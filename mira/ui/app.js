@@ -55,6 +55,7 @@ const elements = {
   missionAnswer: document.getElementById('missionAnswer'),
   demoWorkbenchProofSummary: document.getElementById('demoWorkbenchProofSummary'),
   commandCardAcceptanceSummary: document.getElementById('commandCardAcceptanceSummary'),
+  commandCardRoutePlanFollowThroughProofSummary: document.getElementById('commandCardRoutePlanFollowThroughProofSummary'),
   coordinationDraftList: document.getElementById('coordinationDraftList'),
   routePreviewSummary: document.getElementById('routePreviewSummary'),
   saveRoutePreviewButton: document.getElementById('saveRoutePreviewButton'),
@@ -1909,6 +1910,85 @@ function describeCommandCardAcceptance(mission) {
   ].join(' · ');
 }
 
+function summarizeSourceEvidence(sourceEvidence) {
+  if (!Array.isArray(sourceEvidence) || sourceEvidence.length === 0) {
+    return 'source evidence not listed';
+  }
+  return sourceEvidence
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') return '';
+      const ref = entry.sourceRef || entry.path || entry.kind || 'evidence';
+      const hash = entry.commitHash ? ` ${entry.commitHash}` : '';
+      const summary = entry.summary ? `: ${entry.summary}` : '';
+      return `${ref}${hash}${summary}`;
+    })
+    .filter(Boolean)
+    .join(' | ');
+}
+
+function summarizeList(value, fallback) {
+  if (!Array.isArray(value) || value.length === 0) return fallback;
+  return value.filter(Boolean).join(' | ');
+}
+
+function describeCommandCardRoutePlanFollowThroughProof(mission) {
+  const proof = mission?.commandCardRoutePlanFollowThroughProof;
+  if (!proof || typeof proof !== 'object') {
+    return 'Command-card route-plan follow-through proof: not loaded yet.';
+  }
+  const routePlan = proof.routePlan && typeof proof.routePlan === 'object' ? proof.routePlan : {};
+  const completed = proof.completedContext && typeof proof.completedContext === 'object'
+    ? proof.completedContext.commandCardAcceptanceId || 'completed command card not listed'
+    : 'completed command card not listed';
+  const audit = proof.audit && typeof proof.audit === 'object' ? proof.audit : {};
+  const falseFlags = [
+    'runtimeStarted',
+    'browserOpened',
+    'workbenchOpened',
+    'uiActionPerformed',
+    'fetched',
+    'posted',
+    'routed',
+    'sent',
+    'providerInvoked',
+    'modelInvoked',
+    'accountAccessed',
+    'tokenAccessed',
+    'credentialAccessed',
+    'deviceTouched',
+    'userTargeted',
+    'externalTargeted',
+    'deployed',
+    'moneyMovement',
+    'tradingTouched',
+  ].map((key) => `${key}=${audit[key] === true ? 'true' : 'false'}`).join(', ');
+  return [
+    `Command-card route-plan follow-through proof: ${proof.id || 'unknown proof'}`,
+    `Status: ${proof.status || 'not loaded'}`,
+    `Completed context: ${completed}`,
+    `Target: ${routePlan.target || 'not loaded'}`,
+    `Purpose: ${routePlan.purpose || 'not loaded'}`,
+    `Message/body: ${routePlan.body || routePlan.message || 'not loaded'}`,
+    `Source evidence: ${summarizeSourceEvidence(proof.sourceEvidence)}`,
+    `Control point: ${proof.jamesControlPoint || 'James approval is required before any live route/send action.'}`,
+    `Preconditions: ${summarizeList(proof.preconditions, 'preconditions not listed')}`,
+    `No-go: ${summarizeList(proof.refusalNoGoConditions, 'no-go conditions not listed')}`,
+    `Audit flags: proofOnly=${audit.proofOnly === true}, planningOnly=${audit.planningOnly === true}, ${falseFlags}`,
+  ].join(' · ');
+}
+
+function displayMissionAnswer(answer, mission) {
+  const text = answer || 'Mission Control has no local answer yet.';
+  const cardAction = mission?.commandCardAcceptance?.cardFields?.jamesActionLine;
+  if (!cardAction || !/^JAMES ACTION:/i.test(String(cardAction))) return text;
+  const filtered = text
+    .split(/\r?\n/)
+    .filter((line) => !/^JAMES ACTION:/i.test(line.trim()))
+    .join('\n')
+    .trim();
+  return filtered || text;
+}
+
 function updateSquidRunContext(payload) {
   if (!payload || payload.ok !== true) {
     state.missionControlContext = null;
@@ -1916,6 +1996,7 @@ function updateSquidRunContext(payload) {
     setText(elements.missionAnswer, 'Mission Control is waiting for local SquidRun evidence.');
     setText(elements.demoWorkbenchProofSummary, 'Demo/workbench proof: not loaded yet.');
     setText(elements.commandCardAcceptanceSummary, 'Command card acceptance: not loaded yet.');
+    setText(elements.commandCardRoutePlanFollowThroughProofSummary, 'Command-card route-plan follow-through proof: not loaded yet.');
     renderCoordinationDrafts([]);
     setText(elements.routePreviewSummary, 'Route preview: not prepared yet.');
     setText(elements.foundationSummary, 'No foundation evidence loaded.');
@@ -1945,9 +2026,10 @@ function updateSquidRunContext(payload) {
   state.missionControl = mission;
 
   setText(elements.projectSummary, `${projectName} · ${laneLabel}`);
-  setText(elements.missionAnswer, mission.answer || 'Mission Control has no local answer yet.');
+  setText(elements.missionAnswer, displayMissionAnswer(mission.answer, mission));
   setText(elements.demoWorkbenchProofSummary, describeDemoWorkbenchProof(mission, summary));
   setText(elements.commandCardAcceptanceSummary, describeCommandCardAcceptance(mission));
+  setText(elements.commandCardRoutePlanFollowThroughProofSummary, describeCommandCardRoutePlanFollowThroughProof(mission));
   renderCoordinationDrafts(mission.coordinationDrafts);
   setText(elements.routePreviewSummary, describeRoutePreview(mission.internalRoutePreview));
   setText(elements.foundationSummary, `Foundation vs product: ${mission.foundationVsProduct || 'Local context is foundation; Mission Control is the product test.'}`);

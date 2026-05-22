@@ -2568,6 +2568,7 @@ function collectMissionControlText(elements) {
     elements.missionAnswer.textContent,
     elements.demoWorkbenchProofSummary.textContent,
     elements.commandCardAcceptanceSummary.textContent,
+    elements.commandCardRoutePlanFollowThroughProofSummary.textContent,
     draftText,
     elements.routePreviewSummary.textContent,
     elements.foundationSummary.textContent,
@@ -4038,6 +4039,202 @@ describe('Mira runtime UI boot', () => {
     expect(missionSurfaceText).toContain('mission-control-tool-app-action-plan-v0');
     expect(missionSurfaceText).toContain('mission-control-continuity-memory-proof-v0');
     expect(missionSurfaceText).toContain('mission-control-demo-workbench-proof-v0');
+  });
+
+  test('renders command-card route-plan follow-through proof from mocked SquidRun context without turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const commandCardId = 'mission-control-v0-command-card-acceptance';
+    const proofId = 'mission-control-command-card-route-plan-follow-through-v0';
+    const proofMessage = 'Review mission-control-command-card-route-plan-follow-through-v0 against the visible command card, coordinationDrafts, and internalRoutePreview for exact target/purpose/message, source evidence, James control point, preconditions/no-go conditions, exactly one James-action line, and false live-effect audit flags; do not send, promote, POST, route, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.';
+    const controlPoint = 'James can inspect this local proof before any future route, send, promotion, runtime, browser, workbench, UI/status, provider/model, credential, deploy, money, or trading action is proposed.';
+    const harness = createRuntimeBootHarness({
+      customizeSquidRunContext(context) {
+        context.lane.sourceRef = 'architect#254';
+        context.git.dirtyCount = 0;
+        context.git.statusPreview = [];
+        context.dirtyWork.summary = 'Worktree is clean.';
+        context.dirtyWork.files = [];
+        context.missionControl.answer = [
+          'Project/lane: squidrun / architect#254. Display the completed command-card route-plan follow-through proof from local context only.',
+          `Next team move: Oracle reviews ${proofId}; Builder holds it as local context.`,
+          'JAMES ACTION: NONE - Local display-only Mission Control work; no runtime, route, send, provider/model, credential, deploy, money, or external action is needed.',
+        ].join('\n');
+        context.missionControl.nextTeamMove = `Oracle reviews ${proofId}; Builder holds it as local context.`;
+        context.missionControl.commandCardAcceptance = {
+          id: commandCardId,
+          status: 'acceptance_planning_only',
+          owner: 'Builder',
+          completedContext: {
+            toolAppActionPlanId: 'mission-control-tool-app-action-plan-v0',
+            continuityMemoryProofId: 'mission-control-continuity-memory-proof-v0',
+            demoWorkbenchProofId: 'mission-control-demo-workbench-proof-v0',
+          },
+          cardFields: {
+            currentLaneWhyItMatters: 'Current lane architect#254 matters because James needs the follow-through proof visible without terminal logs.',
+            whatChangedRecently: 'Committed 8c7bd6cf route-plan follow-through proof makes commandCardAcceptance completed context.',
+            builderNextMove: 'Render the completed route-plan follow-through proof from already-loaded /squidrun/context only.',
+            oracleNextMove: 'Review the display-only proof surface for no live effects.',
+            contextCardStatus: 'Context-card/current dirty-context status: Worktree is clean.',
+            jamesActionLine: 'JAMES ACTION: NONE',
+            dryRunRoutePlan: {
+              target: 'oracle',
+              purpose: 'command-card no-effect review',
+              manualExecutionRequired: true,
+              sendPerformed: false,
+              summary: 'Dry-run route plan asks Oracle to review Mission Control v0 command-card fields from local context only; no hm-send, route flip, POST, provider/model call, or external send is performed.',
+            },
+          },
+          jamesControlPoint: 'James can inspect the local command card before any future runtime, browser, workbench, UI/status, route, send, provider/model, credential, deploy, money, or trading action is proposed.',
+          audit: {
+            acceptanceOnly: true,
+            planningOnly: true,
+            runtimeStarted: false,
+            browserOpened: false,
+            workbenchOpened: false,
+            uiActionPerformed: false,
+            fetched: false,
+            posted: false,
+            routed: false,
+            sent: false,
+            providerInvoked: false,
+            modelInvoked: false,
+            accountAccessed: false,
+            tokenAccessed: false,
+            credentialAccessed: false,
+            deviceTouched: false,
+            userTargeted: false,
+            externalTargeted: false,
+            deployed: false,
+            moneyMovement: false,
+            tradingTouched: false,
+          },
+        };
+        context.missionControl.commandCardRoutePlanFollowThroughProof = {
+          id: proofId,
+          status: 'proof_ready_for_oracle_review',
+          owner: 'Builder',
+          routePlan: {
+            target: 'oracle',
+            purpose: 'command-card route-plan proof review',
+            message: proofMessage,
+            body: proofMessage,
+            manualExecutionRequired: true,
+            runtimeExecutes: false,
+            sendPerformed: false,
+          },
+          sourceEvidence: [
+            {
+              kind: 'completed_context',
+              summary: 'Completed context retained: mission-control-v0-command-card-acceptance remains acceptance_planning_only.',
+            },
+            {
+              kind: 'comms',
+              sourceRef: 'architect#242',
+              commitHash: 'df0a47a6',
+              summary: 'Command-card follow-through checkpoint is source-specific before exposing the route-plan proof.',
+            },
+            {
+              kind: 'comms',
+              sourceRef: 'oracle#77',
+              commitHash: 'df0a47a6',
+              summary: 'Oracle acknowledged the committed command-card follow-through before this proof record.',
+            },
+          ],
+          completedContext: {
+            commandCardAcceptanceId: commandCardId,
+          },
+          jamesControlPoint: controlPoint,
+          preconditions: [
+            'Worktree is clean.',
+            'commandCardAcceptance is present as completed visible context.',
+            'The proof is read from loaded /squidrun/context only.',
+          ],
+          refusalNoGoConditions: [
+            'Missing commandCardAcceptance.',
+            'Any POST, /turn call, route, send, runtime/browser/workbench action, provider/model call, credential access, deploy, money, or trading effect.',
+          ],
+          audit: {
+            proofOnly: true,
+            planningOnly: true,
+            runtimeStarted: false,
+            browserOpened: false,
+            workbenchOpened: false,
+            uiActionPerformed: false,
+            fetched: false,
+            posted: false,
+            routed: false,
+            sent: false,
+            providerInvoked: false,
+            modelInvoked: false,
+            accountAccessed: false,
+            tokenAccessed: false,
+            credentialAccessed: false,
+            deviceTouched: false,
+            userTargeted: false,
+            externalTargeted: false,
+            deployed: false,
+            moneyMovement: false,
+            tradingTouched: false,
+          },
+        };
+        context.summary.happening = 'Working in squidrun on architect#254: display-only route-plan follow-through proof surface.';
+        context.summary.nextStep = `Oracle reviews ${proofId}; Builder holds it as local context.`;
+        context.summary.commandCardAcceptance = `${commandCardId}: completed visible command-card context.`;
+        context.summary.commandCardRoutePlanFollowThroughProof = `${proofId}: proof_ready_for_oracle_review.`;
+        context.summary.jamesAction = 'NONE';
+        context.summary.jamesActionReason = 'Local display-only Mission Control work; no runtime, route, send, provider/model, credential, deploy, money, or external action is needed.';
+        return context;
+      },
+    });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const proofText = harness.elements.commandCardRoutePlanFollowThroughProofSummary.textContent;
+    const missionSurfaceText = collectMissionControlText(harness.elements);
+    expect(harness.calls.filter((call) => call.method === 'POST')).toHaveLength(0);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.calls.filter((call) => call.url === '/squidrun/context')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(proofText).toContain(`Command-card route-plan follow-through proof: ${proofId}`);
+    expect(proofText).toContain('Status: proof_ready_for_oracle_review');
+    expect(proofText).toContain(`Completed context: ${commandCardId}`);
+    expect(proofText).toContain('Target: oracle');
+    expect(proofText).toContain('Purpose: command-card route-plan proof review');
+    expect(proofText).toContain(`Message/body: ${proofMessage}`);
+    expect(proofText).toContain('architect#242 df0a47a6');
+    expect(proofText).toContain('oracle#77 df0a47a6');
+    expect(proofText).toContain(`Control point: ${controlPoint}`);
+    expect(proofText).toContain('Preconditions: Worktree is clean. | commandCardAcceptance is present as completed visible context. | The proof is read from loaded /squidrun/context only.');
+    expect(proofText).toContain('No-go: Missing commandCardAcceptance. | Any POST, /turn call, route, send, runtime/browser/workbench action, provider/model call, credential access, deploy, money, or trading effect.');
+    expect(proofText).toContain('Audit flags: proofOnly=true, planningOnly=true');
+    expect(proofText).toContain('runtimeStarted=false');
+    expect(proofText).toContain('browserOpened=false');
+    expect(proofText).toContain('workbenchOpened=false');
+    expect(proofText).toContain('uiActionPerformed=false');
+    expect(proofText).toContain('fetched=false');
+    expect(proofText).toContain('posted=false');
+    expect(proofText).toContain('routed=false');
+    expect(proofText).toContain('sent=false');
+    expect(proofText).toContain('providerInvoked=false');
+    expect(proofText).toContain('modelInvoked=false');
+    expect(proofText).toContain('accountAccessed=false');
+    expect(proofText).toContain('tokenAccessed=false');
+    expect(proofText).toContain('credentialAccessed=false');
+    expect(proofText).toContain('deviceTouched=false');
+    expect(proofText).toContain('userTargeted=false');
+    expect(proofText).toContain('externalTargeted=false');
+    expect(proofText).toContain('deployed=false');
+    expect(proofText).toContain('moneyMovement=false');
+    expect(proofText).toContain('tradingTouched=false');
+    expect(missionSurfaceText).toContain(commandCardId);
+    expect(missionSurfaceText).toContain(proofId);
+    expect((missionSurfaceText.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+    expect(harness.elements.missionAnswer.textContent).not.toContain('JAMES ACTION:');
   });
 
   test('shows the same status-backed what-now answer in the panel, status card, and typed reply', async () => {
