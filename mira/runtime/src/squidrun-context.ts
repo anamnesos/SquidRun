@@ -16,6 +16,7 @@ const cleanContextSelectionCommitHash = "13c90817";
 const demoWorkbenchProofCommitHash = "48e419b4";
 const workbenchSurfaceProofCommitHash = "c301c1ac";
 const commandCardSurfaceCommitHash = "5d119dc6";
+const commandCardFollowThroughCommitHash = "df0a47a6";
 const commsHistoryEvidenceLimit = 500;
 
 export type SquidRunProjectContext = {
@@ -233,6 +234,18 @@ export type SquidRunProjectContext = {
       timestampMs: number | null;
       commitHash: string | null;
     } | null;
+    latestCommandCardFollowThroughCheckpoint: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestCommandCardFollowThroughOracleAck: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
     oracleBenchmark: {
       sourceRef: string | null;
       excerpt: string | null;
@@ -445,6 +458,56 @@ export type SquidRunProjectContext = {
         tradingTouched: false;
       };
     };
+    commandCardRoutePlanFollowThroughProof: null | {
+      id: "mission-control-command-card-route-plan-follow-through-v0";
+      status: "proof_ready_for_oracle_review";
+      owner: "Builder";
+      routePlan: {
+        target: "oracle";
+        purpose: string;
+        message: string;
+        body: string;
+        manualExecutionRequired: true;
+        runtimeExecutes: false;
+        sendPerformed: false;
+      };
+      sourceEvidence: Array<{
+        kind: "file" | "comms" | "completed_context" | "summary";
+        path?: string;
+        sourceRef?: string;
+        commitHash?: string;
+        summary: string;
+      }>;
+      completedContext: {
+        commandCardAcceptanceId: "mission-control-v0-command-card-acceptance";
+      };
+      jamesControlPoint: string;
+      preconditions: string[];
+      refusalNoGoConditions: string[];
+      audit: {
+        proofOnly: true;
+        planningOnly: true;
+        runtimeStarted: false;
+        browserOpened: false;
+        workbenchOpened: false;
+        uiActionPerformed: false;
+        fetched: false;
+        posted: false;
+        routed: false;
+        sent: false;
+        providerInvoked: false;
+        modelInvoked: false;
+        accountAccessed: false;
+        tokenAccessed: false;
+        credentialAccessed: false;
+        deviceTouched: false;
+        userTargeted: false;
+        externalTargeted: false;
+        deployed: false;
+        moneyMovement: false;
+        tradingTouched: false;
+      };
+    };
     internalRoutePreview: {
       status: "reviewed_preview_only";
       selectedDraftTarget: "architect" | "builder" | "oracle";
@@ -478,6 +541,7 @@ export type SquidRunProjectContext = {
     continuityMemoryProof: string | null;
     demoWorkbenchProof: string | null;
     commandCardAcceptance: string | null;
+    commandCardRoutePlanFollowThroughProof: string | null;
     jamesAction: "NONE" | "DO THIS";
     jamesActionReason: string;
   };
@@ -801,15 +865,16 @@ function commsSummary(row: JsonObject | null, maxLength = 260, preferredCommitHa
 
 function isReportShapedCommsBody(rawBody: string | null): boolean {
   const body = rawBody || "";
-  return /^\([A-Z]+\s+#\d+\):\s*(?:Committed|Checkpoint|PASS\b|MODIFY resolved|ACK\b|Status check|Status pulse|Oracle .* PASS|Builder .* PASS|Received [0-9a-f]{7,40} checkpoint)/i.test(body)
+  return /^\([A-Z]+\s+#\d+\):\s*(?:Committed|Checkpoint|PASS\b|MODIFY resolved|ACK\b|Status check|Status pulse|Status\/MODIFY|Builder status nudge|Builder final nudge|Builder final closure nudge|Builder, containment|Oracle .* PASS|Builder .* PASS|Received [0-9a-f]{7,40} checkpoint)/i.test(body)
     || /^\([A-Z]+\s+#\d+\):\s*MODIFY (?:on|update on)\s+#\d+\b/i.test(body)
+    || /^\([A-Z]+\s+#\d+\):\s*(?:Fallback trigger|Containment)\b/i.test(body)
     || /\b(?:Proof|Post-commit proof|Committed-HEAD proof|Clean-head proof|pre-commit all checks passed)\s*:/i.test(body);
 }
 
 function isMissionControlContinuationDelegationBody(rawBody: string | null): boolean {
   const body = rawBody || "";
-  const instructionShaped = /(?:\):\s*)?(?:MODIFY\b|Current-session delegation|TASK\b|Builder\s*:|Builder\b.*\b(?:build|fix|patch|add|continue|land)\b|Fix\b|Regression must\b|Live acceptance\b|next Mira map-backed slice|new tiny follow-up slice)/i.test(body);
-  const continuationTarget = /continuation-aware Mission Control command context|next Mira map-backed slice|next-move advancement|tool\/app action planning|command-card|command card|post-c301c1ac|c301c1ac|demo\/workbench|demoWorkbenchProof|surface-alignment|workbench\/surface|workbench surface|post-48e419b4|48e419b4|clean-context regression|post-208d7ad7|208d7ad7|stale[- ]handoff|current-lane handoff/i.test(body);
+  const instructionShaped = /(?:\):\s*)?(?:MODIFY\b|Current-session delegation|TASK\b|Builder\s*:|Builder\b.*\b(?:build|fix|patch|add|continue|land|take)\b|Fix\b|Regression must\b|Live acceptance\b|next Mira map-backed slice|next map-backed Mira slice|new tiny follow-up slice)/i.test(body);
+  const continuationTarget = /continuation-aware Mission Control command context|next Mira map-backed slice|next map-backed Mira slice|next-move advancement|tool\/app action planning|command-card|command card|route-plan follow-through|follow-through proof|post-df0a47a6|df0a47a6|post-c301c1ac|c301c1ac|demo\/workbench|demoWorkbenchProof|surface-alignment|workbench\/surface|workbench surface|post-48e419b4|48e419b4|clean-context regression|post-208d7ad7|208d7ad7|stale[- ]handoff|current-lane handoff/i.test(body);
   return instructionShaped && continuationTarget && !isReportShapedCommsBody(body);
 }
 
@@ -957,6 +1022,22 @@ function isCommandCardSurfaceOracleAckBody(rawBody: string | null): boolean {
     && /JAMES ACTION:\s*NONE/i.test(body);
 }
 
+function isCommandCardFollowThroughCheckpointBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /Checkpoint:\s*committed #237 post-5d119dc6 command-card follow-through advancement as [`'"]?df0a47a6 Advance Mission Control command card follow-through/i.test(body)
+    && /nextStep is one dry-run Builder\/Oracle route-plan review\/follow-through lane/i.test(body)
+    && /exactly one JAMES ACTION line/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
+function isCommandCardFollowThroughOracleAckBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /^\(ORACLE\s+#\d+\):\s*Checkpoint received\.\s*#237\s*\/\s*df0a47a6 closure recorded/i.test(body)
+    && /nextStep advanced to the dry-run Builder\/Oracle route-plan review\/follow-through lane/i.test(body)
+    && /Exactly one JAMES ACTION line/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
 function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentComms"] {
   const scriptPath = path.join(squidrunRoot, "ui", "scripts", "hm-comms.js");
   if (!fs.existsSync(scriptPath)) {
@@ -987,6 +1068,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestWorkbenchSurfaceProofOracleAck: null,
       latestCommandCardSurfaceCheckpoint: null,
       latestCommandCardSurfaceOracleAck: null,
+      latestCommandCardFollowThroughCheckpoint: null,
+      latestCommandCardFollowThroughOracleAck: null,
       oracleBenchmark: null,
     };
   }
@@ -1141,6 +1224,17 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       return trimText(row.sender) === "oracle"
         && isCommandCardSurfaceOracleAckBody(body);
     });
+    const commandCardFollowThroughCheckpoint = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "architect"
+        && trimText(row.target) === "builder"
+        && isCommandCardFollowThroughCheckpointBody(body);
+    });
+    const commandCardFollowThroughOracleAck = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "oracle"
+        && isCommandCardFollowThroughOracleAckBody(body);
+    });
     const oracleBenchmark = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "oracle" && /benchmark|holy-shit|not impressive|current New Mira/i.test(body);
@@ -1173,6 +1267,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestWorkbenchSurfaceProofOracleAck: commsSummary(workbenchSurfaceProofOracleAck || null, 260, workbenchSurfaceProofCommitHash),
       latestCommandCardSurfaceCheckpoint: commsSummary(commandCardSurfaceCheckpoint || null, 260, commandCardSurfaceCommitHash),
       latestCommandCardSurfaceOracleAck: commsSummary(commandCardSurfaceOracleAck || null, 260, commandCardSurfaceCommitHash),
+      latestCommandCardFollowThroughCheckpoint: commsSummary(commandCardFollowThroughCheckpoint || null, 260, commandCardFollowThroughCommitHash),
+      latestCommandCardFollowThroughOracleAck: commsSummary(commandCardFollowThroughOracleAck || null, 260, commandCardFollowThroughCommitHash),
       oracleBenchmark: commsSummary(oracleBenchmark || null),
     };
   } catch {
@@ -1203,6 +1299,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestWorkbenchSurfaceProofOracleAck: null,
       latestCommandCardSurfaceCheckpoint: null,
       latestCommandCardSurfaceOracleAck: null,
+      latestCommandCardFollowThroughCheckpoint: null,
+      latestCommandCardFollowThroughOracleAck: null,
       oracleBenchmark: null,
     };
   }
@@ -1310,6 +1408,9 @@ function buildMissionControl(input: {
   const commandCardSurfaceReady = commandCardAcceptanceReady
     && input.recentComms.latestCommandCardSurfaceCheckpoint?.commitHash === commandCardSurfaceCommitHash
     && input.recentComms.latestCommandCardSurfaceOracleAck?.commitHash === commandCardSurfaceCommitHash;
+  const commandCardFollowThroughProofReady = commandCardSurfaceReady
+    && input.recentComms.latestCommandCardFollowThroughCheckpoint?.commitHash === commandCardFollowThroughCommitHash
+    && input.recentComms.latestCommandCardFollowThroughOracleAck?.commitHash === commandCardFollowThroughCommitHash;
   const laneLabel = continuationIsStaleSuperseded
     ? continuationDecision.preferredSourceRef || input.recentComms.latestBuilderInstruction?.sourceRef || "current continuation"
     : input.recentComms.latestBuilderInstruction?.sourceRef
@@ -1317,7 +1418,9 @@ function buildMissionControl(input: {
     || input.lane.status
     || "local lane";
   const laneText = continuationIsStaleSuperseded
-    ? commandCardSurfaceReady
+    ? commandCardFollowThroughProofReady
+      ? "Mission Control command-card route-plan follow-through proof is present and ready for Oracle review: it captures the existing coordinationDrafts/internalRoutePreview from the visible command card as local proof only. No send, promotion, execution, runtime, browser, workbench, UI/status action, fetch, POST, route, provider/model, credential, deploy, money, or trading effect happens here."
+      : commandCardSurfaceReady
       ? "Mission Control v0 command-card surface is completed visible context; the active next boundary is one dry-run Builder/Oracle route-plan review/follow-through lane from the visible command card. No send, promotion, execution, runtime, browser, workbench, UI/status action, fetch, POST, route, provider/model, credential, deploy, money, or trading effect happens here."
       : commandCardAcceptanceReady
       ? "Mission Control v0 command-card acceptance is the active next boundary: the local answer/surface must expose a concise command card with current lane, why it matters, recent changes, Builder next move, Oracle next move, context-card dirty status, exactly one James-action line, and one dry-run route plan; no runtime, browser, workbench, UI/status action, POST, route, send, or provider action happens here."
@@ -1346,7 +1449,9 @@ function buildMissionControl(input: {
   const firstDemo = input.roadmap.firstDemo
     || "First inspectable demo: Mira Mission Control.";
   const nextTeamMove = continuationIsStaleSuperseded
-    ? commandCardSurfaceReady
+    ? commandCardFollowThroughProofReady
+      ? "Oracle should review mission-control-command-card-route-plan-follow-through-v0 against the visible command card, coordinationDrafts, and internalRoutePreview; Builder should hold the proof as local context unless Oracle requests a narrow correction."
+      : commandCardSurfaceReady
       ? "Builder should prepare one dry-run Builder/Oracle route-plan review/follow-through lane from the visible Mission Control v0 command card; Oracle should review that the follow-through stays local, useful, no-send, no-promotion, and no-execution."
       : commandCardAcceptanceReady
       ? "Builder should accept Mission Control v0 by pinning a concise local command card with current lane/why it matters, recent changes, Builder next move, Oracle next move, context-card dirty status, one James-action line, and one dry-run route plan; Oracle should review the card remains local/no-effect and does not rely on terminal logs."
@@ -1370,6 +1475,10 @@ function buildMissionControl(input: {
   const foundationVsProduct = "SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James's AI team.";
   const commandCardBuilderNextMove = "Pin the Mission Control v0 command card from local evidence: current lane/why it matters, recent changes, Builder next move, Oracle next move, context-card dirty status, one James-action line, and a dry-run route plan.";
   const commandCardOracleNextMove = "Review the command card for local evidence, no terminal-log dependency, dirty-context clarity, exactly one James-action line, and no runtime/browser/workbench/UI/status action, POST, route, send, provider/model, credential, deploy, money, or trading effect.";
+  const commandCardRoutePlanBuilderMessage = "Prepare the dry-run Builder/Oracle route-plan review/follow-through from the visible Mission Control command card. Use local evidence only; do not send, promote, POST, route, execute, start runtime, open browser/workbench, perform UI/status actions, or call provider/model.";
+  const commandCardRoutePlanOracleMessage = "Review the dry-run Builder/Oracle route-plan follow-through from the visible command card for useful next move, local evidence, exactly one James-action line, and no send, promotion, execution, runtime/browser/workbench/UI/status action, POST, route, provider/model, credential, deploy, money, or trading effect.";
+  const commandCardRoutePlanProofBuilderMessage = "Hold mission-control-command-card-route-plan-follow-through-v0 as local proof context over the visible command card, coordinationDrafts, and internalRoutePreview. Do not send, promote, POST, route, execute, start runtime, open browser/workbench, perform UI/status actions, or call provider/model.";
+  const commandCardRoutePlanProofOracleMessage = "Review mission-control-command-card-route-plan-follow-through-v0 against the visible command card, coordinationDrafts, and internalRoutePreview for exact target/purpose/message, source evidence, James control point, preconditions/no-go conditions, exactly one James-action line, and false live-effect audit flags; do not send, promote, POST, route, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.";
   const toolAppActionPlan: SquidRunProjectContext["missionControl"]["toolAppActionPlan"] = toolAppActionPlanningReady
     ? {
         id: "mission-control-tool-app-action-plan-v0",
@@ -1393,7 +1502,9 @@ function buildMissionControl(input: {
           {
             kind: "comms",
             sourceRef: input.recentComms.latestContinuationDelegation?.sourceRef || "not found",
-            summary: commandCardSurfaceReady
+            summary: commandCardFollowThroughProofReady
+              ? "Current Architect delegation treats the command-card route-plan lane as completed context and asks for an inspectable follow-through proof."
+              : commandCardSurfaceReady
               ? "Current Architect delegation treats the command-card surface as completed context and asks for a dry-run route-plan review/follow-through lane."
               : commandCardAcceptanceReady
               ? "Current Architect delegation treats the completed proof context as ready for Mission Control v0 command-card acceptance."
@@ -1636,7 +1747,9 @@ function buildMissionControl(input: {
           {
             kind: "comms",
             sourceRef: input.recentComms.latestContinuationDelegation?.sourceRef || "not found",
-            summary: commandCardSurfaceReady
+            summary: commandCardFollowThroughProofReady
+              ? "Current Architect delegation treats this demo/workbench proof and command-card acceptance as completed context for route-plan follow-through proof."
+              : commandCardSurfaceReady
               ? "Current Architect delegation treats this demo/workbench proof and command-card acceptance as completed context for route-plan follow-through."
               : commandCardAcceptanceReady
               ? "Current Architect delegation treats this demo/workbench proof as completed context for command-card acceptance, not a live workbench action."
@@ -1742,7 +1855,9 @@ function buildMissionControl(input: {
           {
             kind: "comms",
             sourceRef: input.recentComms.latestContinuationDelegation?.sourceRef || "not found",
-            summary: commandCardSurfaceReady
+            summary: commandCardFollowThroughProofReady
+              ? "Current Architect delegation treats commandCardAcceptance as completed visible context and asks for route-plan follow-through proof."
+              : commandCardSurfaceReady
               ? "Current Architect delegation treats the command-card surface as completed context and asks for a dry-run route-plan review/follow-through lane."
               : "Current Architect delegation asks for Mission Control v0 command-card acceptance without live effects.",
           },
@@ -1770,7 +1885,9 @@ function buildMissionControl(input: {
         },
         cardFields: {
           currentLaneWhyItMatters: `Current lane ${continuationDecision.preferredSourceRef || "current continuation"} matters because Mission Control must turn local SquidRun evidence into a James-inspectable command card instead of terminal-log spelunking.`,
-          whatChangedRecently: commandCardSurfaceReady
+          whatChangedRecently: commandCardFollowThroughProofReady
+            ? `Committed ${commandCardFollowThroughCommitHash} command-card follow-through evidence (${input.recentComms.latestCommandCardFollowThroughCheckpoint?.sourceRef || "not found"} plus Oracle ACK ${input.recentComms.latestCommandCardFollowThroughOracleAck?.sourceRef || "not found"}) keeps commandCardAcceptance completed visible context and exposes a local route-plan follow-through proof for Oracle review.`
+            : commandCardSurfaceReady
             ? `Committed ${commandCardSurfaceCommitHash} command-card surface evidence (${input.recentComms.latestCommandCardSurfaceCheckpoint?.sourceRef || "not found"} plus Oracle ACK ${input.recentComms.latestCommandCardSurfaceOracleAck?.sourceRef || "not found"}) makes commandCardAcceptance completed visible context; the next boundary is dry-run route-plan review/follow-through.`
             : `Committed ${workbenchSurfaceProofCommitHash} workbench surface proof evidence (${input.recentComms.latestWorkbenchSurfaceProofCheckpoint?.sourceRef || "not found"} plus Oracle ACK ${input.recentComms.latestWorkbenchSurfaceProofOracleAck?.sourceRef || "not found"}) makes surface rendering completed context; the next acceptance is the command card.`,
           builderNextMove: commandCardBuilderNextMove,
@@ -1851,10 +1968,15 @@ function buildMissionControl(input: {
                     : [`Workbench surface proof evidence: checkpoint ${input.recentComms.latestDemoWorkbenchProofCheckpoint?.sourceRef || "not found"} ${demoWorkbenchProofCommitHash} and Oracle ACK ${input.recentComms.latestDemoWorkbenchProofOracleAck?.sourceRef || "not found"} ${demoWorkbenchProofCommitHash}; demoWorkbenchProof is completed context and the active next boundary is read-only local surface rendering from /squidrun/context.`]
                   : []),
                 ...(commandCardSurfaceReady
-                  ? [`Completed command-card surface evidence: checkpoint ${input.recentComms.latestCommandCardSurfaceCheckpoint?.sourceRef || "not found"} ${commandCardSurfaceCommitHash} and Oracle ACK ${input.recentComms.latestCommandCardSurfaceOracleAck?.sourceRef || "not found"} ${commandCardSurfaceCommitHash}; commandCardAcceptance remains completed visible context while the active next boundary advances to dry-run Builder/Oracle route-plan review/follow-through from the visible command card.`]
+                  ? commandCardFollowThroughProofReady
+                    ? [`Completed command-card follow-through evidence: checkpoint ${input.recentComms.latestCommandCardFollowThroughCheckpoint?.sourceRef || "not found"} ${commandCardFollowThroughCommitHash} and Oracle ACK ${input.recentComms.latestCommandCardFollowThroughOracleAck?.sourceRef || "not found"} ${commandCardFollowThroughCommitHash}; commandCardAcceptance remains completed visible context and the route-plan follow-through proof is ready for Oracle review.`]
+                    : [`Completed command-card surface evidence: checkpoint ${input.recentComms.latestCommandCardSurfaceCheckpoint?.sourceRef || "not found"} ${commandCardSurfaceCommitHash} and Oracle ACK ${input.recentComms.latestCommandCardSurfaceOracleAck?.sourceRef || "not found"} ${commandCardSurfaceCommitHash}; commandCardAcceptance remains completed visible context while the active next boundary advances to dry-run Builder/Oracle route-plan review/follow-through from the visible command card.`]
                   : []),
                 ...(commandCardAcceptance
                   ? [`Command-card acceptance: ${commandCardAcceptance.id}; current lane/why it matters=${commandCardAcceptance.cardFields.currentLaneWhyItMatters}; what changed recently=${commandCardAcceptance.cardFields.whatChangedRecently}; Builder next move=${commandCardAcceptance.cardFields.builderNextMove}; Oracle next move=${commandCardAcceptance.cardFields.oracleNextMove}; ${commandCardAcceptance.cardFields.contextCardStatus}; ${commandCardAcceptance.cardFields.jamesActionLine}; dry-run route plan=${commandCardAcceptance.cardFields.dryRunRoutePlan.summary}; audit acceptanceOnly=${commandCardAcceptance.audit.acceptanceOnly}, planningOnly=${commandCardAcceptance.audit.planningOnly}, runtimeStarted=${commandCardAcceptance.audit.runtimeStarted}, browserOpened=${commandCardAcceptance.audit.browserOpened}, workbenchOpened=${commandCardAcceptance.audit.workbenchOpened}, uiActionPerformed=${commandCardAcceptance.audit.uiActionPerformed}, fetched=${commandCardAcceptance.audit.fetched}, posted=${commandCardAcceptance.audit.posted}, routed=${commandCardAcceptance.audit.routed}, sent=${commandCardAcceptance.audit.sent}, providerInvoked=${commandCardAcceptance.audit.providerInvoked}, modelInvoked=${commandCardAcceptance.audit.modelInvoked}, accountAccessed=${commandCardAcceptance.audit.accountAccessed}, tokenAccessed=${commandCardAcceptance.audit.tokenAccessed}, credentialAccessed=${commandCardAcceptance.audit.credentialAccessed}, deviceTouched=${commandCardAcceptance.audit.deviceTouched}, userTargeted=${commandCardAcceptance.audit.userTargeted}, externalTargeted=${commandCardAcceptance.audit.externalTargeted}, deployed=${commandCardAcceptance.audit.deployed}, moneyMovement=${commandCardAcceptance.audit.moneyMovement}, tradingTouched=${commandCardAcceptance.audit.tradingTouched}.`]
+                  : []),
+                ...(commandCardFollowThroughProofReady
+                  ? [`Route-plan follow-through proof: mission-control-command-card-route-plan-follow-through-v0; target=oracle; purpose=command-card route-plan proof review; message=${commandCardRoutePlanProofOracleMessage}; source evidence checkpoint ${input.recentComms.latestCommandCardFollowThroughCheckpoint?.sourceRef || "not found"} ${commandCardFollowThroughCommitHash} plus Oracle ACK ${input.recentComms.latestCommandCardFollowThroughOracleAck?.sourceRef || "not found"} ${commandCardFollowThroughCommitHash}; completed context=${commandCardAcceptance?.id || "not found"}; James control point: James can inspect this local proof before any future route, send, promotion, runtime, browser, workbench, UI/status, provider/model, credential, deploy, money, or trading action is proposed; audit proofOnly=true, planningOnly=true, runtimeStarted=false, browserOpened=false, workbenchOpened=false, uiActionPerformed=false, fetched=false, posted=false, routed=false, sent=false, providerInvoked=false, modelInvoked=false, accountAccessed=false, tokenAccessed=false, credentialAccessed=false, deviceTouched=false, userTargeted=false, externalTargeted=false, deployed=false, moneyMovement=false, tradingTouched=false.`]
                   : []),
                 ...(continuityMemoryProof
                   ? [`Continuity/memory proof: ${continuityMemoryProof.id}; owner ${continuityMemoryProof.owner}; current-lane truth ${continuityMemoryProof.currentLaneTruth.sourceRef || "not found"} is ${continuityMemoryProof.currentLaneTruth.authority}; stale-only summary refused=${continuityMemoryProof.staleOnlySummaryRefusal.refused}; James control point: ${continuityMemoryProof.jamesControlPoint}; audit proofOnly=${continuityMemoryProof.audit.proofOnly}, imported=${continuityMemoryProof.audit.imported}, copied=${continuityMemoryProof.audit.copied}, wrote=${continuityMemoryProof.audit.wrote}, restarted=${continuityMemoryProof.audit.restarted}, processStarted=${continuityMemoryProof.audit.processStarted}, browsed=${continuityMemoryProof.audit.browsed}, sent=${continuityMemoryProof.audit.sent}, routed=${continuityMemoryProof.audit.routed}, posted=${continuityMemoryProof.audit.posted}, runtimeStarted=${continuityMemoryProof.audit.runtimeStarted}, providerInvoked=${continuityMemoryProof.audit.providerInvoked}, modelInvoked=${continuityMemoryProof.audit.modelInvoked}, accountAccessed=${continuityMemoryProof.audit.accountAccessed}, tokenAccessed=${continuityMemoryProof.audit.tokenAccessed}, credentialAccessed=${continuityMemoryProof.audit.credentialAccessed}, deviceTouched=${continuityMemoryProof.audit.deviceTouched}, userTargeted=${continuityMemoryProof.audit.userTargeted}, externalTargeted=${continuityMemoryProof.audit.externalTargeted}, deployed=${continuityMemoryProof.audit.deployed}, moneyMovement=${continuityMemoryProof.audit.moneyMovement}, tradingTouched=${continuityMemoryProof.audit.tradingTouched}.`]
@@ -1882,7 +2004,9 @@ function buildMissionControl(input: {
   const coordinationDrafts: SquidRunProjectContext["missionControl"]["coordinationDrafts"] = [
     {
       target: "builder",
-      purpose: commandCardSurfaceReady
+      purpose: commandCardFollowThroughProofReady
+        ? "command-card route-plan proof context"
+        : commandCardSurfaceReady
         ? "command-card route-plan follow-through"
         : commandCardAcceptanceReady
         ? "command-card acceptance"
@@ -1899,8 +2023,10 @@ function buildMissionControl(input: {
         : directChannelBoundaryReady
         ? "direct-channel readiness planning"
         : continuationSelectorProofCommitted ? "v1 dry-run planning" : "implementation",
-      message: commandCardSurfaceReady
-        ? "Prepare the dry-run Builder/Oracle route-plan review/follow-through from the visible Mission Control command card. Use local evidence only; do not send, promote, POST, route, execute, start runtime, open browser/workbench, perform UI/status actions, or call provider/model."
+      message: commandCardFollowThroughProofReady
+        ? commandCardRoutePlanProofBuilderMessage
+        : commandCardSurfaceReady
+        ? commandCardRoutePlanBuilderMessage
         : commandCardAcceptanceReady
         ? commandCardBuilderNextMove
         : workbenchSurfaceProofReady
@@ -1921,7 +2047,9 @@ function buildMissionControl(input: {
     },
     {
       target: "oracle",
-      purpose: commandCardSurfaceReady
+      purpose: commandCardFollowThroughProofReady
+        ? "command-card route-plan proof review"
+        : commandCardSurfaceReady
         ? "command-card route-plan no-effect review"
         : commandCardAcceptanceReady
         ? "command-card no-effect review"
@@ -1938,8 +2066,10 @@ function buildMissionControl(input: {
         : directChannelBoundaryReady
         ? "direct-channel dry-run review"
         : continuationSelectorProofCommitted ? "v1 no-send review" : "benchmark review",
-      message: commandCardSurfaceReady
-        ? "Review the dry-run Builder/Oracle route-plan follow-through from the visible command card for useful next move, local evidence, exactly one James-action line, and no send, promotion, execution, runtime/browser/workbench/UI/status action, POST, route, provider/model, credential, deploy, money, or trading effect."
+      message: commandCardFollowThroughProofReady
+        ? commandCardRoutePlanProofOracleMessage
+        : commandCardSurfaceReady
+        ? commandCardRoutePlanOracleMessage
         : commandCardAcceptanceReady
         ? commandCardOracleNextMove
         : workbenchSurfaceProofReady
@@ -2011,6 +2141,100 @@ function buildMissionControl(input: {
       };
     }),
   });
+  const commandCardRoutePlanFollowThroughProof: SquidRunProjectContext["missionControl"]["commandCardRoutePlanFollowThroughProof"] = commandCardFollowThroughProofReady && commandCardAcceptance
+    ? {
+        id: "mission-control-command-card-route-plan-follow-through-v0",
+        status: "proof_ready_for_oracle_review",
+        owner: "Builder",
+        routePlan: {
+          target: "oracle",
+          purpose: selectedDraft.purpose,
+          message: selectedDraft.message,
+          body: selectedDraft.message,
+          manualExecutionRequired: true,
+          runtimeExecutes: false,
+          sendPerformed: false,
+        },
+        sourceEvidence: [
+          {
+            kind: "file",
+            path: "docs/mira-system-map.md",
+            summary: "System map keeps command-card route-plan follow-through as local proof over existing drafts/preview with no live route or send authority.",
+          },
+          {
+            kind: "file",
+            path: "mira/runtime/src/squidrun-context.ts",
+            summary: "SquidRun context source builds the command-card acceptance, coordinationDrafts, internalRoutePreview, and follow-through proof record.",
+          },
+          {
+            kind: "completed_context",
+            summary: `Completed context retained: ${commandCardAcceptance.id} remains ${commandCardAcceptance.status}.`,
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestContinuationDelegation?.sourceRef || "not found",
+            summary: "Current Architect delegation asks for a no-live-effect route-plan follow-through proof over existing coordinationDrafts/internalRoutePreview.",
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestCommandCardFollowThroughCheckpoint?.sourceRef || "not found",
+            commitHash: commandCardFollowThroughCommitHash,
+            summary: "Command-card follow-through checkpoint is source-specific before exposing the route-plan proof.",
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestCommandCardFollowThroughOracleAck?.sourceRef || "not found",
+            commitHash: commandCardFollowThroughCommitHash,
+            summary: "Oracle acknowledged the committed command-card follow-through before this proof record.",
+          },
+          {
+            kind: "summary",
+            summary: `Existing internalRoutePreview selected target=${selectedDraft.target}, purpose=${selectedDraft.purpose}, manualExecutionRequired=${routePlan.manualExecutionRequired}, runtimeExecutes=${routePlan.runtimeExecutes}.`,
+          },
+        ],
+        completedContext: {
+          commandCardAcceptanceId: "mission-control-v0-command-card-acceptance",
+        },
+        jamesControlPoint: "James can inspect this local proof before any future route, send, promotion, runtime, browser, workbench, UI/status, provider/model, credential, deploy, money, or trading action is proposed.",
+        preconditions: [
+          "Worktree is clean.",
+          "commandCardAcceptance is present as completed visible context.",
+          "df0a47a6 checkpoint and Oracle ACK are source-specific and not report/name-drop rows.",
+          "coordinationDrafts/internalRoutePreview are already reviewed_preview_only and manual.",
+          "The proof is local evidence only, not a route system or execution request.",
+        ],
+        refusalNoGoConditions: [
+          "Dirty worktree or missing commandCardAcceptance.",
+          "Missing source-specific df0a47a6 checkpoint or Oracle ACK.",
+          "Any report/checkpoint/name-drop row trying to replace the active delegation or df0a47a6 authority.",
+          "Any request to start runtime, open browser/workbench, perform UI/status actions, fetch, POST, route, send, call provider/model, touch accounts/tokens/credentials/devices/users/external targets, deploy, move money, or touch trading.",
+          "Any attempt to treat this proof record as live route/send approval.",
+        ],
+        audit: {
+          proofOnly: true,
+          planningOnly: true,
+          runtimeStarted: false,
+          browserOpened: false,
+          workbenchOpened: false,
+          uiActionPerformed: false,
+          fetched: false,
+          posted: false,
+          routed: false,
+          sent: false,
+          providerInvoked: false,
+          modelInvoked: false,
+          accountAccessed: false,
+          tokenAccessed: false,
+          credentialAccessed: false,
+          deviceTouched: false,
+          userTargeted: false,
+          externalTargeted: false,
+          deployed: false,
+          moneyMovement: false,
+          tradingTouched: false,
+        },
+      }
+    : null;
 
   return {
     question: "what is happening here, and what happens next?",
@@ -2024,6 +2248,7 @@ function buildMissionControl(input: {
     continuityMemoryProof,
     demoWorkbenchProof,
     commandCardAcceptance,
+    commandCardRoutePlanFollowThroughProof,
     internalRoutePreview: {
       status: "reviewed_preview_only",
       selectedDraftTarget: selectedDraft.target,
@@ -2130,6 +2355,9 @@ export function getSquidRunContext(
         : null,
       commandCardAcceptance: missionControl.commandCardAcceptance
         ? `${missionControl.commandCardAcceptance.id}: completed visible command-card context with current lane card, recent changes, Builder/Oracle next moves, dirty-context status, one James-action line, and dry-run route plan; owner ${missionControl.commandCardAcceptance.owner}; ${missionControl.commandCardAcceptance.jamesControlPoint}`
+        : null,
+      commandCardRoutePlanFollowThroughProof: missionControl.commandCardRoutePlanFollowThroughProof
+        ? `${missionControl.commandCardRoutePlanFollowThroughProof.id}: ${missionControl.commandCardRoutePlanFollowThroughProof.status}; target ${missionControl.commandCardRoutePlanFollowThroughProof.routePlan.target}; purpose ${missionControl.commandCardRoutePlanFollowThroughProof.routePlan.purpose}; ${missionControl.commandCardRoutePlanFollowThroughProof.jamesControlPoint}`
         : null,
       jamesAction: "NONE",
       jamesActionReason: missionControl.jamesActionReason,
