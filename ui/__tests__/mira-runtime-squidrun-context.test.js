@@ -86,7 +86,7 @@ describe('Mira SquidRun command context', () => {
       'Stop or pivot if Mission Control cannot answer from local evidence.',
     ].join('\n'));
     writeFile(path.join(root, 'ui', 'scripts', 'hm-comms.js'), `#!/usr/bin/env node
-const staleCheckpointSpacerRows = Array.from({ length: 240 }, (_, index) => ({
+const staleCheckpointSpacerRows = Array.from({ length: 560 }, (_, index) => ({
   sender: 'architect',
   target: 'builder',
   timestampMs: 1779443380000 + index,
@@ -747,13 +747,13 @@ const rows = [
     timestampMs: 1779443470324,
     rawBody: '(ARCHITECT #48): Current-session delegation: next Mira map-backed slice is continuation-aware Mission Control command context, not a send/live/direct-channel/trading lane. Evidence from committed HEAD: \`getSquidRunContext()\` summary still says active lane is stale \`architect#11\` "finish the existing 3-file review/no-send gate dirty slice" even though latest comms include \`architect#46\` commit checkpoint for \`7ff9fe8d\` and working tree is clean. Build the smallest no-side-effect slice. JAMES ACTION: NONE.'
   },
+  ...staleCheckpointSpacerRows,
   {
     sender: 'builder',
     target: 'architect',
     timestampMs: 1779443341518,
     rawBody: '(BUILDER #14): ACK on \`7ff9fe8d Add Mira internal pane activation attempt seam\`. Local check matches: HEAD is 7ff9fe8d and working tree is clean. Standing by for the next map-backed Mira delegation; JAMES ACTION: NONE.'
   },
-  ...staleCheckpointSpacerRows,
   {
     sender: 'architect',
     target: 'builder',
@@ -798,6 +798,24 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
 
   test('prefers later PASS/commit/delegation continuation evidence over a stale current-lane handoff', () => {
     const root = createTempSquidRunProject();
+    const commsScript = path.join(root, 'ui', 'scripts', 'hm-comms.js');
+    const readHistoryRows = (last) => JSON.parse(execFileSync(process.execPath, [
+      commsScript,
+      'history',
+      '--last',
+      String(last),
+      '--json',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })).rows;
+    const last500Bodies = readHistoryRows(500).map((row) => row.rawBody || '');
+    expect(last500Bodies.some((body) => body.includes('(BUILDER #14)'))).toBe(false);
+    expect(last500Bodies.some((body) => body.includes('(ARCHITECT #46)'))).toBe(false);
+    const last1000Bodies = readHistoryRows(1000).map((row) => row.rawBody || '');
+    expect(last1000Bodies.some((body) => body.includes('(BUILDER #14)'))).toBe(true);
+    expect(last1000Bodies.some((body) => body.includes('(ARCHITECT #46)'))).toBe(true);
     const context = readContext(root);
     const answer = context.missionControl.answer;
 
@@ -1449,7 +1467,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       'ui/modules/mira-core/typed-restart-continuity-context-v0.js',
       'ui/modules/mira-core/mira-presence-runtime-state-v0.js',
       'mira/runtime/src/status.ts',
-      'hm-comms history --last 500 --json',
+      'hm-comms history --last 1000 --json',
     ]));
     expect(context.missionControl.coordinationDrafts).toEqual([
       {

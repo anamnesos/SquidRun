@@ -23,7 +23,7 @@ const internalRoutePromotionPlanSurfaceCommitHash = "f7352d10";
 const internalRouteAuditPlanningCommitHash = "c1a05e07";
 const postAuditPlanningSelectorCommitHash = "582ef1c6";
 const internalRouteAuditReviewLaneProofCommitHash = "b1acd4d7";
-const commsHistoryEvidenceLimit = 500;
+const commsHistoryEvidenceLimit = 1000;
 
 export type SquidRunProjectContext = {
   ok: true;
@@ -1422,6 +1422,7 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       cwd: squidrunRoot,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 8 * 1024 * 1024,
       timeout: 2500,
     });
     const parsed = JSON.parse(stdout) as JsonObject;
