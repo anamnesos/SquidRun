@@ -96,6 +96,48 @@ const rows = [
   {
     sender: 'architect',
     target: 'builder',
+    timestampMs: 1779449300000,
+    rawBody: '(ARCHITECT #158): Current-session delegation: post-d0bffd58 next-move advancement. Clean Mission Control should no longer ask Builder to plan the continuity/memory proof now that d0bffd58 Add Mission Control continuity memory proof is committed and ACKed by Builder #56 / Oracle #50. Build the smallest read-only/no-side-effect slice so Mission Control keeps missionControl.continuityMemoryProof as completed proof-only context and advances to first inspectable Mission Control demo/workbench proof planning. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779449250000,
+    rawBody: '(ARCHITECT #157): Checkpoint: unrelated Mission Control note committed as cafe999 Later note. It mentions prior d0bffd58 Add Mission Control continuity memory proof; proof PASS; JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'builder',
+    target: 'architect',
+    timestampMs: 1779449220000,
+    rawBody: '(BUILDER #58): ACK checkpoint cafe999 Later note while referencing prior d0bffd58 Add Mission Control continuity memory proof. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'oracle',
+    target: 'architect',
+    timestampMs: 1779449210000,
+    rawBody: '(ORACLE #51): Received cafe999 checkpoint while referencing prior d0bffd58 Add Mission Control continuity memory proof. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779449180000,
+    rawBody: '(ARCHITECT #156): Checkpoint: Mission Control continuity/memory first proof committed as d0bffd58 Add Mission Control continuity memory proof. Oracle #48/#49 PASS accepted; pre-commit checks passed. Clean-head proof: worktree clean, context test PASS 2/2, runtime TypeScript noEmit PASS. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'builder',
+    target: 'architect',
+    timestampMs: 1779449170000,
+    rawBody: '(BUILDER #56): ACK checkpoint d0bffd58 Add Mission Control continuity memory proof. Clean-head proof noted: missionControl.continuityMemoryProof has typed restart/current-lane/status provenance, stale-only architect#11 refusal, James continuity-promotion control point, and false live-effect flags. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'oracle',
+    target: 'architect',
+    timestampMs: 1779449160000,
+    rawBody: '(ORACLE #50): Received d0bffd58 checkpoint for Add Mission Control continuity memory proof. PASS: continuityMemoryProof provenance and no-live-effect flags are accepted for this completed proof. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
     timestampMs: 1779449000000,
     rawBody: '(ARCHITECT #141): Current-session delegation: Mission Control continuity/memory first proof, next Mira map-backed slice. Build the smallest dry-run/no-side-effect proof that New Mira command context can load sourced restart/current-lane truth and reject stale-only summaries. JAMES ACTION: NONE.'
   },
@@ -331,13 +373,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       staleHandoff: expect.objectContaining({
         status: 'stale_superseded',
         sourceRef: 'architect#11',
-        supersededBySourceRef: 'architect#141',
+        supersededBySourceRef: 'architect#158',
         supersededByCommit: '7ff9fe8d Add Mira internal pane activation attempt seam',
       }),
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'stale_handoff_superseded',
-      preferredSourceRef: 'architect#141',
+      preferredSourceRef: 'architect#158',
       committedSeam: '7ff9fe8d Add Mira internal pane activation attempt seam',
       staleSourceRef: 'architect#11',
     }));
@@ -346,7 +388,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       commitHash: '7ff9fe8d',
     }));
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#141',
+      sourceRef: 'architect#158',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -387,15 +429,27 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       sourceRef: 'builder#52',
       commitHash: 'bf82cea4',
     }));
-    expect(answer).toContain('Project/lane: squidrun / architect#141.');
-    expect(answer).toContain('Continuity and memory is the next map boundary');
-    expect(answer).toContain('sourced restart/current-lane truth');
-    expect(answer).toContain('reject stale-only summaries');
-    expect(answer).toContain('completed tool/app action plan remains context');
+    expect(context.recentComms.latestContinuityMemoryProofCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#156',
+      commitHash: 'd0bffd58',
+    }));
+    expect(context.recentComms.latestContinuityMemoryProofAck).toEqual(expect.objectContaining({
+      sourceRef: 'builder#56',
+      commitHash: 'd0bffd58',
+    }));
+    expect(context.recentComms.latestContinuityMemoryProofOracleAck).toEqual(expect.objectContaining({
+      sourceRef: 'oracle#50',
+      commitHash: 'd0bffd58',
+    }));
+    expect(answer).toContain('Project/lane: squidrun / architect#158.');
+    expect(answer).toContain('First inspectable Mission Control demo/workbench proof planning is the next map boundary');
+    expect(answer).toContain('local Mission Control answer/surface for what is happening here and what should happen next from local evidence');
     expect(answer).toContain('Completed direct-channel readiness evidence: checkpoint architect#114 22e876dc and Builder ACK builder#43 22e876dc');
     expect(answer).toContain('next boundary is tool/app action planning from the roadmap, not execution');
     expect(answer).toContain('Completed tool/app action-plan evidence: checkpoint architect#129 5b3e0386 and Builder ACK builder#49 5b3e0386');
-    expect(answer).toContain('active next boundary is continuity/memory sourced restart/current-lane proof planning');
+    expect(answer).toContain('the tool/app action plan remains completed context');
+    expect(answer).toContain('Completed continuity/memory proof evidence: checkpoint architect#156 d0bffd58, Builder ACK builder#56 d0bffd58, and Oracle ACK oracle#50 d0bffd58');
+    expect(answer).toContain('continuityMemoryProof remains completed proof-only context while the active next boundary advances to Mission Control demo/workbench proof planning');
     expect(answer).toContain('Continuity/memory proof: mission-control-continuity-memory-proof-v0');
     expect(answer).toContain('current-lane truth architect#11 is loaded_but_stale_superseded');
     expect(answer).toContain('stale-only summary refused=true');
@@ -412,6 +466,10 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(answer).not.toContain('Builder should draft one local tool/app action plan');
     expect(answer).not.toContain('Draft one Mission Control tool/app action plan');
     expect(answer).not.toContain('Review that the tool/app action plan names a real local-evidence basis');
+    expect(answer).not.toContain('active next boundary is continuity/memory sourced restart/current-lane proof planning');
+    expect(answer).not.toContain('Builder should plan the continuity/memory proof for New Mira command context');
+    expect(answer).not.toContain('Plan one New Mira command-context continuity/memory proof');
+    expect(answer).not.toContain('Review that the continuity/memory plan loads sourced restart/current-lane truth');
     expect(answer).not.toContain('Builder should finish the continuation-aware Mission Control command-context proof');
     expect(answer).not.toContain('finish the continuation-aware command-context proof');
     expect(answer).toContain('Committed seam: 7ff9fe8d Add Mira internal pane activation attempt seam');
@@ -419,14 +477,15 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(answer).toContain('Stale handoff: architect#11');
     expect(answer).toContain('stale/superseded evidence only; it has no active authority');
     expect(answer).not.toContain('Project/lane: squidrun / architect#11. finish the existing 3-file review/no-send gate dirty slice');
-    expect(context.missionControl.nextTeamMove).toBe('Builder should plan the continuity/memory proof for New Mira command context: load sourced restart/current-lane truth, reject stale-only summaries, preserve provenance and James control points, and do not import state, copy .squidrun, write, restart, browse, route, send, or execute.');
+    expect(context.missionControl.nextTeamMove).toBe('Builder should plan the first inspectable Mission Control demo/workbench proof from the local answer/surface: show what is happening here and what should happen next from local evidence, keep completed toolAppActionPlan and continuityMemoryProof as context, and do not start runtime, open a browser, write, POST, route, send, or execute.');
     expect(context.summary.nextStep).toBe(context.missionControl.nextTeamMove);
     expect(context.summary.nextStep).not.toContain('advance Mission Control v1 dry-run coordination/follow-through route planning');
     expect(context.summary.nextStep).not.toContain('align Mission Control to the existing direct-channel readiness contract');
     expect(context.summary.nextStep).not.toContain('draft one local tool/app action plan');
-    expect(context.summary.nextStep).toContain('continuity/memory proof');
-    expect(context.summary.nextStep).toContain('sourced restart/current-lane truth');
-    expect(context.summary.nextStep).toContain('James control point');
+    expect(context.summary.nextStep).toContain('demo/workbench proof');
+    expect(context.summary.nextStep).toContain('local answer/surface');
+    expect(context.summary.nextStep).toContain('what is happening here and what should happen next');
+    expect(context.summary.nextStep).not.toContain('sourced restart/current-lane truth');
     expect(context.summary.toolAppActionPlan).toBe('mission-control-tool-app-action-plan-v0: local_squidrun_evidence_review -> Inspect local SquidRun Mission Control evidence and prepare the first app/tool action candidate for James review.; owner Builder; James must explicitly review and approve a separate future request before any real app/tool execution.');
     expect(context.summary.continuityMemoryProof).toBe('mission-control-continuity-memory-proof-v0: current-lane truth architect#11 is loaded_but_stale_superseded; stale-only summary refused=true; James must review and approve a separate future continuity promotion before New Mira imports, copies, writes, restarts, or promotes any memory state.');
     expect(context.missionControl.toolAppActionPlan).toEqual({
@@ -450,8 +509,8 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         },
         {
           kind: 'comms',
-          sourceRef: 'architect#141',
-          summary: 'Current Architect delegation asks Mission Control to treat the tool/app plan as completed context and advance to continuity/memory planning.',
+          sourceRef: 'architect#158',
+          summary: 'Current Architect delegation asks Mission Control to keep the completed proof context and advance to demo/workbench planning.',
         },
         {
           kind: 'comms',
@@ -547,6 +606,24 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
           commitHash: 'bf82cea4',
           summary: 'Builder acknowledged the continuity/memory boundary before this proof record.',
         },
+        {
+          kind: 'comms',
+          sourceRef: 'architect#156',
+          commitHash: 'd0bffd58',
+          summary: 'Continuity/memory first proof is committed, so this proof record is completed Mission Control context.',
+        },
+        {
+          kind: 'comms',
+          sourceRef: 'builder#56',
+          commitHash: 'd0bffd58',
+          summary: 'Builder acknowledged the completed continuity/memory proof before the demo/workbench boundary.',
+        },
+        {
+          kind: 'comms',
+          sourceRef: 'oracle#50',
+          commitHash: 'd0bffd58',
+          summary: 'Oracle acknowledged the completed continuity/memory proof before the demo/workbench boundary.',
+        },
       ],
       currentLaneTruth: {
         sourcePath: '.squidrun/handoffs/current-lane.json',
@@ -568,6 +645,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         'Worktree is clean.',
         'Stale architect#11 current-lane truth is loaded with provenance.',
         'Later committed Mission Control chain through bf82cea4 is source-specific and acknowledged.',
+        'Continuity/memory proof checkpoint plus Builder and Oracle ACKs are source-specific for d0bffd58.',
         'Continuity evidence is read as local proof context only.',
       ],
       refusalNoGoConditions: [
@@ -605,6 +683,8 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     });
     expect(context.missionControl.evidence).toEqual(expect.arrayContaining([
       'docs/mira-north-star-roadmap.md',
+      'mira/runtime/src/squidrun-context.ts',
+      'ui/__tests__/mira-runtime-squidrun-context.test.js',
       'ui/modules/mira-direct-channel-readiness.js',
       'ui/__tests__/mira-direct-channel-readiness.test.js',
       'ui/modules/mira-core/typed-restart-continuity-context-v0.js',
@@ -614,19 +694,19 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(context.missionControl.coordinationDrafts).toEqual([
       {
         target: 'builder',
-        purpose: 'continuity/memory proof planning',
-        message: 'Plan one New Mira command-context continuity/memory proof from sourced restart/current-lane truth. Reject stale-only summaries, keep provenance and James control points explicit, and do not import state, copy .squidrun, write, restart, browse, route, send, or execute.',
+        purpose: 'demo/workbench proof planning',
+        message: 'Plan the first inspectable Mission Control demo/workbench proof from local answer/surface evidence: show what is happening here and what should happen next, keep completed toolAppActionPlan and continuityMemoryProof as context, and do not start runtime, open browser, perform UI/status actions, POST, route, send, write, import, or execute.',
       },
       {
         target: 'oracle',
-        purpose: 'continuity/memory no-effect review',
-        message: 'Review that the continuity/memory plan loads sourced restart/current-lane truth, rejects stale-only summaries, keeps the completed tool/app plan as context, and claims no import, write, restart, route, send, or execution.',
+        purpose: 'demo/workbench no-effect review',
+        message: 'Review that the demo/workbench plan is inspectable from the local Mission Control answer/surface, keeps completed proof records as context, and claims no runtime start, browser open, UI/status execution, write, POST, route, send, import, or live effect.',
       },
     ]);
     expect(context.missionControl.internalRoutePreview).toEqual(expect.objectContaining({
       status: 'reviewed_preview_only',
       selectedDraftTarget: 'oracle',
-      selectedDraftPurpose: 'continuity/memory no-effect review',
+      selectedDraftPurpose: 'demo/workbench no-effect review',
       audit: expect.objectContaining({
         sendPerformed: false,
         runtimeExecutes: false,
@@ -643,18 +723,18 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       }),
       envelope: expect.objectContaining({
         body: {
-          content: 'Review that the continuity/memory plan loads sourced restart/current-lane truth, rejects stale-only summaries, keeps the completed tool/app plan as context, and claims no import, write, restart, route, send, or execution.',
+          content: 'Review that the demo/workbench plan is inspectable from the local Mission Control answer/surface, keeps completed proof records as context, and claims no runtime start, browser open, UI/status execution, write, POST, route, send, import, or live effect.',
         },
       }),
     }));
     expect(context.missionControl.internalRoutePreview.plan.envelope.evidence).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: 'file',
-        path: 'ui/modules/mira-direct-channel-readiness.js',
+        path: 'mira/runtime/src/squidrun-context.ts',
       }),
       expect.objectContaining({
         kind: 'file',
-        path: 'ui/modules/mira-core/typed-restart-continuity-context-v0.js',
+        path: 'ui/__tests__/mira-runtime-squidrun-context.test.js',
       }),
     ]));
     expect(context.summary.happening).toContain('continuation-aware Mission Control command context');
@@ -674,7 +754,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     }));
     expect(context.dirtyWork.summary).toContain('1 changed file(s)');
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#141',
+      sourceRef: 'architect#158',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -710,15 +790,28 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       sourceRef: 'builder#52',
       commitHash: 'bf82cea4',
     }));
+    expect(context.recentComms.latestContinuityMemoryProofCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#156',
+      commitHash: 'd0bffd58',
+    }));
+    expect(context.recentComms.latestContinuityMemoryProofAck).toEqual(expect.objectContaining({
+      sourceRef: 'builder#56',
+      commitHash: 'd0bffd58',
+    }));
+    expect(context.recentComms.latestContinuityMemoryProofOracleAck).toEqual(expect.objectContaining({
+      sourceRef: 'oracle#50',
+      commitHash: 'd0bffd58',
+    }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'current_handoff',
-      preferredSourceRef: 'architect#141',
+      preferredSourceRef: 'architect#158',
       staleSourceRef: null,
     }));
     expect(context.lane.staleHandoff).toBeNull();
     expect(context.summary.happening).toContain('finish the existing 3-file review/no-send gate dirty slice');
     expect(context.summary.nextStep).not.toContain('tool/app action plan');
     expect(context.summary.nextStep).not.toContain('continuity/memory proof');
+    expect(context.summary.nextStep).not.toContain('demo/workbench proof');
     expect(context.summary.toolAppActionPlan).toBeNull();
     expect(context.summary.continuityMemoryProof).toBeNull();
     expect(context.missionControl.toolAppActionPlan).toBeNull();
@@ -727,7 +820,10 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(answer).not.toContain('Tool/app action plan: local_squidrun_evidence_review');
     expect(answer).not.toContain('Completed tool/app action plan context: local_squidrun_evidence_review');
     expect(answer).not.toContain('Continuity and memory is the next map boundary');
+    expect(answer).not.toContain('First inspectable Mission Control demo/workbench proof planning is the next map boundary');
     expect(answer).not.toContain('Continuity/memory proof: mission-control-continuity-memory-proof-v0');
+    expect(answer).not.toContain('Completed continuity/memory proof evidence: checkpoint architect#156 d0bffd58');
+    expect(answer).not.toContain('Oracle ACK oracle#50 d0bffd58');
     expect(answer).not.toContain('Stale handoff: architect#11');
     expect(answer.match(/^JAMES ACTION:/gm)).toHaveLength(1);
   });
