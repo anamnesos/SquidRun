@@ -95,6 +95,42 @@ const staleCheckpointSpacerRows = Array.from({ length: 240 }, (_, index) => ({
 const rows = [
   {
     sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779456960000,
+    rawBody: '(ARCHITECT #240): Checkpoint: committed unrelated selector note as abc1234 while mentioning prior 5d119dc6 Render Mission Control command card surface and commandCardAcceptance. This newer name-drop chatter must not become the command-card surface checkpoint. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779456950000,
+    rawBody: '(ARCHITECT #239): MODIFY on #237 WIP, narrow proof closure. The post-5d119dc6 command-card route-plan follow-through shape is right, but this is a report/nudge row and must not become active continuation delegation authority. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779456858820,
+    rawBody: '(ARCHITECT #237): Builder, take the post-5d119dc6 next-move advancement slice. Clean evidence now includes the completed command-card surface commit 5d119dc6 Render Mission Control command card surface, Architect checkpoint #235, Oracle checkpoint ACK #74, and clean proof. Build the smallest no-live-effect runtime-context/test/map slice so Mission Control treats missionControl.commandCardAcceptance as completed visible context and advances clean nextStep/drafts/preview to one dry-run Builder/Oracle route-plan review/follow-through lane from the visible command card, with no send/promotion/execution. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'oracle',
+    target: 'architect',
+    timestampMs: 1779456825000,
+    rawBody: '(ORACLE #76): Received cafe119 checkpoint while mentioning prior 5d119dc6 Render Mission Control command card surface. This newer name-drop chatter must not become the command-card surface Oracle ACK. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'oracle',
+    target: 'architect',
+    timestampMs: 1779456815370,
+    rawBody: '(ORACLE #74): Checkpoint received. #230 / 5d119dc6 closure recorded: command-card surface now renders from existing /squidrun/context with the required fields and exactly one JAMES ACTION line; UI boot proof is green; no runtime context change or live-effect authority added. Oracle standing by for the next delegated map-backed boundary. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779456806691,
+    rawBody: '(ARCHITECT #235): Checkpoint: committed #230 command-card surface acceptance as 5d119dc6 Render Mission Control command card surface. Builder #74 PASS and Oracle #73 PASS accepted. Clean-head proof: worktree clean; HEAD 5d119dc6; UI read-only boot PASS 69/69; node --check app.js PASS; node --check UI boot test PASS; map guard PASS 15/15. Local Mission Control workbench now renders missionControl.commandCardAcceptance from existing /squidrun/context: card id, completed contexts, current lane/why, recent changes, Builder/Oracle next moves, dirty/context status, exactly one JAMES ACTION line, and dry-run route plan. No runtime context change or live-effect authority added. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
     target: 'oracle',
     timestampMs: 1779455600000,
     rawBody: '(ARCHITECT #204): Oracle sidecar for #203 post-c301c1ac Mission Control v0 command-card acceptance slice. Review the actual c301c1ac Render Mission Control workbench proof surface checkpoint plus Oracle ACK, but do not treat this sidecar as Builder delegation authority. JAMES ACTION: NONE.'
@@ -475,13 +511,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       staleHandoff: expect.objectContaining({
         status: 'stale_superseded',
         sourceRef: 'architect#11',
-        supersededBySourceRef: 'architect#203',
+        supersededBySourceRef: 'architect#237',
         supersededByCommit: '7ff9fe8d Add Mira internal pane activation attempt seam',
       }),
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'stale_handoff_superseded',
-      preferredSourceRef: 'architect#203',
+      preferredSourceRef: 'architect#237',
       committedSeam: '7ff9fe8d Add Mira internal pane activation attempt seam',
       staleSourceRef: 'architect#11',
     }));
@@ -494,10 +530,10 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       commitHash: '7ff9fe8d',
     }));
     expect(context.recentComms.latestBuilderInstruction).toEqual(expect.objectContaining({
-      sourceRef: 'architect#203',
+      sourceRef: 'architect#237',
     }));
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#203',
+      sourceRef: 'architect#237',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -574,9 +610,17 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       sourceRef: 'oracle#66',
       commitHash: 'c301c1ac',
     }));
-    expect(answer).toContain('Project/lane: squidrun / architect#203.');
-    expect(answer).toContain('Mission Control v0 command-card acceptance is the active next boundary');
-    expect(answer).toContain('the local answer/surface must expose a concise command card');
+    expect(context.recentComms.latestCommandCardSurfaceCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#235',
+      commitHash: '5d119dc6',
+    }));
+    expect(context.recentComms.latestCommandCardSurfaceOracleAck).toEqual(expect.objectContaining({
+      sourceRef: 'oracle#74',
+      commitHash: '5d119dc6',
+    }));
+    expect(answer).toContain('Project/lane: squidrun / architect#237.');
+    expect(answer).toContain('Mission Control v0 command-card surface is completed visible context');
+    expect(answer).toContain('active next boundary is one dry-run Builder/Oracle route-plan review/follow-through lane from the visible command card');
     expect(answer).toContain('Completed direct-channel readiness evidence: checkpoint architect#114 22e876dc and Builder ACK builder#43 22e876dc');
     expect(answer).toContain('next boundary is tool/app action planning from the roadmap, not execution');
     expect(answer).toContain('Completed tool/app action-plan evidence: checkpoint architect#129 5b3e0386 and Builder ACK builder#49 5b3e0386');
@@ -586,9 +630,11 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(answer).toContain('Demo/workbench proof: mission-control-demo-workbench-proof-v0');
     expect(answer).toContain('Workbench surface proof evidence: checkpoint architect#186 48e419b4 and Oracle ACK oracle#62 48e419b4');
     expect(answer).toContain('demoWorkbenchProof and the c301c1ac surface render proof are completed context for command-card acceptance');
+    expect(answer).toContain('Completed command-card surface evidence: checkpoint architect#235 5d119dc6 and Oracle ACK oracle#74 5d119dc6');
+    expect(answer).toContain('commandCardAcceptance remains completed visible context while the active next boundary advances to dry-run Builder/Oracle route-plan review/follow-through from the visible command card');
     expect(answer).toContain('Command-card acceptance: mission-control-v0-command-card-acceptance');
-    expect(answer).toContain('current lane/why it matters=Current lane architect#203 matters');
-    expect(answer).toContain('what changed recently=Committed c301c1ac workbench surface proof evidence (architect#201 plus Oracle ACK oracle#66)');
+    expect(answer).toContain('current lane/why it matters=Current lane architect#237 matters');
+    expect(answer).toContain('what changed recently=Committed 5d119dc6 command-card surface evidence (architect#235 plus Oracle ACK oracle#74)');
     expect(answer).toContain('Builder next move=Pin the Mission Control v0 command card from local evidence');
     expect(answer).toContain('Oracle next move=Review the command card for local evidence');
     expect(answer).toContain('Context-card/current dirty-context status: Worktree is clean.');
@@ -622,19 +668,20 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(answer).toContain('Stale handoff: architect#11');
     expect(answer).toContain('stale/superseded evidence only; it has no active authority');
     expect(answer).not.toContain('Project/lane: squidrun / architect#11. finish the existing 3-file review/no-send gate dirty slice');
-    expect(context.missionControl.nextTeamMove).toBe('Builder should accept Mission Control v0 by pinning a concise local command card with current lane/why it matters, recent changes, Builder next move, Oracle next move, context-card dirty status, one James-action line, and one dry-run route plan; Oracle should review the card remains local/no-effect and does not rely on terminal logs.');
+    expect(context.missionControl.nextTeamMove).toBe('Builder should prepare one dry-run Builder/Oracle route-plan review/follow-through lane from the visible Mission Control v0 command card; Oracle should review that the follow-through stays local, useful, no-send, no-promotion, and no-execution.');
     expect(context.summary.nextStep).toBe(context.missionControl.nextTeamMove);
     expect(context.summary.nextStep).not.toContain('advance Mission Control v1 dry-run coordination/follow-through route planning');
     expect(context.summary.nextStep).not.toContain('align Mission Control to the existing direct-channel readiness contract');
     expect(context.summary.nextStep).not.toContain('draft one local tool/app action plan');
+    expect(context.summary.nextStep).not.toContain('pinning a concise local command card');
     expect(context.summary.nextStep).toContain('Mission Control v0');
     expect(context.summary.nextStep).toContain('command card');
-    expect(context.summary.nextStep).toContain('dry-run route plan');
+    expect(context.summary.nextStep).toContain('route-plan review/follow-through');
     expect(context.summary.nextStep).not.toContain('sourced restart/current-lane truth');
     expect(context.summary.toolAppActionPlan).toBe('mission-control-tool-app-action-plan-v0: local_squidrun_evidence_review -> Inspect local SquidRun Mission Control evidence and prepare the first app/tool action candidate for James review.; owner Builder; James must explicitly review and approve a separate future request before any real app/tool execution.');
     expect(context.summary.continuityMemoryProof).toBe('mission-control-continuity-memory-proof-v0: current-lane truth architect#11 is loaded_but_stale_superseded; stale-only summary refused=true; James must review and approve a separate future continuity promotion before New Mira imports, copies, writes, restarts, or promotes any memory state.');
     expect(context.summary.demoWorkbenchProof).toBe('mission-control-demo-workbench-proof-v0: local_mission_control_answer_surface asks "what is happening here, and what should happen next?"; owner Builder; James must explicitly review and approve a separate future request before anyone starts runtime, opens a browser/workbench, performs UI/status actions, writes state, POSTs, routes, sends, or executes anything from this proof.');
-    expect(context.summary.commandCardAcceptance).toBe('mission-control-v0-command-card-acceptance: current lane card, recent changes, Builder/Oracle next moves, dirty-context status, one James-action line, and dry-run route plan are acceptance-planning only; owner Builder; James can inspect the local command card before any future runtime, browser, workbench, UI/status, route, send, provider/model, credential, deploy, money, or trading action is proposed.');
+    expect(context.summary.commandCardAcceptance).toBe('mission-control-v0-command-card-acceptance: completed visible command-card context with current lane card, recent changes, Builder/Oracle next moves, dirty-context status, one James-action line, and dry-run route plan; owner Builder; James can inspect the local command card before any future runtime, browser, workbench, UI/status, route, send, provider/model, credential, deploy, money, or trading action is proposed.');
     expect(context.missionControl.toolAppActionPlan).toEqual({
       id: 'mission-control-tool-app-action-plan-v0',
       status: 'planning_only',
@@ -656,8 +703,8 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         },
         {
           kind: 'comms',
-      sourceRef: 'architect#203',
-          summary: 'Current Architect delegation treats the completed proof context as ready for Mission Control v0 command-card acceptance.',
+          sourceRef: 'architect#237',
+          summary: 'Current Architect delegation treats the command-card surface as completed context and asks for a dry-run route-plan review/follow-through lane.',
         },
         {
           kind: 'comms',
@@ -875,8 +922,8 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         },
         {
           kind: 'comms',
-          sourceRef: 'architect#203',
-          summary: 'Current Architect delegation treats this demo/workbench proof as completed context for command-card acceptance, not a live workbench action.',
+          sourceRef: 'architect#237',
+          summary: 'Current Architect delegation treats this demo/workbench proof and command-card acceptance as completed context for route-plan follow-through.',
         },
       ],
       completedContext: {
@@ -939,8 +986,8 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         demoWorkbenchProofId: 'mission-control-demo-workbench-proof-v0',
       },
       cardFields: expect.objectContaining({
-        currentLaneWhyItMatters: expect.stringContaining('Current lane architect#203 matters'),
-        whatChangedRecently: expect.stringContaining('Committed c301c1ac workbench surface proof evidence (architect#201 plus Oracle ACK oracle#66)'),
+        currentLaneWhyItMatters: expect.stringContaining('Current lane architect#237 matters'),
+        whatChangedRecently: expect.stringContaining('Committed 5d119dc6 command-card surface evidence (architect#235 plus Oracle ACK oracle#74)'),
         builderNextMove: expect.stringContaining('Pin the Mission Control v0 command card from local evidence'),
         oracleNextMove: expect.stringContaining('Review the command card for local evidence'),
         contextCardStatus: 'Context-card/current dirty-context status: Worktree is clean.',
@@ -990,7 +1037,17 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       }),
       expect.objectContaining({
         kind: 'comms',
-        sourceRef: 'architect#203',
+        sourceRef: 'architect#237',
+      }),
+      expect.objectContaining({
+        kind: 'comms',
+        sourceRef: 'architect#235',
+        commitHash: '5d119dc6',
+      }),
+      expect.objectContaining({
+        kind: 'comms',
+        sourceRef: 'oracle#74',
+        commitHash: '5d119dc6',
       }),
     ]));
     expect(context.missionControl.evidence).toEqual(expect.arrayContaining([
@@ -1010,19 +1067,19 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(context.missionControl.coordinationDrafts).toEqual([
       {
         target: 'builder',
-        purpose: 'command-card acceptance',
-        message: 'Pin the Mission Control v0 command card from local evidence: current lane/why it matters, recent changes, Builder next move, Oracle next move, context-card dirty status, one James-action line, and a dry-run route plan.',
+        purpose: 'command-card route-plan follow-through',
+        message: 'Prepare the dry-run Builder/Oracle route-plan review/follow-through from the visible Mission Control command card. Use local evidence only; do not send, promote, POST, route, execute, start runtime, open browser/workbench, perform UI/status actions, or call provider/model.',
       },
       {
         target: 'oracle',
-        purpose: 'command-card no-effect review',
-        message: 'Review the command card for local evidence, no terminal-log dependency, dirty-context clarity, exactly one James-action line, and no runtime/browser/workbench/UI/status action, POST, route, send, provider/model, credential, deploy, money, or trading effect.',
+        purpose: 'command-card route-plan no-effect review',
+        message: 'Review the dry-run Builder/Oracle route-plan follow-through from the visible command card for useful next move, local evidence, exactly one James-action line, and no send, promotion, execution, runtime/browser/workbench/UI/status action, POST, route, provider/model, credential, deploy, money, or trading effect.',
       },
     ]);
     expect(context.missionControl.internalRoutePreview).toEqual(expect.objectContaining({
       status: 'reviewed_preview_only',
       selectedDraftTarget: 'oracle',
-      selectedDraftPurpose: 'command-card no-effect review',
+      selectedDraftPurpose: 'command-card route-plan no-effect review',
       audit: expect.objectContaining({
         sendPerformed: false,
         runtimeExecutes: false,
@@ -1039,7 +1096,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       }),
       envelope: expect.objectContaining({
         body: {
-          content: 'Review the command card for local evidence, no terminal-log dependency, dirty-context clarity, exactly one James-action line, and no runtime/browser/workbench/UI/status action, POST, route, send, provider/model, credential, deploy, money, or trading effect.',
+          content: 'Review the dry-run Builder/Oracle route-plan follow-through from the visible command card for useful next move, local evidence, exactly one James-action line, and no send, promotion, execution, runtime/browser/workbench/UI/status action, POST, route, provider/model, credential, deploy, money, or trading effect.',
         },
       }),
     }));
@@ -1070,7 +1127,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     }));
     expect(context.dirtyWork.summary).toContain('1 changed file(s)');
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#203',
+      sourceRef: 'architect#237',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -1134,9 +1191,25 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       sourceRef: 'oracle#62',
       commitHash: '48e419b4',
     }));
+    expect(context.recentComms.latestWorkbenchSurfaceProofCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#201',
+      commitHash: 'c301c1ac',
+    }));
+    expect(context.recentComms.latestWorkbenchSurfaceProofOracleAck).toEqual(expect.objectContaining({
+      sourceRef: 'oracle#66',
+      commitHash: 'c301c1ac',
+    }));
+    expect(context.recentComms.latestCommandCardSurfaceCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#235',
+      commitHash: '5d119dc6',
+    }));
+    expect(context.recentComms.latestCommandCardSurfaceOracleAck).toEqual(expect.objectContaining({
+      sourceRef: 'oracle#74',
+      commitHash: '5d119dc6',
+    }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'current_handoff',
-      preferredSourceRef: 'architect#203',
+      preferredSourceRef: 'architect#237',
       staleSourceRef: null,
     }));
     expect(context.lane.staleHandoff).toBeNull();
@@ -1146,6 +1219,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(context.summary.nextStep).not.toContain('demo/workbench proof');
     expect(context.summary.nextStep).not.toContain('workbench Mission Control section renders');
     expect(context.summary.nextStep).not.toContain('command card');
+    expect(context.summary.nextStep).not.toContain('route-plan review/follow-through');
     expect(context.summary.toolAppActionPlan).toBeNull();
     expect(context.summary.continuityMemoryProof).toBeNull();
     expect(context.summary.demoWorkbenchProof).toBeNull();
