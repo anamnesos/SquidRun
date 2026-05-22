@@ -8,6 +8,7 @@ const internalPaneActivationSeamCommitHash = "7ff9fe8d";
 const continuationSelectorCommitHash = "6092a28a";
 const v1RoutePreviewAlignmentCommitHash = "e82f1a54";
 const commsEvidenceWindowCommitHash = "4bfe771c";
+const directChannelReadinessContractCommitHash = "22e876dc";
 const commsHistoryEvidenceLimit = 200;
 
 export type SquidRunProjectContext = {
@@ -118,6 +119,18 @@ export type SquidRunProjectContext = {
       commitHash: string | null;
     } | null;
     latestEvidenceWindowCheckpoint: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestDirectChannelReadinessCheckpoint: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestDirectChannelReadinessAck: {
       sourceRef: string | null;
       excerpt: string | null;
       timestampMs: number | null;
@@ -494,7 +507,7 @@ function commsSummary(row: JsonObject | null, maxLength = 260, preferredCommitHa
 function isMissionControlContinuationDelegationBody(rawBody: string | null): boolean {
   const body = rawBody || "";
   const instructionShaped = /(?:\):\s*)?(?:MODIFY\b|Current-session delegation|TASK\b|Builder\s*:|Builder\b.*\b(?:build|fix|patch|add|continue|land)\b|Fix\b|Regression must\b|Live acceptance\b|next Mira map-backed slice|new tiny follow-up slice)/i.test(body);
-  const continuationTarget = /continuation-aware Mission Control command context|next Mira map-backed slice|stale[- ]handoff|current-lane handoff/i.test(body);
+  const continuationTarget = /continuation-aware Mission Control command context|next Mira map-backed slice|next-move advancement|tool\/app action planning|stale[- ]handoff|current-lane handoff/i.test(body);
   const checkpointOrReport = /^\([A-Z]+\s+#\d+\):\s*(?:Committed|Checkpoint|PASS\b|MODIFY resolved|ACK\b|Status check|Oracle .* PASS|Builder .* PASS)/i.test(body)
     || /\b(?:Proof|Post-commit proof|Committed-HEAD proof|pre-commit all checks passed)\s*:/i.test(body);
   return instructionShaped && continuationTarget && !checkpointOrReport;
@@ -525,6 +538,18 @@ function isEvidenceWindowCheckpointBody(rawBody: string | null): boolean {
     && /JAMES ACTION:\s*NONE/i.test(body);
 }
 
+function isDirectChannelReadinessCheckpointBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /Checkpoint:\s*direct-channel readiness contract alignment committed as [`'"]?22e876dc Align Mission Control direct-channel readiness contract/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
+function isDirectChannelReadinessAckBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /^\(BUILDER\s+#\d+\):\s*ACK checkpoint [`'"]?22e876dc Align Mission Control direct-channel readiness contract/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
 function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentComms"] {
   const scriptPath = path.join(squidrunRoot, "ui", "scripts", "hm-comms.js");
   if (!fs.existsSync(scriptPath)) {
@@ -538,6 +563,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestV1AlignmentDelegation: null,
       latestV1AlignmentCheckpoint: null,
       latestEvidenceWindowCheckpoint: null,
+      latestDirectChannelReadinessCheckpoint: null,
+      latestDirectChannelReadinessAck: null,
       oracleBenchmark: null,
     };
   }
@@ -607,6 +634,16 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       return trimText(row.sender) === "architect"
         && isEvidenceWindowCheckpointBody(body);
     });
+    const directChannelReadinessCheckpoint = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "architect"
+        && isDirectChannelReadinessCheckpointBody(body);
+    });
+    const directChannelReadinessAck = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "builder"
+        && isDirectChannelReadinessAckBody(body);
+    });
     const oracleBenchmark = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "oracle" && /benchmark|holy-shit|not impressive|current New Mira/i.test(body);
@@ -622,6 +659,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestV1AlignmentDelegation: commsSummary(v1AlignmentDelegation || null),
       latestV1AlignmentCheckpoint: commsSummary(v1AlignmentCheckpoint || null, 260, v1RoutePreviewAlignmentCommitHash),
       latestEvidenceWindowCheckpoint: commsSummary(evidenceWindowCheckpoint || null, 260, commsEvidenceWindowCommitHash),
+      latestDirectChannelReadinessCheckpoint: commsSummary(directChannelReadinessCheckpoint || null, 260, directChannelReadinessContractCommitHash),
+      latestDirectChannelReadinessAck: commsSummary(directChannelReadinessAck || null, 260, directChannelReadinessContractCommitHash),
       oracleBenchmark: commsSummary(oracleBenchmark || null),
     };
   } catch {
@@ -635,6 +674,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestV1AlignmentDelegation: null,
       latestV1AlignmentCheckpoint: null,
       latestEvidenceWindowCheckpoint: null,
+      latestDirectChannelReadinessCheckpoint: null,
+      latestDirectChannelReadinessAck: null,
       oracleBenchmark: null,
     };
   }
@@ -717,6 +758,9 @@ function buildMissionControl(input: {
     && input.recentComms.latestV1AlignmentDelegation?.sourceRef === "architect#87"
     && input.recentComms.latestV1AlignmentCheckpoint?.commitHash === v1RoutePreviewAlignmentCommitHash
     && input.recentComms.latestEvidenceWindowCheckpoint?.commitHash === commsEvidenceWindowCommitHash;
+  const toolAppActionPlanningReady = directChannelBoundaryReady
+    && input.recentComms.latestDirectChannelReadinessCheckpoint?.commitHash === directChannelReadinessContractCommitHash
+    && input.recentComms.latestDirectChannelReadinessAck?.commitHash === directChannelReadinessContractCommitHash;
   const laneLabel = continuationIsStaleSuperseded
     ? continuationDecision.preferredSourceRef || input.recentComms.latestBuilderInstruction?.sourceRef || "current continuation"
     : input.recentComms.latestBuilderInstruction?.sourceRef
@@ -724,7 +768,9 @@ function buildMissionControl(input: {
     || input.lane.status
     || "local lane";
   const laneText = continuationIsStaleSuperseded
-    ? directChannelBoundaryReady
+    ? toolAppActionPlanningReady
+      ? "Tool/app action planning from real local evidence is the next map boundary; owner is Builder, James control point is explicit approval before any real tool/app execution, and nothing executes here."
+      : directChannelBoundaryReady
       ? "Separate New Mira direct-channel readiness/dry-run planning now aligns to the existing mira-direct-channel-readiness contract: current owner squidrun-telegram-guard-stack stays untouched, future candidate owner is new-mira-direct-channel, and the result is a future James-visible setup/test gate only."
       : continuationSelectorProofCommitted
       ? "Mission Control v1 dry-run coordination/follow-through route planning is the next map-backed product step; no sends or execution."
@@ -739,7 +785,9 @@ function buildMissionControl(input: {
   const firstDemo = input.roadmap.firstDemo
     || "First inspectable demo: Mira Mission Control.";
   const nextTeamMove = continuationIsStaleSuperseded
-    ? directChannelBoundaryReady
+    ? toolAppActionPlanningReady
+      ? "Builder should draft one local tool/app action plan from real SquidRun evidence only. Owner: Builder. James control point: explicit review and approval before any app/tool execution. No browsing, app call, tool execution, route, send, or credential access happens in this slice."
+      : directChannelBoundaryReady
       ? "Builder should align Mission Control to the existing direct-channel readiness contract: preserve currentOwner=squidrun-telegram-guard-stack, proposedFutureOwner=new-mira-direct-channel, blocked missing/reused candidate cases, and candidate_ready dry-run only with sendReady=false/liveActivationReady=false."
       : continuationSelectorProofCommitted
       ? "Builder should advance Mission Control v1 dry-run coordination/follow-through route planning from local evidence only; Oracle should review that it stays no-send/no-execution before commit."
@@ -756,7 +804,11 @@ function buildMissionControl(input: {
       ? [
           `Committed seam: ${continuationDecision.committedSeam}; checkpoint ${input.recentComms.latestCommitCheckpoint?.sourceRef || "not found"} and Builder ACK ${input.recentComms.latestBuilderAck?.sourceRef || "not found"} supersede the old handoff.`,
           ...(directChannelBoundaryReady
-            ? [
+            ? toolAppActionPlanningReady
+              ? [
+                `Completed direct-channel readiness evidence: checkpoint ${input.recentComms.latestDirectChannelReadinessCheckpoint?.sourceRef || "not found"} ${directChannelReadinessContractCommitHash} and Builder ACK ${input.recentComms.latestDirectChannelReadinessAck?.sourceRef || "not found"} ${directChannelReadinessContractCommitHash}; the next boundary is tool/app action planning from the roadmap, not execution.`,
+              ]
+              : [
                 `Stabilized v1 evidence: delegation ${input.recentComms.latestV1AlignmentDelegation?.sourceRef || "not found"}, alignment checkpoint ${input.recentComms.latestV1AlignmentCheckpoint?.sourceRef || "not found"} ${v1RoutePreviewAlignmentCommitHash}, evidence-window checkpoint ${input.recentComms.latestEvidenceWindowCheckpoint?.sourceRef || "not found"} ${commsEvidenceWindowCommitHash}; the next boundary is separate direct-channel readiness/dry-run planning behind Telegram guard truth.`,
                 "Readiness contract: ui/modules/mira-direct-channel-readiness.js blocks missing candidate config and current-channel reuse; a valid separate candidate is candidate_ready/dryRun only, never send-ready or activation-ready.",
               ]
@@ -775,10 +827,14 @@ function buildMissionControl(input: {
   const coordinationDrafts: SquidRunProjectContext["missionControl"]["coordinationDrafts"] = [
     {
       target: "builder",
-      purpose: directChannelBoundaryReady
+      purpose: toolAppActionPlanningReady
+        ? "tool/app action plan draft"
+        : directChannelBoundaryReady
         ? "direct-channel readiness planning"
         : continuationSelectorProofCommitted ? "v1 dry-run planning" : "implementation",
-      message: directChannelBoundaryReady
+      message: toolAppActionPlanningReady
+        ? "Draft one Mission Control tool/app action plan from real local SquidRun evidence only. Owner: Builder. James control point: explicit approval before any app/tool execution. Do not execute, browse, POST, route, send, start runtime, or touch credentials."
+        : directChannelBoundaryReady
         ? "Align Mission Control with the existing direct-channel readiness contract: currentOwner=squidrun-telegram-guard-stack, proposedFutureOwner=new-mira-direct-channel, missing/reused candidate blocked, valid separate candidate candidate_ready/dryRun only, sendReady=false, liveActivationReady=false."
         : continuationSelectorProofCommitted
         ? "Advance Mission Control v1 dry-run coordination/follow-through route planning from local evidence only; keep it inspectable and no-send/no-execution."
@@ -786,10 +842,14 @@ function buildMissionControl(input: {
     },
     {
       target: "oracle",
-      purpose: directChannelBoundaryReady
+      purpose: toolAppActionPlanningReady
+        ? "tool/app no-execution review"
+        : directChannelBoundaryReady
         ? "direct-channel dry-run review"
         : continuationSelectorProofCommitted ? "v1 no-send review" : "benchmark review",
-      message: directChannelBoundaryReady
+      message: toolAppActionPlanningReady
+        ? "Review that the tool/app action plan names a real local-evidence basis, owner, and James control point, and that it remains planning-only with no execution or live-effect claim."
+        : directChannelBoundaryReady
         ? "Review Mission Control against mira-direct-channel-readiness.test.js: no token/env read, no bot/chat creation, no Telegram send, no route-owner flip, no provider/model/runtime start, and JAMES ACTION remains NONE."
         : continuationSelectorProofCommitted
         ? "Review Mission Control v1 for no-send/no-execution boundaries and useful next-move specificity before commit."
