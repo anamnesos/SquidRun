@@ -5,6 +5,7 @@ import { planManualBridgeRequest, type ManualBridgeRequestPlan } from "./bridge-
 
 type JsonObject = Record<string, unknown>;
 const internalPaneActivationSeamCommitHash = "7ff9fe8d";
+const continuationSelectorCommitHash = "6092a28a";
 
 export type SquidRunProjectContext = {
   ok: true;
@@ -93,6 +94,13 @@ export type SquidRunProjectContext = {
       sourceRef: string | null;
       excerpt: string | null;
       timestampMs: number | null;
+      commitHash?: string | null;
+    } | null;
+    latestContinuationSelectorCheckpoint: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
     } | null;
     oracleBenchmark: {
       sourceRef: string | null;
@@ -441,7 +449,7 @@ function containsCommitHash(rawBody: string | null, commitHash: string): boolean
   return new RegExp(`\\b${escaped}\\b`, "i").test(rawBody || "");
 }
 
-function commsSummary(row: JsonObject | null, maxLength = 260): {
+function commsSummary(row: JsonObject | null, maxLength = 260, preferredCommitHash: string | null = null): {
   sourceRef: string | null;
   excerpt: string | null;
   timestampMs: number | null;
@@ -449,13 +457,16 @@ function commsSummary(row: JsonObject | null, maxLength = 260): {
 } | null {
   if (!row) return null;
   const rawBody = trimText(row.rawBody);
+  const commitHash = preferredCommitHash && containsCommitHash(rawBody, preferredCommitHash)
+    ? preferredCommitHash
+    : containsCommitHash(rawBody, internalPaneActivationSeamCommitHash)
+      ? internalPaneActivationSeamCommitHash
+      : extractCommitHash(rawBody);
   return {
     sourceRef: sourceRefFromBody(rawBody, trimText(row.sender)),
     excerpt: safeCommsPreview(rawBody, maxLength),
     timestampMs: numberValue(row.timestampMs),
-    commitHash: containsCommitHash(rawBody, internalPaneActivationSeamCommitHash)
-      ? internalPaneActivationSeamCommitHash
-      : extractCommitHash(rawBody),
+    commitHash,
   };
 }
 
@@ -468,6 +479,13 @@ function isMissionControlContinuationDelegationBody(rawBody: string | null): boo
   return instructionShaped && continuationTarget && !checkpointOrReport;
 }
 
+function isContinuationSelectorCheckpointBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /continuation selector follow-up committed as [`'"]?6092a28a Harden Mission Control delegation selection/i.test(body)
+    && /Checkpoint|committed|Post-commit proof|pre-commit/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
 function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentComms"] {
   const scriptPath = path.join(squidrunRoot, "ui", "scripts", "hm-comms.js");
   if (!fs.existsSync(scriptPath)) {
@@ -477,6 +495,7 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestCommitCheckpoint: null,
       latestBuilderAck: null,
       latestContinuationDelegation: null,
+      latestContinuationSelectorCheckpoint: null,
       oracleBenchmark: null,
     };
   }
@@ -527,6 +546,11 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       const body = trimText(row.rawBody) || "";
       return isMissionControlContinuationDelegationBody(body);
     });
+    const continuationSelectorCheckpoint = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "architect"
+        && isContinuationSelectorCheckpointBody(body);
+    });
     const oracleBenchmark = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "oracle" && /benchmark|holy-shit|not impressive|current New Mira/i.test(body);
@@ -538,6 +562,7 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestCommitCheckpoint: commsSummary(commitCheckpoint || null),
       latestBuilderAck: commsSummary(builderAck || null),
       latestContinuationDelegation: commsSummary(continuationDelegation || null),
+      latestContinuationSelectorCheckpoint: commsSummary(continuationSelectorCheckpoint || null, 260, continuationSelectorCommitHash),
       oracleBenchmark: commsSummary(oracleBenchmark || null),
     };
   } catch {
@@ -547,6 +572,7 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestCommitCheckpoint: null,
       latestBuilderAck: null,
       latestContinuationDelegation: null,
+      latestContinuationSelectorCheckpoint: null,
       oracleBenchmark: null,
     };
   }
@@ -623,6 +649,8 @@ function buildMissionControl(input: {
 }): SquidRunProjectContext["missionControl"] {
   const continuationDecision = buildContinuationDecision(input);
   const continuationIsStaleSuperseded = continuationDecision.status === "stale_handoff_superseded";
+  const continuationSelectorProofCommitted = continuationIsStaleSuperseded
+    && input.recentComms.latestContinuationSelectorCheckpoint?.commitHash === continuationSelectorCommitHash;
   const laneLabel = continuationIsStaleSuperseded
     ? continuationDecision.preferredSourceRef || input.recentComms.latestBuilderInstruction?.sourceRef || "current continuation"
     : input.recentComms.latestBuilderInstruction?.sourceRef
@@ -630,7 +658,9 @@ function buildMissionControl(input: {
     || input.lane.status
     || "local lane";
   const laneText = continuationIsStaleSuperseded
-    ? input.recentComms.latestContinuationDelegation?.excerpt
+    ? continuationSelectorProofCommitted
+      ? "Mission Control v1 dry-run coordination/follow-through route planning is the next map-backed product step; no sends or execution."
+      : input.recentComms.latestContinuationDelegation?.excerpt
       || input.recentComms.latestBuilderInstruction?.excerpt
       || "Continue the current Mission Control command-context lane."
     : input.recentComms.latestBuilderInstruction?.excerpt
@@ -641,7 +671,9 @@ function buildMissionControl(input: {
   const firstDemo = input.roadmap.firstDemo
     || "First inspectable demo: Mira Mission Control.";
   const nextTeamMove = continuationIsStaleSuperseded
-    ? "Builder should finish the continuation-aware Mission Control command-context proof; Oracle should challenge stale-handoff visibility-without-authority; after commit, the team should continue to the next map-backed Mira slice."
+    ? continuationSelectorProofCommitted
+      ? "Builder should advance Mission Control v1 dry-run coordination/follow-through route planning from local evidence only; Oracle should review that it stays no-send/no-execution before commit."
+      : "Builder should finish the continuation-aware Mission Control command-context proof; Oracle should challenge stale-handoff visibility-without-authority; after commit, the team should continue to the next map-backed Mira slice."
     : "Builder should finish the Mission Control v0 proof packet; Oracle should challenge it against the benchmark; after commit, the team should auto-open the next operator-like capability slice.";
   const jamesActionReason = "This is local, inspectable, dry-run Mission Control work; no bot, channel, account, token, external send, or route switch is needed.";
   const foundationVsProduct = "SquidRun context is foundation. The product test is whether Mira can operate as Mission Control for James's AI team.";
@@ -653,6 +685,9 @@ function buildMissionControl(input: {
     ...(continuationIsStaleSuperseded
       ? [
           `Committed seam: ${continuationDecision.committedSeam}; checkpoint ${input.recentComms.latestCommitCheckpoint?.sourceRef || "not found"} and Builder ACK ${input.recentComms.latestBuilderAck?.sourceRef || "not found"} supersede the old handoff.`,
+          ...(continuationSelectorProofCommitted
+            ? [`Selector proof: ${input.recentComms.latestContinuationSelectorCheckpoint?.sourceRef || "not found"} ${continuationSelectorCommitHash} is committed, so the next move advances to Mission Control v1 dry-run coordination/follow-through route planning.`]
+            : []),
           `Stale handoff: ${continuationDecision.staleSourceRef} "${continuationDecision.staleObjective || "old lane"}" is stale/superseded evidence only; it has no active authority.`,
         ]
       : []),

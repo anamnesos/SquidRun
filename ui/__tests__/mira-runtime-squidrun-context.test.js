@@ -89,6 +89,24 @@ describe('Mira SquidRun command context', () => {
 const rows = [
   {
     sender: 'architect',
+    target: 'oracle',
+    timestampMs: 1779445600000,
+    rawBody: '(ARCHITECT #79): Checkpoint: unrelated Mission Control context slice committed as abc1234 Advance later context. It references prior 6092a28a Harden Mission Control delegation selection selector proof; proof PASS; JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779445511259,
+    rawBody: '(ARCHITECT #75): Current-session delegation: next Mira map-backed slice is a tiny post-commit next-move advancement in Mission Control command context. Evidence after 6092a28a: clean getSquidRunContext() no longer revives the old review/no-send objective, but summary.nextStep still says Builder should finish the continuation-aware command-context proof. Fix the context answer so after the committed continuation-selector proof is present, Mission Control advances to the next map-backed product step: Mission Control v1 dry-run coordination/follow-through route planning, no sends/execution. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779445450000,
+    rawBody: '(ARCHITECT #73): Checkpoint: continuation selector follow-up committed as 6092a28a Harden Mission Control delegation selection. Committed scope: docs/mira-system-map.md, mira/runtime/src/squidrun-context.ts, ui/__tests__/mira-runtime-squidrun-context.test.js. Pre-commit passed all gates. Post-commit proof from clean HEAD: worktree clean, active source is a real instruction row rather than checkpoint/proof rows, summary.happening does not contain the old objective, and answer has exactly one JAMES ACTION line. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
     target: 'builder',
     timestampMs: 1779444600000,
     rawBody: '(ARCHITECT #61): MODIFY / new tiny follow-up slice, caused by post-commit live evidence. Fix the continuation-aware Mission Control command context selector, not the handoff state: latestContinuationDelegation should select real delegation/request/task messages and exclude commit/checkpoint/PASS/proof/review/status reports like Architect #59/#60.'
@@ -172,13 +190,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows }));
       staleHandoff: expect.objectContaining({
         status: 'stale_superseded',
         sourceRef: 'architect#11',
-        supersededBySourceRef: 'architect#61',
+        supersededBySourceRef: 'architect#75',
         supersededByCommit: '7ff9fe8d Add Mira internal pane activation attempt seam',
       }),
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'stale_handoff_superseded',
-      preferredSourceRef: 'architect#61',
+      preferredSourceRef: 'architect#75',
       committedSeam: '7ff9fe8d Add Mira internal pane activation attempt seam',
       staleSourceRef: 'architect#11',
     }));
@@ -187,15 +205,26 @@ process.stdout.write(JSON.stringify({ ok: true, rows }));
       commitHash: '7ff9fe8d',
     }));
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#61',
+      sourceRef: 'architect#75',
+      commitHash: '6092a28a',
     }));
-    expect(answer).toContain('Project/lane: squidrun / architect#61.');
-    expect(answer).toContain('continuation-aware Mission Control command context');
+    expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#73',
+      commitHash: '6092a28a',
+    }));
+    expect(answer).toContain('Project/lane: squidrun / architect#75.');
+    expect(answer).toContain('Mission Control v1 dry-run coordination/follow-through route planning is the next map-backed product step');
+    expect(answer).not.toContain('Builder should finish the continuation-aware Mission Control command-context proof');
+    expect(answer).not.toContain('finish the continuation-aware command-context proof');
     expect(answer).toContain('Committed seam: 7ff9fe8d Add Mira internal pane activation attempt seam');
+    expect(answer).toContain('Selector proof: architect#73 6092a28a is committed');
     expect(answer).toContain('Builder ACK builder#14');
     expect(answer).toContain('Stale handoff: architect#11');
     expect(answer).toContain('stale/superseded evidence only; it has no active authority');
     expect(answer).not.toContain('Project/lane: squidrun / architect#11. finish the existing 3-file review/no-send gate dirty slice');
+    expect(context.missionControl.nextTeamMove).toBe('Builder should advance Mission Control v1 dry-run coordination/follow-through route planning from local evidence only; Oracle should review that it stays no-send/no-execution before commit.');
+    expect(context.summary.nextStep).toBe(context.missionControl.nextTeamMove);
+    expect(context.summary.nextStep).not.toContain('finish the continuation-aware Mission Control command-context proof');
     expect(context.summary.happening).toContain('continuation-aware Mission Control command context');
     expect(context.summary.happening).not.toContain('finish the existing 3-file review/no-send gate dirty slice');
     expect(answer.match(/^JAMES ACTION:/gm)).toHaveLength(1);
@@ -213,11 +242,14 @@ process.stdout.write(JSON.stringify({ ok: true, rows }));
     }));
     expect(context.dirtyWork.summary).toContain('1 changed file(s)');
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#61',
+      sourceRef: 'architect#75',
+    }));
+    expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#73',
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'current_handoff',
-      preferredSourceRef: 'architect#61',
+      preferredSourceRef: 'architect#75',
       staleSourceRef: null,
     }));
     expect(context.lane.staleHandoff).toBeNull();
