@@ -515,15 +515,13 @@ function isMissionControlV1AlignmentDelegationBody(rawBody: string | null): bool
 
 function isV1AlignmentCheckpointBody(rawBody: string | null): boolean {
   const body = rawBody || "";
-  return /Mission Control v1 draft\/preview alignment committed as [`'"]?e82f1a54 Align Mission Control v1 route preview drafts/i.test(body)
-    && /Checkpoint|committed|Clean-head proof|pre-commit/i.test(body)
+  return /Checkpoint:\s*Mission Control v1 draft\/preview alignment committed as [`'"]?e82f1a54 Align Mission Control v1 route preview drafts/i.test(body)
     && /JAMES ACTION:\s*NONE/i.test(body);
 }
 
 function isEvidenceWindowCheckpointBody(rawBody: string | null): boolean {
   const body = rawBody || "";
-  return /continuation evidence-window hardening committed as [`'"]?4bfe771c Harden Mission Control comms evidence window/i.test(body)
-    && /Checkpoint|committed|Clean-head proof|pre-commit/i.test(body)
+  return /Checkpoint:\s*continuation evidence-window hardening committed as [`'"]?4bfe771c Harden Mission Control comms evidence window/i.test(body)
     && /JAMES ACTION:\s*NONE/i.test(body);
 }
 
@@ -727,7 +725,7 @@ function buildMissionControl(input: {
     || "local lane";
   const laneText = continuationIsStaleSuperseded
     ? directChannelBoundaryReady
-      ? "Separate New Mira direct-channel readiness/dry-run planning behind the existing Telegram guard truth is the next map boundary; it is a future James-visible setup/test gate only, not live action."
+      ? "Separate New Mira direct-channel readiness/dry-run planning now aligns to the existing mira-direct-channel-readiness contract: current owner squidrun-telegram-guard-stack stays untouched, future candidate owner is new-mira-direct-channel, and the result is a future James-visible setup/test gate only."
       : continuationSelectorProofCommitted
       ? "Mission Control v1 dry-run coordination/follow-through route planning is the next map-backed product step; no sends or execution."
       : input.recentComms.latestContinuationDelegation?.excerpt
@@ -742,7 +740,7 @@ function buildMissionControl(input: {
     || "First inspectable demo: Mira Mission Control.";
   const nextTeamMove = continuationIsStaleSuperseded
     ? directChannelBoundaryReady
-      ? "Builder should plan the separate New Mira direct-channel readiness/dry-run boundary behind the existing Telegram guard truth from local evidence only: define the future James-visible setup/test gate without setup, send, route-owner flip, or live direct-channel action."
+      ? "Builder should align Mission Control to the existing direct-channel readiness contract: preserve currentOwner=squidrun-telegram-guard-stack, proposedFutureOwner=new-mira-direct-channel, blocked missing/reused candidate cases, and candidate_ready dry-run only with sendReady=false/liveActivationReady=false."
       : continuationSelectorProofCommitted
       ? "Builder should advance Mission Control v1 dry-run coordination/follow-through route planning from local evidence only; Oracle should review that it stays no-send/no-execution before commit."
       : "Builder should finish the continuation-aware Mission Control command-context proof; Oracle should challenge stale-handoff visibility-without-authority; after commit, the team should continue to the next map-backed Mira slice."
@@ -758,7 +756,10 @@ function buildMissionControl(input: {
       ? [
           `Committed seam: ${continuationDecision.committedSeam}; checkpoint ${input.recentComms.latestCommitCheckpoint?.sourceRef || "not found"} and Builder ACK ${input.recentComms.latestBuilderAck?.sourceRef || "not found"} supersede the old handoff.`,
           ...(directChannelBoundaryReady
-            ? [`Stabilized v1 evidence: delegation ${input.recentComms.latestV1AlignmentDelegation?.sourceRef || "not found"}, alignment checkpoint ${input.recentComms.latestV1AlignmentCheckpoint?.sourceRef || "not found"} ${v1RoutePreviewAlignmentCommitHash}, evidence-window checkpoint ${input.recentComms.latestEvidenceWindowCheckpoint?.sourceRef || "not found"} ${commsEvidenceWindowCommitHash}; the next boundary is separate direct-channel readiness/dry-run planning behind Telegram guard truth.`]
+            ? [
+                `Stabilized v1 evidence: delegation ${input.recentComms.latestV1AlignmentDelegation?.sourceRef || "not found"}, alignment checkpoint ${input.recentComms.latestV1AlignmentCheckpoint?.sourceRef || "not found"} ${v1RoutePreviewAlignmentCommitHash}, evidence-window checkpoint ${input.recentComms.latestEvidenceWindowCheckpoint?.sourceRef || "not found"} ${commsEvidenceWindowCommitHash}; the next boundary is separate direct-channel readiness/dry-run planning behind Telegram guard truth.`,
+                "Readiness contract: ui/modules/mira-direct-channel-readiness.js blocks missing candidate config and current-channel reuse; a valid separate candidate is candidate_ready/dryRun only, never send-ready or activation-ready.",
+              ]
             : continuationSelectorProofCommitted
             ? [`Selector proof: ${input.recentComms.latestContinuationSelectorCheckpoint?.sourceRef || "not found"} ${continuationSelectorCommitHash} is committed, so the next move advances to Mission Control v1 dry-run coordination/follow-through route planning.`]
             : []),
@@ -778,7 +779,7 @@ function buildMissionControl(input: {
         ? "direct-channel readiness planning"
         : continuationSelectorProofCommitted ? "v1 dry-run planning" : "implementation",
       message: directChannelBoundaryReady
-        ? "Plan the separate New Mira direct-channel readiness/dry-run boundary behind Telegram guard truth from local evidence: describe the future James-visible setup/test gate only, with no setup, send, or route-owner flip."
+        ? "Align Mission Control with the existing direct-channel readiness contract: currentOwner=squidrun-telegram-guard-stack, proposedFutureOwner=new-mira-direct-channel, missing/reused candidate blocked, valid separate candidate candidate_ready/dryRun only, sendReady=false, liveActivationReady=false."
         : continuationSelectorProofCommitted
         ? "Advance Mission Control v1 dry-run coordination/follow-through route planning from local evidence only; keep it inspectable and no-send/no-execution."
         : "Build Mission Control v0 from local SquidRun evidence: lane, git dirt, map/roadmap truth, owned-work continuation, and recent Architect/Oracle checkpoints. Keep sends dry-run.",
@@ -789,7 +790,7 @@ function buildMissionControl(input: {
         ? "direct-channel dry-run review"
         : continuationSelectorProofCommitted ? "v1 no-send review" : "benchmark review",
       message: directChannelBoundaryReady
-        ? "Review that the separate direct-channel readiness plan stays dry-run only behind Telegram guard truth, requires a future James-visible setup/test gate, and does not create live action."
+        ? "Review Mission Control against mira-direct-channel-readiness.test.js: no token/env read, no bot/chat creation, no Telegram send, no route-owner flip, no provider/model/runtime start, and JAMES ACTION remains NONE."
         : continuationSelectorProofCommitted
         ? "Review Mission Control v1 for no-send/no-execution boundaries and useful next-move specificity before commit."
         : "Challenge Mission Control v0 against the external-agent benchmark. PASS only if it is more useful than a context card and does not overclaim current New Mira.",
@@ -802,6 +803,12 @@ function buildMissionControl(input: {
     ".squidrun/runtime/agent-task-queue.json",
     "git status --short",
     "docs/mira-system-map.md",
+    ...(directChannelBoundaryReady
+      ? [
+          "ui/modules/mira-direct-channel-readiness.js",
+          "ui/__tests__/mira-direct-channel-readiness.test.js",
+        ]
+      : []),
     "docs/mira-north-star-roadmap.md",
     `hm-comms history --last ${commsHistoryEvidenceLimit} --json`,
     continuationIsStaleSuperseded ? continuationDecision.reason : input.fallbackNextStep,
