@@ -96,6 +96,42 @@ const rows = [
   {
     sender: 'architect',
     target: 'builder',
+    timestampMs: 1779460305000,
+    rawBody: '(ARCHITECT #332): Builder containment on #331 WIP. Current dirty scope is runtime-only while mentioning b1acd4d7 Fix Mission Control post audit Oracle ACK selector and internal route/audit planning. This containment row must stay diagnostic and not active delegation authority. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779460304000,
+    rawBody: '(ARCHITECT #330): Checkpoint: committed unrelated selector note as cafeb1a while mentioning prior b1acd4d7 Fix Mission Control post audit Oracle ACK selector and mission-control-internal-route-audit-review-lane-proof-v0. This newer name-drop chatter must not become the internal route/audit review-lane proof checkpoint or active delegation. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'oracle',
+    target: 'architect',
+    timestampMs: 1779460303000,
+    rawBody: '(ORACLE #108): Received cafeb1a checkpoint while mentioning prior b1acd4d7 Fix Mission Control post audit Oracle ACK selector. This newer name-drop chatter must not become the internal route/audit review-lane proof Oracle ACK. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779460302000,
+    rawBody: '(ARCHITECT #331): Builder, take the next map-backed Mira lane from clean b1acd4d7: one inspectable no-live-effect internal route/audit review-lane planning first proof from mission-control-internal-route-promotion-review-plan-v0 only. Scope expectation: runtime context plus focused context test plus map only if truth text changes. Bind source-specific b1acd4d7 checkpoint/Oracle #107 evidence; do not require or invent a Builder b1 ACK if none exists. Add name-drop/report/containment-row regression so later chatter cannot steal checkpoint/ACK/delegation authority. Clean context should expose one concrete plan/proof with owner Builder, target/reviewer Oracle, target/purpose/body or review object, source evidence, James control point before any real route/audit promotion, preconditions/no-go conditions, and manual/planning-only false live-effect audit flags. Dirty worktree blocks exposure/advancement. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779460301000,
+    rawBody: '(ARCHITECT #329): Checkpoint: committed corrective #325 as b1acd4d7 Fix Mission Control post audit Oracle ACK selector. Builder #98 PASS and Oracle #106 PASS accepted. Clean-head proof: worktree clean; HEAD b1acd4d7; focused context PASS 2/2; runtime TypeScript noEmit PASS; map guard PASS 15/15; live context reports stale_handoff_superseded, latestPostAuditPlanningSelectorCheckpoint=architect#311/582ef1c6, latestPostAuditPlanningSelectorBuilderAck=builder#94/582ef1c6, fixed latestPostAuditPlanningSelectorOracleAck=oracle#101/582ef1c6. Completed contexts remain present: commandCardAcceptance, commandCardRoutePlanFollowThroughProof, and internalRoutePromotionReviewPlan. NextStep remains the no-live-effect internal route/audit planning lane from the visible plan only; selected draft purpose is internal route/audit planning review; exactly one JAMES ACTION line. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'oracle',
+    target: 'architect',
+    timestampMs: 1779460300000,
+    rawBody: '(ORACLE #107): Received b1acd4d7 checkpoint. Oracle accepts clean-head post-audit selector / Oracle ACK selector evidence: latestPostAuditPlanningSelectorOracleAck=oracle#101/582ef1c6, completed contexts remain present, internal route/audit planning stays no-live-effect, and exactly one JAMES ACTION line remains. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
     timestampMs: 1779460200000,
     rawBody: '(ARCHITECT #315): Builder, #313 WIP sanity is green but incomplete. Current dirty scope is only mira/runtime/src/squidrun-context.ts with 69 added/changed lines; focused context PASS 2/2, runtime TSC PASS, map guard PASS. This runtime-only selector truth change is still not reviewable and must stay diagnostic only. JAMES ACTION: NONE.'
   },
@@ -775,13 +811,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       staleHandoff: expect.objectContaining({
         status: 'stale_superseded',
         sourceRef: 'architect#11',
-        supersededBySourceRef: 'architect#313',
+        supersededBySourceRef: 'architect#331',
         supersededByCommit: '7ff9fe8d Add Mira internal pane activation attempt seam',
       }),
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'stale_handoff_superseded',
-      preferredSourceRef: 'architect#313',
+      preferredSourceRef: 'architect#331',
       committedSeam: '7ff9fe8d Add Mira internal pane activation attempt seam',
       staleSourceRef: 'architect#11',
     }));
@@ -794,10 +830,10 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       commitHash: '7ff9fe8d',
     }));
     expect(context.recentComms.latestBuilderInstruction).toEqual(expect.objectContaining({
-      sourceRef: 'architect#313',
+      sourceRef: 'architect#331',
     }));
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#313',
+      sourceRef: 'architect#331',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -938,11 +974,22 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       sourceRef: 'oracle#101',
       commitHash: '582ef1c6',
     }));
+    expect(context.recentComms.latestInternalRouteAuditReviewLaneProofCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#329',
+      commitHash: 'b1acd4d7',
+    }));
+    expect(context.recentComms.latestInternalRouteAuditReviewLaneProofOracleAck).toEqual(expect.objectContaining({
+      sourceRef: 'oracle#107',
+      commitHash: 'b1acd4d7',
+    }));
     expect(context.recentComms.latestContinuationDelegation.sourceRef).not.toBe('architect#304');
     expect(context.recentComms.latestPostAuditPlanningSelectorCheckpoint.sourceRef).not.toBe('architect#314');
     expect(context.recentComms.latestPostAuditPlanningSelectorOracleAck.sourceRef).not.toBe('oracle#102');
-    expect(answer).toContain('Project/lane: squidrun / architect#313.');
-    expect(answer).toContain('Mission Control internal-route promotion/review plan is completed visible context; the active next boundary is separate internal route/audit lane planning from the visible plan only.');
+    expect(context.recentComms.latestContinuationDelegation.sourceRef).not.toBe('architect#332');
+    expect(context.recentComms.latestInternalRouteAuditReviewLaneProofCheckpoint.sourceRef).not.toBe('architect#330');
+    expect(context.recentComms.latestInternalRouteAuditReviewLaneProofOracleAck.sourceRef).not.toBe('oracle#108');
+    expect(answer).toContain('Project/lane: squidrun / architect#331.');
+    expect(answer).toContain('Mission Control internal route/audit review-lane proof is inspectable from mission-control-internal-route-promotion-review-plan-v0 only.');
     expect(answer).toContain('Completed direct-channel readiness evidence: checkpoint architect#114 22e876dc and Builder ACK builder#43 22e876dc');
     expect(answer).toContain('next boundary is tool/app action planning from the roadmap, not execution');
     expect(answer).toContain('Completed tool/app action-plan evidence: checkpoint architect#129 5b3e0386 and Builder ACK builder#49 5b3e0386');
@@ -956,7 +1003,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(answer).toContain('Completed post-audit selector evidence: checkpoint architect#311 582ef1c6, Builder ACK builder#94 582ef1c6, and Oracle ACK oracle#101 582ef1c6');
     expect(answer).toContain('WIP sanity/status/containment/closure rows are diagnostic only while mission-control-internal-route-promotion-review-plan-v0 remains completed visible context');
     expect(answer).toContain('Command-card acceptance: mission-control-v0-command-card-acceptance');
-    expect(answer).toContain('current lane/why it matters=Current lane architect#313 matters');
+    expect(answer).toContain('current lane/why it matters=Current lane architect#331 matters');
     expect(answer).toContain('what changed recently=Committed 582ef1c6 post-audit selector evidence (architect#311 plus Builder ACK builder#94 and Oracle ACK oracle#101)');
     expect(answer).toContain('Builder next move=Pin the Mission Control v0 command card from local evidence');
     expect(answer).toContain('Oracle next move=Review the command card for local evidence');
@@ -966,6 +1013,8 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(answer).toContain('source evidence checkpoint architect#242 df0a47a6 plus Oracle ACK oracle#77 df0a47a6 plus visible-surface checkpoint architect#260 120806b4 and Oracle ACK oracle#84 120806b4');
     expect(answer).toContain('Internal-route promotion/review plan: mission-control-internal-route-promotion-review-plan-v0; owner=Builder; target=oracle; purpose=internal-route promotion no-send review');
     expect(answer).toContain('source evidence checkpoint architect#270 0cb27b6b plus Oracle ACK oracle#88 0cb27b6b plus visible-plan surface checkpoint architect#287 f7352d10 and Oracle ACK oracle#95 f7352d10 plus audit-planning checkpoint architect#298 c1a05e07, Builder ACK builder#90 c1a05e07, and Oracle ACK oracle#98 c1a05e07');
+    expect(answer).toContain('Internal route/audit review-lane proof: mission-control-internal-route-audit-review-lane-proof-v0; owner=Builder; target=oracle; purpose=internal route/audit planning review');
+    expect(answer).toContain('source evidence checkpoint architect#329 b1acd4d7 plus Oracle ACK oracle#107 b1acd4d7');
     expect(answer).toContain('audit planningOnly=true, manualOnly=true, sendPerformed=false, promotionPerformed=false, routeFlip=false, runtimeExecutes=false');
     expect(answer).toContain('target local_mission_control_answer_surface asks "what is happening here, and what should happen next?"');
     expect(answer).toContain('runtimeStarted=false, browserOpened=false, workbenchOpened=false, uiActionPerformed=false, fetched=false, posted=false, routed=false, sent=false, providerInvoked=false, modelInvoked=false, accountAccessed=false, tokenAccessed=false, credentialAccessed=false, deviceTouched=false, userTargeted=false, externalTargeted=false, deployed=false, moneyMovement=false, tradingTouched=false');
@@ -996,13 +1045,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(answer).toContain('Stale handoff: architect#11');
     expect(answer).toContain('stale/superseded evidence only; it has no active authority');
     expect(answer).not.toContain('Project/lane: squidrun / architect#11. finish the existing 3-file review/no-send gate dirty slice');
-    expect(context.missionControl.nextTeamMove).toBe('Builder should plan one separate internal route/audit review lane from the visible mission-control-internal-route-promotion-review-plan-v0 only; Oracle should review that it stays planning-only, manual, local, no-send, no-promotion, no-route-flip, and no-execution before any future promotion proposal.');
+    expect(context.missionControl.nextTeamMove).toBe('Oracle should review mission-control-internal-route-audit-review-lane-proof-v0 from the visible mission-control-internal-route-promotion-review-plan-v0; Builder should hold it as local planning-only context unless Oracle requests a narrow correction.');
     expect(context.summary.nextStep).toBe(context.missionControl.nextTeamMove);
     expect(context.summary.nextStep).not.toContain('advance Mission Control v1 dry-run coordination/follow-through route planning');
     expect(context.summary.nextStep).not.toContain('align Mission Control to the existing direct-channel readiness contract');
     expect(context.summary.nextStep).not.toContain('draft one local tool/app action plan');
     expect(context.summary.nextStep).not.toContain('pinning a concise local command card');
-    expect(context.summary.nextStep).toContain('internal route/audit review lane');
+    expect(context.summary.nextStep).toContain('mission-control-internal-route-audit-review-lane-proof-v0');
     expect(context.summary.nextStep).not.toContain('sourced restart/current-lane truth');
     expect(context.summary.toolAppActionPlan).toBe('mission-control-tool-app-action-plan-v0: local_squidrun_evidence_review -> Inspect local SquidRun Mission Control evidence and prepare the first app/tool action candidate for James review.; owner Builder; James must explicitly review and approve a separate future request before any real app/tool execution.');
     expect(context.summary.continuityMemoryProof).toBe('mission-control-continuity-memory-proof-v0: current-lane truth architect#11 is loaded_but_stale_superseded; stale-only summary refused=true; James must review and approve a separate future continuity promotion before New Mira imports, copies, writes, restarts, or promotes any memory state.');
@@ -1031,7 +1080,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         },
         {
           kind: 'comms',
-          sourceRef: 'architect#313',
+          sourceRef: 'architect#331',
           summary: 'Current Architect delegation keeps internal route/audit planning on the visible plan while 582ef1c6 selector hardening prevents WIP sanity/status/containment/closure rows from becoming active delegation authority.',
         },
         {
@@ -1250,7 +1299,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         },
         {
           kind: 'comms',
-          sourceRef: 'architect#313',
+          sourceRef: 'architect#331',
           summary: 'Current Architect delegation treats this demo/workbench proof and command-card acceptance as completed context for route-plan follow-through proof.',
         },
       ],
@@ -1314,7 +1363,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         demoWorkbenchProofId: 'mission-control-demo-workbench-proof-v0',
       },
       cardFields: expect.objectContaining({
-        currentLaneWhyItMatters: expect.stringContaining('Current lane architect#313 matters'),
+        currentLaneWhyItMatters: expect.stringContaining('Current lane architect#331 matters'),
         whatChangedRecently: expect.stringContaining('Committed 582ef1c6 post-audit selector evidence (architect#311 plus Builder ACK builder#94 and Oracle ACK oracle#101)'),
         builderNextMove: expect.stringContaining('Pin the Mission Control v0 command card from local evidence'),
         oracleNextMove: expect.stringContaining('Review the command card for local evidence'),
@@ -1365,7 +1414,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       }),
       expect.objectContaining({
         kind: 'comms',
-        sourceRef: 'architect#313',
+        sourceRef: 'architect#331',
       }),
       expect.objectContaining({
         kind: 'comms',
@@ -1405,19 +1454,19 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(context.missionControl.coordinationDrafts).toEqual([
       {
         target: 'builder',
-        purpose: 'internal route/audit planning context',
-        message: 'Plan one separate internal route/audit review lane from the visible mission-control-internal-route-promotion-review-plan-v0 only for any future promotion proposal. Keep it local/manual; do not POST, route, send, promote, flip routes, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.',
+        purpose: 'internal route/audit proof context',
+        message: 'Hold mission-control-internal-route-audit-review-lane-proof-v0 as local planning-only context from mission-control-internal-route-promotion-review-plan-v0. Do not POST, route, send, promote, flip routes, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.',
       },
       {
         target: 'oracle',
-        purpose: 'internal route/audit planning review',
-        message: 'Review the internal route/audit lane planning from the visible mission-control-internal-route-promotion-review-plan-v0 for source evidence, James control point, preconditions/no-go conditions, manual-only/no-send/no-promotion/no-route-flip/no-execution boundaries, and exactly one James-action line; do not POST, route, send, promote, flip routes, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.',
+        purpose: 'internal route/audit proof review',
+        message: 'Review mission-control-internal-route-audit-review-lane-proof-v0 against mission-control-internal-route-promotion-review-plan-v0 for owner Builder, target Oracle, source evidence, James control point, preconditions/no-go conditions, manual-only/no-send/no-promotion/no-route-flip/no-execution audit flags, and exactly one James-action line; do not POST, route, send, promote, flip routes, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.',
       },
     ]);
     expect(context.missionControl.internalRoutePreview).toEqual(expect.objectContaining({
       status: 'reviewed_preview_only',
       selectedDraftTarget: 'oracle',
-      selectedDraftPurpose: 'internal route/audit planning review',
+      selectedDraftPurpose: 'internal route/audit proof review',
       audit: expect.objectContaining({
         sendPerformed: false,
         runtimeExecutes: false,
@@ -1434,7 +1483,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       }),
       envelope: expect.objectContaining({
         body: {
-          content: 'Review the internal route/audit lane planning from the visible mission-control-internal-route-promotion-review-plan-v0 for source evidence, James control point, preconditions/no-go conditions, manual-only/no-send/no-promotion/no-route-flip/no-execution boundaries, and exactly one James-action line; do not POST, route, send, promote, flip routes, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.',
+          content: 'Review mission-control-internal-route-audit-review-lane-proof-v0 against mission-control-internal-route-promotion-review-plan-v0 for owner Builder, target Oracle, source evidence, James control point, preconditions/no-go conditions, manual-only/no-send/no-promotion/no-route-flip/no-execution audit flags, and exactly one James-action line; do not POST, route, send, promote, flip routes, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.',
         },
       }),
     }));
@@ -1496,7 +1545,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       }),
       expect.objectContaining({
         kind: 'comms',
-        sourceRef: 'architect#313',
+        sourceRef: 'architect#331',
       }),
       expect.objectContaining({
         kind: 'comms',
@@ -1582,7 +1631,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       }),
       expect.objectContaining({
         kind: 'comms',
-        sourceRef: 'architect#313',
+        sourceRef: 'architect#331',
       }),
       expect.objectContaining({
         kind: 'comms',
@@ -1646,7 +1695,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     }));
     expect(context.dirtyWork.summary).toContain('1 changed file(s)');
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-        sourceRef: 'architect#313',
+        sourceRef: 'architect#331',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -1754,10 +1803,21 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       sourceRef: 'oracle#101',
       commitHash: '582ef1c6',
     }));
+    expect(context.recentComms.latestInternalRouteAuditReviewLaneProofCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#329',
+      commitHash: 'b1acd4d7',
+    }));
+    expect(context.recentComms.latestInternalRouteAuditReviewLaneProofOracleAck).toEqual(expect.objectContaining({
+      sourceRef: 'oracle#107',
+      commitHash: 'b1acd4d7',
+    }));
     expect(context.recentComms.latestContinuationDelegation.sourceRef).not.toBe('architect#304');
+    expect(context.recentComms.latestContinuationDelegation.sourceRef).not.toBe('architect#332');
+    expect(context.recentComms.latestInternalRouteAuditReviewLaneProofCheckpoint.sourceRef).not.toBe('architect#330');
+    expect(context.recentComms.latestInternalRouteAuditReviewLaneProofOracleAck.sourceRef).not.toBe('oracle#108');
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'current_handoff',
-      preferredSourceRef: 'architect#313',
+      preferredSourceRef: 'architect#331',
       staleSourceRef: null,
     }));
     expect(context.lane.staleHandoff).toBeNull();
