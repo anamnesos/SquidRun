@@ -242,6 +242,7 @@ function renderCoordinationDrafts(drafts) {
 function isMissionControlQuestion(text) {
   return /what\s+(is\s+)?happening|what\s+happens?\s+next|what\s+should\s+happen\s+next|what\s+now|what\s+do\s+i\s+need\s+to\s+do/i.test(text)
     || isMissionControlAvailableAnswersQuestion(text)
+    || isMissionControlHardStopSetupQuestion(text)
     || isMissionControlLiveBoundaryQuestion(text)
     || isMissionControlManualActionQuestion(text)
     || isMissionControlManualOnlyBoundaryQuestion(text)
@@ -288,8 +289,20 @@ function isMissionControlAvailableAnswersQuestion(text) {
 function isMissionControlLiveBoundaryQuestion(text) {
   const normalized = String(text || '');
   const hasMissionControlContext = /\b(mission\s*control|new\s+mira)\b/i.test(normalized);
-  return /\b(live[-\s]+send|real[-\s]+send|live\s+activation)\b/i.test(normalized)
-    || (hasMissionControlContext && /\b(send\s+boundary|activation\s+boundary|send\s+available)\b/i.test(normalized));
+  return /\b(is|are)\s+.*\b(live[-\s]+send|real[-\s]+send|live\s+activation)\s+.*\b(available|allowed|enabled|blocked|unavailable)\b/i.test(normalized)
+    || /\bwhat\s+(is\s+)?(the\s+)?(live[-\s]+send|real[-\s]+send|live\s+activation)\s+(boundary|availability|status)\b/i.test(normalized)
+    || (hasMissionControlContext && /\bwhat\s+(is\s+)?(the\s+)?(mission\s*control|new\s+mira)?\s*(live[-\s]+send|real[-\s]+send|send|activation)\s+(boundary|availability|status)\b/i.test(normalized))
+    || (hasMissionControlContext && /\bwhat\s+.*\b(send\s+boundary|activation\s+boundary|send\s+available)\b/i.test(normalized));
+}
+
+function isMissionControlHardStopSetupQuestion(text) {
+  const normalized = String(text || '');
+  const hasMissionControlContext = /\b(mission\s*control|new\s+mira)\b/i.test(normalized);
+  return (hasMissionControlContext
+      && (/\bwhat\s+.*\b(hard[-\s]+stop|live[-\s]+activation\s+gate)\s+.*\b(require|requires|need|needs|mean|means)\b/i.test(normalized)
+        || /\bwhat\s+(setup|gate|requirements?)\s+.*\b(live[-\s]+send|real[-\s]+send|live\s+activation)\b/i.test(normalized)
+        || /\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+(hard[-\s]+stop|setup)\s+(requirement|requirements|boundary|gate)\b/i.test(normalized)))
+    || /\bwhat\s+setup\s+(would\s+be\s+|is\s+)?(required|needed)\s+before\s+(live[-\s]+send|real[-\s]+send|live\s+activation)\b/i.test(normalized);
 }
 
 function isMissionControlManualActionQuestion(text) {
@@ -517,6 +530,10 @@ function currentMissionControlAnswer(text = '') {
     const availableAnswers = buildMissionControlAvailableAnswersAnswer();
     if (availableAnswers) return availableAnswers;
   }
+  if (isMissionControlHardStopSetupQuestion(text)) {
+    const hardStopSetupAnswer = buildMissionControlHardStopSetupAnswer();
+    if (hardStopSetupAnswer) return hardStopSetupAnswer;
+  }
   if (isMissionControlLiveBoundaryQuestion(text)) {
     const liveBoundaryAnswer = buildMissionControlLiveBoundaryAnswer();
     if (liveBoundaryAnswer) return liveBoundaryAnswer;
@@ -680,6 +697,7 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
     available.push('current stage/status');
     available.push('stage trail/status list');
     available.push('advance selection');
+    available.push('hard-stop/setup requirements');
     available.push('manual-only boundary');
     available.push('payload/endpoint preview');
     available.push('handler drift check');
@@ -751,6 +769,46 @@ function buildMissionControlLiveBoundaryAnswer(status = state.missionControlActi
     `Future gate: ${nextBoundary.futureJamesVisibleGate || 'Future real send would require a separate James-visible setup/activation lane.'}`,
     'Source: already-loaded Mission Control activation pipeline status from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlHardStopSetupAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const hardStop = status.hardStopTruth && typeof status.hardStopTruth === 'object' ? status.hardStopTruth : {};
+  const nextBoundary = status.nextBoundary && typeof status.nextBoundary === 'object' ? status.nextBoundary : {};
+  const endToEndReadout = status.endToEndReadout && typeof status.endToEndReadout === 'object' ? status.endToEndReadout : {};
+  const currentStage = status.currentStage && typeof status.currentStage === 'object' ? status.currentStage : {};
+  const trace = status.currentStageTrace && typeof status.currentStageTrace === 'object' ? status.currentStageTrace : {};
+  const entries = Array.isArray(trace.entries) ? trace.entries : [];
+  const currentStageId = status.currentStageId || currentStage.id || null;
+  const currentEntry = entries.find((entry) => entry?.stageId === currentStageId)
+    || entries[entries.length - 1]
+    || null;
+  const artifactToken = currentEntry?.token || currentStage.latestToken || endToEndReadout.currentArtifactToken || 'not available';
+  const artifactPath = currentEntry?.relativePath || currentStage.relativePath || endToEndReadout.currentRelativePath || 'No saved hard-stop artifact path is available.';
+  const hardStopRecorded = hardStop.hardStopContractRecorded === true || endToEndReadout.hardStopRecorded === true;
+  const liveSendAvailable = hardStop.liveSendAvailable === true || endToEndReadout.liveSendAvailable === true;
+  const separateActivationLaneRequired = hardStop.separateActivationLaneRequired === true
+    || endToEndReadout.realSendRequiresSeparateActivation === true;
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control hard-stop/setup inspection; no setup or live action is needed.');
+  return [
+    `Hard stop recorded: ${hardStopRecorded ? 'yes' : 'no'}`,
+    `Live send available: ${liveSendAvailable ? 'yes' : 'no'}`,
+    `James setup required before live send: ${hardStop.jamesSetupRequiredBeforeLiveSend === true ? 'yes' : 'no'}`,
+    `Separate activation lane required: ${separateActivationLaneRequired ? 'yes' : 'no'}`,
+    `Current stage: ${currentStage.label || endToEndReadout.currentStageLabel || 'No saved Mission Control send chain yet'}`,
+    `Current hard-stop truth: ${endToEndReadout.currentHardStopTruth || `liveSendAvailable:${liveSendAvailable}; hardStopRecorded:${hardStopRecorded}; jamesSetupRequiredBeforeLiveSend:${hardStop.jamesSetupRequiredBeforeLiveSend === true}.`}`,
+    `Evidence token/path: ${artifactToken} · ${artifactPath}`,
+    `Future gate: ${nextBoundary.futureJamesVisibleGate || 'Future real send would require a separate James-visible setup/activation lane.'}`,
+    `Next boundary: ${nextBoundary.currentNextStep || endToEndReadout.nextBoundary || 'Live send is unavailable from this surface.'}`,
+    `No-effect: ${trace.noEffectSummary || endToEndReadout.noEffectSummary || 'Read-only hard-stop/setup inspection only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.'}`,
+    'Source: already-loaded Mission Control hard-stop/readout/current-stage/next-boundary status from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, setup, enable, start, remove, bypass, send, submit, endpoint call, handler call, click, artifact creation, context-carry artifact/stage, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }

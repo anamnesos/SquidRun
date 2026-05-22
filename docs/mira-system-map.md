@@ -433,6 +433,8 @@ Product-facing local-preview availability prompts such as `what can I ask Missio
 
 Product-facing live-send boundary prompts such as `is live send available in Mission Control?` and `what is the Mission Control live-send boundary?` now answer from the already-loaded activation pipeline status/hard-stop truth, without posting `/turn`, adding fetches, persisting, or sending externally.
 
+Product-facing hard-stop/setup prompts such as `what does the Mission Control hard stop require?` and `what setup would be required before live send?` now answer from the already-loaded activation pipeline hard-stop/readout/current-stage/next-boundary fields, without posting `/turn`, adding fetches, setting up, enabling, starting, removing, bypassing, submitting, persisting, clicking, invoking handlers or endpoints, or sending externally.
+
 Product-facing manual-action/status-focus prompts such as `what manual action is next in Mission Control?` and `which Mission Control button is highlighted?` now answer from the already-loaded activation pipeline status/focus state, without posting `/turn`, adding fetches, clicking buttons, persisting, or sending externally.
 
 Product-facing manual-only boundary prompts such as `what remains manual-only in Mission Control?` and `why is Mission Control manual-only?` now answer from the already-loaded activation pipeline manual-only readout, selector, manual preflight, payload preview, and handler-drift status, without posting `/turn`, adding fetches, making/manualizing/performing/clicking/submitting/saving manual actions, creating artifacts, persisting, or sending externally.
