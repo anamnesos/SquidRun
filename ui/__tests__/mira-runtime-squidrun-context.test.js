@@ -95,6 +95,42 @@ const staleCheckpointSpacerRows = Array.from({ length: 90 }, (_, index) => ({
 const rows = [
   {
     sender: 'architect',
+    target: 'oracle',
+    timestampMs: 1779447040000,
+    rawBody: '(ARCHITECT #103): Checkpoint: unrelated Mira context cleanup committed as abc5678 Later checkpoint. It references prior e82f1a54 Align Mission Control v1 route preview drafts and prior 4bfe771c Harden Mission Control comms evidence window; proof PASS; JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779446945234,
+    rawBody: '(ARCHITECT #99): Current-session delegation: next Mira map-backed slice is post-v1 next-boundary advancement in Mission Control command context. Clean HEAD after e82f1a54 Align Mission Control v1 route preview drafts and 4bfe771c Harden Mission Control comms evidence window still says summary.nextStep is "Builder should advance Mission Control v1 dry-run coordination/follow-through route planning," but that v1 planning/alignment is now committed and stabilized. Build the smallest read-only/no-side-effect slice so clean Mission Control advances past completed v1 planning to separate New Mira direct-channel readiness/dry-run planning only, behind the existing guard truth, with no setup/send/route-owner flip. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779446851000,
+    rawBody: '(ARCHITECT #97): Checkpoint: continuation evidence-window hardening committed as 4bfe771c Harden Mission Control comms evidence window. Clean-head proof: worktree clean, context test PASS 2/2, getSquidRunContext() now reports stale_handoff_superseded, latestCommitCheckpoint=architect#46/7ff9fe8d, latestContinuationDelegation=architect#87, v1 nextStep/drafts/preview retained, and exactly one JAMES ACTION line. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779446850000,
+    rawBody: '(ARCHITECT #98): Oracle PASS accepted for 4bfe771c Harden Mission Control comms evidence window; prior seam evidence is retained after checkpoint chatter; proof PASS. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779446128000,
+    rawBody: '(ARCHITECT #91): Checkpoint: Mission Control v1 draft/preview alignment committed as e82f1a54 Align Mission Control v1 route preview drafts. Clean-head proof: worktree clean; summary.nextStep is v1 dry-run coordination/follow-through planning; coordinationDrafts use Builder purpose v1 dry-run planning and Oracle purpose v1 no-send review; internalRoutePreview selects Oracle with reviewed_preview_only and manualExecutionRequired true. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779446127000,
+    rawBody: '(ARCHITECT #92): Oracle PASS accepted for e82f1a54 Align Mission Control v1 route preview drafts; draft/preview alignment proof held clean. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
     target: 'builder',
     timestampMs: 1779445700000,
     rawBody: '(ARCHITECT #87): Current-session delegation: next Mira map-backed slice is Mission Control v1 dry-run coordination plan alignment. Clean context after 1b6b841c advances summary.nextStep to Mission Control v1 dry-run coordination/follow-through route planning. Build the smallest no-side-effect slice so coordination drafts/preview align with v1. JAMES ACTION: NONE.'
@@ -205,13 +241,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       staleHandoff: expect.objectContaining({
         status: 'stale_superseded',
         sourceRef: 'architect#11',
-        supersededBySourceRef: 'architect#87',
+        supersededBySourceRef: 'architect#99',
         supersededByCommit: '7ff9fe8d Add Mira internal pane activation attempt seam',
       }),
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'stale_handoff_superseded',
-      preferredSourceRef: 'architect#87',
+      preferredSourceRef: 'architect#99',
       committedSeam: '7ff9fe8d Add Mira internal pane activation attempt seam',
       staleSourceRef: 'architect#11',
     }));
@@ -220,41 +256,59 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       commitHash: '7ff9fe8d',
     }));
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#87',
+      sourceRef: 'architect#99',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
       commitHash: '6092a28a',
     }));
-    expect(answer).toContain('Project/lane: squidrun / architect#87.');
-    expect(answer).toContain('Mission Control v1 dry-run coordination/follow-through route planning is the next map-backed product step');
+    expect(context.recentComms.latestV1AlignmentDelegation).toEqual(expect.objectContaining({
+      sourceRef: 'architect#87',
+    }));
+    expect(context.recentComms.latestV1AlignmentCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#91',
+      commitHash: 'e82f1a54',
+    }));
+    expect(context.recentComms.latestEvidenceWindowCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#97',
+      commitHash: '4bfe771c',
+    }));
+    expect(answer).toContain('Project/lane: squidrun / architect#99.');
+    expect(answer).toContain('Separate New Mira direct-channel readiness/dry-run planning behind the existing Telegram guard truth is the next map boundary');
+    expect(answer).toContain('future James-visible setup/test gate only, not live action');
+    expect(answer).toContain('Stabilized v1 evidence: delegation architect#87, alignment checkpoint architect#91 e82f1a54, evidence-window checkpoint architect#97 4bfe771c');
+    expect(answer).toContain('behind Telegram guard truth');
+    expect(answer).not.toContain('Mission Control v1 dry-run coordination/follow-through route planning is the next map-backed product step');
+    expect(answer).not.toContain('Builder should advance Mission Control v1 dry-run coordination/follow-through route planning');
+    expect(answer).not.toContain('Advance Mission Control v1 dry-run coordination/follow-through route planning from local evidence only');
+    expect(answer).not.toContain('Review Mission Control v1 for no-send/no-execution boundaries');
     expect(answer).not.toContain('Builder should finish the continuation-aware Mission Control command-context proof');
     expect(answer).not.toContain('finish the continuation-aware command-context proof');
     expect(answer).toContain('Committed seam: 7ff9fe8d Add Mira internal pane activation attempt seam');
-    expect(answer).toContain('Selector proof: architect#73 6092a28a is committed');
     expect(answer).toContain('Builder ACK builder#14');
     expect(answer).toContain('Stale handoff: architect#11');
     expect(answer).toContain('stale/superseded evidence only; it has no active authority');
     expect(answer).not.toContain('Project/lane: squidrun / architect#11. finish the existing 3-file review/no-send gate dirty slice');
-    expect(context.missionControl.nextTeamMove).toBe('Builder should advance Mission Control v1 dry-run coordination/follow-through route planning from local evidence only; Oracle should review that it stays no-send/no-execution before commit.');
+    expect(context.missionControl.nextTeamMove).toBe('Builder should plan the separate New Mira direct-channel readiness/dry-run boundary behind the existing Telegram guard truth from local evidence only: define the future James-visible setup/test gate without setup, send, route-owner flip, or live direct-channel action.');
     expect(context.summary.nextStep).toBe(context.missionControl.nextTeamMove);
-    expect(context.summary.nextStep).not.toContain('finish the continuation-aware Mission Control command-context proof');
+    expect(context.summary.nextStep).not.toContain('advance Mission Control v1 dry-run coordination/follow-through route planning');
+    expect(context.summary.nextStep).toContain('direct-channel readiness/dry-run boundary');
     expect(context.missionControl.coordinationDrafts).toEqual([
       {
         target: 'builder',
-        purpose: 'v1 dry-run planning',
-        message: 'Advance Mission Control v1 dry-run coordination/follow-through route planning from local evidence only; keep it inspectable and no-send/no-execution.',
+        purpose: 'direct-channel readiness planning',
+        message: 'Plan the separate New Mira direct-channel readiness/dry-run boundary behind Telegram guard truth from local evidence: describe the future James-visible setup/test gate only, with no setup, send, or route-owner flip.',
       },
       {
         target: 'oracle',
-        purpose: 'v1 no-send review',
-        message: 'Review Mission Control v1 for no-send/no-execution boundaries and useful next-move specificity before commit.',
+        purpose: 'direct-channel dry-run review',
+        message: 'Review that the separate direct-channel readiness plan stays dry-run only behind Telegram guard truth, requires a future James-visible setup/test gate, and does not create live action.',
       },
     ]);
     expect(context.missionControl.internalRoutePreview).toEqual(expect.objectContaining({
       status: 'reviewed_preview_only',
       selectedDraftTarget: 'oracle',
-      selectedDraftPurpose: 'v1 no-send review',
+      selectedDraftPurpose: 'direct-channel dry-run review',
       audit: expect.objectContaining({
         sendPerformed: false,
         runtimeExecutes: false,
@@ -271,7 +325,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       }),
       envelope: expect.objectContaining({
         body: {
-          content: 'Review Mission Control v1 for no-send/no-execution boundaries and useful next-move specificity before commit.',
+          content: 'Review that the separate direct-channel readiness plan stays dry-run only behind Telegram guard truth, requires a future James-visible setup/test gate, and does not create live action.',
         },
       }),
     }));
@@ -292,18 +346,28 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     }));
     expect(context.dirtyWork.summary).toContain('1 changed file(s)');
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#87',
+      sourceRef: 'architect#99',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
     }));
+    expect(context.recentComms.latestV1AlignmentDelegation).toEqual(expect.objectContaining({
+      sourceRef: 'architect#87',
+    }));
+    expect(context.recentComms.latestV1AlignmentCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#91',
+    }));
+    expect(context.recentComms.latestEvidenceWindowCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#97',
+    }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'current_handoff',
-      preferredSourceRef: 'architect#87',
+      preferredSourceRef: 'architect#99',
       staleSourceRef: null,
     }));
     expect(context.lane.staleHandoff).toBeNull();
     expect(context.summary.happening).toContain('finish the existing 3-file review/no-send gate dirty slice');
+    expect(context.summary.nextStep).not.toContain('direct-channel readiness/dry-run boundary');
     expect(answer).toContain('Dirty work: 1 changed file(s)');
     expect(answer).not.toContain('Stale handoff: architect#11');
     expect(answer.match(/^JAMES ACTION:/gm)).toHaveLength(1);
