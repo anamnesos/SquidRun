@@ -2571,6 +2571,7 @@ function collectMissionControlText(elements) {
     elements.commandCardRoutePlanFollowThroughProofSummary.textContent,
     elements.internalRoutePromotionReviewPlanSummary.textContent,
     elements.internalRouteAuditReviewLaneProofSummary.textContent,
+    elements.internalRouteAuditPromotionDecisionGateProofSummary.textContent,
     draftText,
     elements.routePreviewSummary.textContent,
     elements.foundationSummary.textContent,
@@ -4786,6 +4787,266 @@ describe('Mira runtime UI boot', () => {
     expect(proofText).toContain('tradingTouched=false');
     expect(missionSurfaceText).toContain(promotionPlanId);
     expect(missionSurfaceText).toContain(proofId);
+    expect((missionSurfaceText.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+    expect(harness.elements.missionAnswer.textContent).not.toContain('JAMES ACTION:');
+  });
+
+  test('renders internal-route audit promotion decision-gate proof from mocked SquidRun context without turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const commandCardId = 'mission-control-v0-command-card-acceptance';
+    const routePlanProofId = 'mission-control-command-card-route-plan-follow-through-v0';
+    const promotionPlanId = 'mission-control-internal-route-promotion-review-plan-v0';
+    const auditReviewProofId = 'mission-control-internal-route-audit-review-lane-proof-v0';
+    const decisionGateProofId = 'mission-control-internal-route-audit-promotion-decision-gate-proof-v0';
+    const proofBody = 'Review mission-control-internal-route-audit-promotion-decision-gate-proof-v0 from the visible mission-control-internal-route-audit-review-lane-proof-v0 only for owner Builder, target Oracle, source evidence, James control point before real promotion, preconditions/no-go conditions, manual-only/no-send/no-promotion/no-route-flip/no-execution audit flags, and exactly one James-action line; do not POST, route, send, promote, flip routes, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.';
+    const controlPoint = 'James must explicitly review and approve a separate future route/audit promotion before any real promotion, route flip, send, runtime, browser, workbench, UI/status, provider/model, credential, deploy, money, or trading action is proposed.';
+    const falseAuditFlags = {
+      sendPerformed: false,
+      promotionPerformed: false,
+      routeFlip: false,
+      runtimeExecutes: false,
+      runtimeStarted: false,
+      browserOpened: false,
+      workbenchOpened: false,
+      uiActionPerformed: false,
+      fetched: false,
+      posted: false,
+      routed: false,
+      sent: false,
+      providerInvoked: false,
+      modelInvoked: false,
+      accountAccessed: false,
+      tokenAccessed: false,
+      credentialAccessed: false,
+      deviceTouched: false,
+      userTargeted: false,
+      externalTargeted: false,
+      deployed: false,
+      moneyMovement: false,
+      tradingTouched: false,
+    };
+    const harness = createRuntimeBootHarness({
+      customizeSquidRunContext(context) {
+        context.lane.sourceRef = 'architect#400';
+        context.git.dirtyCount = 0;
+        context.git.statusPreview = [];
+        context.dirtyWork.summary = 'Worktree is clean.';
+        context.dirtyWork.files = [];
+        context.missionControl.answer = [
+          'Project/lane: squidrun / architect#400. Display the completed internal route/audit promotion decision-gate proof from local context only.',
+          `Next team move: Oracle reviews ${decisionGateProofId}; Builder holds it as local context.`,
+          'JAMES ACTION: NONE - Local display-only Mission Control work; no runtime, route, send, provider/model, credential, deploy, money, or external action is needed.',
+        ].join('\n');
+        context.missionControl.nextTeamMove = `Oracle reviews ${decisionGateProofId}; Builder holds it as local context.`;
+        context.missionControl.commandCardAcceptance = {
+          id: commandCardId,
+          status: 'acceptance_planning_only',
+          owner: 'Builder',
+          completedContext: {
+            toolAppActionPlanId: 'mission-control-tool-app-action-plan-v0',
+            continuityMemoryProofId: 'mission-control-continuity-memory-proof-v0',
+            demoWorkbenchProofId: 'mission-control-demo-workbench-proof-v0',
+          },
+          cardFields: {
+            currentLaneWhyItMatters: 'Current lane architect#400 matters because James needs the promotion decision-gate proof visible without terminal logs.',
+            whatChangedRecently: 'Committed adb1e649 exposes the internal route/audit promotion decision-gate proof as local planning-only context.',
+            builderNextMove: 'Render the completed internal route/audit promotion decision-gate proof from already-loaded /squidrun/context only.',
+            oracleNextMove: 'Review the display-only proof surface for no live effects.',
+            contextCardStatus: 'Context-card/current dirty-context status: Worktree is clean.',
+            jamesActionLine: 'JAMES ACTION: NONE',
+            dryRunRoutePlan: {
+              target: 'oracle',
+              purpose: 'internal route/audit promotion decision-gate no-effect review',
+              manualExecutionRequired: true,
+              sendPerformed: false,
+              summary: 'Dry-run route plan asks Oracle to review the local proof display only; no /turn, POST, route, send, provider/model call, or external send is performed.',
+            },
+          },
+          audit: {
+            acceptanceOnly: true,
+            planningOnly: true,
+            ...falseAuditFlags,
+          },
+        };
+        context.missionControl.commandCardRoutePlanFollowThroughProof = {
+          id: routePlanProofId,
+          status: 'proof_ready_for_oracle_review',
+          owner: 'Builder',
+          completedContext: {
+            commandCardAcceptanceId: commandCardId,
+          },
+          audit: {
+            proofOnly: true,
+            planningOnly: true,
+            fetched: false,
+            posted: false,
+            routed: false,
+            sent: false,
+          },
+        };
+        context.missionControl.internalRoutePromotionReviewPlan = {
+          id: promotionPlanId,
+          status: 'planning_only_ready_for_oracle_review',
+          owner: 'Builder',
+          target: {
+            role: 'oracle',
+            purpose: 'internal-route promotion no-send review',
+            message: 'Completed internal-route promotion/review plan remains visible context for the audit proof.',
+            body: 'Completed internal-route promotion/review plan remains visible context for the audit proof.',
+            manualExecutionRequired: true,
+            runtimeExecutes: false,
+            sendPerformed: false,
+            promotionPerformed: false,
+            routeFlip: false,
+          },
+          completedContext: {
+            commandCardAcceptanceId: commandCardId,
+            commandCardRoutePlanFollowThroughProofId: routePlanProofId,
+          },
+          sourceEvidence: [{ kind: 'completed_context', summary: `${promotionPlanId} remains completed visible context.` }],
+          jamesControlPoint: controlPoint,
+          preconditions: ['Worktree is clean.'],
+          refusalNoGoConditions: ['Any live route, send, POST, promotion, execution, credential, deploy, money, or trading effect.'],
+          audit: {
+            planningOnly: true,
+            manualOnly: true,
+            ...falseAuditFlags,
+          },
+        };
+        context.missionControl.internalRouteAuditReviewLaneProof = {
+          id: auditReviewProofId,
+          status: 'planning_only_ready_for_oracle_review',
+          owner: 'Builder',
+          review: {
+            target: 'oracle',
+            purpose: 'internal route/audit planning review',
+            message: 'Completed internal route/audit review-lane proof remains visible context for the decision-gate proof.',
+            body: 'Completed internal route/audit review-lane proof remains visible context for the decision-gate proof.',
+            manualExecutionRequired: true,
+            runtimeExecutes: false,
+            sendPerformed: false,
+            promotionPerformed: false,
+            routeFlip: false,
+          },
+          completedContext: {
+            commandCardAcceptanceId: commandCardId,
+            commandCardRoutePlanFollowThroughProofId: routePlanProofId,
+            internalRoutePromotionReviewPlanId: promotionPlanId,
+          },
+          sourceEvidence: [{ kind: 'completed_context', summary: `${auditReviewProofId} remains completed visible context.` }],
+          jamesControlPoint: controlPoint,
+          preconditions: ['Worktree is clean.'],
+          refusalNoGoConditions: ['Any live route, send, POST, promotion, execution, credential, deploy, money, or trading effect.'],
+          audit: {
+            planningOnly: true,
+            manualOnly: true,
+            ...falseAuditFlags,
+          },
+        };
+        context.missionControl.internalRouteAuditPromotionDecisionGateProof = {
+          id: decisionGateProofId,
+          status: 'planning_only_ready_for_oracle_review',
+          owner: 'Builder',
+          decisionGate: {
+            target: 'oracle',
+            reviewer: 'oracle',
+            purpose: 'internal route/audit promotion decision-gate review',
+            message: proofBody,
+            body: proofBody,
+            sourceProofId: auditReviewProofId,
+            manualExecutionRequired: true,
+            runtimeExecutes: false,
+            sendPerformed: false,
+            promotionPerformed: false,
+            routeFlip: false,
+          },
+          sourceEvidence: [
+            {
+              kind: 'completed_context',
+              summary: `Completed context retained: ${auditReviewProofId} remains planning_only_ready_for_oracle_review.`,
+            },
+            {
+              kind: 'comms',
+              sourceRef: 'architect#384',
+              commitHash: 'cbeb0d2f',
+              summary: 'cbeb0d2f checkpoint is source-specific evidence before exposing this decision-gate proof.',
+            },
+            {
+              kind: 'comms',
+              sourceRef: 'oracle#15',
+              commitHash: 'cbeb0d2f',
+              summary: 'Oracle acknowledged cbeb0d2f before this decision-gate proof is exposed.',
+            },
+          ],
+          completedContext: {
+            commandCardAcceptanceId: commandCardId,
+            commandCardRoutePlanFollowThroughProofId: routePlanProofId,
+            internalRoutePromotionReviewPlanId: promotionPlanId,
+            internalRouteAuditReviewLaneProofId: auditReviewProofId,
+          },
+          jamesControlPoint: controlPoint,
+          preconditions: [
+            'Worktree is clean.',
+            'mission-control-internal-route-audit-review-lane-proof-v0 is present as completed visible context.',
+            'The proof is read from loaded /squidrun/context only.',
+          ],
+          refusalNoGoConditions: [
+            'Dirty worktree or missing completed internal route/audit review-lane proof context.',
+            'Any request to start runtime, open browser/workbench, perform UI/status actions, fetch, POST, route, send, promote, flip routes, call provider/model, touch accounts/tokens/credentials/devices/users/external targets, deploy, move money, or touch trading.',
+          ],
+          audit: {
+            planningOnly: true,
+            manualOnly: true,
+            ...falseAuditFlags,
+          },
+        };
+        context.summary.happening = 'Working in squidrun on architect#400: display-only internal route/audit promotion decision-gate proof surface.';
+        context.summary.nextStep = `Oracle reviews ${decisionGateProofId}; Builder holds it as local context.`;
+        context.summary.commandCardAcceptance = `${commandCardId}: completed visible command-card context.`;
+        context.summary.commandCardRoutePlanFollowThroughProof = `${routePlanProofId}: proof_ready_for_oracle_review.`;
+        context.summary.internalRoutePromotionReviewPlan = `${promotionPlanId}: planning_only_ready_for_oracle_review.`;
+        context.summary.internalRouteAuditReviewLaneProof = `${auditReviewProofId}: planning_only_ready_for_oracle_review.`;
+        context.summary.internalRouteAuditPromotionDecisionGateProof = `${decisionGateProofId}: planning_only_ready_for_oracle_review.`;
+        context.summary.jamesAction = 'NONE';
+        context.summary.jamesActionReason = 'Local display-only Mission Control work; no runtime, route, send, provider/model, credential, deploy, money, or external action is needed.';
+        return context;
+      },
+    });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const proofText = harness.elements.internalRouteAuditPromotionDecisionGateProofSummary.textContent;
+    const auditReviewText = harness.elements.internalRouteAuditReviewLaneProofSummary.textContent;
+    const missionSurfaceText = collectMissionControlText(harness.elements);
+    expect(harness.calls.filter((call) => call.method === 'POST')).toHaveLength(0);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.calls.filter((call) => call.url === '/squidrun/context')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(auditReviewText).toContain(`Internal-route audit review-lane proof: ${auditReviewProofId}`);
+    expect(proofText).toContain(`Internal-route audit promotion decision-gate proof: ${decisionGateProofId}`);
+    expect(proofText).toContain('Status: planning_only_ready_for_oracle_review');
+    expect(proofText).toContain('Owner: Builder');
+    expect(proofText).toContain(`Completed contexts: ${commandCardId} + ${routePlanProofId} + ${promotionPlanId} + ${auditReviewProofId}`);
+    expect(proofText).toContain('Target: oracle');
+    expect(proofText).toContain('Purpose: internal route/audit promotion decision-gate review');
+    expect(proofText).toContain(`Decision object: ${auditReviewProofId} -> internal route/audit promotion decision-gate review`);
+    expect(proofText).toContain(`Message/body: ${proofBody}`);
+    expect(proofText).toContain('architect#384 cbeb0d2f');
+    expect(proofText).toContain('oracle#15 cbeb0d2f');
+    expect(proofText).toContain(`Control point: ${controlPoint}`);
+    expect(proofText).toContain('Preconditions: Worktree is clean. | mission-control-internal-route-audit-review-lane-proof-v0 is present as completed visible context. | The proof is read from loaded /squidrun/context only.');
+    expect(proofText).toContain('No-go: Dirty worktree or missing completed internal route/audit review-lane proof context. | Any request to start runtime, open browser/workbench, perform UI/status actions, fetch, POST, route, send, promote, flip routes, call provider/model, touch accounts/tokens/credentials/devices/users/external targets, deploy, move money, or touch trading.');
+    expect(proofText).toContain('Audit flags: planningOnly=true, manualOnly=true');
+    for (const key of Object.keys(falseAuditFlags)) {
+      expect(proofText).toContain(`${key}=false`);
+    }
+    expect(missionSurfaceText).toContain(auditReviewProofId);
+    expect(missionSurfaceText).toContain(decisionGateProofId);
     expect((missionSurfaceText.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
     expect(harness.elements.missionAnswer.textContent).not.toContain('JAMES ACTION:');
   });
