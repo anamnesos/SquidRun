@@ -96,6 +96,36 @@ const rows = [
   {
     sender: 'architect',
     target: 'builder',
+    timestampMs: 1779449000000,
+    rawBody: '(ARCHITECT #141): Current-session delegation: Mission Control continuity/memory first proof, next Mira map-backed slice. Build the smallest dry-run/no-side-effect proof that New Mira command context can load sourced restart/current-lane truth and reject stale-only summaries. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779448950000,
+    rawBody: '(ARCHITECT #140): Checkpoint: unrelated Mission Control note committed as cafe123 Later note. It mentions prior bf82cea4 Advance Mission Control continuity memory boundary; proof PASS; JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'builder',
+    target: 'architect',
+    timestampMs: 1779448920000,
+    rawBody: '(BUILDER #54): ACK checkpoint cafe123 Later note while referencing prior bf82cea4 Advance Mission Control continuity memory boundary. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779448880000,
+    rawBody: '(ARCHITECT #139): Checkpoint: post-5b3e0386 continuity/memory next-move advancement committed as bf82cea4 Advance Mission Control continuity memory boundary. Oracle #43 PASS accepted; pre-commit gates passed. Clean-head proof: worktree clean, context test PASS 2/2, runtime TypeScript noEmit PASS. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'builder',
+    target: 'architect',
+    timestampMs: 1779448870000,
+    rawBody: '(BUILDER #52): ACK checkpoint bf82cea4 Advance Mission Control continuity memory boundary. Clean-head proof noted: nextStep/drafts/preview advance to continuity/memory sourced restart/current-lane planning, and dirty fixture blocks advancement. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
     timestampMs: 1779448600000,
     rawBody: '(ARCHITECT #131): Current-session delegation: post-5b3e0386 next-move advancement. Clean Mission Control should treat the completed tool/app action plan as context and advance to the next roadmap/map boundary: continuity and memory, specifically New Mira command context loading sourced restart/current-lane truth and rejecting stale-only summaries. No live memory import, blind .squidrun copy, writes/state import, restart/process start, browsing, sends, routes, POST, UI/status execution, runtime start, provider/model call, credential access, deploy, or money. JAMES ACTION: NONE.'
   },
@@ -301,13 +331,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       staleHandoff: expect.objectContaining({
         status: 'stale_superseded',
         sourceRef: 'architect#11',
-        supersededBySourceRef: 'architect#131',
+        supersededBySourceRef: 'architect#141',
         supersededByCommit: '7ff9fe8d Add Mira internal pane activation attempt seam',
       }),
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'stale_handoff_superseded',
-      preferredSourceRef: 'architect#131',
+      preferredSourceRef: 'architect#141',
       committedSeam: '7ff9fe8d Add Mira internal pane activation attempt seam',
       staleSourceRef: 'architect#11',
     }));
@@ -316,7 +346,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       commitHash: '7ff9fe8d',
     }));
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#131',
+      sourceRef: 'architect#141',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -349,7 +379,15 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       sourceRef: 'builder#49',
       commitHash: '5b3e0386',
     }));
-    expect(answer).toContain('Project/lane: squidrun / architect#131.');
+    expect(context.recentComms.latestContinuityMemoryBoundaryCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#139',
+      commitHash: 'bf82cea4',
+    }));
+    expect(context.recentComms.latestContinuityMemoryBoundaryAck).toEqual(expect.objectContaining({
+      sourceRef: 'builder#52',
+      commitHash: 'bf82cea4',
+    }));
+    expect(answer).toContain('Project/lane: squidrun / architect#141.');
     expect(answer).toContain('Continuity and memory is the next map boundary');
     expect(answer).toContain('sourced restart/current-lane truth');
     expect(answer).toContain('reject stale-only summaries');
@@ -358,6 +396,10 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(answer).toContain('next boundary is tool/app action planning from the roadmap, not execution');
     expect(answer).toContain('Completed tool/app action-plan evidence: checkpoint architect#129 5b3e0386 and Builder ACK builder#49 5b3e0386');
     expect(answer).toContain('active next boundary is continuity/memory sourced restart/current-lane proof planning');
+    expect(answer).toContain('Continuity/memory proof: mission-control-continuity-memory-proof-v0');
+    expect(answer).toContain('current-lane truth architect#11 is loaded_but_stale_superseded');
+    expect(answer).toContain('stale-only summary refused=true');
+    expect(answer).toContain('audit proofOnly=true, imported=false, copied=false, wrote=false, restarted=false, processStarted=false, browsed=false, sent=false, routed=false, posted=false, runtimeStarted=false, providerInvoked=false, modelInvoked=false, accountAccessed=false, tokenAccessed=false, credentialAccessed=false, deviceTouched=false, userTargeted=false, externalTargeted=false, deployed=false, moneyMovement=false, tradingTouched=false');
     expect(answer).toContain('Completed tool/app action plan context: local_squidrun_evidence_review -> Inspect local SquidRun Mission Control evidence and prepare the first app/tool action candidate for James review.');
     expect(answer).toContain('audit planningOnly=true, executed=false, browsed=false, appToolCalled=false, routed=false, sent=false, runtimeStarted=false, credentialAccessed=false, deployed=false, moneyMovement=false');
     expect(answer).not.toContain('Mission Control v1 dry-run coordination/follow-through route planning is the next map-backed product step');
@@ -386,6 +428,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(context.summary.nextStep).toContain('sourced restart/current-lane truth');
     expect(context.summary.nextStep).toContain('James control point');
     expect(context.summary.toolAppActionPlan).toBe('mission-control-tool-app-action-plan-v0: local_squidrun_evidence_review -> Inspect local SquidRun Mission Control evidence and prepare the first app/tool action candidate for James review.; owner Builder; James must explicitly review and approve a separate future request before any real app/tool execution.');
+    expect(context.summary.continuityMemoryProof).toBe('mission-control-continuity-memory-proof-v0: current-lane truth architect#11 is loaded_but_stale_superseded; stale-only summary refused=true; James must review and approve a separate future continuity promotion before New Mira imports, copies, writes, restarts, or promotes any memory state.');
     expect(context.missionControl.toolAppActionPlan).toEqual({
       id: 'mission-control-tool-app-action-plan-v0',
       status: 'planning_only',
@@ -407,7 +450,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         },
         {
           kind: 'comms',
-          sourceRef: 'architect#131',
+          sourceRef: 'architect#141',
           summary: 'Current Architect delegation asks Mission Control to treat the tool/app plan as completed context and advance to continuity/memory planning.',
         },
         {
@@ -462,12 +505,111 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         moneyMovement: false,
       },
     });
+    expect(context.missionControl.continuityMemoryProof).toEqual({
+      id: 'mission-control-continuity-memory-proof-v0',
+      status: 'proof_only',
+      owner: 'Builder',
+      sourceEvidence: [
+        {
+          kind: 'file',
+          path: 'ui/modules/mira-core/typed-restart-continuity-context-v0.js',
+          summary: 'Typed restart continuity context is the current sourced restart/current-lane truth contract.',
+        },
+        {
+          kind: 'file',
+          path: 'ui/modules/mira-core/mira-presence-runtime-state-v0.js',
+          summary: 'Presence runtime state is current SquidRun continuity state, not a New Mira live import.',
+        },
+        {
+          kind: 'file',
+          path: 'ui/modules/startup-ai-briefing.js',
+          summary: 'Startup briefing materializes sourced restart context and stale markers for current SquidRun startup.',
+        },
+        {
+          kind: 'file',
+          path: 'mira/runtime/src/status.ts',
+          summary: 'New Mira runtime status exposes continuityLoaded/liveDataImported truth as read-only status provenance.',
+        },
+        {
+          kind: 'test',
+          path: 'ui/__tests__/mira-core-typed-restart-continuity-context-v0.test.js',
+          summary: 'Focused continuity test coverage anchors sourced restart/current-lane behavior.',
+        },
+        {
+          kind: 'comms',
+          sourceRef: 'architect#139',
+          commitHash: 'bf82cea4',
+          summary: 'Continuity/memory boundary advancement is committed before this proof is exposed.',
+        },
+        {
+          kind: 'comms',
+          sourceRef: 'builder#52',
+          commitHash: 'bf82cea4',
+          summary: 'Builder acknowledged the continuity/memory boundary before this proof record.',
+        },
+      ],
+      currentLaneTruth: {
+        sourcePath: '.squidrun/handoffs/current-lane.json',
+        loaded: true,
+        sourceRef: 'architect#11',
+        objective: 'finish the existing 3-file review/no-send gate dirty slice without broadening it:',
+        nextAction: 'Continue active lane: finish the existing 3-file review/no-send gate dirty slice without broadening it:',
+        generatedAt: '2026-05-22T09:51:49.610Z',
+        authority: 'loaded_but_stale_superseded',
+      },
+      staleOnlySummaryRefusal: {
+        refused: true,
+        staleSourceRef: 'architect#11',
+        staleObjective: 'finish the existing 3-file review/no-send gate dirty slice without broadening it:',
+        reason: 'The current-lane file is loaded and visible, but Mission Control refuses to treat that stale-only summary as active because clean later checkpoint/ACK/delegation evidence supersedes architect#11.',
+      },
+      jamesControlPoint: 'James must review and approve a separate future continuity promotion before New Mira imports, copies, writes, restarts, or promotes any memory state.',
+      preconditions: [
+        'Worktree is clean.',
+        'Stale architect#11 current-lane truth is loaded with provenance.',
+        'Later committed Mission Control chain through bf82cea4 is source-specific and acknowledged.',
+        'Continuity evidence is read as local proof context only.',
+      ],
+      refusalNoGoConditions: [
+        'Dirty worktree or missing source-specific bf82cea4 checkpoint/ACK evidence.',
+        'Any stale-only summary without later sourced checkpoint/ACK/delegation support.',
+        'Any request to import state, copy .squidrun, write memory, restart a process, browse, route, send, POST, call runtime/provider/model, touch credentials, deploy, move money, or touch trading.',
+        "Any continuity promotion without James's explicit review and approval.",
+      ],
+      audit: {
+        proofOnly: true,
+        planningOnly: true,
+        imported: false,
+        copied: false,
+        wrote: false,
+        restarted: false,
+        processStarted: false,
+        browsed: false,
+        appToolCalled: false,
+        sent: false,
+        routed: false,
+        posted: false,
+        runtimeStarted: false,
+        providerInvoked: false,
+        modelInvoked: false,
+        accountAccessed: false,
+        tokenAccessed: false,
+        credentialAccessed: false,
+        deviceTouched: false,
+        userTargeted: false,
+        externalTargeted: false,
+        deployed: false,
+        moneyMovement: false,
+        tradingTouched: false,
+      },
+    });
     expect(context.missionControl.evidence).toEqual(expect.arrayContaining([
       'docs/mira-north-star-roadmap.md',
       'ui/modules/mira-direct-channel-readiness.js',
       'ui/__tests__/mira-direct-channel-readiness.test.js',
       'ui/modules/mira-core/typed-restart-continuity-context-v0.js',
       'ui/modules/mira-core/mira-presence-runtime-state-v0.js',
+      'mira/runtime/src/status.ts',
     ]));
     expect(context.missionControl.coordinationDrafts).toEqual([
       {
@@ -532,7 +674,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     }));
     expect(context.dirtyWork.summary).toContain('1 changed file(s)');
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#131',
+      sourceRef: 'architect#141',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -560,9 +702,17 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       sourceRef: 'builder#49',
       commitHash: '5b3e0386',
     }));
+    expect(context.recentComms.latestContinuityMemoryBoundaryCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#139',
+      commitHash: 'bf82cea4',
+    }));
+    expect(context.recentComms.latestContinuityMemoryBoundaryAck).toEqual(expect.objectContaining({
+      sourceRef: 'builder#52',
+      commitHash: 'bf82cea4',
+    }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'current_handoff',
-      preferredSourceRef: 'architect#131',
+      preferredSourceRef: 'architect#141',
       staleSourceRef: null,
     }));
     expect(context.lane.staleHandoff).toBeNull();
@@ -570,11 +720,14 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(context.summary.nextStep).not.toContain('tool/app action plan');
     expect(context.summary.nextStep).not.toContain('continuity/memory proof');
     expect(context.summary.toolAppActionPlan).toBeNull();
+    expect(context.summary.continuityMemoryProof).toBeNull();
     expect(context.missionControl.toolAppActionPlan).toBeNull();
+    expect(context.missionControl.continuityMemoryProof).toBeNull();
     expect(answer).toContain('Dirty work: 1 changed file(s)');
     expect(answer).not.toContain('Tool/app action plan: local_squidrun_evidence_review');
     expect(answer).not.toContain('Completed tool/app action plan context: local_squidrun_evidence_review');
     expect(answer).not.toContain('Continuity and memory is the next map boundary');
+    expect(answer).not.toContain('Continuity/memory proof: mission-control-continuity-memory-proof-v0');
     expect(answer).not.toContain('Stale handoff: architect#11');
     expect(answer.match(/^JAMES ACTION:/gm)).toHaveLength(1);
   });

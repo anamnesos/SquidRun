@@ -10,6 +10,7 @@ const v1RoutePreviewAlignmentCommitHash = "e82f1a54";
 const commsEvidenceWindowCommitHash = "4bfe771c";
 const directChannelReadinessContractCommitHash = "22e876dc";
 const toolAppActionPlanProofCommitHash = "5b3e0386";
+const continuityMemoryBoundaryCommitHash = "bf82cea4";
 const commsHistoryEvidenceLimit = 200;
 
 export type SquidRunProjectContext = {
@@ -149,6 +150,18 @@ export type SquidRunProjectContext = {
       timestampMs: number | null;
       commitHash: string | null;
     } | null;
+    latestContinuityMemoryBoundaryCheckpoint: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestContinuityMemoryBoundaryAck: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
     oracleBenchmark: {
       sourceRef: string | null;
       excerpt: string | null;
@@ -199,6 +212,62 @@ export type SquidRunProjectContext = {
         moneyMovement: false;
       };
     };
+    continuityMemoryProof: null | {
+      id: "mission-control-continuity-memory-proof-v0";
+      status: "proof_only";
+      owner: "Builder";
+      sourceEvidence: Array<{
+        kind: "file" | "test" | "comms" | "summary";
+        path?: string;
+        sourceRef?: string;
+        commitHash?: string;
+        summary: string;
+      }>;
+      currentLaneTruth: {
+        sourcePath: ".squidrun/handoffs/current-lane.json";
+        loaded: boolean;
+        sourceRef: string | null;
+        objective: string | null;
+        nextAction: string | null;
+        generatedAt: string | null;
+        authority: "loaded_but_stale_superseded";
+      };
+      staleOnlySummaryRefusal: {
+        refused: true;
+        staleSourceRef: string | null;
+        staleObjective: string | null;
+        reason: string;
+      };
+      jamesControlPoint: string;
+      preconditions: string[];
+      refusalNoGoConditions: string[];
+      audit: {
+        proofOnly: true;
+        planningOnly: true;
+        imported: false;
+        copied: false;
+        wrote: false;
+        restarted: false;
+        processStarted: false;
+        browsed: false;
+        appToolCalled: false;
+        sent: false;
+        routed: false;
+        posted: false;
+        runtimeStarted: false;
+        providerInvoked: false;
+        modelInvoked: false;
+        accountAccessed: false;
+        tokenAccessed: false;
+        credentialAccessed: false;
+        deviceTouched: false;
+        userTargeted: false;
+        externalTargeted: false;
+        deployed: false;
+        moneyMovement: false;
+        tradingTouched: false;
+      };
+    };
     internalRoutePreview: {
       status: "reviewed_preview_only";
       selectedDraftTarget: "architect" | "builder" | "oracle";
@@ -229,6 +298,7 @@ export type SquidRunProjectContext = {
     happening: string;
     nextStep: string;
     toolAppActionPlan: string | null;
+    continuityMemoryProof: string | null;
     jamesAction: "NONE" | "DO THIS";
     jamesActionReason: string;
   };
@@ -608,6 +678,18 @@ function isToolAppActionPlanAckBody(rawBody: string | null): boolean {
     && /JAMES ACTION:\s*NONE/i.test(body);
 }
 
+function isContinuityMemoryBoundaryCheckpointBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /Checkpoint:\s*post-5b3e0386 continuity\/memory next-move advancement committed as [`'"]?bf82cea4 Advance Mission Control continuity memory boundary/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
+function isContinuityMemoryBoundaryAckBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /^\(BUILDER\s+#\d+\):\s*ACK checkpoint [`'"]?bf82cea4 Advance Mission Control continuity memory boundary/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
 function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentComms"] {
   const scriptPath = path.join(squidrunRoot, "ui", "scripts", "hm-comms.js");
   if (!fs.existsSync(scriptPath)) {
@@ -625,6 +707,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestDirectChannelReadinessAck: null,
       latestToolAppActionPlanCheckpoint: null,
       latestToolAppActionPlanAck: null,
+      latestContinuityMemoryBoundaryCheckpoint: null,
+      latestContinuityMemoryBoundaryAck: null,
       oracleBenchmark: null,
     };
   }
@@ -714,6 +798,16 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       return trimText(row.sender) === "builder"
         && isToolAppActionPlanAckBody(body);
     });
+    const continuityMemoryBoundaryCheckpoint = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "architect"
+        && isContinuityMemoryBoundaryCheckpointBody(body);
+    });
+    const continuityMemoryBoundaryAck = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "builder"
+        && isContinuityMemoryBoundaryAckBody(body);
+    });
     const oracleBenchmark = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "oracle" && /benchmark|holy-shit|not impressive|current New Mira/i.test(body);
@@ -733,6 +827,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestDirectChannelReadinessAck: commsSummary(directChannelReadinessAck || null, 260, directChannelReadinessContractCommitHash),
       latestToolAppActionPlanCheckpoint: commsSummary(toolAppActionPlanCheckpoint || null, 260, toolAppActionPlanProofCommitHash),
       latestToolAppActionPlanAck: commsSummary(toolAppActionPlanAck || null, 260, toolAppActionPlanProofCommitHash),
+      latestContinuityMemoryBoundaryCheckpoint: commsSummary(continuityMemoryBoundaryCheckpoint || null, 260, continuityMemoryBoundaryCommitHash),
+      latestContinuityMemoryBoundaryAck: commsSummary(continuityMemoryBoundaryAck || null, 260, continuityMemoryBoundaryCommitHash),
       oracleBenchmark: commsSummary(oracleBenchmark || null),
     };
   } catch {
@@ -750,6 +846,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestDirectChannelReadinessAck: null,
       latestToolAppActionPlanCheckpoint: null,
       latestToolAppActionPlanAck: null,
+      latestContinuityMemoryBoundaryCheckpoint: null,
+      latestContinuityMemoryBoundaryAck: null,
       oracleBenchmark: null,
     };
   }
@@ -838,6 +936,9 @@ function buildMissionControl(input: {
   const continuityMemoryPlanningReady = toolAppActionPlanningReady
     && input.recentComms.latestToolAppActionPlanCheckpoint?.commitHash === toolAppActionPlanProofCommitHash
     && input.recentComms.latestToolAppActionPlanAck?.commitHash === toolAppActionPlanProofCommitHash;
+  const continuityMemoryProofReady = continuityMemoryPlanningReady
+    && input.recentComms.latestContinuityMemoryBoundaryCheckpoint?.commitHash === continuityMemoryBoundaryCommitHash
+    && input.recentComms.latestContinuityMemoryBoundaryAck?.commitHash === continuityMemoryBoundaryCommitHash;
   const laneLabel = continuationIsStaleSuperseded
     ? continuationDecision.preferredSourceRef || input.recentComms.latestBuilderInstruction?.sourceRef || "current continuation"
     : input.recentComms.latestBuilderInstruction?.sourceRef
@@ -960,6 +1061,106 @@ function buildMissionControl(input: {
         },
       }
     : null;
+  const continuityMemoryProof: SquidRunProjectContext["missionControl"]["continuityMemoryProof"] = continuityMemoryProofReady
+    ? {
+        id: "mission-control-continuity-memory-proof-v0",
+        status: "proof_only",
+        owner: "Builder",
+        sourceEvidence: [
+          {
+            kind: "file",
+            path: "ui/modules/mira-core/typed-restart-continuity-context-v0.js",
+            summary: "Typed restart continuity context is the current sourced restart/current-lane truth contract.",
+          },
+          {
+            kind: "file",
+            path: "ui/modules/mira-core/mira-presence-runtime-state-v0.js",
+            summary: "Presence runtime state is current SquidRun continuity state, not a New Mira live import.",
+          },
+          {
+            kind: "file",
+            path: "ui/modules/startup-ai-briefing.js",
+            summary: "Startup briefing materializes sourced restart context and stale markers for current SquidRun startup.",
+          },
+          {
+            kind: "file",
+            path: "mira/runtime/src/status.ts",
+            summary: "New Mira runtime status exposes continuityLoaded/liveDataImported truth as read-only status provenance.",
+          },
+          {
+            kind: "test",
+            path: "ui/__tests__/mira-core-typed-restart-continuity-context-v0.test.js",
+            summary: "Focused continuity test coverage anchors sourced restart/current-lane behavior.",
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestContinuityMemoryBoundaryCheckpoint?.sourceRef || "not found",
+            commitHash: continuityMemoryBoundaryCommitHash,
+            summary: "Continuity/memory boundary advancement is committed before this proof is exposed.",
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestContinuityMemoryBoundaryAck?.sourceRef || "not found",
+            commitHash: continuityMemoryBoundaryCommitHash,
+            summary: "Builder acknowledged the continuity/memory boundary before this proof record.",
+          },
+        ],
+        currentLaneTruth: {
+          sourcePath: ".squidrun/handoffs/current-lane.json",
+          loaded: input.lane.loaded,
+          sourceRef: input.lane.sourceRef,
+          objective: input.lane.objective,
+          nextAction: input.lane.nextAction,
+          generatedAt: input.lane.generatedAt,
+          authority: "loaded_but_stale_superseded",
+        },
+        staleOnlySummaryRefusal: {
+          refused: true,
+          staleSourceRef: continuationDecision.staleSourceRef,
+          staleObjective: continuationDecision.staleObjective,
+          reason: "The current-lane file is loaded and visible, but Mission Control refuses to treat that stale-only summary as active because clean later checkpoint/ACK/delegation evidence supersedes architect#11.",
+        },
+        jamesControlPoint: "James must review and approve a separate future continuity promotion before New Mira imports, copies, writes, restarts, or promotes any memory state.",
+        preconditions: [
+          "Worktree is clean.",
+          "Stale architect#11 current-lane truth is loaded with provenance.",
+          "Later committed Mission Control chain through bf82cea4 is source-specific and acknowledged.",
+          "Continuity evidence is read as local proof context only.",
+        ],
+        refusalNoGoConditions: [
+          "Dirty worktree or missing source-specific bf82cea4 checkpoint/ACK evidence.",
+          "Any stale-only summary without later sourced checkpoint/ACK/delegation support.",
+          "Any request to import state, copy .squidrun, write memory, restart a process, browse, route, send, POST, call runtime/provider/model, touch credentials, deploy, move money, or touch trading.",
+          "Any continuity promotion without James's explicit review and approval.",
+        ],
+        audit: {
+          proofOnly: true,
+          planningOnly: true,
+          imported: false,
+          copied: false,
+          wrote: false,
+          restarted: false,
+          processStarted: false,
+          browsed: false,
+          appToolCalled: false,
+          sent: false,
+          routed: false,
+          posted: false,
+          runtimeStarted: false,
+          providerInvoked: false,
+          modelInvoked: false,
+          accountAccessed: false,
+          tokenAccessed: false,
+          credentialAccessed: false,
+          deviceTouched: false,
+          userTargeted: false,
+          externalTargeted: false,
+          deployed: false,
+          moneyMovement: false,
+          tradingTouched: false,
+        },
+      }
+    : null;
   const oracleLine = input.recentComms.oracleBenchmark?.sourceRef
     ? `Benchmark gate: ${input.recentComms.oracleBenchmark.sourceRef} says current New Mira is not impressive yet; the demo must prove command-layer usefulness.`
     : `Benchmark gate: ${hardTruth} ${firstDemo}`;
@@ -974,6 +1175,9 @@ function buildMissionControl(input: {
                 `Completed direct-channel readiness evidence: checkpoint ${input.recentComms.latestDirectChannelReadinessCheckpoint?.sourceRef || "not found"} ${directChannelReadinessContractCommitHash} and Builder ACK ${input.recentComms.latestDirectChannelReadinessAck?.sourceRef || "not found"} ${directChannelReadinessContractCommitHash}; the next boundary is tool/app action planning from the roadmap, not execution.`,
                 ...(continuityMemoryPlanningReady
                   ? [`Completed tool/app action-plan evidence: checkpoint ${input.recentComms.latestToolAppActionPlanCheckpoint?.sourceRef || "not found"} ${toolAppActionPlanProofCommitHash} and Builder ACK ${input.recentComms.latestToolAppActionPlanAck?.sourceRef || "not found"} ${toolAppActionPlanProofCommitHash}; the active next boundary is continuity/memory sourced restart/current-lane proof planning.`]
+                  : []),
+                ...(continuityMemoryProof
+                  ? [`Continuity/memory proof: ${continuityMemoryProof.id}; owner ${continuityMemoryProof.owner}; current-lane truth ${continuityMemoryProof.currentLaneTruth.sourceRef || "not found"} is ${continuityMemoryProof.currentLaneTruth.authority}; stale-only summary refused=${continuityMemoryProof.staleOnlySummaryRefusal.refused}; James control point: ${continuityMemoryProof.jamesControlPoint}; audit proofOnly=${continuityMemoryProof.audit.proofOnly}, imported=${continuityMemoryProof.audit.imported}, copied=${continuityMemoryProof.audit.copied}, wrote=${continuityMemoryProof.audit.wrote}, restarted=${continuityMemoryProof.audit.restarted}, processStarted=${continuityMemoryProof.audit.processStarted}, browsed=${continuityMemoryProof.audit.browsed}, sent=${continuityMemoryProof.audit.sent}, routed=${continuityMemoryProof.audit.routed}, posted=${continuityMemoryProof.audit.posted}, runtimeStarted=${continuityMemoryProof.audit.runtimeStarted}, providerInvoked=${continuityMemoryProof.audit.providerInvoked}, modelInvoked=${continuityMemoryProof.audit.modelInvoked}, accountAccessed=${continuityMemoryProof.audit.accountAccessed}, tokenAccessed=${continuityMemoryProof.audit.tokenAccessed}, credentialAccessed=${continuityMemoryProof.audit.credentialAccessed}, deviceTouched=${continuityMemoryProof.audit.deviceTouched}, userTargeted=${continuityMemoryProof.audit.userTargeted}, externalTargeted=${continuityMemoryProof.audit.externalTargeted}, deployed=${continuityMemoryProof.audit.deployed}, moneyMovement=${continuityMemoryProof.audit.moneyMovement}, tradingTouched=${continuityMemoryProof.audit.tradingTouched}.`]
                   : []),
                 toolAppActionPlan
                   ? `${continuityMemoryPlanningReady ? "Completed tool/app action plan context" : "Tool/app action plan"}: ${toolAppActionPlan.target.actionCategory} -> ${toolAppActionPlan.target.action}; owner ${toolAppActionPlan.owner}; James control point: ${toolAppActionPlan.jamesControlPoint}; audit planningOnly=${toolAppActionPlan.audit.planningOnly}, executed=${toolAppActionPlan.audit.executed}, browsed=${toolAppActionPlan.audit.browsed}, appToolCalled=${toolAppActionPlan.audit.appToolCalled}, routed=${toolAppActionPlan.audit.routed}, sent=${toolAppActionPlan.audit.sent}, runtimeStarted=${toolAppActionPlan.audit.runtimeStarted}, credentialAccessed=${toolAppActionPlan.audit.credentialAccessed}, deployed=${toolAppActionPlan.audit.deployed}, moneyMovement=${toolAppActionPlan.audit.moneyMovement}.`
@@ -1052,6 +1256,7 @@ function buildMissionControl(input: {
       ? [
           "ui/modules/mira-core/typed-restart-continuity-context-v0.js",
           "ui/modules/mira-core/mira-presence-runtime-state-v0.js",
+          "mira/runtime/src/status.ts",
         ]
       : []),
     "docs/mira-north-star-roadmap.md",
@@ -1083,6 +1288,7 @@ function buildMissionControl(input: {
     jamesActionReason,
     coordinationDrafts,
     toolAppActionPlan,
+    continuityMemoryProof,
     internalRoutePreview: {
       status: "reviewed_preview_only",
       selectedDraftTarget: selectedDraft.target,
@@ -1180,6 +1386,9 @@ export function getSquidRunContext(
       nextStep: missionControl.nextTeamMove,
       toolAppActionPlan: missionControl.toolAppActionPlan
         ? `${missionControl.toolAppActionPlan.id}: ${missionControl.toolAppActionPlan.target.actionCategory} -> ${missionControl.toolAppActionPlan.target.action}; owner ${missionControl.toolAppActionPlan.owner}; ${missionControl.toolAppActionPlan.jamesControlPoint}`
+        : null,
+      continuityMemoryProof: missionControl.continuityMemoryProof
+        ? `${missionControl.continuityMemoryProof.id}: current-lane truth ${missionControl.continuityMemoryProof.currentLaneTruth.sourceRef || "not found"} is ${missionControl.continuityMemoryProof.currentLaneTruth.authority}; stale-only summary refused=${missionControl.continuityMemoryProof.staleOnlySummaryRefusal.refused}; ${missionControl.continuityMemoryProof.jamesControlPoint}`
         : null,
       jamesAction: "NONE",
       jamesActionReason: missionControl.jamesActionReason,
