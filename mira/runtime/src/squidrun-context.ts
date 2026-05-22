@@ -12,6 +12,7 @@ const directChannelReadinessContractCommitHash = "22e876dc";
 const toolAppActionPlanProofCommitHash = "5b3e0386";
 const continuityMemoryBoundaryCommitHash = "bf82cea4";
 const continuityMemoryProofCommitHash = "d0bffd58";
+const cleanContextSelectionCommitHash = "13c90817";
 const commsHistoryEvidenceLimit = 500;
 
 export type SquidRunProjectContext = {
@@ -181,6 +182,18 @@ export type SquidRunProjectContext = {
       timestampMs: number | null;
       commitHash: string | null;
     } | null;
+    latestCleanContextSelectionCheckpoint: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestCleanContextSelectionOracleAck: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
     oracleBenchmark: {
       sourceRef: string | null;
       excerpt: string | null;
@@ -287,6 +300,54 @@ export type SquidRunProjectContext = {
         tradingTouched: false;
       };
     };
+    demoWorkbenchProof: null | {
+      id: "mission-control-demo-workbench-proof-v0";
+      status: "proof_planning_only";
+      owner: "Builder";
+      target: {
+        surface: "local_mission_control_answer_surface";
+        question: "what is happening here, and what should happen next?";
+        action: string;
+      };
+      sourceEvidence: Array<{
+        kind: "file" | "comms" | "summary" | "completed_context";
+        path?: string;
+        sourceRef?: string;
+        commitHash?: string;
+        summary: string;
+      }>;
+      completedContext: {
+        toolAppActionPlanId: "mission-control-tool-app-action-plan-v0";
+        continuityMemoryProofId: "mission-control-continuity-memory-proof-v0";
+      };
+      expectedJamesVisibleChecks: string[];
+      jamesControlPoint: string;
+      preconditions: string[];
+      refusalNoGoConditions: string[];
+      audit: {
+        proofOnly: true;
+        planningOnly: true;
+        runtimeStarted: false;
+        browserOpened: false;
+        workbenchOpened: false;
+        uiActionPerformed: false;
+        fetched: false;
+        posted: false;
+        routed: false;
+        sent: false;
+        providerInvoked: false;
+        modelInvoked: false;
+        accountAccessed: false;
+        tokenAccessed: false;
+        credentialAccessed: false;
+        deviceTouched: false;
+        userTargeted: false;
+        externalTargeted: false;
+        deployed: false;
+        moneyMovement: false;
+        tradingTouched: false;
+      };
+    };
     internalRoutePreview: {
       status: "reviewed_preview_only";
       selectedDraftTarget: "architect" | "builder" | "oracle";
@@ -318,6 +379,7 @@ export type SquidRunProjectContext = {
     nextStep: string;
     toolAppActionPlan: string | null;
     continuityMemoryProof: string | null;
+    demoWorkbenchProof: string | null;
     jamesAction: "NONE" | "DO THIS";
     jamesActionReason: string;
   };
@@ -738,6 +800,19 @@ function isContinuityMemoryProofOracleAckBody(rawBody: string | null): boolean {
     && /JAMES ACTION:\s*NONE/i.test(body);
 }
 
+function isCleanContextSelectionCheckpointBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /Checkpoint:\s*committed #169 clean-context selector hardening as [`'"]?13c90817 Harden Mission Control clean context selection/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
+function isCleanContextSelectionOracleAckBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /^\(ORACLE\s+#\d+\):\s*Received [`'"]?13c90817 checkpoint/i.test(body)
+    && /clean-context selector hardening/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
 function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentComms"] {
   const scriptPath = path.join(squidrunRoot, "ui", "scripts", "hm-comms.js");
   if (!fs.existsSync(scriptPath)) {
@@ -760,6 +835,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestContinuityMemoryProofCheckpoint: null,
       latestContinuityMemoryProofAck: null,
       latestContinuityMemoryProofOracleAck: null,
+      latestCleanContextSelectionCheckpoint: null,
+      latestCleanContextSelectionOracleAck: null,
       oracleBenchmark: null,
     };
   }
@@ -870,6 +947,17 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       return trimText(row.sender) === "oracle"
         && isContinuityMemoryProofOracleAckBody(body);
     });
+    const cleanContextSelectionCheckpoint = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "architect"
+        && trimText(row.target) === "builder"
+        && isCleanContextSelectionCheckpointBody(body);
+    });
+    const cleanContextSelectionOracleAck = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "oracle"
+        && isCleanContextSelectionOracleAckBody(body);
+    });
     const oracleBenchmark = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "oracle" && /benchmark|holy-shit|not impressive|current New Mira/i.test(body);
@@ -894,6 +982,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestContinuityMemoryProofCheckpoint: commsSummary(continuityMemoryProofCheckpoint || null, 260, continuityMemoryProofCommitHash),
       latestContinuityMemoryProofAck: commsSummary(continuityMemoryProofAck || null, 260, continuityMemoryProofCommitHash),
       latestContinuityMemoryProofOracleAck: commsSummary(continuityMemoryProofOracleAck || null, 260, continuityMemoryProofCommitHash),
+      latestCleanContextSelectionCheckpoint: commsSummary(cleanContextSelectionCheckpoint || null, 260, cleanContextSelectionCommitHash),
+      latestCleanContextSelectionOracleAck: commsSummary(cleanContextSelectionOracleAck || null, 260, cleanContextSelectionCommitHash),
       oracleBenchmark: commsSummary(oracleBenchmark || null),
     };
   } catch {
@@ -916,6 +1006,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestContinuityMemoryProofCheckpoint: null,
       latestContinuityMemoryProofAck: null,
       latestContinuityMemoryProofOracleAck: null,
+      latestCleanContextSelectionCheckpoint: null,
+      latestCleanContextSelectionOracleAck: null,
       oracleBenchmark: null,
     };
   }
@@ -1011,6 +1103,9 @@ function buildMissionControl(input: {
     && input.recentComms.latestContinuityMemoryProofCheckpoint?.commitHash === continuityMemoryProofCommitHash
     && input.recentComms.latestContinuityMemoryProofAck?.commitHash === continuityMemoryProofCommitHash
     && input.recentComms.latestContinuityMemoryProofOracleAck?.commitHash === continuityMemoryProofCommitHash;
+  const demoWorkbenchProofReady = demoWorkbenchPlanningReady
+    && input.recentComms.latestCleanContextSelectionCheckpoint?.commitHash === cleanContextSelectionCommitHash
+    && input.recentComms.latestCleanContextSelectionOracleAck?.commitHash === cleanContextSelectionCommitHash;
   const laneLabel = continuationIsStaleSuperseded
     ? continuationDecision.preferredSourceRef || input.recentComms.latestBuilderInstruction?.sourceRef || "current continuation"
     : input.recentComms.latestBuilderInstruction?.sourceRef
@@ -1018,7 +1113,9 @@ function buildMissionControl(input: {
     || input.lane.status
     || "local lane";
   const laneText = continuationIsStaleSuperseded
-    ? demoWorkbenchPlanningReady
+    ? demoWorkbenchProofReady
+      ? "Mission Control demo/workbench proof is inspectable as mission-control-demo-workbench-proof-v0: James can review the local Mission Control answer/surface target for what is happening here and what should happen next from local evidence; no runtime, browser, workbench, UI, status, write, POST, route, send, or provider action happens here."
+      : demoWorkbenchPlanningReady
       ? "First inspectable Mission Control demo/workbench proof planning is the next map boundary: James should be able to inspect the local Mission Control answer/surface for what is happening here and what should happen next from local evidence; nothing starts, opens a browser, imports, writes, posts, routes, sends, or executes here."
       : continuityMemoryPlanningReady
       ? "Continuity and memory is the next map boundary: New Mira command context should load sourced restart/current-lane truth and reject stale-only summaries; the completed tool/app action plan remains context, and nothing imports, writes, restarts, or executes here."
@@ -1039,7 +1136,9 @@ function buildMissionControl(input: {
   const firstDemo = input.roadmap.firstDemo
     || "First inspectable demo: Mira Mission Control.";
   const nextTeamMove = continuationIsStaleSuperseded
-    ? demoWorkbenchPlanningReady
+    ? demoWorkbenchProofReady
+      ? "Builder should review mission-control-demo-workbench-proof-v0 as the first inspectable Mission Control demo/workbench proof record from the local answer/surface, keep completed toolAppActionPlan and continuityMemoryProof as context, and wait for James approval before any runtime, browser, workbench, UI, write, POST, route, send, or execution."
+      : demoWorkbenchPlanningReady
       ? "Builder should plan the first inspectable Mission Control demo/workbench proof from the local answer/surface: show what is happening here and what should happen next from local evidence, keep completed toolAppActionPlan and continuityMemoryProof as context, and do not start runtime, open a browser, write, POST, route, send, or execute."
       : continuityMemoryPlanningReady
       ? "Builder should plan the continuity/memory proof for New Mira command context: load sourced restart/current-lane truth, reject stale-only summaries, preserve provenance and James control points, and do not import state, copy .squidrun, write, restart, browse, route, send, or execute."
@@ -1264,6 +1363,109 @@ function buildMissionControl(input: {
         },
       }
     : null;
+  const demoWorkbenchProof: SquidRunProjectContext["missionControl"]["demoWorkbenchProof"] = demoWorkbenchProofReady && toolAppActionPlan && continuityMemoryProof
+    ? {
+        id: "mission-control-demo-workbench-proof-v0",
+        status: "proof_planning_only",
+        owner: "Builder",
+        target: {
+          surface: "local_mission_control_answer_surface",
+          question: "what is happening here, and what should happen next?",
+          action: "Inspect the local Mission Control answer/surface produced from getSquidRunContext without starting runtime, opening a browser, or performing UI/workbench actions.",
+        },
+        sourceEvidence: [
+          {
+            kind: "file",
+            path: "docs/mira-north-star-roadmap.md",
+            summary: "Roadmap names the first inspectable demo as Mission Control answering the current situation and next move from local evidence.",
+          },
+          {
+            kind: "file",
+            path: "docs/mira-system-map.md",
+            summary: "System map keeps demo/workbench inspection local and blocks runtime/browser/UI/status execution and live effects.",
+          },
+          {
+            kind: "file",
+            path: "mira/runtime/src/squidrun-context.ts",
+            summary: "SquidRun context source builds the local Mission Control answer, summary, drafts, preview, and proof record.",
+          },
+          {
+            kind: "completed_context",
+            summary: `Completed context retained: ${toolAppActionPlan.id} remains ${toolAppActionPlan.status}.`,
+          },
+          {
+            kind: "completed_context",
+            summary: `Completed context retained: ${continuityMemoryProof.id} remains ${continuityMemoryProof.status}.`,
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestCleanContextSelectionCheckpoint?.sourceRef || "not found",
+            commitHash: cleanContextSelectionCommitHash,
+            summary: "Clean-context selector hardening is committed before exposing this demo/workbench proof record.",
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestCleanContextSelectionOracleAck?.sourceRef || "not found",
+            commitHash: cleanContextSelectionCommitHash,
+            summary: "Oracle acknowledged the clean-context selector hardening before this proof record.",
+          },
+          {
+            kind: "comms",
+            sourceRef: input.recentComms.latestContinuationDelegation?.sourceRef || "not found",
+            summary: "Current Architect delegation asks for one inspectable demo/workbench proof record, not a live workbench action.",
+          },
+        ],
+        completedContext: {
+          toolAppActionPlanId: "mission-control-tool-app-action-plan-v0",
+          continuityMemoryProofId: "mission-control-continuity-memory-proof-v0",
+        },
+        expectedJamesVisibleChecks: [
+          "The local Mission Control answer names what is happening here from local evidence.",
+          "The local Mission Control answer names what should happen next without reviving the stale architect#11 objective.",
+          "The summary names this concrete demo/workbench proof record.",
+          "The record keeps completed toolAppActionPlan and continuityMemoryProof as context.",
+          "The audit flags show planning/proof only and no runtime, browser, workbench, UI, network, send, route, provider, credential, deploy, money, or trading effect.",
+          "There is exactly one JAMES ACTION line and it remains NONE.",
+        ],
+        jamesControlPoint: "James must explicitly review and approve a separate future request before anyone starts runtime, opens a browser/workbench, performs UI/status actions, writes state, POSTs, routes, sends, or executes anything from this proof.",
+        preconditions: [
+          "Worktree is clean.",
+          "Stale architect#11 is visible but has no active authority.",
+          "Completed toolAppActionPlan and continuityMemoryProof are present as context.",
+          "Clean-context selector hardening checkpoint and Oracle ACK are source-specific for 13c90817.",
+          "The proof is built from local Mission Control answer/surface evidence only.",
+        ],
+        refusalNoGoConditions: [
+          "Dirty worktree or missing completed context records.",
+          "Missing source-specific 13c90817 checkpoint or Oracle ACK.",
+          "Any request to start runtime, open a browser/workbench, perform UI/status actions, fetch, POST, route, send, call provider/model, touch accounts/tokens/credentials/devices/users/external targets, deploy, move money, or touch trading.",
+          "Any attempt to treat this proof record as live action approval.",
+        ],
+        audit: {
+          proofOnly: true,
+          planningOnly: true,
+          runtimeStarted: false,
+          browserOpened: false,
+          workbenchOpened: false,
+          uiActionPerformed: false,
+          fetched: false,
+          posted: false,
+          routed: false,
+          sent: false,
+          providerInvoked: false,
+          modelInvoked: false,
+          accountAccessed: false,
+          tokenAccessed: false,
+          credentialAccessed: false,
+          deviceTouched: false,
+          userTargeted: false,
+          externalTargeted: false,
+          deployed: false,
+          moneyMovement: false,
+          tradingTouched: false,
+        },
+      }
+    : null;
   const oracleLine = input.recentComms.oracleBenchmark?.sourceRef
     ? `Benchmark gate: ${input.recentComms.oracleBenchmark.sourceRef} says current New Mira is not impressive yet; the demo must prove command-layer usefulness.`
     : `Benchmark gate: ${hardTruth} ${firstDemo}`;
@@ -1281,6 +1483,9 @@ function buildMissionControl(input: {
                   : []),
                 ...(demoWorkbenchPlanningReady
                   ? [`Completed continuity/memory proof evidence: checkpoint ${input.recentComms.latestContinuityMemoryProofCheckpoint?.sourceRef || "not found"} ${continuityMemoryProofCommitHash}, Builder ACK ${input.recentComms.latestContinuityMemoryProofAck?.sourceRef || "not found"} ${continuityMemoryProofCommitHash}, and Oracle ACK ${input.recentComms.latestContinuityMemoryProofOracleAck?.sourceRef || "not found"} ${continuityMemoryProofCommitHash}; continuityMemoryProof remains completed proof-only context while the active next boundary advances to Mission Control demo/workbench proof planning.`]
+                  : []),
+                ...(demoWorkbenchProof
+                  ? [`Demo/workbench proof: ${demoWorkbenchProof.id}; owner ${demoWorkbenchProof.owner}; target ${demoWorkbenchProof.target.surface} asks "${demoWorkbenchProof.target.question}"; completed contexts ${demoWorkbenchProof.completedContext.toolAppActionPlanId} and ${demoWorkbenchProof.completedContext.continuityMemoryProofId}; James control point: ${demoWorkbenchProof.jamesControlPoint}; audit proofOnly=${demoWorkbenchProof.audit.proofOnly}, planningOnly=${demoWorkbenchProof.audit.planningOnly}, runtimeStarted=${demoWorkbenchProof.audit.runtimeStarted}, browserOpened=${demoWorkbenchProof.audit.browserOpened}, workbenchOpened=${demoWorkbenchProof.audit.workbenchOpened}, uiActionPerformed=${demoWorkbenchProof.audit.uiActionPerformed}, fetched=${demoWorkbenchProof.audit.fetched}, posted=${demoWorkbenchProof.audit.posted}, routed=${demoWorkbenchProof.audit.routed}, sent=${demoWorkbenchProof.audit.sent}, providerInvoked=${demoWorkbenchProof.audit.providerInvoked}, modelInvoked=${demoWorkbenchProof.audit.modelInvoked}, accountAccessed=${demoWorkbenchProof.audit.accountAccessed}, tokenAccessed=${demoWorkbenchProof.audit.tokenAccessed}, credentialAccessed=${demoWorkbenchProof.audit.credentialAccessed}, deviceTouched=${demoWorkbenchProof.audit.deviceTouched}, userTargeted=${demoWorkbenchProof.audit.userTargeted}, externalTargeted=${demoWorkbenchProof.audit.externalTargeted}, deployed=${demoWorkbenchProof.audit.deployed}, moneyMovement=${demoWorkbenchProof.audit.moneyMovement}, tradingTouched=${demoWorkbenchProof.audit.tradingTouched}.`]
                   : []),
                 ...(continuityMemoryProof
                   ? [`Continuity/memory proof: ${continuityMemoryProof.id}; owner ${continuityMemoryProof.owner}; current-lane truth ${continuityMemoryProof.currentLaneTruth.sourceRef || "not found"} is ${continuityMemoryProof.currentLaneTruth.authority}; stale-only summary refused=${continuityMemoryProof.staleOnlySummaryRefusal.refused}; James control point: ${continuityMemoryProof.jamesControlPoint}; audit proofOnly=${continuityMemoryProof.audit.proofOnly}, imported=${continuityMemoryProof.audit.imported}, copied=${continuityMemoryProof.audit.copied}, wrote=${continuityMemoryProof.audit.wrote}, restarted=${continuityMemoryProof.audit.restarted}, processStarted=${continuityMemoryProof.audit.processStarted}, browsed=${continuityMemoryProof.audit.browsed}, sent=${continuityMemoryProof.audit.sent}, routed=${continuityMemoryProof.audit.routed}, posted=${continuityMemoryProof.audit.posted}, runtimeStarted=${continuityMemoryProof.audit.runtimeStarted}, providerInvoked=${continuityMemoryProof.audit.providerInvoked}, modelInvoked=${continuityMemoryProof.audit.modelInvoked}, accountAccessed=${continuityMemoryProof.audit.accountAccessed}, tokenAccessed=${continuityMemoryProof.audit.tokenAccessed}, credentialAccessed=${continuityMemoryProof.audit.credentialAccessed}, deviceTouched=${continuityMemoryProof.audit.deviceTouched}, userTargeted=${continuityMemoryProof.audit.userTargeted}, externalTargeted=${continuityMemoryProof.audit.externalTargeted}, deployed=${continuityMemoryProof.audit.deployed}, moneyMovement=${continuityMemoryProof.audit.moneyMovement}, tradingTouched=${continuityMemoryProof.audit.tradingTouched}.`]
@@ -1308,7 +1513,9 @@ function buildMissionControl(input: {
   const coordinationDrafts: SquidRunProjectContext["missionControl"]["coordinationDrafts"] = [
     {
       target: "builder",
-      purpose: demoWorkbenchPlanningReady
+      purpose: demoWorkbenchProofReady
+        ? "demo/workbench proof record"
+        : demoWorkbenchPlanningReady
         ? "demo/workbench proof planning"
         : continuityMemoryPlanningReady
         ? "continuity/memory proof planning"
@@ -1317,7 +1524,9 @@ function buildMissionControl(input: {
         : directChannelBoundaryReady
         ? "direct-channel readiness planning"
         : continuationSelectorProofCommitted ? "v1 dry-run planning" : "implementation",
-      message: demoWorkbenchPlanningReady
+      message: demoWorkbenchProofReady
+        ? "Review mission-control-demo-workbench-proof-v0 as the first inspectable Mission Control demo/workbench proof record from the local answer/surface. Keep completed toolAppActionPlan and continuityMemoryProof as context; do not start runtime, open browser/workbench, perform UI/status actions, fetch, POST, route, send, write, or execute."
+        : demoWorkbenchPlanningReady
         ? "Plan the first inspectable Mission Control demo/workbench proof from local answer/surface evidence: show what is happening here and what should happen next, keep completed toolAppActionPlan and continuityMemoryProof as context, and do not start runtime, open browser, perform UI/status actions, POST, route, send, write, import, or execute."
         : continuityMemoryPlanningReady
         ? "Plan one New Mira command-context continuity/memory proof from sourced restart/current-lane truth. Reject stale-only summaries, keep provenance and James control points explicit, and do not import state, copy .squidrun, write, restart, browse, route, send, or execute."
@@ -1331,7 +1540,9 @@ function buildMissionControl(input: {
     },
     {
       target: "oracle",
-      purpose: demoWorkbenchPlanningReady
+      purpose: demoWorkbenchProofReady
+        ? "demo/workbench proof no-effect review"
+        : demoWorkbenchPlanningReady
         ? "demo/workbench no-effect review"
         : continuityMemoryPlanningReady
         ? "continuity/memory no-effect review"
@@ -1340,7 +1551,9 @@ function buildMissionControl(input: {
         : directChannelBoundaryReady
         ? "direct-channel dry-run review"
         : continuationSelectorProofCommitted ? "v1 no-send review" : "benchmark review",
-      message: demoWorkbenchPlanningReady
+      message: demoWorkbenchProofReady
+        ? "Review that mission-control-demo-workbench-proof-v0 is inspectable from the local Mission Control answer/surface, names expected James-visible checks, keeps completed proof records as context, and claims no runtime start, browser/workbench open, UI/status execution, fetch, POST, route, send, write, provider/model, credential, deploy, money, or trading effect."
+        : demoWorkbenchPlanningReady
         ? "Review that the demo/workbench plan is inspectable from the local Mission Control answer/surface, keeps completed proof records as context, and claims no runtime start, browser open, UI/status execution, write, POST, route, send, import, or live effect."
         : continuityMemoryPlanningReady
         ? "Review that the continuity/memory plan loads sourced restart/current-lane truth, rejects stale-only summaries, keeps the completed tool/app plan as context, and claims no import, write, restart, route, send, or execution."
@@ -1409,6 +1622,7 @@ function buildMissionControl(input: {
     coordinationDrafts,
     toolAppActionPlan,
     continuityMemoryProof,
+    demoWorkbenchProof,
     internalRoutePreview: {
       status: "reviewed_preview_only",
       selectedDraftTarget: selectedDraft.target,
@@ -1509,6 +1723,9 @@ export function getSquidRunContext(
         : null,
       continuityMemoryProof: missionControl.continuityMemoryProof
         ? `${missionControl.continuityMemoryProof.id}: current-lane truth ${missionControl.continuityMemoryProof.currentLaneTruth.sourceRef || "not found"} is ${missionControl.continuityMemoryProof.currentLaneTruth.authority}; stale-only summary refused=${missionControl.continuityMemoryProof.staleOnlySummaryRefusal.refused}; ${missionControl.continuityMemoryProof.jamesControlPoint}`
+        : null,
+      demoWorkbenchProof: missionControl.demoWorkbenchProof
+        ? `${missionControl.demoWorkbenchProof.id}: ${missionControl.demoWorkbenchProof.target.surface} asks "${missionControl.demoWorkbenchProof.target.question}"; owner ${missionControl.demoWorkbenchProof.owner}; ${missionControl.demoWorkbenchProof.jamesControlPoint}`
         : null,
       jamesAction: "NONE",
       jamesActionReason: missionControl.jamesActionReason,

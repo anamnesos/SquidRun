@@ -96,6 +96,36 @@ const rows = [
   {
     sender: 'architect',
     target: 'builder',
+    timestampMs: 1779449500000,
+    rawBody: '(ARCHITECT #178): Current-session delegation: Mission Control demo/workbench first-proof slice. Clean HEAD is 13c90817 Harden Mission Control clean context selection. Build the smallest dry-run/no-effect slice to expose one concrete inspectable missionControl.demoWorkbenchProof record from real local SquidRun answer/surface evidence. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'oracle',
+    target: 'architect',
+    timestampMs: 1779449480000,
+    rawBody: '(ORACLE #59): Received cafe000 checkpoint while referencing prior 13c90817 Harden Mission Control clean context selection. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'oracle',
+    target: 'architect',
+    timestampMs: 1779449460000,
+    rawBody: '(ORACLE #58): Received 13c90817 checkpoint. Oracle records clean-context selector hardening as committed and clean-head proven: stale_handoff_superseded, completed toolAppActionPlan plus continuityMemoryProof present, demo/workbench nextStep retained, and no live authority change. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'oracle',
+    timestampMs: 1779449450000,
+    rawBody: '(ARCHITECT #177): Checkpoint: committed #169 clean-context selector hardening as 13c90817 Harden Mission Control clean context selection. Oracle #57 PASS accepted; pre-commit passed. Clean-head proof held. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779449440000,
+    rawBody: '(ARCHITECT #176): Checkpoint: committed #169 clean-context selector hardening as 13c90817 Harden Mission Control clean context selection. Oracle #57 PASS accepted; pre-commit passed through the normal hook, including focused context test PASS 2/2 and Mira system map guard PASS. Clean-head proof: worktree clean, HEAD 13c90817, focused context test PASS 2/2, runtime TypeScript noEmit PASS, demo/workbench nextStep retained, and exactly one JAMES ACTION line. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
     timestampMs: 1779449400000,
     rawBody: '(ARCHITECT #167): Checkpoint: Mission Control demo/workbench boundary advancement committed as 208d7ad7 Advance Mission Control demo workbench boundary. Oracle #52 PASS accepted; pre-commit checks passed. Clean-head proof: worktree clean, context test PASS 2/2, runtime TypeScript noEmit PASS. JAMES ACTION: NONE.'
   },
@@ -385,13 +415,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       staleHandoff: expect.objectContaining({
         status: 'stale_superseded',
         sourceRef: 'architect#11',
-        supersededBySourceRef: 'architect#169',
+        supersededBySourceRef: 'architect#178',
         supersededByCommit: '7ff9fe8d Add Mira internal pane activation attempt seam',
       }),
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'stale_handoff_superseded',
-      preferredSourceRef: 'architect#169',
+      preferredSourceRef: 'architect#178',
       committedSeam: '7ff9fe8d Add Mira internal pane activation attempt seam',
       staleSourceRef: 'architect#11',
     }));
@@ -404,10 +434,10 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       commitHash: '7ff9fe8d',
     }));
     expect(context.recentComms.latestBuilderInstruction).toEqual(expect.objectContaining({
-      sourceRef: 'architect#169',
+      sourceRef: 'architect#178',
     }));
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#169',
+      sourceRef: 'architect#178',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -460,15 +490,26 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       sourceRef: 'oracle#50',
       commitHash: 'd0bffd58',
     }));
-    expect(answer).toContain('Project/lane: squidrun / architect#169.');
-    expect(answer).toContain('First inspectable Mission Control demo/workbench proof planning is the next map boundary');
-    expect(answer).toContain('local Mission Control answer/surface for what is happening here and what should happen next from local evidence');
+    expect(context.recentComms.latestCleanContextSelectionCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#176',
+      commitHash: '13c90817',
+    }));
+    expect(context.recentComms.latestCleanContextSelectionOracleAck).toEqual(expect.objectContaining({
+      sourceRef: 'oracle#58',
+      commitHash: '13c90817',
+    }));
+    expect(answer).toContain('Project/lane: squidrun / architect#178.');
+    expect(answer).toContain('Mission Control demo/workbench proof is inspectable as mission-control-demo-workbench-proof-v0');
+    expect(answer).toContain('local Mission Control answer/surface target for what is happening here and what should happen next from local evidence');
     expect(answer).toContain('Completed direct-channel readiness evidence: checkpoint architect#114 22e876dc and Builder ACK builder#43 22e876dc');
     expect(answer).toContain('next boundary is tool/app action planning from the roadmap, not execution');
     expect(answer).toContain('Completed tool/app action-plan evidence: checkpoint architect#129 5b3e0386 and Builder ACK builder#49 5b3e0386');
     expect(answer).toContain('the tool/app action plan remains completed context');
     expect(answer).toContain('Completed continuity/memory proof evidence: checkpoint architect#156 d0bffd58, Builder ACK builder#56 d0bffd58, and Oracle ACK oracle#50 d0bffd58');
     expect(answer).toContain('continuityMemoryProof remains completed proof-only context while the active next boundary advances to Mission Control demo/workbench proof planning');
+    expect(answer).toContain('Demo/workbench proof: mission-control-demo-workbench-proof-v0');
+    expect(answer).toContain('target local_mission_control_answer_surface asks "what is happening here, and what should happen next?"');
+    expect(answer).toContain('runtimeStarted=false, browserOpened=false, workbenchOpened=false, uiActionPerformed=false, fetched=false, posted=false, routed=false, sent=false, providerInvoked=false, modelInvoked=false, accountAccessed=false, tokenAccessed=false, credentialAccessed=false, deviceTouched=false, userTargeted=false, externalTargeted=false, deployed=false, moneyMovement=false, tradingTouched=false');
     expect(answer).toContain('Continuity/memory proof: mission-control-continuity-memory-proof-v0');
     expect(answer).toContain('current-lane truth architect#11 is loaded_but_stale_superseded');
     expect(answer).toContain('stale-only summary refused=true');
@@ -496,17 +537,18 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(answer).toContain('Stale handoff: architect#11');
     expect(answer).toContain('stale/superseded evidence only; it has no active authority');
     expect(answer).not.toContain('Project/lane: squidrun / architect#11. finish the existing 3-file review/no-send gate dirty slice');
-    expect(context.missionControl.nextTeamMove).toBe('Builder should plan the first inspectable Mission Control demo/workbench proof from the local answer/surface: show what is happening here and what should happen next from local evidence, keep completed toolAppActionPlan and continuityMemoryProof as context, and do not start runtime, open a browser, write, POST, route, send, or execute.');
+    expect(context.missionControl.nextTeamMove).toBe('Builder should review mission-control-demo-workbench-proof-v0 as the first inspectable Mission Control demo/workbench proof record from the local answer/surface, keep completed toolAppActionPlan and continuityMemoryProof as context, and wait for James approval before any runtime, browser, workbench, UI, write, POST, route, send, or execution.');
     expect(context.summary.nextStep).toBe(context.missionControl.nextTeamMove);
     expect(context.summary.nextStep).not.toContain('advance Mission Control v1 dry-run coordination/follow-through route planning');
     expect(context.summary.nextStep).not.toContain('align Mission Control to the existing direct-channel readiness contract');
     expect(context.summary.nextStep).not.toContain('draft one local tool/app action plan');
     expect(context.summary.nextStep).toContain('demo/workbench proof');
+    expect(context.summary.nextStep).toContain('mission-control-demo-workbench-proof-v0');
     expect(context.summary.nextStep).toContain('local answer/surface');
-    expect(context.summary.nextStep).toContain('what is happening here and what should happen next');
     expect(context.summary.nextStep).not.toContain('sourced restart/current-lane truth');
     expect(context.summary.toolAppActionPlan).toBe('mission-control-tool-app-action-plan-v0: local_squidrun_evidence_review -> Inspect local SquidRun Mission Control evidence and prepare the first app/tool action candidate for James review.; owner Builder; James must explicitly review and approve a separate future request before any real app/tool execution.');
     expect(context.summary.continuityMemoryProof).toBe('mission-control-continuity-memory-proof-v0: current-lane truth architect#11 is loaded_but_stale_superseded; stale-only summary refused=true; James must review and approve a separate future continuity promotion before New Mira imports, copies, writes, restarts, or promotes any memory state.');
+    expect(context.summary.demoWorkbenchProof).toBe('mission-control-demo-workbench-proof-v0: local_mission_control_answer_surface asks "what is happening here, and what should happen next?"; owner Builder; James must explicitly review and approve a separate future request before anyone starts runtime, opens a browser/workbench, performs UI/status actions, writes state, POSTs, routes, sends, or executes anything from this proof.');
     expect(context.missionControl.toolAppActionPlan).toEqual({
       id: 'mission-control-tool-app-action-plan-v0',
       status: 'planning_only',
@@ -528,7 +570,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         },
         {
           kind: 'comms',
-          sourceRef: 'architect#169',
+          sourceRef: 'architect#178',
           summary: 'Current Architect delegation asks Mission Control to keep the completed proof context and advance to demo/workbench planning.',
         },
         {
@@ -700,6 +742,107 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         tradingTouched: false,
       },
     });
+    expect(context.missionControl.demoWorkbenchProof).toEqual({
+      id: 'mission-control-demo-workbench-proof-v0',
+      status: 'proof_planning_only',
+      owner: 'Builder',
+      target: {
+        surface: 'local_mission_control_answer_surface',
+        question: 'what is happening here, and what should happen next?',
+        action: 'Inspect the local Mission Control answer/surface produced from getSquidRunContext without starting runtime, opening a browser, or performing UI/workbench actions.',
+      },
+      sourceEvidence: [
+        {
+          kind: 'file',
+          path: 'docs/mira-north-star-roadmap.md',
+          summary: 'Roadmap names the first inspectable demo as Mission Control answering the current situation and next move from local evidence.',
+        },
+        {
+          kind: 'file',
+          path: 'docs/mira-system-map.md',
+          summary: 'System map keeps demo/workbench inspection local and blocks runtime/browser/UI/status execution and live effects.',
+        },
+        {
+          kind: 'file',
+          path: 'mira/runtime/src/squidrun-context.ts',
+          summary: 'SquidRun context source builds the local Mission Control answer, summary, drafts, preview, and proof record.',
+        },
+        {
+          kind: 'completed_context',
+          summary: 'Completed context retained: mission-control-tool-app-action-plan-v0 remains planning_only.',
+        },
+        {
+          kind: 'completed_context',
+          summary: 'Completed context retained: mission-control-continuity-memory-proof-v0 remains proof_only.',
+        },
+        {
+          kind: 'comms',
+          sourceRef: 'architect#176',
+          commitHash: '13c90817',
+          summary: 'Clean-context selector hardening is committed before exposing this demo/workbench proof record.',
+        },
+        {
+          kind: 'comms',
+          sourceRef: 'oracle#58',
+          commitHash: '13c90817',
+          summary: 'Oracle acknowledged the clean-context selector hardening before this proof record.',
+        },
+        {
+          kind: 'comms',
+          sourceRef: 'architect#178',
+          summary: 'Current Architect delegation asks for one inspectable demo/workbench proof record, not a live workbench action.',
+        },
+      ],
+      completedContext: {
+        toolAppActionPlanId: 'mission-control-tool-app-action-plan-v0',
+        continuityMemoryProofId: 'mission-control-continuity-memory-proof-v0',
+      },
+      expectedJamesVisibleChecks: [
+        'The local Mission Control answer names what is happening here from local evidence.',
+        'The local Mission Control answer names what should happen next without reviving the stale architect#11 objective.',
+        'The summary names this concrete demo/workbench proof record.',
+        'The record keeps completed toolAppActionPlan and continuityMemoryProof as context.',
+        'The audit flags show planning/proof only and no runtime, browser, workbench, UI, network, send, route, provider, credential, deploy, money, or trading effect.',
+        'There is exactly one JAMES ACTION line and it remains NONE.',
+      ],
+      jamesControlPoint: 'James must explicitly review and approve a separate future request before anyone starts runtime, opens a browser/workbench, performs UI/status actions, writes state, POSTs, routes, sends, or executes anything from this proof.',
+      preconditions: [
+        'Worktree is clean.',
+        'Stale architect#11 is visible but has no active authority.',
+        'Completed toolAppActionPlan and continuityMemoryProof are present as context.',
+        'Clean-context selector hardening checkpoint and Oracle ACK are source-specific for 13c90817.',
+        'The proof is built from local Mission Control answer/surface evidence only.',
+      ],
+      refusalNoGoConditions: [
+        'Dirty worktree or missing completed context records.',
+        'Missing source-specific 13c90817 checkpoint or Oracle ACK.',
+        'Any request to start runtime, open a browser/workbench, perform UI/status actions, fetch, POST, route, send, call provider/model, touch accounts/tokens/credentials/devices/users/external targets, deploy, move money, or touch trading.',
+        'Any attempt to treat this proof record as live action approval.',
+      ],
+      audit: {
+        proofOnly: true,
+        planningOnly: true,
+        runtimeStarted: false,
+        browserOpened: false,
+        workbenchOpened: false,
+        uiActionPerformed: false,
+        fetched: false,
+        posted: false,
+        routed: false,
+        sent: false,
+        providerInvoked: false,
+        modelInvoked: false,
+        accountAccessed: false,
+        tokenAccessed: false,
+        credentialAccessed: false,
+        deviceTouched: false,
+        userTargeted: false,
+        externalTargeted: false,
+        deployed: false,
+        moneyMovement: false,
+        tradingTouched: false,
+      },
+    });
     expect(context.missionControl.evidence).toEqual(expect.arrayContaining([
       'docs/mira-north-star-roadmap.md',
       'mira/runtime/src/squidrun-context.ts',
@@ -714,19 +857,19 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(context.missionControl.coordinationDrafts).toEqual([
       {
         target: 'builder',
-        purpose: 'demo/workbench proof planning',
-        message: 'Plan the first inspectable Mission Control demo/workbench proof from local answer/surface evidence: show what is happening here and what should happen next, keep completed toolAppActionPlan and continuityMemoryProof as context, and do not start runtime, open browser, perform UI/status actions, POST, route, send, write, import, or execute.',
+        purpose: 'demo/workbench proof record',
+        message: 'Review mission-control-demo-workbench-proof-v0 as the first inspectable Mission Control demo/workbench proof record from the local answer/surface. Keep completed toolAppActionPlan and continuityMemoryProof as context; do not start runtime, open browser/workbench, perform UI/status actions, fetch, POST, route, send, write, or execute.',
       },
       {
         target: 'oracle',
-        purpose: 'demo/workbench no-effect review',
-        message: 'Review that the demo/workbench plan is inspectable from the local Mission Control answer/surface, keeps completed proof records as context, and claims no runtime start, browser open, UI/status execution, write, POST, route, send, import, or live effect.',
+        purpose: 'demo/workbench proof no-effect review',
+        message: 'Review that mission-control-demo-workbench-proof-v0 is inspectable from the local Mission Control answer/surface, names expected James-visible checks, keeps completed proof records as context, and claims no runtime start, browser/workbench open, UI/status execution, fetch, POST, route, send, write, provider/model, credential, deploy, money, or trading effect.',
       },
     ]);
     expect(context.missionControl.internalRoutePreview).toEqual(expect.objectContaining({
       status: 'reviewed_preview_only',
       selectedDraftTarget: 'oracle',
-      selectedDraftPurpose: 'demo/workbench no-effect review',
+      selectedDraftPurpose: 'demo/workbench proof no-effect review',
       audit: expect.objectContaining({
         sendPerformed: false,
         runtimeExecutes: false,
@@ -743,7 +886,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       }),
       envelope: expect.objectContaining({
         body: {
-          content: 'Review that the demo/workbench plan is inspectable from the local Mission Control answer/surface, keeps completed proof records as context, and claims no runtime start, browser open, UI/status execution, write, POST, route, send, import, or live effect.',
+          content: 'Review that mission-control-demo-workbench-proof-v0 is inspectable from the local Mission Control answer/surface, names expected James-visible checks, keeps completed proof records as context, and claims no runtime start, browser/workbench open, UI/status execution, fetch, POST, route, send, write, provider/model, credential, deploy, money, or trading effect.',
         },
       }),
     }));
@@ -774,7 +917,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     }));
     expect(context.dirtyWork.summary).toContain('1 changed file(s)');
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#169',
+      sourceRef: 'architect#178',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -822,9 +965,17 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       sourceRef: 'oracle#50',
       commitHash: 'd0bffd58',
     }));
+    expect(context.recentComms.latestCleanContextSelectionCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#176',
+      commitHash: '13c90817',
+    }));
+    expect(context.recentComms.latestCleanContextSelectionOracleAck).toEqual(expect.objectContaining({
+      sourceRef: 'oracle#58',
+      commitHash: '13c90817',
+    }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'current_handoff',
-      preferredSourceRef: 'architect#169',
+      preferredSourceRef: 'architect#178',
       staleSourceRef: null,
     }));
     expect(context.lane.staleHandoff).toBeNull();
@@ -834,13 +985,16 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(context.summary.nextStep).not.toContain('demo/workbench proof');
     expect(context.summary.toolAppActionPlan).toBeNull();
     expect(context.summary.continuityMemoryProof).toBeNull();
+    expect(context.summary.demoWorkbenchProof).toBeNull();
     expect(context.missionControl.toolAppActionPlan).toBeNull();
     expect(context.missionControl.continuityMemoryProof).toBeNull();
+    expect(context.missionControl.demoWorkbenchProof).toBeNull();
     expect(answer).toContain('Dirty work: 1 changed file(s)');
     expect(answer).not.toContain('Tool/app action plan: local_squidrun_evidence_review');
     expect(answer).not.toContain('Completed tool/app action plan context: local_squidrun_evidence_review');
     expect(answer).not.toContain('Continuity and memory is the next map boundary');
     expect(answer).not.toContain('First inspectable Mission Control demo/workbench proof planning is the next map boundary');
+    expect(answer).not.toContain('Demo/workbench proof: mission-control-demo-workbench-proof-v0');
     expect(answer).not.toContain('Continuity/memory proof: mission-control-continuity-memory-proof-v0');
     expect(answer).not.toContain('Completed continuity/memory proof evidence: checkpoint architect#156 d0bffd58');
     expect(answer).not.toContain('Oracle ACK oracle#50 d0bffd58');
