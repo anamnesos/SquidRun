@@ -21,6 +21,7 @@ const commandCardRoutePlanProofSurfaceCommitHash = "120806b4";
 const internalRoutePlanningCommitHash = "0cb27b6b";
 const internalRoutePromotionPlanSurfaceCommitHash = "f7352d10";
 const internalRouteAuditPlanningCommitHash = "c1a05e07";
+const postAuditPlanningSelectorCommitHash = "582ef1c6";
 const commsHistoryEvidenceLimit = 500;
 
 export type SquidRunProjectContext = {
@@ -299,6 +300,24 @@ export type SquidRunProjectContext = {
       commitHash: string | null;
     } | null;
     latestInternalRouteAuditPlanningOracleAck: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestPostAuditPlanningSelectorCheckpoint: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestPostAuditPlanningSelectorBuilderAck: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestPostAuditPlanningSelectorOracleAck: {
       sourceRef: string | null;
       excerpt: string | null;
       timestampMs: number | null;
@@ -984,14 +1003,15 @@ function isReportShapedCommsBody(rawBody: string | null): boolean {
   return /^\([A-Z]+\s+#\d+\):\s*(?:Committed|Checkpoint|PASS\b|MODIFY\/containment|MODIFY resolved|ACK\b|Status check|Status pulse|Status\/MODIFY|Builder status nudge|Builder final nudge|Builder final closure nudge|Builder, containment|Builder containment|Oracle .* PASS|Builder .* PASS|Received [0-9a-f]{7,40} checkpoint)/i.test(body)
     || /^\([A-Z]+\s+#\d+\):\s*MODIFY (?:on|update on)\s+#\d+\b/i.test(body)
     || /^\([A-Z]+\s+#\d+\):\s*(?:Fallback trigger|Containment)\b/i.test(body)
-    || /\b(?:focused context test is still red|WIP sanity is red|current failure is tighter now|red-fixture nudge|red WIP|containment nudge)\b/i.test(body)
+    || /^\([A-Z]+\s+#\d+\):\s*Builder,?\s+(?:#\d+\s+)?WIP sanity\b/i.test(body)
+    || /\b(?:focused context test is still red|current failure is tighter now|red-fixture nudge|green but incomplete|not reviewable|current dirty scope is|read-only proof|close the packet|close packet visibly|final containment|containment nudge)\b/i.test(body)
     || /\b(?:Proof|Post-commit proof|Committed-HEAD proof|Clean-head proof|pre-commit all checks passed)\s*:/i.test(body);
 }
 
 function isMissionControlContinuationDelegationBody(rawBody: string | null): boolean {
   const body = rawBody || "";
   const instructionShaped = /(?:\):\s*)?(?:MODIFY\b|Current-session delegation|TASK\b|Builder\s*:|Builder\b.*\b(?:build|fix|patch|add|continue|land|take)\b|Fix\b|Regression must\b|Live acceptance\b|next Mira map-backed slice|next map-backed Mira slice|new tiny follow-up slice)/i.test(body);
-  const continuationTarget = /continuation-aware Mission Control command context|next Mira map-backed slice|next map-backed Mira slice|next-move advancement|tool\/app action planning|command-card|command card|route-plan follow-through|follow-through proof|internal-route promotion|internal route\/audit|route\/audit|promotion\/review|post-f7352d10|f7352d10|post-0cb27b6b|0cb27b6b|post-120806b4|120806b4|post-df0a47a6|df0a47a6|post-c301c1ac|c301c1ac|demo\/workbench|demoWorkbenchProof|surface-alignment|workbench\/surface|workbench surface|post-48e419b4|48e419b4|clean-context regression|post-208d7ad7|208d7ad7|stale[- ]handoff|current-lane handoff/i.test(body);
+  const continuationTarget = /continuation-aware Mission Control command context|next Mira map-backed slice|next map-backed Mira slice|next-move advancement|selector cleanup|tool\/app action planning|command-card|command card|route-plan follow-through|follow-through proof|internal-route promotion|internal route\/audit|route\/audit|promotion\/review|post-582ef1c6|582ef1c6|post-f7352d10|f7352d10|post-0cb27b6b|0cb27b6b|post-120806b4|120806b4|post-df0a47a6|df0a47a6|post-c301c1ac|c301c1ac|demo\/workbench|demoWorkbenchProof|surface-alignment|workbench\/surface|workbench surface|post-48e419b4|48e419b4|clean-context regression|post-208d7ad7|208d7ad7|stale[- ]handoff|current-lane handoff/i.test(body);
   return instructionShaped && continuationTarget && !isReportShapedCommsBody(body);
 }
 
@@ -1228,6 +1248,29 @@ function isInternalRouteAuditPlanningOracleAckBody(rawBody: string | null): bool
     && /JAMES ACTION:\s*NONE/i.test(body);
 }
 
+function isPostAuditPlanningSelectorCheckpointBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /Checkpoint:\s*committed #300 post-c1a05e07 selector hardening as [`'"]?582ef1c6 Harden Mission Control post audit planning selector/i.test(body)
+    && /source-specific audit-planning checkpoint [`'"]?architect#298\/c1a05e07[`'"]?/i.test(body)
+    && /Builder ACK [`'"]?builder#90\/c1a05e07[`'"]?/i.test(body)
+    && /Oracle ACK [`'"]?oracle#98\/c1a05e07[`'"]?/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
+function isPostAuditPlanningSelectorBuilderAckBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /^\(BUILDER\s+#\d+\):\s*ACK [`'"]?582ef1c6 checkpoint/i.test(body)
+    && /post-c1a05e07 selector hardening|WIP sanity\/status\/containment\/closure-nudge/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
+function isPostAuditPlanningSelectorOracleAckBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /^\(ORACLE\s+#\d+\):\s*(?:Received [`'"]?582ef1c6 checkpoint|Checkpoint received\.\s*#300\s*\/\s*582ef1c6 closure recorded)/i.test(body)
+    && /post-c1a05e07 selector hardening|WIP sanity\/status\/containment\/closure-nudge|Mission Control post audit planning selector/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
 function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentComms"] {
   const scriptPath = path.join(squidrunRoot, "ui", "scripts", "hm-comms.js");
   if (!fs.existsSync(scriptPath)) {
@@ -1269,6 +1312,9 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestInternalRouteAuditPlanningCheckpoint: null,
       latestInternalRouteAuditPlanningBuilderAck: null,
       latestInternalRouteAuditPlanningOracleAck: null,
+      latestPostAuditPlanningSelectorCheckpoint: null,
+      latestPostAuditPlanningSelectorBuilderAck: null,
+      latestPostAuditPlanningSelectorOracleAck: null,
       oracleBenchmark: null,
     };
   }
@@ -1483,6 +1529,22 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       return trimText(row.sender) === "oracle"
         && isInternalRouteAuditPlanningOracleAckBody(body);
     });
+    const postAuditPlanningSelectorCheckpoint = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "architect"
+        && trimText(row.target) === "builder"
+        && isPostAuditPlanningSelectorCheckpointBody(body);
+    });
+    const postAuditPlanningSelectorBuilderAck = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "builder"
+        && isPostAuditPlanningSelectorBuilderAckBody(body);
+    });
+    const postAuditPlanningSelectorOracleAck = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "oracle"
+        && isPostAuditPlanningSelectorOracleAckBody(body);
+    });
     const oracleBenchmark = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "oracle" && /benchmark|holy-shit|not impressive|current New Mira/i.test(body);
@@ -1526,6 +1588,9 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestInternalRouteAuditPlanningCheckpoint: commsSummary(internalRouteAuditPlanningCheckpoint || null, 260, internalRouteAuditPlanningCommitHash),
       latestInternalRouteAuditPlanningBuilderAck: commsSummary(internalRouteAuditPlanningBuilderAck || null, 260, internalRouteAuditPlanningCommitHash),
       latestInternalRouteAuditPlanningOracleAck: commsSummary(internalRouteAuditPlanningOracleAck || null, 260, internalRouteAuditPlanningCommitHash),
+      latestPostAuditPlanningSelectorCheckpoint: commsSummary(postAuditPlanningSelectorCheckpoint || null, 260, postAuditPlanningSelectorCommitHash),
+      latestPostAuditPlanningSelectorBuilderAck: commsSummary(postAuditPlanningSelectorBuilderAck || null, 260, postAuditPlanningSelectorCommitHash),
+      latestPostAuditPlanningSelectorOracleAck: commsSummary(postAuditPlanningSelectorOracleAck || null, 260, postAuditPlanningSelectorCommitHash),
       oracleBenchmark: commsSummary(oracleBenchmark || null),
     };
   } catch {
@@ -1567,6 +1632,9 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestInternalRouteAuditPlanningCheckpoint: null,
       latestInternalRouteAuditPlanningBuilderAck: null,
       latestInternalRouteAuditPlanningOracleAck: null,
+      latestPostAuditPlanningSelectorCheckpoint: null,
+      latestPostAuditPlanningSelectorBuilderAck: null,
+      latestPostAuditPlanningSelectorOracleAck: null,
       oracleBenchmark: null,
     };
   }
@@ -1690,6 +1758,10 @@ function buildMissionControl(input: {
     && input.recentComms.latestInternalRouteAuditPlanningCheckpoint?.commitHash === internalRouteAuditPlanningCommitHash
     && input.recentComms.latestInternalRouteAuditPlanningBuilderAck?.commitHash === internalRouteAuditPlanningCommitHash
     && input.recentComms.latestInternalRouteAuditPlanningOracleAck?.commitHash === internalRouteAuditPlanningCommitHash;
+  const postAuditPlanningSelectorCommitted = internalRouteAuditPlanningCommitted
+    && input.recentComms.latestPostAuditPlanningSelectorCheckpoint?.commitHash === postAuditPlanningSelectorCommitHash
+    && input.recentComms.latestPostAuditPlanningSelectorBuilderAck?.commitHash === postAuditPlanningSelectorCommitHash
+    && input.recentComms.latestPostAuditPlanningSelectorOracleAck?.commitHash === postAuditPlanningSelectorCommitHash;
   const laneLabel = continuationIsStaleSuperseded
     ? continuationDecision.preferredSourceRef || input.recentComms.latestBuilderInstruction?.sourceRef || "current continuation"
     : input.recentComms.latestBuilderInstruction?.sourceRef
@@ -1799,7 +1871,9 @@ function buildMissionControl(input: {
           {
             kind: "comms",
             sourceRef: input.recentComms.latestContinuationDelegation?.sourceRef || "not found",
-            summary: internalRouteAuditPlanningCommitted
+            summary: postAuditPlanningSelectorCommitted
+              ? "Current Architect delegation keeps internal route/audit planning on the visible plan while 582ef1c6 selector hardening prevents WIP sanity/status/containment/closure rows from becoming active delegation authority."
+              : internalRouteAuditPlanningCommitted
               ? "Current Architect delegation keeps internal route/audit planning on the visible plan while c1a05e07 selector hardening prevents red WIP containment rows from becoming active delegation authority."
               : internalRouteAuditPlanningReady
               ? "Current Architect delegation treats the internal-route promotion/review plan as completed visible context and asks for separate internal route/audit lane planning from that visible plan only."
@@ -2160,7 +2234,9 @@ function buildMissionControl(input: {
           {
             kind: "comms",
             sourceRef: input.recentComms.latestContinuationDelegation?.sourceRef || "not found",
-            summary: internalRouteAuditPlanningCommitted
+            summary: postAuditPlanningSelectorCommitted
+              ? "Current Architect delegation keeps internal route/audit planning on the visible plan while 582ef1c6 evidence marks WIP sanity/status/containment/closure rows as diagnostic only."
+              : internalRouteAuditPlanningCommitted
               ? "Current Architect delegation keeps internal route/audit planning on the visible plan while c1a05e07 evidence marks red WIP containment rows as diagnostic only."
               : internalRouteAuditPlanningReady
               ? "Current Architect delegation treats the internal-route promotion/review plan as completed visible context and asks for separate internal route/audit planning from that visible plan only."
@@ -2214,7 +2290,9 @@ function buildMissionControl(input: {
         },
         cardFields: {
           currentLaneWhyItMatters: `Current lane ${continuationDecision.preferredSourceRef || "current continuation"} matters because Mission Control must turn local SquidRun evidence into a James-inspectable command card instead of terminal-log spelunking.`,
-          whatChangedRecently: internalRouteAuditPlanningCommitted
+          whatChangedRecently: postAuditPlanningSelectorCommitted
+            ? `Committed ${postAuditPlanningSelectorCommitHash} post-audit selector evidence (${input.recentComms.latestPostAuditPlanningSelectorCheckpoint?.sourceRef || "not found"} plus Builder ACK ${input.recentComms.latestPostAuditPlanningSelectorBuilderAck?.sourceRef || "not found"} and Oracle ACK ${input.recentComms.latestPostAuditPlanningSelectorOracleAck?.sourceRef || "not found"}) keeps the internal route/audit planning lane on the visible plan while WIP sanity/status/containment/closure rows remain diagnostic only.`
+            : internalRouteAuditPlanningCommitted
             ? `Committed ${internalRouteAuditPlanningCommitHash} internal route/audit planning selector evidence (${input.recentComms.latestInternalRouteAuditPlanningCheckpoint?.sourceRef || "not found"} plus Builder ACK ${input.recentComms.latestInternalRouteAuditPlanningBuilderAck?.sourceRef || "not found"} and Oracle ACK ${input.recentComms.latestInternalRouteAuditPlanningOracleAck?.sourceRef || "not found"}) keeps commandCardAcceptance, command-card route-plan follow-through proof, and internal-route promotion/review plan completed visible context; red WIP containment rows are diagnostic only and the next boundary remains internal route/audit planning from the visible plan only.`
             : internalRouteAuditPlanningReady
             ? `Committed ${internalRoutePromotionPlanSurfaceCommitHash} internal-route promotion plan surface evidence (${input.recentComms.latestInternalRoutePromotionPlanSurfaceCheckpoint?.sourceRef || "not found"} plus Oracle ACK ${input.recentComms.latestInternalRoutePromotionPlanSurfaceOracleAck?.sourceRef || "not found"}) keeps commandCardAcceptance, command-card route-plan follow-through proof, and internal-route promotion/review plan completed visible context; the next boundary is separate internal route/audit lane planning from the visible plan only.`
@@ -2305,7 +2383,12 @@ function buildMissionControl(input: {
                     : [`Workbench surface proof evidence: checkpoint ${input.recentComms.latestDemoWorkbenchProofCheckpoint?.sourceRef || "not found"} ${demoWorkbenchProofCommitHash} and Oracle ACK ${input.recentComms.latestDemoWorkbenchProofOracleAck?.sourceRef || "not found"} ${demoWorkbenchProofCommitHash}; demoWorkbenchProof is completed context and the active next boundary is read-only local surface rendering from /squidrun/context.`]
                   : []),
                 ...(commandCardSurfaceReady
-                  ? internalRouteAuditPlanningCommitted
+                  ? postAuditPlanningSelectorCommitted
+                    ? [
+                      `Completed internal route/audit planning evidence: checkpoint ${input.recentComms.latestInternalRouteAuditPlanningCheckpoint?.sourceRef || "not found"} ${internalRouteAuditPlanningCommitHash}, Builder ACK ${input.recentComms.latestInternalRouteAuditPlanningBuilderAck?.sourceRef || "not found"} ${internalRouteAuditPlanningCommitHash}, and Oracle ACK ${input.recentComms.latestInternalRouteAuditPlanningOracleAck?.sourceRef || "not found"} ${internalRouteAuditPlanningCommitHash}; red WIP containment rows are diagnostic only while mission-control-internal-route-promotion-review-plan-v0 remains completed visible context and the active next boundary stays internal route/audit planning from the visible plan only.`,
+                      `Completed post-audit selector evidence: checkpoint ${input.recentComms.latestPostAuditPlanningSelectorCheckpoint?.sourceRef || "not found"} ${postAuditPlanningSelectorCommitHash}, Builder ACK ${input.recentComms.latestPostAuditPlanningSelectorBuilderAck?.sourceRef || "not found"} ${postAuditPlanningSelectorCommitHash}, and Oracle ACK ${input.recentComms.latestPostAuditPlanningSelectorOracleAck?.sourceRef || "not found"} ${postAuditPlanningSelectorCommitHash}; WIP sanity/status/containment/closure rows are diagnostic only while mission-control-internal-route-promotion-review-plan-v0 remains completed visible context and the active next boundary stays internal route/audit planning from the visible plan only.`,
+                    ]
+                    : internalRouteAuditPlanningCommitted
                     ? [`Completed internal route/audit planning evidence: checkpoint ${input.recentComms.latestInternalRouteAuditPlanningCheckpoint?.sourceRef || "not found"} ${internalRouteAuditPlanningCommitHash}, Builder ACK ${input.recentComms.latestInternalRouteAuditPlanningBuilderAck?.sourceRef || "not found"} ${internalRouteAuditPlanningCommitHash}, and Oracle ACK ${input.recentComms.latestInternalRouteAuditPlanningOracleAck?.sourceRef || "not found"} ${internalRouteAuditPlanningCommitHash}; red WIP containment rows are diagnostic only while mission-control-internal-route-promotion-review-plan-v0 remains completed visible context and the active next boundary stays internal route/audit planning from the visible plan only.`]
                     : internalRouteAuditPlanningReady
                     ? [`Completed internal-route promotion plan surface evidence: checkpoint ${input.recentComms.latestInternalRoutePromotionPlanSurfaceCheckpoint?.sourceRef || "not found"} ${internalRoutePromotionPlanSurfaceCommitHash} and Oracle ACK ${input.recentComms.latestInternalRoutePromotionPlanSurfaceOracleAck?.sourceRef || "not found"} ${internalRoutePromotionPlanSurfaceCommitHash}; mission-control-internal-route-promotion-review-plan-v0 remains completed visible context while the active next boundary advances to internal route/audit planning from the visible plan only.`]
@@ -2733,6 +2816,28 @@ function buildMissionControl(input: {
                 },
               ]
             : []),
+          ...(postAuditPlanningSelectorCommitted
+            ? [
+                {
+                  kind: "comms" as const,
+                  sourceRef: input.recentComms.latestPostAuditPlanningSelectorCheckpoint?.sourceRef || "not found",
+                  commitHash: postAuditPlanningSelectorCommitHash,
+                  summary: "Post-audit selector hardening is source-specific and committed before WIP sanity/status/containment/closure rows can be treated as diagnostic only.",
+                },
+                {
+                  kind: "comms" as const,
+                  sourceRef: input.recentComms.latestPostAuditPlanningSelectorBuilderAck?.sourceRef || "not found",
+                  commitHash: postAuditPlanningSelectorCommitHash,
+                  summary: "Builder acknowledged the committed post-audit selector hardening boundary.",
+                },
+                {
+                  kind: "comms" as const,
+                  sourceRef: input.recentComms.latestPostAuditPlanningSelectorOracleAck?.sourceRef || "not found",
+                  commitHash: postAuditPlanningSelectorCommitHash,
+                  summary: "Oracle acknowledged the committed post-audit selector hardening boundary.",
+                },
+              ]
+            : []),
         ],
         completedContext: {
           commandCardAcceptanceId: "mission-control-v0-command-card-acceptance",
@@ -2750,6 +2855,9 @@ function buildMissionControl(input: {
           ...(internalRouteAuditPlanningCommitted
             ? ["c1a05e07 internal route/audit planning checkpoint plus Builder/Oracle ACKs are source-specific and not report/name-drop rows."]
             : []),
+          ...(postAuditPlanningSelectorCommitted
+            ? ["582ef1c6 post-audit selector checkpoint plus Builder/Oracle ACKs are source-specific and not report/name-drop rows."]
+            : []),
           "The plan is local evidence only and is not a route promotion request.",
         ],
         refusalNoGoConditions: [
@@ -2760,6 +2868,9 @@ function buildMissionControl(input: {
             : []),
           ...(internalRouteAuditPlanningCommitted
             ? ["Missing source-specific c1a05e07 internal route/audit planning checkpoint, Builder ACK, or Oracle ACK."]
+            : []),
+          ...(postAuditPlanningSelectorCommitted
+            ? ["Missing source-specific 582ef1c6 post-audit selector checkpoint, Builder ACK, or Oracle ACK."]
             : []),
           internalRouteAuditPlanningReady
             ? "Any report/checkpoint/name-drop row trying to replace the active delegation, 0cb27b6b authority, or f7352d10 authority."
