@@ -57,6 +57,7 @@ const elements = {
   commandCardAcceptanceSummary: document.getElementById('commandCardAcceptanceSummary'),
   commandCardRoutePlanFollowThroughProofSummary: document.getElementById('commandCardRoutePlanFollowThroughProofSummary'),
   internalRoutePromotionReviewPlanSummary: document.getElementById('internalRoutePromotionReviewPlanSummary'),
+  internalRouteAuditReviewLaneProofSummary: document.getElementById('internalRouteAuditReviewLaneProofSummary'),
   coordinationDraftList: document.getElementById('coordinationDraftList'),
   routePreviewSummary: document.getElementById('routePreviewSummary'),
   saveRoutePreviewButton: document.getElementById('saveRoutePreviewButton'),
@@ -2032,6 +2033,61 @@ function describeInternalRoutePromotionReviewPlan(mission) {
   ].join(' · ');
 }
 
+function describeInternalRouteAuditReviewLaneProof(mission) {
+  const proof = mission?.internalRouteAuditReviewLaneProof;
+  if (!proof || typeof proof !== 'object') {
+    return 'Internal-route audit review-lane proof: not loaded yet.';
+  }
+  const review = proof.review && typeof proof.review === 'object' ? proof.review : {};
+  const completed = proof.completedContext && typeof proof.completedContext === 'object'
+    ? [
+        proof.completedContext.commandCardAcceptanceId,
+        proof.completedContext.commandCardRoutePlanFollowThroughProofId,
+        proof.completedContext.internalRoutePromotionReviewPlanId,
+      ].filter(Boolean).join(' + ')
+    : 'completed contexts not listed';
+  const audit = proof.audit && typeof proof.audit === 'object' ? proof.audit : {};
+  const falseFlags = [
+    'sendPerformed',
+    'promotionPerformed',
+    'routeFlip',
+    'runtimeExecutes',
+    'runtimeStarted',
+    'browserOpened',
+    'workbenchOpened',
+    'uiActionPerformed',
+    'fetched',
+    'posted',
+    'routed',
+    'sent',
+    'providerInvoked',
+    'modelInvoked',
+    'accountAccessed',
+    'tokenAccessed',
+    'credentialAccessed',
+    'deviceTouched',
+    'userTargeted',
+    'externalTargeted',
+    'deployed',
+    'moneyMovement',
+    'tradingTouched',
+  ].map((key) => `${key}=${audit[key] === true ? 'true' : 'false'}`).join(', ');
+  return [
+    `Internal-route audit review-lane proof: ${proof.id || 'unknown proof'}`,
+    `Status: ${proof.status || 'not loaded'}`,
+    `Owner: ${proof.owner || 'not loaded'}`,
+    `Completed contexts: ${completed}`,
+    `Target: ${review.target || 'not loaded'}`,
+    `Purpose: ${review.purpose || 'not loaded'}`,
+    `Message/body: ${review.body || review.message || 'not loaded'}`,
+    `Source evidence: ${summarizeSourceEvidence(proof.sourceEvidence)}`,
+    `Control point: ${proof.jamesControlPoint || 'James approval is required before any promotion, route, or send action.'}`,
+    `Preconditions: ${summarizeList(proof.preconditions, 'preconditions not listed')}`,
+    `No-go: ${summarizeList(proof.refusalNoGoConditions, 'no-go conditions not listed')}`,
+    `Audit flags: planningOnly=${audit.planningOnly === true}, manualOnly=${audit.manualOnly === true}, ${falseFlags}`,
+  ].join(' · ');
+}
+
 function displayMissionAnswer(answer, mission) {
   const text = answer || 'Mission Control has no local answer yet.';
   const cardAction = mission?.commandCardAcceptance?.cardFields?.jamesActionLine;
@@ -2053,6 +2109,7 @@ function updateSquidRunContext(payload) {
     setText(elements.commandCardAcceptanceSummary, 'Command card acceptance: not loaded yet.');
     setText(elements.commandCardRoutePlanFollowThroughProofSummary, 'Command-card route-plan follow-through proof: not loaded yet.');
     setText(elements.internalRoutePromotionReviewPlanSummary, 'Internal-route promotion/review plan: not loaded yet.');
+    setText(elements.internalRouteAuditReviewLaneProofSummary, 'Internal-route audit review-lane proof: not loaded yet.');
     renderCoordinationDrafts([]);
     setText(elements.routePreviewSummary, 'Route preview: not prepared yet.');
     setText(elements.foundationSummary, 'No foundation evidence loaded.');
@@ -2087,6 +2144,7 @@ function updateSquidRunContext(payload) {
   setText(elements.commandCardAcceptanceSummary, describeCommandCardAcceptance(mission));
   setText(elements.commandCardRoutePlanFollowThroughProofSummary, describeCommandCardRoutePlanFollowThroughProof(mission));
   setText(elements.internalRoutePromotionReviewPlanSummary, describeInternalRoutePromotionReviewPlan(mission));
+  setText(elements.internalRouteAuditReviewLaneProofSummary, describeInternalRouteAuditReviewLaneProof(mission));
   renderCoordinationDrafts(mission.coordinationDrafts);
   setText(elements.routePreviewSummary, describeRoutePreview(mission.internalRoutePreview));
   setText(elements.foundationSummary, `Foundation vs product: ${mission.foundationVsProduct || 'Local context is foundation; Mission Control is the product test.'}`);

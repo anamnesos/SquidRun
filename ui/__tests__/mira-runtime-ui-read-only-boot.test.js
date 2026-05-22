@@ -2570,6 +2570,7 @@ function collectMissionControlText(elements) {
     elements.commandCardAcceptanceSummary.textContent,
     elements.commandCardRoutePlanFollowThroughProofSummary.textContent,
     elements.internalRoutePromotionReviewPlanSummary.textContent,
+    elements.internalRouteAuditReviewLaneProofSummary.textContent,
     draftText,
     elements.routePreviewSummary.textContent,
     elements.foundationSummary.textContent,
@@ -4499,6 +4500,292 @@ describe('Mira runtime UI boot', () => {
     expect(missionSurfaceText).toContain(commandCardId);
     expect(missionSurfaceText).toContain(proofId);
     expect(missionSurfaceText).toContain(planId);
+    expect((missionSurfaceText.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+    expect(harness.elements.missionAnswer.textContent).not.toContain('JAMES ACTION:');
+  });
+
+  test('renders internal-route audit review-lane proof from mocked SquidRun context without turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const commandCardId = 'mission-control-v0-command-card-acceptance';
+    const routePlanProofId = 'mission-control-command-card-route-plan-follow-through-v0';
+    const promotionPlanId = 'mission-control-internal-route-promotion-review-plan-v0';
+    const proofId = 'mission-control-internal-route-audit-review-lane-proof-v0';
+    const proofBody = 'Review mission-control-internal-route-audit-review-lane-proof-v0 against mission-control-internal-route-promotion-review-plan-v0 for owner Builder, target Oracle, source evidence, James control point, preconditions/no-go conditions, manual-only/no-send/no-promotion/no-route-flip/no-execution audit flags, and exactly one James-action line; do not POST, route, send, promote, flip routes, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.';
+    const controlPoint = 'James must explicitly review and approve a separate future route/audit promotion before any real promotion, route flip, send, runtime, browser, workbench, UI/status, provider/model, credential, deploy, money, or trading action is proposed.';
+    const harness = createRuntimeBootHarness({
+      customizeSquidRunContext(context) {
+        context.lane.sourceRef = 'architect#352';
+        context.git.dirtyCount = 0;
+        context.git.statusPreview = [];
+        context.dirtyWork.summary = 'Worktree is clean.';
+        context.dirtyWork.files = [];
+        context.missionControl.answer = [
+          'Project/lane: squidrun / architect#352. Display the completed internal route/audit review-lane proof from local context only.',
+          `Next team move: Oracle reviews ${proofId}; Builder holds it as local context.`,
+          'JAMES ACTION: NONE - Local display-only Mission Control work; no runtime, route, send, provider/model, credential, deploy, money, or external action is needed.',
+        ].join('\n');
+        context.missionControl.nextTeamMove = `Oracle reviews ${proofId}; Builder holds it as local context.`;
+        context.missionControl.commandCardAcceptance = {
+          id: commandCardId,
+          status: 'acceptance_planning_only',
+          owner: 'Builder',
+          completedContext: {
+            toolAppActionPlanId: 'mission-control-tool-app-action-plan-v0',
+            continuityMemoryProofId: 'mission-control-continuity-memory-proof-v0',
+            demoWorkbenchProofId: 'mission-control-demo-workbench-proof-v0',
+          },
+          cardFields: {
+            currentLaneWhyItMatters: 'Current lane architect#352 matters because James needs the internal route/audit proof visible without terminal logs.',
+            whatChangedRecently: 'Committed 7398f44f exposes the internal route/audit review-lane proof as local planning-only context.',
+            builderNextMove: 'Render the completed internal route/audit review-lane proof from already-loaded /squidrun/context only.',
+            oracleNextMove: 'Review the display-only proof surface for no live effects.',
+            contextCardStatus: 'Context-card/current dirty-context status: Worktree is clean.',
+            jamesActionLine: 'JAMES ACTION: NONE',
+            dryRunRoutePlan: {
+              target: 'oracle',
+              purpose: 'internal route/audit proof no-effect review',
+              manualExecutionRequired: true,
+              sendPerformed: false,
+              summary: 'Dry-run route plan asks Oracle to review the local proof display only; no /turn, POST, route, send, provider/model call, or external send is performed.',
+            },
+          },
+          audit: {
+            acceptanceOnly: true,
+            planningOnly: true,
+            runtimeStarted: false,
+            browserOpened: false,
+            workbenchOpened: false,
+            uiActionPerformed: false,
+            fetched: false,
+            posted: false,
+            routed: false,
+            sent: false,
+            providerInvoked: false,
+            modelInvoked: false,
+            accountAccessed: false,
+            tokenAccessed: false,
+            credentialAccessed: false,
+            deviceTouched: false,
+            userTargeted: false,
+            externalTargeted: false,
+            deployed: false,
+            moneyMovement: false,
+            tradingTouched: false,
+          },
+        };
+        context.missionControl.commandCardRoutePlanFollowThroughProof = {
+          id: routePlanProofId,
+          status: 'proof_ready_for_oracle_review',
+          owner: 'Builder',
+          completedContext: {
+            commandCardAcceptanceId: commandCardId,
+          },
+          audit: {
+            proofOnly: true,
+            planningOnly: true,
+            fetched: false,
+            posted: false,
+            routed: false,
+            sent: false,
+          },
+        };
+        context.missionControl.internalRoutePromotionReviewPlan = {
+          id: promotionPlanId,
+          status: 'planning_only_ready_for_oracle_review',
+          owner: 'Builder',
+          target: {
+            role: 'oracle',
+            purpose: 'internal-route promotion no-send review',
+            message: 'Completed internal-route promotion/review plan remains visible context for the audit proof.',
+            body: 'Completed internal-route promotion/review plan remains visible context for the audit proof.',
+            manualExecutionRequired: true,
+            runtimeExecutes: false,
+            sendPerformed: false,
+            promotionPerformed: false,
+            routeFlip: false,
+          },
+          completedContext: {
+            commandCardAcceptanceId: commandCardId,
+            commandCardRoutePlanFollowThroughProofId: routePlanProofId,
+          },
+          sourceEvidence: [
+            {
+              kind: 'completed_context',
+              summary: `${promotionPlanId} remains completed visible context.`,
+            },
+          ],
+          jamesControlPoint: 'James can inspect this completed local plan before any future promotion, route, send, runtime, browser, workbench, UI/status, provider/model, credential, deploy, money, or trading action is proposed.',
+          preconditions: ['Worktree is clean.'],
+          refusalNoGoConditions: ['Any live route, send, POST, promotion, execution, credential, deploy, money, or trading effect.'],
+          audit: {
+            planningOnly: true,
+            manualOnly: true,
+            sendPerformed: false,
+            promotionPerformed: false,
+            routeFlip: false,
+            runtimeExecutes: false,
+            runtimeStarted: false,
+            browserOpened: false,
+            workbenchOpened: false,
+            uiActionPerformed: false,
+            fetched: false,
+            posted: false,
+            routed: false,
+            sent: false,
+            providerInvoked: false,
+            modelInvoked: false,
+            accountAccessed: false,
+            tokenAccessed: false,
+            credentialAccessed: false,
+            deviceTouched: false,
+            userTargeted: false,
+            externalTargeted: false,
+            deployed: false,
+            moneyMovement: false,
+            tradingTouched: false,
+          },
+        };
+        context.missionControl.internalRouteAuditReviewLaneProof = {
+          id: proofId,
+          status: 'planning_only_ready_for_oracle_review',
+          owner: 'Builder',
+          review: {
+            target: 'oracle',
+            purpose: 'internal route/audit planning review',
+            message: proofBody,
+            body: proofBody,
+            manualExecutionRequired: true,
+            runtimeExecutes: false,
+            sendPerformed: false,
+            promotionPerformed: false,
+            routeFlip: false,
+          },
+          sourceEvidence: [
+            {
+              kind: 'completed_context',
+              summary: `Completed context retained: ${promotionPlanId} remains planning_only_ready_for_oracle_review.`,
+            },
+            {
+              kind: 'comms',
+              sourceRef: 'architect#329',
+              commitHash: 'b1acd4d7',
+              summary: 'b1acd4d7 checkpoint is source-specific evidence before exposing this internal route/audit review-lane proof.',
+            },
+            {
+              kind: 'comms',
+              sourceRef: 'oracle#107',
+              commitHash: 'b1acd4d7',
+              summary: 'Oracle acknowledged b1acd4d7 before this review-lane proof is exposed.',
+            },
+          ],
+          completedContext: {
+            commandCardAcceptanceId: commandCardId,
+            commandCardRoutePlanFollowThroughProofId: routePlanProofId,
+            internalRoutePromotionReviewPlanId: promotionPlanId,
+          },
+          jamesControlPoint: controlPoint,
+          preconditions: [
+            'Worktree is clean.',
+            'mission-control-internal-route-promotion-review-plan-v0 is present as completed visible context.',
+            'The proof is read from loaded /squidrun/context only.',
+          ],
+          refusalNoGoConditions: [
+            'Dirty worktree or missing completed internal-route promotion/review plan context.',
+            'Any request to start runtime, open browser/workbench, perform UI/status actions, fetch, POST, route, send, promote, flip routes, call provider/model, touch accounts/tokens/credentials/devices/users/external targets, deploy, move money, or touch trading.',
+          ],
+          audit: {
+            planningOnly: true,
+            manualOnly: true,
+            sendPerformed: false,
+            promotionPerformed: false,
+            routeFlip: false,
+            runtimeExecutes: false,
+            runtimeStarted: false,
+            browserOpened: false,
+            workbenchOpened: false,
+            uiActionPerformed: false,
+            fetched: false,
+            posted: false,
+            routed: false,
+            sent: false,
+            providerInvoked: false,
+            modelInvoked: false,
+            accountAccessed: false,
+            tokenAccessed: false,
+            credentialAccessed: false,
+            deviceTouched: false,
+            userTargeted: false,
+            externalTargeted: false,
+            deployed: false,
+            moneyMovement: false,
+            tradingTouched: false,
+          },
+        };
+        context.summary.happening = 'Working in squidrun on architect#352: display-only internal route/audit review-lane proof surface.';
+        context.summary.nextStep = `Oracle reviews ${proofId}; Builder holds it as local context.`;
+        context.summary.commandCardAcceptance = `${commandCardId}: completed visible command-card context.`;
+        context.summary.commandCardRoutePlanFollowThroughProof = `${routePlanProofId}: proof_ready_for_oracle_review.`;
+        context.summary.internalRoutePromotionReviewPlan = `${promotionPlanId}: planning_only_ready_for_oracle_review.`;
+        context.summary.internalRouteAuditReviewLaneProof = `${proofId}: planning_only_ready_for_oracle_review.`;
+        context.summary.jamesAction = 'NONE';
+        context.summary.jamesActionReason = 'Local display-only Mission Control work; no runtime, route, send, provider/model, credential, deploy, money, or external action is needed.';
+        return context;
+      },
+    });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const proofText = harness.elements.internalRouteAuditReviewLaneProofSummary.textContent;
+    const planText = harness.elements.internalRoutePromotionReviewPlanSummary.textContent;
+    const missionSurfaceText = collectMissionControlText(harness.elements);
+    expect(harness.calls.filter((call) => call.method === 'POST')).toHaveLength(0);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.calls.filter((call) => call.url === '/squidrun/context')).toEqual([
+      expect.objectContaining({ method: 'GET' }),
+    ]);
+    expect(planText).toContain(`Internal-route promotion/review plan: ${promotionPlanId}`);
+    expect(proofText).toContain(`Internal-route audit review-lane proof: ${proofId}`);
+    expect(proofText).toContain('Status: planning_only_ready_for_oracle_review');
+    expect(proofText).toContain('Owner: Builder');
+    expect(proofText).toContain(`Completed contexts: ${commandCardId} + ${routePlanProofId} + ${promotionPlanId}`);
+    expect(proofText).toContain('Target: oracle');
+    expect(proofText).toContain('Purpose: internal route/audit planning review');
+    expect(proofText).toContain(`Message/body: ${proofBody}`);
+    expect(proofText).toContain('architect#329 b1acd4d7');
+    expect(proofText).toContain('oracle#107 b1acd4d7');
+    expect(proofText).toContain(`Control point: ${controlPoint}`);
+    expect(proofText).toContain('Preconditions: Worktree is clean. | mission-control-internal-route-promotion-review-plan-v0 is present as completed visible context. | The proof is read from loaded /squidrun/context only.');
+    expect(proofText).toContain('No-go: Dirty worktree or missing completed internal-route promotion/review plan context. | Any request to start runtime, open browser/workbench, perform UI/status actions, fetch, POST, route, send, promote, flip routes, call provider/model, touch accounts/tokens/credentials/devices/users/external targets, deploy, move money, or touch trading.');
+    expect(proofText).toContain('Audit flags: planningOnly=true, manualOnly=true');
+    expect(proofText).toContain('sendPerformed=false');
+    expect(proofText).toContain('promotionPerformed=false');
+    expect(proofText).toContain('routeFlip=false');
+    expect(proofText).toContain('runtimeExecutes=false');
+    expect(proofText).toContain('runtimeStarted=false');
+    expect(proofText).toContain('browserOpened=false');
+    expect(proofText).toContain('workbenchOpened=false');
+    expect(proofText).toContain('uiActionPerformed=false');
+    expect(proofText).toContain('fetched=false');
+    expect(proofText).toContain('posted=false');
+    expect(proofText).toContain('routed=false');
+    expect(proofText).toContain('sent=false');
+    expect(proofText).toContain('providerInvoked=false');
+    expect(proofText).toContain('modelInvoked=false');
+    expect(proofText).toContain('accountAccessed=false');
+    expect(proofText).toContain('tokenAccessed=false');
+    expect(proofText).toContain('credentialAccessed=false');
+    expect(proofText).toContain('deviceTouched=false');
+    expect(proofText).toContain('userTargeted=false');
+    expect(proofText).toContain('externalTargeted=false');
+    expect(proofText).toContain('deployed=false');
+    expect(proofText).toContain('moneyMovement=false');
+    expect(proofText).toContain('tradingTouched=false');
+    expect(missionSurfaceText).toContain(promotionPlanId);
+    expect(missionSurfaceText).toContain(proofId);
     expect((missionSurfaceText.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
     expect(harness.elements.missionAnswer.textContent).not.toContain('JAMES ACTION:');
   });
