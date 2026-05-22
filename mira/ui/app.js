@@ -244,6 +244,7 @@ function isMissionControlQuestion(text) {
     || isMissionControlAvailableAnswersQuestion(text)
     || isMissionControlHardStopSetupQuestion(text)
     || isMissionControlLiveBoundaryQuestion(text)
+    || isMissionControlReviewGateQuestion(text)
     || isMissionControlManualActionQuestion(text)
     || isMissionControlManualOnlyBoundaryQuestion(text)
     || isMissionControlChecksumEvidenceQuestion(text)
@@ -303,6 +304,15 @@ function isMissionControlHardStopSetupQuestion(text) {
         || /\bwhat\s+(setup|gate|requirements?)\s+.*\b(live[-\s]+send|real[-\s]+send|live\s+activation)\b/i.test(normalized)
         || /\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+(hard[-\s]+stop|setup)\s+(requirement|requirements|boundary|gate)\b/i.test(normalized)))
     || /\bwhat\s+setup\s+(would\s+be\s+|is\s+)?(required|needed)\s+before\s+(live[-\s]+send|real[-\s]+send|live\s+activation)\b/i.test(normalized);
+}
+
+function isMissionControlReviewGateQuestion(text) {
+  const normalized = String(text || '');
+  const hasMissionControlContext = /\b(mission\s*control|new\s+mira)\b/i.test(normalized);
+  return hasMissionControlContext
+    && (/\b(is|are)\s+.*\b(review[-\s]+only|internal[-\s]+only|not[-\s]+sent|no[-\s]+send|review\s+required|manual\s+execution\s+required)\b/i.test(normalized)
+      || /\bwhat\s+.*\b(review[-\s]+only|internal[-\s]+only|not[-\s]+sent|no[-\s]+send|review\s+gates?|audit\s+gates?|review\s+required|manual\s+execution\s+required)\b.*\b(active|loaded|status|truth|recorded|on)\b/i.test(normalized)
+      || /\bwhat\s+(is\s+)?the\s+(mission\s*control|new\s+mira)\s+(review[-\s]+only|internal[-\s]+only|not[-\s]+sent|no[-\s]+send|audit[-\s]+gate|review[-\s]+gate)\s+(status|truth|gates?)\b/i.test(normalized));
 }
 
 function isMissionControlManualActionQuestion(text) {
@@ -538,6 +548,10 @@ function currentMissionControlAnswer(text = '') {
     const liveBoundaryAnswer = buildMissionControlLiveBoundaryAnswer();
     if (liveBoundaryAnswer) return liveBoundaryAnswer;
   }
+  if (isMissionControlReviewGateQuestion(text)) {
+    const reviewGateAnswer = buildMissionControlReviewGateAnswer();
+    if (reviewGateAnswer) return reviewGateAnswer;
+  }
   if (isMissionControlManualActionQuestion(text)) {
     const manualActionAnswer = buildMissionControlManualActionAnswer();
     if (manualActionAnswer) return manualActionAnswer;
@@ -698,6 +712,7 @@ function buildMissionControlAvailableAnswersAnswer(context = state.missionContro
     available.push('stage trail/status list');
     available.push('advance selection');
     available.push('hard-stop/setup requirements');
+    available.push('review/no-send gates');
     available.push('manual-only boundary');
     available.push('payload/endpoint preview');
     available.push('handler drift check');
@@ -809,6 +824,55 @@ function buildMissionControlHardStopSetupAnswer(status = state.missionControlAct
     `No-effect: ${trace.noEffectSummary || endToEndReadout.noEffectSummary || 'Read-only hard-stop/setup inspection only; no command stored, live hm-send execution, bridge delivery, Telegram, route flip, provider/model call, account or token access, runtime execution, or external delivery.'}`,
     'Source: already-loaded Mission Control hard-stop/readout/current-stage/next-boundary status from local SquidRun context.',
     'Boundary: local inspection only; no /turn, fetch, POST, persistence, setup, enable, start, remove, bypass, send, submit, endpoint call, handler call, click, artifact creation, context-carry artifact/stage, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
+    `JAMES ACTION: ${jamesAction} - ${actionReason}`,
+  ].join('\n');
+}
+
+function buildMissionControlReviewGateAnswer(status = state.missionControlActivationPipelineStatus, mission = state.missionControl) {
+  if (!status || typeof status !== 'object') return '';
+  const hardStop = status.hardStopTruth && typeof status.hardStopTruth === 'object' ? status.hardStopTruth : {};
+  const nextBoundary = status.nextBoundary && typeof status.nextBoundary === 'object' ? status.nextBoundary : {};
+  const endToEndReadout = status.endToEndReadout && typeof status.endToEndReadout === 'object' ? status.endToEndReadout : {};
+  const currentStage = status.currentStage && typeof status.currentStage === 'object' ? status.currentStage : {};
+  const reviewFlags = [
+    `manual execution required ${status.manualExecutionRequired === true ? 'yes' : 'no'}`,
+    `review required ${status.reviewRequired === true ? 'yes' : 'no'}`,
+    `internal only ${status.internalOnly === true ? 'yes' : 'no'}`,
+    `reviewable owned work ${status.reviewableOwnedWork === true ? 'yes' : 'no'}`,
+    `not sent ${status.notSent === true ? 'yes' : 'no'}`,
+  ];
+  const noSendFlags = [
+    `command stored ${status.commandStored === true ? 'yes' : 'no'}`,
+    `send performed ${status.sendPerformed === true ? 'yes' : 'no'}`,
+    `runtime executes ${status.runtimeExecutes === true ? 'yes' : 'no'}`,
+    `external send ${status.externalSend === true ? 'yes' : 'no'}`,
+    `Telegram ${status.telegramSend === true ? 'yes' : 'no'}`,
+    `live hm-send ${status.liveHmSend === true ? 'yes' : 'no'}`,
+  ];
+  const authorityFlags = [
+    `live send available ${hardStop.liveSendAvailable === true || endToEndReadout.liveSendAvailable === true ? 'yes' : 'no'}`,
+    `route flip ${status.routeFlip === true ? 'yes' : 'no'}`,
+    `provider/model ${status.providerInvoked === true ? 'yes' : 'no'}`,
+    `account/token access ${status.accountOrTokenAccess === true ? 'yes' : 'no'}`,
+  ];
+  const gateStatus = status.reviewRequired === true && status.internalOnly === true && status.notSent === true
+    ? 'review-only internal no-send'
+    : 'mixed or incomplete';
+  const jamesAction = mission?.jamesAction === 'DO THIS' ? 'DO THIS' : 'NONE';
+  const actionReason = mission?.jamesActionReason
+    || (jamesAction === 'DO THIS'
+      ? 'A concrete setup or activation choice is required before this can continue.'
+      : 'Read-only Mission Control review/no-send gate inspection; no setup or live action is needed.');
+  return [
+    `Review/no-send gate status: ${gateStatus}`,
+    `Review gates: ${reviewFlags.join(' / ')}`,
+    `No-send flags: ${noSendFlags.join(' / ')}`,
+    `Authority flags: ${authorityFlags.join(' / ')}`,
+    `Current stage: ${currentStage.label || endToEndReadout.currentStageLabel || 'No saved Mission Control send chain yet'}`,
+    `Hard stop: recorded ${hardStop.hardStopContractRecorded === true || endToEndReadout.hardStopRecorded === true ? 'yes' : 'no'}; separate activation lane ${hardStop.separateActivationLaneRequired === true || endToEndReadout.realSendRequiresSeparateActivation === true ? 'yes' : 'no'}.`,
+    `Next boundary: ${nextBoundary.currentNextStep || endToEndReadout.nextBoundary || 'Live send is unavailable from this surface.'}`,
+    'Source: already-loaded Mission Control review/no-send gate booleans, hard-stop truth, readout, and next-boundary status from local SquidRun context.',
+    'Boundary: local inspection only; no /turn, fetch, POST, persistence, review, approve, mark reviewed, set internal, save, submit, send, enable, change gates, endpoint call, handler call, click, artifact creation, context-carry artifact/stage, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.',
     `JAMES ACTION: ${jamesAction} - ${actionReason}`,
   ].join('\n');
 }

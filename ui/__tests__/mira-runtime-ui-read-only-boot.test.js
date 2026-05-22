@@ -3991,6 +3991,7 @@ describe('Mira runtime UI boot', () => {
       expect(availableReply).toContain('stage trail/status list');
       expect(availableReply).toContain('advance selection');
       expect(availableReply).toContain('hard-stop/setup requirements');
+      expect(availableReply).toContain('review/no-send gates');
       expect(availableReply).toContain('manual-only boundary');
       expect(availableReply).toContain('validation checks');
       expect(availableReply).toContain('checksum/evidence integrity');
@@ -4085,6 +4086,47 @@ describe('Mira runtime UI boot', () => {
       expect(setupReply).toContain('Boundary: local inspection only; no /turn, fetch, POST, persistence, setup, enable, start, remove, bypass, send, submit, endpoint call, handler call, click, artifact creation, context-carry artifact/stage, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.');
       expect(setupReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
       expect((setupReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+      expect(harness.elements.lastTurn.textContent).toBe('mission control local');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+  });
+
+  test('answers review/no-send gate questions from existing Mission Control status without a turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness();
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const postCountBeforeQuestion = harness.calls.filter((call) => call.method === 'POST').length;
+    for (const question of ['is Mission Control review-only?', 'what Mission Control review gates are active?', 'is Mission Control internal-only and not sent?']) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const postCallsAfterQuestion = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCallsAfterQuestion).toHaveLength(postCountBeforeQuestion);
+      expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        expect.stringContaining('Review/no-send gate status: review-only internal no-send'),
+      ]);
+      const gateReply = harness.elements.thread.children[harness.elements.thread.children.length - 1].children[0].textContent;
+      expect(gateReply).toContain('Review gates: manual execution required yes / review required yes / internal only yes / reviewable owned work yes / not sent yes');
+      expect(gateReply).toContain('No-send flags: command stored no / send performed no / runtime executes no / external send no / Telegram no / live hm-send no');
+      expect(gateReply).toContain('Authority flags: live send available no / route flip no / provider/model no / account/token access no');
+      expect(gateReply).toContain('Current stage: No Mission Control send chain yet');
+      expect(gateReply).toContain('Hard stop: recorded no; separate activation lane yes.');
+      expect(gateReply).toContain('Next boundary: Next inspectable step is local review; live send is still unavailable.');
+      expect(gateReply).toContain('Source: already-loaded Mission Control review/no-send gate booleans, hard-stop truth, readout, and next-boundary status from local SquidRun context.');
+      expect(gateReply).toContain('Boundary: local inspection only; no /turn, fetch, POST, persistence, review, approve, mark reviewed, set internal, save, submit, send, enable, change gates, endpoint call, handler call, click, artifact creation, context-carry artifact/stage, Telegram, hm-send, route flip, provider/model call, account/token access, runtime execution, or external send.');
+      expect(gateReply).toContain('JAMES ACTION: NONE - Local dry-run Mission Control work; no account setup needed.');
+      expect((gateReply.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
       expect(harness.elements.lastTurn.textContent).toBe('mission control local');
       expect(harness.elements.sendButton.disabled).toBe(false);
       expect(harness.elements.sendButton.textContent).toBe('Send');
@@ -5558,6 +5600,54 @@ describe('Mira runtime UI boot', () => {
       expect(harness.elements.sendButton.textContent).toBe('Send');
     }
     expect(harness.calls.filter((call) => call.url === '/turn')).toHaveLength(7);
+  });
+
+  test('does not hijack generic review-gate instructions from explicit user submit', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const harness = createRuntimeBootHarness({ allowTurn: true });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    harness.elements.useModel.checked = false;
+    for (const question of [
+      'review the Mission Control status with the runtime fixture',
+      'approve the Mission Control review gate with the runtime fixture',
+      'mark Mission Control reviewed with the runtime fixture',
+      'set Mission Control internal-only with the runtime fixture',
+      'save the Mission Control review gates with the runtime fixture',
+      'submit the Mission Control review gate with the runtime fixture',
+      'send the Mission Control no-send gate with the runtime fixture',
+      'enable the New Mira audit gate with the runtime fixture',
+      'change Mission Control gates with the runtime fixture',
+      'do the Mission Control review work with the runtime fixture',
+    ]) {
+      harness.elements.turnText.value = question;
+      const submitEvent = { preventDefault: jest.fn() };
+      await harness.elements.turnForm.listeners.submit(submitEvent);
+
+      const turnCalls = harness.calls.filter((call) => call.url === '/turn');
+      const postCalls = harness.calls.filter((call) => call.method === 'POST');
+      expect(submitEvent.preventDefault).toHaveBeenCalledTimes(1);
+      expect(postCalls).toHaveLength(turnCalls.length);
+      expect(turnCalls[turnCalls.length - 1].body).toEqual(expect.objectContaining({
+        text: question,
+        useModel: false,
+        modelProvider: 'openai_responses',
+        modelName: 'gpt-5.5',
+      }));
+      expect(harness.elements.thread.children.slice(-2).map((node) => node.children[0].textContent)).toEqual([
+        question,
+        'Mira. Deterministic local turn.',
+      ]);
+      expect(harness.elements.lastTurn.textContent).toBe('deterministic');
+      expect(harness.elements.sendButton.disabled).toBe(false);
+      expect(harness.elements.sendButton.textContent).toBe('Send');
+    }
+    expect(harness.calls.filter((call) => call.url === '/turn')).toHaveLength(10);
   });
 
   test('does not hijack generic click instructions from explicit user submit', async () => {
