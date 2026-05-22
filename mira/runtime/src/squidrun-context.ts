@@ -700,13 +700,17 @@ function buildMissionControl(input: {
   const coordinationDrafts: SquidRunProjectContext["missionControl"]["coordinationDrafts"] = [
     {
       target: "builder",
-      purpose: "implementation",
-      message: "Build Mission Control v0 from local SquidRun evidence: lane, git dirt, map/roadmap truth, owned-work continuation, and recent Architect/Oracle checkpoints. Keep sends dry-run.",
+      purpose: continuationSelectorProofCommitted ? "v1 dry-run planning" : "implementation",
+      message: continuationSelectorProofCommitted
+        ? "Advance Mission Control v1 dry-run coordination/follow-through route planning from local evidence only; keep it inspectable and no-send/no-execution."
+        : "Build Mission Control v0 from local SquidRun evidence: lane, git dirt, map/roadmap truth, owned-work continuation, and recent Architect/Oracle checkpoints. Keep sends dry-run.",
     },
     {
       target: "oracle",
-      purpose: "benchmark review",
-      message: "Challenge Mission Control v0 against the external-agent benchmark. PASS only if it is more useful than a context card and does not overclaim current New Mira.",
+      purpose: continuationSelectorProofCommitted ? "v1 no-send review" : "benchmark review",
+      message: continuationSelectorProofCommitted
+        ? "Review Mission Control v1 for no-send/no-execution boundaries and useful next-move specificity before commit."
+        : "Challenge Mission Control v0 against the external-agent benchmark. PASS only if it is more useful than a context card and does not overclaim current New Mira.",
     },
   ];
   const selectedDraft = coordinationDrafts.find((draft) => draft.target === "oracle") ?? coordinationDrafts[0]!;

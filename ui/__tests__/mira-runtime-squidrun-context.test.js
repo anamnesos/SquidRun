@@ -225,6 +225,42 @@ process.stdout.write(JSON.stringify({ ok: true, rows }));
     expect(context.missionControl.nextTeamMove).toBe('Builder should advance Mission Control v1 dry-run coordination/follow-through route planning from local evidence only; Oracle should review that it stays no-send/no-execution before commit.');
     expect(context.summary.nextStep).toBe(context.missionControl.nextTeamMove);
     expect(context.summary.nextStep).not.toContain('finish the continuation-aware Mission Control command-context proof');
+    expect(context.missionControl.coordinationDrafts).toEqual([
+      {
+        target: 'builder',
+        purpose: 'v1 dry-run planning',
+        message: 'Advance Mission Control v1 dry-run coordination/follow-through route planning from local evidence only; keep it inspectable and no-send/no-execution.',
+      },
+      {
+        target: 'oracle',
+        purpose: 'v1 no-send review',
+        message: 'Review Mission Control v1 for no-send/no-execution boundaries and useful next-move specificity before commit.',
+      },
+    ]);
+    expect(context.missionControl.internalRoutePreview).toEqual(expect.objectContaining({
+      status: 'reviewed_preview_only',
+      selectedDraftTarget: 'oracle',
+      selectedDraftPurpose: 'v1 no-send review',
+      audit: expect.objectContaining({
+        sendPerformed: false,
+        runtimeExecutes: false,
+        externalSend: false,
+        routeFlip: false,
+        providerInvoked: false,
+      }),
+    }));
+    expect(context.missionControl.internalRoutePreview.plan).toEqual(expect.objectContaining({
+      manualExecutionRequired: true,
+      runtimeExecutes: false,
+      target: expect.objectContaining({
+        role: 'oracle',
+      }),
+      envelope: expect.objectContaining({
+        body: {
+          content: 'Review Mission Control v1 for no-send/no-execution boundaries and useful next-move specificity before commit.',
+        },
+      }),
+    }));
     expect(context.summary.happening).toContain('continuation-aware Mission Control command context');
     expect(context.summary.happening).not.toContain('finish the existing 3-file review/no-send gate dirty slice');
     expect(answer.match(/^JAMES ACTION:/gm)).toHaveLength(1);
