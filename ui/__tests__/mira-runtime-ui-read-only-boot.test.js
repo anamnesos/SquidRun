@@ -51,7 +51,7 @@ function createElement(tagName = 'div') {
   return element;
 }
 
-function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}) {
+function createRuntimeBootHarness({ allowTurn = false, turnPayload = null, customizeSquidRunContext = null } = {}) {
   const elements = {};
   const calls = [];
   const response = (payload, ok = true) => ({
@@ -1227,6 +1227,10 @@ function createRuntimeBootHarness({ allowTurn = false, turnPayload = null } = {}
       liveHmSend: false,
     };
   };
+  if (typeof customizeSquidRunContext === 'function') {
+    payloads['/squidrun/context'] = customizeSquidRunContext(JSON.parse(JSON.stringify(payloads['/squidrun/context'])));
+  }
+
   const fetchImpl = jest.fn(async (url, options = {}) => {
     const pathname = String(url);
     const method = String(options.method || 'GET').toUpperCase();
@@ -2562,6 +2566,7 @@ function collectMissionControlText(elements) {
     .join('\n');
   return [
     elements.missionAnswer.textContent,
+    elements.demoWorkbenchProofSummary.textContent,
     draftText,
     elements.routePreviewSummary.textContent,
     elements.foundationSummary.textContent,
@@ -3806,6 +3811,124 @@ describe('Mira runtime UI boot', () => {
     expect(harness.elements.lastTurn.textContent).toBe('mission control local');
     expect(harness.elements.sendButton.disabled).toBe(false);
     expect(harness.elements.sendButton.textContent).toBe('Send');
+  });
+
+  test('renders completed demo workbench proof from mocked SquidRun context without turn POST', async () => {
+    const appJsPath = path.join(__dirname, '..', '..', 'mira', 'ui', 'app.js');
+    const appJs = fs.readFileSync(appJsPath, 'utf8');
+    const nextStep = 'Builder should prove the local New Mira workbench Mission Control section renders mission-control-demo-workbench-proof-v0 from /squidrun/context with the proof id, answer/surface question, completed toolAppActionPlan and continuityMemoryProof context, next step, and James control point; Oracle should review that the surface proof is read-only and performs no /turn POST or live action.';
+    const controlPoint = 'James must explicitly review and approve a separate future request before anyone starts runtime, opens a browser/workbench, performs UI/status actions, writes state, POSTs, routes, sends, or executes anything from this proof.';
+    const harness = createRuntimeBootHarness({
+      customizeSquidRunContext(context) {
+        context.lane.sourceRef = 'architect#188';
+        context.git.dirtyCount = 0;
+        context.git.statusPreview = [];
+        context.dirtyWork.summary = 'Worktree is clean.';
+        context.dirtyWork.files = [];
+        context.recentComms.latestBuilderInstruction = {
+          sourceRef: 'architect#188',
+          excerpt: 'Advance from completed demoWorkbenchProof to local workbench surface proof.',
+        };
+        context.recentComms.latestDemoWorkbenchProofCheckpoint = {
+          sourceRef: 'architect#186',
+          excerpt: '48e419b4 Add Mission Control demo workbench proof',
+          timestampMs: 1779453404228,
+          commitHash: '48e419b4',
+        };
+        context.recentComms.latestDemoWorkbenchProofOracleAck = {
+          sourceRef: 'oracle#62',
+          excerpt: 'Received 48e419b4 checkpoint.',
+          timestampMs: 1779453416734,
+          commitHash: '48e419b4',
+        };
+        context.missionControl.answer = [
+          'Project/lane: squidrun / architect#188. Mission Control workbench surface proof is the active next boundary.',
+          'Demo/workbench proof: mission-control-demo-workbench-proof-v0; owner Builder; target local_mission_control_answer_surface asks "what is happening here, and what should happen next?"; completed contexts mission-control-tool-app-action-plan-v0 and mission-control-continuity-memory-proof-v0; James control point: ' + controlPoint,
+          'Workbench surface proof evidence: checkpoint architect#186 48e419b4 and Oracle ACK oracle#62 48e419b4; demoWorkbenchProof is completed context and the active next boundary is read-only local surface rendering from /squidrun/context.',
+          `Next team move: ${nextStep}`,
+          'JAMES ACTION: NONE - This is local, inspectable, dry-run Mission Control work; no bot, channel, account, token, external send, or route switch is needed.',
+        ].join('\n');
+        context.missionControl.nextTeamMove = nextStep;
+        context.missionControl.demoWorkbenchProof = {
+          id: 'mission-control-demo-workbench-proof-v0',
+          status: 'proof_planning_only',
+          owner: 'Builder',
+          target: {
+            surface: 'local_mission_control_answer_surface',
+            question: 'what is happening here, and what should happen next?',
+            action: 'Inspect the local Mission Control answer/surface produced from getSquidRunContext without starting runtime, opening a browser, or performing UI/workbench actions.',
+          },
+          sourceEvidence: [],
+          completedContext: {
+            toolAppActionPlanId: 'mission-control-tool-app-action-plan-v0',
+            continuityMemoryProofId: 'mission-control-continuity-memory-proof-v0',
+          },
+          expectedJamesVisibleChecks: [
+            'The local Mission Control answer names what is happening here from local evidence.',
+            'There is exactly one JAMES ACTION line and it remains NONE.',
+          ],
+          jamesControlPoint: controlPoint,
+          preconditions: ['Worktree is clean.'],
+          refusalNoGoConditions: ['Any request to start runtime, open browser/workbench, POST, route, send, or execute.'],
+          audit: {
+            proofOnly: true,
+            planningOnly: true,
+            runtimeStarted: false,
+            browserOpened: false,
+            workbenchOpened: false,
+            uiActionPerformed: false,
+            fetched: false,
+            posted: false,
+            routed: false,
+            sent: false,
+            providerInvoked: false,
+            modelInvoked: false,
+            accountAccessed: false,
+            tokenAccessed: false,
+            credentialAccessed: false,
+            deviceTouched: false,
+            userTargeted: false,
+            externalTargeted: false,
+            deployed: false,
+            moneyMovement: false,
+            tradingTouched: false,
+          },
+        };
+        context.summary.happening = 'Working in squidrun on architect#188: continuation-aware Mission Control command context.';
+        context.summary.nextStep = nextStep;
+        context.summary.demoWorkbenchProof = `mission-control-demo-workbench-proof-v0: local_mission_control_answer_surface asks "what is happening here, and what should happen next?"; owner Builder; ${controlPoint}`;
+        context.summary.jamesAction = 'NONE';
+        context.summary.jamesActionReason = 'This is local, inspectable, dry-run Mission Control work; no bot, channel, account, token, external send, or route switch is needed.';
+        return context;
+      },
+    });
+
+    vm.runInNewContext(appJs, harness.context, {
+      filename: appJsPath,
+    });
+    await waitForBoot(harness.calls);
+
+    const missionSurfaceText = collectMissionControlText(harness.elements);
+    expect(harness.calls.filter((call) => call.method === 'POST')).toHaveLength(0);
+    expect(harness.calls.some((call) => call.url === '/turn')).toBe(false);
+    expect(harness.calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ url: '/squidrun/context', method: 'GET' }),
+    ]));
+    expect(harness.elements.missionAnswer.textContent).toContain('mission-control-demo-workbench-proof-v0');
+    expect(harness.elements.missionAnswer.textContent).toContain('what is happening here, and what should happen next?');
+    expect(harness.elements.missionAnswer.textContent).toContain('mission-control-tool-app-action-plan-v0 and mission-control-continuity-memory-proof-v0');
+    expect(harness.elements.missionAnswer.textContent).toContain(controlPoint);
+    expect((harness.elements.missionAnswer.textContent.match(/JAMES ACTION:/g) || [])).toHaveLength(1);
+    expect(harness.elements.demoWorkbenchProofSummary.textContent).toContain('Demo/workbench proof: mission-control-demo-workbench-proof-v0');
+    expect(harness.elements.demoWorkbenchProofSummary.textContent).toContain('Question: what is happening here, and what should happen next?');
+    expect(harness.elements.demoWorkbenchProofSummary.textContent).toContain('Completed contexts: mission-control-tool-app-action-plan-v0 + mission-control-continuity-memory-proof-v0');
+    expect(harness.elements.demoWorkbenchProofSummary.textContent).toContain('Next step: Builder should prove the local New Mira workbench Mission Control section renders mission-control-demo-workbench-proof-v0');
+    expect(harness.elements.demoWorkbenchProofSummary.textContent).toContain(`Control point: ${controlPoint}`);
+    expect(harness.elements.nextStepSummary.textContent).toContain('Next here: Builder should prove the local New Mira workbench Mission Control section renders mission-control-demo-workbench-proof-v0');
+    expect(missionSurfaceText).toContain('Demo/workbench proof: mission-control-demo-workbench-proof-v0');
+    expect(missionSurfaceText).toContain('Question: what is happening here, and what should happen next?');
+    expect(missionSurfaceText).toContain('Completed contexts: mission-control-tool-app-action-plan-v0 + mission-control-continuity-memory-proof-v0');
+    expect(missionSurfaceText).toContain('JAMES ACTION: NONE');
   });
 
   test('shows the same status-backed what-now answer in the panel, status card, and typed reply', async () => {

@@ -53,6 +53,7 @@ const elements = {
   modelPill: document.getElementById('modelPill'),
   projectSummary: document.getElementById('projectSummary'),
   missionAnswer: document.getElementById('missionAnswer'),
+  demoWorkbenchProofSummary: document.getElementById('demoWorkbenchProofSummary'),
   coordinationDraftList: document.getElementById('coordinationDraftList'),
   routePreviewSummary: document.getElementById('routePreviewSummary'),
   saveRoutePreviewButton: document.getElementById('saveRoutePreviewButton'),
@@ -1851,11 +1852,35 @@ function describeRoutePreview(preview) {
   return `Route preview: ${target} · ${purpose} · ${preview.status.replace(/_/g, ' ')} · ${manualState} · ${runtimeState} · ${sendState} · ${routeState} · ${providerState}.`;
 }
 
+function describeDemoWorkbenchProof(mission, summary) {
+  const proof = mission?.demoWorkbenchProof;
+  if (!proof || typeof proof !== 'object') {
+    return 'Demo/workbench proof: not loaded yet.';
+  }
+  const completed = proof.completedContext && typeof proof.completedContext === 'object'
+    ? [
+        proof.completedContext.toolAppActionPlanId,
+        proof.completedContext.continuityMemoryProofId,
+      ].filter(Boolean).join(' + ')
+    : 'completed contexts not listed';
+  const target = proof.target && typeof proof.target === 'object' ? proof.target : {};
+  const nextStep = summary?.nextStep || mission?.nextTeamMove || 'No next step loaded.';
+  return [
+    `Demo/workbench proof: ${proof.id || 'unknown proof'}`,
+    `Question: ${target.question || 'what is happening here, and what should happen next?'}`,
+    `Surface: ${target.surface || 'local Mission Control answer/surface'}`,
+    `Completed contexts: ${completed}`,
+    `Next step: ${nextStep}`,
+    `Control point: ${proof.jamesControlPoint || 'James approval is required before any runtime/browser/workbench/UI action.'}`,
+  ].join(' · ');
+}
+
 function updateSquidRunContext(payload) {
   if (!payload || payload.ok !== true) {
     state.missionControlContext = null;
     setText(elements.projectSummary, 'SquidRun context unavailable');
     setText(elements.missionAnswer, 'Mission Control is waiting for local SquidRun evidence.');
+    setText(elements.demoWorkbenchProofSummary, 'Demo/workbench proof: not loaded yet.');
     renderCoordinationDrafts([]);
     setText(elements.routePreviewSummary, 'Route preview: not prepared yet.');
     setText(elements.foundationSummary, 'No foundation evidence loaded.');
@@ -1886,6 +1911,7 @@ function updateSquidRunContext(payload) {
 
   setText(elements.projectSummary, `${projectName} · ${laneLabel}`);
   setText(elements.missionAnswer, mission.answer || 'Mission Control has no local answer yet.');
+  setText(elements.demoWorkbenchProofSummary, describeDemoWorkbenchProof(mission, summary));
   renderCoordinationDrafts(mission.coordinationDrafts);
   setText(elements.routePreviewSummary, describeRoutePreview(mission.internalRoutePreview));
   setText(elements.foundationSummary, `Foundation vs product: ${mission.foundationVsProduct || 'Local context is foundation; Mission Control is the product test.'}`);

@@ -13,6 +13,7 @@ const toolAppActionPlanProofCommitHash = "5b3e0386";
 const continuityMemoryBoundaryCommitHash = "bf82cea4";
 const continuityMemoryProofCommitHash = "d0bffd58";
 const cleanContextSelectionCommitHash = "13c90817";
+const demoWorkbenchProofCommitHash = "48e419b4";
 const commsHistoryEvidenceLimit = 500;
 
 export type SquidRunProjectContext = {
@@ -189,6 +190,18 @@ export type SquidRunProjectContext = {
       commitHash: string | null;
     } | null;
     latestCleanContextSelectionOracleAck: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestDemoWorkbenchProofCheckpoint: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestDemoWorkbenchProofOracleAck: {
       sourceRef: string | null;
       excerpt: string | null;
       timestampMs: number | null;
@@ -710,7 +723,7 @@ function isReportShapedCommsBody(rawBody: string | null): boolean {
 function isMissionControlContinuationDelegationBody(rawBody: string | null): boolean {
   const body = rawBody || "";
   const instructionShaped = /(?:\):\s*)?(?:MODIFY\b|Current-session delegation|TASK\b|Builder\s*:|Builder\b.*\b(?:build|fix|patch|add|continue|land)\b|Fix\b|Regression must\b|Live acceptance\b|next Mira map-backed slice|new tiny follow-up slice)/i.test(body);
-  const continuationTarget = /continuation-aware Mission Control command context|next Mira map-backed slice|next-move advancement|tool\/app action planning|demo\/workbench|clean-context regression|post-208d7ad7|208d7ad7|stale[- ]handoff|current-lane handoff/i.test(body);
+  const continuationTarget = /continuation-aware Mission Control command context|next Mira map-backed slice|next-move advancement|tool\/app action planning|demo\/workbench|demoWorkbenchProof|surface-alignment|workbench\/surface|workbench surface|post-48e419b4|48e419b4|clean-context regression|post-208d7ad7|208d7ad7|stale[- ]handoff|current-lane handoff/i.test(body);
   return instructionShaped && continuationTarget && !isReportShapedCommsBody(body);
 }
 
@@ -813,6 +826,20 @@ function isCleanContextSelectionOracleAckBody(rawBody: string | null): boolean {
     && /JAMES ACTION:\s*NONE/i.test(body);
 }
 
+function isDemoWorkbenchProofCheckpointBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /Checkpoint:\s*committed #178 Mission Control demo\/workbench first-proof slice as [`'"]?48e419b4 Add Mission Control demo workbench proof/i.test(body)
+    && /missionControl\.demoWorkbenchProof present/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
+function isDemoWorkbenchProofOracleAckBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /^\(ORACLE\s+#\d+\):\s*Received [`'"]?48e419b4 checkpoint/i.test(body)
+    && /demo\/workbench first-proof slice/i.test(body)
+    && /missionControl\.demoWorkbenchProof present/i.test(body);
+}
+
 function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentComms"] {
   const scriptPath = path.join(squidrunRoot, "ui", "scripts", "hm-comms.js");
   if (!fs.existsSync(scriptPath)) {
@@ -837,6 +864,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestContinuityMemoryProofOracleAck: null,
       latestCleanContextSelectionCheckpoint: null,
       latestCleanContextSelectionOracleAck: null,
+      latestDemoWorkbenchProofCheckpoint: null,
+      latestDemoWorkbenchProofOracleAck: null,
       oracleBenchmark: null,
     };
   }
@@ -958,6 +987,17 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       return trimText(row.sender) === "oracle"
         && isCleanContextSelectionOracleAckBody(body);
     });
+    const demoWorkbenchProofCheckpoint = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "architect"
+        && trimText(row.target) === "builder"
+        && isDemoWorkbenchProofCheckpointBody(body);
+    });
+    const demoWorkbenchProofOracleAck = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "oracle"
+        && isDemoWorkbenchProofOracleAckBody(body);
+    });
     const oracleBenchmark = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "oracle" && /benchmark|holy-shit|not impressive|current New Mira/i.test(body);
@@ -984,6 +1024,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestContinuityMemoryProofOracleAck: commsSummary(continuityMemoryProofOracleAck || null, 260, continuityMemoryProofCommitHash),
       latestCleanContextSelectionCheckpoint: commsSummary(cleanContextSelectionCheckpoint || null, 260, cleanContextSelectionCommitHash),
       latestCleanContextSelectionOracleAck: commsSummary(cleanContextSelectionOracleAck || null, 260, cleanContextSelectionCommitHash),
+      latestDemoWorkbenchProofCheckpoint: commsSummary(demoWorkbenchProofCheckpoint || null, 260, demoWorkbenchProofCommitHash),
+      latestDemoWorkbenchProofOracleAck: commsSummary(demoWorkbenchProofOracleAck || null, 260, demoWorkbenchProofCommitHash),
       oracleBenchmark: commsSummary(oracleBenchmark || null),
     };
   } catch {
@@ -1008,6 +1050,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestContinuityMemoryProofOracleAck: null,
       latestCleanContextSelectionCheckpoint: null,
       latestCleanContextSelectionOracleAck: null,
+      latestDemoWorkbenchProofCheckpoint: null,
+      latestDemoWorkbenchProofOracleAck: null,
       oracleBenchmark: null,
     };
   }
@@ -1106,6 +1150,9 @@ function buildMissionControl(input: {
   const demoWorkbenchProofReady = demoWorkbenchPlanningReady
     && input.recentComms.latestCleanContextSelectionCheckpoint?.commitHash === cleanContextSelectionCommitHash
     && input.recentComms.latestCleanContextSelectionOracleAck?.commitHash === cleanContextSelectionCommitHash;
+  const workbenchSurfaceProofReady = demoWorkbenchProofReady
+    && input.recentComms.latestDemoWorkbenchProofCheckpoint?.commitHash === demoWorkbenchProofCommitHash
+    && input.recentComms.latestDemoWorkbenchProofOracleAck?.commitHash === demoWorkbenchProofCommitHash;
   const laneLabel = continuationIsStaleSuperseded
     ? continuationDecision.preferredSourceRef || input.recentComms.latestBuilderInstruction?.sourceRef || "current continuation"
     : input.recentComms.latestBuilderInstruction?.sourceRef
@@ -1113,7 +1160,9 @@ function buildMissionControl(input: {
     || input.lane.status
     || "local lane";
   const laneText = continuationIsStaleSuperseded
-    ? demoWorkbenchProofReady
+    ? workbenchSurfaceProofReady
+      ? "Mission Control workbench surface proof is the active next boundary: the local New Mira Mission Control section must render mission-control-demo-workbench-proof-v0 from /squidrun/context, including the answer/surface question, completed proof contexts, next step, James control point, and exactly one JAMES ACTION line; no runtime, browser, workbench, UI/status action, write, POST, route, send, or provider action happens here."
+      : demoWorkbenchProofReady
       ? "Mission Control demo/workbench proof is inspectable as mission-control-demo-workbench-proof-v0: James can review the local Mission Control answer/surface target for what is happening here and what should happen next from local evidence; no runtime, browser, workbench, UI, status, write, POST, route, send, or provider action happens here."
       : demoWorkbenchPlanningReady
       ? "First inspectable Mission Control demo/workbench proof planning is the next map boundary: James should be able to inspect the local Mission Control answer/surface for what is happening here and what should happen next from local evidence; nothing starts, opens a browser, imports, writes, posts, routes, sends, or executes here."
@@ -1136,7 +1185,9 @@ function buildMissionControl(input: {
   const firstDemo = input.roadmap.firstDemo
     || "First inspectable demo: Mira Mission Control.";
   const nextTeamMove = continuationIsStaleSuperseded
-    ? demoWorkbenchProofReady
+    ? workbenchSurfaceProofReady
+      ? "Builder should prove the local New Mira workbench Mission Control section renders mission-control-demo-workbench-proof-v0 from /squidrun/context with the proof id, answer/surface question, completed toolAppActionPlan and continuityMemoryProof context, next step, and James control point; Oracle should review that the surface proof is read-only and performs no /turn POST or live action."
+      : demoWorkbenchProofReady
       ? "Builder should review mission-control-demo-workbench-proof-v0 as the first inspectable Mission Control demo/workbench proof record from the local answer/surface, keep completed toolAppActionPlan and continuityMemoryProof as context, and wait for James approval before any runtime, browser, workbench, UI, write, POST, route, send, or execution."
       : demoWorkbenchPlanningReady
       ? "Builder should plan the first inspectable Mission Control demo/workbench proof from the local answer/surface: show what is happening here and what should happen next from local evidence, keep completed toolAppActionPlan and continuityMemoryProof as context, and do not start runtime, open a browser, write, POST, route, send, or execute."
@@ -1175,7 +1226,9 @@ function buildMissionControl(input: {
           {
             kind: "comms",
             sourceRef: input.recentComms.latestContinuationDelegation?.sourceRef || "not found",
-            summary: demoWorkbenchPlanningReady
+            summary: workbenchSurfaceProofReady
+              ? "Current Architect delegation asks Mission Control to keep completed proof context and prove the local workbench surface rendering."
+              : demoWorkbenchPlanningReady
               ? "Current Architect delegation asks Mission Control to keep the completed proof context and advance to demo/workbench planning."
               : continuityMemoryPlanningReady
               ? "Current Architect delegation asks Mission Control to treat the tool/app plan as completed context and advance to continuity/memory planning."
@@ -1487,6 +1540,9 @@ function buildMissionControl(input: {
                 ...(demoWorkbenchProof
                   ? [`Demo/workbench proof: ${demoWorkbenchProof.id}; owner ${demoWorkbenchProof.owner}; target ${demoWorkbenchProof.target.surface} asks "${demoWorkbenchProof.target.question}"; completed contexts ${demoWorkbenchProof.completedContext.toolAppActionPlanId} and ${demoWorkbenchProof.completedContext.continuityMemoryProofId}; James control point: ${demoWorkbenchProof.jamesControlPoint}; audit proofOnly=${demoWorkbenchProof.audit.proofOnly}, planningOnly=${demoWorkbenchProof.audit.planningOnly}, runtimeStarted=${demoWorkbenchProof.audit.runtimeStarted}, browserOpened=${demoWorkbenchProof.audit.browserOpened}, workbenchOpened=${demoWorkbenchProof.audit.workbenchOpened}, uiActionPerformed=${demoWorkbenchProof.audit.uiActionPerformed}, fetched=${demoWorkbenchProof.audit.fetched}, posted=${demoWorkbenchProof.audit.posted}, routed=${demoWorkbenchProof.audit.routed}, sent=${demoWorkbenchProof.audit.sent}, providerInvoked=${demoWorkbenchProof.audit.providerInvoked}, modelInvoked=${demoWorkbenchProof.audit.modelInvoked}, accountAccessed=${demoWorkbenchProof.audit.accountAccessed}, tokenAccessed=${demoWorkbenchProof.audit.tokenAccessed}, credentialAccessed=${demoWorkbenchProof.audit.credentialAccessed}, deviceTouched=${demoWorkbenchProof.audit.deviceTouched}, userTargeted=${demoWorkbenchProof.audit.userTargeted}, externalTargeted=${demoWorkbenchProof.audit.externalTargeted}, deployed=${demoWorkbenchProof.audit.deployed}, moneyMovement=${demoWorkbenchProof.audit.moneyMovement}, tradingTouched=${demoWorkbenchProof.audit.tradingTouched}.`]
                   : []),
+                ...(workbenchSurfaceProofReady
+                  ? [`Workbench surface proof evidence: checkpoint ${input.recentComms.latestDemoWorkbenchProofCheckpoint?.sourceRef || "not found"} ${demoWorkbenchProofCommitHash} and Oracle ACK ${input.recentComms.latestDemoWorkbenchProofOracleAck?.sourceRef || "not found"} ${demoWorkbenchProofCommitHash}; demoWorkbenchProof is completed context and the active next boundary is read-only local surface rendering from /squidrun/context.`]
+                  : []),
                 ...(continuityMemoryProof
                   ? [`Continuity/memory proof: ${continuityMemoryProof.id}; owner ${continuityMemoryProof.owner}; current-lane truth ${continuityMemoryProof.currentLaneTruth.sourceRef || "not found"} is ${continuityMemoryProof.currentLaneTruth.authority}; stale-only summary refused=${continuityMemoryProof.staleOnlySummaryRefusal.refused}; James control point: ${continuityMemoryProof.jamesControlPoint}; audit proofOnly=${continuityMemoryProof.audit.proofOnly}, imported=${continuityMemoryProof.audit.imported}, copied=${continuityMemoryProof.audit.copied}, wrote=${continuityMemoryProof.audit.wrote}, restarted=${continuityMemoryProof.audit.restarted}, processStarted=${continuityMemoryProof.audit.processStarted}, browsed=${continuityMemoryProof.audit.browsed}, sent=${continuityMemoryProof.audit.sent}, routed=${continuityMemoryProof.audit.routed}, posted=${continuityMemoryProof.audit.posted}, runtimeStarted=${continuityMemoryProof.audit.runtimeStarted}, providerInvoked=${continuityMemoryProof.audit.providerInvoked}, modelInvoked=${continuityMemoryProof.audit.modelInvoked}, accountAccessed=${continuityMemoryProof.audit.accountAccessed}, tokenAccessed=${continuityMemoryProof.audit.tokenAccessed}, credentialAccessed=${continuityMemoryProof.audit.credentialAccessed}, deviceTouched=${continuityMemoryProof.audit.deviceTouched}, userTargeted=${continuityMemoryProof.audit.userTargeted}, externalTargeted=${continuityMemoryProof.audit.externalTargeted}, deployed=${continuityMemoryProof.audit.deployed}, moneyMovement=${continuityMemoryProof.audit.moneyMovement}, tradingTouched=${continuityMemoryProof.audit.tradingTouched}.`]
                   : []),
@@ -1513,7 +1569,9 @@ function buildMissionControl(input: {
   const coordinationDrafts: SquidRunProjectContext["missionControl"]["coordinationDrafts"] = [
     {
       target: "builder",
-      purpose: demoWorkbenchProofReady
+      purpose: workbenchSurfaceProofReady
+        ? "workbench surface proof"
+        : demoWorkbenchProofReady
         ? "demo/workbench proof record"
         : demoWorkbenchPlanningReady
         ? "demo/workbench proof planning"
@@ -1524,7 +1582,9 @@ function buildMissionControl(input: {
         : directChannelBoundaryReady
         ? "direct-channel readiness planning"
         : continuationSelectorProofCommitted ? "v1 dry-run planning" : "implementation",
-      message: demoWorkbenchProofReady
+      message: workbenchSurfaceProofReady
+        ? "Prove the local New Mira workbench Mission Control section renders mission-control-demo-workbench-proof-v0 from /squidrun/context with proof id, answer/surface question, completed toolAppActionPlan and continuityMemoryProof context, next step, James control point, and exactly one JAMES ACTION line. Use read-only UI boot coverage only; do not start runtime, open browser/workbench, perform UI/status actions, fetch beyond mocked local GET, POST, route, send, write, or execute."
+        : demoWorkbenchProofReady
         ? "Review mission-control-demo-workbench-proof-v0 as the first inspectable Mission Control demo/workbench proof record from the local answer/surface. Keep completed toolAppActionPlan and continuityMemoryProof as context; do not start runtime, open browser/workbench, perform UI/status actions, fetch, POST, route, send, write, or execute."
         : demoWorkbenchPlanningReady
         ? "Plan the first inspectable Mission Control demo/workbench proof from local answer/surface evidence: show what is happening here and what should happen next, keep completed toolAppActionPlan and continuityMemoryProof as context, and do not start runtime, open browser, perform UI/status actions, POST, route, send, write, import, or execute."
@@ -1540,7 +1600,9 @@ function buildMissionControl(input: {
     },
     {
       target: "oracle",
-      purpose: demoWorkbenchProofReady
+      purpose: workbenchSurfaceProofReady
+        ? "workbench surface no-effect review"
+        : demoWorkbenchProofReady
         ? "demo/workbench proof no-effect review"
         : demoWorkbenchPlanningReady
         ? "demo/workbench no-effect review"
@@ -1551,7 +1613,9 @@ function buildMissionControl(input: {
         : directChannelBoundaryReady
         ? "direct-channel dry-run review"
         : continuationSelectorProofCommitted ? "v1 no-send review" : "benchmark review",
-      message: demoWorkbenchProofReady
+      message: workbenchSurfaceProofReady
+        ? "Review that the local Mission Control workbench surface displays mission-control-demo-workbench-proof-v0 from mocked /squidrun/context, keeps completed proof records as context, shows the next step/control point and exactly one JAMES ACTION line, and performs no /turn POST, runtime start, browser/workbench open, live UI/status action, route, send, provider/model, credential, deploy, money, or trading effect."
+        : demoWorkbenchProofReady
         ? "Review that mission-control-demo-workbench-proof-v0 is inspectable from the local Mission Control answer/surface, names expected James-visible checks, keeps completed proof records as context, and claims no runtime start, browser/workbench open, UI/status execution, fetch, POST, route, send, write, provider/model, credential, deploy, money, or trading effect."
         : demoWorkbenchPlanningReady
         ? "Review that the demo/workbench plan is inspectable from the local Mission Control answer/surface, keeps completed proof records as context, and claims no runtime start, browser open, UI/status execution, write, POST, route, send, import, or live effect."
@@ -1577,6 +1641,13 @@ function buildMissionControl(input: {
       ? [
           "mira/runtime/src/squidrun-context.ts",
           "ui/__tests__/mira-runtime-squidrun-context.test.js",
+        ]
+      : []),
+    ...(workbenchSurfaceProofReady
+      ? [
+          "mira/ui/app.js",
+          "mira/ui/index.html",
+          "ui/__tests__/mira-runtime-ui-read-only-boot.test.js",
         ]
       : []),
     ...(directChannelBoundaryReady
