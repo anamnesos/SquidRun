@@ -96,6 +96,36 @@ const rows = [
   {
     sender: 'architect',
     target: 'builder',
+    timestampMs: 1779448600000,
+    rawBody: '(ARCHITECT #131): Current-session delegation: post-5b3e0386 next-move advancement. Clean Mission Control should treat the completed tool/app action plan as context and advance to the next roadmap/map boundary: continuity and memory, specifically New Mira command context loading sourced restart/current-lane truth and rejecting stale-only summaries. No live memory import, blind .squidrun copy, writes/state import, restart/process start, browsing, sends, routes, POST, UI/status execution, runtime start, provider/model call, credential access, deploy, or money. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779448550000,
+    rawBody: '(ARCHITECT #130): Checkpoint: unrelated Mission Control note committed as deadbee Later note. It mentions prior 5b3e0386 Add Mission Control tool app action plan proof; proof PASS; JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'builder',
+    target: 'architect',
+    timestampMs: 1779448520000,
+    rawBody: '(BUILDER #50): ACK checkpoint deadbee Later note while referencing prior 5b3e0386 Add Mission Control tool app action plan proof. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
+    timestampMs: 1779448480000,
+    rawBody: '(ARCHITECT #129): Checkpoint: Mission Control tool/app action-plan first proof committed as 5b3e0386 Add Mission Control tool app action plan proof. Oracle #40 PASS accepted; pre-commit gates passed. Clean-head proof: worktree clean, context test PASS 2/2, runtime TypeScript noEmit PASS, planningOnly true, executed false. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'builder',
+    target: 'architect',
+    timestampMs: 1779448470000,
+    rawBody: '(BUILDER #49): ACK checkpoint 5b3e0386 Add Mission Control tool app action plan proof. Clean-head proof noted: missionControl.toolAppActionPlan is planning-only, source-evidenced, Builder-owned, James-gated, dirty-fixture-blocked, and no execution/live-effect flags remain false. Standing by for the next map-backed Mira boundary. JAMES ACTION: NONE.'
+  },
+  {
+    sender: 'architect',
+    target: 'builder',
     timestampMs: 1779448200000,
     rawBody: '(ARCHITECT #116): Current-session delegation: post-22e876dc next-move advancement. Clean Mission Control should advance to tool/app action planning from real local evidence only, with owner Builder and a James-control point before any execution. This is local planning only; no browsing, sends, routes, POST, UI/status execution, runtime start, Telegram setup/send, provider/model call, account/token/credential access, device/user/external target, deploy, money, or trading. JAMES ACTION: NONE.'
   },
@@ -271,13 +301,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       staleHandoff: expect.objectContaining({
         status: 'stale_superseded',
         sourceRef: 'architect#11',
-        supersededBySourceRef: 'architect#116',
+        supersededBySourceRef: 'architect#131',
         supersededByCommit: '7ff9fe8d Add Mira internal pane activation attempt seam',
       }),
     }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'stale_handoff_superseded',
-      preferredSourceRef: 'architect#116',
+      preferredSourceRef: 'architect#131',
       committedSeam: '7ff9fe8d Add Mira internal pane activation attempt seam',
       staleSourceRef: 'architect#11',
     }));
@@ -286,7 +316,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       commitHash: '7ff9fe8d',
     }));
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#116',
+      sourceRef: 'architect#131',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -311,14 +341,24 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       sourceRef: 'builder#43',
       commitHash: '22e876dc',
     }));
-    expect(answer).toContain('Project/lane: squidrun / architect#116.');
-    expect(answer).toContain('Tool/app action planning from real local evidence is the next map boundary');
-    expect(answer).toContain('owner is Builder');
-    expect(answer).toContain('James control point is explicit approval before any real tool/app execution');
-    expect(answer).toContain('nothing executes here');
+    expect(context.recentComms.latestToolAppActionPlanCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#129',
+      commitHash: '5b3e0386',
+    }));
+    expect(context.recentComms.latestToolAppActionPlanAck).toEqual(expect.objectContaining({
+      sourceRef: 'builder#49',
+      commitHash: '5b3e0386',
+    }));
+    expect(answer).toContain('Project/lane: squidrun / architect#131.');
+    expect(answer).toContain('Continuity and memory is the next map boundary');
+    expect(answer).toContain('sourced restart/current-lane truth');
+    expect(answer).toContain('reject stale-only summaries');
+    expect(answer).toContain('completed tool/app action plan remains context');
     expect(answer).toContain('Completed direct-channel readiness evidence: checkpoint architect#114 22e876dc and Builder ACK builder#43 22e876dc');
     expect(answer).toContain('next boundary is tool/app action planning from the roadmap, not execution');
-    expect(answer).toContain('Tool/app action plan: local_squidrun_evidence_review -> Inspect local SquidRun Mission Control evidence and prepare the first app/tool action candidate for James review.');
+    expect(answer).toContain('Completed tool/app action-plan evidence: checkpoint architect#129 5b3e0386 and Builder ACK builder#49 5b3e0386');
+    expect(answer).toContain('active next boundary is continuity/memory sourced restart/current-lane proof planning');
+    expect(answer).toContain('Completed tool/app action plan context: local_squidrun_evidence_review -> Inspect local SquidRun Mission Control evidence and prepare the first app/tool action candidate for James review.');
     expect(answer).toContain('audit planningOnly=true, executed=false, browsed=false, appToolCalled=false, routed=false, sent=false, runtimeStarted=false, credentialAccessed=false, deployed=false, moneyMovement=false');
     expect(answer).not.toContain('Mission Control v1 dry-run coordination/follow-through route planning is the next map-backed product step');
     expect(answer).not.toContain('Builder should advance Mission Control v1 dry-run coordination/follow-through route planning');
@@ -327,6 +367,9 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(answer).not.toContain('Builder should align Mission Control to the existing direct-channel readiness contract');
     expect(answer).not.toContain('Align Mission Control with the existing direct-channel readiness contract');
     expect(answer).not.toContain('Review Mission Control against mira-direct-channel-readiness.test.js');
+    expect(answer).not.toContain('Builder should draft one local tool/app action plan');
+    expect(answer).not.toContain('Draft one Mission Control tool/app action plan');
+    expect(answer).not.toContain('Review that the tool/app action plan names a real local-evidence basis');
     expect(answer).not.toContain('Builder should finish the continuation-aware Mission Control command-context proof');
     expect(answer).not.toContain('finish the continuation-aware command-context proof');
     expect(answer).toContain('Committed seam: 7ff9fe8d Add Mira internal pane activation attempt seam');
@@ -334,11 +377,13 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(answer).toContain('Stale handoff: architect#11');
     expect(answer).toContain('stale/superseded evidence only; it has no active authority');
     expect(answer).not.toContain('Project/lane: squidrun / architect#11. finish the existing 3-file review/no-send gate dirty slice');
-    expect(context.missionControl.nextTeamMove).toBe('Builder should draft one local tool/app action plan from real SquidRun evidence only. Owner: Builder. James control point: explicit review and approval before any app/tool execution. No browsing, app call, tool execution, route, send, or credential access happens in this slice.');
+    expect(context.missionControl.nextTeamMove).toBe('Builder should plan the continuity/memory proof for New Mira command context: load sourced restart/current-lane truth, reject stale-only summaries, preserve provenance and James control points, and do not import state, copy .squidrun, write, restart, browse, route, send, or execute.');
     expect(context.summary.nextStep).toBe(context.missionControl.nextTeamMove);
     expect(context.summary.nextStep).not.toContain('advance Mission Control v1 dry-run coordination/follow-through route planning');
     expect(context.summary.nextStep).not.toContain('align Mission Control to the existing direct-channel readiness contract');
-    expect(context.summary.nextStep).toContain('tool/app action plan');
+    expect(context.summary.nextStep).not.toContain('draft one local tool/app action plan');
+    expect(context.summary.nextStep).toContain('continuity/memory proof');
+    expect(context.summary.nextStep).toContain('sourced restart/current-lane truth');
     expect(context.summary.nextStep).toContain('James control point');
     expect(context.summary.toolAppActionPlan).toBe('mission-control-tool-app-action-plan-v0: local_squidrun_evidence_review -> Inspect local SquidRun Mission Control evidence and prepare the first app/tool action candidate for James review.; owner Builder; James must explicitly review and approve a separate future request before any real app/tool execution.');
     expect(context.missionControl.toolAppActionPlan).toEqual({
@@ -362,8 +407,8 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
         },
         {
           kind: 'comms',
-          sourceRef: 'architect#116',
-          summary: 'Current Architect delegation asks Mission Control to advance from completed readiness alignment into local tool/app action planning.',
+          sourceRef: 'architect#131',
+          summary: 'Current Architect delegation asks Mission Control to treat the tool/app plan as completed context and advance to continuity/memory planning.',
         },
         {
           kind: 'comms',
@@ -376,6 +421,18 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
           sourceRef: 'builder#43',
           commitHash: '22e876dc',
           summary: 'Builder acknowledged the completed readiness contract before this planning boundary.',
+        },
+        {
+          kind: 'comms',
+          sourceRef: 'architect#129',
+          commitHash: '5b3e0386',
+          summary: 'Tool/app action-plan first proof is committed, so this plan is completed Mission Control context.',
+        },
+        {
+          kind: 'comms',
+          sourceRef: 'builder#49',
+          commitHash: '5b3e0386',
+          summary: 'Builder acknowledged the completed tool/app action-plan proof before the continuity/memory boundary.',
         },
       ],
       jamesControlPoint: 'James must explicitly review and approve a separate future request before any real app/tool execution.',
@@ -409,23 +466,25 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       'docs/mira-north-star-roadmap.md',
       'ui/modules/mira-direct-channel-readiness.js',
       'ui/__tests__/mira-direct-channel-readiness.test.js',
+      'ui/modules/mira-core/typed-restart-continuity-context-v0.js',
+      'ui/modules/mira-core/mira-presence-runtime-state-v0.js',
     ]));
     expect(context.missionControl.coordinationDrafts).toEqual([
       {
         target: 'builder',
-        purpose: 'tool/app action plan draft',
-        message: 'Draft one Mission Control tool/app action plan from real local SquidRun evidence only. Owner: Builder. James control point: explicit approval before any app/tool execution. Do not execute, browse, POST, route, send, start runtime, or touch credentials.',
+        purpose: 'continuity/memory proof planning',
+        message: 'Plan one New Mira command-context continuity/memory proof from sourced restart/current-lane truth. Reject stale-only summaries, keep provenance and James control points explicit, and do not import state, copy .squidrun, write, restart, browse, route, send, or execute.',
       },
       {
         target: 'oracle',
-        purpose: 'tool/app no-execution review',
-        message: 'Review that the tool/app action plan names a real local-evidence basis, owner, and James control point, and that it remains planning-only with no execution or live-effect claim.',
+        purpose: 'continuity/memory no-effect review',
+        message: 'Review that the continuity/memory plan loads sourced restart/current-lane truth, rejects stale-only summaries, keeps the completed tool/app plan as context, and claims no import, write, restart, route, send, or execution.',
       },
     ]);
     expect(context.missionControl.internalRoutePreview).toEqual(expect.objectContaining({
       status: 'reviewed_preview_only',
       selectedDraftTarget: 'oracle',
-      selectedDraftPurpose: 'tool/app no-execution review',
+      selectedDraftPurpose: 'continuity/memory no-effect review',
       audit: expect.objectContaining({
         sendPerformed: false,
         runtimeExecutes: false,
@@ -442,7 +501,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       }),
       envelope: expect.objectContaining({
         body: {
-          content: 'Review that the tool/app action plan names a real local-evidence basis, owner, and James control point, and that it remains planning-only with no execution or live-effect claim.',
+          content: 'Review that the continuity/memory plan loads sourced restart/current-lane truth, rejects stale-only summaries, keeps the completed tool/app plan as context, and claims no import, write, restart, route, send, or execution.',
         },
       }),
     }));
@@ -450,6 +509,10 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
       expect.objectContaining({
         kind: 'file',
         path: 'ui/modules/mira-direct-channel-readiness.js',
+      }),
+      expect.objectContaining({
+        kind: 'file',
+        path: 'ui/modules/mira-core/typed-restart-continuity-context-v0.js',
       }),
     ]));
     expect(context.summary.happening).toContain('continuation-aware Mission Control command context');
@@ -469,7 +532,7 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     }));
     expect(context.dirtyWork.summary).toContain('1 changed file(s)');
     expect(context.recentComms.latestContinuationDelegation).toEqual(expect.objectContaining({
-      sourceRef: 'architect#116',
+      sourceRef: 'architect#131',
     }));
     expect(context.recentComms.latestContinuationSelectorCheckpoint).toEqual(expect.objectContaining({
       sourceRef: 'architect#73',
@@ -489,18 +552,29 @@ process.stdout.write(JSON.stringify({ ok: true, rows: rows.slice(0, last) }));
     expect(context.recentComms.latestDirectChannelReadinessAck).toEqual(expect.objectContaining({
       sourceRef: 'builder#43',
     }));
+    expect(context.recentComms.latestToolAppActionPlanCheckpoint).toEqual(expect.objectContaining({
+      sourceRef: 'architect#129',
+      commitHash: '5b3e0386',
+    }));
+    expect(context.recentComms.latestToolAppActionPlanAck).toEqual(expect.objectContaining({
+      sourceRef: 'builder#49',
+      commitHash: '5b3e0386',
+    }));
     expect(context.missionControl.continuationDecision).toEqual(expect.objectContaining({
       status: 'current_handoff',
-      preferredSourceRef: 'architect#116',
+      preferredSourceRef: 'architect#131',
       staleSourceRef: null,
     }));
     expect(context.lane.staleHandoff).toBeNull();
     expect(context.summary.happening).toContain('finish the existing 3-file review/no-send gate dirty slice');
     expect(context.summary.nextStep).not.toContain('tool/app action plan');
+    expect(context.summary.nextStep).not.toContain('continuity/memory proof');
     expect(context.summary.toolAppActionPlan).toBeNull();
     expect(context.missionControl.toolAppActionPlan).toBeNull();
     expect(answer).toContain('Dirty work: 1 changed file(s)');
     expect(answer).not.toContain('Tool/app action plan: local_squidrun_evidence_review');
+    expect(answer).not.toContain('Completed tool/app action plan context: local_squidrun_evidence_review');
+    expect(answer).not.toContain('Continuity and memory is the next map boundary');
     expect(answer).not.toContain('Stale handoff: architect#11');
     expect(answer.match(/^JAMES ACTION:/gm)).toHaveLength(1);
   });

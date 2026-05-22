@@ -9,6 +9,7 @@ const continuationSelectorCommitHash = "6092a28a";
 const v1RoutePreviewAlignmentCommitHash = "e82f1a54";
 const commsEvidenceWindowCommitHash = "4bfe771c";
 const directChannelReadinessContractCommitHash = "22e876dc";
+const toolAppActionPlanProofCommitHash = "5b3e0386";
 const commsHistoryEvidenceLimit = 200;
 
 export type SquidRunProjectContext = {
@@ -131,6 +132,18 @@ export type SquidRunProjectContext = {
       commitHash: string | null;
     } | null;
     latestDirectChannelReadinessAck: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestToolAppActionPlanCheckpoint: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestToolAppActionPlanAck: {
       sourceRef: string | null;
       excerpt: string | null;
       timestampMs: number | null;
@@ -583,6 +596,18 @@ function isDirectChannelReadinessAckBody(rawBody: string | null): boolean {
     && /JAMES ACTION:\s*NONE/i.test(body);
 }
 
+function isToolAppActionPlanCheckpointBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /Checkpoint:\s*Mission Control tool\/app action-plan first proof committed as [`'"]?5b3e0386 Add Mission Control tool app action plan proof/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
+function isToolAppActionPlanAckBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /^\(BUILDER\s+#\d+\):\s*ACK checkpoint [`'"]?5b3e0386 Add Mission Control tool app action plan proof/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
 function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentComms"] {
   const scriptPath = path.join(squidrunRoot, "ui", "scripts", "hm-comms.js");
   if (!fs.existsSync(scriptPath)) {
@@ -598,6 +623,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestEvidenceWindowCheckpoint: null,
       latestDirectChannelReadinessCheckpoint: null,
       latestDirectChannelReadinessAck: null,
+      latestToolAppActionPlanCheckpoint: null,
+      latestToolAppActionPlanAck: null,
       oracleBenchmark: null,
     };
   }
@@ -677,6 +704,16 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       return trimText(row.sender) === "builder"
         && isDirectChannelReadinessAckBody(body);
     });
+    const toolAppActionPlanCheckpoint = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "architect"
+        && isToolAppActionPlanCheckpointBody(body);
+    });
+    const toolAppActionPlanAck = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "builder"
+        && isToolAppActionPlanAckBody(body);
+    });
     const oracleBenchmark = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "oracle" && /benchmark|holy-shit|not impressive|current New Mira/i.test(body);
@@ -694,6 +731,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestEvidenceWindowCheckpoint: commsSummary(evidenceWindowCheckpoint || null, 260, commsEvidenceWindowCommitHash),
       latestDirectChannelReadinessCheckpoint: commsSummary(directChannelReadinessCheckpoint || null, 260, directChannelReadinessContractCommitHash),
       latestDirectChannelReadinessAck: commsSummary(directChannelReadinessAck || null, 260, directChannelReadinessContractCommitHash),
+      latestToolAppActionPlanCheckpoint: commsSummary(toolAppActionPlanCheckpoint || null, 260, toolAppActionPlanProofCommitHash),
+      latestToolAppActionPlanAck: commsSummary(toolAppActionPlanAck || null, 260, toolAppActionPlanProofCommitHash),
       oracleBenchmark: commsSummary(oracleBenchmark || null),
     };
   } catch {
@@ -709,6 +748,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestEvidenceWindowCheckpoint: null,
       latestDirectChannelReadinessCheckpoint: null,
       latestDirectChannelReadinessAck: null,
+      latestToolAppActionPlanCheckpoint: null,
+      latestToolAppActionPlanAck: null,
       oracleBenchmark: null,
     };
   }
@@ -794,6 +835,9 @@ function buildMissionControl(input: {
   const toolAppActionPlanningReady = directChannelBoundaryReady
     && input.recentComms.latestDirectChannelReadinessCheckpoint?.commitHash === directChannelReadinessContractCommitHash
     && input.recentComms.latestDirectChannelReadinessAck?.commitHash === directChannelReadinessContractCommitHash;
+  const continuityMemoryPlanningReady = toolAppActionPlanningReady
+    && input.recentComms.latestToolAppActionPlanCheckpoint?.commitHash === toolAppActionPlanProofCommitHash
+    && input.recentComms.latestToolAppActionPlanAck?.commitHash === toolAppActionPlanProofCommitHash;
   const laneLabel = continuationIsStaleSuperseded
     ? continuationDecision.preferredSourceRef || input.recentComms.latestBuilderInstruction?.sourceRef || "current continuation"
     : input.recentComms.latestBuilderInstruction?.sourceRef
@@ -801,7 +845,9 @@ function buildMissionControl(input: {
     || input.lane.status
     || "local lane";
   const laneText = continuationIsStaleSuperseded
-    ? toolAppActionPlanningReady
+    ? continuityMemoryPlanningReady
+      ? "Continuity and memory is the next map boundary: New Mira command context should load sourced restart/current-lane truth and reject stale-only summaries; the completed tool/app action plan remains context, and nothing imports, writes, restarts, or executes here."
+      : toolAppActionPlanningReady
       ? "Tool/app action planning from real local evidence is the next map boundary; owner is Builder, James control point is explicit approval before any real tool/app execution, and nothing executes here."
       : directChannelBoundaryReady
       ? "Separate New Mira direct-channel readiness/dry-run planning now aligns to the existing mira-direct-channel-readiness contract: current owner squidrun-telegram-guard-stack stays untouched, future candidate owner is new-mira-direct-channel, and the result is a future James-visible setup/test gate only."
@@ -818,7 +864,9 @@ function buildMissionControl(input: {
   const firstDemo = input.roadmap.firstDemo
     || "First inspectable demo: Mira Mission Control.";
   const nextTeamMove = continuationIsStaleSuperseded
-    ? toolAppActionPlanningReady
+    ? continuityMemoryPlanningReady
+      ? "Builder should plan the continuity/memory proof for New Mira command context: load sourced restart/current-lane truth, reject stale-only summaries, preserve provenance and James control points, and do not import state, copy .squidrun, write, restart, browse, route, send, or execute."
+      : toolAppActionPlanningReady
       ? "Builder should draft one local tool/app action plan from real SquidRun evidence only. Owner: Builder. James control point: explicit review and approval before any app/tool execution. No browsing, app call, tool execution, route, send, or credential access happens in this slice."
       : directChannelBoundaryReady
       ? "Builder should align Mission Control to the existing direct-channel readiness contract: preserve currentOwner=squidrun-telegram-guard-stack, proposedFutureOwner=new-mira-direct-channel, blocked missing/reused candidate cases, and candidate_ready dry-run only with sendReady=false/liveActivationReady=false."
@@ -851,7 +899,9 @@ function buildMissionControl(input: {
           {
             kind: "comms",
             sourceRef: input.recentComms.latestContinuationDelegation?.sourceRef || "not found",
-            summary: "Current Architect delegation asks Mission Control to advance from completed readiness alignment into local tool/app action planning.",
+            summary: continuityMemoryPlanningReady
+              ? "Current Architect delegation asks Mission Control to treat the tool/app plan as completed context and advance to continuity/memory planning."
+              : "Current Architect delegation asks Mission Control to advance from completed readiness alignment into local tool/app action planning.",
           },
           {
             kind: "comms",
@@ -865,6 +915,22 @@ function buildMissionControl(input: {
             commitHash: directChannelReadinessContractCommitHash,
             summary: "Builder acknowledged the completed readiness contract before this planning boundary.",
           },
+          ...(continuityMemoryPlanningReady
+            ? [
+                {
+                  kind: "comms" as const,
+                  sourceRef: input.recentComms.latestToolAppActionPlanCheckpoint?.sourceRef || "not found",
+                  commitHash: toolAppActionPlanProofCommitHash,
+                  summary: "Tool/app action-plan first proof is committed, so this plan is completed Mission Control context.",
+                },
+                {
+                  kind: "comms" as const,
+                  sourceRef: input.recentComms.latestToolAppActionPlanAck?.sourceRef || "not found",
+                  commitHash: toolAppActionPlanProofCommitHash,
+                  summary: "Builder acknowledged the completed tool/app action-plan proof before the continuity/memory boundary.",
+                },
+              ]
+            : []),
         ],
         jamesControlPoint: "James must explicitly review and approve a separate future request before any real app/tool execution.",
         preconditions: [
@@ -906,8 +972,11 @@ function buildMissionControl(input: {
             ? toolAppActionPlanningReady
               ? [
                 `Completed direct-channel readiness evidence: checkpoint ${input.recentComms.latestDirectChannelReadinessCheckpoint?.sourceRef || "not found"} ${directChannelReadinessContractCommitHash} and Builder ACK ${input.recentComms.latestDirectChannelReadinessAck?.sourceRef || "not found"} ${directChannelReadinessContractCommitHash}; the next boundary is tool/app action planning from the roadmap, not execution.`,
+                ...(continuityMemoryPlanningReady
+                  ? [`Completed tool/app action-plan evidence: checkpoint ${input.recentComms.latestToolAppActionPlanCheckpoint?.sourceRef || "not found"} ${toolAppActionPlanProofCommitHash} and Builder ACK ${input.recentComms.latestToolAppActionPlanAck?.sourceRef || "not found"} ${toolAppActionPlanProofCommitHash}; the active next boundary is continuity/memory sourced restart/current-lane proof planning.`]
+                  : []),
                 toolAppActionPlan
-                  ? `Tool/app action plan: ${toolAppActionPlan.target.actionCategory} -> ${toolAppActionPlan.target.action}; owner ${toolAppActionPlan.owner}; James control point: ${toolAppActionPlan.jamesControlPoint}; audit planningOnly=${toolAppActionPlan.audit.planningOnly}, executed=${toolAppActionPlan.audit.executed}, browsed=${toolAppActionPlan.audit.browsed}, appToolCalled=${toolAppActionPlan.audit.appToolCalled}, routed=${toolAppActionPlan.audit.routed}, sent=${toolAppActionPlan.audit.sent}, runtimeStarted=${toolAppActionPlan.audit.runtimeStarted}, credentialAccessed=${toolAppActionPlan.audit.credentialAccessed}, deployed=${toolAppActionPlan.audit.deployed}, moneyMovement=${toolAppActionPlan.audit.moneyMovement}.`
+                  ? `${continuityMemoryPlanningReady ? "Completed tool/app action plan context" : "Tool/app action plan"}: ${toolAppActionPlan.target.actionCategory} -> ${toolAppActionPlan.target.action}; owner ${toolAppActionPlan.owner}; James control point: ${toolAppActionPlan.jamesControlPoint}; audit planningOnly=${toolAppActionPlan.audit.planningOnly}, executed=${toolAppActionPlan.audit.executed}, browsed=${toolAppActionPlan.audit.browsed}, appToolCalled=${toolAppActionPlan.audit.appToolCalled}, routed=${toolAppActionPlan.audit.routed}, sent=${toolAppActionPlan.audit.sent}, runtimeStarted=${toolAppActionPlan.audit.runtimeStarted}, credentialAccessed=${toolAppActionPlan.audit.credentialAccessed}, deployed=${toolAppActionPlan.audit.deployed}, moneyMovement=${toolAppActionPlan.audit.moneyMovement}.`
                   : "",
               ]
               : [
@@ -929,12 +998,16 @@ function buildMissionControl(input: {
   const coordinationDrafts: SquidRunProjectContext["missionControl"]["coordinationDrafts"] = [
     {
       target: "builder",
-      purpose: toolAppActionPlanningReady
+      purpose: continuityMemoryPlanningReady
+        ? "continuity/memory proof planning"
+        : toolAppActionPlanningReady
         ? "tool/app action plan draft"
         : directChannelBoundaryReady
         ? "direct-channel readiness planning"
         : continuationSelectorProofCommitted ? "v1 dry-run planning" : "implementation",
-      message: toolAppActionPlanningReady
+      message: continuityMemoryPlanningReady
+        ? "Plan one New Mira command-context continuity/memory proof from sourced restart/current-lane truth. Reject stale-only summaries, keep provenance and James control points explicit, and do not import state, copy .squidrun, write, restart, browse, route, send, or execute."
+        : toolAppActionPlanningReady
         ? "Draft one Mission Control tool/app action plan from real local SquidRun evidence only. Owner: Builder. James control point: explicit approval before any app/tool execution. Do not execute, browse, POST, route, send, start runtime, or touch credentials."
         : directChannelBoundaryReady
         ? "Align Mission Control with the existing direct-channel readiness contract: currentOwner=squidrun-telegram-guard-stack, proposedFutureOwner=new-mira-direct-channel, missing/reused candidate blocked, valid separate candidate candidate_ready/dryRun only, sendReady=false, liveActivationReady=false."
@@ -944,12 +1017,16 @@ function buildMissionControl(input: {
     },
     {
       target: "oracle",
-      purpose: toolAppActionPlanningReady
+      purpose: continuityMemoryPlanningReady
+        ? "continuity/memory no-effect review"
+        : toolAppActionPlanningReady
         ? "tool/app no-execution review"
         : directChannelBoundaryReady
         ? "direct-channel dry-run review"
         : continuationSelectorProofCommitted ? "v1 no-send review" : "benchmark review",
-      message: toolAppActionPlanningReady
+      message: continuityMemoryPlanningReady
+        ? "Review that the continuity/memory plan loads sourced restart/current-lane truth, rejects stale-only summaries, keeps the completed tool/app plan as context, and claims no import, write, restart, route, send, or execution."
+        : toolAppActionPlanningReady
         ? "Review that the tool/app action plan names a real local-evidence basis, owner, and James control point, and that it remains planning-only with no execution or live-effect claim."
         : directChannelBoundaryReady
         ? "Review Mission Control against mira-direct-channel-readiness.test.js: no token/env read, no bot/chat creation, no Telegram send, no route-owner flip, no provider/model/runtime start, and JAMES ACTION remains NONE."
@@ -971,6 +1048,12 @@ function buildMissionControl(input: {
           "ui/__tests__/mira-direct-channel-readiness.test.js",
         ]
       : []),
+    ...(continuityMemoryPlanningReady
+      ? [
+          "ui/modules/mira-core/typed-restart-continuity-context-v0.js",
+          "ui/modules/mira-core/mira-presence-runtime-state-v0.js",
+        ]
+      : []),
     "docs/mira-north-star-roadmap.md",
     `hm-comms history --last ${commsHistoryEvidenceLimit} --json`,
     continuationIsStaleSuperseded ? continuationDecision.reason : input.fallbackNextStep,
@@ -980,7 +1063,7 @@ function buildMissionControl(input: {
     content: selectedDraft.message,
     messageId: "mira-mission-control-route-preview-v0",
     requestId: "req-mira-mission-control-route-preview-v0",
-    evidence: evidence.slice(0, 6).map((item) => {
+    evidence: evidence.slice(0, 8).map((item) => {
       const text = String(item);
       const isFile = text.includes(".") || text.includes("/");
       return {
