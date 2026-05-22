@@ -23,6 +23,7 @@ const internalRoutePromotionPlanSurfaceCommitHash = "f7352d10";
 const internalRouteAuditPlanningCommitHash = "c1a05e07";
 const postAuditPlanningSelectorCommitHash = "582ef1c6";
 const internalRouteAuditReviewLaneProofCommitHash = "b1acd4d7";
+const jamesActionLineDedupCommitHash = "2533ace2";
 const commsHistoryEvidenceLimit = 1000;
 
 export type SquidRunProjectContext = {
@@ -331,6 +332,18 @@ export type SquidRunProjectContext = {
       commitHash: string | null;
     } | null;
     latestInternalRouteAuditReviewLaneProofOracleAck: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestJamesActionLineDedupCheckpoint: {
+      sourceRef: string | null;
+      excerpt: string | null;
+      timestampMs: number | null;
+      commitHash: string | null;
+    } | null;
+    latestJamesActionLineDedupOracleAck: {
       sourceRef: string | null;
       excerpt: string | null;
       timestampMs: number | null;
@@ -1361,6 +1374,27 @@ function isInternalRouteAuditReviewLaneProofOracleAckBody(rawBody: string | null
     && /JAMES ACTION:\s*NONE/i.test(body);
 }
 
+function isJamesActionLineDedupCheckpointBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /Checkpoint [`'"]?2533ace2 Deduplicate Mission Control James action line[`'"]? is committed clean/i.test(body)
+    && /composed [`'"]?missionControl\.answer[`'"]? has exactly one literal [`'"]?JAMES ACTION:[`'"]? occurrence/i.test(body)
+    && /structured [`'"]?missionControl\.commandCardAcceptance\.cardFields\.jamesActionLine[`'"]? remains [`'"]?JAMES ACTION:\s*NONE[`'"]?/i.test(body)
+    && /completed contexts remain present through [`'"]?internalRouteAuditReviewLaneProof[`'"]?/i.test(body)
+    && /No live-effect\/trading authority added/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
+function isJamesActionLineDedupOracleAckBody(rawBody: string | null): boolean {
+  const body = rawBody || "";
+  return /^\(ORACLE\s+#\d+\):\s*Checkpoint received\.\s*Clean-head closure recorded for [`'"]?2533ace2 Deduplicate Mission Control James action line[`'"]?/i.test(body)
+    && /Oracle #10 PASS and Builder #107 map-guard closure are accepted as committed evidence/i.test(body)
+    && /composed [`'"]?missionControl\.answer[`'"]? has exactly one literal [`'"]?JAMES ACTION:[`'"]? occurrence/i.test(body)
+    && /structured [`'"]?missionControl\.commandCardAcceptance\.cardFields\.jamesActionLine[`'"]? remains [`'"]?JAMES ACTION:\s*NONE[`'"]?/i.test(body)
+    && /completed contexts remain present through [`'"]?missionControl\.internalRouteAuditReviewLaneProof[`'"]?/i.test(body)
+    && /no runtime\/route\/send\/UI\/status\/provider\/model\/credential\/deploy\/money\/trading authority was added/i.test(body)
+    && /JAMES ACTION:\s*NONE/i.test(body);
+}
+
 function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentComms"] {
   const scriptPath = path.join(squidrunRoot, "ui", "scripts", "hm-comms.js");
   if (!fs.existsSync(scriptPath)) {
@@ -1407,6 +1441,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestPostAuditPlanningSelectorOracleAck: null,
       latestInternalRouteAuditReviewLaneProofCheckpoint: null,
       latestInternalRouteAuditReviewLaneProofOracleAck: null,
+      latestJamesActionLineDedupCheckpoint: null,
+      latestJamesActionLineDedupOracleAck: null,
       oracleBenchmark: null,
     };
   }
@@ -1649,6 +1685,17 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       return trimText(row.sender) === "oracle"
         && isInternalRouteAuditReviewLaneProofOracleAckBody(body);
     });
+    const jamesActionLineDedupCheckpoint = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "architect"
+        && trimText(row.target) === "builder"
+        && isJamesActionLineDedupCheckpointBody(body);
+    });
+    const jamesActionLineDedupOracleAck = mapped.find((row) => {
+      const body = trimText(row.rawBody) || "";
+      return trimText(row.sender) === "oracle"
+        && isJamesActionLineDedupOracleAckBody(body);
+    });
     const oracleBenchmark = mapped.find((row) => {
       const body = trimText(row.rawBody) || "";
       return trimText(row.sender) === "oracle" && /benchmark|holy-shit|not impressive|current New Mira/i.test(body);
@@ -1697,6 +1744,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestPostAuditPlanningSelectorOracleAck: commsSummary(postAuditPlanningSelectorOracleAck || null, 260, postAuditPlanningSelectorCommitHash),
       latestInternalRouteAuditReviewLaneProofCheckpoint: commsSummary(internalRouteAuditReviewLaneProofCheckpoint || null, 260, internalRouteAuditReviewLaneProofCommitHash),
       latestInternalRouteAuditReviewLaneProofOracleAck: commsSummary(internalRouteAuditReviewLaneProofOracleAck || null, 260, internalRouteAuditReviewLaneProofCommitHash),
+      latestJamesActionLineDedupCheckpoint: commsSummary(jamesActionLineDedupCheckpoint || null, 260, jamesActionLineDedupCommitHash),
+      latestJamesActionLineDedupOracleAck: commsSummary(jamesActionLineDedupOracleAck || null, 260, jamesActionLineDedupCommitHash),
       oracleBenchmark: commsSummary(oracleBenchmark || null),
     };
   } catch {
@@ -1743,6 +1792,8 @@ function readRecentComms(squidrunRoot: string): SquidRunProjectContext["recentCo
       latestPostAuditPlanningSelectorOracleAck: null,
       latestInternalRouteAuditReviewLaneProofCheckpoint: null,
       latestInternalRouteAuditReviewLaneProofOracleAck: null,
+      latestJamesActionLineDedupCheckpoint: null,
+      latestJamesActionLineDedupOracleAck: null,
       oracleBenchmark: null,
     };
   }
@@ -1873,6 +1924,9 @@ function buildMissionControl(input: {
   const internalRouteAuditReviewLaneProofReady = postAuditPlanningSelectorCommitted
     && input.recentComms.latestInternalRouteAuditReviewLaneProofCheckpoint?.commitHash === internalRouteAuditReviewLaneProofCommitHash
     && input.recentComms.latestInternalRouteAuditReviewLaneProofOracleAck?.commitHash === internalRouteAuditReviewLaneProofCommitHash;
+  const internalRoutePromotionDecisionGatePlanningReady = internalRouteAuditReviewLaneProofReady
+    && input.recentComms.latestJamesActionLineDedupCheckpoint?.commitHash === jamesActionLineDedupCommitHash
+    && input.recentComms.latestJamesActionLineDedupOracleAck?.commitHash === jamesActionLineDedupCommitHash;
   const laneLabel = continuationIsStaleSuperseded
     ? continuationDecision.preferredSourceRef || input.recentComms.latestBuilderInstruction?.sourceRef || "current continuation"
     : input.recentComms.latestBuilderInstruction?.sourceRef
@@ -1880,7 +1934,9 @@ function buildMissionControl(input: {
     || input.lane.status
     || "local lane";
   const laneText = continuationIsStaleSuperseded
-    ? internalRouteAuditReviewLaneProofReady
+    ? internalRoutePromotionDecisionGatePlanningReady
+      ? "Mission Control internal route/audit review-lane proof is accepted completed context; the active next boundary is one separate no-live-effect internal route/audit promotion decision-gate planning lane from the visible audit-review proof only. James is the explicit control point before any real route/audit promotion, route flip, hm-send/live send, execution, runtime, browser, workbench, UI/status action, fetch, POST, provider/model, credential, deploy, money, or trading effect."
+      : internalRouteAuditReviewLaneProofReady
       ? "Mission Control internal route/audit review-lane proof is inspectable from mission-control-internal-route-promotion-review-plan-v0 only. No live promotion, route flip, hm-send/live send, execution, runtime, browser, workbench, UI/status action, fetch, POST, provider/model, credential, deploy, money, or trading effect happens here."
       : internalRouteAuditPlanningReady
       ? "Mission Control internal-route promotion/review plan is completed visible context; the active next boundary is separate internal route/audit lane planning from the visible plan only. No send, promotion, route flip, execution, runtime, browser, workbench, UI/status action, fetch, POST, provider/model, credential, deploy, money, or trading effect happens here."
@@ -1919,7 +1975,9 @@ function buildMissionControl(input: {
   const firstDemo = input.roadmap.firstDemo
     || "First inspectable demo: Mira Mission Control.";
   const nextTeamMove = continuationIsStaleSuperseded
-    ? internalRouteAuditReviewLaneProofReady
+    ? internalRoutePromotionDecisionGatePlanningReady
+      ? "Builder should plan one no-live-effect internal route/audit promotion decision gate from the visible mission-control-internal-route-audit-review-lane-proof-v0 only; Oracle should review that James remains the explicit control point before any real route/audit promotion, route flip, send, runtime/browser/workbench/UI/status action, provider/model call, credential access, deploy, money, or trading effect."
+      : internalRouteAuditReviewLaneProofReady
       ? "Oracle should review mission-control-internal-route-audit-review-lane-proof-v0 from the visible mission-control-internal-route-promotion-review-plan-v0; Builder should hold it as local planning-only context unless Oracle requests a narrow correction."
       : internalRouteAuditPlanningReady
       ? "Builder should plan one separate internal route/audit review lane from the visible mission-control-internal-route-promotion-review-plan-v0 only; Oracle should review that it stays planning-only, manual, local, no-send, no-promotion, no-route-flip, and no-execution before any future promotion proposal."
@@ -1965,6 +2023,8 @@ function buildMissionControl(input: {
   const internalRouteAuditPlanningOracleMessage = "Review the internal route/audit lane planning from the visible mission-control-internal-route-promotion-review-plan-v0 for source evidence, James control point, preconditions/no-go conditions, manual-only/no-send/no-promotion/no-route-flip/no-execution boundaries, and exactly one James-action line; do not POST, route, send, promote, flip routes, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.";
   const internalRouteAuditReviewLaneProofBuilderMessage = "Hold mission-control-internal-route-audit-review-lane-proof-v0 as local planning-only context from mission-control-internal-route-promotion-review-plan-v0. Do not POST, route, send, promote, flip routes, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.";
   const internalRouteAuditReviewLaneProofOracleMessage = "Review mission-control-internal-route-audit-review-lane-proof-v0 against mission-control-internal-route-promotion-review-plan-v0 for owner Builder, target Oracle, source evidence, James control point, preconditions/no-go conditions, manual-only/no-send/no-promotion/no-route-flip/no-execution audit flags, and exactly one James-action line; do not POST, route, send, promote, flip routes, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.";
+  const internalRoutePromotionDecisionGateBuilderMessage = "Plan one no-live-effect internal route/audit promotion decision gate from the visible mission-control-internal-route-audit-review-lane-proof-v0 only. James is the explicit control point before any real promotion. Do not POST, route, send, promote, flip routes, execute, start runtime, open browser/workbench, perform UI/status actions, call provider/model, touch credentials, deploy, move money, or touch trading.";
+  const internalRoutePromotionDecisionGateOracleMessage = "Review the internal route/audit promotion decision-gate planning lane from the visible mission-control-internal-route-audit-review-lane-proof-v0 only. PASS only if James remains the explicit control point before any real route/audit promotion and all live-effect flags remain false: no POST, route, send, promote, route flip, execution, runtime/browser/workbench/UI/status action, provider/model call, credential access, deploy, money, or trading.";
   const toolAppActionPlan: SquidRunProjectContext["missionControl"]["toolAppActionPlan"] = toolAppActionPlanningReady
     ? {
         id: "mission-control-tool-app-action-plan-v0",
@@ -2520,6 +2580,9 @@ function buildMissionControl(input: {
                 ...(commandCardAcceptance
                   ? [`Command-card acceptance: ${commandCardAcceptance.id}; current lane/why it matters=${commandCardAcceptance.cardFields.currentLaneWhyItMatters}; what changed recently=${commandCardAcceptance.cardFields.whatChangedRecently}; Builder next move=${commandCardAcceptance.cardFields.builderNextMove}; Oracle next move=${commandCardAcceptance.cardFields.oracleNextMove}; ${commandCardAcceptance.cardFields.contextCardStatus}; James-action line=NONE; dry-run route plan=${commandCardAcceptance.cardFields.dryRunRoutePlan.summary}; audit acceptanceOnly=${commandCardAcceptance.audit.acceptanceOnly}, planningOnly=${commandCardAcceptance.audit.planningOnly}, runtimeStarted=${commandCardAcceptance.audit.runtimeStarted}, browserOpened=${commandCardAcceptance.audit.browserOpened}, workbenchOpened=${commandCardAcceptance.audit.workbenchOpened}, uiActionPerformed=${commandCardAcceptance.audit.uiActionPerformed}, fetched=${commandCardAcceptance.audit.fetched}, posted=${commandCardAcceptance.audit.posted}, routed=${commandCardAcceptance.audit.routed}, sent=${commandCardAcceptance.audit.sent}, providerInvoked=${commandCardAcceptance.audit.providerInvoked}, modelInvoked=${commandCardAcceptance.audit.modelInvoked}, accountAccessed=${commandCardAcceptance.audit.accountAccessed}, tokenAccessed=${commandCardAcceptance.audit.tokenAccessed}, credentialAccessed=${commandCardAcceptance.audit.credentialAccessed}, deviceTouched=${commandCardAcceptance.audit.deviceTouched}, userTargeted=${commandCardAcceptance.audit.userTargeted}, externalTargeted=${commandCardAcceptance.audit.externalTargeted}, deployed=${commandCardAcceptance.audit.deployed}, moneyMovement=${commandCardAcceptance.audit.moneyMovement}, tradingTouched=${commandCardAcceptance.audit.tradingTouched}.`]
                   : []),
+                ...(internalRoutePromotionDecisionGatePlanningReady
+                  ? [`Completed answer-shape closure evidence: checkpoint ${input.recentComms.latestJamesActionLineDedupCheckpoint?.sourceRef || "not found"} ${jamesActionLineDedupCommitHash} and Oracle acceptance ${input.recentComms.latestJamesActionLineDedupOracleAck?.sourceRef || "not found"} ${jamesActionLineDedupCommitHash}; mission-control-internal-route-audit-review-lane-proof-v0 is accepted completed context, and the active next boundary advances to internal route/audit promotion decision-gate planning from the visible audit-review proof only with James as the explicit control point before any real route/audit promotion.`]
+                  : []),
                 ...(commandCardFollowThroughProofReady
                   ? [`Route-plan follow-through proof: mission-control-command-card-route-plan-follow-through-v0; target=oracle; purpose=${commandCardRoutePlanProofSurfaceReady ? "internal-route promotion no-send review" : "command-card route-plan proof review"}; message=${commandCardRoutePlanProofSurfaceReady ? internalRoutePromotionOracleMessage : commandCardRoutePlanProofOracleMessage}; source evidence checkpoint ${input.recentComms.latestCommandCardFollowThroughCheckpoint?.sourceRef || "not found"} ${commandCardFollowThroughCommitHash} plus Oracle ACK ${input.recentComms.latestCommandCardFollowThroughOracleAck?.sourceRef || "not found"} ${commandCardFollowThroughCommitHash}${commandCardRoutePlanProofSurfaceReady ? ` plus visible-surface checkpoint ${input.recentComms.latestCommandCardRoutePlanProofSurfaceCheckpoint?.sourceRef || "not found"} ${commandCardRoutePlanProofSurfaceCommitHash} and Oracle ACK ${input.recentComms.latestCommandCardRoutePlanProofSurfaceOracleAck?.sourceRef || "not found"} ${commandCardRoutePlanProofSurfaceCommitHash}` : ""}; completed context=${commandCardAcceptance?.id || "not found"}; James control point: James can inspect this local proof before any future route, send, promotion, runtime, browser, workbench, UI/status, provider/model, credential, deploy, money, or trading action is proposed; audit proofOnly=true, planningOnly=true, runtimeStarted=false, browserOpened=false, workbenchOpened=false, uiActionPerformed=false, fetched=false, posted=false, routed=false, sent=false, providerInvoked=false, modelInvoked=false, accountAccessed=false, tokenAccessed=false, credentialAccessed=false, deviceTouched=false, userTargeted=false, externalTargeted=false, deployed=false, moneyMovement=false, tradingTouched=false.`]
                   : []),
@@ -2555,7 +2618,9 @@ function buildMissionControl(input: {
   const coordinationDrafts: SquidRunProjectContext["missionControl"]["coordinationDrafts"] = [
     {
       target: "builder",
-      purpose: internalRouteAuditReviewLaneProofReady
+      purpose: internalRoutePromotionDecisionGatePlanningReady
+        ? "internal route/audit promotion decision-gate planning"
+        : internalRouteAuditReviewLaneProofReady
         ? "internal route/audit proof context"
         : internalRouteAuditPlanningReady
         ? "internal route/audit planning context"
@@ -2582,7 +2647,9 @@ function buildMissionControl(input: {
         : directChannelBoundaryReady
         ? "direct-channel readiness planning"
         : continuationSelectorProofCommitted ? "v1 dry-run planning" : "implementation",
-      message: internalRouteAuditReviewLaneProofReady
+      message: internalRoutePromotionDecisionGatePlanningReady
+        ? internalRoutePromotionDecisionGateBuilderMessage
+        : internalRouteAuditReviewLaneProofReady
         ? internalRouteAuditReviewLaneProofBuilderMessage
         : internalRouteAuditPlanningReady
         ? internalRouteAuditPlanningBuilderMessage
@@ -2614,7 +2681,9 @@ function buildMissionControl(input: {
     },
     {
       target: "oracle",
-      purpose: internalRouteAuditReviewLaneProofReady
+      purpose: internalRoutePromotionDecisionGatePlanningReady
+        ? "internal route/audit promotion decision-gate no-effect review"
+        : internalRouteAuditReviewLaneProofReady
         ? "internal route/audit proof review"
         : internalRouteAuditPlanningReady
         ? "internal route/audit planning review"
@@ -2641,7 +2710,9 @@ function buildMissionControl(input: {
         : directChannelBoundaryReady
         ? "direct-channel dry-run review"
         : continuationSelectorProofCommitted ? "v1 no-send review" : "benchmark review",
-      message: internalRouteAuditReviewLaneProofReady
+      message: internalRoutePromotionDecisionGatePlanningReady
+        ? internalRoutePromotionDecisionGateOracleMessage
+        : internalRouteAuditReviewLaneProofReady
         ? internalRouteAuditReviewLaneProofOracleMessage
         : internalRouteAuditPlanningReady
         ? internalRouteAuditPlanningOracleMessage
