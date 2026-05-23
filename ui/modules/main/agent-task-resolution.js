@@ -12,6 +12,41 @@ const CURRENT_SESSION_TASK_PATTERN = new RegExp(`^(?:[-*]\\s*)?CURRENT[-\\s]+SES
 const CURRENT_LANE_PATTERN = new RegExp(`^(?:[-*]\\s*)?(?:CURRENT\\s+(?:LANE|PRIORITY|FOCUS)|ACTIVE\\s+LANE|FOCUS)${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
 const TASK_PATTERN = new RegExp(`^(?:[-*]\\s*)?TASK${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
 const OBJECTIVE_PATTERN = new RegExp(`^(?:[-*]\\s*)?OBJECTIVE${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
+const OBJECTIVE_OVERLAP_STOP_WORDS = new Set([
+  'action',
+  'active',
+  'after',
+  'again',
+  'against',
+  'already',
+  'before',
+  'broadening',
+  'builder',
+  'current',
+  'dirty',
+  'exactly',
+  'existing',
+  'finish',
+  'focus',
+  'from',
+  'handoff',
+  'james',
+  'lane',
+  'live',
+  'mission',
+  'none',
+  'objective',
+  'only',
+  'scope',
+  'slice',
+  'task',
+  'that',
+  'this',
+  'through',
+  'with',
+  'without',
+  'work',
+]);
 
 function toOptionalString(value, fallback = null) {
   if (value === null || value === undefined) return fallback;
@@ -171,6 +206,7 @@ function isAgentTaskResolvedByLaterSignal(taskRow = {}, rows = [], startIndex = 
     if (!candidate || candidate === taskRow) continue;
     if (Number.isFinite(taskTs) && taskTs > 0 && toEventTsMs(candidate) < taskTs) continue;
     if (isLaterAgentClosureRow(taskRow, candidate, options)) return true;
+    if (isLaterObjectiveCloseoutRow(taskRow, candidate)) return true;
   }
   return false;
 }
@@ -217,6 +253,60 @@ function firstObjectiveSentence(value) {
   if (!normalized) return '';
   const match = normalized.match(/^(.+?[.!?])(?:\s+|$)/);
   return match ? match[1].trim() : normalized;
+}
+
+function extractComparableTerms(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 4 && !OBJECTIVE_OVERLAP_STOP_WORDS.has(term));
+}
+
+function hasObjectiveOverlap(objective, rawBody, minOverlap = 4) {
+  const objectiveTerms = Array.from(new Set(extractComparableTerms(objective)));
+  if (objectiveTerms.length === 0) return false;
+  const bodyTerms = new Set(extractComparableTerms(rawBody));
+  const matches = objectiveTerms.filter((term) => bodyTerms.has(term));
+  const threshold = Math.min(Math.max(2, minOverlap), objectiveTerms.length);
+  return matches.length >= threshold;
+}
+
+function hasAuthoritativeLaneCloseoutSignal(rawBody) {
+  const text = toOptionalString(rawBody, '');
+  if (!text) return false;
+  const hasCompletion = (
+    /\b(?:closes?|closed|completed|complete|stale|superseded)\b/i.test(text)
+    || /\bno\s+(?:builder\s+)?action\s+remains\b/i.test(text)
+    || /\btreat\b[\s\S]{0,100}\b(?:completed|stale)\b/i.test(text)
+  );
+  if (!hasCompletion) return false;
+
+  const hasAuthority = (
+    /\bclean[-\s]?head\b/i.test(text)
+    || /\bcommitted\b/i.test(text)
+    || /\bcheckpoint\b/i.test(text)
+    || /\bpass\s+accepted\b/i.test(text)
+    || /\bscope[-\s]?verified\b/i.test(text)
+    || /\bfinal\s+review\b/i.test(text)
+  );
+  const laneScoped = /\b(?:old|stale|current[-\s]?lane|handoff|lane|slice)\b/i.test(text);
+  return hasAuthority && laneScoped;
+}
+
+function isLaterObjectiveCloseoutRow(taskRow = {}, candidateRow = {}) {
+  const taskSender = normalizeAgentRole(taskRow?.senderRole);
+  const candidateSender = normalizeAgentRole(candidateRow?.senderRole);
+  if (!taskSender || !candidateSender || taskSender !== candidateSender) return false;
+
+  const directive = extractCurrentLaneDirective(taskRow?.rawBody || '');
+  if (!directive?.objective) return false;
+
+  const body = toOptionalString(candidateRow?.rawBody, '');
+  if (!hasAuthoritativeLaneCloseoutSignal(body)) return false;
+  return hasObjectiveOverlap(directive.objective, body);
 }
 
 function selectHigherPriorityDirective(current, candidate) {
