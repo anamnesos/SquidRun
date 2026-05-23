@@ -30,3 +30,14 @@ A fast regex lint applies to the first 50 characters of coworker outputs. It cat
 - **Clarifying Questions:** Only when a wrong guess costs more time than the round-trip (e.g., "Which branch?").
 
 *Note: This regex lint is a tripwire, not a personality engine. It must not force agents to sound like clipped robots. The goal is bluntness, not robot poetry.*
+
+# Session Semantics & Handoff Materialization
+
+## Current Lane Resolution
+
+- The materializer automatically tracks the "current lane" (the active objective) across agent messages.
+- A lane is considered active until explicitly resolved or superseded.
+- **Authoritative Closeouts**: A current lane is automatically marked stale/closed (`status: 'none'`, `activeLane: null`) if the materializer encounters a subsequent authoritative closeout message.
+  - To qualify as a closeout, the message must contain an overlap in objective terms (minimum 4 matching keywords) and authoritative closing language (e.g., "clean-head", "committed", "closes", "stale", "no builder action remains").
+  - Simple `ACK` or passing status mentions without authoritative language are ignored, preventing accidental closures.
+- This ensures the canonical handoff artifacts accurately reflect resolved work and prevent stale `architect#...` tasks from persisting in side profiles or post-restart contexts.
