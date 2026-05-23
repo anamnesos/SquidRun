@@ -382,6 +382,123 @@ describe('auto-handoff-materializer', () => {
     expect(handoff).toContain('"sourceMessageId": "m-mira-lane"');
   });
 
+  test('clean-head objective closeout resolves stale current lane without killing unrelated active tasks', async () => {
+    const closedOutputPath = path.join(tempDir, 'handoffs', 'closed-session.md');
+    const closedCurrentLanePath = path.join(tempDir, 'handoffs', 'closed-current-lane.json');
+    const staleReviewLane = {
+      messageId: 'm-arch-11',
+      sessionId: 'app-session-378',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'routed',
+      rawBody: '(ARCHITECT #11): TASK Current-session Mira lane.\n\nObjective: finish the existing 3-file review/no-send gate dirty slice without broadening it:\n- `docs/mira-system-map.md`\n- `mira/ui/app.js`\n- `ui/__tests__/mira-runtime-ui-read-only-boot.test.js`\n\nJAMES ACTION: NONE',
+      brokeredAtMs: 1000,
+    };
+    const sourceSpecificBuilderPass = {
+      messageId: 'm-builder-116',
+      sessionId: 'app-session-378',
+      senderRole: 'builder',
+      targetRole: 'architect',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'routed',
+      rawBody: '(BUILDER #116): PASS on #409. Dirty scope is exactly `docs/mira-system-map.md`, `mira/runtime/src/squidrun-context.ts`, and `ui/__tests__/mira-runtime-squidrun-context.test.js`.',
+      brokeredAtMs: 2000,
+    };
+    const sourceSpecificOraclePass = {
+      messageId: 'm-oracle-27',
+      sessionId: 'app-session-378',
+      senderRole: 'oracle',
+      targetRole: 'architect',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'routed',
+      rawBody: '(ORACLE #27): PASS on Builder #116 / #409 against the review bar.',
+      brokeredAtMs: 3000,
+    };
+    const cleanHeadCloseout = {
+      messageId: 'm-clean-head-closeout',
+      sessionId: 'app-session-378',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'routed',
+      rawBody: '(ARCHITECT #2): Checkpoint `b1f68770 Advance Mission Control route audit follow through` is clean-head closed for Builder #116 / #409. Oracle #27 PASS accepted. Fresh verification: worktree clean. This closes the stale three-file review/no-send gate slice; no Builder action remains on that lane. JAMES ACTION: NONE.',
+      brokeredAtMs: 4000,
+    };
+
+    const closed = await materializeSessionHandoff({
+      rows: [
+        staleReviewLane,
+        sourceSpecificBuilderPass,
+        sourceSpecificOraclePass,
+        cleanHeadCloseout,
+      ],
+      outputPath: closedOutputPath,
+      currentLanePath: closedCurrentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-378',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 5000,
+    });
+
+    expect(closed.ok).toBe(true);
+    expect(closed.currentLane).toEqual(expect.objectContaining({
+      status: 'none',
+      activeLane: null,
+      resolvedOrSupersededCount: 1,
+    }));
+    const closedLane = JSON.parse(fs.readFileSync(closedCurrentLanePath, 'utf8'));
+    const closedHandoff = fs.readFileSync(closedOutputPath, 'utf8');
+    expect(closedLane.activeLane).toBeNull();
+    expect(closedHandoff).toContain('- current_lane_status: none');
+    expect(closedHandoff).not.toContain('"sourceMessageId": "m-arch-11"');
+
+    const activeOutputPath = path.join(tempDir, 'handoffs', 'active-session.md');
+    const activeCurrentLanePath = path.join(tempDir, 'handoffs', 'active-current-lane.json');
+    const activeTask = {
+      messageId: 'm-active-task',
+      sessionId: 'app-session-378',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'routed',
+      rawBody: '(ARCHITECT #20): TASK: package/source audit for current startup health.',
+      brokeredAtMs: 1000,
+    };
+    const unrelatedCloseoutNameDrop = {
+      messageId: 'm-unrelated-closeout',
+      sessionId: 'app-session-378',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'routed',
+      rawBody: '(ARCHITECT #21): Checkpoint `b1f68770` is clean-head closed for Builder #116 / #409. This closes the stale three-file review/no-send gate slice and mentions package/source audit only as a side note. JAMES ACTION: NONE.',
+      brokeredAtMs: 2000,
+    };
+
+    const active = await materializeSessionHandoff({
+      rows: [activeTask, unrelatedCloseoutNameDrop],
+      outputPath: activeOutputPath,
+      currentLanePath: activeCurrentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-378',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 3000,
+    });
+
+    expect(active.ok).toBe(true);
+    expect(active.currentLane.activeLane).toEqual(expect.objectContaining({
+      sourceMessageId: 'm-active-task',
+      objective: 'package/source audit for current startup health.',
+    }));
+  });
+
   test('current-session task materializes as current lane and current lane syntax still extracts', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
