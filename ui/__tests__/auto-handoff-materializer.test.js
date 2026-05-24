@@ -99,6 +99,19 @@ describe('auto-handoff-materializer', () => {
     })).toBe('session-current');
   });
 
+  test('toEventTsMs ignores missing primary timestamp fields', () => {
+    expect(_internals.toEventTsMs({
+      brokeredAtMs: null,
+      sentAtMs: 2000,
+      updatedAtMs: 2001,
+    })).toBe(2000);
+    expect(_internals.toEventTsMs({
+      brokeredAtMs: '',
+      sentAtMs: undefined,
+      updatedAtMs: 2001,
+    })).toBe(2001);
+  });
+
   test('pending deliveries exclude failed rows and resolved brokered rows', () => {
     const rows = [
       {
@@ -860,6 +873,77 @@ describe('auto-handoff-materializer', () => {
 
     const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
     expect(JSON.stringify(currentLane)).not.toContain('Stale backlog that must not return');
+  });
+
+  test('same-sender clean-head closeout with direct task ref clears active lane', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session-clean-head-direct-ref.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane-clean-head-direct-ref.json');
+    const task = {
+      messageId: 'm-architect-1',
+      sessionId: 'app-session-380',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'routed',
+      rawBody: '(ARCHITECT #1): Tasking current lane. Scope: restart-continuity blocker after HEAD 02df8792 relaunch: restart artifact ok=true, session advanced 379->380, hm-restart-verify pass, tree clean, but .squidrun/handoffs/current-lane.json still materializes status=none/activeLane=null instead of the promised active architect#2 current_lane_tasking continuity. Builder owns implementation/investigation now. Find the smallest fix that makes post-relaunch/current-session handoff preserve or reconstruct the accepted Mira Presence lane without reviving stale backlog, then run focused materializer tests plus a real materialization proof. Do not restart again until we have green proof.',
+      brokeredAtMs: 1000,
+    };
+    const cleanHeadCloseout = {
+      messageId: 'm-architect-12',
+      sessionId: 'app-session-380',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'recorded',
+      rawBody: '(ARCHITECT #12): CLEAN-HEAD CLOSEOUT for restart-continuity blocker. Commit `cb9eec11 Fix restart current-lane carry-forward` is landed, worktree is clean, and no restart executed. This closes Architect #1 / Builder restart-continuity blocker: post-relaunch sourceRef proof now carries session-379 `architect#2` as `carried_restart_proof`, full session-380 prefers fresh `architect#1`, hyphen-scoped `app-session-254-eunbyeol` stays out of main, materializer tests passed 29/29, restart verifier passed. No Builder action remains on this lane. Runtime reload to pick up cb9eec11 is a separate restart-gate decision, not active implementation work.',
+      brokeredAtMs: null,
+      sentAtMs: 2000,
+      updatedAtMs: 2001,
+    };
+    const builderAck = {
+      messageId: 'm-builder-10',
+      sessionId: 'app-session-380',
+      senderRole: 'builder',
+      targetRole: 'architect',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'routed',
+      rawBody: '(BUILDER #10): ACK Architect #12. Clean-head closeout received. Builder has no remaining action on the restart-continuity blocker.',
+      brokeredAtMs: 3000,
+    };
+
+    const result = await materializeSessionHandoff({
+      rows: [task, cleanHeadCloseout, builderAck],
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-380',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 4000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'none',
+      activeLane: null,
+      candidateCount: 0,
+      resolvedOrSupersededCount: 1,
+    }));
+
+    const handoff = fs.readFileSync(outputPath, 'utf8');
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    expect(currentLane.activeLane).toBeNull();
+    expect(currentLane.continuity.recent_completed_fixes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        at_ms: 2000,
+        source_ref: 'architect#12',
+        summary: expect.stringContaining('This closes Architect #1 / Builder restart-continuity blocker'),
+      }),
+    ]));
+    expect(handoff).toContain('- current_lane_status: none');
+    expect(handoff).toContain('"source_ref": "architect#12"');
   });
 
   test('current-session genuine task overrides accepted restart carry-forward proof', async () => {
