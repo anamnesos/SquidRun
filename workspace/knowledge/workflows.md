@@ -37,6 +37,7 @@ A fast regex lint applies to the first 50 characters of coworker outputs. It cat
 
 - The materializer automatically tracks the "current lane" (the active objective) across agent messages.
 - A lane is considered active until explicitly resolved or superseded.
+- **Explicit Tasking**: The Architect can explicitly define the active lane by including the directive `Tasking current lane.` followed by `Scope: <objective>`. This materializes with the `current_lane_tasking` kind and immediately updates the canonical current lane.
 - **Authoritative Closeouts**: A current lane is automatically marked stale/closed (`status: 'none'`, `activeLane: null`) if the materializer encounters a subsequent authoritative closeout message.
   - To qualify as a closeout, the message must contain an overlap in objective terms (minimum 4 matching keywords) and authoritative closing language (e.g., "clean-head", "committed", "closes", "stale", "no builder action remains").
   - Simple `ACK` or passing status mentions without authoritative language are ignored, preventing accidental closures.
