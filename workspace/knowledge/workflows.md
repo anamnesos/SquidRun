@@ -41,3 +41,15 @@ A fast regex lint applies to the first 50 characters of coworker outputs. It cat
   - To qualify as a closeout, the message must contain an overlap in objective terms (minimum 4 matching keywords) and authoritative closing language (e.g., "clean-head", "committed", "closes", "stale", "no builder action remains").
   - Simple `ACK` or passing status mentions without authoritative language are ignored, preventing accidental closures.
 - This ensures the canonical handoff artifacts accurately reflect resolved work and prevent stale `architect#...` tasks from persisting in side profiles or post-restart contexts.
+
+# Progress Metrics Discipline
+
+## Required Progress Numbers
+
+- Architect status reports must name progress for the current lane as a percentage when the user asks where the team is, whether work is drifting, or how close a goal is.
+- For Mira work, status reports must separate:
+  - `current lane progress`: the active bounded task.
+  - `overall Mira progress`: the broader product/v1 estimate, only after naming the target it measures against.
+- Percentages must include the remaining blocker or next verification step. A number without "what moves it next" is not useful.
+- If the same percentage appears in repeated status reports, Architect must say why it has not changed. If there is no evidence-backed reason, treat the unchanged number as a drift signal and open a bounded lane-health review.
+- Progress numbers are estimates, not proof. Commits, tests, review verdicts, restart checks, and visible user-facing behavior are the evidence that moves the number.
