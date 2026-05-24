@@ -623,6 +623,54 @@ describe('auto-handoff-materializer', () => {
     expect(currentLane.activeLane.objective).toContain('startup continuity surfaces active Mira Presence lane');
   });
 
+  test('tasking current lane preserves short backticked code refs in materialized objective', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session-commit-refs.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane-commit-refs.json');
+    const taskingCurrentLaneBody = '(ARCHITECT #27): Tasking current lane. Scope: Mira/restart experience still sucks from James perspective even after `cb9eec11` + `49564470`: he should not have to re-explain Mira, the accepted critique, or the active lane after restarts. No restart.';
+
+    const directive = extractCurrentLaneDirective(taskingCurrentLaneBody);
+    expect(directive).toEqual(expect.objectContaining({
+      kind: 'current_lane_tasking',
+      objective: expect.stringContaining('after cb9eec11 + 49564470:'),
+    }));
+    expect(directive.objective).not.toContain('after + :');
+
+    const rows = [
+      {
+        messageId: 'm-architect-tasking-current-lane-refs',
+        sessionId: 'app-session-380',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        rawBody: taskingCurrentLaneBody,
+        brokeredAtMs: 1000,
+      },
+    ];
+
+    const result = await materializeSessionHandoff({
+      rows,
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-380',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 2000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane.activeLane).toEqual(expect.objectContaining({
+      sourceMessageId: 'm-architect-tasking-current-lane-refs',
+      sourceRef: 'architect#27',
+      objective: expect.stringContaining('after cb9eec11 + 49564470:'),
+    }));
+
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    expect(currentLane.activeLane.objective).toContain('after cb9eec11 + 49564470:');
+    expect(currentLane.activeLane.objective).not.toContain('after + :');
+  });
+
   test('dash-separated task materializes as current lane', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');

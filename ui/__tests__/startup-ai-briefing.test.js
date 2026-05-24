@@ -19,6 +19,34 @@ describe('startup-ai-briefing', () => {
     })).toBe('eunbyeol');
   });
 
+  test('startup scope treats hyphen-suffixed app-session ids as side profile scope', () => {
+    const sideSessionId = 'app-session-254-eunbyeol';
+    const sideRow = {
+      senderRole: 'architect',
+      targetRole: 'builder',
+      status: 'routed',
+      rawBody: '(ARCHITECT #1): Eunbyeol scoped startup context.',
+      sentAtMs: 2000,
+      sessionId: sideSessionId,
+      metadata: {},
+    };
+    const sideSnapshot = {
+      version: 1,
+      sessionId: sideSessionId,
+      status: 'active',
+      activeLane: {
+        objective: 'Eunbyeol scoped startup context.',
+      },
+    };
+
+    expect(_internals.extractSessionScopeSuffix(sideSessionId)).toBe('eunbyeol');
+    expect(_internals.resolveStartupScopeKey({ sessionScopeId: sideSessionId })).toBe('eunbyeol');
+    expect(_internals.rowMatchesStartupScope(sideRow, { windowKey: 'main', profileName: 'main' })).toBe(false);
+    expect(_internals.rowMatchesStartupScope(sideRow, { sessionScopeId: sideSessionId })).toBe(true);
+    expect(_internals.snapshotMatchesStartupScope(sideSnapshot, { windowKey: 'main', profileName: 'main' })).toBe(false);
+    expect(_internals.snapshotMatchesStartupScope(sideSnapshot, { sessionScopeId: sideSessionId })).toBe(true);
+  });
+
   test('selects newest transcript files first', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-files-'));
     try {
@@ -204,6 +232,117 @@ describe('startup-ai-briefing', () => {
     }
   });
 
+  test('injects machine-readable Mira Presence restart accounting from durable state', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-mira-accounting-'));
+    const outputPath = path.join(tempRoot, '.squidrun', 'handoffs', 'ai-briefing.md');
+    const statusPath = path.join(tempRoot, '.squidrun', 'runtime', 'startup-briefing-status.json');
+    const currentLanePath = path.join(tempRoot, '.squidrun', 'handoffs', 'current-lane.json');
+
+    try {
+      fs.mkdirSync(path.join(tempRoot, '.squidrun', 'handoffs'), { recursive: true });
+      fs.mkdirSync(path.join(tempRoot, '.squidrun', 'runtime'), { recursive: true });
+      fs.mkdirSync(path.join(tempRoot, '.squidrun', 'state'), { recursive: true });
+      fs.writeFileSync(
+        outputPath,
+        '# AI Startup Briefing\n\n- Historical generic Mira prose should not count.\n'
+      );
+      fs.writeFileSync(
+        statusPath,
+        JSON.stringify({
+          ok: false,
+          generatedAt: '2026-05-24T05:20:00.000Z',
+          error: 'ANTHROPIC_API_KEY is not set',
+        })
+      );
+      fs.writeFileSync(
+        path.join(tempRoot, '.squidrun', 'state', 'mira-presence-runtime-state.json'),
+        JSON.stringify({
+          schema: 'squidrun.mira_core.presence_runtime_state.v0',
+          version: 1,
+          generated_at: '2026-05-24T05:19:00.000Z',
+          surface: 'backstage_internal_only',
+          active_mira_presence_lane: 'sentinel_presence_lane',
+          accepted_critique: 'sentinel accepted critique from durable state',
+          next_product_action: 'sentinel next product action from durable state',
+          proof_test_state: 'sentinel proof test state',
+          stale_markers: ['sentinel stale marker'],
+          blocked_status: {
+            live_voice_blocked: true,
+            always_on_mic_blocked: true,
+            pc_embodiment_blocked: true,
+            a3_a4_blocked: true,
+          },
+          interruption_marker: 'none',
+          agency_level: 'A0',
+          canonical_hash: 'sha256:sentinel',
+        })
+      );
+      fs.writeFileSync(
+        currentLanePath,
+        JSON.stringify({
+          version: 1,
+          generatedAt: '2026-05-24T05:21:00.000Z',
+          sessionId: 'app-session-380',
+          status: 'active',
+          activeLane: {
+            objective: 'Startup should surface durable Mira evidence.',
+            status: 'active',
+            sourceRef: 'architect#27',
+            sourceMessageId: 'hm-sentinel-task',
+            sourceTimestampMs: Date.parse('2026-05-24T05:18:00.000Z'),
+          },
+        })
+      );
+
+      const guarded = readStartupBriefingForInjection({
+        projectRoot: tempRoot,
+        outputPath,
+        statusPath,
+        currentLanePath,
+        nowMs: Date.parse('2026-05-24T05:25:00.000Z'),
+      });
+
+      expect(guarded).toContain('UNTRUSTED AI BRIEFING');
+      expect(guarded).toContain('## Mira Presence Restart Accounting (machine-readable)');
+      expect(guarded).toContain('"schema": "squidrun.startup_ai_briefing.mira_presence_restart_accounting.v0"');
+      expect(guarded).toContain('coherent runtime continuity/agency/critique/next-action across restart and surfaces');
+      expect(guarded).toContain('"tone wrapper"');
+      expect(guarded).toContain('"generic startup summary"');
+      expect(guarded).toContain('"global Mira percentage without accounting"');
+      expect(guarded).toContain('"source_ref": ".squidrun/state/mira-presence-runtime-state.json"');
+      expect(guarded).toContain('"active_mira_presence_lane": "sentinel_presence_lane"');
+      expect(guarded).toContain('"accepted_critique": "sentinel accepted critique from durable state"');
+      expect(guarded).toContain('"next_product_action": "sentinel next product action from durable state"');
+      expect(guarded).toContain('"proof_test_state": "sentinel proof test state"');
+      expect(guarded).toContain('"sentinel stale marker"');
+      expect(guarded).toContain('"source_ref": "architect#27"');
+      expect(guarded).toContain('"source_message_id": "hm-sentinel-task"');
+      expect(guarded.indexOf('## Mira Presence Restart Accounting')).toBeLessThan(guarded.indexOf('## Live Current Lane'));
+      expect(guarded).not.toContain('Historical generic Mira prose should not count');
+      expect(guarded).not.toContain('# AI Startup Briefing');
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('recent comms formatting falls through from null brokeredAtMs to sentAtMs', () => {
+    const block = _internals.formatRecentCommsWindow([
+      {
+        messageId: 'm-sent-fallback',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        status: 'recorded',
+        rawBody: '(ARCHITECT #1): Sent timestamp should render.',
+        brokeredAtMs: null,
+        sentAtMs: 2000,
+      },
+    ]);
+
+    expect(block).toContain('1970-01-01T00:00:02.000Z');
+    expect(block).toContain('Sent timestamp should render.');
+    expect(block).not.toContain('| - | architect | builder | recorded |');
+  });
+
   test('excludes main Mira durable requirements and current lane from Eunbyeol startup scope', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-eunbyeol-scope-'));
 
@@ -262,6 +401,7 @@ describe('startup-ai-briefing', () => {
 
       expect(guarded).toContain('Eunbyeol case runtime context');
       expect(guarded).not.toContain('Startup-Facing Durable Requirements');
+      expect(guarded).not.toContain('Mira Presence Restart Accounting');
       expect(guarded).not.toContain('Main Mira Presence Runtime acceptance');
       expect(guarded).not.toContain('Main Mira startup prose');
       expect(guarded).not.toContain('Main Mira Presence lane should stay main');

@@ -13,6 +13,7 @@ const {
 } = require('./main/agent-task-resolution');
 const {
   readMiraPresenceRuntimeStartupSummary,
+  resolveStatePath: resolveMiraPresenceRuntimeStatePath,
   SURFACE_BACKSTAGE_INTERNAL_ONLY: MIRA_PRS_SURFACE_BACKSTAGE,
 } = require('./mira-core/mira-presence-runtime-state-v0');
 const {
@@ -21,6 +22,8 @@ const {
 } = require('./mira-lab-verify-bootstrap-state');
 
 const MIRA_PRESENCE_RUNTIME_STATE_SUMMARY_FILENAME = 'mira-presence-runtime-state-summary.json';
+const MIRA_PRESENCE_RESTART_ACCOUNTING_SCHEMA =
+  'squidrun.startup_ai_briefing.mira_presence_restart_accounting.v0';
 
 const DEFAULT_MODEL = String(process.env.SQUIDRUN_STARTUP_BRIEFING_MODEL || 'claude-opus-4-6').trim();
 const DEFAULT_BASE_URL = String(process.env.SQUIDRUN_ANTHROPIC_BASE_URL || 'https://api.anthropic.com').trim();
@@ -53,9 +56,13 @@ function normalizeScopeKey(value) {
 
 function extractSessionScopeSuffix(value) {
   const text = toText(value, '').toLowerCase();
-  if (!text || !text.includes(':')) return '';
-  const suffix = text.split(':').pop().trim();
-  return suffix || '';
+  if (!text) return '';
+  if (text.includes(':')) {
+    const suffix = text.split(':').pop().trim();
+    if (suffix) return suffix;
+  }
+  const hyphenSuffix = text.match(/^app-session-\d+-(.+)$/);
+  return hyphenSuffix ? hyphenSuffix[1].trim() : '';
 }
 
 function resolveStartupScopeKey(options = {}) {
@@ -206,6 +213,8 @@ function toEventTsMs(row) {
     row?.updatedAtMs,
   ];
   for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined) continue;
+    if (typeof candidate === 'string' && candidate.trim() === '') continue;
     const numeric = Number(candidate);
     if (Number.isFinite(numeric) && numeric >= 0) return Math.floor(numeric);
   }
@@ -402,6 +411,108 @@ function formatRecentCommsWindow(rows = [], options = {}) {
   return lines.join('\n');
 }
 
+function resolvePresenceStateSourceMeta(options = {}) {
+  try {
+    const projectRoot = resolveMiraPresenceProjectRoot(options);
+    const statePath = resolveMiraPresenceRuntimeStatePath(projectRoot);
+    const state = safeReadJson(statePath);
+    const relativePath = normalizeRelativePathForBriefing(path.relative(projectRoot, statePath));
+    return {
+      source_kind: 'mira_presence_runtime_state_json',
+      source_ref: relativePath || normalizeRelativePathForBriefing(path.join('.squidrun', 'state', 'mira-presence-runtime-state.json')),
+      generated_at: state?.generated_at || state?.generatedAt || null,
+      canonical_hash: state?.canonical_hash || null,
+    };
+  } catch (_) {
+    return {
+      source_kind: 'mira_presence_runtime_state_json',
+      source_ref: normalizeRelativePathForBriefing(path.join('.squidrun', 'state', 'mira-presence-runtime-state.json')),
+      generated_at: null,
+      canonical_hash: null,
+    };
+  }
+}
+
+function summarizeCurrentLaneSourceForAccounting(snapshot = {}) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  if (String(snapshot.status || '').toLowerCase() !== 'active') return null;
+  const lane = snapshot.activeLane && typeof snapshot.activeLane === 'object'
+    ? snapshot.activeLane
+    : null;
+  if (!lane) return null;
+  const timestampMs = Number(lane.sourceTimestampMs);
+  return {
+    status: String(lane.status || snapshot.status || 'active'),
+    source_ref: lane.sourceRef || null,
+    source_message_id: lane.sourceMessageId || null,
+    source_timestamp_iso: Number.isFinite(timestampMs) && timestampMs > 0 ? toIso(timestampMs) : null,
+    objective: normalizeInline(lane.objective || '', 220) || null,
+  };
+}
+
+function buildMiraPresenceRestartAccountingPayload(context = {}, currentLaneSnapshot = null, options = {}) {
+  const source = resolvePresenceStateSourceMeta(options);
+  const summary = context?.summary && typeof context.summary === 'object' ? context.summary : {};
+  return {
+    schema: MIRA_PRESENCE_RESTART_ACCOUNTING_SCHEMA,
+    surface: 'startup_injection_internal_context',
+    visible_injection_allowed: false,
+    visible_mira_reply_allowed: false,
+    proof_accounting: {
+      mira_is: 'coherent runtime continuity/agency/critique/next-action across restart and surfaces',
+      mira_is_not: [
+        'tone wrapper',
+        'persona prose',
+        'stale memory vibes',
+        'invented work',
+      ],
+      counts_as_proof_after_relaunch: [
+        'durable Presence runtime state loaded',
+        'active_mira_presence_lane',
+        'accepted_critique',
+        'next_product_action',
+        'stale_markers',
+        'source refs/status',
+      ],
+      does_not_count_as_proof: [
+        'prior Mira discussion',
+        'generic startup summary',
+        'stale AI briefing prose',
+        'global Mira percentage without accounting',
+      ],
+    },
+    presence_runtime: {
+      present: context?.present === true,
+      decision: context?.decision || 'missing_presence_runtime_context',
+      source_kind: source.source_kind,
+      source_ref: source.source_ref,
+      generated_at: source.generated_at,
+      canonical_hash: source.canonical_hash,
+      active_mira_presence_lane: summary.active_mira_presence_lane || null,
+      accepted_critique: summary.accepted_critique || null,
+      next_product_action: summary.next_product_action || null,
+      proof_test_state: summary.proof_test_state || null,
+      stale_markers: Array.isArray(summary.stale_markers) ? summary.stale_markers.slice(0, 4) : [],
+      blocked_status: context?.blocked_status || null,
+      agency_level: context?.agency_level || null,
+      interruption_marker: context?.interruption_marker || null,
+    },
+    current_lane_source: summarizeCurrentLaneSourceForAccounting(currentLaneSnapshot),
+  };
+}
+
+function formatMiraPresenceRestartAccountingBlock(context = {}, currentLaneSnapshot = null, options = {}) {
+  if (context?.present !== true || !context.summary) return '';
+  const payload = buildMiraPresenceRestartAccountingPayload(context, currentLaneSnapshot, options);
+  return [
+    '## Mira Presence Restart Accounting (machine-readable)',
+    '',
+    '```json',
+    JSON.stringify(payload, null, 2),
+    '```',
+  ].join('\n');
+}
+
 function stripLiveAccountBlocks(markdown) {
   const out = [];
   let skip = false;
@@ -441,12 +552,26 @@ function readStartupBriefingForInjection(options = {}) {
   const status = safeReadJson(resolveStatusPath(options));
   const startupScopeKey = resolveStartupScopeKey(options);
   const startupDurableBlock = buildStartupDurableRequirementsBlock(resolveStartupDurableSourceFiles(options), options);
-  const currentLaneBlock = formatCurrentLaneBlock(readCurrentLaneSnapshot(options));
+  const currentLaneSnapshot = readCurrentLaneSnapshot(options);
+  const miraPresenceRestartAccountingBlock = isMainProfile(startupScopeKey)
+    ? formatMiraPresenceRestartAccountingBlock(
+      readMiraPresenceRuntimeStartupContext(options),
+      currentLaneSnapshot,
+      options
+    )
+    : '';
+  const currentLaneBlock = formatCurrentLaneBlock(currentLaneSnapshot);
   const recentCommsBlock = formatRecentCommsWindow(readRecentCurrentScopeComms(options), options);
   const miraLabBootstrapBlock = isMainProfile(startupScopeKey)
     ? readMiraLabVerifyBootstrapStaleBlock(options)
     : '';
-  const continuityBlock = [startupDurableBlock, miraLabBootstrapBlock, currentLaneBlock, recentCommsBlock].filter(Boolean).join('\n\n');
+  const continuityBlock = [
+    startupDurableBlock,
+    miraPresenceRestartAccountingBlock,
+    miraLabBootstrapBlock,
+    currentLaneBlock,
+    recentCommsBlock,
+  ].filter(Boolean).join('\n\n');
   if (!body && !continuityBlock) return '';
   if (!body && continuityBlock) {
     return `LIVE STARTUP CONTINUITY from current-scope data.\n\n${continuityBlock}\n`;
@@ -1253,11 +1378,14 @@ module.exports = {
     resolveLiveAccountSnapshot,
     formatLiveSnapshotBlock,
     stripLiveAccountBlocks,
+    extractSessionScopeSuffix,
     resolveCanonicalSourceFiles,
     resolveStartupDurableSourceFiles,
     buildCanonicalSourceBlock,
     buildStartupDurableRequirementsBlock,
     summarizeMiraPresenceRuntimeForStartup,
+    buildMiraPresenceRestartAccountingPayload,
+    formatMiraPresenceRestartAccountingBlock,
     deriveCanonicalBriefingOverrides,
     applyCanonicalBriefingOverrides,
   },

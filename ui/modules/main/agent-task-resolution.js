@@ -246,9 +246,15 @@ function isReportLikeDirectiveBody(rawBody) {
   return isReportSectionHeading(firstStrippedLine(rawBody));
 }
 
+function isShortCodeLikeInlineRef(value) {
+  const text = String(value || '').trim();
+  if (!text || text.length > 80 || /\s/.test(text)) return false;
+  return /^[a-z0-9][a-z0-9._:/#@+-]*$/i.test(text);
+}
+
 function redactQuotedDirectiveText(value) {
   return String(value || '')
-    .replace(/`[^`]*`/g, ' ')
+    .replace(/`([^`]*)`/g, (_, inner) => (isShortCodeLikeInlineRef(inner) ? inner.trim() : ' '))
     .replace(/"[^"]*"/g, ' ')
     .replace(/'[^']*'/g, ' ');
 }
