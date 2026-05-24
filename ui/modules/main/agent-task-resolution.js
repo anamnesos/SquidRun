@@ -356,6 +356,21 @@ function extractPlainLanguageObjective(rawBody) {
   return firstObjectiveSentence(cleaned);
 }
 
+function extractTaskingCurrentLaneObjective(rawBody) {
+  const stripped = stripAgentPrefix(normalizeLaneObjective(redactQuotedDirectiveText(rawBody)));
+  if (!/\btasking\s+current\s+lane\b/i.test(stripped)) return '';
+
+  const scopeMatch = stripped.match(/\bscope\s*:\s*([\s\S]+)$/i);
+  const rawObjective = scopeMatch
+    ? scopeMatch[1]
+    : stripped.replace(/^tasking\s+current\s+lane\b[.:]?\s*/i, '');
+  return normalizeLaneObjective(
+    rawObjective
+      .replace(/\bdo\s+not\s+declare\s+ready[-\s]?for[-\s]?restart\b[\s\S]*$/i, '')
+      .trim()
+  );
+}
+
 function extractNaturalCurrentLaneDirective(rawBody) {
   if (isReportLikeDirectiveBody(rawBody)) return null;
   const stripped = stripAgentPrefix(normalizeLaneObjective(redactQuotedDirectiveText(rawBody)));
@@ -370,6 +385,15 @@ function extractNaturalCurrentLaneDirective(rawBody) {
       kind: 'james_plain_language_objective',
       objective: plainLanguageObjective,
       priority: 128,
+    };
+  }
+
+  const taskingCurrentLaneObjective = extractTaskingCurrentLaneObjective(rawBody);
+  if (taskingCurrentLaneObjective) {
+    return {
+      kind: 'current_lane_tasking',
+      objective: taskingCurrentLaneObjective,
+      priority: 126,
     };
   }
 
