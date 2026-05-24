@@ -187,9 +187,13 @@ function normalizeScopeKey(value) {
 
 function extractSessionScopeSuffix(value) {
   const text = toOptionalString(value, '').toLowerCase();
-  if (!text || !text.includes(':')) return '';
-  const suffix = text.split(':').pop().trim();
-  return suffix || '';
+  if (!text) return '';
+  if (text.includes(':')) {
+    const suffix = text.split(':').pop().trim();
+    if (suffix) return suffix;
+  }
+  const hyphenSuffix = text.match(/^app-session-\d+-(.+)$/);
+  return hyphenSuffix ? hyphenSuffix[1].trim() : '';
 }
 
 function extractRowScopeKey(row = {}) {
@@ -366,21 +370,28 @@ function sameProofRef(left, right) {
 function extractAcceptedRestartProof(row = {}) {
   const body = toOptionalString(row?.rawBody, '');
   if (!body) return null;
-  if (!/\b(?:post[-\s]?restart|after\s+(?:main[-\s]process\s+)?restart|restart[-\s]?ready|restart\s+gate|expected\s+post[-\s]?restart)\b/i.test(body)) {
+  if (!/\b(?:post[-\s]?restart|after\s+(?:main[-\s]process\s+)?restart|after\s+relaunch|post[-\s]?relaunch|proof\s+target\s+after\s+relaunch|restart[-\s]?ready|restart\s+gate|expected\s+post[-\s]?restart|restart\s+executing|fresh\s+preflight)\b/i.test(body)) {
     return null;
   }
 
   const activeLaneMatch = body.match(/\bactiveLane\b(?:\s*(?:=|:)\s*|\s+)(?:sourceRef\s*=\s*)?(architect|arch|builder|oracle)#(\d+)\b/i);
   const taggedRowsMatch = body.match(/\btagged_rows\s*(?:=|:)?\s*(\d+)\b/i);
   const laneStatusActive = /\bcurrent_lane_status\s*(?:=|:)?\s*active\b/i.test(body);
-  if (!activeLaneMatch || !taggedRowsMatch || !laneStatusActive) {
+  const sourceRefMatch = body.match(/\bsourceRef\s*=\s*(architect|arch|builder|oracle)#(\d+)\b/i);
+  const currentLaneStatusActive = /\bcurrent[-_]?lane\b[\s\S]{0,160}\bstatus\s*=\s*active\b/i.test(body)
+    || /\bstatus\s*=\s*active\b[\s\S]{0,160}\bcurrent[-_]?lane\b/i.test(body);
+  const refMatch = activeLaneMatch || (currentLaneStatusActive ? sourceRefMatch : null);
+  if (!refMatch || (!laneStatusActive && !currentLaneStatusActive)) {
     return null;
   }
 
-  const role = normalizeProofRole(activeLaneMatch[1]);
-  const seq = Number.parseInt(activeLaneMatch[2], 10);
-  const taggedRows = Number.parseInt(taggedRowsMatch[1], 10);
-  if (!role || !Number.isInteger(seq) || seq <= 0 || !Number.isInteger(taggedRows) || taggedRows < 0) {
+  const role = normalizeProofRole(refMatch[1]);
+  const seq = Number.parseInt(refMatch[2], 10);
+  const taggedRows = taggedRowsMatch ? Number.parseInt(taggedRowsMatch[1], 10) : null;
+  if (!role || !Number.isInteger(seq) || seq <= 0) {
+    return null;
+  }
+  if (taggedRows !== null && (!Number.isInteger(taggedRows) || taggedRows < 0)) {
     return null;
   }
 
@@ -460,7 +471,10 @@ function findAcceptedRestartCarryForward(crossSessionRows = [], currentRows = []
     expectedCurrentLaneStatus: 'active',
   };
   currentLane.continuity = safeJsonObject(currentLane.continuity);
-  currentLane.continuity.next_action = `Verify carried restart proof: activeLane=${proof.role}#${proof.seq}, tagged_rows=${proof.taggedRows}, current_lane_status=active.`;
+  const taggedRowsClause = Number.isInteger(proof.taggedRows)
+    ? `, tagged_rows=${proof.taggedRows}`
+    : '';
+  currentLane.continuity.next_action = `Verify carried restart proof: activeLane=${proof.role}#${proof.seq}${taggedRowsClause}, current_lane_status=active.`;
   currentLane.continuity.stale_backlog_markers = [
     'Carried lane is restart continuity proof only; do not execute it as a new-session task without current evidence.',
     ...(

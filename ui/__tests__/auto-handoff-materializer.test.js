@@ -763,6 +763,105 @@ describe('auto-handoff-materializer', () => {
     expect(handoff).not.toContain('Old arbitrary work that must not be resurrected');
   });
 
+  test('post-relaunch sourceRef proof carries accepted lane without tagged_rows wording', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session-source-ref-proof.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane-source-ref-proof.json');
+    const startupRows = [
+      {
+        messageId: 'm-builder-online',
+        sessionId: 'app-session-380',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        rawBody: '(BUILDER #1): Builder online. Startup baseline loaded; standing by for current-session delegation.',
+        brokeredAtMs: 5000,
+      },
+      {
+        messageId: 'm-builder-mixed-proof',
+        sessionId: 'app-session-380',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        rawBody: '(BUILDER #2): Post-relaunch proof is mixed. Restart artifact ok=true, but current-lane.json still shows status=none/activeLane=null.',
+        brokeredAtMs: 5100,
+      },
+    ];
+    const staleTask = {
+      messageId: 'm-stale-task',
+      sessionId: 'app-session-378',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'routed',
+      rawBody: '(ARCHITECT #44): TASK: Stale backlog that must not return.',
+      brokeredAtMs: 1000,
+    };
+    const acceptedLane = {
+      messageId: 'm-mira-presence-lane',
+      sessionId: 'app-session-379',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'routed',
+      rawBody: '(ARCHITECT #2): Tasking current lane. Scope: prove startup continuity surfaces active Mira Presence lane + accepted critique + next action + stale markers.',
+      brokeredAtMs: 2000,
+    };
+    const sourceRefProof = {
+      messageId: 'm-source-ref-proof',
+      sessionId: 'app-session-379',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'routed',
+      rawBody: '(ARCHITECT #18): Restart executing now. Fresh preflight is green. Proof target after relaunch: `.squidrun/coord/restart-execute-result-379.json`, then current-lane must show `status=active sourceRef=architect#2 kind=current_lane_tasking`.',
+      brokeredAtMs: 3000,
+    };
+
+    const result = await materializeSessionHandoff({
+      rows: startupRows,
+      crossSessionRows: [staleTask, acceptedLane, sourceRefProof, ...startupRows],
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-380',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 6000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'active',
+      source: 'comms_journal_restart_carry_forward',
+      carryForward: expect.objectContaining({
+        expectedActiveLane: 'architect#2',
+        expectedTaggedRows: null,
+      }),
+      activeLane: expect.objectContaining({
+        sourceRef: 'architect#2',
+        sourceMessageId: 'm-mira-presence-lane',
+        kind: 'current_lane_tasking',
+        status: 'carried_restart_proof',
+        carriedByProofMessageId: 'm-source-ref-proof',
+      }),
+    }));
+
+    const handoff = fs.readFileSync(outputPath, 'utf8');
+    expect(handoff).toContain('- current_lane_status: active');
+    expect(handoff).toContain('accepted restart carry-forward proof');
+    expect(handoff).toContain('activeLane=architect#2, current_lane_status=active');
+    expect(handoff).toContain('Carried lane is restart continuity proof only');
+
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    expect(JSON.stringify(currentLane)).not.toContain('Stale backlog that must not return');
+  });
+
   test('current-session genuine task overrides accepted restart carry-forward proof', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
@@ -1804,10 +1903,24 @@ describe('auto-handoff-materializer', () => {
         sessionScopeId: 'app-session-329:eunbyeol',
       },
     };
+    const hyphenScopedEunbyeolRow = {
+      messageId: 'm-eunbyeol-hyphen-task',
+      sessionId: 'app-session-254-eunbyeol',
+      senderRole: 'user',
+      targetRole: 'architect',
+      channel: 'telegram',
+      direction: 'inbound',
+      status: 'brokered',
+      rawBody: '(USER #2): TASK: Hyphen-scoped Eunbyeol restart message',
+      brokeredAtMs: 1500,
+      metadata: {
+        sessionScopeId: 'app-session-254-eunbyeol',
+      },
+    };
 
     const main = await materializeSessionHandoff({
-      rows: [mainRow, eunbyeolRow],
-      crossSessionRows: [mainRow, eunbyeolRow],
+      rows: [mainRow, eunbyeolRow, hyphenScopedEunbyeolRow],
+      crossSessionRows: [mainRow, eunbyeolRow, hyphenScopedEunbyeolRow],
       outputPath: mainOutputPath,
       legacyMirrorPath: false,
       sessionId: 'app-session-329',
@@ -1816,7 +1929,7 @@ describe('auto-handoff-materializer', () => {
     });
     const emptyMain = await materializeSessionHandoff({
       rows: [],
-      crossSessionRows: [eunbyeolRow],
+      crossSessionRows: [eunbyeolRow, hyphenScopedEunbyeolRow],
       outputPath: emptyMainOutputPath,
       legacyMirrorPath: false,
       sessionId: 'app-session-329',
@@ -1824,8 +1937,8 @@ describe('auto-handoff-materializer', () => {
       nowMs: 3000,
     });
     const eunbyeol = await materializeSessionHandoff({
-      rows: [mainRow, eunbyeolRow],
-      crossSessionRows: [mainRow, eunbyeolRow],
+      rows: [mainRow, eunbyeolRow, hyphenScopedEunbyeolRow],
+      crossSessionRows: [mainRow, eunbyeolRow, hyphenScopedEunbyeolRow],
       outputPath: eunbyeolOutputPath,
       legacyMirrorPath: false,
       sessionId: 'app-session-329',
@@ -1838,7 +1951,9 @@ describe('auto-handoff-materializer', () => {
     const mainContent = fs.readFileSync(mainOutputPath, 'utf8');
     expect(mainContent).toContain('Main runtime guard');
     expect(mainContent).not.toContain('Eunbyeol case message');
+    expect(mainContent).not.toContain('Hyphen-scoped Eunbyeol restart message');
     expect(mainContent).not.toContain('m-eunbyeol-task');
+    expect(mainContent).not.toContain('m-eunbyeol-hyphen-task');
 
     expect(emptyMain.ok).toBe(true);
     expect(emptyMain.skipped).toBe(true);
@@ -1848,6 +1963,7 @@ describe('auto-handoff-materializer', () => {
     expect(eunbyeol.ok).toBe(true);
     const eunbyeolContent = fs.readFileSync(eunbyeolOutputPath, 'utf8');
     expect(eunbyeolContent).toContain('Eunbyeol case message');
+    expect(eunbyeolContent).toContain('Hyphen-scoped Eunbyeol restart message');
     expect(eunbyeolContent).not.toContain('Main runtime guard');
   });
 
