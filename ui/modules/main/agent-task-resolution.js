@@ -162,7 +162,9 @@ function isLaterAgentClosureRow(taskRow = {}, candidateRow = {}, options = {}) {
   if (!taskRef) return false;
 
   const body = toOptionalString(candidateRow?.rawBody, '');
-  if (!body || !hasClosureSignal(body, options)) return false;
+  if (!body) return false;
+  const authoritativeCloseout = hasAuthoritativeLaneCloseoutSignal(body);
+  if (!hasClosureSignal(body, options) && !authoritativeCloseout) return false;
   if (!bodyReferencesAgentRef(body, taskRef)) return false;
 
   const taskSender = normalizeAgentRole(taskRow?.senderRole);
@@ -177,7 +179,9 @@ function isLaterAgentClosureRow(taskRow = {}, candidateRow = {}, options = {}) {
     && (!candidateTarget || candidateTarget === taskTarget);
 
   if (directQuoteBack) return hasDirectQuoteBackClosureSignal(body, taskRef, options);
-  if (sameSenderSupersession) return hasSameSenderClosureSignal(body);
+  if (sameSenderSupersession) {
+    return hasSameSenderClosureSignal(body) || authoritativeCloseout;
+  }
   return false;
 }
 
@@ -188,6 +192,7 @@ function toEventTsMs(row) {
     row?.updatedAtMs,
   ];
   for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined || candidate === '') continue;
     const numeric = Number(candidate);
     if (Number.isFinite(numeric) && numeric >= 0) {
       return Math.floor(numeric);
