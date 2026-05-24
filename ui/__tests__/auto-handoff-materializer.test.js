@@ -558,6 +558,58 @@ describe('auto-handoff-materializer', () => {
     expect(currentLane.activeLane.objective).toBe('restart gate for committed Mira/startup package d414bfa');
   });
 
+  test('tasking current lane scope materializes as active restart continuity lane', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const taskingCurrentLaneBody = '(ARCHITECT #2): Tasking current lane. Current lane progress remains 90%; what moves it next is fresh Electron main-process restart/reload proof plus targeted verification on the Mira Presence runtime acceptance lane. Scope: determine the exact restart/reload seam from current HEAD, run/refresh the smallest validation that proves startup continuity surfaces active Mira Presence lane + accepted critique + next action + stale markers, and report whether code changes are needed. Do not declare ready-for-restart without commit if edits happen.';
+
+    expect(extractCurrentLaneDirective(taskingCurrentLaneBody)).toEqual(expect.objectContaining({
+      kind: 'current_lane_tasking',
+      objective: expect.stringContaining('determine the exact restart/reload seam'),
+    }));
+
+    const rows = [
+      {
+        messageId: 'm-architect-tasking-current-lane',
+        sessionId: 'app-session-379',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        rawBody: taskingCurrentLaneBody,
+        brokeredAtMs: 1000,
+      },
+    ];
+
+    const result = await materializeSessionHandoff({
+      rows,
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-379',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 2000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'active',
+      activeLane: expect.objectContaining({
+        kind: 'current_lane_tasking',
+        sourceMessageId: 'm-architect-tasking-current-lane',
+        sourceRef: 'architect#2',
+        objective: expect.stringContaining('active Mira Presence lane + accepted critique + next action + stale markers'),
+      }),
+    }));
+    expect(result.currentLane.activeLane.objective).not.toMatch(/Do not declare ready-for-restart/i);
+
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    expect(currentLane.status).toBe('active');
+    expect(currentLane.activeLane.sourceMessageId).toBe('m-architect-tasking-current-lane');
+    expect(currentLane.activeLane.objective).toContain('startup continuity surfaces active Mira Presence lane');
+  });
+
   test('dash-separated task materializes as current lane', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
