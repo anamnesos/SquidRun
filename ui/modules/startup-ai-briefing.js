@@ -17,6 +17,10 @@ const {
   SURFACE_BACKSTAGE_INTERNAL_ONLY: MIRA_PRS_SURFACE_BACKSTAGE,
 } = require('./mira-core/mira-presence-runtime-state-v0');
 const {
+  buildMiraProgressReport,
+  PROGRESS_REPORT_SCHEMA: MIRA_PROGRESS_REPORT_SCHEMA,
+} = require('./mira-core/mira-progress-v0');
+const {
   readBootstrapState: readMiraLabVerifyBootstrapState,
   formatStartupStaleMarker: formatMiraLabVerifyBootstrapStaleMarker,
 } = require('./mira-lab-verify-bootstrap-state');
@@ -450,6 +454,38 @@ function summarizeCurrentLaneSourceForAccounting(snapshot = {}) {
   };
 }
 
+function buildMiraComputedProgressForStartup(options = {}) {
+  try {
+    return buildMiraProgressReport({
+      projectRoot: resolveMiraPresenceProjectRoot(options),
+      contract: options.miraProgressContract,
+      contractPath: options.miraProgressContractPath,
+      inputSignals: options.miraProgressInputSignals || options.progressInputSignals || {},
+      head: options.miraProgressHead || options.head,
+      nowMs: resolveNowMs(options),
+      generatedAt: options.miraProgressGeneratedAt,
+    });
+  } catch (err) {
+    const generatedAt = toIso(resolveNowMs(options));
+    return {
+      schema: MIRA_PROGRESS_REPORT_SCHEMA,
+      version: 1,
+      generated_at: generatedAt,
+      status: 'UNKNOWN',
+      decision: 'computed_progress_unavailable',
+      computed_total_percent: 0,
+      historical_baseline: null,
+      categories: [],
+      warnings: ['computed_progress_read_error'],
+      errors: [err && err.message ? err.message : String(err)],
+      anti_drift: {
+        manual_bumps_allowed: false,
+        hardcoded_global_percent_present: false,
+      },
+    };
+  }
+}
+
 function buildMiraPresenceRestartAccountingPayload(context = {}, currentLaneSnapshot = null, options = {}) {
   const source = resolvePresenceStateSourceMeta(options);
   const summary = context?.summary && typeof context.summary === 'object' ? context.summary : {};
@@ -497,6 +533,7 @@ function buildMiraPresenceRestartAccountingPayload(context = {}, currentLaneSnap
       agency_level: context?.agency_level || null,
       interruption_marker: context?.interruption_marker || null,
     },
+    computed_progress: buildMiraComputedProgressForStartup(options),
     current_lane_source: summarizeCurrentLaneSourceForAccounting(currentLaneSnapshot),
   };
 }
@@ -1386,6 +1423,7 @@ module.exports = {
     summarizeMiraPresenceRuntimeForStartup,
     buildMiraPresenceRestartAccountingPayload,
     formatMiraPresenceRestartAccountingBlock,
+    buildMiraComputedProgressForStartup,
     deriveCanonicalBriefingOverrides,
     applyCanonicalBriefingOverrides,
   },

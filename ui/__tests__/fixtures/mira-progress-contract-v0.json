@@ -1,0 +1,267 @@
+{
+  "schema": "squidrun.mira.progress_contract.v0",
+  "version": 1,
+  "status": "accepted_v0_machine_readable_contract",
+  "accepted_source_refs": [
+    "oracle#17",
+    "architect#53"
+  ],
+  "definition_100": "Mira is a durable, evidence-bound product surface that keeps presence, restart continuity, command context, team coordination, direct reachability, voice transport, and tool/action planning current across restarts without James restating the premise or the team inventing progress.",
+  "formula": {
+    "aggregate": "weighted_sum_of_category_computed_percent",
+    "weight_total": 100,
+    "manual_bumps_allowed": false,
+    "missing_proof_policy": "unknown_zero_score",
+    "stale_source_policy": "warn_and_apply_contract_caps",
+    "historical_estimate_excluded_from_computation": true
+  },
+  "historical_baseline": {
+    "kind": "historical_conversational_estimate",
+    "label": "35-45% real",
+    "range": {
+      "min": 35,
+      "max": 45
+    },
+    "nominal": 40,
+    "source_refs": [
+      "architect#43",
+      "architect#48"
+    ],
+    "computed_authority": false
+  },
+  "anti_drift": {
+    "no_durable_global_percent_field": true,
+    "number_update_requires_source_evidence": true,
+    "number_update_requires_reason": true,
+    "computed_value_wins_over_historical_estimate": true,
+    "allowed_input_kinds": [
+      "progress_contract_fixture",
+      "presence_runtime_state_json",
+      "test_or_probe_proof_input",
+      "blocked_status_flags",
+      "git_head_metadata"
+    ]
+  },
+  "categories": [
+    {
+      "id": "visible_presence_a0_text",
+      "label": "Visible Presence and A0 Text",
+      "weight": 20,
+      "acceptance_100": "Visible Mira replies preserve Presence Runtime and North-Star behavior without assistant collapse, prompt leakage, unsupported capability claims, or status-widget flattening.",
+      "signals": [
+        {
+          "id": "presence_state_loaded",
+          "kind": "presence_state_fields",
+          "points": 25,
+          "required_fields": [
+            "active_mira_presence_lane",
+            "accepted_critique",
+            "next_product_action",
+            "proof_test_state",
+            "stale_markers"
+          ]
+        },
+        {
+          "id": "presence_acceptance_contract_loaded",
+          "kind": "json_contract_schema",
+          "points": 20,
+          "path": "ui/__tests__/fixtures/mira-presence-runtime-acceptance-v0-contract.json",
+          "schema": "squidrun.mira_presence_runtime_acceptance.v0"
+        },
+        {
+          "id": "north_star_contract_loaded",
+          "kind": "json_contract_schema",
+          "points": 20,
+          "path": "ui/__tests__/fixtures/mira-north-star-acceptance-contract.json",
+          "schema": "squidrun.mira.north_star_acceptance_contract.v0"
+        },
+        {
+          "id": "visible_reply_tests",
+          "kind": "proof_input",
+          "points": 35,
+          "proof_key": "mira-presence-runtime-acceptance.test.js"
+        }
+      ]
+    },
+    {
+      "id": "restart_current_scope_continuity",
+      "label": "Restart and Current-Scope Continuity",
+      "weight": 20,
+      "acceptance_100": "After restart, current durable Presence/current-scope evidence surfaces the active lane, accepted critique, next action, stale markers, and proof accounting without James restating it.",
+      "signals": [
+        {
+          "id": "presence_state_loaded",
+          "kind": "presence_state_fields",
+          "points": 25,
+          "required_fields": [
+            "active_mira_presence_lane",
+            "accepted_critique",
+            "next_product_action",
+            "proof_test_state",
+            "stale_markers"
+          ]
+        },
+        {
+          "id": "presence_state_fresh_for_head",
+          "kind": "presence_state_fresh_for_head",
+          "points": 25
+        },
+        {
+          "id": "startup_accounting_tests",
+          "kind": "proof_input",
+          "points": 25,
+          "proof_key": "startup-ai-briefing.test.js"
+        },
+        {
+          "id": "restart_verifier_probe",
+          "kind": "proof_input",
+          "points": 25,
+          "proof_key": "hm-restart-verify"
+        }
+      ]
+    },
+    {
+      "id": "mission_control_command_context",
+      "label": "Mission Control Command Context",
+      "weight": 20,
+      "acceptance_100": "Mira can answer what is happening and what should happen next from live local SquidRun evidence instead of terminal-log spelunking or generic memory.",
+      "signals": [
+        {
+          "id": "north_star_roadmap_loaded",
+          "kind": "json_contract_schema",
+          "points": 20,
+          "path": "ui/__tests__/fixtures/mira-north-star-acceptance-contract.json",
+          "schema": "squidrun.mira.north_star_acceptance_contract.v0"
+        },
+        {
+          "id": "mission_control_context_tests",
+          "kind": "proof_input",
+          "points": 50,
+          "proof_key": "mira-runtime-squidrun-context.test.js"
+        },
+        {
+          "id": "mission_control_visible_surface_tests",
+          "kind": "proof_input",
+          "points": 30,
+          "proof_key": "mira-runtime-ui-read-only-boot.test.js"
+        }
+      ]
+    },
+    {
+      "id": "team_coordination_arms",
+      "label": "Team Coordination Arms",
+      "weight": 15,
+      "acceptance_100": "Mira can coordinate Architect, Builder, Oracle, and CLI as current proof-bound arms, including challenging stale or wrong arm output, without unproved control or hidden sends.",
+      "blocked_status_caps": [
+        {
+          "flag": "a3_a4_blocked",
+          "cap_percent": 40,
+          "reason": "A3/A4 arm authority remains blocked."
+        }
+      ],
+      "signals": [
+        {
+          "id": "presence_arms_contract_loaded",
+          "kind": "json_contract_schema",
+          "points": 20,
+          "path": "ui/__tests__/fixtures/mira-presence-runtime-acceptance-v0-contract.json",
+          "schema": "squidrun.mira_presence_runtime_acceptance.v0"
+        },
+        {
+          "id": "internal_bridge_tests",
+          "kind": "proof_input",
+          "points": 35,
+          "proof_key": "mira-runtime-bridge-api.test.js"
+        },
+        {
+          "id": "arm_challenge_acceptance_tests",
+          "kind": "proof_input",
+          "points": 25,
+          "proof_key": "mira-north-star-acceptance.test.js"
+        },
+        {
+          "id": "hm_send_adapter_tests",
+          "kind": "proof_input",
+          "points": 20,
+          "proof_key": "mira-hm-send-adapter.test.js"
+        }
+      ]
+    },
+    {
+      "id": "direct_channel_reachability",
+      "label": "Direct Channel Reachability",
+      "weight": 10,
+      "acceptance_100": "James can reach Mira through a clear current channel/device path with route ownership, first-contact orientation, duplicate/truncation protection, and no internal pane confusion.",
+      "signals": [
+        {
+          "id": "presence_telegram_contract_loaded",
+          "kind": "json_contract_schema",
+          "points": 20,
+          "path": "ui/__tests__/fixtures/mira-presence-runtime-acceptance-v0-contract.json",
+          "schema": "squidrun.mira_presence_runtime_acceptance.v0"
+        },
+        {
+          "id": "telegram_candidate_tests",
+          "kind": "proof_input",
+          "points": 40,
+          "proof_key": "mira-telegram-turn-candidate.test.js"
+        },
+        {
+          "id": "direct_channel_readiness_tests",
+          "kind": "proof_input",
+          "points": 40,
+          "proof_key": "mira-direct-channel-readiness.test.js"
+        }
+      ]
+    },
+    {
+      "id": "voice_transport",
+      "label": "Voice Transport",
+      "weight": 10,
+      "acceptance_100": "Live voice acts as transport around the same Mira identity, with consent, anti-leak continuity, transcript/egress proof, and no hidden mic or unsupported voice authority.",
+      "hard_zero_when_blocked_status_true": "live_voice_blocked",
+      "signals": [
+        {
+          "id": "presence_voice_gate_contract_loaded",
+          "kind": "json_contract_schema",
+          "points": 20,
+          "path": "ui/__tests__/fixtures/mira-presence-runtime-acceptance-v0-contract.json",
+          "schema": "squidrun.mira_presence_runtime_acceptance.v0"
+        },
+        {
+          "id": "voice_transport_tests",
+          "kind": "proof_input",
+          "points": 80,
+          "proof_key": "mira-voice-lab.test.js"
+        }
+      ]
+    },
+    {
+      "id": "tool_app_action_planning",
+      "label": "Tool and App Action Planning",
+      "weight": 5,
+      "acceptance_100": "Mira can prepare evidence-bound tool/app action plans with explicit James control points before any real-world effect, and proof separates plan, preview, dispatch readiness, and execution.",
+      "signals": [
+        {
+          "id": "north_star_tool_action_contract_loaded",
+          "kind": "json_contract_schema",
+          "points": 20,
+          "path": "ui/__tests__/fixtures/mira-north-star-acceptance-contract.json",
+          "schema": "squidrun.mira.north_star_acceptance_contract.v0"
+        },
+        {
+          "id": "runtime_ui_read_only_boot_tests",
+          "kind": "proof_input",
+          "points": 50,
+          "proof_key": "mira-runtime-ui-read-only-boot.test.js"
+        },
+        {
+          "id": "internal_bridge_tests",
+          "kind": "proof_input",
+          "points": 30,
+          "proof_key": "mira-runtime-bridge-api.test.js"
+        }
+      ]
+    }
+  ]
+}
