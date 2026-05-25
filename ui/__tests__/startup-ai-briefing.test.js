@@ -10,6 +10,7 @@ const {
   readStartupBriefingForInjection,
   _internals,
 } = require('../modules/startup-ai-briefing');
+const progressContract = require('./fixtures/mira-progress-contract-v0.json');
 
 describe('startup-ai-briefing', () => {
   test('startup scope keeps non-main profileName when windowKey is generic main', () => {
@@ -300,6 +301,20 @@ describe('startup-ai-briefing', () => {
         statusPath,
         currentLanePath,
         nowMs: Date.parse('2026-05-24T05:25:00.000Z'),
+        miraProgressContract: progressContract,
+        miraProgressHead: {
+          short_sha: '6427991e',
+          committed_at: '2026-05-24T05:22:00.000Z',
+          subject: 'Add Mira restart accounting startup proof',
+        },
+        miraProgressInputSignals: {
+          proofs: {
+            'startup-ai-briefing.test.js': {
+              status: 'PASS',
+              source_ref: 'npm --prefix ui test -- startup-ai-briefing.test.js',
+            },
+          },
+        },
       });
 
       expect(guarded).toContain('UNTRUSTED AI BRIEFING');
@@ -317,6 +332,15 @@ describe('startup-ai-briefing', () => {
       expect(guarded).toContain('"sentinel stale marker"');
       expect(guarded).toContain('"source_ref": "architect#27"');
       expect(guarded).toContain('"source_message_id": "hm-sentinel-task"');
+      expect(guarded).toContain('"computed_progress"');
+      expect(guarded).toContain('"schema": "squidrun.mira.progress_report.v0"');
+      expect(guarded).toContain('"historical_baseline"');
+      expect(guarded).toContain('"label": "35-45% real"');
+      expect(guarded).toContain('"computed_authority": false');
+      expect(guarded).toContain('"id": "voice_transport"');
+      expect(guarded).toContain('"computed_percent": 0');
+      expect(guarded).toContain('"presence_state_predates_head"');
+      expect(guarded).not.toContain('"global_percent":');
       expect(guarded.indexOf('## Mira Presence Restart Accounting')).toBeLessThan(guarded.indexOf('## Live Current Lane'));
       expect(guarded).not.toContain('Historical generic Mira prose should not count');
       expect(guarded).not.toContain('# AI Startup Briefing');
