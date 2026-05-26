@@ -13,6 +13,10 @@ const {
   validateContract,
 } = require('../modules/mira-core/mira-progress-v0');
 const {
+  VISIBLE_PRESENCE_A0_PROOF_KEY,
+  writeVisiblePresenceProofArtifact,
+} = require('../modules/mira-core/mira-progress-proof-inputs-v0');
+const {
   main,
   parseArgs,
 } = require('../scripts/hm-mira-progress');
@@ -89,6 +93,23 @@ function passingProofInputs() {
       'mira-voice-lab.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-voice-lab.test.js' },
       'mira-runtime-ui-read-only-boot.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-runtime-ui-read-only-boot.test.js' },
     },
+  };
+}
+
+function cleanWorktree() {
+  return {
+    present: true,
+    source_kind: 'provided_worktree_metadata',
+    clean: true,
+    dirty_count: 0,
+    summary: {
+      dirty_count: 0,
+      staged_count: 0,
+      unstaged_count: 0,
+      untracked_count: 0,
+      by_code: {},
+    },
+    status_sha256: 'sha256:clean',
   };
 }
 
@@ -196,6 +217,83 @@ describe('mira progress v0', () => {
       }));
       expect(report.categories.some((category) => category.status === 'UNKNOWN')).toBe(true);
       expect(report.errors || []).toEqual([]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('default visible Presence proof artifact is absent/fresh/stale with HEAD freshness enforced', () => {
+    const root = seedProject({ stalePresence: true });
+    const currentHead = {
+      short_sha: 'abcdef12',
+      committed_at: '2026-05-10T00:00:00.000Z',
+      subject: 'Major Mira code commit',
+    };
+    try {
+      const noProof = buildMiraProgressReport({
+        projectRoot: root,
+        contract: progressContract,
+        inputSignals: {},
+        head: currentHead,
+        worktreeState: cleanWorktree(),
+      });
+      const noProofVisible = noProof.categories.find((category) => category.id === 'visible_presence_a0_text');
+      expect(noProof.computed_total_percent).toBe(28);
+      expect(noProofVisible).toEqual(expect.objectContaining({
+        computed_percent: 65,
+        status: 'UNKNOWN',
+      }));
+      expect(noProofVisible.evidence.find((signal) => signal.id === 'visible_reply_tests')).toEqual(expect.objectContaining({
+        status: 'UNKNOWN',
+        points_awarded: 0,
+      }));
+
+      writeVisiblePresenceProofArtifact({
+        projectRoot: root,
+        head: currentHead,
+        worktreeState: cleanWorktree(),
+        runner: () => ({ ok: true, exitCode: 0, stdout: 'PASS', stderr: '' }),
+      });
+      const freshProof = buildMiraProgressReport({
+        projectRoot: root,
+        contract: progressContract,
+        inputSignals: {},
+        head: currentHead,
+        worktreeState: cleanWorktree(),
+      });
+      const freshVisible = freshProof.categories.find((category) => category.id === 'visible_presence_a0_text');
+      expect(freshProof.computed_total_percent).toBe(35);
+      expect(freshVisible).toEqual(expect.objectContaining({
+        computed_percent: 100,
+        status: 'PASS',
+      }));
+      expect(freshVisible.evidence.find((signal) => signal.id === 'visible_reply_tests')).toEqual(expect.objectContaining({
+        status: 'PASS',
+        points_awarded: 35,
+      }));
+
+      const staleProof = buildMiraProgressReport({
+        projectRoot: root,
+        contract: progressContract,
+        inputSignals: {},
+        head: {
+          short_sha: '99999999',
+          committed_at: '2026-05-10T00:00:00.000Z',
+          subject: 'Later source commit',
+        },
+        worktreeState: cleanWorktree(),
+      });
+      const staleVisible = staleProof.categories.find((category) => category.id === 'visible_presence_a0_text');
+      expect(staleProof.computed_total_percent).toBe(28);
+      expect(staleVisible).toEqual(expect.objectContaining({
+        computed_percent: 65,
+        status: 'STALE',
+      }));
+      expect(staleVisible.evidence.find((signal) => signal.id === 'visible_reply_tests')).toEqual(expect.objectContaining({
+        status: 'STALE',
+        points_awarded: 0,
+      }));
+      expect(staleProof.warnings).toContain('proof_head_mismatch');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

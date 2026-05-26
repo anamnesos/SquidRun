@@ -155,6 +155,8 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/mira-core/memory-candidate-staging-v1.js: Extracts bounded recent-panel conversation signals into tentative Mira understandings with confidence/risk/revision metadata, not visible CRUD memory management.
 - ui/modules/mira-core/mira-language-rules-v0.js: Shared Mira reply-language gate used by local text, tab, and route-facing tests to block meta/tool-like user-visible phrasing.
 - ui/modules/mira-core/mira-persona-loader-v0.js: Loads and hot-reloads Mira voice/persona text from config files, returning explicit persona metadata for broker/runtime freshness checks.
+- ui/modules/mira-core/mira-progress-proof-inputs-v0.js: Generates and reads HEAD/worktree-bound Mira progress proof artifacts, including the visible Presence/A0 harness proof consumed by progress and startup accounting.
+- ui/modules/mira-core/mira-progress-v0.js: Computes contract-driven Mira progress from Presence state, fixtures, blocker flags, HEAD metadata, explicit proof inputs, and fresh generated proof artifacts without durable global percent authority.
 - ui/modules/mira-core/tentative-understanding-store-v1.js: Persists tentative-understanding scaffold rows through CognitiveMemoryStore pending-PR mechanics while explicitly blocking durable memory promotion, hidden approval, and James-as-clickthrough-harness behavior.
 - ui/modules/mira-core/text-model-attachment-v1.js: Owns typed Mira Responses API attachment config/call contract, defaulting to gpt-5.5, forbidding silent downgrade/local fallback in the enabled path, and bounding recent thread context.
 - ui/modules/mira-browser-history-curiosity.js: Native read-only browser-history curiosity adapter that temp-copies Chromium History DB files and returns compact metadata only (hosts, titles, safe paths, visit counts, timestamps) without cookies, auth stores, browser mutation, or external sends.
@@ -289,7 +291,9 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/scripts/hm-memory-search.js: Queries the cognitive/vector memory index and returns ranked semantic matches.
 - ui/scripts/hm-memory.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-mira-emit.js: Emits Mira-originated route intents through the normal SquidRun messaging path for proof and runtime integration.
+- ui/scripts/hm-mira-progress.js: Prints contract-driven Mira progress and consumes fresh default progress proof artifacts unless explicitly disabled.
 - ui/scripts/hm-mira-reply.js: Sends Architect-authored replies back to Mira-originated intents while preserving sender/target role constraints.
+- ui/scripts/hm-mira-visible-presence-proof.js: Runs the visible Presence/A0 acceptance Jest harness and writes the HEAD-bound progress proof artifact.
 - ui/scripts/hm-pane.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-path-audit.js: Audits documented/runtime paths and path-safety constraints across the workspace.
 - ui/scripts/hm-preflight.js: Scans protocol docs (`CLAUDE.md`, `GEMINI.md`, `AGENTS.md`, `CODEX.md`) for potential coordination-rule conflicts.

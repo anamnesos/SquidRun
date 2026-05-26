@@ -9,6 +9,9 @@ const {
   readMiraPresenceRuntimeState,
   resolveStatePath: resolveMiraPresenceRuntimeStatePath,
 } = require('./mira-presence-runtime-state-v0');
+const {
+  readDefaultProgressProofInputs,
+} = require('./mira-progress-proof-inputs-v0');
 
 const PROGRESS_CONTRACT_SCHEMA = 'squidrun.mira.progress_contract.v0';
 const PROGRESS_REPORT_SCHEMA = 'squidrun.mira.progress_report.v0';
@@ -482,7 +485,25 @@ function buildMiraProgressReport(options = {}) {
     ? options.presenceRead
     : readMiraPresenceRuntimeState({ projectRoot, statePath: presenceStatePath });
   const head = readHeadMetadata(projectRoot, options);
-  const proofs = normalizeProofInputs(options.inputSignals || options);
+  const defaultProofRead = options.disableDefaultProofFile === true
+    ? {
+      present: false,
+      status: 'disabled',
+      source_ref: null,
+      inputSignals: {},
+      warnings: [],
+    }
+    : readDefaultProgressProofInputs({
+      projectRoot,
+      progressProofPath: options.progressProofPath || options.defaultProofPath,
+      head,
+      worktreeState: options.worktreeState || options.currentWorktreeState,
+    });
+  const proofs = normalizeProofInputs(defaultProofRead.inputSignals || {});
+  const explicitProofs = normalizeProofInputs(options.inputSignals || options);
+  for (const [key, proof] of explicitProofs.entries()) {
+    proofs.set(key, proof);
+  }
   const presenceStateSourceRef = normalizeRelative(projectRoot, presenceStatePath);
   const context = {
     projectRoot,
@@ -503,6 +524,9 @@ function buildMiraProgressReport(options = {}) {
     staleWarnings.push('presence_state_unavailable');
   } else if (!Number.isFinite(head.committed_at_ms)) {
     staleWarnings.push('head_metadata_unavailable');
+  }
+  for (const warning of defaultProofRead.warnings || []) {
+    if (warning) staleWarnings.push(warning);
   }
   const unknownCategories = categories.filter((category) => category.status === 'UNKNOWN');
   const blockedCategories = categories.filter((category) => category.status === 'BLOCKED');
@@ -553,6 +577,11 @@ function buildMiraProgressReport(options = {}) {
         short_sha: head.short_sha,
         committed_at: head.committed_at,
         subject: head.subject,
+      },
+      progress_proof_inputs: {
+        source_ref: defaultProofRead.source_ref || null,
+        present: defaultProofRead.present === true,
+        status: defaultProofRead.status || null,
       },
     },
     categories,

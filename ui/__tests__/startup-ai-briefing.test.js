@@ -10,7 +10,33 @@ const {
   readStartupBriefingForInjection,
   _internals,
 } = require('../modules/startup-ai-briefing');
+const {
+  writeVisiblePresenceProofArtifact,
+} = require('../modules/mira-core/mira-progress-proof-inputs-v0');
 const progressContract = require('./fixtures/mira-progress-contract-v0.json');
+
+function extractMiraRestartAccountingPayload(text) {
+  const match = String(text || '').match(/## Mira Presence Restart Accounting \(machine-readable\)[\s\S]*?```json\n([\s\S]*?)\n```/);
+  if (!match) throw new Error('missing_mira_restart_accounting_payload');
+  return JSON.parse(match[1]);
+}
+
+function cleanWorktree() {
+  return {
+    present: true,
+    source_kind: 'provided_worktree_metadata',
+    clean: true,
+    dirty_count: 0,
+    summary: {
+      dirty_count: 0,
+      staged_count: 0,
+      unstaged_count: 0,
+      untracked_count: 0,
+      by_code: {},
+    },
+    status_sha256: 'sha256:clean',
+  };
+}
 
 describe('startup-ai-briefing', () => {
   test('startup scope keeps non-main profileName when windowKey is generic main', () => {
@@ -243,6 +269,7 @@ describe('startup-ai-briefing', () => {
       fs.mkdirSync(path.join(tempRoot, '.squidrun', 'handoffs'), { recursive: true });
       fs.mkdirSync(path.join(tempRoot, '.squidrun', 'runtime'), { recursive: true });
       fs.mkdirSync(path.join(tempRoot, '.squidrun', 'state'), { recursive: true });
+      fs.mkdirSync(path.join(tempRoot, 'ui', '__tests__', 'fixtures'), { recursive: true });
       fs.writeFileSync(
         outputPath,
         '# AI Startup Briefing\n\n- Historical generic Mira prose should not count.\n'
@@ -279,6 +306,14 @@ describe('startup-ai-briefing', () => {
         })
       );
       fs.writeFileSync(
+        path.join(tempRoot, 'ui', '__tests__', 'fixtures', 'mira-presence-runtime-acceptance-v0-contract.json'),
+        `${JSON.stringify({ schema: 'squidrun.mira_presence_runtime_acceptance.v0' }, null, 2)}\n`
+      );
+      fs.writeFileSync(
+        path.join(tempRoot, 'ui', '__tests__', 'fixtures', 'mira-north-star-acceptance-contract.json'),
+        `${JSON.stringify({ schema: 'squidrun.mira.north_star_acceptance_contract.v0' }, null, 2)}\n`
+      );
+      fs.writeFileSync(
         currentLanePath,
         JSON.stringify({
           version: 1,
@@ -294,6 +329,22 @@ describe('startup-ai-briefing', () => {
           },
         })
       );
+      writeVisiblePresenceProofArtifact({
+        projectRoot: tempRoot,
+        head: {
+          short_sha: '6427991e',
+          committed_at: '2026-05-24T05:22:00.000Z',
+          subject: 'Add Mira restart accounting startup proof',
+        },
+        worktreeState: cleanWorktree(),
+        nowMs: Date.parse('2026-05-24T05:23:00.000Z'),
+        runner: () => ({
+          ok: true,
+          exitCode: 0,
+          stdout: 'PASS ui/__tests__/mira-presence-runtime-acceptance.test.js',
+          stderr: '',
+        }),
+      });
 
       const guarded = readStartupBriefingForInjection({
         projectRoot: tempRoot,
@@ -315,6 +366,7 @@ describe('startup-ai-briefing', () => {
             },
           },
         },
+        miraProgressWorktreeState: cleanWorktree(),
       });
 
       expect(guarded).toContain('UNTRUSTED AI BRIEFING');
@@ -344,6 +396,30 @@ describe('startup-ai-briefing', () => {
       expect(guarded.indexOf('## Mira Presence Restart Accounting')).toBeLessThan(guarded.indexOf('## Live Current Lane'));
       expect(guarded).not.toContain('Historical generic Mira prose should not count');
       expect(guarded).not.toContain('# AI Startup Briefing');
+
+      const payload = extractMiraRestartAccountingPayload(guarded);
+      expect(payload.presence_runtime).toEqual(expect.objectContaining({
+        active_mira_presence_lane: 'sentinel_presence_lane',
+        accepted_critique: 'sentinel accepted critique from durable state',
+        next_product_action: 'sentinel next product action from durable state',
+        proof_test_state: 'sentinel proof test state',
+      }));
+      expect(payload.presence_runtime.stale_markers).toEqual(['sentinel stale marker']);
+      expect(payload.computed_progress.source_refs.progress_proof_inputs).toEqual(expect.objectContaining({
+        present: true,
+        status: 'loaded',
+        source_ref: '.squidrun/runtime/mira-progress-proof-inputs-v0.json',
+      }));
+      const visiblePresence = payload.computed_progress.categories
+        .find((category) => category.id === 'visible_presence_a0_text');
+      expect(visiblePresence).toEqual(expect.objectContaining({
+        computed_percent: 100,
+        status: 'PASS',
+      }));
+      expect(visiblePresence.evidence.find((signal) => signal.id === 'visible_reply_tests')).toEqual(expect.objectContaining({
+        status: 'PASS',
+        points_awarded: 35,
+      }));
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
