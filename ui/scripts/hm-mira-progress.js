@@ -17,6 +17,8 @@ function parseArgs(argv = []) {
     pretty: false,
     plain: false,
     proofFile: null,
+    progressProofPath: null,
+    disableDefaultProofFile: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -45,6 +47,13 @@ function parseArgs(argv = []) {
       index += 1;
     } else if (token.startsWith('--proof-file=')) {
       parsed.proofFile = token.slice('--proof-file='.length);
+    } else if (token === '--progress-proof-file') {
+      parsed.progressProofPath = argv[index + 1] || null;
+      index += 1;
+    } else if (token.startsWith('--progress-proof-file=')) {
+      parsed.progressProofPath = token.slice('--progress-proof-file='.length);
+    } else if (token === '--no-default-proof-file') {
+      parsed.disableDefaultProofFile = true;
     } else if (!parsed.projectRoot && token && !token.startsWith('-')) {
       parsed.projectRoot = token;
     }
@@ -77,6 +86,8 @@ function main(argv = process.argv.slice(2), stdinText = null) {
     projectRoot: args.projectRoot || process.cwd(),
     contractPath: args.contractPath || undefined,
     inputSignals,
+    progressProofPath: args.progressProofPath || undefined,
+    disableDefaultProofFile: args.disableDefaultProofFile,
   });
   const output = args.plain && !args.json
     ? formatMiraProgressPlain(report)
