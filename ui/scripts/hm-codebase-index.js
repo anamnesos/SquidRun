@@ -260,11 +260,10 @@ function renderInventoryMarkdown(inventory) {
     '',
     '## Metadata',
     `- Source command: \`${inventory.sourceCommand}\``,
-    `- Git branch: \`${inventory.git.branch}\``,
-    `- Git HEAD: \`${inventory.git.head}\``,
     `- Total files listed: ${inventory.totalFiles}`,
     '- Scope: tracked files plus nonignored untracked files visible to Git',
     '- Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`',
+    '- Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.',
     '- Verify freshness: `node ui/scripts/hm-codebase-index.js --check`',
     '',
     '## Summary By Group',
@@ -272,11 +271,6 @@ function renderInventoryMarkdown(inventory) {
     '',
     '## Summary By Kind',
     renderCountMap(inventory.kinds),
-    '',
-    '## Summary By Status',
-    '- `clean/tracked`: present in Git with no working-tree status marker',
-    '- Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`',
-    renderCountMap(inventory.statuses),
     '',
     '## Files',
     '',
@@ -291,11 +285,10 @@ function renderInventoryMarkdown(inventory) {
   for (const [group, files] of Array.from(filesByGroup.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
     lines.push(`### ${group}`);
     lines.push('');
-    lines.push('| Path | Kind | Status | Bytes |');
-    lines.push('| --- | --- | --- | ---: |');
+    lines.push('| Path | Kind | Bytes |');
+    lines.push('| --- | --- | ---: |');
     for (const file of files) {
-      const status = file.status === '  ' ? 'clean/tracked' : file.status;
-      lines.push(`| \`${markdownEscape(file.path)}\` | ${markdownEscape(file.kind)} | \`${markdownEscape(status)}\` | ${formatBytes(file.bytes)} |`);
+      lines.push(`| \`${markdownEscape(file.path)}\` | ${markdownEscape(file.kind)} | ${formatBytes(file.bytes)} |`);
     }
     lines.push('');
   }
