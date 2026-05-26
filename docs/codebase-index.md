@@ -222,7 +222,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/ansi.test.js` | test | 297 |
 | `ui/__tests__/app-control-service.test.js` | test | 6000 |
 | `ui/__tests__/auto-handoff-handlers.test.js` | test | 3147 |
-| `ui/__tests__/auto-handoff-materializer.test.js` | test | 82195 |
+| `ui/__tests__/auto-handoff-materializer.test.js` | test | 90474 |
 | `ui/__tests__/auto-nudge-handlers.test.js` | test | 16904 |
 | `ui/__tests__/autonomous-smoke.test.js` | test | 4388 |
 | `ui/__tests__/background-agent-manager.test.js` | test | 9965 |
@@ -820,10 +820,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/local-model-capabilities.js` | source | 5853 |
 | `ui/modules/logger.js` | source | 5157 |
 | `ui/modules/main/activity-manager.js` | source | 3656 |
-| `ui/modules/main/agent-task-resolution.js` | source | 24960 |
+| `ui/modules/main/agent-task-resolution.js` | source | 25155 |
 | `ui/modules/main/app-context.js` | source | 2477 |
 | `ui/modules/main/app-control-service.js` | source | 5776 |
-| `ui/modules/main/auto-handoff-materializer.js` | source | 62805 |
+| `ui/modules/main/auto-handoff-materializer.js` | source | 62879 |
 | `ui/modules/main/autonomous-smoke.js` | source | 4864 |
 | `ui/modules/main/background-agent-manager.js` | source | 22675 |
 | `ui/modules/main/cli-identity.js` | source | 2710 |
