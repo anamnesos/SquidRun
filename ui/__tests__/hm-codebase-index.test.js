@@ -27,7 +27,7 @@ describe('hm-codebase-index', () => {
     expect(fileKind('ui/styles/base.css')).toBe('asset');
   });
 
-  test('renders deterministic Markdown inventory with status legend', () => {
+  test('renders deterministic Markdown inventory without volatile Git state', () => {
     const markdown = renderInventoryMarkdown({
       sourceCommand: 'git ls-files --cached --others --exclude-standard',
       git: { branch: 'main', head: 'abc1234' },
@@ -42,8 +42,13 @@ describe('hm-codebase-index', () => {
     });
 
     expect(markdown).toContain('# Codebase Index');
+    expect(markdown).toContain('committed Markdown omits volatile commit identity, branch name, and working-tree status');
     expect(markdown).toContain('Verify freshness: `node ui/scripts/hm-codebase-index.js --check`');
-    expect(markdown).toContain('| `AGENTS.md` | doc | `clean/tracked` | 100 |');
-    expect(markdown).toContain('| `ui/scripts/hm-codebase-index.js` | script | `??` | 200 |');
+    expect(markdown).not.toContain('Git HEAD');
+    expect(markdown).not.toContain('Git branch');
+    expect(markdown).not.toContain('Summary By Status');
+    expect(markdown).not.toContain('| Path | Kind | Status | Bytes |');
+    expect(markdown).toContain('| `AGENTS.md` | doc | 100 |');
+    expect(markdown).toContain('| `ui/scripts/hm-codebase-index.js` | script | 200 |');
   });
 });

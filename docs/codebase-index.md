@@ -6,11 +6,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Git branch: `main`
-- Git HEAD: `094cc604`
 - Total files listed: 1202
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
+- Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
 - Verify freshness: `node ui/scripts/hm-codebase-index.js --check`
 
 ## Summary By Group
@@ -37,1273 +36,1267 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - source: 426
 - test: 476
 
-## Summary By Status
-- `clean/tracked`: present in Git with no working-tree status marker
-- Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- clean/tracked: 1195
-- M: 7
-
 ## Files
 
 ### .github
 
-| Path | Kind | Status | Bytes |
-| --- | --- | --- | ---: |
-| `.github/workflows/ci.yml` | config | `clean/tracked` | 1852 |
-| `.github/workflows/release.yml` | config | `clean/tracked` | 2761 |
+| Path | Kind | Bytes |
+| --- | --- | ---: |
+| `.github/workflows/ci.yml` | config | 1852 |
+| `.github/workflows/release.yml` | config | 2761 |
 
 ### benchmarks
 
-| Path | Kind | Status | Bytes |
-| --- | --- | --- | ---: |
-| `benchmarks/prompts/doc-sync-roles.md` | doc | `clean/tracked` | 933 |
-| `benchmarks/README.md` | doc | `clean/tracked` | 4363 |
+| Path | Kind | Bytes |
+| --- | --- | ---: |
+| `benchmarks/prompts/doc-sync-roles.md` | doc | 933 |
+| `benchmarks/README.md` | doc | 4363 |
 
 ### docs
 
-| Path | Kind | Status | Bytes |
-| --- | --- | --- | ---: |
-| `docs/agent-templates.md` | doc | `clean/tracked` | 1312 |
-| `docs/background-builder-agents-spec.md` | doc | `clean/tracked` | 10011 |
-| `docs/codebase-index.md` | doc | `M ` | - |
-| `docs/csm-1b-benchmark-prep.md` | doc | `clean/tracked` | 8073 |
-| `docs/device-to-device-diagram.svg` | doc | `clean/tracked` | 42933 |
-| `docs/diagrams-reference.md` | doc | `clean/tracked` | 16076 |
-| `docs/event-kernel-spec.md` | doc | `clean/tracked` | 24652 |
-| `docs/Gasline Tankless Diagram 32 Lyell St.excalidraw` | doc | `clean/tracked` | 97568 |
-| `docs/github-integration-spec.md` | doc | `clean/tracked` | 6260 |
-| `docs/guide/install.md` | doc | `clean/tracked` | 3205 |
-| `docs/guide/limitations.md` | doc | `clean/tracked` | 4393 |
-| `docs/guide/quickstart.md` | doc | `clean/tracked` | 3627 |
-| `docs/guide/troubleshooting.md` | doc | `clean/tracked` | 6013 |
-| `docs/guide/workspace-model.md` | doc | `clean/tracked` | 3523 |
-| `docs/instance-mapping.md` | doc | `clean/tracked` | 1684 |
-| `docs/investigations/external-project-mode-audit.md` | doc | `clean/tracked` | 4065 |
-| `docs/investigations/send-trusted-enter-failure.md` | doc | `clean/tracked` | 3419 |
-| `docs/mira-care-intake-design-note-v0.md` | doc | `clean/tracked` | 8476 |
-| `docs/mira-north-star-acceptance.md` | doc | `clean/tracked` | 7081 |
-| `docs/mira-north-star-roadmap.md` | doc | `clean/tracked` | 8530 |
-| `docs/mira-pc-embodiment-permission-v0.md` | doc | `clean/tracked` | 10045 |
-| `docs/mira-presence-runtime-acceptance-v0.md` | doc | `clean/tracked` | 16200 |
-| `docs/mira-system-map.md` | doc | `M ` | 115682 |
-| `docs/mira-voice-audio-intake-v0.md` | doc | `clean/tracked` | 9440 |
-| `docs/models/base-instructions.md` | doc | `clean/tracked` | 2070 |
-| `docs/models/claude-notes.md` | doc | `clean/tracked` | 1161 |
-| `docs/models/codex-notes.md` | doc | `clean/tracked` | 1081 |
-| `docs/models/gemini-notes.md` | doc | `clean/tracked` | 1321 |
-| `docs/plugins.md` | doc | `clean/tracked` | 3351 |
-| `docs/protocol-spec.md` | doc | `clean/tracked` | 9640 |
-| `docs/roles/ARCH.md` | doc | `clean/tracked` | 264 |
-| `docs/roles/BUILDER.md` | doc | `clean/tracked` | 267 |
-| `docs/roles/ORACLE.md` | doc | `clean/tracked` | 266 |
-| `docs/team-memory-spec.md` | doc | `clean/tracked` | 33573 |
-| `docs/transition-ledger-spec.md` | doc | `clean/tracked` | 7347 |
-| `docs/triggers.md` | doc | `clean/tracked` | 3909 |
+| Path | Kind | Bytes |
+| --- | --- | ---: |
+| `docs/agent-templates.md` | doc | 1312 |
+| `docs/background-builder-agents-spec.md` | doc | 10011 |
+| `docs/codebase-index.md` | doc | - |
+| `docs/csm-1b-benchmark-prep.md` | doc | 8073 |
+| `docs/device-to-device-diagram.svg` | doc | 42933 |
+| `docs/diagrams-reference.md` | doc | 16076 |
+| `docs/event-kernel-spec.md` | doc | 24652 |
+| `docs/Gasline Tankless Diagram 32 Lyell St.excalidraw` | doc | 97568 |
+| `docs/github-integration-spec.md` | doc | 6260 |
+| `docs/guide/install.md` | doc | 3205 |
+| `docs/guide/limitations.md` | doc | 4393 |
+| `docs/guide/quickstart.md` | doc | 3627 |
+| `docs/guide/troubleshooting.md` | doc | 6013 |
+| `docs/guide/workspace-model.md` | doc | 3523 |
+| `docs/instance-mapping.md` | doc | 1684 |
+| `docs/investigations/external-project-mode-audit.md` | doc | 4065 |
+| `docs/investigations/send-trusted-enter-failure.md` | doc | 3419 |
+| `docs/mira-care-intake-design-note-v0.md` | doc | 8476 |
+| `docs/mira-north-star-acceptance.md` | doc | 7081 |
+| `docs/mira-north-star-roadmap.md` | doc | 8530 |
+| `docs/mira-pc-embodiment-permission-v0.md` | doc | 10045 |
+| `docs/mira-presence-runtime-acceptance-v0.md` | doc | 16200 |
+| `docs/mira-system-map.md` | doc | 115682 |
+| `docs/mira-voice-audio-intake-v0.md` | doc | 9440 |
+| `docs/models/base-instructions.md` | doc | 2070 |
+| `docs/models/claude-notes.md` | doc | 1161 |
+| `docs/models/codex-notes.md` | doc | 1081 |
+| `docs/models/gemini-notes.md` | doc | 1321 |
+| `docs/plugins.md` | doc | 3351 |
+| `docs/protocol-spec.md` | doc | 9640 |
+| `docs/roles/ARCH.md` | doc | 264 |
+| `docs/roles/BUILDER.md` | doc | 267 |
+| `docs/roles/ORACLE.md` | doc | 266 |
+| `docs/team-memory-spec.md` | doc | 33573 |
+| `docs/transition-ledger-spec.md` | doc | 7347 |
+| `docs/triggers.md` | doc | 3909 |
 
 ### root
 
-| Path | Kind | Status | Bytes |
-| --- | --- | --- | ---: |
-| `.env.example` | config | `clean/tracked` | 2728 |
-| `.gitignore` | config | `clean/tracked` | 3723 |
-| `AGENTS.md` | doc | `clean/tracked` | 6311 |
-| `ARCHITECTURE.md` | doc | `M ` | 57135 |
-| `CLAUDE-AI.md` | doc | `clean/tracked` | 3856 |
-| `CLAUDE.md` | doc | `clean/tracked` | 1988 |
-| `CODE_OF_CONDUCT.md` | doc | `clean/tracked` | 5185 |
-| `CODEX.md` | doc | `clean/tracked` | 615 |
-| `CONTRIBUTING.md` | doc | `clean/tracked` | 858 |
-| `GEMINI.md` | doc | `clean/tracked` | 675 |
-| `jest.config.js` | source | `clean/tracked` | 221 |
-| `LICENSE` | file | `clean/tracked` | 1078 |
-| `mira/bridge/hm-send-adapter.js` | source | `clean/tracked` | 4997 |
-| `mira/bridge/read-pane-messages.js` | source | `clean/tracked` | 6473 |
-| `mira/bridge/README.md` | doc | `clean/tracked` | 1944 |
-| `mira/bridge/send-pane-message.js` | source | `clean/tracked` | 3807 |
-| `mira/bridge/squidrun-adapter-protocol-v0.md` | doc | `clean/tracked` | 6791 |
-| `mira/import-disposition-manifest.json` | config | `clean/tracked` | 5395 |
-| `mira/imports/approvals/batch-2a-normalized-core-approval-v1.json` | config | `clean/tracked` | 1195 |
-| `mira/imports/approvals/first-batch-approval-v1.json` | config | `clean/tracked` | 709 |
-| `mira/imports/import-approval-marker-schema-v0.json` | config | `clean/tracked` | 1751 |
-| `mira/imports/import-approval-marker-semantics-v0.md` | doc | `clean/tracked` | 1563 |
-| `mira/imports/import-executor-semantics-v0.md` | doc | `clean/tracked` | 2882 |
-| `mira/imports/import-receipt-schema-v0.json` | config | `clean/tracked` | 2737 |
-| `mira/imports/import-receipt-semantics-v0.md` | doc | `clean/tracked` | 1563 |
-| `mira/imports/import-record.schema.json` | config | `clean/tracked` | 1471 |
-| `mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.json` | config | `clean/tracked` | 3484 |
-| `mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.md` | doc | `clean/tracked` | 1865 |
-| `mira/imports/normalizers/normalized-core-apply-semantics-v0.md` | doc | `clean/tracked` | 2638 |
-| `mira/imports/normalizers/normalized-core-approval-marker-schema-v0.json` | config | `clean/tracked` | 3234 |
-| `mira/imports/normalizers/normalized-core-receipt-schema-v0.json` | config | `clean/tracked` | 5949 |
-| `mira/imports/persistent-first-import-runbook-v0.md` | doc | `clean/tracked` | 2451 |
-| `mira/imports/README.md` | doc | `clean/tracked` | 375 |
-| `mira/imports/reports/batch-2a-normalized-core-dry-run-v1.json` | config | `clean/tracked` | 4896 |
-| `mira/imports/reports/first-batch-dry-run-v1.json` | config | `clean/tracked` | 2524 |
-| `mira/imports/reports/README.md` | doc | `clean/tracked` | 340 |
-| `mira/imports/review-queue.json` | config | `clean/tracked` | 5874 |
-| `mira/README.md` | doc | `clean/tracked` | 1738 |
-| `mira/runtime/continuity-loader-contract-v0.json` | config | `clean/tracked` | 1012 |
-| `mira/runtime/continuity-loader-contract-v0.md` | doc | `clean/tracked` | 1896 |
-| `mira/runtime/package.json` | config | `clean/tracked` | 570 |
-| `mira/runtime/README.md` | doc | `clean/tracked` | 1909 |
-| `mira/runtime/src/acceptance-continuity.ts` | source | `clean/tracked` | 4112 |
-| `mira/runtime/src/autonomy.ts` | source | `clean/tracked` | 27740 |
-| `mira/runtime/src/bridge-request-plan.ts` | source | `clean/tracked` | 4048 |
-| `mira/runtime/src/bridge-status.ts` | source | `clean/tracked` | 983 |
-| `mira/runtime/src/contracts.ts` | source | `clean/tracked` | 2981 |
-| `mira/runtime/src/import-status.ts` | source | `clean/tracked` | 1355 |
-| `mira/runtime/src/mission-control-route-preview.ts` | source | `clean/tracked` | 304102 |
-| `mira/runtime/src/model-adapter.ts` | source | `clean/tracked` | 18558 |
-| `mira/runtime/src/model-status.ts` | source | `clean/tracked` | 5658 |
-| `mira/runtime/src/normalized-core.ts` | source | `clean/tracked` | 5870 |
-| `mira/runtime/src/operator-context.ts` | source | `clean/tracked` | 3187 |
-| `mira/runtime/src/persona-core.ts` | source | `clean/tracked` | 4491 |
-| `mira/runtime/src/runtime.ts` | source | `clean/tracked` | 2878 |
-| `mira/runtime/src/server.ts` | source | `clean/tracked` | 35311 |
-| `mira/runtime/src/squidrun-context.ts` | source | `clean/tracked` | 228601 |
-| `mira/runtime/src/state-root.ts` | source | `clean/tracked` | 2035 |
-| `mira/runtime/src/status.ts` | source | `clean/tracked` | 3080 |
-| `mira/runtime/src/turn-journal.ts` | source | `clean/tracked` | 5604 |
-| `mira/runtime/src/turn-memory.ts` | source | `clean/tracked` | 8793 |
-| `mira/runtime/src/turn.ts` | source | `clean/tracked` | 20195 |
-| `mira/runtime/src/voice-correction.ts` | source | `clean/tracked` | 3749 |
-| `mira/runtime/src/voice-lab.ts` | source | `clean/tracked` | 7423 |
-| `mira/runtime/src/work-draft.ts` | source | `clean/tracked` | 10500 |
-| `mira/runtime/src/work-task.ts` | source | `clean/tracked` | 70655 |
-| `mira/runtime/tsconfig.json` | config | `clean/tracked` | 435 |
-| `mira/state/.gitignore` | config | `clean/tracked` | 52 |
-| `mira/state/README.md` | doc | `clean/tracked` | 613 |
-| `mira/state/state-root-contract.json` | config | `clean/tracked` | 612 |
-| `mira/tools/audit-voice-conversation.js` | source | `clean/tracked` | 8349 |
-| `mira/tools/capture-voice-correction.js` | source | `clean/tracked` | 3332 |
-| `mira/tools/evaluate-voice-lab.js` | source | `clean/tracked` | 5456 |
-| `mira/tools/execute-reviewed-import.js` | source | `clean/tracked` | 11952 |
-| `mira/tools/import-status.js` | source | `clean/tracked` | 2368 |
-| `mira/tools/list-voice-corrections.js` | source | `clean/tracked` | 2122 |
-| `mira/tools/normalize-core-dry-run.js` | source | `clean/tracked` | 17872 |
-| `mira/tools/normalize-operator-context.js` | source | `clean/tracked` | 4180 |
-| `mira/tools/plan-reviewed-imports.js` | source | `clean/tracked` | 3300 |
-| `mira/tools/read-runtime-turns.js` | source | `clean/tracked` | 5953 |
-| `mira/tools/resolve-state-root.js` | source | `clean/tracked` | 670 |
-| `mira/tools/start-local-runtime.js` | source | `clean/tracked` | 11190 |
-| `mira/tools/validate-import-queue.js` | source | `clean/tracked` | 3310 |
-| `mira/ui/app.js` | source | `clean/tracked` | 254021 |
-| `mira/ui/index.html` | asset | `clean/tracked` | 8158 |
-| `mira/ui/styles.css` | asset | `clean/tracked` | 10484 |
-| `mira/voice/review/.gitkeep` | config | `clean/tracked` | 1 |
-| `mira/voice/voice-lab-v0.jsonl` | jsonl | `clean/tracked` | 15467 |
-| `MODEL-SHIMS.md` | doc | `clean/tracked` | 913 |
-| `package-lock.json` | config | `clean/tracked` | 232 |
-| `package.json` | config | `clean/tracked` | 772 |
-| `PRODUCT-GUIDE.md` | doc | `clean/tracked` | 741 |
-| `README.md` | doc | `clean/tracked` | 18148 |
-| `relay/package-lock.json` | config | `clean/tracked` | 843 |
-| `relay/package.json` | config | `clean/tracked` | 262 |
-| `relay/README.md` | doc | `clean/tracked` | 576 |
-| `relay/server.js` | source | `clean/tracked` | 26220 |
-| `ROLES.md` | doc | `clean/tracked` | 20583 |
-| `start-squidrun.bat` | script | `clean/tracked` | 36 |
-| `telegram-poller.js` | source | `clean/tracked` | 6954 |
+| Path | Kind | Bytes |
+| --- | --- | ---: |
+| `.env.example` | config | 2728 |
+| `.gitignore` | config | 3723 |
+| `AGENTS.md` | doc | 6311 |
+| `ARCHITECTURE.md` | doc | 57135 |
+| `CLAUDE-AI.md` | doc | 3856 |
+| `CLAUDE.md` | doc | 1988 |
+| `CODE_OF_CONDUCT.md` | doc | 5185 |
+| `CODEX.md` | doc | 615 |
+| `CONTRIBUTING.md` | doc | 858 |
+| `GEMINI.md` | doc | 675 |
+| `jest.config.js` | source | 221 |
+| `LICENSE` | file | 1078 |
+| `mira/bridge/hm-send-adapter.js` | source | 4997 |
+| `mira/bridge/read-pane-messages.js` | source | 6473 |
+| `mira/bridge/README.md` | doc | 1944 |
+| `mira/bridge/send-pane-message.js` | source | 3807 |
+| `mira/bridge/squidrun-adapter-protocol-v0.md` | doc | 6791 |
+| `mira/import-disposition-manifest.json` | config | 5395 |
+| `mira/imports/approvals/batch-2a-normalized-core-approval-v1.json` | config | 1195 |
+| `mira/imports/approvals/first-batch-approval-v1.json` | config | 709 |
+| `mira/imports/import-approval-marker-schema-v0.json` | config | 1751 |
+| `mira/imports/import-approval-marker-semantics-v0.md` | doc | 1563 |
+| `mira/imports/import-executor-semantics-v0.md` | doc | 2882 |
+| `mira/imports/import-receipt-schema-v0.json` | config | 2737 |
+| `mira/imports/import-receipt-semantics-v0.md` | doc | 1563 |
+| `mira/imports/import-record.schema.json` | config | 1471 |
+| `mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.json` | config | 3484 |
+| `mira/imports/normalizers/batch-2a-core-normalizer-contract-v0.md` | doc | 1865 |
+| `mira/imports/normalizers/normalized-core-apply-semantics-v0.md` | doc | 2638 |
+| `mira/imports/normalizers/normalized-core-approval-marker-schema-v0.json` | config | 3234 |
+| `mira/imports/normalizers/normalized-core-receipt-schema-v0.json` | config | 5949 |
+| `mira/imports/persistent-first-import-runbook-v0.md` | doc | 2451 |
+| `mira/imports/README.md` | doc | 375 |
+| `mira/imports/reports/batch-2a-normalized-core-dry-run-v1.json` | config | 4896 |
+| `mira/imports/reports/first-batch-dry-run-v1.json` | config | 2524 |
+| `mira/imports/reports/README.md` | doc | 340 |
+| `mira/imports/review-queue.json` | config | 5874 |
+| `mira/README.md` | doc | 1738 |
+| `mira/runtime/continuity-loader-contract-v0.json` | config | 1012 |
+| `mira/runtime/continuity-loader-contract-v0.md` | doc | 1896 |
+| `mira/runtime/package.json` | config | 570 |
+| `mira/runtime/README.md` | doc | 1909 |
+| `mira/runtime/src/acceptance-continuity.ts` | source | 4112 |
+| `mira/runtime/src/autonomy.ts` | source | 27740 |
+| `mira/runtime/src/bridge-request-plan.ts` | source | 4048 |
+| `mira/runtime/src/bridge-status.ts` | source | 983 |
+| `mira/runtime/src/contracts.ts` | source | 2981 |
+| `mira/runtime/src/import-status.ts` | source | 1355 |
+| `mira/runtime/src/mission-control-route-preview.ts` | source | 304102 |
+| `mira/runtime/src/model-adapter.ts` | source | 18558 |
+| `mira/runtime/src/model-status.ts` | source | 5658 |
+| `mira/runtime/src/normalized-core.ts` | source | 5870 |
+| `mira/runtime/src/operator-context.ts` | source | 3187 |
+| `mira/runtime/src/persona-core.ts` | source | 4491 |
+| `mira/runtime/src/runtime.ts` | source | 2878 |
+| `mira/runtime/src/server.ts` | source | 35311 |
+| `mira/runtime/src/squidrun-context.ts` | source | 228601 |
+| `mira/runtime/src/state-root.ts` | source | 2035 |
+| `mira/runtime/src/status.ts` | source | 3080 |
+| `mira/runtime/src/turn-journal.ts` | source | 5604 |
+| `mira/runtime/src/turn-memory.ts` | source | 8793 |
+| `mira/runtime/src/turn.ts` | source | 20195 |
+| `mira/runtime/src/voice-correction.ts` | source | 3749 |
+| `mira/runtime/src/voice-lab.ts` | source | 7423 |
+| `mira/runtime/src/work-draft.ts` | source | 10500 |
+| `mira/runtime/src/work-task.ts` | source | 70655 |
+| `mira/runtime/tsconfig.json` | config | 435 |
+| `mira/state/.gitignore` | config | 52 |
+| `mira/state/README.md` | doc | 613 |
+| `mira/state/state-root-contract.json` | config | 612 |
+| `mira/tools/audit-voice-conversation.js` | source | 8349 |
+| `mira/tools/capture-voice-correction.js` | source | 3332 |
+| `mira/tools/evaluate-voice-lab.js` | source | 5456 |
+| `mira/tools/execute-reviewed-import.js` | source | 11952 |
+| `mira/tools/import-status.js` | source | 2368 |
+| `mira/tools/list-voice-corrections.js` | source | 2122 |
+| `mira/tools/normalize-core-dry-run.js` | source | 17872 |
+| `mira/tools/normalize-operator-context.js` | source | 4180 |
+| `mira/tools/plan-reviewed-imports.js` | source | 3300 |
+| `mira/tools/read-runtime-turns.js` | source | 5953 |
+| `mira/tools/resolve-state-root.js` | source | 670 |
+| `mira/tools/start-local-runtime.js` | source | 11190 |
+| `mira/tools/validate-import-queue.js` | source | 3310 |
+| `mira/ui/app.js` | source | 254021 |
+| `mira/ui/index.html` | asset | 8158 |
+| `mira/ui/styles.css` | asset | 10484 |
+| `mira/voice/review/.gitkeep` | config | 1 |
+| `mira/voice/voice-lab-v0.jsonl` | jsonl | 15467 |
+| `MODEL-SHIMS.md` | doc | 913 |
+| `package-lock.json` | config | 232 |
+| `package.json` | config | 772 |
+| `PRODUCT-GUIDE.md` | doc | 741 |
+| `README.md` | doc | 18148 |
+| `relay/package-lock.json` | config | 843 |
+| `relay/package.json` | config | 262 |
+| `relay/README.md` | doc | 576 |
+| `relay/server.js` | source | 26220 |
+| `ROLES.md` | doc | 20583 |
+| `start-squidrun.bat` | script | 36 |
+| `telegram-poller.js` | source | 6954 |
 
 ### scripts
 
-| Path | Kind | Status | Bytes |
-| --- | --- | --- | ---: |
-| `scripts/pre-commit.sh` | script | `clean/tracked` | 10121 |
+| Path | Kind | Bytes |
+| --- | --- | ---: |
+| `scripts/pre-commit.sh` | script | 10121 |
 
 ### tools
 
-| Path | Kind | Status | Bytes |
-| --- | --- | --- | ---: |
-| `tools/New-DesktopShortcut.ps1` | script | `clean/tracked` | 1235 |
-| `tools/send-long-telegram.js` | source | `clean/tracked` | 2076 |
-| `tools/send-telegram-document.js` | source | `clean/tracked` | 2154 |
+| Path | Kind | Bytes |
+| --- | --- | ---: |
+| `tools/New-DesktopShortcut.ps1` | script | 1235 |
+| `tools/send-long-telegram.js` | source | 2076 |
+| `tools/send-telegram-document.js` | source | 2154 |
 
 ### ui/__tests__
 
-| Path | Kind | Status | Bytes |
-| --- | --- | --- | ---: |
-| `ui/__tests__/activity-log-handlers.test.js` | test | `clean/tracked` | 5259 |
-| `ui/__tests__/agent-claims-handlers.test.js` | test | `clean/tracked` | 3950 |
-| `ui/__tests__/agent-colors.test.js` | test | `clean/tracked` | 14920 |
-| `ui/__tests__/ansi.test.js` | test | `clean/tracked` | 297 |
-| `ui/__tests__/app-control-service.test.js` | test | `clean/tracked` | 6000 |
-| `ui/__tests__/auto-handoff-handlers.test.js` | test | `clean/tracked` | 3147 |
-| `ui/__tests__/auto-handoff-materializer.test.js` | test | `clean/tracked` | 82195 |
-| `ui/__tests__/auto-nudge-handlers.test.js` | test | `clean/tracked` | 16904 |
-| `ui/__tests__/autonomous-smoke.test.js` | test | `clean/tracked` | 4388 |
-| `ui/__tests__/background-agent-manager.test.js` | test | `clean/tracked` | 9965 |
-| `ui/__tests__/background-processes.test.js` | test | `clean/tracked` | 4614 |
-| `ui/__tests__/backup-handlers.test.js` | test | `clean/tracked` | 6136 |
-| `ui/__tests__/backup-manager.test.js` | test | `clean/tracked` | 22049 |
-| `ui/__tests__/bridge-client.test.js` | test | `clean/tracked` | 23319 |
-| `ui/__tests__/bridge.test.js` | test | `clean/tracked` | 15554 |
-| `ui/__tests__/capability-planner.test.js` | test | `clean/tracked` | 688 |
-| `ui/__tests__/checkpoint-handlers.test.js` | test | `clean/tracked` | 17431 |
-| `ui/__tests__/claude-extract.test.js` | test | `clean/tracked` | 1841 |
-| `ui/__tests__/cognitive-memory-api.test.js` | test | `clean/tracked` | 21865 |
-| `ui/__tests__/cognitive-memory-handlers.test.js` | test | `clean/tracked` | 4212 |
-| `ui/__tests__/cognitive-memory-immunity.test.js` | test | `clean/tracked` | 4347 |
-| `ui/__tests__/cognitive-memory-sleep.test.js` | test | `clean/tracked` | 14140 |
-| `ui/__tests__/cognitive-memory-store.test.js` | test | `clean/tracked` | 8662 |
-| `ui/__tests__/command-palette.test.js` | test | `clean/tracked` | 1775 |
-| `ui/__tests__/comms-console.test.js` | test | `clean/tracked` | 10290 |
-| `ui/__tests__/comms-worker-client.test.js` | test | `clean/tracked` | 6009 |
-| `ui/__tests__/compaction-detector.test.js` | test | `clean/tracked` | 24279 |
-| `ui/__tests__/completion-detection-handlers.test.js` | test | `clean/tracked` | 5632 |
-| `ui/__tests__/completion-quality-handlers.test.js` | test | `clean/tracked` | 9571 |
-| `ui/__tests__/confidence-surface.test.js` | test | `clean/tracked` | 1746 |
-| `ui/__tests__/config.test.js` | test | `clean/tracked` | 8424 |
-| `ui/__tests__/conflict-detection-handlers.test.js` | test | `clean/tracked` | 2110 |
-| `ui/__tests__/context-compressor.test.js` | test | `clean/tracked` | 41480 |
-| `ui/__tests__/contract-promotion-handlers.test.js` | test | `clean/tracked` | 2076 |
-| `ui/__tests__/contract-promotion-service.test.js` | test | `clean/tracked` | 4422 |
-| `ui/__tests__/contract-promotion.test.js` | test | `clean/tracked` | 14480 |
-| `ui/__tests__/contracts.test.js` | test | `clean/tracked` | 14703 |
-| `ui/__tests__/coord-path-integration.test.js` | test | `clean/tracked` | 2224 |
-| `ui/__tests__/cross-device-bridge-e2e.test.js` | test | `clean/tracked` | 11168 |
-| `ui/__tests__/cross-device-target.test.js` | test | `clean/tracked` | 2891 |
-| `ui/__tests__/daemon-handlers.test.js` | test | `clean/tracked` | 46784 |
-| `ui/__tests__/daemon-snapshot.test.js` | test | `clean/tracked` | 2336 |
-| `ui/__tests__/daemon.test.js` | test | `clean/tracked` | 16804 |
-| `ui/__tests__/debug-replay-handlers.test.js` | test | `clean/tracked` | 28695 |
-| `ui/__tests__/device-pairing-handlers.test.js` | test | `clean/tracked` | 1603 |
-| `ui/__tests__/diagnostic-log.test.js` | test | `clean/tracked` | 3548 |
-| `ui/__tests__/doc-generator.test.js` | test | `clean/tracked` | 4966 |
-| `ui/__tests__/error-handlers.test.js` | test | `clean/tracked` | 14765 |
-| `ui/__tests__/event-bus.test.js` | test | `clean/tracked` | 56505 |
-| `ui/__tests__/evidence-ledger-e2e.test.js` | test | `clean/tracked` | 7854 |
-| `ui/__tests__/evidence-ledger-handlers-worker-routing.test.js` | test | `clean/tracked` | 3256 |
-| `ui/__tests__/evidence-ledger-ingest.test.js` | test | `clean/tracked` | 2688 |
-| `ui/__tests__/evidence-ledger-integration.test.js` | test | `clean/tracked` | 12104 |
-| `ui/__tests__/evidence-ledger-investigator.test.js` | test | `clean/tracked` | 14394 |
-| `ui/__tests__/evidence-ledger-ipc-integration.test.js` | test | `clean/tracked` | 8140 |
-| `ui/__tests__/evidence-ledger-memory-seed.test.js` | test | `clean/tracked` | 4100 |
-| `ui/__tests__/evidence-ledger-memory.test.js` | test | `clean/tracked` | 16048 |
-| `ui/__tests__/evidence-ledger-query-contract.test.js` | test | `clean/tracked` | 21051 |
-| `ui/__tests__/evidence-ledger-store-config.test.js` | test | `clean/tracked` | 2455 |
-| `ui/__tests__/evidence-ledger-store.test.js` | test | `clean/tracked` | 11435 |
-| `ui/__tests__/evidence-ledger-worker-client.test.js` | test | `clean/tracked` | 2705 |
-| `ui/__tests__/experiment-profiles.test.js` | test | `clean/tracked` | 4052 |
-| `ui/__tests__/experiment-runtime-evidence-chain.test.js` | test | `clean/tracked` | 7967 |
-| `ui/__tests__/experiment-runtime-isolation.test.js` | test | `clean/tracked` | 7635 |
-| `ui/__tests__/experiment-runtime-paths.test.js` | test | `clean/tracked` | 1881 |
-| `ui/__tests__/experiment-runtime-shared-scope.test.js` | test | `clean/tracked` | 1970 |
-| `ui/__tests__/experiment-worker-client.test.js` | test | `clean/tracked` | 2240 |
-| `ui/__tests__/external-notification-handlers.test.js` | test | `clean/tracked` | 3657 |
-| `ui/__tests__/external-notifications-pruning.test.js` | test | `clean/tracked` | 1328 |
-| `ui/__tests__/external-notifications.test.js` | test | `clean/tracked` | 2569 |
-| `ui/__tests__/extraction-helpers.test.js` | test | `clean/tracked` | 2311 |
-| `ui/__tests__/feature-capability-gating.test.js` | test | `clean/tracked` | 6875 |
-| `ui/__tests__/firmware-manager.test.js` | test | `clean/tracked` | 8397 |
-| `ui/__tests__/fixtures/mira-core-auth-binding-contract.json` | test | `clean/tracked` | 47493 |
-| `ui/__tests__/fixtures/mira-core-durable-state-seed-v0-contract.json` | test | `clean/tracked` | 6315 |
-| `ui/__tests__/fixtures/mira-core-encryption-key-contract.json` | test | `clean/tracked` | 50923 |
-| `ui/__tests__/fixtures/mira-core-eval-contract.json` | test | `clean/tracked` | 30290 |
-| `ui/__tests__/fixtures/mira-core-growth-loop-v0-contract.json` | test | `clean/tracked` | 7178 |
-| `ui/__tests__/fixtures/mira-core-identity-anchor-v0-contract.json` | test | `clean/tracked` | 7986 |
-| `ui/__tests__/fixtures/mira-core-identity-signing-contract.json` | test | `clean/tracked` | 42812 |
-| `ui/__tests__/fixtures/mira-core-intent-queue-contract.json` | test | `clean/tracked` | 34855 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-boundary-refresh-contract.json` | test | `clean/tracked` | 66421 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-dry-check-contract.json` | test | `clean/tracked` | 64755 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-preimplementation-checklist-contract.json` | test | `clean/tracked` | 57334 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-gap-contract.json` | test | `clean/tracked` | 66555 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase49-contract.json` | test | `clean/tracked` | 75812 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase50-contract.json` | test | `clean/tracked` | 81607 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase51-contract.json` | test | `clean/tracked` | 86622 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase52-contract.json` | test | `clean/tracked` | 90136 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase53-contract.json` | test | `clean/tracked` | 95976 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase54-contract.json` | test | `clean/tracked` | 106689 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase55-contract.json` | test | `clean/tracked` | 115501 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase56-contract.json` | test | `clean/tracked` | 124724 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase57-contract.json` | test | `clean/tracked` | 133791 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase58-contract.json` | test | `clean/tracked` | 144128 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase59-contract.json` | test | `clean/tracked` | 153603 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase60-contract.json` | test | `clean/tracked` | 163522 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase61-contract.json` | test | `clean/tracked` | 176447 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase62-contract.json` | test | `clean/tracked` | 191852 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase63-contract.json` | test | `clean/tracked` | 202651 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase64-contract.json` | test | `clean/tracked` | 216776 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase65-contract.json` | test | `clean/tracked` | 231387 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase66-contract.json` | test | `clean/tracked` | 248113 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-safety-contract.json` | test | `clean/tracked` | 73261 |
-| `ui/__tests__/fixtures/mira-core-local-acceptance-contract.json` | test | `clean/tracked` | 36362 |
-| `ui/__tests__/fixtures/mira-core-local-text-session-v0-contract.json` | test | `clean/tracked` | 8799 |
-| `ui/__tests__/fixtures/mira-core-milestone-readiness-contract.json` | test | `clean/tracked` | 41460 |
-| `ui/__tests__/fixtures/mira-core-mutation-patch-contract.json` | test | `clean/tracked` | 31566 |
-| `ui/__tests__/fixtures/mira-core-orientation-contract.json` | test | `clean/tracked` | 17414 |
-| `ui/__tests__/fixtures/mira-core-perception-contract.json` | test | `clean/tracked` | 34124 |
-| `ui/__tests__/fixtures/mira-core-persistence-audit-contract.json` | test | `clean/tracked` | 47582 |
-| `ui/__tests__/fixtures/mira-core-presence-runtime-read-path-v0-contract.json` | test | `clean/tracked` | 7476 |
-| `ui/__tests__/fixtures/mira-core-presence-v0-contract.json` | test | `clean/tracked` | 5054 |
-| `ui/__tests__/fixtures/mira-core-profile-contract.json` | test | `clean/tracked` | 21114 |
-| `ui/__tests__/fixtures/mira-core-proposal-contract.json` | test | `clean/tracked` | 32746 |
-| `ui/__tests__/fixtures/mira-core-pulse-contract.json` | test | `clean/tracked` | 20466 |
-| `ui/__tests__/fixtures/mira-core-readiness-contract.json` | test | `clean/tracked` | 44851 |
-| `ui/__tests__/fixtures/mira-core-relationship-presence-v1-contract.json` | test | `clean/tracked` | 6793 |
-| `ui/__tests__/fixtures/mira-core-runtime-control-path-contract.json` | test | `clean/tracked` | 40879 |
-| `ui/__tests__/fixtures/mira-core-runtime-control-reporting-reconciliation-contract.json` | test | `clean/tracked` | 41431 |
-| `ui/__tests__/fixtures/mira-core-runtime-controls-contract.json` | test | `clean/tracked` | 36291 |
-| `ui/__tests__/fixtures/mira-core-runtime-dry-run-implementation-contract.json` | test | `clean/tracked` | 37537 |
-| `ui/__tests__/fixtures/mira-core-runtime-dry-run-readiness-gap-contract.json` | test | `clean/tracked` | 50770 |
-| `ui/__tests__/fixtures/mira-core-runtime-dry-run-review-contract.json` | test | `clean/tracked` | 30046 |
-| `ui/__tests__/fixtures/mira-core-runtime-dry-runner-contract.json` | test | `clean/tracked` | 35499 |
-| `ui/__tests__/fixtures/mira-core-runtime-harness-contract.json` | test | `clean/tracked` | 71983 |
-| `ui/__tests__/fixtures/mira-core-runtime-milestone-refresh-contract.json` | test | `clean/tracked` | 66191 |
-| `ui/__tests__/fixtures/mira-core-runtime-mode-flag-reader-safety-contract.json` | test | `clean/tracked` | 82603 |
-| `ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-contract.json` | test | `clean/tracked` | 56243 |
-| `ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-implementation-risk-contract.json` | test | `clean/tracked` | 77828 |
-| `ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-prerequisite-boundary-contract.json` | test | `clean/tracked` | 62644 |
-| `ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-status-gap-refresh-contract.json` | test | `clean/tracked` | 58274 |
-| `ui/__tests__/fixtures/mira-core-runtime-next-action-contract.json` | test | `clean/tracked` | 29115 |
-| `ui/__tests__/fixtures/mira-core-runtime-operator-status-contract.json` | test | `clean/tracked` | 28370 |
-| `ui/__tests__/fixtures/mira-core-runtime-operator-ui-surface-contract.json` | test | `clean/tracked` | 36761 |
-| `ui/__tests__/fixtures/mira-core-runtime-preflight-contract.json` | test | `clean/tracked` | 30936 |
-| `ui/__tests__/fixtures/mira-core-runtime-promotion-gate-contract.json` | test | `clean/tracked` | 31992 |
-| `ui/__tests__/fixtures/mira-core-runtime-readiness-refresh-through-phase37-contract.json` | test | `clean/tracked` | 42659 |
-| `ui/__tests__/fixtures/mira-core-runtime-slice-contract.json` | test | `clean/tracked` | 34300 |
-| `ui/__tests__/fixtures/mira-core-runtime-status-milestone-refresh-contract.json` | test | `clean/tracked` | 38947 |
-| `ui/__tests__/fixtures/mira-core-server-api-contract.json` | test | `clean/tracked` | 53449 |
-| `ui/__tests__/fixtures/mira-core-server-boundary-contract.json` | test | `clean/tracked` | 36297 |
-| `ui/__tests__/fixtures/mira-core-server-handler-contract.json` | test | `clean/tracked` | 54688 |
-| `ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json` | test | `clean/tracked` | 40309 |
-| `ui/__tests__/fixtures/mira-core-server-upload-contract.json` | test | `clean/tracked` | 31405 |
-| `ui/__tests__/fixtures/mira-core-snapshot-contract.json` | test | `clean/tracked` | 11217 |
-| `ui/__tests__/fixtures/mira-core-storage-retention-contract.json` | test | `clean/tracked` | 43175 |
-| `ui/__tests__/fixtures/mira-north-star-acceptance-contract.json` | test | `clean/tracked` | 11079 |
-| `ui/__tests__/fixtures/mira-presence-runtime-acceptance-v0-contract.json` | test | `clean/tracked` | 11509 |
-| `ui/__tests__/fixtures/mira-progress-contract-v0.json` | test | `clean/tracked` | 9471 |
-| `ui/__tests__/formatters.test.js` | test | `clean/tracked` | 3271 |
-| `ui/__tests__/friction-handlers.test.js` | test | `clean/tracked` | 8460 |
-| `ui/__tests__/gemini-command.test.js` | test | `clean/tracked` | 1914 |
-| `ui/__tests__/git-handlers.test.js` | test | `clean/tracked` | 39443 |
-| `ui/__tests__/github-handlers.test.js` | test | `clean/tracked` | 4628 |
-| `ui/__tests__/github-service.test.js` | test | `clean/tracked` | 20339 |
-| `ui/__tests__/handler-registry.test.js` | test | `clean/tracked` | 1151 |
-| `ui/__tests__/hazard-prefix.test.js` | test | `clean/tracked` | 1439 |
-| `ui/__tests__/helpers/ipc-harness.js` | test | `clean/tracked` | 2813 |
-| `ui/__tests__/helpers/mock-config.js` | test | `clean/tracked` | 6524 |
-| `ui/__tests__/helpers/real-config.js` | test | `clean/tracked` | 2090 |
-| `ui/__tests__/hm-bg.test.js` | test | `clean/tracked` | 1886 |
-| `ui/__tests__/hm-claim-cli-e2e.test.js` | test | `clean/tracked` | 5315 |
-| `ui/__tests__/hm-codebase-index.test.js` | test | `clean/tracked` | 1959 |
-| `ui/__tests__/hm-experiment.test.js` | test | `clean/tracked` | 2841 |
-| `ui/__tests__/hm-github.test.js` | test | `clean/tracked` | 2922 |
-| `ui/__tests__/hm-health-snapshot.test.js` | test | `clean/tracked` | 36767 |
-| `ui/__tests__/hm-initiative.test.js` | test | `clean/tracked` | 7230 |
-| `ui/__tests__/hm-memory-ingest.test.js` | test | `clean/tracked` | 2120 |
-| `ui/__tests__/hm-memory-promote.test.js` | test | `clean/tracked` | 2695 |
-| `ui/__tests__/hm-mira-lab-prompt.test.js` | test | `clean/tracked` | 11495 |
-| `ui/__tests__/hm-mira-lab-verify.test.js` | test | `clean/tracked` | 16492 |
-| `ui/__tests__/hm-mira-self-direction.test.js` | test | `clean/tracked` | 36931 |
-| `ui/__tests__/hm-pane.test.js` | test | `clean/tracked` | 1571 |
-| `ui/__tests__/hm-phone-voice.test.js` | test | `clean/tracked` | 1134 |
-| `ui/__tests__/hm-promotion.test.js` | test | `clean/tracked` | 1602 |
-| `ui/__tests__/hm-reddit.test.js` | test | `clean/tracked` | 10440 |
-| `ui/__tests__/hm-screenshot.test.js` | test | `clean/tracked` | 641 |
-| `ui/__tests__/hm-send-coworker-output-lint.test.js` | test | `clean/tracked` | 14371 |
-| `ui/__tests__/hm-send.test.js` | test | `clean/tracked` | 106157 |
-| `ui/__tests__/hm-smoke-runner.test.js` | test | `clean/tracked` | 11973 |
-| `ui/__tests__/hm-sms.test.js` | test | `clean/tracked` | 3616 |
-| `ui/__tests__/hm-supervisor.test.js` | test | `clean/tracked` | 894 |
-| `ui/__tests__/hm-task-queue.test.js` | test | `clean/tracked` | 22280 |
-| `ui/__tests__/hm-telegram-poller-lane.test.js` | test | `clean/tracked` | 3555 |
-| `ui/__tests__/hm-telegram-routing.test.js` | test | `clean/tracked` | 7906 |
-| `ui/__tests__/hm-telegram.test.js` | test | `clean/tracked` | 11866 |
-| `ui/__tests__/hm-transition.test.js` | test | `clean/tracked` | 2309 |
-| `ui/__tests__/hm-twitter.test.js` | test | `clean/tracked` | 11240 |
-| `ui/__tests__/hm-voice-broker.test.js` | test | `clean/tracked` | 2656 |
-| `ui/__tests__/image-gen.test.js` | test | `clean/tracked` | 12705 |
-| `ui/__tests__/inbound-poller-service.test.js` | test | `clean/tracked` | 3227 |
-| `ui/__tests__/ingress-envelope.test.js` | test | `clean/tracked` | 2607 |
-| `ui/__tests__/inject-message-ipc.test.js` | test | `clean/tracked` | 4845 |
-| `ui/__tests__/injection-events.test.js` | test | `clean/tracked` | 25354 |
-| `ui/__tests__/injection.test.js` | test | `clean/tracked` | 91060 |
-| `ui/__tests__/input-shadow-log.test.js` | test | `clean/tracked` | 2000 |
-| `ui/__tests__/ipc-handlers.test.js` | test | `clean/tracked` | 5078 |
-| `ui/__tests__/jest-staged.test.js` | test | `clean/tracked` | 2090 |
-| `ui/__tests__/kernel-bridge.test.js` | test | `clean/tracked` | 3303 |
-| `ui/__tests__/knowledge-base.test.js` | test | `clean/tracked` | 24040 |
-| `ui/__tests__/knowledge-graph-handlers.test.js` | test | `clean/tracked` | 14100 |
-| `ui/__tests__/knowledge-handlers.test.js` | test | `clean/tracked` | 4973 |
-| `ui/__tests__/launch-intent.test.js` | test | `clean/tracked` | 2689 |
-| `ui/__tests__/learning-data-handlers.test.js` | test | `clean/tracked` | 10832 |
-| `ui/__tests__/local-embedder.test.js` | test | `clean/tracked` | 14089 |
-| `ui/__tests__/local-model-capabilities.test.js` | test | `clean/tracked` | 2509 |
-| `ui/__tests__/logger.test.js` | test | `clean/tracked` | 8889 |
-| `ui/__tests__/mcp-autoconfig-handlers.test.js` | test | `clean/tracked` | 4987 |
-| `ui/__tests__/mcp-bridge.test.js` | test | `clean/tracked` | 28446 |
-| `ui/__tests__/mcp-handlers.test.js` | test | `clean/tracked` | 6477 |
-| `ui/__tests__/mcp-server.test.js` | test | `clean/tracked` | 6250 |
-| `ui/__tests__/memory-broker.test.js` | test | `clean/tracked` | 3881 |
-| `ui/__tests__/memory-consistency-check.test.js` | test | `clean/tracked` | 29389 |
-| `ui/__tests__/memory-delivery.test.js` | test | `clean/tracked` | 12530 |
-| `ui/__tests__/memory-ingest-integration.test.js` | test | `clean/tracked` | 3536 |
-| `ui/__tests__/memory-ingest-recovery.test.js` | test | `clean/tracked` | 13887 |
-| `ui/__tests__/memory-ingest-router.test.js` | test | `clean/tracked` | 1268 |
-| `ui/__tests__/memory-ingest-schema.test.js` | test | `clean/tracked` | 2712 |
-| `ui/__tests__/memory-promotion-lifecycle.test.js` | test | `clean/tracked` | 19898 |
-| `ui/__tests__/memory-recall.test.js` | test | `clean/tracked` | 15710 |
-| `ui/__tests__/memory-search.test.js` | test | `clean/tracked` | 12759 |
-| `ui/__tests__/message-envelope-contract.test.js` | test | `clean/tracked` | 2939 |
-| `ui/__tests__/message-queue-handlers.test.js` | test | `clean/tracked` | 11537 |
-| `ui/__tests__/migration-007.test.js` | test | `clean/tracked` | 6334 |
-| `ui/__tests__/migration-008.test.js` | test | `clean/tracked` | 2472 |
-| `ui/__tests__/mira-architect-route-v0.test.js` | test | `clean/tracked` | 25344 |
-| `ui/__tests__/mira-automation-scheduler-curiosity.test.js` | test | `clean/tracked` | 4598 |
-| `ui/__tests__/mira-bridge-protocol.test.js` | test | `clean/tracked` | 2623 |
-| `ui/__tests__/mira-bridge-send-receive-e2e.test.js` | test | `clean/tracked` | 5978 |
-| `ui/__tests__/mira-browser-history-curiosity.test.js` | test | `clean/tracked` | 5118 |
-| `ui/__tests__/mira-calendar-message-curiosity.test.js` | test | `clean/tracked` | 5480 |
-| `ui/__tests__/mira-coordinator-snapshot.test.js` | test | `clean/tracked` | 10881 |
-| `ui/__tests__/mira-core-auth-binding.test.js` | test | `clean/tracked` | 22380 |
-| `ui/__tests__/mira-core-autonomy-substrate-v0.test.js` | test | `clean/tracked` | 6761 |
-| `ui/__tests__/mira-core-durable-state-seed-v0.test.js` | test | `clean/tracked` | 21950 |
-| `ui/__tests__/mira-core-empty-response-diagnostics.test.js` | test | `clean/tracked` | 9379 |
-| `ui/__tests__/mira-core-encryption-key.test.js` | test | `clean/tracked` | 29059 |
-| `ui/__tests__/mira-core-eval-runner.test.js` | test | `clean/tracked` | 9250 |
-| `ui/__tests__/mira-core-experience-v0.test.js` | test | `clean/tracked` | 13565 |
-| `ui/__tests__/mira-core-growth-loop-v0.test.js` | test | `clean/tracked` | 37104 |
-| `ui/__tests__/mira-core-identity-anchor-v0.test.js` | test | `clean/tracked` | 22913 |
-| `ui/__tests__/mira-core-identity-signing.test.js` | test | `clean/tracked` | 19645 |
-| `ui/__tests__/mira-core-intent-queue.test.js` | test | `clean/tracked` | 18748 |
-| `ui/__tests__/mira-core-kill-switch-wiring-noop-boundary-refresh.test.js` | test | `clean/tracked` | 31277 |
-| `ui/__tests__/mira-core-kill-switch-wiring-noop-dry-check.test.js` | test | `clean/tracked` | 29492 |
-| `ui/__tests__/mira-core-kill-switch-wiring-preimplementation-checklist.test.js` | test | `clean/tracked` | 27277 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-gap.test.js` | test | `clean/tracked` | 27403 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase49.test.js` | test | `clean/tracked` | 27907 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase50.test.js` | test | `clean/tracked` | 28982 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase51.test.js` | test | `clean/tracked` | 30670 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase52.test.js` | test | `clean/tracked` | 32092 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase53.test.js` | test | `clean/tracked` | 34589 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase54.test.js` | test | `clean/tracked` | 40222 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase55.test.js` | test | `clean/tracked` | 43541 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase56.test.js` | test | `clean/tracked` | 46930 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase57.test.js` | test | `clean/tracked` | 51278 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase58.test.js` | test | `clean/tracked` | 55456 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase59.test.js` | test | `clean/tracked` | 59392 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase60.test.js` | test | `clean/tracked` | 63839 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase61.test.js` | test | `clean/tracked` | 66496 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase62.test.js` | test | `clean/tracked` | 71955 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase63.test.js` | test | `clean/tracked` | 26333 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase64.test.js` | test | `clean/tracked` | 28420 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase65.test.js` | test | `clean/tracked` | 30039 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase66.test.js` | test | `clean/tracked` | 32111 |
-| `ui/__tests__/mira-core-kill-switch-wiring-safety.test.js` | test | `clean/tracked` | 27256 |
-| `ui/__tests__/mira-core-local-acceptance.test.js` | test | `clean/tracked` | 18558 |
-| `ui/__tests__/mira-core-local-text-session-v0.test.js` | test | `clean/tracked` | 33548 |
-| `ui/__tests__/mira-core-milestone-readiness.test.js` | test | `clean/tracked` | 18628 |
-| `ui/__tests__/mira-core-mutation-patch.test.js` | test | `clean/tracked` | 17974 |
-| `ui/__tests__/mira-core-orientation.test.js` | test | `clean/tracked` | 27431 |
-| `ui/__tests__/mira-core-perception.test.js` | test | `clean/tracked` | 17365 |
-| `ui/__tests__/mira-core-persistence-audit.test.js` | test | `clean/tracked` | 26945 |
-| `ui/__tests__/mira-core-presence-runtime-read-path-v0.test.js` | test | `clean/tracked` | 19056 |
-| `ui/__tests__/mira-core-presence-v0.test.js` | test | `clean/tracked` | 12837 |
-| `ui/__tests__/mira-core-profiles.test.js` | test | `clean/tracked` | 19816 |
-| `ui/__tests__/mira-core-proposal-validator.test.js` | test | `clean/tracked` | 10806 |
-| `ui/__tests__/mira-core-pulse.test.js` | test | `clean/tracked` | 11926 |
-| `ui/__tests__/mira-core-readiness.test.js` | test | `clean/tracked` | 18634 |
-| `ui/__tests__/mira-core-relationship-presence-v1.test.js` | test | `clean/tracked` | 26842 |
-| `ui/__tests__/mira-core-runtime-control-path.test.js` | test | `clean/tracked` | 27789 |
-| `ui/__tests__/mira-core-runtime-control-reporting-reconciliation.test.js` | test | `clean/tracked` | 27349 |
-| `ui/__tests__/mira-core-runtime-controls.test.js` | test | `clean/tracked` | 22589 |
-| `ui/__tests__/mira-core-runtime-dry-run-implementation.test.js` | test | `clean/tracked` | 26630 |
-| `ui/__tests__/mira-core-runtime-dry-run-readiness-gap.test.js` | test | `clean/tracked` | 30441 |
-| `ui/__tests__/mira-core-runtime-dry-run-review.test.js` | test | `clean/tracked` | 21849 |
-| `ui/__tests__/mira-core-runtime-dry-runner.test.js` | test | `clean/tracked` | 22553 |
-| `ui/__tests__/mira-core-runtime-harness.test.js` | test | `clean/tracked` | 41516 |
-| `ui/__tests__/mira-core-runtime-milestone-refresh.test.js` | test | `clean/tracked` | 19979 |
-| `ui/__tests__/mira-core-runtime-mode-flag-reader-safety.test.js` | test | `clean/tracked` | 30448 |
-| `ui/__tests__/mira-core-runtime-mode-kill-switch-implementation-risk.test.js` | test | `clean/tracked` | 31402 |
-| `ui/__tests__/mira-core-runtime-mode-kill-switch-prerequisite-boundary.test.js` | test | `clean/tracked` | 29089 |
-| `ui/__tests__/mira-core-runtime-mode-kill-switch-status-gap-refresh.test.js` | test | `clean/tracked` | 31274 |
-| `ui/__tests__/mira-core-runtime-mode-kill-switch.test.js` | test | `clean/tracked` | 30606 |
-| `ui/__tests__/mira-core-runtime-next-action.test.js` | test | `clean/tracked` | 19561 |
-| `ui/__tests__/mira-core-runtime-operator-status.test.js` | test | `clean/tracked` | 20165 |
-| `ui/__tests__/mira-core-runtime-operator-ui-surface.test.js` | test | `clean/tracked` | 25150 |
-| `ui/__tests__/mira-core-runtime-preflight.test.js` | test | `clean/tracked` | 26846 |
-| `ui/__tests__/mira-core-runtime-promotion-gate.test.js` | test | `clean/tracked` | 19708 |
-| `ui/__tests__/mira-core-runtime-readiness-refresh-through-phase37.test.js` | test | `clean/tracked` | 25590 |
-| `ui/__tests__/mira-core-runtime-slice.test.js` | test | `clean/tracked` | 20708 |
-| `ui/__tests__/mira-core-runtime-status-milestone-refresh.test.js` | test | `clean/tracked` | 18992 |
-| `ui/__tests__/mira-core-server-api.test.js` | test | `clean/tracked` | 28772 |
-| `ui/__tests__/mira-core-server-boundary.test.js` | test | `clean/tracked` | 18902 |
-| `ui/__tests__/mira-core-server-handler.test.js` | test | `clean/tracked` | 34150 |
-| `ui/__tests__/mira-core-server-runtime-gap.test.js` | test | `clean/tracked` | 17986 |
-| `ui/__tests__/mira-core-server-upload.test.js` | test | `clean/tracked` | 19139 |
-| `ui/__tests__/mira-core-snapshot.test.js` | test | `clean/tracked` | 23410 |
-| `ui/__tests__/mira-core-storage-retention.test.js` | test | `clean/tracked` | 22733 |
-| `ui/__tests__/mira-core-typed-capability-roundtable-v0.test.js` | test | `clean/tracked` | 17659 |
-| `ui/__tests__/mira-core-typed-restart-continuity-context-v0.test.js` | test | `clean/tracked` | 8844 |
-| `ui/__tests__/mira-direct-channel-readiness.test.js` | test | `clean/tracked` | 9774 |
-| `ui/__tests__/mira-email-curiosity.test.js` | test | `clean/tracked` | 6012 |
-| `ui/__tests__/mira-environment-curiosity.test.js` | test | `clean/tracked` | 9520 |
-| `ui/__tests__/mira-execute-reviewed-import.test.js` | test | `clean/tracked` | 11215 |
-| `ui/__tests__/mira-extraction-main-ui.test.js` | test | `clean/tracked` | 1423 |
-| `ui/__tests__/mira-first-batch-approval-marker.test.js` | test | `clean/tracked` | 3101 |
-| `ui/__tests__/mira-first-batch-dry-run-report.test.js` | test | `clean/tracked` | 2204 |
-| `ui/__tests__/mira-hm-send-adapter.test.js` | test | `clean/tracked` | 4440 |
-| `ui/__tests__/mira-import-approval-marker-semantics.test.js` | test | `clean/tracked` | 2622 |
-| `ui/__tests__/mira-import-executor-semantics.test.js` | test | `clean/tracked` | 3232 |
-| `ui/__tests__/mira-import-receipt-semantics.test.js` | test | `clean/tracked` | 2491 |
-| `ui/__tests__/mira-import-status.test.js` | test | `clean/tracked` | 3773 |
-| `ui/__tests__/mira-lab-default-ui.test.js` | test | `clean/tracked` | 12201 |
-| `ui/__tests__/mira-lab-prompt-reply.test.js` | test | `clean/tracked` | 92147 |
-| `ui/__tests__/mira-lab-surface.test.js` | test | `clean/tracked` | 174937 |
-| `ui/__tests__/mira-lab-verify-bootstrap-state.test.js` | test | `clean/tracked` | 6292 |
-| `ui/__tests__/mira-live-entrypoint.test.js` | test | `clean/tracked` | 2824 |
-| `ui/__tests__/mira-local-text-tab.test.js` | test | `M ` | 24191 |
-| `ui/__tests__/mira-local-text-ui-surface.test.js` | test | `M ` | 82687 |
-| `ui/__tests__/mira-memory-curiosity.test.js` | test | `clean/tracked` | 3579 |
-| `ui/__tests__/mira-meta-posture-gate.test.js` | test | `clean/tracked` | 35686 |
-| `ui/__tests__/mira-normalized-core-import-contract.test.js` | test | `clean/tracked` | 22024 |
-| `ui/__tests__/mira-north-star-acceptance.test.js` | test | `clean/tracked` | 7135 |
-| `ui/__tests__/mira-operator-context-normalizer.test.js` | test | `clean/tracked` | 2912 |
-| `ui/__tests__/mira-persona-loader-v0.test.js` | test | `clean/tracked` | 13766 |
-| `ui/__tests__/mira-presence-runtime-acceptance.test.js` | test | `clean/tracked` | 37529 |
-| `ui/__tests__/mira-presence-runtime-state-v0.test.js` | test | `clean/tracked` | 36134 |
-| `ui/__tests__/mira-product-foundation.test.js` | test | `clean/tracked` | 2780 |
-| `ui/__tests__/mira-progress-proof-inputs-v0.test.js` | test | `clean/tracked` | 6688 |
-| `ui/__tests__/mira-progress-v0.test.js` | test | `clean/tracked` | 14009 |
-| `ui/__tests__/mira-read-pane-messages.test.js` | test | `clean/tracked` | 5844 |
-| `ui/__tests__/mira-reviewed-import-plan.test.js` | test | `clean/tracked` | 3657 |
-| `ui/__tests__/mira-runtime-bridge-api.test.js` | test | `clean/tracked` | 337528 |
-| `ui/__tests__/mira-runtime-bridge-request-plan.test.js` | test | `clean/tracked` | 4408 |
-| `ui/__tests__/mira-runtime-continuity-loader-contract.test.js` | test | `clean/tracked` | 2431 |
-| `ui/__tests__/mira-runtime-curiosity.test.js` | test | `clean/tracked` | 5594 |
-| `ui/__tests__/mira-runtime-internal-pane-send-activation.test.js` | test | `clean/tracked` | 23693 |
-| `ui/__tests__/mira-runtime-squidrun-context.test.js` | test | `clean/tracked` | 147025 |
-| `ui/__tests__/mira-runtime-state-root.test.js` | test | `clean/tracked` | 19785 |
-| `ui/__tests__/mira-runtime-turn-visible-reply-parity.test.js` | test | `clean/tracked` | 12188 |
-| `ui/__tests__/mira-runtime-ui-read-only-boot.test.js` | test | `clean/tracked` | 468987 |
-| `ui/__tests__/mira-send-pane-message-cli.test.js` | test | `clean/tracked` | 5931 |
-| `ui/__tests__/mira-source-action-substrate.test.js` | test | `clean/tracked` | 6719 |
-| `ui/__tests__/mira-start-local-runtime.test.js` | test | `clean/tracked` | 3495 |
-| `ui/__tests__/mira-state-import-tooling.test.js` | test | `clean/tracked` | 2140 |
-| `ui/__tests__/mira-system-map-guard.test.js` | test | `M ` | 9678 |
-| `ui/__tests__/mira-tab-language-gate.test.js` | test | `clean/tracked` | 6322 |
-| `ui/__tests__/mira-telegram-turn-candidate.test.js` | test | `clean/tracked` | 5876 |
-| `ui/__tests__/mira-visual-asset-curiosity.test.js` | test | `clean/tracked` | 5327 |
-| `ui/__tests__/mira-voice-conversation-audit.test.js` | test | `clean/tracked` | 6458 |
-| `ui/__tests__/mira-voice-correction-capture.test.js` | test | `clean/tracked` | 4934 |
-| `ui/__tests__/mira-voice-lab.test.js` | test | `clean/tracked` | 4349 |
-| `ui/__tests__/mira-web-research-curiosity.test.js` | test | `clean/tracked` | 2662 |
-| `ui/__tests__/mira-work-continuation-curiosity.test.js` | test | `clean/tracked` | 4556 |
-| `ui/__tests__/mira-work-evidence-gate.test.js` | test | `clean/tracked` | 3157 |
-| `ui/__tests__/mocks/electron.js` | test | `clean/tracked` | 2439 |
-| `ui/__tests__/model-switch-handlers.test.js` | test | `clean/tracked` | 11047 |
-| `ui/__tests__/notifications.test.js` | test | `clean/tracked` | 7982 |
-| `ui/__tests__/operator-hub-scripts.test.js` | test | `clean/tracked` | 5376 |
-| `ui/__tests__/oracle-handlers.test.js` | test | `clean/tracked` | 6003 |
-| `ui/__tests__/organic-ui-handlers.test.js` | test | `clean/tracked` | 18592 |
-| `ui/__tests__/output-validation-handlers.test.js` | test | `clean/tracked` | 10309 |
-| `ui/__tests__/owned-work-continue-broker.test.js` | test | `clean/tracked` | 7514 |
-| `ui/__tests__/owned-work-summary.test.js` | test | `clean/tracked` | 5856 |
-| `ui/__tests__/pane-control-service.test.js` | test | `clean/tracked` | 5155 |
-| `ui/__tests__/pane-host-renderer.test.js` | test | `clean/tracked` | 9648 |
-| `ui/__tests__/pane-host-window-manager.test.js` | test | `clean/tracked` | 5644 |
-| `ui/__tests__/pane-visibility.test.js` | test | `clean/tracked` | 13359 |
-| `ui/__tests__/perf-audit-handlers.test.js` | test | `clean/tracked` | 12958 |
-| `ui/__tests__/performance-data-helper.test.js` | test | `clean/tracked` | 3044 |
-| `ui/__tests__/performance-tracking-handlers.test.js` | test | `clean/tracked` | 9606 |
-| `ui/__tests__/phone-voice-client.test.js` | test | `clean/tracked` | 6860 |
-| `ui/__tests__/pipeline.test.js` | test | `clean/tracked` | 20816 |
-| `ui/__tests__/plugin-handlers.test.js` | test | `clean/tracked` | 9361 |
-| `ui/__tests__/precommit-handlers.test.js` | test | `clean/tracked` | 10872 |
-| `ui/__tests__/presence-state.test.js` | test | `clean/tracked` | 1631 |
-| `ui/__tests__/problem-orchestrator.test.js` | test | `clean/tracked` | 5079 |
-| `ui/__tests__/process-handlers.test.js` | test | `clean/tracked` | 10914 |
-| `ui/__tests__/profile.test.js` | test | `clean/tracked` | 3267 |
-| `ui/__tests__/project-handlers.test.js` | test | `clean/tracked` | 30156 |
-| `ui/__tests__/protocol.test.js` | test | `clean/tracked` | 5064 |
-| `ui/__tests__/pty-handlers.test.js` | test | `clean/tracked` | 36692 |
-| `ui/__tests__/pty-output-filter.test.js` | test | `clean/tracked` | 2867 |
-| `ui/__tests__/recall-boundary.test.js` | test | `clean/tracked` | 1262 |
-| `ui/__tests__/recall-feedback.test.js` | test | `clean/tracked` | 9009 |
-| `ui/__tests__/recovery-handlers.test.js` | test | `clean/tracked` | 11088 |
-| `ui/__tests__/recovery-manager.test.js` | test | `clean/tracked` | 23125 |
-| `ui/__tests__/recovery.test.js` | test | `clean/tracked` | 22623 |
-| `ui/__tests__/relay-server-security.test.js` | test | `clean/tracked` | 10258 |
-| `ui/__tests__/renderer-csp.test.js` | test | `clean/tracked` | 606 |
-| `ui/__tests__/renderer-events.test.js` | test | `clean/tracked` | 9775 |
-| `ui/__tests__/renderer-ipc-registry.test.js` | test | `clean/tracked` | 2556 |
-| `ui/__tests__/renderer.test.js` | test | `clean/tracked` | 12985 |
-| `ui/__tests__/resource-handlers.test.js` | test | `clean/tracked` | 20429 |
-| `ui/__tests__/scheduler-handlers.test.js` | test | `clean/tracked` | 10860 |
-| `ui/__tests__/scheduler.test.js` | test | `clean/tracked` | 27737 |
-| `ui/__tests__/scoped-context-firewall.test.js` | test | `clean/tracked` | 2030 |
-| `ui/__tests__/screenshot-handlers.test.js` | test | `clean/tracked` | 13873 |
-| `ui/__tests__/service-lifecycle-registry.test.js` | test | `clean/tracked` | 1678 |
-| `ui/__tests__/session-history-handlers.test.js` | test | `clean/tracked` | 4316 |
-| `ui/__tests__/session-summary-handlers.test.js` | test | `clean/tracked` | 9188 |
-| `ui/__tests__/settings-capabilities.test.js` | test | `clean/tracked` | 2172 |
-| `ui/__tests__/settings-handlers.test.js` | test | `clean/tracked` | 23018 |
-| `ui/__tests__/settings-manager.test.js` | test | `clean/tracked` | 16476 |
-| `ui/__tests__/setup.js` | test | `clean/tracked` | 602 |
-| `ui/__tests__/shared-context-handlers.test.js` | test | `clean/tracked` | 4713 |
-| `ui/__tests__/shared-state.test.js` | test | `clean/tracked` | 6312 |
-| `ui/__tests__/smart-routing-handlers.test.js` | test | `clean/tracked` | 6642 |
-| `ui/__tests__/smart-routing.test.js` | test | `clean/tracked` | 10637 |
-| `ui/__tests__/sms-poller.test.js` | test | `clean/tracked` | 8013 |
-| `ui/__tests__/social-move-classifier-v0.test.js` | test | `clean/tracked` | 26226 |
-| `ui/__tests__/squidrun-app.test.js` | test | `clean/tracked` | 230661 |
-| `ui/__tests__/startup-ai-briefing.test.js` | test | `clean/tracked` | 36233 |
-| `ui/__tests__/startup-source-of-truth.test.js` | test | `clean/tracked` | 1987 |
-| `ui/__tests__/startup-transcript-context.test.js` | test | `clean/tracked` | 10069 |
-| `ui/__tests__/state-handlers.test.js` | test | `clean/tracked` | 8772 |
-| `ui/__tests__/status-strip.test.js` | test | `clean/tracked` | 3782 |
-| `ui/__tests__/supervisor-daemon-memory-index.test.js` | test | `clean/tracked` | 3949 |
-| `ui/__tests__/supervisor-store.test.js` | test | `clean/tracked` | 5964 |
-| `ui/__tests__/task-parser-handlers.test.js` | test | `clean/tracked` | 10195 |
-| `ui/__tests__/task-parser.test.js` | test | `clean/tracked` | 4212 |
-| `ui/__tests__/task-pool-handlers.test.js` | test | `clean/tracked` | 4325 |
-| `ui/__tests__/team-memory-claims.test.js` | test | `clean/tracked` | 17616 |
-| `ui/__tests__/team-memory-comms-tagged-extractor.test.js` | test | `clean/tracked` | 4561 |
-| `ui/__tests__/team-memory-daily-integration.test.js` | test | `clean/tracked` | 5409 |
-| `ui/__tests__/team-memory-guards.test.js` | test | `clean/tracked` | 4183 |
-| `ui/__tests__/team-memory-handlers.test.js` | test | `clean/tracked` | 8835 |
-| `ui/__tests__/team-memory-integrity-checker.test.js` | test | `clean/tracked` | 5436 |
-| `ui/__tests__/team-memory-patterns.test.js` | test | `clean/tracked` | 6889 |
-| `ui/__tests__/team-memory-runtime-experiments.test.js` | test | `clean/tracked` | 2661 |
-| `ui/__tests__/team-memory-runtime.test.js` | test | `clean/tracked` | 15791 |
-| `ui/__tests__/team-memory-store.test.js` | test | `clean/tracked` | 2603 |
-| `ui/__tests__/team-memory-worker-client.test.js` | test | `clean/tracked` | 2242 |
-| `ui/__tests__/telegram-poller.test.js` | test | `clean/tracked` | 22776 |
-| `ui/__tests__/template-handlers.test.js` | test | `clean/tracked` | 19093 |
-| `ui/__tests__/terminal-events.test.js` | test | `clean/tracked` | 12686 |
-| `ui/__tests__/terminal.test.js` | test | `clean/tracked` | 71330 |
-| `ui/__tests__/test-execution-handlers.test.js` | test | `clean/tracked` | 10226 |
-| `ui/__tests__/test-notification-handlers.test.js` | test | `clean/tracked` | 8456 |
-| `ui/__tests__/token-utils.test.js` | test | `clean/tracked` | 5466 |
-| `ui/__tests__/transcript-index.test.js` | test | `clean/tracked` | 4531 |
-| `ui/__tests__/transition-ledger-handlers.test.js` | test | `clean/tracked` | 5270 |
-| `ui/__tests__/transition-ledger.test.js` | test | `clean/tracked` | 23199 |
-| `ui/__tests__/triggers-full.test.js` | test | `clean/tracked` | 23460 |
-| `ui/__tests__/triggers-metrics.test.js` | test | `clean/tracked` | 11307 |
-| `ui/__tests__/triggers-routing.test.js` | test | `clean/tracked` | 17495 |
-| `ui/__tests__/triggers.test.js` | test | `clean/tracked` | 3460 |
-| `ui/__tests__/usage-manager.test.js` | test | `clean/tracked` | 1841 |
-| `ui/__tests__/usage-stats-handlers.test.js` | test | `clean/tracked` | 9817 |
-| `ui/__tests__/user-profile-handlers.test.js` | test | `clean/tracked` | 4634 |
-| `ui/__tests__/voice-broker-handlers.test.js` | test | `clean/tracked` | 5262 |
-| `ui/__tests__/voice-broker-lease-contract.test.js` | test | `clean/tracked` | 31375 |
-| `ui/__tests__/voice-broker-tab.test.js` | test | `clean/tracked` | 35900 |
-| `ui/__tests__/voice-broker.test.js` | test | `clean/tracked` | 44789 |
-| `ui/__tests__/watcher-worker.test.js` | test | `clean/tracked` | 3208 |
-| `ui/__tests__/watcher.test.js` | test | `clean/tracked` | 32313 |
-| `ui/__tests__/websocket-delivery.test.js` | test | `clean/tracked` | 61728 |
-| `ui/__tests__/websocket-runtime-paths.test.js` | test | `clean/tracked` | 2394 |
-| `ui/__tests__/websocket-runtime-queue.test.js` | test | `clean/tracked` | 10280 |
-| `ui/__tests__/websocket-server.test.js` | test | `clean/tracked` | 6449 |
-| `ui/__tests__/whisper-handlers.test.js` | test | `clean/tracked` | 5960 |
-| `ui/__tests__/window-team-bootstrap.test.js` | test | `clean/tracked` | 5421 |
-| `ui/__tests__/workflow-handlers.test.js` | test | `clean/tracked` | 20664 |
+| Path | Kind | Bytes |
+| --- | --- | ---: |
+| `ui/__tests__/activity-log-handlers.test.js` | test | 5259 |
+| `ui/__tests__/agent-claims-handlers.test.js` | test | 3950 |
+| `ui/__tests__/agent-colors.test.js` | test | 14920 |
+| `ui/__tests__/ansi.test.js` | test | 297 |
+| `ui/__tests__/app-control-service.test.js` | test | 6000 |
+| `ui/__tests__/auto-handoff-handlers.test.js` | test | 3147 |
+| `ui/__tests__/auto-handoff-materializer.test.js` | test | 82195 |
+| `ui/__tests__/auto-nudge-handlers.test.js` | test | 16904 |
+| `ui/__tests__/autonomous-smoke.test.js` | test | 4388 |
+| `ui/__tests__/background-agent-manager.test.js` | test | 9965 |
+| `ui/__tests__/background-processes.test.js` | test | 4614 |
+| `ui/__tests__/backup-handlers.test.js` | test | 6136 |
+| `ui/__tests__/backup-manager.test.js` | test | 22049 |
+| `ui/__tests__/bridge-client.test.js` | test | 23319 |
+| `ui/__tests__/bridge.test.js` | test | 15554 |
+| `ui/__tests__/capability-planner.test.js` | test | 688 |
+| `ui/__tests__/checkpoint-handlers.test.js` | test | 17431 |
+| `ui/__tests__/claude-extract.test.js` | test | 1841 |
+| `ui/__tests__/cognitive-memory-api.test.js` | test | 21865 |
+| `ui/__tests__/cognitive-memory-handlers.test.js` | test | 4212 |
+| `ui/__tests__/cognitive-memory-immunity.test.js` | test | 4347 |
+| `ui/__tests__/cognitive-memory-sleep.test.js` | test | 14140 |
+| `ui/__tests__/cognitive-memory-store.test.js` | test | 8662 |
+| `ui/__tests__/command-palette.test.js` | test | 1775 |
+| `ui/__tests__/comms-console.test.js` | test | 10290 |
+| `ui/__tests__/comms-worker-client.test.js` | test | 6009 |
+| `ui/__tests__/compaction-detector.test.js` | test | 24279 |
+| `ui/__tests__/completion-detection-handlers.test.js` | test | 5632 |
+| `ui/__tests__/completion-quality-handlers.test.js` | test | 9571 |
+| `ui/__tests__/confidence-surface.test.js` | test | 1746 |
+| `ui/__tests__/config.test.js` | test | 8424 |
+| `ui/__tests__/conflict-detection-handlers.test.js` | test | 2110 |
+| `ui/__tests__/context-compressor.test.js` | test | 41480 |
+| `ui/__tests__/contract-promotion-handlers.test.js` | test | 2076 |
+| `ui/__tests__/contract-promotion-service.test.js` | test | 4422 |
+| `ui/__tests__/contract-promotion.test.js` | test | 14480 |
+| `ui/__tests__/contracts.test.js` | test | 14703 |
+| `ui/__tests__/coord-path-integration.test.js` | test | 2224 |
+| `ui/__tests__/cross-device-bridge-e2e.test.js` | test | 11168 |
+| `ui/__tests__/cross-device-target.test.js` | test | 2891 |
+| `ui/__tests__/daemon-handlers.test.js` | test | 46784 |
+| `ui/__tests__/daemon-snapshot.test.js` | test | 2336 |
+| `ui/__tests__/daemon.test.js` | test | 16804 |
+| `ui/__tests__/debug-replay-handlers.test.js` | test | 28695 |
+| `ui/__tests__/device-pairing-handlers.test.js` | test | 1603 |
+| `ui/__tests__/diagnostic-log.test.js` | test | 3548 |
+| `ui/__tests__/doc-generator.test.js` | test | 4966 |
+| `ui/__tests__/error-handlers.test.js` | test | 14765 |
+| `ui/__tests__/event-bus.test.js` | test | 56505 |
+| `ui/__tests__/evidence-ledger-e2e.test.js` | test | 7854 |
+| `ui/__tests__/evidence-ledger-handlers-worker-routing.test.js` | test | 3256 |
+| `ui/__tests__/evidence-ledger-ingest.test.js` | test | 2688 |
+| `ui/__tests__/evidence-ledger-integration.test.js` | test | 12104 |
+| `ui/__tests__/evidence-ledger-investigator.test.js` | test | 14394 |
+| `ui/__tests__/evidence-ledger-ipc-integration.test.js` | test | 8140 |
+| `ui/__tests__/evidence-ledger-memory-seed.test.js` | test | 4100 |
+| `ui/__tests__/evidence-ledger-memory.test.js` | test | 16048 |
+| `ui/__tests__/evidence-ledger-query-contract.test.js` | test | 21051 |
+| `ui/__tests__/evidence-ledger-store-config.test.js` | test | 2455 |
+| `ui/__tests__/evidence-ledger-store.test.js` | test | 11435 |
+| `ui/__tests__/evidence-ledger-worker-client.test.js` | test | 2705 |
+| `ui/__tests__/experiment-profiles.test.js` | test | 4052 |
+| `ui/__tests__/experiment-runtime-evidence-chain.test.js` | test | 7967 |
+| `ui/__tests__/experiment-runtime-isolation.test.js` | test | 7635 |
+| `ui/__tests__/experiment-runtime-paths.test.js` | test | 1881 |
+| `ui/__tests__/experiment-runtime-shared-scope.test.js` | test | 1970 |
+| `ui/__tests__/experiment-worker-client.test.js` | test | 2240 |
+| `ui/__tests__/external-notification-handlers.test.js` | test | 3657 |
+| `ui/__tests__/external-notifications-pruning.test.js` | test | 1328 |
+| `ui/__tests__/external-notifications.test.js` | test | 2569 |
+| `ui/__tests__/extraction-helpers.test.js` | test | 2311 |
+| `ui/__tests__/feature-capability-gating.test.js` | test | 6875 |
+| `ui/__tests__/firmware-manager.test.js` | test | 8397 |
+| `ui/__tests__/fixtures/mira-core-auth-binding-contract.json` | test | 47493 |
+| `ui/__tests__/fixtures/mira-core-durable-state-seed-v0-contract.json` | test | 6315 |
+| `ui/__tests__/fixtures/mira-core-encryption-key-contract.json` | test | 50923 |
+| `ui/__tests__/fixtures/mira-core-eval-contract.json` | test | 30290 |
+| `ui/__tests__/fixtures/mira-core-growth-loop-v0-contract.json` | test | 7178 |
+| `ui/__tests__/fixtures/mira-core-identity-anchor-v0-contract.json` | test | 7986 |
+| `ui/__tests__/fixtures/mira-core-identity-signing-contract.json` | test | 42812 |
+| `ui/__tests__/fixtures/mira-core-intent-queue-contract.json` | test | 34855 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-boundary-refresh-contract.json` | test | 66421 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-dry-check-contract.json` | test | 64755 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-preimplementation-checklist-contract.json` | test | 57334 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-gap-contract.json` | test | 66555 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase49-contract.json` | test | 75812 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase50-contract.json` | test | 81607 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase51-contract.json` | test | 86622 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase52-contract.json` | test | 90136 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase53-contract.json` | test | 95976 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase54-contract.json` | test | 106689 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase55-contract.json` | test | 115501 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase56-contract.json` | test | 124724 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase57-contract.json` | test | 133791 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase58-contract.json` | test | 144128 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase59-contract.json` | test | 153603 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase60-contract.json` | test | 163522 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase61-contract.json` | test | 176447 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase62-contract.json` | test | 191852 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase63-contract.json` | test | 202651 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase64-contract.json` | test | 216776 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase65-contract.json` | test | 231387 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase66-contract.json` | test | 248113 |
+| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-safety-contract.json` | test | 73261 |
+| `ui/__tests__/fixtures/mira-core-local-acceptance-contract.json` | test | 36362 |
+| `ui/__tests__/fixtures/mira-core-local-text-session-v0-contract.json` | test | 8799 |
+| `ui/__tests__/fixtures/mira-core-milestone-readiness-contract.json` | test | 41460 |
+| `ui/__tests__/fixtures/mira-core-mutation-patch-contract.json` | test | 31566 |
+| `ui/__tests__/fixtures/mira-core-orientation-contract.json` | test | 17414 |
+| `ui/__tests__/fixtures/mira-core-perception-contract.json` | test | 34124 |
+| `ui/__tests__/fixtures/mira-core-persistence-audit-contract.json` | test | 47582 |
+| `ui/__tests__/fixtures/mira-core-presence-runtime-read-path-v0-contract.json` | test | 7476 |
+| `ui/__tests__/fixtures/mira-core-presence-v0-contract.json` | test | 5054 |
+| `ui/__tests__/fixtures/mira-core-profile-contract.json` | test | 21114 |
+| `ui/__tests__/fixtures/mira-core-proposal-contract.json` | test | 32746 |
+| `ui/__tests__/fixtures/mira-core-pulse-contract.json` | test | 20466 |
+| `ui/__tests__/fixtures/mira-core-readiness-contract.json` | test | 44851 |
+| `ui/__tests__/fixtures/mira-core-relationship-presence-v1-contract.json` | test | 6793 |
+| `ui/__tests__/fixtures/mira-core-runtime-control-path-contract.json` | test | 40879 |
+| `ui/__tests__/fixtures/mira-core-runtime-control-reporting-reconciliation-contract.json` | test | 41431 |
+| `ui/__tests__/fixtures/mira-core-runtime-controls-contract.json` | test | 36291 |
+| `ui/__tests__/fixtures/mira-core-runtime-dry-run-implementation-contract.json` | test | 37537 |
+| `ui/__tests__/fixtures/mira-core-runtime-dry-run-readiness-gap-contract.json` | test | 50770 |
+| `ui/__tests__/fixtures/mira-core-runtime-dry-run-review-contract.json` | test | 30046 |
+| `ui/__tests__/fixtures/mira-core-runtime-dry-runner-contract.json` | test | 35499 |
+| `ui/__tests__/fixtures/mira-core-runtime-harness-contract.json` | test | 71983 |
+| `ui/__tests__/fixtures/mira-core-runtime-milestone-refresh-contract.json` | test | 66191 |
+| `ui/__tests__/fixtures/mira-core-runtime-mode-flag-reader-safety-contract.json` | test | 82603 |
+| `ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-contract.json` | test | 56243 |
+| `ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-implementation-risk-contract.json` | test | 77828 |
+| `ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-prerequisite-boundary-contract.json` | test | 62644 |
+| `ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-status-gap-refresh-contract.json` | test | 58274 |
+| `ui/__tests__/fixtures/mira-core-runtime-next-action-contract.json` | test | 29115 |
+| `ui/__tests__/fixtures/mira-core-runtime-operator-status-contract.json` | test | 28370 |
+| `ui/__tests__/fixtures/mira-core-runtime-operator-ui-surface-contract.json` | test | 36761 |
+| `ui/__tests__/fixtures/mira-core-runtime-preflight-contract.json` | test | 30936 |
+| `ui/__tests__/fixtures/mira-core-runtime-promotion-gate-contract.json` | test | 31992 |
+| `ui/__tests__/fixtures/mira-core-runtime-readiness-refresh-through-phase37-contract.json` | test | 42659 |
+| `ui/__tests__/fixtures/mira-core-runtime-slice-contract.json` | test | 34300 |
+| `ui/__tests__/fixtures/mira-core-runtime-status-milestone-refresh-contract.json` | test | 38947 |
+| `ui/__tests__/fixtures/mira-core-server-api-contract.json` | test | 53449 |
+| `ui/__tests__/fixtures/mira-core-server-boundary-contract.json` | test | 36297 |
+| `ui/__tests__/fixtures/mira-core-server-handler-contract.json` | test | 54688 |
+| `ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json` | test | 40309 |
+| `ui/__tests__/fixtures/mira-core-server-upload-contract.json` | test | 31405 |
+| `ui/__tests__/fixtures/mira-core-snapshot-contract.json` | test | 11217 |
+| `ui/__tests__/fixtures/mira-core-storage-retention-contract.json` | test | 43175 |
+| `ui/__tests__/fixtures/mira-north-star-acceptance-contract.json` | test | 11079 |
+| `ui/__tests__/fixtures/mira-presence-runtime-acceptance-v0-contract.json` | test | 11509 |
+| `ui/__tests__/fixtures/mira-progress-contract-v0.json` | test | 9471 |
+| `ui/__tests__/formatters.test.js` | test | 3271 |
+| `ui/__tests__/friction-handlers.test.js` | test | 8460 |
+| `ui/__tests__/gemini-command.test.js` | test | 1914 |
+| `ui/__tests__/git-handlers.test.js` | test | 39443 |
+| `ui/__tests__/github-handlers.test.js` | test | 4628 |
+| `ui/__tests__/github-service.test.js` | test | 20339 |
+| `ui/__tests__/handler-registry.test.js` | test | 1151 |
+| `ui/__tests__/hazard-prefix.test.js` | test | 1439 |
+| `ui/__tests__/helpers/ipc-harness.js` | test | 2813 |
+| `ui/__tests__/helpers/mock-config.js` | test | 6524 |
+| `ui/__tests__/helpers/real-config.js` | test | 2090 |
+| `ui/__tests__/hm-bg.test.js` | test | 1886 |
+| `ui/__tests__/hm-claim-cli-e2e.test.js` | test | 5315 |
+| `ui/__tests__/hm-codebase-index.test.js` | test | 2292 |
+| `ui/__tests__/hm-experiment.test.js` | test | 2841 |
+| `ui/__tests__/hm-github.test.js` | test | 2922 |
+| `ui/__tests__/hm-health-snapshot.test.js` | test | 36767 |
+| `ui/__tests__/hm-initiative.test.js` | test | 7230 |
+| `ui/__tests__/hm-memory-ingest.test.js` | test | 2120 |
+| `ui/__tests__/hm-memory-promote.test.js` | test | 2695 |
+| `ui/__tests__/hm-mira-lab-prompt.test.js` | test | 11495 |
+| `ui/__tests__/hm-mira-lab-verify.test.js` | test | 16492 |
+| `ui/__tests__/hm-mira-self-direction.test.js` | test | 36931 |
+| `ui/__tests__/hm-pane.test.js` | test | 1571 |
+| `ui/__tests__/hm-phone-voice.test.js` | test | 1134 |
+| `ui/__tests__/hm-promotion.test.js` | test | 1602 |
+| `ui/__tests__/hm-reddit.test.js` | test | 10440 |
+| `ui/__tests__/hm-screenshot.test.js` | test | 641 |
+| `ui/__tests__/hm-send-coworker-output-lint.test.js` | test | 14371 |
+| `ui/__tests__/hm-send.test.js` | test | 106157 |
+| `ui/__tests__/hm-smoke-runner.test.js` | test | 11973 |
+| `ui/__tests__/hm-sms.test.js` | test | 3616 |
+| `ui/__tests__/hm-supervisor.test.js` | test | 894 |
+| `ui/__tests__/hm-task-queue.test.js` | test | 22280 |
+| `ui/__tests__/hm-telegram-poller-lane.test.js` | test | 3555 |
+| `ui/__tests__/hm-telegram-routing.test.js` | test | 7906 |
+| `ui/__tests__/hm-telegram.test.js` | test | 11866 |
+| `ui/__tests__/hm-transition.test.js` | test | 2309 |
+| `ui/__tests__/hm-twitter.test.js` | test | 11240 |
+| `ui/__tests__/hm-voice-broker.test.js` | test | 2656 |
+| `ui/__tests__/image-gen.test.js` | test | 12705 |
+| `ui/__tests__/inbound-poller-service.test.js` | test | 3227 |
+| `ui/__tests__/ingress-envelope.test.js` | test | 2607 |
+| `ui/__tests__/inject-message-ipc.test.js` | test | 4845 |
+| `ui/__tests__/injection-events.test.js` | test | 25354 |
+| `ui/__tests__/injection.test.js` | test | 91060 |
+| `ui/__tests__/input-shadow-log.test.js` | test | 2000 |
+| `ui/__tests__/ipc-handlers.test.js` | test | 5078 |
+| `ui/__tests__/jest-staged.test.js` | test | 2090 |
+| `ui/__tests__/kernel-bridge.test.js` | test | 3303 |
+| `ui/__tests__/knowledge-base.test.js` | test | 24040 |
+| `ui/__tests__/knowledge-graph-handlers.test.js` | test | 14100 |
+| `ui/__tests__/knowledge-handlers.test.js` | test | 4973 |
+| `ui/__tests__/launch-intent.test.js` | test | 2689 |
+| `ui/__tests__/learning-data-handlers.test.js` | test | 10832 |
+| `ui/__tests__/local-embedder.test.js` | test | 14089 |
+| `ui/__tests__/local-model-capabilities.test.js` | test | 2509 |
+| `ui/__tests__/logger.test.js` | test | 8889 |
+| `ui/__tests__/mcp-autoconfig-handlers.test.js` | test | 4987 |
+| `ui/__tests__/mcp-bridge.test.js` | test | 28446 |
+| `ui/__tests__/mcp-handlers.test.js` | test | 6477 |
+| `ui/__tests__/mcp-server.test.js` | test | 6250 |
+| `ui/__tests__/memory-broker.test.js` | test | 3881 |
+| `ui/__tests__/memory-consistency-check.test.js` | test | 29389 |
+| `ui/__tests__/memory-delivery.test.js` | test | 12530 |
+| `ui/__tests__/memory-ingest-integration.test.js` | test | 3536 |
+| `ui/__tests__/memory-ingest-recovery.test.js` | test | 13887 |
+| `ui/__tests__/memory-ingest-router.test.js` | test | 1268 |
+| `ui/__tests__/memory-ingest-schema.test.js` | test | 2712 |
+| `ui/__tests__/memory-promotion-lifecycle.test.js` | test | 19898 |
+| `ui/__tests__/memory-recall.test.js` | test | 15710 |
+| `ui/__tests__/memory-search.test.js` | test | 12759 |
+| `ui/__tests__/message-envelope-contract.test.js` | test | 2939 |
+| `ui/__tests__/message-queue-handlers.test.js` | test | 11537 |
+| `ui/__tests__/migration-007.test.js` | test | 6334 |
+| `ui/__tests__/migration-008.test.js` | test | 2472 |
+| `ui/__tests__/mira-architect-route-v0.test.js` | test | 25344 |
+| `ui/__tests__/mira-automation-scheduler-curiosity.test.js` | test | 4598 |
+| `ui/__tests__/mira-bridge-protocol.test.js` | test | 2623 |
+| `ui/__tests__/mira-bridge-send-receive-e2e.test.js` | test | 5978 |
+| `ui/__tests__/mira-browser-history-curiosity.test.js` | test | 5118 |
+| `ui/__tests__/mira-calendar-message-curiosity.test.js` | test | 5480 |
+| `ui/__tests__/mira-coordinator-snapshot.test.js` | test | 10881 |
+| `ui/__tests__/mira-core-auth-binding.test.js` | test | 22380 |
+| `ui/__tests__/mira-core-autonomy-substrate-v0.test.js` | test | 6761 |
+| `ui/__tests__/mira-core-durable-state-seed-v0.test.js` | test | 21950 |
+| `ui/__tests__/mira-core-empty-response-diagnostics.test.js` | test | 9379 |
+| `ui/__tests__/mira-core-encryption-key.test.js` | test | 29059 |
+| `ui/__tests__/mira-core-eval-runner.test.js` | test | 9250 |
+| `ui/__tests__/mira-core-experience-v0.test.js` | test | 13565 |
+| `ui/__tests__/mira-core-growth-loop-v0.test.js` | test | 37104 |
+| `ui/__tests__/mira-core-identity-anchor-v0.test.js` | test | 22913 |
+| `ui/__tests__/mira-core-identity-signing.test.js` | test | 19645 |
+| `ui/__tests__/mira-core-intent-queue.test.js` | test | 18748 |
+| `ui/__tests__/mira-core-kill-switch-wiring-noop-boundary-refresh.test.js` | test | 31277 |
+| `ui/__tests__/mira-core-kill-switch-wiring-noop-dry-check.test.js` | test | 29492 |
+| `ui/__tests__/mira-core-kill-switch-wiring-preimplementation-checklist.test.js` | test | 27277 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-gap.test.js` | test | 27403 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase49.test.js` | test | 27907 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase50.test.js` | test | 28982 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase51.test.js` | test | 30670 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase52.test.js` | test | 32092 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase53.test.js` | test | 34589 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase54.test.js` | test | 40222 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase55.test.js` | test | 43541 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase56.test.js` | test | 46930 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase57.test.js` | test | 51278 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase58.test.js` | test | 55456 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase59.test.js` | test | 59392 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase60.test.js` | test | 63839 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase61.test.js` | test | 66496 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase62.test.js` | test | 71955 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase63.test.js` | test | 26333 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase64.test.js` | test | 28420 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase65.test.js` | test | 30039 |
+| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase66.test.js` | test | 32111 |
+| `ui/__tests__/mira-core-kill-switch-wiring-safety.test.js` | test | 27256 |
+| `ui/__tests__/mira-core-local-acceptance.test.js` | test | 18558 |
+| `ui/__tests__/mira-core-local-text-session-v0.test.js` | test | 33548 |
+| `ui/__tests__/mira-core-milestone-readiness.test.js` | test | 18628 |
+| `ui/__tests__/mira-core-mutation-patch.test.js` | test | 17974 |
+| `ui/__tests__/mira-core-orientation.test.js` | test | 27431 |
+| `ui/__tests__/mira-core-perception.test.js` | test | 17365 |
+| `ui/__tests__/mira-core-persistence-audit.test.js` | test | 26945 |
+| `ui/__tests__/mira-core-presence-runtime-read-path-v0.test.js` | test | 19056 |
+| `ui/__tests__/mira-core-presence-v0.test.js` | test | 12837 |
+| `ui/__tests__/mira-core-profiles.test.js` | test | 19816 |
+| `ui/__tests__/mira-core-proposal-validator.test.js` | test | 10806 |
+| `ui/__tests__/mira-core-pulse.test.js` | test | 11926 |
+| `ui/__tests__/mira-core-readiness.test.js` | test | 18634 |
+| `ui/__tests__/mira-core-relationship-presence-v1.test.js` | test | 26842 |
+| `ui/__tests__/mira-core-runtime-control-path.test.js` | test | 27789 |
+| `ui/__tests__/mira-core-runtime-control-reporting-reconciliation.test.js` | test | 27349 |
+| `ui/__tests__/mira-core-runtime-controls.test.js` | test | 22589 |
+| `ui/__tests__/mira-core-runtime-dry-run-implementation.test.js` | test | 26630 |
+| `ui/__tests__/mira-core-runtime-dry-run-readiness-gap.test.js` | test | 30441 |
+| `ui/__tests__/mira-core-runtime-dry-run-review.test.js` | test | 21849 |
+| `ui/__tests__/mira-core-runtime-dry-runner.test.js` | test | 22553 |
+| `ui/__tests__/mira-core-runtime-harness.test.js` | test | 41516 |
+| `ui/__tests__/mira-core-runtime-milestone-refresh.test.js` | test | 19979 |
+| `ui/__tests__/mira-core-runtime-mode-flag-reader-safety.test.js` | test | 30448 |
+| `ui/__tests__/mira-core-runtime-mode-kill-switch-implementation-risk.test.js` | test | 31402 |
+| `ui/__tests__/mira-core-runtime-mode-kill-switch-prerequisite-boundary.test.js` | test | 29089 |
+| `ui/__tests__/mira-core-runtime-mode-kill-switch-status-gap-refresh.test.js` | test | 31274 |
+| `ui/__tests__/mira-core-runtime-mode-kill-switch.test.js` | test | 30606 |
+| `ui/__tests__/mira-core-runtime-next-action.test.js` | test | 19561 |
+| `ui/__tests__/mira-core-runtime-operator-status.test.js` | test | 20165 |
+| `ui/__tests__/mira-core-runtime-operator-ui-surface.test.js` | test | 25150 |
+| `ui/__tests__/mira-core-runtime-preflight.test.js` | test | 26846 |
+| `ui/__tests__/mira-core-runtime-promotion-gate.test.js` | test | 19708 |
+| `ui/__tests__/mira-core-runtime-readiness-refresh-through-phase37.test.js` | test | 25590 |
+| `ui/__tests__/mira-core-runtime-slice.test.js` | test | 20708 |
+| `ui/__tests__/mira-core-runtime-status-milestone-refresh.test.js` | test | 18992 |
+| `ui/__tests__/mira-core-server-api.test.js` | test | 28772 |
+| `ui/__tests__/mira-core-server-boundary.test.js` | test | 18902 |
+| `ui/__tests__/mira-core-server-handler.test.js` | test | 34150 |
+| `ui/__tests__/mira-core-server-runtime-gap.test.js` | test | 17986 |
+| `ui/__tests__/mira-core-server-upload.test.js` | test | 19139 |
+| `ui/__tests__/mira-core-snapshot.test.js` | test | 23410 |
+| `ui/__tests__/mira-core-storage-retention.test.js` | test | 22733 |
+| `ui/__tests__/mira-core-typed-capability-roundtable-v0.test.js` | test | 17659 |
+| `ui/__tests__/mira-core-typed-restart-continuity-context-v0.test.js` | test | 8844 |
+| `ui/__tests__/mira-direct-channel-readiness.test.js` | test | 9774 |
+| `ui/__tests__/mira-email-curiosity.test.js` | test | 6012 |
+| `ui/__tests__/mira-environment-curiosity.test.js` | test | 9520 |
+| `ui/__tests__/mira-execute-reviewed-import.test.js` | test | 11215 |
+| `ui/__tests__/mira-extraction-main-ui.test.js` | test | 1423 |
+| `ui/__tests__/mira-first-batch-approval-marker.test.js` | test | 3101 |
+| `ui/__tests__/mira-first-batch-dry-run-report.test.js` | test | 2204 |
+| `ui/__tests__/mira-hm-send-adapter.test.js` | test | 4440 |
+| `ui/__tests__/mira-import-approval-marker-semantics.test.js` | test | 2622 |
+| `ui/__tests__/mira-import-executor-semantics.test.js` | test | 3232 |
+| `ui/__tests__/mira-import-receipt-semantics.test.js` | test | 2491 |
+| `ui/__tests__/mira-import-status.test.js` | test | 3773 |
+| `ui/__tests__/mira-lab-default-ui.test.js` | test | 12201 |
+| `ui/__tests__/mira-lab-prompt-reply.test.js` | test | 92147 |
+| `ui/__tests__/mira-lab-surface.test.js` | test | 174937 |
+| `ui/__tests__/mira-lab-verify-bootstrap-state.test.js` | test | 6292 |
+| `ui/__tests__/mira-live-entrypoint.test.js` | test | 2824 |
+| `ui/__tests__/mira-local-text-tab.test.js` | test | 24191 |
+| `ui/__tests__/mira-local-text-ui-surface.test.js` | test | 82687 |
+| `ui/__tests__/mira-memory-curiosity.test.js` | test | 3579 |
+| `ui/__tests__/mira-meta-posture-gate.test.js` | test | 35686 |
+| `ui/__tests__/mira-normalized-core-import-contract.test.js` | test | 22024 |
+| `ui/__tests__/mira-north-star-acceptance.test.js` | test | 7135 |
+| `ui/__tests__/mira-operator-context-normalizer.test.js` | test | 2912 |
+| `ui/__tests__/mira-persona-loader-v0.test.js` | test | 13766 |
+| `ui/__tests__/mira-presence-runtime-acceptance.test.js` | test | 37529 |
+| `ui/__tests__/mira-presence-runtime-state-v0.test.js` | test | 36134 |
+| `ui/__tests__/mira-product-foundation.test.js` | test | 2780 |
+| `ui/__tests__/mira-progress-proof-inputs-v0.test.js` | test | 6688 |
+| `ui/__tests__/mira-progress-v0.test.js` | test | 14009 |
+| `ui/__tests__/mira-read-pane-messages.test.js` | test | 5844 |
+| `ui/__tests__/mira-reviewed-import-plan.test.js` | test | 3657 |
+| `ui/__tests__/mira-runtime-bridge-api.test.js` | test | 337528 |
+| `ui/__tests__/mira-runtime-bridge-request-plan.test.js` | test | 4408 |
+| `ui/__tests__/mira-runtime-continuity-loader-contract.test.js` | test | 2431 |
+| `ui/__tests__/mira-runtime-curiosity.test.js` | test | 5594 |
+| `ui/__tests__/mira-runtime-internal-pane-send-activation.test.js` | test | 23693 |
+| `ui/__tests__/mira-runtime-squidrun-context.test.js` | test | 147025 |
+| `ui/__tests__/mira-runtime-state-root.test.js` | test | 19785 |
+| `ui/__tests__/mira-runtime-turn-visible-reply-parity.test.js` | test | 12188 |
+| `ui/__tests__/mira-runtime-ui-read-only-boot.test.js` | test | 468987 |
+| `ui/__tests__/mira-send-pane-message-cli.test.js` | test | 5931 |
+| `ui/__tests__/mira-source-action-substrate.test.js` | test | 6719 |
+| `ui/__tests__/mira-start-local-runtime.test.js` | test | 3495 |
+| `ui/__tests__/mira-state-import-tooling.test.js` | test | 2140 |
+| `ui/__tests__/mira-system-map-guard.test.js` | test | 9678 |
+| `ui/__tests__/mira-tab-language-gate.test.js` | test | 6322 |
+| `ui/__tests__/mira-telegram-turn-candidate.test.js` | test | 5876 |
+| `ui/__tests__/mira-visual-asset-curiosity.test.js` | test | 5327 |
+| `ui/__tests__/mira-voice-conversation-audit.test.js` | test | 6458 |
+| `ui/__tests__/mira-voice-correction-capture.test.js` | test | 4934 |
+| `ui/__tests__/mira-voice-lab.test.js` | test | 4349 |
+| `ui/__tests__/mira-web-research-curiosity.test.js` | test | 2662 |
+| `ui/__tests__/mira-work-continuation-curiosity.test.js` | test | 4556 |
+| `ui/__tests__/mira-work-evidence-gate.test.js` | test | 3157 |
+| `ui/__tests__/mocks/electron.js` | test | 2439 |
+| `ui/__tests__/model-switch-handlers.test.js` | test | 11047 |
+| `ui/__tests__/notifications.test.js` | test | 7982 |
+| `ui/__tests__/operator-hub-scripts.test.js` | test | 5376 |
+| `ui/__tests__/oracle-handlers.test.js` | test | 6003 |
+| `ui/__tests__/organic-ui-handlers.test.js` | test | 18592 |
+| `ui/__tests__/output-validation-handlers.test.js` | test | 10309 |
+| `ui/__tests__/owned-work-continue-broker.test.js` | test | 7514 |
+| `ui/__tests__/owned-work-summary.test.js` | test | 5856 |
+| `ui/__tests__/pane-control-service.test.js` | test | 5155 |
+| `ui/__tests__/pane-host-renderer.test.js` | test | 9648 |
+| `ui/__tests__/pane-host-window-manager.test.js` | test | 5644 |
+| `ui/__tests__/pane-visibility.test.js` | test | 13359 |
+| `ui/__tests__/perf-audit-handlers.test.js` | test | 12958 |
+| `ui/__tests__/performance-data-helper.test.js` | test | 3044 |
+| `ui/__tests__/performance-tracking-handlers.test.js` | test | 9606 |
+| `ui/__tests__/phone-voice-client.test.js` | test | 6860 |
+| `ui/__tests__/pipeline.test.js` | test | 20816 |
+| `ui/__tests__/plugin-handlers.test.js` | test | 9361 |
+| `ui/__tests__/precommit-handlers.test.js` | test | 10872 |
+| `ui/__tests__/presence-state.test.js` | test | 1631 |
+| `ui/__tests__/problem-orchestrator.test.js` | test | 5079 |
+| `ui/__tests__/process-handlers.test.js` | test | 10914 |
+| `ui/__tests__/profile.test.js` | test | 3267 |
+| `ui/__tests__/project-handlers.test.js` | test | 30156 |
+| `ui/__tests__/protocol.test.js` | test | 5064 |
+| `ui/__tests__/pty-handlers.test.js` | test | 36692 |
+| `ui/__tests__/pty-output-filter.test.js` | test | 2867 |
+| `ui/__tests__/recall-boundary.test.js` | test | 1262 |
+| `ui/__tests__/recall-feedback.test.js` | test | 9009 |
+| `ui/__tests__/recovery-handlers.test.js` | test | 11088 |
+| `ui/__tests__/recovery-manager.test.js` | test | 23125 |
+| `ui/__tests__/recovery.test.js` | test | 22623 |
+| `ui/__tests__/relay-server-security.test.js` | test | 10258 |
+| `ui/__tests__/renderer-csp.test.js` | test | 606 |
+| `ui/__tests__/renderer-events.test.js` | test | 9775 |
+| `ui/__tests__/renderer-ipc-registry.test.js` | test | 2556 |
+| `ui/__tests__/renderer.test.js` | test | 12985 |
+| `ui/__tests__/resource-handlers.test.js` | test | 20429 |
+| `ui/__tests__/scheduler-handlers.test.js` | test | 10860 |
+| `ui/__tests__/scheduler.test.js` | test | 27737 |
+| `ui/__tests__/scoped-context-firewall.test.js` | test | 2030 |
+| `ui/__tests__/screenshot-handlers.test.js` | test | 13873 |
+| `ui/__tests__/service-lifecycle-registry.test.js` | test | 1678 |
+| `ui/__tests__/session-history-handlers.test.js` | test | 4316 |
+| `ui/__tests__/session-summary-handlers.test.js` | test | 9188 |
+| `ui/__tests__/settings-capabilities.test.js` | test | 2172 |
+| `ui/__tests__/settings-handlers.test.js` | test | 23018 |
+| `ui/__tests__/settings-manager.test.js` | test | 16476 |
+| `ui/__tests__/setup.js` | test | 602 |
+| `ui/__tests__/shared-context-handlers.test.js` | test | 4713 |
+| `ui/__tests__/shared-state.test.js` | test | 6312 |
+| `ui/__tests__/smart-routing-handlers.test.js` | test | 6642 |
+| `ui/__tests__/smart-routing.test.js` | test | 10637 |
+| `ui/__tests__/sms-poller.test.js` | test | 8013 |
+| `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
+| `ui/__tests__/squidrun-app.test.js` | test | 230661 |
+| `ui/__tests__/startup-ai-briefing.test.js` | test | 36233 |
+| `ui/__tests__/startup-source-of-truth.test.js` | test | 1987 |
+| `ui/__tests__/startup-transcript-context.test.js` | test | 10069 |
+| `ui/__tests__/state-handlers.test.js` | test | 8772 |
+| `ui/__tests__/status-strip.test.js` | test | 3782 |
+| `ui/__tests__/supervisor-daemon-memory-index.test.js` | test | 3949 |
+| `ui/__tests__/supervisor-store.test.js` | test | 5964 |
+| `ui/__tests__/task-parser-handlers.test.js` | test | 10195 |
+| `ui/__tests__/task-parser.test.js` | test | 4212 |
+| `ui/__tests__/task-pool-handlers.test.js` | test | 4325 |
+| `ui/__tests__/team-memory-claims.test.js` | test | 17616 |
+| `ui/__tests__/team-memory-comms-tagged-extractor.test.js` | test | 4561 |
+| `ui/__tests__/team-memory-daily-integration.test.js` | test | 5409 |
+| `ui/__tests__/team-memory-guards.test.js` | test | 4183 |
+| `ui/__tests__/team-memory-handlers.test.js` | test | 8835 |
+| `ui/__tests__/team-memory-integrity-checker.test.js` | test | 5436 |
+| `ui/__tests__/team-memory-patterns.test.js` | test | 6889 |
+| `ui/__tests__/team-memory-runtime-experiments.test.js` | test | 2661 |
+| `ui/__tests__/team-memory-runtime.test.js` | test | 15791 |
+| `ui/__tests__/team-memory-store.test.js` | test | 2603 |
+| `ui/__tests__/team-memory-worker-client.test.js` | test | 2242 |
+| `ui/__tests__/telegram-poller.test.js` | test | 22776 |
+| `ui/__tests__/template-handlers.test.js` | test | 19093 |
+| `ui/__tests__/terminal-events.test.js` | test | 12686 |
+| `ui/__tests__/terminal.test.js` | test | 71330 |
+| `ui/__tests__/test-execution-handlers.test.js` | test | 10226 |
+| `ui/__tests__/test-notification-handlers.test.js` | test | 8456 |
+| `ui/__tests__/token-utils.test.js` | test | 5466 |
+| `ui/__tests__/transcript-index.test.js` | test | 4531 |
+| `ui/__tests__/transition-ledger-handlers.test.js` | test | 5270 |
+| `ui/__tests__/transition-ledger.test.js` | test | 23199 |
+| `ui/__tests__/triggers-full.test.js` | test | 23460 |
+| `ui/__tests__/triggers-metrics.test.js` | test | 11307 |
+| `ui/__tests__/triggers-routing.test.js` | test | 17495 |
+| `ui/__tests__/triggers.test.js` | test | 3460 |
+| `ui/__tests__/usage-manager.test.js` | test | 1841 |
+| `ui/__tests__/usage-stats-handlers.test.js` | test | 9817 |
+| `ui/__tests__/user-profile-handlers.test.js` | test | 4634 |
+| `ui/__tests__/voice-broker-handlers.test.js` | test | 5262 |
+| `ui/__tests__/voice-broker-lease-contract.test.js` | test | 31375 |
+| `ui/__tests__/voice-broker-tab.test.js` | test | 35900 |
+| `ui/__tests__/voice-broker.test.js` | test | 44789 |
+| `ui/__tests__/watcher-worker.test.js` | test | 3208 |
+| `ui/__tests__/watcher.test.js` | test | 32313 |
+| `ui/__tests__/websocket-delivery.test.js` | test | 61728 |
+| `ui/__tests__/websocket-runtime-paths.test.js` | test | 2394 |
+| `ui/__tests__/websocket-runtime-queue.test.js` | test | 10280 |
+| `ui/__tests__/websocket-server.test.js` | test | 6449 |
+| `ui/__tests__/whisper-handlers.test.js` | test | 5960 |
+| `ui/__tests__/window-team-bootstrap.test.js` | test | 5421 |
+| `ui/__tests__/workflow-handlers.test.js` | test | 20664 |
 
 ### ui/modules
 
-| Path | Kind | Status | Bytes |
-| --- | --- | --- | ---: |
-| `ui/modules/agent-templates.js` | source | `clean/tracked` | 2941 |
-| `ui/modules/analysis/doc-generator.js` | source | `clean/tracked` | 31812 |
-| `ui/modules/ansi.js` | source | `clean/tracked` | 189 |
-| `ui/modules/backup-manager.js` | source | `clean/tracked` | 15821 |
-| `ui/modules/bridge-client.js` | source | `clean/tracked` | 37954 |
-| `ui/modules/bridge/channel-policy.js` | source | `clean/tracked` | 5318 |
-| `ui/modules/bridge/preload-api.js` | source | `clean/tracked` | 8355 |
-| `ui/modules/bridge/renderer-modules.js` | source | `clean/tracked` | 842 |
-| `ui/modules/bridge/safe-ipc.js` | source | `clean/tracked` | 3924 |
-| `ui/modules/buffered-file-writer.js` | source | `clean/tracked` | 5113 |
-| `ui/modules/bus-reliability-trace.js` | source | `clean/tracked` | 2089 |
-| `ui/modules/capability-planner.js` | source | `clean/tracked` | 6232 |
-| `ui/modules/codex-utils.js` | source | `clean/tracked` | 474 |
-| `ui/modules/cognitive-memory-antibody.js` | source | `clean/tracked` | 30090 |
-| `ui/modules/cognitive-memory-api.js` | source | `clean/tracked` | 53288 |
-| `ui/modules/cognitive-memory-immunity.js` | source | `clean/tracked` | 15884 |
-| `ui/modules/cognitive-memory-sleep.js` | source | `clean/tracked` | 38611 |
-| `ui/modules/cognitive-memory-store.js` | source | `clean/tracked` | 31234 |
-| `ui/modules/command-palette.js` | source | `clean/tracked` | 6577 |
-| `ui/modules/comms-worker-client.js` | source | `clean/tracked` | 11742 |
-| `ui/modules/comms-worker.js` | source | `clean/tracked` | 4506 |
-| `ui/modules/comms/message-envelope.js` | source | `clean/tracked` | 6399 |
-| `ui/modules/compaction-detector.js` | source | `clean/tracked` | 14847 |
-| `ui/modules/confidence-surface.js` | source | `clean/tracked` | 2977 |
-| `ui/modules/constants.js` | source | `clean/tracked` | 5682 |
-| `ui/modules/context-compressor.js` | source | `clean/tracked` | 22801 |
-| `ui/modules/contract-promotion-service.js` | source | `clean/tracked` | 9284 |
-| `ui/modules/contract-promotion.js` | source | `clean/tracked` | 8291 |
-| `ui/modules/contracts.js` | source | `clean/tracked` | 3046 |
-| `ui/modules/cross-device-target.js` | source | `clean/tracked` | 2360 |
-| `ui/modules/daemon-handlers.js` | source | `clean/tracked` | 50063 |
-| `ui/modules/daemon-snapshot.js` | source | `clean/tracked` | 2031 |
-| `ui/modules/diagnostic-log.js` | source | `clean/tracked` | 1992 |
-| `ui/modules/event-bus.js` | source | `clean/tracked` | 22926 |
-| `ui/modules/experiment/index.js` | source | `clean/tracked` | 2533 |
-| `ui/modules/experiment/profiles.js` | source | `clean/tracked` | 7347 |
-| `ui/modules/experiment/runtime.js` | source | `clean/tracked` | 39158 |
-| `ui/modules/experiment/worker-client.js` | source | `clean/tracked` | 4514 |
-| `ui/modules/experiment/worker.js` | source | `clean/tracked` | 2308 |
-| `ui/modules/external-notifications.js` | source | `clean/tracked` | 9126 |
-| `ui/modules/feature-capabilities.js` | source | `clean/tracked` | 593 |
-| `ui/modules/formatters.js` | source | `clean/tracked` | 2798 |
-| `ui/modules/gemini-command.js` | source | `clean/tracked` | 2736 |
-| `ui/modules/image-gen.js` | source | `clean/tracked` | 10327 |
-| `ui/modules/ingress-envelope.js` | source | `clean/tracked` | 5196 |
-| `ui/modules/inject-message-ipc.js` | source | `clean/tracked` | 3468 |
-| `ui/modules/input-shadow-log.js` | source | `clean/tracked` | 2698 |
-| `ui/modules/ipc-handlers.js` | source | `clean/tracked` | 2972 |
-| `ui/modules/ipc/agent-claims-handlers.js` | source | `clean/tracked` | 997 |
-| `ui/modules/ipc/agent-metrics-handlers.js` | source | `clean/tracked` | 14899 |
-| `ui/modules/ipc/auto-handoff-handlers.js` | source | `clean/tracked` | 1458 |
-| `ui/modules/ipc/auto-nudge-handlers.js` | source | `clean/tracked` | 6672 |
-| `ui/modules/ipc/background-processes.js` | source | `clean/tracked` | 1380 |
-| `ui/modules/ipc/backup-handlers.js` | source | `clean/tracked` | 2490 |
-| `ui/modules/ipc/checkpoint-handlers.js` | source | `clean/tracked` | 9156 |
-| `ui/modules/ipc/cognitive-memory-handlers.js` | source | `clean/tracked` | 4879 |
-| `ui/modules/ipc/completion-detection-handlers.js` | source | `clean/tracked` | 2406 |
-| `ui/modules/ipc/completion-quality-handlers.js` | source | `clean/tracked` | 5536 |
-| `ui/modules/ipc/conflict-detection-handlers.js` | source | `clean/tracked` | 692 |
-| `ui/modules/ipc/contract-promotion-handlers.js` | source | `clean/tracked` | 1176 |
-| `ui/modules/ipc/debug-replay-handlers.js` | source | `clean/tracked` | 11470 |
-| `ui/modules/ipc/device-pairing-handlers.js` | source | `clean/tracked` | 4065 |
-| `ui/modules/ipc/error-handlers.js` | source | `clean/tracked` | 6600 |
-| `ui/modules/ipc/evidence-ledger-handlers.js` | source | `clean/tracked` | 6413 |
-| `ui/modules/ipc/evidence-ledger-runtime.js` | source | `clean/tracked` | 22372 |
-| `ui/modules/ipc/evidence-ledger-worker-client.js` | source | `clean/tracked` | 4664 |
-| `ui/modules/ipc/evidence-ledger-worker.js` | source | `clean/tracked` | 2441 |
-| `ui/modules/ipc/external-notification-handlers.js` | source | `clean/tracked` | 1117 |
-| `ui/modules/ipc/friction-handlers.js` | source | `clean/tracked` | 3092 |
-| `ui/modules/ipc/git-handlers.js` | source | `clean/tracked` | 15070 |
-| `ui/modules/ipc/github-handlers.js` | source | `clean/tracked` | 8897 |
-| `ui/modules/ipc/handler-registry.js` | source | `clean/tracked` | 7739 |
-| `ui/modules/ipc/index.js` | source | `clean/tracked` | 2082 |
-| `ui/modules/ipc/ipc-state.js` | source | `clean/tracked` | 1282 |
-| `ui/modules/ipc/knowledge-graph-handlers.js` | source | `clean/tracked` | 4704 |
-| `ui/modules/ipc/knowledge-handlers.js` | source | `clean/tracked` | 1857 |
-| `ui/modules/ipc/mcp-autoconfig-handlers.js` | source | `clean/tracked` | 3451 |
-| `ui/modules/ipc/mcp-handlers.js` | source | `clean/tracked` | 2254 |
-| `ui/modules/ipc/message-queue-handlers.js` | source | `clean/tracked` | 3881 |
-| `ui/modules/ipc/mira-coordinator-snapshot-handlers.js` | source | `clean/tracked` | 1280 |
-| `ui/modules/ipc/mira-lab-handlers.js` | source | `clean/tracked` | 9625 |
-| `ui/modules/ipc/mira-local-text-ui-surface-handlers.js` | source | `clean/tracked` | 1215 |
-| `ui/modules/ipc/model-switch-handlers.js` | source | `clean/tracked` | 5240 |
-| `ui/modules/ipc/oracle-handlers.js` | source | `clean/tracked` | 5663 |
-| `ui/modules/ipc/organic-ui-handlers.js` | source | `clean/tracked` | 10244 |
-| `ui/modules/ipc/output-validation-handlers.js` | source | `clean/tracked` | 5191 |
-| `ui/modules/ipc/owned-work-handlers.js` | source | `clean/tracked` | 712 |
-| `ui/modules/ipc/perf-audit-handlers.js` | source | `clean/tracked` | 6542 |
-| `ui/modules/ipc/plugin-handlers.js` | source | `clean/tracked` | 2937 |
-| `ui/modules/ipc/precommit-handlers.js` | source | `clean/tracked` | 5757 |
-| `ui/modules/ipc/preflight-handlers.js` | source | `clean/tracked` | 9244 |
-| `ui/modules/ipc/process-handlers.js` | source | `clean/tracked` | 7335 |
-| `ui/modules/ipc/project-handlers.js` | source | `clean/tracked` | 26464 |
-| `ui/modules/ipc/pty-handlers.js` | source | `clean/tracked` | 24303 |
-| `ui/modules/ipc/recovery-handlers.js` | source | `clean/tracked` | 3731 |
-| `ui/modules/ipc/resource-handlers.js` | source | `clean/tracked` | 8183 |
-| `ui/modules/ipc/scheduler-handlers.js` | source | `clean/tracked` | 2860 |
-| `ui/modules/ipc/screenshot-handlers.js` | source | `clean/tracked` | 8108 |
-| `ui/modules/ipc/session-history-handlers.js` | source | `clean/tracked` | 1266 |
-| `ui/modules/ipc/session-summary-handlers.js` | source | `clean/tracked` | 3210 |
-| `ui/modules/ipc/settings-handlers.js` | source | `clean/tracked` | 15897 |
-| `ui/modules/ipc/shared-context-handlers.js` | source | `clean/tracked` | 1525 |
-| `ui/modules/ipc/smart-routing-handlers.js` | source | `clean/tracked` | 2205 |
-| `ui/modules/ipc/state-handlers.js` | source | `clean/tracked` | 4036 |
-| `ui/modules/ipc/task-parser-handlers.js` | source | `clean/tracked` | 3287 |
-| `ui/modules/ipc/task-pool-handlers.js` | source | `clean/tracked` | 12857 |
-| `ui/modules/ipc/team-memory-handlers.js` | source | `clean/tracked` | 3907 |
-| `ui/modules/ipc/template-handlers.js` | source | `clean/tracked` | 9381 |
-| `ui/modules/ipc/test-execution-handlers.js` | source | `clean/tracked` | 8188 |
-| `ui/modules/ipc/test-notification-handlers.js` | source | `clean/tracked` | 4064 |
-| `ui/modules/ipc/transition-ledger-handlers.js` | source | `clean/tracked` | 6460 |
-| `ui/modules/ipc/user-profile-handlers.js` | source | `clean/tracked` | 8234 |
-| `ui/modules/ipc/voice-broker-handlers.js` | source | `clean/tracked` | 4047 |
-| `ui/modules/ipc/whisper-handlers.js` | source | `clean/tracked` | 3916 |
-| `ui/modules/ipc/workflow-handlers.js` | source | `clean/tracked` | 27872 |
-| `ui/modules/knowledge-base.js` | source | `clean/tracked` | 10260 |
-| `ui/modules/knowledge/knowledge-graph-service.js` | source | `clean/tracked` | 1539 |
-| `ui/modules/knowledge/knowledge-graph-store.js` | source | `clean/tracked` | 20065 |
-| `ui/modules/live-ops-disabled.js` | source | `clean/tracked` | 4928 |
-| `ui/modules/local-embedder.js` | source | `clean/tracked` | 2961 |
-| `ui/modules/local-model-capabilities.js` | source | `clean/tracked` | 5853 |
-| `ui/modules/logger.js` | source | `clean/tracked` | 5157 |
-| `ui/modules/main/activity-manager.js` | source | `clean/tracked` | 3656 |
-| `ui/modules/main/agent-task-resolution.js` | source | `clean/tracked` | 24276 |
-| `ui/modules/main/app-context.js` | source | `clean/tracked` | 2477 |
-| `ui/modules/main/app-control-service.js` | source | `clean/tracked` | 5776 |
-| `ui/modules/main/auto-handoff-materializer.js` | source | `clean/tracked` | 62805 |
-| `ui/modules/main/autonomous-smoke.js` | source | `clean/tracked` | 4864 |
-| `ui/modules/main/background-agent-manager.js` | source | `clean/tracked` | 22675 |
-| `ui/modules/main/cli-identity.js` | source | `clean/tracked` | 2710 |
-| `ui/modules/main/comms-journal.js` | source | `clean/tracked` | 2489 |
-| `ui/modules/main/device-pairing-store.js` | source | `clean/tracked` | 3087 |
-| `ui/modules/main/evidence-ledger-ingest.js` | source | `clean/tracked` | 7473 |
-| `ui/modules/main/evidence-ledger-investigator.js` | source | `clean/tracked` | 37081 |
-| `ui/modules/main/evidence-ledger-memory-seed.js` | source | `clean/tracked` | 6772 |
-| `ui/modules/main/evidence-ledger-memory.js` | source | `clean/tracked` | 34273 |
-| `ui/modules/main/evidence-ledger-store.js` | source | `clean/tracked` | 36463 |
-| `ui/modules/main/firmware-manager.js` | source | `clean/tracked` | 13578 |
-| `ui/modules/main/github-service.js` | source | `clean/tracked` | 26183 |
-| `ui/modules/main/inbound-poller-service.js` | source | `clean/tracked` | 5829 |
-| `ui/modules/main/kernel-bridge.js` | source | `clean/tracked` | 5190 |
-| `ui/modules/main/launch-intent.js` | source | `clean/tracked` | 2928 |
-| `ui/modules/main/mira-lab-window.js` | source | `clean/tracked` | 1789 |
-| `ui/modules/main/pane-control-service.js` | source | `clean/tracked` | 5972 |
-| `ui/modules/main/pane-host-window-manager.js` | source | `clean/tracked` | 12289 |
-| `ui/modules/main/pty-output-filter.js` | source | `clean/tracked` | 7261 |
-| `ui/modules/main/settings-manager.js` | source | `clean/tracked` | 21516 |
-| `ui/modules/main/squidrun-app.js` | source | `clean/tracked` | 399571 |
-| `ui/modules/main/telegram-poller-worker.js` | source | `clean/tracked` | 1884 |
-| `ui/modules/main/usage-manager.js` | source | `clean/tracked` | 2909 |
-| `ui/modules/mcp-bridge.js` | source | `clean/tracked` | 21053 |
-| `ui/modules/memory-broker.js` | source | `clean/tracked` | 20520 |
-| `ui/modules/memory-consistency-check.js` | source | `clean/tracked` | 61562 |
-| `ui/modules/memory-ingest/delivery.js` | source | `clean/tracked` | 43438 |
-| `ui/modules/memory-ingest/journal.js` | source | `clean/tracked` | 16198 |
-| `ui/modules/memory-ingest/lifecycle.js` | source | `clean/tracked` | 8512 |
-| `ui/modules/memory-ingest/promotion.js` | source | `clean/tracked` | 17321 |
-| `ui/modules/memory-ingest/router.js` | source | `clean/tracked` | 4469 |
-| `ui/modules/memory-ingest/schema.js` | source | `clean/tracked` | 8024 |
-| `ui/modules/memory-ingest/service.js` | source | `clean/tracked` | 38214 |
-| `ui/modules/memory-ingest/shutdown-marker.js` | source | `clean/tracked` | 2914 |
-| `ui/modules/memory-recall.js` | source | `clean/tracked` | 41325 |
-| `ui/modules/memory-search.js` | source | `clean/tracked` | 46252 |
-| `ui/modules/mira-automation-scheduler-curiosity.js` | source | `clean/tracked` | 7824 |
-| `ui/modules/mira-browser-history-curiosity.js` | source | `clean/tracked` | 8668 |
-| `ui/modules/mira-calendar-message-curiosity.js` | source | `clean/tracked` | 20349 |
-| `ui/modules/mira-coordinator-snapshot-channel.js` | source | `clean/tracked` | 146 |
-| `ui/modules/mira-core/auth-binding.js` | source | `clean/tracked` | 37330 |
-| `ui/modules/mira-core/autonomy-substrate-v0.js` | source | `clean/tracked` | 17244 |
-| `ui/modules/mira-core/coordinator-snapshot-v0.js` | source | `clean/tracked` | 28844 |
-| `ui/modules/mira-core/developmental-understanding-v1.js` | source | `clean/tracked` | 5788 |
-| `ui/modules/mira-core/durable-state-seed-v0.js` | source | `clean/tracked` | 58606 |
-| `ui/modules/mira-core/encryption-key.js` | source | `clean/tracked` | 39184 |
-| `ui/modules/mira-core/eval-runner.js` | source | `clean/tracked` | 11944 |
-| `ui/modules/mira-core/experience-v0.js` | source | `clean/tracked` | 31756 |
-| `ui/modules/mira-core/growth-loop-v0.js` | source | `clean/tracked` | 61479 |
-| `ui/modules/mira-core/identity-anchor-v0.js` | source | `clean/tracked` | 56600 |
-| `ui/modules/mira-core/identity-signing.js` | source | `clean/tracked` | 36012 |
-| `ui/modules/mira-core/intent-queue.js` | source | `clean/tracked` | 36946 |
-| `ui/modules/mira-core/kill-switch-wiring-noop-boundary-refresh.js` | source | `clean/tracked` | 57831 |
-| `ui/modules/mira-core/kill-switch-wiring-noop-dry-check.js` | source | `clean/tracked` | 55522 |
-| `ui/modules/mira-core/kill-switch-wiring-preimplementation-checklist.js` | source | `clean/tracked` | 52737 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-gap.js` | source | `clean/tracked` | 51837 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase49.js` | source | `clean/tracked` | 63040 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase50.js` | source | `clean/tracked` | 65638 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase51.js` | source | `clean/tracked` | 68186 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase52.js` | source | `clean/tracked` | 70386 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase53.js` | source | `clean/tracked` | 73805 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase54.js` | source | `clean/tracked` | 78296 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase55.js` | source | `clean/tracked` | 83471 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase56.js` | source | `clean/tracked` | 87698 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase57.js` | source | `clean/tracked` | 92541 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase58.js` | source | `clean/tracked` | 97504 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase59.js` | source | `clean/tracked` | 102230 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase60.js` | source | `clean/tracked` | 107130 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase61.js` | source | `clean/tracked` | 112597 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase62.js` | source | `clean/tracked` | 119782 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase63.js` | source | `clean/tracked` | 58101 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase64.js` | source | `clean/tracked` | 63276 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase65.js` | source | `clean/tracked` | 68886 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase66.js` | source | `clean/tracked` | 75725 |
-| `ui/modules/mira-core/kill-switch-wiring-safety.js` | source | `clean/tracked` | 63131 |
-| `ui/modules/mira-core/local-acceptance.js` | source | `clean/tracked` | 40506 |
-| `ui/modules/mira-core/local-text-session-v0.js` | source | `clean/tracked` | 44591 |
-| `ui/modules/mira-core/memory-candidate-staging-v1.js` | source | `clean/tracked` | 5911 |
-| `ui/modules/mira-core/milestone-readiness.js` | source | `clean/tracked` | 34015 |
-| `ui/modules/mira-core/mira-architect-route-v0.js` | source | `clean/tracked` | 6551 |
-| `ui/modules/mira-core/mira-language-rules-v0.js` | source | `clean/tracked` | 6726 |
-| `ui/modules/mira-core/mira-persona-loader-v0.js` | source | `clean/tracked` | 6809 |
-| `ui/modules/mira-core/mira-presence-runtime-state-v0.js` | source | `clean/tracked` | 29187 |
-| `ui/modules/mira-core/mira-progress-proof-inputs-v0.js` | source | `clean/tracked` | 17167 |
-| `ui/modules/mira-core/mira-progress-v0.js` | source | `clean/tracked` | 25005 |
-| `ui/modules/mira-core/mutation-patch.js` | source | `clean/tracked` | 58719 |
-| `ui/modules/mira-core/orientation.js` | source | `clean/tracked` | 27473 |
-| `ui/modules/mira-core/perception.js` | source | `clean/tracked` | 51939 |
-| `ui/modules/mira-core/persistence-audit.js` | source | `clean/tracked` | 40108 |
-| `ui/modules/mira-core/presence-runtime-read-path-v0.js` | source | `clean/tracked` | 65967 |
-| `ui/modules/mira-core/presence-v0.js` | source | `clean/tracked` | 25040 |
-| `ui/modules/mira-core/profiles.js` | source | `clean/tracked` | 27388 |
-| `ui/modules/mira-core/proposal-validator.js` | source | `clean/tracked` | 19000 |
-| `ui/modules/mira-core/pulse.js` | source | `clean/tracked` | 25860 |
-| `ui/modules/mira-core/readiness.js` | source | `clean/tracked` | 51096 |
-| `ui/modules/mira-core/relationship-presence-v1.js` | source | `clean/tracked` | 44510 |
-| `ui/modules/mira-core/runtime-control-path.js` | source | `clean/tracked` | 50236 |
-| `ui/modules/mira-core/runtime-control-reporting-reconciliation.js` | source | `clean/tracked` | 54277 |
-| `ui/modules/mira-core/runtime-controls.js` | source | `clean/tracked` | 37783 |
-| `ui/modules/mira-core/runtime-dry-run-implementation.js` | source | `clean/tracked` | 49296 |
-| `ui/modules/mira-core/runtime-dry-run-readiness-gap.js` | source | `clean/tracked` | 60590 |
-| `ui/modules/mira-core/runtime-dry-run-review.js` | source | `clean/tracked` | 40138 |
-| `ui/modules/mira-core/runtime-dry-runner.js` | source | `clean/tracked` | 44245 |
-| `ui/modules/mira-core/runtime-harness.js` | source | `clean/tracked` | 70353 |
-| `ui/modules/mira-core/runtime-milestone-refresh.js` | source | `clean/tracked` | 36225 |
-| `ui/modules/mira-core/runtime-mode-flag-reader-safety.js` | source | `clean/tracked` | 54967 |
-| `ui/modules/mira-core/runtime-mode-kill-switch-implementation-risk.js` | source | `clean/tracked` | 59584 |
-| `ui/modules/mira-core/runtime-mode-kill-switch-prerequisite-boundary.js` | source | `clean/tracked` | 57784 |
-| `ui/modules/mira-core/runtime-mode-kill-switch-status-gap-refresh.js` | source | `clean/tracked` | 58192 |
-| `ui/modules/mira-core/runtime-mode-kill-switch.js` | source | `clean/tracked` | 63693 |
-| `ui/modules/mira-core/runtime-next-action.js` | source | `clean/tracked` | 40182 |
-| `ui/modules/mira-core/runtime-operator-status.js` | source | `clean/tracked` | 38443 |
-| `ui/modules/mira-core/runtime-operator-ui-surface.js` | source | `clean/tracked` | 53205 |
-| `ui/modules/mira-core/runtime-preflight.js` | source | `clean/tracked` | 44091 |
-| `ui/modules/mira-core/runtime-promotion-gate.js` | source | `clean/tracked` | 40722 |
-| `ui/modules/mira-core/runtime-readiness-refresh-through-phase37.js` | source | `clean/tracked` | 52693 |
-| `ui/modules/mira-core/runtime-slice.js` | source | `clean/tracked` | 38721 |
-| `ui/modules/mira-core/runtime-status-milestone-refresh.js` | source | `clean/tracked` | 39354 |
-| `ui/modules/mira-core/server-api.js` | source | `clean/tracked` | 49518 |
-| `ui/modules/mira-core/server-boundary.js` | source | `clean/tracked` | 48457 |
-| `ui/modules/mira-core/server-handler.js` | source | `clean/tracked` | 55558 |
-| `ui/modules/mira-core/server-runtime-gap.js` | source | `clean/tracked` | 37857 |
-| `ui/modules/mira-core/server-upload.js` | source | `clean/tracked` | 35557 |
-| `ui/modules/mira-core/snapshot.js` | source | `clean/tracked` | 53515 |
-| `ui/modules/mira-core/social-move-classifier-v0.js` | source | `clean/tracked` | 32072 |
-| `ui/modules/mira-core/storage-retention.js` | source | `clean/tracked` | 36485 |
-| `ui/modules/mira-core/tentative-understanding-store-v1.js` | source | `clean/tracked` | 10401 |
-| `ui/modules/mira-core/text-model-attachment-v1.js` | source | `clean/tracked` | 61133 |
-| `ui/modules/mira-core/typed-capability-roundtable-v0.js` | source | `clean/tracked` | 44439 |
-| `ui/modules/mira-core/typed-restart-continuity-context-v0.js` | source | `clean/tracked` | 14635 |
-| `ui/modules/mira-direct-channel-readiness.js` | source | `clean/tracked` | 8634 |
-| `ui/modules/mira-email-curiosity.js` | source | `clean/tracked` | 14795 |
-| `ui/modules/mira-environment-curiosity.js` | source | `clean/tracked` | 12067 |
-| `ui/modules/mira-lab-surface.js` | source | `clean/tracked` | 325785 |
-| `ui/modules/mira-lab-verify-bootstrap-state.js` | source | `clean/tracked` | 5927 |
-| `ui/modules/mira-live-entrypoint.js` | source | `clean/tracked` | 3409 |
-| `ui/modules/mira-local-text-ui-surface.js` | source | `clean/tracked` | 47504 |
-| `ui/modules/mira-memory-curiosity.js` | source | `clean/tracked` | 5599 |
-| `ui/modules/mira-runtime-curiosity.js` | source | `clean/tracked` | 9391 |
-| `ui/modules/mira-source-action-substrate.js` | source | `clean/tracked` | 11397 |
-| `ui/modules/mira-telegram-turn-candidate.js` | source | `clean/tracked` | 5689 |
-| `ui/modules/mira-visual-asset-curiosity.js` | source | `clean/tracked` | 9123 |
-| `ui/modules/mira-web-research-curiosity.js` | source | `clean/tracked` | 8052 |
-| `ui/modules/mira-work-continuation-curiosity.js` | source | `clean/tracked` | 5125 |
-| `ui/modules/mira-work-evidence-gate.js` | source | `clean/tracked` | 10021 |
-| `ui/modules/model-selector.js` | source | `clean/tracked` | 4317 |
-| `ui/modules/notifications.js` | source | `clean/tracked` | 3828 |
-| `ui/modules/owned-work-continue-broker.js` | source | `clean/tracked` | 6743 |
-| `ui/modules/owned-work-summary.js` | source | `clean/tracked` | 4198 |
-| `ui/modules/pane-visibility.js` | source | `clean/tracked` | 14322 |
-| `ui/modules/performance-data.js` | source | `clean/tracked` | 1542 |
-| `ui/modules/phone-voice-client.js` | source | `clean/tracked` | 21309 |
-| `ui/modules/pipeline.js` | source | `clean/tracked` | 12233 |
-| `ui/modules/plugins/index.js` | source | `clean/tracked` | 104 |
-| `ui/modules/plugins/plugin-manager.js` | source | `clean/tracked` | 15296 |
-| `ui/modules/presence-state.js` | source | `clean/tracked` | 5417 |
-| `ui/modules/problem-orchestrator.js` | source | `clean/tracked` | 18707 |
-| `ui/modules/recovery-manager.js` | source | `clean/tracked` | 20614 |
-| `ui/modules/renderer-bridge.js` | source | `clean/tracked` | 3330 |
-| `ui/modules/renderer-ipc-registry.js` | source | `clean/tracked` | 1377 |
-| `ui/modules/replay/debug-replay.js` | source | `clean/tracked` | 20207 |
-| `ui/modules/runtime-config.js` | source | `clean/tracked` | 1525 |
-| `ui/modules/scheduler.js` | source | `clean/tracked` | 16158 |
-| `ui/modules/scoped-context-firewall.js` | source | `clean/tracked` | 4734 |
-| `ui/modules/service-lifecycle-registry.js` | source | `clean/tracked` | 3918 |
-| `ui/modules/settings.js` | source | `clean/tracked` | 16950 |
-| `ui/modules/shared-state.js` | source | `clean/tracked` | 10485 |
-| `ui/modules/smart-routing.js` | source | `clean/tracked` | 11068 |
-| `ui/modules/sms-poller.js` | source | `clean/tracked` | 18982 |
-| `ui/modules/sqlite-compat.js` | source | `clean/tracked` | 1389 |
-| `ui/modules/startup-ai-briefing.js` | source | `clean/tracked` | 52408 |
-| `ui/modules/startup-transcript-context.js` | source | `clean/tracked` | 11881 |
-| `ui/modules/status-strip.js` | source | `clean/tracked` | 6375 |
-| `ui/modules/supervisor/index.js` | source | `clean/tracked` | 339 |
-| `ui/modules/supervisor/migrations.js` | source | `clean/tracked` | 2584 |
-| `ui/modules/supervisor/migrations/001-initial-schema.js` | source | `clean/tracked` | 1641 |
-| `ui/modules/supervisor/store.js` | source | `clean/tracked` | 21164 |
-| `ui/modules/tabs.js` | source | `clean/tracked` | 4284 |
-| `ui/modules/tabs/api-keys.js` | source | `clean/tracked` | 7616 |
-| `ui/modules/tabs/bridge.js` | source | `clean/tracked` | 28404 |
-| `ui/modules/tabs/comms-console.js` | source | `clean/tracked` | 26289 |
-| `ui/modules/tabs/oracle.js` | source | `clean/tracked` | 8728 |
-| `ui/modules/tabs/screenshots.js` | source | `clean/tracked` | 9472 |
-| `ui/modules/tabs/utils.js` | source | `clean/tracked` | 424 |
-| `ui/modules/tabs/voice-broker.js` | source | `clean/tracked` | 46857 |
-| `ui/modules/task-parser.js` | source | `clean/tracked` | 8943 |
-| `ui/modules/team-memory/backfill.js` | source | `clean/tracked` | 9039 |
-| `ui/modules/team-memory/claims.js` | source | `clean/tracked` | 42439 |
-| `ui/modules/team-memory/comms-tagged-extractor.js` | source | `clean/tracked` | 9195 |
-| `ui/modules/team-memory/daily-integration.js` | source | `clean/tracked` | 16164 |
-| `ui/modules/team-memory/guards.js` | source | `clean/tracked` | 18009 |
-| `ui/modules/team-memory/index.js` | source | `clean/tracked` | 20057 |
-| `ui/modules/team-memory/integrity-checker.js` | source | `clean/tracked` | 10452 |
-| `ui/modules/team-memory/migrations.js` | source | `clean/tracked` | 4026 |
-| `ui/modules/team-memory/migrations/001-initial-schema.js` | source | `clean/tracked` | 5477 |
-| `ui/modules/team-memory/migrations/002-phase1-compat.js` | source | `clean/tracked` | 3827 |
-| `ui/modules/team-memory/migrations/003-phase2-search.js` | source | `clean/tracked` | 1730 |
-| `ui/modules/team-memory/migrations/004-phase4-patterns.js` | source | `clean/tracked` | 1863 |
-| `ui/modules/team-memory/migrations/005-phase5-guards.js` | source | `clean/tracked` | 2475 |
-| `ui/modules/team-memory/migrations/006-phase6-experiments.js` | source | `clean/tracked` | 5087 |
-| `ui/modules/team-memory/migrations/007-phase6b-pending-proof.js` | source | `clean/tracked` | 2585 |
-| `ui/modules/team-memory/migrations/008-phase6c-contradiction-resolution.js` | source | `clean/tracked` | 1859 |
-| `ui/modules/team-memory/migrations/009-phase7-memory-ingest.js` | source | `clean/tracked` | 4286 |
-| `ui/modules/team-memory/migrations/010-phase8-memory-ingest-recovery.js` | source | `clean/tracked` | 1393 |
-| `ui/modules/team-memory/migrations/011-phase9-memory-promotion-lifecycle.js` | source | `clean/tracked` | 3661 |
-| `ui/modules/team-memory/migrations/012-phase10-memory-delivery.js` | source | `clean/tracked` | 3470 |
-| `ui/modules/team-memory/migrations/013-phase10b-memory-class-expansion.js` | source | `clean/tracked` | 8908 |
-| `ui/modules/team-memory/migrations/014-phase10c-promotion-correction-links.js` | source | `clean/tracked` | 833 |
-| `ui/modules/team-memory/migrations/015-phase11-recall-feedback.js` | source | `clean/tracked` | 2935 |
-| `ui/modules/team-memory/patterns.js` | source | `clean/tracked` | 17687 |
-| `ui/modules/team-memory/recall-feedback.js` | source | `clean/tracked` | 15930 |
-| `ui/modules/team-memory/runtime.js` | source | `clean/tracked` | 19136 |
-| `ui/modules/team-memory/store.js` | source | `clean/tracked` | 5814 |
-| `ui/modules/team-memory/worker-client.js` | source | `clean/tracked` | 4577 |
-| `ui/modules/team-memory/worker.js` | source | `clean/tracked` | 2317 |
-| `ui/modules/telegram-poller.js` | source | `clean/tracked` | 30881 |
-| `ui/modules/terminal.js` | source | `clean/tracked` | 102996 |
-| `ui/modules/terminal/agent-colors.js` | source | `clean/tracked` | 10161 |
-| `ui/modules/terminal/injection-capabilities.js` | source | `clean/tracked` | 4493 |
-| `ui/modules/terminal/injection.js` | source | `clean/tracked` | 74115 |
-| `ui/modules/terminal/recovery.js` | source | `clean/tracked` | 15111 |
-| `ui/modules/token-utils.js` | source | `clean/tracked` | 1573 |
-| `ui/modules/transcript-index.js` | source | `clean/tracked` | 13166 |
-| `ui/modules/transition-ledger.js` | source | `clean/tracked` | 37486 |
-| `ui/modules/triggers.js` | source | `clean/tracked` | 36228 |
-| `ui/modules/triggers/metrics.js` | source | `clean/tracked` | 6048 |
-| `ui/modules/triggers/routing.js` | source | `clean/tracked` | 11053 |
-| `ui/modules/triggers/sequencing.js` | source | `clean/tracked` | 8061 |
-| `ui/modules/ui-view.js` | source | `clean/tracked` | 17307 |
-| `ui/modules/utils.js` | source | `clean/tracked` | 1881 |
-| `ui/modules/utils/transcript-store.js` | source | `clean/tracked` | 1537 |
-| `ui/modules/voice-broker-lease-contract.js` | source | `clean/tracked` | 15971 |
-| `ui/modules/voice-broker-lease-store.js` | source | `clean/tracked` | 6371 |
-| `ui/modules/voice-broker.js` | source | `clean/tracked` | 50616 |
-| `ui/modules/watcher-worker.js` | source | `clean/tracked` | 4919 |
-| `ui/modules/watcher.js` | source | `clean/tracked` | 51406 |
-| `ui/modules/websocket-runtime.js` | source | `clean/tracked` | 71545 |
-| `ui/modules/websocket-server.js` | source | `clean/tracked` | 2022 |
-| `ui/modules/window-team-bootstrap.js` | source | `clean/tracked` | 5353 |
+| Path | Kind | Bytes |
+| --- | --- | ---: |
+| `ui/modules/agent-templates.js` | source | 2941 |
+| `ui/modules/analysis/doc-generator.js` | source | 31812 |
+| `ui/modules/ansi.js` | source | 189 |
+| `ui/modules/backup-manager.js` | source | 15821 |
+| `ui/modules/bridge-client.js` | source | 37954 |
+| `ui/modules/bridge/channel-policy.js` | source | 5318 |
+| `ui/modules/bridge/preload-api.js` | source | 8355 |
+| `ui/modules/bridge/renderer-modules.js` | source | 842 |
+| `ui/modules/bridge/safe-ipc.js` | source | 3924 |
+| `ui/modules/buffered-file-writer.js` | source | 5113 |
+| `ui/modules/bus-reliability-trace.js` | source | 2089 |
+| `ui/modules/capability-planner.js` | source | 6232 |
+| `ui/modules/codex-utils.js` | source | 474 |
+| `ui/modules/cognitive-memory-antibody.js` | source | 30090 |
+| `ui/modules/cognitive-memory-api.js` | source | 53288 |
+| `ui/modules/cognitive-memory-immunity.js` | source | 15884 |
+| `ui/modules/cognitive-memory-sleep.js` | source | 38611 |
+| `ui/modules/cognitive-memory-store.js` | source | 31234 |
+| `ui/modules/command-palette.js` | source | 6577 |
+| `ui/modules/comms-worker-client.js` | source | 11742 |
+| `ui/modules/comms-worker.js` | source | 4506 |
+| `ui/modules/comms/message-envelope.js` | source | 6399 |
+| `ui/modules/compaction-detector.js` | source | 14847 |
+| `ui/modules/confidence-surface.js` | source | 2977 |
+| `ui/modules/constants.js` | source | 5682 |
+| `ui/modules/context-compressor.js` | source | 22801 |
+| `ui/modules/contract-promotion-service.js` | source | 9284 |
+| `ui/modules/contract-promotion.js` | source | 8291 |
+| `ui/modules/contracts.js` | source | 3046 |
+| `ui/modules/cross-device-target.js` | source | 2360 |
+| `ui/modules/daemon-handlers.js` | source | 50063 |
+| `ui/modules/daemon-snapshot.js` | source | 2031 |
+| `ui/modules/diagnostic-log.js` | source | 1992 |
+| `ui/modules/event-bus.js` | source | 22926 |
+| `ui/modules/experiment/index.js` | source | 2533 |
+| `ui/modules/experiment/profiles.js` | source | 7347 |
+| `ui/modules/experiment/runtime.js` | source | 39158 |
+| `ui/modules/experiment/worker-client.js` | source | 4514 |
+| `ui/modules/experiment/worker.js` | source | 2308 |
+| `ui/modules/external-notifications.js` | source | 9126 |
+| `ui/modules/feature-capabilities.js` | source | 593 |
+| `ui/modules/formatters.js` | source | 2798 |
+| `ui/modules/gemini-command.js` | source | 2736 |
+| `ui/modules/image-gen.js` | source | 10327 |
+| `ui/modules/ingress-envelope.js` | source | 5196 |
+| `ui/modules/inject-message-ipc.js` | source | 3468 |
+| `ui/modules/input-shadow-log.js` | source | 2698 |
+| `ui/modules/ipc-handlers.js` | source | 2972 |
+| `ui/modules/ipc/agent-claims-handlers.js` | source | 997 |
+| `ui/modules/ipc/agent-metrics-handlers.js` | source | 14899 |
+| `ui/modules/ipc/auto-handoff-handlers.js` | source | 1458 |
+| `ui/modules/ipc/auto-nudge-handlers.js` | source | 6672 |
+| `ui/modules/ipc/background-processes.js` | source | 1380 |
+| `ui/modules/ipc/backup-handlers.js` | source | 2490 |
+| `ui/modules/ipc/checkpoint-handlers.js` | source | 9156 |
+| `ui/modules/ipc/cognitive-memory-handlers.js` | source | 4879 |
+| `ui/modules/ipc/completion-detection-handlers.js` | source | 2406 |
+| `ui/modules/ipc/completion-quality-handlers.js` | source | 5536 |
+| `ui/modules/ipc/conflict-detection-handlers.js` | source | 692 |
+| `ui/modules/ipc/contract-promotion-handlers.js` | source | 1176 |
+| `ui/modules/ipc/debug-replay-handlers.js` | source | 11470 |
+| `ui/modules/ipc/device-pairing-handlers.js` | source | 4065 |
+| `ui/modules/ipc/error-handlers.js` | source | 6600 |
+| `ui/modules/ipc/evidence-ledger-handlers.js` | source | 6413 |
+| `ui/modules/ipc/evidence-ledger-runtime.js` | source | 22372 |
+| `ui/modules/ipc/evidence-ledger-worker-client.js` | source | 4664 |
+| `ui/modules/ipc/evidence-ledger-worker.js` | source | 2441 |
+| `ui/modules/ipc/external-notification-handlers.js` | source | 1117 |
+| `ui/modules/ipc/friction-handlers.js` | source | 3092 |
+| `ui/modules/ipc/git-handlers.js` | source | 15070 |
+| `ui/modules/ipc/github-handlers.js` | source | 8897 |
+| `ui/modules/ipc/handler-registry.js` | source | 7739 |
+| `ui/modules/ipc/index.js` | source | 2082 |
+| `ui/modules/ipc/ipc-state.js` | source | 1282 |
+| `ui/modules/ipc/knowledge-graph-handlers.js` | source | 4704 |
+| `ui/modules/ipc/knowledge-handlers.js` | source | 1857 |
+| `ui/modules/ipc/mcp-autoconfig-handlers.js` | source | 3451 |
+| `ui/modules/ipc/mcp-handlers.js` | source | 2254 |
+| `ui/modules/ipc/message-queue-handlers.js` | source | 3881 |
+| `ui/modules/ipc/mira-coordinator-snapshot-handlers.js` | source | 1280 |
+| `ui/modules/ipc/mira-lab-handlers.js` | source | 9625 |
+| `ui/modules/ipc/mira-local-text-ui-surface-handlers.js` | source | 1215 |
+| `ui/modules/ipc/model-switch-handlers.js` | source | 5240 |
+| `ui/modules/ipc/oracle-handlers.js` | source | 5663 |
+| `ui/modules/ipc/organic-ui-handlers.js` | source | 10244 |
+| `ui/modules/ipc/output-validation-handlers.js` | source | 5191 |
+| `ui/modules/ipc/owned-work-handlers.js` | source | 712 |
+| `ui/modules/ipc/perf-audit-handlers.js` | source | 6542 |
+| `ui/modules/ipc/plugin-handlers.js` | source | 2937 |
+| `ui/modules/ipc/precommit-handlers.js` | source | 5757 |
+| `ui/modules/ipc/preflight-handlers.js` | source | 9244 |
+| `ui/modules/ipc/process-handlers.js` | source | 7335 |
+| `ui/modules/ipc/project-handlers.js` | source | 26464 |
+| `ui/modules/ipc/pty-handlers.js` | source | 24303 |
+| `ui/modules/ipc/recovery-handlers.js` | source | 3731 |
+| `ui/modules/ipc/resource-handlers.js` | source | 8183 |
+| `ui/modules/ipc/scheduler-handlers.js` | source | 2860 |
+| `ui/modules/ipc/screenshot-handlers.js` | source | 8108 |
+| `ui/modules/ipc/session-history-handlers.js` | source | 1266 |
+| `ui/modules/ipc/session-summary-handlers.js` | source | 3210 |
+| `ui/modules/ipc/settings-handlers.js` | source | 15897 |
+| `ui/modules/ipc/shared-context-handlers.js` | source | 1525 |
+| `ui/modules/ipc/smart-routing-handlers.js` | source | 2205 |
+| `ui/modules/ipc/state-handlers.js` | source | 4036 |
+| `ui/modules/ipc/task-parser-handlers.js` | source | 3287 |
+| `ui/modules/ipc/task-pool-handlers.js` | source | 12857 |
+| `ui/modules/ipc/team-memory-handlers.js` | source | 3907 |
+| `ui/modules/ipc/template-handlers.js` | source | 9381 |
+| `ui/modules/ipc/test-execution-handlers.js` | source | 8188 |
+| `ui/modules/ipc/test-notification-handlers.js` | source | 4064 |
+| `ui/modules/ipc/transition-ledger-handlers.js` | source | 6460 |
+| `ui/modules/ipc/user-profile-handlers.js` | source | 8234 |
+| `ui/modules/ipc/voice-broker-handlers.js` | source | 4047 |
+| `ui/modules/ipc/whisper-handlers.js` | source | 3916 |
+| `ui/modules/ipc/workflow-handlers.js` | source | 27872 |
+| `ui/modules/knowledge-base.js` | source | 10260 |
+| `ui/modules/knowledge/knowledge-graph-service.js` | source | 1539 |
+| `ui/modules/knowledge/knowledge-graph-store.js` | source | 20065 |
+| `ui/modules/live-ops-disabled.js` | source | 4928 |
+| `ui/modules/local-embedder.js` | source | 2961 |
+| `ui/modules/local-model-capabilities.js` | source | 5853 |
+| `ui/modules/logger.js` | source | 5157 |
+| `ui/modules/main/activity-manager.js` | source | 3656 |
+| `ui/modules/main/agent-task-resolution.js` | source | 24276 |
+| `ui/modules/main/app-context.js` | source | 2477 |
+| `ui/modules/main/app-control-service.js` | source | 5776 |
+| `ui/modules/main/auto-handoff-materializer.js` | source | 62805 |
+| `ui/modules/main/autonomous-smoke.js` | source | 4864 |
+| `ui/modules/main/background-agent-manager.js` | source | 22675 |
+| `ui/modules/main/cli-identity.js` | source | 2710 |
+| `ui/modules/main/comms-journal.js` | source | 2489 |
+| `ui/modules/main/device-pairing-store.js` | source | 3087 |
+| `ui/modules/main/evidence-ledger-ingest.js` | source | 7473 |
+| `ui/modules/main/evidence-ledger-investigator.js` | source | 37081 |
+| `ui/modules/main/evidence-ledger-memory-seed.js` | source | 6772 |
+| `ui/modules/main/evidence-ledger-memory.js` | source | 34273 |
+| `ui/modules/main/evidence-ledger-store.js` | source | 36463 |
+| `ui/modules/main/firmware-manager.js` | source | 13578 |
+| `ui/modules/main/github-service.js` | source | 26183 |
+| `ui/modules/main/inbound-poller-service.js` | source | 5829 |
+| `ui/modules/main/kernel-bridge.js` | source | 5190 |
+| `ui/modules/main/launch-intent.js` | source | 2928 |
+| `ui/modules/main/mira-lab-window.js` | source | 1789 |
+| `ui/modules/main/pane-control-service.js` | source | 5972 |
+| `ui/modules/main/pane-host-window-manager.js` | source | 12289 |
+| `ui/modules/main/pty-output-filter.js` | source | 7261 |
+| `ui/modules/main/settings-manager.js` | source | 21516 |
+| `ui/modules/main/squidrun-app.js` | source | 399571 |
+| `ui/modules/main/telegram-poller-worker.js` | source | 1884 |
+| `ui/modules/main/usage-manager.js` | source | 2909 |
+| `ui/modules/mcp-bridge.js` | source | 21053 |
+| `ui/modules/memory-broker.js` | source | 20520 |
+| `ui/modules/memory-consistency-check.js` | source | 61562 |
+| `ui/modules/memory-ingest/delivery.js` | source | 43438 |
+| `ui/modules/memory-ingest/journal.js` | source | 16198 |
+| `ui/modules/memory-ingest/lifecycle.js` | source | 8512 |
+| `ui/modules/memory-ingest/promotion.js` | source | 17321 |
+| `ui/modules/memory-ingest/router.js` | source | 4469 |
+| `ui/modules/memory-ingest/schema.js` | source | 8024 |
+| `ui/modules/memory-ingest/service.js` | source | 38214 |
+| `ui/modules/memory-ingest/shutdown-marker.js` | source | 2914 |
+| `ui/modules/memory-recall.js` | source | 41325 |
+| `ui/modules/memory-search.js` | source | 46252 |
+| `ui/modules/mira-automation-scheduler-curiosity.js` | source | 7824 |
+| `ui/modules/mira-browser-history-curiosity.js` | source | 8668 |
+| `ui/modules/mira-calendar-message-curiosity.js` | source | 20349 |
+| `ui/modules/mira-coordinator-snapshot-channel.js` | source | 146 |
+| `ui/modules/mira-core/auth-binding.js` | source | 37330 |
+| `ui/modules/mira-core/autonomy-substrate-v0.js` | source | 17244 |
+| `ui/modules/mira-core/coordinator-snapshot-v0.js` | source | 28844 |
+| `ui/modules/mira-core/developmental-understanding-v1.js` | source | 5788 |
+| `ui/modules/mira-core/durable-state-seed-v0.js` | source | 58606 |
+| `ui/modules/mira-core/encryption-key.js` | source | 39184 |
+| `ui/modules/mira-core/eval-runner.js` | source | 11944 |
+| `ui/modules/mira-core/experience-v0.js` | source | 31756 |
+| `ui/modules/mira-core/growth-loop-v0.js` | source | 61479 |
+| `ui/modules/mira-core/identity-anchor-v0.js` | source | 56600 |
+| `ui/modules/mira-core/identity-signing.js` | source | 36012 |
+| `ui/modules/mira-core/intent-queue.js` | source | 36946 |
+| `ui/modules/mira-core/kill-switch-wiring-noop-boundary-refresh.js` | source | 57831 |
+| `ui/modules/mira-core/kill-switch-wiring-noop-dry-check.js` | source | 55522 |
+| `ui/modules/mira-core/kill-switch-wiring-preimplementation-checklist.js` | source | 52737 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-gap.js` | source | 51837 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase49.js` | source | 63040 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase50.js` | source | 65638 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase51.js` | source | 68186 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase52.js` | source | 70386 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase53.js` | source | 73805 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase54.js` | source | 78296 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase55.js` | source | 83471 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase56.js` | source | 87698 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase57.js` | source | 92541 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase58.js` | source | 97504 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase59.js` | source | 102230 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase60.js` | source | 107130 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase61.js` | source | 112597 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase62.js` | source | 119782 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase63.js` | source | 58101 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase64.js` | source | 63276 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase65.js` | source | 68886 |
+| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase66.js` | source | 75725 |
+| `ui/modules/mira-core/kill-switch-wiring-safety.js` | source | 63131 |
+| `ui/modules/mira-core/local-acceptance.js` | source | 40506 |
+| `ui/modules/mira-core/local-text-session-v0.js` | source | 44591 |
+| `ui/modules/mira-core/memory-candidate-staging-v1.js` | source | 5911 |
+| `ui/modules/mira-core/milestone-readiness.js` | source | 34015 |
+| `ui/modules/mira-core/mira-architect-route-v0.js` | source | 6551 |
+| `ui/modules/mira-core/mira-language-rules-v0.js` | source | 6726 |
+| `ui/modules/mira-core/mira-persona-loader-v0.js` | source | 6809 |
+| `ui/modules/mira-core/mira-presence-runtime-state-v0.js` | source | 29187 |
+| `ui/modules/mira-core/mira-progress-proof-inputs-v0.js` | source | 17167 |
+| `ui/modules/mira-core/mira-progress-v0.js` | source | 25005 |
+| `ui/modules/mira-core/mutation-patch.js` | source | 58719 |
+| `ui/modules/mira-core/orientation.js` | source | 27473 |
+| `ui/modules/mira-core/perception.js` | source | 51939 |
+| `ui/modules/mira-core/persistence-audit.js` | source | 40108 |
+| `ui/modules/mira-core/presence-runtime-read-path-v0.js` | source | 65967 |
+| `ui/modules/mira-core/presence-v0.js` | source | 25040 |
+| `ui/modules/mira-core/profiles.js` | source | 27388 |
+| `ui/modules/mira-core/proposal-validator.js` | source | 19000 |
+| `ui/modules/mira-core/pulse.js` | source | 25860 |
+| `ui/modules/mira-core/readiness.js` | source | 51096 |
+| `ui/modules/mira-core/relationship-presence-v1.js` | source | 44510 |
+| `ui/modules/mira-core/runtime-control-path.js` | source | 50236 |
+| `ui/modules/mira-core/runtime-control-reporting-reconciliation.js` | source | 54277 |
+| `ui/modules/mira-core/runtime-controls.js` | source | 37783 |
+| `ui/modules/mira-core/runtime-dry-run-implementation.js` | source | 49296 |
+| `ui/modules/mira-core/runtime-dry-run-readiness-gap.js` | source | 60590 |
+| `ui/modules/mira-core/runtime-dry-run-review.js` | source | 40138 |
+| `ui/modules/mira-core/runtime-dry-runner.js` | source | 44245 |
+| `ui/modules/mira-core/runtime-harness.js` | source | 70353 |
+| `ui/modules/mira-core/runtime-milestone-refresh.js` | source | 36225 |
+| `ui/modules/mira-core/runtime-mode-flag-reader-safety.js` | source | 54967 |
+| `ui/modules/mira-core/runtime-mode-kill-switch-implementation-risk.js` | source | 59584 |
+| `ui/modules/mira-core/runtime-mode-kill-switch-prerequisite-boundary.js` | source | 57784 |
+| `ui/modules/mira-core/runtime-mode-kill-switch-status-gap-refresh.js` | source | 58192 |
+| `ui/modules/mira-core/runtime-mode-kill-switch.js` | source | 63693 |
+| `ui/modules/mira-core/runtime-next-action.js` | source | 40182 |
+| `ui/modules/mira-core/runtime-operator-status.js` | source | 38443 |
+| `ui/modules/mira-core/runtime-operator-ui-surface.js` | source | 53205 |
+| `ui/modules/mira-core/runtime-preflight.js` | source | 44091 |
+| `ui/modules/mira-core/runtime-promotion-gate.js` | source | 40722 |
+| `ui/modules/mira-core/runtime-readiness-refresh-through-phase37.js` | source | 52693 |
+| `ui/modules/mira-core/runtime-slice.js` | source | 38721 |
+| `ui/modules/mira-core/runtime-status-milestone-refresh.js` | source | 39354 |
+| `ui/modules/mira-core/server-api.js` | source | 49518 |
+| `ui/modules/mira-core/server-boundary.js` | source | 48457 |
+| `ui/modules/mira-core/server-handler.js` | source | 55558 |
+| `ui/modules/mira-core/server-runtime-gap.js` | source | 37857 |
+| `ui/modules/mira-core/server-upload.js` | source | 35557 |
+| `ui/modules/mira-core/snapshot.js` | source | 53515 |
+| `ui/modules/mira-core/social-move-classifier-v0.js` | source | 32072 |
+| `ui/modules/mira-core/storage-retention.js` | source | 36485 |
+| `ui/modules/mira-core/tentative-understanding-store-v1.js` | source | 10401 |
+| `ui/modules/mira-core/text-model-attachment-v1.js` | source | 61133 |
+| `ui/modules/mira-core/typed-capability-roundtable-v0.js` | source | 44439 |
+| `ui/modules/mira-core/typed-restart-continuity-context-v0.js` | source | 14635 |
+| `ui/modules/mira-direct-channel-readiness.js` | source | 8634 |
+| `ui/modules/mira-email-curiosity.js` | source | 14795 |
+| `ui/modules/mira-environment-curiosity.js` | source | 12067 |
+| `ui/modules/mira-lab-surface.js` | source | 325785 |
+| `ui/modules/mira-lab-verify-bootstrap-state.js` | source | 5927 |
+| `ui/modules/mira-live-entrypoint.js` | source | 3409 |
+| `ui/modules/mira-local-text-ui-surface.js` | source | 47504 |
+| `ui/modules/mira-memory-curiosity.js` | source | 5599 |
+| `ui/modules/mira-runtime-curiosity.js` | source | 9391 |
+| `ui/modules/mira-source-action-substrate.js` | source | 11397 |
+| `ui/modules/mira-telegram-turn-candidate.js` | source | 5689 |
+| `ui/modules/mira-visual-asset-curiosity.js` | source | 9123 |
+| `ui/modules/mira-web-research-curiosity.js` | source | 8052 |
+| `ui/modules/mira-work-continuation-curiosity.js` | source | 5125 |
+| `ui/modules/mira-work-evidence-gate.js` | source | 10021 |
+| `ui/modules/model-selector.js` | source | 4317 |
+| `ui/modules/notifications.js` | source | 3828 |
+| `ui/modules/owned-work-continue-broker.js` | source | 6743 |
+| `ui/modules/owned-work-summary.js` | source | 4198 |
+| `ui/modules/pane-visibility.js` | source | 14322 |
+| `ui/modules/performance-data.js` | source | 1542 |
+| `ui/modules/phone-voice-client.js` | source | 21309 |
+| `ui/modules/pipeline.js` | source | 12233 |
+| `ui/modules/plugins/index.js` | source | 104 |
+| `ui/modules/plugins/plugin-manager.js` | source | 15296 |
+| `ui/modules/presence-state.js` | source | 5417 |
+| `ui/modules/problem-orchestrator.js` | source | 18707 |
+| `ui/modules/recovery-manager.js` | source | 20614 |
+| `ui/modules/renderer-bridge.js` | source | 3330 |
+| `ui/modules/renderer-ipc-registry.js` | source | 1377 |
+| `ui/modules/replay/debug-replay.js` | source | 20207 |
+| `ui/modules/runtime-config.js` | source | 1525 |
+| `ui/modules/scheduler.js` | source | 16158 |
+| `ui/modules/scoped-context-firewall.js` | source | 4734 |
+| `ui/modules/service-lifecycle-registry.js` | source | 3918 |
+| `ui/modules/settings.js` | source | 16950 |
+| `ui/modules/shared-state.js` | source | 10485 |
+| `ui/modules/smart-routing.js` | source | 11068 |
+| `ui/modules/sms-poller.js` | source | 18982 |
+| `ui/modules/sqlite-compat.js` | source | 1389 |
+| `ui/modules/startup-ai-briefing.js` | source | 52408 |
+| `ui/modules/startup-transcript-context.js` | source | 11881 |
+| `ui/modules/status-strip.js` | source | 6375 |
+| `ui/modules/supervisor/index.js` | source | 339 |
+| `ui/modules/supervisor/migrations.js` | source | 2584 |
+| `ui/modules/supervisor/migrations/001-initial-schema.js` | source | 1641 |
+| `ui/modules/supervisor/store.js` | source | 21164 |
+| `ui/modules/tabs.js` | source | 4284 |
+| `ui/modules/tabs/api-keys.js` | source | 7616 |
+| `ui/modules/tabs/bridge.js` | source | 28404 |
+| `ui/modules/tabs/comms-console.js` | source | 26289 |
+| `ui/modules/tabs/oracle.js` | source | 8728 |
+| `ui/modules/tabs/screenshots.js` | source | 9472 |
+| `ui/modules/tabs/utils.js` | source | 424 |
+| `ui/modules/tabs/voice-broker.js` | source | 46857 |
+| `ui/modules/task-parser.js` | source | 8943 |
+| `ui/modules/team-memory/backfill.js` | source | 9039 |
+| `ui/modules/team-memory/claims.js` | source | 42439 |
+| `ui/modules/team-memory/comms-tagged-extractor.js` | source | 9195 |
+| `ui/modules/team-memory/daily-integration.js` | source | 16164 |
+| `ui/modules/team-memory/guards.js` | source | 18009 |
+| `ui/modules/team-memory/index.js` | source | 20057 |
+| `ui/modules/team-memory/integrity-checker.js` | source | 10452 |
+| `ui/modules/team-memory/migrations.js` | source | 4026 |
+| `ui/modules/team-memory/migrations/001-initial-schema.js` | source | 5477 |
+| `ui/modules/team-memory/migrations/002-phase1-compat.js` | source | 3827 |
+| `ui/modules/team-memory/migrations/003-phase2-search.js` | source | 1730 |
+| `ui/modules/team-memory/migrations/004-phase4-patterns.js` | source | 1863 |
+| `ui/modules/team-memory/migrations/005-phase5-guards.js` | source | 2475 |
+| `ui/modules/team-memory/migrations/006-phase6-experiments.js` | source | 5087 |
+| `ui/modules/team-memory/migrations/007-phase6b-pending-proof.js` | source | 2585 |
+| `ui/modules/team-memory/migrations/008-phase6c-contradiction-resolution.js` | source | 1859 |
+| `ui/modules/team-memory/migrations/009-phase7-memory-ingest.js` | source | 4286 |
+| `ui/modules/team-memory/migrations/010-phase8-memory-ingest-recovery.js` | source | 1393 |
+| `ui/modules/team-memory/migrations/011-phase9-memory-promotion-lifecycle.js` | source | 3661 |
+| `ui/modules/team-memory/migrations/012-phase10-memory-delivery.js` | source | 3470 |
+| `ui/modules/team-memory/migrations/013-phase10b-memory-class-expansion.js` | source | 8908 |
+| `ui/modules/team-memory/migrations/014-phase10c-promotion-correction-links.js` | source | 833 |
+| `ui/modules/team-memory/migrations/015-phase11-recall-feedback.js` | source | 2935 |
+| `ui/modules/team-memory/patterns.js` | source | 17687 |
+| `ui/modules/team-memory/recall-feedback.js` | source | 15930 |
+| `ui/modules/team-memory/runtime.js` | source | 19136 |
+| `ui/modules/team-memory/store.js` | source | 5814 |
+| `ui/modules/team-memory/worker-client.js` | source | 4577 |
+| `ui/modules/team-memory/worker.js` | source | 2317 |
+| `ui/modules/telegram-poller.js` | source | 30881 |
+| `ui/modules/terminal.js` | source | 102996 |
+| `ui/modules/terminal/agent-colors.js` | source | 10161 |
+| `ui/modules/terminal/injection-capabilities.js` | source | 4493 |
+| `ui/modules/terminal/injection.js` | source | 74115 |
+| `ui/modules/terminal/recovery.js` | source | 15111 |
+| `ui/modules/token-utils.js` | source | 1573 |
+| `ui/modules/transcript-index.js` | source | 13166 |
+| `ui/modules/transition-ledger.js` | source | 37486 |
+| `ui/modules/triggers.js` | source | 36228 |
+| `ui/modules/triggers/metrics.js` | source | 6048 |
+| `ui/modules/triggers/routing.js` | source | 11053 |
+| `ui/modules/triggers/sequencing.js` | source | 8061 |
+| `ui/modules/ui-view.js` | source | 17307 |
+| `ui/modules/utils.js` | source | 1881 |
+| `ui/modules/utils/transcript-store.js` | source | 1537 |
+| `ui/modules/voice-broker-lease-contract.js` | source | 15971 |
+| `ui/modules/voice-broker-lease-store.js` | source | 6371 |
+| `ui/modules/voice-broker.js` | source | 50616 |
+| `ui/modules/watcher-worker.js` | source | 4919 |
+| `ui/modules/watcher.js` | source | 51406 |
+| `ui/modules/websocket-runtime.js` | source | 71545 |
+| `ui/modules/websocket-server.js` | source | 2022 |
+| `ui/modules/window-team-bootstrap.js` | source | 5353 |
 
 ### ui/other
 
-| Path | Kind | Status | Bytes |
-| --- | --- | --- | ---: |
-| `ui/assets/squidrun-favicon.ico` | asset | `clean/tracked` | 110916 |
-| `ui/config.js` | source | `clean/tracked` | 15294 |
-| `ui/daemon-client.js` | source | `clean/tracked` | 22675 |
-| `ui/eslint.config.js` | source | `clean/tracked` | 794 |
-| `ui/index.html` | asset | `clean/tracked` | 58298 |
-| `ui/jest.config.js` | source | `clean/tracked` | 949 |
-| `ui/jsconfig.json` | config | `clean/tracked` | 659 |
-| `ui/main.js` | source | `clean/tracked` | 6153 |
-| `ui/mcp-server.js` | source | `clean/tracked` | 22417 |
-| `ui/mira-lab-renderer.js` | source | `clean/tracked` | 13296 |
-| `ui/mira-lab.html` | asset | `clean/tracked` | 1613 |
-| `ui/package-lock.json` | config | `clean/tracked` | 480121 |
-| `ui/package.json` | config | `clean/tracked` | 5992 |
-| `ui/pane-host-renderer.js` | source | `clean/tracked` | 35875 |
-| `ui/pane-host.html` | asset | `clean/tracked` | 1143 |
-| `ui/preload.js` | source | `clean/tracked` | 934 |
-| `ui/profile.js` | source | `clean/tracked` | 7694 |
-| `ui/renderer.js` | source | `clean/tracked` | 113713 |
-| `ui/supervisor-daemon.js` | source | `clean/tracked` | 259767 |
-| `ui/terminal-daemon.js` | source | `clean/tracked` | 73275 |
-| `ui/types/contracts.d.ts` | source | `clean/tracked` | 8484 |
-| `ui/workspace-template/.squidrun/README-FIRST.md` | doc | `clean/tracked` | 173 |
-| `ui/workspace-template/AGENTS.md` | doc | `clean/tracked` | 2898 |
-| `ui/workspace-template/CLAUDE.md` | doc | `clean/tracked` | 2945 |
-| `ui/workspace-template/CODEX.md` | doc | `clean/tracked` | 3289 |
-| `ui/workspace-template/GEMINI.md` | doc | `clean/tracked` | 2736 |
-| `ui/workspace-template/PRODUCT-GUIDE.md` | doc | `clean/tracked` | 6328 |
-| `ui/workspace-template/ROLES.md` | doc | `clean/tracked` | 13270 |
-| `ui/workspace-template/user-profile.json` | config | `clean/tracked` | 231 |
+| Path | Kind | Bytes |
+| --- | --- | ---: |
+| `ui/assets/squidrun-favicon.ico` | asset | 110916 |
+| `ui/config.js` | source | 15294 |
+| `ui/daemon-client.js` | source | 22675 |
+| `ui/eslint.config.js` | source | 794 |
+| `ui/index.html` | asset | 58298 |
+| `ui/jest.config.js` | source | 949 |
+| `ui/jsconfig.json` | config | 659 |
+| `ui/main.js` | source | 6153 |
+| `ui/mcp-server.js` | source | 22417 |
+| `ui/mira-lab-renderer.js` | source | 13296 |
+| `ui/mira-lab.html` | asset | 1613 |
+| `ui/package-lock.json` | config | 480121 |
+| `ui/package.json` | config | 5992 |
+| `ui/pane-host-renderer.js` | source | 35875 |
+| `ui/pane-host.html` | asset | 1143 |
+| `ui/preload.js` | source | 934 |
+| `ui/profile.js` | source | 7694 |
+| `ui/renderer.js` | source | 113713 |
+| `ui/supervisor-daemon.js` | source | 259767 |
+| `ui/terminal-daemon.js` | source | 73275 |
+| `ui/types/contracts.d.ts` | source | 8484 |
+| `ui/workspace-template/.squidrun/README-FIRST.md` | doc | 173 |
+| `ui/workspace-template/AGENTS.md` | doc | 2898 |
+| `ui/workspace-template/CLAUDE.md` | doc | 2945 |
+| `ui/workspace-template/CODEX.md` | doc | 3289 |
+| `ui/workspace-template/GEMINI.md` | doc | 2736 |
+| `ui/workspace-template/PRODUCT-GUIDE.md` | doc | 6328 |
+| `ui/workspace-template/ROLES.md` | doc | 13270 |
+| `ui/workspace-template/user-profile.json` | config | 231 |
 
 ### ui/scripts
 
-| Path | Kind | Status | Bytes |
-| --- | --- | --- | ---: |
-| `ui/scripts/claude-extract.js` | script | `clean/tracked` | 6085 |
-| `ui/scripts/deprecated/coverage-report.js` | script | `clean/tracked` | 1153 |
-| `ui/scripts/deprecated/README.md` | doc | `clean/tracked` | 289 |
-| `ui/scripts/deprecated/test-image-gen.js` | script | `clean/tracked` | 8865 |
-| `ui/scripts/doc-lint.js` | script | `clean/tracked` | 12818 |
-| `ui/scripts/evidence-ledger-seed-memory.js` | script | `clean/tracked` | 4857 |
-| `ui/scripts/extraction-helpers.js` | script | `clean/tracked` | 3073 |
-| `ui/scripts/hm-agent-alert.js` | script | `clean/tracked` | 2275 |
-| `ui/scripts/hm-alignment-audit.js` | script | `clean/tracked` | 10543 |
-| `ui/scripts/hm-anomaly.js` | script | `clean/tracked` | 3735 |
-| `ui/scripts/hm-app.js` | script | `clean/tracked` | 7915 |
-| `ui/scripts/hm-architect-wake-watchdog.js` | script | `clean/tracked` | 7035 |
-| `ui/scripts/hm-architect-watchdog.js` | script | `clean/tracked` | 14538 |
-| `ui/scripts/hm-bg.js` | script | `clean/tracked` | 13615 |
-| `ui/scripts/hm-bidirectional-wake-watchdog.js` | script | `clean/tracked` | 8367 |
-| `ui/scripts/hm-capabilities.js` | script | `clean/tracked` | 15107 |
-| `ui/scripts/hm-ci-check.js` | script | `clean/tracked` | 2243 |
-| `ui/scripts/hm-claim.js` | script | `clean/tracked` | 20929 |
-| `ui/scripts/hm-codebase-index.js` | script | `clean/tracked` | 12295 |
-| `ui/scripts/hm-codex-heartbeat-check.js` | script | `clean/tracked` | 5853 |
-| `ui/scripts/hm-comms.js` | script | `clean/tracked` | 11443 |
-| `ui/scripts/hm-compat-count.js` | script | `clean/tracked` | 8858 |
-| `ui/scripts/hm-csm-1b-bench.py` | script | `clean/tracked` | 24197 |
-| `ui/scripts/hm-doctor.js` | script | `clean/tracked` | 18972 |
-| `ui/scripts/hm-experiment.js` | script | `clean/tracked` | 12365 |
-| `ui/scripts/hm-github.js` | script | `clean/tracked` | 14433 |
-| `ui/scripts/hm-health-snapshot.js` | script | `clean/tracked` | 49912 |
-| `ui/scripts/hm-heartbeat.js` | script | `clean/tracked` | 8590 |
-| `ui/scripts/hm-hook-afteragent.js` | script | `clean/tracked` | 973 |
-| `ui/scripts/hm-hook-injection.js` | script | `clean/tracked` | 6600 |
-| `ui/scripts/hm-hook-precompress.js` | script | `clean/tracked` | 1315 |
-| `ui/scripts/hm-image-gen.js` | script | `clean/tracked` | 3476 |
-| `ui/scripts/hm-initiative.js` | script | `clean/tracked` | 19177 |
-| `ui/scripts/hm-investigate.js` | script | `clean/tracked` | 13022 |
-| `ui/scripts/hm-memory-antibody.js` | script | `clean/tracked` | 2571 |
-| `ui/scripts/hm-memory-api.js` | script | `clean/tracked` | 4920 |
-| `ui/scripts/hm-memory-broker.js` | script | `clean/tracked` | 2689 |
-| `ui/scripts/hm-memory-consistency.js` | script | `clean/tracked` | 9937 |
-| `ui/scripts/hm-memory-extract.js` | script | `clean/tracked` | 7447 |
-| `ui/scripts/hm-memory-index.js` | script | `clean/tracked` | 1995 |
-| `ui/scripts/hm-memory-ingest.js` | script | `clean/tracked` | 7907 |
-| `ui/scripts/hm-memory-promote.js` | script | `clean/tracked` | 4088 |
-| `ui/scripts/hm-memory-registry.js` | script | `clean/tracked` | 1943 |
-| `ui/scripts/hm-memory-search.js` | script | `clean/tracked` | 3001 |
-| `ui/scripts/hm-memory.js` | script | `clean/tracked` | 12937 |
-| `ui/scripts/hm-mira-core-auth-binding.js` | script | `clean/tracked` | 1861 |
-| `ui/scripts/hm-mira-core-durable-state-seed-v0.js` | script | `clean/tracked` | 5088 |
-| `ui/scripts/hm-mira-core-encryption-key.js` | script | `clean/tracked` | 1869 |
-| `ui/scripts/hm-mira-core-eval-runner.js` | script | `clean/tracked` | 1550 |
-| `ui/scripts/hm-mira-core-growth-loop-v0.js` | script | `clean/tracked` | 5300 |
-| `ui/scripts/hm-mira-core-identity-anchor-v0.js` | script | `clean/tracked` | 3415 |
-| `ui/scripts/hm-mira-core-identity-signing.js` | script | `clean/tracked` | 1877 |
-| `ui/scripts/hm-mira-core-intent-queue.js` | script | `clean/tracked` | 1301 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-noop-boundary-refresh.js` | script | `clean/tracked` | 2005 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-noop-dry-check.js` | script | `clean/tracked` | 1977 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-preimplementation-checklist.js` | script | `clean/tracked` | 2031 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-gap.js` | script | `clean/tracked` | 1975 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase49.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase50.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase51.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase52.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase53.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase54.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase55.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase56.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase57.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase58.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase59.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase60.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase61.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase62.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase63.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase64.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase65.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase66.js` | script | `clean/tracked` | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-safety.js` | script | `clean/tracked` | 1949 |
-| `ui/scripts/hm-mira-core-local-acceptance.js` | script | `clean/tracked` | 1313 |
-| `ui/scripts/hm-mira-core-local-text-session-v0.js` | script | `clean/tracked` | 5009 |
-| `ui/scripts/hm-mira-core-milestone-readiness.js` | script | `clean/tracked` | 1889 |
-| `ui/scripts/hm-mira-core-mutation-patch.js` | script | `clean/tracked` | 1308 |
-| `ui/scripts/hm-mira-core-perception.js` | script | `clean/tracked` | 1298 |
-| `ui/scripts/hm-mira-core-persistence-audit.js` | script | `clean/tracked` | 1881 |
-| `ui/scripts/hm-mira-core-presence-runtime-read-path-v0.js` | script | `clean/tracked` | 4205 |
-| `ui/scripts/hm-mira-core-presence-v0.js` | script | `clean/tracked` | 4280 |
-| `ui/scripts/hm-mira-core-profiles.js` | script | `clean/tracked` | 1712 |
-| `ui/scripts/hm-mira-core-pulse.js` | script | `clean/tracked` | 1554 |
-| `ui/scripts/hm-mira-core-readiness.js` | script | `clean/tracked` | 1851 |
-| `ui/scripts/hm-mira-core-relationship-presence-v1.js` | script | `clean/tracked` | 4473 |
-| `ui/scripts/hm-mira-core-runtime-control-path.js` | script | `clean/tracked` | 1891 |
-| `ui/scripts/hm-mira-core-runtime-control-reporting-reconciliation.js` | script | `clean/tracked` | 2009 |
-| `ui/scripts/hm-mira-core-runtime-controls.js` | script | `clean/tracked` | 1877 |
-| `ui/scripts/hm-mira-core-runtime-dry-run-implementation.js` | script | `clean/tracked` | 1929 |
-| `ui/scripts/hm-mira-core-runtime-dry-run-readiness-gap.js` | script | `clean/tracked` | 1963 |
-| `ui/scripts/hm-mira-core-runtime-dry-run-review.js` | script | `clean/tracked` | 1897 |
-| `ui/scripts/hm-mira-core-runtime-dry-runner.js` | script | `clean/tracked` | 1883 |
-| `ui/scripts/hm-mira-core-runtime-harness.js` | script | `clean/tracked` | 1873 |
-| `ui/scripts/hm-mira-core-runtime-milestone-refresh.js` | script | `clean/tracked` | 1911 |
-| `ui/scripts/hm-mira-core-runtime-mode-flag-reader-safety.js` | script | `clean/tracked` | 1971 |
-| `ui/scripts/hm-mira-core-runtime-mode-kill-switch-implementation-risk.js` | script | `clean/tracked` | 2021 |
-| `ui/scripts/hm-mira-core-runtime-mode-kill-switch-prerequisite-boundary.js` | script | `clean/tracked` | 2029 |
-| `ui/scripts/hm-mira-core-runtime-mode-kill-switch-status-gap-refresh.js` | script | `clean/tracked` | 2015 |
-| `ui/scripts/hm-mira-core-runtime-mode-kill-switch.js` | script | `clean/tracked` | 1945 |
-| `ui/scripts/hm-mira-core-runtime-next-action.js` | script | `clean/tracked` | 1890 |
-| `ui/scripts/hm-mira-core-runtime-operator-status.js` | script | `clean/tracked` | 1903 |
-| `ui/scripts/hm-mira-core-runtime-operator-ui-surface.js` | script | `clean/tracked` | 1920 |
-| `ui/scripts/hm-mira-core-runtime-preflight.js` | script | `clean/tracked` | 1881 |
-| `ui/scripts/hm-mira-core-runtime-promotion-gate.js` | script | `clean/tracked` | 1899 |
-| `ui/scripts/hm-mira-core-runtime-readiness-refresh-through-phase37.js` | script | `clean/tracked` | 2011 |
-| `ui/scripts/hm-mira-core-runtime-slice.js` | script | `clean/tracked` | 1865 |
-| `ui/scripts/hm-mira-core-runtime-status-milestone-refresh.js` | script | `clean/tracked` | 1940 |
-| `ui/scripts/hm-mira-core-server-api.js` | script | `clean/tracked` | 1853 |
-| `ui/scripts/hm-mira-core-server-boundary.js` | script | `clean/tracked` | 1311 |
-| `ui/scripts/hm-mira-core-server-handler.js` | script | `clean/tracked` | 1869 |
-| `ui/scripts/hm-mira-core-server-runtime-gap.js` | script | `clean/tracked` | 1883 |
-| `ui/scripts/hm-mira-core-server-upload.js` | script | `clean/tracked` | 1304 |
-| `ui/scripts/hm-mira-core-snapshot.js` | script | `clean/tracked` | 2039 |
-| `ui/scripts/hm-mira-core-status.js` | script | `clean/tracked` | 1555 |
-| `ui/scripts/hm-mira-core-storage-retention.js` | script | `clean/tracked` | 1881 |
-| `ui/scripts/hm-mira-core-validate-proposal.js` | script | `clean/tracked` | 1636 |
-| `ui/scripts/hm-mira-emit.js` | script | `clean/tracked` | 8985 |
-| `ui/scripts/hm-mira-lab-prompt.js` | script | `clean/tracked` | 7564 |
-| `ui/scripts/hm-mira-lab-verify.js` | script | `clean/tracked` | 15187 |
-| `ui/scripts/hm-mira-presence-runtime-state-v0.js` | script | `clean/tracked` | 3315 |
-| `ui/scripts/hm-mira-progress.js` | script | `clean/tracked` | 3427 |
-| `ui/scripts/hm-mira-reply.js` | script | `clean/tracked` | 3555 |
-| `ui/scripts/hm-mira-self-direction.js` | script | `clean/tracked` | 25582 |
-| `ui/scripts/hm-mira-visible-presence-proof.js` | script | `clean/tracked` | 3067 |
-| `ui/scripts/hm-oracle-wake-watchdog.js` | script | `clean/tracked` | 5079 |
-| `ui/scripts/hm-pane.js` | script | `clean/tracked` | 7418 |
-| `ui/scripts/hm-path-audit.config.json` | script | `clean/tracked` | 686 |
-| `ui/scripts/hm-path-audit.js` | script | `clean/tracked` | 4769 |
-| `ui/scripts/hm-permission-ask-summary.js` | script | `clean/tracked` | 1094 |
-| `ui/scripts/hm-phone-voice.js` | script | `clean/tracked` | 3532 |
-| `ui/scripts/hm-preflight.js` | script | `clean/tracked` | 2404 |
-| `ui/scripts/hm-promotion.js` | script | `clean/tracked` | 7524 |
-| `ui/scripts/hm-reddit.js` | script | `clean/tracked` | 9957 |
-| `ui/scripts/hm-restart-execute.js` | script | `clean/tracked` | 31077 |
-| `ui/scripts/hm-restart-execute.test.js` | test | `clean/tracked` | 22975 |
-| `ui/scripts/hm-restart-request.js` | script | `clean/tracked` | 13697 |
-| `ui/scripts/hm-restart-verify.js` | script | `clean/tracked` | 9173 |
-| `ui/scripts/hm-screenshot-window.ps1` | script | `clean/tracked` | 3812 |
-| `ui/scripts/hm-screenshot.js` | script | `clean/tracked` | 7994 |
-| `ui/scripts/hm-search.js` | script | `clean/tracked` | 3354 |
-| `ui/scripts/hm-send-context-leak-guard.js` | script | `clean/tracked` | 6115 |
-| `ui/scripts/hm-send-coworker-output-lint.js` | script | `clean/tracked` | 10575 |
-| `ui/scripts/hm-send-permission-guard.js` | script | `clean/tracked` | 6348 |
-| `ui/scripts/hm-send.js` | script | `clean/tracked` | 78458 |
-| `ui/scripts/hm-session-summary.js` | script | `clean/tracked` | 13877 |
-| `ui/scripts/hm-smoke-runner.js` | script | `clean/tracked` | 97515 |
-| `ui/scripts/hm-sms.js` | script | `clean/tracked` | 10818 |
-| `ui/scripts/hm-startup-ai-briefing.js` | script | `clean/tracked` | 1294 |
-| `ui/scripts/hm-startup-health.js` | script | `clean/tracked` | 307 |
-| `ui/scripts/hm-startup-transcript-context.js` | script | `clean/tracked` | 1621 |
-| `ui/scripts/hm-supervisor.js` | script | `clean/tracked` | 5200 |
-| `ui/scripts/hm-surface-audit.js` | script | `clean/tracked` | 8678 |
-| `ui/scripts/hm-task-queue.js` | script | `clean/tracked` | 33694 |
-| `ui/scripts/hm-telegram-longpoll-relay.js` | script | `clean/tracked` | 3484 |
-| `ui/scripts/hm-telegram-poller-lane.js` | script | `clean/tracked` | 11838 |
-| `ui/scripts/hm-telegram-routing.js` | script | `clean/tracked` | 9813 |
-| `ui/scripts/hm-telegram.js` | script | `clean/tracked` | 26544 |
-| `ui/scripts/hm-transcript-index.js` | script | `clean/tracked` | 2651 |
-| `ui/scripts/hm-transition.js` | script | `clean/tracked` | 9518 |
-| `ui/scripts/hm-trigger.js` | script | `clean/tracked` | 4496 |
-| `ui/scripts/hm-twitter.js` | script | `clean/tracked` | 9859 |
-| `ui/scripts/hm-visual-capture.js` | script | `clean/tracked` | 13957 |
-| `ui/scripts/hm-visual-utils.js` | script | `clean/tracked` | 17618 |
-| `ui/scripts/hm-voice-broker.js` | script | `clean/tracked` | 9903 |
-| `ui/scripts/hm-voice-say.js` | script | `clean/tracked` | 1315 |
-| `ui/scripts/install-supervisor-task.ps1` | script | `clean/tracked` | 2696 |
-| `ui/scripts/jest-staged.js` | script | `clean/tracked` | 4101 |
-| `ui/scripts/local_embedder.py` | script | `clean/tracked` | 1205 |
-| `ui/scripts/mira-system-map-guard.js` | script | `M ` | 9173 |
+| Path | Kind | Bytes |
+| --- | --- | ---: |
+| `ui/scripts/claude-extract.js` | script | 6085 |
+| `ui/scripts/deprecated/coverage-report.js` | script | 1153 |
+| `ui/scripts/deprecated/README.md` | doc | 289 |
+| `ui/scripts/deprecated/test-image-gen.js` | script | 8865 |
+| `ui/scripts/doc-lint.js` | script | 12818 |
+| `ui/scripts/evidence-ledger-seed-memory.js` | script | 4857 |
+| `ui/scripts/extraction-helpers.js` | script | 3073 |
+| `ui/scripts/hm-agent-alert.js` | script | 2275 |
+| `ui/scripts/hm-alignment-audit.js` | script | 10543 |
+| `ui/scripts/hm-anomaly.js` | script | 3735 |
+| `ui/scripts/hm-app.js` | script | 7915 |
+| `ui/scripts/hm-architect-wake-watchdog.js` | script | 7035 |
+| `ui/scripts/hm-architect-watchdog.js` | script | 14538 |
+| `ui/scripts/hm-bg.js` | script | 13615 |
+| `ui/scripts/hm-bidirectional-wake-watchdog.js` | script | 8367 |
+| `ui/scripts/hm-capabilities.js` | script | 15107 |
+| `ui/scripts/hm-ci-check.js` | script | 2243 |
+| `ui/scripts/hm-claim.js` | script | 20929 |
+| `ui/scripts/hm-codebase-index.js` | script | 11983 |
+| `ui/scripts/hm-codex-heartbeat-check.js` | script | 5853 |
+| `ui/scripts/hm-comms.js` | script | 11443 |
+| `ui/scripts/hm-compat-count.js` | script | 8858 |
+| `ui/scripts/hm-csm-1b-bench.py` | script | 24197 |
+| `ui/scripts/hm-doctor.js` | script | 18972 |
+| `ui/scripts/hm-experiment.js` | script | 12365 |
+| `ui/scripts/hm-github.js` | script | 14433 |
+| `ui/scripts/hm-health-snapshot.js` | script | 49912 |
+| `ui/scripts/hm-heartbeat.js` | script | 8590 |
+| `ui/scripts/hm-hook-afteragent.js` | script | 973 |
+| `ui/scripts/hm-hook-injection.js` | script | 6600 |
+| `ui/scripts/hm-hook-precompress.js` | script | 1315 |
+| `ui/scripts/hm-image-gen.js` | script | 3476 |
+| `ui/scripts/hm-initiative.js` | script | 19177 |
+| `ui/scripts/hm-investigate.js` | script | 13022 |
+| `ui/scripts/hm-memory-antibody.js` | script | 2571 |
+| `ui/scripts/hm-memory-api.js` | script | 4920 |
+| `ui/scripts/hm-memory-broker.js` | script | 2689 |
+| `ui/scripts/hm-memory-consistency.js` | script | 9937 |
+| `ui/scripts/hm-memory-extract.js` | script | 7447 |
+| `ui/scripts/hm-memory-index.js` | script | 1995 |
+| `ui/scripts/hm-memory-ingest.js` | script | 7907 |
+| `ui/scripts/hm-memory-promote.js` | script | 4088 |
+| `ui/scripts/hm-memory-registry.js` | script | 1943 |
+| `ui/scripts/hm-memory-search.js` | script | 3001 |
+| `ui/scripts/hm-memory.js` | script | 12937 |
+| `ui/scripts/hm-mira-core-auth-binding.js` | script | 1861 |
+| `ui/scripts/hm-mira-core-durable-state-seed-v0.js` | script | 5088 |
+| `ui/scripts/hm-mira-core-encryption-key.js` | script | 1869 |
+| `ui/scripts/hm-mira-core-eval-runner.js` | script | 1550 |
+| `ui/scripts/hm-mira-core-growth-loop-v0.js` | script | 5300 |
+| `ui/scripts/hm-mira-core-identity-anchor-v0.js` | script | 3415 |
+| `ui/scripts/hm-mira-core-identity-signing.js` | script | 1877 |
+| `ui/scripts/hm-mira-core-intent-queue.js` | script | 1301 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-noop-boundary-refresh.js` | script | 2005 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-noop-dry-check.js` | script | 1977 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-preimplementation-checklist.js` | script | 2031 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-gap.js` | script | 1975 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase49.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase50.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase51.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase52.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase53.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase54.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase55.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase56.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase57.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase58.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase59.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase60.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase61.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase62.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase63.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase64.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase65.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase66.js` | script | 2047 |
+| `ui/scripts/hm-mira-core-kill-switch-wiring-safety.js` | script | 1949 |
+| `ui/scripts/hm-mira-core-local-acceptance.js` | script | 1313 |
+| `ui/scripts/hm-mira-core-local-text-session-v0.js` | script | 5009 |
+| `ui/scripts/hm-mira-core-milestone-readiness.js` | script | 1889 |
+| `ui/scripts/hm-mira-core-mutation-patch.js` | script | 1308 |
+| `ui/scripts/hm-mira-core-perception.js` | script | 1298 |
+| `ui/scripts/hm-mira-core-persistence-audit.js` | script | 1881 |
+| `ui/scripts/hm-mira-core-presence-runtime-read-path-v0.js` | script | 4205 |
+| `ui/scripts/hm-mira-core-presence-v0.js` | script | 4280 |
+| `ui/scripts/hm-mira-core-profiles.js` | script | 1712 |
+| `ui/scripts/hm-mira-core-pulse.js` | script | 1554 |
+| `ui/scripts/hm-mira-core-readiness.js` | script | 1851 |
+| `ui/scripts/hm-mira-core-relationship-presence-v1.js` | script | 4473 |
+| `ui/scripts/hm-mira-core-runtime-control-path.js` | script | 1891 |
+| `ui/scripts/hm-mira-core-runtime-control-reporting-reconciliation.js` | script | 2009 |
+| `ui/scripts/hm-mira-core-runtime-controls.js` | script | 1877 |
+| `ui/scripts/hm-mira-core-runtime-dry-run-implementation.js` | script | 1929 |
+| `ui/scripts/hm-mira-core-runtime-dry-run-readiness-gap.js` | script | 1963 |
+| `ui/scripts/hm-mira-core-runtime-dry-run-review.js` | script | 1897 |
+| `ui/scripts/hm-mira-core-runtime-dry-runner.js` | script | 1883 |
+| `ui/scripts/hm-mira-core-runtime-harness.js` | script | 1873 |
+| `ui/scripts/hm-mira-core-runtime-milestone-refresh.js` | script | 1911 |
+| `ui/scripts/hm-mira-core-runtime-mode-flag-reader-safety.js` | script | 1971 |
+| `ui/scripts/hm-mira-core-runtime-mode-kill-switch-implementation-risk.js` | script | 2021 |
+| `ui/scripts/hm-mira-core-runtime-mode-kill-switch-prerequisite-boundary.js` | script | 2029 |
+| `ui/scripts/hm-mira-core-runtime-mode-kill-switch-status-gap-refresh.js` | script | 2015 |
+| `ui/scripts/hm-mira-core-runtime-mode-kill-switch.js` | script | 1945 |
+| `ui/scripts/hm-mira-core-runtime-next-action.js` | script | 1890 |
+| `ui/scripts/hm-mira-core-runtime-operator-status.js` | script | 1903 |
+| `ui/scripts/hm-mira-core-runtime-operator-ui-surface.js` | script | 1920 |
+| `ui/scripts/hm-mira-core-runtime-preflight.js` | script | 1881 |
+| `ui/scripts/hm-mira-core-runtime-promotion-gate.js` | script | 1899 |
+| `ui/scripts/hm-mira-core-runtime-readiness-refresh-through-phase37.js` | script | 2011 |
+| `ui/scripts/hm-mira-core-runtime-slice.js` | script | 1865 |
+| `ui/scripts/hm-mira-core-runtime-status-milestone-refresh.js` | script | 1940 |
+| `ui/scripts/hm-mira-core-server-api.js` | script | 1853 |
+| `ui/scripts/hm-mira-core-server-boundary.js` | script | 1311 |
+| `ui/scripts/hm-mira-core-server-handler.js` | script | 1869 |
+| `ui/scripts/hm-mira-core-server-runtime-gap.js` | script | 1883 |
+| `ui/scripts/hm-mira-core-server-upload.js` | script | 1304 |
+| `ui/scripts/hm-mira-core-snapshot.js` | script | 2039 |
+| `ui/scripts/hm-mira-core-status.js` | script | 1555 |
+| `ui/scripts/hm-mira-core-storage-retention.js` | script | 1881 |
+| `ui/scripts/hm-mira-core-validate-proposal.js` | script | 1636 |
+| `ui/scripts/hm-mira-emit.js` | script | 8985 |
+| `ui/scripts/hm-mira-lab-prompt.js` | script | 7564 |
+| `ui/scripts/hm-mira-lab-verify.js` | script | 15187 |
+| `ui/scripts/hm-mira-presence-runtime-state-v0.js` | script | 3315 |
+| `ui/scripts/hm-mira-progress.js` | script | 3427 |
+| `ui/scripts/hm-mira-reply.js` | script | 3555 |
+| `ui/scripts/hm-mira-self-direction.js` | script | 25582 |
+| `ui/scripts/hm-mira-visible-presence-proof.js` | script | 3067 |
+| `ui/scripts/hm-oracle-wake-watchdog.js` | script | 5079 |
+| `ui/scripts/hm-pane.js` | script | 7418 |
+| `ui/scripts/hm-path-audit.config.json` | script | 686 |
+| `ui/scripts/hm-path-audit.js` | script | 4769 |
+| `ui/scripts/hm-permission-ask-summary.js` | script | 1094 |
+| `ui/scripts/hm-phone-voice.js` | script | 3532 |
+| `ui/scripts/hm-preflight.js` | script | 2404 |
+| `ui/scripts/hm-promotion.js` | script | 7524 |
+| `ui/scripts/hm-reddit.js` | script | 9957 |
+| `ui/scripts/hm-restart-execute.js` | script | 31077 |
+| `ui/scripts/hm-restart-execute.test.js` | test | 22975 |
+| `ui/scripts/hm-restart-request.js` | script | 13697 |
+| `ui/scripts/hm-restart-verify.js` | script | 9173 |
+| `ui/scripts/hm-screenshot-window.ps1` | script | 3812 |
+| `ui/scripts/hm-screenshot.js` | script | 7994 |
+| `ui/scripts/hm-search.js` | script | 3354 |
+| `ui/scripts/hm-send-context-leak-guard.js` | script | 6115 |
+| `ui/scripts/hm-send-coworker-output-lint.js` | script | 10575 |
+| `ui/scripts/hm-send-permission-guard.js` | script | 6348 |
+| `ui/scripts/hm-send.js` | script | 78458 |
+| `ui/scripts/hm-session-summary.js` | script | 13877 |
+| `ui/scripts/hm-smoke-runner.js` | script | 97515 |
+| `ui/scripts/hm-sms.js` | script | 10818 |
+| `ui/scripts/hm-startup-ai-briefing.js` | script | 1294 |
+| `ui/scripts/hm-startup-health.js` | script | 307 |
+| `ui/scripts/hm-startup-transcript-context.js` | script | 1621 |
+| `ui/scripts/hm-supervisor.js` | script | 5200 |
+| `ui/scripts/hm-surface-audit.js` | script | 8678 |
+| `ui/scripts/hm-task-queue.js` | script | 33694 |
+| `ui/scripts/hm-telegram-longpoll-relay.js` | script | 3484 |
+| `ui/scripts/hm-telegram-poller-lane.js` | script | 11838 |
+| `ui/scripts/hm-telegram-routing.js` | script | 9813 |
+| `ui/scripts/hm-telegram.js` | script | 26544 |
+| `ui/scripts/hm-transcript-index.js` | script | 2651 |
+| `ui/scripts/hm-transition.js` | script | 9518 |
+| `ui/scripts/hm-trigger.js` | script | 4496 |
+| `ui/scripts/hm-twitter.js` | script | 9859 |
+| `ui/scripts/hm-visual-capture.js` | script | 13957 |
+| `ui/scripts/hm-visual-utils.js` | script | 17618 |
+| `ui/scripts/hm-voice-broker.js` | script | 9903 |
+| `ui/scripts/hm-voice-say.js` | script | 1315 |
+| `ui/scripts/install-supervisor-task.ps1` | script | 2696 |
+| `ui/scripts/jest-staged.js` | script | 4101 |
+| `ui/scripts/local_embedder.py` | script | 1205 |
+| `ui/scripts/mira-system-map-guard.js` | script | 9173 |
 
 ### ui/styles
 
-| Path | Kind | Status | Bytes |
-| --- | --- | --- | ---: |
-| `ui/styles/base.css` | asset | `clean/tracked` | 31844 |
-| `ui/styles/layout.css` | asset | `clean/tracked` | 45161 |
-| `ui/styles/mira-lab.css` | asset | `clean/tracked` | 4844 |
-| `ui/styles/panes.css` | asset | `clean/tracked` | 13886 |
-| `ui/styles/settings-panel.css` | asset | `clean/tracked` | 11422 |
-| `ui/styles/state-bar.css` | asset | `clean/tracked` | 2286 |
-| `ui/styles/status-strip.css` | asset | `clean/tracked` | 4654 |
-| `ui/styles/tabs.css` | asset | `clean/tracked` | 2550 |
-| `ui/styles/tabs/activity.css` | asset | `clean/tracked` | 6486 |
-| `ui/styles/tabs/api-keys.css` | asset | `clean/tracked` | 1833 |
-| `ui/styles/tabs/bridge.css` | asset | `clean/tracked` | 6921 |
-| `ui/styles/tabs/comms-console.css` | asset | `clean/tracked` | 9292 |
-| `ui/styles/tabs/oracle.css` | asset | `clean/tracked` | 7745 |
-| `ui/styles/tabs/screenshots.css` | asset | `clean/tracked` | 3626 |
-| `ui/styles/tabs/voice-broker.css` | asset | `clean/tracked` | 2662 |
+| Path | Kind | Bytes |
+| --- | --- | ---: |
+| `ui/styles/base.css` | asset | 31844 |
+| `ui/styles/layout.css` | asset | 45161 |
+| `ui/styles/mira-lab.css` | asset | 4844 |
+| `ui/styles/panes.css` | asset | 13886 |
+| `ui/styles/settings-panel.css` | asset | 11422 |
+| `ui/styles/state-bar.css` | asset | 2286 |
+| `ui/styles/status-strip.css` | asset | 4654 |
+| `ui/styles/tabs.css` | asset | 2550 |
+| `ui/styles/tabs/activity.css` | asset | 6486 |
+| `ui/styles/tabs/api-keys.css` | asset | 1833 |
+| `ui/styles/tabs/bridge.css` | asset | 6921 |
+| `ui/styles/tabs/comms-console.css` | asset | 9292 |
+| `ui/styles/tabs/oracle.css` | asset | 7745 |
+| `ui/styles/tabs/screenshots.css` | asset | 3626 |
+| `ui/styles/tabs/voice-broker.css` | asset | 2662 |
 
 ### workspace/knowledge
 
-| Path | Kind | Status | Bytes |
-| --- | --- | --- | ---: |
-| `workspace/knowledge/workflows.md` | doc | `clean/tracked` | 4211 |
+| Path | Kind | Bytes |
+| --- | --- | ---: |
+| `workspace/knowledge/workflows.md` | doc | 4211 |
 
