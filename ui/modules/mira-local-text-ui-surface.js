@@ -38,6 +38,10 @@ const {
   buildMiraLiveWhatNowAnswerV0,
   isMiraLiveWhatNowPrompt,
 } = require('./mira-core/live-what-now-answer-v0');
+const {
+  buildMiraLiveInternalRequestDraftV0,
+  isMiraLiveInternalRequestDraftPrompt,
+} = require('./mira-core/live-internal-request-draft-v0');
 
 const LOCAL_TEXT_UI_CHANNEL = 'mira:local-text-session';
 const LOCAL_TEXT_UI_SURFACE_SCHEMA_VERSION = 'squidrun.mira.local_text_ui_surface_v0.phase75.v0';
@@ -429,6 +433,7 @@ function buildSurfaceRecord({
   developmentalUnderstanding = null,
   autonomySubstrate = null,
   whatNowAnswer = null,
+  internalRequestDraft = null,
 }) {
   const replyCount = reply ? 1 : 0;
   const attachment = modelAttachment || getMiraTextModelAttachmentConfig({}, { enabled: false });
@@ -513,6 +518,20 @@ function buildSurfaceRecord({
       stale_or_parked_exclusions: whatNowAnswer.stale_or_parked_exclusions || [],
       james_action_line_count: whatNowAnswer.james_action_line_count,
       no_effects: whatNowAnswer.no_effects || null,
+    } : null,
+    internal_request_draft: internalRequestDraft ? {
+      schema: internalRequestDraft.schema,
+      decision: internalRequestDraft.decision,
+      read_only: internalRequestDraft.read_only === true,
+      source_status: internalRequestDraft.source_status || null,
+      source_evidence: internalRequestDraft.source_evidence || [],
+      current_lane: internalRequestDraft.current_lane || null,
+      target_agent: internalRequestDraft.target_agent || null,
+      proposed_message_body: internalRequestDraft.proposed_message_body || null,
+      reason_trigger: internalRequestDraft.reason_trigger || null,
+      blocked_parked_exclusions: internalRequestDraft.blocked_parked_exclusions || [],
+      james_action_line_count: internalRequestDraft.james_action_line_count,
+      no_effects: internalRequestDraft.no_effects || null,
     } : null,
     reply: reply ? {
       count: 1,
@@ -905,6 +924,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     staleAfterMs: options.typedRestartContinuityMaxAgeMs || options.restartContinuityMaxAgeMs,
   });
   let whatNowAnswer = null;
+  let internalRequestDraft = null;
   if (localReply && isMiraLiveWhatNowPrompt(text)) {
     whatNowAnswer = buildMiraLiveWhatNowAnswerV0({
       promptText: text,
@@ -929,6 +949,38 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
           text: whatNowAnswer.answer_text,
           reply_id: `mira-live-what-now:${stableHash(whatNowAnswer).slice(0, 16)}`,
           source: 'mira_live_what_now_answer_v0',
+          model: null,
+        },
+        attachment,
+        modelCallCount: 0,
+        networkCount: 0,
+      };
+    }
+  }
+  if (localReply && modelResult.ok !== true && isMiraLiveInternalRequestDraftPrompt(text)) {
+    internalRequestDraft = buildMiraLiveInternalRequestDraftV0({
+      promptText: text,
+      projectRoot,
+      metadata: {
+        sessionId: getPayloadValue(payload, 'sessionId'),
+      },
+      nowMs: Date.parse(generatedAt),
+    }, {
+      projectRoot,
+      nowMs: Date.parse(generatedAt),
+      currentLaneSnapshot: options.currentLaneSnapshot,
+      commsRows: options.commsRows,
+      commsReader: options.commsReader,
+      evidenceLedgerDbPath: options.evidenceLedgerDbPath,
+      commsLimit: options.commsLimit,
+    });
+    if (internalRequestDraft.ok === true) {
+      modelResult = {
+        ok: true,
+        reply: {
+          text: internalRequestDraft.answer_text,
+          reply_id: `mira-live-internal-request-draft:${stableHash(internalRequestDraft).slice(0, 16)}`,
+          source: 'mira_live_internal_request_draft_v0',
           model: null,
         },
         attachment,
@@ -1027,8 +1079,11 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
   const effectiveReasons = degraded
     ? [modelResult.reason || 'no_model_response']
     : reasons;
-  const deterministicWhatNowAccepted = whatNowAnswer?.ok === true && accepted;
-  const memoryCandidateStaging = accepted && !deterministicWhatNowAccepted
+  const deterministicLocalEvidenceAccepted = accepted && (
+    whatNowAnswer?.ok === true
+    || internalRequestDraft?.ok === true
+  );
+  const memoryCandidateStaging = accepted && !deterministicLocalEvidenceAccepted
     ? buildMiraMemoryCandidateStagingV1({
       threadContext: payload.threadContext || payload.thread_context || {},
       currentUserText: text,
@@ -1036,7 +1091,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     })
     : buildMiraMemoryCandidateStagingV1({});
   const memoryCandidatePersistence = accepted
-    && !deterministicWhatNowAccepted
+    && !deterministicLocalEvidenceAccepted
     && Number(memoryCandidateStaging.candidate_count || 0) > 0
     ? persistMiraTentativeUnderstandingsV1(memoryCandidateStaging, {
       projectRoot,
@@ -1093,6 +1148,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     developmentalUnderstanding,
     autonomySubstrate,
     whatNowAnswer,
+    internalRequestDraft,
   });
   return {
     ui_surface_v0: surface,

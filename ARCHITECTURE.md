@@ -153,6 +153,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/mira-core/developmental-understanding-v1.js: Builds Mira's integrated conversation, tentative-understanding, self-state, relationship-state, relational-texture, and next-intention surface without claiming durable memory commit or private consciousness.
 - ui/modules/mira-core/local-text-session-v0.js: Local Mira text session builder that applies language rules and model attachment boundaries before visible tab output.
 - ui/modules/mira-core/live-what-now-answer-v0.js: Read-only live-evidence renderer for the visible Mira "what now?" answer; uses current-lane/comms evidence and keeps parked/prototype/archive scaffolds out of next-move authority.
+- ui/modules/mira-core/live-internal-request-draft-v0.js: Read-only live-evidence renderer for reviewable internal Builder/Oracle request drafts; produces draft-only message bodies without hm-send, runtime POST, model call, or external action.
 - ui/modules/mira-core/memory-candidate-staging-v1.js: Extracts bounded recent-panel conversation signals into tentative Mira understandings with confidence/risk/revision metadata, not visible CRUD memory management.
 - ui/modules/mira-core/mira-language-rules-v0.js: Shared Mira reply-language gate used by local text, tab, and route-facing tests to block meta/tool-like user-visible phrasing.
 - ui/modules/mira-core/mira-persona-loader-v0.js: Loads and hot-reloads Mira voice/persona text from config files, returning explicit persona metadata for broker/runtime freshness checks.

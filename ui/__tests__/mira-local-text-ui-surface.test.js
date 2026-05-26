@@ -165,6 +165,47 @@ function whatNowCommsRows() {
   ];
 }
 
+function internalRequestDraftCommsRows() {
+  return [
+    {
+      messageId: 'architect-95',
+      sessionId: 'app-session-382',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      direction: 'outbound',
+      status: 'routed',
+      ackStatus: 'routed_unverified_timeout',
+      brokeredAtMs: Date.parse('2026-05-26T14:55:41.607Z'),
+      rawBody: '(ARCHITECT #95): HEAD `8223186c Fix handoff current-lane proof pollution`; committed scope is exactly the four reviewed files; git status clean; targeted Jest PASS 3 suites / 78 tests; codebase:index:check PASS.',
+      metadata: { windowKey: 'main' },
+    },
+    {
+      messageId: 'architect-96',
+      sessionId: 'app-session-382',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      direction: 'outbound',
+      status: 'routed',
+      ackStatus: 'routed_unverified_timeout',
+      brokeredAtMs: Date.parse('2026-05-26T14:55:41.773Z'),
+      rawBody: '(ARCHITECT #96): HEAD/scope/clean tree/tests/index all match; current-lane artifact is closed/none and no builder#22 authority. No further Builder action pending unless Oracle objects.',
+      metadata: { windowKey: 'main' },
+    },
+    {
+      messageId: 'architect-98',
+      sessionId: 'app-session-382',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      direction: 'outbound',
+      status: 'routed',
+      ackStatus: 'routed_unverified_timeout',
+      brokeredAtMs: Date.parse('2026-05-26T15:20:58.559Z'),
+      rawBody: '(ARCHITECT #98): New current-session task: A2 Mira internal-request draft lane. Objective: make Mira produce reviewable internal Builder/Oracle request drafts from live SquidRun evidence without dispatching them. Requirements: draft only, no hm-send, no runtime POST, no external action, no model call unless already allowed by the local text surface contract; answer must identify source evidence, target agent, proposed message body, reason/trigger, blocked/parked exclusions, and exactly one `JAMES ACTION:` line. Use current live evidence after `8223186c`, not parked New Mira/voice/phase scaffolds. Return smallest implementation/proof packet or blocker.',
+      metadata: { windowKey: 'main' },
+    },
+  ];
+}
+
 function seedTypedRestartContinuity(projectRoot, {
   currentLaneObjective = 'MAIN_TYPED_LANE_SENTINEL: continue typed restart proof',
   presenceAction = 'MAIN_PRESENCE_ACTION_SENTINEL: land private typed continuity context',
@@ -752,6 +793,88 @@ describe('Mira Local Text UI Surface v0', () => {
         no_writes: true,
       }),
     }));
+    expect(surface.checked_output_counters.model_call_count).toBe(0);
+    expect(surface.checked_output_counters.network_count).toBe(0);
+    expect(surface.checked_output_counters.external_send_count).toBe(0);
+    expect(surface.checked_output_counters.write_count).toBe(0);
+    expect(surface.boundary).toEqual(expect.objectContaining({
+      no_model: true,
+      no_network: true,
+      no_tools: true,
+      no_actions: true,
+      no_writes: true,
+    }));
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('internal-request draft prompt returns reviewable draft without model POST or sends', async () => {
+    const projectRoot = seededProject();
+    writeJson(projectRoot, CURRENT_LANE_RELATIVE_PATH, {
+      version: 1,
+      generatedAt: '2026-05-26T14:56:00.000Z',
+      sessionId: 'app-session-382',
+      source: 'comms_journal',
+      status: 'none',
+      activeLane: null,
+    });
+    const fetchImpl = jest.fn();
+
+    const output = await buildMiraLocalTextUiSurface(payload({
+      text: 'draft internal request',
+      now: '2026-05-26T15:22:00.000Z',
+      sessionId: 'app-session-382',
+      startedAt: '2026-05-26T15:21:00.000Z',
+      expiresAt: '2026-05-26T15:40:00.000Z',
+    }), {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+      commsRows: internalRequestDraftCommsRows(),
+    });
+
+    const surface = output.ui_surface_v0;
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(surface.decision).toBe('accepted');
+    expect(surface.reply).toEqual(expect.objectContaining({
+      count: 1,
+      source: 'mira_live_internal_request_draft_v0',
+    }));
+    expect(surface.reply.text).toContain('Internal request draft: draft only; not sent.');
+    expect(surface.reply.text).toContain('Source evidence:');
+    expect(surface.reply.text).toContain('Target agent: Builder.');
+    expect(surface.reply.text).toContain('Proposed message body:');
+    expect(surface.reply.text).toContain('(DRAFT TO BUILDER)');
+    expect(surface.reply.text).toContain('Blocked/parked exclusions:');
+    expect(surface.reply.text).toContain('parked/prototype/archive');
+    expect((surface.reply.text.match(/^JAMES ACTION:/gm) || [])).toHaveLength(1);
+    expect(surface.internal_request_draft).toEqual(expect.objectContaining({
+      decision: 'drafted_from_live_evidence',
+      target_agent: 'builder',
+      james_action_line_count: 1,
+      current_lane: expect.objectContaining({
+        source_ref: 'architect#98',
+        objective: expect.stringContaining('A2 Mira internal-request draft lane'),
+      }),
+      no_effects: expect.objectContaining({
+        no_hm_send: true,
+        no_sends: true,
+        no_runtime_post: true,
+        no_external_action: true,
+        no_model_call: true,
+        no_writes: true,
+        draft_only: true,
+      }),
+    }));
+    expect(surface.internal_request_draft.proposed_message_body).not.toContain('JAMES ACTION:');
+    expect(surface.internal_request_draft.source_evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'active_current_session_lane',
+        source_ref: 'architect#98',
+      }),
+    ]));
     expect(surface.checked_output_counters.model_call_count).toBe(0);
     expect(surface.checked_output_counters.network_count).toBe(0);
     expect(surface.checked_output_counters.external_send_count).toBe(0);
