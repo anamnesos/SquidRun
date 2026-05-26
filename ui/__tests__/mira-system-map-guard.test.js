@@ -161,9 +161,9 @@ describe('mira-system-map-guard', () => {
     expect(classifyMiraOwnedPath('ui/modules/ipc/mira-coordinator-snapshot-handlers.js')).toBe('Mira IPC surface');
     expect(classifyMiraOwnedPath('ui/modules/ipc/settings-handlers.js')).toBeNull();
     expect(classifyMiraOwnedPath('ui/modules/main/mira-lab-window.js')).toBe('Mira Lab window route');
-    expect(classifyMiraOwnedPath('ui/modules/tabs/mira-local-text.js')).toBe('Mira local text tab');
+    expect(classifyMiraOwnedPath('ui/modules/tabs/mira-local-text.js')).toBe('Removed Mira local text tab shell');
     expect(classifyMiraOwnedPath('ui/mira-lab-renderer.js')).toBe('Mira Lab renderer surface');
-    expect(classifyMiraOwnedPath('ui/styles/tabs/mira-local-text.css')).toBe('Mira local text style');
+    expect(classifyMiraOwnedPath('ui/styles/tabs/mira-local-text.css')).toBe('Removed Mira local text style shell');
     expect(classifyMiraOwnedPath('ui/scripts/hm-mira-lab-prompt.js')).toBe('Mira script surface');
     expect(classifyMiraOwnedPath('ui/scripts/mira-system-map-guard.js')).toBe('Mira source-of-truth enforcement');
     expect(classifyMiraOwnedPath('ui/__tests__/mira-presence-runtime-state-v0.test.js')).toBe('Mira test coverage');

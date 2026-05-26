@@ -84,8 +84,8 @@ function classifyMiraOwnedPath(filePath = '', diffProvider = () => '') {
   if (/^ui\/modules\/ipc\/mira-[^/]+\.js$/i.test(normalized)) return 'Mira IPC surface';
   if (normalized === 'ui/modules/ipc/voice-broker-handlers.js') return 'Mira voice IPC route';
   if (normalized === 'ui/modules/main/mira-lab-window.js') return 'Mira Lab window route';
-  if (normalized === 'ui/modules/tabs/mira-local-text.js') return 'Mira local text tab';
-  if (normalized === 'ui/styles/tabs/mira-local-text.css') return 'Mira local text style';
+  if (normalized === 'ui/modules/tabs/mira-local-text.js') return 'Removed Mira local text tab shell';
+  if (normalized === 'ui/styles/tabs/mira-local-text.css') return 'Removed Mira local text style shell';
   if (/^ui\/mira-lab[^/]*$/i.test(normalized)) return 'Mira Lab renderer surface';
   if (normalized === 'ui/styles/mira-lab.css') return 'Mira Lab style surface';
   if (/^ui\/scripts\/hm-mira[^/]*\.js$/i.test(normalized)) return 'Mira script surface';

@@ -1,9 +1,27 @@
+const fs = require('fs');
+const path = require('path');
+
+const legacyControllerPath = path.resolve(__dirname, '..', 'modules', 'tabs', 'mira-local-text.js');
+const legacyStylePath = path.resolve(__dirname, '..', 'styles', 'tabs', 'mira-local-text.css');
+const coreSurfacePath = path.resolve(__dirname, '..', 'modules', 'mira-local-text-ui-surface.js');
+const legacyControllerPresent = fs.existsSync(legacyControllerPath);
+const legacyController = legacyControllerPresent
+  ? require('../modules/tabs/mira-local-text')
+  : {
+    LOCAL_TEXT_UI_CHANNEL: 'mira:local-text-ui-surface',
+    MIRA_COORDINATOR_SNAPSHOT_CHANNEL: 'mira:coordinator-snapshot-v0',
+    createMiraLocalTextController: () => {
+      throw new Error('legacy_mira_local_text_tab_removed');
+    },
+    resetMiraLocalTextMemoryForTests: () => {},
+  };
+
 const {
   LOCAL_TEXT_UI_CHANNEL,
   MIRA_COORDINATOR_SNAPSHOT_CHANNEL,
   createMiraLocalTextController,
   resetMiraLocalTextMemoryForTests,
-} = require('../modules/tabs/mira-local-text');
+} = legacyController;
 
 function makeElement(id, value = '') {
   const listeners = new Map();
@@ -245,7 +263,17 @@ function coordinatorSnapshotResult() {
   };
 }
 
-describe('Mira local text tab controller', () => {
+describe('Mira local text tab shell cleanup', () => {
+  test('removes the unmounted tab shell while preserving the core local text surface', () => {
+    expect(fs.existsSync(legacyControllerPath)).toBe(false);
+    expect(fs.existsSync(legacyStylePath)).toBe(false);
+    expect(fs.existsSync(coreSurfacePath)).toBe(true);
+  });
+});
+
+const legacyTabDescribe = legacyControllerPresent ? describe : describe.skip;
+
+legacyTabDescribe('Mira local text tab controller', () => {
   beforeEach(() => {
     resetMiraLocalTextMemoryForTests();
   });
