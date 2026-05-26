@@ -9,6 +9,7 @@ const AGENT_REF_PATTERN = /\b(ARCHITECT|ARCH|BUILDER|ORACLE)\s+#(\d+)\b/gi;
 const COMPLETION_CONTINUITY_PATTERN = /\b(?:finished|committed|commit landed|lane closed|closed|verified locally|runtime cleanup verified|worktree clean|final git status|tests? (?:passed|green)|patch complete|task complete|resolvedCount|queue (?:is )?clean)\b/i;
 const DIRECTIVE_SEPARATOR_PATTERN = String.raw`\s*(?::|[\u2014\u2013-])\s*`;
 const CURRENT_SESSION_TASK_PATTERN = new RegExp(`^(?:[-*]\\s*)?CURRENT[-\\s]+SESSION\\s+TASK${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
+const MIDLINE_CURRENT_SESSION_TASK_PATTERN = new RegExp(`\\bNEW\\s+CURRENT[-\\s]+SESSION\\s+TASK${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
 const CURRENT_LANE_PATTERN = new RegExp(`^(?:[-*]\\s*)?(?:CURRENT\\s+(?:LANE|PRIORITY|FOCUS)|ACTIVE\\s+LANE|FOCUS)${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
 const TASK_PATTERN = new RegExp(`^(?:[-*]\\s*)?TASK${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
 const OBJECTIVE_PATTERN = new RegExp(`^(?:[-*]\\s*)?OBJECTIVE${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
@@ -82,6 +83,11 @@ function parseLeadingAgentRef(rawBody) {
   if (!text) return null;
   const match = text.match(/^\s*\((ARCHITECT|ARCH|BUILDER|ORACLE)\s+#(\d+)\)\s*:/i);
   return normalizeAgentRef(match ? { role: match[1], seq: match[2] } : null);
+}
+
+function canSetCurrentLaneFromBody(rawBody) {
+  const ref = parseLeadingAgentRef(rawBody);
+  return !ref || ref.role === 'architect';
 }
 
 function extractAgentRefs(rawBody) {
@@ -309,8 +315,11 @@ function hasAuthoritativeLaneCloseoutSignal(rawBody) {
 
 function isLaterObjectiveCloseoutRow(taskRow = {}, candidateRow = {}) {
   const taskSender = normalizeAgentRole(taskRow?.senderRole);
+  const taskTarget = normalizeAgentRole(taskRow?.targetRole);
   const candidateSender = normalizeAgentRole(candidateRow?.senderRole);
+  const candidateTarget = normalizeAgentRole(candidateRow?.targetRole);
   if (!taskSender || !candidateSender || taskSender !== candidateSender) return false;
+  if (taskTarget && candidateTarget && candidateTarget !== taskTarget) return false;
 
   const directive = extractCurrentLaneDirective(taskRow?.rawBody || '');
   if (!directive?.objective) return false;
@@ -468,12 +477,14 @@ function extractNaturalCurrentLaneDirective(rawBody) {
 function extractCurrentLaneDirective(rawBody) {
   const body = toOptionalString(rawBody, '');
   if (!body) return null;
+  if (!canSetCurrentLaneFromBody(body)) return null;
 
   const lines = body.split(/\r?\n/);
   let bestDirective = null;
   let insideReportSection = isReportLikeDirectiveBody(body);
   for (const line of lines) {
     const stripped = stripAgentPrefix(line);
+    const directiveText = redactQuotedDirectiveText(stripped);
     if (!stripped) continue;
     if (isReportSectionHeading(stripped)) {
       insideReportSection = true;
@@ -481,7 +492,8 @@ function extractCurrentLaneDirective(rawBody) {
     }
     if (insideReportSection) continue;
 
-    let match = stripped.match(CURRENT_SESSION_TASK_PATTERN);
+    let match = directiveText.match(CURRENT_SESSION_TASK_PATTERN)
+      || directiveText.match(MIDLINE_CURRENT_SESSION_TASK_PATTERN);
     if (match) {
       const objective = normalizeLaneObjective(match[1]);
       if (objective) {

@@ -117,6 +117,54 @@ function writeJson(projectRoot, relativePath, payload) {
   return filePath;
 }
 
+function whatNowCommsRows() {
+  return [
+    {
+      messageId: 'builder-20',
+      sessionId: 'app-session-382',
+      senderRole: 'builder',
+      targetRole: 'architect',
+      direction: 'outbound',
+      status: 'routed',
+      ackStatus: 'routed_unverified_timeout',
+      brokeredAtMs: Date.parse('2026-05-26T08:52:14.177Z'),
+      rawBody: '(BUILDER #20): Commit proof for generator freshness fix. Commit landed: - 2a549a26 Stabilize codebase index freshness check.',
+      metadata: { windowKey: 'main' },
+    },
+    {
+      messageId: 'architect-63',
+      sessionId: 'app-session-382',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      direction: 'outbound',
+      status: 'routed',
+      ackStatus: 'routed_unverified_timeout',
+      brokeredAtMs: Date.parse('2026-05-26T08:52:32.711Z'),
+      rawBody: '(ARCHITECT #63): Generator fix commit proof accepted. Cleanup checkpoint closed: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`, clean tree, codebase:index:check PASS. New current-session task: A1/A2 visible Mira movement lane. Objective: implement/propose the smallest user-visible `what now?` answer from live local evidence. Requirements: answer current lane/status, recent concrete changes, stale/parked evidence excluded from authority, next Builder/Oracle/internal move, exactly one `JAMES ACTION:` line; no sends, no runtime POST, no external action. Use live SquidRun evidence/current lane, not parked prototype/phase scaffold. Return implementation/proof packet or blocker.',
+      metadata: { windowKey: 'main' },
+    },
+    {
+      messageId: 'builder-21',
+      sessionId: 'app-session-382',
+      senderRole: 'builder',
+      targetRole: 'architect',
+      direction: 'outbound',
+      status: 'routed',
+      ackStatus: 'routed_unverified_timeout',
+      brokeredAtMs: Date.parse('2026-05-26T09:05:18.049Z'),
+      rawBody: [
+        '(BUILDER #21): A1/A2 visible Mira movement patch is staged for review, no commit.',
+        '',
+        'Implemented:',
+        '- Added `ui/modules/mira-core/live-what-now-answer-v0.js`: read-only live-evidence renderer for narrow `what now?` prompts.',
+        '- Wired it into `ui/modules/mira-local-text-ui-surface.js` after the local session gate.',
+        '- Tightened `ui/modules/main/agent-task-resolution.js` so Architect #63 is recognized even though "New current-session task:" appears mid-message, and unrelated later target rows do not close it.',
+      ].join('\n'),
+      metadata: { windowKey: 'main' },
+    },
+  ];
+}
+
 function seedTypedRestartContinuity(projectRoot, {
   currentLaneObjective = 'MAIN_TYPED_LANE_SENTINEL: continue typed restart proof',
   presenceAction = 'MAIN_PRESENCE_ACTION_SENTINEL: land private typed continuity context',
@@ -641,6 +689,80 @@ describe('Mira Local Text UI Surface v0', () => {
       .toBe('meta_posture_narration');
     expect(classifyAttachmentContractViolation("We’re hardening Mira so she doesn't fake continuity."))
       .toBe('meta_posture_narration');
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('what-now prompt returns read-only live-evidence answer without model POST or sends', async () => {
+    const projectRoot = seededProject();
+    writeJson(projectRoot, CURRENT_LANE_RELATIVE_PATH, {
+      version: 1,
+      generatedAt: '2026-05-26T08:52:35.009Z',
+      sessionId: 'app-session-382',
+      source: 'comms_journal',
+      status: 'none',
+      activeLane: null,
+      continuity: {
+        recent_completed_fixes: [{
+          source_ref: 'architect#63',
+          summary: 'Cleanup checkpoint closed.',
+        }],
+      },
+    });
+    const fetchImpl = jest.fn();
+
+    const output = await buildMiraLocalTextUiSurface(payload({
+      text: 'what now?',
+      now: '2026-05-26T08:53:00.000Z',
+      sessionId: 'app-session-382',
+      startedAt: '2026-05-26T08:52:00.000Z',
+      expiresAt: '2026-05-26T09:10:00.000Z',
+    }), {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+      commsRows: whatNowCommsRows(),
+    });
+
+    const surface = output.ui_surface_v0;
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(surface.decision).toBe('accepted');
+    expect(surface.reply).toEqual(expect.objectContaining({
+      count: 1,
+      source: 'mira_live_what_now_answer_v0',
+    }));
+    expect(surface.reply.text).toContain('Current lane: A1/A2 visible Mira movement lane');
+    expect(surface.reply.text).toContain('Recent changes:');
+    expect(surface.reply.text).toContain('parked, prototype, archive');
+    expect(surface.reply.text).toContain('Next internal move: Builder proves this read-only what-now surface, then Oracle reviews it');
+    expect((surface.reply.text.match(/^JAMES ACTION:/gm) || [])).toHaveLength(1);
+    expect(surface.what_now_answer).toEqual(expect.objectContaining({
+      decision: 'answered_from_live_evidence',
+      james_action_line_count: 1,
+      current_lane: expect.objectContaining({
+        source_ref: 'architect#63',
+        objective: expect.stringContaining('A1/A2 visible Mira movement lane'),
+      }),
+      no_effects: expect.objectContaining({
+        no_sends: true,
+        no_runtime_post: true,
+        no_external_action: true,
+        no_writes: true,
+      }),
+    }));
+    expect(surface.checked_output_counters.model_call_count).toBe(0);
+    expect(surface.checked_output_counters.network_count).toBe(0);
+    expect(surface.checked_output_counters.external_send_count).toBe(0);
+    expect(surface.checked_output_counters.write_count).toBe(0);
+    expect(surface.boundary).toEqual(expect.objectContaining({
+      no_model: true,
+      no_network: true,
+      no_tools: true,
+      no_actions: true,
+      no_writes: true,
+    }));
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 

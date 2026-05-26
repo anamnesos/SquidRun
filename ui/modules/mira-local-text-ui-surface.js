@@ -34,6 +34,10 @@ const {
 const {
   buildTypedCapabilityRoundtableContextV0,
 } = require('./mira-core/typed-capability-roundtable-v0');
+const {
+  buildMiraLiveWhatNowAnswerV0,
+  isMiraLiveWhatNowPrompt,
+} = require('./mira-core/live-what-now-answer-v0');
 
 const LOCAL_TEXT_UI_CHANNEL = 'mira:local-text-session';
 const LOCAL_TEXT_UI_SURFACE_SCHEMA_VERSION = 'squidrun.mira.local_text_ui_surface_v0.phase75.v0';
@@ -424,6 +428,7 @@ function buildSurfaceRecord({
   memoryCandidateStaging = null,
   developmentalUnderstanding = null,
   autonomySubstrate = null,
+  whatNowAnswer = null,
 }) {
   const replyCount = reply ? 1 : 0;
   const attachment = modelAttachment || getMiraTextModelAttachmentConfig({}, { enabled: false });
@@ -498,6 +503,17 @@ function buildSurfaceRecord({
       session_id: null,
       output_hash: null,
     },
+    what_now_answer: whatNowAnswer ? {
+      schema: whatNowAnswer.schema,
+      decision: whatNowAnswer.decision,
+      read_only: whatNowAnswer.read_only === true,
+      source_status: whatNowAnswer.source_status || null,
+      current_lane: whatNowAnswer.current_lane || null,
+      recent_changes: whatNowAnswer.recent_changes || [],
+      stale_or_parked_exclusions: whatNowAnswer.stale_or_parked_exclusions || [],
+      james_action_line_count: whatNowAnswer.james_action_line_count,
+      no_effects: whatNowAnswer.no_effects || null,
+    } : null,
     reply: reply ? {
       count: 1,
       text: reply.text,
@@ -888,7 +904,40 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     nowMs: Date.parse(generatedAt),
     staleAfterMs: options.typedRestartContinuityMaxAgeMs || options.restartContinuityMaxAgeMs,
   });
-  if (localReply && attachment.enabled === true) {
+  let whatNowAnswer = null;
+  if (localReply && isMiraLiveWhatNowPrompt(text)) {
+    whatNowAnswer = buildMiraLiveWhatNowAnswerV0({
+      promptText: text,
+      projectRoot,
+      metadata: {
+        sessionId: getPayloadValue(payload, 'sessionId'),
+      },
+      nowMs: Date.parse(generatedAt),
+    }, {
+      projectRoot,
+      nowMs: Date.parse(generatedAt),
+      currentLaneSnapshot: options.currentLaneSnapshot,
+      commsRows: options.commsRows,
+      commsReader: options.commsReader,
+      evidenceLedgerDbPath: options.evidenceLedgerDbPath,
+      commsLimit: options.commsLimit,
+    });
+    if (whatNowAnswer.ok === true) {
+      modelResult = {
+        ok: true,
+        reply: {
+          text: whatNowAnswer.answer_text,
+          reply_id: `mira-live-what-now:${stableHash(whatNowAnswer).slice(0, 16)}`,
+          source: 'mira_live_what_now_answer_v0',
+          model: null,
+        },
+        attachment,
+        modelCallCount: 0,
+        networkCount: 0,
+      };
+    }
+  }
+  if (localReply && modelResult.ok !== true && attachment.enabled === true) {
     const capabilityRoundtableContext = await buildTypedCapabilityRoundtableContextV0({
       projectRoot,
       promptText: text,
@@ -978,14 +1027,17 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
   const effectiveReasons = degraded
     ? [modelResult.reason || 'no_model_response']
     : reasons;
-  const memoryCandidateStaging = accepted
+  const deterministicWhatNowAccepted = whatNowAnswer?.ok === true && accepted;
+  const memoryCandidateStaging = accepted && !deterministicWhatNowAccepted
     ? buildMiraMemoryCandidateStagingV1({
       threadContext: payload.threadContext || payload.thread_context || {},
       currentUserText: text,
       currentAssistantText: reply?.text || '',
     })
     : buildMiraMemoryCandidateStagingV1({});
-  const memoryCandidatePersistence = accepted && Number(memoryCandidateStaging.candidate_count || 0) > 0
+  const memoryCandidatePersistence = accepted
+    && !deterministicWhatNowAccepted
+    && Number(memoryCandidateStaging.candidate_count || 0) > 0
     ? persistMiraTentativeUnderstandingsV1(memoryCandidateStaging, {
       projectRoot,
       profileName: scope.profile || 'main',
@@ -1040,6 +1092,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     memoryCandidateStaging: persistedMemoryCandidateStaging,
     developmentalUnderstanding,
     autonomySubstrate,
+    whatNowAnswer,
   });
   return {
     ui_surface_v0: surface,
