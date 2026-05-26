@@ -1432,6 +1432,169 @@ describe('auto-handoff-materializer', () => {
     expect(currentLane.activeLane.sourceMessageId).toBe('m-arch-65');
   });
 
+  test('pre-closeout materialized current lane ignores Builder proof visible-answer text and unsequenced status prose', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const rows = [
+      {
+        messageId: 'm-architect-63',
+        sessionId: 'app-session-382',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        ackStatus: 'routed_unverified_timeout',
+        brokeredAtMs: Date.parse('2026-05-26T08:52:32.711Z'),
+        rawBody: '(ARCHITECT #63): Generator fix commit proof accepted. Cleanup checkpoint closed: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`, clean tree, codebase:index:check PASS. New current-session task: A1/A2 visible Mira movement lane. Objective: implement/propose the smallest user-visible `what now?` answer from live local evidence. Requirements: answer current lane/status, recent concrete changes, stale/parked evidence excluded from authority, next Builder/Oracle/internal move, exactly one `JAMES ACTION:` line; no sends, no runtime POST, no external action. Use live SquidRun evidence/current lane, not parked prototype/phase scaffold. Return implementation/proof packet or blocker.',
+      },
+      {
+        messageId: 'm-builder-22-proof',
+        sessionId: 'app-session-382',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        ackStatus: 'routed_unverified_timeout',
+        brokeredAtMs: Date.parse('2026-05-26T09:11:04.706Z'),
+        rawBody: [
+          '(BUILDER #22): Revised A1/A2 proof after Architect #69 MODIFY. Staged, no commit.',
+          '',
+          'Visible reply from live probe:',
+          'Current lane: A1/A2 visible Mira movement lane (active architect#63; source=live_comms_journal).',
+          'Recent changes: Cleanup checkpoint closed: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`, clean tree, codebase:index:check PASS. (architect#63).',
+          'JAMES ACTION: NONE',
+        ].join('\n'),
+      },
+      {
+        messageId: 'm-unsequenced-status',
+        sessionId: 'app-session-382',
+        senderRole: 'architect',
+        channel: 'telegram',
+        direction: 'outbound',
+        status: 'recorded',
+        sentAtMs: Date.parse('2026-05-26T09:17:04.140Z'),
+        rawBody: 'Status: actual checkpoint reached. Cleanup is committed, the stale Mira local-text shell is gone, codebase index no longer self-fails, and the A1/A2 Mira `what now?` movement is committed. Live probe works: it answers from architect#63 with one JAMES ACTION line and zero model/network/send/write counters.',
+      },
+    ];
+
+    const result = await materializeSessionHandoff({
+      rows,
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-382',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: Date.parse('2026-05-26T09:18:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'active',
+      activeLane: expect.objectContaining({
+        sourceRef: 'architect#63',
+        sourceMessageId: 'm-architect-63',
+        objective: expect.stringContaining('A1/A2 visible Mira movement lane'),
+      }),
+    }));
+
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    const handoff = fs.readFileSync(outputPath, 'utf8');
+    expect(currentLane.activeLane.sourceRef).toBe('architect#63');
+    expect(currentLane.activeLane.sourceMessageId).toBe('m-architect-63');
+    expect(currentLane.activeLane.objective).toContain('A1/A2 visible Mira movement lane');
+    expect(currentLane.activeLane.sourceRef).not.toBe('builder#22');
+    expect(handoff).toContain('"sourceRef": "architect#63"');
+    expect(handoff).not.toContain('"sourceRef": "builder#22"');
+  });
+
+  test('post-closeout materialized current lane is none, not Builder proof visible-answer text', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const rows = [
+      {
+        messageId: 'm-architect-63',
+        sessionId: 'app-session-382',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        ackStatus: 'routed_unverified_timeout',
+        brokeredAtMs: Date.parse('2026-05-26T08:52:32.711Z'),
+        rawBody: '(ARCHITECT #63): Generator fix commit proof accepted. Cleanup checkpoint closed: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`, clean tree, codebase:index:check PASS. New current-session task: A1/A2 visible Mira movement lane. Objective: implement/propose the smallest user-visible `what now?` answer from live local evidence. Requirements: answer current lane/status, recent concrete changes, stale/parked evidence excluded from authority, next Builder/Oracle/internal move, exactly one `JAMES ACTION:` line; no sends, no runtime POST, no external action. Use live SquidRun evidence/current lane, not parked prototype/phase scaffold. Return implementation/proof packet or blocker.',
+      },
+      {
+        messageId: 'm-builder-22-proof',
+        sessionId: 'app-session-382',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        ackStatus: 'routed_unverified_timeout',
+        brokeredAtMs: Date.parse('2026-05-26T09:11:04.706Z'),
+        rawBody: [
+          '(BUILDER #22): Revised A1/A2 proof after Architect #69 MODIFY. Staged, no commit.',
+          '',
+          'Visible reply from live probe:',
+          'Current lane: A1/A2 visible Mira movement lane (active architect#63; source=live_comms_journal).',
+          'JAMES ACTION: NONE',
+        ].join('\n'),
+      },
+      {
+        messageId: 'm-architect-76-closeout',
+        sessionId: 'app-session-382',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        ackStatus: 'routed_unverified_timeout',
+        brokeredAtMs: Date.parse('2026-05-26T09:14:08.843Z'),
+        rawBody: '(ARCHITECT #76): A1/A2 visible movement lane checkpoint independently verified post-commit for ARCHITECT #63. Commit `4e837af4 Add live Mira what-now answer`; clean tree; codebase:index:check PASS; targeted tests PASS. Builder action closed; no further Builder action pending for this lane checkpoint.',
+      },
+      {
+        messageId: 'm-architect-77-sidecar-closeout',
+        sessionId: 'app-session-382',
+        senderRole: 'architect',
+        targetRole: 'oracle',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        ackStatus: 'accepted.daemon_pty_unverified',
+        brokeredAtMs: Date.parse('2026-05-26T09:14:08.731Z'),
+        rawBody: '(ARCHITECT #77): Oracle sidecar closed; no further Oracle action pending for this checkpoint.',
+      },
+    ];
+
+    const result = await materializeSessionHandoff({
+      rows,
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-382',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: Date.parse('2026-05-26T09:15:00.000Z'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'none',
+      activeLane: null,
+      resolvedOrSupersededCount: 1,
+    }));
+
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    const handoff = fs.readFileSync(outputPath, 'utf8');
+    expect(currentLane.status).toBe('none');
+    expect(currentLane.activeLane).toBeNull();
+    expect(JSON.stringify(currentLane)).not.toContain('builder#22');
+    expect(handoff).toContain('- current_lane_status: none');
+    expect(handoff).not.toContain('"sourceRef": "builder#22"');
+  });
+
   test('materializeSessionHandoff writes once and skips rewrite when unchanged', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const rows = [

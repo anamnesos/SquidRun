@@ -169,6 +169,8 @@ function isLaterAgentClosureRow(taskRow = {}, candidateRow = {}, options = {}) {
 
   const body = toOptionalString(candidateRow?.rawBody, '');
   if (!body) return false;
+  const candidateRef = parseLeadingAgentRef(body);
+  if (!candidateRef) return false;
   const authoritativeCloseout = hasAuthoritativeLaneCloseoutSignal(body);
   if (!hasClosureSignal(body, options) && !authoritativeCloseout) return false;
   if (!bodyReferencesAgentRef(body, taskRef)) return false;
@@ -318,6 +320,8 @@ function isLaterObjectiveCloseoutRow(taskRow = {}, candidateRow = {}) {
   const taskTarget = normalizeAgentRole(taskRow?.targetRole);
   const candidateSender = normalizeAgentRole(candidateRow?.senderRole);
   const candidateTarget = normalizeAgentRole(candidateRow?.targetRole);
+  const candidateRef = parseLeadingAgentRef(candidateRow?.rawBody || '');
+  if (!candidateRef) return false;
   if (!taskSender || !candidateSender || taskSender !== candidateSender) return false;
   if (taskTarget && candidateTarget && candidateTarget !== taskTarget) return false;
 

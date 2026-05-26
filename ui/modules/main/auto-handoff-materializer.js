@@ -1479,13 +1479,14 @@ async function materializeSessionHandoff(options = {}) {
     };
   }
 
-  let currentLane = deriveCurrentLaneSnapshot(sourceSession.rows, {
+  const sourceRowsForResolution = sortByEventTsAsc(sourceSession.rows);
+  let currentLane = deriveCurrentLaneSnapshot(sourceRowsForResolution, {
     sessionId: sourceSession.sessionId || sessionId || null,
     nowMs: options.nowMs,
   });
   const restartCarryForward = currentLane?.activeLane
     ? null
-    : findAcceptedRestartCarryForward(crossSessionRows, sourceSession.rows, {
+    : findAcceptedRestartCarryForward(crossSessionRows, sourceRowsForResolution, {
       sessionId: sourceSession.sessionId || sessionId || null,
       nowMs: options.nowMs,
       restartCarryForwardAgeLimit: options.restartCarryForwardAgeLimit,
