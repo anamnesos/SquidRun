@@ -1436,7 +1436,7 @@ describe('Mira Local Text UI Surface v0', () => {
       fallback_used: false,
       degraded_reason: 'model_response_contract_violation',
       primary_status: 'degraded',
-      contract_violation_class: 'generic_assistant_phrase',
+      contract_violation_class: 'fake_internal_state',
     }));
     expect(JSON.stringify(surface.reply)).not.toContain('How can I assist you today');
     expect(surface.model_attachment.contract_violation_raw_text).toContain('How can I assist you today');

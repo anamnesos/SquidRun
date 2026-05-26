@@ -210,7 +210,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/tabs/api-keys.js: Exports setupApiKeysTab, destroyApiKeysTab, loadApiKeys.
 - ui/modules/tabs/bridge.js: Exports setupBridgeTab. Renders the existing Bridge tab in the right-side panel and hydrates relay health from `bridge:get-status` plus live kernel bridge events.
 - ui/modules/tabs/comms-console.js: Exports setupCommsConsoleTab, destroy. The existing Comms tab backfills `comms_journal`, correlates live `comms.*` events by `messageId`, and surfaces delivery status/attempt/error metadata for external channels.
-- ui/modules/tabs/mira-local-text.js: Legacy/extraction-stage Mira typed conversation controller retained for Lab/local-text migration work; no longer wired into the main SquidRun right-panel lifecycle.
+- ui/modules/mira-local-text-ui-surface.js: Core local typed conversation surface retained for Lab/local-text gate coverage after the old unmounted `ui/modules/tabs/mira-local-text.js` shell was removed.
 - ui/modules/tabs/oracle.js: Exports setupOracleTab, destroyOracleTab, applyImageGenCapability.
 - ui/modules/tabs/screenshots.js: Exports setupScreenshots, destroyScreenshots, loadScreenshots.
 - ui/modules/tabs/utils.js: Exports escapeHtml.

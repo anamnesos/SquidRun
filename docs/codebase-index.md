@@ -7,8 +7,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
 - Git branch: `main`
-- Git HEAD: `8abb9b32`
-- Total files listed: 1204
+- Git HEAD: `094cc604`
+- Total files listed: 1202
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Verify freshness: `node ui/scripts/hm-codebase-index.js --check`
@@ -21,28 +21,27 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - scripts: 1
 - tools: 3
 - ui/__tests__: 475
-- ui/modules: 367
+- ui/modules: 366
 - ui/other: 29
 - ui/scripts: 172
-- ui/styles: 16
+- ui/styles: 15
 - workspace/knowledge: 1
 
 ## Summary By Kind
-- asset: 22
+- asset: 21
 - config: 30
 - doc: 74
 - file: 1
 - jsonl: 1
 - script: 173
-- source: 427
+- source: 426
 - test: 476
 
 ## Summary By Status
 - `clean/tracked`: present in Git with no working-tree status marker
 - Other values are raw two-column `git status --porcelain` codes such as `M`, `A`, or `??`
-- ??: 3
-- clean/tracked: 1193
-- M: 8
+- clean/tracked: 1195
+- M: 7
 
 ## Files
 
@@ -66,7 +65,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | --- | --- | --- | ---: |
 | `docs/agent-templates.md` | doc | `clean/tracked` | 1312 |
 | `docs/background-builder-agents-spec.md` | doc | `clean/tracked` | 10011 |
-| `docs/codebase-index.md` | doc | ` M` | - |
+| `docs/codebase-index.md` | doc | `M ` | - |
 | `docs/csm-1b-benchmark-prep.md` | doc | `clean/tracked` | 8073 |
 | `docs/device-to-device-diagram.svg` | doc | `clean/tracked` | 42933 |
 | `docs/diagrams-reference.md` | doc | `clean/tracked` | 16076 |
@@ -86,7 +85,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/mira-north-star-roadmap.md` | doc | `clean/tracked` | 8530 |
 | `docs/mira-pc-embodiment-permission-v0.md` | doc | `clean/tracked` | 10045 |
 | `docs/mira-presence-runtime-acceptance-v0.md` | doc | `clean/tracked` | 16200 |
-| `docs/mira-system-map.md` | doc | ` M` | 115427 |
+| `docs/mira-system-map.md` | doc | `M ` | 115682 |
 | `docs/mira-voice-audio-intake-v0.md` | doc | `clean/tracked` | 9440 |
 | `docs/models/base-instructions.md` | doc | `clean/tracked` | 2070 |
 | `docs/models/claude-notes.md` | doc | `clean/tracked` | 1161 |
@@ -108,7 +107,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | `clean/tracked` | 2728 |
 | `.gitignore` | config | `clean/tracked` | 3723 |
 | `AGENTS.md` | doc | `clean/tracked` | 6311 |
-| `ARCHITECTURE.md` | doc | ` M` | 57134 |
+| `ARCHITECTURE.md` | doc | `M ` | 57135 |
 | `CLAUDE-AI.md` | doc | `clean/tracked` | 3856 |
 | `CLAUDE.md` | doc | `clean/tracked` | 1988 |
 | `CODE_OF_CONDUCT.md` | doc | `clean/tracked` | 5185 |
@@ -553,8 +552,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-lab-surface.test.js` | test | `clean/tracked` | 174937 |
 | `ui/__tests__/mira-lab-verify-bootstrap-state.test.js` | test | `clean/tracked` | 6292 |
 | `ui/__tests__/mira-live-entrypoint.test.js` | test | `clean/tracked` | 2824 |
-| `ui/__tests__/mira-local-text-tab.test.js` | test | `clean/tracked` | 22980 |
-| `ui/__tests__/mira-local-text-ui-surface.test.js` | test | `clean/tracked` | 82692 |
+| `ui/__tests__/mira-local-text-tab.test.js` | test | `M ` | 24191 |
+| `ui/__tests__/mira-local-text-ui-surface.test.js` | test | `M ` | 82687 |
 | `ui/__tests__/mira-memory-curiosity.test.js` | test | `clean/tracked` | 3579 |
 | `ui/__tests__/mira-meta-posture-gate.test.js` | test | `clean/tracked` | 35686 |
 | `ui/__tests__/mira-normalized-core-import-contract.test.js` | test | `clean/tracked` | 22024 |
@@ -564,8 +563,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-presence-runtime-acceptance.test.js` | test | `clean/tracked` | 37529 |
 | `ui/__tests__/mira-presence-runtime-state-v0.test.js` | test | `clean/tracked` | 36134 |
 | `ui/__tests__/mira-product-foundation.test.js` | test | `clean/tracked` | 2780 |
-| `ui/__tests__/mira-progress-proof-inputs-v0.test.js` | test | `??` | 6688 |
-| `ui/__tests__/mira-progress-v0.test.js` | test | ` M` | 14009 |
+| `ui/__tests__/mira-progress-proof-inputs-v0.test.js` | test | `clean/tracked` | 6688 |
+| `ui/__tests__/mira-progress-v0.test.js` | test | `clean/tracked` | 14009 |
 | `ui/__tests__/mira-read-pane-messages.test.js` | test | `clean/tracked` | 5844 |
 | `ui/__tests__/mira-reviewed-import-plan.test.js` | test | `clean/tracked` | 3657 |
 | `ui/__tests__/mira-runtime-bridge-api.test.js` | test | `clean/tracked` | 337528 |
@@ -581,7 +580,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-source-action-substrate.test.js` | test | `clean/tracked` | 6719 |
 | `ui/__tests__/mira-start-local-runtime.test.js` | test | `clean/tracked` | 3495 |
 | `ui/__tests__/mira-state-import-tooling.test.js` | test | `clean/tracked` | 2140 |
-| `ui/__tests__/mira-system-map-guard.test.js` | test | `clean/tracked` | 9650 |
+| `ui/__tests__/mira-system-map-guard.test.js` | test | `M ` | 9678 |
 | `ui/__tests__/mira-tab-language-gate.test.js` | test | `clean/tracked` | 6322 |
 | `ui/__tests__/mira-telegram-turn-candidate.test.js` | test | `clean/tracked` | 5876 |
 | `ui/__tests__/mira-visual-asset-curiosity.test.js` | test | `clean/tracked` | 5327 |
@@ -648,7 +647,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/sms-poller.test.js` | test | `clean/tracked` | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | `clean/tracked` | 26226 |
 | `ui/__tests__/squidrun-app.test.js` | test | `clean/tracked` | 230661 |
-| `ui/__tests__/startup-ai-briefing.test.js` | test | ` M` | 36233 |
+| `ui/__tests__/startup-ai-briefing.test.js` | test | `clean/tracked` | 36233 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | `clean/tracked` | 1987 |
 | `ui/__tests__/startup-transcript-context.test.js` | test | `clean/tracked` | 10069 |
 | `ui/__tests__/state-handlers.test.js` | test | `clean/tracked` | 8772 |
@@ -914,8 +913,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/mira-core/mira-language-rules-v0.js` | source | `clean/tracked` | 6726 |
 | `ui/modules/mira-core/mira-persona-loader-v0.js` | source | `clean/tracked` | 6809 |
 | `ui/modules/mira-core/mira-presence-runtime-state-v0.js` | source | `clean/tracked` | 29187 |
-| `ui/modules/mira-core/mira-progress-proof-inputs-v0.js` | source | `??` | 17167 |
-| `ui/modules/mira-core/mira-progress-v0.js` | source | ` M` | 25005 |
+| `ui/modules/mira-core/mira-progress-proof-inputs-v0.js` | source | `clean/tracked` | 17167 |
+| `ui/modules/mira-core/mira-progress-v0.js` | source | `clean/tracked` | 25005 |
 | `ui/modules/mira-core/mutation-patch.js` | source | `clean/tracked` | 58719 |
 | `ui/modules/mira-core/orientation.js` | source | `clean/tracked` | 27473 |
 | `ui/modules/mira-core/perception.js` | source | `clean/tracked` | 51939 |
@@ -1001,7 +1000,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/smart-routing.js` | source | `clean/tracked` | 11068 |
 | `ui/modules/sms-poller.js` | source | `clean/tracked` | 18982 |
 | `ui/modules/sqlite-compat.js` | source | `clean/tracked` | 1389 |
-| `ui/modules/startup-ai-briefing.js` | source | ` M` | 52408 |
+| `ui/modules/startup-ai-briefing.js` | source | `clean/tracked` | 52408 |
 | `ui/modules/startup-transcript-context.js` | source | `clean/tracked` | 11881 |
 | `ui/modules/status-strip.js` | source | `clean/tracked` | 6375 |
 | `ui/modules/supervisor/index.js` | source | `clean/tracked` | 339 |
@@ -1012,7 +1011,6 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/tabs/api-keys.js` | source | `clean/tracked` | 7616 |
 | `ui/modules/tabs/bridge.js` | source | `clean/tracked` | 28404 |
 | `ui/modules/tabs/comms-console.js` | source | `clean/tracked` | 26289 |
-| `ui/modules/tabs/mira-local-text.js` | source | `clean/tracked` | 19226 |
 | `ui/modules/tabs/oracle.js` | source | `clean/tracked` | 8728 |
 | `ui/modules/tabs/screenshots.js` | source | `clean/tracked` | 9472 |
 | `ui/modules/tabs/utils.js` | source | `clean/tracked` | 424 |
@@ -1233,10 +1231,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-mira-lab-prompt.js` | script | `clean/tracked` | 7564 |
 | `ui/scripts/hm-mira-lab-verify.js` | script | `clean/tracked` | 15187 |
 | `ui/scripts/hm-mira-presence-runtime-state-v0.js` | script | `clean/tracked` | 3315 |
-| `ui/scripts/hm-mira-progress.js` | script | ` M` | 3427 |
+| `ui/scripts/hm-mira-progress.js` | script | `clean/tracked` | 3427 |
 | `ui/scripts/hm-mira-reply.js` | script | `clean/tracked` | 3555 |
 | `ui/scripts/hm-mira-self-direction.js` | script | `clean/tracked` | 25582 |
-| `ui/scripts/hm-mira-visible-presence-proof.js` | script | `??` | 3067 |
+| `ui/scripts/hm-mira-visible-presence-proof.js` | script | `clean/tracked` | 3067 |
 | `ui/scripts/hm-oracle-wake-watchdog.js` | script | `clean/tracked` | 5079 |
 | `ui/scripts/hm-pane.js` | script | `clean/tracked` | 7418 |
 | `ui/scripts/hm-path-audit.config.json` | script | `clean/tracked` | 686 |
@@ -1281,7 +1279,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/install-supervisor-task.ps1` | script | `clean/tracked` | 2696 |
 | `ui/scripts/jest-staged.js` | script | `clean/tracked` | 4101 |
 | `ui/scripts/local_embedder.py` | script | `clean/tracked` | 1205 |
-| `ui/scripts/mira-system-map-guard.js` | script | `clean/tracked` | 9145 |
+| `ui/scripts/mira-system-map-guard.js` | script | `M ` | 9173 |
 
 ### ui/styles
 
@@ -1299,7 +1297,6 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/styles/tabs/api-keys.css` | asset | `clean/tracked` | 1833 |
 | `ui/styles/tabs/bridge.css` | asset | `clean/tracked` | 6921 |
 | `ui/styles/tabs/comms-console.css` | asset | `clean/tracked` | 9292 |
-| `ui/styles/tabs/mira-local-text.css` | asset | `clean/tracked` | 3601 |
 | `ui/styles/tabs/oracle.css` | asset | `clean/tracked` | 7745 |
 | `ui/styles/tabs/screenshots.css` | asset | `clean/tracked` | 3626 |
 | `ui/styles/tabs/voice-broker.css` | asset | `clean/tracked` | 2662 |
