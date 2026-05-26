@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1204
+- Total files listed: 1206
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -19,8 +19,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 100
 - scripts: 1
 - tools: 3
-- ui/__tests__: 476
-- ui/modules: 367
+- ui/__tests__: 477
+- ui/modules: 368
 - ui/other: 29
 - ui/scripts: 172
 - ui/styles: 15
@@ -33,8 +33,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - file: 1
 - jsonl: 1
 - script: 173
-- source: 427
-- test: 477
+- source: 428
+- test: 478
 
 ## Files
 
@@ -78,7 +78,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/mira-north-star-roadmap.md` | doc | 8530 |
 | `docs/mira-pc-embodiment-permission-v0.md` | doc | 10045 |
 | `docs/mira-presence-runtime-acceptance-v0.md` | doc | 16200 |
-| `docs/mira-system-map.md` | doc | 116149 |
+| `docs/mira-system-map.md` | doc | 116591 |
 | `docs/mira-voice-audio-intake-v0.md` | doc | 9440 |
 | `docs/models/base-instructions.md` | doc | 2070 |
 | `docs/models/claude-notes.md` | doc | 1161 |
@@ -100,7 +100,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | 2728 |
 | `.gitignore` | config | 3723 |
 | `AGENTS.md` | doc | 6311 |
-| `ARCHITECTURE.md` | doc | 57366 |
+| `ARCHITECTURE.md` | doc | 57610 |
 | `CLAUDE-AI.md` | doc | 3856 |
 | `CLAUDE.md` | doc | 1988 |
 | `CODE_OF_CONDUCT.md` | doc | 5185 |
@@ -545,9 +545,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-lab-surface.test.js` | test | 174937 |
 | `ui/__tests__/mira-lab-verify-bootstrap-state.test.js` | test | 6292 |
 | `ui/__tests__/mira-live-entrypoint.test.js` | test | 2824 |
+| `ui/__tests__/mira-live-internal-request-draft-v0.test.js` | test | 5510 |
 | `ui/__tests__/mira-live-what-now-answer-v0.test.js` | test | 6754 |
 | `ui/__tests__/mira-local-text-tab.test.js` | test | 24191 |
-| `ui/__tests__/mira-local-text-ui-surface.test.js` | test | 88103 |
+| `ui/__tests__/mira-local-text-ui-surface.test.js` | test | 93582 |
 | `ui/__tests__/mira-memory-curiosity.test.js` | test | 3579 |
 | `ui/__tests__/mira-meta-posture-gate.test.js` | test | 35686 |
 | `ui/__tests__/mira-normalized-core-import-contract.test.js` | test | 22024 |
@@ -899,6 +900,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase65.js` | source | 68886 |
 | `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase66.js` | source | 75725 |
 | `ui/modules/mira-core/kill-switch-wiring-safety.js` | source | 63131 |
+| `ui/modules/mira-core/live-internal-request-draft-v0.js` | source | 13282 |
 | `ui/modules/mira-core/live-what-now-answer-v0.js` | source | 10420 |
 | `ui/modules/mira-core/local-acceptance.js` | source | 40506 |
 | `ui/modules/mira-core/local-text-session-v0.js` | source | 44591 |
@@ -961,7 +963,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/mira-lab-surface.js` | source | 325785 |
 | `ui/modules/mira-lab-verify-bootstrap-state.js` | source | 5927 |
 | `ui/modules/mira-live-entrypoint.js` | source | 3409 |
-| `ui/modules/mira-local-text-ui-surface.js` | source | 49398 |
+| `ui/modules/mira-local-text-ui-surface.js` | source | 51613 |
 | `ui/modules/mira-memory-curiosity.js` | source | 5599 |
 | `ui/modules/mira-runtime-curiosity.js` | source | 9391 |
 | `ui/modules/mira-source-action-substrate.js` | source | 11397 |
