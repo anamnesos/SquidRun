@@ -192,6 +192,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/capability-planner.js: Static domain capability registry that turns detected legal/financial/medical problems into user-facing "here is what we can do" action plans.
 - ui/modules/problem-orchestrator.js: Phase 1 real-problem orchestration skeleton that owns `.squidrun/runtime/active-cases.json`, dedupes intake records, attaches capability plans, and surfaces oracle timeout/disagreement warnings in case state and startup summaries.
 - ui/modules/project-rooms.js: Read-only room registry and renderer switcher for Main, TrustQuote, and Mira Build overview/status cards; switching rooms changes only local DOM state and does not mutate project context, route ownership, agents, or external channels.
+- ui/modules/project-room-envelope.js: Read-only TrustQuote room envelope/readiness helpers on existing comms metadata; TrustQuote room rows can surface in Main as activity but cannot set Main current-lane authority or launch room agents.
 - ui/modules/pipeline.js: Exports init, setMainWindow, onMessage, markCommitted, ....
 - ui/modules/plugins/index.js: Plugin-module entrypoint that re-exports `createPluginManager`.
 - ui/modules/plugins/plugin-manager.js: Plugin Manager Loads plugin manifests, manages lifecycle, and dispatches hook events.
