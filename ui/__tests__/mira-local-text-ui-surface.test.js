@@ -32,6 +32,7 @@ const {
   renderMiraBriefForInstructions,
 } = require('../modules/mira-core/text-model-attachment-v1');
 const {
+  APPROVAL_SEND_CHANNEL,
   buildMiraLocalTextUiSurfaceResponse,
   registerMiraLocalTextUiSurfaceHandlers,
 } = require('../modules/ipc/mira-local-text-ui-surface-handlers');
@@ -960,6 +961,7 @@ describe('Mira Local Text UI Surface v0', () => {
       activeLane: null,
     });
     const fetchImpl = jest.fn();
+    const sendAgentMessage = jest.fn();
 
     const output = await buildMiraLocalTextUiSurface(payload({
       text: 'A2-to-A3 approved internal handoff preview',
@@ -974,12 +976,14 @@ describe('Mira Local Text UI Surface v0', () => {
         OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
       },
       fetchImpl,
+      sendAgentMessage,
       commsRows: internalHandoffPreviewCommsRows(),
       progressReport: handoffProgressReport(),
     });
 
     const surface = output.ui_surface_v0;
     expect(fetchImpl).not.toHaveBeenCalled();
+    expect(sendAgentMessage).not.toHaveBeenCalled();
     expect(surface.decision).toBe('accepted');
     expect(surface.reply).toEqual(expect.objectContaining({
       count: 1,
@@ -998,6 +1002,8 @@ describe('Mira Local Text UI Surface v0', () => {
     expect((surface.reply.text.match(/^JAMES ACTION:/gm) || [])).toHaveLength(1);
     expect(surface.internal_handoff_preview).toEqual(expect.objectContaining({
       decision: 'preview_ready_no_dispatch',
+      preview_id: expect.stringMatching(/^mira-internal-handoff-preview-/),
+      preview_hash: expect.stringMatching(/^sha256:/),
       target_agent: 'builder',
       james_action_line_count: 1,
       current_lane: expect.objectContaining({
@@ -1013,6 +1019,9 @@ describe('Mira Local Text UI Surface v0', () => {
         required_before_dispatch: true,
         flag_present: false,
         dispatch_enabled: false,
+        channel: 'mira:internal-handoff-approval-send',
+        approval_id: expect.stringMatching(/^mira-internal-handoff-approval-/),
+        approval_token: expect.stringMatching(/^mira-internal-handoff-approval-/),
       }),
       no_effects: expect.objectContaining({
         hm_send_count: 0,
@@ -2218,12 +2227,14 @@ describe('Mira Local Text UI Surface v0', () => {
 
     expect(DEFAULT_HANDLERS).toContain(registerMiraLocalTextUiSurfaceHandlers);
     expect(isAllowedInvokeChannel(LOCAL_TEXT_UI_CHANNEL)).toBe(true);
+    expect(isAllowedInvokeChannel(APPROVAL_SEND_CHANNEL)).toBe(true);
 
     registerMiraLocalTextUiSurfaceHandlers({ ipcMain }, {
       projectRoot,
       env: disabledAttachmentEnv(),
     });
     expect(ipcMain.handle).toHaveBeenCalledWith(LOCAL_TEXT_UI_CHANNEL, expect.any(Function));
+    expect(ipcMain.handle).toHaveBeenCalledWith(APPROVAL_SEND_CHANNEL, expect.any(Function));
     const handled = await registered.get(LOCAL_TEXT_UI_CHANNEL)({}, payload());
     expect(handled.ui_surface_v0.decision).toBe('degraded');
     expect(handled.ui_surface_v0.status).toBe('model_unavailable');
@@ -2250,7 +2261,9 @@ describe('Mira Local Text UI Surface v0', () => {
     };
     const api = createPreloadApi(ipcRenderer);
     await api.mira.localTextSession({ text: 'hello' });
+    await api.mira.approveInternalHandoffSend({ approvalId: 'approval-test' });
     expect(ipcRenderer.invoke).toHaveBeenCalledWith(LOCAL_TEXT_UI_CHANNEL, { text: 'hello' });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith(APPROVAL_SEND_CHANNEL, { approvalId: 'approval-test' });
 
     const direct = await buildMiraLocalTextUiSurfaceResponse(payload(), {
       projectRoot,
