@@ -167,6 +167,7 @@ describe('project room registry and switcher', () => {
     expect(controller.disabled).toBeUndefined();
     expect(controller.getSelectedRoomId()).toBe('main');
     expect(dom.root.hidden).toBe(false);
+    expect(dom.root.classList.contains('project-rooms-hidden')).toBe(false);
     expect(dom.root.getAttribute('aria-hidden')).toBe('false');
     expect(dom.root.dataset.selectedRoom).toBe('main');
     expect(dom.overview.dataset.roomId).toBe('main');
@@ -203,6 +204,7 @@ describe('project room registry and switcher', () => {
     expect(controller.ok).toBe(true);
     expect(controller.getSelectedRoomId()).toBe('main');
     expect(dom.root.hidden).toBe(false);
+    expect(dom.root.classList.contains('project-rooms-hidden')).toBe(false);
     expect(dom.root.innerHTML).toContain('data-project-room-tab="main"');
     expect(dom.root.innerHTML).toContain('data-project-room-tab="trustquote"');
     expect(dom.root.innerHTML).toContain('data-project-room-tab="mira-build"');
@@ -262,6 +264,7 @@ describe('project room registry and switcher', () => {
       expect(controller.getSelectedRoomId()).toBeNull();
       expect(controller.selectRoom('trustquote')).toBeNull();
       expect(dom.root.hidden).toBe(true);
+      expect(dom.root.classList.contains('project-rooms-hidden')).toBe(true);
       expect(dom.root.dataset.disabledReason).toBe(projectRooms.SIDE_PROFILE_DISABLED_REASON);
       expect(dom.root.getAttribute('aria-hidden')).toBe('true');
       expect(dom.root.innerHTML).toBe('');
@@ -333,8 +336,9 @@ describe('project room registry and switcher', () => {
   test('room shell lives above the main work area while right panel tabs remain tools', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
     const roomIndex = html.indexOf('id="projectRooms"');
+    const roomSectionStart = html.lastIndexOf('<section', roomIndex);
     const roomSectionEnd = html.indexOf('</section>', roomIndex);
-    const roomSectionHtml = html.slice(roomIndex, roomSectionEnd);
+    const roomSectionHtml = html.slice(roomSectionStart, roomSectionEnd);
     const mainContentIndex = html.indexOf('class="main-content"');
     const rightPanelIndex = html.indexOf('id="rightPanel"');
     const panelTabsStart = html.indexOf('class="panel-tabs"');
@@ -345,6 +349,7 @@ describe('project room registry and switcher', () => {
     expect(roomIndex).toBeLessThan(mainContentIndex);
     expect(roomIndex).toBeLessThan(rightPanelIndex);
     expect(roomSectionHtml).toContain('hidden');
+    expect(roomSectionHtml).toContain('project-rooms-hidden');
     expect(roomSectionHtml).not.toContain('data-project-room-tab');
     expect(roomSectionHtml).not.toMatch(/>Main<|>TrustQuote<|>Mira Build</);
     expect(panelTabsHtml).toContain('data-tab="bridge"');
@@ -352,5 +357,23 @@ describe('project room registry and switcher', () => {
     expect(panelTabsHtml).toContain('data-tab="screenshots"');
     expect(panelTabsHtml).not.toContain('data-project-room-tab');
     expect(html.toLowerCase()).not.toContain('plumbhalo');
+  });
+
+  test('hidden Project Rooms CSS collapses the mount to zero footprint', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'project-rooms.css'), 'utf8');
+    const hiddenRuleMatch = css.match(/\.project-rooms\[hidden\],[\s\S]*?\.project-rooms\.project-rooms-hidden\s*\{([\s\S]*?)\}/);
+
+    expect(hiddenRuleMatch).not.toBeNull();
+    const hiddenRule = hiddenRuleMatch ? hiddenRuleMatch[1] : '';
+
+    expect(hiddenRule).toMatch(/display:\s*none\s*!important/);
+    expect(hiddenRule).toMatch(/flex:\s*0\s+0\s+0\s*!important/);
+    expect(hiddenRule).toMatch(/min-height:\s*0\s*!important/);
+    expect(hiddenRule).toMatch(/height:\s*0\s*!important/);
+    expect(hiddenRule).toMatch(/padding:\s*0\s*!important/);
+    expect(hiddenRule).toMatch(/margin:\s*0\s*!important/);
+    expect(hiddenRule).toMatch(/border:\s*0\s*!important/);
+    expect(hiddenRule).toMatch(/gap:\s*0\s*!important/);
+    expect(hiddenRule).toMatch(/overflow:\s*hidden\s*!important/);
   });
 });
