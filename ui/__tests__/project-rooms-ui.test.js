@@ -80,6 +80,51 @@ function installRoomDom() {
   };
 }
 
+function installEmptyRoomMountDom() {
+  const root = createFakeElement('projectRooms', { selectedRoom: 'main' });
+  const byId = new Map([['projectRooms', root]]);
+  let tabs = [];
+  let shellHtml = '';
+
+  Object.defineProperty(root, 'innerHTML', {
+    get() {
+      return shellHtml;
+    },
+    set(value) {
+      shellHtml = String(value || '');
+      if (!shellHtml.includes('data-project-room-tab')) {
+        tabs = [];
+        byId.delete('projectRoomOverview');
+        return;
+      }
+      const overview = createFakeElement('projectRoomOverview', { roomId: 'main' });
+      tabs = ['main', 'trustquote', 'mira-build'].map((roomId) => createFakeElement(`room-${roomId}`, {
+        projectRoomTab: roomId,
+      }));
+      byId.set('projectRoomOverview', overview);
+      for (const tab of tabs) {
+        byId.set(tab.id, tab);
+      }
+    },
+  });
+
+  return {
+    root,
+    get overview() {
+      return byId.get('projectRoomOverview') || null;
+    },
+    get tabs() {
+      return tabs;
+    },
+    documentRef: {
+      getElementById: jest.fn((id) => byId.get(id) || null),
+      querySelectorAll: jest.fn((selector) => (
+        selector === '[data-project-room-tab]' ? tabs : []
+      )),
+    },
+  };
+}
+
 describe('project room registry and switcher', () => {
   let projectRooms;
   const oldInternalVisibleCopy = [
@@ -138,6 +183,33 @@ describe('project room registry and switcher', () => {
     expect(dom.tabs[0].getAttribute('aria-selected')).toBe('true');
   });
 
+  test('main room tab shell is generated lazily after main context is known', () => {
+    const shellHtml = projectRooms._internals.buildProjectRoomsShellHtml('main');
+
+    expect(shellHtml).toContain('data-project-room-tab="main"');
+    expect(shellHtml).toContain('data-project-room-tab="trustquote"');
+    expect(shellHtml).toContain('data-project-room-tab="mira-build"');
+    expect(shellHtml).toMatch(/>Main<[\s\S]*>TrustQuote<[\s\S]*>Mira Build</);
+  });
+
+  test('main profile initializes tabs from an empty static mount point', () => {
+    const dom = installEmptyRoomMountDom();
+
+    const controller = projectRooms.initProjectRooms({
+      documentRef: dom.documentRef,
+      windowContext: { windowKey: 'main', profileName: 'main' },
+    });
+
+    expect(controller.ok).toBe(true);
+    expect(controller.getSelectedRoomId()).toBe('main');
+    expect(dom.root.hidden).toBe(false);
+    expect(dom.root.innerHTML).toContain('data-project-room-tab="main"');
+    expect(dom.root.innerHTML).toContain('data-project-room-tab="trustquote"');
+    expect(dom.root.innerHTML).toContain('data-project-room-tab="mira-build"');
+    expect(dom.tabs).toHaveLength(3);
+    expect(dom.overview.innerHTML).toContain('Current work');
+  });
+
   test('switching rooms only changes DOM state and calls no side-effect APIs', () => {
     const dom = installRoomDom();
     const invoke = jest.fn();
@@ -192,6 +264,7 @@ describe('project room registry and switcher', () => {
       expect(dom.root.hidden).toBe(true);
       expect(dom.root.dataset.disabledReason).toBe(projectRooms.SIDE_PROFILE_DISABLED_REASON);
       expect(dom.root.getAttribute('aria-hidden')).toBe('true');
+      expect(dom.root.innerHTML).toBe('');
       expect(dom.overview.dataset.roomId).toBe('');
       expect(dom.overview.innerHTML).toBe('');
       expect(dom.overview.innerHTML).not.toMatch(/TrustQuote|Mira Build/);
@@ -260,6 +333,8 @@ describe('project room registry and switcher', () => {
   test('room shell lives above the main work area while right panel tabs remain tools', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
     const roomIndex = html.indexOf('id="projectRooms"');
+    const roomSectionEnd = html.indexOf('</section>', roomIndex);
+    const roomSectionHtml = html.slice(roomIndex, roomSectionEnd);
     const mainContentIndex = html.indexOf('class="main-content"');
     const rightPanelIndex = html.indexOf('id="rightPanel"');
     const panelTabsStart = html.indexOf('class="panel-tabs"');
@@ -269,6 +344,9 @@ describe('project room registry and switcher', () => {
     expect(roomIndex).toBeGreaterThan(-1);
     expect(roomIndex).toBeLessThan(mainContentIndex);
     expect(roomIndex).toBeLessThan(rightPanelIndex);
+    expect(roomSectionHtml).toContain('hidden');
+    expect(roomSectionHtml).not.toContain('data-project-room-tab');
+    expect(roomSectionHtml).not.toMatch(/>Main<|>TrustQuote<|>Mira Build</);
     expect(panelTabsHtml).toContain('data-tab="bridge"');
     expect(panelTabsHtml).toContain('data-tab="comms"');
     expect(panelTabsHtml).toContain('data-tab="screenshots"');
