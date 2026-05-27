@@ -13,6 +13,7 @@ const {
   validateContract,
 } = require('../modules/mira-core/mira-progress-v0');
 const {
+  INTERNAL_HANDOFF_APPROVAL_PROOF_KEY,
   INTERNAL_HANDOFF_PREVIEW_PROOF_KEY,
   INTERNAL_REQUEST_DRAFT_PROOF_KEY,
   LIVE_WHAT_NOW_PROOF_KEY,
@@ -92,11 +93,11 @@ function passingProofInputs() {
       [LIVE_WHAT_NOW_PROOF_KEY]: { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-what-now-answer-v0.test.js' },
       [INTERNAL_REQUEST_DRAFT_PROOF_KEY]: { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-internal-request-draft-v0.test.js' },
       [INTERNAL_HANDOFF_PREVIEW_PROOF_KEY]: { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-internal-handoff-preview-v0.test.js' },
+      [INTERNAL_HANDOFF_APPROVAL_PROOF_KEY]: { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-internal-handoff-approval-v0.test.js' },
       [LOCAL_TEXT_UI_SURFACE_PROOF_KEY]: { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-local-text-ui-surface.test.js' },
       'mira-runtime-squidrun-context.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-runtime-squidrun-context.test.js' },
       'mira-runtime-bridge-api.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-runtime-bridge-api.test.js' },
       'mira-north-star-acceptance.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-north-star-acceptance.test.js' },
-      'mira-hm-send-adapter.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-hm-send-adapter.test.js' },
       'mira-telegram-turn-candidate.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-telegram-turn-candidate.test.js' },
       'mira-direct-channel-readiness.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-direct-channel-readiness.test.js' },
       'mira-voice-lab.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-voice-lab.test.js' },

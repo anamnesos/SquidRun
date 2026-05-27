@@ -183,7 +183,7 @@
           "id": "hm_send_adapter_tests",
           "kind": "proof_input",
           "points": 20,
-          "proof_key": "mira-hm-send-adapter.test.js"
+          "proof_key": "mira-live-internal-handoff-approval-v0.test.js"
         }
       ]
     },

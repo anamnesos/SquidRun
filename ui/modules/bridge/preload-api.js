@@ -123,6 +123,7 @@ function createPreloadApi(ipcRenderer) {
 
     mira: {
       coordinatorSnapshot: (payload = {}) => ipc.invoke('mira:coordinator-snapshot', payload),
+      approveInternalHandoffSend: (payload = {}) => ipc.invoke('mira:internal-handoff-approval-send', payload),
       localTextSession: (payload = {}) => ipc.invoke('mira:local-text-session', payload),
     },
 

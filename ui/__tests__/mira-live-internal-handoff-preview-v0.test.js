@@ -132,6 +132,8 @@ describe('Mira live internal handoff preview v0', () => {
       preview_only: true,
       requires_explicit_approval: true,
     }));
+    expect(preview.preview_id).toMatch(/^mira-internal-handoff-preview-/);
+    expect(preview.preview_hash).toMatch(/^sha256:/);
     expect(preview.risk_blocked_exclusions).toEqual(expect.arrayContaining([
       expect.stringContaining('preview-only'),
       expect.stringContaining('parked/prototype/archive'),
@@ -143,6 +145,19 @@ describe('Mira live internal handoff preview v0', () => {
       flag_present: false,
       dispatch_enabled: false,
       dispatch_path_tested: false,
+      channel: 'mira:internal-handoff-approval-send',
+      approval_id: expect.stringMatching(/^mira-internal-handoff-approval-/),
+      approval_token: expect.stringMatching(/^mira-internal-handoff-approval-/),
+      binding: expect.objectContaining({
+        target_agent: 'builder',
+        body_hash: expect.stringMatching(/^sha256:/),
+        session: expect.objectContaining({
+          session_id: 'app-session-382',
+          profile_name: 'main',
+          window_key: 'main',
+          source_scope: 'main',
+        }),
+      }),
     }));
     expect(jamesActionLines(preview.answer_text)).toHaveLength(1);
     expect(preview.answer_text).toContain('Approved internal handoff preview: approval-ready, not sent.');

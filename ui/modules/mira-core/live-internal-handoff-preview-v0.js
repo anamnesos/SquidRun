@@ -9,6 +9,11 @@ const {
 const {
   buildMiraProgressReport,
 } = require('./mira-progress-v0');
+const {
+  APPROVAL_ACTION,
+  APPROVAL_SEND_CHANNEL,
+  buildMiraInternalHandoffApprovalEnvelope,
+} = require('./live-internal-handoff-approval-v0');
 
 const SCHEMA = 'squidrun.mira_core.live_internal_handoff_preview_v0';
 const VERSION = 1;
@@ -65,6 +70,8 @@ function buildProgressEvidence(progressReport = {}) {
     head_committed_at: head.committed_at || null,
     proof_source_ref: trimText(proof.source_ref, 160) || null,
     proof_status: trimText(proof.status, 40) || null,
+    proof_canonical_hash: trimText(proof.canonical_hash, 120) || null,
+    progress_canonical_hash: trimText(progressReport.canonical_hash, 120) || null,
     restart_current_scope: restart ? {
       computed_percent: Number(restart.computed_percent || 0),
       status: trimText(restart.status, 40) || null,
@@ -149,6 +156,7 @@ function buildAnswerText({
   whyTarget,
   commandPreview,
   dispatchPayloadPreview,
+  approvalEnvelope,
   riskExclusions,
   progress,
 }) {
@@ -166,6 +174,7 @@ function buildAnswerText({
     'Send command preview:',
     commandPreview,
     `Dispatch payload preview: ${JSON.stringify(dispatchPayloadPreview)}`,
+    `Approval binding: preview ${approvalEnvelope.preview_id}; approval ${approvalEnvelope.approval_id}; action ${approvalEnvelope.channel}.`,
     `Risk/blocked exclusions: ${riskExclusions.join('; ')}.`,
     'JAMES ACTION: REVIEW OR EDIT BEFORE ANY SEND',
   ].join('\n');
@@ -251,6 +260,54 @@ function buildMiraLiveInternalHandoffPreviewV0(input = {}, options = {}) {
   const whyTarget = buildWhyTarget(draft, progress);
   const riskExclusions = buildRiskExclusions(draft, progress, flagPresent);
   const evidence = summarizeEvidence(draft, progress);
+  const metadata = {
+    sessionId: input.sessionId
+      || input.session_id
+      || input.metadata?.sessionId
+      || input.metadata?.session_id
+      || options.sessionId
+      || options.session_id,
+    profileName: input.profileName
+      || input.profile_name
+      || input.metadata?.profileName
+      || input.metadata?.profile_name
+      || options.profileName
+      || options.profile_name
+      || 'main',
+    windowKey: input.windowKey
+      || input.window_key
+      || input.metadata?.windowKey
+      || input.metadata?.window_key
+      || options.windowKey
+      || options.window_key
+      || 'main',
+    sourceScope: input.sourceScope
+      || input.source_scope
+      || input.metadata?.sourceScope
+      || input.metadata?.source_scope
+      || options.sourceScope
+      || options.source_scope
+      || 'main',
+  };
+  const previewSeed = {
+    schema: SCHEMA,
+    version: VERSION,
+    generated_at: new Date(nowMs).toISOString(),
+    source_evidence: evidence,
+    target_agent: targetAgent,
+    draft_body: draftBody,
+    current_lane: draft.current_lane,
+    progress,
+    send_command_preview: commandPreview,
+    dispatch_payload_preview: dispatchPayloadPreview,
+  };
+  const approvalEnvelope = buildMiraInternalHandoffApprovalEnvelope(previewSeed, {
+    projectRoot,
+    nowMs,
+    metadata,
+    progressReport,
+    progressProofArtifactHash: options.progressProofArtifactHash,
+  });
   const answerText = buildAnswerText({
     evidence,
     targetAgent,
@@ -258,6 +315,7 @@ function buildMiraLiveInternalHandoffPreviewV0(input = {}, options = {}) {
     whyTarget,
     commandPreview,
     dispatchPayloadPreview,
+    approvalEnvelope,
     riskExclusions,
     progress,
   });
@@ -272,6 +330,8 @@ function buildMiraLiveInternalHandoffPreviewV0(input = {}, options = {}) {
     read_only: true,
     generated_at: new Date(nowMs).toISOString(),
     answer_text: answerText,
+    preview_id: approvalEnvelope.preview_id,
+    preview_hash: approvalEnvelope.preview_hash,
     james_action_line_count: countJamesActionLines(answerText),
     source_evidence: evidence,
     target_agent: targetAgent,
@@ -294,6 +354,17 @@ function buildMiraLiveInternalHandoffPreviewV0(input = {}, options = {}) {
       flag_present: flagPresent,
       dispatch_enabled: false,
       dispatch_path_tested: false,
+      action: APPROVAL_ACTION,
+      channel: APPROVAL_SEND_CHANNEL,
+      preview_id: approvalEnvelope.preview_id,
+      preview_hash: approvalEnvelope.preview_hash,
+      approval_id: approvalEnvelope.approval_id,
+      approval_token: approvalEnvelope.approval_token,
+      approval_token_hash: approvalEnvelope.approval_token_hash,
+      generated_at: approvalEnvelope.generated_at,
+      expires_at: approvalEnvelope.expires_at,
+      binding: approvalEnvelope.binding,
+      dispatch_payload_preview: approvalEnvelope.dispatch_payload_preview,
       decision: flagPresent
         ? 'flag_present_but_dispatch_path_not_enabled'
         : 'approval_required_preview_only',
