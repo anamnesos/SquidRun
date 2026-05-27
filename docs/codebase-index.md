@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1212
+- Total files listed: 1215
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -19,22 +19,22 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 100
 - scripts: 1
 - tools: 3
-- ui/__tests__: 479
-- ui/modules: 372
+- ui/__tests__: 480
+- ui/modules: 373
 - ui/other: 29
 - ui/scripts: 172
-- ui/styles: 15
+- ui/styles: 16
 - workspace/knowledge: 1
 
 ## Summary By Kind
-- asset: 21
+- asset: 22
 - config: 30
 - doc: 74
 - file: 1
 - jsonl: 1
 - script: 173
-- source: 432
-- test: 480
+- source: 433
+- test: 481
 
 ## Files
 
@@ -100,7 +100,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | 2728 |
 | `.gitignore` | config | 3723 |
 | `AGENTS.md` | doc | 6311 |
-| `ARCHITECTURE.md` | doc | 57657 |
+| `ARCHITECTURE.md` | doc | 57921 |
 | `CLAUDE-AI.md` | doc | 3856 |
 | `CLAUDE.md` | doc | 1988 |
 | `CODE_OF_CONDUCT.md` | doc | 5185 |
@@ -612,6 +612,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/process-handlers.test.js` | test | 10914 |
 | `ui/__tests__/profile.test.js` | test | 3267 |
 | `ui/__tests__/project-handlers.test.js` | test | 30156 |
+| `ui/__tests__/project-rooms-ui.test.js` | test | 6953 |
 | `ui/__tests__/protocol.test.js` | test | 5064 |
 | `ui/__tests__/pty-handlers.test.js` | test | 36692 |
 | `ui/__tests__/pty-output-filter.test.js` | test | 2867 |
@@ -707,7 +708,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/bridge-client.js` | source | 37954 |
 | `ui/modules/bridge/channel-policy.js` | source | 5359 |
 | `ui/modules/bridge/preload-api.js` | source | 8467 |
-| `ui/modules/bridge/renderer-modules.js` | source | 842 |
+| `ui/modules/bridge/renderer-modules.js` | source | 889 |
 | `ui/modules/bridge/safe-ipc.js` | source | 3924 |
 | `ui/modules/buffered-file-writer.js` | source | 5113 |
 | `ui/modules/bus-reliability-trace.js` | source | 2089 |
@@ -990,6 +991,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/plugins/plugin-manager.js` | source | 15296 |
 | `ui/modules/presence-state.js` | source | 5417 |
 | `ui/modules/problem-orchestrator.js` | source | 18707 |
+| `ui/modules/project-rooms.js` | source | 7591 |
 | `ui/modules/recovery-manager.js` | source | 20614 |
 | `ui/modules/renderer-bridge.js` | source | 3330 |
 | `ui/modules/renderer-ipc-registry.js` | source | 1377 |
@@ -1081,7 +1083,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/config.js` | source | 15294 |
 | `ui/daemon-client.js` | source | 22675 |
 | `ui/eslint.config.js` | source | 794 |
-| `ui/index.html` | asset | 58298 |
+| `ui/index.html` | asset | 59213 |
 | `ui/jest.config.js` | source | 949 |
 | `ui/jsconfig.json` | config | 659 |
 | `ui/main.js` | source | 6153 |
@@ -1094,7 +1096,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/pane-host.html` | asset | 1143 |
 | `ui/preload.js` | source | 934 |
 | `ui/profile.js` | source | 7694 |
-| `ui/renderer.js` | source | 113713 |
+| `ui/renderer.js` | source | 113878 |
 | `ui/supervisor-daemon.js` | source | 259767 |
 | `ui/terminal-daemon.js` | source | 73275 |
 | `ui/types/contracts.d.ts` | source | 8484 |
@@ -1292,6 +1294,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/styles/layout.css` | asset | 45161 |
 | `ui/styles/mira-lab.css` | asset | 4844 |
 | `ui/styles/panes.css` | asset | 13886 |
+| `ui/styles/project-rooms.css` | asset | 3359 |
 | `ui/styles/settings-panel.css` | asset | 11422 |
 | `ui/styles/state-bar.css` | asset | 2286 |
 | `ui/styles/status-strip.css` | asset | 4654 |

@@ -123,6 +123,7 @@ const daemonHandlers = rendererModules.daemonHandlers;
 const { showStatusNotice } = rendererModules.notifications;
 const { debounceButton, applyShortcutTooltips } = rendererModules.utils;
 const { initCommandPalette } = rendererModules.commandPalette;
+const projectRooms = rendererModules.projectRooms;
 const { initStatusStrip } = rendererModules.statusStrip;
 const { initPaneVisibilityControls } = rendererModules.paneVisibility;
 const { createWindowTeamBootstrap, readInitialWindowContextFromLocation } = rendererModules.windowTeamBootstrap;
@@ -2658,6 +2659,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupAutonomyOnboardingHandlers();
   initMainPaneState();
   applyWindowChrome(initialWindowContext);
+  if (projectRooms && typeof projectRooms.initProjectRooms === 'function') {
+    projectRooms.initProjectRooms();
+  }
 
   // Enhance shortcut tooltips for controls with keyboard hints
   applyShortcutTooltips();
