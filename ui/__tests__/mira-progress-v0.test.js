@@ -13,7 +13,11 @@ const {
   validateContract,
 } = require('../modules/mira-core/mira-progress-v0');
 const {
+  INTERNAL_REQUEST_DRAFT_PROOF_KEY,
+  LIVE_WHAT_NOW_PROOF_KEY,
+  LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
   VISIBLE_PRESENCE_A0_PROOF_KEY,
+  writeProgressProofArtifact,
   writeVisiblePresenceProofArtifact,
 } = require('../modules/mira-core/mira-progress-proof-inputs-v0');
 const {
@@ -84,6 +88,9 @@ function passingProofInputs() {
       'mira-presence-runtime-acceptance.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-presence-runtime-acceptance.test.js' },
       'startup-ai-briefing.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- startup-ai-briefing.test.js' },
       'hm-restart-verify': { status: 'PASS', source_ref: 'node ui/scripts/hm-restart-verify.js --no-send --json' },
+      [LIVE_WHAT_NOW_PROOF_KEY]: { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-what-now-answer-v0.test.js' },
+      [INTERNAL_REQUEST_DRAFT_PROOF_KEY]: { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-internal-request-draft-v0.test.js' },
+      [LOCAL_TEXT_UI_SURFACE_PROOF_KEY]: { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-local-text-ui-surface.test.js' },
       'mira-runtime-squidrun-context.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-runtime-squidrun-context.test.js' },
       'mira-runtime-bridge-api.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-runtime-bridge-api.test.js' },
       'mira-north-star-acceptance.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-north-star-acceptance.test.js' },
@@ -294,6 +301,56 @@ describe('mira progress v0', () => {
         points_awarded: 0,
       }));
       expect(staleProof.warnings).toContain('proof_head_mismatch');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('default progress proof artifact counts A1/A2 Mission Control evidence from clean HEAD', () => {
+    const root = seedProject({ stalePresence: true });
+    const currentHead = {
+      full_sha: 'abcdef1234567890abcdef1234567890abcdef12',
+      short_sha: 'abcdef12',
+      committed_at: '2026-05-10T00:00:00.000Z',
+      subject: 'A2 current Mira checkpoint',
+    };
+    try {
+      writeProgressProofArtifact({
+        projectRoot: root,
+        head: currentHead,
+        worktreeState: cleanWorktree(),
+        nowMs: Date.parse('2026-05-26T22:30:00.000Z'),
+        runner: (command, projectRoot, metadata) => ({
+          ok: true,
+          exitCode: 0,
+          stdout: `PASS ${metadata.proofKey}`,
+          stderr: '',
+        }),
+      });
+
+      const report = buildMiraProgressReport({
+        projectRoot: root,
+        contract: progressContract,
+        inputSignals: {},
+        head: currentHead,
+        worktreeState: cleanWorktree(),
+      });
+
+      expect(report.computed_total_percent).toBe(55);
+      expect(report.warnings).toEqual(['presence_state_predates_head']);
+      expect(report.categories.find((category) => category.id === 'visible_presence_a0_text')).toEqual(expect.objectContaining({
+        computed_percent: 100,
+        status: 'PASS',
+      }));
+      expect(report.categories.find((category) => category.id === 'mission_control_command_context')).toEqual(expect.objectContaining({
+        computed_percent: 100,
+        status: 'PASS',
+      }));
+      expect(report.categories.find((category) => category.id === 'tool_app_action_planning')).toEqual(expect.objectContaining({
+        computed_percent: 100,
+        status: 'PASS',
+      }));
+      expect(report.categories.find((category) => category.id === 'mission_control_command_context').last_proof_source_refs).toContain('.squidrun/runtime/mira-progress-proof-inputs-v0.json');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -5,9 +5,10 @@ const path = require('path');
 
 const {
   DEFAULT_TIMEOUT_MS,
+  DEFAULT_PROGRESS_PROOF_COMMANDS,
   VISIBLE_PRESENCE_A0_PROOF_KEY,
   VISIBLE_PRESENCE_A0_TEST_COMMAND,
-  writeVisiblePresenceProofArtifact,
+  writeProgressProofArtifact,
 } = require('../modules/mira-core/mira-progress-proof-inputs-v0');
 
 function parseArgs(argv = []) {
@@ -56,7 +57,7 @@ function parseArgs(argv = []) {
 
 function main(argv = process.argv.slice(2), options = {}) {
   const args = parseArgs(argv);
-  const result = writeVisiblePresenceProofArtifact({
+  const result = writeProgressProofArtifact({
     projectRoot: args.projectRoot,
     progressProofPath: args.out || undefined,
     timeoutMs: args.timeoutMs,
@@ -65,6 +66,14 @@ function main(argv = process.argv.slice(2), options = {}) {
     nowMs: options.nowMs,
   });
   const proof = result.artifact.proofs[VISIBLE_PRESENCE_A0_PROOF_KEY];
+  const proofs = Object.fromEntries(Object.entries(result.artifact.proofs || {}).map(([key, entry]) => [
+    key,
+    {
+      status: entry.status,
+      command: entry.command,
+      reason: entry.reason,
+    },
+  ]));
   const output = {
     ok: result.ok,
     schema: result.artifact.schema,
@@ -72,9 +81,12 @@ function main(argv = process.argv.slice(2), options = {}) {
     proof_key: VISIBLE_PRESENCE_A0_PROOF_KEY,
     status: proof.status,
     command: VISIBLE_PRESENCE_A0_TEST_COMMAND,
+    proof_count: Object.keys(result.artifact.proofs || {}).length,
+    expected_proof_keys: DEFAULT_PROGRESS_PROOF_COMMANDS.map((entry) => entry.proof_key),
+    proofs,
     head: result.artifact.head,
     worktree: result.artifact.worktree,
-    consumable_when_current_worktree_clean: proof.status === 'PASS' && result.artifact.worktree?.clean === true,
+    consumable_when_current_worktree_clean: result.ok === true && result.artifact.worktree?.clean === true,
   };
   process.stdout.write(`${JSON.stringify(output, null, args.pretty ? 2 : 0)}\n`);
   return result;

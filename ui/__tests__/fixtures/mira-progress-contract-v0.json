@@ -134,16 +134,16 @@
           "schema": "squidrun.mira.north_star_acceptance_contract.v0"
         },
         {
-          "id": "mission_control_context_tests",
+          "id": "live_what_now_answer_tests",
           "kind": "proof_input",
           "points": 50,
-          "proof_key": "mira-runtime-squidrun-context.test.js"
+          "proof_key": "mira-live-what-now-answer-v0.test.js"
         },
         {
-          "id": "mission_control_visible_surface_tests",
+          "id": "local_text_mission_control_surface_tests",
           "kind": "proof_input",
           "points": 30,
-          "proof_key": "mira-runtime-ui-read-only-boot.test.js"
+          "proof_key": "mira-local-text-ui-surface.test.js"
         }
       ]
     },
@@ -250,16 +250,16 @@
           "schema": "squidrun.mira.north_star_acceptance_contract.v0"
         },
         {
-          "id": "runtime_ui_read_only_boot_tests",
+          "id": "live_internal_request_draft_tests",
           "kind": "proof_input",
           "points": 50,
-          "proof_key": "mira-runtime-ui-read-only-boot.test.js"
+          "proof_key": "mira-live-internal-request-draft-v0.test.js"
         },
         {
-          "id": "internal_bridge_tests",
+          "id": "local_text_internal_request_surface_tests",
           "kind": "proof_input",
           "points": 30,
-          "proof_key": "mira-runtime-bridge-api.test.js"
+          "proof_key": "mira-local-text-ui-surface.test.js"
         }
       ]
     }
