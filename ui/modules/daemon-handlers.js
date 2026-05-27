@@ -1193,6 +1193,7 @@ function processThrottleQueue(paneId) {
     terminal.sendToPane(paneId, routedMessage, {
       meta: injectMeta || undefined,
       traceContext: traceContext || undefined,
+      deliveryId: deliveryId || undefined,
       hmSendFastEnter,
       startupInjection: isStartupInjection,
       clipboardPasteThresholdBytes: INJECT_CLIPBOARD_PASTE_THRESHOLD_BYTES,

@@ -545,6 +545,26 @@ describe('terminal.js module', () => {
       }));
     });
 
+    test('passes deliveryId to hidden pane host injection for verification callbacks', async () => {
+      mockSettings.getSettings.mockReturnValue({
+        hiddenPaneHostsEnabled: true,
+        paneCommands: { '1': 'codex' },
+      });
+      mockSquidRun.paneHost = {
+        inject: jest.fn().mockResolvedValue({ success: true }),
+      };
+      terminal.setInputLocked('1', false);
+
+      terminal.sendToPane('1', 'oracle verdict payload', { deliveryId: 'oracle-90-delivery' });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockSquidRun.paneHost.inject).toHaveBeenCalledWith('1', expect.objectContaining({
+        message: 'oracle verdict payload',
+        deliveryId: 'oracle-90-delivery',
+      }));
+    });
+
     test('bypasses pane host injection for startupInjection payloads', async () => {
       mockSettings.getSettings.mockReturnValue({
         hiddenPaneHostsEnabled: true,

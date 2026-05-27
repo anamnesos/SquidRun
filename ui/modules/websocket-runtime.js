@@ -123,6 +123,10 @@ function getRoleForPaneId(paneId) {
   return PANE_TO_CANONICAL_ROLE.get(String(paneId)) || null;
 }
 
+function isCanonicalLocalPaneRoleTarget(target) {
+  return Boolean(normalizeRoleId(target));
+}
+
 function normalizeScopeProfile(value) {
   return normalizeProfileName(value || DEFAULT_PROFILE);
 }
@@ -1826,8 +1830,9 @@ async function handleMessage(clientId, rawData) {
       excludeClientId: clientId,
     })) {
       wsDeliveryCount = 1;
-      // Prevent duplicate delivery via both WebSocket route and terminal injection route.
-      skipMessageHandler = true;
+      // Prevent duplicate delivery for non-local direct routes. Canonical local pane roles
+      // still need the app handler because delivered.websocket is not a user-visible proof.
+      skipMessageHandler = !isCanonicalLocalPaneRoleTarget(target);
     }
   }
 
