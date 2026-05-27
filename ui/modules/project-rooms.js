@@ -3,8 +3,12 @@
 const {
   buildTrustQuoteReadinessCard,
 } = require('./project-room-envelope');
+const {
+  readInitialWindowContextFromLocation,
+} = require('./window-team-bootstrap');
 
 const MAIN_ROOM_ID = 'main';
+const SIDE_PROFILE_DISABLED_REASON = 'project_rooms_main_profile_only';
 
 const PROJECT_ROOMS = Object.freeze([
   Object.freeze({
@@ -12,12 +16,11 @@ const PROJECT_ROOMS = Object.freeze([
     label: 'Main',
     status: 'LIVE',
     authority: 'live',
-    title: 'Current command room',
-    summary: 'The room James is in now: live SquidRun panes, current lane evidence, and direct status answers.',
+    title: 'Current work',
+    summary: 'Live SquidRun session state and current lane evidence.',
     details: [
-      'Panes: Mira, Builder, Oracle',
-      'Source authority: current local SquidRun evidence',
-      'Other room cards are summaries only',
+      'Architect, Builder, and Oracle panes',
+      'Current lane and status',
     ],
     jamesAction: 'JAMES ACTION: NONE',
   }),
@@ -27,12 +30,11 @@ const PROJECT_ROOMS = Object.freeze([
     label: 'Mira Build',
     status: 'PREVIEW',
     authority: 'preview',
-    title: 'SquidRun and Mira internals',
-    summary: 'Build room for SquidRun/Mira implementation, system-map evidence, and blocker visibility.',
+    title: 'Mira build',
+    summary: 'Mira implementation evidence and blockers.',
     details: [
-      'Room launch proof: not present',
-      'Prototype/archive refs: non-authoritative',
       'Voice and A3/A4 remain blocked',
+      'Preview status only',
     ],
     jamesAction: 'JAMES ACTION: NONE',
   }),
@@ -67,6 +69,82 @@ function normalizeRoomId(roomId) {
 
 function getProjectRoom(roomId = MAIN_ROOM_ID) {
   return cloneRoom(ROOM_BY_ID[normalizeRoomId(roomId)]);
+}
+
+function normalizeContextText(value, fallback = '') {
+  const text = String(value || '').trim();
+  return text || fallback;
+}
+
+function normalizeContextKey(value, fallback = 'main') {
+  return normalizeContextText(value, fallback).toLowerCase();
+}
+
+function getProjectRoomsWindowContext(options = {}) {
+  const supplied = options.windowContext || options.context || null;
+  if (supplied && typeof supplied === 'object') {
+    return {
+      windowKey: normalizeContextText(supplied.windowKey, 'main'),
+      profileName: normalizeContextText(supplied.profileName || supplied.profile, 'main'),
+      sessionScopeId: normalizeContextText(supplied.sessionScopeId, ''),
+    };
+  }
+
+  if (typeof options.locationSearch === 'string') {
+    const parsed = readInitialWindowContextFromLocation(options.locationSearch);
+    return {
+      windowKey: normalizeContextText(parsed.windowKey, 'main'),
+      profileName: normalizeContextText(parsed.profileName, 'main'),
+      sessionScopeId: normalizeContextText(parsed.sessionScopeId, ''),
+    };
+  }
+
+  const windowRef = options.windowRef || (typeof window !== 'undefined' ? window : null);
+  const search = windowRef?.location?.search;
+  if (typeof search === 'string') {
+    const parsed = readInitialWindowContextFromLocation(search);
+    return {
+      windowKey: normalizeContextText(parsed.windowKey, 'main'),
+      profileName: normalizeContextText(parsed.profileName, 'main'),
+      sessionScopeId: normalizeContextText(parsed.sessionScopeId, ''),
+    };
+  }
+
+  return {
+    windowKey: 'main',
+    profileName: 'main',
+    sessionScopeId: '',
+  };
+}
+
+function isMainProjectRoomContext(context = {}) {
+  const windowKey = normalizeContextKey(context.windowKey, 'main');
+  const profileName = normalizeContextKey(context.profileName || context.profile, 'main');
+  return windowKey === 'main' && profileName === 'main';
+}
+
+function disableProjectRoomsDom(documentRef, reason = SIDE_PROFILE_DISABLED_REASON) {
+  const root = documentRef.getElementById('projectRooms');
+  const overview = documentRef.getElementById('projectRoomOverview');
+  const tabs = Array.from(documentRef.querySelectorAll('[data-project-room-tab]'));
+
+  if (root) {
+    root.hidden = true;
+    root.dataset.disabledReason = reason;
+    root.setAttribute('aria-hidden', 'true');
+  }
+
+  for (const tab of tabs) {
+    tab.disabled = true;
+    tab.setAttribute('aria-disabled', 'true');
+    tab.setAttribute('aria-selected', 'false');
+    tab.setAttribute('tabindex', '-1');
+  }
+
+  if (overview) {
+    overview.dataset.roomId = '';
+    overview.innerHTML = '';
+  }
 }
 
 function getRoomAuthority(roomId = MAIN_ROOM_ID, launchProof = null) {
@@ -173,6 +251,9 @@ function setActiveRoomDom(documentRef, roomId) {
   const tabs = Array.from(documentRef.querySelectorAll('[data-project-room-tab]'));
 
   if (root) {
+    root.hidden = false;
+    root.dataset.disabledReason = '';
+    root.setAttribute('aria-hidden', 'false');
     root.dataset.selectedRoom = selectedRoomId;
   }
 
@@ -206,6 +287,20 @@ function initProjectRooms(options = {}) {
     return {
       ok: false,
       reason: 'missing_project_rooms_root',
+      destroy: () => {},
+    };
+  }
+
+  const windowContext = getProjectRoomsWindowContext(options);
+  if (!isMainProjectRoomContext(windowContext)) {
+    disableProjectRoomsDom(documentRef);
+    return {
+      ok: true,
+      disabled: true,
+      reason: SIDE_PROFILE_DISABLED_REASON,
+      windowContext,
+      getSelectedRoomId: () => null,
+      selectRoom: () => null,
       destroy: () => {},
     };
   }
@@ -244,6 +339,7 @@ function initProjectRooms(options = {}) {
 module.exports = {
   MAIN_ROOM_ID,
   PROJECT_ROOMS,
+  SIDE_PROFILE_DISABLED_REASON,
   buildRoomOverviewHtml,
   getProjectRoom,
   getProjectRoomIds,
@@ -252,4 +348,8 @@ module.exports = {
   initProjectRooms,
   normalizeRoomId,
   resolveMainLaneAuthority,
+  _internals: {
+    getProjectRoomsWindowContext,
+    isMainProjectRoomContext,
+  },
 };

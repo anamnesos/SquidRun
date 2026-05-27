@@ -6,6 +6,20 @@ const DEFAULT_PROVIDER_LIMIT = 5;
 const DEFAULT_PROVIDER_TIMEOUT_MS = 900;
 const RECALL_START = '[SQUIDRUN MEMORY RECALL]';
 const RECALL_END = '[/SQUIDRUN MEMORY RECALL]';
+const PROFILE_SCOPE_KEYS = Object.freeze([
+  'profile',
+  'profileName',
+  'profile_name',
+  'windowKey',
+  'window_key',
+  'targetProfile',
+  'target_profile',
+  'sourceProfile',
+  'source_profile',
+]);
+const EUNBYEOL_NAME_PATTERN = /\b(eunbyeol|eunbyul)\b|은별/i;
+const EUNBYEOL_CASE_SCOPE_PATTERN = /\b(korean fraud|korean case|daegu|customs case|26-05-00420|profile:eunbyeol|window:eunbyeol|runtime-eunbyeol|context-snapshots-eunbyeol|app-status-eunbyeol|settings-eunbyeol)\b/i;
+const CASE_SCOPE_PATTERN = /\b(casework|case work|case-note|case note|case_evidence|case evidence)\b/i;
 
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -40,6 +54,115 @@ function tokenize(value) {
   return String(value || '')
     .toLowerCase()
     .match(/[a-z0-9_./:-]+/g) || [];
+}
+
+function normalizeScopeValue(value) {
+  return asText(value).toLowerCase();
+}
+
+function normalizeScopeList(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeScopeValue(entry)).filter(Boolean);
+  }
+  if (value && typeof value === 'object') {
+    return Object.values(value).map((entry) => normalizeScopeValue(entry)).filter(Boolean);
+  }
+  return normalizeScopeValue(value).split(/[|, ]+/).map((entry) => entry.trim()).filter(Boolean);
+}
+
+function recallContextAllowsProfileScope(context = {}, profileKey = '') {
+  const expected = normalizeScopeValue(profileKey);
+  if (!expected || expected === 'main') return true;
+  if (context.allowProfileScopedRecall === true || context.allowCaseRecall === true) return true;
+  const candidates = [
+    context.profile,
+    context.profileName,
+    context.profile_name,
+    context.windowKey,
+    context.window_key,
+    context.targetProfile,
+    context.target_profile,
+    context.sourceProfile,
+    context.source_profile,
+  ].map((entry) => normalizeScopeValue(entry)).filter(Boolean);
+  const sessionScopeId = normalizeScopeValue(context.sessionScopeId || context.session_scope_id);
+  if (sessionScopeId && sessionScopeId.split(/[:/-]+/).includes(expected)) return true;
+  return candidates.includes(expected);
+}
+
+function extractExplicitProfileScope(metadata = {}) {
+  const meta = asObject(metadata);
+  for (const key of PROFILE_SCOPE_KEYS) {
+    const value = normalizeScopeValue(meta[key]);
+    if (value && value !== 'main') return value;
+  }
+  const routing = asObject(meta.routing);
+  for (const key of PROFILE_SCOPE_KEYS) {
+    const value = normalizeScopeValue(routing[key]);
+    if (value && value !== 'main') return value;
+  }
+  const scopes = normalizeScopeList(meta.scopes || meta.scope);
+  if (scopes.includes('case') || scopes.includes('casework') || scopes.includes('case_scope')) {
+    return 'case';
+  }
+  const profileScope = scopes.find((scope) => /^profile[:/-]/.test(scope) || /^window[:/-]/.test(scope));
+  if (profileScope) {
+    return profileScope.replace(/^(?:profile|window)[:/-]+/, '');
+  }
+  const sessionScopeId = normalizeScopeValue(meta.sessionScopeId || meta.session_scope_id || meta.sessionId || meta.session_id);
+  const sessionParts = sessionScopeId.split(/[:/-]+/).filter(Boolean);
+  const scopedPart = sessionParts
+    .slice()
+    .reverse()
+    .find((part) => part && part !== 'app' && part !== 'session' && part !== 'test' && !/^\d+$/.test(part) && part !== 'main');
+  return scopedPart || '';
+}
+
+function classifyRecallItemScope(item = {}) {
+  const metadata = asObject(item.metadata);
+  const explicitProfile = extractExplicitProfileScope(metadata);
+  if (explicitProfile) {
+    return {
+      scoped: true,
+      profile: explicitProfile,
+      reason: 'explicit_profile_scope',
+    };
+  }
+
+  const scopeText = [
+    item.ref,
+    item.title,
+    item.excerpt,
+    item.sourceKind,
+    item.source,
+    JSON.stringify(metadata),
+  ].filter(Boolean).join(' ');
+
+  if (EUNBYEOL_CASE_SCOPE_PATTERN.test(scopeText) || (EUNBYEOL_NAME_PATTERN.test(scopeText) && CASE_SCOPE_PATTERN.test(scopeText))) {
+    return {
+      scoped: true,
+      profile: 'eunbyeol',
+      reason: 'eunbyeol_case_scope',
+    };
+  }
+  if (CASE_SCOPE_PATTERN.test(scopeText)) {
+    return {
+      scoped: true,
+      profile: 'case',
+      reason: 'case_scope',
+    };
+  }
+  return {
+    scoped: false,
+    profile: '',
+    reason: 'unscoped',
+  };
+}
+
+function shouldIncludeRecallItemForContext(item = {}, context = {}) {
+  const scope = classifyRecallItemScope(item);
+  if (!scope.scoped) return true;
+  return recallContextAllowsProfileScope(context, scope.profile);
 }
 
 function tokenCoverageScore(text, query) {
@@ -168,6 +291,7 @@ function normalizeProviderItems(rawResult, provider) {
 function mergeProviderResults(sourceResults, options = {}) {
   const rrfK = clampInt(options.rrfK, DEFAULT_RRF_K, 1, 500);
   const limit = clampInt(options.limit, DEFAULT_LIMIT, 1, 50);
+  const context = asObject(options.context);
   const merged = new Map();
   const contentKeyToKey = new Map();
 
@@ -175,7 +299,8 @@ function mergeProviderResults(sourceResults, options = {}) {
     if (!sourceResult || sourceResult.ok === false) continue;
     const provider = asObject(sourceResult.provider);
     const weight = Number.isFinite(Number(provider.weight)) ? Number(provider.weight) : 1;
-    const items = normalizeProviderItems(sourceResult, provider);
+    const items = normalizeProviderItems(sourceResult, provider)
+      .filter((item) => shouldIncludeRecallItemForContext(item, context));
     items.forEach((item, index) => {
       const providerRank = item.providerRank || index + 1;
       const mergeKey = contentKeyToKey.get(item.contentKey) || item.key;
@@ -298,9 +423,11 @@ function createMemoryBroker(options = {}) {
           timeoutMs,
         }
       )));
+      const recallContext = asObject(context);
       const results = mergeProviderResults(sourceResults, {
         limit,
         rrfK,
+        context: recallContext,
       });
       const sources = sourceResults.map((result) => ({
         source: result?.provider?.id || result?.provider?.source || 'unknown',
@@ -596,5 +723,10 @@ module.exports = {
   formatRecallForPaneMessage,
   mergeProviderResults,
   normalizeProviderItem,
+  _internals: {
+    classifyRecallItemScope,
+    recallContextAllowsProfileScope,
+    shouldIncludeRecallItemForContext,
+  },
   prependRecallToMessage,
 };

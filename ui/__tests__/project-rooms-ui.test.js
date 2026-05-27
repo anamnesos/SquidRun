@@ -9,6 +9,8 @@ function createFakeElement(id, dataset = {}) {
   return {
     id,
     dataset: { ...dataset },
+    hidden: false,
+    disabled: false,
     innerHTML: '',
     textContent: '',
     listeners,
@@ -80,6 +82,14 @@ function installRoomDom() {
 
 describe('project room registry and switcher', () => {
   let projectRooms;
+  const oldInternalVisibleCopy = [
+    /\bPayload\b/i,
+    /\bTransport\b/i,
+    /Main lane authority/i,
+    /Cross-room publish/i,
+    /Source authority/i,
+    /Prototype\/archive/i,
+  ];
 
   beforeEach(() => {
     jest.resetModules();
@@ -100,16 +110,28 @@ describe('project room registry and switcher', () => {
     ]);
   });
 
-  test('defaults to Main and renders it as the current command room', () => {
+  test('main profile exposes Main, TrustQuote, and Mira Build with Main selected by default', () => {
     const dom = installRoomDom();
 
-    const controller = projectRooms.initProjectRooms({ documentRef: dom.documentRef });
+    const controller = projectRooms.initProjectRooms({
+      documentRef: dom.documentRef,
+      windowContext: { windowKey: 'main', profileName: 'main' },
+    });
 
     expect(controller.ok).toBe(true);
+    expect(controller.disabled).toBeUndefined();
     expect(controller.getSelectedRoomId()).toBe('main');
+    expect(dom.root.hidden).toBe(false);
+    expect(dom.root.getAttribute('aria-hidden')).toBe('false');
     expect(dom.root.dataset.selectedRoom).toBe('main');
     expect(dom.overview.dataset.roomId).toBe('main');
-    expect(dom.overview.innerHTML).toContain('Current command room');
+    expect(dom.overview.innerHTML).toContain('Current work');
+    expect(dom.overview.innerHTML).toContain('data-room-card="main"');
+    expect(dom.overview.innerHTML).toContain('data-room-card="trustquote"');
+    expect(dom.overview.innerHTML).toContain('data-room-card="mira-build"');
+    expect(dom.overview.innerHTML).toContain('Main');
+    expect(dom.overview.innerHTML).toContain('TrustQuote');
+    expect(dom.overview.innerHTML).toContain('Mira Build');
     expect(dom.overview.innerHTML).toContain('JAMES ACTION: NONE');
     expect(dom.overview.innerHTML.match(/JAMES ACTION:/g)).toHaveLength(1);
     expect(dom.tabs[0].classList.contains('active')).toBe(true);
@@ -129,8 +151,9 @@ describe('project room registry and switcher', () => {
     expect(controller.getSelectedRoomId()).toBe('trustquote');
     expect(dom.root.dataset.selectedRoom).toBe('trustquote');
     expect(dom.overview.innerHTML).toContain('TrustQuote readiness');
-    expect(dom.overview.innerHTML).toContain('Attach target: D:/projects/TrustQuote');
-    expect(dom.overview.innerHTML).toContain('Main lane authority: disabled');
+    expect(dom.overview.innerHTML).toContain('Project: D:/projects/TrustQuote');
+    expect(dom.overview.innerHTML).toContain('Status: preview only');
+    expect(dom.overview.innerHTML).toContain('Review required before launch');
     expect(invoke).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
@@ -138,10 +161,64 @@ describe('project room registry and switcher', () => {
     dom.tabs[2].click();
 
     expect(controller.getSelectedRoomId()).toBe('mira-build');
-    expect(dom.overview.innerHTML).toContain('SquidRun and Mira internals');
+    expect(dom.root.dataset.selectedRoom).toBe('mira-build');
+    expect(dom.overview.innerHTML).toContain('Mira implementation evidence and blockers');
+    expect(dom.overview.innerHTML).toContain('Voice and A3/A4 remain blocked');
     expect(invoke).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  test('Eunbyeol and side-profile contexts hide Project Rooms before preview rooms render', () => {
+    const sideContexts = [
+      { windowContext: { windowKey: 'eunbyeol', profileName: 'eunbyeol', sessionScopeId: 'case-scope' } },
+      { windowContext: { windowKey: 'main', profileName: 'eunbyeol', sessionScopeId: 'case-scope' } },
+      { locationSearch: '?windowKey=eunbyeol&profileName=eunbyeol&sessionScopeId=case-scope' },
+    ];
+
+    for (const sideContext of sideContexts) {
+      const dom = installRoomDom();
+
+      const controller = projectRooms.initProjectRooms({
+        documentRef: dom.documentRef,
+        ...sideContext,
+      });
+
+      expect(controller.ok).toBe(true);
+      expect(controller.disabled).toBe(true);
+      expect(controller.reason).toBe(projectRooms.SIDE_PROFILE_DISABLED_REASON);
+      expect(controller.getSelectedRoomId()).toBeNull();
+      expect(controller.selectRoom('trustquote')).toBeNull();
+      expect(dom.root.hidden).toBe(true);
+      expect(dom.root.dataset.disabledReason).toBe(projectRooms.SIDE_PROFILE_DISABLED_REASON);
+      expect(dom.root.getAttribute('aria-hidden')).toBe('true');
+      expect(dom.overview.dataset.roomId).toBe('');
+      expect(dom.overview.innerHTML).toBe('');
+      expect(dom.overview.innerHTML).not.toMatch(/TrustQuote|Mira Build/);
+
+      for (const tab of dom.tabs) {
+        expect(tab.disabled).toBe(true);
+        expect(tab.getAttribute('aria-disabled')).toBe('true');
+        expect(tab.getAttribute('aria-selected')).toBe('false');
+        expect(tab.getAttribute('tabindex')).toBe('-1');
+      }
+
+      dom.tabs[1].click();
+
+      expect(controller.getSelectedRoomId()).toBeNull();
+      expect(dom.overview.innerHTML).toBe('');
+      expect(dom.overview.innerHTML).not.toMatch(/TrustQuote|Mira Build/);
+    }
+  });
+
+  test('visible room copy stays product-facing and avoids old internal wording', () => {
+    const visibleMarkup = projectRooms.getProjectRoomIds()
+      .map((roomId) => projectRooms.buildRoomOverviewHtml(roomId))
+      .join('\n');
+
+    for (const pattern of oldInternalVisibleCopy) {
+      expect(visibleMarkup).not.toMatch(pattern);
+    }
   });
 
   test('room registry module does not include send, routing, restart, or project mutation calls', () => {

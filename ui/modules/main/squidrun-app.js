@@ -9985,6 +9985,9 @@ class SquidRunApp {
         ...((recallContext && typeof recallContext === 'object') ? recallContext : {}),
         logLabel,
         paneId: String(recallContext.paneId || '1'),
+        windowKey: toNonEmptyString(recallContext.windowKey) || 'main',
+        profileName: toNonEmptyString(recallContext.profileName || recallContext.profile) || 'main',
+        sessionScopeId: toNonEmptyString(recallContext.sessionScopeId) || null,
       }, {
         limit: recallContext.recallLimit || 4,
         providerLimit: recallContext.recallProviderLimit || 3,
@@ -10007,6 +10010,12 @@ class SquidRunApp {
     };
     if (toNonEmptyString(recallContext.windowKey) && !toNonEmptyString(meta.windowKey)) {
       meta.windowKey = toNonEmptyString(recallContext.windowKey);
+    }
+    if (toNonEmptyString(recallContext.profileName || recallContext.profile) && !toNonEmptyString(meta.profileName)) {
+      meta.profileName = toNonEmptyString(recallContext.profileName || recallContext.profile);
+    }
+    if (toNonEmptyString(recallContext.sessionScopeId) && !toNonEmptyString(meta.sessionScopeId)) {
+      meta.sessionScopeId = toNonEmptyString(recallContext.sessionScopeId);
     }
     const channel = toNonEmptyString(recallContext.channel) || 'user';
     const isTelegramInbound = channel.toLowerCase() === 'telegram';
@@ -10279,6 +10288,8 @@ class SquidRunApp {
           paneId: '1',
           role: 'architect',
           windowKey: inboundWindowKey,
+          profileName: inboundRoute.profile || inboundWindowKey,
+          sessionScopeId: inboundSessionScopeId,
           channel: 'telegram',
           sender,
           messageId: inboundMessageId,
@@ -10287,6 +10298,7 @@ class SquidRunApp {
           metadata: {
             ...(metadata && typeof metadata === 'object' ? metadata : {}),
             windowKey: inboundWindowKey,
+            profileName: inboundRoute.profile || inboundWindowKey,
             sessionScopeId: inboundSessionScopeId,
           },
           header: 'MESSAGE RECALL',

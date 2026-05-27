@@ -110,6 +110,169 @@ describe('memory-broker', () => {
     ]));
   });
 
+  test('suppresses Eunbyeol and Korean case recall in a non-case main lane', async () => {
+    const broker = createMemoryBroker({
+      providers: [
+        {
+          id: 'cognitive',
+          sourceKind: 'vector_cognitive',
+          async recall() {
+            return {
+              ok: true,
+              items: [
+                {
+                  id: 'case-eunbyeol',
+                  title: 'Eunbyeol Korean case',
+                  excerpt: 'Old Korean fraud case context for Eunbyeol should not leak into this lane.',
+                  ref: 'context-snapshots-eunbyeol/1.md',
+                  score: 10,
+                  metadata: {
+                    profileName: 'eunbyeol',
+                    sessionScopeId: 'app-test:eunbyeol',
+                  },
+                },
+                {
+                  id: 'main-tabs',
+                  title: 'Project Rooms UI',
+                  excerpt: 'Main SquidRun tab semantics and profile scoping investigation.',
+                  ref: 'squidrun/project-rooms',
+                  score: 1,
+                  metadata: {
+                    profileName: 'main',
+                  },
+                },
+              ],
+            };
+          },
+        },
+      ],
+    });
+
+    const result = await broker.recall('Eunbyeol top tabs confused James', {
+      windowKey: 'main',
+      profileName: 'main',
+      sessionScopeId: 'app-session-384',
+      laneKind: 'ui_tabs_profile_isolation',
+    }, { limit: 5 });
+
+    expect(result.ok).toBe(true);
+    expect(result.results.map((item) => item.id)).toEqual(['main-tabs']);
+    expect(formatRecallForPaneMessage(result)).not.toMatch(/Eunbyeol|Korean fraud|context-snapshots-eunbyeol/i);
+  });
+
+  test('allows Eunbyeol profile recall when the context explicitly targets Eunbyeol', async () => {
+    const broker = createMemoryBroker({
+      providers: [
+        {
+          id: 'team',
+          sourceKind: 'graph_team',
+          async recall() {
+            return {
+              ok: true,
+              items: [
+                {
+                  id: 'case-eunbyeol',
+                  title: 'Eunbyeol Korean case',
+                  excerpt: 'Scoped case context for the Eunbyeol profile.',
+                  ref: 'context-snapshots-eunbyeol/1.md',
+                  metadata: {
+                    scopes: ['profile:eunbyeol'],
+                  },
+                },
+              ],
+            };
+          },
+        },
+      ],
+    });
+
+    const result = await broker.recall('Eunbyeol case status', {
+      windowKey: 'eunbyeol',
+      profileName: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    }, { limit: 5 });
+
+    expect(result.results).toEqual([
+      expect.objectContaining({ id: 'case-eunbyeol' }),
+    ]);
+    expect(formatRecallForPaneMessage(result)).toContain('Scoped case context for the Eunbyeol profile.');
+  });
+
+  test('suppresses bare case-scoped recall unless case recall is explicitly allowed', async () => {
+    const broker = createMemoryBroker({
+      providers: [
+        {
+          id: 'team',
+          sourceKind: 'graph_team',
+          async recall() {
+            return {
+              ok: true,
+              items: [
+                {
+                  id: 'generic-case-note',
+                  title: 'Case note',
+                  excerpt: 'A private case-scoped note.',
+                  metadata: {
+                    scopes: ['case'],
+                  },
+                },
+              ],
+            };
+          },
+        },
+      ],
+    });
+
+    const mainResult = await broker.recall('case note', {
+      windowKey: 'main',
+      profileName: 'main',
+    }, { limit: 5 });
+    const allowedResult = await broker.recall('case note', {
+      windowKey: 'main',
+      profileName: 'main',
+      allowCaseRecall: true,
+    }, { limit: 5 });
+
+    expect(mainResult.results).toEqual([]);
+    expect(allowedResult.results).toEqual([
+      expect.objectContaining({ id: 'generic-case-note' }),
+    ]);
+  });
+
+  test('keeps non-case product recall about Eunbyeol profile routing visible to main', async () => {
+    const broker = createMemoryBroker({
+      providers: [
+        {
+          id: 'ledger',
+          sourceKind: 'episodic_ledger',
+          async recall() {
+            return {
+              ok: true,
+              items: [
+                {
+                  id: 'profile-routing-product',
+                  title: 'Eunbyeol profile routing bug',
+                  excerpt: 'Product work: side-profile windows should not inherit main Project Rooms.',
+                  ref: 'ui/modules/project-rooms.js',
+                },
+              ],
+            };
+          },
+        },
+      ],
+    });
+
+    const result = await broker.recall('Eunbyeol top tabs profile routing', {
+      windowKey: 'main',
+      profileName: 'main',
+      sessionScopeId: 'app-session-384',
+    }, { limit: 5 });
+
+    expect(result.results).toEqual([
+      expect.objectContaining({ id: 'profile-routing-product' }),
+    ]);
+  });
+
   test('formats a compact pane recall block', async () => {
     const recall = {
       ok: true,
