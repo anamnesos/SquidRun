@@ -129,7 +129,8 @@ describe('project room registry and switcher', () => {
     expect(controller.getSelectedRoomId()).toBe('trustquote');
     expect(dom.root.dataset.selectedRoom).toBe('trustquote');
     expect(dom.overview.innerHTML).toContain('TrustQuote readiness');
-    expect(dom.overview.innerHTML).toContain('Project-context mutation: disabled');
+    expect(dom.overview.innerHTML).toContain('Attach target: D:/projects/TrustQuote');
+    expect(dom.overview.innerHTML).toContain('Main lane authority: disabled');
     expect(invoke).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();

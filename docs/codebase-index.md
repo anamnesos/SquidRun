@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1215
+- Total files listed: 1217
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -19,8 +19,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 100
 - scripts: 1
 - tools: 3
-- ui/__tests__: 480
-- ui/modules: 373
+- ui/__tests__: 481
+- ui/modules: 374
 - ui/other: 29
 - ui/scripts: 172
 - ui/styles: 16
@@ -33,8 +33,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - file: 1
 - jsonl: 1
 - script: 173
-- source: 433
-- test: 481
+- source: 434
+- test: 482
 
 ## Files
 
@@ -100,7 +100,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | 2728 |
 | `.gitignore` | config | 3723 |
 | `AGENTS.md` | doc | 6311 |
-| `ARCHITECTURE.md` | doc | 57921 |
+| `ARCHITECTURE.md` | doc | 58160 |
 | `CLAUDE-AI.md` | doc | 3856 |
 | `CLAUDE.md` | doc | 1988 |
 | `CODE_OF_CONDUCT.md` | doc | 5185 |
@@ -612,7 +612,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/process-handlers.test.js` | test | 10914 |
 | `ui/__tests__/profile.test.js` | test | 3267 |
 | `ui/__tests__/project-handlers.test.js` | test | 30156 |
-| `ui/__tests__/project-rooms-ui.test.js` | test | 6953 |
+| `ui/__tests__/project-room-envelope.test.js` | test | 10827 |
+| `ui/__tests__/project-rooms-ui.test.js` | test | 7035 |
 | `ui/__tests__/protocol.test.js` | test | 5064 |
 | `ui/__tests__/pty-handlers.test.js` | test | 36692 |
 | `ui/__tests__/pty-output-filter.test.js` | test | 2867 |
@@ -824,7 +825,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/local-model-capabilities.js` | source | 5853 |
 | `ui/modules/logger.js` | source | 5157 |
 | `ui/modules/main/activity-manager.js` | source | 3656 |
-| `ui/modules/main/agent-task-resolution.js` | source | 25155 |
+| `ui/modules/main/agent-task-resolution.js` | source | 25301 |
 | `ui/modules/main/app-context.js` | source | 2477 |
 | `ui/modules/main/app-control-service.js` | source | 5776 |
 | `ui/modules/main/auto-handoff-materializer.js` | source | 62879 |
@@ -991,7 +992,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/plugins/plugin-manager.js` | source | 15296 |
 | `ui/modules/presence-state.js` | source | 5417 |
 | `ui/modules/problem-orchestrator.js` | source | 18707 |
-| `ui/modules/project-rooms.js` | source | 7591 |
+| `ui/modules/project-room-envelope.js` | source | 12704 |
+| `ui/modules/project-rooms.js` | source | 7283 |
 | `ui/modules/recovery-manager.js` | source | 20614 |
 | `ui/modules/renderer-bridge.js` | source | 3330 |
 | `ui/modules/renderer-ipc-registry.js` | source | 1377 |

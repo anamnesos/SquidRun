@@ -1,5 +1,9 @@
 'use strict';
 
+const {
+  buildTrustQuoteReadinessCard,
+} = require('./project-room-envelope');
+
 const MAIN_ROOM_ID = 'main';
 
 const PROJECT_ROOMS = Object.freeze([
@@ -17,20 +21,7 @@ const PROJECT_ROOMS = Object.freeze([
     ],
     jamesAction: 'JAMES ACTION: NONE',
   }),
-  Object.freeze({
-    id: 'trustquote',
-    label: 'TrustQuote',
-    status: 'PREVIEW',
-    authority: 'preview',
-    title: 'TrustQuote readiness',
-    summary: 'Future TrustQuote room for Builder/Oracle work, product map, and workflow knowledge.',
-    details: [
-      'Room launch proof: not present',
-      'Project-context mutation: disabled',
-      'Agent routing: preview only',
-    ],
-    jamesAction: 'JAMES ACTION: NONE',
-  }),
+  Object.freeze(buildTrustQuoteReadinessCard()),
   Object.freeze({
     id: 'mira-build',
     label: 'Mira Build',

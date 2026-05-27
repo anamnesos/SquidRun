@@ -1,3 +1,7 @@
+const {
+  canUseCommsRowAsMainLaneAuthority,
+} = require('../project-room-envelope');
+
 const AGENT_ROLE_ALIASES = new Map([
   ['arch', 'architect'],
   ['architect', 'architect'],
@@ -661,6 +665,7 @@ function deriveCurrentLaneSnapshot(rows = [], options = {}) {
 
   for (let index = 0; index < orderedRows.length; index += 1) {
     const row = orderedRows[index];
+    if (!canUseCommsRowAsMainLaneAuthority(row)) continue;
     const directive = extractCurrentLaneDirective(row?.rawBody || '');
     if (!directive) continue;
     const ref = parseLeadingAgentRef(row?.rawBody || '');
