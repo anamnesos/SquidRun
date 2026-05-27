@@ -85,6 +85,9 @@ const {
   buildCanonicalEnvelopeMetadata,
   buildWebSocketDispatchMessage,
 } = require('../comms/message-envelope');
+const {
+  buildPendingOracleVerdictPayload,
+} = require('../oracle-verdict-visibility');
 const teamMemory = require('../team-memory');
 const experiment = require('../experiment');
 const {
@@ -3664,6 +3667,9 @@ class SquidRunApp {
                 paneId: String(paneId),
                 target: canonicalEnvelope.target?.role || targetRoleForJournal || String(paneId),
                 senderRole: senderRoleForJournal,
+                rawBody: canonicalEnvelope.content,
+                sessionId: canonicalEnvelope.session_id || this.commsSessionScopeId || null,
+                sentAtMs: canonicalEnvelope.timestamp_ms || nowMs,
                 traceContext,
                 routeKind: 'local',
               });
@@ -3769,6 +3775,7 @@ class SquidRunApp {
               result,
               target: 'all',
               senderRole: data.role || 'unknown',
+              rawBody: data.message.content,
               traceContext,
               routeKind: 'local',
             });
@@ -7564,6 +7571,9 @@ class SquidRunApp {
     paneId = null,
     target = null,
     senderRole = null,
+    rawBody = null,
+    sessionId = null,
+    sentAtMs = null,
     traceContext = null,
     routeKind = 'local',
   } = {}) {
@@ -7571,31 +7581,36 @@ class SquidRunApp {
     if (!normalizedMessageId || !result) return null;
 
     const finalState = this.getCommsJournalFinalDeliveryState(result);
+    const deliveryMetadata = {
+      source: 'websocket-local-trigger-delivery',
+      routeKind,
+      paneId: paneId ? String(paneId) : null,
+      targetRaw: target || null,
+      traceId: traceContext?.traceId || traceContext?.correlationId || null,
+      deliveryId: result?.deliveryId || null,
+      deliveryMode: result?.mode || null,
+      deliveryAccepted: finalState.accepted,
+      deliveryVerified: finalState.verified,
+      finalOutcome: finalState.ackStatus,
+      failureReason: toNonEmptyString(result?.reason) || toNonEmptyString(result?.details?.failureReason),
+      notified: Array.isArray(result?.notified) ? result.notified : [],
+    };
+
     const journalResult = await executeEvidenceLedgerOperation(
       'upsert-comms-journal',
       {
         messageId: normalizedMessageId,
+        sessionId: sessionId || null,
         senderRole: senderRole || null,
         targetRole: target || null,
         channel: 'ws',
         direction: 'outbound',
+        rawBody: rawBody || null,
+        sentAtMs: sentAtMs || null,
         status: finalState.status,
         ackStatus: finalState.ackStatus,
         errorCode: finalState.errorCode,
-        metadata: {
-          source: 'websocket-local-trigger-delivery',
-          routeKind,
-          paneId: paneId ? String(paneId) : null,
-          targetRaw: target || null,
-          traceId: traceContext?.traceId || traceContext?.correlationId || null,
-          deliveryId: result?.deliveryId || null,
-          deliveryMode: result?.mode || null,
-          deliveryAccepted: finalState.accepted,
-          deliveryVerified: finalState.verified,
-          finalOutcome: finalState.ackStatus,
-          failureReason: toNonEmptyString(result?.reason) || toNonEmptyString(result?.details?.failureReason),
-          notified: Array.isArray(result?.notified) ? result.notified : [],
-        },
+        metadata: deliveryMetadata,
       },
       {
         source: {
@@ -7608,6 +7623,23 @@ class SquidRunApp {
 
     if (journalResult?.ok === false) {
       log.warn('EvidenceLedger', `Comms journal delivery finalization failed: ${journalResult.reason || 'unknown'}`);
+    }
+
+    const pendingVerdict = buildPendingOracleVerdictPayload({
+      messageId: normalizedMessageId,
+      sessionId: sessionId || null,
+      senderRole: senderRole || null,
+      targetRole: target || null,
+      channel: 'ws',
+      direction: 'outbound',
+      rawBody: rawBody || null,
+      sentAtMs: sentAtMs || null,
+      status: finalState.status,
+      ackStatus: finalState.ackStatus,
+      metadata: deliveryMetadata,
+    });
+    if (pendingVerdict) {
+      this.emitCommsBridgeEvent('comms.verdict.pending', pendingVerdict);
     }
 
     return journalResult;

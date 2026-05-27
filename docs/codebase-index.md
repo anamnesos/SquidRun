@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1217
+- Total files listed: 1219
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -19,8 +19,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 100
 - scripts: 1
 - tools: 3
-- ui/__tests__: 481
-- ui/modules: 374
+- ui/__tests__: 482
+- ui/modules: 375
 - ui/other: 29
 - ui/scripts: 172
 - ui/styles: 16
@@ -33,8 +33,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - file: 1
 - jsonl: 1
 - script: 173
-- source: 434
-- test: 482
+- source: 435
+- test: 483
 
 ## Files
 
@@ -240,7 +240,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/cognitive-memory-sleep.test.js` | test | 14140 |
 | `ui/__tests__/cognitive-memory-store.test.js` | test | 8662 |
 | `ui/__tests__/command-palette.test.js` | test | 1775 |
-| `ui/__tests__/comms-console.test.js` | test | 10290 |
+| `ui/__tests__/comms-console.test.js` | test | 12785 |
 | `ui/__tests__/comms-worker-client.test.js` | test | 6009 |
 | `ui/__tests__/compaction-detector.test.js` | test | 24279 |
 | `ui/__tests__/completion-detection-handlers.test.js` | test | 5632 |
@@ -592,6 +592,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/notifications.test.js` | test | 7982 |
 | `ui/__tests__/operator-hub-scripts.test.js` | test | 5376 |
 | `ui/__tests__/oracle-handlers.test.js` | test | 6003 |
+| `ui/__tests__/oracle-verdict-visibility.test.js` | test | 3604 |
 | `ui/__tests__/organic-ui-handlers.test.js` | test | 18592 |
 | `ui/__tests__/output-validation-handlers.test.js` | test | 10309 |
 | `ui/__tests__/owned-work-continue-broker.test.js` | test | 7514 |
@@ -645,7 +646,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/smart-routing.test.js` | test | 10637 |
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
-| `ui/__tests__/squidrun-app.test.js` | test | 238179 |
+| `ui/__tests__/squidrun-app.test.js` | test | 239521 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 1987 |
 | `ui/__tests__/startup-transcript-context.test.js` | test | 10069 |
@@ -849,7 +850,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/pane-host-window-manager.js` | source | 12289 |
 | `ui/modules/main/pty-output-filter.js` | source | 7261 |
 | `ui/modules/main/settings-manager.js` | source | 21516 |
-| `ui/modules/main/squidrun-app.js` | source | 403003 |
+| `ui/modules/main/squidrun-app.js` | source | 403996 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 1884 |
 | `ui/modules/main/usage-manager.js` | source | 2909 |
 | `ui/modules/mcp-bridge.js` | source | 21053 |
@@ -982,6 +983,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/mira-work-evidence-gate.js` | source | 10021 |
 | `ui/modules/model-selector.js` | source | 4317 |
 | `ui/modules/notifications.js` | source | 3828 |
+| `ui/modules/oracle-verdict-visibility.js` | source | 6596 |
 | `ui/modules/owned-work-continue-broker.js` | source | 6743 |
 | `ui/modules/owned-work-summary.js` | source | 4198 |
 | `ui/modules/pane-visibility.js` | source | 14322 |
@@ -1017,7 +1019,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/tabs.js` | source | 4284 |
 | `ui/modules/tabs/api-keys.js` | source | 7616 |
 | `ui/modules/tabs/bridge.js` | source | 28404 |
-| `ui/modules/tabs/comms-console.js` | source | 26289 |
+| `ui/modules/tabs/comms-console.js` | source | 31350 |
 | `ui/modules/tabs/oracle.js` | source | 8728 |
 | `ui/modules/tabs/screenshots.js` | source | 9472 |
 | `ui/modules/tabs/utils.js` | source | 424 |
@@ -1085,7 +1087,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/config.js` | source | 15294 |
 | `ui/daemon-client.js` | source | 22675 |
 | `ui/eslint.config.js` | source | 794 |
-| `ui/index.html` | asset | 59213 |
+| `ui/index.html` | asset | 59309 |
 | `ui/jest.config.js` | source | 949 |
 | `ui/jsconfig.json` | config | 659 |
 | `ui/main.js` | source | 6153 |
@@ -1293,7 +1295,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | Path | Kind | Bytes |
 | --- | --- | ---: |
 | `ui/styles/base.css` | asset | 31844 |
-| `ui/styles/layout.css` | asset | 45161 |
+| `ui/styles/layout.css` | asset | 45581 |
 | `ui/styles/mira-lab.css` | asset | 4844 |
 | `ui/styles/panes.css` | asset | 13886 |
 | `ui/styles/project-rooms.css` | asset | 3359 |
@@ -1304,7 +1306,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/styles/tabs/activity.css` | asset | 6486 |
 | `ui/styles/tabs/api-keys.css` | asset | 1833 |
 | `ui/styles/tabs/bridge.css` | asset | 6921 |
-| `ui/styles/tabs/comms-console.css` | asset | 9292 |
+| `ui/styles/tabs/comms-console.css` | asset | 9700 |
 | `ui/styles/tabs/oracle.css` | asset | 7745 |
 | `ui/styles/tabs/screenshots.css` | asset | 3626 |
 | `ui/styles/tabs/voice-broker.css` | asset | 2662 |

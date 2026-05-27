@@ -2363,6 +2363,48 @@ describe('SquidRunApp', () => {
       ]);
     });
 
+    it('emits pending visibility events for unverified Oracle verdict delivery', async () => {
+      const { app, options, triggers } = await initWebSocketApp();
+      app.kernelBridge.emitBridgeEvent = jest.fn();
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'accepted.daemon_pty_unverified',
+        deliveryId: 'delivery-verdict-pending-1',
+        mode: 'pty',
+        notified: ['1'],
+      });
+
+      await options.onMessage({
+        role: 'oracle',
+        paneId: '3',
+        traceContext: { traceId: 'hm-oracle-79' },
+        message: {
+          type: 'send',
+          target: 'architect',
+          content: '(ORACLE 79): PASS',
+          messageId: 'hm-oracle-79',
+        },
+      });
+
+      expect(app.kernelBridge.emitBridgeEvent).toHaveBeenCalledWith(
+        'comms.verdict.pending',
+        expect.objectContaining({
+          kind: 'oracle_verdict_visibility_pending',
+          messageId: 'hm-oracle-79',
+          sourceRef: 'oracle#79',
+          verdict: 'PASS',
+          status: 'routed',
+          ackStatus: 'accepted.daemon_pty_unverified',
+          senderRole: 'oracle',
+          targetRole: 'architect',
+        }),
+        'system'
+      );
+      expect(triggers.sendDirectMessage).toHaveBeenCalledTimes(1);
+    });
+
     it('finalizes comms journal rows as failed when local pane delivery is rejected', async () => {
       const { options, triggers, evidenceLedger } = await initWebSocketApp();
       triggers.sendDirectMessage.mockResolvedValueOnce({
