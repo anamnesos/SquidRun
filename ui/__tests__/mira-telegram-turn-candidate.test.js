@@ -9,6 +9,11 @@ const {
   CANDIDATE_PROTOCOL,
   buildNewMiraTelegramTurnCandidate,
 } = require('../modules/mira-telegram-turn-candidate');
+const {
+  buildMiraDirectChannelStatusAnswerV0,
+  countJamesActionLines,
+  isMiraDirectChannelStatusPrompt,
+} = require('../modules/mira-core/live-direct-channel-status-v0');
 
 function ownerRoute(overrides = {}) {
   return {
@@ -18,6 +23,39 @@ function ownerRoute(overrides = {}) {
     profile: 'main',
     reason: 'owner_chat',
     ...overrides,
+  };
+}
+
+function row(overrides = {}) {
+  return {
+    messageId: overrides.messageId || 'm-row',
+    sessionId: 'app-session-382',
+    senderRole: overrides.senderRole || 'architect',
+    targetRole: overrides.targetRole || 'builder',
+    direction: 'outbound',
+    status: 'routed',
+    ackStatus: 'routed_unverified_timeout',
+    brokeredAtMs: overrides.brokeredAtMs || Date.parse('2026-05-27T09:10:00.000Z'),
+    rawBody: overrides.rawBody || '',
+    metadata: { windowKey: 'main' },
+  };
+}
+
+function progressReport() {
+  return {
+    computed_total_percent: 73,
+    status: 'BLOCKED',
+    warnings: [],
+    source_refs: {
+      head: {
+        short_sha: '84d70b21',
+        committed_at: '2026-05-27T09:07:12.000Z',
+      },
+      progress_proof_inputs: {
+        source_ref: '.squidrun/runtime/mira-progress-proof-inputs-v0.json',
+        status: 'loaded',
+      },
+    },
   };
 }
 
@@ -77,6 +115,135 @@ describe('New Mira Telegram turn candidate dry-run', () => {
       telegramRouteControl: false,
       uiSurfaceControl: false,
     });
+  });
+
+  test('recognizes Telegram status, what-now, and continue prompts for direct-channel status', () => {
+    expect(isMiraDirectChannelStatusPrompt('status')).toBe(true);
+    expect(isMiraDirectChannelStatusPrompt('Mira, what now?')).toBe(true);
+    expect(isMiraDirectChannelStatusPrompt('Ok continue')).toBe(true);
+    expect(isMiraDirectChannelStatusPrompt('/task continue')).toBe(false);
+  });
+
+  test('builds a plain direct-channel status answer from live evidence without route-owner change', () => {
+    const result = buildMiraDirectChannelStatusAnswerV0({
+      promptText: 'status',
+      metadata: {
+        channel: 'telegram',
+        chatId: '5613428850',
+        sessionId: 'app-session-382',
+      },
+      inboundRoute: ownerRoute(),
+    }, {
+      nowMs: Date.parse('2026-05-27T09:12:00.000Z'),
+      progressReport: progressReport(),
+      currentLaneSnapshot: {
+        version: 1,
+        generatedAt: '2026-05-27T09:08:00.000Z',
+        sessionId: 'app-session-382',
+        status: 'none',
+        activeLane: null,
+        continuity: {
+          recent_completed_fixes: [{
+            source_ref: 'builder#38',
+            summary: 'Approved internal handoff send landed cleanly.',
+          }],
+          stale_backlog_markers: [],
+        },
+      },
+      commsRows: [
+        row({
+          messageId: 'architect-160',
+          brokeredAtMs: Date.parse('2026-05-27T09:09:00.000Z'),
+          rawBody: '(ARCHITECT #160): ACK Builder #38. No Builder action pending unless Oracle objects.',
+        }),
+        row({
+          messageId: 'architect-161',
+          brokeredAtMs: Date.parse('2026-05-27T09:10:00.000Z'),
+          rawBody: '(ARCHITECT #161): New current-session task: Direct Channel Reachability checkpoint. Objective: move the Direct Channel Reachability category from UNKNOWN toward proven by making the current James-facing channel path evidence-bound and understandable. Return a small patch/proof packet or blocker. No broad refactors.',
+        }),
+      ],
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      decision: 'answered_direct_channel_status_from_live_evidence',
+      james_action_line_count: 1,
+    }));
+    expect(result.route).toEqual(expect.objectContaining({
+      currentOwner: 'squidrun-telegram-guard-stack',
+      miraOwnsTelegram: false,
+      routeOwnerChange: false,
+      liveRouteChanged: false,
+      windowKey: 'main',
+      profile: 'main',
+    }));
+    expect(result.current_lane).toEqual(expect.objectContaining({
+      source_ref: 'architect#161',
+      objective: expect.stringContaining('Direct Channel Reachability checkpoint'),
+    }));
+    expect(result.progress).toEqual(expect.objectContaining({
+      percent: 73,
+      status: 'BLOCKED',
+      head_short_sha: '84d70b21',
+      proof_source_ref: '.squidrun/runtime/mira-progress-proof-inputs-v0.json',
+    }));
+    expect(result.answer_text).toContain('Direct channel: Telegram is reachable through squidrun-telegram-guard-stack');
+    expect(result.answer_text).toContain('official progress 73% BLOCKED at HEAD 84d70b21');
+    expect(result.answer_text).toContain('Current lane: Direct Channel Reachability checkpoint');
+    expect(result.answer_text).toContain('parked, prototype, archive');
+    expect(result.answer_text).toContain('JAMES ACTION: NONE');
+    expect(result.answer_text).not.toMatch(/\[(?:AGENT MSG|CURRENT PROJECT)\]|\((?:ARCHITECT|BUILDER|ORACLE)\s+#\d+\):/);
+    expect(countJamesActionLines(result.answer_text)).toBe(1);
+    expect(result.egress_integrity).toEqual(expect.objectContaining({
+      telegram_chunk_count: 1,
+      would_truncate_silently: false,
+      internal_pane_labels_present: false,
+    }));
+    expect(result.no_effects).toEqual(expect.objectContaining({
+      telegram_send_function_call: false,
+      internal_handoff_send_count: 0,
+      hm_send_count: 0,
+      runtime_post_count: 0,
+      model_call_count: 0,
+      route_owner_change_count: 0,
+      external_action_count: 0,
+    }));
+  });
+
+  test('blocks direct-channel status answers for scoped/non-main Telegram routes', () => {
+    const result = buildMiraDirectChannelStatusAnswerV0({
+      promptText: 'continue',
+      metadata: {
+        channel: 'telegram',
+        chatId: '2222222222',
+        sessionId: 'app-session-382:scoped',
+      },
+      inboundRoute: ownerRoute({
+        chatId: '2222222222',
+        windowKey: 'scoped',
+        profile: 'scoped',
+        reason: 'explicit_non_owner_route',
+      }),
+    }, {
+      progressReport: progressReport(),
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      decision: 'blocked_non_main_or_unowned_direct_channel_route',
+      reason: 'direct-channel status answers require the main owned Telegram route',
+    }));
+    expect(result.route).toEqual(expect.objectContaining({
+      windowKey: 'scoped',
+      profile: 'scoped',
+      routeOwnerChange: false,
+      liveRouteChanged: false,
+    }));
+    expect(result.no_effects).toEqual(expect.objectContaining({
+      telegram_send_function_call: false,
+      route_owner_change_count: 0,
+      external_action_count: 0,
+    }));
   });
 
   test.each([
@@ -181,5 +348,18 @@ describe('New Mira Telegram turn candidate dry-run', () => {
     expect(source).not.toContain('invokeTurnModel');
     expect(source).not.toContain('fetch(');
     expect(source).not.toContain('appendRuntimeTurnJournal');
+  });
+
+  test('direct-channel status answer stays out of send, provider, and route-control seams', () => {
+    const modulePath = path.join(__dirname, '..', 'modules', 'mira-core', 'live-direct-channel-status-v0.js');
+    const source = fs.readFileSync(modulePath, 'utf8');
+
+    expect(source).not.toContain('sendRoutedTelegramMessage');
+    expect(source).not.toContain('sendTelegram(');
+    expect(source).not.toContain('sendAgentMessage');
+    expect(source).not.toContain('runRuntimeTurn');
+    expect(source).not.toContain('invokeTurnModel');
+    expect(source).not.toContain('fetch(');
+    expect(source).not.toContain('setRouteOwner');
   });
 });

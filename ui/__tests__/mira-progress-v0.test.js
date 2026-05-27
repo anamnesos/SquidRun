@@ -309,7 +309,7 @@ describe('mira progress v0', () => {
     }
   });
 
-  test('default progress proof artifact counts restart plus A1/A2/handoff-preview evidence from clean HEAD', () => {
+  test('default progress proof artifact counts restart plus A1/A2/handoff and direct-channel evidence from clean HEAD', () => {
     const root = seedProject({ stalePresence: true });
     const currentHead = {
       full_sha: 'abcdef1234567890abcdef1234567890abcdef12',
@@ -339,7 +339,7 @@ describe('mira progress v0', () => {
         worktreeState: cleanWorktree(),
       });
 
-      expect(report.computed_total_percent).toBe(68);
+      expect(report.computed_total_percent).toBe(76);
       expect(report.warnings).toEqual(['presence_state_predates_head']);
       expect(report.categories.find((category) => category.id === 'restart_current_scope_continuity')).toEqual(expect.objectContaining({
         computed_percent: 75,
@@ -356,6 +356,10 @@ describe('mira progress v0', () => {
       expect(report.categories.find((category) => category.id === 'team_coordination_arms')).toEqual(expect.objectContaining({
         computed_percent: 40,
         status: 'BLOCKED',
+      }));
+      expect(report.categories.find((category) => category.id === 'direct_channel_reachability')).toEqual(expect.objectContaining({
+        computed_percent: 100,
+        status: 'PASS',
       }));
       expect(report.categories.find((category) => category.id === 'tool_app_action_planning')).toEqual(expect.objectContaining({
         computed_percent: 100,
@@ -398,7 +402,7 @@ describe('mira progress v0', () => {
       });
 
       expect(report.warnings).toEqual([]);
-      expect(report.computed_total_percent).toBe(73);
+      expect(report.computed_total_percent).toBe(81);
       expect(report.categories.find((category) => category.id === 'restart_current_scope_continuity')).toEqual(expect.objectContaining({
         computed_percent: 100,
         status: 'PASS',
@@ -406,6 +410,10 @@ describe('mira progress v0', () => {
       expect(report.categories.find((category) => category.id === 'team_coordination_arms')).toEqual(expect.objectContaining({
         computed_percent: 40,
         status: 'BLOCKED',
+      }));
+      expect(report.categories.find((category) => category.id === 'direct_channel_reachability')).toEqual(expect.objectContaining({
+        computed_percent: 100,
+        status: 'PASS',
       }));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

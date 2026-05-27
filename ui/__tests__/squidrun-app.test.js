@@ -4158,6 +4158,181 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('answers Telegram status prompts from direct-channel evidence without model or pane confusion', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      const triggers = require('../modules/triggers');
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      jest.spyOn(app, 'shouldOrientMiraTelegramChannel').mockReturnValue(false);
+      queryCommsJournalEntries.mockReturnValue([
+        {
+          messageId: 'architect-160',
+          sessionId: 'app-session-382',
+          senderRole: 'architect',
+          targetRole: 'builder',
+          direction: 'outbound',
+          status: 'routed',
+          brokeredAtMs: Date.parse('2026-05-27T09:09:00.000Z'),
+          rawBody: '(ARCHITECT #160): ACK Builder #38. No Builder action pending unless Oracle objects.',
+          metadata: { windowKey: 'main' },
+        },
+        {
+          messageId: 'architect-161',
+          sessionId: 'app-session-382',
+          senderRole: 'architect',
+          targetRole: 'builder',
+          direction: 'outbound',
+          status: 'routed',
+          brokeredAtMs: Date.parse('2026-05-27T09:10:00.000Z'),
+          rawBody: '(ARCHITECT #161): New current-session task: Direct Channel Reachability checkpoint. Objective: make the current James-facing channel path evidence-bound and understandable. Return a small patch/proof packet or blocker.',
+          metadata: { windowKey: 'main' },
+        },
+      ]);
+
+      const result = await app.routeMainTelegramInboundToMira({
+        body: 'status',
+        sender: 'james',
+        metadata: { chatId: '5613428850', updateId: 201, messageId: 9001 },
+        inboundMessageId: 'telegram-in-201',
+        inboundSessionScopeId: 'app-session-382',
+        nowMs: Date.parse('2026-05-27T09:12:00.000Z'),
+        progressReport: {
+          computed_total_percent: 73,
+          status: 'BLOCKED',
+          warnings: [],
+          source_refs: {
+            head: { short_sha: '84d70b21' },
+            progress_proof_inputs: {
+              source_ref: '.squidrun/runtime/mira-progress-proof-inputs-v0.json',
+              status: 'loaded',
+            },
+          },
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        handled: true,
+        status: 'telegram_delivered',
+      }));
+      expect(result.reply).toEqual(expect.objectContaining({
+        source: 'mira_direct_channel_status_v0',
+      }));
+      expect(result.directChannelStatusAnswer).toEqual(expect.objectContaining({
+        ok: true,
+        james_action_line_count: 1,
+        route: expect.objectContaining({
+          currentOwner: 'squidrun-telegram-guard-stack',
+          miraOwnsTelegram: false,
+          routeOwnerChange: false,
+          liveRouteChanged: false,
+        }),
+      }));
+      expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+      expect(deliverySpy).not.toHaveBeenCalled();
+      expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+      const sentText = sendRoutedTelegramMessage.mock.calls[0][0];
+      expect(sentText).toContain('Direct channel: Telegram is reachable through squidrun-telegram-guard-stack');
+      expect(sentText).toContain('official progress 73% BLOCKED at HEAD 84d70b21');
+      expect(sentText).toContain('Current lane: Direct Channel Reachability checkpoint');
+      expect(sentText).toContain('source architect#161');
+      expect(sentText).toContain('JAMES ACTION: NONE');
+      expect(sentText).not.toMatch(/\[(?:AGENT MSG|CURRENT PROJECT)\]|\((?:ARCHITECT|BUILDER|ORACLE)\s+#\d+\):|\[Telegram from/i);
+      expect(sendRoutedTelegramMessage.mock.calls[0][2]).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-201-mira-direct-status-reply',
+        senderRole: 'mira',
+        chatId: '5613428850',
+        metadata: expect.objectContaining({
+          routeKind: 'telegram',
+          windowKey: 'main',
+          profile: 'main',
+        }),
+      }));
+    });
+
+    it('suppresses duplicate direct-channel status replies and keeps scoped status off the main Mira route', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      jest.spyOn(app, 'shouldOrientMiraTelegramChannel').mockReturnValue(false);
+      queryCommsJournalEntries.mockReturnValue([]);
+
+      const first = await app.routeMainTelegramInboundToMira({
+        body: 'continue',
+        sender: 'james',
+        metadata: { chatId: '5613428850' },
+        inboundMessageId: 'telegram-in-continue-1',
+        inboundSessionScopeId: 'app-session-382',
+        nowMs: Date.parse('2026-05-27T09:12:00.000Z'),
+        progressReport: {
+          computed_total_percent: 73,
+          status: 'BLOCKED',
+          warnings: [],
+          source_refs: {
+            head: { short_sha: '84d70b21' },
+            progress_proof_inputs: { source_ref: '.squidrun/runtime/mira-progress-proof-inputs-v0.json', status: 'loaded' },
+          },
+        },
+      });
+      const duplicate = await app.routeMainTelegramInboundToMira({
+        body: 'continue',
+        sender: 'james',
+        metadata: { chatId: '5613428850' },
+        inboundMessageId: 'telegram-in-continue-2',
+        inboundSessionScopeId: 'app-session-382',
+        nowMs: Date.parse('2026-05-27T09:12:00.000Z'),
+        progressReport: {
+          computed_total_percent: 73,
+          status: 'BLOCKED',
+          warnings: [],
+          source_refs: {
+            head: { short_sha: '84d70b21' },
+            progress_proof_inputs: { source_ref: '.squidrun/runtime/mira-progress-proof-inputs-v0.json', status: 'loaded' },
+          },
+        },
+      });
+
+      expect(first.status).toBe('telegram_delivered');
+      expect(duplicate.status).toBe('telegram_duplicate_suppressed');
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+      expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+
+      const previousFlag = process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
+      process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED = '1';
+      telegramPoller.start.mockReturnValue(true);
+      sendRoutedTelegramMessage.mockClear();
+      const scopedDelivery = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.verified',
+      });
+
+      try {
+        app.startTelegramPoller();
+        const options = telegramPoller.start.mock.calls[0][0];
+        options.onMessage('status', 'scoped', { chatId: 2222222222, updateId: 202 });
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(scopedDelivery).toHaveBeenCalled();
+        expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+        expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+      } finally {
+        if (previousFlag === undefined) {
+          delete process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
+        } else {
+          process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED = previousFlag;
+        }
+      }
+    });
+
     it('contains angry Telegram meta-repair replies before egress', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');

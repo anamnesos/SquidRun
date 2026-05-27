@@ -6,6 +6,7 @@ const path = require('path');
 
 const {
   DEFAULT_PROGRESS_PROOF_COMMANDS,
+  DIRECT_CHANNEL_READINESS_PROOF_KEY,
   INTERNAL_HANDOFF_APPROVAL_PROOF_KEY,
   INTERNAL_HANDOFF_PREVIEW_PROOF_KEY,
   INTERNAL_REQUEST_DRAFT_PROOF_KEY,
@@ -14,6 +15,7 @@ const {
   MIRA_PROGRESS_PROOF_INPUTS_SCHEMA,
   RESTART_VERIFIER_PROOF_KEY,
   STARTUP_ACCOUNTING_PROOF_KEY,
+  TELEGRAM_TURN_CANDIDATE_PROOF_KEY,
   VISIBLE_PRESENCE_A0_PROOF_KEY,
   readDefaultProgressProofInputs,
   resolveDefaultProgressProofPath,
@@ -128,7 +130,7 @@ describe('mira progress proof inputs v0', () => {
     }
   });
 
-  test('default writer records current A0, A1, A2, handoff-preview, and approval proof keys with HEAD metadata', () => {
+  test('default writer records current A0, A1, A2, handoff, direct-channel, and approval proof keys with HEAD metadata', () => {
     const root = makeRoot();
     const commands = [];
     try {
@@ -159,6 +161,8 @@ describe('mira progress proof inputs v0', () => {
         INTERNAL_REQUEST_DRAFT_PROOF_KEY,
         INTERNAL_HANDOFF_PREVIEW_PROOF_KEY,
         INTERNAL_HANDOFF_APPROVAL_PROOF_KEY,
+        TELEGRAM_TURN_CANDIDATE_PROOF_KEY,
+        DIRECT_CHANNEL_READINESS_PROOF_KEY,
         LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
       ]);
       expect(artifact.proofs[STARTUP_ACCOUNTING_PROOF_KEY]).toEqual(expect.objectContaining({
@@ -186,6 +190,14 @@ describe('mira progress proof inputs v0', () => {
         status: 'PASS',
         reason: 'A3 approval-controlled internal handoff send harness passed',
       }));
+      expect(artifact.proofs[TELEGRAM_TURN_CANDIDATE_PROOF_KEY]).toEqual(expect.objectContaining({
+        status: 'PASS',
+        reason: 'direct-channel Telegram candidate/status harness passed',
+      }));
+      expect(artifact.proofs[DIRECT_CHANNEL_READINESS_PROOF_KEY]).toEqual(expect.objectContaining({
+        status: 'PASS',
+        reason: 'direct-channel readiness dry-run harness passed',
+      }));
       expect(artifact.proofs[LOCAL_TEXT_UI_SURFACE_PROOF_KEY]).toEqual(expect.objectContaining({
         status: 'PASS',
         reason: 'local text surface A1/A2/handoff-preview acceptance harness passed',
@@ -202,6 +214,8 @@ describe('mira progress proof inputs v0', () => {
       expect(read.inputSignals.proofs[INTERNAL_REQUEST_DRAFT_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
       expect(read.inputSignals.proofs[INTERNAL_HANDOFF_PREVIEW_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
       expect(read.inputSignals.proofs[INTERNAL_HANDOFF_APPROVAL_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
+      expect(read.inputSignals.proofs[TELEGRAM_TURN_CANDIDATE_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
+      expect(read.inputSignals.proofs[DIRECT_CHANNEL_READINESS_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
       expect(read.inputSignals.proofs[LOCAL_TEXT_UI_SURFACE_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
