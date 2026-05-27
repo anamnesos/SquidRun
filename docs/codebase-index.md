@@ -612,7 +612,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/process-handlers.test.js` | test | 10914 |
 | `ui/__tests__/profile.test.js` | test | 3267 |
 | `ui/__tests__/project-handlers.test.js` | test | 30156 |
-| `ui/__tests__/project-room-envelope.test.js` | test | 10827 |
+| `ui/__tests__/project-room-envelope.test.js` | test | 15801 |
 | `ui/__tests__/project-rooms-ui.test.js` | test | 7035 |
 | `ui/__tests__/protocol.test.js` | test | 5064 |
 | `ui/__tests__/pty-handlers.test.js` | test | 36692 |
@@ -992,7 +992,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/plugins/plugin-manager.js` | source | 15296 |
 | `ui/modules/presence-state.js` | source | 5417 |
 | `ui/modules/problem-orchestrator.js` | source | 18707 |
-| `ui/modules/project-room-envelope.js` | source | 12704 |
+| `ui/modules/project-room-envelope.js` | source | 19697 |
 | `ui/modules/project-rooms.js` | source | 7283 |
 | `ui/modules/recovery-manager.js` | source | 20614 |
 | `ui/modules/renderer-bridge.js` | source | 3330 |

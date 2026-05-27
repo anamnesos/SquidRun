@@ -7,6 +7,7 @@ const {
   TRUSTQUOTE_ROOM_ID,
   buildTrustQuoteReadiness,
   buildTrustQuoteReadinessCard,
+  buildTrustQuoteLaunchReadiness,
   buildTrustQuoteRoomEnvelope,
   canUseCommsRowAsMainLaneAuthority,
   normalizeTrustQuoteRoomEnvelope,
@@ -299,13 +300,146 @@ describe('TrustQuote room envelope and readiness', () => {
     }));
   });
 
+  test('launch readiness preview shows exact payload and current blockers without launching', () => {
+    const pathExists = jest.fn((filePath) => ![
+      'D:/projects/TrustQuote/AGENTS.md',
+      'D:/projects/TrustQuote/ROLES.md',
+    ].includes(filePath));
+    const readiness = buildTrustQuoteLaunchReadiness({
+      env: {},
+      mainSessionScopeId: 'app-session-382',
+      pathExists,
+      readJson: jest.fn(() => ({
+        workspace: 'D:/projects/TrustQuote',
+        session_id: 'app-44628-1772664778476',
+        version: 1,
+      })),
+    });
+
+    expect(readiness).toEqual(expect.objectContaining({
+      roomId: 'trustquote',
+      status: 'preview_only',
+      canLaunchAgents: false,
+      approvalRequired: true,
+    }));
+    expect(readiness.env).toEqual({
+      requiredName: 'SQUIDRUN_TRUSTQUOTE_PROJECT_ROOT',
+      requiredValue: 'D:/projects/TrustQuote',
+      currentValue: null,
+      status: 'missing',
+    });
+    expect(readiness.payload).toEqual({
+      roomId: 'trustquote',
+      launchMode: 'main_owned_secondary_window_preview',
+      windowKey: 'trustquote',
+      profileName: 'main',
+      profileKey: 'trustquote',
+      projectRoot: 'D:/projects/TrustQuote',
+      requiredEnv: {
+        SQUIDRUN_TRUSTQUOTE_PROJECT_ROOT: 'D:/projects/TrustQuote',
+      },
+      sessionScopeId: 'app-session-382:trustquote',
+      startupBundlePath: 'D:/projects/squidrun/.squidrun/runtime/window-teams/trustquote/startup-bundle.md',
+      linkPath: 'D:/projects/TrustQuote/.squidrun/link.json',
+      autoBootAgents: false,
+      roleLayout: 'builder-oracle-preview',
+      allowedRoles: ['builder', 'oracle'],
+      blockedRoles: ['architect'],
+      dispatch: 'preview_only',
+    });
+    expect(readiness.sourceFiles).toEqual([
+      { name: 'AGENTS.md', path: 'D:/projects/TrustQuote/AGENTS.md', present: false },
+      { name: 'CLAUDE.md', path: 'D:/projects/TrustQuote/CLAUDE.md', present: true },
+      { name: 'ROLES.md', path: 'D:/projects/TrustQuote/ROLES.md', present: false },
+    ]);
+    expect(readiness.link).toEqual(expect.objectContaining({
+      path: 'D:/projects/TrustQuote/.squidrun/link.json',
+      status: 'stale_or_non_profiled',
+      exists: true,
+      issues: ['missing_or_wrong_profile', 'stale_session_scope'],
+      expected: {
+        workspace: 'D:/projects/TrustQuote',
+        profile: 'trustquote',
+        session_id: 'app-session-382:trustquote',
+      },
+    }));
+    expect(readiness.rawPath).toEqual({
+      secondaryWindowSupported: true,
+      currentRoleLayout: 'standard',
+      currentAutoBootAgents: true,
+      currentBootScope: 'full_3_pane_team',
+      previewAutoBootAgents: false,
+    });
+    expect(readiness.blockers).toEqual(expect.arrayContaining([
+      'explicit_launch_approval_required',
+      'env_override_missing',
+      'trustquote_agents_md_missing',
+      'trustquote_roles_md_missing',
+      'trustquote_link_json_stale_or_non_profiled',
+      'raw_secondary_window_auto_boots_full_3_pane_team',
+    ]));
+  });
+
+  test('launch readiness attaches a non-authoritative room envelope preview', () => {
+    const readiness = buildTrustQuoteLaunchReadiness({
+      env: { SQUIDRUN_TRUSTQUOTE_PROJECT_ROOT: 'D:/projects/TrustQuote' },
+      mainSessionScopeId: 'app-session-382',
+      pathExists: () => true,
+      readJson: () => ({
+        workspace: 'D:/projects/TrustQuote',
+        profile: 'trustquote',
+        session_id: 'app-session-382:trustquote',
+      }),
+    });
+
+    const normalized = normalizeTrustQuoteRoomEnvelope(readiness.roomEnvelopePreview);
+    expect(normalized).toEqual(expect.objectContaining({
+      ok: true,
+      roomId: 'trustquote',
+      sourceWindowKey: 'trustquote',
+      targetRoomId: 'main',
+      targetRole: 'architect',
+      sessionScopeId: 'app-session-382:trustquote',
+      canAffectMainCurrentLane: false,
+    }));
+    expect(canUseCommsRowAsMainLaneAuthority({
+      rawBody: '(ARCHITECT #1): New current-session task: TrustQuote launch preview.',
+      metadata: readiness.roomEnvelopePreview,
+    })).toBe(false);
+  });
+
+  test('launch readiness exposes every reviewed side-effect boundary as disabled', () => {
+    const readiness = buildTrustQuoteLaunchReadiness({
+      env: {},
+      mainSessionScopeId: 'app-session-382',
+      pathExists: () => false,
+      readJson: jest.fn(),
+    });
+
+    expect(readiness.sideEffectBoundary).toEqual({
+      opensWindow: false,
+      writesStartupBundle: false,
+      writesProfileLink: false,
+      launchesAgents: false,
+      dispatchesMessage: false,
+      performsRuntimePost: false,
+      mutatesMainProjectContext: false,
+      changesAppLifecycle: false,
+      changesChannelRoute: false,
+      includesUnreviewedRoom: false,
+    });
+  });
+
   test('room envelope helper adds no send, post, mutation, restart, or route-owner behavior', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'modules', 'project-room-envelope.js'), 'utf8');
 
+    expect(source).not.toMatch(/openAppWindow|writeProfileStartupBundle|ensureProfileWorkspaceLink|writeFileSync/);
+    expect(source).not.toMatch(/spawnAllAgents/);
     expect(source).not.toMatch(/hm-send|sendAgentMessage|sendDirectMessage/);
     expect(source).not.toMatch(/fetch\s*\(|XMLHttpRequest|runtime\s+POST/i);
     expect(source).not.toMatch(/setContext|project:set-context/);
     expect(source).not.toMatch(/restart|relaunch|routeOwner/i);
+    expect(source).not.toMatch(/telegram/i);
     expect(source.toLowerCase()).not.toContain('plumbhalo');
   });
 });
