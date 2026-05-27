@@ -13,6 +13,10 @@ const DEFAULT_PROGRESS_PROOF_RELATIVE_PATH = path.join(
 );
 const VISIBLE_PRESENCE_A0_PROOF_KEY = 'mira-presence-runtime-acceptance.test.js';
 const VISIBLE_PRESENCE_A0_TEST_COMMAND = 'npm --prefix ui test -- mira-presence-runtime-acceptance.test.js --runInBand';
+const STARTUP_ACCOUNTING_PROOF_KEY = 'startup-ai-briefing.test.js';
+const STARTUP_ACCOUNTING_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/startup-ai-briefing.test.js --runInBand';
+const RESTART_VERIFIER_PROOF_KEY = 'hm-restart-verify';
+const RESTART_VERIFIER_TEST_COMMAND = 'node ui/scripts/hm-restart-verify.js --no-send --json --timeout-ms 15000';
 const LIVE_WHAT_NOW_PROOF_KEY = 'mira-live-what-now-answer-v0.test.js';
 const LIVE_WHAT_NOW_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-what-now-answer-v0.test.js --runInBand';
 const INTERNAL_REQUEST_DRAFT_PROOF_KEY = 'mira-live-internal-request-draft-v0.test.js';
@@ -25,6 +29,18 @@ const DEFAULT_PROGRESS_PROOF_COMMANDS = Object.freeze([
     command: VISIBLE_PRESENCE_A0_TEST_COMMAND,
     pass_reason: 'visible Presence/A0 acceptance harness passed',
     fail_reason: 'visible Presence/A0 acceptance harness failed',
+  }),
+  Object.freeze({
+    proof_key: STARTUP_ACCOUNTING_PROOF_KEY,
+    command: STARTUP_ACCOUNTING_TEST_COMMAND,
+    pass_reason: 'startup/current-scope accounting harness passed',
+    fail_reason: 'startup/current-scope accounting harness failed',
+  }),
+  Object.freeze({
+    proof_key: RESTART_VERIFIER_PROOF_KEY,
+    command: RESTART_VERIFIER_TEST_COMMAND,
+    pass_reason: 'restart verifier probe passed without send',
+    fail_reason: 'restart verifier probe failed',
   }),
   Object.freeze({
     proof_key: LIVE_WHAT_NOW_PROOF_KEY,
@@ -556,6 +572,10 @@ module.exports = {
   LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
   LOCAL_TEXT_UI_SURFACE_TEST_COMMAND,
   MIRA_PROGRESS_PROOF_INPUTS_SCHEMA,
+  RESTART_VERIFIER_PROOF_KEY,
+  RESTART_VERIFIER_TEST_COMMAND,
+  STARTUP_ACCOUNTING_PROOF_KEY,
+  STARTUP_ACCOUNTING_TEST_COMMAND,
   VISIBLE_PRESENCE_A0_PROOF_KEY,
   VISIBLE_PRESENCE_A0_TEST_COMMAND,
   buildProgressProofArtifact,

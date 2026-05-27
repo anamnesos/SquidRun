@@ -306,7 +306,7 @@ describe('mira progress v0', () => {
     }
   });
 
-  test('default progress proof artifact counts A1/A2 Mission Control evidence from clean HEAD', () => {
+  test('default progress proof artifact counts restart plus A1/A2 evidence from clean HEAD', () => {
     const root = seedProject({ stalePresence: true });
     const currentHead = {
       full_sha: 'abcdef1234567890abcdef1234567890abcdef12',
@@ -336,8 +336,12 @@ describe('mira progress v0', () => {
         worktreeState: cleanWorktree(),
       });
 
-      expect(report.computed_total_percent).toBe(55);
+      expect(report.computed_total_percent).toBe(65);
       expect(report.warnings).toEqual(['presence_state_predates_head']);
+      expect(report.categories.find((category) => category.id === 'restart_current_scope_continuity')).toEqual(expect.objectContaining({
+        computed_percent: 75,
+        status: 'STALE',
+      }));
       expect(report.categories.find((category) => category.id === 'visible_presence_a0_text')).toEqual(expect.objectContaining({
         computed_percent: 100,
         status: 'PASS',
@@ -351,6 +355,47 @@ describe('mira progress v0', () => {
         status: 'PASS',
       }));
       expect(report.categories.find((category) => category.id === 'mission_control_command_context').last_proof_source_refs).toContain('.squidrun/runtime/mira-progress-proof-inputs-v0.json');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('fresh Presence state lets the same default proof artifact fully count restart continuity', () => {
+    const root = seedProject({ stalePresence: false });
+    const currentHead = {
+      full_sha: 'abcdef1234567890abcdef1234567890abcdef12',
+      short_sha: 'abcdef12',
+      committed_at: '2026-05-10T00:00:00.000Z',
+      subject: 'Restart continuity current head',
+    };
+    try {
+      writeProgressProofArtifact({
+        projectRoot: root,
+        head: currentHead,
+        worktreeState: cleanWorktree(),
+        nowMs: Date.parse('2026-05-26T22:30:00.000Z'),
+        runner: (command, projectRoot, metadata) => ({
+          ok: true,
+          exitCode: 0,
+          stdout: `PASS ${metadata.proofKey}`,
+          stderr: '',
+        }),
+      });
+
+      const report = buildMiraProgressReport({
+        projectRoot: root,
+        contract: progressContract,
+        inputSignals: {},
+        head: currentHead,
+        worktreeState: cleanWorktree(),
+      });
+
+      expect(report.warnings).toEqual([]);
+      expect(report.computed_total_percent).toBe(70);
+      expect(report.categories.find((category) => category.id === 'restart_current_scope_continuity')).toEqual(expect.objectContaining({
+        computed_percent: 100,
+        status: 'PASS',
+      }));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

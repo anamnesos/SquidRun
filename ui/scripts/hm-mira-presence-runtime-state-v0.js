@@ -9,6 +9,9 @@ const {
   markInterruptedNotCaptured,
   readMiraPresenceRuntimeStartupSummary,
 } = require('../modules/mira-core/mira-presence-runtime-state-v0');
+const {
+  refreshMiraPresenceCurrentScopeStateV0,
+} = require('../modules/mira-core/mira-presence-current-scope-state-v0');
 
 function parseArgs(argv) {
   const args = {
@@ -24,6 +27,7 @@ function parseArgs(argv) {
     if (token === '--apply') { args.apply = true; continue; }
     if (token === '--read') { args.action = 'read'; continue; }
     if (token === '--mark-interrupted') { args.action = 'mark_interrupted'; continue; }
+    if (token === '--refresh-current-scope') { args.action = 'refresh_current_scope'; continue; }
     if (token === '--project-root' || token === '--project') {
       args.projectRoot = list.shift();
       continue;
@@ -88,6 +92,12 @@ function main(argv, stdinJson) {
 
   if (args.action === 'mark_interrupted') {
     const out = markInterruptedNotCaptured({ projectRoot, apply: args.apply });
+    process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+    return out;
+  }
+
+  if (args.action === 'refresh_current_scope') {
+    const out = refreshMiraPresenceCurrentScopeStateV0({ projectRoot, apply: args.apply });
     process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
     return out;
   }

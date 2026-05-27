@@ -10,6 +10,7 @@ const seedContract = require('./fixtures/mira-core-durable-state-seed-v0-contrac
 const relationshipContract = require('./fixtures/mira-core-relationship-presence-v1-contract.json');
 const growthContract = require('./fixtures/mira-core-growth-loop-v0-contract.json');
 const identityContract = require('./fixtures/mira-core-identity-anchor-v0-contract.json');
+const progressContract = require('./fixtures/mira-progress-contract-v0.json');
 const {
   ALLOWED_FILENAME,
   ALLOWED_RELATIVE_DIR,
@@ -40,6 +41,13 @@ const {
   CURRENT_LANE_RELATIVE_PATH,
   PRESENCE_SUMMARY_RELATIVE_PATH,
 } = require('../modules/mira-core/typed-restart-continuity-context-v0');
+const {
+  buildMiraPresenceCurrentScopeStateV0,
+  refreshMiraPresenceCurrentScopeStateV0,
+} = require('../modules/mira-core/mira-presence-current-scope-state-v0');
+const {
+  writeProgressProofArtifact,
+} = require('../modules/mira-core/mira-progress-proof-inputs-v0');
 
 const { main: cliMain } = require('../scripts/hm-mira-presence-runtime-state-v0');
 
@@ -71,6 +79,23 @@ function writeJson(projectRoot, relativePath, value) {
   fs.mkdirSync(path.dirname(fullPath), { recursive: true });
   fs.writeFileSync(fullPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
   return fullPath;
+}
+
+function cleanWorktree() {
+  return {
+    present: true,
+    source_kind: 'provided_worktree_metadata',
+    clean: true,
+    dirty_count: 0,
+    summary: {
+      dirty_count: 0,
+      staged_count: 0,
+      unstaged_count: 0,
+      untracked_count: 0,
+      by_code: {},
+    },
+    status_sha256: 'sha256:clean',
+  };
 }
 
 function seedDurableMiraSources(projectRoot) {
@@ -831,6 +856,151 @@ describe('mira presence runtime state v0', () => {
     }));
 
     fs.rmSync(briefingDir, { recursive: true, force: true });
+  });
+
+  test('current-scope refresh rebuilds Presence state from lane and progress evidence without dropping blockers', () => {
+    const projectRoot = tempProject();
+    try {
+      buildMiraPresenceRuntimeStateV0({
+        projectRoot,
+        apply: true,
+        nowIso: '2026-05-10T08:53:28.086Z',
+        state: fullState(),
+      });
+      writeJson(projectRoot, CURRENT_LANE_RELATIVE_PATH, {
+        version: 1,
+        generatedAt: '2026-05-27T05:28:59.062Z',
+        sessionId: 'app-session-382',
+        source: 'comms_journal',
+        status: 'none',
+        activeLane: {
+          sourceRef: 'builder#22',
+          objective: 'PARKED PROTOTYPE SENTINEL must not become authority',
+        },
+        continuity: {
+          stale_backlog_markers: [
+            '86 delivery-uncertain comms row(s) are restart context, not live blockers without current evidence.',
+          ],
+        },
+      });
+
+      const progressReport = {
+        computed_total_percent: 55,
+        status: 'BLOCKED',
+        warnings: ['presence_state_predates_head'],
+        source_refs: {
+          head: { short_sha: '92992031', committed_at: '2026-05-27T04:00:00.000Z' },
+          progress_proof_inputs: {
+            source_ref: '.squidrun/runtime/mira-progress-proof-inputs-v0.json',
+            status: 'loaded',
+          },
+        },
+      };
+      const preview = buildMiraPresenceCurrentScopeStateV0({
+        projectRoot,
+        progressReport,
+      });
+
+      expect(preview.ok).toBe(true);
+      expect(preview.current_lane).toEqual(expect.objectContaining({
+        status: 'none',
+        active_lane_present: false,
+        source_ref: null,
+        objective: null,
+      }));
+      expect(preview.state.next_product_action).toContain('current lane status none');
+      expect(preview.state.next_product_action).toContain('computed progress 55% BLOCKED at HEAD 92992031');
+      expect(preview.state.next_product_action).toContain('parked/prototype/archive evidence out of route authority');
+      expect(preview.state.proof_test_state).toContain('proof artifact loaded');
+      expect(preview.state.stale_markers).toContain('parked/prototype/archive scaffolds excluded from current-scope authority');
+      expect(preview.state.stale_markers).toContain('voice_transport_blocked_until_contract_tests_pass');
+      expect(preview.state.stale_markers).not.toContain('presence_state_predates_head');
+      expect(JSON.stringify(preview.state)).not.toContain('PARKED PROTOTYPE SENTINEL');
+      for (const flag of REQUIRED_BLOCKED_FLAGS) {
+        expect(preview.state.blocked_status[flag]).toBe(true);
+      }
+
+      const applied = refreshMiraPresenceCurrentScopeStateV0({
+        projectRoot,
+        apply: true,
+        nowIso: '2026-05-27T05:40:00.000Z',
+        progressReport,
+      });
+      expect(applied.decision).toBe('applied');
+      const after = readMiraPresenceRuntimeState({ projectRoot });
+      expect(after.state.generated_at).toBe('2026-05-27T05:40:00.000Z');
+      expect(after.summary.next_product_action).toContain('current lane status none');
+      expect(after.summary.accepted_critique).toBe('anti-smoothing rule shape, not warmer prompt');
+      expect(after.blocked_status.a3_a4_blocked).toBe(true);
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('current-scope apply records the post-refresh computed progress on first clean apply', () => {
+    const projectRoot = tempProject();
+    const head = {
+      full_sha: 'abcdef1234567890abcdef1234567890abcdef12',
+      short_sha: 'abcdef12',
+      committed_at: '2026-05-27T05:41:03.000Z',
+      subject: 'Repair Mira restart continuity state',
+    };
+    try {
+      buildMiraPresenceRuntimeStateV0({
+        projectRoot,
+        apply: true,
+        nowIso: '2026-05-10T08:53:28.086Z',
+        state: fullState(),
+      });
+      writeJson(projectRoot, CURRENT_LANE_RELATIVE_PATH, {
+        version: 1,
+        generatedAt: '2026-05-27T05:28:59.062Z',
+        sessionId: 'app-session-382',
+        source: 'comms_journal',
+        status: 'none',
+        activeLane: null,
+      });
+      writeJson(projectRoot, path.join('ui', '__tests__', 'fixtures', 'mira-progress-contract-v0.json'), progressContract);
+      writeJson(projectRoot, path.join('ui', '__tests__', 'fixtures', 'mira-presence-runtime-acceptance-v0-contract.json'), {
+        schema: 'squidrun.mira_presence_runtime_acceptance.v0',
+      });
+      writeJson(projectRoot, path.join('ui', '__tests__', 'fixtures', 'mira-north-star-acceptance-contract.json'), {
+        schema: 'squidrun.mira.north_star_acceptance_contract.v0',
+      });
+      writeProgressProofArtifact({
+        projectRoot,
+        head,
+        worktreeState: cleanWorktree(),
+        runner: (command, root, metadata) => ({
+          ok: true,
+          exitCode: 0,
+          stdout: `PASS ${metadata.proofKey}`,
+          stderr: '',
+        }),
+      });
+
+      const applied = refreshMiraPresenceCurrentScopeStateV0({
+        projectRoot,
+        apply: true,
+        nowIso: '2026-05-27T05:42:00.000Z',
+        head,
+        worktreeState: cleanWorktree(),
+      });
+
+      expect(applied.decision).toBe('applied');
+      expect(applied.computed_progress).toEqual(expect.objectContaining({
+        percent: 70,
+        status: 'BLOCKED',
+        head_short_sha: 'abcdef12',
+      }));
+      expect(applied.record.generated_at).toBe('2026-05-27T05:42:00.000Z');
+      expect(applied.record.next_product_action).toContain('computed progress 70% BLOCKED at HEAD abcdef12');
+      expect(applied.record.proof_test_state).toContain('progress 70% BLOCKED at HEAD abcdef12');
+      expect(applied.record.blocked_status.live_voice_blocked).toBe(true);
+      expect(applied.record.blocked_status.a3_a4_blocked).toBe(true);
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 
   test('real-CLI stdin pipe accepts state JSON and writes the durable artifact', () => {

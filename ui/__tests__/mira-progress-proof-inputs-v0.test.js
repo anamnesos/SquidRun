@@ -10,6 +10,8 @@ const {
   LIVE_WHAT_NOW_PROOF_KEY,
   LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
   MIRA_PROGRESS_PROOF_INPUTS_SCHEMA,
+  RESTART_VERIFIER_PROOF_KEY,
+  STARTUP_ACCOUNTING_PROOF_KEY,
   VISIBLE_PRESENCE_A0_PROOF_KEY,
   readDefaultProgressProofInputs,
   resolveDefaultProgressProofPath,
@@ -149,10 +151,20 @@ describe('mira progress proof inputs v0', () => {
       const artifact = JSON.parse(fs.readFileSync(result.proofPath, 'utf8'));
       expect(Object.keys(artifact.proofs)).toEqual([
         VISIBLE_PRESENCE_A0_PROOF_KEY,
+        STARTUP_ACCOUNTING_PROOF_KEY,
+        RESTART_VERIFIER_PROOF_KEY,
         LIVE_WHAT_NOW_PROOF_KEY,
         INTERNAL_REQUEST_DRAFT_PROOF_KEY,
         LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
       ]);
+      expect(artifact.proofs[STARTUP_ACCOUNTING_PROOF_KEY]).toEqual(expect.objectContaining({
+        status: 'PASS',
+        reason: 'startup/current-scope accounting harness passed',
+      }));
+      expect(artifact.proofs[RESTART_VERIFIER_PROOF_KEY]).toEqual(expect.objectContaining({
+        status: 'PASS',
+        reason: 'restart verifier probe passed without send',
+      }));
       expect(artifact.proofs[LIVE_WHAT_NOW_PROOF_KEY]).toEqual(expect.objectContaining({
         status: 'PASS',
         reason: 'A1 live what-now acceptance harness passed',
@@ -172,6 +184,8 @@ describe('mira progress proof inputs v0', () => {
         head: head(),
         worktreeState: cleanWorktree(),
       });
+      expect(read.inputSignals.proofs[STARTUP_ACCOUNTING_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
+      expect(read.inputSignals.proofs[RESTART_VERIFIER_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
       expect(read.inputSignals.proofs[LIVE_WHAT_NOW_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
       expect(read.inputSignals.proofs[INTERNAL_REQUEST_DRAFT_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
       expect(read.inputSignals.proofs[LOCAL_TEXT_UI_SURFACE_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
