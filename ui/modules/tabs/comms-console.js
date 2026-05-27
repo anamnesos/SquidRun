@@ -13,11 +13,16 @@ const {
   resolveBackgroundBuilderAlias,
 } = require('../../config');
 const { escapeHtml } = require('./utils');
+const {
+  buildPendingOracleVerdictPayload,
+  collectPendingOracleVerdicts,
+} = require('../oracle-verdict-visibility');
 
 const MAX_SCROLL_ENTRIES = 5000;
 const BODY_COLLAPSE_LIMIT = 4000;
 const HISTORY_PAGE_SIZE = 50;
 const TOP_LOAD_THRESHOLD_PX = 24;
+const PENDING_VERDICT_POLL_MS = 15 * 1000;
 
 const CHANNEL_LABELS = {
   ws: 'WS',
@@ -52,6 +57,8 @@ let hasLoadedBackfill = false;
 let oldestLoadedTimestamp = null;
 let hasMoreHistory = true;
 let loadingOlderHistory = false;
+let pendingVerdictPollTimer = null;
+let latestPendingVerdicts = [];
 
 function formatTimestamp(ts) {
   const d = new Date(Number.isFinite(ts) ? ts : Date.now());
@@ -235,6 +242,100 @@ function buildEntryMetaParts(entry) {
   if (metadata.chatId) parts.push(`Chat ${metadata.chatId}`);
   if (metadata.telegramMessageId) parts.push(`Telegram msg ${metadata.telegramMessageId}`);
   return parts;
+}
+
+function formatPendingVerdictText(verdict) {
+  if (!verdict || typeof verdict !== 'object') return '';
+  const source = verdict.sourceRef ? ` ${verdict.sourceRef}` : '';
+  const ack = verdict.ackStatus ? ` (${verdict.ackStatus})` : '';
+  return `Oracle ${verdict.verdict || 'verdict'} visibility unverified${source}${ack}`;
+}
+
+function getOrCreateStatusIndicator() {
+  let indicator = document.getElementById('oracleVerdictPendingIndicator');
+  if (indicator) return indicator;
+  const statusBar = document.querySelector('.status-bar');
+  if (!statusBar || typeof document.createElement !== 'function') return null;
+  indicator = Array.from(statusBar.children || []).find((child) => child?.id === 'oracleVerdictPendingIndicator') || null;
+  if (indicator) return indicator;
+  indicator = document.createElement('span');
+  indicator.id = 'oracleVerdictPendingIndicator';
+  indicator.className = 'oracle-verdict-pending-indicator';
+  indicator.hidden = true;
+  statusBar.appendChild(indicator);
+  return indicator;
+}
+
+function ensureCommsTabBadge() {
+  const tab = document.querySelector('.panel-tab[data-tab="comms"]');
+  if (!tab || typeof document.createElement !== 'function') return null;
+  let badge = tab.querySelector('.oracle-verdict-pending-badge');
+  if (badge) return badge;
+  badge = document.createElement('span');
+  badge.className = 'oracle-verdict-pending-badge';
+  badge.hidden = true;
+  tab.appendChild(badge);
+  return badge;
+}
+
+function renderPendingVerdictIndicator(verdicts = latestPendingVerdicts) {
+  const pending = Array.isArray(verdicts) ? verdicts.filter(Boolean) : [];
+  latestPendingVerdicts = pending;
+  const first = pending[0] || null;
+  const text = formatPendingVerdictText(first);
+  const indicator = getOrCreateStatusIndicator();
+  if (indicator) {
+    indicator.hidden = !first;
+    indicator.textContent = first ? text : '';
+    indicator.title = first?.bodyPreview || text || '';
+  }
+  const badge = ensureCommsTabBadge();
+  if (badge) {
+    badge.hidden = !first;
+    badge.textContent = first ? 'Verdict pending' : '';
+    badge.title = first ? text : '';
+  }
+}
+
+function mergePendingVerdict(verdict) {
+  if (!verdict) return;
+  const key = verdict.messageId || verdict.sourceRef || `${verdict.verdict}:${verdict.sentAtMs}`;
+  const filtered = latestPendingVerdicts.filter((item) => {
+    const itemKey = item?.messageId || item?.sourceRef || `${item?.verdict}:${item?.sentAtMs}`;
+    return itemKey !== key;
+  });
+  renderPendingVerdictIndicator([verdict, ...filtered].slice(0, 3));
+}
+
+function removePendingVerdictForRow(row = {}) {
+  const verdict = buildPendingOracleVerdictPayload(row);
+  if (verdict) {
+    mergePendingVerdict(verdict);
+    return;
+  }
+  const messageId = row?.messageId || row?.message_id || null;
+  if (!messageId) return;
+  const next = latestPendingVerdicts.filter((item) => item?.messageId !== messageId);
+  if (next.length !== latestPendingVerdicts.length) {
+    renderPendingVerdictIndicator(next);
+  }
+}
+
+function updatePendingVerdictsFromRows(rows = [], options = {}) {
+  const pending = collectPendingOracleVerdicts(rows, { limit: 3 });
+  if (options.replace === false) {
+    if (pending.length > 0) {
+      for (const verdict of pending.slice().reverse()) {
+        mergePendingVerdict(verdict);
+      }
+      return;
+    }
+    for (const row of Array.isArray(rows) ? rows : []) {
+      removePendingVerdictForRow(row);
+    }
+    return;
+  }
+  renderPendingVerdictIndicator(pending);
 }
 
 function normalizeJournalRow(row) {
@@ -534,6 +635,7 @@ function appendRows(rows, { animate = false } = {}) {
     if (!entry) continue;
     addEntry(entry, { animate });
   }
+  updatePendingVerdictsFromRows(rows);
 }
 
 function upsertEntry(entry, { animate = true } = {}) {
@@ -646,10 +748,35 @@ async function backfillByMessageId(messageId, fallbackEntry = null) {
       if (fallbackEntry) upsertEntry(fallbackEntry, { animate: true });
       return;
     }
+    updatePendingVerdictsFromRows(rows, { replace: false });
     const entry = normalizeJournalRow(rows[0]);
     if (entry) upsertEntry(entry, { animate: true });
   } catch (_) {
     if (fallbackEntry) upsertEntry(fallbackEntry, { animate: true });
+  }
+}
+
+async function refreshPendingVerdictsFromJournal() {
+  try {
+    const result = await invokeBridge('evidence-ledger:query-comms-journal', {
+      senderRole: 'oracle',
+      limit: 25,
+      order: 'desc',
+    });
+    updatePendingVerdictsFromRows(normalizeJournalResult(result));
+  } catch (_) {
+    // The indicator is advisory; keep the comms console usable if a refresh fails.
+  }
+}
+
+function startPendingVerdictRefresh() {
+  if (pendingVerdictPollTimer) return;
+  void refreshPendingVerdictsFromJournal();
+  pendingVerdictPollTimer = setInterval(() => {
+    void refreshPendingVerdictsFromJournal();
+  }, PENDING_VERDICT_POLL_MS);
+  if (typeof pendingVerdictPollTimer.unref === 'function') {
+    pendingVerdictPollTimer.unref();
   }
 }
 
@@ -712,6 +839,8 @@ function setupCommsConsoleTab(bus) {
   oldestLoadedTimestamp = null;
   hasMoreHistory = true;
   loadingOlderHistory = false;
+  latestPendingVerdicts = [];
+  renderPendingVerdictIndicator([]);
   resetListPlaceholder();
   bindOpenBackfill();
   bindEntryToggleDelegation();
@@ -725,6 +854,9 @@ function setupCommsConsoleTab(bus) {
   if (busRef) {
     const commsHandler = (event) => {
       const entry = normalizeBusEvent(event);
+      if (event.type === 'comms.verdict.pending') {
+        mergePendingVerdict(buildPendingOracleVerdictPayload(event.payload || {}) || event.payload || null);
+      }
       if (!entry) return;
       if (entry.messageId) {
         void backfillByMessageId(entry.messageId, entry);
@@ -739,9 +871,14 @@ function setupCommsConsoleTab(bus) {
   if (!hasLoadedBackfill) {
     void backfillFromJournal();
   }
+  startPendingVerdictRefresh();
 }
 
 function destroy() {
+  if (pendingVerdictPollTimer) {
+    clearInterval(pendingVerdictPollTimer);
+    pendingVerdictPollTimer = null;
+  }
   if (busRef) {
     for (const h of handlers) {
       busRef.off(h.type, h.fn);
@@ -761,10 +898,16 @@ function destroy() {
   oldestLoadedTimestamp = null;
   hasMoreHistory = true;
   loadingOlderHistory = false;
+  latestPendingVerdicts = [];
+  renderPendingVerdictIndicator([]);
   resetListPlaceholder();
 }
 
 module.exports = {
   setupCommsConsoleTab,
   destroy,
+  _internals: {
+    formatPendingVerdictText,
+    updatePendingVerdictsFromRows,
+  },
 };

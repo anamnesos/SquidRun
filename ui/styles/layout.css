@@ -1135,6 +1135,25 @@
   transition: opacity var(--transition-fast);
 }
 
+.oracle-verdict-pending-indicator {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  max-width: min(42vw, 520px);
+  padding: 1px 8px;
+  border: 1px solid rgba(255, 214, 119, 0.42);
+  border-radius: var(--radius-sm);
+  color: #ffe099;
+  background: rgba(58, 38, 8, 0.28);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.oracle-verdict-pending-indicator[hidden] {
+  display: none;
+}
+
 .status-left {
   display: flex;
   align-items: center;
