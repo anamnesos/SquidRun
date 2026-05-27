@@ -1,11 +1,16 @@
 'use strict';
 
+const fs = require('fs');
+
 const ROOM_ENVELOPE_VERSION = 'squidrun.room-envelope.v0';
 const MAIN_ROOM_ID = 'main';
 const TRUSTQUOTE_ROOM_ID = 'trustquote';
 const TRUSTQUOTE_PROJECT_PATH = 'D:/projects/TrustQuote';
+const TRUSTQUOTE_REQUIRED_PROJECT_ROOT_ENV = 'SQUIDRUN_TRUSTQUOTE_PROJECT_ROOT';
+const DEFAULT_SQUIDRUN_ROOT = 'D:/projects/squidrun';
 const TRUSTED_INTERNAL_TARGETS = new Set(['architect', 'builder', 'oracle']);
 const TRUSTQUOTE_ROOM_VISIBILITIES = new Set(['room_internal', 'cross_room_summary']);
+const TRUSTQUOTE_STARTUP_SOURCE_FILES = Object.freeze(['AGENTS.md', 'CLAUDE.md', 'ROLES.md']);
 
 function toText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -45,8 +50,27 @@ function normalizePathForMetadata(value) {
   return text.replace(/\\/g, '/');
 }
 
+function stripTrailingSlash(value) {
+  return toText(value, '').replace(/[\\/]+$/g, '');
+}
+
+function joinMetadataPath(basePath, ...parts) {
+  const base = stripTrailingSlash(normalizePathForMetadata(basePath));
+  const suffix = parts
+    .map((part) => toText(part, '').replace(/^[\\/]+|[\\/]+$/g, ''))
+    .filter(Boolean)
+    .join('/');
+  return suffix ? `${base}/${suffix}` : base;
+}
+
 function normalizeProjectToken(value) {
   return toText(value, '').replace(/\\/g, '/').toLowerCase();
+}
+
+function sameMetadataPath(left, right) {
+  const normalizedLeft = normalizeProjectToken(left).replace(/[\\/]+$/g, '');
+  const normalizedRight = normalizeProjectToken(right).replace(/[\\/]+$/g, '');
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
 }
 
 function projectMetadataCandidates(metadata = {}) {
@@ -93,6 +117,31 @@ function hashRoomBody(body = '') {
     hash = Math.imul(hash, 16777619);
   }
   return `room-body-v0:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function makeTrustQuoteSessionScopeId(mainSessionScopeId = '') {
+  const base = toText(mainSessionScopeId, 'app-session-preview');
+  return base.toLowerCase().endsWith(`:${TRUSTQUOTE_ROOM_ID}`)
+    ? base
+    : `${base}:${TRUSTQUOTE_ROOM_ID}`;
+}
+
+function defaultPathExists(filePath) {
+  if (!filePath) return false;
+  try {
+    return fs.existsSync(filePath);
+  } catch (_) {
+    return false;
+  }
+}
+
+function defaultReadJson(filePath) {
+  if (!filePath) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (_) {
+    return null;
+  }
 }
 
 function hasTrustQuoteText(row = {}) {
@@ -153,6 +202,139 @@ function buildTrustQuoteRoomEnvelope(input = {}) {
       sourceRefs: normalizeSourceRefs(input.sourceRefs || input.source_refs),
       dispatch: 'preview_only',
     },
+  };
+}
+
+function buildTrustQuoteLaunchReadiness(options = {}) {
+  const projectPath = normalizePathForMetadata(options.projectPath || TRUSTQUOTE_PROJECT_PATH);
+  const squidrunRoot = normalizePathForMetadata(options.squidrunRoot || DEFAULT_SQUIDRUN_ROOT);
+  const mainSessionScopeId = toText(options.mainSessionScopeId || options.sessionScopeId || options.session_id, 'app-session-preview');
+  const sessionScopeId = makeTrustQuoteSessionScopeId(mainSessionScopeId);
+  const pathExists = typeof options.pathExists === 'function' ? options.pathExists : defaultPathExists;
+  const readJson = typeof options.readJson === 'function' ? options.readJson : defaultReadJson;
+  const env = asObject(options.env || (typeof process !== 'undefined' ? process.env : {}));
+  const envProjectRoot = normalizePathForMetadata(env[TRUSTQUOTE_REQUIRED_PROJECT_ROOT_ENV]);
+  const linkPath = joinMetadataPath(projectPath, '.squidrun', 'link.json');
+  const startupBundlePath = joinMetadataPath(squidrunRoot, '.squidrun', 'runtime', 'window-teams', TRUSTQUOTE_ROOM_ID, 'startup-bundle.md');
+  const sourceFiles = TRUSTQUOTE_STARTUP_SOURCE_FILES.map((name) => {
+    const filePath = joinMetadataPath(projectPath, name);
+    return {
+      name,
+      path: filePath,
+      present: Boolean(pathExists(filePath)),
+    };
+  });
+  const linkExists = Boolean(pathExists(linkPath));
+  const linkJson = linkExists ? asObject(readJson(linkPath)) : {};
+  const linkIssues = [];
+
+  if (!linkExists) {
+    linkIssues.push('missing');
+  } else if (!Object.keys(linkJson).length) {
+    linkIssues.push('unreadable');
+  } else {
+    if (!sameMetadataPath(linkJson.workspace, projectPath)) linkIssues.push('workspace_mismatch');
+    if (toText(linkJson.profile, '') !== TRUSTQUOTE_ROOM_ID) linkIssues.push('missing_or_wrong_profile');
+    if (toText(linkJson.session_id, '') !== sessionScopeId) linkIssues.push('stale_session_scope');
+  }
+
+  const blockers = ['explicit_launch_approval_required'];
+  const envStatus = envProjectRoot
+    ? (sameMetadataPath(envProjectRoot, projectPath) ? 'configured' : 'mismatch')
+    : 'missing';
+  if (envStatus === 'missing') blockers.push('env_override_missing');
+  if (envStatus === 'mismatch') blockers.push('env_override_mismatch');
+
+  for (const sourceFile of sourceFiles) {
+    if (sourceFile.present !== true) {
+      blockers.push(`trustquote_${sourceFile.name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_missing`);
+    }
+  }
+
+  const linkStatus = linkIssues.length ? 'stale_or_non_profiled' : 'current';
+  if (linkStatus !== 'current') blockers.push('trustquote_link_json_stale_or_non_profiled');
+  blockers.push('raw_secondary_window_auto_boots_full_3_pane_team');
+
+  const payload = {
+    roomId: TRUSTQUOTE_ROOM_ID,
+    launchMode: 'main_owned_secondary_window_preview',
+    windowKey: TRUSTQUOTE_ROOM_ID,
+    profileName: MAIN_ROOM_ID,
+    profileKey: TRUSTQUOTE_ROOM_ID,
+    projectRoot: projectPath,
+    requiredEnv: {
+      [TRUSTQUOTE_REQUIRED_PROJECT_ROOT_ENV]: projectPath,
+    },
+    sessionScopeId,
+    startupBundlePath,
+    linkPath,
+    autoBootAgents: false,
+    roleLayout: 'builder-oracle-preview',
+    allowedRoles: ['builder', 'oracle'],
+    blockedRoles: ['architect'],
+    dispatch: 'preview_only',
+  };
+  const roomEnvelopePreview = buildTrustQuoteRoomEnvelope({
+    body: 'TrustQuote room launch readiness preview.',
+    targetRole: 'architect',
+    sessionScopeId,
+    sourceRefs: [
+      projectPath,
+      linkPath,
+      startupBundlePath,
+    ],
+  });
+
+  return {
+    roomId: TRUSTQUOTE_ROOM_ID,
+    status: 'preview_only',
+    canLaunchAgents: false,
+    approvalRequired: true,
+    env: {
+      requiredName: TRUSTQUOTE_REQUIRED_PROJECT_ROOT_ENV,
+      requiredValue: projectPath,
+      currentValue: envProjectRoot || null,
+      status: envStatus,
+    },
+    sourceFiles,
+    link: {
+      path: linkPath,
+      status: linkStatus,
+      exists: linkExists,
+      issues: linkIssues,
+      expected: {
+        workspace: projectPath,
+        profile: TRUSTQUOTE_ROOM_ID,
+        session_id: sessionScopeId,
+      },
+      current: linkExists && Object.keys(linkJson).length ? {
+        workspace: normalizePathForMetadata(linkJson.workspace),
+        profile: toText(linkJson.profile, null),
+        session_id: toText(linkJson.session_id, null),
+      } : null,
+    },
+    rawPath: {
+      secondaryWindowSupported: true,
+      currentRoleLayout: 'standard',
+      currentAutoBootAgents: true,
+      currentBootScope: 'full_3_pane_team',
+      previewAutoBootAgents: false,
+    },
+    payload,
+    roomEnvelopePreview,
+    sideEffectBoundary: {
+      opensWindow: false,
+      writesStartupBundle: false,
+      writesProfileLink: false,
+      launchesAgents: false,
+      dispatchesMessage: false,
+      performsRuntimePost: false,
+      mutatesMainProjectContext: false,
+      changesAppLifecycle: false,
+      changesChannelRoute: false,
+      includesUnreviewedRoom: false,
+    },
+    blockers,
   };
 }
 
@@ -286,6 +468,10 @@ function buildTrustQuoteReadiness(options = {}) {
   const rows = queryTrustQuoteRoomRows(options.commsRows || []);
   const validRows = rows.filter((row) => row.envelope.ok);
   const nonAuthoritativeRows = rows.filter((row) => row.canAffectMainCurrentLane !== true);
+  const launchReadiness = buildTrustQuoteLaunchReadiness({
+    ...options,
+    projectPath,
+  });
 
   return {
     roomId: TRUSTQUOTE_ROOM_ID,
@@ -296,6 +482,7 @@ function buildTrustQuoteReadiness(options = {}) {
     envelopeVersion: ROOM_ENVELOPE_VERSION,
     validRoomRowCount: validRows.length,
     visibleNonAuthoritativeRowCount: nonAuthoritativeRows.length,
+    launchReadiness,
     canLaunchAgents: false,
     canMutateMainProjectContext: false,
     canAffectMainCurrentLane: false,
@@ -304,6 +491,7 @@ function buildTrustQuoteReadiness(options = {}) {
       'explicit_room_launch_not_approved',
       'main_lane_authority_disabled',
       'cross_room_publish_requires_review',
+      ...launchReadiness.blockers,
     ],
   };
 }
@@ -319,6 +507,9 @@ function buildTrustQuoteReadinessCard(options = {}) {
     summary: 'Future TrustQuote room for Builder/Oracle work, product map, and workflow knowledge.',
     details: [
       `Attach target: ${readiness.projectPath}`,
+      `Launch preview: ${readiness.launchReadiness.payload.launchMode}`,
+      `Payload: windowKey=${readiness.launchReadiness.payload.windowKey}, profileKey=${readiness.launchReadiness.payload.profileKey}, autoBootAgents=false`,
+      `Blockers: ${readiness.launchReadiness.blockers.slice(0, 4).join(', ')}`,
       `Transport: ${readiness.transport}`,
       'Main lane authority: disabled',
       'Cross-room publish: review required',
@@ -332,7 +523,9 @@ module.exports = {
   MAIN_ROOM_ID,
   ROOM_ENVELOPE_VERSION,
   TRUSTQUOTE_PROJECT_PATH,
+  TRUSTQUOTE_REQUIRED_PROJECT_ROOT_ENV,
   TRUSTQUOTE_ROOM_ID,
+  buildTrustQuoteLaunchReadiness,
   buildTrustQuoteReadiness,
   buildTrustQuoteReadinessCard,
   buildTrustQuoteRoomEnvelope,
