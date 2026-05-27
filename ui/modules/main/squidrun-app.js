@@ -124,6 +124,10 @@ const {
   MIRA_LIVE_PROMPT_REPLY_CHANNEL,
   sendMiraLivePrompt,
 } = require('../mira-live-entrypoint');
+const {
+  buildMiraDirectChannelStatusAnswerV0,
+  isMiraDirectChannelStatusPrompt,
+} = require('../mira-core/live-direct-channel-status-v0');
 const { captureScreenshot } = require('../ipc/screenshot-handlers');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
 const { createBufferedFileWriter } = require('../buffered-file-writer');
@@ -8225,6 +8229,36 @@ class SquidRunApp {
     };
   }
 
+  buildMiraDirectChannelStatusReply(body, options = {}) {
+    const metadata = options.metadata && typeof options.metadata === 'object' ? options.metadata : {};
+    const chatId = metadata.chatId ?? options.chatId ?? null;
+    const inboundRoute = options.inboundRoute || this.resolveTelegramInboundRoute(chatId);
+    return buildMiraDirectChannelStatusAnswerV0({
+      promptText: body,
+      metadata: {
+        ...metadata,
+        channel: 'telegram',
+        sessionId: options.inboundSessionScopeId || options.sessionId || this.getWindowSessionScopeId('main'),
+        windowKey: inboundRoute?.windowKey || metadata.windowKey || 'main',
+        profile: inboundRoute?.profile || metadata.profile || 'main',
+      },
+      inboundRoute,
+    }, {
+      projectRoot: getProjectRoot(),
+      nowMs: options.nowMs,
+      currentLaneSnapshot: options.currentLaneSnapshot,
+      commsRows: options.commsRows,
+      commsReader: options.commsReader || queryCommsJournalEntries,
+      evidenceLedgerDbPath: options.evidenceLedgerDbPath,
+      commsLimit: options.commsLimit,
+      progressReport: options.progressReport,
+      progressProofPath: options.progressProofPath,
+      head: options.head,
+      worktreeState: options.worktreeState,
+      sessionId: options.inboundSessionScopeId || options.sessionId || this.getWindowSessionScopeId('main'),
+    });
+  }
+
   containMiraTelegramVisibleReply(replyText, { prompt = '' } = {}) {
     const text = toNonEmptyString(replyText);
     if (!text) {
@@ -8476,7 +8510,68 @@ class SquidRunApp {
     );
   }
 
-  async routeMainTelegramInboundToMira({ body, sender = 'unknown', metadata = {}, inboundMessageId = null, inboundSessionScopeId = null } = {}) {
+  async routeMainTelegramInboundToMira({
+    body,
+    sender = 'unknown',
+    metadata = {},
+    inboundMessageId = null,
+    inboundSessionScopeId = null,
+    nowMs = null,
+    currentLaneSnapshot = null,
+    commsRows = null,
+    commsReader = null,
+    evidenceLedgerDbPath = null,
+    progressReport = null,
+    progressProofPath = null,
+    head = null,
+    worktreeState = null,
+  } = {}) {
+    if (isMiraDirectChannelStatusPrompt(body)) {
+      const directChannelStatusAnswer = this.buildMiraDirectChannelStatusReply(body, {
+        metadata,
+        inboundSessionScopeId,
+        nowMs,
+        currentLaneSnapshot,
+        commsRows,
+        commsReader,
+        evidenceLedgerDbPath,
+        progressReport,
+        progressProofPath,
+        head,
+        worktreeState,
+      });
+      if (directChannelStatusAnswer?.ok === true) {
+        const userFacingReply = this.buildMiraTelegramUserFacingReply(directChannelStatusAnswer.answer_text, {
+          chatId: metadata?.chatId,
+        });
+        const telegramResult = await this.routeTelegramReply({
+          target: 'telegram',
+          content: userFacingReply.text,
+          fromRole: 'mira',
+          messageId: inboundMessageId ? `${inboundMessageId}-mira-direct-status-reply` : null,
+          chatId: metadata?.chatId,
+        });
+        if (telegramResult?.ok && userFacingReply.oriented) {
+          this.markMiraTelegramChannelOriented(metadata?.chatId, {
+            messageId: telegramResult.messageId || (inboundMessageId ? `${inboundMessageId}-mira-direct-status-reply` : null),
+          });
+        }
+        return {
+          ok: Boolean(telegramResult?.ok),
+          handled: true,
+          status: telegramResult?.status || (telegramResult?.ok ? 'telegram_delivered' : 'telegram_send_failed'),
+          reply: {
+            ok: true,
+            state: 'ready',
+            source: 'mira_direct_channel_status_v0',
+            message: directChannelStatusAnswer.answer_text,
+          },
+          directChannelStatusAnswer,
+          telegramResult,
+        };
+      }
+    }
+
     const reply = await this.buildTelegramMiraLiveReply(body, {
       sessionId: inboundSessionScopeId || this.getWindowSessionScopeId('main'),
       sender,

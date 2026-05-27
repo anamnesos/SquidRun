@@ -25,6 +25,10 @@ const INTERNAL_HANDOFF_PREVIEW_PROOF_KEY = 'mira-live-internal-handoff-preview-v
 const INTERNAL_HANDOFF_PREVIEW_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-internal-handoff-preview-v0.test.js --runInBand';
 const INTERNAL_HANDOFF_APPROVAL_PROOF_KEY = 'mira-live-internal-handoff-approval-v0.test.js';
 const INTERNAL_HANDOFF_APPROVAL_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-internal-handoff-approval-v0.test.js --runInBand';
+const TELEGRAM_TURN_CANDIDATE_PROOF_KEY = 'mira-telegram-turn-candidate.test.js';
+const TELEGRAM_TURN_CANDIDATE_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/mira-telegram-turn-candidate.test.js --runInBand';
+const DIRECT_CHANNEL_READINESS_PROOF_KEY = 'mira-direct-channel-readiness.test.js';
+const DIRECT_CHANNEL_READINESS_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/mira-direct-channel-readiness.test.js --runInBand';
 const LOCAL_TEXT_UI_SURFACE_PROOF_KEY = 'mira-local-text-ui-surface.test.js';
 const LOCAL_TEXT_UI_SURFACE_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/mira-local-text-ui-surface.test.js --runInBand';
 const DEFAULT_PROGRESS_PROOF_COMMANDS = Object.freeze([
@@ -69,6 +73,18 @@ const DEFAULT_PROGRESS_PROOF_COMMANDS = Object.freeze([
     command: INTERNAL_HANDOFF_APPROVAL_TEST_COMMAND,
     pass_reason: 'A3 approval-controlled internal handoff send harness passed',
     fail_reason: 'A3 approval-controlled internal handoff send harness failed',
+  }),
+  Object.freeze({
+    proof_key: TELEGRAM_TURN_CANDIDATE_PROOF_KEY,
+    command: TELEGRAM_TURN_CANDIDATE_TEST_COMMAND,
+    pass_reason: 'direct-channel Telegram candidate/status harness passed',
+    fail_reason: 'direct-channel Telegram candidate/status harness failed',
+  }),
+  Object.freeze({
+    proof_key: DIRECT_CHANNEL_READINESS_PROOF_KEY,
+    command: DIRECT_CHANNEL_READINESS_TEST_COMMAND,
+    pass_reason: 'direct-channel readiness dry-run harness passed',
+    fail_reason: 'direct-channel readiness dry-run harness failed',
   }),
   Object.freeze({
     proof_key: LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
@@ -581,6 +597,8 @@ module.exports = {
   DEFAULT_PROGRESS_PROOF_COMMANDS,
   DEFAULT_PROGRESS_PROOF_RELATIVE_PATH,
   DEFAULT_TIMEOUT_MS,
+  DIRECT_CHANNEL_READINESS_PROOF_KEY,
+  DIRECT_CHANNEL_READINESS_TEST_COMMAND,
   INTERNAL_HANDOFF_APPROVAL_PROOF_KEY,
   INTERNAL_HANDOFF_APPROVAL_TEST_COMMAND,
   INTERNAL_HANDOFF_PREVIEW_PROOF_KEY,
@@ -596,6 +614,8 @@ module.exports = {
   RESTART_VERIFIER_TEST_COMMAND,
   STARTUP_ACCOUNTING_PROOF_KEY,
   STARTUP_ACCOUNTING_TEST_COMMAND,
+  TELEGRAM_TURN_CANDIDATE_PROOF_KEY,
+  TELEGRAM_TURN_CANDIDATE_TEST_COMMAND,
   VISIBLE_PRESENCE_A0_PROOF_KEY,
   VISIBLE_PRESENCE_A0_TEST_COMMAND,
   buildProgressProofArtifact,
