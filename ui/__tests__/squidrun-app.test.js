@@ -5463,12 +5463,76 @@ describe('SquidRunApp', () => {
 
       expect(mockManagers.memoryBroker.recall).toHaveBeenCalledWith(
         '[Telegram from james]: what did you do?',
-        expect.objectContaining({ channel: 'telegram', paneId: '1' }),
+        expect.objectContaining({
+          channel: 'telegram',
+          paneId: '1',
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: null,
+        }),
         expect.objectContaining({ limit: 4, providerLimit: 3 })
       );
       expect(triggers.sendDirectMessage.mock.calls[0][1]).toContain('[SQUIDRUN MEMORY RECALL]');
       expect(triggers.sendDirectMessage.mock.calls[0][1]).toContain('James wants non-jargon plain English updates.');
       expect(triggers.sendDirectMessage.mock.calls[0][1]).toContain('[Telegram from james]: what did you do?');
+    });
+
+    it('passes profile scope into recall and delivery metadata for scoped human messages', async () => {
+      const triggers = require('../modules/triggers');
+      mockManagers.memoryBroker = {
+        recall: jest.fn(async () => ({
+          ok: true,
+          results: [
+            {
+              rank: 1,
+              sourceKind: 'graph_team',
+              title: 'Scoped context',
+              excerpt: 'Only visible when profile scope matches.',
+              ref: 'memory:scoped',
+            },
+          ],
+        })),
+      };
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+
+      await app.deliverHumanMessageWithRecall(
+        '[Telegram from sideprofile]: status?',
+        {
+          paneId: '1',
+          channel: 'telegram',
+          sender: 'sideprofile',
+          messageId: 'telegram-in-sideprofile-1',
+          windowKey: 'sideprofile',
+          profileName: 'sideprofile',
+          sessionScopeId: 'app-test:sideprofile',
+        },
+        'Telegram'
+      );
+
+      expect(mockManagers.memoryBroker.recall).toHaveBeenCalledWith(
+        '[Telegram from sideprofile]: status?',
+        expect.objectContaining({
+          channel: 'telegram',
+          paneId: '1',
+          windowKey: 'sideprofile',
+          profileName: 'sideprofile',
+          sessionScopeId: 'app-test:sideprofile',
+        }),
+        expect.objectContaining({ limit: 4, providerLimit: 3 })
+      );
+      expect(triggers.sendDirectMessage.mock.calls[0][3]).toEqual(expect.objectContaining({
+        meta: expect.objectContaining({
+          windowKey: 'sideprofile',
+          profileName: 'sideprofile',
+          sessionScopeId: 'app-test:sideprofile',
+        }),
+      }));
     });
 
     it('replays queued pane deliveries and clears them once pane delivery verifies', async () => {
