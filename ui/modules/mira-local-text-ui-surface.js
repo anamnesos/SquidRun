@@ -42,6 +42,10 @@ const {
   buildMiraLiveInternalRequestDraftV0,
   isMiraLiveInternalRequestDraftPrompt,
 } = require('./mira-core/live-internal-request-draft-v0');
+const {
+  buildMiraLiveInternalHandoffPreviewV0,
+  isMiraLiveInternalHandoffPreviewPrompt,
+} = require('./mira-core/live-internal-handoff-preview-v0');
 
 const LOCAL_TEXT_UI_CHANNEL = 'mira:local-text-session';
 const LOCAL_TEXT_UI_SURFACE_SCHEMA_VERSION = 'squidrun.mira.local_text_ui_surface_v0.phase75.v0';
@@ -434,6 +438,7 @@ function buildSurfaceRecord({
   autonomySubstrate = null,
   whatNowAnswer = null,
   internalRequestDraft = null,
+  internalHandoffPreview = null,
 }) {
   const replyCount = reply ? 1 : 0;
   const attachment = modelAttachment || getMiraTextModelAttachmentConfig({}, { enabled: false });
@@ -532,6 +537,23 @@ function buildSurfaceRecord({
       blocked_parked_exclusions: internalRequestDraft.blocked_parked_exclusions || [],
       james_action_line_count: internalRequestDraft.james_action_line_count,
       no_effects: internalRequestDraft.no_effects || null,
+    } : null,
+    internal_handoff_preview: internalHandoffPreview ? {
+      schema: internalHandoffPreview.schema,
+      decision: internalHandoffPreview.decision,
+      read_only: internalHandoffPreview.read_only === true,
+      source_evidence: internalHandoffPreview.source_evidence || [],
+      current_lane: internalHandoffPreview.current_lane || null,
+      target_agent: internalHandoffPreview.target_agent || null,
+      draft_body: internalHandoffPreview.draft_body || null,
+      why_this_target: internalHandoffPreview.why_this_target || null,
+      send_command_preview: internalHandoffPreview.send_command_preview || null,
+      dispatch_payload_preview: internalHandoffPreview.dispatch_payload_preview || null,
+      risk_blocked_exclusions: internalHandoffPreview.risk_blocked_exclusions || [],
+      progress: internalHandoffPreview.progress || null,
+      approval_gate: internalHandoffPreview.approval_gate || null,
+      james_action_line_count: internalHandoffPreview.james_action_line_count,
+      no_effects: internalHandoffPreview.no_effects || null,
     } : null,
     reply: reply ? {
       count: 1,
@@ -925,6 +947,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
   });
   let whatNowAnswer = null;
   let internalRequestDraft = null;
+  let internalHandoffPreview = null;
   if (localReply && isMiraLiveWhatNowPrompt(text)) {
     whatNowAnswer = buildMiraLiveWhatNowAnswerV0({
       promptText: text,
@@ -949,6 +972,47 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
           text: whatNowAnswer.answer_text,
           reply_id: `mira-live-what-now:${stableHash(whatNowAnswer).slice(0, 16)}`,
           source: 'mira_live_what_now_answer_v0',
+          model: null,
+        },
+        attachment,
+        modelCallCount: 0,
+        networkCount: 0,
+      };
+    }
+  }
+  if (localReply && modelResult.ok !== true && isMiraLiveInternalHandoffPreviewPrompt(text)) {
+    internalHandoffPreview = buildMiraLiveInternalHandoffPreviewV0({
+      promptText: text,
+      projectRoot,
+      metadata: {
+        sessionId: getPayloadValue(payload, 'sessionId'),
+      },
+      nowMs: Date.parse(generatedAt),
+      approvalApproved: getPayloadValue(payload, 'approvalApproved'),
+      dispatchApproved: getPayloadValue(payload, 'dispatchApproved'),
+    }, {
+      projectRoot,
+      nowMs: Date.parse(generatedAt),
+      currentLaneSnapshot: options.currentLaneSnapshot,
+      commsRows: options.commsRows,
+      commsReader: options.commsReader,
+      evidenceLedgerDbPath: options.evidenceLedgerDbPath,
+      commsLimit: options.commsLimit,
+      progressReport: options.progressReport,
+      progressProofPath: options.progressProofPath,
+      head: options.head,
+      worktreeState: options.worktreeState,
+      approvalApproved: options.approvalApproved,
+      dispatchApproved: options.dispatchApproved,
+      approval: options.approval,
+    });
+    if (internalHandoffPreview.ok === true) {
+      modelResult = {
+        ok: true,
+        reply: {
+          text: internalHandoffPreview.answer_text,
+          reply_id: `mira-live-internal-handoff-preview:${stableHash(internalHandoffPreview).slice(0, 16)}`,
+          source: 'mira_live_internal_handoff_preview_v0',
           model: null,
         },
         attachment,
@@ -1081,6 +1145,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     : reasons;
   const deterministicLocalEvidenceAccepted = accepted && (
     whatNowAnswer?.ok === true
+    || internalHandoffPreview?.ok === true
     || internalRequestDraft?.ok === true
   );
   const memoryCandidateStaging = accepted && !deterministicLocalEvidenceAccepted
@@ -1149,6 +1214,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     autonomySubstrate,
     whatNowAnswer,
     internalRequestDraft,
+    internalHandoffPreview,
   });
   return {
     ui_surface_v0: surface,

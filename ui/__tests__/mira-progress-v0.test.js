@@ -13,6 +13,7 @@ const {
   validateContract,
 } = require('../modules/mira-core/mira-progress-v0');
 const {
+  INTERNAL_HANDOFF_PREVIEW_PROOF_KEY,
   INTERNAL_REQUEST_DRAFT_PROOF_KEY,
   LIVE_WHAT_NOW_PROOF_KEY,
   LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
@@ -90,6 +91,7 @@ function passingProofInputs() {
       'hm-restart-verify': { status: 'PASS', source_ref: 'node ui/scripts/hm-restart-verify.js --no-send --json' },
       [LIVE_WHAT_NOW_PROOF_KEY]: { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-what-now-answer-v0.test.js' },
       [INTERNAL_REQUEST_DRAFT_PROOF_KEY]: { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-internal-request-draft-v0.test.js' },
+      [INTERNAL_HANDOFF_PREVIEW_PROOF_KEY]: { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-internal-handoff-preview-v0.test.js' },
       [LOCAL_TEXT_UI_SURFACE_PROOF_KEY]: { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-local-text-ui-surface.test.js' },
       'mira-runtime-squidrun-context.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-runtime-squidrun-context.test.js' },
       'mira-runtime-bridge-api.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-runtime-bridge-api.test.js' },
@@ -306,7 +308,7 @@ describe('mira progress v0', () => {
     }
   });
 
-  test('default progress proof artifact counts restart plus A1/A2 evidence from clean HEAD', () => {
+  test('default progress proof artifact counts restart plus A1/A2/handoff-preview evidence from clean HEAD', () => {
     const root = seedProject({ stalePresence: true });
     const currentHead = {
       full_sha: 'abcdef1234567890abcdef1234567890abcdef12',
@@ -336,7 +338,7 @@ describe('mira progress v0', () => {
         worktreeState: cleanWorktree(),
       });
 
-      expect(report.computed_total_percent).toBe(65);
+      expect(report.computed_total_percent).toBe(68);
       expect(report.warnings).toEqual(['presence_state_predates_head']);
       expect(report.categories.find((category) => category.id === 'restart_current_scope_continuity')).toEqual(expect.objectContaining({
         computed_percent: 75,
@@ -349,6 +351,10 @@ describe('mira progress v0', () => {
       expect(report.categories.find((category) => category.id === 'mission_control_command_context')).toEqual(expect.objectContaining({
         computed_percent: 100,
         status: 'PASS',
+      }));
+      expect(report.categories.find((category) => category.id === 'team_coordination_arms')).toEqual(expect.objectContaining({
+        computed_percent: 40,
+        status: 'BLOCKED',
       }));
       expect(report.categories.find((category) => category.id === 'tool_app_action_planning')).toEqual(expect.objectContaining({
         computed_percent: 100,
@@ -391,10 +397,14 @@ describe('mira progress v0', () => {
       });
 
       expect(report.warnings).toEqual([]);
-      expect(report.computed_total_percent).toBe(70);
+      expect(report.computed_total_percent).toBe(73);
       expect(report.categories.find((category) => category.id === 'restart_current_scope_continuity')).toEqual(expect.objectContaining({
         computed_percent: 100,
         status: 'PASS',
+      }));
+      expect(report.categories.find((category) => category.id === 'team_coordination_arms')).toEqual(expect.objectContaining({
+        computed_percent: 40,
+        status: 'BLOCKED',
       }));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

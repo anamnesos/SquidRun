@@ -206,6 +206,66 @@ function internalRequestDraftCommsRows() {
   ];
 }
 
+function internalHandoffPreviewCommsRows() {
+  return [
+    {
+      messageId: 'architect-132',
+      sessionId: 'app-session-382',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      direction: 'outbound',
+      status: 'routed',
+      ackStatus: 'routed_unverified_timeout',
+      brokeredAtMs: Date.parse('2026-05-27T05:47:00.000Z'),
+      rawBody: '(ARCHITECT #132): Commit proof checked independently. Official progress is now 70% BLOCKED with no warnings; restart/current-scope is 100 PASS; startup probe carries current lane none + accepted critique + parked/prototype/archive exclusion; blockers remain. No further Builder action pending unless Oracle objects.',
+      metadata: { windowKey: 'main' },
+    },
+    {
+      messageId: 'architect-134',
+      sessionId: 'app-session-382',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      direction: 'outbound',
+      status: 'routed',
+      ackStatus: 'routed_unverified_timeout',
+      brokeredAtMs: Date.parse('2026-05-27T06:02:00.000Z'),
+      rawBody: '(ARCHITECT #134): New current-session task: A2-to-A3 approved internal handoff preview. Objective: let Mira take her evidence-bound internal request draft and produce an explicit approval-ready handoff plan for Builder/Oracle, without dispatching it automatically. Requirements: source from live current evidence/progress 70 at HEAD `87cfdba8`; show target agent, draft body, why this target, exact send command preview or dispatch payload preview, risk/blocked exclusions, and exactly one `JAMES ACTION:` line; no hm-send/runtime POST/external action unless an explicit approval flag/path is present and tested separately; current default must be preview-only with counters 0. This should move Team Coordination Arms toward proof without claiming A3/A4 authority. Return smallest patch/proof or blocker.',
+      metadata: { windowKey: 'main' },
+    },
+  ];
+}
+
+function handoffProgressReport() {
+  return {
+    computed_total_percent: 70,
+    status: 'BLOCKED',
+    warnings: [],
+    source_refs: {
+      head: {
+        short_sha: '87cfdba8',
+        committed_at: '2026-05-27T05:45:00.000Z',
+      },
+      progress_proof_inputs: {
+        source_ref: '.squidrun/runtime/mira-progress-proof-inputs-v0.json',
+        status: 'loaded',
+      },
+    },
+    categories: [
+      {
+        id: 'restart_current_scope_continuity',
+        computed_percent: 100,
+        status: 'PASS',
+      },
+      {
+        id: 'team_coordination_arms',
+        computed_percent: 20,
+        status: 'BLOCKED',
+        blocker_markers: ['a3_a4_blocked: A3/A4 arm authority remains blocked.'],
+      },
+    ],
+  };
+}
+
 function seedTypedRestartContinuity(projectRoot, {
   currentLaneObjective = 'MAIN_TYPED_LANE_SENTINEL: continue typed restart proof',
   presenceAction = 'MAIN_PRESENCE_ACTION_SENTINEL: land private typed continuity context',
@@ -873,6 +933,113 @@ describe('Mira Local Text UI Surface v0', () => {
       expect.objectContaining({
         kind: 'active_current_session_lane',
         source_ref: 'architect#98',
+      }),
+    ]));
+    expect(surface.checked_output_counters.model_call_count).toBe(0);
+    expect(surface.checked_output_counters.network_count).toBe(0);
+    expect(surface.checked_output_counters.external_send_count).toBe(0);
+    expect(surface.checked_output_counters.write_count).toBe(0);
+    expect(surface.boundary).toEqual(expect.objectContaining({
+      no_model: true,
+      no_network: true,
+      no_tools: true,
+      no_actions: true,
+      no_writes: true,
+    }));
+    expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  test('internal handoff preview prompt returns approval-ready plan without model POST or sends', async () => {
+    const projectRoot = seededProject();
+    writeJson(projectRoot, CURRENT_LANE_RELATIVE_PATH, {
+      version: 1,
+      generatedAt: '2026-05-27T05:45:00.000Z',
+      sessionId: 'app-session-382',
+      source: 'comms_journal',
+      status: 'none',
+      activeLane: null,
+    });
+    const fetchImpl = jest.fn();
+
+    const output = await buildMiraLocalTextUiSurface(payload({
+      text: 'A2-to-A3 approved internal handoff preview',
+      now: '2026-05-27T06:05:00.000Z',
+      sessionId: 'app-session-382',
+      startedAt: '2026-05-27T06:04:00.000Z',
+      expiresAt: '2026-05-27T06:20:00.000Z',
+    }), {
+      projectRoot,
+      env: {
+        SQUIDRUN_MIRA_TEXT_MODEL_ENABLED: '1',
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
+      },
+      fetchImpl,
+      commsRows: internalHandoffPreviewCommsRows(),
+      progressReport: handoffProgressReport(),
+    });
+
+    const surface = output.ui_surface_v0;
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(surface.decision).toBe('accepted');
+    expect(surface.reply).toEqual(expect.objectContaining({
+      count: 1,
+      source: 'mira_live_internal_handoff_preview_v0',
+    }));
+    expect(surface.reply.text).toContain('Approved internal handoff preview: approval-ready, not sent.');
+    expect(surface.reply.text).toContain('Progress: 70% BLOCKED at HEAD 87cfdba8.');
+    expect(surface.reply.text).toContain('Target agent: Builder.');
+    expect(surface.reply.text).toContain('Draft body:');
+    expect(surface.reply.text).toContain('(DRAFT TO BUILDER)');
+    expect(surface.reply.text).toContain('Send command preview:');
+    expect(surface.reply.text).toContain('node ui/scripts/hm-send.js builder --stdin');
+    expect(surface.reply.text).toContain('Dispatch payload preview:');
+    expect(surface.reply.text).toContain('Risk/blocked exclusions:');
+    expect(surface.reply.text).toContain('A3/A4 arm authority remains blocked');
+    expect((surface.reply.text.match(/^JAMES ACTION:/gm) || [])).toHaveLength(1);
+    expect(surface.internal_handoff_preview).toEqual(expect.objectContaining({
+      decision: 'preview_ready_no_dispatch',
+      target_agent: 'builder',
+      james_action_line_count: 1,
+      current_lane: expect.objectContaining({
+        source_ref: 'architect#134',
+        objective: expect.stringContaining('A2-to-A3 approved internal handoff preview'),
+      }),
+      progress: expect.objectContaining({
+        percent: 70,
+        status: 'BLOCKED',
+        head_short_sha: '87cfdba8',
+      }),
+      approval_gate: expect.objectContaining({
+        required_before_dispatch: true,
+        flag_present: false,
+        dispatch_enabled: false,
+      }),
+      no_effects: expect.objectContaining({
+        hm_send_count: 0,
+        send_count: 0,
+        runtime_post_count: 0,
+        model_call_count: 0,
+        network_count: 0,
+        write_count: 0,
+        dispatch_count: 0,
+        preview_only: true,
+        no_hm_send: true,
+        no_sends: true,
+        no_runtime_post: true,
+        no_external_action: true,
+        no_model_call: true,
+        no_writes: true,
+      }),
+    }));
+    expect(surface.internal_handoff_preview.draft_body).not.toContain('JAMES ACTION:');
+    expect(surface.internal_handoff_preview.source_evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'active_current_session_lane',
+        source_ref: 'architect#134',
+      }),
+      expect.objectContaining({
+        kind: 'computed_progress',
+        source_ref: 'HEAD:87cfdba8',
       }),
     ]));
     expect(surface.checked_output_counters.model_call_count).toBe(0);

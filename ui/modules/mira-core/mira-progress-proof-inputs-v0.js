@@ -21,6 +21,8 @@ const LIVE_WHAT_NOW_PROOF_KEY = 'mira-live-what-now-answer-v0.test.js';
 const LIVE_WHAT_NOW_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-what-now-answer-v0.test.js --runInBand';
 const INTERNAL_REQUEST_DRAFT_PROOF_KEY = 'mira-live-internal-request-draft-v0.test.js';
 const INTERNAL_REQUEST_DRAFT_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-internal-request-draft-v0.test.js --runInBand';
+const INTERNAL_HANDOFF_PREVIEW_PROOF_KEY = 'mira-live-internal-handoff-preview-v0.test.js';
+const INTERNAL_HANDOFF_PREVIEW_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-internal-handoff-preview-v0.test.js --runInBand';
 const LOCAL_TEXT_UI_SURFACE_PROOF_KEY = 'mira-local-text-ui-surface.test.js';
 const LOCAL_TEXT_UI_SURFACE_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/mira-local-text-ui-surface.test.js --runInBand';
 const DEFAULT_PROGRESS_PROOF_COMMANDS = Object.freeze([
@@ -55,10 +57,16 @@ const DEFAULT_PROGRESS_PROOF_COMMANDS = Object.freeze([
     fail_reason: 'A2 internal-request draft acceptance harness failed',
   }),
   Object.freeze({
+    proof_key: INTERNAL_HANDOFF_PREVIEW_PROOF_KEY,
+    command: INTERNAL_HANDOFF_PREVIEW_TEST_COMMAND,
+    pass_reason: 'A2-to-A3 internal handoff preview harness passed',
+    fail_reason: 'A2-to-A3 internal handoff preview harness failed',
+  }),
+  Object.freeze({
     proof_key: LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
     command: LOCAL_TEXT_UI_SURFACE_TEST_COMMAND,
-    pass_reason: 'local text surface A1/A2 acceptance harness passed',
-    fail_reason: 'local text surface A1/A2 acceptance harness failed',
+    pass_reason: 'local text surface A1/A2/handoff-preview acceptance harness passed',
+    fail_reason: 'local text surface A1/A2/handoff-preview acceptance harness failed',
   }),
 ]);
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -565,6 +573,8 @@ module.exports = {
   DEFAULT_PROGRESS_PROOF_COMMANDS,
   DEFAULT_PROGRESS_PROOF_RELATIVE_PATH,
   DEFAULT_TIMEOUT_MS,
+  INTERNAL_HANDOFF_PREVIEW_PROOF_KEY,
+  INTERNAL_HANDOFF_PREVIEW_TEST_COMMAND,
   INTERNAL_REQUEST_DRAFT_PROOF_KEY,
   INTERNAL_REQUEST_DRAFT_TEST_COMMAND,
   LIVE_WHAT_NOW_PROOF_KEY,

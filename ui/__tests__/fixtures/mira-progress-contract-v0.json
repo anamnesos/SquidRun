@@ -171,7 +171,7 @@
           "id": "internal_bridge_tests",
           "kind": "proof_input",
           "points": 35,
-          "proof_key": "mira-runtime-bridge-api.test.js"
+          "proof_key": "mira-live-internal-handoff-preview-v0.test.js"
         },
         {
           "id": "arm_challenge_acceptance_tests",
