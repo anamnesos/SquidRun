@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="styles/layout.css">
   <link rel="stylesheet" href="styles/panes.css">
   <link rel="stylesheet" href="styles/state-bar.css">
+  <link rel="stylesheet" href="styles/project-rooms.css">
   <link rel="stylesheet" href="styles/settings-panel.css">
   <link rel="stylesheet" href="styles/tabs.css">
   <link rel="stylesheet" href="styles/tabs/comms-console.css">
@@ -417,6 +418,15 @@
       <span class="cost-indicator" id="costIndicator" title="Estimated session cost"></span>
     </div>
   </div>
+
+  <section class="project-rooms" id="projectRooms" data-selected-room="main" aria-label="Project rooms">
+    <div class="project-room-switcher" role="tablist" aria-label="Rooms">
+      <button type="button" class="project-room-tab active" data-project-room-tab="main" role="tab" aria-selected="true" aria-controls="projectRoomOverview">Main</button>
+      <button type="button" class="project-room-tab" data-project-room-tab="trustquote" role="tab" aria-selected="false" aria-controls="projectRoomOverview" tabindex="-1">TrustQuote</button>
+      <button type="button" class="project-room-tab" data-project-room-tab="mira-build" role="tab" aria-selected="false" aria-controls="projectRoomOverview" tabindex="-1">Mira Build</button>
+    </div>
+    <div class="project-room-overview" id="projectRoomOverview" data-room-id="main" aria-live="polite"></div>
+  </section>
 
   <div class="main-content">
     <div class="terminals-section" id="terminalsSection">
