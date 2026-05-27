@@ -132,6 +132,7 @@ function disableProjectRoomsDom(documentRef, reason = SIDE_PROFILE_DISABLED_REAS
     root.hidden = true;
     root.dataset.disabledReason = reason;
     root.setAttribute('aria-hidden', 'true');
+    root.innerHTML = '';
   }
 
   for (const tab of tabs) {
@@ -226,6 +227,40 @@ function buildRoomCardHtml(room, options = {}) {
   ].join('');
 }
 
+function buildRoomTabHtml(room, selectedRoomId = MAIN_ROOM_ID) {
+  const active = normalizeRoomId(room.id) === normalizeRoomId(selectedRoomId);
+  return [
+    '<button',
+    ' type="button"',
+    ` class="project-room-tab${active ? ' active' : ''}"`,
+    ` data-project-room-tab="${escapeHtml(room.id)}"`,
+    ' role="tab"',
+    ` aria-selected="${active ? 'true' : 'false'}"`,
+    ' aria-controls="projectRoomOverview"',
+    active ? '' : ' tabindex="-1"',
+    `>${escapeHtml(room.label)}</button>`,
+  ].join('');
+}
+
+function buildProjectRoomsShellHtml(selectedRoomId = MAIN_ROOM_ID) {
+  return [
+    '<div class="project-room-switcher" role="tablist" aria-label="Rooms">',
+    PROJECT_ROOMS.map((room) => buildRoomTabHtml(room, selectedRoomId)).join(''),
+    '</div>',
+    `<div class="project-room-overview" id="projectRoomOverview" data-room-id="${escapeHtml(normalizeRoomId(selectedRoomId))}" aria-live="polite"></div>`,
+  ].join('');
+}
+
+function ensureProjectRoomsShell(documentRef, selectedRoomId = MAIN_ROOM_ID) {
+  const root = documentRef.getElementById('projectRooms');
+  if (!root) return false;
+  const overview = documentRef.getElementById('projectRoomOverview');
+  const tabs = Array.from(documentRef.querySelectorAll('[data-project-room-tab]'));
+  if (overview && tabs.length > 0) return true;
+  root.innerHTML = buildProjectRoomsShellHtml(selectedRoomId);
+  return true;
+}
+
 function buildRoomOverviewHtml(roomId = MAIN_ROOM_ID) {
   const selectedRoom = getProjectRoom(roomId);
   const selectedAuthority = getRoomAuthority(selectedRoom.id);
@@ -306,6 +341,7 @@ function initProjectRooms(options = {}) {
   }
 
   let selectedRoomId = normalizeRoomId(options.initialRoomId || root.dataset.selectedRoom || MAIN_ROOM_ID);
+  ensureProjectRoomsShell(documentRef, selectedRoomId);
   const cleanup = [];
   const tabs = Array.from(documentRef.querySelectorAll('[data-project-room-tab]'));
 
@@ -349,6 +385,7 @@ module.exports = {
   normalizeRoomId,
   resolveMainLaneAuthority,
   _internals: {
+    buildProjectRoomsShellHtml,
     getProjectRoomsWindowContext,
     isMainProjectRoomContext,
   },
