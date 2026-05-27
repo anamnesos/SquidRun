@@ -3,6 +3,7 @@
 const fs = require('fs');
 
 const ROOM_ENVELOPE_VERSION = 'squidrun.room-envelope.v0';
+const WORK_ROOM_CONTRACT_VERSION = 'squidrun.work-room-contract.v0';
 const MAIN_ROOM_ID = 'main';
 const TRUSTQUOTE_ROOM_ID = 'trustquote';
 const TRUSTQUOTE_PROJECT_PATH = 'D:/projects/TrustQuote';
@@ -11,6 +12,9 @@ const DEFAULT_SQUIDRUN_ROOT = 'D:/projects/squidrun';
 const TRUSTED_INTERNAL_TARGETS = new Set(['architect', 'builder', 'oracle']);
 const TRUSTQUOTE_ROOM_VISIBILITIES = new Set(['room_internal', 'cross_room_summary']);
 const TRUSTQUOTE_STARTUP_SOURCE_FILES = Object.freeze(['AGENTS.md', 'CLAUDE.md', 'ROLES.md']);
+const TRUSTQUOTE_REQUIRED_WORK_ROOM_ROLES = Object.freeze(['builder', 'oracle']);
+const REAL_ROOM_ROUTE_STATUS = 'healthy';
+const REAL_ROOM_ROUTE_SOURCE = 'client_activity';
 
 function toText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -124,6 +128,15 @@ function makeTrustQuoteSessionScopeId(mainSessionScopeId = '') {
   return base.toLowerCase().endsWith(`:${TRUSTQUOTE_ROOM_ID}`)
     ? base
     : `${base}:${TRUSTQUOTE_ROOM_ID}`;
+}
+
+function makeRoomRouteScope(roomId = TRUSTQUOTE_ROOM_ID, sessionScopeId = '') {
+  const normalizedRoomId = normalizeRoomId(roomId);
+  return {
+    profileName: normalizedRoomId,
+    windowKey: normalizedRoomId,
+    sessionScopeId: toText(sessionScopeId, null),
+  };
 }
 
 function defaultPathExists(filePath) {
@@ -338,6 +351,115 @@ function buildTrustQuoteLaunchReadiness(options = {}) {
   };
 }
 
+function normalizeRouteHealth(role, value = {}) {
+  const source = asObject(value);
+  const normalizedRole = normalizeInternalRole(source.role || role);
+  const healthy = source.healthy === true
+    && toText(source.status, '') === REAL_ROOM_ROUTE_STATUS
+    && toText(source.source, '') === REAL_ROOM_ROUTE_SOURCE;
+  return {
+    role: normalizedRole || role,
+    healthy,
+    status: toText(source.status, source.healthy === true ? 'unknown' : 'missing'),
+    source: toText(source.source, null),
+    lastSeen: source.lastSeen ?? null,
+    ageMs: Number.isFinite(Number(source.ageMs)) ? Number(source.ageMs) : null,
+    routeScope: asObject(source.routeScope || source.targetScope),
+  };
+}
+
+function resolveRouteHealth(role, routeScope, options = {}) {
+  if (typeof options.getRoutingHealth === 'function') {
+    return normalizeRouteHealth(role, options.getRoutingHealth(
+      role,
+      options.staleAfterMs,
+      options.now,
+      routeScope,
+      asObject(options.routingHealthOptions)
+    ));
+  }
+  const routeHealth = asObject(options.routeHealth);
+  return normalizeRouteHealth(role, routeHealth[role]);
+}
+
+function routeScopeMatchesExpected(routeScope = {}, expected = {}) {
+  const source = asObject(routeScope);
+  return toText(source.profileName, '') === expected.profileName
+    && toText(source.windowKey, '') === expected.windowKey
+    && toText(source.sessionScopeId, null) === expected.sessionScopeId;
+}
+
+function buildTrustQuoteWorkRoomContract(options = {}) {
+  const projectPath = normalizePathForMetadata(options.projectPath || TRUSTQUOTE_PROJECT_PATH);
+  const mainSessionScopeId = toText(options.mainSessionScopeId || options.sessionScopeId || options.session_id, 'app-session-preview');
+  const sessionScopeId = makeTrustQuoteSessionScopeId(mainSessionScopeId);
+  const routeScope = makeRoomRouteScope(TRUSTQUOTE_ROOM_ID, sessionScopeId);
+  const readiness = buildTrustQuoteLaunchReadiness({
+    ...options,
+    projectPath,
+    mainSessionScopeId,
+  });
+  const requiredRoles = (Array.isArray(options.requiredRoles) ? options.requiredRoles : TRUSTQUOTE_REQUIRED_WORK_ROOM_ROLES)
+    .map(normalizeInternalRole)
+    .filter((role) => role && role !== 'architect');
+  const uniqueRequiredRoles = Array.from(new Set(requiredRoles));
+  const routeChecks = uniqueRequiredRoles.map((role) => resolveRouteHealth(role, routeScope, options));
+  const blockers = [];
+
+  if (readiness.env.status !== 'configured') {
+    blockers.push(`env_${readiness.env.status}`);
+  }
+  for (const sourceFile of readiness.sourceFiles) {
+    if (sourceFile.present !== true) {
+      blockers.push(`missing_startup_source:${sourceFile.name}`);
+    }
+  }
+  if (readiness.link.status !== 'current') {
+    blockers.push('profile_link_not_current');
+  }
+  if (uniqueRequiredRoles.length === 0) {
+    blockers.push('required_room_agent_roles_missing');
+  }
+  for (const route of routeChecks) {
+    if (!route.healthy) {
+      blockers.push(`route_unhealthy:${route.role}:${route.status}`);
+      continue;
+    }
+    if (!routeScopeMatchesExpected(route.routeScope, routeScope)) {
+      blockers.push(`route_scope_mismatch:${route.role}`);
+    }
+  }
+
+  const proven = blockers.length === 0;
+  return {
+    version: WORK_ROOM_CONTRACT_VERSION,
+    roomId: TRUSTQUOTE_ROOM_ID,
+    label: 'TrustQuote',
+    status: proven ? 'proven' : 'blocked',
+    canRenderTopTab: proven,
+    canRouteTask: proven,
+    project: {
+      name: 'TrustQuote',
+      path: projectPath,
+    },
+    routeContract: {
+      ownerRoomId: TRUSTQUOTE_ROOM_ID,
+      routeScope,
+      requiredRoles: uniqueRequiredRoles,
+      routeChecks,
+      allowedTargets: proven ? uniqueRequiredRoles : [],
+    },
+    antiPurgatory: {
+      continuitySource: readiness.link.path,
+      currentTaskSource: 'comms_journal_room_scope_required',
+      manualUiInspectionRequired: false,
+      unprovenRoomRenders: false,
+    },
+    readiness,
+    blockers,
+  };
+}
+
 function normalizeTrustQuoteRoomEnvelope(rowOrMetadata = {}) {
   const metadata = extractMetadata(rowOrMetadata);
   const room = extractRoomMetadata(metadata);
@@ -520,13 +642,16 @@ module.exports = {
   ROOM_ENVELOPE_VERSION,
   TRUSTQUOTE_PROJECT_PATH,
   TRUSTQUOTE_REQUIRED_PROJECT_ROOT_ENV,
+  WORK_ROOM_CONTRACT_VERSION,
   TRUSTQUOTE_ROOM_ID,
   buildTrustQuoteLaunchReadiness,
   buildTrustQuoteReadiness,
   buildTrustQuoteReadinessCard,
   buildTrustQuoteRoomEnvelope,
+  buildTrustQuoteWorkRoomContract,
   canUseCommsRowAsMainLaneAuthority,
   hashRoomBody,
+  makeRoomRouteScope,
   normalizeTrustQuoteRoomCommsRow,
   normalizeTrustQuoteRoomEnvelope,
   queryTrustQuoteRoomRows,
