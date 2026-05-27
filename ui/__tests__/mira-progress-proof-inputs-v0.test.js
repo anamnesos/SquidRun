@@ -6,6 +6,7 @@ const path = require('path');
 
 const {
   DEFAULT_PROGRESS_PROOF_COMMANDS,
+  INTERNAL_HANDOFF_PREVIEW_PROOF_KEY,
   INTERNAL_REQUEST_DRAFT_PROOF_KEY,
   LIVE_WHAT_NOW_PROOF_KEY,
   LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
@@ -126,7 +127,7 @@ describe('mira progress proof inputs v0', () => {
     }
   });
 
-  test('default writer records current A0, A1, and A2 proof keys with HEAD metadata', () => {
+  test('default writer records current A0, A1, A2, and handoff-preview proof keys with HEAD metadata', () => {
     const root = makeRoot();
     const commands = [];
     try {
@@ -155,6 +156,7 @@ describe('mira progress proof inputs v0', () => {
         RESTART_VERIFIER_PROOF_KEY,
         LIVE_WHAT_NOW_PROOF_KEY,
         INTERNAL_REQUEST_DRAFT_PROOF_KEY,
+        INTERNAL_HANDOFF_PREVIEW_PROOF_KEY,
         LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
       ]);
       expect(artifact.proofs[STARTUP_ACCOUNTING_PROOF_KEY]).toEqual(expect.objectContaining({
@@ -174,9 +176,13 @@ describe('mira progress proof inputs v0', () => {
         status: 'PASS',
         reason: 'A2 internal-request draft acceptance harness passed',
       }));
+      expect(artifact.proofs[INTERNAL_HANDOFF_PREVIEW_PROOF_KEY]).toEqual(expect.objectContaining({
+        status: 'PASS',
+        reason: 'A2-to-A3 internal handoff preview harness passed',
+      }));
       expect(artifact.proofs[LOCAL_TEXT_UI_SURFACE_PROOF_KEY]).toEqual(expect.objectContaining({
         status: 'PASS',
-        reason: 'local text surface A1/A2 acceptance harness passed',
+        reason: 'local text surface A1/A2/handoff-preview acceptance harness passed',
       }));
 
       const read = readDefaultProgressProofInputs({
@@ -188,6 +194,7 @@ describe('mira progress proof inputs v0', () => {
       expect(read.inputSignals.proofs[RESTART_VERIFIER_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
       expect(read.inputSignals.proofs[LIVE_WHAT_NOW_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
       expect(read.inputSignals.proofs[INTERNAL_REQUEST_DRAFT_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
+      expect(read.inputSignals.proofs[INTERNAL_HANDOFF_PREVIEW_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
       expect(read.inputSignals.proofs[LOCAL_TEXT_UI_SURFACE_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
