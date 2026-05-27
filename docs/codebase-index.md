@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1206
+- Total files listed: 1207
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -20,7 +20,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - scripts: 1
 - tools: 3
 - ui/__tests__: 477
-- ui/modules: 368
+- ui/modules: 369
 - ui/other: 29
 - ui/scripts: 172
 - ui/styles: 15
@@ -33,7 +33,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - file: 1
 - jsonl: 1
 - script: 173
-- source: 428
+- source: 429
 - test: 478
 
 ## Files
@@ -78,7 +78,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/mira-north-star-roadmap.md` | doc | 8530 |
 | `docs/mira-pc-embodiment-permission-v0.md` | doc | 10045 |
 | `docs/mira-presence-runtime-acceptance-v0.md` | doc | 16200 |
-| `docs/mira-system-map.md` | doc | 116758 |
+| `docs/mira-system-map.md` | doc | 117896 |
 | `docs/mira-voice-audio-intake-v0.md` | doc | 9440 |
 | `docs/models/base-instructions.md` | doc | 2070 |
 | `docs/models/claude-notes.md` | doc | 1161 |
@@ -556,10 +556,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-operator-context-normalizer.test.js` | test | 2912 |
 | `ui/__tests__/mira-persona-loader-v0.test.js` | test | 13766 |
 | `ui/__tests__/mira-presence-runtime-acceptance.test.js` | test | 37529 |
-| `ui/__tests__/mira-presence-runtime-state-v0.test.js` | test | 36134 |
+| `ui/__tests__/mira-presence-runtime-state-v0.test.js` | test | 42688 |
 | `ui/__tests__/mira-product-foundation.test.js` | test | 2780 |
-| `ui/__tests__/mira-progress-proof-inputs-v0.test.js` | test | 9221 |
-| `ui/__tests__/mira-progress-v0.test.js` | test | 16596 |
+| `ui/__tests__/mira-progress-proof-inputs-v0.test.js` | test | 9986 |
+| `ui/__tests__/mira-progress-v0.test.js` | test | 18163 |
 | `ui/__tests__/mira-read-pane-messages.test.js` | test | 5844 |
 | `ui/__tests__/mira-reviewed-import-plan.test.js` | test | 3657 |
 | `ui/__tests__/mira-runtime-bridge-api.test.js` | test | 337528 |
@@ -642,7 +642,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
 | `ui/__tests__/squidrun-app.test.js` | test | 230661 |
-| `ui/__tests__/startup-ai-briefing.test.js` | test | 36233 |
+| `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 1987 |
 | `ui/__tests__/startup-transcript-context.test.js` | test | 10069 |
 | `ui/__tests__/state-handlers.test.js` | test | 8772 |
@@ -909,8 +909,9 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/mira-core/mira-architect-route-v0.js` | source | 6551 |
 | `ui/modules/mira-core/mira-language-rules-v0.js` | source | 6726 |
 | `ui/modules/mira-core/mira-persona-loader-v0.js` | source | 6809 |
+| `ui/modules/mira-core/mira-presence-current-scope-state-v0.js` | source | 9735 |
 | `ui/modules/mira-core/mira-presence-runtime-state-v0.js` | source | 29187 |
-| `ui/modules/mira-core/mira-progress-proof-inputs-v0.js` | source | 20734 |
+| `ui/modules/mira-core/mira-progress-proof-inputs-v0.js` | source | 21711 |
 | `ui/modules/mira-core/mira-progress-v0.js` | source | 25005 |
 | `ui/modules/mira-core/mutation-patch.js` | source | 58719 |
 | `ui/modules/mira-core/orientation.js` | source | 27473 |
@@ -997,7 +998,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/smart-routing.js` | source | 11068 |
 | `ui/modules/sms-poller.js` | source | 18982 |
 | `ui/modules/sqlite-compat.js` | source | 1389 |
-| `ui/modules/startup-ai-briefing.js` | source | 52408 |
+| `ui/modules/startup-ai-briefing.js` | source | 54303 |
 | `ui/modules/startup-transcript-context.js` | source | 11881 |
 | `ui/modules/status-strip.js` | source | 6375 |
 | `ui/modules/supervisor/index.js` | source | 339 |
@@ -1227,7 +1228,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-mira-emit.js` | script | 8985 |
 | `ui/scripts/hm-mira-lab-prompt.js` | script | 7564 |
 | `ui/scripts/hm-mira-lab-verify.js` | script | 15187 |
-| `ui/scripts/hm-mira-presence-runtime-state-v0.js` | script | 3315 |
+| `ui/scripts/hm-mira-presence-runtime-state-v0.js` | script | 3762 |
 | `ui/scripts/hm-mira-progress.js` | script | 3427 |
 | `ui/scripts/hm-mira-reply.js` | script | 3555 |
 | `ui/scripts/hm-mira-self-direction.js` | script | 25582 |

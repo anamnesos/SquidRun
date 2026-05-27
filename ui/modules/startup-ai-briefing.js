@@ -204,8 +204,6 @@ function readCurrentLaneSnapshot(options = {}) {
   const lanePath = resolveCurrentLanePath(options);
   const snapshot = safeReadJson(lanePath);
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  if (String(snapshot.status || '').toLowerCase() !== 'active') return null;
-  if (!snapshot.activeLane || typeof snapshot.activeLane !== 'object') return null;
   if (!snapshotMatchesStartupScope(snapshot, options)) return null;
   return snapshot;
 }
@@ -367,14 +365,20 @@ function readRecentCurrentScopeComms(options = {}) {
   }
 }
 
-function formatCurrentLaneBlock(snapshot = {}) {
+function formatCurrentLaneBlock(snapshot = {}, options = {}) {
   if (!snapshot || typeof snapshot !== 'object') return '';
-  if (String(snapshot.status || '').toLowerCase() !== 'active') return '';
+  const status = String(snapshot.status || '').toLowerCase();
+  const payload = status === 'active'
+    ? snapshot
+    : {
+      schema: 'squidrun.startup_ai_briefing.current_lane_status.v0',
+      ...summarizeCurrentLaneSourceForAccounting(snapshot, options),
+    };
   return [
     '## Live Current Lane (machine-readable)',
     '',
     '```json',
-    JSON.stringify(snapshot, null, 2),
+    JSON.stringify(payload, null, 2),
     '```',
   ].join('\n');
 }
@@ -437,16 +441,57 @@ function resolvePresenceStateSourceMeta(options = {}) {
   }
 }
 
-function summarizeCurrentLaneSourceForAccounting(snapshot = {}) {
+function summarizeCurrentLaneContinuity(snapshot = {}) {
+  const continuity = snapshot?.continuity && typeof snapshot.continuity === 'object'
+    ? snapshot.continuity
+    : {};
+  return {
+    next_action: normalizeInline(continuity.next_action || '', 180) || null,
+    recent_completed_fixes: (Array.isArray(continuity.recent_completed_fixes)
+      ? continuity.recent_completed_fixes
+      : []
+    ).slice(0, 4).map((item) => ({
+      source_ref: normalizeInline(item?.source_ref || '', 80) || null,
+      summary: normalizeInline(item?.summary || '', 220) || null,
+    })),
+    stale_backlog_markers: (Array.isArray(continuity.stale_backlog_markers)
+      ? continuity.stale_backlog_markers
+      : []
+    ).slice(0, 4).map((item) => normalizeInline(item, 220)).filter(Boolean),
+  };
+}
+
+function summarizeCurrentLaneSourceForAccounting(snapshot = {}, options = {}) {
   if (!snapshot || typeof snapshot !== 'object') return null;
-  if (String(snapshot.status || '').toLowerCase() !== 'active') return null;
+  const status = String(snapshot.status || '').toLowerCase() || 'unknown';
+  const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
+  const lanePath = resolveCurrentLanePath(options);
+  const artifactSourceRef = normalizeRelativePathForBriefing(path.relative(projectRoot, lanePath))
+    || normalizeRelativePathForBriefing(path.join('.squidrun', 'handoffs', 'current-lane.json'));
+  const base = {
+    status,
+    decision: status === 'active' ? 'active_current_lane_loaded' : 'no_active_current_lane',
+    artifact_source_ref: artifactSourceRef,
+    generated_at: snapshot.generatedAt || snapshot.generated_at || null,
+    session_id: snapshot.sessionId || snapshot.session_id || null,
+    active_lane_present: false,
+    source_ref: null,
+    source_message_id: null,
+    source_timestamp_iso: null,
+    objective: null,
+    continuity: summarizeCurrentLaneContinuity(snapshot),
+  };
+  if (status !== 'active') return base;
   const lane = snapshot.activeLane && typeof snapshot.activeLane === 'object'
     ? snapshot.activeLane
     : null;
-  if (!lane) return null;
+  if (!lane) return base;
   const timestampMs = Number(lane.sourceTimestampMs);
   return {
+    ...base,
     status: String(lane.status || snapshot.status || 'active'),
+    decision: 'active_current_lane_loaded',
+    active_lane_present: true,
     source_ref: lane.sourceRef || null,
     source_message_id: lane.sourceMessageId || null,
     source_timestamp_iso: Number.isFinite(timestampMs) && timestampMs > 0 ? toIso(timestampMs) : null,
@@ -537,7 +582,7 @@ function buildMiraPresenceRestartAccountingPayload(context = {}, currentLaneSnap
       interruption_marker: context?.interruption_marker || null,
     },
     computed_progress: buildMiraComputedProgressForStartup(options),
-    current_lane_source: summarizeCurrentLaneSourceForAccounting(currentLaneSnapshot),
+    current_lane_source: summarizeCurrentLaneSourceForAccounting(currentLaneSnapshot, options),
   };
 }
 
@@ -600,7 +645,7 @@ function readStartupBriefingForInjection(options = {}) {
       options
     )
     : '';
-  const currentLaneBlock = formatCurrentLaneBlock(currentLaneSnapshot);
+  const currentLaneBlock = formatCurrentLaneBlock(currentLaneSnapshot, options);
   const recentCommsBlock = formatRecentCommsWindow(readRecentCurrentScopeComms(options), options);
   const miraLabBootstrapBlock = isMainProfile(startupScopeKey)
     ? readMiraLabVerifyBootstrapStaleBlock(options)
@@ -1407,6 +1452,7 @@ module.exports = {
     resolveStartupScopeKey,
     rowMatchesStartupScope,
     snapshotMatchesStartupScope,
+    summarizeCurrentLaneSourceForAccounting,
     formatCurrentLaneBlock,
     formatRecentCommsWindow,
     resolveCurrentSessionScopeId,

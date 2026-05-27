@@ -425,6 +425,135 @@ describe('startup-ai-briefing', () => {
     }
   });
 
+  test('restart accounting reports closed current lane as none without reviving parked proof text', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-mira-none-lane-'));
+    const outputPath = path.join(tempRoot, '.squidrun', 'handoffs', 'ai-briefing.md');
+    const statusPath = path.join(tempRoot, '.squidrun', 'runtime', 'startup-briefing-status.json');
+    const currentLanePath = path.join(tempRoot, '.squidrun', 'handoffs', 'current-lane.json');
+
+    try {
+      fs.mkdirSync(path.join(tempRoot, '.squidrun', 'handoffs'), { recursive: true });
+      fs.mkdirSync(path.join(tempRoot, '.squidrun', 'runtime'), { recursive: true });
+      fs.mkdirSync(path.join(tempRoot, '.squidrun', 'state'), { recursive: true });
+      fs.mkdirSync(path.join(tempRoot, 'ui', '__tests__', 'fixtures'), { recursive: true });
+      fs.writeFileSync(outputPath, '# AI Startup Briefing\n\n- Stale prose should be omitted.\n');
+      fs.writeFileSync(statusPath, JSON.stringify({
+        ok: false,
+        generatedAt: '2026-05-27T05:20:00.000Z',
+        error: 'ANTHROPIC_API_KEY is not set',
+      }));
+      fs.writeFileSync(
+        path.join(tempRoot, '.squidrun', 'state', 'mira-presence-runtime-state.json'),
+        JSON.stringify({
+          schema: 'squidrun.mira_core.presence_runtime_state.v0',
+          version: 1,
+          generated_at: '2026-05-27T05:30:00.000Z',
+          surface: 'backstage_internal_only',
+          active_mira_presence_lane: 'mira_presence_runtime_acceptance_v0',
+          accepted_critique: 'anti-smoothing rule shape, not warmer prompt',
+          next_product_action: 'restart/current-scope continuity: surface current lane status none and computed progress from live evidence.',
+          proof_test_state: 'current-scope proof path refreshed at HEAD 92992031',
+          stale_markers: [
+            'current_lane_status:none:no_active_lane',
+            'parked/prototype/archive scaffolds excluded from current-scope authority',
+          ],
+          blocked_status: {
+            live_voice_blocked: true,
+            always_on_mic_blocked: true,
+            pc_embodiment_blocked: true,
+            a3_a4_blocked: true,
+          },
+          interruption_marker: 'none',
+          agency_level: 'A0',
+          canonical_hash: 'sha256:sentinel-current',
+        })
+      );
+      fs.writeFileSync(
+        path.join(tempRoot, 'ui', '__tests__', 'fixtures', 'mira-presence-runtime-acceptance-v0-contract.json'),
+        `${JSON.stringify({ schema: 'squidrun.mira_presence_runtime_acceptance.v0' }, null, 2)}\n`
+      );
+      fs.writeFileSync(
+        path.join(tempRoot, 'ui', '__tests__', 'fixtures', 'mira-north-star-acceptance-contract.json'),
+        `${JSON.stringify({ schema: 'squidrun.mira.north_star_acceptance_contract.v0' }, null, 2)}\n`
+      );
+      fs.writeFileSync(currentLanePath, JSON.stringify({
+        version: 1,
+        generatedAt: '2026-05-27T05:28:59.062Z',
+        sessionId: 'app-session-382',
+        source: 'comms_journal',
+        status: 'none',
+        activeLane: {
+          sourceRef: 'builder#22',
+          objective: 'PARKED PROTOTYPE SENTINEL must not become current lane authority',
+        },
+        continuity: {
+          stale_backlog_markers: [
+            '86 delivery-uncertain comms row(s) are restart context, not live blockers without current evidence.',
+          ],
+        },
+      }));
+
+      const guarded = readStartupBriefingForInjection({
+        projectRoot: tempRoot,
+        outputPath,
+        statusPath,
+        currentLanePath,
+        nowMs: Date.parse('2026-05-27T05:35:00.000Z'),
+        miraProgressContract: progressContract,
+        miraProgressHead: {
+          short_sha: '92992031',
+          committed_at: '2026-05-27T05:25:00.000Z',
+          subject: 'Refresh Mira progress accounting',
+        },
+        miraProgressInputSignals: {
+          proofs: {
+            'mira-presence-runtime-acceptance.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- mira-presence-runtime-acceptance.test.js' },
+            'startup-ai-briefing.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/startup-ai-briefing.test.js --runInBand' },
+            'hm-restart-verify': { status: 'PASS', source_ref: 'node ui/scripts/hm-restart-verify.js --no-send --json' },
+            'mira-live-what-now-answer-v0.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-what-now-answer-v0.test.js --runInBand' },
+            'mira-live-internal-request-draft-v0.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-internal-request-draft-v0.test.js --runInBand' },
+            'mira-local-text-ui-surface.test.js': { status: 'PASS', source_ref: 'npm --prefix ui test -- --runTestsByPath __tests__/mira-local-text-ui-surface.test.js --runInBand' },
+          },
+        },
+        miraProgressWorktreeState: cleanWorktree(),
+        recentCommsRows: [],
+      });
+
+      expect(guarded).toContain('"schema": "squidrun.startup_ai_briefing.current_lane_status.v0"');
+      expect(guarded).toContain('"status": "none"');
+      expect(guarded).toContain('## Mira Presence Restart Accounting (machine-readable)');
+      expect(guarded).not.toContain('PARKED PROTOTYPE SENTINEL');
+      expect(guarded).not.toContain('Stale prose should be omitted');
+      const payload = extractMiraRestartAccountingPayload(guarded);
+      expect(JSON.stringify(payload.current_lane_source)).not.toContain('builder#22');
+      expect(payload.current_lane_source).toEqual(expect.objectContaining({
+        status: 'none',
+        decision: 'no_active_current_lane',
+        active_lane_present: false,
+        source_ref: null,
+        objective: null,
+      }));
+      expect(payload.current_lane_source.artifact_source_ref).toBe('.squidrun/handoffs/current-lane.json');
+      expect(payload.current_lane_source.continuity.stale_backlog_markers).toEqual([
+        '86 delivery-uncertain comms row(s) are restart context, not live blockers without current evidence.',
+      ]);
+      expect(payload.presence_runtime.stale_markers).toContain('parked/prototype/archive scaffolds excluded from current-scope authority');
+      expect(payload.computed_progress.computed_total_percent).toBe(70);
+      expect(payload.computed_progress.warnings).toEqual([]);
+      expect(payload.computed_progress.categories.find((category) => category.id === 'restart_current_scope_continuity')).toEqual(expect.objectContaining({
+        computed_percent: 100,
+        status: 'PASS',
+      }));
+      expect(payload.computed_progress.categories.find((category) => category.id === 'voice_transport')).toEqual(expect.objectContaining({
+        computed_percent: 0,
+        status: 'BLOCKED',
+      }));
+      expect(payload.computed_progress.source_refs.head.short_sha).toBe('92992031');
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test('recent comms formatting falls through from null brokeredAtMs to sentAtMs', () => {
     const block = _internals.formatRecentCommsWindow([
       {
