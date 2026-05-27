@@ -125,6 +125,15 @@ function installEmptyRoomMountDom() {
   };
 }
 
+function installNoRoomMountDom() {
+  return {
+    documentRef: {
+      getElementById: jest.fn(() => null),
+      querySelectorAll: jest.fn(() => []),
+    },
+  };
+}
+
 describe('project room registry and switcher', () => {
   let projectRooms;
   const oldInternalVisibleCopy = [
@@ -155,7 +164,7 @@ describe('project room registry and switcher', () => {
     ]);
   });
 
-  test('main profile exposes Main, TrustQuote, and Mira Build with Main selected by default', () => {
+  test('explicit debug mount exposes Main, TrustQuote, and Mira Build with Main selected by default', () => {
     const dom = installRoomDom();
 
     const controller = projectRooms.initProjectRooms({
@@ -184,7 +193,7 @@ describe('project room registry and switcher', () => {
     expect(dom.tabs[0].getAttribute('aria-selected')).toBe('true');
   });
 
-  test('main room tab shell is generated lazily after main context is known', () => {
+  test('Project Rooms shell can be generated for a non-default debug/status surface', () => {
     const shellHtml = projectRooms._internals.buildProjectRoomsShellHtml('main');
 
     expect(shellHtml).toContain('data-project-room-tab="main"');
@@ -193,7 +202,7 @@ describe('project room registry and switcher', () => {
     expect(shellHtml).toMatch(/>Main<[\s\S]*>TrustQuote<[\s\S]*>Mira Build</);
   });
 
-  test('main profile initializes tabs from an empty static mount point', () => {
+  test('explicit debug/status mount initializes tabs from an empty mount point', () => {
     const dom = installEmptyRoomMountDom();
 
     const controller = projectRooms.initProjectRooms({
@@ -210,6 +219,20 @@ describe('project room registry and switcher', () => {
     expect(dom.root.innerHTML).toContain('data-project-room-tab="mira-build"');
     expect(dom.tabs).toHaveLength(3);
     expect(dom.overview.innerHTML).toContain('Current work');
+  });
+
+  test('default shell absence leaves Project Rooms module inert', () => {
+    const dom = installNoRoomMountDom();
+
+    const controller = projectRooms.initProjectRooms({
+      documentRef: dom.documentRef,
+      windowContext: { windowKey: 'main', profileName: 'main' },
+    });
+
+    expect(controller.ok).toBe(false);
+    expect(controller.reason).toBe('missing_project_rooms_root');
+    expect(dom.documentRef.getElementById).toHaveBeenCalledWith('projectRooms');
+    expect(dom.documentRef.querySelectorAll).not.toHaveBeenCalled();
   });
 
   test('switching rooms only changes DOM state and calls no side-effect APIs', () => {
@@ -333,25 +356,29 @@ describe('project room registry and switcher', () => {
     });
   });
 
-  test('room shell lives above the main work area while right panel tabs remain tools', () => {
+  test('default live shell has no Project Rooms mount, tabs, cards, or reserved header slot', () => {
     const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-    const roomIndex = html.indexOf('id="projectRooms"');
-    const roomSectionStart = html.lastIndexOf('<section', roomIndex);
-    const roomSectionEnd = html.indexOf('</section>', roomIndex);
-    const roomSectionHtml = html.slice(roomSectionStart, roomSectionEnd);
     const mainContentIndex = html.indexOf('class="main-content"');
+    const stateBarIndex = html.indexOf('class="state-bar"');
     const rightPanelIndex = html.indexOf('id="rightPanel"');
     const panelTabsStart = html.indexOf('class="panel-tabs"');
     const panelTabsEnd = html.indexOf('class="panel-content"');
     const panelTabsHtml = html.slice(panelTabsStart, panelTabsEnd);
+    const preMainHtml = html.slice(0, mainContentIndex);
+    const postStatePreMainHtml = html.slice(stateBarIndex, mainContentIndex);
 
-    expect(roomIndex).toBeGreaterThan(-1);
-    expect(roomIndex).toBeLessThan(mainContentIndex);
-    expect(roomIndex).toBeLessThan(rightPanelIndex);
-    expect(roomSectionHtml).toContain('hidden');
-    expect(roomSectionHtml).toContain('project-rooms-hidden');
-    expect(roomSectionHtml).not.toContain('data-project-room-tab');
-    expect(roomSectionHtml).not.toMatch(/>Main<|>TrustQuote<|>Mira Build</);
+    expect(mainContentIndex).toBeGreaterThan(-1);
+    expect(stateBarIndex).toBeGreaterThan(-1);
+    expect(stateBarIndex).toBeLessThan(mainContentIndex);
+    expect(rightPanelIndex).toBeGreaterThan(mainContentIndex);
+    expect(html).not.toContain('id="projectRooms"');
+    expect(preMainHtml).not.toContain('class="project-rooms');
+    expect(preMainHtml).not.toContain('data-project-room-tab');
+    expect(preMainHtml).not.toContain('project-room-switcher');
+    expect(preMainHtml).not.toContain('project-room-overview');
+    expect(preMainHtml).not.toContain('data-room-card=');
+    expect(preMainHtml).not.toMatch(/>Main<|>TrustQuote<|>Mira Build/);
+    expect(postStatePreMainHtml).not.toContain('<section');
     expect(panelTabsHtml).toContain('data-tab="bridge"');
     expect(panelTabsHtml).toContain('data-tab="comms"');
     expect(panelTabsHtml).toContain('data-tab="screenshots"');
