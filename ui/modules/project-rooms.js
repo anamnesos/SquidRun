@@ -130,6 +130,7 @@ function disableProjectRoomsDom(documentRef, reason = SIDE_PROFILE_DISABLED_REAS
 
   if (root) {
     root.hidden = true;
+    root.classList.add('project-rooms-hidden');
     root.dataset.disabledReason = reason;
     root.setAttribute('aria-hidden', 'true');
     root.innerHTML = '';
@@ -287,6 +288,7 @@ function setActiveRoomDom(documentRef, roomId) {
 
   if (root) {
     root.hidden = false;
+    root.classList.remove('project-rooms-hidden');
     root.dataset.disabledReason = '';
     root.setAttribute('aria-hidden', 'false');
     root.dataset.selectedRoom = selectedRoomId;
