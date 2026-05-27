@@ -5,11 +5,14 @@ const {
   ROOM_ENVELOPE_VERSION,
   TRUSTQUOTE_PROJECT_PATH,
   TRUSTQUOTE_ROOM_ID,
+  WORK_ROOM_CONTRACT_VERSION,
   buildTrustQuoteReadiness,
   buildTrustQuoteReadinessCard,
   buildTrustQuoteLaunchReadiness,
   buildTrustQuoteRoomEnvelope,
+  buildTrustQuoteWorkRoomContract,
   canUseCommsRowAsMainLaneAuthority,
+  makeRoomRouteScope,
   normalizeTrustQuoteRoomEnvelope,
   queryTrustQuoteRoomRows,
 } = require('../modules/project-room-envelope');
@@ -294,10 +297,177 @@ describe('TrustQuote room envelope and readiness', () => {
       status: 'PREVIEW',
       authority: 'preview',
       details: expect.arrayContaining([
-        `Attach target: ${TRUSTQUOTE_PROJECT_PATH}`,
-        'Main lane authority: disabled',
+        `Project: ${TRUSTQUOTE_PROJECT_PATH}`,
+        'Status: preview only',
+        'Review required before launch',
       ]),
     }));
+    expect(card.readiness).toEqual(expect.objectContaining({
+      canAffectMainCurrentLane: false,
+      canLaunchAgents: false,
+    }));
+  });
+
+  test('real TrustQuote work-room contract stays hidden when current evidence is not route-backed', () => {
+    const contract = buildTrustQuoteWorkRoomContract({
+      env: {},
+      mainSessionScopeId: 'app-session-410',
+      pathExists: (filePath) => filePath === TRUSTQUOTE_PROJECT_PATH,
+      readJson: () => ({
+        workspace: TRUSTQUOTE_PROJECT_PATH,
+        session_id: 'old-session',
+      }),
+    });
+
+    expect(contract).toEqual(expect.objectContaining({
+      version: WORK_ROOM_CONTRACT_VERSION,
+      roomId: TRUSTQUOTE_ROOM_ID,
+      status: 'blocked',
+      canRenderTopTab: false,
+      canRouteTask: false,
+    }));
+    expect(contract.routeContract.allowedTargets).toEqual([]);
+    expect(contract.antiPurgatory).toEqual(expect.objectContaining({
+      manualUiInspectionRequired: false,
+      unprovenRoomRenders: false,
+    }));
+    expect(contract.blockers).toEqual(expect.arrayContaining([
+      'env_missing',
+      'missing_startup_source:AGENTS.md',
+      'missing_startup_source:CLAUDE.md',
+      'missing_startup_source:ROLES.md',
+      'profile_link_not_current',
+      'route_unhealthy:builder:missing',
+      'route_unhealthy:oracle:missing',
+    ]));
+  });
+
+  test('real TrustQuote work-room contract can prove a tab only from matching live room routes', () => {
+    const sessionScopeId = 'app-session-410:trustquote';
+    const routeScope = makeRoomRouteScope(TRUSTQUOTE_ROOM_ID, sessionScopeId);
+    const routeHealth = {
+      builder: {
+        healthy: true,
+        status: 'healthy',
+        source: 'client_activity',
+        lastSeen: 1000,
+        ageMs: 5,
+        routeScope,
+      },
+      oracle: {
+        healthy: true,
+        status: 'healthy',
+        source: 'client_activity',
+        lastSeen: 1001,
+        ageMs: 4,
+        routeScope,
+      },
+    };
+
+    const contract = buildTrustQuoteWorkRoomContract({
+      env: { SQUIDRUN_TRUSTQUOTE_PROJECT_ROOT: TRUSTQUOTE_PROJECT_PATH },
+      mainSessionScopeId: 'app-session-410',
+      pathExists: () => true,
+      readJson: () => ({
+        workspace: TRUSTQUOTE_PROJECT_PATH,
+        profile: TRUSTQUOTE_ROOM_ID,
+        session_id: sessionScopeId,
+      }),
+      routeHealth,
+    });
+
+    expect(contract).toEqual(expect.objectContaining({
+      status: 'proven',
+      canRenderTopTab: true,
+      canRouteTask: true,
+      blockers: [],
+    }));
+    expect(contract.routeContract).toEqual(expect.objectContaining({
+      routeScope,
+      requiredRoles: ['builder', 'oracle'],
+      allowedTargets: ['builder', 'oracle'],
+    }));
+    expect(contract.routeContract.routeChecks.every((route) => route.healthy === true)).toBe(true);
+    expect(contract.antiPurgatory).toEqual(expect.objectContaining({
+      continuitySource: 'D:/projects/TrustQuote/.squidrun/link.json',
+      currentTaskSource: 'comms_journal_room_scope_required',
+      manualUiInspectionRequired: false,
+      unprovenRoomRenders: false,
+    }));
+  });
+
+  test('real TrustQuote work-room contract requests routing health for exact room scope', () => {
+    const sessionScopeId = 'app-session-410:trustquote';
+    const routeScope = makeRoomRouteScope(TRUSTQUOTE_ROOM_ID, sessionScopeId);
+    const getRoutingHealth = jest.fn((role, staleAfterMs, now, requestedScope) => ({
+      role,
+      healthy: true,
+      status: 'healthy',
+      source: 'client_activity',
+      lastSeen: now - 10,
+      ageMs: 10,
+      staleThresholdMs: staleAfterMs,
+      routeScope: requestedScope,
+    }));
+
+    const contract = buildTrustQuoteWorkRoomContract({
+      env: { SQUIDRUN_TRUSTQUOTE_PROJECT_ROOT: TRUSTQUOTE_PROJECT_PATH },
+      mainSessionScopeId: 'app-session-410',
+      staleAfterMs: 5000,
+      now: 8000,
+      pathExists: () => true,
+      readJson: () => ({
+        workspace: TRUSTQUOTE_PROJECT_PATH,
+        profile: TRUSTQUOTE_ROOM_ID,
+        session_id: sessionScopeId,
+      }),
+      getRoutingHealth,
+    });
+
+    expect(contract.status).toBe('proven');
+    expect(contract.canRenderTopTab).toBe(true);
+    expect(contract.canRouteTask).toBe(true);
+    expect(getRoutingHealth).toHaveBeenNthCalledWith(1, 'builder', 5000, 8000, routeScope, {});
+    expect(getRoutingHealth).toHaveBeenNthCalledWith(2, 'oracle', 5000, 8000, routeScope, {});
+  });
+
+  test('handler-only or wrong-scope route health cannot prove a real TrustQuote tab', () => {
+    const sessionScopeId = 'app-session-410:trustquote';
+    const routeScope = makeRoomRouteScope(TRUSTQUOTE_ROOM_ID, sessionScopeId);
+
+    const contract = buildTrustQuoteWorkRoomContract({
+      env: { SQUIDRUN_TRUSTQUOTE_PROJECT_ROOT: TRUSTQUOTE_PROJECT_PATH },
+      mainSessionScopeId: 'app-session-410',
+      pathExists: () => true,
+      readJson: () => ({
+        workspace: TRUSTQUOTE_PROJECT_PATH,
+        profile: TRUSTQUOTE_ROOM_ID,
+        session_id: sessionScopeId,
+      }),
+      routeHealth: {
+        builder: {
+          healthy: true,
+          status: 'handler_route_available',
+          source: 'local_message_handler',
+          routeScope,
+        },
+        oracle: {
+          healthy: true,
+          status: 'healthy',
+          source: 'client_activity',
+          routeScope: makeRoomRouteScope(TRUSTQUOTE_ROOM_ID, 'app-session-999:trustquote'),
+        },
+      },
+    });
+
+    expect(contract.status).toBe('blocked');
+    expect(contract.canRenderTopTab).toBe(false);
+    expect(contract.canRouteTask).toBe(false);
+    expect(contract.routeContract.allowedTargets).toEqual([]);
+    expect(contract.blockers).toEqual(expect.arrayContaining([
+      'route_unhealthy:builder:handler_route_available',
+      'route_scope_mismatch:oracle',
+    ]));
   });
 
   test('launch readiness preview shows exact payload and current blockers without launching', () => {
