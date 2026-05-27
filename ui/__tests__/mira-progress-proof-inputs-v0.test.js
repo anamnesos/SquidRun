@@ -5,10 +5,15 @@ const os = require('os');
 const path = require('path');
 
 const {
+  DEFAULT_PROGRESS_PROOF_COMMANDS,
+  INTERNAL_REQUEST_DRAFT_PROOF_KEY,
+  LIVE_WHAT_NOW_PROOF_KEY,
+  LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
   MIRA_PROGRESS_PROOF_INPUTS_SCHEMA,
   VISIBLE_PRESENCE_A0_PROOF_KEY,
   readDefaultProgressProofInputs,
   resolveDefaultProgressProofPath,
+  writeProgressProofArtifact,
   writeVisiblePresenceProofArtifact,
 } = require('../modules/mira-core/mira-progress-proof-inputs-v0');
 
@@ -114,6 +119,62 @@ describe('mira progress proof inputs v0', () => {
         head: expect.objectContaining({ short_sha: 'abcdef12' }),
       }));
       expect(artifact.canonical_hash).toMatch(/^sha256:/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('default writer records current A0, A1, and A2 proof keys with HEAD metadata', () => {
+    const root = makeRoot();
+    const commands = [];
+    try {
+      const result = writeProgressProofArtifact({
+        projectRoot: root,
+        head: head(),
+        worktreeState: cleanWorktree(),
+        nowMs: Date.parse('2026-05-26T22:30:00.000Z'),
+        runner: (command, projectRoot, metadata) => {
+          commands.push({ command, proofKey: metadata.proofKey });
+          return {
+            ok: true,
+            exitCode: 0,
+            stdout: `PASS ${metadata.proofKey}`,
+            stderr: '',
+          };
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(commands.map((item) => item.proofKey)).toEqual(DEFAULT_PROGRESS_PROOF_COMMANDS.map((item) => item.proof_key));
+      const artifact = JSON.parse(fs.readFileSync(result.proofPath, 'utf8'));
+      expect(Object.keys(artifact.proofs)).toEqual([
+        VISIBLE_PRESENCE_A0_PROOF_KEY,
+        LIVE_WHAT_NOW_PROOF_KEY,
+        INTERNAL_REQUEST_DRAFT_PROOF_KEY,
+        LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
+      ]);
+      expect(artifact.proofs[LIVE_WHAT_NOW_PROOF_KEY]).toEqual(expect.objectContaining({
+        status: 'PASS',
+        reason: 'A1 live what-now acceptance harness passed',
+        head: expect.objectContaining({ short_sha: 'abcdef12' }),
+      }));
+      expect(artifact.proofs[INTERNAL_REQUEST_DRAFT_PROOF_KEY]).toEqual(expect.objectContaining({
+        status: 'PASS',
+        reason: 'A2 internal-request draft acceptance harness passed',
+      }));
+      expect(artifact.proofs[LOCAL_TEXT_UI_SURFACE_PROOF_KEY]).toEqual(expect.objectContaining({
+        status: 'PASS',
+        reason: 'local text surface A1/A2 acceptance harness passed',
+      }));
+
+      const read = readDefaultProgressProofInputs({
+        projectRoot: root,
+        head: head(),
+        worktreeState: cleanWorktree(),
+      });
+      expect(read.inputSignals.proofs[LIVE_WHAT_NOW_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
+      expect(read.inputSignals.proofs[INTERNAL_REQUEST_DRAFT_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
+      expect(read.inputSignals.proofs[LOCAL_TEXT_UI_SURFACE_PROOF_KEY]).toEqual(expect.objectContaining({ status: 'PASS' }));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

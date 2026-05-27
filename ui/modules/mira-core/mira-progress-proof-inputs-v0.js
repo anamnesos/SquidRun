@@ -13,6 +13,38 @@ const DEFAULT_PROGRESS_PROOF_RELATIVE_PATH = path.join(
 );
 const VISIBLE_PRESENCE_A0_PROOF_KEY = 'mira-presence-runtime-acceptance.test.js';
 const VISIBLE_PRESENCE_A0_TEST_COMMAND = 'npm --prefix ui test -- mira-presence-runtime-acceptance.test.js --runInBand';
+const LIVE_WHAT_NOW_PROOF_KEY = 'mira-live-what-now-answer-v0.test.js';
+const LIVE_WHAT_NOW_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-what-now-answer-v0.test.js --runInBand';
+const INTERNAL_REQUEST_DRAFT_PROOF_KEY = 'mira-live-internal-request-draft-v0.test.js';
+const INTERNAL_REQUEST_DRAFT_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/mira-live-internal-request-draft-v0.test.js --runInBand';
+const LOCAL_TEXT_UI_SURFACE_PROOF_KEY = 'mira-local-text-ui-surface.test.js';
+const LOCAL_TEXT_UI_SURFACE_TEST_COMMAND = 'npm --prefix ui test -- --runTestsByPath __tests__/mira-local-text-ui-surface.test.js --runInBand';
+const DEFAULT_PROGRESS_PROOF_COMMANDS = Object.freeze([
+  Object.freeze({
+    proof_key: VISIBLE_PRESENCE_A0_PROOF_KEY,
+    command: VISIBLE_PRESENCE_A0_TEST_COMMAND,
+    pass_reason: 'visible Presence/A0 acceptance harness passed',
+    fail_reason: 'visible Presence/A0 acceptance harness failed',
+  }),
+  Object.freeze({
+    proof_key: LIVE_WHAT_NOW_PROOF_KEY,
+    command: LIVE_WHAT_NOW_TEST_COMMAND,
+    pass_reason: 'A1 live what-now acceptance harness passed',
+    fail_reason: 'A1 live what-now acceptance harness failed',
+  }),
+  Object.freeze({
+    proof_key: INTERNAL_REQUEST_DRAFT_PROOF_KEY,
+    command: INTERNAL_REQUEST_DRAFT_TEST_COMMAND,
+    pass_reason: 'A2 internal-request draft acceptance harness passed',
+    fail_reason: 'A2 internal-request draft acceptance harness failed',
+  }),
+  Object.freeze({
+    proof_key: LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
+    command: LOCAL_TEXT_UI_SURFACE_TEST_COMMAND,
+    pass_reason: 'local text surface A1/A2 acceptance harness passed',
+    fail_reason: 'local text surface A1/A2 acceptance harness failed',
+  }),
+]);
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 const PASS_STATUSES = new Set(['pass', 'passed', 'green', 'ok']);
@@ -66,10 +98,6 @@ function resolveProgressProofPath(options = {}) {
     return path.resolve(String(options.progressProofPath || options.proofPath));
   }
   return resolveDefaultProgressProofPath(resolveProjectRoot(options));
-}
-
-function toIsoFromMs(ms) {
-  return Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : null;
 }
 
 function normalizeHeadMetadata(head = {}) {
@@ -296,19 +324,56 @@ function defaultRunCommand(command, projectRoot, timeoutMs = DEFAULT_TIMEOUT_MS)
   }
 }
 
-function buildVisiblePresenceProofArtifact(options = {}) {
+function normalizeProofCommands(commands = []) {
+  return (Array.isArray(commands) ? commands : [])
+    .map((entry) => {
+      const proofKey = String(entry?.proof_key || entry?.proofKey || '').trim();
+      const command = String(entry?.command || '').trim();
+      if (!proofKey || !command) return null;
+      return {
+        proof_key: proofKey,
+        command,
+        pass_reason: entry.pass_reason || entry.passReason || `${proofKey} passed`,
+        fail_reason: entry.fail_reason || entry.failReason || `${proofKey} failed`,
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildProgressProofArtifact(options = {}) {
   const projectRoot = resolveProjectRoot(options);
   const generatedAt = options.generatedAt
     || new Date(Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now()).toISOString();
-  const command = options.command || VISIBLE_PRESENCE_A0_TEST_COMMAND;
   const timeoutMs = Number(options.timeoutMs) || DEFAULT_TIMEOUT_MS;
   const runner = typeof options.runner === 'function'
     ? options.runner
     : (cmd, root) => defaultRunCommand(cmd, root, timeoutMs);
   const currentHead = normalizeHeadMetadata(options.head || readGitHeadMetadata(projectRoot));
   const currentWorktree = normalizeWorktreeState(options.worktreeState || readGitWorktreeState(projectRoot));
-  const run = runner(command, projectRoot, { timeoutMs, proofKey: VISIBLE_PRESENCE_A0_PROOF_KEY });
-  const status = run && run.ok === true ? 'PASS' : 'FAIL';
+  const proofCommands = normalizeProofCommands(options.proofCommands || DEFAULT_PROGRESS_PROOF_COMMANDS);
+  const proofs = {};
+
+  for (const proofCommand of proofCommands) {
+    const run = runner(proofCommand.command, projectRoot, {
+      timeoutMs,
+      proofKey: proofCommand.proof_key,
+    });
+    const status = run && run.ok === true ? 'PASS' : 'FAIL';
+    proofs[proofCommand.proof_key] = {
+      status,
+      generated_at: generatedAt,
+      proof_key: proofCommand.proof_key,
+      command: proofCommand.command,
+      source_ref: proofCommand.command,
+      reason: status === 'PASS' ? proofCommand.pass_reason : proofCommand.fail_reason,
+      head: currentHead,
+      worktree: currentWorktree,
+      exit_code: Number.isInteger(run?.exitCode) ? run.exitCode : (status === 'PASS' ? 0 : 1),
+      stdout_excerpt: summarizeOutput(run?.stdout || ''),
+      stderr_excerpt: summarizeOutput(run?.stderr || ''),
+    };
+  }
+
   const artifact = {
     schema: MIRA_PROGRESS_PROOF_INPUTS_SCHEMA,
     version: 1,
@@ -316,26 +381,36 @@ function buildVisiblePresenceProofArtifact(options = {}) {
     source_kind: 'generated_progress_proof_artifact',
     head: currentHead,
     worktree: currentWorktree,
-    proofs: {
-      [VISIBLE_PRESENCE_A0_PROOF_KEY]: {
-        status,
-        generated_at: generatedAt,
-        proof_key: VISIBLE_PRESENCE_A0_PROOF_KEY,
-        command,
-        source_ref: command,
-        reason: status === 'PASS'
-          ? 'visible Presence/A0 acceptance harness passed'
-          : 'visible Presence/A0 acceptance harness failed',
-        head: currentHead,
-        worktree: currentWorktree,
-        exit_code: Number.isInteger(run?.exitCode) ? run.exitCode : (status === 'PASS' ? 0 : 1),
-        stdout_excerpt: summarizeOutput(run?.stdout || ''),
-        stderr_excerpt: summarizeOutput(run?.stderr || ''),
-      },
-    },
+    proofs,
   };
   artifact.canonical_hash = stableHash(artifact);
   return artifact;
+}
+
+function buildVisiblePresenceProofArtifact(options = {}) {
+  return buildProgressProofArtifact({
+    ...options,
+    proofCommands: [{
+      proof_key: VISIBLE_PRESENCE_A0_PROOF_KEY,
+      command: options.command || VISIBLE_PRESENCE_A0_TEST_COMMAND,
+      pass_reason: 'visible Presence/A0 acceptance harness passed',
+      fail_reason: 'visible Presence/A0 acceptance harness failed',
+    }],
+  });
+}
+
+function writeProgressProofArtifact(options = {}) {
+  const projectRoot = resolveProjectRoot(options);
+  const proofPath = resolveProgressProofPath({ ...options, projectRoot });
+  const artifact = buildProgressProofArtifact({ ...options, projectRoot });
+  fs.mkdirSync(path.dirname(proofPath), { recursive: true });
+  fs.writeFileSync(proofPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+  return {
+    ok: Object.values(artifact.proofs || {}).every((proof) => proof.status === 'PASS'),
+    proofPath,
+    source_ref: normalizeRelative(projectRoot, proofPath),
+    artifact,
+  };
 }
 
 function writeVisiblePresenceProofArtifact(options = {}) {
@@ -471,11 +546,19 @@ function readDefaultProgressProofInputs(options = {}) {
 }
 
 module.exports = {
+  DEFAULT_PROGRESS_PROOF_COMMANDS,
   DEFAULT_PROGRESS_PROOF_RELATIVE_PATH,
   DEFAULT_TIMEOUT_MS,
+  INTERNAL_REQUEST_DRAFT_PROOF_KEY,
+  INTERNAL_REQUEST_DRAFT_TEST_COMMAND,
+  LIVE_WHAT_NOW_PROOF_KEY,
+  LIVE_WHAT_NOW_TEST_COMMAND,
+  LOCAL_TEXT_UI_SURFACE_PROOF_KEY,
+  LOCAL_TEXT_UI_SURFACE_TEST_COMMAND,
   MIRA_PROGRESS_PROOF_INPUTS_SCHEMA,
   VISIBLE_PRESENCE_A0_PROOF_KEY,
   VISIBLE_PRESENCE_A0_TEST_COMMAND,
+  buildProgressProofArtifact,
   buildVisiblePresenceProofArtifact,
   headsMatch,
   normalizeHeadMetadata,
@@ -489,5 +572,6 @@ module.exports = {
   stableHash,
   summarizePorcelainStatus,
   worktreesAllowPass,
+  writeProgressProofArtifact,
   writeVisiblePresenceProofArtifact,
 };
