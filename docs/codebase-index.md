@@ -256,7 +256,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/coord-path-integration.test.js` | test | 2224 |
 | `ui/__tests__/cross-device-bridge-e2e.test.js` | test | 11168 |
 | `ui/__tests__/cross-device-target.test.js` | test | 2891 |
-| `ui/__tests__/daemon-handlers.test.js` | test | 46784 |
+| `ui/__tests__/daemon-handlers.test.js` | test | 46975 |
 | `ui/__tests__/daemon-snapshot.test.js` | test | 2336 |
 | `ui/__tests__/daemon.test.js` | test | 16804 |
 | `ui/__tests__/debug-replay-handlers.test.js` | test | 28695 |
@@ -671,7 +671,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/telegram-poller.test.js` | test | 22776 |
 | `ui/__tests__/template-handlers.test.js` | test | 19093 |
 | `ui/__tests__/terminal-events.test.js` | test | 12686 |
-| `ui/__tests__/terminal.test.js` | test | 71330 |
+| `ui/__tests__/terminal.test.js` | test | 72074 |
 | `ui/__tests__/test-execution-handlers.test.js` | test | 10226 |
 | `ui/__tests__/test-notification-handlers.test.js` | test | 8456 |
 | `ui/__tests__/token-utils.test.js` | test | 5466 |
@@ -691,7 +691,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/voice-broker.test.js` | test | 44789 |
 | `ui/__tests__/watcher-worker.test.js` | test | 3208 |
 | `ui/__tests__/watcher.test.js` | test | 32313 |
-| `ui/__tests__/websocket-delivery.test.js` | test | 61728 |
+| `ui/__tests__/websocket-delivery.test.js` | test | 64404 |
 | `ui/__tests__/websocket-runtime-paths.test.js` | test | 2394 |
 | `ui/__tests__/websocket-runtime-queue.test.js` | test | 10280 |
 | `ui/__tests__/websocket-server.test.js` | test | 6449 |
@@ -733,7 +733,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/contract-promotion.js` | source | 8291 |
 | `ui/modules/contracts.js` | source | 3046 |
 | `ui/modules/cross-device-target.js` | source | 2360 |
-| `ui/modules/daemon-handlers.js` | source | 50063 |
+| `ui/modules/daemon-handlers.js` | source | 50101 |
 | `ui/modules/daemon-snapshot.js` | source | 2031 |
 | `ui/modules/diagnostic-log.js` | source | 1992 |
 | `ui/modules/event-bus.js` | source | 22926 |
@@ -1075,7 +1075,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/voice-broker.js` | source | 50616 |
 | `ui/modules/watcher-worker.js` | source | 4919 |
 | `ui/modules/watcher.js` | source | 51406 |
-| `ui/modules/websocket-runtime.js` | source | 71545 |
+| `ui/modules/websocket-runtime.js` | source | 71750 |
 | `ui/modules/websocket-server.js` | source | 2022 |
 | `ui/modules/window-team-bootstrap.js` | source | 5353 |
 

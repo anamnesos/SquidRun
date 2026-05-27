@@ -1218,6 +1218,88 @@ describe('WebSocket Delivery Audit', () => {
     expect(received.from).toBe('architect');
   });
 
+  test('does not let unverified local-role websocket delivery short-circuit local pane handler', async () => {
+    const receiver = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(receiver);
+    const sender = await connectAndRegister({ port, role: 'oracle', paneId: '3' });
+    activeClients.add(sender);
+
+    onMessageSpy.mockImplementation((payload) => {
+      if (payload?.message?.type === 'send' && /^oracle-(86|91)-pass-/.test(payload.message.messageId || '')) {
+        return {
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: false,
+          status: 'accepted.unverified',
+          mode: 'local-pane-injection',
+        };
+      }
+      return undefined;
+    });
+
+    const cases = [
+      {
+        messageId: 'oracle-86-pass-short',
+        content: '(ORACLE 86): PASS',
+      },
+      {
+        messageId: 'oracle-91-pass-recorded',
+        content: '(ORACLE 91): PASS. Builder packet meets all criteria and should not stop at recorded-only websocket delivery.',
+      },
+    ];
+
+    for (const current of cases) {
+      const ackPromise = waitForMessage(
+        sender,
+        (msg) => msg.type === 'send-ack' && msg.messageId === current.messageId
+      );
+      const delivery = waitForMessage(
+        receiver,
+        (msg) => msg.type === 'message' && msg.content === current.content
+      );
+
+      sender.send(JSON.stringify({
+        type: 'send',
+        target: 'architect',
+        content: current.content,
+        messageId: current.messageId,
+        ackRequired: true,
+      }));
+
+      const [ack, received] = await Promise.all([ackPromise, delivery]);
+      expect(ack.ok).toBe(true);
+      expect(ack.status).toBe('delivered.websocket');
+      expect(ack.verified).toBe(false);
+      expect(ack.userVisible).toBe(false);
+      expect(ack.wsDeliveryCount).toBe(1);
+      expect(received.from).toBe('oracle');
+    }
+
+    const localHandlerCalls = onMessageSpy.mock.calls
+      .map(([payload]) => payload)
+      .filter((payload) => /^oracle-(86|91)-pass-/.test(payload?.message?.messageId || ''));
+    expect(localHandlerCalls).toHaveLength(2);
+    expect(localHandlerCalls).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: 'oracle',
+        paneId: '3',
+        message: expect.objectContaining({
+          target: 'architect',
+          messageId: 'oracle-86-pass-short',
+        }),
+      }),
+      expect.objectContaining({
+        role: 'oracle',
+        paneId: '3',
+        message: expect.objectContaining({
+          target: 'architect',
+          messageId: 'oracle-91-pass-recorded',
+        }),
+      }),
+    ]));
+  });
+
   test('does not count a self-targeted transient websocket client as pane-visible delivery', async () => {
     const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
     activeClients.add(sender);
@@ -1378,8 +1460,8 @@ describe('WebSocket Delivery Audit', () => {
       .filter((msg) => msg?.type === 'comms-metric' && msg?.eventType === 'comms.dedupe.hit');
 
     expect(deliveredCount).toBe(1);
-    // Direct websocket route is now single-path for `send`; no terminal handler duplicate.
-    expect(routedSendCalls).toHaveLength(0);
+    // Canonical local role targets must still reach the app handler; cached resend does not.
+    expect(routedSendCalls).toHaveLength(1);
     expect(dedupeMetricCalls).toHaveLength(1);
     expect(dedupeMetricCalls[0].payload.mode).toBe('cache');
     expect(secondAck.ok).toBe(true);
@@ -1443,8 +1525,8 @@ describe('WebSocket Delivery Audit', () => {
       .filter((msg) => msg?.payload?.mode === 'signature_cache');
 
     expect(deliveredCount).toBe(1);
-    // Direct websocket route is now single-path for `send`; no terminal handler duplicate.
-    expect(routedSendCalls).toHaveLength(0);
+    // Canonical local role targets must still reach the app handler; signature-cached resend does not.
+    expect(routedSendCalls).toHaveLength(1);
     expect(signatureDedupeMetricCalls).toHaveLength(1);
     expect(secondAck.ok).toBe(true);
     expect(secondAck.status).toBe('delivered.websocket');

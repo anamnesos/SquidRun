@@ -1105,6 +1105,13 @@ describe('daemon-handlers.js module', () => {
         jest.advanceTimersByTime(0);
 
         expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'pending');
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '3',
+          'msg',
+          expect.objectContaining({
+            deliveryId: 'delivery-pending-1',
+          })
+        );
         expect(sendBridge).not.toHaveBeenCalledWith(
           'trigger-delivery-outcome',
           expect.objectContaining({ deliveryId: 'delivery-pending-1' })
