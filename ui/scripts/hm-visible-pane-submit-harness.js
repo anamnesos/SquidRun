@@ -395,6 +395,11 @@ function writeHarnessManifest(params, layout, captureResult, submit, beforeSnaps
     capture: {
       provider: 'squidrun-app-websocket-screenshot',
       source: 'electron.capturePage',
+      eventId: captureResult?.captureEvent?.eventId || null,
+      eventSource: captureResult?.captureEvent?.source || null,
+      eventRecordedAt: captureResult?.captureEvent?.recordedAt || null,
+      imageSha256: captureResult?.captureEvent?.imageSha256 || captureResult?.imageSha256 || null,
+      runId: captureResult?.captureEvent?.runId || layout.runId,
       requestedWindowKey: params.windowKey,
       windowKey: params.windowKey,
       requestedPaneId: params.paneId,
@@ -475,10 +480,12 @@ async function runHarness(params, deps = {}) {
     waitMs: params.waitMs,
     pollMs: params.pollMs,
   });
+  const layout = buildRunLayout(params, nowMs);
   const captureRun = deps.captureScreenshot || captureScreenshot;
   const captureResponse = await captureRun({
     windowKey: params.windowKey,
     paneId: params.paneId,
+    runId: layout.runId,
   }, {
     role: params.role,
     port: params.port,
@@ -489,7 +496,6 @@ async function runHarness(params, deps = {}) {
     throw new Error(`screenshot capture failed: ${captureResult?.error || 'unknown_error'}`);
   }
 
-  const layout = buildRunLayout(params, nowMs);
   const manifest = writeHarnessManifest(params, layout, captureResult, submit, before, outputResult, nowMs);
   if (typeof client.disconnect === 'function' && !deps.daemonClient) client.disconnect();
   return {

@@ -15,4 +15,10 @@ describe('hm-screenshot CLI helpers', () => {
       hmScreenshot.buildPayload('capture', new Map([['pane', '2']]))
     ).toEqual({ paneId: '2' });
   });
+
+  test('buildPayload includes visible-proof run id', () => {
+    expect(
+      hmScreenshot.buildPayload('capture', new Map([['window-key', 'trustquote'], ['pane', 'trustquote-builder'], ['run-id', 'run-1']]))
+    ).toEqual({ windowKey: 'trustquote', paneId: 'trustquote-builder', runId: 'run-1' });
+  });
 });

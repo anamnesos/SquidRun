@@ -45,6 +45,7 @@ const {
   isHardBlockMode: isCoworkerLintHardBlock,
 } = require('./hm-send-coworker-output-lint');
 const {
+  collectSurfaceCaptureEventRequests,
   detectSurfaceClaimGuardViolation,
 } = require('./hm-send-surface-claim-guard');
 const {
@@ -636,7 +637,7 @@ function readRecentUserInboundRows() {
   }
 }
 
-function detectSurfaceClaimGuard({ messageId, targetRole } = {}) {
+function detectSurfaceClaimGuard({ messageId, targetRole, captureEventVerifier = null } = {}) {
   return detectSurfaceClaimGuardViolation({
     content: message,
     messageId,
@@ -647,10 +648,11 @@ function detectSurfaceClaimGuard({ messageId, targetRole } = {}) {
     profile: effectiveProfileName,
     recentUserRows: readRecentUserInboundRows(),
     existsSync: fs.existsSync,
+    captureEventVerifier,
   });
 }
 
-function runOutputGuards({ messageId, targetRole } = {}) {
+async function runOutputGuards({ messageId, targetRole } = {}) {
   const guardInput = {
     content: message,
     messageId,
@@ -659,9 +661,13 @@ function runOutputGuards({ messageId, targetRole } = {}) {
     targetRaw: target,
     profile: effectiveProfileName,
   };
+  const normalizedGuardTarget = normalizeRole(targetRole) || normalizeRole(target);
+  const captureEventVerifier = ['user', 'telegram'].includes(normalizedGuardTarget)
+    ? await buildSurfaceCaptureEventVerifierForContent(message)
+    : null;
 
   if (bypassGuard) {
-    const surfaceClaimBypass = detectSurfaceClaimGuard({ messageId, targetRole });
+    const surfaceClaimBypass = detectSurfaceClaimGuard({ messageId, targetRole, captureEventVerifier });
     if (surfaceClaimBypass) {
       appendGuardJsonl('surface-claim-bypasses.jsonl', {
         ...surfaceClaimBypass,
@@ -725,7 +731,7 @@ function runOutputGuards({ messageId, targetRole } = {}) {
     return { ok: true, bypassed: true };
   }
 
-  const surfaceClaimViolation = detectSurfaceClaimGuard({ messageId, targetRole });
+  const surfaceClaimViolation = detectSurfaceClaimGuard({ messageId, targetRole, captureEventVerifier });
   if (surfaceClaimViolation) {
     const logResult = appendGuardJsonl('surface-claim-violations.jsonl', surfaceClaimViolation);
     if (surfaceClaimViolation.violation_class === 'james_repeat_requires_surface_concession') {
@@ -1369,6 +1375,61 @@ function closeSocket(ws) {
       resolve();
     }
   });
+}
+
+async function verifySurfaceCaptureEventViaRuntime(request = {}) {
+  const windowKey = normalizeProfileName(request.windowKey || 'main') || 'main';
+  const profilePort = getProfileWebSocketPort(windowKey);
+  const port = Number.isFinite(profilePort) ? profilePort : PORT;
+  const socketUrl = `ws://127.0.0.1:${port}`;
+  const requestId = `surface-capture-event-verify-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  let ws = null;
+  try {
+    ws = new WebSocket(socketUrl);
+    await waitForMatch(ws, (msg) => msg.type === 'welcome', DEFAULT_CONNECT_TIMEOUT_MS, 'Connection timeout');
+    ws.send(JSON.stringify({
+      type: 'register',
+      role: role || 'cli',
+      profileName: windowKey,
+      windowKey,
+    }));
+    await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
+    ws.send(JSON.stringify({
+      type: 'surface-capture-event-verify',
+      requestId,
+      payload: request,
+    }));
+    const response = await waitForMatch(
+      ws,
+      (msg) => msg.type === 'response' && msg.requestId === requestId,
+      Math.max(ackTimeoutMs, DEFAULT_CONNECT_TIMEOUT_MS),
+      'Surface capture event verification timeout'
+    );
+    if (response?.ok === false) {
+      return { ok: false, reason: response.error || 'surface_capture_event_runtime_rejected' };
+    }
+    return response?.result && typeof response.result === 'object'
+      ? response.result
+      : { ok: false, reason: 'surface_capture_event_runtime_invalid_response' };
+  } catch (err) {
+    return { ok: false, reason: 'surface_capture_event_runtime_unavailable', error: err.message };
+  } finally {
+    if (ws) await closeSocket(ws);
+  }
+}
+
+async function buildSurfaceCaptureEventVerifierForContent(content) {
+  const requests = collectSurfaceCaptureEventRequests(content);
+  if (!requests.length) return () => ({ ok: false, reason: 'surface_capture_event_not_requested' });
+  const results = new Map();
+  for (const request of requests) {
+    const key = `${request.eventId}|${path.resolve(request.screenshotPath || '')}`;
+    results.set(key, await verifySurfaceCaptureEventViaRuntime(request));
+  }
+  return (request = {}) => {
+    const key = `${request.eventId}|${path.resolve(request.screenshotPath || '')}`;
+    return results.get(key) || { ok: false, reason: 'surface_capture_event_not_verified' };
+  };
 }
 
 function normalizeRole(targetInput) {
@@ -2237,7 +2298,7 @@ async function main() {
     ? formatTrustQuoteReverseContent(message, role)
     : message;
   const miraInboxMode = isMiraInboxTarget(targetRole);
-  const guardResult = runOutputGuards({ messageId, targetRole });
+  const guardResult = await runOutputGuards({ messageId, targetRole });
   if (guardResult?.ok !== true) {
     closeCommsJournalStores();
     process.exit(1);

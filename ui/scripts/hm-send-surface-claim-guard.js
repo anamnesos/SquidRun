@@ -8,6 +8,7 @@ const MARKDOWN_IMAGE_TARGET_RE = /\]\(([^)\r\n]+?\.(?:png|jpe?g|webp))\)/gi;
 const DEFAULT_SURFACE_ARTIFACT_MAX_AGE_MS = 45 * 60 * 1000;
 const VISIBLE_PANE_SUBMIT_MANIFEST_SCHEMA = 'squidrun.visible_pane_submit_harness.v0';
 const VISIBLE_PANE_SUBMIT_PRODUCER = 'hm-visible-pane-submit-harness';
+const SURFACE_CAPTURE_EVENT_SOURCE = 'squidrun-electron-main-capture-event';
 const TRUSTQUOTE_PANE_BY_ROLE = Object.freeze({
   builder: 'trustquote-builder',
   oracle: 'trustquote-oracle',
@@ -312,6 +313,10 @@ function validateVisiblePaneSubmitManifest(manifest, imagePath, options = {}) {
   const requestedPaneId = asText(manifest.capture?.requestedPaneId);
   const captureScope = normalizeSurfaceKey(manifest.capture?.scope);
   const returnedPath = asText(manifest.capture?.returnedPath);
+  const captureEventId = asText(manifest.capture?.eventId);
+  const captureEventSource = asText(manifest.capture?.eventSource);
+  const imageSha256 = asText(manifest.capture?.imageSha256);
+  const captureRunId = asText(manifest.capture?.runId || manifest.runId);
   const observedSummary = asText(manifest.observedStateSummary || manifest.summary?.observedStateSummary);
 
   if (!windowKey || isForbiddenSurfaceKey(windowKey)) return { ok: false, reason: 'surface_window_key_forbidden_or_missing' };
@@ -330,6 +335,10 @@ function validateVisiblePaneSubmitManifest(manifest, imagePath, options = {}) {
   if (captureScope !== 'pane') return { ok: false, reason: 'surface_capture_scope_not_pane' };
   if (!returnedPath) return { ok: false, reason: 'surface_capture_returned_path_missing' };
   if (pathHasForbiddenCaptureSegment(returnedPath)) return { ok: false, reason: 'surface_capture_returned_path_forbidden' };
+  if (!captureEventId) return { ok: false, reason: 'surface_capture_event_id_missing' };
+  if (captureEventSource !== SURFACE_CAPTURE_EVENT_SOURCE) return { ok: false, reason: 'surface_capture_event_source_missing_or_untrusted' };
+  if (!/^[a-f0-9]{64}$/i.test(imageSha256)) return { ok: false, reason: 'surface_capture_image_hash_missing' };
+  if (!captureRunId || captureRunId !== asText(manifest.runId)) return { ok: false, reason: 'surface_capture_run_id_mismatch' };
 
   const expectedSurface = inferExpectedSurface(options.content || '');
   if (expectedSurface.windowKey && windowKey !== expectedSurface.windowKey) {
@@ -341,6 +350,28 @@ function validateVisiblePaneSubmitManifest(manifest, imagePath, options = {}) {
     if (expectedPane && paneId !== expectedPane) {
       return { ok: false, reason: 'surface_claim_pane_mismatch', expectedPaneId: expectedPane };
     }
+  }
+
+  if (typeof options.captureEventVerifier !== 'function') {
+    return { ok: false, reason: 'surface_capture_event_verifier_missing' };
+  }
+
+  const captureEventVerification = options.captureEventVerifier({
+    eventId: captureEventId,
+    imageSha256,
+    screenshotPath: resolvedImagePath,
+    returnedPath,
+    windowKey,
+    paneId,
+    scope: captureScope,
+    runId: captureRunId,
+    manifestPath: options.provenancePath || null,
+  });
+  if (!captureEventVerification || captureEventVerification.ok !== true) {
+    return {
+      ok: false,
+      reason: captureEventVerification?.reason || 'surface_capture_event_unverified',
+    };
   }
 
   return { ok: true };
@@ -385,6 +416,8 @@ function validateSurfaceArtifact(imagePath, options = {}) {
     const visiblePaneManifest = validateVisiblePaneSubmitManifest(manifest, resolvedImagePath, {
       content: options.content,
       provenanceDir: path.dirname(candidate),
+      provenancePath: candidate,
+      captureEventVerifier: options.captureEventVerifier,
     });
     if (!visiblePaneManifest.ok) {
       return {
@@ -413,6 +446,43 @@ function validateSurfaceArtifact(imagePath, options = {}) {
   }
 
   return { ok: false, reason: 'surface_artifact_provenance_missing', path: resolvedImagePath };
+}
+
+function collectSurfaceCaptureEventRequests(content, options = {}) {
+  const existsSync = typeof options.existsSync === 'function' ? options.existsSync : fs.existsSync;
+  const requests = [];
+  for (const imagePath of extractImagePaths(content)) {
+    const resolvedImagePath = path.resolve(imagePath);
+    try {
+      if (!existsSync(resolvedImagePath)) continue;
+    } catch (_) {
+      continue;
+    }
+    for (const candidate of surfaceArtifactProvenanceCandidates(resolvedImagePath)) {
+      try {
+        if (!existsSync(candidate)) continue;
+      } catch (_) {
+        continue;
+      }
+      const manifest = safeReadJson(candidate, options);
+      if (!manifest || !jsonContainsPath(manifest, resolvedImagePath, path.dirname(candidate))) continue;
+      if (asText(manifest.schema) !== VISIBLE_PANE_SUBMIT_MANIFEST_SCHEMA) continue;
+      if (asText(manifest.producer) !== VISIBLE_PANE_SUBMIT_PRODUCER) continue;
+      requests.push({
+        eventId: asText(manifest.capture?.eventId),
+        imageSha256: asText(manifest.capture?.imageSha256),
+        screenshotPath: resolvedImagePath,
+        returnedPath: asText(manifest.capture?.returnedPath),
+        windowKey: normalizeSurfaceKey(manifest.capture?.windowKey || manifest.surface?.windowKey || manifest.windowKey),
+        paneId: asText(manifest.capture?.paneId || manifest.surface?.paneId || manifest.paneId),
+        scope: normalizeSurfaceKey(manifest.capture?.scope || 'pane'),
+        runId: asText(manifest.capture?.runId || manifest.runId),
+        manifestPath: candidate,
+      });
+      break;
+    }
+  }
+  return requests;
 }
 
 function hasExistingSurfaceArtifact(content, options = {}) {
@@ -511,6 +581,7 @@ function detectSurfaceClaimGuardViolation(input = {}) {
     nowMs,
     maxAgeMs: input.surfaceArtifactMaxAgeMs,
     content,
+    captureEventVerifier: input.captureEventVerifier,
   });
 
   if (repeated && !isAdmissionOrConcession(content) && !hasArtifact) {
@@ -552,6 +623,7 @@ function detectSurfaceClaimGuardViolation(input = {}) {
 }
 
 module.exports = {
+  collectSurfaceCaptureEventRequests,
   detectSurfaceClaimGuardViolation,
   extractImagePaths,
   findLatestUserRepeat,

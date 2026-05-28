@@ -205,6 +205,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/shared-state.js: Exports init, getState, getChangesSince, getChangelogForPane, ....
 - ui/modules/smart-routing.js: Exports getBestAgent, inferTaskType, scoreAgents.
 - ui/modules/sms-poller.js: Exports start, stop, isRunning, _internals, ....
+- ui/modules/surface-capture-events.js: In-memory Electron-main capture event ledger that binds visible-pane screenshot claims to app-recorded window/pane/path/timestamp/image hashes.
 - ui/modules/window-team-bootstrap.js: Renderer-side window-context bootstrap that tracks `windowKey`, startup source bundle metadata, and secondary-window auto-boot rules.
 - ui/mira-lab.html: Dev-only standalone Mira Lab prototype shell, intentionally separate from the normal SquidRun right panel and dashboard chrome.
 - ui/mira-lab-renderer.js: Mira Lab renderer logic for the prototype conversation/lab surface.
