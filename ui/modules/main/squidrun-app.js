@@ -184,6 +184,11 @@ const PTY_DATA_IPC_BATCH_INTERVAL_MS = Number.parseInt(
   10
 );
 const STARTUP_READY_BUFFER_MAX = 4096;
+function isWorkRoomRouteOwnerTerminal(value) {
+  if (!value || typeof value !== 'object') return false;
+  return value.workRoomRouteOwner === true
+    || Boolean(value.routeOwner && value.roomId);
+}
 const TELEGRAM_REPLY_WINDOW_MS = Number.parseInt(
   process.env.SQUIDRUN_TELEGRAM_REPLY_WINDOW_MS || String(5 * 60 * 1000),
   10
@@ -2398,6 +2403,11 @@ class SquidRunApp {
     }
   }
 
+  filterTerminalsForVisibleShell(terminals = []) {
+    if (!Array.isArray(terminals)) return [];
+    return terminals.filter((term) => !isWorkRoomRouteOwnerTerminal(term));
+  }
+
   pruneVisibleInjectDeliveryCache(now = Date.now()) {
     if (!this.visibleInjectDeliveryCache || this.visibleInjectDeliveryCache.size === 0) return;
     for (const [key, entry] of this.visibleInjectDeliveryCache.entries()) {
@@ -4396,7 +4406,7 @@ class SquidRunApp {
 
     if (this.ctx.daemonClient?.connected) {
       try {
-        const terminals = this.ctx.daemonClient.getTerminals?.() || [];
+        const terminals = this.filterTerminalsForVisibleShell(this.ctx.daemonClient.getTerminals?.() || []);
         window.webContents.send('daemon-connected', { terminals, windowKey });
         return;
       } catch (err) {
@@ -5281,7 +5291,7 @@ class SquidRunApp {
         });
       }
 
-      const terminals = await this.requestDaemonTerminalSnapshot(2500);
+      const terminals = this.filterTerminalsForVisibleShell(await this.requestDaemonTerminalSnapshot(2500));
       for (const paneId of PANE_IDS) {
         daemonClient.resume(String(paneId));
       }
@@ -6712,7 +6722,7 @@ class SquidRunApp {
           } else {
             // Daemon already connected before renderer loaded - resend the event
             log.info('App', 'Resending daemon-connected to renderer (was connected before load)');
-            const terminals = this.ctx.daemonClient.getTerminals?.() || [];
+            const terminals = this.filterTerminalsForVisibleShell(this.ctx.daemonClient.getTerminals?.() || []);
             this.daemonConnectedForStartup = true;
             this.clearDaemonConnectTimeout();
             this.sendToAllWindows('daemon-connected', {
@@ -6871,7 +6881,11 @@ class SquidRunApp {
     // Update IPC handlers with daemon client
     ipcHandlers.setDaemonClient(this.ctx.daemonClient);
 
-    const handlePaneExit = (paneId, code) => {
+    const handlePaneExit = (paneId, code, metadata = null) => {
+      const cachedTerminal = this.ctx.daemonClient?.getTerminal?.(paneId) || null;
+      if (isWorkRoomRouteOwnerTerminal(metadata) || isWorkRoomRouteOwnerTerminal(cachedTerminal)) {
+        return;
+      }
       if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
         return;
       }
@@ -6902,6 +6916,10 @@ class SquidRunApp {
 
     this.attachDaemonClientListener('data', (paneId, data) => {
       this.lastDaemonOutputAtMs = Date.now();
+      const terminalMetadata = this.ctx.daemonClient?.getTerminal?.(paneId) || null;
+      if (isWorkRoomRouteOwnerTerminal(terminalMetadata)) {
+        return;
+      }
       const isBackgroundPane = this.backgroundAgentManager.isBackgroundPaneId(paneId);
       this.backgroundAgentManager.handleDaemonData(paneId, data);
       if (isBackgroundPane) {
@@ -6961,10 +6979,10 @@ class SquidRunApp {
       }
     });
 
-    this.attachDaemonClientListener('exit', (paneId, code) => {
+    this.attachDaemonClientListener('exit', (paneId, code, metadata) => {
       this.startupReadyBuffers.delete(String(paneId));
       this.backgroundAgentManager.handleDaemonExit(paneId, code);
-      handlePaneExit(paneId, code);
+      handlePaneExit(paneId, code, metadata);
     });
 
     this.attachDaemonClientListener('killed', (paneId) => {
@@ -6975,8 +6993,11 @@ class SquidRunApp {
       }
     });
 
-    this.attachDaemonClientListener('spawned', (paneId, pid) => {
+    this.attachDaemonClientListener('spawned', (paneId, pid, dryRun, metadata) => {
       log.info('Daemon', `Terminal spawned for pane ${paneId}, PID: ${pid}`);
+      if (isWorkRoomRouteOwnerTerminal(metadata)) {
+        return;
+      }
       if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
         return;
       }
@@ -6993,6 +7014,9 @@ class SquidRunApp {
 
       if (terminals && terminals.length > 0) {
         for (const term of terminals) {
+          if (isWorkRoomRouteOwnerTerminal(term)) {
+            continue;
+          }
           if (this.backgroundAgentManager.isBackgroundPaneId(term?.paneId)) {
             continue;
           }
@@ -7021,19 +7045,20 @@ class SquidRunApp {
         this.broadcastClaudeState();
       }
       if (terminals && terminals.length > 0) {
-        const deadTerminals = terminals.filter(term => term.alive === false);
+        const deadTerminals = terminals.filter(term => term.alive === false && !isWorkRoomRouteOwnerTerminal(term));
         for (const term of deadTerminals) {
           const paneId = String(term.paneId);
           log.warn('Daemon', `Detected dead terminal for pane ${paneId} on connect - scheduling recovery`);
-          handlePaneExit(paneId, -1);
+          handlePaneExit(paneId, -1, term);
         }
       }
-      this.sendToAllWindows('daemon-connected', { terminals });
-      this.primePaneHostFromTerminalSnapshot(terminals);
+      const visibleTerminals = this.filterTerminalsForVisibleShell(terminals);
+      this.sendToAllWindows('daemon-connected', { terminals: visibleTerminals });
+      this.primePaneHostFromTerminalSnapshot(visibleTerminals);
 
       this.kernelBridge.emitBridgeEvent('bridge.connected', {
         transport: 'daemon-client',
-        terminalCount: terminals?.length || 0,
+        terminalCount: visibleTerminals?.length || 0,
       });
     });
 

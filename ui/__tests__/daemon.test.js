@@ -26,6 +26,8 @@ jest.mock('fs', () => ({
 }));
 
 const net = require('net');
+const { spawn } = require('child_process');
+const { getProfilePipePath } = require('../profile');
 const { DaemonClient, getDaemonClient } = require('../daemon-client');
 
 describe('DaemonClient', () => {
@@ -67,6 +69,31 @@ describe('DaemonClient', () => {
     test('should initialize empty terminals cache', () => {
       const newClient = new DaemonClient();
       expect(newClient.terminals.size).toBe(0);
+    });
+
+    test('can target a profile-scoped terminal daemon pipe', async () => {
+      const profileClient = new DaemonClient({ profileName: 'trustquote' });
+
+      await profileClient.connect();
+
+      expect(net.createConnection).toHaveBeenCalledWith(getProfilePipePath('trustquote', process.platform));
+      profileClient.disconnect();
+    });
+
+    test('spawns profile-scoped daemon with matching profile env', async () => {
+      const profileClient = new DaemonClient({ profileName: 'trustquote' });
+
+      await profileClient._spawnDaemon();
+
+      expect(spawn).toHaveBeenCalledWith(
+        expect.any(String),
+        [expect.stringContaining('terminal-daemon.js')],
+        expect.objectContaining({
+          env: expect.objectContaining({
+            SQUIDRUN_PROFILE: 'trustquote',
+          }),
+        })
+      );
     });
 
     test('should extend EventEmitter', () => {
@@ -384,10 +411,19 @@ describe('DaemonClient', () => {
 
       await client.connect();
 
-      const msg = JSON.stringify({ event: 'exit', paneId: '1', code: 0 }) + '\n';
+      const msg = JSON.stringify({
+        event: 'exit',
+        paneId: '1',
+        code: 0,
+        pid: 9999,
+        createdAt: 123,
+      }) + '\n';
       mockSocket.emit('data', msg);
 
-      expect(exitHandler).toHaveBeenCalledWith('1', 0);
+      expect(exitHandler).toHaveBeenCalledWith('1', 0, expect.objectContaining({
+        pid: 9999,
+        createdAt: 123,
+      }));
     });
 
     test('should emit spawned event and cache terminal', async () => {
@@ -396,12 +432,53 @@ describe('DaemonClient', () => {
 
       await client.connect();
 
-      const msg = JSON.stringify({ event: 'spawned', paneId: '1', pid: 9999 }) + '\n';
+      const msg = JSON.stringify({
+        event: 'spawned',
+        paneId: '1',
+        pid: 9999,
+        mode: 'pty',
+        createdAt: 123,
+        workRoomRouteOwner: true,
+        routeOwner: 'trustquote-work-room-route-owner',
+        roomId: 'trustquote',
+      }) + '\n';
       mockSocket.emit('data', msg);
 
-      expect(spawnedHandler).toHaveBeenCalledWith('1', 9999, false);
+      expect(spawnedHandler).toHaveBeenCalledWith('1', 9999, false, expect.objectContaining({
+        pid: 9999,
+        createdAt: 123,
+      }));
       expect(client.terminals.has('1')).toBe(true);
       expect(client.terminals.get('1').pid).toBe(9999);
+      expect(client.terminals.get('1').createdAt).toBe(123);
+      expect(client.terminals.get('1')).toEqual(expect.objectContaining({
+        workRoomRouteOwner: true,
+        routeOwner: 'trustquote-work-room-route-owner',
+        roomId: 'trustquote',
+      }));
+    });
+
+    test('should not mark a newer cached terminal dead from a stale exit event', async () => {
+      await client.connect();
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'spawned',
+        paneId: '1',
+        pid: 2222,
+        createdAt: 200,
+      })}\n`);
+
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'exit',
+        paneId: '1',
+        code: 0,
+        pid: 1111,
+        createdAt: 100,
+      })}\n`);
+
+      expect(client.terminals.get('1')).toEqual(expect.objectContaining({
+        pid: 2222,
+        alive: true,
+      }));
     });
 
     test('should emit error event', async () => {

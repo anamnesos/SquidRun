@@ -132,7 +132,18 @@ describe('TrustQuote work-room route owner', () => {
     };
     const daemonClient = new EventEmitter();
     daemonClient.connect = jest.fn().mockResolvedValue(true);
-    daemonClient.spawn = jest.fn().mockReturnValue(true);
+    let nextPid = 31000;
+    daemonClient.spawn = jest.fn((paneId) => {
+      const pid = nextPid++;
+      setImmediate(() => daemonClient.emit('spawned', paneId, pid, false, {
+        paneId,
+        pid,
+        dryRun: false,
+        mode: 'pty',
+        createdAt: pid + 1000,
+      }));
+      return true;
+    });
     daemonClient.write = jest.fn().mockReturnValue(true);
     const plan = buildTrustQuoteRouteOwnerPlan({
       mainSessionScopeId: 'app-session-384',
@@ -193,6 +204,135 @@ describe('TrustQuote work-room route owner', () => {
     expect(websocketRuntime.stop).toHaveBeenCalled();
   });
 
+  test('ignores stale daemon exits from replaced terminals before closing a current route client', async () => {
+    const websocketRuntime = {
+      start: jest.fn().mockResolvedValue({}),
+      stop: jest.fn().mockResolvedValue({}),
+    };
+    const daemonClient = new EventEmitter();
+    daemonClient.connect = jest.fn().mockResolvedValue(true);
+    daemonClient.write = jest.fn().mockReturnValue(true);
+    daemonClient.kill = jest.fn().mockReturnValue(true);
+    const spawned = {};
+    let nextPid = 41000;
+    daemonClient.spawn = jest.fn((paneId) => {
+      const pid = nextPid++;
+      const createdAt = pid + 2000;
+      spawned[paneId] = { paneId, pid, createdAt, dryRun: false, mode: 'pty' };
+      setImmediate(() => daemonClient.emit('spawned', paneId, pid, false, spawned[paneId]));
+      return true;
+    });
+    const owner = new TrustQuoteWorkRoomRouteOwner({
+      plan: buildTrustQuoteRouteOwnerPlan({
+        mainSessionScopeId: 'app-session-384',
+        settings: { paneCommands: { 2: 'codex', 3: 'gemini' } },
+      }),
+      websocketRuntime,
+      daemonClient,
+      WebSocketImpl: FakeWebSocket,
+      heartbeatMs: 100000,
+      spawnAckTimeoutMs: 50,
+    });
+
+    await owner.start();
+    const oracleWs = owner.clients.get('oracle');
+    expect(oracleWs).toBeDefined();
+
+    daemonClient.emit('exit', 'trustquote-oracle', 0, {
+      paneId: 'trustquote-oracle',
+      pid: 1,
+      createdAt: 1,
+    });
+
+    expect(owner.clients.get('oracle')).toBe(oracleWs);
+    expect(oracleWs.readyState).toBe(1);
+    expect(owner.ignoredDaemonEvents).toEqual([
+      expect.objectContaining({
+        role: 'oracle',
+        reason: 'stale_terminal_lifecycle_event',
+      }),
+    ]);
+
+    daemonClient.emit('exit', 'trustquote-oracle', 0, {
+      paneId: 'trustquote-oracle',
+      pid: spawned['trustquote-oracle'].pid,
+      createdAt: spawned['trustquote-oracle'].createdAt,
+    });
+
+    expect(owner.clients.has('oracle')).toBe(false);
+    expect(oracleWs.readyState).toBe(3);
+
+    await owner.stop();
+  });
+
+  test('uses daemon list proof to avoid closing current clients on legacy unidentified exit events', async () => {
+    const websocketRuntime = {
+      start: jest.fn().mockResolvedValue({}),
+      stop: jest.fn().mockResolvedValue({}),
+    };
+    const daemonClient = new EventEmitter();
+    daemonClient.connect = jest.fn().mockResolvedValue(true);
+    daemonClient.write = jest.fn().mockReturnValue(true);
+    daemonClient.kill = jest.fn().mockReturnValue(true);
+    let listAlive = true;
+    const spawned = {};
+    let nextPid = 51000;
+    daemonClient.spawn = jest.fn((paneId) => {
+      const pid = nextPid++;
+      const createdAt = pid + 3000;
+      spawned[paneId] = { paneId, pid, createdAt, dryRun: false, mode: 'pty' };
+      setImmediate(() => daemonClient.emit('spawned', paneId, pid, false, spawned[paneId]));
+      return true;
+    });
+    daemonClient.list = jest.fn(() => {
+      setImmediate(() => daemonClient.emit('list', [
+        {
+          ...spawned['trustquote-oracle'],
+          alive: listAlive,
+        },
+      ]));
+      return true;
+    });
+    const owner = new TrustQuoteWorkRoomRouteOwner({
+      plan: buildTrustQuoteRouteOwnerPlan({
+        mainSessionScopeId: 'app-session-384',
+        settings: { paneCommands: { 2: 'codex', 3: 'gemini' } },
+      }),
+      websocketRuntime,
+      daemonClient,
+      WebSocketImpl: FakeWebSocket,
+      heartbeatMs: 100000,
+      spawnAckTimeoutMs: 50,
+    });
+
+    await owner.start();
+    const oracleWs = owner.clients.get('oracle');
+
+    daemonClient.emit('exit', 'trustquote-oracle', 0);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(owner.clients.get('oracle')).toBe(oracleWs);
+    expect(owner.ignoredDaemonEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'oracle',
+          reason: 'unidentified_lifecycle_event_but_current_terminal_alive',
+        }),
+      ])
+    );
+
+    listAlive = false;
+    daemonClient.emit('exit', 'trustquote-oracle', 0);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(owner.clients.has('oracle')).toBe(false);
+    expect(oracleWs.readyState).toBe(3);
+
+    await owner.stop();
+  });
+
   test('supervised start defaults to no live agents and records PID ownership', () => {
     const spawned = [];
     const tempDir = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'trustquote-route-owner-'));
@@ -235,6 +375,9 @@ describe('TrustQuote work-room route owner', () => {
       }));
       expect(result.status.updatedAt).not.toBe('2000-01-01T00:00:00.000Z');
       expect(spawnImpl).toHaveBeenCalledTimes(1);
+      expect(spawned[0].options.env).toEqual(expect.objectContaining({
+        SQUIDRUN_PROFILE: 'trustquote',
+      }));
       expect(spawned[0].args).toEqual(expect.arrayContaining([
         'run',
         '--session',

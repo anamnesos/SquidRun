@@ -13,6 +13,7 @@ const fs = require('fs');
 const { EventEmitter } = require('events');
 const log = require('./modules/logger');
 const { PANE_ROLES, resolveCoordPath, PIPE_PATH } = require('./config');
+const { getProfilePipePath, normalizeProfileName } = require('./profile');
 
 // In packaged builds, __dirname points inside app.asar which can't be spawned.
 // Resolve to the unpacked copy so child_process.spawn works.
@@ -21,8 +22,16 @@ const DAEMON_SCRIPT = path.join(ASAR_UNPACKED_DIR, 'terminal-daemon.js');
 const DAEMON_PID_FILE = resolveCoordPath('runtime/daemon.pid', { forWrite: true });
 
 class DaemonClient extends EventEmitter {
-  constructor() {
+  constructor(options = {}) {
     super();
+    const profileName = options.profileName ? normalizeProfileName(options.profileName) : null;
+    this.pipePath = options.pipePath || (profileName ? getProfilePipePath(profileName, os.platform()) : PIPE_PATH);
+    this.daemonEnv = {
+      ...(options.daemonEnv && typeof options.daemonEnv === 'object' ? options.daemonEnv : {}),
+    };
+    if (profileName && !this.daemonEnv.SQUIDRUN_PROFILE) {
+      this.daemonEnv.SQUIDRUN_PROFILE = profileName;
+    }
     this.client = null;
     this.connected = false;
     this.connectPromise = null;
@@ -92,7 +101,7 @@ class DaemonClient extends EventEmitter {
    */
   _tryConnect() {
     return new Promise((resolve) => {
-      const client = net.createConnection(PIPE_PATH);
+      const client = net.createConnection(this.pipePath);
       let settled = false;
       let timeout = null;
 
@@ -227,9 +236,14 @@ class DaemonClient extends EventEmitter {
           break;
 
         case 'exit':
-          this.emit('exit', msg.paneId, msg.code);
+          this.emit('exit', msg.paneId, msg.code, msg);
           if (this.terminals.has(msg.paneId)) {
-            this.terminals.get(msg.paneId).alive = false;
+            const cached = this.terminals.get(msg.paneId);
+            const eventPid = Number(msg.pid);
+            const cachedPid = Number(cached?.pid);
+            if (!Number.isFinite(eventPid) || !Number.isFinite(cachedPid) || eventPid === cachedPid) {
+              cached.alive = false;
+            }
           }
           break;
 
@@ -239,8 +253,16 @@ class DaemonClient extends EventEmitter {
             pid: msg.pid,
             alive: true,
             dryRun: msg.dryRun || false,
+            mode: msg.mode || 'pty',
+            createdAt: msg.createdAt || null,
+            workRoomRouteOwner: msg.workRoomRouteOwner === true,
+            backgroundAgent: msg.backgroundAgent === true,
+            routeOwner: msg.routeOwner || null,
+            roomId: msg.roomId || null,
+            role: msg.role || null,
+            ownerPaneId: msg.ownerPaneId || null,
           });
-          this.emit('spawned', msg.paneId, msg.pid, msg.dryRun || false);
+          this.emit('spawned', msg.paneId, msg.pid, msg.dryRun || false, msg);
           break;
 
         case 'list':
@@ -257,8 +279,15 @@ class DaemonClient extends EventEmitter {
           break;
 
         case 'killed':
-          this.terminals.delete(msg.paneId);
-          this.emit('killed', msg.paneId);
+          if (this.terminals.has(msg.paneId)) {
+            const cached = this.terminals.get(msg.paneId);
+            const eventPid = Number(msg.pid);
+            const cachedPid = Number(cached?.pid);
+            if (!Number.isFinite(eventPid) || !Number.isFinite(cachedPid) || eventPid === cachedPid) {
+              this.terminals.delete(msg.paneId);
+            }
+          }
+          this.emit('killed', msg.paneId, msg);
           break;
 
         case 'error':
@@ -422,6 +451,10 @@ class DaemonClient extends EventEmitter {
         detached: true,
         stdio: 'ignore', // Don't inherit stdio - daemon runs independently
         cwd: ASAR_UNPACKED_DIR,
+        env: {
+          ...process.env,
+          ...this.daemonEnv,
+        },
       });
 
       // Unref so parent can exit without waiting

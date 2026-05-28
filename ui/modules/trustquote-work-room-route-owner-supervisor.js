@@ -5,7 +5,10 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const { DaemonClient } = require('../daemon-client');
-const { buildTrustQuoteWorkRoomContract } = require('./project-room-envelope');
+const {
+  TRUSTQUOTE_ROOM_ID,
+  buildTrustQuoteWorkRoomContract,
+} = require('./project-room-envelope');
 const {
   ROUTE_OWNER_ID,
   ROUTE_OWNER_VERSION,
@@ -172,6 +175,7 @@ function startTrustQuoteRouteOwner(options = {}) {
     windowsHide: true,
     env: {
       ...process.env,
+      SQUIDRUN_PROFILE: TRUSTQUOTE_ROOM_ID,
       ...(options.env && typeof options.env === 'object' ? options.env : {}),
     },
     stdio: ['ignore', logFd, logFd],
@@ -262,7 +266,7 @@ async function cleanupRouteOwnerTerminals(options = {}, plan = null) {
   }
   const routePlan = plan || buildTrustQuoteRouteOwnerPlan(options);
   const injectedDaemonClient = Boolean(options.daemonClient);
-  const daemonClient = options.daemonClient || new DaemonClient();
+  const daemonClient = options.daemonClient || new DaemonClient({ profileName: TRUSTQUOTE_ROOM_ID });
   try {
     if (typeof daemonClient.connect === 'function') {
       const connected = await daemonClient.connect();
