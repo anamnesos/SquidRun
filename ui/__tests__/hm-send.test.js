@@ -294,6 +294,35 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('blocks user-facing done or visible claims without a surface artifact before send', async () => {
+    const tempProject = createLinkedProject({ squidrunRoot: null });
+    writeAppStatus(tempProject, 'app-session-781');
+    const logPath = path.join(tempProject, '.squidrun', 'runtime', 'surface-claim-violations.jsonl');
+
+    try {
+      const result = await runHmSend(
+        ['telegram', 'Done: the demo invoice is visible in the TrustQuote dashboard.', '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
+        {
+          HM_SEND_PORT: '65534',
+          SQUIDRUN_PROJECT_ROOT: tempProject,
+        },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('BLOCKED: user-facing done/visible claim has no surface artifact');
+      expect(result.stderr).toContain('This blocks the claim, not the work needed to make it true');
+      expect(fs.existsSync(logPath)).toBe(true);
+      const [entry] = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
+      expect(entry).toMatchObject({
+        violation_class: 'surface_done_claim_without_artifact',
+        targetRole: 'telegram',
+      });
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+    }
+  });
+
   test('writes delivery trace events with payload bytes and ACK timing', async () => {
     const tempProject = createLinkedProject();
     const sendAttempts = [];
