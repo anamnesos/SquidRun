@@ -306,6 +306,13 @@ class TrustQuoteWorkRoomRouteOwner {
     for (const role of Array.from(this.clients.keys())) {
       this.closeRouteClient(role);
     }
+    if (this.options.killTerminalsOnStop !== false && typeof this.daemonClient.kill === 'function') {
+      for (const spec of this.plan.roles) {
+        try {
+          this.daemonClient.kill(spec.paneId);
+        } catch (_) {}
+      }
+    }
     if (typeof this.daemonClient.off === 'function') {
       this.daemonClient.off('exit', this.handleDaemonExit);
       this.daemonClient.off('killed', this.handleDaemonExit);

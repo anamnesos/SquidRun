@@ -5,6 +5,13 @@ const {
   TrustQuoteWorkRoomRouteOwner,
   buildTrustQuoteRouteOwnerPlan,
 } = require('../modules/trustquote-work-room-route-owner');
+const {
+  probeTrustQuoteRouteOwner,
+  readRouteOwnerStatus,
+  startTrustQuoteRouteOwner,
+  stopTrustQuoteRouteOwner,
+  writeSupervisorStatus,
+} = require('../modules/trustquote-work-room-route-owner-supervisor');
 
 function parseArgs(argv = []) {
   const options = {
@@ -19,6 +26,23 @@ function parseArgs(argv = []) {
     }
     if (token === '--json') {
       options.json = true;
+      continue;
+    }
+    if (token === '--status-file') {
+      options.statusPath = String(argv[index + 1] || '');
+      index += 1;
+      continue;
+    }
+    if (token.startsWith('--status-file=')) {
+      options.statusPath = token.slice('--status-file='.length);
+      continue;
+    }
+    if (token === '--launch-agents') {
+      options.launchAgents = true;
+      continue;
+    }
+    if (token === '--allow-live-agents') {
+      options.allowLiveAgents = true;
       continue;
     }
     if (token === '--session' || token === '--main-session') {
@@ -56,6 +80,15 @@ function parseArgs(argv = []) {
       options.dryRun = true;
       continue;
     }
+    if (token === '--stale-after-ms') {
+      options.staleAfterMs = Number.parseInt(String(argv[index + 1] || ''), 10);
+      index += 1;
+      continue;
+    }
+    if (token.startsWith('--stale-after-ms=')) {
+      options.staleAfterMs = Number.parseInt(token.slice('--stale-after-ms='.length), 10);
+      continue;
+    }
   }
   return options;
 }
@@ -71,12 +104,62 @@ async function main() {
     return;
   }
 
+  if (options.command === 'status') {
+    printJson(readRouteOwnerStatus(options));
+    return;
+  }
+
+  if (options.command === 'start') {
+    printJson(startTrustQuoteRouteOwner(options));
+    return;
+  }
+
+  if (options.command === 'stop') {
+    printJson(await stopTrustQuoteRouteOwner(options));
+    return;
+  }
+
+  if (options.command === 'probe') {
+    printJson(await probeTrustQuoteRouteOwner(options));
+    return;
+  }
+
   if (options.command !== 'run') {
     throw new Error(`unknown command: ${options.command}`);
   }
 
   const owner = new TrustQuoteWorkRoomRouteOwner(options);
-  const result = await owner.start();
+  let result;
+  try {
+    result = await owner.start();
+  } catch (err) {
+    if (options.statusPath) {
+      writeSupervisorStatus(options, {
+        state: 'failed',
+        running: false,
+        pid: process.pid,
+        pidAlive: false,
+        error: err.message,
+      });
+    }
+    throw err;
+  }
+  if (options.statusPath) {
+    writeSupervisorStatus(options, {
+      state: 'running',
+      running: true,
+      pid: process.pid,
+      pidAlive: true,
+      routeOwnerVersion: result.plan?.version || null,
+      launchAgents: options.launchAgents !== false,
+      dryRun: options.dryRun === true,
+      plan: result.plan,
+      stoppedAt: null,
+      stopReason: null,
+      terminalCleanup: null,
+      error: null,
+    });
+  }
   printJson({
     ok: true,
     command: 'run',
@@ -84,10 +167,30 @@ async function main() {
   });
   process.on('SIGINT', async () => {
     await owner.stop();
+    if (options.statusPath) {
+      writeSupervisorStatus(options, {
+        state: 'stopped',
+        running: false,
+        pid: process.pid,
+        pidAlive: false,
+        stoppedAt: new Date().toISOString(),
+        stopReason: 'SIGINT',
+      });
+    }
     process.exit(0);
   });
   process.on('SIGTERM', async () => {
     await owner.stop();
+    if (options.statusPath) {
+      writeSupervisorStatus(options, {
+        state: 'stopped',
+        running: false,
+        pid: process.pid,
+        pidAlive: false,
+        stoppedAt: new Date().toISOString(),
+        stopReason: 'SIGTERM',
+      });
+    }
     process.exit(0);
   });
 }
