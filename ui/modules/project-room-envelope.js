@@ -21,6 +21,7 @@ const TRUSTQUOTE_GENERATED_STARTUP_SOURCE_FILES = new Set(['AGENTS.md', 'ROLES.m
 const TRUSTQUOTE_WORKSTREAM_VERSION = 'squidrun.work-room-workstream.v0';
 const REAL_ROOM_ROUTE_STATUS = 'healthy';
 const REAL_ROOM_ROUTE_SOURCE = 'client_activity';
+const REAL_ROOM_ROUTE_CLIENT_KIND = 'work_room_route_client';
 
 function toText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -448,6 +449,7 @@ function buildTrustQuoteLaunchReadiness(options = {}) {
 function normalizeRouteHealth(role, value = {}) {
   const source = asObject(value);
   const normalizedRole = normalizeInternalRole(source.role || role);
+  const routeBinding = asObject(source.routeBinding || source.binding);
   const healthy = source.healthy === true
     && toText(source.status, '') === REAL_ROOM_ROUTE_STATUS
     && toText(source.source, '') === REAL_ROOM_ROUTE_SOURCE;
@@ -459,6 +461,23 @@ function normalizeRouteHealth(role, value = {}) {
     lastSeen: source.lastSeen ?? null,
     ageMs: Number.isFinite(Number(source.ageMs)) ? Number(source.ageMs) : null,
     routeScope: asObject(source.routeScope || source.targetScope),
+    clientKind: toText(source.clientKind || routeBinding.clientKind, null),
+    routeBinding: {
+      clientKind: toText(routeBinding.clientKind || source.clientKind, null),
+      routeOwner: toText(routeBinding.routeOwner || routeBinding.owner, null),
+      roomId: normalizeRoomId(routeBinding.roomId || routeBinding.room_id),
+      role: normalizeInternalRole(routeBinding.role || source.role || role),
+      paneId: toText(routeBinding.paneId || routeBinding.pane_id, null),
+      terminalPaneId: toText(routeBinding.terminalPaneId || routeBinding.terminal_pane_id, null),
+      terminalBacked: routeBinding.terminalBacked === true || routeBinding.terminal_backed === true,
+      agentProcessStarted: routeBinding.agentProcessStarted === true || routeBinding.agent_process_started === true,
+      profileName: toText(routeBinding.profileName || routeBinding.profile, null),
+      windowKey: toText(routeBinding.windowKey || routeBinding.window, null),
+      sessionScopeId: toText(routeBinding.sessionScopeId || routeBinding.session_scope_id, null),
+      workspace: normalizePathForMetadata(routeBinding.workspace || routeBinding.projectPath || routeBinding.projectRoot),
+      startupBundlePath: normalizePathForMetadata(routeBinding.startupBundlePath || routeBinding.startup_bundle_path),
+      workstreamPath: normalizePathForMetadata(routeBinding.workstreamPath || routeBinding.workstream_path),
+    },
   };
 }
 
@@ -481,6 +500,25 @@ function routeScopeMatchesExpected(routeScope = {}, expected = {}) {
   return toText(source.profileName, '') === expected.profileName
     && toText(source.windowKey, '') === expected.windowKey
     && toText(source.sessionScopeId, null) === expected.sessionScopeId;
+}
+
+function getRouteOwnerProofIssues(route = {}, expected = {}) {
+  const binding = asObject(route.routeBinding);
+  const issues = [];
+  if (route.healthy !== true) return issues;
+  if (toText(route.clientKind || binding.clientKind, '') !== REAL_ROOM_ROUTE_CLIENT_KIND) {
+    issues.push('client_kind_missing');
+  }
+  if (binding.roomId !== TRUSTQUOTE_ROOM_ID) issues.push('room_mismatch');
+  if (binding.role !== route.role) issues.push('role_mismatch');
+  if (binding.terminalBacked !== true) issues.push('terminal_not_backed');
+  if (binding.agentProcessStarted !== true) issues.push('agent_process_not_started');
+  if (!binding.terminalPaneId) issues.push('terminal_pane_missing');
+  if (!routeScopeMatchesExpected(binding, expected.routeScope)) issues.push('binding_scope_mismatch');
+  if (!sameMetadataPath(binding.workspace, expected.projectPath)) issues.push('workspace_mismatch');
+  if (!sameMetadataPath(binding.startupBundlePath, expected.startupBundlePath)) issues.push('startup_bundle_mismatch');
+  if (!sameMetadataPath(binding.workstreamPath, expected.workstreamPath)) issues.push('workstream_mismatch');
+  return issues;
 }
 
 function normalizeWorkstreamEvidence(value = {}, expected = {}) {
@@ -579,6 +617,12 @@ function buildTrustQuoteWorkRoomContract(options = {}) {
     projectPath,
     sessionScopeId,
   });
+  const routeOwnerExpected = {
+    projectPath,
+    routeScope,
+    startupBundlePath: readiness.payload?.startupBundlePath,
+    workstreamPath: trustQuoteWorkstreamPath(projectPath),
+  };
   const blockers = [];
 
   if (readiness.projectRootBinding.status !== 'configured') {
@@ -605,6 +649,9 @@ function buildTrustQuoteWorkRoomContract(options = {}) {
     }
     if (!routeScopeMatchesExpected(route.routeScope, routeScope)) {
       blockers.push(`route_scope_mismatch:${route.role}`);
+    }
+    for (const issue of getRouteOwnerProofIssues(route, routeOwnerExpected)) {
+      blockers.push(`route_owner_proof_${issue}:${route.role}`);
     }
   }
 
@@ -822,6 +869,7 @@ module.exports = {
   TRUSTQUOTE_PROJECT_PATH,
   TRUSTQUOTE_REQUIRED_PROJECT_ROOT_ENV,
   TRUSTQUOTE_WORKSTREAM_VERSION,
+  REAL_ROOM_ROUTE_CLIENT_KIND,
   WORK_ROOM_CONTRACT_VERSION,
   TRUSTQUOTE_ROOM_ID,
   buildTrustQuoteLaunchReadiness,

@@ -164,6 +164,36 @@ function getObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function normalizeClientRouteBinding(input = {}, scope = {}) {
+  const binding = getObject(input.routeBinding || input.route_binding || input.clientBinding);
+  const metadata = getObject(input.metadata);
+  const metadataBinding = getObject(metadata.routeBinding || metadata.route_binding || metadata.clientBinding);
+  const source = Object.keys(binding).length ? binding : metadataBinding;
+  const profileName = normalizeScopeProfile(source.profileName || source.profile || scope.profileName || DEFAULT_PROFILE);
+  const windowKey = normalizeWindowKey(source.windowKey || source.window || scope.windowKey, profileName);
+  return {
+    clientKind: toNonEmptyString(source.clientKind || source.kind || input.clientKind),
+    routeOwner: toNonEmptyString(source.routeOwner || source.owner || input.routeOwner),
+    roomId: toNonEmptyString(source.roomId || source.room_id),
+    role: normalizeRoleId(source.role || input.role) || toNonEmptyString(source.role || input.role),
+    paneId: normalizePaneId(source.paneId || source.pane_id || input.paneId)
+      || toNonEmptyString(source.paneId || source.pane_id || input.paneId),
+    terminalPaneId: toNonEmptyString(source.terminalPaneId || source.terminal_pane_id),
+    terminalBacked: source.terminalBacked === true || source.terminal_backed === true,
+    agentProcessStarted: source.agentProcessStarted === true || source.agent_process_started === true,
+    profileName,
+    windowKey,
+    sessionScopeId: normalizeScopeString(
+      source.sessionScopeId
+      || source.session_scope_id
+      || scope.sessionScopeId
+    ),
+    workspace: toNonEmptyString(source.workspace || source.projectPath || source.projectRoot),
+    startupBundlePath: toNonEmptyString(source.startupBundlePath || source.startup_bundle_path),
+    workstreamPath: toNonEmptyString(source.workstreamPath || source.workstream_path),
+  };
+}
+
 function extractExplicitRouteScope(message = {}) {
   const metadata = getObject(message.metadata);
   const envelope = getObject(metadata.envelope);
@@ -594,6 +624,8 @@ function getRoutingHealth(target, staleAfterMs = ROUTING_STALE_MS, now = Date.no
     staleThresholdMs,
     source: 'client_activity',
     routeScope: routeScope?.targetScope || routeScope || null,
+    clientKind: route.clientKind || null,
+    routeBinding: route.routeBinding || null,
   };
 }
 
@@ -1387,6 +1419,8 @@ function start(options = {}) {
           profileName: DEFAULT_PROFILE,
           windowKey: DEFAULT_PROFILE,
           sessionScopeId: null,
+          clientKind: null,
+          routeBinding: null,
           connectedAt: now,
           lastSeen: now,
         };
@@ -1490,6 +1524,8 @@ async function handleMessage(clientId, rawData) {
     clientInfo.profileName = scope.profileName;
     clientInfo.windowKey = scope.windowKey;
     clientInfo.sessionScopeId = scope.sessionScopeId;
+    clientInfo.routeBinding = normalizeClientRouteBinding(message, scope);
+    clientInfo.clientKind = clientInfo.routeBinding.clientKind || null;
     markClientSeen(clientId, 'register');
     log.info(
       'WebSocket',
@@ -1502,8 +1538,26 @@ async function handleMessage(clientId, rawData) {
       profileName: clientInfo.profileName,
       windowKey: clientInfo.windowKey,
       sessionScopeId: clientInfo.sessionScopeId,
+      clientKind: clientInfo.clientKind,
+      routeBinding: clientInfo.routeBinding,
     });
     flushOutboundQueueForClient(clientId, 'register');
+    return;
+  }
+
+  if (message.type === 'heartbeat' || message.type === 'route-heartbeat') {
+    sendJson(clientInfo.ws, {
+      type: `${message.type}-ack`,
+      requestId: typeof message.requestId === 'string' ? message.requestId : null,
+      timestamp: Date.now(),
+      role: clientInfo.role || null,
+      paneId: clientInfo.paneId || null,
+      profileName: clientInfo.profileName || DEFAULT_PROFILE,
+      windowKey: clientInfo.windowKey || clientInfo.profileName || DEFAULT_PROFILE,
+      sessionScopeId: clientInfo.sessionScopeId || null,
+      clientKind: clientInfo.clientKind || null,
+      routeBinding: clientInfo.routeBinding || null,
+    });
     return;
   }
 
@@ -2046,6 +2100,8 @@ function getClients() {
     profileName: info.profileName || DEFAULT_PROFILE,
     windowKey: info.windowKey || info.profileName || DEFAULT_PROFILE,
     sessionScopeId: info.sessionScopeId || null,
+    clientKind: info.clientKind || null,
+    routeBinding: info.routeBinding || null,
     connectedAt: info.connectedAt,
     lastSeen: info.lastSeen || null,
     ready: info.ws.readyState === 1,
