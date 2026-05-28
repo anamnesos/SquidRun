@@ -71,6 +71,8 @@ describe('hm-visible-pane-submit-harness', () => {
       targetRole: 'builder',
       paneId: 'trustquote-builder',
       message: 'What do you see?',
+      port: 9979,
+      capturePort: 9900,
     });
   });
 
@@ -87,6 +89,7 @@ describe('hm-visible-pane-submit-harness', () => {
         message: 'Harness prompt',
         role: 'builder',
         port: 9979,
+        capturePort: 9900,
         waitMs: 100,
         pollMs: 10,
         timeoutMs: 1000,
@@ -151,6 +154,49 @@ describe('hm-visible-pane-submit-harness', () => {
         content: `Visible in the TrustQuote dashboard: ${result.screenshotPath}`,
         captureEventVerifier: () => ({ ok: true }),
       })).toEqual(expect.objectContaining({ ok: true }));
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('fails closed when live screenshot capture lacks app-side capture event', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'visible-pane-submit-'));
+    const capturePath = writeCaptureFile(tempDir);
+
+    try {
+      await expect(runHarness({
+        windowKey: 'trustquote',
+        targetRole: 'builder',
+        paneId: 'trustquote-builder',
+        terminalId: 'trustquote-builder',
+        message: 'Harness prompt',
+        role: 'builder',
+        port: 9979,
+        capturePort: 9900,
+        waitMs: 100,
+        pollMs: 10,
+        timeoutMs: 1000,
+        label: 'visible-pane-submit',
+        artifactRoot: path.join(tempDir, 'visible-pane-submit'),
+      }, {
+        nowMs: () => NOW_MS,
+        daemonClient: new FakeDaemonClient(),
+        sendHarnessMessage: async () => ({
+          requestId: 'request-1',
+          messageId: 'message-1',
+          result: {
+            accepted: true,
+            verified: true,
+            status: 'delivered.verified',
+          },
+        }),
+        captureScreenshot: async () => ({
+          success: true,
+          path: capturePath,
+          paneId: 'trustquote-builder',
+          scope: 'pane',
+        }),
+      })).rejects.toThrow(/app-side capture event/);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

@@ -28,6 +28,10 @@ const DEFAULT_RESPONSE_TIMEOUT_MS = 15000;
 const DEFAULT_WAIT_MS = 8000;
 const DEFAULT_POLL_MS = 500;
 const DEFAULT_OUTPUT_DELTA_CHARS = 20;
+const DEFAULT_CAPTURE_PORT = Number.parseInt(
+  process.env.HM_SEND_CAPTURE_PORT || process.env.HM_SEND_MAIN_PORT || String(getProfileWebSocketPort('main')),
+  10
+);
 
 const TRUSTQUOTE_PANE_BY_ROLE = Object.freeze({
   builder: 'trustquote-builder',
@@ -43,6 +47,7 @@ function usage() {
   console.log('  --label <name>              Artifact label (default visible-pane-submit)');
   console.log('  --artifact-root <path>      Root for run artifacts (default .squidrun/screenshots/visible-pane-submit)');
   console.log('  --port <port>               WebSocket port (default from window profile)');
+  console.log('  --capture-port <port>       Electron app screenshot/verification port (default main app port)');
   console.log('  --role <role>               Sender role (default builder)');
   console.log('  --timeout <ms>              WebSocket response timeout (default 15000)');
 }
@@ -129,6 +134,7 @@ function collectHarnessOptions(parsed) {
       getOption(options, 'port', ''),
       getProfileWebSocketPort(isTrustQuoteWorkspace(windowKey) ? TRUSTQUOTE_WORKSPACE_KEY : windowKey)
     ),
+    capturePort: asPositiveInt(getOption(options, 'capture-port', ''), DEFAULT_CAPTURE_PORT),
     waitMs: asPositiveInt(getOption(options, 'wait-ms', ''), DEFAULT_WAIT_MS),
     pollMs: asPositiveInt(getOption(options, 'poll-ms', ''), DEFAULT_POLL_MS),
     timeoutMs: asPositiveInt(getOption(options, 'timeout', ''), DEFAULT_RESPONSE_TIMEOUT_MS),
@@ -488,12 +494,15 @@ async function runHarness(params, deps = {}) {
     runId: layout.runId,
   }, {
     role: params.role,
-    port: params.port,
+    port: params.capturePort || DEFAULT_CAPTURE_PORT,
     timeoutMs: params.timeoutMs,
   });
   const captureResult = captureResponse?.result || captureResponse;
   if (!captureResult?.success || !captureResult?.path) {
     throw new Error(`screenshot capture failed: ${captureResult?.error || 'unknown_error'}`);
+  }
+  if (!captureResult?.captureEvent?.eventId || !captureResult?.captureEvent?.imageSha256) {
+    throw new Error('screenshot capture did not include app-side capture event; restart the Electron app on code with surface capture events loaded');
   }
 
   const manifest = writeHarnessManifest(params, layout, captureResult, submit, before, outputResult, nowMs);
