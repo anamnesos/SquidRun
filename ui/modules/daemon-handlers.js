@@ -23,6 +23,7 @@ const diagnosticLog = require('./diagnostic-log');
 const { stripAnsi } = require('./ansi');
 const { showToast } = require('./notifications');
 const uiView = require('./ui-view');
+const { TRUSTQUOTE_PROJECT_PATH } = require('./workspace-pane-shell');
 const {
   DEFAULT_INJECT_IPC_REASSEMBLY_TTL_MS,
   getUtf8ByteLength,
@@ -555,6 +556,33 @@ function isRendererReloadReplay(data = {}) {
   return source.includes('reload') || source.includes('reattach') || source.includes('snapshot');
 }
 
+function getActivePaneIdsForRenderer() {
+  try {
+    const terminal = require('./terminal');
+    if (terminal && typeof terminal.getActivePaneIds === 'function') {
+      const paneIds = terminal.getActivePaneIds();
+      if (Array.isArray(paneIds) && paneIds.length > 0) {
+        return paneIds.map((paneId) => String(paneId));
+      }
+    }
+  } catch (_) {}
+  return PANE_IDS.slice();
+}
+
+function getRendererWindowKey() {
+  try {
+    return String(document?.body?.dataset?.windowKey || 'main').trim().toLowerCase() || 'main';
+  } catch (_) {
+    return 'main';
+  }
+}
+
+function resolveVisibleProjectDisplayPath(projectPath = null) {
+  return getRendererWindowKey() === 'trustquote'
+    ? TRUSTQUOTE_PROJECT_PATH
+    : projectPath;
+}
+
 // ============================================================
 // SYNC STATE MANAGEMENT
 // ============================================================
@@ -669,7 +697,8 @@ async function handleDaemonConnectedPayload(data = {}, initTerminalsFn, reattach
       }
     }
 
-    const missingPanes = PANE_IDS.filter(id => !existingPaneIds.has(id));
+    const activePaneIds = getActivePaneIdsForRenderer();
+    const missingPanes = activePaneIds.filter(id => !existingPaneIds.has(id));
     if (missingPanes.length > 0) {
       log.info('Daemon', 'Creating missing terminals for panes:', missingPanes);
       for (const paneId of missingPanes) {
@@ -925,7 +954,7 @@ function setupAutoTriggerListener() {
 function setupProjectListener() {
   registerScopedIpcListener('project', 'project-changed', (event, projectPath) => {
     log.info('Project', 'Changed to:', projectPath);
-    uiView.updateProjectDisplay(projectPath);
+    uiView.updateProjectDisplay(resolveVisibleProjectDisplayPath(projectPath));
     const projectName = projectPath ? basenameFromPath(projectPath) : 'Developer Mode';
     showToast(`[PROJECT CONTEXT SWITCHED] ${projectName || 'Developer Mode'} — restart agents to apply`, 'warning');
   });
@@ -1335,7 +1364,7 @@ async function selectProject() {
   try {
     const result = await window.squidrun.project.select();
     if (result.success) {
-      uiView.updateProjectDisplay(result.path);
+      uiView.updateProjectDisplay(resolveVisibleProjectDisplayPath(result.path));
       updateConnectionStatus(`Project: ${result.path}`);
     } else if (result.canceled) {
       updateConnectionStatus('Project selection canceled');
@@ -1350,7 +1379,7 @@ async function selectProject() {
 async function loadInitialProject() {
   try {
     const projectPath = await window.squidrun.project.get();
-    uiView.updateProjectDisplay(projectPath || null);
+    uiView.updateProjectDisplay(resolveVisibleProjectDisplayPath(projectPath || null));
   } catch (err) {
     log.error('Daemon', 'Error loading initial project:', err);
   }

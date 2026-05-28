@@ -170,4 +170,26 @@ describe('app-control-service', () => {
       error: 'window registry unavailable',
     }));
   });
+
+  test('open-trustquote-workspace opens the real workspace without auto-booting duplicate agents', async () => {
+    const openAppWindow = jest.fn().mockResolvedValue({
+      ok: true,
+      windowKey: 'trustquote',
+      status: 'opened',
+    });
+
+    const result = await executeAppControlAction({ openAppWindow }, 'open-trustquote-workspace');
+
+    expect(openAppWindow).toHaveBeenCalledWith('trustquote', {
+      autoBootAgents: false,
+      profileName: 'trustquote',
+    });
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'open-trustquote-workspace',
+      windowKey: 'trustquote',
+      status: 'opened',
+    }));
+    expect(result.note).toMatch(/without starting duplicate agents/i);
+  });
 });

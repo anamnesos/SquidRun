@@ -22,6 +22,14 @@ function normalizeAction(action) {
     return 'open-mira-lab';
   }
   if (
+    normalized === 'open-trustquote-workspace'
+    || normalized === 'trustquote-workspace'
+    || normalized === 'open-trustquote'
+    || normalized === 'trustquote'
+  ) {
+    return 'open-trustquote-workspace';
+  }
+  if (
     normalized === 'mira-lab-renderer-prompt'
     || normalized === 'mira-lab-drive'
     || normalized === 'drive-mira-lab'
@@ -113,6 +121,38 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
       })
       .catch((error) => {
         log.warn('AppControl', `Mira Lab open failed: ${error.message}`);
+        return {
+          success: false,
+          reason: 'open_window_failed',
+          action: normalizedAction,
+          error: error.message,
+        };
+      });
+  }
+
+  if (normalizedAction === 'open-trustquote-workspace') {
+    if (typeof ctx.openAppWindow !== 'function') {
+      return {
+        success: false,
+        reason: 'open_window_unavailable',
+        action: normalizedAction,
+      };
+    }
+    return Promise.resolve()
+      .then(() => ctx.openAppWindow('trustquote', { autoBootAgents: false, profileName: 'trustquote' }))
+      .then((result) => {
+        const settled = result && typeof result === 'object' ? result : {};
+        return {
+          success: Boolean(settled.ok),
+          action: normalizedAction,
+          windowKey: settled.windowKey || 'trustquote',
+          status: settled.status || (settled.ok ? 'opened' : 'open_failed'),
+          reason: settled.ok ? undefined : (settled.reason || 'open_window_failed'),
+          note: 'TrustQuote workspace opened/focused without starting duplicate agents.',
+        };
+      })
+      .catch((error) => {
+        log.warn('AppControl', `TrustQuote workspace open failed: ${error.message}`);
         return {
           success: false,
           reason: 'open_window_failed',
