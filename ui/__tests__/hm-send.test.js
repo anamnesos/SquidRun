@@ -1682,7 +1682,7 @@ describe('hm-send retry behavior', () => {
       const [request] = fs.readFileSync(mockLogPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
       expect(JSON.parse(request.body)).toEqual(expect.objectContaining({
         chat_id: '12345',
-        text: '(ARCHITECT #56): Explicit Telegram reply',
+        text: 'Explicit Telegram reply',
       }));
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
@@ -1809,7 +1809,7 @@ describe('hm-send retry behavior', () => {
       expect(request.path).toContain('/sendMessage');
       expect(JSON.parse(request.body)).toEqual(expect.objectContaining({
         chat_id: '12345',
-        text: message,
+        text: 'Clean Telegram proof path',
       }));
 
       store = new EvidenceLedgerStore({ dbPath: evidenceDbPath, enabled: true });
@@ -1819,7 +1819,7 @@ describe('hm-send retry behavior', () => {
         senderRole: 'architect',
         targetRole: 'user',
         channel: 'telegram',
-        rawBody: message,
+        rawBody: 'Clean Telegram proof path',
         status: 'acked',
       }));
     } finally {
