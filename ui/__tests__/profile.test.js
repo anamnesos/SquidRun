@@ -6,6 +6,8 @@ const path = require('path');
 
 const {
   buildProfileTelegramEnv,
+  PROFILE_ROOT_CONFIG_VERSION,
+  getProfileProjectRootConfigPath,
   getProfilePipePath,
   getProfileProjectRootOverride,
   getProfileWebSocketPort,
@@ -54,6 +56,25 @@ describe('profile helpers', () => {
       expect(getProfileProjectRootOverride('unit-profile', {})).toBe(profileRoot);
     } finally {
       fs.rmSync(path.dirname(profileRoot), { recursive: true, force: true });
+    }
+  });
+
+  test('resolves durable profile-root contracts when env is absent', () => {
+    const squidrunRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-profile-root-'));
+    const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'trustquote-profile-root-'));
+    try {
+      const configPath = getProfileProjectRootConfigPath('trustquote', squidrunRoot);
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(configPath, JSON.stringify({
+        version: PROFILE_ROOT_CONFIG_VERSION,
+        profile: 'trustquote',
+        projectRoot: profileRoot,
+      }, null, 2));
+
+      expect(getProfileProjectRootOverride('trustquote', {}, { squidrunRoot })).toBe(path.resolve(profileRoot));
+    } finally {
+      fs.rmSync(squidrunRoot, { recursive: true, force: true });
+      fs.rmSync(profileRoot, { recursive: true, force: true });
     }
   });
 

@@ -29,6 +29,7 @@ const PROFILE_PORT_OFFSETS = Object.freeze({
   main: 0,
   scoped: 1,
 });
+const PROFILE_ROOT_CONFIG_VERSION = 'squidrun.profile-root.v0';
 
 function toNonEmptyString(value) {
   if (typeof value !== 'string') return null;
@@ -141,7 +142,7 @@ function getProfileWebSocketPort(profileName = null, basePort = 9900) {
   return basePort + 10 + hash;
 }
 
-function getProfileProjectRootOverride(profileName = null, env = process.env) {
+function getProfileProjectRootOverride(profileName = null, env = process.env, options = {}) {
   const normalizedProfile = normalizeProfileName(profileName || env?.SQUIDRUN_PROFILE || DEFAULT_PROFILE);
   if (isMainProfile(normalizedProfile)) return null;
 
@@ -151,12 +152,31 @@ function getProfileProjectRootOverride(profileName = null, env = process.env) {
     return path.resolve(explicitRoot);
   }
 
+  const configPath = getProfileProjectRootConfigPath(normalizedProfile, options?.squidrunRoot);
+  try {
+    if (fs.existsSync(configPath)) {
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      const configuredRoot = toNonEmptyString(parsed?.projectRoot || parsed?.workspace);
+      if (configuredRoot && fs.existsSync(configuredRoot)) {
+        return path.resolve(configuredRoot);
+      }
+    }
+  } catch (_) {
+    // Invalid local profile-root contracts are ignored so env/bundled fallbacks still work.
+  }
+
   const bundledProfileRoot = path.resolve(__dirname, '..', '.squidrun', 'profiles', normalizedProfile, 'workspace');
   if (fs.existsSync(bundledProfileRoot)) {
     return bundledProfileRoot;
   }
 
   return null;
+}
+
+function getProfileProjectRootConfigPath(profileName = null, squidrunRoot = null) {
+  const normalizedProfile = normalizeProfileName(profileName || DEFAULT_PROFILE);
+  const root = path.resolve(squidrunRoot || path.join(__dirname, '..'));
+  return path.join(root, '.squidrun', 'profiles', normalizedProfile, 'project-root.json');
 }
 
 function getProfileInstructionFilename(baseName, profileName = null) {
@@ -211,6 +231,7 @@ function buildProfileTelegramEnv(env = process.env, profileName = null) {
 
 module.exports = {
   DEFAULT_PROFILE,
+  PROFILE_ROOT_CONFIG_VERSION,
   SCOPED_PROFILE_CHAT_ID,
   PROFILE_SCOPED_DIRS,
   PROFILE_SCOPED_FILES,
@@ -219,6 +240,7 @@ module.exports = {
   isMainProfile,
   parseProfileArg,
   applyProfileEnv,
+  getProfileProjectRootConfigPath,
   namespaceCoordRelPath,
   getProfilePipePath,
   getProfileWebSocketPort,
