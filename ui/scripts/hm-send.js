@@ -121,6 +121,13 @@ const DEFAULT_ACK_TIMEOUT_MS = Math.max(
   (Number.isFinite(DEFAULT_TRIGGER_VERIFY_TIMEOUT_MS) ? DEFAULT_TRIGGER_VERIFY_TIMEOUT_MS : 5000)
     + (Number.isFinite(DEFAULT_ACK_TIMEOUT_BUFFER_MS) ? DEFAULT_ACK_TIMEOUT_BUFFER_MS : 1500)
 );
+const SURFACE_CAPTURE_VERIFY_PORT = Number.parseInt(
+  process.env.HM_SEND_SURFACE_CAPTURE_VERIFY_PORT
+    || process.env.HM_SEND_CAPTURE_PORT
+    || process.env.HM_SEND_MAIN_PORT
+    || String(getProfileWebSocketPort('main')),
+  10
+);
 const DEFAULT_DELIVERY_CHECK_TIMEOUT_MS = Number.parseInt(
   process.env.HM_SEND_DELIVERY_CHECK_TIMEOUT_MS || '1200',
   10
@@ -1378,9 +1385,9 @@ function closeSocket(ws) {
 }
 
 async function verifySurfaceCaptureEventViaRuntime(request = {}) {
-  const windowKey = normalizeProfileName(request.windowKey || 'main') || 'main';
-  const profilePort = getProfileWebSocketPort(windowKey);
-  const port = Number.isFinite(profilePort) ? profilePort : PORT;
+  const port = Number.isFinite(SURFACE_CAPTURE_VERIFY_PORT)
+    ? SURFACE_CAPTURE_VERIFY_PORT
+    : getProfileWebSocketPort('main');
   const socketUrl = `ws://127.0.0.1:${port}`;
   const requestId = `surface-capture-event-verify-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let ws = null;
@@ -1390,8 +1397,8 @@ async function verifySurfaceCaptureEventViaRuntime(request = {}) {
     ws.send(JSON.stringify({
       type: 'register',
       role: role || 'cli',
-      profileName: windowKey,
-      windowKey,
+      profileName: 'main',
+      windowKey: 'main',
     }));
     await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
     ws.send(JSON.stringify({

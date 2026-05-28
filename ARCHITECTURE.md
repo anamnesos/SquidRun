@@ -310,7 +310,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/scripts/hm-send.js: CLI utility that sends/queries runtime actions via WebSocket; hot-loads outbound guardrails before journaling or websocket dispatch.
 - ui/scripts/hm-send-context-leak-guard.js: Outbound hm-send guard that blocks private side-profile context leakage from the main profile and records violations/bypasses as JSONL runtime audit rows.
 - ui/scripts/hm-send-permission-guard.js: Outbound hm-send guard that detects permission-ask phrases, records violations/bypasses as JSONL runtime audit rows, and supports summary reporting.
-- ui/scripts/hm-visible-pane-submit-harness.js: Visible pane submit proof harness that sends through the live WebSocket route, waits for terminal output, captures the same app window/pane, and writes provenance consumed by the surface-claim guard.
+- ui/scripts/hm-visible-pane-submit-harness.js: Visible pane submit proof harness that sends through the live WebSocket route, waits for terminal output, captures the same app window/pane through the Electron app port, and writes app-event-bound provenance consumed by the surface-claim guard.
 - ui/scripts/hm-sms.js: Exports parseMessage, getTwilioConfig, getMissingConfigKeys, buildAuthHeader, ....
 - ui/scripts/hm-surface-audit.js: UI/documentation surface audit helper used to check exposed commands and runtime-facing features.
 - ui/scripts/hm-telegram.js: Exports parseMessage, getTelegramConfig, getMissingConfigKeys, requestTelegram, .... Outbound sends reuse caller-provided journal `messageId` when present so live comms events and evidence-ledger rows stay correlated.
