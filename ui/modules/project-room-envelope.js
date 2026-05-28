@@ -1,6 +1,10 @@
 'use strict';
 
 const fs = require('fs');
+const {
+  getProfileProjectRootConfigPath,
+  getProfileProjectRootOverride,
+} = require('../profile');
 
 const ROOM_ENVELOPE_VERSION = 'squidrun.room-envelope.v0';
 const WORK_ROOM_CONTRACT_VERSION = 'squidrun.work-room-contract.v0';
@@ -13,6 +17,8 @@ const TRUSTED_INTERNAL_TARGETS = new Set(['architect', 'builder', 'oracle']);
 const TRUSTQUOTE_ROOM_VISIBILITIES = new Set(['room_internal', 'cross_room_summary']);
 const TRUSTQUOTE_STARTUP_SOURCE_FILES = Object.freeze(['AGENTS.md', 'CLAUDE.md', 'ROLES.md']);
 const TRUSTQUOTE_REQUIRED_WORK_ROOM_ROLES = Object.freeze(['builder', 'oracle']);
+const TRUSTQUOTE_GENERATED_STARTUP_SOURCE_FILES = new Set(['AGENTS.md', 'ROLES.md']);
+const TRUSTQUOTE_WORKSTREAM_VERSION = 'squidrun.work-room-workstream.v0';
 const REAL_ROOM_ROUTE_STATUS = 'healthy';
 const REAL_ROOM_ROUTE_SOURCE = 'client_activity';
 
@@ -157,6 +163,98 @@ function defaultReadJson(filePath) {
   }
 }
 
+function trustQuoteWorkRoomPath(projectPath, ...parts) {
+  return joinMetadataPath(projectPath, '.squidrun', 'work-rooms', TRUSTQUOTE_ROOM_ID, ...parts);
+}
+
+function trustQuoteGeneratedStartupSourcePath(projectPath, name) {
+  return trustQuoteWorkRoomPath(projectPath, 'startup', name);
+}
+
+function trustQuoteWorkstreamPath(projectPath) {
+  return trustQuoteWorkRoomPath(projectPath, 'current-workstream.json');
+}
+
+function resolveStartupSourceFile(projectPath, name, pathExists) {
+  const rootPath = joinMetadataPath(projectPath, name);
+  if (pathExists(rootPath)) {
+    return {
+      name,
+      path: rootPath,
+      present: true,
+      source: 'project_root',
+    };
+  }
+
+  const generatedPath = trustQuoteGeneratedStartupSourcePath(projectPath, name);
+  if (TRUSTQUOTE_GENERATED_STARTUP_SOURCE_FILES.has(name) && pathExists(generatedPath)) {
+    return {
+      name,
+      path: generatedPath,
+      present: true,
+      source: 'generated_room_startup',
+      rootPath,
+    };
+  }
+
+  return {
+    name,
+    path: rootPath,
+    present: false,
+    source: 'missing',
+    fallbackPath: TRUSTQUOTE_GENERATED_STARTUP_SOURCE_FILES.has(name) ? generatedPath : null,
+  };
+}
+
+function resolveTrustQuoteProfileRootBinding(options = {}) {
+  const projectPath = normalizePathForMetadata(options.projectPath || TRUSTQUOTE_PROJECT_PATH);
+  const squidrunRoot = normalizePathForMetadata(options.squidrunRoot || DEFAULT_SQUIDRUN_ROOT);
+  const env = asObject(options.env || (typeof process !== 'undefined' ? process.env : {}));
+  const envProjectRoot = normalizePathForMetadata(env[TRUSTQUOTE_REQUIRED_PROJECT_ROOT_ENV]);
+  const envStatus = envProjectRoot
+    ? (sameMetadataPath(envProjectRoot, projectPath) ? 'configured' : 'mismatch')
+    : 'missing';
+  const hasOverride = Object.prototype.hasOwnProperty.call(options, 'profileRootOverride');
+  let profileRoot = hasOverride ? options.profileRootOverride : null;
+  if (!hasOverride) {
+    const resolver = typeof options.getProfileProjectRootOverride === 'function'
+      ? options.getProfileProjectRootOverride
+      : getProfileProjectRootOverride;
+    try {
+      profileRoot = resolver(TRUSTQUOTE_ROOM_ID, env, { squidrunRoot });
+    } catch (_) {
+      profileRoot = null;
+    }
+  }
+  const profileRootPath = normalizePathForMetadata(profileRoot);
+  const profileStatus = profileRootPath
+    ? (sameMetadataPath(profileRootPath, projectPath) ? 'configured' : 'mismatch')
+    : 'missing';
+  const profileConfigPath = getProfileProjectRootConfigPath(TRUSTQUOTE_ROOM_ID, squidrunRoot);
+  const status = envStatus === 'configured' || profileStatus === 'configured'
+    ? 'configured'
+    : (envStatus === 'mismatch' || profileStatus === 'mismatch' ? 'mismatch' : 'missing');
+
+  return {
+    status,
+    source: envStatus === 'configured'
+      ? 'env'
+      : (profileStatus === 'configured' ? 'profile_root_contract' : null),
+    env: {
+      requiredName: TRUSTQUOTE_REQUIRED_PROJECT_ROOT_ENV,
+      requiredValue: projectPath,
+      currentValue: envProjectRoot || null,
+      status: envStatus,
+    },
+    profileRoot: {
+      path: profileConfigPath,
+      expectedValue: projectPath,
+      currentValue: profileRootPath || null,
+      status: profileStatus,
+    },
+  };
+}
+
 function hasTrustQuoteText(row = {}) {
   return /\btrustquote\b/i.test(toText(row.rawBody || row.body || row.content, ''));
 }
@@ -225,18 +323,16 @@ function buildTrustQuoteLaunchReadiness(options = {}) {
   const sessionScopeId = makeTrustQuoteSessionScopeId(mainSessionScopeId);
   const pathExists = typeof options.pathExists === 'function' ? options.pathExists : defaultPathExists;
   const readJson = typeof options.readJson === 'function' ? options.readJson : defaultReadJson;
-  const env = asObject(options.env || (typeof process !== 'undefined' ? process.env : {}));
-  const envProjectRoot = normalizePathForMetadata(env[TRUSTQUOTE_REQUIRED_PROJECT_ROOT_ENV]);
+  const rootBinding = resolveTrustQuoteProfileRootBinding({
+    ...options,
+    projectPath,
+    squidrunRoot,
+  });
   const linkPath = joinMetadataPath(projectPath, '.squidrun', 'link.json');
   const startupBundlePath = joinMetadataPath(squidrunRoot, '.squidrun', 'runtime', 'window-teams', TRUSTQUOTE_ROOM_ID, 'startup-bundle.md');
-  const sourceFiles = TRUSTQUOTE_STARTUP_SOURCE_FILES.map((name) => {
-    const filePath = joinMetadataPath(projectPath, name);
-    return {
-      name,
-      path: filePath,
-      present: Boolean(pathExists(filePath)),
-    };
-  });
+  const sourceFiles = TRUSTQUOTE_STARTUP_SOURCE_FILES.map((name) => (
+    resolveStartupSourceFile(projectPath, name, pathExists)
+  ));
   const linkExists = Boolean(pathExists(linkPath));
   const linkJson = linkExists ? asObject(readJson(linkPath)) : {};
   const linkIssues = [];
@@ -252,11 +348,12 @@ function buildTrustQuoteLaunchReadiness(options = {}) {
   }
 
   const blockers = ['explicit_launch_approval_required'];
-  const envStatus = envProjectRoot
-    ? (sameMetadataPath(envProjectRoot, projectPath) ? 'configured' : 'mismatch')
-    : 'missing';
-  if (envStatus === 'missing') blockers.push('env_override_missing');
-  if (envStatus === 'mismatch') blockers.push('env_override_mismatch');
+  if (rootBinding.status === 'missing') blockers.push('project_root_binding_missing');
+  if (rootBinding.status === 'mismatch') blockers.push('project_root_binding_mismatch');
+  if (rootBinding.env.status === 'missing' && rootBinding.profileRoot.status !== 'configured') blockers.push('env_override_missing');
+  if (rootBinding.env.status === 'mismatch') blockers.push('env_override_mismatch');
+  if (rootBinding.profileRoot.status === 'missing' && rootBinding.env.status !== 'configured') blockers.push('profile_root_contract_missing');
+  if (rootBinding.profileRoot.status === 'mismatch') blockers.push('profile_root_contract_mismatch');
 
   for (const sourceFile of sourceFiles) {
     if (sourceFile.present !== true) {
@@ -303,12 +400,9 @@ function buildTrustQuoteLaunchReadiness(options = {}) {
     status: 'preview_only',
     canLaunchAgents: false,
     approvalRequired: true,
-    env: {
-      requiredName: TRUSTQUOTE_REQUIRED_PROJECT_ROOT_ENV,
-      requiredValue: projectPath,
-      currentValue: envProjectRoot || null,
-      status: envStatus,
-    },
+    projectRootBinding: rootBinding,
+    env: rootBinding.env,
+    profileRoot: rootBinding.profileRoot,
     sourceFiles,
     link: {
       path: linkPath,
@@ -389,6 +483,82 @@ function routeScopeMatchesExpected(routeScope = {}, expected = {}) {
     && toText(source.sessionScopeId, null) === expected.sessionScopeId;
 }
 
+function normalizeWorkstreamEvidence(value = {}, expected = {}) {
+  const source = asObject(value);
+  const issues = [];
+  if (toText(source.version, '') !== TRUSTQUOTE_WORKSTREAM_VERSION) issues.push('version_mismatch');
+  if (toText(source.roomId, '') !== TRUSTQUOTE_ROOM_ID) issues.push('room_mismatch');
+  if (!sameMetadataPath(source.projectRoot || source.workspace, expected.projectPath)) issues.push('project_mismatch');
+  if (toText(source.profile, '') !== TRUSTQUOTE_ROOM_ID) issues.push('profile_mismatch');
+  if (toText(source.sessionScopeId || source.session_id, '') !== expected.sessionScopeId) issues.push('session_scope_mismatch');
+
+  return {
+    path: toText(source.path, expected.path),
+    present: true,
+    status: issues.length ? 'stale_or_mismatched' : 'current',
+    issues,
+    currentTask: source.currentTask || null,
+    workstreamStatus: toText(source.status, null),
+    routeStatus: toText(source.routeStatus, null),
+    sourceRefs: normalizeSourceRefs(source.sourceRefs),
+  };
+}
+
+function resolveTrustQuoteWorkstreamEvidence(options = {}) {
+  const projectPath = normalizePathForMetadata(options.projectPath || TRUSTQUOTE_PROJECT_PATH);
+  const sessionScopeId = toText(options.sessionScopeId, null);
+  const pathExists = typeof options.pathExists === 'function' ? options.pathExists : defaultPathExists;
+  const readJson = typeof options.readJson === 'function' ? options.readJson : defaultReadJson;
+  const workstreamPath = trustQuoteWorkstreamPath(projectPath);
+
+  if (options.workstreamEvidence && typeof options.workstreamEvidence === 'object') {
+    return normalizeWorkstreamEvidence({
+      path: workstreamPath,
+      ...options.workstreamEvidence,
+    }, {
+      path: workstreamPath,
+      projectPath,
+      sessionScopeId,
+    });
+  }
+
+  if (!pathExists(workstreamPath)) {
+    return {
+      path: workstreamPath,
+      present: false,
+      status: 'missing',
+      issues: ['missing'],
+      currentTask: null,
+      workstreamStatus: null,
+      routeStatus: null,
+      sourceRefs: [],
+    };
+  }
+
+  const parsed = asObject(readJson(workstreamPath));
+  if (!Object.keys(parsed).length) {
+    return {
+      path: workstreamPath,
+      present: true,
+      status: 'unreadable',
+      issues: ['unreadable'],
+      currentTask: null,
+      workstreamStatus: null,
+      routeStatus: null,
+      sourceRefs: [],
+    };
+  }
+
+  return normalizeWorkstreamEvidence({
+    path: workstreamPath,
+    ...parsed,
+  }, {
+    path: workstreamPath,
+    projectPath,
+    sessionScopeId,
+  });
+}
+
 function buildTrustQuoteWorkRoomContract(options = {}) {
   const projectPath = normalizePathForMetadata(options.projectPath || TRUSTQUOTE_PROJECT_PATH);
   const mainSessionScopeId = toText(options.mainSessionScopeId || options.sessionScopeId || options.session_id, 'app-session-preview');
@@ -404,10 +574,15 @@ function buildTrustQuoteWorkRoomContract(options = {}) {
     .filter((role) => role && role !== 'architect');
   const uniqueRequiredRoles = Array.from(new Set(requiredRoles));
   const routeChecks = uniqueRequiredRoles.map((role) => resolveRouteHealth(role, routeScope, options));
+  const workstream = resolveTrustQuoteWorkstreamEvidence({
+    ...options,
+    projectPath,
+    sessionScopeId,
+  });
   const blockers = [];
 
-  if (readiness.env.status !== 'configured') {
-    blockers.push(`env_${readiness.env.status}`);
+  if (readiness.projectRootBinding.status !== 'configured') {
+    blockers.push(`project_root_binding_${readiness.projectRootBinding.status}`);
   }
   for (const sourceFile of readiness.sourceFiles) {
     if (sourceFile.present !== true) {
@@ -419,6 +594,9 @@ function buildTrustQuoteWorkRoomContract(options = {}) {
   }
   if (uniqueRequiredRoles.length === 0) {
     blockers.push('required_room_agent_roles_missing');
+  }
+  if (workstream.status !== 'current') {
+    blockers.push(`workstream_evidence_${workstream.status}`);
   }
   for (const route of routeChecks) {
     if (!route.healthy) {
@@ -451,11 +629,12 @@ function buildTrustQuoteWorkRoomContract(options = {}) {
     },
     antiPurgatory: {
       continuitySource: readiness.link.path,
-      currentTaskSource: 'comms_journal_room_scope_required',
+      currentTaskSource: workstream.status === 'current' ? workstream.path : 'comms_journal_room_scope_required',
       manualUiInspectionRequired: false,
       unprovenRoomRenders: false,
     },
     readiness,
+    workstream,
     blockers,
   };
 }
@@ -642,6 +821,7 @@ module.exports = {
   ROOM_ENVELOPE_VERSION,
   TRUSTQUOTE_PROJECT_PATH,
   TRUSTQUOTE_REQUIRED_PROJECT_ROOT_ENV,
+  TRUSTQUOTE_WORKSTREAM_VERSION,
   WORK_ROOM_CONTRACT_VERSION,
   TRUSTQUOTE_ROOM_ID,
   buildTrustQuoteLaunchReadiness,
@@ -651,6 +831,7 @@ module.exports = {
   buildTrustQuoteWorkRoomContract,
   canUseCommsRowAsMainLaneAuthority,
   hashRoomBody,
+  makeTrustQuoteSessionScopeId,
   makeRoomRouteScope,
   normalizeTrustQuoteRoomCommsRow,
   normalizeTrustQuoteRoomEnvelope,

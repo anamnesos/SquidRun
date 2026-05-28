@@ -21,6 +21,19 @@ const {
 } = require('../modules/main/agent-task-resolution');
 
 describe('TrustQuote room envelope and readiness', () => {
+  function currentWorkstream(sessionScopeId = 'app-session-410:trustquote') {
+    return {
+      version: 'squidrun.work-room-workstream.v0',
+      roomId: TRUSTQUOTE_ROOM_ID,
+      profile: TRUSTQUOTE_ROOM_ID,
+      projectRoot: TRUSTQUOTE_PROJECT_PATH,
+      sessionScopeId,
+      status: 'initialized_no_active_task',
+      routeStatus: 'unproven',
+      currentTask: null,
+    };
+  }
+
   test('builds a typed TrustQuote room envelope on existing comms metadata', () => {
     const envelope = buildTrustQuoteRoomEnvelope({
       body: '(BUILDER #1): TrustQuote room status.',
@@ -311,6 +324,7 @@ describe('TrustQuote room envelope and readiness', () => {
   test('real TrustQuote work-room contract stays hidden when current evidence is not route-backed', () => {
     const contract = buildTrustQuoteWorkRoomContract({
       env: {},
+      profileRootOverride: null,
       mainSessionScopeId: 'app-session-410',
       pathExists: (filePath) => filePath === TRUSTQUOTE_PROJECT_PATH,
       readJson: () => ({
@@ -332,11 +346,12 @@ describe('TrustQuote room envelope and readiness', () => {
       unprovenRoomRenders: false,
     }));
     expect(contract.blockers).toEqual(expect.arrayContaining([
-      'env_missing',
+      'project_root_binding_missing',
       'missing_startup_source:AGENTS.md',
       'missing_startup_source:CLAUDE.md',
       'missing_startup_source:ROLES.md',
       'profile_link_not_current',
+      'workstream_evidence_missing',
       'route_unhealthy:builder:missing',
       'route_unhealthy:oracle:missing',
     ]));
@@ -373,6 +388,7 @@ describe('TrustQuote room envelope and readiness', () => {
         profile: TRUSTQUOTE_ROOM_ID,
         session_id: sessionScopeId,
       }),
+      workstreamEvidence: currentWorkstream(sessionScopeId),
       routeHealth,
     });
 
@@ -390,7 +406,7 @@ describe('TrustQuote room envelope and readiness', () => {
     expect(contract.routeContract.routeChecks.every((route) => route.healthy === true)).toBe(true);
     expect(contract.antiPurgatory).toEqual(expect.objectContaining({
       continuitySource: 'D:/projects/TrustQuote/.squidrun/link.json',
-      currentTaskSource: 'comms_journal_room_scope_required',
+      currentTaskSource: 'D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/current-workstream.json',
       manualUiInspectionRequired: false,
       unprovenRoomRenders: false,
     }));
@@ -421,6 +437,7 @@ describe('TrustQuote room envelope and readiness', () => {
         profile: TRUSTQUOTE_ROOM_ID,
         session_id: sessionScopeId,
       }),
+      workstreamEvidence: currentWorkstream(sessionScopeId),
       getRoutingHealth,
     });
 
@@ -444,6 +461,7 @@ describe('TrustQuote room envelope and readiness', () => {
         profile: TRUSTQUOTE_ROOM_ID,
         session_id: sessionScopeId,
       }),
+      workstreamEvidence: currentWorkstream(sessionScopeId),
       routeHealth: {
         builder: {
           healthy: true,
@@ -473,10 +491,13 @@ describe('TrustQuote room envelope and readiness', () => {
   test('launch readiness preview shows exact payload and current blockers without launching', () => {
     const pathExists = jest.fn((filePath) => ![
       'D:/projects/TrustQuote/AGENTS.md',
+      'D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/startup/AGENTS.md',
       'D:/projects/TrustQuote/ROLES.md',
+      'D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/startup/ROLES.md',
     ].includes(filePath));
     const readiness = buildTrustQuoteLaunchReadiness({
       env: {},
+      profileRootOverride: null,
       mainSessionScopeId: 'app-session-382',
       pathExists,
       readJson: jest.fn(() => ({
@@ -518,9 +539,21 @@ describe('TrustQuote room envelope and readiness', () => {
       dispatch: 'preview_only',
     });
     expect(readiness.sourceFiles).toEqual([
-      { name: 'AGENTS.md', path: 'D:/projects/TrustQuote/AGENTS.md', present: false },
-      { name: 'CLAUDE.md', path: 'D:/projects/TrustQuote/CLAUDE.md', present: true },
-      { name: 'ROLES.md', path: 'D:/projects/TrustQuote/ROLES.md', present: false },
+      {
+        name: 'AGENTS.md',
+        path: 'D:/projects/TrustQuote/AGENTS.md',
+        present: false,
+        source: 'missing',
+        fallbackPath: 'D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/startup/AGENTS.md',
+      },
+      { name: 'CLAUDE.md', path: 'D:/projects/TrustQuote/CLAUDE.md', present: true, source: 'project_root' },
+      {
+        name: 'ROLES.md',
+        path: 'D:/projects/TrustQuote/ROLES.md',
+        present: false,
+        source: 'missing',
+        fallbackPath: 'D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/startup/ROLES.md',
+      },
     ]);
     expect(readiness.link).toEqual(expect.objectContaining({
       path: 'D:/projects/TrustQuote/.squidrun/link.json',
@@ -542,7 +575,9 @@ describe('TrustQuote room envelope and readiness', () => {
     });
     expect(readiness.blockers).toEqual(expect.arrayContaining([
       'explicit_launch_approval_required',
+      'project_root_binding_missing',
       'env_override_missing',
+      'profile_root_contract_missing',
       'trustquote_agents_md_missing',
       'trustquote_roles_md_missing',
       'trustquote_link_json_stale_or_non_profiled',
