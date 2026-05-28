@@ -656,13 +656,20 @@ function buildTrustQuoteWorkRoomContract(options = {}) {
   }
 
   const proven = blockers.length === 0;
+  const visibleRoomView = options.visibleRoomView === true;
+  const canRouteTask = proven;
+  const canRenderTopTab = proven && visibleRoomView;
+  const productBlockers = [];
+  if (proven && !visibleRoomView) {
+    productBlockers.push('visible_room_view_missing');
+  }
   return {
     version: WORK_ROOM_CONTRACT_VERSION,
     roomId: TRUSTQUOTE_ROOM_ID,
     label: 'TrustQuote',
     status: proven ? 'proven' : 'blocked',
-    canRenderTopTab: proven,
-    canRouteTask: proven,
+    canRenderTopTab,
+    canRouteTask,
     project: {
       name: 'TrustQuote',
       path: projectPath,
@@ -672,7 +679,13 @@ function buildTrustQuoteWorkRoomContract(options = {}) {
       routeScope,
       requiredRoles: uniqueRequiredRoles,
       routeChecks,
-      allowedTargets: proven ? uniqueRequiredRoles : [],
+      allowedTargets: canRouteTask ? uniqueRequiredRoles : [],
+    },
+    productProof: {
+      visibleRoomView,
+      jamesCanInspectWorkPanes: visibleRoomView,
+      hiddenRouteHealthOnly: proven && !visibleRoomView,
+      blockers: productBlockers,
     },
     antiPurgatory: {
       continuitySource: readiness.link.path,

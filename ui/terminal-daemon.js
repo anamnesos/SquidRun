@@ -232,6 +232,33 @@ function normalizeScrollbackMaxSize(value) {
   return parsed;
 }
 
+function normalizeTerminalOwnership(options = {}) {
+  const readText = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
+  return {
+    workRoomRouteOwner: options.workRoomRouteOwner === true,
+    backgroundAgent: options.backgroundAgent === true,
+    routeOwner: readText(options.routeOwner),
+    roomId: readText(options.roomId),
+    role: readText(options.role),
+    ownerPaneId: readText(options.ownerPaneId),
+  };
+}
+
+function terminalIdentityPayload(terminal = {}) {
+  return {
+    pid: terminal.pid || null,
+    dryRun: terminal.dryRun || false,
+    mode: terminal.mode || 'pty',
+    createdAt: terminal.createdAt || null,
+    workRoomRouteOwner: terminal.workRoomRouteOwner === true,
+    backgroundAgent: terminal.backgroundAgent === true,
+    routeOwner: terminal.routeOwner || null,
+    roomId: terminal.roomId || null,
+    role: terminal.role || null,
+    ownerPaneId: terminal.ownerPaneId || null,
+  };
+}
+
 function appendToScrollback(terminal, chunk) {
   if (!terminal) return;
   const text = typeof chunk === 'string' ? chunk : String(chunk ?? '');
@@ -1304,6 +1331,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     ? options.paneCommand
     : '';
   const paneRuntime = detectCliRuntimeFromCommand(paneCommand);
+  const ownership = normalizeTerminalOwnership(options);
   const packagedWorkspaceBin = path.join(os.homedir(), 'SquidRun', '.squidrun', 'bin');
   const projectWorkspaceBin = path.join(workDir, '.squidrun', 'bin');
 
@@ -1349,6 +1377,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       lastActivity: Date.now(), // Track last activity
       lastMeaningfulActivity: Date.now(), // Smart Watchdog: last non-spinner output
       lastInputTime: Date.now(), // Track last user INPUT
+      ...ownership,
     };
 
     terminals.set(paneId, terminalInfo);
@@ -1364,7 +1393,10 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       }
     }, 300);
 
-    return { paneId, pid: mockPid, dryRun: true, mode: 'dry-run' };
+    return {
+      paneId,
+      ...terminalIdentityPayload(terminalInfo),
+    };
   }
 
   // NORMAL MODE: Spawn real PTY
@@ -1393,6 +1425,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     lastActivity: Date.now(), // Track last PTY output
     lastMeaningfulActivity: Date.now(), // Smart Watchdog: last non-spinner output
     lastInputTime: Date.now(), // Track last user INPUT (not output)
+    ...ownership,
   };
 
   terminals.set(paneId, terminalInfo);
@@ -1435,16 +1468,25 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       event: 'exit',
       paneId,
       code: exitCode,
+      ...terminalIdentityPayload(terminalInfo),
     });
 
     broadcastKernelEvent('pty.down', {
       paneId,
-      payload: { paneId: String(paneId), code: exitCode, reason: 'process_exit' },
+      payload: {
+        paneId: String(paneId),
+        code: exitCode,
+        reason: 'process_exit',
+        ...terminalIdentityPayload(terminalInfo),
+      },
       kernelMeta: terminalInfo.lastKernelMeta || null,
     });
   });
 
-  return { paneId, pid: ptyProcess.pid, dryRun: false, mode: 'pty' };
+  return {
+    paneId,
+    ...terminalIdentityPayload(terminalInfo),
+  };
 }
 
 // Write data to a terminal
@@ -1544,7 +1586,10 @@ function killTerminal(paneId) {
   terminal.alive = false;
   terminals.delete(paneId);
   logInfo(`Terminal ${paneId} killed (dryRun: ${terminal.dryRun || false})`);
-  return true;
+  return {
+    paneId,
+    ...terminalIdentityPayload(terminal),
+  };
 }
 
 // List all terminals
@@ -1561,6 +1606,12 @@ function listTerminals() {
         scrollback: info.scrollback || '',
         dryRun: info.dryRun || false,
         createdAt: info.createdAt || null,
+        workRoomRouteOwner: info.workRoomRouteOwner === true,
+        backgroundAgent: info.backgroundAgent === true,
+        routeOwner: info.routeOwner || null,
+        roomId: info.roomId || null,
+        role: info.role || null,
+        ownerPaneId: info.ownerPaneId || null,
         lastActivity: info.lastActivity || null,
         lastMeaningfulActivity: info.lastMeaningfulActivity || null, // Smart Watchdog
         lastInputTime: info.lastInputTime || null,
@@ -1631,8 +1682,7 @@ function handleMessage(client, message) {
         sendToClient(client, {
           event: 'spawned',
           paneId: msg.paneId,
-          pid: result.pid,
-          dryRun: result.dryRun || false,
+          ...terminalIdentityPayload(result),
         });
         broadcastKernelEvent('pty.up', {
           paneId: msg.paneId,
@@ -1641,6 +1691,7 @@ function handleMessage(client, message) {
             pid: result.pid,
             mode: result.mode || 'pty',
             dryRun: result.dryRun || false,
+            createdAt: result.createdAt || null,
           },
           kernelMeta: msg.kernelMeta || null,
         });
@@ -1754,10 +1805,11 @@ function handleMessage(client, message) {
 
       case 'kill': {
         const existing = terminals.get(msg.paneId);
-        killTerminal(msg.paneId);
+        const killed = killTerminal(msg.paneId);
         sendToClient(client, {
           event: 'killed',
           paneId: msg.paneId,
+          ...terminalIdentityPayload(killed || existing || {}),
         });
         if (existing && existing.dryRun) {
           broadcastKernelEvent('pty.down', {
@@ -1765,6 +1817,8 @@ function handleMessage(client, message) {
             payload: {
               paneId: String(msg.paneId),
               reason: 'killed',
+              pid: existing.pid || null,
+              createdAt: existing.createdAt || null,
             },
             kernelMeta: existing.lastKernelMeta || null,
           });

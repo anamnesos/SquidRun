@@ -376,7 +376,7 @@ describe('TrustQuote room envelope and readiness', () => {
     ]));
   });
 
-  test('real TrustQuote work-room contract can prove a tab only from matching live room routes', () => {
+  test('matching live room routes prove routing but not a visible tab by themselves', () => {
     const sessionScopeId = 'app-session-410:trustquote';
     const routeScope = makeRoomRouteScope(TRUSTQUOTE_ROOM_ID, sessionScopeId);
     const routeHealth = {
@@ -417,7 +417,7 @@ describe('TrustQuote room envelope and readiness', () => {
 
     expect(contract).toEqual(expect.objectContaining({
       status: 'proven',
-      canRenderTopTab: true,
+      canRenderTopTab: false,
       canRouteTask: true,
       blockers: [],
     }));
@@ -427,6 +427,12 @@ describe('TrustQuote room envelope and readiness', () => {
       allowedTargets: ['builder', 'oracle'],
     }));
     expect(contract.routeContract.routeChecks.every((route) => route.healthy === true)).toBe(true);
+    expect(contract.productProof).toEqual(expect.objectContaining({
+      visibleRoomView: false,
+      jamesCanInspectWorkPanes: false,
+      hiddenRouteHealthOnly: true,
+      blockers: ['visible_room_view_missing'],
+    }));
     expect(contract.antiPurgatory).toEqual(expect.objectContaining({
       continuitySource: 'D:/projects/TrustQuote/.squidrun/link.json',
       currentTaskSource: 'D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/current-workstream.json',
@@ -467,13 +473,63 @@ describe('TrustQuote room envelope and readiness', () => {
     });
 
     expect(contract.status).toBe('proven');
-    expect(contract.canRenderTopTab).toBe(true);
+    expect(contract.canRenderTopTab).toBe(false);
     expect(contract.canRouteTask).toBe(true);
     expect(getRoutingHealth).toHaveBeenNthCalledWith(1, 'builder', 5000, 8000, routeScope, {});
     expect(getRoutingHealth).toHaveBeenNthCalledWith(2, 'oracle', 5000, 8000, routeScope, {});
   });
 
-  test('handler-only or wrong-scope route health cannot prove a real TrustQuote tab', () => {
+  test('visible TrustQuote tabs require an explicit visible room view proof flag', () => {
+    const sessionScopeId = 'app-session-410:trustquote';
+    const routeScope = makeRoomRouteScope(TRUSTQUOTE_ROOM_ID, sessionScopeId);
+    const routeHealth = {
+      builder: {
+        healthy: true,
+        status: 'healthy',
+        source: 'client_activity',
+        lastSeen: 1000,
+        ageMs: 5,
+        routeScope,
+        clientKind: 'work_room_route_client',
+        routeBinding: routeOwnerBinding('builder', sessionScopeId),
+      },
+      oracle: {
+        healthy: true,
+        status: 'healthy',
+        source: 'client_activity',
+        lastSeen: 1001,
+        ageMs: 4,
+        routeScope,
+        clientKind: 'work_room_route_client',
+        routeBinding: routeOwnerBinding('oracle', sessionScopeId),
+      },
+    };
+
+    const contract = buildTrustQuoteWorkRoomContract({
+      env: { SQUIDRUN_TRUSTQUOTE_PROJECT_ROOT: TRUSTQUOTE_PROJECT_PATH },
+      mainSessionScopeId: 'app-session-410',
+      pathExists: () => true,
+      readJson: () => ({
+        workspace: TRUSTQUOTE_PROJECT_PATH,
+        profile: TRUSTQUOTE_ROOM_ID,
+        session_id: sessionScopeId,
+      }),
+      workstreamEvidence: currentWorkstream(sessionScopeId),
+      routeHealth,
+      visibleRoomView: true,
+    });
+
+    expect(contract.canRenderTopTab).toBe(true);
+    expect(contract.canRouteTask).toBe(true);
+    expect(contract.productProof).toEqual(expect.objectContaining({
+      visibleRoomView: true,
+      jamesCanInspectWorkPanes: true,
+      hiddenRouteHealthOnly: false,
+      blockers: [],
+    }));
+  });
+
+  test('handler-only or wrong-scope route health cannot prove real TrustQuote routing', () => {
     const sessionScopeId = 'app-session-410:trustquote';
     const routeScope = makeRoomRouteScope(TRUSTQUOTE_ROOM_ID, sessionScopeId);
 
@@ -513,7 +569,7 @@ describe('TrustQuote room envelope and readiness', () => {
     ]));
   });
 
-  test('bare client_activity without terminal-backed route owner proof cannot prove a real TrustQuote tab', () => {
+  test('bare client_activity without terminal-backed route owner proof cannot prove real TrustQuote routing', () => {
     const sessionScopeId = 'app-session-410:trustquote';
     const routeScope = makeRoomRouteScope(TRUSTQUOTE_ROOM_ID, sessionScopeId);
 

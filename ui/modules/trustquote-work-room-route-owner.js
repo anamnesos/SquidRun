@@ -28,6 +28,7 @@ const DEFAULT_ROLE_COMMANDS = Object.freeze({
   oracle: 'gemini --yolo --model gemini-3.1-pro-preview',
 });
 const DEFAULT_HEARTBEAT_MS = 15000;
+const DEFAULT_SPAWN_ACK_TIMEOUT_MS = 1500;
 
 function toText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -186,21 +187,90 @@ function waitForSocketMessage(ws, predicate, timeoutMs = 5000, label = 'socket m
   });
 }
 
+function toFiniteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function waitForDaemonEvent(emitter, eventName, predicate, timeoutMs = DEFAULT_SPAWN_ACK_TIMEOUT_MS) {
+  if (!emitter || typeof emitter.on !== 'function') return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (typeof emitter.off === 'function') emitter.off(eventName, onEvent);
+      else if (typeof emitter.removeListener === 'function') emitter.removeListener(eventName, onEvent);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(null);
+    }, timeoutMs);
+    const onEvent = (...args) => {
+      const result = predicate(...args);
+      if (!result) return;
+      cleanup();
+      resolve(result);
+    };
+    emitter.on(eventName, onEvent);
+  });
+}
+
+function normalizeSpawnAck(spec, paneId, pid, dryRun, metadata = {}) {
+  const source = metadata && typeof metadata === 'object' ? metadata : {};
+  const normalizedPaneId = String(paneId || source.paneId || spec.paneId);
+  if (normalizedPaneId !== String(spec.paneId)) return null;
+  return {
+    role: spec.role,
+    paneId: normalizedPaneId,
+    pid: toFiniteNumber(pid ?? source.pid),
+    dryRun: Boolean(dryRun ?? source.dryRun),
+    mode: source.mode || null,
+    createdAt: source.createdAt || null,
+  };
+}
+
+function normalizeLifecycleEvent(event, paneId, codeOrMetadata, maybeMetadata) {
+  const metadata = maybeMetadata && typeof maybeMetadata === 'object'
+    ? maybeMetadata
+    : (codeOrMetadata && typeof codeOrMetadata === 'object' ? codeOrMetadata : {});
+  const code = typeof codeOrMetadata === 'number' ? codeOrMetadata : metadata.code;
+  return {
+    event,
+    paneId: String(paneId || metadata.paneId || ''),
+    code: Number.isFinite(Number(code)) ? Number(code) : null,
+    pid: toFiniteNumber(metadata.pid),
+    createdAt: metadata.createdAt || null,
+    mode: metadata.mode || null,
+    dryRun: metadata.dryRun === true,
+    at: new Date().toISOString(),
+  };
+}
+
+function terminalEventMatchesRef(event, ref) {
+  if (!ref) return true;
+  if (event.pid !== null && ref.pid !== null && event.pid !== ref.pid) return false;
+  if (event.createdAt && ref.createdAt && String(event.createdAt) !== String(ref.createdAt)) return false;
+  return true;
+}
+
 class TrustQuoteWorkRoomRouteOwner {
   constructor(options = {}) {
     this.options = options;
     this.plan = options.plan || buildTrustQuoteRouteOwnerPlan(options);
     this.websocketRuntime = options.websocketRuntime || require('./websocket-runtime');
     this.WebSocketImpl = options.WebSocketImpl || require('ws');
-    this.daemonClient = options.daemonClient || new DaemonClient();
+    this.daemonClient = options.daemonClient || new DaemonClient({ profileName: TRUSTQUOTE_ROOM_ID });
     this.heartbeatMs = Number.parseInt(String(options.heartbeatMs || DEFAULT_HEARTBEAT_MS), 10) || DEFAULT_HEARTBEAT_MS;
+    this.spawnAckTimeoutMs = Number.parseInt(String(options.spawnAckTimeoutMs || DEFAULT_SPAWN_ACK_TIMEOUT_MS), 10) || DEFAULT_SPAWN_ACK_TIMEOUT_MS;
     this.clients = new Map();
     this.heartbeatTimers = new Map();
+    this.roleTerminalRefs = new Map();
+    this.ignoredDaemonEvents = [];
     this.started = false;
-    this.handleDaemonExit = (paneId) => {
-      const spec = this.plan.roles.find((roleSpec) => roleSpec.paneId === String(paneId));
-      if (!spec) return;
-      this.closeRouteClient(spec.role);
+    this.handleDaemonExit = (paneId, code, metadata) => {
+      void this.handleDaemonLifecycleEvent('exit', paneId, code, metadata);
+    };
+    this.handleDaemonKilled = (paneId, metadata) => {
+      void this.handleDaemonLifecycleEvent('killed', paneId, metadata);
     };
   }
 
@@ -218,11 +288,11 @@ class TrustQuoteWorkRoomRouteOwner {
     }
     if (typeof this.daemonClient.on === 'function') {
       this.daemonClient.on('exit', this.handleDaemonExit);
-      this.daemonClient.on('killed', this.handleDaemonExit);
+      this.daemonClient.on('killed', this.handleDaemonKilled);
     }
 
     for (const spec of this.plan.roles) {
-      this.spawnRoleTerminal(spec);
+      await this.spawnRoleTerminal(spec);
       if (this.options.launchAgents !== false) {
         this.launchRoleAgent(spec);
       }
@@ -232,9 +302,15 @@ class TrustQuoteWorkRoomRouteOwner {
     return { ok: true, plan: this.plan };
   }
 
-  spawnRoleTerminal(spec) {
+  async spawnRoleTerminal(spec) {
     if (typeof this.daemonClient.spawn !== 'function') return false;
-    return this.daemonClient.spawn(
+    const spawnAck = waitForDaemonEvent(
+      this.daemonClient,
+      'spawned',
+      (paneId, pid, dryRun, metadata) => normalizeSpawnAck(spec, paneId, pid, dryRun, metadata),
+      this.spawnAckTimeoutMs
+    );
+    const result = this.daemonClient.spawn(
       spec.paneId,
       spec.cwd,
       this.options.dryRun === true,
@@ -248,6 +324,15 @@ class TrustQuoteWorkRoomRouteOwner {
         paneCommand: spec.command,
       }
     );
+    if (result && typeof result === 'object') {
+      const ref = normalizeSpawnAck(spec, result.paneId, result.pid, result.dryRun, result);
+      if (ref) this.roleTerminalRefs.set(spec.role, ref);
+      return result;
+    }
+    if (!result) return result;
+    const ref = await spawnAck;
+    if (ref) this.roleTerminalRefs.set(spec.role, ref);
+    return result;
   }
 
   launchRoleAgent(spec) {
@@ -278,6 +363,13 @@ class TrustQuoteWorkRoomRouteOwner {
         traceId: msg.traceId || null,
       });
     });
+    ws.on?.('close', () => {
+      const current = this.clients.get(spec.role);
+      if (current === ws) this.clients.delete(spec.role);
+      const timer = this.heartbeatTimers.get(spec.role);
+      if (timer) clearInterval(timer);
+      this.heartbeatTimers.delete(spec.role);
+    });
     const heartbeat = () => {
       if (ws.readyState !== 1) return;
       ws.send(JSON.stringify({
@@ -302,6 +394,74 @@ class TrustQuoteWorkRoomRouteOwner {
     } catch (_) {}
   }
 
+  async readCurrentTerminalSnapshot(paneId) {
+    if (typeof this.daemonClient.list !== 'function' || typeof this.daemonClient.on !== 'function') return null;
+    const listResult = waitForDaemonEvent(
+      this.daemonClient,
+      'list',
+      (terminals) => (Array.isArray(terminals) ? terminals : null),
+      this.spawnAckTimeoutMs
+    );
+    const sent = this.daemonClient.list();
+    if (!sent) return null;
+    const terminals = await listResult;
+    if (!Array.isArray(terminals)) return null;
+    return terminals.find((terminal) => String(terminal?.paneId) === String(paneId)) || null;
+  }
+
+  async handleDaemonLifecycleEvent(event, paneId, codeOrMetadata, maybeMetadata) {
+    const spec = this.plan.roles.find((roleSpec) => roleSpec.paneId === String(paneId));
+    if (!spec) return;
+    const lifecycleEvent = normalizeLifecycleEvent(event, paneId, codeOrMetadata, maybeMetadata);
+    const terminalRef = this.roleTerminalRefs.get(spec.role) || null;
+    if (!terminalEventMatchesRef(lifecycleEvent, terminalRef)) {
+      this.ignoredDaemonEvents.push({
+        role: spec.role,
+        reason: 'stale_terminal_lifecycle_event',
+        event: lifecycleEvent,
+        terminalRef,
+      });
+      return;
+    }
+    if (terminalRef && lifecycleEvent.pid === null && !lifecycleEvent.createdAt) {
+      const current = await this.readCurrentTerminalSnapshot(spec.paneId);
+      const currentPid = toFiniteNumber(current?.pid);
+      if (
+        current
+        && currentPid !== null
+        && terminalRef.pid !== null
+        && currentPid === terminalRef.pid
+        && current.alive !== false
+      ) {
+        this.ignoredDaemonEvents.push({
+          role: spec.role,
+          reason: 'unidentified_lifecycle_event_but_current_terminal_alive',
+          event: lifecycleEvent,
+          terminalRef,
+          currentTerminal: current,
+        });
+        return;
+      }
+      if (
+        current
+        && currentPid !== null
+        && terminalRef.pid !== null
+        && currentPid !== terminalRef.pid
+      ) {
+        this.ignoredDaemonEvents.push({
+          role: spec.role,
+          reason: 'unidentified_lifecycle_event_for_replaced_terminal',
+          event: lifecycleEvent,
+          terminalRef,
+          currentTerminal: current,
+        });
+        return;
+      }
+    }
+    this.closeRouteClient(spec.role);
+    this.roleTerminalRefs.delete(spec.role);
+  }
+
   async stop() {
     for (const role of Array.from(this.clients.keys())) {
       this.closeRouteClient(role);
@@ -315,7 +475,7 @@ class TrustQuoteWorkRoomRouteOwner {
     }
     if (typeof this.daemonClient.off === 'function') {
       this.daemonClient.off('exit', this.handleDaemonExit);
-      this.daemonClient.off('killed', this.handleDaemonExit);
+      this.daemonClient.off('killed', this.handleDaemonKilled);
     }
     if (this.options.stopWebsocket !== false && typeof this.websocketRuntime.stop === 'function') {
       await this.websocketRuntime.stop();
@@ -325,6 +485,7 @@ class TrustQuoteWorkRoomRouteOwner {
 }
 
 module.exports = {
+  DEFAULT_SPAWN_ACK_TIMEOUT_MS,
   DEFAULT_ROLE_PANE_IDS,
   ROUTE_OWNER_ID,
   ROUTE_OWNER_VERSION,

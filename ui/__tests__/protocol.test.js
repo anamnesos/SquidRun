@@ -64,18 +64,21 @@ describe('Daemon Protocol', () => {
       expect(msg.data).toBeDefined();
     });
 
-    test('exit event should have paneId and code', () => {
-      const msg = { event: 'exit', paneId: '1', code: 0 };
+    test('exit event should have paneId, code, and terminal identity', () => {
+      const msg = { event: 'exit', paneId: '1', code: 0, pid: 12345, createdAt: 123 };
       expect(msg.event).toBe('exit');
       expect(msg.paneId).toBeDefined();
       expect(typeof msg.code).toBe('number');
+      expect(typeof msg.pid).toBe('number');
+      expect(typeof msg.createdAt).toBe('number');
     });
 
-    test('spawned event should have paneId and pid', () => {
-      const msg = { event: 'spawned', paneId: '1', pid: 12345 };
+    test('spawned event should have paneId, pid, and terminal identity', () => {
+      const msg = { event: 'spawned', paneId: '1', pid: 12345, createdAt: 123 };
       expect(msg.event).toBe('spawned');
       expect(msg.paneId).toBeDefined();
       expect(typeof msg.pid).toBe('number');
+      expect(typeof msg.createdAt).toBe('number');
     });
 
     test('list event should have terminals array', () => {

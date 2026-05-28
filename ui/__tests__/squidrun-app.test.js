@@ -3894,6 +3894,73 @@ describe('SquidRunApp', () => {
       expect(ctx.agentRunning.get('1')).toBe('running');
       expect(triggerProactiveMemoryInjection).toHaveBeenCalledTimes(1);
     });
+
+    it('keeps TrustQuote work-room owner terminals out of visible pane recovery', async () => {
+      const { getDaemonClient } = require('../daemon-client');
+      const routeOwnerTerminal = {
+        paneId: 'trustquote-oracle',
+        pid: 44123,
+        alive: true,
+        workRoomRouteOwner: true,
+        routeOwner: 'trustquote-work-room-route-owner',
+        roomId: 'trustquote',
+      };
+      const sharedDaemonClient = {
+        on: jest.fn(),
+        off: jest.fn(),
+        connect: jest.fn().mockResolvedValue(),
+        disconnect: jest.fn(),
+        getTerminal: jest.fn((paneId) => (paneId === 'trustquote-oracle' ? routeOwnerTerminal : null)),
+      };
+      getDaemonClient.mockReturnValue(sharedDaemonClient);
+
+      const mainWindow = {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          send: jest.fn(),
+          isDestroyed: jest.fn().mockReturnValue(false),
+        },
+      };
+      const recoveryManager = {
+        handleExit: jest.fn(),
+        recordActivity: jest.fn(),
+        recordPtyOutput: jest.fn(),
+      };
+      const ctx = {
+        ...mockAppContext,
+        mainWindow,
+        daemonClient: sharedDaemonClient,
+        agentRunning: new Map(),
+        recoveryManager,
+        pluginManager: {
+          hasHook: jest.fn().mockReturnValue(false),
+          dispatch: jest.fn().mockResolvedValue(),
+        },
+        getWindow: jest.fn((key = 'main') => (key === 'main' ? mainWindow : null)),
+        getWindows: jest.fn(() => new Map([['main', mainWindow]])),
+      };
+      const app = new SquidRunApp(ctx, mockManagers);
+
+      await app.initDaemonClient();
+
+      const dataListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'data')?.[1];
+      const exitListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'exit')?.[1];
+      const spawnedListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'spawned')?.[1];
+      const connectedListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'connected')?.[1];
+
+      dataListener('trustquote-oracle', 'oracle output');
+      exitListener('trustquote-oracle', -1073741510, routeOwnerTerminal);
+      spawnedListener('trustquote-oracle', 44123, false, routeOwnerTerminal);
+      connectedListener([{ ...routeOwnerTerminal, alive: false }]);
+
+      expect(recoveryManager.handleExit).not.toHaveBeenCalled();
+      expect(recoveryManager.recordActivity).not.toHaveBeenCalledWith('trustquote-oracle');
+      expect(recoveryManager.recordPtyOutput).not.toHaveBeenCalledWith('trustquote-oracle', 'oracle output');
+      expect(ctx.agentRunning.has('trustquote-oracle')).toBe(false);
+      expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-data-trustquote-oracle', expect.anything());
+      expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-exit-trustquote-oracle', expect.anything());
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith('daemon-connected', { terminals: [] });
+    });
   });
 
   describe('smoke test - full module loads', () => {
