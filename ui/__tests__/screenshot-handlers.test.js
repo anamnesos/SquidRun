@@ -174,6 +174,13 @@ describe('Screenshot Handlers', () => {
         success: true,
         paneId: null,
         scope: 'all',
+        imageSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        captureEvent: expect.objectContaining({
+          source: 'squidrun-electron-main-capture-event',
+          windowKey: 'main',
+          scope: 'all',
+          imageSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
       }));
       expect(ctx.mainWindow.webContents.capturePage).toHaveBeenCalledWith();
       expect(fs.writeFileSync).toHaveBeenCalledTimes(2);
@@ -196,6 +203,10 @@ describe('Screenshot Handlers', () => {
         success: true,
         paneId: '3',
         scope: 'pane',
+        captureEvent: expect.objectContaining({
+          paneId: '3',
+          scope: 'pane',
+        }),
       }));
       expect(ctx.mainWindow.webContents.executeJavaScript).toHaveBeenCalled();
       expect(ctx.mainWindow.webContents.capturePage).toHaveBeenCalledWith(rect);

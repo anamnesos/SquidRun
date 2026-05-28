@@ -5,6 +5,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const {
+  recordSurfaceCaptureEvent,
+  sha256Buffer,
+} = require('../surface-capture-events');
 
 function sanitizePaneSegment(paneId) {
   const raw = String(paneId || '').trim();
@@ -62,6 +66,7 @@ async function captureScreenshot(ctx, options = {}) {
       ? await mainWindow.webContents.capturePage(rect)
       : await mainWindow.webContents.capturePage();
     const buffer = image.toPNG();
+    const imageSha256 = sha256Buffer(buffer);
 
     if (!fs.existsSync(SCREENSHOTS_DIR)) {
       fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
@@ -79,12 +84,26 @@ async function captureScreenshot(ctx, options = {}) {
     const latestPath = path.join(SCREENSHOTS_DIR, 'latest.png');
     fs.writeFileSync(latestPath, buffer);
 
+    const captureEvent = recordSurfaceCaptureEvent({
+      windowKey: typeof options?.windowKey === 'string' && options.windowKey.trim() ? options.windowKey.trim() : 'main',
+      paneId: paneId || null,
+      scope: rect ? 'pane' : 'all',
+      path: filePath,
+      imageSha256,
+      requestId: typeof options?.requestId === 'string' ? options.requestId : null,
+      runId: typeof options?.runId === 'string' ? options.runId : null,
+    }, {
+      auditLogPath: ctx?.CAPTURE_EVENTS_LOG_PATH,
+    });
+
     return {
       success: true,
       filename,
       path: filePath,
       paneId: paneId || null,
       scope: rect ? 'pane' : 'all',
+      imageSha256,
+      captureEvent,
     };
   } catch (err) {
     return { success: false, error: err.message };

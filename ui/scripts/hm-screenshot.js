@@ -20,6 +20,7 @@ function usage() {
   console.log('Common options:');
   console.log('  --window-key <key>          Capture a specific app window (for example trustquote)');
   console.log('  --pane <id>                Capture a specific pane only');
+  console.log('  --run-id <id>              Attach capture to a visible-proof run id');
   console.log('  --send-telegram [caption]  Send screenshot to Telegram after capture');
   console.log('  --role <role>              Sender role (default: builder)');
   console.log('  --port <port>              WebSocket port (default: 9900)');
@@ -114,6 +115,8 @@ function buildPayload(command, options) {
   if (windowKey) payload.windowKey = windowKey;
   const paneId = asString(getOption(options, 'pane', getOption(options, 'pane-id', '')), '');
   if (paneId) payload.paneId = paneId;
+  const runId = asString(getOption(options, 'run-id', getOption(options, 'run', '')), '');
+  if (runId) payload.runId = runId;
   return payload;
 }
 

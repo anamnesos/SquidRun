@@ -32,6 +32,8 @@ function writeSurfaceArtifact(tempDir, options = {}) {
   const windowKey = options.windowKey || 'trustquote';
   const paneId = options.paneId || 'trustquote-builder';
   const targetRole = options.targetRole || 'builder';
+  const imageSha256 = options.imageSha256 || 'a'.repeat(64);
+  const eventId = options.eventId || 'capture-event-1';
   fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({
     schema: 'squidrun.visible_pane_submit_harness.v0',
     producer: 'hm-visible-pane-submit-harness',
@@ -56,6 +58,11 @@ function writeSurfaceArtifact(tempDir, options = {}) {
     capture: {
       provider: options.captureProvider || 'squidrun-app-websocket-screenshot',
       source: options.captureSource || 'electron.capturePage',
+      eventId,
+      eventSource: options.eventSource || 'squidrun-electron-main-capture-event',
+      eventRecordedAt: new Date(options.generatedAtMs || NOW_MS).toISOString(),
+      imageSha256,
+      runId: options.runId || 'trustquote-builder-run',
       requestedWindowKey: options.requestedWindowKey || windowKey,
       windowKey,
       requestedPaneId: options.requestedPaneId || paneId,
@@ -72,6 +79,10 @@ function writeSurfaceArtifact(tempDir, options = {}) {
     },
   }, null, 2));
   return screenshotPath;
+}
+
+function verifiedCaptureEvent() {
+  return { ok: true };
 }
 
 function writeGenericFreshArtifact(tempDir) {
@@ -187,7 +198,11 @@ describe('hm-send surface claim guard', () => {
 
     try {
       const content = `Visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`;
-      expect(validateSurfaceArtifact(screenshotPath, { nowMs: NOW_MS, content })).toEqual(expect.objectContaining({
+      expect(validateSurfaceArtifact(screenshotPath, {
+        nowMs: NOW_MS,
+        content,
+        captureEventVerifier: verifiedCaptureEvent,
+      })).toEqual(expect.objectContaining({
         ok: true,
         provenancePath: path.join(tempDir, 'visible-pane-submit', 'trustquote-builder-run', 'manifest.json'),
       }));
@@ -198,6 +213,7 @@ describe('hm-send surface claim guard', () => {
         senderRole: 'architect',
         recentUserRows: [],
         nowMs: NOW_MS,
+        captureEventVerifier: verifiedCaptureEvent,
       });
 
       expect(violation).toBeNull();
@@ -227,6 +243,31 @@ describe('hm-send surface claim guard', () => {
       expect(violation).toMatchObject({
         violation_class: 'surface_done_claim_without_artifact',
       });
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects hand-written visible-pane-submit manifests without an app-verified capture event', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'surface-claim-'));
+    const screenshotPath = writeSurfaceArtifact(tempDir);
+
+    try {
+      expect(validateSurfaceArtifact(screenshotPath, {
+        nowMs: NOW_MS,
+        content: `Done: visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`,
+      })).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'surface_capture_event_verifier_missing',
+      }));
+      expect(validateSurfaceArtifact(screenshotPath, {
+        nowMs: NOW_MS,
+        content: `Done: visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`,
+        captureEventVerifier: () => ({ ok: false, reason: 'surface_capture_event_not_found' }),
+      })).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'surface_capture_event_not_found',
+      }));
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -310,7 +351,11 @@ describe('hm-send surface claim guard', () => {
     });
 
     try {
-      expect(validateSurfaceArtifact(screenshotPath, { nowMs: NOW_MS, content: 'Done: visible in the TrustQuote dashboard.' })).toEqual(expect.objectContaining({
+      expect(validateSurfaceArtifact(screenshotPath, {
+        nowMs: NOW_MS,
+        content: 'Done: visible in the TrustQuote dashboard.',
+        captureEventVerifier: verifiedCaptureEvent,
+      })).toEqual(expect.objectContaining({
         ok: false,
         reason: 'surface_artifact_stale',
       }));

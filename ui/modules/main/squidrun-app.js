@@ -133,6 +133,9 @@ const {
 } = require('../mira-core/live-direct-channel-status-v0');
 const { captureScreenshot } = require('../ipc/screenshot-handlers');
 const {
+  verifySurfaceCaptureEvent,
+} = require('../surface-capture-events');
+const {
   TRUSTQUOTE_WORKSPACE_KEY,
   isTrustQuoteWorkspace,
   isTrustQuotePaneId,
@@ -3295,7 +3298,13 @@ class SquidRunApp {
               const result = await captureScreenshot({
                 mainWindow: targetWindow,
                 SCREENSHOTS_DIR: path.join(WORKSPACE_PATH, 'screenshots'),
-              }, { paneId });
+                CAPTURE_EVENTS_LOG_PATH: path.join(WORKSPACE_PATH, 'runtime', 'surface-capture-events.jsonl'),
+              }, {
+                paneId,
+                windowKey,
+                requestId: data.message.requestId || null,
+                runId: toNonEmptyString(payload.runId) || null,
+              });
 
               // Legacy mode: if no requestId is present, push event result to requester role/client.
               if (!data.message.requestId) {
@@ -3309,6 +3318,15 @@ class SquidRunApp {
             } catch (err) {
               log.error('WebSocket', `Screenshot failed: ${err.message}`);
               return { success: false, error: err.message };
+            }
+          }
+
+          if (data.message.type === 'surface-capture-event-verify') {
+            try {
+              return verifySurfaceCaptureEvent(data.message.payload || {});
+            } catch (err) {
+              log.error('WebSocket', `Surface capture event verify failed: ${err.message}`);
+              return { ok: false, reason: 'surface_capture_event_verify_failed', error: err.message };
             }
           }
 

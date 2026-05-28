@@ -105,11 +105,19 @@ describe('hm-visible-pane-submit-harness', () => {
             deliveryId: 'delivery-1',
           },
         }),
-        captureScreenshot: async () => ({
+        captureScreenshot: async (payload) => ({
           success: true,
           path: capturePath,
           paneId: 'trustquote-builder',
           scope: 'pane',
+          imageSha256: 'b'.repeat(64),
+          captureEvent: {
+            eventId: 'capture-event-1',
+            source: 'squidrun-electron-main-capture-event',
+            recordedAt: new Date(NOW_MS).toISOString(),
+            imageSha256: 'b'.repeat(64),
+            runId: payload.runId,
+          },
         }),
       });
 
@@ -130,6 +138,9 @@ describe('hm-visible-pane-submit-harness', () => {
         capture: {
           provider: 'squidrun-app-websocket-screenshot',
           source: 'electron.capturePage',
+          eventId: 'capture-event-1',
+          eventSource: 'squidrun-electron-main-capture-event',
+          imageSha256: 'b'.repeat(64),
           windowKey: 'trustquote',
           paneId: 'trustquote-builder',
           scope: 'pane',
@@ -138,6 +149,7 @@ describe('hm-visible-pane-submit-harness', () => {
       expect(validateSurfaceArtifact(result.screenshotPath, {
         nowMs: NOW_MS,
         content: `Visible in the TrustQuote dashboard: ${result.screenshotPath}`,
+        captureEventVerifier: () => ({ ok: true }),
       })).toEqual(expect.objectContaining({ ok: true }));
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
