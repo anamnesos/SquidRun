@@ -6,6 +6,24 @@ const IMAGE_PATH_RE = /(?:[A-Za-z]:[\\/][^"'<>|\r\n)]+?\.(?:png|jpe?g|webp)|\/[^
 const QUOTED_IMAGE_PATH_RE = /["'`]([^"'`\r\n]+?\.(?:png|jpe?g|webp))["'`]/gi;
 const MARKDOWN_IMAGE_TARGET_RE = /\]\(([^)\r\n]+?\.(?:png|jpe?g|webp))\)/gi;
 const DEFAULT_SURFACE_ARTIFACT_MAX_AGE_MS = 45 * 60 * 1000;
+const VISIBLE_PANE_SUBMIT_MANIFEST_SCHEMA = 'squidrun.visible_pane_submit_harness.v0';
+const VISIBLE_PANE_SUBMIT_PRODUCER = 'hm-visible-pane-submit-harness';
+const TRUSTQUOTE_PANE_BY_ROLE = Object.freeze({
+  builder: 'trustquote-builder',
+  oracle: 'trustquote-oracle',
+});
+const FORBIDDEN_SURFACE_KEYS = new Set([
+  'local',
+  'localhost',
+  'emulator',
+  'mock',
+  'sandbox',
+  'private',
+  'private-browser',
+  'private-screenshot',
+  'demo-env',
+  'fake-environment',
+]);
 
 const STOPWORDS = new Set([
   'the', 'and', 'for', 'that', 'this', 'with', 'you', 'your', 'are', 'was', 'were',
@@ -215,6 +233,119 @@ function firstTimestampMs(value) {
   return 0;
 }
 
+function pathHasSegment(filePath, expectedSegment) {
+  const segment = asText(expectedSegment).toLowerCase();
+  if (!segment) return false;
+  return path.resolve(filePath)
+    .replace(/\\/g, '/')
+    .toLowerCase()
+    .split('/')
+    .includes(segment);
+}
+
+function normalizeSurfaceKey(value) {
+  return asText(value).toLowerCase().replace(/[\s_]+/g, '-');
+}
+
+function isForbiddenSurfaceKey(value) {
+  const key = normalizeSurfaceKey(value);
+  if (!key) return true;
+  if (FORBIDDEN_SURFACE_KEYS.has(key)) return true;
+  return /\b(?:local|localhost|emulator|mock|sandbox|private|fake)\b/i.test(key);
+}
+
+function pathHasForbiddenCaptureSegment(filePath) {
+  const normalized = asText(filePath).replace(/\\/g, '/').toLowerCase();
+  if (!normalized) return true;
+  return normalized.split('/').some((segment) => (
+    /^(?:emulator|mock|sandbox|private|private-browser|private-screenshot|demo-env|fake-environment)$/.test(segment)
+    || /(?:emulator|mock|sandbox|private-screenshot|fake-environment)/.test(segment)
+  ));
+}
+
+function inferExpectedSurface(content = '') {
+  const text = asText(content).toLowerCase();
+  if (/\btrustquote\b/.test(text)) {
+    return { windowKey: 'trustquote' };
+  }
+  return {};
+}
+
+function manifestPathMatches(manifestValue, targetPath, baseDir = '') {
+  if (!manifestValue) return false;
+  return jsonContainsPath(manifestValue, targetPath, baseDir);
+}
+
+function validateVisiblePaneSubmitManifest(manifest, imagePath, options = {}) {
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    return { ok: false, reason: 'surface_manifest_invalid' };
+  }
+  if (asText(manifest.schema) !== VISIBLE_PANE_SUBMIT_MANIFEST_SCHEMA) {
+    return { ok: false, reason: 'surface_manifest_untrusted_schema' };
+  }
+  if (asText(manifest.producer) !== VISIBLE_PANE_SUBMIT_PRODUCER) {
+    return { ok: false, reason: 'surface_manifest_untrusted_producer' };
+  }
+  if (!pathHasSegment(imagePath, 'visible-pane-submit')) {
+    return { ok: false, reason: 'surface_artifact_not_visible_submit_bundle' };
+  }
+
+  const baseDir = asText(options.provenanceDir, '');
+  const resolvedImagePath = path.resolve(imagePath);
+  if (
+    !manifestPathMatches(manifest.screenshotPath, resolvedImagePath, baseDir)
+    && !manifestPathMatches(manifest.files?.screenshot, resolvedImagePath, baseDir)
+    && !manifestPathMatches(manifest.summary?.screenshotPath, resolvedImagePath, baseDir)
+  ) {
+    return { ok: false, reason: 'surface_manifest_screenshot_mismatch' };
+  }
+
+  const windowKey = normalizeSurfaceKey(manifest.surface?.windowKey || manifest.windowKey);
+  const paneId = asText(manifest.surface?.paneId || manifest.paneId);
+  const terminalId = asText(manifest.surface?.terminalId || manifest.terminalId);
+  const targetRole = normalizeRole(manifest.surface?.targetRole || manifest.targetRole);
+  const captureProvider = asText(manifest.capture?.provider);
+  const captureSource = asText(manifest.capture?.source);
+  const captureWindowKey = normalizeSurfaceKey(manifest.capture?.windowKey);
+  const requestedWindowKey = normalizeSurfaceKey(manifest.capture?.requestedWindowKey);
+  const capturePaneId = asText(manifest.capture?.paneId);
+  const requestedPaneId = asText(manifest.capture?.requestedPaneId);
+  const captureScope = normalizeSurfaceKey(manifest.capture?.scope);
+  const returnedPath = asText(manifest.capture?.returnedPath);
+  const observedSummary = asText(manifest.observedStateSummary || manifest.summary?.observedStateSummary);
+
+  if (!windowKey || isForbiddenSurfaceKey(windowKey)) return { ok: false, reason: 'surface_window_key_forbidden_or_missing' };
+  if (!paneId) return { ok: false, reason: 'surface_pane_id_missing' };
+  if (!terminalId) return { ok: false, reason: 'surface_terminal_id_missing' };
+  if (!targetRole) return { ok: false, reason: 'surface_target_role_missing' };
+  if (!observedSummary) return { ok: false, reason: 'surface_observed_state_missing' };
+  if (manifest.surface?.sameWindowUserSurface !== true) return { ok: false, reason: 'surface_not_same_window' };
+  if (manifest.surface?.forbiddenSubstitute === true) return { ok: false, reason: 'surface_marked_substitute' };
+  if (captureProvider !== 'squidrun-app-websocket-screenshot') return { ok: false, reason: 'surface_capture_provider_untrusted' };
+  if (captureSource !== 'electron.capturePage') return { ok: false, reason: 'surface_capture_source_untrusted' };
+  if (captureWindowKey !== windowKey) return { ok: false, reason: 'surface_capture_window_mismatch' };
+  if (requestedWindowKey !== windowKey) return { ok: false, reason: 'surface_capture_requested_window_mismatch' };
+  if (capturePaneId !== paneId) return { ok: false, reason: 'surface_capture_pane_mismatch' };
+  if (requestedPaneId !== paneId) return { ok: false, reason: 'surface_capture_requested_pane_mismatch' };
+  if (captureScope !== 'pane') return { ok: false, reason: 'surface_capture_scope_not_pane' };
+  if (!returnedPath) return { ok: false, reason: 'surface_capture_returned_path_missing' };
+  if (pathHasForbiddenCaptureSegment(returnedPath)) return { ok: false, reason: 'surface_capture_returned_path_forbidden' };
+
+  const expectedSurface = inferExpectedSurface(options.content || '');
+  if (expectedSurface.windowKey && windowKey !== expectedSurface.windowKey) {
+    return { ok: false, reason: 'surface_claim_window_mismatch', expectedWindowKey: expectedSurface.windowKey };
+  }
+
+  if (windowKey === 'trustquote') {
+    const expectedPane = TRUSTQUOTE_PANE_BY_ROLE[targetRole];
+    if (expectedPane && paneId !== expectedPane) {
+      return { ok: false, reason: 'surface_claim_pane_mismatch', expectedPaneId: expectedPane };
+    }
+  }
+
+  return { ok: true };
+}
+
 function surfaceArtifactProvenanceCandidates(imagePath) {
   const resolved = path.resolve(imagePath);
   const imageDir = path.dirname(resolved);
@@ -251,6 +382,18 @@ function validateSurfaceArtifact(imagePath, options = {}) {
     }
     const manifest = safeReadJson(candidate, options);
     if (!manifest || !jsonContainsPath(manifest, resolvedImagePath, path.dirname(candidate))) continue;
+    const visiblePaneManifest = validateVisiblePaneSubmitManifest(manifest, resolvedImagePath, {
+      content: options.content,
+      provenanceDir: path.dirname(candidate),
+    });
+    if (!visiblePaneManifest.ok) {
+      return {
+        ...visiblePaneManifest,
+        ok: false,
+        path: resolvedImagePath,
+        provenancePath: candidate,
+      };
+    }
     const timestampMs = firstTimestampMs(manifest) || Number(safeStat(candidate, options)?.mtimeMs || 0);
     if (!timestampMs || nowMs - timestampMs > maxAgeMs) {
       return {
@@ -274,7 +417,10 @@ function validateSurfaceArtifact(imagePath, options = {}) {
 
 function hasExistingSurfaceArtifact(content, options = {}) {
   return extractImagePaths(content).some((candidate) => {
-    const validation = validateSurfaceArtifact(candidate, options);
+    const validation = validateSurfaceArtifact(candidate, {
+      ...options,
+      content,
+    });
     return validation.ok === true;
   });
 }
@@ -364,6 +510,7 @@ function detectSurfaceClaimGuardViolation(input = {}) {
     statSync: input.statSync,
     nowMs,
     maxAgeMs: input.surfaceArtifactMaxAgeMs,
+    content,
   });
 
   if (repeated && !isAdmissionOrConcession(content) && !hasArtifact) {
@@ -375,7 +522,7 @@ function detectSurfaceClaimGuardViolation(input = {}) {
       targetRole: normalizeRole(targetRole) || normalizeRole(targetRaw) || null,
       targetRaw: targetRaw || null,
       sessionId,
-      reason: 'James repeated the same unresolved point; outbound reply must concede/name the unresolved surface or include a fresh recognized surface artifact.',
+      reason: 'James repeated the same unresolved point; outbound reply must concede/name the unresolved surface or include a fresh visible-pane-submit artifact.',
       repeat: {
         score: repeated.score,
         latestMessageId: repeated.latestMessageId,
@@ -397,7 +544,7 @@ function detectSurfaceClaimGuardViolation(input = {}) {
       targetRole: normalizeRole(targetRole) || normalizeRole(targetRaw) || null,
       targetRaw: targetRaw || null,
       sessionId,
-      reason: 'User-facing done/visible claim needs a fresh recognized surface artifact in the message.',
+      reason: 'User-facing done/visible claim needs a fresh visible-pane-submit artifact in the message.',
     };
   }
 

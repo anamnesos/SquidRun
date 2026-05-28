@@ -310,7 +310,7 @@ describe('hm-send retry behavior', () => {
       );
 
       expect(result.code).toBe(1);
-      expect(result.stderr).toContain('BLOCKED: user-facing done/visible claim has no fresh surface artifact');
+      expect(result.stderr).toContain('BLOCKED: user-facing done/visible claim has no fresh visible-pane-submit artifact');
       expect(result.stderr).toContain('This blocks the claim, not the work needed to make it true');
       expect(fs.existsSync(logPath)).toBe(true);
       const [entry] = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
