@@ -452,6 +452,29 @@ describe('terminal.js module', () => {
       expect(caps.verifySubmitAccepted).toBe(true);
     });
 
+    test('uses source pane runtime and PTY Enter for TrustQuote route-owned panes', () => {
+      mockSettings.getSettings.mockReturnValue({
+        hiddenPaneHostsEnabled: false,
+        paneCommands: {
+          '2': 'codex --yolo',
+          '3': 'claude --dangerously-skip-permissions',
+        },
+      });
+
+      const builderCaps = terminal.getPaneInjectionCapabilities('trustquote-builder');
+      expect(builderCaps.displayName).toBe('Codex');
+      expect(builderCaps.enterMethod).toBe('pty');
+      expect(builderCaps.submitMethod).toBe('trustquote-pty-enter');
+      expect(builderCaps.requiresFocusForEnter).toBe(false);
+      expect(builderCaps.verifySubmitAccepted).toBe(true);
+
+      const oracleCaps = terminal.getPaneInjectionCapabilities('trustquote-oracle');
+      expect(oracleCaps.displayName).toBe('Claude');
+      expect(oracleCaps.enterMethod).toBe('pty');
+      expect(oracleCaps.submitMethod).toBe('trustquote-pty-enter');
+      expect(oracleCaps.requiresFocusForEnter).toBe(false);
+    });
+
     test('returns safe generic defaults for unknown runtimes', () => {
       mockSettings.getSettings.mockReturnValue({
         paneCommands: { '9': 'my-custom-cli --run' },

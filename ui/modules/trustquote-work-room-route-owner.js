@@ -29,6 +29,7 @@ const DEFAULT_ROLE_COMMANDS = Object.freeze({
 });
 const DEFAULT_HEARTBEAT_MS = 15000;
 const DEFAULT_SPAWN_ACK_TIMEOUT_MS = 1500;
+const DEFAULT_ROUTE_MESSAGE_ENTER_DELAY_MS = process.platform === 'win32' ? 500 : 150;
 
 function toText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -261,6 +262,14 @@ class TrustQuoteWorkRoomRouteOwner {
     this.daemonClient = options.daemonClient || new DaemonClient({ profileName: TRUSTQUOTE_ROOM_ID });
     this.heartbeatMs = Number.parseInt(String(options.heartbeatMs || DEFAULT_HEARTBEAT_MS), 10) || DEFAULT_HEARTBEAT_MS;
     this.spawnAckTimeoutMs = Number.parseInt(String(options.spawnAckTimeoutMs || DEFAULT_SPAWN_ACK_TIMEOUT_MS), 10) || DEFAULT_SPAWN_ACK_TIMEOUT_MS;
+    const routeMessageEnterDelayMs = Number.parseInt(
+      String(options.routeMessageEnterDelayMs ?? DEFAULT_ROUTE_MESSAGE_ENTER_DELAY_MS),
+      10
+    );
+    this.routeMessageEnterDelayMs = Number.isFinite(routeMessageEnterDelayMs) && routeMessageEnterDelayMs >= 0
+      ? routeMessageEnterDelayMs
+      : DEFAULT_ROUTE_MESSAGE_ENTER_DELAY_MS;
+    this.attachExistingTerminals = options.attachExistingTerminals === true;
     this.clients = new Map();
     this.heartbeatTimers = new Map();
     this.roleTerminalRefs = new Map();
@@ -292,8 +301,12 @@ class TrustQuoteWorkRoomRouteOwner {
     }
 
     for (const spec of this.plan.roles) {
-      await this.spawnRoleTerminal(spec);
-      if (this.options.launchAgents !== false) {
+      if (this.attachExistingTerminals) {
+        await this.attachExistingRoleTerminal(spec);
+      } else {
+        await this.spawnRoleTerminal(spec);
+      }
+      if (!this.attachExistingTerminals && this.options.launchAgents !== false) {
         this.launchRoleAgent(spec);
       }
       await this.openRouteClient(spec);
@@ -335,6 +348,16 @@ class TrustQuoteWorkRoomRouteOwner {
     return result;
   }
 
+  async attachExistingRoleTerminal(spec) {
+    const current = await this.readCurrentTerminalSnapshot(spec.paneId);
+    if (!current || current.alive === false) {
+      throw new Error(`existing terminal unavailable for ${spec.paneId}`);
+    }
+    const ref = normalizeSpawnAck(spec, current.paneId, current.pid, current.dryRun, current);
+    if (ref) this.roleTerminalRefs.set(spec.role, ref);
+    return ref;
+  }
+
   launchRoleAgent(spec) {
     if (!spec.command || typeof this.daemonClient.write !== 'function') return false;
     return this.daemonClient.write(spec.paneId, `${spec.command}\r`, {
@@ -345,23 +368,46 @@ class TrustQuoteWorkRoomRouteOwner {
     });
   }
 
+  submitRouteMessage(spec, content, traceId = null) {
+    if (typeof this.daemonClient.write !== 'function') return false;
+    const meta = {
+      source: ROUTE_OWNER_ID,
+      roomId: TRUSTQUOTE_ROOM_ID,
+      role: spec.role,
+      traceId: traceId || null,
+      sessionScopeId: this.plan.sessionScopeId,
+    };
+    const accepted = this.daemonClient.write(spec.paneId, String(content || ''), {
+      ...meta,
+      phase: 'payload',
+    });
+    if (accepted === false) return false;
+
+    const sendEnter = () => this.daemonClient.write(spec.paneId, '\r', {
+      ...meta,
+      phase: 'submit-enter',
+    });
+    if (this.routeMessageEnterDelayMs <= 0) {
+      return sendEnter();
+    }
+    const timer = setTimeout(sendEnter, this.routeMessageEnterDelayMs);
+    if (timer && typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    return true;
+  }
+
   async openRouteClient(spec) {
     const ws = new this.WebSocketImpl(`ws://127.0.0.1:${this.plan.port}`);
     await waitForSocketMessage(ws, (msg) => msg.type === 'welcome', this.options.timeoutMs, `${spec.role} welcome`);
     ws.send(JSON.stringify(createRegisterPayload(spec, this.plan, {
-      agentProcessStarted: this.options.launchAgents !== false,
+      agentProcessStarted: this.attachExistingTerminals || this.options.launchAgents !== false,
     })));
     await waitForSocketMessage(ws, (msg) => msg.type === 'registered', this.options.timeoutMs, `${spec.role} registered`);
     ws.on?.('message', (raw) => {
       const msg = parseJson(raw?.toString ? raw.toString() : raw);
       if (!msg || msg.type !== 'message') return;
-      if (typeof this.daemonClient.write !== 'function') return;
-      this.daemonClient.write(spec.paneId, `${String(msg.content || '')}\r`, {
-        source: ROUTE_OWNER_ID,
-        roomId: TRUSTQUOTE_ROOM_ID,
-        role: spec.role,
-        traceId: msg.traceId || null,
-      });
+      this.submitRouteMessage(spec, msg.content || '', msg.traceId || null);
     });
     ws.on?.('close', () => {
       const current = this.clients.get(spec.role);
@@ -466,7 +512,11 @@ class TrustQuoteWorkRoomRouteOwner {
     for (const role of Array.from(this.clients.keys())) {
       this.closeRouteClient(role);
     }
-    if (this.options.killTerminalsOnStop !== false && typeof this.daemonClient.kill === 'function') {
+    if (
+      !this.attachExistingTerminals
+      && this.options.killTerminalsOnStop !== false
+      && typeof this.daemonClient.kill === 'function'
+    ) {
       for (const spec of this.plan.roles) {
         try {
           this.daemonClient.kill(spec.paneId);

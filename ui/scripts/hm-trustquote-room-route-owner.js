@@ -76,6 +76,15 @@ function parseArgs(argv = []) {
       options.launchAgents = false;
       continue;
     }
+    if (token === '--attach-existing' || token === '--attach-existing-terminals') {
+      options.attachExistingTerminals = true;
+      options.killTerminalsOnStop = false;
+      continue;
+    }
+    if (token === '--no-kill-terminals') {
+      options.killTerminalsOnStop = false;
+      continue;
+    }
     if (token === '--dry-run') {
       options.dryRun = true;
       continue;
@@ -152,6 +161,8 @@ async function main() {
       pidAlive: true,
       routeOwnerVersion: result.plan?.version || null,
       launchAgents: options.launchAgents !== false,
+      attachExistingTerminals: options.attachExistingTerminals === true,
+      killTerminalsOnStop: options.killTerminalsOnStop === false ? false : true,
       dryRun: options.dryRun === true,
       plan: result.plan,
       stoppedAt: null,

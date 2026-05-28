@@ -20,6 +20,7 @@ const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
 const { getRuntimeInjectionCapabilityDefault } = require('./terminal/injection-capabilities');
 const { readStartupBriefingForInjection } = require('./startup-ai-briefing');
+const { isTrustQuotePaneId } = require('./work-room-terminal-visibility');
 
 const TERMINAL_EVENT_SOURCE = 'terminal.js';
 const { attachAgentColors } = require('./terminal/agent-colors');
@@ -81,6 +82,10 @@ const lastOutputTime = {};
 const codexIdentityInjected = new Set();
 const codexIdentityTimeouts = new Map();
 const terminalInputBridgeDisposables = new Map();
+const TRUSTQUOTE_SOURCE_PANE_BY_ID = Object.freeze({
+  'trustquote-builder': '2',
+  'trustquote-oracle': '3',
+});
 
 // Per-pane input lock - panes locked by default (view-only), toggle to unlock for direct typing
 // Prevents accidental typing in agent panes while allowing programmatic sends (sendToPane/triggers)
@@ -641,7 +646,9 @@ function getSettingsSafe() {
 function getPaneCommandFromSettings(paneId) {
   const settingsObj = getSettingsSafe();
   const paneCommands = settingsObj?.paneCommands || {};
-  const cmd = paneCommands[String(paneId)] || '';
+  const id = String(paneId);
+  const sourcePaneId = TRUSTQUOTE_SOURCE_PANE_BY_ID[id] || null;
+  const cmd = paneCommands[id] || (sourcePaneId ? paneCommands[sourcePaneId] : '') || '';
   return typeof cmd === 'string' ? cmd : '';
 }
 
@@ -720,6 +727,15 @@ function getPaneInjectionCapabilities(paneId) {
       verifySubmitAccepted: hiddenHostNeedsSubmitProof,
       deferSubmitWhilePaneActive: false,
       typingGuardWhenBypassing: true,
+      enterFailureReason: 'pty_enter_failed',
+    });
+  }
+
+  if (isTrustQuotePaneId(paneId)) {
+    Object.assign(base, {
+      submitMethod: 'trustquote-pty-enter',
+      requiresFocusForEnter: false,
+      enterMethod: 'pty',
       enterFailureReason: 'pty_enter_failed',
     });
   }

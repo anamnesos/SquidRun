@@ -204,6 +204,146 @@ describe('TrustQuote work-room route owner', () => {
     expect(websocketRuntime.stop).toHaveBeenCalled();
   });
 
+  test('route messages write payload and Enter as separate PTY events', async () => {
+    const websocketRuntime = {
+      start: jest.fn().mockResolvedValue({}),
+      stop: jest.fn().mockResolvedValue({}),
+    };
+    const daemonClient = new EventEmitter();
+    daemonClient.connect = jest.fn().mockResolvedValue(true);
+    daemonClient.spawn = jest.fn((paneId) => {
+      setImmediate(() => daemonClient.emit('spawned', paneId, 32000, false, {
+        paneId,
+        pid: 32000,
+        dryRun: false,
+        mode: 'pty',
+        createdAt: 32100,
+      }));
+      return true;
+    });
+    daemonClient.write = jest.fn().mockReturnValue(true);
+    const owner = new TrustQuoteWorkRoomRouteOwner({
+      plan: buildTrustQuoteRouteOwnerPlan({
+        mainSessionScopeId: 'app-session-384',
+        settings: { paneCommands: { 2: 'codex', 3: 'claude' } },
+      }),
+      websocketRuntime,
+      daemonClient,
+      WebSocketImpl: FakeWebSocket,
+      heartbeatMs: 100000,
+      routeMessageEnterDelayMs: 1,
+    });
+
+    await owner.start();
+    const builderSocket = FakeWebSocket.instances.find((ws) => (
+      ws.sent.some((msg) => msg.type === 'register' && msg.role === 'builder')
+    ));
+    expect(builderSocket).toBeTruthy();
+
+    daemonClient.write.mockClear();
+    builderSocket.emit('message', JSON.stringify({
+      type: 'message',
+      content: '(ROUTE TEST): submit this payload',
+      traceId: 'route-test-1',
+    }));
+
+    expect(daemonClient.write).toHaveBeenCalledWith(
+      'trustquote-builder',
+      '(ROUTE TEST): submit this payload',
+      expect.objectContaining({
+        source: ROUTE_OWNER_ID,
+        role: 'builder',
+        traceId: 'route-test-1',
+        phase: 'payload',
+      })
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(daemonClient.write).toHaveBeenCalledWith(
+      'trustquote-builder',
+      '\r',
+      expect.objectContaining({
+        source: ROUTE_OWNER_ID,
+        role: 'builder',
+        traceId: 'route-test-1',
+        phase: 'submit-enter',
+      })
+    );
+
+    await owner.stop();
+  });
+
+  test('attach-existing mode binds live route terminals without respawning or killing them', async () => {
+    const websocketRuntime = {
+      start: jest.fn().mockResolvedValue({}),
+      stop: jest.fn().mockResolvedValue({}),
+    };
+    const daemonClient = new EventEmitter();
+    daemonClient.connect = jest.fn().mockResolvedValue(true);
+    daemonClient.spawn = jest.fn();
+    daemonClient.write = jest.fn().mockReturnValue(true);
+    daemonClient.kill = jest.fn();
+    daemonClient.list = jest.fn(() => {
+      setImmediate(() => daemonClient.emit('list', [
+        {
+          paneId: 'trustquote-builder',
+          pid: 42001,
+          alive: true,
+          dryRun: false,
+          mode: 'pty',
+          createdAt: 42100,
+        },
+        {
+          paneId: 'trustquote-oracle',
+          pid: 42002,
+          alive: true,
+          dryRun: false,
+          mode: 'pty',
+          createdAt: 42200,
+        },
+      ]));
+      return true;
+    });
+    const owner = new TrustQuoteWorkRoomRouteOwner({
+      plan: buildTrustQuoteRouteOwnerPlan({
+        mainSessionScopeId: 'app-session-384',
+        settings: { paneCommands: { 2: 'codex', 3: 'claude' } },
+      }),
+      websocketRuntime,
+      daemonClient,
+      WebSocketImpl: FakeWebSocket,
+      heartbeatMs: 100000,
+      attachExistingTerminals: true,
+      launchAgents: false,
+      spawnAckTimeoutMs: 50,
+    });
+
+    await owner.start();
+
+    expect(daemonClient.spawn).not.toHaveBeenCalled();
+    expect(daemonClient.write).not.toHaveBeenCalledWith(
+      'trustquote-builder',
+      'codex\r',
+      expect.anything()
+    );
+    expect(owner.roleTerminalRefs.get('builder')).toEqual(expect.objectContaining({
+      paneId: 'trustquote-builder',
+      pid: 42001,
+    }));
+
+    const registerMessages = FakeWebSocket.instances
+      .flatMap((ws) => ws.sent)
+      .filter((msg) => msg.type === 'register');
+    expect(registerMessages).toHaveLength(2);
+    expect(registerMessages.every((msg) => msg.routeBinding.agentProcessStarted === true)).toBe(true);
+
+    await owner.stop();
+
+    expect(daemonClient.kill).not.toHaveBeenCalled();
+    expect(websocketRuntime.stop).toHaveBeenCalled();
+  });
+
   test('ignores stale daemon exits from replaced terminals before closing a current route client', async () => {
     const websocketRuntime = {
       start: jest.fn().mockResolvedValue({}),
@@ -457,6 +597,47 @@ describe('TrustQuote work-room route owner', () => {
     }
   });
 
+  test('supervised stop does not kill terminals for attach-existing route owners', async () => {
+    const tempDir = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'trustquote-route-owner-'));
+    let alive = true;
+    const killImpl = jest.fn((pid, signal) => {
+      if (signal === 0) {
+        if (alive) return true;
+        throw Object.assign(new Error('missing'), { code: 'ESRCH' });
+      }
+      alive = false;
+      return true;
+    });
+    const daemonClient = {
+      connect: jest.fn().mockResolvedValue(true),
+      kill: jest.fn(),
+    };
+    try {
+      writeSupervisorStatus({ lifecycleDir: tempDir }, {
+        state: 'running',
+        running: true,
+        pid: 12345,
+        attachExistingTerminals: true,
+      });
+
+      const stopped = await stopTrustQuoteRouteOwner({
+        lifecycleDir: tempDir,
+        killImpl,
+        daemonClient,
+        timeoutMs: 50,
+      });
+
+      expect(stopped.ok).toBe(true);
+      expect(daemonClient.kill).not.toHaveBeenCalled();
+      expect(stopped.terminalCleanup).toEqual({
+        skipped: true,
+        reason: 'attached_existing_terminals',
+      });
+    } finally {
+      require('fs').rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test('probe reports route health without proving contract when agents are not started', async () => {
     class ProbeWebSocket extends EventEmitter {
       constructor() {
@@ -551,6 +732,26 @@ describe('TrustQuote work-room route owner', () => {
       'app-session-384',
       '--status-file',
       require('path').resolve('D:/tmp/status.json'),
+      '--no-launch-agents',
+    ]));
+  });
+
+  test('run args can attach to existing terminals without cleanup ownership', () => {
+    const args = buildRunArgs({
+      mainSessionScopeId: 'app-session-384',
+      statusPath: 'D:/tmp/status.json',
+      attachExistingTerminals: true,
+      killTerminalsOnStop: false,
+    });
+
+    expect(args).toEqual(expect.arrayContaining([
+      'run',
+      '--session',
+      'app-session-384',
+      '--status-file',
+      require('path').resolve('D:/tmp/status.json'),
+      '--attach-existing-terminals',
+      '--no-kill-terminals',
       '--no-launch-agents',
     ]));
   });
