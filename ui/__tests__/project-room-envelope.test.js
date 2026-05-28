@@ -34,6 +34,25 @@ describe('TrustQuote room envelope and readiness', () => {
     };
   }
 
+  function routeOwnerBinding(role, sessionScopeId = 'app-session-410:trustquote') {
+    return {
+      clientKind: 'work_room_route_client',
+      routeOwner: 'trustquote-work-room-route-owner',
+      roomId: TRUSTQUOTE_ROOM_ID,
+      role,
+      paneId: role === 'builder' ? 'trustquote-builder' : 'trustquote-oracle',
+      terminalPaneId: role === 'builder' ? 'trustquote-builder' : 'trustquote-oracle',
+      terminalBacked: true,
+      agentProcessStarted: true,
+      profileName: TRUSTQUOTE_ROOM_ID,
+      windowKey: TRUSTQUOTE_ROOM_ID,
+      sessionScopeId,
+      workspace: TRUSTQUOTE_PROJECT_PATH,
+      startupBundlePath: 'D:/projects/squidrun/.squidrun/runtime/window-teams/trustquote/startup-bundle.md',
+      workstreamPath: 'D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/current-workstream.json',
+    };
+  }
+
   test('builds a typed TrustQuote room envelope on existing comms metadata', () => {
     const envelope = buildTrustQuoteRoomEnvelope({
       body: '(BUILDER #1): TrustQuote room status.',
@@ -368,6 +387,8 @@ describe('TrustQuote room envelope and readiness', () => {
         lastSeen: 1000,
         ageMs: 5,
         routeScope,
+        clientKind: 'work_room_route_client',
+        routeBinding: routeOwnerBinding('builder', sessionScopeId),
       },
       oracle: {
         healthy: true,
@@ -376,6 +397,8 @@ describe('TrustQuote room envelope and readiness', () => {
         lastSeen: 1001,
         ageMs: 4,
         routeScope,
+        clientKind: 'work_room_route_client',
+        routeBinding: routeOwnerBinding('oracle', sessionScopeId),
       },
     };
 
@@ -424,6 +447,8 @@ describe('TrustQuote room envelope and readiness', () => {
       ageMs: 10,
       staleThresholdMs: staleAfterMs,
       routeScope: requestedScope,
+      clientKind: 'work_room_route_client',
+      routeBinding: routeOwnerBinding(role, sessionScopeId),
     }));
 
     const contract = buildTrustQuoteWorkRoomContract({
@@ -485,6 +510,46 @@ describe('TrustQuote room envelope and readiness', () => {
     expect(contract.blockers).toEqual(expect.arrayContaining([
       'route_unhealthy:builder:handler_route_available',
       'route_scope_mismatch:oracle',
+    ]));
+  });
+
+  test('bare client_activity without terminal-backed route owner proof cannot prove a real TrustQuote tab', () => {
+    const sessionScopeId = 'app-session-410:trustquote';
+    const routeScope = makeRoomRouteScope(TRUSTQUOTE_ROOM_ID, sessionScopeId);
+
+    const contract = buildTrustQuoteWorkRoomContract({
+      env: { SQUIDRUN_TRUSTQUOTE_PROJECT_ROOT: TRUSTQUOTE_PROJECT_PATH },
+      mainSessionScopeId: 'app-session-410',
+      pathExists: () => true,
+      readJson: () => ({
+        workspace: TRUSTQUOTE_PROJECT_PATH,
+        profile: TRUSTQUOTE_ROOM_ID,
+        session_id: sessionScopeId,
+      }),
+      workstreamEvidence: currentWorkstream(sessionScopeId),
+      routeHealth: {
+        builder: {
+          healthy: true,
+          status: 'healthy',
+          source: 'client_activity',
+          routeScope,
+        },
+        oracle: {
+          healthy: true,
+          status: 'healthy',
+          source: 'client_activity',
+          routeScope,
+        },
+      },
+    });
+
+    expect(contract.status).toBe('blocked');
+    expect(contract.canRenderTopTab).toBe(false);
+    expect(contract.canRouteTask).toBe(false);
+    expect(contract.blockers).toEqual(expect.arrayContaining([
+      'route_owner_proof_client_kind_missing:builder',
+      'route_owner_proof_terminal_not_backed:builder',
+      'route_owner_proof_agent_process_not_started:oracle',
     ]));
   });
 
@@ -635,7 +700,7 @@ describe('TrustQuote room envelope and readiness', () => {
     });
   });
 
-  test('room envelope helper adds no send, post, mutation, restart, or route-owner behavior', () => {
+  test('room envelope helper adds no send, post, mutation, restart, or executable route-owner behavior', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'modules', 'project-room-envelope.js'), 'utf8');
 
     expect(source).not.toMatch(/openAppWindow|writeProfileStartupBundle|ensureProfileWorkspaceLink|writeFileSync/);
@@ -643,7 +708,8 @@ describe('TrustQuote room envelope and readiness', () => {
     expect(source).not.toMatch(/hm-send|sendAgentMessage|sendDirectMessage/);
     expect(source).not.toMatch(/fetch\s*\(|XMLHttpRequest|runtime\s+POST/i);
     expect(source).not.toMatch(/setContext|project:set-context/);
-    expect(source).not.toMatch(/restart|relaunch|routeOwner/i);
+    expect(source).not.toMatch(/restart|relaunch/i);
+    expect(source).not.toMatch(/new\s+TrustQuoteWorkRoomRouteOwner|daemonClient|WebSocketImpl/);
     expect(source).not.toMatch(/telegram/i);
     expect(source.toLowerCase()).not.toContain('plumbhalo');
   });

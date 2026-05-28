@@ -12,7 +12,15 @@ jest.mock('../modules/logger', () => ({
 const WebSocket = require('ws');
 const websocketServer = require('../modules/websocket-server');
 
-function connectAndRegister({ port, role, paneId, profileName = 'main', windowKey = profileName, sessionScopeId = null }) {
+function connectAndRegister({
+  port,
+  role,
+  paneId,
+  profileName = 'main',
+  windowKey = profileName,
+  sessionScopeId = null,
+  routeBinding = null,
+}) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}`);
 
@@ -34,6 +42,7 @@ function connectAndRegister({ port, role, paneId, profileName = 'main', windowKe
           profileName,
           windowKey,
           sessionScopeId,
+          ...(routeBinding ? { routeBinding } : {}),
         }));
         return;
       }
@@ -1638,6 +1647,75 @@ describe('WebSocket Delivery Audit', () => {
     expect(health.status).toBe('no_route');
     expect(health.paneId).toBe('2');
     expect(health.role).toBe('builder');
+  });
+
+  test('health exposes terminal-backed work-room route binding for client_activity routes', async () => {
+    const routeBinding = {
+      clientKind: 'work_room_route_client',
+      routeOwner: 'trustquote-work-room-route-owner',
+      roomId: 'trustquote',
+      role: 'builder',
+      paneId: 'trustquote-builder',
+      terminalPaneId: 'trustquote-builder',
+      terminalBacked: true,
+      agentProcessStarted: true,
+      profileName: 'trustquote',
+      windowKey: 'trustquote',
+      sessionScopeId: 'app-test:trustquote',
+      workspace: 'D:/projects/TrustQuote',
+      startupBundlePath: 'D:/projects/squidrun/.squidrun/runtime/window-teams/trustquote/startup-bundle.md',
+      workstreamPath: 'D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/current-workstream.json',
+    };
+    const targetClient = await connectAndRegister({
+      port,
+      role: 'builder',
+      paneId: '2',
+      profileName: 'trustquote',
+      windowKey: 'trustquote',
+      sessionScopeId: 'app-test:trustquote',
+      routeBinding,
+    });
+    activeClients.add(targetClient);
+    const probeClient = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(probeClient);
+
+    const heartbeatId = 'route-heartbeat-1';
+    const heartbeatPromise = waitForMessage(
+      targetClient,
+      (msg) => msg.type === 'route-heartbeat-ack' && msg.requestId === heartbeatId
+    );
+    targetClient.send(JSON.stringify({ type: 'route-heartbeat', requestId: heartbeatId }));
+    const heartbeat = await heartbeatPromise;
+    expect(heartbeat.routeBinding).toEqual(expect.objectContaining({
+      clientKind: 'work_room_route_client',
+      terminalBacked: true,
+      agentProcessStarted: true,
+      sessionScopeId: 'app-test:trustquote',
+    }));
+
+    const requestId = 'health-work-room-route-1';
+    const healthPromise = waitForMessage(
+      probeClient,
+      (msg) => msg.type === 'health-check-result' && msg.requestId === requestId
+    );
+    probeClient.send(JSON.stringify({
+      type: 'health-check',
+      target: 'builder',
+      requestId,
+      metadata: {
+        routing: {
+          profileName: 'trustquote',
+          windowKey: 'trustquote',
+          sessionScopeId: 'app-test:trustquote',
+        },
+      },
+    }));
+
+    const health = await healthPromise;
+    expect(health.healthy).toBe(true);
+    expect(health.source).toBe('client_activity');
+    expect(health.clientKind).toBe('work_room_route_client');
+    expect(health.routeBinding).toEqual(expect.objectContaining(routeBinding));
   });
 
   test('side-profile health exposes local handler route readiness before scoped terminal delivery', async () => {
