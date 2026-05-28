@@ -31,7 +31,7 @@ function toPositiveInt(value, fallback) {
   return numeric;
 }
 
-function registerProcessHandlers(ctx) {
+function registerProcessHandlers(ctx, deps = {}) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerProcessHandlers requires ctx.ipcMain');
   }
@@ -217,13 +217,18 @@ function registerProcessHandlers(ctx) {
     ),
   }));
 
-  ipcMain.handle('get-daemon-terminal-snapshot', () => {
-    const terminals = typeof ctx.daemonClient?.getTerminals === 'function'
-      ? ctx.daemonClient.getTerminals()
+  ipcMain.handle('get-daemon-terminal-snapshot', (event, options = {}) => {
+    const windowKey = String(options?.windowKey || '').trim().toLowerCase();
+    const scopedPaneId = windowKey === 'trustquote' ? 'trustquote-builder' : '';
+    const daemonClient = scopedPaneId && typeof deps?.getDaemonClientForPane === 'function'
+      ? (deps.getDaemonClientForPane(scopedPaneId) || ctx.daemonClient)
+      : ctx.daemonClient;
+    const terminals = typeof daemonClient?.getTerminals === 'function'
+      ? daemonClient.getTerminals()
       : [];
     return {
-      ok: ctx.daemonClient?.connected === true,
-      source: 'main-daemon-client',
+      ok: daemonClient?.connected === true,
+      source: windowKey === 'trustquote' ? 'trustquote-daemon-client' : 'main-daemon-client',
       terminals: Array.isArray(terminals) ? terminals : [],
     };
   });

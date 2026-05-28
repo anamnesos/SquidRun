@@ -80,10 +80,33 @@ jest.mock('../modules/runtime-config', () => ({
 
 // Mock daemon-client
 jest.mock('../daemon-client', () => ({
+  DaemonClient: jest.fn().mockImplementation(() => ({
+    connect: jest.fn().mockResolvedValue(true),
+    disconnect: jest.fn(),
+    on: jest.fn(),
+    off: jest.fn(),
+    getTerminals: jest.fn().mockReturnValue([]),
+    connected: true,
+  })),
   getDaemonClient: jest.fn().mockReturnValue({
     connect: jest.fn().mockResolvedValue(),
     disconnect: jest.fn(),
     isConnected: jest.fn().mockReturnValue(false),
+  }),
+}));
+
+jest.mock('../modules/trustquote-work-room-prerequisites', () => ({
+  materializeTrustQuoteWorkRoomPrerequisites: jest.fn().mockReturnValue({
+    ok: true,
+    write: true,
+    results: [],
+  }),
+}));
+
+jest.mock('../modules/trustquote-work-room-route-owner-supervisor', () => ({
+  readRouteOwnerStatus: jest.fn().mockReturnValue({
+    running: false,
+    plan: {},
   }),
 }));
 
@@ -518,6 +541,54 @@ describe('SquidRunApp', () => {
 
       expect(app.cliIdentityForwarderRegistered).toBe(false);
       expect(app.triggerAckForwarderRegistered).toBe(false);
+    });
+  });
+
+  describe('TrustQuote workspace routing', () => {
+    it('uses the live route-owner session scope for the TrustQuote window', () => {
+      const { readRouteOwnerStatus } = require('../modules/trustquote-work-room-route-owner-supervisor');
+      readRouteOwnerStatus.mockReturnValue({
+        running: true,
+        plan: {
+          mainSessionScopeId: 'app-session-384',
+          sessionScopeId: 'app-session-384:trustquote',
+          projectPath: 'D:/projects/TrustQuote',
+        },
+      });
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.getWindowSessionScopeId('trustquote')).toBe('app-session-384:trustquote');
+    });
+
+    it('syncs TrustQuote artifacts from the already-running route owner before opening', async () => {
+      const { DaemonClient } = require('../daemon-client');
+      const { materializeTrustQuoteWorkRoomPrerequisites } = require('../modules/trustquote-work-room-prerequisites');
+      const { readRouteOwnerStatus } = require('../modules/trustquote-work-room-route-owner-supervisor');
+      readRouteOwnerStatus.mockReturnValue({
+        running: true,
+        plan: {
+          mainSessionScopeId: 'app-session-384',
+          sessionScopeId: 'app-session-384:trustquote',
+          projectPath: 'D:/projects/TrustQuote',
+        },
+      });
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.focusAppWindow = jest.fn().mockReturnValue(true);
+
+      await app.openAppWindow('trustquote');
+
+      expect(materializeTrustQuoteWorkRoomPrerequisites).toHaveBeenCalledWith(expect.objectContaining({
+        write: true,
+        mainSessionScopeId: 'app-session-384',
+        projectPath: 'D:/projects/TrustQuote',
+      }));
+      expect(DaemonClient).toHaveBeenCalledWith({ profileName: 'trustquote' });
+      expect(app.createWindow).toHaveBeenCalledWith(expect.objectContaining({
+        windowKey: 'trustquote',
+        profileName: 'trustquote',
+        autoBootAgents: false,
+      }));
     });
   });
 
@@ -3959,7 +4030,7 @@ describe('SquidRunApp', () => {
       expect(ctx.agentRunning.has('trustquote-oracle')).toBe(false);
       expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-data-trustquote-oracle', expect.anything());
       expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-exit-trustquote-oracle', expect.anything());
-      expect(mainWindow.webContents.send).toHaveBeenCalledWith('daemon-connected', { terminals: [] });
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith('daemon-connected', { terminals: [], windowKey: 'main' });
     });
   });
 

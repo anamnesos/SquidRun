@@ -264,6 +264,13 @@ function registerPtyHandlers(ctx, deps = {}) {
   const { broadcastClaudeState, recordSessionStart, recordSessionLifecycle, updateIntentState } = deps;
   const getRecoveryManager = () => deps?.recoveryManager || ctx.recoveryManager;
   const getFirmwareManager = () => deps?.firmwareManager || ctx.firmwareManager;
+  const getDaemonClientForPane = (paneId) => {
+    if (typeof deps?.getDaemonClientForPane === 'function') {
+      const scopedClient = deps.getDaemonClientForPane(paneId);
+      if (scopedClient) return scopedClient;
+    }
+    return ctx.daemonClient;
+  };
   const isDeveloperMode = () => String(ctx?.currentSettings?.operatingMode || '').toLowerCase() === 'developer';
   const getPaneProjects = () => {
     const paneProjects = ctx?.currentSettings?.paneProjects;
@@ -297,7 +304,8 @@ function registerPtyHandlers(ctx, deps = {}) {
   }
 
   ipcMain.handle('pty-create', async (event, paneId, workingDir) => {
-    if (!ctx.daemonClient || !ctx.daemonClient.connected) {
+    const daemonClient = getDaemonClientForPane(paneId);
+    if (!daemonClient || !daemonClient.connected) {
       log.error('PTY', 'pty-create: Daemon not connected');
       return { error: 'Daemon not connected' };
     }
@@ -346,9 +354,9 @@ function registerPtyHandlers(ctx, deps = {}) {
 
     const spawnOptions = { paneCommand };
     if (spawnEnv) {
-      ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, spawnEnv, spawnOptions);
+      daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, spawnEnv, spawnOptions);
     } else {
-      ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, null, spawnOptions);
+      daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, null, spawnOptions);
     }
     return { paneId, cwd, dryRun: ctx.currentSettings.dryRun };
   });
@@ -361,7 +369,8 @@ function registerPtyHandlers(ctx, deps = {}) {
       text: data,
     });
 
-    if (!ctx.daemonClient || !ctx.daemonClient.connected) {
+    const daemonClient = getDaemonClientForPane(paneId);
+    if (!daemonClient || !daemonClient.connected) {
       return { success: false, error: 'daemon_not_connected' };
     }
     try {
@@ -370,7 +379,7 @@ function registerPtyHandlers(ctx, deps = {}) {
       const payloadBytes = Buffer.byteLength(text, 'utf8');
       if (payloadBytes >= autoChunkThresholdBytes && payloadBytes > 0) {
         const chunkedResult = await writeChunkedText(
-          ctx.daemonClient,
+          daemonClient,
           paneId,
           text,
           { chunkSize: DEFAULT_CHUNK_SIZE, yieldEveryChunks: 1 },
@@ -392,8 +401,8 @@ function registerPtyHandlers(ctx, deps = {}) {
 
       const normalizedKernelMeta = normalizeKernelMetaForTrace(kernelMeta);
       const accepted = kernelMeta
-        ? ctx.daemonClient.write(paneId, text, normalizedKernelMeta || kernelMeta)
-        : ctx.daemonClient.write(paneId, text);
+        ? daemonClient.write(paneId, text, normalizedKernelMeta || kernelMeta)
+        : daemonClient.write(paneId, text);
       if (!accepted) {
         return { success: false, error: 'daemon_write_failed' };
       }
@@ -404,34 +413,38 @@ function registerPtyHandlers(ctx, deps = {}) {
   });
 
   ipcMain.handle('pty-write-chunked', async (event, paneId, fullText, options = {}, kernelMeta = null) => {
-    if (!ctx.daemonClient || !ctx.daemonClient.connected) {
+    const daemonClient = getDaemonClientForPane(paneId);
+    if (!daemonClient || !daemonClient.connected) {
       return;
     }
 
-    return writeChunkedText(ctx.daemonClient, paneId, fullText, options, kernelMeta);
+    return writeChunkedText(daemonClient, paneId, fullText, options, kernelMeta);
   });
 
   ipcMain.handle('pty-pause', (event, paneId) => {
-    if (ctx.daemonClient && ctx.daemonClient.connected) {
-      ctx.daemonClient.pause(paneId);
+    const daemonClient = getDaemonClientForPane(paneId);
+    if (daemonClient && daemonClient.connected) {
+      daemonClient.pause(paneId);
     }
   });
 
   ipcMain.handle('pty-resume', (event, paneId) => {
-    if (ctx.daemonClient && ctx.daemonClient.connected) {
-      ctx.daemonClient.resume(paneId);
+    const daemonClient = getDaemonClientForPane(paneId);
+    if (daemonClient && daemonClient.connected) {
+      daemonClient.resume(paneId);
     }
   });
 
   ipcMain.handle('interrupt-pane', (event, paneId) => {
-    if (!ctx.daemonClient || !ctx.daemonClient.connected) {
+    const daemonClient = getDaemonClientForPane(paneId);
+    if (!daemonClient || !daemonClient.connected) {
       return { success: false, error: 'Daemon not connected' };
     }
     if (!paneId) {
       return { success: false, error: 'paneId required' };
     }
     try {
-      const writeAccepted = ctx.daemonClient.write(paneId, '\x03');
+      const writeAccepted = daemonClient.write(paneId, '\x03');
       if (writeAccepted === false) {
         return { success: false, error: 'daemon_write_failed' };
       }
@@ -543,24 +556,26 @@ function registerPtyHandlers(ctx, deps = {}) {
       return { ignored: true, reason: 'pane_host_resize_blocked' };
     }
 
-    if (ctx.daemonClient && ctx.daemonClient.connected) {
+    const daemonClient = getDaemonClientForPane(paneId);
+    if (daemonClient && daemonClient.connected) {
       const normalizedKernelMeta = normalizeKernelMetaForTrace(kernelMeta);
       if (kernelMeta) {
-        ctx.daemonClient.resize(paneId, cols, rows, normalizedKernelMeta || kernelMeta);
+        daemonClient.resize(paneId, cols, rows, normalizedKernelMeta || kernelMeta);
       } else {
-        ctx.daemonClient.resize(paneId, cols, rows);
+        daemonClient.resize(paneId, cols, rows);
       }
     }
     return { ignored: false };
   });
 
   ipcMain.handle('pty-kill', (event, paneId) => {
-    if (ctx.daemonClient && ctx.daemonClient.connected) {
+    const daemonClient = getDaemonClientForPane(paneId);
+    if (daemonClient && daemonClient.connected) {
       const recoveryManager = getRecoveryManager();
       if (paneId && recoveryManager?.markExpectedExit) {
         recoveryManager.markExpectedExit(paneId, 'manual-kill');
       }
-      ctx.daemonClient.kill(paneId);
+      daemonClient.kill(paneId);
     }
   });
 
@@ -579,7 +594,8 @@ function registerPtyHandlers(ctx, deps = {}) {
       return { success: true, command: null, dryRun: true };
     }
 
-    if (!ctx.daemonClient || !ctx.daemonClient.connected) {
+    const daemonClient = getDaemonClientForPane(paneId);
+    if (!daemonClient || !daemonClient.connected) {
       return { success: false, error: 'Daemon not connected' };
     }
 
@@ -648,9 +664,12 @@ function registerPtyHandlers(ctx, deps = {}) {
     return Object.fromEntries(ctx.agentRunning);
   });
 
-  ipcMain.handle('get-daemon-terminals', () => {
-    if (ctx.daemonClient) {
-      return ctx.daemonClient.getTerminals();
+  ipcMain.handle('get-daemon-terminals', (event, options = {}) => {
+    const windowKey = String(options?.windowKey || '').trim().toLowerCase();
+    const paneId = String(options?.paneId || (windowKey === 'trustquote' ? 'trustquote-builder' : '')).trim();
+    const daemonClient = paneId ? getDaemonClientForPane(paneId) : ctx.daemonClient;
+    if (daemonClient) {
+      return daemonClient.getTerminals();
     }
     return [];
   });

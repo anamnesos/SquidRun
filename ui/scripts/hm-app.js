@@ -15,7 +15,7 @@ const DEFAULT_RESPONSE_TIMEOUT_MS = 5000;
 
 function usage() {
   console.log('Usage: node hm-app.js <command> [options]');
-  console.log('Commands: reload-renderers, restart-telegram-poller, open-mira-lab, drive-mira-lab');
+  console.log('Commands: reload-renderers, restart-telegram-poller, open-mira-lab, open-trustquote-workspace, drive-mira-lab');
   console.log('Options:');
   console.log('  --role <role>               Sender role (default: builder)');
   console.log(`  --port <port>               WebSocket port (default: ${DEFAULT_PORT})`);
@@ -29,6 +29,7 @@ function usage() {
   console.log('Examples:');
   console.log('  node hm-app.js reload-renderers');
   console.log('  node hm-app.js open-mira-lab');
+  console.log('  node hm-app.js open-trustquote-workspace');
   console.log('  node hm-app.js drive-mira-lab --prompt "are we still talking?" --pane builder');
 }
 
@@ -76,6 +77,7 @@ function normalizeCommand(command) {
   if (normalized === 'reload' || normalized === 'reload-renderer') return 'reload-renderers';
   if (normalized === 'restart-telegram' || normalized === 'reload-telegram-poller') return 'restart-telegram-poller';
   if (normalized === 'mira-lab' || normalized === 'open-mira' || normalized === 'mira-lab-open') return 'open-mira-lab';
+  if (normalized === 'trustquote' || normalized === 'open-trustquote' || normalized === 'trustquote-workspace') return 'open-trustquote-workspace';
   if (normalized === 'drive-mira-lab' || normalized === 'mira-lab-drive' || normalized === 'mira-lab-renderer-prompt') return 'mira-lab-renderer-prompt';
   return normalized;
 }
@@ -196,6 +198,7 @@ async function main() {
     'reload-renderers',
     'restart-telegram-poller',
     'open-mira-lab',
+    'open-trustquote-workspace',
     'mira-lab-renderer-prompt',
   ]);
   if (!allowedCommands.has(command)) {

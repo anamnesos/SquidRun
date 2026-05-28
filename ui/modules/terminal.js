@@ -86,6 +86,7 @@ const terminalInputBridgeDisposables = new Map();
 // Prevents accidental typing in agent panes while allowing programmatic sends (sendToPane/triggers)
 const inputLocked = {};
 PANE_IDS.forEach(id => { inputLocked[id] = true; }); // Default: all panes locked
+let activePaneIds = [...PANE_IDS];
 const IS_DARWIN = process.platform === 'darwin';
 const HIDDEN_PANE_HOSTS_ENV_FLAG = (
   typeof process !== 'undefined'
@@ -199,6 +200,23 @@ function isHiddenPaneHostPane(paneId) {
   const id = String(paneId || '');
   if (!id) return false;
   return isHiddenPaneHostModeEnabled() && PANE_IDS.includes(id);
+}
+
+function getActivePaneIds() {
+  return activePaneIds.slice();
+}
+
+function setActivePaneIds(paneIds = null) {
+  const nextIds = Array.isArray(paneIds)
+    ? paneIds.map((paneId) => String(paneId || '').trim()).filter(Boolean)
+    : [];
+  activePaneIds = nextIds.length > 0 ? Array.from(new Set(nextIds)) : [...PANE_IDS];
+  for (const paneId of activePaneIds) {
+    if (!Object.prototype.hasOwnProperty.call(inputLocked, paneId)) {
+      inputLocked[paneId] = true;
+    }
+  }
+  return getActivePaneIds();
 }
 
 function isPaneReadOnlyMirrorMode(paneId) {
@@ -826,7 +844,7 @@ function syncTerminalInputBridge(paneId, options = {}) {
 }
 
 function refreshMirrorModeBindings() {
-  for (const paneId of PANE_IDS) {
+  for (const paneId of getActivePaneIds()) {
     const id = String(paneId);
     if (isPaneReadOnlyMirrorMode(id)) {
       detachTerminalInputBridge(id);
@@ -1723,12 +1741,12 @@ function sendToPane(paneId, message, options = {}) {
 
   // Initialize all terminals
   async function initTerminals() {
-    for (const paneId of PANE_IDS) {
+    for (const paneId of getActivePaneIds()) {
       if (terminals.has(paneId)) continue;
       await initTerminal(paneId);
     }
     updateConnectionStatus('All terminals ready');
-    focusPane('1');
+    focusPane(getActivePaneIds()[0] || '1');
   // Start stuck message sweeper for Claude panes
   startStuckMessageSweeper();
 }
@@ -2482,7 +2500,7 @@ function isGeminiPane(paneId) {
 // Spawn agents in all panes
 async function spawnAllAgents() {
   updateConnectionStatus('Starting agents in all panes...');
-  for (const paneId of PANE_IDS) {
+  for (const paneId of getActivePaneIds()) {
     await spawnAgent(paneId);
     // Small delay between panes to prevent race conditions
     await new Promise(resolve => setTimeout(resolve, 200));
@@ -2493,7 +2511,7 @@ async function spawnAllAgents() {
 // Kill all terminals
 async function killAllTerminals() {
   updateConnectionStatus('Killing all terminals...');
-  for (const paneId of PANE_IDS) {
+  for (const paneId of getActivePaneIds()) {
     try {
       await window.squidrun.pty.kill(paneId);
     } catch (err) {
@@ -2524,7 +2542,7 @@ async function freshStartAll() {
   updateConnectionStatus('Fresh start: killing all terminals...');
 
   // Kill all terminals and reset identity tracking
-  for (const paneId of PANE_IDS) {
+  for (const paneId of getActivePaneIds()) {
     try {
       await window.squidrun.pty.kill(paneId);
     } catch (err) {
@@ -2542,7 +2560,7 @@ async function freshStartAll() {
   updateConnectionStatus('Fresh start: recreating terminals...');
 
   // Recreate terminal instances and PTYs
-  for (const paneId of PANE_IDS) {
+  for (const paneId of getActivePaneIds()) {
     try {
       await initTerminal(paneId);
     } catch (err) {
@@ -2554,7 +2572,7 @@ async function freshStartAll() {
   await new Promise(resolve => setTimeout(resolve, 300));
 
   // Spawn agents with fresh sessions
-  for (const paneId of PANE_IDS) {
+  for (const paneId of getActivePaneIds()) {
     await spawnAgent(paneId);
   }
 
@@ -2848,6 +2866,8 @@ module.exports = {
   setStatusCallbacks,
   initUIFocusTracker,   // Global UI focus tracking for multi-pane restore
   userInputFocused,     // Active UI composition guard (focus + recent typing)
+  getActivePaneIds,
+  setActivePaneIds,
   initTerminals,
   initTerminal,
   reattachTerminal,

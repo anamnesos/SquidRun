@@ -127,6 +127,7 @@ const projectRooms = rendererModules.projectRooms;
 const { initStatusStrip } = rendererModules.statusStrip;
 const { initPaneVisibilityControls } = rendererModules.paneVisibility;
 const { createWindowTeamBootstrap, readInitialWindowContextFromLocation } = rendererModules.windowTeamBootstrap;
+const { configureWorkspacePaneShell } = rendererModules.workspacePaneShell || {};
 const { sendMiraLivePrompt, normalizeMiraLiveSessionId } = rendererModules.miraLiveEntrypoint || {};
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = rendererModules.modelSelector;
 const { PANE_ROLES, PANE_ROLE_BUNDLES } = rendererModules.config;
@@ -479,6 +480,9 @@ const windowTeamBootstrap = createWindowTeamBootstrap({
 if (typeof terminal.setStartupWindowContext === 'function') {
   terminal.setStartupWindowContext(initialWindowContext);
 }
+if (typeof configureWorkspacePaneShell === 'function') {
+  configureWorkspacePaneShell(initialWindowContext, terminal, document);
+}
 const STARTUP_OVERLAY_FADE_MS = 280;
 const DAEMON_TIMEOUT_FALLBACK_MESSAGE = "SquidRun couldn't start the background daemon. Make sure Node.js 18+ is installed and try restarting the app.";
 const STARTUP_LOADING_DEFAULT_MESSAGE = 'Starting SquidRun...';
@@ -507,6 +511,9 @@ function handleRendererWindowContext(payload = {}) {
   if (typeof terminal.setStartupWindowContext === 'function') {
     terminal.setStartupWindowContext(windowContext);
   }
+  if (typeof configureWorkspacePaneShell === 'function') {
+    configureWorkspacePaneShell(windowContext, terminal, document);
+  }
   applyWindowChrome(windowContext);
   if (!initState.autoSpawnChecked) {
     checkInitComplete();
@@ -527,6 +534,49 @@ function getWindowLifecycleMode(windowContext = getCurrentWindowContext()) {
   if (mode) return mode;
   if (windowContext?.standaloneWindow === true) return 'standalone-profile-app';
   return isSecondaryWindow(windowContext) ? 'secondary-window' : 'main-app';
+}
+
+function getWorkspaceSwitchKey(windowContext = getCurrentWindowContext()) {
+  const rawKey = String(windowContext?.windowKey || 'main').trim().toLowerCase();
+  return rawKey === 'trustquote' ? 'trustquote' : 'main';
+}
+
+function updateWorkspaceSwitcher(windowContext = getCurrentWindowContext()) {
+  const activeKey = getWorkspaceSwitchKey(windowContext);
+  document.querySelectorAll('[data-workspace-switch]').forEach((button) => {
+    const targetKey = String(button.dataset.workspaceSwitch || '').trim().toLowerCase();
+    const isActive = targetKey === activeKey;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+
+async function openWorkspaceFromSwitch(targetKey) {
+  const normalizedTarget = String(targetKey || '').trim().toLowerCase();
+  const activeKey = getWorkspaceSwitchKey();
+  if (!normalizedTarget || normalizedTarget === activeKey) return;
+
+  const payload = normalizedTarget === 'trustquote'
+    ? { windowKey: 'trustquote', profileName: 'trustquote', autoBootAgents: false }
+    : { windowKey: 'main' };
+  try {
+    await ipcRenderer.invoke('open-app-window', payload);
+  } catch (err) {
+    console.error('[WorkspaceSwitch] open failed:', err);
+  }
+}
+
+function bindWorkspaceSwitcher() {
+  const switcher = document.getElementById('workspaceSwitcher');
+  if (!switcher || switcher.dataset.bound === 'true') return;
+  switcher.dataset.bound = 'true';
+  switcher.addEventListener('click', (event) => {
+    const button = event.target?.closest?.('[data-workspace-switch]');
+    if (!button) return;
+    event.preventDefault();
+    void openWorkspaceFromSwitch(button.dataset.workspaceSwitch);
+  });
+  updateWorkspaceSwitcher();
 }
 
 function applyWindowChrome(windowContext = getCurrentWindowContext()) {
@@ -569,6 +619,7 @@ function applyWindowChrome(windowContext = getCurrentWindowContext()) {
       fullRestartBtn.dataset.windowAction = 'close-window';
     }
   }
+  updateWorkspaceSwitcher(normalized);
 }
 
 function formatStartupElapsed(ms) {
@@ -812,13 +863,14 @@ function markTerminalsReady() {
 }
 
 async function requestDaemonTerminalSnapshotAfterReload(timeoutMs = 1500) {
+  const windowContext = getCurrentWindowContext();
   const directSnapshotFn = bridgeApi?.daemon?.terminalSnapshot
     || window?.squidrun?.daemon?.terminalSnapshot
     || window?.squidrunAPI?.daemon?.terminalSnapshot;
 
-  if (typeof directSnapshotFn === 'function') {
+  if (windowContext.windowKey !== 'trustquote' && typeof directSnapshotFn === 'function') {
     try {
-      const snapshot = await directSnapshotFn({ timeoutMs });
+      const snapshot = await directSnapshotFn({ timeoutMs, windowKey: windowContext.windowKey });
       if (snapshot?.ok && Array.isArray(snapshot.terminals)) {
         return snapshot;
       }
@@ -829,7 +881,7 @@ async function requestDaemonTerminalSnapshotAfterReload(timeoutMs = 1500) {
   }
 
   try {
-    const snapshot = await ipcRenderer.invoke('get-daemon-terminal-snapshot');
+    const snapshot = await ipcRenderer.invoke('get-daemon-terminal-snapshot', { windowKey: windowContext.windowKey });
     if (snapshot?.ok && Array.isArray(snapshot.terminals)) {
       return snapshot;
     }
@@ -2658,6 +2710,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
   setupAutonomyOnboardingHandlers();
   initMainPaneState();
+  bindWorkspaceSwitcher();
   applyWindowChrome(initialWindowContext);
   if (projectRooms && typeof projectRooms.initProjectRooms === 'function') {
     projectRooms.initProjectRooms();

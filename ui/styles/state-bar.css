@@ -22,6 +22,45 @@
   min-width: 0;
 }
 
+.workspace-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: var(--space-3);
+  padding: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  flex-shrink: 0;
+}
+
+.workspace-switch {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1;
+  padding: 5px 8px;
+  min-height: 24px;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.workspace-switch:hover,
+.workspace-switch:focus-visible {
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+
+.workspace-switch.active {
+  color: #071018;
+  background: var(--color-primary);
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.18);
+}
+
 .state-bar-right {
   display: flex;
   align-items: center;

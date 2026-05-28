@@ -18,6 +18,7 @@ function usage() {
   console.log('Usage: node hm-screenshot.js <command> [options]');
   console.log('Commands: capture');
   console.log('Common options:');
+  console.log('  --window-key <key>          Capture a specific app window (for example trustquote)');
   console.log('  --pane <id>                Capture a specific pane only');
   console.log('  --send-telegram [caption]  Send screenshot to Telegram after capture');
   console.log('  --role <role>              Sender role (default: builder)');
@@ -109,6 +110,8 @@ function buildPayload(command, options) {
   }
 
   const payload = {};
+  const windowKey = asString(getOption(options, 'window-key', getOption(options, 'window', '')), '');
+  if (windowKey) payload.windowKey = windowKey;
   const paneId = asString(getOption(options, 'pane', getOption(options, 'pane-id', '')), '');
   if (paneId) payload.paneId = paneId;
   return payload;

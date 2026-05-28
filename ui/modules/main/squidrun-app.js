@@ -11,7 +11,7 @@ const WebSocket = require('ws');
 const { createHash } = require('crypto');
 const { spawn } = require('child_process');
 const log = require('../logger');
-const { getDaemonClient } = require('../../daemon-client');
+const { getDaemonClient, DaemonClient } = require('../../daemon-client');
 const {
   WORKSPACE_PATH,
   PANE_IDS,
@@ -132,6 +132,19 @@ const {
   isMiraDirectChannelStatusPrompt,
 } = require('../mira-core/live-direct-channel-status-v0');
 const { captureScreenshot } = require('../ipc/screenshot-handlers');
+const {
+  TRUSTQUOTE_WORKSPACE_KEY,
+  isTrustQuoteWorkspace,
+  isTrustQuotePaneId,
+  isWorkRoomRouteOwnerTerminal,
+  filterTerminalsForWorkspace,
+} = require('../work-room-terminal-visibility');
+const {
+  materializeTrustQuoteWorkRoomPrerequisites,
+} = require('../trustquote-work-room-prerequisites');
+const {
+  readRouteOwnerStatus,
+} = require('../trustquote-work-room-route-owner-supervisor');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
 const { createBufferedFileWriter } = require('../buffered-file-writer');
 const {
@@ -184,11 +197,6 @@ const PTY_DATA_IPC_BATCH_INTERVAL_MS = Number.parseInt(
   10
 );
 const STARTUP_READY_BUFFER_MAX = 4096;
-function isWorkRoomRouteOwnerTerminal(value) {
-  if (!value || typeof value !== 'object') return false;
-  return value.workRoomRouteOwner === true
-    || Boolean(value.routeOwner && value.roomId);
-}
 const TELEGRAM_REPLY_WINDOW_MS = Number.parseInt(
   process.env.SQUIDRUN_TELEGRAM_REPLY_WINDOW_MS || String(5 * 60 * 1000),
   10
@@ -691,6 +699,8 @@ class SquidRunApp {
     }
     this.lastDaemonOutputAtMs = Date.now();
     this.daemonClientListeners = [];
+    this.profileDaemonClients = new Map();
+    this.profileDaemonClientListeners = new Map();
     this.consoleLogPath = path.join(WORKSPACE_PATH, 'console.log');
     this.consoleLogWriter = createBufferedFileWriter({
       filePath: this.consoleLogPath,
@@ -2316,6 +2326,176 @@ class SquidRunApp {
     return delivered;
   }
 
+  sendDaemonConnectedToAppWindows(terminals = []) {
+    let delivered = false;
+    for (const [windowKey] of this.getAppWindows()) {
+      const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+      const visibleTerminals = this.filterTerminalsForVisibleShell(terminals, {
+        windowKey: normalizedWindowKey,
+      });
+      delivered = this.sendToVisibleWindow('daemon-connected', {
+        terminals: visibleTerminals,
+        windowKey: normalizedWindowKey,
+      }, { windowKey: normalizedWindowKey }) || delivered;
+    }
+    return delivered;
+  }
+
+  sendTrustQuoteDaemonConnected(terminals = []) {
+    const visibleTerminals = this.filterTerminalsForVisibleShell(terminals, {
+      windowKey: TRUSTQUOTE_WORKSPACE_KEY,
+    });
+    return this.sendToVisibleWindow('daemon-connected', {
+      terminals: visibleTerminals,
+      windowKey: TRUSTQUOTE_WORKSPACE_KEY,
+    }, { windowKey: TRUSTQUOTE_WORKSPACE_KEY });
+  }
+
+  getDaemonClientForPane(paneId) {
+    if (isTrustQuotePaneId(paneId)) {
+      return this.profileDaemonClients.get(TRUSTQUOTE_WORKSPACE_KEY) || null;
+    }
+    return this.ctx.daemonClient || null;
+  }
+
+  attachTrustQuoteDaemonClientListeners(client) {
+    if (!client || typeof client.on !== 'function') return;
+    if (this.profileDaemonClientListeners.has(TRUSTQUOTE_WORKSPACE_KEY)) return;
+
+    const listeners = [];
+    const attach = (eventName, listener) => {
+      client.on(eventName, listener);
+      listeners.push({ eventName, listener });
+    };
+
+    attach('data', (paneId, data) => {
+      if (!isTrustQuotePaneId(paneId)) return;
+      this.sendToVisibleWindow(`pty-data-${paneId}`, data, { windowKey: TRUSTQUOTE_WORKSPACE_KEY });
+    });
+
+    attach('exit', (paneId, code) => {
+      if (!isTrustQuotePaneId(paneId)) return;
+      this.sendToVisibleWindow(`pty-exit-${paneId}`, code, { windowKey: TRUSTQUOTE_WORKSPACE_KEY });
+    });
+
+    attach('killed', (paneId) => {
+      if (!isTrustQuotePaneId(paneId)) return;
+      this.sendToVisibleWindow(`pty-exit-${paneId}`, null, { windowKey: TRUSTQUOTE_WORKSPACE_KEY });
+    });
+
+    attach('spawned', () => {
+      this.sendTrustQuoteDaemonConnected(client.getTerminals?.() || []);
+    });
+
+    attach('connected', (terminals = []) => {
+      this.sendTrustQuoteDaemonConnected(terminals);
+    });
+
+    attach('reconnected', () => {
+      this.sendTrustQuoteDaemonConnected(client.getTerminals?.() || []);
+      this.sendToVisibleWindow('daemon-reconnected', null, { windowKey: TRUSTQUOTE_WORKSPACE_KEY });
+    });
+
+    attach('disconnected', () => {
+      this.sendToVisibleWindow('daemon-disconnected', null, { windowKey: TRUSTQUOTE_WORKSPACE_KEY });
+    });
+
+    this.profileDaemonClientListeners.set(TRUSTQUOTE_WORKSPACE_KEY, { client, listeners });
+  }
+
+  async ensureTrustQuoteDaemonClient() {
+    const existing = this.profileDaemonClients.get(TRUSTQUOTE_WORKSPACE_KEY);
+    if (existing?.connected) return existing;
+
+    const client = existing || new DaemonClient({ profileName: TRUSTQUOTE_WORKSPACE_KEY });
+    if (!existing) {
+      this.profileDaemonClients.set(TRUSTQUOTE_WORKSPACE_KEY, client);
+      this.attachTrustQuoteDaemonClientListeners(client);
+    }
+
+    await client.connect();
+    return client;
+  }
+
+  readTrustQuoteRouteOwnerStatus() {
+    try {
+      return readRouteOwnerStatus({ squidrunRoot: WORKSPACE_PATH });
+    } catch (err) {
+      log.warn('Window', `Failed to read TrustQuote route-owner status: ${err.message}`);
+      return null;
+    }
+  }
+
+  getTrustQuoteRouteOwnerSessionScopeId() {
+    const status = this.readTrustQuoteRouteOwnerStatus();
+    return status?.running && toNonEmptyString(status?.plan?.sessionScopeId)
+      ? status.plan.sessionScopeId
+      : null;
+  }
+
+  syncTrustQuoteWorkspaceArtifactsWithLiveRouteOwner() {
+    const status = this.readTrustQuoteRouteOwnerStatus();
+    const mainSessionScopeId = status?.running && toNonEmptyString(status?.plan?.mainSessionScopeId)
+      ? status.plan.mainSessionScopeId
+      : null;
+    if (!mainSessionScopeId) {
+      return {
+        ok: false,
+        reason: 'trustquote_route_owner_not_running_or_unscoped',
+        status,
+      };
+    }
+
+    try {
+      const materialized = materializeTrustQuoteWorkRoomPrerequisites({
+        write: true,
+        squidrunRoot: WORKSPACE_PATH,
+        projectPath: status.plan?.projectPath,
+        mainSessionScopeId,
+      });
+      return {
+        ok: true,
+        status,
+        materialized,
+      };
+    } catch (err) {
+      log.warn('Window', `Failed to sync TrustQuote workspace artifacts: ${err.message}`);
+      return {
+        ok: false,
+        reason: 'trustquote_workspace_artifact_sync_failed',
+        error: err.message,
+        status,
+      };
+    }
+  }
+
+  buildTrustQuoteWorkspaceStartupBundle() {
+    const syncResult = this.syncTrustQuoteWorkspaceArtifactsWithLiveRouteOwner();
+    if (!syncResult?.ok) {
+      log.warn('Window', `TrustQuote startup bundle sync skipped: ${syncResult?.reason || 'unknown'}`);
+      return null;
+    }
+
+    const artifacts = syncResult.materialized?.artifacts || {};
+    const paths = artifacts.paths || {};
+    const bundlePath = toNonEmptyString(paths.startupBundlePath);
+    const text = toNonEmptyString(artifacts.startupBundle)
+      || (bundlePath ? this.readTextFileSafe(bundlePath).trim() : '');
+    if (!bundlePath || !text) return null;
+
+    return {
+      ok: true,
+      sessionScopeId: toNonEmptyString(artifacts.sessionScopeId) || this.getWindowSessionScopeId(TRUSTQUOTE_WORKSPACE_KEY),
+      sourcePaths: [
+        paths.linkPath,
+        paths.agentsPath,
+        paths.rolesPath,
+      ].filter(Boolean),
+      bundlePath,
+      text,
+    };
+  }
+
   canSendToWindow(windowRef) {
     if (!windowRef) return false;
     if (typeof windowRef.isDestroyed === 'function' && windowRef.isDestroyed()) {
@@ -2403,9 +2583,9 @@ class SquidRunApp {
     }
   }
 
-  filterTerminalsForVisibleShell(terminals = []) {
-    if (!Array.isArray(terminals)) return [];
-    return terminals.filter((term) => !isWorkRoomRouteOwnerTerminal(term));
+  filterTerminalsForVisibleShell(terminals = [], options = {}) {
+    const windowKey = toNonEmptyString(options.windowKey) || 'main';
+    return filterTerminalsForWorkspace(terminals, windowKey);
   }
 
   pruneVisibleInjectDeliveryCache(now = Date.now()) {
@@ -3107,8 +3287,13 @@ class SquidRunApp {
             try {
               const payload = data.message.payload || {};
               const paneId = payload.paneId || data.message.paneId || null;
+              const windowKey = toNonEmptyString(payload.windowKey) || 'main';
+              const targetWindow = this.getAppWindow(windowKey) || (windowKey === 'main' ? this.ctx.mainWindow : null);
+              if (!this.canSendToWindow(targetWindow)) {
+                return { success: false, error: `Window not available: ${windowKey}` };
+              }
               const result = await captureScreenshot({
-                mainWindow: this.ctx.mainWindow,
+                mainWindow: targetWindow,
                 SCREENSHOTS_DIR: path.join(WORKSPACE_PATH, 'screenshots'),
               }, { paneId });
 
@@ -4023,6 +4208,8 @@ class SquidRunApp {
   async createWindow() {
     const rawOptions = arguments[0] && typeof arguments[0] === 'object' ? arguments[0] : {};
     const windowKey = String(rawOptions.windowKey || 'main').trim() || 'main';
+    const windowProfileName = toNonEmptyString(rawOptions.profileName)
+      || (isTrustQuoteWorkspace(windowKey) ? TRUSTQUOTE_WORKSPACE_KEY : this.activeProfileName);
     const lifecycleRoot = rawOptions.lifecycleRoot === true
       || (windowKey === 'main' && !this.canSendToWindow(this.ctx.mainWindow));
     const existingWindow = this.getAppWindow(windowKey);
@@ -4036,13 +4223,17 @@ class SquidRunApp {
       || (isPrimaryWindow
         ? (this.activeProfileName === 'scoped' ? 'SquidRun - Scoped' : 'SquidRun')
         : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`);
-    const shouldAutoBootWindowAgents = this.activeProfileName !== 'main'
-      || windowKey !== 'main'
-      || this.isStandaloneProfileWindow(windowKey);
+    const shouldAutoBootWindowAgents = rawOptions.autoBootAgents === false
+      ? false
+      : (this.activeProfileName !== 'main'
+        || windowKey !== 'main'
+        || this.isStandaloneProfileWindow(windowKey));
     const standaloneWindow = this.isStandaloneProfileWindow(windowKey);
     const lifecycleMode = this.getWindowLifecycleMode(windowKey);
     let initialStartupBundle = null;
-    if (this.activeProfileName !== 'scoped' && windowKey !== 'scoped' && (this.activeProfileName !== 'main' || windowKey !== 'main')) {
+    if (isTrustQuoteWorkspace(windowKey)) {
+      initialStartupBundle = this.buildTrustQuoteWorkspaceStartupBundle();
+    } else if (this.activeProfileName !== 'scoped' && windowKey !== 'scoped' && (this.activeProfileName !== 'main' || windowKey !== 'main')) {
       try {
         initialStartupBundle = await this.writeProfileStartupBundle(windowKey === 'main' ? this.activeProfileName : windowKey);
       } catch (err) {
@@ -4053,8 +4244,8 @@ class SquidRunApp {
     const query = {
       windowKey,
       windowTeam: String(rawOptions.windowTeam || windowKey).trim() || windowKey,
-      profileName: this.activeProfileName,
-      profileLabel: this.activeProfileName === 'scoped' ? 'Scoped' : this.formatWindowKeyLabel(this.activeProfileName),
+      profileName: windowProfileName,
+      profileLabel: windowProfileName === 'scoped' ? 'Scoped' : this.formatWindowKeyLabel(windowProfileName),
       roleLayout: 'standard',
       sessionScopeId: this.getWindowSessionScopeId(windowKey),
       startupBundlePath: startupBundlePath || '',
@@ -4090,9 +4281,19 @@ class SquidRunApp {
 
       // Register IPC handlers and load listeners before renderer startup to avoid startup races.
       this.initModules();
-      this.setupWindowListeners(windowRef, { windowKey, lifecycleRoot });
+      this.setupWindowListeners(windowRef, {
+        windowKey,
+        lifecycleRoot,
+        profileName: windowProfileName,
+        autoBootAgents: shouldAutoBootWindowAgents,
+      });
     } else {
-      this.setupWindowListeners(windowRef, { windowKey, lifecycleRoot });
+      this.setupWindowListeners(windowRef, {
+        windowKey,
+        lifecycleRoot,
+        profileName: windowProfileName,
+        autoBootAgents: shouldAutoBootWindowAgents,
+      });
     }
 
     windowRef.loadFile(RENDERER_ENTRY_HTML, { query }).catch((err) => {
@@ -4225,10 +4426,23 @@ class SquidRunApp {
     const windowTitle = windowKey === 'main'
       ? 'SquidRun'
       : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`;
+    if (isTrustQuoteWorkspace(windowKey)) {
+      const syncResult = this.syncTrustQuoteWorkspaceArtifactsWithLiveRouteOwner();
+      if (!syncResult?.ok) {
+        log.warn('Window', `TrustQuote workspace artifact sync skipped: ${syncResult?.reason || 'unknown'}`);
+      }
+      try {
+        await this.ensureTrustQuoteDaemonClient();
+      } catch (err) {
+        log.warn('Window', `TrustQuote daemon client unavailable before opening workspace: ${err.message}`);
+      }
+    }
     await this.createWindow({
       windowKey,
       windowTeam: windowKey,
       title: windowTitle,
+      profileName: isTrustQuoteWorkspace(windowKey) ? TRUSTQUOTE_WORKSPACE_KEY : undefined,
+      autoBootAgents: isTrustQuoteWorkspace(windowKey) ? false : undefined,
       lifecycleRoot: options.lifecycleRoot === true,
     });
     this.focusAppWindow(windowKey);
@@ -4347,6 +4561,10 @@ class SquidRunApp {
 
   getWindowSessionScopeId(windowKey = 'main') {
     const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+    if (isTrustQuoteWorkspace(normalizedWindowKey)) {
+      const liveSessionScopeId = this.getTrustQuoteRouteOwnerSessionScopeId();
+      if (liveSessionScopeId) return liveSessionScopeId;
+    }
     const baseScopeId = toNonEmptyString(this.commsSessionScopeId) || `app-${process.pid}-${Date.now()}`;
     if (normalizedWindowKey === 'main' && !isMainProfile(this.activeProfileName)) {
       return `${baseScopeId}:${this.activeProfileName}`;
@@ -4404,9 +4622,22 @@ class SquidRunApp {
       log.warn('Window', `Failed to seed state for ${windowKey}: ${err.message}`);
     }
 
+    if (isTrustQuoteWorkspace(windowKey)) {
+      void this.ensureTrustQuoteDaemonClient()
+        .then((client) => {
+          if (!this.canSendToWindow(window)) return;
+          const terminals = this.filterTerminalsForVisibleShell(client.getTerminals?.() || [], { windowKey });
+          window.webContents.send('daemon-connected', { terminals, windowKey });
+        })
+        .catch((err) => {
+          log.warn('Window', `Failed to seed TrustQuote daemon state for ${windowKey}: ${err.message}`);
+        });
+      return;
+    }
+
     if (this.ctx.daemonClient?.connected) {
       try {
-        const terminals = this.filterTerminalsForVisibleShell(this.ctx.daemonClient.getTerminals?.() || []);
+        const terminals = this.filterTerminalsForVisibleShell(this.ctx.daemonClient.getTerminals?.() || [], { windowKey });
         window.webContents.send('daemon-connected', { terminals, windowKey });
         return;
       } catch (err) {
@@ -4979,6 +5210,7 @@ class SquidRunApp {
       stopRuntimeLifecycle: (reason) => this.stopRuntimeServices(reason || 'ipc-stop'),
       getRuntimeLifecycleState: () => this.runtimeLifecycleState,
       performFullShutdown: (reason) => this.performFullShutdown(reason || 'ipc-full-restart'),
+      getDaemonClientForPane: (paneId) => this.getDaemonClientForPane(paneId),
       createMiraLabWindow: (opts = {}) => miraLabWindowModule.createMiraLabWindow({ BrowserWindow, ...opts }),
       sendAgentMessage: (target, body, metadata = {}) => {
         const PANE_BY_ROLE = { architect: '1', builder: '2', oracle: '3' };
@@ -5040,7 +5272,10 @@ class SquidRunApp {
       const requestedWindowKey = typeof payload === 'string'
         ? payload
         : (payload?.windowKey || payload?.key || 'main');
-      return this.openAppWindow(requestedWindowKey);
+      const openOptions = payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload
+        : {};
+      return this.openAppWindow(requestedWindowKey, openOptions);
     });
 
     ipcMain.removeHandler('close-app-window');
@@ -5291,12 +5526,13 @@ class SquidRunApp {
         });
       }
 
-      const terminals = this.filterTerminalsForVisibleShell(await this.requestDaemonTerminalSnapshot(2500));
+      const snapshotTerminals = await this.requestDaemonTerminalSnapshot(2500);
+      const terminals = this.filterTerminalsForVisibleShell(snapshotTerminals, { windowKey: 'main' });
       for (const paneId of PANE_IDS) {
         daemonClient.resume(String(paneId));
       }
 
-      this.sendToAllWindows('daemon-connected', { terminals });
+      this.sendDaemonConnectedToAppWindows(snapshotTerminals);
       this.primePaneHostFromTerminalSnapshot(terminals);
 
       this.emitCommsBridgeEvent('comms.transport.recovery.completed', {
@@ -5349,11 +5585,15 @@ class SquidRunApp {
 
   setupWindowListeners(window = this.ctx.mainWindow, options = {}) {
     const windowKey = String(options.windowKey || 'main').trim() || 'main';
+    const windowProfileName = toNonEmptyString(options.profileName)
+      || (isTrustQuoteWorkspace(windowKey) ? TRUSTQUOTE_WORKSPACE_KEY : this.activeProfileName);
     const isPrimaryWindow = windowKey === 'main';
     const lifecycleRoot = options.lifecycleRoot === true;
-    const shouldAutoBootWindowAgents = this.activeProfileName !== 'main'
-      || windowKey !== 'main'
-      || this.isStandaloneProfileWindow(windowKey);
+    const shouldAutoBootWindowAgents = options.autoBootAgents === false
+      ? false
+      : (this.activeProfileName !== 'main'
+        || windowKey !== 'main'
+        || this.isStandaloneProfileWindow(windowKey));
     const standaloneWindow = this.isStandaloneProfileWindow(windowKey);
     const lifecycleMode = this.getWindowLifecycleMode(windowKey);
     const startupBundlePath = this.getProfileStartupBundlePath(windowKey);
@@ -5406,7 +5646,9 @@ class SquidRunApp {
         await this.initPostLoad();
       }
       let startupBundle = null;
-      if (this.activeProfileName === 'scoped' || windowKey === 'scoped') {
+      if (isTrustQuoteWorkspace(windowKey)) {
+        startupBundle = this.buildTrustQuoteWorkspaceStartupBundle();
+      } else if (this.activeProfileName === 'scoped' || windowKey === 'scoped') {
         try {
           startupBundle = await this.injectScopedStartupBundle();
         } catch (err) {
@@ -5423,8 +5665,8 @@ class SquidRunApp {
         window.webContents.send('window-context', {
           windowKey,
           windowTeam: this.activeProfileName === 'scoped' && windowKey === 'main' ? 'scoped' : windowKey,
-          profileName: this.activeProfileName,
-          profileLabel: this.activeProfileName === 'scoped' ? 'Scoped' : this.formatWindowKeyLabel(this.activeProfileName),
+          profileName: windowProfileName,
+          profileLabel: windowProfileName === 'scoped' ? 'Scoped' : this.formatWindowKeyLabel(windowProfileName),
           roleLayout: 'standard',
           sessionScopeId: this.getWindowSessionScopeId(windowKey),
           startupBundlePath: startupBundle?.bundlePath || startupBundlePath || null,
@@ -6722,16 +6964,15 @@ class SquidRunApp {
           } else {
             // Daemon already connected before renderer loaded - resend the event
             log.info('App', 'Resending daemon-connected to renderer (was connected before load)');
-            const terminals = this.filterTerminalsForVisibleShell(this.ctx.daemonClient.getTerminals?.() || []);
+            const terminals = this.ctx.daemonClient.getTerminals?.() || [];
+            const visibleTerminals = this.filterTerminalsForVisibleShell(terminals, { windowKey: 'main' });
             this.daemonConnectedForStartup = true;
             this.clearDaemonConnectTimeout();
-            this.sendToAllWindows('daemon-connected', {
-              terminals
-            });
-            this.primePaneHostFromTerminalSnapshot(terminals);
+            this.sendDaemonConnectedToAppWindows(terminals);
+            this.primePaneHostFromTerminalSnapshot(visibleTerminals);
             this.kernelBridge.emitBridgeEvent('bridge.connected', {
               transport: 'daemon-client',
-              terminalCount: terminals.length,
+              terminalCount: visibleTerminals.length,
               resumed: true,
             });
           }
@@ -7052,8 +7293,8 @@ class SquidRunApp {
           handlePaneExit(paneId, -1, term);
         }
       }
-      const visibleTerminals = this.filterTerminalsForVisibleShell(terminals);
-      this.sendToAllWindows('daemon-connected', { terminals: visibleTerminals });
+      const visibleTerminals = this.filterTerminalsForVisibleShell(terminals, { windowKey: 'main' });
+      this.sendDaemonConnectedToAppWindows(terminals);
       this.primePaneHostFromTerminalSnapshot(visibleTerminals);
 
       this.kernelBridge.emitBridgeEvent('bridge.connected', {

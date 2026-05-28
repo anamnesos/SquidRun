@@ -14,6 +14,7 @@ function createRendererModules() {
     statusStrip: require('../status-strip'),
     paneVisibility: require('../pane-visibility'),
     windowTeamBootstrap: require('../window-team-bootstrap'),
+    workspacePaneShell: require('../workspace-pane-shell'),
     miraLiveEntrypoint: require('../mira-live-entrypoint'),
     modelSelector: require('../model-selector'),
     config: require('../../config'),
