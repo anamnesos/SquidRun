@@ -731,14 +731,14 @@ function runOutputGuards({ messageId, targetRole } = {}) {
     if (surfaceClaimViolation.violation_class === 'james_repeat_requires_surface_concession') {
       writeGuardBlock([
         'BLOCKED: James repeated the same unresolved point.',
-        'Concede/name the unresolved surface first, or include a real screenshot artifact from the surface James can inspect.',
+        'Concede/name the unresolved surface first, or include a fresh provenance-bound screenshot artifact from the surface James can inspect.',
         'This blocks claims/status only; focus windows, run visible harnesses, inspect surfaces, and fix reversible route bugs directly.',
         `Log: ${logResult.path}`,
       ]);
     } else if (surfaceClaimViolation.violation_class === 'surface_done_claim_without_artifact') {
       writeGuardBlock([
-        'BLOCKED: user-facing done/visible claim has no surface artifact.',
-        'Include a real screenshot artifact path from the surface James can inspect, or say the real thing is not visible yet.',
+        'BLOCKED: user-facing done/visible claim has no fresh surface artifact.',
+        'Include a fresh provenance-bound screenshot artifact path from the surface James can inspect, or say the real thing is not visible yet.',
         'This blocks the claim, not the work needed to make it true.',
         `Log: ${logResult.path}`,
       ]);

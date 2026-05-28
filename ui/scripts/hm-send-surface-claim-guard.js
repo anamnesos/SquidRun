@@ -5,6 +5,7 @@ const USER_FACING_TARGETS = new Set(['user', 'telegram']);
 const IMAGE_PATH_RE = /(?:[A-Za-z]:[\\/][^"'<>|\r\n)]+?\.(?:png|jpe?g|webp)|\/[^"'<>|\r\n)]+?\.(?:png|jpe?g|webp))/gi;
 const QUOTED_IMAGE_PATH_RE = /["'`]([^"'`\r\n]+?\.(?:png|jpe?g|webp))["'`]/gi;
 const MARKDOWN_IMAGE_TARGET_RE = /\]\(([^)\r\n]+?\.(?:png|jpe?g|webp))\)/gi;
+const DEFAULT_SURFACE_ARTIFACT_MAX_AGE_MS = 45 * 60 * 1000;
 
 const STOPWORDS = new Set([
   'the', 'and', 'for', 'that', 'this', 'with', 'you', 'your', 'are', 'was', 'were',
@@ -137,14 +138,144 @@ function extractImagePaths(content) {
   return Array.from(new Set(paths));
 }
 
-function hasExistingSurfaceArtifact(content, options = {}) {
-  const existsSync = typeof options.existsSync === 'function' ? options.existsSync : fs.existsSync;
-  return extractImagePaths(content).some((candidate) => {
-    try {
-      return existsSync(path.resolve(candidate));
-    } catch (_) {
-      return false;
+function safeReadJson(filePath, options = {}) {
+  const readFileSync = typeof options.readFileSync === 'function' ? options.readFileSync : fs.readFileSync;
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function safeStat(filePath, options = {}) {
+  const statSync = typeof options.statSync === 'function' ? options.statSync : fs.statSync;
+  try {
+    return statSync(filePath);
+  } catch (_) {
+    return null;
+  }
+}
+
+function normalizeFilePath(value) {
+  const text = asText(value);
+  if (!text) return '';
+  try {
+    return path.resolve(text).toLowerCase();
+  } catch (_) {
+    return text.replace(/\\/g, '/').toLowerCase();
+  }
+}
+
+function jsonContainsPath(value, targetPath, baseDir = '') {
+  const normalizedTarget = normalizeFilePath(targetPath);
+  if (!normalizedTarget) return false;
+  const stack = [value];
+  const seen = new Set();
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    if (typeof current === 'string') {
+      if (normalizeFilePath(current) === normalizedTarget) return true;
+      if (baseDir && normalizeFilePath(path.resolve(baseDir, current)) === normalizedTarget) return true;
+      continue;
     }
+    if (typeof current !== 'object') continue;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    if (Array.isArray(current)) {
+      for (const item of current) stack.push(item);
+      continue;
+    }
+    for (const item of Object.values(current)) stack.push(item);
+  }
+  return false;
+}
+
+function firstTimestampMs(value) {
+  const stack = [value];
+  const seen = new Set();
+  const timestampKeys = new Set(['generatedAt', 'finishedAt', 'createdAt', 'capturedAt', 'startedAt']);
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || typeof current !== 'object') continue;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    if (Array.isArray(current)) {
+      for (const item of current) stack.push(item);
+      continue;
+    }
+    for (const [key, item] of Object.entries(current)) {
+      if (timestampKeys.has(key) && typeof item === 'string') {
+        const parsed = Date.parse(item);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+      }
+      if (item && typeof item === 'object') stack.push(item);
+    }
+  }
+  return 0;
+}
+
+function surfaceArtifactProvenanceCandidates(imagePath) {
+  const resolved = path.resolve(imagePath);
+  const imageDir = path.dirname(resolved);
+  const parentDir = path.dirname(imageDir);
+  const grandparentDir = path.dirname(parentDir);
+  return Array.from(new Set([
+    path.join(imageDir, 'manifest.json'),
+    path.join(imageDir, 'summary.json'),
+    path.join(parentDir, 'manifest.json'),
+    path.join(parentDir, 'summary.json'),
+    path.join(grandparentDir, 'manifest.json'),
+    path.join(grandparentDir, 'summary.json'),
+  ]));
+}
+
+function validateSurfaceArtifact(imagePath, options = {}) {
+  const existsSync = typeof options.existsSync === 'function' ? options.existsSync : fs.existsSync;
+  const nowMs = Number(options.nowMs) || Date.now();
+  const maxAgeMs = Math.max(1, Number(options.maxAgeMs) || DEFAULT_SURFACE_ARTIFACT_MAX_AGE_MS);
+  const resolvedImagePath = path.resolve(imagePath);
+  try {
+    if (!existsSync(resolvedImagePath)) {
+      return { ok: false, reason: 'image_missing', path: resolvedImagePath };
+    }
+  } catch (_) {
+    return { ok: false, reason: 'image_check_failed', path: resolvedImagePath };
+  }
+
+  for (const candidate of surfaceArtifactProvenanceCandidates(resolvedImagePath)) {
+    try {
+      if (!existsSync(candidate)) continue;
+    } catch (_) {
+      continue;
+    }
+    const manifest = safeReadJson(candidate, options);
+    if (!manifest || !jsonContainsPath(manifest, resolvedImagePath, path.dirname(candidate))) continue;
+    const timestampMs = firstTimestampMs(manifest) || Number(safeStat(candidate, options)?.mtimeMs || 0);
+    if (!timestampMs || nowMs - timestampMs > maxAgeMs) {
+      return {
+        ok: false,
+        reason: 'surface_artifact_stale',
+        path: resolvedImagePath,
+        provenancePath: candidate,
+        timestampMs: timestampMs || null,
+      };
+    }
+    return {
+      ok: true,
+      path: resolvedImagePath,
+      provenancePath: candidate,
+      timestampMs,
+    };
+  }
+
+  return { ok: false, reason: 'surface_artifact_provenance_missing', path: resolvedImagePath };
+}
+
+function hasExistingSurfaceArtifact(content, options = {}) {
+  return extractImagePaths(content).some((candidate) => {
+    const validation = validateSurfaceArtifact(candidate, options);
+    return validation.ok === true;
   });
 }
 
@@ -183,10 +314,18 @@ function hasSubstituteAsProofInstruction(content) {
   for (const imagePath of extractImagePaths(text)) {
     scanText = scanText.split(imagePath).join(' ');
   }
-  const substitute = /\b(?:local|localhost|emulator|mock|sandbox|private browser|private screenshot|demo env|fake environment)\b/i.test(scanText);
-  const realSurface = /\b(?:real dashboard|james(?:'s)? dashboard|production|prod|live dashboard|actual dashboard|where james sees|trustquote dashboard|customer dashboard|james-visible)\b/i.test(scanText);
-  const proofVerb = /\b(?:proof|prove|counts?|visible|screenshot|show|final|done|finish|create|leave|use)\b/i.test(scanText);
-  return substitute && realSurface && proofVerb;
+  const stripped = scanText
+    .replace(/^\s*\((?:ARCHITECT|ARCH|BUILDER|ORACLE|USER|JAMES)\s*#?\d*\)\s*:?\s*/i, '')
+    .trim();
+  const commandText = stripped.match(/^(?:builder|oracle|architect)\s*[:—-]\s*(.+)$/i)?.[1] || stripped;
+  const startsWithInstruction = /^(?:please\s+)?(?:use|treat|count|accept|take|frame|report|show|send|relay|call|claim|present|submit)\b/i.test(commandText);
+  if (!startsWithInstruction) return false;
+
+  const substitute = /\b(?:local|localhost|emulator|mock|sandbox|private browser|private screenshot|demo env|fake environment)\b/i.test(commandText);
+  const realSurface = /\b(?:real dashboard|james(?:'s)? dashboard|production|prod|live dashboard|actual dashboard|where james sees|trustquote dashboard|customer dashboard|james-visible)\b/i.test(commandText);
+  const proofPhrase = /\b(?:as|for|like)\s+(?:proof|evidence|visible proof|completion proof|final proof)\b/i.test(commandText)
+    || /\b(?:counts?|is|becomes?|proves?)\s+(?:as\s+)?(?:proof|evidence|visible proof|completion proof)\b/i.test(commandText);
+  return substitute && realSurface && proofPhrase;
 }
 
 function detectSurfaceClaimGuardViolation(input = {}) {
@@ -221,6 +360,10 @@ function detectSurfaceClaimGuardViolation(input = {}) {
   });
   const hasArtifact = hasExistingSurfaceArtifact(content, {
     existsSync: input.existsSync,
+    readFileSync: input.readFileSync,
+    statSync: input.statSync,
+    nowMs,
+    maxAgeMs: input.surfaceArtifactMaxAgeMs,
   });
 
   if (repeated && !isAdmissionOrConcession(content) && !hasArtifact) {
@@ -232,7 +375,7 @@ function detectSurfaceClaimGuardViolation(input = {}) {
       targetRole: normalizeRole(targetRole) || normalizeRole(targetRaw) || null,
       targetRaw: targetRaw || null,
       sessionId,
-      reason: 'James repeated the same unresolved point; outbound reply must concede/name the unresolved surface or include a real surface artifact.',
+      reason: 'James repeated the same unresolved point; outbound reply must concede/name the unresolved surface or include a fresh recognized surface artifact.',
       repeat: {
         score: repeated.score,
         latestMessageId: repeated.latestMessageId,
@@ -254,7 +397,7 @@ function detectSurfaceClaimGuardViolation(input = {}) {
       targetRole: normalizeRole(targetRole) || normalizeRole(targetRaw) || null,
       targetRaw: targetRaw || null,
       sessionId,
-      reason: 'User-facing done/visible claim needs a literal surface artifact in the message.',
+      reason: 'User-facing done/visible claim needs a fresh recognized surface artifact in the message.',
     };
   }
 
@@ -272,4 +415,5 @@ module.exports = {
   normalizeUserPointText,
   tokensForPoint,
   tokenOverlapScore,
+  validateSurfaceArtifact,
 };
