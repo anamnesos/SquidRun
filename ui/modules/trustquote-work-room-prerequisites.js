@@ -238,6 +238,33 @@ function writeJsonIfChanged(filePath, payload, write) {
   return writeTextIfChanged(filePath, JSON.stringify(payload, null, 2), write);
 }
 
+function isSameTrustQuoteWorkstreamScope(existing, next) {
+  if (!existing || typeof existing !== 'object' || Array.isArray(existing)) return false;
+  if (!next || typeof next !== 'object' || Array.isArray(next)) return false;
+  return toText(existing.version, '') === TRUSTQUOTE_WORKSTREAM_VERSION
+    && toText(existing.roomId, '') === TRUSTQUOTE_ROOM_ID
+    && toText(existing.profile, '') === TRUSTQUOTE_ROOM_ID
+    && normalizeToPosix(existing.projectRoot || existing.workspace) === normalizeToPosix(next.projectRoot || next.workspace)
+    && toText(existing.sessionScopeId || existing.session_id, '') === toText(next.sessionScopeId || next.session_id, '');
+}
+
+function isProvenTrustQuoteWorkstream(existing, next) {
+  return isSameTrustQuoteWorkstreamScope(existing, next)
+    && toText(existing.routeStatus, '').toLowerCase() === 'proven'
+    && Array.isArray(existing.blockers)
+    && existing.blockers.length === 0;
+}
+
+function writeWorkstreamIfChanged(filePath, payload, write) {
+  if (write && fs.existsSync(filePath)) {
+    const existing = readJsonFile(filePath);
+    if (isProvenTrustQuoteWorkstream(existing, payload)) {
+      return { path: normalizeToPosix(filePath), status: 'preserved_proven' };
+    }
+  }
+  return writeJsonIfChanged(filePath, payload, write);
+}
+
 function materializeTrustQuoteWorkRoomPrerequisites(options = {}) {
   const write = options.write === true;
   const artifacts = buildTrustQuoteWorkRoomPrerequisiteArtifacts(options);
@@ -264,7 +291,7 @@ function materializeTrustQuoteWorkRoomPrerequisites(options = {}) {
     },
     {
       kind: 'workstream',
-      ...writeJsonIfChanged(artifacts.paths.workstreamPath, artifacts.workstream, write),
+      ...writeWorkstreamIfChanged(artifacts.paths.workstreamPath, artifacts.workstream, write),
     },
   ];
 

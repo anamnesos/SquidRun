@@ -107,4 +107,46 @@ describe('TrustQuote work-room prerequisites materializer', () => {
       'route_unhealthy:oracle:missing',
     ]);
   });
+
+  test('does not overwrite a proven workstream while refreshing prerequisites', () => {
+    materializeTrustQuoteWorkRoomPrerequisites({
+      squidrunRoot,
+      projectPath: projectRoot,
+      mainSessionScopeId: 'app-session-500',
+      generatedAt: '2026-05-28T00:00:00.000Z',
+      write: true,
+    });
+    const workstreamPath = path.join(projectRoot, '.squidrun', 'work-rooms', 'trustquote', 'current-workstream.json');
+    const provenWorkstream = {
+      version: 'squidrun.work-room-workstream.v0',
+      roomId: 'trustquote',
+      profile: 'trustquote',
+      projectRoot: toPosix(projectRoot),
+      sessionScopeId: 'app-session-500:trustquote',
+      status: 'route_proven',
+      routeStatus: 'proven',
+      currentTask: null,
+      blockers: [],
+      routeProof: {
+        status: 'proven',
+        generatedAt: '2026-05-28T00:01:00.000Z',
+      },
+      sourceRefs: ['proof'],
+      generatedAt: '2026-05-28T00:01:00.000Z',
+    };
+    fs.writeFileSync(workstreamPath, `${JSON.stringify(provenWorkstream, null, 2)}\n`, 'utf8');
+
+    const result = materializeTrustQuoteWorkRoomPrerequisites({
+      squidrunRoot,
+      projectPath: projectRoot,
+      mainSessionScopeId: 'app-session-500',
+      generatedAt: '2026-05-28T00:02:00.000Z',
+      write: true,
+    });
+
+    expect(result.results.find((entry) => entry.kind === 'workstream')).toEqual(expect.objectContaining({
+      status: 'preserved_proven',
+    }));
+    expect(JSON.parse(fs.readFileSync(workstreamPath, 'utf8'))).toEqual(provenWorkstream);
+  });
 });
