@@ -599,6 +599,198 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('relays TrustQuote Builder replies to main Architect with room attribution', async () => {
+    const registerAttempts = [];
+    const healthChecks = [];
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          registerAttempts.push(msg);
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          healthChecks.push(msg);
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            accepted: true,
+            queued: true,
+            verified: true,
+            status: 'delivered.verified',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['architect', '(BUILDER #1): reverse relay proof', '--timeout', '120', '--retries', '0', '--no-fallback'],
+        {
+          HM_SEND_PORT: '65534',
+          HM_SEND_TRUSTQUOTE_REVERSE_PORT: String(port),
+          SQUIDRUN_PROFILE: 'trustquote',
+          SQUIDRUN_ROLE: 'builder',
+          SQUIDRUN_PANE_ID: 'trustquote-builder',
+          SQUIDRUN_SESSION_SCOPE_ID: 'app-session-384:trustquote',
+          SQUIDRUN_PROJECT_ROOT: 'D:/projects/TrustQuote',
+        }
+      );
+
+      expect(result.code).toBe(0);
+      expect(registerAttempts).toEqual([
+        expect.objectContaining({
+          role: 'builder',
+          profileName: 'main',
+          windowKey: 'main',
+          sessionScopeId: null,
+        }),
+      ]);
+      expect(healthChecks).toEqual([
+        expect.objectContaining({
+          target: 'architect',
+        }),
+      ]);
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0]).toEqual(expect.objectContaining({
+        target: 'architect',
+        content: '(TRUSTQUOTE-BUILDER #1): reverse relay proof',
+      }));
+      expect(sendAttempts[0].metadata).toEqual(expect.objectContaining({
+        sender: expect.objectContaining({
+          role: 'builder',
+          roomRole: 'builder',
+          profileName: 'trustquote',
+          paneId: 'trustquote-builder',
+        }),
+        room: expect.objectContaining({
+          id: 'trustquote',
+          sourceRoomId: 'trustquote',
+          targetRoomId: 'main',
+          targetRole: 'architect',
+          dispatch: 'trustquote_reverse_relay',
+        }),
+        trustQuoteReverseRelay: expect.objectContaining({
+          sourceRole: 'builder',
+          sourcePaneId: 'trustquote-builder',
+          targetProfile: 'main',
+          targetRole: 'architect',
+        }),
+      }));
+      expect(sendAttempts[0].metadata.routing).toBeUndefined();
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('does not reverse-relay TrustQuote Builder messages to non-coordinator targets', async () => {
+    const sideRegisters = [];
+    const mainConnections = [];
+    let sideServer;
+    let mainServer;
+
+    await new Promise((resolve, reject) => {
+      sideServer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      sideServer.once('listening', resolve);
+      sideServer.once('error', reject);
+    });
+    await new Promise((resolve, reject) => {
+      mainServer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      mainServer.once('listening', resolve);
+      mainServer.once('error', reject);
+    });
+
+    const sidePort = sideServer.address().port;
+    const mainPort = mainServer.address().port;
+
+    sideServer.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          sideRegisters.push(msg);
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: false,
+            status: 'scope_route_unavailable',
+            failClosed: true,
+            routeScope: { profileName: 'trustquote', windowKey: 'trustquote' },
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+    mainServer.on('connection', (ws) => {
+      mainConnections.push(ws);
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+    });
+
+    try {
+      const result = await runHmSend(
+        ['oracle', '(BUILDER #2): should stay in TrustQuote scope', '--timeout', '120', '--retries', '0', '--no-fallback'],
+        {
+          HM_SEND_PORT: String(sidePort),
+          HM_SEND_TRUSTQUOTE_REVERSE_PORT: String(mainPort),
+          SQUIDRUN_PROFILE: 'trustquote',
+          SQUIDRUN_ROLE: 'builder',
+          SQUIDRUN_PANE_ID: 'trustquote-builder',
+        }
+      );
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('Send blocked by profile isolation (scope_route_unavailable)');
+      expect(sideRegisters).toEqual([
+        expect.objectContaining({
+          role: 'builder',
+          profileName: 'trustquote',
+          windowKey: 'trustquote',
+        }),
+      ]);
+      expect(mainConnections).toHaveLength(0);
+    } finally {
+      await Promise.all([
+        new Promise((resolve) => sideServer.close(resolve)),
+        new Promise((resolve) => mainServer.close(resolve)),
+      ]);
+    }
+  });
+
   test('surfaces content_context_mismatch as content-guard error, not profile isolation', async () => {
     let server;
 

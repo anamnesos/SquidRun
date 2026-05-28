@@ -125,6 +125,8 @@ function buildRunArgs(options = {}) {
   if (options.projectPath) args.push('--project-path', options.projectPath);
   if (options.squidrunRoot) args.push('--squidrun-root', options.squidrunRoot);
   if (options.dryRun === true) args.push('--dry-run');
+  if (options.attachExistingTerminals === true) args.push('--attach-existing-terminals');
+  if (options.killTerminalsOnStop === false) args.push('--no-kill-terminals');
   if (options.launchAgents !== true) args.push('--no-launch-agents');
   return args;
 }
@@ -196,6 +198,8 @@ function startTrustQuoteRouteOwner(options = {}) {
     command: [process.execPath, ...buildRunArgs(options)].join(' '),
     logPath: normalizePathForMetadata(logPath),
     plan,
+    attachExistingTerminals: options.attachExistingTerminals === true,
+    killTerminalsOnStop: options.killTerminalsOnStop === false ? false : true,
   });
   if (typeof fs.closeSync === 'function') {
     try {
@@ -215,7 +219,10 @@ function wait(ms) {
 
 async function stopTrustQuoteRouteOwner(options = {}) {
   const status = readRouteOwnerStatus(options);
-  const terminalCleanup = await cleanupRouteOwnerTerminals(options, status.plan);
+  const shouldCleanupTerminals = options.killTerminalsOnStop !== false && status.attachExistingTerminals !== true;
+  const terminalCleanup = shouldCleanupTerminals
+    ? await cleanupRouteOwnerTerminals(options, status.plan)
+    : { skipped: true, reason: status.attachExistingTerminals === true ? 'attached_existing_terminals' : 'disabled' };
   if (!status.pid || !status.pidAlive) {
     const stopped = writeSupervisorStatus(options, {
       state: 'stopped',

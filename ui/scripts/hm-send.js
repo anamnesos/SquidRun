@@ -16,6 +16,7 @@ const {
 } = require('../config');
 const {
   getActiveProfileName,
+  getProfileWebSocketPort,
   isMainProfile,
   namespaceCoordRelPath,
   normalizeProfileName,
@@ -134,6 +135,9 @@ const MAX_RETRIES = 5;
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 const SPECIAL_USER_TARGETS = new Set(['user', 'telegram']);
 const INTERNAL_INBOX_TARGETS = new Set(['mira']);
+const TRUSTQUOTE_PROFILE_NAME = 'trustquote';
+const TRUSTQUOTE_REVERSE_TARGETS = new Set(['architect']);
+const TRUSTQUOTE_REVERSE_SOURCE_ROLES = new Set(['builder', 'oracle']);
 const args = process.argv.slice(2);
 const listDevicesMode = args.includes('--list-devices');
 const DEFAULT_ROLE_BY_PANE = Object.freeze({
@@ -861,13 +865,116 @@ function buildProjectMetadata(context = localProjectContext) {
 
 const projectMetadata = buildProjectMetadata(localProjectContext);
 
-function buildRegisterPayload(envelope = null) {
+function buildRegisterPayload(envelope = null, options = {}) {
+  const registerOptions = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+  const profileName = normalizeProfileName(registerOptions.profileName || effectiveProfileName);
+  const windowKey = normalizeProfileName(registerOptions.windowKey || profileName);
+  const sessionScopeId = Object.prototype.hasOwnProperty.call(registerOptions, 'sessionScopeId')
+    ? registerOptions.sessionScopeId
+    : (envelope?.session_id || projectMetadata?.session_id || null);
   return {
     type: 'register',
-    role,
-    profileName: effectiveProfileName,
-    windowKey: effectiveProfileName,
-    sessionScopeId: envelope?.session_id || projectMetadata?.session_id || null,
+    role: registerOptions.role || role,
+    profileName,
+    windowKey,
+    sessionScopeId,
+  };
+}
+
+function getTrustQuoteReverseMainPort() {
+  const explicit = Number.parseInt(
+    String(process.env.HM_SEND_TRUSTQUOTE_REVERSE_PORT || process.env.HM_SEND_MAIN_PORT || ''),
+    10
+  );
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  return getProfileWebSocketPort('main');
+}
+
+function getTrustQuoteSourcePaneId(sourceRole) {
+  const envPane = String(process.env.SQUIDRUN_PANE_ID || '').trim();
+  if (envPane) return envPane;
+  if (sourceRole === 'builder') return 'trustquote-builder';
+  if (sourceRole === 'oracle') return 'trustquote-oracle';
+  return null;
+}
+
+function formatTrustQuoteReverseContent(content, sourceRole) {
+  const text = String(content || '');
+  const normalizedRole = normalizeRole(sourceRole);
+  if (!TRUSTQUOTE_REVERSE_SOURCE_ROLES.has(normalizedRole)) return text;
+  if (/^\(TRUSTQUOTE-(?:BUILDER|ORACLE)(?:\s+#[^)]+)?\):/i.test(text.trimStart())) {
+    return text;
+  }
+  const roleLabel = normalizedRole.toUpperCase();
+  const replaced = text.replace(
+    new RegExp(`^\\((${roleLabel})([^)]*)\\):`, 'i'),
+    `(TRUSTQUOTE-${roleLabel}$2):`
+  );
+  if (replaced !== text) return replaced;
+  return `(TRUSTQUOTE-${roleLabel}): ${text}`;
+}
+
+function buildTrustQuoteReverseRouteContext(targetRole) {
+  const normalizedSourceRole = normalizeRole(role);
+  if (normalizeProfileName(effectiveProfileName) !== TRUSTQUOTE_PROFILE_NAME) return null;
+  if (!TRUSTQUOTE_REVERSE_TARGETS.has(targetRole)) return null;
+  if (!TRUSTQUOTE_REVERSE_SOURCE_ROLES.has(normalizedSourceRole)) return null;
+
+  const sourcePaneId = getTrustQuoteSourcePaneId(normalizedSourceRole);
+  const sessionScopeId = String(process.env.SQUIDRUN_SESSION_SCOPE_ID || projectMetadata?.session_id || '').trim() || null;
+  const sourceProjectPath = String(projectMetadata?.path || process.env.SQUIDRUN_PROJECT_ROOT || '').trim() || null;
+  return {
+    port: getTrustQuoteReverseMainPort(),
+    register: {
+      profileName: 'main',
+      windowKey: 'main',
+      sessionScopeId: null,
+      role: normalizedSourceRole,
+    },
+    metadata: {
+      sender: {
+        role: normalizedSourceRole,
+        roomRole: normalizedSourceRole,
+        profileName: TRUSTQUOTE_PROFILE_NAME,
+        windowKey: TRUSTQUOTE_PROFILE_NAME,
+        paneId: sourcePaneId,
+        terminalPaneId: sourcePaneId,
+      },
+      room: {
+        id: TRUSTQUOTE_PROFILE_NAME,
+        sourceRoomId: TRUSTQUOTE_PROFILE_NAME,
+        sourceWindowKey: TRUSTQUOTE_PROFILE_NAME,
+        sourceProjectPath,
+        targetRoomId: 'main',
+        targetRole: 'architect',
+        visibility: 'cross_room_summary',
+        sessionScopeId,
+        dispatch: 'trustquote_reverse_relay',
+      },
+      trustQuoteReverseRelay: {
+        sourceProfile: TRUSTQUOTE_PROFILE_NAME,
+        sourceWindowKey: TRUSTQUOTE_PROFILE_NAME,
+        sourceRole: normalizedSourceRole,
+        sourcePaneId,
+        targetProfile: 'main',
+        targetRole: 'architect',
+        sessionScopeId,
+      },
+    },
+  };
+}
+
+function mergeDispatchMetadata(baseMetadata = {}, extraMetadata = null) {
+  if (!extraMetadata || typeof extraMetadata !== 'object' || Array.isArray(extraMetadata)) {
+    return baseMetadata;
+  }
+  return {
+    ...baseMetadata,
+    ...extraMetadata,
+    sender: {
+      ...(baseMetadata.sender && typeof baseMetadata.sender === 'object' ? baseMetadata.sender : {}),
+      ...(extraMetadata.sender && typeof extraMetadata.sender === 'object' ? extraMetadata.sender : {}),
+    },
   };
 }
 
@@ -1803,7 +1910,8 @@ async function emitCommsEventBestEffort(eventType, payload = {}) {
 async function sendViaWebSocketWithAck(envelope, options = {}) {
   const opts = (options && typeof options === 'object' && !Array.isArray(options)) ? options : {};
   const skipHealthCheck = opts.skipHealthCheck === true;
-  const socketUrl = `ws://127.0.0.1:${PORT}`;
+  const socketPort = Number.isFinite(Number(opts.port)) ? Number(opts.port) : PORT;
+  const socketUrl = `ws://127.0.0.1:${socketPort}`;
   const ws = new WebSocket(socketUrl);
   const sendStartedAtMs = Date.now();
   const payloadBytes = getUtf8ByteLength(envelope?.content || '');
@@ -1832,7 +1940,7 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
 
   await waitForMatch(ws, (msg) => msg.type === 'welcome', DEFAULT_CONNECT_TIMEOUT_MS, 'Connection timeout');
 
-  ws.send(JSON.stringify(buildRegisterPayload(envelope)));
+  ws.send(JSON.stringify(buildRegisterPayload(envelope, opts.register)));
   await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
 
   if (!skipHealthCheck) {
@@ -1867,6 +1975,7 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
       attempt,
       maxAttempts: attempts,
     });
+    dispatchMessage.metadata = mergeDispatchMetadata(dispatchMessage.metadata, opts.metadata);
     dispatchMessage.traceContext = {
       ...(dispatchMessage.traceContext && typeof dispatchMessage.traceContext === 'object'
         ? dispatchMessage.traceContext
@@ -2049,6 +2158,10 @@ async function main() {
   const targetRole = normalizeRole(target)
     || (isSpecialTarget(target) ? String(target).trim().toLowerCase() : null)
     || (bridgeTarget ? bridgeTarget.targetRole : null);
+  const trustQuoteReverseRoute = buildTrustQuoteReverseRouteContext(targetRole);
+  const outboundMessage = trustQuoteReverseRoute
+    ? formatTrustQuoteReverseContent(message, role)
+    : message;
   const miraInboxMode = isMiraInboxTarget(targetRole);
   const guardResult = runOutputGuards({ messageId, targetRole });
   if (guardResult?.ok !== true) {
@@ -2066,7 +2179,7 @@ async function main() {
       role: targetRole,
       pane_id: resolvePaneIdForRole(targetRole),
     },
-    content: message,
+    content: outboundMessage,
     priority,
     timestamp_ms: Date.now(),
     project: projectMetadata || null,
@@ -2096,6 +2209,7 @@ async function main() {
       bridgeTarget: bridgeMode ? bridgeTarget.toDevice : null,
       bridgeEnabled: bridgeMode ? isCrossDeviceEnabled(process.env) : null,
       ...envelopeMetadata,
+      ...(trustQuoteReverseRoute ? trustQuoteReverseRoute.metadata : {}),
     },
   });
 
@@ -2115,6 +2229,7 @@ async function main() {
   try {
     sendResult = await sendViaWebSocketWithAck(envelope, {
       skipHealthCheck: bridgeMode,
+      ...(trustQuoteReverseRoute || {}),
     });
   } catch (err) {
     wsError = err;
