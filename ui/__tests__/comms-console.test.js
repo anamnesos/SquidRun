@@ -361,42 +361,29 @@ describe('comms-console background builder rendering', () => {
     expect(list.children[0].innerHTML).not.toContain(`${'A'.repeat(4000)}...`);
   });
 
-  test('surfaces pending Oracle verdict visibility from recorded journal rows', async () => {
-    invokeBridge.mockImplementation(async (_channel, filters = {}) => {
-      if (filters?.senderRole === 'oracle') {
-        return {
-          rows: [
-            {
-              messageId: 'hm-oracle-86',
-              senderRole: 'oracle',
-              targetRole: 'architect',
-              rawBody: '(ORACLE 86): PASS visibility test.',
-              status: 'recorded',
-              metadata: { source: 'hm-send' },
-              sentAtMs: Date.now(),
-            },
-          ],
-        };
-      }
-      return { rows: [] };
+  test('does not surface pending Oracle verdict prose in global shell chrome from journal rows', async () => {
+    invokeBridge.mockResolvedValue({
+      rows: [
+        {
+          messageId: 'hm-oracle-86',
+          senderRole: 'oracle',
+          targetRole: 'architect',
+          rawBody: '(ORACLE 86): PASS visibility test.',
+          status: 'recorded',
+          metadata: { source: 'hm-send' },
+          sentAtMs: Date.now(),
+        },
+      ],
     });
 
     commsConsole.setupCommsConsoleTab(bus);
     await flushPromises();
 
-    const indicator = global.document.getElementById('oracleVerdictPendingIndicator')
-      || global.document.statusBar.children.find((child) => child.id === 'oracleVerdictPendingIndicator');
-    expect(indicator.hidden).toBe(false);
-    expect(indicator.textContent).toContain('Oracle PASS visibility unverified oracle#86');
-
-    const badge = global.document.tabButton.children.find((child) => (
-      child.classList?.contains('oracle-verdict-pending-badge')
-    ));
-    expect(badge.hidden).toBe(false);
-    expect(badge.textContent).toContain('Verdict pending');
+    expect(global.document.statusBar.children).toHaveLength(0);
+    expect(global.document.tabButton.children).toHaveLength(0);
   });
 
-  test('surfaces pending Oracle verdict visibility from live unverified events', async () => {
+  test('does not surface pending Oracle verdict prose in global shell chrome from live events', async () => {
     commsConsole.setupCommsConsoleTab(bus);
     await flushPromises();
 
@@ -417,10 +404,7 @@ describe('comms-console background builder rendering', () => {
     });
     await flushPromises();
 
-    const indicator = global.document.getElementById('oracleVerdictPendingIndicator')
-      || global.document.statusBar.children.find((child) => child.id === 'oracleVerdictPendingIndicator');
-    expect(indicator.hidden).toBe(false);
-    expect(indicator.textContent).toContain('Oracle PASS visibility unverified oracle#83');
-    expect(indicator.textContent).toContain('routed_unverified_timeout');
+    expect(global.document.statusBar.children).toHaveLength(0);
+    expect(global.document.tabButton.children).toHaveLength(0);
   });
 });
