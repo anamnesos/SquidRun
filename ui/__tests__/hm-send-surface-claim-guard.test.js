@@ -7,18 +7,39 @@ const {
   extractImagePaths,
   findLatestUserRepeat,
   hasSurfaceCompletionClaim,
+  validateSurfaceArtifact,
 } = require('../scripts/hm-send-surface-claim-guard');
 
+const NOW_MS = 1_780_000_000_000;
+
 function userRow(rawBody, offsetMs, id = 'row') {
-  const nowMs = 1_780_000_000_000;
   return {
     messageId: id,
     senderRole: 'user',
     targetRole: 'architect',
     direction: 'inbound',
-    brokeredAtMs: nowMs - offsetMs,
+    brokeredAtMs: NOW_MS - offsetMs,
     rawBody,
   };
+}
+
+function writeSurfaceArtifact(tempDir, options = {}) {
+  const runDir = path.join(tempDir, options.runDir || 'visual-capture-run');
+  const currentDir = path.join(runDir, 'current');
+  fs.mkdirSync(currentDir, { recursive: true });
+  const screenshotPath = path.join(currentDir, options.fileName || 'screenshot.png');
+  fs.writeFileSync(screenshotPath, 'not actually a png but enough for path/provenance tests');
+  fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({
+    runId: 'visual-capture-run',
+    generatedAt: new Date(options.generatedAtMs || NOW_MS).toISOString(),
+    files: {
+      screenshot: screenshotPath,
+    },
+    summary: {
+      screenshotPath,
+    },
+  }, null, 2));
+  return screenshotPath;
 }
 
 describe('hm-send surface claim guard', () => {
@@ -27,7 +48,7 @@ describe('hm-send surface claim guard', () => {
       userRow('There is still nothing in my TrustQuote dashboard.', 0, 'latest'),
       userRow('There is nothing in my TrustQuote dashboard.', 60_000, 'previous'),
     ], {
-      nowMs: 1_780_000_000_000,
+      nowMs: NOW_MS,
     });
 
     expect(repeat).toEqual(expect.objectContaining({
@@ -44,7 +65,7 @@ describe('hm-send surface claim guard', () => {
       targetRaw: 'telegram',
       senderRole: 'architect',
       sessionId: 'app-session-386',
-      nowMs: 1_780_000_000_000,
+      nowMs: NOW_MS,
       recentUserRows: [
         userRow('There is still nothing in my TrustQuote dashboard.', 0, 'latest'),
         userRow('There is nothing in my TrustQuote dashboard.', 60_000, 'previous'),
@@ -63,7 +84,7 @@ describe('hm-send surface claim guard', () => {
       targetRole: 'telegram',
       targetRaw: 'telegram',
       senderRole: 'architect',
-      nowMs: 1_780_000_000_000,
+      nowMs: NOW_MS,
       recentUserRows: [
         userRow('There is still nothing in my TrustQuote dashboard.', 0, 'latest'),
         userRow('There is nothing in my TrustQuote dashboard.', 60_000, 'previous'),
@@ -89,13 +110,13 @@ describe('hm-send surface claim guard', () => {
     });
   });
 
-  test('allows visible claims when the message carries an existing screenshot artifact path', () => {
+  test('does not let an unrelated existing PNG satisfy a visible claim', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'surface-claim-'));
-    const screenshotPath = path.join(tempDir, 'proof screenshot.png');
-    fs.writeFileSync(screenshotPath, 'not actually a png but path existence is the guard proof');
+    const screenshotPath = path.join(tempDir, 'old-unrelated.png');
+    fs.writeFileSync(screenshotPath, 'unrelated image');
 
     try {
-      const content = `Visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`;
+      const content = `Done: visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`;
       expect(extractImagePaths(content)).toContain(screenshotPath);
       const violation = detectSurfaceClaimGuardViolation({
         content,
@@ -103,9 +124,65 @@ describe('hm-send surface claim guard', () => {
         targetRaw: 'telegram',
         senderRole: 'architect',
         recentUserRows: [],
+        nowMs: NOW_MS,
+      });
+
+      expect(violation).toMatchObject({
+        violation_class: 'surface_done_claim_without_artifact',
+      });
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('allows visible claims only with fresh provenance-bound surface artifact paths', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'surface-claim-'));
+    const screenshotPath = writeSurfaceArtifact(tempDir);
+
+    try {
+      const content = `Visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`;
+      expect(validateSurfaceArtifact(screenshotPath, { nowMs: NOW_MS })).toEqual(expect.objectContaining({
+        ok: true,
+        provenancePath: path.join(tempDir, 'visual-capture-run', 'manifest.json'),
+      }));
+      const violation = detectSurfaceClaimGuardViolation({
+        content,
+        targetRole: 'telegram',
+        targetRaw: 'telegram',
+        senderRole: 'architect',
+        recentUserRows: [],
+        nowMs: NOW_MS,
       });
 
       expect(violation).toBeNull();
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects stale provenance-bound surface artifact paths', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'surface-claim-'));
+    const screenshotPath = writeSurfaceArtifact(tempDir, {
+      generatedAtMs: NOW_MS - (2 * 60 * 60 * 1000),
+    });
+
+    try {
+      expect(validateSurfaceArtifact(screenshotPath, { nowMs: NOW_MS })).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'surface_artifact_stale',
+      }));
+      const violation = detectSurfaceClaimGuardViolation({
+        content: `Done: visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`,
+        targetRole: 'telegram',
+        targetRaw: 'telegram',
+        senderRole: 'architect',
+        recentUserRows: [],
+        nowMs: NOW_MS,
+      });
+
+      expect(violation).toMatchObject({
+        violation_class: 'surface_done_claim_without_artifact',
+      });
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -132,6 +209,19 @@ describe('hm-send surface claim guard', () => {
       targetRaw: 'builder',
       senderRole: 'architect',
       recentUserRows: [],
+    });
+
+    expect(violation).toBeNull();
+  });
+
+  test('does not block agent discussion of substitute-proof failures', () => {
+    const violation = detectSurfaceClaimGuardViolation({
+      content: 'The anti-substitute check false-positives on agents discussing substitutes: emulator plus production plus proof got blocked.',
+      targetRole: 'builder',
+      targetRaw: 'builder',
+      senderRole: 'oracle',
+      recentUserRows: [],
+      nowMs: NOW_MS,
     });
 
     expect(violation).toBeNull();
