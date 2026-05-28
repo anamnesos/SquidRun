@@ -45,6 +45,9 @@ const {
   isHardBlockMode: isCoworkerLintHardBlock,
 } = require('./hm-send-coworker-output-lint');
 const {
+  detectSurfaceClaimGuardViolation,
+} = require('./hm-send-surface-claim-guard');
+const {
   buildOutboundMessageEnvelope,
   buildCanonicalEnvelopeMetadata,
   buildWebSocketDispatchMessage,
@@ -617,6 +620,36 @@ function detectTelegramUserTargetGuard({ messageId } = {}) {
   };
 }
 
+function readRecentUserInboundRows() {
+  const sessionId = normalizeSessionId(projectMetadata?.session_id || '');
+  if (!sessionId) return [];
+  try {
+    return queryCommsJournalEntries({
+      sessionId,
+      direction: 'inbound',
+      senderRole: 'user',
+      order: 'desc',
+      limit: 80,
+    });
+  } catch (_) {
+    return [];
+  }
+}
+
+function detectSurfaceClaimGuard({ messageId, targetRole } = {}) {
+  return detectSurfaceClaimGuardViolation({
+    content: message,
+    messageId,
+    senderRole: role || 'cli',
+    targetRole,
+    targetRaw: target,
+    sessionId: normalizeSessionId(projectMetadata?.session_id || ''),
+    profile: effectiveProfileName,
+    recentUserRows: readRecentUserInboundRows(),
+    existsSync: fs.existsSync,
+  });
+}
+
 function runOutputGuards({ messageId, targetRole } = {}) {
   const guardInput = {
     content: message,
@@ -628,6 +661,14 @@ function runOutputGuards({ messageId, targetRole } = {}) {
   };
 
   if (bypassGuard) {
+    const surfaceClaimBypass = detectSurfaceClaimGuard({ messageId, targetRole });
+    if (surfaceClaimBypass) {
+      appendGuardJsonl('surface-claim-bypasses.jsonl', {
+        ...surfaceClaimBypass,
+        bypassReason: process.env.HM_SEND_BYPASS_GUARD === '1' ? 'env' : 'flag',
+      });
+    }
+
     const telegramUserTargetBypass = detectTelegramUserTargetGuard({ messageId });
     if (telegramUserTargetBypass) {
       appendGuardJsonl('telegram-user-target-bypasses.jsonl', {
@@ -682,6 +723,39 @@ function runOutputGuards({ messageId, targetRole } = {}) {
     }
 
     return { ok: true, bypassed: true };
+  }
+
+  const surfaceClaimViolation = detectSurfaceClaimGuard({ messageId, targetRole });
+  if (surfaceClaimViolation) {
+    const logResult = appendGuardJsonl('surface-claim-violations.jsonl', surfaceClaimViolation);
+    if (surfaceClaimViolation.violation_class === 'james_repeat_requires_surface_concession') {
+      writeGuardBlock([
+        'BLOCKED: James repeated the same unresolved point.',
+        'Concede/name the unresolved surface first, or include a real screenshot artifact from the surface James can inspect.',
+        'This blocks claims/status only; focus windows, run visible harnesses, inspect surfaces, and fix reversible route bugs directly.',
+        `Log: ${logResult.path}`,
+      ]);
+    } else if (surfaceClaimViolation.violation_class === 'surface_done_claim_without_artifact') {
+      writeGuardBlock([
+        'BLOCKED: user-facing done/visible claim has no surface artifact.',
+        'Include a real screenshot artifact path from the surface James can inspect, or say the real thing is not visible yet.',
+        'This blocks the claim, not the work needed to make it true.',
+        `Log: ${logResult.path}`,
+      ]);
+    } else if (surfaceClaimViolation.violation_class === 'substitute_as_surface_proof') {
+      writeGuardBlock([
+        'BLOCKED: local/emulator/private/demo surface is being used as proof for James-visible or production reality.',
+        'Use the real surface, or say the substitute does not count before doing substitute work.',
+        'This blocks the substitute claim/instruction, not reversible action on the real surface.',
+        `Log: ${logResult.path}`,
+      ]);
+    } else {
+      writeGuardBlock([
+        `BLOCKED: surface-claim-guard '${surfaceClaimViolation.violation_class || 'violation'}'.`,
+        `Log: ${logResult.path}`,
+      ]);
+    }
+    return { ok: false, type: 'surface_claim', violation: surfaceClaimViolation };
   }
 
   const telegramUserTargetViolation = detectTelegramUserTargetGuard({ messageId });
