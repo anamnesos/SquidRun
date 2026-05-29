@@ -294,6 +294,39 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('warns and logs dead comms liveness without blocking delivery', async () => {
+    const tempProject = createLinkedProject();
+    const sendAttempts = [];
+    const { server, port } = await startAckServer(sendAttempts);
+    const logPath = path.join(tempProject, '.squidrun', 'runtime', 'comms-liveness-violations.jsonl');
+
+    try {
+      const message = '(ORACLE #9): PASS. 4 suites / 21 tests. Caps unchanged. Standing by.';
+      const result = await runHmSend(
+        ['architect', message, '--role', 'oracle', '--timeout', '80', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port) },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(result.stdout).toContain('Delivered to architect');
+      expect(result.stderr).toContain("WARN: comms-liveness 'dead_packet_opener'");
+      expect(result.stderr).toContain('send continuing');
+      expect(fs.existsSync(logPath)).toBe(true);
+      const [entry] = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
+      expect(entry).toEqual(expect.objectContaining({
+        type: 'comms_liveness',
+        enforcement_mode: 'soft_warn',
+        violation_class: 'dead_packet_opener',
+        targetRole: 'architect',
+      }));
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('blocks user-facing done or visible claims without a surface artifact before send', async () => {
     const tempProject = createLinkedProject({ squidrunRoot: null });
     writeAppStatus(tempProject, 'app-session-781');

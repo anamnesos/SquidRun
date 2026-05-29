@@ -204,6 +204,10 @@ const TELEGRAM_REPLY_WINDOW_MS = Number.parseInt(
   process.env.SQUIDRUN_TELEGRAM_REPLY_WINDOW_MS || String(5 * 60 * 1000),
   10
 );
+const TELEGRAM_REPLY_GUARD_WARNING_THROTTLE_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_WARNING_THROTTLE_MS || '30000', 10) || 30_000
+);
 const TELEGRAM_REPLY_DEDUPE_WINDOW_MS = Math.max(
   5_000,
   Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_DEDUPE_WINDOW_MS || '45000', 10) || 45_000
@@ -738,6 +742,7 @@ class SquidRunApp {
       sender: null,
       chatId: null,
     };
+    this.pendingTelegramReplyGuards = new Map();
     this.telegramReplyDedupe = new Map();
     this.telegramStrayCorrectionReplies = new Map();
     this.autonomousSmoke = {
@@ -5385,6 +5390,23 @@ class SquidRunApp {
     this.schedulePtyDataFlush();
   }
 
+  hasOnlySquidRunInjectedKernelMeta(kernelMetas = []) {
+    if (!Array.isArray(kernelMetas) || kernelMetas.length === 0) return false;
+    return kernelMetas.every((kernelMeta) => {
+      const source = toNonEmptyString(kernelMeta?.source);
+      const meta = (kernelMeta?.meta && typeof kernelMeta.meta === 'object' && !Array.isArray(kernelMeta.meta))
+        ? kernelMeta.meta
+        : {};
+      const injectedSource = source === 'injection.js'
+        || (source && source.startsWith('squidrun-app.direct-pane-delivery'));
+      const telegramReplyTarget = meta.replyTarget === 'telegram'
+        || meta.reply_target === 'telegram'
+        || meta.channel === 'telegram'
+        || meta.originChannel === 'telegram';
+      return injectedSource && meta.replyTargetRequired === true && telegramReplyTarget;
+    });
+  }
+
   flushBufferedPtyData(targetPaneId = null) {
     if (this.pendingPtyDataByPane.size === 0) return;
 
@@ -5401,16 +5423,27 @@ class SquidRunApp {
         this.paneHostWindowManager.sendToPaneWindow(String(paneId), `pty-data-${paneId}`, buffered);
       }
       this.visiblePtyOutputFilter.ingest(paneId, buffered);
-      this.flushVisibleFilteredPtyData(paneId);
+      this.flushVisibleFilteredPtyData(paneId, { originalChunk: buffered });
     }
 
     this.refreshPtyVisibleReleaseTimer();
   }
 
   flushVisibleFilteredPtyData(targetPaneId = null, options = {}) {
-    const releases = this.visiblePtyOutputFilter.releaseReady(targetPaneId, options);
+    const releases = this.visiblePtyOutputFilter.releaseReady(targetPaneId, {
+      ...options,
+      includeKernelMeta: true,
+    });
     for (const entry of releases) {
       if (!entry || !entry.text) continue;
+      const outputKind = this.hasOnlySquidRunInjectedKernelMeta(entry.kernelMetas)
+        ? 'squidrun_injected_echo'
+        : 'agent_visible_output';
+      this.inspectPaneOutputForReplyGuards(entry.paneId, entry.text, {
+        outputKind,
+        kernelMetas: entry.kernelMetas || [],
+        originalChunk: options.originalChunk || null,
+      });
       this.sendToVisibleWindow(`pty-data-${entry.paneId}`, entry.text);
     }
   }
@@ -6066,6 +6099,7 @@ class SquidRunApp {
       message: normalizedMessage,
       traceContext,
       messageId,
+      meta,
     });
     const directStatus = toNonEmptyString(directPtyResult?.status).toLowerCase();
     const directAccepted = (
@@ -6132,6 +6166,7 @@ class SquidRunApp {
     message = '',
     traceContext = null,
     messageId = null,
+    meta = null,
   } = {}) {
     const normalizedPaneId = toNonEmptyString(paneId) || '1';
     const text = String(message || '');
@@ -6163,6 +6198,7 @@ class SquidRunApp {
       parentEventId: toNonEmptyString(traceContext?.parentEventId) || undefined,
       causationId: toNonEmptyString(traceContext?.causationId) || undefined,
       source: 'squidrun-app.direct-pane-delivery',
+      meta: (meta && typeof meta === 'object' && !Array.isArray(meta)) ? meta : undefined,
     };
 
     appendBusTraceEvent({
@@ -9132,6 +9168,10 @@ class SquidRunApp {
           error: result?.error || 'unknown_error',
         };
       }
+      this.clearPendingTelegramReplyGuard({
+        paneId: ROLE_ID_MAP.architect || '1',
+        chatId: replyChatId || null,
+      });
       const sentMessageId = result.messageId || messageId;
       this.markTelegramReplySent({
         message,
@@ -10286,6 +10326,119 @@ class SquidRunApp {
     }
   }
 
+  buildTelegramReplyTargetPaneMessage(message, recallContext = {}) {
+    const text = String(message || '');
+    const chatId = normalizeChatId(recallContext.chatId || recallContext.telegramChatId || recallContext.metadata?.chatId);
+    const messageId = toNonEmptyString(recallContext.messageId);
+    const sender = toNonEmptyString(recallContext.sender) || 'user';
+    const guardLines = [
+      '[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]',
+      `Source: Telegram from ${sender}${messageId ? ` (${messageId})` : ''}${chatId ? ` chat=${chatId}` : ''}.`,
+      "Do not answer only in this pane. Reply via `hm-send telegram ...` or report a Telegram-route block.",
+      '[END SQUIDRUN REPLY TARGET]',
+    ];
+    return `${guardLines.join('\n')}\n\n${text}`;
+  }
+
+  applyTelegramReplyTargetMetadata(meta = {}, recallContext = {}) {
+    meta.source = toNonEmptyString(meta.source) || 'telegram-poller';
+    meta.channel = 'telegram';
+    meta.replyTarget = 'telegram';
+    meta.reply_target = 'telegram';
+    meta.replyTargetRequired = true;
+    meta.replyTargetReason = 'telegram_origin_user_message';
+    meta.telegramRequiresEgress = true;
+    meta.originChannel = 'telegram';
+    const chatId = normalizeChatId(recallContext.chatId || recallContext.telegramChatId || meta.chatId || meta.telegramChatId);
+    if (chatId) {
+      meta.chatId = chatId;
+      meta.telegramChatId = chatId;
+    }
+    if (toNonEmptyString(recallContext.messageId) && !toNonEmptyString(meta.replyToMessageId)) {
+      meta.replyToMessageId = toNonEmptyString(recallContext.messageId);
+    }
+    return meta;
+  }
+
+  markPendingTelegramReplyGuard(input = {}) {
+    const paneId = toNonEmptyString(input.paneId) || '1';
+    const messageId = toNonEmptyString(input.messageId)
+      || `telegram-pending-${paneId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const chatId = normalizeChatId(input.chatId);
+    const guard = {
+      paneId,
+      messageId,
+      sender: toNonEmptyString(input.sender) || 'user',
+      chatId,
+      telegramChatId: chatId,
+      windowKey: toNonEmptyString(input.windowKey) || 'main',
+      profileName: toNonEmptyString(input.profileName || input.profile) || 'main',
+      sessionScopeId: toNonEmptyString(input.sessionScopeId) || this.getWindowSessionScopeId('main'),
+      createdAtMs: Date.now(),
+      lastWarningAtMs: 0,
+      status: 'pending_telegram_egress',
+    };
+    this.pendingTelegramReplyGuards.set(paneId, guard);
+    return guard;
+  }
+
+  clearPendingTelegramReplyGuard({ paneId = '1', chatId = null } = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    if (!guard) return false;
+    const normalizedChatId = normalizeChatId(chatId);
+    const guardChatId = normalizeChatId(guard.chatId);
+    if (normalizedChatId && guardChatId && normalizedChatId !== guardChatId) {
+      return false;
+    }
+    this.pendingTelegramReplyGuards.delete(normalizedPaneId);
+    return true;
+  }
+
+  isPendingTelegramReplyGuardFresh(guard = {}, nowMs = Date.now()) {
+    const createdAtMs = Number(guard.createdAtMs || 0);
+    if (!Number.isFinite(createdAtMs) || createdAtMs <= 0) return false;
+    return (nowMs - createdAtMs) <= TELEGRAM_REPLY_WINDOW_MS;
+  }
+
+  inspectPaneOutputForReplyGuards(paneId, text, options = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    if (!guard) return { ok: true, status: 'no_pending_guard' };
+    const nowMs = Date.now();
+    if (!this.isPendingTelegramReplyGuardFresh(guard, nowMs)) {
+      this.pendingTelegramReplyGuards.delete(normalizedPaneId);
+      return { ok: true, status: 'stale_guard_cleared' };
+    }
+    if (options.outputKind === 'squidrun_injected_echo') {
+      return { ok: true, status: 'injected_echo_ignored' };
+    }
+    const visibleText = toNonEmptyString(text);
+    if (!visibleText) return { ok: true, status: 'empty_output_ignored' };
+    if ((nowMs - Number(guard.lastWarningAtMs || 0)) < TELEGRAM_REPLY_GUARD_WARNING_THROTTLE_MS) {
+      return { ok: false, status: 'telegram_reply_guard_throttled', guard };
+    }
+
+    const warning = [
+      'TELEGRAM REPLY TARGET WARNING',
+      `Pane ${normalizedPaneId} produced visible output after Telegram inbound ${guard.messageId}.`,
+      "That output is pane-only unless it egresses through Telegram. Use `hm-send telegram ...` or explicitly report the Telegram route block.",
+    ].join(' ');
+    guard.lastWarningAtMs = nowMs;
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+    log.warn('TelegramReplyGuard', warning);
+    this.activity.logActivity?.('warning', normalizedPaneId, warning, {
+      source: 'telegram-reply-target-guard',
+      messageId: guard.messageId,
+      chatId: guard.chatId || null,
+      outputPreview: visibleText.slice(0, 240),
+    });
+    this.sendToVisibleWindow('project-warning', warning, {
+      windowKey: guard.windowKey || 'main',
+    });
+    return { ok: false, status: 'telegram_reply_guard_warning', guard, warning };
+  }
+
   async deliverHumanMessageWithRecall(message, recallContext = {}, logLabel = 'HumanMessage') {
     const messageWithRecall = await this.buildHumanMessageWithUnifiedRecall(message, recallContext, logLabel);
     const meta = {
@@ -10303,9 +10456,24 @@ class SquidRunApp {
     }
     const channel = toNonEmptyString(recallContext.channel) || 'user';
     const isTelegramInbound = channel.toLowerCase() === 'telegram';
+    const outboundMessage = isTelegramInbound
+      ? this.buildTelegramReplyTargetPaneMessage(messageWithRecall, recallContext)
+      : messageWithRecall;
+    if (isTelegramInbound) {
+      this.applyTelegramReplyTargetMetadata(meta, recallContext);
+      this.markPendingTelegramReplyGuard({
+        paneId: String(recallContext.paneId || '1'),
+        messageId: recallContext.messageId || null,
+        sender: recallContext.sender || 'user',
+        chatId: recallContext.chatId || meta.chatId || meta.telegramChatId || null,
+        windowKey: recallContext.windowKey || meta.windowKey || null,
+        profileName: recallContext.profileName || recallContext.profile || meta.profileName || null,
+        sessionScopeId: recallContext.sessionScopeId || meta.sessionScopeId || null,
+      });
+    }
     const result = await this.deliverPaneMessageReliably({
       paneId: String(recallContext.paneId || '1'),
-      message: messageWithRecall,
+      message: outboundMessage,
       fromRole: null,
       traceContext: recallContext.traceContext || null,
       meta: Object.keys(meta).length > 0 ? meta : null,

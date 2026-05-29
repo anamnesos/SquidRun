@@ -37,6 +37,29 @@ describe('pty-output-filter', () => {
     expect(filter.releaseReady('1', { now: 20 })).toEqual([]);
   });
 
+  test('can include kernel metadata on visible PTY releases when requested', () => {
+    const filter = createPtyOutputFilter({ holdMs: 1000 });
+    const kernelMeta = {
+      source: 'squidrun-app.direct-pane-delivery',
+      meta: {
+        channel: 'telegram',
+        replyTarget: 'telegram',
+      },
+    };
+
+    filter.ingest('1', 'hello', 0);
+    filter.applyKernelEvent({
+      type: 'pty.data.received',
+      paneId: '1',
+      payload: { byteLen: getUtf8ByteLength('hello') },
+      kernelMeta,
+    });
+
+    expect(filter.releaseReady('1', { now: 20, includeKernelMeta: true })).toEqual([
+      { paneId: '1', text: 'hello', kernelMetas: [kernelMeta] },
+    ]);
+  });
+
   test('falls back to releasing unmatched PTY data after the hold window expires', () => {
     const filter = createPtyOutputFilter({ holdMs: 50 });
 

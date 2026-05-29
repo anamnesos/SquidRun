@@ -3104,6 +3104,39 @@ describe('SquidRunApp', () => {
       }));
     });
 
+    it('passes delivery metadata through the direct daemon PTY route', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'codex',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      await app.deliverPaneMessageViaDaemonPty({
+        paneId: '1',
+        message: 'telegram inbound',
+        messageId: 'direct-meta-1',
+        meta: {
+          channel: 'telegram',
+          replyTarget: 'telegram',
+          replyTargetRequired: true,
+        },
+      });
+
+      expect(app.ctx.daemonClient.write.mock.calls[0][2]).toEqual(expect.objectContaining({
+        source: 'squidrun-app.direct-pane-delivery',
+        meta: expect.objectContaining({
+          channel: 'telegram',
+          replyTarget: 'telegram',
+          replyTargetRequired: true,
+        }),
+      }));
+    });
+
     it('does not write Codex paste terminator for non-Codex direct daemon route', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.ctx.currentSettings = {
@@ -5557,11 +5590,59 @@ describe('SquidRunApp', () => {
       }));
       expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
         ['1'],
-        '[Telegram from james]: plain inbound message',
+        expect.stringContaining('[Telegram from james]: plain inbound message'),
         null,
         expect.any(Object)
       );
+      expect(triggers.sendDirectMessage.mock.calls[0][1]).toContain('[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]');
+      expect(triggers.sendDirectMessage.mock.calls[0][1]).toContain('Do not answer only in this pane');
       expect(triggers.sendDirectMessage.mock.calls[0][1]).not.toContain('[SQUIDRUN RECALL START]');
+    });
+
+    it('carries actionable Telegram reply-target metadata on pane delivery', async () => {
+      const triggers = require('../modules/triggers');
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+
+      await app.deliverHumanMessageWithRecall(
+        '[Telegram from james]: route this back',
+        {
+          paneId: '1',
+          channel: 'telegram',
+          sender: 'james',
+          messageId: 'telegram-in-reply-target-1',
+          chatId: '1111111111',
+          metadata: {
+            source: 'telegram-poller',
+            updateId: 123,
+          },
+        },
+        'Telegram'
+      );
+
+      expect(triggers.sendDirectMessage.mock.calls[0][3]).toEqual(expect.objectContaining({
+        meta: expect.objectContaining({
+          source: 'telegram-poller',
+          channel: 'telegram',
+          replyTarget: 'telegram',
+          reply_target: 'telegram',
+          replyTargetRequired: true,
+          replyTargetReason: 'telegram_origin_user_message',
+          telegramRequiresEgress: true,
+          chatId: '1111111111',
+          telegramChatId: '1111111111',
+          replyToMessageId: 'telegram-in-reply-target-1',
+        }),
+      }));
+      expect(app.pendingTelegramReplyGuards.get('1')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-reply-target-1',
+        chatId: '1111111111',
+        status: 'pending_telegram_egress',
+      }));
     });
 
     it('prepends unified memory broker recall when ranked context exists', async () => {
@@ -5670,6 +5751,213 @@ describe('SquidRunApp', () => {
           profileName: 'eunbyeol',
           sessionScopeId: 'app-test:eunbyeol',
         }),
+      }));
+    });
+
+    it('warns when a pane produces visible output before Telegram egress', () => {
+      const mainWindow = {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          send: jest.fn(),
+          isDestroyed: jest.fn().mockReturnValue(false),
+        },
+      };
+      const ctx = {
+        ...mockAppContext,
+        mainWindow,
+        getWindow: jest.fn((key = 'main') => (key === 'main' ? mainWindow : null)),
+        getWindows: jest.fn(() => new Map([['main', mainWindow]])),
+      };
+      const guardedApp = new SquidRunApp(ctx, mockManagers);
+      guardedApp.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-visible-output-1',
+        chatId: '1111111111',
+        sender: 'james',
+      });
+
+      const result = guardedApp.inspectPaneOutputForReplyGuards('1', 'I answered in the pane only.', {
+        outputKind: 'agent_visible_output',
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_guard_warning',
+      }));
+      expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+        'warning',
+        '1',
+        expect.stringContaining('TELEGRAM REPLY TARGET WARNING'),
+        expect.objectContaining({
+          source: 'telegram-reply-target-guard',
+          messageId: 'telegram-in-visible-output-1',
+          chatId: '1111111111',
+        })
+      );
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+        'project-warning',
+        expect.stringContaining('TELEGRAM REPLY TARGET WARNING')
+      );
+    });
+
+    it('ignores metadata-classified SquidRun injected Telegram prompt echoes for the response-side guard', () => {
+      app.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-echo-1',
+        chatId: '1111111111',
+        sender: 'james',
+      });
+
+      const result = app.inspectPaneOutputForReplyGuards(
+        '1',
+        '[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]\n\n[Telegram from james]: hello',
+        { outputKind: 'squidrun_injected_echo' }
+      );
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'injected_echo_ignored',
+      }));
+      expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+        'warning',
+        '1',
+        expect.stringContaining('TELEGRAM REPLY TARGET WARNING'),
+        expect.any(Object)
+      );
+      expect(app.pendingTelegramReplyGuards.has('1')).toBe(true);
+    });
+
+    it('classifies injected Telegram echoes from kernel metadata only', () => {
+      expect(app.hasOnlySquidRunInjectedKernelMeta([
+        {
+          source: 'injection.js',
+          meta: {
+            replyTargetRequired: true,
+            replyTarget: 'telegram',
+          },
+        },
+      ])).toBe(true);
+      expect(app.hasOnlySquidRunInjectedKernelMeta([
+        {
+          source: 'squidrun-app.direct-pane-delivery',
+          meta: {
+            replyTargetRequired: true,
+            channel: 'telegram',
+          },
+        },
+      ])).toBe(true);
+      expect(app.hasOnlySquidRunInjectedKernelMeta([
+        {
+          source: 'injection.js',
+          meta: {},
+        },
+      ])).toBe(false);
+      expect(app.hasOnlySquidRunInjectedKernelMeta([])).toBe(false);
+    });
+
+    it('warns when quoted inbound text lacks injected-echo metadata', () => {
+      const mainWindow = {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          send: jest.fn(),
+          isDestroyed: jest.fn().mockReturnValue(false),
+        },
+      };
+      const ctx = {
+        ...mockAppContext,
+        mainWindow,
+        getWindow: jest.fn((key = 'main') => (key === 'main' ? mainWindow : null)),
+        getWindows: jest.fn(() => new Map([['main', mainWindow]])),
+      };
+      const guardedApp = new SquidRunApp(ctx, mockManagers);
+      guardedApp.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-marker-text-1',
+        chatId: '1111111111',
+        sender: 'james',
+      });
+
+      const result = guardedApp.inspectPaneOutputForReplyGuards(
+        '1',
+        '[Telegram from James]: yes, fixed it, deploying',
+        { outputKind: 'agent_visible_output' }
+      );
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_guard_warning',
+      }));
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+        'project-warning',
+        expect.stringContaining('TELEGRAM REPLY TARGET WARNING')
+      );
+    });
+
+    it('warns when quoted reply-target marker text lacks injected-echo metadata', () => {
+      const mainWindow = {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          send: jest.fn(),
+          isDestroyed: jest.fn().mockReturnValue(false),
+        },
+      };
+      const ctx = {
+        ...mockAppContext,
+        mainWindow,
+        getWindow: jest.fn((key = 'main') => (key === 'main' ? mainWindow : null)),
+        getWindows: jest.fn(() => new Map([['main', mainWindow]])),
+      };
+      const guardedApp = new SquidRunApp(ctx, mockManagers);
+      guardedApp.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-marker-quote-1',
+        chatId: '1111111111',
+        sender: 'james',
+      });
+
+      const result = guardedApp.inspectPaneOutputForReplyGuards(
+        '1',
+        'Noting [SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]; the answer is X',
+        { outputKind: 'agent_visible_output' }
+      );
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_guard_warning',
+      }));
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+        'project-warning',
+        expect.stringContaining('TELEGRAM REPLY TARGET WARNING')
+      );
+    });
+
+    it('clears the pending Telegram reply guard after real Telegram egress', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-clear-1',
+        chatId: '1111111111',
+        sender: 'james',
+      });
+
+      const result = await app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Back through Telegram.',
+        messageId: 'telegram-in-clear-1-reply',
+        chatId: '1111111111',
+      });
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalled();
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+      expect(app.pendingTelegramReplyGuards.has('1')).toBe(false);
+      expect(app.inspectPaneOutputForReplyGuards('1', 'later pane output', {
+        outputKind: 'agent_visible_output',
+      })).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'no_pending_guard',
       }));
     });
 
