@@ -61,6 +61,7 @@ describe('TrustQuote work-room prerequisites materializer', () => {
       'profile_link',
       'startup_source_agents',
       'startup_source_roles',
+      'startup_source_playbook',
       'startup_bundle',
       'workstream',
     ]);
@@ -92,7 +93,28 @@ describe('TrustQuote work-room prerequisites materializer', () => {
       expect.objectContaining({ name: 'AGENTS.md', present: true, source: 'generated_room_startup' }),
       expect.objectContaining({ name: 'CLAUDE.md', present: true, source: 'project_root' }),
       expect.objectContaining({ name: 'ROLES.md', present: true, source: 'generated_room_startup' }),
+      expect.objectContaining({ name: 'TRUSTQUOTE-PLAYBOOK.md', present: true, source: 'generated_room_startup' }),
     ]);
+    const agentsSource = fs.readFileSync(
+      path.join(projectRoot, '.squidrun', 'work-rooms', 'trustquote', 'startup', 'AGENTS.md'),
+      'utf8'
+    );
+    const playbookSource = fs.readFileSync(
+      path.join(projectRoot, '.squidrun', 'work-rooms', 'trustquote', 'startup', 'TRUSTQUOTE-PLAYBOOK.md'),
+      'utf8'
+    );
+    const startupBundle = fs.readFileSync(
+      path.join(squidrunRoot, '.squidrun', 'runtime', 'window-teams', 'trustquote', 'startup-bundle.md'),
+      'utf8'
+    );
+    expect(agentsSource).toContain('startup/TRUSTQUOTE-PLAYBOOK.md');
+    expect(playbookSource).toContain('Invoices are jobs documents');
+    expect(playbookSource).toContain('Proposals are quotes documents');
+    expect(playbookSource).toContain('calendar-events are appointments');
+    expect(playbookSource).toContain('TELEGRAM_WEBHOOK_SECRET');
+    expect(playbookSource).toContain('VAPI_WEBHOOK_SECRET');
+    expect(playbookSource).toContain('UPSTASH_REDIS_REST_URL');
+    expect(startupBundle).toContain('TRUSTQUOTE-PLAYBOOK.md');
     expect(contract.readiness.link).toEqual(expect.objectContaining({
       status: 'current',
       issues: [],
