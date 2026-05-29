@@ -369,6 +369,7 @@ describe('TrustQuote room envelope and readiness', () => {
       'missing_startup_source:AGENTS.md',
       'missing_startup_source:CLAUDE.md',
       'missing_startup_source:ROLES.md',
+      'missing_startup_source:TRUSTQUOTE-PLAYBOOK.md',
       'profile_link_not_current',
       'workstream_evidence_missing',
       'route_unhealthy:builder:missing',
@@ -615,6 +616,8 @@ describe('TrustQuote room envelope and readiness', () => {
       'D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/startup/AGENTS.md',
       'D:/projects/TrustQuote/ROLES.md',
       'D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/startup/ROLES.md',
+      'D:/projects/TrustQuote/TRUSTQUOTE-PLAYBOOK.md',
+      'D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/startup/TRUSTQUOTE-PLAYBOOK.md',
     ].includes(filePath));
     const readiness = buildTrustQuoteLaunchReadiness({
       env: {},
@@ -675,6 +678,13 @@ describe('TrustQuote room envelope and readiness', () => {
         source: 'missing',
         fallbackPath: 'D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/startup/ROLES.md',
       },
+      {
+        name: 'TRUSTQUOTE-PLAYBOOK.md',
+        path: 'D:/projects/TrustQuote/TRUSTQUOTE-PLAYBOOK.md',
+        present: false,
+        source: 'missing',
+        fallbackPath: 'D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/startup/TRUSTQUOTE-PLAYBOOK.md',
+      },
     ]);
     expect(readiness.link).toEqual(expect.objectContaining({
       path: 'D:/projects/TrustQuote/.squidrun/link.json',
@@ -701,6 +711,7 @@ describe('TrustQuote room envelope and readiness', () => {
       'profile_root_contract_missing',
       'trustquote_agents_md_missing',
       'trustquote_roles_md_missing',
+      'trustquote_trustquote_playbook_md_missing',
       'trustquote_link_json_stale_or_non_profiled',
       'raw_secondary_window_auto_boots_full_3_pane_team',
     ]));
