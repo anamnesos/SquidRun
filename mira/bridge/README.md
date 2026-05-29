@@ -64,12 +64,34 @@ Runtime planner flags:
 This gives Mira runtime awareness of the team-message path without granting
 runtime send authority.
 
+## Level 4: Runtime Pane Roundtrip
+
+File: `mira/runtime/src/pane-bridge.ts`
+
+The runtime exposes local-only `POST /bridge/pane-messages` and
+`GET /bridge/pane-messages` endpoints for the first parity seam. A SquidRun pane
+message addressed to Mira can be recorded as a roundtrip under
+`MIRA_STATE_ROOT/bridge/pane-roundtrips`; the runtime then returns a manual reply
+plan using the Level 3 planner.
+
+Roundtrip flags:
+
+- `stateWritten=true`
+- `sendPerformed=false`
+- `runtimeExecutes=false`
+- `externalSend=false`
+- `telegramRouteControl=false`
+- `uiSurfaceControl=false`
+
+This proves receive/reply shape and Mira-owned state placement without granting
+runtime send authority or importing SquidRun private state.
+
 ## Current Boundaries
 
 - No runtime auto-send.
 - No Telegram route ownership.
 - No Telegram fallback.
 - No UI product surface.
-- No bridge server.
+- No standalone bridge server.
 - No runtime continuity claim.
 - No queue/report/import mutation.

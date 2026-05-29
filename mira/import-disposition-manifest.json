@@ -1,6 +1,17 @@
 {
   "schema": "mira.product.import_disposition.v1",
-  "status": "foundation_manifest_only",
+  "status": "runtime_bridge_roundtrip_increment",
+  "current_increment": {
+    "id": "runtime_bridge_pane_roundtrip_v0",
+    "runtime_endpoint": "POST /bridge/pane-messages",
+    "read_endpoint": "GET /bridge/pane-messages",
+    "state_relative_path": "bridge/pane-roundtrips",
+    "manual_reply_plan_only": true,
+    "runtime_auto_send": false,
+    "telegram_route_control": false,
+    "ui_surface_control": false,
+    "live_data_import": false
+  },
   "created_for": "session_373_mira_product_extraction",
   "product_root": "mira/",
   "runtime_decision": {

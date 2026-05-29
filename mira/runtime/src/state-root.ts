@@ -27,6 +27,11 @@ export const requiredStateRootBuckets: StateRootBucket[] = [
     relativePath: "imports",
     purpose: "Import receipts and reviewed migration metadata.",
   },
+  {
+    id: "bridge",
+    relativePath: "bridge",
+    purpose: "Mira-owned bridge receive/reply records and local parity evidence.",
+  },
 ];
 
 function pathSegments(value: string): string[] {

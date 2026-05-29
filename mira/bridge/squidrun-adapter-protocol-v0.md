@@ -1,9 +1,11 @@
 # SquidRun Adapter Protocol v0
 
-Status: milestone skeleton for the next Mira extraction step.
+Status: local runtime receive/reply parity seam started.
 
 Scope: define the narrow bridge between independent Mira runtime and SquidRun.
-This does not implement runtime code, alter Telegram routes, or add UI surface.
+The local Mira runtime now implements the pane-message receive/reply shape for
+state-root parity. This still does not alter Telegram routes, add UI surface, or
+grant runtime auto-send authority.
 
 ## Transport
 
@@ -173,6 +175,19 @@ Mira request correlation id.
   ]
 }
 ```
+
+## Runtime Roundtrip Parity
+
+The extracted runtime implements a narrow local parity seam:
+
+- `POST /bridge/pane-messages` receives an internal Architect/Builder/Oracle
+  pane message addressed to Mira.
+- The runtime writes exactly one roundtrip record under
+  `MIRA_STATE_ROOT/bridge/pane-roundtrips`.
+- The response includes a manual reply plan back to the source pane.
+- Runtime send execution remains false; no `hm-send` call is made.
+- Telegram route control, UI surface control, live data import, and continuity
+  claims remain false.
 
 ## Evidence Metadata
 

@@ -217,6 +217,7 @@ describe('Mira runtime state-root readiness', () => {
       'permissions',
       'acceptance',
       'imports',
+      'bridge',
     ]);
   });
 
@@ -280,6 +281,9 @@ describe('Mira runtime state-root readiness', () => {
         cliAvailable: true,
         cliRelativePath: 'mira/bridge/send-pane-message.js',
         allowedRoles: ['architect', 'builder', 'oracle'],
+        paneMessageReceive: true,
+        runtimeReplyParity: true,
+        replyStateRelativePath: 'bridge/pane-roundtrips',
         liveSendManualOnly: true,
         autoSend: false,
         runtimeInvokesSendCli: false,
@@ -499,6 +503,8 @@ describe('Mira runtime state-root readiness', () => {
       bridge: expect.objectContaining({
         cliAvailable: true,
         allowedRoles: ['architect', 'builder', 'oracle'],
+        paneMessageReceive: true,
+        runtimeReplyParity: true,
         liveSendManualOnly: true,
         autoSend: false,
         runtimeInvokesSendCli: false,
@@ -509,7 +515,7 @@ describe('Mira runtime state-root readiness', () => {
 
   test('session still reports no continuity when an empty state root has required buckets', () => {
     const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-empty-state-root-'));
-    for (const bucket of ['continuity', 'conversation-evidence', 'permissions', 'acceptance', 'imports']) {
+    for (const bucket of ['continuity', 'conversation-evidence', 'permissions', 'acceptance', 'imports', 'bridge']) {
       fs.mkdirSync(path.join(stateRoot, bucket), { recursive: true });
     }
 

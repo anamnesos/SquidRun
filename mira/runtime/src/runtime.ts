@@ -48,6 +48,11 @@ const capabilities: RuntimeCapability[] = [
     status: "available",
     notes: "Manual-only internal pane send CLI can be planned or invoked by an operator; runtime does not auto-send.",
   },
+  {
+    id: "team_bridge_runtime_roundtrip",
+    status: "available",
+    notes: "Runtime can receive an internal pane message addressed to Mira, write a Mira-owned roundtrip record, and return a manual reply plan without sending.",
+  },
 ];
 
 export function getHealth(startedAt: number): HealthResponse {

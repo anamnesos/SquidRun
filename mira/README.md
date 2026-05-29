@@ -2,11 +2,11 @@
 
 Mira is being extracted as a product, not added back as another SquidRun tab.
 
-This root is the first implementation-facing boundary for that extraction. It
-does not move runtime code, copy live state, create a new UI, or change any
-Telegram route. It records what starts Mira as Mira, what must be preserved, and
-what becomes deletable only after the independent runtime and bridge reach
-parity.
+This root is the implementation-facing boundary for that extraction. It does
+not move live SquidRun runtime code, copy live state, create a new SquidRun UI,
+or change any Telegram route. It records what starts Mira as Mira, what must be
+preserved, and what becomes deletable only after the independent runtime and
+bridge reach parity.
 
 ## V1 Direction
 
@@ -24,14 +24,22 @@ parity.
 
 ## Current Boundary
 
-The first foundation commit is documentation plus a manifest:
+The manifest remains the import and cleanup source of truth, but the tree is now
+past the first foundation commit. Current real surfaces include:
 
 - `mira/README.md`
 - `mira/import-disposition-manifest.json`
+- `mira/runtime/` Node/TypeScript local service
+- `mira/bridge/` SquidRun pane bridge docs and CLIs
+- `mira/state/`, `mira/imports/`, `mira/tools/`, `mira/ui/`, and `mira/voice/`
 
-The manifest is the source of truth for the next extraction commits. Future
-deletion should follow the manifest after replacement code and tests prove
-parity, not by manually guessing which old Mira Lab files are stale.
+The first runtime bridge parity increment is `POST /bridge/pane-messages` plus
+`GET /bridge/pane-messages`: Mira runtime can receive an internal pane message,
+record the roundtrip under `MIRA_STATE_ROOT/bridge/pane-roundtrips`, and return a
+manual reply plan without executing `hm-send`.
+
+Future deletion should follow the manifest after replacement code and tests
+prove parity, not by manually guessing which old Mira Lab files are stale.
 
 ## Explicit Non-Scope
 

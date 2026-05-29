@@ -70,6 +70,9 @@ export type BridgeCapabilitySummary = {
   cliPath: string;
   cliRelativePath: "mira/bridge/send-pane-message.js";
   allowedRoles: ("architect" | "builder" | "oracle")[];
+  paneMessageReceive: true;
+  runtimeReplyParity: true;
+  replyStateRelativePath: "bridge/pane-roundtrips";
   liveSendManualOnly: true;
   autoSend: false;
   runtimeInvokesSendCli: false;

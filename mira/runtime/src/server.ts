@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { getAutonomyStatus, runAutonomyFollowThrough, runAutonomyLoopOnce, runAutonomyTick } from "./autonomy.js";
 import { planManualBridgeRequest } from "./bridge-request-plan.js";
 import { getModelProviderList, getModelProviderStatus } from "./model-status.js";
+import { createPaneBridgeRoundTrip, listPaneBridgeRoundTrips } from "./pane-bridge.js";
 import {
   createMissionControlDispatchReadiness,
   createMissionControlInternalSendActivationDesign,
@@ -286,6 +287,17 @@ export function startAutonomyBackgroundLoop(env: NodeJS.ProcessEnv = process.env
 
 export async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+
+  if (request.method === "POST" && requestUrl.pathname === "/bridge/pane-messages") {
+    try {
+      const body = await readJsonBody(request);
+      const roundTrip = createPaneBridgeRoundTrip(body);
+      sendJson(response, 200, roundTrip);
+    } catch (error) {
+      sendJson(response, 400, errorPayload(error));
+    }
+    return;
+  }
 
   if (request.method === "POST" && requestUrl.pathname === "/bridge/manual-plan") {
     try {
@@ -888,6 +900,15 @@ export async function route(request: IncomingMessage, response: ServerResponse):
 
   if (requestUrl.pathname === "/autonomy/status") {
     sendJson(response, 200, getAutonomyStatus());
+    return;
+  }
+
+  if (requestUrl.pathname === "/bridge/pane-messages") {
+    const limit = Number.parseInt(requestUrl.searchParams.get("limit") || "20", 10);
+    sendJson(response, 200, listPaneBridgeRoundTrips(process.env, {
+      limit,
+      includeInternal: includeInternalFields(requestUrl),
+    }));
     return;
   }
 

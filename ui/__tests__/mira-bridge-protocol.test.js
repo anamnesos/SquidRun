@@ -46,9 +46,13 @@ describe('Mira SquidRun adapter protocol', () => {
     expect(readme).toContain('manualExecutionRequired=true');
     expect(readme).toContain('runtimeExecutes=false');
     expect(readme).toContain('autoSend=false');
+    expect(readme).toContain('## Level 4: Runtime Pane Roundtrip');
+    expect(readme).toContain('mira/runtime/src/pane-bridge.ts');
+    expect(readme).toContain('POST /bridge/pane-messages');
+    expect(readme).toContain('MIRA_STATE_ROOT/bridge/pane-roundtrips');
     expect(readme).toContain('No runtime auto-send.');
     expect(readme).toContain('No Telegram route ownership.');
     expect(readme).toContain('No UI product surface.');
-    expect(readme).toContain('No bridge server.');
+    expect(readme).toContain('No standalone bridge server.');
   });
 });
