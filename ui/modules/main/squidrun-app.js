@@ -743,6 +743,7 @@ class SquidRunApp {
       chatId: null,
     };
     this.pendingTelegramReplyGuards = new Map();
+    this.pendingTelegramReplyGuardTimers = new Map();
     this.telegramReplyDedupe = new Map();
     this.telegramStrayCorrectionReplies = new Map();
     this.autonomousSmoke = {
@@ -10365,6 +10366,7 @@ class SquidRunApp {
     const messageId = toNonEmptyString(input.messageId)
       || `telegram-pending-${paneId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const chatId = normalizeChatId(input.chatId);
+    const createdAtMs = Date.now();
     const guard = {
       paneId,
       messageId,
@@ -10374,12 +10376,117 @@ class SquidRunApp {
       windowKey: toNonEmptyString(input.windowKey) || 'main',
       profileName: toNonEmptyString(input.profileName || input.profile) || 'main',
       sessionScopeId: toNonEmptyString(input.sessionScopeId) || this.getWindowSessionScopeId('main'),
-      createdAtMs: Date.now(),
+      createdAtMs,
+      expiresAtMs: createdAtMs + TELEGRAM_REPLY_WINDOW_MS,
       lastWarningAtMs: 0,
+      warningCount: 0,
+      violationCount: 0,
+      lastViolationAtMs: 0,
+      lastPaneOutputPreview: null,
       status: 'pending_telegram_egress',
+      requiresTelegramEgress: true,
     };
     this.pendingTelegramReplyGuards.set(paneId, guard);
+    this.schedulePendingTelegramReplyGuardEscalation(guard);
     return guard;
+  }
+
+  clearPendingTelegramReplyGuardTimer(paneId = '1') {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const timer = this.pendingTelegramReplyGuardTimers.get(normalizedPaneId);
+    if (timer) {
+      clearTimeout(timer);
+      this.pendingTelegramReplyGuardTimers.delete(normalizedPaneId);
+    }
+  }
+
+  schedulePendingTelegramReplyGuardEscalation(guard = {}) {
+    const paneId = toNonEmptyString(guard.paneId) || '1';
+    this.clearPendingTelegramReplyGuardTimer(paneId);
+    const expiresAtMs = Number(guard.expiresAtMs || 0);
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= 0) return;
+    const delayMs = Math.max(0, expiresAtMs - Date.now());
+    const timer = setTimeout(() => {
+      this.pendingTelegramReplyGuardTimers.delete(paneId);
+      this.expirePendingTelegramReplyGuard(paneId, {
+        messageId: guard.messageId,
+        reason: 'reply_window_expired',
+      });
+    }, delayMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    this.pendingTelegramReplyGuardTimers.set(paneId, timer);
+  }
+
+  getPendingTelegramReplyRequirement(paneId = '1') {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    return guard ? { ...guard } : null;
+  }
+
+  getPendingTelegramReplyRequirements() {
+    return Array.from(this.pendingTelegramReplyGuards.values()).map((guard) => ({ ...guard }));
+  }
+
+  emitTelegramReplyRequirementNotice(guard = {}, {
+    message,
+    type = 'warning',
+    reason = null,
+    outputPreview = null,
+  } = {}) {
+    const paneId = toNonEmptyString(guard.paneId) || '1';
+    const notice = toNonEmptyString(message);
+    if (!notice) return false;
+    const details = {
+      source: 'telegram-reply-requirement',
+      messageId: guard.messageId || null,
+      chatId: guard.chatId || null,
+      status: guard.status || null,
+      reason,
+      violationCount: Number(guard.violationCount || 0),
+      warningCount: Number(guard.warningCount || 0),
+      requiresTelegramEgress: true,
+      outputPreview: outputPreview || guard.lastPaneOutputPreview || null,
+    };
+    if (type === 'error') {
+      log.error('TelegramReplyRequirement', notice);
+    } else {
+      log.warn('TelegramReplyRequirement', notice);
+    }
+    this.activity.logActivity?.(type, paneId, notice, details);
+    this.sendToVisibleWindow('project-warning', notice, {
+      windowKey: guard.windowKey || 'main',
+    });
+    return true;
+  }
+
+  expirePendingTelegramReplyGuard(paneId = '1', options = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    if (!guard) return null;
+    const expectedMessageId = toNonEmptyString(options.messageId);
+    if (expectedMessageId && toNonEmptyString(guard.messageId) !== expectedMessageId) {
+      return null;
+    }
+    if (guard.status === 'telegram_reply_required_expired_unresolved' && guard.expiredAtMs) {
+      return { ...guard };
+    }
+    this.clearPendingTelegramReplyGuardTimer(normalizedPaneId);
+    const nowMs = Number(options.nowMs) || Date.now();
+    guard.status = 'telegram_reply_required_expired_unresolved';
+    guard.expiredAtMs = nowMs;
+    guard.unresolvedSinceMs = Number(guard.unresolvedSinceMs || 0) || nowMs;
+    guard.unresolvedReason = toNonEmptyString(options.reason) || 'reply_window_expired';
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+    this.emitTelegramReplyRequirementNotice(guard, {
+      type: 'error',
+      reason: guard.unresolvedReason,
+      message: [
+        'TELEGRAM REPLY REQUIREMENT UNRESOLVED',
+        `Pane ${normalizedPaneId} still owes Telegram egress for inbound ${guard.messageId}.`,
+        'A pane-only answer does not close this turn. Send a Telegram reply or report the Telegram route block.',
+      ].join(' '),
+    });
+    return { ...guard };
   }
 
   clearPendingTelegramReplyGuard({ paneId = '1', chatId = null } = {}) {
@@ -10391,6 +10498,7 @@ class SquidRunApp {
     if (normalizedChatId && guardChatId && normalizedChatId !== guardChatId) {
       return false;
     }
+    this.clearPendingTelegramReplyGuardTimer(normalizedPaneId);
     this.pendingTelegramReplyGuards.delete(normalizedPaneId);
     return true;
   }
@@ -10407,36 +10515,58 @@ class SquidRunApp {
     if (!guard) return { ok: true, status: 'no_pending_guard' };
     const nowMs = Date.now();
     if (!this.isPendingTelegramReplyGuardFresh(guard, nowMs)) {
-      this.pendingTelegramReplyGuards.delete(normalizedPaneId);
-      return { ok: true, status: 'stale_guard_cleared' };
+      const expiredGuard = this.expirePendingTelegramReplyGuard(normalizedPaneId, {
+        messageId: guard.messageId,
+        nowMs,
+        reason: 'reply_window_expired',
+      });
+      return {
+        ok: false,
+        status: 'telegram_reply_requirement_expired_unresolved',
+        guard: expiredGuard || { ...guard },
+      };
     }
     if (options.outputKind === 'squidrun_injected_echo') {
       return { ok: true, status: 'injected_echo_ignored' };
     }
     const visibleText = toNonEmptyString(text);
     if (!visibleText) return { ok: true, status: 'empty_output_ignored' };
+
+    guard.status = 'telegram_reply_required_unresolved';
+    guard.violationCount = Number(guard.violationCount || 0) + 1;
+    guard.lastViolationAtMs = nowMs;
+    guard.unresolvedSinceMs = Number(guard.unresolvedSinceMs || 0) || nowMs;
+    guard.lastPaneOutputPreview = visibleText.slice(0, 240);
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+
     if ((nowMs - Number(guard.lastWarningAtMs || 0)) < TELEGRAM_REPLY_GUARD_WARNING_THROTTLE_MS) {
-      return { ok: false, status: 'telegram_reply_guard_throttled', guard };
+      return {
+        ok: false,
+        status: 'telegram_reply_requirement_unresolved_throttled',
+        guard: { ...guard },
+      };
     }
 
     const warning = [
-      'TELEGRAM REPLY TARGET WARNING',
+      'TELEGRAM REPLY REQUIREMENT UNRESOLVED',
       `Pane ${normalizedPaneId} produced visible output after Telegram inbound ${guard.messageId}.`,
-      "That output is pane-only unless it egresses through Telegram. Use `hm-send telegram ...` or explicitly report the Telegram route block.",
+      "That output did not satisfy the Telegram reply debt. Use `hm-send telegram ...` or explicitly report the Telegram route block.",
     ].join(' ');
     guard.lastWarningAtMs = nowMs;
+    guard.warningCount = Number(guard.warningCount || 0) + 1;
     this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
-    log.warn('TelegramReplyGuard', warning);
-    this.activity.logActivity?.('warning', normalizedPaneId, warning, {
-      source: 'telegram-reply-target-guard',
-      messageId: guard.messageId,
-      chatId: guard.chatId || null,
+    this.emitTelegramReplyRequirementNotice(guard, {
+      type: 'warning',
+      reason: 'pane_output_without_telegram_egress',
       outputPreview: visibleText.slice(0, 240),
+      message: warning,
     });
-    this.sendToVisibleWindow('project-warning', warning, {
-      windowKey: guard.windowKey || 'main',
-    });
-    return { ok: false, status: 'telegram_reply_guard_warning', guard, warning };
+    return {
+      ok: false,
+      status: 'telegram_reply_requirement_unresolved',
+      guard: { ...guard },
+      warning,
+    };
   }
 
   async deliverHumanMessageWithRecall(message, recallContext = {}, logLabel = 'HumanMessage') {

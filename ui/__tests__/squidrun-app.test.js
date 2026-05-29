@@ -5642,6 +5642,7 @@ describe('SquidRunApp', () => {
         messageId: 'telegram-in-reply-target-1',
         chatId: '1111111111',
         status: 'pending_telegram_egress',
+        requiresTelegramEgress: true,
       }));
     });
 
@@ -5754,7 +5755,7 @@ describe('SquidRunApp', () => {
       }));
     });
 
-    it('warns when a pane produces visible output before Telegram egress', () => {
+    it('keeps Telegram reply requirements unresolved when a pane answers without Telegram egress', () => {
       const mainWindow = {
         isDestroyed: jest.fn().mockReturnValue(false),
         webContents: {
@@ -5782,22 +5783,118 @@ describe('SquidRunApp', () => {
 
       expect(result).toEqual(expect.objectContaining({
         ok: false,
-        status: 'telegram_reply_guard_warning',
+        status: 'telegram_reply_requirement_unresolved',
+        guard: expect.objectContaining({
+          status: 'telegram_reply_required_unresolved',
+          violationCount: 1,
+          lastPaneOutputPreview: 'I answered in the pane only.',
+        }),
       }));
       expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
         'warning',
         '1',
-        expect.stringContaining('TELEGRAM REPLY TARGET WARNING'),
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
         expect.objectContaining({
-          source: 'telegram-reply-target-guard',
+          source: 'telegram-reply-requirement',
           messageId: 'telegram-in-visible-output-1',
           chatId: '1111111111',
+          status: 'telegram_reply_required_unresolved',
+          requiresTelegramEgress: true,
         })
       );
       expect(mainWindow.webContents.send).toHaveBeenCalledWith(
         'project-warning',
-        expect.stringContaining('TELEGRAM REPLY TARGET WARNING')
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED')
       );
+      expect(guardedApp.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-visible-output-1',
+        status: 'telegram_reply_required_unresolved',
+        violationCount: 1,
+      }));
+    });
+
+    it('keeps ignored Telegram reply warnings unresolved instead of treating pane output as satisfaction', () => {
+      app.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-throttled-unresolved-1',
+        chatId: '1111111111',
+        sender: 'james',
+      });
+
+      app.inspectPaneOutputForReplyGuards('1', 'first pane-only answer', {
+        outputKind: 'agent_visible_output',
+      });
+      const result = app.inspectPaneOutputForReplyGuards('1', 'second pane-only answer', {
+        outputKind: 'agent_visible_output',
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_requirement_unresolved_throttled',
+        guard: expect.objectContaining({
+          messageId: 'telegram-in-throttled-unresolved-1',
+          status: 'telegram_reply_required_unresolved',
+          violationCount: 2,
+          lastPaneOutputPreview: 'second pane-only answer',
+        }),
+      }));
+      expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-throttled-unresolved-1',
+        status: 'telegram_reply_required_unresolved',
+        violationCount: 2,
+      }));
+    });
+
+    it('escalates unanswered Telegram reply requirements when no Telegram egress happens', () => {
+      jest.useFakeTimers({ now: 1700000000000 });
+      try {
+        const mainWindow = {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          webContents: {
+            send: jest.fn(),
+            isDestroyed: jest.fn().mockReturnValue(false),
+          },
+        };
+        const ctx = {
+          ...mockAppContext,
+          mainWindow,
+          getWindow: jest.fn((key = 'main') => (key === 'main' ? mainWindow : null)),
+          getWindows: jest.fn(() => new Map([['main', mainWindow]])),
+        };
+        const guardedApp = new SquidRunApp(ctx, mockManagers);
+        guardedApp.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-expire-1',
+          chatId: '1111111111',
+          sender: 'james',
+        });
+
+        jest.advanceTimersByTime((5 * 60 * 1000) + 1);
+
+        expect(guardedApp.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-expire-1',
+          status: 'telegram_reply_required_expired_unresolved',
+          unresolvedReason: 'reply_window_expired',
+        }));
+        expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+          'error',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.objectContaining({
+            source: 'telegram-reply-requirement',
+            messageId: 'telegram-in-expire-1',
+            status: 'telegram_reply_required_expired_unresolved',
+            reason: 'reply_window_expired',
+            requiresTelegramEgress: true,
+          })
+        );
+        expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+          'project-warning',
+          expect.stringContaining('still owes Telegram egress')
+        );
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('ignores metadata-classified SquidRun injected Telegram prompt echoes for the response-side guard', () => {
@@ -5821,7 +5918,7 @@ describe('SquidRunApp', () => {
       expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
         'warning',
         '1',
-        expect.stringContaining('TELEGRAM REPLY TARGET WARNING'),
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
         expect.any(Object)
       );
       expect(app.pendingTelegramReplyGuards.has('1')).toBe(true);
@@ -5885,11 +5982,11 @@ describe('SquidRunApp', () => {
 
       expect(result).toEqual(expect.objectContaining({
         ok: false,
-        status: 'telegram_reply_guard_warning',
+        status: 'telegram_reply_requirement_unresolved',
       }));
       expect(mainWindow.webContents.send).toHaveBeenCalledWith(
         'project-warning',
-        expect.stringContaining('TELEGRAM REPLY TARGET WARNING')
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED')
       );
     });
 
@@ -5923,11 +6020,11 @@ describe('SquidRunApp', () => {
 
       expect(result).toEqual(expect.objectContaining({
         ok: false,
-        status: 'telegram_reply_guard_warning',
+        status: 'telegram_reply_requirement_unresolved',
       }));
       expect(mainWindow.webContents.send).toHaveBeenCalledWith(
         'project-warning',
-        expect.stringContaining('TELEGRAM REPLY TARGET WARNING')
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED')
       );
     });
 
@@ -5939,6 +6036,12 @@ describe('SquidRunApp', () => {
         chatId: '1111111111',
         sender: 'james',
       });
+      expect(app.inspectPaneOutputForReplyGuards('1', 'pane-only does not clear first', {
+        outputKind: 'agent_visible_output',
+      })).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_requirement_unresolved',
+      }));
 
       const result = await app.routeTelegramReply({
         target: 'telegram',
