@@ -41,7 +41,7 @@ function createPaneState() {
   };
 }
 
-function classifyPendingBytes(segments, byteBudget, visibility) {
+function classifyPendingBytes(segments, byteBudget, visibility, kernelMeta = null) {
   let remaining = Math.max(0, Number(byteBudget) || 0);
   if (remaining <= 0) return false;
 
@@ -52,6 +52,7 @@ function classifyPendingBytes(segments, byteBudget, visibility) {
 
     if (remaining >= segment.byteLen) {
       segment.visibility = visibility;
+      segment.kernelMeta = kernelMeta || null;
       remaining -= segment.byteLen;
       changed = true;
       continue;
@@ -66,6 +67,7 @@ function classifyPendingBytes(segments, byteBudget, visibility) {
       byteLen: headBytes,
       arrivedAtMs: segment.arrivedAtMs,
       visibility,
+      kernelMeta: kernelMeta || null,
     };
     const tailSegment = {
       text: tail,
@@ -161,6 +163,7 @@ class PtyOutputFilter {
       byteLen: getUtf8ByteLength(text),
       arrivedAtMs,
       visibility: null,
+      kernelMeta: null,
     });
   }
 
@@ -181,12 +184,12 @@ class PtyOutputFilter {
     }
 
     const visibility = normalizeVisibility(event.kernelMeta?.meta?.visibility);
-    const changed = classifyPendingBytes(state.segments, byteLen, visibility);
+    const changed = classifyPendingBytes(state.segments, byteLen, visibility, event.kernelMeta || null);
     this._cleanupPaneState(paneId, state, now);
     return { paneId, changed, visibility };
   }
 
-  releaseReady(targetPaneId = null, { now = Date.now(), force = false } = {}) {
+  releaseReady(targetPaneId = null, { now = Date.now(), force = false, includeKernelMeta = false } = {}) {
     const paneIds = targetPaneId === null
       ? Array.from(this.panes.keys())
       : [String(targetPaneId)];
@@ -200,6 +203,7 @@ class PtyOutputFilter {
         for (const segment of state.segments) {
           if (segment.visibility === null) {
             segment.visibility = 'user';
+            segment.kernelMeta = null;
           }
         }
       } else {
@@ -207,6 +211,7 @@ class PtyOutputFilter {
           if (segment.visibility !== null) continue;
           if ((Number(now) - segment.arrivedAtMs) >= this.holdMs) {
             segment.visibility = 'user';
+            segment.kernelMeta = null;
             continue;
           }
           break;
@@ -214,6 +219,7 @@ class PtyOutputFilter {
       }
 
       let visibleText = '';
+      const kernelMetas = [];
       while (state.segments.length > 0) {
         const segment = state.segments[0];
         if (!segment || segment.visibility === null) break;
@@ -221,11 +227,18 @@ class PtyOutputFilter {
         state.segments.shift();
         if (segment.visibility === 'internal') continue;
         visibleText += applySentinelFilter(state, segment.text, this.sentinel);
+        if (includeKernelMeta && segment.kernelMeta) {
+          kernelMetas.push(segment.kernelMeta);
+        }
       }
 
       this._cleanupPaneState(paneId, state);
       if (visibleText) {
-        results.push({ paneId, text: visibleText });
+        if (includeKernelMeta) {
+          results.push({ paneId, text: visibleText, kernelMetas });
+        } else {
+          results.push({ paneId, text: visibleText });
+        }
       }
     }
 

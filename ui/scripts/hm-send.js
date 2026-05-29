@@ -45,6 +45,10 @@ const {
   isHardBlockMode: isCoworkerLintHardBlock,
 } = require('./hm-send-coworker-output-lint');
 const {
+  detectCommsLivenessViolation,
+  appendCommsLivenessViolation,
+} = require('./hm-comms-liveness-guard');
+const {
   collectSurfaceCaptureEventRequests,
   detectSurfaceClaimGuardViolation,
 } = require('./hm-send-surface-claim-guard');
@@ -735,6 +739,21 @@ async function runOutputGuards({ messageId, targetRole } = {}) {
       );
     }
 
+    const commsLivenessBypass = detectCommsLivenessViolation({
+      ...guardInput,
+      bypass: '0',
+    });
+    if (commsLivenessBypass) {
+      appendCommsLivenessViolation(
+        {
+          ...commsLivenessBypass,
+          messageId,
+          bypassReason: process.env.HM_SEND_BYPASS_GUARD === '1' ? 'env' : 'flag',
+        },
+        { logPath: resolveGuardLogPath('comms-liveness-bypasses.jsonl') }
+      );
+    }
+
     return { ok: true, bypassed: true };
   }
 
@@ -827,6 +846,25 @@ async function runOutputGuards({ messageId, targetRole } = {}) {
     writeGuardBlock([
       `WARN: coworker-output-lint '${coworkerLintViolation.violation_class}' opener '${coworkerLintViolation.phrase}' — logged, send continuing.`,
       'Set HM_SEND_COWORKER_LINT_HARD=1 to enforce hard-block.',
+      `Log: ${logResult.path}`,
+    ]);
+  }
+
+  const commsLivenessViolation = detectCommsLivenessViolation({
+    ...guardInput,
+    bypass: '0',
+  });
+  if (commsLivenessViolation) {
+    const logResult = appendCommsLivenessViolation(
+      {
+        ...commsLivenessViolation,
+        messageId,
+      },
+      { logPath: resolveGuardLogPath('comms-liveness-violations.jsonl') }
+    );
+    writeGuardBlock([
+      `WARN: comms-liveness '${commsLivenessViolation.violation_class}' phrase '${commsLivenessViolation.phrase}' - logged, send continuing.`,
+      'Smoke alarm only: the human wrapper is reading dead. Add the emotion the moment actually earned; do not fake a profanity quota.',
       `Log: ${logResult.path}`,
     ]);
   }
