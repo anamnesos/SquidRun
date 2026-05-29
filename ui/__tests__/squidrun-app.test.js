@@ -5845,7 +5845,8 @@ describe('SquidRunApp', () => {
       }));
     });
 
-    it('escalates unanswered Telegram reply requirements when no Telegram egress happens', () => {
+    it('escalates unanswered Telegram reply requirements to a phone notice when no Telegram egress happens', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       jest.useFakeTimers({ now: 1700000000000 });
       try {
         const mainWindow = {
@@ -5868,13 +5869,36 @@ describe('SquidRunApp', () => {
           chatId: '1111111111',
           sender: 'james',
         });
+        guardedApp.inspectPaneOutputForReplyGuards('1', 'RAW PANE HALF THOUGHT - do not text this', {
+          outputKind: 'agent_visible_output',
+        });
 
         jest.advanceTimersByTime((5 * 60 * 1000) + 1);
+        await Promise.resolve();
+        await Promise.resolve();
 
         expect(guardedApp.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
           messageId: 'telegram-in-expire-1',
-          status: 'telegram_reply_required_expired_unresolved',
+          status: 'telegram_reply_required_phone_escalated',
           unresolvedReason: 'reply_window_expired',
+          phoneEscalationAttemptCount: 1,
+          phoneEscalationMessageId: 42,
+          requiresTelegramEgress: true,
+        }));
+        expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+        const [phoneNotice, _env, routeOptions] = sendRoutedTelegramMessage.mock.calls[0];
+        expect(phoneNotice).toContain('SquidRun still owes you a reply');
+        expect(phoneNotice).toContain('This is a delivery notice, not the actual answer');
+        expect(phoneNotice).not.toContain('RAW PANE HALF THOUGHT');
+        expect(routeOptions).toEqual(expect.objectContaining({
+          chatId: '1111111111',
+          messageId: 'telegram-in-expire-1-unresolved-notice',
+          senderRole: 'system',
+          metadata: expect.objectContaining({
+            routeKind: 'telegram-reply-requirement-escalation',
+            satisfiesReplyRequirement: false,
+            sourceMessageId: 'telegram-in-expire-1',
+          }),
         }));
         expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
           'error',
@@ -5888,10 +5912,187 @@ describe('SquidRunApp', () => {
             requiresTelegramEgress: true,
           })
         );
+        expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+          'warning',
+          '1',
+          'Telegram reply debt escalated to phone notice',
+          expect.objectContaining({
+            source: 'telegram-reply-requirement',
+            messageId: 'telegram-in-expire-1',
+            status: 'telegram_reply_required_phone_escalated',
+            satisfiesReplyRequirement: false,
+            requiresTelegramEgress: true,
+          })
+        );
         expect(mainWindow.webContents.send).toHaveBeenCalledWith(
           'project-warning',
           expect.stringContaining('still owes Telegram egress')
         );
+        expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+          'project-warning',
+          expect.stringContaining('actual reply is still unresolved')
+        );
+        const laterPaneOutput = guardedApp.inspectPaneOutputForReplyGuards('1', 'still pane-only later', {
+          outputKind: 'agent_visible_output',
+        });
+        expect(laterPaneOutput).toEqual(expect.objectContaining({
+          ok: false,
+          status: 'telegram_reply_requirement_phone_escalated_unresolved',
+          guard: expect.objectContaining({
+            status: 'telegram_reply_required_phone_escalated',
+            phoneEscalationAttemptCount: 1,
+          }),
+        }));
+        expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('does not repeat phone escalation spam for the same unresolved Telegram debt', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-no-spam-1',
+        chatId: '1111111111',
+        sender: 'james',
+      });
+
+      const first = await app.sendTelegramReplyRequirementPhoneEscalation('1');
+      const second = await app.sendTelegramReplyRequirementPhoneEscalation('1');
+
+      expect(first).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_reply_requirement_phone_escalated',
+      }));
+      expect(second).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_reply_requirement_phone_escalation_already_sent',
+      }));
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+      expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-no-spam-1',
+        status: 'telegram_reply_required_phone_escalated',
+        phoneEscalationAttemptCount: 1,
+        requiresTelegramEgress: true,
+      }));
+    });
+
+    it('keeps the Telegram reply debt unresolved when the phone notice send fails', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      sendRoutedTelegramMessage.mockResolvedValueOnce({
+        ok: false,
+        error: 'bot_api_down',
+      });
+      app.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-phone-fail-1',
+        chatId: '1111111111',
+        sender: 'james',
+      });
+
+      const result = await app.sendTelegramReplyRequirementPhoneEscalation('1');
+      const retry = await app.sendTelegramReplyRequirementPhoneEscalation('1');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_requirement_phone_escalation_failed',
+        error: 'bot_api_down',
+      }));
+      expect(retry).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_requirement_phone_escalation_already_attempted',
+      }));
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+      expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-phone-fail-1',
+        status: 'telegram_reply_required_phone_escalation_failed',
+        phoneEscalationAttemptCount: 1,
+        phoneEscalationError: 'bot_api_down',
+        requiresTelegramEgress: true,
+      }));
+      expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+        'error',
+        '1',
+        expect.stringContaining('TELEGRAM REPLY PHONE ESCALATION FAILED'),
+        expect.objectContaining({
+          source: 'telegram-reply-requirement',
+          messageId: 'telegram-in-phone-fail-1',
+          status: 'telegram_reply_required_phone_escalation_failed',
+          reason: 'bot_api_down',
+          requiresTelegramEgress: true,
+        })
+      );
+    });
+
+    it('does not send SquidRun-internal phone notices to scoped non-owner Telegram chats', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-scoped-phone-block-1',
+        chatId: '2222222222',
+        sender: 'scoped',
+        windowKey: 'scoped',
+        profileName: 'scoped',
+      });
+
+      const result = await app.sendTelegramReplyRequirementPhoneEscalation('1');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_requirement_phone_escalation_blocked',
+        error: 'explicit_non_owner_route',
+      }));
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-scoped-phone-block-1',
+        status: 'telegram_reply_required_phone_escalation_failed',
+        phoneEscalationError: 'explicit_non_owner_route',
+        requiresTelegramEgress: true,
+      }));
+      expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+        'error',
+        '1',
+        expect.stringContaining('TELEGRAM REPLY PHONE ESCALATION BLOCKED'),
+        expect.objectContaining({
+          source: 'telegram-reply-requirement',
+          messageId: 'telegram-in-scoped-phone-block-1',
+          reason: 'explicit_non_owner_route',
+          requiresTelegramEgress: true,
+        })
+      );
+    });
+
+    it('does not phone-escalate a Telegram reply debt after real Telegram egress clears it', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      jest.useFakeTimers({ now: 1700000000000 });
+      try {
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-clear-before-phone-1',
+          chatId: '1111111111',
+          sender: 'james',
+        });
+
+        const result = await app.routeTelegramReply({
+          target: 'telegram',
+          content: 'Actual answer through Telegram.',
+          messageId: 'telegram-in-clear-before-phone-1-reply',
+          chatId: '1111111111',
+        });
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_delivered',
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+        sendRoutedTelegramMessage.mockClear();
+
+        jest.advanceTimersByTime((5 * 60 * 1000) + 1);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
       } finally {
         jest.useRealTimers();
       }

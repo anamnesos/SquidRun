@@ -10383,6 +10383,12 @@ class SquidRunApp {
       violationCount: 0,
       lastViolationAtMs: 0,
       lastPaneOutputPreview: null,
+      phoneEscalationAttemptCount: 0,
+      phoneEscalationAttemptedAtMs: 0,
+      phoneEscalationSentAtMs: 0,
+      phoneEscalationMessageId: null,
+      phoneEscalationError: null,
+      phoneEscalationInFlight: false,
       status: 'pending_telegram_egress',
       requiresTelegramEgress: true,
     };
@@ -10467,6 +10473,11 @@ class SquidRunApp {
     if (expectedMessageId && toNonEmptyString(guard.messageId) !== expectedMessageId) {
       return null;
     }
+    if (guard.phoneEscalationSentAtMs) {
+      guard.status = 'telegram_reply_required_phone_escalated';
+      this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+      return { ...guard };
+    }
     if (guard.status === 'telegram_reply_required_expired_unresolved' && guard.expiredAtMs) {
       return { ...guard };
     }
@@ -10486,7 +10497,179 @@ class SquidRunApp {
         'A pane-only answer does not close this turn. Send a Telegram reply or report the Telegram route block.',
       ].join(' '),
     });
+    if (options.phoneEscalation !== false) {
+      void this.sendTelegramReplyRequirementPhoneEscalation(normalizedPaneId, {
+        reason: guard.unresolvedReason,
+      });
+    }
     return { ...guard };
+  }
+
+  buildTelegramReplyRequirementPhoneNotice(guard = {}) {
+    const sender = toNonEmptyString(guard.sender) || 'your Telegram message';
+    return [
+      `SquidRun still owes you a reply to your Telegram message from ${sender}.`,
+      'It caught that no real Telegram reply was sent, so it is not pretending a terminal-only answer reached you.',
+      'This is a delivery notice, not the actual answer. The turn is still unresolved until a real reply is sent.',
+    ].join('\n');
+  }
+
+  async sendTelegramReplyRequirementPhoneEscalation(paneId = '1', options = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    if (!guard) {
+      return { ok: false, status: 'no_pending_guard' };
+    }
+    const chatId = normalizeChatId(guard.chatId || guard.telegramChatId);
+    if (!chatId) {
+      guard.status = 'telegram_reply_required_phone_escalation_failed';
+      guard.phoneEscalationError = 'missing_chat_id';
+      this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+      this.emitTelegramReplyRequirementNotice(guard, {
+        type: 'error',
+        reason: 'missing_chat_id',
+        message: [
+          'TELEGRAM REPLY PHONE ESCALATION FAILED',
+          `Pane ${normalizedPaneId} still owes Telegram egress for inbound ${guard.messageId}, but no chat id is available.`,
+        ].join(' '),
+      });
+      return { ok: false, status: 'telegram_reply_requirement_phone_escalation_failed', error: 'missing_chat_id' };
+    }
+    const route = this.resolveTelegramInboundRoute(chatId);
+    const routeWindowKey = toNonEmptyString(route?.windowKey) || 'main';
+    const routeProfile = toNonEmptyString(route?.profile) || routeWindowKey;
+    if (!route?.ok || routeWindowKey !== 'main' || routeProfile !== 'main') {
+      guard.status = 'telegram_reply_required_phone_escalation_failed';
+      guard.phoneEscalationError = route?.reason || 'non_main_telegram_route';
+      this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+      this.emitTelegramReplyRequirementNotice(guard, {
+        type: 'error',
+        reason: guard.phoneEscalationError,
+        message: [
+          'TELEGRAM REPLY PHONE ESCALATION BLOCKED',
+          `Pane ${normalizedPaneId} still owes Telegram egress for inbound ${guard.messageId}, but the chat route is not the main owner route.`,
+        ].join(' '),
+      });
+      return {
+        ok: false,
+        status: 'telegram_reply_requirement_phone_escalation_blocked',
+        error: guard.phoneEscalationError,
+        guard: { ...guard },
+      };
+    }
+    if (guard.phoneEscalationInFlight) {
+      return { ok: false, status: 'telegram_reply_requirement_phone_escalation_in_flight', guard: { ...guard } };
+    }
+    if (guard.phoneEscalationAttemptedAtMs && options.force !== true) {
+      return {
+        ok: Boolean(guard.phoneEscalationSentAtMs),
+        status: guard.phoneEscalationSentAtMs
+          ? 'telegram_reply_requirement_phone_escalation_already_sent'
+          : 'telegram_reply_requirement_phone_escalation_already_attempted',
+        guard: { ...guard },
+      };
+    }
+
+    const nowMs = Date.now();
+    guard.phoneEscalationInFlight = true;
+    guard.phoneEscalationAttemptCount = Number(guard.phoneEscalationAttemptCount || 0) + 1;
+    guard.phoneEscalationAttemptedAtMs = nowMs;
+    guard.phoneEscalationError = null;
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+
+    const message = this.buildTelegramReplyRequirementPhoneNotice(guard);
+    try {
+      const result = await sendRoutedTelegramMessage(message, process.env, {
+        messageId: `${guard.messageId || 'telegram-reply'}-unresolved-notice`,
+        senderRole: 'system',
+        sessionId: this.commsSessionScopeId || null,
+        chatId,
+        metadata: {
+          routeKind: 'telegram-reply-requirement-escalation',
+          targetRaw: 'telegram',
+          windowKey: guard.windowKey || 'main',
+          profile: guard.profileName || 'main',
+          chatId,
+          telegramChatId: chatId,
+          sessionScopeId: guard.sessionScopeId || null,
+          sourceMessageId: guard.messageId || null,
+          satisfiesReplyRequirement: false,
+        },
+      });
+
+      const latest = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+      if (!latest || toNonEmptyString(latest.messageId) !== toNonEmptyString(guard.messageId)) {
+        return { ok: false, status: 'telegram_reply_requirement_stale_after_escalation' };
+      }
+      latest.phoneEscalationInFlight = false;
+      if (!result?.ok) {
+        latest.status = 'telegram_reply_required_phone_escalation_failed';
+        latest.phoneEscalationError = result?.error || 'telegram_send_failed';
+        this.pendingTelegramReplyGuards.set(normalizedPaneId, latest);
+        this.emitTelegramReplyRequirementNotice(latest, {
+          type: 'error',
+          reason: latest.phoneEscalationError,
+          message: [
+            'TELEGRAM REPLY PHONE ESCALATION FAILED',
+            `Pane ${normalizedPaneId} still owes Telegram egress for inbound ${latest.messageId}.`,
+            'The phone notice could not be sent; the reply debt remains unresolved.',
+          ].join(' '),
+        });
+        return {
+          ok: false,
+          status: 'telegram_reply_requirement_phone_escalation_failed',
+          error: latest.phoneEscalationError,
+          guard: { ...latest },
+        };
+      }
+
+      latest.status = 'telegram_reply_required_phone_escalated';
+      latest.phoneEscalationSentAtMs = Date.now();
+      latest.phoneEscalationMessageId = result.messageId || null;
+      latest.phoneEscalationError = null;
+      latest.requiresTelegramEgress = true;
+      this.pendingTelegramReplyGuards.set(normalizedPaneId, latest);
+      this.activity.logActivity?.('warning', normalizedPaneId, 'Telegram reply debt escalated to phone notice', {
+        source: 'telegram-reply-requirement',
+        messageId: latest.messageId || null,
+        chatId,
+        status: latest.status,
+        phoneEscalationMessageId: latest.phoneEscalationMessageId || null,
+        requiresTelegramEgress: true,
+        satisfiesReplyRequirement: false,
+      });
+      this.sendToVisibleWindow('project-warning', 'Telegram reply debt was escalated to James by phone notice; the actual reply is still unresolved.', {
+        windowKey: latest.windowKey || 'main',
+      });
+      return {
+        ok: true,
+        status: 'telegram_reply_requirement_phone_escalated',
+        messageId: result.messageId || null,
+        chatId: result.chatId || chatId,
+        guard: { ...latest },
+      };
+    } catch (err) {
+      const latest = this.pendingTelegramReplyGuards.get(normalizedPaneId) || guard;
+      latest.phoneEscalationInFlight = false;
+      latest.status = 'telegram_reply_required_phone_escalation_failed';
+      latest.phoneEscalationError = err?.message || 'telegram_send_failed';
+      this.pendingTelegramReplyGuards.set(normalizedPaneId, latest);
+      this.emitTelegramReplyRequirementNotice(latest, {
+        type: 'error',
+        reason: latest.phoneEscalationError,
+        message: [
+          'TELEGRAM REPLY PHONE ESCALATION FAILED',
+          `Pane ${normalizedPaneId} still owes Telegram egress for inbound ${latest.messageId}.`,
+          'The phone notice could not be sent; the reply debt remains unresolved.',
+        ].join(' '),
+      });
+      return {
+        ok: false,
+        status: 'telegram_reply_requirement_phone_escalation_failed',
+        error: latest.phoneEscalationError,
+        guard: { ...latest },
+      };
+    }
   }
 
   clearPendingTelegramReplyGuard({ paneId = '1', chatId = null } = {}) {
@@ -10522,7 +10705,9 @@ class SquidRunApp {
       });
       return {
         ok: false,
-        status: 'telegram_reply_requirement_expired_unresolved',
+        status: expiredGuard?.phoneEscalationSentAtMs
+          ? 'telegram_reply_requirement_phone_escalated_unresolved'
+          : 'telegram_reply_requirement_expired_unresolved',
         guard: expiredGuard || { ...guard },
       };
     }
