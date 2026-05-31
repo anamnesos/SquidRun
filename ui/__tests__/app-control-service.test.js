@@ -171,6 +171,25 @@ describe('app-control-service', () => {
     }));
   });
 
+  test('open-live-task-audit-sidecar opens the task audit sidecar without restart', async () => {
+    const openAppWindow = jest.fn().mockResolvedValue({
+      ok: true,
+      windowKey: 'live-task-audit-sidecar',
+      status: 'opened',
+    });
+
+    const result = await executeAppControlAction({ openAppWindow }, 'task-audit');
+
+    expect(openAppWindow).toHaveBeenCalledWith('live-task-audit-sidecar', {});
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'open-live-task-audit-sidecar',
+      windowKey: 'live-task-audit-sidecar',
+      status: 'opened',
+    }));
+    expect(result.note).toMatch(/sidecar opened\/focused without restarting/i);
+  });
+
   test('open-trustquote-workspace opens the real workspace without auto-booting duplicate agents', async () => {
     const openAppWindow = jest.fn().mockResolvedValue({
       ok: true,

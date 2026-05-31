@@ -151,6 +151,7 @@ const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 const SPECIAL_USER_TARGETS = new Set(['user', 'telegram']);
 const INTERNAL_INBOX_TARGETS = new Set(['mira']);
 const TRUSTQUOTE_PROFILE_NAME = 'trustquote';
+const TRUSTQUOTE_ROUTE_OWNER_ID = 'trustquote-work-room-route-owner';
 const TRUSTQUOTE_REVERSE_TARGETS = new Set(['architect']);
 const TRUSTQUOTE_REVERSE_SOURCE_ROLES = new Set(['builder', 'oracle']);
 const args = process.argv.slice(2);
@@ -971,11 +972,24 @@ function chooseSessionId(linkSessionId, runtimeSessionId) {
   return normalizedLinkSessionId;
 }
 
+function getExplicitSessionScopeId(env = process.env) {
+  return normalizeSessionId(env?.SQUIDRUN_SESSION_SCOPE_ID || env?.SQUIDRUN_SESSION_ID || '');
+}
+
+function scopeSessionIdForEffectiveProfile(sessionId, profileName = effectiveProfileName) {
+  const normalizedSessionId = normalizeSessionId(sessionId);
+  if (!normalizedSessionId) return null;
+  if (normalizeProfileName(profileName) !== TRUSTQUOTE_PROFILE_NAME) return normalizedSessionId;
+  if (normalizedSessionId.endsWith(`:${TRUSTQUOTE_PROFILE_NAME}`)) return normalizedSessionId;
+  return `${normalizedSessionId}:${TRUSTQUOTE_PROFILE_NAME}`;
+}
+
 function buildProjectMetadata(context = localProjectContext) {
   if (!context?.projectPath) return null;
   const projectPath = String(context.projectPath || '').trim();
   const projectName = String(context.projectName || path.basename(projectPath) || '').trim();
-  const sessionId = chooseSessionId(
+  const explicitSessionScopeId = getExplicitSessionScopeId();
+  const sessionId = explicitSessionScopeId || chooseSessionId(
     typeof context.sessionId === 'string' ? context.sessionId.trim() : '',
     resolveCurrentSessionId(context)
   );
@@ -983,7 +997,7 @@ function buildProjectMetadata(context = localProjectContext) {
   return {
     name: projectName || null,
     path: projectPath || null,
-    session_id: sessionId || null,
+    session_id: scopeSessionIdForEffectiveProfile(sessionId) || null,
     source: String(context.source || 'unknown'),
   };
 }
@@ -2015,6 +2029,73 @@ async function queryDeliveryCheckBestEffort(ws, messageId, options = {}) {
   return null;
 }
 
+function isTrustQuoteRouteOwnerTarget(targetInput = target) {
+  if (normalizeProfileName(effectiveProfileName) !== TRUSTQUOTE_PROFILE_NAME) return false;
+  const normalizedTarget = normalizeRole(targetInput);
+  return normalizedTarget === 'builder' || normalizedTarget === 'oracle';
+}
+
+function normalizeTrustQuoteRouteOwnerHealth(health, targetInput = target) {
+  if (!isTrustQuoteRouteOwnerTarget(targetInput)) return health;
+  const normalizedTarget = normalizeRole(targetInput) || String(targetInput || '').trim().toLowerCase();
+  const expectedSessionScopeId = scopeSessionIdForEffectiveProfile(projectMetadata?.session_id || getExplicitSessionScopeId());
+  const base = health && typeof health === 'object' ? health : {};
+  const routeBinding = base.routeBinding && typeof base.routeBinding === 'object' ? base.routeBinding : null;
+  const blocked = (status, error) => ({
+    ...base,
+    type: base.type || 'health-check-result',
+    target: base.target || normalizedTarget || targetInput || null,
+    healthy: false,
+    status,
+    error,
+    failClosed: true,
+    routeOwnerRequired: TRUSTQUOTE_ROUTE_OWNER_ID,
+    expectedSessionScopeId: expectedSessionScopeId || null,
+  });
+
+  if (!health) {
+    return blocked(
+      'trustquote_route_owner_health_unavailable',
+      `TrustQuote route-owner health check did not return for target '${normalizedTarget}'.`
+    );
+  }
+  if (base.healthy === true && String(base.source || '').toLowerCase() !== 'client_activity') {
+    return blocked(
+      'trustquote_route_owner_unhealthy',
+      `TrustQuote target '${normalizedTarget}' must be backed by route-owner client_activity; got ${base.source || base.status || 'unknown'}.`
+    );
+  }
+  if (base.healthy !== true || String(base.status || '').toLowerCase() !== 'healthy') {
+    const status = String(base.status || '').toLowerCase();
+    return blocked(
+      status === 'scope_route_unavailable' || status === 'cross_profile_scope_mismatch'
+        ? status
+        : 'trustquote_route_owner_unhealthy',
+      `TrustQuote route-owner target '${normalizedTarget}' is not healthy (${base.status || 'unknown'}).`
+    );
+  }
+  if (
+    !routeBinding
+    || routeBinding.routeOwner !== TRUSTQUOTE_ROUTE_OWNER_ID
+    || routeBinding.roomId !== TRUSTQUOTE_PROFILE_NAME
+  ) {
+    return blocked(
+      'trustquote_route_owner_unhealthy',
+      `TrustQuote target '${normalizedTarget}' is not bound to ${TRUSTQUOTE_ROUTE_OWNER_ID}.`
+    );
+  }
+  if (
+    expectedSessionScopeId
+    && routeBinding.sessionScopeId !== expectedSessionScopeId
+  ) {
+    return blocked(
+      'trustquote_route_owner_session_mismatch',
+      `TrustQuote route-owner target '${normalizedTarget}' is scoped to '${routeBinding.sessionScopeId || '<missing>'}', expected '${expectedSessionScopeId}'.`
+    );
+  }
+  return health;
+}
+
 function isTargetHealthBlocking(health, targetInput = target) {
   if (!health || typeof health !== 'object') return false;
   const status = String(health.status || '').toLowerCase();
@@ -2024,7 +2105,13 @@ function isTargetHealthBlocking(health, targetInput = target) {
     }
     return true;
   }
-  if (status === 'scope_route_unavailable' || status === 'cross_profile_scope_mismatch') {
+  if (
+    status === 'scope_route_unavailable'
+    || status === 'cross_profile_scope_mismatch'
+    || status === 'trustquote_route_owner_health_unavailable'
+    || status === 'trustquote_route_owner_unhealthy'
+    || status === 'trustquote_route_owner_session_mismatch'
+  ) {
     return true;
   }
   return false;
@@ -2124,7 +2211,10 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
   await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
 
   if (!skipHealthCheck) {
-    const health = await queryTargetHealthBestEffort(ws);
+    const health = normalizeTrustQuoteRouteOwnerHealth(
+      await queryTargetHealthBestEffort(ws),
+      target
+    );
     if (isTargetHealthBlocking(health, target)) {
       await closeSocket(ws);
       traceComplete({
@@ -2496,8 +2586,10 @@ async function main() {
         || sendResult?.error
         || wsError?.message
         || 'profile_route_unavailable';
+      const reason = sendResult?.health?.error || sendResult?.ack?.error || null;
       console.error(
         `Send blocked by profile isolation (${status}). `
+        + (reason ? `${reason} ` : '')
         + `Profile '${effectiveProfileName}' cannot fall back to main target '${target}'.`
       );
     }

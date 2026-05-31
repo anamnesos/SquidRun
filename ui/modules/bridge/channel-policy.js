@@ -60,6 +60,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'list-friction',
   'list-processes',
   'list-screenshots',
+  'live-task-audit-sidecar:snapshot',
   'mira:coordinator-snapshot',
   'mira:lab-export',
   'mira:lab-open',

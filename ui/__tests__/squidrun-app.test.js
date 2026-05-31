@@ -38,6 +38,7 @@ jest.mock('electron', () => ({
       send: jest.fn(),
       on: jest.fn(),
       openDevTools: jest.fn(),
+      reloadIgnoringCache: jest.fn(),
     },
     isDestroyed: jest.fn().mockReturnValue(false),
     isMinimized: jest.fn().mockReturnValue(false),
@@ -438,6 +439,11 @@ jest.mock('../modules/local-model-capabilities', () => ({
 // Now require the module under test
 const { spawn } = require('child_process');
 const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
+const {
+  attachProof,
+  closeWorkItem,
+  openWorkItem,
+} = require('../modules/main/work-item-ledger');
 const {
   buildNewMiraTelegramTurnCandidate,
 } = require('../modules/mira-telegram-turn-candidate');
@@ -1264,6 +1270,49 @@ describe('SquidRunApp', () => {
       } finally {
         factoryModule.createMiraLabWindow = originalFactory;
       }
+    });
+
+    it('openAppWindow("live-task-audit-sidecar") creates the standalone task audit sidecar', async () => {
+      const enforceMenuSpy = jest.spyOn(app, 'enforceMenuSuppression');
+      const result = await app.openAppWindow('live-task-audit-sidecar');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        windowKey: 'live-task-audit-sidecar',
+        title: 'SquidRun Task Audit',
+      }));
+      expect(result.htmlPath).toMatch(/live-task-audit-sidecar\.html$/);
+      expect(result.preloadPath).toMatch(/preload\.js$/);
+
+      expect(app.ctx.setWindow).toHaveBeenCalledWith('live-task-audit-sidecar', expect.any(Object));
+      const sidecarWindow = app.ctx.getWindow('live-task-audit-sidecar');
+      expect(sidecarWindow).toBeTruthy();
+      expect(sidecarWindow).not.toBe(app.ctx.mainWindow);
+      expect(sidecarWindow.loadFile).toHaveBeenCalledWith(expect.stringMatching(/live-task-audit-sidecar\.html$/));
+      expect(sidecarWindow.focus).toHaveBeenCalled();
+      expect(enforceMenuSpy).toHaveBeenCalledWith(sidecarWindow);
+      expect(app.setupWindowListeners).toHaveBeenCalledWith(
+        sidecarWindow,
+        expect.objectContaining({ windowKey: 'live-task-audit-sidecar', lifecycleRoot: false }),
+      );
+    });
+
+    it('openAppWindow("live-task-audit-sidecar") reloads a reused sidecar before focusing it', async () => {
+      await app.openAppWindow('live-task-audit-sidecar');
+      const sidecarWindow = app.ctx.getWindow('live-task-audit-sidecar');
+      sidecarWindow.focus.mockClear();
+      sidecarWindow.webContents.reloadIgnoringCache.mockClear();
+
+      const result = await app.openAppWindow('live-task-audit-sidecar');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        windowKey: 'live-task-audit-sidecar',
+        status: 'reused_existing_reloaded',
+      }));
+      expect(sidecarWindow.webContents.reloadIgnoringCache).toHaveBeenCalledTimes(1);
+      expect(sidecarWindow.focus).toHaveBeenCalled();
+      expect(app.ctx.getWindow('live-task-audit-sidecar')).toBe(sidecarWindow);
     });
 
     it('closing a standalone Scoped profile window quits that profile process cleanly', async () => {
@@ -2865,6 +2914,185 @@ describe('SquidRunApp', () => {
       expect(spawn).not.toHaveBeenCalled();
 
       jest.useRealTimers();
+    });
+
+    it('suppresses architect-to-oracle watchdog when the matching work item is terminal', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-work-item-terminal-'));
+      const workItemRoot = path.join(tempRoot, 'runtime', 'work-items');
+      try {
+        openWorkItem({
+          id: 'wi-watchdog-terminal',
+          session: 'app-session-389',
+          profile: 'main',
+          window: 'main',
+          sourceMessageIds: ['m-architect-oracle-terminal'],
+          objective: 'Oracle verify the terminal watchdog suppression patch',
+          ownerRoles: ['builder', 'oracle'],
+        }, {
+          workItemRoot,
+          now: '2026-05-30T10:00:00.000Z',
+        });
+        closeWorkItem({
+          id: 'wi-watchdog-terminal',
+          verdict: 'passed',
+          reason: 'terminal before stale watchdog fired',
+        }, {
+          workItemRoot,
+          now: '2026-05-30T10:01:00.000Z',
+        });
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogWorkItemRoot = workItemRoot;
+
+        app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: 'm-architect-oracle-terminal',
+          content: '(ARCHITECT #200): Verify wi-watchdog-terminal and report.',
+          sentAtMs: new Date('2026-05-30T10:00:30').getTime(),
+        });
+
+        jest.advanceTimersByTime(30 * 1000);
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
+    it('suppresses architect-to-oracle watchdog when oracle_verify proof is already attached', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-work-item-proof-'));
+      const workItemRoot = path.join(tempRoot, 'runtime', 'work-items');
+      try {
+        openWorkItem({
+          id: 'wi-watchdog-acknowledged',
+          session: 'app-session-389',
+          profile: 'main',
+          window: 'main',
+          sourceMessageIds: ['m-architect-oracle-acknowledged'],
+          objective: 'Oracle verify the acknowledged watchdog suppression patch',
+          ownerRoles: ['builder', 'oracle'],
+          requiredProof: ['oracle_verify'],
+        }, {
+          workItemRoot,
+          now: '2026-05-30T10:02:00.000Z',
+        });
+        attachProof({
+          id: 'wi-watchdog-acknowledged',
+          role: 'oracle_verify',
+          ref: 'oracle:watchdog-pass',
+          hash: 'sha256:oracle-watchdog-pass',
+          summary: 'Oracle verification already attached',
+        }, {
+          workItemRoot,
+          now: '2026-05-30T10:03:00.000Z',
+        });
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogWorkItemRoot = workItemRoot;
+
+        app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: 'm-architect-oracle-acknowledged',
+          content: '(ARCHITECT #201): Verify wi-watchdog-acknowledged and report.',
+          sentAtMs: new Date('2026-05-30T10:03:30').getTime(),
+        });
+
+        jest.advanceTimersByTime(30 * 1000);
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
+    it('suppresses architect-to-oracle watchdog when current-lane evidence is terminal', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-current-lane-'));
+      const currentLanePath = path.join(tempRoot, 'handoffs', 'current-lane.json');
+      try {
+        fs.mkdirSync(path.dirname(currentLanePath), { recursive: true });
+        fs.writeFileSync(currentLanePath, JSON.stringify({
+          version: 1,
+          source: 'comms_journal',
+          status: 'none',
+          activeLane: {
+            laneId: 'app-session-389:architect-202:m-architect-current-lane-terminal',
+            sourceMessageId: 'm-architect-current-lane-terminal',
+            sourceRef: 'architect#202',
+            objective: 'Oracle verify current-lane terminal suppression',
+            status: 'resolved_or_superseded',
+          },
+        }, null, 2));
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogCurrentLanePath = currentLanePath;
+
+        app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: 'm-architect-current-lane-terminal',
+          content: '(ARCHITECT #202): Verify current-lane terminal suppression.',
+          sentAtMs: new Date('2026-05-30T10:04:30').getTime(),
+        });
+
+        jest.advanceTimersByTime(30 * 1000);
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
+    it('reports exact correlation blockers before architect-to-oracle watchdog fires', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-blocker-'));
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogWorkItemRoot = path.join(tempRoot, 'runtime', 'work-items');
+        app.agentResponseWatchdogCurrentLanePath = path.join(tempRoot, 'handoffs', 'current-lane.json');
+
+        app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: 'm-architect-oracle-blocked',
+          content: '(ARCHITECT #203): Verify the watchdog blocker report and reply.',
+          sentAtMs: new Date('2026-05-30T10:05:30').getTime(),
+        });
+
+        jest.advanceTimersByTime(30 * 1000);
+
+        expect(spawn).toHaveBeenCalledWith(
+          'node',
+          expect.arrayContaining([
+            expect.stringContaining(path.join('scripts', 'hm-send.js')),
+            'architect',
+            expect.stringContaining('Closure correlation blockers: comms_journal:no_later_resolution; work_items:no_correlating_work_item; current_lane:missing.'),
+            '--role',
+            'system',
+          ]),
+          expect.objectContaining({ windowsHide: true })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
     });
   });
 
@@ -5791,25 +6019,46 @@ describe('SquidRunApp', () => {
         }),
       }));
       expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
-        'warning',
+        'agent_response_debt',
         '1',
         expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
         expect.objectContaining({
           source: 'telegram-reply-requirement',
+          debtKind: 'telegram_reply_required',
+          agentSideOnly: true,
+          userFacingNoticeSuppressed: true,
           messageId: 'telegram-in-visible-output-1',
           chatId: '1111111111',
           status: 'telegram_reply_required_unresolved',
           requiresTelegramEgress: true,
+          agentAlert: expect.objectContaining({
+            ok: true,
+            targetRoles: ['architect'],
+          }),
         })
       );
-      expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+      expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
         'project-warning',
-        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED')
+        expect.anything()
+      );
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'architect',
+          expect.stringContaining('(SYSTEM RESPONSE-DEBT): TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
       );
       expect(guardedApp.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
         messageId: 'telegram-in-visible-output-1',
         status: 'telegram_reply_required_unresolved',
         violationCount: 1,
+        agentDebtNoticeTargetRoles: ['architect'],
       }));
     });
 
@@ -5845,7 +6094,7 @@ describe('SquidRunApp', () => {
       }));
     });
 
-    it('escalates unanswered Telegram reply requirements to a phone notice when no Telegram egress happens', async () => {
+    it('routes unanswered Telegram reply requirements to agent lanes instead of James-facing notices', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       jest.useFakeTimers({ now: 1700000000000 });
       try {
@@ -5879,77 +6128,69 @@ describe('SquidRunApp', () => {
 
         expect(guardedApp.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
           messageId: 'telegram-in-expire-1',
-          status: 'telegram_reply_required_phone_escalated',
+          status: 'telegram_reply_required_expired_unresolved',
           unresolvedReason: 'reply_window_expired',
-          phoneEscalationAttemptCount: 1,
-          phoneEscalationMessageId: 42,
+          agentDebtNoticeAttemptCount: 2,
+          agentDebtNoticeTargetRoles: ['architect'],
+          agentDebtNoticeError: null,
           requiresTelegramEgress: true,
         }));
-        expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
-        const [phoneNotice, _env, routeOptions] = sendRoutedTelegramMessage.mock.calls[0];
-        expect(phoneNotice).toContain('SquidRun still owes you a reply');
-        expect(phoneNotice).toContain('This is a delivery notice, not the actual answer');
-        expect(phoneNotice).not.toContain('RAW PANE HALF THOUGHT');
-        expect(routeOptions).toEqual(expect.objectContaining({
-          chatId: '1111111111',
-          messageId: 'telegram-in-expire-1-unresolved-notice',
-          senderRole: 'system',
-          metadata: expect.objectContaining({
-            routeKind: 'telegram-reply-requirement-escalation',
-            satisfiesReplyRequirement: false,
-            sourceMessageId: 'telegram-in-expire-1',
-          }),
-        }));
+        expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
         expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
-          'error',
+          'agent_response_debt',
           '1',
           expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
           expect.objectContaining({
             source: 'telegram-reply-requirement',
+            debtKind: 'telegram_reply_required',
+            agentSideOnly: true,
+            userFacingNoticeSuppressed: true,
             messageId: 'telegram-in-expire-1',
             status: 'telegram_reply_required_expired_unresolved',
             reason: 'reply_window_expired',
             requiresTelegramEgress: true,
+            agentAlert: expect.objectContaining({
+              ok: true,
+              route: 'agent_hm_send',
+              targetRoles: ['architect'],
+            }),
           })
         );
-        expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
-          'warning',
-          '1',
-          'Telegram reply debt escalated to phone notice',
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
+          'project-warning',
+          expect.anything()
+        );
+        expect(spawn).toHaveBeenCalledWith(
+          'node',
+          expect.arrayContaining([
+            expect.stringContaining(path.join('scripts', 'hm-send.js')),
+            'architect',
+            expect.stringContaining('Pane 1 still owes Telegram egress for inbound telegram-in-expire-1.'),
+            '--role',
+            'system',
+          ]),
           expect.objectContaining({
-            source: 'telegram-reply-requirement',
-            messageId: 'telegram-in-expire-1',
-            status: 'telegram_reply_required_phone_escalated',
-            satisfiesReplyRequirement: false,
-            requiresTelegramEgress: true,
+            windowsHide: true,
           })
-        );
-        expect(mainWindow.webContents.send).toHaveBeenCalledWith(
-          'project-warning',
-          expect.stringContaining('still owes Telegram egress')
-        );
-        expect(mainWindow.webContents.send).toHaveBeenCalledWith(
-          'project-warning',
-          expect.stringContaining('actual reply is still unresolved')
         );
         const laterPaneOutput = guardedApp.inspectPaneOutputForReplyGuards('1', 'still pane-only later', {
           outputKind: 'agent_visible_output',
         });
         expect(laterPaneOutput).toEqual(expect.objectContaining({
           ok: false,
-          status: 'telegram_reply_requirement_phone_escalated_unresolved',
+          status: 'telegram_reply_requirement_expired_unresolved',
           guard: expect.objectContaining({
-            status: 'telegram_reply_required_phone_escalated',
-            phoneEscalationAttemptCount: 1,
+            status: 'telegram_reply_required_expired_unresolved',
+            agentDebtNoticeAttemptCount: 2,
           }),
         }));
-        expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+        expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
       } finally {
         jest.useRealTimers();
       }
     });
 
-    it('does not repeat phone escalation spam for the same unresolved Telegram debt', async () => {
+    it('does not repeat agent-side response-debt alert spam for the same unresolved Telegram debt', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       app.markPendingTelegramReplyGuard({
         paneId: '1',
@@ -5958,112 +6199,139 @@ describe('SquidRunApp', () => {
         sender: 'james',
       });
 
-      const first = await app.sendTelegramReplyRequirementPhoneEscalation('1');
-      const second = await app.sendTelegramReplyRequirementPhoneEscalation('1');
+      const first = await app.sendTelegramReplyRequirementAgentEscalation('1');
+      const second = await app.sendTelegramReplyRequirementAgentEscalation('1');
 
       expect(first).toEqual(expect.objectContaining({
         ok: true,
-        status: 'telegram_reply_requirement_phone_escalated',
+        status: 'telegram_reply_requirement_agent_alerted',
       }));
       expect(second).toEqual(expect.objectContaining({
         ok: true,
-        status: 'telegram_reply_requirement_phone_escalation_already_sent',
+        status: 'telegram_reply_requirement_agent_alert_already_sent',
       }));
-      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(spawn).toHaveBeenCalledTimes(1);
       expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
         messageId: 'telegram-in-no-spam-1',
-        status: 'telegram_reply_required_phone_escalated',
-        phoneEscalationAttemptCount: 1,
+        status: 'telegram_reply_required_agent_alerted',
+        agentDebtNoticeAttemptCount: 1,
+        agentDebtNoticeTargetRoles: ['architect'],
         requiresTelegramEgress: true,
       }));
     });
 
-    it('keeps the Telegram reply debt unresolved when the phone notice send fails', async () => {
+    it('keeps the Telegram reply debt visible when agent-side alert routing fails', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
-      sendRoutedTelegramMessage.mockResolvedValueOnce({
-        ok: false,
-        error: 'bot_api_down',
-      });
       app.markPendingTelegramReplyGuard({
-        paneId: '1',
-        messageId: 'telegram-in-phone-fail-1',
+        paneId: '2',
+        messageId: 'telegram-in-agent-alert-fail-1',
         chatId: '1111111111',
         sender: 'james',
       });
+      jest.spyOn(app, 'sendInternalHmMessage').mockReturnValue(false);
 
-      const result = await app.sendTelegramReplyRequirementPhoneEscalation('1');
-      const retry = await app.sendTelegramReplyRequirementPhoneEscalation('1');
+      const result = await app.sendTelegramReplyRequirementAgentEscalation('2');
 
       expect(result).toEqual(expect.objectContaining({
         ok: false,
-        status: 'telegram_reply_requirement_phone_escalation_failed',
-        error: 'bot_api_down',
+        status: 'telegram_reply_requirement_agent_alert_failed',
+        error: 'agent_route_unavailable',
       }));
-      expect(retry).toEqual(expect.objectContaining({
-        ok: false,
-        status: 'telegram_reply_requirement_phone_escalation_already_attempted',
-      }));
-      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
-      expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
-        messageId: 'telegram-in-phone-fail-1',
-        status: 'telegram_reply_required_phone_escalation_failed',
-        phoneEscalationAttemptCount: 1,
-        phoneEscalationError: 'bot_api_down',
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(app.getPendingTelegramReplyRequirement('2')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-agent-alert-fail-1',
+        status: 'telegram_reply_required_agent_alert_failed',
+        agentDebtNoticeAttemptCount: 1,
+        agentDebtNoticeError: 'agent_route_unavailable',
         requiresTelegramEgress: true,
       }));
       expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
-        'error',
-        '1',
-        expect.stringContaining('TELEGRAM REPLY PHONE ESCALATION FAILED'),
+        'agent_response_debt',
+        '2',
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
         expect.objectContaining({
           source: 'telegram-reply-requirement',
-          messageId: 'telegram-in-phone-fail-1',
-          status: 'telegram_reply_required_phone_escalation_failed',
-          reason: 'bot_api_down',
+          messageId: 'telegram-in-agent-alert-fail-1',
+          status: 'telegram_reply_required_agent_alerted',
+          agentAlert: expect.objectContaining({
+            ok: false,
+            error: 'agent_route_unavailable',
+            targetRoles: ['builder', 'architect'],
+          }),
           requiresTelegramEgress: true,
         })
       );
     });
 
-    it('does not send SquidRun-internal phone notices to scoped non-owner Telegram chats', async () => {
+    it('routes scoped Telegram reply debt to agent lanes without sending user-facing phone notices', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       app.markPendingTelegramReplyGuard({
-        paneId: '1',
-        messageId: 'telegram-in-scoped-phone-block-1',
+        paneId: '2',
+        messageId: 'telegram-in-scoped-agent-alert-1',
         chatId: '2222222222',
         sender: 'scoped',
         windowKey: 'scoped',
         profileName: 'scoped',
       });
 
-      const result = await app.sendTelegramReplyRequirementPhoneEscalation('1');
+      const result = await app.sendTelegramReplyRequirementAgentEscalation('2');
 
       expect(result).toEqual(expect.objectContaining({
-        ok: false,
-        status: 'telegram_reply_requirement_phone_escalation_blocked',
-        error: 'explicit_non_owner_route',
+        ok: true,
+        status: 'telegram_reply_requirement_agent_alerted',
       }));
       expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
-      expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
-        messageId: 'telegram-in-scoped-phone-block-1',
-        status: 'telegram_reply_required_phone_escalation_failed',
-        phoneEscalationError: 'explicit_non_owner_route',
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'builder',
+          expect.stringContaining('(SYSTEM RESPONSE-DEBT): TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
+      );
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'architect',
+          expect.stringContaining('(SYSTEM RESPONSE-DEBT): TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
+      );
+      expect(app.getPendingTelegramReplyRequirement('2')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-scoped-agent-alert-1',
+        status: 'telegram_reply_required_agent_alerted',
+        agentDebtNoticeTargetRoles: ['builder', 'architect'],
         requiresTelegramEgress: true,
       }));
       expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
-        'error',
-        '1',
-        expect.stringContaining('TELEGRAM REPLY PHONE ESCALATION BLOCKED'),
+        'agent_response_debt',
+        '2',
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
         expect.objectContaining({
           source: 'telegram-reply-requirement',
-          messageId: 'telegram-in-scoped-phone-block-1',
-          reason: 'explicit_non_owner_route',
+          messageId: 'telegram-in-scoped-agent-alert-1',
+          agentSideOnly: true,
+          userFacingNoticeSuppressed: true,
+          agentAlert: expect.objectContaining({
+            targetRoles: ['builder', 'architect'],
+          }),
           requiresTelegramEgress: true,
         })
       );
     });
 
-    it('does not phone-escalate a Telegram reply debt after real Telegram egress clears it', async () => {
+    it('does not agent-alert a Telegram reply debt after real Telegram egress clears it', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       jest.useFakeTimers({ now: 1700000000000 });
       try {
@@ -6092,6 +6360,7 @@ describe('SquidRunApp', () => {
         await Promise.resolve();
 
         expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+        expect(spawn).not.toHaveBeenCalled();
         expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
       } finally {
         jest.useRealTimers();
@@ -6153,7 +6422,7 @@ describe('SquidRunApp', () => {
       expect(app.hasOnlySquidRunInjectedKernelMeta([])).toBe(false);
     });
 
-    it('warns when quoted inbound text lacks injected-echo metadata', () => {
+    it('routes response debt when quoted inbound text lacks injected-echo metadata', () => {
       const mainWindow = {
         isDestroyed: jest.fn().mockReturnValue(false),
         webContents: {
@@ -6185,13 +6454,22 @@ describe('SquidRunApp', () => {
         ok: false,
         status: 'telegram_reply_requirement_unresolved',
       }));
-      expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+      expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
         'project-warning',
-        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED')
+        expect.anything()
+      );
+      expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+        'agent_response_debt',
+        '1',
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+        expect.objectContaining({
+          source: 'telegram-reply-requirement',
+          agentSideOnly: true,
+        })
       );
     });
 
-    it('warns when quoted reply-target marker text lacks injected-echo metadata', () => {
+    it('routes response debt when quoted reply-target marker text lacks injected-echo metadata', () => {
       const mainWindow = {
         isDestroyed: jest.fn().mockReturnValue(false),
         webContents: {
@@ -6223,9 +6501,18 @@ describe('SquidRunApp', () => {
         ok: false,
         status: 'telegram_reply_requirement_unresolved',
       }));
-      expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+      expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
         'project-warning',
-        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED')
+        expect.anything()
+      );
+      expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+        'agent_response_debt',
+        '1',
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+        expect.objectContaining({
+          source: 'telegram-reply-requirement',
+          agentSideOnly: true,
+        })
       );
     });
 

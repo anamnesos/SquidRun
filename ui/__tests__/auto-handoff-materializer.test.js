@@ -11,6 +11,14 @@ const {
 const {
   extractCurrentLaneDirective,
 } = require('../modules/main/agent-task-resolution');
+const {
+  openWorkItem,
+} = require('../modules/main/work-item-ledger');
+
+function writeJson(filePath, payload) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+}
 
 describe('auto-handoff-materializer', () => {
   let tempDir;
@@ -569,6 +577,209 @@ describe('auto-handoff-materializer', () => {
 
     const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
     expect(currentLane.activeLane.objective).toBe('restart gate for committed Mira/startup package d414bfa');
+  });
+
+  test('typed active work item takes current-lane precedence over comms parsing', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const queuePath = path.join(tempDir, 'runtime', 'agent-task-queue.json');
+    const workItemRoot = path.join(tempDir, 'runtime', 'work-items');
+
+    openWorkItem({
+      id: 'wi-preferred',
+      session: 'app-session-339',
+      profile: 'main',
+      window: 'main',
+      objective: 'Typed proof-bound work item should drive startup continuity',
+      ownerRoles: ['builder'],
+      sourceMessageIds: ['architect#95'],
+      requiredProof: ['builder_code'],
+    }, {
+      workItemRoot,
+      now: '2026-05-30T12:00:00.000Z',
+    });
+    writeJson(queuePath, {
+      agents: {
+        builder: {
+          active: {
+            taskId: 'wi-queue-losing-b',
+            title: 'Queue losing B',
+            state: 'active',
+            updatedAt: '2026-05-30T12:00:30.000Z',
+          },
+        },
+      },
+    });
+    writeJson(currentLanePath, {
+      source: 'comms_journal',
+      status: 'active',
+      activeLane: {
+        laneId: 'wi-current-lane-losing-b',
+        objective: 'Current lane losing B',
+        kind: 'current_session_task',
+        sourceRef: 'wi-current-lane-losing-b',
+        sourceMessageId: 'architect#22',
+      },
+    });
+
+    const rows = [
+      {
+        messageId: 'm-current-session-task',
+        sessionId: 'app-session-339',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(ARCHITECT #22): CURRENT-SESSION TASK: prose lane should lose to typed work item',
+        brokeredAtMs: 1000,
+      },
+    ];
+
+    const result = await materializeSessionHandoff({
+      rows,
+      outputPath,
+      currentLanePath,
+      workItemRoot,
+      queuePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-339',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 2000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      source: 'work_item',
+      status: 'active',
+      activeLane: expect.objectContaining({
+        kind: 'proof_bound_work_item',
+        workItemId: 'wi-preferred',
+        objective: 'Typed proof-bound work item should drive startup continuity',
+        sourceMessageIds: ['architect#95'],
+        activeWorkReconciliation: expect.objectContaining({
+          status: 'CONFLICT',
+          authority: 'work_item',
+          activeWorkItemId: 'wi-preferred',
+          queueActiveIds: ['builder:wi-queue-losing-b'],
+          conflictMarkers: expect.arrayContaining([
+            'queue_active_conflicts_with_work_item:builder:wi-queue-losing-b',
+            'current_lane_conflicts_with_work_item:wi-current-lane-losing-b',
+          ]),
+          conflictingStores: expect.arrayContaining([
+            expect.objectContaining({
+              store: 'agent-task-queue',
+              id: 'builder:wi-queue-losing-b',
+              active: expect.objectContaining({ taskId: 'wi-queue-losing-b' }),
+            }),
+            expect.objectContaining({
+              store: 'current-lane',
+              id: 'wi-current-lane-losing-b',
+              active: expect.objectContaining({ objective: 'Current lane losing B' }),
+            }),
+          ]),
+        }),
+      }),
+    }));
+
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    expect(currentLane.source).toBe('work_item');
+    expect(currentLane.activeLane.workItemId).toBe('wi-preferred');
+    expect(currentLane.activeLane.objective).toBe('Typed proof-bound work item should drive startup continuity');
+    expect(currentLane.activeWorkReconciliation).toEqual(expect.objectContaining({
+      status: 'CONFLICT',
+      authority: 'work_item',
+      activeWorkItemId: 'wi-preferred',
+    }));
+  });
+
+  test('no typed active work item keeps current-lane comms fallback', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session-no-typed.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane-no-typed.json');
+    const queuePath = path.join(tempDir, 'runtime', 'agent-task-queue-no-typed.json');
+    const workItemRoot = path.join(tempDir, 'runtime', 'work-items-no-typed');
+
+    writeJson(queuePath, {
+      agents: {
+        builder: {
+          active: {
+            taskId: 'queue-only-active',
+            title: 'Queue-only active task',
+            state: 'active',
+          },
+        },
+      },
+    });
+
+    const rows = [
+      {
+        messageId: 'm-current-session-task',
+        sessionId: 'app-session-340',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(ARCHITECT #24): CURRENT-SESSION TASK: comms fallback remains active when no typed item exists',
+        brokeredAtMs: 1000,
+      },
+    ];
+
+    const result = await materializeSessionHandoff({
+      rows,
+      outputPath,
+      currentLanePath,
+      workItemRoot,
+      queuePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-340',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 2000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'active',
+      activeWorkReconciliation: expect.objectContaining({
+        status: 'STALE',
+        authority: 'current_lane',
+        activeWorkItemId: null,
+        queueActiveIds: ['builder:queue-only-active'],
+        staleMarkers: [
+          'no_typed_active_work_item_queue_active',
+          'no_typed_active_work_item_current_lane_active',
+        ],
+        currentLaneActive: expect.objectContaining({
+          activeLane: expect.objectContaining({
+            objective: 'comms fallback remains active when no typed item exists',
+            sourceMessageId: 'm-current-session-task',
+          }),
+        }),
+      }),
+      continuity: expect.objectContaining({
+        stale_backlog_markers: [
+          'no_typed_active_work_item_queue_active',
+          'no_typed_active_work_item_current_lane_active',
+        ],
+      }),
+      activeLane: expect.objectContaining({
+        kind: 'current_session_task',
+        objective: 'comms fallback remains active when no typed item exists',
+        sourceMessageId: 'm-current-session-task',
+      }),
+    }));
+    expect(result.currentLane.source).not.toBe('work_item');
+
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    expect(currentLane.activeWorkReconciliation.staleMarkers).toEqual([
+      'no_typed_active_work_item_queue_active',
+      'no_typed_active_work_item_current_lane_active',
+    ]);
+
+    const sessionMarkdown = fs.readFileSync(outputPath, 'utf8');
+    expect(sessionMarkdown).toContain('"activeWorkReconciliation"');
+    expect(sessionMarkdown).toContain('no_typed_active_work_item_queue_active');
+    expect(sessionMarkdown).toContain('no_typed_active_work_item_current_lane_active');
   });
 
   test('tasking current lane scope materializes as active restart continuity lane', async () => {

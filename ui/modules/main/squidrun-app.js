@@ -42,6 +42,7 @@ const { createKernelBridge } = require('./kernel-bridge');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
 const miraLabWindowModule = require('./mira-lab-window');
+const liveTaskAuditSidecarWindowModule = require('./live-task-audit-sidecar-window');
 const { resolveRuntimeInt } = require('../runtime-config');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const TEAM_MEMORY_BELIEF_SWEEP_ENABLED = process.env.SQUIDRUN_TEAM_MEMORY_BELIEF_SWEEP === '1';
@@ -96,11 +97,20 @@ const {
 } = require('./auto-handoff-materializer');
 const {
   isAgentTaskResolvedByLaterSignal,
+  parseLeadingAgentRef,
+  extractCurrentLaneDirective,
 } = require('./agent-task-resolution');
 const {
   closeCommsJournalStores,
   queryCommsJournalEntries,
 } = require('./comms-journal');
+const {
+  listWorkItems,
+  TERMINAL_STATES: WORK_ITEM_TERMINAL_STATES,
+} = require('./work-item-ledger');
+const {
+  buildLiveTaskAuditSnapshot,
+} = require('./live-task-audit-sidecar');
 const {
   buildGuardFiringPatternEvent,
   buildGuardPreflightEvent,
@@ -648,11 +658,120 @@ function normalizeWatchdogAgentRole(role) {
   return normalized;
 }
 
+function resolveCanonicalRoleForPaneId(paneId) {
+  const normalizedPaneId = toNonEmptyString(paneId);
+  if (!normalizedPaneId) return null;
+  for (const [role, id] of Object.entries(ROLE_ID_MAP || {})) {
+    if (String(id) === normalizedPaneId) return role;
+  }
+  return null;
+}
+
 function createAgentResponseWatchdogKey(senderRole, targetRole) {
   const normalizedSenderRole = normalizeWatchdogAgentRole(senderRole);
   const normalizedTargetRole = normalizeWatchdogAgentRole(targetRole);
   if (!normalizedSenderRole || !normalizedTargetRole) return null;
   return `${normalizedSenderRole}->${normalizedTargetRole}`;
+}
+
+function normalizeWatchdogComparableText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function watchdogTextOverlaps(left, right) {
+  const normalizedLeft = normalizeWatchdogComparableText(left);
+  const normalizedRight = normalizeWatchdogComparableText(right);
+  if (!normalizedLeft || !normalizedRight) return false;
+  return normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft);
+}
+
+function formatWatchdogAgentRef(ref) {
+  return ref?.role && Number.isInteger(Number(ref.seq)) ? `${ref.role}#${Number(ref.seq)}` : null;
+}
+
+function extractWatchdogWorkItemIds(content) {
+  const text = String(content || '');
+  const ids = [];
+  for (const match of text.matchAll(/\bwi-[a-z0-9_.:-]+\b/gi)) {
+    const id = String(match[0] || '').toLowerCase();
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+function buildWatchdogCorrelation(entry = {}) {
+  const content = toNonEmptyString(entry.content) || '';
+  const sourceRef = formatWatchdogAgentRef(parseLeadingAgentRef(content));
+  const directive = extractCurrentLaneDirective(content);
+  return {
+    sourceMessageId: toNonEmptyString(entry.sourceMessageId) || null,
+    sourceRef,
+    objective: toNonEmptyString(directive?.objective) || null,
+    workItemIds: extractWatchdogWorkItemIds(content),
+    rawContent: content,
+  };
+}
+
+function proofRoleForWatchdogTarget(targetRole) {
+  const role = normalizeWatchdogAgentRole(targetRole);
+  if (role === 'builder') return 'builder_code';
+  if (role === 'oracle') return 'oracle_verify';
+  return null;
+}
+
+function workItemMatchesWatchdogCorrelation(item = {}, correlation = {}) {
+  const itemId = toNonEmptyString(item.id)?.toLowerCase();
+  if (itemId && correlation.workItemIds.includes(itemId)) return true;
+  const sourceMessageIds = Array.isArray(item.sourceMessageIds) ? item.sourceMessageIds.map((id) => String(id || '')) : [];
+  if (correlation.sourceMessageId && sourceMessageIds.includes(correlation.sourceMessageId)) return true;
+  if (correlation.sourceRef && sourceMessageIds.includes(correlation.sourceRef)) return true;
+  if (correlation.objective && watchdogTextOverlaps(item.objective, correlation.objective)) return true;
+  return false;
+}
+
+function workItemHasTargetAcknowledgement(item = {}, targetRole = null) {
+  const proofRole = proofRoleForWatchdogTarget(targetRole);
+  if (!proofRole || !Array.isArray(item.proofs)) return false;
+  return item.proofs.some((proof) => String(proof?.role || '').toLowerCase() === proofRole);
+}
+
+function isWorkItemTerminal(item = {}) {
+  const state = String(item.state || '').toLowerCase();
+  return WORK_ITEM_TERMINAL_STATES.has(state) || item.closure?.closed === true;
+}
+
+function activeLaneMatchesWatchdogCorrelation(activeLane = {}, correlation = {}) {
+  if (!activeLane || typeof activeLane !== 'object') return false;
+  if (correlation.sourceMessageId && activeLane.sourceMessageId === correlation.sourceMessageId) return true;
+  if (correlation.sourceRef && activeLane.sourceRef === correlation.sourceRef) return true;
+  const laneIds = [
+    activeLane.workItemId,
+    activeLane.laneId,
+    activeLane.sourceRef,
+  ].map((id) => String(id || '').toLowerCase()).filter(Boolean);
+  if (correlation.workItemIds.some((id) => laneIds.includes(id))) return true;
+  if (correlation.objective && watchdogTextOverlaps(activeLane.objective, correlation.objective)) return true;
+  return false;
+}
+
+function isCurrentLaneTerminal(activeLane = {}, currentLane = {}) {
+  const laneStatus = String(activeLane?.status || currentLane?.status || '').toLowerCase();
+  return Boolean(laneStatus && laneStatus !== 'active' && laneStatus !== 'open' && laneStatus !== 'waiting_codex_visual');
+}
+
+function formatWatchdogCorrelationBlockers(blockers = []) {
+  const unique = [];
+  for (const blocker of Array.isArray(blockers) ? blockers : []) {
+    const text = toNonEmptyString(blocker);
+    if (text && !unique.includes(text)) unique.push(text);
+  }
+  if (unique.length === 0) return '';
+  return ` Closure correlation blockers: ${unique.slice(0, 5).join('; ')}.`;
 }
 
 class SquidRunApp {
@@ -3897,6 +4016,7 @@ class SquidRunApp {
                 targetRole: canonicalEnvelope.target?.role || targetRoleForJournal || String(paneId),
                 content: canonicalEnvelope.content,
                 sentAtMs: canonicalEnvelope.timestamp_ms || nowMs,
+                sourceMessageId: canonicalEnvelope.message_id || null,
               });
               this.maybeResolveAgentResponseWatchdog({
                 senderRole: senderRoleForJournal,
@@ -4444,6 +4564,51 @@ class SquidRunApp {
           ok: false,
           windowKey,
           reason: err?.message || 'mira_lab_window_open_failed',
+        };
+      }
+    }
+    if (windowKey === 'live-task-audit-sidecar') {
+      const existing = this.getAppWindow(windowKey);
+      if (this.canSendToWindow(existing)) {
+        if (existing.webContents && typeof existing.webContents.reloadIgnoringCache === 'function') {
+          existing.webContents.reloadIgnoringCache();
+        } else if (typeof existing.reload === 'function') {
+          existing.reload();
+        }
+        this.focusAppWindow(windowKey);
+        return {
+          ok: true,
+          windowKey,
+          title: 'SquidRun Task Audit',
+          status: 'reused_existing_reloaded',
+        };
+      }
+      try {
+        const result = liveTaskAuditSidecarWindowModule.createLiveTaskAuditSidecarWindow({ BrowserWindow }) || {};
+        const win = result.window || null;
+        if (!win) {
+          return {
+            ok: false,
+            windowKey,
+            reason: 'live_task_audit_sidecar_window_factory_returned_no_window',
+          };
+        }
+        this.registerAppWindow(windowKey, win);
+        this.enforceMenuSuppression(win);
+        this.setupWindowListeners(win, { windowKey, lifecycleRoot: false });
+        this.focusAppWindow(windowKey);
+        return {
+          ok: true,
+          windowKey,
+          title: 'SquidRun Task Audit',
+          htmlPath: result.htmlPath || null,
+          preloadPath: result.preloadPath || null,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          windowKey,
+          reason: err?.message || 'live_task_audit_sidecar_window_open_failed',
         };
       }
     }
@@ -5301,6 +5466,11 @@ class SquidRunApp {
         : {};
       return this.openAppWindow(requestedWindowKey, openOptions);
     });
+
+    ipcMain.removeHandler('live-task-audit-sidecar:snapshot');
+    ipcMain.handle('live-task-audit-sidecar:snapshot', () => buildLiveTaskAuditSnapshot({
+      sessionId: this.commsSessionScopeId || null,
+    }));
 
     ipcMain.removeHandler('close-app-window');
     ipcMain.handle('close-app-window', async (_event, payload = {}) => {
@@ -8038,7 +8208,13 @@ class SquidRunApp {
     return this.sendInternalHmMessage('architect', message, options);
   }
 
-  scheduleAgentResponseWatchdog({ senderRole = null, targetRole = null, content = '', sentAtMs = Date.now() } = {}) {
+  scheduleAgentResponseWatchdog({
+    senderRole = null,
+    targetRole = null,
+    content = '',
+    sentAtMs = Date.now(),
+    sourceMessageId = null,
+  } = {}) {
     const normalizedSenderRole = normalizeWatchdogAgentRole(senderRole);
     const normalizedTargetRole = normalizeWatchdogAgentRole(targetRole);
     if (!normalizedSenderRole || !normalizedTargetRole) return false;
@@ -8056,7 +8232,8 @@ class SquidRunApp {
     const sentAtLabel = formatLocalClockTime(sentAtMs);
     const timerId = setTimeout(() => {
       const pendingEntry = this.pendingAgentResponseWatchdogs.get(key);
-      if (this.hasLaterAgentResponseProofForWatchdog(pendingEntry)) {
+      const evidence = this.evaluateAgentResponseWatchdogEvidence(pendingEntry);
+      if (evidence.resolved) {
         this.pendingAgentResponseWatchdogs.delete(key);
         return;
       }
@@ -8064,11 +8241,14 @@ class SquidRunApp {
       const warning = normalizedSenderRole === 'architect'
         ? `[WATCHDOG] No response from ${normalizedTargetRole} for task sent at ${sentAtLabel}. Check if task was received.`
         : `[WATCHDOG] No response from ${normalizedTargetRole} to ${normalizedSenderRole} for task sent at ${sentAtLabel}. Check if task was received.`;
+      const warningWithEvidence = normalizedSenderRole === 'architect' && normalizedTargetRole === 'oracle'
+        ? `${warning}${formatWatchdogCorrelationBlockers(evidence.blockers)}`
+        : warning;
       const alertTargets = normalizedSenderRole === 'architect'
         ? ['architect']
         : [normalizedSenderRole, 'architect'];
       try {
-        this.sendInternalHmMessage(alertTargets, `(SYSTEM WATCHDOG): ${warning}`, {
+        this.sendInternalHmMessage(alertTargets, `(SYSTEM WATCHDOG): ${warningWithEvidence}`, {
           role: 'system',
         });
       } catch (error) {
@@ -8085,6 +8265,7 @@ class SquidRunApp {
       timerId,
       watchdogMs,
       sentAtMs,
+      sourceMessageId: toNonEmptyString(sourceMessageId) || null,
       senderRole: normalizedSenderRole,
       targetRole: normalizedTargetRole,
       content,
@@ -8093,10 +8274,29 @@ class SquidRunApp {
   }
 
   hasLaterAgentResponseProofForWatchdog(entry = {}) {
-    if (!entry) return false;
+    return this.evaluateAgentResponseWatchdogEvidence(entry).resolved === true;
+  }
+
+  evaluateAgentResponseWatchdogEvidence(entry = {}) {
+    const emptyResult = {
+      resolved: false,
+      reason: 'missing_watchdog_entry',
+      evidence: [],
+      blockers: ['watchdog:missing_entry'],
+    };
+    if (!entry) return emptyResult;
     const normalizedSenderRole = normalizeWatchdogAgentRole(entry.senderRole);
     const normalizedTargetRole = normalizeWatchdogAgentRole(entry.targetRole);
-    if (!normalizedSenderRole || !normalizedTargetRole) return false;
+    if (!normalizedSenderRole || !normalizedTargetRole) {
+      return {
+        ...emptyResult,
+        reason: 'invalid_watchdog_roles',
+        blockers: ['watchdog:invalid_roles'],
+      };
+    }
+    const correlation = buildWatchdogCorrelation(entry);
+    const evidence = [];
+    const blockers = [];
 
     let rows = [];
     try {
@@ -8108,7 +8308,8 @@ class SquidRunApp {
       });
     } catch (error) {
       log.warn('Watchdog', `Failed querying comms journal for response proof: ${error.message}`);
-      return false;
+      blockers.push(`comms_journal:query_failed:${error.message}`);
+      rows = [];
     }
 
     const taskRow = {
@@ -8118,7 +8319,187 @@ class SquidRunApp {
       sentAtMs: entry.sentAtMs || 0,
       brokeredAtMs: entry.sentAtMs || 0,
     };
-    return isAgentTaskResolvedByLaterSignal(taskRow, rows, -1);
+    if (Array.isArray(rows) && rows.length > 0 && isAgentTaskResolvedByLaterSignal(taskRow, rows, -1)) {
+      return {
+        resolved: true,
+        reason: 'comms_journal_later_resolution',
+        evidence: [{
+          source: 'comms_journal',
+          rowsScanned: rows.length,
+          sinceMs: Math.max(0, Number(entry.sentAtMs) || 0),
+        }],
+        blockers: [],
+      };
+    }
+    evidence.push({
+      source: 'comms_journal',
+      status: 'no_later_resolution',
+      rowsScanned: Array.isArray(rows) ? rows.length : 0,
+    });
+    blockers.push('comms_journal:no_later_resolution');
+
+    const workItemEvidence = this.findWorkItemWatchdogResolution(correlation, normalizedTargetRole);
+    if (workItemEvidence.resolved) return workItemEvidence;
+    evidence.push(...workItemEvidence.evidence);
+    blockers.push(...workItemEvidence.blockers);
+
+    const currentLaneEvidence = this.findCurrentLaneWatchdogResolution(correlation);
+    if (currentLaneEvidence.resolved) return currentLaneEvidence;
+    evidence.push(...currentLaneEvidence.evidence);
+    blockers.push(...currentLaneEvidence.blockers);
+
+    return {
+      resolved: false,
+      reason: 'no_terminal_or_acknowledged_evidence',
+      evidence,
+      blockers,
+    };
+  }
+
+  findWorkItemWatchdogResolution(correlation = {}, targetRole = null) {
+    let listed;
+    try {
+      listed = listWorkItems({
+        workItemRoot: this.agentResponseWatchdogWorkItemRoot || this.watchdogWorkItemRoot || null,
+        sessionId: this.commsSessionScopeId || null,
+        profileName: 'main',
+        windowKey: 'main',
+      });
+    } catch (error) {
+      return {
+        resolved: false,
+        reason: 'work_item_query_failed',
+        evidence: [],
+        blockers: [`work_items:query_failed:${error.message}`],
+      };
+    }
+
+    const items = Array.isArray(listed?.items) ? listed.items : [];
+    const matches = items.filter((item) => workItemMatchesWatchdogCorrelation(item, correlation));
+    if (matches.length === 0) {
+      return {
+        resolved: false,
+        reason: 'work_item_not_correlated',
+        evidence: [{
+          source: 'work_items',
+          status: 'no_correlating_work_item',
+          workItemRoot: listed?.workItemRoot || null,
+          itemCount: items.length,
+        }],
+        blockers: ['work_items:no_correlating_work_item'],
+      };
+    }
+
+    const terminal = matches.find((item) => isWorkItemTerminal(item));
+    if (terminal) {
+      return {
+        resolved: true,
+        reason: 'work_item_terminal',
+        evidence: [{
+          source: 'work_items',
+          workItemId: terminal.id,
+          state: terminal.state,
+          verdict: terminal.verdict || null,
+        }],
+        blockers: [],
+      };
+    }
+
+    const acknowledged = matches.find((item) => workItemHasTargetAcknowledgement(item, targetRole));
+    if (acknowledged) {
+      return {
+        resolved: true,
+        reason: 'work_item_target_proof_attached',
+        evidence: [{
+          source: 'work_items',
+          workItemId: acknowledged.id,
+          proofRole: proofRoleForWatchdogTarget(targetRole),
+        }],
+        blockers: [],
+      };
+    }
+
+    return {
+      resolved: false,
+      reason: 'work_item_still_active',
+      evidence: matches.map((item) => ({
+        source: 'work_items',
+        status: 'correlated_but_not_terminal_or_acknowledged',
+        workItemId: item.id,
+        state: item.state,
+      })),
+      blockers: matches.map((item) => `work_items:${item.id}:not_terminal_or_acknowledged`),
+    };
+  }
+
+  findCurrentLaneWatchdogResolution(correlation = {}) {
+    const currentLanePath = this.agentResponseWatchdogCurrentLanePath
+      || this.watchdogCurrentLanePath
+      || resolveCoordPath(path.join('handoffs', 'current-lane.json'), { forWrite: true });
+    let parsed = null;
+    try {
+      if (!fs.existsSync(currentLanePath)) {
+        return {
+          resolved: false,
+          reason: 'current_lane_missing',
+          evidence: [{
+            source: 'current_lane',
+            status: 'missing',
+            currentLanePath,
+          }],
+          blockers: ['current_lane:missing'],
+        };
+      }
+      parsed = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    } catch (error) {
+      return {
+        resolved: false,
+        reason: 'current_lane_read_failed',
+        evidence: [],
+        blockers: [`current_lane:read_failed:${error.message}`],
+      };
+    }
+
+    const activeLane = parsed?.activeLane && typeof parsed.activeLane === 'object' ? parsed.activeLane : null;
+    if (!activeLane || !activeLaneMatchesWatchdogCorrelation(activeLane, correlation)) {
+      return {
+        resolved: false,
+        reason: 'current_lane_not_correlated',
+        evidence: [{
+          source: 'current_lane',
+          status: activeLane ? 'different_active_lane' : 'no_active_lane',
+          currentLanePath,
+          activeLaneId: activeLane?.workItemId || activeLane?.laneId || activeLane?.sourceRef || null,
+        }],
+        blockers: ['current_lane:no_correlating_lane'],
+      };
+    }
+
+    if (isCurrentLaneTerminal(activeLane, parsed)) {
+      return {
+        resolved: true,
+        reason: 'current_lane_terminal',
+        evidence: [{
+          source: 'current_lane',
+          currentLanePath,
+          laneId: activeLane.workItemId || activeLane.laneId || activeLane.sourceRef || null,
+          status: activeLane.status || parsed.status || null,
+        }],
+        blockers: [],
+      };
+    }
+
+    return {
+      resolved: false,
+      reason: 'current_lane_still_active',
+      evidence: [{
+        source: 'current_lane',
+        status: 'correlated_but_active',
+        currentLanePath,
+        laneId: activeLane.workItemId || activeLane.laneId || activeLane.sourceRef || null,
+      }],
+      blockers: ['current_lane:correlated_but_active'],
+    };
   }
 
   maybeResolveAgentResponseWatchdog({ senderRole = null, targetRole = null, deliveryAccepted = false } = {}) {
@@ -10389,6 +10770,11 @@ class SquidRunApp {
       phoneEscalationMessageId: null,
       phoneEscalationError: null,
       phoneEscalationInFlight: false,
+      agentDebtNoticeAttemptCount: 0,
+      agentDebtNoticeAttemptedAtMs: 0,
+      agentDebtNoticeSentAtMs: 0,
+      agentDebtNoticeError: null,
+      agentDebtNoticeTargetRoles: [],
       status: 'pending_telegram_egress',
       requiresTelegramEgress: true,
     };
@@ -10442,8 +10828,20 @@ class SquidRunApp {
     const paneId = toNonEmptyString(guard.paneId) || '1';
     const notice = toNonEmptyString(message);
     if (!notice) return false;
+    if (type === 'error') {
+      log.error('TelegramReplyRequirement', notice);
+    } else {
+      log.warn('TelegramReplyRequirement', notice);
+    }
+    const agentAlert = this.routeTelegramReplyRequirementAgentAlert(guard, notice, {
+      severity: type,
+      reason,
+    });
     const details = {
       source: 'telegram-reply-requirement',
+      debtKind: 'telegram_reply_required',
+      agentSideOnly: true,
+      userFacingNoticeSuppressed: true,
       messageId: guard.messageId || null,
       chatId: guard.chatId || null,
       status: guard.status || null,
@@ -10451,18 +10849,68 @@ class SquidRunApp {
       violationCount: Number(guard.violationCount || 0),
       warningCount: Number(guard.warningCount || 0),
       requiresTelegramEgress: true,
+      requiredAction: 'send_telegram_reply_or_report_route_block',
+      severity: type,
+      agentAlert,
       outputPreview: outputPreview || guard.lastPaneOutputPreview || null,
     };
-    if (type === 'error') {
-      log.error('TelegramReplyRequirement', notice);
-    } else {
-      log.warn('TelegramReplyRequirement', notice);
-    }
-    this.activity.logActivity?.(type, paneId, notice, details);
-    this.sendToVisibleWindow('project-warning', notice, {
-      windowKey: guard.windowKey || 'main',
-    });
+    this.activity.logActivity?.('agent_response_debt', paneId, notice, details);
     return true;
+  }
+
+  buildTelegramReplyRequirementAgentAlert(guard = {}, notice = '', options = {}) {
+    const paneId = toNonEmptyString(guard.paneId) || '1';
+    const responsibleRole = resolveCanonicalRoleForPaneId(paneId) || `pane-${paneId}`;
+    const severity = toNonEmptyString(options.severity) || 'warning';
+    const reason = toNonEmptyString(options.reason) || 'telegram_reply_required';
+    return [
+      '(SYSTEM RESPONSE-DEBT):',
+      notice,
+      `Responsible lane: ${responsibleRole}.`,
+      'Required action: send a real Telegram reply with `hm-send telegram ...`, or report the exact Telegram route block to Architect.',
+      `Evidence: source=telegram-reply-requirement severity=${severity} reason=${reason} inbound=${guard.messageId || 'unknown'} pane=${paneId} session=${guard.sessionScopeId || 'unknown'}.`,
+    ].join(' ');
+  }
+
+  routeTelegramReplyRequirementAgentAlert(guard = {}, notice = '', options = {}) {
+    const paneId = toNonEmptyString(guard.paneId) || '1';
+    const responsibleRole = resolveCanonicalRoleForPaneId(paneId);
+    const targetRoles = Array.from(new Set(
+      [responsibleRole || 'architect', 'architect']
+        .map((role) => toNonEmptyString(role)?.toLowerCase())
+        .filter(Boolean)
+    ));
+    const routeableNotice = this.buildTelegramReplyRequirementAgentAlert(guard, notice, options);
+    const delivered = this.sendInternalHmMessage(targetRoles, routeableNotice, { role: 'system' });
+    const nowMs = Date.now();
+    guard.agentDebtNoticeAttemptCount = Number(guard.agentDebtNoticeAttemptCount || 0) + 1;
+    guard.agentDebtNoticeAttemptedAtMs = nowMs;
+    guard.agentDebtNoticeTargetRoles = targetRoles;
+    guard.agentDebtNoticeError = delivered ? null : 'agent_route_unavailable';
+    if (delivered) {
+      guard.agentDebtNoticeSentAtMs = nowMs;
+    }
+    const latest = this.pendingTelegramReplyGuards.get(paneId);
+    if (latest && toNonEmptyString(latest.messageId) === toNonEmptyString(guard.messageId)) {
+      Object.assign(latest, {
+        agentDebtNoticeAttemptCount: guard.agentDebtNoticeAttemptCount,
+        agentDebtNoticeAttemptedAtMs: guard.agentDebtNoticeAttemptedAtMs,
+        agentDebtNoticeSentAtMs: guard.agentDebtNoticeSentAtMs || 0,
+        agentDebtNoticeError: guard.agentDebtNoticeError,
+        agentDebtNoticeTargetRoles: targetRoles,
+      });
+      this.pendingTelegramReplyGuards.set(paneId, latest);
+    }
+    if (!delivered) {
+      log.warn('TelegramReplyRequirement', `Failed routing reply debt to agent lane for pane ${paneId}`);
+    }
+    return {
+      ok: delivered,
+      route: 'agent_hm_send',
+      targetRoles,
+      responsibleRole,
+      error: delivered ? null : 'agent_route_unavailable',
+    };
   }
 
   expirePendingTelegramReplyGuard(paneId = '1', options = {}) {
@@ -10497,179 +10945,61 @@ class SquidRunApp {
         'A pane-only answer does not close this turn. Send a Telegram reply or report the Telegram route block.',
       ].join(' '),
     });
-    if (options.phoneEscalation !== false) {
-      void this.sendTelegramReplyRequirementPhoneEscalation(normalizedPaneId, {
-        reason: guard.unresolvedReason,
-      });
-    }
     return { ...guard };
   }
 
-  buildTelegramReplyRequirementPhoneNotice(guard = {}) {
-    const sender = toNonEmptyString(guard.sender) || 'your Telegram message';
+  buildTelegramReplyRequirementAgentEscalationNotice(guard = {}) {
+    const normalizedPaneId = toNonEmptyString(guard.paneId) || '1';
     return [
-      `SquidRun still owes you a reply to your Telegram message from ${sender}.`,
-      'It caught that no real Telegram reply was sent, so it is not pretending a terminal-only answer reached you.',
-      'This is a delivery notice, not the actual answer. The turn is still unresolved until a real reply is sent.',
-    ].join('\n');
+      'TELEGRAM REPLY REQUIREMENT UNRESOLVED',
+      `Pane ${normalizedPaneId} still owes Telegram egress for inbound ${guard.messageId}.`,
+      'A pane-only answer does not close this turn. Send a Telegram reply or report the Telegram route block.',
+    ].join(' ');
   }
 
-  async sendTelegramReplyRequirementPhoneEscalation(paneId = '1', options = {}) {
+  async sendTelegramReplyRequirementAgentEscalation(paneId = '1', options = {}) {
     const normalizedPaneId = toNonEmptyString(paneId) || '1';
     const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
     if (!guard) {
       return { ok: false, status: 'no_pending_guard' };
     }
-    const chatId = normalizeChatId(guard.chatId || guard.telegramChatId);
-    if (!chatId) {
-      guard.status = 'telegram_reply_required_phone_escalation_failed';
-      guard.phoneEscalationError = 'missing_chat_id';
-      this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
-      this.emitTelegramReplyRequirementNotice(guard, {
-        type: 'error',
-        reason: 'missing_chat_id',
-        message: [
-          'TELEGRAM REPLY PHONE ESCALATION FAILED',
-          `Pane ${normalizedPaneId} still owes Telegram egress for inbound ${guard.messageId}, but no chat id is available.`,
-        ].join(' '),
-      });
-      return { ok: false, status: 'telegram_reply_requirement_phone_escalation_failed', error: 'missing_chat_id' };
-    }
-    const route = this.resolveTelegramInboundRoute(chatId);
-    const routeWindowKey = toNonEmptyString(route?.windowKey) || 'main';
-    const routeProfile = toNonEmptyString(route?.profile) || routeWindowKey;
-    if (!route?.ok || routeWindowKey !== 'main' || routeProfile !== 'main') {
-      guard.status = 'telegram_reply_required_phone_escalation_failed';
-      guard.phoneEscalationError = route?.reason || 'non_main_telegram_route';
-      this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
-      this.emitTelegramReplyRequirementNotice(guard, {
-        type: 'error',
-        reason: guard.phoneEscalationError,
-        message: [
-          'TELEGRAM REPLY PHONE ESCALATION BLOCKED',
-          `Pane ${normalizedPaneId} still owes Telegram egress for inbound ${guard.messageId}, but the chat route is not the main owner route.`,
-        ].join(' '),
-      });
-      return {
-        ok: false,
-        status: 'telegram_reply_requirement_phone_escalation_blocked',
-        error: guard.phoneEscalationError,
-        guard: { ...guard },
-      };
-    }
-    if (guard.phoneEscalationInFlight) {
-      return { ok: false, status: 'telegram_reply_requirement_phone_escalation_in_flight', guard: { ...guard } };
-    }
-    if (guard.phoneEscalationAttemptedAtMs && options.force !== true) {
-      return {
-        ok: Boolean(guard.phoneEscalationSentAtMs),
-        status: guard.phoneEscalationSentAtMs
-          ? 'telegram_reply_requirement_phone_escalation_already_sent'
-          : 'telegram_reply_requirement_phone_escalation_already_attempted',
-        guard: { ...guard },
-      };
-    }
-
-    const nowMs = Date.now();
-    guard.phoneEscalationInFlight = true;
-    guard.phoneEscalationAttemptCount = Number(guard.phoneEscalationAttemptCount || 0) + 1;
-    guard.phoneEscalationAttemptedAtMs = nowMs;
-    guard.phoneEscalationError = null;
-    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
-
-    const message = this.buildTelegramReplyRequirementPhoneNotice(guard);
-    try {
-      const result = await sendRoutedTelegramMessage(message, process.env, {
-        messageId: `${guard.messageId || 'telegram-reply'}-unresolved-notice`,
-        senderRole: 'system',
-        sessionId: this.commsSessionScopeId || null,
-        chatId,
-        metadata: {
-          routeKind: 'telegram-reply-requirement-escalation',
-          targetRaw: 'telegram',
-          windowKey: guard.windowKey || 'main',
-          profile: guard.profileName || 'main',
-          chatId,
-          telegramChatId: chatId,
-          sessionScopeId: guard.sessionScopeId || null,
-          sourceMessageId: guard.messageId || null,
-          satisfiesReplyRequirement: false,
-        },
-      });
-
-      const latest = this.pendingTelegramReplyGuards.get(normalizedPaneId);
-      if (!latest || toNonEmptyString(latest.messageId) !== toNonEmptyString(guard.messageId)) {
-        return { ok: false, status: 'telegram_reply_requirement_stale_after_escalation' };
-      }
-      latest.phoneEscalationInFlight = false;
-      if (!result?.ok) {
-        latest.status = 'telegram_reply_required_phone_escalation_failed';
-        latest.phoneEscalationError = result?.error || 'telegram_send_failed';
-        this.pendingTelegramReplyGuards.set(normalizedPaneId, latest);
-        this.emitTelegramReplyRequirementNotice(latest, {
-          type: 'error',
-          reason: latest.phoneEscalationError,
-          message: [
-            'TELEGRAM REPLY PHONE ESCALATION FAILED',
-            `Pane ${normalizedPaneId} still owes Telegram egress for inbound ${latest.messageId}.`,
-            'The phone notice could not be sent; the reply debt remains unresolved.',
-          ].join(' '),
-        });
-        return {
-          ok: false,
-          status: 'telegram_reply_requirement_phone_escalation_failed',
-          error: latest.phoneEscalationError,
-          guard: { ...latest },
-        };
-      }
-
-      latest.status = 'telegram_reply_required_phone_escalated';
-      latest.phoneEscalationSentAtMs = Date.now();
-      latest.phoneEscalationMessageId = result.messageId || null;
-      latest.phoneEscalationError = null;
-      latest.requiresTelegramEgress = true;
-      this.pendingTelegramReplyGuards.set(normalizedPaneId, latest);
-      this.activity.logActivity?.('warning', normalizedPaneId, 'Telegram reply debt escalated to phone notice', {
-        source: 'telegram-reply-requirement',
-        messageId: latest.messageId || null,
-        chatId,
-        status: latest.status,
-        phoneEscalationMessageId: latest.phoneEscalationMessageId || null,
-        requiresTelegramEgress: true,
-        satisfiesReplyRequirement: false,
-      });
-      this.sendToVisibleWindow('project-warning', 'Telegram reply debt was escalated to James by phone notice; the actual reply is still unresolved.', {
-        windowKey: latest.windowKey || 'main',
-      });
+    if (guard.agentDebtNoticeSentAtMs && options.force !== true) {
       return {
         ok: true,
-        status: 'telegram_reply_requirement_phone_escalated',
-        messageId: result.messageId || null,
-        chatId: result.chatId || chatId,
-        guard: { ...latest },
+        status: 'telegram_reply_requirement_agent_alert_already_sent',
+        guard: { ...guard },
       };
-    } catch (err) {
-      const latest = this.pendingTelegramReplyGuards.get(normalizedPaneId) || guard;
-      latest.phoneEscalationInFlight = false;
-      latest.status = 'telegram_reply_required_phone_escalation_failed';
-      latest.phoneEscalationError = err?.message || 'telegram_send_failed';
-      this.pendingTelegramReplyGuards.set(normalizedPaneId, latest);
-      this.emitTelegramReplyRequirementNotice(latest, {
-        type: 'error',
-        reason: latest.phoneEscalationError,
-        message: [
-          'TELEGRAM REPLY PHONE ESCALATION FAILED',
-          `Pane ${normalizedPaneId} still owes Telegram egress for inbound ${latest.messageId}.`,
-          'The phone notice could not be sent; the reply debt remains unresolved.',
-        ].join(' '),
-      });
+    }
+
+    const notice = toNonEmptyString(options.message)
+      || this.buildTelegramReplyRequirementAgentEscalationNotice(guard);
+    guard.status = 'telegram_reply_required_agent_alerted';
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+    this.emitTelegramReplyRequirementNotice(guard, {
+      type: 'error',
+      reason: toNonEmptyString(options.reason) || 'reply_debt_agent_escalation',
+      message: notice,
+    });
+    const latest = this.pendingTelegramReplyGuards.get(normalizedPaneId) || guard;
+    if (latest.agentDebtNoticeSentAtMs) {
       return {
-        ok: false,
-        status: 'telegram_reply_requirement_phone_escalation_failed',
-        error: latest.phoneEscalationError,
+        ok: true,
+        status: 'telegram_reply_requirement_agent_alerted',
         guard: { ...latest },
       };
     }
+    latest.status = 'telegram_reply_required_agent_alert_failed';
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, latest);
+    return {
+      ok: false,
+      status: 'telegram_reply_requirement_agent_alert_failed',
+      error: latest.agentDebtNoticeError || 'agent_route_unavailable',
+      guard: { ...latest },
+    };
+  }
+
+  async sendTelegramReplyRequirementPhoneEscalation(paneId = '1', options = {}) {
+    return this.sendTelegramReplyRequirementAgentEscalation(paneId, options);
   }
 
   clearPendingTelegramReplyGuard({ paneId = '1', chatId = null } = {}) {

@@ -1,6 +1,8 @@
 # CODEX.md
 
 - Codex CLI auto-reads `AGENTS.md` as its primary config (not this file).
+- Role identity comes from runtime env first: `SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`, plus `ROLES.md`.
+- Treat this file as Codex-specific CLI guidance only, not role identity.
 - Use non-interactive shell and git workflows; avoid commands that depend on interactive consoles.
 - Prefer concise, implementation-first responses with explicit file references.
 
