@@ -10921,6 +10921,14 @@ class SquidRunApp {
     if (expectedMessageId && toNonEmptyString(guard.messageId) !== expectedMessageId) {
       return null;
     }
+    const journalSatisfaction = this.reconcilePendingTelegramReplyGuardWithJournal(normalizedPaneId, guard);
+    if (journalSatisfaction) {
+      return {
+        ...guard,
+        status: journalSatisfaction.status,
+        satisfiedByMessageId: journalSatisfaction.egressMessageId,
+      };
+    }
     if (guard.phoneEscalationSentAtMs) {
       guard.status = 'telegram_reply_required_phone_escalated';
       this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
@@ -11002,6 +11010,127 @@ class SquidRunApp {
     return this.sendTelegramReplyRequirementAgentEscalation(paneId, options);
   }
 
+  getCommsJournalRowTimestampMs(row = {}) {
+    for (const value of [row.sentAtMs, row.brokeredAtMs, row.updatedAtMs]) {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    }
+    return 0;
+  }
+
+  getCommsJournalRowChatId(row = {}) {
+    const metadata = (row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata))
+      ? row.metadata
+      : {};
+    return normalizeChatId(
+      metadata.chatId
+      || metadata.telegramChatId
+      || metadata.routedChatId
+      || metadata.envelope?.metadata?.chatId
+      || metadata.envelope?.metadata?.telegramChatId
+      || null
+    );
+  }
+
+  getCommsJournalRowSessionId(row = {}) {
+    const metadata = (row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata))
+      ? row.metadata
+      : {};
+    return toNonEmptyString(
+      row.sessionId
+      || metadata.sessionScopeId
+      || metadata.session_scope_id
+      || metadata.sessionId
+      || metadata.session_id
+      || metadata.envelope?.session_id
+      || null
+    );
+  }
+
+  isProvenTelegramEgressJournalRow(row = {}) {
+    const metadata = (row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata))
+      ? row.metadata
+      : {};
+    const targetSignals = [
+      row.targetRole,
+      metadata.targetRaw,
+      metadata.directTarget,
+      metadata.target?.raw,
+      metadata.target?.role,
+      metadata.envelope?.target?.raw,
+      metadata.envelope?.target?.role,
+    ].map((value) => toNonEmptyString(value)?.toLowerCase()).filter(Boolean);
+    return String(row.channel || '').toLowerCase() === 'telegram'
+      && String(row.direction || '').toLowerCase() === 'outbound'
+      && String(row.status || '').toLowerCase() === 'acked'
+      && String(row.ackStatus || '').toLowerCase() === 'telegram_delivered'
+      && (
+        targetSignals.includes('telegram')
+        || String(metadata.routeKind || '').toLowerCase() === 'telegram'
+      );
+  }
+
+  findAckedTelegramEgressForPendingGuard(guard = {}) {
+    const guardChatId = normalizeChatId(guard.chatId || guard.telegramChatId);
+    const guardSessionId = toNonEmptyString(guard.sessionScopeId);
+    const guardCreatedAtMs = Number(guard.createdAtMs || 0);
+    if (!guardChatId || !guardSessionId || !Number.isFinite(guardCreatedAtMs) || guardCreatedAtMs <= 0) {
+      return null;
+    }
+
+    let rows = [];
+    try {
+      rows = queryCommsJournalEntries({
+        sessionId: guardSessionId,
+        channel: 'telegram',
+        direction: 'outbound',
+        sinceMs: guardCreatedAtMs,
+        order: 'asc',
+        limit: 500,
+      });
+    } catch (err) {
+      log.warn('TelegramReplyRequirement', `Failed checking Telegram egress journal: ${err.message}`);
+      return null;
+    }
+
+    return (Array.isArray(rows) ? rows : []).find((row) => {
+      const metadata = (row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata))
+        ? row.metadata
+        : {};
+      const replyToMessageId = toNonEmptyString(
+        metadata.replyToMessageId
+        || metadata.reply_to_message_id
+        || metadata.inboundMessageId
+        || metadata.inbound_message_id
+        || null
+      );
+      if (replyToMessageId && replyToMessageId !== toNonEmptyString(guard.messageId)) return false;
+      if (!this.isProvenTelegramEgressJournalRow(row)) return false;
+      if (this.getCommsJournalRowSessionId(row) !== guardSessionId) return false;
+      if (this.getCommsJournalRowChatId(row) !== guardChatId) return false;
+      return this.getCommsJournalRowTimestampMs(row) >= guardCreatedAtMs;
+    }) || null;
+  }
+
+  reconcilePendingTelegramReplyGuardWithJournal(paneId = '1', guard = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const egressRow = this.findAckedTelegramEgressForPendingGuard(guard);
+    if (!egressRow) return null;
+    this.clearPendingTelegramReplyGuard({
+      paneId: normalizedPaneId,
+      chatId: guard.chatId || guard.telegramChatId || null,
+    });
+    return {
+      ok: true,
+      status: 'telegram_reply_requirement_satisfied_by_journal',
+      paneId: normalizedPaneId,
+      inboundMessageId: guard.messageId || null,
+      egressMessageId: egressRow.messageId || null,
+      chatId: this.getCommsJournalRowChatId(egressRow),
+      sessionScopeId: this.getCommsJournalRowSessionId(egressRow),
+    };
+  }
+
   clearPendingTelegramReplyGuard({ paneId = '1', chatId = null } = {}) {
     const normalizedPaneId = toNonEmptyString(paneId) || '1';
     const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
@@ -11026,6 +11155,15 @@ class SquidRunApp {
     const normalizedPaneId = toNonEmptyString(paneId) || '1';
     const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
     if (!guard) return { ok: true, status: 'no_pending_guard' };
+    const journalSatisfaction = this.reconcilePendingTelegramReplyGuardWithJournal(normalizedPaneId, guard);
+    if (journalSatisfaction) {
+      return {
+        ok: true,
+        status: journalSatisfaction.status,
+        guard: null,
+        satisfaction: journalSatisfaction,
+      };
+    }
     const nowMs = Date.now();
     if (!this.isPendingTelegramReplyGuardFresh(guard, nowMs)) {
       const expiredGuard = this.expirePendingTelegramReplyGuard(normalizedPaneId, {
