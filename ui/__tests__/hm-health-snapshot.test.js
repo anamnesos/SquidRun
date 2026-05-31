@@ -37,6 +37,40 @@ jest.mock('../modules/memory-consistency-check', () => ({
   })),
 }));
 
+jest.mock('../modules/main/codex-desktop-capability-awareness', () => ({
+  buildCodexDesktopCapabilityStatus: jest.fn(() => ({
+    status: 'routes_discoverable_process_not_running_or_unproven',
+    availability: {
+      codexDesktopProcess: {
+        status: 'not_proven',
+        process_count: 0,
+        visible_window_count: 0,
+      },
+      computerUseAppControl: {
+        status: 'known_route',
+        source_message_id: 'telegram-in-808498547',
+      },
+      hmCodexDesktopTransport: {
+        can_summon_workspace: false,
+        visible_injection_proven: false,
+      },
+    },
+    freshness: {
+      attentionInbox: {
+        active_count: 0,
+        completed_count: 0,
+        total_count: 0,
+        polling_freshness: 'missing_index',
+      },
+      heartbeat: {
+        status: 'missing',
+        proof: 'not_proven',
+        reason: 'missing_heartbeat',
+      },
+    },
+  })),
+}));
+
 const { execFileSync } = require('child_process');
 const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
 
@@ -604,6 +638,37 @@ describe('hm-health-snapshot', () => {
           },
         },
       },
+      codexDesktopCapability: {
+        status: 'process_available_heartbeat_not_proven',
+        availability: {
+          codexDesktopProcess: {
+            status: 'available',
+            process_count: 3,
+            visible_window_count: 1,
+          },
+          computerUseAppControl: {
+            status: 'known_route',
+            source_message_id: 'telegram-in-808498547',
+          },
+          hmCodexDesktopTransport: {
+            can_summon_workspace: true,
+            visible_injection_proven: false,
+          },
+        },
+        freshness: {
+          attentionInbox: {
+            active_count: 2,
+            completed_count: 5,
+            total_count: 8,
+            polling_freshness: 'index_loaded',
+          },
+          heartbeat: {
+            status: 'missing',
+            proof: 'not_proven',
+            reason: 'missing_heartbeat',
+          },
+        },
+      },
     });
 
     expect(markdown).toContain('STARTUP HEALTH');
@@ -620,6 +685,14 @@ describe('hm-health-snapshot', () => {
     expect(markdown).toContain('Connection: disconnected');
     expect(markdown).toContain('Device ID: LOCAL');
     expect(markdown).toContain('Runtime: mode=connecting, enabled=yes, configured=yes');
+    expect(markdown).toContain('CODEX DESKTOP CAPABILITY');
+    expect(markdown).toContain('Status: process_available_heartbeat_not_proven');
+    expect(markdown).toContain('Process/App: available (processes=3, visible_windows=1)');
+    expect(markdown).toContain('App-Control Route: known_route (source=telegram-in-808498547)');
+    expect(markdown).toContain('Attention Inbox: active=2, completed=5, total=8, freshness=index_loaded');
+    expect(markdown).toContain('Heartbeat: missing (not_proven; reason=missing_heartbeat)');
+    expect(markdown).toContain('Desktop Transport: summon=yes, visible_injection=not_proven');
+    expect(markdown).toContain('hm-codex-capability-status');
     expect(markdown).toContain('LOCAL MODELS');
     expect(markdown).toContain('Feature Enabled: yes');
     expect(markdown).toContain('Sleep Extraction: path=anthropic-api, enabled=yes, available=yes, model=claude-opus-4-6');
