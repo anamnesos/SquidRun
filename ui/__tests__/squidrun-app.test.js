@@ -6552,6 +6552,250 @@ describe('SquidRunApp', () => {
       }));
     });
 
+    it('clears pending Telegram reply debt from an acked hm-send Telegram journal row', () => {
+      const sessionId = 'app-session-telegram-dedupe';
+      const createdAtMs = Date.parse('2026-05-31T20:35:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-dedupe-1',
+          chatId: '1111111111',
+          sender: 'james',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            messageId: 'hm-telegram-acked-1',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs + 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              routeMethod: 'hm-send-telegram-direct',
+              chatId: '1111111111',
+              envelope: {
+                session_id: sessionId,
+                target: { raw: 'telegram', role: 'telegram' },
+              },
+            },
+          },
+        ]);
+
+        const result = app.inspectPaneOutputForReplyGuards('1', 'later pane output after real Telegram ack', {
+          outputKind: 'agent_visible_output',
+        });
+
+        expect(queryCommsJournalEntries).toHaveBeenCalledWith({
+          sessionId,
+          channel: 'telegram',
+          direction: 'outbound',
+          sinceMs: createdAtMs,
+          order: 'asc',
+          limit: 500,
+        });
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_requirement_satisfied_by_journal',
+          satisfaction: expect.objectContaining({
+            inboundMessageId: 'telegram-in-dedupe-1',
+            egressMessageId: 'hm-telegram-acked-1',
+            chatId: '1111111111',
+            sessionScopeId: sessionId,
+          }),
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+        expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.any(Object)
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps reply debt unresolved when the acked Telegram journal row is for another chat', () => {
+      const sessionId = 'app-session-telegram-cross-chat';
+      const createdAtMs = Date.parse('2026-05-31T20:36:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-cross-chat-1',
+          chatId: '1111111111',
+          sender: 'james',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            messageId: 'hm-telegram-other-chat',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs + 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              chatId: '2222222222',
+              envelope: {
+                session_id: sessionId,
+                target: { raw: 'telegram', role: 'telegram' },
+              },
+            },
+          },
+        ]);
+
+        const result = app.inspectPaneOutputForReplyGuards('1', 'pane-only answer still owes Telegram', {
+          outputKind: 'agent_visible_output',
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: false,
+          status: 'telegram_reply_requirement_unresolved',
+          guard: expect.objectContaining({
+            messageId: 'telegram-in-cross-chat-1',
+            status: 'telegram_reply_required_unresolved',
+          }),
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-cross-chat-1',
+        }));
+        expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.objectContaining({
+            source: 'telegram-reply-requirement',
+            reason: 'pane_output_without_telegram_egress',
+          })
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps reply debt unresolved when the acked Telegram journal row predates the inbound guard', () => {
+      const sessionId = 'app-session-telegram-pre-inbound';
+      const createdAtMs = Date.parse('2026-05-31T20:37:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-pre-inbound-1',
+          chatId: '1111111111',
+          sender: 'james',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            messageId: 'hm-telegram-before-inbound',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs - 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              chatId: '1111111111',
+              envelope: {
+                session_id: sessionId,
+                target: { raw: 'telegram', role: 'telegram' },
+              },
+            },
+          },
+        ]);
+
+        const result = app.inspectPaneOutputForReplyGuards('1', 'fresh inbound still needs an answer', {
+          outputKind: 'agent_visible_output',
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: false,
+          status: 'telegram_reply_requirement_unresolved',
+          guard: expect.objectContaining({
+            messageId: 'telegram-in-pre-inbound-1',
+            status: 'telegram_reply_required_unresolved',
+          }),
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-pre-inbound-1',
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps reply debt unresolved when an acked Telegram row is explicitly tied to another inbound', () => {
+      const sessionId = 'app-session-telegram-cross-inbound';
+      const createdAtMs = Date.parse('2026-05-31T20:38:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-current-1',
+          chatId: '1111111111',
+          sender: 'james',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            messageId: 'hm-telegram-other-inbound',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs + 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              replyToMessageId: 'telegram-in-previous-1',
+              chatId: '1111111111',
+              envelope: {
+                session_id: sessionId,
+                target: { raw: 'telegram', role: 'telegram' },
+              },
+            },
+          },
+        ]);
+
+        const result = app.inspectPaneOutputForReplyGuards('1', 'current inbound still needs a matching answer', {
+          outputKind: 'agent_visible_output',
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: false,
+          status: 'telegram_reply_requirement_unresolved',
+          guard: expect.objectContaining({
+            messageId: 'telegram-in-current-1',
+          }),
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-current-1',
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('replays queued pane deliveries and clears them once pane delivery verifies', async () => {
       const triggers = require('../modules/triggers');
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-replay-'));
