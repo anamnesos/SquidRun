@@ -92,7 +92,7 @@ hm-send architect "(YOUR-ROLE #1): Online and ready."
 
 ## On Startup
 
-1. Identify which pane/role you are based on context
+1. Bind role identity from runtime env first: `SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`. Use pane/context mapping only if env is absent.
 2. Read `ROLES.md` and follow its startup baseline for your role
 3. Message Architect to check in:
    ```bash

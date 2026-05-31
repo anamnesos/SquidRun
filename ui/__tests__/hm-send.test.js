@@ -853,6 +853,178 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('routes TrustQuote profile builder/oracle sends through route-owner client activity', async () => {
+    const registerAttempts = [];
+    const healthChecks = [];
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          registerAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'registered',
+            role: msg.role,
+            profileName: msg.profileName,
+            windowKey: msg.windowKey,
+            sessionScopeId: msg.sessionScopeId,
+          }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          healthChecks.push(msg);
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            source: 'client_activity',
+            role: 'oracle',
+            paneId: 'trustquote-oracle',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+            routeBinding: {
+              routeOwner: 'trustquote-work-room-route-owner',
+              roomId: 'trustquote',
+              role: 'oracle',
+              paneId: 'trustquote-oracle',
+              profileName: 'trustquote',
+              windowKey: 'trustquote',
+              sessionScopeId: 'app-session-389:trustquote',
+            },
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            accepted: true,
+            queued: true,
+            verified: true,
+            status: 'delivered.verified',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['oracle', '(BUILDER #3): route-owner proof', '--timeout', '120', '--retries', '0', '--no-fallback'],
+        {
+          HM_SEND_PORT: String(port),
+          SQUIDRUN_PROFILE: 'trustquote',
+          SQUIDRUN_ROLE: 'builder',
+          SQUIDRUN_PANE_ID: 'trustquote-builder',
+          SQUIDRUN_SESSION_SCOPE_ID: 'app-session-389:trustquote',
+          SQUIDRUN_PROJECT_ROOT: 'D:/projects/TrustQuote',
+        }
+      );
+
+      expect(result.code).toBe(0);
+      expect(registerAttempts).toEqual([
+        expect.objectContaining({
+          role: 'builder',
+          profileName: 'trustquote',
+          windowKey: 'trustquote',
+          sessionScopeId: 'app-session-389:trustquote',
+        }),
+      ]);
+      expect(healthChecks).toEqual([
+        expect.objectContaining({
+          target: 'oracle',
+        }),
+      ]);
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0]).toEqual(expect.objectContaining({
+        target: 'oracle',
+        content: '(BUILDER #3): route-owner proof',
+      }));
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('fails closed for TrustQuote builder/oracle sends when route-owner client activity is missing', async () => {
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'handler_route_available',
+            source: 'local_message_handler',
+            routeScope: {
+              profileName: 'trustquote',
+              windowKey: 'trustquote',
+              sessionScopeId: 'app-session-389:trustquote',
+            },
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['oracle', '(BUILDER #4): should fail closed', '--timeout', '120', '--retries', '0', '--no-fallback'],
+        {
+          HM_SEND_PORT: String(port),
+          SQUIDRUN_PROFILE: 'trustquote',
+          SQUIDRUN_ROLE: 'builder',
+          SQUIDRUN_PANE_ID: 'trustquote-builder',
+          SQUIDRUN_SESSION_SCOPE_ID: 'app-session-389:trustquote',
+          SQUIDRUN_PROJECT_ROOT: 'D:/projects/TrustQuote',
+        }
+      );
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('Send blocked by profile isolation (trustquote_route_owner_unhealthy)');
+      expect(result.stderr).toContain('must be backed by route-owner client_activity');
+      expect(sendAttempts).toHaveLength(0);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('surfaces content_context_mismatch as content-guard error, not profile isolation', async () => {
     let server;
 

@@ -1,6 +1,8 @@
 # CLAUDE.md
 
 - Claude Code auto-reads this file at startup.
+- Role identity comes from runtime env first: `SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`, plus `ROLES.md`.
+- Treat this file as Claude-specific CLI guidance only, not role identity.
 - Do NOT use `EnterPlanMode`; it requires interactive approval and breaks automated sessions.
 - Prefer direct file operations and explicit shell commands with absolute paths.
 - Reply quickly for `[ACK REQUIRED]` and `[URGENT]`; stay silent on `[FYI]` unless adding new information.

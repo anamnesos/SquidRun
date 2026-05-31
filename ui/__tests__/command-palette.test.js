@@ -37,6 +37,19 @@ describe('command-palette', () => {
     expect(openAppWindow).toHaveBeenCalledWith('mira-lab');
   });
 
+  test('includes the Task Audit sidecar command and routes it to the window opener', () => {
+    const openAppWindow = jest.fn();
+    const commands = getCommandPaletteCommands({ openAppWindow });
+    const sidecarCommand = commands.find((entry) => entry.id === 'open-live-task-audit-sidecar');
+
+    expect(sidecarCommand).toEqual(expect.objectContaining({
+      label: 'Open Task Audit',
+      category: 'Windows',
+    }));
+    sidecarCommand.action();
+    expect(openAppWindow).toHaveBeenCalledWith('live-task-audit-sidecar');
+  });
+
   test('labels pane 1 navigation with Mira without changing the pane target', () => {
     const terminal = require('../modules/terminal');
     const commands = getCommandPaletteCommands();

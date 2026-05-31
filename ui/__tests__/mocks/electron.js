@@ -4,6 +4,7 @@ const makeWebContents = () => ({
   once: jest.fn(),
   removeListener: jest.fn(),
   openDevTools: jest.fn(),
+  reloadIgnoringCache: jest.fn(),
   executeJavaScript: jest.fn(async () => undefined),
   sendInputEvent: jest.fn(),
 });

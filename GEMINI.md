@@ -1,6 +1,8 @@
 # GEMINI.md
 
 - Gemini CLI auto-reads this file at startup.
+- Role identity comes from runtime env first: `SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`, plus `ROLES.md`.
+- Treat this file as Gemini-specific CLI guidance only, not role identity.
 - If local file visibility appears stale, verify with shell commands before declaring a path missing.
 - Keep outputs concise, structured, and evidence-first.
 - Reply quickly for `[ACK REQUIRED]` and `[URGENT]`; stay silent on `[FYI]` unless adding new information.

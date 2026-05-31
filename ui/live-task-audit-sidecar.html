@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SquidRun Task Audit</title>
+  <link rel="stylesheet" href="styles/live-task-audit-sidecar.css">
+</head>
+<body>
+  <main class="task-audit-shell">
+    <header class="task-audit-header">
+      <div class="task-audit-title-block">
+        <p class="task-audit-eyebrow">SquidRun Task Audit</p>
+        <h1>Task Audit</h1>
+        <p class="task-audit-subtitle">Plain read-only source of truth for what is owed now, what needs audit or cleanup, and what closed with proof.</p>
+      </div>
+      <div class="task-audit-meta-grid" aria-label="Snapshot metadata">
+        <span class="task-audit-state" id="taskAuditHealth" data-tone="neutral">Loading</span>
+        <span id="taskAuditSession">Session -</span>
+        <span id="taskAuditUpdated">Not loaded</span>
+        <span id="taskAuditAuthority">Authority: -</span>
+        <span id="taskAuditSchema">snapshot pending</span>
+        <span id="taskAuditSource">source pending</span>
+        <button id="taskAuditRefresh" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <section class="task-audit-telemetry" aria-label="Task audit telemetry">
+      <div><strong id="terminalActiveCount">0</strong><span>Needs Doing</span></div>
+      <div><strong id="terminalFutureCount">0</strong><span>Audit / Cleanup Later</span></div>
+      <div><strong id="terminalHistoryCount">0</strong><span>History</span></div>
+      <div><strong id="terminalBlockerCount">0</strong><span>Blockers</span></div>
+      <div><strong id="terminalSignalCount">0</strong><span>Stale / Conflict</span></div>
+    </section>
+
+    <nav class="task-audit-layouts" id="taskAuditLayouts" aria-label="Task audit layout options"></nav>
+
+    <nav class="task-audit-tabs" aria-label="Task audit views">
+      <button class="task-audit-tab active" type="button" data-tab="active">
+        Needs Doing <span id="activeCount">0</span>
+      </button>
+      <button class="task-audit-tab" type="button" data-tab="future">
+        Audit / Cleanup Later <span id="futureCount">0</span>
+      </button>
+      <button class="task-audit-tab" type="button" data-tab="history">
+        History <span id="historyCount">0</span>
+      </button>
+    </nav>
+
+    <section class="task-audit-stage" id="taskAuditStage" aria-live="polite"></section>
+  </main>
+  <script src="live-task-audit-sidecar-renderer.js"></script>
+</body>
+</html>

@@ -13,6 +13,18 @@ const ACTIVITY_FILE_PATH = typeof resolveCoordPath === 'function'
   ? resolveCoordPath('activity.json', { forWrite: true })
   : path.join(WORKSPACE_PATH, 'activity.json');
 
+function isAgentResponseDebtActivity(type, message, details = {}) {
+  const source = String(details?.source || details?.subsystem || '').toLowerCase();
+  const debtKind = String(details?.debtKind || '').toLowerCase();
+  const text = String(message || '');
+
+  if (details?.agentSideOnly === true) return true;
+  if (source === 'telegram-reply-requirement') return true;
+  if (debtKind === 'telegram_reply_required' || debtKind === 'agent_response_debt') return true;
+  if (type === 'agent_response_debt') return true;
+  return /\b(TELEGRAM REPLY REQUIREMENT UNRESOLVED|TELEGRAM REPLY PHONE ESCALATION|agent response debt)\b/i.test(text);
+}
+
 class ActivityManager {
   constructor(appContext) {
     this.ctx = appContext;
@@ -44,8 +56,9 @@ class ActivityManager {
     }
 
     if (this.ctx.externalNotifier && typeof this.ctx.externalNotifier.notify === 'function') {
+      const agentResponseDebt = isAgentResponseDebtActivity(type, message, details);
       if (type === 'error') {
-        this.ctx.externalNotifier.notify({
+        if (!agentResponseDebt) this.ctx.externalNotifier.notify({
           category: 'alert',
           title: `Error detected${paneId ? ` (pane ${paneId})` : ''}`,
           message: details.snippet || message,
@@ -118,3 +131,4 @@ class ActivityManager {
 }
 
 module.exports = ActivityManager;
+module.exports.isAgentResponseDebtActivity = isAgentResponseDebtActivity;

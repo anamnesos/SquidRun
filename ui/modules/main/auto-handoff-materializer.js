@@ -19,6 +19,9 @@ const {
   querySessionSummariesFromMemory,
   readFallbackSummary,
 } = require('../../scripts/hm-session-summary');
+const {
+  deriveWorkItemCurrentLaneSnapshot,
+} = require('./work-item-ledger');
 
 const HANDOFFS_RELATIVE_DIR = 'handoffs';
 const SESSION_HANDOFF_FILE = 'session.md';
@@ -918,6 +921,85 @@ function formatRestartContinuitySummary(currentLane = {}) {
   return lines;
 }
 
+function uniqueInlineStrings(values = []) {
+  const out = [];
+  for (const value of Array.isArray(values) ? values : [values]) {
+    const text = toOptionalString(value, null);
+    if (!text || out.includes(text)) continue;
+    out.push(text);
+  }
+  return out;
+}
+
+function normalizePathForHandoff(value) {
+  return toOptionalString(value, '')?.replace(/\\/g, '/') || '';
+}
+
+function currentLaneActiveForReconciliation(currentLane = {}, currentLanePath = null) {
+  const activeLane = currentLane?.activeLane && typeof currentLane.activeLane === 'object'
+    ? currentLane.activeLane
+    : null;
+  return {
+    currentLanePath: normalizePathForHandoff(currentLanePath),
+    source: toOptionalString(currentLane?.source, null),
+    status: toOptionalString(currentLane?.status, null),
+    activeLane: activeLane ? {
+      laneId: toOptionalString(activeLane.laneId, null),
+      workItemId: toOptionalString(activeLane.workItemId, null),
+      sourceRef: toOptionalString(activeLane.sourceRef, null),
+      sourceMessageId: toOptionalString(activeLane.sourceMessageId, null),
+      objective: toOptionalString(activeLane.objective, null),
+      kind: toOptionalString(activeLane.kind, null),
+    } : null,
+  };
+}
+
+function attachFallbackActiveWorkReconciliation(currentLane = {}, typedCurrentLane = null, currentLanePath = null) {
+  const sourceReconciliation = typedCurrentLane?.activeWorkReconciliation;
+  if (!sourceReconciliation || typedCurrentLane?.activeLane) return currentLane;
+
+  const staleMarkers = uniqueInlineStrings(sourceReconciliation.staleMarkers || []);
+  const warnings = uniqueInlineStrings(sourceReconciliation.warnings || []);
+  const activeLane = currentLane?.activeLane && typeof currentLane.activeLane === 'object'
+    ? currentLane.activeLane
+    : null;
+  if (activeLane) {
+    const marker = 'no_typed_active_work_item_current_lane_active';
+    if (!staleMarkers.includes(marker)) staleMarkers.push(marker);
+    if (!warnings.includes(marker)) warnings.push(marker);
+  }
+
+  const status = sourceReconciliation.status === 'CONFLICT'
+    ? 'CONFLICT'
+    : (staleMarkers.length > 0 || warnings.length > 0 ? 'STALE' : sourceReconciliation.status);
+  const authority = activeLane
+    ? 'current_lane'
+    : sourceReconciliation.chosenAuthority || sourceReconciliation.authority || 'none';
+  const reconciliation = {
+    ...sourceReconciliation,
+    status,
+    authority,
+    chosenAuthority: authority,
+    currentLaneActive: activeLane
+      ? currentLaneActiveForReconciliation(currentLane, currentLanePath)
+      : sourceReconciliation.currentLaneActive,
+    staleMarkers,
+    warnings,
+  };
+  const continuity = safeJsonObject(currentLane?.continuity);
+  return {
+    ...currentLane,
+    activeWorkReconciliation: reconciliation,
+    continuity: {
+      ...continuity,
+      stale_backlog_markers: uniqueInlineStrings([
+        ...(Array.isArray(continuity.stale_backlog_markers) ? continuity.stale_backlog_markers : []),
+        ...warnings,
+      ]),
+    },
+  };
+}
+
 function buildSessionHandoffMarkdown(rows, options = {}) {
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
   const sessionId = toOptionalString(options.sessionId, '-') || '-';
@@ -1458,6 +1540,9 @@ async function materializeSessionHandoff(options = {}) {
     .filter(Boolean);
 
   const primaryPath = toOptionalString(options.outputPath, null) || resolvePrimarySessionHandoffPath();
+  const currentLaneOutputPath = options.currentLanePath === false
+    ? null
+    : (toOptionalString(options.currentLanePath, null) || resolveCurrentLanePath(primaryPath));
   const hasPriorContextRows = sourceSession.usedFallback === true
     && Array.isArray(sourceSession.fallbackMeaningfulRows)
     && sourceSession.fallbackMeaningfulRows.length > 0;
@@ -1480,10 +1565,24 @@ async function materializeSessionHandoff(options = {}) {
   }
 
   const sourceRowsForResolution = sortByEventTsAsc(sourceSession.rows);
-  let currentLane = deriveCurrentLaneSnapshot(sourceRowsForResolution, {
-    sessionId: sourceSession.sessionId || sessionId || null,
-    nowMs: options.nowMs,
-  });
+  const typedCurrentLane = options.workItems === false
+    ? null
+    : deriveWorkItemCurrentLaneSnapshot({
+      sessionId: sourceSession.sessionId || sessionId || null,
+      profileName: windowKey,
+      windowKey,
+      nowMs: options.nowMs,
+      workItemRoot: options.workItemRoot,
+      queuePath: options.queuePath,
+      currentLanePath: currentLaneOutputPath,
+      listWorkItems: options.listWorkItems,
+    });
+  let currentLane = typedCurrentLane?.activeLane
+    ? typedCurrentLane
+    : deriveCurrentLaneSnapshot(sourceRowsForResolution, {
+      sessionId: sourceSession.sessionId || sessionId || null,
+      nowMs: options.nowMs,
+    });
   const restartCarryForward = currentLane?.activeLane
     ? null
     : findAcceptedRestartCarryForward(crossSessionRows, sourceRowsForResolution, {
@@ -1494,6 +1593,7 @@ async function materializeSessionHandoff(options = {}) {
   if (restartCarryForward?.currentLane) {
     currentLane = restartCarryForward.currentLane;
   }
+  currentLane = attachFallbackActiveWorkReconciliation(currentLane, typedCurrentLane, currentLaneOutputPath);
   const priorContextRows = restartCarryForward?.priorContextRows?.length
     ? restartCarryForward.priorContextRows
     : (sourceSession.usedFallback ? sourceSession.fallbackMeaningfulRows : []);
@@ -1559,7 +1659,7 @@ async function materializeSessionHandoff(options = {}) {
   }
 
   if (options.currentLanePath !== false) {
-    const currentLanePath = toOptionalString(options.currentLanePath, null) || resolveCurrentLanePath(primaryPath);
+    const currentLanePath = currentLaneOutputPath;
     const laneWrite = await writeTextIfChanged(currentLanePath, `${JSON.stringify(currentLane, null, 2)}\n`);
     if (laneWrite.error) {
       return {
