@@ -59,6 +59,7 @@ workspace/console.log
 workspace/triggers/*.txt
 .hivemind/
 .squidrun/*
+ui/.squidrun/
 
 # Playwright MCP browser-automation artifacts (screenshots, downloads, recordings)
 # History contains a 204MB video at 8f8d2ee that blocks pushes to GitHub.
@@ -155,6 +156,7 @@ workspace/performance-audit.md
 # Screenshots (user-specific)
 workspace/screenshots/
 screenshots/
+task-audit-audit-tab-*.png
 
 # Audit screens (ephemeral)
 workspace/audit-logs/

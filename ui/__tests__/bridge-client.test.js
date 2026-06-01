@@ -96,6 +96,8 @@ describe('bridge-client', () => {
       type: 'register',
       deviceId: 'LOCAL_A',
       sharedSecret: 'secret',
+      availableRoles: ['architect'],
+      roles: ['architect'],
     });
 
     emitJson(socket, { type: 'register-ack', ok: true });

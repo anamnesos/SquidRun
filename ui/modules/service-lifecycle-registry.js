@@ -120,6 +120,38 @@ function buildServiceLifecycleSummary(options = {}) {
   };
 }
 
+function buildServiceLifecycleRegistry(options = {}) {
+  const statuses = options.statuses && typeof options.statuses === 'object'
+    ? options.statuses
+    : (options.statusById && typeof options.statusById === 'object' ? options.statusById : {});
+  return buildServiceLifecycleSummary({
+    ...options,
+    statusById: statuses,
+  }).services;
+}
+
+function serviceIsDegraded(service = {}) {
+  const state = String(service.status?.state || service.status?.status || '').trim().toLowerCase();
+  if (!state) return false;
+  return ['blocked', 'degraded', 'error', 'failed', 'fail', 'missing', 'unavailable'].includes(state);
+}
+
+function summarizeServiceLifecycle(registry = {}) {
+  const services = Array.isArray(registry)
+    ? registry
+    : (Array.isArray(registry.services) ? registry.services : []);
+  const degraded = services.filter(serviceIsDegraded);
+  return {
+    ok: degraded.length === 0,
+    services,
+    degraded,
+    totals: {
+      services: services.length,
+      degraded: degraded.length,
+    },
+  };
+}
+
 function findServiceLifecycle(id) {
   const target = String(id || '').trim();
   if (!target) return null;
@@ -128,6 +160,8 @@ function findServiceLifecycle(id) {
 
 module.exports = {
   SERVICE_DEFINITIONS,
+  buildServiceLifecycleRegistry,
   buildServiceLifecycleSummary,
   findServiceLifecycle,
+  summarizeServiceLifecycle,
 };

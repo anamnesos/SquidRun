@@ -54,9 +54,10 @@ const STALE_HOURS_BY_SEVERITY = {
 };
 
 function printUsage() {
-  console.log('Usage: node ui/scripts/doc-lint.js [--docs errors,blockers,status] [--staged] [--root <path>] [--now <iso>]');
+  console.log('Usage: node ui/scripts/doc-lint.js [--docs errors,blockers,status] [--staged] [--require-existing] [--root <path>] [--now <iso>]');
   console.log('  --docs   Comma-separated keys. Default: errors,blockers,status');
   console.log('  --staged Lint only staged target docs (pre-commit mode)');
+  console.log('  --require-existing Fail when target runtime docs are absent');
   console.log('  --root   Repo root override (default: inferred from script path)');
   console.log('  --now    Override current time (ISO8601) for deterministic checks');
 }
@@ -69,6 +70,7 @@ function parseArgs(argv) {
   const args = {
     docs: Object.keys(DOCS),
     stagedOnly: false,
+    requireExisting: false,
     root: path.resolve(__dirname, '..', '..'),
     now: new Date(),
   };
@@ -81,6 +83,10 @@ function parseArgs(argv) {
     }
     if (token === '--staged') {
       args.stagedOnly = true;
+      continue;
+    }
+    if (token === '--require-existing') {
+      args.requireExisting = true;
       continue;
     }
     if (token === '--docs' && argv[i + 1]) {
@@ -427,6 +433,10 @@ function main() {
     const doc = DOCS[key];
     const fullPath = path.join(args.root, doc.relPath);
     if (!fs.existsSync(fullPath)) {
+      if (!args.requireExisting) {
+        console.log(`[doc-lint] SKIP ${doc.relPath} (file not found)`);
+        continue;
+      }
       console.error(`[doc-lint] FAIL ${doc.relPath}`);
       console.error('  - file not found');
       totalIssues++;

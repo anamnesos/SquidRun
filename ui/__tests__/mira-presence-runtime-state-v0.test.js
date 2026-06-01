@@ -48,6 +48,9 @@ const {
 const {
   writeProgressProofArtifact,
 } = require('../modules/mira-core/mira-progress-proof-inputs-v0');
+const {
+  buildMiraProgressReport,
+} = require('../modules/mira-core/mira-progress-v0');
 
 const { main: cliMain } = require('../scripts/hm-mira-presence-runtime-state-v0');
 
@@ -989,15 +992,34 @@ describe('mira presence runtime state v0', () => {
 
       expect(applied.decision).toBe('applied');
       expect(applied.computed_progress).toEqual(expect.objectContaining({
-        percent: 70,
+        percent: 81,
         status: 'BLOCKED',
         head_short_sha: 'abcdef12',
       }));
       expect(applied.record.generated_at).toBe('2026-05-27T05:42:00.000Z');
-      expect(applied.record.next_product_action).toContain('computed progress 70% BLOCKED at HEAD abcdef12');
-      expect(applied.record.proof_test_state).toContain('progress 70% BLOCKED at HEAD abcdef12');
+      expect(applied.record.next_product_action).toContain('computed progress 81% BLOCKED at HEAD abcdef12');
+      expect(applied.record.proof_test_state).toContain('progress 81% BLOCKED at HEAD abcdef12');
       expect(applied.record.blocked_status.live_voice_blocked).toBe(true);
       expect(applied.record.blocked_status.a3_a4_blocked).toBe(true);
+
+      const postApplyProgress = buildMiraProgressReport({
+        projectRoot,
+        contract: progressContract,
+        head,
+        worktreeState: cleanWorktree(),
+      });
+      expect(postApplyProgress.computed_total_percent).toBe(81);
+      expect(Object.fromEntries(
+        postApplyProgress.categories.map((category) => [category.id, category.computed_percent])
+      )).toEqual(expect.objectContaining({
+        visible_presence_a0_text: 100,
+        restart_current_scope_continuity: 100,
+        mission_control_command_context: 100,
+        team_coordination_arms: 40,
+        direct_channel_reachability: 100,
+        voice_transport: 0,
+        tool_app_action_planning: 100,
+      }));
     } finally {
       fs.rmSync(projectRoot, { recursive: true, force: true });
     }

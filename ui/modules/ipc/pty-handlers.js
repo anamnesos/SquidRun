@@ -82,6 +82,14 @@ function toNonEmptyString(value) {
   return trimmed ? trimmed : null;
 }
 
+function pathSegments(value) {
+  return String(value || '').split(/[\\/]+/).filter(Boolean);
+}
+
+function isInsideSquidRunPrivateRoot(candidatePath) {
+  return pathSegments(path.resolve(candidatePath)).some((segment) => segment.toLowerCase() === '.squidrun');
+}
+
 function detectCliFromCommand(command) {
   const normalized = String(command || '').trim().toLowerCase();
   if (!normalized) return 'claude';
@@ -106,10 +114,6 @@ function resolveWindowsClaudeTempDir(cwd, env = process.env) {
   }
 
   const cwdValue = toNonEmptyString(cwd);
-  if (cwdValue) {
-    candidates.push(winPath.join(cwdValue, '.squidrun', 'tmp'));
-  }
-
   const parsedRoot = cwdValue ? toNonEmptyString(winPath.parse(cwdValue).root) : null;
   const systemDrive = toNonEmptyString(env.SystemDrive) || 'C:';
   const driveRoot = parsedRoot || `${systemDrive}\\`;
@@ -126,6 +130,7 @@ function resolveWindowsClaudeTempDir(cwd, env = process.env) {
     seen.add(dedupeKey);
 
     if (/\s/.test(normalized)) continue;
+    if (isInsideSquidRunPrivateRoot(normalized)) continue;
 
     try {
       fs.mkdirSync(normalized, { recursive: true });
@@ -702,6 +707,7 @@ registerPtyHandlers.unregister = unregisterPtyHandlers;
 module.exports = {
   registerPtyHandlers,
   _internals: {
+    isInsideSquidRunPrivateRoot,
     resolveWindowsClaudeTempDir,
   },
 };

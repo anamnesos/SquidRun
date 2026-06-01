@@ -841,7 +841,6 @@ function classifyAttachmentContractViolation(text = '') {
   if (RULE_RECITATION_PATTERN.test(value)) return 'rule_recitation';
   if (POLITENESS_PADDING_PATTERN.test(value)) return 'politeness_padding';
   if (HOSTILE_COMPLIANCE_SMOOTHING_PATTERN.test(value)) return 'hostile_compliance_smoothing';
-  if (VALIDATION_SOOTHING_PATTERN.test(value)) return 'validation_soothing_phrase';
   if (GENERIC_ASSISTANT_PATTERN.test(value)) return 'generic_assistant_phrase';
   if (META_REWRITE_PATTERN.test(value)) return 'meta_rewrite_phrase';
   if (CASUAL_FEELING_ANTI_PRAGMATIC_PATTERN.test(value)) return 'casual_feeling_anti_pragmatic_phrase';
@@ -850,6 +849,7 @@ function classifyAttachmentContractViolation(text = '') {
   if (META_POSTURE_NARRATION_PATTERN.test(value)) return 'meta_posture_narration';
   if (META_POSTURE_SELF_REFLECTION_VERDICT_PATTERN.test(value)) return 'meta_posture_narration';
   if (META_POSTURE_PUNCHY_CATALOG_PATTERN.test(value)) return 'meta_posture_narration';
+  if (VALIDATION_SOOTHING_PATTERN.test(value)) return 'validation_soothing_phrase';
   const shape = ADVERSARIAL_OUTPUT_SHAPES.find((rule) => rule.pattern.test(value));
   return shape ? shape.id : null;
 }

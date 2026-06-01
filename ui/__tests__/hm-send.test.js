@@ -52,14 +52,23 @@ function getTriggerPath(filename, options = {}) {
 function runHmSend(args, env = {}, options = {}) {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-send.js');
+    const isolatedProjectRoot = !options.cwd && !env.SQUIDRUN_PROJECT_ROOT
+      ? createLinkedProject({ squidrunRoot: null })
+      : null;
+    if (isolatedProjectRoot) {
+      writeAppStatus(isolatedProjectRoot, 'app-session-hm-send-test');
+    }
+    const childCwd = options.cwd || isolatedProjectRoot || path.join(__dirname, '..');
+    const scopedProjectRoot = env.SQUIDRUN_PROJECT_ROOT || childCwd;
     const child = spawn(process.execPath, [scriptPath, ...args], {
       env: {
         ...process.env,
         SQUIDRUN_ROLE: '',
         SQUIDRUN_PANE_ID: '',
+        SQUIDRUN_PROJECT_ROOT: scopedProjectRoot,
         ...env,
       },
-      cwd: options.cwd || path.join(__dirname, '..'),
+      cwd: childCwd,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -73,13 +82,21 @@ function runHmSend(args, env = {}, options = {}) {
       stderr += chunk.toString();
     });
 
-    child.on('error', reject);
+    child.on('error', (err) => {
+      if (isolatedProjectRoot) {
+        fs.rmSync(isolatedProjectRoot, { recursive: true, force: true });
+      }
+      reject(err);
+    });
     if (options.stdin !== undefined) {
       child.stdin.end(String(options.stdin));
     } else {
       child.stdin.end();
     }
     child.on('close', (code) => {
+      if (isolatedProjectRoot) {
+        fs.rmSync(isolatedProjectRoot, { recursive: true, force: true });
+      }
       resolve({ code, stdout, stderr });
     });
   });
@@ -92,10 +109,11 @@ function extractFallbackPath(stderr) {
 
 function createLinkedProject(options = {}) {
   const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-guard-'));
-  const includeSquidrunRoot = options.squidrunRoot !== null;
-  const squidrunRoot = typeof options.squidrunRoot === 'string'
+  const includeSquidrunRoot = typeof options.squidrunRoot === 'string'
+    && options.squidrunRoot.trim();
+  const squidrunRoot = includeSquidrunRoot
     ? options.squidrunRoot
-    : path.join(__dirname, '..', '..');
+    : null;
   fs.mkdirSync(path.join(tempProject, '.squidrun'), { recursive: true });
   const linkPayload = {
     workspace: tempProject,
@@ -2572,6 +2590,7 @@ describe('hm-send retry behavior', () => {
 
   test('falls back to trigger file with complete message after websocket retries exhaust', async () => {
     const sendAttempts = [];
+    const tempProject = createLinkedProject({ squidrunRoot: null });
     let server;
 
     await new Promise((resolve, reject) => {
@@ -2581,9 +2600,8 @@ describe('hm-send retry behavior', () => {
     });
 
     const port = server.address().port;
-    const triggerPath = path.resolve(getTriggerPath('builder.txt'));
-    const cwdTriggerPath = path.resolve(path.join(path.join(__dirname, '..'), '.squidrun', 'triggers', 'builder.txt'));
-    const trackedPaths = Array.from(new Set([triggerPath, cwdTriggerPath]));
+    const triggerPath = path.resolve(getTriggerPath('builder.txt', { cwd: tempProject }));
+    const trackedPaths = [triggerPath];
     const originalContentByPath = new Map();
     for (const candidatePath of trackedPaths) {
       if (fs.existsSync(candidatePath)) {
@@ -2635,7 +2653,8 @@ describe('hm-send retry behavior', () => {
     try {
       const result = await runHmSend(
         ['builder', message, '--role', 'builder', '--timeout', '80', '--retries', '1'],
-        { HM_SEND_PORT: String(port) }
+        { HM_SEND_PORT: String(port) },
+        { cwd: tempProject }
       );
 
       expect(result.code).toBe(0);
@@ -2664,6 +2683,7 @@ describe('hm-send retry behavior', () => {
           fs.unlinkSync(cleanupPath);
         }
       }
+      fs.rmSync(tempProject, { recursive: true, force: true });
       await new Promise((resolve) => server.close(resolve));
     }
   });
@@ -2767,9 +2787,9 @@ describe('hm-send retry behavior', () => {
   });
 
   test('routes director target alias to architect fallback path when using --role director', async () => {
-    const triggerPath = path.resolve(getTriggerPath('architect.txt'));
-    const cwdTriggerPath = path.resolve(path.join(path.join(__dirname, '..'), '.squidrun', 'triggers', 'architect.txt'));
-    const trackedPaths = Array.from(new Set([triggerPath, cwdTriggerPath]));
+    const tempProject = createLinkedProject({ squidrunRoot: null });
+    const triggerPath = path.resolve(getTriggerPath('architect.txt', { cwd: tempProject }));
+    const trackedPaths = [triggerPath];
     const originalContentByPath = new Map();
     for (const candidatePath of trackedPaths) {
       if (fs.existsSync(candidatePath)) {
@@ -2783,7 +2803,8 @@ describe('hm-send retry behavior', () => {
     try {
       const result = await runHmSend(
         ['director', message, '--role', 'director', '--timeout', '80', '--retries', '0'],
-        { HM_SEND_PORT: '65534' } // force websocket failure -> trigger fallback
+        { HM_SEND_PORT: '65534' }, // force websocket failure -> trigger fallback
+        { cwd: tempProject }
       );
 
       expect(result.code).toBe(0);
@@ -2808,6 +2829,7 @@ describe('hm-send retry behavior', () => {
           fs.unlinkSync(cleanupPath);
         }
       }
+      fs.rmSync(tempProject, { recursive: true, force: true });
     }
   });
 
