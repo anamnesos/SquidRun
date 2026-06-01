@@ -3,24 +3,16 @@
 const { pathToFileURL } = require('url');
 const { execFileSync } = require('child_process');
 const path = require('path');
+const { compileMiraRuntime } = require('./helpers/mira-runtime-build');
 
 describe('Mira runtime manual bridge request planner', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
-  const runtimeTsconfig = path.join(repoRoot, 'mira', 'runtime', 'tsconfig.json');
-  const tscBin = path.join(repoRoot, 'ui', 'node_modules', 'typescript', 'bin', 'tsc');
   const compiledPlannerPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'bridge-request-plan.js');
   const compiledPlannerUrl = pathToFileURL(compiledPlannerPath).href;
   const bridgeCliPath = path.join(repoRoot, 'mira', 'bridge', 'send-pane-message.js');
 
   beforeAll(() => {
-    execFileSync(process.execPath, [
-      tscBin,
-      '-p',
-      runtimeTsconfig,
-    ], {
-      cwd: repoRoot,
-      stdio: 'pipe',
-    });
+    compileMiraRuntime(repoRoot);
   });
 
   function runPlannerSnippet(source) {

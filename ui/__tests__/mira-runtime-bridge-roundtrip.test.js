@@ -1,28 +1,20 @@
 'use strict';
 
-const { spawn, execFileSync } = require('child_process');
+const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { compileMiraRuntime } = require('./helpers/mira-runtime-build');
 
 describe('Mira runtime bridge pane roundtrip parity', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
-  const runtimeTsconfig = path.join(repoRoot, 'mira', 'runtime', 'tsconfig.json');
-  const tscBin = path.join(repoRoot, 'ui', 'node_modules', 'typescript', 'bin', 'tsc');
   const compiledServerPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'server.js');
   let serverProcess;
   let baseUrl;
   let tempStateRoot;
 
   beforeAll(() => {
-    execFileSync(process.execPath, [
-      tscBin,
-      '-p',
-      runtimeTsconfig,
-    ], {
-      cwd: repoRoot,
-      stdio: 'pipe',
-    });
+    compileMiraRuntime(repoRoot);
   });
 
   afterEach(async () => {

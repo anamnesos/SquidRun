@@ -7,28 +7,20 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { compileMiraRuntime } = require('./helpers/mira-runtime-build');
 
 const { evaluateMiraVisibleReply } = require('../modules/mira-core/mira-language-rules-v0');
 const { visibleReplyLeakageViolation } = require('../modules/mira-core/local-text-session-v0');
 
 describe('New Mira runtime turn visible reply parity', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
-  const runtimeTsconfig = path.join(repoRoot, 'mira', 'runtime', 'tsconfig.json');
-  const tscBin = path.join(repoRoot, 'ui', 'node_modules', 'typescript', 'bin', 'tsc');
   const compiledTurnPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'turn.js');
   const compiledTurnUrl = pathToFileURL(compiledTurnPath).href;
   const compiledTurnJournalPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'turn-journal.js');
   const compiledTurnJournalUrl = pathToFileURL(compiledTurnJournalPath).href;
 
   beforeAll(() => {
-    execFileSync(process.execPath, [
-      tscBin,
-      '-p',
-      runtimeTsconfig,
-    ], {
-      cwd: repoRoot,
-      stdio: 'pipe',
-    });
+    compileMiraRuntime(repoRoot);
   });
 
   function runRuntimeSnippet(source, env = {}) {

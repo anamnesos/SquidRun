@@ -442,6 +442,18 @@ function resolveProjectContextFromLink(startDir = process.cwd()) {
   };
 }
 
+function resolveProjectContextFromEnv(env = process.env) {
+  const explicitProjectRoot = String(env?.SQUIDRUN_PROJECT_ROOT || '').trim();
+  if (!explicitProjectRoot) return null;
+  const projectPath = path.resolve(explicitProjectRoot);
+  return {
+    source: 'env',
+    projectPath,
+    projectName: path.basename(projectPath),
+    squidrunRoot: null,
+  };
+}
+
 function readProjectContextFromState() {
   const candidates = [];
   if (typeof resolveCoordPath === 'function') {
@@ -466,14 +478,35 @@ function readProjectContextFromState() {
   return null;
 }
 
+function isPathInside(parentDir, candidatePath) {
+  if (!parentDir || !candidatePath) return false;
+  const relativePath = path.relative(path.resolve(parentDir), path.resolve(candidatePath));
+  return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
+function shouldUseGlobalStateProjectContext(startDir = process.cwd()) {
+  if (typeof getSquidrunRoot !== 'function') return false;
+  try {
+    const squidrunRoot = getSquidrunRoot();
+    return Boolean(squidrunRoot && isPathInside(squidrunRoot, startDir));
+  } catch (_) {
+    return false;
+  }
+}
+
 function resolveLocalProjectContext(startDir = process.cwd()) {
   const fromLink = resolveProjectContextFromLink(startDir);
   if (fromLink?.projectPath) return fromLink;
 
+  const fromEnv = resolveProjectContextFromEnv(process.env);
+  if (fromEnv?.projectPath) return fromEnv;
+
   // link.json is the canonical agent workspace bootstrap. state.json tracks
   // mutable UI project selection and can legitimately lag across sessions.
-  const fromState = readProjectContextFromState();
-  if (fromState?.projectPath) return fromState;
+  if (shouldUseGlobalStateProjectContext(startDir)) {
+    const fromState = readProjectContextFromState();
+    if (fromState?.projectPath) return fromState;
+  }
 
   const cwdPath = path.resolve(startDir);
   return {
@@ -526,6 +559,26 @@ function resolveLocalCoordPath(relativePath, options = {}) {
 
 function resolveGuardLogPath(fileName) {
   return resolveLocalCoordPath(path.join('runtime', fileName), { forWrite: true });
+}
+
+function resolveLocalEvidenceLedgerDbPath() {
+  const explicitDbPath = String(process.env.SQUIDRUN_COMMS_JOURNAL_DB_PATH || '').trim();
+  if (explicitDbPath) return path.resolve(explicitDbPath);
+  return resolveLocalCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
+}
+
+function queryLocalCommsJournalEntries(filters = {}, options = {}) {
+  return queryCommsJournalEntries(filters, {
+    ...options,
+    dbPath: resolveLocalEvidenceLedgerDbPath(),
+  });
+}
+
+function appendLocalCommsJournalEntry(entry = {}, options = {}) {
+  return appendCommsJournalEntry(entry, {
+    ...options,
+    dbPath: resolveLocalEvidenceLedgerDbPath(),
+  });
 }
 
 function writeGuardBlock(messageLines = []) {
@@ -591,7 +644,7 @@ function detectTelegramUserTargetGuard({ messageId } = {}) {
 
   let rows = [];
   try {
-    rows = queryCommsJournalEntries({
+    rows = queryLocalCommsJournalEntries({
       sessionId,
       direction: 'inbound',
       senderRole: 'user',
@@ -637,7 +690,7 @@ function readRecentUserInboundRows() {
   const sessionId = normalizeSessionId(projectMetadata?.session_id || '');
   if (!sessionId) return [];
   try {
-    return queryCommsJournalEntries({
+    return queryLocalCommsJournalEntries({
       sessionId,
       direction: 'inbound',
       senderRole: 'user',
@@ -2461,7 +2514,7 @@ async function main() {
     await sendTelegramTextDirect(envelope);
   }
   const envelopeMetadata = buildCanonicalEnvelopeMetadata(envelope);
-  const preSendJournal = appendCommsJournalEntry({
+  const preSendJournal = appendLocalCommsJournalEntry({
     messageId: envelope.message_id,
     sessionId: envelope.session_id || null,
     senderRole: envelope.sender?.role || (role || 'cli'),

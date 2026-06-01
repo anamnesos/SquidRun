@@ -5,11 +5,10 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { compileMiraRuntime } = require('./helpers/mira-runtime-build');
 
 describe('Mira runtime state-root readiness', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
-  const runtimeTsconfig = path.join(repoRoot, 'mira', 'runtime', 'tsconfig.json');
-  const tscBin = path.join(repoRoot, 'ui', 'node_modules', 'typescript', 'bin', 'tsc');
   const compiledStateRootPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'state-root.js');
   const compiledRuntimePath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'runtime.js');
   const compiledStatusPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'status.js');
@@ -17,14 +16,7 @@ describe('Mira runtime state-root readiness', () => {
   const compiledRuntimeUrl = pathToFileURL(compiledRuntimePath).href;
 
   beforeAll(() => {
-    execFileSync(process.execPath, [
-      tscBin,
-      '-p',
-      runtimeTsconfig,
-    ], {
-      cwd: repoRoot,
-      stdio: 'pipe',
-    });
+    compileMiraRuntime(repoRoot);
   });
 
   function runRuntimeSnippet(source) {

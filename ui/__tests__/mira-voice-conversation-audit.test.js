@@ -4,6 +4,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { compileMiraRuntime } = require('./helpers/mira-runtime-build');
 
 const {
   evaluateTranscript,
@@ -14,19 +15,10 @@ const {
 describe('Mira conversation voice audit', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
   const auditScript = path.join(repoRoot, 'mira', 'tools', 'audit-voice-conversation.js');
-  const runtimeTsconfig = path.join(repoRoot, 'mira', 'runtime', 'tsconfig.json');
-  const tscBin = path.join(repoRoot, 'ui', 'node_modules', 'typescript', 'bin', 'tsc');
   let tempDir;
 
   beforeAll(() => {
-    execFileSync(process.execPath, [
-      tscBin,
-      '-p',
-      runtimeTsconfig,
-    ], {
-      cwd: repoRoot,
-      stdio: 'pipe',
-    });
+    compileMiraRuntime(repoRoot);
   });
 
   beforeEach(() => {

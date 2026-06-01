@@ -6,11 +6,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { compileMiraRuntime } = require('./helpers/mira-runtime-build');
 
 describe('Mira Mission Control internal pane send activation seam', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
-  const runtimeTsconfig = path.join(repoRoot, 'mira', 'runtime', 'tsconfig.json');
-  const tscBin = path.join(repoRoot, 'ui', 'node_modules', 'typescript', 'bin', 'tsc');
   const compiledServerPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'server.js');
   const compiledRoutePreviewPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'mission-control-route-preview.js');
   const compiledRoutePreviewUrl = pathToFileURL(compiledRoutePreviewPath).href;
@@ -20,14 +19,7 @@ describe('Mira Mission Control internal pane send activation seam', () => {
   let tempStateRoot;
 
   beforeAll(() => {
-    execFileSync(process.execPath, [
-      tscBin,
-      '-p',
-      runtimeTsconfig,
-    ], {
-      cwd: repoRoot,
-      stdio: 'pipe',
-    });
+    compileMiraRuntime(repoRoot);
   });
 
   afterEach(async () => {

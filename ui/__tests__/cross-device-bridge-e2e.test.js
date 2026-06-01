@@ -1,4 +1,6 @@
 const net = require('net');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
@@ -21,12 +23,22 @@ jest.mock('../modules/ipc/evidence-ledger-handlers', () => ({
 function runHmSend(args, env = {}) {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-send.js');
+    const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'cross-device-hm-send-'));
+    fs.mkdirSync(path.join(tempProject, '.squidrun'), { recursive: true });
+    fs.writeFileSync(path.join(tempProject, '.squidrun', 'link.json'), JSON.stringify({
+      workspace: tempProject,
+      version: 1,
+    }, null, 2));
+    fs.writeFileSync(path.join(tempProject, '.squidrun', 'app-status.json'), JSON.stringify({
+      session_id: 'app-session-cross-device-test',
+    }, null, 2));
     const child = spawn(process.execPath, [scriptPath, ...args], {
-      cwd: path.join(__dirname, '..'),
+      cwd: tempProject,
       env: {
         ...process.env,
         SQUIDRUN_ROLE: '',
         SQUIDRUN_PANE_ID: '',
+        SQUIDRUN_PROJECT_ROOT: tempProject,
         ...env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -42,8 +54,12 @@ function runHmSend(args, env = {}) {
       stderr += chunk.toString();
     });
 
-    child.on('error', reject);
+    child.on('error', (err) => {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      reject(err);
+    });
     child.on('close', (code) => {
+      fs.rmSync(tempProject, { recursive: true, force: true });
       resolve({ code, stdout, stderr });
     });
   });

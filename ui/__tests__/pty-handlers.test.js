@@ -60,14 +60,34 @@ describe('PTY Handlers', () => {
   });
 
   describe('windows temp compatibility', () => {
-    test('resolves a spaceless workspace temp dir for Claude on Windows', () => {
+    test('resolves a spaceless non-.squidrun temp dir for Claude on Windows', () => {
       const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
       const cwd = 'D:\\projects\\squidrun';
-      const expected = path.win32.join(cwd, '.squidrun', 'tmp');
+      const expected = 'D:\\squidrun-tmp';
 
       const result = withPlatform('win32', () => _internals.resolveWindowsClaudeTempDir(cwd));
 
       expect(result).toBe(expected);
+      expect(result).not.toMatch(/\s/);
+      expect(_internals.isInsideSquidRunPrivateRoot(result)).toBe(false);
+      expect(mkdirSpy).toHaveBeenCalledWith(expected, { recursive: true });
+      mkdirSpy.mockRestore();
+    });
+
+    test('skips explicit Windows temp roots inside .squidrun', () => {
+      const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+      const cwd = 'D:\\projects\\squidrun';
+      const rejectedTemp = path.win32.join(cwd, '.squidrun', 'tmp');
+      const expected = 'D:\\squidrun-tmp';
+
+      const result = withPlatform('win32', () => _internals.resolveWindowsClaudeTempDir(cwd, {
+        SQUIDRUN_WINDOWS_TMP: rejectedTemp,
+        SystemDrive: 'D:',
+      }));
+
+      expect(result).toBe(expected);
+      expect(_internals.isInsideSquidRunPrivateRoot(result)).toBe(false);
+      expect(mkdirSpy).not.toHaveBeenCalledWith(rejectedTemp, { recursive: true });
       expect(mkdirSpy).toHaveBeenCalledWith(expected, { recursive: true });
       mkdirSpy.mockRestore();
     });
@@ -252,7 +272,7 @@ describe('PTY Handlers', () => {
       ctx.daemonClient.connected = true;
       ctx.currentSettings.paneCommands = { '99': 'claude' };
       const workingDir = 'D:\\projects\\squidrun';
-      const expectedTemp = path.win32.join(workingDir, '.squidrun', 'tmp');
+      const expectedTemp = 'D:\\squidrun-tmp';
 
       await withPlatform('win32', async () => {
         await harness.invoke('pty-create', '99', workingDir);
@@ -270,6 +290,7 @@ describe('PTY Handlers', () => {
         }),
         { paneCommand: 'claude' }
       );
+      expect(_internals.isInsideSquidRunPrivateRoot(expectedTemp)).toBe(false);
       mkdirSpy.mockRestore();
     });
 

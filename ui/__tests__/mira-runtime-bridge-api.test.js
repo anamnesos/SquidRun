@@ -8,6 +8,7 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const { compileMiraRuntime } = require('./helpers/mira-runtime-build');
 const {
   evaluateCandidate,
   readVoiceLab,
@@ -15,8 +16,6 @@ const {
 
 describe('Mira runtime bridge manual-plan API', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
-  const runtimeTsconfig = path.join(repoRoot, 'mira', 'runtime', 'tsconfig.json');
-  const tscBin = path.join(repoRoot, 'ui', 'node_modules', 'typescript', 'bin', 'tsc');
   const compiledServerPath = path.join(repoRoot, 'mira', 'runtime', 'dist', 'server.js');
   let serverProcess;
   let openAiMockServer;
@@ -26,14 +25,7 @@ describe('Mira runtime bridge manual-plan API', () => {
   const voiceLabPath = path.join(repoRoot, 'mira', 'voice', 'voice-lab-v0.jsonl');
 
   beforeAll(() => {
-    execFileSync(process.execPath, [
-      tscBin,
-      '-p',
-      runtimeTsconfig,
-    ], {
-      cwd: repoRoot,
-      stdio: 'pipe',
-    });
+    compileMiraRuntime(repoRoot);
   });
 
   afterEach(async () => {
