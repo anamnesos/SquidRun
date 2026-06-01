@@ -78,7 +78,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/mira-north-star-roadmap.md` | doc | 8530 |
 | `docs/mira-pc-embodiment-permission-v0.md` | doc | 10045 |
 | `docs/mira-presence-runtime-acceptance-v0.md` | doc | 16200 |
-| `docs/mira-system-map.md` | doc | 120952 |
+| `docs/mira-system-map.md` | doc | 121674 |
 | `docs/mira-voice-audio-intake-v0.md` | doc | 9440 |
 | `docs/models/base-instructions.md` | doc | 2070 |
 | `docs/models/claude-notes.md` | doc | 1161 |
@@ -164,7 +164,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/runtime/src/voice-lab.ts` | source | 7423 |
 | `mira/runtime/src/work-draft.ts` | source | 10500 |
 | `mira/runtime/src/work-task.ts` | source | 70655 |
-| `mira/runtime/tsconfig.json` | config | 435 |
+| `mira/runtime/tsconfig.json` | config | 511 |
 | `mira/state/.gitignore` | config | 52 |
 | `mira/state/README.md` | doc | 613 |
 | `mira/state/state-root-contract.json` | config | 612 |
@@ -705,7 +705,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/voice-broker-tab.test.js` | test | 35900 |
 | `ui/__tests__/voice-broker.test.js` | test | 44789 |
 | `ui/__tests__/watcher-worker.test.js` | test | 3208 |
-| `ui/__tests__/watcher.test.js` | test | 32313 |
+| `ui/__tests__/watcher.test.js` | test | 32293 |
 | `ui/__tests__/websocket-delivery.test.js` | test | 67024 |
 | `ui/__tests__/websocket-runtime-paths.test.js` | test | 2394 |
 | `ui/__tests__/websocket-runtime-queue.test.js` | test | 10280 |
@@ -1127,8 +1127,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/mcp-server.js` | source | 22417 |
 | `ui/mira-lab-renderer.js` | source | 13296 |
 | `ui/mira-lab.html` | asset | 1613 |
-| `ui/package-lock.json` | config | 479738 |
-| `ui/package.json` | config | 5992 |
+| `ui/package-lock.json` | config | 476184 |
+| `ui/package.json` | config | 6734 |
 | `ui/pane-host-renderer.js` | source | 35875 |
 | `ui/pane-host.html` | asset | 1143 |
 | `ui/preload.js` | source | 934 |
