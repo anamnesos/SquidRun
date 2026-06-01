@@ -673,13 +673,13 @@ describe('watcher module', () => {
     const queuePath = path.join(watcher.MESSAGE_QUEUE_DIR, 'queue-2.json');
 
     worker.emit('message', { watcherName: 'message', type: 'change', path: queuePath });
-    await new Promise((resolve) => setTimeout(resolve, 25));
-
-    expect(triggers.notifyAgents).toHaveBeenCalledWith(
-      ['2'],
-      '[MSG from Architect]: Deliver after ack',
-      expect.objectContaining({ deliveryId: expect.any(String) })
-    );
+    await waitForCondition(() => {
+      expect(triggers.notifyAgents).toHaveBeenCalledWith(
+        ['2'],
+        '[MSG from Architect]: Deliver after ack',
+        expect.objectContaining({ deliveryId: expect.any(String) })
+      );
+    });
     expect(await watcher.getMessages('2', true)).toHaveLength(1);
 
     const deliveryId = triggers.notifyAgents.mock.calls[0][2].deliveryId;
