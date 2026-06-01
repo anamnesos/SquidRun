@@ -99,12 +99,15 @@ describe('live-task-audit preview server', () => {
     expect(html).toContain('Needs Doing');
     expect(html).toContain('Audit / Cleanup Later');
     expect(html).toContain('History');
-    expect(html).toContain('historyCount');
-    expect(html).toContain('terminalHistoryCount');
     expect(html).toContain('taskAuditLayouts');
     expect(html).toContain('taskAuditStage');
     expect(html).toContain('taskAuditHealth');
-    expect(html).toContain('terminalBlockerCount');
+    expect(html).toContain('historyCount');
+    expect(html).not.toContain('terminalHistoryCount');
+    expect(html).not.toContain('terminalBlockerCount');
+    expect(html).not.toContain('taskAuditAuthority');
+    expect(html).not.toContain('taskAuditSchema');
+    expect(html).not.toContain('taskAuditSource');
     expect(html).not.toMatch(/Terminal Cockpit|Command Center|Route Map|taskAuditConcepts/);
   });
 

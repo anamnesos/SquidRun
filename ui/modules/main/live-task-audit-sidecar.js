@@ -17,6 +17,8 @@ const SNAPSHOT_SCHEMA = 'squidrun.live_task_audit_sidecar.snapshot.v0';
 const TASK_AUDIT_ITEMS_SCHEMA = 'squidrun.live_task_audit_sidecar.items.v0';
 const DEFAULT_TASK_AUDIT_ITEMS_RELATIVE_PATH = path.join('runtime', 'live-task-audit-sidecar', 'task-audit-items.json');
 const DEFAULT_APP_STATUS_RELATIVE_PATH = 'app-status.json';
+const TASK_AUDIT_SECTIONS = Object.freeze(['Mira', 'TrustQuote', 'SquidRun', 'Other']);
+const DGC_BUNDLE_BASENAME = 'main-DGcSGf52.js';
 
 function toOptionalString(value, fallback = null) {
   if (value === null || value === undefined) return fallback;
@@ -61,12 +63,83 @@ function uniqueStrings(values = []) {
   return out;
 }
 
+function splitListValue(value) {
+  if (Array.isArray(value)) return value.flatMap((entry) => splitListValue(entry));
+  const text = toOptionalString(value, null);
+  if (!text) return [];
+  return text
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 function readJsonFile(filePath) {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
   } catch (_) {
     return null;
   }
+}
+
+function normalizeSection(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const normalized = text.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if (normalized === 'mira') return 'Mira';
+  if (normalized === 'trustquote') return 'TrustQuote';
+  if (normalized === 'squidrun') return 'SquidRun';
+  if (normalized === 'other') return 'Other';
+  return null;
+}
+
+function haystackForSection(item = {}) {
+  const source = item.source && typeof item.source === 'object' ? item.source : {};
+  const project = item.project && typeof item.project === 'object' ? item.project : {};
+  return [
+    item.id,
+    item.title,
+    item.objective,
+    item.kind,
+    item.status,
+    item.profile,
+    item.windowKey,
+    item.section,
+    project.name,
+    project.path,
+    item.sourceRef,
+    source.kind,
+    source.ref,
+    source.label,
+    item.rationale,
+    item.nextAction,
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function classifyTaskAuditSection(item = {}) {
+  const explicit = normalizeSection(item.section || item.area);
+  if (explicit) return explicit;
+  const project = item.project && typeof item.project === 'object' ? item.project : {};
+  const projectSection = normalizeSection(project.name);
+  if (projectSection) return projectSection;
+
+  const haystack = haystackForSection(item);
+  if (/\btrustquote\b|trustquote-work-room|work-room|route-owner|prod-readiness|staging|deploy/.test(haystack)) {
+    return 'TrustQuote';
+  }
+  if (/\bmira\b|presence-runtime|north-star|voice-transport|a3_a4|a3|a4/.test(haystack)) {
+    return 'Mira';
+  }
+  if (/\bsquidrun\b|task-audit|work-item|codex|attention|desktop|mission-control|memory|evidence|restart|handoff|current-lane|hm-send|telegram|supervisor|scheduler|recovery|bridge|pane|oracle|architect|builder|firmware|gemini|localmodel|future-items/.test(haystack)) {
+    return 'SquidRun';
+  }
+  return 'Other';
+}
+
+function addSection(item = {}) {
+  return {
+    ...item,
+    section: classifyTaskAuditSection(item),
+  };
 }
 
 function resolveAppStatusPath(options = {}) {
@@ -114,7 +187,7 @@ function normalizeProofSummary(item = {}) {
 function activeItemFromWorkItem(item = {}) {
   const sessionId = toOptionalString(item.session?.id, null);
   const updatedAt = asIso(item.updatedAt || item.createdAt);
-  return {
+  return addSection({
     id: item.id || null,
     title: toOptionalString(item.objective, '(no objective)'),
     status: toOptionalString(item.state, 'active'),
@@ -134,7 +207,7 @@ function activeItemFromWorkItem(item = {}) {
     riskClass: item.riskClass || null,
     sideEffectCaps: Array.isArray(item.sideEffectCaps) ? item.sideEffectCaps : [],
     requiredProofs: Array.isArray(item.requiredProofs) ? item.requiredProofs : [],
-  };
+  });
 }
 
 function historyItemFromWorkItem(item = {}) {
@@ -151,7 +224,7 @@ function historyItemFromWorkItem(item = {}) {
   const missingText = proofState.missingRoles.length
     ? ` Missing: ${proofState.missingRoles.join(', ')}.`
     : '';
-  return {
+  return addSection({
     id: item.id || null,
     title: toOptionalString(item.objective, '(no objective)'),
     status: verdict,
@@ -179,7 +252,7 @@ function historyItemFromWorkItem(item = {}) {
     why: `${proofText}${missingText}`,
     proofState,
     closureReason: toOptionalString(closure.reason, null),
-  };
+  });
 }
 
 function activeItemFromCurrentLane(currentLane = {}) {
@@ -188,7 +261,7 @@ function activeItemFromCurrentLane(currentLane = {}) {
     : null;
   if (!activeLane) return null;
   const updatedAt = asIso(currentLane.generatedAt || Date.now());
-  return {
+  return addSection({
     id: activeLane.workItemId || activeLane.laneId || activeLane.sourceRef || activeLane.sourceMessageId,
     title: toOptionalString(activeLane.objective, '(no objective)'),
     status: toOptionalString(activeLane.status || currentLane.status, 'active'),
@@ -213,12 +286,25 @@ function activeItemFromCurrentLane(currentLane = {}) {
     riskClass: null,
     sideEffectCaps: [],
     requiredProofs: [],
-  };
+  });
+}
+
+function shouldPromoteCurrentLaneFallback(currentLane = {}) {
+  const activeLane = currentLane.activeLane && typeof currentLane.activeLane === 'object'
+    ? currentLane.activeLane
+    : null;
+  if (!activeLane) return false;
+  if (toOptionalString(activeLane.workItemId || activeLane.sourceRef, null)) return true;
+
+  const source = toOptionalString(currentLane.source, '').toLowerCase();
+  const laneId = toOptionalString(activeLane.laneId, '').toLowerCase();
+  if (source === 'comms_journal' && laneId.includes(':unsequenced:')) return false;
+  return true;
 }
 
 function activeItemFromQueueTask(task = {}) {
   const updatedAt = asIso(task.updatedAt || task.lastAdvancedAt || Date.now());
-  return {
+  return addSection({
     id: task.taskId || `${task.agent}:active`,
     title: toOptionalString(task.title, task.taskId || '(no title)'),
     status: toOptionalString(task.status || task.state, 'active'),
@@ -243,22 +329,26 @@ function activeItemFromQueueTask(task = {}) {
     riskClass: null,
     sideEffectCaps: [],
     requiredProofs: [],
-  };
+  });
 }
 
 function normalizeTaskAuditItem(raw = {}, index = 0, sourcePath = null, defaults = {}) {
   const id = toOptionalString(raw.id, null) || `task-audit-item-${index + 1}`;
   const updatedAt = asIso(raw.updatedAt || raw.createdAt || raw.timestamp || Date.now());
   const sessionId = toOptionalString(raw.sessionId || raw.session?.id, null);
-  const partition = String(raw.partition || raw.tab || 'future').toLowerCase() === 'active'
+  const requestedPartition = String(raw.partition || raw.tab || 'future').toLowerCase();
+  const partition = requestedPartition === 'active'
     ? 'active'
-    : 'future';
-  return {
+    : (requestedPartition === 'history' || requestedPartition === 'resolved' ? 'history' : 'future');
+  return addSection({
     id,
     title: toOptionalString(raw.title || raw.objective || raw.summary, '(no title)'),
     status: toOptionalString(raw.status || raw.state, 'future'),
+    verdict: toOptionalString(raw.verdict, null),
     kind: toOptionalString(raw.kind || raw.category, 'future_audit'),
     partition,
+    section: toOptionalString(raw.section || raw.area, null),
+    tags: uniqueStrings(splitListValue(raw.tags || raw.tag)),
     ownerRoles: uniqueStrings(raw.ownerRoles || raw.ownerRole || raw.owner || []),
     sessionId,
     sessionNumber: parseSessionNumber(sessionId),
@@ -271,9 +361,13 @@ function normalizeTaskAuditItem(raw = {}, index = 0, sourcePath = null, defaults
     createdAt: asIso(raw.createdAt || updatedAt),
     updatedAt,
     timestamp: updatedAt,
+    closedAt: toOptionalString(raw.closedAt || raw.resolvedAt, null) ? asIso(raw.closedAt || raw.resolvedAt) : null,
+    whatHappened: toOptionalString(raw.whatHappened || raw.outcome, null),
+    why: toOptionalString(raw.why || raw.evidenceSummary, null),
     rationale: toOptionalString(raw.rationale || raw.reason || raw.notes, null),
     nextAction: toOptionalString(raw.nextAction, null),
-  };
+    evidenceRefs: uniqueStrings(raw.evidenceRefs || raw.evidenceRef || []),
+  });
 }
 
 function itemsFromStore(parsed, sourcePath, defaults = {}) {
@@ -281,13 +375,97 @@ function itemsFromStore(parsed, sourcePath, defaults = {}) {
   return rawItems.map((item, index) => normalizeTaskAuditItem(item, index, normalizePathForMetadata(sourcePath), defaults));
 }
 
+function resolvedDgcProofPath(options = {}) {
+  const explicit = toOptionalString(options.dgcResolvedProofPath, null);
+  if (explicit) return path.resolve(explicit);
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('runtime', 'builder-task-audit-cleanup-392-proof.md'));
+  }
+  return path.join(getProjectRoot(), '.squidrun', 'runtime', 'builder-task-audit-cleanup-392-proof.md');
+}
+
+function dgcBundlePath(options = {}) {
+  const explicit = toOptionalString(options.dgcBundlePath, null);
+  if (explicit) return path.resolve(explicit);
+  return path.join(getProjectRoot(), 'ui', DGC_BUNDLE_BASENAME);
+}
+
+function hasDgcResolvedByAbsenceProof(options = {}) {
+  const proofPath = resolvedDgcProofPath(options);
+  try {
+    const text = fs.readFileSync(proofPath, 'utf8');
+    return text.includes('Resolved by absence / no-op')
+      && text.includes(`ui/${DGC_BUNDLE_BASENAME}`)
+      && text.includes('does not exist');
+  } catch (_) {
+    return false;
+  }
+}
+
+function isDgcBundleAuditItem(item = {}) {
+  return haystackForSection(item).includes(DGC_BUNDLE_BASENAME.toLowerCase());
+}
+
+function resolveDgcBundleAuditItem(item = {}, options = {}) {
+  if (!isDgcBundleAuditItem(item)) return item;
+  if (item.partition === 'history' || fs.existsSync(dgcBundlePath(options)) || !hasDgcResolvedByAbsenceProof(options)) {
+    return item;
+  }
+  const proofPath = normalizePathForMetadata(resolvedDgcProofPath(options));
+  return addSection({
+    ...item,
+    partition: 'history',
+    status: 'resolved',
+    verdict: 'resolved',
+    state: 'closed',
+    closedAt: '2026-05-31T20:20:37.176Z',
+    updatedAt: '2026-05-31T20:20:37.176Z',
+    timestamp: '2026-05-31T20:20:37.176Z',
+    whatHappened: `${DGC_BUNDLE_BASENAME} was checked in session 392 and resolved by absence; no file exists now.`,
+    why: `Evidence: ${proofPath}; ${normalizePathForMetadata(dgcBundlePath(options))} is absent.`,
+    rationale: `${DGC_BUNDLE_BASENAME} is not present, so this is not current cleanup work.`,
+    nextAction: 'No action needed unless the file reappears.',
+    evidenceRefs: uniqueStrings([...(item.evidenceRefs || []), proofPath]),
+  });
+}
+
+function reconcileTaskAuditItems(items = [], options = {}) {
+  return items.map((item) => resolveDgcBundleAuditItem(item, options));
+}
+
+function historyItemFromTaskAuditItem(item = {}) {
+  const closedAt = asIso(item.closedAt || item.updatedAt || item.timestamp || item.createdAt);
+  const verdict = toOptionalString(item.verdict || item.status || 'resolved', 'resolved');
+  const whatHappened = toOptionalString(item.whatHappened || item.rationale, null)
+    || 'Audit item was resolved or recorded for history.';
+  const why = toOptionalString(item.why || item.nextAction, null)
+    || 'Retained as Task Audit history with source evidence.';
+  return addSection({
+    ...item,
+    status: verdict,
+    verdict,
+    state: 'closed',
+    closedAt,
+    timestamp: closedAt,
+    updatedAt: asIso(item.updatedAt || closedAt),
+    source: item.source && typeof item.source === 'object'
+      ? { ...item.source, kind: item.source.kind || 'task_audit_history' }
+      : { kind: 'task_audit_history', ref: item.sourceRef || item.id || null, label: 'task_audit_history' },
+    sourceRef: item.sourceRef || item.id || null,
+    whatHappened,
+    why,
+    closureReason: whatHappened,
+    proofState: null,
+  });
+}
+
 function readTaskAuditItems(options = {}) {
   const taskAuditItemsPath = resolveTaskAuditItemsPath(options);
   const parsed = readJsonFile(taskAuditItemsPath);
-  const items = itemsFromStore(parsed, taskAuditItemsPath, {
+  const items = reconcileTaskAuditItems(itemsFromStore(parsed, taskAuditItemsPath, {
     sourceKind: 'task_audit_item_store',
     sourceLabel: 'task_audit_items',
-  });
+  }), options);
   return {
     ok: true,
     schema: TASK_AUDIT_ITEMS_SCHEMA,
@@ -305,13 +483,29 @@ function readFutureItems(options = {}) {
   return readTaskAuditItems(options);
 }
 
+function reconciliationWarningTitle(warning) {
+  const text = String(warning || '');
+  if (text === 'no_typed_active_work_item_current_lane_active') {
+    return 'Current-lane store shows an unverified active entry';
+  }
+  if (text === 'no_typed_active_work_item_queue_active') {
+    return 'Agent queue has active work without typed work-item proof';
+  }
+  return text
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    || 'Active work reconciliation warning';
+}
+
 function futureItemsFromReconciliation(reconciliation = {}, generatedAt = asIso()) {
   const warnings = Array.isArray(reconciliation.warnings) ? reconciliation.warnings : [];
   return warnings.map((warning, index) => {
     const kind = String(warning || '').includes('conflict') ? 'reconciliation_conflict' : 'reconciliation_stale_marker';
     return normalizeTaskAuditItem({
       id: `reconciliation-${index + 1}-${String(warning).replace(/[^a-z0-9_-]+/gi, '_').slice(0, 48)}`,
-      title: String(warning || 'active work reconciliation warning'),
+      title: reconciliationWarningTitle(warning),
       status: kind === 'reconciliation_conflict' ? 'needs_review' : 'watch',
       kind,
       sourceKind: 'active_work_reconciliation',
@@ -320,6 +514,7 @@ function futureItemsFromReconciliation(reconciliation = {}, generatedAt = asIso(
       createdAt: generatedAt,
       updatedAt: generatedAt,
       rationale: 'Active task authority and fallback stores need review before this becomes active work.',
+      nextAction: 'Review later only when Architect opens a current lane with typed work-item proof.',
     }, index);
   });
 }
@@ -337,8 +532,10 @@ function buildActiveItems(status = {}) {
 
   const reconciliation = status.activeWorkReconciliation || {};
   const fallback = [];
-  const currentLaneItem = activeItemFromCurrentLane(reconciliation.currentLaneActive || {});
-  if (currentLaneItem) fallback.push(currentLaneItem);
+  if (shouldPromoteCurrentLaneFallback(reconciliation.currentLaneActive || {})) {
+    const currentLaneItem = activeItemFromCurrentLane(reconciliation.currentLaneActive || {});
+    if (currentLaneItem) fallback.push(currentLaneItem);
+  }
   for (const task of Array.isArray(reconciliation.queueActive) ? reconciliation.queueActive : []) {
     const queueItem = activeItemFromQueueTask(task);
     if (!fallback.some((item) => item.id === queueItem.id)) fallback.push(queueItem);
@@ -365,9 +562,12 @@ function buildLiveTaskAuditSnapshot(options = {}) {
     ...buildActiveItems(status),
     ...supplementalActiveItems,
   ]);
-  const historyItems = buildHistoryItems(status, options);
+  const historyItems = sortByUpdatedAtDesc([
+    ...buildHistoryItems(status, options),
+    ...itemStore.items.filter((item) => item.partition === 'history').map(historyItemFromTaskAuditItem),
+  ]).slice(0, Number.isFinite(Number(options.historyLimit)) ? Number(options.historyLimit) : 50);
   const futureItems = sortByUpdatedAtDesc([
-    ...itemStore.items.filter((item) => item.partition !== 'active'),
+    ...itemStore.items.filter((item) => item.partition === 'future'),
     ...futureItemsFromReconciliation(reconciliation || {}, generatedAt),
   ]);
   const primarySessionId = activeItems[0]?.sessionId
@@ -417,8 +617,10 @@ function buildLiveTaskAuditSnapshot(options = {}) {
 module.exports = {
   DEFAULT_TASK_AUDIT_ITEMS_RELATIVE_PATH,
   SNAPSHOT_SCHEMA,
+  TASK_AUDIT_SECTIONS,
   TASK_AUDIT_ITEMS_SCHEMA,
   buildLiveTaskAuditSnapshot,
+  classifyTaskAuditSection,
   readFutureItems,
   readTaskAuditItems,
   resolveAppStatusPath,
