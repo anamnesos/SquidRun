@@ -1643,6 +1643,80 @@ describe('auto-handoff-materializer', () => {
     expect(currentLane.activeLane.sourceMessageId).toBe('m-arch-65');
   });
 
+  test('oracle descriptive proof prose does not materialize a phantom current lane', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
+    const offendingFragment = 'audit-cleanup-392 and telegram-reply-debt-dedupe-392 each have builder proof md+hash +';
+    const rows = [
+      {
+        messageId: 'hm-1780299003902-hkqn7i',
+        sessionId: 'app-session-393',
+        senderRole: 'oracle',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        rawBody: [
+          `Task: ${offendingFragment}`,
+          'History (closed) <-- ADD this tab.',
+          'This is descriptive review/proof status, not a delegation or current-lane instruction.',
+        ].join('\n'),
+        brokeredAtMs: 1780299003942,
+      },
+    ];
+    writeJson(currentLanePath, {
+      source: 'comms_journal',
+      status: 'active',
+      activeLane: {
+        laneId: 'app-session-393:unsequenced:hm-1780299003902-hkqn7i',
+        sourceMessageId: 'hm-1780299003902-hkqn7i',
+        objective: offendingFragment,
+        kind: 'task',
+        status: 'active',
+      },
+    });
+
+    expect(extractCurrentLaneDirective(rows[0].rawBody)).toEqual(expect.objectContaining({
+      kind: 'task',
+      objective: offendingFragment,
+    }));
+
+    const result = await materializeSessionHandoff({
+      rows,
+      outputPath,
+      currentLanePath,
+      legacyMirrorPath: false,
+      sessionId: 'app-session-393',
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 1780299060000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.currentLane).toEqual(expect.objectContaining({
+      status: 'none',
+      activeLane: null,
+      activeLaneCount: 0,
+      candidateCount: 0,
+    }));
+
+    const currentLane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    expect(currentLane.status).toBe('none');
+    expect(currentLane.activeLane).toBeNull();
+    expect(currentLane.continuity.next_action).toBeNull();
+    expect(currentLane.activeWorkReconciliation).toEqual(expect.objectContaining({
+      status: 'OK',
+      authority: 'none',
+      chosenAuthority: 'none',
+      currentLaneActive: expect.objectContaining({
+        activeLane: null,
+        status: 'none',
+      }),
+      staleMarkers: [],
+      warnings: [],
+    }));
+    expect(JSON.stringify(currentLane.activeLane || {})).not.toContain(offendingFragment);
+  });
+
   test('pre-closeout materialized current lane ignores Builder proof visible-answer text and unsequenced status prose', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');

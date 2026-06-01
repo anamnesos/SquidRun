@@ -102,6 +102,7 @@ describe('live-task-audit-sidecar', () => {
         title: 'Review mobile loading/dev-badge flags',
         kind: 'browser_cleanup',
         sessionNumber: 389,
+        section: 'SquidRun',
       }),
     ]);
     expect(snapshot.active.items.map((item) => item.title)).not.toContain('Review mobile loading/dev-badge flags');
@@ -153,6 +154,7 @@ describe('live-task-audit-sidecar', () => {
         id: 'wi-sidecar-history',
         title: 'Close a finished Task Audit cleanup lane',
         verdict: 'passed',
+        section: 'SquidRun',
         closedAt: '2026-05-30T19:02:00.000Z',
         whatHappened: 'Cleanup finished and proof attached.',
         why: 'Proof: 1/1 roles present.',
@@ -228,6 +230,70 @@ describe('live-task-audit-sidecar', () => {
     ]);
   });
 
+  test('classifies manual items into plain sections and moves resolved DGcSGf52 cleanup to History', () => {
+    const proofPath = path.join(tempRoot, '.squidrun', 'runtime', 'builder-task-audit-cleanup-392-proof.md');
+    writeJson(path.join(tempRoot, '.squidrun', 'app-status.json'), { session: 393 });
+    fs.mkdirSync(path.dirname(proofPath), { recursive: true });
+    fs.writeFileSync(proofPath, [
+      '## #2 ui/main-DGcSGf52.js provenance',
+      'Resolved by absence / no-op.',
+      '',
+      'Evidence:',
+      '- `ui/main-DGcSGf52.js` does not exist.',
+    ].join('\n'), 'utf8');
+    writeJson(taskAuditItemsPath, {
+      items: [
+        {
+          id: 'verify-stray-electron-main-bundle-391',
+          title: 'Verify whether ui/main-DGcSGf52.js is stray build output',
+          status: 'ask_verify',
+          kind: 'cleanup_ask_verify',
+          ownerRoles: ['builder'],
+          updatedAt: '2026-05-31T19:09:39.224Z',
+          sourceRef: '.squidrun/runtime/oracle-task-audit-inventory-391.md',
+        },
+        {
+          id: 'mira-live-vs-prototype-debt-393',
+          title: 'Separate live Mira wiring from parked prototype work',
+          status: 'needs_review',
+          kind: 'architecture_debt',
+          section: 'Mira',
+          updatedAt: '2026-06-01T07:30:00.000Z',
+        },
+        {
+          id: 'trustquote-prod-local-only-debt-393',
+          title: 'Track TrustQuote local-only deploy debt read-only',
+          status: 'watch',
+          kind: 'cross_project_read_only',
+          updatedAt: '2026-06-01T07:31:00.000Z',
+          profile: 'trustquote',
+        },
+      ],
+    });
+
+    const snapshot = sidecar.buildLiveTaskAuditSnapshot({
+      workItemRoot,
+      taskAuditItemsPath,
+      now: '2026-06-01T07:32:00.000Z',
+    });
+
+    expect(snapshot.future.items.map((item) => item.id)).toEqual([
+      'trustquote-prod-local-only-debt-393',
+      'mira-live-vs-prototype-debt-393',
+    ]);
+    expect(snapshot.future.items.map((item) => item.section)).toEqual(['TrustQuote', 'Mira']);
+    expect(snapshot.history.items).toEqual([
+      expect.objectContaining({
+        id: 'verify-stray-electron-main-bundle-391',
+        status: 'resolved',
+        verdict: 'resolved',
+        section: 'SquidRun',
+        whatHappened: expect.stringContaining('resolved by absence'),
+        why: expect.stringContaining('builder-task-audit-cleanup-392-proof.md'),
+      }),
+    ]);
+  });
+
   test('falls back to current-lane and queue while keeping stale markers in future audit', () => {
     writeJson(currentLanePath, {
       source: 'comms_fallback',
@@ -268,10 +334,37 @@ describe('live-task-audit-sidecar', () => {
       'Fallback active task from current-lane',
     ]);
     expect(snapshot.future.items.map((item) => item.title)).toEqual(expect.arrayContaining([
-      'no_typed_active_work_item_queue_active',
-      'no_typed_active_work_item_current_lane_active',
+      'Agent queue has active work without typed work-item proof',
+      'Current-lane store shows an unverified active entry',
     ]));
     expect(snapshot.reconciliation.status).toBe('STALE');
+  });
+
+  test('keeps unsequenced comms-journal current-lane fragments out of Needs Doing', () => {
+    writeJson(currentLanePath, {
+      source: 'comms_journal',
+      status: 'active',
+      generatedAt: '2026-06-01T07:39:38.470Z',
+      sessionId: 'app-session-393',
+      activeLane: {
+        laneId: 'app-session-393:unsequenced:hm-1780299003902-hkqn7i',
+        sourceRef: null,
+        sourceMessageId: 'hm-1780299003902-hkqn7i',
+        objective: 'History (closed) <-- ADD this tab.',
+        ownerRoles: ['builder'],
+      },
+    });
+
+    const snapshot = sidecar.buildLiveTaskAuditSnapshot({
+      workItemRoot,
+      currentLanePath,
+      now: '2026-06-01T07:40:00.000Z',
+    });
+
+    expect(snapshot.active.items).toEqual([]);
+    expect(snapshot.future.items.map((item) => item.title)).toEqual(expect.arrayContaining([
+      'Current-lane store shows an unverified active entry',
+    ]));
   });
 
 });

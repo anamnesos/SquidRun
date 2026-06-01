@@ -54,3 +54,9 @@ A fast regex lint applies to the first 50 characters of coworker outputs. It cat
 - Percentages must include the remaining blocker or next verification step. A number without "what moves it next" is not useful.
 - If the same percentage appears in repeated status reports, Architect must say why it has not changed. If there is no evidence-backed reason, treat the unchanged number as a drift signal and open a bounded lane-health review.
 - Progress numbers are estimates, not proof. Commits, tests, review verdicts, restart checks, and visible user-facing behavior are the evidence that moves the number.
+
+# Restart / Proof Actor Boundary
+
+When James assigns a restart or proof lane to Codex Desktop, Codex Desktop performs the restart/proof. SquidRun agents must not reroute that work to themselves or another agent.
+
+If Builder or Oracle sees a restart/proof plan naming Codex Desktop, they should hold for Codex Desktop to perform it and report Codex Desktop proof as pending. If an agent-run restart is proposed anyway, treat it as a process/authority failure with the wrong actor, not as a code, commit, or preflight gap.

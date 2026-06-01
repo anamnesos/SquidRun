@@ -958,11 +958,13 @@ function attachFallbackActiveWorkReconciliation(currentLane = {}, typedCurrentLa
   const sourceReconciliation = typedCurrentLane?.activeWorkReconciliation;
   if (!sourceReconciliation || typedCurrentLane?.activeLane) return currentLane;
 
-  const staleMarkers = uniqueInlineStrings(sourceReconciliation.staleMarkers || []);
-  const warnings = uniqueInlineStrings(sourceReconciliation.warnings || []);
   const activeLane = currentLane?.activeLane && typeof currentLane.activeLane === 'object'
     ? currentLane.activeLane
     : null;
+  const staleMarkers = uniqueInlineStrings(sourceReconciliation.staleMarkers || [])
+    .filter((marker) => activeLane || marker !== 'no_typed_active_work_item_current_lane_active');
+  const warnings = uniqueInlineStrings(sourceReconciliation.warnings || [])
+    .filter((marker) => activeLane || marker !== 'no_typed_active_work_item_current_lane_active');
   if (activeLane) {
     const marker = 'no_typed_active_work_item_current_lane_active';
     if (!staleMarkers.includes(marker)) staleMarkers.push(marker);
@@ -971,18 +973,16 @@ function attachFallbackActiveWorkReconciliation(currentLane = {}, typedCurrentLa
 
   const status = sourceReconciliation.status === 'CONFLICT'
     ? 'CONFLICT'
-    : (staleMarkers.length > 0 || warnings.length > 0 ? 'STALE' : sourceReconciliation.status);
+    : (staleMarkers.length > 0 || warnings.length > 0 ? 'STALE' : 'OK');
   const authority = activeLane
     ? 'current_lane'
-    : sourceReconciliation.chosenAuthority || sourceReconciliation.authority || 'none';
+    : ((sourceReconciliation.queueActiveIds || []).length > 0 ? 'agent_task_queue' : 'none');
   const reconciliation = {
     ...sourceReconciliation,
     status,
     authority,
     chosenAuthority: authority,
-    currentLaneActive: activeLane
-      ? currentLaneActiveForReconciliation(currentLane, currentLanePath)
-      : sourceReconciliation.currentLaneActive,
+    currentLaneActive: currentLaneActiveForReconciliation(currentLane, currentLanePath),
     staleMarkers,
     warnings,
   };

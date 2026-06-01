@@ -94,6 +94,12 @@ function canSetCurrentLaneFromBody(rawBody) {
   return !ref || ref.role === 'architect';
 }
 
+function canSetCurrentLaneFromRow(row = {}) {
+  const senderRole = normalizeAgentRole(row?.senderRole);
+  if (senderRole && senderRole !== 'architect') return false;
+  return canSetCurrentLaneFromBody(row?.rawBody || '');
+}
+
 function extractAgentRefs(rawBody) {
   const text = toOptionalString(rawBody, '');
   if (!text) return [];
@@ -666,6 +672,7 @@ function deriveCurrentLaneSnapshot(rows = [], options = {}) {
   for (let index = 0; index < orderedRows.length; index += 1) {
     const row = orderedRows[index];
     if (!canUseCommsRowAsMainLaneAuthority(row)) continue;
+    if (!canSetCurrentLaneFromRow(row)) continue;
     const directive = extractCurrentLaneDirective(row?.rawBody || '');
     if (!directive) continue;
     const ref = parseLeadingAgentRef(row?.rawBody || '');

@@ -51,12 +51,12 @@
     {
       id: 'table',
       label: 'Table',
-      note: 'Most compact scan.',
+      note: 'Rows',
     },
     {
       id: 'timeline',
       label: 'Timeline',
-      note: 'Updated-first stack.',
+      note: 'Cards',
     },
   ];
 
@@ -64,6 +64,52 @@
   let refreshTimer = null;
   let lastSnapshotOk = false;
   let currentSnapshot = null;
+  const SECTION_ORDER = ['Mira', 'TrustQuote', 'SquidRun', 'Other'];
+  const STATUS_LABELS = {
+    active: 'Active',
+    ask_james: 'Ask James',
+    ask_james_protected: 'Protected - ask James',
+    ask_verify: 'Needs verification',
+    blocked: 'Blocked',
+    canceled: 'Canceled',
+    cleanup_action: 'Cleanup',
+    closed: 'Closed',
+    deferred: 'Deferred',
+    failed: 'Failed',
+    future: 'Parked',
+    keep_dormant: 'Keep dormant',
+    needs_review: 'Needs review',
+    open: 'Open',
+    passed: 'Passed',
+    queued: 'Queued',
+    ready_to_delete_after_proof_check: 'Ready after proof check',
+    resolved: 'Resolved',
+    watch: 'Watch',
+    waiting_codex_visual: 'Waiting for Codex proof',
+  };
+  const SOURCE_LABELS = {
+    active_work_reconciliation: 'Work reconciliation',
+    agent_task_queue: 'Agent task queue',
+    current_lane: 'Current lane',
+    oracle_v2_cleanup: 'Oracle cleanup review',
+    protected_file_policy: 'Protected file policy',
+    settings_disabled_flag: 'Disabled setting',
+    task_audit_history: 'Task Audit history',
+    task_audit_item_store: 'Task Audit item store',
+    task_audit_items: 'Task Audit item store',
+    task_audit_manual_item: 'Manual audit item',
+    work_item: 'Work item',
+    work_item_history: 'Work item history',
+  };
+  const OWNER_LABELS = {
+    architect: 'Architect',
+    builder: 'Builder',
+    codex: 'Codex',
+    oracle: 'Oracle',
+    trustquote_builder: 'TrustQuote Builder',
+    trustquote_oracle: 'TrustQuote Oracle',
+    unassigned: 'Unassigned',
+  };
 
   function getBridgeApi() {
     return window.squidrunAPI || window.squidrun || {};
@@ -140,17 +186,111 @@
 
   function ownerText(item) {
     const roles = safeArray(item.ownerRoles);
-    return roles.length ? roles.join(', ') : 'unassigned';
+    const values = roles.length ? roles : ['unassigned'];
+    return values.map(displayOwnerRole).join(', ');
+  }
+
+  function ownerTone(role) {
+    const normalized = String(role || '').toLowerCase();
+    if (normalized.includes('codex')) return 'codex';
+    if (normalized.includes('builder')) return 'builder';
+    if (normalized.includes('oracle')) return 'oracle';
+    if (normalized.includes('architect')) return 'architect';
+    return 'neutral';
+  }
+
+  function ownerTokens(item) {
+    const roles = safeArray(item.ownerRoles);
+    const values = roles.length ? roles : ['unassigned'];
+    return values.map((role) => el('span', `task-audit-owner-token ${ownerTone(role)}`, displayOwnerRole(role)));
+  }
+
+  function appendOwnerTokens(parent, item) {
+    const wrap = el('div', 'task-audit-owner-cell');
+    ownerTokens(item).forEach((token) => wrap.appendChild(token));
+    parent.appendChild(wrap);
   }
 
   function sourceText(item) {
     const source = item.source && typeof item.source === 'object' ? item.source : {};
-    return source.label || item.sourceRef || item.id || '-';
+    return displaySource(source.label || source.kind || item.sourceRef || item.id || '-');
+  }
+
+  function humanizeToken(value) {
+    const text = String(value || '').trim();
+    if (!text) return '-';
+    return text
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+
+  function displayStatus(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return 'Unknown';
+    const key = raw.toLowerCase();
+    return STATUS_LABELS[key] || humanizeToken(raw);
+  }
+
+  function displaySource(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '-';
+    const key = raw.toLowerCase();
+    if (SOURCE_LABELS[key]) return SOURCE_LABELS[key];
+    if (/^architect#\d+$/i.test(raw)) return raw.replace(/^architect/i, 'Architect ');
+    if (/^builder#\d+$/i.test(raw)) return raw.replace(/^builder/i, 'Builder ');
+    if (/^oracle#\d+$/i.test(raw)) return raw.replace(/^oracle/i, 'Oracle ');
+    if (/telegram-in-/i.test(raw)) return 'Telegram request';
+    if (/codex/i.test(raw)) return 'Codex proof';
+    if (raw.includes('/') || raw.includes('\\')) return compactPath(raw);
+    return humanizeToken(raw);
+  }
+
+  function displayOwnerRole(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return OWNER_LABELS.unassigned;
+    const key = raw.toLowerCase();
+    return OWNER_LABELS[key] || humanizeToken(raw);
+  }
+
+  function sectionForItem(item = {}) {
+    const explicit = String(item.section || '').trim();
+    if (SECTION_ORDER.includes(explicit)) return explicit;
+    const projectName = String(item.project?.name || '').toLowerCase();
+    const profile = String(item.profile || '').toLowerCase();
+    const source = `${item.sourceRef || ''} ${item.source?.label || ''} ${item.source?.kind || ''}`.toLowerCase();
+    const title = String(item.title || '').toLowerCase();
+    const haystack = `${projectName} ${profile} ${source} ${title} ${item.kind || ''}`.toLowerCase();
+    if (haystack.includes('trustquote')) return 'TrustQuote';
+    if (/\bmira\b|presence|north-star|voice/.test(haystack)) return 'Mira';
+    if (/squidrun|task-audit|codex|memory|evidence|mission|restart|hm-send|telegram|supervisor|scheduler|bridge|gemini|firmware|localmodel|future-items/.test(haystack)) return 'SquidRun';
+    return 'Other';
+  }
+
+  function groupItemsBySection(items = []) {
+    const groups = new Map(SECTION_ORDER.map((section) => [section, []]));
+    items.forEach((item) => {
+      const section = sectionForItem(item);
+      if (!groups.has(section)) groups.set('Other', groups.get('Other') || []);
+      groups.get(groups.has(section) ? section : 'Other').push(item);
+    });
+    return SECTION_ORDER
+      .map((section) => ({ section, items: groups.get(section) || [] }))
+      .filter((group) => group.items.length > 0);
   }
 
   function setText(id, value) {
     const node = document.getElementById(id);
     if (node) node.textContent = value;
+  }
+
+  function setCount(id, value) {
+    const node = document.getElementById(id);
+    if (!node) return;
+    const count = Number(value) || 0;
+    node.textContent = String(count);
+    node.dataset.hasItems = count > 0 ? 'true' : 'false';
   }
 
   function setTone(id, value, tone) {
@@ -171,7 +311,7 @@
     const status = String(value || '').toLowerCase();
     if (status.includes('block') || status.includes('fail') || status.includes('needs_review')) return 'danger';
     if (status.includes('wait') || status.includes('queue') || status.includes('watch') || status.includes('defer')) return 'warn';
-    if (status.includes('complete') || status.includes('closed') || status.includes('pass')) return 'good';
+    if (status.includes('complete') || status.includes('closed') || status.includes('pass') || status.includes('resolved')) return 'good';
     return future ? 'future' : 'active';
   }
 
@@ -281,19 +421,16 @@
     const data = summary(snapshot);
     const sessionNumber = snapshot?.session?.number;
     const sessionId = snapshot?.session?.id;
-    setText('taskAuditSession', sessionNumber ? `Session #${sessionNumber}` : (sessionId || 'Session -'));
+    setText('taskAuditSession', sessionNumber ? `Session ${sessionNumber}` : (sessionId || 'Session -'));
     setText('taskAuditUpdated', `Updated ${formatTime(snapshot?.generatedAt)}`);
-    setText('taskAuditSchema', snapshot?.schema || 'snapshot unavailable');
-    setText('taskAuditSource', compactPath(snapshot?.sources?.taskAuditItemsPath || snapshot?.future?.sourcePath));
-    setTone('taskAuditHealth', lastSnapshotOk ? 'Snapshot live' : 'Snapshot issue', lastSnapshotOk ? 'good' : 'danger');
-    setTone('taskAuditAuthority', `Authority: ${data.reconciliation.authority}`, data.reconciliation.conflicts ? 'danger' : 'neutral');
+    setTone('taskAuditHealth', lastSnapshotOk ? 'Live' : 'Needs check', lastSnapshotOk ? 'good' : 'danger');
     Object.entries(TAB_CONFIG).forEach(([key, config]) => {
       const count = data[key]?.length || 0;
-      setText(config.countId, String(count));
-      setText(config.telemetryId, String(count));
+      setCount(config.countId, count);
+      setCount(config.telemetryId, count);
     });
-    setText('terminalBlockerCount', String(data.blockers));
-    setText('terminalSignalCount', String(data.signals));
+    setCount('terminalBlockerCount', data.blockers);
+    setCount('terminalSignalCount', data.signals);
   }
 
   function emptyState(title, detail) {
@@ -314,14 +451,7 @@
     const nav = document.getElementById('taskAuditLayouts');
     if (!nav) return;
     nav.replaceChildren();
-    LAYOUTS.forEach((layout) => {
-      const link = el('a', layout.id === selectedLayout ? 'active' : '');
-      link.href = layoutUrl(layout.id);
-      link.dataset.layout = layout.id;
-      link.appendChild(el('strong', '', layout.label));
-      link.appendChild(el('span', '', layout.note));
-      nav.appendChild(link);
-    });
+    nav.hidden = true;
   }
 
   function rowLabels(partition = 'active') {
@@ -338,7 +468,7 @@
       item.title || '(no title)',
       whyItMatters(item, partition),
       ownerText(item),
-      item.status || 'unknown',
+      displayStatus(item.status || 'unknown'),
       formatDateTime(item.updatedAt || item.timestamp),
       sourceText(item),
       nextAction(item, partition),
@@ -347,15 +477,17 @@
       item.title || '(no title)',
       whyItMatters(item, partition),
       ownerText(item),
-      item.verdict || item.status || 'closed',
+      displayStatus(item.verdict || item.status || 'closed'),
       formatDateTime(item.closedAt || item.timestamp || item.updatedAt),
       sourceText(item),
       nextAction(item, partition),
     ];
     const values = partition === 'history' ? historyValues : activeValues;
     values.forEach((value, index) => {
-      const cell = el('td', index === 0 ? 'task-title' : '', value);
+      const label = labels[index];
+      const cell = el('td', index === 0 ? 'task-title' : '', label === 'Owner' ? undefined : value);
       cell.dataset.label = labels[index];
+      if (label === 'Owner') appendOwnerTokens(cell, item);
       row.appendChild(cell);
     });
     return row;
@@ -367,7 +499,7 @@
         'Task Title': item.title || '(no title)',
         'What Happened': whyItMatters(item, partition),
         Owner: ownerText(item),
-        Verdict: item.verdict || item.status || 'closed',
+        Verdict: displayStatus(item.verdict || item.status || 'closed'),
         'Closed At': formatDateTime(item.closedAt || item.timestamp || item.updatedAt),
         Source: sourceText(item),
         Why: nextAction(item, partition),
@@ -377,7 +509,7 @@
       'Task Title': item.title || '(no title)',
       'Why It Matters': whyItMatters(item, partition),
       Owner: ownerText(item),
-      Status: item.status || 'unknown',
+      Status: displayStatus(item.status || 'unknown'),
       'Last Updated': formatDateTime(item.updatedAt || item.timestamp),
       Source: sourceText(item),
       'Next Action': nextAction(item, partition),
@@ -394,14 +526,45 @@
       const field = el('div', index === 0 ? 'primary' : '');
       field.dataset.label = label;
       field.appendChild(el('span', '', label));
-      field.appendChild(el(index === 0 ? 'strong' : 'p', '', values[label]));
+      if (label === 'Owner') {
+        appendOwnerTokens(field, item);
+      } else {
+        field.appendChild(el(index === 0 ? 'strong' : 'p', '', values[label]));
+      }
       row.appendChild(field);
     });
     return row;
   }
 
+  function renderTable(items, partition = 'active') {
+    const table = el('table', 'task-audit-table');
+    const head = el('thead');
+    const headRow = el('tr');
+    rowLabels(partition).forEach((label) => headRow.appendChild(el('th', '', label)));
+    head.appendChild(headRow);
+    table.appendChild(head);
+    const body = el('tbody');
+    items.forEach((item) => body.appendChild(renderRow(item, partition)));
+    table.appendChild(body);
+    return table;
+  }
+
+  function renderSectionGroup(group, partition = 'active', layout = 'table') {
+    const groupNode = el('section', 'task-audit-section-group');
+    groupNode.dataset.section = group.section;
+    const heading = el('h3', '', `${group.section} (${group.items.length})`);
+    groupNode.appendChild(heading);
+    if (layout === 'timeline') {
+      const timeline = el('div', 'task-audit-timeline-layout');
+      group.items.forEach((item) => timeline.appendChild(renderFieldCard(item, partition)));
+      groupNode.appendChild(timeline);
+      return groupNode;
+    }
+    groupNode.appendChild(renderTable(group.items, partition));
+    return groupNode;
+  }
+
   function renderRows(items, partition = 'active', layout = 'table') {
-    const future = partition === 'future';
     const config = TAB_CONFIG[partition] || TAB_CONFIG.active;
     const section = el('section', 'task-audit-table-wrap');
     section.dataset.partition = partition;
@@ -415,23 +578,9 @@
       return section;
     }
 
-    if (layout === 'timeline') {
-      const timeline = el('div', 'task-audit-timeline-layout');
-      items.forEach((item) => timeline.appendChild(renderFieldCard(item, partition)));
-      section.appendChild(timeline);
-      return section;
-    }
-
-    const table = el('table', 'task-audit-table');
-    const head = el('thead');
-    const headRow = el('tr');
-    rowLabels(partition).forEach((label) => headRow.appendChild(el('th', '', label)));
-    head.appendChild(headRow);
-    table.appendChild(head);
-    const body = el('tbody');
-    items.forEach((item) => body.appendChild(renderRow(item, partition)));
-    table.appendChild(body);
-    section.appendChild(table);
+    groupItemsBySection(items).forEach((group) => {
+      section.appendChild(renderSectionGroup(group, partition, layout));
+    });
     return section;
   }
 
