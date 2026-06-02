@@ -79,6 +79,14 @@ For agent-created artifacts, "ask James" is banned as a disposition. The default
 
 Every sidecar entry should use the existing `status`, `rationale`, and `nextAction` fields honestly. The state must say whether the thing is live, disabled, unproven, stale, to-finish, or blocked, and `nextAction` must name the agent-owned evidence step. Vague user-escalation parking is itself a defect to fix.
 
+# Agent Pane Injection Invariant
+
+Claude panes and Codex panes do not fail the same way. James's S400 differential clue was decisive: Codex panes were not truncating, only Claude panes were. That ruled out a universal PTY byte limit.
+
+Root cause found in `ui/modules/main/squidrun-app.js`: `deliverPaneMessageReliably()` tried the direct daemon PTY route first. That route already skipped large Codex payloads (`skipped.codex_chunked_payload`) so Codex fell through to the packetized/chunked inject path, but Claude payloads above the same threshold still went through one direct daemon PTY write plus Enter. That one-shot Claude write is the front-clip/tail-retain failure path.
+
+Current rule: payloads at or above `DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES` must skip direct daemon PTY for every pane runtime and use the verified packetized/chunked inject path. Short direct daemon writes may remain. The full-message pointer file is only a silent-clip safety net; it is not the root fix.
+
 # Telegram reply-guard: external-process replies vs in-memory state
 
 Load-bearing constraint (S396). `hm-send.js telegram` runs in a SEPARATE process from the Electron main app, so a Telegram reply it sends CANNOT directly clear the app's in-memory `pendingTelegramReplyGuards` map. That gap is what produced the recurring `(SYSTEM RESPONSE-DEBT) pane_output_without_telegram_egress` loop: the only clear path was a fragile lazy journal reconcile at pane-output time, so a reply that was actually sent kept getting flagged as unanswered.

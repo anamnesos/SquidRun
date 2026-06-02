@@ -150,7 +150,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/main/telegram-poller-worker.js: Child-process Telegram inbound poller owner; it is the only runtime `getUpdates` loop and sends inbound messages back to `SquidRunApp` through the inbound-poller service IPC boundary.
 - ui/modules/main/pane-host-window-manager.js: Creates/manages hidden pane-host BrowserWindows and routes bridge messages into pane-host renderers.
 - ui/modules/main/settings-manager.js: Exports SettingsManager.
-- ui/modules/main/squidrun-app.js: Registers IPC channels (pane-host-ready, pane-host-inject, pane-host-dispatch-enter, ...).
+- ui/modules/main/squidrun-app.js: Registers IPC channels (pane-host-ready, pane-host-inject, pane-host-dispatch-enter, ...). Its direct daemon PTY delivery path is short-payload only; chunk-sized or larger pane messages must route through packetized/chunked inject so Claude panes do not front-clip one-shot writes.
 - ui/modules/mira-core/autonomy-substrate-v0.js: Backend-only first autonomy substrate for typed Mira: self-directed drives, curiosity queue, permissioned local reads, transcript-quality gates, evidence-backed self-profile proposal records, and strict visible/backend separation. It performs no durable writes or external sends by default.
 - ui/modules/mira-core/developmental-understanding-v1.js: Builds Mira's integrated conversation, tentative-understanding, self-state, relationship-state, relational-texture, and next-intention surface without claiming durable memory commit or private consciousness.
 - ui/modules/mira-core/local-text-session-v0.js: Local Mira text session builder that applies language rules and model attachment boundaries before visible tab output.
