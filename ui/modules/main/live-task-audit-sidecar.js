@@ -406,6 +406,57 @@ function isDgcBundleAuditItem(item = {}) {
   return haystackForSection(item).includes(DGC_BUNDLE_BASENAME.toLowerCase());
 }
 
+function resolveSourceRefPath(sourceRef, options = {}) {
+  const ref = toOptionalString(sourceRef, null);
+  if (!ref) return null;
+  if (/^[a-z]+:\/\//i.test(ref)) return null;
+  const rawPath = ref.split(/\s+vs\s+/i)[0].split(/\s+\(/)[0].trim();
+  if (!rawPath || rawPath.includes(':') && !/^[A-Za-z]:[\\/]/.test(rawPath)) return null;
+  if (/^HEAD:/i.test(rawPath) || /^architect#\d+|^builder#\d+|^oracle#\d+/i.test(rawPath)) return null;
+  const normalized = rawPath.replace(/\\/g, '/');
+  if (!/[/.]/.test(normalized)) return null;
+  if (path.isAbsolute(rawPath)) return path.resolve(rawPath);
+  return path.join(getProjectRoot(), rawPath);
+}
+
+function isMissingSourceResolvedItem(item = {}, options = {}) {
+  if (item.partition === 'history') return false;
+  const explicit = String(item.resolveWhenSourceMissing || item.resolve_when_source_missing || '').toLowerCase();
+  const sourceKind = String(item.source?.kind || item.sourceKind || '').toLowerCase();
+  const kind = String(item.kind || '').toLowerCase();
+  const shouldCheck = explicit === 'true'
+    || explicit === '1'
+    || sourceKind === 'coordination_state'
+    || kind.includes('delete_candidate')
+    || kind.includes('dead_file')
+    || kind.includes('stale_file');
+  if (!shouldCheck) return false;
+  const sourcePath = resolveSourceRefPath(item.sourceRef || item.source?.ref, options);
+  if (!sourcePath) return false;
+  return !fs.existsSync(sourcePath);
+}
+
+function resolveMissingSourceAuditItem(item = {}, options = {}) {
+  if (!isMissingSourceResolvedItem(item, options)) return item;
+  const sourceRef = item.sourceRef || item.source?.ref || 'source file';
+  const updatedAt = asIso(options.now || options.nowMs);
+  return addSection({
+    ...item,
+    partition: 'history',
+    status: 'resolved',
+    verdict: 'resolved_by_absence',
+    state: 'closed',
+    closedAt: updatedAt,
+    updatedAt,
+    timestamp: updatedAt,
+    whatHappened: `${sourceRef} is absent, so the delete/dead-file audit item no longer belongs in Needs Doing.`,
+    why: `Source disappearance was reconciled from ${normalizePathForMetadata(resolveSourceRefPath(sourceRef, options) || sourceRef)}.`,
+    rationale: `Resolved by absence: ${sourceRef} is no longer present.`,
+    nextAction: 'No active action remains unless the source reappears.',
+    evidenceRefs: uniqueStrings([...(item.evidenceRefs || []), normalizePathForMetadata(resolveSourceRefPath(sourceRef, options) || sourceRef)]),
+  });
+}
+
 function resolveDgcBundleAuditItem(item = {}, options = {}) {
   if (!isDgcBundleAuditItem(item)) return item;
   if (item.partition === 'history' || fs.existsSync(dgcBundlePath(options)) || !hasDgcResolvedByAbsenceProof(options)) {
@@ -430,7 +481,9 @@ function resolveDgcBundleAuditItem(item = {}, options = {}) {
 }
 
 function reconcileTaskAuditItems(items = [], options = {}) {
-  return items.map((item) => resolveDgcBundleAuditItem(item, options));
+  return items
+    .map((item) => resolveMissingSourceAuditItem(item, options))
+    .map((item) => resolveDgcBundleAuditItem(item, options));
 }
 
 function historyItemFromTaskAuditItem(item = {}) {

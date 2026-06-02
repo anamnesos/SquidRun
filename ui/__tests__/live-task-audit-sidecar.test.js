@@ -230,6 +230,45 @@ describe('live-task-audit-sidecar', () => {
     ]);
   });
 
+  test('moves active dead-file manual items to History when their source file is gone', () => {
+    const deletedStatePath = path.join(tempRoot, '.squidrun', 'coord', 'current-objective-state.json');
+    writeJson(taskAuditItemsPath, {
+      items: [
+        {
+          id: 'current-objective-state-stale-dead-398',
+          partition: 'active',
+          section: 'SquidRun',
+          title: 'Delete stale current-objective-state.json',
+          status: 'needs_review',
+          kind: 'delete_candidate',
+          ownerRoles: ['builder', 'oracle'],
+          sessionId: 'app-session-398',
+          sourceKind: 'coordination_state',
+          sourceRef: '.squidrun/coord/current-objective-state.json',
+          updatedAt: '2026-06-02T10:31:07.097Z',
+        },
+      ],
+    });
+
+    const snapshot = sidecar.buildLiveTaskAuditSnapshot({
+      workItemRoot,
+      taskAuditItemsPath,
+      now: '2026-06-02T11:00:00.000Z',
+    });
+
+    expect(fs.existsSync(deletedStatePath)).toBe(false);
+    expect(snapshot.active.items.map((item) => item.id)).not.toContain('current-objective-state-stale-dead-398');
+    expect(snapshot.history.items).toEqual([
+      expect.objectContaining({
+        id: 'current-objective-state-stale-dead-398',
+        status: 'resolved_by_absence',
+        verdict: 'resolved_by_absence',
+        section: 'SquidRun',
+        whatHappened: expect.stringContaining('current-objective-state.json is absent'),
+      }),
+    ]);
+  });
+
   test('classifies manual items into plain sections and moves resolved DGcSGf52 cleanup to History', () => {
     const proofPath = path.join(tempRoot, '.squidrun', 'runtime', 'builder-task-audit-cleanup-392-proof.md');
     writeJson(path.join(tempRoot, '.squidrun', 'app-status.json'), { session: 393 });
