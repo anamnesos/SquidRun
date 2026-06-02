@@ -9148,18 +9148,40 @@ class SquidRunApp {
       .map((root) => path.join(root, '.squidrun', `triggers-${normalizedWindowKey}`, 'architect.txt'));
   }
 
+  // Busy-pane inbound hardening (James-approved 2026-06-02). Defaults ON; set
+  // SQUIDRUN_INJECT_BUSY_PANE_HARDENING=0 (or false/off) to roll back to the
+  // legacy clobber-write + single-attempt behaviour without a code revert.
+  isScopedInboundHardeningEnabled() {
+    const raw = String(process.env.SQUIDRUN_INJECT_BUSY_PANE_HARDENING || '').trim().toLowerCase();
+    return raw !== '0' && raw !== 'false' && raw !== 'off';
+  }
+
   forwardScopedTelegramInboundToProfileWindow(windowKey, message) {
     const normalizedWindowKey = toNonEmptyString(windowKey);
     const normalizedMessage = toNonEmptyString(message);
     if (!normalizedWindowKey || normalizedWindowKey === 'main' || !normalizedMessage) return false;
 
+    const appendMode = this.isScopedInboundHardeningEnabled();
     let wrote = false;
     for (const triggerPath of this.getScopedTelegramTriggerPaths(normalizedWindowKey)) {
       try {
         fs.mkdirSync(path.dirname(triggerPath), { recursive: true });
-        fs.writeFileSync(triggerPath, normalizedMessage, 'utf8');
+        if (appendMode) {
+          // Append per-message so concurrent inbound waves to a busy pane are
+          // not clobbered into a single overwritten file (the silent-loss bug).
+          // A drained pane leaves an empty file; we re-create it on next inbound.
+          let separator = '';
+          try {
+            const existing = fs.existsSync(triggerPath) ? fs.readFileSync(triggerPath, 'utf8') : '';
+            if (existing && !existing.endsWith('\n')) separator = '\n';
+          } catch (_) { /* best-effort: fall through to plain append */ }
+          const chunk = normalizedMessage.endsWith('\n') ? normalizedMessage : `${normalizedMessage}\n`;
+          fs.appendFileSync(triggerPath, `${separator}${chunk}`, 'utf8');
+        } else {
+          fs.writeFileSync(triggerPath, normalizedMessage, 'utf8');
+        }
         wrote = true;
-        log.info('Telegram', `Forwarded scoped Telegram inbound to ${normalizedWindowKey} trigger lane: ${triggerPath}`);
+        log.info('Telegram', `Forwarded scoped Telegram inbound to ${normalizedWindowKey} trigger lane (${appendMode ? 'append' : 'overwrite'}): ${triggerPath}`);
       } catch (err) {
         log.warn('Telegram', `Failed to forward scoped Telegram inbound to ${triggerPath}: ${err.message}`);
       }
@@ -9281,6 +9303,50 @@ class SquidRunApp {
     } finally {
       await closeSocketBestEffort(ws);
     }
+  }
+
+  // Retry-until-verified wrapper around the single-shot delivery. Each attempt
+  // opens a fresh socket and re-dispatches, with exponential backoff, so a pane
+  // that is busy mid-turn on the first attempt can still be reached once it
+  // settles — instead of giving up immediately (the old maxAttempts:1 behaviour).
+  // Bounded; the append trigger fallback still catches anything that never verifies.
+  async deliverScopedTelegramInboundWithRetry(windowKey, message, options = {}) {
+    const hardening = this.isScopedInboundHardeningEnabled();
+    const maxAttempts = hardening
+      ? Math.max(1, Number.parseInt(String(process.env.SQUIDRUN_SCOPED_TELEGRAM_MAX_ATTEMPTS || '4'), 10) || 4)
+      : 1;
+    const baseBackoffMs = Math.max(
+      250,
+      Number.parseInt(String(process.env.SQUIDRUN_SCOPED_TELEGRAM_RETRY_BASE_MS || '1000'), 10) || 1000
+    );
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    let lastResult = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        lastResult = await this.deliverScopedTelegramInboundToProfileWindow(windowKey, message, options);
+      } catch (err) {
+        lastResult = {
+          ok: false, accepted: false, queued: false, verified: false, userVisible: false,
+          status: 'scoped_runtime_error', error: err.message,
+        };
+      }
+      if (lastResult?.verified === true && lastResult?.userVisible === true) {
+        return lastResult;
+      }
+      if (attempt < maxAttempts) {
+        const delayMs = Math.min(8000, baseBackoffMs * (2 ** (attempt - 1)));
+        log.warn(
+          'Telegram',
+          `Scoped Telegram inbound to ${windowKey} not verified (attempt ${attempt}/${maxAttempts}, status=${lastResult?.status || 'unknown'}); retrying in ${delayMs}ms`
+        );
+        await sleep(delayMs);
+      }
+    }
+    return lastResult || {
+      ok: false, accepted: false, queued: false, verified: false, userVisible: false,
+      status: 'scoped_runtime_unavailable',
+    };
   }
 
   handleScopedTelegramInboundFallback(windowKey, message, deliveryResult = null) {
@@ -12051,7 +12117,7 @@ class SquidRunApp {
           ? fullTelegramMessage.slice(0, TELEGRAM_MSG_SIZE_LIMIT) + '\n[...truncated — full text in evidence ledger]'
           : fullTelegramMessage;
         if (inboundWindowKey !== 'main') {
-          void this.deliverScopedTelegramInboundToProfileWindow(inboundWindowKey, safeMessage, {
+          void this.deliverScopedTelegramInboundWithRetry(inboundWindowKey, safeMessage, {
             messageId: inboundMessageId,
             sessionScopeId: inboundSessionScopeId,
             chatId: metadata?.chatId,

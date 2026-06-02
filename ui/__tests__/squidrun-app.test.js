@@ -5614,7 +5614,7 @@ describe('SquidRunApp', () => {
         verified: true,
       });
       const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
-      jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+      jest.spyOn(app, 'deliverScopedTelegramInboundWithRetry').mockResolvedValue({
         ok: false,
         accepted: false,
         queued: false,
@@ -5737,50 +5737,106 @@ describe('SquidRunApp', () => {
       expect(app.telegramInboundContext).toEqual(previousContext);
     });
 
-    it('writes standalone scoped Telegram forwarding into scoped profile and compatibility trigger roots', () => {
+    it('appends standalone scoped Telegram forwarding into scoped profile and compatibility trigger roots', () => {
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-scoped-root-'));
-      const previousRoot = process.env.SQUIDRUN_SCOPED_PROJECT_ROOT;
-      process.env.SQUIDRUN_SCOPED_PROJECT_ROOT = tempRoot;
-      const mainTriggerPath = path.resolve(path.join(
-        require('../config').getProjectRoot(),
-        '.squidrun',
-        'triggers-scoped',
-        'architect.txt'
-      ));
-      const hadMainTrigger = fs.existsSync(mainTriggerPath);
-      const previousMainTrigger = hadMainTrigger ? fs.readFileSync(mainTriggerPath, 'utf8') : null;
+      const compatRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-scoped-compat-'));
+      const scopedTriggerPath = path.join(tempRoot, '.squidrun', 'triggers-scoped', 'architect.txt');
+      const compatTriggerPath = path.join(compatRoot, '.squidrun', 'triggers-scoped', 'architect.txt');
+      jest.spyOn(app, 'getScopedTelegramTriggerPaths').mockReturnValue([scopedTriggerPath, compatTriggerPath]);
 
       try {
         const forwarded = app.forwardScopedTelegramInboundToProfileWindow(
           'scoped',
-          '[Telegram from scoped]: root test'
+          '[Telegram from scoped]: root test 1'
         );
-        const scopedTriggerPath = path.join(
-          tempRoot,
-          '.squidrun',
-          'triggers-scoped',
-          'architect.txt'
+        const forwardedAgain = app.forwardScopedTelegramInboundToProfileWindow(
+          'scoped',
+          '[Telegram from scoped]: root test 2'
         );
 
-        expect(app.getScopedTelegramTriggerPaths('scoped')).toEqual([scopedTriggerPath, mainTriggerPath]);
         expect(forwarded).toBe(true);
-        expect(fs.readFileSync(scopedTriggerPath, 'utf8')).toBe('[Telegram from scoped]: root test');
-        expect(fs.readFileSync(mainTriggerPath, 'utf8')).toBe('[Telegram from scoped]: root test');
+        expect(forwardedAgain).toBe(true);
+        expect(fs.readFileSync(scopedTriggerPath, 'utf8')).toBe(
+          '[Telegram from scoped]: root test 1\n[Telegram from scoped]: root test 2\n'
+        );
+        expect(fs.readFileSync(compatTriggerPath, 'utf8')).toBe(
+          '[Telegram from scoped]: root test 1\n[Telegram from scoped]: root test 2\n'
+        );
       } finally {
-        try {
-          if (hadMainTrigger) {
-            fs.mkdirSync(path.dirname(mainTriggerPath), { recursive: true });
-            fs.writeFileSync(mainTriggerPath, previousMainTrigger, 'utf8');
-          } else if (fs.existsSync(mainTriggerPath)) {
-            fs.unlinkSync(mainTriggerPath);
-          }
-        } catch (_) {}
-        if (previousRoot === undefined) {
-          delete process.env.SQUIDRUN_SCOPED_PROJECT_ROOT;
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        fs.rmSync(compatRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps scoped Telegram trigger overwrite mode behind the hardening rollback flag', () => {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-scoped-overwrite-'));
+      const previousHardening = process.env.SQUIDRUN_INJECT_BUSY_PANE_HARDENING;
+      process.env.SQUIDRUN_INJECT_BUSY_PANE_HARDENING = '0';
+      const triggerPath = path.join(tempRoot, '.squidrun', 'triggers-scoped', 'architect.txt');
+      jest.spyOn(app, 'getScopedTelegramTriggerPaths').mockReturnValue([triggerPath]);
+
+      try {
+        expect(app.forwardScopedTelegramInboundToProfileWindow('scoped', 'first')).toBe(true);
+        expect(app.forwardScopedTelegramInboundToProfileWindow('scoped', 'second')).toBe(true);
+        expect(fs.readFileSync(triggerPath, 'utf8')).toBe('second');
+      } finally {
+        if (previousHardening === undefined) {
+          delete process.env.SQUIDRUN_INJECT_BUSY_PANE_HARDENING;
         } else {
-          process.env.SQUIDRUN_SCOPED_PROJECT_ROOT = previousRoot;
+          process.env.SQUIDRUN_INJECT_BUSY_PANE_HARDENING = previousHardening;
         }
         fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('retries scoped Telegram runtime delivery until user-visible verification', async () => {
+      jest.useFakeTimers();
+      const previousAttempts = process.env.SQUIDRUN_SCOPED_TELEGRAM_MAX_ATTEMPTS;
+      const previousBackoff = process.env.SQUIDRUN_SCOPED_TELEGRAM_RETRY_BASE_MS;
+      process.env.SQUIDRUN_SCOPED_TELEGRAM_MAX_ATTEMPTS = '3';
+      process.env.SQUIDRUN_SCOPED_TELEGRAM_RETRY_BASE_MS = '1';
+      const firstFailure = {
+        ok: false,
+        accepted: true,
+        queued: true,
+        verified: false,
+        userVisible: false,
+        status: 'accepted.unverified',
+      };
+      const success = {
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.daemon_pty',
+      };
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow')
+        .mockResolvedValueOnce(firstFailure)
+        .mockResolvedValueOnce(firstFailure)
+        .mockResolvedValueOnce(success);
+
+      try {
+        const delivery = app.deliverScopedTelegramInboundWithRetry('scoped', 'retry payload', { messageId: 'telegram-in-retry' });
+        await Promise.resolve();
+        await jest.advanceTimersByTimeAsync(250);
+        await Promise.resolve();
+        await jest.advanceTimersByTimeAsync(500);
+
+        await expect(delivery).resolves.toBe(success);
+        expect(scopedRuntimeSpy).toHaveBeenCalledTimes(3);
+      } finally {
+        if (previousAttempts === undefined) {
+          delete process.env.SQUIDRUN_SCOPED_TELEGRAM_MAX_ATTEMPTS;
+        } else {
+          process.env.SQUIDRUN_SCOPED_TELEGRAM_MAX_ATTEMPTS = previousAttempts;
+        }
+        if (previousBackoff === undefined) {
+          delete process.env.SQUIDRUN_SCOPED_TELEGRAM_RETRY_BASE_MS;
+        } else {
+          process.env.SQUIDRUN_SCOPED_TELEGRAM_RETRY_BASE_MS = previousBackoff;
+        }
+        jest.useRealTimers();
       }
     });
 

@@ -31,6 +31,11 @@ function readNonNegativeIntFromQuery(params, key, fallback) {
   }
 }
 
+function resolveInjectBusyExtraSettleMs(params, isDarwin) {
+  const fallback = isDarwin ? 2500 : 4000;
+  return readNonNegativeIntFromQuery(params, 'injectBusyExtraSettleMs', fallback);
+}
+
 function readJsonObjectFromQuery(params, key) {
   try {
     const raw = params.get(key);
@@ -375,6 +380,7 @@ if (typeof module !== 'undefined' && module.exports) {
       normalizePendingProbeText,
       normalizeRuntimeHint,
       probePendingInputLine,
+      resolveInjectBusyExtraSettleMs,
       readJsonObjectFromQuery,
       resolvePostEnterDeliveryResult,
       shouldWriteCodexPasteEnd,
@@ -452,6 +458,13 @@ if (typeof window !== 'undefined') {
     'submitDeferPollMs',
     DEFAULT_SUBMIT_DEFER_POLL_MS
   );
+  // Busy-pane inject hardening (James-approved 2026-06-02): when the normal
+  // defer window expires while a non-codex (Claude/Ink) pane is still streaming,
+  // a force-write drops the FRONT of the payload. Grant one extended settle pass
+  // first so the truncating force-write becomes a last resort, not the common
+  // case. Timing-only — never alters payload bytes (see Inject Path Invariant).
+  // Set injectBusyExtraSettleMs=0 to disable.
+  const INJECT_BUSY_EXTRA_SETTLE_MS = resolveInjectBusyExtraSettleMs(params, isDarwin);
   const LONG_PAYLOAD_BYTES = readPositiveIntFromQuery(
     params,
     'longPayloadBytes',
@@ -731,10 +744,24 @@ if (typeof window !== 'undefined') {
       // interleaved with streaming CLI output.
       const preWriteDeferResult = await deferSubmitWhilePaneActive(runtime, deferMaxWaitMs);
       if (preWriteDeferResult.forcedExpire) {
-        console.warn(
-          `[PaneHost] Pre-write defer window expired for pane ${runtime.paneId} after ${preWriteDeferResult.waitedMs}ms; `
-          + 'writing while output is still active'
-        );
+        // Busy-pane hardening: only non-codex panes truncate on a force-write
+        // (codex uses a different input model and is immune). Give them one
+        // extended settle pass before falling through to the force-write.
+        let stillActive = true;
+        if (INJECT_BUSY_EXTRA_SETTLE_MS > 0 && !codexPasteEndNeeded) {
+          const extended = await deferSubmitWhilePaneActive(runtime, INJECT_BUSY_EXTRA_SETTLE_MS);
+          stillActive = extended.forcedExpire;
+          console.warn(
+            `[PaneHost] Busy-pane extended settle for pane ${runtime.paneId}: `
+            + `waited extra ${extended.waitedMs}ms, stillActive=${stillActive}`
+          );
+        }
+        if (stillActive) {
+          console.warn(
+            `[PaneHost] Pre-write defer window expired for pane ${runtime.paneId} after ${preWriteDeferResult.waitedMs}ms; `
+            + 'writing while output is still active'
+          );
+        }
       }
 
       const chunkThreshold = Number.isFinite(CHUNK_THRESHOLD_BYTES) && CHUNK_THRESHOLD_BYTES > 0

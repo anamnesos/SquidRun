@@ -239,4 +239,11 @@ describe('pane-host-renderer internals', () => {
       )
     ).toBe(false);
   });
+
+  test('busy-pane extra settle defaults on Windows and can be disabled', () => {
+    expect(_internals.resolveInjectBusyExtraSettleMs(new URLSearchParams(''), false)).toBe(4000);
+    expect(_internals.resolveInjectBusyExtraSettleMs(new URLSearchParams(''), true)).toBe(2500);
+    expect(_internals.resolveInjectBusyExtraSettleMs(new URLSearchParams('injectBusyExtraSettleMs=0'), false)).toBe(0);
+    expect(_internals.resolveInjectBusyExtraSettleMs(new URLSearchParams('injectBusyExtraSettleMs=1250'), false)).toBe(1250);
+  });
 });
