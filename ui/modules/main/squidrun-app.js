@@ -232,6 +232,11 @@ const TELEGRAM_REPLY_GUARD_JOURNAL_DIAGNOSTIC_THROTTLE_MS = Math.max(
   5_000,
   Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_JOURNAL_DIAGNOSTIC_THROTTLE_MS || '30000', 10) || 30_000
 );
+const TERMINAL_PENDING_TELEGRAM_REPLY_GUARD_STATUSES = new Set([
+  'telegram_reply_required_expired_unresolved',
+  'telegram_reply_required_phone_escalated',
+  'telegram_reply_required_phone_escalated_unresolved',
+]);
 const TELEGRAM_REPLY_DEDUPE_WINDOW_MS = Math.max(
   5_000,
   Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_DEDUPE_WINDOW_MS || '45000', 10) || 45_000
@@ -11228,8 +11233,7 @@ class SquidRunApp {
   ensurePendingTelegramReplyGuardJournalReconcileTimer() {
     if (this.pendingTelegramReplyGuardJournalReconcileTimer) return;
     const timer = setInterval(() => {
-      if (!this.pendingTelegramReplyGuards || this.pendingTelegramReplyGuards.size === 0) {
-        this.clearPendingTelegramReplyGuardJournalReconcileTimer();
+      if (this.clearPendingTelegramReplyGuardJournalReconcileTimerIfIdle()) {
         return;
       }
       this.reconcilePendingTelegramReplyGuardsWithJournal({
@@ -11245,6 +11249,23 @@ class SquidRunApp {
     if (!this.pendingTelegramReplyGuardJournalReconcileTimer) return;
     clearInterval(this.pendingTelegramReplyGuardJournalReconcileTimer);
     this.pendingTelegramReplyGuardJournalReconcileTimer = null;
+  }
+
+  isTerminalPendingTelegramReplyGuard(guard = {}) {
+    return TERMINAL_PENDING_TELEGRAM_REPLY_GUARD_STATUSES.has(String(guard.status || '').toLowerCase());
+  }
+
+  countNonTerminalPendingTelegramReplyGuards() {
+    if (!this.pendingTelegramReplyGuards || this.pendingTelegramReplyGuards.size === 0) return 0;
+    return Array.from(this.pendingTelegramReplyGuards.values())
+      .filter((guard) => !this.isTerminalPendingTelegramReplyGuard(guard))
+      .length;
+  }
+
+  clearPendingTelegramReplyGuardJournalReconcileTimerIfIdle() {
+    if (this.countNonTerminalPendingTelegramReplyGuards() > 0) return false;
+    this.clearPendingTelegramReplyGuardJournalReconcileTimer();
+    return true;
   }
 
   getPendingTelegramReplyRequirement(paneId = '1') {
@@ -11370,9 +11391,11 @@ class SquidRunApp {
     if (guard.phoneEscalationSentAtMs) {
       guard.status = 'telegram_reply_required_phone_escalated';
       this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+      this.clearPendingTelegramReplyGuardJournalReconcileTimerIfIdle();
       return { ...guard };
     }
     if (guard.status === 'telegram_reply_required_expired_unresolved' && guard.expiredAtMs) {
+      this.clearPendingTelegramReplyGuardJournalReconcileTimerIfIdle();
       return { ...guard };
     }
     this.clearPendingTelegramReplyGuardTimer(normalizedPaneId);
@@ -11382,6 +11405,7 @@ class SquidRunApp {
     guard.unresolvedSinceMs = Number(guard.unresolvedSinceMs || 0) || nowMs;
     guard.unresolvedReason = toNonEmptyString(options.reason) || 'reply_window_expired';
     this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+    this.clearPendingTelegramReplyGuardJournalReconcileTimerIfIdle();
     this.emitTelegramReplyRequirementNotice(guard, {
       type: 'error',
       reason: guard.unresolvedReason,
@@ -11610,6 +11634,9 @@ class SquidRunApp {
 
   reconcilePendingTelegramReplyGuardWithJournal(paneId = '1', guard = {}, options = {}) {
     const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    if (this.isTerminalPendingTelegramReplyGuard(guard)) {
+      return null;
+    }
     const result = this.getAckedTelegramEgressForPendingGuardResult(guard, options);
     const egressRow = result.row;
     if (!egressRow) {
@@ -11633,11 +11660,17 @@ class SquidRunApp {
 
   reconcilePendingTelegramReplyGuardsWithJournal(options = {}) {
     const reconciled = [];
+    let skippedTerminalCount = 0;
     for (const [paneId, guard] of Array.from(this.pendingTelegramReplyGuards.entries())) {
+      if (this.isTerminalPendingTelegramReplyGuard(guard)) {
+        skippedTerminalCount += 1;
+        continue;
+      }
       const satisfaction = this.reconcilePendingTelegramReplyGuardWithJournal(paneId, guard, options);
       if (satisfaction) reconciled.push(satisfaction);
     }
-    if (this.pendingTelegramReplyGuards.size === 0) {
+    const nonTerminalPendingCount = this.countNonTerminalPendingTelegramReplyGuards();
+    if (nonTerminalPendingCount === 0) {
       this.clearPendingTelegramReplyGuardJournalReconcileTimer();
     }
     return {
@@ -11647,6 +11680,8 @@ class SquidRunApp {
         : 'telegram_reply_guards_checked_from_journal',
       reconciledCount: reconciled.length,
       pendingCount: this.pendingTelegramReplyGuards.size,
+      nonTerminalPendingCount,
+      skippedTerminalCount,
       reconciled,
     };
   }
@@ -11662,9 +11697,7 @@ class SquidRunApp {
     }
     this.clearPendingTelegramReplyGuardTimer(normalizedPaneId);
     this.pendingTelegramReplyGuards.delete(normalizedPaneId);
-    if (this.pendingTelegramReplyGuards.size === 0) {
-      this.clearPendingTelegramReplyGuardJournalReconcileTimer();
-    }
+    this.clearPendingTelegramReplyGuardJournalReconcileTimerIfIdle();
     return true;
   }
 
