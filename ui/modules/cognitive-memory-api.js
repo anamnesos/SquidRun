@@ -76,6 +76,25 @@ function normalizeWhitespace(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function normalizePath(value) {
+  return String(value || '').replace(/\\/g, '/').trim();
+}
+
+function metadataOrdinal(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const text = String(value).trim();
+  return text === '' ? null : text;
+}
+
+function sameKnowledgeOrdinal(left = {}, right = {}) {
+  const leftSection = metadataOrdinal(left.sectionIndex ?? left.section_index);
+  const leftChunk = metadataOrdinal(left.chunkIndex ?? left.chunk_index);
+  const rightSection = metadataOrdinal(right.sectionIndex ?? right.section_index);
+  const rightChunk = metadataOrdinal(right.chunkIndex ?? right.chunk_index);
+  if (leftSection === null && leftChunk === null && rightSection === null && rightChunk === null) return true;
+  return leftSection === rightSection && leftChunk === rightChunk;
+}
+
 /**
  * @param {unknown} value
  * @returns {string[]}
@@ -637,7 +656,32 @@ class CognitiveMemoryApi {
     });
     const nowMs = Date.now();
     const embedding = await this.embedText(content);
-    const existing = db.prepare('SELECT node_id, is_immune FROM nodes WHERE content_hash = ? LIMIT 1').get(contentHash);
+    let existing = db.prepare('SELECT node_id, is_immune FROM nodes WHERE content_hash = ? LIMIT 1').get(contentHash);
+    let matchedByStableSource = false;
+    if (!existing) {
+      const sourceCandidates = db.prepare(`
+        SELECT node_id, is_immune, metadata_json
+        FROM nodes
+        WHERE COALESCE(source_type, '') = ?
+          AND COALESCE(source_path, '') = ?
+          AND COALESCE(heading, '') = ?
+        ORDER BY updated_at_ms DESC, node_id ASC
+      `).all(sourceType, normalizePath(sourcePath || ''), heading || '');
+      const resultMetadata = result.metadata && typeof result.metadata === 'object' && !Array.isArray(result.metadata)
+        ? result.metadata
+        : {};
+      const ordinalMatches = sourceCandidates.filter((row) => sameKnowledgeOrdinal(
+        parseJson(row.metadata_json, {}),
+        resultMetadata
+      ));
+      if (ordinalMatches.length === 1) {
+        existing = ordinalMatches[0];
+        matchedByStableSource = true;
+      } else if (sourceCandidates.length === 1 && ordinalMatches.length === 0) {
+        existing = sourceCandidates[0];
+        matchedByStableSource = true;
+      }
+    }
     const requestedImmune = result.isImmune === true || result.is_immune === 1;
 
     if (existing) {
@@ -647,6 +691,8 @@ class CognitiveMemoryApi {
             content = ?,
             confidence_score = ?,
             embedding_json = ?,
+            content_hash = ?,
+            current_version = COALESCE(current_version, 1) + ?,
             source_type = ?,
             source_path = ?,
             title = ?,
@@ -660,8 +706,10 @@ class CognitiveMemoryApi {
         content,
         clamp(result.confidence || 0.55, 0, 1),
         JSON.stringify(embedding),
+        contentHash,
+        matchedByStableSource ? 1 : 0,
         sourceType,
-        sourcePath,
+        normalizePath(sourcePath || ''),
         result.title || null,
         heading,
         JSON.stringify(result.metadata || {}),

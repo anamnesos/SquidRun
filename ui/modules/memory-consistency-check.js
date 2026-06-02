@@ -30,8 +30,52 @@ function normalizeWhitespace(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function tokenizeContentForContainment(value) {
+  const text = normalizeWhitespace(value).toLowerCase();
+  return Array.from(text.matchAll(/[\p{L}\p{N}]+/gu))
+    .map((match) => match[0])
+    .filter((token) => token.length >= 2);
+}
+
+function contentContainmentScore(sourceContent, candidateContent) {
+  const sourceTokens = Array.from(new Set(tokenizeContentForContainment(sourceContent)));
+  if (sourceTokens.length < 5) return 0;
+  const candidateTokens = new Set(tokenizeContentForContainment(candidateContent));
+  if (candidateTokens.size === 0) return 0;
+  const matched = sourceTokens.filter((token) => candidateTokens.has(token)).length;
+  return matched / sourceTokens.length;
+}
+
 function normalizePath(value) {
   return String(value || '').replace(/\\/g, '/').trim();
+}
+
+function metadataOrdinal(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const text = String(value).trim();
+  return text === '' ? null : text;
+}
+
+function buildKnowledgeStableKey(input = {}) {
+  const sourceType = normalizeWhitespace(input.sourceType || input.source_type || 'knowledge').toLowerCase();
+  const sourcePath = normalizePath(input.sourcePath || input.source_path || '').toLowerCase();
+  const heading = normalizeWhitespace(input.heading || '');
+  const metadata = input.metadata && typeof input.metadata === 'object' && !Array.isArray(input.metadata)
+    ? input.metadata
+    : {};
+  const sectionIndex = metadataOrdinal(metadata.sectionIndex ?? metadata.section_index);
+  const chunkIndex = metadataOrdinal(metadata.chunkIndex ?? metadata.chunk_index);
+  const ordinalKey = sectionIndex !== null || chunkIndex !== null
+    ? `|section:${sectionIndex ?? ''}|chunk:${chunkIndex ?? ''}`
+    : '';
+  return `${sourceType}|${sourcePath}|${heading}${ordinalKey}`;
+}
+
+function buildSourceHeadingKey(input = {}) {
+  const sourceType = normalizeWhitespace(input.sourceType || input.source_type || 'knowledge').toLowerCase();
+  const sourcePath = normalizePath(input.sourcePath || input.source_path || '').toLowerCase();
+  const heading = normalizeWhitespace(input.heading || '');
+  return `${sourceType}|${sourcePath}|${heading}`;
 }
 
 function safeJsonParse(value, fallback = {}) {
@@ -102,6 +146,8 @@ function collectKnowledgeEntries(paths, options = {}) {
     metadata: entry.metadata || {},
     lastModifiedMs: Number(entry.lastModifiedMs || 0),
     contentHash: hashKnowledgeNodeIdentity(entry),
+    stableKey: buildKnowledgeStableKey(entry),
+    sourceHeadingKey: buildSourceHeadingKey(entry),
   }));
 }
 
@@ -124,12 +170,16 @@ function createBaseResult(paths, cognitiveDbPath, knowledgeEntries) {
       missingInCognitiveCount: 0,
       orphanedNodeCount: 0,
       duplicateKnowledgeHashCount: 0,
+      duplicateSourceHeadingCount: 0,
+      resyncKnowledgeEntryCount: 0,
       issueCount: 0,
     },
     drift: {
       missingKnowledgeEntries: [],
       orphanedKnowledgeNodes: [],
       duplicateKnowledgeHashes: [],
+      duplicateSourceHeadings: [],
+      resyncKnowledgeEntries: [],
       issues: [],
     },
   };
@@ -156,6 +206,8 @@ function mapKnowledgeNodeRow(row) {
     category: row.category || null,
   };
   mapped.contentHash = normalizeWhitespace(row.content_hash || '') || hashKnowledgeNodeIdentity(mapped);
+  mapped.stableKey = buildKnowledgeStableKey(mapped);
+  mapped.sourceHeadingKey = buildSourceHeadingKey(mapped);
   return mapped;
 }
 
@@ -205,20 +257,34 @@ function loadKnowledgeNodeById(db, availableColumns, nodeId) {
   return row ? mapKnowledgeNodeRow(row) : null;
 }
 
-function finalizeAnalysisResult(result, missingKnowledgeEntries, orphanedKnowledgeNodes, duplicateKnowledgeHashes, sampleLimit) {
+function finalizeAnalysisResult(
+  result,
+  missingKnowledgeEntries,
+  orphanedKnowledgeNodes,
+  duplicateKnowledgeHashes,
+  duplicateSourceHeadings,
+  resyncKnowledgeEntries,
+  sampleLimit
+) {
   result.summary.missingInCognitiveCount = missingKnowledgeEntries.length;
   result.summary.orphanedNodeCount = orphanedKnowledgeNodes.length;
   result.summary.duplicateKnowledgeHashCount = duplicateKnowledgeHashes.length;
+  result.summary.duplicateSourceHeadingCount = duplicateSourceHeadings.length;
+  result.summary.resyncKnowledgeEntryCount = resyncKnowledgeEntries.length;
   result.summary.issueCount = result.drift.issues.length;
   result.drift.missingKnowledgeEntries = buildSample(missingKnowledgeEntries, sampleLimit);
   result.drift.orphanedKnowledgeNodes = buildSample(orphanedKnowledgeNodes, sampleLimit);
   result.drift.duplicateKnowledgeHashes = buildSample(duplicateKnowledgeHashes, sampleLimit);
+  result.drift.duplicateSourceHeadings = buildSample(duplicateSourceHeadings, sampleLimit);
+  result.drift.resyncKnowledgeEntries = buildSample(resyncKnowledgeEntries, sampleLimit);
 
   if (
     result.drift.issues.length > 0
     || missingKnowledgeEntries.length > 0
     || orphanedKnowledgeNodes.length > 0
     || duplicateKnowledgeHashes.length > 0
+    || duplicateSourceHeadings.length > 0
+    || resyncKnowledgeEntries.length > 0
   ) {
     result.status = 'drift_detected';
     result.synced = false;
@@ -249,6 +315,9 @@ function analyzeMemoryConsistency(options = {}) {
     orphanedKnowledgeNodes: [],
     duplicateKnowledgeHashes: [],
     duplicateGroups: [],
+    duplicateSourceHeadings: [],
+    duplicateSourceGroups: [],
+    resyncKnowledgeEntries: [],
     schema: {
       availableNodeColumns: [],
       availableTables: new Set(),
@@ -309,17 +378,27 @@ function analyzeMemoryConsistency(options = {}) {
     result.summary.knowledgeNodeCount = analysis.knowledgeNodes.length;
 
     const expectedByHash = new Map();
+    const expectedByStableKey = new Map();
     for (const entry of knowledgeEntries) {
       const list = expectedByHash.get(entry.contentHash) || [];
       list.push(entry);
       expectedByHash.set(entry.contentHash, list);
+
+      const stableList = expectedByStableKey.get(entry.stableKey) || [];
+      stableList.push(entry);
+      expectedByStableKey.set(entry.stableKey, stableList);
     }
 
     const nodesByHash = new Map();
+    const nodesByStableKey = new Map();
     for (const node of analysis.knowledgeNodes) {
       const list = nodesByHash.get(node.contentHash) || [];
       list.push(node);
       nodesByHash.set(node.contentHash, list);
+
+      const stableList = nodesByStableKey.get(node.stableKey) || [];
+      stableList.push(node);
+      nodesByStableKey.set(node.stableKey, stableList);
     }
 
     analysis.missingKnowledgeEntries = knowledgeEntries
@@ -331,6 +410,7 @@ function analyzeMemoryConsistency(options = {}) {
         title: entry.title,
         metadata: entry.metadata,
         contentHash: entry.contentHash,
+        stableKey: entry.stableKey,
         content: entry.content,
         lastModifiedMs: entry.lastModifiedMs,
       }));
@@ -350,8 +430,42 @@ function analyzeMemoryConsistency(options = {}) {
       contentHash: group.contentHash,
       count: group.nodes.length,
       nodeIds: group.nodes.map((entry) => entry.nodeId),
-      sourcePaths: Array.from(new Set(group.nodes.map((entry) => entry.sourcePath).filter(Boolean))),
+        sourcePaths: Array.from(new Set(group.nodes.map((entry) => entry.sourcePath).filter(Boolean))),
     }));
+
+    analysis.duplicateSourceGroups = Array.from(nodesByStableKey.entries())
+      .filter(([stableKey, entries]) => entries.length > (expectedByStableKey.get(stableKey) || []).length)
+      .map(([stableKey, entries]) => ({
+        stableKey,
+        nodes: entries.map((entry) => ({ ...entry })),
+        expectedCount: (expectedByStableKey.get(stableKey) || []).length,
+      }));
+
+    analysis.duplicateSourceHeadings = analysis.duplicateSourceGroups.map((group) => ({
+      stableKey: group.stableKey,
+      count: group.nodes.length,
+      expectedCount: group.expectedCount,
+      nodeIds: group.nodes.map((entry) => entry.nodeId),
+      contentHashes: Array.from(new Set(group.nodes.map((entry) => entry.contentHash).filter(Boolean))),
+      sourcePath: group.nodes[0]?.sourcePath || null,
+      heading: group.nodes[0]?.heading || null,
+    }));
+
+    analysis.resyncKnowledgeEntries = knowledgeEntries
+      .filter((entry) => {
+        const matchingNodes = nodesByStableKey.get(entry.stableKey) || [];
+        return matchingNodes.length > 0 && !matchingNodes.some((node) => node.contentHash === entry.contentHash);
+      })
+      .map((entry) => ({
+        sourceKey: entry.sourceKey,
+        sourcePath: entry.sourcePath,
+        heading: entry.heading,
+        title: entry.title,
+        metadata: entry.metadata,
+        contentHash: entry.contentHash,
+        stableKey: entry.stableKey,
+        matchingNodeIds: (nodesByStableKey.get(entry.stableKey) || []).map((node) => node.nodeId),
+      }));
 
     finalizeAnalysisResult(
       result,
@@ -368,6 +482,8 @@ function analyzeMemoryConsistency(options = {}) {
         contentHash: node.contentHash,
       })),
       analysis.duplicateKnowledgeHashes,
+      analysis.duplicateSourceHeadings,
+      analysis.resyncKnowledgeEntries,
       sampleLimit
     );
 
@@ -515,6 +631,26 @@ function chooseDuplicateSurvivor(nodes = []) {
   })[0] || null;
 }
 
+function chooseSourceHeadingSurvivor(nodes = [], entry = {}) {
+  const currentMatches = nodes.filter((node) => node.contentHash === entry.contentHash);
+  return chooseDuplicateSurvivor(currentMatches.length > 0 ? currentMatches : nodes);
+}
+
+function isHighConfidenceContentMatchForEntry(node, entry, sourceHeadingEntries = []) {
+  const candidates = sourceHeadingEntries
+    .map((candidate) => ({
+      entry: candidate,
+      score: contentContainmentScore(node.content, candidate.content),
+    }))
+    .sort((left, right) => right.score - left.score);
+  const best = candidates[0] || null;
+  if (!best || best.entry.stableKey !== entry.stableKey || best.score < 0.45) {
+    return false;
+  }
+  const second = candidates[1] || null;
+  return !second || second.score < 0.35 || (best.score - second.score) >= 0.15;
+}
+
 function classifyOrphanNode(node, paths, relationalProfile, replacementIndex) {
   const sourceAbsPath = resolveKnowledgeSourceAbsolutePath(paths, node.sourcePath);
   const sourceExists = fs.existsSync(sourceAbsPath);
@@ -594,7 +730,9 @@ function buildPlanSummary(actions = [], skipped = []) {
   return {
     actionCount: actions.length,
     insertCount: actions.filter((action) => action.kind === 'insert_missing_chunk').length,
+    resyncCount: actions.filter((action) => action.kind === 'resync_source_heading').length,
     duplicateMergeCount: actions.filter((action) => action.kind === 'collapse_duplicate_hash').length,
+    sourceHeadingMergeCount: actions.filter((action) => action.kind === 'resync_source_heading' && action.loserNodeIds.length > 0).length,
     orphanDeleteCount: actions.filter((action) => action.kind === 'delete_revision_skew_orphan').length,
     deleteCount: actions.reduce((sum, action) => sum + Number(action.deleteCount || 0), 0),
     skippedCount: skipped.length,
@@ -637,7 +775,7 @@ function applyRepairScopeToPlan(plan, scopeValue) {
   const scopedActions = [];
   const deferredActions = [];
   for (const action of plan.actions) {
-    if (action.kind === 'insert_missing_chunk') {
+    if (action.kind === 'insert_missing_chunk' || action.kind === 'resync_source_heading') {
       scopedActions.push(action);
     } else {
       deferredActions.push(action);
@@ -671,7 +809,9 @@ function planMemoryConsistencyRepair(options = {}) {
     summary: {
       actionCount: 0,
       insertCount: 0,
+      resyncCount: 0,
       duplicateMergeCount: 0,
+      sourceHeadingMergeCount: 0,
       orphanDeleteCount: 0,
       deleteCount: 0,
       skippedCount: 0,
@@ -699,6 +839,7 @@ function planMemoryConsistencyRepair(options = {}) {
     const allowOrphanDeletes = options.allowOrphanDeletes === true || options.repairOrphans === true;
 
     const duplicateLoserIds = new Set();
+    const sourceHeadingHandledNodeIds = new Set();
     const survivorProfileOverrides = new Map();
 
     analysis.duplicateGroups.forEach((group, groupIndex) => {
@@ -722,10 +863,114 @@ function planMemoryConsistencyRepair(options = {}) {
       });
     });
 
-    const actionOffset = plan.actions.length;
-    analysis.missingKnowledgeEntries.forEach((entry, index) => {
+    const activeNodesByStableKey = new Map();
+    const activeNodesBySourceHeadingKey = new Map();
+    for (const node of analysis.knowledgeNodes) {
+      if (duplicateLoserIds.has(node.nodeId)) continue;
+      const list = activeNodesByStableKey.get(node.stableKey) || [];
+      list.push(node);
+      activeNodesByStableKey.set(node.stableKey, list);
+      const sourceHeadingList = activeNodesBySourceHeadingKey.get(node.sourceHeadingKey) || [];
+      sourceHeadingList.push(node);
+      activeNodesBySourceHeadingKey.set(node.sourceHeadingKey, sourceHeadingList);
+    }
+
+    const entriesBySourceHeadingKey = new Map();
+    for (const entry of analysis.knowledgeEntries) {
+      const list = entriesBySourceHeadingKey.get(entry.sourceHeadingKey) || [];
+      list.push(entry);
+      entriesBySourceHeadingKey.set(entry.sourceHeadingKey, list);
+    }
+
+    analysis.knowledgeEntries.forEach((entry) => {
+      const exactMatchingNodes = activeNodesByStableKey.get(entry.stableKey) || [];
+      const sourceHeadingEntries = entriesBySourceHeadingKey.get(entry.sourceHeadingKey) || [];
+      const looseMatchingNodes = (activeNodesBySourceHeadingKey.get(entry.sourceHeadingKey) || [])
+        .filter((node) => !sourceHeadingHandledNodeIds.has(node.nodeId));
+      const contentMatchedLooseNodes = sourceHeadingEntries.length > 1
+        ? looseMatchingNodes.filter((node) => isHighConfidenceContentMatchForEntry(node, entry, sourceHeadingEntries))
+        : [];
+      const matchingNodes = sourceHeadingEntries.length === 1 && exactMatchingNodes.length > 0
+        ? Array.from(new Map([...exactMatchingNodes, ...looseMatchingNodes].map((node) => [node.nodeId, node])).values())
+        : exactMatchingNodes;
+      const resyncNodes = Array.from(
+        new Map([...matchingNodes, ...contentMatchedLooseNodes].map((node) => [node.nodeId, node])).values()
+      );
+      if (resyncNodes.length > 0) {
+        const survivor = chooseSourceHeadingSurvivor(resyncNodes, entry);
+        if (!survivor) return;
+        const losers = resyncNodes.filter((node) => node.nodeId !== survivor.nodeId);
+        const needsResync = survivor.contentHash !== entry.contentHash || losers.length > 0;
+        if (!needsResync) return;
+        const profiles = resyncNodes.map((node) => buildNodeRelationalProfile(node, edgeCounts, traceRows, leaseCounts));
+        survivorProfileOverrides.set(survivor.nodeId, aggregateProfiles(profiles));
+        [survivor, ...losers].forEach((node) => sourceHeadingHandledNodeIds.add(node.nodeId));
+        plan.actions.push({
+          id: `action-${plan.actions.length + 1}`,
+          kind: 'resync_source_heading',
+          driftType: 'source_heading_resync',
+          safe: true,
+          sourceStableKey: entry.stableKey,
+          survivorNodeId: survivor.nodeId,
+          loserNodeIds: losers.map((node) => node.nodeId),
+          survivorInheritsImmunity: resyncNodes.some((node) => node.isImmune),
+          deleteCount: losers.length,
+          entry: {
+            sourceKey: entry.sourceKey,
+            sourcePath: entry.sourcePath,
+            title: entry.title,
+            heading: entry.heading,
+            contentHash: entry.contentHash,
+            content: entry.content,
+            metadata: entry.metadata,
+            lastModifiedMs: entry.lastModifiedMs,
+          },
+          reason: contentMatchedLooseNodes.length > 0
+            ? `Resync source heading and collapse ${losers.length} content-matched same-heading node(s).`
+            : losers.length > 0
+            ? `Resync source heading and collapse ${losers.length} same-section duplicate node(s).`
+            : 'Resync existing cognitive node to the current knowledge section content hash.',
+        });
+        return;
+      }
+
+      if (!analysis.missingKnowledgeEntries.some((missing) => missing.contentHash === entry.contentHash)) return;
+      if (sourceHeadingEntries.length === 1 && looseMatchingNodes.length > 0) {
+        const survivor = chooseSourceHeadingSurvivor(looseMatchingNodes, entry);
+        if (!survivor) return;
+        const losers = looseMatchingNodes.filter((node) => node.nodeId !== survivor.nodeId);
+        const profiles = looseMatchingNodes.map((node) => buildNodeRelationalProfile(node, edgeCounts, traceRows, leaseCounts));
+        survivorProfileOverrides.set(survivor.nodeId, aggregateProfiles(profiles));
+        [survivor, ...losers].forEach((node) => sourceHeadingHandledNodeIds.add(node.nodeId));
+        plan.actions.push({
+          id: `action-${plan.actions.length + 1}`,
+          kind: 'resync_source_heading',
+          driftType: 'source_heading_resync',
+          safe: true,
+          sourceStableKey: entry.stableKey,
+          sourceHeadingKey: entry.sourceHeadingKey,
+          survivorNodeId: survivor.nodeId,
+          loserNodeIds: losers.map((node) => node.nodeId),
+          survivorInheritsImmunity: looseMatchingNodes.some((node) => node.isImmune),
+          deleteCount: losers.length,
+          entry: {
+            sourceKey: entry.sourceKey,
+            sourcePath: entry.sourcePath,
+            title: entry.title,
+            heading: entry.heading,
+            contentHash: entry.contentHash,
+            content: entry.content,
+            metadata: entry.metadata,
+            lastModifiedMs: entry.lastModifiedMs,
+          },
+          reason: losers.length > 0
+            ? 'Resync the only current source heading and collapse same-heading duplicate node(s) despite ordinal drift.'
+            : 'Resync existing cognitive node to the only current source heading despite ordinal drift.',
+        });
+        return;
+      }
       plan.actions.push({
-        id: `action-${actionOffset + index + 1}`,
+        id: `action-${plan.actions.length + 1}`,
         kind: 'insert_missing_chunk',
         driftType: 'missing_chunk',
         safe: true,
@@ -740,13 +985,14 @@ function planMemoryConsistencyRepair(options = {}) {
           metadata: entry.metadata,
           lastModifiedMs: entry.lastModifiedMs,
         },
-        reason: 'Canonical knowledge chunk exists on disk but is missing from cognitive memory.',
+        reason: 'Canonical knowledge chunk exists on disk but is missing from cognitive memory and no same source heading node exists to resync.',
       });
     });
 
     const orphanActionOffset = plan.actions.length;
     analysis.orphanedKnowledgeNodes
       .filter((node) => !duplicateLoserIds.has(node.nodeId))
+      .filter((node) => !sourceHeadingHandledNodeIds.has(node.nodeId))
       .forEach((node, index) => {
         const relationalProfile = survivorProfileOverrides.get(node.nodeId)
           || buildNodeRelationalProfile(node, edgeCounts, traceRows, leaseCounts);
@@ -910,6 +1156,65 @@ function insertKnowledgeNode(db, availableNodeColumns, availableTables, entry, n
   }
 
   return nodeId;
+}
+
+function mergeSourceHeadingMetadata(node, entry, nowMs) {
+  return {
+    ...(node.metadata && typeof node.metadata === 'object' && !Array.isArray(node.metadata) ? node.metadata : {}),
+    ...(entry.metadata && typeof entry.metadata === 'object' && !Array.isArray(entry.metadata) ? entry.metadata : {}),
+    repairedBy: 'hm-memory-consistency',
+    repairMode: 'source_heading_resync',
+    repairedAt: new Date(nowMs).toISOString(),
+  };
+}
+
+function updateKnowledgeNodeFromEntry(db, availableNodeColumns, availableTables, node, entry, relationalProfile, nowMs) {
+  const setPairs = [];
+  const add = (column, value) => {
+    if (availableNodeColumns.includes(column)) setPairs.push([column, value]);
+  };
+  const previousVersion = Math.max(Number(node.currentVersion || 1), Number(relationalProfile?.currentVersion || 1));
+  const versionBump = node.contentHash === entry.contentHash ? 0 : 1;
+  add('category', 'knowledge');
+  add('content', entry.content);
+  add('confidence_score', Math.max(Number(node.confidenceScore || 0.5), 0.5));
+  add('content_hash', entry.contentHash);
+  add('current_version', previousVersion + versionBump);
+  add('source_type', 'knowledge');
+  add('source_path', entry.sourcePath);
+  add('title', entry.title || null);
+  add('heading', entry.heading || null);
+  add('metadata_json', JSON.stringify(mergeSourceHeadingMetadata(node, entry, nowMs)));
+  add('updated_at_ms', nowMs);
+  add('last_reconsolidated_at', new Date(nowMs).toISOString());
+  if (relationalProfile) {
+    add('access_count', Math.max(Number(node.accessCount || 0), Number(relationalProfile.accessCount || 0)));
+    add('salience_score', Math.max(Number(node.salienceScore || 0), Number(relationalProfile.salienceScore || 0)));
+    add('is_immune', node.isImmune || relationalProfile.isImmune ? 1 : 0);
+  }
+
+  if (setPairs.length > 0) {
+    db.prepare(`
+      UPDATE nodes
+      SET ${setPairs.map(([column]) => `${column} = ?`).join(', ')}
+      WHERE node_id = ?
+    `).run(...setPairs.map(([, value]) => value), node.nodeId);
+  }
+
+  if (availableTables.has('traces')) {
+    const existing = db.prepare(`
+      SELECT 1
+      FROM traces
+      WHERE node_id = ? AND trace_id = ?
+      LIMIT 1
+    `).get(node.nodeId, entry.contentHash);
+    if (!existing) {
+      db.prepare(`
+        INSERT INTO traces (node_id, trace_id, extracted_at)
+        VALUES (?, ?, ?)
+      `).run(node.nodeId, entry.contentHash, new Date(nowMs).toISOString());
+    }
+  }
 }
 
 function moveDuplicateTraces(db, loserNodeId, survivorNodeId) {
@@ -1115,6 +1420,124 @@ function buildOrphanMigrationSummary(actions = [], skipped = []) {
     ambiguousTargetCount: skipped.filter((entry) => entry.kind === 'ambiguous_multi_target').length,
     noTargetCount: skipped.filter((entry) => entry.kind === 'no_target').length,
     mappingRequiredCount: skipped.filter((entry) => entry.kind === 'mapping_required').length,
+  };
+}
+
+function normalizeGuardedOrphanDeleteTargets(value) {
+  const raw = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value.targets || value.dropTargets || value.orphanDropTargets || value.deletes || value)
+    : value;
+  if (!raw) return [];
+
+  const normalizeEntry = (entry) => {
+    if (typeof entry === 'string') {
+      const separatorIndex = entry.indexOf('::');
+      if (separatorIndex === -1) {
+        return null;
+      }
+      return {
+        sourcePath: normalizePath(entry.slice(0, separatorIndex)),
+        heading: normalizeWhitespace(entry.slice(separatorIndex + 2)),
+        nodeIds: [],
+        disposition: 'drop',
+        reason: null,
+      };
+    }
+    if (!entry || typeof entry !== 'object') {
+      return null;
+    }
+    const nodeIds = Array.isArray(entry.nodeIds)
+      ? entry.nodeIds
+      : (entry.nodeId ? [entry.nodeId] : []);
+    return {
+      sourcePath: normalizePath(entry.sourcePath || entry.source_path || entry.path || ''),
+      heading: normalizeWhitespace(entry.heading || entry.title || ''),
+      nodeIds: nodeIds.map((nodeId) => normalizeWhitespace(nodeId)).filter(Boolean),
+      disposition: normalizeWhitespace(entry.disposition || entry.kind || 'drop') || 'drop',
+      reason: normalizeWhitespace(entry.reason || entry.note || '') || null,
+    };
+  };
+
+  if (Array.isArray(raw)) {
+    return raw.map(normalizeEntry).filter((entry) => entry?.sourcePath && entry.heading);
+  }
+
+  if (typeof raw === 'object') {
+    return Object.entries(raw)
+      .map(([key, entry]) => {
+        if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+          return normalizeEntry({ ...entry, sourcePath: entry.sourcePath || key });
+        }
+        return normalizeEntry(String(key));
+      })
+      .filter((entry) => entry?.sourcePath && entry.heading);
+  }
+
+  return [];
+}
+
+function guardedDeleteTargetKey(sourcePath, heading) {
+  return `${normalizePath(sourcePath || '').toLowerCase()}::${normalizeWhitespace(heading || '')}`;
+}
+
+function buildGuardedDeleteBlockers(relationalProfile = {}) {
+  const blockers = [];
+  if (relationalProfile.isImmune) {
+    blockers.push('immune_protected');
+  }
+  if (Number(relationalProfile.edgeCount || 0) > 0) {
+    blockers.push(`edge_count=${Number(relationalProfile.edgeCount || 0)}`);
+  }
+  if (Number(relationalProfile.leaseCount || 0) > 0) {
+    blockers.push(`lease_count=${Number(relationalProfile.leaseCount || 0)}`);
+  }
+  if (Number(relationalProfile.currentVersion || 1) > 1) {
+    blockers.push(`version=${Number(relationalProfile.currentVersion || 1)}`);
+  }
+  if (Number(relationalProfile.salienceScore || 0) > 0) {
+    blockers.push(`salience=${Number(relationalProfile.salienceScore || 0).toFixed(2)}`);
+  }
+  if (Number(relationalProfile.nonRoutineTraceCount || 0) > 0) {
+    blockers.push(`non_routine_trace_count=${Number(relationalProfile.nonRoutineTraceCount || 0)}`);
+  }
+  return blockers;
+}
+
+function summarizeRelationalProfile(relationalProfile = {}) {
+  return {
+    edgeCount: Number(relationalProfile.edgeCount || 0),
+    leaseCount: Number(relationalProfile.leaseCount || 0),
+    traceCount: Number(relationalProfile.traceCount || 0),
+    routineTraceCount: Number(relationalProfile.routineTraceCount || 0),
+    nonRoutineTraceCount: Number(relationalProfile.nonRoutineTraceCount || 0),
+    currentVersion: Number(relationalProfile.currentVersion || 1),
+    salienceScore: Number(relationalProfile.salienceScore || 0),
+    isImmune: Boolean(relationalProfile.isImmune),
+    accessCount: Number(relationalProfile.accessCount || 0),
+    lastAccessedAt: relationalProfile.lastAccessedAt || null,
+  };
+}
+
+function buildGuardedOrphanDeleteSummary(actions = [], skipped = []) {
+  return {
+    actionCount: actions.length,
+    guardedDeleteCount: actions.filter((action) => action.kind === 'guarded_delete_orphan').length,
+    guardedStableKeyCollapseCount: actions.filter((action) => action.kind === 'collapse_guarded_orphan_stable_key').length,
+    deleteCount: actions.reduce((sum, action) => sum + Number(action.deleteCount || 0), 0),
+    skippedCount: skipped.length,
+    escalatedCount: skipped.filter((entry) => entry.kind === 'guarded_delete_escalated').length,
+    missingTargetCount: skipped.filter((entry) => entry.kind === 'drop_target_not_found').length,
+  };
+}
+
+function buildGuardedDeleteSkip(kind, target, reason, extra = {}) {
+  return {
+    kind,
+    sourcePath: target?.sourcePath || null,
+    heading: target?.heading || null,
+    disposition: target?.disposition || 'drop',
+    reason,
+    ...extra,
   };
 }
 
@@ -1596,6 +2019,366 @@ function runOrphanMigration(options = {}) {
   }
 }
 
+function planGuardedOrphanDeletes(options = {}) {
+  const analysis = analyzeMemoryConsistency(options);
+  const targets = normalizeGuardedOrphanDeleteTargets(
+    options.orphanDropTargets || options.dropTargets || options.deleteTargets || options.targets
+  );
+  const result = {
+    ok: analysis.ok,
+    mode: 'guarded_delete_review',
+    dryRun: true,
+    checkedAt: new Date().toISOString(),
+    workspaceDir: analysis.paths.workspaceDir,
+    knowledgeDir: analysis.paths.knowledgeDir,
+    cognitiveDbPath: analysis.cognitiveDbPath,
+    detection: analysis.result,
+    targets,
+    actions: [],
+    skipped: [],
+    summary: buildGuardedOrphanDeleteSummary(),
+  };
+
+  if (
+    analysis.result.drift.issues.length > 0
+    || analysis.result.status === 'cognitive_memory_missing'
+    || analysis.result.status === 'nodes_table_missing'
+    || analysis.result.status === 'schema_incomplete'
+  ) {
+    return result;
+  }
+
+  if (targets.length === 0) {
+    result.ok = false;
+    result.reason = 'no_guarded_delete_targets';
+    return result;
+  }
+
+  let db = null;
+  try {
+    db = new DatabaseSync(analysis.cognitiveDbPath);
+    const availableTables = listTables(db);
+    const edgeCounts = loadNodeEdgeCounts(db, availableTables);
+    const traceRows = loadNodeTraceRows(db, availableTables);
+    const leaseCounts = loadNodeLeaseCounts(db, availableTables);
+    const orphansByTargetKey = new Map();
+
+    for (const node of analysis.orphanedKnowledgeNodes) {
+      const key = guardedDeleteTargetKey(node.sourcePath, node.heading);
+      const list = orphansByTargetKey.get(key) || [];
+      list.push(node);
+      orphansByTargetKey.set(key, list);
+    }
+
+    for (const [targetIndex, target] of targets.entries()) {
+      const nodeIdFilter = new Set(target.nodeIds || []);
+      const matches = (orphansByTargetKey.get(guardedDeleteTargetKey(target.sourcePath, target.heading)) || [])
+        .filter((node) => nodeIdFilter.size === 0 || nodeIdFilter.has(node.nodeId))
+        .sort((left, right) => String(left.nodeId).localeCompare(String(right.nodeId)));
+
+      if (matches.length === 0) {
+        result.skipped.push(buildGuardedDeleteSkip(
+          'drop_target_not_found',
+          target,
+          'No orphaned cognitive node currently matches this explicit drop target.',
+          { requestedNodeIds: target.nodeIds || [] }
+        ));
+        continue;
+      }
+
+      const collapsedLoserIds = new Set();
+      const matchesByStableKey = new Map();
+      for (const node of matches) {
+        const list = matchesByStableKey.get(node.stableKey) || [];
+        list.push(node);
+        matchesByStableKey.set(node.stableKey, list);
+      }
+
+      for (const [stableKey, stableMatches] of matchesByStableKey.entries()) {
+        if (stableMatches.length <= 1) continue;
+        const survivor = chooseDuplicateSurvivor(stableMatches);
+        if (!survivor) continue;
+        const losers = stableMatches.filter((node) => node.nodeId !== survivor.nodeId);
+        losers.forEach((node) => collapsedLoserIds.add(node.nodeId));
+        const profiles = stableMatches.map((node) => buildNodeRelationalProfile(node, edgeCounts, traceRows, leaseCounts));
+        result.actions.push({
+          id: `guarded-stable-collapse-${targetIndex + 1}-${result.actions.length + 1}`,
+          kind: 'collapse_guarded_orphan_stable_key',
+          driftType: 'explicit_orphan_stable_key_duplicate',
+          safe: true,
+          stableKey,
+          survivorNodeId: survivor.nodeId,
+          loserNodeIds: losers.map((node) => node.nodeId),
+          survivorInheritsImmunity: stableMatches.some((node) => node.isImmune),
+          deleteCount: losers.length,
+          target: {
+            sourcePath: target.sourcePath,
+            heading: target.heading,
+            disposition: target.disposition,
+            reason: target.reason,
+          },
+          relationalProfile: summarizeRelationalProfile(aggregateProfiles(profiles)),
+          reason: `Explicit drop target has ${stableMatches.length} stale node(s) for one stable source key; collapse to one survivor before delete/escalation review.`,
+        });
+      }
+
+      for (const [nodeIndex, node] of matches.entries()) {
+        if (collapsedLoserIds.has(node.nodeId)) continue;
+        const relationalProfile = buildNodeRelationalProfile(node, edgeCounts, traceRows, leaseCounts);
+        const blockers = buildGuardedDeleteBlockers(relationalProfile);
+        if (blockers.length > 0) {
+          result.skipped.push(buildGuardedDeleteSkip(
+            'guarded_delete_escalated',
+            target,
+            'Explicit drop target has blocker(s); escalate with purge recommendation instead of deleting automatically.',
+            {
+              nodeId: node.nodeId,
+              contentHash: node.contentHash,
+              blockers,
+              purgeRecommendation: target.reason || 'Adjudicated as superseded or relocated; recommend purge after Architect/James approval.',
+              relationalProfile: summarizeRelationalProfile(relationalProfile),
+            }
+          ));
+          continue;
+        }
+
+        result.actions.push({
+          id: `guarded-delete-${targetIndex + 1}-${nodeIndex + 1}`,
+          kind: 'guarded_delete_orphan',
+          driftType: 'explicit_orphan_drop',
+          safe: true,
+          deleteCount: 1,
+          node: {
+            nodeId: node.nodeId,
+            sourcePath: node.sourcePath,
+            heading: node.heading,
+            contentHash: node.contentHash,
+          },
+          target: {
+            sourcePath: target.sourcePath,
+            heading: target.heading,
+            disposition: target.disposition,
+            reason: target.reason,
+          },
+          relationalProfile: summarizeRelationalProfile(relationalProfile),
+          reason: target.reason || 'Explicitly adjudicated stale orphan with no blockers.',
+        });
+      }
+    }
+
+    result.summary = buildGuardedOrphanDeleteSummary(result.actions, result.skipped);
+    return result;
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // best effort
+    }
+  }
+}
+
+function runGuardedOrphanDeletes(options = {}) {
+  const dryRun = options.dryRun !== false;
+  const plan = planGuardedOrphanDeletes(options);
+  if (dryRun) {
+    return plan;
+  }
+
+  const result = {
+    ...plan,
+    mode: 'guarded_delete',
+    dryRun: false,
+    execution: {
+      attemptedActions: plan.actions.length,
+      appliedActions: 0,
+      skippedActions: plan.skipped.length,
+      deletedNodes: 0,
+      deletedEdges: 0,
+      deletedTraces: 0,
+      deletedLeases: 0,
+      auditEventsWritten: 0,
+      failures: [],
+    },
+    postCheck: null,
+  };
+
+  if (plan.actions.length === 0) {
+    result.postCheck = runMemoryConsistencyCheck(options);
+    return result;
+  }
+
+  const ledgerState = openEvidenceLedgerStore(options);
+  if (!ledgerState.ok || !ledgerState.store) {
+    return {
+      ...result,
+      ok: false,
+      reason: ledgerState.reason || 'evidence_ledger_unavailable',
+      postCheck: runMemoryConsistencyCheck(options),
+    };
+  }
+
+  let db = null;
+  const auditQueue = [];
+  const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+
+  try {
+    db = new DatabaseSync(plan.cognitiveDbPath);
+    const availableNodeColumns = listNodeColumns(db);
+    const availableTables = listTables(db);
+    db.exec('BEGIN IMMEDIATE;');
+
+    for (const action of plan.actions) {
+      if (action.kind === 'collapse_guarded_orphan_stable_key') {
+        const survivorNode = loadKnowledgeNodeById(db, availableNodeColumns, action.survivorNodeId);
+        if (!survivorNode) {
+          result.execution.failures.push({
+            action: action.id,
+            reason: 'survivor_node_missing',
+          });
+          continue;
+        }
+
+        preserveDuplicateImmunity(db, availableNodeColumns, action.survivorNodeId, action.survivorInheritsImmunity);
+        for (const loserNodeId of action.loserNodeIds) {
+          if (availableTables.has('traces')) {
+            moveDuplicateTraces(db, loserNodeId, action.survivorNodeId);
+          }
+          if (availableTables.has('edges')) {
+            moveDuplicateEdges(db, loserNodeId, action.survivorNodeId);
+          }
+          if (availableTables.has('memory_leases')) {
+            moveDuplicateLeases(db, loserNodeId, action.survivorNodeId);
+          }
+          const deleted = deleteNodeWithRelations(db, availableTables, loserNodeId);
+          if (Number(deleted.nodeDeletes || 0) > 0) {
+            result.execution.deletedNodes += 1;
+            result.execution.deletedEdges += Number(deleted.edgeDeletes || 0);
+            result.execution.deletedTraces += Number(deleted.traceDeletes || 0);
+            result.execution.deletedLeases += Number(deleted.leaseDeletes || 0);
+          }
+        }
+        result.execution.appliedActions += 1;
+        auditQueue.push(buildAuditEvent('collapse_guarded_orphan_stable_key', {
+          driftType: action.driftType,
+          survivorNodeId: action.survivorNodeId,
+          loserNodeIds: action.loserNodeIds,
+          sourcePath: action.target?.sourcePath || null,
+          heading: action.target?.heading || null,
+          stableKey: action.stableKey,
+          deletedNodes: action.loserNodeIds.length,
+        }, nowMs, options.sessionId || null));
+        continue;
+      }
+
+      const node = loadKnowledgeNodeById(db, availableNodeColumns, action.node.nodeId);
+      if (!node) {
+        result.execution.skippedActions += 1;
+        continue;
+      }
+
+      const edgeCounts = loadNodeEdgeCounts(db, availableTables);
+      const traceRows = loadNodeTraceRows(db, availableTables);
+      const leaseCounts = loadNodeLeaseCounts(db, availableTables);
+      const relationalProfile = buildNodeRelationalProfile(node, edgeCounts, traceRows, leaseCounts);
+      const blockers = buildGuardedDeleteBlockers(relationalProfile);
+      if (blockers.length > 0) {
+        result.execution.failures.push({
+          action: action.id,
+          reason: 'guarded_delete_blockers_detected',
+          nodeId: node.nodeId,
+          blockers,
+        });
+        continue;
+      }
+
+      const deleted = deleteNodeWithRelations(db, availableTables, node.nodeId);
+      if (Number(deleted.nodeDeletes || 0) === 0) {
+        result.execution.failures.push({
+          action: action.id,
+          reason: 'guarded_delete_failed',
+          nodeId: node.nodeId,
+        });
+        continue;
+      }
+
+      result.execution.appliedActions += 1;
+      result.execution.deletedNodes += Number(deleted.nodeDeletes || 0);
+      result.execution.deletedEdges += Number(deleted.edgeDeletes || 0);
+      result.execution.deletedTraces += Number(deleted.traceDeletes || 0);
+      result.execution.deletedLeases += Number(deleted.leaseDeletes || 0);
+      auditQueue.push(buildAuditEvent('guarded_delete_orphan', {
+        driftType: action.driftType,
+        nodeId: node.nodeId,
+        sourcePath: node.sourcePath,
+        heading: node.heading,
+        contentHash: node.contentHash,
+        disposition: action.target.disposition,
+        reason: action.reason,
+        deletedEdges: Number(deleted.edgeDeletes || 0),
+        deletedTraces: Number(deleted.traceDeletes || 0),
+        deletedLeases: Number(deleted.leaseDeletes || 0),
+      }, nowMs, options.sessionId || null));
+    }
+
+    if (result.execution.failures.length > 0) {
+      db.exec('ROLLBACK;');
+      result.ok = false;
+      result.reason = 'guarded_delete_failed';
+      result.postCheck = runMemoryConsistencyCheck(options);
+      return result;
+    }
+
+    db.exec('COMMIT;');
+
+    for (const event of auditQueue) {
+      const appendResult = ledgerState.store.appendEvent(event, {
+        nowMs,
+        sessionId: options.sessionId || null,
+      });
+      if (!appendResult?.ok) {
+        result.execution.failures.push({
+          action: event?.payload?.action || 'unknown',
+          reason: appendResult?.reason || appendResult?.status || 'audit_write_failed',
+        });
+      } else {
+        result.execution.auditEventsWritten += 1;
+      }
+    }
+
+    result.ok = result.execution.failures.length === 0;
+    if (!result.ok) {
+      result.reason = 'guarded_delete_completed_with_audit_failures';
+    }
+    result.postCheck = runMemoryConsistencyCheck(options);
+    return result;
+  } catch (err) {
+    try {
+      db?.exec('ROLLBACK;');
+    } catch {
+      // best effort
+    }
+    result.ok = false;
+    result.reason = err.message;
+    result.execution.failures.push({
+      action: 'guarded_delete',
+      reason: err.message,
+    });
+    result.postCheck = runMemoryConsistencyCheck(options);
+    return result;
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // best effort
+    }
+    try {
+      ledgerState.store?.close();
+    } catch {
+      // best effort
+    }
+  }
+}
+
 function runMemoryConsistencyRepair(options = {}) {
   const dryRun = options.dryRun === true;
   const plan = planMemoryConsistencyRepair(options);
@@ -1612,8 +2395,10 @@ function runMemoryConsistencyRepair(options = {}) {
       appliedActions: 0,
       skippedActions: plan.skipped.length,
       insertedNodes: 0,
+      resyncedNodes: 0,
       deletedNodes: 0,
       mergedDuplicateGroups: 0,
+      mergedSourceHeadingGroups: 0,
       auditEventsWritten: 0,
       failures: [],
     },
@@ -1672,6 +2457,59 @@ function runMemoryConsistencyRepair(options = {}) {
           sourcePath: action.entry.sourcePath,
           heading: action.entry.heading,
           contentHash: action.entry.contentHash,
+        }, nowMs, options.sessionId || null));
+        continue;
+      }
+
+      if (action.kind === 'resync_source_heading') {
+        const survivorNode = loadKnowledgeNodeById(db, availableNodeColumns, action.survivorNodeId);
+        if (!survivorNode) {
+          result.execution.failures.push({
+            action: action.id,
+            reason: 'survivor_node_missing',
+          });
+          continue;
+        }
+
+        preserveDuplicateImmunity(db, availableNodeColumns, action.survivorNodeId, action.survivorInheritsImmunity);
+        const profileNodes = [survivorNode];
+        for (const loserNodeId of action.loserNodeIds) {
+          const loserNode = loadKnowledgeNodeById(db, availableNodeColumns, loserNodeId);
+          if (loserNode) profileNodes.push(loserNode);
+          if (availableTables.has('traces')) {
+            moveDuplicateTraces(db, loserNodeId, action.survivorNodeId);
+          }
+          if (availableTables.has('edges')) {
+            moveDuplicateEdges(db, loserNodeId, action.survivorNodeId);
+          }
+          if (availableTables.has('memory_leases')) {
+            moveDuplicateLeases(db, loserNodeId, action.survivorNodeId);
+          }
+          const deleted = deleteNodeWithRelations(db, availableTables, loserNodeId);
+          if (Number(deleted.nodeDeletes || 0) > 0) {
+            result.execution.deletedNodes += 1;
+          }
+        }
+        const edgeCounts = loadNodeEdgeCounts(db, availableTables);
+        const traceRows = loadNodeTraceRows(db, availableTables);
+        const leaseCounts = loadNodeLeaseCounts(db, availableTables);
+        const relationalProfile = aggregateProfiles(
+          profileNodes.map((node) => buildNodeRelationalProfile(node, edgeCounts, traceRows, leaseCounts))
+        );
+        updateKnowledgeNodeFromEntry(db, availableNodeColumns, availableTables, survivorNode, action.entry, relationalProfile, nowMs);
+        result.execution.resyncedNodes += 1;
+        if (action.loserNodeIds.length > 0) {
+          result.execution.mergedSourceHeadingGroups += 1;
+        }
+        result.execution.appliedActions += 1;
+        auditQueue.push(buildAuditEvent('resync_source_heading', {
+          driftType: action.driftType,
+          survivorNodeId: action.survivorNodeId,
+          loserNodeIds: action.loserNodeIds,
+          sourcePath: action.entry.sourcePath,
+          heading: action.entry.heading,
+          contentHash: action.entry.contentHash,
+          deletedNodes: action.loserNodeIds.length,
         }, nowMs, options.sessionId || null));
         continue;
       }
@@ -1780,9 +2618,11 @@ module.exports = {
   analyzeMemoryConsistency,
   collectKnowledgeEntries,
   hashKnowledgeNodeIdentity,
+  planGuardedOrphanDeletes,
   planOrphanMigration,
   planMemoryConsistencyRepair,
   resolveCognitiveMemoryDbPath,
+  runGuardedOrphanDeletes,
   runMemoryConsistencyCheck,
   runMemoryConsistencyRepair,
   runOrphanMigration,

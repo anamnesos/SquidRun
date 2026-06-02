@@ -68,3 +68,29 @@ Load-bearing constraint (S396). `hm-send.js telegram` runs in a SEPARATE process
 Fix (commits 0668dd12 / 45508bf5, `ui/modules/main/squidrun-app.js`): a proactive `setInterval` (default 5s, `SQUIDRUN_TELEGRAM_REPLY_GUARD_JOURNAL_RECONCILE_INTERVAL_MS`, floor 1s) reconciles pending guards against the evidence-ledger journal independent of pane output; chat-equality is enforced only when both guard and row carry a chatId, with a 5s journal grace; terminal guards (expired_unresolved / phone_escalated) stay in the map for bookkeeping but are skipped, and the interval self-clears once the non-terminal count hits 0. Reconcile is READ-ONLY journal queries (no new ledger writes); the timer is `unref()`'d and cleared in the destroy/cleanup paths.
 
 Do NOT "simplify" this back to pane-output-only reconcile — the external-process/in-memory gap will return. Known accepted limitation: `pendingTelegramReplyGuards` is in-memory only, so an inbound that arrived pre-restart and was unanswered is dropped on restart (it will not nag post-restart). The inbound row still exists in the evidence-ledger for manual recovery; auto-nagging across a restart is intentionally not provided.
+
+## Release Process
+
+(Re-homed S398 from cognitive memory — lost when workflows.md was rewritten; not preserved in infrastructure.md or elsewhere, so this is the only copy.)
+
+- Version bump in `ui/package.json`
+- Build with `npx electron-builder` (`--win` from Windows, `--mac` from Mac). Note: Windows may require `--config.npmRebuild=false` if Spectre-mitigated libs are missing.
+- Create GitHub release: `gh release create vX.Y.Z ui/dist/SquidRun-Setup-X.Y.Z.exe`
+- Update site: bump `RELEASE_VERSION` in `squidrun-site/platform-download-button.tsx`, push to `master`, wait for Vercel deploy.
+
+## Task Delegation Template (Architect -> Builder)
+
+(Re-homed S398 from cognitive memory — lost in the workflows.md rewrite.)
+
+Structured envelopes for Builder delegation:
+```
+OBJECTIVE: <one-line goal>
+SCOPE IN: <what to touch>
+SCOPE OUT: <what NOT to touch>
+REQUIRED EDITS: <file list>
+VALIDATION: <commands to run>
+ACCEPTANCE: <how to know it's done>
+DELIVERABLE: <commit, PR, staged changes, etc.>
+PRIORITY: <now / next / backlog>
+```
+Comms cadence: Builder sends initial ACK + plan, then delta updates only on state change. No noise.

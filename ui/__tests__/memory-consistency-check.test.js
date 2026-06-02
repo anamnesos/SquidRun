@@ -206,8 +206,9 @@ describe('memory consistency check', () => {
     const result = planMemoryConsistencyRepair({ projectRoot: tempDir, allowOrphanDeletes: true });
 
     expect(result.mode).toBe('dry_run');
-    expect(result.summary.insertCount).toBe(1);
-    expect(result.summary.orphanDeleteCount).toBe(1);
+    expect(result.summary.insertCount).toBe(0);
+    expect(result.summary.resyncCount).toBe(1);
+    expect(result.summary.orphanDeleteCount).toBe(0);
     expect(result.skipped).toEqual([]);
 
     const verifyDb = createDatabase(dbPath);
@@ -216,7 +217,7 @@ describe('memory consistency check', () => {
     expect(afterCount).toBe(beforeCount);
   });
 
-  test('repair inserts missing chunks, deletes safe revision-skew orphans, and writes audit events', () => {
+  test('repair resyncs same source-heading drift in place and writes audit events', () => {
     const {
       collectKnowledgeEntries,
       runMemoryConsistencyRepair,
@@ -257,8 +258,9 @@ describe('memory consistency check', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.execution.insertedNodes).toBe(1);
-    expect(result.execution.deletedNodes).toBe(1);
+    expect(result.execution.insertedNodes).toBe(0);
+    expect(result.execution.resyncedNodes).toBe(1);
+    expect(result.execution.deletedNodes).toBe(0);
     expect(result.postCheck.status).toBe('in_sync');
     expect(result.postCheck.synced).toBe(true);
 
@@ -270,7 +272,7 @@ describe('memory consistency check', () => {
     const evidenceDb = createDatabase(evidenceLedgerDbPath);
     const auditCount = Number(evidenceDb.prepare('SELECT COUNT(*) AS count FROM ledger_events').get().count || 0);
     evidenceDb.close();
-    expect(auditCount).toBe(2);
+    expect(auditCount).toBe(1);
   });
 
   test('missing-only repair inserts canonical chunks without deleting orphans', () => {
@@ -315,17 +317,178 @@ describe('memory consistency check', () => {
 
     expect(result.ok).toBe(true);
     expect(result.repairScope).toBe('missing-only');
-    expect(result.execution.insertedNodes).toBe(1);
+    expect(result.execution.insertedNodes).toBe(0);
+    expect(result.execution.resyncedNodes).toBe(1);
     expect(result.execution.deletedNodes).toBe(0);
     expect(result.summary.deferredActionCount).toBe(0);
+    expect(result.summary.deferredSkippedCount).toBe(0);
+    expect(result.postCheck.summary.missingInCognitiveCount).toBe(0);
+    expect(result.postCheck.summary.orphanedNodeCount).toBe(0);
+
+    const verifyDb = createDatabase(dbPath);
+    const orphan = verifyDb.prepare('SELECT node_id, content_hash FROM nodes WHERE node_id = ?').get('node-orphan');
+    verifyDb.close();
+    expect(orphan.node_id).toBe('node-orphan');
+    expect(orphan.content_hash).toBe(entries[1].contentHash);
+  });
+
+  test('missing-only repair does not guess-resync ambiguous repeated headings', () => {
+    const {
+      collectKnowledgeEntries,
+      runMemoryConsistencyRepair,
+    } = helpers;
+    const { resolveWorkspacePaths } = require('../modules/memory-search');
+
+    fs.writeFileSync(
+      path.join(tempDir, 'workspace', 'knowledge', 'user-context.md'),
+      [
+        '# User Context',
+        '',
+        '## Repeated',
+        '',
+        '- First canonical section.',
+        '',
+        '## Repeated',
+        '',
+        '- Second canonical section.',
+      ].join('\n')
+    );
+
+    const paths = resolveWorkspacePaths({ projectRoot: tempDir });
+    const entries = collectKnowledgeEntries(paths);
+    const dbPath = path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db');
+    const evidenceLedgerDbPath = path.join(tempDir, 'runtime', 'evidence-ledger.db');
+    fs.mkdirSync(path.dirname(evidenceLedgerDbPath), { recursive: true });
+
+    const db = createDatabase(dbPath);
+    createCognitiveSchema(db);
+    insertKnowledgeNode(db, {
+      nodeId: 'ambiguous-heading-orphan',
+      sourcePath: 'knowledge/user-context.md',
+      title: 'User Context',
+      heading: 'Repeated',
+      content: 'Old ambiguous repeated-heading content.',
+    }, helpers);
+    db.close();
+
+    const result = runMemoryConsistencyRepair({
+      projectRoot: tempDir,
+      evidenceLedgerDbPath,
+      repairScope: 'missing-only',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.execution.insertedNodes).toBe(2);
+    expect(result.execution.resyncedNodes).toBe(0);
     expect(result.summary.deferredSkippedCount).toBe(1);
     expect(result.postCheck.summary.missingInCognitiveCount).toBe(0);
     expect(result.postCheck.summary.orphanedNodeCount).toBe(1);
 
     const verifyDb = createDatabase(dbPath);
-    const orphan = verifyDb.prepare('SELECT node_id FROM nodes WHERE node_id = ?').get('node-orphan');
+    const orphan = verifyDb.prepare('SELECT content_hash FROM nodes WHERE node_id = ?').get('ambiguous-heading-orphan');
+    const canonicalCount = Number(verifyDb.prepare(`
+      SELECT COUNT(*) AS count
+      FROM nodes
+      WHERE source_path = ? AND heading = ? AND node_id != ?
+    `).get('knowledge/user-context.md', 'Repeated', 'ambiguous-heading-orphan').count || 0);
     verifyDb.close();
-    expect(orphan.node_id).toBe('node-orphan');
+
+    expect(orphan.content_hash).not.toBe(entries[0].contentHash);
+    expect(canonicalCount).toBe(2);
+  });
+
+  test('missing-only repair resyncs high-confidence content matches inside multi-chunk headings', () => {
+    const {
+      collectKnowledgeEntries,
+      runMemoryConsistencyRepair,
+    } = helpers;
+    const { resolveWorkspacePaths } = require('../modules/memory-search');
+
+    const filler = Array.from({ length: 80 }, (_, index) => (
+      `- Filler preference ${index}: keep unrelated Mira wording and operating texture out of the channel-routing fact.`
+    ));
+    fs.writeFileSync(
+      path.join(tempDir, 'workspace', 'knowledge', 'user-context.md'),
+      [
+        '# User Context',
+        '',
+        '## Communication Patterns',
+        '',
+        '- Channel + input basics: James uses Telegram when away from the PC; voice-transcribed messages are common, so preserve conversational context across the channel switch.',
+        ...filler,
+      ].join('\n')
+    );
+    fs.writeFileSync(
+      path.join(tempDir, 'workspace', 'knowledge', 'helper.md'),
+      [
+        '# Helper',
+        '',
+        '## Stable',
+        '',
+        '- Stable helper node.',
+      ].join('\n')
+    );
+
+    const paths = resolveWorkspacePaths({ projectRoot: tempDir });
+    const entries = collectKnowledgeEntries(paths);
+    const helperEntry = entries.find((entry) => entry.sourcePath === 'knowledge/helper.md');
+    const matchedEntry = entries.find((entry) => (
+      entry.sourcePath === 'knowledge/user-context.md'
+      && entry.heading === 'Communication Patterns'
+      && entry.content.includes('Telegram when away from the PC')
+    ));
+    expect(matchedEntry).toBeTruthy();
+    expect(helperEntry).toBeTruthy();
+    expect(entries.filter((entry) => entry.heading === 'Communication Patterns').length).toBeGreaterThan(1);
+
+    const dbPath = path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db');
+    const db = createDatabase(dbPath);
+    createCognitiveSchema(db);
+    insertKnowledgeNode(db, {
+      nodeId: 'rehome-node',
+      sourcePath: 'knowledge/user-context.md',
+      title: 'User Context',
+      heading: 'Communication Patterns',
+      content: 'Uses Telegram when away from PC. May send voice-transcribed messages. Expects agents to preserve context and continue with minimal friction.',
+      metadata: { sectionIndex: 2, chunkIndex: 0, headingLevel: 2 },
+      accessCount: 4,
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'helper-node',
+      sourcePath: helperEntry.sourcePath,
+      title: helperEntry.title,
+      heading: helperEntry.heading,
+      content: helperEntry.content,
+      contentHash: helperEntry.contentHash,
+      metadata: helperEntry.metadata,
+    }, helpers);
+    db.prepare(`
+      INSERT INTO edges (source_node_id, target_node_id, relation_type, weight)
+      VALUES (?, ?, ?, ?)
+    `).run('rehome-node', 'helper-node', 'supports', 1.0);
+    db.close();
+
+    const result = runMemoryConsistencyRepair({
+      projectRoot: tempDir,
+      evidenceLedgerDbPath: path.join(tempDir, 'runtime', 'evidence-ledger.db'),
+      repairScope: 'missing-only',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.execution.resyncedNodes).toBe(1);
+    expect(result.postCheck.summary.orphanedNodeCount).toBe(0);
+
+    const verifyDb = createDatabase(dbPath);
+    const row = verifyDb.prepare('SELECT content_hash FROM nodes WHERE node_id = ?').get('rehome-node');
+    const edgeCount = Number(verifyDb.prepare(`
+      SELECT COUNT(*) AS count
+      FROM edges
+      WHERE source_node_id = ? AND target_node_id = ?
+    `).get('rehome-node', 'helper-node').count || 0);
+    verifyDb.close();
+
+    expect(row.content_hash).toBe(matchedEntry.contentHash);
+    expect(edgeCount).toBe(1);
   });
 
   test('repair skips deleted-source orphans with an explanation', () => {
@@ -356,7 +519,7 @@ describe('memory consistency check', () => {
     expect(result.postCheck.summary.orphanedNodeCount).toBe(1);
   });
 
-  test('repair skips orphan deletion when migration-worthy relational data is attached', () => {
+  test('repair resyncs same source-heading relational drift without dropping edges', () => {
     const {
       collectKnowledgeEntries,
       runMemoryConsistencyRepair,
@@ -400,14 +563,25 @@ describe('memory consistency check', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.skipped).toHaveLength(1);
-    expect(result.skipped[0]).toEqual(expect.objectContaining({
-      driftType: 'relational_migration_required',
-    }));
+    expect(result.execution.resyncedNodes).toBe(1);
+    expect(result.skipped).toHaveLength(0);
     expect(result.actions.some((action) => action.kind === 'delete_revision_skew_orphan')).toBe(false);
+
+    const verifyDb = createDatabase(path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db'));
+    const edgeCount = Number(verifyDb.prepare(`
+      SELECT COUNT(*) AS count
+      FROM edges
+      WHERE source_node_id = ? AND target_node_id = ?
+    `).get('relational-orphan', 'helper-node').count || 0);
+    const row = verifyDb.prepare('SELECT content_hash, current_version FROM nodes WHERE node_id = ?').get('relational-orphan');
+    verifyDb.close();
+
+    expect(edgeCount).toBe(1);
+    expect(row.content_hash).toBe(entries[0].contentHash);
+    expect(Number(row.current_version || 0)).toBe(3);
   });
 
-  test('repair blocks auto-deletion of immune revision-skew orphans', () => {
+  test('repair resyncs immune source-heading drift while preserving immunity', () => {
     const {
       collectKnowledgeEntries,
       runMemoryConsistencyRepair,
@@ -434,14 +608,16 @@ describe('memory consistency check', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.skipped).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        kind: 'immune_protected_orphan',
-        driftType: 'immune_protected',
-        nodeId: 'immune-orphan',
-      }),
-    ]));
+    expect(result.execution.resyncedNodes).toBe(1);
+    expect(result.skipped).toEqual([]);
     expect(result.actions.some((action) => action.kind === 'delete_revision_skew_orphan')).toBe(false);
+
+    const verifyDb = createDatabase(path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db'));
+    const row = verifyDb.prepare('SELECT content_hash, is_immune FROM nodes WHERE node_id = ?').get('immune-orphan');
+    verifyDb.close();
+
+    expect(row.content_hash).toBe(entries[0].contentHash);
+    expect(Number(row.is_immune || 0)).toBe(1);
   });
 
   test('repair consolidates duplicate hashes and preserves traces and edges on the survivor', () => {
@@ -807,5 +983,216 @@ describe('memory consistency check', () => {
       expect.objectContaining({ kind: 'no_target', nodeId: 'mapped-no-target' }),
       expect.objectContaining({ kind: 'deleted_source_review', nodeId: 'deleted-source-orphan' }),
     ]));
+  });
+
+  test('guarded orphan delete review plans unblocked explicit drops and escalates protected nodes', () => {
+    const {
+      planGuardedOrphanDeletes,
+    } = helpers;
+
+    const db = createDatabase(path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db'));
+    createCognitiveSchema(db);
+    insertKnowledgeNode(db, {
+      nodeId: 'drop-node',
+      sourcePath: 'knowledge/user-context.md',
+      title: 'User Context',
+      heading: 'Old Heading',
+      content: 'Superseded old guidance.',
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'protected-node',
+      sourcePath: 'knowledge/user-context.md',
+      title: 'User Context',
+      heading: 'Protected Heading',
+      content: 'Superseded protected guidance.',
+      currentVersion: 2,
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'helper-node',
+      sourcePath: 'knowledge/user-context.md',
+      title: 'User Context',
+      heading: 'Helper Heading',
+      content: 'Helper node for an edge.',
+    }, helpers);
+    db.prepare(`
+      INSERT INTO edges (source_node_id, target_node_id, relation_type, weight)
+      VALUES (?, ?, ?, ?)
+    `).run('protected-node', 'helper-node', 'supports', 1.0);
+    db.close();
+
+    const result = planGuardedOrphanDeletes({
+      projectRoot: tempDir,
+      dropTargets: [
+        {
+          sourcePath: 'knowledge/user-context.md',
+          heading: 'Old Heading',
+          reason: 'Superseded by current file.',
+        },
+        {
+          sourcePath: 'knowledge/user-context.md',
+          heading: 'Protected Heading',
+          reason: 'Superseded by current file; recommend purge.',
+        },
+      ],
+    });
+
+    expect(result.mode).toBe('guarded_delete_review');
+    expect(result.summary.guardedDeleteCount).toBe(1);
+    expect(result.summary.escalatedCount).toBe(1);
+    expect(result.actions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'guarded_delete_orphan',
+        node: expect.objectContaining({ nodeId: 'drop-node' }),
+      }),
+    ]));
+    expect(result.skipped).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'guarded_delete_escalated',
+        nodeId: 'protected-node',
+        blockers: expect.arrayContaining(['edge_count=1', 'version=2']),
+      }),
+    ]));
+  });
+
+  test('guarded orphan delete collapses duplicate stable-key residuals before escalating the survivor', () => {
+    const {
+      runGuardedOrphanDeletes,
+    } = helpers;
+    const dbPath = path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db');
+    const evidenceLedgerDbPath = path.join(tempDir, 'runtime', 'evidence-ledger.db');
+    fs.mkdirSync(path.dirname(evidenceLedgerDbPath), { recursive: true });
+
+    const db = createDatabase(dbPath);
+    createCognitiveSchema(db);
+    insertKnowledgeNode(db, {
+      nodeId: 'protected-survivor',
+      sourcePath: 'knowledge/user-context.md',
+      title: 'User Context',
+      heading: 'Old Heading',
+      content: 'Superseded protected guidance v2.',
+      metadata: { sectionIndex: 9, chunkIndex: 0 },
+      accessCount: 10,
+      currentVersion: 2,
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'duplicate-loser',
+      sourcePath: 'knowledge/user-context.md',
+      title: 'User Context',
+      heading: 'Old Heading',
+      content: 'Superseded protected guidance v1.',
+      metadata: { sectionIndex: 9, chunkIndex: 0 },
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'helper-node',
+      sourcePath: 'knowledge/user-context.md',
+      title: 'User Context',
+      heading: 'Helper',
+      content: 'Helper content.',
+    }, helpers);
+    db.prepare(`
+      INSERT INTO edges (source_node_id, target_node_id, relation_type, weight)
+      VALUES (?, ?, ?, ?)
+    `).run('duplicate-loser', 'helper-node', 'supports', 1.0);
+    db.close();
+
+    const result = runGuardedOrphanDeletes({
+      projectRoot: tempDir,
+      evidenceLedgerDbPath,
+      dryRun: false,
+      dropTargets: [
+        {
+          sourcePath: 'knowledge/user-context.md',
+          heading: 'Old Heading',
+          reason: 'Superseded by current file; recommend purge.',
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.summary.guardedStableKeyCollapseCount).toBe(1);
+    expect(result.summary.escalatedCount).toBe(1);
+    expect(result.execution.deletedNodes).toBe(1);
+
+    const verifyDb = createDatabase(dbPath);
+    const survivor = verifyDb.prepare('SELECT node_id FROM nodes WHERE node_id = ?').get('protected-survivor');
+    const loser = verifyDb.prepare('SELECT node_id FROM nodes WHERE node_id = ?').get('duplicate-loser');
+    const movedEdgeCount = Number(verifyDb.prepare(`
+      SELECT COUNT(*) AS count
+      FROM edges
+      WHERE source_node_id = ? AND target_node_id = ?
+    `).get('protected-survivor', 'helper-node').count || 0);
+    verifyDb.close();
+
+    expect(survivor.node_id).toBe('protected-survivor');
+    expect(loser).toBeUndefined();
+    expect(movedEdgeCount).toBe(1);
+  });
+
+  test('guarded orphan delete run deletes only unblocked nodes and writes audit events', () => {
+    const {
+      runGuardedOrphanDeletes,
+    } = helpers;
+    const dbPath = path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db');
+    const evidenceLedgerDbPath = path.join(tempDir, 'runtime', 'evidence-ledger.db');
+    fs.mkdirSync(path.dirname(evidenceLedgerDbPath), { recursive: true });
+
+    const db = createDatabase(dbPath);
+    createCognitiveSchema(db);
+    insertKnowledgeNode(db, {
+      nodeId: 'drop-node',
+      sourcePath: 'knowledge/user-context.md',
+      title: 'User Context',
+      heading: 'Old Heading',
+      content: 'Superseded old guidance.',
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'protected-node',
+      sourcePath: 'knowledge/user-context.md',
+      title: 'User Context',
+      heading: 'Protected Heading',
+      content: 'Superseded protected guidance.',
+      isImmune: true,
+    }, helpers);
+    db.close();
+
+    const result = runGuardedOrphanDeletes({
+      projectRoot: tempDir,
+      evidenceLedgerDbPath,
+      dryRun: false,
+      dropTargets: [
+        {
+          sourcePath: 'knowledge/user-context.md',
+          heading: 'Old Heading',
+          reason: 'Superseded by current file.',
+        },
+        {
+          sourcePath: 'knowledge/user-context.md',
+          heading: 'Protected Heading',
+          reason: 'Superseded by current file; recommend purge.',
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.execution.appliedActions).toBe(1);
+    expect(result.execution.deletedNodes).toBe(1);
+    expect(result.summary.escalatedCount).toBe(1);
+
+    const verifyDb = createDatabase(dbPath);
+    const deletedNode = verifyDb.prepare('SELECT node_id FROM nodes WHERE node_id = ?').get('drop-node');
+    const protectedNode = verifyDb.prepare('SELECT node_id FROM nodes WHERE node_id = ?').get('protected-node');
+    verifyDb.close();
+
+    expect(deletedNode).toBeUndefined();
+    expect(protectedNode.node_id).toBe('protected-node');
+
+    const evidenceDb = createDatabase(evidenceLedgerDbPath);
+    const auditCount = Number(evidenceDb.prepare(`
+      SELECT COUNT(*) AS count
+      FROM ledger_events
+      WHERE type = ?
+    `).get('memory.consistency.repair').count || 0);
+    evidenceDb.close();
+    expect(auditCount).toBe(1);
   });
 });
