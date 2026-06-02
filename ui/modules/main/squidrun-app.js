@@ -220,6 +220,18 @@ const TELEGRAM_REPLY_GUARD_WARNING_THROTTLE_MS = Math.max(
   5_000,
   Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_WARNING_THROTTLE_MS || '30000', 10) || 30_000
 );
+const TELEGRAM_REPLY_GUARD_JOURNAL_RECONCILE_INTERVAL_MS = Math.max(
+  1_000,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_JOURNAL_RECONCILE_INTERVAL_MS || '5000', 10) || 5_000
+);
+const TELEGRAM_REPLY_GUARD_JOURNAL_GRACE_MS = Math.max(
+  0,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_JOURNAL_GRACE_MS || '5000', 10) || 5_000
+);
+const TELEGRAM_REPLY_GUARD_JOURNAL_DIAGNOSTIC_THROTTLE_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_JOURNAL_DIAGNOSTIC_THROTTLE_MS || '30000', 10) || 30_000
+);
 const TELEGRAM_REPLY_DEDUPE_WINDOW_MS = Math.max(
   5_000,
   Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_DEDUPE_WINDOW_MS || '45000', 10) || 45_000
@@ -865,6 +877,7 @@ class SquidRunApp {
     };
     this.pendingTelegramReplyGuards = new Map();
     this.pendingTelegramReplyGuardTimers = new Map();
+    this.pendingTelegramReplyGuardJournalReconcileTimer = null;
     this.telegramReplyDedupe = new Map();
     this.telegramStrayCorrectionReplies = new Map();
     this.autonomousSmoke = {
@@ -11182,6 +11195,7 @@ class SquidRunApp {
     };
     this.pendingTelegramReplyGuards.set(paneId, guard);
     this.schedulePendingTelegramReplyGuardEscalation(guard);
+    this.ensurePendingTelegramReplyGuardJournalReconcileTimer();
     return guard;
   }
 
@@ -11209,6 +11223,28 @@ class SquidRunApp {
     }, delayMs);
     if (typeof timer.unref === 'function') timer.unref();
     this.pendingTelegramReplyGuardTimers.set(paneId, timer);
+  }
+
+  ensurePendingTelegramReplyGuardJournalReconcileTimer() {
+    if (this.pendingTelegramReplyGuardJournalReconcileTimer) return;
+    const timer = setInterval(() => {
+      if (!this.pendingTelegramReplyGuards || this.pendingTelegramReplyGuards.size === 0) {
+        this.clearPendingTelegramReplyGuardJournalReconcileTimer();
+        return;
+      }
+      this.reconcilePendingTelegramReplyGuardsWithJournal({
+        reason: 'telegram_reply_guard_journal_reconcile_timer',
+        logMisses: true,
+      });
+    }, TELEGRAM_REPLY_GUARD_JOURNAL_RECONCILE_INTERVAL_MS);
+    if (typeof timer.unref === 'function') timer.unref();
+    this.pendingTelegramReplyGuardJournalReconcileTimer = timer;
+  }
+
+  clearPendingTelegramReplyGuardJournalReconcileTimer() {
+    if (!this.pendingTelegramReplyGuardJournalReconcileTimer) return;
+    clearInterval(this.pendingTelegramReplyGuardJournalReconcileTimer);
+    this.pendingTelegramReplyGuardJournalReconcileTimer = null;
   }
 
   getPendingTelegramReplyRequirement(paneId = '1') {
@@ -11472,32 +11508,52 @@ class SquidRunApp {
       );
   }
 
-  findAckedTelegramEgressForPendingGuard(guard = {}) {
+  getAckedTelegramEgressForPendingGuardResult(guard = {}, options = {}) {
     const guardChatId = normalizeChatId(guard.chatId || guard.telegramChatId);
     const guardSessionId = toNonEmptyString(guard.sessionScopeId);
     const guardCreatedAtMs = Number(guard.createdAtMs || 0);
-    if (!guardChatId || !guardSessionId || !Number.isFinite(guardCreatedAtMs) || guardCreatedAtMs <= 0) {
-      return null;
+    const graceMs = Math.max(0, Number(options.graceMs ?? TELEGRAM_REPLY_GUARD_JOURNAL_GRACE_MS) || 0);
+    const sinceMs = Number.isFinite(guardCreatedAtMs) && guardCreatedAtMs > 0
+      ? Math.max(0, guardCreatedAtMs - graceMs)
+      : 0;
+    const diagnostics = {
+      guardChatId: guardChatId || null,
+      guardSessionId: guardSessionId || null,
+      guardCreatedAtMs: Number.isFinite(guardCreatedAtMs) ? guardCreatedAtMs : 0,
+      sinceMs,
+      candidateRowCount: 0,
+      reason: null,
+      error: null,
+    };
+    if (!guardSessionId || !Number.isFinite(guardCreatedAtMs) || guardCreatedAtMs <= 0) {
+      diagnostics.reason = 'missing_required_guard_fields';
+      return { row: null, diagnostics };
     }
 
     let rows = [];
     try {
-      rows = queryCommsJournalEntries({
+      const queryFn = typeof options.queryCommsJournalEntries === 'function'
+        ? options.queryCommsJournalEntries
+        : queryCommsJournalEntries;
+      rows = queryFn({
         sessionId: guardSessionId,
         channel: 'telegram',
         direction: 'outbound',
-        sinceMs: guardCreatedAtMs,
+        sinceMs,
         order: 'asc',
         limit: 500,
       });
+      diagnostics.candidateRowCount = Array.isArray(rows) ? rows.length : 0;
     } catch (err) {
+      diagnostics.reason = 'query_failed';
+      diagnostics.error = err.message;
       log.warn('TelegramReplyRequirement', `Failed checking Telegram egress journal: ${err.message}`);
-      return null;
+      return { row: null, diagnostics };
     }
 
-    return (Array.isArray(rows) ? rows : []).find((row) => {
-      const metadata = (row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata))
-        ? row.metadata
+    const row = (Array.isArray(rows) ? rows : []).find((candidate) => {
+      const metadata = (candidate.metadata && typeof candidate.metadata === 'object' && !Array.isArray(candidate.metadata))
+        ? candidate.metadata
         : {};
       const replyToMessageId = toNonEmptyString(
         metadata.replyToMessageId
@@ -11507,17 +11563,59 @@ class SquidRunApp {
         || null
       );
       if (replyToMessageId && replyToMessageId !== toNonEmptyString(guard.messageId)) return false;
-      if (!this.isProvenTelegramEgressJournalRow(row)) return false;
-      if (this.getCommsJournalRowSessionId(row) !== guardSessionId) return false;
-      if (this.getCommsJournalRowChatId(row) !== guardChatId) return false;
-      return this.getCommsJournalRowTimestampMs(row) >= guardCreatedAtMs;
+      if (!this.isProvenTelegramEgressJournalRow(candidate)) return false;
+      if (this.getCommsJournalRowSessionId(candidate) !== guardSessionId) return false;
+      const rowChatId = this.getCommsJournalRowChatId(candidate);
+      if (guardChatId && rowChatId && rowChatId !== guardChatId) return false;
+      return this.getCommsJournalRowTimestampMs(candidate) >= sinceMs;
     }) || null;
+    diagnostics.reason = row ? 'matched' : 'no_matching_acked_telegram_egress';
+    return { row, diagnostics };
   }
 
-  reconcilePendingTelegramReplyGuardWithJournal(paneId = '1', guard = {}) {
+  findAckedTelegramEgressForPendingGuard(guard = {}, options = {}) {
+    return this.getAckedTelegramEgressForPendingGuardResult(guard, options).row;
+  }
+
+  notePendingTelegramReplyGuardJournalMiss(paneId = '1', guard = {}, diagnostics = {}, options = {}) {
     const normalizedPaneId = toNonEmptyString(paneId) || '1';
-    const egressRow = this.findAckedTelegramEgressForPendingGuard(guard);
-    if (!egressRow) return null;
+    const latest = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    if (!latest || toNonEmptyString(latest.messageId) !== toNonEmptyString(guard.messageId)) return;
+    const nowMs = Date.now();
+    latest.lastJournalReconcileAtMs = nowMs;
+    latest.lastJournalReconcileReason = diagnostics.reason || 'no_matching_acked_telegram_egress';
+    latest.lastJournalReconcileCandidateRowCount = Number(diagnostics.candidateRowCount || 0);
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, latest);
+    if (options.logMisses !== true) return;
+    const lastDiagnosticAtMs = Number(latest.lastJournalReconcileDiagnosticAtMs || 0);
+    if ((nowMs - lastDiagnosticAtMs) < TELEGRAM_REPLY_GUARD_JOURNAL_DIAGNOSTIC_THROTTLE_MS) return;
+    latest.lastJournalReconcileDiagnosticAtMs = nowMs;
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, latest);
+    log.warn(
+      'TelegramReplyRequirement',
+      [
+        'No acked Telegram egress matched pending guard',
+        `pane=${normalizedPaneId}`,
+        `inbound=${toNonEmptyString(latest.messageId) || 'unknown'}`,
+        `chatId=${diagnostics.guardChatId || latest.chatId || latest.telegramChatId || 'missing'}`,
+        `session=${diagnostics.guardSessionId || latest.sessionScopeId || 'missing'}`,
+        `createdAtMs=${diagnostics.guardCreatedAtMs || latest.createdAtMs || 'missing'}`,
+        `sinceMs=${diagnostics.sinceMs || 'missing'}`,
+        `candidateRows=${Number(diagnostics.candidateRowCount || 0)}`,
+        `reason=${diagnostics.reason || 'unknown'}`,
+        `source=${toNonEmptyString(options.reason) || 'journal_reconcile'}`,
+      ].join(' ')
+    );
+  }
+
+  reconcilePendingTelegramReplyGuardWithJournal(paneId = '1', guard = {}, options = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const result = this.getAckedTelegramEgressForPendingGuardResult(guard, options);
+    const egressRow = result.row;
+    if (!egressRow) {
+      this.notePendingTelegramReplyGuardJournalMiss(normalizedPaneId, guard, result.diagnostics, options);
+      return null;
+    }
     this.clearPendingTelegramReplyGuard({
       paneId: normalizedPaneId,
       chatId: guard.chatId || guard.telegramChatId || null,
@@ -11533,6 +11631,26 @@ class SquidRunApp {
     };
   }
 
+  reconcilePendingTelegramReplyGuardsWithJournal(options = {}) {
+    const reconciled = [];
+    for (const [paneId, guard] of Array.from(this.pendingTelegramReplyGuards.entries())) {
+      const satisfaction = this.reconcilePendingTelegramReplyGuardWithJournal(paneId, guard, options);
+      if (satisfaction) reconciled.push(satisfaction);
+    }
+    if (this.pendingTelegramReplyGuards.size === 0) {
+      this.clearPendingTelegramReplyGuardJournalReconcileTimer();
+    }
+    return {
+      ok: true,
+      status: reconciled.length > 0
+        ? 'telegram_reply_guards_reconciled_from_journal'
+        : 'telegram_reply_guards_checked_from_journal',
+      reconciledCount: reconciled.length,
+      pendingCount: this.pendingTelegramReplyGuards.size,
+      reconciled,
+    };
+  }
+
   clearPendingTelegramReplyGuard({ paneId = '1', chatId = null } = {}) {
     const normalizedPaneId = toNonEmptyString(paneId) || '1';
     const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
@@ -11544,6 +11662,9 @@ class SquidRunApp {
     }
     this.clearPendingTelegramReplyGuardTimer(normalizedPaneId);
     this.pendingTelegramReplyGuards.delete(normalizedPaneId);
+    if (this.pendingTelegramReplyGuards.size === 0) {
+      this.clearPendingTelegramReplyGuardJournalReconcileTimer();
+    }
     return true;
   }
 
@@ -12082,6 +12203,10 @@ class SquidRunApp {
     this.flushBufferedPtyData();
     this.clearPtyVisibleReleaseTimer();
     this.flushVisibleFilteredPtyData(null, { force: true });
+    this.clearPendingTelegramReplyGuardJournalReconcileTimer();
+    for (const paneId of Array.from(this.pendingTelegramReplyGuardTimers.keys())) {
+      this.clearPendingTelegramReplyGuardTimer(paneId);
+    }
     this.clearDaemonConnectTimeout();
     this.clearWebSocketStartRetry();
     if (this.paneHostBootstrapTimer) {
