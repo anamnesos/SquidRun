@@ -225,7 +225,7 @@ The floor is: this agent gives a shit about the outcome.
 5. **Cross-device:** `workspace/knowledge/` is git-tracked and shared across devices. Model-specific memory dirs are supplementary — procedural knowledge goes in the shared location.
 6. **Project registry updates:** When a new project is set up or discovered, add or update it in `workspace/knowledge/projects.md`.
 7. **Deployment config updates:** When deployment configuration changes, update `workspace/knowledge/infrastructure.md`.
-8. **Device registry updates:** When a new device joins or a device-specific quirk is learned, add or update it in `workspace/knowledge/devices.md`.
+8. **Device registry updates:** When a new device joins or a device-specific quirk is learned, add or update it in `workspace/knowledge/runtime-environment.md`.
 9. **User-pattern updates:** When new user preferences or communication patterns are learned, add or update them in `workspace/knowledge/user-context.md`.
 
 ## Pre-Restart Gate (Mandatory)
