@@ -3679,7 +3679,7 @@ describe('SquidRunApp', () => {
       ]);
     });
 
-    it('skips direct PTY writes for Codex payloads that require chunked verified injection', async () => {
+    it('skips direct PTY writes for payloads that require chunked verified injection', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.ctx.currentSettings = {
         paneCommands: {
@@ -3701,13 +3701,43 @@ describe('SquidRunApp', () => {
       expect(result).toEqual(expect.objectContaining({
         accepted: false,
         verified: false,
-        status: 'skipped.codex_chunked_payload',
+        status: 'skipped.chunked_payload',
         mode: 'daemon-pty',
         paneId: '1',
+        paneRuntime: 'codex',
       }));
     });
 
-    it('routes long Codex pane messages through the verified trigger path after skipping direct PTY', async () => {
+    it('skips direct PTY writes for long Claude payloads instead of one-shotting the pane', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'claude',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = await app.deliverPaneMessageViaDaemonPty({
+        paneId: '1',
+        message: 'x'.repeat(256),
+        messageId: 'direct-claude-long-1',
+      });
+
+      expect(app.ctx.daemonClient.write).not.toHaveBeenCalled();
+      expect(result).toEqual(expect.objectContaining({
+        accepted: false,
+        verified: false,
+        status: 'skipped.chunked_payload',
+        mode: 'daemon-pty',
+        paneId: '1',
+        paneRuntime: 'non-codex',
+      }));
+    });
+
+    it('routes long Claude pane messages through the verified trigger path instead of direct PTY', async () => {
       const triggers = require('../modules/triggers');
       triggers.sendDirectMessage.mockClear();
       triggers.sendDirectMessage.mockResolvedValueOnce({
@@ -3719,7 +3749,7 @@ describe('SquidRunApp', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.ctx.currentSettings = {
         paneCommands: {
-          1: 'codex --yolo',
+          1: 'claude',
         },
       };
       app.ctx.daemonClient = {
@@ -3731,15 +3761,15 @@ describe('SquidRunApp', () => {
       const result = await app.deliverPaneMessageReliably({
         paneId: '1',
         message,
-        fromRole: 'builder',
-        messageId: 'codex-long-fallback-1',
+        fromRole: 'oracle',
+        messageId: 'claude-long-fallback-1',
       });
 
       expect(app.ctx.daemonClient.write).not.toHaveBeenCalled();
       expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
         ['1'],
         message,
-        'builder',
+        'oracle',
         expect.objectContaining({ awaitDelivery: true })
       );
       expect(result).toEqual(expect.objectContaining({

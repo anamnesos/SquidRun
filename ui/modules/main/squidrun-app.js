@@ -6698,7 +6698,7 @@ class SquidRunApp {
       || directPtyResult?.queued === true
       || directPtyResult?.ok === true
     ) && !directStatus.includes('failed')
-      && directStatus !== 'skipped.codex_chunked_payload';
+      && !directStatus.startsWith('skipped.');
     if (directPtyResult?.verified === true || directAccepted) {
       return directPtyResult;
     }
@@ -6804,10 +6804,11 @@ class SquidRunApp {
 
     try {
       const payloadBytes = getUtf8ByteLength(text);
-      if (
-        this.isCodexPaneCommand(normalizedPaneId)
-        && payloadBytes >= DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES
-      ) {
+      if (payloadBytes >= DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES) {
+        // Codex already skipped this unsafe direct path; Claude did not, which
+        // caused front-clipped long inbound messages. Use the packetized
+        // inject path for all runtimes once the payload is chunk-sized.
+        const paneRuntime = this.isCodexPaneCommand(normalizedPaneId) ? 'codex' : 'non-codex';
         appendBusTraceEvent({
           eventType: 'pane_direct_pty_write_skipped',
           messageId: messageId || traceId || null,
@@ -6817,18 +6818,20 @@ class SquidRunApp {
           payloadFingerprint: createPayloadFingerprint(text),
           success: false,
           verified: false,
-          status: 'skipped.codex_chunked_payload',
+          status: 'skipped.chunked_payload',
           mode: 'daemon-pty',
-          reason: 'codex_chunked_payload_requires_verified_inject_path',
+          paneRuntime,
+          reason: 'chunked_payload_requires_verified_inject_path',
         });
         return {
           ok: false,
           accepted: false,
           queued: false,
           verified: false,
-          status: 'skipped.codex_chunked_payload',
+          status: 'skipped.chunked_payload',
           mode: 'daemon-pty',
           paneId: normalizedPaneId,
+          paneRuntime,
         };
       }
 
