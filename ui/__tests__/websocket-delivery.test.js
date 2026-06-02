@@ -1718,6 +1718,71 @@ describe('WebSocket Delivery Audit', () => {
     expect(health.routeBinding).toEqual(expect.objectContaining(routeBinding));
   });
 
+  test('scoped main-to-room websocket delivery skips main handler fallback for canonical targets', async () => {
+    const routeBinding = {
+      clientKind: 'work_room_route_client',
+      routeOwner: 'trustquote-work-room-route-owner',
+      roomId: 'trustquote',
+      role: 'builder',
+      paneId: 'trustquote-builder',
+      terminalPaneId: 'trustquote-builder',
+      terminalBacked: true,
+      agentProcessStarted: true,
+      profileName: 'trustquote',
+      windowKey: 'trustquote',
+      sessionScopeId: 'app-test:trustquote',
+      workspace: 'D:/projects/TrustQuote',
+    };
+    const receiver = await connectAndRegister({
+      port,
+      role: 'builder',
+      paneId: 'trustquote-builder',
+      profileName: 'trustquote',
+      windowKey: 'trustquote',
+      sessionScopeId: 'app-test:trustquote',
+      routeBinding,
+    });
+    activeClients.add(receiver);
+    const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(sender);
+
+    onMessageSpy.mockClear();
+    const messageId = 'trustquote-forward-no-main-fallback-1';
+    const routedMessagePromise = waitForMessage(
+      receiver,
+      (msg) => msg.type === 'message' && msg.traceId === messageId
+    );
+    const ackPromise = waitForMessage(
+      sender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: '(ARCHITECT): TrustQuote scoped route proof',
+      messageId,
+      ackRequired: true,
+      metadata: {
+        routing: {
+          profileName: 'trustquote',
+          windowKey: 'trustquote',
+          sessionScopeId: 'app-test:trustquote',
+        },
+      },
+    }));
+
+    const routedMessage = await routedMessagePromise;
+    const ack = await ackPromise;
+    expect(routedMessage.content).toBe('(ARCHITECT): TrustQuote scoped route proof');
+    expect(ack.ok).toBe(true);
+    expect(ack.status).toBe('delivered.websocket');
+    expect(ack.wsDeliveryCount).toBe(1);
+    const handlerSendCalls = onMessageSpy.mock.calls
+      .map((call) => call[0])
+      .filter((payload) => payload?.message?.type === 'send');
+    expect(handlerSendCalls).toHaveLength(0);
+  });
+
   test('side-profile health exposes local handler route readiness before scoped terminal delivery', async () => {
     const scopedProbe = await connectAndRegister({
       port,

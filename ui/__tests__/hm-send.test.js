@@ -978,6 +978,205 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('routes main sender to TrustQuote room when --target-profile is explicit', async () => {
+    const tempProject = createLinkedProject();
+    writeAppStatus(tempProject, 'app-session-389');
+    const registerAttempts = [];
+    const healthChecks = [];
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          registerAttempts.push(msg);
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          healthChecks.push(msg);
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            source: 'client_activity',
+            role: 'builder',
+            paneId: 'trustquote-builder',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+            routeBinding: {
+              routeOwner: 'trustquote-work-room-route-owner',
+              roomId: 'trustquote',
+              role: 'builder',
+              paneId: 'trustquote-builder',
+              profileName: 'trustquote',
+              windowKey: 'trustquote',
+              sessionScopeId: 'app-session-389:trustquote',
+            },
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            accepted: true,
+            queued: true,
+            verified: false,
+            status: 'delivered.websocket',
+            wsDeliveryCount: 1,
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        [
+          'builder',
+          '(ARCHITECT): TrustQuote forward route proof',
+          '--role',
+          'architect',
+          '--target-profile',
+          'trustquote',
+          '--timeout',
+          '120',
+          '--retries',
+          '0',
+          '--no-fallback',
+        ],
+        { HM_SEND_PORT: String(port) },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(registerAttempts).toEqual([
+        expect.objectContaining({
+          role: 'architect',
+          profileName: 'main',
+          windowKey: 'main',
+        }),
+      ]);
+      expect(healthChecks).toEqual([
+        expect.objectContaining({
+          target: 'builder',
+          metadata: expect.objectContaining({
+            routing: expect.objectContaining({
+              profileName: 'trustquote',
+              windowKey: 'trustquote',
+              sessionScopeId: 'app-session-389:trustquote',
+            }),
+          }),
+        }),
+      ]);
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0]).toEqual(expect.objectContaining({
+        target: 'builder',
+        content: '(ARCHITECT): TrustQuote forward route proof',
+      }));
+      expect(sendAttempts[0].metadata).toEqual(expect.objectContaining({
+        routing: expect.objectContaining({
+          profileName: 'trustquote',
+          windowKey: 'trustquote',
+          sessionScopeId: 'app-session-389:trustquote',
+        }),
+      }));
+      expect(result.stdout).toContain('Accepted by builder but unverified');
+      expect(result.stdout).toContain('delivered.websocket');
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('target-profile route failure does not fall back to main trigger', async () => {
+    const tempProject = createLinkedProject();
+    writeAppStatus(tempProject, 'app-session-389');
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: false,
+            status: 'scope_route_unavailable',
+            failClosed: true,
+            routeScope: {
+              profileName: 'trustquote',
+              windowKey: 'trustquote',
+              sessionScopeId: 'app-session-389:trustquote',
+            },
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        [
+          'builder',
+          '(ARCHITECT): should not hit main trigger',
+          '--role',
+          'architect',
+          '--target-profile',
+          'trustquote',
+          '--timeout',
+          '120',
+          '--retries',
+          '0',
+        ],
+        { HM_SEND_PORT: String(port) },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('Send blocked by profile isolation (scope_route_unavailable)');
+      expect(sendAttempts).toHaveLength(0);
+      expect(fs.existsSync(getTriggerPath('builder.txt', { cwd: tempProject }))).toBe(false);
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('fails closed for TrustQuote builder/oracle sends when route-owner client activity is missing', async () => {
     const sendAttempts = [];
     let server;
