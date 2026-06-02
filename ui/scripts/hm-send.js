@@ -148,17 +148,6 @@ const FORCE_FALLBACK_ON_UNVERIFIED = process.env.HM_SEND_FORCE_FALLBACK_ON_UNVER
 const DEFAULT_RETRIES = 3;
 const MAX_RETRIES = 5;
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
-const AUTO_CHUNK_LONG_MESSAGES = process.env.HM_SEND_AUTO_CHUNK_LONG_MESSAGES !== '0';
-const LONG_MESSAGE_INLINE_LIMIT_BYTES = normalizePositiveInt(
-  process.env.HM_SEND_LONG_MESSAGE_INLINE_LIMIT_BYTES,
-  1400,
-  256
-);
-const LONG_MESSAGE_CHUNK_BYTES = normalizePositiveInt(
-  process.env.HM_SEND_LONG_MESSAGE_CHUNK_BYTES,
-  900,
-  256
-);
 const SPECIAL_USER_TARGETS = new Set(['user', 'telegram']);
 const INTERNAL_INBOX_TARGETS = new Set(['mira']);
 const TRUSTQUOTE_PROFILE_NAME = 'trustquote';
@@ -1985,84 +1974,6 @@ function previewMessage(content) {
   return `${content.substring(0, 50)}...`;
 }
 
-function splitUtf8Chunks(text, maxBytes) {
-  const input = typeof text === 'string' ? text : String(text ?? '');
-  const limit = Math.max(1, Number.parseInt(String(maxBytes), 10) || LONG_MESSAGE_CHUNK_BYTES);
-  const chunks = [];
-  let current = '';
-  let currentBytes = 0;
-
-  for (const char of input) {
-    const charBytes = getUtf8ByteLength(char);
-    if (current && currentBytes + charBytes > limit) {
-      chunks.push(current);
-      current = char;
-      currentBytes = charBytes;
-      continue;
-    }
-    current += char;
-    currentBytes += charBytes;
-  }
-
-  if (current || chunks.length === 0) {
-    chunks.push(current);
-  }
-  return chunks;
-}
-
-function splitAgentMessagePrefix(content) {
-  const text = typeof content === 'string' ? content : String(content ?? '');
-  const match = text.match(/^(\([^)]+\):\s*)([\s\S]*)$/);
-  if (!match) {
-    return { prefix: '', body: text };
-  }
-  return {
-    prefix: match[1] || '',
-    body: match[2] || '',
-  };
-}
-
-function buildLongMessageChunkPlan(envelope = {}) {
-  const content = typeof envelope.content === 'string' ? envelope.content : String(envelope.content ?? '');
-  const payloadBytes = getUtf8ByteLength(content);
-  if (payloadBytes <= LONG_MESSAGE_INLINE_LIMIT_BYTES) return null;
-
-  const { prefix, body } = splitAgentMessagePrefix(content);
-  const bodyChunks = splitUtf8Chunks(body, LONG_MESSAGE_CHUNK_BYTES);
-  const fingerprint = createPayloadFingerprint(content);
-  const total = bodyChunks.length;
-  const chunks = bodyChunks.map((bodyChunk, index) => {
-    const part = index + 1;
-    const partLabel = `${String(part).padStart(2, '0')}-of-${String(total).padStart(2, '0')}`;
-    const header = `[hm-send chunk ${part}/${total}; original=${envelope.message_id}; bytes=${payloadBytes}; fingerprint=${fingerprint}]`;
-    return {
-      part,
-      total,
-      messageId: `${envelope.message_id}-part${String(part).padStart(2, '0')}`,
-      partLabel,
-      content: `${prefix}${header}\n${bodyChunk}`,
-    };
-  });
-
-  return {
-    originalMessageId: envelope.message_id,
-    payloadBytes,
-    fingerprint,
-    chunkBytes: LONG_MESSAGE_CHUNK_BYTES,
-    inlineLimitBytes: LONG_MESSAGE_INLINE_LIMIT_BYTES,
-    chunks,
-  };
-}
-
-function shouldAutoChunkLongMessage({ envelope, bridgeMode = false, miraInboxMode = false } = {}) {
-  if (!AUTO_CHUNK_LONG_MESSAGES) return false;
-  if (bridgeMode || miraInboxMode) return false;
-  if (isSpecialTarget(target) || telegramPhotoPath) return false;
-  const normalizedTargetRole = normalizeRole(envelope?.target?.role || target);
-  if (!normalizedTargetRole) return false;
-  return getUtf8ByteLength(envelope?.content || '') > LONG_MESSAGE_INLINE_LIMIT_BYTES;
-}
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -2657,177 +2568,33 @@ async function main() {
   if (isTelegramTextDirectModeActive()) {
     await sendTelegramTextDirect(envelope);
   }
+  const envelopeMetadata = buildCanonicalEnvelopeMetadata(envelope);
+  const preSendJournal = appendLocalCommsJournalEntry({
+    messageId: envelope.message_id,
+    sessionId: envelope.session_id || null,
+    senderRole: envelope.sender?.role || (role || 'cli'),
+    targetRole: envelope.target?.role || targetRole,
+    channel: miraInboxMode ? 'mira-inbox' : 'ws',
+    direction: 'outbound',
+    sentAtMs: envelope.timestamp_ms,
+    rawBody: envelope.content,
+    status: miraInboxMode ? 'mira_inbox_recorded' : 'recorded',
+    attempt: 1,
+    metadata: {
+      source: 'hm-send',
+      maxAttempts: retries + 1,
+      routeKind: miraInboxMode ? 'mira-inbox' : (bridgeMode ? 'bridge' : 'local'),
+      bridgeTarget: bridgeMode ? bridgeTarget.toDevice : null,
+      bridgeEnabled: bridgeMode ? isCrossDeviceEnabled(process.env) : null,
+      ...envelopeMetadata,
+      ...(trustQuoteReverseRoute ? trustQuoteReverseRoute.metadata : {}),
+      ...(forwardProfileRoute ? forwardProfileRoute.metadata : {}),
+    },
+  });
 
-  const appendPreSendJournal = (currentEnvelope, options = {}) => {
-    const envelopeMetadata = buildCanonicalEnvelopeMetadata(currentEnvelope);
-    const channel = options.channel || (miraInboxMode ? 'mira-inbox' : 'ws');
-    const status = options.status || (miraInboxMode ? 'mira_inbox_recorded' : 'recorded');
-    return appendLocalCommsJournalEntry({
-      messageId: currentEnvelope.message_id,
-      sessionId: currentEnvelope.session_id || null,
-      senderRole: currentEnvelope.sender?.role || (role || 'cli'),
-      targetRole: currentEnvelope.target?.role || targetRole,
-      channel,
-      direction: 'outbound',
-      sentAtMs: currentEnvelope.timestamp_ms,
-      rawBody: currentEnvelope.content,
-      status,
-      attempt: 1,
-      metadata: {
-        source: 'hm-send',
-        maxAttempts: retries + 1,
-        routeKind: options.routeKind || (miraInboxMode ? 'mira-inbox' : (bridgeMode ? 'bridge' : 'local')),
-        bridgeTarget: bridgeMode ? bridgeTarget.toDevice : null,
-        bridgeEnabled: bridgeMode ? isCrossDeviceEnabled(process.env) : null,
-        ...envelopeMetadata,
-        ...(trustQuoteReverseRoute ? trustQuoteReverseRoute.metadata : {}),
-        ...(forwardProfileRoute ? forwardProfileRoute.metadata : {}),
-        ...(options.metadata && typeof options.metadata === 'object' && !Array.isArray(options.metadata)
-          ? options.metadata
-          : {}),
-      },
-    });
-  };
-
-  const warnIfJournalUnavailable = (journalResult, label = 'pre-send') => {
-    if (journalResult?.ok !== true) {
-      console.warn(`Comms journal ${label} record unavailable: ${journalResult?.reason || 'unknown'}`);
-    }
-  };
-
-  const chunkPlan = shouldAutoChunkLongMessage({ envelope, bridgeMode, miraInboxMode })
-    ? buildLongMessageChunkPlan(envelope)
-    : null;
-
-  if (chunkPlan) {
-    warnIfJournalUnavailable(appendPreSendJournal(envelope, {
-      status: 'chunked_original_recorded',
-      routeKind: bridgeMode ? 'bridge' : 'chunked-local',
-      metadata: {
-        longMessage: {
-          mode: 'auto_chunk',
-          chunkCount: chunkPlan.chunks.length,
-          payloadBytes: chunkPlan.payloadBytes,
-          fingerprint: chunkPlan.fingerprint,
-          inlineLimitBytes: chunkPlan.inlineLimitBytes,
-          chunkBytes: chunkPlan.chunkBytes,
-        },
-      },
-    }), 'chunked original');
-
-    let failedChunk = null;
-    let anyUnverified = false;
-    for (const chunk of chunkPlan.chunks) {
-      const chunkEnvelope = buildOutboundMessageEnvelope({
-        message_id: chunk.messageId,
-        session_id: projectMetadata?.session_id || null,
-        sender: {
-          role: role || 'cli',
-        },
-        target: {
-          raw: target || null,
-          role: targetRole,
-          pane_id: resolvePaneIdForRole(targetRole),
-        },
-        content: chunk.content,
-        priority,
-        timestamp_ms: Date.now(),
-        project: projectMetadata || null,
-      });
-      warnIfJournalUnavailable(appendPreSendJournal(chunkEnvelope, {
-        routeKind: bridgeMode ? 'bridge' : 'chunked-local',
-        metadata: {
-          hmSendChunk: {
-            originalMessageId: chunkPlan.originalMessageId,
-            part: chunk.part,
-            total: chunk.total,
-            partLabel: chunk.partLabel,
-            payloadBytes: chunkPlan.payloadBytes,
-            fingerprint: chunkPlan.fingerprint,
-          },
-        },
-      }), `chunk ${chunk.part}/${chunk.total}`);
-
-      let chunkResult = null;
-      let chunkError = null;
-      try {
-        chunkResult = await sendViaWebSocketWithAck(chunkEnvelope, {
-          skipHealthCheck: bridgeMode || chunk.part > 1,
-          ...(trustQuoteReverseRoute || forwardProfileRoute || {}),
-          metadata: {
-            hmSendChunk: {
-              originalMessageId: chunkPlan.originalMessageId,
-              part: chunk.part,
-              total: chunk.total,
-              payloadBytes: chunkPlan.payloadBytes,
-              fingerprint: chunkPlan.fingerprint,
-            },
-          },
-        });
-      } catch (err) {
-        chunkError = err;
-      }
-
-      if (!chunkResult?.ok) {
-        failedChunk = {
-          chunk,
-          result: chunkResult,
-          error: chunkError,
-        };
-        break;
-      }
-      if (chunkResult.delivered === false) {
-        anyUnverified = true;
-      }
-    }
-
-    if (!failedChunk) {
-      const deliveryWord = anyUnverified ? 'Accepted' : 'Delivered';
-      const verificationNote = anyUnverified
-        ? ' Some chunks were accepted but unverified; check comms history before resending.'
-        : '';
-      console.log(
-        `${deliveryWord} to ${target} in ${chunkPlan.chunks.length} chunks: ${previewMessage(message)} `
-        + `(original: ${chunkPlan.originalMessageId}, bytes: ${chunkPlan.payloadBytes}).${verificationNote}`
-      );
-      closeCommsJournalStores();
-      process.exit(0);
-    }
-
-    const failReason = failedChunk.error?.message
-      || failedChunk.result?.ack?.status
-      || failedChunk.result?.deliveryCheck?.status
-      || failedChunk.result?.error
-      || 'unknown_chunk_failure';
-    if (enableFallback && !isSpecialTarget(target) && !shouldFailClosedWithoutFallback(failedChunk.result, failedChunk.error)) {
-      const fallbackResult = writeTriggerFallback(target, buildTriggerFallbackDescriptor(envelope));
-      if (fallbackResult.ok) {
-        console.warn(
-          `Auto-chunked hm-send failed at chunk ${failedChunk.chunk.part}/${failedChunk.chunk.total} `
-          + `(${failReason}). Wrote trigger fallback: ${fallbackResult.path}`
-        );
-        closeCommsJournalStores();
-        process.exit(0);
-      }
-      console.error(
-        `Auto-chunked hm-send failed at chunk ${failedChunk.chunk.part}/${failedChunk.chunk.total} `
-        + `(${failReason}) and trigger fallback failed: ${fallbackResult.error}`
-      );
-      closeCommsJournalStores();
-      process.exit(1);
-    }
-
-    console.error(
-      `Auto-chunked hm-send failed at chunk ${failedChunk.chunk.part}/${failedChunk.chunk.total}: ${failReason}. `
-      + 'No fallback was used.'
-    );
-    closeCommsJournalStores();
-    process.exit(1);
+  if (preSendJournal?.ok !== true) {
+    console.warn(`Comms journal pre-send record unavailable: ${preSendJournal?.reason || 'unknown'}`);
   }
-
-  const preSendJournal = appendPreSendJournal(envelope);
-
-  warnIfJournalUnavailable(preSendJournal);
 
   if (miraInboxMode) {
     console.log(`Recorded to mira inbox: ${previewMessage(message)} (message_id: ${envelope.message_id})`);
