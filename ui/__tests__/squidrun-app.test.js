@@ -49,6 +49,7 @@ jest.mock('electron', () => ({
     show: jest.fn(),
     hide: jest.fn(),
     close: jest.fn(),
+    getTitle: jest.fn().mockReturnValue(''),
   })),
   ipcMain: {
     handle: jest.fn(),
@@ -101,6 +102,16 @@ jest.mock('../modules/trustquote-work-room-prerequisites', () => ({
     ok: true,
     write: true,
     results: [],
+    artifacts: {
+      sessionScopeId: 'app-session-384:trustquote',
+      paths: {
+        startupBundlePath: '/test/workspace/.squidrun/runtime/window-teams/trustquote/startup-bundle.md',
+        linkPath: '/test/trustquote/.squidrun/link.json',
+        agentsPath: '/test/trustquote/.squidrun/work-rooms/trustquote/startup/AGENTS.md',
+        rolesPath: '/test/trustquote/.squidrun/work-rooms/trustquote/startup/ROLES.md',
+      },
+      startupBundle: '# TrustQuote Startup Bundle\n',
+    },
   }),
 }));
 
@@ -108,6 +119,23 @@ jest.mock('../modules/trustquote-work-room-route-owner-supervisor', () => ({
   readRouteOwnerStatus: jest.fn().mockReturnValue({
     running: false,
     plan: {},
+  }),
+  startTrustQuoteRouteOwner: jest.fn().mockReturnValue({
+    ok: true,
+    started: true,
+    status: {
+      running: true,
+      state: 'running',
+      plan: {
+        mainSessionScopeId: 'app-session-384',
+        sessionScopeId: 'app-session-384:trustquote',
+        projectPath: 'D:/projects/TrustQuote',
+      },
+    },
+  }),
+  stopTrustQuoteRouteOwner: jest.fn().mockResolvedValue({
+    ok: true,
+    stopped: true,
   }),
 }));
 
@@ -448,6 +476,74 @@ const {
   buildNewMiraTelegramTurnCandidate,
 } = require('../modules/mira-telegram-turn-candidate');
 const SquidRunApp = require('../modules/main/squidrun-app');
+const trustQuotePrerequisites = require('../modules/trustquote-work-room-prerequisites');
+const trustQuoteRouteOwnerSupervisor = require('../modules/trustquote-work-room-route-owner-supervisor');
+
+function resetTrustQuoteWorkRoomMocks() {
+  trustQuotePrerequisites.materializeTrustQuoteWorkRoomPrerequisites.mockReturnValue({
+    ok: true,
+    write: true,
+    results: [],
+    artifacts: {
+      sessionScopeId: 'app-session-384:trustquote',
+      paths: {
+        startupBundlePath: '/test/workspace/.squidrun/runtime/window-teams/trustquote/startup-bundle.md',
+        linkPath: '/test/trustquote/.squidrun/link.json',
+        agentsPath: '/test/trustquote/.squidrun/work-rooms/trustquote/startup/AGENTS.md',
+        rolesPath: '/test/trustquote/.squidrun/work-rooms/trustquote/startup/ROLES.md',
+      },
+      startupBundle: '# TrustQuote Startup Bundle\n',
+    },
+  });
+  trustQuoteRouteOwnerSupervisor.readRouteOwnerStatus.mockReturnValue({
+    running: false,
+    plan: {},
+  });
+  trustQuoteRouteOwnerSupervisor.startTrustQuoteRouteOwner.mockReturnValue({
+    ok: true,
+    started: true,
+    status: {
+      running: true,
+      state: 'running',
+      plan: {
+        mainSessionScopeId: 'app-session-384',
+        sessionScopeId: 'app-session-384:trustquote',
+        projectPath: 'D:/projects/TrustQuote',
+      },
+    },
+  });
+  trustQuoteRouteOwnerSupervisor.stopTrustQuoteRouteOwner.mockResolvedValue({
+    ok: true,
+    stopped: true,
+  });
+}
+
+function createReadyTrustQuoteWindow(overrides = {}) {
+  const { webContents: webContentsOverrides = {}, ...windowOverrides } = overrides;
+  return {
+    webContents: {
+      send: jest.fn(),
+      executeJavaScript: jest.fn().mockResolvedValue({
+        ok: true,
+        reason: null,
+        blockers: [],
+        overlayVisible: false,
+        startupText: '',
+        startupStage: '',
+        startupPercent: '100%',
+        panes: [
+          { paneId: '2', paneVisible: true, terminalVisible: true, hasTerminalShell: true },
+          { paneId: '3', paneVisible: true, terminalVisible: true, hasTerminalShell: true },
+        ],
+      }),
+      ...webContentsOverrides,
+    },
+    isDestroyed: jest.fn().mockReturnValue(false),
+    isVisible: jest.fn().mockReturnValue(true),
+    getTitle: jest.fn().mockReturnValue('SquidRun - Trustquote'),
+    ...windowOverrides,
+  };
+}
 
 describe('SquidRunApp', () => {
   let mockAppContext;
@@ -455,6 +551,7 @@ describe('SquidRunApp', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    resetTrustQuoteWorkRoomMocks();
     queryCommsJournalEntries.mockReturnValue([]);
     const windows = new Map();
 
@@ -570,6 +667,7 @@ describe('SquidRunApp', () => {
       const { DaemonClient } = require('../daemon-client');
       const { materializeTrustQuoteWorkRoomPrerequisites } = require('../modules/trustquote-work-room-prerequisites');
       const { readRouteOwnerStatus } = require('../modules/trustquote-work-room-route-owner-supervisor');
+      mockManagers.settings.readAppStatus.mockReturnValue({ session: 384 });
       readRouteOwnerStatus.mockReturnValue({
         running: true,
         plan: {
@@ -579,10 +677,15 @@ describe('SquidRunApp', () => {
         },
       });
       const app = new SquidRunApp(mockAppContext, mockManagers);
-      app.createWindow = jest.fn().mockResolvedValue();
+      app.commsSessionScopeId = 'app-session-384';
+      app.getTrustQuoteMainSessionScopeId = jest.fn(() => 'app-session-384');
+      const trustQuoteWindow = createReadyTrustQuoteWindow();
+      app.createWindow = jest.fn(async () => {
+        mockAppContext.setWindow('trustquote', trustQuoteWindow);
+      });
       app.focusAppWindow = jest.fn().mockReturnValue(true);
 
-      await app.openAppWindow('trustquote');
+      const result = await app.openAppWindow('trustquote');
 
       expect(materializeTrustQuoteWorkRoomPrerequisites).toHaveBeenCalledWith(expect.objectContaining({
         write: true,
@@ -595,6 +698,193 @@ describe('SquidRunApp', () => {
         profileName: 'trustquote',
         autoBootAgents: false,
       }));
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        windowKey: 'trustquote',
+        visible: true,
+        trustQuoteSessionScopeId: 'app-session-384:trustquote',
+      }));
+    });
+
+    it('resynchronizes a stale TrustQuote route owner to the current session without launching duplicate agents', async () => {
+      const {
+        readRouteOwnerStatus,
+        startTrustQuoteRouteOwner,
+        stopTrustQuoteRouteOwner,
+      } = require('../modules/trustquote-work-room-route-owner-supervisor');
+      mockManagers.settings.readAppStatus.mockReturnValue({ session: 394 });
+      const staleStatus = {
+        running: true,
+        state: 'running',
+        plan: {
+          mainSessionScopeId: 'app-session-393',
+          sessionScopeId: 'app-session-393:trustquote',
+          projectPath: 'D:/projects/TrustQuote',
+        },
+      };
+      const currentStatus = {
+        running: true,
+        state: 'running',
+        plan: {
+          mainSessionScopeId: 'app-session-394',
+          sessionScopeId: 'app-session-394:trustquote',
+          projectPath: 'D:/projects/TrustQuote',
+        },
+      };
+      const stoppedStatus = {
+        running: false,
+        state: 'stopped',
+        plan: {
+          mainSessionScopeId: 'app-session-394',
+          sessionScopeId: 'app-session-394:trustquote',
+          projectPath: 'D:/projects/TrustQuote',
+        },
+      };
+      readRouteOwnerStatus.mockImplementation(() => {
+        if (startTrustQuoteRouteOwner.mock.calls.length > 0) return currentStatus;
+        if (stopTrustQuoteRouteOwner.mock.calls.length > 0) return stoppedStatus;
+        return staleStatus;
+      });
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-394';
+      app.getTrustQuoteMainSessionScopeId = jest.fn(() => 'app-session-394');
+      const trustQuoteWindow = createReadyTrustQuoteWindow();
+      app.createWindow = jest.fn(async () => {
+        mockAppContext.setWindow('trustquote', trustQuoteWindow);
+      });
+
+      const result = await app.openAppWindow('trustquote');
+
+      expect(stopTrustQuoteRouteOwner).toHaveBeenCalledWith(expect.objectContaining({
+        mainSessionScopeId: 'app-session-394',
+        attachExistingTerminals: true,
+        killTerminalsOnStop: false,
+        launchAgents: false,
+        reason: 'session_scope_changed',
+      }));
+      expect(startTrustQuoteRouteOwner).toHaveBeenCalledWith(expect.objectContaining({
+        mainSessionScopeId: 'app-session-394',
+        attachExistingTerminals: true,
+        killTerminalsOnStop: false,
+        launchAgents: false,
+      }));
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        windowKey: 'trustquote',
+        trustQuoteSessionScopeId: 'app-session-394:trustquote',
+      }));
+    });
+
+    it('does not return ok when the TrustQuote window is visible but still bootstrapping with unusable panes', async () => {
+      const { readRouteOwnerStatus } = require('../modules/trustquote-work-room-route-owner-supervisor');
+      mockManagers.settings.readAppStatus.mockReturnValue({ session: 394 });
+      readRouteOwnerStatus.mockReturnValue({
+        running: true,
+        state: 'running',
+        plan: {
+          mainSessionScopeId: 'app-session-394',
+          sessionScopeId: 'app-session-394:trustquote',
+          projectPath: 'D:/projects/TrustQuote',
+        },
+      });
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-394';
+      app.getTrustQuoteMainSessionScopeId = jest.fn(() => 'app-session-394');
+      const trustQuoteWindow = createReadyTrustQuoteWindow();
+      app.createWindow = jest.fn(async () => {
+        mockAppContext.setWindow('trustquote', trustQuoteWindow);
+      });
+      app.focusAppWindow = jest.fn().mockReturnValue(true);
+      app.waitForTrustQuoteWindowReadiness = jest.fn().mockResolvedValue({
+        ok: false,
+        reason: 'trustquote_workroom_unusable',
+        blockers: [
+          'startup_overlay_visible',
+          'startup_progress_zero',
+          'pane_2_terminal_unusable',
+          'pane_3_terminal_unusable',
+        ],
+        overlayVisible: true,
+        startupText: 'Starting SquidRun...',
+        startupStage: 'Bootstrapping workspace...',
+        startupPercent: '0%',
+        panes: [
+          { paneId: '2', paneVisible: true, terminalVisible: false, hasTerminalShell: false },
+          { paneId: '3', paneVisible: true, terminalVisible: false, hasTerminalShell: false },
+        ],
+      });
+
+      await expect(app.openAppWindow('trustquote')).resolves.toEqual(expect.objectContaining({
+        ok: false,
+        windowKey: 'trustquote',
+        reason: 'trustquote_workroom_unusable',
+        status: 'open_unusable',
+        details: expect.objectContaining({
+          workroomReadiness: expect.objectContaining({
+            startupPercent: '0%',
+            blockers: expect.arrayContaining([
+              'startup_overlay_visible',
+              'startup_progress_zero',
+              'pane_2_terminal_unusable',
+              'pane_3_terminal_unusable',
+            ]),
+          }),
+        }),
+      }));
+    });
+
+    it('does not return ok when TrustQuote window creation fails to register a visible window', async () => {
+      const { readRouteOwnerStatus } = require('../modules/trustquote-work-room-route-owner-supervisor');
+      mockManagers.settings.readAppStatus.mockReturnValue({ session: 394 });
+      readRouteOwnerStatus.mockReturnValue({
+        running: true,
+        state: 'running',
+        plan: {
+          mainSessionScopeId: 'app-session-394',
+          sessionScopeId: 'app-session-394:trustquote',
+          projectPath: 'D:/projects/TrustQuote',
+        },
+      });
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-394';
+      app.getTrustQuoteMainSessionScopeId = jest.fn(() => 'app-session-394');
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.focusAppWindow = jest.fn().mockReturnValue(false);
+
+      await expect(app.openAppWindow('trustquote')).resolves.toEqual(expect.objectContaining({
+        ok: false,
+        windowKey: 'trustquote',
+        reason: 'trustquote_window_not_registered',
+        status: 'open_unverified',
+      }));
+    });
+
+    it('blocks TrustQuote open when startup bundle materialization fails', async () => {
+      const { materializeTrustQuoteWorkRoomPrerequisites } = require('../modules/trustquote-work-room-prerequisites');
+      const { readRouteOwnerStatus } = require('../modules/trustquote-work-room-route-owner-supervisor');
+      mockManagers.settings.readAppStatus.mockReturnValue({ session: 394 });
+      readRouteOwnerStatus.mockReturnValue({
+        running: true,
+        state: 'running',
+        plan: {
+          mainSessionScopeId: 'app-session-394',
+          sessionScopeId: 'app-session-394:trustquote',
+          projectPath: 'D:/projects/TrustQuote',
+        },
+      });
+      materializeTrustQuoteWorkRoomPrerequisites.mockImplementation(() => {
+        throw new Error('bundle write failed');
+      });
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-394';
+      app.getTrustQuoteMainSessionScopeId = jest.fn(() => 'app-session-394');
+      app.createWindow = jest.fn();
+
+      await expect(app.openAppWindow('trustquote')).resolves.toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'trustquote_workspace_artifact_sync_failed',
+      }));
+      expect(app.createWindow).not.toHaveBeenCalled();
     });
   });
 
