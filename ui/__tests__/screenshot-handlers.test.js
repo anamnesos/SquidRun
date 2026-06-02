@@ -20,7 +20,10 @@ jest.mock('fs', () => ({
 }));
 
 const fs = require('fs');
-const { registerScreenshotHandlers } = require('../modules/ipc/screenshot-handlers');
+const {
+  captureScreenshot,
+  registerScreenshotHandlers,
+} = require('../modules/ipc/screenshot-handlers');
 
 describe('Screenshot Handlers', () => {
   let harness;
@@ -211,6 +214,58 @@ describe('Screenshot Handlers', () => {
       expect(ctx.mainWindow.webContents.executeJavaScript).toHaveBeenCalled();
       expect(ctx.mainWindow.webContents.capturePage).toHaveBeenCalledWith(rect);
       expect(result.filename).toMatch(/^capture-pane-3-\d+\.png$/);
+    });
+
+    test('fails TrustQuote proof status when readiness validator reports a bootstrapping workroom', async () => {
+      fs.existsSync.mockReturnValue(true);
+      const image = { toPNG: jest.fn(() => Buffer.from('trustquote-boot-overlay')) };
+      ctx.mainWindow.webContents.capturePage = jest.fn().mockResolvedValue(image);
+      ctx.mainWindow.webContents.executeJavaScript = jest.fn();
+      const validateWindowReadiness = jest.fn().mockResolvedValue({
+        ok: false,
+        reason: 'trustquote_workroom_unusable',
+        blockers: [
+          'startup_overlay_visible',
+          'startup_progress_zero',
+          'pane_2_terminal_unusable',
+        ],
+        startupPercent: '0%',
+      });
+
+      const result = await captureScreenshot(ctx, {
+        windowKey: 'trustquote',
+        validateWindowReadiness,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'trustquote_workroom_unusable',
+        path: expect.stringContaining('capture-'),
+        imageSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        captureEvent: expect.objectContaining({
+          windowKey: 'trustquote',
+          imageSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+        workroomReadiness: expect.objectContaining({
+          startupPercent: '0%',
+          blockers: expect.arrayContaining([
+            'startup_overlay_visible',
+            'startup_progress_zero',
+            'pane_2_terminal_unusable',
+          ]),
+        }),
+      }));
+      expect(validateWindowReadiness).toHaveBeenCalledWith(expect.objectContaining({
+        windowKey: 'trustquote',
+        paneId: null,
+        scope: 'all',
+        path: expect.stringContaining('capture-'),
+        imageSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }));
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('latest.png'),
+        expect.any(Buffer)
+      );
     });
 
     test('returns window-not-available when window is destroyed', async () => {

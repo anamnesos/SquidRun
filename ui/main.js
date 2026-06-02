@@ -6,6 +6,15 @@
 const path = require('path');
 const os = require('os');
 const { app, Menu } = require('electron');
+
+if (process.env.NODE_PATH) {
+  try {
+    require('module').Module._initPaths();
+  } catch (_) {
+    // Best effort: Electron app mode can skip NODE_PATH initialization.
+  }
+}
+
 const { parseLaunchIntent } = require('./modules/main/launch-intent');
 const {
   applyProfileEnv,

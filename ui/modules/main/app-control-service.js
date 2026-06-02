@@ -39,6 +39,21 @@ function normalizeAction(action) {
     return 'open-trustquote-workspace';
   }
   if (
+    normalized === 'close-trustquote-workspace'
+    || normalized === 'close-trustquote'
+    || normalized === 'trustquote-close'
+    || normalized === 'close-trustquote-window'
+  ) {
+    return 'close-trustquote-workspace';
+  }
+  if (
+    normalized === 'close-app-window'
+    || normalized === 'close-window'
+    || normalized === 'window-close'
+  ) {
+    return 'close-app-window';
+  }
+  if (
     normalized === 'mira-lab-renderer-prompt'
     || normalized === 'mira-lab-drive'
     || normalized === 'drive-mira-lab'
@@ -56,6 +71,13 @@ function canReload(windowRef) {
     && windowRef.webContents
     && typeof windowRef.webContents.reloadIgnoringCache === 'function'
   );
+}
+
+function getCloseWindowKey(action, payload = {}) {
+  if (action === 'close-trustquote-workspace') return 'trustquote';
+  if (typeof payload === 'string') return payload.trim() || 'main';
+  if (!payload || typeof payload !== 'object') return 'main';
+  return String(payload.windowKey || payload.key || payload.window || 'main').trim() || 'main';
 }
 
 function executeAppControlAction(ctx = {}, action, payload = {}) {
@@ -198,6 +220,49 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
           success: false,
           reason: 'open_window_failed',
           action: normalizedAction,
+          error: error.message,
+        };
+      });
+  }
+
+  if (normalizedAction === 'close-app-window' || normalizedAction === 'close-trustquote-workspace') {
+    const windowKey = getCloseWindowKey(normalizedAction, payload);
+    if (windowKey === 'main') {
+      return {
+        success: false,
+        reason: 'main_window_requires_quit',
+        action: normalizedAction,
+        windowKey,
+      };
+    }
+    if (typeof ctx.closeAppWindow !== 'function') {
+      return {
+        success: false,
+        reason: 'close_window_unavailable',
+        action: normalizedAction,
+        windowKey,
+      };
+    }
+    return Promise.resolve()
+      .then(() => ctx.closeAppWindow(windowKey))
+      .then((result) => {
+        const settled = result && typeof result === 'object' ? result : {};
+        return {
+          success: Boolean(settled.ok),
+          action: normalizedAction,
+          windowKey: settled.windowKey || windowKey,
+          status: settled.status || (settled.ok ? 'closed' : 'close_failed'),
+          reason: settled.ok ? undefined : (settled.reason || 'close_window_failed'),
+          note: 'Non-main app window close requested without stopping the Electron main process.',
+        };
+      })
+      .catch((error) => {
+        log.warn('AppControl', `App window close failed for ${windowKey}: ${error.message}`);
+        return {
+          success: false,
+          reason: 'close_window_failed',
+          action: normalizedAction,
+          windowKey,
           error: error.message,
         };
       });

@@ -15,7 +15,7 @@ const DEFAULT_RESPONSE_TIMEOUT_MS = 5000;
 
 function usage() {
   console.log('Usage: node hm-app.js <command> [options]');
-  console.log('Commands: reload-renderers, restart-telegram-poller, open-mira-lab, open-live-task-audit-sidecar, open-trustquote-workspace, drive-mira-lab');
+  console.log('Commands: reload-renderers, restart-telegram-poller, open-mira-lab, open-live-task-audit-sidecar, open-trustquote-workspace, close-trustquote-workspace, close-app-window, drive-mira-lab');
   console.log('Options:');
   console.log('  --role <role>               Sender role (default: builder)');
   console.log(`  --port <port>               WebSocket port (default: ${DEFAULT_PORT})`);
@@ -31,6 +31,8 @@ function usage() {
   console.log('  node hm-app.js open-mira-lab');
   console.log('  node hm-app.js open-live-task-audit-sidecar');
   console.log('  node hm-app.js open-trustquote-workspace');
+  console.log('  node hm-app.js close-trustquote-workspace');
+  console.log('  node hm-app.js close-app-window --window-key trustquote');
   console.log('  node hm-app.js drive-mira-lab --prompt "are we still talking?" --pane builder');
 }
 
@@ -85,6 +87,13 @@ function normalizeCommand(command) {
     || normalized === 'open-task-audit'
   ) return 'open-live-task-audit-sidecar';
   if (normalized === 'trustquote' || normalized === 'open-trustquote' || normalized === 'trustquote-workspace') return 'open-trustquote-workspace';
+  if (
+    normalized === 'close-trustquote'
+    || normalized === 'trustquote-close'
+    || normalized === 'close-trustquote-window'
+    || normalized === 'close-trustquote-workspace'
+  ) return 'close-trustquote-workspace';
+  if (normalized === 'close-window' || normalized === 'window-close' || normalized === 'close-app-window') return 'close-app-window';
   if (normalized === 'drive-mira-lab' || normalized === 'mira-lab-drive' || normalized === 'mira-lab-renderer-prompt') return 'mira-lab-renderer-prompt';
   return normalized;
 }
@@ -207,6 +216,8 @@ async function main() {
     'open-mira-lab',
     'open-live-task-audit-sidecar',
     'open-trustquote-workspace',
+    'close-trustquote-workspace',
+    'close-app-window',
     'mira-lab-renderer-prompt',
   ]);
   if (!allowedCommands.has(command)) {
@@ -229,6 +240,19 @@ async function main() {
       sessionId: asString(getOption(options, 'session-id', ''), '') || null,
       timeoutMs: asNumber(getOption(options, 'timeout-ms', null), null),
     };
+  }
+  if (command === 'close-app-window' || command === 'close-trustquote-workspace') {
+    const windowKey = command === 'close-trustquote-workspace'
+      ? 'trustquote'
+      : asString(
+        getOption(options, 'window-key', getOption(options, 'window', getOption(options, 'key', ''))),
+        ''
+      );
+    if (!windowKey) {
+      console.error('close-app-window requires --window-key <non-main-window-key>');
+      process.exit(1);
+    }
+    payload = { windowKey };
   }
 
   const response = await run(command, {

@@ -96,7 +96,7 @@ async function captureScreenshot(ctx, options = {}) {
       auditLogPath: ctx?.CAPTURE_EVENTS_LOG_PATH,
     });
 
-    return {
+    const result = {
       success: true,
       filename,
       path: filePath,
@@ -105,6 +105,27 @@ async function captureScreenshot(ctx, options = {}) {
       imageSha256,
       captureEvent,
     };
+
+    if (typeof options?.validateWindowReadiness === 'function') {
+      const readiness = await options.validateWindowReadiness({
+        windowKey: typeof options?.windowKey === 'string' && options.windowKey.trim() ? options.windowKey.trim() : 'main',
+        paneId: paneId || null,
+        scope: result.scope,
+        path: filePath,
+        imageSha256,
+      });
+      if (!readiness?.ok) {
+        return {
+          ...result,
+          success: false,
+          reason: readiness?.reason || 'window_capture_not_ready',
+          workroomReadiness: readiness || null,
+        };
+      }
+      result.workroomReadiness = readiness;
+    }
+
+    return result;
   } catch (err) {
     return { success: false, error: err.message };
   }

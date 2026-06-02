@@ -157,6 +157,8 @@ const {
 } = require('../trustquote-work-room-prerequisites');
 const {
   readRouteOwnerStatus,
+  startTrustQuoteRouteOwner,
+  stopTrustQuoteRouteOwner,
 } = require('../trustquote-work-room-route-owner-supervisor');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
 const { createBufferedFileWriter } = require('../buffered-file-writer');
@@ -2547,11 +2549,166 @@ class SquidRunApp {
 
   readTrustQuoteRouteOwnerStatus() {
     try {
-      return readRouteOwnerStatus({ squidrunRoot: WORKSPACE_PATH });
+      return readRouteOwnerStatus({ squidrunRoot: this.resolveTrustQuoteSquidrunRoot() });
     } catch (err) {
       log.warn('Window', `Failed to read TrustQuote route-owner status: ${err.message}`);
       return null;
     }
+  }
+
+  resolveTrustQuoteSquidrunRoot() {
+    const linkCandidates = [
+      path.join(getProjectRoot(), '.squidrun', 'link.json'),
+      path.join(WORKSPACE_PATH, 'link.json'),
+    ];
+    for (const linkPath of linkCandidates) {
+      const link = this.readJsonFileSafe(linkPath, null);
+      const squidrunRoot = toNonEmptyString(link?.squidrun_root || link?.squidrunRoot);
+      if (squidrunRoot) return path.resolve(squidrunRoot);
+    }
+    return path.resolve(__dirname, '..', '..', '..');
+  }
+
+  getTrustQuoteMainSessionScopeId(squidrunRoot = this.resolveTrustQuoteSquidrunRoot()) {
+    const status = this.readJsonFileSafe(path.join(squidrunRoot, '.squidrun', 'app-status.json'), null);
+    const sessionNumber = Number(status?.session);
+    if (Number.isInteger(sessionNumber) && sessionNumber > 0) {
+      return `app-session-${sessionNumber}`;
+    }
+    const currentScope = toNonEmptyString(this.commsSessionScopeId);
+    if (currentScope) {
+      const sessionMatch = currentScope.match(/^app-session-\d+/i);
+      return sessionMatch ? sessionMatch[0] : currentScope.replace(/:trustquote$/i, '');
+    }
+    const managerStatus = typeof this.settings?.readAppStatus === 'function'
+      ? this.settings.readAppStatus()
+      : null;
+    const managerSession = Number(managerStatus?.session);
+    if (Number.isInteger(managerSession) && managerSession > 0) {
+      return `app-session-${managerSession}`;
+    }
+    return null;
+  }
+
+  isTrustQuoteRouteOwnerCurrent(status = null, expectedMainSessionScopeId = '') {
+    const expectedMain = toNonEmptyString(expectedMainSessionScopeId);
+    if (!expectedMain || !status?.running) return false;
+    const actualMain = toNonEmptyString(status?.plan?.mainSessionScopeId);
+    const actualRoom = toNonEmptyString(status?.plan?.sessionScopeId);
+    return actualMain === expectedMain && actualRoom === `${expectedMain}:trustquote`;
+  }
+
+  async waitForTrustQuoteRouteOwnerCurrent(options = {}) {
+    const squidrunRoot = toNonEmptyString(options.squidrunRoot) || this.resolveTrustQuoteSquidrunRoot();
+    const expectedMainSessionScopeId = toNonEmptyString(options.expectedMainSessionScopeId)
+      || this.getTrustQuoteMainSessionScopeId(squidrunRoot);
+    const timeoutMs = Number.isFinite(Number(options.timeoutMs)) ? Number(options.timeoutMs) : 5000;
+    const deadline = Date.now() + timeoutMs;
+    let lastStatus = null;
+    while (Date.now() <= deadline) {
+      lastStatus = this.readTrustQuoteRouteOwnerStatus();
+      if (this.isTrustQuoteRouteOwnerCurrent(lastStatus, expectedMainSessionScopeId)) {
+        return { ok: true, status: lastStatus };
+      }
+      if (lastStatus?.state === 'failed') {
+        return {
+          ok: false,
+          reason: 'trustquote_route_owner_start_failed',
+          status: lastStatus,
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return {
+      ok: false,
+      reason: 'trustquote_route_owner_start_timeout',
+      status: lastStatus,
+    };
+  }
+
+  async ensureTrustQuoteRouteOwnerCurrent() {
+    const squidrunRoot = this.resolveTrustQuoteSquidrunRoot();
+    const expectedMainSessionScopeId = this.getTrustQuoteMainSessionScopeId(squidrunRoot);
+    if (!expectedMainSessionScopeId) {
+      return {
+        ok: false,
+        reason: 'trustquote_main_session_scope_missing',
+        squidrunRoot,
+      };
+    }
+
+    let status = this.readTrustQuoteRouteOwnerStatus();
+    const actualMainSessionScopeId = toNonEmptyString(status?.plan?.mainSessionScopeId);
+    const routeOwnerOptions = {
+      squidrunRoot,
+      mainSessionScopeId: expectedMainSessionScopeId,
+      projectPath: toNonEmptyString(status?.plan?.projectPath) || undefined,
+      attachExistingTerminals: true,
+      killTerminalsOnStop: false,
+      launchAgents: false,
+    };
+
+    if (this.isTrustQuoteRouteOwnerCurrent(status, expectedMainSessionScopeId)) {
+      return {
+        ok: true,
+        status,
+        squidrunRoot,
+        expectedMainSessionScopeId,
+      };
+    }
+
+    if (status?.running && actualMainSessionScopeId && actualMainSessionScopeId !== expectedMainSessionScopeId) {
+      const stopped = await stopTrustQuoteRouteOwner({
+        ...routeOwnerOptions,
+        reason: 'session_scope_changed',
+      });
+      if (stopped?.ok === false || stopped?.stopped === false) {
+        return {
+          ok: false,
+          reason: 'trustquote_route_owner_stale_scope_stop_failed',
+          status,
+          stopResult: stopped,
+          expectedMainSessionScopeId,
+          actualMainSessionScopeId,
+        };
+      }
+      status = this.readTrustQuoteRouteOwnerStatus();
+    }
+
+    if (!this.isTrustQuoteRouteOwnerCurrent(status, expectedMainSessionScopeId)) {
+      const started = startTrustQuoteRouteOwner(routeOwnerOptions);
+      if (started?.ok === false) {
+        return {
+          ok: false,
+          reason: started.reason || 'trustquote_route_owner_start_failed',
+          startResult: started,
+          status,
+          expectedMainSessionScopeId,
+          actualMainSessionScopeId,
+        };
+      }
+      const current = await this.waitForTrustQuoteRouteOwnerCurrent({
+        squidrunRoot,
+        expectedMainSessionScopeId,
+      });
+      if (!current.ok) {
+        return {
+          ...current,
+          startResult: started,
+          expectedMainSessionScopeId,
+          actualMainSessionScopeId,
+        };
+      }
+      status = current.status;
+    }
+
+    return {
+      ok: true,
+      status,
+      squidrunRoot,
+      expectedMainSessionScopeId,
+      resynchronized: actualMainSessionScopeId !== expectedMainSessionScopeId,
+    };
   }
 
   getTrustQuoteRouteOwnerSessionScopeId() {
@@ -2563,6 +2720,8 @@ class SquidRunApp {
 
   syncTrustQuoteWorkspaceArtifactsWithLiveRouteOwner() {
     const status = this.readTrustQuoteRouteOwnerStatus();
+    const squidrunRoot = this.resolveTrustQuoteSquidrunRoot();
+    const expectedMainSessionScopeId = this.getTrustQuoteMainSessionScopeId(squidrunRoot);
     const mainSessionScopeId = status?.running && toNonEmptyString(status?.plan?.mainSessionScopeId)
       ? status.plan.mainSessionScopeId
       : null;
@@ -2573,13 +2732,22 @@ class SquidRunApp {
         status,
       };
     }
+    if (expectedMainSessionScopeId && mainSessionScopeId !== expectedMainSessionScopeId) {
+      return {
+        ok: false,
+        reason: 'trustquote_route_owner_stale_session_scope',
+        expectedMainSessionScopeId,
+        actualMainSessionScopeId: mainSessionScopeId,
+        status,
+      };
+    }
 
     try {
       const materialized = materializeTrustQuoteWorkRoomPrerequisites({
         write: true,
-        squidrunRoot: WORKSPACE_PATH,
+        squidrunRoot,
         projectPath: status.plan?.projectPath,
-        mainSessionScopeId,
+        mainSessionScopeId: expectedMainSessionScopeId || mainSessionScopeId,
       });
       return {
         ok: true,
@@ -2621,6 +2789,41 @@ class SquidRunApp {
       ].filter(Boolean),
       bundlePath,
       text,
+    };
+  }
+
+  async prepareTrustQuoteWorkspaceOpen() {
+    const routeOwner = await this.ensureTrustQuoteRouteOwnerCurrent();
+    if (!routeOwner.ok) return routeOwner;
+
+    const syncResult = this.syncTrustQuoteWorkspaceArtifactsWithLiveRouteOwner();
+    if (!syncResult?.ok) return syncResult;
+
+    const bundle = this.buildTrustQuoteWorkspaceStartupBundle();
+    if (!bundle?.bundlePath || !bundle?.text) {
+      return {
+        ok: false,
+        reason: 'trustquote_startup_bundle_unavailable',
+        status: syncResult.status,
+      };
+    }
+
+    try {
+      await this.ensureTrustQuoteDaemonClient();
+    } catch (err) {
+      return {
+        ok: false,
+        reason: 'trustquote_daemon_client_unavailable',
+        error: err.message,
+        status: syncResult.status,
+      };
+    }
+
+    return {
+      ok: true,
+      routeOwner,
+      syncResult,
+      bundle,
     };
   }
 
@@ -3392,6 +3595,7 @@ class SquidRunApp {
                 getPaneHostWindows: () => this.paneHostWindowManager?.getPaneHostWindows?.() || [],
                 restartTelegramPoller: (payload = {}) => this.restartTelegramPoller(payload),
                 openAppWindow: (windowKey, openOptions = {}) => this.openAppWindow(windowKey, openOptions),
+                closeAppWindow: (windowKey) => this.closeAppWindow(windowKey),
                 driveMiraLabRenderer: (drivePayload = {}) => miraLabHandlersModule.driveMiraLabRenderer(drivePayload, {
                   ipcMain,
                   getMiraLabWindow: () => this.getAppWindow('mira-lab'),
@@ -3429,6 +3633,9 @@ class SquidRunApp {
                 windowKey,
                 requestId: data.message.requestId || null,
                 runId: toNonEmptyString(payload.runId) || null,
+                validateWindowReadiness: isTrustQuoteWorkspace(windowKey)
+                  ? () => this.probeTrustQuoteWindowReadiness(windowKey)
+                  : undefined,
               });
 
               // Legacy mode: if no requestId is present, push event result to requester role/client.
@@ -4525,6 +4732,155 @@ class SquidRunApp {
     return true;
   }
 
+  verifyAppWindowVisible(rawWindowKey = 'main', expectedTitle = '') {
+    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    const window = this.getAppWindow(windowKey);
+    if (!this.canSendToWindow(window)) {
+      return {
+        ok: false,
+        windowKey,
+        reason: `${windowKey}_window_not_registered`,
+      };
+    }
+    const visible = typeof window.isVisible === 'function' ? window.isVisible() : null;
+    if (visible === false) {
+      return {
+        ok: false,
+        windowKey,
+        reason: `${windowKey}_window_not_visible`,
+        visible,
+      };
+    }
+    const title = typeof window.getTitle === 'function'
+      ? toNonEmptyString(window.getTitle())
+      : null;
+    if (expectedTitle && title && title.toLowerCase() !== expectedTitle.toLowerCase()) {
+      return {
+        ok: false,
+        windowKey,
+        reason: `${windowKey}_window_title_mismatch`,
+        expectedTitle,
+        title,
+        visible,
+      };
+    }
+    return {
+      ok: true,
+      windowKey,
+      visible,
+      title: title || expectedTitle || null,
+    };
+  }
+
+  async probeTrustQuoteWindowReadiness(rawWindowKey = TRUSTQUOTE_WORKSPACE_KEY) {
+    const windowKey = String(rawWindowKey || TRUSTQUOTE_WORKSPACE_KEY).trim() || TRUSTQUOTE_WORKSPACE_KEY;
+    const window = this.getAppWindow(windowKey);
+    if (!this.canSendToWindow(window)) {
+      return {
+        ok: false,
+        reason: 'trustquote_window_not_registered',
+        windowKey,
+      };
+    }
+    if (!window.webContents || typeof window.webContents.executeJavaScript !== 'function') {
+      return {
+        ok: false,
+        reason: 'trustquote_window_readiness_probe_unavailable',
+        windowKey,
+      };
+    }
+
+    const script = `(() => {
+      const visible = (el) => {
+        if (!el) return false;
+        const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+        const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 0, height: 0 };
+        return rect.width > 0
+          && rect.height > 0
+          && (!style || (style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0.01));
+      };
+      const textOf = (selector) => {
+        const el = document.querySelector(selector);
+        return el ? String(el.textContent || '').trim() : '';
+      };
+      const overlay = document.getElementById('startupLoadingOverlay');
+      const overlayVisible = visible(overlay) && !overlay.classList.contains('hidden');
+      const startupText = textOf('#startupLoadingText');
+      const startupStage = textOf('#startupLoadingStageText');
+      const startupPercent = textOf('#startupLoadingPercent');
+      const paneIds = ['2', '3'];
+      const panes = paneIds.map((id) => {
+        const pane = document.querySelector('.pane[data-pane-id="' + id + '"]');
+        const terminal = document.getElementById('terminal-' + id);
+        const xterm = terminal ? terminal.querySelector('.xterm, .xterm-screen, .xterm-viewport') : null;
+        return {
+          paneId: id,
+          paneVisible: visible(pane),
+          terminalVisible: visible(terminal),
+          hasTerminalShell: Boolean(xterm),
+        };
+      });
+      const blockers = [];
+      if (overlayVisible) blockers.push('startup_overlay_visible');
+      if (/^0\\s*%$/.test(startupPercent)) blockers.push('startup_progress_zero');
+      for (const pane of panes) {
+        if (!pane.paneVisible) blockers.push('pane_' + pane.paneId + '_missing');
+        else if (!pane.terminalVisible || !pane.hasTerminalShell) blockers.push('pane_' + pane.paneId + '_terminal_unusable');
+      }
+      return {
+        ok: blockers.length === 0,
+        reason: blockers.length === 0 ? null : 'trustquote_workroom_unusable',
+        blockers,
+        overlayVisible,
+        startupText,
+        startupStage,
+        startupPercent,
+        panes,
+      };
+    })();`;
+
+    try {
+      const readiness = await window.webContents.executeJavaScript(script, true);
+      if (!readiness || typeof readiness !== 'object') {
+        return {
+          ok: false,
+          reason: 'trustquote_window_readiness_probe_empty',
+          windowKey,
+        };
+      }
+      return {
+        windowKey,
+        ...readiness,
+        reason: readiness.ok ? null : (readiness.reason || 'trustquote_workroom_unusable'),
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: 'trustquote_window_readiness_probe_failed',
+        error: err?.message || String(err),
+        windowKey,
+      };
+    }
+  }
+
+  async waitForTrustQuoteWindowReadiness(rawWindowKey = TRUSTQUOTE_WORKSPACE_KEY, options = {}) {
+    const timeoutMs = Number.isFinite(Number(options.timeoutMs)) ? Number(options.timeoutMs) : 8000;
+    const intervalMs = Number.isFinite(Number(options.intervalMs)) ? Number(options.intervalMs) : 250;
+    const deadline = Date.now() + timeoutMs;
+    let last = null;
+    do {
+      last = await this.probeTrustQuoteWindowReadiness(rawWindowKey);
+      if (last.ok) return last;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    } while (Date.now() < deadline);
+    return {
+      ...(last || {}),
+      ok: false,
+      reason: last?.reason || 'trustquote_workroom_readiness_timeout',
+      timedOut: true,
+    };
+  }
+
   async openAppWindow(rawWindowKey = 'main', options = {}) {
     const windowKey = String(rawWindowKey || 'main').trim() || 'main';
     if (windowKey === 'mira-lab') {
@@ -4615,15 +4971,17 @@ class SquidRunApp {
     const windowTitle = windowKey === 'main'
       ? 'SquidRun'
       : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`;
+    let trustQuoteReadiness = null;
     if (isTrustQuoteWorkspace(windowKey)) {
-      const syncResult = this.syncTrustQuoteWorkspaceArtifactsWithLiveRouteOwner();
-      if (!syncResult?.ok) {
-        log.warn('Window', `TrustQuote workspace artifact sync skipped: ${syncResult?.reason || 'unknown'}`);
-      }
-      try {
-        await this.ensureTrustQuoteDaemonClient();
-      } catch (err) {
-        log.warn('Window', `TrustQuote daemon client unavailable before opening workspace: ${err.message}`);
+      trustQuoteReadiness = await this.prepareTrustQuoteWorkspaceOpen();
+      if (!trustQuoteReadiness.ok) {
+        return {
+          ok: false,
+          windowKey,
+          title: windowTitle,
+          reason: trustQuoteReadiness.reason || 'trustquote_workspace_prerequisite_failed',
+          details: trustQuoteReadiness,
+        };
       }
     }
     await this.createWindow({
@@ -4634,7 +4992,51 @@ class SquidRunApp {
       autoBootAgents: isTrustQuoteWorkspace(windowKey) ? false : undefined,
       lifecycleRoot: options.lifecycleRoot === true,
     });
-    this.focusAppWindow(windowKey);
+    const focused = this.focusAppWindow(windowKey);
+    if (isTrustQuoteWorkspace(windowKey)) {
+      const verification = this.verifyAppWindowVisible(windowKey, windowTitle);
+      if (!verification.ok) {
+        return {
+          ok: false,
+          windowKey,
+          title: windowTitle,
+          status: 'open_unverified',
+          reason: verification.reason || 'trustquote_window_not_visible',
+          details: {
+            trustQuoteReadiness,
+            verification,
+            focused,
+          },
+        };
+      }
+      const readiness = await this.waitForTrustQuoteWindowReadiness(windowKey);
+      if (!readiness.ok) {
+        return {
+          ok: false,
+          windowKey,
+          title: windowTitle,
+          status: 'open_unusable',
+          reason: readiness.reason || 'trustquote_workroom_unusable',
+          details: {
+            trustQuoteReadiness,
+            verification,
+            workroomReadiness: readiness,
+            focused,
+          },
+        };
+      }
+      return {
+        ok: true,
+        windowKey,
+        title: windowTitle,
+        status: 'opened',
+        focused,
+        visible: verification.visible,
+        verifiedTitle: verification.title,
+        workroomReadiness: readiness,
+        trustQuoteSessionScopeId: trustQuoteReadiness.routeOwner?.status?.plan?.sessionScopeId || null,
+      };
+    }
     return {
       ok: true,
       windowKey,
