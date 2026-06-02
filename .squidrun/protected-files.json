@@ -1,0 +1,16 @@
+[
+  "workspace/user-profile.json",
+  "ARCHITECTURE.md",
+  "ROLES.md",
+  "CLAUDE.md",
+  "CODEX.md",
+  "GEMINI.md",
+  "CLAUDE-AI.md",
+  "AGENTS.md",
+  "workspace/knowledge/",
+  "workspace/knowledge/README.md",
+  "workspace/knowledge/workflows.md",
+  "workspace/knowledge/infrastructure.md",
+  "workspace/knowledge/projects.md",
+  "workspace/knowledge/user-context.md"
+]
