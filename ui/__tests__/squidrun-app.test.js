@@ -6480,6 +6480,49 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('stops periodic journal reconciliation after an unanswered Telegram guard expires without pane output', async () => {
+      const createdAtMs = Date.parse('2026-06-01T20:40:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        queryCommsJournalEntries.mockReturnValue([]);
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-expire-zero-output-1',
+          chatId: '1111111111',
+          sender: 'james',
+          sessionScopeId: 'app-session-expire-zero-output',
+        });
+        expect(app.pendingTelegramReplyGuardJournalReconcileTimer).not.toBeNull();
+
+        jest.advanceTimersByTime((5 * 60 * 1000) + 1);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-expire-zero-output-1',
+          status: 'telegram_reply_required_expired_unresolved',
+          unresolvedReason: 'reply_window_expired',
+          requiresTelegramEgress: true,
+        }));
+        expect(app.pendingTelegramReplyGuardJournalReconcileTimer).toBeNull();
+        expect(queryCommsJournalEntries).toHaveBeenCalled();
+
+        queryCommsJournalEntries.mockClear();
+        mockManagers.activity.logActivity.mockClear();
+        jest.advanceTimersByTime(60 * 1000);
+        await Promise.resolve();
+
+        expect(queryCommsJournalEntries).not.toHaveBeenCalled();
+        expect(mockManagers.activity.logActivity).not.toHaveBeenCalled();
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-expire-zero-output-1',
+          status: 'telegram_reply_required_expired_unresolved',
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('does not repeat agent-side response-debt alert spam for the same unresolved Telegram debt', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       app.markPendingTelegramReplyGuard({
