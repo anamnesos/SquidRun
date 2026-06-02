@@ -6955,6 +6955,61 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('credits delivered target=user Telegram egress rows against pending reply debt', () => {
+      const sessionId = 'app-session-telegram-target-user-row';
+      const createdAtMs = Date.parse('2026-06-02T10:53:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-target-user-1',
+          chatId: '1111111111',
+          sender: 'james',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            messageId: 'hm-telegram-target-user-1',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs + 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              chatId: '1111111111',
+            },
+          },
+        ]);
+
+        const result = app.reconcilePendingTelegramReplyGuardsWithJournal({
+          reason: 'unit-test',
+          logMisses: false,
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_guards_reconciled_from_journal',
+          reconciledCount: 1,
+          pendingCount: 0,
+          reconciled: [
+            expect.objectContaining({
+              inboundMessageId: 'telegram-in-target-user-1',
+              egressMessageId: 'hm-telegram-target-user-1',
+              chatId: '1111111111',
+              sessionScopeId: sessionId,
+            }),
+          ],
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('reconciles a pending Telegram guard with an injected matching journal query', () => {
       const sessionId = 'app-session-telegram-injected-query';
       const createdAtMs = Date.parse('2026-05-31T20:35:30.000Z');

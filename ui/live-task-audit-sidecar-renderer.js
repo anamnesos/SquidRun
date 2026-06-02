@@ -276,8 +276,7 @@
       groups.get(groups.has(section) ? section : 'Other').push(item);
     });
     return SECTION_ORDER
-      .map((section) => ({ section, items: groups.get(section) || [] }))
-      .filter((group) => group.items.length > 0);
+      .map((section) => ({ section, items: groups.get(section) || [] }));
   }
 
   function setText(id, value) {
@@ -556,11 +555,19 @@
     groupNode.appendChild(heading);
     if (layout === 'timeline') {
       const timeline = el('div', 'task-audit-timeline-layout');
-      group.items.forEach((item) => timeline.appendChild(renderFieldCard(item, partition)));
+      if (group.items.length > 0) {
+        group.items.forEach((item) => timeline.appendChild(renderFieldCard(item, partition)));
+      } else {
+        timeline.appendChild(emptyState('No items', 'Nothing parked here.'));
+      }
       groupNode.appendChild(timeline);
       return groupNode;
     }
-    groupNode.appendChild(renderTable(group.items, partition));
+    if (group.items.length > 0) {
+      groupNode.appendChild(renderTable(group.items, partition));
+    } else {
+      groupNode.appendChild(emptyState('No items', 'Nothing parked here.'));
+    }
     return groupNode;
   }
 

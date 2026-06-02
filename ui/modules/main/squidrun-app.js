@@ -11522,14 +11522,14 @@ class SquidRunApp {
       metadata.envelope?.target?.raw,
       metadata.envelope?.target?.role,
     ].map((value) => toNonEmptyString(value)?.toLowerCase()).filter(Boolean);
+    const hasTelegramTargetSignal = targetSignals.includes('telegram')
+      || String(metadata.routeKind || '').toLowerCase() === 'telegram';
+    const hasUserTelegramTargetSignal = targetSignals.includes('user');
     return String(row.channel || '').toLowerCase() === 'telegram'
       && String(row.direction || '').toLowerCase() === 'outbound'
       && String(row.status || '').toLowerCase() === 'acked'
       && String(row.ackStatus || '').toLowerCase() === 'telegram_delivered'
-      && (
-        targetSignals.includes('telegram')
-        || String(metadata.routeKind || '').toLowerCase() === 'telegram'
-      );
+      && (hasTelegramTargetSignal || hasUserTelegramTargetSignal);
   }
 
   getAckedTelegramEgressForPendingGuardResult(guard = {}, options = {}) {
