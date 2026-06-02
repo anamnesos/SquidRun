@@ -61,6 +61,24 @@ When James assigns a restart or proof lane to Codex Desktop, Codex Desktop perfo
 
 If Builder or Oracle sees a restart/proof plan naming Codex Desktop, they should hold for Codex Desktop to perform it and report Codex Desktop proof as pending. If an agent-run restart is proposed anyway, treat it as a process/authority failure with the wrong actor, not as a code, commit, or preflight gap.
 
+# Image / Visual Analysis Actor Boundary
+
+Image and visual analysis — screenshots, plain visual description of the SquidRun UI, the live-task-audit sidecar panel, any "tell me what you see" request — is **Codex Desktop's job**, not Oracle's and not Architect's (James, repeatedly; restated emphatically 2026-06-02 / S400). Codex Desktop is the computer-use app with real desktop/browser vision; it can look at the live app window or browser-proof a surface (e.g. the task-audit sidecar at `http://127.0.0.1:8787/task-audit-preview`).
+
+Dispatch path: **Architect** creates the request (cross-device coordination is Architect's lane), e.g. `node ui/scripts/hm-codex-attention.js create --requested-by architect --reason "<what to look at>" --url http://127.0.0.1:8787/task-audit-preview --check "<verbatim ask>"`. Oracle/Builder must not absorb image-analysis work themselves; relay it to Architect → Codex Desktop.
+
+Historical stale hook root cause: `.claude/hooks/pre-tool-image-read-guard.js` (written 2026-04-29) used to force-block every image `Read` and redirect to **Oracle**, from the era when Oracle was the strong-vision model. That redirect was obsolete and circular. Current expected behavior: the hook must route live UI surfaces to Codex Desktop through proven `hm-codex-attention --url/--route/--target-window`; bare local image files must put the absolute file path in `--check`, use a real attention target such as `--target-window main`, and mark that file-read-via-check path unproven until the bridge grows a real image/file target field. Never fall back to Oracle for visual analysis.
+
+# Task Audit Sidecar Discipline
+
+The live-task-audit sidecar is not a loose to-do list and not a place to park uncertainty on James. It is the persistent shared model of what is still broken, disabled, half-wired, or easy for a cold session to misinterpret.
+
+An entry leaves the sidecar only when the thing is genuinely resolved: deleted, finished with proof, or deliberately retained with current evidence. Getting bored, losing context, or not recognizing an artifact is not resolution.
+
+For agent-created artifacts, "ask James" is banned as a disposition. The default workflow is: investigate provenance ourselves with grep, git log/blame, session/comms history, and runtime evidence; then choose delete, to-finish, or honest broken-state entry. Escalate to James only for money, credentials/auth, irreversible data state, external-facing behavior, or a product choice that cannot be inferred from evidence.
+
+Every sidecar entry should use the existing `status`, `rationale`, and `nextAction` fields honestly. The state must say whether the thing is live, disabled, unproven, stale, to-finish, or blocked, and `nextAction` must name the agent-owned evidence step. Vague user-escalation parking is itself a defect to fix.
+
 # Telegram reply-guard: external-process replies vs in-memory state
 
 Load-bearing constraint (S396). `hm-send.js telegram` runs in a SEPARATE process from the Electron main app, so a Telegram reply it sends CANNOT directly clear the app's in-memory `pendingTelegramReplyGuards` map. That gap is what produced the recurring `(SYSTEM RESPONSE-DEBT) pane_output_without_telegram_egress` loop: the only clear path was a fragile lazy journal reconcile at pane-output time, so a reply that was actually sent kept getting flagged as unanswered.
@@ -68,6 +86,8 @@ Load-bearing constraint (S396). `hm-send.js telegram` runs in a SEPARATE process
 Fix (commits 0668dd12 / 45508bf5, `ui/modules/main/squidrun-app.js`): a proactive `setInterval` (default 5s, `SQUIDRUN_TELEGRAM_REPLY_GUARD_JOURNAL_RECONCILE_INTERVAL_MS`, floor 1s) reconciles pending guards against the evidence-ledger journal independent of pane output; chat-equality is enforced only when both guard and row carry a chatId, with a 5s journal grace; terminal guards (expired_unresolved / phone_escalated) stay in the map for bookkeeping but are skipped, and the interval self-clears once the non-terminal count hits 0. Reconcile is READ-ONLY journal queries (no new ledger writes); the timer is `unref()`'d and cleared in the destroy/cleanup paths.
 
 S399 row-field triage: a delivered `hm-send telegram` row can already be matchable with `channel=telegram`, `direction=outbound`, `status=acked`, `ack_status=telegram_delivered`, `target=user`, and matching metadata `chatId` even when `replyToMessageId` is absent. Missing `replyToMessageId` should be fixed for future precision, but it is not by itself proof that the reconciler rejected the row; if the raw row is matchable and the guard still nags, check whether the running main process can query the journal at all (for example native SQLite/`better-sqlite3` ABI health) before sending a duplicate Telegram reply.
+
+S400 false-fire fix: ABI/journal queryability was ruled out in app-session-400. The live rows were readable and delivered, but rapid Telegram bursts can produce a real same-chat delivered reply whose `replyToMessageId` points to an adjacent inbound. The guard is an egress proof, not semantic coverage. Same-session, same-chat, `telegram_delivered` outbound egress inside the journal grace window must satisfy the pending guard even when the reply-to id is adjacent; different-chat and pre-window rows still do not satisfy it.
 
 Native DB guard: `ui/package.json` postinstall runs `ui/scripts/postinstall-electron-rebuild.js`, which probes `better-sqlite3` through Electron (`ELECTRON_RUN_AS_NODE=1`) before rebuilding. If the probe succeeds at Electron ABI 119, it skips; if a Node install leaves the native module at the wrong ABI, it runs the targeted `electron-rebuild -f -o better-sqlite3` path and re-probes.
 

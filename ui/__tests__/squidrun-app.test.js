@@ -7161,6 +7161,83 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('credits same-chat delivered Telegram egress from the session 400 rapid-burst shape', () => {
+      const sessionId = 'app-session-400';
+      const guardCreatedAtMs = 1780431576869;
+      jest.useFakeTimers({ now: guardCreatedAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-808498646',
+          chatId: '5613428850',
+          sender: 'james',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            rowId: 67373,
+            messageId: 'hm-1780431576782-bst8n4',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: 1780431576810,
+            rawBody: 'You are putting your finger right on the gap.',
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              telegramMessageId: 20598,
+              replyToMessageId: 'telegram-in-808498645',
+              inboundMessageId: 'telegram-in-808498645',
+              chatId: 5613428850,
+              source: 'hm-telegram',
+              envelope: {
+                session_id: sessionId,
+                target: { raw: 'telegram', role: 'telegram', pane_id: null },
+              },
+            },
+            updatedAtMs: 1780431577469,
+          },
+        ]);
+
+        const result = app.inspectPaneOutputForReplyGuards('1', 'pane output after rapid Telegram burst', {
+          outputKind: 'agent_visible_output',
+        });
+
+        expect(queryCommsJournalEntries).toHaveBeenCalledWith({
+          sessionId,
+          channel: 'telegram',
+          direction: 'outbound',
+          sinceMs: guardCreatedAtMs - 5000,
+          order: 'asc',
+          limit: 500,
+        });
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_requirement_satisfied_by_journal',
+          guard: null,
+          satisfaction: expect.objectContaining({
+            inboundMessageId: 'telegram-in-808498646',
+            egressMessageId: 'hm-1780431576782-bst8n4',
+            chatId: '5613428850',
+            sessionScopeId: sessionId,
+          }),
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+        expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.any(Object)
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('reconciles a pending Telegram guard with an injected matching journal query', () => {
       const sessionId = 'app-session-telegram-injected-query';
       const createdAtMs = Date.parse('2026-05-31T20:35:30.000Z');
@@ -7455,7 +7532,7 @@ describe('SquidRunApp', () => {
       }
     });
 
-    it('keeps reply debt unresolved when an acked Telegram row is explicitly tied to another inbound', () => {
+    it('clears reply debt when a same-chat delivered Telegram row is tied to an adjacent inbound', () => {
       const sessionId = 'app-session-telegram-cross-inbound';
       const createdAtMs = Date.parse('2026-05-31T20:38:00.000Z');
       jest.useFakeTimers({ now: createdAtMs });
@@ -7491,20 +7568,21 @@ describe('SquidRunApp', () => {
           },
         ]);
 
-        const result = app.inspectPaneOutputForReplyGuards('1', 'current inbound still needs a matching answer', {
+        const result = app.inspectPaneOutputForReplyGuards('1', 'current inbound was answered on Telegram', {
           outputKind: 'agent_visible_output',
         });
 
         expect(result).toEqual(expect.objectContaining({
-          ok: false,
-          status: 'telegram_reply_requirement_unresolved',
-          guard: expect.objectContaining({
-            messageId: 'telegram-in-current-1',
+          ok: true,
+          status: 'telegram_reply_requirement_satisfied_by_journal',
+          guard: null,
+          satisfaction: expect.objectContaining({
+            inboundMessageId: 'telegram-in-current-1',
+            egressMessageId: 'hm-telegram-other-inbound',
+            chatId: '1111111111',
           }),
         }));
-        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
-          messageId: 'telegram-in-current-1',
-        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
       } finally {
         jest.useRealTimers();
       }

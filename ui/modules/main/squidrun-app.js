@@ -11613,6 +11613,7 @@ class SquidRunApp {
   getAckedTelegramEgressForPendingGuardResult(guard = {}, options = {}) {
     const guardChatId = normalizeChatId(guard.chatId || guard.telegramChatId);
     const guardSessionId = toNonEmptyString(guard.sessionScopeId);
+    const guardMessageId = toNonEmptyString(guard.messageId);
     const guardCreatedAtMs = Number(guard.createdAtMs || 0);
     const graceMs = Math.max(0, Number(options.graceMs ?? TELEGRAM_REPLY_GUARD_JOURNAL_GRACE_MS) || 0);
     const sinceMs = Number.isFinite(guardCreatedAtMs) && guardCreatedAtMs > 0
@@ -11657,6 +11658,12 @@ class SquidRunApp {
       const metadata = (candidate.metadata && typeof candidate.metadata === 'object' && !Array.isArray(candidate.metadata))
         ? candidate.metadata
         : {};
+      if (!this.isProvenTelegramEgressJournalRow(candidate)) return false;
+      if (this.getCommsJournalRowSessionId(candidate) !== guardSessionId) return false;
+      const rowTimestampMs = this.getCommsJournalRowTimestampMs(candidate);
+      if (rowTimestampMs < sinceMs) return false;
+      const rowChatId = this.getCommsJournalRowChatId(candidate);
+      if (guardChatId && rowChatId && rowChatId !== guardChatId) return false;
       const replyToMessageId = toNonEmptyString(
         metadata.replyToMessageId
         || metadata.reply_to_message_id
@@ -11664,12 +11671,11 @@ class SquidRunApp {
         || metadata.inbound_message_id
         || null
       );
-      if (replyToMessageId && replyToMessageId !== toNonEmptyString(guard.messageId)) return false;
-      if (!this.isProvenTelegramEgressJournalRow(candidate)) return false;
-      if (this.getCommsJournalRowSessionId(candidate) !== guardSessionId) return false;
-      const rowChatId = this.getCommsJournalRowChatId(candidate);
-      if (guardChatId && rowChatId && rowChatId !== guardChatId) return false;
-      return this.getCommsJournalRowTimestampMs(candidate) >= sinceMs;
+      if (!replyToMessageId || replyToMessageId === guardMessageId) return true;
+      // Telegram reply debt is an egress guard, not semantic coverage. During rapid
+      // same-chat bursts hm-send can stamp a reply with an adjacent inbound id; the
+      // delivered same-chat Telegram row still proves the pane did not answer only locally.
+      return Boolean(guardChatId && rowChatId && guardChatId === rowChatId);
     }) || null;
     diagnostics.reason = row ? 'matched' : 'no_matching_acked_telegram_egress';
     return { row, diagnostics };

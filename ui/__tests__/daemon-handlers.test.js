@@ -4,6 +4,8 @@
  */
 
 // Mock dependencies before requiring the module
+const fs = require('fs');
+
 jest.mock('../modules/renderer-bridge', () => ({
   invokeBridge: jest.fn().mockResolvedValue({}),
   sendBridge: jest.fn(),
@@ -1010,6 +1012,51 @@ describe('daemon-handlers.js module', () => {
             hmSendFastEnter: true,
           })
         );
+      });
+
+      test('materializes long hm-send payloads and injects a full-message pointer', () => {
+        const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+        const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+        try {
+          let injectHandler;
+          onBridge.mockImplementation((channel, handler) => {
+            if (channel === 'inject-message') injectHandler = handler;
+          });
+          daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+          const longPayload = `(ORACLE #400): ${'route ambiguity '.repeat(120)}\n[CURRENT PROJECT] name=squidrun | path=D:\\projects\\squidrun`;
+          injectHandler({}, {
+            panes: ['1'],
+            message: longPayload,
+            deliveryId: 'delivery-hm-long-1',
+            traceContext: {
+              messageId: 'hm-long-agent-message-1',
+              traceId: 'hm-long-agent-message-1',
+            },
+          });
+
+          expect(mkdirSpy).toHaveBeenCalled();
+          const fullMessageWrite = writeSpy.mock.calls.find(([filePath]) => (
+            String(filePath).match(/full-agent-messages[\\/]+hm-long-agent-message-1\.txt$/)
+          ));
+          expect(fullMessageWrite).toBeDefined();
+          expect(fullMessageWrite[1]).toContain('--- FULL MESSAGE START ---');
+          expect(fullMessageWrite[1]).toContain(longPayload);
+          expect(terminal.sendToPane).toHaveBeenCalledWith(
+            '1',
+            expect.stringContaining('FULL MSG AT .squidrun/coord/full-agent-messages/hm-long-agent-message-1.txt'),
+            expect.objectContaining({
+              hmSendFastEnter: true,
+              clipboardPasteThresholdBytes: 1024,
+            })
+          );
+          const injectedPointer = terminal.sendToPane.mock.calls[0][1];
+          expect(injectedPointer).not.toBe(longPayload);
+          expect(injectedPointer).toContain('Do not act from this preview alone');
+        } finally {
+          mkdirSpy.mockRestore();
+          writeSpy.mockRestore();
+        }
       });
 
       test('reassembles packetized inject-message payloads before sending to terminal', () => {

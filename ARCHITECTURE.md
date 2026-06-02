@@ -145,6 +145,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/main/inbound-poller-service.js: Owns main-process inbound Telegram/SMS poller lifecycle behind a small service boundary so channel handling can move out of Electron without changing message routing callbacks.
 - ui/modules/main/kernel-bridge.js: Exports KernelBridge, createKernelBridge, BRIDGE_VERSION, BRIDGE_EVENT_CHANNEL, ....
 - ui/modules/main/launch-intent.js: Normalizes `--window` / standalone launch flags so secondary windows can cold-open with their own top-level lifecycle while still sharing the runtime when needed.
+- ui/modules/main/live-task-audit-sidecar.js: Builds the Task Audit sidecar snapshot from typed work items, current-lane reconciliation, and the canonical `.squidrun/runtime/live-task-audit-sidecar/task-audit-items.json` state file; the legacy `future-items.json` file is not read and should not be recreated.
 - ui/modules/main/pane-control-service.js: Exports executePaneControlAction, detectPaneModel, normalizeAction.
 - ui/modules/main/telegram-poller-worker.js: Child-process Telegram inbound poller owner; it is the only runtime `getUpdates` loop and sends inbound messages back to `SquidRunApp` through the inbound-poller service IPC boundary.
 - ui/modules/main/pane-host-window-manager.js: Creates/manages hidden pane-host BrowserWindows and routes bridge messages into pane-host renderers.
@@ -396,6 +397,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - `.squidrun/handoffs/`: materialized session handoff index (`session.md`) from comms journal.
 - `.squidrun/context-snapshots/`: per-pane startup context snapshots (`1.md`, `2.md`, `3.md`, etc.).
 - `.squidrun/runtime/`: live SQLite stores (`evidence-ledger.db*`, `team-memory.sqlite*`, `supervisor.sqlite*`).
+- `.squidrun/runtime/live-task-audit-sidecar/task-audit-items.json`: canonical Task Audit sidecar state for broken/disabled/half-wired/misinterpreted items. The sidecar is a live mental-model record, not a generic to-do list. Resolved entries leave the file; unresolved agent-created residue gets an honest status/next action instead of user-escalation parking. The old `future-items.json` sidecar file was a zero-consumer legacy artifact and is deleted.
 - `.squidrun/reports/`: generated audit/review reports.
 - `.squidrun/state/`: runtime queue/state artifacts (e.g., `comms-outbound-queue.json`).
 - `.squidrun/triggers/`: fallback trigger files consumed by watcher for agent delivery.
