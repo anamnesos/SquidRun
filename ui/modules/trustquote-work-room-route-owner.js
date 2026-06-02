@@ -30,6 +30,7 @@ const DEFAULT_ROLE_COMMANDS = Object.freeze({
 const DEFAULT_HEARTBEAT_MS = 15000;
 const DEFAULT_SPAWN_ACK_TIMEOUT_MS = 1500;
 const DEFAULT_ROUTE_MESSAGE_ENTER_DELAY_MS = process.platform === 'win32' ? 500 : 150;
+const DEFAULT_ROUTE_RECONNECT_DELAY_MS = 1000;
 
 function toText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -246,6 +247,39 @@ function normalizeLifecycleEvent(event, paneId, codeOrMetadata, maybeMetadata) {
   };
 }
 
+function normalizedComparablePath(value) {
+  return normalizePathForMetadata(value).toLowerCase();
+}
+
+function validateAttachedTerminal(spec, terminal = {}) {
+  const problems = [];
+  if (!terminal || terminal.alive === false) {
+    problems.push('terminal_not_alive');
+  }
+  if (String(terminal?.paneId || '') !== String(spec.paneId)) {
+    problems.push('pane_id_mismatch');
+  }
+  if (normalizedComparablePath(terminal?.cwd) !== normalizedComparablePath(spec.cwd)) {
+    problems.push('cwd_mismatch');
+  }
+  if (terminal?.workRoomRouteOwner !== true) {
+    problems.push('missing_work_room_owner_flag');
+  }
+  if (String(terminal?.routeOwner || '') !== ROUTE_OWNER_ID) {
+    problems.push('route_owner_mismatch');
+  }
+  if (String(terminal?.roomId || '') !== TRUSTQUOTE_ROOM_ID) {
+    problems.push('room_id_mismatch');
+  }
+  if (String(terminal?.role || '') !== String(spec.role)) {
+    problems.push('role_mismatch');
+  }
+  return {
+    ok: problems.length === 0,
+    problems,
+  };
+}
+
 function terminalEventMatchesRef(event, ref) {
   if (!ref) return true;
   if (event.pid !== null && ref.pid !== null && event.pid !== ref.pid) return false;
@@ -269,12 +303,22 @@ class TrustQuoteWorkRoomRouteOwner {
     this.routeMessageEnterDelayMs = Number.isFinite(routeMessageEnterDelayMs) && routeMessageEnterDelayMs >= 0
       ? routeMessageEnterDelayMs
       : DEFAULT_ROUTE_MESSAGE_ENTER_DELAY_MS;
+    const routeReconnectDelayMs = Number.parseInt(
+      String(options.routeReconnectDelayMs ?? DEFAULT_ROUTE_RECONNECT_DELAY_MS),
+      10
+    );
+    this.routeReconnectDelayMs = Number.isFinite(routeReconnectDelayMs) && routeReconnectDelayMs >= 0
+      ? routeReconnectDelayMs
+      : DEFAULT_ROUTE_RECONNECT_DELAY_MS;
     this.attachExistingTerminals = options.attachExistingTerminals === true;
     this.clients = new Map();
     this.heartbeatTimers = new Map();
+    this.routeReconnectTimers = new Map();
+    this.routeCloseSuppressions = new Set();
     this.roleTerminalRefs = new Map();
     this.ignoredDaemonEvents = [];
     this.started = false;
+    this.stopping = false;
     this.handleDaemonExit = (paneId, code, metadata) => {
       void this.handleDaemonLifecycleEvent('exit', paneId, code, metadata);
     };
@@ -285,6 +329,7 @@ class TrustQuoteWorkRoomRouteOwner {
 
   async start() {
     if (this.started) return { ok: true, alreadyRunning: true, plan: this.plan };
+    this.stopping = false;
     await this.websocketRuntime.start({
       port: this.plan.port,
       sessionScopeId: this.plan.sessionScopeId,
@@ -350,8 +395,9 @@ class TrustQuoteWorkRoomRouteOwner {
 
   async attachExistingRoleTerminal(spec) {
     const current = await this.readCurrentTerminalSnapshot(spec.paneId);
-    if (!current || current.alive === false) {
-      throw new Error(`existing terminal unavailable for ${spec.paneId}`);
+    const validation = validateAttachedTerminal(spec, current);
+    if (!validation.ok) {
+      throw new Error(`existing terminal unavailable for ${spec.paneId}: ${validation.problems.join(',')}`);
     }
     const ref = normalizeSpawnAck(spec, current.paneId, current.pid, current.dryRun, current);
     if (ref) this.roleTerminalRefs.set(spec.role, ref);
@@ -398,6 +444,9 @@ class TrustQuoteWorkRoomRouteOwner {
   }
 
   async openRouteClient(spec) {
+    const pendingReconnect = this.routeReconnectTimers.get(spec.role);
+    if (pendingReconnect) clearTimeout(pendingReconnect);
+    this.routeReconnectTimers.delete(spec.role);
     const ws = new this.WebSocketImpl(`ws://127.0.0.1:${this.plan.port}`);
     await waitForSocketMessage(ws, (msg) => msg.type === 'welcome', this.options.timeoutMs, `${spec.role} welcome`);
     ws.send(JSON.stringify(createRegisterPayload(spec, this.plan, {
@@ -415,6 +464,8 @@ class TrustQuoteWorkRoomRouteOwner {
       const timer = this.heartbeatTimers.get(spec.role);
       if (timer) clearInterval(timer);
       this.heartbeatTimers.delete(spec.role);
+      if (this.routeCloseSuppressions.delete(spec.role)) return;
+      this.scheduleRouteClientReconnect(spec, 'socket_closed');
     });
     const heartbeat = () => {
       if (ws.readyState !== 1) return;
@@ -429,15 +480,45 @@ class TrustQuoteWorkRoomRouteOwner {
     return ws;
   }
 
+  scheduleRouteClientReconnect(spec, reason = 'socket_closed') {
+    if (!this.started || this.stopping) return false;
+    if (!this.roleTerminalRefs.has(spec.role)) return false;
+    if (this.routeReconnectTimers.has(spec.role)) return false;
+    const timer = setTimeout(() => {
+      this.routeReconnectTimers.delete(spec.role);
+      if (!this.started || this.stopping || !this.roleTerminalRefs.has(spec.role)) return;
+      this.openRouteClient(spec).catch((err) => {
+        this.ignoredDaemonEvents.push({
+          role: spec.role,
+          reason: 'route_client_reconnect_failed',
+          reconnectReason: reason,
+          error: err?.message || String(err),
+          at: new Date().toISOString(),
+        });
+        this.scheduleRouteClientReconnect(spec, 'reconnect_failed');
+      });
+    }, this.routeReconnectDelayMs);
+    if (timer && typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    this.routeReconnectTimers.set(spec.role, timer);
+    return true;
+  }
+
   closeRouteClient(role) {
     const timer = this.heartbeatTimers.get(role);
     if (timer) clearInterval(timer);
     this.heartbeatTimers.delete(role);
+    const reconnectTimer = this.routeReconnectTimers.get(role);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    this.routeReconnectTimers.delete(role);
     const ws = this.clients.get(role);
     this.clients.delete(role);
+    this.routeCloseSuppressions.add(role);
     try {
       if (ws && ws.readyState !== 3) ws.close();
     } catch (_) {}
+    this.routeCloseSuppressions.delete(role);
   }
 
   async readCurrentTerminalSnapshot(paneId) {
@@ -509,6 +590,11 @@ class TrustQuoteWorkRoomRouteOwner {
   }
 
   async stop() {
+    this.stopping = true;
+    for (const timer of this.routeReconnectTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.routeReconnectTimers.clear();
     for (const role of Array.from(this.clients.keys())) {
       this.closeRouteClient(role);
     }
@@ -531,6 +617,7 @@ class TrustQuoteWorkRoomRouteOwner {
       await this.websocketRuntime.stop();
     }
     this.started = false;
+    this.stopping = false;
   }
 }
 
@@ -543,4 +630,5 @@ module.exports = {
   buildTrustQuoteRouteOwnerPlan,
   createRegisterPayload,
   createRouteBinding,
+  validateAttachedTerminal,
 };

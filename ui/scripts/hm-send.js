@@ -179,6 +179,7 @@ if (!listDevicesMode && args.length < 2) {
   console.log(`  --timeout: ack timeout in ms (default: ${DEFAULT_ACK_TIMEOUT_MS})`);
   console.log('  --retries: retry count after first send (default: 3)');
   console.log('  --no-fallback: disable trigger file fallback');
+  console.log('  --target-profile: route to a non-main profile/work-room without changing sender identity');
   console.log('  --bypass-guard: bypass outbound guardrails and log any would-block match');
   process.exit(1);
 }
@@ -196,13 +197,16 @@ let cleanupMessageFilePathOnSuccess = null;
 let useStdin = false;
 let telegramPhotoPath = null;
 let telegramChatIdOverride = null;
+let targetProfileOverride = null;
+let targetWindowKeyOverride = null;
+let targetSessionScopeIdOverride = null;
 let bypassGuard = String(process.env.HM_SEND_BYPASS_GUARD || '').trim() === '1';
 
 // Known flags that signal end of inline message content.
 // Words starting with "--" that are NOT in this set are treated as message text,
 // which prevents accidental truncation when message content contains "--something".
 const KNOWN_FLAGS = new Set([
-  '--role', '--file', '--stdin', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices', '--chat-id', '--bypass-guard',
+  '--role', '--file', '--stdin', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices', '--chat-id', '--target-profile', '--route-profile', '--target-window', '--target-session', '--target-session-scope', '--bypass-guard',
 ]);
 
 function shouldCleanupMessageFile(filePath) {
@@ -290,6 +294,21 @@ for (; i < args.length; i++) {
   }
   if (token === '--no-fallback') {
     enableFallback = false;
+    continue;
+  }
+  if ((token === '--target-profile' || token === '--route-profile') && args[i + 1]) {
+    targetProfileOverride = normalizeProfileName(args[i + 1]);
+    i++;
+    continue;
+  }
+  if (token === '--target-window' && args[i + 1]) {
+    targetWindowKeyOverride = normalizeProfileName(args[i + 1]);
+    i++;
+    continue;
+  }
+  if ((token === '--target-session' || token === '--target-session-scope') && args[i + 1]) {
+    targetSessionScopeIdOverride = String(args[i + 1] || '').trim() || null;
+    i++;
     continue;
   }
   if (token === '--bypass-guard') {
@@ -1056,6 +1075,27 @@ function buildProjectMetadata(context = localProjectContext) {
 }
 
 const projectMetadata = buildProjectMetadata(localProjectContext);
+
+function buildTargetProfileRouteContext() {
+  const profileName = normalizeProfileName(targetProfileOverride || '');
+  if (!targetProfileOverride || isMainProfile(profileName)) return null;
+  const windowKey = normalizeProfileName(targetWindowKeyOverride || profileName);
+  const sessionScopeId = targetSessionScopeIdOverride
+    || scopeSessionIdForEffectiveProfile(projectMetadata?.session_id || getExplicitSessionScopeId(), profileName);
+  return {
+    port: process.env.HM_SEND_PORT ? PORT : getProfileWebSocketPort(profileName),
+    targetProfileName: profileName,
+    metadata: {
+      routing: {
+        profileName,
+        windowKey,
+        sessionScopeId,
+      },
+    },
+  };
+}
+
+const targetProfileRouteContext = buildTargetProfileRouteContext();
 
 function buildRegisterPayload(envelope = null, options = {}) {
   const registerOptions = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
@@ -2023,16 +2063,21 @@ function getDeliveryCheckOptions(ackTimeoutValue) {
   };
 }
 
-async function queryTargetHealthBestEffort(ws) {
+async function queryTargetHealthBestEffort(ws, options = {}) {
   const requestId = `health-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const opts = (options && typeof options === 'object' && !Array.isArray(options)) ? options : {};
 
   try {
-    ws.send(JSON.stringify({
+    const payload = {
       type: 'health-check',
       target,
       requestId,
       staleAfterMs: TARGET_HEARTBEAT_STALE_MS,
-    }));
+    };
+    if (opts.metadata && typeof opts.metadata === 'object') {
+      payload.metadata = opts.metadata;
+    }
+    ws.send(JSON.stringify(payload));
 
     const health = await waitForMatch(
       ws,
@@ -2082,16 +2127,23 @@ async function queryDeliveryCheckBestEffort(ws, messageId, options = {}) {
   return null;
 }
 
-function isTrustQuoteRouteOwnerTarget(targetInput = target) {
-  if (normalizeProfileName(effectiveProfileName) !== TRUSTQUOTE_PROFILE_NAME) return false;
+function isTrustQuoteRouteOwnerTarget(targetInput = target, routeContext = null) {
+  const routeProfile = normalizeProfileName(routeContext?.targetProfileName || '');
+  if (
+    normalizeProfileName(effectiveProfileName) !== TRUSTQUOTE_PROFILE_NAME
+    && routeProfile !== TRUSTQUOTE_PROFILE_NAME
+  ) {
+    return false;
+  }
   const normalizedTarget = normalizeRole(targetInput);
   return normalizedTarget === 'builder' || normalizedTarget === 'oracle';
 }
 
-function normalizeTrustQuoteRouteOwnerHealth(health, targetInput = target) {
-  if (!isTrustQuoteRouteOwnerTarget(targetInput)) return health;
+function normalizeTrustQuoteRouteOwnerHealth(health, targetInput = target, routeContext = null) {
+  if (!isTrustQuoteRouteOwnerTarget(targetInput, routeContext)) return health;
   const normalizedTarget = normalizeRole(targetInput) || String(targetInput || '').trim().toLowerCase();
-  const expectedSessionScopeId = scopeSessionIdForEffectiveProfile(projectMetadata?.session_id || getExplicitSessionScopeId());
+  const expectedSessionScopeId = routeContext?.metadata?.routing?.sessionScopeId
+    || scopeSessionIdForEffectiveProfile(projectMetadata?.session_id || getExplicitSessionScopeId());
   const base = health && typeof health === 'object' ? health : {};
   const routeBinding = base.routeBinding && typeof base.routeBinding === 'object' ? base.routeBinding : null;
   const blocked = (status, error) => ({
@@ -2191,6 +2243,7 @@ function getIsolationFailureStatus(result = null) {
 
 function shouldFailClosedWithoutFallback(result = null, error = null) {
   if (getIsolationFailureStatus(result)) return true;
+  if (targetProfileRouteContext && (error || !result?.ok)) return true;
   if (isProfileScopedCanonicalTarget(target) && (error || !result?.ok)) return true;
   return false;
 }
@@ -2265,8 +2318,9 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
 
   if (!skipHealthCheck) {
     const health = normalizeTrustQuoteRouteOwnerHealth(
-      await queryTargetHealthBestEffort(ws),
-      target
+      await queryTargetHealthBestEffort(ws, opts),
+      target,
+      targetProfileRouteContext
     );
     if (isTargetHealthBlocking(health, target)) {
       await closeSocket(ws);
@@ -2482,6 +2536,7 @@ async function main() {
     || (isSpecialTarget(target) ? String(target).trim().toLowerCase() : null)
     || (bridgeTarget ? bridgeTarget.targetRole : null);
   const trustQuoteReverseRoute = buildTrustQuoteReverseRouteContext(targetRole);
+  const forwardProfileRoute = trustQuoteReverseRoute ? null : targetProfileRouteContext;
   const outboundMessage = trustQuoteReverseRoute
     ? formatTrustQuoteReverseContent(message, role)
     : message;
@@ -2533,6 +2588,7 @@ async function main() {
       bridgeEnabled: bridgeMode ? isCrossDeviceEnabled(process.env) : null,
       ...envelopeMetadata,
       ...(trustQuoteReverseRoute ? trustQuoteReverseRoute.metadata : {}),
+      ...(forwardProfileRoute ? forwardProfileRoute.metadata : {}),
     },
   });
 
@@ -2552,7 +2608,7 @@ async function main() {
   try {
     sendResult = await sendViaWebSocketWithAck(envelope, {
       skipHealthCheck: bridgeMode,
-      ...(trustQuoteReverseRoute || {}),
+      ...(trustQuoteReverseRoute || forwardProfileRoute || {}),
     });
   } catch (err) {
     wsError = err;

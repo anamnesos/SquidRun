@@ -290,17 +290,27 @@ describe('TrustQuote work-room route owner', () => {
           paneId: 'trustquote-builder',
           pid: 42001,
           alive: true,
+          cwd: 'D:/projects/TrustQuote',
           dryRun: false,
           mode: 'pty',
           createdAt: 42100,
+          workRoomRouteOwner: true,
+          routeOwner: ROUTE_OWNER_ID,
+          roomId: 'trustquote',
+          role: 'builder',
         },
         {
           paneId: 'trustquote-oracle',
           pid: 42002,
           alive: true,
+          cwd: 'D:/projects/TrustQuote',
           dryRun: false,
           mode: 'pty',
           createdAt: 42200,
+          workRoomRouteOwner: true,
+          routeOwner: ROUTE_OWNER_ID,
+          roomId: 'trustquote',
+          role: 'oracle',
         },
       ]));
       return true;
@@ -342,6 +352,95 @@ describe('TrustQuote work-room route owner', () => {
 
     expect(daemonClient.kill).not.toHaveBeenCalled();
     expect(websocketRuntime.stop).toHaveBeenCalled();
+  });
+
+  test('attach-existing mode rejects panes that lack TrustQuote room ownership proof', async () => {
+    const websocketRuntime = {
+      start: jest.fn().mockResolvedValue({}),
+      stop: jest.fn().mockResolvedValue({}),
+    };
+    const daemonClient = new EventEmitter();
+    daemonClient.connect = jest.fn().mockResolvedValue(true);
+    daemonClient.list = jest.fn(() => {
+      setImmediate(() => daemonClient.emit('list', [
+        {
+          paneId: 'trustquote-builder',
+          pid: 43001,
+          alive: true,
+          cwd: 'D:/projects/squidrun/ui',
+          dryRun: false,
+          mode: 'pty',
+          createdAt: 43100,
+        },
+      ]));
+      return true;
+    });
+    const owner = new TrustQuoteWorkRoomRouteOwner({
+      plan: buildTrustQuoteRouteOwnerPlan({
+        mainSessionScopeId: 'app-session-384',
+        settings: { paneCommands: { 2: 'codex', 3: 'claude' } },
+      }),
+      websocketRuntime,
+      daemonClient,
+      WebSocketImpl: FakeWebSocket,
+      heartbeatMs: 100000,
+      attachExistingTerminals: true,
+      launchAgents: false,
+      spawnAckTimeoutMs: 50,
+    });
+
+    await expect(owner.start()).rejects.toThrow(/existing terminal unavailable for trustquote-builder/);
+  });
+
+  test('reopens a route client after websocket disconnect while terminal is still alive', async () => {
+    const websocketRuntime = {
+      start: jest.fn().mockResolvedValue({}),
+      stop: jest.fn().mockResolvedValue({}),
+    };
+    const daemonClient = new EventEmitter();
+    daemonClient.connect = jest.fn().mockResolvedValue(true);
+    daemonClient.write = jest.fn().mockReturnValue(true);
+    daemonClient.spawn = jest.fn((paneId) => {
+      const pid = paneId === 'trustquote-builder' ? 44001 : 44002;
+      setImmediate(() => daemonClient.emit('spawned', paneId, pid, false, {
+        paneId,
+        pid,
+        dryRun: false,
+        mode: 'pty',
+        createdAt: pid + 100,
+      }));
+      return true;
+    });
+    const owner = new TrustQuoteWorkRoomRouteOwner({
+      plan: buildTrustQuoteRouteOwnerPlan({
+        mainSessionScopeId: 'app-session-384',
+        settings: { paneCommands: { 2: 'codex', 3: 'claude' } },
+      }),
+      websocketRuntime,
+      daemonClient,
+      WebSocketImpl: FakeWebSocket,
+      heartbeatMs: 100000,
+      routeReconnectDelayMs: 1,
+    });
+
+    await owner.start();
+    const firstBuilderSocket = owner.clients.get('builder');
+    expect(firstBuilderSocket).toBeDefined();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+
+    firstBuilderSocket.close();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const secondBuilderSocket = owner.clients.get('builder');
+    expect(secondBuilderSocket).toBeDefined();
+    expect(secondBuilderSocket).not.toBe(firstBuilderSocket);
+    expect(FakeWebSocket.instances).toHaveLength(3);
+    const registerMessages = FakeWebSocket.instances
+      .flatMap((ws) => ws.sent)
+      .filter((msg) => msg.type === 'register' && msg.role === 'builder');
+    expect(registerMessages).toHaveLength(2);
+
+    await owner.stop();
   });
 
   test('ignores stale daemon exits from replaced terminals before closing a current route client', async () => {

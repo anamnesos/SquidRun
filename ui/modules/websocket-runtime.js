@@ -1884,9 +1884,13 @@ async function handleMessage(clientId, rawData) {
       excludeClientId: clientId,
     })) {
       wsDeliveryCount = 1;
-      // Prevent duplicate delivery for non-local direct routes. Canonical local pane roles
-      // still need the app handler because delivered.websocket is not a user-visible proof.
-      skipMessageHandler = !isCanonicalLocalPaneRoleTarget(target);
+      // Fail-closed side-profile delivery is terminal-backed by the scoped route client.
+      // Letting canonical targets fall through to the main handler after this creates
+      // wrong-profile trigger fallbacks for messages that were already routed.
+      skipMessageHandler = (
+        routeScope.failClosed
+        && !isMainProfile(routeScope.targetScope?.profileName)
+      ) || !isCanonicalLocalPaneRoleTarget(target);
     }
   }
 
