@@ -3,8 +3,10 @@
 const path = require('path');
 const fs = require('fs');
 const {
+  planGuardedOrphanDeletes,
   planMemoryConsistencyRepair,
   planOrphanMigration,
+  runGuardedOrphanDeletes,
   runMemoryConsistencyCheck,
   runMemoryConsistencyRepair,
   runOrphanMigration,
@@ -38,6 +40,8 @@ function printUsage() {
     '  node scripts/hm-memory-consistency.js [--json] [--repair | --dry-run] [--repair-scope missing-only] [--allow-orphan-deletes] [--project-root <path>] [--workspace-dir <path>] [--db-path <path>] [--sample-limit <n>] [--evidence-ledger-db-path <path>]',
     '  node scripts/hm-memory-consistency.js [--json] --orphan-migration-review [--mapping-file <path>]',
     '  node scripts/hm-memory-consistency.js [--json] --migrate-orphans --mapping-file <path>',
+    '  node scripts/hm-memory-consistency.js [--json] --guarded-delete-review --drop-file <path>',
+    '  node scripts/hm-memory-consistency.js [--json] --guarded-delete-orphans --drop-file <path>',
     '',
   ].join('\n'));
 }
@@ -48,6 +52,16 @@ function readMappingFile(filePath) {
   const parsed = JSON.parse(fs.readFileSync(resolved, 'utf8'));
   if (Array.isArray(parsed) || (parsed && typeof parsed === 'object')) {
     return parsed.mappings || parsed;
+  }
+  return undefined;
+}
+
+function readDropFile(filePath) {
+  if (!filePath) return undefined;
+  const resolved = path.resolve(String(filePath));
+  const parsed = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+  if (Array.isArray(parsed) || (parsed && typeof parsed === 'object')) {
+    return parsed.targets || parsed.dropTargets || parsed.orphanDropTargets || parsed;
   }
   return undefined;
 }
@@ -108,7 +122,9 @@ function renderRepairSections(lines, result) {
     `repair_scope: ${result.repairScope || 'all'}`,
     `planned_actions: ${result.summary.actionCount}`,
     `planned_inserts: ${result.summary.insertCount}`,
+    `planned_resyncs: ${result.summary.resyncCount || 0}`,
     `planned_duplicate_merges: ${result.summary.duplicateMergeCount}`,
+    `planned_source_heading_merges: ${result.summary.sourceHeadingMergeCount || 0}`,
     `planned_orphan_deletes: ${result.summary.orphanDeleteCount}`,
     `planned_total_deletes: ${result.summary.deleteCount}`,
     `planned_skips: ${result.summary.skippedCount}`
@@ -123,6 +139,10 @@ function renderRepairSections(lines, result) {
     for (const action of result.actions) {
       if (action.kind === 'insert_missing_chunk') {
         lines.push(`- INSERT ${action.entry.sourcePath} :: ${action.entry.heading || '(no heading)'}`);
+        continue;
+      }
+      if (action.kind === 'resync_source_heading') {
+        lines.push(`- RESYNC ${action.entry.sourcePath} :: ${action.entry.heading || '(no heading)'} :: keep=${action.survivorNodeId} :: delete=${action.loserNodeIds.join(', ') || '-'}`);
         continue;
       }
       if (action.kind === 'collapse_duplicate_hash') {
@@ -147,8 +167,10 @@ function renderRepairSections(lines, result) {
       '',
       `applied_actions: ${result.execution.appliedActions}`,
       `inserted_nodes: ${result.execution.insertedNodes}`,
+      `resynced_nodes: ${result.execution.resyncedNodes || 0}`,
       `deleted_nodes: ${result.execution.deletedNodes}`,
       `merged_duplicate_groups: ${result.execution.mergedDuplicateGroups}`,
+      `merged_source_heading_groups: ${result.execution.mergedSourceHeadingGroups || 0}`,
       `audit_events_written: ${result.execution.auditEventsWritten}`
     );
     if (result.execution.failures.length > 0) {
@@ -214,7 +236,69 @@ function renderOrphanMigrationReport(result) {
   return `${lines.join('\n')}\n`;
 }
 
+function renderGuardedDeleteReport(result) {
+  const lines = [
+    `Guarded orphan delete: ${result.mode}`,
+    `workspace: ${result.workspaceDir}`,
+    `cognitive_db: ${result.cognitiveDbPath}`,
+    `targets: ${Array.isArray(result.targets) ? result.targets.length : 0}`,
+    `planned_deletes: ${result.summary.guardedDeleteCount}`,
+    `planned_total_deletes: ${result.summary.deleteCount}`,
+    `escalated: ${result.summary.escalatedCount}`,
+    `missing_targets: ${result.summary.missingTargetCount}`,
+    `skipped: ${result.summary.skippedCount}`,
+  ];
+
+  if (result.actions.length > 0) {
+    lines.push('', 'Planned Deletes:');
+    for (const action of result.actions) {
+      lines.push(`- DELETE ${action.node.nodeId} :: ${action.node.sourcePath || '(no path)'} :: ${action.node.heading || '(no heading)'}`);
+    }
+  }
+
+  if (result.skipped.length > 0) {
+    lines.push('', 'Escalations / Skips:');
+    for (const entry of result.skipped) {
+      const nodePart = entry.nodeId ? `${entry.nodeId} :: ` : '';
+      const blockerPart = Array.isArray(entry.blockers) && entry.blockers.length > 0
+        ? ` :: blockers=${entry.blockers.join(', ')}`
+        : '';
+      lines.push(`- ${entry.kind} ${nodePart}${entry.sourcePath || '(no path)'} :: ${entry.heading || '(no heading)'} :: ${entry.reason}${blockerPart}`);
+    }
+  }
+
+  if (result.execution) {
+    lines.push(
+      '',
+      `applied_deletes: ${result.execution.appliedActions}`,
+      `deleted_nodes: ${result.execution.deletedNodes}`,
+      `deleted_edges: ${result.execution.deletedEdges}`,
+      `deleted_traces: ${result.execution.deletedTraces}`,
+      `deleted_leases: ${result.execution.deletedLeases}`,
+      `audit_events_written: ${result.execution.auditEventsWritten}`
+    );
+    if (result.execution.failures.length > 0) {
+      lines.push('', 'Execution Failures:');
+      for (const failure of result.execution.failures) {
+        lines.push(`- ${failure.action}: ${failure.reason}`);
+      }
+    }
+  }
+
+  if (result.postCheck) {
+    lines.push('', `post_delete_status: ${result.postCheck.status}`);
+    lines.push(`post_delete_missing: ${result.postCheck.summary.missingInCognitiveCount}`);
+    lines.push(`post_delete_orphans: ${result.postCheck.summary.orphanedNodeCount}`);
+    lines.push(`post_delete_source_heading_duplicates: ${result.postCheck.summary.duplicateSourceHeadingCount || 0}`);
+  }
+
+  return `${lines.join('\n')}\n`;
+}
+
 function renderTextReport(result) {
+  if (result.mode === 'guarded_delete' || result.mode === 'guarded_delete_review' || result.summary?.guardedDeleteCount != null) {
+    return renderGuardedDeleteReport(result);
+  }
   if (result.mode === 'migrate' || result.summary?.mappedMigrationCount != null) {
     return renderOrphanMigrationReport(result);
   }
@@ -241,18 +325,24 @@ function main(argv = process.argv.slice(2)) {
     sampleLimit: flags['sample-limit'],
     repairScope: flags['repair-scope'] || (flags['insert-missing-only'] ? 'missing-only' : undefined),
     allowOrphanDeletes: flags['allow-orphan-deletes'] === true,
+    sessionId: flags['session-id'] ? String(flags['session-id']) : undefined,
     orphanMappings: flags['mapping-file'] ? readMappingFile(flags['mapping-file']) : undefined,
+    orphanDropTargets: flags['drop-file'] ? readDropFile(flags['drop-file']) : undefined,
     evidenceLedgerDbPath: flags['evidence-ledger-db-path']
       ? path.resolve(String(flags['evidence-ledger-db-path']))
       : undefined,
   };
-  const result = flags['orphan-migration-review']
+  const result = flags['guarded-delete-review']
+    ? planGuardedOrphanDeletes(options)
+    : (flags['guarded-delete-orphans']
+      ? runGuardedOrphanDeletes({ ...options, dryRun: false })
+      : (flags['orphan-migration-review']
     ? planOrphanMigration(options)
     : (flags['migrate-orphans']
       ? runOrphanMigration({ ...options, dryRun: false })
       : (flags['dry-run']
         ? planMemoryConsistencyRepair(options)
-        : (flags.repair ? runMemoryConsistencyRepair(options) : runMemoryConsistencyCheck(options))));
+        : (flags.repair ? runMemoryConsistencyRepair(options) : runMemoryConsistencyCheck(options))))));
 
   if (flags.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
