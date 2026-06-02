@@ -49,8 +49,26 @@ ui/daemon.log
 *.pid.lock
 
 # Runtime state (regenerated)
-workspace/
-knowledge/
+workspace/*
+!workspace/knowledge/
+workspace/knowledge/*
+!workspace/knowledge/README.md
+!workspace/knowledge/architecture-decisions.md
+!workspace/knowledge/consultation-schema.md
+!workspace/knowledge/exogenous-triggers-spec.md
+!workspace/knowledge/hyperliquid-rate-limit-broker-plan.md
+!workspace/knowledge/infrastructure.md
+!workspace/knowledge/mira-lab-window-workflow.md
+!workspace/knowledge/paper-trading-cycle-protocol.md
+!workspace/knowledge/projects.md
+!workspace/knowledge/recovering-lost-user-input.md
+!workspace/knowledge/runtime-environment.md
+!workspace/knowledge/trading-operations.md
+!workspace/knowledge/trustquote-field-workflow.md
+!workspace/knowledge/unlock-trading-routine.md
+!workspace/knowledge/unlock-watchlist.md
+!workspace/knowledge/workflows.md
+/knowledge/
 test-results/
 vision_test/
 25
@@ -181,7 +199,6 @@ workspace/logs/
 # Sensitive operational data (public repo — keep private)
 workspace/knowledge/session-*-handoff.md
 workspace/knowledge/case-operations.md
-workspace/knowledge/architecture-decisions.md
 
 # Generic local caches
 .cache/

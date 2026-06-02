@@ -222,7 +222,7 @@ The floor is: this agent gives a shit about the outcome.
 2. **No user action required:** Agents must never ask the user "should I save this?" — just save it. Users are not responsible for maintaining agent memory.
 3. **Deduplication:** Before writing, check if the knowledge already exists. Update existing entries rather than duplicating.
 4. **Scope:** Save operational/procedural knowledge (how to build, deploy, configure, etc.). Do NOT save session-specific context (current task state, in-progress work).
-5. **Cross-device:** `workspace/knowledge/` is git-tracked and shared across devices. Model-specific memory dirs are supplementary — procedural knowledge goes in the shared location.
+5. **Cross-device:** Only explicitly allowlisted procedural files in `workspace/knowledge/` are git-tracked and shared across devices. Relationship, case, persona, financial, and session-specific files in that directory are intentionally local-only under the privacy constraint. Model-specific memory dirs are supplementary — procedural knowledge goes in the shared location.
 6. **Project registry updates:** When a new project is set up or discovered, add or update it in `workspace/knowledge/projects.md`.
 7. **Deployment config updates:** When deployment configuration changes, update `workspace/knowledge/infrastructure.md`.
 8. **Device registry updates:** When a new device joins or a device-specific quirk is learned, add or update it in `workspace/knowledge/runtime-environment.md`.
