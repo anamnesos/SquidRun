@@ -526,14 +526,8 @@ function readTaskAuditItems(options = {}) {
     taskAuditItemsPath: normalizePathForMetadata(taskAuditItemsPath),
     present: Boolean(parsed),
     taskAuditItemsPresent: Boolean(parsed),
-    legacyFutureItemsReader: 'disabled',
-    legacyFutureItemsRead: false,
     items,
   };
-}
-
-function readFutureItems(options = {}) {
-  return readTaskAuditItems(options);
 }
 
 function reconciliationWarningTitle(warning) {
@@ -649,8 +643,6 @@ function buildLiveTaskAuditSnapshot(options = {}) {
       sourcePresent: itemStore.present,
       taskAuditItemsPath: itemStore.taskAuditItemsPath,
       taskAuditItemsPresent: itemStore.taskAuditItemsPresent,
-      legacyFutureItemsReader: itemStore.legacyFutureItemsReader,
-      legacyFutureItemsRead: itemStore.legacyFutureItemsRead,
     },
     history: {
       count: historyItems.length,
@@ -674,7 +666,6 @@ module.exports = {
   TASK_AUDIT_ITEMS_SCHEMA,
   buildLiveTaskAuditSnapshot,
   classifyTaskAuditSection,
-  readFutureItems,
   readTaskAuditItems,
   resolveAppStatusPath,
   resolveTaskAuditItemsPath,

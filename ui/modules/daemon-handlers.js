@@ -14,8 +14,16 @@
  *    - Handles: Focus management, idle detection, Enter verification
  */
 
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { invokeBridge, sendBridge, onBridge } = require('./renderer-bridge');
-const { PANE_IDS, resolvePaneCwd } = require('../config');
+const {
+  PANE_IDS,
+  getProjectRoot,
+  resolveCoordPath,
+  resolvePaneCwd,
+} = require('../config');
 const { getProfileInstructionFilename } = require('../profile');
 const log = require('./logger');
 const bus = require('./event-bus');
@@ -38,6 +46,10 @@ const {
 // PTY ingestion truncation. Mirrors USER_BROADCAST_CLIPBOARD_PASTE_THRESHOLD_BYTES
 // in ./terminal.js.
 const INJECT_CLIPBOARD_PASTE_THRESHOLD_BYTES = 1024;
+const LONG_AGENT_MESSAGE_POINTER_THRESHOLD_BYTES = 1024;
+const FULL_AGENT_MESSAGE_DIR = path.join('coord', 'full-agent-messages');
+const FULL_AGENT_MESSAGE_HEAD_CHARS = 360;
+const FULL_AGENT_MESSAGE_TAIL_CHARS = 260;
 
 // Terminal module for health handlers (lazy loaded)
 let terminal = null;
@@ -112,6 +124,113 @@ function isHmSendTraceContext(traceContext = null) {
     (messageId && messageId.startsWith('hm-'))
     || (traceId && traceId.startsWith('hm-'))
   );
+}
+
+function sanitizeFileSegment(value, fallback = 'message') {
+  const clean = String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 96);
+  return clean || fallback;
+}
+
+function compactOneLine(value, maxChars) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function relativeDisplayPath(filePath) {
+  try {
+    const projectRoot = typeof getProjectRoot === 'function' ? getProjectRoot() : null;
+    if (projectRoot) {
+      const relativePath = path.relative(projectRoot, filePath);
+      if (relativePath && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)) {
+        return relativePath.replace(/\\/g, '/');
+      }
+    }
+  } catch (_) {}
+  return String(filePath || '').replace(/\\/g, '/');
+}
+
+function extractAgentMessagePrefix(message) {
+  const match = String(message || '').match(/^\s*(\([A-Z][A-Z/-]*\s+#\d+\):)/i);
+  return match ? match[1] : '(AGENT MSG):';
+}
+
+function writeFullAgentMessageFile(message, context = {}) {
+  const text = String(message || '');
+  const traceMessageId = toNonEmptyString(context.messageId)
+    || toNonEmptyString(context.deliveryId)
+    || `hm-${Date.now()}`;
+  const safeMessageId = sanitizeFileSegment(traceMessageId, 'message');
+  const fullDir = resolveCoordPath(FULL_AGENT_MESSAGE_DIR, { forWrite: true });
+  fs.mkdirSync(fullDir, { recursive: true });
+  const filePath = path.join(fullDir, `${safeMessageId}.txt`);
+  const sha256 = crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+  const createdAt = new Date().toISOString();
+  const body = [
+    'SQUIDRUN FULL AGENT MESSAGE',
+    `createdAt: ${createdAt}`,
+    `messageId: ${traceMessageId}`,
+    `deliveryId: ${context.deliveryId || ''}`,
+    `paneId: ${context.paneId || ''}`,
+    `bytesUtf8: ${getUtf8ByteLength(text)}`,
+    `sha256: ${sha256}`,
+    '',
+    'The pane-visible message was shortened so Claude panes cannot silently front-clip long inbound agent payloads.',
+    'Read the full message below before replying via hm-send.js.',
+    '',
+    '--- FULL MESSAGE START ---',
+    text,
+    '--- FULL MESSAGE END ---',
+    '',
+  ].join('\n');
+  fs.writeFileSync(filePath, body, 'utf8');
+  return {
+    filePath,
+    displayPath: relativeDisplayPath(filePath),
+    bytes: getUtf8ByteLength(text),
+    sha256,
+  };
+}
+
+function materializeLongAgentMessageForPane(message, context = {}) {
+  const text = String(message || '');
+  const bytes = getUtf8ByteLength(text);
+  if (!isHmSendTraceContext(context.traceContext)) {
+    return { message: text, materialized: false };
+  }
+  if (bytes < LONG_AGENT_MESSAGE_POINTER_THRESHOLD_BYTES) {
+    return { message: text, materialized: false };
+  }
+
+  try {
+    const full = writeFullAgentMessageFile(text, context);
+    const prefix = extractAgentMessagePrefix(text);
+    const head = compactOneLine(text, FULL_AGENT_MESSAGE_HEAD_CHARS);
+    const tail = compactOneLine(text.slice(-FULL_AGENT_MESSAGE_TAIL_CHARS), FULL_AGENT_MESSAGE_TAIL_CHARS);
+    const pointerMessage = [
+      `${prefix} FULL MSG AT ${full.displayPath}`,
+      `Long inbound hm-send payload materialized (${full.bytes} bytes, sha256 ${full.sha256.slice(0, 12)}...) so the Claude pane cannot silently front-clip it.`,
+      'Do not act from this preview alone; read the full file, then reply via hm-send.js.',
+      `HEAD: ${head}`,
+      `TAIL: ${tail}`,
+    ].join('\n');
+    return {
+      message: pointerMessage,
+      materialized: true,
+      filePath: full.filePath,
+      displayPath: full.displayPath,
+      originalBytes: bytes,
+      pointerBytes: getUtf8ByteLength(pointerMessage),
+      sha256: full.sha256,
+    };
+  } catch (err) {
+    log.warn('InjectIPC', `Failed to materialize long agent message: ${err.message}`);
+    return { message: text, materialized: false, error: err.message };
+  }
 }
 
 function toPositiveInt(value, fallback) {
@@ -1143,7 +1262,7 @@ function processThrottleQueue(paneId) {
 
   const item = queue.shift();
   const message = typeof item === 'string' ? item : item.message;
-  const routedMessage = stripInternalRoutingWrappers(message);
+  let routedMessage = stripInternalRoutingWrappers(message);
   const deliveryId = item && typeof item === 'object' ? item.deliveryId : null;
   const traceContext = item && typeof item === 'object' ? (item.traceContext || null) : null;
   const traceMessageId = toNonEmptyString(traceContext?.messageId)
@@ -1158,6 +1277,14 @@ function processThrottleQueue(paneId) {
   const isStartupInjection = item && typeof item === 'object' && item.startupInjection === true;
   const corrId = traceContext?.traceId || traceContext?.correlationId || undefined;
   const causationId = traceContext?.parentEventId || traceContext?.causationId || undefined;
+
+  const materialized = materializeLongAgentMessageForPane(routedMessage, {
+    paneId: String(paneId),
+    deliveryId: deliveryId || null,
+    messageId: traceMessageId,
+    traceContext,
+  });
+  routedMessage = materialized.message;
 
   if (message.trim() === '(UNSTICK)') {
     log.info('Daemon', `Sending UNSTICK (ESC) to pane ${paneId}`);
@@ -1202,7 +1329,22 @@ function processThrottleQueue(paneId) {
     payloadFingerprint: createPayloadFingerprint(routedMessage),
     hmSendTrace: hmSendFastEnter,
     startupInjection: isStartupInjection,
+    materializedFullPayload: materialized.materialized === true,
+    fullPayloadPath: materialized.displayPath || null,
+    originalPayloadBytes: materialized.originalBytes || null,
   });
+  if (materialized.materialized === true) {
+    appendBusTraceEvent({
+      eventType: 'renderer_full_agent_message_materialized',
+      messageId: traceMessageId,
+      deliveryId: deliveryId || null,
+      paneId: String(paneId),
+      payloadBytes: materialized.originalBytes,
+      pointerBytes: materialized.pointerBytes,
+      fullPayloadPath: materialized.displayPath,
+      payloadSha256: materialized.sha256,
+    });
+  }
 
   let queueFinalized = false;
   const finalizeQueueProcessing = () => {
