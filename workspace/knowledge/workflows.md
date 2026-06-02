@@ -60,3 +60,11 @@ A fast regex lint applies to the first 50 characters of coworker outputs. It cat
 When James assigns a restart or proof lane to Codex Desktop, Codex Desktop performs the restart/proof. SquidRun agents must not reroute that work to themselves or another agent.
 
 If Builder or Oracle sees a restart/proof plan naming Codex Desktop, they should hold for Codex Desktop to perform it and report Codex Desktop proof as pending. If an agent-run restart is proposed anyway, treat it as a process/authority failure with the wrong actor, not as a code, commit, or preflight gap.
+
+# Telegram reply-guard: external-process replies vs in-memory state
+
+Load-bearing constraint (S396). `hm-send.js telegram` runs in a SEPARATE process from the Electron main app, so a Telegram reply it sends CANNOT directly clear the app's in-memory `pendingTelegramReplyGuards` map. That gap is what produced the recurring `(SYSTEM RESPONSE-DEBT) pane_output_without_telegram_egress` loop: the only clear path was a fragile lazy journal reconcile at pane-output time, so a reply that was actually sent kept getting flagged as unanswered.
+
+Fix (commits 0668dd12 / 45508bf5, `ui/modules/main/squidrun-app.js`): a proactive `setInterval` (default 5s, `SQUIDRUN_TELEGRAM_REPLY_GUARD_JOURNAL_RECONCILE_INTERVAL_MS`, floor 1s) reconciles pending guards against the evidence-ledger journal independent of pane output; chat-equality is enforced only when both guard and row carry a chatId, with a 5s journal grace; terminal guards (expired_unresolved / phone_escalated) stay in the map for bookkeeping but are skipped, and the interval self-clears once the non-terminal count hits 0. Reconcile is READ-ONLY journal queries (no new ledger writes); the timer is `unref()`'d and cleared in the destroy/cleanup paths.
+
+Do NOT "simplify" this back to pane-output-only reconcile — the external-process/in-memory gap will return. Known accepted limitation: `pendingTelegramReplyGuards` is in-memory only, so an inbound that arrived pre-restart and was unanswered is dropped on restart (it will not nag post-restart). The inbound row still exists in the evidence-ledger for manual recovery; auto-nagging across a restart is intentionally not provided.
