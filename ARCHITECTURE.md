@@ -324,6 +324,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/scripts/hm-twitter.js: Exports parseArgs, getTwitterConfig, getMissingConfigKeys, percentEncode, ....
 - ui/scripts/install-supervisor-task.ps1: PowerShell installer for registering the durable supervisor as a Windows scheduled task.
 - ui/scripts/local_embedder.py: Python helper worker for local embeddings.
+- ui/scripts/postinstall-electron-rebuild.js: npm postinstall guard that first probes `better-sqlite3` under the Electron runtime ABI, then runs a targeted `electron-rebuild -f -o better-sqlite3` only when the native module cannot load.
 - ui/modules/cognitive-memory-sleep.js: Exports SleepConsolidator, resolves sleep threshold configs, manages background semantic clustering, and auto-promotes matched supervisor failure->success antibodies into immune nodes.
 - ui/modules/cognitive-memory-store.js: Cognitive memory vector and metadata store wrapper over sqlite-vec.
 - ui/modules/memory-search.js: Hybrid FTS and sqlite-vec memory search index and chunking engine.

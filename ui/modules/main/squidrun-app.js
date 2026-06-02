@@ -9063,6 +9063,12 @@ class SquidRunApp {
       chatId,
       defaultChatId: normalizeChatId(process.env.TELEGRAM_CHAT_ID || '') || null,
       sender: typeof context?.sender === 'string' && context.sender.trim() ? context.sender.trim() : null,
+      messageId: toNonEmptyString(context?.messageId || context?.inboundMessageId) || null,
+      inboundMessageId: toNonEmptyString(context?.inboundMessageId || context?.messageId) || null,
+      updateId: Number.isFinite(Number(context?.updateId)) ? Math.floor(Number(context.updateId)) : null,
+      telegramMessageId: Number.isFinite(Number(context?.telegramMessageId))
+        ? Math.floor(Number(context.telegramMessageId))
+        : null,
       windowKey: 'main',
       profile: 'main',
       sessionScopeId: toNonEmptyString(context?.sessionScopeId) || this.getWindowSessionScopeId('main'),
@@ -9098,6 +9104,12 @@ class SquidRunApp {
       lastInboundAtMs: Date.now(),
       sender: typeof sender === 'string' && sender.trim() ? sender.trim() : 'unknown',
       chatId,
+      messageId: toNonEmptyString(metadata?.messageId || metadata?.inboundMessageId) || null,
+      inboundMessageId: toNonEmptyString(metadata?.inboundMessageId || metadata?.messageId) || null,
+      updateId: Number.isFinite(Number(metadata?.updateId)) ? Math.floor(Number(metadata.updateId)) : null,
+      telegramMessageId: Number.isFinite(Number(metadata?.telegramMessageId))
+        ? Math.floor(Number(metadata.telegramMessageId))
+        : null,
       windowKey: 'main',
       profile: 'main',
       sessionScopeId: toNonEmptyString(metadata?.sessionScopeId) || this.getWindowSessionScopeId('main'),
@@ -12027,15 +12039,6 @@ class SquidRunApp {
           'Telegram',
           `Handling inbound Telegram callback from ${sender} (update=${metadata?.updateId ?? 'unknown'} message=${metadata?.messageId ?? 'unknown'} mediaKind=${media?.kind || (photo ? 'photo' : (document ? 'document' : 'none'))})`
         );
-        if (inboundWindowKey === 'main') {
-          this.markTelegramInboundContext(sender, {
-            chatId: metadata?.chatId,
-            windowKey: inboundWindowKey,
-            profile: inboundRoute.profile || 'main',
-            sessionScopeId: inboundSessionScopeId,
-            body,
-          });
-        }
         const updateId = Number.isFinite(Number(metadata?.updateId))
           ? Math.floor(Number(metadata.updateId))
           : null;
@@ -12050,6 +12053,19 @@ class SquidRunApp {
         const sentAtMs = Number.isFinite(Number(metadata?.timestampMs))
           ? Math.floor(Number(metadata.timestampMs))
           : Date.now();
+        if (inboundWindowKey === 'main') {
+          this.markTelegramInboundContext(sender, {
+            chatId: metadata?.chatId,
+            windowKey: inboundWindowKey,
+            profile: inboundRoute.profile || 'main',
+            sessionScopeId: inboundSessionScopeId,
+            messageId: inboundMessageId,
+            inboundMessageId,
+            updateId,
+            telegramMessageId: messageId,
+            body,
+          });
+        }
         void Promise.resolve(executeEvidenceLedgerOperation(
           'upsert-comms-journal',
           {

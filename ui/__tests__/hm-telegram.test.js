@@ -183,6 +183,59 @@ describe('hm-telegram', () => {
     }));
   });
 
+  test('sendTelegram annotates matching reply-context egress with inbound ids', async () => {
+    mockTelegramResponse(200, {
+      ok: true,
+      result: {
+        message_id: 20581,
+        chat: { id: 5613428850 },
+      },
+    });
+
+    const result = await hmTelegram.sendTelegram('same-channel answer', {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '5613428850',
+    }, {
+      messageId: 'hm-telegram-reply-context-1',
+      sessionId: 'app-session-399',
+      replyContext: {
+        chatId: '5613428850',
+        inboundMessageId: 'telegram-in-808498637',
+        updateId: 808498637,
+        telegramMessageId: 20580,
+        sender: 'james',
+        sessionScopeId: 'app-session-399',
+        windowKey: 'main',
+        profile: 'main',
+        lastInboundAtMs: 1780422913000,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(appendCommsJournalEntry.mock.calls[0][0]).toEqual(expect.objectContaining({
+      messageId: 'hm-telegram-reply-context-1',
+      metadata: expect.objectContaining({
+        replyContext: 'telegram',
+        replyToMessageId: 'telegram-in-808498637',
+        inboundMessageId: 'telegram-in-808498637',
+        telegramUpdateId: 808498637,
+        inboundTelegramMessageId: 20580,
+        replyContextSessionScopeId: 'app-session-399',
+      }),
+    }));
+    expect(appendCommsJournalEntry.mock.calls[1][0]).toEqual(expect.objectContaining({
+      messageId: 'hm-telegram-reply-context-1',
+      status: 'acked',
+      ackStatus: 'telegram_delivered',
+      metadata: expect.objectContaining({
+        replyToMessageId: 'telegram-in-808498637',
+        inboundMessageId: 'telegram-in-808498637',
+        telegramMessageId: 20581,
+        chatId: 5613428850,
+      }),
+    }));
+  });
+
   test('sendTelegram truncates outbound message to 4000 chars with suffix', async () => {
     mockTelegramResponse(200, {
       ok: true,

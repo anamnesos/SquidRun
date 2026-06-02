@@ -272,11 +272,68 @@ function readTelegramReplyContext() {
   return {
     chatId,
     sender: typeof payload.sender === 'string' ? payload.sender.trim() || null : null,
+    messageId: typeof payload.messageId === 'string' ? payload.messageId.trim() || null : null,
+    inboundMessageId: typeof payload.inboundMessageId === 'string' ? payload.inboundMessageId.trim() || null : null,
+    replyToMessageId: typeof payload.replyToMessageId === 'string' ? payload.replyToMessageId.trim() || null : null,
+    updateId: Number.isFinite(Number(payload.updateId)) ? Math.floor(Number(payload.updateId)) : null,
+    telegramMessageId: Number.isFinite(Number(payload.telegramMessageId))
+      ? Math.floor(Number(payload.telegramMessageId))
+      : null,
+    sessionScopeId: typeof payload.sessionScopeId === 'string' ? payload.sessionScopeId.trim() || null : null,
+    windowKey: typeof payload.windowKey === 'string' ? payload.windowKey.trim() || null : null,
+    profile: typeof payload.profile === 'string' ? payload.profile.trim() || null : null,
     defaultChatId: normalizeChatId(payload.defaultChatId),
     lastInboundAtMs: Number.isFinite(Number(payload.lastInboundAtMs))
       ? Math.floor(Number(payload.lastInboundAtMs))
       : null,
   };
+}
+
+function buildReplyContextJournalMetadata({ outboundChatId = null, replyContext = null } = {}) {
+  const context = (replyContext && typeof replyContext === 'object' && !Array.isArray(replyContext))
+    ? replyContext
+    : readTelegramReplyContext();
+  const contextChatId = normalizeChatId(context?.chatId);
+  const normalizedOutboundChatId = normalizeChatId(outboundChatId);
+  if (!contextChatId || !normalizedOutboundChatId || contextChatId !== normalizedOutboundChatId) {
+    return {};
+  }
+
+  const inboundMessageId = typeof context.replyToMessageId === 'string' && context.replyToMessageId.trim()
+    ? context.replyToMessageId.trim()
+    : (typeof context.inboundMessageId === 'string' && context.inboundMessageId.trim()
+      ? context.inboundMessageId.trim()
+      : (typeof context.messageId === 'string' && context.messageId.trim() ? context.messageId.trim() : null));
+  const metadata = {
+    replyContext: 'telegram',
+    replyContextChatId: contextChatId,
+    replyContextLastInboundAtMs: Number.isFinite(Number(context.lastInboundAtMs))
+      ? Math.floor(Number(context.lastInboundAtMs))
+      : null,
+  };
+  if (inboundMessageId) {
+    metadata.replyToMessageId = inboundMessageId;
+    metadata.inboundMessageId = inboundMessageId;
+  }
+  if (Number.isFinite(Number(context.updateId))) {
+    metadata.telegramUpdateId = Math.floor(Number(context.updateId));
+  }
+  if (Number.isFinite(Number(context.telegramMessageId))) {
+    metadata.inboundTelegramMessageId = Math.floor(Number(context.telegramMessageId));
+  }
+  if (typeof context.sender === 'string' && context.sender.trim()) {
+    metadata.replyContextSender = context.sender.trim();
+  }
+  if (typeof context.sessionScopeId === 'string' && context.sessionScopeId.trim()) {
+    metadata.replyContextSessionScopeId = context.sessionScopeId.trim();
+  }
+  if (typeof context.windowKey === 'string' && context.windowKey.trim()) {
+    metadata.replyContextWindowKey = context.windowKey.trim();
+  }
+  if (typeof context.profile === 'string' && context.profile.trim()) {
+    metadata.replyContextProfile = context.profile.trim();
+  }
+  return metadata;
 }
 
 function resolveReplyContextChatId(config, options = {}) {
@@ -524,6 +581,12 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
   const targetRole = asRole(opts.targetRole || opts.toRole || 'user', 'user');
   const sessionId = resolvePreferredSessionId(opts.sessionId, localProjectContext?.sessionId || null);
   const preparedCaption = maybeTruncateTelegramCaption(caption);
+  const config = getTelegramConfig(env);
+  const outboundChatId = resolveOutboundChatId(config, opts);
+  const replyContextMetadata = buildReplyContextJournalMetadata({
+    outboundChatId,
+    replyContext: opts.replyContext,
+  });
 
   upsertTelegramJournal({
     messageId,
@@ -534,7 +597,7 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
     rawBody: preparedCaption.text ? `[photo] ${preparedCaption.text}` : '[photo]',
     status: 'recorded',
     attempt: 1,
-    metadata: mergeJournalMetadata(opts.metadata, {
+    metadata: mergeJournalMetadata(replyContextMetadata, opts.metadata, {
       source: 'hm-telegram',
       mode: 'photo',
       photoPath: path.resolve(photoPath),
@@ -543,8 +606,6 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
     }),
   });
 
-  const config = getTelegramConfig(env);
-  const outboundChatId = resolveOutboundChatId(config, opts);
   const missing = getMissingConfigKeys(config, { chatId: outboundChatId });
   if (missing.length > 0) {
     upsertTelegramJournal({
@@ -612,7 +673,7 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
       targetRole,
       status: 'acked',
       ackStatus: 'telegram_delivered',
-      metadata: mergeJournalMetadata(opts.metadata, {
+      metadata: mergeJournalMetadata(replyContextMetadata, opts.metadata, {
         telegramMessageId: payload?.result?.message_id || null,
         chatId: payload?.result?.chat?.id || outboundChatId,
       }),
@@ -656,6 +717,10 @@ async function sendTelegram(message, env = process.env, options = {}) {
   const preparedMessage = maybeTruncateTelegramMessage(message);
   const config = getTelegramConfig(env);
   const outboundChatId = resolveOutboundChatId(config, opts);
+  const replyContextMetadata = buildReplyContextJournalMetadata({
+    outboundChatId,
+    replyContext: opts.replyContext,
+  });
 
   upsertTelegramJournal({
     messageId,
@@ -666,7 +731,7 @@ async function sendTelegram(message, env = process.env, options = {}) {
     rawBody: preparedMessage.text,
     status: 'recorded',
     attempt: 1,
-    metadata: mergeJournalMetadata(opts.metadata, {
+    metadata: mergeJournalMetadata(replyContextMetadata, opts.metadata, {
       source: 'hm-telegram',
       mode: 'message',
       messageTruncated: preparedMessage.truncated,
@@ -751,7 +816,7 @@ async function sendTelegram(message, env = process.env, options = {}) {
       targetRole,
       status: 'acked',
       ackStatus: 'telegram_delivered',
-      metadata: mergeJournalMetadata(opts.metadata, {
+      metadata: mergeJournalMetadata(replyContextMetadata, opts.metadata, {
         telegramMessageId: payload?.result?.message_id || null,
         chatId: payload?.result?.chat?.id || outboundChatId,
       }),
@@ -849,6 +914,7 @@ module.exports = {
   normalizeChatId,
   parseChatAllowlist,
   readTelegramReplyContext,
+  buildReplyContextJournalMetadata,
   resolveReplyContextChatId,
   resolveOutboundChatId,
   isChatAllowed,

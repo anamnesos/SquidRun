@@ -4660,7 +4660,11 @@ describe('SquidRunApp', () => {
       const options = telegramPoller.start.mock.calls[0][0];
       expect(typeof options.onMessage).toBe('function');
 
-      options.onMessage('/task build passed', 'james');
+      options.onMessage('/task build passed', 'james', {
+        chatId: 5613428850,
+        updateId: 808498637,
+        messageId: 20580,
+      });
       await new Promise((resolve) => setImmediate(resolve));
       expect(sendMiraLivePrompt).not.toHaveBeenCalled();
       expect(deliverySpy).toHaveBeenCalledWith(
@@ -4680,6 +4684,11 @@ describe('SquidRunApp', () => {
       expect(app.telegramInboundContext).toEqual(
         expect.objectContaining({
           sender: 'james',
+          messageId: 'telegram-in-808498637',
+          inboundMessageId: 'telegram-in-808498637',
+          updateId: 808498637,
+          telegramMessageId: 20580,
+          chatId: '5613428850',
           windowKey: 'main',
         })
       );
@@ -7056,6 +7065,92 @@ describe('SquidRunApp', () => {
               inboundMessageId: 'telegram-in-target-user-1',
               egressMessageId: 'hm-telegram-target-user-1',
               chatId: '1111111111',
+              sessionScopeId: sessionId,
+            }),
+          ],
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('credits the raw delivered hm-send telegram row shape from session 399', () => {
+      const sessionId = 'app-session-399';
+      const guardCreatedAtMs = 1780422913433;
+      jest.useFakeTimers({ now: guardCreatedAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-808498637',
+          chatId: '5613428850',
+          sender: 'james',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            rowId: 67315,
+            messageId: 'hm-1780422928508-4rxl3m',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: 1780422928536,
+            brokeredAtMs: null,
+            rawBody: 'Quiet and clean.',
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            attempt: 1,
+            metadata: {
+              envelope_version: 'hm-envelope-v1',
+              envelope: {
+                version: 'hm-envelope-v1',
+                message_id: 'hm-1780422928508-4rxl3m',
+                timestamp_ms: 1780422928535,
+                sent_at: '2026-06-02T17:55:28.535Z',
+                session_id: sessionId,
+                sender: { role: 'architect' },
+                target: { raw: 'telegram', role: 'telegram', pane_id: null },
+              },
+              session_id: sessionId,
+              sender: { role: 'architect' },
+              target: { raw: 'telegram', role: 'telegram', pane_id: null },
+              directTarget: 'telegram',
+              routeMethod: 'hm-send-telegram-direct',
+              source: 'hm-telegram',
+              mode: 'message',
+              telegramMessageId: 20581,
+              chatId: 5613428850,
+            },
+            updatedAtMs: 1780422929186,
+          },
+        ]);
+
+        const result = app.reconcilePendingTelegramReplyGuardsWithJournal({
+          reason: 'unit-test-raw-session-399-row',
+          logMisses: false,
+        });
+
+        expect(queryCommsJournalEntries).toHaveBeenCalledWith({
+          sessionId,
+          channel: 'telegram',
+          direction: 'outbound',
+          sinceMs: guardCreatedAtMs - 5000,
+          order: 'asc',
+          limit: 500,
+        });
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_guards_reconciled_from_journal',
+          reconciledCount: 1,
+          pendingCount: 0,
+          reconciled: [
+            expect.objectContaining({
+              inboundMessageId: 'telegram-in-808498637',
+              egressMessageId: 'hm-1780422928508-4rxl3m',
+              chatId: '5613428850',
               sessionScopeId: sessionId,
             }),
           ],
