@@ -110,6 +110,10 @@ Do NOT "simplify" this back to pane-output-only reconcile — the external-proce
 - Create GitHub release: `gh release create vX.Y.Z ui/dist/SquidRun-Setup-X.Y.Z.exe`
 - Update site: bump `RELEASE_VERSION` in `squidrun-site/platform-download-button.tsx`, push to `master`, wait for Vercel deploy.
 
+## CLI Gotchas
+
+- **`hm-restart-request.js` has NO `--help`.** Invoking it with any args (including `--help`) immediately *captures a real restart request* — it writes `.squidrun/coord/restart-request.json` + `restart-handoff.md`. There is no read-only/inspect mode. To inspect safely, `Read` the script or pass `--dry-run` (skips the file writes). Discovered S401 when an exploratory `--help` wrote a spurious `restart-401` record. NOTE: writing the request file alone does NOT trigger a restart — the trigger is a queued item in the Codex Desktop attention inbox (`hm-codex-attention.js create`). A stray request file is harmless-but-confusing cruft; hard-delete it (it's only written, never required-present, by `hm-restart-request.js`).
+
 ## Task Delegation Template (Architect -> Builder)
 
 (Re-homed S398 from cognitive memory — lost in the workflows.md rewrite.)

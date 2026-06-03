@@ -8,6 +8,14 @@
 - Hardware checked 2026-05-08: AMD Ryzen 9 9950X (16 cores / 32 threads), NVIDIA GeForce RTX 5090, ~61.6GB RAM.
 - Notes: use `npx electron-builder` for packaging; if Windows Spectre-mitigated build libs are missing, package with `--config.npmRebuild=false`.
 
+### PC optimization ground-truth (live-inspected 2026-06-02, S401)
+- Full spec: Gigabyte X870E AORUS ELITE WIFI7 (BIOS FA9), 2x32GB Corsair CMH64GX5M2M6000Z30 (rated DDR5-6000 CL30), Samsung 990 Pro 2TB+4TB, Win11 Pro 25H2 build 26200.8457 (current).
+- `pcssagent.exe` (~750MB) is **APC PowerChute Serial Shutdown (UPS agent), service `APCPBEAgent`, LocalSystem — NOT Synology.** An APC UPS is physically attached (PnP "APC UPS" / "American Power Conversion USB UPS"). KEEP — it's power-loss protection. Do NOT recommend killing it; this was misidentified as Synology once and corrected.
+- Known-open optimization gaps (owners): **RAM EXPO off** — running 4800 vs rated 6000 (BIOS fix, Builder). **Memory Integrity/HVCI ON** — James is low-threat, disable is his reboot-gated toggle. **Chipset driver** 8.02.18.557 vs latest 8.05.04.516.
+- Applied + live S401: power plan = **Ultimate Performance**; Ollama tuned via User-scope env `OLLAMA_FLASH_ATTENTION=1` + `OLLAMA_KV_CACHE_TYPE=q8_0` (Ollama runs as the logged-in user, so User scope is correct — do not bother with Machine scope).
+- Bloat disabled S401 (reversible): Synology Drive Client startup `.lnk` renamed `.disabled` + runtime stopped; HKCU Run entries removed for Chrome/Edge AutoLaunch + Epson EPLTarget x2 + EPSDNMON. Pending elevated pass: HKLM Run (Logitech Download Assistant, EPPCCMON, EEventManager) + services (GigabyteUpdateService, OptionsPlusUpdaterService disable-updater-only, Synology Drive VSS) + Defender dev-folder exclusions.
+- Elevation boundary for CLI audits here: HKCU Run + user-context processes are editable non-elevated; **HKLM Run, service StartMode, LocalSystem processes, Machine env, and Defender exclusions all require an elevated shell.**
+
 ## MACBOOK
 
 - Device ID: `MACBOOK`

@@ -64,7 +64,7 @@
   let refreshTimer = null;
   let lastSnapshotOk = false;
   let currentSnapshot = null;
-  const SECTION_ORDER = ['Mira', 'TrustQuote', 'SquidRun', 'Other'];
+  const SECTION_ORDER = ['Mira', 'TrustQuote', 'PC Hardware', 'SquidRun', 'Other'];
   const STATUS_LABELS = {
     active: 'Active',
     ask_james: 'Ask James',
@@ -254,8 +254,21 @@
     return OWNER_LABELS[key] || humanizeToken(raw);
   }
 
+  function isPcHardwareItem(item = {}) {
+    const projectName = String(item.project?.name || '').toLowerCase();
+    const profile = String(item.profile || '').toLowerCase();
+    const source = `${item.sourceRef || ''} ${item.source?.label || ''} ${item.source?.kind || ''}`.toLowerCase();
+    const title = String(item.title || '').toLowerCase();
+    const tags = safeArray(item.tags).join(' ').toLowerCase();
+    const haystack = `${projectName} ${profile} ${source} ${title} ${item.kind || ''} ${tags}`.toLowerCase();
+    return /\bpc\s*hardware\b|\bexpo\b|\bxmp\b|\bddr5\b|\b9950x\b|\bx870e\b|\brtx\s*5090\b|\bnvidia\b|\bamd\s+chipset\b|\b990\s*pro\b|\bnvme\b|\bpbo\b|curve optimizer|memory integrity|\bvbs\b/.test(haystack);
+  }
+
   function sectionForItem(item = {}) {
     const explicit = String(item.section || '').trim();
+    if (explicit === 'PC Hardware') return explicit;
+    if (explicit && explicit !== 'SquidRun' && SECTION_ORDER.includes(explicit)) return explicit;
+    if (isPcHardwareItem(item)) return 'PC Hardware';
     if (SECTION_ORDER.includes(explicit)) return explicit;
     const projectName = String(item.project?.name || '').toLowerCase();
     const profile = String(item.profile || '').toLowerCase();

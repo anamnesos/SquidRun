@@ -144,10 +144,10 @@ describe('live-task-audit preview server', () => {
     expect(renderer).not.toMatch(/Terminal Cockpit|Command Center|Route Map|taskAuditConcepts/);
   });
 
-  test('renderer keeps every task-audit section heading including empty Other', () => {
+  test('renderer keeps every task-audit section heading including PC Hardware and empty Other', () => {
     const renderer = fs.readFileSync(path.join(__dirname, '..', 'live-task-audit-sidecar-renderer.js'), 'utf8');
 
-    expect(renderer).toContain("const SECTION_ORDER = ['Mira', 'TrustQuote', 'SquidRun', 'Other']");
+    expect(renderer).toContain("const SECTION_ORDER = ['Mira', 'TrustQuote', 'PC Hardware', 'SquidRun', 'Other']");
     expect(renderer).toContain('.map((section) => ({ section, items: groups.get(section) || [] }))');
     expect(renderer).not.toContain('.filter((group) => group.items.length > 0)');
     expect(renderer).toContain("'No items'");
