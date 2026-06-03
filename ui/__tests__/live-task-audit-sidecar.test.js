@@ -333,6 +333,43 @@ describe('live-task-audit-sidecar', () => {
     ]);
   });
 
+  test('keeps PC Hardware as a first-class section before SquidRun firmware fallback', () => {
+    writeJson(taskAuditItemsPath, {
+      items: [
+        {
+          id: 'pc-hardware-expo-off-401',
+          partition: 'active',
+          section: 'hardware',
+          title: 'EXPO OFF - RAM at 4800 vs rated DDR5-6000',
+          status: 'to_do',
+          kind: 'firmware_tuning',
+          ownerRoles: ['builder'],
+          sessionId: 'app-session-401',
+          updatedAt: '2026-06-02T22:49:02.423Z',
+        },
+        {
+          id: 'pc-hardware-bios-x870e-401',
+          partition: 'active',
+          title: 'BIOS firmware currency for X870E AORUS ELITE WIFI7',
+          status: 'verify',
+          kind: 'firmware_review',
+          ownerRoles: ['builder'],
+          sessionId: 'app-session-401',
+          updatedAt: '2026-06-02T22:49:03.423Z',
+        },
+      ],
+    });
+
+    const snapshot = sidecar.buildLiveTaskAuditSnapshot({
+      workItemRoot,
+      taskAuditItemsPath,
+      now: '2026-06-02T22:50:00.000Z',
+    });
+
+    expect(sidecar.TASK_AUDIT_SECTIONS).toEqual(['Mira', 'TrustQuote', 'PC Hardware', 'SquidRun', 'Other']);
+    expect(snapshot.active.items.map((item) => item.section)).toEqual(['PC Hardware', 'PC Hardware']);
+  });
+
   test('falls back to current-lane and queue while keeping stale markers in future audit', () => {
     writeJson(currentLanePath, {
       source: 'comms_fallback',

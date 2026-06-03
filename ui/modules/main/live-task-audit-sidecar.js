@@ -17,7 +17,7 @@ const SNAPSHOT_SCHEMA = 'squidrun.live_task_audit_sidecar.snapshot.v0';
 const TASK_AUDIT_ITEMS_SCHEMA = 'squidrun.live_task_audit_sidecar.items.v0';
 const DEFAULT_TASK_AUDIT_ITEMS_RELATIVE_PATH = path.join('runtime', 'live-task-audit-sidecar', 'task-audit-items.json');
 const DEFAULT_APP_STATUS_RELATIVE_PATH = 'app-status.json';
-const TASK_AUDIT_SECTIONS = Object.freeze(['Mira', 'TrustQuote', 'SquidRun', 'Other']);
+const TASK_AUDIT_SECTIONS = Object.freeze(['Mira', 'TrustQuote', 'PC Hardware', 'SquidRun', 'Other']);
 const DGC_BUNDLE_BASENAME = 'main-DGcSGf52.js';
 
 function toOptionalString(value, fallback = null) {
@@ -87,6 +87,7 @@ function normalizeSection(value) {
   const normalized = text.toLowerCase().replace(/[^a-z0-9]+/g, '');
   if (normalized === 'mira') return 'Mira';
   if (normalized === 'trustquote') return 'TrustQuote';
+  if (normalized === 'pchardware' || normalized === 'hardware') return 'PC Hardware';
   if (normalized === 'squidrun') return 'SquidRun';
   if (normalized === 'other') return 'Other';
   return null;
@@ -128,6 +129,9 @@ function classifyTaskAuditSection(item = {}) {
   }
   if (/\bmira\b|presence-runtime|north-star|voice-transport|a3_a4|a3|a4/.test(haystack)) {
     return 'Mira';
+  }
+  if (/\bpc\s*hardware\b|\bexpo\b|\bxmp\b|\bddr5\b|\b9950x\b|\bx870e\b|\brtx\s*5090\b|\bnvidia\b|\bamd\s+chipset\b|\b990\s*pro\b|\bnvme\b|\bpbo\b|curve optimizer|memory integrity|\bvbs\b/.test(haystack)) {
+    return 'PC Hardware';
   }
   if (/\bsquidrun\b|task-audit|work-item|codex|attention|desktop|mission-control|memory|evidence|restart|handoff|current-lane|hm-send|telegram|supervisor|scheduler|recovery|bridge|pane|oracle|architect|builder|firmware|gemini|localmodel|future-items/.test(haystack)) {
     return 'SquidRun';
