@@ -912,6 +912,95 @@ describe('hm-health-snapshot', () => {
     expect(snapshot.status.penalties).toContainEqual({ code: 'memory_consistency_unsynced', points: 10 });
   });
 
+  test('surfaces accepted source-heading residue instead of hiding it behind zero hash duplicates', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      jestTimeoutMs: 1000,
+      env: {},
+      memoryConsistency: {
+        ok: true,
+        checkedAt: '2026-03-15T00:00:00.000Z',
+        status: 'drift_detected',
+        synced: false,
+        summary: {
+          knowledgeEntryCount: 218,
+          knowledgeNodeCount: 218,
+          missingInCognitiveCount: 0,
+          orphanedNodeCount: 0,
+          duplicateKnowledgeHashCount: 0,
+          duplicateSourceHeadingCount: 11,
+          issueCount: 0,
+        },
+        repairPlan: {
+          mode: 'dry_run',
+          dryRun: true,
+          actionCount: 0,
+          skippedCount: 0,
+        },
+      },
+    });
+    const markdown = renderStartupHealthMarkdown(snapshot);
+
+    expect(snapshot.status.level).toBe('warn');
+    expect(snapshot.status.label).toBe('WARN');
+    expect(snapshot.status.score).toBe(90);
+    expect(snapshot.status.warnings).toContain('memory_consistency_accepted_source_heading_residue:source_heading_duplicates=11,actions=0,accepted=yes');
+    expect(snapshot.status.warnings).not.toContain(expect.stringContaining('memory_consistency_unclassified_drift'));
+    expect(snapshot.status.penalties).toContainEqual({ code: 'memory_consistency_unsynced', points: 10 });
+    expect(markdown).toContain('Sync Status: drift_detected (accepted benign residue)');
+    expect(markdown).toContain('Counts: entries=218, nodes=218, missing=0, orphans=0, duplicates=0, source_heading_duplicates=11');
+    expect(markdown).toContain('Accepted Residue: source_heading_duplicates=11 (positional stable-key residue; no repair action queued)');
+  });
+
+  test('writes the startup health markdown artifact on demand', () => {
+    const { main } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+    const stdout = { write: jest.fn() };
+    const stderr = { write: jest.fn() };
+
+    const exitCode = main([tempDir, '--markdown', '--write'], { stdout, stderr });
+    const outputPath = path.join(tempDir, '.squidrun', 'build', 'startup-health.md');
+
+    expect(exitCode).toBe(0);
+    expect(stderr.write).not.toHaveBeenCalled();
+    expect(fs.existsSync(outputPath)).toBe(true);
+    expect(fs.readFileSync(outputPath, 'utf8')).toContain('STARTUP HEALTH');
+    expect(stdout.write.mock.calls.map(([chunk]) => String(chunk)).join('')).toContain(`Wrote startup health artifact: ${outputPath}`);
+  });
+
+  test('writes side-profile startup health to the suffixed on-demand artifact path', () => {
+    const { main } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+    const stdout = { write: jest.fn() };
+    const stderr = { write: jest.fn() };
+
+    const exitCode = main([tempDir, '--profile', 'eunbyeol', '--json', '--write'], { stdout, stderr });
+    const mainPath = path.join(tempDir, '.squidrun', 'build', 'startup-health.md');
+    const sidePath = path.join(tempDir, '.squidrun', 'build', 'startup-health-eunbyeol.md');
+    const payload = JSON.parse(stdout.write.mock.calls.map(([chunk]) => String(chunk)).join(''));
+
+    expect(exitCode).toBe(0);
+    expect(stderr.write).not.toHaveBeenCalled();
+    expect(fs.existsSync(mainPath)).toBe(false);
+    expect(fs.existsSync(sidePath)).toBe(true);
+    expect(payload.writeResult).toEqual(expect.objectContaining({
+      ok: true,
+      outputPath: sidePath,
+    }));
+  });
+
   test('degrades startup health when the memory dry-run has actionable repair work', () => {
     const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
     execFileSync.mockReturnValue([

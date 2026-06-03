@@ -30,6 +30,42 @@ function normalizePathForMetadata(value) {
   return toText(value, '').replace(/\\/g, '/');
 }
 
+function resolveRouteOwnerLaunchExecutable(options = {}) {
+  const override = toText(
+    options.nodePath
+    || options.nodeExecutable
+    || process.env.SQUIDRUN_TRUSTQUOTE_ROUTE_OWNER_NODE_PATH
+    || process.env.SQUIDRUN_SUPERVISOR_NODE_PATH,
+    ''
+  );
+  if (override) {
+    return {
+      executable: override,
+      env: { ...process.env },
+    };
+  }
+
+  const currentExecPath = String(process.execPath || '').trim();
+  const execBaseName = path.basename(currentExecPath).toLowerCase();
+  const runningInsideElectron = Boolean(process.versions?.electron);
+  const currentExecIsNode = execBaseName === 'node' || execBaseName === 'node.exe';
+  if (!runningInsideElectron || currentExecIsNode) {
+    return {
+      executable: currentExecPath,
+      env: { ...process.env },
+    };
+  }
+
+  const electronAsNodeEnv = {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: '1',
+  };
+  return {
+    executable: currentExecPath,
+    env: electronAsNodeEnv,
+  };
+}
+
 function resolveSquidrunRoot(options = {}) {
   return path.resolve(options.squidrunRoot || path.join(__dirname, '..', '..'));
 }
@@ -151,9 +187,16 @@ function startTrustQuoteRouteOwner(options = {}) {
   const logPath = resolveLogPath(options);
   const existing = readRouteOwnerStatus(options);
   if (existing.running) {
+    if (toText(existing.state, '').toLowerCase() === 'running') {
+      return {
+        ok: true,
+        alreadyRunning: true,
+        status: existing,
+      };
+    }
     return {
-      ok: true,
-      alreadyRunning: true,
+      ok: false,
+      reason: 'trustquote_route_owner_not_ready',
       status: existing,
     };
   }
@@ -167,16 +210,17 @@ function startTrustQuoteRouteOwner(options = {}) {
   }
 
   const plan = buildTrustQuoteRouteOwnerPlan(options);
+  const launch = resolveRouteOwnerLaunchExecutable(options);
   fs.mkdirSync(path.dirname(statusPath), { recursive: true });
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
   const logFd = fs.openSync(logPath, 'a');
   const spawnImpl = options.spawnImpl || spawn;
-  const child = spawnImpl(process.execPath, buildRunArgs(options), {
+  const child = spawnImpl(launch.executable, buildRunArgs(options), {
     cwd: resolveSquidrunRoot(options),
     detached: true,
     windowsHide: true,
     env: {
-      ...process.env,
+      ...launch.env,
       SQUIDRUN_PROFILE: TRUSTQUOTE_ROOM_ID,
       ...(options.env && typeof options.env === 'object' ? options.env : {}),
     },
@@ -195,7 +239,7 @@ function startTrustQuoteRouteOwner(options = {}) {
     error: null,
     launchAgents: options.launchAgents === true,
     dryRun: options.dryRun === true,
-    command: [process.execPath, ...buildRunArgs(options)].join(' '),
+    command: [launch.executable, ...buildRunArgs(options)].join(' '),
     logPath: normalizePathForMetadata(logPath),
     plan,
     attachExistingTerminals: options.attachExistingTerminals === true,
@@ -416,6 +460,7 @@ module.exports = {
   isPidAlive,
   probeTrustQuoteRouteOwner,
   readRouteOwnerStatus,
+  resolveRouteOwnerLaunchExecutable,
   resolveLifecycleDir,
   resolveLogPath,
   resolveStatusPath,

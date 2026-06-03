@@ -5,6 +5,14 @@
 - Relay: hosted on Railway (`wss://relay-production-2c27.up.railway.app`).
 - Telegram bot: configured via `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` in `.env`.
 
+## TrustQuote route-owner supervisor: ELECTRON_RUN_AS_NODE launch fix (S404)
+
+**Root cause (the stuck-STARTING bug):** `startTrustQuoteRouteOwner` in `trustquote-work-room-route-owner-supervisor.js` spawned `process.execPath` to run the route-owner script. Inside the Electron main process `process.execPath` is `electron.exe`, and spawning it **without** `ELECTRON_RUN_AS_NODE=1` launches a second full Electron app, not Node — so the route-owner script never executed, the supervisor sat at `state=STARTING` forever, and room port **9979 never bound**. Downstream symptom: the main-side readiness probe raced an 8s DOM check against a supervisor that would never reach ready, producing a false `workroom_unusable`.
+
+**Fix:** `resolveRouteOwnerLaunchExecutable()` injects `ELECTRON_RUN_AS_NODE=1` into the spawn env when `process.execPath` is electron (skips it when already Node, or when not inside Electron); overridable via `SQUIDRUN_TRUSTQUOTE_ROUTE_OWNER_NODE_PATH` / `SQUIDRUN_SUPERVISOR_NODE_PATH`. Plus state-correctness gating in `squidrun-app.js`: readiness now requires `status.state==='running'` AND a proven route probe (`canRouteTask`); `isTrustQuoteRouteOwnerCurrent` and `getTrustQuoteRouteOwnerSessionScopeId` no longer accept a bare `running:true` with a non-`running` state.
+
+**Restart-safety (verified S404 Oracle gate):** a running-but-not-`running` supervisor (e.g. a stale `STARTING` one) is stopped and relaunched on the next workspace-open. The stop path is **terminal-safe**: `ensureTrustQuoteRouteOwnerCurrent` always passes `killTerminalsOnStop:false` + `attachExistingTerminals:true`, so `stopTrustQuoteRouteOwner` SIGTERMs only the supervisor pid and never cleans up the attached agent terminals James can see. Stale cross-session supervisors are caught by the `session_scope_changed` stop branch; same-session not-ready ones by the `route_owner_not_ready` branch — so a stuck supervisor cannot deadlock a fresh launch. `ensure` is one-shot per workspace-open (not a loop), so a persistent failure returns a clean error rather than thrashing stop/start. Caveat (low, forward-looking): the `RUN_AS_NODE=1` env is inherited by any child the route-owner spawns; today it runs `--no-launch-agents`/attach-only so it spawns none, but if agent-launch is ever enabled, confirm the agent spawn strips `ELECTRON_RUN_AS_NODE` so the codex/claude CLIs don't inherit it.
+
 ## How restarts ACTUALLY happen (READ THIS BEFORE STAGING ANY RESTART)
 
 The Architect **cannot** restart the SquidRun app from its own pane, and staging

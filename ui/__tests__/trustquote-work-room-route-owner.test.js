@@ -629,6 +629,89 @@ describe('TrustQuote work-room route owner', () => {
     }
   });
 
+  test('supervised start launches Electron as Node when the app runtime is Electron', () => {
+    const spawned = [];
+    const tempDir = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'trustquote-route-owner-'));
+    const originalExecPath = process.execPath;
+    const originalVersions = process.versions;
+    try {
+      Object.defineProperty(process, 'execPath', {
+        configurable: true,
+        writable: true,
+        value: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+      });
+      Object.defineProperty(process, 'versions', {
+        configurable: true,
+        value: {
+          ...originalVersions,
+          electron: '35.0.0',
+        },
+      });
+      const spawnImpl = jest.fn((command, args, options) => {
+        spawned.push({ command, args, options });
+        return { pid: 22334, unref: jest.fn() };
+      });
+
+      const result = startTrustQuoteRouteOwner({
+        lifecycleDir: tempDir,
+        mainSessionScopeId: 'app-session-384',
+        spawnImpl,
+        killImpl: () => { throw Object.assign(new Error('missing'), { code: 'ESRCH' }); },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(spawned[0].command).toBe('D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe');
+      expect(spawned[0].options.env).toEqual(expect.objectContaining({
+        ELECTRON_RUN_AS_NODE: '1',
+        SQUIDRUN_PROFILE: 'trustquote',
+      }));
+      expect(result.status.command).toContain('electron.exe');
+    } finally {
+      Object.defineProperty(process, 'execPath', {
+        configurable: true,
+        writable: true,
+        value: originalExecPath,
+      });
+      Object.defineProperty(process, 'versions', {
+        configurable: true,
+        value: originalVersions,
+      });
+      require('fs').rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('supervised start does not treat a starting same-scope route owner as already running', () => {
+    const tempDir = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'trustquote-route-owner-'));
+    try {
+      writeSupervisorStatus({ lifecycleDir: tempDir }, {
+        state: 'starting',
+        running: true,
+        pid: 12345,
+        plan: buildTrustQuoteRouteOwnerPlan({
+          mainSessionScopeId: 'app-session-384',
+        }),
+      });
+
+      const result = startTrustQuoteRouteOwner({
+        lifecycleDir: tempDir,
+        mainSessionScopeId: 'app-session-384',
+        spawnImpl: jest.fn(),
+        killImpl: () => true,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'trustquote_route_owner_not_ready',
+        status: expect.objectContaining({
+          state: 'starting',
+          running: true,
+        }),
+      }));
+    } finally {
+      require('fs').rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test('supervisor refuses live agent activation without explicit allow flag', () => {
     const tempDir = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'trustquote-route-owner-'));
     try {

@@ -156,6 +156,7 @@ const {
   materializeTrustQuoteWorkRoomPrerequisites,
 } = require('../trustquote-work-room-prerequisites');
 const {
+  probeTrustQuoteRouteOwner,
   readRouteOwnerStatus,
   startTrustQuoteRouteOwner,
   stopTrustQuoteRouteOwner,
@@ -1083,7 +1084,7 @@ class SquidRunApp {
     const ledgerSession = canonicalSessionNumber ?? (Number.isInteger(Number(ledgerContext?.session)) ? Number(ledgerContext.session) : null);
     const ledgerMode = typeof ledgerContext?.mode === 'string' ? ledgerContext.mode : 'unknown';
     const ledgerStatus = typeof ledgerContext?.status === 'string' ? ledgerContext.status : 'unknown';
-    return `Startup health ${Number.isInteger(canonicalSessionNumber) ? `for session ${canonicalSessionNumber}` : 'snapshot'}: overall ${level}${score !== null ? ` score=${score}/100` : ''}. Evidence ledger rows=${evidenceRows}, cognitive memory rows=${cognitiveRows}. Memory consistency=${memoryConsistencyStatus} (entries=${Number(memoryConsistencySummary.knowledgeEntryCount || 0)}, nodes=${Number(memoryConsistencySummary.knowledgeNodeCount || 0)}, missing=${Number(memoryConsistencySummary.missingInCognitiveCount || 0)}, orphans=${Number(memoryConsistencySummary.orphanedNodeCount || 0)}, duplicates=${Number(memoryConsistencySummary.duplicateKnowledgeHashCount || 0)}). Bridge mode=${bridgeMode}, connection=${bridgeState}. Ledger context: session ${ledgerSession ?? 'unknown'} ${ledgerStatus} (${ledgerMode}).`;
+    return `Startup health ${Number.isInteger(canonicalSessionNumber) ? `for session ${canonicalSessionNumber}` : 'snapshot'}: overall ${level}${score !== null ? ` score=${score}/100` : ''}. Evidence ledger rows=${evidenceRows}, cognitive memory rows=${cognitiveRows}. Memory consistency=${memoryConsistencyStatus} (entries=${Number(memoryConsistencySummary.knowledgeEntryCount || 0)}, nodes=${Number(memoryConsistencySummary.knowledgeNodeCount || 0)}, missing=${Number(memoryConsistencySummary.missingInCognitiveCount || 0)}, orphans=${Number(memoryConsistencySummary.orphanedNodeCount || 0)}, duplicates=${Number(memoryConsistencySummary.duplicateKnowledgeHashCount || 0)}, source_heading_duplicates=${Number(memoryConsistencySummary.duplicateSourceHeadingCount || 0)}). Bridge mode=${bridgeMode}, connection=${bridgeState}. Ledger context: session ${ledgerSession ?? 'unknown'} ${ledgerStatus} (${ledgerMode}).`;
   }
 
   buildStartupHealthReport(snapshot = {}, ledgerContext = {}, sessionNumber = null) {
@@ -2611,9 +2612,23 @@ class SquidRunApp {
   isTrustQuoteRouteOwnerCurrent(status = null, expectedMainSessionScopeId = '') {
     const expectedMain = toNonEmptyString(expectedMainSessionScopeId);
     if (!expectedMain || !status?.running) return false;
+    if (toNonEmptyString(status?.state).toLowerCase() !== 'running') return false;
     const actualMain = toNonEmptyString(status?.plan?.mainSessionScopeId);
     const actualRoom = toNonEmptyString(status?.plan?.sessionScopeId);
     return actualMain === expectedMain && actualRoom === `${expectedMain}:trustquote`;
+  }
+
+  isTrustQuoteRouteOwnerProbeReady(probe = null) {
+    return probe?.ok === true
+      && probe?.reachable !== false
+      && probe?.contract?.status === 'proven'
+      && probe?.contract?.canRouteTask === true;
+  }
+
+  getTrustQuoteRouteOwnerProbeFailureReason(probe = null) {
+    if (!probe) return 'trustquote_route_owner_start_timeout';
+    if (probe.reachable === false) return 'trustquote_route_owner_probe_unreachable';
+    return 'trustquote_route_owner_probe_blocked';
   }
 
   async waitForTrustQuoteRouteOwnerCurrent(options = {}) {
@@ -2621,12 +2636,28 @@ class SquidRunApp {
     const expectedMainSessionScopeId = toNonEmptyString(options.expectedMainSessionScopeId)
       || this.getTrustQuoteMainSessionScopeId(squidrunRoot);
     const timeoutMs = Number.isFinite(Number(options.timeoutMs)) ? Number(options.timeoutMs) : 5000;
+    const probeTimeoutMs = Number.isFinite(Number(options.probeTimeoutMs)) ? Number(options.probeTimeoutMs) : 3000;
     const deadline = Date.now() + timeoutMs;
     let lastStatus = null;
+    let lastProbe = null;
     while (Date.now() <= deadline) {
       lastStatus = this.readTrustQuoteRouteOwnerStatus();
       if (this.isTrustQuoteRouteOwnerCurrent(lastStatus, expectedMainSessionScopeId)) {
-        return { ok: true, status: lastStatus };
+        lastProbe = await probeTrustQuoteRouteOwner({
+          squidrunRoot,
+          mainSessionScopeId: expectedMainSessionScopeId,
+          projectPath: toNonEmptyString(lastStatus?.plan?.projectPath) || undefined,
+          timeoutMs: probeTimeoutMs,
+        });
+        if (this.isTrustQuoteRouteOwnerProbeReady(lastProbe)) {
+          return { ok: true, status: lastStatus, probe: lastProbe };
+        }
+        return {
+          ok: false,
+          reason: this.getTrustQuoteRouteOwnerProbeFailureReason(lastProbe),
+          status: lastStatus,
+          probe: lastProbe,
+        };
       }
       if (lastStatus?.state === 'failed') {
         return {
@@ -2639,8 +2670,9 @@ class SquidRunApp {
     }
     return {
       ok: false,
-      reason: 'trustquote_route_owner_start_timeout',
+      reason: this.getTrustQuoteRouteOwnerProbeFailureReason(lastProbe),
       status: lastStatus,
+      probe: lastProbe,
     };
   }
 
@@ -2667,9 +2699,21 @@ class SquidRunApp {
     };
 
     if (this.isTrustQuoteRouteOwnerCurrent(status, expectedMainSessionScopeId)) {
+      const current = await this.waitForTrustQuoteRouteOwnerCurrent({
+        squidrunRoot,
+        expectedMainSessionScopeId,
+      });
+      if (!current.ok) {
+        return {
+          ...current,
+          expectedMainSessionScopeId,
+          actualMainSessionScopeId,
+        };
+      }
       return {
         ok: true,
-        status,
+        status: current.status,
+        probe: current.probe,
         squidrunRoot,
         expectedMainSessionScopeId,
       };
@@ -2684,6 +2728,28 @@ class SquidRunApp {
         return {
           ok: false,
           reason: 'trustquote_route_owner_stale_scope_stop_failed',
+          status,
+          stopResult: stopped,
+          expectedMainSessionScopeId,
+          actualMainSessionScopeId,
+        };
+      }
+      status = this.readTrustQuoteRouteOwnerStatus();
+    }
+
+    if (
+      status?.running
+      && actualMainSessionScopeId === expectedMainSessionScopeId
+      && toNonEmptyString(status?.state).toLowerCase() !== 'running'
+    ) {
+      const stopped = await stopTrustQuoteRouteOwner({
+        ...routeOwnerOptions,
+        reason: 'route_owner_not_ready',
+      });
+      if (stopped?.ok === false || stopped?.stopped === false) {
+        return {
+          ok: false,
+          reason: 'trustquote_route_owner_unready_stop_failed',
           status,
           stopResult: stopped,
           expectedMainSessionScopeId,
@@ -2731,7 +2797,9 @@ class SquidRunApp {
 
   getTrustQuoteRouteOwnerSessionScopeId() {
     const status = this.readTrustQuoteRouteOwnerStatus();
-    return status?.running && toNonEmptyString(status?.plan?.sessionScopeId)
+    return status?.running
+      && toNonEmptyString(status?.state).toLowerCase() === 'running'
+      && toNonEmptyString(status?.plan?.sessionScopeId)
       ? status.plan.sessionScopeId
       : null;
   }
