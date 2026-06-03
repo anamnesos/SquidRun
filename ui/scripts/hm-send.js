@@ -7,6 +7,7 @@
 const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const {
   LEGACY_ROLE_ALIASES,
   ROLE_ID_MAP,
@@ -627,6 +628,24 @@ function appendGuardJsonl(fileName, payload = {}) {
   }
 }
 
+function buildGuardBodyLogFields(content, maxChars = 500) {
+  const text = String(content || '');
+  const snippet = text.length > maxChars ? text.slice(0, maxChars) : text;
+  return {
+    bodySnippet: snippet,
+    bodySha256: crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
+    bodyBytes: Buffer.byteLength(text, 'utf8'),
+    bodyTruncated: text.length > maxChars,
+  };
+}
+
+function enrichSurfaceClaimGuardLog(payload = {}) {
+  return {
+    ...payload,
+    ...buildGuardBodyLogFields(message),
+  };
+}
+
 function buildCurrentRoleEvidenceTargets(senderRole) {
   const targets = new Set();
   const rawRole = String(senderRole || '').trim().toLowerCase();
@@ -754,7 +773,7 @@ async function runOutputGuards({ messageId, targetRole } = {}) {
     const surfaceClaimBypass = detectSurfaceClaimGuard({ messageId, targetRole, captureEventVerifier });
     if (surfaceClaimBypass) {
       appendGuardJsonl('surface-claim-bypasses.jsonl', {
-        ...surfaceClaimBypass,
+        ...enrichSurfaceClaimGuardLog(surfaceClaimBypass),
         bypassReason: process.env.HM_SEND_BYPASS_GUARD === '1' ? 'env' : 'flag',
       });
     }
@@ -832,7 +851,8 @@ async function runOutputGuards({ messageId, targetRole } = {}) {
 
   const surfaceClaimViolation = detectSurfaceClaimGuard({ messageId, targetRole, captureEventVerifier });
   if (surfaceClaimViolation) {
-    const logResult = appendGuardJsonl('surface-claim-violations.jsonl', surfaceClaimViolation);
+    const surfaceClaimLogPayload = enrichSurfaceClaimGuardLog(surfaceClaimViolation);
+    const logResult = appendGuardJsonl('surface-claim-violations.jsonl', surfaceClaimLogPayload);
     if (surfaceClaimViolation.violation_class === 'james_repeat_requires_surface_concession') {
       writeGuardBlock([
         'BLOCKED: James repeated the same unresolved point.',

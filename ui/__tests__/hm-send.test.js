@@ -369,6 +369,10 @@ describe('hm-send retry behavior', () => {
         violation_class: 'surface_done_claim_without_artifact',
         targetRole: 'telegram',
       });
+      expect(entry.bodySnippet).toBe('Done: the demo invoice is visible in the TrustQuote dashboard.');
+      expect(entry.bodySha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(entry.bodyBytes).toBe(Buffer.byteLength('Done: the demo invoice is visible in the TrustQuote dashboard.', 'utf8'));
+      expect(entry.bodyTruncated).toBe(false);
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
     }
