@@ -758,6 +758,7 @@ function summarizeMemoryConsistency(result = null) {
       missingInCognitiveCount: Number(summary.missingInCognitiveCount || 0),
       orphanedNodeCount: Number(summary.orphanedNodeCount || 0),
       duplicateKnowledgeHashCount: Number(summary.duplicateKnowledgeHashCount || 0),
+      duplicateSourceHeadingCount: Number(summary.duplicateSourceHeadingCount || 0),
       issueCount: Number(summary.issueCount || 0),
     },
   };
@@ -766,6 +767,23 @@ function summarizeMemoryConsistency(result = null) {
     summarized.repairPlan = repairPlan;
   }
   return summarized;
+}
+
+function getAcceptedSourceHeadingResidue(memoryConsistency = {}, actionability = null) {
+  const source = memoryConsistency && typeof memoryConsistency === 'object' && !Array.isArray(memoryConsistency)
+    ? memoryConsistency
+    : {};
+  const current = actionability || getMemoryConsistencyActionability(source);
+  return source.status === 'drift_detected'
+    && current.checkFailure !== true
+    && current.actionable !== true
+    && current.missing === 0
+    && current.orphans === 0
+    && current.duplicates === 0
+    && current.sourceHeadingDuplicates > 0
+    && current.issues === 0
+    && current.actionCount === 0
+    && current.skippedCount === 0;
 }
 
 function summarizeItemsByKey(items = [], key) {
@@ -791,6 +809,7 @@ function summarizeMemoryConsistencyRepairPlan(plan = null) {
     actionCount: Number(summary.actionCount || 0),
     insertCount: Number(summary.insertCount || 0),
     duplicateMergeCount: Number(summary.duplicateMergeCount || 0),
+    sourceHeadingMergeCount: Number(summary.sourceHeadingMergeCount || 0),
     orphanDeleteCount: Number(summary.orphanDeleteCount || 0),
     deleteCount: Number(summary.deleteCount || 0),
     skippedCount: Number(summary.skippedCount || 0),
@@ -943,6 +962,7 @@ function getMemoryConsistencyActionability(memoryConsistency = {}) {
   const missing = Number(summary.missingInCognitiveCount || 0);
   const orphans = Number(summary.orphanedNodeCount || 0);
   const duplicates = Number(summary.duplicateKnowledgeHashCount || 0);
+  const sourceHeadingDuplicates = Number(summary.duplicateSourceHeadingCount || 0);
   const issues = Number(summary.issueCount || 0);
   const actionCount = repairPlan ? Number(repairPlan.actionCount || 0) : 0;
   const skippedCount = repairPlan ? Number(repairPlan.skippedCount || 0) : 0;
@@ -963,6 +983,7 @@ function getMemoryConsistencyActionability(memoryConsistency = {}) {
     missing,
     orphans,
     duplicates,
+    sourceHeadingDuplicates,
     issues,
     actionCount,
     skippedCount,
@@ -1047,6 +1068,14 @@ function buildHealthStatus(snapshot) {
       + `actions=${memoryActionability.actionCount},`
       + `skips=${memoryActionability.skippedCount}`
     );
+  } else if (getAcceptedSourceHeadingResidue(memoryConsistency, memoryActionability)) {
+    warnings.push(
+      'memory_consistency_accepted_source_heading_residue:'
+      + `source_heading_duplicates=${memoryActionability.sourceHeadingDuplicates},`
+      + `actions=${memoryActionability.actionCount},`
+      + `accepted=yes`
+    );
+    addPenalty('memory_consistency_unsynced');
   } else if (memoryConsistency.status === 'drift_detected') {
     warnings.push(
       'memory_consistency_unclassified_drift:'
@@ -1157,9 +1186,14 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   const memoryConsistency = snapshot.memoryConsistency && typeof snapshot.memoryConsistency === 'object'
     ? snapshot.memoryConsistency
     : {};
+  const memoryActionability = getMemoryConsistencyActionability(memoryConsistency);
+  const acceptedSourceHeadingResidue = getAcceptedSourceHeadingResidue(memoryConsistency, memoryActionability);
   lines.push('');
   lines.push('MEMORY CONSISTENCY');
-  lines.push(`- Sync Status: ${memoryConsistency.status || 'unknown'} (${memoryConsistency.synced === true ? 'in sync' : 'attention needed'})`);
+  const memoryStatusLabel = memoryConsistency.synced === true
+    ? 'in sync'
+    : (acceptedSourceHeadingResidue ? 'accepted benign residue' : 'attention needed');
+  lines.push(`- Sync Status: ${memoryConsistency.status || 'unknown'} (${memoryStatusLabel})`);
   lines.push(
     '- Counts: '
     + `entries=${Number(memoryConsistency.summary?.knowledgeEntryCount || 0)}, `
@@ -1167,7 +1201,13 @@ function renderStartupHealthMarkdown(snapshot = {}) {
     + `missing=${Number(memoryConsistency.summary?.missingInCognitiveCount || 0)}, `
     + `orphans=${Number(memoryConsistency.summary?.orphanedNodeCount || 0)}, `
     + `duplicates=${Number(memoryConsistency.summary?.duplicateKnowledgeHashCount || 0)}`
+    + (Number(memoryConsistency.summary?.duplicateSourceHeadingCount || 0) > 0
+      ? `, source_heading_duplicates=${Number(memoryConsistency.summary?.duplicateSourceHeadingCount || 0)}`
+      : '')
   );
+  if (acceptedSourceHeadingResidue) {
+    lines.push(`- Accepted Residue: source_heading_duplicates=${memoryActionability.sourceHeadingDuplicates} (positional stable-key residue; no repair action queued)`);
+  }
   if (memoryConsistency.error) {
     lines.push(`- Error: ${memoryConsistency.error}`);
   }
@@ -1179,6 +1219,7 @@ function renderStartupHealthMarkdown(snapshot = {}) {
       + `skips=${Number(plan.skippedCount || 0)}, `
       + `insert=${Number(plan.insertCount || 0)}, `
       + `merge=${Number(plan.duplicateMergeCount || 0)}, `
+      + (Number(plan.sourceHeadingMergeCount || 0) > 0 ? `source_heading_merge=${Number(plan.sourceHeadingMergeCount || 0)}, ` : '')
       + `delete=${Number(plan.orphanDeleteCount || 0)}`
     );
     const skippedByKind = plan.skippedByKind && typeof plan.skippedByKind === 'object' && !Array.isArray(plan.skippedByKind)
@@ -1283,6 +1324,8 @@ function renderUsage() {
     '  --profile <name>    Use a profile-scoped coordination namespace.',
     '  --markdown          Print the compact startup markdown summary.',
     '  --json              Print the raw JSON snapshot (default).',
+    '  --write             Write the startup-health markdown artifact.',
+    '  --output <path>     Override the --write destination path.',
     '',
   ].join('\n');
 }
@@ -1293,6 +1336,8 @@ function parseCliArgs(argv = []) {
     projectRoot: null,
     profileName: null,
     format: 'json',
+    write: false,
+    outputPath: null,
     errors: [],
   };
   const args = Array.isArray(argv) ? argv : [];
@@ -1309,6 +1354,29 @@ function parseCliArgs(argv = []) {
     }
     if (token === '--json') {
       parsed.format = 'json';
+      continue;
+    }
+    if (token === '--write') {
+      parsed.write = true;
+      continue;
+    }
+    if (token === '--output') {
+      const next = String(args[index + 1] || '').trim();
+      if (!next || next.startsWith('-')) {
+        parsed.errors.push('--output requires a file path.');
+      } else {
+        parsed.outputPath = next;
+        index += 1;
+      }
+      continue;
+    }
+    if (token.startsWith('--output=')) {
+      const value = token.slice('--output='.length).trim();
+      if (!value) {
+        parsed.errors.push('--output requires a file path.');
+      } else {
+        parsed.outputPath = value;
+      }
       continue;
     }
     if (token === '--profile') {
@@ -1343,6 +1411,38 @@ function parseCliArgs(argv = []) {
   return parsed;
 }
 
+function getStartupHealthFileName(profileName = DEFAULT_PROFILE) {
+  const normalizedProfile = normalizeProfileName(profileName || DEFAULT_PROFILE);
+  return normalizedProfile === DEFAULT_PROFILE
+    ? 'startup-health.md'
+    : `startup-health-${normalizedProfile}.md`;
+}
+
+function resolveStartupHealthOutputPath(projectRoot, profileName = DEFAULT_PROFILE, outputPath = null) {
+  if (outputPath) return path.resolve(String(outputPath));
+  return path.join(
+    normalizeProjectRoot(projectRoot),
+    '.squidrun',
+    namespaceCoordRelPath(path.join('build', getStartupHealthFileName(profileName)), profileName)
+  );
+}
+
+function writeStartupHealthMarkdown(snapshot = {}, options = {}) {
+  const outputPath = resolveStartupHealthOutputPath(
+    options.projectRoot || snapshot.projectRoot || null,
+    options.profileName || snapshot.profileName || DEFAULT_PROFILE,
+    options.outputPath || null
+  );
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  const markdown = renderStartupHealthMarkdown(snapshot);
+  fs.writeFileSync(outputPath, markdown, 'utf8');
+  return {
+    ok: true,
+    outputPath,
+    bytes: Buffer.byteLength(markdown, 'utf8'),
+  };
+}
+
 function main(argv = process.argv.slice(2), io = {}) {
   const stdout = io.stdout || process.stdout;
   const stderr = io.stderr || process.stderr;
@@ -1359,10 +1459,21 @@ function main(argv = process.argv.slice(2), io = {}) {
     projectRoot: parsed.projectRoot || null,
     profileName: parsed.profileName || DEFAULT_PROFILE,
   });
+  let writeResult = null;
+  if (parsed.write) {
+    writeResult = writeStartupHealthMarkdown(snapshot, {
+      projectRoot: parsed.projectRoot || snapshot.projectRoot || null,
+      profileName: parsed.profileName || DEFAULT_PROFILE,
+      outputPath: parsed.outputPath || null,
+    });
+  }
   if (parsed.format === 'markdown') {
     stdout.write(renderStartupHealthMarkdown(snapshot));
+    if (writeResult) {
+      stdout.write(`\nWrote startup health artifact: ${writeResult.outputPath}\n`);
+    }
   } else {
-    stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
+    stdout.write(`${JSON.stringify(writeResult ? { ...snapshot, writeResult } : snapshot, null, 2)}\n`);
   }
   return 0;
 }
@@ -1389,7 +1500,9 @@ module.exports = {
   createHealthSnapshot,
   applyBridgeDiscoveryToSnapshot,
   buildBridgeSnapshotFromEnv,
+  getAcceptedSourceHeadingResidue,
   getPenaltyPoints,
+  getStartupHealthFileName,
   inspectSqliteDb,
   inspectCodexDesktopCapability,
   listJestTests,
@@ -1400,7 +1513,9 @@ module.exports = {
   readEffectiveProjectEnv,
   renderStartupHealthMarkdown,
   renderUsage,
+  resolveStartupHealthOutputPath,
   resolveHealthThreshold,
   resolveWindowsCmdPath,
+  writeStartupHealthMarkdown,
   main,
 };
