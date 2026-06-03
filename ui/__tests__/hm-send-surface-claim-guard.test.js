@@ -167,6 +167,44 @@ describe('hm-send surface claim guard', () => {
     });
   });
 
+  test('allows forward-looking Telegram status without treating the channel as a surface', () => {
+    for (const content of [
+      "We'll keep working on TrustQuote route-owner tonight.",
+      "Builder is finishing the TrustQuote route-owner fix; you'll see it after restart.",
+      'Planning the dashboard proof next once the restart gate clears.',
+      'The route-owner fix is in progress; it is not visible yet.',
+    ]) {
+      expect(hasSurfaceCompletionClaim(content)).toBe(false);
+      expect(detectSurfaceClaimGuardViolation({
+        content,
+        targetRole: 'telegram',
+        targetRaw: 'telegram',
+        senderRole: 'architect',
+        recentUserRows: [],
+        nowMs: NOW_MS,
+      })).toBeNull();
+    }
+  });
+
+  test('still blocks present-tense surface completion claims to James', () => {
+    for (const content of [
+      'The invoice is fixed and showing on your dashboard now.',
+      'Done - visible in the TrustQuote pane.',
+    ]) {
+      expect(hasSurfaceCompletionClaim(content)).toBe(true);
+      expect(detectSurfaceClaimGuardViolation({
+        content,
+        targetRole: 'telegram',
+        targetRaw: 'telegram',
+        senderRole: 'architect',
+        recentUserRows: [],
+        nowMs: NOW_MS,
+      })).toMatchObject({
+        violation_class: 'surface_done_claim_without_artifact',
+      });
+    }
+  });
+
   test('does not let an unrelated existing PNG satisfy a visible claim', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'surface-claim-'));
     const screenshotPath = path.join(tempDir, 'old-unrelated.png');

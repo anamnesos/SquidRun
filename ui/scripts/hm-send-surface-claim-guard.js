@@ -510,14 +510,35 @@ function isNegatedClaim(content) {
     || isAdmissionOrConcession(text);
 }
 
+function isForwardLookingSurfaceClaim(content) {
+  const text = asText(content).toLowerCase();
+  if (!text) return false;
+  if (/\b(?:now|already|currently|right now)\b/.test(text)) return false;
+  return /\b(?:will|i'll|we'll|you'll|going to|about to|once|as soon as|after\s+(?:restart|the\b)|next|planning|working on|in progress)\b/.test(text);
+}
+
+function splitClaimSentences(content) {
+  return asText(content)
+    .split(/(?:[.!?]+|\r?\n)+/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function sentenceHasSurfaceCompletionClaim(sentence) {
+  const text = asText(sentence);
+  if (!text || isForwardLookingSurfaceClaim(text)) return false;
+  const lower = text.toLowerCase();
+  const startsWithClaim = /^\s*(?:done|complete|completed|finished|all set|verdict\s*:\s*done)\b/i.test(text);
+  const doneTerm = /\b(?:done|finished|complete|completed|all set|ready for james|visible|showing|left open|created|fixed|resolved|works now|verdict\s*:\s*done|this counts|count this)\b/i.test(text);
+  const surfaceNoun = /\b(?:dashboard|pane|invoice|screen|window|prompt|screenshot|sidecar)\b/i.test(text);
+  const testOnly = /\b(?:test|unit|jest|suite)\b/i.test(lower);
+  return surfaceNoun && doneTerm && (!startsWithClaim || !testOnly);
+}
+
 function hasSurfaceCompletionClaim(content) {
   const text = asText(content);
   if (!text || isNegatedClaim(text)) return false;
-  const lower = text.toLowerCase();
-  const startsWithClaim = /(?:^|\n)\s*(?:done|complete|completed|finished|all set|verdict\s*:\s*done)\b/i.test(text);
-  const doneTerm = /\b(?:done|finished|complete|completed|all set|ready for james|visible|left open|created|fixed|resolved|works now|verdict\s*:\s*done|this counts|count this)\b/i.test(text);
-  const surfaceTerm = /\b(?:james|visible|see|sees|screen|dashboard|window|pane|prompt|invoice|trustquote|telegram|real dashboard|screenshot|surface)\b/i.test(text);
-  return (startsWithClaim && !/\b(?:test|unit|jest|suite)\b/i.test(lower)) || (doneTerm && surfaceTerm);
+  return splitClaimSentences(text).some((sentence) => sentenceHasSurfaceCompletionClaim(sentence));
 }
 
 function hasSubstituteAsProofInstruction(content) {
@@ -631,7 +652,9 @@ module.exports = {
   hasSubstituteAsProofInstruction,
   hasSurfaceCompletionClaim,
   isAdmissionOrConcession,
+  isForwardLookingSurfaceClaim,
   normalizeUserPointText,
+  sentenceHasSurfaceCompletionClaim,
   tokensForPoint,
   tokenOverlapScore,
   validateSurfaceArtifact,
