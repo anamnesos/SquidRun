@@ -54,6 +54,7 @@ workspace/*
 workspace/knowledge/*
 !workspace/knowledge/README.md
 !workspace/knowledge/architecture-decisions.md
+!workspace/knowledge/codex-desktop-restart.md
 !workspace/knowledge/consultation-schema.md
 !workspace/knowledge/exogenous-triggers-spec.md
 !workspace/knowledge/hyperliquid-rate-limit-broker-plan.md
