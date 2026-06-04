@@ -83,9 +83,10 @@ That missing transport is *exactly why* the ~5-min inbox poll is the only path i
   frozen (dead since May 30). It stays only because `hm-codex-heartbeat-check.js` still reads it — expect it
   to always report stale now. That's the retirement showing through, not a fault.
 
-> Open follow-up (recorded, not yet acted): `hm-alignment-audit.js` writes to an inbox nobody reads. Either
-> the alignment-audit feature is itself dormant, or it should be repointed at the attention-bridge. Decision
-> belongs to James/Architect — do not change its behavior on your own.
+> Resolved (S405, Architect): `hm-alignment-audit.js` is **Architect-invoked on-demand** (a 12h audit), not
+> scheduled or hooked — nothing runs it automatically, which is why the inbox froze Apr 29. So the
+> "unconsumed writes" are **latent, not live** (nothing actively writes there). No action now; if the
+> alignment-audit feature is ever revived, repoint it at the attention-bridge then.
 
 **Genuine garbage (safe to remove — superseded in-app restart mechanism, pre-S396):**
 - One-shot restart *execution* snapshots from the old in-app restart path: `restart-arch*.json`,
