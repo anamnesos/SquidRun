@@ -49,17 +49,18 @@ put the trigger in the Codex inbox. Both. The transport that would let the app p
 into Codex Desktop is unsupported (`hm-codex-desktop-transport.js` reports `can_inject_visible_message:false`,
 `can_summon_workspace:true`), which is why the inbox-poll is the path.
 
-**S400 Codex Desktop cleanup boundary:** keep the live/current surfaces only:
-- `.squidrun/runtime/codex-attention-bridge`
+**S400/S405 Codex Desktop cleanup boundary** (S405 split-verdict after 3-way consensus — Oracle over-deletion, Codex `.codex/automations` check, Architect in-repo grep). Keep the live/current surfaces only:
+- `.squidrun/runtime/codex-attention-bridge` — **VERIFIED LIVE** restart + coordination path (`watch-codex-attention-requests`). This is the one that matters.
 - `.squidrun/runtime/codex-desktop-capability-status-v0.json`
 - `.squidrun/runtime/codex-desktop-inbound-transport-report-v0.json`
-- `.squidrun/coord/codex-heartbeat.json`
-- `.squidrun/coord/codex-inbox.jsonl`
-- `.squidrun/coord/codex-inbox-processed.json`
-- `.squidrun/coord/codex-wake-bridge-status.json`
+- `.squidrun/coord/codex-heartbeat.json` — KEEP: has an in-repo READER (`hm-codex-heartbeat-check.js`). But its WRITER (the `squidrun-codex-wake-bridge` poller) is retired/uninstalled, so it is frozen (dead since May 30) and the heartbeat check will read stale **by design now** — that is expected, not a bug.
+- `.squidrun/coord/codex-inbox.jsonl` — KEEP, but **asymmetric**: WRITE-side LIVE (`hm-alignment-audit.js` line ~261 `appendJsonLine(instanceConfig.codexInboxPath,…)`, wired via `operator-registry.json` line 15 `codexInbox`), READ-side RETIRED (the wake-bridge poller is uninstalled). => envelopes written here are currently **UNCONSUMED**. Do NOT delete; do NOT touch `operator-registry.json` line 15 (pulling it breaks the audit tool). Restored as an empty log after the S405 over-deletion.
 - `.squidrun/coord/restart-request.json`
 - `.squidrun/coord/restart-handoff.md`
 - `.squidrun/coord/restart-execute-log.jsonl`
+
+**RETIRED DEAD (S405) — dropped from keep-list, do NOT recreate (resurrection-trap guard):**
+- `.squidrun/coord/codex-inbox-processed.json` and `.squidrun/coord/codex-wake-bridge-status.json` — OUTPUTS of the retired `squidrun-codex-wake-bridge` poller. Zero in-repo reader AND zero in-repo writer; the consumer automation is uninstalled per Codex Desktop's own `.codex/automations` check. They will NOT regenerate. Kill rationale: dead poller outputs. Leave absent; recreating them would be fabrication.
 
 Deleted S400 stale/corpse artifacts with no live consumers: old `codex-*2026-04-29`
 briefing/guardrail/maintenance notes, one-off postrestart proof snapshots, detached
@@ -67,3 +68,6 @@ restart helper/result/launch files, and extracted Codex app protocol bundles und
 `.squidrun/runtime/codex-app-*`. Do not recreate those as parking lots. A stale
 heartbeat means "current proof not established", not "Codex Desktop is dead"; check
 the attention bridge and current capability status before assigning restart/proof work.
+
+**Cleanup doctrine — before deleting ANY `coord/`/`runtime/` state (S405 lesson, learned the hard way via an over-deletion of external-owned state):** verify ALL of —
+(a) in-repo **readers**, (b) in-repo **writers** (a file with no reader may still have a live writer, like `codex-inbox.jsonl`), (c) `operator-registry.json` references, and (d) **external** automation registries (`.codex/automations`) via Codex Desktop. "No grep hit" does NOT mean dead: external consumers (Codex Desktop) have no in-repo reader at all, so a grep-clean file can still be live external-owned state. gitignored coord/runtime files are unrecoverable once deleted. When ownership cannot be verified across all four, HANDS OFF and flag rather than delete.
