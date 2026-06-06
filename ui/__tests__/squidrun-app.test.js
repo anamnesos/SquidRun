@@ -6532,7 +6532,7 @@ describe('SquidRunApp', () => {
       );
     });
 
-    it('hydrates pending Telegram reply guards from durable open obligations', () => {
+    it('hydrates pending Telegram reply guards from durable open obligations without auto-nagging', () => {
       const nowMs = Date.now();
       app.commsSessionScopeId = 'app-session-hydrate';
       queryTelegramReplyObligations.mockReturnValue([
@@ -6574,9 +6574,11 @@ describe('SquidRunApp', () => {
       expect(result).toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_reply_obligations_hydrated',
-        hydratedCount: 1,
-        skippedCount: 1,
+        hydratedCount: 2,
+        skippedCount: 0,
         sessionId: 'app-session-hydrate',
+        autoEscalationScheduledCount: 0,
+        autoEscalationSuppressedCount: 2,
       }));
       expect(app.pendingTelegramReplyGuards.get('2')).toEqual(expect.objectContaining({
         paneId: '2',
@@ -6587,8 +6589,78 @@ describe('SquidRunApp', () => {
         requiresTelegramEgress: true,
         durableObligationOk: true,
         durableObligationId: 'telegram-reply-hydrate-1',
+        hydratedFromDurableObligation: true,
+        autoEscalationSuppressed: true,
+        durableDeadlineElapsedAtHydration: false,
       }));
-      expect(app.pendingTelegramReplyGuards.has('3')).toBe(false);
+      expect(app.pendingTelegramReplyGuards.get('3')).toEqual(expect.objectContaining({
+        paneId: '3',
+        messageId: 'telegram-in-expired-1',
+        sessionScopeId: 'app-session-hydrate',
+        status: 'pending_telegram_egress',
+        hydratedFromDurableObligation: true,
+        autoEscalationSuppressed: true,
+        durableDeadlineElapsedAtHydration: true,
+      }));
+      expect(app.pendingTelegramReplyGuardTimers.size).toBe(0);
+      expect(spawn).not.toHaveBeenCalled();
+      expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+        'agent_response_debt',
+        expect.any(String),
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+        expect.any(Object)
+      );
+    });
+
+    it('does not auto-alert after restart hydration even when the rebuilt guard deadline passes', async () => {
+      const nowMs = Date.parse('2026-06-06T12:00:00.000Z');
+      jest.useFakeTimers({ now: nowMs });
+      try {
+        app.commsSessionScopeId = 'app-session-restart-no-nag';
+        queryTelegramReplyObligations.mockReturnValue([
+          {
+            obligationId: 'telegram-reply-restart-no-nag-1',
+            inboundMessageId: 'telegram-in-restart-no-nag-1',
+            chatId: '1111111111',
+            sessionId: 'app-session-restart-no-nag',
+            paneId: '1',
+            windowKey: 'main',
+            profileName: 'main',
+            senderRole: 'james',
+            status: 'open',
+            openedAtMs: nowMs - 30_000,
+            deadlineAtMs: nowMs + 1000,
+          },
+        ]);
+
+        const result = app.hydratePendingTelegramReplyGuardsFromObligations({ nowMs });
+        mockManagers.activity.logActivity.mockClear();
+        spawn.mockClear();
+
+        jest.advanceTimersByTime(2000);
+        await Promise.resolve();
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          hydratedCount: 1,
+          autoEscalationScheduledCount: 0,
+          autoEscalationSuppressedCount: 1,
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-restart-no-nag-1',
+          status: 'pending_telegram_egress',
+          autoEscalationSuppressed: true,
+        }));
+        expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.any(Object)
+        );
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('prepends unified memory broker recall when ranked context exists', async () => {
@@ -7405,6 +7477,162 @@ describe('SquidRunApp', () => {
           expect.any(Object)
         );
         expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+        expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.any(Object)
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('rebuilds a pending Telegram reply guard from durable state and satisfies it from journal egress', () => {
+      const sessionId = 'app-session-telegram-restart-rebuild';
+      const createdAtMs = Date.parse('2026-06-06T12:15:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        queryTelegramReplyObligations.mockReturnValue([
+          {
+            obligationId: 'telegram-reply-restart-rebuild-1',
+            inboundMessageId: 'telegram-in-restart-rebuild-1',
+            chatId: '1111111111',
+            sessionId,
+            paneId: '1',
+            windowKey: 'main',
+            profileName: 'main',
+            senderRole: 'james',
+            status: 'open',
+            openedAtMs: createdAtMs - 20_000,
+            deadlineAtMs: createdAtMs + 60_000,
+          },
+        ]);
+
+        const hydration = app.hydratePendingTelegramReplyGuardsFromObligations({ nowMs: createdAtMs });
+        expect(hydration).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_obligations_hydrated',
+          hydratedCount: 1,
+          autoEscalationSuppressedCount: 1,
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-restart-rebuild-1',
+          durableObligationId: 'telegram-reply-restart-rebuild-1',
+          hydratedFromDurableObligation: true,
+          autoEscalationSuppressed: true,
+        }));
+
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            rowId: 67890,
+            messageId: 'hm-telegram-restart-rebuild-egress-1',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs + 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              chatId: '1111111111',
+              replyToMessageId: 'telegram-in-restart-rebuild-1',
+              envelope: {
+                session_id: sessionId,
+                target: { raw: 'telegram', role: 'telegram' },
+              },
+            },
+          },
+        ]);
+
+        const result = app.reconcilePendingTelegramReplyGuardsWithJournal({
+          reason: 'unit-test-restart-rebuild',
+          logMisses: false,
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_guards_reconciled_from_journal',
+          reconciledCount: 1,
+          pendingCount: 0,
+          reconciled: [
+            expect.objectContaining({
+              inboundMessageId: 'telegram-in-restart-rebuild-1',
+              egressMessageId: 'hm-telegram-restart-rebuild-egress-1',
+              chatId: '1111111111',
+              sessionScopeId: sessionId,
+              durableSatisfaction: expect.objectContaining({
+                ok: true,
+                status: 'satisfied',
+              }),
+            }),
+          ],
+        }));
+        expect(satisfyTelegramReplyObligation).toHaveBeenCalledWith(
+          expect.objectContaining({
+            inboundMessageId: 'telegram-in-restart-rebuild-1',
+            satisfiedByMessageId: 'hm-telegram-restart-rebuild-egress-1',
+            satisfiedByRowId: 67890,
+            satisfactionSource: 'squidrun-app.journal-reconcile',
+            satisfaction: expect.objectContaining({
+              reason: 'matched',
+              replyToMessageId: 'telegram-in-restart-rebuild-1',
+            }),
+          }),
+          expect.any(Object)
+        );
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+        expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.any(Object)
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps rebuilt Telegram reply debt open when journal reconciliation query fails', () => {
+      const sessionId = 'app-session-telegram-query-fail';
+      const createdAtMs = Date.parse('2026-06-06T12:20:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-query-fail-1',
+          chatId: '1111111111',
+          sender: 'james',
+          sessionScopeId: sessionId,
+          persistDurable: false,
+        });
+        queryCommsJournalEntries.mockImplementation(() => {
+          throw new Error('ledger temporarily unavailable');
+        });
+
+        const result = app.reconcilePendingTelegramReplyGuardsWithJournal({
+          reason: 'unit-test-query-failure',
+          logMisses: true,
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_guards_checked_from_journal',
+          reconciledCount: 0,
+          pendingCount: 1,
+          nonTerminalPendingCount: 1,
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-query-fail-1',
+          status: 'pending_telegram_egress',
+          lastJournalReconcileReason: 'query_failed',
+          lastJournalReconcileCandidateRowCount: 0,
+        }));
+        expect(satisfyTelegramReplyObligation).not.toHaveBeenCalled();
         expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
           'agent_response_debt',
           '1',

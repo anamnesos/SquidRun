@@ -670,7 +670,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/smart-routing.test.js` | test | 10637 |
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
-| `ui/__tests__/squidrun-app.test.js` | test | 335315 |
+| `ui/__tests__/squidrun-app.test.js` | test | 343961 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 1987 |
 | `ui/__tests__/startup-transcript-context.test.js` | test | 10069 |
@@ -886,7 +886,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/pane-host-window-manager.js` | source | 12289 |
 | `ui/modules/main/pty-output-filter.js` | source | 7793 |
 | `ui/modules/main/settings-manager.js` | source | 21516 |
-| `ui/modules/main/squidrun-app.js` | source | 498345 |
+| `ui/modules/main/squidrun-app.js` | source | 498835 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 1884 |
 | `ui/modules/main/telegram-reply-obligations.js` | source | 13086 |
 | `ui/modules/main/usage-manager.js` | source | 2909 |

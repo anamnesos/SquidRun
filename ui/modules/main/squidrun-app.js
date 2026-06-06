@@ -11441,10 +11441,11 @@ class SquidRunApp {
     }
   }
 
-  buildPendingTelegramReplyGuardFromObligation(obligation = {}) {
+  buildPendingTelegramReplyGuardFromObligation(obligation = {}, options = {}) {
     const paneId = toNonEmptyString(obligation.paneId) || '1';
     const inboundMessageId = toNonEmptyString(obligation.inboundMessageId);
     if (!inboundMessageId) return null;
+    const nowMs = Number(options.nowMs || Date.now());
     const openedAtMs = Number(obligation.openedAtMs || 0);
     const createdAtMs = Number.isFinite(openedAtMs) && openedAtMs > 0 ? openedAtMs : Date.now();
     const deadlineAtMs = Number(obligation.deadlineAtMs || 0);
@@ -11484,8 +11485,11 @@ class SquidRunApp {
       durableObligationOk: true,
       durableObligationStatus: obligation.status || 'open',
       durableObligationId: obligation.obligationId || null,
-      durableObligationUpdatedAtMs: Date.now(),
-      durableHydratedAtMs: Date.now(),
+      durableObligationUpdatedAtMs: nowMs,
+      durableHydratedAtMs: nowMs,
+      hydratedFromDurableObligation: true,
+      autoEscalationSuppressed: options.autoEscalationSuppressed !== false,
+      durableDeadlineElapsedAtHydration: expiresAtMs <= nowMs,
     };
   }
 
@@ -11517,19 +11521,20 @@ class SquidRunApp {
     }
 
     const nowMs = Number(options.nowMs || Date.now());
+    const scheduleEscalation = options.scheduleEscalation === true;
     let hydratedCount = 0;
     let skippedCount = 0;
+    let autoEscalationScheduledCount = 0;
+    let autoEscalationSuppressedCount = 0;
     for (const obligation of Array.isArray(obligations) ? obligations : []) {
       if (!obligation || String(obligation.status || '').toLowerCase() !== 'open') {
         skippedCount += 1;
         continue;
       }
-      const expiresAtMs = Number(obligation.deadlineAtMs || 0);
-      if (Number.isFinite(expiresAtMs) && expiresAtMs > 0 && expiresAtMs <= nowMs) {
-        skippedCount += 1;
-        continue;
-      }
-      const guard = this.buildPendingTelegramReplyGuardFromObligation(obligation);
+      const guard = this.buildPendingTelegramReplyGuardFromObligation(obligation, {
+        nowMs,
+        autoEscalationSuppressed: !scheduleEscalation,
+      });
       if (!guard) {
         skippedCount += 1;
         continue;
@@ -11540,7 +11545,12 @@ class SquidRunApp {
         continue;
       }
       this.pendingTelegramReplyGuards.set(guard.paneId, guard);
-      this.schedulePendingTelegramReplyGuardEscalation(guard);
+      if (scheduleEscalation) {
+        this.schedulePendingTelegramReplyGuardEscalation(guard);
+        autoEscalationScheduledCount += 1;
+      } else {
+        autoEscalationSuppressedCount += 1;
+      }
       hydratedCount += 1;
     }
     if (hydratedCount > 0) {
@@ -11554,6 +11564,8 @@ class SquidRunApp {
       hydratedCount,
       skippedCount,
       sessionId: sessionId || null,
+      autoEscalationScheduledCount,
+      autoEscalationSuppressedCount,
     };
   }
 
