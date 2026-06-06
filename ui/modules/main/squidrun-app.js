@@ -168,6 +168,9 @@ const {
   renderStartupHealthMarkdown,
 } = require('../../scripts/hm-health-snapshot');
 const {
+  checkAndRecoverTelegramPoller,
+} = require('../../scripts/hm-telegram-poller-watchdog');
+const {
   generateSessionSummary,
 } = require('../../scripts/hm-session-summary');
 const {
@@ -1229,12 +1232,22 @@ class SquidRunApp {
       })
     );
 
+    const projectRoot = options.projectRoot || getProjectRoot();
+    const telegramPollerRecovery = await this.runStartupHealthTelegramPollerAutoRecover({
+      projectRoot,
+      profileName,
+      nowMs,
+      staleThresholdMs: options.telegramPollerStaleThresholdMs,
+      enabled: options.telegramPollerAutoRecover !== false,
+    });
+
     const snapshot = createHealthSnapshot({
-      projectRoot: options.projectRoot || getProjectRoot(),
+      projectRoot,
       profileName,
       jestTimeoutMs: options.jestTimeoutMs,
       bridgeStatus: this.getBridgeStatus(),
       systemCapabilities: this.lastSystemCapabilities,
+      telegramPollerStaleThresholdMs: options.telegramPollerStaleThresholdMs,
       nowMs,
       generatedAt,
     });
@@ -1284,9 +1297,38 @@ class SquidRunApp {
       ok: true,
       outputPath,
       snapshot,
+      telegramPollerRecovery,
       ledgerContext,
       ingestResult,
     };
+  }
+
+  async runStartupHealthTelegramPollerAutoRecover(options = {}) {
+    if (options.enabled === false) {
+      return { ok: true, skipped: true, reason: 'disabled' };
+    }
+    const profileName = normalizeProfileName(options.profileName || getActiveProfileName());
+    if (!isMainProfile(profileName)) {
+      return { ok: true, skipped: true, reason: 'profile_not_owner' };
+    }
+
+    try {
+      const result = await checkAndRecoverTelegramPoller({
+        projectRoot: options.projectRoot || getProjectRoot(),
+        nowMs: options.nowMs,
+        staleThresholdMs: options.staleThresholdMs,
+      });
+      if (result?.recovery?.recovered === true) {
+        log.warn(
+          'StartupHealth',
+          `Recovered wedged Telegram poller before app startup-health snapshot (${result.recovery.action || 'unknown'})`
+        );
+      }
+      return result;
+    } catch (err) {
+      log.warn('StartupHealth', `Telegram poller recovery preflight failed: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
   }
 
   applyLocalModelEnvironment(snapshot = null) {
