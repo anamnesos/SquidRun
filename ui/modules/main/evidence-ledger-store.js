@@ -427,6 +427,42 @@ CREATE INDEX IF NOT EXISTS idx_arm_checkin_proofs_room_session_role
   ON arm_checkin_proofs(app_room_id, session_id, role, checked_in_at_ms DESC);
 `;
 
+const SCHEMA_V8_SQL = `
+CREATE TABLE IF NOT EXISTS arm_missing_watchdogs (
+  watchdog_id TEXT PRIMARY KEY,
+  registry_id TEXT NOT NULL,
+  arm_id TEXT NOT NULL,
+  app_room_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  arm_key TEXT NOT NULL,
+  role TEXT NOT NULL,
+  pane_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('expected', 'nudged', 'escalated', 'satisfied')) DEFAULT 'expected',
+  expected_at_ms INTEGER NOT NULL,
+  nudge_due_at_ms INTEGER NOT NULL,
+  nudged_at_ms INTEGER,
+  escalate_due_at_ms INTEGER,
+  escalated_at_ms INTEGER,
+  satisfied_at_ms INTEGER,
+  last_action_key TEXT,
+  last_action_at_ms INTEGER,
+  last_error TEXT,
+  metadata_json TEXT DEFAULT '{}',
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  UNIQUE(registry_id, arm_id, expected_at_ms)
+);
+
+CREATE INDEX IF NOT EXISTS idx_arm_missing_watchdogs_registry_status
+  ON arm_missing_watchdogs(registry_id, status, updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_arm_missing_watchdogs_arm_status
+  ON arm_missing_watchdogs(arm_id, status, updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_arm_missing_watchdogs_due
+  ON arm_missing_watchdogs(status, nudge_due_at_ms, escalate_due_at_ms);
+`;
+
 const COMMS_CHANNELS = new Set(['ws', 'telegram', 'sms', 'user', 'voice']);
 const COMMS_DIRECTIONS = new Set(['inbound', 'outbound']);
 const COMMS_STATUS_RANK = Object.freeze({
@@ -443,6 +479,9 @@ const ARM_REGISTRY_STATUSES = new Set(['active', 'retired', 'blocked']);
 const ARM_STATUSES = new Set(['desired', 'ready', 'missing', 'disabled']);
 const ARM_CHECKIN_STATUSES = new Set(['accepted', 'rejected']);
 const IDENTITY_PROOF_KINDS = new Set(['role_check_in', 'startup_check_in', 'manual_check_in']);
+const ARM_MISSING_WATCHDOG_STATUSES = new Set(['expected', 'nudged', 'escalated', 'satisfied']);
+const DEFAULT_ARM_MISSING_NUDGE_AFTER_MS = 2 * 60 * 1000;
+const DEFAULT_ARM_MISSING_ESCALATE_AFTER_NUDGE_MS = 4 * 60 * 1000;
 
 function toMs(value, fallback) {
   const numeric = Number(value);
@@ -623,6 +662,13 @@ function normalizeArmCheckinStatus(value) {
   return ARM_CHECKIN_STATUSES.has(normalized) ? normalized : null;
 }
 
+function normalizeArmMissingWatchdogStatus(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  return ARM_MISSING_WATCHDOG_STATUSES.has(normalized) ? normalized : null;
+}
+
 function normalizeArmIdentityProofKind(value) {
   const text = toOptionalString(value, null);
   if (!text) return 'role_check_in';
@@ -753,6 +799,33 @@ function mapArmCheckinProofRow(row) {
   };
 }
 
+function mapArmMissingWatchdogRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    watchdogId: row.watchdog_id,
+    registryId: row.registry_id,
+    armId: row.arm_id,
+    appRoomId: row.app_room_id,
+    sessionId: row.session_id,
+    armKey: row.arm_key,
+    role: row.role,
+    paneId: row.pane_id,
+    status: row.status,
+    expectedAtMs: row.expected_at_ms,
+    nudgeDueAtMs: row.nudge_due_at_ms,
+    nudgedAtMs: row.nudged_at_ms,
+    escalateDueAtMs: row.escalate_due_at_ms,
+    escalatedAtMs: row.escalated_at_ms,
+    satisfiedAtMs: row.satisfied_at_ms,
+    lastActionKey: row.last_action_key,
+    lastActionAtMs: row.last_action_at_ms,
+    lastError: row.last_error,
+    metadata: parseJson(row.metadata_json, {}),
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
 function loadSqliteDriver() {
   try {
     // CLI path (Node 22+): prefer built-in sqlite.
@@ -861,6 +934,7 @@ class EvidenceLedgerStore {
     this.db.exec(SCHEMA_V5_SQL);
     this.db.exec(SCHEMA_V6_SQL);
     this.db.exec(SCHEMA_V7_SQL);
+    this.db.exec(SCHEMA_V8_SQL);
   }
 
   _migrateCommsJournalVoiceChannel() {
@@ -2015,6 +2089,274 @@ class EvidenceLedgerStore {
         ok: true,
         status: missingCount === 0 ? 'ready' : 'missing',
         registry: this.getArmRegistryManifest({ registryId: registry.registryId }),
+      };
+    } catch (err) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: err.message,
+        registryId: registry.registryId,
+      };
+    }
+  }
+
+  queryArmMissingWatchdogs(filters = {}) {
+    if (!this.isAvailable()) return [];
+
+    const clauses = [];
+    const params = [];
+
+    if (filters.watchdogId || filters.watchdog_id) {
+      clauses.push('watchdog_id = ?');
+      params.push(String(filters.watchdogId || filters.watchdog_id));
+    }
+    if (filters.registryId || filters.registry_id) {
+      clauses.push('registry_id = ?');
+      params.push(String(filters.registryId || filters.registry_id));
+    }
+    if (filters.armId || filters.arm_id) {
+      clauses.push('arm_id = ?');
+      params.push(String(filters.armId || filters.arm_id));
+    }
+    if (filters.appRoomId || filters.app_room_id) {
+      clauses.push('app_room_id = ?');
+      params.push(String(filters.appRoomId || filters.app_room_id));
+    }
+    if (filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id) {
+      clauses.push('session_id = ?');
+      params.push(String(filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id));
+    }
+    if (filters.armKey || filters.arm_key) {
+      clauses.push('arm_key = ?');
+      params.push(String(filters.armKey || filters.arm_key));
+    }
+    const statuses = Array.isArray(filters.statuses)
+      ? filters.statuses.map((status) => normalizeArmMissingWatchdogStatus(status)).filter(Boolean)
+      : [];
+    if (statuses.length > 0) {
+      clauses.push(`status IN (${statuses.map(() => '?').join(', ')})`);
+      params.push(...statuses);
+    } else if (filters.status) {
+      const status = normalizeArmMissingWatchdogStatus(filters.status);
+      if (status) {
+        clauses.push('status = ?');
+        params.push(status);
+      }
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const order = (String(filters.order || 'asc').toLowerCase() === 'desc')
+      ? 'ORDER BY updated_at_ms DESC, watchdog_id DESC'
+      : 'ORDER BY expected_at_ms ASC, watchdog_id ASC';
+    const limit = Math.max(1, Math.min(50_000, Number(filters.limit) || 5000));
+
+    const rows = this.db.prepare(`
+      SELECT * FROM arm_missing_watchdogs
+      ${where}
+      ${order}
+      LIMIT ?
+    `).all(...params, limit);
+    return rows.map((row) => mapArmMissingWatchdogRow(row));
+  }
+
+  advanceArmMissingWatchdogs(filters = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+
+    const nowMs = toMs(options.nowMs, Date.now());
+    const nudgeAfterMs = Math.max(1, Number(options.nudgeAfterMs) || DEFAULT_ARM_MISSING_NUDGE_AFTER_MS);
+    const escalateAfterNudgeMs = Math.max(
+      1,
+      Number(options.escalateAfterNudgeMs) || DEFAULT_ARM_MISSING_ESCALATE_AFTER_NUDGE_MS
+    );
+    const evaluation = options.evaluate === false
+      ? null
+      : this.evaluateArmRegistryReadiness(filters, { nowMs });
+    if (evaluation && evaluation.ok === false) {
+      return evaluation;
+    }
+    const registry = this.getArmRegistryManifest(filters.registryId || filters.registry_id
+      ? { registryId: filters.registryId || filters.registry_id }
+      : filters);
+    if (!registry) {
+      return { ok: false, status: 'not_found', reason: 'arm_registry_not_found' };
+    }
+
+    const actions = [];
+    try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      for (const arm of registry.arms) {
+        const openWatchdogs = this.queryArmMissingWatchdogs({
+          registryId: registry.registryId,
+          armId: arm.armId,
+          statuses: ['expected', 'nudged'],
+          order: 'desc',
+          limit: 1,
+        });
+        const openWatchdog = openWatchdogs[0] || null;
+
+        if (!arm.required || arm.status === 'disabled') {
+          continue;
+        }
+
+        if (arm.status === 'ready') {
+          const activeWatchdogs = this.queryArmMissingWatchdogs({
+            registryId: registry.registryId,
+            armId: arm.armId,
+            statuses: ['expected', 'nudged', 'escalated'],
+            order: 'desc',
+            limit: 50,
+          });
+          for (const watchdog of activeWatchdogs) {
+            if (watchdog.status === 'satisfied') continue;
+            this.db.prepare(`
+              UPDATE arm_missing_watchdogs
+              SET
+                status = 'satisfied',
+                satisfied_at_ms = COALESCE(satisfied_at_ms, ?),
+                last_action_key = ?,
+                last_action_at_ms = ?,
+                updated_at_ms = ?
+              WHERE watchdog_id = ?
+            `).run(
+              nowMs,
+              `satisfied:${watchdog.watchdogId}:${nowMs}`,
+              nowMs,
+              nowMs,
+              watchdog.watchdogId
+            );
+          }
+          continue;
+        }
+
+        const escalatedExisting = this.queryArmMissingWatchdogs({
+          registryId: registry.registryId,
+          armId: arm.armId,
+          status: 'escalated',
+          order: 'desc',
+          limit: 1,
+        })[0] || null;
+        if (!openWatchdog && escalatedExisting) {
+          continue;
+        }
+
+        if (!openWatchdog) {
+          const watchdogId = buildStableHashId('arm-watchdog', [
+            registry.registryId,
+            arm.armId,
+            nowMs,
+          ]);
+          const nudgeDueAtMs = nowMs + nudgeAfterMs;
+          this.db.prepare(`
+            INSERT INTO arm_missing_watchdogs (
+              watchdog_id, registry_id, arm_id, app_room_id, session_id, arm_key,
+              role, pane_id, status, expected_at_ms, nudge_due_at_ms,
+              metadata_json, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'expected', ?, ?, ?, ?, ?)
+          `).run(
+            watchdogId,
+            registry.registryId,
+            arm.armId,
+            registry.appRoomId,
+            registry.sessionId,
+            arm.armKey,
+            arm.role,
+            arm.paneId || null,
+            nowMs,
+            nudgeDueAtMs,
+            JSON.stringify({
+              source: 'arm_registry_readiness',
+              registryStatus: registry.status,
+            }),
+            nowMs,
+            nowMs
+          );
+          continue;
+        }
+
+        if (openWatchdog.status === 'expected' && nowMs >= Number(openWatchdog.nudgeDueAtMs || 0)) {
+          const actionKey = `nudge:${openWatchdog.watchdogId}:${openWatchdog.expectedAtMs}`;
+          const escalateDueAtMs = nowMs + escalateAfterNudgeMs;
+          this.db.prepare(`
+            UPDATE arm_missing_watchdogs
+            SET
+              status = 'nudged',
+              nudged_at_ms = COALESCE(nudged_at_ms, ?),
+              escalate_due_at_ms = COALESCE(escalate_due_at_ms, ?),
+              last_action_key = ?,
+              last_action_at_ms = ?,
+              updated_at_ms = ?
+            WHERE watchdog_id = ? AND status = 'expected'
+          `).run(
+            nowMs,
+            escalateDueAtMs,
+            actionKey,
+            nowMs,
+            nowMs,
+            openWatchdog.watchdogId
+          );
+          actions.push({
+            kind: 'nudge',
+            actionKey,
+            watchdogId: openWatchdog.watchdogId,
+            registryId: registry.registryId,
+            armId: arm.armId,
+            armKey: arm.armKey,
+            role: arm.role,
+            paneId: arm.paneId || null,
+            dueAtMs: nowMs,
+            nextDueAtMs: escalateDueAtMs,
+          });
+          continue;
+        }
+
+        if (openWatchdog.status === 'nudged' && nowMs >= Number(openWatchdog.escalateDueAtMs || 0)) {
+          const actionKey = `escalate:${openWatchdog.watchdogId}:${openWatchdog.expectedAtMs}`;
+          this.db.prepare(`
+            UPDATE arm_missing_watchdogs
+            SET
+              status = 'escalated',
+              escalated_at_ms = COALESCE(escalated_at_ms, ?),
+              last_action_key = ?,
+              last_action_at_ms = ?,
+              updated_at_ms = ?
+            WHERE watchdog_id = ? AND status = 'nudged'
+          `).run(
+            nowMs,
+            actionKey,
+            nowMs,
+            nowMs,
+            openWatchdog.watchdogId
+          );
+          actions.push({
+            kind: 'escalate',
+            actionKey,
+            watchdogId: openWatchdog.watchdogId,
+            registryId: registry.registryId,
+            appRoomId: registry.appRoomId,
+            sessionId: registry.sessionId,
+            armId: arm.armId,
+            armKey: arm.armKey,
+            role: arm.role,
+            paneId: arm.paneId || null,
+            target: 'architect',
+            dueAtMs: nowMs,
+          });
+        }
+      }
+      this.db.exec('COMMIT;');
+      const watchdogs = this.queryArmMissingWatchdogs({
+        registryId: registry.registryId,
+        limit: 50_000,
+      });
+      return {
+        ok: true,
+        status: actions.length > 0 ? 'actions_due' : 'checked',
+        registry: this.getArmRegistryManifest({ registryId: registry.registryId }),
+        watchdogs,
+        actions,
       };
     } catch (err) {
       try { this.db.exec('ROLLBACK;'); } catch {}

@@ -110,6 +110,28 @@ function evaluateArmRegistryReadiness(filters = {}, options = {}) {
   return { ...result, dbPath: storeResult.dbPath };
 }
 
+function queryArmMissingWatchdogs(filters = {}, options = {}) {
+  const opts = asObject(options);
+  const storeResult = resolveStore(opts.dbPath || null);
+  if (!storeResult.ok || !storeResult.store) return [];
+  return storeResult.store.queryArmMissingWatchdogs(filters || {});
+}
+
+function advanceArmMissingWatchdogs(filters = {}, options = {}) {
+  const opts = asObject(options);
+  const storeResult = resolveStore(opts.dbPath || null);
+  if (!storeResult.ok || !storeResult.store) {
+    return {
+      ok: false,
+      status: 'unavailable',
+      reason: storeResult.reason || 'store_unavailable',
+      dbPath: storeResult.dbPath || null,
+    };
+  }
+  const result = storeResult.store.advanceArmMissingWatchdogs(filters || {}, opts);
+  return { ...result, dbPath: storeResult.dbPath };
+}
+
 function closeArmRegistryStores() {
   for (const { store } of storeCache.values()) {
     try {
@@ -129,5 +151,7 @@ module.exports = {
   recordArmCheckinProof,
   queryArmCheckinProofs,
   evaluateArmRegistryReadiness,
+  queryArmMissingWatchdogs,
+  advanceArmMissingWatchdogs,
   closeArmRegistryStores,
 };
