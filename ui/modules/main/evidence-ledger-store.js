@@ -298,6 +298,43 @@ CREATE INDEX IF NOT EXISTS idx_comms_journal_sender_brokered
   ON comms_journal(sender_role, brokered_at_ms);
 `;
 
+const SCHEMA_V5_SQL = `
+CREATE TABLE IF NOT EXISTS telegram_reply_obligations (
+  obligation_id TEXT PRIMARY KEY,
+  inbound_message_id TEXT NOT NULL UNIQUE,
+  chat_id TEXT,
+  session_id TEXT,
+  pane_id TEXT,
+  window_key TEXT,
+  profile_name TEXT,
+  sender_role TEXT,
+  target_role TEXT,
+  status TEXT NOT NULL CHECK (status IN ('open', 'satisfied', 'expired', 'escalated')),
+  opened_at_ms INTEGER NOT NULL,
+  deadline_at_ms INTEGER NOT NULL,
+  last_transition_at_ms INTEGER NOT NULL,
+  satisfied_at_ms INTEGER,
+  satisfied_by_message_id TEXT,
+  satisfied_by_row_id INTEGER,
+  satisfaction_source TEXT,
+  expired_at_ms INTEGER,
+  escalated_at_ms INTEGER,
+  metadata_json TEXT DEFAULT '{}',
+  satisfaction_json TEXT DEFAULT '{}',
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_reply_obligations_status_deadline
+  ON telegram_reply_obligations(status, deadline_at_ms);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_reply_obligations_session_chat
+  ON telegram_reply_obligations(session_id, chat_id, opened_at_ms);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_reply_obligations_inbound
+  ON telegram_reply_obligations(inbound_message_id);
+`;
+
 const COMMS_CHANNELS = new Set(['ws', 'telegram', 'sms', 'user', 'voice']);
 const COMMS_DIRECTIONS = new Set(['inbound', 'outbound']);
 const COMMS_STATUS_RANK = Object.freeze({
@@ -307,6 +344,9 @@ const COMMS_STATUS_RANK = Object.freeze({
   acked: 4,
   failed: 4,
 });
+const DEFAULT_TELEGRAM_REPLY_OBLIGATION_WINDOW_MS = 5 * 60 * 1000;
+const TELEGRAM_REPLY_OBLIGATION_STATUSES = new Set(['open', 'satisfied', 'expired', 'escalated']);
+const TERMINAL_TELEGRAM_REPLY_OBLIGATION_STATUSES = new Set(['satisfied', 'expired', 'escalated']);
 
 function toMs(value, fallback) {
   const numeric = Number(value);
@@ -417,6 +457,80 @@ function mapCommsRow(row) {
   };
 }
 
+function normalizeTelegramReplyObligationStatus(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  if (TELEGRAM_REPLY_OBLIGATION_STATUSES.has(normalized)) return normalized;
+  if ([
+    'pending',
+    'pending_telegram_egress',
+    'telegram_reply_required_unresolved',
+    'telegram_reply_required_agent_alerted',
+    'telegram_reply_required_agent_alert_failed',
+  ].includes(normalized)) {
+    return 'open';
+  }
+  if ([
+    'telegram_reply_requirement_satisfied_by_journal',
+    'telegram_reply_requirement_satisfied',
+  ].includes(normalized)) {
+    return 'satisfied';
+  }
+  if ([
+    'telegram_reply_required_expired_unresolved',
+    'telegram_reply_requirement_expired_unresolved',
+  ].includes(normalized)) {
+    return 'expired';
+  }
+  if ([
+    'telegram_reply_required_phone_escalated',
+    'telegram_reply_required_phone_escalated_unresolved',
+    'telegram_reply_requirement_phone_escalated_unresolved',
+  ].includes(normalized)) {
+    return 'escalated';
+  }
+  return null;
+}
+
+function isTerminalTelegramReplyObligationStatus(status) {
+  return TERMINAL_TELEGRAM_REPLY_OBLIGATION_STATUSES.has(String(status || '').toLowerCase());
+}
+
+function buildTelegramReplyObligationId(inboundMessageId) {
+  const digest = crypto.createHash('sha256').update(String(inboundMessageId), 'utf8').digest('hex').slice(0, 16);
+  return `telegram-reply-${digest}`;
+}
+
+function mapTelegramReplyObligationRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    obligationId: row.obligation_id,
+    inboundMessageId: row.inbound_message_id,
+    chatId: row.chat_id,
+    sessionId: row.session_id,
+    paneId: row.pane_id,
+    windowKey: row.window_key,
+    profileName: row.profile_name,
+    senderRole: row.sender_role,
+    targetRole: row.target_role,
+    status: row.status,
+    openedAtMs: row.opened_at_ms,
+    deadlineAtMs: row.deadline_at_ms,
+    lastTransitionAtMs: row.last_transition_at_ms,
+    satisfiedAtMs: row.satisfied_at_ms,
+    satisfiedByMessageId: row.satisfied_by_message_id,
+    satisfiedByRowId: row.satisfied_by_row_id,
+    satisfactionSource: row.satisfaction_source,
+    expiredAtMs: row.expired_at_ms,
+    escalatedAtMs: row.escalated_at_ms,
+    metadata: parseJson(row.metadata_json, {}),
+    satisfaction: parseJson(row.satisfaction_json, {}),
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
 function loadSqliteDriver() {
   try {
     // CLI path (Node 22+): prefer built-in sqlite.
@@ -522,6 +636,7 @@ class EvidenceLedgerStore {
     this.db.exec(SCHEMA_V4_SQL);
     this._migrateCommsJournalVoiceChannel();
     this.db.exec(SCHEMA_V4_SQL);
+    this.db.exec(SCHEMA_V5_SQL);
   }
 
   _migrateCommsJournalVoiceChannel() {
@@ -1050,6 +1165,350 @@ class EvidenceLedgerStore {
     }
   }
 
+  queryTelegramReplyObligations(filters = {}) {
+    if (!this.isAvailable()) return [];
+
+    const clauses = [];
+    const params = [];
+
+    if (filters.obligationId) {
+      clauses.push('obligation_id = ?');
+      params.push(String(filters.obligationId));
+    }
+    if (filters.inboundMessageId || filters.messageId) {
+      clauses.push('inbound_message_id = ?');
+      params.push(String(filters.inboundMessageId || filters.messageId));
+    }
+    if (filters.sessionId) {
+      clauses.push('session_id = ?');
+      params.push(String(filters.sessionId));
+    }
+    if (filters.chatId) {
+      clauses.push('chat_id = ?');
+      params.push(String(filters.chatId));
+    }
+    if (filters.paneId) {
+      clauses.push('pane_id = ?');
+      params.push(String(filters.paneId));
+    }
+    const statuses = Array.isArray(filters.statuses)
+      ? filters.statuses.map((status) => normalizeTelegramReplyObligationStatus(status)).filter(Boolean)
+      : [];
+    if (statuses.length > 0) {
+      clauses.push(`status IN (${statuses.map(() => '?').join(', ')})`);
+      params.push(...statuses);
+    } else if (filters.status) {
+      const status = normalizeTelegramReplyObligationStatus(filters.status);
+      if (status) {
+        clauses.push('status = ?');
+        params.push(status);
+      }
+    }
+    if (filters.openOnly) {
+      clauses.push("status = 'open'");
+    }
+    if (filters.sinceMs !== undefined) {
+      clauses.push('opened_at_ms >= ?');
+      params.push(toMs(filters.sinceMs, 0));
+    }
+    if (filters.untilMs !== undefined) {
+      clauses.push('opened_at_ms <= ?');
+      params.push(toMs(filters.untilMs, Number.MAX_SAFE_INTEGER));
+    }
+    if (filters.dueByMs !== undefined) {
+      clauses.push('deadline_at_ms <= ?');
+      params.push(toMs(filters.dueByMs, Number.MAX_SAFE_INTEGER));
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const order = (String(filters.order || 'asc').toLowerCase() === 'desc')
+      ? 'ORDER BY opened_at_ms DESC, obligation_id DESC'
+      : 'ORDER BY opened_at_ms ASC, obligation_id ASC';
+    const limit = Math.max(1, Math.min(50_000, Number(filters.limit) || 5000));
+
+    const rows = this.db.prepare(`
+      SELECT * FROM telegram_reply_obligations
+      ${where}
+      ${order}
+      LIMIT ?
+    `).all(...params, limit);
+    return rows.map((row) => mapTelegramReplyObligationRow(row));
+  }
+
+  getTelegramReplyObligation(filters = {}) {
+    return this.queryTelegramReplyObligations({ ...filters, limit: 1 })[0] || null;
+  }
+
+  upsertTelegramReplyObligation(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+
+    const inboundMessageId = toOptionalString(
+      input.inboundMessageId || input.inbound_message_id || input.messageId || input.message_id,
+      null
+    );
+    if (!inboundMessageId) {
+      return { ok: false, status: 'invalid', reason: 'inbound_message_id_required' };
+    }
+
+    const nowMs = toMs(options.nowMs, Date.now());
+    const openedAtMs = toOptionalMs(input.openedAtMs ?? input.opened_at_ms ?? input.createdAtMs ?? input.created_at_ms)
+      ?? nowMs;
+    const deadlineAtMs = toOptionalMs(input.deadlineAtMs ?? input.deadline_at_ms ?? input.expiresAtMs ?? input.expires_at_ms)
+      ?? (openedAtMs + Math.max(1, Number(options.defaultWindowMs) || DEFAULT_TELEGRAM_REPLY_OBLIGATION_WINDOW_MS));
+    const obligationId = toOptionalString(input.obligationId || input.obligation_id, null)
+      || buildTelegramReplyObligationId(inboundMessageId);
+    const incomingStatus = normalizeTelegramReplyObligationStatus(input.status) || 'open';
+    const metadata = ensureObject(input.metadata ?? input.meta ?? input.metadata_json);
+
+    try {
+      const existingRow = this.db.prepare(`
+        SELECT * FROM telegram_reply_obligations
+        WHERE inbound_message_id = ? OR obligation_id = ?
+        LIMIT 1
+      `).get(inboundMessageId, obligationId);
+      const existing = mapTelegramReplyObligationRow(existingRow);
+
+      if (!existing) {
+        const satisfaction = incomingStatus === 'satisfied'
+          ? ensureObject(input.satisfaction ?? input.satisfaction_json)
+          : {};
+        const statusTimestamp = incomingStatus === 'satisfied'
+          ? (toOptionalMs(input.satisfiedAtMs ?? input.satisfied_at_ms) ?? nowMs)
+          : null;
+        const expiredAtMs = incomingStatus === 'expired'
+          ? (toOptionalMs(input.expiredAtMs ?? input.expired_at_ms) ?? nowMs)
+          : null;
+        const escalatedAtMs = incomingStatus === 'escalated'
+          ? (toOptionalMs(input.escalatedAtMs ?? input.escalated_at_ms) ?? nowMs)
+          : null;
+        this.db.prepare(`
+          INSERT INTO telegram_reply_obligations (
+            obligation_id, inbound_message_id, chat_id, session_id, pane_id, window_key,
+            profile_name, sender_role, target_role, status, opened_at_ms, deadline_at_ms,
+            last_transition_at_ms, satisfied_at_ms, satisfied_by_message_id,
+            satisfied_by_row_id, satisfaction_source, expired_at_ms, escalated_at_ms,
+            metadata_json, satisfaction_json, created_at_ms, updated_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          obligationId,
+          inboundMessageId,
+          toOptionalString(input.chatId ?? input.chat_id ?? input.telegramChatId ?? input.telegram_chat_id, null),
+          toOptionalString(input.sessionId ?? input.session_id ?? input.sessionScopeId ?? input.session_scope_id, null),
+          toOptionalString(input.paneId ?? input.pane_id, null),
+          toOptionalString(input.windowKey ?? input.window_key, null),
+          toOptionalString(input.profileName ?? input.profile_name ?? input.profile, null),
+          toOptionalString(input.senderRole ?? input.sender_role ?? input.sender, null),
+          toOptionalString(input.targetRole ?? input.target_role ?? input.target, null),
+          incomingStatus,
+          openedAtMs,
+          deadlineAtMs,
+          nowMs,
+          statusTimestamp,
+          toOptionalString(input.satisfiedByMessageId ?? input.satisfied_by_message_id ?? input.egressMessageId, null),
+          toOptionalMs(input.satisfiedByRowId ?? input.satisfied_by_row_id ?? input.egressRowId),
+          toOptionalString(input.satisfactionSource ?? input.satisfaction_source, null),
+          expiredAtMs,
+          escalatedAtMs,
+          JSON.stringify(metadata),
+          JSON.stringify(satisfaction),
+          nowMs,
+          nowMs
+        );
+        return {
+          ok: true,
+          status: 'inserted',
+          obligation: this.getTelegramReplyObligation({ inboundMessageId }),
+        };
+      }
+
+      const existingTerminal = isTerminalTelegramReplyObligationStatus(existing.status);
+      if (!existingTerminal && incomingStatus === 'satisfied') {
+        return this.satisfyTelegramReplyObligation({
+          obligationId: existing.obligationId,
+          satisfiedAtMs: input.satisfiedAtMs ?? input.satisfied_at_ms,
+          satisfiedByMessageId: input.satisfiedByMessageId ?? input.satisfied_by_message_id ?? input.egressMessageId,
+          satisfiedByRowId: input.satisfiedByRowId ?? input.satisfied_by_row_id ?? input.egressRowId,
+          satisfactionSource: input.satisfactionSource ?? input.satisfaction_source,
+          satisfaction: input.satisfaction ?? input.satisfaction_json,
+        }, options);
+      }
+      const mergedStatus = existingTerminal && incomingStatus === 'open'
+        ? existing.status
+        : (existingTerminal ? existing.status : incomingStatus);
+      const mergedOpenedAtMs = Math.min(Number(existing.openedAtMs || openedAtMs), openedAtMs);
+      const mergedDeadlineAtMs = Number(existing.deadlineAtMs || 0) > 0
+        ? Number(existing.deadlineAtMs)
+        : deadlineAtMs;
+      const mergedMetadata = mergeMetadata(existing.metadata, metadata);
+      this.db.prepare(`
+        UPDATE telegram_reply_obligations
+        SET
+          chat_id = COALESCE(?, chat_id),
+          session_id = COALESCE(?, session_id),
+          pane_id = COALESCE(?, pane_id),
+          window_key = COALESCE(?, window_key),
+          profile_name = COALESCE(?, profile_name),
+          sender_role = COALESCE(?, sender_role),
+          target_role = COALESCE(?, target_role),
+          status = ?,
+          opened_at_ms = ?,
+          deadline_at_ms = ?,
+          last_transition_at_ms = CASE WHEN status != ? THEN ? ELSE last_transition_at_ms END,
+          metadata_json = ?,
+          updated_at_ms = ?
+        WHERE obligation_id = ?
+      `).run(
+        toOptionalString(input.chatId ?? input.chat_id ?? input.telegramChatId ?? input.telegram_chat_id, null),
+        toOptionalString(input.sessionId ?? input.session_id ?? input.sessionScopeId ?? input.session_scope_id, null),
+        toOptionalString(input.paneId ?? input.pane_id, null),
+        toOptionalString(input.windowKey ?? input.window_key, null),
+        toOptionalString(input.profileName ?? input.profile_name ?? input.profile, null),
+        toOptionalString(input.senderRole ?? input.sender_role ?? input.sender, null),
+        toOptionalString(input.targetRole ?? input.target_role ?? input.target, null),
+        mergedStatus,
+        mergedOpenedAtMs,
+        mergedDeadlineAtMs,
+        mergedStatus,
+        nowMs,
+        JSON.stringify(mergedMetadata),
+        nowMs,
+        existing.obligationId
+      );
+      return {
+        ok: true,
+        status: 'updated',
+        obligation: this.getTelegramReplyObligation({ obligationId: existing.obligationId }),
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: err.message,
+        inboundMessageId,
+      };
+    }
+  }
+
+  satisfyTelegramReplyObligation(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+    const obligationId = toOptionalString(input.obligationId || input.obligation_id, null);
+    const inboundMessageId = toOptionalString(
+      input.inboundMessageId || input.inbound_message_id || input.messageId || input.message_id,
+      null
+    );
+    const existing = this.getTelegramReplyObligation({
+      ...(obligationId ? { obligationId } : {}),
+      ...(inboundMessageId ? { inboundMessageId } : {}),
+    });
+    if (!existing) {
+      return { ok: false, status: 'not_found', reason: 'telegram_reply_obligation_not_found' };
+    }
+    if (existing.status === 'satisfied') {
+      return { ok: true, status: 'already_satisfied', obligation: existing };
+    }
+    if (isTerminalTelegramReplyObligationStatus(existing.status)) {
+      return {
+        ok: false,
+        status: 'terminal_state',
+        reason: `telegram_reply_obligation_${existing.status}`,
+        obligation: existing,
+      };
+    }
+
+    const nowMs = toMs(options.nowMs, Date.now());
+    const satisfiedAtMs = toOptionalMs(
+      input.satisfiedAtMs ?? input.satisfied_at_ms ?? input.egressAtMs ?? input.egress_at_ms
+    ) ?? nowMs;
+    const satisfaction = ensureObject(input.satisfaction ?? input.satisfaction_json);
+
+    try {
+      this.db.prepare(`
+        UPDATE telegram_reply_obligations
+        SET
+          status = 'satisfied',
+          satisfied_at_ms = ?,
+          satisfied_by_message_id = ?,
+          satisfied_by_row_id = ?,
+          satisfaction_source = ?,
+          satisfaction_json = ?,
+          last_transition_at_ms = ?,
+          updated_at_ms = ?
+        WHERE obligation_id = ? AND status = 'open'
+      `).run(
+        satisfiedAtMs,
+        toOptionalString(input.satisfiedByMessageId ?? input.satisfied_by_message_id ?? input.egressMessageId, null),
+        toOptionalMs(input.satisfiedByRowId ?? input.satisfied_by_row_id ?? input.egressRowId),
+        toOptionalString(input.satisfactionSource ?? input.satisfaction_source ?? input.source, null),
+        JSON.stringify(satisfaction),
+        nowMs,
+        nowMs,
+        existing.obligationId
+      );
+      const updated = this.getTelegramReplyObligation({ obligationId: existing.obligationId });
+      return {
+        ok: updated?.status === 'satisfied',
+        status: updated?.status === 'satisfied' ? 'satisfied' : 'not_updated',
+        obligation: updated,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: err.message,
+        obligationId: existing.obligationId,
+      };
+    }
+  }
+
+  expireTelegramReplyObligations(options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+    const nowMs = toMs(options.nowMs, Date.now());
+    const limit = Math.max(1, Math.min(10_000, Number(options.limit) || 1000));
+    const filters = {
+      status: 'open',
+      dueByMs: nowMs,
+      order: 'asc',
+      limit,
+    };
+    if (options.sessionId) filters.sessionId = options.sessionId;
+    if (options.chatId) filters.chatId = options.chatId;
+    const due = this.queryTelegramReplyObligations(filters);
+    let expiredCount = 0;
+    try {
+      for (const obligation of due) {
+        const result = this.db.prepare(`
+          UPDATE telegram_reply_obligations
+          SET
+            status = 'expired',
+            expired_at_ms = ?,
+            last_transition_at_ms = ?,
+            updated_at_ms = ?
+          WHERE obligation_id = ? AND status = 'open'
+        `).run(nowMs, nowMs, nowMs, obligation.obligationId);
+        expiredCount += Number(result?.changes || 0);
+      }
+      return {
+        ok: true,
+        status: expiredCount > 0 ? 'expired' : 'none_due',
+        expiredCount,
+        dueCount: due.length,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: err.message,
+        expiredCount,
+      };
+    }
+  }
+
   prune(options = {}) {
     if (!this.isAvailable()) {
       return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
@@ -1187,4 +1646,5 @@ module.exports = {
   resolveDefaultDbPath,
   DEFAULT_MAX_ROWS,
   DEFAULT_RETENTION_MS,
+  DEFAULT_TELEGRAM_REPLY_OBLIGATION_WINDOW_MS,
 };
