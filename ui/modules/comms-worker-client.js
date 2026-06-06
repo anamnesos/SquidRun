@@ -3,7 +3,10 @@ const { fork } = require('child_process');
 const log = require('./logger');
 
 const WORKER_PATH = path.join(__dirname, 'comms-worker.js');
-const REQUEST_TIMEOUT_MS = 15000;
+const REQUEST_TIMEOUT_MS = parsePositiveInt(
+  Number.parseInt(process.env.SQUIDRUN_COMMS_WORKER_REQUEST_TIMEOUT_MS || '15000', 10),
+  15000
+);
 const STOP_TIMEOUT_MS = 2000;
 const RESTART_BASE_DELAY_MS = Number.parseInt(process.env.SQUIDRUN_COMMS_WORKER_RESTART_BASE_MS || '500', 10);
 const RESTART_MAX_DELAY_MS = Number.parseInt(process.env.SQUIDRUN_COMMS_WORKER_RESTART_MAX_MS || '10000', 10);
@@ -39,6 +42,34 @@ function rejectAllPending(err) {
   for (const [reqId] of pendingRequests) {
     const entry = clearPendingRequest(reqId);
     if (entry) entry.reject(err);
+  }
+}
+
+function quarantineWorker(worker, reason = 'unresponsive') {
+  if (!worker) return;
+
+  if (workerProcess === worker) {
+    workerProcess = null;
+  }
+  running = false;
+  cachedPort = null;
+  cachedClients = [];
+
+  const err = new Error(`comms worker quarantined (${reason})`);
+  err.code = 'COMMS_WORKER_QUARANTINED';
+  rejectAllPending(err);
+
+  worker.__squidrunQuarantined = true;
+  try {
+    if (typeof worker.kill === 'function') {
+      worker.kill();
+    }
+  } catch (killErr) {
+    log.warn('CommsWorker', `Failed to kill quarantined worker (${reason}): ${killErr.message}`);
+  }
+
+  if (desiredRunning) {
+    scheduleRestart(`worker_quarantined:${reason}`);
   }
 }
 
@@ -164,16 +195,24 @@ function ensureWorker() {
 
   worker.on('exit', (code, signal) => {
     const intentional = worker.__squidrunIntentionalStop === true;
-    if (workerProcess === worker) {
+    const quarantined = worker.__squidrunQuarantined === true;
+    const wasCurrentWorker = workerProcess === worker;
+    if (wasCurrentWorker) {
       workerProcess = null;
+      running = false;
+      cachedPort = null;
+      cachedClients = [];
+      rejectAllPending(new Error(`comms worker exited (code=${code}, signal=${signal || 'none'})`));
     }
-    running = false;
-    cachedPort = null;
-    cachedClients = [];
-    rejectAllPending(new Error(`comms worker exited (code=${code}, signal=${signal || 'none'})`));
+
     if (intentional) {
       log.info('CommsWorker', `Worker stopped (${signal || code || 'exit'})`);
       clearRestartTimer();
+    } else if (quarantined) {
+      log.warn('CommsWorker', `Worker exited after quarantine (code=${code}, signal=${signal || 'none'})`);
+      if (!workerProcess) {
+        scheduleRestart('worker_quarantined_exit');
+      }
     } else {
       log.error('CommsWorker', `Worker exited unexpectedly (code=${code}, signal=${signal || 'none'})`);
       scheduleRestart('worker_exit');
@@ -192,7 +231,10 @@ function sendRequest(action, payload = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
     const timer = setTimeout(() => {
       const entry = clearPendingRequest(reqId);
       if (!entry) return;
-      entry.reject(new Error(`comms worker timeout (${action})`));
+      const timeoutError = new Error(`comms worker timeout (${action})`);
+      timeoutError.code = 'COMMS_WORKER_TIMEOUT';
+      quarantineWorker(worker, `timeout:${action}`);
+      entry.reject(timeoutError);
     }, timeoutMs);
 
     pendingRequests.set(reqId, { resolve, reject, timer });
@@ -206,6 +248,7 @@ function sendRequest(action, payload = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
       });
     } catch (err) {
       const entry = clearPendingRequest(reqId);
+      quarantineWorker(worker, `send_failed:${action}`);
       if (entry) entry.reject(err);
     }
   });

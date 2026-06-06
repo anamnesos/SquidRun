@@ -1,10 +1,17 @@
 const { EventEmitter } = require('events');
 
+let stallNextRequest = false;
+
 function createWorkerStub() {
   const worker = new EventEmitter();
   worker.connected = true;
 
   worker.send = jest.fn((msg) => {
+    if (stallNextRequest && msg.kind === 'request' && msg.action !== 'shutdown') {
+      stallNextRequest = false;
+      return;
+    }
+
     setImmediate(() => {
       if (msg.kind === 'request' && msg.action === 'start') {
         worker.emit('message', {
@@ -80,6 +87,8 @@ describe('comms-worker-client', () => {
     jest.resetModules();
     process.env.SQUIDRUN_COMMS_WORKER_RESTART_BASE_MS = '20';
     process.env.SQUIDRUN_COMMS_WORKER_RESTART_MAX_MS = '80';
+    process.env.SQUIDRUN_COMMS_WORKER_REQUEST_TIMEOUT_MS = '20';
+    stallNextRequest = false;
 
     workers = [];
     forkMock = jest.fn(() => {
@@ -103,6 +112,7 @@ describe('comms-worker-client', () => {
     await client.resetForTests();
     delete process.env.SQUIDRUN_COMMS_WORKER_RESTART_BASE_MS;
     delete process.env.SQUIDRUN_COMMS_WORKER_RESTART_MAX_MS;
+    delete process.env.SQUIDRUN_COMMS_WORKER_REQUEST_TIMEOUT_MS;
   });
 
   test('start initializes worker and caches running state/port', async () => {
@@ -204,6 +214,22 @@ describe('comms-worker-client', () => {
     const result = await client.sendToPane('2', 'hello-after-exit');
 
     expect(result).toBe(true);
+    expect(forkMock).toHaveBeenCalledTimes(2);
+    expect(client.isRunning()).toBe(true);
+  });
+
+  test('sendToPane quarantines a timed-out connected worker before reuse', async () => {
+    await client.start({ port: 0, onMessage: jest.fn(async () => ({ ok: true })) });
+    expect(forkMock).toHaveBeenCalledTimes(1);
+
+    stallNextRequest = true;
+
+    const firstResult = await client.sendToPane('2', 'stalled-send');
+    expect(firstResult).toBe(false);
+    expect(workers[0].kill).toHaveBeenCalledTimes(1);
+
+    const secondResult = await client.sendToPane('2', 'after-quarantine');
+    expect(secondResult).toBe(true);
     expect(forkMock).toHaveBeenCalledTimes(2);
     expect(client.isRunning()).toBe(true);
   });
