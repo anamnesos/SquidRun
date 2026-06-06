@@ -792,6 +792,73 @@ function isArmIdentityProofKind(value) {
   return IDENTITY_PROOF_KINDS.has(normalizeArmIdentityProofKind(value));
 }
 
+function normalizeIdentityToken(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || null;
+}
+
+function addIdentityCandidate(target, value) {
+  const normalized = normalizeIdentityToken(value);
+  if (normalized) target.add(normalized);
+}
+
+function extractCommsProofIdentity(row = {}) {
+  const metadata = ensureObject(row.metadata);
+  const envelope = ensureObject(metadata.envelope);
+  const sender = ensureObject(metadata.sender);
+  const envelopeSender = ensureObject(envelope.sender);
+  const project = ensureObject(metadata.project);
+  const envelopeProject = ensureObject(envelope.project);
+  const rawBody = String(row.rawBody || '');
+  const roles = new Set();
+  const panes = new Set();
+  const sessions = new Set();
+
+  addIdentityCandidate(roles, row.senderRole);
+  addIdentityCandidate(roles, sender.role);
+  addIdentityCandidate(roles, envelopeSender.role);
+
+  addIdentityCandidate(panes, sender.pane_id);
+  addIdentityCandidate(panes, sender.paneId);
+  addIdentityCandidate(panes, envelopeSender.pane_id);
+  addIdentityCandidate(panes, envelopeSender.paneId);
+
+  addIdentityCandidate(sessions, row.sessionId);
+  addIdentityCandidate(sessions, metadata.session_id);
+  addIdentityCandidate(sessions, metadata.sessionId);
+  addIdentityCandidate(sessions, envelope.session_id);
+  addIdentityCandidate(sessions, envelope.sessionId);
+  addIdentityCandidate(sessions, project.session_id);
+  addIdentityCandidate(sessions, project.sessionId);
+  addIdentityCandidate(sessions, envelopeProject.session_id);
+  addIdentityCandidate(sessions, envelopeProject.sessionId);
+
+  for (const match of rawBody.matchAll(/\benv\s+role=([a-z0-9_-]+)/gi)) {
+    addIdentityCandidate(roles, match[1]);
+  }
+  for (const match of rawBody.matchAll(/\bSQUIDRUN_ROLE=([a-z0-9_-]+)/gi)) {
+    addIdentityCandidate(roles, match[1]);
+  }
+  for (const match of rawBody.matchAll(/\bpane=([a-z0-9_-]+)/gi)) {
+    addIdentityCandidate(panes, match[1]);
+  }
+  for (const match of rawBody.matchAll(/\b(?:online|awake|ready)\s+in\s+([a-z0-9_-]+)/gi)) {
+    addIdentityCandidate(panes, match[1]);
+  }
+  for (const match of rawBody.matchAll(/\bSQUIDRUN_PANE_ID=([a-z0-9_-]+)/gi)) {
+    addIdentityCandidate(panes, match[1]);
+  }
+  for (const match of rawBody.matchAll(/\bsession=([a-z0-9_:-]+)/gi)) {
+    addIdentityCandidate(sessions, match[1]);
+  }
+  for (const match of rawBody.matchAll(/\bSQUIDRUN_SESSION_SCOPE_ID=([a-z0-9_:-]+)/gi)) {
+    addIdentityCandidate(sessions, match[1]);
+  }
+
+  return { roles, panes, sessions };
+}
+
 function buildStableHashId(prefix, parts = []) {
   const digest = crypto
     .createHash('sha256')
@@ -2054,6 +2121,46 @@ class EvidenceLedgerStore {
     }
     if (!messageId && !Number.isFinite(commsRowId)) {
       rejectionReasons.push('message_or_row_required');
+    }
+    let commsProofRow = null;
+    if (messageId || Number.isFinite(commsRowId)) {
+      const byMessage = messageId
+        ? mapCommsRow(this.db.prepare('SELECT * FROM comms_journal WHERE message_id = ? LIMIT 1').get(messageId))
+        : null;
+      const byRow = Number.isFinite(commsRowId)
+        ? mapCommsRow(this.db.prepare('SELECT * FROM comms_journal WHERE row_id = ? LIMIT 1').get(commsRowId))
+        : null;
+      if (messageId && !byMessage) {
+        rejectionReasons.push('comms_message_not_found');
+      }
+      if (Number.isFinite(commsRowId) && !byRow) {
+        rejectionReasons.push('comms_row_not_found');
+      }
+      if (byMessage && byRow && byMessage.rowId !== byRow.rowId) {
+        rejectionReasons.push('comms_message_row_mismatch');
+      }
+      commsProofRow = byMessage || byRow || null;
+      if (commsProofRow) {
+        if (commsProofRow.direction !== 'outbound') {
+          rejectionReasons.push('comms_direction_not_outbound');
+        }
+        if (commsProofRow.status === 'failed') {
+          rejectionReasons.push('comms_status_failed');
+        }
+        const commsIdentity = extractCommsProofIdentity(commsProofRow);
+        const expectedRole = normalizeIdentityToken(arm.role);
+        const expectedPane = normalizeIdentityToken(arm.paneId);
+        const expectedSession = normalizeIdentityToken(registry.sessionId);
+        if (expectedRole && !commsIdentity.roles.has(expectedRole)) {
+          rejectionReasons.push('comms_role_mismatch');
+        }
+        if (expectedPane && !commsIdentity.panes.has(expectedPane)) {
+          rejectionReasons.push('comms_pane_mismatch');
+        }
+        if (expectedSession && !commsIdentity.sessions.has(expectedSession)) {
+          rejectionReasons.push('comms_session_mismatch');
+        }
+      }
     }
     if (envSessionId && envSessionId !== registry.sessionId) {
       rejectionReasons.push('env_session_mismatch');
