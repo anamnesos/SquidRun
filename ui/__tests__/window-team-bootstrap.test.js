@@ -155,4 +155,38 @@ describe('window-team-bootstrap', () => {
     });
     expect(bootstrap.shouldDeferAutoSpawn()).toBe(false);
   });
+
+  test('treats display-only Squid Room context as loaded without startup bundle and keeps auto-boot disabled', async () => {
+    const initialContext = readInitialWindowContextFromLocation(
+      '?windowKey=squid-room&windowTeam=squid-room&profileName=main&sessionScopeId=app-test%3Asquid-room&autoBootAgents=false&displayOnly=true&skipStartupBundle=true&contextReady=true'
+    );
+
+    expect(initialContext).toEqual(expect.objectContaining({
+      loaded: true,
+      windowKey: 'squid-room',
+      windowTeam: 'squid-room',
+      profileName: 'main',
+      startupBundlePath: '',
+      startupBundleReady: false,
+      autoBootAgents: false,
+      displayOnly: true,
+      skipStartupBundle: true,
+    }));
+
+    const settings = { checkAutoSpawn: jest.fn() };
+    const bootstrap = createWindowTeamBootstrap({
+      settings,
+      terminal: { spawnAllAgents: jest.fn() },
+      initialContext,
+    });
+
+    expect(bootstrap.shouldDeferAutoSpawn()).toBe(false);
+    await expect(bootstrap.maybeRunSecondaryAutoBoot({ reconnectedToExisting: false })).resolves.toEqual(
+      expect.objectContaining({
+        skipped: true,
+        reason: 'auto_boot_disabled',
+      })
+    );
+    expect(settings.checkAutoSpawn).not.toHaveBeenCalled();
+  });
 });

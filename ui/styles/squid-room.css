@@ -1,0 +1,143 @@
+/* Squid Room display window */
+
+.squid-room-surface {
+  display: none;
+}
+
+body.squid-room-workspace .terminals-section {
+  background: linear-gradient(180deg, rgba(8, 12, 20, 0.98) 0%, rgba(6, 9, 15, 0.98) 100%);
+}
+
+body.squid-room-workspace .pane-layout {
+  flex: 0 0 auto;
+  min-height: 116px;
+  padding: 8px;
+}
+
+body.squid-room-workspace .main-pane-container,
+body.squid-room-workspace .command-bar,
+body.squid-room-workspace #miraLiveReply,
+body.squid-room-workspace .workspace-hidden-pane {
+  display: none !important;
+}
+
+body.squid-room-workspace .side-panes-container {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+body.squid-room-workspace .side-panes-container .pane {
+  min-width: 0;
+  min-height: 96px;
+  filter: none;
+}
+
+body.squid-room-workspace .pane-terminal.squid-room-terminal-hidden {
+  display: none !important;
+}
+
+body.squid-room-workspace #squidRoomSurface {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+body.squid-room-workspace #squidRoomSurface:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px;
+}
+
+.squid-room-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 1px solid rgba(116, 139, 166, 0.24);
+  border-radius: 8px;
+  background: rgba(12, 18, 29, 0.78);
+}
+
+.squid-room-eyebrow {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.squid-room-title {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.squid-room-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.squid-room-app {
+  border: 1px solid rgba(116, 139, 166, 0.24);
+  border-radius: 8px;
+  background: rgba(11, 16, 26, 0.78);
+  overflow: hidden;
+}
+
+.squid-room-app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid rgba(116, 139, 166, 0.18);
+}
+
+.squid-room-app-title {
+  margin: 0;
+  color: var(--color-primary);
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.squid-room-app-status {
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.squid-room-counts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.squid-room-counts span {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid rgba(116, 139, 166, 0.24);
+  border-radius: 6px;
+  color: var(--color-text);
+  background: rgba(7, 11, 18, 0.58);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.squid-room-arm-list {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  min-height: 72px;
+}

@@ -50,6 +50,19 @@ describe('command-palette', () => {
     expect(openAppWindow).toHaveBeenCalledWith('live-task-audit-sidecar');
   });
 
+  test('includes the Squid Room command and routes it to the explicit window opener', () => {
+    const openAppWindow = jest.fn();
+    const commands = getCommandPaletteCommands({ openAppWindow });
+    const squidRoomCommand = commands.find((entry) => entry.id === 'open-squid-room');
+
+    expect(squidRoomCommand).toEqual(expect.objectContaining({
+      label: 'Open Squid Room',
+      category: 'Windows',
+    }));
+    squidRoomCommand.action();
+    expect(openAppWindow).toHaveBeenCalledWith('squid-room');
+  });
+
   test('labels pane 1 navigation with Mira without changing the pane target', () => {
     const terminal = require('../modules/terminal');
     const commands = getCommandPaletteCommands();

@@ -517,6 +517,19 @@ function toNonEmptyString(value) {
   return normalized || null;
 }
 
+function toBooleanFlag(value, fallback = false) {
+  if (value === true || value === false) return value;
+  if (value === 1 || value === 0) return Boolean(value);
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+function isSquidRoomWindowKey(value) {
+  return String(value || '').trim().toLowerCase() === 'squid-room';
+}
+
 function isTelegramAgentOpsOrCommandText(value) {
   const text = toNonEmptyString(value);
   if (!text) return false;
@@ -4698,6 +4711,9 @@ class SquidRunApp {
   async createWindow() {
     const rawOptions = arguments[0] && typeof arguments[0] === 'object' ? arguments[0] : {};
     const windowKey = String(rawOptions.windowKey || 'main').trim() || 'main';
+    const displayOnlyWindow = toBooleanFlag(rawOptions.displayOnly, false);
+    const skipStartupBundle = displayOnlyWindow || toBooleanFlag(rawOptions.skipStartupBundle, false);
+    const windowTeam = String(rawOptions.windowTeam || windowKey).trim() || windowKey;
     const windowProfileName = toNonEmptyString(rawOptions.profileName)
       || (isTrustQuoteWorkspace(windowKey) ? TRUSTQUOTE_WORKSPACE_KEY : this.activeProfileName);
     const lifecycleRoot = rawOptions.lifecycleRoot === true
@@ -4713,7 +4729,7 @@ class SquidRunApp {
       || (isPrimaryWindow
         ? (this.activeProfileName === 'scoped' ? 'SquidRun - Scoped' : 'SquidRun')
         : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`);
-    const shouldAutoBootWindowAgents = rawOptions.autoBootAgents === false
+    const shouldAutoBootWindowAgents = displayOnlyWindow || toBooleanFlag(rawOptions.autoBootAgents, true) === false
       ? false
       : (this.activeProfileName !== 'main'
         || windowKey !== 'main'
@@ -4721,7 +4737,9 @@ class SquidRunApp {
     const standaloneWindow = this.isStandaloneProfileWindow(windowKey);
     const lifecycleMode = this.getWindowLifecycleMode(windowKey);
     let initialStartupBundle = null;
-    if (isTrustQuoteWorkspace(windowKey)) {
+    if (skipStartupBundle) {
+      initialStartupBundle = null;
+    } else if (isTrustQuoteWorkspace(windowKey)) {
       initialStartupBundle = this.buildTrustQuoteWorkspaceStartupBundle();
     } else if (this.activeProfileName !== 'scoped' && windowKey !== 'scoped' && (this.activeProfileName !== 'main' || windowKey !== 'main')) {
       try {
@@ -4730,10 +4748,12 @@ class SquidRunApp {
         log.warn('Window', `Failed to prebuild ${windowKey} startup bundle before renderer load: ${err.message}`);
       }
     }
-    const startupBundlePath = initialStartupBundle?.bundlePath || this.getProfileStartupBundlePath(windowKey);
+    const startupBundlePath = skipStartupBundle
+      ? ''
+      : (initialStartupBundle?.bundlePath || this.getProfileStartupBundlePath(windowKey));
     const query = {
       windowKey,
-      windowTeam: String(rawOptions.windowTeam || windowKey).trim() || windowKey,
+      windowTeam,
       profileName: windowProfileName,
       profileLabel: windowProfileName === 'scoped' ? 'Scoped' : this.formatWindowKeyLabel(windowProfileName),
       roleLayout: 'standard',
@@ -4742,6 +4762,8 @@ class SquidRunApp {
       startupSourceFiles: JSON.stringify(initialStartupBundle?.sourcePaths || []),
       startupBundleReady: String(Boolean(initialStartupBundle?.bundlePath && initialStartupBundle?.text)),
       autoBootAgents: String(shouldAutoBootWindowAgents),
+      displayOnly: String(displayOnlyWindow),
+      skipStartupBundle: String(skipStartupBundle),
       standaloneWindow: String(standaloneWindow),
       lifecycleMode,
       contextReady: 'true',
@@ -4773,16 +4795,22 @@ class SquidRunApp {
       this.initModules();
       this.setupWindowListeners(windowRef, {
         windowKey,
+        windowTeam,
         lifecycleRoot,
         profileName: windowProfileName,
         autoBootAgents: shouldAutoBootWindowAgents,
+        displayOnly: displayOnlyWindow,
+        skipStartupBundle,
       });
     } else {
       this.setupWindowListeners(windowRef, {
         windowKey,
+        windowTeam,
         lifecycleRoot,
         profileName: windowProfileName,
         autoBootAgents: shouldAutoBootWindowAgents,
+        displayOnly: displayOnlyWindow,
+        skipStartupBundle,
       });
     }
 
@@ -5123,6 +5151,7 @@ class SquidRunApp {
     const windowTitle = windowKey === 'main'
       ? 'SquidRun'
       : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`;
+    const isSquidRoomWindow = isSquidRoomWindowKey(windowKey);
     let trustQuoteReadiness = null;
     if (isTrustQuoteWorkspace(windowKey)) {
       trustQuoteReadiness = await this.prepareTrustQuoteWorkspaceOpen();
@@ -5138,10 +5167,14 @@ class SquidRunApp {
     }
     await this.createWindow({
       windowKey,
-      windowTeam: windowKey,
+      windowTeam: isSquidRoomWindow ? 'squid-room' : windowKey,
       title: windowTitle,
-      profileName: isTrustQuoteWorkspace(windowKey) ? TRUSTQUOTE_WORKSPACE_KEY : undefined,
-      autoBootAgents: isTrustQuoteWorkspace(windowKey) ? false : undefined,
+      profileName: isTrustQuoteWorkspace(windowKey)
+        ? TRUSTQUOTE_WORKSPACE_KEY
+        : (isSquidRoomWindow ? 'main' : undefined),
+      autoBootAgents: isTrustQuoteWorkspace(windowKey) || isSquidRoomWindow ? false : undefined,
+      displayOnly: isSquidRoomWindow ? true : undefined,
+      skipStartupBundle: isSquidRoomWindow ? true : undefined,
       lifecycleRoot: options.lifecycleRoot === true,
     });
     const focused = this.focusAppWindow(windowKey);
@@ -6362,18 +6395,21 @@ class SquidRunApp {
 
   setupWindowListeners(window = this.ctx.mainWindow, options = {}) {
     const windowKey = String(options.windowKey || 'main').trim() || 'main';
+    const windowTeam = String(options.windowTeam || windowKey).trim() || windowKey;
+    const displayOnlyWindow = toBooleanFlag(options.displayOnly, false);
+    const skipStartupBundle = displayOnlyWindow || toBooleanFlag(options.skipStartupBundle, false);
     const windowProfileName = toNonEmptyString(options.profileName)
       || (isTrustQuoteWorkspace(windowKey) ? TRUSTQUOTE_WORKSPACE_KEY : this.activeProfileName);
     const isPrimaryWindow = windowKey === 'main';
     const lifecycleRoot = options.lifecycleRoot === true;
-    const shouldAutoBootWindowAgents = options.autoBootAgents === false
+    const shouldAutoBootWindowAgents = displayOnlyWindow || toBooleanFlag(options.autoBootAgents, true) === false
       ? false
       : (this.activeProfileName !== 'main'
         || windowKey !== 'main'
         || this.isStandaloneProfileWindow(windowKey));
     const standaloneWindow = this.isStandaloneProfileWindow(windowKey);
     const lifecycleMode = this.getWindowLifecycleMode(windowKey);
-    const startupBundlePath = this.getProfileStartupBundlePath(windowKey);
+    const startupBundlePath = skipStartupBundle ? '' : this.getProfileStartupBundlePath(windowKey);
 
     if (!window) return;
 
@@ -6423,7 +6459,9 @@ class SquidRunApp {
         await this.initPostLoad();
       }
       let startupBundle = null;
-      if (isTrustQuoteWorkspace(windowKey)) {
+      if (skipStartupBundle) {
+        startupBundle = null;
+      } else if (isTrustQuoteWorkspace(windowKey)) {
         startupBundle = this.buildTrustQuoteWorkspaceStartupBundle();
       } else if (this.activeProfileName === 'scoped' || windowKey === 'scoped') {
         try {
@@ -6441,15 +6479,17 @@ class SquidRunApp {
       try {
         window.webContents.send('window-context', {
           windowKey,
-          windowTeam: this.activeProfileName === 'scoped' && windowKey === 'main' ? 'scoped' : windowKey,
+          windowTeam: this.activeProfileName === 'scoped' && windowKey === 'main' ? 'scoped' : windowTeam,
           profileName: windowProfileName,
           profileLabel: windowProfileName === 'scoped' ? 'Scoped' : this.formatWindowKeyLabel(windowProfileName),
           roleLayout: 'standard',
           sessionScopeId: this.getWindowSessionScopeId(windowKey),
-          startupBundlePath: startupBundle?.bundlePath || startupBundlePath || null,
+          startupBundlePath: skipStartupBundle ? null : (startupBundle?.bundlePath || startupBundlePath || null),
           startupSourceFiles: startupBundle?.sourcePaths || [],
           startupBundleReady: Boolean(startupBundle?.bundlePath && startupBundle?.text),
           autoBootAgents: shouldAutoBootWindowAgents,
+          displayOnly: displayOnlyWindow,
+          skipStartupBundle,
           standaloneWindow,
           lifecycleMode,
         });

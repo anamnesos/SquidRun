@@ -163,6 +163,8 @@ function makeDocument() {
     ]),
     new FakeElement('div', { className: 'main-pane-container' }, [makePane('1', 'Mira')]),
     new FakeElement('div', { className: 'side-panes-container' }, [makePane('2', 'Builder'), makePane('3', 'Oracle')]),
+    new FakeElement('form', { className: 'command-bar' }),
+    new FakeElement('section', { className: 'squid-room-surface', id: 'squidRoomSurface' }),
   ]));
 }
 
@@ -195,5 +197,29 @@ describe('workspace pane shell', () => {
     expect(doc.getElementById('terminal-2')).toBeTruthy();
     expect(doc.getElementById('terminal-3')).toBeTruthy();
     expect(doc.getElementById('terminal-trustquote-builder')).toBeFalsy();
+  });
+
+  test('Squid Room hides Architect, preserves Builder and Oracle, and does not retarget to TrustQuote panes', () => {
+    const doc = makeDocument();
+    const terminal = { setActivePaneIds: jest.fn() };
+    doc.getElementById('squidRoomSurface').hidden = true;
+
+    const result = configureWorkspacePaneShell({ windowKey: 'squid-room' }, terminal, doc);
+
+    expect(result).toEqual(expect.objectContaining({
+      workspaceKey: 'squid-room',
+      paneIds: ['2', '3'],
+      displayOnly: true,
+    }));
+    expect(doc.body.classList.contains('squid-room-workspace')).toBe(true);
+    expect(doc.body.classList.contains('trustquote-workspace')).toBe(false);
+    expect(terminal.setActivePaneIds).toHaveBeenCalledWith(['2', '3']);
+    expect(doc.querySelector('.pane[data-pane-id="1"]').hidden).toBe(true);
+    expect(doc.querySelector('.pane[data-pane-id="2"]').hidden).toBe(false);
+    expect(doc.querySelector('.pane[data-pane-id="3"]').hidden).toBe(false);
+    expect(doc.getElementById('terminal-2').hidden).toBe(true);
+    expect(doc.getElementById('terminal-3').classList.contains('squid-room-terminal-hidden')).toBe(true);
+    expect(doc.getElementById('terminal-trustquote-builder')).toBeFalsy();
+    expect(doc.getElementById('squidRoomSurface').hidden).toBe(false);
   });
 });

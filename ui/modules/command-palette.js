@@ -13,6 +13,7 @@ function getCommandPaletteCommands(options = {}) {
     { id: 'open-scoped-window', label: 'Open Scoped Window', icon: '🪟', category: 'Windows', action: () => options.openAppWindow?.('scoped') },
     { id: 'open-mira-lab', label: 'Open Mira Lab', icon: '🪟', category: 'Windows', action: () => options.openAppWindow?.('mira-lab') },
     { id: 'open-live-task-audit-sidecar', label: 'Open Task Audit', icon: '🧭', category: 'Windows', action: () => options.openAppWindow?.('live-task-audit-sidecar') },
+    { id: 'open-squid-room', label: 'Open Squid Room', icon: '▣', category: 'Windows', action: () => options.openAppWindow?.('squid-room') },
     // Navigation
     { id: 'focus-1', label: 'Focus Mira (Pane 1)', icon: '1️⃣', category: 'Navigate', shortcut: 'Alt+1', action: () => terminal.focusPane('1') },
     { id: 'focus-2', label: 'Focus Builder (Pane 2)', icon: '2️⃣', category: 'Navigate', shortcut: 'Alt+2', action: () => terminal.focusPane('2') },
