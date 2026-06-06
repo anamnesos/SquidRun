@@ -134,6 +134,60 @@ function readJsonFile(filePath) {
   }
 }
 
+function readJsonFileWithStatus(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return { ok: false, status: 'missing', filePath };
+  }
+  try {
+    return {
+      ok: true,
+      status: 'ok',
+      filePath,
+      value: JSON.parse(fs.readFileSync(filePath, 'utf8')),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 'broken',
+      filePath,
+      error: err,
+      brokenState: buildBrokenJsonState('work_item_json', filePath, err),
+    };
+  }
+}
+
+function buildBrokenJsonState(store, filePath, err) {
+  return {
+    status: 'broken',
+    code: 'BROKEN_JSON_STATE',
+    reason: `${store}_parse_error`,
+    store,
+    filePath: normalizePathForMetadata(filePath),
+    message: err?.message || String(err || 'json parse error'),
+  };
+}
+
+function makeBrokenBackupPath(filePath) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return path.join(
+    path.dirname(filePath),
+    `${path.basename(filePath)}.broken-${stamp}-${process.pid}.json`
+  );
+}
+
+function preserveBrokenJsonFile(filePath, store) {
+  const parsed = readJsonFileWithStatus(filePath);
+  if (parsed.status !== 'broken') return null;
+  const backupPath = makeBrokenBackupPath(filePath);
+  fs.copyFileSync(filePath, backupPath);
+  return {
+    ...parsed.brokenState,
+    backupPath: normalizePathForMetadata(backupPath),
+    store,
+    reason: `${store}_parse_error`,
+  };
+}
+
 function resolveWorkItemRoot(options = {}) {
   if (toOptionalString(options.workItemRoot, null)) {
     return path.resolve(options.workItemRoot);
@@ -382,15 +436,28 @@ function sameArtifactRef(left = {}, right = {}) {
 
 function readIndex(options = {}) {
   const indexPath = resolveIndexPath(options);
-  const parsed = readJsonFile(indexPath);
-  if (!parsed || typeof parsed !== 'object') {
+  const read = readJsonFileWithStatus(indexPath);
+  if (read.status === 'missing') {
     return {
       schema: WORK_ITEM_INDEX_SCHEMA,
       version: 1,
       updatedAt: null,
       activeWorkItemId: null,
       items: [],
+      status: 'ok',
+      staleMarkers: [],
     };
+  }
+  if (read.status === 'broken') {
+    return rebuildIndexFromItemFiles(options, buildBrokenJsonState('work_item_index', indexPath, read.error));
+  }
+  const parsed = read.value;
+  if (!parsed || typeof parsed !== 'object') {
+    return rebuildIndexFromItemFiles(options, buildBrokenJsonState(
+      'work_item_index',
+      indexPath,
+      new Error('index payload is not an object')
+    ));
   }
   return {
     schema: WORK_ITEM_INDEX_SCHEMA,
@@ -398,6 +465,52 @@ function readIndex(options = {}) {
     updatedAt: toOptionalString(parsed.updatedAt, null),
     activeWorkItemId: normalizeWorkItemId(parsed.activeWorkItemId),
     items: Array.isArray(parsed.items) ? parsed.items : [],
+    status: 'ok',
+    staleMarkers: [],
+  };
+}
+
+function buildIndexEntryForItem(item, options = {}) {
+  return {
+    id: item.id,
+    state: item.state,
+    sessionId: item.session?.id || null,
+    profile: item.profile || null,
+    windowKey: item.window?.key || null,
+    objective: item.objective,
+    updatedAt: item.updatedAt,
+    path: normalizePathForMetadata(resolveItemPath(item.id, options)),
+  };
+}
+
+function rebuildIndexFromItemFiles(options = {}, brokenState = null) {
+  const workItemRoot = resolveWorkItemRoot(options);
+  const staleMarkers = ['work_item_index_rebuilt_from_item_files'];
+  if (brokenState) staleMarkers.unshift(brokenState.reason || 'work_item_index_parse_error');
+  const entries = [];
+  if (fs.existsSync(workItemRoot)) {
+    const names = fs.readdirSync(workItemRoot)
+      .filter((name) => name.endsWith('.json') && name !== DEFAULT_INDEX_FILE)
+      .sort();
+    for (const name of names) {
+      const itemPath = path.join(workItemRoot, name);
+      const read = readJsonFileWithStatus(itemPath);
+      if (!read.ok || !read.value || typeof read.value !== 'object') continue;
+      const item = normalizeWorkItem(read.value, options);
+      entries.push(buildIndexEntryForItem(item, options));
+    }
+  }
+  entries.sort((left, right) => toTimestampMs(right.updatedAt) - toTimestampMs(left.updatedAt));
+  const activeEntry = entries.find((candidate) => ACTIVE_STATES.has(candidate.state));
+  return {
+    schema: WORK_ITEM_INDEX_SCHEMA,
+    version: 1,
+    updatedAt: null,
+    activeWorkItemId: activeEntry ? activeEntry.id : null,
+    items: entries,
+    status: brokenState ? 'rebuilt_from_broken_index' : 'rebuilt',
+    brokenState,
+    staleMarkers,
   };
 }
 
@@ -409,22 +522,18 @@ function writeIndex(index, options = {}) {
     activeWorkItemId: normalizeWorkItemId(index.activeWorkItemId),
     items: Array.isArray(index.items) ? index.items : [],
   };
-  writeJsonAtomic(resolveIndexPath(options), normalized);
+  const indexPath = resolveIndexPath(options);
+  const preservedBrokenState = preserveBrokenJsonFile(indexPath, 'work_item_index');
+  writeJsonAtomic(indexPath, normalized);
+  if (preservedBrokenState) {
+    normalized.preservedBrokenState = preservedBrokenState;
+  }
   return normalized;
 }
 
 function updateIndexForItem(item, options = {}) {
   const index = readIndex(options);
-  const entry = {
-    id: item.id,
-    state: item.state,
-    sessionId: item.session?.id || null,
-    profile: item.profile || null,
-    windowKey: item.window?.key || null,
-    objective: item.objective,
-    updatedAt: item.updatedAt,
-    path: normalizePathForMetadata(resolveItemPath(item.id, options)),
-  };
+  const entry = buildIndexEntryForItem(item, options);
   index.items = [
     ...index.items.filter((candidate) => candidate.id !== item.id),
     entry,
@@ -477,6 +586,9 @@ function listWorkItems(options = {}) {
     workItemRoot: normalizePathForMetadata(resolveWorkItemRoot(options)),
     indexPath: normalizePathForMetadata(resolveIndexPath(options)),
     activeWorkItemId: index.activeWorkItemId || null,
+    indexStatus: index.status || 'ok',
+    brokenState: index.brokenState || null,
+    staleMarkers: Array.isArray(index.staleMarkers) ? index.staleMarkers : [],
     items,
   };
 }
@@ -791,7 +903,8 @@ function normalizeQueueActiveTask(agent, task = {}) {
 
 function readQueueActiveTasks(options = {}) {
   const queuePath = resolveTaskQueuePath(options);
-  const parsed = readJsonFile(queuePath);
+  const read = readJsonFileWithStatus(queuePath);
+  const parsed = read.ok ? read.value : null;
   const agents = parsed?.agents && typeof parsed.agents === 'object' ? parsed.agents : {};
   const active = [];
   for (const agent of ['architect', 'builder', 'oracle']) {
@@ -800,6 +913,9 @@ function readQueueActiveTasks(options = {}) {
   }
   return {
     queuePath: normalizePathForMetadata(queuePath),
+    brokenState: read.status === 'broken'
+      ? buildBrokenJsonState('agent_task_queue', queuePath, read.error)
+      : null,
     active,
   };
 }
@@ -886,8 +1002,15 @@ function buildActiveWorkReconciliation(options = {}) {
   const queue = readQueueActiveTasks(options);
   const currentLane = readCurrentLaneActive(options);
   const conflictMarkers = [];
-  const staleMarkers = [];
+  const staleMarkers = Array.isArray(listed.staleMarkers) ? [...listed.staleMarkers] : [];
   const conflictingStores = [];
+
+  if (listed.brokenState) {
+    staleMarkers.push(`typed_work_item_index_broken:${listed.brokenState.reason || 'unknown'}`);
+  }
+  if (queue.brokenState) {
+    staleMarkers.push(`agent_task_queue_broken:${queue.brokenState.reason || 'unknown'}`);
+  }
 
   if (activeWorkItem) {
     for (const task of queue.active) {

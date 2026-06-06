@@ -380,6 +380,111 @@ describe('work-item-ledger', () => {
     }));
   });
 
+  test('listWorkItems rebuilds from item files and surfaces broken index state', () => {
+    ledger.openWorkItem({
+      id: 'wi-broken-index-active',
+      session: 'app-session-503',
+      profile: 'main',
+      window: 'main',
+      objective: 'Do not hide active typed work',
+      ownerRoles: ['builder'],
+      requiredProof: ['builder_code'],
+    }, {
+      workItemRoot,
+      now: '2026-05-30T11:00:00.000Z',
+    });
+    fs.writeFileSync(path.join(workItemRoot, 'index.json'), '{"items": [');
+
+    const listed = ledger.listWorkItems({ workItemRoot });
+
+    expect(listed).toEqual(expect.objectContaining({
+      ok: true,
+      activeWorkItemId: 'wi-broken-index-active',
+      indexStatus: 'rebuilt_from_broken_index',
+      brokenState: expect.objectContaining({
+        code: 'BROKEN_JSON_STATE',
+        reason: 'work_item_index_parse_error',
+      }),
+      staleMarkers: expect.arrayContaining([
+        'work_item_index_parse_error',
+        'work_item_index_rebuilt_from_item_files',
+      ]),
+      items: [
+        expect.objectContaining({
+          id: 'wi-broken-index-active',
+          state: 'active',
+          objective: 'Do not hide active typed work',
+        }),
+      ],
+    }));
+  });
+
+  test('status carries broken index and broken queue markers instead of silently emptying stores', () => {
+    const queuePath = path.join(tempRoot, 'runtime', 'agent-task-queue.json');
+    ledger.openWorkItem({
+      id: 'wi-broken-store-active',
+      session: 'app-session-503',
+      profile: 'main',
+      window: 'main',
+      objective: 'Surface broken store markers',
+      ownerRoles: ['builder'],
+      requiredProof: ['builder_code'],
+    }, {
+      workItemRoot,
+      now: '2026-05-30T11:00:00.000Z',
+    });
+    fs.writeFileSync(path.join(workItemRoot, 'index.json'), '{"items": [');
+    fs.mkdirSync(path.dirname(queuePath), { recursive: true });
+    fs.writeFileSync(queuePath, '{"agents": { "builder": ');
+
+    const status = ledger.statusWorkItems({}, {
+      workItemRoot,
+      queuePath,
+      sessionId: 'app-session-503',
+      profileName: 'main',
+      windowKey: 'main',
+      now: '2026-05-30T11:01:00.000Z',
+    });
+
+    expect(status.activeWorkItemId).toBe('wi-broken-store-active');
+    expect(status.activeWorkReconciliation).toEqual(expect.objectContaining({
+      status: 'STALE',
+      activeWorkItemId: 'wi-broken-store-active',
+      staleMarkers: expect.arrayContaining([
+        'work_item_index_parse_error',
+        'work_item_index_rebuilt_from_item_files',
+        'typed_work_item_index_broken:work_item_index_parse_error',
+        'agent_task_queue_broken:agent_task_queue_parse_error',
+      ]),
+    }));
+  });
+
+  test('openWorkItem preserves a malformed index before replacing it', () => {
+    fs.mkdirSync(workItemRoot, { recursive: true });
+    const indexPath = path.join(workItemRoot, 'index.json');
+    fs.writeFileSync(indexPath, '{"items": [');
+
+    const opened = ledger.openWorkItem({
+      id: 'wi-preserve-broken-index',
+      session: 'app-session-503',
+      profile: 'main',
+      window: 'main',
+      objective: 'Preserve broken index before rewrite',
+      ownerRoles: ['builder'],
+    }, {
+      workItemRoot,
+      now: '2026-05-30T11:00:00.000Z',
+    });
+
+    expect(opened.index.preservedBrokenState).toEqual(expect.objectContaining({
+      store: 'work_item_index',
+      reason: 'work_item_index_parse_error',
+      backupPath: expect.stringContaining('index.json.broken-'),
+    }));
+    expect(fs.readFileSync(opened.index.preservedBrokenState.backupPath, 'utf8')).toBe('{"items": [');
+    expect(JSON.parse(fs.readFileSync(indexPath, 'utf8')).activeWorkItemId).toBe('wi-preserve-broken-index');
+  });
+
   test('status exposes typed authority plus inspectable queue and current-lane divergence', () => {
     const queuePath = path.join(tempRoot, 'runtime', 'agent-task-queue.json');
     const currentLanePath = path.join(tempRoot, 'handoffs', 'current-lane.json');

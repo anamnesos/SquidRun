@@ -29,6 +29,53 @@ function ensureDirForFile(targetPath) {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 }
 
+function createBrokenJsonError(filePath, store, err) {
+  const error = new Error(`${store}_json_parse_error: ${filePath}: ${err.message}`);
+  error.code = 'BROKEN_JSON_STATE';
+  error.reason = `${store}_json_parse_error`;
+  error.store = store;
+  error.filePath = filePath;
+  error.cause = err;
+  return error;
+}
+
+function toBrokenState(error) {
+  return {
+    status: 'broken',
+    reason: error.reason || 'json_parse_error',
+    code: error.code || 'BROKEN_JSON_STATE',
+    store: error.store || 'json_state',
+    filePath: error.filePath || null,
+    message: error.message,
+  };
+}
+
+function makeBrokenBackupPath(filePath) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return path.join(
+    path.dirname(filePath),
+    `${path.basename(filePath)}.broken-${stamp}-${process.pid}.json`
+  );
+}
+
+function preserveBrokenJsonFile(filePath, store) {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  try {
+    JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return null;
+  } catch (err) {
+    const backupPath = makeBrokenBackupPath(filePath);
+    fs.copyFileSync(filePath, backupPath);
+    return {
+      store,
+      sourcePath: filePath,
+      backupPath,
+      reason: `${store}_json_parse_error`,
+      error: err.message,
+    };
+  }
+}
+
 function trimText(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -198,23 +245,43 @@ function normalizeQueueState(raw) {
   return normalized;
 }
 
-function readQueue(queuePath = getQueuePath()) {
+function readQueue(queuePath = getQueuePath(), options = {}) {
   const fallback = buildDefaultQueueState();
   if (!queuePath || !fs.existsSync(queuePath)) {
-    return { queuePath, state: fallback };
+    return { ok: true, status: 'ok', queuePath, state: fallback };
   }
   try {
     const parsed = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
     return {
+      ok: true,
+      status: 'ok',
       queuePath,
       state: normalizeQueueState(parsed),
     };
-  } catch (_) {
-    return {
-      queuePath,
-      state: fallback,
-    };
+  } catch (err) {
+    const error = createBrokenJsonError(queuePath, 'agent_task_queue', err);
+    if (options.onBroken === 'return') {
+      return {
+        ok: false,
+        status: 'broken',
+        queuePath,
+        state: fallback,
+        brokenState: toBrokenState(error),
+      };
+    }
+    throw error;
   }
+}
+
+function writeJsonAtomic(filePath, payload) {
+  ensureDirForFile(filePath);
+  const dir = path.dirname(filePath);
+  const tempPath = path.join(
+    dir,
+    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
+  );
+  fs.writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  fs.renameSync(tempPath, filePath);
 }
 
 function writeQueue(state, queuePath = getQueuePath()) {
@@ -223,8 +290,14 @@ function writeQueue(state, queuePath = getQueuePath()) {
   if (!queuePath) {
     throw new Error('queue_path_unavailable');
   }
-  ensureDirForFile(queuePath);
-  fs.writeFileSync(queuePath, JSON.stringify(normalized, null, 2));
+  const preservedBrokenState = preserveBrokenJsonFile(queuePath, 'agent_task_queue');
+  writeJsonAtomic(queuePath, normalized);
+  if (preservedBrokenState) {
+    return {
+      ...normalized,
+      preservedBrokenState,
+    };
+  }
   return normalized;
 }
 
@@ -932,6 +1005,7 @@ module.exports = {
   VALID_RISK_CLASSES,
   getQueuePath,
   buildDefaultQueueState,
+  createBrokenJsonError,
   normalizeQueueState,
   normalizeTask,
   inferRiskClass,
@@ -940,6 +1014,7 @@ module.exports = {
   dispatchWakeCandidates,
   readQueue,
   writeQueue,
+  toBrokenState,
   enqueueTask,
   listQueue,
   activateTask,
