@@ -3129,16 +3129,22 @@ class EvidenceLedgerStore {
       ...buildNoSideEffectResult('executor_disabled', nowMs),
       executorPresent: typeof options.executor === 'function' || typeof options.dispatcher === 'function',
     };
+    const keepPendingApprovalVisible = request.approvalRequired
+      && !request.approvedBy
+      && !request.approvalRef
+      && request.status === 'approval_required';
+    const nextStatus = keepPendingApprovalVisible ? request.status : 'dispatch_blocked';
 
     try {
       this.db.prepare(`
         UPDATE arm_apply_requests
         SET
-          status = 'dispatch_blocked',
+          status = ?,
           side_effect_result_json = ?,
           updated_at_ms = ?
         WHERE request_id = ?
       `).run(
+        nextStatus,
         JSON.stringify(sideEffectResult),
         nowMs,
         requestId
