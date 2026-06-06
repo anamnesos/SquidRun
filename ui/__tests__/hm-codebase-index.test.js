@@ -50,5 +50,7 @@ describe('hm-codebase-index', () => {
     expect(markdown).not.toContain('| Path | Kind | Status | Bytes |');
     expect(markdown).toContain('| `AGENTS.md` | doc | 100 |');
     expect(markdown).toContain('| `ui/scripts/hm-codebase-index.js` | script | 200 |');
+    expect(markdown.endsWith('\n')).toBe(true);
+    expect(markdown.endsWith('\n\n')).toBe(false);
   });
 });

@@ -85,7 +85,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/mira-north-star-roadmap.md` | doc | 8530 |
 | `docs/mira-pc-embodiment-permission-v0.md` | doc | 10045 |
 | `docs/mira-presence-runtime-acceptance-v0.md` | doc | 16200 |
-| `docs/mira-system-map.md` | doc | 121674 |
+| `docs/mira-system-map.md` | doc | 124924 |
 | `docs/mira-voice-audio-intake-v0.md` | doc | 9440 |
 | `docs/models/base-instructions.md` | doc | 2070 |
 | `docs/models/claude-notes.md` | doc | 1161 |
@@ -395,7 +395,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/hm-app.test.js` | test | 766 |
 | `ui/__tests__/hm-bg.test.js` | test | 1886 |
 | `ui/__tests__/hm-claim-cli-e2e.test.js` | test | 5315 |
-| `ui/__tests__/hm-codebase-index.test.js` | test | 2292 |
+| `ui/__tests__/hm-codebase-index.test.js` | test | 2391 |
 | `ui/__tests__/hm-comms-liveness-guard.test.js` | test | 19224 |
 | `ui/__tests__/hm-experiment.test.js` | test | 2841 |
 | `ui/__tests__/hm-github.test.js` | test | 2922 |
@@ -670,7 +670,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/smart-routing.test.js` | test | 10637 |
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
-| `ui/__tests__/squidrun-app.test.js` | test | 330303 |
+| `ui/__tests__/squidrun-app.test.js` | test | 333740 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 1987 |
 | `ui/__tests__/startup-transcript-context.test.js` | test | 10069 |
@@ -886,7 +886,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/pane-host-window-manager.js` | source | 12289 |
 | `ui/modules/main/pty-output-filter.js` | source | 7793 |
 | `ui/modules/main/settings-manager.js` | source | 21516 |
-| `ui/modules/main/squidrun-app.js` | source | 485982 |
+| `ui/modules/main/squidrun-app.js` | source | 494272 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 1884 |
 | `ui/modules/main/telegram-reply-obligations.js` | source | 13086 |
 | `ui/modules/main/usage-manager.js` | source | 2909 |
@@ -1182,7 +1182,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-capabilities.js` | script | 15107 |
 | `ui/scripts/hm-ci-check.js` | script | 2243 |
 | `ui/scripts/hm-claim.js` | script | 20929 |
-| `ui/scripts/hm-codebase-index.js` | script | 11983 |
+| `ui/scripts/hm-codebase-index.js` | script | 12003 |
 | `ui/scripts/hm-codex-attention.js` | script | 6889 |
 | `ui/scripts/hm-codex-capability-status.js` | script | 3798 |
 | `ui/scripts/hm-codex-desktop-transport.js` | script | 3580 |
