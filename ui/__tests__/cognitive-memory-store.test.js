@@ -72,6 +72,40 @@ describe('cognitive-memory store and extraction', () => {
     }));
   });
 
+  test('mirrors pending PRs through a temp file before rename', () => {
+    store.stageMemoryPRs([
+      {
+        category: 'fact',
+        statement: 'The pending-pr mirror should be atomic.',
+        confidence_score: 0.81,
+      },
+    ]);
+
+    const writeSpy = jest.spyOn(fs, 'writeFileSync');
+    const renameSpy = jest.spyOn(fs, 'renameSync');
+    try {
+      const payload = store.syncPendingPrFile();
+
+      expect(payload.items).toHaveLength(1);
+      const renameCall = renameSpy.mock.calls.find(([, targetPath]) => targetPath === pendingPrPath);
+      expect(renameCall).toBeTruthy();
+      const [tempPath] = renameCall;
+      expect(path.dirname(tempPath)).toBe(path.dirname(pendingPrPath));
+      expect(path.basename(tempPath)).toMatch(/^\.pending-pr\.json\.\d+\.\d+\.[a-f0-9]+\.tmp$/);
+      expect(writeSpy).toHaveBeenCalledWith(tempPath, expect.stringContaining('The pending-pr mirror should be atomic.'), 'utf8');
+      expect(fs.existsSync(tempPath)).toBe(false);
+
+      const mirrored = JSON.parse(fs.readFileSync(pendingPrPath, 'utf8'));
+      expect(mirrored.items[0]).toEqual(expect.objectContaining({
+        statement: 'The pending-pr mirror should be atomic.',
+        confidence_score: 0.81,
+      }));
+    } finally {
+      writeSpy.mockRestore();
+      renameSpy.mockRestore();
+    }
+  });
+
   test('defaults cognitive memory DB to the profile-scoped runtime path', () => {
     const mainPath = resolveDefaultCognitiveMemoryDbPath({
       projectRoot: tempDir,

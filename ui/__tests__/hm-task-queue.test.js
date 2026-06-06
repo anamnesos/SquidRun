@@ -181,6 +181,38 @@ describe('hm-task-queue', () => {
     }));
   });
 
+  it('writes queue state through a unique temp file before rename', () => {
+    const queuePath = queue.getQueuePath();
+    const writeSpy = jest.spyOn(fs, 'writeFileSync');
+    const renameSpy = jest.spyOn(fs, 'renameSync');
+    try {
+      queue.writeQueue({
+        version: 2,
+        agents: {
+          builder: {
+            pending: [
+              { taskId: 'atomic-queue-task', message: 'Atomic queue write' },
+            ],
+          },
+        },
+      }, queuePath);
+
+      const renameCall = renameSpy.mock.calls.find(([, targetPath]) => targetPath === queuePath);
+      expect(renameCall).toBeTruthy();
+      const [tempPath] = renameCall;
+      expect(path.dirname(tempPath)).toBe(path.dirname(queuePath));
+      expect(path.basename(tempPath)).toMatch(/^\.agent-task-queue\.json\.\d+\.\d+\.[a-f0-9]+\.tmp$/);
+      expect(writeSpy).toHaveBeenCalledWith(tempPath, expect.stringContaining('atomic-queue-task'), 'utf8');
+      expect(fs.existsSync(tempPath)).toBe(false);
+      expect(queue.readQueue(queuePath).state.agents.builder.pending[0]).toEqual(expect.objectContaining({
+        taskId: 'atomic-queue-task',
+      }));
+    } finally {
+      writeSpy.mockRestore();
+      renameSpy.mockRestore();
+    }
+  });
+
   it('lists pending and active tasks per agent', () => {
     queue.enqueueTask({
       agent: 'builder',

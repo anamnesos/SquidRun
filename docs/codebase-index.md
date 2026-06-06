@@ -232,7 +232,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/ansi.test.js` | test | 297 |
 | `ui/__tests__/app-control-service.test.js` | test | 9920 |
 | `ui/__tests__/auto-handoff-handlers.test.js` | test | 3147 |
-| `ui/__tests__/auto-handoff-materializer.test.js` | test | 100410 |
+| `ui/__tests__/auto-handoff-materializer.test.js` | test | 102098 |
 | `ui/__tests__/auto-nudge-handlers.test.js` | test | 16904 |
 | `ui/__tests__/autonomous-smoke.test.js` | test | 4388 |
 | `ui/__tests__/background-agent-manager.test.js` | test | 9965 |
@@ -252,7 +252,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/cognitive-memory-handlers.test.js` | test | 4212 |
 | `ui/__tests__/cognitive-memory-immunity.test.js` | test | 4347 |
 | `ui/__tests__/cognitive-memory-sleep.test.js` | test | 14140 |
-| `ui/__tests__/cognitive-memory-store.test.js` | test | 8662 |
+| `ui/__tests__/cognitive-memory-store.test.js` | test | 9976 |
 | `ui/__tests__/command-palette.test.js` | test | 2311 |
 | `ui/__tests__/comms-console.test.js` | test | 11915 |
 | `ui/__tests__/comms-worker-client.test.js` | test | 6959 |
@@ -418,7 +418,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/hm-smoke-runner.test.js` | test | 11973 |
 | `ui/__tests__/hm-sms.test.js` | test | 3616 |
 | `ui/__tests__/hm-supervisor.test.js` | test | 894 |
-| `ui/__tests__/hm-task-queue.test.js` | test | 24307 |
+| `ui/__tests__/hm-task-queue.test.js` | test | 25538 |
 | `ui/__tests__/hm-telegram-poller-lane.test.js` | test | 3555 |
 | `ui/__tests__/hm-telegram-poller-watchdog.test.js` | test | 5434 |
 | `ui/__tests__/hm-telegram-routing.test.js` | test | 7906 |
@@ -751,7 +751,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/cognitive-memory-api.js` | source | 55366 |
 | `ui/modules/cognitive-memory-immunity.js` | source | 15884 |
 | `ui/modules/cognitive-memory-sleep.js` | source | 38611 |
-| `ui/modules/cognitive-memory-store.js` | source | 31234 |
+| `ui/modules/cognitive-memory-store.js` | source | 31732 |
 | `ui/modules/command-palette.js` | source | 6746 |
 | `ui/modules/comms-worker-client.js` | source | 13036 |
 | `ui/modules/comms-worker.js` | source | 4506 |
@@ -860,7 +860,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/agent-task-resolution.js` | source | 25576 |
 | `ui/modules/main/app-context.js` | source | 2477 |
 | `ui/modules/main/app-control-service.js` | source | 11024 |
-| `ui/modules/main/auto-handoff-materializer.js` | source | 66751 |
+| `ui/modules/main/auto-handoff-materializer.js` | source | 67376 |
 | `ui/modules/main/autonomous-smoke.js` | source | 4864 |
 | `ui/modules/main/background-agent-manager.js` | source | 22675 |
 | `ui/modules/main/cli-identity.js` | source | 2710 |
