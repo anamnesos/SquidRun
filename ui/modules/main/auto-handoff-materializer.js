@@ -1427,6 +1427,29 @@ async function ensureParentDir(targetPath) {
   await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
 }
 
+function buildAtomicTextTempPath(filePath) {
+  return path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
+  );
+}
+
+async function writeTextAtomic(filePath, content) {
+  await ensureParentDir(filePath);
+  const tempPath = buildAtomicTextTempPath(filePath);
+  try {
+    await fs.promises.writeFile(tempPath, content, 'utf8');
+    await fs.promises.rename(tempPath, filePath);
+  } catch (err) {
+    try {
+      await fs.promises.unlink(tempPath);
+    } catch (_) {
+      // Best-effort cleanup; the caller still gets the write error.
+    }
+    throw err;
+  }
+}
+
 async function writeTextIfChanged(filePath, content, options = {}) {
   const next = String(content || '');
   try {
@@ -1448,11 +1471,10 @@ async function writeTextIfChanged(filePath, content, options = {}) {
     let backupPath = null;
     const requestedBackupPath = toOptionalString(options.backupPath, null);
     if (hasExistingFile && requestedBackupPath && path.resolve(requestedBackupPath) !== path.resolve(filePath)) {
-      await ensureParentDir(requestedBackupPath);
-      await fs.promises.writeFile(requestedBackupPath, current, 'utf8');
+      await writeTextAtomic(requestedBackupPath, current);
       backupPath = requestedBackupPath;
     }
-    await fs.promises.writeFile(filePath, next, 'utf8');
+    await writeTextAtomic(filePath, next);
     return { changed: true, backupPath };
   } catch (err) {
     return { changed: false, error: err.message };
@@ -1751,6 +1773,9 @@ module.exports = {
     resolvePrimarySessionHandoffPath,
     resolveLastSessionHandoffPath,
     resolveCurrentLanePath,
+    buildAtomicTextTempPath,
+    writeTextAtomic,
+    writeTextIfChanged,
     isMeaningfulHandoffRow,
     filterMeaningfulRows,
     selectSourceSessionRows,

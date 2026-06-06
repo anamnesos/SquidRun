@@ -1920,6 +1920,40 @@ describe('auto-handoff-materializer', () => {
     expect(content).toContain('TASK');
   });
 
+  test('writeTextIfChanged writes target and backup through temp rename', async () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const backupPath = path.join(tempDir, 'handoffs', 'last-session.md');
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, '# Old Handoff\n', 'utf8');
+
+    const writeSpy = jest.spyOn(fs.promises, 'writeFile');
+    const renameSpy = jest.spyOn(fs.promises, 'rename');
+    try {
+      const result = await _internals.writeTextIfChanged(outputPath, '# New Handoff\n', { backupPath });
+
+      expect(result).toEqual({
+        changed: true,
+        backupPath,
+      });
+      expect(fs.readFileSync(outputPath, 'utf8')).toBe('# New Handoff\n');
+      expect(fs.readFileSync(backupPath, 'utf8')).toBe('# Old Handoff\n');
+
+      const targetRename = renameSpy.mock.calls.find(([, targetPath]) => targetPath === outputPath);
+      const backupRename = renameSpy.mock.calls.find(([, targetPath]) => targetPath === backupPath);
+      expect(targetRename).toBeTruthy();
+      expect(backupRename).toBeTruthy();
+      expect(path.basename(targetRename[0])).toMatch(/^\.session\.md\.\d+\.\d+\.[a-f0-9]+\.tmp$/);
+      expect(path.basename(backupRename[0])).toMatch(/^\.last-session\.md\.\d+\.\d+\.[a-f0-9]+\.tmp$/);
+      expect(writeSpy).toHaveBeenCalledWith(targetRename[0], '# New Handoff\n', 'utf8');
+      expect(writeSpy).toHaveBeenCalledWith(backupRename[0], '# Old Handoff\n', 'utf8');
+      expect(fs.existsSync(targetRename[0])).toBe(false);
+      expect(fs.existsSync(backupRename[0])).toBe(false);
+    } finally {
+      writeSpy.mockRestore();
+      renameSpy.mockRestore();
+    }
+  });
+
   test('materializeSessionHandoff reuses the last meaningful session and preserves the prior handoff copy', async () => {
     const handoffsDir = path.join(tempDir, 'handoffs');
     const outputPath = path.join(handoffsDir, 'session.md');

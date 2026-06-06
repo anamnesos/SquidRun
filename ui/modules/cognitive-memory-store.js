@@ -25,6 +25,25 @@ function ensureDir(targetPath) {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 }
 
+function writeJsonAtomic(filePath, payload) {
+  ensureDir(filePath);
+  const tempPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString('hex')}.tmp`
+  );
+  try {
+    fs.writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    fs.renameSync(tempPath, filePath);
+  } catch (err) {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch (_) {
+      // Best-effort cleanup; the caller still gets the write error.
+    }
+    throw err;
+  }
+}
+
 function sqlStringLiteral(value) {
   return `'${String(value || '').replace(/'/g, "''")}'`;
 }
@@ -494,8 +513,7 @@ class CognitiveMemoryStore {
         updated_at_ms: row.updated_at_ms,
       })),
     };
-    ensureDir(this.pendingPrPath);
-    fs.writeFileSync(this.pendingPrPath, JSON.stringify(payload, null, 2));
+    writeJsonAtomic(this.pendingPrPath, payload);
     return payload;
   }
 
