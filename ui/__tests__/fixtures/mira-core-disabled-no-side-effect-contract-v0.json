@@ -1,0 +1,281 @@
+{
+  "schema": "squidrun.mira_core.disabled_no_side_effect_contract.v0",
+  "version": 0,
+  "owner": "builder",
+  "status": "archive_park_reference_only",
+  "decision": "parked_mira_scaffold_is_disabled_reference_only_with_no_side_effects",
+  "created_at": "2026-06-06T00:00:00.000Z",
+  "fixture_path": "ui/__tests__/fixtures/mira-core-disabled-no-side-effect-contract-v0.json",
+  "test_path": "ui/__tests__/mira-core-disabled-no-side-effect-contract-v0.test.js",
+  "future_promotion_gate": {
+    "default": "fail_closed",
+    "requires_new_map_row": true,
+    "requires_acceptance_test": true,
+    "requires_named_lane": true
+  },
+  "allowed_disabled_classifications": [
+    "ARCHIVE / PARK",
+    "RETIRED",
+    "DELETE-AFTER-PARITY"
+  ],
+  "disallowed_disabled_classification_tokens": [
+    "LIVE",
+    "KEEP",
+    "READY"
+  ],
+  "disabled_families": [
+    {
+      "id": "runtime_scaffold",
+      "classification": "ARCHIVE / PARK",
+      "status": "disabled_reference_only",
+      "path_globs": [
+        "ui/modules/mira-core/runtime-*.js",
+        "ui/scripts/hm-mira-core-runtime-*.js",
+        "ui/__tests__/mira-core-runtime-*.test.js",
+        "ui/__tests__/fixtures/mira-core-runtime-*-contract.json"
+      ]
+    },
+    {
+      "id": "server_scaffold",
+      "classification": "ARCHIVE / PARK",
+      "status": "disabled_reference_only",
+      "path_globs": [
+        "ui/modules/mira-core/server-*.js",
+        "ui/scripts/hm-mira-core-server-*.js",
+        "ui/__tests__/mira-core-server-*.test.js",
+        "ui/__tests__/fixtures/mira-core-server-*-contract.json"
+      ]
+    },
+    {
+      "id": "kill_switch_scaffold",
+      "classification": "ARCHIVE / PARK",
+      "status": "disabled_reference_only",
+      "path_globs": [
+        "ui/modules/mira-core/kill-switch-*.js",
+        "ui/scripts/hm-mira-core-kill-switch-*.js",
+        "ui/__tests__/mira-core-kill-switch-*.test.js",
+        "ui/__tests__/fixtures/mira-core-kill-switch-*-contract.json"
+      ]
+    },
+    {
+      "id": "phase49_66_rollup_lineage",
+      "classification": "DELETE-AFTER-PARITY",
+      "status": "disabled_reference_only",
+      "path_globs": [
+        "ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase*.js",
+        "ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase*.js",
+        "ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase*.test.js",
+        "ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase*-contract.json"
+      ]
+    },
+    {
+      "id": "auth_encryption_storage_identity_scaffold",
+      "classification": "ARCHIVE / PARK",
+      "status": "disabled_reference_only",
+      "path_globs": [
+        "ui/modules/mira-core/auth-binding.js",
+        "ui/modules/mira-core/encryption-key.js",
+        "ui/modules/mira-core/identity-signing.js",
+        "ui/modules/mira-core/storage-retention.js",
+        "ui/modules/mira-core/persistence-audit.js",
+        "ui/scripts/hm-mira-core-auth-binding.js",
+        "ui/scripts/hm-mira-core-encryption-key.js",
+        "ui/scripts/hm-mira-core-identity-signing.js",
+        "ui/scripts/hm-mira-core-storage-retention.js",
+        "ui/scripts/hm-mira-core-persistence-audit.js",
+        "ui/__tests__/mira-core-auth-binding.test.js",
+        "ui/__tests__/mira-core-encryption-key.test.js",
+        "ui/__tests__/mira-core-identity-signing.test.js",
+        "ui/__tests__/mira-core-storage-retention.test.js",
+        "ui/__tests__/mira-core-persistence-audit.test.js",
+        "ui/__tests__/fixtures/mira-core-auth-binding-contract.json",
+        "ui/__tests__/fixtures/mira-core-encryption-key-contract.json",
+        "ui/__tests__/fixtures/mira-core-identity-signing-contract.json",
+        "ui/__tests__/fixtures/mira-core-storage-retention-contract.json",
+        "ui/__tests__/fixtures/mira-core-persistence-audit-contract.json"
+      ]
+    }
+  ],
+  "protected_live_paths": [
+    "ui/scripts/hm-mira-emit.js",
+    "ui/scripts/hm-mira-reply.js",
+    "ui/modules/mira-core/mira-architect-route-v0.js",
+    "ui/modules/mira-core/durable-state-seed-v0.js",
+    "ui/scripts/hm-mira-core-durable-state-seed-v0.js",
+    "ui/__tests__/mira-core-durable-state-seed-v0.test.js",
+    "ui/__tests__/fixtures/mira-core-durable-state-seed-v0-contract.json",
+    "ui/modules/mira-core/mira-progress-v0.js",
+    "ui/modules/mira-core/mira-presence-runtime-state-v0.js",
+    "ui/modules/mira-core/mira-progress-proof-inputs-v0.js",
+    "ui/modules/mira-core/local-text-session-v0.js",
+    "ui/modules/mira-core/live-what-now-answer-v0.js",
+    "ui/modules/mira-core/live-internal-request-draft-v0.js",
+    "ui/modules/mira-core/live-direct-channel-status-v0.js",
+    "ui/modules/mira-core/presence-runtime-read-path-v0.js",
+    "ui/modules/mira-core/mira-presence-current-scope-state-v0.js",
+    "ui/modules/mira-core/relationship-presence-v1.js",
+    "ui/modules/mira-core/growth-loop-v0.js",
+    "ui/modules/mira-core/identity-anchor-v0.js",
+    "mira/runtime/src/bridge-request-plan.ts",
+    "mira/runtime/src/pane-bridge.ts",
+    "mira/runtime/src/bridge-status.ts",
+    "mira/bridge/send-pane-message.js"
+  ],
+  "allowed_consumer_reference_paths": [
+    "docs/mira-system-map.md",
+    "ARCHITECTURE.md",
+    "docs/codebase-index.md",
+    "ui/__tests__/fixtures/mira-core-disabled-no-side-effect-contract-v0.json",
+    "ui/__tests__/mira-core-disabled-no-side-effect-contract-v0.test.js"
+  ],
+  "required_side_effect_flags": [
+    "runtimeStarted",
+    "serverStarted",
+    "listenerStarted",
+    "routeRegistered",
+    "killSwitchFlipped",
+    "networkCalled",
+    "kmsCalled",
+    "providerCalled",
+    "browserOpened",
+    "shellExecuted",
+    "internalHmSendDispatch",
+    "telegramSend",
+    "userSend",
+    "externalSend",
+    "deviceSend",
+    "dbWrite",
+    "ledgerWrite",
+    "memorySync",
+    "fileOutput",
+    "deployment",
+    "trade",
+    "customerAction",
+    "secretRead",
+    "secretExport",
+    "rawPrivateContentReconstruction"
+  ],
+  "side_effect_flags": {
+    "runtimeStarted": false,
+    "serverStarted": false,
+    "listenerStarted": false,
+    "routeRegistered": false,
+    "killSwitchFlipped": false,
+    "networkCalled": false,
+    "kmsCalled": false,
+    "providerCalled": false,
+    "browserOpened": false,
+    "shellExecuted": false,
+    "internalHmSendDispatch": false,
+    "telegramSend": false,
+    "userSend": false,
+    "externalSend": false,
+    "deviceSend": false,
+    "dbWrite": false,
+    "ledgerWrite": false,
+    "memorySync": false,
+    "fileOutput": false,
+    "deployment": false,
+    "trade": false,
+    "customerAction": false,
+    "secretRead": false,
+    "secretExport": false,
+    "rawPrivateContentReconstruction": false
+  },
+  "required_side_effect_counters": [
+    "runtimeStarts",
+    "serversStarted",
+    "listenersStarted",
+    "routesRegistered",
+    "killSwitchFlips",
+    "networkCalls",
+    "kmsCalls",
+    "providerCalls",
+    "browserOpens",
+    "shellExecutions",
+    "internalHmSendDispatches",
+    "telegramSends",
+    "userSends",
+    "externalSends",
+    "deviceSends",
+    "databaseWrites",
+    "ledgerWrites",
+    "memoryMutations",
+    "fileOutputs",
+    "deployments",
+    "trades",
+    "customerActions",
+    "secretReads",
+    "secretExports",
+    "rawPrivateReconstructions"
+  ],
+  "side_effect_counters": {
+    "runtimeStarts": 0,
+    "serversStarted": 0,
+    "listenersStarted": 0,
+    "routesRegistered": 0,
+    "killSwitchFlips": 0,
+    "networkCalls": 0,
+    "kmsCalls": 0,
+    "providerCalls": 0,
+    "browserOpens": 0,
+    "shellExecutions": 0,
+    "internalHmSendDispatches": 0,
+    "telegramSends": 0,
+    "userSends": 0,
+    "externalSends": 0,
+    "deviceSends": 0,
+    "databaseWrites": 0,
+    "ledgerWrites": 0,
+    "memoryMutations": 0,
+    "fileOutputs": 0,
+    "deployments": 0,
+    "trades": 0,
+    "customerActions": 0,
+    "secretReads": 0,
+    "secretExports": 0,
+    "rawPrivateReconstructions": 0
+  },
+  "negative_fixtures": [
+    {
+      "id": "runtime_started_true",
+      "mutations": [
+        {
+          "path": [
+            "side_effect_flags",
+            "runtimeStarted"
+          ],
+          "value": true
+        }
+      ],
+      "expected_error_id": "side_effect_flag_true"
+    },
+    {
+      "id": "network_counter_nonzero",
+      "mutations": [
+        {
+          "path": [
+            "side_effect_counters",
+            "networkCalls"
+          ],
+          "value": 1
+        }
+      ],
+      "expected_error_id": "side_effect_counter_nonzero"
+    },
+    {
+      "id": "family_marked_live_keep",
+      "mutations": [
+        {
+          "path": [
+            "disabled_families",
+            0,
+            "classification"
+          ],
+          "value": "LIVE / KEEP"
+        }
+      ],
+      "expected_error_id": "classification_disallowed"
+    }
+  ]
+}
