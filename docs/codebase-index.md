@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1263
+- Total files listed: 1288
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -14,27 +14,28 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Summary By Group
 - .github: 2
+- .squidrun: 1
 - benchmarks: 2
 - docs: 36
-- root: 101
+- root: 102
 - scripts: 1
 - tools: 3
-- ui/__tests__: 499
+- ui/__tests__: 503
 - ui/modules: 387
 - ui/other: 32
-- ui/scripts: 182
+- ui/scripts: 185
 - ui/styles: 17
-- workspace/knowledge: 1
+- workspace/knowledge: 17
 
 ## Summary By Kind
 - asset: 25
-- config: 30
-- doc: 74
+- config: 31
+- doc: 90
 - file: 1
 - jsonl: 1
-- script: 183
-- source: 449
-- test: 500
+- script: 186
+- source: 450
+- test: 504
 
 ## Files
 
@@ -44,6 +45,12 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | --- | --- | ---: |
 | `.github/workflows/ci.yml` | config | 1852 |
 | `.github/workflows/release.yml` | config | 2761 |
+
+### .squidrun
+
+| Path | Kind | Bytes |
+| --- | --- | ---: |
+| `.squidrun/protected-files.json` | config | 368 |
 
 ### benchmarks
 
@@ -97,10 +104,11 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 | Path | Kind | Bytes |
 | --- | --- | ---: |
+| `.claude/hooks/pre-tool-image-read-guard.js` | source | 4481 |
 | `.env.example` | config | 2728 |
-| `.gitignore` | config | 3756 |
-| `AGENTS.md` | doc | 6387 |
-| `ARCHITECTURE.md` | doc | 59145 |
+| `.gitignore` | config | 4598 |
+| `AGENTS.md` | doc | 6432 |
+| `ARCHITECTURE.md` | doc | 61575 |
 | `CLAUDE-AI.md` | doc | 3856 |
 | `CLAUDE.md` | doc | 2161 |
 | `CODE_OF_CONDUCT.md` | doc | 5185 |
@@ -164,7 +172,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `mira/runtime/src/voice-lab.ts` | source | 7423 |
 | `mira/runtime/src/work-draft.ts` | source | 10500 |
 | `mira/runtime/src/work-task.ts` | source | 70655 |
-| `mira/runtime/tsconfig.json` | config | 511 |
+| `mira/runtime/tsconfig.json` | config | 530 |
 | `mira/state/.gitignore` | config | 52 |
 | `mira/state/README.md` | doc | 613 |
 | `mira/state/state-root-contract.json` | config | 612 |
@@ -195,7 +203,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `relay/package.json` | config | 262 |
 | `relay/README.md` | doc | 576 |
 | `relay/server.js` | source | 26220 |
-| `ROLES.md` | doc | 20583 |
+| `ROLES.md` | doc | 20786 |
 | `start-squidrun.bat` | script | 36 |
 | `telegram-poller.js` | source | 6954 |
 
@@ -222,7 +230,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/agent-claims-handlers.test.js` | test | 3950 |
 | `ui/__tests__/agent-colors.test.js` | test | 14920 |
 | `ui/__tests__/ansi.test.js` | test | 297 |
-| `ui/__tests__/app-control-service.test.js` | test | 7434 |
+| `ui/__tests__/app-control-service.test.js` | test | 9920 |
 | `ui/__tests__/auto-handoff-handlers.test.js` | test | 3147 |
 | `ui/__tests__/auto-handoff-materializer.test.js` | test | 100410 |
 | `ui/__tests__/auto-nudge-handlers.test.js` | test | 16904 |
@@ -233,6 +241,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/backup-manager.test.js` | test | 22049 |
 | `ui/__tests__/bridge-client.test.js` | test | 23379 |
 | `ui/__tests__/bridge.test.js` | test | 15554 |
+| `ui/__tests__/bus-reliability-trace.test.js` | test | 3450 |
 | `ui/__tests__/capability-planner.test.js` | test | 688 |
 | `ui/__tests__/checkpoint-handlers.test.js` | test | 17431 |
 | `ui/__tests__/claude-extract.test.js` | test | 1841 |
@@ -261,7 +270,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/coord-path-integration.test.js` | test | 2224 |
 | `ui/__tests__/cross-device-bridge-e2e.test.js` | test | 11888 |
 | `ui/__tests__/cross-device-target.test.js` | test | 2891 |
-| `ui/__tests__/daemon-handlers.test.js` | test | 46975 |
+| `ui/__tests__/daemon-handlers.test.js` | test | 49074 |
 | `ui/__tests__/daemon-snapshot.test.js` | test | 2336 |
 | `ui/__tests__/daemon.test.js` | test | 19015 |
 | `ui/__tests__/debug-replay-handlers.test.js` | test | 28695 |
@@ -383,34 +392,37 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/helpers/mira-runtime-build.js` | test | 6447 |
 | `ui/__tests__/helpers/mock-config.js` | test | 6524 |
 | `ui/__tests__/helpers/real-config.js` | test | 2090 |
+| `ui/__tests__/hm-app.test.js` | test | 766 |
 | `ui/__tests__/hm-bg.test.js` | test | 1886 |
 | `ui/__tests__/hm-claim-cli-e2e.test.js` | test | 5315 |
 | `ui/__tests__/hm-codebase-index.test.js` | test | 2292 |
 | `ui/__tests__/hm-comms-liveness-guard.test.js` | test | 19224 |
 | `ui/__tests__/hm-experiment.test.js` | test | 2841 |
 | `ui/__tests__/hm-github.test.js` | test | 2922 |
-| `ui/__tests__/hm-health-snapshot.test.js` | test | 39245 |
+| `ui/__tests__/hm-health-snapshot.test.js` | test | 44757 |
 | `ui/__tests__/hm-initiative.test.js` | test | 7230 |
 | `ui/__tests__/hm-memory-ingest.test.js` | test | 2120 |
 | `ui/__tests__/hm-memory-promote.test.js` | test | 2695 |
 | `ui/__tests__/hm-mira-lab-prompt.test.js` | test | 11495 |
 | `ui/__tests__/hm-mira-lab-verify.test.js` | test | 16492 |
 | `ui/__tests__/hm-mira-self-direction.test.js` | test | 36931 |
+| `ui/__tests__/hm-oracle-wake-watchdogs.test.js` | test | 5564 |
 | `ui/__tests__/hm-pane.test.js` | test | 1571 |
 | `ui/__tests__/hm-phone-voice.test.js` | test | 1134 |
 | `ui/__tests__/hm-promotion.test.js` | test | 1602 |
 | `ui/__tests__/hm-reddit.test.js` | test | 10440 |
 | `ui/__tests__/hm-screenshot.test.js` | test | 948 |
 | `ui/__tests__/hm-send-coworker-output-lint.test.js` | test | 14371 |
-| `ui/__tests__/hm-send-surface-claim-guard.test.js` | test | 15260 |
-| `ui/__tests__/hm-send.test.js` | test | 121612 |
+| `ui/__tests__/hm-send-surface-claim-guard.test.js` | test | 16616 |
+| `ui/__tests__/hm-send.test.js` | test | 128965 |
 | `ui/__tests__/hm-smoke-runner.test.js` | test | 11973 |
 | `ui/__tests__/hm-sms.test.js` | test | 3616 |
 | `ui/__tests__/hm-supervisor.test.js` | test | 894 |
 | `ui/__tests__/hm-task-queue.test.js` | test | 22280 |
 | `ui/__tests__/hm-telegram-poller-lane.test.js` | test | 3555 |
+| `ui/__tests__/hm-telegram-poller-watchdog.test.js` | test | 5434 |
 | `ui/__tests__/hm-telegram-routing.test.js` | test | 7906 |
-| `ui/__tests__/hm-telegram.test.js` | test | 11866 |
+| `ui/__tests__/hm-telegram.test.js` | test | 15851 |
 | `ui/__tests__/hm-transition.test.js` | test | 2309 |
 | `ui/__tests__/hm-twitter.test.js` | test | 11240 |
 | `ui/__tests__/hm-visible-pane-submit-harness.test.js` | test | 6296 |
@@ -430,8 +442,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/knowledge-handlers.test.js` | test | 4973 |
 | `ui/__tests__/launch-intent.test.js` | test | 2689 |
 | `ui/__tests__/learning-data-handlers.test.js` | test | 10832 |
-| `ui/__tests__/live-task-audit-preview-server.test.js` | test | 6769 |
-| `ui/__tests__/live-task-audit-sidecar.test.js` | test | 12930 |
+| `ui/__tests__/live-task-audit-preview-server.test.js` | test | 7340 |
+| `ui/__tests__/live-task-audit-sidecar.test.js` | test | 15655 |
 | `ui/__tests__/local-embedder.test.js` | test | 14089 |
 | `ui/__tests__/local-model-capabilities.test.js` | test | 2509 |
 | `ui/__tests__/logger.test.js` | test | 8889 |
@@ -440,7 +452,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mcp-handlers.test.js` | test | 6477 |
 | `ui/__tests__/mcp-server.test.js` | test | 6250 |
 | `ui/__tests__/memory-broker.test.js` | test | 8894 |
-| `ui/__tests__/memory-consistency-check.test.js` | test | 29389 |
+| `ui/__tests__/memory-consistency-check.test.js` | test | 43679 |
 | `ui/__tests__/memory-delivery.test.js` | test | 12530 |
 | `ui/__tests__/memory-ingest-integration.test.js` | test | 3536 |
 | `ui/__tests__/memory-ingest-recovery.test.js` | test | 13887 |
@@ -610,7 +622,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/owned-work-continue-broker.test.js` | test | 7514 |
 | `ui/__tests__/owned-work-summary.test.js` | test | 5856 |
 | `ui/__tests__/pane-control-service.test.js` | test | 5155 |
-| `ui/__tests__/pane-host-renderer.test.js` | test | 9648 |
+| `ui/__tests__/pane-host-renderer.test.js` | test | 10177 |
 | `ui/__tests__/pane-host-window-manager.test.js` | test | 5644 |
 | `ui/__tests__/pane-visibility.test.js` | test | 13359 |
 | `ui/__tests__/perf-audit-handlers.test.js` | test | 12958 |
@@ -644,7 +656,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/scheduler-handlers.test.js` | test | 10860 |
 | `ui/__tests__/scheduler.test.js` | test | 27737 |
 | `ui/__tests__/scoped-context-firewall.test.js` | test | 2030 |
-| `ui/__tests__/screenshot-handlers.test.js` | test | 14268 |
+| `ui/__tests__/screenshot-handlers.test.js` | test | 16317 |
 | `ui/__tests__/service-lifecycle-registry.test.js` | test | 1678 |
 | `ui/__tests__/session-history-handlers.test.js` | test | 4316 |
 | `ui/__tests__/session-summary-handlers.test.js` | test | 9188 |
@@ -658,7 +670,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/smart-routing.test.js` | test | 10637 |
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
-| `ui/__tests__/squidrun-app.test.js` | test | 289071 |
+| `ui/__tests__/squidrun-app.test.js` | test | 330303 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 1987 |
 | `ui/__tests__/startup-transcript-context.test.js` | test | 10069 |
@@ -681,7 +693,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/team-memory-runtime.test.js` | test | 15791 |
 | `ui/__tests__/team-memory-store.test.js` | test | 2603 |
 | `ui/__tests__/team-memory-worker-client.test.js` | test | 2242 |
-| `ui/__tests__/telegram-poller.test.js` | test | 22776 |
+| `ui/__tests__/telegram-poller.test.js` | test | 23979 |
 | `ui/__tests__/template-handlers.test.js` | test | 19093 |
 | `ui/__tests__/terminal-events.test.js` | test | 12686 |
 | `ui/__tests__/terminal.test.js` | test | 73088 |
@@ -696,7 +708,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/triggers-routing.test.js` | test | 17495 |
 | `ui/__tests__/triggers.test.js` | test | 3460 |
 | `ui/__tests__/trustquote-work-room-prerequisites.test.js` | test | 6811 |
-| `ui/__tests__/trustquote-work-room-route-owner.test.js` | test | 24534 |
+| `ui/__tests__/trustquote-work-room-route-owner.test.js` | test | 30851 |
 | `ui/__tests__/usage-manager.test.js` | test | 1841 |
 | `ui/__tests__/usage-stats-handlers.test.js` | test | 9817 |
 | `ui/__tests__/user-profile-handlers.test.js` | test | 4634 |
@@ -705,8 +717,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/voice-broker-tab.test.js` | test | 35900 |
 | `ui/__tests__/voice-broker.test.js` | test | 44789 |
 | `ui/__tests__/watcher-worker.test.js` | test | 3208 |
-| `ui/__tests__/watcher.test.js` | test | 32293 |
-| `ui/__tests__/websocket-delivery.test.js` | test | 67024 |
+| `ui/__tests__/watcher.test.js` | test | 32368 |
+| `ui/__tests__/websocket-delivery.test.js` | test | 69249 |
 | `ui/__tests__/websocket-runtime-paths.test.js` | test | 2394 |
 | `ui/__tests__/websocket-runtime-queue.test.js` | test | 10280 |
 | `ui/__tests__/websocket-server.test.js` | test | 6449 |
@@ -731,11 +743,11 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/bridge/renderer-modules.js` | source | 949 |
 | `ui/modules/bridge/safe-ipc.js` | source | 3924 |
 | `ui/modules/buffered-file-writer.js` | source | 5113 |
-| `ui/modules/bus-reliability-trace.js` | source | 2089 |
+| `ui/modules/bus-reliability-trace.js` | source | 7822 |
 | `ui/modules/capability-planner.js` | source | 6232 |
 | `ui/modules/codex-utils.js` | source | 474 |
 | `ui/modules/cognitive-memory-antibody.js` | source | 30090 |
-| `ui/modules/cognitive-memory-api.js` | source | 53288 |
+| `ui/modules/cognitive-memory-api.js` | source | 55366 |
 | `ui/modules/cognitive-memory-immunity.js` | source | 15884 |
 | `ui/modules/cognitive-memory-sleep.js` | source | 38611 |
 | `ui/modules/cognitive-memory-store.js` | source | 31234 |
@@ -751,7 +763,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/contract-promotion.js` | source | 8291 |
 | `ui/modules/contracts.js` | source | 3046 |
 | `ui/modules/cross-device-target.js` | source | 2360 |
-| `ui/modules/daemon-handlers.js` | source | 51034 |
+| `ui/modules/daemon-handlers.js` | source | 56139 |
 | `ui/modules/daemon-snapshot.js` | source | 2031 |
 | `ui/modules/diagnostic-log.js` | source | 1992 |
 | `ui/modules/event-bus.js` | source | 22926 |
@@ -818,7 +830,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/ipc/recovery-handlers.js` | source | 3731 |
 | `ui/modules/ipc/resource-handlers.js` | source | 8183 |
 | `ui/modules/ipc/scheduler-handlers.js` | source | 2860 |
-| `ui/modules/ipc/screenshot-handlers.js` | source | 8778 |
+| `ui/modules/ipc/screenshot-handlers.js` | source | 9507 |
 | `ui/modules/ipc/session-history-handlers.js` | source | 1266 |
 | `ui/modules/ipc/session-summary-handlers.js` | source | 3210 |
 | `ui/modules/ipc/settings-handlers.js` | source | 15897 |
@@ -846,7 +858,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/activity-manager.js` | source | 4478 |
 | `ui/modules/main/agent-task-resolution.js` | source | 25576 |
 | `ui/modules/main/app-context.js` | source | 2477 |
-| `ui/modules/main/app-control-service.js` | source | 8636 |
+| `ui/modules/main/app-control-service.js` | source | 11024 |
 | `ui/modules/main/auto-handoff-materializer.js` | source | 66751 |
 | `ui/modules/main/autonomous-smoke.js` | source | 4864 |
 | `ui/modules/main/background-agent-manager.js` | source | 22675 |
@@ -867,19 +879,19 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/kernel-bridge.js` | source | 5190 |
 | `ui/modules/main/launch-intent.js` | source | 2928 |
 | `ui/modules/main/live-task-audit-sidecar-window.js` | source | 1854 |
-| `ui/modules/main/live-task-audit-sidecar.js` | source | 24427 |
+| `ui/modules/main/live-task-audit-sidecar.js` | source | 26983 |
 | `ui/modules/main/mira-lab-window.js` | source | 1789 |
 | `ui/modules/main/pane-control-service.js` | source | 5972 |
 | `ui/modules/main/pane-host-window-manager.js` | source | 12289 |
 | `ui/modules/main/pty-output-filter.js` | source | 7793 |
 | `ui/modules/main/settings-manager.js` | source | 21516 |
-| `ui/modules/main/squidrun-app.js` | source | 452302 |
+| `ui/modules/main/squidrun-app.js` | source | 485982 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 1884 |
 | `ui/modules/main/usage-manager.js` | source | 2909 |
 | `ui/modules/main/work-item-ledger.js` | source | 39805 |
 | `ui/modules/mcp-bridge.js` | source | 21053 |
 | `ui/modules/memory-broker.js` | source | 25096 |
-| `ui/modules/memory-consistency-check.js` | source | 61562 |
+| `ui/modules/memory-consistency-check.js` | source | 96764 |
 | `ui/modules/memory-ingest/delivery.js` | source | 43438 |
 | `ui/modules/memory-ingest/journal.js` | source | 16198 |
 | `ui/modules/memory-ingest/lifecycle.js` | source | 8512 |
@@ -1079,7 +1091,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/team-memory/store.js` | source | 5814 |
 | `ui/modules/team-memory/worker-client.js` | source | 4577 |
 | `ui/modules/team-memory/worker.js` | source | 2317 |
-| `ui/modules/telegram-poller.js` | source | 30881 |
+| `ui/modules/telegram-poller.js` | source | 32380 |
 | `ui/modules/terminal.js` | source | 104183 |
 | `ui/modules/terminal/agent-colors.js` | source | 10161 |
 | `ui/modules/terminal/injection-capabilities.js` | source | 4493 |
@@ -1093,8 +1105,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/triggers/routing.js` | source | 11053 |
 | `ui/modules/triggers/sequencing.js` | source | 8061 |
 | `ui/modules/trustquote-work-room-prerequisites.js` | source | 18697 |
-| `ui/modules/trustquote-work-room-route-owner-supervisor.js` | source | 13262 |
-| `ui/modules/trustquote-work-room-route-owner.js` | source | 18796 |
+| `ui/modules/trustquote-work-room-route-owner-supervisor.js` | source | 14513 |
+| `ui/modules/trustquote-work-room-route-owner.js` | source | 22142 |
 | `ui/modules/ui-view.js` | source | 17307 |
 | `ui/modules/utils.js` | source | 1881 |
 | `ui/modules/utils/transcript-store.js` | source | 1537 |
@@ -1103,7 +1115,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/voice-broker.js` | source | 50616 |
 | `ui/modules/watcher-worker.js` | source | 4919 |
 | `ui/modules/watcher.js` | source | 51406 |
-| `ui/modules/websocket-runtime.js` | source | 74695 |
+| `ui/modules/websocket-runtime.js` | source | 74870 |
 | `ui/modules/websocket-server.js` | source | 2022 |
 | `ui/modules/window-team-bootstrap.js` | source | 5353 |
 | `ui/modules/work-room-terminal-visibility.js` | source | 1931 |
@@ -1121,15 +1133,15 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/jest.config.js` | source | 949 |
 | `ui/jsconfig.json` | config | 659 |
 | `ui/live-task-audit-preview.html` | asset | 2014 |
-| `ui/live-task-audit-sidecar-renderer.js` | source | 24710 |
+| `ui/live-task-audit-sidecar-renderer.js` | source | 25887 |
 | `ui/live-task-audit-sidecar.html` | asset | 1739 |
-| `ui/main.js` | source | 6153 |
+| `ui/main.js` | source | 6339 |
 | `ui/mcp-server.js` | source | 22417 |
 | `ui/mira-lab-renderer.js` | source | 13296 |
 | `ui/mira-lab.html` | asset | 1613 |
 | `ui/package-lock.json` | config | 476184 |
-| `ui/package.json` | config | 6734 |
-| `ui/pane-host-renderer.js` | source | 35875 |
+| `ui/package.json` | config | 6866 |
+| `ui/pane-host-renderer.js` | source | 37661 |
 | `ui/pane-host.html` | asset | 1143 |
 | `ui/preload.js` | source | 934 |
 | `ui/profile.js` | source | 8692 |
@@ -1160,7 +1172,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-agent-alert.js` | script | 2275 |
 | `ui/scripts/hm-alignment-audit.js` | script | 10543 |
 | `ui/scripts/hm-anomaly.js` | script | 3735 |
-| `ui/scripts/hm-app.js` | script | 8516 |
+| `ui/scripts/hm-app.js` | script | 9642 |
 | `ui/scripts/hm-architect-wake-watchdog.js` | script | 7035 |
 | `ui/scripts/hm-architect-watchdog.js` | script | 14538 |
 | `ui/scripts/hm-bg.js` | script | 13615 |
@@ -1180,7 +1192,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-doctor.js` | script | 18972 |
 | `ui/scripts/hm-experiment.js` | script | 12365 |
 | `ui/scripts/hm-github.js` | script | 14433 |
-| `ui/scripts/hm-health-snapshot.js` | script | 52214 |
+| `ui/scripts/hm-health-snapshot.js` | script | 61007 |
 | `ui/scripts/hm-heartbeat.js` | script | 8590 |
 | `ui/scripts/hm-hook-afteragent.js` | script | 973 |
 | `ui/scripts/hm-hook-injection.js` | script | 6600 |
@@ -1192,7 +1204,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-memory-antibody.js` | script | 2571 |
 | `ui/scripts/hm-memory-api.js` | script | 4920 |
 | `ui/scripts/hm-memory-broker.js` | script | 2689 |
-| `ui/scripts/hm-memory-consistency.js` | script | 9937 |
+| `ui/scripts/hm-memory-consistency.js` | script | 14326 |
 | `ui/scripts/hm-memory-extract.js` | script | 7447 |
 | `ui/scripts/hm-memory-index.js` | script | 1995 |
 | `ui/scripts/hm-memory-ingest.js` | script | 7907 |
@@ -1282,6 +1294,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-mira-reply.js` | script | 3555 |
 | `ui/scripts/hm-mira-self-direction.js` | script | 25582 |
 | `ui/scripts/hm-mira-visible-presence-proof.js` | script | 3472 |
+| `ui/scripts/hm-oracle-wake-context.js` | script | 8639 |
 | `ui/scripts/hm-oracle-wake-watchdog.js` | script | 5079 |
 | `ui/scripts/hm-pane.js` | script | 7418 |
 | `ui/scripts/hm-path-audit.config.json` | script | 686 |
@@ -1301,21 +1314,22 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-send-context-leak-guard.js` | script | 6115 |
 | `ui/scripts/hm-send-coworker-output-lint.js` | script | 10575 |
 | `ui/scripts/hm-send-permission-guard.js` | script | 6348 |
-| `ui/scripts/hm-send-surface-claim-guard.js` | script | 26119 |
-| `ui/scripts/hm-send.js` | script | 95887 |
+| `ui/scripts/hm-send-surface-claim-guard.js` | script | 26922 |
+| `ui/scripts/hm-send.js` | script | 99690 |
 | `ui/scripts/hm-session-summary.js` | script | 13877 |
 | `ui/scripts/hm-smoke-runner.js` | script | 97515 |
 | `ui/scripts/hm-sms.js` | script | 10818 |
 | `ui/scripts/hm-startup-ai-briefing.js` | script | 1294 |
-| `ui/scripts/hm-startup-health.js` | script | 307 |
+| `ui/scripts/hm-startup-health.js` | script | 3869 |
 | `ui/scripts/hm-startup-transcript-context.js` | script | 1621 |
 | `ui/scripts/hm-supervisor.js` | script | 5200 |
 | `ui/scripts/hm-surface-audit.js` | script | 8678 |
 | `ui/scripts/hm-task-queue.js` | script | 33694 |
 | `ui/scripts/hm-telegram-longpoll-relay.js` | script | 3484 |
 | `ui/scripts/hm-telegram-poller-lane.js` | script | 11838 |
+| `ui/scripts/hm-telegram-poller-watchdog.js` | script | 16064 |
 | `ui/scripts/hm-telegram-routing.js` | script | 9813 |
-| `ui/scripts/hm-telegram.js` | script | 26544 |
+| `ui/scripts/hm-telegram.js` | script | 32405 |
 | `ui/scripts/hm-transcript-index.js` | script | 2651 |
 | `ui/scripts/hm-transition.js` | script | 9518 |
 | `ui/scripts/hm-trigger.js` | script | 4496 |
@@ -1332,6 +1346,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/jest-staged.js` | script | 4101 |
 | `ui/scripts/local_embedder.py` | script | 1205 |
 | `ui/scripts/mira-system-map-guard.js` | script | 9173 |
+| `ui/scripts/postinstall-electron-rebuild.js` | script | 3426 |
 
 ### ui/styles
 
@@ -1359,5 +1374,21 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 | Path | Kind | Bytes |
 | --- | --- | ---: |
-| `workspace/knowledge/workflows.md` | doc | 4726 |
+| `workspace/knowledge/architecture-decisions.md` | doc | 9691 |
+| `workspace/knowledge/codex-desktop-restart.md` | doc | 7156 |
+| `workspace/knowledge/consultation-schema.md` | doc | 1739 |
+| `workspace/knowledge/exogenous-triggers-spec.md` | doc | 2942 |
+| `workspace/knowledge/hyperliquid-rate-limit-broker-plan.md` | doc | 1570 |
+| `workspace/knowledge/infrastructure.md` | doc | 8337 |
+| `workspace/knowledge/mira-lab-window-workflow.md` | doc | 923 |
+| `workspace/knowledge/paper-trading-cycle-protocol.md` | doc | 1684 |
+| `workspace/knowledge/projects.md` | doc | 1096 |
+| `workspace/knowledge/README.md` | doc | 242 |
+| `workspace/knowledge/recovering-lost-user-input.md` | doc | 3336 |
+| `workspace/knowledge/runtime-environment.md` | doc | 3812 |
+| `workspace/knowledge/trading-operations.md` | doc | 13351 |
+| `workspace/knowledge/trustquote-field-workflow.md` | doc | 2349 |
+| `workspace/knowledge/unlock-trading-routine.md` | doc | 2489 |
+| `workspace/knowledge/unlock-watchlist.md` | doc | 1669 |
+| `workspace/knowledge/workflows.md` | doc | 20404 |
 

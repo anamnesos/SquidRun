@@ -302,6 +302,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/scripts/hm-mira-progress.js: Prints contract-driven Mira progress and consumes fresh default progress proof artifacts unless explicitly disabled.
 - ui/scripts/hm-mira-reply.js: Sends Architect-authored replies back to Mira-originated intents while preserving sender/target role constraints.
 - ui/scripts/hm-mira-visible-presence-proof.js: Runs the default Mira progress proof harnesses and writes the HEAD-bound progress proof artifact.
+- ui/scripts/hm-oracle-wake-context.js: Shared read-only wake-context builder for Oracle wake watchdog scripts; summarizes cached market-scanner movers and stale watch-rule context without importing removed live-ops modules.
 - ui/scripts/hm-pane.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-path-audit.js: Audits documented/runtime paths and path-safety constraints across the workspace.
 - ui/scripts/hm-preflight.js: Scans protocol docs (`CLAUDE.md`, `GEMINI.md`, `AGENTS.md`, `CODEX.md`) for potential coordination-rule conflicts.
