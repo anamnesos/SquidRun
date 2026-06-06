@@ -718,8 +718,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/voice-broker-lease-contract.test.js` | test | 31375 |
 | `ui/__tests__/voice-broker-tab.test.js` | test | 35900 |
 | `ui/__tests__/voice-broker.test.js` | test | 44789 |
-| `ui/__tests__/watcher-worker.test.js` | test | 3208 |
-| `ui/__tests__/watcher.test.js` | test | 32368 |
+| `ui/__tests__/watcher-worker.test.js` | test | 5936 |
+| `ui/__tests__/watcher.test.js` | test | 36120 |
 | `ui/__tests__/websocket-delivery.test.js` | test | 69249 |
 | `ui/__tests__/websocket-runtime-paths.test.js` | test | 2394 |
 | `ui/__tests__/websocket-runtime-queue.test.js` | test | 10280 |
@@ -1116,8 +1116,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/voice-broker-lease-contract.js` | source | 15971 |
 | `ui/modules/voice-broker-lease-store.js` | source | 6371 |
 | `ui/modules/voice-broker.js` | source | 50616 |
-| `ui/modules/watcher-worker.js` | source | 4919 |
-| `ui/modules/watcher.js` | source | 51406 |
+| `ui/modules/watcher-worker.js` | source | 6316 |
+| `ui/modules/watcher.js` | source | 57213 |
 | `ui/modules/websocket-runtime.js` | source | 74870 |
 | `ui/modules/websocket-server.js` | source | 2022 |
 | `ui/modules/window-team-bootstrap.js` | source | 5353 |

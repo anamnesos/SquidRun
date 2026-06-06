@@ -147,7 +147,6 @@ async function waitForCondition(assertion, { timeoutMs = 1000, intervalMs = 20 }
 
 describe('watcher module', () => {
   afterEach(() => {
-    jest.useRealTimers();
     while (activeWatcherFixtures.length > 0) {
       const { watcher, tempDir } = activeWatcherFixtures.pop();
       try {
@@ -161,6 +160,7 @@ describe('watcher module', () => {
       } catch {}
       cleanupDir(tempDir);
     }
+    jest.useRealTimers();
   });
 
 
@@ -637,6 +637,127 @@ describe('watcher module', () => {
 
     watcher.stopTriggerWatcher();
     expect(workerInstance.kill).toHaveBeenCalled();
+
+    cleanupDir(tempDir);
+  });
+
+  test('trigger watcher restarts a connected worker with no freshness messages', () => {
+    jest.useFakeTimers();
+    const { watcher, tempDir, childProcessMock, getWorker } = setupWatcher();
+
+    watcher.startTriggerWatcher();
+    const firstWorker = getWorker(0);
+
+    jest.advanceTimersByTime(watcher._internals.WATCHER_WORKER_STALE_TIMEOUT_MS + 1);
+    expect(firstWorker.kill).toHaveBeenCalledTimes(1);
+
+    jest.advanceTimersByTime(watcher._internals.WATCHER_WORKER_RESTART_DELAY_MS + 1);
+    expect(childProcessMock.fork).toHaveBeenCalledTimes(2);
+
+    cleanupDir(tempDir);
+  });
+
+  test('trigger watcher restarts when heartbeats arrive but chokidar never becomes ready', () => {
+    jest.useFakeTimers();
+    const { watcher, tempDir, childProcessMock, getWorker } = setupWatcher();
+
+    watcher.startTriggerWatcher();
+    const firstWorker = getWorker(0);
+    firstWorker.emit('message', {
+      watcherName: 'trigger',
+      type: 'heartbeat',
+      pid: 111,
+      ready: false,
+      reason: 'registered',
+      watchedPathCount: 1,
+    });
+
+    jest.advanceTimersByTime(10000);
+    firstWorker.emit('message', {
+      watcherName: 'trigger',
+      type: 'heartbeat',
+      pid: 111,
+      ready: false,
+      reason: 'interval',
+      watchedPathCount: 1,
+    });
+    jest.advanceTimersByTime(10000);
+    firstWorker.emit('message', {
+      watcherName: 'trigger',
+      type: 'heartbeat',
+      pid: 111,
+      ready: false,
+      reason: 'interval',
+      watchedPathCount: 1,
+    });
+
+    jest.advanceTimersByTime(10001);
+    expect(firstWorker.kill).toHaveBeenCalledTimes(1);
+    jest.advanceTimersByTime(watcher._internals.WATCHER_WORKER_RESTART_DELAY_MS + 1);
+    expect(childProcessMock.fork).toHaveBeenCalledTimes(2);
+
+    cleanupDir(tempDir);
+  });
+
+  test('trigger watcher restarts when a ready worker heartbeat goes stale', () => {
+    jest.useFakeTimers();
+    const { watcher, tempDir, childProcessMock, getWorker } = setupWatcher();
+
+    watcher.startTriggerWatcher();
+    const firstWorker = getWorker(0);
+    firstWorker.emit('message', {
+      watcherName: 'trigger',
+      type: 'ready',
+      pid: 112,
+      watchedPathCount: 1,
+    });
+    expect(watcher._internals.getWatcherWorkerFreshness().trigger).toEqual(expect.objectContaining({
+      running: true,
+      ready: true,
+      status: 'fresh',
+      pid: 112,
+      watchedPathCount: 1,
+    }));
+
+    jest.advanceTimersByTime(watcher._internals.WATCHER_WORKER_STALE_TIMEOUT_MS + 1);
+    expect(firstWorker.kill).toHaveBeenCalledTimes(1);
+
+    jest.advanceTimersByTime(watcher._internals.WATCHER_WORKER_RESTART_DELAY_MS + 1);
+    expect(childProcessMock.fork).toHaveBeenCalledTimes(2);
+
+    cleanupDir(tempDir);
+  });
+
+  test('trigger watcher heartbeat keeps a ready worker fresh', () => {
+    jest.useFakeTimers();
+    const { watcher, tempDir, childProcessMock, getWorker } = setupWatcher();
+
+    watcher.startTriggerWatcher();
+    const firstWorker = getWorker(0);
+    firstWorker.emit('message', {
+      watcherName: 'trigger',
+      type: 'ready',
+      pid: 113,
+      watchedPathCount: 2,
+    });
+
+    jest.advanceTimersByTime(watcher._internals.WATCHER_WORKER_STALE_TIMEOUT_MS - 1);
+    firstWorker.emit('message', {
+      watcherName: 'trigger',
+      type: 'heartbeat',
+      pid: 113,
+      ready: true,
+      reason: 'interval',
+      watchedPathCount: 2,
+    });
+    jest.advanceTimersByTime(watcher._internals.WATCHER_WORKER_STALE_TIMEOUT_MS - 1);
+
+    expect(firstWorker.kill).not.toHaveBeenCalled();
+    expect(childProcessMock.fork).toHaveBeenCalledTimes(1);
+    expect(watcher._internals.getWatcherWorkerFreshness().trigger).toEqual(expect.objectContaining({
+      status: 'fresh',
+      lastHeartbeatReason: 'interval',
+    }));
 
     cleanupDir(tempDir);
   });

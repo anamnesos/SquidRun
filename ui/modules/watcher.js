@@ -71,7 +71,10 @@ const triggerRetryTimers = new Map();
 const WORKSPACE_WATCH_POLL_INTERVAL_MS = 5000;
 const WATCHER_WORKER_PATH = path.join(__dirname, 'watcher-worker.js');
 const WATCHER_WORKER_RESTART_DELAY_MS = 1000;
+const WATCHER_WORKER_READY_TIMEOUT_MS = 30000;
+const WATCHER_WORKER_STALE_TIMEOUT_MS = 15000;
 const watcherRestartTimers = new Map();
+const watcherWorkerHealth = new Map();
 const MESSAGE_DELIVERY_ACK_TIMEOUT_MS = 4000;
 const MESSAGE_DELIVERY_RETRY_BASE_MS = 500;
 const MESSAGE_DELIVERY_RETRY_MAX_MS = 10000;
@@ -659,6 +662,156 @@ function scheduleWatcherWorkerRestart(watcherName, startFn) {
   watcherRestartTimers.set(watcherName, timer);
 }
 
+function currentWatcherWorker(watcherName) {
+  if (watcherName === 'workspace') return workspaceWatcher;
+  if (watcherName === 'trigger') return triggerWatcher;
+  if (watcherName === 'message') return messageWatcher;
+  return null;
+}
+
+function clearWatcherWorkerFreshness(worker) {
+  const health = worker?.__squidrunWatcherHealth;
+  if (!health) return;
+  if (health.readyTimer) {
+    clearTimeout(health.readyTimer);
+    health.readyTimer = null;
+  }
+  if (health.staleTimer) {
+    clearTimeout(health.staleTimer);
+    health.staleTimer = null;
+  }
+  if (watcherWorkerHealth.get(health.watcherName) === health) {
+    watcherWorkerHealth.delete(health.watcherName);
+  }
+  worker.__squidrunWatcherHealth = null;
+}
+
+function stopStaleWatcherWorker(watcherName, worker, restartFn, reason) {
+  if (!worker || currentWatcherWorker(watcherName) !== worker) return;
+  log.error('Watcher', `${watcherName} worker freshness failure: ${reason}`);
+  stopWatcherWorker(watcherName, watcherName, { reason, clearRestart: false });
+  scheduleWatcherWorkerRestart(watcherName, restartFn);
+}
+
+function scheduleWatcherWorkerStaleCheck(worker, restartFn) {
+  const health = worker?.__squidrunWatcherHealth;
+  if (!health) return;
+  if (health.staleTimer) {
+    clearTimeout(health.staleTimer);
+  }
+
+  const lastSeenAtMs = Math.max(
+    Number(health.lastSeenAtMs) || 0,
+    Number(health.lastHeartbeatAtMs) || 0,
+    Number(health.readyAtMs) || 0,
+    Number(health.startedAtMs) || 0
+  );
+  const ageMs = Math.max(0, Date.now() - lastSeenAtMs);
+  const waitMs = Math.max(1, WATCHER_WORKER_STALE_TIMEOUT_MS - ageMs);
+  health.staleTimer = setTimeout(() => {
+    const currentHealth = worker.__squidrunWatcherHealth;
+    if (!currentHealth || currentWatcherWorker(currentHealth.watcherName) !== worker) return;
+    const currentLastSeenAtMs = Math.max(
+      Number(currentHealth.lastSeenAtMs) || 0,
+      Number(currentHealth.lastHeartbeatAtMs) || 0,
+      Number(currentHealth.readyAtMs) || 0,
+      Number(currentHealth.startedAtMs) || 0
+    );
+    const currentAgeMs = Math.max(0, Date.now() - currentLastSeenAtMs);
+    if (currentAgeMs >= WATCHER_WORKER_STALE_TIMEOUT_MS) {
+      stopStaleWatcherWorker(currentHealth.watcherName, worker, restartFn, `stale_heartbeat:${currentAgeMs}ms`);
+      return;
+    }
+    scheduleWatcherWorkerStaleCheck(worker, restartFn);
+  }, waitMs);
+  health.staleTimer?.unref?.();
+}
+
+function attachWatcherWorkerFreshness(worker, watcherName, restartFn) {
+  const nowMs = Date.now();
+  const health = {
+    watcherName,
+    pid: null,
+    ready: false,
+    startedAtMs: nowMs,
+    readyAtMs: null,
+    lastSeenAtMs: nowMs,
+    lastHeartbeatAtMs: null,
+    lastHeartbeatReason: null,
+    watchedPathCount: null,
+    readyTimer: null,
+    staleTimer: null,
+  };
+  worker.__squidrunWatcherHealth = health;
+  watcherWorkerHealth.set(watcherName, health);
+
+  health.readyTimer = setTimeout(() => {
+    if (worker.__squidrunWatcherHealth !== health || currentWatcherWorker(watcherName) !== worker) return;
+    if (health.ready) return;
+    stopStaleWatcherWorker(watcherName, worker, restartFn, 'ready_timeout');
+  }, WATCHER_WORKER_READY_TIMEOUT_MS);
+  health.readyTimer?.unref?.();
+
+  scheduleWatcherWorkerStaleCheck(worker, restartFn);
+}
+
+function recordWatcherWorkerMessage(worker, watcherName, msg = {}, restartFn) {
+  const health = worker?.__squidrunWatcherHealth;
+  if (!health || health.watcherName !== watcherName) return;
+  const nowMs = Date.now();
+  health.lastSeenAtMs = nowMs;
+  if (Number.isFinite(Number(msg.pid))) health.pid = Number(msg.pid);
+  if (Number.isFinite(Number(msg.watchedPathCount))) health.watchedPathCount = Number(msg.watchedPathCount);
+
+  if (msg.type === 'ready') {
+    health.ready = true;
+    health.readyAtMs = nowMs;
+    if (health.readyTimer) {
+      clearTimeout(health.readyTimer);
+      health.readyTimer = null;
+    }
+  }
+
+  if (msg.type === 'heartbeat') {
+    health.lastHeartbeatAtMs = nowMs;
+    health.lastHeartbeatReason = String(msg.reason || 'heartbeat');
+    if (msg.ready === true && !health.ready) {
+      health.ready = true;
+      health.readyAtMs = nowMs;
+      if (health.readyTimer) {
+        clearTimeout(health.readyTimer);
+        health.readyTimer = null;
+      }
+    }
+  }
+
+  scheduleWatcherWorkerStaleCheck(worker, restartFn);
+}
+
+function getWatcherWorkerFreshness(nowMs = Date.now()) {
+  const statuses = {};
+  for (const watcherName of ['workspace', 'trigger', 'message']) {
+    const worker = currentWatcherWorker(watcherName);
+    const health = watcherWorkerHealth.get(watcherName);
+    const running = isWatcherWorkerRunning(worker);
+    const lastSeenAtMs = Number(health?.lastSeenAtMs) || null;
+    const ageMs = lastSeenAtMs ? Math.max(0, Number(nowMs) - lastSeenAtMs) : null;
+    statuses[watcherName] = {
+      running,
+      ready: Boolean(health?.ready),
+      status: !running ? 'stopped'
+        : (!health?.ready ? 'starting'
+          : (ageMs !== null && ageMs > WATCHER_WORKER_STALE_TIMEOUT_MS ? 'stale' : 'fresh')),
+      pid: health?.pid || null,
+      ageMs,
+      lastHeartbeatAtMs: health?.lastHeartbeatAtMs || null,
+      lastHeartbeatReason: health?.lastHeartbeatReason || null,
+      watchedPathCount: health?.watchedPathCount ?? null,
+    };
+  }
+  return statuses;
+}
+
 function stopWatcherWorker(watcherName, workerRefName, { reason = 'stop', clearRestart = true } = {}) {
   if (clearRestart) {
     clearWatcherRestartTimer(watcherName);
@@ -669,6 +822,7 @@ function stopWatcherWorker(watcherName, workerRefName, { reason = 'stop', clearR
   if (!worker) return false;
 
   worker.__squidrunIntentionalStop = true;
+  clearWatcherWorkerFreshness(worker);
   try {
     worker.kill();
   } catch (err) {
@@ -688,10 +842,16 @@ function startWatcherWorker(watcherName, onEvent, restartFn) {
       SQUIDRUN_WATCHER_NAME: watcherName,
     },
   });
+  attachWatcherWorkerFreshness(worker, watcherName, restartFn);
 
   worker.on('message', (msg) => {
     if (!msg || typeof msg !== 'object') return;
     if (msg.watcherName !== watcherName) return;
+    recordWatcherWorkerMessage(worker, watcherName, msg, restartFn);
+
+    if (msg.type === 'ready' || msg.type === 'heartbeat') {
+      return;
+    }
 
     if (msg.type === 'error') {
       log.error('Watcher', `${watcherName} worker reported error: ${msg.error || 'unknown error'}`);
@@ -709,6 +869,7 @@ function startWatcherWorker(watcherName, onEvent, restartFn) {
 
   worker.on('exit', (code, signal) => {
     const intentional = worker.__squidrunIntentionalStop === true;
+    clearWatcherWorkerFreshness(worker);
     if (watcherName === 'workspace' && workspaceWatcher === worker) workspaceWatcher = null;
     if (watcherName === 'trigger' && triggerWatcher === worker) triggerWatcher = null;
     if (watcherName === 'message' && messageWatcher === worker) messageWatcher = null;
@@ -1591,5 +1752,9 @@ module.exports = {
     clearQueueMutationChains: () => queueMutationChains.clear(),
     getTriggerPaths: () => [...TRIGGER_PATHS],
     isRuntimeNoopFileChange,
+    getWatcherWorkerFreshness,
+    WATCHER_WORKER_READY_TIMEOUT_MS,
+    WATCHER_WORKER_STALE_TIMEOUT_MS,
+    WATCHER_WORKER_RESTART_DELAY_MS,
   },
 };
