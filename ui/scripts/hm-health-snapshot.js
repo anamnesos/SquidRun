@@ -101,6 +101,11 @@ const HEALTH_SCORE_PENALTIES = Object.freeze({
     category: 'transport',
     rationale: 'Inbound Telegram can silently stop even while the worker process remains alive.',
   }),
+  supervisor_heartbeat_stale: Object.freeze({
+    points: 12,
+    category: 'supervisor',
+    rationale: 'A stale supervisor status file means startup health cannot trust the background worker lane.',
+  }),
 });
 
 const BRIDGE_ENV_KEYS = Object.freeze([
@@ -112,6 +117,9 @@ const BRIDGE_ENV_KEYS = Object.freeze([
   'SQUIDRUN_PROFILE',
 ]);
 const DEFAULT_BRIDGE_DISCOVERY_MAX_AGE_MS = 10 * 60 * 1000;
+const DEFAULT_SUPERVISOR_POLL_MS = 4000;
+const DEFAULT_SUPERVISOR_STATUS_STALE_MULTIPLIER = 4;
+const DEFAULT_SUPERVISOR_STATUS_STALE_MIN_MS = 15000;
 const MEMORY_CONSISTENCY_REVIEW_SKIP_KIND_ALLOWLIST = Object.freeze([
   'ambiguous_multi_target',
   'deleted_source_orphan',
@@ -529,6 +537,164 @@ function readAppStatusSnapshot(projectRoot, options = {}) {
       error: err.message,
     };
   }
+}
+
+function parseSupervisorPidPayload(rawValue = '') {
+  const raw = String(rawValue || '').trim();
+  if (!raw) {
+    return { pid: null, payload: null };
+  }
+
+  try {
+    const payload = JSON.parse(raw);
+    return {
+      pid: asPositiveInt(payload?.pid, null),
+      payload,
+    };
+  } catch {
+    return {
+      pid: asPositiveInt(raw, null),
+      payload: null,
+    };
+  }
+}
+
+function getSupervisorStatusFreshnessWindowMs(status = {}, options = {}) {
+  const env = options.env && typeof options.env === 'object' ? options.env : process.env;
+  const pollMs = asPositiveInt(
+    status?.pollMs,
+    asPositiveInt(env.SQUIDRUN_SUPERVISOR_POLL_MS, DEFAULT_SUPERVISOR_POLL_MS)
+  );
+  const staleMultiplier = Math.max(
+    3,
+    asPositiveInt(
+      options.supervisorStatusStaleMultiplier ?? env.SQUIDRUN_SUPERVISOR_STATUS_STALE_MULTIPLIER,
+      DEFAULT_SUPERVISOR_STATUS_STALE_MULTIPLIER
+    )
+  );
+  const staleMinMs = Math.max(
+    DEFAULT_SUPERVISOR_STATUS_STALE_MIN_MS,
+    asPositiveInt(
+      options.supervisorStatusStaleMinMs ?? env.SQUIDRUN_SUPERVISOR_STATUS_STALE_MIN_MS,
+      DEFAULT_SUPERVISOR_STATUS_STALE_MIN_MS
+    )
+  );
+  return Math.max(staleMinMs, pollMs * staleMultiplier);
+}
+
+function inspectSupervisorHeartbeat(projectRoot, options = {}) {
+  if (options.supervisor && typeof options.supervisor === 'object' && !Array.isArray(options.supervisor)) {
+    return options.supervisor;
+  }
+
+  const profileName = normalizeProfileName(options.profileName || DEFAULT_PROFILE);
+  const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+  const statusPath = options.supervisorStatusPath
+    ? path.resolve(String(options.supervisorStatusPath))
+    : resolveProfileCoordPath(projectRoot, path.join('runtime', 'supervisor-status.json'), profileName);
+  const pidPath = options.supervisorPidPath
+    ? path.resolve(String(options.supervisorPidPath))
+    : resolveProfileCoordPath(projectRoot, path.join('runtime', 'supervisor.pid'), profileName);
+  const stat = safeStat(statusPath);
+  if (!stat || !stat.isFile()) {
+    return {
+      ok: true,
+      status: 'missing',
+      statusPath,
+      pidPath,
+      statusFilePresent: false,
+      pidFilePresent: safeStat(pidPath)?.isFile() === true,
+      pid: null,
+      state: null,
+      pollMs: null,
+      heartbeatAtMs: null,
+      heartbeatAgeMs: null,
+      freshnessWindowMs: getSupervisorStatusFreshnessWindowMs({}, options),
+      heartbeatFresh: false,
+      stale: false,
+      staleReasons: [],
+      error: null,
+    };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+  } catch (err) {
+    return {
+      ok: false,
+      status: 'read_error',
+      statusPath,
+      pidPath,
+      statusFilePresent: true,
+      pidFilePresent: safeStat(pidPath)?.isFile() === true,
+      pid: null,
+      state: null,
+      pollMs: null,
+      heartbeatAtMs: null,
+      heartbeatAgeMs: null,
+      freshnessWindowMs: getSupervisorStatusFreshnessWindowMs({}, options),
+      heartbeatFresh: false,
+      stale: true,
+      staleReasons: ['status_read_error'],
+      error: err.message,
+    };
+  }
+
+  const status = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  let pidInfo = { pid: null, payload: null };
+  try {
+    pidInfo = parseSupervisorPidPayload(fs.readFileSync(pidPath, 'utf8'));
+  } catch {
+    pidInfo = { pid: null, payload: null };
+  }
+  const pid = asPositiveInt(status.pid, asPositiveInt(pidInfo.pid, null));
+  const state = typeof status.state === 'string' ? status.state.trim().toLowerCase() || null : null;
+  const pollMs = asPositiveInt(status.pollMs, null);
+  const freshnessWindowMs = getSupervisorStatusFreshnessWindowMs(status, options);
+  const heartbeatAtMs = Number.isFinite(Number(status.heartbeatAtMs))
+    ? Math.floor(Number(status.heartbeatAtMs))
+    : null;
+  const heartbeatAgeMs = heartbeatAtMs !== null ? Math.max(0, nowMs - heartbeatAtMs) : null;
+  const heartbeatFresh = heartbeatAgeMs !== null && heartbeatAgeMs <= freshnessWindowMs;
+  const staleReasons = [];
+
+  if (state === 'stopped') {
+    staleReasons.push('status_stopped');
+  }
+  if (heartbeatAtMs === null) {
+    staleReasons.push('missing_heartbeat');
+  } else if (!heartbeatFresh) {
+    staleReasons.push('heartbeat_stale');
+  }
+
+  let statusLabel = 'fresh';
+  if (state === 'stopped') {
+    statusLabel = 'stopped';
+  } else if (heartbeatAtMs === null) {
+    statusLabel = 'missing_heartbeat';
+  } else if (!heartbeatFresh) {
+    statusLabel = 'stale';
+  }
+
+  return {
+    ok: staleReasons.length === 0,
+    status: statusLabel,
+    statusPath,
+    pidPath,
+    statusFilePresent: true,
+    pidFilePresent: safeStat(pidPath)?.isFile() === true,
+    pid,
+    state,
+    pollMs,
+    heartbeatAtMs,
+    heartbeatAgeMs,
+    freshnessWindowMs,
+    heartbeatFresh,
+    stale: staleReasons.length > 0,
+    staleReasons,
+    error: null,
+  };
 }
 
 function collectKeyModules(projectRoot) {
@@ -1154,6 +1320,22 @@ function buildHealthStatus(snapshot) {
   ) {
     warnings.push(`telegram_poller_${telegramPoller.status}`);
   }
+  const supervisor = snapshot.supervisor && typeof snapshot.supervisor === 'object'
+    ? snapshot.supervisor
+    : {};
+  if (supervisor.stale === true) {
+    const staleReasons = Array.isArray(supervisor.staleReasons) && supervisor.staleReasons.length > 0
+      ? supervisor.staleReasons.join(',')
+      : 'unknown';
+    warnings.push(
+      'supervisor_heartbeat_stale:'
+      + `status=${supervisor.status || 'unknown'},`
+      + `reasons=${staleReasons},`
+      + `age_ms=${supervisor.heartbeatAgeMs ?? 'unknown'},`
+      + `threshold_ms=${supervisor.freshnessWindowMs ?? 'unknown'}`
+    );
+    addPenalty('supervisor_heartbeat_stale');
+  }
   const threshold = resolveHealthThreshold(score);
   return {
     level: threshold.level,
@@ -1196,6 +1378,10 @@ function createHealthSnapshot(options = {}) {
     profileName,
     appUp: appStatus.exists === true,
   });
+  const supervisor = inspectSupervisorHeartbeat(projectRoot, {
+    ...options,
+    profileName,
+  });
 
   const snapshot = {
     generatedAt,
@@ -1218,6 +1404,7 @@ function createHealthSnapshot(options = {}) {
     systemCapabilities,
     codexDesktopCapability,
     telegramPoller,
+    supervisor,
   };
 
   return {
@@ -1347,6 +1534,31 @@ function renderStartupHealthMarkdown(snapshot = {}) {
     lines.push('- Probe: optional pending; penalty=0');
   } else if (bridge.enabled === true && bridge.required !== true && bridge.mode !== 'connected') {
     lines.push('- Probe: optional offline; penalty=0');
+  }
+
+  const supervisor = snapshot.supervisor && typeof snapshot.supervisor === 'object'
+    ? snapshot.supervisor
+    : {};
+  const supervisorHeartbeatText = isFiniteNumberValue(supervisor.heartbeatAtMs)
+    ? new Date(Number(supervisor.heartbeatAtMs)).toISOString()
+    : 'no heartbeatAtMs';
+  const supervisorAgeText = isFiniteNumberValue(supervisor.heartbeatAgeMs)
+    ? `${Math.round(Number(supervisor.heartbeatAgeMs) / 1000)}s old`
+    : 'age unknown';
+  const supervisorThresholdText = isFiniteNumberValue(supervisor.freshnessWindowMs)
+    ? `${Math.round(Number(supervisor.freshnessWindowMs) / 1000)}s threshold`
+    : 'threshold unknown';
+  lines.push('');
+  lines.push('SUPERVISOR HEARTBEAT');
+  lines.push(
+    `- Freshness: ${supervisor.status || 'unknown'}`
+    + ` (${supervisorHeartbeatText}; ${supervisorAgeText}; ${supervisorThresholdText})`
+  );
+  if (supervisor.statusPath) {
+    lines.push(`- State Path: ${supervisor.statusPath}`);
+  }
+  if (Array.isArray(supervisor.staleReasons) && supervisor.staleReasons.length > 0) {
+    lines.push(`- Stale Reasons: ${supervisor.staleReasons.join(', ')}`);
   }
 
   const warnings = Array.isArray(snapshot.status?.warnings) ? snapshot.status.warnings : [];
@@ -1611,7 +1823,9 @@ module.exports = {
   buildBridgeSnapshotFromEnv,
   getAcceptedSourceHeadingResidue,
   getPenaltyPoints,
+  getSupervisorStatusFreshnessWindowMs,
   getStartupHealthFileName,
+  inspectSupervisorHeartbeat,
   inspectTelegramPoller,
   inspectSqliteDb,
   inspectCodexDesktopCapability,

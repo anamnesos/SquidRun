@@ -1011,6 +1011,87 @@ describe('hm-health-snapshot', () => {
     expect(markdown).toContain('- Recovery: required; hm-startup-health invokes hm-telegram-poller-watchdog recover before rendering this report.');
   });
 
+  test('surfaces a stale supervisor heartbeat in startup health', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const nowMs = Date.parse('2026-06-06T10:00:00.000Z');
+    fs.writeFileSync(
+      path.join(tempDir, '.squidrun', 'runtime', 'supervisor-status.json'),
+      JSON.stringify({
+        pid: process.pid,
+        state: 'running',
+        pollMs: 4000,
+        heartbeatAtMs: nowMs - 60000,
+      })
+    );
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs,
+      jestTimeoutMs: 1000,
+      env: {},
+    });
+    const markdown = renderStartupHealthMarkdown(snapshot);
+
+    expect(snapshot.supervisor).toEqual(expect.objectContaining({
+      status: 'stale',
+      stale: true,
+      heartbeatAgeMs: 60000,
+      freshnessWindowMs: 16000,
+      staleReasons: ['heartbeat_stale'],
+    }));
+    expect(snapshot.status.label).toBe('WARN');
+    expect(snapshot.status.score).toBe(88);
+    expect(snapshot.status.warnings).toContain(
+      'supervisor_heartbeat_stale:status=stale,reasons=heartbeat_stale,age_ms=60000,threshold_ms=16000'
+    );
+    expect(snapshot.status.penalties).toContainEqual({ code: 'supervisor_heartbeat_stale', points: 12 });
+    expect(markdown).toContain('SUPERVISOR HEARTBEAT');
+    expect(markdown).toContain('- Freshness: stale');
+    expect(markdown).toContain('- Stale Reasons: heartbeat_stale');
+  });
+
+  test('keeps a fresh supervisor heartbeat out of startup health warnings', () => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const nowMs = Date.parse('2026-06-06T10:00:00.000Z');
+    fs.writeFileSync(
+      path.join(tempDir, '.squidrun', 'runtime', 'supervisor-status.json'),
+      JSON.stringify({
+        pid: process.pid,
+        state: 'running',
+        pollMs: 4000,
+        heartbeatAtMs: nowMs - 1000,
+      })
+    );
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs,
+      jestTimeoutMs: 1000,
+      env: {},
+    });
+
+    expect(snapshot.supervisor).toEqual(expect.objectContaining({
+      status: 'fresh',
+      stale: false,
+      heartbeatAgeMs: 1000,
+      freshnessWindowMs: 16000,
+      staleReasons: [],
+    }));
+    expect(snapshot.status.score).toBe(100);
+    expect(snapshot.status.warnings).not.toContainEqual(expect.stringContaining('supervisor_heartbeat_stale'));
+    expect(snapshot.status.penalties).not.toContainEqual(expect.objectContaining({ code: 'supervisor_heartbeat_stale' }));
+  });
+
   test('writes side-profile startup health to the suffixed on-demand artifact path', () => {
     const { main } = require('../scripts/hm-health-snapshot');
     execFileSync.mockReturnValue([
@@ -1096,6 +1177,10 @@ describe('hm-health-snapshot', () => {
     expect(HEALTH_SCORE_PENALTIES.memory_consistency_drift).toEqual(expect.objectContaining({
       points: 12,
       category: 'memory_consistency',
+    }));
+    expect(HEALTH_SCORE_PENALTIES.supervisor_heartbeat_stale).toEqual(expect.objectContaining({
+      points: 12,
+      category: 'supervisor',
     }));
     expect(getPenaltyPoints('missing_key_modules', { count: 2 })).toBe(8);
     expect(resolveHealthThreshold(100)).toEqual(expect.objectContaining({ label: 'OK' }));
