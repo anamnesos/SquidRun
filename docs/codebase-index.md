@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1293
+- Total files listed: 1073
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -20,10 +20,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 102
 - scripts: 1
 - tools: 3
-- ui/__tests__: 507
-- ui/modules: 388
+- ui/__tests__: 397
+- ui/modules: 333
 - ui/other: 32
-- ui/scripts: 185
+- ui/scripts: 130
 - ui/styles: 17
 - workspace/knowledge: 17
 
@@ -33,9 +33,9 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - doc: 90
 - file: 1
 - jsonl: 1
-- script: 186
-- source: 451
-- test: 508
+- script: 131
+- source: 396
+- test: 398
 
 ## Files
 
@@ -85,7 +85,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/mira-north-star-roadmap.md` | doc | 8530 |
 | `docs/mira-pc-embodiment-permission-v0.md` | doc | 10045 |
 | `docs/mira-presence-runtime-acceptance-v0.md` | doc | 16200 |
-| `docs/mira-system-map.md` | doc | 125640 |
+| `docs/mira-system-map.md` | doc | 125661 |
 | `docs/mira-voice-audio-intake-v0.md` | doc | 9440 |
 | `docs/models/base-instructions.md` | doc | 2070 |
 | `docs/models/claude-notes.md` | doc | 1161 |
@@ -108,7 +108,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | 2728 |
 | `.gitignore` | config | 4598 |
 | `AGENTS.md` | doc | 6432 |
-| `ARCHITECTURE.md` | doc | 61575 |
+| `ARCHITECTURE.md` | doc | 61886 |
 | `CLAUDE-AI.md` | doc | 3856 |
 | `CLAUDE.md` | doc | 2161 |
 | `CODE_OF_CONDUCT.md` | doc | 5185 |
@@ -303,45 +303,18 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/extraction-helpers.test.js` | test | 2311 |
 | `ui/__tests__/feature-capability-gating.test.js` | test | 6875 |
 | `ui/__tests__/firmware-manager.test.js` | test | 8397 |
-| `ui/__tests__/fixtures/mira-core-auth-binding-contract.json` | test | 47493 |
 | `ui/__tests__/fixtures/mira-core-disabled-no-side-effect-contract-v0.json` | test | 8813 |
 | `ui/__tests__/fixtures/mira-core-durable-state-seed-v0-contract.json` | test | 6315 |
-| `ui/__tests__/fixtures/mira-core-encryption-key-contract.json` | test | 50923 |
 | `ui/__tests__/fixtures/mira-core-eval-contract.json` | test | 30290 |
 | `ui/__tests__/fixtures/mira-core-growth-loop-v0-contract.json` | test | 7178 |
 | `ui/__tests__/fixtures/mira-core-identity-anchor-v0-contract.json` | test | 7986 |
-| `ui/__tests__/fixtures/mira-core-identity-signing-contract.json` | test | 42812 |
 | `ui/__tests__/fixtures/mira-core-intent-queue-contract.json` | test | 34855 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-boundary-refresh-contract.json` | test | 66421 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-noop-dry-check-contract.json` | test | 64755 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-preimplementation-checklist-contract.json` | test | 57334 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-gap-contract.json` | test | 66555 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase49-contract.json` | test | 75812 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase50-contract.json` | test | 81607 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase51-contract.json` | test | 86622 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase52-contract.json` | test | 90136 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase53-contract.json` | test | 95976 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase54-contract.json` | test | 106689 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase55-contract.json` | test | 115501 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase56-contract.json` | test | 124724 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase57-contract.json` | test | 133791 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase58-contract.json` | test | 144128 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase59-contract.json` | test | 153603 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase60-contract.json` | test | 163522 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase61-contract.json` | test | 176447 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase62-contract.json` | test | 191852 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase63-contract.json` | test | 202651 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase64-contract.json` | test | 216776 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase65-contract.json` | test | 231387 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-readiness-rollup-through-phase66-contract.json` | test | 248113 |
-| `ui/__tests__/fixtures/mira-core-kill-switch-wiring-safety-contract.json` | test | 73261 |
 | `ui/__tests__/fixtures/mira-core-local-acceptance-contract.json` | test | 36362 |
 | `ui/__tests__/fixtures/mira-core-local-text-session-v0-contract.json` | test | 8799 |
 | `ui/__tests__/fixtures/mira-core-milestone-readiness-contract.json` | test | 41460 |
 | `ui/__tests__/fixtures/mira-core-mutation-patch-contract.json` | test | 31566 |
 | `ui/__tests__/fixtures/mira-core-orientation-contract.json` | test | 17414 |
 | `ui/__tests__/fixtures/mira-core-perception-contract.json` | test | 34124 |
-| `ui/__tests__/fixtures/mira-core-persistence-audit-contract.json` | test | 47582 |
 | `ui/__tests__/fixtures/mira-core-presence-runtime-read-path-v0-contract.json` | test | 7476 |
 | `ui/__tests__/fixtures/mira-core-presence-v0-contract.json` | test | 5054 |
 | `ui/__tests__/fixtures/mira-core-profile-contract.json` | test | 21114 |
@@ -349,35 +322,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/fixtures/mira-core-pulse-contract.json` | test | 20466 |
 | `ui/__tests__/fixtures/mira-core-readiness-contract.json` | test | 44851 |
 | `ui/__tests__/fixtures/mira-core-relationship-presence-v1-contract.json` | test | 6793 |
-| `ui/__tests__/fixtures/mira-core-runtime-control-path-contract.json` | test | 40879 |
-| `ui/__tests__/fixtures/mira-core-runtime-control-reporting-reconciliation-contract.json` | test | 41431 |
-| `ui/__tests__/fixtures/mira-core-runtime-controls-contract.json` | test | 36291 |
-| `ui/__tests__/fixtures/mira-core-runtime-dry-run-implementation-contract.json` | test | 37537 |
-| `ui/__tests__/fixtures/mira-core-runtime-dry-run-readiness-gap-contract.json` | test | 50770 |
-| `ui/__tests__/fixtures/mira-core-runtime-dry-run-review-contract.json` | test | 30046 |
-| `ui/__tests__/fixtures/mira-core-runtime-dry-runner-contract.json` | test | 35499 |
-| `ui/__tests__/fixtures/mira-core-runtime-harness-contract.json` | test | 71983 |
-| `ui/__tests__/fixtures/mira-core-runtime-milestone-refresh-contract.json` | test | 66191 |
-| `ui/__tests__/fixtures/mira-core-runtime-mode-flag-reader-safety-contract.json` | test | 82603 |
-| `ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-contract.json` | test | 56243 |
-| `ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-implementation-risk-contract.json` | test | 77828 |
-| `ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-prerequisite-boundary-contract.json` | test | 62644 |
-| `ui/__tests__/fixtures/mira-core-runtime-mode-kill-switch-status-gap-refresh-contract.json` | test | 58274 |
-| `ui/__tests__/fixtures/mira-core-runtime-next-action-contract.json` | test | 29115 |
-| `ui/__tests__/fixtures/mira-core-runtime-operator-status-contract.json` | test | 28370 |
-| `ui/__tests__/fixtures/mira-core-runtime-operator-ui-surface-contract.json` | test | 36761 |
-| `ui/__tests__/fixtures/mira-core-runtime-preflight-contract.json` | test | 30936 |
-| `ui/__tests__/fixtures/mira-core-runtime-promotion-gate-contract.json` | test | 31992 |
-| `ui/__tests__/fixtures/mira-core-runtime-readiness-refresh-through-phase37-contract.json` | test | 42659 |
-| `ui/__tests__/fixtures/mira-core-runtime-slice-contract.json` | test | 34300 |
-| `ui/__tests__/fixtures/mira-core-runtime-status-milestone-refresh-contract.json` | test | 38947 |
-| `ui/__tests__/fixtures/mira-core-server-api-contract.json` | test | 53449 |
-| `ui/__tests__/fixtures/mira-core-server-boundary-contract.json` | test | 36297 |
-| `ui/__tests__/fixtures/mira-core-server-handler-contract.json` | test | 54688 |
-| `ui/__tests__/fixtures/mira-core-server-runtime-gap-contract.json` | test | 40309 |
-| `ui/__tests__/fixtures/mira-core-server-upload-contract.json` | test | 31405 |
 | `ui/__tests__/fixtures/mira-core-snapshot-contract.json` | test | 11217 |
-| `ui/__tests__/fixtures/mira-core-storage-retention-contract.json` | test | 43175 |
 | `ui/__tests__/fixtures/mira-north-star-acceptance-contract.json` | test | 11079 |
 | `ui/__tests__/fixtures/mira-presence-runtime-acceptance-v0-contract.json` | test | 11509 |
 | `ui/__tests__/fixtures/mira-progress-contract-v0.json` | test | 9528 |
@@ -474,48 +419,21 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-browser-history-curiosity.test.js` | test | 5118 |
 | `ui/__tests__/mira-calendar-message-curiosity.test.js` | test | 5480 |
 | `ui/__tests__/mira-coordinator-snapshot.test.js` | test | 10881 |
-| `ui/__tests__/mira-core-auth-binding.test.js` | test | 22380 |
 | `ui/__tests__/mira-core-autonomy-substrate-v0.test.js` | test | 6761 |
 | `ui/__tests__/mira-core-disabled-no-side-effect-contract-v0.test.js` | test | 13664 |
 | `ui/__tests__/mira-core-durable-state-seed-v0.test.js` | test | 21950 |
 | `ui/__tests__/mira-core-empty-response-diagnostics.test.js` | test | 9379 |
-| `ui/__tests__/mira-core-encryption-key.test.js` | test | 29059 |
 | `ui/__tests__/mira-core-eval-runner.test.js` | test | 9250 |
 | `ui/__tests__/mira-core-experience-v0.test.js` | test | 13565 |
 | `ui/__tests__/mira-core-growth-loop-v0.test.js` | test | 37104 |
 | `ui/__tests__/mira-core-identity-anchor-v0.test.js` | test | 22913 |
-| `ui/__tests__/mira-core-identity-signing.test.js` | test | 19645 |
 | `ui/__tests__/mira-core-intent-queue.test.js` | test | 18748 |
-| `ui/__tests__/mira-core-kill-switch-wiring-noop-boundary-refresh.test.js` | test | 31277 |
-| `ui/__tests__/mira-core-kill-switch-wiring-noop-dry-check.test.js` | test | 29492 |
-| `ui/__tests__/mira-core-kill-switch-wiring-preimplementation-checklist.test.js` | test | 27277 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-gap.test.js` | test | 27403 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase49.test.js` | test | 27907 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase50.test.js` | test | 28982 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase51.test.js` | test | 30670 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase52.test.js` | test | 32092 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase53.test.js` | test | 34589 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase54.test.js` | test | 40222 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase55.test.js` | test | 43541 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase56.test.js` | test | 46930 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase57.test.js` | test | 51278 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase58.test.js` | test | 55456 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase59.test.js` | test | 59392 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase60.test.js` | test | 63839 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase61.test.js` | test | 66496 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase62.test.js` | test | 71955 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase63.test.js` | test | 26333 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase64.test.js` | test | 28420 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase65.test.js` | test | 30039 |
-| `ui/__tests__/mira-core-kill-switch-wiring-readiness-rollup-through-phase66.test.js` | test | 32111 |
-| `ui/__tests__/mira-core-kill-switch-wiring-safety.test.js` | test | 27256 |
 | `ui/__tests__/mira-core-local-acceptance.test.js` | test | 18558 |
 | `ui/__tests__/mira-core-local-text-session-v0.test.js` | test | 33548 |
 | `ui/__tests__/mira-core-milestone-readiness.test.js` | test | 18628 |
 | `ui/__tests__/mira-core-mutation-patch.test.js` | test | 17974 |
 | `ui/__tests__/mira-core-orientation.test.js` | test | 27431 |
 | `ui/__tests__/mira-core-perception.test.js` | test | 17365 |
-| `ui/__tests__/mira-core-persistence-audit.test.js` | test | 26945 |
 | `ui/__tests__/mira-core-presence-runtime-read-path-v0.test.js` | test | 19056 |
 | `ui/__tests__/mira-core-presence-v0.test.js` | test | 12837 |
 | `ui/__tests__/mira-core-profiles.test.js` | test | 19816 |
@@ -523,35 +441,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-core-pulse.test.js` | test | 11926 |
 | `ui/__tests__/mira-core-readiness.test.js` | test | 18634 |
 | `ui/__tests__/mira-core-relationship-presence-v1.test.js` | test | 26842 |
-| `ui/__tests__/mira-core-runtime-control-path.test.js` | test | 27789 |
-| `ui/__tests__/mira-core-runtime-control-reporting-reconciliation.test.js` | test | 27349 |
-| `ui/__tests__/mira-core-runtime-controls.test.js` | test | 22589 |
-| `ui/__tests__/mira-core-runtime-dry-run-implementation.test.js` | test | 26630 |
-| `ui/__tests__/mira-core-runtime-dry-run-readiness-gap.test.js` | test | 30441 |
-| `ui/__tests__/mira-core-runtime-dry-run-review.test.js` | test | 21849 |
-| `ui/__tests__/mira-core-runtime-dry-runner.test.js` | test | 22553 |
-| `ui/__tests__/mira-core-runtime-harness.test.js` | test | 41516 |
-| `ui/__tests__/mira-core-runtime-milestone-refresh.test.js` | test | 19979 |
-| `ui/__tests__/mira-core-runtime-mode-flag-reader-safety.test.js` | test | 30448 |
-| `ui/__tests__/mira-core-runtime-mode-kill-switch-implementation-risk.test.js` | test | 31402 |
-| `ui/__tests__/mira-core-runtime-mode-kill-switch-prerequisite-boundary.test.js` | test | 29089 |
-| `ui/__tests__/mira-core-runtime-mode-kill-switch-status-gap-refresh.test.js` | test | 31274 |
-| `ui/__tests__/mira-core-runtime-mode-kill-switch.test.js` | test | 30606 |
-| `ui/__tests__/mira-core-runtime-next-action.test.js` | test | 19561 |
-| `ui/__tests__/mira-core-runtime-operator-status.test.js` | test | 20165 |
-| `ui/__tests__/mira-core-runtime-operator-ui-surface.test.js` | test | 25150 |
-| `ui/__tests__/mira-core-runtime-preflight.test.js` | test | 26846 |
-| `ui/__tests__/mira-core-runtime-promotion-gate.test.js` | test | 19708 |
-| `ui/__tests__/mira-core-runtime-readiness-refresh-through-phase37.test.js` | test | 25590 |
-| `ui/__tests__/mira-core-runtime-slice.test.js` | test | 20708 |
-| `ui/__tests__/mira-core-runtime-status-milestone-refresh.test.js` | test | 18992 |
-| `ui/__tests__/mira-core-server-api.test.js` | test | 28772 |
-| `ui/__tests__/mira-core-server-boundary.test.js` | test | 18902 |
-| `ui/__tests__/mira-core-server-handler.test.js` | test | 34150 |
-| `ui/__tests__/mira-core-server-runtime-gap.test.js` | test | 17986 |
-| `ui/__tests__/mira-core-server-upload.test.js` | test | 19139 |
 | `ui/__tests__/mira-core-snapshot.test.js` | test | 23410 |
-| `ui/__tests__/mira-core-storage-retention.test.js` | test | 22733 |
 | `ui/__tests__/mira-core-typed-capability-roundtable-v0.test.js` | test | 17659 |
 | `ui/__tests__/mira-core-typed-restart-continuity-context-v0.test.js` | test | 8844 |
 | `ui/__tests__/mira-direct-channel-readiness.test.js` | test | 9774 |
@@ -911,41 +801,15 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/mira-browser-history-curiosity.js` | source | 8668 |
 | `ui/modules/mira-calendar-message-curiosity.js` | source | 20349 |
 | `ui/modules/mira-coordinator-snapshot-channel.js` | source | 146 |
-| `ui/modules/mira-core/auth-binding.js` | source | 37330 |
 | `ui/modules/mira-core/autonomy-substrate-v0.js` | source | 17244 |
 | `ui/modules/mira-core/coordinator-snapshot-v0.js` | source | 28844 |
 | `ui/modules/mira-core/developmental-understanding-v1.js` | source | 5788 |
 | `ui/modules/mira-core/durable-state-seed-v0.js` | source | 58606 |
-| `ui/modules/mira-core/encryption-key.js` | source | 39184 |
 | `ui/modules/mira-core/eval-runner.js` | source | 11944 |
 | `ui/modules/mira-core/experience-v0.js` | source | 31756 |
 | `ui/modules/mira-core/growth-loop-v0.js` | source | 61479 |
 | `ui/modules/mira-core/identity-anchor-v0.js` | source | 56600 |
-| `ui/modules/mira-core/identity-signing.js` | source | 36012 |
 | `ui/modules/mira-core/intent-queue.js` | source | 36946 |
-| `ui/modules/mira-core/kill-switch-wiring-noop-boundary-refresh.js` | source | 57831 |
-| `ui/modules/mira-core/kill-switch-wiring-noop-dry-check.js` | source | 55522 |
-| `ui/modules/mira-core/kill-switch-wiring-preimplementation-checklist.js` | source | 52737 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-gap.js` | source | 51837 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase49.js` | source | 63040 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase50.js` | source | 65638 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase51.js` | source | 68186 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase52.js` | source | 70386 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase53.js` | source | 73805 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase54.js` | source | 78296 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase55.js` | source | 83471 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase56.js` | source | 87698 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase57.js` | source | 92541 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase58.js` | source | 97504 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase59.js` | source | 102230 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase60.js` | source | 107130 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase61.js` | source | 112597 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase62.js` | source | 119782 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase63.js` | source | 58101 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase64.js` | source | 63276 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase65.js` | source | 68886 |
-| `ui/modules/mira-core/kill-switch-wiring-readiness-rollup-through-phase66.js` | source | 75725 |
-| `ui/modules/mira-core/kill-switch-wiring-safety.js` | source | 63131 |
 | `ui/modules/mira-core/live-direct-channel-status-v0.js` | source | 11105 |
 | `ui/modules/mira-core/live-internal-handoff-approval-v0.js` | source | 23557 |
 | `ui/modules/mira-core/live-internal-handoff-preview-v0.js` | source | 14028 |
@@ -965,7 +829,6 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/mira-core/mutation-patch.js` | source | 58719 |
 | `ui/modules/mira-core/orientation.js` | source | 27473 |
 | `ui/modules/mira-core/perception.js` | source | 51939 |
-| `ui/modules/mira-core/persistence-audit.js` | source | 40108 |
 | `ui/modules/mira-core/presence-runtime-read-path-v0.js` | source | 65967 |
 | `ui/modules/mira-core/presence-v0.js` | source | 25040 |
 | `ui/modules/mira-core/profiles.js` | source | 27388 |
@@ -973,36 +836,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/mira-core/pulse.js` | source | 25860 |
 | `ui/modules/mira-core/readiness.js` | source | 51096 |
 | `ui/modules/mira-core/relationship-presence-v1.js` | source | 44510 |
-| `ui/modules/mira-core/runtime-control-path.js` | source | 50236 |
-| `ui/modules/mira-core/runtime-control-reporting-reconciliation.js` | source | 54277 |
-| `ui/modules/mira-core/runtime-controls.js` | source | 37783 |
-| `ui/modules/mira-core/runtime-dry-run-implementation.js` | source | 49296 |
-| `ui/modules/mira-core/runtime-dry-run-readiness-gap.js` | source | 60590 |
-| `ui/modules/mira-core/runtime-dry-run-review.js` | source | 40138 |
-| `ui/modules/mira-core/runtime-dry-runner.js` | source | 44245 |
-| `ui/modules/mira-core/runtime-harness.js` | source | 70353 |
-| `ui/modules/mira-core/runtime-milestone-refresh.js` | source | 36225 |
-| `ui/modules/mira-core/runtime-mode-flag-reader-safety.js` | source | 54967 |
-| `ui/modules/mira-core/runtime-mode-kill-switch-implementation-risk.js` | source | 59584 |
-| `ui/modules/mira-core/runtime-mode-kill-switch-prerequisite-boundary.js` | source | 57784 |
-| `ui/modules/mira-core/runtime-mode-kill-switch-status-gap-refresh.js` | source | 58192 |
-| `ui/modules/mira-core/runtime-mode-kill-switch.js` | source | 63693 |
-| `ui/modules/mira-core/runtime-next-action.js` | source | 40182 |
-| `ui/modules/mira-core/runtime-operator-status.js` | source | 38443 |
-| `ui/modules/mira-core/runtime-operator-ui-surface.js` | source | 53205 |
-| `ui/modules/mira-core/runtime-preflight.js` | source | 44091 |
-| `ui/modules/mira-core/runtime-promotion-gate.js` | source | 40722 |
-| `ui/modules/mira-core/runtime-readiness-refresh-through-phase37.js` | source | 52693 |
-| `ui/modules/mira-core/runtime-slice.js` | source | 38721 |
-| `ui/modules/mira-core/runtime-status-milestone-refresh.js` | source | 39354 |
-| `ui/modules/mira-core/server-api.js` | source | 49518 |
-| `ui/modules/mira-core/server-boundary.js` | source | 48457 |
-| `ui/modules/mira-core/server-handler.js` | source | 55558 |
-| `ui/modules/mira-core/server-runtime-gap.js` | source | 37857 |
-| `ui/modules/mira-core/server-upload.js` | source | 35557 |
 | `ui/modules/mira-core/snapshot.js` | source | 53515 |
 | `ui/modules/mira-core/social-move-classifier-v0.js` | source | 32072 |
-| `ui/modules/mira-core/storage-retention.js` | source | 36485 |
 | `ui/modules/mira-core/tentative-understanding-store-v1.js` | source | 10401 |
 | `ui/modules/mira-core/text-model-attachment-v1.js` | source | 61133 |
 | `ui/modules/mira-core/typed-capability-roundtable-v0.js` | source | 44439 |
@@ -1217,79 +1052,24 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-memory-registry.js` | script | 1943 |
 | `ui/scripts/hm-memory-search.js` | script | 3001 |
 | `ui/scripts/hm-memory.js` | script | 12937 |
-| `ui/scripts/hm-mira-core-auth-binding.js` | script | 1861 |
 | `ui/scripts/hm-mira-core-durable-state-seed-v0.js` | script | 5088 |
-| `ui/scripts/hm-mira-core-encryption-key.js` | script | 1869 |
 | `ui/scripts/hm-mira-core-eval-runner.js` | script | 1550 |
 | `ui/scripts/hm-mira-core-growth-loop-v0.js` | script | 5300 |
 | `ui/scripts/hm-mira-core-identity-anchor-v0.js` | script | 3415 |
-| `ui/scripts/hm-mira-core-identity-signing.js` | script | 1877 |
 | `ui/scripts/hm-mira-core-intent-queue.js` | script | 1301 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-noop-boundary-refresh.js` | script | 2005 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-noop-dry-check.js` | script | 1977 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-preimplementation-checklist.js` | script | 2031 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-gap.js` | script | 1975 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase49.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase50.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase51.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase52.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase53.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase54.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase55.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase56.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase57.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase58.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase59.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase60.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase61.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase62.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase63.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase64.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase65.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-readiness-rollup-through-phase66.js` | script | 2047 |
-| `ui/scripts/hm-mira-core-kill-switch-wiring-safety.js` | script | 1949 |
 | `ui/scripts/hm-mira-core-local-acceptance.js` | script | 1313 |
 | `ui/scripts/hm-mira-core-local-text-session-v0.js` | script | 5009 |
 | `ui/scripts/hm-mira-core-milestone-readiness.js` | script | 1889 |
 | `ui/scripts/hm-mira-core-mutation-patch.js` | script | 1308 |
 | `ui/scripts/hm-mira-core-perception.js` | script | 1298 |
-| `ui/scripts/hm-mira-core-persistence-audit.js` | script | 1881 |
 | `ui/scripts/hm-mira-core-presence-runtime-read-path-v0.js` | script | 4205 |
 | `ui/scripts/hm-mira-core-presence-v0.js` | script | 4280 |
 | `ui/scripts/hm-mira-core-profiles.js` | script | 1712 |
 | `ui/scripts/hm-mira-core-pulse.js` | script | 1554 |
 | `ui/scripts/hm-mira-core-readiness.js` | script | 1851 |
 | `ui/scripts/hm-mira-core-relationship-presence-v1.js` | script | 4473 |
-| `ui/scripts/hm-mira-core-runtime-control-path.js` | script | 1891 |
-| `ui/scripts/hm-mira-core-runtime-control-reporting-reconciliation.js` | script | 2009 |
-| `ui/scripts/hm-mira-core-runtime-controls.js` | script | 1877 |
-| `ui/scripts/hm-mira-core-runtime-dry-run-implementation.js` | script | 1929 |
-| `ui/scripts/hm-mira-core-runtime-dry-run-readiness-gap.js` | script | 1963 |
-| `ui/scripts/hm-mira-core-runtime-dry-run-review.js` | script | 1897 |
-| `ui/scripts/hm-mira-core-runtime-dry-runner.js` | script | 1883 |
-| `ui/scripts/hm-mira-core-runtime-harness.js` | script | 1873 |
-| `ui/scripts/hm-mira-core-runtime-milestone-refresh.js` | script | 1911 |
-| `ui/scripts/hm-mira-core-runtime-mode-flag-reader-safety.js` | script | 1971 |
-| `ui/scripts/hm-mira-core-runtime-mode-kill-switch-implementation-risk.js` | script | 2021 |
-| `ui/scripts/hm-mira-core-runtime-mode-kill-switch-prerequisite-boundary.js` | script | 2029 |
-| `ui/scripts/hm-mira-core-runtime-mode-kill-switch-status-gap-refresh.js` | script | 2015 |
-| `ui/scripts/hm-mira-core-runtime-mode-kill-switch.js` | script | 1945 |
-| `ui/scripts/hm-mira-core-runtime-next-action.js` | script | 1890 |
-| `ui/scripts/hm-mira-core-runtime-operator-status.js` | script | 1903 |
-| `ui/scripts/hm-mira-core-runtime-operator-ui-surface.js` | script | 1920 |
-| `ui/scripts/hm-mira-core-runtime-preflight.js` | script | 1881 |
-| `ui/scripts/hm-mira-core-runtime-promotion-gate.js` | script | 1899 |
-| `ui/scripts/hm-mira-core-runtime-readiness-refresh-through-phase37.js` | script | 2011 |
-| `ui/scripts/hm-mira-core-runtime-slice.js` | script | 1865 |
-| `ui/scripts/hm-mira-core-runtime-status-milestone-refresh.js` | script | 1940 |
-| `ui/scripts/hm-mira-core-server-api.js` | script | 1853 |
-| `ui/scripts/hm-mira-core-server-boundary.js` | script | 1311 |
-| `ui/scripts/hm-mira-core-server-handler.js` | script | 1869 |
-| `ui/scripts/hm-mira-core-server-runtime-gap.js` | script | 1883 |
-| `ui/scripts/hm-mira-core-server-upload.js` | script | 1304 |
 | `ui/scripts/hm-mira-core-snapshot.js` | script | 2039 |
 | `ui/scripts/hm-mira-core-status.js` | script | 1555 |
-| `ui/scripts/hm-mira-core-storage-retention.js` | script | 1881 |
 | `ui/scripts/hm-mira-core-validate-proposal.js` | script | 1636 |
 | `ui/scripts/hm-mira-emit.js` | script | 8985 |
 | `ui/scripts/hm-mira-lab-prompt.js` | script | 7564 |
