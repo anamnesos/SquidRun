@@ -124,6 +124,63 @@ describe('hm-task-queue', () => {
     }));
   });
 
+  it('fails closed on malformed existing queue JSON instead of returning empty state', () => {
+    const queuePath = queue.getQueuePath();
+    fs.writeFileSync(queuePath, '{"agents": { "builder": ');
+
+    expect(() => queue.readQueue()).toThrow(/agent_task_queue_json_parse_error/);
+
+    const broken = queue.readQueue(queuePath, { onBroken: 'return' });
+    expect(broken).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'broken',
+      queuePath,
+      brokenState: expect.objectContaining({
+        code: 'BROKEN_JSON_STATE',
+        reason: 'agent_task_queue_json_parse_error',
+        filePath: queuePath,
+      }),
+    }));
+  });
+
+  it('blocks queue mutation when the current queue JSON is malformed', () => {
+    const queuePath = queue.getQueuePath();
+    fs.writeFileSync(queuePath, '{"agents": { "builder": ');
+
+    expect(() => queue.enqueueTask({
+      agent: 'builder',
+      message: 'Must not erase broken queue',
+    })).toThrow(/agent_task_queue_json_parse_error/);
+    expect(fs.readFileSync(queuePath, 'utf8')).toBe('{"agents": { "builder": ');
+  });
+
+  it('preserves a malformed queue file before an explicit direct rewrite', () => {
+    const queuePath = queue.getQueuePath();
+    fs.writeFileSync(queuePath, '{"agents": { "builder": ');
+
+    const saved = queue.writeQueue({
+      version: 2,
+      agents: {
+        builder: {
+          pending: [
+            { taskId: 'replacement-task', message: 'Replacement task' },
+          ],
+        },
+      },
+    });
+
+    expect(saved.preservedBrokenState).toEqual(expect.objectContaining({
+      store: 'agent_task_queue',
+      sourcePath: queuePath,
+      reason: 'agent_task_queue_json_parse_error',
+      backupPath: expect.stringContaining('agent-task-queue.json.broken-'),
+    }));
+    expect(fs.readFileSync(saved.preservedBrokenState.backupPath, 'utf8')).toBe('{"agents": { "builder": ');
+    expect(queue.readQueue().state.agents.builder.pending[0]).toEqual(expect.objectContaining({
+      taskId: 'replacement-task',
+    }));
+  });
+
   it('lists pending and active tasks per agent', () => {
     queue.enqueueTask({
       agent: 'builder',
