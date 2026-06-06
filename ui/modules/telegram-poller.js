@@ -332,6 +332,34 @@ function persistNextOffset(filePath, key, offset, details = {}) {
   return writePollerState(filePath, state);
 }
 
+function persistPollerHeartbeat(filePath, key, details = {}) {
+  if (!filePath) return false;
+
+  const existing = readPollerState(filePath);
+  const state = existing && typeof existing === 'object' && !Array.isArray(existing)
+    ? existing
+    : {};
+  const nowIso = new Date().toISOString();
+  const priorPoller = state.poller && typeof state.poller === 'object' && !Array.isArray(state.poller)
+    ? state.poller
+    : {};
+
+  state.version = 1;
+  state.updatedAt = nowIso;
+  state.poller = {
+    ...priorPoller,
+    cursorKey: key || priorPoller.cursorKey || null,
+    pid: process.pid,
+    profile: details.profile || priorPoller.profile || null,
+    nextOffset: normalizeOffset(details.nextOffset) ?? normalizeOffset(priorPoller.nextOffset),
+    lastPollAt: nowIso,
+    lastPollStatus: details.status || priorPoller.lastPollStatus || 'unknown',
+    lastError: details.error || null,
+  };
+
+  return writePollerState(filePath, state);
+}
+
 function resolveStartupGraceMs(options = {}) {
   const candidates = [
     options.startupGraceMs,
@@ -624,6 +652,8 @@ async function maybeDownloadInboundMedia(message, currentConfig, context = {}) {
 async function pollNow() {
   if (!running || !config || pollInFlight) return;
   pollInFlight = true;
+  let heartbeatStatus = 'started';
+  let heartbeatError = null;
 
   try {
     const path = buildUpdatesPath(config, nextOffset);
@@ -631,6 +661,8 @@ async function pollNow() {
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       log.warn('Telegram', `Telegram polling failed (${response.statusCode})`);
+      heartbeatStatus = 'http_error';
+      heartbeatError = `status:${response.statusCode}`;
       return;
     }
 
@@ -639,10 +671,13 @@ async function pollNow() {
       payload = JSON.parse(response.body || '{}');
     } catch (err) {
       log.warn('Telegram', `Telegram polling returned invalid JSON: ${err.message}`);
+      heartbeatStatus = 'invalid_json';
+      heartbeatError = err.message;
       return;
     }
 
     const updates = Array.isArray(payload.result) ? payload.result : [];
+    heartbeatStatus = updates.length > 0 ? 'updates_received' : 'ok_empty';
     const sortedUpdates = updates
       .slice()
       .sort((left, right) => {
@@ -776,7 +811,15 @@ async function pollNow() {
     }
   } catch (err) {
     log.warn('Telegram', `Telegram polling error: ${err.message}`);
+    heartbeatStatus = 'request_error';
+    heartbeatError = err.message;
   } finally {
+    persistPollerHeartbeat(statePath, cursorKey, {
+      error: heartbeatError,
+      nextOffset,
+      profile: config?.profile || 'main',
+      status: heartbeatStatus,
+    });
     pollInFlight = false;
   }
 }
@@ -882,6 +925,7 @@ const _internals = {
   resolveStatePath,
   readPersistedOffset,
   persistNextOffset,
+  persistPollerHeartbeat,
   shouldDropStaleStartupMessage,
 };
 

@@ -96,6 +96,11 @@ const HEALTH_SCORE_PENALTIES = Object.freeze({
     category: 'memory_consistency',
     rationale: 'If consistency cannot be confirmed, health visibility is degraded even without confirmed drift.',
   }),
+  telegram_poller_wedged: Object.freeze({
+    points: 20,
+    category: 'transport',
+    rationale: 'Inbound Telegram can silently stop even while the worker process remains alive.',
+  }),
 });
 
 const BRIDGE_ENV_KEYS = Object.freeze([
@@ -120,6 +125,7 @@ let SQLITE_DRIVER = undefined;
 let resolveDefaultCognitiveMemoryDbPathFn = null;
 let runMemoryConsistencyCheckFn = null;
 let planMemoryConsistencyRepairFn = null;
+let inspectTelegramPollerFreshnessFn = null;
 
 function getResolveDefaultCognitiveMemoryDbPath() {
   if (!resolveDefaultCognitiveMemoryDbPathFn) {
@@ -140,6 +146,13 @@ function getPlanMemoryConsistencyRepair() {
     ({ planMemoryConsistencyRepair: planMemoryConsistencyRepairFn } = require('../modules/memory-consistency-check'));
   }
   return planMemoryConsistencyRepairFn;
+}
+
+function getInspectTelegramPollerFreshness() {
+  if (!inspectTelegramPollerFreshnessFn) {
+    ({ inspectTelegramPollerFreshness: inspectTelegramPollerFreshnessFn } = require('./hm-telegram-poller-watchdog'));
+  }
+  return inspectTelegramPollerFreshnessFn;
 }
 
 function asPositiveInt(value, fallback) {
@@ -920,6 +933,37 @@ function inspectCodexDesktopCapability(projectRoot, options = {}) {
   });
 }
 
+function inspectTelegramPoller(projectRoot, options = {}) {
+  const profileName = normalizeProfileName(options.profileName || DEFAULT_PROFILE);
+  if (options.telegramPoller && typeof options.telegramPoller === 'object') {
+    return options.telegramPoller;
+  }
+  if (profileName !== DEFAULT_PROFILE) {
+    return {
+      ok: true,
+      status: 'profile_not_owner',
+      wedged: false,
+      reason: 'main_profile_owns_getupdates',
+    };
+  }
+  try {
+    return getInspectTelegramPollerFreshness()({
+      projectRoot,
+      nowMs: options.nowMs,
+      staleThresholdMs: options.telegramPollerStaleThresholdMs,
+      appUp: options.appUp,
+      statePath: options.telegramPollerStatePath,
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      status: 'inspect_error',
+      wedged: false,
+      error: err.message,
+    };
+  }
+}
+
 function hasMemoryConsistencyCheckFailure(memoryConsistency = {}) {
   const status = String(memoryConsistency.status || '').trim();
   if (memoryConsistency.error) return true;
@@ -1091,6 +1135,25 @@ function buildHealthStatus(snapshot) {
     warnings.push(`memory_consistency_${memoryConsistency.status || 'unknown'}`);
     addPenalty('memory_consistency_unsynced');
   }
+  const telegramPoller = snapshot.telegramPoller && typeof snapshot.telegramPoller === 'object'
+    ? snapshot.telegramPoller
+    : {};
+  if (telegramPoller.wedged === true) {
+    warnings.push(
+      'telegram_poller_wedged:'
+      + `status=${telegramPoller.status || 'unknown'},`
+      + `age_ms=${telegramPoller.ageMs ?? 'unknown'},`
+      + `threshold_ms=${telegramPoller.staleThresholdMs ?? 'unknown'}`
+    );
+    addPenalty('telegram_poller_wedged');
+  } else if (
+    telegramPoller.status
+    && telegramPoller.status !== 'fresh'
+    && telegramPoller.status !== 'profile_not_owner'
+    && telegramPoller.status !== 'app_not_up'
+  ) {
+    warnings.push(`telegram_poller_${telegramPoller.status}`);
+  }
   const threshold = resolveHealthThreshold(score);
   return {
     level: threshold.level,
@@ -1128,6 +1191,11 @@ function createHealthSnapshot(options = {}) {
   const memoryConsistency = inspectMemoryConsistency(projectRoot, { ...options, profileName });
   const systemCapabilities = inspectSystemCapabilities(projectRoot, options);
   const codexDesktopCapability = inspectCodexDesktopCapability(projectRoot, options);
+  const telegramPoller = inspectTelegramPoller(projectRoot, {
+    ...options,
+    profileName,
+    appUp: appStatus.exists === true,
+  });
 
   const snapshot = {
     generatedAt,
@@ -1149,6 +1217,7 @@ function createHealthSnapshot(options = {}) {
     memoryConsistency,
     systemCapabilities,
     codexDesktopCapability,
+    telegramPoller,
   };
 
   return {
@@ -1285,6 +1354,32 @@ function renderStartupHealthMarkdown(snapshot = {}) {
     lines.push(`- Warnings: ${warnings.join('; ')}`);
   }
 
+  const telegramPoller = snapshot.telegramPoller && typeof snapshot.telegramPoller === 'object'
+    ? snapshot.telegramPoller
+    : {};
+  const telegramAgeText = isFiniteNumberValue(telegramPoller.ageMs)
+    ? `${Math.round(Number(telegramPoller.ageMs) / 1000)}s old`
+    : 'age unknown';
+  const telegramThresholdText = isFiniteNumberValue(telegramPoller.staleThresholdMs)
+    ? `${Math.round(Number(telegramPoller.staleThresholdMs) / 1000)}s threshold`
+    : 'threshold unknown';
+  lines.push('');
+  lines.push('TELEGRAM POLLER');
+  lines.push(
+    `- Freshness: ${telegramPoller.status || 'unknown'}`
+    + ` (${telegramPoller.updatedAt || 'no updatedAt'}; ${telegramAgeText}; ${telegramThresholdText})`
+  );
+  if (telegramPoller.statePath) {
+    lines.push(`- State Path: ${telegramPoller.statePath}`);
+  }
+  if (telegramPoller.wedged === true) {
+    lines.push('- Recovery: required; hm-startup-health invokes hm-telegram-poller-watchdog recover before rendering this report.');
+  } else if (telegramPoller.status === 'profile_not_owner') {
+    lines.push('- Recovery: skipped; main profile owns Telegram getUpdates.');
+  } else {
+    lines.push('- Recovery: not needed.');
+  }
+
   const codexDesktop = snapshot.codexDesktopCapability && typeof snapshot.codexDesktopCapability === 'object'
     ? snapshot.codexDesktopCapability
     : {};
@@ -1326,6 +1421,8 @@ function renderUsage() {
     '  --json              Print the raw JSON snapshot (default).',
     '  --write             Write the startup-health markdown artifact.',
     '  --output <path>     Override the --write destination path.',
+    '  --telegram-poller-stale-threshold-ms=<ms>',
+    '                      Override the Telegram poller freshness threshold.',
     '',
   ].join('\n');
 }
@@ -1338,6 +1435,7 @@ function parseCliArgs(argv = []) {
     format: 'json',
     write: false,
     outputPath: null,
+    telegramPollerStaleThresholdMs: null,
     errors: [],
   };
   const args = Array.isArray(argv) ? argv : [];
@@ -1395,6 +1493,16 @@ function parseCliArgs(argv = []) {
         parsed.errors.push('--profile requires a profile name.');
       } else {
         parsed.profileName = value;
+      }
+      continue;
+    }
+    if (token.startsWith('--telegram-poller-stale-threshold-ms=')) {
+      const value = token.slice('--telegram-poller-stale-threshold-ms='.length).trim();
+      const parsedValue = Number(value);
+      if (Number.isFinite(parsedValue) && parsedValue > 0) {
+        parsed.telegramPollerStaleThresholdMs = Math.floor(parsedValue);
+      } else {
+        parsed.errors.push(`Invalid Telegram poller threshold: ${value}`);
       }
       continue;
     }
@@ -1458,6 +1566,7 @@ function main(argv = process.argv.slice(2), io = {}) {
   const snapshot = createHealthSnapshot({
     projectRoot: parsed.projectRoot || null,
     profileName: parsed.profileName || DEFAULT_PROFILE,
+    telegramPollerStaleThresholdMs: parsed.telegramPollerStaleThresholdMs,
   });
   let writeResult = null;
   if (parsed.write) {
@@ -1503,6 +1612,7 @@ module.exports = {
   getAcceptedSourceHeadingResidue,
   getPenaltyPoints,
   getStartupHealthFileName,
+  inspectTelegramPoller,
   inspectSqliteDb,
   inspectCodexDesktopCapability,
   listJestTests,
