@@ -4494,8 +4494,8 @@ class SquidRunApp {
 
     this.startSmsPoller();
     // Telegram must have one getUpdates owner. Duplicate pollers race offsets
-    // and lose messages; hm-telegram-longpoll-relay.js is intentionally disabled
-    // for that reason. Keep this lifecycle path as the single runtime owner until
+    // and lose messages; the old standalone long-poll relay was removed for
+    // that reason. Keep this lifecycle path as the single runtime owner until
     // the poller is extracted to a single-owner child process or supervisor lane.
     this.startTelegramPoller();
     this.startBridgeClient();

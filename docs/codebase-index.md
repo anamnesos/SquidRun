@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1292
+- Total files listed: 1291
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -23,7 +23,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - ui/__tests__: 505
 - ui/modules: 388
 - ui/other: 32
-- ui/scripts: 186
+- ui/scripts: 185
 - ui/styles: 17
 - workspace/knowledge: 17
 
@@ -33,7 +33,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - doc: 90
 - file: 1
 - jsonl: 1
-- script: 187
+- script: 186
 - source: 451
 - test: 506
 
@@ -887,7 +887,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/pane-host-window-manager.js` | source | 12289 |
 | `ui/modules/main/pty-output-filter.js` | source | 7793 |
 | `ui/modules/main/settings-manager.js` | source | 21516 |
-| `ui/modules/main/squidrun-app.js` | source | 498835 |
+| `ui/modules/main/squidrun-app.js` | source | 498822 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 1884 |
 | `ui/modules/main/telegram-reply-obligations.js` | source | 13086 |
 | `ui/modules/main/usage-manager.js` | source | 2909 |
@@ -1328,7 +1328,6 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-supervisor.js` | script | 5200 |
 | `ui/scripts/hm-surface-audit.js` | script | 8678 |
 | `ui/scripts/hm-task-queue.js` | script | 35837 |
-| `ui/scripts/hm-telegram-longpoll-relay.js` | script | 3484 |
 | `ui/scripts/hm-telegram-poller-lane.js` | script | 11838 |
 | `ui/scripts/hm-telegram-poller-watchdog.js` | script | 16064 |
 | `ui/scripts/hm-telegram-reply-guard-probe.js` | script | 4754 |
