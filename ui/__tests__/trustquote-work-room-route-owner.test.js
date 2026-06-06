@@ -3,6 +3,7 @@ const { EventEmitter } = require('events');
 const {
   ROUTE_OWNER_ID,
   TrustQuoteWorkRoomRouteOwner,
+  buildTrustQuoteRoleStartupInstruction,
   buildTrustQuoteRouteOwnerPlan,
   createRegisterPayload,
 } = require('../modules/trustquote-work-room-route-owner');
@@ -155,6 +156,8 @@ describe('TrustQuote work-room route owner', () => {
       daemonClient,
       WebSocketImpl: FakeWebSocket,
       heartbeatMs: 100000,
+      roleStartupPromptDelayMs: 0,
+      routeMessageEnterDelayMs: 0,
     });
 
     await owner.start();
@@ -187,6 +190,34 @@ describe('TrustQuote work-room route owner', () => {
         sessionScopeId: 'app-session-384:trustquote',
       })
     );
+    const startupPayloads = daemonClient.write.mock.calls.filter((call) => (
+      call[2]?.traceId && String(call[2].traceId).startsWith('startup-checkin-') && call[2]?.phase === 'payload'
+    ));
+    expect(startupPayloads).toHaveLength(2);
+    expect(startupPayloads).toEqual(expect.arrayContaining([
+      [
+        'trustquote-builder',
+        expect.stringContaining('(TRUSTQUOTE BUILDER #1): TrustQuote Builder online in trustquote-builder;'),
+        expect.objectContaining({
+          role: 'builder',
+          traceId: 'startup-checkin-builder',
+          phase: 'payload',
+          sessionScopeId: 'app-session-384:trustquote',
+        }),
+      ],
+      [
+        'trustquote-oracle',
+        expect.stringContaining('(TRUSTQUOTE ORACLE #1): TrustQuote Oracle online in trustquote-oracle;'),
+        expect.objectContaining({
+          role: 'oracle',
+          traceId: 'startup-checkin-oracle',
+          phase: 'payload',
+          sessionScopeId: 'app-session-384:trustquote',
+        }),
+      ],
+    ]));
+    expect(startupPayloads[0][1]).toContain('Ignore stale CLI session summaries');
+    expect(startupPayloads[0][1]).toContain('No autonomy/trading/customer side effects enabled.');
 
     const registerMessages = FakeWebSocket.instances
       .flatMap((ws) => ws.sent)
@@ -341,6 +372,11 @@ describe('TrustQuote work-room route owner', () => {
       paneId: 'trustquote-builder',
       pid: 42001,
     }));
+    expect(daemonClient.write).not.toHaveBeenCalledWith(
+      'trustquote-builder',
+      expect.stringContaining('TRUSTQUOTE WORK-ROOM STARTUP BINDING'),
+      expect.anything()
+    );
 
     const registerMessages = FakeWebSocket.instances
       .flatMap((ws) => ws.sent)
@@ -390,6 +426,30 @@ describe('TrustQuote work-room route owner', () => {
     });
 
     await expect(owner.start()).rejects.toThrow(/existing terminal unavailable for trustquote-builder/);
+  });
+
+  test('builds a role-specific startup binding that rejects stale resumed identity and requires hm-send check-in', () => {
+    const plan = buildTrustQuoteRouteOwnerPlan({
+      mainSessionScopeId: 'app-session-384',
+      settings: { paneCommands: { 2: 'codex', 3: 'codex' } },
+    });
+    const builderInstruction = buildTrustQuoteRoleStartupInstruction(plan.roles[0], plan, {
+      hmSendPath: 'D:/projects/squidrun/ui/scripts/hm-send.js',
+    });
+    const oracleInstruction = buildTrustQuoteRoleStartupInstruction(plan.roles[1], plan, {
+      hmSendPath: 'D:/projects/squidrun/ui/scripts/hm-send.js',
+    });
+
+    expect(builderInstruction).toContain('You are TrustQuote Builder in pane trustquote-builder.');
+    expect(builderInstruction).toContain('SQUIDRUN_ROLE=builder; SQUIDRUN_PANE_ID=trustquote-builder');
+    expect(builderInstruction).toContain('Ignore stale CLI session summaries');
+    expect(builderInstruction).toContain('(TRUSTQUOTE BUILDER #1): TrustQuote Builder online in trustquote-builder;');
+    expect(builderInstruction).toContain("| node 'D:/projects/squidrun/ui/scripts/hm-send.js' architect --stdin");
+
+    expect(oracleInstruction).toContain('You are TrustQuote Oracle in pane trustquote-oracle.');
+    expect(oracleInstruction).toContain('SQUIDRUN_ROLE=oracle; SQUIDRUN_PANE_ID=trustquote-oracle');
+    expect(oracleInstruction).toContain('(TRUSTQUOTE ORACLE #1): TrustQuote Oracle online in trustquote-oracle;');
+    expect(oracleInstruction).not.toContain('(TRUSTQUOTE BUILDER #1)');
   });
 
   test('reopens a route client after websocket disconnect while terminal is still alive', async () => {
