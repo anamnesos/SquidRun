@@ -328,4 +328,53 @@ maybeDescribe('arm apply queue', () => {
       }),
     }));
   });
+
+  test('keeps unapproved high-risk dispatch attempts visible in the approval queue', () => {
+    const queued = enqueueArmApplyRequest({
+      requestId: 'apply-money-write-unapproved-1',
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-406:trustquote',
+      armKey: 'money-documents',
+      actionCategory: 'money_write',
+      riskClass: 'safe',
+      evidenceRefs: ['invoice:unapproved'],
+      draftPayload: { amount: 12500 },
+    }, { dbPath, nowMs: 2_000 });
+    expect(queued.ok).toBe(true);
+    expect(queued.request.status).toBe('approval_required');
+
+    const executor = jest.fn(() => ({ ok: true, status: 'wrote-money' }));
+    const dispatched = dispatchArmApplyRequest({
+      requestId: 'apply-money-write-unapproved-1',
+    }, { dbPath, nowMs: 3_000, executor });
+
+    expect(executor).not.toHaveBeenCalled();
+    expect(dispatched).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'executor_disabled',
+      dispatched: false,
+      dispatchEnabled: false,
+    }));
+    expect(dispatched.request).toEqual(expect.objectContaining({
+      status: 'approval_required',
+      approvalRequired: true,
+      approvedBy: null,
+      approvalRef: null,
+      sideEffectResult: expect.objectContaining({
+        noExecutionPerformed: true,
+        sideEffects: expect.objectContaining({
+          moneyWrites: 0,
+        }),
+      }),
+    }));
+
+    const pendingApproval = getArmApplyRequest({
+      requestId: 'apply-money-write-unapproved-1',
+      status: 'approval_required',
+    }, { dbPath });
+    expect(pendingApproval).toEqual(expect.objectContaining({
+      requestId: 'apply-money-write-unapproved-1',
+      status: 'approval_required',
+    }));
+  });
 });
