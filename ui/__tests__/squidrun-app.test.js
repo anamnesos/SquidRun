@@ -434,6 +434,14 @@ jest.mock('../scripts/hm-health-snapshot', () => ({
   ].join('\n')),
 }));
 
+jest.mock('../scripts/hm-telegram-poller-watchdog', () => ({
+  checkAndRecoverTelegramPoller: jest.fn(async () => ({
+    ok: true,
+    freshness: { wedged: false, status: 'fresh' },
+    recovery: { ok: true, action: 'none', recovered: false, reason: 'not_wedged' },
+  })),
+}));
+
 jest.mock('../scripts/hm-session-summary', () => ({
   generateSessionSummary: jest.fn(async () => ({
     ok: true,
@@ -2129,6 +2137,7 @@ describe('SquidRunApp', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
       const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+      const { checkAndRecoverTelegramPoller } = require('../scripts/hm-telegram-poller-watchdog');
       const teamMemory = require('../modules/team-memory');
       createHealthSnapshot.mockReturnValueOnce({
         generatedAt: '2026-03-13T00:00:00.000Z',
@@ -2201,10 +2210,44 @@ describe('SquidRunApp', () => {
         nowMs: expect.any(Number),
         generatedAt: expect.any(String),
       }));
+      expect(checkAndRecoverTelegramPoller).toHaveBeenCalledWith(expect.objectContaining({
+        projectRoot: '/test',
+        staleThresholdMs: undefined,
+      }));
+      expect(checkAndRecoverTelegramPoller.mock.invocationCallOrder[0])
+        .toBeLessThan(createHealthSnapshot.mock.invocationCallOrder[0]);
       expect(createHealthSnapshot.mock.calls[0][0].bridgeStatus).toEqual(expect.objectContaining({
         state: expect.any(String),
       }));
       expect(teamMemory.initializeTeamMemoryRuntime).not.toHaveBeenCalled();
+    });
+
+    it('skips Telegram poller recovery for side-profile startup health artifacts', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const { checkAndRecoverTelegramPoller } = require('../scripts/hm-telegram-poller-watchdog');
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
+        session: 777,
+        status: 'ACTIVE',
+        mode: 'APP',
+      });
+      const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      const result = await app.refreshStartupHealthArtifacts({
+        profileName: 'eunbyeol',
+        sessionNumber: 777,
+      });
+
+      expect(result.telegramPollerRecovery).toEqual({
+        ok: true,
+        skipped: true,
+        reason: 'profile_not_owner',
+      });
+      expect(checkAndRecoverTelegramPoller).not.toHaveBeenCalled();
+      expect(writeFileAtomic).toHaveBeenCalledWith(
+        expect.stringContaining('startup-health-eunbyeol.md'),
+        expect.any(String)
+      );
     });
 
     it('anchors startup ledger session context to app-status when ledger context is stale', async () => {
