@@ -55,6 +55,32 @@ describe('voice-broker IPC handlers', () => {
     }));
   });
 
+  test('reports stopped when broker lane has only stale heartbeat proof', () => {
+    const status = handlers.buildVoiceBrokerStatus({
+      env: { OPENAI_API_KEY: 'sk-test' },
+      lane: {
+        status: () => ({
+          ok: true,
+          running: false,
+          pid: null,
+          stalePid: 1234,
+          staleHeartbeat: true,
+          reason: 'stale_voice_broker_status',
+        }),
+      },
+    });
+
+    expect(status).toEqual(expect.objectContaining({
+      state: 'stopped',
+      ready: true,
+      running: false,
+      lane: expect.objectContaining({
+        staleHeartbeat: true,
+        reason: 'stale_voice_broker_status',
+      }),
+    }));
+  });
+
   test('control fails closed for start/restart when broker is not ready', async () => {
     const lane = {
       status: jest.fn(() => ({ ok: true, running: false })),
