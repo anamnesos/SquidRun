@@ -45,7 +45,6 @@ const miraLabWindowModule = require('./mira-lab-window');
 const liveTaskAuditSidecarWindowModule = require('./live-task-audit-sidecar-window');
 const { resolveRuntimeInt } = require('../runtime-config');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
-const TEAM_MEMORY_BELIEF_SWEEP_ENABLED = process.env.SQUIDRUN_TEAM_MEMORY_BELIEF_SWEEP === '1';
 const TELEGRAM_PENDING_REPLAY_GRACE_MS = 10 * 60 * 1000;
 
 // Import sub-modules
@@ -267,10 +266,6 @@ const MIRA_TELEGRAM_META_REPAIR_CONTAINMENT_TEXT = "No. I'm stopping here.";
 const TEAM_MEMORY_BACKFILL_LIMIT = Number.parseInt(process.env.SQUIDRUN_TEAM_MEMORY_BACKFILL_LIMIT || '5000', 10);
 const TEAM_MEMORY_INTEGRITY_SWEEP_INTERVAL_MS = Number.parseInt(
   process.env.SQUIDRUN_TEAM_MEMORY_INTEGRITY_SWEEP_MS || String(24 * 60 * 60 * 1000),
-  10
-);
-const TEAM_MEMORY_BELIEF_SNAPSHOT_INTERVAL_MS = Number.parseInt(
-  process.env.SQUIDRUN_TEAM_MEMORY_BELIEF_SWEEP_MS || String(5 * 60 * 1000),
   10
 );
 const TEAM_MEMORY_PATTERN_MINING_INTERVAL_MS = Number.parseInt(
@@ -4646,14 +4641,6 @@ class SquidRunApp {
       intervalMs: TEAM_MEMORY_INTEGRITY_SWEEP_INTERVAL_MS,
       immediate: true,
     });
-    if (TEAM_MEMORY_BELIEF_SWEEP_ENABLED) {
-      teamMemory.startBeliefSnapshotSweep({
-        intervalMs: TEAM_MEMORY_BELIEF_SNAPSHOT_INTERVAL_MS,
-        immediate: true,
-      });
-    } else {
-      log.info('TeamMemory', 'Belief snapshot sweep disabled by default; set SQUIDRUN_TEAM_MEMORY_BELIEF_SWEEP=1 to re-enable.');
-    }
     teamMemory.startPatternMiningSweep({
       intervalMs: TEAM_MEMORY_PATTERN_MINING_INTERVAL_MS,
       immediate: true,
@@ -12802,7 +12789,6 @@ class SquidRunApp {
     await this.stopAutoHandoffMaterializer({ flush: true });
     contextCompressor.shutdown();
     teamMemory.stopIntegritySweep();
-    teamMemory.stopBeliefSnapshotSweep();
     teamMemory.stopPatternMiningSweep();
     if (typeof teamMemory.stopCommsTaggedClaimsSweep === 'function') {
       teamMemory.stopCommsTaggedClaimsSweep();

@@ -394,8 +394,6 @@ jest.mock('../modules/team-memory', () => ({
   runIntegrityCheck: jest.fn(async () => ({ ok: true, orphanCount: 0 })),
   startIntegritySweep: jest.fn(),
   stopIntegritySweep: jest.fn(),
-  startBeliefSnapshotSweep: jest.fn(),
-  stopBeliefSnapshotSweep: jest.fn(),
   startPatternMiningSweep: jest.fn(),
   stopPatternMiningSweep: jest.fn(),
   closeTeamMemoryRuntime: jest.fn(async () => undefined),
@@ -4248,7 +4246,6 @@ describe('SquidRunApp', () => {
       expect(closeSharedRuntime).toHaveBeenCalled();
       expect(experiment.closeExperimentRuntime).toHaveBeenCalled();
       expect(teamMemory.stopIntegritySweep).toHaveBeenCalled();
-      expect(teamMemory.stopBeliefSnapshotSweep).toHaveBeenCalled();
       expect(teamMemory.stopPatternMiningSweep).toHaveBeenCalled();
       expect(teamMemory.closeTeamMemoryRuntime).toHaveBeenCalled();
       expect(websocketServer.stop).toHaveBeenCalled();

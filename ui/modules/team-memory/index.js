@@ -44,10 +44,8 @@ function resolveDefaultPatternSpoolPath() {
 
 const DEFAULT_ERRORS_PATH = resolveDefaultErrorsPath();
 const DEFAULT_INTEGRITY_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_BELIEF_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_PATTERN_MINING_INTERVAL_MS = 60 * 1000;
 const DEFAULT_COMMS_TAGGED_CLAIMS_INTERVAL_MS = 30 * 1000;
-const DEFAULT_BELIEF_AGENTS = Object.freeze(['architect', 'builder', 'oracle']);
 const DEFAULT_EVIDENCE_LEDGER_DB_PATH = resolveDefaultEvidenceLedgerDbPath();
 const CANONICAL_ROLE_IDS = new Set(
   (Array.isArray(ROLE_NAMES) && ROLE_NAMES.length > 0 ? ROLE_NAMES : ['architect', 'builder', 'oracle'])
@@ -62,7 +60,6 @@ const PANE_ID_TO_CANONICAL_ROLE = new Map(
 );
 
 let integritySweepTimer = null;
-let beliefSnapshotTimer = null;
 let patternMiningTimer = null;
 let commsTaggedClaimsTimer = null;
 let lastTaggedExtractionCursorMs = null;
@@ -323,60 +320,6 @@ function isIntegritySweepRunning() {
   return Boolean(integritySweepTimer);
 }
 
-function startBeliefSnapshotSweep(options = {}) {
-  stopBeliefSnapshotSweep();
-
-  const intervalMsRaw = Number(options.intervalMs);
-  const intervalMs = Number.isFinite(intervalMsRaw) && intervalMsRaw > 0
-    ? Math.floor(intervalMsRaw)
-    : DEFAULT_BELIEF_SNAPSHOT_INTERVAL_MS;
-
-  const agents = Array.isArray(options.agents) && options.agents.length > 0
-    ? options.agents
-    : [...DEFAULT_BELIEF_AGENTS];
-
-  const runSnapshots = async () => {
-    for (const agent of agents) {
-      try {
-        const result = await executeTeamMemoryOperation('create-belief-snapshot', {
-          agent,
-          session: options.session || null,
-          maxBeliefs: options.maxBeliefs,
-        }, options);
-        if (result?.ok === false) {
-          log.warn('TeamMemory', `Belief snapshot unavailable for ${agent}: ${result.reason || 'unknown'}`);
-          continue;
-        }
-        const contradictionCount = Number(result?.contradictions?.count || 0);
-        if (contradictionCount > 0) {
-          log.warn('TeamMemory', `Belief snapshot for ${agent} found ${contradictionCount} contradiction(s)`);
-        }
-      } catch (err) {
-        log.warn('TeamMemory', `Belief snapshot failed for ${agent}: ${err.message}`);
-      }
-    }
-  };
-
-  if (options.immediate !== false) {
-    runSnapshots();
-  }
-
-  beliefSnapshotTimer = setInterval(runSnapshots, intervalMs);
-  if (typeof beliefSnapshotTimer.unref === 'function') {
-    beliefSnapshotTimer.unref();
-  }
-}
-
-function stopBeliefSnapshotSweep() {
-  if (!beliefSnapshotTimer) return;
-  clearInterval(beliefSnapshotTimer);
-  beliefSnapshotTimer = null;
-}
-
-function isBeliefSnapshotSweepRunning() {
-  return Boolean(beliefSnapshotTimer);
-}
-
 async function appendPatternHookEvent(event = {}, options = {}) {
   const payload = asObject(event);
   const spoolPath = options.spoolPath || DEFAULT_PATTERN_SPOOL_PATH;
@@ -572,7 +515,6 @@ function isCommsTaggedClaimsSweepRunning() {
 
 function closeTeamMemoryRuntime(options = {}) {
   stopIntegritySweep();
-  stopBeliefSnapshotSweep();
   stopPatternMiningSweep();
   stopCommsTaggedClaimsSweep();
   closePatternHookLedgerStore();
@@ -584,7 +526,6 @@ function closeTeamMemoryRuntime(options = {}) {
 
 async function resetForTests() {
   stopIntegritySweep();
-  stopBeliefSnapshotSweep();
   stopPatternMiningSweep();
   stopCommsTaggedClaimsSweep();
   closePatternHookLedgerStore();
@@ -600,9 +541,6 @@ module.exports = {
   startIntegritySweep,
   stopIntegritySweep,
   isIntegritySweepRunning,
-  startBeliefSnapshotSweep,
-  stopBeliefSnapshotSweep,
-  isBeliefSnapshotSweepRunning,
   appendPatternHookEvent,
   startPatternMiningSweep,
   stopPatternMiningSweep,
