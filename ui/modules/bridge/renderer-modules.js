@@ -15,6 +15,7 @@ function createRendererModules() {
     paneVisibility: require('../pane-visibility'),
     windowTeamBootstrap: require('../window-team-bootstrap'),
     workspacePaneShell: require('../workspace-pane-shell'),
+    squidRoomSurface: require('../squid-room-surface'),
     miraLiveEntrypoint: require('../mira-live-entrypoint'),
     modelSelector: require('../model-selector'),
     config: require('../../config'),

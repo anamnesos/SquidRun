@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1091
+- Total files listed: 1093
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -20,8 +20,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 102
 - scripts: 1
 - tools: 3
-- ui/__tests__: 404
-- ui/modules: 339
+- ui/__tests__: 405
+- ui/modules: 340
 - ui/other: 32
 - ui/scripts: 132
 - ui/styles: 18
@@ -34,8 +34,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - file: 1
 - jsonl: 1
 - script: 133
-- source: 402
-- test: 405
+- source: 403
+- test: 406
 
 ## Files
 
@@ -110,7 +110,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | 2728 |
 | `.gitignore` | config | 4598 |
 | `AGENTS.md` | doc | 6432 |
-| `ARCHITECTURE.md` | doc | 63883 |
+| `ARCHITECTURE.md` | doc | 64135 |
 | `CLAUDE-AI.md` | doc | 3856 |
 | `CLAUDE.md` | doc | 2161 |
 | `CODE_OF_CONDUCT.md` | doc | 5185 |
@@ -570,6 +570,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/smart-routing.test.js` | test | 10637 |
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
+| `ui/__tests__/squid-room-surface.test.js` | test | 6787 |
 | `ui/__tests__/squidrun-app.test.js` | test | 350910 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 1987 |
@@ -643,7 +644,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/bridge-client.js` | source | 37954 |
 | `ui/modules/bridge/channel-policy.js` | source | 5417 |
 | `ui/modules/bridge/preload-api.js` | source | 8467 |
-| `ui/modules/bridge/renderer-modules.js` | source | 949 |
+| `ui/modules/bridge/renderer-modules.js` | source | 1005 |
 | `ui/modules/bridge/safe-ipc.js` | source | 3924 |
 | `ui/modules/buffered-file-writer.js` | source | 5113 |
 | `ui/modules/bus-reliability-trace.js` | source | 7822 |
@@ -900,6 +901,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/smart-routing.js` | source | 11068 |
 | `ui/modules/sms-poller.js` | source | 18982 |
 | `ui/modules/sqlite-compat.js` | source | 1389 |
+| `ui/modules/squid-room-surface.js` | source | 9268 |
 | `ui/modules/startup-ai-briefing.js` | source | 54303 |
 | `ui/modules/startup-transcript-context.js` | source | 11881 |
 | `ui/modules/status-strip.js` | source | 6375 |
@@ -1000,7 +1002,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/pane-host.html` | asset | 1143 |
 | `ui/preload.js` | source | 934 |
 | `ui/profile.js` | source | 8692 |
-| `ui/renderer.js` | source | 116182 |
+| `ui/renderer.js` | source | 116489 |
 | `ui/supervisor-daemon.js` | source | 259767 |
 | `ui/terminal-daemon.js` | source | 74913 |
 | `ui/types/contracts.d.ts` | source | 8484 |
@@ -1161,7 +1163,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/styles/panes.css` | asset | 13886 |
 | `ui/styles/project-rooms.css` | asset | 3686 |
 | `ui/styles/settings-panel.css` | asset | 11422 |
-| `ui/styles/squid-room.css` | asset | 2802 |
+| `ui/styles/squid-room.css` | asset | 4823 |
 | `ui/styles/state-bar.css` | asset | 3172 |
 | `ui/styles/status-strip.css` | asset | 4654 |
 | `ui/styles/tabs.css` | asset | 2550 |
