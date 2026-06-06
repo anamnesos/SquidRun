@@ -13,6 +13,20 @@
 
 **Restart-safety (verified S404 Oracle gate):** a running-but-not-`running` supervisor (e.g. a stale `STARTING` one) is stopped and relaunched on the next workspace-open. The stop path is **terminal-safe**: `ensureTrustQuoteRouteOwnerCurrent` always passes `killTerminalsOnStop:false` + `attachExistingTerminals:true`, so `stopTrustQuoteRouteOwner` SIGTERMs only the supervisor pid and never cleans up the attached agent terminals James can see. Stale cross-session supervisors are caught by the `session_scope_changed` stop branch; same-session not-ready ones by the `route_owner_not_ready` branch — so a stuck supervisor cannot deadlock a fresh launch. `ensure` is one-shot per workspace-open (not a loop), so a persistent failure returns a clean error rather than thrashing stop/start. Caveat (low, forward-looking): the `RUN_AS_NODE=1` env is inherited by any child the route-owner spawns; today it runs `--no-launch-agents`/attach-only so it spawns none, but if agent-launch is ever enabled, confirm the agent spawn strips `ELECTRON_RUN_AS_NODE` so the codex/claude CLIs don't inherit it.
 
+### Manually (re)opening the TrustQuote agents from the Architect CLI (S406)
+
+When James says "open the TrustQuote agents" and the room is dead, the symptom is `hm-send … --target-profile trustquote` returning **`scope_route_unavailable`** (route-owner alive but scoped to a previous `app-session-N`) or **`ECONNREFUSED 127.0.0.1:9979`** (no supervisor at all). After an app restart the side work-room does **not** always auto-relaunch under the new session scope.
+
+Procedure (Architect pane, project root):
+1. Diagnose: `node ui/scripts/hm-trustquote-room-route-owner.js status` (and `probe`). Check `sessionScopeId` matches the current `app-session-N` from `.squidrun/app-status.json`.
+2. If scoped to an old session: `node ui/scripts/hm-trustquote-room-route-owner.js stop` (terminal-safe — kills only the supervisor pid).
+3. Relaunch persistently:
+   `node ui/scripts/hm-trustquote-room-route-owner.js start --launch-agents --allow-live-agents --session app-session-<N> --status-file D:\projects\squidrun\.squidrun\runtime\trustquote-work-room-route-owner\status.json`
+   - `--allow-live-agents` is **required** alongside `--launch-agents`, else `start` refuses with `live_agent_launch_requires_explicit_allow`.
+4. Verify: `status` shows `state:running`; port 9979 OPEN; a generic `hm-send.js builder --target-profile trustquote --file <ping>` returns `delivered.websocket` (the real liveness proof — process-alive is not enough).
+
+**CRITICAL — use `start`, NOT `run`, for persistence.** The `start` command spawns the supervisor `detached:true` + `child.unref()` + `windowsHide:true` (see `startTrustQuoteRouteOwner`), so it survives the launching shell. Launching `run` directly as a backgrounded shell command (e.g. via a tool's `run_in_background`) ties the supervisor's lifetime to that shell task — when the task is reaped the supervisor dies, port 9979 closes, and the room silently drops. This bit S406: a backgrounded `run` looked healthy for ~70 min then died on task reap. Content-guard note: the room's content filter rejects main-context-looking bodies (`MAIN_CONTEXT_PATTERN`) — send generic liveness pings via `--file`, not inline strings full of session/lane/main-architect wording.
+
 ## How restarts ACTUALLY happen (READ THIS BEFORE STAGING ANY RESTART)
 
 The Architect **cannot** restart the SquidRun app from its own pane, and staging
