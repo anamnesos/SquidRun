@@ -3,12 +3,19 @@ const { fork } = require('child_process');
 const log = require('../logger');
 
 const WORKER_PATH = path.join(__dirname, 'evidence-ledger-worker.js');
-const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+const DEFAULT_REQUEST_TIMEOUT_MS = parsePositiveInt(
+  Number.parseInt(process.env.SQUIDRUN_EVIDENCE_LEDGER_WORKER_REQUEST_TIMEOUT_MS || '15000', 10),
+  15000
+);
 const DEFAULT_CLOSE_TIMEOUT_MS = 2000;
 
 let workerProcess = null;
 let requestCounter = 0;
 const pendingRequests = new Map();
+
+function parsePositiveInt(value, fallback) {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
 
 function nextRequestId() {
   requestCounter += 1;
@@ -27,6 +34,26 @@ function rejectAllPending(error) {
   for (const [reqId] of pendingRequests) {
     const entry = clearPendingRequest(reqId);
     if (entry) entry.reject(error);
+  }
+}
+
+function quarantineWorker(worker, reason = 'unresponsive') {
+  if (!worker) return;
+  if (workerProcess === worker) {
+    workerProcess = null;
+  }
+
+  const err = new Error(`evidence-ledger worker quarantined (${reason})`);
+  err.code = 'EVIDENCE_LEDGER_WORKER_QUARANTINED';
+  rejectAllPending(err);
+
+  worker.__squidrunIntentionalStop = true;
+  try {
+    if (typeof worker.kill === 'function') {
+      worker.kill();
+    }
+  } catch (killErr) {
+    log.warn('EvidenceLedgerWorker', `Failed to kill quarantined worker (${reason}): ${killErr.message}`);
   }
 }
 
@@ -57,11 +84,11 @@ function attachWorkerListeners(worker) {
 
   worker.on('exit', (code, signal) => {
     const intentional = worker.__squidrunIntentionalStop === true;
-    if (workerProcess === worker) {
+    const wasCurrentWorker = workerProcess === worker;
+    if (wasCurrentWorker) {
       workerProcess = null;
+      rejectAllPending(new Error(`evidence-ledger worker exited (code=${code}, signal=${signal || 'none'})`));
     }
-
-    rejectAllPending(new Error(`evidence-ledger worker exited (code=${code}, signal=${signal || 'none'})`));
 
     if (intentional) {
       log.info('EvidenceLedgerWorker', `Worker stopped (${signal || code || 'exit'})`);
@@ -99,6 +126,7 @@ function sendRequestWithWorker(worker, type, payload = {}, timeoutMs = DEFAULT_R
       if (!entry) return;
       const timeoutError = new Error(`evidence-ledger worker timeout (${type})`);
       timeoutError.code = 'EVIDENCE_LEDGER_WORKER_TIMEOUT';
+      quarantineWorker(worker, `timeout:${type}`);
       entry.reject(timeoutError);
     }, timeoutMs);
 
@@ -112,6 +140,7 @@ function sendRequestWithWorker(worker, type, payload = {}, timeoutMs = DEFAULT_R
       });
     } catch (err) {
       const entry = clearPendingRequest(reqId);
+      quarantineWorker(worker, `send_failed:${type}`);
       if (entry) entry.reject(err);
     }
   });

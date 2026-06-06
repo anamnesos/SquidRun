@@ -1,9 +1,16 @@
 const { EventEmitter } = require('events');
 
+let stallNextRequest = false;
+
 function createWorkerStub() {
   const worker = new EventEmitter();
   worker.connected = true;
   worker.send = jest.fn((msg) => {
+    if (stallNextRequest && msg.type !== 'close') {
+      stallNextRequest = false;
+      return;
+    }
+
     setImmediate(() => {
       if (msg.type === 'close') {
         worker.emit('message', {
@@ -43,6 +50,8 @@ describe('evidence-ledger-worker-client', () => {
 
   beforeEach(() => {
     jest.resetModules();
+    process.env.SQUIDRUN_EVIDENCE_LEDGER_WORKER_REQUEST_TIMEOUT_MS = '20';
+    stallNextRequest = false;
 
     workers = [];
     forkMock = jest.fn(() => {
@@ -64,6 +73,7 @@ describe('evidence-ledger-worker-client', () => {
 
   afterEach(async () => {
     await client.resetForTests();
+    delete process.env.SQUIDRUN_EVIDENCE_LEDGER_WORKER_REQUEST_TIMEOUT_MS;
   });
 
   test('initializeRuntime forks worker and resolves init result', async () => {
@@ -96,5 +106,19 @@ describe('evidence-ledger-worker-client', () => {
   test('closeRuntime is a no-op when worker was never started', async () => {
     await expect(client.closeRuntime()).resolves.toBeUndefined();
     expect(forkMock).not.toHaveBeenCalled();
+  });
+
+  test('executeOperation quarantines a timed-out connected worker before reuse', async () => {
+    stallNextRequest = true;
+
+    await expect(client.executeOperation('get-context', {}, {})).rejects.toMatchObject({
+      code: 'EVIDENCE_LEDGER_WORKER_TIMEOUT',
+    });
+    expect(forkMock).toHaveBeenCalledTimes(1);
+    expect(workers[0].kill).toHaveBeenCalledTimes(1);
+
+    const second = await client.executeOperation('get-context', {}, {});
+    expect(second.ok).toBe(true);
+    expect(forkMock).toHaveBeenCalledTimes(2);
   });
 });

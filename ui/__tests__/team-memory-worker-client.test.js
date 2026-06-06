@@ -1,9 +1,16 @@
 const { EventEmitter } = require('events');
 
+let stallNextRequest = false;
+
 function createWorkerStub() {
   const worker = new EventEmitter();
   worker.connected = true;
   worker.send = jest.fn((msg) => {
+    if (stallNextRequest && msg.type !== 'close') {
+      stallNextRequest = false;
+      return;
+    }
+
     setImmediate(() => {
       if (msg.type === 'close') {
         worker.emit('message', {
@@ -43,6 +50,8 @@ describe('team-memory worker client', () => {
 
   beforeEach(() => {
     jest.resetModules();
+    process.env.SQUIDRUN_TEAM_MEMORY_WORKER_REQUEST_TIMEOUT_MS = '20';
+    stallNextRequest = false;
     workers = [];
     forkMock = jest.fn(() => {
       const worker = createWorkerStub();
@@ -63,6 +72,7 @@ describe('team-memory worker client', () => {
 
   afterEach(async () => {
     await client.resetForTests();
+    delete process.env.SQUIDRUN_TEAM_MEMORY_WORKER_REQUEST_TIMEOUT_MS;
   });
 
   test('initializeRuntime forks worker and resolves', async () => {
@@ -79,6 +89,20 @@ describe('team-memory worker client', () => {
 
     workers[0].connected = false;
     workers[0].emit('exit', 1, null);
+
+    const second = await client.executeOperation('health', {}, {});
+    expect(second.ok).toBe(true);
+    expect(forkMock).toHaveBeenCalledTimes(2);
+  });
+
+  test('executeOperation quarantines a timed-out connected worker before reuse', async () => {
+    stallNextRequest = true;
+
+    await expect(client.executeOperation('health', {}, {})).rejects.toMatchObject({
+      code: 'TEAM_MEMORY_WORKER_TIMEOUT',
+    });
+    expect(forkMock).toHaveBeenCalledTimes(1);
+    expect(workers[0].kill).toHaveBeenCalledTimes(1);
 
     const second = await client.executeOperation('health', {}, {});
     expect(second.ok).toBe(true);
