@@ -400,7 +400,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/hm-comms.test.js` | test | 1261 |
 | `ui/__tests__/hm-experiment.test.js` | test | 2841 |
 | `ui/__tests__/hm-github.test.js` | test | 2922 |
-| `ui/__tests__/hm-health-snapshot.test.js` | test | 44757 |
+| `ui/__tests__/hm-health-snapshot.test.js` | test | 47803 |
 | `ui/__tests__/hm-initiative.test.js` | test | 7230 |
 | `ui/__tests__/hm-memory-ingest.test.js` | test | 2120 |
 | `ui/__tests__/hm-memory-promote.test.js` | test | 2695 |
@@ -1195,7 +1195,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-doctor.js` | script | 18972 |
 | `ui/scripts/hm-experiment.js` | script | 12365 |
 | `ui/scripts/hm-github.js` | script | 14433 |
-| `ui/scripts/hm-health-snapshot.js` | script | 61007 |
+| `ui/scripts/hm-health-snapshot.js` | script | 68226 |
 | `ui/scripts/hm-heartbeat.js` | script | 8590 |
 | `ui/scripts/hm-hook-afteragent.js` | script | 973 |
 | `ui/scripts/hm-hook-injection.js` | script | 6600 |
