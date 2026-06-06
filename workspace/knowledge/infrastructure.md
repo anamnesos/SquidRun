@@ -27,6 +27,33 @@ Procedure (Architect pane, project root):
 
 **CRITICAL — use `start`, NOT `run`, for persistence.** The `start` command spawns the supervisor `detached:true` + `child.unref()` + `windowsHide:true` (see `startTrustQuoteRouteOwner`), so it survives the launching shell. Launching `run` directly as a backgrounded shell command (e.g. via a tool's `run_in_background`) ties the supervisor's lifetime to that shell task — when the task is reaped the supervisor dies, port 9979 closes, and the room silently drops. This bit S406: a backgrounded `run` looked healthy for ~70 min then died on task reap. Content-guard note: the room's content filter rejects main-context-looking bodies (`MAIN_CONTEXT_PATTERN`) — send generic liveness pings via `--file`, not inline strings full of session/lane/main-architect wording.
 
+### TrustQuote work-room canonical lifecycle and S406 regression map
+
+This is the intended TrustQuote room flow, not just a recovery command:
+
+1. The visible opener is `open-trustquote-workspace`, which calls `openAppWindow('trustquote', { autoBootAgents:false, profileName:'trustquote' })`. The TrustQuote window must not auto-spawn duplicate default panes.
+2. Before the window renders as usable, `openAppWindow('trustquote')` must ensure the route owner is current for the main session, materialize `D:/projects/TrustQuote/.squidrun/link.json`, `current-workstream.json`, and `.squidrun/runtime/window-teams/trustquote/startup-bundle.md`, then require a proven route-owner probe with `canRouteTask:true`.
+3. The route owner owns the TrustQuote agent terminals. Its plan must bind `trustquote-builder` to Builder and `trustquote-oracle` to Oracle with `SQUIDRUN_PROFILE=trustquote`, `SQUIDRUN_SESSION_SCOPE_ID=app-session-<N>:trustquote`, `SQUIDRUN_PROJECT_ROOT=D:/projects/TrustQuote`, and role-specific `SQUIDRUN_ROLE`/`SQUIDRUN_PANE_ID`.
+4. For newly spawned TrustQuote agents, the route-owner launch path must deliver the per-role startup binding and first check-in instruction. The normal main-pane path does this through renderer `terminal.js:spawnAgent()` -> startup identity injection, but route-owner starts its own terminals and cannot assume renderer `spawnAgent()` will run.
+5. The first live proof for identity is not process-alive or env metadata. It is distinct TrustQuote Builder and TrustQuote Oracle check-ins landing in `hm-comms` under the TrustQuote scope/session, with the agents acknowledging the generated startup sources and TrustQuote playbook.
+6. The visible window must retarget the shell to `trustquote-builder` and `trustquote-oracle` (`workspace-pane-shell.js`) and readiness must check those retargeted panes, not just fallback pane `2`/`3`.
+
+S406 regression inventory, ranked:
+
+1. **Critical - startup identity/check-in bypass.** `trustquote-work-room-route-owner.js` had correct role/env data in `buildTrustQuoteRouteOwnerPlan()`, but the spawned-agent path used `spawnRoleTerminal()` plus `launchRoleAgent()`, and `launchRoleAgent()` only wrote the bare CLI command. The renderer startup identity path (`terminal.js:spawnAgent()` / startup injection) did not run, so Codex could resume stale same-workspace context and both panes could behave like TrustQuote Builder. This is a route-owner launch/bootstrap bug, not a terminal-daemon bug. `terminal-daemon.js` explicitly leaves identity injection to renderer startup handling.
+2. **High - session/artifact desync.** `openAppWindow` must refresh `link.json`, `current-workstream.json`, and the startup bundle before treating a route owner as current. A running supervisor for the wrong `app-session-N` or a stale workstream can make the backend look alive while the room contract is stale.
+3. **High - visible opener removed or hidden.** The header/open-room affordance regressed across the room-switcher/header changes, leaving a headless route owner that could be healthy while James had no visible TrustQuote room window.
+4. **Medium - readiness checked fallback panes.** Readiness must prefer `trustquote-builder` and `trustquote-oracle`; pane `2`/`3` are fallback/source-pane identifiers only after retargeting. Treating fallback IDs as authority lets the window lie about the room.
+5. **Medium - proof surfaces can disagree.** As of the S406 audit snapshot, `hm-trustquote-room-route-owner.js probe --json` returned `contract.status="proven"` and `canRouteTask:true` with builder/oracle `source:"client_activity"`, while `D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/current-workstream.json` still said `routeStatus:"unproven"` with `live_builder_route_missing` and `live_oracle_route_missing`. Re-probe and refresh artifacts before claiming current status.
+
+Three independent seams can lie and must be reconciled separately:
+
+- **Identity seam:** spawned CLI can be alive and correctly env-bound but still acting from stale Codex/Gemini context unless role-specific startup binding and check-in proof land.
+- **Backend/session seam:** status pid, port 9979, and route heartbeats can be alive for the wrong session or stale artifacts unless the session scope and route-owner probe match the current `app-session-N:trustquote`.
+- **Window/readiness seam:** a visible shell can show panes or labels while the actual route-binding lives elsewhere. Trust the retargeted pane IDs plus route binding, not generic pane `2`/`3` alone.
+
+Use this proof order for future claims: current main session -> materialized TrustQuote artifacts -> route-owner status `state:"running"` for the same session -> route-owner probe with `canRouteTask:true` and client_activity routes -> distinct Builder/Oracle startup check-ins -> visible TrustQuote window readiness on `trustquote-builder` and `trustquote-oracle`.
+
 ## How restarts ACTUALLY happen (READ THIS BEFORE STAGING ANY RESTART)
 
 The Architect **cannot** restart the SquidRun app from its own pane, and staging
