@@ -463,6 +463,47 @@ CREATE INDEX IF NOT EXISTS idx_arm_missing_watchdogs_due
   ON arm_missing_watchdogs(status, nudge_due_at_ms, escalate_due_at_ms);
 `;
 
+const SCHEMA_V9_SQL = `
+CREATE TABLE IF NOT EXISTS arm_apply_requests (
+  request_id TEXT PRIMARY KEY,
+  registry_id TEXT NOT NULL,
+  arm_id TEXT NOT NULL,
+  app_room_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  arm_key TEXT NOT NULL,
+  role TEXT NOT NULL,
+  pane_id TEXT,
+  action_category TEXT NOT NULL,
+  risk_class TEXT NOT NULL CHECK (risk_class IN ('safe', 'review', 'approval_required')),
+  status TEXT NOT NULL CHECK (
+    status IN ('draft', 'approval_required', 'approved', 'executable', 'rejected', 'cancelled', 'dispatch_blocked')
+  ) DEFAULT 'draft',
+  approval_required INTEGER NOT NULL DEFAULT 0,
+  approved_by TEXT,
+  approved_at_ms INTEGER,
+  approval_ref TEXT,
+  evidence_refs_json TEXT DEFAULT '[]',
+  draft_payload_json TEXT DEFAULT '{}',
+  draft_payload_hash TEXT,
+  side_effect_result_json TEXT DEFAULT '{}',
+  metadata_json TEXT DEFAULT '{}',
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_arm_apply_requests_registry_status
+  ON arm_apply_requests(registry_id, status, updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_arm_apply_requests_arm_status
+  ON arm_apply_requests(arm_id, status, updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_arm_apply_requests_category_risk
+  ON arm_apply_requests(action_category, risk_class, updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_arm_apply_requests_approval
+  ON arm_apply_requests(approval_required, status, updated_at_ms DESC);
+`;
+
 const COMMS_CHANNELS = new Set(['ws', 'telegram', 'sms', 'user', 'voice']);
 const COMMS_DIRECTIONS = new Set(['inbound', 'outbound']);
 const COMMS_STATUS_RANK = Object.freeze({
@@ -482,6 +523,24 @@ const IDENTITY_PROOF_KINDS = new Set(['role_check_in', 'startup_check_in', 'manu
 const ARM_MISSING_WATCHDOG_STATUSES = new Set(['expected', 'nudged', 'escalated', 'satisfied']);
 const DEFAULT_ARM_MISSING_NUDGE_AFTER_MS = 2 * 60 * 1000;
 const DEFAULT_ARM_MISSING_ESCALATE_AFTER_NUDGE_MS = 4 * 60 * 1000;
+const ARM_APPLY_REQUEST_STATUSES = new Set([
+  'draft',
+  'approval_required',
+  'approved',
+  'executable',
+  'rejected',
+  'cancelled',
+  'dispatch_blocked',
+]);
+const ARM_APPLY_RISK_CLASSES = new Set(['safe', 'review', 'approval_required']);
+const HIGH_RISK_ARM_APPLY_CATEGORIES = new Set([
+  'customer_message',
+  'money_write',
+  'schedule_mutation',
+  'delete_archive',
+  'refund_reversal',
+  'production_repair',
+]);
 
 function toMs(value, fallback) {
   const numeric = Number(value);
@@ -669,6 +728,59 @@ function normalizeArmMissingWatchdogStatus(value) {
   return ARM_MISSING_WATCHDOG_STATUSES.has(normalized) ? normalized : null;
 }
 
+function normalizeArmApplyRequestStatus(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  return ARM_APPLY_REQUEST_STATUSES.has(normalized) ? normalized : null;
+}
+
+function normalizeArmApplyRiskClass(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return 'review';
+  const normalized = text.toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+  if (['high', 'risky', 'requires_approval', 'approval'].includes(normalized)) {
+    return 'approval_required';
+  }
+  if (['low', 'safe', 'read_only', 'draft'].includes(normalized)) {
+    return 'safe';
+  }
+  if (['medium', 'review', 'caution'].includes(normalized)) {
+    return 'review';
+  }
+  return ARM_APPLY_RISK_CLASSES.has(normalized) ? normalized : 'review';
+}
+
+function normalizeArmApplyCategory(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  return text.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || null;
+}
+
+function buildNoSideEffectResult(reason = 'executor_disabled', nowMs = null) {
+  return {
+    dispatchEnabled: false,
+    executorPresent: false,
+    dispatched: false,
+    noExecutionPerformed: true,
+    reason,
+    checkedAtMs: Number.isFinite(nowMs) ? nowMs : null,
+    sideEffects: {
+      customerMessagesSent: 0,
+      moneyWrites: 0,
+      scheduleMutations: 0,
+      deleteArchiveActions: 0,
+      refundReversalActions: 0,
+      productionRepairActions: 0,
+    },
+  };
+}
+
+function hashJson(value) {
+  const json = JSON.stringify(value ?? {});
+  return crypto.createHash('sha256').update(json, 'utf8').digest('hex');
+}
+
 function normalizeArmIdentityProofKind(value) {
   const text = toOptionalString(value, null);
   if (!text) return 'role_check_in';
@@ -826,6 +938,34 @@ function mapArmMissingWatchdogRow(row) {
   };
 }
 
+function mapArmApplyRequestRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    requestId: row.request_id,
+    registryId: row.registry_id,
+    armId: row.arm_id,
+    appRoomId: row.app_room_id,
+    sessionId: row.session_id,
+    armKey: row.arm_key,
+    role: row.role,
+    paneId: row.pane_id,
+    actionCategory: row.action_category,
+    riskClass: row.risk_class,
+    status: row.status,
+    approvalRequired: Number(row.approval_required || 0) === 1,
+    approvedBy: row.approved_by,
+    approvedAtMs: row.approved_at_ms,
+    approvalRef: row.approval_ref,
+    evidenceRefs: parseJson(row.evidence_refs_json, []),
+    draftPayload: parseJson(row.draft_payload_json, {}),
+    draftPayloadHash: row.draft_payload_hash,
+    sideEffectResult: parseJson(row.side_effect_result_json, {}),
+    metadata: parseJson(row.metadata_json, {}),
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
 function loadSqliteDriver() {
   try {
     // CLI path (Node 22+): prefer built-in sqlite.
@@ -935,6 +1075,7 @@ class EvidenceLedgerStore {
     this.db.exec(SCHEMA_V6_SQL);
     this.db.exec(SCHEMA_V7_SQL);
     this.db.exec(SCHEMA_V8_SQL);
+    this.db.exec(SCHEMA_V9_SQL);
   }
 
   _migrateCommsJournalVoiceChannel() {
@@ -2365,6 +2506,340 @@ class EvidenceLedgerStore {
         status: 'db_error',
         reason: err.message,
         registryId: registry.registryId,
+      };
+    }
+  }
+
+  queryArmApplyRequests(filters = {}) {
+    if (!this.isAvailable()) return [];
+
+    const clauses = [];
+    const params = [];
+
+    if (filters.requestId || filters.request_id) {
+      clauses.push('request_id = ?');
+      params.push(String(filters.requestId || filters.request_id));
+    }
+    if (filters.registryId || filters.registry_id) {
+      clauses.push('registry_id = ?');
+      params.push(String(filters.registryId || filters.registry_id));
+    }
+    if (filters.armId || filters.arm_id) {
+      clauses.push('arm_id = ?');
+      params.push(String(filters.armId || filters.arm_id));
+    }
+    if (filters.appRoomId || filters.app_room_id) {
+      clauses.push('app_room_id = ?');
+      params.push(String(filters.appRoomId || filters.app_room_id));
+    }
+    if (filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id) {
+      clauses.push('session_id = ?');
+      params.push(String(filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id));
+    }
+    if (filters.armKey || filters.arm_key) {
+      clauses.push('arm_key = ?');
+      params.push(String(filters.armKey || filters.arm_key));
+    }
+    if (filters.actionCategory || filters.action_category || filters.category) {
+      const category = normalizeArmApplyCategory(
+        filters.actionCategory || filters.action_category || filters.category
+      );
+      if (category) {
+        clauses.push('action_category = ?');
+        params.push(category);
+      }
+    }
+    if (filters.riskClass || filters.risk_class || filters.risk) {
+      clauses.push('risk_class = ?');
+      params.push(normalizeArmApplyRiskClass(filters.riskClass || filters.risk_class || filters.risk));
+    }
+    if (filters.status) {
+      const status = normalizeArmApplyRequestStatus(filters.status);
+      if (status) {
+        clauses.push('status = ?');
+        params.push(status);
+      }
+    }
+    if (filters.approvalRequired !== undefined || filters.approval_required !== undefined) {
+      clauses.push('approval_required = ?');
+      params.push((filters.approvalRequired ?? filters.approval_required) ? 1 : 0);
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const order = (String(filters.order || 'desc').toLowerCase() === 'asc')
+      ? 'ORDER BY created_at_ms ASC, request_id ASC'
+      : 'ORDER BY created_at_ms DESC, request_id DESC';
+    const limit = Math.max(1, Math.min(50_000, Number(filters.limit) || 5000));
+
+    const rows = this.db.prepare(`
+      SELECT * FROM arm_apply_requests
+      ${where}
+      ${order}
+      LIMIT ?
+    `).all(...params, limit);
+    return rows.map((row) => mapArmApplyRequestRow(row));
+  }
+
+  getArmApplyRequest(filters = {}) {
+    return this.queryArmApplyRequests({ ...filters, limit: 1 })[0] || null;
+  }
+
+  enqueueArmApplyRequest(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+
+    const appRoomId = toOptionalString(input.appRoomId || input.app_room_id || input.roomId || input.room_id, null);
+    const sessionId = toOptionalString(
+      input.sessionId || input.session_id || input.sessionScopeId || input.session_scope_id,
+      null
+    );
+    const registryIdFilter = toOptionalString(input.registryId || input.registry_id, null);
+    const registry = this.getArmRegistryManifest(
+      registryIdFilter
+        ? { registryId: registryIdFilter }
+        : {
+            ...(appRoomId ? { appRoomId } : {}),
+            ...(sessionId ? { sessionId } : {}),
+          }
+    );
+    if (!registry) {
+      return { ok: false, status: 'not_found', reason: 'arm_registry_not_found' };
+    }
+
+    const actionCategory = normalizeArmApplyCategory(
+      input.actionCategory || input.action_category || input.category
+    );
+    if (!actionCategory) {
+      return { ok: false, status: 'invalid', reason: 'action_category_required' };
+    }
+
+    const role = toOptionalString(input.role || input.senderRole || input.sender_role, null);
+    const paneId = toOptionalString(input.paneId || input.pane_id, null);
+    const armIdFilter = toOptionalString(input.armId || input.arm_id, null);
+    const inputArmKey = normalizeArmKey(input.armKey || input.arm_key || input.key, role);
+    const candidates = registry.arms.filter((arm) => {
+      if (armIdFilter && arm.armId !== armIdFilter) return false;
+      if (inputArmKey && arm.armKey !== inputArmKey) return false;
+      if (!inputArmKey && !armIdFilter && role && String(arm.role).toLowerCase() !== String(role).toLowerCase()) {
+        return false;
+      }
+      return true;
+    });
+    const arm = candidates.find((candidate) => (
+      !paneId || !candidate.paneId || String(candidate.paneId).toLowerCase() === String(paneId).toLowerCase()
+    )) || candidates[0] || null;
+    if (!arm) {
+      return { ok: false, status: 'not_found', reason: 'arm_not_found', registryId: registry.registryId };
+    }
+
+    const nowMs = toMs(options.nowMs, Date.now());
+    const incomingRiskClass = normalizeArmApplyRiskClass(input.riskClass || input.risk_class || input.risk);
+    const approvalRequired = Boolean(input.approvalRequired || input.approval_required)
+      || incomingRiskClass === 'approval_required'
+      || HIGH_RISK_ARM_APPLY_CATEGORIES.has(actionCategory);
+    const riskClass = approvalRequired ? 'approval_required' : incomingRiskClass;
+    const status = approvalRequired
+      ? 'approval_required'
+      : (normalizeArmApplyRequestStatus(input.status) || 'draft');
+    const evidenceRefs = ensureArray(input.evidenceRefs || input.evidence_refs);
+    const draftPayload = ensureObject(input.draftPayload || input.draft_payload || input.payload);
+    const draftPayloadHash = hashJson(draftPayload);
+    const metadata = ensureObject(input.metadata ?? input.meta);
+    const sideEffectResult = buildNoSideEffectResult('queued_stub_no_executor', nowMs);
+    const requestId = toOptionalString(input.requestId || input.request_id, null)
+      || buildStableHashId('arm-apply', [
+        registry.registryId,
+        arm.armId,
+        actionCategory,
+        draftPayloadHash,
+        hashJson(evidenceRefs),
+        nowMs,
+      ]);
+
+    try {
+      this.db.prepare(`
+        INSERT INTO arm_apply_requests (
+          request_id, registry_id, arm_id, app_room_id, session_id, arm_key,
+          role, pane_id, action_category, risk_class, status, approval_required,
+          approved_by, approved_at_ms, approval_ref, evidence_refs_json,
+          draft_payload_json, draft_payload_hash, side_effect_result_json,
+          metadata_json, created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(request_id) DO UPDATE SET
+          action_category = excluded.action_category,
+          risk_class = excluded.risk_class,
+          status = excluded.status,
+          approval_required = excluded.approval_required,
+          evidence_refs_json = excluded.evidence_refs_json,
+          draft_payload_json = excluded.draft_payload_json,
+          draft_payload_hash = excluded.draft_payload_hash,
+          side_effect_result_json = excluded.side_effect_result_json,
+          metadata_json = excluded.metadata_json,
+          updated_at_ms = excluded.updated_at_ms
+      `).run(
+        requestId,
+        registry.registryId,
+        arm.armId,
+        registry.appRoomId,
+        registry.sessionId,
+        arm.armKey,
+        role || arm.role,
+        paneId || arm.paneId || null,
+        actionCategory,
+        riskClass,
+        status,
+        approvalRequired ? 1 : 0,
+        null,
+        null,
+        null,
+        JSON.stringify(evidenceRefs),
+        JSON.stringify(draftPayload),
+        draftPayloadHash,
+        JSON.stringify(sideEffectResult),
+        JSON.stringify(metadata),
+        nowMs,
+        nowMs
+      );
+
+      return {
+        ok: true,
+        status,
+        approvalRequired,
+        riskClass,
+        request: this.getArmApplyRequest({ requestId }),
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: err.message,
+        requestId,
+      };
+    }
+  }
+
+  markArmApplyRequestExecutable(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+
+    const requestId = toOptionalString(input.requestId || input.request_id, null);
+    if (!requestId) {
+      return { ok: false, status: 'invalid', reason: 'request_id_required' };
+    }
+    const request = this.getArmApplyRequest({ requestId });
+    if (!request) {
+      return { ok: false, status: 'not_found', reason: 'arm_apply_request_not_found', requestId };
+    }
+    if (['rejected', 'cancelled'].includes(request.status)) {
+      return { ok: false, status: request.status, reason: 'terminal_request_status', request };
+    }
+
+    const approvedBy = toOptionalString(input.approvedBy || input.approved_by || options.approvedBy, null);
+    const approvalRef = toOptionalString(input.approvalRef || input.approval_ref || options.approvalRef, null);
+    const approvedAtMs = toOptionalMs(input.approvedAtMs ?? input.approved_at_ms ?? options.approvedAtMs)
+      ?? toMs(options.nowMs, Date.now());
+    const hasIncomingApproval = Boolean(approvedBy && approvalRef);
+    const hasExistingApproval = Boolean(request.approvedBy && request.approvalRef);
+
+    if (request.approvalRequired && !hasIncomingApproval && !hasExistingApproval) {
+      return {
+        ok: false,
+        status: 'approval_required',
+        reason: 'approval_required',
+        executable: false,
+        request,
+      };
+    }
+
+    const nowMs = toMs(options.nowMs, Date.now());
+    const nextApprovedBy = approvedBy || request.approvedBy || null;
+    const nextApprovalRef = approvalRef || request.approvalRef || null;
+    const nextApprovedAtMs = hasIncomingApproval ? approvedAtMs : (request.approvedAtMs || null);
+
+    try {
+      this.db.prepare(`
+        UPDATE arm_apply_requests
+        SET
+          status = 'executable',
+          approved_by = COALESCE(?, approved_by),
+          approved_at_ms = COALESCE(?, approved_at_ms),
+          approval_ref = COALESCE(?, approval_ref),
+          updated_at_ms = ?
+        WHERE request_id = ?
+      `).run(
+        nextApprovedBy,
+        nextApprovedAtMs,
+        nextApprovalRef,
+        nowMs,
+        requestId
+      );
+
+      return {
+        ok: true,
+        status: 'executable',
+        executable: true,
+        request: this.getArmApplyRequest({ requestId }),
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: err.message,
+        requestId,
+      };
+    }
+  }
+
+  dispatchArmApplyRequest(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+
+    const requestId = toOptionalString(input.requestId || input.request_id, null);
+    if (!requestId) {
+      return { ok: false, status: 'invalid', reason: 'request_id_required' };
+    }
+    const request = this.getArmApplyRequest({ requestId });
+    if (!request) {
+      return { ok: false, status: 'not_found', reason: 'arm_apply_request_not_found', requestId };
+    }
+
+    const nowMs = toMs(options.nowMs, Date.now());
+    const sideEffectResult = {
+      ...buildNoSideEffectResult('executor_disabled', nowMs),
+      executorPresent: typeof options.executor === 'function' || typeof options.dispatcher === 'function',
+    };
+
+    try {
+      this.db.prepare(`
+        UPDATE arm_apply_requests
+        SET
+          status = 'dispatch_blocked',
+          side_effect_result_json = ?,
+          updated_at_ms = ?
+        WHERE request_id = ?
+      `).run(
+        JSON.stringify(sideEffectResult),
+        nowMs,
+        requestId
+      );
+
+      return {
+        ok: false,
+        status: 'executor_disabled',
+        dispatched: false,
+        dispatchEnabled: false,
+        sideEffectResult,
+        request: this.getArmApplyRequest({ requestId }),
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: err.message,
+        requestId,
       };
     }
   }
