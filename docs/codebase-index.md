@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1073
+- Total files listed: 1074
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -20,7 +20,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 102
 - scripts: 1
 - tools: 3
-- ui/__tests__: 397
+- ui/__tests__: 398
 - ui/modules: 333
 - ui/other: 32
 - ui/scripts: 130
@@ -35,7 +35,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - jsonl: 1
 - script: 131
 - source: 396
-- test: 398
+- test: 399
 
 ## Files
 
@@ -563,7 +563,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/smart-routing.test.js` | test | 10637 |
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
-| `ui/__tests__/squidrun-app.test.js` | test | 343799 |
+| `ui/__tests__/squidrun-app.test.js` | test | 348212 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 1987 |
 | `ui/__tests__/startup-transcript-context.test.js` | test | 10069 |
@@ -601,6 +601,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/triggers-metrics.test.js` | test | 11307 |
 | `ui/__tests__/triggers-routing.test.js` | test | 17495 |
 | `ui/__tests__/triggers.test.js` | test | 3460 |
+| `ui/__tests__/trustquote-main-ui.test.js` | test | 543 |
 | `ui/__tests__/trustquote-work-room-prerequisites.test.js` | test | 6811 |
 | `ui/__tests__/trustquote-work-room-route-owner.test.js` | test | 30851 |
 | `ui/__tests__/usage-manager.test.js` | test | 1841 |
@@ -779,7 +780,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/pane-host-window-manager.js` | source | 12289 |
 | `ui/modules/main/pty-output-filter.js` | source | 7793 |
 | `ui/modules/main/settings-manager.js` | source | 21516 |
-| `ui/modules/main/squidrun-app.js` | source | 498162 |
+| `ui/modules/main/squidrun-app.js` | source | 499057 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 1884 |
 | `ui/modules/main/telegram-reply-obligations.js` | source | 13086 |
 | `ui/modules/main/usage-manager.js` | source | 2909 |
@@ -969,7 +970,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/config.js` | source | 15294 |
 | `ui/daemon-client.js` | source | 24256 |
 | `ui/eslint.config.js` | source | 794 |
-| `ui/index.html` | asset | 58336 |
+| `ui/index.html` | asset | 59108 |
 | `ui/jest.config.js` | source | 949 |
 | `ui/jsconfig.json` | config | 659 |
 | `ui/live-task-audit-preview.html` | asset | 2014 |
@@ -1164,7 +1165,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `workspace/knowledge/consultation-schema.md` | doc | 1739 |
 | `workspace/knowledge/exogenous-triggers-spec.md` | doc | 2942 |
 | `workspace/knowledge/hyperliquid-rate-limit-broker-plan.md` | doc | 1570 |
-| `workspace/knowledge/infrastructure.md` | doc | 8337 |
+| `workspace/knowledge/infrastructure.md` | doc | 10567 |
 | `workspace/knowledge/mira-lab-window-workflow.md` | doc | 923 |
 | `workspace/knowledge/paper-trading-cycle-protocol.md` | doc | 1684 |
 | `workspace/knowledge/projects.md` | doc | 1096 |
