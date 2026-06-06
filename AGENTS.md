@@ -60,7 +60,7 @@ PowerShell-safe form:
 
 If you are **Oracle** and received a roll call:
 ```bash
-hm-send architect "(ORACLE #1): Oracle online. Standing by."
+hm-send architect "(ORACLE #1): Oracle online. Ready for current-session work."
 ```
 
 ### Message Format
@@ -80,7 +80,7 @@ When you receive a message like `(ARCH #1): Roll call - report status`:
 
 **WRONG:**
 ```
-I received the roll call. Standing by.
+I received the roll call. Ready for current-session work.
 ```
 
 **RIGHT:**
@@ -96,7 +96,7 @@ hm-send architect "(YOUR-ROLE #1): Online and ready."
 2. Read `ROLES.md` and follow its startup baseline for your role
 3. Message Architect to check in:
    ```bash
-   hm-send architect "(YOUR-ROLE #1): [Role] online. Standing by."
+   hm-send architect "(YOUR-ROLE #1): [Role] online. Ready for current-session work."
    ```
 
 ---
