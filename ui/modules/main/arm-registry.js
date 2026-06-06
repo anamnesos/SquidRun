@@ -73,6 +73,43 @@ function queryArmRegistryArms(filters = {}, options = {}) {
   return storeResult.store.queryArmRegistryArms(filters || {});
 }
 
+function recordArmCheckinProof(input = {}, options = {}) {
+  const opts = asObject(options);
+  const storeResult = resolveStore(opts.dbPath || null);
+  if (!storeResult.ok || !storeResult.store) {
+    return {
+      ok: false,
+      status: 'unavailable',
+      reason: storeResult.reason || 'store_unavailable',
+      dbPath: storeResult.dbPath || null,
+    };
+  }
+  const result = storeResult.store.recordArmCheckinProof(input, opts);
+  return { ...result, dbPath: storeResult.dbPath };
+}
+
+function queryArmCheckinProofs(filters = {}, options = {}) {
+  const opts = asObject(options);
+  const storeResult = resolveStore(opts.dbPath || null);
+  if (!storeResult.ok || !storeResult.store) return [];
+  return storeResult.store.queryArmCheckinProofs(filters || {});
+}
+
+function evaluateArmRegistryReadiness(filters = {}, options = {}) {
+  const opts = asObject(options);
+  const storeResult = resolveStore(opts.dbPath || null);
+  if (!storeResult.ok || !storeResult.store) {
+    return {
+      ok: false,
+      status: 'unavailable',
+      reason: storeResult.reason || 'store_unavailable',
+      dbPath: storeResult.dbPath || null,
+    };
+  }
+  const result = storeResult.store.evaluateArmRegistryReadiness(filters || {}, opts);
+  return { ...result, dbPath: storeResult.dbPath };
+}
+
 function closeArmRegistryStores() {
   for (const { store } of storeCache.values()) {
     try {
@@ -89,5 +126,8 @@ module.exports = {
   getArmRegistryManifest,
   queryArmRegistryManifests,
   queryArmRegistryArms,
+  recordArmCheckinProof,
+  queryArmCheckinProofs,
+  evaluateArmRegistryReadiness,
   closeArmRegistryStores,
 };

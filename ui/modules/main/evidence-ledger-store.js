@@ -392,6 +392,41 @@ CREATE INDEX IF NOT EXISTS idx_arm_registry_arms_room_session_role
   ON arm_registry_arms(app_room_id, session_id, role);
 `;
 
+const SCHEMA_V7_SQL = `
+CREATE TABLE IF NOT EXISTS arm_checkin_proofs (
+  checkin_id TEXT PRIMARY KEY,
+  registry_id TEXT NOT NULL,
+  arm_id TEXT NOT NULL,
+  app_room_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  arm_key TEXT NOT NULL,
+  role TEXT NOT NULL,
+  pane_id TEXT,
+  route_target TEXT,
+  proof_kind TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('accepted', 'rejected')) DEFAULT 'accepted',
+  rejected_reason TEXT,
+  message_id TEXT,
+  comms_row_id INTEGER,
+  raw_role_marker TEXT,
+  env_json TEXT DEFAULT '{}',
+  proof_refs_json TEXT DEFAULT '[]',
+  metadata_json TEXT DEFAULT '{}',
+  checked_in_at_ms INTEGER NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_arm_checkin_proofs_registry_status
+  ON arm_checkin_proofs(registry_id, status, checked_in_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_arm_checkin_proofs_arm_status
+  ON arm_checkin_proofs(arm_id, status, checked_in_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_arm_checkin_proofs_room_session_role
+  ON arm_checkin_proofs(app_room_id, session_id, role, checked_in_at_ms DESC);
+`;
+
 const COMMS_CHANNELS = new Set(['ws', 'telegram', 'sms', 'user', 'voice']);
 const COMMS_DIRECTIONS = new Set(['inbound', 'outbound']);
 const COMMS_STATUS_RANK = Object.freeze({
@@ -406,6 +441,8 @@ const TELEGRAM_REPLY_OBLIGATION_STATUSES = new Set(['open', 'satisfied', 'expire
 const TERMINAL_TELEGRAM_REPLY_OBLIGATION_STATUSES = new Set(['satisfied', 'expired', 'escalated']);
 const ARM_REGISTRY_STATUSES = new Set(['active', 'retired', 'blocked']);
 const ARM_STATUSES = new Set(['desired', 'ready', 'missing', 'disabled']);
+const ARM_CHECKIN_STATUSES = new Set(['accepted', 'rejected']);
+const IDENTITY_PROOF_KINDS = new Set(['role_check_in', 'startup_check_in', 'manual_check_in']);
 
 function toMs(value, fallback) {
   const numeric = Number(value);
@@ -579,6 +616,24 @@ function normalizeArmStatus(value) {
   return ARM_STATUSES.has(normalized) ? normalized : null;
 }
 
+function normalizeArmCheckinStatus(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  return ARM_CHECKIN_STATUSES.has(normalized) ? normalized : null;
+}
+
+function normalizeArmIdentityProofKind(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return 'role_check_in';
+  const normalized = text.toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+  return normalized || 'role_check_in';
+}
+
+function isArmIdentityProofKind(value) {
+  return IDENTITY_PROOF_KINDS.has(normalizeArmIdentityProofKind(value));
+}
+
 function buildStableHashId(prefix, parts = []) {
   const digest = crypto
     .createHash('sha256')
@@ -668,6 +723,33 @@ function mapArmRegistryRow(row, arms = []) {
     createdAtMs: row.created_at_ms,
     updatedAtMs: row.updated_at_ms,
     arms,
+  };
+}
+
+function mapArmCheckinProofRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    checkinId: row.checkin_id,
+    registryId: row.registry_id,
+    armId: row.arm_id,
+    appRoomId: row.app_room_id,
+    sessionId: row.session_id,
+    armKey: row.arm_key,
+    role: row.role,
+    paneId: row.pane_id,
+    routeTarget: row.route_target,
+    proofKind: row.proof_kind,
+    status: row.status,
+    rejectedReason: row.rejected_reason,
+    messageId: row.message_id,
+    commsRowId: row.comms_row_id,
+    rawRoleMarker: row.raw_role_marker,
+    env: parseJson(row.env_json, {}),
+    proofRefs: parseJson(row.proof_refs_json, []),
+    metadata: parseJson(row.metadata_json, {}),
+    checkedInAtMs: row.checked_in_at_ms,
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
   };
 }
 
@@ -778,6 +860,7 @@ class EvidenceLedgerStore {
     this.db.exec(SCHEMA_V4_SQL);
     this.db.exec(SCHEMA_V5_SQL);
     this.db.exec(SCHEMA_V6_SQL);
+    this.db.exec(SCHEMA_V7_SQL);
   }
 
   _migrateCommsJournalVoiceChannel() {
@@ -1638,6 +1721,308 @@ class EvidenceLedgerStore {
         status: 'db_error',
         reason: err.message,
         registryId,
+      };
+    }
+  }
+
+  queryArmCheckinProofs(filters = {}) {
+    if (!this.isAvailable()) return [];
+
+    const clauses = [];
+    const params = [];
+
+    if (filters.checkinId || filters.checkin_id) {
+      clauses.push('checkin_id = ?');
+      params.push(String(filters.checkinId || filters.checkin_id));
+    }
+    if (filters.registryId || filters.registry_id) {
+      clauses.push('registry_id = ?');
+      params.push(String(filters.registryId || filters.registry_id));
+    }
+    if (filters.armId || filters.arm_id) {
+      clauses.push('arm_id = ?');
+      params.push(String(filters.armId || filters.arm_id));
+    }
+    if (filters.appRoomId || filters.app_room_id) {
+      clauses.push('app_room_id = ?');
+      params.push(String(filters.appRoomId || filters.app_room_id));
+    }
+    if (filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id) {
+      clauses.push('session_id = ?');
+      params.push(String(filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id));
+    }
+    if (filters.armKey || filters.arm_key) {
+      clauses.push('arm_key = ?');
+      params.push(String(filters.armKey || filters.arm_key));
+    }
+    if (filters.role) {
+      clauses.push('role = ?');
+      params.push(String(filters.role));
+    }
+    if (filters.status) {
+      const status = normalizeArmCheckinStatus(filters.status);
+      if (status) {
+        clauses.push('status = ?');
+        params.push(status);
+      }
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const order = (String(filters.order || 'desc').toLowerCase() === 'asc')
+      ? 'ORDER BY checked_in_at_ms ASC, checkin_id ASC'
+      : 'ORDER BY checked_in_at_ms DESC, checkin_id DESC';
+    const limit = Math.max(1, Math.min(50_000, Number(filters.limit) || 5000));
+
+    const rows = this.db.prepare(`
+      SELECT * FROM arm_checkin_proofs
+      ${where}
+      ${order}
+      LIMIT ?
+    `).all(...params, limit);
+    return rows.map((row) => mapArmCheckinProofRow(row));
+  }
+
+  recordArmCheckinProof(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+
+    const appRoomId = toOptionalString(input.appRoomId || input.app_room_id || input.roomId || input.room_id, null);
+    const sessionId = toOptionalString(
+      input.sessionId || input.session_id || input.sessionScopeId || input.session_scope_id,
+      null
+    );
+    const registryIdFilter = toOptionalString(input.registryId || input.registry_id, null);
+    const registry = this.getArmRegistryManifest(
+      registryIdFilter
+        ? { registryId: registryIdFilter }
+        : {
+            ...(appRoomId ? { appRoomId } : {}),
+            ...(sessionId ? { sessionId } : {}),
+          }
+    );
+    if (!registry) {
+      return { ok: false, status: 'not_found', reason: 'arm_registry_not_found' };
+    }
+
+    const env = ensureObject(input.env || input.environment || input.env_json);
+    const envRole = toOptionalString(env.SQUIDRUN_ROLE || env.role, null);
+    const envPaneId = toOptionalString(env.SQUIDRUN_PANE_ID || env.paneId || env.pane_id, null);
+    const envSessionId = toOptionalString(env.SQUIDRUN_SESSION_SCOPE_ID || env.sessionId || env.session_id, null);
+    const role = toOptionalString(input.role || input.senderRole || input.sender_role || envRole, null);
+    const paneId = toOptionalString(input.paneId || input.pane_id || envPaneId, null);
+    const inputArmKey = normalizeArmKey(input.armKey || input.arm_key || input.key, role);
+    const proofKind = normalizeArmIdentityProofKind(input.proofKind || input.proof_kind || input.kind);
+    const checkedInAtMs = toOptionalMs(input.checkedInAtMs ?? input.checked_in_at_ms ?? input.timestampMs)
+      ?? toMs(options.nowMs, Date.now());
+    const nowMs = toMs(options.nowMs, Date.now());
+    const messageId = toOptionalString(input.messageId || input.message_id, null);
+    const commsRowId = toOptionalMs(input.commsRowId ?? input.comms_row_id ?? input.rowId ?? input.row_id);
+    const proofRefs = ensureArray(input.proofRefs || input.proof_refs);
+    const metadata = ensureObject(input.metadata ?? input.meta);
+
+    const candidates = registry.arms.filter((arm) => {
+      if (inputArmKey && arm.armKey !== inputArmKey) return false;
+      if (!inputArmKey && role && String(arm.role).toLowerCase() !== String(role).toLowerCase()) return false;
+      return true;
+    });
+    const arm = candidates.find((candidate) => (
+      !paneId || !candidate.paneId || String(candidate.paneId).toLowerCase() === String(paneId).toLowerCase()
+    )) || candidates[0] || null;
+    if (!arm) {
+      return { ok: false, status: 'not_found', reason: 'arm_not_found', registryId: registry.registryId };
+    }
+
+    const rejectionReasons = [];
+    if (!isArmIdentityProofKind(proofKind)) {
+      rejectionReasons.push('identity_check_in_required');
+    }
+    if (!messageId && !Number.isFinite(commsRowId)) {
+      rejectionReasons.push('message_or_row_required');
+    }
+    if (envSessionId && envSessionId !== registry.sessionId) {
+      rejectionReasons.push('env_session_mismatch');
+    }
+    if (sessionId && sessionId !== registry.sessionId) {
+      rejectionReasons.push('session_mismatch');
+    }
+    if (role && String(role).toLowerCase() !== String(arm.role).toLowerCase()) {
+      rejectionReasons.push('role_mismatch');
+    }
+    if (envRole && String(envRole).toLowerCase() !== String(arm.role).toLowerCase()) {
+      rejectionReasons.push('env_role_mismatch');
+    }
+    if (arm.paneId && paneId && String(paneId).toLowerCase() !== String(arm.paneId).toLowerCase()) {
+      rejectionReasons.push('pane_mismatch');
+    }
+    if (arm.paneId && envPaneId && String(envPaneId).toLowerCase() !== String(arm.paneId).toLowerCase()) {
+      rejectionReasons.push('env_pane_mismatch');
+    }
+
+    const accepted = rejectionReasons.length === 0;
+    const status = accepted ? 'accepted' : 'rejected';
+    const rejectedReason = accepted ? null : rejectionReasons.join(',');
+    const checkinId = toOptionalString(input.checkinId || input.checkin_id, null)
+      || buildStableHashId('arm-checkin', [
+        registry.registryId,
+        arm.armId,
+        messageId || commsRowId || checkedInAtMs,
+        proofKind,
+      ]);
+
+    try {
+      this.db.prepare(`
+        INSERT INTO arm_checkin_proofs (
+          checkin_id, registry_id, arm_id, app_room_id, session_id, arm_key, role,
+          pane_id, route_target, proof_kind, status, rejected_reason, message_id,
+          comms_row_id, raw_role_marker, env_json, proof_refs_json, metadata_json,
+          checked_in_at_ms, created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(checkin_id) DO UPDATE SET
+          status = excluded.status,
+          rejected_reason = excluded.rejected_reason,
+          message_id = COALESCE(excluded.message_id, arm_checkin_proofs.message_id),
+          comms_row_id = COALESCE(excluded.comms_row_id, arm_checkin_proofs.comms_row_id),
+          raw_role_marker = COALESCE(excluded.raw_role_marker, arm_checkin_proofs.raw_role_marker),
+          env_json = excluded.env_json,
+          proof_refs_json = excluded.proof_refs_json,
+          metadata_json = excluded.metadata_json,
+          checked_in_at_ms = excluded.checked_in_at_ms,
+          updated_at_ms = excluded.updated_at_ms
+      `).run(
+        checkinId,
+        registry.registryId,
+        arm.armId,
+        registry.appRoomId,
+        registry.sessionId,
+        arm.armKey,
+        role || arm.role,
+        paneId || arm.paneId || null,
+        toOptionalString(input.routeTarget || input.route_target || arm.routeTarget, null),
+        proofKind,
+        status,
+        rejectedReason,
+        messageId,
+        Number.isFinite(commsRowId) ? commsRowId : null,
+        toOptionalString(input.rawRoleMarker || input.raw_role_marker || input.rawMarker, null),
+        JSON.stringify(env),
+        JSON.stringify(proofRefs),
+        JSON.stringify(metadata),
+        checkedInAtMs,
+        nowMs,
+        nowMs
+      );
+
+      const proof = this.queryArmCheckinProofs({ checkinId, limit: 1 })[0] || null;
+      const evaluation = options.evaluate === false
+        ? null
+        : this.evaluateArmRegistryReadiness({ registryId: registry.registryId }, { nowMs });
+      return {
+        ok: accepted,
+        status,
+        reason: rejectedReason,
+        proof,
+        evaluation,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: err.message,
+        checkinId,
+      };
+    }
+  }
+
+  evaluateArmRegistryReadiness(filters = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+    const registry = this.getArmRegistryManifest(filters);
+    if (!registry) {
+      return { ok: false, status: 'not_found', reason: 'arm_registry_not_found' };
+    }
+
+    const nowMs = toMs(options.nowMs, Date.now());
+    const acceptedProofs = this.queryArmCheckinProofs({
+      registryId: registry.registryId,
+      status: 'accepted',
+      limit: 50_000,
+    });
+    const latestAcceptedByArm = new Map();
+    for (const proof of acceptedProofs) {
+      const current = latestAcceptedByArm.get(proof.armId);
+      if (!current || Number(proof.checkedInAtMs || 0) > Number(current.checkedInAtMs || 0)) {
+        latestAcceptedByArm.set(proof.armId, proof);
+      }
+    }
+
+    let desiredCount = 0;
+    let readyCount = 0;
+    try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      for (const arm of registry.arms) {
+        if (!arm.required || arm.status === 'disabled') {
+          this.db.prepare(`
+            UPDATE arm_registry_arms
+            SET status = 'disabled', updated_at_ms = ?
+            WHERE arm_id = ?
+          `).run(nowMs, arm.armId);
+          continue;
+        }
+        desiredCount += 1;
+        const proof = latestAcceptedByArm.get(arm.armId);
+        const nextStatus = proof ? 'ready' : 'missing';
+        if (proof) readyCount += 1;
+        this.db.prepare(`
+          UPDATE arm_registry_arms
+          SET
+            status = ?,
+            last_proof_refs_json = ?,
+            updated_at_ms = ?
+          WHERE arm_id = ?
+        `).run(
+          nextStatus,
+          JSON.stringify(proof ? [
+            ...ensureArray(proof.proofRefs),
+            ...(proof.messageId ? [`hm:${proof.messageId}`] : []),
+            ...(Number.isFinite(proof.commsRowId) ? [`comms:${proof.commsRowId}`] : []),
+          ] : ensureArray(arm.lastProofRefs)),
+          nowMs,
+          arm.armId
+        );
+      }
+      const missingCount = Math.max(0, desiredCount - readyCount);
+      this.db.prepare(`
+        UPDATE arm_registries
+        SET
+          desired_count = ?,
+          ready_count = ?,
+          missing_count = ?,
+          last_evaluated_at_ms = ?,
+          updated_at_ms = ?
+        WHERE registry_id = ?
+      `).run(
+        desiredCount,
+        readyCount,
+        missingCount,
+        nowMs,
+        nowMs,
+        registry.registryId
+      );
+      this.db.exec('COMMIT;');
+      return {
+        ok: true,
+        status: missingCount === 0 ? 'ready' : 'missing',
+        registry: this.getArmRegistryManifest({ registryId: registry.registryId }),
+      };
+    } catch (err) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: err.message,
+        registryId: registry.registryId,
       };
     }
   }
