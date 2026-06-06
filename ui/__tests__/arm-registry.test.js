@@ -77,6 +77,47 @@ function trustquoteManifest(overrides = {}) {
   };
 }
 
+function seedCommsCheckin(dbPath, input = {}, nowMs = 1_000) {
+  const sessionId = input.sessionId || 'app-session-406:trustquote';
+  const role = input.role || 'trustquote-lead';
+  const paneId = input.paneId || 'trustquote-lead';
+  const messageId = input.messageId || `hm-${role}-${nowMs}`;
+  const store = new EvidenceLedgerStore({ dbPath });
+  expect(store.init().ok).toBe(true);
+  expect(store.upsertCommsJournal({
+    messageId,
+    sessionId,
+    senderRole: role,
+    targetRole: 'architect',
+    channel: 'ws',
+    direction: 'outbound',
+    status: 'routed',
+    sentAtMs: nowMs,
+    brokeredAtMs: nowMs,
+    rawBody: `(${role}): online in ${paneId}; env role=${role}; pane=${paneId}; session=${sessionId}`,
+    metadata: {
+      session_id: sessionId,
+      sender: {
+        role,
+        pane_id: paneId,
+      },
+      envelope: {
+        session_id: sessionId,
+        sender: {
+          role,
+          pane_id: paneId,
+        },
+      },
+      project: {
+        session_id: sessionId,
+      },
+    },
+  }, { nowMs }).ok).toBe(true);
+  const row = store.queryCommsJournal({ messageId, limit: 1 })[0];
+  store.close();
+  return row;
+}
+
 const maybeDescribe = hasSqliteDriver() ? describe : describe.skip;
 
 maybeDescribe('arm registry', () => {
@@ -198,6 +239,11 @@ maybeDescribe('arm registry', () => {
 
   test('computes desired ready and missing from durable role check-ins', () => {
     expect(upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
+    const leadRow = seedCommsCheckin(dbPath, {
+      messageId: 'hm-lead-1',
+      role: 'trustquote-lead',
+      paneId: 'trustquote-lead',
+    }, 2_000);
 
     const leadCheckin = recordArmCheckinProof({
       appRoomId: 'trustquote',
@@ -207,14 +253,14 @@ maybeDescribe('arm registry', () => {
       paneId: 'trustquote-lead',
       proofKind: 'startup_check_in',
       messageId: 'hm-lead-1',
-      commsRowId: 101,
+      commsRowId: leadRow.rowId,
       rawRoleMarker: '(TRUSTQUOTE LEAD #1)',
       env: {
         SQUIDRUN_ROLE: 'trustquote-lead',
         SQUIDRUN_PANE_ID: 'trustquote-lead',
         SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
       },
-      proofRefs: ['comms_journal:101'],
+      proofRefs: [`comms_journal:${leadRow.rowId}`],
     }, { dbPath, nowMs: 2_000 });
 
     expect(leadCheckin.ok).toBe(true);
@@ -225,6 +271,11 @@ maybeDescribe('arm registry', () => {
       missingCount: 2,
     }));
 
+    seedCommsCheckin(dbPath, {
+      messageId: 'hm-ops-1',
+      role: 'trustquote-operations',
+      paneId: 'trustquote-operations',
+    }, 3_000);
     const operationsCheckin = recordArmCheckinProof({
       appRoomId: 'trustquote',
       sessionId: 'app-session-406:trustquote',
@@ -269,6 +320,40 @@ maybeDescribe('arm registry', () => {
     });
   });
 
+  test('rejects forged check-in message ids that are not in comms journal', () => {
+    expect(upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
+
+    const forged = recordArmCheckinProof({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-406:trustquote',
+      armKey: 'lead',
+      role: 'trustquote-lead',
+      paneId: 'trustquote-lead',
+      proofKind: 'startup_check_in',
+      messageId: 'not-in-comms-journal',
+      env: {
+        SQUIDRUN_ROLE: 'trustquote-lead',
+        SQUIDRUN_PANE_ID: 'trustquote-lead',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+      },
+    }, { dbPath, nowMs: 2_000 });
+
+    expect(forged.ok).toBe(false);
+    expect(forged.status).toBe('rejected');
+    expect(forged.reason).toContain('comms_message_not_found');
+
+    const evaluation = evaluateArmRegistryReadiness({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-406:trustquote',
+    }, { dbPath, nowMs: 3_000 });
+    expect(evaluation.ok).toBe(true);
+    expect(evaluation.registry).toEqual(expect.objectContaining({
+      desiredCount: 3,
+      readyCount: 0,
+      missingCount: 3,
+    }));
+  });
+
   test('rejects route probes wrong identity and heartbeats as readiness proof', () => {
     expect(upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
 
@@ -286,6 +371,11 @@ maybeDescribe('arm registry', () => {
     expect(routeProbe.status).toBe('rejected');
     expect(routeProbe.reason).toContain('identity_check_in_required');
 
+    seedCommsCheckin(dbPath, {
+      messageId: 'hm-wrong-pane',
+      role: 'trustquote-operations',
+      paneId: 'trustquote-builder',
+    }, 3_000);
     const wrongPane = recordArmCheckinProof({
       appRoomId: 'trustquote',
       sessionId: 'app-session-406:trustquote',
@@ -302,7 +392,14 @@ maybeDescribe('arm registry', () => {
     }, { dbPath, nowMs: 3_000 });
     expect(wrongPane.ok).toBe(false);
     expect(wrongPane.reason).toContain('pane_mismatch');
+    expect(wrongPane.reason).toContain('comms_pane_mismatch');
 
+    seedCommsCheckin(dbPath, {
+      messageId: 'hm-stale-session',
+      role: 'trustquote-billing',
+      paneId: 'trustquote-billing',
+      sessionId: 'app-session-405:trustquote',
+    }, 4_000);
     const staleSession = recordArmCheckinProof({
       registryId: routeProbe.proof.registryId,
       sessionId: 'app-session-405:trustquote',
@@ -320,6 +417,7 @@ maybeDescribe('arm registry', () => {
     expect(staleSession.ok).toBe(false);
     expect(staleSession.reason).toContain('session_mismatch');
     expect(staleSession.reason).toContain('env_session_mismatch');
+    expect(staleSession.reason).toContain('comms_session_mismatch');
 
     const evaluation = evaluateArmRegistryReadiness({
       appRoomId: 'trustquote',

@@ -2,6 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
 const {
   upsertArmRegistryManifest,
   recordArmCheckinProof,
@@ -52,6 +53,45 @@ function oneArmManifest(overrides = {}) {
     ],
     ...overrides,
   };
+}
+
+function seedCommsCheckin(dbPath, input = {}, nowMs = 1_000) {
+  const sessionId = input.sessionId || 'app-session-406:trustquote';
+  const role = input.role || 'trustquote-billing';
+  const paneId = input.paneId || 'trustquote-billing';
+  const messageId = input.messageId || `hm-${role}-${nowMs}`;
+  const store = new EvidenceLedgerStore({ dbPath });
+  expect(store.init().ok).toBe(true);
+  expect(store.upsertCommsJournal({
+    messageId,
+    sessionId,
+    senderRole: role,
+    targetRole: 'architect',
+    channel: 'ws',
+    direction: 'outbound',
+    status: 'routed',
+    sentAtMs: nowMs,
+    brokeredAtMs: nowMs,
+    rawBody: `(${role}): online in ${paneId}; env role=${role}; pane=${paneId}; session=${sessionId}`,
+    metadata: {
+      session_id: sessionId,
+      sender: {
+        role,
+        pane_id: paneId,
+      },
+      envelope: {
+        session_id: sessionId,
+        sender: {
+          role,
+          pane_id: paneId,
+        },
+      },
+      project: {
+        session_id: sessionId,
+      },
+    },
+  }, { nowMs }).ok).toBe(true);
+  store.close();
 }
 
 const maybeDescribe = hasSqliteDriver() ? describe : describe.skip;
@@ -181,6 +221,11 @@ maybeDescribe('missing arm watchdog', () => {
       nowMs: 121_000,
     });
 
+    seedCommsCheckin(dbPath, {
+      messageId: 'hm-billing-1',
+      role: 'trustquote-billing',
+      paneId: 'trustquote-billing',
+    }, 200_000);
     const checkin = recordArmCheckinProof({
       appRoomId: 'trustquote',
       sessionId: 'app-session-406:trustquote',
