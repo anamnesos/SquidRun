@@ -81,6 +81,43 @@ function readJsonFile(filePath) {
   }
 }
 
+function errorSummary(error) {
+  return {
+    name: toOptionalString(error?.name, 'Error'),
+    message: toOptionalString(error?.message, String(error || 'unknown error')),
+    code: toOptionalString(error?.code, null),
+  };
+}
+
+function readJsonFileDetailed(filePath) {
+  try {
+    return {
+      ok: true,
+      present: true,
+      value: JSON.parse(fs.readFileSync(filePath, 'utf8')),
+      reason: null,
+      error: null,
+    };
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return {
+        ok: true,
+        present: false,
+        value: null,
+        reason: 'file_missing',
+        error: null,
+      };
+    }
+    return {
+      ok: false,
+      present: true,
+      value: null,
+      reason: error instanceof SyntaxError ? 'json_parse_error' : 'json_read_failed',
+      error: errorSummary(error),
+    };
+  }
+}
+
 function normalizeSection(value) {
   const text = toOptionalString(value, null);
   if (!text) return null;
@@ -518,20 +555,61 @@ function historyItemFromTaskAuditItem(item = {}) {
 
 function readTaskAuditItems(options = {}) {
   const taskAuditItemsPath = resolveTaskAuditItemsPath(options);
-  const parsed = readJsonFile(taskAuditItemsPath);
+  const read = readJsonFileDetailed(taskAuditItemsPath);
+  const normalizedPath = normalizePathForMetadata(taskAuditItemsPath);
+  if (!read.ok) {
+    return {
+      ok: false,
+      status: 'ERROR',
+      reason: read.reason === 'json_parse_error'
+        ? 'task_audit_items_json_parse_error'
+        : 'task_audit_items_read_failed',
+      schema: TASK_AUDIT_ITEMS_SCHEMA,
+      sourcePath: normalizedPath,
+      taskAuditItemsPath: normalizedPath,
+      present: read.present,
+      taskAuditItemsPresent: read.present,
+      items: [],
+      error: read.error,
+    };
+  }
+  const parsed = read.value;
   const items = reconcileTaskAuditItems(itemsFromStore(parsed, taskAuditItemsPath, {
     sourceKind: 'task_audit_item_store',
     sourceLabel: 'task_audit_items',
   }), options);
   return {
     ok: true,
+    status: read.present ? 'OK' : 'MISSING',
+    reason: null,
     schema: TASK_AUDIT_ITEMS_SCHEMA,
-    sourcePath: normalizePathForMetadata(taskAuditItemsPath),
-    taskAuditItemsPath: normalizePathForMetadata(taskAuditItemsPath),
-    present: Boolean(parsed),
-    taskAuditItemsPresent: Boolean(parsed),
+    sourcePath: normalizedPath,
+    taskAuditItemsPath: normalizedPath,
+    present: read.present,
+    taskAuditItemsPresent: read.present,
     items,
+    error: null,
   };
+}
+
+function futureItemFromTaskAuditItemStoreFailure(itemStore = {}, generatedAt = asIso()) {
+  if (itemStore.ok !== false) return null;
+  return normalizeTaskAuditItem({
+    id: 'task-audit-items-source-unreadable',
+    partition: 'future',
+    section: 'SquidRun',
+    title: 'Task Audit item store is unreadable',
+    status: 'blocked',
+    kind: 'source_truth_corruption',
+    ownerRoles: ['builder'],
+    sourceKind: 'task_audit_item_store',
+    sourceRef: itemStore.taskAuditItemsPath || itemStore.sourcePath || null,
+    sourceLabel: 'task_audit_items',
+    createdAt: generatedAt,
+    updatedAt: generatedAt,
+    rationale: 'The Task Audit item store exists but cannot be read as valid JSON, so parked audit/history rows are not authoritative.',
+    nextAction: 'Repair task-audit-items.json from source evidence or backup before relying on Task Audit counts.',
+  }, 0, itemStore.taskAuditItemsPath || itemStore.sourcePath || null);
 }
 
 function reconciliationWarningTitle(warning) {
@@ -608,6 +686,7 @@ function buildLiveTaskAuditSnapshot(options = {}) {
   const status = statusWorkItems({}, options);
   const reconciliation = status.activeWorkReconciliation || null;
   const itemStore = readTaskAuditItems(options);
+  const itemStoreFailureItem = futureItemFromTaskAuditItemStoreFailure(itemStore, generatedAt);
   const supplementalActiveItems = itemStore.items.filter((item) => item.partition === 'active');
   const activeItems = sortByUpdatedAtDesc([
     ...buildActiveItems(status),
@@ -618,6 +697,7 @@ function buildLiveTaskAuditSnapshot(options = {}) {
     ...itemStore.items.filter((item) => item.partition === 'history').map(historyItemFromTaskAuditItem),
   ]).slice(0, Number.isFinite(Number(options.historyLimit)) ? Number(options.historyLimit) : 50);
   const futureItems = sortByUpdatedAtDesc([
+    ...(itemStoreFailureItem ? [itemStoreFailureItem] : []),
     ...itemStore.items.filter((item) => item.partition === 'future'),
     ...futureItemsFromReconciliation(reconciliation || {}, generatedAt),
   ]);
@@ -645,8 +725,12 @@ function buildLiveTaskAuditSnapshot(options = {}) {
       items: futureItems,
       sourcePath: itemStore.sourcePath,
       sourcePresent: itemStore.present,
+      sourceStatus: itemStore.status,
+      sourceReason: itemStore.reason,
       taskAuditItemsPath: itemStore.taskAuditItemsPath,
       taskAuditItemsPresent: itemStore.taskAuditItemsPresent,
+      taskAuditItemsStatus: itemStore.status,
+      taskAuditItemsReason: itemStore.reason,
     },
     history: {
       count: historyItems.length,
@@ -657,6 +741,9 @@ function buildLiveTaskAuditSnapshot(options = {}) {
       workItemRoot: status.workItemRoot || null,
       workItemIndexPath: status.indexPath || null,
       taskAuditItemsPath: itemStore.taskAuditItemsPath,
+      taskAuditItemsStatus: itemStore.status,
+      taskAuditItemsReason: itemStore.reason,
+      taskAuditItemsError: itemStore.error,
       appStatusPath: normalizePathForMetadata(resolveAppStatusPath(options)),
       currentLanePath: reconciliation?.currentLaneActive?.currentLanePath || null,
     },

@@ -46,6 +46,75 @@ describe('live-task-audit-sidecar', () => {
     jest.dontMock('../config');
   });
 
+  test('keeps a missing task audit item store as an optional empty source', () => {
+    const itemStore = sidecar.readTaskAuditItems({ taskAuditItemsPath });
+
+    expect(itemStore).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'MISSING',
+      reason: null,
+      present: false,
+      taskAuditItemsPresent: false,
+      items: [],
+    }));
+  });
+
+  test('surfaces malformed task audit item store instead of emptying the sidecar', () => {
+    fs.mkdirSync(path.dirname(taskAuditItemsPath), { recursive: true });
+    fs.writeFileSync(taskAuditItemsPath, '{ not json', 'utf8');
+
+    const itemStore = sidecar.readTaskAuditItems({ taskAuditItemsPath });
+
+    expect(itemStore).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'ERROR',
+      reason: 'task_audit_items_json_parse_error',
+      present: true,
+      taskAuditItemsPresent: true,
+      items: [],
+      error: expect.objectContaining({
+        name: 'SyntaxError',
+      }),
+    }));
+
+    const snapshot = sidecar.buildLiveTaskAuditSnapshot({
+      workItemRoot,
+      taskAuditItemsPath,
+      now: '2026-06-06T11:02:00.000Z',
+    });
+
+    expect(snapshot.future).toEqual(expect.objectContaining({
+      count: 1,
+      sourcePresent: true,
+      sourceStatus: 'ERROR',
+      sourceReason: 'task_audit_items_json_parse_error',
+      taskAuditItemsPresent: true,
+      taskAuditItemsStatus: 'ERROR',
+      taskAuditItemsReason: 'task_audit_items_json_parse_error',
+    }));
+    expect(snapshot.future.items).toEqual([
+      expect.objectContaining({
+        id: 'task-audit-items-source-unreadable',
+        title: 'Task Audit item store is unreadable',
+        status: 'blocked',
+        kind: 'source_truth_corruption',
+        section: 'SquidRun',
+        source: expect.objectContaining({
+          kind: 'task_audit_item_store',
+          label: 'task_audit_items',
+        }),
+        nextAction: expect.stringContaining('Repair task-audit-items.json'),
+      }),
+    ]);
+    expect(snapshot.sources).toEqual(expect.objectContaining({
+      taskAuditItemsStatus: 'ERROR',
+      taskAuditItemsReason: 'task_audit_items_json_parse_error',
+      taskAuditItemsError: expect.objectContaining({
+        name: 'SyntaxError',
+      }),
+    }));
+  });
+
   test('separates typed active work items from manual audit items', () => {
     ledger.openWorkItem({
       id: 'wi-sidecar-active',
