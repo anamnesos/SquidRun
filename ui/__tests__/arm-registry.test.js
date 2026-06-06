@@ -354,6 +354,98 @@ maybeDescribe('arm registry', () => {
     }));
   });
 
+  test('drops stale readiness proof when an arm key changes role or pane identity', () => {
+    const oneArmManifest = trustquoteManifest({
+      arms: [
+        {
+          armKey: 'money-documents',
+          role: 'trustquote-billing',
+          paneId: 'trustquote-billing',
+          routeTarget: 'trustquote-billing',
+          armKind: 'domain',
+          displayName: 'Money + Documents',
+          dataSources: ['jobs', 'quotes', 'payments'],
+          permissions: { read: ['money_records'], draft: ['invoice'] },
+          checkInObligation: { required: true },
+        },
+      ],
+    });
+    expect(upsertArmRegistryManifest(oneArmManifest, { dbPath, nowMs: 1_000 }).ok).toBe(true);
+    seedCommsCheckin(dbPath, {
+      messageId: 'hm-billing-ready',
+      role: 'trustquote-billing',
+      paneId: 'trustquote-billing',
+    }, 2_000);
+
+    const accepted = recordArmCheckinProof({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-406:trustquote',
+      armKey: 'money-documents',
+      role: 'trustquote-billing',
+      paneId: 'trustquote-billing',
+      proofKind: 'startup_check_in',
+      messageId: 'hm-billing-ready',
+      env: {
+        SQUIDRUN_ROLE: 'trustquote-billing',
+        SQUIDRUN_PANE_ID: 'trustquote-billing',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+      },
+      proofRefs: ['hm:hm-billing-ready'],
+    }, { dbPath, nowMs: 2_000 });
+    expect(accepted.ok).toBe(true);
+    expect(accepted.evaluation.registry).toEqual(expect.objectContaining({
+      desiredCount: 1,
+      readyCount: 1,
+      missingCount: 0,
+    }));
+
+    const renamed = upsertArmRegistryManifest(trustquoteManifest({
+      arms: [
+        {
+          armKey: 'money-documents',
+          role: 'trustquote-finance',
+          paneId: 'trustquote-finance',
+          routeTarget: 'trustquote-finance',
+          armKind: 'domain',
+          displayName: 'Money + Documents',
+          dataSources: ['jobs', 'quotes', 'payments'],
+          permissions: { read: ['money_records'], draft: ['invoice'] },
+          checkInObligation: { required: true },
+        },
+      ],
+    }), { dbPath, nowMs: 3_000 });
+
+    expect(renamed.ok).toBe(true);
+    expect(renamed.registry).toEqual(expect.objectContaining({
+      desiredCount: 1,
+      readyCount: 0,
+      missingCount: 1,
+    }));
+    expect(renamed.registry.arms[0]).toEqual(expect.objectContaining({
+      role: 'trustquote-finance',
+      paneId: 'trustquote-finance',
+      status: 'desired',
+      lastProofRefs: [],
+    }));
+
+    const evaluation = evaluateArmRegistryReadiness({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-406:trustquote',
+    }, { dbPath, nowMs: 4_000 });
+    expect(evaluation.ok).toBe(true);
+    expect(evaluation.registry).toEqual(expect.objectContaining({
+      desiredCount: 1,
+      readyCount: 0,
+      missingCount: 1,
+    }));
+    expect(evaluation.registry.arms[0]).toEqual(expect.objectContaining({
+      role: 'trustquote-finance',
+      paneId: 'trustquote-finance',
+      status: 'missing',
+      lastProofRefs: [],
+    }));
+  });
+
   test('rejects route probes wrong identity and heartbeats as readiness proof', () => {
     expect(upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
 

@@ -859,6 +859,17 @@ function extractCommsProofIdentity(row = {}) {
   return { roles, panes, sessions };
 }
 
+function armProofMatchesCurrentIdentity(proof = {}, arm = {}, registry = {}) {
+  if (!proof || !arm || !registry) return false;
+  if (proof.armId !== arm.armId) return false;
+  if (proof.armKey !== arm.armKey) return false;
+  if (proof.sessionId !== registry.sessionId) return false;
+  if (normalizeIdentityToken(proof.role) !== normalizeIdentityToken(arm.role)) return false;
+  const expectedPane = normalizeIdentityToken(arm.paneId);
+  if (expectedPane && normalizeIdentityToken(proof.paneId) !== expectedPane) return false;
+  return true;
+}
+
 function buildStableHashId(prefix, parts = []) {
   const digest = crypto
     .createHash('sha256')
@@ -1817,7 +1828,11 @@ class EvidenceLedgerStore {
       if (!armKey || !role) continue;
       const required = arm.required !== false && arm.optional !== true;
       const existingArm = existingArmByKey.get(armKey);
-      const preservedReadyStatus = existingArm && ['ready', 'missing'].includes(existingArm.status)
+      const paneId = toOptionalString(arm.paneId || arm.pane_id, null);
+      const identityUnchanged = existingArm
+        && normalizeIdentityToken(existingArm.role) === normalizeIdentityToken(role)
+        && normalizeIdentityToken(existingArm.paneId) === normalizeIdentityToken(paneId);
+      const preservedReadyStatus = identityUnchanged && ['ready', 'missing'].includes(existingArm.status)
         ? existingArm.status
         : null;
       normalizedArms.push({
@@ -1825,7 +1840,7 @@ class EvidenceLedgerStore {
           || buildStableHashId('arm', [registryId, armKey]),
         armKey,
         role,
-        paneId: toOptionalString(arm.paneId || arm.pane_id, null),
+        paneId,
         routeTarget: toOptionalString(arm.routeTarget || arm.route_target || arm.target, null),
         armKind: toOptionalString(arm.armKind || arm.arm_kind || arm.kind, 'domain') || 'domain',
         displayName: toOptionalString(arm.displayName || arm.display_name || arm.label, null),
@@ -1835,7 +1850,7 @@ class EvidenceLedgerStore {
         permissions: ensureObject(arm.permissions || arm.permissionModel || arm.permission_model),
         checkInObligation: ensureObject(arm.checkInObligation || arm.check_in_obligation),
         checkInDeadlineAtMs: toOptionalMs(arm.checkInDeadlineAtMs ?? arm.check_in_deadline_at_ms ?? arm.deadlineAtMs),
-        lastProofRefs: ensureArray(existingArm?.lastProofRefs),
+        lastProofRefs: identityUnchanged ? ensureArray(existingArm?.lastProofRefs) : [],
         metadata: mergeMetadata(existingArm?.metadata, ensureObject(arm.metadata ?? arm.meta)),
       });
     }
@@ -2271,8 +2286,11 @@ class EvidenceLedgerStore {
       status: 'accepted',
       limit: 50_000,
     });
+    const currentArmById = new Map(registry.arms.map((arm) => [arm.armId, arm]));
     const latestAcceptedByArm = new Map();
     for (const proof of acceptedProofs) {
+      const currentArm = currentArmById.get(proof.armId);
+      if (!armProofMatchesCurrentIdentity(proof, currentArm, registry)) continue;
       const current = latestAcceptedByArm.get(proof.armId);
       if (!current || Number(proof.checkedInAtMs || 0) > Number(current.checkedInAtMs || 0)) {
         latestAcceptedByArm.set(proof.armId, proof);
