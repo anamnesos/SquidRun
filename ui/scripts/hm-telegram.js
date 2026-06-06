@@ -16,6 +16,9 @@ const {
   appendCommsJournalEntry,
   closeCommsJournalStores,
 } = require('../modules/main/comms-journal');
+const {
+  reconcileTelegramReplyObligationFromJournal,
+} = require('../modules/main/telegram-reply-obligations');
 require('dotenv').config({ path: path.join(process.env.SQUIDRUN_PROJECT_ROOT || path.resolve(__dirname, '..', '..'), '.env') });
 
 const TELEGRAM_RATE_LIMIT_MAX_MESSAGES = 10;
@@ -198,6 +201,38 @@ function upsertTelegramJournal(entry = {}) {
     console.warn(`[hm-telegram] journal write unavailable: ${result?.reason || 'unknown'}`);
   }
   return result;
+}
+
+function getReplyObligationInboundMessageId(metadata = {}) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const value = metadata.replyToMessageId
+    || metadata.reply_to_message_id
+    || metadata.inboundMessageId
+    || metadata.inbound_message_id
+    || null;
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
+function reconcileTelegramReplyObligationAfterAck(metadata = {}, options = {}) {
+  const inboundMessageId = getReplyObligationInboundMessageId(metadata);
+  if (!inboundMessageId) return null;
+  try {
+    return reconcileTelegramReplyObligationFromJournal({
+      inboundMessageId,
+    }, {
+      dbPath: options.dbPath || null,
+    });
+  } catch (err) {
+    console.warn(`[hm-telegram] durable reply obligation reconcile skipped: ${err.message}`);
+    return {
+      ok: false,
+      status: 'exception',
+      reason: err.message,
+      inboundMessageId,
+    };
+  }
 }
 
 function usage() {
@@ -743,6 +778,10 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
   try { payload = JSON.parse(response.body || '{}'); } catch { payload = null; }
 
   if (response.statusCode >= 200 && response.statusCode < 300 && payload?.ok !== false) {
+    const ackMetadata = mergeJournalMetadata(replyContextMetadata, opts.metadata, {
+      telegramMessageId: payload?.result?.message_id || null,
+      chatId: payload?.result?.chat?.id || outboundChatId,
+    });
     upsertTelegramJournal({
       messageId,
       sessionId,
@@ -750,16 +789,18 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
       targetRole,
       status: 'acked',
       ackStatus: 'telegram_delivered',
-      metadata: mergeJournalMetadata(replyContextMetadata, opts.metadata, {
-        telegramMessageId: payload?.result?.message_id || null,
-        chatId: payload?.result?.chat?.id || outboundChatId,
-      }),
+      metadata: ackMetadata,
+    });
+    const durableSatisfaction = reconcileTelegramReplyObligationAfterAck(ackMetadata, {
+      dbPath: opts.dbPath || null,
     });
     return {
       ok: true,
       statusCode: response.statusCode,
       messageId: payload?.result?.message_id || null,
+      journalMessageId: messageId,
       chatId: payload?.result?.chat?.id || outboundChatId,
+      durableSatisfaction,
     };
   }
 
@@ -886,6 +927,10 @@ async function sendTelegram(message, env = process.env, options = {}) {
   }
 
   if (response.statusCode >= 200 && response.statusCode < 300 && payload?.ok !== false) {
+    const ackMetadata = mergeJournalMetadata(replyContextMetadata, opts.metadata, {
+      telegramMessageId: payload?.result?.message_id || null,
+      chatId: payload?.result?.chat?.id || outboundChatId,
+    });
     upsertTelegramJournal({
       messageId,
       sessionId,
@@ -893,16 +938,18 @@ async function sendTelegram(message, env = process.env, options = {}) {
       targetRole,
       status: 'acked',
       ackStatus: 'telegram_delivered',
-      metadata: mergeJournalMetadata(replyContextMetadata, opts.metadata, {
-        telegramMessageId: payload?.result?.message_id || null,
-        chatId: payload?.result?.chat?.id || outboundChatId,
-      }),
+      metadata: ackMetadata,
+    });
+    const durableSatisfaction = reconcileTelegramReplyObligationAfterAck(ackMetadata, {
+      dbPath: opts.dbPath || null,
     });
     return {
       ok: true,
       statusCode: response.statusCode,
       messageId: payload?.result?.message_id || null,
+      journalMessageId: messageId,
       chatId: payload?.result?.chat?.id || outboundChatId,
+      durableSatisfaction,
     };
   }
 
@@ -1000,6 +1047,8 @@ module.exports = {
   parseChatAllowlist,
   readTelegramReplyContext,
   buildReplyContextJournalMetadata,
+  getReplyObligationInboundMessageId,
+  reconcileTelegramReplyObligationAfterAck,
   resolveReplyContextChatId,
   resolveOutboundChatId,
   isChatAllowed,

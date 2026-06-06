@@ -226,6 +226,11 @@ jest.mock('../modules/main/telegram-reply-obligations', () => ({
     obligation: { obligationId: 'telegram-reply-test' },
   })),
   queryTelegramReplyObligations: jest.fn(() => []),
+  satisfyTelegramReplyObligation: jest.fn(() => ({
+    ok: true,
+    status: 'satisfied',
+    obligation: { status: 'satisfied' },
+  })),
 }));
 
 jest.mock('../modules/bridge-client', () => {
@@ -497,6 +502,7 @@ const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
 const {
   openTelegramReplyObligation,
   queryTelegramReplyObligations,
+  satisfyTelegramReplyObligation,
 } = require('../modules/main/telegram-reply-obligations');
 const {
   attachProof,
@@ -600,6 +606,11 @@ describe('SquidRunApp', () => {
       obligation: { obligationId: 'telegram-reply-test' },
     });
     queryTelegramReplyObligations.mockReturnValue([]);
+    satisfyTelegramReplyObligation.mockReturnValue({
+      ok: true,
+      status: 'satisfied',
+      obligation: { status: 'satisfied' },
+    });
     const windows = new Map();
 
     // Create mock app context
@@ -7291,7 +7302,23 @@ describe('SquidRunApp', () => {
       expect(result).toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_delivered',
+        durableSatisfaction: expect.objectContaining({
+          ok: true,
+          status: 'satisfied',
+        }),
       }));
+      expect(satisfyTelegramReplyObligation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inboundMessageId: 'telegram-in-clear-1',
+          satisfiedByMessageId: 'telegram-in-clear-1-reply',
+          satisfactionSource: 'squidrun-app.route-telegram-reply',
+          satisfaction: expect.objectContaining({
+            reason: 'telegram_delivery_confirmed',
+            chatId: '1111111111',
+          }),
+        }),
+        expect.any(Object)
+      );
       expect(app.pendingTelegramReplyGuards.has('1')).toBe(false);
       expect(app.inspectPaneOutputForReplyGuards('1', 'later pane output', {
         outputKind: 'agent_visible_output',
@@ -7357,8 +7384,26 @@ describe('SquidRunApp', () => {
             egressMessageId: 'hm-telegram-acked-1',
             chatId: '1111111111',
             sessionScopeId: sessionId,
+            durableSatisfaction: expect.objectContaining({
+              ok: true,
+              status: 'satisfied',
+            }),
           }),
         }));
+        expect(satisfyTelegramReplyObligation).toHaveBeenCalledWith(
+          expect.objectContaining({
+            inboundMessageId: 'telegram-in-dedupe-1',
+            satisfiedAtMs: createdAtMs + 1000,
+            satisfiedByMessageId: 'hm-telegram-acked-1',
+            satisfactionSource: 'squidrun-app.journal-reconcile',
+            satisfaction: expect.objectContaining({
+              reason: 'matched',
+              chatId: '1111111111',
+              sessionId,
+            }),
+          }),
+          expect.any(Object)
+        );
         expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
         expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
           'agent_response_debt',
