@@ -335,6 +335,63 @@ CREATE INDEX IF NOT EXISTS idx_telegram_reply_obligations_inbound
   ON telegram_reply_obligations(inbound_message_id);
 `;
 
+const SCHEMA_V6_SQL = `
+CREATE TABLE IF NOT EXISTS arm_registries (
+  registry_id TEXT PRIMARY KEY,
+  app_room_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  main_session_id TEXT,
+  lead_role TEXT,
+  lead_pane_id TEXT,
+  route_target TEXT,
+  status TEXT NOT NULL CHECK (status IN ('active', 'retired', 'blocked')) DEFAULT 'active',
+  desired_count INTEGER NOT NULL DEFAULT 0,
+  ready_count INTEGER NOT NULL DEFAULT 0,
+  missing_count INTEGER NOT NULL DEFAULT 0,
+  last_evaluated_at_ms INTEGER,
+  metadata_json TEXT DEFAULT '{}',
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  UNIQUE(app_room_id, session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_arm_registries_room_session
+  ON arm_registries(app_room_id, session_id);
+
+CREATE INDEX IF NOT EXISTS idx_arm_registries_status_updated
+  ON arm_registries(status, updated_at_ms DESC);
+
+CREATE TABLE IF NOT EXISTS arm_registry_arms (
+  arm_id TEXT PRIMARY KEY,
+  registry_id TEXT NOT NULL,
+  app_room_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  arm_key TEXT NOT NULL,
+  role TEXT NOT NULL,
+  pane_id TEXT,
+  route_target TEXT,
+  arm_kind TEXT NOT NULL DEFAULT 'domain',
+  display_name TEXT,
+  required INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL CHECK (status IN ('desired', 'ready', 'missing', 'disabled')) DEFAULT 'desired',
+  data_sources_json TEXT DEFAULT '[]',
+  permissions_json TEXT DEFAULT '{}',
+  check_in_obligation_json TEXT DEFAULT '{}',
+  check_in_deadline_at_ms INTEGER,
+  last_proof_refs_json TEXT DEFAULT '[]',
+  metadata_json TEXT DEFAULT '{}',
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  UNIQUE(registry_id, arm_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_arm_registry_arms_registry
+  ON arm_registry_arms(registry_id, status, updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_arm_registry_arms_room_session_role
+  ON arm_registry_arms(app_room_id, session_id, role);
+`;
+
 const COMMS_CHANNELS = new Set(['ws', 'telegram', 'sms', 'user', 'voice']);
 const COMMS_DIRECTIONS = new Set(['inbound', 'outbound']);
 const COMMS_STATUS_RANK = Object.freeze({
@@ -347,6 +404,8 @@ const COMMS_STATUS_RANK = Object.freeze({
 const DEFAULT_TELEGRAM_REPLY_OBLIGATION_WINDOW_MS = 5 * 60 * 1000;
 const TELEGRAM_REPLY_OBLIGATION_STATUSES = new Set(['open', 'satisfied', 'expired', 'escalated']);
 const TERMINAL_TELEGRAM_REPLY_OBLIGATION_STATUSES = new Set(['satisfied', 'expired', 'escalated']);
+const ARM_REGISTRY_STATUSES = new Set(['active', 'retired', 'blocked']);
+const ARM_STATUSES = new Set(['desired', 'ready', 'missing', 'disabled']);
 
 function toMs(value, fallback) {
   const numeric = Number(value);
@@ -418,6 +477,10 @@ function toOptionalAttempt(value) {
 function ensureObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
+}
+
+function ensureArray(value) {
+  return Array.isArray(value) ? value : [];
 }
 
 function mergeMetadata(existing, incoming) {
@@ -502,6 +565,35 @@ function buildTelegramReplyObligationId(inboundMessageId) {
   return `telegram-reply-${digest}`;
 }
 
+function normalizeArmRegistryStatus(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  return ARM_REGISTRY_STATUSES.has(normalized) ? normalized : null;
+}
+
+function normalizeArmStatus(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  return ARM_STATUSES.has(normalized) ? normalized : null;
+}
+
+function buildStableHashId(prefix, parts = []) {
+  const digest = crypto
+    .createHash('sha256')
+    .update(parts.map((part) => String(part || '')).join('\u001f'), 'utf8')
+    .digest('hex')
+    .slice(0, 16);
+  return `${prefix}-${digest}`;
+}
+
+function normalizeArmKey(value, fallback) {
+  const text = toOptionalString(value, null) || toOptionalString(fallback, null);
+  if (!text) return null;
+  return text.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || null;
+}
+
 function mapTelegramReplyObligationRow(row) {
   if (!row || typeof row !== 'object') return null;
   return {
@@ -528,6 +620,54 @@ function mapTelegramReplyObligationRow(row) {
     satisfaction: parseJson(row.satisfaction_json, {}),
     createdAtMs: row.created_at_ms,
     updatedAtMs: row.updated_at_ms,
+  };
+}
+
+function mapArmRegistryArmRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    armId: row.arm_id,
+    registryId: row.registry_id,
+    appRoomId: row.app_room_id,
+    sessionId: row.session_id,
+    armKey: row.arm_key,
+    role: row.role,
+    paneId: row.pane_id,
+    routeTarget: row.route_target,
+    armKind: row.arm_kind,
+    displayName: row.display_name,
+    required: Number(row.required || 0) === 1,
+    status: row.status,
+    dataSources: parseJson(row.data_sources_json, []),
+    permissions: parseJson(row.permissions_json, {}),
+    checkInObligation: parseJson(row.check_in_obligation_json, {}),
+    checkInDeadlineAtMs: row.check_in_deadline_at_ms,
+    lastProofRefs: parseJson(row.last_proof_refs_json, []),
+    metadata: parseJson(row.metadata_json, {}),
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
+  };
+}
+
+function mapArmRegistryRow(row, arms = []) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    registryId: row.registry_id,
+    appRoomId: row.app_room_id,
+    sessionId: row.session_id,
+    mainSessionId: row.main_session_id,
+    leadRole: row.lead_role,
+    leadPaneId: row.lead_pane_id,
+    routeTarget: row.route_target,
+    status: row.status,
+    desiredCount: row.desired_count,
+    readyCount: row.ready_count,
+    missingCount: row.missing_count,
+    lastEvaluatedAtMs: row.last_evaluated_at_ms,
+    metadata: parseJson(row.metadata_json, {}),
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
+    arms,
   };
 }
 
@@ -637,6 +777,7 @@ class EvidenceLedgerStore {
     this._migrateCommsJournalVoiceChannel();
     this.db.exec(SCHEMA_V4_SQL);
     this.db.exec(SCHEMA_V5_SQL);
+    this.db.exec(SCHEMA_V6_SQL);
   }
 
   _migrateCommsJournalVoiceChannel() {
@@ -1161,6 +1302,342 @@ class EvidenceLedgerStore {
         status: 'db_error',
         reason: err.message,
         messageId,
+      };
+    }
+  }
+
+  queryArmRegistryArms(filters = {}) {
+    if (!this.isAvailable()) return [];
+
+    const clauses = [];
+    const params = [];
+
+    if (filters.registryId) {
+      clauses.push('registry_id = ?');
+      params.push(String(filters.registryId));
+    }
+    if (filters.appRoomId || filters.app_room_id) {
+      clauses.push('app_room_id = ?');
+      params.push(String(filters.appRoomId || filters.app_room_id));
+    }
+    if (filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id) {
+      clauses.push('session_id = ?');
+      params.push(String(filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id));
+    }
+    if (filters.role) {
+      clauses.push('role = ?');
+      params.push(String(filters.role));
+    }
+    if (filters.armKey || filters.arm_key) {
+      clauses.push('arm_key = ?');
+      params.push(String(filters.armKey || filters.arm_key));
+    }
+    if (filters.status) {
+      const status = normalizeArmStatus(filters.status);
+      if (status) {
+        clauses.push('status = ?');
+        params.push(status);
+      }
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const order = (String(filters.order || 'asc').toLowerCase() === 'desc')
+      ? 'ORDER BY updated_at_ms DESC, arm_key DESC'
+      : 'ORDER BY arm_key ASC, updated_at_ms ASC';
+    const limit = Math.max(1, Math.min(10_000, Number(filters.limit) || 1000));
+
+    const rows = this.db.prepare(`
+      SELECT * FROM arm_registry_arms
+      ${where}
+      ${order}
+      LIMIT ?
+    `).all(...params, limit);
+    return rows.map((row) => mapArmRegistryArmRow(row));
+  }
+
+  queryArmRegistries(filters = {}) {
+    if (!this.isAvailable()) return [];
+
+    const clauses = [];
+    const params = [];
+
+    if (filters.registryId || filters.registry_id) {
+      clauses.push('registry_id = ?');
+      params.push(String(filters.registryId || filters.registry_id));
+    }
+    if (filters.appRoomId || filters.app_room_id) {
+      clauses.push('app_room_id = ?');
+      params.push(String(filters.appRoomId || filters.app_room_id));
+    }
+    if (filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id) {
+      clauses.push('session_id = ?');
+      params.push(String(filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id));
+    }
+    if (filters.status) {
+      const status = normalizeArmRegistryStatus(filters.status);
+      if (status) {
+        clauses.push('status = ?');
+        params.push(status);
+      }
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const order = (String(filters.order || 'asc').toLowerCase() === 'desc')
+      ? 'ORDER BY updated_at_ms DESC, registry_id DESC'
+      : 'ORDER BY updated_at_ms ASC, registry_id ASC';
+    const limit = Math.max(1, Math.min(10_000, Number(filters.limit) || 1000));
+
+    const rows = this.db.prepare(`
+      SELECT * FROM arm_registries
+      ${where}
+      ${order}
+      LIMIT ?
+    `).all(...params, limit);
+
+    const withArms = filters.withArms !== false;
+    return rows.map((row) => {
+      const arms = withArms
+        ? this.queryArmRegistryArms({ registryId: row.registry_id, limit: 10_000 })
+        : [];
+      return mapArmRegistryRow(row, arms);
+    });
+  }
+
+  getArmRegistryManifest(filters = {}) {
+    return this.queryArmRegistries({ ...filters, limit: 1 })[0] || null;
+  }
+
+  upsertArmRegistryManifest(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+
+    const appRoomId = toOptionalString(input.appRoomId || input.app_room_id || input.roomId || input.room_id, null);
+    const sessionId = toOptionalString(
+      input.sessionId || input.session_id || input.sessionScopeId || input.session_scope_id,
+      null
+    );
+    if (!appRoomId) {
+      return { ok: false, status: 'invalid', reason: 'app_room_id_required' };
+    }
+    if (!sessionId) {
+      return { ok: false, status: 'invalid', reason: 'session_id_required' };
+    }
+
+    const nowMs = toMs(options.nowMs, Date.now());
+    const existingRow = this.db.prepare(`
+      SELECT * FROM arm_registries
+      WHERE registry_id = ?
+         OR (app_room_id = ? AND session_id = ?)
+      LIMIT 1
+    `).get(
+      toOptionalString(input.registryId || input.registry_id, buildStableHashId('arm-registry', [appRoomId, sessionId])),
+      appRoomId,
+      sessionId
+    );
+    const existing = mapArmRegistryRow(existingRow, []);
+    const registryId = existing?.registryId
+      || toOptionalString(input.registryId || input.registry_id, null)
+      || buildStableHashId('arm-registry', [appRoomId, sessionId]);
+    const metadata = mergeMetadata(existing?.metadata, ensureObject(input.metadata ?? input.meta ?? input.metadata_json));
+    const armsInput = ensureArray(input.arms || input.desiredArms || input.desired_arms);
+    const existingArms = this.queryArmRegistryArms({ registryId, limit: 10_000 });
+    const existingArmByKey = new Map(existingArms.map((arm) => [arm.armKey, arm]));
+    const normalizedArms = [];
+
+    for (const rawArm of armsInput) {
+      const arm = ensureObject(rawArm);
+      const role = toOptionalString(arm.role, null);
+      const armKey = normalizeArmKey(arm.armKey || arm.arm_key || arm.key, role || arm.displayName || arm.display_name);
+      if (!armKey || !role) continue;
+      const required = arm.required !== false && arm.optional !== true;
+      const existingArm = existingArmByKey.get(armKey);
+      const preservedReadyStatus = existingArm && ['ready', 'missing'].includes(existingArm.status)
+        ? existingArm.status
+        : null;
+      normalizedArms.push({
+        armId: existingArm?.armId || toOptionalString(arm.armId || arm.arm_id, null)
+          || buildStableHashId('arm', [registryId, armKey]),
+        armKey,
+        role,
+        paneId: toOptionalString(arm.paneId || arm.pane_id, null),
+        routeTarget: toOptionalString(arm.routeTarget || arm.route_target || arm.target, null),
+        armKind: toOptionalString(arm.armKind || arm.arm_kind || arm.kind, 'domain') || 'domain',
+        displayName: toOptionalString(arm.displayName || arm.display_name || arm.label, null),
+        required,
+        status: required ? (preservedReadyStatus || 'desired') : 'disabled',
+        dataSources: ensureArray(arm.dataSources || arm.data_sources),
+        permissions: ensureObject(arm.permissions || arm.permissionModel || arm.permission_model),
+        checkInObligation: ensureObject(arm.checkInObligation || arm.check_in_obligation),
+        checkInDeadlineAtMs: toOptionalMs(arm.checkInDeadlineAtMs ?? arm.check_in_deadline_at_ms ?? arm.deadlineAtMs),
+        lastProofRefs: ensureArray(existingArm?.lastProofRefs),
+        metadata: mergeMetadata(existingArm?.metadata, ensureObject(arm.metadata ?? arm.meta)),
+      });
+    }
+
+    const incomingKeys = new Set(normalizedArms.map((arm) => arm.armKey));
+    const replaceArms = options.replaceArms !== false && armsInput.length > 0;
+    const countSourceArms = armsInput.length > 0 ? normalizedArms : existingArms;
+    const activeRequiredArms = countSourceArms.filter((arm) => arm.required && arm.status !== 'disabled');
+    const readyCount = activeRequiredArms.filter((arm) => arm.status === 'ready').length;
+    const desiredCount = activeRequiredArms.length;
+    const missingCount = Math.max(0, desiredCount - readyCount);
+    const registryStatus = normalizeArmRegistryStatus(input.status) || existing?.status || 'active';
+
+    try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      if (!existing) {
+        this.db.prepare(`
+          INSERT INTO arm_registries (
+            registry_id, app_room_id, session_id, main_session_id, lead_role, lead_pane_id,
+            route_target, status, desired_count, ready_count, missing_count,
+            last_evaluated_at_ms, metadata_json, created_at_ms, updated_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          registryId,
+          appRoomId,
+          sessionId,
+          toOptionalString(input.mainSessionId || input.main_session_id || input.mainSessionScopeId, null),
+          toOptionalString(input.leadRole || input.lead_role, null),
+          toOptionalString(input.leadPaneId || input.lead_pane_id, null),
+          toOptionalString(input.routeTarget || input.route_target, null),
+          registryStatus,
+          desiredCount,
+          readyCount,
+          missingCount,
+          nowMs,
+          JSON.stringify(metadata),
+          nowMs,
+          nowMs
+        );
+      } else {
+        this.db.prepare(`
+          UPDATE arm_registries
+          SET
+            main_session_id = COALESCE(?, main_session_id),
+            lead_role = COALESCE(?, lead_role),
+            lead_pane_id = COALESCE(?, lead_pane_id),
+            route_target = COALESCE(?, route_target),
+            status = ?,
+            desired_count = ?,
+            ready_count = ?,
+            missing_count = ?,
+            last_evaluated_at_ms = ?,
+            metadata_json = ?,
+            updated_at_ms = ?
+          WHERE registry_id = ?
+        `).run(
+          toOptionalString(input.mainSessionId || input.main_session_id || input.mainSessionScopeId, null),
+          toOptionalString(input.leadRole || input.lead_role, null),
+          toOptionalString(input.leadPaneId || input.lead_pane_id, null),
+          toOptionalString(input.routeTarget || input.route_target, null),
+          registryStatus,
+          desiredCount,
+          readyCount,
+          missingCount,
+          nowMs,
+          JSON.stringify(metadata),
+          nowMs,
+          registryId
+        );
+      }
+
+      for (const arm of normalizedArms) {
+        const existingArm = existingArmByKey.get(arm.armKey);
+        if (!existingArm) {
+          this.db.prepare(`
+            INSERT INTO arm_registry_arms (
+              arm_id, registry_id, app_room_id, session_id, arm_key, role, pane_id,
+              route_target, arm_kind, display_name, required, status, data_sources_json,
+              permissions_json, check_in_obligation_json, check_in_deadline_at_ms,
+              last_proof_refs_json, metadata_json, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            arm.armId,
+            registryId,
+            appRoomId,
+            sessionId,
+            arm.armKey,
+            arm.role,
+            arm.paneId,
+            arm.routeTarget,
+            arm.armKind,
+            arm.displayName,
+            arm.required ? 1 : 0,
+            arm.status,
+            JSON.stringify(arm.dataSources),
+            JSON.stringify(arm.permissions),
+            JSON.stringify(arm.checkInObligation),
+            arm.checkInDeadlineAtMs,
+            JSON.stringify(arm.lastProofRefs),
+            JSON.stringify(arm.metadata),
+            nowMs,
+            nowMs
+          );
+          continue;
+        }
+
+        this.db.prepare(`
+          UPDATE arm_registry_arms
+          SET
+            role = ?,
+            pane_id = COALESCE(?, pane_id),
+            route_target = COALESCE(?, route_target),
+            arm_kind = ?,
+            display_name = COALESCE(?, display_name),
+            required = ?,
+            status = ?,
+            data_sources_json = ?,
+            permissions_json = ?,
+            check_in_obligation_json = ?,
+            check_in_deadline_at_ms = ?,
+            last_proof_refs_json = ?,
+            metadata_json = ?,
+            updated_at_ms = ?
+          WHERE arm_id = ?
+        `).run(
+          arm.role,
+          arm.paneId,
+          arm.routeTarget,
+          arm.armKind,
+          arm.displayName,
+          arm.required ? 1 : 0,
+          arm.status,
+          JSON.stringify(arm.dataSources),
+          JSON.stringify(arm.permissions),
+          JSON.stringify(arm.checkInObligation),
+          arm.checkInDeadlineAtMs,
+          JSON.stringify(arm.lastProofRefs),
+          JSON.stringify(arm.metadata),
+          nowMs,
+          existingArm.armId
+        );
+      }
+
+      if (replaceArms) {
+        for (const arm of existingArms) {
+          if (incomingKeys.has(arm.armKey)) continue;
+          this.db.prepare(`
+            UPDATE arm_registry_arms
+            SET status = 'disabled', required = 0, updated_at_ms = ?
+            WHERE arm_id = ?
+          `).run(nowMs, arm.armId);
+        }
+      }
+
+      this.db.exec('COMMIT;');
+      return {
+        ok: true,
+        status: existing ? 'updated' : 'inserted',
+        registry: this.getArmRegistryManifest({ registryId }),
+      };
+    } catch (err) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: err.message,
+        registryId,
       };
     }
   }
