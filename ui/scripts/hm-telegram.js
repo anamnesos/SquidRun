@@ -24,6 +24,20 @@ const TELEGRAM_MESSAGE_MAX_CHARS = 4_000;
 const TELEGRAM_CAPTION_MAX_CHARS = 1_000;
 const TELEGRAM_TRUNCATED_SUFFIX = '[message truncated]';
 const TELEGRAM_REPLY_CONTEXT_PATH = path.join('runtime', 'telegram-reply-context.json');
+const RESERVED_SINGLE_MESSAGE_TOKENS = new Set([
+  'help',
+  'poll',
+  'poller',
+  'recover',
+  'receive',
+  'restart',
+  'run',
+  'start',
+  'status',
+  'stop',
+  'updates',
+  'version',
+]);
 const INTERNAL_EGRESS_LINE_PATTERNS = [
   /^\s*\[CURRENT PROJECT\].*$/i,
   /^\s*\[PROJECT CONTEXT SWITCHED\].*$/i,
@@ -188,9 +202,14 @@ function upsertTelegramJournal(entry = {}) {
 
 function usage() {
   console.log('Usage: node hm-telegram.js <message>');
+  console.log('       node hm-telegram.js --message <message>');
+  console.log('       node hm-telegram.js --text <message>');
+  console.log('       node hm-telegram.js --stdin');
+  console.log('       node hm-telegram.js --file <text-file>');
   console.log('       node hm-telegram.js --photo <image-path> [caption]');
   console.log('       node hm-telegram.js [--chat-id <chat-id>] <message>');
   console.log('       node hm-telegram.js --photo <image-path> [caption] [--chat-id <chat-id>]');
+  console.log('Poller status: node hm-telegram-poller-lane.js status');
   console.log('Env required: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID');
   console.log('Optional: TELEGRAM_CHAT_ALLOWLIST (comma-separated chat ids)');
 }
@@ -199,9 +218,19 @@ function parseMessage(args = []) {
   return args.join(' ').trim();
 }
 
+function isReservedSingleMessageToken(value) {
+  const token = String(value || '').trim().toLowerCase();
+  if (!token) return false;
+  if (token.startsWith('--')) return true;
+  return RESERVED_SINGLE_MESSAGE_TOKENS.has(token);
+}
+
 function parseCliArgs(argv = []) {
   let photoPath = null;
   let chatId = null;
+  let messageFile = null;
+  let readStdin = false;
+  let explicitMessage = false;
   const messageParts = [];
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -222,15 +251,63 @@ function parseCliArgs(argv = []) {
       i += 1;
       continue;
     }
+    if (token === '--message' || token === '--text') {
+      if (!argv[i + 1]) {
+        return { ok: false, error: `${token} requires message text` };
+      }
+      explicitMessage = true;
+      messageParts.push(argv[i + 1]);
+      i += 1;
+      continue;
+    }
+    if (token === '--stdin') {
+      explicitMessage = true;
+      readStdin = true;
+      continue;
+    }
+    if (token === '--file') {
+      if (!argv[i + 1]) {
+        return { ok: false, error: '--file requires a text file path' };
+      }
+      explicitMessage = true;
+      messageFile = argv[i + 1];
+      i += 1;
+      continue;
+    }
+    if (String(token || '').startsWith('--')) {
+      return { ok: false, error: `Unknown option ${token}` };
+    }
     messageParts.push(token);
+  }
+
+  if (!photoPath && !explicitMessage && messageParts.length === 1 && isReservedSingleMessageToken(messageParts[0])) {
+    return {
+      ok: false,
+      error: `hm-telegram.js sends messages; refusing reserved command-like token "${messageParts[0]}". For poller status use hm-telegram-poller-lane.js status, or use --message/--text/--stdin/--file for explicit message text.`,
+    };
   }
 
   return {
     ok: true,
     photoPath,
     chatId,
+    messageFile,
+    readStdin,
+    explicitMessage,
     message: parseMessage(messageParts),
   };
+}
+
+function readParsedMessageInput(parsed = {}) {
+  const parts = [];
+  if (parsed.message) parts.push(parsed.message);
+  if (parsed.messageFile) {
+    parts.push(fs.readFileSync(parsed.messageFile, 'utf8'));
+  }
+  if (parsed.readStdin) {
+    parts.push(fs.readFileSync(0, 'utf8'));
+  }
+  return parts.join('\n').trim();
 }
 
 function normalizeChatId(value) {
@@ -860,8 +937,17 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     process.exit(1);
   }
 
+  let message = '';
+  try {
+    message = readParsedMessageInput(parsed);
+  } catch (err) {
+    closeCommsJournalStores();
+    console.error(`[hm-telegram] Message input failed: ${err.message}`);
+    process.exit(1);
+  }
+
   if (parsed.photoPath) {
-    const result = await sendTelegramPhoto(parsed.photoPath, parsed.message, env, { chatId: parsed.chatId });
+    const result = await sendTelegramPhoto(parsed.photoPath, message, env, { chatId: parsed.chatId });
     if (!result.ok) {
       closeCommsJournalStores();
       console.error(`[hm-telegram] Photo failed: ${result.error}`);
@@ -874,7 +960,6 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     process.exit(0);
   }
 
-  const message = parsed.message;
   if (!message) {
     console.error('[hm-telegram] Message cannot be empty');
     process.exit(1);

@@ -57,6 +57,9 @@ describe('hm-telegram', () => {
       ok: true,
       photoPath: null,
       chatId: '2222222222',
+      messageFile: null,
+      readStdin: false,
+      explicitMessage: false,
       message: 'reply now',
     });
 
@@ -64,8 +67,66 @@ describe('hm-telegram', () => {
       ok: true,
       photoPath: 'captcha.png',
       chatId: '2222222222',
+      messageFile: null,
+      readStdin: false,
+      explicitMessage: false,
       message: 'caption text',
     });
+  });
+
+  test('parseCliArgs rejects bare reserved command tokens but allows explicit message text', () => {
+    expect(hmTelegram.parseCliArgs(['status'])).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.stringContaining('reserved command-like token "status"'),
+    }));
+    expect(hmTelegram.parseCliArgs(['--message', 'status'])).toEqual(expect.objectContaining({
+      ok: true,
+      explicitMessage: true,
+      message: 'status',
+    }));
+  });
+
+  test('main rejects bare status without sending Telegram request', async () => {
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((code) => {
+      throw new Error(`process.exit:${code}`);
+    });
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(hmTelegram.main(['status'], {
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '123456',
+      })).rejects.toThrow('process.exit:1');
+      expect(https.request).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('reserved command-like token "status"'));
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+
+  test('main still sends a normal message', async () => {
+    mockTelegramResponse(200, {
+      ok: true,
+      result: {
+        message_id: 321,
+        chat: { id: 123456 },
+      },
+    });
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((code) => {
+      throw new Error(`process.exit:${code}`);
+    });
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await expect(hmTelegram.main(['normal', 'status', 'update'], {
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '123456',
+      })).rejects.toThrow('process.exit:0');
+      expect(https.request).toHaveBeenCalledTimes(1);
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      exitSpy.mockRestore();
+      logSpy.mockRestore();
+    }
   });
 
   test('getMissingConfigKeys reports required env vars', () => {
