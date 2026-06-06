@@ -105,6 +105,10 @@ const {
   queryCommsJournalEntries,
 } = require('./comms-journal');
 const {
+  openTelegramReplyObligation,
+  queryTelegramReplyObligations,
+} = require('./telegram-reply-obligations');
+const {
   listWorkItems,
   TERMINAL_STATES: WORK_ITEM_TERMINAL_STATES,
 } = require('./work-item-ledger');
@@ -3539,6 +3543,15 @@ class SquidRunApp {
     await this.initializeStartupSessionScope({
       sessionNumber: this.getCurrentAppStatusSessionNumber(),
     });
+    const durableTelegramReplyHydration = this.hydratePendingTelegramReplyGuardsFromObligations({
+      sessionId: this.commsSessionScopeId || null,
+    });
+    if (durableTelegramReplyHydration?.ok === false) {
+      log.warn(
+        'TelegramReplyRequirement',
+        `Durable reply-obligation hydration failed: ${durableTelegramReplyHydration.reason || 'unknown'}`
+      );
+    }
     try {
       const startupHealthResult = await this.refreshStartupHealthArtifacts({
         sessionNumber: this.getCurrentAppStatusSessionNumber(),
@@ -11353,12 +11366,196 @@ class SquidRunApp {
     return meta;
   }
 
+  persistPendingTelegramReplyGuardObligation(guard = {}, options = {}) {
+    const paneId = toNonEmptyString(guard.paneId) || '1';
+    const inboundMessageId = toNonEmptyString(guard.messageId);
+    if (!inboundMessageId) {
+      return { ok: false, status: 'invalid', reason: 'inbound_message_id_required' };
+    }
+    try {
+      const writeFn = typeof options.openTelegramReplyObligation === 'function'
+        ? options.openTelegramReplyObligation
+        : openTelegramReplyObligation;
+      const result = writeFn({
+        inboundMessageId,
+        chatId: guard.chatId || guard.telegramChatId || null,
+        sessionId: guard.sessionScopeId || null,
+        paneId,
+        windowKey: guard.windowKey || null,
+        profileName: guard.profileName || guard.profile || null,
+        senderRole: guard.sender || 'user',
+        targetRole: resolveCanonicalRoleForPaneId(paneId) || `pane-${paneId}`,
+        openedAtMs: guard.createdAtMs || null,
+        deadlineAtMs: guard.expiresAtMs || null,
+        metadata: {
+          source: 'squidrun-app.telegram-reply-guard',
+          requiresTelegramEgress: true,
+          status: guard.status || null,
+        },
+      }, {
+        nowMs: options.nowMs,
+      });
+      const latest = this.pendingTelegramReplyGuards.get(paneId);
+      if (latest && toNonEmptyString(latest.messageId) === inboundMessageId) {
+        latest.durableObligationOk = result?.ok === true;
+        latest.durableObligationStatus = result?.status || null;
+        latest.durableObligationId = result?.obligation?.obligationId || latest.durableObligationId || null;
+        latest.durableObligationUpdatedAtMs = Date.now();
+        latest.durableObligationError = result?.ok === false
+          ? (result.reason || result.error || 'durable_obligation_write_failed')
+          : null;
+        this.pendingTelegramReplyGuards.set(paneId, latest);
+      }
+      if (result?.ok === false) {
+        log.warn(
+          'TelegramReplyRequirement',
+          `Failed writing durable reply obligation for inbound ${inboundMessageId}: ${result.reason || result.error || 'unknown'}`
+        );
+      }
+      return result;
+    } catch (err) {
+      const latest = this.pendingTelegramReplyGuards.get(paneId);
+      if (latest && toNonEmptyString(latest.messageId) === inboundMessageId) {
+        latest.durableObligationOk = false;
+        latest.durableObligationStatus = 'exception';
+        latest.durableObligationError = err.message;
+        latest.durableObligationUpdatedAtMs = Date.now();
+        this.pendingTelegramReplyGuards.set(paneId, latest);
+      }
+      log.warn('TelegramReplyRequirement', `Durable reply obligation write failed: ${err.message}`);
+      return { ok: false, status: 'exception', reason: err.message };
+    }
+  }
+
+  buildPendingTelegramReplyGuardFromObligation(obligation = {}) {
+    const paneId = toNonEmptyString(obligation.paneId) || '1';
+    const inboundMessageId = toNonEmptyString(obligation.inboundMessageId);
+    if (!inboundMessageId) return null;
+    const openedAtMs = Number(obligation.openedAtMs || 0);
+    const createdAtMs = Number.isFinite(openedAtMs) && openedAtMs > 0 ? openedAtMs : Date.now();
+    const deadlineAtMs = Number(obligation.deadlineAtMs || 0);
+    const expiresAtMs = Number.isFinite(deadlineAtMs) && deadlineAtMs > 0
+      ? deadlineAtMs
+      : (createdAtMs + TELEGRAM_REPLY_WINDOW_MS);
+    const chatId = normalizeChatId(obligation.chatId);
+    return {
+      paneId,
+      messageId: inboundMessageId,
+      sender: toNonEmptyString(obligation.senderRole) || 'user',
+      chatId,
+      telegramChatId: chatId,
+      windowKey: toNonEmptyString(obligation.windowKey) || 'main',
+      profileName: toNonEmptyString(obligation.profileName) || 'main',
+      sessionScopeId: toNonEmptyString(obligation.sessionId) || this.getWindowSessionScopeId('main'),
+      createdAtMs,
+      expiresAtMs,
+      lastWarningAtMs: 0,
+      warningCount: 0,
+      violationCount: 0,
+      lastViolationAtMs: 0,
+      lastPaneOutputPreview: null,
+      phoneEscalationAttemptCount: 0,
+      phoneEscalationAttemptedAtMs: 0,
+      phoneEscalationSentAtMs: 0,
+      phoneEscalationMessageId: null,
+      phoneEscalationError: null,
+      phoneEscalationInFlight: false,
+      agentDebtNoticeAttemptCount: 0,
+      agentDebtNoticeAttemptedAtMs: 0,
+      agentDebtNoticeSentAtMs: 0,
+      agentDebtNoticeError: null,
+      agentDebtNoticeTargetRoles: [],
+      status: 'pending_telegram_egress',
+      requiresTelegramEgress: true,
+      durableObligationOk: true,
+      durableObligationStatus: obligation.status || 'open',
+      durableObligationId: obligation.obligationId || null,
+      durableObligationUpdatedAtMs: Date.now(),
+      durableHydratedAtMs: Date.now(),
+    };
+  }
+
+  hydratePendingTelegramReplyGuardsFromObligations(options = {}) {
+    const queryFn = typeof options.queryTelegramReplyObligations === 'function'
+      ? options.queryTelegramReplyObligations
+      : queryTelegramReplyObligations;
+    const sessionId = options.sessionId === null
+      ? null
+      : (toNonEmptyString(options.sessionId) || toNonEmptyString(this.commsSessionScopeId));
+    const filters = {
+      status: 'open',
+      order: 'asc',
+      limit: Math.max(1, Math.min(1000, Number(options.limit) || 100)),
+    };
+    if (sessionId) filters.sessionId = sessionId;
+    let obligations = [];
+    try {
+      obligations = queryFn(filters) || [];
+    } catch (err) {
+      log.warn('TelegramReplyRequirement', `Failed loading durable reply obligations: ${err.message}`);
+      return {
+        ok: false,
+        status: 'query_failed',
+        reason: err.message,
+        hydratedCount: 0,
+        skippedCount: 0,
+      };
+    }
+
+    const nowMs = Number(options.nowMs || Date.now());
+    let hydratedCount = 0;
+    let skippedCount = 0;
+    for (const obligation of Array.isArray(obligations) ? obligations : []) {
+      if (!obligation || String(obligation.status || '').toLowerCase() !== 'open') {
+        skippedCount += 1;
+        continue;
+      }
+      const expiresAtMs = Number(obligation.deadlineAtMs || 0);
+      if (Number.isFinite(expiresAtMs) && expiresAtMs > 0 && expiresAtMs <= nowMs) {
+        skippedCount += 1;
+        continue;
+      }
+      const guard = this.buildPendingTelegramReplyGuardFromObligation(obligation);
+      if (!guard) {
+        skippedCount += 1;
+        continue;
+      }
+      const existing = this.pendingTelegramReplyGuards.get(guard.paneId);
+      if (existing && toNonEmptyString(existing.messageId) === toNonEmptyString(guard.messageId)) {
+        skippedCount += 1;
+        continue;
+      }
+      this.pendingTelegramReplyGuards.set(guard.paneId, guard);
+      this.schedulePendingTelegramReplyGuardEscalation(guard);
+      hydratedCount += 1;
+    }
+    if (hydratedCount > 0) {
+      this.ensurePendingTelegramReplyGuardJournalReconcileTimer();
+    }
+    return {
+      ok: true,
+      status: hydratedCount > 0
+        ? 'telegram_reply_obligations_hydrated'
+        : 'telegram_reply_obligations_checked',
+      hydratedCount,
+      skippedCount,
+      sessionId: sessionId || null,
+    };
+  }
+
   markPendingTelegramReplyGuard(input = {}) {
     const paneId = toNonEmptyString(input.paneId) || '1';
     const messageId = toNonEmptyString(input.messageId)
       || `telegram-pending-${paneId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const chatId = normalizeChatId(input.chatId);
-    const createdAtMs = Date.now();
+    const inputCreatedAtMs = Number(input.createdAtMs ?? input.openedAtMs ?? input.opened_at_ms);
+    const createdAtMs = Number.isFinite(inputCreatedAtMs) && inputCreatedAtMs > 0
+      ? Math.floor(inputCreatedAtMs)
+      : Date.now();
+    const inputExpiresAtMs = Number(input.expiresAtMs ?? input.deadlineAtMs ?? input.deadline_at_ms);
+    const expiresAtMs = Number.isFinite(inputExpiresAtMs) && inputExpiresAtMs > 0
+      ? Math.floor(inputExpiresAtMs)
+      : (createdAtMs + TELEGRAM_REPLY_WINDOW_MS);
     const guard = {
       paneId,
       messageId,
@@ -11369,7 +11566,7 @@ class SquidRunApp {
       profileName: toNonEmptyString(input.profileName || input.profile) || 'main',
       sessionScopeId: toNonEmptyString(input.sessionScopeId) || this.getWindowSessionScopeId('main'),
       createdAtMs,
-      expiresAtMs: createdAtMs + TELEGRAM_REPLY_WINDOW_MS,
+      expiresAtMs,
       lastWarningAtMs: 0,
       warningCount: 0,
       violationCount: 0,
@@ -11390,9 +11587,15 @@ class SquidRunApp {
       requiresTelegramEgress: true,
     };
     this.pendingTelegramReplyGuards.set(paneId, guard);
+    if (input.persistDurable !== false) {
+      this.persistPendingTelegramReplyGuardObligation(guard, {
+        nowMs: createdAtMs,
+        openTelegramReplyObligation: input.openTelegramReplyObligation,
+      });
+    }
     this.schedulePendingTelegramReplyGuardEscalation(guard);
     this.ensurePendingTelegramReplyGuardJournalReconcileTimer();
-    return guard;
+    return { ...(this.pendingTelegramReplyGuards.get(paneId) || guard) };
   }
 
   clearPendingTelegramReplyGuardTimer(paneId = '1') {

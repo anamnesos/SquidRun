@@ -219,6 +219,15 @@ jest.mock('../modules/main/comms-journal', () => ({
   queryCommsJournalEntries: jest.fn(() => []),
 }));
 
+jest.mock('../modules/main/telegram-reply-obligations', () => ({
+  openTelegramReplyObligation: jest.fn(() => ({
+    ok: true,
+    status: 'inserted',
+    obligation: { obligationId: 'telegram-reply-test' },
+  })),
+  queryTelegramReplyObligations: jest.fn(() => []),
+}));
+
 jest.mock('../modules/bridge-client', () => {
   const actual = jest.requireActual('../modules/bridge-client');
   return {
@@ -486,6 +495,10 @@ jest.mock('../modules/local-model-capabilities', () => ({
 const { spawn } = require('child_process');
 const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
 const {
+  openTelegramReplyObligation,
+  queryTelegramReplyObligations,
+} = require('../modules/main/telegram-reply-obligations');
+const {
   attachProof,
   closeWorkItem,
   openWorkItem,
@@ -581,6 +594,12 @@ describe('SquidRunApp', () => {
     jest.clearAllMocks();
     resetTrustQuoteWorkRoomMocks();
     queryCommsJournalEntries.mockReturnValue([]);
+    openTelegramReplyObligation.mockReturnValue({
+      ok: true,
+      status: 'inserted',
+      obligation: { obligationId: 'telegram-reply-test' },
+    });
+    queryTelegramReplyObligations.mockReturnValue([]);
     const windows = new Map();
 
     // Create mock app context
@@ -6477,7 +6496,88 @@ describe('SquidRunApp', () => {
         chatId: '1111111111',
         status: 'pending_telegram_egress',
         requiresTelegramEgress: true,
+        durableObligationOk: true,
+        durableObligationId: 'telegram-reply-test',
       }));
+      expect(openTelegramReplyObligation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inboundMessageId: 'telegram-in-reply-target-1',
+          chatId: '1111111111',
+          sessionId: expect.any(String),
+          paneId: '1',
+          windowKey: 'main',
+          profileName: 'main',
+          senderRole: 'james',
+          targetRole: 'architect',
+          metadata: expect.objectContaining({
+            source: 'squidrun-app.telegram-reply-guard',
+            requiresTelegramEgress: true,
+            status: 'pending_telegram_egress',
+          }),
+        }),
+        expect.objectContaining({
+          nowMs: expect.any(Number),
+        })
+      );
+    });
+
+    it('hydrates pending Telegram reply guards from durable open obligations', () => {
+      const nowMs = Date.now();
+      app.commsSessionScopeId = 'app-session-hydrate';
+      queryTelegramReplyObligations.mockReturnValue([
+        {
+          obligationId: 'telegram-reply-hydrate-1',
+          inboundMessageId: 'telegram-in-hydrate-1',
+          chatId: '1111111111',
+          sessionId: 'app-session-hydrate',
+          paneId: '2',
+          windowKey: 'main',
+          profileName: 'main',
+          senderRole: 'james',
+          status: 'open',
+          openedAtMs: nowMs - 1000,
+          deadlineAtMs: nowMs + 60_000,
+        },
+        {
+          obligationId: 'telegram-reply-expired-1',
+          inboundMessageId: 'telegram-in-expired-1',
+          chatId: '1111111111',
+          sessionId: 'app-session-hydrate',
+          paneId: '3',
+          windowKey: 'main',
+          profileName: 'main',
+          senderRole: 'james',
+          status: 'open',
+          openedAtMs: nowMs - 120_000,
+          deadlineAtMs: nowMs - 1,
+        },
+      ]);
+
+      const result = app.hydratePendingTelegramReplyGuardsFromObligations({ nowMs });
+
+      expect(queryTelegramReplyObligations).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'open',
+        sessionId: 'app-session-hydrate',
+        order: 'asc',
+      }));
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_reply_obligations_hydrated',
+        hydratedCount: 1,
+        skippedCount: 1,
+        sessionId: 'app-session-hydrate',
+      }));
+      expect(app.pendingTelegramReplyGuards.get('2')).toEqual(expect.objectContaining({
+        paneId: '2',
+        messageId: 'telegram-in-hydrate-1',
+        chatId: '1111111111',
+        sessionScopeId: 'app-session-hydrate',
+        status: 'pending_telegram_egress',
+        requiresTelegramEgress: true,
+        durableObligationOk: true,
+        durableObligationId: 'telegram-reply-hydrate-1',
+      }));
+      expect(app.pendingTelegramReplyGuards.has('3')).toBe(false);
     });
 
     it('prepends unified memory broker recall when ranked context exists', async () => {
