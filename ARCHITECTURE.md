@@ -130,6 +130,9 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/main/activity-manager.js: Exports ActivityManager.
 - ui/modules/main/agent-task-resolution.js: Shared current-lane/task-resolution helper used by `squidrun-app`, `auto-handoff-materializer`, `startup-ai-briefing`, and `hm-session-summary` to parse agent refs, detect later ACK/complete/supersede closure rows, and derive the active current-session lane from `comms_journal` evidence.
 - ui/modules/main/app-context.js: Exports new.
+- ui/modules/main/arm-apply-queue.js: Evidence-ledger-backed apply-request queue for lead/arm proposals; persists category/risk/evidence/status, forces high-risk/alias categories through approval-required state, requires real James/user/Architect comms approval rows before executable marking, and keeps dispatch as a no-executor/no-side-effect stub.
+- ui/modules/main/arm-registry.js: Evidence-ledger-backed app-room arm registry wrapper; persists desired arms/manifests, records role/pane/session check-in proofs from real `comms_journal` evidence, evaluates desired/ready/missing from accepted identity-matched check-ins, and rejects forged/stale/route-only readiness claims.
+- ui/modules/main/arm-state-projection.js: Explicit read-only projection over the durable arm registry, check-in, missing-watchdog, and apply-queue tables; surfaces desired/ready/missing plus watchdog/queue summaries without advancing watchdogs, dispatching requests, opening rooms, or changing TrustQuote behavior.
 - ui/modules/main/auto-handoff-materializer.js: Exports materializeSessionHandoff, buildSessionHandoffMarkdown, removeLegacyPaneHandoffFiles, _internals, ....
 - ui/modules/main/background-agent-manager.js: Exports BackgroundAgentManager, createBackgroundAgentManager, containsCompletionSignal, appendCompletionDirective, ....
 - ui/modules/main/cli-identity.js: Exports CliIdentityManager.
@@ -146,6 +149,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/main/kernel-bridge.js: Exports KernelBridge, createKernelBridge, BRIDGE_VERSION, BRIDGE_EVENT_CHANNEL, ....
 - ui/modules/main/launch-intent.js: Normalizes `--window` / standalone launch flags so secondary windows can cold-open with their own top-level lifecycle while still sharing the runtime when needed.
 - ui/modules/main/live-task-audit-sidecar.js: Builds the Task Audit sidecar snapshot from typed work items, current-lane reconciliation, and the canonical `.squidrun/runtime/live-task-audit-sidecar/task-audit-items.json` state file; the legacy `future-items.json` file is not read and should not be recreated.
+- ui/modules/main/missing-arm-watchdog.js: Stage-based missing-arm watchdog wrapper around the durable registry state; advances expected -> nudge -> escalate -> satisfied with injectable sender and canonical Architect escalation sink while tests can exercise stages without real timers.
 - ui/modules/main/pane-control-service.js: Exports executePaneControlAction, detectPaneModel, normalizeAction.
 - ui/modules/main/telegram-poller-worker.js: Child-process Telegram inbound poller owner; it is the only runtime `getUpdates` loop and sends inbound messages back to `SquidRunApp` through the inbound-poller service IPC boundary.
 - ui/modules/main/pane-host-window-manager.js: Creates/manages hidden pane-host BrowserWindows and routes bridge messages into pane-host renderers.
@@ -274,6 +278,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/scripts/hm-codebase-index.js: Deterministic codebase inventory generator/checker built from `git ls-files --cached --others --exclude-standard`.
 - ui/scripts/doc-lint.js: Lints `.squidrun/build/*.md` docs for active-item caps, required metadata fields, and stale-marker correctness.
 - ui/scripts/evidence-ledger-seed-memory.js: Seeds Evidence Ledger decision memory from context snapshot markdown/JSON with deterministic IDs.
+- ui/scripts/hm-arm-state.js: Explicit read-only CLI for `arm-state-projection`; prints desired/ready/missing, watchdog, and apply-queue state only when invoked and does not wire into TrustQuote room open/readiness behavior.
 - ui/scripts/hm-bg.js: Background Builder control CLI; uses WebSocket for live PTY agents and the durable supervisor queue CLI for queued work.
 - ui/scripts/hm-capabilities.js: Runtime capability-manifest CLI that scans live `hm-*` scripts, writes `.squidrun/runtime/tool-manifest.json`, and supports `list`, `search`, and `verify` lookups before agents make negative capability claims.
 - ui/scripts/hm-ci-check.js: CLI utility for reading the latest CI/pre-commit gate status used by review and release workflows.
