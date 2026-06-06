@@ -13,6 +13,8 @@ const PID_PATH = path.join(RUNTIME_DIR, 'voice-broker.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'voice-broker.log');
 const STATUS_PATH = path.join(RUNTIME_DIR, 'voice-broker-status.json');
 const CHILD_START_GRACE_MS = 10000;
+const STATUS_HEARTBEAT_INTERVAL_MS = 5000;
+const STATUS_STALE_AFTER_MS = 30000;
 
 function usage() {
   console.log('Usage: node ui/scripts/hm-voice-broker.js <start|stop|restart|status|run>');
@@ -123,12 +125,21 @@ function writeLog(message) {
   fs.appendFileSync(LOG_PATH, `${new Date().toISOString()} ${message}\n`, 'utf8');
 }
 
-function readStatusFile() {
+function readStatusInfo() {
   try {
-    return JSON.parse(fs.readFileSync(STATUS_PATH, 'utf8'));
+    const stat = fs.statSync(STATUS_PATH);
+    return {
+      value: JSON.parse(fs.readFileSync(STATUS_PATH, 'utf8')),
+      mtimeMs: Number(stat.mtimeMs || 0),
+    };
   } catch {
-    return null;
+    return { value: null, mtimeMs: 0 };
   }
+}
+
+function timestampMs(value) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function buildStatusSnapshot({
@@ -136,6 +147,7 @@ function buildStatusSnapshot({
   pidAlive = false,
   pidMtimeMs = 0,
   statusFile = null,
+  statusMtimeMs = 0,
   nowMs = Date.now(),
 } = {}) {
   const numericPid = Number(pid);
@@ -148,10 +160,19 @@ function buildStatusSnapshot({
     && statusPid === validPid
   );
   const pidAgeMs = pidMtimeMs > 0 ? Math.max(0, nowMs - pidMtimeMs) : Infinity;
+  const statusUpdatedAtMs = timestampMs(statusFile?.heartbeatAt || statusFile?.updatedAt) || Number(statusMtimeMs) || 0;
+  const statusAgeMs = statusUpdatedAtMs > 0 ? Math.max(0, nowMs - statusUpdatedAtMs) : Infinity;
+  const statusFresh = Boolean(statusMatchesPid && statusAgeMs <= STATUS_STALE_AFTER_MS);
   const starting = Boolean(pidAlive && !statusMatchesPid && pidAgeMs <= CHILD_START_GRACE_MS);
-  const running = Boolean(pidAlive && statusMatchesPid && statusFile?.running !== false);
+  const running = Boolean(pidAlive && statusMatchesPid && statusFresh && statusFile?.running !== false);
   const stalePid = Boolean(pidAlive && !running && !starting);
   const staleStatus = Boolean(statusFile && !statusMatchesPid);
+  const staleHeartbeat = Boolean(pidAlive && statusMatchesPid && statusFile?.running !== false && !statusFresh);
+  const reason = running
+    ? null
+    : (starting ? 'broker_starting'
+      : (staleHeartbeat ? 'stale_voice_broker_status'
+        : (stalePid ? 'stale_voice_broker_pid' : 'not_running')));
 
   return {
     ok: true,
@@ -160,9 +181,11 @@ function buildStatusSnapshot({
     pid: running || starting ? validPid : null,
     stalePid: stalePid ? validPid : null,
     staleStatus,
-    reason: running
-      ? null
-      : (starting ? 'broker_starting' : (stalePid ? 'stale_voice_broker_pid' : 'not_running')),
+    staleHeartbeat,
+    statusFresh,
+    statusAgeMs: Number.isFinite(statusAgeMs) ? statusAgeMs : null,
+    statusStaleAfterMs: STATUS_STALE_AFTER_MS,
+    reason,
     pidPath: PID_PATH,
     logPath: LOG_PATH,
     statusPath: STATUS_PATH,
@@ -172,11 +195,13 @@ function buildStatusSnapshot({
 
 function status() {
   const pidInfo = readPidInfo();
+  const statusInfo = readStatusInfo();
   return buildStatusSnapshot({
     pid: pidInfo.pid,
     pidAlive: isPidAlive(pidInfo.pid),
     pidMtimeMs: pidInfo.mtimeMs,
-    statusFile: readStatusFile(),
+    statusFile: statusInfo.value,
+    statusMtimeMs: statusInfo.mtimeMs,
   });
 }
 
@@ -188,10 +213,13 @@ async function runBroker() {
     config: getVoiceBrokerConfig(process.env),
   });
 
+  let statusHeartbeatTimer = null;
   const writeStatus = (extra = {}) => {
+    const now = new Date().toISOString();
     writeJson(STATUS_PATH, {
       pid: process.pid,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
+      heartbeatAt: now,
       ...broker.getStatus(),
       ...extra,
     });
@@ -206,6 +234,8 @@ async function runBroker() {
     }
     writeLog(`[start] pid=${process.pid} address=${JSON.stringify(started.address)}`);
     writeStatus();
+    statusHeartbeatTimer = setInterval(() => writeStatus(), STATUS_HEARTBEAT_INTERVAL_MS);
+    statusHeartbeatTimer?.unref?.();
   } catch (err) {
     writeLog(`[error] start failed: ${err.message}`);
     writeStatus({ ok: false, lastError: err.message });
@@ -213,6 +243,10 @@ async function runBroker() {
   }
 
   const shutdown = async () => {
+    if (statusHeartbeatTimer) {
+      clearInterval(statusHeartbeatTimer);
+      statusHeartbeatTimer = null;
+    }
     try {
       await broker.stop();
       writeLog(`[stop] pid=${process.pid}`);
@@ -349,6 +383,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  CHILD_START_GRACE_MS,
+  STATUS_HEARTBEAT_INTERVAL_MS,
+  STATUS_STALE_AFTER_MS,
   buildStatusSnapshot,
   isPidAlive,
   isNodeExecutablePath,

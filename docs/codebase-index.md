@@ -85,7 +85,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/mira-north-star-roadmap.md` | doc | 8530 |
 | `docs/mira-pc-embodiment-permission-v0.md` | doc | 10045 |
 | `docs/mira-presence-runtime-acceptance-v0.md` | doc | 16200 |
-| `docs/mira-system-map.md` | doc | 124924 |
+| `docs/mira-system-map.md` | doc | 125225 |
 | `docs/mira-voice-audio-intake-v0.md` | doc | 9440 |
 | `docs/models/base-instructions.md` | doc | 2070 |
 | `docs/models/claude-notes.md` | doc | 1161 |
@@ -427,7 +427,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/hm-transition.test.js` | test | 2309 |
 | `ui/__tests__/hm-twitter.test.js` | test | 11240 |
 | `ui/__tests__/hm-visible-pane-submit-harness.test.js` | test | 6296 |
-| `ui/__tests__/hm-voice-broker.test.js` | test | 2656 |
+| `ui/__tests__/hm-voice-broker.test.js` | test | 4413 |
 | `ui/__tests__/image-gen.test.js` | test | 12705 |
 | `ui/__tests__/inbound-poller-service.test.js` | test | 3227 |
 | `ui/__tests__/ingress-envelope.test.js` | test | 2607 |
@@ -714,7 +714,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/usage-manager.test.js` | test | 1841 |
 | `ui/__tests__/usage-stats-handlers.test.js` | test | 9817 |
 | `ui/__tests__/user-profile-handlers.test.js` | test | 4634 |
-| `ui/__tests__/voice-broker-handlers.test.js` | test | 5262 |
+| `ui/__tests__/voice-broker-handlers.test.js` | test | 5937 |
 | `ui/__tests__/voice-broker-lease-contract.test.js` | test | 31375 |
 | `ui/__tests__/voice-broker-tab.test.js` | test | 35900 |
 | `ui/__tests__/voice-broker.test.js` | test | 44789 |
@@ -1343,7 +1343,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-visible-pane-submit-harness.js` | script | 20917 |
 | `ui/scripts/hm-visual-capture.js` | script | 13957 |
 | `ui/scripts/hm-visual-utils.js` | script | 17618 |
-| `ui/scripts/hm-voice-broker.js` | script | 9903 |
+| `ui/scripts/hm-voice-broker.js` | script | 11410 |
 | `ui/scripts/hm-voice-say.js` | script | 1315 |
 | `ui/scripts/hm-work-item.js` | script | 7568 |
 | `ui/scripts/install-supervisor-task.ps1` | script | 2696 |

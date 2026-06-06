@@ -1,5 +1,6 @@
 const {
   buildStatusSnapshot,
+  STATUS_STALE_AFTER_MS,
   isNodeExecutablePath,
   resolveBrokerLaunchCommand,
 } = require('../scripts/hm-voice-broker');
@@ -57,6 +58,66 @@ describe('hm-voice-broker lane launcher', () => {
       staleStatus: true,
       reason: 'stale_voice_broker_pid',
       broker: null,
+    }));
+  });
+
+  test('does not report running when matching broker status heartbeat is stale', () => {
+    const nowMs = Date.now();
+    const snapshot = buildStatusSnapshot({
+      pid: 25064,
+      pidAlive: true,
+      pidMtimeMs: nowMs - 60000,
+      statusFile: {
+        pid: 25064,
+        running: true,
+        updatedAt: new Date(nowMs - STATUS_STALE_AFTER_MS - 1000).toISOString(),
+        heartbeatAt: new Date(nowMs - STATUS_STALE_AFTER_MS - 1000).toISOString(),
+        address: { address: '127.0.0.1', port: 61984 },
+      },
+      nowMs,
+    });
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      running: false,
+      starting: false,
+      stalePid: 25064,
+      staleStatus: false,
+      staleHeartbeat: true,
+      statusFresh: false,
+      reason: 'stale_voice_broker_status',
+      broker: null,
+    }));
+    expect(snapshot.statusAgeMs).toBeGreaterThan(STATUS_STALE_AFTER_MS);
+  });
+
+  test('reports running only when matching broker status heartbeat is fresh', () => {
+    const nowMs = Date.now();
+    const snapshot = buildStatusSnapshot({
+      pid: 25064,
+      pidAlive: true,
+      pidMtimeMs: nowMs - 60000,
+      statusFile: {
+        pid: 25064,
+        running: true,
+        updatedAt: new Date(nowMs - 1000).toISOString(),
+        heartbeatAt: new Date(nowMs - 1000).toISOString(),
+        address: { address: '127.0.0.1', port: 61984 },
+      },
+      nowMs,
+    });
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      running: true,
+      starting: false,
+      stalePid: null,
+      staleStatus: false,
+      staleHeartbeat: false,
+      statusFresh: true,
+      reason: null,
+      broker: expect.objectContaining({
+        pid: 25064,
+        running: true,
+      }),
     }));
   });
 
