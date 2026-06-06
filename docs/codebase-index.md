@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1291
+- Total files listed: 1292
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -20,7 +20,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 102
 - scripts: 1
 - tools: 3
-- ui/__tests__: 504
+- ui/__tests__: 505
 - ui/modules: 388
 - ui/other: 32
 - ui/scripts: 186
@@ -35,7 +35,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - jsonl: 1
 - script: 187
 - source: 451
-- test: 505
+- test: 506
 
 ## Files
 
@@ -397,6 +397,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/hm-claim-cli-e2e.test.js` | test | 5315 |
 | `ui/__tests__/hm-codebase-index.test.js` | test | 2391 |
 | `ui/__tests__/hm-comms-liveness-guard.test.js` | test | 19224 |
+| `ui/__tests__/hm-comms.test.js` | test | 1261 |
 | `ui/__tests__/hm-experiment.test.js` | test | 2841 |
 | `ui/__tests__/hm-github.test.js` | test | 2922 |
 | `ui/__tests__/hm-health-snapshot.test.js` | test | 44757 |
@@ -435,7 +436,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/injection.test.js` | test | 91060 |
 | `ui/__tests__/input-shadow-log.test.js` | test | 2000 |
 | `ui/__tests__/ipc-handlers.test.js` | test | 5078 |
-| `ui/__tests__/jest-staged.test.js` | test | 2090 |
+| `ui/__tests__/jest-staged.test.js` | test | 2528 |
 | `ui/__tests__/kernel-bridge.test.js` | test | 3303 |
 | `ui/__tests__/knowledge-base.test.js` | test | 24040 |
 | `ui/__tests__/knowledge-graph-handlers.test.js` | test | 14100 |
@@ -1188,7 +1189,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-codex-desktop-transport.js` | script | 3580 |
 | `ui/scripts/hm-codex-heartbeat-check.js` | script | 5853 |
 | `ui/scripts/hm-comms-liveness-guard.js` | script | 17700 |
-| `ui/scripts/hm-comms.js` | script | 11443 |
+| `ui/scripts/hm-comms.js` | script | 12071 |
 | `ui/scripts/hm-compat-count.js` | script | 8858 |
 | `ui/scripts/hm-csm-1b-bench.py` | script | 24197 |
 | `ui/scripts/hm-doctor.js` | script | 18972 |
@@ -1346,7 +1347,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-voice-say.js` | script | 1315 |
 | `ui/scripts/hm-work-item.js` | script | 7568 |
 | `ui/scripts/install-supervisor-task.ps1` | script | 2696 |
-| `ui/scripts/jest-staged.js` | script | 4101 |
+| `ui/scripts/jest-staged.js` | script | 4184 |
 | `ui/scripts/local_embedder.py` | script | 1205 |
 | `ui/scripts/mira-system-map-guard.js` | script | 9173 |
 | `ui/scripts/postinstall-electron-rebuild.js` | script | 3426 |
