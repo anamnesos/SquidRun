@@ -61,7 +61,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/ipc-handlers.js: Exports init, setDaemonClient, setExternalNotifier, setupIPCHandlers, ....
 - ui/modules/ipc/agent-claims-handlers.js: Registers IPC channels (claim-agent, release-agent, get-claims, ...).
 - ui/modules/ipc/agent-metrics-handlers.js: Registers IPC channels (record-completion, record-error, record-response-time, ...).
-- ui/modules/ipc/arm-state-projection-handlers.js: Read-only renderer IPC seam for `arm-state-projection`; returns desired/ready/missing, watchdog, and apply-queue state from durable tables without seeding, evaluating, advancing watchdogs, dispatching requests, or changing TrustQuote room behavior.
+- ui/modules/ipc/arm-state-projection-handlers.js: Read-only renderer IPC seam for `arm-state:projection`; ignores renderer DB-path overrides and returns desired/ready/missing, watchdog, and apply-queue state from the canonical durable tables without seeding, evaluating, advancing watchdogs, dispatching requests, or changing TrustQuote room behavior.
 - ui/modules/ipc/auto-handoff-handlers.js: Registers IPC channels (trigger-handoff, get-handoff-chain).
 - ui/modules/ipc/auto-nudge-handlers.js: Registers IPC channels (get-agent-health, nudge-pane, restart-pane, ...).
 - ui/modules/ipc/background-processes.js: Tracks background child processes, broadcasts process state to renderer, and terminates running processes on cleanup.

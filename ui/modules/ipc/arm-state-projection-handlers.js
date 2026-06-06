@@ -25,10 +25,10 @@ function buildProjectionFilters(payload = {}) {
   };
 }
 
-function buildProjectionOptions(payload = {}) {
+function buildProjectionOptions(payload = {}, deps = {}) {
   const input = asObject(payload);
   return {
-    ...(input.dbPath || input.db_path ? { dbPath: input.dbPath || input.db_path } : {}),
+    ...(deps.dbPath ? { dbPath: deps.dbPath } : {}),
     ...(input.nowMs || input.now_ms ? { nowMs: Number(input.nowMs || input.now_ms) } : {}),
     includeRows: input.includeRows !== false && input.include_rows !== false,
   };
@@ -39,7 +39,7 @@ function buildArmStateProjectionResponse(payload = {}, deps = {}) {
     ? deps.buildArmStateProjection
     : buildArmStateProjection;
   try {
-    const result = projector(buildProjectionFilters(payload), buildProjectionOptions(payload));
+    const result = projector(buildProjectionFilters(payload), buildProjectionOptions(payload, deps));
     return {
       channel: ARM_STATE_PROJECTION_CHANNEL,
       schema: ARM_STATE_PROJECTION_SCHEMA,

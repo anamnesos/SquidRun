@@ -1,4 +1,4 @@
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -319,5 +319,38 @@ maybeDescribe('arm state projection', () => {
       readyCount: 0,
       missingCount: 2,
     }));
+  });
+
+  test('CLI refuses a missing explicit db path without creating projection files', () => {
+    const missingDbPath = path.join(tempDir, 'missing-projection.db');
+
+    const result = spawnSync(process.execPath, [
+      path.join(__dirname, '..', 'scripts', 'hm-arm-state.js'),
+      'status',
+      '--db',
+      missingDbPath,
+      '--app-room',
+      'trustquote',
+      '--session',
+      'app-session-406:trustquote',
+      '--json',
+    ], {
+      cwd: path.join(__dirname, '..', '..'),
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe('');
+    const payload = JSON.parse(result.stdout);
+    expect(payload).toEqual(expect.objectContaining({
+      ok: false,
+      schema: 'squidrun.arm_state_projection.v0',
+    }));
+    expect(payload.reason).toContain('db_not_found:');
+    expect(payload.reason).toContain('--allow-create');
+    expect(fs.existsSync(missingDbPath)).toBe(false);
+    expect(fs.existsSync(`${missingDbPath}-wal`)).toBe(false);
+    expect(fs.existsSync(`${missingDbPath}-shm`)).toBe(false);
   });
 });

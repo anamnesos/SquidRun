@@ -105,7 +105,6 @@ maybeDescribe('arm state projection IPC handler', () => {
       appRoomId: 'trustquote',
       sessionId: 'app-session-406:trustquote',
     }, {
-      dbPath,
       nowMs: 12345,
       includeRows: false,
     });
@@ -148,9 +147,8 @@ maybeDescribe('arm state projection IPC handler', () => {
     const response = buildArmStateProjectionResponse({
       appRoomId: 'trustquote',
       sessionId,
-      dbPath,
       nowMs: 999_000,
-    });
+    }, { dbPath });
 
     expect(response).toEqual(expect.objectContaining({
       ok: true,
@@ -183,13 +181,52 @@ maybeDescribe('arm state projection IPC handler', () => {
     expect(queryArmApplyRequests({ registryId: seeded.registry.registryId }, { dbPath })).toEqual(beforeRequests);
   });
 
+  test('ignores renderer-supplied db path and does not create alternate database files', () => {
+    const sessionId = 'app-session-handler-override:trustquote';
+    const seeded = seedTrustQuoteArmRegistry({
+      dbPath,
+      sessionId,
+      nowMs: 1_000,
+    });
+    expect(seeded.ok).toBe(true);
+    const alternateDbPath = path.join(tempDir, 'projection-attack.db');
+
+    const response = buildArmStateProjectionResponse({
+      appRoomId: 'trustquote',
+      sessionId,
+      db_path: alternateDbPath,
+      nowMs: 9_000,
+    }, { dbPath });
+
+    expect(response).toEqual(expect.objectContaining({
+      ok: true,
+      dbPath: path.resolve(dbPath),
+      channel: ARM_STATE_PROJECTION_CHANNEL,
+      projectionOnly: true,
+      readOnly: true,
+      sideEffects: {
+        writesPerformed: 0,
+        dispatchesPerformed: 0,
+        watchdogAdvancesPerformed: 0,
+      },
+    }));
+    expect(fs.existsSync(alternateDbPath)).toBe(false);
+    expect(fs.existsSync(`${alternateDbPath}-wal`)).toBe(false);
+    expect(fs.existsSync(`${alternateDbPath}-shm`)).toBe(false);
+  });
+
   test('reports missing registries without seeding them', () => {
+    const seeded = seedTrustQuoteArmRegistry({
+      dbPath,
+      sessionId: 'app-session-handler-existing:trustquote',
+      nowMs: 1_000,
+    });
+    expect(seeded.ok).toBe(true);
     const response = buildArmStateProjectionResponse({
       appRoomId: 'trustquote',
       sessionId: 'app-session-missing:trustquote',
-      dbPath,
       nowMs: 5_000,
-    });
+    }, { dbPath });
 
     expect(response).toEqual(expect.objectContaining({
       ok: false,
