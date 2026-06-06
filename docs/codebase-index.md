@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1291
+- Total files listed: 1293
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -20,7 +20,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 102
 - scripts: 1
 - tools: 3
-- ui/__tests__: 505
+- ui/__tests__: 507
 - ui/modules: 388
 - ui/other: 32
 - ui/scripts: 185
@@ -35,7 +35,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - jsonl: 1
 - script: 186
 - source: 451
-- test: 506
+- test: 508
 
 ## Files
 
@@ -85,7 +85,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/mira-north-star-roadmap.md` | doc | 8530 |
 | `docs/mira-pc-embodiment-permission-v0.md` | doc | 10045 |
 | `docs/mira-presence-runtime-acceptance-v0.md` | doc | 16200 |
-| `docs/mira-system-map.md` | doc | 125225 |
+| `docs/mira-system-map.md` | doc | 125640 |
 | `docs/mira-voice-audio-intake-v0.md` | doc | 9440 |
 | `docs/models/base-instructions.md` | doc | 2070 |
 | `docs/models/claude-notes.md` | doc | 1161 |
@@ -304,6 +304,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/feature-capability-gating.test.js` | test | 6875 |
 | `ui/__tests__/firmware-manager.test.js` | test | 8397 |
 | `ui/__tests__/fixtures/mira-core-auth-binding-contract.json` | test | 47493 |
+| `ui/__tests__/fixtures/mira-core-disabled-no-side-effect-contract-v0.json` | test | 8813 |
 | `ui/__tests__/fixtures/mira-core-durable-state-seed-v0-contract.json` | test | 6315 |
 | `ui/__tests__/fixtures/mira-core-encryption-key-contract.json` | test | 50923 |
 | `ui/__tests__/fixtures/mira-core-eval-contract.json` | test | 30290 |
@@ -475,6 +476,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-coordinator-snapshot.test.js` | test | 10881 |
 | `ui/__tests__/mira-core-auth-binding.test.js` | test | 22380 |
 | `ui/__tests__/mira-core-autonomy-substrate-v0.test.js` | test | 6761 |
+| `ui/__tests__/mira-core-disabled-no-side-effect-contract-v0.test.js` | test | 13664 |
 | `ui/__tests__/mira-core-durable-state-seed-v0.test.js` | test | 21950 |
 | `ui/__tests__/mira-core-empty-response-diagnostics.test.js` | test | 9379 |
 | `ui/__tests__/mira-core-encryption-key.test.js` | test | 29059 |
