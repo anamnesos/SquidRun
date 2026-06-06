@@ -444,7 +444,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/launch-intent.test.js` | test | 2689 |
 | `ui/__tests__/learning-data-handlers.test.js` | test | 10832 |
 | `ui/__tests__/live-task-audit-preview-server.test.js` | test | 7340 |
-| `ui/__tests__/live-task-audit-sidecar.test.js` | test | 15655 |
+| `ui/__tests__/live-task-audit-sidecar.test.js` | test | 17900 |
 | `ui/__tests__/local-embedder.test.js` | test | 14089 |
 | `ui/__tests__/local-model-capabilities.test.js` | test | 2509 |
 | `ui/__tests__/logger.test.js` | test | 8889 |
@@ -881,7 +881,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/kernel-bridge.js` | source | 5190 |
 | `ui/modules/main/launch-intent.js` | source | 2928 |
 | `ui/modules/main/live-task-audit-sidecar-window.js` | source | 1854 |
-| `ui/modules/main/live-task-audit-sidecar.js` | source | 26983 |
+| `ui/modules/main/live-task-audit-sidecar.js` | source | 29792 |
 | `ui/modules/main/mira-lab-window.js` | source | 1789 |
 | `ui/modules/main/pane-control-service.js` | source | 5972 |
 | `ui/modules/main/pane-host-window-manager.js` | source | 12289 |
