@@ -3650,4 +3650,5 @@ module.exports = {
   DEFAULT_MAX_ROWS,
   DEFAULT_RETENTION_MS,
   DEFAULT_TELEGRAM_REPLY_OBLIGATION_WINDOW_MS,
+  armProofMatchesCurrentIdentity,
 };

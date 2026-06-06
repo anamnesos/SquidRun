@@ -7,6 +7,7 @@ const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store')
 const {
   upsertArmRegistryManifest,
   recordArmCheckinProof,
+  evaluateArmRegistryReadiness,
   queryArmMissingWatchdogs,
   closeArmRegistryStores,
 } = require('../modules/main/arm-registry');
@@ -217,6 +218,70 @@ maybeDescribe('arm state projection', () => {
 
     expect(queryArmMissingWatchdogs({ status: 'expected' }, { dbPath })).toEqual(beforeWatchdogs);
     expect(queryArmApplyRequests({ status: 'approval_required' }, { dbPath })).toEqual(beforeQueue);
+  });
+
+  test('does not attach a stale accepted check-in after arm identity changes', () => {
+    expect(upsertArmRegistryManifest(manifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
+    const billingRow = seedCommsCheckin(dbPath, {
+      messageId: 'hm-billing-ready-original',
+      role: 'trustquote-billing',
+      paneId: 'trustquote-billing',
+    }, 2_000);
+    const accepted = recordArmCheckinProof({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-406:trustquote',
+      armKey: 'money-documents',
+      role: 'trustquote-billing',
+      paneId: 'trustquote-billing',
+      proofKind: 'startup_check_in',
+      messageId: 'hm-billing-ready-original',
+      commsRowId: billingRow.rowId,
+      env: {
+        SQUIDRUN_ROLE: 'trustquote-billing',
+        SQUIDRUN_PANE_ID: 'trustquote-billing',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+      },
+    }, { dbPath, nowMs: 2_000 });
+    expect(accepted.ok).toBe(true);
+
+    const renamedManifest = manifest();
+    renamedManifest.arms = renamedManifest.arms.map((arm) => (
+      arm.armKey === 'money-documents'
+        ? {
+          ...arm,
+          role: 'trustquote-finance',
+          paneId: 'trustquote-finance',
+          routeTarget: 'trustquote-finance',
+        }
+        : arm
+    ));
+    expect(upsertArmRegistryManifest(renamedManifest, { dbPath, nowMs: 3_000 }).ok).toBe(true);
+    const evaluated = evaluateArmRegistryReadiness({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-406:trustquote',
+    }, { dbPath, nowMs: 4_000 });
+    expect(evaluated.ok).toBe(true);
+    expect(evaluated.registry.arms.find((arm) => arm.armKey === 'money-documents')).toEqual(expect.objectContaining({
+      role: 'trustquote-finance',
+      paneId: 'trustquote-finance',
+      status: 'missing',
+      lastProofRefs: [],
+    }));
+
+    const projection = buildArmStateProjection({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-406:trustquote',
+    }, { dbPath, nowMs: 5_000 });
+    const moneyArm = projection.arms.find((arm) => arm.armKey === 'money-documents');
+    expect(moneyArm).toEqual(expect.objectContaining({
+      role: 'trustquote-finance',
+      paneId: 'trustquote-finance',
+      status: 'missing',
+      latestAcceptedCheckin: null,
+    }));
+    expect(moneyArm.latestAcceptedCheckin).not.toEqual(expect.objectContaining({
+      messageId: 'hm-billing-ready-original',
+    }));
   });
 
   test('CLI surfaces the same projection only when explicitly invoked', () => {

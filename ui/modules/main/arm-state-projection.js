@@ -11,6 +11,7 @@ const {
 } = require('./arm-apply-queue');
 const {
   resolveDefaultDbPath,
+  armProofMatchesCurrentIdentity,
 } = require('./evidence-ledger-store');
 
 const ARM_STATE_PROJECTION_SCHEMA = 'squidrun.arm_state_projection.v0';
@@ -50,10 +51,12 @@ function firstNumber(...values) {
   return null;
 }
 
-function latestAcceptedByArm(proofs = []) {
+function latestAcceptedByArm(proofs = [], registry = {}) {
   const latest = new Map();
+  const currentArmById = new Map((registry.arms || []).map((arm) => [arm.armId, arm]));
   for (const proof of proofs) {
     if (!proof?.armId || proof.status !== 'accepted') continue;
+    if (!armProofMatchesCurrentIdentity(proof, currentArmById.get(proof.armId), registry)) continue;
     const current = latest.get(proof.armId);
     if (!current || Number(proof.checkedInAtMs || 0) > Number(current.checkedInAtMs || 0)) {
       latest.set(proof.armId, proof);
@@ -181,7 +184,7 @@ function buildArmStateProjection(filters = {}, options = {}) {
   const checkins = queryArmCheckinProofs({ registryId: registry.registryId, limit: 50_000 }, { dbPath });
   const watchdogs = queryArmMissingWatchdogs({ registryId: registry.registryId, limit: 50_000 }, { dbPath });
   const applyRequests = queryArmApplyRequests({ registryId: registry.registryId, limit: 50_000 }, { dbPath });
-  const proofByArm = latestAcceptedByArm(checkins);
+  const proofByArm = latestAcceptedByArm(checkins, registry);
 
   const arms = registry.arms.map((arm) => {
     const latestProof = proofByArm.get(arm.armId) || null;
