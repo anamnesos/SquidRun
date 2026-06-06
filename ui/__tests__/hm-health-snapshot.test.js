@@ -977,6 +977,40 @@ describe('hm-health-snapshot', () => {
     expect(stdout.write.mock.calls.map(([chunk]) => String(chunk)).join('')).toContain(`Wrote startup health artifact: ${outputPath}`);
   });
 
+  test('surfaces a wedged Telegram poller in startup health', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      jestTimeoutMs: 1000,
+      env: {},
+      telegramPoller: {
+        ok: false,
+        status: 'stale',
+        wedged: true,
+        ageMs: 43 * 60 * 1000,
+        staleThresholdMs: 10 * 60 * 1000,
+        updatedAt: '2026-06-06T04:00:00.000Z',
+        statePath: path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json'),
+      },
+    });
+    const markdown = renderStartupHealthMarkdown(snapshot);
+
+    expect(snapshot.status.label).toBe('WARN');
+    expect(snapshot.status.score).toBe(80);
+    expect(snapshot.status.warnings).toContain(
+      `telegram_poller_wedged:status=stale,age_ms=${43 * 60 * 1000},threshold_ms=${10 * 60 * 1000}`
+    );
+    expect(snapshot.status.penalties).toContainEqual({ code: 'telegram_poller_wedged', points: 20 });
+    expect(markdown).toContain('TELEGRAM POLLER');
+    expect(markdown).toContain('- Freshness: stale');
+    expect(markdown).toContain('- Recovery: required; hm-startup-health invokes hm-telegram-poller-watchdog recover before rendering this report.');
+  });
+
   test('writes side-profile startup health to the suffixed on-demand artifact path', () => {
     const { main } = require('../scripts/hm-health-snapshot');
     execFileSync.mockReturnValue([

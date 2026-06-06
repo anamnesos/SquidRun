@@ -253,6 +253,41 @@ describe('telegram-poller', () => {
     }
   });
 
+  test('pollNow persists a heartbeat even when Telegram returns no updates', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-poller-heartbeat-'));
+    const statePath = path.join(tempDir, 'telegram-poller-state.json');
+
+    try {
+      telegramPoller.start({
+        env: {
+          TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+          TELEGRAM_CHAT_ID: '123456',
+        },
+        onMessage: jest.fn(),
+        statePath,
+      });
+
+      mockTelegramUpdates([]);
+
+      await telegramPoller._internals.pollNow();
+
+      const persisted = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      expect(persisted.updatedAt).toEqual(expect.any(String));
+      expect(Date.parse(persisted.updatedAt)).not.toBeNaN();
+      expect(persisted.poller).toEqual(expect.objectContaining({
+        cursorKey: expect.stringContaining('telegram:'),
+        lastPollStatus: 'ok_empty',
+        nextOffset: 0,
+        pid: process.pid,
+        profile: 'main',
+      }));
+      expect(Date.parse(persisted.poller.lastPollAt)).not.toBeNaN();
+    } finally {
+      telegramPoller.stop();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test('startup drain drops stale Telegram backlog while accepting fresh updates', async () => {
     const onMessage = jest.fn();
     const startedAtMs = Date.parse('2026-05-08T04:00:00.000Z');
