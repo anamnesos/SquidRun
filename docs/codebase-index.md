@@ -110,7 +110,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | 2728 |
 | `.gitignore` | config | 4598 |
 | `AGENTS.md` | doc | 6432 |
-| `ARCHITECTURE.md` | doc | 64135 |
+| `ARCHITECTURE.md` | doc | 64188 |
 | `CLAUDE-AI.md` | doc | 3856 |
 | `CLAUDE.md` | doc | 2161 |
 | `CODE_OF_CONDUCT.md` | doc | 5185 |
@@ -235,8 +235,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/app-control-service.test.js` | test | 10708 |
 | `ui/__tests__/arm-apply-queue.test.js` | test | 12293 |
 | `ui/__tests__/arm-registry.test.js` | test | 17669 |
-| `ui/__tests__/arm-state-projection-handlers.test.js` | test | 6280 |
-| `ui/__tests__/arm-state-projection.test.js` | test | 10624 |
+| `ui/__tests__/arm-state-projection-handlers.test.js` | test | 7542 |
+| `ui/__tests__/arm-state-projection.test.js` | test | 11731 |
 | `ui/__tests__/auto-handoff-handlers.test.js` | test | 3147 |
 | `ui/__tests__/auto-handoff-materializer.test.js` | test | 102098 |
 | `ui/__tests__/auto-nudge-handlers.test.js` | test | 16904 |
@@ -687,7 +687,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/ipc-handlers.js` | source | 2972 |
 | `ui/modules/ipc/agent-claims-handlers.js` | source | 997 |
 | `ui/modules/ipc/agent-metrics-handlers.js` | source | 14899 |
-| `ui/modules/ipc/arm-state-projection-handlers.js` | source | 3321 |
+| `ui/modules/ipc/arm-state-projection-handlers.js` | source | 3302 |
 | `ui/modules/ipc/auto-handoff-handlers.js` | source | 1458 |
 | `ui/modules/ipc/auto-nudge-handlers.js` | source | 6672 |
 | `ui/modules/ipc/background-processes.js` | source | 1380 |
@@ -1032,7 +1032,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-app.js` | script | 9855 |
 | `ui/scripts/hm-architect-wake-watchdog.js` | script | 7035 |
 | `ui/scripts/hm-architect-watchdog.js` | script | 14538 |
-| `ui/scripts/hm-arm-state.js` | script | 4683 |
+| `ui/scripts/hm-arm-state.js` | script | 5076 |
 | `ui/scripts/hm-bg.js` | script | 13615 |
 | `ui/scripts/hm-bidirectional-wake-watchdog.js` | script | 8367 |
 | `ui/scripts/hm-capabilities.js` | script | 15107 |

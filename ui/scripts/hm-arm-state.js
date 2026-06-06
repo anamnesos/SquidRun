@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const {
   ARM_STATE_PROJECTION_SCHEMA,
   buildArmStateProjection,
@@ -40,6 +42,10 @@ function parseArgs(argv = []) {
       options.includeRows = false;
       continue;
     }
+    if (key === 'allow-create') {
+      options.allowCreate = true;
+      continue;
+    }
     if (['db', 'registry-id', 'app-room', 'room', 'session', 'now-ms'].includes(key)) {
       const next = argv[index + 1];
       if (!next || String(next).startsWith('--')) {
@@ -64,7 +70,7 @@ function usage() {
     schema: ARM_STATE_PROJECTION_SCHEMA,
     usage: [
       'node ui/scripts/hm-arm-state.js status --app-room trustquote --session app-session-406:trustquote --json',
-      'node ui/scripts/hm-arm-state.js status --registry-id <id> [--db <path>] [--no-rows]',
+      'node ui/scripts/hm-arm-state.js status --registry-id <id> [--db <path>] [--allow-create] [--no-rows]',
     ],
     readOnly: true,
     explicitInvocationRequired: true,
@@ -80,8 +86,12 @@ function buildFilters(options = {}) {
 }
 
 function buildOptions(options = {}) {
+  const dbPath = options.db ? path.resolve(String(options.db)) : null;
+  if (dbPath && !options.allowCreate && !fs.existsSync(dbPath)) {
+    throw new Error(`db_not_found: ${dbPath}; pass --allow-create to initialize an explicit --db path`);
+  }
   return {
-    ...(options.db ? { dbPath: options.db } : {}),
+    ...(dbPath ? { dbPath } : {}),
     ...(options['now-ms'] ? { nowMs: Number(options['now-ms']) } : {}),
     includeRows: options.includeRows !== false,
   };
