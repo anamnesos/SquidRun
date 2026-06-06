@@ -2,6 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
 const {
   upsertArmRegistryManifest,
   closeArmRegistryStores,
@@ -53,6 +54,43 @@ function trustquoteManifest() {
       },
     ],
   };
+}
+
+function seedApprovalRow(dbPath, input = {}, nowMs = 1_000) {
+  const sessionId = input.sessionId || 'app-session-406';
+  const senderRole = input.senderRole || 'architect';
+  const targetRole = input.targetRole || 'builder';
+  const requestId = input.requestId || 'apply-customer-message-1';
+  const messageId = input.messageId || `hm-approval-${nowMs}`;
+  const store = new EvidenceLedgerStore({ dbPath });
+  expect(store.init().ok).toBe(true);
+  expect(store.upsertCommsJournal({
+    messageId,
+    sessionId,
+    senderRole,
+    targetRole,
+    channel: 'ws',
+    direction: 'outbound',
+    status: 'routed',
+    sentAtMs: nowMs,
+    brokeredAtMs: nowMs,
+    rawBody: `(ARCHITECT #406): approved arm apply request ${requestId}`,
+    metadata: {
+      session_id: sessionId,
+      sender: { role: senderRole },
+      envelope: {
+        session_id: sessionId,
+        sender: { role: senderRole },
+      },
+      armApplyApproval: {
+        requestId,
+        decision: 'approved',
+      },
+    },
+  }, { nowMs }).ok).toBe(true);
+  const row = store.queryCommsJournal({ messageId, limit: 1 })[0];
+  store.close();
+  return row;
 }
 
 const HIGH_RISK_CATEGORIES = [
@@ -152,11 +190,39 @@ maybeDescribe('arm apply queue', () => {
       approvalRef: null,
     }));
 
+    const invalidRefApproval = markArmApplyRequestExecutable({
+      requestId: 'apply-customer-message-1',
+      approvedBy: 'widget',
+      approvalRef: 'hm-approval:67999',
+    }, { dbPath, nowMs: 4_000 });
+    expect(invalidRefApproval).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'approval_required',
+      executable: false,
+      reason: 'approval_ref_invalid',
+    }));
+
+    const approvalRow = seedApprovalRow(dbPath, {
+      requestId: 'apply-customer-message-1',
+      messageId: 'hm-approval-real-1',
+    }, 5_000);
+    const fakeApprover = markArmApplyRequestExecutable({
+      requestId: 'apply-customer-message-1',
+      approvedBy: 'widget',
+      approvalRef: `comms:${approvalRow.rowId}`,
+    }, { dbPath, nowMs: 5_500 });
+    expect(fakeApprover).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'approval_required',
+      executable: false,
+      reason: 'approval_authority_not_verified',
+    }));
+
     const approved = markArmApplyRequestExecutable({
       requestId: 'apply-customer-message-1',
       approvedBy: 'architect',
-      approvalRef: 'hm-approval:67999',
-    }, { dbPath, nowMs: 4_000 });
+      approvalRef: `comms:${approvalRow.rowId}`,
+    }, { dbPath, nowMs: 6_000 });
 
     expect(approved).toEqual(expect.objectContaining({
       ok: true,
@@ -166,8 +232,8 @@ maybeDescribe('arm apply queue', () => {
     expect(approved.request).toEqual(expect.objectContaining({
       status: 'executable',
       approvedBy: 'architect',
-      approvalRef: 'hm-approval:67999',
-      approvedAtMs: 4000,
+      approvalRef: `comms:${approvalRow.rowId}`,
+      approvedAtMs: 6000,
     }));
   });
 
@@ -187,8 +253,11 @@ maybeDescribe('arm apply queue', () => {
     expect(markArmApplyRequestExecutable({
       requestId: 'apply-schedule-change-1',
       approvedBy: 'architect',
-      approvalRef: 'hm-approval:68000',
-    }, { dbPath, nowMs: 3_000 }).ok).toBe(true);
+      approvalRef: `comms:${seedApprovalRow(dbPath, {
+        requestId: 'apply-schedule-change-1',
+        messageId: 'hm-approval-real-2',
+      }, 3_000).rowId}`,
+    }, { dbPath, nowMs: 3_500 }).ok).toBe(true);
 
     const executor = jest.fn(() => ({ ok: true, status: 'sent' }));
     const dispatched = dispatchArmApplyRequest({

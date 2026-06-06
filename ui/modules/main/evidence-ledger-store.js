@@ -1044,6 +1044,76 @@ function mapArmApplyRequestRow(row) {
   };
 }
 
+function parseArmApplyApprovalRef(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const rowMatch = text.match(/^(?:comms|comms_journal|row|row_id):?(\d+)$/i);
+  if (rowMatch) {
+    return { rowId: Number.parseInt(rowMatch[1], 10), messageId: null };
+  }
+  const messageMatch = text.match(/^(?:hm|message|message_id):?(hm-[A-Za-z0-9_-]+)$/i);
+  if (messageMatch) {
+    return { rowId: null, messageId: messageMatch[1] };
+  }
+  if (/^\d+$/.test(text)) {
+    return { rowId: Number.parseInt(text, 10), messageId: null };
+  }
+  if (/^hm-[A-Za-z0-9_-]+$/.test(text)) {
+    return { rowId: null, messageId: text };
+  }
+  return null;
+}
+
+function extractCommsAuthorityCandidates(row = {}) {
+  const metadata = ensureObject(row.metadata);
+  const envelope = ensureObject(metadata.envelope);
+  const sender = ensureObject(metadata.sender);
+  const envelopeSender = ensureObject(envelope.sender);
+  const candidates = new Set();
+  addIdentityCandidate(candidates, row.senderRole);
+  addIdentityCandidate(candidates, sender.role);
+  addIdentityCandidate(candidates, envelopeSender.role);
+  const heading = String(row.rawBody || '').match(/^\((ARCHITECT|JAMES|USER)\b/i);
+  if (heading) addIdentityCandidate(candidates, heading[1]);
+  return candidates;
+}
+
+function approvalAuthorityMatches(candidates, approvedBy) {
+  const actor = normalizeIdentityToken(approvedBy);
+  if (!actor) return false;
+  if (actor === 'james') return candidates.has('james') || candidates.has('user');
+  if (actor === 'user') return candidates.has('user') || candidates.has('james');
+  return candidates.has(actor);
+}
+
+function approvalRowHasRequestBinding(row = {}, request = {}) {
+  const requestId = toOptionalString(request.requestId, null);
+  if (!requestId) return false;
+  const metadata = ensureObject(row.metadata);
+  const direct = ensureObject(metadata.armApplyApproval || metadata.arm_apply_approval || metadata.approval);
+  const directRequestId = toOptionalString(direct.requestId || direct.request_id, null);
+  if (directRequestId && directRequestId === requestId) return true;
+  return String(row.rawBody || '').toLowerCase().includes(requestId.toLowerCase());
+}
+
+function approvalRowHasApproveDecision(row = {}) {
+  const metadata = ensureObject(row.metadata);
+  const direct = ensureObject(metadata.armApplyApproval || metadata.arm_apply_approval || metadata.approval);
+  const decision = toOptionalString(direct.decision || direct.status || direct.verdict, null);
+  if (['approve', 'approved', 'approval_granted'].includes(String(decision || '').toLowerCase())) {
+    return true;
+  }
+  return /\bapprov(?:e|ed|al|ing)\b/i.test(String(row.rawBody || ''));
+}
+
+function sessionsCompatible(approvalSessionId, requestSessionId) {
+  const approval = toOptionalString(approvalSessionId, null);
+  const request = toOptionalString(requestSessionId, null);
+  if (!approval || !request) return true;
+  if (approval === request) return true;
+  return request.startsWith(`${approval}:`) || approval.startsWith(`${request}:`);
+}
+
 function loadSqliteDriver() {
   try {
     // CLI path (Node 22+): prefer built-in sqlite.
@@ -2868,20 +2938,108 @@ class EvidenceLedgerStore {
     const hasIncomingApproval = Boolean(approvedBy && approvalRef);
     const hasExistingApproval = Boolean(request.approvedBy && request.approvalRef);
 
-    if (request.approvalRequired && !hasIncomingApproval && !hasExistingApproval) {
-      return {
-        ok: false,
-        status: 'approval_required',
-        reason: 'approval_required',
-        executable: false,
-        request,
-      };
+    let approval = null;
+    if (request.approvalRequired) {
+      if (hasIncomingApproval) {
+        const parsedRef = parseArmApplyApprovalRef(approvalRef);
+        if (!parsedRef) {
+          return {
+            ok: false,
+            status: 'approval_required',
+            reason: 'approval_ref_invalid',
+            executable: false,
+            request,
+          };
+        }
+        const approvalRow = parsedRef.messageId
+          ? mapCommsRow(this.db.prepare('SELECT * FROM comms_journal WHERE message_id = ? LIMIT 1').get(parsedRef.messageId))
+          : mapCommsRow(this.db.prepare('SELECT * FROM comms_journal WHERE row_id = ? LIMIT 1').get(parsedRef.rowId));
+        if (!approvalRow) {
+          return {
+            ok: false,
+            status: 'approval_required',
+            reason: 'approval_row_not_found',
+            executable: false,
+            request,
+          };
+        }
+        if (approvalRow.direction !== 'inbound' && approvalRow.direction !== 'outbound') {
+          return {
+            ok: false,
+            status: 'approval_required',
+            reason: 'approval_row_invalid_direction',
+            executable: false,
+            request,
+          };
+        }
+        if (approvalRow.status === 'failed') {
+          return {
+            ok: false,
+            status: 'approval_required',
+            reason: 'approval_row_failed',
+            executable: false,
+            request,
+          };
+        }
+        const authorityCandidates = extractCommsAuthorityCandidates(approvalRow);
+        const hasAuthority = approvalAuthorityMatches(authorityCandidates, approvedBy)
+          && (authorityCandidates.has('architect') || authorityCandidates.has('james') || authorityCandidates.has('user'));
+        if (!hasAuthority) {
+          return {
+            ok: false,
+            status: 'approval_required',
+            reason: 'approval_authority_not_verified',
+            executable: false,
+            request,
+          };
+        }
+        if (!sessionsCompatible(approvalRow.sessionId, request.sessionId)) {
+          return {
+            ok: false,
+            status: 'approval_required',
+            reason: 'approval_session_mismatch',
+            executable: false,
+            request,
+          };
+        }
+        if (!approvalRowHasRequestBinding(approvalRow, request)) {
+          return {
+            ok: false,
+            status: 'approval_required',
+            reason: 'approval_request_binding_missing',
+            executable: false,
+            request,
+          };
+        }
+        if (!approvalRowHasApproveDecision(approvalRow)) {
+          return {
+            ok: false,
+            status: 'approval_required',
+            reason: 'approval_decision_missing',
+            executable: false,
+            request,
+          };
+        }
+        approval = {
+          approvedBy,
+          approvalRef,
+          approvedAtMs,
+        };
+      } else if (!hasExistingApproval) {
+        return {
+          ok: false,
+          status: 'approval_required',
+          reason: 'approval_required',
+          executable: false,
+          request,
+        };
+      }
     }
 
     const nowMs = toMs(options.nowMs, Date.now());
-    const nextApprovedBy = approvedBy || request.approvedBy || null;
-    const nextApprovalRef = approvalRef || request.approvalRef || null;
-    const nextApprovedAtMs = hasIncomingApproval ? approvedAtMs : (request.approvedAtMs || null);
+    const nextApprovedBy = approval?.approvedBy || request.approvedBy || null;
+    const nextApprovalRef = approval?.approvalRef || request.approvalRef || null;
+    const nextApprovedAtMs = approval?.approvedAtMs || request.approvedAtMs || null;
 
     try {
       this.db.prepare(`
