@@ -31,6 +31,13 @@ function normalizeAction(action) {
     return 'open-live-task-audit-sidecar';
   }
   if (
+    normalized === 'open-squid-room'
+    || normalized === 'squid-room'
+    || normalized === 'squid-room-open'
+  ) {
+    return 'open-squid-room';
+  }
+  if (
     normalized === 'open-trustquote-workspace'
     || normalized === 'trustquote-workspace'
     || normalized === 'open-trustquote'
@@ -184,6 +191,45 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
       })
       .catch((error) => {
         log.warn('AppControl', `Live task/audit sidecar open failed: ${error.message}`);
+        return {
+          success: false,
+          reason: 'open_window_failed',
+          action: normalizedAction,
+          error: error.message,
+        };
+      });
+  }
+
+  if (normalizedAction === 'open-squid-room') {
+    if (typeof ctx.openAppWindow !== 'function') {
+      return {
+        success: false,
+        reason: 'open_window_unavailable',
+        action: normalizedAction,
+      };
+    }
+    const squidRoomOptions = {
+      autoBootAgents: false,
+      profileName: 'main',
+      windowTeam: 'squid-room',
+      displayOnly: true,
+      skipStartupBundle: true,
+    };
+    return Promise.resolve()
+      .then(() => ctx.openAppWindow('squid-room', squidRoomOptions))
+      .then((result) => {
+        const settled = result && typeof result === 'object' ? result : {};
+        return {
+          success: Boolean(settled.ok),
+          action: normalizedAction,
+          windowKey: settled.windowKey || 'squid-room',
+          status: settled.status || (settled.ok ? 'opened' : 'open_failed'),
+          reason: settled.ok ? undefined : (settled.reason || 'open_window_failed'),
+          note: 'Squid Room opened as a display-only main-profile window.',
+        };
+      })
+      .catch((error) => {
+        log.warn('AppControl', `Squid Room open failed: ${error.message}`);
         return {
           success: false,
           reason: 'open_window_failed',

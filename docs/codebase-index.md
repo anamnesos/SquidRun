@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1090
+- Total files listed: 1091
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -24,11 +24,11 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - ui/modules: 339
 - ui/other: 32
 - ui/scripts: 132
-- ui/styles: 17
+- ui/styles: 18
 - workspace/knowledge: 17
 
 ## Summary By Kind
-- asset: 25
+- asset: 26
 - config: 31
 - doc: 92
 - file: 1
@@ -110,7 +110,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | 2728 |
 | `.gitignore` | config | 4598 |
 | `AGENTS.md` | doc | 6432 |
-| `ARCHITECTURE.md` | doc | 63679 |
+| `ARCHITECTURE.md` | doc | 63883 |
 | `CLAUDE-AI.md` | doc | 3856 |
 | `CLAUDE.md` | doc | 2161 |
 | `CODE_OF_CONDUCT.md` | doc | 5185 |
@@ -232,7 +232,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/agent-claims-handlers.test.js` | test | 3950 |
 | `ui/__tests__/agent-colors.test.js` | test | 14920 |
 | `ui/__tests__/ansi.test.js` | test | 297 |
-| `ui/__tests__/app-control-service.test.js` | test | 9920 |
+| `ui/__tests__/app-control-service.test.js` | test | 10708 |
 | `ui/__tests__/arm-apply-queue.test.js` | test | 12293 |
 | `ui/__tests__/arm-registry.test.js` | test | 17669 |
 | `ui/__tests__/arm-state-projection-handlers.test.js` | test | 6280 |
@@ -259,7 +259,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/cognitive-memory-immunity.test.js` | test | 4347 |
 | `ui/__tests__/cognitive-memory-sleep.test.js` | test | 14140 |
 | `ui/__tests__/cognitive-memory-store.test.js` | test | 9976 |
-| `ui/__tests__/command-palette.test.js` | test | 2311 |
+| `ui/__tests__/command-palette.test.js` | test | 2828 |
 | `ui/__tests__/comms-console.test.js` | test | 11915 |
 | `ui/__tests__/comms-worker-client.test.js` | test | 6959 |
 | `ui/__tests__/compaction-detector.test.js` | test | 24279 |
@@ -344,7 +344,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/helpers/mira-runtime-build.js` | test | 6447 |
 | `ui/__tests__/helpers/mock-config.js` | test | 6524 |
 | `ui/__tests__/helpers/real-config.js` | test | 2090 |
-| `ui/__tests__/hm-app.test.js` | test | 766 |
+| `ui/__tests__/hm-app.test.js` | test | 1056 |
 | `ui/__tests__/hm-bg.test.js` | test | 1886 |
 | `ui/__tests__/hm-claim-cli-e2e.test.js` | test | 5315 |
 | `ui/__tests__/hm-codebase-index.test.js` | test | 2391 |
@@ -570,7 +570,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/smart-routing.test.js` | test | 10637 |
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
-| `ui/__tests__/squidrun-app.test.js` | test | 348212 |
+| `ui/__tests__/squidrun-app.test.js` | test | 350910 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 1987 |
 | `ui/__tests__/startup-transcript-context.test.js` | test | 10069 |
@@ -609,7 +609,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/triggers-routing.test.js` | test | 17495 |
 | `ui/__tests__/triggers.test.js` | test | 3460 |
 | `ui/__tests__/trustquote-arm-registry-seed.test.js` | test | 5727 |
-| `ui/__tests__/trustquote-main-ui.test.js` | test | 543 |
+| `ui/__tests__/trustquote-main-ui.test.js` | test | 916 |
 | `ui/__tests__/trustquote-work-room-prerequisites.test.js` | test | 6811 |
 | `ui/__tests__/trustquote-work-room-route-owner.test.js` | test | 33884 |
 | `ui/__tests__/usage-manager.test.js` | test | 1841 |
@@ -626,11 +626,11 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/websocket-runtime-queue.test.js` | test | 10280 |
 | `ui/__tests__/websocket-server.test.js` | test | 6449 |
 | `ui/__tests__/whisper-handlers.test.js` | test | 5960 |
-| `ui/__tests__/window-team-bootstrap.test.js` | test | 5421 |
+| `ui/__tests__/window-team-bootstrap.test.js` | test | 6668 |
 | `ui/__tests__/work-item-ledger.test.js` | test | 23012 |
 | `ui/__tests__/work-room-terminal-visibility.test.js` | test | 1836 |
 | `ui/__tests__/workflow-handlers.test.js` | test | 20664 |
-| `ui/__tests__/workspace-pane-shell.test.js` | test | 7229 |
+| `ui/__tests__/workspace-pane-shell.test.js` | test | 8663 |
 
 ### ui/modules
 
@@ -654,7 +654,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/cognitive-memory-immunity.js` | source | 15884 |
 | `ui/modules/cognitive-memory-sleep.js` | source | 38611 |
 | `ui/modules/cognitive-memory-store.js` | source | 31732 |
-| `ui/modules/command-palette.js` | source | 6746 |
+| `ui/modules/command-palette.js` | source | 6890 |
 | `ui/modules/comms-worker-client.js` | source | 13036 |
 | `ui/modules/comms-worker.js` | source | 4506 |
 | `ui/modules/comms/message-envelope.js` | source | 6399 |
@@ -762,7 +762,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/activity-manager.js` | source | 4478 |
 | `ui/modules/main/agent-task-resolution.js` | source | 25576 |
 | `ui/modules/main/app-context.js` | source | 2477 |
-| `ui/modules/main/app-control-service.js` | source | 11024 |
+| `ui/modules/main/app-control-service.js` | source | 12470 |
 | `ui/modules/main/arm-apply-queue.js` | source | 3377 |
 | `ui/modules/main/arm-registry.js` | source | 4851 |
 | `ui/modules/main/arm-state-projection.js` | source | 9645 |
@@ -793,7 +793,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/pane-host-window-manager.js` | source | 12289 |
 | `ui/modules/main/pty-output-filter.js` | source | 7793 |
 | `ui/modules/main/settings-manager.js` | source | 21516 |
-| `ui/modules/main/squidrun-app.js` | source | 499306 |
+| `ui/modules/main/squidrun-app.js` | source | 501122 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 1884 |
 | `ui/modules/main/telegram-reply-obligations.js` | source | 13086 |
 | `ui/modules/main/trustquote-arm-registry-seed.js` | source | 8357 |
@@ -972,9 +972,9 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/watcher.js` | source | 57213 |
 | `ui/modules/websocket-runtime.js` | source | 74870 |
 | `ui/modules/websocket-server.js` | source | 2022 |
-| `ui/modules/window-team-bootstrap.js` | source | 5353 |
+| `ui/modules/window-team-bootstrap.js` | source | 5806 |
 | `ui/modules/work-room-terminal-visibility.js` | source | 1931 |
-| `ui/modules/workspace-pane-shell.js` | source | 3884 |
+| `ui/modules/workspace-pane-shell.js` | source | 5943 |
 
 ### ui/other
 
@@ -984,7 +984,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/config.js` | source | 15294 |
 | `ui/daemon-client.js` | source | 24256 |
 | `ui/eslint.config.js` | source | 794 |
-| `ui/index.html` | asset | 59108 |
+| `ui/index.html` | asset | 61085 |
 | `ui/jest.config.js` | source | 949 |
 | `ui/jsconfig.json` | config | 659 |
 | `ui/live-task-audit-preview.html` | asset | 2014 |
@@ -1027,7 +1027,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-agent-alert.js` | script | 2275 |
 | `ui/scripts/hm-alignment-audit.js` | script | 10543 |
 | `ui/scripts/hm-anomaly.js` | script | 3735 |
-| `ui/scripts/hm-app.js` | script | 9642 |
+| `ui/scripts/hm-app.js` | script | 9855 |
 | `ui/scripts/hm-architect-wake-watchdog.js` | script | 7035 |
 | `ui/scripts/hm-architect-watchdog.js` | script | 14538 |
 | `ui/scripts/hm-arm-state.js` | script | 4683 |
@@ -1161,6 +1161,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/styles/panes.css` | asset | 13886 |
 | `ui/styles/project-rooms.css` | asset | 3686 |
 | `ui/styles/settings-panel.css` | asset | 11422 |
+| `ui/styles/squid-room.css` | asset | 2802 |
 | `ui/styles/state-bar.css` | asset | 3172 |
 | `ui/styles/status-strip.css` | asset | 4654 |
 | `ui/styles/tabs.css` | asset | 2550 |

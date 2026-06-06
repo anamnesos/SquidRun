@@ -200,6 +200,31 @@ describe('app-control-service', () => {
     expect(result.note).toMatch(/sidecar opened\/focused without restarting/i);
   });
 
+  test('open-squid-room opens a display-only main-profile window with auto-boot disabled', async () => {
+    const openAppWindow = jest.fn().mockResolvedValue({
+      ok: true,
+      windowKey: 'squid-room',
+      status: 'opened',
+    });
+
+    const result = await executeAppControlAction({ openAppWindow }, 'open-squid-room');
+
+    expect(openAppWindow).toHaveBeenCalledWith('squid-room', {
+      autoBootAgents: false,
+      profileName: 'main',
+      windowTeam: 'squid-room',
+      displayOnly: true,
+      skipStartupBundle: true,
+    });
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'open-squid-room',
+      windowKey: 'squid-room',
+      status: 'opened',
+    }));
+    expect(result.note).toMatch(/display-only main-profile window/i);
+  });
+
   test('open-trustquote-workspace opens the real workspace without auto-booting duplicate agents', async () => {
     const openAppWindow = jest.fn().mockResolvedValue({
       ok: true,

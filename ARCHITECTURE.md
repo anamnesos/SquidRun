@@ -218,6 +218,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/mira-lab.html: Dev-only standalone Mira Lab prototype shell, intentionally separate from the normal SquidRun right panel and dashboard chrome.
 - ui/mira-lab-renderer.js: Mira Lab renderer logic for the prototype conversation/lab surface.
 - ui/styles/mira-lab.css: Mira Lab styling, including low-power/reduced-motion rendering fallback.
+- ui/styles/squid-room.css: Display-only Squid Room window styling; hides Architect/command input, keeps Builder/Oracle as the top live pair, and gives the arm-state surface the remaining read-only workspace.
 - ui/modules/status-strip.js: Exports initStatusStrip, shutdownStatusStrip.
 - ui/modules/tabs.js: Exports setConnectionStatusCallback, togglePanel, isPanelOpen, switchTab, .... Manages the existing right-side tabbed utility panel (bridge, screenshots, comms, oracle, voice, api-keys); Mira is no longer mounted as a main SquidRun tab.
 - ui/modules/tabs/api-keys.js: Exports setupApiKeysTab, destroyApiKeysTab, loadApiKeys.

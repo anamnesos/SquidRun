@@ -15,7 +15,7 @@ const DEFAULT_RESPONSE_TIMEOUT_MS = 5000;
 
 function usage() {
   console.log('Usage: node hm-app.js <command> [options]');
-  console.log('Commands: reload-renderers, restart-telegram-poller, open-mira-lab, open-live-task-audit-sidecar, open-trustquote-workspace, close-trustquote-workspace, close-app-window, drive-mira-lab');
+  console.log('Commands: reload-renderers, restart-telegram-poller, open-mira-lab, open-live-task-audit-sidecar, open-squid-room, open-trustquote-workspace, close-trustquote-workspace, close-app-window, drive-mira-lab');
   console.log('Options:');
   console.log('  --role <role>               Sender role (default: builder)');
   console.log(`  --port <port>               WebSocket port (default: ${DEFAULT_PORT})`);
@@ -30,6 +30,7 @@ function usage() {
   console.log('  node hm-app.js reload-renderers');
   console.log('  node hm-app.js open-mira-lab');
   console.log('  node hm-app.js open-live-task-audit-sidecar');
+  console.log('  node hm-app.js open-squid-room');
   console.log('  node hm-app.js open-trustquote-workspace');
   console.log('  node hm-app.js close-trustquote-workspace');
   console.log('  node hm-app.js close-app-window --window-key trustquote');
@@ -86,6 +87,7 @@ function normalizeCommand(command) {
     || normalized === 'task-audit'
     || normalized === 'open-task-audit'
   ) return 'open-live-task-audit-sidecar';
+  if (normalized === 'squid-room' || normalized === 'open-squid-room' || normalized === 'squid-room-open') return 'open-squid-room';
   if (normalized === 'trustquote' || normalized === 'open-trustquote' || normalized === 'trustquote-workspace') return 'open-trustquote-workspace';
   if (
     normalized === 'close-trustquote'
@@ -215,6 +217,7 @@ async function main() {
     'restart-telegram-poller',
     'open-mira-lab',
     'open-live-task-audit-sidecar',
+    'open-squid-room',
     'open-trustquote-workspace',
     'close-trustquote-workspace',
     'close-app-window',

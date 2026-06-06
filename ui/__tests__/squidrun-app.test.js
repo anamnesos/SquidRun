@@ -1665,6 +1665,37 @@ describe('SquidRunApp', () => {
       );
     });
 
+    it('opens Squid Room as display-only without TrustQuote preparation or startup bundle materialization', async () => {
+      const prepareTrustQuote = jest.spyOn(app, 'prepareTrustQuoteWorkspaceOpen');
+      const writeBundle = jest.spyOn(app, 'writeProfileStartupBundle');
+
+      await expect(app.openAppWindow('squid-room')).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        windowKey: 'squid-room',
+        title: 'SquidRun - Squid Room',
+      }));
+
+      expect(prepareTrustQuote).not.toHaveBeenCalled();
+      expect(writeBundle).not.toHaveBeenCalled();
+      const squidRoomWindow = app.ctx.getWindow('squid-room');
+      expect(squidRoomWindow.loadFile).toHaveBeenCalledWith(
+        expect.stringContaining('index.html'),
+        expect.objectContaining({
+          query: expect.objectContaining({
+            windowKey: 'squid-room',
+            windowTeam: 'squid-room',
+            profileName: 'main',
+            profileLabel: 'Main',
+            startupBundlePath: '',
+            startupBundleReady: 'false',
+            autoBootAgents: 'false',
+            displayOnly: 'true',
+            skipStartupBundle: 'true',
+          }),
+        })
+      );
+    });
+
     it('routes visible-window sends to the requested secondary window without clobbering main', async () => {
       await app.createWindow();
       const primaryWindow = app.ctx.mainWindow;
@@ -2009,6 +2040,48 @@ describe('SquidRunApp', () => {
         expect.objectContaining({
           terminals: [{ paneId: '1', alive: true, scrollback: 'ready' }],
           windowKey: 'scoped',
+        })
+      );
+    });
+
+    it('does not write a startup bundle when Squid Room finishes loading', async () => {
+      app.setupWindowListeners.mockRestore();
+      const bundleSpy = jest.spyOn(app, 'writeProfileStartupBundle').mockResolvedValue({
+        bundlePath: '/test/workspace/runtime/window-teams/squid-room/startup-bundle.md',
+        sourcePaths: ['/test/profile/AGENTS.md'],
+        text: 'should not be written',
+      });
+
+      await app.createWindow({
+        windowKey: 'squid-room',
+        windowTeam: 'squid-room',
+        profileName: 'main',
+        autoBootAgents: false,
+        displayOnly: true,
+        skipStartupBundle: true,
+      });
+      const squidRoomWindow = app.ctx.getWindow('squid-room');
+      const didFinishLoad = squidRoomWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+
+      await didFinishLoad();
+
+      expect(bundleSpy).not.toHaveBeenCalled();
+      expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith(
+        'window-context',
+        expect.objectContaining({
+          windowKey: 'squid-room',
+          windowTeam: 'squid-room',
+          profileName: 'main',
+          startupBundlePath: null,
+          startupSourceFiles: [],
+          startupBundleReady: false,
+          autoBootAgents: false,
+          displayOnly: true,
+          skipStartupBundle: true,
+          standaloneWindow: false,
+          lifecycleMode: 'secondary-window',
         })
       );
     });

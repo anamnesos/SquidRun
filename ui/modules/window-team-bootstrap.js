@@ -37,6 +37,8 @@ function normalizeWindowContext(payload = {}) {
     startupSourceFiles: Array.isArray(payload.startupSourceFiles) ? payload.startupSourceFiles.slice() : [],
     startupBundleReady: payload.startupBundleReady === true,
     autoBootAgents: payload.autoBootAgents === true,
+    displayOnly: payload.displayOnly === true,
+    skipStartupBundle: payload.skipStartupBundle === true,
     standaloneWindow: payload.standaloneWindow === true,
     lifecycleMode: toText(payload.lifecycleMode, ''),
   };
@@ -50,14 +52,18 @@ function readInitialWindowContextFromLocation(search = '') {
     const profileName = toText(params.get('profileName'), 'main');
     const startupBundlePath = toText(params.get('startupBundlePath'), '');
     const startupBundleReady = toBoolean(params.get('startupBundleReady'), false);
+    const displayOnly = toBoolean(params.get('displayOnly'), false);
+    const skipStartupBundle = toBoolean(params.get('skipStartupBundle'), false);
     const sideProfileWindow = windowKey !== 'main' || profileName !== 'main';
     const rawReadyContext = toBoolean(params.get('contextReady'), false)
       || params.has('autoBootAgents')
+      || params.has('displayOnly')
+      || params.has('skipStartupBundle')
       || params.has('standaloneWindow')
       || params.has('lifecycleMode')
       || params.has('startupBundlePath');
     const hasReadyContext = sideProfileWindow
-      ? rawReadyContext && startupBundlePath && startupBundleReady
+      ? rawReadyContext && (displayOnly || (startupBundlePath && startupBundleReady))
       : rawReadyContext;
     return {
       loaded: hasReadyContext,
@@ -71,6 +77,8 @@ function readInitialWindowContextFromLocation(search = '') {
       startupSourceFiles: parseList(params.get('startupSourceFiles')),
       startupBundleReady,
       autoBootAgents: toBoolean(params.get('autoBootAgents'), false),
+      displayOnly,
+      skipStartupBundle,
       standaloneWindow: toBoolean(params.get('standaloneWindow'), false),
       lifecycleMode: toText(params.get('lifecycleMode'), ''),
     };
@@ -87,6 +95,8 @@ function readInitialWindowContextFromLocation(search = '') {
       startupSourceFiles: [],
       startupBundleReady: false,
       autoBootAgents: false,
+      displayOnly: false,
+      skipStartupBundle: false,
       standaloneWindow: false,
       lifecycleMode: '',
     };
