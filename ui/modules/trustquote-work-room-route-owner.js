@@ -31,6 +31,8 @@ const DEFAULT_HEARTBEAT_MS = 15000;
 const DEFAULT_SPAWN_ACK_TIMEOUT_MS = 1500;
 const DEFAULT_ROUTE_MESSAGE_ENTER_DELAY_MS = process.platform === 'win32' ? 500 : 150;
 const DEFAULT_ROUTE_RECONNECT_DELAY_MS = 1000;
+const DEFAULT_ROLE_STARTUP_PROMPT_DELAY_MS = 8000;
+const DEFAULT_GEMINI_ROLE_STARTUP_PROMPT_DELAY_MS = 15000;
 
 function toText(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -100,6 +102,48 @@ function createRegisterPayload(spec, plan, options = {}) {
     sessionScopeId: plan.sessionScopeId,
     routeBinding: createRouteBinding(spec, plan, options),
   };
+}
+
+function roleDisplayName(role) {
+  if (role === 'oracle') return 'TrustQuote Oracle';
+  if (role === 'builder') return 'TrustQuote Builder';
+  return `TrustQuote ${toText(role, 'Agent')}`;
+}
+
+function roleCheckInLabel(role) {
+  return roleDisplayName(role).toUpperCase();
+}
+
+function buildTrustQuoteRoleStartupInstruction(spec, plan, options = {}) {
+  const roleName = roleDisplayName(spec.role);
+  const hmSendPath = normalizePathForMetadata(
+    options.hmSendPath || path.join(plan.squidrunRoot, 'ui', 'scripts', 'hm-send.js')
+  );
+  const checkIn = [
+    `(${roleCheckInLabel(spec.role)} #1): ${roleName} online in ${spec.paneId};`,
+    `env role=${spec.env?.SQUIDRUN_ROLE || spec.role};`,
+    `session=${plan.sessionScopeId};`,
+    `workspace=${plan.projectPath}.`,
+    'Ready for current-session TrustQuote work.',
+    'No autonomy/trading/customer side effects enabled.',
+  ].join(' ');
+
+  return [
+    '# TRUSTQUOTE WORK-ROOM STARTUP BINDING',
+    '',
+    `You are ${roleName} in pane ${spec.paneId}.`,
+    `Current env authority: SQUIDRUN_ROLE=${spec.env?.SQUIDRUN_ROLE || spec.role}; SQUIDRUN_PANE_ID=${spec.env?.SQUIDRUN_PANE_ID || spec.paneId}; SQUIDRUN_PROFILE=${TRUSTQUOTE_ROOM_ID}; SQUIDRUN_SESSION_SCOPE_ID=${plan.sessionScopeId}.`,
+    'Ignore stale CLI session summaries or previous workspace context that name a different TrustQuote role.',
+    'Treat this as the active startup identity for this clean route-owner launch.',
+    'Do not enable autonomy, trading, deploys, customer sends, or other production side effects from this startup binding.',
+    '',
+    'First action: send Architect this exact check-in via hm-send, then wait for direction:',
+    "```powershell",
+    "@'",
+    checkIn,
+    `'@ | node '${hmSendPath}' architect --stdin`,
+    "```",
+  ].join('\n');
 }
 
 function buildTrustQuoteRouteOwnerPlan(options = {}) {
@@ -314,6 +358,7 @@ class TrustQuoteWorkRoomRouteOwner {
     this.clients = new Map();
     this.heartbeatTimers = new Map();
     this.routeReconnectTimers = new Map();
+    this.roleStartupPromptTimers = new Map();
     this.routeCloseSuppressions = new Set();
     this.roleTerminalRefs = new Map();
     this.ignoredDaemonEvents = [];
@@ -355,6 +400,9 @@ class TrustQuoteWorkRoomRouteOwner {
         this.launchRoleAgent(spec);
       }
       await this.openRouteClient(spec);
+      if (!this.attachExistingTerminals && this.options.launchAgents !== false) {
+        this.scheduleRoleStartupPrompt(spec);
+      }
     }
     this.started = true;
     return { ok: true, plan: this.plan };
@@ -412,6 +460,47 @@ class TrustQuoteWorkRoomRouteOwner {
       role: spec.role,
       sessionScopeId: this.plan.sessionScopeId,
     });
+  }
+
+  getRoleStartupPromptDelayMs(spec) {
+    if (this.options.roleStartupPromptDelayMs !== undefined) {
+      const configured = Number.parseInt(String(this.options.roleStartupPromptDelayMs), 10);
+      return Number.isFinite(configured) && configured >= 0 ? configured : DEFAULT_ROLE_STARTUP_PROMPT_DELAY_MS;
+    }
+    const command = String(spec?.command || '').toLowerCase();
+    return command.includes('gemini')
+      ? DEFAULT_GEMINI_ROLE_STARTUP_PROMPT_DELAY_MS
+      : DEFAULT_ROLE_STARTUP_PROMPT_DELAY_MS;
+  }
+
+  scheduleRoleStartupPrompt(spec) {
+    if (this.options.injectRoleStartupPrompt === false) return false;
+    const existing = this.roleStartupPromptTimers.get(spec.role);
+    if (existing) clearTimeout(existing);
+    this.roleStartupPromptTimers.delete(spec.role);
+
+    const send = () => {
+      this.roleStartupPromptTimers.delete(spec.role);
+      this.sendRoleStartupPrompt(spec);
+    };
+    const delayMs = this.getRoleStartupPromptDelayMs(spec);
+    if (delayMs <= 0) {
+      send();
+      return true;
+    }
+    const timer = setTimeout(send, delayMs);
+    if (timer && typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    this.roleStartupPromptTimers.set(spec.role, timer);
+    return true;
+  }
+
+  sendRoleStartupPrompt(spec) {
+    const instruction = buildTrustQuoteRoleStartupInstruction(spec, this.plan, {
+      hmSendPath: this.options.hmSendPath,
+    });
+    return this.submitRouteMessage(spec, instruction, `startup-checkin-${spec.role}`);
   }
 
   submitRouteMessage(spec, content, traceId = null) {
@@ -591,6 +680,10 @@ class TrustQuoteWorkRoomRouteOwner {
 
   async stop() {
     this.stopping = true;
+    for (const timer of this.roleStartupPromptTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.roleStartupPromptTimers.clear();
     for (const timer of this.routeReconnectTimers.values()) {
       clearTimeout(timer);
     }
@@ -627,6 +720,7 @@ module.exports = {
   ROUTE_OWNER_ID,
   ROUTE_OWNER_VERSION,
   TrustQuoteWorkRoomRouteOwner,
+  buildTrustQuoteRoleStartupInstruction,
   buildTrustQuoteRouteOwnerPlan,
   createRegisterPayload,
   createRouteBinding,
