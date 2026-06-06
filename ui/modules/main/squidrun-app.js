@@ -137,6 +137,7 @@ const { executeGitHubOperation } = require('../ipc/github-handlers');
 const { executePaneControlAction } = require('./pane-control-service');
 const { executeAppControlAction } = require('./app-control-service');
 const miraLabHandlersModule = require('../ipc/mira-lab-handlers');
+const armStateProjectionHandlersModule = require('../ipc/arm-state-projection-handlers');
 const {
   MIRA_LIVE_PROMPT_REPLY_CHANNEL,
   sendMiraLivePrompt,
@@ -6024,6 +6025,7 @@ class SquidRunApp {
     ipcMain.handle('live-task-audit-sidecar:snapshot', () => buildLiveTaskAuditSnapshot({
       sessionId: this.commsSessionScopeId || null,
     }));
+    armStateProjectionHandlersModule.registerArmStateProjectionHandlers({ ipcMain });
 
     ipcMain.removeHandler('close-app-window');
     ipcMain.handle('close-app-window', async (_event, payload = {}) => {
@@ -12782,6 +12784,7 @@ class SquidRunApp {
       ipcMain.removeHandler('shared-state-changelog');
       ipcMain.removeHandler('shared-state-mark-seen');
       ipcMain.removeHandler('context-snapshot-refresh');
+      armStateProjectionHandlersModule.unregisterArmStateProjectionHandlers({ ipcMain });
     } catch (_) {
       // no-op
     }

@@ -2,6 +2,7 @@
 
 const INVOKE_CHANNELS = Object.freeze([
   'apply-rollback',
+  'arm-state:projection',
   'clear-activity-log',
   'clear-friction',
   'bridge:get-devices',
