@@ -541,6 +541,38 @@ const HIGH_RISK_ARM_APPLY_CATEGORIES = new Set([
   'refund_reversal',
   'production_repair',
 ]);
+const ARM_APPLY_CATEGORY_ALIASES = Object.freeze({
+  customer_send: 'customer_message',
+  customer_reply: 'customer_message',
+  customer_outreach: 'customer_message',
+  message_customer: 'customer_message',
+  send_customer_message: 'customer_message',
+  invoice_write: 'money_write',
+  payment_write: 'money_write',
+  price_write: 'money_write',
+  money_update: 'money_write',
+  schedule_change: 'schedule_mutation',
+  appointment_write: 'schedule_mutation',
+  calendar_write: 'schedule_mutation',
+  delete: 'delete_archive',
+  archive_delete: 'delete_archive',
+  record_delete: 'delete_archive',
+  refund: 'refund_reversal',
+  refund_write: 'refund_reversal',
+  reversal: 'refund_reversal',
+  production_fix: 'production_repair',
+  production_change: 'production_repair',
+  prod_repair: 'production_repair',
+});
+const ARM_APPLY_ALLOWED_CATEGORIES = new Set([
+  ...HIGH_RISK_ARM_APPLY_CATEGORIES,
+  'read_only_lookup',
+  'evidence_summary',
+  'internal_note',
+  'draft_only',
+  'qa_observation',
+  'code_patch_plan',
+]);
 
 function toMs(value, fallback) {
   const numeric = Number(value);
@@ -754,7 +786,10 @@ function normalizeArmApplyRiskClass(value) {
 function normalizeArmApplyCategory(value) {
   const text = toOptionalString(value, null);
   if (!text) return null;
-  return text.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || null;
+  const normalized = text.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || null;
+  if (!normalized) return null;
+  const canonical = ARM_APPLY_CATEGORY_ALIASES[normalized] || normalized;
+  return ARM_APPLY_ALLOWED_CATEGORIES.has(canonical) ? canonical : null;
 }
 
 function buildNoSideEffectResult(reason = 'executor_disabled', nowMs = null) {
