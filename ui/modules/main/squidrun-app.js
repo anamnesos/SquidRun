@@ -2685,6 +2685,15 @@ class SquidRunApp {
     while (Date.now() <= deadline) {
       lastStatus = this.readTrustQuoteRouteOwnerStatus();
       if (this.isTrustQuoteRouteOwnerCurrent(lastStatus, expectedMainSessionScopeId)) {
+        const syncResult = this.syncTrustQuoteWorkspaceArtifactsWithLiveRouteOwner();
+        if (!syncResult?.ok) {
+          return {
+            ok: false,
+            reason: syncResult?.reason || 'trustquote_workspace_artifact_sync_failed',
+            status: lastStatus,
+            syncResult,
+          };
+        }
         lastProbe = await probeTrustQuoteRouteOwner({
           squidrunRoot,
           mainSessionScopeId: expectedMainSessionScopeId,
@@ -4937,13 +4946,26 @@ class SquidRunApp {
       const startupText = textOf('#startupLoadingText');
       const startupStage = textOf('#startupLoadingStageText');
       const startupPercent = textOf('#startupLoadingPercent');
-      const paneIds = ['2', '3'];
-      const panes = paneIds.map((id) => {
-        const pane = document.querySelector('.pane[data-pane-id="' + id + '"]');
-        const terminal = document.getElementById('terminal-' + id);
+      const paneSpecs = [
+        { id: 'trustquote-builder', fallbackId: '2' },
+        { id: 'trustquote-oracle', fallbackId: '3' },
+      ];
+      const panes = paneSpecs.map((spec) => {
+        const pane = document.querySelector(
+          '.pane[data-pane-id="' + spec.id + '"],'
+          + '.pane[data-pane-id="' + spec.fallbackId + '"],'
+          + '.pane[data-workspace-source-pane-id="' + spec.fallbackId + '"]'
+        );
+        const effectivePaneId = pane && pane.dataset && pane.dataset.paneId
+          ? pane.dataset.paneId
+          : spec.id;
+        const terminal = document.getElementById('terminal-' + effectivePaneId)
+          || document.getElementById('terminal-' + spec.id)
+          || document.getElementById('terminal-' + spec.fallbackId);
         const xterm = terminal ? terminal.querySelector('.xterm, .xterm-screen, .xterm-viewport') : null;
         return {
-          paneId: id,
+          paneId: spec.id,
+          effectivePaneId,
           paneVisible: visible(pane),
           terminalVisible: visible(terminal),
           hasTerminalShell: Boolean(xterm),

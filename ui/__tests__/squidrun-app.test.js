@@ -577,8 +577,8 @@ function createReadyTrustQuoteWindow(overrides = {}) {
         startupStage: '',
         startupPercent: '100%',
         panes: [
-          { paneId: '2', paneVisible: true, terminalVisible: true, hasTerminalShell: true },
-          { paneId: '3', paneVisible: true, terminalVisible: true, hasTerminalShell: true },
+          { paneId: 'trustquote-builder', effectivePaneId: 'trustquote-builder', paneVisible: true, terminalVisible: true, hasTerminalShell: true },
+          { paneId: 'trustquote-oracle', effectivePaneId: 'trustquote-oracle', paneVisible: true, terminalVisible: true, hasTerminalShell: true },
         ],
       }),
       ...webContentsOverrides,
@@ -762,6 +762,103 @@ describe('SquidRunApp', () => {
         visible: true,
         trustQuoteSessionScopeId: 'app-session-384:trustquote',
       }));
+    });
+
+    it('refreshes TrustQuote link and workstream proof before probing an already-current route owner', async () => {
+      const { materializeTrustQuoteWorkRoomPrerequisites } = require('../modules/trustquote-work-room-prerequisites');
+      const {
+        probeTrustQuoteRouteOwner,
+        readRouteOwnerStatus,
+      } = require('../modules/trustquote-work-room-route-owner-supervisor');
+      mockManagers.settings.readAppStatus.mockReturnValue({ session: 406 });
+      readRouteOwnerStatus.mockReturnValue({
+        running: true,
+        state: 'running',
+        plan: {
+          mainSessionScopeId: 'app-session-406',
+          sessionScopeId: 'app-session-406:trustquote',
+          projectPath: 'D:/projects/TrustQuote',
+        },
+      });
+      materializeTrustQuoteWorkRoomPrerequisites.mockReturnValue({
+        ok: true,
+        write: true,
+        results: [],
+        artifacts: {
+          sessionScopeId: 'app-session-406:trustquote',
+          paths: {
+            startupBundlePath: '/test/workspace/.squidrun/runtime/window-teams/trustquote/startup-bundle.md',
+            linkPath: '/test/trustquote/.squidrun/link.json',
+            agentsPath: '/test/trustquote/.squidrun/work-rooms/trustquote/startup/AGENTS.md',
+            rolesPath: '/test/trustquote/.squidrun/work-rooms/trustquote/startup/ROLES.md',
+          },
+          startupBundle: '# TrustQuote Startup Bundle\n',
+        },
+      });
+      probeTrustQuoteRouteOwner.mockImplementation(() => {
+        const refreshedBeforeProbe = materializeTrustQuoteWorkRoomPrerequisites.mock.calls.length > 0;
+        return Promise.resolve(refreshedBeforeProbe
+          ? {
+              ok: true,
+              reachable: true,
+              routeHealth: {
+                builder: { healthy: true, source: 'client_activity' },
+                oracle: { healthy: true, source: 'client_activity' },
+              },
+              contract: {
+                status: 'proven',
+                canRouteTask: true,
+                blockers: [],
+              },
+            }
+          : {
+              ok: true,
+              reachable: true,
+              contract: {
+                status: 'blocked',
+                canRouteTask: false,
+                blockers: [
+                  'profile_link_not_current',
+                  'workstream_evidence_stale_or_mismatched',
+                ],
+              },
+            });
+      });
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-406';
+      app.getTrustQuoteMainSessionScopeId = jest.fn(() => 'app-session-406');
+      const trustQuoteWindow = createReadyTrustQuoteWindow();
+      app.createWindow = jest.fn(async () => {
+        mockAppContext.setWindow('trustquote', trustQuoteWindow);
+      });
+
+      const result = await app.openAppWindow('trustquote');
+
+      expect(materializeTrustQuoteWorkRoomPrerequisites).toHaveBeenCalledWith(expect.objectContaining({
+        write: true,
+        mainSessionScopeId: 'app-session-406',
+        projectPath: 'D:/projects/TrustQuote',
+      }));
+      expect(probeTrustQuoteRouteOwner).toHaveBeenCalledWith(expect.objectContaining({
+        mainSessionScopeId: 'app-session-406',
+        projectPath: 'D:/projects/TrustQuote',
+      }));
+      expect(materializeTrustQuoteWorkRoomPrerequisites.mock.invocationCallOrder[0])
+        .toBeLessThan(probeTrustQuoteRouteOwner.mock.invocationCallOrder[0]);
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        windowKey: 'trustquote',
+        trustQuoteSessionScopeId: 'app-session-406:trustquote',
+      }));
+    });
+
+    it('checks TrustQuote window readiness against the retargeted room pane ids', () => {
+      const source = fs.readFileSync(path.join(__dirname, '..', 'modules', 'main', 'squidrun-app.js'), 'utf8');
+
+      expect(source).toContain("{ id: 'trustquote-builder', fallbackId: '2' }");
+      expect(source).toContain("{ id: 'trustquote-oracle', fallbackId: '3' }");
+      expect(source).toContain("document.getElementById('terminal-' + effectivePaneId)");
+      expect(source).not.toContain("const paneIds = ['2', '3'];");
     });
 
     it('resynchronizes a stale TrustQuote route owner to the current session without launching duplicate agents', async () => {
@@ -1015,16 +1112,16 @@ describe('SquidRunApp', () => {
         blockers: [
           'startup_overlay_visible',
           'startup_progress_zero',
-          'pane_2_terminal_unusable',
-          'pane_3_terminal_unusable',
+          'pane_trustquote-builder_terminal_unusable',
+          'pane_trustquote-oracle_terminal_unusable',
         ],
         overlayVisible: true,
         startupText: 'Starting SquidRun...',
         startupStage: 'Bootstrapping workspace...',
         startupPercent: '0%',
         panes: [
-          { paneId: '2', paneVisible: true, terminalVisible: false, hasTerminalShell: false },
-          { paneId: '3', paneVisible: true, terminalVisible: false, hasTerminalShell: false },
+          { paneId: 'trustquote-builder', effectivePaneId: 'trustquote-builder', paneVisible: true, terminalVisible: false, hasTerminalShell: false },
+          { paneId: 'trustquote-oracle', effectivePaneId: 'trustquote-oracle', paneVisible: true, terminalVisible: false, hasTerminalShell: false },
         ],
       });
 
@@ -1039,8 +1136,8 @@ describe('SquidRunApp', () => {
             blockers: expect.arrayContaining([
               'startup_overlay_visible',
               'startup_progress_zero',
-              'pane_2_terminal_unusable',
-              'pane_3_terminal_unusable',
+              'pane_trustquote-builder_terminal_unusable',
+              'pane_trustquote-oracle_terminal_unusable',
             ]),
           }),
         }),
