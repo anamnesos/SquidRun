@@ -10,9 +10,18 @@ jest.mock('../modules/main/comms-journal', () => ({
   appendCommsJournalEntry: jest.fn(() => ({ ok: true })),
   closeCommsJournalStores: jest.fn(),
 }));
+jest.mock('../modules/main/telegram-reply-obligations', () => ({
+  reconcileTelegramReplyObligationFromJournal: jest.fn(() => ({
+    ok: true,
+    status: 'satisfied',
+  })),
+}));
 
 const https = require('https');
 const { appendCommsJournalEntry } = require('../modules/main/comms-journal');
+const {
+  reconcileTelegramReplyObligationFromJournal,
+} = require('../modules/main/telegram-reply-obligations');
 const hmTelegram = require('../scripts/hm-telegram');
 
 async function flushMicrotasks(iterations = 8) {
@@ -273,6 +282,13 @@ describe('hm-telegram', () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(result).toEqual(expect.objectContaining({
+      journalMessageId: 'hm-telegram-reply-context-1',
+      durableSatisfaction: expect.objectContaining({
+        ok: true,
+        status: 'satisfied',
+      }),
+    }));
     expect(appendCommsJournalEntry.mock.calls[0][0]).toEqual(expect.objectContaining({
       messageId: 'hm-telegram-reply-context-1',
       metadata: expect.objectContaining({
@@ -295,6 +311,32 @@ describe('hm-telegram', () => {
         chatId: 5613428850,
       }),
     }));
+    expect(reconcileTelegramReplyObligationFromJournal).toHaveBeenCalledWith({
+      inboundMessageId: 'telegram-in-808498637',
+    }, {
+      dbPath: null,
+    });
+  });
+
+  test('sendTelegram skips durable reply reconciliation when no inbound reply context exists', async () => {
+    mockTelegramResponse(200, {
+      ok: true,
+      result: {
+        message_id: 314,
+        chat: { id: 123456 },
+      },
+    });
+
+    const result = await hmTelegram.sendTelegram('ordinary broadcast', {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '123456',
+    }, {
+      messageId: 'hm-telegram-no-reply-context-1',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.durableSatisfaction).toBeNull();
+    expect(reconcileTelegramReplyObligationFromJournal).not.toHaveBeenCalled();
   });
 
   test('sendTelegram truncates outbound message to 4000 chars with suffix', async () => {

@@ -422,7 +422,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/hm-telegram-poller-lane.test.js` | test | 3555 |
 | `ui/__tests__/hm-telegram-poller-watchdog.test.js` | test | 5434 |
 | `ui/__tests__/hm-telegram-routing.test.js` | test | 7906 |
-| `ui/__tests__/hm-telegram.test.js` | test | 15851 |
+| `ui/__tests__/hm-telegram.test.js` | test | 17197 |
 | `ui/__tests__/hm-transition.test.js` | test | 2309 |
 | `ui/__tests__/hm-twitter.test.js` | test | 11240 |
 | `ui/__tests__/hm-visible-pane-submit-harness.test.js` | test | 6296 |
@@ -670,7 +670,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/smart-routing.test.js` | test | 10637 |
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
-| `ui/__tests__/squidrun-app.test.js` | test | 333740 |
+| `ui/__tests__/squidrun-app.test.js` | test | 335315 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 1987 |
 | `ui/__tests__/startup-transcript-context.test.js` | test | 10069 |
@@ -886,7 +886,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/pane-host-window-manager.js` | source | 12289 |
 | `ui/modules/main/pty-output-filter.js` | source | 7793 |
 | `ui/modules/main/settings-manager.js` | source | 21516 |
-| `ui/modules/main/squidrun-app.js` | source | 494272 |
+| `ui/modules/main/squidrun-app.js` | source | 498345 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 1884 |
 | `ui/modules/main/telegram-reply-obligations.js` | source | 13086 |
 | `ui/modules/main/usage-manager.js` | source | 2909 |
@@ -1332,7 +1332,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-telegram-poller-watchdog.js` | script | 16064 |
 | `ui/scripts/hm-telegram-reply-guard-probe.js` | script | 4754 |
 | `ui/scripts/hm-telegram-routing.js` | script | 9813 |
-| `ui/scripts/hm-telegram.js` | script | 32405 |
+| `ui/scripts/hm-telegram.js` | script | 34049 |
 | `ui/scripts/hm-transcript-index.js` | script | 2651 |
 | `ui/scripts/hm-transition.js` | script | 9518 |
 | `ui/scripts/hm-trigger.js` | script | 4496 |

@@ -107,6 +107,7 @@ const {
 const {
   openTelegramReplyObligation,
   queryTelegramReplyObligations,
+  satisfyTelegramReplyObligation,
 } = require('./telegram-reply-obligations');
 const {
   listWorkItems,
@@ -10174,11 +10175,23 @@ class SquidRunApp {
           error: result?.error || 'unknown_error',
         };
       }
+      const guardPaneId = ROLE_ID_MAP.architect || '1';
+      const pendingGuard = this.pendingTelegramReplyGuards.get(String(guardPaneId));
+      const sentMessageId = result.journalMessageId || messageId || result.messageId;
+      const durableSatisfaction = pendingGuard
+        ? this.satisfyDurableTelegramReplyObligationForGuard(pendingGuard, {
+          source: 'squidrun-app.route-telegram-reply',
+          reason: 'telegram_delivery_confirmed',
+          egressMessageId: sentMessageId || null,
+          chatId: result.chatId || replyChatId || null,
+          sessionId: routeSessionScopeId || this.commsSessionScopeId || null,
+          satisfiedAtMs: Date.now(),
+        })
+        : null;
       this.clearPendingTelegramReplyGuard({
-        paneId: ROLE_ID_MAP.architect || '1',
+        paneId: guardPaneId,
         chatId: replyChatId || null,
       });
-      const sentMessageId = result.messageId || messageId;
       this.markTelegramReplySent({
         message,
         chatId: replyChatId,
@@ -10205,6 +10218,7 @@ class SquidRunApp {
         profile: routeProfile,
         sessionScopeId: routeSessionScopeId,
         routeMethod: result.method || null,
+        durableSatisfaction,
       };
     } catch (err) {
       return {
@@ -11543,6 +11557,75 @@ class SquidRunApp {
     };
   }
 
+  satisfyDurableTelegramReplyObligationForGuard(guard = {}, evidence = {}, options = {}) {
+    const inboundMessageId = toNonEmptyString(guard.messageId);
+    if (!inboundMessageId) {
+      return { ok: false, status: 'invalid', reason: 'inbound_message_id_required' };
+    }
+    const satisfyFn = typeof options.satisfyTelegramReplyObligation === 'function'
+      ? options.satisfyTelegramReplyObligation
+      : satisfyTelegramReplyObligation;
+    const satisfiedAtMs = Number(evidence.satisfiedAtMs || evidence.egressAtMs || evidence.sentAtMs || Date.now());
+    const row = evidence.row && typeof evidence.row === 'object' ? evidence.row : null;
+    const rowMetadata = row?.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+      ? row.metadata
+      : {};
+    const egressMessageId = toNonEmptyString(
+      evidence.egressMessageId
+      || evidence.messageId
+      || row?.messageId
+      || null
+    );
+    try {
+      const result = satisfyFn({
+        inboundMessageId,
+        satisfiedAtMs: Number.isFinite(satisfiedAtMs) ? Math.floor(satisfiedAtMs) : Date.now(),
+        satisfiedByMessageId: egressMessageId,
+        satisfiedByRowId: Number.isFinite(Number(evidence.egressRowId ?? row?.rowId))
+          ? Math.floor(Number(evidence.egressRowId ?? row?.rowId))
+          : null,
+        satisfactionSource: toNonEmptyString(evidence.source) || 'squidrun-app.telegram-reply-satisfaction',
+        satisfaction: {
+          reason: toNonEmptyString(evidence.reason) || 'telegram_delivery_confirmed',
+          chatId: normalizeChatId(
+            evidence.chatId
+            || rowMetadata.chatId
+            || rowMetadata.telegramChatId
+            || guard.chatId
+            || guard.telegramChatId
+            || null
+          ),
+          sessionId: toNonEmptyString(
+            evidence.sessionId
+            || row?.sessionId
+            || rowMetadata.sessionScopeId
+            || rowMetadata.session_id
+            || guard.sessionScopeId
+            || null
+          ),
+          replyToMessageId: toNonEmptyString(
+            evidence.replyToMessageId
+            || rowMetadata.replyToMessageId
+            || rowMetadata.inboundMessageId
+            || null
+          ),
+        },
+      }, {
+        nowMs: options.nowMs,
+      });
+      if (result?.ok === false && !['not_found', 'terminal_state'].includes(result.status)) {
+        log.warn(
+          'TelegramReplyRequirement',
+          `Failed satisfying durable reply obligation for inbound ${inboundMessageId}: ${result.reason || result.error || 'unknown'}`
+        );
+      }
+      return result;
+    } catch (err) {
+      log.warn('TelegramReplyRequirement', `Durable reply obligation satisfaction failed: ${err.message}`);
+      return { ok: false, status: 'exception', reason: err.message };
+    }
+  }
+
   markPendingTelegramReplyGuard(input = {}) {
     const paneId = toNonEmptyString(input.paneId) || '1';
     const messageId = toNonEmptyString(input.messageId)
@@ -12043,6 +12126,16 @@ class SquidRunApp {
       this.notePendingTelegramReplyGuardJournalMiss(normalizedPaneId, guard, result.diagnostics, options);
       return null;
     }
+    const durableSatisfaction = this.satisfyDurableTelegramReplyObligationForGuard(guard, {
+      source: 'squidrun-app.journal-reconcile',
+      reason: result.diagnostics?.reason || 'acked_telegram_egress_journal_row',
+      row: egressRow,
+      egressMessageId: egressRow.messageId || null,
+      egressRowId: egressRow.rowId || null,
+      satisfiedAtMs: this.getCommsJournalRowTimestampMs(egressRow) || Date.now(),
+      chatId: this.getCommsJournalRowChatId(egressRow),
+      sessionId: this.getCommsJournalRowSessionId(egressRow),
+    }, options);
     this.clearPendingTelegramReplyGuard({
       paneId: normalizedPaneId,
       chatId: guard.chatId || guard.telegramChatId || null,
@@ -12055,6 +12148,7 @@ class SquidRunApp {
       egressMessageId: egressRow.messageId || null,
       chatId: this.getCommsJournalRowChatId(egressRow),
       sessionScopeId: this.getCommsJournalRowSessionId(egressRow),
+      durableSatisfaction,
     };
   }
 
