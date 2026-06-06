@@ -93,6 +93,14 @@ function runJest(uiRoot, args = []) {
   });
 }
 
+function buildTargetedJestArgs(run = {}) {
+  const args = ['--runTestsByPath', run.uiPath];
+  if (Array.isArray(run.testNames) && run.testNames.length > 0) {
+    args.push(`--testNamePattern=${run.testNames.map(escapeRegex).join('|')}`);
+  }
+  return args;
+}
+
 function main() {
   const repoRoot = path.resolve(__dirname, '..', '..');
   const uiRoot = path.join(repoRoot, 'ui');
@@ -107,11 +115,7 @@ function main() {
   }
 
   for (const run of plan.targetedRuns) {
-    const args = ['--runTestsByPath', run.uiPath];
-    if (Array.isArray(run.testNames) && run.testNames.length > 0) {
-      args.push('--testNamePattern', run.testNames.map(escapeRegex).join('|'));
-    }
-    const result = runJest(uiRoot, args);
+    const result = runJest(uiRoot, buildTargetedJestArgs(run));
     if (result.status !== 0) {
       process.exit(result.status || 1);
     }
@@ -137,6 +141,7 @@ if (require.main === module) {
 module.exports = {
   extractAddedTestNames,
   buildJestPlan,
+  buildTargetedJestArgs,
   _internals: {
     escapeRegex,
     isUiJavaScriptFile,

@@ -3,6 +3,7 @@
 const {
   extractAddedTestNames,
   buildJestPlan,
+  buildTargetedJestArgs,
 } = require('../scripts/jest-staged');
 
 describe('jest-staged helper', () => {
@@ -71,5 +72,18 @@ describe('jest-staged helper', () => {
     expect(plan.hasWork).toBe(false);
     expect(plan.relatedFiles).toEqual([]);
     expect(plan.targetedRuns).toEqual([]);
+  });
+
+  test('passes option-looking test names as a single Jest pattern argument', () => {
+    const args = buildTargetedJestArgs({
+      uiPath: '__tests__/hm-comms.test.js',
+      testNames: ['--limit is a real alias for history row count'],
+    });
+
+    expect(args).toEqual([
+      '--runTestsByPath',
+      '__tests__/hm-comms.test.js',
+      '--testNamePattern=--limit is a real alias for history row count',
+    ]);
   });
 });

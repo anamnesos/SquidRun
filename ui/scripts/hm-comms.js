@@ -22,6 +22,7 @@ function usage() {
   console.log('Commands: history');
   console.log('Options:');
   console.log(`  --last <n>                 Show the latest N messages (default: ${DEFAULT_LAST})`);
+  console.log('  --limit <n>                Alias for --last');
   console.log('  --session <n|id>          Filter by session number (e.g. 174) or session id (e.g. app-session-174)');
   console.log('  --between <a> <b>         Filter bidirectionally between roles a and b');
   console.log('  --scope <main|windowKey>  Filter by profile/window scope (default: main)');
@@ -30,10 +31,16 @@ function usage() {
   console.log('  --db <path>               Override DB path (default: profile-scoped .squidrun/runtime*/evidence-ledger.db)');
   console.log('Examples:');
   console.log('  node hm-comms.js history --last 15');
+  console.log('  node hm-comms.js history --limit 15');
   console.log('  node hm-comms.js history --session 174');
   console.log('  node hm-comms.js history --between architect builder --last 10');
   console.log('  node hm-comms.js history --between builder oracle --last 25 --json');
 }
+
+const FLAG_OPTIONS = new Set(['all-scopes', 'json']);
+const VALUE_OPTIONS = new Set(['last', 'limit', 'session', 'scope', 'db']);
+const PAIR_OPTIONS = new Set(['between']);
+const KNOWN_OPTIONS = new Set([...FLAG_OPTIONS, ...VALUE_OPTIONS, ...PAIR_OPTIONS]);
 
 function parseArgs(argv) {
   const positional = [];
@@ -47,6 +54,10 @@ function parseArgs(argv) {
     }
 
     const key = token.slice(2).trim();
+    if (!KNOWN_OPTIONS.has(key)) {
+      throw new Error(`unknown_option: --${key}`);
+    }
+
     if (key === 'between') {
       const left = argv[i + 1];
       const right = argv[i + 2];
@@ -58,10 +69,17 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (FLAG_OPTIONS.has(key)) {
+      options.set(key, true);
+      continue;
+    }
+
     const next = argv[i + 1];
-    const value = (!next || next.startsWith('--')) ? true : next;
-    if (value !== true) i += 1;
-    options.set(key, value);
+    if (!next || next.startsWith('--')) {
+      throw new Error(`--${key} requires a value`);
+    }
+    i += 1;
+    options.set(key, next);
   }
 
   return { positional, options };
@@ -220,7 +238,10 @@ function buildHistoryQuery(options) {
     params.push(left, right, right, left);
   }
 
-  const limitRaw = asPositiveInt(getOption(options, 'last', DEFAULT_LAST), DEFAULT_LAST);
+  const limitRaw = asPositiveInt(
+    options.has('limit') ? getOption(options, 'limit', DEFAULT_LAST) : getOption(options, 'last', DEFAULT_LAST),
+    DEFAULT_LAST
+  );
   const limit = Math.max(1, Math.min(MAX_LAST, limitRaw));
   const scope = resolveHistoryScope(options);
   const queryLimit = scope === 'all' ? limit : Math.min(MAX_LAST, Math.max(limit, limit * 10));
@@ -370,6 +391,7 @@ if (require.main === module) {
 module.exports = {
   buildHistoryQuery,
   extractRowScopeKey,
+  parseArgs,
   rowMatchesScope,
   resolveHistoryScope,
   toJsonRows,
