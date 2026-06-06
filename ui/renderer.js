@@ -128,6 +128,7 @@ const { initStatusStrip } = rendererModules.statusStrip;
 const { initPaneVisibilityControls } = rendererModules.paneVisibility;
 const { createWindowTeamBootstrap, readInitialWindowContextFromLocation } = rendererModules.windowTeamBootstrap;
 const { configureWorkspacePaneShell } = rendererModules.workspacePaneShell || {};
+const { initSquidRoomSurface } = rendererModules.squidRoomSurface || {};
 const { sendMiraLivePrompt, normalizeMiraLiveSessionId } = rendererModules.miraLiveEntrypoint || {};
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = rendererModules.modelSelector;
 const { PANE_ROLES, PANE_ROLE_BUNDLES } = rendererModules.config;
@@ -2565,6 +2566,14 @@ function setupEventListeners() {
   initCommandPalette({
     openAppWindow: (windowKey) => ipcRenderer.invoke('open-app-window', { windowKey }),
   });
+
+  if (typeof initSquidRoomSurface === 'function') {
+    initSquidRoomSurface({
+      document,
+      invoke: (channel, payload) => ipcRenderer.invoke(channel, payload),
+      getWindowContext: () => getCurrentWindowContext(),
+    });
+  }
 
   // Fix: Blur terminals when UI input/textarea gets focus (NOT xterm's internal textarea)
   // This prevents xterm from capturing keyboard input meant for form fields
