@@ -162,6 +162,41 @@ maybeDescribe('arm apply queue', () => {
     }));
   });
 
+  test('normalizes high-risk category aliases and rejects unknown categories', () => {
+    const alias = enqueueArmApplyRequest({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-406:trustquote',
+      armKey: 'money-documents',
+      actionCategory: 'customer_send',
+      riskClass: 'safe',
+      evidenceRefs: ['customer:alias-bypass-probe'],
+      draftPayload: { message: 'Draft only.' },
+    }, { dbPath, nowMs: 2_000 });
+
+    expect(alias.ok).toBe(true);
+    expect(alias.request).toEqual(expect.objectContaining({
+      actionCategory: 'customer_message',
+      riskClass: 'approval_required',
+      status: 'approval_required',
+      approvalRequired: true,
+    }));
+
+    const unknown = enqueueArmApplyRequest({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-406:trustquote',
+      armKey: 'money-documents',
+      actionCategory: 'customerish_safe_send',
+      riskClass: 'safe',
+      draftPayload: { message: 'Should not persist.' },
+    }, { dbPath, nowMs: 3_000 });
+
+    expect(unknown).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'invalid',
+      reason: 'action_category_required',
+    }));
+  });
+
   test('does not mark a risky request executable without explicit approval', () => {
     const queued = enqueueArmApplyRequest({
       requestId: 'apply-customer-message-1',
