@@ -673,6 +673,47 @@ async function readDaemonScrollbackForPane(paneId, options = {}) {
   return typeof terminalEntry?.scrollback === 'string' ? terminalEntry.scrollback : '';
 }
 
+async function repaintTerminalFromDaemonScrollback(paneId, options = {}) {
+  const id = String(paneId || '').trim();
+  if (!id) return { ok: false, reason: 'missing_pane' };
+  const terminal = terminals.get(id);
+  if (!terminal) return { ok: false, reason: 'terminal_not_attached' };
+  const scrollback = await readDaemonScrollbackForPane(id, { timeoutMs: options.timeoutMs });
+  if (!scrollback) return { ok: false, reason: 'empty_scrollback' };
+
+  if (options.clear !== false && typeof terminal.clear === 'function') {
+    try {
+      terminal.clear();
+    } catch (err) {
+      log.warn(`Terminal ${id}`, `Daemon scrollback repaint clear failed: ${err?.message || err}`);
+    }
+  }
+
+  resetTerminalWriteQueue(id);
+  queueTerminalWrite(id, terminal, trimScrollbackToMaxLines(scrollback));
+  scheduleTerminalAttachPaintRefresh(id, terminal, fitAddons.get(id));
+  return { ok: true };
+}
+
+function scheduleDaemonScrollbackRepaint(paneId, options = {}) {
+  const id = String(paneId || '').trim();
+  if (!id) return;
+  const delays = Array.isArray(options.delays)
+    ? options.delays
+    : [1200, 3200, 6500];
+  for (const delayMs of delays) {
+    const delay = Math.max(0, Number(delayMs) || 0);
+    setTimeout(() => {
+      void repaintTerminalFromDaemonScrollback(id, {
+        timeoutMs: options.timeoutMs,
+        clear: options.clear,
+      }).catch((err) => {
+        log.warn(`Terminal ${id}`, `Daemon scrollback repaint failed: ${err?.message || err}`);
+      });
+    }, delay);
+  }
+}
+
 async function readDaemonTerminalForPane(paneId, options = {}) {
   const id = String(paneId || '').trim();
   if (!id) return null;
@@ -2388,6 +2429,10 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       ptyExitListenerDisposers.set(String(paneId), disposeOnExit);
     }
 
+    if (recreatedForWorkingDir.recreated && options.repaintAfterRecreate !== false) {
+      scheduleDaemonScrollbackRepaint(paneId, { timeoutMs: options.snapshotTimeoutMs });
+    }
+
   } catch (err) {
     log.error(`Terminal ${paneId}`, 'Failed to create PTY', err);
     updatePaneStatus(paneId, 'Error');
@@ -2434,6 +2479,7 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
       scrollback: '',
       snapshotTimeoutMs: options.snapshotTimeoutMs,
       recreateDelayMs: options.recreateDelayMs,
+      repaintAfterRecreate: options.repaintAfterRecreate,
     });
     if (runtimeOverride.command && options.spawnAfterRecreate !== false) {
       await spawnAgent(paneId);
