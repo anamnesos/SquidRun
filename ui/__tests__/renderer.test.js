@@ -445,6 +445,74 @@ describe('renderer.js smoke tests', () => {
     });
   });
 
+  describe('pane expand button activation', () => {
+    it('delegates nested Squid Room team button clicks to the pane toggle', () => {
+      const button = {
+        dataset: { paneId: '2' },
+      };
+      const event = {
+        target: {
+          closest: jest.fn((selector) => (selector === '.expand-btn' ? button : null)),
+        },
+        preventDefault: jest.fn(),
+        stopPropagation: jest.fn(),
+      };
+      const toggleFn = jest.fn();
+
+      const handled = renderer.handlePaneExpandButtonClick(event, toggleFn);
+
+      expect(handled).toBe(true);
+      expect(event.preventDefault).toHaveBeenCalledTimes(1);
+      expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+      expect(toggleFn).toHaveBeenCalledWith('2');
+    });
+
+    it('ignores clicks outside expand buttons', () => {
+      const event = {
+        target: {
+          closest: jest.fn(() => null),
+        },
+        preventDefault: jest.fn(),
+        stopPropagation: jest.fn(),
+      };
+      const toggleFn = jest.fn();
+
+      const handled = renderer.handlePaneExpandButtonClick(event, toggleFn);
+
+      expect(handled).toBe(false);
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(event.stopPropagation).not.toHaveBeenCalled();
+      expect(toggleFn).not.toHaveBeenCalled();
+    });
+
+    it('emits pane visibility after delegated expand activation', () => {
+      const previousQuerySelector = global.document.querySelector;
+      const pane = {
+        classList: {
+          contains: jest.fn((className) => className === 'pane-expanded'),
+        },
+      };
+      global.document.querySelector = jest.fn(() => pane);
+      const button = { dataset: { paneId: '2' } };
+      const event = {
+        target: {
+          closest: jest.fn((selector) => (selector === '.expand-btn' ? button : null)),
+        },
+      };
+      const eventBus = { emit: jest.fn() };
+
+      const handled = renderer.emitPaneVisibilityChangedForExpandClick(event, eventBus);
+
+      expect(handled).toBe(true);
+      expect(eventBus.emit).toHaveBeenCalledWith('pane.visibility.changed', {
+        paneId: '2',
+        payload: { paneId: '2', visible: true },
+        source: 'renderer.js',
+      });
+      global.document.querySelector = previousQuerySelector;
+    });
+  });
+
   // Note: Callback wiring tests removed - Jest module caching makes them unreliable.
   // The fact that the module loads successfully (tested above) implicitly verifies
   // the wiring works, since missing callbacks would cause runtime errors.

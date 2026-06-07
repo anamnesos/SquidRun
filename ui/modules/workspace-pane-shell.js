@@ -279,13 +279,16 @@ function ensureSquidRoomTeamHeader(doc, teamContainer) {
   header.appendChild(title);
 
   const actions = createElement(doc, 'div', { className: 'pane-actions squid-room-team-actions' });
-  actions.appendChild(createPaneActionButton(
+  const expandButton = createPaneActionButton(
     doc,
     'expand-btn squid-room-team-expand-btn',
     SQUID_ROOM_TEAM_PANE_IDS[0],
     'Expand Builder + Oracle (ESC to collapse)',
     PANE_ICON_SVGS.expand
-  ));
+  );
+  expandButton.dataset.expanded = 'false';
+  expandButton.setAttribute?.('aria-expanded', 'false');
+  actions.appendChild(expandButton);
   header.appendChild(actions);
   return header;
 }

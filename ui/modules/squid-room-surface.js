@@ -181,6 +181,24 @@ function renderSquidRoomProjection(projection, elements) {
   return model;
 }
 
+function setSquidRoomTeamExpandButtonState(teamContainer, expanded) {
+  const label = expanded
+    ? 'Collapse Builder + Oracle (ESC to collapse)'
+    : 'Expand Builder + Oracle (ESC to collapse)';
+  teamContainer?.querySelectorAll?.('.squid-room-team-expand-btn').forEach((button) => {
+    if (button.dataset) {
+      button.dataset.tooltip = label;
+      button.dataset.expanded = String(expanded);
+    }
+    button.setAttribute?.('aria-label', label);
+    button.setAttribute?.('aria-expanded', String(expanded));
+    button.classList?.toggle?.('active', expanded);
+    if ('title' in button) {
+      button.title = label;
+    }
+  });
+}
+
 function toggleSquidRoomPaneExpansion({
   body = null,
   pane = null,
@@ -201,6 +219,7 @@ function toggleSquidRoomPaneExpansion({
     teamContainer.querySelectorAll?.('.pane').forEach((teamPane) => {
       teamPane.classList.toggle('pane-expanded', !expanded);
     });
+    setSquidRoomTeamExpandButtonState(teamContainer, !expanded);
     return { handled: true, expandedPaneId: !expanded ? pane.dataset?.paneId || expandedPaneId : null };
   }
 
@@ -300,5 +319,6 @@ module.exports = {
   refreshSquidRoomSurface,
   renderSquidRoomHtml,
   renderSquidRoomProjection,
+  setSquidRoomTeamExpandButtonState,
   toggleSquidRoomPaneExpansion,
 };

@@ -2051,6 +2051,36 @@ function toggleExpandPane(paneId) {
   // ResizeObserver in terminal.js handles resize automatically when element dimensions change
 }
 
+function getExpandButtonFromEvent(event) {
+  const target = event?.target;
+  if (!target || typeof target.closest !== 'function') return null;
+  return target.closest('.expand-btn');
+}
+
+function handlePaneExpandButtonClick(event, toggleFn = toggleExpandPane) {
+  const button = getExpandButtonFromEvent(event);
+  const paneId = button?.dataset?.paneId;
+  if (!paneId || typeof toggleFn !== 'function') return false;
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  toggleFn(paneId);
+  return true;
+}
+
+function emitPaneVisibilityChangedForExpandClick(event, eventBus = bus) {
+  const button = getExpandButtonFromEvent(event);
+  const paneId = button?.dataset?.paneId;
+  if (!paneId || typeof eventBus?.emit !== 'function') return false;
+  const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+  const visible = pane ? pane.classList.contains('pane-expanded') : true;
+  eventBus.emit('pane.visibility.changed', {
+    paneId,
+    payload: { paneId, visible },
+    source: 'renderer.js',
+  });
+  return true;
+}
+
 function findExpandedPaneId() {
   if (expandedPaneId) {
     const expandedPane = document.querySelector(`.pane[data-pane-id="${expandedPaneId}"]`);
@@ -2914,14 +2944,9 @@ function setupEventListeners() {
     });
   });
 
-  // Expand button for worker panes - toggles expanded view
-  document.querySelectorAll('.expand-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation(); // Don't trigger pane focus
-      const paneId = btn.dataset.paneId;
-      toggleExpandPane(paneId);
-    });
-  });
+  // Expand button for worker panes - delegated so rebuilt Squid Room headers still work.
+  document.addEventListener('click', handlePaneExpandButtonClick);
+  registerRendererLifecycleCleanup(() => document.removeEventListener('click', handlePaneExpandButtonClick));
 
   // Role bundle info button + modal
   document.querySelectorAll('.pane-role-info-btn').forEach(btn => {
@@ -3561,22 +3586,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // 4. pane.visibility.changed — pane expand/collapse
-  document.querySelectorAll('.expand-btn').forEach(btn => {
-    const onPaneVisibilityChanged = () => {
-      const paneId = btn.dataset.paneId;
-      if (paneId) {
-        const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-        const visible = pane ? pane.classList.contains('pane-expanded') : true;
-        bus.emit('pane.visibility.changed', {
-          paneId,
-          payload: { paneId, visible },
-          source: 'renderer.js',
-        });
-      }
-    };
-    btn.addEventListener('click', onPaneVisibilityChanged);
-    registerRendererLifecycleCleanup(() => btn.removeEventListener('click', onPaneVisibilityChanged));
-  });
+  const onPaneVisibilityChanged = (event) => {
+    emitPaneVisibilityChangedForExpandClick(event);
+  };
+  document.addEventListener('click', onPaneVisibilityChanged);
+  registerRendererLifecycleCleanup(() => document.removeEventListener('click', onPaneVisibilityChanged));
 
   // 5. ui.longtask.detected — PerformanceObserver for long tasks
   if (typeof PerformanceObserver !== 'undefined') {
@@ -3610,6 +3624,8 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     createCommandBarMessageRouter,
     createRafTextareaAutoGrow,
+    emitPaneVisibilityChangedForExpandClick,
+    handlePaneExpandButtonClick,
     handleGlobalEscapePressed,
     isSquidRoomWindowContext,
     isSquidRoomPaneWrongWorkingDir,
