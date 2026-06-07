@@ -357,6 +357,7 @@ describe('squid-room-surface', () => {
     expect(teamContainer.classList.contains('squid-room-team-collapsed')).toBe(true);
     expect(teamContainer.classList.contains('squid-room-team-expanded')).toBe(false);
     expect(paneLayout.classList.contains('has-squid-room-team-expanded')).toBe(false);
+    expect(paneLayout.classList.contains('has-squid-room-team-collapsed')).toBe(true);
     expect(builderPane.classList.contains('pane-expanded')).toBe(false);
     expect(oraclePane.classList.contains('pane-expanded')).toBe(false);
     expect(teamButton.dataset.tooltip).toBe('Expand Builder + Oracle');
@@ -376,6 +377,7 @@ describe('squid-room-surface', () => {
     expect(collapsed).toEqual({ handled: true, expandedPaneId: null });
     expect(teamContainer.classList.contains('squid-room-team-collapsed')).toBe(false);
     expect(paneLayout.classList.contains('has-squid-room-team-expanded')).toBe(false);
+    expect(paneLayout.classList.contains('has-squid-room-team-collapsed')).toBe(false);
     expect(builderPane.classList.contains('pane-expanded')).toBe(false);
     expect(oraclePane.classList.contains('pane-expanded')).toBe(false);
     expect(teamButton.dataset.tooltip).toBe('Collapse Builder + Oracle');

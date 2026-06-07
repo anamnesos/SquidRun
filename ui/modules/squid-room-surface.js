@@ -173,6 +173,7 @@ function toggleSquidRoomPaneExpansion({
     teamContainer.classList.remove('squid-room-team-expanded');
     teamContainer.classList.toggle('squid-room-team-collapsed', !nextExpanded);
     paneLayout.classList.remove('has-squid-room-team-expanded');
+    paneLayout.classList.toggle('has-squid-room-team-collapsed', !nextExpanded);
     teamContainer.querySelectorAll?.('.pane').forEach((teamPane) => {
       teamPane.classList.remove('pane-expanded');
     });
