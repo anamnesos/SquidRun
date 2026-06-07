@@ -343,6 +343,7 @@ function configureSquidRoomRuntimeOverrides(terminal, livePanes = SQUID_ROOM_TRU
       commandSourcePaneId: spec.commandSourcePaneId,
       workingDir: spec.workingDir,
       startupMessage: spec.startupMessage,
+      recreateOnWorkingDirMismatch: true,
     });
   }
 }

@@ -203,6 +203,9 @@ describe('terminal.js module', () => {
       startupBundlePath: '',
       startupBundleReady: false,
     });
+    terminal.clearPaneRuntimeOverride('trustquote-lead');
+    terminal.clearPaneRuntimeOverride('trustquote-invoice');
+    terminal.clearPaneRuntimeOverride('trustquote-schedule-dispatch');
   });
 
   afterEach(() => {
@@ -222,6 +225,9 @@ describe('terminal.js module', () => {
     }
     terminal._internals.deferredResizeTimers.clear();
     terminal._internals.deferredResizeFirstRequestedAt.clear();
+    terminal.clearPaneRuntimeOverride('trustquote-lead');
+    terminal.clearPaneRuntimeOverride('trustquote-invoice');
+    terminal.clearPaneRuntimeOverride('trustquote-schedule-dispatch');
     jest.useRealTimers();
   });
 
@@ -1421,6 +1427,40 @@ describe('terminal.js module', () => {
       jest.runOnlyPendingTimers();
       expect(terminalInstance.refresh).toHaveBeenCalledWith(0, 23);
       expect(terminalInstance.scrollToBottom).toHaveBeenCalled();
+    });
+
+    test('recreates runtime override panes when the daemon PTY cwd is wrong', async () => {
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+      terminal.setPaneRuntimeOverride('trustquote-lead', {
+        workingDir: 'D:\\projects\\TrustQuote',
+        command: 'codex --yolo',
+        recreateOnWorkingDirMismatch: true,
+      });
+      mockSquidRun.daemon.terminalSnapshot.mockResolvedValueOnce({
+        ok: true,
+        terminals: [
+          {
+            paneId: 'trustquote-lead',
+            alive: true,
+            cwd: 'D:\\projects\\squidrun\\ui',
+            scrollback: 'PS D:\\projects\\squidrun\\ui> ',
+          },
+        ],
+      });
+
+      await terminal.initTerminal('trustquote-lead', { snapshotTimeoutMs: 777, recreateDelayMs: 0 });
+
+      expect(mockSquidRun.pty.kill).toHaveBeenCalledWith('trustquote-lead');
+      expect(mockSquidRun.pty.create).toHaveBeenCalledWith('trustquote-lead', 'D:\\projects\\TrustQuote');
+      const terminalInstance = terminal.terminals.get('trustquote-lead');
+      const staleWrite = terminalInstance.write.mock.calls.find(
+        (args) => typeof args[0] === 'string' && args[0].includes('D:\\projects\\squidrun\\ui')
+      );
+      expect(staleWrite).toBeUndefined();
+      terminal.clearPaneRuntimeOverride('trustquote-lead');
     });
   });
 
