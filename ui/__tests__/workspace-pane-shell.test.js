@@ -226,6 +226,13 @@ describe('workspace pane shell', () => {
       'trustquote-schedule-dispatch',
     ]);
     expect(terminal.setPaneRuntimeOverride).toHaveBeenCalledTimes(3);
+    expect(terminal.setPaneRuntimeOverride).toHaveBeenCalledWith(
+      'trustquote-lead',
+      expect.objectContaining({
+        workingDir: 'D:\\projects\\TrustQuote',
+        recreateOnWorkingDirMismatch: true,
+      })
+    );
     expect(doc.querySelector('.pane[data-pane-id="1"]').hidden).toBe(true);
     expect(doc.querySelector('.pane[data-pane-id="2"]').hidden).toBe(false);
     expect(doc.querySelector('.pane[data-pane-id="3"]').hidden).toBe(false);

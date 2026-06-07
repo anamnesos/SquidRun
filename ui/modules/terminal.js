@@ -669,25 +669,88 @@ function trimScrollbackToMaxLines(scrollback, maxLines = XTERM_SCROLLBACK_LINES)
 }
 
 async function readDaemonScrollbackForPane(paneId, options = {}) {
+  const terminalEntry = await readDaemonTerminalForPane(paneId, options);
+  return typeof terminalEntry?.scrollback === 'string' ? terminalEntry.scrollback : '';
+}
+
+async function readDaemonTerminalForPane(paneId, options = {}) {
   const id = String(paneId || '').trim();
-  if (!id) return '';
+  if (!id) return null;
   const snapshotFn = window?.squidrun?.daemon?.terminalSnapshot
     || window?.squidrunAPI?.daemon?.terminalSnapshot;
-  if (typeof snapshotFn !== 'function') return '';
+  if (typeof snapshotFn !== 'function') return null;
 
   const timeoutMs = Number.isFinite(Number(options.timeoutMs))
     ? Math.max(250, Number(options.timeoutMs))
     : 1500;
   try {
     const snapshot = await snapshotFn({ timeoutMs });
-    const terminalEntry = Array.isArray(snapshot?.terminals)
+    return Array.isArray(snapshot?.terminals)
       ? snapshot.terminals.find((entry) => String(entry?.paneId || '') === id)
       : null;
-    return typeof terminalEntry?.scrollback === 'string' ? terminalEntry.scrollback : '';
   } catch (err) {
-    log.warn(`Terminal ${id}`, `Daemon scrollback restore failed: ${err?.message || err}`);
-    return '';
+    log.warn(`Terminal ${id}`, `Daemon terminal snapshot failed: ${err?.message || err}`);
+    return null;
   }
+}
+
+function normalizeWorkingDirForCompare(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+$/g, '')
+    .toLowerCase();
+}
+
+function getDaemonTerminalWorkingDir(entry = {}) {
+  return entry?.cwd || entry?.workingDir || entry?.currentWorkingDirectory || '';
+}
+
+function isDaemonTerminalWorkingDirMismatch(entry = {}, expectedWorkingDir = '') {
+  if (!entry || entry.alive !== true) return false;
+  const actual = normalizeWorkingDirForCompare(getDaemonTerminalWorkingDir(entry));
+  const expected = normalizeWorkingDirForCompare(expectedWorkingDir);
+  return Boolean(actual && expected && actual !== expected);
+}
+
+async function recreatePaneOnWorkingDirMismatch(paneId, workingDir, runtimeOverride = {}, options = {}) {
+  if (runtimeOverride.recreateOnWorkingDirMismatch !== true) {
+    return { recreated: false, skipped: true, reason: 'not_enabled' };
+  }
+  const id = String(paneId || '').trim();
+  const expectedWorkingDir = String(workingDir || '').trim();
+  if (!id || !expectedWorkingDir) {
+    return { recreated: false, skipped: true, reason: 'missing_pane_or_working_dir' };
+  }
+
+  const existing = await readDaemonTerminalForPane(id, { timeoutMs: options.snapshotTimeoutMs });
+  if (!isDaemonTerminalWorkingDirMismatch(existing, expectedWorkingDir)) {
+    return { recreated: false, skipped: true, reason: 'working_dir_ok' };
+  }
+
+  if (!window?.squidrun?.pty?.kill) {
+    log.warn(`Terminal ${id}`, 'Working directory mismatch detected but PTY kill is unavailable');
+    return { recreated: false, skipped: true, reason: 'pty_kill_unavailable' };
+  }
+
+  const actualWorkingDir = getDaemonTerminalWorkingDir(existing);
+  log.warn(
+    `Terminal ${id}`,
+    `Recreating PTY for working directory mismatch: ${actualWorkingDir || 'unknown cwd'} -> ${expectedWorkingDir}`
+  );
+  try {
+    await window.squidrun.pty.kill(id);
+  } catch (err) {
+    log.warn(`Terminal ${id}`, `Failed to kill mismatched PTY before recreate: ${err?.message || err}`);
+  }
+  resetTerminalWriteQueue(id);
+  const recreateDelayMs = Number.isFinite(Number(options.recreateDelayMs))
+    ? Math.max(0, Number(options.recreateDelayMs))
+    : 250;
+  if (recreateDelayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, recreateDelayMs));
+  }
+  return { recreated: true, actualWorkingDir, expectedWorkingDir };
 }
 
 // Track when user focuses any UI input (not xterm textareas).
@@ -2262,6 +2325,10 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
   scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon);
 
   try {
+    const recreatedForWorkingDir = await recreatePaneOnWorkingDirMismatch(paneId, workingDir, runtimeOverride, {
+      snapshotTimeoutMs: options.snapshotTimeoutMs,
+      recreateDelayMs: options.recreateDelayMs,
+    });
     await window.squidrun.pty.create(paneId, workingDir);
     updatePaneStatus(paneId, 'Connected');
 
@@ -2276,7 +2343,9 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 
     const restoredScrollback = typeof options.scrollback === 'string'
       ? options.scrollback
-      : await readDaemonScrollbackForPane(paneId, { timeoutMs: options.snapshotTimeoutMs });
+      : (recreatedForWorkingDir.recreated
+        ? ''
+        : await readDaemonScrollbackForPane(paneId, { timeoutMs: options.snapshotTimeoutMs }));
     if (restoredScrollback && restoredScrollback.length > 0) {
       queueTerminalWrite(paneId, terminal, trimScrollbackToMaxLines(restoredScrollback));
       scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon);
