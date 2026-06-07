@@ -65,7 +65,7 @@ maybeDescribe('TrustQuote arm registry seed', () => {
 
     expect(manifest).toEqual(expect.objectContaining({
       appRoomId: 'trustquote',
-      sessionId: 'app-session-777:trustquote',
+      sessionId: 'app-room:trustquote',
       mainSessionId: 'app-session-777',
       leadRole: 'trustquote-lead',
       leadPaneId: 'trustquote-lead',
@@ -81,6 +81,8 @@ maybeDescribe('TrustQuote arm registry seed', () => {
       'trustquote-money-documents',
     ]);
     expect(manifest.metadata).toEqual(expect.objectContaining({
+      manifestScope: 'app_room',
+      readinessSessionId: 'app-session-777:trustquote',
       sourceRef: 'docs/trustquote-arm-set-proposal.md',
       readinessTruth: 'missing_until_role_checkins_exist',
       buildModeArms: [
@@ -103,7 +105,8 @@ maybeDescribe('TrustQuote arm registry seed', () => {
     expect(result.status).toBe('seeded_and_evaluated');
     expect(result.registry).toEqual(expect.objectContaining({
       appRoomId: 'trustquote',
-      sessionId: 'app-session-999:trustquote',
+      sessionId: 'app-room:trustquote',
+      readinessSessionId: 'app-session-999:trustquote',
       mainSessionId: 'app-session-999',
       desiredCount: 3,
       readyCount: 0,
@@ -176,7 +179,8 @@ maybeDescribe('TrustQuote arm registry seed', () => {
       schema: 'squidrun.trustquote_arm_registry_seed.v0',
     }));
     expect(result.registry).toEqual(expect.objectContaining({
-      sessionId: 'app-session-cli:trustquote',
+      sessionId: 'app-room:trustquote',
+      readinessSessionId: 'app-session-cli:trustquote',
       desiredCount: 3,
       readyCount: 0,
       missingCount: 3,

@@ -4,8 +4,12 @@
 const {
   TRUSTQUOTE_ARM_REGISTRY_SEED_SCHEMA,
   seedTrustQuoteArmRegistry,
+  resolveTrustQuoteManifestSessionId,
 } = require('../modules/main/trustquote-arm-registry-seed');
-const { closeArmRegistryStores } = require('../modules/main/arm-registry');
+const {
+  closeArmRegistryStores,
+  migrateArmRegistryManifestScope,
+} = require('../modules/main/arm-registry');
 const { closeArmApplyQueueStores } = require('../modules/main/arm-apply-queue');
 const log = require('../modules/logger');
 
@@ -45,7 +49,17 @@ function parseArgs(argv = []) {
       options.evaluate = false;
       continue;
     }
-    if (['db', 'session', 'main-session', 'session-number', 'project-root', 'app-status', 'now-ms'].includes(key)) {
+    if ([
+      'db',
+      'session',
+      'main-session',
+      'session-number',
+      'project-root',
+      'app-status',
+      'now-ms',
+      'from-session',
+      'to-session',
+    ].includes(key)) {
       const next = argv[index + 1];
       if (!next || String(next).startsWith('--')) {
         throw new Error(`--${key} requires a value`);
@@ -70,7 +84,8 @@ function usage() {
     schema: TRUSTQUOTE_ARM_REGISTRY_SEED_SCHEMA,
     usage: [
       'node ui/scripts/hm-seed-trustquote-arm-registry.js seed --json',
-      'node ui/scripts/hm-seed-trustquote-arm-registry.js seed --session app-session-406:trustquote --db <path> --json',
+      'node ui/scripts/hm-seed-trustquote-arm-registry.js seed --session app-session-407:trustquote --db <path> --json',
+      'node ui/scripts/hm-seed-trustquote-arm-registry.js migrate --from-session app-session-406:trustquote --json',
       'node ui/scripts/hm-seed-trustquote-arm-registry.js seed --dry-run --json',
     ],
     writes: ['arm_registries', 'arm_registry_arms'],
@@ -87,8 +102,17 @@ function buildSeedOptions(options = {}) {
     ...(options['project-root'] ? { projectRoot: options['project-root'] } : {}),
     ...(options['app-status'] ? { appStatusPath: options['app-status'] } : {}),
     ...(options['now-ms'] ? { nowMs: Number(options['now-ms']) } : {}),
+    ...(options['from-session'] ? { fromSessionId: options['from-session'] } : {}),
     dryRun: options.dryRun === true,
     evaluate: options.evaluate !== false,
+  };
+}
+
+function buildMigrationOptions(options = {}) {
+  return {
+    appRoomId: 'trustquote',
+    ...(options['from-session'] ? { fromSessionId: options['from-session'] } : {}),
+    toSessionId: options['to-session'] || resolveTrustQuoteManifestSessionId(),
   };
 }
 
@@ -103,7 +127,10 @@ function printText(result) {
   }
   const registry = result.registry || result.manifest || {};
   console.log(`TrustQuote arm seed: ${result.status}`);
-  console.log(`Room/session: ${registry.appRoomId || 'trustquote'} / ${registry.sessionId || 'unknown'}`);
+  console.log(`Room/manifest session: ${registry.appRoomId || 'trustquote'} / ${registry.sessionId || 'unknown'}`);
+  if (registry.metadata?.readinessSessionId || result.evaluation?.registry?.readinessSessionId) {
+    console.log(`Readiness session: ${registry.metadata?.readinessSessionId || result.evaluation.registry.readinessSessionId}`);
+  }
   console.log(`Desired/ready/missing: ${registry.desiredCount || 3}/${registry.readyCount || 0}/${registry.missingCount || 3}`);
   console.log('Desired arms: Lead, Work + Schedule, Money + Documents');
   console.log('Dev/QA remains build-mode metadata only; no check-ins, apply requests, watchdogs, or dispatches created.');
@@ -115,7 +142,7 @@ function main(argv = process.argv.slice(2)) {
     printJson(usage());
     return 0;
   }
-  if (options.command !== 'seed') {
+  if (!['seed', 'migrate'].includes(options.command)) {
     printJson({ ok: false, reason: 'unknown_command', command: options.command, ...usage() });
     return 1;
   }
@@ -133,7 +160,17 @@ function main(argv = process.argv.slice(2)) {
       console.info = () => {};
       console.warn = () => {};
     }
-    result = seedTrustQuoteArmRegistry(buildSeedOptions(options));
+    if (options.command === 'migrate') {
+      result = migrateArmRegistryManifestScope(buildMigrationOptions(options), {
+        ...(options.db ? { dbPath: options.db } : {}),
+        ...(options['now-ms'] ? { nowMs: Number(options['now-ms']) } : {}),
+        role: 'builder',
+        paneId: 'builder',
+        source: 'hm-seed-trustquote-arm-registry',
+      });
+    } else {
+      result = seedTrustQuoteArmRegistry(buildSeedOptions(options));
+    }
   } finally {
     console.log = originalConsole.log;
     console.info = originalConsole.info;

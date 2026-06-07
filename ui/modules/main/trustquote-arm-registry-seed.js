@@ -5,6 +5,8 @@ const path = require('path');
 const {
   upsertArmRegistryManifest,
   evaluateArmRegistryReadiness,
+  migrateArmRegistryManifestScope,
+  buildCanonicalAppRoomSessionId,
 } = require('./arm-registry');
 
 const TRUSTQUOTE_ARM_REGISTRY_SEED_SCHEMA = 'squidrun.trustquote_arm_registry_seed.v0';
@@ -66,6 +68,10 @@ function resolveTrustQuoteSessionId(options = {}) {
     return /:trustquote$/i.test(explicitSession) ? explicitSession : `${explicitSession}:trustquote`;
   }
   return `${resolveMainSessionId(options)}:trustquote`;
+}
+
+function resolveTrustQuoteManifestSessionId() {
+  return buildCanonicalAppRoomSessionId(TRUSTQUOTE_APP_ROOM_ID);
 }
 
 function trustQuoteDayToDayArms() {
@@ -175,7 +181,8 @@ function trustQuoteBuildModeArms() {
 function buildTrustQuoteArmRegistryManifest(options = {}) {
   const opts = asObject(options);
   const mainSessionId = resolveMainSessionId(opts);
-  const sessionId = resolveTrustQuoteSessionId({ ...opts, mainSessionId });
+  const sessionId = resolveTrustQuoteManifestSessionId(opts);
+  const readinessSessionId = resolveTrustQuoteSessionId({ ...opts, mainSessionId });
   const nowMs = toMs(opts.nowMs, Date.now());
 
   return {
@@ -191,6 +198,8 @@ function buildTrustQuoteArmRegistryManifest(options = {}) {
       sourceRef: TRUSTQUOTE_PROPOSAL_SOURCE_REF,
       seededBy: 'trustquote-arm-registry-seed',
       seededAtMs: nowMs,
+      manifestScope: 'app_room',
+      readinessSessionId,
       desiredMode: 'day-to-day',
       readinessTruth: 'missing_until_role_checkins_exist',
       buildModeArms: trustQuoteBuildModeArms(),
@@ -203,6 +212,7 @@ function seedTrustQuoteArmRegistry(options = {}) {
   const opts = asObject(options);
   const nowMs = toMs(opts.nowMs, Date.now());
   const manifest = buildTrustQuoteArmRegistryManifest({ ...opts, nowMs });
+  const readinessSessionId = manifest.metadata.readinessSessionId;
 
   if (opts.dryRun === true) {
     return {
@@ -220,6 +230,25 @@ function seedTrustQuoteArmRegistry(options = {}) {
     };
   }
 
+  const migration = migrateArmRegistryManifestScope({
+    appRoomId: TRUSTQUOTE_APP_ROOM_ID,
+    toSessionId: manifest.sessionId,
+    ...(opts.fromSessionId || opts.from_session_id ? { fromSessionId: opts.fromSessionId || opts.from_session_id } : {}),
+  }, {
+    dbPath: opts.dbPath,
+    nowMs,
+    role: opts.role || 'builder',
+    paneId: opts.paneId || opts.pane_id || 'builder',
+    source: 'trustquote-arm-registry-seed',
+  });
+  if (!migration.ok) {
+    return {
+      ...migration,
+      schema: TRUSTQUOTE_ARM_REGISTRY_SEED_SCHEMA,
+      manifest,
+    };
+  }
+
   const seedResult = upsertArmRegistryManifest(manifest, { dbPath: opts.dbPath, nowMs });
   if (!seedResult.ok) {
     return {
@@ -233,7 +262,7 @@ function seedTrustQuoteArmRegistry(options = {}) {
     ? null
     : evaluateArmRegistryReadiness({
       appRoomId: TRUSTQUOTE_APP_ROOM_ID,
-      sessionId: manifest.sessionId,
+      sessionId: readinessSessionId,
     }, { dbPath: opts.dbPath, nowMs });
 
   return {
@@ -241,6 +270,7 @@ function seedTrustQuoteArmRegistry(options = {}) {
     status: evaluation?.ok ? 'seeded_and_evaluated' : seedResult.status,
     schema: TRUSTQUOTE_ARM_REGISTRY_SEED_SCHEMA,
     manifest,
+    migration,
     seed: seedResult,
     evaluation,
     registry: evaluation?.registry || seedResult.registry || null,
@@ -258,6 +288,7 @@ module.exports = {
   TRUSTQUOTE_ARM_REGISTRY_SEED_SCHEMA,
   TRUSTQUOTE_PROPOSAL_SOURCE_REF,
   buildTrustQuoteArmRegistryManifest,
+  resolveTrustQuoteManifestSessionId,
   resolveMainSessionId,
   resolveTrustQuoteSessionId,
   seedTrustQuoteArmRegistry,

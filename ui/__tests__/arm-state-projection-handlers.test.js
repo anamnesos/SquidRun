@@ -215,7 +215,7 @@ maybeDescribe('arm state projection IPC handler', () => {
     expect(fs.existsSync(`${alternateDbPath}-shm`)).toBe(false);
   });
 
-  test('reports missing registries without seeding them', () => {
+  test('resolves canonical manifest across sessions without seeding a new one', () => {
     const seeded = seedTrustQuoteArmRegistry({
       dbPath,
       sessionId: 'app-session-handler-existing:trustquote',
@@ -229,13 +229,19 @@ maybeDescribe('arm state projection IPC handler', () => {
     }, { dbPath });
 
     expect(response).toEqual(expect.objectContaining({
-      ok: false,
-      status: 'not_found',
-      reason: 'arm_registry_not_found',
+      ok: true,
+      status: 'missing',
       projectionOnly: true,
       readOnly: true,
       dispatchEnabled: false,
       executorEnabled: false,
+    }));
+    expect(response.registry).toEqual(expect.objectContaining({
+      sessionId: 'app-room:trustquote',
+      readinessSessionId: 'app-session-missing:trustquote',
+      desiredCount: 3,
+      readyCount: 0,
+      missingCount: 3,
     }));
     expect(response.sideEffects).toEqual({
       writesPerformed: 0,
