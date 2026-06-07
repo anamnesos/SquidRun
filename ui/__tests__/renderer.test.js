@@ -513,6 +513,53 @@ describe('renderer.js smoke tests', () => {
     });
   });
 
+  describe('Squid Room app section toggle', () => {
+    function makeSection(open) {
+      const labelEl = { textContent: open ? 'Collapse' : 'Expand' };
+      const button = {
+        setAttribute: jest.fn(),
+        dataset: {},
+        querySelector: jest.fn((sel) => (sel === '.squid-room-app-toggle-label' ? labelEl : null)),
+      };
+      const details = {
+        open,
+        querySelector: jest.fn((sel) => (sel === '.squid-room-app-toggle-btn' ? button : null)),
+      };
+      button.closest = jest.fn((sel) => (sel === 'details.squid-room-app' ? details : null));
+      return { details, button, labelEl };
+    }
+
+    it('toggles the section open state and syncs the labeled button', () => {
+      const { details, button, labelEl } = makeSection(true);
+      const event = {
+        target: { closest: jest.fn((sel) => (sel === '.squid-room-app-toggle-btn' ? button : null)) },
+        preventDefault: jest.fn(),
+        stopPropagation: jest.fn(),
+      };
+
+      const handled = renderer.handleSquidRoomAppToggleClick(event);
+
+      expect(handled).toBe(true);
+      expect(event.preventDefault).toHaveBeenCalledTimes(1);
+      expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+      expect(details.open).toBe(false);
+      expect(labelEl.textContent).toBe('Expand');
+      expect(button.setAttribute).toHaveBeenCalledWith('aria-expanded', 'false');
+      expect(button.dataset.expanded).toBe('false');
+    });
+
+    it('ignores clicks outside the section toggle button', () => {
+      const event = {
+        target: { closest: jest.fn(() => null) },
+        preventDefault: jest.fn(),
+        stopPropagation: jest.fn(),
+      };
+
+      expect(renderer.handleSquidRoomAppToggleClick(event)).toBe(false);
+      expect(event.preventDefault).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Squid Room inline projection fallback', () => {
     it('renders Arms count from projection without a bottom arm-list render', () => {
       const elements = {
