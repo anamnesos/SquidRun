@@ -193,7 +193,15 @@ describe('daemon-handlers.js module', () => {
       });
 
       expect(setReconnected).toHaveBeenCalledWith(true);
-      expect(reattachTerminal).toHaveBeenCalledWith('1', 'Architect ready', { createdAt: 123 });
+      expect(reattachTerminal).toHaveBeenCalledWith('1', 'Architect ready', expect.objectContaining({
+        createdAt: 123,
+        cwd: null,
+        daemonTerminal: expect.objectContaining({
+          paneId: '1',
+          alive: true,
+          scrollback: 'Architect ready',
+        }),
+      }));
       expect(terminal.initTerminal).toHaveBeenCalledWith('2');
       expect(terminal.initTerminal).toHaveBeenCalledWith('3');
       expect(onTerminalsReady).toHaveBeenCalledWith(false);
