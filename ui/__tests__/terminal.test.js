@@ -1451,7 +1451,11 @@ describe('terminal.js module', () => {
         ],
       });
 
-      await terminal.initTerminal('trustquote-lead', { snapshotTimeoutMs: 777, recreateDelayMs: 0 });
+      await terminal.initTerminal('trustquote-lead', {
+        snapshotTimeoutMs: 777,
+        recreateDelayMs: 0,
+        repaintAfterRecreate: false,
+      });
 
       expect(mockSquidRun.pty.kill).toHaveBeenCalledWith('trustquote-lead');
       expect(mockSquidRun.pty.create).toHaveBeenCalledWith('trustquote-lead', 'D:\\projects\\TrustQuote');
@@ -1547,6 +1551,7 @@ describe('terminal.js module', () => {
         },
         recreateDelayMs: 0,
         spawnAfterRecreate: false,
+        repaintAfterRecreate: false,
       });
       await reattachPromise;
 
