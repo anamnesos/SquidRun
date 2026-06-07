@@ -18,14 +18,6 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function titleCase(value) {
-  return toText(value, 'unknown')
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1).toLowerCase())
-    .join(' ');
-}
-
 function getMainSessionId(windowContext = {}) {
   const sessionScopeId = toText(windowContext.sessionScopeId, '');
   if (!sessionScopeId) return '';
@@ -83,16 +75,18 @@ function buildSquidRoomModel(rawProjection = {}) {
       ready: readyCount,
       missing: missingCount,
     },
-    arms: Array.isArray(projection.arms) ? projection.arms.map((arm) => ({
-      armKey: toText(arm.armKey, 'unknown'),
-      displayName: toText(arm.displayName, toText(arm.armKey, 'Unknown arm')),
-      role: toText(arm.role, 'unknown'),
-      paneId: toText(arm.paneId, 'unknown'),
-      status: toText(arm.status, 'unknown'),
-      latestAcceptedCheckin: arm.latestAcceptedCheckin || null,
-      watchdogSummary: arm.watchdogSummary || {},
-      applyQueueSummary: arm.applyQueueSummary || {},
-    })) : [],
+    arms: Array.isArray(projection.arms) ? projection.arms
+      .filter((arm) => arm?.required !== false && toText(arm?.status, 'unknown') !== 'disabled')
+      .map((arm) => ({
+        armKey: toText(arm.armKey, 'unknown'),
+        displayName: toText(arm.displayName, toText(arm.armKey, 'Unknown arm')),
+        role: toText(arm.role, 'unknown'),
+        paneId: toText(arm.paneId, 'unknown'),
+        status: toText(arm.status, 'unknown'),
+        latestAcceptedCheckin: arm.latestAcceptedCheckin || null,
+        watchdogSummary: arm.watchdogSummary || {},
+        applyQueueSummary: arm.applyQueueSummary || {},
+      })) : [],
     watchdogs: {
       open: Number(watchdogSummary.open || 0),
       overdue: Number(watchdogSummary.overdue || 0),
@@ -126,7 +120,6 @@ function renderArmRow(arm = {}) {
     <div class="squid-room-arm" data-arm-key="${escapeHtml(arm.armKey)}" data-arm-status="${escapeHtml(arm.status)}">
       <div class="squid-room-arm-main">
         <span class="squid-room-arm-name">${escapeHtml(arm.displayName)}</span>
-        <span class="squid-room-arm-status">${escapeHtml(titleCase(arm.status))}</span>
       </div>
       <div class="squid-room-arm-meta">
         <span>${escapeHtml(arm.role)}</span>
@@ -149,7 +142,7 @@ function renderArmRow(arm = {}) {
 function renderSquidRoomHtml(model = {}) {
   const arms = Array.isArray(model.arms) && model.arms.length > 0
     ? model.arms.map(renderArmRow).join('')
-    : '<div class="squid-room-empty">No desired arms</div>';
+    : '<div class="squid-room-empty">No arms listed</div>';
   return `
     <div class="squid-room-summary-row">
       <span>Watchdogs open ${Number(model.watchdogs?.open || 0)}</span>
@@ -173,13 +166,9 @@ function getSurfaceElements(doc) {
 
 function renderSquidRoomProjection(projection, elements) {
   const model = buildSquidRoomModel(projection);
-  if (elements.status) elements.status.textContent = model.status;
+  if (elements.status) elements.status.textContent = model.ok ? '' : 'Projection unavailable';
   if (elements.counts) {
-    elements.counts.innerHTML = [
-      `<span>Desired ${model.counts.desired}</span>`,
-      `<span>Ready ${model.counts.ready}</span>`,
-      `<span>Missing ${model.counts.missing}</span>`,
-    ].join('');
+    elements.counts.innerHTML = `<span>Arms count ${model.counts.desired}</span>`;
   }
   if (elements.arms) elements.arms.innerHTML = renderSquidRoomHtml(model);
   if (elements.root) {
@@ -190,6 +179,46 @@ function renderSquidRoomProjection(projection, elements) {
     elements.root.dataset.executorEnabled = String(model.projectionFlags.executorEnabled);
   }
   return model;
+}
+
+function toggleSquidRoomPaneExpansion({
+  body = null,
+  pane = null,
+  paneLayout = null,
+  expandedPaneId = null,
+} = {}) {
+  if (!body?.classList?.contains?.('squid-room-workspace') || !pane || !paneLayout) {
+    return { handled: false, expandedPaneId };
+  }
+
+  const teamContainer = pane.closest?.('.squid-room-team-container');
+  const livePaneContainer = pane.closest?.('.squid-room-live-panes');
+
+  if (teamContainer) {
+    const expanded = teamContainer.classList.contains('squid-room-team-expanded');
+    teamContainer.classList.toggle('squid-room-team-expanded', !expanded);
+    paneLayout.classList.toggle('has-squid-room-team-expanded', !expanded);
+    teamContainer.querySelectorAll?.('.pane').forEach((teamPane) => {
+      teamPane.classList.toggle('pane-expanded', !expanded);
+    });
+    return { handled: true, expandedPaneId: !expanded ? pane.dataset?.paneId || expandedPaneId : null };
+  }
+
+  if (livePaneContainer) {
+    if (pane.classList.contains('pane-expanded')) {
+      pane.classList.remove('pane-expanded');
+      livePaneContainer.classList.remove('has-expanded-pane');
+      return { handled: true, expandedPaneId: null };
+    }
+    livePaneContainer.querySelectorAll?.('.pane-expanded').forEach((expandedPane) => {
+      expandedPane.classList.remove('pane-expanded');
+    });
+    pane.classList.add('pane-expanded');
+    livePaneContainer.classList.add('has-expanded-pane');
+    return { handled: true, expandedPaneId: pane.dataset?.paneId || expandedPaneId };
+  }
+
+  return { handled: false, expandedPaneId };
 }
 
 async function refreshSquidRoomSurface(options = {}) {
@@ -271,4 +300,5 @@ module.exports = {
   refreshSquidRoomSurface,
   renderSquidRoomHtml,
   renderSquidRoomProjection,
+  toggleSquidRoomPaneExpansion,
 };

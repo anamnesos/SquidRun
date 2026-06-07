@@ -1438,6 +1438,68 @@ describe('SquidRunApp', () => {
       expect(mainWindow.webContents.send).not.toHaveBeenCalled();
     });
 
+    it('clears stale pane-host degraded state when visible fallback reaches a live dynamic PTY', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      app.ctx.daemonClient = {
+        connected: true,
+        getTerminals: jest.fn(() => [
+          {
+            paneId: 'trustquote-invoice',
+            alive: true,
+            pid: 610968,
+            mode: 'pty',
+            scrollback: 'PS D:\\projects\\TrustQuote> ',
+          },
+        ]),
+        getTerminal: jest.fn((paneId) => (
+          paneId === 'trustquote-invoice'
+            ? {
+              paneId: 'trustquote-invoice',
+              alive: true,
+              pid: 610968,
+              mode: 'pty',
+              scrollback: 'PS D:\\projects\\TrustQuote> ',
+            }
+            : null
+        )),
+      };
+      const mainWindow = {
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          send: jest.fn(),
+        },
+      };
+      app.registerAppWindow('main', mainWindow);
+      app.paneHostMissingPanes = new Set(['trustquote-invoice']);
+      app.paneHostLastErrorReason = 'inject_hidden_not_ready';
+      app.paneHostLastErrorAt = '2026-06-07T09:39:10.096Z';
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => null);
+
+      const routed = app.routeInjectMessage({
+        panes: ['trustquote-invoice'],
+        message: 'status',
+        meta: {
+          preferHiddenPaneHost: true,
+        },
+      });
+
+      expect(routed).toBe(true);
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+        'inject-message',
+        expect.objectContaining({
+          panes: ['trustquote-invoice'],
+          meta: expect.objectContaining({
+            deliveryPath: 'visible_fallback',
+          }),
+        })
+      );
+      expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
+      expect(app.paneHostLastErrorReason).toBeNull();
+      expect(app.paneHostReady.has('trustquote-invoice')).toBe(true);
+    });
+
     it('routes pane-host inject IPC through the shared inject router and chunks long payloads', async () => {
       const { ipcMain } = require('electron');
       const watcher = require('../modules/watcher');
@@ -1665,7 +1727,7 @@ describe('SquidRunApp', () => {
       );
     });
 
-    it('opens Squid Room as display-only without TrustQuote preparation or startup bundle materialization', async () => {
+    it('opens Squid Room without TrustQuote preparation or startup bundle materialization', async () => {
       const prepareTrustQuote = jest.spyOn(app, 'prepareTrustQuoteWorkspaceOpen');
       const writeBundle = jest.spyOn(app, 'writeProfileStartupBundle');
 
@@ -2234,6 +2296,151 @@ describe('SquidRunApp', () => {
       expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
       expect(app.paneHostLastErrorReason).toBeNull();
       expect(app.paneHostLastErrorAt).toBeNull();
+    });
+
+    it('clears stale dynamic pane-host degradation from a live daemon terminal', () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      app.paneHostMissingPanes = new Set(['trustquote-invoice']);
+      app.paneHostLastErrorReason = 'inject_hidden_not_ready';
+      app.paneHostLastErrorAt = '2026-06-07T09:39:10.096Z';
+
+      const result = app.reconcilePaneHostStatusFromDaemonTerminals([
+        {
+          paneId: 'trustquote-invoice',
+          alive: true,
+          pid: 610968,
+          mode: 'pty',
+          cwd: 'D:\\projects\\TrustQuote',
+          scrollback: 'PS D:\\projects\\TrustQuote> ',
+        },
+      ], { source: 'test_live_terminal' });
+
+      expect(result.recovered).toEqual(['trustquote-invoice']);
+      expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
+      expect(app.paneHostReady.has('trustquote-invoice')).toBe(true);
+      expect(app.paneHostLastErrorReason).toBeNull();
+      expect(app.paneHostLastErrorAt).toBeNull();
+      expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            paneHost: expect.objectContaining({
+              degraded: false,
+              missingPanes: [],
+              readyPanes: expect.arrayContaining(['trustquote-invoice']),
+            }),
+          }),
+        })
+      );
+    });
+
+    it('derives Squid Room arm readiness from live daemon PTYs when writing pane-host status', () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      app.paneHostReady = new Set(['1', '2', '3']);
+      app.paneHostMissingPanes = new Set(['trustquote-invoice', 'trustquote-schedule-dispatch']);
+      app.paneHostLastErrorReason = 'inject_hidden_not_ready';
+      app.paneHostLastErrorAt = '2026-06-07T09:51:25.850Z';
+      app.ctx.daemonClient = {
+        getTerminals: jest.fn(() => [
+          {
+            paneId: 'trustquote-invoice',
+            alive: true,
+            pid: 610968,
+            mode: 'pty',
+            cwd: 'D:\\projects\\TrustQuote',
+            scrollback: 'PS D:\\projects\\TrustQuote> ',
+          },
+          {
+            paneId: 'trustquote-schedule-dispatch',
+            alive: true,
+            pid: 646232,
+            mode: 'pty',
+            cwd: 'D:\\projects\\TrustQuote',
+            scrollback: 'PS D:\\projects\\TrustQuote> ',
+          },
+          {
+            paneId: 'trustquote-money-documents',
+            alive: true,
+            pid: 111111,
+            mode: 'pty',
+            cwd: 'D:\\projects\\TrustQuote',
+            scrollback: 'PS D:\\projects\\TrustQuote> ',
+          },
+          {
+            paneId: 'trustquote-work-schedule',
+            alive: true,
+            pid: 222222,
+            mode: 'pty',
+            cwd: 'D:\\projects\\TrustQuote',
+            scrollback: 'PS D:\\projects\\TrustQuote> ',
+          },
+        ]),
+      };
+
+      app.updatePaneHostStatus();
+
+      const paneHostPatch = mockManagers.settings.writeAppStatus.mock.calls.at(-1)[0].statusPatch.paneHost;
+      expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            paneHost: expect.objectContaining({
+              degraded: false,
+              missingPanes: [],
+              lastErrorReason: null,
+              lastErrorAt: null,
+            }),
+          }),
+        })
+      );
+      expect(paneHostPatch.readyPanes).toEqual(expect.arrayContaining([
+        '1',
+        '2',
+        '3',
+        'trustquote-invoice',
+        'trustquote-schedule-dispatch',
+      ]));
+      expect(paneHostPatch.readyPanes).toEqual(expect.not.arrayContaining([
+        'trustquote-money-documents',
+        'trustquote-work-schedule',
+      ]));
+    });
+
+    it('does not re-degrade a live Squid Room arm from the hidden inject readiness gate', () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      app.ctx.daemonClient = {
+        getTerminals: jest.fn(() => [
+          {
+            paneId: 'trustquote-invoice',
+            alive: true,
+            pid: 610968,
+            mode: 'pty',
+            cwd: 'D:\\projects\\TrustQuote',
+            scrollback: 'PS D:\\projects\\TrustQuote> ',
+          },
+        ]),
+        getTerminal: jest.fn(() => null),
+      };
+
+      app.reportPaneHostDegraded({
+        paneId: 'trustquote-invoice',
+        reason: 'inject_hidden_not_ready',
+        message: 'Hidden pane host unavailable/not ready for pane trustquote-invoice.',
+      });
+
+      expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
+      expect(app.paneHostReady.has('trustquote-invoice')).toBe(true);
+      expect(app.paneHostLastErrorReason).toBeNull();
+      expect(app.paneHostLastErrorAt).toBeNull();
+      expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            paneHost: expect.objectContaining({
+              degraded: false,
+              missingPanes: [],
+              readyPanes: expect.arrayContaining(['trustquote-invoice']),
+            }),
+          }),
+        })
+      );
     });
   });
 

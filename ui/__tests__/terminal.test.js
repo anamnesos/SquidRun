@@ -10,12 +10,16 @@ const path = require('path');
 // Mock dependencies before requiring the module
 jest.mock('@xterm/xterm', () => ({
   Terminal: jest.fn().mockImplementation(() => ({
+    cols: 80,
+    rows: 24,
     loadAddon: jest.fn(),
     open: jest.fn(),
     write: jest.fn(),
     clear: jest.fn(),
     focus: jest.fn(),
     blur: jest.fn(),
+    refresh: jest.fn(),
+    scrollToBottom: jest.fn(),
     onData: jest.fn(),
     onSelectionChange: jest.fn(),
     getSelection: jest.fn(),
@@ -91,6 +95,9 @@ const mockSquidRun = {
   settings: {
     get: jest.fn().mockReturnValue({ paneCommands: {} }),
   },
+  daemon: {
+    terminalSnapshot: jest.fn().mockResolvedValue({ ok: false, terminals: [] }),
+  },
 };
 
 // Mock process.cwd
@@ -162,6 +169,7 @@ describe('terminal.js module', () => {
 
     // Reset mocks
     mockSquidRun.invoke.mockResolvedValue({ ok: true });
+    mockSquidRun.daemon.terminalSnapshot.mockResolvedValue({ ok: false, terminals: [] });
     mockSquidRun.pty.write.mockResolvedValue();
     mockSquidRun.claude.spawn.mockResolvedValue({ success: true, command: 'claude' });
     delete mockSquidRun.paneHost;
@@ -180,6 +188,10 @@ describe('terminal.js module', () => {
     }
     terminal._internals.terminalWriteFlushTimers.clear();
     terminal._internals.terminalWriteFrameBudgets.clear();
+    for (const timer of terminal._internals.terminalPaintRefreshTimers.values()) {
+      clearTimeout(timer);
+    }
+    terminal._internals.terminalPaintRefreshTimers.clear();
     for (const timer of terminal._internals.deferredResizeTimers.values()) {
       clearTimeout(timer);
     }
@@ -201,6 +213,10 @@ describe('terminal.js module', () => {
     }
     terminal._internals.terminalWriteFlushTimers.clear();
     terminal._internals.terminalWriteFrameBudgets.clear();
+    for (const timer of terminal._internals.terminalPaintRefreshTimers.values()) {
+      clearTimeout(timer);
+    }
+    terminal._internals.terminalPaintRefreshTimers.clear();
     for (const timer of terminal._internals.deferredResizeTimers.values()) {
       clearTimeout(timer);
     }
@@ -709,6 +725,24 @@ describe('terminal.js module', () => {
       expect(message).not.toContain('[SQUIDRUN RECALL START]');
 
       existsSpy.mockRestore();
+    });
+
+    test('uses pane runtime startup override for Squid Room app arms', async () => {
+      terminal.setPaneRuntimeOverride('trustquote-lead', {
+        label: 'TrustQuote Lead',
+        roleLabel: 'TrustQuote Lead',
+        provider: 'codex',
+        startupMessage: 'TrustQuote arm role: Lead.\nWork in D:\\projects\\TrustQuote.',
+      });
+
+      const message = await terminal._internals.buildStartupIdentityMessage('trustquote-lead');
+
+      expect(message).toContain('# SQUIDRUN SESSION: TrustQuote Lead');
+      expect(message).toContain('TrustQuote arm role: Lead.');
+      expect(message).toContain('Work in D:\\projects\\TrustQuote.');
+      expect(message).not.toContain('SIDE-PROFILE STARTUP CONTEXT PENDING');
+
+      terminal.clearPaneRuntimeOverride('trustquote-lead');
     });
 
     test('uses side-profile startup bundle instead of main Mira briefing for Eunbyeol startup', async () => {
@@ -1335,6 +1369,35 @@ describe('terminal.js module', () => {
       await terminal.initTerminal('1');
 
       expect(Terminal).toHaveBeenCalledWith(expect.objectContaining({ scrollback: 2000 }));
+    });
+
+    test('should restore daemon scrollback when attaching an existing dynamic pane PTY', async () => {
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+      mockSquidRun.daemon.terminalSnapshot.mockResolvedValueOnce({
+        ok: true,
+        terminals: [
+          {
+            paneId: 'trustquote-invoice',
+            alive: true,
+            scrollback: 'Windows PowerShell\r\nPS D:\\projects\\TrustQuote> ',
+          },
+        ],
+      });
+
+      await terminal.initTerminal('trustquote-invoice', { snapshotTimeoutMs: 777 });
+
+      expect(mockSquidRun.daemon.terminalSnapshot).toHaveBeenCalledWith({ timeoutMs: 777 });
+      const terminalInstance = terminal.terminals.get('trustquote-invoice');
+      const writeCall = terminalInstance.write.mock.calls.find(
+        (args) => typeof args[0] === 'string' && args[0].includes('D:\\projects\\TrustQuote')
+      );
+      expect(writeCall).toBeDefined();
+      jest.runOnlyPendingTimers();
+      expect(terminalInstance.refresh).toHaveBeenCalledWith(0, 23);
+      expect(terminalInstance.scrollToBottom).toHaveBeenCalled();
     });
   });
 

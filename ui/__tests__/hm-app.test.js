@@ -1,7 +1,7 @@
 const { normalizeCommand } = require('../scripts/hm-app');
 
 describe('hm-app CLI command normalization', () => {
-  test('routes Squid Room aliases to the display-only opener', () => {
+  test('routes Squid Room aliases to the surface opener', () => {
     expect(normalizeCommand('squid-room')).toBe('open-squid-room');
     expect(normalizeCommand('open-squid-room')).toBe('open-squid-room');
     expect(normalizeCommand('squid-room-open')).toBe('open-squid-room');

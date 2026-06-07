@@ -86,6 +86,7 @@ const TRUSTQUOTE_SOURCE_PANE_BY_ID = Object.freeze({
   'trustquote-builder': '2',
   'trustquote-oracle': '3',
 });
+const paneRuntimeOverrides = new Map();
 
 // Per-pane input lock - panes locked by default (view-only), toggle to unlock for direct typing
 // Prevents accidental typing in agent panes while allowing programmatic sends (sendToPane/triggers)
@@ -134,6 +135,7 @@ const terminalWatermarks = new Map(); // paneId -> number (bytes in flight)
 const terminalPaused = new Map(); // paneId -> boolean (is PTY paused)
 const terminalWriteFlushTimers = new Map(); // paneId -> timer ID
 const terminalWriteFrameBudgets = new Map(); // paneId -> { startedAt, bytes, chunks }
+const terminalPaintRefreshTimers = new Map(); // `${paneId}:${delayMs}` -> timer ID
 
 const HIGH_WATERMARK = 500000; // 500KB - pause producer
 const LOW_WATERMARK = 50000;   // 50KB - resume producer
@@ -224,6 +226,44 @@ function setActivePaneIds(paneIds = null) {
   return getActivePaneIds();
 }
 
+function getPaneRuntimeOverride(paneId) {
+  const id = String(paneId || '').trim();
+  if (!id) return {};
+  const override = paneRuntimeOverrides.get(id);
+  return override ? { ...override } : {};
+}
+
+function setPaneRuntimeOverride(paneId, override = {}) {
+  const id = String(paneId || '').trim();
+  if (!id || !override || typeof override !== 'object') return getPaneRuntimeOverride(id);
+  const next = {
+    ...getPaneRuntimeOverride(id),
+    ...override,
+  };
+  for (const [key, value] of Object.entries(next)) {
+    if (value === undefined || value === null || value === '') {
+      delete next[key];
+    }
+  }
+  paneRuntimeOverrides.set(id, next);
+  if (!Object.prototype.hasOwnProperty.call(inputLocked, id)) {
+    inputLocked[id] = true;
+  }
+  if (next.provider || next.label) {
+    registerPaneCliIdentity(id, {
+      provider: next.provider,
+      label: next.label || next.provider,
+    });
+  }
+  return getPaneRuntimeOverride(id);
+}
+
+function clearPaneRuntimeOverride(paneId) {
+  const id = String(paneId || '').trim();
+  if (!id) return false;
+  return paneRuntimeOverrides.delete(id);
+}
+
 function isPaneReadOnlyMirrorMode(paneId) {
   const id = String(paneId || '');
   if (!id) return false;
@@ -301,6 +341,84 @@ function resetTerminalWriteQueue(paneId) {
   terminalWatermarks.set(id, 0);
   terminalPaused.set(id, false);
   terminalWriteFrameBudgets.delete(id);
+}
+
+function clearTerminalPaintRefresh(paneId) {
+  const id = String(paneId);
+  for (const [key, timer] of terminalPaintRefreshTimers.entries()) {
+    if (key === id || key.startsWith(`${id}:`)) {
+      clearTimeout(timer);
+      terminalPaintRefreshTimers.delete(key);
+    }
+  }
+}
+
+function refreshTerminalViewport(paneId, terminal, fitAddon = null) {
+  const id = String(paneId);
+  if (!terminal) return;
+
+  try {
+    if (fitAddon && typeof fitAddon.fit === 'function') {
+      fitAddon.fit();
+    }
+  } catch (err) {
+    log.warn(`Terminal ${id}`, `Paint refresh fit failed: ${err?.message || err}`);
+  }
+
+  try {
+    const cols = Number(terminal.cols);
+    const rows = Number(terminal.rows);
+    if (
+      window.squidrun?.pty?.resize
+      && Number.isFinite(cols)
+      && Number.isFinite(rows)
+      && cols > 0
+      && rows > 0
+    ) {
+      window.squidrun.pty.resize(id, cols, rows);
+    }
+  } catch (err) {
+    log.warn(`Terminal ${id}`, `Paint refresh resize failed: ${err?.message || err}`);
+  }
+
+  try {
+    if (typeof terminal.refresh === 'function') {
+      const lastRow = Math.max(0, (Number(terminal.rows) || 1) - 1);
+      terminal.refresh(0, lastRow);
+    }
+  } catch (err) {
+    log.warn(`Terminal ${id}`, `Paint refresh failed: ${err?.message || err}`);
+  }
+
+  try {
+    if (typeof terminal.scrollToBottom === 'function') {
+      terminal.scrollToBottom();
+    }
+  } catch (err) {
+    log.warn(`Terminal ${id}`, `Paint refresh scroll failed: ${err?.message || err}`);
+  }
+}
+
+function scheduleTerminalPaintRefresh(paneId, terminal, fitAddon = null, delayMs = 0) {
+  const id = String(paneId);
+  if (!id || !terminal) return;
+  const delay = Math.max(0, Number(delayMs) || 0);
+  const key = `${id}:${delay}`;
+  const existingTimer = terminalPaintRefreshTimers.get(key);
+  if (existingTimer) clearTimeout(existingTimer);
+
+  const timer = setTimeout(() => {
+    terminalPaintRefreshTimers.delete(key);
+    if (terminals.get(id) !== terminal) return;
+    refreshTerminalViewport(id, terminal, fitAddon || fitAddons.get(id));
+  }, delay);
+  terminalPaintRefreshTimers.set(key, timer);
+}
+
+function scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon = null) {
+  scheduleTerminalPaintRefresh(paneId, terminal, fitAddon, 0);
+  scheduleTerminalPaintRefresh(paneId, terminal, fitAddon, 80);
+  scheduleTerminalPaintRefresh(paneId, terminal, fitAddon, 250);
 }
 
 /**
@@ -422,6 +540,11 @@ function flushTerminalQueue(paneId, terminal) {
     // If watermark drops below low threshold, resume the PTY producer
     maybeResumePtyProducer(paneId, newWatermark);
 
+    const paneFitAddon = fitAddons.get(String(paneId));
+    if (paneFitAddon) {
+      scheduleTerminalPaintRefresh(paneId, terminal, paneFitAddon, 16);
+    }
+
     const nextDelayMs = recordTerminalWriteFrame(paneId, byteLen);
     scheduleTerminalQueueFlush(paneId, terminal, nextDelayMs);
   });
@@ -537,6 +660,28 @@ function trimScrollbackToMaxLines(scrollback, maxLines = XTERM_SCROLLBACK_LINES)
   return text;
 }
 
+async function readDaemonScrollbackForPane(paneId, options = {}) {
+  const id = String(paneId || '').trim();
+  if (!id) return '';
+  const snapshotFn = window?.squidrun?.daemon?.terminalSnapshot
+    || window?.squidrunAPI?.daemon?.terminalSnapshot;
+  if (typeof snapshotFn !== 'function') return '';
+
+  const timeoutMs = Number.isFinite(Number(options.timeoutMs))
+    ? Math.max(250, Number(options.timeoutMs))
+    : 1500;
+  try {
+    const snapshot = await snapshotFn({ timeoutMs });
+    const terminalEntry = Array.isArray(snapshot?.terminals)
+      ? snapshot.terminals.find((entry) => String(entry?.paneId || '') === id)
+      : null;
+    return typeof terminalEntry?.scrollback === 'string' ? terminalEntry.scrollback : '';
+  } catch (err) {
+    log.warn(`Terminal ${id}`, `Daemon scrollback restore failed: ${err?.message || err}`);
+    return '';
+  }
+}
+
 // Track when user focuses any UI input (not xterm textareas).
 // Call once from renderer.js after DOMContentLoaded.
 function isNonTerminalUiInput(el) {
@@ -647,7 +792,11 @@ function getPaneCommandFromSettings(paneId) {
   const settingsObj = getSettingsSafe();
   const paneCommands = settingsObj?.paneCommands || {};
   const id = String(paneId);
-  const sourcePaneId = TRUSTQUOTE_SOURCE_PANE_BY_ID[id] || null;
+  const runtimeOverride = getPaneRuntimeOverride(id);
+  if (typeof runtimeOverride.command === 'string' && runtimeOverride.command.trim()) {
+    return runtimeOverride.command.trim();
+  }
+  const sourcePaneId = runtimeOverride.commandSourcePaneId || TRUSTQUOTE_SOURCE_PANE_BY_ID[id] || null;
   const cmd = paneCommands[id] || (sourcePaneId ? paneCommands[sourcePaneId] : '') || '';
   return typeof cmd === 'string' ? cmd : '';
 }
@@ -756,6 +905,10 @@ function isCodexPane(paneId) {
 }
 
 function getPaneIdentityLabel(paneId) {
+  const runtimeOverride = getPaneRuntimeOverride(paneId);
+  if (runtimeOverride.roleLabel || runtimeOverride.label) {
+    return runtimeOverride.roleLabel || runtimeOverride.label;
+  }
   if (typeof getPaneDisplayName === 'function') {
     return getPaneDisplayName(paneId, { includeRole: true });
   }
@@ -938,6 +1091,7 @@ function teardownTerminalPane(paneId) {
   }
 
   cleanupResizeObserver(id);
+  clearTerminalPaintRefresh(id);
   clearStartupInjection(id);
   detachTerminalInputBridge(id);
   detachPtyListeners(id);
@@ -1262,6 +1416,10 @@ async function buildStartupIdentityMessage(paneId, options = {}) {
   const d = new Date();
   const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const header = `# SQUIDRUN SESSION: ${role} - Started ${timestamp}`;
+  const runtimeOverride = getPaneRuntimeOverride(paneId);
+  if (typeof runtimeOverride.startupMessage === 'string' && runtimeOverride.startupMessage.trim()) {
+    return [header, runtimeOverride.startupMessage.trim()].join('\n');
+  }
   const context = normalizeStartupWindowContext(options.windowContext || startupWindowContext);
   const [briefingSummary, healthSummary] = await Promise.all([
     Promise.resolve(fetchStartupAiBriefing({ windowContext: context })),
@@ -1979,10 +2137,18 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 }
 
   // Initialize a single terminal
-  async function initTerminal(paneId) {
+  async function initTerminal(paneId, options = {}) {
     if (terminals.has(paneId)) return;
     const container = document.getElementById(`terminal-${paneId}`);
     if (!container) return;
+  const runtimeOverride = getPaneRuntimeOverride(paneId);
+  const workingDir = String(
+    options.workingDir
+    || options.cwd
+    || runtimeOverride.workingDir
+    || runtimeOverride.cwd
+    || process.cwd()
+  );
   teardownTerminalPane(paneId);
 
   // Create AbortController for this pane's container DOM listeners (destroy-before-setup)
@@ -2085,9 +2251,10 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 
   // Setup ResizeObserver to auto-resize terminal when container size changes
   setupResizeObserver(paneId);
+  scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon);
 
   try {
-    await window.squidrun.pty.create(paneId, process.cwd());
+    await window.squidrun.pty.create(paneId, workingDir);
     updatePaneStatus(paneId, 'Connected');
 
     // Now that PTY exists, sync size again (initial resize may have fired before PTY was created)
@@ -2097,6 +2264,14 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       log.info(`Terminal ${paneId}`, `PTY size synced: ${terminal.cols}x${terminal.rows}`);
     } catch (resizeErr) {
       log.warn(`Terminal ${paneId}`, 'Post-create PTY resize failed:', resizeErr);
+    }
+
+    const restoredScrollback = typeof options.scrollback === 'string'
+      ? options.scrollback
+      : await readDaemonScrollbackForPane(paneId, { timeoutMs: options.snapshotTimeoutMs });
+    if (restoredScrollback && restoredScrollback.length > 0) {
+      queueTerminalWrite(paneId, terminal, trimScrollbackToMaxLines(restoredScrollback));
+      scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon);
     }
 
     syncTerminalInputBridge(paneId);
@@ -2258,10 +2433,12 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
 
   // Setup ResizeObserver to auto-resize terminal when container size changes
   setupResizeObserver(paneId);
+  scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon);
 
   // U1: Restore scrollback buffer if available
   if (scrollback && scrollback.length > 0) {
     queueTerminalWrite(paneId, terminal, trimScrollbackToMaxLines(scrollback));
+    scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon);
   }
 
   syncTerminalInputBridge(paneId);
@@ -2446,13 +2623,18 @@ async function spawnAgent(paneId, model = null) {
   if (terminal) {
     updatePaneStatus(paneId, 'Starting...');
     syncTerminalInputBridge(paneId, { modelHint: model });
+    const runtimeOverride = getPaneRuntimeOverride(paneId);
     let result;
-    try {
-      result = await window.squidrun.claude.spawn(paneId);
-    } catch (err) {
-      log.error(`spawnAgent ${paneId}`, 'Spawn failed:', err);
-      updatePaneStatus(paneId, 'Spawn failed');
-      return;
+    if (runtimeOverride.command) {
+      result = { success: true, command: runtimeOverride.command, runtimeOverride: true };
+    } else {
+      try {
+        result = await window.squidrun.claude.spawn(paneId);
+      } catch (err) {
+        log.error(`spawnAgent ${paneId}`, 'Spawn failed:', err);
+        updatePaneStatus(paneId, 'Spawn failed');
+        return;
+      }
     }
     if (result.success && result.command) {
       // Use pty.write directly instead of terminal.paste for reliability
@@ -2884,6 +3066,9 @@ module.exports = {
   userInputFocused,     // Active UI composition guard (focus + recent typing)
   getActivePaneIds,
   setActivePaneIds,
+  getPaneRuntimeOverride,
+  setPaneRuntimeOverride,
+  clearPaneRuntimeOverride,
   initTerminals,
   initTerminal,
   reattachTerminal,
@@ -2961,8 +3146,11 @@ module.exports = {
     resizeSinglePane,
     scheduleDeferredTerminalResize,
     clearDeferredTerminalResize,
+    scheduleTerminalPaintRefresh,
+    scheduleTerminalAttachPaintRefresh,
     terminalWriteFlushTimers,
     terminalWriteFrameBudgets,
+    terminalPaintRefreshTimers,
     deferredResizeTimers,
     deferredResizeFirstRequestedAt,
     TERMINAL_WRITE_FRAME_YIELD_MS,

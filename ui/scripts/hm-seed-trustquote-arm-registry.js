@@ -131,8 +131,8 @@ function printText(result) {
   if (registry.metadata?.readinessSessionId || result.evaluation?.registry?.readinessSessionId) {
     console.log(`Readiness session: ${registry.metadata?.readinessSessionId || result.evaluation.registry.readinessSessionId}`);
   }
-  console.log(`Desired/ready/missing: ${registry.desiredCount || 3}/${registry.readyCount || 0}/${registry.missingCount || 3}`);
-  console.log('Desired arms: Lead, Work + Schedule, Money + Documents');
+  console.log(`Arms count: ${registry.desiredCount || 3}`);
+  console.log('Arms: Lead, Invoice, Schedule Dispatch');
   console.log('Dev/QA remains build-mode metadata only; no check-ins, apply requests, watchdogs, or dispatches created.');
 }
 

@@ -10,7 +10,7 @@ body.squid-room-workspace .terminals-section {
 
 body.squid-room-workspace .pane-layout {
   flex: 0 0 auto;
-  min-height: 116px;
+  min-height: 220px;
   padding: 8px;
 }
 
@@ -28,16 +28,80 @@ body.squid-room-workspace .side-panes-container {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(116, 139, 166, 0.24);
+  border-radius: 8px;
+  background: rgba(10, 15, 24, 0.76);
+}
+
+.squid-room-team-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 0 4px 4px;
+}
+
+.squid-room-team-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.squid-room-team-title strong {
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.squid-room-team-eyebrow {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.squid-room-team-actions {
+  flex: 0 0 auto;
 }
 
 body.squid-room-workspace .side-panes-container .pane {
   min-width: 0;
-  min-height: 96px;
+  min-height: 180px;
   filter: none;
 }
 
-body.squid-room-workspace .pane-terminal.squid-room-terminal-hidden {
+body.squid-room-workspace .side-panes-container .pane-terminal {
+  min-height: 132px;
+}
+
+body.squid-room-workspace .pane-layout.has-expanded-pane .side-panes-container .pane:not(.pane-expanded) {
+  display: block !important;
+}
+
+body.squid-room-workspace .pane-layout.has-squid-room-team-expanded {
+  flex: 1 1 auto;
+  min-height: calc(100vh - 160px);
+}
+
+body.squid-room-workspace .pane-layout.has-squid-room-team-expanded + #squidRoomSurface {
   display: none !important;
+}
+
+body.squid-room-workspace .side-panes-container.squid-room-team-expanded {
+  align-content: stretch;
+  min-height: calc(100vh - 176px);
+}
+
+body.squid-room-workspace .side-panes-container.squid-room-team-expanded .pane {
+  min-height: calc(100vh - 236px);
+}
+
+body.squid-room-workspace .side-panes-container.squid-room-team-expanded .pane-terminal {
+  min-height: calc(100vh - 296px);
 }
 
 body.squid-room-workspace #squidRoomSurface {
@@ -92,6 +156,15 @@ body.squid-room-workspace #squidRoomSurface:not([hidden]) {
   overflow: hidden;
 }
 
+details.squid-room-app > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+details.squid-room-app > summary::-webkit-details-marker {
+  display: none;
+}
+
 .squid-room-app-header {
   display: flex;
   align-items: center;
@@ -140,6 +213,45 @@ body.squid-room-workspace #squidRoomSurface:not([hidden]) {
   gap: 8px;
   padding: 10px 12px 12px;
   min-height: 72px;
+}
+
+.squid-room-live-panes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+
+.squid-room-live-panes .pane {
+  min-width: 0;
+  min-height: 320px;
+  border-color: rgba(0, 240, 255, 0.22);
+  background: rgba(5, 9, 15, 0.84);
+}
+
+.squid-room-live-panes .pane-header {
+  min-height: 42px;
+}
+
+.squid-room-live-panes .pane-terminal {
+  height: 270px;
+  min-height: 270px;
+}
+
+.squid-room-live-panes.has-expanded-pane {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.squid-room-live-panes.has-expanded-pane .pane:not(.pane-expanded) {
+  display: none !important;
+}
+
+.squid-room-live-panes .pane.pane-expanded {
+  min-height: min(68vh, 680px);
+}
+
+.squid-room-live-panes .pane.pane-expanded .pane-terminal {
+  height: min(60vh, 600px);
 }
 
 .squid-room-summary-row {

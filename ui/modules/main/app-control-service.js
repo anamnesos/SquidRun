@@ -225,7 +225,7 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
           windowKey: settled.windowKey || 'squid-room',
           status: settled.status || (settled.ok ? 'opened' : 'open_failed'),
           reason: settled.ok ? undefined : (settled.reason || 'open_window_failed'),
-          note: 'Squid Room opened as a display-only main-profile window.',
+          note: 'Squid Room opened as a main-profile surface window.',
         };
       })
       .catch((error) => {

@@ -72,13 +72,13 @@ maybeDescribe('TrustQuote arm registry seed', () => {
     }));
     expect(manifest.arms.map((arm) => arm.armKey)).toEqual([
       'lead',
-      'work-schedule',
-      'money-documents',
+      'invoice',
+      'schedule-dispatch',
     ]);
     expect(manifest.arms.map((arm) => arm.role)).toEqual([
       'trustquote-lead',
-      'trustquote-work-schedule',
-      'trustquote-money-documents',
+      'trustquote-invoice',
+      'trustquote-schedule-dispatch',
     ]);
     expect(manifest.metadata).toEqual(expect.objectContaining({
       manifestScope: 'app_room',
@@ -114,8 +114,8 @@ maybeDescribe('TrustQuote arm registry seed', () => {
     }));
     expect(Object.fromEntries(result.registry.arms.map((arm) => [arm.armKey, arm.status]))).toEqual({
       lead: 'missing',
-      'money-documents': 'missing',
-      'work-schedule': 'missing',
+      'invoice': 'missing',
+      'schedule-dispatch': 'missing',
     });
     expect(queryArmCheckinProofs({}, { dbPath })).toHaveLength(0);
     expect(queryArmApplyRequests({}, { dbPath })).toHaveLength(0);

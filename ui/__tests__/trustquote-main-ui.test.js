@@ -13,7 +13,7 @@ describe('TrustQuote main UI entry points', () => {
     expect(html).toContain("'open-app-window',{windowKey:'trustquote',profileName:'trustquote',autoBootAgents:false}");
   });
 
-  test('Squid Room has an explicit display-only opener in the header', () => {
+  test('Squid Room has an explicit surface opener in the header', () => {
     const html = fs.readFileSync(path.join(uiRoot, 'index.html'), 'utf8');
 
     expect(html).toContain('id="openSquidRoomBtn"');

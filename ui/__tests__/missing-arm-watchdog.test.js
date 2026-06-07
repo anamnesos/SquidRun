@@ -40,12 +40,12 @@ function oneArmManifest(overrides = {}) {
     routeTarget: 'trustquote',
     arms: [
       {
-        armKey: 'money-documents',
-        role: 'trustquote-billing',
-        paneId: 'trustquote-billing',
-        routeTarget: 'trustquote-billing',
+        armKey: 'invoice',
+        role: 'trustquote-invoice',
+        paneId: 'trustquote-invoice',
+        routeTarget: 'trustquote-invoice',
         armKind: 'domain',
-        displayName: 'Money + Documents',
+        displayName: 'Invoice',
         dataSources: ['jobs', 'quotes', 'payments'],
         permissions: { read: ['money_records'], draft: ['invoice'] },
         checkInObligation: { required: true },
@@ -57,8 +57,8 @@ function oneArmManifest(overrides = {}) {
 
 function seedCommsCheckin(dbPath, input = {}, nowMs = 1_000) {
   const sessionId = input.sessionId || 'app-session-406:trustquote';
-  const role = input.role || 'trustquote-billing';
-  const paneId = input.paneId || 'trustquote-billing';
+  const role = input.role || 'trustquote-invoice';
+  const paneId = input.paneId || 'trustquote-invoice';
   const messageId = input.messageId || `hm-${role}-${nowMs}`;
   const store = new EvidenceLedgerStore({ dbPath });
   expect(store.init().ok).toBe(true);
@@ -136,7 +136,7 @@ maybeDescribe('missing arm watchdog', () => {
     expect(nudged.actions).toEqual([
       expect.objectContaining({
         kind: 'nudge',
-        armKey: 'money-documents',
+        armKey: 'invoice',
         nextDueAtMs: 361000,
       }),
     ]);
@@ -183,14 +183,14 @@ maybeDescribe('missing arm watchdog', () => {
       expect.objectContaining({
         kind: 'escalate',
         target: 'architect',
-        armKey: 'money-documents',
+        armKey: 'invoice',
       }),
     ]);
     expect(escalated.dispatches).toEqual([
       expect.objectContaining({
         ok: true,
         target: 'architect',
-        message: 'sent:money-documents',
+        message: 'sent:invoice',
       }),
     ]);
     expect(sends).toHaveLength(1);
@@ -223,20 +223,20 @@ maybeDescribe('missing arm watchdog', () => {
 
     seedCommsCheckin(dbPath, {
       messageId: 'hm-billing-1',
-      role: 'trustquote-billing',
-      paneId: 'trustquote-billing',
+      role: 'trustquote-invoice',
+      paneId: 'trustquote-invoice',
     }, 200_000);
     const checkin = recordArmCheckinProof({
       appRoomId: 'trustquote',
       sessionId: 'app-session-406:trustquote',
-      armKey: 'money-documents',
-      role: 'trustquote-billing',
-      paneId: 'trustquote-billing',
+      armKey: 'invoice',
+      role: 'trustquote-invoice',
+      paneId: 'trustquote-invoice',
       proofKind: 'startup_check_in',
       messageId: 'hm-billing-1',
       env: {
-        SQUIDRUN_ROLE: 'trustquote-billing',
-        SQUIDRUN_PANE_ID: 'trustquote-billing',
+        SQUIDRUN_ROLE: 'trustquote-invoice',
+        SQUIDRUN_PANE_ID: 'trustquote-invoice',
         SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
       },
     }, { dbPath, nowMs: 200_000 });

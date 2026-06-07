@@ -158,6 +158,9 @@ const {
   filterTerminalsForWorkspace,
 } = require('../work-room-terminal-visibility');
 const {
+  SQUID_ROOM_PANE_IDS,
+} = require('../workspace-pane-shell');
+const {
   materializeTrustQuoteWorkRoomPrerequisites,
 } = require('../trustquote-work-room-prerequisites');
 const {
@@ -2074,17 +2077,48 @@ class SquidRunApp {
     return [...PANE_IDS];
   }
 
+  getPaneHostStatusPaneIds() {
+    const paneIds = new Set([
+      ...PANE_IDS.map((paneId) => String(paneId)),
+      ...SQUID_ROOM_PANE_IDS.map((paneId) => String(paneId)),
+      ...Array.from(this.paneHostReady || []).map((paneId) => String(paneId)),
+      ...Array.from(this.paneHostMissingPanes || []).map((paneId) => String(paneId)),
+    ]);
+    return Array.from(paneIds).filter(Boolean).sort();
+  }
+
+  derivePaneHostStatusFromLiveTerminals(terminals = null) {
+    const terminalList = Array.isArray(terminals)
+      ? terminals
+      : (this.ctx.daemonClient?.getTerminals?.() || []);
+    const paneIds = this.getPaneHostStatusPaneIds();
+    const readyPanes = new Set(Array.from(this.paneHostReady || []).map((paneId) => String(paneId)));
+    const missingPanes = new Set(Array.from(this.paneHostMissingPanes || []).map((paneId) => String(paneId)));
+
+    for (const paneId of paneIds) {
+      if (!this.getLiveDaemonTerminalForPane(paneId, terminalList)) continue;
+      readyPanes.add(paneId);
+      missingPanes.delete(paneId);
+    }
+
+    const degraded = missingPanes.size > 0;
+    return {
+      hiddenModeEnabled: this.isHiddenPaneHostModeEnabled(),
+      degraded,
+      missingPanes: Array.from(missingPanes).sort(),
+      readyPanes: Array.from(readyPanes).sort(),
+      lastErrorReason: degraded ? this.paneHostLastErrorReason : null,
+      lastErrorAt: degraded ? this.paneHostLastErrorAt : null,
+    };
+  }
+
   updatePaneHostStatus() {
     if (!this.settings || typeof this.settings.writeAppStatus !== 'function') return;
+    const derivedStatus = this.derivePaneHostStatusFromLiveTerminals();
     this.settings.writeAppStatus({
       statusPatch: {
         paneHost: {
-          hiddenModeEnabled: this.isHiddenPaneHostModeEnabled(),
-          degraded: this.paneHostMissingPanes.size > 0,
-          missingPanes: Array.from(this.paneHostMissingPanes).sort(),
-          readyPanes: Array.from(this.paneHostReady).sort(),
-          lastErrorReason: this.paneHostLastErrorReason,
-          lastErrorAt: this.paneHostLastErrorAt,
+          ...derivedStatus,
           lastCheckedAt: new Date().toISOString(),
         },
       },
@@ -2099,6 +2133,13 @@ class SquidRunApp {
   } = {}) {
     const id = paneId === null || paneId === undefined ? null : String(paneId).trim();
     const normalizedReason = String(reason || 'unknown');
+    if (
+      id
+      && (normalizedReason === 'inject_hidden_not_ready' || normalizedReason === 'inject_hidden_send_failed')
+      && this.clearPaneHostDegradedFromLiveTerminal(id, { source: `degrade_suppressed:${normalizedReason}` })
+    ) {
+      return;
+    }
     const wasMissing = id ? this.paneHostMissingPanes.has(id) : false;
     const reasonChanged = this.paneHostLastErrorReason !== normalizedReason;
     const nowIso = new Date().toISOString();
@@ -2151,6 +2192,77 @@ class SquidRunApp {
 
     log.info('PaneHost', `Hidden pane host recovered for pane ${id}`);
     this.updatePaneHostStatus();
+  }
+
+  getLiveDaemonTerminalForPane(paneId, terminalList = null) {
+    const id = String(paneId || '').trim();
+    if (!id) return null;
+
+    const terminals = Array.isArray(terminalList)
+      ? terminalList
+      : (this.getDaemonClientForPane(id)?.getTerminals?.() || this.ctx.daemonClient?.getTerminals?.() || []);
+    const terminal = Array.isArray(terminals)
+      ? terminals.find((entry) => String(entry?.paneId || '') === id)
+      : null;
+    const fallbackTerminal = terminal || this.getDaemonClientForPane(id)?.getTerminal?.(id) || this.ctx.daemonClient?.getTerminal?.(id);
+    if (!fallbackTerminal || String(fallbackTerminal?.paneId || id) !== id) return null;
+    if (fallbackTerminal.alive === false) return null;
+    const hasProcess = Number(fallbackTerminal.pid) > 0;
+    const hasPtyMode = String(fallbackTerminal.mode || '').toLowerCase() === 'pty';
+    const hasScrollback = typeof fallbackTerminal.scrollback === 'string' && fallbackTerminal.scrollback.length > 0;
+    return (hasProcess || hasPtyMode || hasScrollback) ? fallbackTerminal : null;
+  }
+
+  clearPaneHostDegradedFromLiveTerminal(paneId, options = {}) {
+    const id = String(paneId || '').trim();
+    if (!id) return false;
+    const terminal = this.getLiveDaemonTerminalForPane(id, options.terminals || null);
+    if (!terminal) return false;
+
+    const wasMissing = this.paneHostMissingPanes.has(id);
+    const wasReady = this.paneHostReady.has(id);
+    this.paneHostReady.add(id);
+    this.paneHostMissingPanes.delete(id);
+    if (this.paneHostMissingPanes.size === 0) {
+      this.paneHostLastErrorReason = null;
+      this.paneHostLastErrorAt = null;
+    }
+
+    if (wasMissing || !wasReady) {
+      log.info(
+        'PaneHost',
+        `Recovered pane-host status from live daemon terminal for pane ${id}`
+        + `${options.source ? ` (${options.source})` : ''}`
+      );
+      this.updatePaneHostStatus();
+    }
+    return true;
+  }
+
+  reconcilePaneHostStatusFromDaemonTerminals(terminals = [], options = {}) {
+    if (!this.isHiddenPaneHostModeEnabled()) {
+      return { recovered: [], remainingMissing: [], skipped: true, reason: 'hidden_pane_host_disabled' };
+    }
+    const explicitPaneIds = Array.isArray(options.paneIds)
+      ? options.paneIds.map((value) => String(value || '').trim()).filter(Boolean)
+      : [];
+    const paneIds = explicitPaneIds.length > 0
+      ? explicitPaneIds
+      : Array.from(this.paneHostMissingPanes);
+    const recovered = [];
+    for (const paneId of paneIds) {
+      if (this.clearPaneHostDegradedFromLiveTerminal(paneId, {
+        terminals,
+        source: options.source || 'daemon_terminal_reconcile',
+      })) {
+        recovered.push(paneId);
+      }
+    }
+    return {
+      recovered,
+      remainingMissing: Array.from(this.paneHostMissingPanes).sort(),
+      skipped: false,
+    };
   }
 
   verifyPaneHostWindowsAfterBootstrap(source = 'startup') {
@@ -2532,6 +2644,9 @@ class SquidRunApp {
   }
 
   sendDaemonConnectedToAppWindows(terminals = []) {
+    this.reconcilePaneHostStatusFromDaemonTerminals(terminals, {
+      source: 'daemon_connected',
+    });
     let delivered = false;
     for (const [windowKey] of this.getAppWindows()) {
       const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
@@ -3372,18 +3487,23 @@ class SquidRunApp {
 
       if (routedToVisible) {
         routed = true;
-        this.reportPaneHostDegraded({
-          paneId,
-          reason: canRouteToHiddenHost ? 'inject_hidden_send_failed' : 'inject_hidden_not_ready',
-          message: `Hidden pane host unavailable/not ready for pane ${paneId}. Routed inject via visible renderer fallback.`,
-          details: {
-            deliveryId: packet.deliveryId || null,
-            hiddenHostReady: hostReady,
-            hiddenHostWindowPresent: hostWindowPresent,
-            hiddenHostLoading: hostLoading,
-            fallback: 'visible_renderer',
-          },
+        const recoveredFromLiveTerminal = this.clearPaneHostDegradedFromLiveTerminal(paneId, {
+          source: 'visible_renderer_fallback',
         });
+        if (!recoveredFromLiveTerminal) {
+          this.reportPaneHostDegraded({
+            paneId,
+            reason: canRouteToHiddenHost ? 'inject_hidden_send_failed' : 'inject_hidden_not_ready',
+            message: `Hidden pane host unavailable/not ready for pane ${paneId}. Routed inject via visible renderer fallback.`,
+            details: {
+              deliveryId: packet.deliveryId || null,
+              hiddenHostReady: hostReady,
+              hiddenHostWindowPresent: hostWindowPresent,
+              hiddenHostLoading: hostLoading,
+              fallback: 'visible_renderer',
+            },
+          });
+        }
       } else {
         this.reportPaneHostDegraded({
           paneId,

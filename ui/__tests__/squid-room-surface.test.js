@@ -6,6 +6,7 @@ const {
   refreshSquidRoomSurface,
   renderSquidRoomHtml,
   renderSquidRoomProjection,
+  toggleSquidRoomPaneExpansion,
 } = require('../modules/squid-room-surface');
 
 class FakeElement {
@@ -45,6 +46,43 @@ class FakeDocument {
   }
 }
 
+class FakeClassList {
+  constructor(initial = []) {
+    this.values = new Set(initial);
+  }
+
+  add(value) {
+    this.values.add(value);
+  }
+
+  remove(value) {
+    this.values.delete(value);
+  }
+
+  contains(value) {
+    return this.values.has(value);
+  }
+
+  toggle(value, force) {
+    const enabled = force === undefined ? !this.values.has(value) : Boolean(force);
+    if (enabled) {
+      this.values.add(value);
+    } else {
+      this.values.delete(value);
+    }
+    return enabled;
+  }
+}
+
+function expandableNode({ paneId = '', classes = [], closestMap = {}, queryAllMap = {} } = {}) {
+  return {
+    dataset: paneId ? { paneId } : {},
+    classList: new FakeClassList(classes),
+    closest: (selector) => closestMap[selector] || null,
+    querySelectorAll: (selector) => queryAllMap[selector] || [],
+  };
+}
+
 function projection(overrides = {}) {
   return {
     ok: true,
@@ -75,14 +113,25 @@ function projection(overrides = {}) {
         applyQueueSummary: { pendingApproval: 0, executable: 0 },
       },
       {
-        armKey: 'money-documents',
-        displayName: 'Money + Documents',
-        role: 'trustquote-billing',
-        paneId: 'trustquote-billing',
+        armKey: 'invoice',
+        displayName: 'Invoice',
+        role: 'trustquote-invoice',
+        paneId: 'trustquote-invoice',
         status: 'missing',
         latestAcceptedCheckin: null,
         watchdogSummary: { open: 1, overdue: 1 },
         applyQueueSummary: { pendingApproval: 1, executable: 0 },
+      },
+      {
+        armKey: 'retired',
+        displayName: 'Retired Arm',
+        role: 'trustquote-retired',
+        paneId: 'trustquote-retired',
+        status: 'disabled',
+        required: false,
+        latestAcceptedCheckin: null,
+        watchdogSummary: {},
+        applyQueueSummary: {},
       },
     ],
     watchdogs: {
@@ -128,7 +177,7 @@ describe('squid-room-surface', () => {
     }));
     expect(model.arms).toHaveLength(2);
     expect(model.arms[1]).toEqual(expect.objectContaining({
-      displayName: 'Money + Documents',
+      displayName: 'Invoice',
       status: 'missing',
       latestAcceptedCheckin: null,
     }));
@@ -139,6 +188,7 @@ describe('squid-room-surface', () => {
 
     expect(html).toContain('<details class="squid-room-arm-details">');
     expect(html).toContain('Pending approval');
+    expect(html).not.toContain('Retired Arm');
     expect(html).not.toMatch(/apply|dispatch|send|approve/i);
   });
 
@@ -170,9 +220,9 @@ describe('squid-room-surface', () => {
       sessionId: 'app-session-406:trustquote',
       includeRows: true,
     });
-    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Missing 2');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Desired 3');
-    expect(doc.getElementById('squidRoomTrustQuoteArms').innerHTML).toContain('Money + Documents');
+    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('');
+    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Arms count 3');
+    expect(doc.getElementById('squidRoomTrustQuoteArms').innerHTML).toContain('Invoice');
     expect(doc.getElementById('squidRoomSurface').dataset).toEqual(expect.objectContaining({
       projectionStatus: 'loaded',
       projectionOnly: 'true',
@@ -219,9 +269,9 @@ describe('squid-room-surface', () => {
       sessionId: 'app-session-408:trustquote',
       includeRows: true,
     });
-    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Missing 3');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Desired 3');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Missing 3');
+    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('');
+    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Arms count 3');
+    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).not.toContain('Missing 3');
   });
 
   test('projection invoke failures render unavailable instead of leaving placeholders', async () => {
@@ -239,8 +289,8 @@ describe('squid-room-surface', () => {
 
     expect(result.ok).toBe(false);
     expect(result.model.status).toBe('Unavailable');
-    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Unavailable');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Desired 0');
+    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Projection unavailable');
+    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Arms count 0');
     expect(doc.getElementById('squidRoomSurface').dataset.projectionStatus).toBe('unavailable');
   });
 
@@ -279,8 +329,82 @@ describe('squid-room-surface', () => {
     });
 
     expect(model.ok).toBe(false);
-    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Not seeded');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Ready 0');
-    expect(doc.getElementById('squidRoomTrustQuoteArms').innerHTML).toContain('No desired arms');
+    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Projection unavailable');
+    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Arms count 0');
+    expect(doc.getElementById('squidRoomTrustQuoteArms').innerHTML).toContain('No arms listed');
+  });
+
+  test('toggles Builder and Oracle as one Squid Room team container', () => {
+    const body = expandableNode({ classes: ['squid-room-workspace'] });
+    const paneLayout = expandableNode();
+    const builderPane = expandableNode({ paneId: '2' });
+    const oraclePane = expandableNode({ paneId: '3' });
+    const teamContainer = expandableNode({
+      queryAllMap: { '.pane': [builderPane, oraclePane] },
+    });
+    builderPane.closest = (selector) => (selector === '.squid-room-team-container' ? teamContainer : null);
+
+    const expanded = toggleSquidRoomPaneExpansion({
+      body,
+      pane: builderPane,
+      paneLayout,
+      expandedPaneId: null,
+    });
+
+    expect(expanded).toEqual({ handled: true, expandedPaneId: '2' });
+    expect(teamContainer.classList.contains('squid-room-team-expanded')).toBe(true);
+    expect(paneLayout.classList.contains('has-squid-room-team-expanded')).toBe(true);
+    expect(builderPane.classList.contains('pane-expanded')).toBe(true);
+    expect(oraclePane.classList.contains('pane-expanded')).toBe(true);
+
+    const collapsed = toggleSquidRoomPaneExpansion({
+      body,
+      pane: builderPane,
+      paneLayout,
+      expandedPaneId: '2',
+    });
+
+    expect(collapsed).toEqual({ handled: true, expandedPaneId: null });
+    expect(teamContainer.classList.contains('squid-room-team-expanded')).toBe(false);
+    expect(paneLayout.classList.contains('has-squid-room-team-expanded')).toBe(false);
+    expect(builderPane.classList.contains('pane-expanded')).toBe(false);
+    expect(oraclePane.classList.contains('pane-expanded')).toBe(false);
+  });
+
+  test('toggles a TrustQuote live pane within its app container', () => {
+    const body = expandableNode({ classes: ['squid-room-workspace'] });
+    const paneLayout = expandableNode();
+    const leadPane = expandableNode({ paneId: 'trustquote-lead' });
+    const invoicePane = expandableNode({
+      paneId: 'trustquote-invoice',
+      classes: ['pane-expanded'],
+    });
+    const livePaneContainer = expandableNode({
+      queryAllMap: { '.pane-expanded': [invoicePane] },
+    });
+    leadPane.closest = (selector) => (selector === '.squid-room-live-panes' ? livePaneContainer : null);
+
+    const expanded = toggleSquidRoomPaneExpansion({
+      body,
+      pane: leadPane,
+      paneLayout,
+      expandedPaneId: 'trustquote-invoice',
+    });
+
+    expect(expanded).toEqual({ handled: true, expandedPaneId: 'trustquote-lead' });
+    expect(invoicePane.classList.contains('pane-expanded')).toBe(false);
+    expect(leadPane.classList.contains('pane-expanded')).toBe(true);
+    expect(livePaneContainer.classList.contains('has-expanded-pane')).toBe(true);
+
+    const collapsed = toggleSquidRoomPaneExpansion({
+      body,
+      pane: leadPane,
+      paneLayout,
+      expandedPaneId: 'trustquote-lead',
+    });
+
+    expect(collapsed).toEqual({ handled: true, expandedPaneId: null });
+    expect(leadPane.classList.contains('pane-expanded')).toBe(false);
+    expect(livePaneContainer.classList.contains('has-expanded-pane')).toBe(false);
   });
 });
