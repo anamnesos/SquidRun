@@ -207,10 +207,28 @@ async function refreshSquidRoomSurface(options = {}) {
   }
 
   const payload = buildProjectionRequest(windowContext, TRUSTQUOTE_APP_ROOM_ID);
-  const projection = await invoke(ARM_STATE_PROJECTION_CHANNEL, payload);
+  let projection = null;
+  try {
+    projection = await invoke(ARM_STATE_PROJECTION_CHANNEL, payload);
+  } catch (err) {
+    projection = {
+      ok: false,
+      status: 'projection_failed',
+      reason: err?.message || String(err),
+      projectionOnly: true,
+      readOnly: true,
+      dispatchEnabled: false,
+      executorEnabled: false,
+      sideEffects: {
+        writesPerformed: 0,
+        dispatchesPerformed: 0,
+        watchdogAdvancesPerformed: 0,
+      },
+    };
+  }
   const model = renderSquidRoomProjection(projection, elements);
   return {
-    ok: true,
+    ok: model.ok,
     channel: ARM_STATE_PROJECTION_CHANNEL,
     payload,
     model,
@@ -230,7 +248,16 @@ function initSquidRoomSurface(options = {}) {
     });
   }
   void refresh();
-  return { ok: true, refresh };
+  return {
+    ok: true,
+    refresh,
+    refreshForWindowContext: (windowContext = {}) => {
+      if (toText(windowContext.windowKey, 'main') !== SQUID_ROOM_WINDOW_KEY) {
+        return Promise.resolve({ ok: false, skipped: true, reason: 'not_squid_room' });
+      }
+      return refresh();
+    },
+  };
 }
 
 module.exports = {
