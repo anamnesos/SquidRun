@@ -513,6 +513,46 @@ describe('renderer.js smoke tests', () => {
     });
   });
 
+  describe('Squid Room inline projection fallback', () => {
+    it('preserves Arms count while suppressing duplicate bottom arm rows', () => {
+      const elements = {
+        status: { textContent: 'stale' },
+        counts: { innerHTML: '' },
+        arms: {
+          innerHTML: '<div class="squid-room-arm">stale</div>',
+          hidden: false,
+          dataset: {},
+          setAttribute: jest.fn(),
+        },
+        root: { dataset: {} },
+      };
+
+      const result = renderer.renderSquidRoomProjectionInline({
+        ok: true,
+        registry: {
+          desiredCount: 3,
+          readyCount: 3,
+          missingCount: 0,
+        },
+        arms: [
+          { armKey: 'invoice', displayName: 'Invoice', status: 'ready' },
+        ],
+      }, elements);
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        counts: { desired: 3, ready: 3, missing: 0 },
+      }));
+      expect(elements.status.textContent).toBe('');
+      expect(elements.counts.innerHTML).toContain('Arms count 3');
+      expect(elements.arms.innerHTML).toBe('');
+      expect(elements.arms.hidden).toBe(true);
+      expect(elements.arms.dataset.renderSuppressed).toBe('live-panes');
+      expect(elements.arms.setAttribute).toHaveBeenCalledWith('aria-hidden', 'true');
+      expect(elements.root.dataset.projectionStatus).toBe('loaded');
+    });
+  });
+
   // Note: Callback wiring tests removed - Jest module caching makes them unreliable.
   // The fact that the module loads successfully (tested above) implicitly verifies
   // the wiring works, since missing callbacks would cause runtime errors.

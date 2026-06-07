@@ -153,6 +153,17 @@ function renderSquidRoomHtml(model = {}) {
   `;
 }
 
+function suppressVisibleArmList(elements = {}) {
+  const armList = elements?.arms;
+  if (!armList) return;
+  armList.innerHTML = '';
+  armList.hidden = true;
+  armList.setAttribute?.('aria-hidden', 'true');
+  if (armList.dataset) {
+    armList.dataset.renderSuppressed = 'live-panes';
+  }
+}
+
 function getSurfaceElements(doc) {
   if (!doc || typeof doc.getElementById !== 'function') return null;
   return {
@@ -170,7 +181,7 @@ function renderSquidRoomProjection(projection, elements) {
   if (elements.counts) {
     elements.counts.innerHTML = `<span>Arms count ${model.counts.desired}</span>`;
   }
-  if (elements.arms) elements.arms.innerHTML = renderSquidRoomHtml(model);
+  suppressVisibleArmList(elements);
   if (elements.root) {
     elements.root.dataset.projectionStatus = model.ok ? 'loaded' : 'unavailable';
     elements.root.dataset.projectionOnly = String(model.projectionFlags.projectionOnly);
@@ -320,5 +331,6 @@ module.exports = {
   renderSquidRoomHtml,
   renderSquidRoomProjection,
   setSquidRoomTeamExpandButtonState,
+  suppressVisibleArmList,
   toggleSquidRoomPaneExpansion,
 };
