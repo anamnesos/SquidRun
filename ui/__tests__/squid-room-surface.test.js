@@ -222,7 +222,9 @@ describe('squid-room-surface', () => {
     });
     expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('');
     expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Arms count 3');
-    expect(doc.getElementById('squidRoomTrustQuoteArms').innerHTML).toContain('Invoice');
+    expect(doc.getElementById('squidRoomTrustQuoteArms').innerHTML).toBe('');
+    expect(doc.getElementById('squidRoomTrustQuoteArms').hidden).toBe(true);
+    expect(doc.getElementById('squidRoomTrustQuoteArms').dataset.renderSuppressed).toBe('live-panes');
     expect(doc.getElementById('squidRoomSurface').dataset).toEqual(expect.objectContaining({
       projectionStatus: 'loaded',
       projectionOnly: 'true',
@@ -331,7 +333,8 @@ describe('squid-room-surface', () => {
     expect(model.ok).toBe(false);
     expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Projection unavailable');
     expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Arms count 0');
-    expect(doc.getElementById('squidRoomTrustQuoteArms').innerHTML).toContain('No arms listed');
+    expect(doc.getElementById('squidRoomTrustQuoteArms').innerHTML).toBe('');
+    expect(doc.getElementById('squidRoomTrustQuoteArms').hidden).toBe(true);
   });
 
   test('toggles Builder and Oracle as one Squid Room team container', () => {

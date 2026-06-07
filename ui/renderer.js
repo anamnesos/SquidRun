@@ -746,13 +746,15 @@ function buildSquidRoomProjectionPayload(windowContext = {}) {
   };
 }
 
-function escapeSquidRoomHtml(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+function suppressInlineSquidRoomArmList(elements = {}) {
+  const armList = elements?.arms;
+  if (!armList) return;
+  armList.innerHTML = '';
+  armList.hidden = true;
+  armList.setAttribute?.('aria-hidden', 'true');
+  if (armList.dataset) {
+    armList.dataset.renderSuppressed = 'live-panes';
+  }
 }
 
 function renderSquidRoomProjectionInline(projection = {}, elements = getSquidRoomSurfaceElements()) {
@@ -767,17 +769,7 @@ function renderSquidRoomProjectionInline(projection = {}, elements = getSquidRoo
   if (elements.counts) {
     elements.counts.innerHTML = `<span>Arms count ${desired}</span>`;
   }
-  if (elements.arms) {
-    const activeArms = Array.isArray(projection?.arms)
-      ? projection.arms.filter((arm) => arm?.required !== false && String(arm?.status || '').trim() !== 'disabled')
-      : [];
-    elements.arms.innerHTML = activeArms.length > 0
-      ? activeArms.map((arm) => (
-        `<div class="squid-room-arm" data-arm-key="${escapeSquidRoomHtml(arm.armKey || 'unknown')}">`
-        + `<div class="squid-room-arm-main"><span class="squid-room-arm-name">${escapeSquidRoomHtml(arm.displayName || arm.armKey || 'Unknown arm')}</span></div></div>`
-      )).join('')
-      : '<div class="squid-room-empty">No arms listed</div>';
-  }
+  suppressInlineSquidRoomArmList(elements);
   if (elements.root) {
     elements.root.dataset.projectionStatus = ok ? 'loaded' : 'unavailable';
   }
@@ -3630,5 +3622,6 @@ if (typeof module !== 'undefined' && module.exports) {
     isSquidRoomWindowContext,
     isSquidRoomPaneWrongWorkingDir,
     normalizeSquidRoomWorkingDirForCompare,
+    renderSquidRoomProjectionInline,
   };
 }
