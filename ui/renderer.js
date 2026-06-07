@@ -2098,7 +2098,11 @@ function emitPaneVisibilityChangedForExpandClick(event, eventBus = bus) {
   const paneId = button?.dataset?.paneId;
   if (!paneId || typeof eventBus?.emit !== 'function') return false;
   const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-  const visible = pane ? pane.classList.contains('pane-expanded') : true;
+  const isTeamToggle = button?.dataset?.squidRoomTeamToggle === 'true'
+    || button?.classList?.contains?.('squid-room-team-expand-btn');
+  const visible = isTeamToggle
+    ? button.dataset?.expanded !== 'false'
+    : (pane ? pane.classList.contains('pane-expanded') : true);
   eventBus.emit('pane.visibility.changed', {
     paneId,
     payload: { paneId, visible },
@@ -2115,8 +2119,7 @@ function findExpandedPaneId() {
     }
   }
   const expandedPane = document.querySelector(
-    '.squid-room-team-container.squid-room-team-expanded .pane.pane-expanded, '
-    + '.squid-room-live-panes .pane.pane-expanded, '
+    '.squid-room-live-panes .pane.pane-expanded, '
     + '.pane.pane-expanded'
   );
   return expandedPane?.dataset?.paneId || null;

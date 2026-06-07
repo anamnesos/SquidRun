@@ -82,26 +82,18 @@ body.squid-room-workspace .pane-layout.has-expanded-pane .side-panes-container .
   display: block !important;
 }
 
-body.squid-room-workspace .pane-layout.has-squid-room-team-expanded {
-  flex: 1 1 auto;
-  min-height: calc(100vh - 160px);
+body.squid-room-workspace .side-panes-container.squid-room-team-collapsed {
+  flex: 0 0 auto;
+  min-height: 0;
+  align-content: start;
 }
 
-body.squid-room-workspace .pane-layout.has-squid-room-team-expanded + #squidRoomSurface {
+body.squid-room-workspace .side-panes-container.squid-room-team-collapsed > .pane {
   display: none !important;
 }
 
-body.squid-room-workspace .side-panes-container.squid-room-team-expanded {
-  align-content: stretch;
-  min-height: calc(100vh - 176px);
-}
-
-body.squid-room-workspace .side-panes-container.squid-room-team-expanded .pane {
-  min-height: calc(100vh - 236px);
-}
-
-body.squid-room-workspace .side-panes-container.squid-room-team-expanded .pane-terminal {
-  min-height: calc(100vh - 296px);
+body.squid-room-workspace .side-panes-container.squid-room-team-collapsed .squid-room-team-header {
+  padding-bottom: 0;
 }
 
 body.squid-room-workspace #squidRoomSurface {

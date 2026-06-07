@@ -245,8 +245,9 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.squid-room-team-header')).toBeTruthy();
     expect(doc.querySelector('.squid-room-team-expand-btn').dataset.paneId).toBe('2');
     expect(doc.querySelector('.squid-room-team-expand-btn').dataset.tooltip).toContain('Builder + Oracle');
-    expect(doc.querySelector('.squid-room-team-expand-btn').dataset.expanded).toBe('false');
-    expect(doc.querySelector('.squid-room-team-expand-btn').getAttribute('aria-expanded')).toBe('false');
+    expect(doc.querySelector('.squid-room-team-expand-btn').dataset.expanded).toBe('true');
+    expect(doc.querySelector('.squid-room-team-expand-btn').getAttribute('aria-expanded')).toBe('true');
+    expect(doc.querySelector('.squid-room-team-expand-btn').querySelector('.squid-room-team-toggle-label').textContent).toBe('Collapse');
     expect(doc.getElementById('terminal-2').hidden).toBe(false);
     expect(doc.getElementById('terminal-3').classList.contains('squid-room-terminal-hidden')).toBe(false);
     expect(doc.getElementById('terminal-trustquote-builder')).toBeFalsy();
