@@ -44,7 +44,7 @@ function hasSqliteDriver() {
 function manifest() {
   return {
     appRoomId: 'trustquote',
-    sessionId: 'app-session-406:trustquote',
+    sessionId: 'app-room:trustquote',
     mainSessionId: 'app-session-406',
     leadRole: 'trustquote-lead',
     leadPaneId: 'trustquote-lead',
@@ -281,6 +281,83 @@ maybeDescribe('arm state projection', () => {
     }));
     expect(moneyArm.latestAcceptedCheckin).not.toEqual(expect.objectContaining({
       messageId: 'hm-billing-ready-original',
+    }));
+  });
+
+  test('uses canonical manifest across restart but only current-session check-ins count', () => {
+    expect(upsertArmRegistryManifest(manifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
+    const lead406 = seedCommsCheckin(dbPath, {
+      messageId: 'hm-lead-session-406',
+      role: 'trustquote-lead',
+      paneId: 'trustquote-lead',
+      sessionId: 'app-session-406:trustquote',
+    }, 2_000);
+    expect(recordArmCheckinProof({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-406:trustquote',
+      armKey: 'lead',
+      role: 'trustquote-lead',
+      paneId: 'trustquote-lead',
+      proofKind: 'startup_check_in',
+      messageId: 'hm-lead-session-406',
+      commsRowId: lead406.rowId,
+      env: {
+        SQUIDRUN_ROLE: 'trustquote-lead',
+        SQUIDRUN_PANE_ID: 'trustquote-lead',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+      },
+    }, { dbPath, nowMs: 2_000 }).ok).toBe(true);
+
+    const restarted = buildArmStateProjection({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-407:trustquote',
+    }, { dbPath, nowMs: 3_000 });
+    expect(restarted.registry).toEqual(expect.objectContaining({
+      sessionId: 'app-room:trustquote',
+      readinessSessionId: 'app-session-407:trustquote',
+      desiredCount: 2,
+      readyCount: 0,
+      missingCount: 2,
+    }));
+    expect(restarted.arms.find((arm) => arm.armKey === 'lead')).toEqual(expect.objectContaining({
+      status: 'missing',
+      latestAcceptedCheckin: null,
+    }));
+
+    const lead407 = seedCommsCheckin(dbPath, {
+      messageId: 'hm-lead-session-407',
+      role: 'trustquote-lead',
+      paneId: 'trustquote-lead',
+      sessionId: 'app-session-407:trustquote',
+    }, 4_000);
+    expect(recordArmCheckinProof({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-407:trustquote',
+      armKey: 'lead',
+      role: 'trustquote-lead',
+      paneId: 'trustquote-lead',
+      proofKind: 'startup_check_in',
+      messageId: 'hm-lead-session-407',
+      commsRowId: lead407.rowId,
+      env: {
+        SQUIDRUN_ROLE: 'trustquote-lead',
+        SQUIDRUN_PANE_ID: 'trustquote-lead',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-407:trustquote',
+      },
+    }, { dbPath, nowMs: 4_000 }).ok).toBe(true);
+
+    const current = buildArmStateProjection({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-407:trustquote',
+    }, { dbPath, nowMs: 5_000 });
+    expect(current.registry).toEqual(expect.objectContaining({
+      desiredCount: 2,
+      readyCount: 1,
+      missingCount: 1,
+    }));
+    expect(current.arms.find((arm) => arm.armKey === 'lead')).toEqual(expect.objectContaining({
+      status: 'ready',
+      latestAcceptedCheckin: expect.objectContaining({ messageId: 'hm-lead-session-407' }),
     }));
   });
 

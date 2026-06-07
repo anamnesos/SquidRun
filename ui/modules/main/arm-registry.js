@@ -2,6 +2,8 @@ const path = require('path');
 const {
   EvidenceLedgerStore,
   resolveDefaultDbPath,
+  buildCanonicalAppRoomSessionId,
+  isCanonicalAppRoomSessionId,
 } = require('./evidence-ledger-store');
 
 const storeCache = new Map();
@@ -71,6 +73,21 @@ function queryArmRegistryArms(filters = {}, options = {}) {
   const storeResult = resolveStore(opts.dbPath || null);
   if (!storeResult.ok || !storeResult.store) return [];
   return storeResult.store.queryArmRegistryArms(filters || {});
+}
+
+function migrateArmRegistryManifestScope(filters = {}, options = {}) {
+  const opts = asObject(options);
+  const storeResult = resolveStore(opts.dbPath || null);
+  if (!storeResult.ok || !storeResult.store) {
+    return {
+      ok: false,
+      status: 'unavailable',
+      reason: storeResult.reason || 'store_unavailable',
+      dbPath: storeResult.dbPath || null,
+    };
+  }
+  const result = storeResult.store.migrateArmRegistryManifestScope(filters || {}, opts);
+  return { ...result, dbPath: storeResult.dbPath };
 }
 
 function recordArmCheckinProof(input = {}, options = {}) {
@@ -148,10 +165,13 @@ module.exports = {
   getArmRegistryManifest,
   queryArmRegistryManifests,
   queryArmRegistryArms,
+  migrateArmRegistryManifestScope,
   recordArmCheckinProof,
   queryArmCheckinProofs,
   evaluateArmRegistryReadiness,
   queryArmMissingWatchdogs,
   advanceArmMissingWatchdogs,
   closeArmRegistryStores,
+  buildCanonicalAppRoomSessionId,
+  isCanonicalAppRoomSessionId,
 };

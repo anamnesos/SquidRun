@@ -65,6 +65,16 @@ function latestAcceptedByArm(proofs = [], registry = {}) {
   return latest;
 }
 
+function resolveReadinessSessionId(filters = {}, registry = {}) {
+  return toOptionalString(
+    filters.readinessSessionId || filters.readiness_session_id || filters.currentSessionId || filters.current_session_id,
+    null
+  ) || toOptionalString(
+    filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id,
+    null
+  ) || toOptionalString(registry.sessionId, null);
+}
+
 function summarizeWatchdogs(watchdogs = [], nowMs) {
   const openStatuses = new Set(['expected', 'nudged', 'escalated']);
   const open = watchdogs.filter((watchdog) => openStatuses.has(watchdog.status));
@@ -176,20 +186,40 @@ function buildArmStateProjection(filters = {}, options = {}) {
   const opts = asObject(options);
   const nowMs = toMs(opts.nowMs, Date.now());
   const dbPath = path.resolve(String(opts.dbPath || resolveDefaultDbPath()));
-  const registry = getArmRegistryManifest(buildFilters(filters), { dbPath });
+  const registryFilters = buildFilters(filters);
+  const registry = getArmRegistryManifest(registryFilters, { dbPath });
   if (!registry) {
     return unavailableProjection('arm_registry_not_found', dbPath, nowMs);
   }
+  const readinessSessionId = resolveReadinessSessionId(filters, registry);
 
   const checkins = queryArmCheckinProofs({ registryId: registry.registryId, limit: 50_000 }, { dbPath });
-  const watchdogs = queryArmMissingWatchdogs({ registryId: registry.registryId, limit: 50_000 }, { dbPath });
-  const applyRequests = queryArmApplyRequests({ registryId: registry.registryId, limit: 50_000 }, { dbPath });
-  const proofByArm = latestAcceptedByArm(checkins, registry);
+  const watchdogs = queryArmMissingWatchdogs({
+    registryId: registry.registryId,
+    ...(readinessSessionId ? { sessionId: readinessSessionId } : {}),
+    limit: 50_000,
+  }, { dbPath });
+  const applyRequests = queryArmApplyRequests({
+    registryId: registry.registryId,
+    ...(readinessSessionId ? { sessionId: readinessSessionId } : {}),
+    limit: 50_000,
+  }, { dbPath });
+  const readinessRegistry = { ...registry, readinessSessionId };
+  const proofByArm = latestAcceptedByArm(checkins, readinessRegistry);
+  const scopedCheckins = readinessSessionId
+    ? checkins.filter((proof) => proof.sessionId === readinessSessionId)
+    : checkins;
+  let desiredCount = 0;
+  let readyCount = 0;
 
   const arms = registry.arms.map((arm) => {
     const latestProof = proofByArm.get(arm.armId) || null;
     const armWatchdogs = watchdogs.filter((watchdog) => watchdog.armId === arm.armId);
     const armApplyRequests = applyRequests.filter((request) => request.armId === arm.armId);
+    const disabled = !arm.required || arm.status === 'disabled';
+    if (!disabled) desiredCount += 1;
+    if (latestProof && !disabled) readyCount += 1;
+    const projectedStatus = disabled ? 'disabled' : (latestProof ? 'ready' : 'missing');
     return {
       armId: arm.armId,
       armKey: arm.armKey,
@@ -199,7 +229,7 @@ function buildArmStateProjection(filters = {}, options = {}) {
       armKind: arm.armKind,
       displayName: arm.displayName,
       required: arm.required,
-      status: arm.status,
+      status: projectedStatus,
       latestAcceptedCheckin: latestProof ? {
         checkinId: latestProof.checkinId,
         proofKind: latestProof.proofKind,
@@ -212,11 +242,12 @@ function buildArmStateProjection(filters = {}, options = {}) {
       applyQueueSummary: summarizeApplyQueue(armApplyRequests),
     };
   });
+  const missingCount = Math.max(0, desiredCount - readyCount);
 
   const includeRows = opts.includeRows !== false;
   return {
     ok: true,
-    status: Number(registry.missingCount || 0) === 0 ? 'ready' : 'missing',
+    status: missingCount === 0 ? 'ready' : 'missing',
     schema: ARM_STATE_PROJECTION_SCHEMA,
     generatedAtMs: nowMs,
     dbPath,
@@ -235,23 +266,24 @@ function buildArmStateProjection(filters = {}, options = {}) {
       registryId: registry.registryId,
       appRoomId: registry.appRoomId,
       sessionId: registry.sessionId,
+      readinessSessionId,
       mainSessionId: registry.mainSessionId,
       leadRole: registry.leadRole,
       leadPaneId: registry.leadPaneId,
       routeTarget: registry.routeTarget,
       status: registry.status,
-      desiredCount: registry.desiredCount,
-      readyCount: registry.readyCount,
-      missingCount: registry.missingCount,
+      desiredCount,
+      readyCount,
+      missingCount,
       lastEvaluatedAtMs: registry.lastEvaluatedAtMs,
       metadata: registry.metadata,
     },
     arms,
     checkins: {
-      total: checkins.length,
-      accepted: checkins.filter((proof) => proof.status === 'accepted').length,
-      rejected: checkins.filter((proof) => proof.status === 'rejected').length,
-      byStatus: countBy(checkins, 'status'),
+      total: scopedCheckins.length,
+      accepted: scopedCheckins.filter((proof) => proof.status === 'accepted').length,
+      rejected: scopedCheckins.filter((proof) => proof.status === 'rejected').length,
+      byStatus: countBy(scopedCheckins, 'status'),
     },
     watchdogs: {
       summary: summarizeWatchdogs(watchdogs, nowMs),

@@ -573,6 +573,8 @@ const ARM_APPLY_ALLOWED_CATEGORIES = new Set([
   'qa_observation',
   'code_patch_plan',
 ]);
+const APP_ROOM_MANIFEST_SESSION_PREFIX = 'app-room:';
+const APP_SESSION_SCOPE_PATTERN = /^app-session-\d+(?::|$)/i;
 
 function toMs(value, fallback) {
   const numeric = Number(value);
@@ -739,6 +741,37 @@ function normalizeArmRegistryStatus(value) {
   return ARM_REGISTRY_STATUSES.has(normalized) ? normalized : null;
 }
 
+function normalizeAppRoomId(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  return text.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || null;
+}
+
+function buildCanonicalAppRoomSessionId(appRoomId) {
+  const normalized = normalizeAppRoomId(appRoomId);
+  if (!normalized) return null;
+  const sessionId = `${APP_ROOM_MANIFEST_SESSION_PREFIX}${normalized}`;
+  if (APP_SESSION_SCOPE_PATTERN.test(sessionId)) {
+    throw new Error(`canonical_app_room_session_must_not_parse_as_app_session: ${sessionId}`);
+  }
+  return sessionId;
+}
+
+function isCanonicalAppRoomSessionId(sessionId) {
+  const text = toOptionalString(sessionId, null);
+  return Boolean(text && text.startsWith(APP_ROOM_MANIFEST_SESSION_PREFIX));
+}
+
+function resolveReadinessSessionId(filters = {}, registry = {}) {
+  return toOptionalString(
+    filters.readinessSessionId || filters.readiness_session_id || filters.currentSessionId || filters.current_session_id,
+    null
+  ) || toOptionalString(
+    filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id,
+    null
+  ) || toOptionalString(registry.readinessSessionId || registry.sessionId, null);
+}
+
 function normalizeArmStatus(value) {
   const text = toOptionalString(value, null);
   if (!text) return null;
@@ -898,7 +931,8 @@ function armProofMatchesCurrentIdentity(proof = {}, arm = {}, registry = {}) {
   if (!proof || !arm || !registry) return false;
   if (proof.armId !== arm.armId) return false;
   if (proof.armKey !== arm.armKey) return false;
-  if (proof.sessionId !== registry.sessionId) return false;
+  const readinessSessionId = resolveReadinessSessionId(registry, registry);
+  if (readinessSessionId && proof.sessionId !== readinessSessionId) return false;
   if (normalizeIdentityToken(proof.role) !== normalizeIdentityToken(arm.role)) return false;
   const expectedPane = normalizeIdentityToken(arm.paneId);
   if (expectedPane && normalizeIdentityToken(proof.paneId) !== expectedPane) return false;
@@ -1885,7 +1919,33 @@ class EvidenceLedgerStore {
   }
 
   getArmRegistryManifest(filters = {}) {
-    return this.queryArmRegistries({ ...filters, limit: 1 })[0] || null;
+    if (filters.registryId || filters.registry_id) {
+      return this.queryArmRegistries({
+        registryId: filters.registryId || filters.registry_id,
+        limit: 1,
+      })[0] || null;
+    }
+    const direct = this.queryArmRegistries({ ...filters, limit: 1 })[0] || null;
+    if (direct) return direct;
+
+    const appRoomId = toOptionalString(filters.appRoomId || filters.app_room_id, null);
+    const sessionId = toOptionalString(
+      filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id,
+      null
+    );
+    if (!appRoomId || !sessionId || isCanonicalAppRoomSessionId(sessionId)) return null;
+
+    const canonicalSessionId = buildCanonicalAppRoomSessionId(appRoomId);
+    if (!canonicalSessionId) return null;
+    const canonicalFilters = {
+      ...filters,
+      sessionId: canonicalSessionId,
+      session_id: undefined,
+      sessionScopeId: undefined,
+      session_scope_id: undefined,
+      limit: 1,
+    };
+    return this.queryArmRegistries(canonicalFilters)[0] || null;
   }
 
   upsertArmRegistryManifest(input = {}, options = {}) {
@@ -1894,10 +1954,7 @@ class EvidenceLedgerStore {
     }
 
     const appRoomId = toOptionalString(input.appRoomId || input.app_room_id || input.roomId || input.room_id, null);
-    const sessionId = toOptionalString(
-      input.sessionId || input.session_id || input.sessionScopeId || input.session_scope_id,
-      null
-    );
+    const sessionId = appRoomId ? buildCanonicalAppRoomSessionId(appRoomId) : null;
     if (!appRoomId) {
       return { ok: false, status: 'invalid', reason: 'app_room_id_required' };
     }
@@ -2127,6 +2184,194 @@ class EvidenceLedgerStore {
     }
   }
 
+  migrateArmRegistryManifestScope(filters = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+
+    const appRoomId = toOptionalString(filters.appRoomId || filters.app_room_id || filters.roomId || filters.room_id, null);
+    if (!appRoomId) {
+      return { ok: false, status: 'invalid', reason: 'app_room_id_required' };
+    }
+    const toSessionId = toOptionalString(
+      filters.toSessionId || filters.to_session_id || filters.canonicalSessionId || filters.canonical_session_id,
+      buildCanonicalAppRoomSessionId(appRoomId)
+    );
+    if (!toSessionId || !isCanonicalAppRoomSessionId(toSessionId) || APP_SESSION_SCOPE_PATTERN.test(toSessionId)) {
+      return {
+        ok: false,
+        status: 'invalid',
+        reason: 'canonical_app_room_session_required',
+        appRoomId,
+        toSessionId,
+      };
+    }
+
+    const fromSessionId = toOptionalString(filters.fromSessionId || filters.from_session_id, null);
+    const nowMs = toMs(options.nowMs, Date.now());
+    const canonicalRow = this.db.prepare(`
+      SELECT * FROM arm_registries
+      WHERE app_room_id = ? AND session_id = ?
+      LIMIT 1
+    `).get(appRoomId, toSessionId);
+    const currentLegacyRows = this.db.prepare(`
+      SELECT * FROM arm_registries
+      WHERE app_room_id = ? AND session_id != ?
+      ORDER BY updated_at_ms DESC, registry_id DESC
+    `).all(appRoomId, toSessionId);
+    if (canonicalRow) {
+      if (currentLegacyRows.length > 0) {
+        return {
+          ok: false,
+          status: 'duplicate_scope_conflict',
+          reason: 'canonical_and_legacy_registries_present',
+          appRoomId,
+          toSessionId,
+          canonicalRegistryId: canonicalRow.registry_id,
+          legacyRegistries: currentLegacyRows.map((row) => ({
+            registryId: row.registry_id,
+            sessionId: row.session_id,
+          })),
+        };
+      }
+      const registry = mapArmRegistryRow(canonicalRow, this.queryArmRegistryArms({
+        registryId: canonicalRow.registry_id,
+        limit: 10_000,
+      }));
+      return {
+        ok: true,
+        status: 'already_canonical',
+        migrated: false,
+        appRoomId,
+        toSessionId,
+        registry,
+      };
+    }
+
+    const legacyRows = fromSessionId
+      ? this.db.prepare(`
+          SELECT * FROM arm_registries
+          WHERE app_room_id = ? AND session_id = ?
+          ORDER BY updated_at_ms DESC, registry_id DESC
+        `).all(appRoomId, fromSessionId)
+      : this.db.prepare(`
+          SELECT * FROM arm_registries
+          WHERE app_room_id = ? AND session_id != ?
+          ORDER BY updated_at_ms DESC, registry_id DESC
+        `).all(appRoomId, toSessionId);
+
+    if (legacyRows.length === 0) {
+      return {
+        ok: true,
+        status: 'no_legacy_registry',
+        migrated: false,
+        appRoomId,
+        toSessionId,
+      };
+    }
+    if (legacyRows.length > 1 && !fromSessionId) {
+      return {
+        ok: false,
+        status: 'ambiguous_legacy_registry',
+        reason: 'multiple_legacy_registries_require_from_session_id',
+        appRoomId,
+        toSessionId,
+        legacySessions: legacyRows.map((row) => row.session_id),
+      };
+    }
+
+    const legacyRow = legacyRows[0];
+    const registryId = legacyRow.registry_id;
+    const fromSession = legacyRow.session_id;
+    const before = {
+      registryRows: 1,
+      armRows: this.db.prepare('SELECT COUNT(*) AS count FROM arm_registry_arms WHERE registry_id = ?').get(registryId).count,
+      checkinRows: this.db.prepare('SELECT COUNT(*) AS count FROM arm_checkin_proofs WHERE registry_id = ?').get(registryId).count,
+      watchdogRows: this.db.prepare('SELECT COUNT(*) AS count FROM arm_missing_watchdogs WHERE registry_id = ?').get(registryId).count,
+      applyRows: this.db.prepare('SELECT COUNT(*) AS count FROM arm_apply_requests WHERE registry_id = ?').get(registryId).count,
+    };
+
+    try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      this.db.prepare(`
+        UPDATE arm_registries
+        SET session_id = ?, updated_at_ms = ?
+        WHERE registry_id = ?
+      `).run(toSessionId, nowMs, registryId);
+      this.db.prepare(`
+        UPDATE arm_registry_arms
+        SET session_id = ?, updated_at_ms = ?
+        WHERE registry_id = ?
+      `).run(toSessionId, nowMs, registryId);
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: err.message,
+        appRoomId,
+        fromSessionId: fromSession,
+        toSessionId,
+        registryId,
+      };
+    }
+
+    const after = {
+      canonicalRows: this.db.prepare(`
+        SELECT COUNT(*) AS count FROM arm_registries WHERE app_room_id = ? AND session_id = ?
+      `).get(appRoomId, toSessionId).count,
+      legacyRows: this.db.prepare(`
+        SELECT COUNT(*) AS count FROM arm_registries WHERE app_room_id = ? AND session_id != ?
+      `).get(appRoomId, toSessionId).count,
+      armRows: this.db.prepare('SELECT COUNT(*) AS count FROM arm_registry_arms WHERE registry_id = ?').get(registryId).count,
+      checkinRows: this.db.prepare('SELECT COUNT(*) AS count FROM arm_checkin_proofs WHERE registry_id = ?').get(registryId).count,
+      watchdogRows: this.db.prepare('SELECT COUNT(*) AS count FROM arm_missing_watchdogs WHERE registry_id = ?').get(registryId).count,
+      applyRows: this.db.prepare('SELECT COUNT(*) AS count FROM arm_apply_requests WHERE registry_id = ?').get(registryId).count,
+    };
+    const logResult = this.appendEvent({
+      eventId: buildStableHashId('evt-arm-registry-scope-migration', [registryId, fromSession, toSessionId, nowMs]),
+      traceId: `arm-registry-scope-migration:${appRoomId}`,
+      type: 'arm_registry_manifest_scope_migration',
+      stage: 'migration',
+      source: 'evidence-ledger-store',
+      paneId: toOptionalString(options.paneId || options.pane_id, 'builder'),
+      role: toOptionalString(options.role, 'builder'),
+      ts: nowMs,
+      direction: 'internal',
+      payload: {
+        appRoomId,
+        registryId,
+        fromSessionId: fromSession,
+        toSessionId,
+        before,
+        after,
+        mode: 'rewrite_in_place',
+      },
+      meta: {
+        source: toOptionalString(options.source, 'arm-registry-manifest-scope-migration'),
+      },
+    }, { nowMs, sessionId: toOptionalString(options.sessionId || options.session_id, null) });
+    log.info(
+      'EvidenceLedger',
+      `Migrated arm registry ${registryId} manifest scope for ${appRoomId}: ${fromSession} -> ${toSessionId}`
+    );
+
+    return {
+      ok: true,
+      status: 'migrated',
+      migrated: true,
+      appRoomId,
+      registryId,
+      fromSessionId: fromSession,
+      toSessionId,
+      before,
+      after,
+      logResult,
+      registry: this.getArmRegistryManifest({ registryId }),
+    };
+  }
+
   queryArmCheckinProofs(filters = {}) {
     if (!this.isAvailable()) return [];
 
@@ -2206,6 +2451,11 @@ class EvidenceLedgerStore {
     if (!registry) {
       return { ok: false, status: 'not_found', reason: 'arm_registry_not_found' };
     }
+    const readinessSessionId = sessionId || toOptionalString(
+      input.readinessSessionId || input.readiness_session_id || input.currentSessionId || input.current_session_id,
+      null
+    ) || toOptionalString(ensureObject(input.env || input.environment || input.env_json).SQUIDRUN_SESSION_SCOPE_ID, null)
+      || registry.sessionId;
 
     const env = ensureObject(input.env || input.environment || input.env_json);
     const envRole = toOptionalString(env.SQUIDRUN_ROLE || env.role, null);
@@ -2270,7 +2520,7 @@ class EvidenceLedgerStore {
         const commsIdentity = extractCommsProofIdentity(commsProofRow);
         const expectedRole = normalizeIdentityToken(arm.role);
         const expectedPane = normalizeIdentityToken(arm.paneId);
-        const expectedSession = normalizeIdentityToken(registry.sessionId);
+        const expectedSession = normalizeIdentityToken(readinessSessionId);
         if (expectedRole && !commsIdentity.roles.has(expectedRole)) {
           rejectionReasons.push('comms_role_mismatch');
         }
@@ -2282,10 +2532,10 @@ class EvidenceLedgerStore {
         }
       }
     }
-    if (envSessionId && envSessionId !== registry.sessionId) {
+    if (envSessionId && envSessionId !== readinessSessionId) {
       rejectionReasons.push('env_session_mismatch');
     }
-    if (sessionId && sessionId !== registry.sessionId) {
+    if (sessionId && sessionId !== readinessSessionId) {
       rejectionReasons.push('session_mismatch');
     }
     if (role && String(role).toLowerCase() !== String(arm.role).toLowerCase()) {
@@ -2332,13 +2582,13 @@ class EvidenceLedgerStore {
           checked_in_at_ms = excluded.checked_in_at_ms,
           updated_at_ms = excluded.updated_at_ms
       `).run(
-        checkinId,
-        registry.registryId,
-        arm.armId,
-        registry.appRoomId,
-        registry.sessionId,
-        arm.armKey,
-        role || arm.role,
+          checkinId,
+          registry.registryId,
+          arm.armId,
+          registry.appRoomId,
+          readinessSessionId,
+          arm.armKey,
+          role || arm.role,
         paneId || arm.paneId || null,
         toOptionalString(input.routeTarget || input.route_target || arm.routeTarget, null),
         proofKind,
@@ -2358,7 +2608,7 @@ class EvidenceLedgerStore {
       const proof = this.queryArmCheckinProofs({ checkinId, limit: 1 })[0] || null;
       const evaluation = options.evaluate === false
         ? null
-        : this.evaluateArmRegistryReadiness({ registryId: registry.registryId }, { nowMs });
+        : this.evaluateArmRegistryReadiness({ registryId: registry.registryId, sessionId: readinessSessionId }, { nowMs });
       return {
         ok: accepted,
         status,
@@ -2384,6 +2634,7 @@ class EvidenceLedgerStore {
     if (!registry) {
       return { ok: false, status: 'not_found', reason: 'arm_registry_not_found' };
     }
+    const readinessSessionId = resolveReadinessSessionId(filters, registry);
 
     const nowMs = toMs(options.nowMs, Date.now());
     const acceptedProofs = this.queryArmCheckinProofs({
@@ -2393,9 +2644,10 @@ class EvidenceLedgerStore {
     });
     const currentArmById = new Map(registry.arms.map((arm) => [arm.armId, arm]));
     const latestAcceptedByArm = new Map();
+    const readinessRegistry = { ...registry, readinessSessionId };
     for (const proof of acceptedProofs) {
       const currentArm = currentArmById.get(proof.armId);
-      if (!armProofMatchesCurrentIdentity(proof, currentArm, registry)) continue;
+      if (!armProofMatchesCurrentIdentity(proof, currentArm, readinessRegistry)) continue;
       const current = latestAcceptedByArm.get(proof.armId);
       if (!current || Number(proof.checkedInAtMs || 0) > Number(current.checkedInAtMs || 0)) {
         latestAcceptedByArm.set(proof.armId, proof);
@@ -2456,10 +2708,14 @@ class EvidenceLedgerStore {
         registry.registryId
       );
       this.db.exec('COMMIT;');
+      const evaluatedRegistry = this.getArmRegistryManifest({ registryId: registry.registryId });
+      if (evaluatedRegistry && readinessSessionId) {
+        evaluatedRegistry.readinessSessionId = readinessSessionId;
+      }
       return {
         ok: true,
         status: missingCount === 0 ? 'ready' : 'missing',
-        registry: this.getArmRegistryManifest({ registryId: registry.registryId }),
+        registry: evaluatedRegistry,
       };
     } catch (err) {
       try { this.db.exec('ROLLBACK;'); } catch {}
@@ -2554,6 +2810,7 @@ class EvidenceLedgerStore {
     if (!registry) {
       return { ok: false, status: 'not_found', reason: 'arm_registry_not_found' };
     }
+    const readinessSessionId = resolveReadinessSessionId({ ...options, ...filters }, registry);
 
     const actions = [];
     try {
@@ -2562,6 +2819,7 @@ class EvidenceLedgerStore {
         const openWatchdogs = this.queryArmMissingWatchdogs({
           registryId: registry.registryId,
           armId: arm.armId,
+          ...(readinessSessionId ? { sessionId: readinessSessionId } : {}),
           statuses: ['expected', 'nudged'],
           order: 'desc',
           limit: 1,
@@ -2576,6 +2834,7 @@ class EvidenceLedgerStore {
           const activeWatchdogs = this.queryArmMissingWatchdogs({
             registryId: registry.registryId,
             armId: arm.armId,
+            ...(readinessSessionId ? { sessionId: readinessSessionId } : {}),
             statuses: ['expected', 'nudged', 'escalated'],
             order: 'desc',
             limit: 50,
@@ -2605,6 +2864,7 @@ class EvidenceLedgerStore {
         const escalatedExisting = this.queryArmMissingWatchdogs({
           registryId: registry.registryId,
           armId: arm.armId,
+          ...(readinessSessionId ? { sessionId: readinessSessionId } : {}),
           status: 'escalated',
           order: 'desc',
           limit: 1,
@@ -2631,7 +2891,7 @@ class EvidenceLedgerStore {
             registry.registryId,
             arm.armId,
             registry.appRoomId,
-            registry.sessionId,
+            readinessSessionId || registry.sessionId,
             arm.armKey,
             arm.role,
             arm.paneId || null,
@@ -2707,7 +2967,7 @@ class EvidenceLedgerStore {
             watchdogId: openWatchdog.watchdogId,
             registryId: registry.registryId,
             appRoomId: registry.appRoomId,
-            sessionId: registry.sessionId,
+            sessionId: readinessSessionId || registry.sessionId,
             armId: arm.armId,
             armKey: arm.armKey,
             role: arm.role,
@@ -2720,12 +2980,16 @@ class EvidenceLedgerStore {
       this.db.exec('COMMIT;');
       const watchdogs = this.queryArmMissingWatchdogs({
         registryId: registry.registryId,
+        ...(readinessSessionId ? { sessionId: readinessSessionId } : {}),
         limit: 50_000,
       });
       return {
         ok: true,
         status: actions.length > 0 ? 'actions_due' : 'checked',
-        registry: this.getArmRegistryManifest({ registryId: registry.registryId }),
+        registry: {
+          ...this.getArmRegistryManifest({ registryId: registry.registryId }),
+          readinessSessionId,
+        },
         watchdogs,
         actions,
       };
@@ -2836,6 +3100,7 @@ class EvidenceLedgerStore {
     if (!registry) {
       return { ok: false, status: 'not_found', reason: 'arm_registry_not_found' };
     }
+    const readinessSessionId = resolveReadinessSessionId(input, registry);
 
     const actionCategory = normalizeArmApplyCategory(
       input.actionCategory || input.action_category || input.category
@@ -2912,7 +3177,7 @@ class EvidenceLedgerStore {
         registry.registryId,
         arm.armId,
         registry.appRoomId,
-        registry.sessionId,
+        readinessSessionId || registry.sessionId,
         arm.armKey,
         role || arm.role,
         paneId || arm.paneId || null,
@@ -3651,4 +3916,6 @@ module.exports = {
   DEFAULT_RETENTION_MS,
   DEFAULT_TELEGRAM_REPLY_OBLIGATION_WINDOW_MS,
   armProofMatchesCurrentIdentity,
+  buildCanonicalAppRoomSessionId,
+  isCanonicalAppRoomSessionId,
 };

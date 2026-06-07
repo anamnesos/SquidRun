@@ -6,6 +6,7 @@ const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store')
 const {
   upsertArmRegistryManifest,
   getArmRegistryManifest,
+  migrateArmRegistryManifestScope,
   recordArmCheckinProof,
   queryArmCheckinProofs,
   evaluateArmRegistryReadiness,
@@ -32,7 +33,7 @@ function hasSqliteDriver() {
 function trustquoteManifest(overrides = {}) {
   return {
     appRoomId: 'trustquote',
-    sessionId: 'app-session-406:trustquote',
+    sessionId: 'app-room:trustquote',
     mainSessionId: 'app-session-406',
     leadRole: 'trustquote-lead',
     leadPaneId: 'trustquote-lead',
@@ -144,7 +145,7 @@ maybeDescribe('arm registry', () => {
     expect(inserted.status).toBe('inserted');
     expect(inserted.registry).toEqual(expect.objectContaining({
       appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      sessionId: 'app-room:trustquote',
       mainSessionId: 'app-session-406',
       leadRole: 'trustquote-lead',
       desiredCount: 3,
@@ -213,7 +214,117 @@ maybeDescribe('arm registry', () => {
     expect(armCount).toBe(3);
   });
 
-  test('keeps app-room session manifests isolated', () => {
+  test('migrates a legacy session-pinned manifest in place and logs it', () => {
+    const inserted = upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 });
+    expect(inserted.ok).toBe(true);
+
+    const legacyStore = new EvidenceLedgerStore({ dbPath });
+    expect(legacyStore.init().ok).toBe(true);
+    legacyStore.db.prepare(`
+      UPDATE arm_registries SET session_id = ? WHERE registry_id = ?
+    `).run('app-session-406:trustquote', inserted.registry.registryId);
+    legacyStore.db.prepare(`
+      UPDATE arm_registry_arms SET session_id = ? WHERE registry_id = ?
+    `).run('app-session-406:trustquote', inserted.registry.registryId);
+    legacyStore.close();
+
+    const migrated = migrateArmRegistryManifestScope({
+      appRoomId: 'trustquote',
+      fromSessionId: 'app-session-406:trustquote',
+    }, { dbPath, nowMs: 2_000 });
+
+    expect(migrated).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'migrated',
+      migrated: true,
+      fromSessionId: 'app-session-406:trustquote',
+      toSessionId: 'app-room:trustquote',
+    }));
+    expect(migrated.before).toEqual(expect.objectContaining({
+      armRows: 3,
+      checkinRows: 0,
+      watchdogRows: 0,
+      applyRows: 0,
+    }));
+    expect(migrated.after).toEqual(expect.objectContaining({
+      canonicalRows: 1,
+      legacyRows: 0,
+      armRows: 3,
+      checkinRows: 0,
+      watchdogRows: 0,
+      applyRows: 0,
+    }));
+
+    const verify = new EvidenceLedgerStore({ dbPath });
+    expect(verify.init().ok).toBe(true);
+    expect(verify.db.prepare(`
+      SELECT COUNT(*) AS count FROM arm_registries WHERE app_room_id = 'trustquote'
+    `).get().count).toBe(1);
+    expect(verify.db.prepare(`
+      SELECT COUNT(*) AS count FROM arm_registry_arms WHERE session_id = 'app-room:trustquote'
+    `).get().count).toBe(3);
+    expect(verify.db.prepare(`
+      SELECT COUNT(*) AS count FROM ledger_events WHERE type = 'arm_registry_manifest_scope_migration'
+    `).get().count).toBe(1);
+    verify.close();
+
+    const second = migrateArmRegistryManifestScope({
+      appRoomId: 'trustquote',
+      fromSessionId: 'app-session-406:trustquote',
+    }, { dbPath, nowMs: 3_000 });
+    expect(second).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'already_canonical',
+      migrated: false,
+    }));
+  });
+
+  test('rejects canonical success when a legacy duplicate registry remains', () => {
+    const inserted = upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 });
+    expect(inserted.ok).toBe(true);
+
+    const duplicateStore = new EvidenceLedgerStore({ dbPath });
+    expect(duplicateStore.init().ok).toBe(true);
+    duplicateStore.db.prepare(`
+      INSERT INTO arm_registries (
+        registry_id, app_room_id, session_id, main_session_id, lead_role,
+        lead_pane_id, route_target, status, desired_count, ready_count,
+        missing_count, last_evaluated_at_ms, metadata_json, created_at_ms, updated_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 3, 0, 3, ?, '{}', ?, ?)
+    `).run(
+      'arm-registry-legacy-duplicate',
+      'trustquote',
+      'app-session-405:trustquote',
+      'app-session-405',
+      'trustquote-lead',
+      'trustquote-lead',
+      'trustquote',
+      1_500,
+      1_500,
+      1_500
+    );
+    duplicateStore.close();
+
+    const duplicate = migrateArmRegistryManifestScope({
+      appRoomId: 'trustquote',
+      fromSessionId: 'app-session-405:trustquote',
+    }, { dbPath, nowMs: 2_000 });
+
+    expect(duplicate).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'duplicate_scope_conflict',
+      reason: 'canonical_and_legacy_registries_present',
+      canonicalRegistryId: inserted.registry.registryId,
+      legacyRegistries: [
+        expect.objectContaining({
+          registryId: 'arm-registry-legacy-duplicate',
+          sessionId: 'app-session-405:trustquote',
+        }),
+      ],
+    }));
+  });
+
+  test('keeps one canonical app-room manifest across app sessions', () => {
     expect(upsertArmRegistryManifest(trustquoteManifest({
       sessionId: 'app-session-406:trustquote',
     }), { dbPath, nowMs: 1_000 }).ok).toBe(true);
@@ -232,9 +343,17 @@ maybeDescribe('arm registry', () => {
       sessionId: 'app-session-407:trustquote',
     }, { dbPath });
 
-    expect(current.mainSessionId).toBe('app-session-406');
+    expect(current.registryId).toBe(next.registryId);
+    expect(current.sessionId).toBe('app-room:trustquote');
+    expect(next.sessionId).toBe('app-room:trustquote');
     expect(next.mainSessionId).toBe('app-session-407');
     expect(next.metadata).toEqual(expect.objectContaining({ source: 'next-session' }));
+
+    const rows = new EvidenceLedgerStore({ dbPath });
+    expect(rows.init().ok).toBe(true);
+    const count = rows.db.prepare('SELECT COUNT(*) AS count FROM arm_registries').get().count;
+    rows.close();
+    expect(count).toBe(1);
   });
 
   test('computes desired ready and missing from durable role check-ins', () => {
@@ -494,7 +613,7 @@ maybeDescribe('arm registry', () => {
     }, 4_000);
     const staleSession = recordArmCheckinProof({
       registryId: routeProbe.proof.registryId,
-      sessionId: 'app-session-405:trustquote',
+      sessionId: 'app-session-406:trustquote',
       armKey: 'money-documents',
       role: 'trustquote-billing',
       paneId: 'trustquote-billing',
