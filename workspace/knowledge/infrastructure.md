@@ -38,6 +38,12 @@ This is the intended TrustQuote room flow, not just a recovery command:
 5. The first live proof for identity is not process-alive or env metadata. It is distinct TrustQuote Builder and TrustQuote Oracle check-ins landing in `hm-comms` under the TrustQuote scope/session, with the agents acknowledging the generated startup sources and TrustQuote playbook.
 6. The visible window must retarget the shell to `trustquote-builder` and `trustquote-oracle` (`workspace-pane-shell.js`) and readiness must check those retargeted panes, not just fallback pane `2`/`3`.
 
+#### TrustQuote arm manifest vs readiness scope (S407)
+
+The Squid Room desired-arm manifest is durable app-room state, not session state. Its registry row must be keyed by the canonical sentinel `app-room:trustquote`, which is intentionally format-distinct from `app-session-N:trustquote` and survives restarts. Current room readiness stays session-scoped through `readinessSessionId`: check-ins, missing-watchdogs, apply requests, and desired/ready/missing counts are evaluated against the current session, for example `app-session-408:trustquote`.
+
+The projection path must resolve the canonical manifest directly, then recompute readiness against the requested/current session. A fresh 408 projection is expected to find the `app-room:trustquote` manifest with `desired=3`, `ready=0`, and `missing=3` until fresh 408 identity check-ins land. Startup must not auto-seed or auto-migrate this manifest; explicit seed/migration tooling must target `app-room:trustquote`, treat an already-canonical row as `already_canonical`, and refuse duplicate canonical plus legacy rows as a blocker instead of repairing them silently.
+
 S406 regression inventory, ranked:
 
 1. **Critical - startup identity/check-in bypass.** `trustquote-work-room-route-owner.js` had correct role/env data in `buildTrustQuoteRouteOwnerPlan()`, but the spawned-agent path used `spawnRoleTerminal()` plus `launchRoleAgent()`, and `launchRoleAgent()` only wrote the bare CLI command. The renderer startup identity path (`terminal.js:spawnAgent()` / startup injection) did not run, so Codex could resume stale same-workspace context and both panes could behave like TrustQuote Builder. This is a route-owner launch/bootstrap bug, not a terminal-daemon bug. `terminal-daemon.js` explicitly leaves identity injection to renderer startup handling.
