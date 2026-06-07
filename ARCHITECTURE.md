@@ -61,7 +61,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/ipc-handlers.js: Exports init, setDaemonClient, setExternalNotifier, setupIPCHandlers, ....
 - ui/modules/ipc/agent-claims-handlers.js: Registers IPC channels (claim-agent, release-agent, get-claims, ...).
 - ui/modules/ipc/agent-metrics-handlers.js: Registers IPC channels (record-completion, record-error, record-response-time, ...).
-- ui/modules/ipc/arm-state-projection-handlers.js: Read-only renderer IPC seam for `arm-state:projection`; ignores renderer DB-path overrides and returns desired/ready/missing, watchdog, and apply-queue state from the canonical durable tables without seeding, evaluating, advancing watchdogs, dispatching requests, or changing TrustQuote room behavior.
+- ui/modules/ipc/arm-state-projection-handlers.js: Read-only renderer IPC seam for `arm-state:projection`; ignores renderer DB-path overrides and treats renderer `sessionId` as readiness scope, not the manifest key. Returns desired/ready/missing, watchdog, and apply-queue state from the canonical durable tables without seeding, evaluating, advancing watchdogs, dispatching requests, or changing TrustQuote room behavior.
 - ui/modules/ipc/auto-handoff-handlers.js: Registers IPC channels (trigger-handoff, get-handoff-chain).
 - ui/modules/ipc/auto-nudge-handlers.js: Registers IPC channels (get-agent-health, nudge-pane, restart-pane, ...).
 - ui/modules/ipc/background-processes.js: Tracks background child processes, broadcasts process state to renderer, and terminates running processes on cleanup.
@@ -132,8 +132,9 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/main/agent-task-resolution.js: Shared current-lane/task-resolution helper used by `squidrun-app`, `auto-handoff-materializer`, `startup-ai-briefing`, and `hm-session-summary` to parse agent refs, detect later ACK/complete/supersede closure rows, and derive the active current-session lane from `comms_journal` evidence.
 - ui/modules/main/app-context.js: Exports new.
 - ui/modules/main/arm-apply-queue.js: Evidence-ledger-backed apply-request queue for lead/arm proposals; persists category/risk/evidence/status, forces high-risk/alias categories through approval-required state, requires real James/user/Architect comms approval rows before executable marking, and keeps dispatch as a no-executor/no-side-effect stub.
-- ui/modules/main/arm-registry.js: Evidence-ledger-backed app-room arm registry wrapper; persists desired arms/manifests, records role/pane/session check-in proofs from real `comms_journal` evidence, evaluates desired/ready/missing from accepted identity-matched check-ins, and rejects forged/stale/route-only readiness claims.
-- ui/modules/main/arm-state-projection.js: Explicit read-only projection over the durable arm registry, check-in, missing-watchdog, and apply-queue tables; surfaces desired/ready/missing plus watchdog/queue summaries without advancing watchdogs, dispatching requests, opening rooms, or changing TrustQuote behavior.
+- ui/modules/main/arm-registry.js: Evidence-ledger-backed app-room arm registry wrapper; persists desired arm manifests under canonical app-room sentinel session ids (`app-room:<id>`), records role/pane/session check-in proofs from real `comms_journal` evidence, evaluates readiness against `readinessSessionId`, and rejects forged/stale/route-only readiness claims.
+- ui/modules/main/arm-state-projection.js: Explicit read-only projection over the durable arm registry, check-in, missing-watchdog, and apply-queue tables; resolves manifests by canonical app-room scope and recomputes desired/ready/missing against the requested/current readiness session without advancing watchdogs, dispatching requests, opening rooms, or changing TrustQuote behavior.
+- ui/modules/main/trustquote-arm-registry-seed.js: Explicit TrustQuote desired-arm manifest seed/migration helper. The manifest session is always the canonical app-room sentinel `app-room:trustquote`, while `metadata.readinessSessionId` tracks the current `app-session-N:trustquote` readiness scope. This is not a startup hook; only explicit CLI/module callers run it.
 - ui/modules/main/auto-handoff-materializer.js: Exports materializeSessionHandoff, buildSessionHandoffMarkdown, removeLegacyPaneHandoffFiles, _internals, ....
 - ui/modules/main/background-agent-manager.js: Exports BackgroundAgentManager, createBackgroundAgentManager, containsCompletionSignal, appendCompletionDirective, ....
 - ui/modules/main/cli-identity.js: Exports CliIdentityManager.
@@ -415,6 +416,12 @@ This is a curated orientation map for agents, not a complete generated inventory
 - `.squidrun/build/`: build blockers/errors/status artifacts used by restart gates.
 - `.squidrun/app-status.json` + `.squidrun/link.json`: runtime truth + bootstrap metadata.
 - `.squidrun/fresh-install.json`: marker file indicating a new installation before onboarding completion.
+
+### Arm Registry Scope Contract
+- Desired-arm manifests are durable app-room state and are stored as `arm_registries.session_id='app-room:<appRoomId>'`. The `app-room:<id>` sentinel is intentionally format-distinct from `app-session-N[:room]`; `buildCanonicalAppRoomSessionId()` enforces that it cannot parse as an app session.
+- Readiness, check-ins, missing-watchdogs, and apply requests remain session-scoped. They use the current readiness scope, for example `app-session-408:trustquote`, through `readinessSessionId`.
+- Squid Room renderers may send the current session id, but `arm-state:projection` treats that value as readiness scope, resolves the manifest by canonical app-room scope, and recomputes desired/ready/missing from current-session accepted identity proofs. Projection is read-only and must not seed, migrate, dispatch, or advance watchdog state.
+- Startup must not seed or migrate arm-registry manifests. Any future seed/reseed path must be explicit and must target the canonical `app-room:<id>` manifest. Re-running migration with an already-canonical row is a no-op (`already_canonical`); duplicate canonical plus legacy rows are a blocker/refusal, not a boot-time repair.
 
 ## 9) TEST INFRASTRUCTURE
 - Test suite root: `ui/__tests__/` (Jest, Node environment) with shared setup in `ui/__tests__/setup.js`.
