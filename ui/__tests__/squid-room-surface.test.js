@@ -2,6 +2,7 @@ const {
   ARM_STATE_PROJECTION_CHANNEL,
   buildProjectionRequest,
   buildSquidRoomModel,
+  initSquidRoomSurface,
   refreshSquidRoomSurface,
   renderSquidRoomHtml,
   renderSquidRoomProjection,
@@ -179,6 +180,68 @@ describe('squid-room-surface', () => {
       dispatchEnabled: 'false',
       executorEnabled: 'false',
     }));
+  });
+
+  test('context-arrival refresh consumes and applies the projection payload', async () => {
+    const doc = new FakeDocument();
+    const invoke = jest.fn().mockResolvedValue(projection({
+      registry: {
+        appRoomId: 'trustquote',
+        desiredCount: 3,
+        readyCount: 0,
+        missingCount: 3,
+      },
+    }));
+    let windowContext = { windowKey: 'main', sessionScopeId: 'app-session-408' };
+
+    const controller = initSquidRoomSurface({
+      document: doc,
+      invoke,
+      getWindowContext: () => windowContext,
+    });
+    await Promise.resolve();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('');
+
+    windowContext = { windowKey: 'squid-room', sessionScopeId: 'app-session-408:squid-room' };
+    const result = await controller.refreshForWindowContext(windowContext);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      payload: {
+        appRoomId: 'trustquote',
+        sessionId: 'app-session-408:trustquote',
+        includeRows: true,
+      },
+    }));
+    expect(invoke).toHaveBeenCalledWith(ARM_STATE_PROJECTION_CHANNEL, {
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-408:trustquote',
+      includeRows: true,
+    });
+    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Missing 3');
+    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Desired 3');
+    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Missing 3');
+  });
+
+  test('projection invoke failures render unavailable instead of leaving placeholders', async () => {
+    const doc = new FakeDocument();
+    const invoke = jest.fn().mockRejectedValue(new Error('ipc handler missing'));
+
+    const result = await refreshSquidRoomSurface({
+      document: doc,
+      invoke,
+      getWindowContext: () => ({
+        windowKey: 'squid-room',
+        sessionScopeId: 'app-session-408:squid-room',
+      }),
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.model.status).toBe('Unavailable');
+    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Unavailable');
+    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Desired 0');
+    expect(doc.getElementById('squidRoomSurface').dataset.projectionStatus).toBe('unavailable');
   });
 
   test('refresh skips non-Squid-Room windows without invoking IPC', async () => {

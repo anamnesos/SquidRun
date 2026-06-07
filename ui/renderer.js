@@ -128,7 +128,14 @@ const { initStatusStrip } = rendererModules.statusStrip;
 const { initPaneVisibilityControls } = rendererModules.paneVisibility;
 const { createWindowTeamBootstrap, readInitialWindowContextFromLocation } = rendererModules.windowTeamBootstrap;
 const { configureWorkspacePaneShell } = rendererModules.workspacePaneShell || {};
-const { initSquidRoomSurface } = rendererModules.squidRoomSurface || {};
+const squidRoomSurfaceModule = rendererModules.squidRoomSurface || {};
+const {
+  initSquidRoomSurface,
+  refreshSquidRoomSurface,
+} = squidRoomSurfaceModule;
+const SQUID_ROOM_PROJECTION_CHANNEL = squidRoomSurfaceModule.ARM_STATE_PROJECTION_CHANNEL || 'arm-state:projection';
+const SQUID_ROOM_WINDOW_KEY = squidRoomSurfaceModule.SQUID_ROOM_WINDOW_KEY || 'squid-room';
+const TRUSTQUOTE_APP_ROOM_ID = squidRoomSurfaceModule.TRUSTQUOTE_APP_ROOM_ID || 'trustquote';
 const { sendMiraLivePrompt, normalizeMiraLiveSessionId } = rendererModules.miraLiveEntrypoint || {};
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = rendererModules.modelSelector;
 const { PANE_ROLES, PANE_ROLE_BUNDLES } = rendererModules.config;
@@ -478,6 +485,7 @@ const windowTeamBootstrap = createWindowTeamBootstrap({
   log,
   initialContext: initialWindowContext,
 });
+let squidRoomSurfaceController = null;
 if (typeof terminal.setStartupWindowContext === 'function') {
   terminal.setStartupWindowContext(initialWindowContext);
 }
@@ -507,6 +515,169 @@ function getCurrentWindowContext() {
   return windowTeamBootstrap.getState();
 }
 
+function isSquidRoomWindowContext(windowContext = {}) {
+  return String(windowContext?.windowKey || 'main').trim() === SQUID_ROOM_WINDOW_KEY;
+}
+
+function getSquidRoomSurfaceElements() {
+  return {
+    root: document.getElementById('squidRoomSurface'),
+    status: document.getElementById('squidRoomTrustQuoteStatus'),
+    counts: document.getElementById('squidRoomTrustQuoteCounts'),
+    arms: document.getElementById('squidRoomTrustQuoteArms'),
+  };
+}
+
+function buildSquidRoomProjectionPayload(windowContext = {}) {
+  if (typeof squidRoomSurfaceModule.buildProjectionRequest === 'function') {
+    return squidRoomSurfaceModule.buildProjectionRequest(windowContext, TRUSTQUOTE_APP_ROOM_ID);
+  }
+  const sessionScopeId = String(windowContext?.sessionScopeId || '').trim();
+  const mainSessionId = sessionScopeId ? sessionScopeId.split(':')[0] : '';
+  return {
+    appRoomId: TRUSTQUOTE_APP_ROOM_ID,
+    ...(mainSessionId ? { sessionId: `${mainSessionId}:${TRUSTQUOTE_APP_ROOM_ID}` } : {}),
+    includeRows: true,
+  };
+}
+
+function escapeSquidRoomHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderSquidRoomProjectionInline(projection = {}, elements = getSquidRoomSurfaceElements()) {
+  const registry = projection?.registry || {};
+  const desired = Number(registry.desiredCount || 0);
+  const ready = Number(registry.readyCount || 0);
+  const missing = Number(registry.missingCount || 0);
+  const ok = projection?.ok === true;
+  if (elements.status) {
+    elements.status.textContent = ok
+      ? (missing > 0 ? `Missing ${missing}` : 'Ready')
+      : 'Unavailable';
+  }
+  if (elements.counts) {
+    elements.counts.innerHTML = [
+      `<span>Desired ${desired}</span>`,
+      `<span>Ready ${ready}</span>`,
+      `<span>Missing ${missing}</span>`,
+    ].join('');
+  }
+  if (elements.arms) {
+    elements.arms.innerHTML = Array.isArray(projection?.arms) && projection.arms.length > 0
+      ? projection.arms.map((arm) => (
+        `<div class="squid-room-arm" data-arm-key="${escapeSquidRoomHtml(arm.armKey || 'unknown')}">`
+        + `<div class="squid-room-arm-main"><span class="squid-room-arm-name">${escapeSquidRoomHtml(arm.displayName || arm.armKey || 'Unknown arm')}</span>`
+        + `<span class="squid-room-arm-status">${escapeSquidRoomHtml(arm.status || 'unknown')}</span></div></div>`
+      )).join('')
+      : '<div class="squid-room-empty">No desired arms</div>';
+  }
+  if (elements.root) {
+    elements.root.dataset.projectionStatus = ok ? 'loaded' : 'unavailable';
+  }
+  return {
+    ok,
+    counts: { desired, ready, missing },
+  };
+}
+
+function renderSquidRoomSurfaceUnavailable(reason = 'projection_unavailable') {
+  const elements = getSquidRoomSurfaceElements();
+  if (!elements.root) return { ok: false, skipped: true, reason: 'surface_unavailable' };
+  const model = renderSquidRoomProjectionInline({ ok: false }, elements);
+  elements.root.dataset.projectionStatus = 'unavailable';
+  elements.root.dataset.projectionReason = String(reason || 'projection_unavailable');
+  return { ok: false, reason, model };
+}
+
+function createSquidRoomSurfaceOptions() {
+  return {
+    document,
+    invoke: (channel, payload) => ipcRenderer.invoke(channel, payload),
+    getWindowContext: () => getCurrentWindowContext(),
+  };
+}
+
+function ensureSquidRoomSurfaceController() {
+  if (squidRoomSurfaceController?.ok === true) {
+    return squidRoomSurfaceController;
+  }
+  if (typeof initSquidRoomSurface !== 'function') {
+    return null;
+  }
+  const controller = initSquidRoomSurface(createSquidRoomSurfaceOptions());
+  if (controller?.ok === true) {
+    squidRoomSurfaceController = controller;
+  }
+  return controller || null;
+}
+
+async function refreshSquidRoomSurfaceWithoutController(windowContext = getCurrentWindowContext(), reason = 'controller_unavailable') {
+  if (!isSquidRoomWindowContext(windowContext)) {
+    return { ok: false, skipped: true, reason: 'not_squid_room' };
+  }
+  log.info('SquidRoom', `Refreshing without controller reason=${String(reason || 'unknown')}`);
+  if (typeof refreshSquidRoomSurface === 'function') {
+    const moduleResult = await refreshSquidRoomSurface({
+      ...createSquidRoomSurfaceOptions(),
+      getWindowContext: () => windowContext,
+    });
+    if (moduleResult?.skipped !== true) {
+      return moduleResult;
+    }
+    log.info('SquidRoom', `Surface module refresh skipped: ${moduleResult.reason || 'unknown'}`);
+  }
+
+  const elements = getSquidRoomSurfaceElements();
+  if (!elements.root) return { ok: false, skipped: true, reason: 'surface_unavailable' };
+
+  const payload = buildSquidRoomProjectionPayload(windowContext);
+  let projection = null;
+  try {
+    projection = await ipcRenderer.invoke(SQUID_ROOM_PROJECTION_CHANNEL, payload);
+  } catch (err) {
+    return renderSquidRoomSurfaceUnavailable(err?.message || reason || 'projection_failed');
+  }
+
+  const model = renderSquidRoomProjectionInline(projection, elements);
+  log.info('SquidRoom', `Applied projection desired=${model.counts.desired} ready=${model.counts.ready} missing=${model.counts.missing}`);
+  return {
+    ok: model?.ok === true,
+    channel: SQUID_ROOM_PROJECTION_CHANNEL,
+    payload,
+    model,
+    fallbackReason: reason,
+  };
+}
+
+function refreshSquidRoomSurfaceForContext(windowContext = getCurrentWindowContext()) {
+  if (!isSquidRoomWindowContext(windowContext)) {
+    return;
+  }
+  log.info('SquidRoom', `Refresh requested for ${windowContext.windowKey}`);
+  const controller = ensureSquidRoomSurfaceController();
+  if (!controller || typeof controller.refreshForWindowContext !== 'function') {
+    void refreshSquidRoomSurfaceWithoutController(windowContext, 'controller_unavailable');
+    return;
+  }
+  void Promise.resolve(controller.refreshForWindowContext(windowContext))
+    .then((result) => {
+      if (result?.skipped === true) {
+        return refreshSquidRoomSurfaceWithoutController(windowContext, result.reason || 'controller_skipped');
+      }
+      return result;
+    })
+    .catch((err) => {
+      log.warn('SquidRoom', `Controller refresh failed: ${err?.message || err}`);
+      return refreshSquidRoomSurfaceWithoutController(windowContext, 'controller_refresh_failed');
+    });
+}
+
 function handleRendererWindowContext(payload = {}) {
   const windowContext = windowTeamBootstrap.handleWindowContext(payload || {});
   if (typeof terminal.setStartupWindowContext === 'function') {
@@ -516,6 +687,7 @@ function handleRendererWindowContext(payload = {}) {
     configureWorkspacePaneShell(windowContext, terminal, document);
   }
   applyWindowChrome(windowContext);
+  refreshSquidRoomSurfaceForContext(windowContext);
   if (!initState.autoSpawnChecked) {
     checkInitComplete();
   }
@@ -2567,14 +2739,6 @@ function setupEventListeners() {
     openAppWindow: (windowKey) => ipcRenderer.invoke('open-app-window', { windowKey }),
   });
 
-  if (typeof initSquidRoomSurface === 'function') {
-    initSquidRoomSurface({
-      document,
-      invoke: (channel, payload) => ipcRenderer.invoke(channel, payload),
-      getWindowContext: () => getCurrentWindowContext(),
-    });
-  }
-
   // Fix: Blur terminals when UI input/textarea gets focus (NOT xterm's internal textarea)
   // This prevents xterm from capturing keyboard input meant for form fields
   document.addEventListener('focusin', (e) => {
@@ -2716,6 +2880,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Setup all event handlers
+  refreshSquidRoomSurfaceForContext(getCurrentWindowContext());
   setupEventListeners();
   setupAutonomyOnboardingHandlers();
   initMainPaneState();
