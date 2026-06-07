@@ -6,12 +6,69 @@ const {
 } = require('./work-room-terminal-visibility');
 
 const SQUID_ROOM_WORKSPACE_KEY = 'squid-room';
-const SQUID_ROOM_PANE_IDS = Object.freeze(['2', '3']);
+const SQUID_ROOM_TEAM_PANE_IDS = Object.freeze(['2', '3']);
 const TRUSTQUOTE_PANES = Object.freeze([
   { sourcePaneId: '2', paneId: TRUSTQUOTE_PANE_IDS[0], label: 'TrustQuote Builder' },
   { sourcePaneId: '3', paneId: TRUSTQUOTE_PANE_IDS[1], label: 'TrustQuote Oracle' },
 ]);
 const TRUSTQUOTE_PROJECT_PATH = 'D:\\projects\\TrustQuote';
+const PANE_ICON_SVGS = Object.freeze({
+  avatar: '<svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>',
+  info: '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+  interrupt: '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>',
+  enter: '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>',
+  restart: '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>',
+  expand: '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>',
+  lock: '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+});
+const SQUID_ROOM_TRUSTQUOTE_ARM_PANES = Object.freeze([
+  {
+    paneId: 'trustquote-lead',
+    label: 'TrustQuote Lead',
+    role: 'Lead',
+    commandSourcePaneId: '2',
+    workingDir: TRUSTQUOTE_PROJECT_PATH,
+    command: 'codex --yolo',
+    startupMessage: [
+      'TrustQuote arm role: Lead.',
+      'Work in D:\\projects\\TrustQuote.',
+      'Use SquidRun evidence and current local files only. Do not claim production/deploy/readiness without proof.',
+      'Coordinate as a TrustQuote app arm inside Squid Room; this is not the main SquidRun Builder pane.',
+    ].join('\n'),
+  },
+  {
+    paneId: 'trustquote-invoice',
+    label: 'Invoice',
+    role: 'Invoice',
+    commandSourcePaneId: '2',
+    workingDir: TRUSTQUOTE_PROJECT_PATH,
+    command: 'codex --yolo',
+    startupMessage: [
+      'TrustQuote arm role: Invoice.',
+      'Work in D:\\projects\\TrustQuote.',
+      'Focus on TrustQuote invoice, quote, document, payment, and money-flow evidence when assigned.',
+      'Coordinate as a TrustQuote app arm inside Squid Room; this is not the main SquidRun Builder pane.',
+    ].join('\n'),
+  },
+  {
+    paneId: 'trustquote-schedule-dispatch',
+    label: 'Schedule Dispatch',
+    role: 'Schedule Dispatch',
+    commandSourcePaneId: '3',
+    workingDir: TRUSTQUOTE_PROJECT_PATH,
+    command: 'codex --yolo',
+    startupMessage: [
+      'TrustQuote arm role: Schedule Dispatch.',
+      'Work in D:\\projects\\TrustQuote.',
+      'Focus on TrustQuote calendar, dispatch, schedule, dashboard, workflow, and work-state evidence when assigned.',
+      'Coordinate as a TrustQuote app arm inside Squid Room; this is not the main SquidRun Oracle pane.',
+    ].join('\n'),
+  },
+]);
+const SQUID_ROOM_PANE_IDS = Object.freeze([
+  ...SQUID_ROOM_TEAM_PANE_IDS,
+  ...SQUID_ROOM_TRUSTQUOTE_ARM_PANES.map((pane) => pane.paneId),
+]);
 
 function getDocument(doc) {
   if (doc && typeof doc.querySelector === 'function') return doc;
@@ -40,6 +97,253 @@ function setPaneTitleLabel(pane, label) {
     if (node.nodeType === 3 && node.textContent.trim()) {
       node.textContent = '';
     }
+  }
+}
+
+function appendTextNode(parent, text) {
+  if (!parent?.ownerDocument || !text) return null;
+  if (typeof parent.ownerDocument.createTextNode === 'function') {
+    const node = parent.ownerDocument.createTextNode(text);
+    parent.appendChild(node);
+    return node;
+  }
+  const node = parent.ownerDocument.createElement('span');
+  node.textContent = text;
+  parent.appendChild(node);
+  return node;
+}
+
+function createElement(doc, tagName, attrs = {}, text = '') {
+  const element = doc.createElement(tagName);
+  if (attrs.className) element.className = attrs.className;
+  if (attrs.id) element.id = attrs.id;
+  if (attrs.type) element.type = attrs.type;
+  if (attrs.title) element.title = attrs.title;
+  if (attrs.value !== undefined) element.value = attrs.value;
+  if (attrs.selected !== undefined) element.selected = Boolean(attrs.selected);
+  if (attrs.dataset) {
+    for (const [key, value] of Object.entries(attrs.dataset)) {
+      if (value !== undefined && value !== null) {
+        element.dataset[key] = String(value);
+      }
+    }
+  }
+  if (attrs.attributes) {
+    for (const [key, value] of Object.entries(attrs.attributes)) {
+      element.setAttribute?.(key, String(value));
+    }
+  }
+  if (attrs.innerHTML) element.innerHTML = attrs.innerHTML;
+  if (text) element.textContent = text;
+  return element;
+}
+
+function createPaneActionButton(doc, className, paneId, tooltip, iconMarkup) {
+  return createElement(doc, 'button', {
+    className: `pane-action-btn ${className}`,
+    type: 'button',
+    dataset: {
+      paneId,
+      tooltip,
+    },
+    attributes: {
+      'aria-label': tooltip,
+    },
+    innerHTML: iconMarkup,
+  });
+}
+
+function createRoleInfoButton(doc, paneId) {
+  return createElement(doc, 'button', {
+    className: 'pane-role-info-btn',
+    type: 'button',
+    title: 'Show role bundle',
+    dataset: { paneId },
+    innerHTML: PANE_ICON_SVGS.info,
+  });
+}
+
+function createModelSelector(doc, paneId) {
+  const selector = createElement(doc, 'select', {
+    className: 'model-selector',
+    id: `model-selector-${paneId}`,
+    title: 'Switch model for this pane',
+    dataset: {
+      paneId,
+      previousValue: 'codex',
+    },
+  });
+  for (const [value, label] of [
+    ['claude', 'Claude'],
+    ['codex', 'Codex'],
+    ['gemini', 'Gemini'],
+  ]) {
+    selector.appendChild(createElement(doc, 'option', {
+      value,
+      selected: value === 'codex',
+    }, label));
+  }
+  selector.value = 'codex';
+  return selector;
+}
+
+function createSquidRoomLivePane(doc, spec) {
+  const pane = createElement(doc, 'div', {
+    className: 'pane squid-room-live-pane',
+    dataset: {
+      paneId: spec.paneId,
+      squidRoomLivePane: 'true',
+      squidRoomLabel: spec.label,
+      squidRoomRole: spec.role,
+      squidRoomWorkingDir: spec.workingDir,
+      squidRoomCommand: spec.command,
+      squidRoomCommandSourcePaneId: spec.commandSourcePaneId,
+      squidRoomStartupMessage: spec.startupMessage,
+      cli: 'codex',
+    },
+  });
+
+  const header = createElement(doc, 'div', { className: 'pane-header' });
+  const title = createElement(doc, 'span', { className: 'pane-title' });
+  title.appendChild(createElement(doc, 'span', {
+    className: 'agent-avatar',
+    innerHTML: PANE_ICON_SVGS.avatar,
+  }));
+  title.appendChild(createElement(doc, 'span', {
+    className: 'agent-badge idle',
+    id: `badge-${spec.paneId}`,
+  }));
+  appendTextNode(title, spec.label);
+  title.appendChild(createRoleInfoButton(doc, spec.paneId));
+  title.appendChild(createElement(doc, 'span', {
+    className: 'cli-badge',
+    id: `cli-badge-${spec.paneId}`,
+  }));
+  title.appendChild(createElement(doc, 'span', {
+    className: 'pane-project',
+    id: `project-${spec.paneId}`,
+  }));
+  title.appendChild(createElement(doc, 'span', {
+    className: 'agent-task',
+    id: `task-${spec.paneId}`,
+    text: '',
+  }));
+
+  const headerRight = createElement(doc, 'div', { className: 'pane-header-right' });
+  headerRight.appendChild(createModelSelector(doc, spec.paneId));
+  headerRight.appendChild(createElement(doc, 'span', {
+    className: 'agent-health',
+    id: `health-${spec.paneId}`,
+    title: 'Last output time',
+  }, '-'));
+
+  const actions = createElement(doc, 'div', { className: 'pane-actions' });
+  actions.appendChild(createPaneActionButton(doc, 'interrupt-btn', spec.paneId, 'Interrupt (ESC)', PANE_ICON_SVGS.interrupt));
+  actions.appendChild(createPaneActionButton(doc, 'unstick-btn', spec.paneId, 'Enter', PANE_ICON_SVGS.enter));
+  actions.appendChild(createPaneActionButton(doc, 'kickoff-btn', spec.paneId, 'Restart agent', PANE_ICON_SVGS.restart));
+  actions.appendChild(createPaneActionButton(doc, 'expand-btn', spec.paneId, 'Expand (ESC to collapse)', PANE_ICON_SVGS.expand));
+  headerRight.appendChild(actions);
+  headerRight.appendChild(createElement(doc, 'span', {
+    className: 'lock-icon',
+    id: `lock-icon-${spec.paneId}`,
+    dataset: {
+      paneId: spec.paneId,
+      tooltip: 'Locked (click to toggle)',
+    },
+    innerHTML: PANE_ICON_SVGS.lock,
+  }));
+
+  header.appendChild(title);
+  header.appendChild(headerRight);
+  pane.appendChild(header);
+  pane.appendChild(createElement(doc, 'div', {
+    className: 'pane-terminal',
+    id: `terminal-${spec.paneId}`,
+  }));
+  pane.appendChild(createElement(doc, 'span', { id: `status-${spec.paneId}` }));
+  return pane;
+}
+
+function ensureSquidRoomTeamHeader(doc, teamContainer) {
+  if (!doc || !teamContainer) return null;
+  let header = teamContainer.querySelector?.('.squid-room-team-header');
+  if (!header) {
+    header = createElement(doc, 'div', { className: 'squid-room-team-header' });
+    teamContainer.insertBefore?.(header, teamContainer.firstChild || null);
+  }
+
+  header.innerHTML = '';
+  const title = createElement(doc, 'div', { className: 'squid-room-team-title' });
+  title.appendChild(createElement(doc, 'span', { className: 'squid-room-team-eyebrow' }, 'Live team'));
+  title.appendChild(createElement(doc, 'strong', {}, 'Builder + Oracle'));
+  header.appendChild(title);
+
+  const actions = createElement(doc, 'div', { className: 'pane-actions squid-room-team-actions' });
+  actions.appendChild(createPaneActionButton(
+    doc,
+    'expand-btn squid-room-team-expand-btn',
+    SQUID_ROOM_TEAM_PANE_IDS[0],
+    'Expand Builder + Oracle (ESC to collapse)',
+    PANE_ICON_SVGS.expand
+  ));
+  header.appendChild(actions);
+  return header;
+}
+
+function ensureSquidRoomLivePaneContainer(doc) {
+  let container = doc.querySelector?.('#squidRoomTrustQuoteLivePanes');
+  if (container) return container;
+
+  const app = doc.querySelector?.('.squid-room-app[data-app-room-id="trustquote"]')
+    || doc.querySelector?.('[data-app-room-id="trustquote"]')
+    || doc.querySelector?.('#squidRoomSurface');
+  if (!app) return null;
+
+  container = createElement(doc, 'div', {
+    className: 'squid-room-live-panes',
+    id: 'squidRoomTrustQuoteLivePanes',
+  });
+  app.appendChild(container);
+  return container;
+}
+
+function ensureSquidRoomLivePanes(doc) {
+  const container = ensureSquidRoomLivePaneContainer(doc);
+  if (!container) return [];
+
+  const panes = [];
+  for (const spec of SQUID_ROOM_TRUSTQUOTE_ARM_PANES) {
+    let pane = doc.querySelector?.(`.pane[data-pane-id="${spec.paneId}"]`);
+    if (!pane) {
+      pane = createSquidRoomLivePane(doc, spec);
+      container.appendChild(pane);
+    }
+    setElementHidden(pane, false);
+    pane.dataset.squidRoomLivePane = 'true';
+    pane.dataset.squidRoomLabel = spec.label;
+    pane.dataset.squidRoomRole = spec.role;
+    pane.dataset.squidRoomWorkingDir = spec.workingDir;
+    pane.dataset.squidRoomCommand = spec.command;
+    pane.dataset.squidRoomCommandSourcePaneId = spec.commandSourcePaneId;
+    pane.dataset.squidRoomStartupMessage = spec.startupMessage;
+    pane.dataset.cli = 'codex';
+    panes.push(spec);
+  }
+  return panes;
+}
+
+function configureSquidRoomRuntimeOverrides(terminal, livePanes = SQUID_ROOM_TRUSTQUOTE_ARM_PANES) {
+  if (!terminal || typeof terminal.setPaneRuntimeOverride !== 'function') return;
+  for (const spec of livePanes) {
+    terminal.setPaneRuntimeOverride(spec.paneId, {
+      label: spec.label,
+      roleLabel: spec.label,
+      provider: 'codex',
+      command: spec.command,
+      commandSourcePaneId: spec.commandSourcePaneId,
+      workingDir: spec.workingDir,
+      startupMessage: spec.startupMessage,
+    });
   }
 }
 
@@ -130,14 +434,22 @@ function configureSquidRoomPaneShell(doc) {
   const miraLiveReply = doc.querySelector('#miraLiveReply');
   setElementHidden(miraLiveReply, true);
 
-  for (const paneId of SQUID_ROOM_PANE_IDS) {
+  const teamContainer = doc.querySelector?.('.side-panes-container');
+  if (teamContainer) {
+    teamContainer.classList?.add?.('squid-room-team-container');
+    teamContainer.dataset.squidRoomSection = 'builder-oracle';
+    teamContainer.setAttribute?.('aria-label', 'Builder and Oracle');
+    ensureSquidRoomTeamHeader(doc, teamContainer);
+  }
+
+  for (const paneId of SQUID_ROOM_TEAM_PANE_IDS) {
     const pane = doc.querySelector(`.pane[data-pane-id="${paneId}"]`);
     setElementHidden(pane, false);
     const terminal = doc.querySelector(`#terminal-${paneId}`);
     if (terminal) {
-      terminal.hidden = true;
-      terminal.setAttribute?.('aria-hidden', 'true');
-      terminal.classList?.add?.('squid-room-terminal-hidden');
+      terminal.hidden = false;
+      terminal.removeAttribute?.('aria-hidden');
+      terminal.classList?.remove?.('squid-room-terminal-hidden');
     }
   }
 
@@ -147,10 +459,13 @@ function configureSquidRoomPaneShell(doc) {
     surface.removeAttribute?.('aria-hidden');
   }
 
+  const livePanes = ensureSquidRoomLivePanes(doc);
+
   return {
     workspaceKey: SQUID_ROOM_WORKSPACE_KEY,
     paneIds: SQUID_ROOM_PANE_IDS.slice(),
-    displayOnly: true,
+    teamPaneIds: SQUID_ROOM_TEAM_PANE_IDS.slice(),
+    livePanes,
   };
 }
 
@@ -174,6 +489,9 @@ function configureWorkspacePaneShell(windowContext = {}, terminal = null, doc = 
   if (terminal && typeof terminal.setActivePaneIds === 'function') {
     terminal.setActivePaneIds(result.paneIds || null);
   }
+  if (isSquidRoomWorkspace(result.workspaceKey)) {
+    configureSquidRoomRuntimeOverrides(terminal, result.livePanes);
+  }
 
   return result;
 }
@@ -181,6 +499,8 @@ function configureWorkspacePaneShell(windowContext = {}, terminal = null, doc = 
 module.exports = {
   SQUID_ROOM_WORKSPACE_KEY,
   SQUID_ROOM_PANE_IDS,
+  SQUID_ROOM_TEAM_PANE_IDS,
+  SQUID_ROOM_TRUSTQUOTE_ARM_PANES,
   TRUSTQUOTE_PROJECT_PATH,
   TRUSTQUOTE_PANES,
   configureWorkspacePaneShell,

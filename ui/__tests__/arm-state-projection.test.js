@@ -62,12 +62,12 @@ function manifest() {
         checkInObligation: { required: true },
       },
       {
-        armKey: 'money-documents',
-        role: 'trustquote-billing',
-        paneId: 'trustquote-billing',
-        routeTarget: 'trustquote-billing',
+        armKey: 'invoice',
+        role: 'trustquote-invoice',
+        paneId: 'trustquote-invoice',
+        routeTarget: 'trustquote-invoice',
         armKind: 'domain',
-        displayName: 'Money + Documents',
+        displayName: 'Invoice',
         dataSources: ['jobs', 'quotes', 'payments'],
         permissions: { read: ['money_records'], draft: ['invoice'] },
         checkInObligation: { required: true },
@@ -161,7 +161,7 @@ maybeDescribe('arm state projection', () => {
       requestId: 'apply-money-write-projection-1',
       appRoomId: 'trustquote',
       sessionId: 'app-session-406:trustquote',
-      armKey: 'money-documents',
+      armKey: 'invoice',
       actionCategory: 'money_write',
       riskClass: 'safe',
       evidenceRefs: ['invoice:projection'],
@@ -211,7 +211,7 @@ maybeDescribe('arm state projection', () => {
       status: 'ready',
       latestAcceptedCheckin: expect.objectContaining({ messageId: 'hm-lead-ready' }),
     }));
-    expect(projection.arms.find((arm) => arm.armKey === 'money-documents')).toEqual(expect.objectContaining({
+    expect(projection.arms.find((arm) => arm.armKey === 'invoice')).toEqual(expect.objectContaining({
       status: 'missing',
       applyQueueSummary: expect.objectContaining({ pendingApproval: 1 }),
     }));
@@ -224,21 +224,21 @@ maybeDescribe('arm state projection', () => {
     expect(upsertArmRegistryManifest(manifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
     const billingRow = seedCommsCheckin(dbPath, {
       messageId: 'hm-billing-ready-original',
-      role: 'trustquote-billing',
-      paneId: 'trustquote-billing',
+      role: 'trustquote-invoice',
+      paneId: 'trustquote-invoice',
     }, 2_000);
     const accepted = recordArmCheckinProof({
       appRoomId: 'trustquote',
       sessionId: 'app-session-406:trustquote',
-      armKey: 'money-documents',
-      role: 'trustquote-billing',
-      paneId: 'trustquote-billing',
+      armKey: 'invoice',
+      role: 'trustquote-invoice',
+      paneId: 'trustquote-invoice',
       proofKind: 'startup_check_in',
       messageId: 'hm-billing-ready-original',
       commsRowId: billingRow.rowId,
       env: {
-        SQUIDRUN_ROLE: 'trustquote-billing',
-        SQUIDRUN_PANE_ID: 'trustquote-billing',
+        SQUIDRUN_ROLE: 'trustquote-invoice',
+        SQUIDRUN_PANE_ID: 'trustquote-invoice',
         SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
       },
     }, { dbPath, nowMs: 2_000 });
@@ -246,7 +246,7 @@ maybeDescribe('arm state projection', () => {
 
     const renamedManifest = manifest();
     renamedManifest.arms = renamedManifest.arms.map((arm) => (
-      arm.armKey === 'money-documents'
+      arm.armKey === 'invoice'
         ? {
           ...arm,
           role: 'trustquote-finance',
@@ -261,7 +261,7 @@ maybeDescribe('arm state projection', () => {
       sessionId: 'app-session-406:trustquote',
     }, { dbPath, nowMs: 4_000 });
     expect(evaluated.ok).toBe(true);
-    expect(evaluated.registry.arms.find((arm) => arm.armKey === 'money-documents')).toEqual(expect.objectContaining({
+    expect(evaluated.registry.arms.find((arm) => arm.armKey === 'invoice')).toEqual(expect.objectContaining({
       role: 'trustquote-finance',
       paneId: 'trustquote-finance',
       status: 'missing',
@@ -272,7 +272,7 @@ maybeDescribe('arm state projection', () => {
       appRoomId: 'trustquote',
       sessionId: 'app-session-406:trustquote',
     }, { dbPath, nowMs: 5_000 });
-    const moneyArm = projection.arms.find((arm) => arm.armKey === 'money-documents');
+    const moneyArm = projection.arms.find((arm) => arm.armKey === 'invoice');
     expect(moneyArm).toEqual(expect.objectContaining({
       role: 'trustquote-finance',
       paneId: 'trustquote-finance',

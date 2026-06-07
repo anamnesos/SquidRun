@@ -164,7 +164,12 @@ function makeDocument() {
     new FakeElement('div', { className: 'main-pane-container' }, [makePane('1', 'Mira')]),
     new FakeElement('div', { className: 'side-panes-container' }, [makePane('2', 'Builder'), makePane('3', 'Oracle')]),
     new FakeElement('form', { className: 'command-bar' }),
-    new FakeElement('section', { className: 'squid-room-surface', id: 'squidRoomSurface' }),
+    new FakeElement('section', { className: 'squid-room-surface', id: 'squidRoomSurface' }, [
+      new FakeElement('div', { className: 'squid-room-app', dataset: { appRoomId: 'trustquote' } }, [
+        new FakeElement('div', { className: 'squid-room-arm-list', id: 'squidRoomTrustQuoteArms' }),
+        new FakeElement('div', { className: 'squid-room-live-panes', id: 'squidRoomTrustQuoteLivePanes' }),
+      ]),
+    ]),
   ]));
 }
 
@@ -199,27 +204,51 @@ describe('workspace pane shell', () => {
     expect(doc.getElementById('terminal-trustquote-builder')).toBeFalsy();
   });
 
-  test('Squid Room hides Architect, preserves Builder and Oracle, and does not retarget to TrustQuote panes', () => {
+  test('Squid Room hides Architect and renders mirrored team panes plus live TrustQuote PTY mounts', () => {
     const doc = makeDocument();
-    const terminal = { setActivePaneIds: jest.fn() };
+    const terminal = { setActivePaneIds: jest.fn(), setPaneRuntimeOverride: jest.fn() };
     doc.getElementById('squidRoomSurface').hidden = true;
 
     const result = configureWorkspacePaneShell({ windowKey: 'squid-room' }, terminal, doc);
 
     expect(result).toEqual(expect.objectContaining({
       workspaceKey: 'squid-room',
-      paneIds: ['2', '3'],
-      displayOnly: true,
+      paneIds: ['2', '3', 'trustquote-lead', 'trustquote-invoice', 'trustquote-schedule-dispatch'],
+      teamPaneIds: ['2', '3'],
     }));
     expect(doc.body.classList.contains('squid-room-workspace')).toBe(true);
     expect(doc.body.classList.contains('trustquote-workspace')).toBe(false);
-    expect(terminal.setActivePaneIds).toHaveBeenCalledWith(['2', '3']);
+    expect(terminal.setActivePaneIds).toHaveBeenCalledWith([
+      '2',
+      '3',
+      'trustquote-lead',
+      'trustquote-invoice',
+      'trustquote-schedule-dispatch',
+    ]);
+    expect(terminal.setPaneRuntimeOverride).toHaveBeenCalledTimes(3);
     expect(doc.querySelector('.pane[data-pane-id="1"]').hidden).toBe(true);
     expect(doc.querySelector('.pane[data-pane-id="2"]').hidden).toBe(false);
     expect(doc.querySelector('.pane[data-pane-id="3"]').hidden).toBe(false);
-    expect(doc.getElementById('terminal-2').hidden).toBe(true);
-    expect(doc.getElementById('terminal-3').classList.contains('squid-room-terminal-hidden')).toBe(true);
+    expect(doc.querySelector('.squid-room-team-header')).toBeTruthy();
+    expect(doc.querySelector('.squid-room-team-expand-btn').dataset.paneId).toBe('2');
+    expect(doc.querySelector('.squid-room-team-expand-btn').dataset.tooltip).toContain('Builder + Oracle');
+    expect(doc.getElementById('terminal-2').hidden).toBe(false);
+    expect(doc.getElementById('terminal-3').classList.contains('squid-room-terminal-hidden')).toBe(false);
     expect(doc.getElementById('terminal-trustquote-builder')).toBeFalsy();
+    expect(doc.getElementById('terminal-trustquote-lead')).toBeTruthy();
+    expect(doc.getElementById('terminal-trustquote-invoice')).toBeTruthy();
+    expect(doc.getElementById('terminal-trustquote-schedule-dispatch')).toBeTruthy();
+    for (const paneId of ['trustquote-lead', 'trustquote-invoice', 'trustquote-schedule-dispatch']) {
+      const pane = doc.querySelector(`.pane[data-pane-id="${paneId}"]`);
+      expect(pane.querySelector('.agent-avatar').innerHTML).toContain('avatar-icon');
+      expect(pane.querySelector(`.model-selector[data-pane-id="${paneId}"]`).value).toBe('codex');
+      expect(pane.querySelector(`.pane-role-info-btn[data-pane-id="${paneId}"]`).innerHTML).toContain('pane-btn-icon');
+      expect(pane.querySelector('.interrupt-btn').innerHTML).toContain('pane-btn-icon');
+      expect(pane.querySelector('.unstick-btn').innerHTML).toContain('pane-btn-icon');
+      expect(pane.querySelector('.kickoff-btn').innerHTML).toContain('pane-btn-icon');
+      expect(pane.querySelector('.expand-btn').innerHTML).toContain('pane-btn-icon');
+      expect(pane.querySelector(`.lock-icon[data-pane-id="${paneId}"]`).innerHTML).toContain('pane-btn-icon');
+    }
     expect(doc.getElementById('squidRoomSurface').hidden).toBe(false);
   });
 });

@@ -41,7 +41,10 @@ async function initModelSelectors() {
 
     document.querySelectorAll('.model-selector').forEach(select => {
       const paneId = select.dataset.paneId;
-      const cmd = (paneCommands[paneId] || 'claude').toLowerCase();
+      const runtimeOverride = typeof terminal.getPaneRuntimeOverride === 'function'
+        ? terminal.getPaneRuntimeOverride(paneId)
+        : null;
+      const cmd = (runtimeOverride?.command || paneCommands[paneId] || 'claude').toLowerCase();
 
       // Detect model from command
       const model = detectModelFamily(cmd);

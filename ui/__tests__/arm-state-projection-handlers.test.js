@@ -134,7 +134,7 @@ maybeDescribe('arm state projection IPC handler', () => {
       requestId: 'handler-money-write-1',
       appRoomId: 'trustquote',
       sessionId,
-      armKey: 'money-documents',
+      armKey: 'invoice',
       actionCategory: 'money_write',
       riskClass: 'safe',
       evidenceRefs: ['handler:projection'],

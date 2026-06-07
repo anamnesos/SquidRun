@@ -156,7 +156,7 @@ describe('window-team-bootstrap', () => {
     expect(bootstrap.shouldDeferAutoSpawn()).toBe(false);
   });
 
-  test('treats display-only Squid Room context as loaded without startup bundle and keeps auto-boot disabled', async () => {
+  test('treats Squid Room surface context as loaded without startup bundle and keeps auto-boot disabled', async () => {
     const initialContext = readInitialWindowContextFromLocation(
       '?windowKey=squid-room&windowTeam=squid-room&profileName=main&sessionScopeId=app-test%3Asquid-room&autoBootAgents=false&displayOnly=true&skipStartupBundle=true&contextReady=true'
     );

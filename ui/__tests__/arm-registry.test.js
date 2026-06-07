@@ -52,23 +52,23 @@ function trustquoteManifest(overrides = {}) {
         checkInObligation: { required: true, deadlineMs: 120000 },
       },
       {
-        armKey: 'work-schedule',
-        role: 'trustquote-operations',
-        paneId: 'trustquote-operations',
-        routeTarget: 'trustquote-operations',
+        armKey: 'schedule-dispatch',
+        role: 'trustquote-schedule-dispatch',
+        paneId: 'trustquote-schedule-dispatch',
+        routeTarget: 'trustquote-schedule-dispatch',
         armKind: 'domain',
-        displayName: 'Work + Schedule',
+        displayName: 'Schedule Dispatch',
         dataSources: ['calendar-events', 'customers', 'job-packets'],
         permissions: { read: ['schedule', 'customers'], draft: ['schedule_change'] },
         checkInObligation: { required: true, deadlineMs: 120000 },
       },
       {
-        armKey: 'money-documents',
-        role: 'trustquote-billing',
-        paneId: 'trustquote-billing',
-        routeTarget: 'trustquote-billing',
+        armKey: 'invoice',
+        role: 'trustquote-invoice',
+        paneId: 'trustquote-invoice',
+        routeTarget: 'trustquote-invoice',
         armKind: 'domain',
-        displayName: 'Money + Documents',
+        displayName: 'Invoice',
         dataSources: ['jobs', 'quotes', 'payments', 'pricebook'],
         permissions: { read: ['money_records'], draft: ['invoice', 'payment_reminder'] },
         checkInObligation: { required: true, deadlineMs: 120000 },
@@ -153,9 +153,9 @@ maybeDescribe('arm registry', () => {
       missingCount: 3,
     }));
     expect(inserted.registry.arms.map((arm) => arm.armKey)).toEqual([
+      'invoice',
       'lead',
-      'money-documents',
-      'work-schedule',
+      'schedule-dispatch',
     ]);
     expect(inserted.registry.arms.every((arm) => arm.status === 'desired')).toBe(true);
 
@@ -392,20 +392,20 @@ maybeDescribe('arm registry', () => {
 
     seedCommsCheckin(dbPath, {
       messageId: 'hm-ops-1',
-      role: 'trustquote-operations',
-      paneId: 'trustquote-operations',
+      role: 'trustquote-schedule-dispatch',
+      paneId: 'trustquote-schedule-dispatch',
     }, 3_000);
     const operationsCheckin = recordArmCheckinProof({
       appRoomId: 'trustquote',
       sessionId: 'app-session-406:trustquote',
-      armKey: 'work-schedule',
-      role: 'trustquote-operations',
-      paneId: 'trustquote-operations',
+      armKey: 'schedule-dispatch',
+      role: 'trustquote-schedule-dispatch',
+      paneId: 'trustquote-schedule-dispatch',
       proofKind: 'role_check_in',
       messageId: 'hm-ops-1',
       env: {
-        role: 'trustquote-operations',
-        paneId: 'trustquote-operations',
+        role: 'trustquote-schedule-dispatch',
+        paneId: 'trustquote-schedule-dispatch',
         sessionId: 'app-session-406:trustquote',
       },
       proofRefs: ['hm:hm-ops-1'],
@@ -434,8 +434,8 @@ maybeDescribe('arm registry', () => {
     }));
     expect(Object.fromEntries(persisted.arms.map((arm) => [arm.armKey, arm.status]))).toEqual({
       lead: 'ready',
-      'money-documents': 'missing',
-      'work-schedule': 'ready',
+      'invoice': 'missing',
+      'schedule-dispatch': 'ready',
     });
   });
 
@@ -477,12 +477,12 @@ maybeDescribe('arm registry', () => {
     const oneArmManifest = trustquoteManifest({
       arms: [
         {
-          armKey: 'money-documents',
-          role: 'trustquote-billing',
-          paneId: 'trustquote-billing',
-          routeTarget: 'trustquote-billing',
+          armKey: 'invoice',
+          role: 'trustquote-invoice',
+          paneId: 'trustquote-invoice',
+          routeTarget: 'trustquote-invoice',
           armKind: 'domain',
-          displayName: 'Money + Documents',
+          displayName: 'Invoice',
           dataSources: ['jobs', 'quotes', 'payments'],
           permissions: { read: ['money_records'], draft: ['invoice'] },
           checkInObligation: { required: true },
@@ -492,21 +492,21 @@ maybeDescribe('arm registry', () => {
     expect(upsertArmRegistryManifest(oneArmManifest, { dbPath, nowMs: 1_000 }).ok).toBe(true);
     seedCommsCheckin(dbPath, {
       messageId: 'hm-billing-ready',
-      role: 'trustquote-billing',
-      paneId: 'trustquote-billing',
+      role: 'trustquote-invoice',
+      paneId: 'trustquote-invoice',
     }, 2_000);
 
     const accepted = recordArmCheckinProof({
       appRoomId: 'trustquote',
       sessionId: 'app-session-406:trustquote',
-      armKey: 'money-documents',
-      role: 'trustquote-billing',
-      paneId: 'trustquote-billing',
+      armKey: 'invoice',
+      role: 'trustquote-invoice',
+      paneId: 'trustquote-invoice',
       proofKind: 'startup_check_in',
       messageId: 'hm-billing-ready',
       env: {
-        SQUIDRUN_ROLE: 'trustquote-billing',
-        SQUIDRUN_PANE_ID: 'trustquote-billing',
+        SQUIDRUN_ROLE: 'trustquote-invoice',
+        SQUIDRUN_PANE_ID: 'trustquote-invoice',
         SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
       },
       proofRefs: ['hm:hm-billing-ready'],
@@ -521,12 +521,12 @@ maybeDescribe('arm registry', () => {
     const renamed = upsertArmRegistryManifest(trustquoteManifest({
       arms: [
         {
-          armKey: 'money-documents',
+          armKey: 'invoice',
           role: 'trustquote-finance',
           paneId: 'trustquote-finance',
           routeTarget: 'trustquote-finance',
           armKind: 'domain',
-          displayName: 'Money + Documents',
+          displayName: 'Invoice',
           dataSources: ['jobs', 'quotes', 'payments'],
           permissions: { read: ['money_records'], draft: ['invoice'] },
           checkInObligation: { required: true },
@@ -584,19 +584,19 @@ maybeDescribe('arm registry', () => {
 
     seedCommsCheckin(dbPath, {
       messageId: 'hm-wrong-pane',
-      role: 'trustquote-operations',
+      role: 'trustquote-schedule-dispatch',
       paneId: 'trustquote-builder',
     }, 3_000);
     const wrongPane = recordArmCheckinProof({
       appRoomId: 'trustquote',
       sessionId: 'app-session-406:trustquote',
-      armKey: 'work-schedule',
-      role: 'trustquote-operations',
+      armKey: 'schedule-dispatch',
+      role: 'trustquote-schedule-dispatch',
       paneId: 'trustquote-builder',
       proofKind: 'startup_check_in',
       messageId: 'hm-wrong-pane',
       env: {
-        SQUIDRUN_ROLE: 'trustquote-operations',
+        SQUIDRUN_ROLE: 'trustquote-schedule-dispatch',
         SQUIDRUN_PANE_ID: 'trustquote-builder',
         SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
       },
@@ -607,21 +607,21 @@ maybeDescribe('arm registry', () => {
 
     seedCommsCheckin(dbPath, {
       messageId: 'hm-stale-session',
-      role: 'trustquote-billing',
-      paneId: 'trustquote-billing',
+      role: 'trustquote-invoice',
+      paneId: 'trustquote-invoice',
       sessionId: 'app-session-405:trustquote',
     }, 4_000);
     const staleSession = recordArmCheckinProof({
       registryId: routeProbe.proof.registryId,
       sessionId: 'app-session-406:trustquote',
-      armKey: 'money-documents',
-      role: 'trustquote-billing',
-      paneId: 'trustquote-billing',
+      armKey: 'invoice',
+      role: 'trustquote-invoice',
+      paneId: 'trustquote-invoice',
       proofKind: 'startup_check_in',
       messageId: 'hm-stale-session',
       env: {
-        SQUIDRUN_ROLE: 'trustquote-billing',
-        SQUIDRUN_PANE_ID: 'trustquote-billing',
+        SQUIDRUN_ROLE: 'trustquote-invoice',
+        SQUIDRUN_PANE_ID: 'trustquote-invoice',
         SQUIDRUN_SESSION_SCOPE_ID: 'app-session-405:trustquote',
       },
     }, { dbPath, nowMs: 4_000 });

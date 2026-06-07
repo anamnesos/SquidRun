@@ -132,6 +132,7 @@ const squidRoomSurfaceModule = rendererModules.squidRoomSurface || {};
 const {
   initSquidRoomSurface,
   refreshSquidRoomSurface,
+  toggleSquidRoomPaneExpansion,
 } = squidRoomSurfaceModule;
 const SQUID_ROOM_PROJECTION_CHANNEL = squidRoomSurfaceModule.ARM_STATE_PROJECTION_CHANNEL || 'arm-state:projection';
 const SQUID_ROOM_WINDOW_KEY = squidRoomSurfaceModule.SQUID_ROOM_WINDOW_KEY || 'squid-room';
@@ -510,6 +511,8 @@ const profileOnboardingState = {
 };
 let headerSessionBadgeRetryTimer = null;
 let headerSessionBadgeRetryAttempts = 0;
+let squidRoomLivePaneEnsureTimer = null;
+const squidRoomLivePaneSpawnAttempts = new Set();
 
 function getCurrentWindowContext() {
   return windowTeamBootstrap.getState();
@@ -527,6 +530,105 @@ function getSquidRoomSurfaceElements() {
     arms: document.getElementById('squidRoomTrustQuoteArms'),
   };
 }
+
+function getSquidRoomLivePaneElements() {
+  return Array.from(document.querySelectorAll('[data-squid-room-live-pane="true"]'));
+}
+
+function getSquidRoomPaneRuntimeSpec(element) {
+  const paneId = String(element?.dataset?.paneId || '').trim();
+  if (!paneId) return null;
+  return {
+    paneId,
+    label: String(element.dataset.squidRoomLabel || paneId).trim(),
+    roleLabel: String(element.dataset.squidRoomLabel || paneId).trim(),
+    provider: 'codex',
+    command: String(element.dataset.squidRoomCommand || 'codex --yolo').trim(),
+    commandSourcePaneId: String(element.dataset.squidRoomCommandSourcePaneId || '2').trim(),
+    workingDir: String(element.dataset.squidRoomWorkingDir || 'D:\\projects\\TrustQuote').trim(),
+    startupMessage: String(element.dataset.squidRoomStartupMessage || '').trim(),
+  };
+}
+
+function stripSquidRoomAnsi(value) {
+  return String(value || '').replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
+}
+
+function hasSquidRoomLiveCliContent(term = {}) {
+  if (!term || term.alive !== true) return false;
+  const tail = stripSquidRoomAnsi(String(term.scrollback || '').slice(-4000));
+  if (!tail.trim()) return false;
+  if (/(^|\n)PS [^\n>]*>\s*$/m.test(tail)) return false;
+  if (/(^|\n)[A-Z]:\\[^\n>]*>\s*$/m.test(tail)) return false;
+  return /codex|claude|gemini|openai|chatgpt|model|\/help|welcome/i.test(tail);
+}
+
+async function getSquidRoomDaemonTermForPane(paneId) {
+  try {
+    const terminals = await ipcRenderer.invoke('get-daemon-terminals', { paneId });
+    if (!Array.isArray(terminals)) return null;
+    return terminals.find((term) => String(term?.paneId || '') === String(paneId) && term.alive === true) || null;
+  } catch (err) {
+    log.warn('SquidRoom', `Daemon terminal snapshot failed for ${paneId}: ${err?.message || err}`);
+    return null;
+  }
+}
+
+async function ensureSquidRoomLivePaneAgents(windowContext = getCurrentWindowContext(), options = {}) {
+  if (!isSquidRoomWindowContext(windowContext)) return { ok: false, skipped: true, reason: 'not_squid_room' };
+  const livePaneElements = getSquidRoomLivePaneElements();
+  if (livePaneElements.length === 0) return { ok: false, skipped: true, reason: 'no_live_panes' };
+
+  const ensured = [];
+  for (const element of livePaneElements) {
+    const spec = getSquidRoomPaneRuntimeSpec(element);
+    if (!spec) continue;
+
+    if (typeof terminal.setPaneRuntimeOverride === 'function') {
+      terminal.setPaneRuntimeOverride(spec.paneId, spec);
+    }
+
+    if (!terminal.getTerminal(spec.paneId)) {
+      await terminal.initTerminal(spec.paneId, { workingDir: spec.workingDir, focus: false });
+    }
+
+    const existingTerm = await getSquidRoomDaemonTermForPane(spec.paneId);
+    if (hasSquidRoomLiveCliContent(existingTerm)) {
+      element.dataset.squidRoomCli = 'live';
+      ensured.push({ paneId: spec.paneId, status: 'live' });
+      continue;
+    }
+
+    if (squidRoomLivePaneSpawnAttempts.has(spec.paneId) && options.force !== true) {
+      ensured.push({ paneId: spec.paneId, status: 'spawn_pending' });
+      continue;
+    }
+
+    try {
+      squidRoomLivePaneSpawnAttempts.add(spec.paneId);
+      await terminal.spawnAgent(spec.paneId, 'codex');
+      element.dataset.squidRoomCli = 'spawned';
+      ensured.push({ paneId: spec.paneId, status: 'spawned' });
+    } catch (err) {
+      squidRoomLivePaneSpawnAttempts.delete(spec.paneId);
+      element.dataset.squidRoomCli = 'spawn_failed';
+      log.error('SquidRoom', `Failed to spawn live pane ${spec.paneId}:`, err);
+      ensured.push({ paneId: spec.paneId, status: 'spawn_failed', error: err?.message || String(err) });
+    }
+  }
+  return { ok: true, ensured };
+}
+
+function scheduleSquidRoomLivePaneEnsure(windowContext = getCurrentWindowContext(), delayMs = 300) {
+  if (!isSquidRoomWindowContext(windowContext)) return;
+  if (squidRoomLivePaneEnsureTimer) clearTimeout(squidRoomLivePaneEnsureTimer);
+  squidRoomLivePaneEnsureTimer = setTimeout(() => {
+    squidRoomLivePaneEnsureTimer = null;
+    void ensureSquidRoomLivePaneAgents(getCurrentWindowContext());
+  }, delayMs);
+}
+
+scheduleSquidRoomLivePaneEnsure(initialWindowContext, 300);
 
 function buildSquidRoomProjectionPayload(windowContext = {}) {
   if (typeof squidRoomSurfaceModule.buildProjectionRequest === 'function') {
@@ -557,25 +659,21 @@ function renderSquidRoomProjectionInline(projection = {}, elements = getSquidRoo
   const missing = Number(registry.missingCount || 0);
   const ok = projection?.ok === true;
   if (elements.status) {
-    elements.status.textContent = ok
-      ? (missing > 0 ? `Missing ${missing}` : 'Ready')
-      : 'Unavailable';
+    elements.status.textContent = ok ? '' : 'Projection unavailable';
   }
   if (elements.counts) {
-    elements.counts.innerHTML = [
-      `<span>Desired ${desired}</span>`,
-      `<span>Ready ${ready}</span>`,
-      `<span>Missing ${missing}</span>`,
-    ].join('');
+    elements.counts.innerHTML = `<span>Arms count ${desired}</span>`;
   }
   if (elements.arms) {
-    elements.arms.innerHTML = Array.isArray(projection?.arms) && projection.arms.length > 0
-      ? projection.arms.map((arm) => (
+    const activeArms = Array.isArray(projection?.arms)
+      ? projection.arms.filter((arm) => arm?.required !== false && String(arm?.status || '').trim() !== 'disabled')
+      : [];
+    elements.arms.innerHTML = activeArms.length > 0
+      ? activeArms.map((arm) => (
         `<div class="squid-room-arm" data-arm-key="${escapeSquidRoomHtml(arm.armKey || 'unknown')}">`
-        + `<div class="squid-room-arm-main"><span class="squid-room-arm-name">${escapeSquidRoomHtml(arm.displayName || arm.armKey || 'Unknown arm')}</span>`
-        + `<span class="squid-room-arm-status">${escapeSquidRoomHtml(arm.status || 'unknown')}</span></div></div>`
+        + `<div class="squid-room-arm-main"><span class="squid-room-arm-name">${escapeSquidRoomHtml(arm.displayName || arm.armKey || 'Unknown arm')}</span></div></div>`
       )).join('')
-      : '<div class="squid-room-empty">No desired arms</div>';
+      : '<div class="squid-room-empty">No arms listed</div>';
   }
   if (elements.root) {
     elements.root.dataset.projectionStatus = ok ? 'loaded' : 'unavailable';
@@ -685,6 +783,7 @@ function handleRendererWindowContext(payload = {}) {
   }
   if (typeof configureWorkspacePaneShell === 'function') {
     configureWorkspacePaneShell(windowContext, terminal, document);
+    scheduleSquidRoomLivePaneEnsure(windowContext, 300);
   }
   applyWindowChrome(windowContext);
   refreshSquidRoomSurfaceForContext(windowContext);
@@ -1817,6 +1916,19 @@ function toggleExpandPane(paneId) {
   const paneLayout = document.querySelector('.pane-layout');
   if (!pane || !paneLayout) return;
 
+  if (typeof toggleSquidRoomPaneExpansion === 'function') {
+    const squidRoomToggle = toggleSquidRoomPaneExpansion({
+      body: document.body,
+      pane,
+      paneLayout,
+      expandedPaneId,
+    });
+    if (squidRoomToggle?.handled) {
+      expandedPaneId = squidRoomToggle.expandedPaneId;
+      return;
+    }
+  }
+
   if (pane.classList.contains('pane-expanded')) {
     // Collapse
     expandedPaneId = null;
@@ -1834,6 +1946,28 @@ function toggleExpandPane(paneId) {
     paneLayout.classList.add('has-expanded-pane');
   }
   // ResizeObserver in terminal.js handles resize automatically when element dimensions change
+}
+
+function findExpandedPaneId() {
+  if (expandedPaneId) {
+    const expandedPane = document.querySelector(`.pane[data-pane-id="${expandedPaneId}"]`);
+    if (expandedPane?.classList?.contains('pane-expanded')) {
+      return expandedPaneId;
+    }
+  }
+  const expandedPane = document.querySelector(
+    '.squid-room-team-container.squid-room-team-expanded .pane.pane-expanded, '
+    + '.squid-room-live-panes .pane.pane-expanded, '
+    + '.pane.pane-expanded'
+  );
+  return expandedPane?.dataset?.paneId || null;
+}
+
+function collapseExpandedPane() {
+  const paneId = findExpandedPaneId();
+  if (!paneId) return false;
+  toggleExpandPane(paneId);
+  return true;
 }
 
 // Status Strip - imported from modules/status-strip.js
@@ -1967,8 +2101,11 @@ function setupEventListeners() {
       return;
     }
     // ESC to collapse expanded pane
-    if (e.key === 'Escape' && expandedPaneId) {
-      toggleExpandPane(expandedPaneId);
+    if (e.key === 'Escape' && collapseExpandedPane()) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+      return;
     }
   });
 
@@ -2925,6 +3062,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Global ESC key handler - interrupt agent AND release keyboard
   ipcRenderer.on('global-escape-pressed', () => {
+    if (collapseExpandedPane()) {
+      terminal.blurAllTerminals();
+      if (document.activeElement) {
+        document.activeElement.blur();
+      }
+      const statusBar = document.querySelector('.status-bar');
+      if (statusBar) {
+        const msg = document.createElement('span');
+        msg.textContent = ' | Expanded pane collapsed';
+        msg.style.color = '#4fc3f7';
+        statusBar.appendChild(msg);
+        setTimeout(() => msg.remove(), 2000);
+      }
+      return;
+    }
+
     // Send daemon-backed interrupt to focused pane so hidden-pane-host mode
     // still reaches the real agent process.
     const focusedPane = terminal.getFocusedPane();
@@ -3185,6 +3338,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     markTerminalsReady
   );
   await recoverMissedDaemonConnectedAfterReload(daemonListenerController);
+  await ensureSquidRoomLivePaneAgents(getCurrentWindowContext(), { force: true });
 
   // Load initial project path
   await daemonHandlers.loadInitialProject();

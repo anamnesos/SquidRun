@@ -212,14 +212,14 @@ function buildArmStateProjection(filters = {}, options = {}) {
   let desiredCount = 0;
   let readyCount = 0;
 
-  const arms = registry.arms.map((arm) => {
+  const activeArms = registry.arms.filter((arm) => arm.required && arm.status !== 'disabled');
+  const arms = activeArms.map((arm) => {
     const latestProof = proofByArm.get(arm.armId) || null;
     const armWatchdogs = watchdogs.filter((watchdog) => watchdog.armId === arm.armId);
     const armApplyRequests = applyRequests.filter((request) => request.armId === arm.armId);
-    const disabled = !arm.required || arm.status === 'disabled';
-    if (!disabled) desiredCount += 1;
-    if (latestProof && !disabled) readyCount += 1;
-    const projectedStatus = disabled ? 'disabled' : (latestProof ? 'ready' : 'missing');
+    desiredCount += 1;
+    if (latestProof) readyCount += 1;
+    const projectedStatus = latestProof ? 'ready' : 'missing';
     return {
       armId: arm.armId,
       armKey: arm.armKey,
