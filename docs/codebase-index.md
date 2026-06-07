@@ -110,7 +110,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | 2728 |
 | `.gitignore` | config | 4598 |
 | `AGENTS.md` | doc | 6432 |
-| `ARCHITECTURE.md` | doc | 64188 |
+| `ARCHITECTURE.md` | doc | 64201 |
 | `CLAUDE-AI.md` | doc | 3856 |
 | `CLAUDE.md` | doc | 2161 |
 | `CODE_OF_CONDUCT.md` | doc | 5185 |
@@ -235,7 +235,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/app-control-service.test.js` | test | 10708 |
 | `ui/__tests__/arm-apply-queue.test.js` | test | 12293 |
 | `ui/__tests__/arm-registry.test.js` | test | 17669 |
-| `ui/__tests__/arm-state-projection-handlers.test.js` | test | 7542 |
+| `ui/__tests__/arm-state-projection-handlers.test.js` | test | 7528 |
 | `ui/__tests__/arm-state-projection.test.js` | test | 11731 |
 | `ui/__tests__/auto-handoff-handlers.test.js` | test | 3147 |
 | `ui/__tests__/auto-handoff-materializer.test.js` | test | 102098 |
