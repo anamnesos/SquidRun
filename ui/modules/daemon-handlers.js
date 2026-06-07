@@ -812,7 +812,11 @@ async function handleDaemonConnectedPayload(data = {}, initTerminalsFn, reattach
         }
 
         existingPaneIds.add(paneId);
-        await reattachTerminalFn(paneId, term.scrollback, { createdAt: term.createdAt || null });
+        await reattachTerminalFn(paneId, term.scrollback, {
+          createdAt: term.createdAt || null,
+          cwd: term.cwd || null,
+          daemonTerminal: term,
+        });
       }
     }
 

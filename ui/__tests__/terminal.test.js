@@ -1525,6 +1525,40 @@ describe('terminal.js module', () => {
       expect(terminal.terminals.has('1')).toBe(true);
     });
 
+    test('recreates runtime override panes during reattach when the daemon PTY cwd is wrong', async () => {
+      terminal.terminals.delete('trustquote-lead');
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+      terminal.setPaneRuntimeOverride('trustquote-lead', {
+        workingDir: 'D:\\projects\\TrustQuote',
+        command: 'codex --yolo',
+        recreateOnWorkingDirMismatch: true,
+      });
+
+      const reattachPromise = terminal.reattachTerminal('trustquote-lead', 'PS D:\\projects\\squidrun\\ui> ', {
+        cwd: 'D:\\projects\\squidrun\\ui',
+        daemonTerminal: {
+          paneId: 'trustquote-lead',
+          alive: true,
+          cwd: 'D:\\projects\\squidrun\\ui',
+          scrollback: 'PS D:\\projects\\squidrun\\ui> ',
+        },
+        recreateDelayMs: 0,
+        spawnAfterRecreate: false,
+      });
+      await reattachPromise;
+
+      expect(mockSquidRun.pty.kill).toHaveBeenCalledWith('trustquote-lead');
+      expect(mockSquidRun.pty.create).toHaveBeenCalledWith('trustquote-lead', 'D:\\projects\\TrustQuote');
+      const terminalInstance = terminal.terminals.get('trustquote-lead');
+      const staleWrite = terminalInstance.write.mock.calls.find(
+        (args) => typeof args[0] === 'string' && args[0].includes('D:\\projects\\squidrun\\ui')
+      );
+      expect(staleWrite).toBeUndefined();
+    });
+
     test('should trim restored scrollback to xterm cap lines', async () => {
       terminal.terminals.delete('99');
       const mockContainer = {

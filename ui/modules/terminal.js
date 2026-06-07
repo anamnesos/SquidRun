@@ -723,7 +723,9 @@ async function recreatePaneOnWorkingDirMismatch(paneId, workingDir, runtimeOverr
     return { recreated: false, skipped: true, reason: 'missing_pane_or_working_dir' };
   }
 
-  const existing = await readDaemonTerminalForPane(id, { timeoutMs: options.snapshotTimeoutMs });
+  const existing = options.daemonTerminal && typeof options.daemonTerminal === 'object'
+    ? options.daemonTerminal
+    : await readDaemonTerminalForPane(id, { timeoutMs: options.snapshotTimeoutMs });
   if (!isDaemonTerminalWorkingDirMismatch(existing, expectedWorkingDir)) {
     return { recreated: false, skipped: true, reason: 'working_dir_ok' };
   }
@@ -2405,6 +2407,37 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
 
   if (terminals.has(paneId)) {
     log.info(`Terminal ${paneId}`, 'Already attached, skipping');
+    return;
+  }
+
+  const runtimeOverride = getPaneRuntimeOverride(paneId);
+  const workingDir = String(
+    runtimeOverride.workingDir
+    || runtimeOverride.cwd
+    || ''
+  );
+  const daemonTerminal = options.daemonTerminal && typeof options.daemonTerminal === 'object'
+    ? options.daemonTerminal
+    : {
+      paneId,
+      alive: true,
+      cwd: options.cwd || options.workingDir || null,
+    };
+  const recreatedForWorkingDir = await recreatePaneOnWorkingDirMismatch(paneId, workingDir, runtimeOverride, {
+    snapshotTimeoutMs: options.snapshotTimeoutMs,
+    recreateDelayMs: options.recreateDelayMs,
+    daemonTerminal,
+  });
+  if (recreatedForWorkingDir.recreated) {
+    await initTerminal(paneId, {
+      workingDir,
+      scrollback: '',
+      snapshotTimeoutMs: options.snapshotTimeoutMs,
+      recreateDelayMs: options.recreateDelayMs,
+    });
+    if (runtimeOverride.command && options.spawnAfterRecreate !== false) {
+      await spawnAgent(paneId);
+    }
     return;
   }
 
