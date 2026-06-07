@@ -1148,6 +1148,29 @@ describe('terminal.js module', () => {
       jest.runOnlyPendingTimers();
       expect(mockTerminalObj.write).toHaveBeenCalledTimes(2);
     });
+
+    test('refreshes the viewport after the terminal write queue drains', () => {
+      const mockTerminalObj = {
+        cols: 120,
+        rows: 30,
+        write: jest.fn((_data, callback) => callback()),
+        refresh: jest.fn(),
+        scrollToBottom: jest.fn(),
+      };
+      const fitAddon = { fit: jest.fn() };
+      terminal.terminals.set('1', mockTerminalObj);
+      terminal.fitAddons.set('1', fitAddon);
+
+      terminal._internals.queueTerminalWrite('1', mockTerminalObj, 'restored scrollback');
+
+      jest.runOnlyPendingTimers();
+      jest.runOnlyPendingTimers();
+
+      expect(fitAddon.fit).toHaveBeenCalled();
+      expect(mockSquidRun.pty.resize).toHaveBeenCalledWith('1', 120, 30);
+      expect(mockTerminalObj.refresh).toHaveBeenCalledWith(0, 29);
+      expect(mockTerminalObj.scrollToBottom).toHaveBeenCalled();
+    });
   });
 
   describe('freshStartAll', () => {

@@ -519,7 +519,12 @@ function getCurrentWindowContext() {
 }
 
 function isSquidRoomWindowContext(windowContext = {}) {
-  return String(windowContext?.windowKey || 'main').trim() === SQUID_ROOM_WINDOW_KEY;
+  if (String(windowContext?.windowKey || 'main').trim() === SQUID_ROOM_WINDOW_KEY) {
+    return true;
+  }
+  const body = typeof document !== 'undefined' ? document.body : null;
+  return body?.dataset?.workspaceKey === SQUID_ROOM_WINDOW_KEY
+    || body?.classList?.contains?.('squid-room-workspace') === true;
 }
 
 function getSquidRoomSurfaceElements() {
@@ -563,13 +568,96 @@ function hasSquidRoomLiveCliContent(term = {}) {
   return /codex|claude|gemini|openai|chatgpt|model|\/help|welcome/i.test(tail);
 }
 
-async function getSquidRoomDaemonTermForPane(paneId) {
+function normalizeSquidRoomWorkingDirForCompare(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+$/g, '')
+    .toLowerCase();
+}
+
+function isSquidRoomPaneWrongWorkingDir(term = {}, expectedWorkingDir = '') {
+  if (!term || term.alive !== true) return false;
+  const actualWorkingDir = term.cwd || term.workingDir || term.currentWorkingDirectory || '';
+  const actual = normalizeSquidRoomWorkingDirForCompare(actualWorkingDir);
+  const expected = normalizeSquidRoomWorkingDirForCompare(expectedWorkingDir);
+  if (!actual || !expected) return false;
+  return actual !== expected;
+}
+
+async function recreateSquidRoomLivePanePty(spec, element = null) {
+  const paneId = String(spec?.paneId || '');
+  const workingDir = String(spec?.workingDir || '').trim();
+  if (!paneId || !workingDir) {
+    return { ok: false, reason: 'invalid_spec' };
+  }
+  if (!window?.squidrun?.pty?.kill || !window?.squidrun?.pty?.create) {
+    return { ok: false, reason: 'pty_control_unavailable' };
+  }
+
   try {
-    const terminals = await ipcRenderer.invoke('get-daemon-terminals', { paneId });
-    if (!Array.isArray(terminals)) return null;
-    return terminals.find((term) => String(term?.paneId || '') === String(paneId) && term.alive === true) || null;
+    await window.squidrun.pty.kill(paneId);
   } catch (err) {
-    log.warn('SquidRoom', `Daemon terminal snapshot failed for ${paneId}: ${err?.message || err}`);
+    log.warn('SquidRoom', `Failed to kill stale live pane ${paneId}: ${err?.message || err}`);
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  if (typeof terminal.resetTerminalWriteQueue === 'function') {
+    terminal.resetTerminalWriteQueue(paneId);
+  }
+  const terminalInstance = typeof terminal.getTerminal === 'function'
+    ? terminal.getTerminal(paneId)
+    : null;
+  if (terminalInstance && typeof terminalInstance.clear === 'function') {
+    try {
+      terminalInstance.clear();
+    } catch (err) {
+      log.warn('SquidRoom', `Failed to clear stale live pane ${paneId}: ${err?.message || err}`);
+    }
+  }
+
+  await window.squidrun.pty.create(paneId, workingDir);
+  if (typeof terminal.updatePaneStatus === 'function') {
+    terminal.updatePaneStatus(paneId, 'Connected');
+  }
+  if (element) {
+    element.dataset.squidRoomCli = 'recreated';
+  }
+  return { ok: true };
+}
+
+async function getSquidRoomDaemonTermForPane(paneId) {
+  const id = String(paneId);
+  const directSnapshotFn = bridgeApi?.daemon?.terminalSnapshot
+    || window?.squidrun?.daemon?.terminalSnapshot
+    || window?.squidrunAPI?.daemon?.terminalSnapshot;
+  if (typeof directSnapshotFn === 'function') {
+    try {
+      const snapshot = await directSnapshotFn({ timeoutMs: 1500, windowKey: SQUID_ROOM_WINDOW_KEY });
+      if (Array.isArray(snapshot?.terminals)) {
+        return snapshot.terminals.find((term) => String(term?.paneId || '') === id && term.alive === true) || null;
+      }
+    } catch (err) {
+      log.warn('SquidRoom', `Direct daemon snapshot failed for ${id}: ${err?.message || err}`);
+    }
+  }
+
+  try {
+    const snapshot = await ipcRenderer.invoke('get-daemon-terminal-snapshot', { windowKey: SQUID_ROOM_WINDOW_KEY });
+    if (Array.isArray(snapshot?.terminals)) {
+      return snapshot.terminals.find((term) => String(term?.paneId || '') === id && term.alive === true) || null;
+    }
+  } catch (err) {
+    log.warn('SquidRoom', `Daemon terminal snapshot IPC failed for ${id}: ${err?.message || err}`);
+  }
+
+  try {
+    const terminals = await ipcRenderer.invoke('get-daemon-terminals', { paneId: id });
+    if (!Array.isArray(terminals)) return null;
+    return terminals.find((term) => String(term?.paneId || '') === id && term.alive === true) || null;
+  } catch (err) {
+    log.warn('SquidRoom', `Daemon terminal list failed for ${id}: ${err?.message || err}`);
     return null;
   }
 }
@@ -592,7 +680,22 @@ async function ensureSquidRoomLivePaneAgents(windowContext = getCurrentWindowCon
       await terminal.initTerminal(spec.paneId, { workingDir: spec.workingDir, focus: false });
     }
 
-    const existingTerm = await getSquidRoomDaemonTermForPane(spec.paneId);
+    let existingTerm = await getSquidRoomDaemonTermForPane(spec.paneId);
+    if (isSquidRoomPaneWrongWorkingDir(existingTerm, spec.workingDir)) {
+      log.warn(
+        'SquidRoom',
+        `Live pane ${spec.paneId} is attached to ${existingTerm?.cwd || 'unknown cwd'}; recreating in ${spec.workingDir}`
+      );
+      const recreate = await recreateSquidRoomLivePanePty(spec, element);
+      if (!recreate.ok) {
+        element.dataset.squidRoomCli = 'cwd_mismatch';
+        ensured.push({ paneId: spec.paneId, status: 'cwd_mismatch', reason: recreate.reason });
+        continue;
+      }
+      squidRoomLivePaneSpawnAttempts.delete(spec.paneId);
+      existingTerm = null;
+    }
+
     if (hasSquidRoomLiveCliContent(existingTerm)) {
       element.dataset.squidRoomCli = 'live';
       ensured.push({ paneId: spec.paneId, status: 'live' });
@@ -1970,6 +2073,45 @@ function collapseExpandedPane() {
   return true;
 }
 
+function appendTemporaryStatusMessage(doc, text, timeoutFn = setTimeout, timeoutMs = 2000) {
+  const statusBar = doc?.querySelector?.('.status-bar');
+  if (!statusBar || !doc?.createElement) return null;
+  const msg = doc.createElement('span');
+  msg.textContent = text;
+  msg.style.color = '#4fc3f7';
+  statusBar.appendChild(msg);
+  timeoutFn(() => {
+    if (typeof msg.remove === 'function') {
+      msg.remove();
+    } else if (msg.parentNode && typeof msg.parentNode.removeChild === 'function') {
+      msg.parentNode.removeChild(msg);
+    }
+  }, timeoutMs);
+  return msg;
+}
+
+function handleGlobalEscapePressed({
+  collapseExpandedPaneFn = collapseExpandedPane,
+  terminalApi = terminal,
+  doc = document,
+  timeoutFn = setTimeout,
+} = {}) {
+  const collapsed = Boolean(collapseExpandedPaneFn());
+  if (terminalApi && typeof terminalApi.blurAllTerminals === 'function') {
+    terminalApi.blurAllTerminals();
+  }
+  if (doc?.activeElement && typeof doc.activeElement.blur === 'function') {
+    doc.activeElement.blur();
+  }
+  appendTemporaryStatusMessage(
+    doc,
+    collapsed ? ' | Expanded pane collapsed' : ' | Keyboard released',
+    timeoutFn,
+    2000
+  );
+  return { collapsed, interrupted: false };
+}
+
 // Status Strip - imported from modules/status-strip.js
 
 function createRafTextareaAutoGrow(input, options = {}) {
@@ -2676,7 +2818,7 @@ function setupEventListeners() {
     spawnAllBtn.addEventListener('click', debounceButton('spawnAll', terminal.spawnAllAgents));
   }
 
-  // Pane action buttons: Interrupt (ESC), Enter, Restart
+  // Pane action buttons: Interrupt, Enter, Restart
   document.querySelectorAll('.interrupt-btn').forEach(btn => {
     btn.addEventListener('click', async (_e) => {
       const paneId = btn.dataset.paneId;
@@ -3060,48 +3202,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupModelChangeListener();
   initModelSelectors();
 
-  // Global ESC key handler - interrupt agent AND release keyboard
+  // Global ESC key handler - collapse expanded UI and release keyboard.
+  // Interrupting a process is an explicit pane-header button action.
   ipcRenderer.on('global-escape-pressed', () => {
-    if (collapseExpandedPane()) {
-      terminal.blurAllTerminals();
-      if (document.activeElement) {
-        document.activeElement.blur();
-      }
-      const statusBar = document.querySelector('.status-bar');
-      if (statusBar) {
-        const msg = document.createElement('span');
-        msg.textContent = ' | Expanded pane collapsed';
-        msg.style.color = '#4fc3f7';
-        statusBar.appendChild(msg);
-        setTimeout(() => msg.remove(), 2000);
-      }
-      return;
-    }
-
-    // Send daemon-backed interrupt to focused pane so hidden-pane-host mode
-    // still reaches the real agent process.
-    const focusedPane = terminal.getFocusedPane();
-    if (focusedPane) {
-      terminal.interruptPane(focusedPane).catch(err => {
-        log.error('ESC', 'Failed to send interrupt:', err);
-      });
-    }
-
-    // Also blur terminals to release keyboard capture
-    terminal.blurAllTerminals();
-    if (document.activeElement) {
-      document.activeElement.blur();
-    }
-
-    // Show visual feedback
-    const statusBar = document.querySelector('.status-bar');
-    if (statusBar) {
-      const msg = document.createElement('span');
-      msg.textContent = ` | Ctrl+C sent to pane ${focusedPane} - agent interrupted`;
-      msg.style.color = '#4fc3f7';
-      statusBar.appendChild(msg);
-      setTimeout(() => msg.remove(), 2000);
-    }
+    handleGlobalEscapePressed();
   });
 
   // Watchdog alert - all agents stuck, notify user
@@ -3506,5 +3610,9 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     createCommandBarMessageRouter,
     createRafTextareaAutoGrow,
+    handleGlobalEscapePressed,
+    isSquidRoomWindowContext,
+    isSquidRoomPaneWrongWorkingDir,
+    normalizeSquidRoomWorkingDirForCompare,
   };
 }

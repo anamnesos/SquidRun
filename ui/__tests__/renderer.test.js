@@ -354,6 +354,97 @@ describe('renderer.js smoke tests', () => {
     });
   });
 
+  describe('Squid Room live pane helpers', () => {
+    it('treats the Squid Room DOM marker as active even before async window context catches up', () => {
+      const previousBody = global.document.body;
+      global.document.body = {
+        dataset: { workspaceKey: 'squid-room' },
+        classList: {
+          contains: jest.fn(() => true),
+        },
+      };
+
+      expect(renderer.isSquidRoomWindowContext({ windowKey: 'main' })).toBe(true);
+      expect(renderer.isSquidRoomWindowContext({ windowKey: 'squid-room' })).toBe(true);
+
+      global.document.body = previousBody;
+    });
+
+    it('detects stale dynamic pane PTYs that are attached to the wrong cwd', () => {
+      expect(renderer.isSquidRoomPaneWrongWorkingDir(
+        { alive: true, cwd: 'D:\\projects\\squidrun\\ui' },
+        'D:\\projects\\TrustQuote'
+      )).toBe(true);
+      expect(renderer.isSquidRoomPaneWrongWorkingDir(
+        { alive: true, cwd: 'D:\\projects\\TrustQuote\\' },
+        'D:/projects/TrustQuote'
+      )).toBe(false);
+      expect(renderer.isSquidRoomPaneWrongWorkingDir(
+        { alive: false, cwd: 'D:\\projects\\squidrun\\ui' },
+        'D:\\projects\\TrustQuote'
+      )).toBe(false);
+    });
+  });
+
+  describe('global ESC handling', () => {
+    it('releases keyboard focus without interrupting the focused pane', () => {
+      const statusBar = { appendChild: jest.fn() };
+      const doc = {
+        activeElement: { blur: jest.fn() },
+        querySelector: jest.fn((selector) => (selector === '.status-bar' ? statusBar : null)),
+        createElement: jest.fn(() => ({
+          style: {},
+          remove: jest.fn(),
+        })),
+      };
+      const terminalApi = {
+        blurAllTerminals: jest.fn(),
+        interruptPane: jest.fn(),
+        getFocusedPane: jest.fn(() => '2'),
+      };
+
+      const result = renderer.handleGlobalEscapePressed({
+        collapseExpandedPaneFn: () => false,
+        terminalApi,
+        doc,
+        timeoutFn: jest.fn(),
+      });
+
+      expect(result).toEqual({ collapsed: false, interrupted: false });
+      expect(terminalApi.blurAllTerminals).toHaveBeenCalledTimes(1);
+      expect(terminalApi.interruptPane).not.toHaveBeenCalled();
+      expect(statusBar.appendChild.mock.calls[0][0].textContent).toBe(' | Keyboard released');
+    });
+
+    it('collapses expanded UI without interrupting the focused pane', () => {
+      const statusBar = { appendChild: jest.fn() };
+      const doc = {
+        activeElement: { blur: jest.fn() },
+        querySelector: jest.fn((selector) => (selector === '.status-bar' ? statusBar : null)),
+        createElement: jest.fn(() => ({
+          style: {},
+          remove: jest.fn(),
+        })),
+      };
+      const terminalApi = {
+        blurAllTerminals: jest.fn(),
+        interruptPane: jest.fn(),
+      };
+
+      const result = renderer.handleGlobalEscapePressed({
+        collapseExpandedPaneFn: () => true,
+        terminalApi,
+        doc,
+        timeoutFn: jest.fn(),
+      });
+
+      expect(result).toEqual({ collapsed: true, interrupted: false });
+      expect(terminalApi.blurAllTerminals).toHaveBeenCalledTimes(1);
+      expect(terminalApi.interruptPane).not.toHaveBeenCalled();
+      expect(statusBar.appendChild.mock.calls[0][0].textContent).toBe(' | Expanded pane collapsed');
+    });
+  });
+
   // Note: Callback wiring tests removed - Jest module caching makes them unreliable.
   // The fact that the module loads successfully (tested above) implicitly verifies
   // the wiring works, since missing callbacks would cause runtime errors.
