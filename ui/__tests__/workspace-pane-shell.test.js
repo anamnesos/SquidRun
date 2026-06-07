@@ -15,6 +15,7 @@ class FakeElement {
     this.id = attrs.id || '';
     this.dataset = { ...(attrs.dataset || {}) };
     this.classList = new FakeClassList(attrs.className || '');
+    this.attributes = {};
     this.childNodes = [];
     this.parentNode = null;
     this.ownerDocument = null;
@@ -51,10 +52,16 @@ class FakeElement {
   }
 
   setAttribute(name, value) {
+    this.attributes[name] = String(value);
     if (name === 'aria-hidden') this.ariaHidden = String(value);
   }
 
+  getAttribute(name) {
+    return this.attributes[name] || null;
+  }
+
   removeAttribute(name) {
+    delete this.attributes[name];
     if (name === 'aria-hidden') delete this.ariaHidden;
   }
 
@@ -239,6 +246,8 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.squid-room-team-header')).toBeTruthy();
     expect(doc.querySelector('.squid-room-team-expand-btn').dataset.paneId).toBe('2');
     expect(doc.querySelector('.squid-room-team-expand-btn').dataset.tooltip).toContain('Builder + Oracle');
+    expect(doc.querySelector('.squid-room-team-expand-btn').dataset.expanded).toBe('false');
+    expect(doc.querySelector('.squid-room-team-expand-btn').getAttribute('aria-expanded')).toBe('false');
     expect(doc.getElementById('terminal-2').hidden).toBe(false);
     expect(doc.getElementById('terminal-3').classList.contains('squid-room-terminal-hidden')).toBe(false);
     expect(doc.getElementById('terminal-trustquote-builder')).toBeFalsy();
