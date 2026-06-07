@@ -109,68 +109,12 @@ function buildSquidRoomModel(rawProjection = {}) {
   };
 }
 
-function renderArmRow(arm = {}) {
-  const latest = arm.latestAcceptedCheckin;
-  const checkinText = latest
-    ? `Check-in ${escapeHtml(latest.messageId || latest.commsRowId || 'accepted')}`
-    : 'No accepted check-in';
-  const watchdog = arm.watchdogSummary || {};
-  const queue = arm.applyQueueSummary || {};
-  return `
-    <div class="squid-room-arm" data-arm-key="${escapeHtml(arm.armKey)}" data-arm-status="${escapeHtml(arm.status)}">
-      <div class="squid-room-arm-main">
-        <span class="squid-room-arm-name">${escapeHtml(arm.displayName)}</span>
-      </div>
-      <div class="squid-room-arm-meta">
-        <span>${escapeHtml(arm.role)}</span>
-        <span>${escapeHtml(arm.paneId)}</span>
-        <span>${checkinText}</span>
-      </div>
-      <details class="squid-room-arm-details">
-        <summary>Details</summary>
-        <div class="squid-room-detail-grid">
-          <span>Watchdogs open</span><strong>${Number(watchdog.open || 0)}</strong>
-          <span>Watchdogs overdue</span><strong>${Number(watchdog.overdue || 0)}</strong>
-          <span>Pending approval</span><strong>${Number(queue.pendingApproval || 0)}</strong>
-          <span>Executable drafts</span><strong>${Number(queue.executable || 0)}</strong>
-        </div>
-      </details>
-    </div>
-  `;
-}
-
-function renderSquidRoomHtml(model = {}) {
-  const arms = Array.isArray(model.arms) && model.arms.length > 0
-    ? model.arms.map(renderArmRow).join('')
-    : '<div class="squid-room-empty">No arms listed</div>';
-  return `
-    <div class="squid-room-summary-row">
-      <span>Watchdogs open ${Number(model.watchdogs?.open || 0)}</span>
-      <span>Overdue ${Number(model.watchdogs?.overdue || 0)}</span>
-      <span>Pending approval ${Number(model.applyQueue?.pendingApproval || 0)}</span>
-    </div>
-    ${arms}
-  `;
-}
-
-function suppressVisibleArmList(elements = {}) {
-  const armList = elements?.arms;
-  if (!armList) return;
-  armList.innerHTML = '';
-  armList.hidden = true;
-  armList.setAttribute?.('aria-hidden', 'true');
-  if (armList.dataset) {
-    armList.dataset.renderSuppressed = 'live-panes';
-  }
-}
-
 function getSurfaceElements(doc) {
   if (!doc || typeof doc.getElementById !== 'function') return null;
   return {
     root: doc.getElementById('squidRoomSurface'),
     status: doc.getElementById('squidRoomTrustQuoteStatus'),
     counts: doc.getElementById('squidRoomTrustQuoteCounts'),
-    arms: doc.getElementById('squidRoomTrustQuoteArms'),
     refreshButton: doc.getElementById('squidRoomRefreshBtn'),
   };
 }
@@ -181,7 +125,6 @@ function renderSquidRoomProjection(projection, elements) {
   if (elements.counts) {
     elements.counts.innerHTML = `<span>Arms count ${model.counts.desired}</span>`;
   }
-  suppressVisibleArmList(elements);
   if (elements.root) {
     elements.root.dataset.projectionStatus = model.ok ? 'loaded' : 'unavailable';
     elements.root.dataset.projectionOnly = String(model.projectionFlags.projectionOnly);
@@ -328,9 +271,7 @@ module.exports = {
   getAppRoomSessionId,
   initSquidRoomSurface,
   refreshSquidRoomSurface,
-  renderSquidRoomHtml,
   renderSquidRoomProjection,
   setSquidRoomTeamExpandButtonState,
-  suppressVisibleArmList,
   toggleSquidRoomPaneExpansion,
 };

@@ -532,7 +532,6 @@ function getSquidRoomSurfaceElements() {
     root: document.getElementById('squidRoomSurface'),
     status: document.getElementById('squidRoomTrustQuoteStatus'),
     counts: document.getElementById('squidRoomTrustQuoteCounts'),
-    arms: document.getElementById('squidRoomTrustQuoteArms'),
   };
 }
 
@@ -746,17 +745,6 @@ function buildSquidRoomProjectionPayload(windowContext = {}) {
   };
 }
 
-function suppressInlineSquidRoomArmList(elements = {}) {
-  const armList = elements?.arms;
-  if (!armList) return;
-  armList.innerHTML = '';
-  armList.hidden = true;
-  armList.setAttribute?.('aria-hidden', 'true');
-  if (armList.dataset) {
-    armList.dataset.renderSuppressed = 'live-panes';
-  }
-}
-
 function renderSquidRoomProjectionInline(projection = {}, elements = getSquidRoomSurfaceElements()) {
   const registry = projection?.registry || {};
   const desired = Number(registry.desiredCount || 0);
@@ -769,7 +757,6 @@ function renderSquidRoomProjectionInline(projection = {}, elements = getSquidRoo
   if (elements.counts) {
     elements.counts.innerHTML = `<span>Arms count ${desired}</span>`;
   }
-  suppressInlineSquidRoomArmList(elements);
   if (elements.root) {
     elements.root.dataset.projectionStatus = ok ? 'loaded' : 'unavailable';
   }
