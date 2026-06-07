@@ -238,7 +238,7 @@ function createSquidRoomLivePane(doc, spec) {
   }, '-'));
 
   const actions = createElement(doc, 'div', { className: 'pane-actions' });
-  actions.appendChild(createPaneActionButton(doc, 'interrupt-btn', spec.paneId, 'Interrupt (ESC)', PANE_ICON_SVGS.interrupt));
+  actions.appendChild(createPaneActionButton(doc, 'interrupt-btn', spec.paneId, 'Interrupt', PANE_ICON_SVGS.interrupt));
   actions.appendChild(createPaneActionButton(doc, 'unstick-btn', spec.paneId, 'Enter', PANE_ICON_SVGS.enter));
   actions.appendChild(createPaneActionButton(doc, 'kickoff-btn', spec.paneId, 'Restart agent', PANE_ICON_SVGS.restart));
   actions.appendChild(createPaneActionButton(doc, 'expand-btn', spec.paneId, 'Expand (ESC to collapse)', PANE_ICON_SVGS.expand));

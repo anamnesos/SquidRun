@@ -56,7 +56,7 @@ SquidRun maintains your team's state in the `.squidrun/` directory. If you need 
 ## Troubleshooting
 - **Infinite Loading Screen:** Verify Node.js 18+ is in your system PATH.
 - **"Cannot find module hm-send.js":** Ensure agents are using the global `hm-send` command instead of hardcoded repository paths.
-- **Agent Unresponsive:** Use **Interrupt (ESC)** or **Send Enter** in the pane header to unstick a CLI prompt. If the agent is fully stalled, use the **Restart** button.
+- **Agent Unresponsive:** Use **Interrupt** or **Send Enter** in the pane header to unstick a CLI prompt. If the agent is fully stalled, use the **Restart** button.
 
 ## Team Scaling: Background Builders
 The Builder can autonomously scale the team by spawning up to 3 **Background Builder** agents. This happens automatically when a task is highly parallelizable (e.g., refactoring across 3+ files). These agents report results back to the primary Builder for integration, ensuring you have the throughput of four engineers when you need it most.

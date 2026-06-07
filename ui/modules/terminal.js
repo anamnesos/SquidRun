@@ -419,6 +419,9 @@ function scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon = null) {
   scheduleTerminalPaintRefresh(paneId, terminal, fitAddon, 0);
   scheduleTerminalPaintRefresh(paneId, terminal, fitAddon, 80);
   scheduleTerminalPaintRefresh(paneId, terminal, fitAddon, 250);
+  scheduleTerminalPaintRefresh(paneId, terminal, fitAddon, 650);
+  scheduleTerminalPaintRefresh(paneId, terminal, fitAddon, 1200);
+  scheduleTerminalPaintRefresh(paneId, terminal, fitAddon, 2400);
 }
 
 /**
@@ -510,6 +513,11 @@ function flushTerminalQueue(paneId, terminal) {
 
   const queue = terminalWriteQueues.get(paneId);
   if (!queue || queue.length === 0) {
+    const paneFitAddon = fitAddons.get(String(paneId));
+    if (paneFitAddon) {
+      scheduleTerminalPaintRefresh(paneId, terminal, paneFitAddon, 0);
+      scheduleTerminalPaintRefresh(paneId, terminal, paneFitAddon, 120);
+    }
     return;
   }
 
