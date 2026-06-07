@@ -187,6 +187,40 @@ details.squid-room-app > summary::-webkit-details-marker {
   font-size: 12px;
 }
 
+.squid-room-app-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.squid-room-app-toggle-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid rgba(0, 240, 255, 0.32);
+  border-radius: 6px;
+  color: var(--color-text);
+  background: rgba(0, 240, 255, 0.08);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.squid-room-app-toggle-btn:hover {
+  border-color: rgba(0, 240, 255, 0.55);
+  background: rgba(0, 240, 255, 0.16);
+}
+
+.squid-room-app-toggle-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.25);
+}
+
 .squid-room-counts {
   display: flex;
   flex-wrap: wrap;
@@ -224,6 +258,29 @@ details.squid-room-app > summary::-webkit-details-marker {
 
 .squid-room-live-panes .pane-header {
   min-height: 42px;
+  /* Narrow 3-up arm panes: let the header wrap instead of clipping the right
+     cluster, so the model switcher is never squeezed out of view. */
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+/* Title yields space (shrinks/ellipsizes) before the controls do. */
+.squid-room-live-pane .pane-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.squid-room-live-pane .pane-header-right {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* The model switcher must stay visible at any pane width - never shrink it away. */
+.squid-room-live-pane .model-selector {
+  flex: 0 0 auto;
+  min-width: 72px;
 }
 
 .squid-room-live-panes .pane-terminal {

@@ -2046,6 +2046,53 @@ function handlePaneExpandButtonClick(event, toggleFn = toggleExpandPane) {
   return true;
 }
 
+// Per-app-section collapse/expand. Each Squid Room app is a <details class="squid-room-app">;
+// this gives it a discoverable labeled button instead of relying on a click on the header text.
+function syncSquidRoomAppSectionToggle(details) {
+  if (!details) return;
+  const button = details.querySelector?.('.squid-room-app-toggle-btn');
+  if (!button) return;
+  const open = details.open === true;
+  const label = open ? 'Collapse' : 'Expand';
+  const tip = open ? 'Collapse this app section' : 'Expand this app section';
+  button.setAttribute?.('aria-expanded', String(open));
+  button.setAttribute?.('aria-label', tip);
+  if (button.dataset) {
+    button.dataset.expanded = String(open);
+    button.dataset.tooltip = tip;
+  }
+  const labelEl = button.querySelector?.('.squid-room-app-toggle-label');
+  if (labelEl) labelEl.textContent = label;
+}
+
+function handleSquidRoomAppToggleClick(event) {
+  const target = event?.target;
+  if (!target || typeof target.closest !== 'function') return false;
+  const button = target.closest('.squid-room-app-toggle-btn');
+  if (!button) return false;
+  const details = button.closest?.('details.squid-room-app');
+  if (!details) return false;
+  // Stop the native <summary> toggle so we own a single, deterministic toggle.
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  details.open = !details.open;
+  syncSquidRoomAppSectionToggle(details);
+  return true;
+}
+
+function initSquidRoomAppSectionToggles(doc = document) {
+  const sections = doc?.querySelectorAll?.('details.squid-room-app');
+  if (!sections) return;
+  sections.forEach((details) => {
+    if (details.dataset && details.dataset.appToggleBound !== 'true') {
+      details.dataset.appToggleBound = 'true';
+      // Keep the button label correct even when collapsed via the summary text itself.
+      details.addEventListener?.('toggle', () => syncSquidRoomAppSectionToggle(details));
+    }
+    syncSquidRoomAppSectionToggle(details);
+  });
+}
+
 function emitPaneVisibilityChangedForExpandClick(event, eventBus = bus) {
   const button = getExpandButtonFromEvent(event);
   const paneId = button?.dataset?.paneId;
@@ -2927,6 +2974,11 @@ function setupEventListeners() {
   document.addEventListener('click', handlePaneExpandButtonClick);
   registerRendererLifecycleCleanup(() => document.removeEventListener('click', handlePaneExpandButtonClick));
 
+  // Per-app-section collapse/expand button - delegated for the same reason.
+  document.addEventListener('click', handleSquidRoomAppToggleClick);
+  registerRendererLifecycleCleanup(() => document.removeEventListener('click', handleSquidRoomAppToggleClick));
+  initSquidRoomAppSectionToggles();
+
   // Role bundle info button + modal
   document.querySelectorAll('.pane-role-info-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -3605,6 +3657,8 @@ if (typeof module !== 'undefined' && module.exports) {
     createRafTextareaAutoGrow,
     emitPaneVisibilityChangedForExpandClick,
     handlePaneExpandButtonClick,
+    handleSquidRoomAppToggleClick,
+    syncSquidRoomAppSectionToggle,
     handleGlobalEscapePressed,
     isSquidRoomWindowContext,
     isSquidRoomPaneWrongWorkingDir,
