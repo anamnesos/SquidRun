@@ -511,6 +511,36 @@ describe('renderer.js smoke tests', () => {
       });
       global.document.querySelector = previousQuerySelector;
     });
+
+    it('emits team visibility from the Squid Room team toggle state', () => {
+      const previousQuerySelector = global.document.querySelector;
+      global.document.querySelector = jest.fn(() => ({
+        classList: { contains: jest.fn(() => false) },
+      }));
+      const button = {
+        dataset: {
+          paneId: '2',
+          expanded: 'false',
+          squidRoomTeamToggle: 'true',
+        },
+      };
+      const event = {
+        target: {
+          closest: jest.fn((selector) => (selector === '.expand-btn' ? button : null)),
+        },
+      };
+      const eventBus = { emit: jest.fn() };
+
+      const handled = renderer.emitPaneVisibilityChangedForExpandClick(event, eventBus);
+
+      expect(handled).toBe(true);
+      expect(eventBus.emit).toHaveBeenCalledWith('pane.visibility.changed', {
+        paneId: '2',
+        payload: { paneId: '2', visible: false },
+        source: 'renderer.js',
+      });
+      global.document.querySelector = previousQuerySelector;
+    });
   });
 
   describe('Squid Room app section toggle', () => {

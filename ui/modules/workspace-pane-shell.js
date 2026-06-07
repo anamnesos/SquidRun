@@ -279,15 +279,23 @@ function ensureSquidRoomTeamHeader(doc, teamContainer) {
   header.appendChild(title);
 
   const actions = createElement(doc, 'div', { className: 'pane-actions squid-room-team-actions' });
-  const expandButton = createPaneActionButton(
-    doc,
-    'expand-btn squid-room-team-expand-btn',
-    SQUID_ROOM_TEAM_PANE_IDS[0],
-    'Expand Builder + Oracle (ESC to collapse)',
-    PANE_ICON_SVGS.expand
-  );
-  expandButton.dataset.expanded = 'false';
-  expandButton.setAttribute?.('aria-expanded', 'false');
+  const expandButton = createElement(doc, 'button', {
+    className: 'squid-room-app-toggle-btn expand-btn squid-room-team-expand-btn',
+    type: 'button',
+    dataset: {
+      paneId: SQUID_ROOM_TEAM_PANE_IDS[0],
+      tooltip: 'Collapse Builder + Oracle',
+      expanded: 'true',
+      squidRoomTeamToggle: 'true',
+    },
+    attributes: {
+      'aria-label': 'Collapse Builder + Oracle',
+      'aria-expanded': 'true',
+    },
+  });
+  expandButton.appendChild(createElement(doc, 'span', {
+    className: 'squid-room-team-toggle-label',
+  }, 'Collapse'));
   actions.appendChild(expandButton);
   header.appendChild(actions);
   return header;

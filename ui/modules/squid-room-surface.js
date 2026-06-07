@@ -136,9 +136,8 @@ function renderSquidRoomProjection(projection, elements) {
 }
 
 function setSquidRoomTeamExpandButtonState(teamContainer, expanded) {
-  const label = expanded
-    ? 'Collapse Builder + Oracle (ESC to collapse)'
-    : 'Expand Builder + Oracle (ESC to collapse)';
+  const visibleLabel = expanded ? 'Collapse' : 'Expand';
+  const label = expanded ? 'Collapse Builder + Oracle' : 'Expand Builder + Oracle';
   teamContainer?.querySelectorAll?.('.squid-room-team-expand-btn').forEach((button) => {
     if (button.dataset) {
       button.dataset.tooltip = label;
@@ -150,6 +149,8 @@ function setSquidRoomTeamExpandButtonState(teamContainer, expanded) {
     if ('title' in button) {
       button.title = label;
     }
+    const labelNode = button.querySelector?.('.squid-room-team-toggle-label');
+    if (labelNode) labelNode.textContent = visibleLabel;
   });
 }
 
@@ -167,14 +168,16 @@ function toggleSquidRoomPaneExpansion({
   const livePaneContainer = pane.closest?.('.squid-room-live-panes');
 
   if (teamContainer) {
-    const expanded = teamContainer.classList.contains('squid-room-team-expanded');
-    teamContainer.classList.toggle('squid-room-team-expanded', !expanded);
-    paneLayout.classList.toggle('has-squid-room-team-expanded', !expanded);
+    const expanded = !teamContainer.classList.contains('squid-room-team-collapsed');
+    const nextExpanded = !expanded;
+    teamContainer.classList.remove('squid-room-team-expanded');
+    teamContainer.classList.toggle('squid-room-team-collapsed', !nextExpanded);
+    paneLayout.classList.remove('has-squid-room-team-expanded');
     teamContainer.querySelectorAll?.('.pane').forEach((teamPane) => {
-      teamPane.classList.toggle('pane-expanded', !expanded);
+      teamPane.classList.remove('pane-expanded');
     });
-    setSquidRoomTeamExpandButtonState(teamContainer, !expanded);
-    return { handled: true, expandedPaneId: !expanded ? pane.dataset?.paneId || expandedPaneId : null };
+    setSquidRoomTeamExpandButtonState(teamContainer, nextExpanded);
+    return { handled: true, expandedPaneId: null };
   }
 
   if (livePaneContainer) {

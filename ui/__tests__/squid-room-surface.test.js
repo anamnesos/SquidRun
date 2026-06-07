@@ -320,11 +320,12 @@ describe('squid-room-surface', () => {
     expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Arms count 0');
   });
 
-  test('toggles Builder and Oracle as one Squid Room team container', () => {
+  test('collapses and expands Builder and Oracle as a local Squid Room team container', () => {
     const body = expandableNode({ classes: ['squid-room-workspace'] });
     const paneLayout = expandableNode();
     const builderPane = expandableNode({ paneId: '2' });
     const oraclePane = expandableNode({ paneId: '3' });
+    const labelNode = { textContent: 'Collapse' };
     const teamButton = {
       dataset: {},
       title: '',
@@ -332,6 +333,9 @@ describe('squid-room-surface', () => {
       classList: new FakeClassList(),
       setAttribute(key, value) {
         this.attributes[key] = value;
+      },
+      querySelector(selector) {
+        return selector === '.squid-room-team-toggle-label' ? labelNode : null;
       },
     };
     const teamContainer = expandableNode({
@@ -349,34 +353,37 @@ describe('squid-room-surface', () => {
       expandedPaneId: null,
     });
 
-    expect(expanded).toEqual({ handled: true, expandedPaneId: '2' });
-    expect(teamContainer.classList.contains('squid-room-team-expanded')).toBe(true);
-    expect(paneLayout.classList.contains('has-squid-room-team-expanded')).toBe(true);
-    expect(builderPane.classList.contains('pane-expanded')).toBe(true);
-    expect(oraclePane.classList.contains('pane-expanded')).toBe(true);
-    expect(teamButton.dataset.tooltip).toBe('Collapse Builder + Oracle (ESC to collapse)');
-    expect(teamButton.dataset.expanded).toBe('true');
-    expect(teamButton.attributes['aria-expanded']).toBe('true');
-    expect(teamButton.attributes['aria-label']).toBe('Collapse Builder + Oracle (ESC to collapse)');
-    expect(teamButton.classList.contains('active')).toBe(true);
+    expect(expanded).toEqual({ handled: true, expandedPaneId: null });
+    expect(teamContainer.classList.contains('squid-room-team-collapsed')).toBe(true);
+    expect(teamContainer.classList.contains('squid-room-team-expanded')).toBe(false);
+    expect(paneLayout.classList.contains('has-squid-room-team-expanded')).toBe(false);
+    expect(builderPane.classList.contains('pane-expanded')).toBe(false);
+    expect(oraclePane.classList.contains('pane-expanded')).toBe(false);
+    expect(teamButton.dataset.tooltip).toBe('Expand Builder + Oracle');
+    expect(teamButton.dataset.expanded).toBe('false');
+    expect(teamButton.attributes['aria-expanded']).toBe('false');
+    expect(teamButton.attributes['aria-label']).toBe('Expand Builder + Oracle');
+    expect(teamButton.classList.contains('active')).toBe(false);
+    expect(labelNode.textContent).toBe('Expand');
 
     const collapsed = toggleSquidRoomPaneExpansion({
       body,
       pane: builderPane,
       paneLayout,
-      expandedPaneId: '2',
+      expandedPaneId: null,
     });
 
     expect(collapsed).toEqual({ handled: true, expandedPaneId: null });
-    expect(teamContainer.classList.contains('squid-room-team-expanded')).toBe(false);
+    expect(teamContainer.classList.contains('squid-room-team-collapsed')).toBe(false);
     expect(paneLayout.classList.contains('has-squid-room-team-expanded')).toBe(false);
     expect(builderPane.classList.contains('pane-expanded')).toBe(false);
     expect(oraclePane.classList.contains('pane-expanded')).toBe(false);
-    expect(teamButton.dataset.tooltip).toBe('Expand Builder + Oracle (ESC to collapse)');
-    expect(teamButton.dataset.expanded).toBe('false');
-    expect(teamButton.attributes['aria-expanded']).toBe('false');
-    expect(teamButton.attributes['aria-label']).toBe('Expand Builder + Oracle (ESC to collapse)');
-    expect(teamButton.classList.contains('active')).toBe(false);
+    expect(teamButton.dataset.tooltip).toBe('Collapse Builder + Oracle');
+    expect(teamButton.dataset.expanded).toBe('true');
+    expect(teamButton.attributes['aria-expanded']).toBe('true');
+    expect(teamButton.attributes['aria-label']).toBe('Collapse Builder + Oracle');
+    expect(teamButton.classList.contains('active')).toBe(true);
+    expect(labelNode.textContent).toBe('Collapse');
   });
 
   test('toggles a TrustQuote live pane within its app container', () => {
