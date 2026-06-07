@@ -514,16 +514,10 @@ describe('renderer.js smoke tests', () => {
   });
 
   describe('Squid Room inline projection fallback', () => {
-    it('preserves Arms count while suppressing duplicate bottom arm rows', () => {
+    it('renders Arms count from projection without a bottom arm-list render', () => {
       const elements = {
         status: { textContent: 'stale' },
         counts: { innerHTML: '' },
-        arms: {
-          innerHTML: '<div class="squid-room-arm">stale</div>',
-          hidden: false,
-          dataset: {},
-          setAttribute: jest.fn(),
-        },
         root: { dataset: {} },
       };
 
@@ -545,10 +539,6 @@ describe('renderer.js smoke tests', () => {
       }));
       expect(elements.status.textContent).toBe('');
       expect(elements.counts.innerHTML).toContain('Arms count 3');
-      expect(elements.arms.innerHTML).toBe('');
-      expect(elements.arms.hidden).toBe(true);
-      expect(elements.arms.dataset.renderSuppressed).toBe('live-panes');
-      expect(elements.arms.setAttribute).toHaveBeenCalledWith('aria-hidden', 'true');
       expect(elements.root.dataset.projectionStatus).toBe('loaded');
     });
   });

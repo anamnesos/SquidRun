@@ -173,7 +173,6 @@ function makeDocument() {
     new FakeElement('form', { className: 'command-bar' }),
     new FakeElement('section', { className: 'squid-room-surface', id: 'squidRoomSurface' }, [
       new FakeElement('div', { className: 'squid-room-app', dataset: { appRoomId: 'trustquote' } }, [
-        new FakeElement('div', { className: 'squid-room-arm-list', id: 'squidRoomTrustQuoteArms' }),
         new FakeElement('div', { className: 'squid-room-live-panes', id: 'squidRoomTrustQuoteLivePanes' }),
       ]),
     ]),

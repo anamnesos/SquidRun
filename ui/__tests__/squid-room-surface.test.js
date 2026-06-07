@@ -4,7 +4,6 @@ const {
   buildSquidRoomModel,
   initSquidRoomSurface,
   refreshSquidRoomSurface,
-  renderSquidRoomHtml,
   renderSquidRoomProjection,
   toggleSquidRoomPaneExpansion,
 } = require('../modules/squid-room-surface');
@@ -34,7 +33,6 @@ class FakeDocument {
       'squidRoomSurface',
       'squidRoomTrustQuoteStatus',
       'squidRoomTrustQuoteCounts',
-      'squidRoomTrustQuoteArms',
       'squidRoomRefreshBtn',
     ]) {
       this.elements.set(id, new FakeElement(id));
@@ -183,15 +181,6 @@ describe('squid-room-surface', () => {
     }));
   });
 
-  test('renders native expandable details without action buttons', () => {
-    const html = renderSquidRoomHtml(buildSquidRoomModel(projection()));
-
-    expect(html).toContain('<details class="squid-room-arm-details">');
-    expect(html).toContain('Pending approval');
-    expect(html).not.toContain('Retired Arm');
-    expect(html).not.toMatch(/apply|dispatch|send|approve/i);
-  });
-
   test('refresh invokes only arm-state projection and updates DOM state', async () => {
     const doc = new FakeDocument();
     const invoke = jest.fn().mockResolvedValue(projection());
@@ -222,9 +211,6 @@ describe('squid-room-surface', () => {
     });
     expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('');
     expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Arms count 3');
-    expect(doc.getElementById('squidRoomTrustQuoteArms').innerHTML).toBe('');
-    expect(doc.getElementById('squidRoomTrustQuoteArms').hidden).toBe(true);
-    expect(doc.getElementById('squidRoomTrustQuoteArms').dataset.renderSuppressed).toBe('live-panes');
     expect(doc.getElementById('squidRoomSurface').dataset).toEqual(expect.objectContaining({
       projectionStatus: 'loaded',
       projectionOnly: 'true',
@@ -327,14 +313,11 @@ describe('squid-room-surface', () => {
       root: doc.getElementById('squidRoomSurface'),
       status: doc.getElementById('squidRoomTrustQuoteStatus'),
       counts: doc.getElementById('squidRoomTrustQuoteCounts'),
-      arms: doc.getElementById('squidRoomTrustQuoteArms'),
     });
 
     expect(model.ok).toBe(false);
     expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Projection unavailable');
     expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Arms count 0');
-    expect(doc.getElementById('squidRoomTrustQuoteArms').innerHTML).toBe('');
-    expect(doc.getElementById('squidRoomTrustQuoteArms').hidden).toBe(true);
   });
 
   test('toggles Builder and Oracle as one Squid Room team container', () => {
