@@ -1078,8 +1078,8 @@ function setupProjectListener() {
   registerScopedIpcListener('project', 'project-changed', (event, projectPath) => {
     log.info('Project', 'Changed to:', projectPath);
     uiView.updateProjectDisplay(resolveVisibleProjectDisplayPath(projectPath));
-    const projectName = projectPath ? basenameFromPath(projectPath) : 'Developer Mode';
-    showToast(`[PROJECT CONTEXT SWITCHED] ${projectName || 'Developer Mode'} — restart agents to apply`, 'warning');
+    const projectName = projectPath ? basenameFromPath(projectPath) : 'SquidRun home';
+    showToast(`[PROJECT CONTEXT SWITCHED] ${projectName || 'SquidRun home'} — restart agents to apply`, 'warning');
   });
   registerScopedIpcListener('project', 'project-warning', (event, message) => {
     log.warn('Project', message);

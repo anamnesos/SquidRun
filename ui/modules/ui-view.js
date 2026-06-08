@@ -513,7 +513,7 @@ function updateProjectDisplay(projectPath) {
       projectPathEl.textContent = projectPath;
       projectPathEl.classList.remove('no-project');
     } else {
-      projectPathEl.textContent = 'Developer Mode';
+      projectPathEl.textContent = 'SquidRun home';
       projectPathEl.classList.add('no-project');
     }
   }

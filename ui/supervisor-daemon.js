@@ -256,7 +256,7 @@ const DEFAULT_AGENT_TASK_REENGAGE_IDLE_MS = Math.max(
 );
 const AGENT_TASK_QUEUE_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const MARKET_SCANNER_PHASES = Object.freeze([
-  { key: 'market_scanner', label: 'LiveOps market scanner' },
+  { key: 'market_scanner', label: 'Trading manual-only / public-core removed' },
 ]);
 const DEFAULT_LIVE_OPS_INTERVAL_MINUTES = 6 * 60;
 const DEFAULT_SPARK_MONITOR_INTERVAL_MINUTES = 1;

@@ -1,5 +1,12 @@
 # TrustQuote Arm-Set Proposal
 
+> **SUPERSEDED - do not build from this document.** This proposal captured the
+> old TrustQuote Lead / Work + Schedule / Money + Documents abstraction and the
+> desired/ready/missing scoreboard model. James's current Squid Room authority is
+> `memory/project_squidroom_original_definition.md`: real CLI panes, one
+> Builder, one Oracle, expandable per-app arm sections, and a single arms count.
+> Keep this file only as historical context for the drift it caused.
+
 Status: DRAFT / ITERATIVE-LEAD-RULEBOOK / PENDING-TRUE-UNKNOWNS
 Date: 2026-06-06
 Source: Joint S406 proposal co-signed by Oracle and Builder

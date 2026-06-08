@@ -396,13 +396,13 @@ describe('Project Handlers', () => {
   });
 
   describe('clear-project-context', () => {
-    test('clears active project context and returns developer mode', async () => {
+    test('clears active project context and returns SquidRun home', async () => {
       const result = await harness.invoke('clear-project-context');
 
       expect(result.success).toBe(true);
       expect(result.mode).toBe('developer');
       expect(result.path).toBeNull();
-      expect(result.name).toBe('Developer Mode');
+      expect(result.name).toBe('SquidRun home');
       expect(ctx.watcher.writeState).toHaveBeenCalled();
       expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('project-changed', null);
     });

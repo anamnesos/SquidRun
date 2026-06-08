@@ -456,9 +456,12 @@ function renderCodexDesktopCapabilityMarkdown(status = {}) {
   const inbox = status.freshness?.attentionInbox || {};
   const heartbeat = status.freshness?.heartbeat || {};
   const desktopTransport = status.availability?.hmCodexDesktopTransport || {};
+  const statusLabel = status.status === 'process_available_heartbeat_not_proven'
+    ? 'available, not monitored'
+    : (status.status || 'unknown');
   return [
     'CODEX DESKTOP CAPABILITY',
-    `- Status: ${status.status || 'unknown'}`,
+    `- Status: ${statusLabel}${statusLabel !== status.status && status.status ? ` (${status.status})` : ''}`,
     `- Process/App: ${processAvailability.status || 'unknown'} (processes=${Number(processAvailability.process_count || 0)}, visible_windows=${Number(processAvailability.visible_window_count || 0)})`,
     `- App-Control Route: ${appControl.status || 'unknown'} (source=${appControl.source_message_id || 'unknown'})`,
     `- Attention Inbox: active=${Number(inbox.active_count || 0)}, completed=${Number(inbox.completed_count || 0)}, total=${Number(inbox.total_count || 0)}, freshness=${inbox.polling_freshness || 'unknown'}`,

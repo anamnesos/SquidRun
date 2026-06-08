@@ -61,7 +61,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/ipc-handlers.js: Exports init, setDaemonClient, setExternalNotifier, setupIPCHandlers, ....
 - ui/modules/ipc/agent-claims-handlers.js: Registers IPC channels (claim-agent, release-agent, get-claims, ...).
 - ui/modules/ipc/agent-metrics-handlers.js: Registers IPC channels (record-completion, record-error, record-response-time, ...).
-- ui/modules/ipc/arm-state-projection-handlers.js: Read-only renderer IPC seam for `arm-state:projection`; ignores renderer DB-path overrides and treats renderer `sessionId` as readiness scope, not the manifest key. Returns desired/ready/missing, watchdog, and apply-queue state from the canonical durable tables without seeding, evaluating, advancing watchdogs, dispatching requests, or changing TrustQuote room behavior.
+- ui/modules/ipc/arm-state-projection-handlers.js: Read-only renderer IPC seam for `arm-state:projection`; ignores renderer DB-path overrides and treats renderer `sessionId` as readiness scope, not the manifest key. Returns legacy registry readiness, watchdog, and apply-queue state from the canonical durable tables without seeding, evaluating, advancing watchdogs, dispatching requests, or changing TrustQuote room behavior. This projection is not the user-facing Squid Room authority.
 - ui/modules/ipc/auto-handoff-handlers.js: Registers IPC channels (trigger-handoff, get-handoff-chain).
 - ui/modules/ipc/auto-nudge-handlers.js: Registers IPC channels (get-agent-health, nudge-pane, restart-pane, ...).
 - ui/modules/ipc/background-processes.js: Tracks background child processes, broadcasts process state to renderer, and terminates running processes on cleanup.
@@ -213,7 +213,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/settings.js: Exports setConnectionStatusCallback, setSettingsLoadedCallback, loadSettings, applySettingsToUI, ....
 - ui/modules/shared-state.js: Exports init, getState, getChangesSince, getChangelogForPane, ....
 - ui/modules/smart-routing.js: Exports getBestAgent, inferTaskType, scoreAgents.
-- ui/modules/squid-room-surface.js: Read-only Squid Room renderer surface; invokes `arm-state:projection` for TrustQuote arm state, renders desired/ready/missing, arm cards, watchdog and approval summaries, and exposes only refresh/native-expand controls.
+- ui/modules/squid-room-surface.js: Read-only Squid Room renderer surface. The live Squid Room contract is real CLI panes, one shared Builder and one shared Oracle rendered at the top, expandable per-app arm sections, and a single arms count. Legacy registry/projection data may appear only as non-authority support context; the desired/ready/missing scoreboard and Work+Schedule/Money+Documents abstraction are not the product spec.
 - ui/modules/sms-poller.js: Exports start, stop, isRunning, _internals, ....
 - ui/modules/surface-capture-events.js: In-memory Electron-main capture event ledger that binds visible-pane screenshot claims to app-recorded window/pane/path/timestamp/image hashes.
 - ui/modules/window-team-bootstrap.js: Renderer-side window-context bootstrap that tracks `windowKey`, startup source bundle metadata, and secondary-window auto-boot rules.
@@ -349,6 +349,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - **Architect (Pane 1):** The outer-loop coordinator. Handles decomposition, review, and release gating (no direct implementation). Elevates the AI from individual workers to a management layer over native sub-agents.
 - **Builder (Pane 2):** The working lead. Executes implementation and autonomously spawns up to 3 background agents (`builder-bg-1..3`) for parallel execution.
 - **Oracle (Pane 3):** The high-level system monitor and vision-provider. Shifted from the old per-pane "Analyst" role to provide system-wide investigation, root-cause evidence, documentation, and benchmarks.
+- **Squid Room authority:** James's canonical Squid Room spec is `memory/project_squidroom_original_definition.md`. The Squid Room is a separate window with the same live Builder and Oracle panes rendered once, plus expandable app arm sections containing real CLI agents and a single arms count. It is not the old desired/ready/missing scoreboard, not duplicate Builder/Oracle sessions, and not the TrustQuote Lead / Work + Schedule / Money + Documents abstraction.
 - Primary comms path: `node ui/scripts/hm-send.js <target> "(ROLE #N): ..."` sends WebSocket envelopes into the comms runtime.
 - Fallback comms path: if WebSocket delivery is unverified/fails, `hm-send.js` writes `.squidrun/triggers/<role>.txt` atomically.
 - Trigger/watch path: `ui/modules/watcher.js` watches trigger/message/workspace paths and calls `ui/modules/triggers.js` for routing and delivery tracking.
