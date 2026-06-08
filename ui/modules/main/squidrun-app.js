@@ -159,6 +159,7 @@ const {
 } = require('../work-room-terminal-visibility');
 const {
   SQUID_ROOM_PANE_IDS,
+  SQUID_ROOM_TEAM_PANE_IDS,
 } = require('../workspace-pane-shell');
 const {
   getTrustQuoteArmPaneIds,
@@ -537,6 +538,7 @@ function isSquidRoomWindowKey(value) {
 }
 
 const SQUID_ROOM_ARM_PANE_ID_SET = new Set(getTrustQuoteArmPaneIds().map((paneId) => String(paneId)));
+const SQUID_ROOM_TEAM_PANE_ID_SET = new Set((SQUID_ROOM_TEAM_PANE_IDS || []).map((paneId) => String(paneId)));
 
 function isSquidRoomArmPaneId(value) {
   return SQUID_ROOM_ARM_PANE_ID_SET.has(String(value || ''));
@@ -2658,8 +2660,32 @@ class SquidRunApp {
   }
 
   getVisibleWindowKeyForPane(paneId) {
-    if (isSquidRoomArmPaneId(paneId)) return 'squid-room';
-    return 'main';
+    return this.getVisibleWindowKeysForPane(paneId)[0] || 'main';
+  }
+
+  getVisibleWindowKeysForPane(paneId) {
+    const normalizedPaneId = String(paneId || '');
+    if (isSquidRoomArmPaneId(normalizedPaneId)) return ['squid-room'];
+    const windowKeys = ['main'];
+    if (
+      SQUID_ROOM_TEAM_PANE_ID_SET.has(normalizedPaneId)
+      && this.canSendToWindow(this.getAppWindow('squid-room'))
+    ) {
+      windowKeys.push('squid-room');
+    }
+    return windowKeys;
+  }
+
+  sendToVisibleWindowsForPane(channel, payload, paneId) {
+    let delivered = false;
+    const seenWindows = new Set();
+    for (const windowKey of this.getVisibleWindowKeysForPane(paneId)) {
+      const windowRef = this.getAppWindow(windowKey);
+      if (windowRef && seenWindows.has(windowRef)) continue;
+      if (windowRef) seenWindows.add(windowRef);
+      delivered = this.sendToVisibleWindow(channel, payload, { windowKey }) || delivered;
+    }
+    return delivered;
   }
 
   sendDaemonConnectedToAppWindows(terminals = []) {
@@ -6394,9 +6420,7 @@ class SquidRunApp {
         kernelMetas: entry.kernelMetas || [],
         originalChunk: options.originalChunk || null,
       });
-      this.sendToVisibleWindow(`pty-data-${entry.paneId}`, entry.text, {
-        windowKey: this.getVisibleWindowKeyForPane(entry.paneId),
-      });
+      this.sendToVisibleWindowsForPane(`pty-data-${entry.paneId}`, entry.text, entry.paneId);
     }
   }
 
@@ -8166,9 +8190,7 @@ class SquidRunApp {
         .catch(err => log.error('Plugins', `Error in agent:stateChanged hook: ${err.message}`));
       this.broadcastClaudeState();
       this.activity.logActivity('state', paneId, `Session ended (exit code: ${code})`, { exitCode: code });
-      this.sendToVisibleWindow(`pty-exit-${paneId}`, code, {
-        windowKey: this.getVisibleWindowKeyForPane(paneId),
-      });
+      this.sendToVisibleWindowsForPane(`pty-exit-${paneId}`, code, paneId);
       if (this.isHiddenPaneHostModeEnabled()) {
         this.paneHostWindowManager.sendToPaneWindow(String(paneId), `pty-exit-${paneId}`, code);
       }
