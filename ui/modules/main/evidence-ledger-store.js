@@ -509,9 +509,9 @@ const COMMS_DIRECTIONS = new Set(['inbound', 'outbound']);
 const COMMS_STATUS_RANK = Object.freeze({
   recorded: 1,
   brokered: 2,
+  failed: 2.5,
   routed: 3,
   acked: 4,
-  failed: 4,
 });
 const DEFAULT_TELEGRAM_REPLY_OBLIGATION_WINDOW_MS = 5 * 60 * 1000;
 const TELEGRAM_REPLY_OBLIGATION_STATUSES = new Set(['open', 'satisfied', 'expired', 'escalated']);

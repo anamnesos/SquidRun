@@ -170,6 +170,86 @@ maybeDescribe('evidence-ledger-store', () => {
     });
   });
 
+  test('upsertCommsJournal lets delivery proof supersede stale failed status', () => {
+    expect(store.init().ok).toBe(true);
+
+    const failed = store.upsertCommsJournal({
+      messageId: 'hm-failed-then-routed',
+      sessionId: 's_1',
+      senderRole: 'builder',
+      targetRole: 'architect',
+      channel: 'ws',
+      direction: 'outbound',
+      sentAtMs: 1000,
+      rawBody: '(BUILDER #2): retry noise',
+      status: 'failed',
+      attempt: 1,
+      metadata: { reason: 'model write-ack timeout after 2500ms' },
+    });
+    expect(failed.ok).toBe(true);
+
+    const routed = store.upsertCommsJournal({
+      messageId: 'hm-failed-then-routed',
+      channel: 'ws',
+      direction: 'outbound',
+      brokeredAtMs: 1100,
+      status: 'routed',
+      attempt: 2,
+      metadata: { route: 'renderer_pty_write_completed' },
+    });
+    expect(routed.ok).toBe(true);
+
+    let row = store.db.prepare(`
+      SELECT * FROM comms_journal WHERE message_id = ?
+    `).get('hm-failed-then-routed');
+    expect(row.status).toBe('routed');
+    expect(JSON.parse(row.metadata_json)).toMatchObject({
+      reason: 'model write-ack timeout after 2500ms',
+      route: 'renderer_pty_write_completed',
+    });
+
+    const lateFailed = store.upsertCommsJournal({
+      messageId: 'hm-failed-then-routed',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'failed',
+      attempt: 3,
+      metadata: { lateFailure: 'stale replay classifier' },
+    });
+    expect(lateFailed.ok).toBe(true);
+
+    row = store.db.prepare(`
+      SELECT * FROM comms_journal WHERE message_id = ?
+    `).get('hm-failed-then-routed');
+    expect(row.status).toBe('routed');
+
+    const acked = store.upsertCommsJournal({
+      messageId: 'hm-failed-then-routed',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'acked',
+      ackStatus: 'renderer_pty_write_completed',
+      attempt: 4,
+    });
+    expect(acked.ok).toBe(true);
+
+    const finalFailed = store.upsertCommsJournal({
+      messageId: 'hm-failed-then-routed',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'failed',
+      attempt: 5,
+    });
+    expect(finalFailed.ok).toBe(true);
+
+    row = store.db.prepare(`
+      SELECT * FROM comms_journal WHERE message_id = ?
+    `).get('hm-failed-then-routed');
+    expect(row.status).toBe('acked');
+    expect(row.ack_status).toBe('renderer_pty_write_completed');
+    expect(row.attempt).toBe(5);
+  });
+
   test('upsertCommsJournal preserves voice channel for outbound speech egress', () => {
     expect(store.init().ok).toBe(true);
 
