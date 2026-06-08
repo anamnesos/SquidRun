@@ -87,6 +87,12 @@ Root cause found in `ui/modules/main/squidrun-app.js`: `deliverPaneMessageReliab
 
 Current rule: payloads at or above `DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES` must skip direct daemon PTY for every pane runtime and use the verified packetized/chunked inject path. Short direct daemon writes may remain. The full-message pointer file is only a silent-clip safety net; it is not the root fix.
 
+## Squid Room PTY mirror and delivery-status triage (S416)
+
+Squid Room Builder/Oracle panes are the same live pane sessions rendered in another window. Commit `3e39fff2` fixed the S415 blank-body bug by treating panes `2`/`3` as multi-window PTY owners when Squid Room exists: `pty-data` and `pty-exit` go to both `main` and `squid-room`; TrustQuote arm panes remain `squid-room` only. Static tests alone were not enough proof because the changed path lives in Electron main-process routing. Runtime proof required a restart/code-load, then fresh `hm-screenshot --window-key squid-room` captures showing Builder/Oracle terminal bodies painting live.
+
+Do not treat a single `hm-comms` row with `status=failed` as proof that an agent never received the message. In S415/S416, rows `68644`, `68645`, `68646`, and `68648` were marked failed while bus trace showed successful packetized IPC handoff/reassembly before a later `pane_delivery_outcome` of `delivery_failed` caused by `write ack timeout after 2500ms`. The pending queue then retained those messages in `.squidrun/runtime/pending-pane-deliveries.json` with `lastFailureReason=routed_unverified_timeout`, so retry/restart state looked broken even though later pane behavior proved the messages were processed. Triage order: check `bus-reliability-trace.jsonl` for `pane_ipc_handoff` / `renderer_ipc_reassembled`, check `.squidrun/runtime/pending-pane-deliveries.json` for stale retries, then check recipient follow-up rows before resending or claiming route loss.
+
 # Telegram reply-guard: external-process replies vs in-memory state
 
 Load-bearing constraint (S396). `hm-send.js telegram` runs in a SEPARATE process from the Electron main app, so a Telegram reply it sends CANNOT directly clear the app's in-memory `pendingTelegramReplyGuards` map. That gap is what produced the recurring `(SYSTEM RESPONSE-DEBT) pane_output_without_telegram_egress` loop: the only clear path was a fragile lazy journal reconcile at pane-output time, so a reply that was actually sent kept getting flagged as unanswered.
