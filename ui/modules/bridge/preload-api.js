@@ -59,7 +59,7 @@ function createPreloadApi(ipcRenderer) {
     },
 
     pty: {
-      create: (paneId, workingDir) => ipc.invoke('pty-create', paneId, workingDir),
+      create: (paneId, workingDir, options = {}) => ipc.invoke('pty-create', paneId, workingDir, options),
       write: (paneId, data, kernelMeta = null) => ipc.invoke('pty-write', paneId, data, kernelMeta),
       writeChunked: (paneId, fullText, options = {}, kernelMeta = null) =>
         ipc.invoke('pty-write-chunked', paneId, fullText, options, kernelMeta),

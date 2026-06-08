@@ -161,6 +161,9 @@ const {
   SQUID_ROOM_PANE_IDS,
 } = require('../workspace-pane-shell');
 const {
+  getTrustQuoteArmPaneIds,
+} = require('../trustquote-arm-specs');
+const {
   materializeTrustQuoteWorkRoomPrerequisites,
 } = require('../trustquote-work-room-prerequisites');
 const {
@@ -531,6 +534,12 @@ function toBooleanFlag(value, fallback = false) {
 
 function isSquidRoomWindowKey(value) {
   return String(value || '').trim().toLowerCase() === 'squid-room';
+}
+
+const SQUID_ROOM_ARM_PANE_ID_SET = new Set(getTrustQuoteArmPaneIds().map((paneId) => String(paneId)));
+
+function isSquidRoomArmPaneId(value) {
+  return SQUID_ROOM_ARM_PANE_ID_SET.has(String(value || ''));
 }
 
 function isTelegramAgentOpsOrCommandText(value) {
@@ -915,6 +924,8 @@ class SquidRunApp {
     this.bridgeClient = null;
     this.bridgeRuntimeConfig = this.resolveBridgeRuntimeConfig();
     this.pendingPaneDeliveryQueuePath = resolveCoordPath('runtime/pending-pane-deliveries.json', { forWrite: true });
+    this.squidRoomWindowStatePath = resolveCoordPath('runtime/squid-room-window-state.json', { forWrite: true });
+    this.squidRoomRestoreAttempted = false;
     this.pendingPaneDeliveryReplayPromise = Promise.resolve();
     this.bridgeEnabled = Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env);
     this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getProfileDeviceId(process.env, getActiveProfileName()) || null;
@@ -2074,7 +2085,10 @@ class SquidRunApp {
 
   getHiddenPaneHostPaneIds() {
     if (!this.isHiddenPaneHostModeEnabled()) return [];
-    return [...PANE_IDS];
+    return Array.from(new Set([
+      ...PANE_IDS,
+      ...SQUID_ROOM_PANE_IDS,
+    ].map((paneId) => String(paneId))));
   }
 
   getPaneHostStatusPaneIds() {
@@ -2641,6 +2655,11 @@ class SquidRunApp {
       delivered = this.sendToVisibleWindow(channel, payload, { windowKey: normalizedWindowKey }) || delivered;
     }
     return delivered;
+  }
+
+  getVisibleWindowKeyForPane(paneId) {
+    if (isSquidRoomArmPaneId(paneId)) return 'squid-room';
+    return 'main';
   }
 
   sendDaemonConnectedToAppWindows(terminals = []) {
@@ -5297,6 +5316,9 @@ class SquidRunApp {
       skipStartupBundle: isSquidRoomWindow ? true : undefined,
       lifecycleRoot: options.lifecycleRoot === true,
     });
+    if (isSquidRoomWindow) {
+      this.writeSquidRoomWindowState(true, options.restoredFromState ? 'startup_restore' : 'open_app_window');
+    }
     const focused = this.focusAppWindow(windowKey);
     if (isTrustQuoteWorkspace(windowKey)) {
       const verification = this.verifyAppWindowVisible(windowKey, windowTitle);
@@ -5498,7 +5520,56 @@ class SquidRunApp {
     return null;
   }
 
+  readSquidRoomWindowState() {
+    try {
+      if (!fs.existsSync(this.squidRoomWindowStatePath)) return null;
+      return JSON.parse(fs.readFileSync(this.squidRoomWindowStatePath, 'utf8'));
+    } catch (err) {
+      log.warn('Window', `Failed to read Squid Room window state: ${err.message}`);
+      return null;
+    }
+  }
+
+  writeSquidRoomWindowState(open, reason = 'unknown') {
+    try {
+      fs.mkdirSync(path.dirname(this.squidRoomWindowStatePath), { recursive: true });
+      fs.writeFileSync(this.squidRoomWindowStatePath, JSON.stringify({
+        schema: 'squidrun.squid_room_window_state.v0',
+        windowKey: 'squid-room',
+        open: Boolean(open),
+        reason,
+        updatedAt: new Date().toISOString(),
+        sessionScopeId: this.commsSessionScopeId || null,
+      }, null, 2), 'utf8');
+      return { ok: true };
+    } catch (err) {
+      log.warn('Window', `Failed to write Squid Room window state: ${err.message}`);
+      return { ok: false, reason: err.message };
+    }
+  }
+
+  restorePersistedSquidRoomWindow() {
+    if (this.squidRoomRestoreAttempted) return { ok: true, skipped: true, reason: 'already_attempted' };
+    this.squidRoomRestoreAttempted = true;
+    const state = this.readSquidRoomWindowState();
+    if (state?.open !== true) return { ok: true, skipped: true, reason: 'not_marked_open' };
+    if (this.canSendToWindow(this.getAppWindow('squid-room'))) {
+      return { ok: true, skipped: true, reason: 'already_open' };
+    }
+    setTimeout(() => {
+      if (this.shuttingDown || this.fullShutdownPromise) return;
+      void this.openAppWindow('squid-room', { restoredFromState: true })
+        .catch((err) => {
+          log.warn('Window', `Failed to restore Squid Room window: ${err.message}`);
+        });
+    }, 500);
+    return { ok: true, scheduled: true };
+  }
+
   handleAppWindowClosed(windowKey, windowRef) {
+    if (isSquidRoomWindowKey(windowKey) && !this.shuttingDown && !this.fullShutdownPromise) {
+      this.writeSquidRoomWindowState(false, 'window_closed');
+    }
     this.unregisterAppWindow(windowKey);
     if (this.ctx.mainWindow !== windowRef) return;
     const replacementWindow = this.getFallbackMainWindow(windowRef);
@@ -6323,7 +6394,9 @@ class SquidRunApp {
         kernelMetas: entry.kernelMetas || [],
         originalChunk: options.originalChunk || null,
       });
-      this.sendToVisibleWindow(`pty-data-${entry.paneId}`, entry.text);
+      this.sendToVisibleWindow(`pty-data-${entry.paneId}`, entry.text, {
+        windowKey: this.getVisibleWindowKeyForPane(entry.paneId),
+      });
     }
   }
 
@@ -6577,6 +6650,7 @@ class SquidRunApp {
       log.info('Window', `did-finish-load${isPrimaryWindow ? '' : ` (${windowKey})`}`);
       if (lifecycleRoot) {
         await this.initPostLoad();
+        this.restorePersistedSquidRoomWindow();
       }
       let startupBundle = null;
       if (skipStartupBundle) {
@@ -8092,7 +8166,9 @@ class SquidRunApp {
         .catch(err => log.error('Plugins', `Error in agent:stateChanged hook: ${err.message}`));
       this.broadcastClaudeState();
       this.activity.logActivity('state', paneId, `Session ended (exit code: ${code})`, { exitCode: code });
-      this.sendToVisibleWindow(`pty-exit-${paneId}`, code);
+      this.sendToVisibleWindow(`pty-exit-${paneId}`, code, {
+        windowKey: this.getVisibleWindowKeyForPane(paneId),
+      });
       if (this.isHiddenPaneHostModeEnabled()) {
         this.paneHostWindowManager.sendToPaneWindow(String(paneId), `pty-exit-${paneId}`, code);
       }

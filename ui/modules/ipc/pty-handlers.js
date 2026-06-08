@@ -308,28 +308,37 @@ function registerPtyHandlers(ctx, deps = {}) {
     return result.firmwarePath;
   }
 
-  ipcMain.handle('pty-create', async (event, paneId, workingDir) => {
+  ipcMain.handle('pty-create', async (event, paneId, workingDir, options = {}) => {
     const daemonClient = getDaemonClientForPane(paneId);
     if (!daemonClient || !daemonClient.connected) {
       log.error('PTY', 'pty-create: Daemon not connected');
       return { error: 'Daemon not connected' };
     }
 
+    const ptyOptions = options && typeof options === 'object' ? options : {};
+    const preferWorkingDir = ptyOptions.preferWorkingDir === true || ptyOptions.spawnCommandOnCreate === true;
     const paneRoot = resolvePaneCwd(paneId, {
       paneProjects: getPaneProjects(),
       projectRoot: getActiveProjectRoot(),
     });
-    const cwd = paneRoot || workingDir || process.cwd();
-    const paneCommand = getPaneCommandForRuntime(ctx, paneId);
+    const cwd = preferWorkingDir
+      ? (workingDir || paneRoot || process.cwd())
+      : (paneRoot || workingDir || process.cwd());
+    const explicitPaneCommand = typeof ptyOptions.paneCommand === 'string'
+      ? ptyOptions.paneCommand.trim()
+      : '';
+    const paneCommand = explicitPaneCommand || getPaneCommandForRuntime(ctx, paneId);
     const runtime = detectCliFromCommand(paneCommand);
 
-    let spawnEnv = null;
+    let spawnEnv = (ptyOptions.env && typeof ptyOptions.env === 'object')
+      ? { ...ptyOptions.env }
+      : null;
 
     if (process.platform === 'win32') {
       const userProfile = process.env.USERPROFILE || '';
       if (userProfile && !userProfile.includes('~')) {
         const longTemp = path.join(userProfile, 'AppData', 'Local', 'Temp');
-        spawnEnv = { TEMP: longTemp, TMP: longTemp };
+        spawnEnv = { ...(spawnEnv || {}), TEMP: longTemp, TMP: longTemp };
       }
 
       if (runtime === 'claude') {
@@ -357,13 +366,17 @@ function registerPtyHandlers(ctx, deps = {}) {
       }
     }
 
+    const spawnCommandOnCreate = ptyOptions.spawnCommandOnCreate === true && Boolean(paneCommand);
     const spawnOptions = { paneCommand };
+    if (spawnCommandOnCreate) {
+      spawnOptions.spawnCommandOnCreate = true;
+    }
     if (spawnEnv) {
       daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, spawnEnv, spawnOptions);
     } else {
       daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, null, spawnOptions);
     }
-    return { paneId, cwd, dryRun: ctx.currentSettings.dryRun };
+    return { paneId, cwd, dryRun: ctx.currentSettings.dryRun, paneCommand, spawnCommandOnCreate };
   });
 
   ipcMain.handle('pty-write', async (event, paneId, data, kernelMeta = null) => {

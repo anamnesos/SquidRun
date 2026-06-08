@@ -206,6 +206,7 @@ describe('terminal.js module', () => {
     terminal.clearPaneRuntimeOverride('trustquote-lead');
     terminal.clearPaneRuntimeOverride('trustquote-invoice');
     terminal.clearPaneRuntimeOverride('trustquote-schedule-dispatch');
+    terminal.clearPaneRuntimeOverride('trustquote-app');
   });
 
   afterEach(() => {
@@ -228,6 +229,7 @@ describe('terminal.js module', () => {
     terminal.clearPaneRuntimeOverride('trustquote-lead');
     terminal.clearPaneRuntimeOverride('trustquote-invoice');
     terminal.clearPaneRuntimeOverride('trustquote-schedule-dispatch');
+    terminal.clearPaneRuntimeOverride('trustquote-app');
     jest.useRealTimers();
   });
 
@@ -1458,13 +1460,65 @@ describe('terminal.js module', () => {
       });
 
       expect(mockSquidRun.pty.kill).toHaveBeenCalledWith('trustquote-lead');
-      expect(mockSquidRun.pty.create).toHaveBeenCalledWith('trustquote-lead', 'D:\\projects\\TrustQuote');
+      expect(mockSquidRun.pty.create).toHaveBeenCalledWith(
+        'trustquote-lead',
+        'D:\\projects\\TrustQuote',
+        expect.objectContaining({
+          paneCommand: 'codex --yolo',
+          env: expect.objectContaining({
+            SQUIDRUN_ROLE: 'trustquote-lead',
+            SQUIDRUN_WORKING_DIR: 'D:\\projects\\TrustQuote',
+          }),
+        })
+      );
       const terminalInstance = terminal.terminals.get('trustquote-lead');
       const staleWrite = terminalInstance.write.mock.calls.find(
         (args) => typeof args[0] === 'string' && args[0].includes('D:\\projects\\squidrun\\ui')
       );
       expect(staleWrite).toBeUndefined();
       terminal.clearPaneRuntimeOverride('trustquote-lead');
+    });
+
+    test('creates command-bearing runtime override panes without typing the command later', async () => {
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+      terminal.setStartupWindowContext({
+        windowKey: 'squid-room',
+        profileName: 'main',
+        sessionScopeId: 'app-session-413:squid-room',
+      });
+      terminal.setPaneRuntimeOverride('trustquote-app', {
+        roleId: 'trustquote-app',
+        routeTarget: 'trustquote-app',
+        workingDir: 'D:\\projects\\TrustQuote',
+        command: 'codex --yolo',
+        spawnCommandOnCreate: true,
+        startupMessage: 'TrustQuote arm role: TrustQuote App.',
+      });
+
+      await terminal.initTerminal('trustquote-app');
+      await terminal.spawnAgent('trustquote-app', 'codex');
+
+      expect(mockSquidRun.pty.create).toHaveBeenCalledWith(
+        'trustquote-app',
+        'D:\\projects\\TrustQuote',
+        expect.objectContaining({
+          paneCommand: 'codex --yolo',
+          spawnCommandOnCreate: true,
+          preferWorkingDir: true,
+          env: expect.objectContaining({
+            SQUIDRUN_ROLE: 'trustquote-app',
+            SQUIDRUN_SESSION_SCOPE_ID: 'app-session-413:squid-room',
+            SQUIDRUN_PROFILE: 'main',
+            SQUIDRUN_WINDOW_KEY: 'squid-room',
+            SQUIDRUN_WORKING_DIR: 'D:\\projects\\TrustQuote',
+          }),
+        })
+      );
+      expect(mockSquidRun.pty.write).not.toHaveBeenCalledWith('trustquote-app', 'codex --yolo');
+      terminal.clearPaneRuntimeOverride('trustquote-app');
     });
   });
 
@@ -1556,7 +1610,17 @@ describe('terminal.js module', () => {
       await reattachPromise;
 
       expect(mockSquidRun.pty.kill).toHaveBeenCalledWith('trustquote-lead');
-      expect(mockSquidRun.pty.create).toHaveBeenCalledWith('trustquote-lead', 'D:\\projects\\TrustQuote');
+      expect(mockSquidRun.pty.create).toHaveBeenCalledWith(
+        'trustquote-lead',
+        'D:\\projects\\TrustQuote',
+        expect.objectContaining({
+          paneCommand: 'codex --yolo',
+          env: expect.objectContaining({
+            SQUIDRUN_ROLE: 'trustquote-lead',
+            SQUIDRUN_WORKING_DIR: 'D:\\projects\\TrustQuote',
+          }),
+        })
+      );
       const terminalInstance = terminal.terminals.get('trustquote-lead');
       const staleWrite = terminalInstance.write.mock.calls.find(
         (args) => typeof args[0] === 'string' && args[0].includes('D:\\projects\\squidrun\\ui')

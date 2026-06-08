@@ -1267,6 +1267,22 @@ function getShell() {
   return os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash';
 }
 
+function getShellCommandInvocation(command = '') {
+  const shell = getShell();
+  const text = String(command || '').trim();
+  if (!text) return { command: shell, args: [] };
+  if (os.platform() === 'win32') {
+    return {
+      command: shell,
+      args: ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', text],
+    };
+  }
+  return {
+    command: shell,
+    args: ['-lc', text],
+  };
+}
+
 function detectCliRuntimeFromCommand(command = '') {
   const normalized = String(command || '').trim().toLowerCase();
   if (!normalized) return 'claude';
@@ -1400,10 +1416,13 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   }
 
   // NORMAL MODE: Spawn real PTY
-  const shell = getShell();
-  logInfo(`Spawning terminal for pane ${paneId} in ${workDir}`);
+  const spawnCommandOnCreate = options.spawnCommandOnCreate === true && Boolean(paneCommand);
+  const invocation = spawnCommandOnCreate
+    ? getShellCommandInvocation(paneCommand)
+    : { command: getShell(), args: [] };
+  logInfo(`Spawning terminal for pane ${paneId} in ${workDir}${spawnCommandOnCreate ? ` with command: ${paneCommand}` : ''}`);
 
-  const ptyProcess = pty.spawn(shell, [], {
+  const ptyProcess = pty.spawn(invocation.command, invocation.args, {
     name: 'xterm-256color',
     cols: 80,
     rows: 24,
@@ -1420,7 +1439,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     scrollback: '', // U1: Buffer for scrollback persistence
     scrollbackMaxSize: normalizeScrollbackMaxSize(options?.scrollbackMaxSize),
     dryRun: false,
-    mode: 'pty',
+    mode: spawnCommandOnCreate ? 'pty-command' : 'pty',
     createdAt: Date.now(), // Track terminal creation time (for reattach guard)
     lastActivity: Date.now(), // Track last PTY output
     lastMeaningfulActivity: Date.now(), // Smart Watchdog: last non-spinner output
