@@ -5129,7 +5129,7 @@ describe('SquidRunApp', () => {
       }
     });
 
-    it('routes Squid Room arm pty data and exits to the squid-room window', async () => {
+    it('routes Squid Room pty data and exits to owning visible windows', async () => {
       jest.useFakeTimers();
       try {
         const { getDaemonClient } = require('../daemon-client');
@@ -5175,6 +5175,24 @@ describe('SquidRunApp', () => {
         const dataListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'data')?.[1];
         const exitListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'exit')?.[1];
         const kernelListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'kernel-event')?.[1];
+
+        dataListener('2', 'builder-live-output');
+        jest.advanceTimersByTime(16);
+        kernelListener({
+          type: 'pty.data.received',
+          paneId: '2',
+          payload: { paneId: '2', byteLen: Buffer.byteLength('builder-live-output', 'utf8') },
+          kernelMeta: null,
+        });
+        exitListener('2', 0);
+
+        expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty-data-2', 'builder-live-output');
+        expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty-exit-2', 0);
+        expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('pty-data-2', 'builder-live-output');
+        expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('pty-exit-2', 0);
+
+        mainWindow.webContents.send.mockClear();
+        squidRoomWindow.webContents.send.mockClear();
 
         dataListener('trustquote-app', 'arm-live-output');
         jest.advanceTimersByTime(16);
