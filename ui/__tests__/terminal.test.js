@@ -196,6 +196,12 @@ describe('terminal.js module', () => {
       clearTimeout(timer);
     }
     terminal._internals.terminalPaintRefreshTimers.clear();
+    for (const timer of terminal._internals.resizeDebounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    terminal._internals.resizeDebounceTimers.clear();
+    terminal._internals.terminalAppliedPtyGeometries.clear();
+    terminal._internals.terminalOwnFitSuppressUntil.clear();
     for (const timer of terminal._internals.deferredResizeTimers.values()) {
       clearTimeout(timer);
     }
@@ -227,6 +233,12 @@ describe('terminal.js module', () => {
       clearTimeout(timer);
     }
     terminal._internals.terminalPaintRefreshTimers.clear();
+    for (const timer of terminal._internals.resizeDebounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    terminal._internals.resizeDebounceTimers.clear();
+    terminal._internals.terminalAppliedPtyGeometries.clear();
+    terminal._internals.terminalOwnFitSuppressUntil.clear();
     for (const timer of terminal._internals.deferredResizeTimers.values()) {
       clearTimeout(timer);
     }
@@ -1072,6 +1084,132 @@ describe('terminal.js module', () => {
 
       expect(mockFitAddon.fit).toHaveBeenCalled();
       expect(mockSquidRun.pty.resize).toHaveBeenCalledWith('1', 120, 40);
+    });
+
+    test('does not refit or resize the PTY when the pane container is stable', () => {
+      jest.useFakeTimers();
+      const stableContainer = {
+        clientWidth: 800,
+        clientHeight: 420,
+        getBoundingClientRect: jest.fn(() => ({ width: 800, height: 420 })),
+      };
+      mockDocument.getElementById.mockImplementation((id) => (
+        id === 'terminal-1' ? stableContainer : null
+      ));
+      terminal._internals.terminalAppliedPtyGeometries.set('1', {
+        cols: 120,
+        rows: 40,
+        containerWidth: 800,
+        containerHeight: 420,
+      });
+      const mockTerminalObj = { cols: 120, rows: 40 };
+      const mockFitAddon = {
+        fit: jest.fn(() => {
+          mockTerminalObj.cols = 121;
+          mockTerminalObj.rows = 40;
+        }),
+      };
+
+      terminal.fitAddons.set('1', mockFitAddon);
+      terminal.terminals.set('1', mockTerminalObj);
+
+      terminal._internals.resizeSinglePane('1');
+
+      expect(mockFitAddon.fit).not.toHaveBeenCalled();
+      expect(mockSquidRun.pty.resize).not.toHaveBeenCalled();
+    });
+
+    test('does resize the PTY when the pane container actually changes size', () => {
+      jest.useFakeTimers();
+      const changedContainer = {
+        clientWidth: 920,
+        clientHeight: 500,
+        getBoundingClientRect: jest.fn(() => ({ width: 920, height: 500 })),
+      };
+      mockDocument.getElementById.mockImplementation((id) => (
+        id === 'terminal-1' ? changedContainer : null
+      ));
+      terminal._internals.terminalAppliedPtyGeometries.set('1', {
+        cols: 120,
+        rows: 40,
+        containerWidth: 800,
+        containerHeight: 420,
+      });
+      const mockTerminalObj = { cols: 120, rows: 40 };
+      const mockFitAddon = {
+        fit: jest.fn(() => {
+          mockTerminalObj.cols = 136;
+          mockTerminalObj.rows = 48;
+        }),
+      };
+
+      terminal.fitAddons.set('1', mockFitAddon);
+      terminal.terminals.set('1', mockTerminalObj);
+
+      terminal._internals.resizeSinglePane('1');
+
+      expect(mockFitAddon.fit).toHaveBeenCalled();
+      expect(mockSquidRun.pty.resize).toHaveBeenCalledWith('1', 136, 48);
+    });
+
+    test('gates direct paint-refresh PTY resize when only xterm geometry changes', () => {
+      const stableContainer = {
+        clientWidth: 800,
+        clientHeight: 420,
+        getBoundingClientRect: jest.fn(() => ({ width: 800, height: 420 })),
+      };
+      mockDocument.getElementById.mockImplementation((id) => (
+        id === 'terminal-1' ? stableContainer : null
+      ));
+      terminal._internals.terminalAppliedPtyGeometries.set('1', {
+        cols: 120,
+        rows: 40,
+        containerWidth: 800,
+        containerHeight: 420,
+      });
+      const mockTerminalObj = { cols: 121, rows: 40 };
+
+      const result = terminal._internals.applyTerminalPtyResize('1', mockTerminalObj, {
+        operation: 'paint_refresh',
+      });
+
+      expect(result.applied).toBe(false);
+      expect(result.reason).toBe('container_geometry_unchanged');
+      expect(mockSquidRun.pty.resize).not.toHaveBeenCalled();
+    });
+
+    test('suppresses ResizeObserver callbacks caused by an owned fit pass', () => {
+      const originalResizeObserver = global.ResizeObserver;
+      const observe = jest.fn();
+      let observerCallback;
+      global.ResizeObserver = jest.fn((callback) => {
+        observerCallback = callback;
+        return {
+          observe,
+          unobserve: jest.fn(),
+          disconnect: jest.fn(),
+        };
+      });
+      const container = {
+        clientWidth: 800,
+        clientHeight: 420,
+        getBoundingClientRect: jest.fn(() => ({ width: 800, height: 420 })),
+      };
+      mockDocument.getElementById.mockImplementation((id) => (
+        id === 'terminal-1' ? container : null
+      ));
+      const fitAddon = { fit: jest.fn() };
+
+      try {
+        terminal._internals.setupResizeObserver('1');
+        terminal._internals.fitTerminalForPane('1', fitAddon, 'test_fit');
+        observerCallback();
+
+        expect(observe).toHaveBeenCalledWith(container);
+        expect(terminal._internals.resizeDebounceTimers.has('1')).toBe(false);
+      } finally {
+        global.ResizeObserver = originalResizeObserver;
+      }
     });
 
     test('skips fit and pty resize for squid-room mirrors of shared main panes', () => {
