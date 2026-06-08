@@ -410,6 +410,38 @@ function buildDeliveryResult({
   };
 }
 
+function isDeliveryVerificationOnlyFailure(outcome = {}) {
+  const status = String(outcome?.status || '').toLowerCase();
+  const reason = String(outcome?.reason || outcome?.error || '').toLowerCase();
+  const combined = `${status} ${reason}`;
+
+  if (
+    combined.includes('submit_not_accepted')
+    || combined.includes('input_buffer_pending')
+    || combined.includes('enter_dispatch_failed')
+    || combined.includes('enter_failed')
+    || combined.includes('window_unavailable')
+    || combined.includes('main_window_unavailable')
+    || combined.includes('missing_textarea')
+    || combined.includes('pty_write_failed')
+  ) {
+    return false;
+  }
+
+  return (
+    status === 'verification_failed'
+    || status === 'ack_timeout'
+    || status === 'write_ack_timeout'
+    || combined.includes('ack_timeout')
+    || combined.includes('write ack timeout')
+    || combined.includes('write-ack timeout')
+    || combined.includes('model write-ack timeout')
+    || combined.includes('model_write_ack_timeout')
+    || combined.includes('verification timeout')
+    || combined.includes('verification_failed')
+  );
+}
+
 function waitForDeliveryVerification(deliveryId, expectedPanes, timeoutMs = getDeliveryVerifyTimeoutMs()) {
   const expected = new Set((expectedPanes || []).map((paneId) => String(paneId)));
   if (!deliveryId || expected.size === 0) {
@@ -446,6 +478,7 @@ function waitForDeliveryVerification(deliveryId, expectedPanes, timeoutMs = getD
       if (!expected.has(paneKey)) return;
 
       const accepted = outcome?.accepted !== false;
+      const verificationOnlyFailure = !accepted && isDeliveryVerificationOnlyFailure(outcome);
       const explicitlyVerified = outcome?.verified === true;
       const statusLower = String(outcome?.status || '').toLowerCase();
       const isUnverifiedSignal = (
@@ -460,13 +493,14 @@ function waitForDeliveryVerification(deliveryId, expectedPanes, timeoutMs = getD
         unverified.delete(paneKey);
         failed.delete(paneKey);
         failureByPane.delete(paneKey);
-      } else if (accepted) {
+      } else if (accepted || verificationOnlyFailure) {
         acked.delete(paneKey);
         unverified.add(paneKey);
         failed.delete(paneKey);
         failureByPane.set(paneKey, {
-          status: outcome?.status || 'accepted.unverified',
+          status: verificationOnlyFailure ? 'verification_failed' : (outcome?.status || 'accepted.unverified'),
           reason: outcome?.reason || null,
+          originalStatus: verificationOnlyFailure ? (outcome?.status || null) : undefined,
         });
       } else {
         acked.delete(paneKey);
