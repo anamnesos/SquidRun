@@ -6,12 +6,14 @@
 
 body.squid-room-workspace .terminals-section {
   background: linear-gradient(180deg, rgba(8, 12, 20, 0.98) 0%, rgba(6, 9, 15, 0.98) 100%);
+  gap: 8px;
 }
 
 body.squid-room-workspace .pane-layout {
-  flex: 0 0 auto;
-  min-height: 220px;
-  padding: 8px;
+  flex: 0 0 clamp(260px, 30vh, 420px);
+  min-height: 0;
+  padding: 8px 8px 0;
+  overflow: visible;
 }
 
 body.squid-room-workspace .main-pane-container,
@@ -25,8 +27,10 @@ body.squid-room-workspace .side-panes-container {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
   padding: 8px;
   border: 1px solid rgba(116, 139, 166, 0.24);
@@ -70,12 +74,14 @@ body.squid-room-workspace .side-panes-container {
 
 body.squid-room-workspace .side-panes-container .pane {
   min-width: 0;
-  min-height: 180px;
+  min-height: 0;
+  height: 100%;
   filter: none;
 }
 
 body.squid-room-workspace .side-panes-container .pane-terminal {
-  min-height: 132px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 body.squid-room-workspace .pane-layout.has-expanded-pane .side-panes-container .pane:not(.pane-expanded) {
@@ -104,23 +110,24 @@ body.squid-room-workspace .side-panes-container.squid-room-team-collapsed .squid
 body.squid-room-workspace #squidRoomSurface {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 body.squid-room-workspace #squidRoomSurface:not([hidden]) {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 8px;
+  padding: 0 8px 8px;
 }
 
 .squid-room-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 54px;
-  padding: 8px 10px;
+  min-height: 48px;
+  padding: 7px 10px;
   border: 1px solid rgba(116, 139, 166, 0.24);
   border-radius: 8px;
   background: rgba(12, 18, 29, 0.78);
@@ -141,12 +148,19 @@ body.squid-room-workspace #squidRoomSurface:not([hidden]) {
 }
 
 .squid-room-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 10px;
 }
 
 .squid-room-app {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
   border: 1px solid rgba(116, 139, 166, 0.24);
   border-radius: 8px;
   background: rgba(11, 16, 26, 0.78);
@@ -164,6 +178,8 @@ details.squid-room-app > summary::-webkit-details-marker {
 }
 
 details.squid-room-app:not([open]) {
+  display: block;
+  height: auto;
   min-height: 0;
 }
 
@@ -178,12 +194,17 @@ details.squid-room-app:not([open]) .squid-room-live-panes {
 }
 
 .squid-room-app-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  padding: 10px 12px;
   border-bottom: 1px solid rgba(116, 139, 166, 0.18);
+}
+
+.squid-room-app-header > div:first-child {
+  min-width: 0;
 }
 
 .squid-room-app-title {
@@ -202,16 +223,21 @@ details.squid-room-app:not([open]) .squid-room-live-panes {
 .squid-room-app-header-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex: 0 0 auto;
+  min-width: 0;
 }
 
 .squid-room-app-toggle-btn {
+  position: relative;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-width: 32px;
   min-height: 28px;
-  padding: 0 12px;
+  padding: 0;
   border: 1px solid rgba(0, 240, 255, 0.32);
   border-radius: 6px;
   color: var(--color-text);
@@ -223,9 +249,42 @@ details.squid-room-app:not([open]) .squid-room-live-panes {
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
+.squid-room-app-toggle-btn::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-135deg) translate(-1px, -1px);
+  transition: transform var(--transition-fast);
+}
+
+.squid-room-app-toggle-btn[data-expanded="false"]::before {
+  transform: rotate(45deg) translate(-2px, -2px);
+}
+
+.squid-room-app-toggle-label,
+.squid-room-team-toggle-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .squid-room-app-toggle-btn:hover {
   border-color: rgba(0, 240, 255, 0.55);
   background: rgba(0, 240, 255, 0.16);
+}
+
+.squid-room-app-toggle-btn.active,
+.squid-room-app-toggle-btn[aria-expanded="true"] {
+  border-color: rgba(0, 240, 255, 0.46);
+  color: var(--color-primary);
 }
 
 .squid-room-app-toggle-btn:focus-visible {
@@ -256,14 +315,20 @@ details.squid-room-app:not([open]) .squid-room-live-panes {
 
 .squid-room-live-panes {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  flex: 1 1 auto;
+  min-height: 260px;
+  height: 100%;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-auto-rows: minmax(260px, 1fr);
+  align-items: stretch;
   gap: 10px;
   padding: 0 12px 12px;
 }
 
 .squid-room-live-panes .pane {
   min-width: 0;
-  min-height: 320px;
+  min-height: 260px;
+  height: 100%;
   border-color: rgba(0, 240, 255, 0.22);
   background: rgba(5, 9, 15, 0.84);
 }
@@ -296,8 +361,9 @@ details.squid-room-app:not([open]) .squid-room-live-panes {
 }
 
 .squid-room-live-panes .pane-terminal {
-  height: 270px;
-  min-height: 270px;
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
 }
 
 .squid-room-live-panes.has-expanded-pane {
@@ -313,5 +379,27 @@ details.squid-room-app:not([open]) .squid-room-live-panes {
 }
 
 .squid-room-live-panes .pane.pane-expanded .pane-terminal {
-  height: min(60vh, 600px);
+  min-height: min(60vh, 600px);
+}
+
+@media (max-width: 1100px), (max-height: 760px) {
+  body.squid-room-workspace .pane-layout {
+    flex-basis: clamp(220px, 28vh, 320px);
+  }
+
+  .squid-room-header {
+    min-height: 42px;
+  }
+
+  .squid-room-app-header {
+    padding: 8px 10px;
+  }
+
+  .squid-room-live-panes {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    grid-auto-rows: minmax(220px, 1fr);
+    min-height: 220px;
+    gap: 8px;
+    padding: 0 10px 10px;
+  }
 }
