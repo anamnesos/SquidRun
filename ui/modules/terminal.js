@@ -372,24 +372,20 @@ function refreshTerminalViewport(paneId, terminal, fitAddon = null) {
   } else {
     try {
       if (fitAddon && typeof fitAddon.fit === 'function') {
-        fitAddon.fit();
+        if (terminalContainerChangedSinceLastApply(id)) {
+          fitTerminalForPane(id, fitAddon, 'paint_refresh');
+        } else {
+          emitTerminalResizeSkipped(id, 'paint_refresh_container_unchanged', {
+            operation: 'paint_refresh',
+          });
+        }
       }
     } catch (err) {
       log.warn(`Terminal ${id}`, `Paint refresh fit failed: ${err?.message || err}`);
     }
 
     try {
-      const cols = Number(terminal.cols);
-      const rows = Number(terminal.rows);
-      if (
-        window.squidrun?.pty?.resize
-        && Number.isFinite(cols)
-        && Number.isFinite(rows)
-        && cols > 0
-        && rows > 0
-      ) {
-        window.squidrun.pty.resize(id, cols, rows);
-      }
+      applyTerminalPtyResize(id, terminal, { operation: 'paint_refresh' });
     } catch (err) {
       log.warn(`Terminal ${id}`, `Paint refresh resize failed: ${err?.message || err}`);
     }
@@ -1264,6 +1260,8 @@ function teardownTerminalPane(paneId) {
 
   cleanupResizeObserver(id);
   clearTerminalPaintRefresh(id);
+  terminalAppliedPtyGeometries.delete(id);
+  terminalOwnFitSuppressUntil.delete(id);
   clearStartupInjection(id);
   detachTerminalInputBridge(id);
   detachPtyListeners(id);
@@ -2363,7 +2361,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 
   terminal.open(container);
   if (rendererOwnsPtyGeometry(paneId)) {
-    fitAddon.fit();
+    fitTerminalForPane(paneId, fitAddon, 'initial_fit');
   } else {
     emitPtyGeometrySkipped(paneId, 'secondary_squid_room_mirror_geometry_blocked', {
       operation: 'initial_fit',
@@ -2375,7 +2373,10 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
   // Sync PTY size to fitted terminal dimensions (PTY spawns at 80x24 by default)
   if (rendererOwnsPtyGeometry(paneId)) {
     try {
-      window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
+      applyTerminalPtyResize(paneId, terminal, {
+        operation: 'initial_resize',
+        forceApply: true,
+      });
     } catch (err) {
       log.warn(`Terminal ${paneId}`, 'Initial PTY resize failed (PTY may not exist yet):', err);
     }
@@ -2492,8 +2493,11 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
     // Now that PTY exists, sync size again (initial resize may have fired before PTY was created)
     if (rendererOwnsPtyGeometry(paneId)) {
       try {
-        fitAddon.fit();
-        window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
+        fitTerminalForPane(paneId, fitAddon, 'post_create_sync');
+        applyTerminalPtyResize(paneId, terminal, {
+          operation: 'post_create_sync',
+          forceApply: true,
+        });
         log.info(`Terminal ${paneId}`, `PTY size synced: ${terminal.cols}x${terminal.rows}`);
       } catch (resizeErr) {
         log.warn(`Terminal ${paneId}`, 'Post-create PTY resize failed:', resizeErr);
@@ -2619,7 +2623,7 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
 
   terminal.open(container);
   if (rendererOwnsPtyGeometry(paneId)) {
-    fitAddon.fit();
+    fitTerminalForPane(paneId, fitAddon, 'reattach_fit');
   } else {
     emitPtyGeometrySkipped(paneId, 'secondary_squid_room_mirror_geometry_blocked', {
       operation: 'reattach_fit',
@@ -2631,7 +2635,10 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
   // Sync PTY size to fitted terminal dimensions (PTY already exists during reattach)
   if (rendererOwnsPtyGeometry(paneId)) {
     try {
-      window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
+      applyTerminalPtyResize(paneId, terminal, {
+        operation: 'reattach_resize',
+        forceApply: true,
+      });
       log.info(`Terminal ${paneId}`, `Reattach PTY size synced: ${terminal.cols}x${terminal.rows}`);
     } catch (err) {
       log.warn(`Terminal ${paneId}`, 'Reattach PTY resize failed:', err);
@@ -3082,10 +3089,189 @@ const resizeObservers = new Map();    // paneId -> ResizeObserver
 const resizeDebounceTimers = new Map(); // paneId -> timer ID
 const deferredResizeTimers = new Map(); // paneId -> timer ID
 const deferredResizeFirstRequestedAt = new Map(); // paneId -> timestamp
+const terminalAppliedPtyGeometries = new Map(); // paneId -> last cols/rows actually sent to PTY
+const terminalOwnFitSuppressUntil = new Map(); // paneId -> timestamp while self-fit ResizeObserver callbacks are ignored
 
 const RESIZE_OBSERVER_DEBOUNCE_MS = 150;
 const RESIZE_INPUT_DEFER_MS = 150;
 const RESIZE_INPUT_MAX_DEFER_MS = 900;
+const RESIZE_OWN_FIT_OBSERVER_SUPPRESS_MS = 250;
+const RESIZE_CONTAINER_TOLERANCE_PX = 2;
+
+function getTerminalGeometry(terminal) {
+  const cols = Math.trunc(Number(terminal?.cols));
+  const rows = Math.trunc(Number(terminal?.rows));
+  if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) {
+    return null;
+  }
+  return { cols, rows };
+}
+
+function getTerminalContainerSize(paneId) {
+  const container = document.getElementById(`terminal-${paneId}`);
+  if (!container) return null;
+  const rect = typeof container.getBoundingClientRect === 'function'
+    ? container.getBoundingClientRect()
+    : null;
+  const width = Number(container.clientWidth) || Number(rect?.width);
+  const height = Number(container.clientHeight) || Number(rect?.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+  return {
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+}
+
+function containerSizeApproximatelyEqual(a, b) {
+  if (!a || !b) return false;
+  return Math.abs(a.width - b.width) <= RESIZE_CONTAINER_TOLERANCE_PX
+    && Math.abs(a.height - b.height) <= RESIZE_CONTAINER_TOLERANCE_PX;
+}
+
+function getAppliedTerminalContainerSize(previous) {
+  const width = Number(previous?.containerWidth);
+  const height = Number(previous?.containerHeight);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+  return {
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+}
+
+function terminalContainerChangedSinceLastApply(paneId) {
+  const id = String(paneId);
+  const previous = terminalAppliedPtyGeometries.get(id);
+  if (!previous) return true;
+  const containerSize = getTerminalContainerSize(id);
+  const previousContainerSize = getAppliedTerminalContainerSize(previous);
+  if (!containerSize || !previousContainerSize) return true;
+  return !containerSizeApproximatelyEqual(containerSize, previousContainerSize);
+}
+
+function markOwnTerminalFit(paneId) {
+  const id = String(paneId);
+  terminalOwnFitSuppressUntil.set(id, Date.now() + RESIZE_OWN_FIT_OBSERVER_SUPPRESS_MS);
+}
+
+function shouldSuppressOwnFitResizeObserver(paneId) {
+  const id = String(paneId);
+  const until = Number(terminalOwnFitSuppressUntil.get(id)) || 0;
+  if (until <= 0) return false;
+  if (Date.now() <= until) return true;
+  terminalOwnFitSuppressUntil.delete(id);
+  return false;
+}
+
+function fitTerminalForPane(paneId, fitAddon, operation = 'fit') {
+  if (!fitAddon || typeof fitAddon.fit !== 'function') return false;
+  markOwnTerminalFit(paneId);
+  fitAddon.fit();
+  bus.emit('fit.completed', {
+    paneId: String(paneId),
+    payload: { operation },
+    source: TERMINAL_EVENT_SOURCE,
+  });
+  return true;
+}
+
+function emitTerminalResizeSkipped(paneId, reason, payload = {}) {
+  bus.emit('fit.skipped', {
+    paneId: String(paneId),
+    payload: {
+      reason,
+      ...payload,
+    },
+    source: TERMINAL_EVENT_SOURCE,
+  });
+}
+
+function applyTerminalPtyResize(paneId, terminal, options = {}) {
+  const id = String(paneId);
+  const operation = options.operation || 'pty_resize';
+  if (!rendererOwnsPtyGeometry(id)) {
+    emitPtyGeometrySkipped(id, 'secondary_squid_room_mirror_geometry_blocked', { operation });
+    return { applied: false, reason: 'secondary_squid_room_mirror_geometry_blocked' };
+  }
+
+  const geometry = getTerminalGeometry(terminal);
+  if (!geometry) {
+    emitTerminalResizeSkipped(id, 'invalid_terminal_geometry', { operation });
+    return { applied: false, reason: 'invalid_terminal_geometry' };
+  }
+
+  if (!window.squidrun?.pty?.resize) {
+    emitTerminalResizeSkipped(id, 'pty_resize_unavailable', {
+      operation,
+      cols: geometry.cols,
+      rows: geometry.rows,
+    });
+    return { applied: false, reason: 'pty_resize_unavailable', ...geometry };
+  }
+
+  const previous = terminalAppliedPtyGeometries.get(id) || null;
+  const containerSize = getTerminalContainerSize(id);
+  const previousContainerSize = previous
+    ? { width: previous.containerWidth, height: previous.containerHeight }
+    : null;
+  const sameAppliedGeometry = previous
+    && previous.cols === geometry.cols
+    && previous.rows === geometry.rows;
+  if (sameAppliedGeometry && options.forceApply !== true) {
+    emitTerminalResizeSkipped(id, 'applied_geometry_unchanged', {
+      operation,
+      cols: geometry.cols,
+      rows: geometry.rows,
+    });
+    return { applied: false, reason: 'applied_geometry_unchanged', ...geometry };
+  }
+
+  const sameContainerSize = previous
+    && containerSize
+    && previousContainerSize
+    && containerSizeApproximatelyEqual(containerSize, previousContainerSize);
+  if (sameContainerSize && options.forceApply !== true) {
+    emitTerminalResizeSkipped(id, 'container_geometry_unchanged', {
+      operation,
+      cols: geometry.cols,
+      rows: geometry.rows,
+      lastAppliedCols: previous.cols,
+      lastAppliedRows: previous.rows,
+      containerWidth: containerSize.width,
+      containerHeight: containerSize.height,
+    });
+    return { applied: false, reason: 'container_geometry_unchanged', ...geometry };
+  }
+
+  bus.emit('pty.resize.requested', {
+    paneId: id,
+    payload: {
+      operation,
+      cols: geometry.cols,
+      rows: geometry.rows,
+      prevCols: options.prevCols,
+      prevRows: options.prevRows,
+      lastAppliedCols: previous?.cols,
+      lastAppliedRows: previous?.rows,
+      containerWidth: containerSize?.width,
+      containerHeight: containerSize?.height,
+    },
+    source: TERMINAL_EVENT_SOURCE,
+  });
+  window.squidrun.pty.resize(id, geometry.cols, geometry.rows);
+  terminalAppliedPtyGeometries.set(id, {
+    cols: geometry.cols,
+    rows: geometry.rows,
+    containerWidth: containerSize?.width,
+    containerHeight: containerSize?.height,
+    operation,
+    appliedAt: Date.now(),
+  });
+  return { applied: true, ...geometry };
+}
 
 function shouldDeferTerminalResizeForInput() {
   return userIsTyping() || userInputFocused();
@@ -3139,6 +3325,13 @@ function setupResizeObserver(paneId) {
   }
 
   const observer = new ResizeObserver(() => {
+    if (shouldSuppressOwnFitResizeObserver(paneId)) {
+      emitTerminalResizeSkipped(paneId, 'own_fit_resize_observer_suppressed', {
+        operation: 'resize_observer',
+      });
+      return;
+    }
+
     // Skip resize while settings overlay is open — its max-height transition
     // triggers layout reflow on all terminal containers, and fitAddon.fit()
     // with the WebGL renderer stalls the main thread (Item 23).
@@ -3162,6 +3355,12 @@ function setupResizeObserver(paneId) {
 
     resizeDebounceTimers.set(paneId, setTimeout(() => {
       resizeDebounceTimers.delete(paneId);
+      if (shouldSuppressOwnFitResizeObserver(paneId)) {
+        emitTerminalResizeSkipped(paneId, 'own_fit_resize_timer_suppressed', {
+          operation: 'resize_observer_debounce',
+        });
+        return;
+      }
       resizeSinglePane(paneId);
     }, delay));
   });
@@ -3212,32 +3411,32 @@ function resizeSinglePane(paneId, options = {}) {
   }
   clearDeferredTerminalResize(paneId);
   try {
-    const prevCols = terminal.cols;
-    const prevRows = terminal.rows;
+    const previousGeometry = getTerminalGeometry(terminal) || {};
+    const prevCols = previousGeometry.cols;
+    const prevRows = previousGeometry.rows;
     bus.emit('resize.started', {
       paneId,
       payload: { prevCols, prevRows },
       source: TERMINAL_EVENT_SOURCE,
     });
-    fitAddon.fit();
-    // Skip pty.resize IPC if geometry hasn't changed (avoids flooding during drag-resize)
-    if (terminal.cols === prevCols && terminal.rows === prevRows) {
-      bus.emit('fit.skipped', {
-        paneId,
-        payload: { reason: 'geometry_unchanged', cols: terminal.cols, rows: terminal.rows },
-        source: TERMINAL_EVENT_SOURCE,
+    if (!terminalContainerChangedSinceLastApply(paneId)) {
+      emitTerminalResizeSkipped(paneId, 'resize_container_unchanged_before_fit', {
+        operation: 'resize_single_pane',
+        cols: prevCols,
+        rows: prevRows,
       });
       return;
     }
-    bus.emit('pty.resize.requested', {
-      paneId,
-      payload: { cols: terminal.cols, rows: terminal.rows, prevCols, prevRows },
-      source: TERMINAL_EVENT_SOURCE,
+    fitTerminalForPane(paneId, fitAddon, 'resize_single_pane');
+    const resizeResult = applyTerminalPtyResize(paneId, terminal, {
+      operation: 'resize_single_pane',
+      prevCols,
+      prevRows,
     });
-    window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
+    if (!resizeResult.applied) return;
     bus.emit('resize.completed', {
       paneId,
-      payload: { cols: terminal.cols, rows: terminal.rows },
+      payload: { cols: resizeResult.cols, rows: resizeResult.rows },
       source: TERMINAL_EVENT_SOURCE,
     });
   } catch (err) {
@@ -3457,6 +3656,10 @@ module.exports = {
     getPaneIdentityLabel,
     queueTerminalWrite,
     resizeSinglePane,
+    setupResizeObserver,
+    applyTerminalPtyResize,
+    fitTerminalForPane,
+    shouldSuppressOwnFitResizeObserver,
     scheduleDeferredTerminalResize,
     clearDeferredTerminalResize,
     scheduleTerminalPaintRefresh,
@@ -3468,11 +3671,15 @@ module.exports = {
     terminalWatermarks,
     terminalPaused,
     terminalPaintRefreshTimers,
+    resizeDebounceTimers,
+    terminalAppliedPtyGeometries,
+    terminalOwnFitSuppressUntil,
     deferredResizeTimers,
     deferredResizeFirstRequestedAt,
     TERMINAL_WRITE_FRAME_YIELD_MS,
     TERMINAL_WRITE_FRAME_BYTE_BUDGET,
     RESIZE_INPUT_MAX_DEFER_MS,
+    RESIZE_OWN_FIT_OBSERVER_SUPPRESS_MS,
   },
 };
 
