@@ -915,6 +915,46 @@ function getPaneCommandFromSettings(paneId) {
   return typeof cmd === 'string' ? cmd : '';
 }
 
+function buildPtyCreateOptionsForRuntimeOverride(paneId, runtimeOverride = {}, workingDir = '') {
+  const command = typeof runtimeOverride.command === 'string'
+    ? runtimeOverride.command.trim()
+    : '';
+  const hasRuntimeOverride = Boolean(
+    command
+    || runtimeOverride.spawnCommandOnCreate === true
+    || runtimeOverride.roleId
+    || runtimeOverride.routeTarget
+    || runtimeOverride.role
+    || runtimeOverride.roleLabel
+    || runtimeOverride.label
+    || runtimeOverride.workingDir
+    || runtimeOverride.cwd
+  );
+  if (!hasRuntimeOverride) return {};
+  const spawnCommandOnCreate = runtimeOverride.spawnCommandOnCreate === true && Boolean(command);
+  const context = normalizeStartupWindowContext(startupWindowContext);
+  const role = String(
+    runtimeOverride.roleId
+    || runtimeOverride.routeTarget
+    || runtimeOverride.role
+    || runtimeOverride.roleLabel
+    || runtimeOverride.label
+    || paneId
+  ).trim();
+  const env = {
+    ...(role ? { SQUIDRUN_ROLE: role } : {}),
+    ...(context.sessionScopeId ? { SQUIDRUN_SESSION_SCOPE_ID: context.sessionScopeId } : {}),
+    ...(context.profileName ? { SQUIDRUN_PROFILE: context.profileName } : {}),
+    ...(context.windowKey ? { SQUIDRUN_WINDOW_KEY: context.windowKey } : {}),
+    ...(workingDir ? { SQUIDRUN_WORKING_DIR: workingDir } : {}),
+  };
+  return {
+    ...(command ? { paneCommand: command } : {}),
+    ...(spawnCommandOnCreate ? { spawnCommandOnCreate: true, preferWorkingDir: true } : {}),
+    ...(Object.keys(env).length > 0 ? { env } : {}),
+  };
+}
+
 function classifyRuntimeFromIdentity(paneId) {
   const id = String(paneId);
   const entry = paneCliIdentity.get(id);
@@ -2372,8 +2412,22 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       snapshotTimeoutMs: options.snapshotTimeoutMs,
       recreateDelayMs: options.recreateDelayMs,
     });
-    await window.squidrun.pty.create(paneId, workingDir);
+    const ptyCreateOptions = buildPtyCreateOptionsForRuntimeOverride(paneId, runtimeOverride, workingDir);
+    if (Object.keys(ptyCreateOptions).length > 0) {
+      await window.squidrun.pty.create(paneId, workingDir, ptyCreateOptions);
+    } else {
+      await window.squidrun.pty.create(paneId, workingDir);
+    }
     updatePaneStatus(paneId, 'Connected');
+    if (runtimeOverride.spawnCommandOnCreate === true && runtimeOverride.command) {
+      const commandText = String(runtimeOverride.command || '').trim().toLowerCase();
+      const modelType = commandText.includes('gemini') ? 'gemini' : commandText.includes('codex') ? 'codex' : 'claude';
+      armStartupInjection(paneId, {
+        modelType,
+        isGemini: modelType === 'gemini',
+        source: 'spawn-command-on-create',
+      });
+    }
 
     // Now that PTY exists, sync size again (initial resize may have fired before PTY was created)
     try {
@@ -2793,6 +2847,17 @@ async function spawnAgent(paneId, model = null) {
       }
     }
     if (result.success && result.command) {
+      if (runtimeOverride.spawnCommandOnCreate === true) {
+        const commandText = String(result.command || '').trim().toLowerCase();
+        const modelType = commandText.includes('gemini') ? 'gemini' : commandText.includes('codex') ? 'codex' : 'claude';
+        armStartupInjection(paneId, {
+          modelType,
+          isGemini: modelType === 'gemini',
+          source: 'spawn-command-on-create-retry',
+        });
+        updatePaneStatus(paneId, 'Working');
+        return;
+      }
       // Use pty.write directly instead of terminal.paste for reliability
       // terminal.paste() can fail if terminal isn't fully ready
       try {

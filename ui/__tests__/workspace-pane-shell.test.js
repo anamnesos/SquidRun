@@ -219,7 +219,7 @@ describe('workspace pane shell', () => {
 
     expect(result).toEqual(expect.objectContaining({
       workspaceKey: 'squid-room',
-      paneIds: ['2', '3', 'trustquote-lead', 'trustquote-invoice', 'trustquote-schedule-dispatch'],
+      paneIds: ['2', '3', 'trustquote-lead', 'trustquote-schedule-dispatch', 'trustquote-app', 'trustquote-invoice'],
       teamPaneIds: ['2', '3'],
     }));
     expect(doc.body.classList.contains('squid-room-workspace')).toBe(true);
@@ -228,15 +228,28 @@ describe('workspace pane shell', () => {
       '2',
       '3',
       'trustquote-lead',
-      'trustquote-invoice',
       'trustquote-schedule-dispatch',
+      'trustquote-app',
+      'trustquote-invoice',
     ]);
-    expect(terminal.setPaneRuntimeOverride).toHaveBeenCalledTimes(3);
+    expect(terminal.setPaneRuntimeOverride).toHaveBeenCalledTimes(4);
     expect(terminal.setPaneRuntimeOverride).toHaveBeenCalledWith(
       'trustquote-lead',
       expect.objectContaining({
         workingDir: 'D:\\projects\\TrustQuote',
+        spawnCommandOnCreate: true,
         recreateOnWorkingDirMismatch: true,
+      })
+    );
+    expect(terminal.setPaneRuntimeOverride).toHaveBeenCalledWith(
+      'trustquote-app',
+      expect.objectContaining({
+        roleId: 'trustquote-app',
+        routeTarget: 'trustquote-app',
+        command: 'codex --yolo',
+        commandSourcePaneId: '2',
+        workingDir: 'D:\\projects\\TrustQuote',
+        spawnCommandOnCreate: true,
       })
     );
     expect(doc.querySelector('.pane[data-pane-id="1"]').hidden).toBe(true);
@@ -252,9 +265,10 @@ describe('workspace pane shell', () => {
     expect(doc.getElementById('terminal-3').classList.contains('squid-room-terminal-hidden')).toBe(false);
     expect(doc.getElementById('terminal-trustquote-builder')).toBeFalsy();
     expect(doc.getElementById('terminal-trustquote-lead')).toBeTruthy();
-    expect(doc.getElementById('terminal-trustquote-invoice')).toBeTruthy();
     expect(doc.getElementById('terminal-trustquote-schedule-dispatch')).toBeTruthy();
-    for (const paneId of ['trustquote-lead', 'trustquote-invoice', 'trustquote-schedule-dispatch']) {
+    expect(doc.getElementById('terminal-trustquote-app')).toBeTruthy();
+    expect(doc.getElementById('terminal-trustquote-invoice')).toBeTruthy();
+    for (const paneId of ['trustquote-lead', 'trustquote-schedule-dispatch', 'trustquote-app', 'trustquote-invoice']) {
       const pane = doc.querySelector(`.pane[data-pane-id="${paneId}"]`);
       expect(pane.querySelector('.agent-avatar').innerHTML).toContain('avatar-icon');
       expect(pane.querySelector(`.model-selector[data-pane-id="${paneId}"]`).value).toBe('codex');

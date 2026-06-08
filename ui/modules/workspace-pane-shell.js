@@ -4,6 +4,10 @@ const {
   TRUSTQUOTE_PANE_IDS,
   isTrustQuoteWorkspace,
 } = require('./work-room-terminal-visibility');
+const {
+  TRUSTQUOTE_PROJECT_PATH,
+  getTrustQuoteDayToDayArmSpecs,
+} = require('./trustquote-arm-specs');
 
 const SQUID_ROOM_WORKSPACE_KEY = 'squid-room';
 const SQUID_ROOM_TEAM_PANE_IDS = Object.freeze(['2', '3']);
@@ -11,7 +15,6 @@ const TRUSTQUOTE_PANES = Object.freeze([
   { sourcePaneId: '2', paneId: TRUSTQUOTE_PANE_IDS[0], label: 'TrustQuote Builder' },
   { sourcePaneId: '3', paneId: TRUSTQUOTE_PANE_IDS[1], label: 'TrustQuote Oracle' },
 ]);
-const TRUSTQUOTE_PROJECT_PATH = 'D:\\projects\\TrustQuote';
 const PANE_ICON_SVGS = Object.freeze({
   avatar: '<svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>',
   info: '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
@@ -21,50 +24,17 @@ const PANE_ICON_SVGS = Object.freeze({
   expand: '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>',
   lock: '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
 });
-const SQUID_ROOM_TRUSTQUOTE_ARM_PANES = Object.freeze([
-  {
-    paneId: 'trustquote-lead',
-    label: 'TrustQuote Lead',
-    role: 'Lead',
-    commandSourcePaneId: '2',
-    workingDir: TRUSTQUOTE_PROJECT_PATH,
-    command: 'codex --yolo',
-    startupMessage: [
-      'TrustQuote arm role: Lead.',
-      'Work in D:\\projects\\TrustQuote.',
-      'Use SquidRun evidence and current local files only. Do not claim production/deploy/readiness without proof.',
-      'Coordinate as a TrustQuote app arm inside Squid Room; this is not the main SquidRun Builder pane.',
-    ].join('\n'),
-  },
-  {
-    paneId: 'trustquote-invoice',
-    label: 'Invoice',
-    role: 'Invoice',
-    commandSourcePaneId: '2',
-    workingDir: TRUSTQUOTE_PROJECT_PATH,
-    command: 'codex --yolo',
-    startupMessage: [
-      'TrustQuote arm role: Invoice.',
-      'Work in D:\\projects\\TrustQuote.',
-      'Focus on TrustQuote invoice, quote, document, payment, and money-flow evidence when assigned.',
-      'Coordinate as a TrustQuote app arm inside Squid Room; this is not the main SquidRun Builder pane.',
-    ].join('\n'),
-  },
-  {
-    paneId: 'trustquote-schedule-dispatch',
-    label: 'Schedule Dispatch',
-    role: 'Schedule Dispatch',
-    commandSourcePaneId: '3',
-    workingDir: TRUSTQUOTE_PROJECT_PATH,
-    command: 'codex --yolo',
-    startupMessage: [
-      'TrustQuote arm role: Schedule Dispatch.',
-      'Work in D:\\projects\\TrustQuote.',
-      'Focus on TrustQuote calendar, dispatch, schedule, dashboard, workflow, and work-state evidence when assigned.',
-      'Coordinate as a TrustQuote app arm inside Squid Room; this is not the main SquidRun Oracle pane.',
-    ].join('\n'),
-  },
-]);
+const SQUID_ROOM_TRUSTQUOTE_ARM_PANES = Object.freeze(getTrustQuoteDayToDayArmSpecs().map((spec) => Object.freeze({
+  paneId: spec.paneId,
+  label: spec.label,
+  role: spec.roleLabel,
+  roleId: spec.role,
+  routeTarget: spec.routeTarget,
+  commandSourcePaneId: spec.commandSourcePaneId,
+  workingDir: spec.workingDir,
+  command: spec.command,
+  startupMessage: spec.startupMessage,
+})));
 const SQUID_ROOM_PANE_IDS = Object.freeze([
   ...SQUID_ROOM_TEAM_PANE_IDS,
   ...SQUID_ROOM_TRUSTQUOTE_ARM_PANES.map((pane) => pane.paneId),
@@ -195,6 +165,8 @@ function createSquidRoomLivePane(doc, spec) {
       squidRoomLivePane: 'true',
       squidRoomLabel: spec.label,
       squidRoomRole: spec.role,
+      squidRoomRoleId: spec.roleId || spec.routeTarget || spec.paneId,
+      squidRoomRouteTarget: spec.routeTarget || spec.paneId,
       squidRoomWorkingDir: spec.workingDir,
       squidRoomCommand: spec.command,
       squidRoomCommandSourcePaneId: spec.commandSourcePaneId,
@@ -333,6 +305,8 @@ function ensureSquidRoomLivePanes(doc) {
     pane.dataset.squidRoomLivePane = 'true';
     pane.dataset.squidRoomLabel = spec.label;
     pane.dataset.squidRoomRole = spec.role;
+    pane.dataset.squidRoomRoleId = spec.roleId || spec.routeTarget || spec.paneId;
+    pane.dataset.squidRoomRouteTarget = spec.routeTarget || spec.paneId;
     pane.dataset.squidRoomWorkingDir = spec.workingDir;
     pane.dataset.squidRoomCommand = spec.command;
     pane.dataset.squidRoomCommandSourcePaneId = spec.commandSourcePaneId;
@@ -349,11 +323,14 @@ function configureSquidRoomRuntimeOverrides(terminal, livePanes = SQUID_ROOM_TRU
     terminal.setPaneRuntimeOverride(spec.paneId, {
       label: spec.label,
       roleLabel: spec.label,
+      roleId: spec.roleId || spec.routeTarget || spec.paneId,
+      routeTarget: spec.routeTarget || spec.paneId,
       provider: 'codex',
       command: spec.command,
       commandSourcePaneId: spec.commandSourcePaneId,
       workingDir: spec.workingDir,
       startupMessage: spec.startupMessage,
+      spawnCommandOnCreate: true,
       recreateOnWorkingDirMismatch: true,
     });
   }

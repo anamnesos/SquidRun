@@ -222,6 +222,48 @@ describe('PTY Handlers', () => {
       );
     });
 
+    test('can create dynamic Squid Room arm panes with command, env, and workingDir at spawn time', async () => {
+      ctx.daemonClient.connected = true;
+      const workingDir = 'D:\\projects\\TrustQuote';
+
+      const result = await harness.invoke('pty-create', 'trustquote-app', workingDir, {
+        paneCommand: 'codex --yolo',
+        spawnCommandOnCreate: true,
+        preferWorkingDir: true,
+        env: {
+          SQUIDRUN_ROLE: 'trustquote-app',
+          SQUIDRUN_SESSION_SCOPE_ID: 'app-session-413:squid-room',
+          SQUIDRUN_PROFILE: 'main',
+          SQUIDRUN_WINDOW_KEY: 'squid-room',
+          SQUIDRUN_WORKING_DIR: workingDir,
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        paneId: 'trustquote-app',
+        cwd: workingDir,
+        paneCommand: 'codex --yolo',
+        spawnCommandOnCreate: true,
+      }));
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        'trustquote-app',
+        workingDir,
+        false,
+        null,
+        expect.objectContaining({
+          SQUIDRUN_ROLE: 'trustquote-app',
+          SQUIDRUN_SESSION_SCOPE_ID: 'app-session-413:squid-room',
+          SQUIDRUN_PROFILE: 'main',
+          SQUIDRUN_WINDOW_KEY: 'squid-room',
+          SQUIDRUN_WORKING_DIR: workingDir,
+        }),
+        {
+          paneCommand: 'codex --yolo',
+          spawnCommandOnCreate: true,
+        }
+      );
+    });
+
     test('spawns codex panes with null mode (interactive PTY, not codex-exec)', async () => {
       ctx.daemonClient.connected = true;
       ctx.currentSettings.paneCommands = { '2': 'codex --mode exec' };

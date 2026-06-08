@@ -512,7 +512,8 @@ const profileOnboardingState = {
 let headerSessionBadgeRetryTimer = null;
 let headerSessionBadgeRetryAttempts = 0;
 let squidRoomLivePaneEnsureTimer = null;
-const squidRoomLivePaneSpawnAttempts = new Set();
+const squidRoomLivePaneSpawnAttempts = new Map();
+const SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS = 15000;
 
 function getCurrentWindowContext() {
   return windowTeamBootstrap.getState();
@@ -546,11 +547,14 @@ function getSquidRoomPaneRuntimeSpec(element) {
     paneId,
     label: String(element.dataset.squidRoomLabel || paneId).trim(),
     roleLabel: String(element.dataset.squidRoomLabel || paneId).trim(),
+    roleId: String(element.dataset.squidRoomRoleId || element.dataset.squidRoomRouteTarget || paneId).trim(),
+    routeTarget: String(element.dataset.squidRoomRouteTarget || paneId).trim(),
     provider: 'codex',
     command: String(element.dataset.squidRoomCommand || 'codex --yolo').trim(),
     commandSourcePaneId: String(element.dataset.squidRoomCommandSourcePaneId || '2').trim(),
     workingDir: String(element.dataset.squidRoomWorkingDir || 'D:\\projects\\TrustQuote').trim(),
     startupMessage: String(element.dataset.squidRoomStartupMessage || '').trim(),
+    spawnCommandOnCreate: true,
   };
 }
 
@@ -565,6 +569,31 @@ function hasSquidRoomLiveCliContent(term = {}) {
   if (/(^|\n)PS [^\n>]*>\s*$/m.test(tail)) return false;
   if (/(^|\n)[A-Z]:\\[^\n>]*>\s*$/m.test(tail)) return false;
   return /codex|claude|gemini|openai|chatgpt|model|\/help|welcome/i.test(tail);
+}
+
+function hasSquidRoomShellOnlyPrompt(term = {}) {
+  if (!term || term.alive !== true) return false;
+  const tail = stripSquidRoomAnsi(String(term.scrollback || '').slice(-2000));
+  if (!tail.trim()) return false;
+  if (hasSquidRoomLiveCliContent(term)) return false;
+  return /(^|\n)PS [^\n>]*>\s*$/m.test(tail)
+    || /(^|\n)[A-Z]:\\[^\n>]*>\s*$/m.test(tail)
+    || /(^|\n)[^\n$#>]+[$#>]\s*$/m.test(tail);
+}
+
+function buildSquidRoomPtyCreateOptions(spec = {}) {
+  return {
+    paneCommand: spec.command,
+    spawnCommandOnCreate: true,
+    preferWorkingDir: true,
+    env: {
+      SQUIDRUN_ROLE: spec.roleId || spec.routeTarget || spec.paneId,
+      SQUIDRUN_PROFILE: getCurrentWindowContext()?.profileName || 'main',
+      SQUIDRUN_SESSION_SCOPE_ID: getCurrentWindowContext()?.sessionScopeId || '',
+      SQUIDRUN_WINDOW_KEY: SQUID_ROOM_WINDOW_KEY,
+      SQUIDRUN_WORKING_DIR: spec.workingDir,
+    },
+  };
 }
 
 function normalizeSquidRoomWorkingDirForCompare(value) {
@@ -616,7 +645,7 @@ async function recreateSquidRoomLivePanePty(spec, element = null) {
     }
   }
 
-  await window.squidrun.pty.create(paneId, workingDir);
+  await window.squidrun.pty.create(paneId, workingDir, buildSquidRoomPtyCreateOptions(spec));
   if (typeof terminal.updatePaneStatus === 'function') {
     terminal.updatePaneStatus(paneId, 'Connected');
   }
@@ -696,27 +725,54 @@ async function ensureSquidRoomLivePaneAgents(windowContext = getCurrentWindowCon
     }
 
     if (hasSquidRoomLiveCliContent(existingTerm)) {
+      squidRoomLivePaneSpawnAttempts.delete(spec.paneId);
       element.dataset.squidRoomCli = 'live';
       ensured.push({ paneId: spec.paneId, status: 'live' });
       continue;
     }
 
-    if (squidRoomLivePaneSpawnAttempts.has(spec.paneId) && options.force !== true) {
-      ensured.push({ paneId: spec.paneId, status: 'spawn_pending' });
+    const attempt = squidRoomLivePaneSpawnAttempts.get(spec.paneId) || null;
+    const attemptAgeMs = attempt?.attemptedAt ? Date.now() - attempt.attemptedAt : null;
+    const promptOnly = hasSquidRoomShellOnlyPrompt(existingTerm);
+    const timedOut = attemptAgeMs !== null && attemptAgeMs > SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS;
+    const shouldRespawn = promptOnly || timedOut;
+    if (attempt && options.force !== true && !shouldRespawn) {
+      ensured.push({ paneId: spec.paneId, status: 'spawn_pending', ageMs: attemptAgeMs });
       continue;
     }
 
+    if (shouldRespawn && existingTerm) {
+      log.warn(
+        'SquidRoom',
+        `Live pane ${spec.paneId} has no CLI proof after spawn (${promptOnly ? 'prompt_only' : 'timeout'}); respawning`
+      );
+      const recreate = await recreateSquidRoomLivePanePty(spec, element);
+      if (!recreate.ok) {
+        element.dataset.squidRoomCli = 'respawn_failed';
+        ensured.push({ paneId: spec.paneId, status: 'respawn_failed', reason: recreate.reason });
+        continue;
+      }
+      existingTerm = null;
+    }
+
     try {
-      squidRoomLivePaneSpawnAttempts.add(spec.paneId);
+      const previousAttempts = Number(attempt?.attempts || 0);
+      squidRoomLivePaneSpawnAttempts.set(spec.paneId, {
+        attemptedAt: Date.now(),
+        attempts: previousAttempts + 1,
+      });
       await terminal.spawnAgent(spec.paneId, 'codex');
-      element.dataset.squidRoomCli = 'spawned';
-      ensured.push({ paneId: spec.paneId, status: 'spawned' });
+      element.dataset.squidRoomCli = shouldRespawn ? 'respawned' : 'spawned';
+      ensured.push({ paneId: spec.paneId, status: shouldRespawn ? 'respawned' : 'spawned' });
     } catch (err) {
       squidRoomLivePaneSpawnAttempts.delete(spec.paneId);
       element.dataset.squidRoomCli = 'spawn_failed';
       log.error('SquidRoom', `Failed to spawn live pane ${spec.paneId}:`, err);
       ensured.push({ paneId: spec.paneId, status: 'spawn_failed', error: err?.message || String(err) });
     }
+  }
+  if (ensured.some((entry) => ['spawned', 'respawned', 'spawn_pending'].includes(entry.status))) {
+    scheduleSquidRoomLivePaneEnsure(getCurrentWindowContext(), SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS + 500);
   }
   return { ok: true, ensured };
 }

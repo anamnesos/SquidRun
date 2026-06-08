@@ -72,13 +72,15 @@ maybeDescribe('TrustQuote arm registry seed', () => {
     }));
     expect(manifest.arms.map((arm) => arm.armKey)).toEqual([
       'lead',
-      'invoice',
       'schedule-dispatch',
+      'app',
+      'invoice',
     ]);
     expect(manifest.arms.map((arm) => arm.role)).toEqual([
       'trustquote-lead',
-      'trustquote-invoice',
       'trustquote-schedule-dispatch',
+      'trustquote-app',
+      'trustquote-invoice',
     ]);
     expect(manifest.metadata).toEqual(expect.objectContaining({
       manifestScope: 'app_room',
@@ -108,14 +110,15 @@ maybeDescribe('TrustQuote arm registry seed', () => {
       sessionId: 'app-room:trustquote',
       readinessSessionId: 'app-session-999:trustquote',
       mainSessionId: 'app-session-999',
-      desiredCount: 3,
+      desiredCount: 4,
       readyCount: 0,
-      missingCount: 3,
+      missingCount: 4,
     }));
     expect(Object.fromEntries(result.registry.arms.map((arm) => [arm.armKey, arm.status]))).toEqual({
       lead: 'missing',
-      'invoice': 'missing',
       'schedule-dispatch': 'missing',
+      app: 'missing',
+      'invoice': 'missing',
     });
     expect(queryArmCheckinProofs({}, { dbPath })).toHaveLength(0);
     expect(queryArmApplyRequests({}, { dbPath })).toHaveLength(0);
@@ -127,7 +130,7 @@ maybeDescribe('TrustQuote arm registry seed', () => {
     const armCount = store.db.prepare('SELECT COUNT(*) AS count FROM arm_registry_arms').get().count;
     store.close();
     expect(registryCount).toBe(1);
-    expect(armCount).toBe(3);
+    expect(armCount).toBe(4);
   });
 
   test('dry-run reports the manifest without writing registry rows', () => {
@@ -181,9 +184,9 @@ maybeDescribe('TrustQuote arm registry seed', () => {
     expect(result.registry).toEqual(expect.objectContaining({
       sessionId: 'app-room:trustquote',
       readinessSessionId: 'app-session-cli:trustquote',
-      desiredCount: 3,
+      desiredCount: 4,
       readyCount: 0,
-      missingCount: 3,
+      missingCount: 4,
     }));
   });
 });

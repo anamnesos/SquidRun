@@ -701,6 +701,21 @@ describe('SquidRunApp', () => {
       expect(app.cliIdentityForwarderRegistered).toBe(false);
       expect(app.triggerAckForwarderRegistered).toBe(false);
     });
+
+    it('includes Squid Room arm panes in hidden pane host coverage when enabled', () => {
+      mockAppContext.currentSettings.hiddenPaneHostsEnabled = true;
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.getHiddenPaneHostPaneIds()).toEqual(expect.arrayContaining([
+        '1',
+        '2',
+        '3',
+        'trustquote-lead',
+        'trustquote-schedule-dispatch',
+        'trustquote-app',
+        'trustquote-invoice',
+      ]));
+    });
   });
 
   describe('TrustQuote workspace routing', () => {
@@ -1758,6 +1773,50 @@ describe('SquidRunApp', () => {
       );
     });
 
+    it('persists Squid Room open state and clears it on intentional close', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squid-room-state-'));
+      app.squidRoomWindowStatePath = path.join(tempDir, 'squid-room-window-state.json');
+
+      await app.openAppWindow('squid-room');
+
+      expect(JSON.parse(fs.readFileSync(app.squidRoomWindowStatePath, 'utf8'))).toEqual(expect.objectContaining({
+        windowKey: 'squid-room',
+        open: true,
+        reason: 'open_app_window',
+      }));
+
+      const squidRoomWindow = app.ctx.getWindow('squid-room');
+      app.handleAppWindowClosed('squid-room', squidRoomWindow);
+
+      expect(JSON.parse(fs.readFileSync(app.squidRoomWindowStatePath, 'utf8'))).toEqual(expect.objectContaining({
+        windowKey: 'squid-room',
+        open: false,
+        reason: 'window_closed',
+      }));
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it('restores Squid Room on startup when the persisted state says it was open', async () => {
+      jest.useFakeTimers();
+      try {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squid-room-restore-'));
+        app.squidRoomWindowStatePath = path.join(tempDir, 'squid-room-window-state.json');
+        fs.writeFileSync(app.squidRoomWindowStatePath, JSON.stringify({
+          windowKey: 'squid-room',
+          open: true,
+        }), 'utf8');
+        const openAppWindow = jest.spyOn(app, 'openAppWindow').mockResolvedValue({ ok: true });
+
+        expect(app.restorePersistedSquidRoomWindow()).toEqual({ ok: true, scheduled: true });
+        jest.advanceTimersByTime(500);
+
+        expect(openAppWindow).toHaveBeenCalledWith('squid-room', { restoredFromState: true });
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('routes visible-window sends to the requested secondary window without clobbering main', async () => {
       await app.createWindow();
       const primaryWindow = app.ctx.mainWindow;
@@ -2281,13 +2340,22 @@ describe('SquidRunApp', () => {
 
     it('clears stale degraded pane-host status once verification succeeds', () => {
       app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
-      app.paneHostMissingPanes = new Set(['1', '2', '3']);
+      const paneIds = [
+        '1',
+        '2',
+        '3',
+        'trustquote-lead',
+        'trustquote-schedule-dispatch',
+        'trustquote-app',
+        'trustquote-invoice',
+      ];
+      app.paneHostMissingPanes = new Set(paneIds);
       app.paneHostLastErrorReason = 'bootstrap_ready_signal_missing';
       app.paneHostLastErrorAt = '2026-04-03T00:00:00.000Z';
-      app.paneHostReady = new Set(['1', '2', '3']);
+      app.paneHostReady = new Set(paneIds);
       app.paneHostWindowManager.getWindowDiagnostics = jest.fn(() => ({
         loading: false,
-        paneIds: ['1', '2', '3'],
+        paneIds,
       }));
       app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({ webContents: {} }));
 
@@ -5056,6 +5124,72 @@ describe('SquidRunApp', () => {
 
         expect(ptyDataCallIndex).toBeGreaterThanOrEqual(0);
         expect(ptyExitCallIndex).toBeGreaterThan(ptyDataCallIndex);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('routes Squid Room arm pty data and exits to the squid-room window', async () => {
+      jest.useFakeTimers();
+      try {
+        const { getDaemonClient } = require('../daemon-client');
+        const sharedDaemonClient = {
+          on: jest.fn(),
+          off: jest.fn(),
+          connect: jest.fn().mockResolvedValue(),
+          disconnect: jest.fn(),
+          getTerminal: jest.fn().mockReturnValue(null),
+        };
+        getDaemonClient.mockReturnValue(sharedDaemonClient);
+
+        const mainWindow = {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          webContents: {
+            send: jest.fn(),
+            isDestroyed: jest.fn().mockReturnValue(false),
+          },
+        };
+        const squidRoomWindow = {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          webContents: {
+            send: jest.fn(),
+            isDestroyed: jest.fn().mockReturnValue(false),
+          },
+        };
+        const windows = new Map([
+          ['main', mainWindow],
+          ['squid-room', squidRoomWindow],
+        ]);
+        const ctx = {
+          ...mockAppContext,
+          mainWindow,
+          daemonClient: sharedDaemonClient,
+          agentRunning: new Map(),
+          getWindow: jest.fn((key = 'main') => windows.get(key) || null),
+          getWindows: jest.fn(() => new Map(windows)),
+        };
+        const app = new SquidRunApp(ctx, mockManagers);
+
+        await app.initDaemonClient();
+
+        const dataListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'data')?.[1];
+        const exitListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'exit')?.[1];
+        const kernelListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'kernel-event')?.[1];
+
+        dataListener('trustquote-app', 'arm-live-output');
+        jest.advanceTimersByTime(16);
+        kernelListener({
+          type: 'pty.data.received',
+          paneId: 'trustquote-app',
+          payload: { paneId: 'trustquote-app', byteLen: Buffer.byteLength('arm-live-output', 'utf8') },
+          kernelMeta: null,
+        });
+        exitListener('trustquote-app', 0);
+
+        expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('pty-data-trustquote-app', 'arm-live-output');
+        expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('pty-exit-trustquote-app', 0);
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-data-trustquote-app', 'arm-live-output');
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-exit-trustquote-app', 0);
       } finally {
         jest.useRealTimers();
       }

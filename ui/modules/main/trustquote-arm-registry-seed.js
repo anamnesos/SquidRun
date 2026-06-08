@@ -8,6 +8,9 @@ const {
   migrateArmRegistryManifestScope,
   buildCanonicalAppRoomSessionId,
 } = require('./arm-registry');
+const {
+  getTrustQuoteDayToDayArmSpecs,
+} = require('../trustquote-arm-specs');
 
 const TRUSTQUOTE_ARM_REGISTRY_SEED_SCHEMA = 'squidrun.trustquote_arm_registry_seed.v0';
 const TRUSTQUOTE_APP_ROOM_ID = 'trustquote';
@@ -75,87 +78,20 @@ function resolveTrustQuoteManifestSessionId() {
 }
 
 function trustQuoteDayToDayArms() {
-  return [
-    {
-      armKey: 'lead',
-      role: 'trustquote-lead',
-      paneId: 'trustquote-lead',
-      routeTarget: 'trustquote-lead',
-      armKind: 'lead',
-      displayName: 'TrustQuote Lead',
-      dataSources: [
-        'arm-registry',
-        'readiness-proof',
-        'domain-summaries',
-        'approval-state',
-        'business-rulebook',
-      ],
-      permissions: {
-        read: ['readiness', 'domain_summaries', 'approval_state', 'business_rules'],
-        write: ['readiness_notes', 'missing_arm_status'],
-        cannot: ['customer_message', 'money_write', 'schedule_mutation', 'delete_archive', 'refund_reversal', 'production_repair'],
-      },
-      checkInObligation: {
-        required: true,
-        proofKind: 'startup_check_in',
-      },
+  return getTrustQuoteDayToDayArmSpecs().map((spec) => ({
+    armKey: spec.armKey,
+    role: spec.role,
+    paneId: spec.paneId,
+    routeTarget: spec.routeTarget,
+    armKind: spec.armKind,
+    displayName: spec.displayName,
+    dataSources: spec.dataSources,
+    permissions: spec.permissions,
+    checkInObligation: {
+      required: true,
+      proofKind: 'startup_check_in',
     },
-    {
-      armKey: 'invoice',
-      role: 'trustquote-invoice',
-      paneId: 'trustquote-invoice',
-      routeTarget: 'trustquote-invoice',
-      armKind: 'domain',
-      displayName: 'Invoice',
-      dataSources: [
-        'jobs',
-        'active-invoices',
-        'quotes',
-        'payments',
-        'refunds',
-        'expenses',
-        'pricebook',
-        'warranties',
-        'business-settings',
-      ],
-      permissions: {
-        read: ['jobs', 'quotes', 'payments', 'warranties', 'pricebook', 'business_settings'],
-        draft: ['invoice_contract', 'proposal', 'payment_entry', 'reminder', 'warranty_suggestion'],
-        cannot: ['customer_message_send', 'money_write_without_approval', 'refund_reversal', 'delete_archive'],
-      },
-      checkInObligation: {
-        required: true,
-        proofKind: 'startup_check_in',
-      },
-    },
-    {
-      armKey: 'schedule-dispatch',
-      role: 'trustquote-schedule-dispatch',
-      paneId: 'trustquote-schedule-dispatch',
-      routeTarget: 'trustquote-schedule-dispatch',
-      armKind: 'domain',
-      displayName: 'Schedule Dispatch',
-      dataSources: [
-        'calendar-events',
-        'appointment-packets',
-        'job-packets',
-        'customers',
-        'properties',
-        'field-notes',
-        'materials',
-        'media-metadata',
-      ],
-      permissions: {
-        read: ['schedule', 'jobs', 'customers', 'properties', 'field_context'],
-        draft: ['schedule_change', 'job_note', 'missing_info_prompt', 'address_recommendation'],
-        cannot: ['money_write', 'customer_message_send', 'delete_archive'],
-      },
-      checkInObligation: {
-        required: true,
-        proofKind: 'startup_check_in',
-      },
-    },
-  ];
+  }));
 }
 
 function trustQuoteBuildModeArms() {
