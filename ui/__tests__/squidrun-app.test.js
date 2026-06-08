@@ -8831,6 +8831,185 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('resolves non-Telegram reassembled pending state without replaying it', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-reassembled-resolved-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      jest.spyOn(app, 'recordPendingPaneDeliveryDrop').mockImplementation(() => {});
+      app.commsSessionScopeId = 'app-session-147';
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'hm-reassembled-1',
+            paneId: '1',
+            message: '[AGENT MSG - reply via hm-send.js] FULL MSG AT .squidrun/coord/full-agent-messages/hm-reassembled-1.txt',
+            messageId: 'hm-reassembled-1',
+            channel: 'ws',
+            sender: 'builder',
+            createdAt: '2026-05-16T07:26:50.776Z',
+            lastFailureReason: 'verification_failed',
+            attemptCount: 1,
+            meta: {
+              windowKey: 'main',
+              sessionScopeId: 'app-session-147',
+              reassembled: true,
+              fullPayloadPath: '.squidrun/coord/full-agent-messages/hm-reassembled-1.txt',
+            },
+          },
+        ],
+      }));
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'test-resolve-reassembled' });
+
+        expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 0,
+          droppedCount: 0,
+          resolvedCount: 1,
+          remainingCount: 0,
+        }));
+        expect(app.recordPendingPaneDeliveryDrop).toHaveBeenCalledWith(
+          expect.objectContaining({ queueKey: 'hm-reassembled-1' }),
+          expect.objectContaining({
+            reason: 'accepted_unverified_pending_delivery_resolved',
+            resolved: true,
+            resolutionEvidence: expect.objectContaining({
+              reason: 'reassembled_payload_evidence',
+            }),
+          })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves non-Telegram pending state when comms journal has routed proof', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-journal-resolved-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      jest.spyOn(app, 'recordPendingPaneDeliveryDrop').mockImplementation(() => {});
+      app.commsSessionScopeId = 'app-session-147';
+      queryCommsJournalEntries.mockImplementation((filters = {}) => (
+        filters.messageId === 'hm-journal-routed-1'
+          ? [{
+            rowId: 777,
+            messageId: 'hm-journal-routed-1',
+            status: 'routed',
+            ackStatus: 'accepted.unverified',
+            metadata: {
+              deliveryAccepted: true,
+              finalOutcome: 'accepted.unverified',
+            },
+          }]
+          : []
+      ));
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'hm-journal-routed-1',
+            paneId: '1',
+            message: '(BUILDER #12): already routed but verifier timed out',
+            messageId: 'hm-journal-routed-1',
+            channel: 'ws',
+            sender: 'builder',
+            createdAt: '2026-05-16T07:26:50.776Z',
+            lastFailureReason: 'delivery_failed',
+            attemptCount: 2,
+            meta: {
+              windowKey: 'main',
+              sessionScopeId: 'app-session-147',
+            },
+          },
+        ],
+      }));
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'test-resolve-journal' });
+
+        expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+        expect(queryCommsJournalEntries).toHaveBeenCalledWith(expect.objectContaining({
+          messageId: 'hm-journal-routed-1',
+          order: 'desc',
+          limit: 1,
+        }));
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 0,
+          droppedCount: 0,
+          resolvedCount: 1,
+          remainingCount: 0,
+        }));
+        expect(app.recordPendingPaneDeliveryDrop).toHaveBeenCalledWith(
+          expect.objectContaining({ queueKey: 'hm-journal-routed-1' }),
+          expect.objectContaining({
+            reason: 'comms_journal_pending_delivery_resolved',
+            resolved: true,
+            resolutionEvidence: expect.objectContaining({
+              reason: 'comms_journal_delivery_proof',
+              rowId: 777,
+              status: 'routed',
+            }),
+          })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('drops prior-session non-Telegram pending deliveries instead of replaying them', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-non-telegram-stale-session-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      jest.spyOn(app, 'recordPendingPaneDeliveryDrop').mockImplementation(() => {});
+      app.commsSessionScopeId = 'app-session-330';
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'hm-stale-session-1',
+            paneId: '1',
+            message: '(BUILDER #9): stale retry',
+            messageId: 'hm-stale-session-1',
+            channel: 'ws',
+            sender: 'builder',
+            createdAt: '2026-05-08T00:45:48.915Z',
+            lastFailureReason: 'delivery_failed',
+            attemptCount: 3,
+            meta: {
+              windowKey: 'main',
+              sessionScopeId: 'app-session-329',
+            },
+          },
+        ],
+      }));
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'startup-replay' });
+
+        expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 0,
+          droppedCount: 1,
+          remainingCount: 0,
+        }));
+        expect(app.recordPendingPaneDeliveryDrop).toHaveBeenCalledWith(
+          expect.objectContaining({ queueKey: 'hm-stale-session-1' }),
+          expect.objectContaining({
+            reason: 'stale_pending_session_scope',
+            expectedSessionScopeId: 'app-session-330',
+            itemSessionScopeId: 'app-session-329',
+          })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
     it('drops prior-session Telegram pending deliveries instead of flushing them into the current session', async () => {
       const triggers = require('../modules/triggers');
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-stale-session-'));

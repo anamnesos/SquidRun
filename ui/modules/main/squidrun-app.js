@@ -6915,11 +6915,175 @@ class SquidRunApp {
     return Number.isFinite(createdAtMs) ? createdAtMs : null;
   }
 
-  shouldDropPendingPaneDeliveryForReplay(item = {}) {
-    if (!this.isTelegramPendingPaneDelivery(item)) {
-      return { drop: false };
-    }
+  getPendingPaneDeliveryFailureText(item = {}) {
+    const meta = item.meta && typeof item.meta === 'object' ? item.meta : {};
+    return [
+      item.lastFailureReason,
+      meta.failureReason,
+      meta.finalOutcome,
+      meta.errorCode,
+      meta.status,
+      meta.reason,
+    ]
+      .map((value) => toNonEmptyString(value))
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+  }
 
+  isPendingPaneDeliveryVerificationUncertain(item = {}) {
+    const failureText = this.getPendingPaneDeliveryFailureText(item);
+    if (!failureText) return false;
+    return (
+      failureText.includes('accepted.unverified')
+      || failureText.includes('accepted.daemon_pty_unverified')
+      || failureText.includes('routed_unverified_timeout')
+      || failureText.includes('routed_unverified')
+      || failureText.includes('verification_failed')
+      || failureText.includes('ack_timeout')
+      || failureText.includes('write ack timeout')
+      || failureText.includes('write-ack timeout')
+      || failureText.includes('model write-ack timeout')
+      || failureText.includes('model_write_ack_timeout')
+    );
+  }
+
+  getPendingPaneDeliveryMetadataResolution(item = {}) {
+    const meta = item.meta && typeof item.meta === 'object' ? item.meta : {};
+    const message = toNonEmptyString(item.message) || '';
+    const evidenceText = [
+      message,
+      meta.fullPayloadPath,
+      meta.fullAgentMessagePath,
+      meta.fullMessagePath,
+      meta.materializedFullPayloadPath,
+      meta.handoffPath,
+      meta.handoffFile,
+      meta.reassembledPath,
+      meta.sourceRef,
+      meta.source_ref,
+      meta.via,
+      meta.source,
+      meta.routeKind,
+    ]
+      .map((value) => toNonEmptyString(value))
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const handoffEvidenceText = [
+      meta.handoffPath,
+      meta.handoffFile,
+      meta.sourceRef,
+      meta.source_ref,
+      meta.via,
+      meta.source,
+      meta.routeKind,
+    ]
+      .map((value) => toNonEmptyString(value))
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+    if (
+      meta.reassembled === true
+      || meta.reassembledPayload === true
+      || meta.reassembledFromChunks === true
+      || meta.payloadReassembled === true
+    ) {
+      return { reason: 'reassembled_payload_evidence' };
+    }
+    if (
+      evidenceText.includes('full-agent-messages')
+      || /^.*full msg at\s+\.squidrun[\\/]+coord[\\/]+full-agent-messages/i.test(message)
+    ) {
+      return { reason: 'materialized_full_payload_evidence' };
+    }
+    if (
+      meta.handoff === true
+      || meta.handoffMaterialized === true
+      || handoffEvidenceText.includes('auto-handoff')
+      || handoffEvidenceText.includes('.squidrun/handoffs')
+    ) {
+      return { reason: 'handoff_evidence' };
+    }
+    if (
+      meta.recipientFollowUp === true
+      || toNonEmptyString(meta.recipientFollowUpMessageId)
+      || toNonEmptyString(meta.recipientFollowUpAt)
+      || toNonEmptyString(meta.followUpMessageId)
+      || toNonEmptyString(meta.replyMessageId)
+    ) {
+      return { reason: 'recipient_follow_up_metadata' };
+    }
+    return null;
+  }
+
+  getPendingPaneDeliveryCommsJournalResolution(item = {}) {
+    const messageId = toNonEmptyString(item.messageId) || toNonEmptyString(item.queueKey);
+    if (!messageId) return null;
+    try {
+      const rows = queryCommsJournalEntries({
+        messageId,
+        order: 'desc',
+        limit: 1,
+      });
+      const row = Array.isArray(rows) ? rows[0] : null;
+      if (!row) return null;
+      const status = String(row.status || '').toLowerCase();
+      const ackStatus = String(row.ackStatus || row.ack_status || '').toLowerCase();
+      const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+      if (
+        status === 'routed'
+        || status === 'acked'
+        || metadata.deliveryAccepted === true
+        || metadata.deliveryVerified === true
+        || ackStatus === 'delivered.verified'
+      ) {
+        return {
+          reason: 'comms_journal_delivery_proof',
+          messageId,
+          rowId: row.rowId ?? row.row_id ?? null,
+          status,
+          ackStatus: ackStatus || null,
+        };
+      }
+    } catch (err) {
+      log.warn('PendingPaneDelivery', `Comms journal resolution probe failed for ${messageId}: ${err.message}`);
+    }
+    return null;
+  }
+
+  getPendingPaneDeliveryRecipientFollowUpResolution(item = {}, expectedSessionScopeId = null) {
+    const targetRole = resolveCanonicalRoleForPaneId(item.paneId);
+    const itemTimestampMs = this.getPendingPaneDeliveryTimestampMs(item);
+    if (!targetRole || !Number.isFinite(itemTimestampMs)) return null;
+    try {
+      const filters = {
+        senderRole: targetRole,
+        sinceMs: itemTimestampMs + 1,
+        order: 'asc',
+        limit: 1,
+      };
+      if (expectedSessionScopeId) {
+        filters.sessionId = expectedSessionScopeId;
+      }
+      const rows = queryCommsJournalEntries(filters);
+      const row = Array.isArray(rows) ? rows[0] : null;
+      if (!row) return null;
+      return {
+        reason: 'recipient_follow_up_comms_journal',
+        targetRole,
+        rowId: row.rowId ?? row.row_id ?? null,
+        messageId: row.messageId || row.message_id || null,
+      };
+    } catch (err) {
+      log.warn('PendingPaneDelivery', `Recipient follow-up probe failed for pending delivery ${item.queueKey || item.messageId || 'unknown'}: ${err.message}`);
+    }
+    return null;
+  }
+
+  shouldDropPendingPaneDeliveryForReplay(item = {}) {
+    const isTelegramPending = this.isTelegramPendingPaneDelivery(item);
     const windowKey = this.getPendingPaneDeliveryWindowKey(item);
     const expectedSessionScopeId = this.getWindowSessionScopeId(windowKey);
     const itemSessionScopeId = this.getPendingPaneDeliverySessionScopeId(item);
@@ -6930,7 +7094,9 @@ class SquidRunApp {
     ) {
       return {
         drop: true,
-        reason: 'stale_telegram_pending_session_scope',
+        reason: isTelegramPending
+          ? 'stale_telegram_pending_session_scope'
+          : 'stale_pending_session_scope',
         expectedSessionScopeId,
         itemSessionScopeId,
         windowKey,
@@ -6947,14 +7113,15 @@ class SquidRunApp {
     ) {
       return {
         drop: true,
-        reason: 'stale_telegram_pending_before_current_start',
+        reason: isTelegramPending
+          ? 'stale_telegram_pending_before_current_start'
+          : 'stale_pending_before_current_start',
         appStartedAtMs,
         itemTimestampMs,
         windowKey,
       };
     }
 
-    const lastFailureReason = (toNonEmptyString(item.lastFailureReason) || '').toLowerCase();
     const matchesCurrentSession = Boolean(
       itemSessionScopeId
       && expectedSessionScopeId
@@ -6966,20 +7133,38 @@ class SquidRunApp {
       && Number.isFinite(itemTimestampMs)
       && itemTimestampMs >= appStartedAtMs - TELEGRAM_PENDING_REPLAY_GRACE_MS
     );
+    const journalResolution = this.getPendingPaneDeliveryCommsJournalResolution(item);
+    if (journalResolution && (matchesCurrentSession || appearsCurrentWithoutSession || !itemSessionScopeId)) {
+      return {
+        drop: true,
+        resolved: true,
+        reason: 'comms_journal_pending_delivery_resolved',
+        resolutionEvidence: journalResolution,
+        windowKey,
+        itemSessionScopeId,
+        expectedSessionScopeId,
+      };
+    }
+
+    const lastFailureReason = (toNonEmptyString(item.lastFailureReason) || '').toLowerCase();
+    const verificationUncertain = this.isPendingPaneDeliveryVerificationUncertain(item);
+    const metadataResolution = this.getPendingPaneDeliveryMetadataResolution(item);
+    const recipientFollowUpResolution = verificationUncertain
+      ? this.getPendingPaneDeliveryRecipientFollowUpResolution(item, expectedSessionScopeId)
+      : null;
     if (
       (matchesCurrentSession || appearsCurrentWithoutSession)
-      && (
-        lastFailureReason === 'accepted.unverified'
-        || lastFailureReason === 'accepted.daemon_pty_unverified'
-        || lastFailureReason === 'routed_unverified_timeout'
-        || lastFailureReason === 'routed_unverified'
-      )
+      && verificationUncertain
+      && (isTelegramPending || metadataResolution || recipientFollowUpResolution)
     ) {
       return {
         drop: true,
         resolved: true,
-        reason: 'accepted_unverified_telegram_delivery_resolved',
+        reason: isTelegramPending
+          ? 'accepted_unverified_telegram_delivery_resolved'
+          : 'accepted_unverified_pending_delivery_resolved',
         lastFailureReason,
+        resolutionEvidence: metadataResolution || recipientFollowUpResolution || { reason: 'accepted_unverified_delivery_state' },
         windowKey,
         itemSessionScopeId,
         expectedSessionScopeId,
@@ -7363,9 +7548,10 @@ class SquidRunApp {
           }
           this.recordPendingPaneDeliveryDrop(item, dropDecision);
           const logMethod = dropDecision.resolved ? 'info' : 'warn';
+          const channelLabel = this.isTelegramPendingPaneDelivery(item) ? 'Telegram ' : '';
           log[logMethod](
             'PendingPaneDelivery',
-            `${dropDecision.resolved ? 'Resolved' : 'Dropping stale'} pending Telegram delivery ${item.queueKey || item.messageId || 'unknown'} (${dropDecision.reason || 'stale_pending_delivery'})`
+            `${dropDecision.resolved ? 'Resolved' : 'Dropping stale'} pending ${channelLabel}delivery ${item.queueKey || item.messageId || 'unknown'} (${dropDecision.reason || 'stale_pending_delivery'})`
           );
           continue;
         }
@@ -7403,7 +7589,7 @@ class SquidRunApp {
         log.warn('PendingPaneDelivery', `Dropped ${droppedCount} stale queued delivery(s) (${reason})`);
       }
       if (resolvedCount > 0) {
-        log.info('PendingPaneDelivery', `Resolved ${resolvedCount} accepted/unverified Telegram delivery state(s) without replay (${reason})`);
+        log.info('PendingPaneDelivery', `Resolved ${resolvedCount} accepted/unverified pending delivery state(s) without replay (${reason})`);
       }
       return {
         ok: true,
