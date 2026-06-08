@@ -1600,9 +1600,12 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   const codexInbox = codexDesktop.freshness?.attentionInbox || {};
   const codexHeartbeat = codexDesktop.freshness?.heartbeat || {};
   const codexTransport = codexDesktop.availability?.hmCodexDesktopTransport || {};
+  const codexStatusLabel = codexDesktop.status === 'process_available_heartbeat_not_proven'
+    ? 'available, not monitored'
+    : (codexDesktop.status || 'unknown');
   lines.push('');
   lines.push('CODEX DESKTOP CAPABILITY');
-  lines.push(`- Status: ${codexDesktop.status || 'unknown'}`);
+  lines.push(`- Status: ${codexStatusLabel}${codexStatusLabel !== codexDesktop.status && codexDesktop.status ? ` (${codexDesktop.status})` : ''}`);
   lines.push(`- Process/App: ${codexProcess.status || 'unknown'} (processes=${Number(codexProcess.process_count || 0)}, visible_windows=${Number(codexProcess.visible_window_count || 0)})`);
   lines.push(`- App-Control Route: ${codexAppControl.status || 'unknown'}${codexAppControl.source_message_id ? ` (source=${codexAppControl.source_message_id})` : ''}`);
   lines.push(`- Attention Inbox: active=${Number(codexInbox.active_count || 0)}, completed=${Number(codexInbox.completed_count || 0)}, total=${Number(codexInbox.total_count || 0)}, freshness=${codexInbox.polling_freshness || 'unknown'}`);

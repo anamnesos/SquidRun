@@ -686,7 +686,7 @@ describe('hm-health-snapshot', () => {
     expect(markdown).toContain('Device ID: LOCAL');
     expect(markdown).toContain('Runtime: mode=connecting, enabled=yes, configured=yes');
     expect(markdown).toContain('CODEX DESKTOP CAPABILITY');
-    expect(markdown).toContain('Status: process_available_heartbeat_not_proven');
+    expect(markdown).toContain('Status: available, not monitored (process_available_heartbeat_not_proven)');
     expect(markdown).toContain('Process/App: available (processes=3, visible_windows=1)');
     expect(markdown).toContain('App-Control Route: known_route (source=telegram-in-808498547)');
     expect(markdown).toContain('Attention Inbox: active=2, completed=5, total=8, freshness=index_loaded');

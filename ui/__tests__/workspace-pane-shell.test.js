@@ -166,7 +166,7 @@ function makePane(id, label) {
 function makeDocument() {
   return new FakeDocument(new FakeElement('body', {}, [
     new FakeElement('div', { className: 'project-indicator' }, [
-      new FakeElement('span', { className: 'project-path no-project', id: 'projectPath', textContent: 'Developer Mode' }),
+      new FakeElement('span', { className: 'project-path no-project', id: 'projectPath', textContent: 'SquidRun home' }),
     ]),
     new FakeElement('div', { className: 'main-pane-container' }, [makePane('1', 'Mira')]),
     new FakeElement('div', { className: 'side-panes-container' }, [makePane('2', 'Builder'), makePane('3', 'Oracle')]),

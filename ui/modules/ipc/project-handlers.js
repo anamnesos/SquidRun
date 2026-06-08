@@ -378,9 +378,9 @@ function registerProjectHandlers(ctx, deps) {
     } else {
       syncResult = syncProjectRoot(initialProject, deps);
       if (!initialProject) {
-        log.warn('Project', 'Operating in project mode but no project selected — agents will use SquidRun root as CWD');
+        log.warn('Project', 'Operating in attached project mode but no project is attached — agents will use SquidRun root as CWD');
         if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
-          ctx.mainWindow.webContents.send('project-warning', 'No project selected');
+          ctx.mainWindow.webContents.send('project-warning', 'No attached project selected');
         }
       }
     }
@@ -544,7 +544,7 @@ function registerProjectHandlers(ctx, deps) {
       success: true,
       mode: 'developer',
       path: null,
-      name: 'Developer Mode',
+      name: 'SquidRun home',
     };
   }
 

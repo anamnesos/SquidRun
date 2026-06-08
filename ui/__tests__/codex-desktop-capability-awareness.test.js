@@ -144,6 +144,8 @@ describe('codex-desktop-capability-awareness', () => {
       proof: 'not_proven',
       reason: 'missing_heartbeat',
     }));
+    expect(awareness.renderCodexDesktopCapabilityMarkdown(status))
+      .toContain('Status: available, not monitored (process_available_heartbeat_not_proven)');
     expect(status.availability.hmCodexDesktopTransport).toEqual(expect.objectContaining({
       status: 'available',
       can_summon_workspace: true,
