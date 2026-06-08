@@ -82,6 +82,8 @@ const mockSquidRun = {
     clipboardPasteText: jest.fn().mockResolvedValue({ success: true, method: 'insertText', insertedLength: 0 }),
     kill: jest.fn().mockResolvedValue(),
     resize: jest.fn().mockResolvedValue(),
+    pause: jest.fn(),
+    resume: jest.fn(),
     onData: jest.fn(),
     onExit: jest.fn(),
     sendTrustedEnter: jest.fn().mockResolvedValue(),
@@ -188,6 +190,8 @@ describe('terminal.js module', () => {
     }
     terminal._internals.terminalWriteFlushTimers.clear();
     terminal._internals.terminalWriteFrameBudgets.clear();
+    terminal._internals.terminalWatermarks.clear();
+    terminal._internals.terminalPaused.clear();
     for (const timer of terminal._internals.terminalPaintRefreshTimers.values()) {
       clearTimeout(timer);
     }
@@ -217,6 +221,8 @@ describe('terminal.js module', () => {
     }
     terminal._internals.terminalWriteFlushTimers.clear();
     terminal._internals.terminalWriteFrameBudgets.clear();
+    terminal._internals.terminalWatermarks.clear();
+    terminal._internals.terminalPaused.clear();
     for (const timer of terminal._internals.terminalPaintRefreshTimers.values()) {
       clearTimeout(timer);
     }
@@ -1068,6 +1074,58 @@ describe('terminal.js module', () => {
       expect(mockSquidRun.pty.resize).toHaveBeenCalledWith('1', 120, 40);
     });
 
+    test('skips fit and pty resize for squid-room mirrors of shared main panes', () => {
+      jest.useFakeTimers();
+      terminal.setStartupWindowContext({
+        windowKey: 'squid-room',
+        profileName: 'main',
+        sessionScopeId: 'app-session-416:squid-room',
+      });
+      const mockTerminalObj = { cols: 80, rows: 24 };
+      const mockFitAddon = {
+        fit: jest.fn(() => {
+          mockTerminalObj.cols = 140;
+          mockTerminalObj.rows = 50;
+        }),
+      };
+
+      terminal.fitAddons.set('2', mockFitAddon);
+      terminal.terminals.set('2', mockTerminalObj);
+
+      terminal.handleResize();
+      jest.advanceTimersByTime(300);
+
+      expect(terminal._internals.rendererOwnsPtyGeometry('2')).toBe(false);
+      expect(mockFitAddon.fit).not.toHaveBeenCalled();
+      expect(mockSquidRun.pty.resize).not.toHaveBeenCalled();
+    });
+
+    test('keeps squid-room TrustQuote arms authoritative for their own PTY geometry', () => {
+      jest.useFakeTimers();
+      terminal.setStartupWindowContext({
+        windowKey: 'squid-room',
+        profileName: 'main',
+        sessionScopeId: 'app-session-416:squid-room',
+      });
+      const mockTerminalObj = { cols: 80, rows: 24 };
+      const mockFitAddon = {
+        fit: jest.fn(() => {
+          mockTerminalObj.cols = 128;
+          mockTerminalObj.rows = 36;
+        }),
+      };
+
+      terminal.fitAddons.set('trustquote-app', mockFitAddon);
+      terminal.terminals.set('trustquote-app', mockTerminalObj);
+
+      terminal.handleResize();
+      jest.advanceTimersByTime(300);
+
+      expect(terminal._internals.rendererOwnsPtyGeometry('trustquote-app')).toBe(true);
+      expect(mockFitAddon.fit).toHaveBeenCalled();
+      expect(mockSquidRun.pty.resize).toHaveBeenCalledWith('trustquote-app', 128, 36);
+    });
+
     test('should handle resize errors gracefully', () => {
       jest.useFakeTimers();
       const mockFitAddon = { fit: jest.fn().mockImplementation(() => { throw new Error('fit error'); }) };
@@ -1178,6 +1236,41 @@ describe('terminal.js module', () => {
       expect(mockSquidRun.pty.resize).toHaveBeenCalledWith('1', 120, 30);
       expect(mockTerminalObj.refresh).toHaveBeenCalledWith(0, 29);
       expect(mockTerminalObj.scrollToBottom).toHaveBeenCalled();
+    });
+
+    test('does not let squid-room mirrors drive producer pause backpressure for shared panes', () => {
+      terminal.setStartupWindowContext({
+        windowKey: 'squid-room',
+        profileName: 'main',
+        sessionScopeId: 'app-session-416:squid-room',
+      });
+      const mockTerminalObj = {
+        write: jest.fn(),
+      };
+
+      terminal._internals.queueTerminalWrite('2', mockTerminalObj, 'x'.repeat(600000));
+
+      expect(mockTerminalObj.write).toHaveBeenCalledTimes(1);
+      expect(mockSquidRun.pty.pause).not.toHaveBeenCalled();
+      expect(terminal._internals.terminalPaused.get('2')).toBe(false);
+    });
+
+    test('does not let squid-room mirrors resume producers for shared panes', () => {
+      terminal.setStartupWindowContext({
+        windowKey: 'squid-room',
+        profileName: 'main',
+        sessionScopeId: 'app-session-416:squid-room',
+      });
+      terminal._internals.terminalPaused.set('3', true);
+      terminal._internals.terminalWatermarks.set('3', 10);
+      const mockTerminalObj = {
+        write: jest.fn((_data, callback) => callback()),
+      };
+
+      terminal._internals.queueTerminalWrite('3', mockTerminalObj, 'ok');
+
+      expect(mockSquidRun.pty.resume).not.toHaveBeenCalled();
+      expect(terminal._internals.terminalPaused.get('3')).toBe(false);
     });
   });
 
