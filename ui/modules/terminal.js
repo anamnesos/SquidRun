@@ -23,6 +23,8 @@ const { readStartupBriefingForInjection } = require('./startup-ai-briefing');
 const { isTrustQuotePaneId } = require('./work-room-terminal-visibility');
 
 const TERMINAL_EVENT_SOURCE = 'terminal.js';
+const SQUID_ROOM_WINDOW_KEY = 'squid-room';
+const SQUID_ROOM_MIRRORED_TEAM_PANE_IDS = new Set(['2', '3']);
 const { attachAgentColors } = require('./terminal/agent-colors');
 const {
   PANE_IDS,
@@ -271,6 +273,12 @@ function isPaneReadOnlyMirrorMode(paneId) {
 }
 
 function maybeResumePtyProducer(paneId, watermark) {
+  if (!rendererOwnsPtyGeometry(paneId)) {
+    if (terminalPaused.get(paneId)) {
+      terminalPaused.set(paneId, false);
+    }
+    return;
+  }
   if (watermark < LOW_WATERMARK && terminalPaused.get(paneId)) {
     if (window.squidrun?.pty?.resume) {
       window.squidrun.pty.resume(paneId);
@@ -357,28 +365,34 @@ function refreshTerminalViewport(paneId, terminal, fitAddon = null) {
   const id = String(paneId);
   if (!terminal) return;
 
-  try {
-    if (fitAddon && typeof fitAddon.fit === 'function') {
-      fitAddon.fit();
+  if (!rendererOwnsPtyGeometry(id)) {
+    emitPtyGeometrySkipped(id, 'secondary_squid_room_mirror_geometry_blocked', {
+      operation: 'paint_refresh',
+    });
+  } else {
+    try {
+      if (fitAddon && typeof fitAddon.fit === 'function') {
+        fitAddon.fit();
+      }
+    } catch (err) {
+      log.warn(`Terminal ${id}`, `Paint refresh fit failed: ${err?.message || err}`);
     }
-  } catch (err) {
-    log.warn(`Terminal ${id}`, `Paint refresh fit failed: ${err?.message || err}`);
-  }
 
-  try {
-    const cols = Number(terminal.cols);
-    const rows = Number(terminal.rows);
-    if (
-      window.squidrun?.pty?.resize
-      && Number.isFinite(cols)
-      && Number.isFinite(rows)
-      && cols > 0
-      && rows > 0
-    ) {
-      window.squidrun.pty.resize(id, cols, rows);
+    try {
+      const cols = Number(terminal.cols);
+      const rows = Number(terminal.rows);
+      if (
+        window.squidrun?.pty?.resize
+        && Number.isFinite(cols)
+        && Number.isFinite(rows)
+        && cols > 0
+        && rows > 0
+      ) {
+        window.squidrun.pty.resize(id, cols, rows);
+      }
+    } catch (err) {
+      log.warn(`Terminal ${id}`, `Paint refresh resize failed: ${err?.message || err}`);
     }
-  } catch (err) {
-    log.warn(`Terminal ${id}`, `Paint refresh resize failed: ${err?.message || err}`);
   }
 
   try {
@@ -482,7 +496,11 @@ function queueTerminalWrite(paneId, terminal, data) {
   terminalWatermarks.set(paneId, currentWatermark);
 
   // If watermark exceeds high threshold, pause the PTY producer
-  if (currentWatermark > HIGH_WATERMARK && !terminalPaused.get(paneId)) {
+  if (
+    rendererOwnsPtyGeometry(paneId)
+    && currentWatermark > HIGH_WATERMARK
+    && !terminalPaused.get(paneId)
+  ) {
     if (window.squidrun?.pty?.pause) {
       window.squidrun.pty.pause(paneId);
       terminalPaused.set(paneId, true);
@@ -1511,6 +1529,36 @@ function setStartupWindowContext(context = {}) {
   return { ...startupWindowContext };
 }
 
+function getCurrentRendererWindowKey() {
+  const bodyWindowKey = typeof document !== 'undefined'
+    ? String(document?.body?.dataset?.windowKey || '').trim().toLowerCase()
+    : '';
+  if (bodyWindowKey) return bodyWindowKey;
+  return normalizeStartupWindowContext(startupWindowContext).windowKey;
+}
+
+function isSecondarySquidRoomMirrorPane(paneId) {
+  const id = String(paneId || '').trim();
+  if (!SQUID_ROOM_MIRRORED_TEAM_PANE_IDS.has(id)) return false;
+  return getCurrentRendererWindowKey() === SQUID_ROOM_WINDOW_KEY;
+}
+
+function rendererOwnsPtyGeometry(paneId) {
+  return !isSecondarySquidRoomMirrorPane(paneId);
+}
+
+function emitPtyGeometrySkipped(paneId, reason, payload = {}) {
+  bus.emit('fit.skipped', {
+    paneId,
+    payload: {
+      reason,
+      windowKey: getCurrentRendererWindowKey(),
+      ...payload,
+    },
+    source: TERMINAL_EVENT_SOURCE,
+  });
+}
+
 function getStartupWindowContext() {
   return { ...startupWindowContext };
 }
@@ -2314,15 +2362,27 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
   const { fitAddon } = setupTerminalAddons(paneId, terminal, container);
 
   terminal.open(container);
-  fitAddon.fit();
+  if (rendererOwnsPtyGeometry(paneId)) {
+    fitAddon.fit();
+  } else {
+    emitPtyGeometrySkipped(paneId, 'secondary_squid_room_mirror_geometry_blocked', {
+      operation: 'initial_fit',
+    });
+  }
   const agentColorDisposable = attachAgentColors(paneId, terminal);
   if (agentColorDisposable) { agentColorDisposers.set(paneId, agentColorDisposable); }
 
   // Sync PTY size to fitted terminal dimensions (PTY spawns at 80x24 by default)
-  try {
-    window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
-  } catch (err) {
-    log.warn(`Terminal ${paneId}`, 'Initial PTY resize failed (PTY may not exist yet):', err);
+  if (rendererOwnsPtyGeometry(paneId)) {
+    try {
+      window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
+    } catch (err) {
+      log.warn(`Terminal ${paneId}`, 'Initial PTY resize failed (PTY may not exist yet):', err);
+    }
+  } else {
+    emitPtyGeometrySkipped(paneId, 'secondary_squid_room_mirror_geometry_blocked', {
+      operation: 'initial_resize',
+    });
   }
 
   // Critical: block keyboard input when user is typing in a UI input/textarea
@@ -2430,12 +2490,18 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
     }
 
     // Now that PTY exists, sync size again (initial resize may have fired before PTY was created)
-    try {
-      fitAddon.fit();
-      window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
-      log.info(`Terminal ${paneId}`, `PTY size synced: ${terminal.cols}x${terminal.rows}`);
-    } catch (resizeErr) {
-      log.warn(`Terminal ${paneId}`, 'Post-create PTY resize failed:', resizeErr);
+    if (rendererOwnsPtyGeometry(paneId)) {
+      try {
+        fitAddon.fit();
+        window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
+        log.info(`Terminal ${paneId}`, `PTY size synced: ${terminal.cols}x${terminal.rows}`);
+      } catch (resizeErr) {
+        log.warn(`Terminal ${paneId}`, 'Post-create PTY resize failed:', resizeErr);
+      }
+    } else {
+      emitPtyGeometrySkipped(paneId, 'secondary_squid_room_mirror_geometry_blocked', {
+        operation: 'post_create_sync',
+      });
     }
 
     const restoredScrollback = typeof options.scrollback === 'string'
@@ -2552,16 +2618,28 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
   const { fitAddon } = setupTerminalAddons(paneId, terminal, container);
 
   terminal.open(container);
-  fitAddon.fit();
+  if (rendererOwnsPtyGeometry(paneId)) {
+    fitAddon.fit();
+  } else {
+    emitPtyGeometrySkipped(paneId, 'secondary_squid_room_mirror_geometry_blocked', {
+      operation: 'reattach_fit',
+    });
+  }
   const agentColorDisposable = attachAgentColors(paneId, terminal);
   if (agentColorDisposable) { agentColorDisposers.set(paneId, agentColorDisposable); }
 
   // Sync PTY size to fitted terminal dimensions (PTY already exists during reattach)
-  try {
-    window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
-    log.info(`Terminal ${paneId}`, `Reattach PTY size synced: ${terminal.cols}x${terminal.rows}`);
-  } catch (err) {
-    log.warn(`Terminal ${paneId}`, 'Reattach PTY resize failed:', err);
+  if (rendererOwnsPtyGeometry(paneId)) {
+    try {
+      window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
+      log.info(`Terminal ${paneId}`, `Reattach PTY size synced: ${terminal.cols}x${terminal.rows}`);
+    } catch (err) {
+      log.warn(`Terminal ${paneId}`, 'Reattach PTY resize failed:', err);
+    }
+  } else {
+    emitPtyGeometrySkipped(paneId, 'secondary_squid_room_mirror_geometry_blocked', {
+      operation: 'reattach_resize',
+    });
   }
 
   // Critical: block keyboard input when user is typing in a UI input/textarea
@@ -3053,6 +3131,12 @@ function setupResizeObserver(paneId) {
   cleanupResizeObserver(paneId);
   const container = document.getElementById(`terminal-${paneId}`);
   if (!container) return;
+  if (!rendererOwnsPtyGeometry(paneId)) {
+    emitPtyGeometrySkipped(paneId, 'secondary_squid_room_mirror_geometry_blocked', {
+      operation: 'resize_observer_setup',
+    });
+    return;
+  }
 
   const observer = new ResizeObserver(() => {
     // Skip resize while settings overlay is open — its max-height transition
@@ -3105,6 +3189,7 @@ function cleanupResizeObserver(paneId) {
 function handleResize() {
   let i = 0;
   for (const [paneId] of fitAddons) {
+    if (!rendererOwnsPtyGeometry(paneId)) continue;
     setTimeout(() => resizeSinglePane(paneId), i * 50);
     i++;
   }
@@ -3114,6 +3199,13 @@ function resizeSinglePane(paneId, options = {}) {
   const fitAddon = fitAddons.get(paneId);
   const terminal = terminals.get(paneId);
   if (!fitAddon || !terminal) return;
+  if (!rendererOwnsPtyGeometry(paneId)) {
+    clearDeferredTerminalResize(paneId);
+    emitPtyGeometrySkipped(paneId, 'secondary_squid_room_mirror_geometry_blocked', {
+      operation: 'resize_single_pane',
+    });
+    return;
+  }
   if (options?.force !== true && shouldDeferTerminalResizeForInput()) {
     scheduleDeferredTerminalResize(paneId);
     return;
@@ -3369,8 +3461,12 @@ module.exports = {
     clearDeferredTerminalResize,
     scheduleTerminalPaintRefresh,
     scheduleTerminalAttachPaintRefresh,
+    rendererOwnsPtyGeometry,
+    isSecondarySquidRoomMirrorPane,
     terminalWriteFlushTimers,
     terminalWriteFrameBudgets,
+    terminalWatermarks,
+    terminalPaused,
     terminalPaintRefreshTimers,
     deferredResizeTimers,
     deferredResizeFirstRequestedAt,
