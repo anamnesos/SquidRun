@@ -34,6 +34,7 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
 
   afterEach(() => {
     jest.dontMock('../config');
+    jest.restoreAllMocks();
     fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
@@ -117,5 +118,97 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
       reason: 'start_in_progress',
     }));
     expect(childProcess.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  test('startRunner stale-lock reclaim lets only one stale reclaimer spawn', () => {
+    const lockPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog-start.lock');
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify({
+      pid: 1111,
+      createdAt: '2026-06-09T05:00:00.000Z',
+      ownerToken: 'stale-owner',
+    }), 'utf8');
+    const staleDate = new Date(Date.now() - 60_000);
+    fs.utimesSync(lockPath, staleDate, staleDate);
+
+    const originalRenameSync = fs.renameSync.bind(fs);
+    let competitorResult = null;
+    let reentered = false;
+    const renameSpy = jest.spyOn(fs, 'renameSync').mockImplementation((src, dest) => {
+      if (src === lockPath && !reentered) {
+        reentered = true;
+        renameSpy.mockImplementation(originalRenameSync);
+        competitorResult = moduleUnderTest.startRunner({
+          projectRoot: tempRoot,
+          startLock: { staleAfterMs: 1_000 },
+        });
+        const error = new Error('stale lock already claimed');
+        error.code = 'ENOENT';
+        throw error;
+      }
+      return originalRenameSync(src, dest);
+    });
+
+    const result = moduleUnderTest.startRunner({
+      projectRoot: tempRoot,
+      startLock: { staleAfterMs: 1_000 },
+    });
+
+    expect(competitorResult).toEqual(expect.objectContaining({
+      ok: true,
+      started: true,
+      pid: 9876,
+    }));
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      alreadyStarting: true,
+      startInProgress: true,
+      reason: 'start_in_progress',
+      claimReason: 'stale_lock_claim_lost',
+    }));
+    expect(childProcess.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  test('startRunner does not spawn when stale claim captures a changed lock', () => {
+    const lockPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog-start.lock');
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify({
+      pid: 1111,
+      createdAt: '2026-06-09T05:00:00.000Z',
+      ownerToken: 'stale-owner',
+    }), 'utf8');
+    const staleDate = new Date(Date.now() - 60_000);
+    fs.utimesSync(lockPath, staleDate, staleDate);
+
+    const originalRenameSync = fs.renameSync.bind(fs);
+    let changed = false;
+    jest.spyOn(fs, 'renameSync').mockImplementation((src, dest) => {
+      if (src === lockPath && !changed) {
+        changed = true;
+        fs.writeFileSync(lockPath, JSON.stringify({
+          pid: 2222,
+          createdAt: new Date().toISOString(),
+          ownerToken: 'fresh-owner',
+        }), 'utf8');
+      }
+      return originalRenameSync(src, dest);
+    });
+
+    const result = moduleUnderTest.startRunner({
+      projectRoot: tempRoot,
+      startLock: { staleAfterMs: 1_000 },
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      alreadyStarting: true,
+      startInProgress: true,
+      reason: 'start_in_progress',
+      claimReason: 'stale_lock_claim_mismatch',
+    }));
+    expect(JSON.parse(fs.readFileSync(lockPath, 'utf8'))).toEqual(expect.objectContaining({
+      ownerToken: 'fresh-owner',
+    }));
+    expect(childProcess.spawn).not.toHaveBeenCalled();
   });
 });

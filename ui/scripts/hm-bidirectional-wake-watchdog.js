@@ -180,14 +180,79 @@ function cleanupRunnerMetadata() {
   }
 }
 
-function readLockAgeMs(lockPath = DEFAULT_START_LOCK_PATH, nowMs = Date.now()) {
+function readLockSnapshot(lockPath = DEFAULT_START_LOCK_PATH, nowMs = Date.now()) {
   try {
     const stat = fs.statSync(lockPath);
     const mtimeMs = Number(stat.mtimeMs || 0);
-    return mtimeMs > 0 ? Math.max(0, nowMs - mtimeMs) : null;
+    return {
+      lockPath,
+      mtimeMs,
+      size: Number(stat.size || 0),
+      raw: fs.readFileSync(lockPath, 'utf8'),
+      ageMs: mtimeMs > 0 ? Math.max(0, nowMs - mtimeMs) : null,
+    };
   } catch {
     return null;
   }
+}
+
+function sameLockSnapshot(left = null, right = null) {
+  return Boolean(
+    left
+    && right
+    && Number(left.mtimeMs) === Number(right.mtimeMs)
+    && Number(left.size) === Number(right.size)
+    && String(left.raw || '') === String(right.raw || '')
+  );
+}
+
+function claimStaleStartLock(lockPath = DEFAULT_START_LOCK_PATH, observedSnapshot = null, options = {}) {
+  const latest = readLockSnapshot(lockPath, options.nowMs);
+  if (!sameLockSnapshot(observedSnapshot, latest)) {
+    return {
+      claimed: false,
+      reason: 'stale_lock_changed',
+      lockPath,
+      lockAgeMs: latest?.ageMs ?? null,
+    };
+  }
+  const claimPath = `${lockPath}.stale-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  try {
+    fs.renameSync(lockPath, claimPath);
+    const claimedSnapshot = readLockSnapshot(claimPath, options.nowMs);
+    if (!sameLockSnapshot(observedSnapshot, claimedSnapshot)) {
+      try {
+        fs.renameSync(claimPath, lockPath);
+      } catch {
+        // Best effort restore; returning start_in_progress prevents this process from spawning.
+      }
+      return {
+        claimed: false,
+        reason: 'stale_lock_claim_mismatch',
+        lockPath,
+        lockAgeMs: claimedSnapshot?.ageMs ?? null,
+      };
+    }
+    return {
+      claimed: true,
+      lockPath,
+      claimPath,
+      lockAgeMs: latest?.ageMs ?? null,
+    };
+  } catch (error) {
+    return {
+      claimed: false,
+      reason: 'stale_lock_claim_lost',
+      error: error.message,
+      code: error.code || null,
+      lockPath,
+      lockAgeMs: latest?.ageMs ?? null,
+    };
+  }
+}
+
+function buildStartLockOwnerToken(nowMs = Date.now()) {
+  return `${process.pid}-${nowMs}-${Math.random().toString(36).slice(2)}`;
 }
 
 function acquireStartLock(lockPath = DEFAULT_START_LOCK_PATH, options = {}) {
@@ -200,6 +265,7 @@ function acquireStartLock(lockPath = DEFAULT_START_LOCK_PATH, options = {}) {
       fs.writeFileSync(fd, JSON.stringify({
         pid: process.pid,
         createdAt: new Date(nowMs).toISOString(),
+        ownerToken: buildStartLockOwnerToken(nowMs),
       }));
       fs.closeSync(fd);
       return { acquired: true, lockPath };
@@ -207,26 +273,32 @@ function acquireStartLock(lockPath = DEFAULT_START_LOCK_PATH, options = {}) {
       if (error?.code !== 'EEXIST') {
         return { acquired: false, reason: 'start_lock_failed', error: error.message, lockPath };
       }
-      const lockAgeMs = readLockAgeMs(lockPath, nowMs);
-      if (attempt === 0 && lockAgeMs !== null && lockAgeMs >= staleAfterMs) {
-        try {
-          fs.rmSync(lockPath, { force: true });
-          appendLog(DEFAULT_LOG_PATH, `[cleanup] removed stale start lock ageMs=${lockAgeMs}`);
+      const lockSnapshot = readLockSnapshot(lockPath, nowMs);
+      if (attempt === 0 && lockSnapshot?.ageMs !== null && lockSnapshot?.ageMs >= staleAfterMs) {
+        const claim = claimStaleStartLock(lockPath, lockSnapshot, { nowMs });
+        if (claim.claimed) {
+          try {
+            fs.rmSync(claim.claimPath, { force: true });
+          } catch {
+            // Best effort quarantine cleanup; the original lock path was already atomically claimed.
+          }
+          appendLog(DEFAULT_LOG_PATH, `[cleanup] claimed stale start lock ageMs=${claim.lockAgeMs}`);
           continue;
-        } catch (cleanupError) {
-          return {
-            acquired: false,
-            reason: 'start_lock_cleanup_failed',
-            error: cleanupError.message,
-            lockAgeMs,
-            lockPath,
-          };
         }
+        return {
+          acquired: false,
+          reason: 'start_in_progress',
+          claimReason: claim.reason || 'stale_lock_claim_lost',
+          error: claim.error || null,
+          code: claim.code || null,
+          lockAgeMs: claim.lockAgeMs,
+          lockPath,
+        };
       }
       return {
         acquired: false,
         reason: 'start_in_progress',
-        lockAgeMs,
+        lockAgeMs: lockSnapshot?.ageMs ?? null,
         lockPath,
       };
     }
