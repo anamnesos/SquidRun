@@ -14,6 +14,10 @@ const {
   buildArmStateProjection,
   closeArmStateProjectionStores,
 } = require('../modules/main/arm-state-projection');
+const {
+  closeCommsJournalStores,
+  queryCommsJournalEntries,
+} = require('../modules/main/comms-journal');
 
 const SCHEMA = 'squidrun.squid_room.restart_survival_proof.v0';
 const DEFAULT_BASELINE_PATH = resolveCoordPath('runtime/squid-room-restart-survival-baseline.json', { forWrite: true });
@@ -319,6 +323,62 @@ function extractField(rawBody, fieldName) {
   return match ? match[1].trim().split(/\s+/)[0].replace(/[.,]+$/g, '') : null;
 }
 
+function extractBinding(rawBody, fieldName) {
+  const pattern = new RegExp(`\\b${fieldName}\\s*=\\s*([^,;\\r\\n]+)`, 'i');
+  const match = String(rawBody || '').match(pattern);
+  return match ? match[1].trim().split(/\s+/)[0].replace(/[.,]+$/g, '') : null;
+}
+
+function asObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function parseJsonObject(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(String(value || '{}'));
+    return asObject(parsed);
+  } catch {
+    return {};
+  }
+}
+
+function getRowMetadata(row = {}) {
+  return parseJsonObject(row.metadata || row.meta || row.metadata_json || row.metadataJson);
+}
+
+function extractMetadataValue(metadata = {}, candidates = []) {
+  const direct = asObject(metadata);
+  const envelope = asObject(direct.envelope);
+  for (const key of candidates) {
+    if (direct[key] !== undefined && direct[key] !== null && String(direct[key]).trim()) {
+      return String(direct[key]).trim();
+    }
+    if (envelope[key] !== undefined && envelope[key] !== null && String(envelope[key]).trim()) {
+      return String(envelope[key]).trim();
+    }
+  }
+  return null;
+}
+
+function extractMetadataRole(metadata = {}, kind = 'sender') {
+  const direct = asObject(metadata);
+  const envelope = asObject(direct.envelope);
+  const directValue = asObject(direct[kind]).role || direct[`${kind}Role`] || direct[`${kind}_role`];
+  const envelopeValue = asObject(envelope[kind]).role || envelope[`${kind}Role`] || envelope[`${kind}_role`];
+  return (directValue || envelopeValue || null);
+}
+
+function normalizeArmIdentity(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return null;
+  const arm = REQUIRED_ARMS.find((candidate) => (
+    candidate.role === text
+    || candidate.paneId === text
+  ));
+  return arm ? arm.role : null;
+}
+
 function extractCwd(rawBody, expectedCwd = null) {
   const envValue = extractField(rawBody, 'SQUIDRUN_WORKING_DIR');
   if (envValue) return stripPathToken(envValue);
@@ -331,6 +391,27 @@ function extractCwd(rawBody, expectedCwd = null) {
       .map(stripPathToken)
       .find((candidate) => pathsMatch(candidate, expectedCwd));
     if (expectedMention) return expectedMention;
+  }
+  const footerMatch = body.match(/\[CURRENT PROJECT\][^\r\n|]*\|\s*path=([A-Za-z]:[\\/][^\r\n]+)/i);
+  if (footerMatch) return stripPathToken(footerMatch[1]);
+  return null;
+}
+
+function extractProjectCwdFromMetadata(metadata = {}, expectedCwd = null) {
+  const direct = asObject(metadata);
+  const envelope = asObject(direct.envelope);
+  const candidates = [
+    asObject(direct.project).path,
+    asObject(envelope.project).path,
+    direct.projectPath,
+    direct.project_path,
+    envelope.projectPath,
+    envelope.project_path,
+  ];
+  for (const candidate of candidates) {
+    const cwd = stripPathToken(candidate || '');
+    if (!cwd) continue;
+    if (!expectedCwd || pathsMatch(cwd, expectedCwd)) return cwd;
   }
   return null;
 }
@@ -348,6 +429,42 @@ function hasAllArmReceipts(rows, sessionScope) {
   return REQUIRED_ARMS.every((arm) => receipts[arm.paneId]);
 }
 
+function queryCommsRowsFromLedger(sessionScope, limit = 200) {
+  try {
+    return queryCommsJournalEntries({
+      sessionId: sessionScope,
+      order: 'asc',
+      limit,
+    });
+  } catch (error) {
+    return null;
+  } finally {
+    if (typeof closeCommsJournalStores === 'function') {
+      closeCommsJournalStores();
+    }
+  }
+}
+
+function queryCommsRowsFromCli(scriptPath, sessionScope) {
+  const output = execFileSync(process.execPath, [
+    scriptPath,
+    'history',
+    '--scope',
+    'squid-room',
+    '--session',
+    sessionScope,
+    '--last',
+    '200',
+    '--json',
+  ], {
+    cwd: getProjectRoot(),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  return normalizeCommsHistoryPayload(JSON.parse(output));
+}
+
 function readCommsRows(options = {}) {
   if (options.commsRowsPath) {
     return normalizeCommsHistoryPayload(readJson(options.commsRowsPath, []));
@@ -363,23 +480,10 @@ function readCommsRows(options = {}) {
 
   try {
     do {
-      const output = execFileSync(process.execPath, [
-        scriptPath,
-        'history',
-        '--scope',
-        'squid-room',
-        '--session',
-        sessionScope,
-        '--last',
-        '200',
-        '--json',
-      ], {
-        cwd: getProjectRoot(),
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        maxBuffer: 4 * 1024 * 1024,
-      });
-      lastRows = normalizeCommsHistoryPayload(JSON.parse(output));
+      const ledgerRows = queryCommsRowsFromLedger(sessionScope);
+      lastRows = Array.isArray(ledgerRows)
+        ? ledgerRows
+        : queryCommsRowsFromCli(scriptPath, sessionScope);
       if (hasAllArmReceipts(lastRows, sessionScope)) return lastRows;
       if (Date.now() >= deadline) break;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, RECEIPT_POLL_MS);
@@ -405,19 +509,61 @@ function parseArmReceipts(rows, options = {}) {
   const sortedRows = [...(rows || [])].sort((a, b) => Number(a.rowId || a.row_id || 0) - Number(b.rowId || b.row_id || 0));
 
   for (const row of sortedRows) {
+    const metadata = getRowMetadata(row);
     const rawBody = row.rawBody || row.raw_body || row.body || row.message || '';
-    const role = extractField(rawBody, 'SQUIDRUN_ROLE');
-    const paneId = extractField(rawBody, 'SQUIDRUN_PANE_ID') || role;
-    const sessionScope = extractField(rawBody, 'SQUIDRUN_SESSION_SCOPE_ID') || row.session_id || row.sessionId || null;
-    const windowKey = extractField(rawBody, 'SQUIDRUN_WINDOW_KEY') || row.scope || row.windowKey || null;
+    const rowStatus = String(row.status || '').toLowerCase();
+    const rowSessionScope = row.session_id
+      || row.sessionId
+      || extractMetadataValue(metadata, ['session_id', 'sessionId'])
+      || null;
+    const senderRole = normalizeArmIdentity(
+      row.senderRole
+      || row.sender_role
+      || row.sender
+      || extractMetadataRole(metadata, 'sender')
+    );
+    const routedSenderMatchesSession = rowStatus === 'routed'
+      && senderRole
+      && (!expectedSessionScope || rowSessionScope === expectedSessionScope);
+    const role = normalizeArmIdentity(
+      extractField(rawBody, 'SQUIDRUN_ROLE')
+      || extractBinding(rawBody, 'role')
+      || (routedSenderMatchesSession ? senderRole : null)
+    );
+    const paneId = normalizeArmIdentity(
+      extractField(rawBody, 'SQUIDRUN_PANE_ID')
+      || extractBinding(rawBody, 'pane')
+      || role
+      || (routedSenderMatchesSession ? senderRole : null)
+    );
+    const sessionScope = extractField(rawBody, 'SQUIDRUN_SESSION_SCOPE_ID')
+      || extractBinding(rawBody, 'session')
+      || rowSessionScope
+      || null;
+    const windowKey = extractField(rawBody, 'SQUIDRUN_WINDOW_KEY')
+      || extractBinding(rawBody, 'window')
+      || row.scope
+      || row.windowKey
+      || null;
     const expectedArm = REQUIRED_ARMS.find((arm) => arm.paneId === paneId || arm.role === role);
     if (!expectedArm) continue;
-    const cwd = extractCwd(rawBody, expectedArm.cwd);
-    if (expectedSessionScope && sessionScope && sessionScope !== expectedSessionScope) continue;
+    if (expectedSessionScope && sessionScope !== expectedSessionScope) continue;
+    const cwd = extractCwd(rawBody, expectedArm.cwd)
+      || extractProjectCwdFromMetadata(metadata, expectedArm.cwd);
     receipts[expectedArm.paneId] = {
       rowId: row.rowId || row.row_id || null,
-      timestampMs: Number(row.timestampMs || row.timestamp_ms || parseIsoMs(row.timestamp)),
-      sender: row.sender || null,
+      timestampMs: Number(
+        row.timestampMs
+        || row.timestamp_ms
+        || row.brokeredAtMs
+        || row.brokered_at_ms
+        || row.sentAtMs
+        || row.sent_at_ms
+        || row.updatedAtMs
+        || row.updated_at_ms
+        || parseIsoMs(row.timestamp)
+      ),
+      sender: row.sender || row.senderRole || row.sender_role || senderRole || null,
       role,
       paneId,
       sessionScope,
