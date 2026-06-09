@@ -47,6 +47,11 @@ const {
   resolveCoordPath,
 } = require('./config');
 const { appendInputShadowLog } = require('./modules/input-shadow-log');
+const {
+  hydrateTerminalFromRestartSnapshot,
+  loadRestartScrollbackSnapshot,
+  saveRestartScrollbackSnapshot,
+} = require('./modules/terminal-restart-scrollback-store');
 
 // ============================================================
 // D1: DAEMON LOGGING TO FILE
@@ -421,6 +426,34 @@ function checkGhostText(paneId, data) {
 // ============================================================
 
 const SESSION_FILE_PATH = resolveCoordPath('runtime/session-state.json', { forWrite: true });
+const RESTART_SCROLLBACK_FILE_PATH = resolveCoordPath('runtime/terminal-restart-scrollback.json', { forWrite: true });
+let restartScrollbackSnapshot = loadRestartScrollbackSnapshot(RESTART_SCROLLBACK_FILE_PATH);
+let restartScrollbackSaveTimer = null;
+
+function refreshRestartScrollbackFromTerminals(terminalsSnapshot = terminals) {
+  try {
+    restartScrollbackSnapshot = saveRestartScrollbackSnapshot(
+      RESTART_SCROLLBACK_FILE_PATH,
+      terminalsSnapshot,
+      { previousSnapshot: restartScrollbackSnapshot }
+    );
+    return restartScrollbackSnapshot;
+  } catch (err) {
+    logWarn(`[Session] Could not save restart scrollback snapshot: ${err.message}`);
+    return restartScrollbackSnapshot;
+  }
+}
+
+function scheduleRestartScrollbackSnapshotSave() {
+  if (restartScrollbackSaveTimer) return;
+  restartScrollbackSaveTimer = setTimeout(() => {
+    restartScrollbackSaveTimer = null;
+    refreshRestartScrollbackFromTerminals();
+  }, 1000);
+  if (typeof restartScrollbackSaveTimer.unref === 'function') {
+    restartScrollbackSaveTimer.unref();
+  }
+}
 
 /**
  * Save current session state to disk
@@ -447,6 +480,7 @@ function saveSessionState() {
 
   try {
     fs.writeFileSync(SESSION_FILE_PATH, JSON.stringify(sessionState, null, 2));
+    refreshRestartScrollbackFromTerminals(sessionState.terminals);
     logInfo(`Session state saved: ${sessionState.terminals.length} terminals`);
   } catch (err) {
     logError(`Failed to save session state: ${err.message}`);
@@ -491,6 +525,11 @@ function clearSessionState() {
     if (fs.existsSync(SESSION_FILE_PATH)) {
       fs.unlinkSync(SESSION_FILE_PATH);
       logInfo('Session state cleared');
+    }
+    if (fs.existsSync(RESTART_SCROLLBACK_FILE_PATH)) {
+      fs.unlinkSync(RESTART_SCROLLBACK_FILE_PATH);
+      restartScrollbackSnapshot = loadRestartScrollbackSnapshot(RESTART_SCROLLBACK_FILE_PATH);
+      logInfo('Restart scrollback snapshot cleared');
     }
   } catch (err) {
     logWarn(`Could not clear session state: ${err.message}`);
@@ -1396,6 +1435,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       ...ownership,
     };
 
+    hydrateTerminalFromRestartSnapshot(terminalInfo, restartScrollbackSnapshot);
     terminals.set(paneId, terminalInfo);
 
     // Send initial mock prompt after short delay
@@ -1447,6 +1487,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     ...ownership,
   };
 
+  hydrateTerminalFromRestartSnapshot(terminalInfo, restartScrollbackSnapshot);
   terminals.set(paneId, terminalInfo);
 
   // Identity injection is handled by renderer (terminal.js:spawnAgent) at 4s
@@ -1469,6 +1510,8 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
 
     // U1: Buffer output for scrollback persistence
     appendToScrollback(terminalInfo, data);
+    hydrateTerminalFromRestartSnapshot(terminalInfo, restartScrollbackSnapshot);
+    scheduleRestartScrollbackSnapshotSave();
 
     broadcast({
       event: 'data',
@@ -1528,6 +1571,7 @@ function writeTerminal(paneId, data) {
       // Enter: echo newline and process command
       broadcast({ event: 'data', paneId, data: '\r\n' });
       appendToScrollback(terminal, '\r\n');
+      scheduleRestartScrollbackSnapshotSave();
 
       const input = terminal.inputBuffer;
       terminal.inputBuffer = '';
@@ -1547,11 +1591,13 @@ function writeTerminal(paneId, data) {
         // Send escape sequence to visually delete: backspace, space, backspace
         broadcast({ event: 'data', paneId, data: '\b \b' });
         terminal.scrollback = terminal.scrollback.slice(0, -1);
+        scheduleRestartScrollbackSnapshotSave();
       }
     } else {
       // Normal character: echo and add to buffer
       broadcast({ event: 'data', paneId, data });
       appendToScrollback(terminal, data);
+      scheduleRestartScrollbackSnapshotSave();
       terminal.inputBuffer += data;
     }
     return { ok: true, status: 'accepted' };
@@ -1615,25 +1661,26 @@ function killTerminal(paneId) {
 function listTerminals() {
   const list = [];
   for (const [paneId, info] of terminals) {
-      list.push({
-        paneId,
-        pid: info.pid,
-        alive: info.alive,
-        cwd: info.cwd,
-        mode: info.mode || 'pty',
-        // Include scrollback for session restoration
-        scrollback: info.scrollback || '',
-        dryRun: info.dryRun || false,
-        createdAt: info.createdAt || null,
-        workRoomRouteOwner: info.workRoomRouteOwner === true,
-        backgroundAgent: info.backgroundAgent === true,
-        routeOwner: info.routeOwner || null,
-        roomId: info.roomId || null,
-        role: info.role || null,
-        ownerPaneId: info.ownerPaneId || null,
-        lastActivity: info.lastActivity || null,
-        lastMeaningfulActivity: info.lastMeaningfulActivity || null, // Smart Watchdog
-        lastInputTime: info.lastInputTime || null,
+    hydrateTerminalFromRestartSnapshot(info, restartScrollbackSnapshot);
+    list.push({
+      paneId,
+      pid: info.pid,
+      alive: info.alive,
+      cwd: info.cwd,
+      mode: info.mode || 'pty',
+      // Include scrollback for session restoration
+      scrollback: info.scrollback || '',
+      dryRun: info.dryRun || false,
+      createdAt: info.createdAt || null,
+      workRoomRouteOwner: info.workRoomRouteOwner === true,
+      backgroundAgent: info.backgroundAgent === true,
+      routeOwner: info.routeOwner || null,
+      roomId: info.roomId || null,
+      role: info.role || null,
+      ownerPaneId: info.ownerPaneId || null,
+      lastActivity: info.lastActivity || null,
+      lastMeaningfulActivity: info.lastMeaningfulActivity || null, // Smart Watchdog
+      lastInputTime: info.lastInputTime || null,
     });
   }
   return list;
