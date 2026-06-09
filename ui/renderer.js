@@ -715,13 +715,21 @@ function summarizeSquidRoomPetMessage(row = {}, role = '') {
   return text || fallback;
 }
 
+// A pane is only "Blocked" when its latest message is a genuine self-report of
+// being stuck — NOT when the message merely mentions blocked/fail/error as the
+// work TOPIC (the team's whole job is discussing bugs, blockers, and failures).
+// Bare-keyword matching produced a permanent false "Blocked" badge while agents
+// were actively working — the room/agent-state incoherence James flagged.
+const SQUID_ROOM_PET_RESOLUTION_RE = /\b(unblocked|no longer blocked|not blocked|resolved|fixed|landed|shipped|passed|all green|gates? (?:green|pass(?:ed)?)|no errors?|done|complete[d]?|clean|ready)\b/;
+const SQUID_ROOM_PET_BLOCKED_RE = /\b(blocked on|blocker:|i'?m blocked|we'?re blocked|cannot proceed|can'?t proceed|cannot continue|can'?t continue|stuck on|stuck waiting|failed to|failing to|giving up|hard blocker|blocking (?:me|us))\b/;
+
 function classifySquidRoomPetState(row = {}, role = '') {
   const text = stripSquidRoomMessageNoise(getSquidRoomCommsText(row)).toLowerCase();
+  if (!SQUID_ROOM_PET_RESOLUTION_RE.test(text) && SQUID_ROOM_PET_BLOCKED_RE.test(text)) {
+    return { state: 'failed', label: 'Blocked' };
+  }
   if (/\b(watchdog|no response|no .{0,40} reply|nudged|wait|waiting|hold|stood down|stand down|pending)\b/.test(text)) {
     return { state: 'waiting', label: 'Waiting' };
-  }
-  if (/\b(blocked|failed|failure|fail|error|stuck|cannot|can't)\b/.test(text)) {
-    return { state: 'failed', label: 'Blocked' };
   }
   if (role === 'oracle' || /\b(verify|verifying|review|reviewing|check|checking|proof|audit)\b/.test(text)) {
     return { state: 'review', label: 'Reviewing' };
@@ -3992,5 +4000,6 @@ if (typeof module !== 'undefined' && module.exports) {
     isSquidRoomPaneWrongWorkingDir,
     normalizeSquidRoomWorkingDirForCompare,
     renderSquidRoomProjectionInline,
+    classifySquidRoomPetState,
   };
 }
