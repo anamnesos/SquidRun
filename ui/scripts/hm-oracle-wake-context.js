@@ -12,6 +12,10 @@ const DEFAULT_WATCH_STATE_PATH = resolveCoordPath(path.join('runtime', 'oracle-w
 const DEFAULT_STALE_RULE_DISTANCE_PCT = 0.015;
 const DEFAULT_TOP_MOVER_LIMIT = 5;
 const DEFAULT_STALE_RULE_LIMIT = 5;
+// A market scan older than this is not "live" data. The disabled/lastScan.ok checks
+// already catch the public-core-removed state; this window additionally defeats the
+// ~9s heartbeat that re-stamps updatedAt and masks a month-stale lastScanAt.
+const DEFAULT_SCAN_FRESHNESS_MS = 30 * 60 * 1000;
 
 function toText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -75,6 +79,24 @@ function sortMovers(entries = []) {
     .filter((entry) => toText(entry.ticker || entry.coin))
     .slice()
     .sort((left, right) => Math.abs(toNumber(right.change24hPct, 0)) - Math.abs(toNumber(left.change24hPct, 0)));
+}
+
+// Data-honesty gate: decide whether the cached scanner state represents live market
+// data. Returns { live, reason }. Disabled/failed scans and stale lastScanAt are NOT
+// live — emitting their cached movers as current is the "stale-as-live" defect.
+function evaluateScanLiveness(scannerState = {}, options = {}) {
+  const now = Number.isFinite(options.now) ? Number(options.now) : Date.now();
+  const freshnessMs = Math.max(0, Number(options.freshnessMs) || DEFAULT_SCAN_FRESHNESS_MS);
+
+  if (toText(scannerState.status).toLowerCase() === 'disabled') return { live: false, reason: 'status_disabled' };
+  if (scannerState.enabled === false) return { live: false, reason: 'scanner_disabled' };
+  if (scannerState?.lastScan?.ok === false) return { live: false, reason: 'last_scan_failed' };
+
+  const lastScanAtMs = Date.parse(toText(scannerState.lastScanAt));
+  if (!Number.isFinite(lastScanAtMs)) return { live: false, reason: 'no_last_scan_at' };
+  if (now - lastScanAtMs > freshnessMs) return { live: false, reason: 'scan_stale' };
+
+  return { live: true, reason: 'live' };
 }
 
 function extractTopMovers(scannerState = {}, limit = DEFAULT_TOP_MOVER_LIMIT) {
@@ -205,7 +227,15 @@ async function buildOracleWakeContext(options = {}) {
   const marketScannerState = readJson(marketScannerStatePath, {}) || {};
   const watchConfig = loadRulesConfig(rulesPath);
   const watchState = loadWatchState(statePath);
-  const topMovers = extractTopMovers(marketScannerState, Number(options.topMoverLimit) || DEFAULT_TOP_MOVER_LIMIT);
+  const scanLiveness = evaluateScanLiveness(marketScannerState, {
+    now: options.now,
+    freshnessMs: options.scanFreshnessMs,
+  });
+  // Only surface cached movers when the scan is genuinely live. A disabled/failed/stale
+  // scan must report disabled, never its frozen cached prices.
+  const topMovers = scanLiveness.live
+    ? extractTopMovers(marketScannerState, Number(options.topMoverLimit) || DEFAULT_TOP_MOVER_LIMIT)
+    : [];
   const staleRules = collectStaleRules(watchConfig, watchState, {
     distancePct: staleDistancePct,
   });
@@ -214,8 +244,12 @@ async function buildOracleWakeContext(options = {}) {
     unlocks: [],
     topMovers,
     staleRules,
+    moversStatus: scanLiveness.live ? 'live' : 'disabled',
+    moversDisabledReason: scanLiveness.live ? null : scanLiveness.reason,
     unlocksSummary: 'none',
-    moversSummary: topMovers.length > 0 ? topMovers.map(formatMoverInline).join('; ') : 'none',
+    moversSummary: !scanLiveness.live
+      ? 'disabled'
+      : (topMovers.length > 0 ? topMovers.map(formatMoverInline).join('; ') : 'none'),
     staleRulesSummary: staleRules.length > 0
       ? staleRules.slice(0, Number(options.staleRuleLimit) || DEFAULT_STALE_RULE_LIMIT).map(formatStaleRuleInline).join('; ')
       : 'none',
@@ -230,12 +264,14 @@ async function buildOracleWakeMessage(baseMessage, options = {}) {
 
 module.exports = {
   DEFAULT_MARKET_SCANNER_STATE_PATH,
+  DEFAULT_SCAN_FRESHNESS_MS,
   DEFAULT_STALE_RULE_DISTANCE_PCT,
   DEFAULT_WATCH_RULES_PATH,
   DEFAULT_WATCH_STATE_PATH,
   buildOracleWakeContext,
   buildOracleWakeMessage,
   collectStaleRules,
+  evaluateScanLiveness,
   extractCachedMarketData,
   extractTopMovers,
   formatMoverInline,
