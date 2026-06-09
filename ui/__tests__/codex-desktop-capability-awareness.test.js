@@ -40,7 +40,6 @@ describe('codex-desktop-capability-awareness', () => {
     createScript('hm-codex-capability-status.js');
     createScript('hm-codex-attention.js');
     createScript('hm-codex-desktop-transport.js');
-    createScript('hm-codex-heartbeat-check.js');
     jest.doMock('../config', () => ({
       ...require('./helpers/mock-config').mockDefaultConfig,
       WORKSPACE_PATH: path.join(tempRoot, '.squidrun'),
@@ -61,15 +60,17 @@ describe('codex-desktop-capability-awareness', () => {
     jest.dontMock('../config');
   });
 
-  test('separates Codex process/app-control availability from missing heartbeat proof', () => {
+  test('reports Codex process/app-control availability without legacy heartbeat proof', () => {
     writeJson(path.join(tempRoot, '.squidrun', 'operator-registry.json'), {
       instances: [
         {
           id: 'james-main',
-          codexHeartbeatPath: '.squidrun/coord/codex-heartbeat.json',
-          notifyPolicy: { codexHeartbeatStaleMinutes: 10 },
         },
       ],
+    });
+    writeJson(path.join(tempRoot, '.squidrun', 'coord', 'codex-heartbeat.json'), {
+      ts: '2026-05-01T00:00:00.000Z',
+      status: 'stale_legacy_file_should_not_count',
     });
     writeJson(path.join(tempRoot, '.squidrun', 'runtime', 'codex-attention-bridge', 'index.json'), {
       schema: 'squidrun.codex_attention_bridge.index.v0',
@@ -110,7 +111,7 @@ describe('codex-desktop-capability-awareness', () => {
       platform: 'win32',
     });
 
-    expect(status.status).toBe('process_available_heartbeat_not_proven');
+    expect(status.status).toBe('process_available_not_monitored');
     expect(status.acceptance_context).toEqual(expect.objectContaining({
       user_correction_source: 'telegram-in-808498547',
       decision: 'surface_existing_codex_desktop_computer_use_app_control_and_attention_inbox_routes_not_new_transport',
@@ -138,14 +139,10 @@ describe('codex-desktop-capability-awareness', () => {
       completed_count: 1,
       total_count: 2,
     }));
-    expect(status.freshness.heartbeat).toEqual(expect.objectContaining({
-      status: 'missing',
-      proven_fresh: false,
-      proof: 'not_proven',
-      reason: 'missing_heartbeat',
-    }));
+    expect(status.freshness.heartbeat).toBeUndefined();
+    expect(status.availability.hmCodexHeartbeatCheck).toBeUndefined();
     expect(awareness.renderCodexDesktopCapabilityMarkdown(status))
-      .toContain('Status: available, not monitored (process_available_heartbeat_not_proven)');
+      .toContain('Status: available, not monitored (process_available_not_monitored)');
     expect(status.availability.hmCodexDesktopTransport).toEqual(expect.objectContaining({
       status: 'available',
       can_summon_workspace: true,
@@ -154,19 +151,13 @@ describe('codex-desktop-capability-awareness', () => {
     expect(status.boundaries.join(' ')).toContain('Do not claim local SquidRun can push a visible message');
   });
 
-  test('derives inbox counts and heartbeat freshness from files rather than hardcoded alive', () => {
+  test('derives inbox counts from files rather than hardcoded alive', () => {
     writeJson(path.join(tempRoot, '.squidrun', 'operator-registry.json'), {
       instances: [
         {
           id: 'james-main',
-          codexHeartbeatPath: '.squidrun/coord/codex-heartbeat.json',
-          notifyPolicy: { codexHeartbeatStaleMinutes: 10 },
         },
       ],
-    });
-    writeJson(path.join(tempRoot, '.squidrun', 'coord', 'codex-heartbeat.json'), {
-      ts: '2026-05-31T20:57:00.000Z',
-      status: 'checked',
     });
     writeJson(path.join(tempRoot, '.squidrun', 'runtime', 'codex-attention-bridge', 'index.json'), {
       updated_at: '2026-05-31T20:58:00.000Z',
@@ -195,26 +186,16 @@ describe('codex-desktop-capability-awareness', () => {
       completed_count: 2,
       total_count: 3,
     }));
-    expect(status.freshness.heartbeat).toEqual(expect.objectContaining({
-      status: 'fresh',
-      proven_fresh: true,
-      proof: 'fresh',
-    }));
+    expect(status.freshness.heartbeat).toBeUndefined();
   });
 
-  test('does not treat an omitted CLI now-ms value as epoch freshness', () => {
+  test('does not treat an omitted CLI now-ms value as epoch attention freshness', () => {
     writeJson(path.join(tempRoot, '.squidrun', 'operator-registry.json'), {
       instances: [
         {
           id: 'james-main',
-          codexHeartbeatPath: '.squidrun/coord/codex-heartbeat.json',
-          notifyPolicy: { codexHeartbeatStaleMinutes: 10 },
         },
       ],
-    });
-    writeJson(path.join(tempRoot, '.squidrun', 'coord', 'codex-heartbeat.json'), {
-      ts: '1970-01-01T00:00:00.000Z',
-      status: 'checked',
     });
     writeJson(path.join(tempRoot, '.squidrun', 'runtime', 'codex-attention-bridge', 'index.json'), {
       updated_at: '1970-01-01T00:00:00.000Z',
@@ -231,12 +212,7 @@ describe('codex-desktop-capability-awareness', () => {
     });
 
     expect(status.generated_at).toBe('2026-05-31T21:15:00.000Z');
-    expect(status.freshness.heartbeat).toEqual(expect.objectContaining({
-      status: 'stale',
-      proven_fresh: false,
-      proof: 'not_proven',
-      reason: 'stale_heartbeat',
-    }));
+    expect(status.freshness.heartbeat).toBeUndefined();
     expect(status.freshness.attentionInbox.age_minutes).toBeGreaterThan(0);
   });
 
@@ -245,8 +221,6 @@ describe('codex-desktop-capability-awareness', () => {
       instances: [
         {
           id: 'james-main',
-          codexHeartbeatPath: '.squidrun/coord/codex-heartbeat.json',
-          notifyPolicy: { codexHeartbeatStaleMinutes: 10 },
         },
       ],
     });
@@ -276,6 +250,7 @@ describe('codex-desktop-capability-awareness', () => {
     expect(markdown).toContain('CODEX DESKTOP CAPABILITY');
     expect(markdown).toContain('visible_injection=not_proven');
     expect(markdown).toContain('hm-codex-capability-status');
-    expect(markdown).toContain('hm-codex-heartbeat-check');
+    expect(markdown).not.toContain('hm-codex-heartbeat-check');
+    expect(markdown).not.toContain('Heartbeat:');
   });
 });

@@ -4,7 +4,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const heartbeatCheck = require('../scripts/hm-codex-heartbeat-check');
 const alignmentAudit = require('../scripts/hm-alignment-audit');
 
 function writeJson(filePath, payload) {
@@ -36,10 +35,6 @@ function writeRegistry(projectRoot, liveInstance = {}, templateInstance = {}) {
         codexInbox: '.squidrun/coord/codex-inbox.jsonl',
         architectInbox: '.squidrun/coord/architect-inbox.jsonl',
         coordPath: '.squidrun/coord',
-        codexHeartbeatPath: '.squidrun/coord/codex-heartbeat.json',
-        notifyPolicy: {
-          codexHeartbeatStaleMinutes: 10,
-        },
         ...templateInstance,
       },
     ],
@@ -57,58 +52,6 @@ describe('operator hub scripts', () => {
   afterEach(() => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     jest.restoreAllMocks();
-  });
-
-  test('codex heartbeat check falls back to template heartbeat policy and passes when fresh', () => {
-    writeRegistry(tempRoot);
-    writeJson(path.join(tempRoot, '.squidrun', 'coord', 'codex-heartbeat.json'), {
-      timestampUtc: '2026-04-27T00:00:00.000Z',
-    });
-
-    const result = heartbeatCheck.runCheck({
-      projectRoot: tempRoot,
-      instance: 'james-main',
-      nowMs: Date.parse('2026-04-27T00:09:00.000Z'),
-      runNodeScript: jest.fn(),
-    });
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      reason: 'fresh',
-      staleMinutes: 10,
-      ageMinutes: 9,
-    }));
-  });
-
-  test('codex heartbeat check reports stale heartbeat through anomaly and Telegram', () => {
-    writeRegistry(tempRoot);
-    writeJson(path.join(tempRoot, '.squidrun', 'coord', 'codex-heartbeat.json'), {
-      ts: '2026-04-27T00:00:00.000Z',
-    });
-    const runNodeScript = jest.fn(() => ({ status: 0, stdout: '{"ok":true}' }));
-
-    const result = heartbeatCheck.runCheck({
-      projectRoot: tempRoot,
-      instance: 'james-main',
-      nowMs: Date.parse('2026-04-27T00:11:30.000Z'),
-      runNodeScript,
-    });
-
-    expect(result).toEqual(expect.objectContaining({
-      ok: false,
-      reason: 'stale_heartbeat',
-      ageMinutes: 11.5,
-    }));
-    expect(runNodeScript).toHaveBeenCalledTimes(2);
-    expect(runNodeScript.mock.calls[0][1]).toEqual(expect.arrayContaining([
-      'type=codex_heartbeat_stale',
-      'src=architect',
-      'sev=high',
-      '--json',
-    ]));
-    expect(runNodeScript.mock.calls[0][1].some((arg) => String(arg).includes('"instance":"james-main"'))).toBe(true);
-    expect(runNodeScript.mock.calls[1][1][0]).toBe('telegram');
-    expect(runNodeScript.mock.calls[1][1][1]).toContain('Codex heartbeat stale for james-main');
   });
 
   test('alignment audit appends a report with architect, reply, and absent witness entries', async () => {

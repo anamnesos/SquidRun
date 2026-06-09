@@ -3,7 +3,7 @@
 
 /**
  * hm-codex-capability-status: report discoverable Codex Desktop, app-control,
- * attention inbox, desktop transport, and heartbeat-check capability status.
+ * attention inbox, and desktop transport capability status.
  *
  * Usage:
  *   node ui/scripts/hm-codex-capability-status.js [status] [--json|--markdown] [--write-report] [--out <path>]
@@ -71,7 +71,7 @@ function usage() {
     'Usage:',
     '  node ui/scripts/hm-codex-capability-status.js [status] [--json|--markdown] [--write-report] [--out <path>]',
     '',
-    'Reports Codex Desktop/process availability separately from heartbeat and attention-inbox freshness.',
+    'Reports Codex Desktop/process availability separately from attention-inbox freshness.',
     '',
   ].join('\n');
 }

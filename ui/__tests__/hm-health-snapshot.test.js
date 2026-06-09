@@ -639,7 +639,7 @@ describe('hm-health-snapshot', () => {
         },
       },
       codexDesktopCapability: {
-        status: 'process_available_heartbeat_not_proven',
+        status: 'process_available_not_monitored',
         availability: {
           codexDesktopProcess: {
             status: 'available',
@@ -662,11 +662,6 @@ describe('hm-health-snapshot', () => {
             total_count: 8,
             polling_freshness: 'index_loaded',
           },
-          heartbeat: {
-            status: 'missing',
-            proof: 'not_proven',
-            reason: 'missing_heartbeat',
-          },
         },
       },
     });
@@ -686,13 +681,14 @@ describe('hm-health-snapshot', () => {
     expect(markdown).toContain('Device ID: LOCAL');
     expect(markdown).toContain('Runtime: mode=connecting, enabled=yes, configured=yes');
     expect(markdown).toContain('CODEX DESKTOP CAPABILITY');
-    expect(markdown).toContain('Status: available, not monitored (process_available_heartbeat_not_proven)');
+    expect(markdown).toContain('Status: available, not monitored (process_available_not_monitored)');
     expect(markdown).toContain('Process/App: available (processes=3, visible_windows=1)');
     expect(markdown).toContain('App-Control Route: known_route (source=telegram-in-808498547)');
     expect(markdown).toContain('Attention Inbox: active=2, completed=5, total=8, freshness=index_loaded');
-    expect(markdown).toContain('Heartbeat: missing (not_proven; reason=missing_heartbeat)');
     expect(markdown).toContain('Desktop Transport: summon=yes, visible_injection=not_proven');
     expect(markdown).toContain('hm-codex-capability-status');
+    expect(markdown).not.toContain('Heartbeat: missing');
+    expect(markdown).not.toContain('hm-codex-heartbeat-check');
     expect(markdown).toContain('LOCAL MODELS');
     expect(markdown).toContain('Feature Enabled: yes');
     expect(markdown).toContain('Sleep Extraction: path=anthropic-api, enabled=yes, available=yes, model=claude-opus-4-6');
