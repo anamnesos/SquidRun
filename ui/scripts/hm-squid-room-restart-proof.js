@@ -121,6 +121,13 @@ function pathsMatch(actual, expected) {
   return normalizePathText(actual) === normalizePathText(expected);
 }
 
+function stripPathToken(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^['"]|['"]$/g, '')
+    .replace(/[)\].,;]+$/g, '');
+}
+
 function stripAnsi(text) {
   return String(text || '')
     .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
@@ -305,11 +312,42 @@ function extractField(rawBody, fieldName) {
   return match ? match[1].trim().split(/\s+/)[0].replace(/[.,]+$/g, '') : null;
 }
 
-function extractCwd(rawBody) {
+function extractCwd(rawBody, expectedCwd = null) {
   const envValue = extractField(rawBody, 'SQUIDRUN_WORKING_DIR');
-  if (envValue) return envValue;
-  const cwdMatch = String(rawBody || '').match(/cwd=([A-Za-z]:[\\/][^\s.;|]+)/i);
-  return cwdMatch ? cwdMatch[1].trim() : null;
+  if (envValue) return stripPathToken(envValue);
+  const body = String(rawBody || '');
+  const cwdMatch = body.match(/cwd=([A-Za-z]:[\\/][^\s;|]+)/i);
+  if (cwdMatch) return stripPathToken(cwdMatch[1]);
+  if (expectedCwd) {
+    const pathMentions = body.match(/[A-Za-z]:[\\/][^\s;|]+/g) || [];
+    const expectedMention = pathMentions
+      .map(stripPathToken)
+      .find((candidate) => pathsMatch(candidate, expectedCwd));
+    if (expectedMention) return expectedMention;
+  }
+  return null;
+}
+
+function isNoActiveCurrentLane(currentLane) {
+  if (!currentLane || typeof currentLane !== 'object') return false;
+  return currentLane.status === 'none'
+    && !currentLane.activeLane
+    && !currentLane.activeLanePresent
+    && !currentLane.objective;
+}
+
+function restartRequestHasNoOpenWork(restartRequest, baseline) {
+  if (!restartRequest || typeof restartRequest !== 'object') return false;
+  const sourceSessionId = Number(restartRequest.sourceSessionId || 0);
+  const baselineSession = Number(baseline?.appStatus?.session || 0);
+  if (sourceSessionId && baselineSession && sourceSessionId !== baselineSession) return false;
+  const headCommit = String(restartRequest.git?.headCommit || restartRequest.git?.shortHead || '');
+  const baselineHead = String(baseline?.gitHead || '');
+  if (headCommit && baselineHead && !headCommit.startsWith(baselineHead)) return false;
+  return Array.isArray(restartRequest.openWork)
+    && restartRequest.openWork.length === 0
+    && Array.isArray(restartRequest.topPriorities)
+    && restartRequest.topPriorities.length === 0;
 }
 
 function normalizeCommsHistoryPayload(payload) {
@@ -363,9 +401,9 @@ function parseArmReceipts(rows, options = {}) {
     const paneId = extractField(rawBody, 'SQUIDRUN_PANE_ID') || role;
     const sessionScope = extractField(rawBody, 'SQUIDRUN_SESSION_SCOPE_ID') || row.session_id || row.sessionId || null;
     const windowKey = extractField(rawBody, 'SQUIDRUN_WINDOW_KEY') || row.scope || row.windowKey || null;
-    const cwd = extractCwd(rawBody);
     const expectedArm = REQUIRED_ARMS.find((arm) => arm.paneId === paneId || arm.role === role);
     if (!expectedArm) continue;
+    const cwd = extractCwd(rawBody, expectedArm.cwd);
     if (expectedSessionScope && sessionScope && sessionScope !== expectedSessionScope) continue;
     receipts[expectedArm.paneId] = {
       rowId: row.rowId || row.row_id || null,
@@ -425,10 +463,14 @@ function collectEvidence(options = {}) {
   const sessionStatePath = options.sessionStatePath || resolveCoordPath('runtime/session-state.json');
   const daemonLogPath = options.daemonLogPath || resolveCoordPath('runtime/daemon.log');
   const busTracePath = options.busTracePath || resolveCoordPath('runtime/bus-reliability-trace.jsonl');
+  const currentLanePath = options.currentLanePath || resolveCoordPath('handoffs/current-lane.json');
+  const restartRequestPath = options.restartRequestPath || resolveCoordPath('coord/restart-request.json');
 
   const appStatus = readJson(appStatusPath, {});
   const windowState = readJson(windowStatePath, {});
   const sessionState = readJson(sessionStatePath, {});
+  const currentLane = readJson(currentLanePath, {});
+  const restartRequest = readJson(restartRequestPath, {});
   const sessionScope = getSessionScopeForSquidRoom(appStatus);
   const startedMs = parseIsoMs(appStatus?.started);
   const eventWindowSec = options.eventWindowSec || DEFAULT_EVENT_WINDOW_SEC;
@@ -451,9 +493,13 @@ function collectEvidence(options = {}) {
       sessionStatePath,
       daemonLogPath,
       busTracePath,
+      currentLanePath,
+      restartRequestPath,
     },
     appStatus,
     windowState,
+    currentLane,
+    restartRequest,
     sessionScope,
     terminalSummary: summarizeSessionState(sessionState, {
       tailChars: options.tailChars || DEFAULT_TAIL_CHARS,
@@ -489,6 +535,8 @@ function buildBaselineSnapshot(evidence) {
     },
     sessionScope: evidence.sessionScope,
     windowState: evidence.windowState || {},
+    currentLane: evidence.currentLane || {},
+    restartRequest: evidence.restartRequest || {},
     terminalSummary: evidence.terminalSummary,
     armProjection: evidence.armProjection,
     armReceipts: evidence.armReceipts,
@@ -759,6 +807,20 @@ function verifyNoSilentDrop(baseline, evidence) {
   const dropped = [];
   const checked = [];
   const panesToCheck = ['2', '3', ...REQUIRED_ARMS.map((arm) => arm.paneId)];
+  const baselineNoLane = isNoActiveCurrentLane(baseline?.currentLane);
+  const currentNoLane = isNoActiveCurrentLane(evidence?.currentLane);
+  const legacyBaselineNoOpenWork = !baseline?.currentLane
+    && currentNoLane
+    && restartRequestHasNoOpenWork(evidence?.restartRequest, baseline);
+
+  if ((baselineNoLane && currentNoLane) || legacyBaselineNoOpenWork) {
+    return check('PASS', 'in_progress_not_silently_dropped', 'No active current lane was present, so terminal body liveness is the restart survival proof for panes.', {
+      currentLaneStatus: evidence?.currentLane?.status || null,
+      baselineCurrentLaneStatus: baseline?.currentLane?.status || null,
+      restartRequestId: evidence?.restartRequest?.requestId || null,
+      legacyBaselineNoOpenWork,
+    });
+  }
 
   for (const paneId of panesToCheck) {
     const before = baselinePanes[paneId];
