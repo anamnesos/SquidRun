@@ -12,6 +12,10 @@ const {
   summarizeSessionState,
   verifyRestartSurvival,
 } = require('../scripts/hm-squid-room-restart-proof');
+const {
+  buildRestartScrollbackSnapshot,
+  hydrateTerminalFromRestartSnapshot,
+} = require('../modules/terminal-restart-scrollback-store');
 
 const ALL_READY = [...REQUIRED_PANES];
 
@@ -84,8 +88,12 @@ function evidence({
   terminalOverrides = {},
   receiptOverrides = {},
   rateOverrides = {},
-  currentLane,
-  restartRequest,
+  currentLane = {
+    status: 'active',
+    activeLane: { id: 'test-active-lane' },
+    activeLanePresent: true,
+    objective: 'prove restart continuity',
+  },
 } = {}) {
   const sessionScope = `app-session-${session}:squid-room`;
   const terminals = [
@@ -134,7 +142,6 @@ function evidence({
     armReceipts: parseArmReceipts(rows, { sessionScope }),
     eventRates: eventRates(rateOverrides),
     currentLane,
-    restartRequest,
   };
 }
 
@@ -222,34 +229,43 @@ describe('hm-squid-room-restart-proof', () => {
     }));
   });
 
-  it('passes respawn body shrink when current lane and restart request prove no open work', () => {
-    const before = buildBaselineSnapshot(evidence({ session: 416 }));
-    delete before.currentLane;
-    delete before.restartRequest;
-
-    const after = evidence({
-      session: 417,
-      started: '2026-06-08T23:00:00.000Z',
-      windowReason: 'startup_restore',
-      windowUpdatedAt: '2026-06-08T23:00:04.000Z',
+  it('fails when baseline does not prove active mid-work', () => {
+    const before = buildBaselineSnapshot(evidence({
+      session: 416,
       currentLane: {
         status: 'none',
         activeLane: null,
         activeLanePresent: false,
         objective: null,
       },
-      restartRequest: {
-        requestId: 'restart-416-test',
-        sourceSessionId: 416,
-        git: {
-          headCommit: 'testhead123456',
-        },
-        openWork: [],
-        topPriorities: [],
-      },
+    }));
+    const after = evidence({
+      session: 417,
+      started: '2026-06-08T23:00:00.000Z',
+      windowReason: 'startup_restore',
+      windowUpdatedAt: '2026-06-08T23:00:04.000Z',
+    });
+
+    const result = verifyRestartSurvival(after, before);
+    const dropCheck = result.checks.find((entry) => entry.id === 'in_progress_not_silently_dropped');
+
+    expect(result.status).toBe('FAIL');
+    expect(dropCheck.status).toBe('FAIL');
+    expect(dropCheck.why).toContain('active current lane');
+  });
+
+  it('passes when a mid-work baseline tail is restored somewhere in the post-restart body', () => {
+    const before = buildBaselineSnapshot(evidence({ session: 416 }));
+
+    const after = evidence({
+      session: 417,
+      started: '2026-06-08T23:00:00.000Z',
+      windowReason: 'startup_restore',
+      windowUpdatedAt: '2026-06-08T23:00:04.000Z',
+      terminalSuffix: 'fresh post restart output',
       terminalOverrides: {
         2: {
-          scrollback: ['fresh Builder startup body after respawn'],
+          scrollback: ['builder body baseline tail\nfresh Builder startup body after respawn'],
         },
       },
     });
@@ -258,7 +274,46 @@ describe('hm-squid-room-restart-proof', () => {
     const dropCheck = result.checks.find((entry) => entry.id === 'in_progress_not_silently_dropped');
 
     expect(dropCheck.status).toBe('PASS');
-    expect(dropCheck.evidence.legacyBaselineNoOpenWork).toBe(true);
+    expect(result.status).toBe('PASS');
+  });
+
+  it('proves restart scrollback hydration without a full restart', () => {
+    const before = evidence({ session: 416 });
+    const baseline = buildBaselineSnapshot(before);
+    const preservedPane = {
+      paneId: '2',
+      cwd: 'D:/projects/squidrun',
+      scrollback: before.terminalSummary.panes['2'].bodyText,
+      scrollbackMaxSize: 50000,
+    };
+    const snapshot = buildRestartScrollbackSnapshot([preservedPane]);
+    const respawnedPane = {
+      paneId: '2',
+      cwd: 'D:/projects/squidrun',
+      alive: true,
+      scrollback: 'fresh prompt after respawn',
+      scrollbackMaxSize: 50000,
+      lastActivity: 2000,
+      lastInputTime: 1900,
+    };
+
+    hydrateTerminalFromRestartSnapshot(respawnedPane, snapshot);
+
+    const after = evidence({
+      session: 417,
+      started: '2026-06-08T23:00:00.000Z',
+      windowReason: 'startup_restore',
+      windowUpdatedAt: '2026-06-08T23:00:04.000Z',
+      terminalOverrides: {
+        2: respawnedPane,
+      },
+    });
+
+    const result = verifyRestartSurvival(after, baseline);
+    const dropCheck = result.checks.find((entry) => entry.id === 'in_progress_not_silently_dropped');
+
+    expect(respawnedPane.restartScrollbackHydrated).toBe(true);
+    expect(dropCheck.status).toBe('PASS');
     expect(result.status).toBe('PASS');
   });
 

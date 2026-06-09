@@ -32,6 +32,8 @@ const REQUIRED_PANES = [...REQUIRED_MAIN_PANES, ...REQUIRED_ARMS.map((arm) => ar
 const DEFAULT_TAIL_CHARS = 700;
 const DEFAULT_MIN_BODY_CHARS = 20;
 const DEFAULT_EVENT_WINDOW_SEC = 30;
+const DEFAULT_RECEIPT_WAIT_MS = 10000;
+const RECEIPT_POLL_MS = 500;
 const RESIZE_STEADY_STATE_LIMIT_PER_SEC = 1;
 
 function usage() {
@@ -57,6 +59,7 @@ function parseArgs(argv) {
     allowNoBaseline: false,
     commsRowsPath: null,
     eventWindowSec: DEFAULT_EVENT_WINDOW_SEC,
+    receiptWaitMs: DEFAULT_RECEIPT_WAIT_MS,
   };
 
   for (let index = 3; index < argv.length; index += 1) {
@@ -75,6 +78,8 @@ function parseArgs(argv) {
       args.commsRowsPath = argv[++index];
     } else if (arg === '--event-window-sec') {
       args.eventWindowSec = Number(argv[++index]);
+    } else if (arg === '--receipt-wait-ms') {
+      args.receiptWaitMs = Number(argv[++index]);
     } else if (arg === '--help' || arg === '-h') {
       args.command = 'help';
     } else {
@@ -155,6 +160,8 @@ function summarizeTerminal(terminal, options = {}) {
     dryRun: Boolean(terminal?.dryRun),
     printableChars: bodyText.length,
     hasRenderableBody: bodyText.length >= Number(options.minBodyChars || DEFAULT_MIN_BODY_CHARS),
+    bodyText,
+    bodySha256: sha256(bodyText),
     tailChars: tailText.length,
     tailSha256: sha256(tailText),
     tailText,
@@ -328,34 +335,17 @@ function extractCwd(rawBody, expectedCwd = null) {
   return null;
 }
 
-function isNoActiveCurrentLane(currentLane) {
-  if (!currentLane || typeof currentLane !== 'object') return false;
-  return currentLane.status === 'none'
-    && !currentLane.activeLane
-    && !currentLane.activeLanePresent
-    && !currentLane.objective;
-}
-
-function restartRequestHasNoOpenWork(restartRequest, baseline) {
-  if (!restartRequest || typeof restartRequest !== 'object') return false;
-  const sourceSessionId = Number(restartRequest.sourceSessionId || 0);
-  const baselineSession = Number(baseline?.appStatus?.session || 0);
-  if (sourceSessionId && baselineSession && sourceSessionId !== baselineSession) return false;
-  const headCommit = String(restartRequest.git?.headCommit || restartRequest.git?.shortHead || '');
-  const baselineHead = String(baseline?.gitHead || '');
-  if (headCommit && baselineHead && !headCommit.startsWith(baselineHead)) return false;
-  return Array.isArray(restartRequest.openWork)
-    && restartRequest.openWork.length === 0
-    && Array.isArray(restartRequest.topPriorities)
-    && restartRequest.topPriorities.length === 0;
-}
-
 function normalizeCommsHistoryPayload(payload) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.rows)) return payload.rows;
   if (Array.isArray(payload?.messages)) return payload.messages;
   if (Array.isArray(payload?.entries)) return payload.entries;
   return [];
+}
+
+function hasAllArmReceipts(rows, sessionScope) {
+  const receipts = parseArmReceipts(rows, { sessionScope });
+  return REQUIRED_ARMS.every((arm) => receipts[arm.paneId]);
 }
 
 function readCommsRows(options = {}) {
@@ -367,27 +357,46 @@ function readCommsRows(options = {}) {
   if (!sessionScope) return [];
 
   const scriptPath = path.resolve(__dirname, 'hm-comms.js');
+  const waitMs = Math.max(Number(options.receiptWaitMs || 0), 0);
+  const deadline = Date.now() + waitMs;
+  let lastRows = [];
+
   try {
-    const output = execFileSync(process.execPath, [
-      scriptPath,
-      'history',
-      '--scope',
-      'squid-room',
-      '--session',
-      sessionScope,
-      '--last',
-      '200',
-      '--json',
-    ], {
-      cwd: getProjectRoot(),
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      maxBuffer: 4 * 1024 * 1024,
-    });
-    return normalizeCommsHistoryPayload(JSON.parse(output));
+    do {
+      const output = execFileSync(process.execPath, [
+        scriptPath,
+        'history',
+        '--scope',
+        'squid-room',
+        '--session',
+        sessionScope,
+        '--last',
+        '200',
+        '--json',
+      ], {
+        cwd: getProjectRoot(),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 4 * 1024 * 1024,
+      });
+      lastRows = normalizeCommsHistoryPayload(JSON.parse(output));
+      if (hasAllArmReceipts(lastRows, sessionScope)) return lastRows;
+      if (Date.now() >= deadline) break;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, RECEIPT_POLL_MS);
+    } while (true);
+    return lastRows;
   } catch (error) {
-    return [];
+    return lastRows;
   }
+}
+
+function isActiveCurrentLane(currentLane) {
+  if (!currentLane || typeof currentLane !== 'object') return false;
+  if (currentLane.status === 'active') return true;
+  if (currentLane.activeLane || currentLane.activeLanePresent) return true;
+  if (currentLane.objective) return true;
+  const activeWork = currentLane.activeWorkReconciliation || {};
+  return Array.isArray(activeWork.activeWorkItemIds) && activeWork.activeWorkItemIds.length > 0;
 }
 
 function parseArmReceipts(rows, options = {}) {
@@ -464,13 +473,11 @@ function collectEvidence(options = {}) {
   const daemonLogPath = options.daemonLogPath || resolveCoordPath('runtime/daemon.log');
   const busTracePath = options.busTracePath || resolveCoordPath('runtime/bus-reliability-trace.jsonl');
   const currentLanePath = options.currentLanePath || resolveCoordPath('handoffs/current-lane.json');
-  const restartRequestPath = options.restartRequestPath || resolveCoordPath('coord/restart-request.json');
 
   const appStatus = readJson(appStatusPath, {});
   const windowState = readJson(windowStatePath, {});
   const sessionState = readJson(sessionStatePath, {});
   const currentLane = readJson(currentLanePath, {});
-  const restartRequest = readJson(restartRequestPath, {});
   const sessionScope = getSessionScopeForSquidRoom(appStatus);
   const startedMs = parseIsoMs(appStatus?.started);
   const eventWindowSec = options.eventWindowSec || DEFAULT_EVENT_WINDOW_SEC;
@@ -479,6 +486,7 @@ function collectEvidence(options = {}) {
   const commsRows = readCommsRows({
     sessionScope,
     commsRowsPath: options.commsRowsPath,
+    receiptWaitMs: options.receiptWaitMs,
   });
 
   return {
@@ -494,12 +502,10 @@ function collectEvidence(options = {}) {
       daemonLogPath,
       busTracePath,
       currentLanePath,
-      restartRequestPath,
     },
     appStatus,
     windowState,
     currentLane,
-    restartRequest,
     sessionScope,
     terminalSummary: summarizeSessionState(sessionState, {
       tailChars: options.tailChars || DEFAULT_TAIL_CHARS,
@@ -536,7 +542,6 @@ function buildBaselineSnapshot(evidence) {
     sessionScope: evidence.sessionScope,
     windowState: evidence.windowState || {},
     currentLane: evidence.currentLane || {},
-    restartRequest: evidence.restartRequest || {},
     terminalSummary: evidence.terminalSummary,
     armProjection: evidence.armProjection,
     armReceipts: evidence.armReceipts,
@@ -807,18 +812,11 @@ function verifyNoSilentDrop(baseline, evidence) {
   const dropped = [];
   const checked = [];
   const panesToCheck = ['2', '3', ...REQUIRED_ARMS.map((arm) => arm.paneId)];
-  const baselineNoLane = isNoActiveCurrentLane(baseline?.currentLane);
-  const currentNoLane = isNoActiveCurrentLane(evidence?.currentLane);
-  const legacyBaselineNoOpenWork = !baseline?.currentLane
-    && currentNoLane
-    && restartRequestHasNoOpenWork(evidence?.restartRequest, baseline);
 
-  if ((baselineNoLane && currentNoLane) || legacyBaselineNoOpenWork) {
-    return check('PASS', 'in_progress_not_silently_dropped', 'No active current lane was present, so terminal body liveness is the restart survival proof for panes.', {
-      currentLaneStatus: evidence?.currentLane?.status || null,
+  if (!isActiveCurrentLane(baseline?.currentLane)) {
+    return check('FAIL', 'in_progress_not_silently_dropped', 'Baseline did not prove an active current lane with in-progress pane output.', {
       baselineCurrentLaneStatus: baseline?.currentLane?.status || null,
-      restartRequestId: evidence?.restartRequest?.requestId || null,
-      legacyBaselineNoOpenWork,
+      baselineActiveLanePresent: Boolean(baseline?.currentLane?.activeLane || baseline?.currentLane?.activeLanePresent),
     });
   }
 
@@ -832,13 +830,14 @@ function verifyNoSilentDrop(baseline, evidence) {
       continue;
     }
     const beforeTail = normalizeBodyText(before.tailText || '');
-    const afterTailArea = normalizeBodyText(after.tailText || '');
-    if (beforeTail && !afterTailArea.includes(beforeTail) && after.printableChars < before.printableChars) {
+    const afterSearchArea = normalizeBodyText(after.bodyText || after.tailText || '');
+    if (beforeTail && !afterSearchArea.includes(beforeTail)) {
       dropped.push({
         paneId,
-        reason: 'baseline_tail_not_found_and_body_shrank',
+        reason: 'baseline_tail_not_found_in_restored_body',
         baselineTailSha256: before.tailSha256,
-        currentTailSha256: after.tailSha256,
+        currentBodySha256: after.bodySha256 || null,
+        currentTailSha256: after.tailSha256 || null,
         beforePrintableChars: before.printableChars,
         afterPrintableChars: after.printableChars,
       });
@@ -856,7 +855,7 @@ function verifyNoSilentDrop(baseline, evidence) {
     });
   }
 
-  return check('PASS', 'in_progress_not_silently_dropped', 'Baseline terminal body tails are still present or the body did not collapse after restart.', {
+  return check('PASS', 'in_progress_not_silently_dropped', 'Baseline terminal body tails are still present after restart.', {
     checked,
   });
 }
@@ -985,6 +984,7 @@ function main(argv = process.argv) {
     const evidence = collectEvidence({
       commsRowsPath: args.commsRowsPath,
       eventWindowSec: args.eventWindowSec,
+      receiptWaitMs: args.receiptWaitMs,
     });
     const baseline = buildBaselineSnapshot(evidence);
     const outputPath = args.outPath || DEFAULT_BASELINE_PATH;
@@ -1007,6 +1007,7 @@ function main(argv = process.argv) {
     const evidence = collectEvidence({
       commsRowsPath: args.commsRowsPath,
       eventWindowSec: args.eventWindowSec,
+      receiptWaitMs: args.receiptWaitMs,
     });
     const result = verifyRestartSurvival(evidence, baseline, {
       allowSameSession: args.allowSameSession,
