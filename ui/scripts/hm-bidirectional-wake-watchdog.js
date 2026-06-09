@@ -21,10 +21,12 @@ const DEFAULT_STATE_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-
 const DEFAULT_PID_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wake-watchdog.pid'), { forWrite: true });
 const DEFAULT_STATUS_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wake-watchdog-status.json'), { forWrite: true });
 const DEFAULT_LOG_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wake-watchdog.log'), { forWrite: true });
+const DEFAULT_START_LOCK_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wake-watchdog-start.lock'), { forWrite: true });
 const DEFAULT_ARCHITECT_SILENCE_MS = 8 * 60 * 1000;
 const DEFAULT_ORACLE_SILENCE_MS = 10 * 60 * 1000;
 const CHILD_START_GRACE_MS = 10_000;
 const MIN_STATUS_STALE_AFTER_MS = 90_000;
+const START_LOCK_STALE_AFTER_MS = 15_000;
 
 function toText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -175,6 +177,69 @@ function cleanupRunnerMetadata() {
     fs.rmSync(DEFAULT_STATUS_PATH, { force: true });
   } catch {
     // Best effort stale metadata cleanup.
+  }
+}
+
+function readLockAgeMs(lockPath = DEFAULT_START_LOCK_PATH, nowMs = Date.now()) {
+  try {
+    const stat = fs.statSync(lockPath);
+    const mtimeMs = Number(stat.mtimeMs || 0);
+    return mtimeMs > 0 ? Math.max(0, nowMs - mtimeMs) : null;
+  } catch {
+    return null;
+  }
+}
+
+function acquireStartLock(lockPath = DEFAULT_START_LOCK_PATH, options = {}) {
+  const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+  const staleAfterMs = Math.max(1_000, toNumber(options.staleAfterMs, START_LOCK_STALE_AFTER_MS));
+  ensureDir(lockPath);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const fd = fs.openSync(lockPath, 'wx');
+      fs.writeFileSync(fd, JSON.stringify({
+        pid: process.pid,
+        createdAt: new Date(nowMs).toISOString(),
+      }));
+      fs.closeSync(fd);
+      return { acquired: true, lockPath };
+    } catch (error) {
+      if (error?.code !== 'EEXIST') {
+        return { acquired: false, reason: 'start_lock_failed', error: error.message, lockPath };
+      }
+      const lockAgeMs = readLockAgeMs(lockPath, nowMs);
+      if (attempt === 0 && lockAgeMs !== null && lockAgeMs >= staleAfterMs) {
+        try {
+          fs.rmSync(lockPath, { force: true });
+          appendLog(DEFAULT_LOG_PATH, `[cleanup] removed stale start lock ageMs=${lockAgeMs}`);
+          continue;
+        } catch (cleanupError) {
+          return {
+            acquired: false,
+            reason: 'start_lock_cleanup_failed',
+            error: cleanupError.message,
+            lockAgeMs,
+            lockPath,
+          };
+        }
+      }
+      return {
+        acquired: false,
+        reason: 'start_in_progress',
+        lockAgeMs,
+        lockPath,
+      };
+    }
+  }
+  return { acquired: false, reason: 'start_lock_not_acquired', lockPath };
+}
+
+function releaseStartLock(lockPath = DEFAULT_START_LOCK_PATH) {
+  try {
+    fs.rmSync(lockPath, { force: true });
+    return { ok: true, lockPath };
+  } catch (error) {
+    return { ok: false, error: error.message, lockPath };
   }
 }
 
@@ -564,52 +629,74 @@ function startRunner(options = {}) {
     cleanupRunnerMetadata();
   }
 
-  const statePath = path.resolve(toText(options.statePath, DEFAULT_STATE_PATH));
-  const intervalMs = Math.max(30_000, toNumber(options.intervalMs, DEFAULT_INTERVAL_MS));
-  const childArgs = [
-    __filename,
-    'run',
-    '--state',
-    statePath,
-    '--interval-ms',
-    String(intervalMs),
-  ];
-  if (options.agentPaneAutoRecovery === false) {
-    childArgs.push('--no-agent-pane-auto-recovery');
+  const lock = acquireStartLock(DEFAULT_START_LOCK_PATH, options.startLock);
+  if (!lock.acquired) {
+    return {
+      ok: lock.reason === 'start_in_progress',
+      alreadyStarting: lock.reason === 'start_in_progress',
+      startInProgress: lock.reason === 'start_in_progress',
+      ...lock,
+    };
   }
 
-  ensureDir(DEFAULT_LOG_PATH);
-  const out = fs.openSync(DEFAULT_LOG_PATH, 'a');
-  const executable = resolveLaunchExecutable();
-  const projectRoot = path.resolve(
-    toText(options.projectRoot, '')
-    || process.env.SQUIDRUN_PROJECT_ROOT
-    || path.join(__dirname, '..', '..')
-  );
-  const child = spawn(executable, childArgs, {
-    cwd: projectRoot,
-    detached: true,
-    stdio: ['ignore', out, out],
-    env: {
-      ...cleanNodeChildEnv(process.env),
-      SQUIDRUN_PROJECT_ROOT: projectRoot,
-    },
-    windowsHide: true,
-  });
-  child.unref();
-  fs.writeFileSync(DEFAULT_PID_PATH, String(child.pid), 'utf8');
-  appendLog(DEFAULT_LOG_PATH, `[spawn] pid=${child.pid} executable=${executable} intervalMs=${intervalMs}`);
-  return {
-    ok: true,
-    started: true,
-    pid: child.pid,
-    intervalMs,
-    statePath,
-    pidPath: DEFAULT_PID_PATH,
-    statusPath: DEFAULT_STATUS_PATH,
-    logPath: DEFAULT_LOG_PATH,
-    executable,
-  };
+  try {
+    const rechecked = readRunnerStatus();
+    if (rechecked.running) {
+      return { ok: true, alreadyRunning: true, ...rechecked };
+    }
+    if (rechecked.starting) {
+      return { ok: true, alreadyStarting: true, ...rechecked };
+    }
+
+    const statePath = path.resolve(toText(options.statePath, DEFAULT_STATE_PATH));
+    const intervalMs = Math.max(30_000, toNumber(options.intervalMs, DEFAULT_INTERVAL_MS));
+    const childArgs = [
+      __filename,
+      'run',
+      '--state',
+      statePath,
+      '--interval-ms',
+      String(intervalMs),
+    ];
+    if (options.agentPaneAutoRecovery === false) {
+      childArgs.push('--no-agent-pane-auto-recovery');
+    }
+
+    ensureDir(DEFAULT_LOG_PATH);
+    const out = fs.openSync(DEFAULT_LOG_PATH, 'a');
+    const executable = resolveLaunchExecutable();
+    const projectRoot = path.resolve(
+      toText(options.projectRoot, '')
+      || process.env.SQUIDRUN_PROJECT_ROOT
+      || path.join(__dirname, '..', '..')
+    );
+    const child = spawn(executable, childArgs, {
+      cwd: projectRoot,
+      detached: true,
+      stdio: ['ignore', out, out],
+      env: {
+        ...cleanNodeChildEnv(process.env),
+        SQUIDRUN_PROJECT_ROOT: projectRoot,
+      },
+      windowsHide: true,
+    });
+    child.unref();
+    fs.writeFileSync(DEFAULT_PID_PATH, String(child.pid), 'utf8');
+    appendLog(DEFAULT_LOG_PATH, `[spawn] pid=${child.pid} executable=${executable} intervalMs=${intervalMs}`);
+    return {
+      ok: true,
+      started: true,
+      pid: child.pid,
+      intervalMs,
+      statePath,
+      pidPath: DEFAULT_PID_PATH,
+      statusPath: DEFAULT_STATUS_PATH,
+      logPath: DEFAULT_LOG_PATH,
+      executable,
+    };
+  } finally {
+    releaseStartLock(DEFAULT_START_LOCK_PATH);
+  }
 }
 
 function stopRunner() {
