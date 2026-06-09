@@ -183,6 +183,9 @@ const {
   checkAndRecoverTelegramPoller,
 } = require('../../scripts/hm-telegram-poller-watchdog');
 const {
+  startRunner: startBidirectionalWakeWatchdogRunner,
+} = require('../../scripts/hm-bidirectional-wake-watchdog');
+const {
   generateSessionSummary,
 } = require('../../scripts/hm-session-summary');
 const {
@@ -1270,6 +1273,12 @@ class SquidRunApp {
       staleThresholdMs: options.telegramPollerStaleThresholdMs,
       enabled: options.telegramPollerAutoRecover !== false,
     });
+    const bidirectionalWakeWatchdog = await this.runStartupHealthBidirectionalWakeWatchdogAutoStart({
+      projectRoot,
+      profileName,
+      nowMs,
+      enabled: options.bidirectionalWakeWatchdogAutoStart !== false,
+    });
 
     const snapshot = createHealthSnapshot({
       projectRoot,
@@ -1328,6 +1337,7 @@ class SquidRunApp {
       outputPath,
       snapshot,
       telegramPollerRecovery,
+      bidirectionalWakeWatchdog,
       ledgerContext,
       ingestResult,
     };
@@ -1357,6 +1367,32 @@ class SquidRunApp {
       return result;
     } catch (err) {
       log.warn('StartupHealth', `Telegram poller recovery preflight failed: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
+  }
+
+  async runStartupHealthBidirectionalWakeWatchdogAutoStart(options = {}) {
+    if (options.enabled === false) {
+      return { ok: true, skipped: true, reason: 'disabled' };
+    }
+    const profileName = normalizeProfileName(options.profileName || getActiveProfileName());
+    if (!isMainProfile(profileName)) {
+      return { ok: true, skipped: true, reason: 'profile_not_owner' };
+    }
+
+    try {
+      const result = startBidirectionalWakeWatchdogRunner({
+        projectRoot: options.projectRoot || getProjectRoot(),
+      });
+      if (result?.started === true) {
+        log.warn(
+          'StartupHealth',
+          `Started bidirectional wake watchdog runner before startup-health snapshot (pid=${result.pid || 'unknown'})`
+        );
+      }
+      return result;
+    } catch (err) {
+      log.warn('StartupHealth', `Bidirectional wake watchdog auto-start failed: ${err.message}`);
       return { ok: false, error: err.message };
     }
   }
