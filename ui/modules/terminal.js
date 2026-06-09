@@ -152,6 +152,8 @@ const TERMINAL_WRITE_FRAME_YIELD_MS = 16;
 const TERMINAL_STREAMING_FIT_MIN_INTERVAL_MS = 350;
 const TERMINAL_STREAMING_FIT_SETTLE_MS = 160;
 const TERMINAL_USER_SCROLL_HOLD_MS = 1800;
+const TERMINAL_SCROLL_FALLBACK_DELAY_MS = 24;
+const TERMINAL_WHEEL_PIXEL_LINE = 40;
 const PROMOTION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 // WebGL rendering: disabled by default to reduce memory usage.
@@ -400,12 +402,96 @@ function terminalHasScrollableScrollback(terminal) {
   return info.scrollbackRows > 0 || info.baseY > 0;
 }
 
+function getTerminalViewportY(terminal) {
+  return getTerminalScrollbackInfo(terminal).viewportY;
+}
+
 function markTerminalUserScroll(paneId, terminal, event = {}) {
   const id = String(paneId);
   if (!terminalHasScrollableScrollback(terminal)) return false;
   const deltaY = Number(event.deltaY);
   if (Number.isFinite(deltaY) && deltaY === 0) return false;
   terminalUserScrollUntil.set(id, Date.now() + TERMINAL_USER_SCROLL_HOLD_MS);
+  return true;
+}
+
+function normalizeTerminalWheelScrollLines(event = {}, terminal = {}) {
+  const deltaY = Number(event.deltaY);
+  if (!Number.isFinite(deltaY) || deltaY === 0) return 0;
+
+  const rows = Math.max(1, Number(terminal?.rows) || 1);
+  const deltaMode = Number(event.deltaMode) || 0;
+  let rawLines;
+  if (deltaMode === 1) {
+    rawLines = deltaY;
+  } else if (deltaMode === 2) {
+    rawLines = deltaY * rows;
+  } else {
+    rawLines = deltaY / TERMINAL_WHEEL_PIXEL_LINE;
+  }
+
+  const direction = rawLines < 0 ? -1 : 1;
+  const lineCount = Math.max(1, Math.ceil(Math.abs(rawLines)));
+  return direction * Math.min(rows, lineCount);
+}
+
+function applyTerminalScrollLines(paneId, terminal, lines) {
+  const id = String(paneId);
+  const amount = Number(lines);
+  if (!terminalHasScrollableScrollback(terminal) || !Number.isFinite(amount) || amount === 0) {
+    return false;
+  }
+  if (typeof terminal?.scrollLines !== 'function') {
+    return false;
+  }
+  terminal.scrollLines(amount);
+  markTerminalUserScroll(id, terminal, { deltaY: amount });
+  return true;
+}
+
+function scheduleTerminalScrollFallback(paneId, terminal, beforeViewportY, lines, delayMs = TERMINAL_SCROLL_FALLBACK_DELAY_MS) {
+  const id = String(paneId);
+  const amount = Number(lines);
+  if (!id || !terminal || !Number.isFinite(amount) || amount === 0) return false;
+  if (typeof terminal.scrollLines !== 'function') return false;
+
+  setTimeout(() => {
+    if (terminals.get(id) !== terminal) return;
+    if (getTerminalViewportY(terminal) !== beforeViewportY) return;
+    applyTerminalScrollLines(id, terminal, amount);
+  }, Math.max(0, Number(delayMs) || 0));
+  return true;
+}
+
+function handleTerminalWheelScrollIntent(paneId, terminal, event = {}) {
+  if (!markTerminalUserScroll(paneId, terminal, event)) return false;
+
+  if (typeof terminal?.focus === 'function') {
+    try {
+      terminal.focus();
+    } catch (_) {}
+  }
+
+  const lines = normalizeTerminalWheelScrollLines(event, terminal);
+  if (lines === 0) return false;
+  return scheduleTerminalScrollFallback(paneId, terminal, getTerminalViewportY(terminal), lines);
+}
+
+function getTerminalKeyboardScrollLines(event = {}, terminal = {}) {
+  if (event?.ctrlKey || event?.metaKey || event?.altKey) return 0;
+  const key = String(event?.key || '');
+  const rows = Math.max(1, Number(terminal?.rows) || 1);
+  if (key === 'PageUp') return -rows;
+  if (key === 'PageDown') return rows;
+  return 0;
+}
+
+function handleTerminalKeyboardScroll(paneId, terminal, event = {}) {
+  const lines = getTerminalKeyboardScrollLines(event, terminal);
+  if (lines === 0) return false;
+  if (!applyTerminalScrollLines(paneId, terminal, lines)) return false;
+  if (typeof event.preventDefault === 'function') event.preventDefault();
+  if (typeof event.stopPropagation === 'function') event.stopPropagation();
   return true;
 }
 
@@ -513,7 +599,7 @@ function scheduleStreamingViewportFit(paneId, terminal, fitAddon = null) {
 function setupTerminalWheelScrollGuard(paneId, container, terminal, options = {}) {
   if (!container || typeof container.addEventListener !== 'function' || !terminal) return false;
   container.addEventListener('wheel', (event) => {
-    markTerminalUserScroll(paneId, terminal, event);
+    handleTerminalWheelScrollIntent(paneId, terminal, event);
   }, {
     passive: true,
     ...(options.signal ? { signal: options.signal } : {}),
@@ -2511,6 +2597,10 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       return false;
     }
 
+    if (handleTerminalKeyboardScroll(paneId, terminal, event)) {
+      return false;
+    }
+
     if (isPaneReadOnlyMirrorMode(paneId)) {
       if (event.ctrlKey && event.key.toLowerCase() === 'f') {
         openTerminalSearch(paneId);
@@ -2772,6 +2862,10 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
     const isEnterKey = event.key === 'Enter' || event.key === 'Return' || event.keyCode === 13;
     if (isCopyShortcut(event) || isPasteShortcut(event)) {
       // Keep Ctrl/Cmd+C and Ctrl/Cmd+V as clipboard actions, never terminal input/SIGINT.
+      return false;
+    }
+
+    if (handleTerminalKeyboardScroll(paneId, terminal, event)) {
       return false;
     }
 
@@ -3803,6 +3897,12 @@ module.exports = {
     getTerminalScrollbackInfo,
     terminalHasScrollableScrollback,
     markTerminalUserScroll,
+    normalizeTerminalWheelScrollLines,
+    applyTerminalScrollLines,
+    scheduleTerminalScrollFallback,
+    handleTerminalWheelScrollIntent,
+    getTerminalKeyboardScrollLines,
+    handleTerminalKeyboardScroll,
     shouldPreserveTerminalUserScroll,
     setupTerminalWheelScrollGuard,
     rendererOwnsPtyGeometry,
@@ -3826,6 +3926,7 @@ module.exports = {
     TERMINAL_STREAMING_FIT_MIN_INTERVAL_MS,
     TERMINAL_STREAMING_FIT_SETTLE_MS,
     TERMINAL_USER_SCROLL_HOLD_MS,
+    TERMINAL_SCROLL_FALLBACK_DELAY_MS,
     RESIZE_INPUT_MAX_DEFER_MS,
     RESIZE_OWN_FIT_OBSERVER_SUPPRESS_MS,
   },

@@ -1617,6 +1617,83 @@ describe('terminal.js module', () => {
       expect(terminal._internals.shouldPreserveTerminalUserScroll('1')).toBe(true);
     });
 
+    test('B scrollback: wheel fallback scrolls when xterm leaves the viewport pinned', () => {
+      const terminalObj = {
+        rows: 24,
+        buffer: {
+          active: {
+            baseY: 72,
+            viewportY: 72,
+            cursorY: 3,
+            length: 96,
+          },
+        },
+        focus: jest.fn(),
+        scrollLines: jest.fn(),
+      };
+      terminal.terminals.set('1', terminalObj);
+
+      const event = { deltaY: -120, deltaMode: 0, preventDefault: jest.fn() };
+      expect(terminal._internals.handleTerminalWheelScrollIntent('1', terminalObj, event)).toBe(true);
+
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(terminalObj.focus).toHaveBeenCalled();
+      jest.advanceTimersByTime(terminal._internals.TERMINAL_SCROLL_FALLBACK_DELAY_MS);
+
+      expect(terminalObj.scrollLines).toHaveBeenCalledWith(-3);
+      expect(terminal._internals.shouldPreserveTerminalUserScroll('1')).toBe(true);
+    });
+
+    test('B scrollback: wheel fallback does not double-scroll after xterm moves the viewport', () => {
+      const terminalObj = {
+        rows: 24,
+        buffer: {
+          active: {
+            baseY: 72,
+            viewportY: 72,
+            cursorY: 3,
+            length: 96,
+          },
+        },
+        focus: jest.fn(),
+        scrollLines: jest.fn(),
+      };
+      terminal.terminals.set('1', terminalObj);
+
+      expect(terminal._internals.handleTerminalWheelScrollIntent('1', terminalObj, { deltaY: -120 })).toBe(true);
+      terminalObj.buffer.active.viewportY = 69;
+      jest.advanceTimersByTime(terminal._internals.TERMINAL_SCROLL_FALLBACK_DELAY_MS);
+
+      expect(terminalObj.scrollLines).not.toHaveBeenCalled();
+    });
+
+    test('B scrollback: PageUp key scrolls locally instead of relying on PTY input', () => {
+      const terminalObj = {
+        rows: 24,
+        buffer: {
+          active: {
+            baseY: 72,
+            viewportY: 72,
+            cursorY: 3,
+            length: 96,
+          },
+        },
+        scrollLines: jest.fn(),
+      };
+      const event = {
+        key: 'PageUp',
+        shiftKey: true,
+        preventDefault: jest.fn(),
+        stopPropagation: jest.fn(),
+      };
+
+      expect(terminal._internals.handleTerminalKeyboardScroll('1', terminalObj, event)).toBe(true);
+
+      expect(terminalObj.scrollLines).toHaveBeenCalledWith(-24);
+      expect(event.preventDefault).toHaveBeenCalled();
+      expect(event.stopPropagation).toHaveBeenCalled();
+    });
+
     test('B scrollback: xterm viewport CSS keeps scroll overflow on the viewport layer', () => {
       const css = fs.readFileSync(path.join(__dirname, '../styles/layout.css'), 'utf8');
 
