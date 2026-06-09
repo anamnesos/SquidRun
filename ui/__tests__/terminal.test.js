@@ -201,7 +201,6 @@ describe('terminal.js module', () => {
     }
     terminal._internals.terminalStreamingFitTimers.clear();
     terminal._internals.terminalStreamingLastFitAt.clear();
-    terminal._internals.terminalUserScrollUntil.clear();
     ['1', '2', '3', 'trustquote-app', 'trustquote-lead', 'trustquote-invoice', 'trustquote-schedule-dispatch'].forEach((paneId) => {
       terminal.resetTerminalWriteQueue(paneId);
     });
@@ -1574,12 +1573,50 @@ describe('terminal.js module', () => {
       expect(terminalObj.refresh).toHaveBeenCalledWith(0, 23);
       expect(terminalObj.scrollToBottom).not.toHaveBeenCalled();
 
-      jest.advanceTimersByTime(terminal._internals.TERMINAL_USER_SCROLL_HOLD_MS + 1);
+      // Position-based, NOT time-based: after a long gap the viewport is STILL
+      // scrolled up (viewportY 10 < baseY 40), so auto-scroll stays suppressed.
+      // (Old behavior yanked to bottom once the 1.8s hold expired — the bug.)
+      jest.advanceTimersByTime(180000); // long gap — position, not time, decides
       terminal._internals.refreshTerminalViewport('1', terminalObj, fitAddon, {
         operation: 'scrollback_access_probe_after_hold',
         forceFit: true,
       });
+      expect(terminalObj.scrollToBottom).not.toHaveBeenCalled();
+
+      // When the user scrolls back to the bottom (viewportY >= baseY), auto-follow
+      // resumes naturally — no timer involved.
+      terminalObj.buffer.active.viewportY = 40;
+      terminal._internals.refreshTerminalViewport('1', terminalObj, fitAddon, {
+        operation: 'scrollback_access_probe_returned_to_bottom',
+        forceFit: true,
+      });
       expect(terminalObj.scrollToBottom).toHaveBeenCalledTimes(1);
+    });
+
+    test('B scrollback: at-bottom race — a 1-row streaming lag still auto-follows (does not stick)', () => {
+      // The opposite-but-equal bug: when following at the bottom and a line lands,
+      // baseY bumps before the viewport follows, so viewportY is transiently 1 row
+      // short. A strict viewportY<baseY predicate would suppress the follow and
+      // stick mid-stream. The bottom tolerance must keep auto-following here.
+      const make = (baseY, viewportY) => ({
+        rows: 24,
+        buffer: { active: { baseY, viewportY, cursorY: 4, length: baseY + 24 } },
+        refresh: jest.fn(),
+        scrollToBottom: jest.fn(),
+      });
+      const fitAddon = { fit: jest.fn() };
+
+      for (const lag of [0, 1, 2]) {
+        const t = make(40, 40 - lag); // within tolerance => keep following
+        terminal.terminals.set('1', t);
+        terminal._internals.refreshTerminalViewport('1', t, fitAddon, { operation: 'stream', forceFit: true });
+        expect(t.scrollToBottom).toHaveBeenCalledTimes(1);
+      }
+
+      const scrolled = make(40, 37); // 3 rows up => a genuine scroll-back, preserve
+      terminal.terminals.set('1', scrolled);
+      terminal._internals.refreshTerminalViewport('1', scrolled, fitAddon, { operation: 'stream', forceFit: true });
+      expect(scrolled.scrollToBottom).not.toHaveBeenCalled();
     });
 
     test('B scrollback: installs a passive wheel listener without swallowing xterm wheel handling', () => {
@@ -1614,7 +1651,9 @@ describe('terminal.js module', () => {
       const event = { deltaY: -120, preventDefault: jest.fn() };
       wheelHandler(event);
       expect(event.preventDefault).not.toHaveBeenCalled();
-      expect(terminal._internals.shouldPreserveTerminalUserScroll('1')).toBe(true);
+      // Position authority: viewport is scrolled up (viewportY 2 < baseY 12), so
+      // auto-follow is suppressed regardless of any timer.
+      expect(terminal._internals.shouldPreserveTerminalUserScroll('1', terminalObj)).toBe(true);
     });
 
     test('B scrollback: wheel fallback scrolls when xterm leaves the viewport pinned', () => {
@@ -1641,7 +1680,10 @@ describe('terminal.js module', () => {
       jest.advanceTimersByTime(terminal._internals.TERMINAL_SCROLL_FALLBACK_DELAY_MS);
 
       expect(terminalObj.scrollLines).toHaveBeenCalledWith(-3);
-      expect(terminal._internals.shouldPreserveTerminalUserScroll('1')).toBe(true);
+      // Simulate the fallback scroll landing (viewport moves up 3 rows). Position
+      // authority now preserves the user's scroll — no timer involved.
+      terminalObj.buffer.active.viewportY = 69;
+      expect(terminal._internals.shouldPreserveTerminalUserScroll('1', terminalObj)).toBe(true);
     });
 
     test('B scrollback: wheel fallback does not double-scroll after xterm moves the viewport', () => {
