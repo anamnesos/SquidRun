@@ -200,9 +200,12 @@ describe('app-control-service', () => {
     expect(executeJavaScript).toHaveBeenCalledTimes(1);
     const [script, userGesture] = executeJavaScript.mock.calls[0];
     expect(userGesture).toBe(true);
-    expect(script).toContain('__squidrunTerminalScrollProbeTarget');
-    expect(script).toContain('xterm-helper-textarea');
-    expect(script).toContain('KeyboardEvent');
+    // The injected script must delegate into the isolated world (where the
+    // terminal + expando live) rather than read the expando from the main world.
+    expect(script).toContain('runTerminalScrollProbe');
+    expect(script).toContain('rendererModules');
+    expect(script).toContain('"op":"dispatchKey"');
+    expect(script).toContain('"key":"PageUp"');
     expect(result).toEqual(expect.objectContaining({
       success: true,
       action: 'terminal-scroll-probe',
