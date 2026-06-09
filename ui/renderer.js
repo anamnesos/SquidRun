@@ -512,8 +512,11 @@ const profileOnboardingState = {
 let headerSessionBadgeRetryTimer = null;
 let headerSessionBadgeRetryAttempts = 0;
 let squidRoomLivePaneEnsureTimer = null;
+let squidRoomPetStatusTimer = null;
 const squidRoomLivePaneSpawnAttempts = new Map();
 const SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS = 15000;
+const SQUID_ROOM_PET_STATUS_REFRESH_MS = 12000;
+const SQUID_ROOM_PET_STATUS_CHANNEL = 'evidence-ledger:query-comms-journal';
 
 function getCurrentWindowContext() {
   return windowTeamBootstrap.getState();
@@ -538,6 +541,125 @@ function getSquidRoomSurfaceElements() {
 
 function getSquidRoomLivePaneElements() {
   return Array.from(document.querySelectorAll('[data-squid-room-live-pane="true"]'));
+}
+
+function getSquidRoomPetPaneElements() {
+  return Array.from(document.querySelectorAll('[data-squid-room-pet]'));
+}
+
+function stripSquidRoomMessageNoise(value) {
+  return stripSquidRoomAnsi(String(value || ''))
+    .replace(/\[AGENT MSG[^\]]*\]\s*/gi, '')
+    .replace(/^\((?:BUILDER|ORACLE|ARCHITECT|CODEX|SYSTEM)\s*(?:#\d+)?(?:\s*->\s*[A-Z-]+)?\):\s*/i, '')
+    .replace(/^(?:BUILDER|ORACLE|ARCHITECT|CODEX|SYSTEM)\s*:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getSquidRoomCommsText(row = {}) {
+  return String(row?.rawBody || row?.raw_body || row?.body || row?.excerpt || '');
+}
+
+function isSquidRoomPetNoiseRow(row = {}, role = '') {
+  const targetRole = String(row?.targetRole || row?.target_role || row?.target || '').trim().toLowerCase();
+  const text = getSquidRoomCommsText(row).toLowerCase();
+  if (targetRole.startsWith(`${role}-bg-`) || targetRole.startsWith(`${role}-background-`)) {
+    return true;
+  }
+  return /\bbackground lane for\b/.test(text);
+}
+
+function summarizeSquidRoomPetMessage(row = {}, role = '') {
+  const raw = stripSquidRoomMessageNoise(getSquidRoomCommsText(row));
+  const fallback = role === 'oracle' ? 'Checking the proof.' : 'Working the active fix.';
+  if (!raw) return fallback;
+  const firstSentence = raw.split(/(?<=[.!?])\s+/)[0] || raw;
+  const text = firstSentence.length > 128 ? `${firstSentence.slice(0, 125).trim()}...` : firstSentence;
+  return text || fallback;
+}
+
+function classifySquidRoomPetState(row = {}, role = '') {
+  const text = stripSquidRoomMessageNoise(getSquidRoomCommsText(row)).toLowerCase();
+  if (/\b(blocked|blocker|failed|fail|error|stuck|cannot|can't)\b/.test(text)) {
+    return { state: 'failed', label: 'Blocked' };
+  }
+  if (/\b(wait|waiting|hold|stood down|stand down|pending)\b/.test(text)) {
+    return { state: 'waiting', label: 'Waiting' };
+  }
+  if (role === 'oracle' || /\b(verify|verifying|review|reviewing|check|checking|proof|audit)\b/.test(text)) {
+    return { state: 'review', label: 'Reviewing' };
+  }
+  if (/\b(work|working|build|building|patch|fix|implement|commit|spawn)\b/.test(text)) {
+    return { state: 'running', label: 'Working' };
+  }
+  return { state: 'idle', label: 'Ready' };
+}
+
+async function queryLatestSquidRoomPetRow(role) {
+  const invoke = typeof window?.squidrun?.invoke === 'function'
+    ? window.squidrun.invoke.bind(window.squidrun)
+    : (typeof ipcRenderer?.invoke === 'function' ? ipcRenderer.invoke.bind(ipcRenderer) : null);
+  if (!invoke) return null;
+  const rows = await invoke(SQUID_ROOM_PET_STATUS_CHANNEL, {
+    senderRole: role,
+    order: 'desc',
+    limit: 8,
+  });
+  if (!Array.isArray(rows)) return null;
+  return rows.find((row) => {
+    if (isSquidRoomPetNoiseRow(row, role)) return false;
+    return getSquidRoomCommsText(row).trim();
+  }) || rows.find((row) => getSquidRoomCommsText(row).trim()) || rows[0] || null;
+}
+
+function updateSquidRoomPetPane(pane, row) {
+  if (!pane || !row) return;
+  const role = String(pane.dataset?.squidRoomPet || '').trim().toLowerCase();
+  const state = classifySquidRoomPetState(row, role);
+  const message = summarizeSquidRoomPetMessage(row, role);
+  pane.dataset.squidRoomState = state.state;
+  pane.dataset.squidRoomLastRowId = String(row.rowId || row.row_id || '');
+  const stateEl = pane.querySelector?.('.squid-room-pet-state');
+  if (stateEl) stateEl.textContent = state.label;
+  const bubble = pane.querySelector?.('.squid-room-pet-bubble');
+  if (bubble) bubble.textContent = message;
+}
+
+async function refreshSquidRoomPetStatus(windowContext = getCurrentWindowContext()) {
+  if (!isSquidRoomWindowContext(windowContext)) return { ok: false, skipped: true, reason: 'not_squid_room' };
+  const petPanes = getSquidRoomPetPaneElements();
+  if (petPanes.length === 0) return { ok: false, skipped: true, reason: 'no_pet_panes' };
+
+  const updates = [];
+  for (const pane of petPanes) {
+    const role = String(pane?.dataset?.squidRoomPet || '').trim().toLowerCase();
+    if (!role) continue;
+    try {
+      const row = await queryLatestSquidRoomPetRow(role);
+      if (!row) continue;
+      updateSquidRoomPetPane(pane, row);
+      updates.push({ role, rowId: row.rowId || row.row_id || null });
+    } catch (err) {
+      log.warn('SquidRoom', `Pet status refresh failed for ${role}: ${err?.message || err}`);
+    }
+  }
+  return { ok: true, updates };
+}
+
+function scheduleSquidRoomPetStatusRefresh(windowContext = getCurrentWindowContext(), delayMs = 600) {
+  if (!isSquidRoomWindowContext(windowContext)) {
+    if (squidRoomPetStatusTimer) {
+      clearTimeout(squidRoomPetStatusTimer);
+      squidRoomPetStatusTimer = null;
+    }
+    return;
+  }
+  if (squidRoomPetStatusTimer) clearTimeout(squidRoomPetStatusTimer);
+  squidRoomPetStatusTimer = setTimeout(() => {
+    squidRoomPetStatusTimer = null;
+    void refreshSquidRoomPetStatus(getCurrentWindowContext())
+      .finally(() => scheduleSquidRoomPetStatusRefresh(getCurrentWindowContext(), SQUID_ROOM_PET_STATUS_REFRESH_MS));
+  }, delayMs);
 }
 
 function getSquidRoomPaneRuntimeSpec(element) {
@@ -896,6 +1018,7 @@ function refreshSquidRoomSurfaceForContext(windowContext = getCurrentWindowConte
     return;
   }
   log.info('SquidRoom', `Refresh requested for ${windowContext.windowKey}`);
+  void refreshSquidRoomPetStatus(windowContext);
   const controller = ensureSquidRoomSurfaceController();
   if (!controller || typeof controller.refreshForWindowContext !== 'function') {
     void refreshSquidRoomSurfaceWithoutController(windowContext, 'controller_unavailable');
@@ -922,6 +1045,7 @@ function handleRendererWindowContext(payload = {}) {
   if (typeof configureWorkspacePaneShell === 'function') {
     configureWorkspacePaneShell(windowContext, terminal, document);
     scheduleSquidRoomLivePaneEnsure(windowContext, 300);
+    scheduleSquidRoomPetStatusRefresh(windowContext, 600);
   }
   applyWindowChrome(windowContext);
   refreshSquidRoomSurfaceForContext(windowContext);

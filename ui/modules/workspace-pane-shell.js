@@ -11,6 +11,26 @@ const {
 
 const SQUID_ROOM_WORKSPACE_KEY = 'squid-room';
 const SQUID_ROOM_TEAM_PANE_IDS = Object.freeze(['2', '3']);
+const SQUID_ROOM_PET_PANE_SPECS = Object.freeze([
+  {
+    paneId: '2',
+    petId: 'builder',
+    title: 'Builder Squid',
+    role: 'Builder',
+    state: 'running',
+    stateLabel: 'Working',
+    bubble: 'Working the active fix.',
+  },
+  {
+    paneId: '3',
+    petId: 'oracle',
+    title: 'Oracle Squid',
+    role: 'Oracle',
+    state: 'review',
+    stateLabel: 'Reviewing',
+    bubble: 'Checking the proof.',
+  },
+]);
 const TRUSTQUOTE_PANES = Object.freeze([
   { sourcePaneId: '2', paneId: TRUSTQUOTE_PANE_IDS[0], label: 'TrustQuote Builder' },
   { sourcePaneId: '3', paneId: TRUSTQUOTE_PANE_IDS[1], label: 'TrustQuote Oracle' },
@@ -36,7 +56,6 @@ const SQUID_ROOM_TRUSTQUOTE_ARM_PANES = Object.freeze(getTrustQuoteDayToDayArmSp
   startupMessage: spec.startupMessage,
 })));
 const SQUID_ROOM_PANE_IDS = Object.freeze([
-  ...SQUID_ROOM_TEAM_PANE_IDS,
   ...SQUID_ROOM_TRUSTQUOTE_ARM_PANES.map((pane) => pane.paneId),
 ]);
 
@@ -236,6 +255,75 @@ function createSquidRoomLivePane(doc, spec) {
   return pane;
 }
 
+function createSquidRoomPetArtwork(doc, spec) {
+  const sprite = createElement(doc, 'div', {
+    className: `squid-room-pet-sprite squid-room-pet-sprite-${spec.petId}`,
+    attributes: { 'aria-hidden': 'true' },
+  });
+  sprite.appendChild(createElement(doc, 'div', { className: 'squid-room-pet-head' }));
+  sprite.appendChild(createElement(doc, 'div', { className: 'squid-room-pet-face' }, spec.petId === 'builder' ? '>' : '*'));
+  const arms = createElement(doc, 'div', { className: 'squid-room-pet-arms' });
+  arms.appendChild(createElement(doc, 'span'));
+  arms.appendChild(createElement(doc, 'span'));
+  sprite.appendChild(arms);
+  const tentacles = createElement(doc, 'div', { className: 'squid-room-pet-tentacles' });
+  for (let i = 0; i < 5; i += 1) {
+    tentacles.appendChild(createElement(doc, 'span'));
+  }
+  sprite.appendChild(tentacles);
+  return sprite;
+}
+
+function renderSquidRoomPetPane(doc, pane, spec) {
+  if (!doc || !pane || !spec) return null;
+  if (Array.isArray(pane.childNodes)) pane.childNodes.length = 0;
+  pane.innerHTML = '';
+  pane.className = 'pane squid-room-pet-pane';
+  pane.dataset.paneId = spec.paneId;
+  pane.dataset.squidRoomPet = spec.petId;
+  pane.dataset.squidRoomSourcePaneId = spec.paneId;
+  pane.dataset.squidRoomState = spec.state;
+  pane.dataset.squidRoomRole = spec.role;
+  pane.dataset.squidRoomLabel = spec.title;
+
+  const shell = createElement(doc, 'div', { className: 'squid-room-pet-shell' });
+  const header = createElement(doc, 'div', { className: 'squid-room-pet-header' });
+  const title = createElement(doc, 'div', { className: 'squid-room-pet-title' });
+  title.appendChild(createElement(doc, 'span', { className: 'squid-room-pet-eyebrow' }, spec.role));
+  title.appendChild(createElement(doc, 'strong', {}, spec.title));
+  header.appendChild(title);
+  header.appendChild(createElement(doc, 'span', { className: 'squid-room-pet-state' }, spec.stateLabel));
+
+  const stage = createElement(doc, 'div', { className: 'squid-room-pet-stage' });
+  stage.appendChild(createSquidRoomPetArtwork(doc, spec));
+  stage.appendChild(createElement(doc, 'div', {
+    className: 'squid-room-pet-shadow',
+    attributes: { 'aria-hidden': 'true' },
+  }));
+
+  shell.appendChild(header);
+  shell.appendChild(stage);
+  shell.appendChild(createElement(doc, 'div', {
+    className: 'squid-room-pet-bubble',
+    id: `squidRoomPetBubble-${spec.paneId}`,
+    attributes: { 'aria-live': 'polite' },
+  }, spec.bubble));
+  pane.appendChild(shell);
+  return pane;
+}
+
+function ensureSquidRoomPetPanes(doc) {
+  const panes = [];
+  for (const spec of SQUID_ROOM_PET_PANE_SPECS) {
+    const pane = doc.querySelector?.(`.pane[data-pane-id="${spec.paneId}"], .pane[data-workspace-source-pane-id="${spec.paneId}"]`);
+    if (!pane) continue;
+    setElementHidden(pane, false);
+    renderSquidRoomPetPane(doc, pane, spec);
+    panes.push(spec);
+  }
+  return panes;
+}
+
 function ensureSquidRoomTeamHeader(doc, teamContainer) {
   if (!doc || !teamContainer) return null;
   let header = teamContainer.querySelector?.('.squid-room-team-header');
@@ -246,7 +334,7 @@ function ensureSquidRoomTeamHeader(doc, teamContainer) {
 
   header.innerHTML = '';
   const title = createElement(doc, 'div', { className: 'squid-room-team-title' });
-  title.appendChild(createElement(doc, 'span', { className: 'squid-room-team-eyebrow' }, 'Live team'));
+  title.appendChild(createElement(doc, 'span', { className: 'squid-room-team-eyebrow' }, 'Pets'));
   title.appendChild(createElement(doc, 'strong', {}, 'Builder + Oracle'));
   header.appendChild(title);
 
@@ -431,16 +519,7 @@ function configureSquidRoomPaneShell(doc) {
     ensureSquidRoomTeamHeader(doc, teamContainer);
   }
 
-  for (const paneId of SQUID_ROOM_TEAM_PANE_IDS) {
-    const pane = doc.querySelector(`.pane[data-pane-id="${paneId}"]`);
-    setElementHidden(pane, false);
-    const terminal = doc.querySelector(`#terminal-${paneId}`);
-    if (terminal) {
-      terminal.hidden = false;
-      terminal.removeAttribute?.('aria-hidden');
-      terminal.classList?.remove?.('squid-room-terminal-hidden');
-    }
-  }
+  const petPanes = ensureSquidRoomPetPanes(doc);
 
   const surface = doc.querySelector('#squidRoomSurface');
   if (surface) {
@@ -454,6 +533,7 @@ function configureSquidRoomPaneShell(doc) {
     workspaceKey: SQUID_ROOM_WORKSPACE_KEY,
     paneIds: SQUID_ROOM_PANE_IDS.slice(),
     teamPaneIds: SQUID_ROOM_TEAM_PANE_IDS.slice(),
+    petPanes,
     livePanes,
   };
 }
@@ -488,6 +568,7 @@ function configureWorkspacePaneShell(windowContext = {}, terminal = null, doc = 
 module.exports = {
   SQUID_ROOM_WORKSPACE_KEY,
   SQUID_ROOM_PANE_IDS,
+  SQUID_ROOM_PET_PANE_SPECS,
   SQUID_ROOM_TEAM_PANE_IDS,
   SQUID_ROOM_TRUSTQUOTE_ARM_PANES,
   TRUSTQUOTE_PROJECT_PATH,
