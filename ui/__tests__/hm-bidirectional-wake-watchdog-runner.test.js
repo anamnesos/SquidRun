@@ -92,4 +92,30 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
       })
     );
   });
+
+  test('startRunner atomic lock prevents a concurrent double spawn before pid file exists', () => {
+    let reentrantResult = null;
+    childProcess.spawn.mockImplementationOnce(() => {
+      reentrantResult = moduleUnderTest.startRunner({ projectRoot: tempRoot });
+      return {
+        pid: 9876,
+        unref: jest.fn(),
+      };
+    });
+
+    const result = moduleUnderTest.startRunner({ projectRoot: tempRoot });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      started: true,
+      pid: 9876,
+    }));
+    expect(reentrantResult).toEqual(expect.objectContaining({
+      ok: true,
+      alreadyStarting: true,
+      startInProgress: true,
+      reason: 'start_in_progress',
+    }));
+    expect(childProcess.spawn).toHaveBeenCalledTimes(1);
+  });
 });
