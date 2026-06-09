@@ -166,7 +166,6 @@ body.squid-room-workspace .squid-room-pet-pane {
   background-position: 0% 0%;
   background-size: 800% 900%;
   image-rendering: pixelated;
-  filter: drop-shadow(0 15px 22px rgba(0, 0, 0, 0.34));
   z-index: 1;
 }
 
