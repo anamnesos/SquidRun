@@ -84,6 +84,8 @@ function evidence({
   terminalOverrides = {},
   receiptOverrides = {},
   rateOverrides = {},
+  currentLane,
+  restartRequest,
 } = {}) {
   const sessionScope = `app-session-${session}:squid-room`;
   const terminals = [
@@ -131,6 +133,8 @@ function evidence({
     commsRows: rows,
     armReceipts: parseArmReceipts(rows, { sessionScope }),
     eventRates: eventRates(rateOverrides),
+    currentLane,
+    restartRequest,
   };
 }
 
@@ -195,6 +199,67 @@ describe('hm-squid-room-restart-proof', () => {
       windowKey: 'squid-room',
       cwd: 'D:/projects/TrustQuote',
     }));
+  });
+
+  it('parses TrustQuote cwd when startup prose says online in the project path', () => {
+    const sessionScope = 'app-session-417:squid-room';
+    const receipts = parseArmReceipts([
+      {
+        rowId: 201,
+        rawBody: [
+          '(TRUSTQUOTE APP #1): TrustQuote App pane online in D:\\projects\\TrustQuote.',
+          'Env binding: SQUIDRUN_ROLE=trustquote-app, SQUIDRUN_PANE_ID=trustquote-app,',
+          'SQUIDRUN_SESSION_SCOPE_ID=app-session-417:squid-room, SQUIDRUN_PROFILE=main.',
+        ].join(' '),
+      },
+    ], { sessionScope });
+
+    expect(receipts['trustquote-app']).toEqual(expect.objectContaining({
+      role: 'trustquote-app',
+      paneId: 'trustquote-app',
+      sessionScope,
+      cwd: 'D:\\projects\\TrustQuote',
+    }));
+  });
+
+  it('passes respawn body shrink when current lane and restart request prove no open work', () => {
+    const before = buildBaselineSnapshot(evidence({ session: 416 }));
+    delete before.currentLane;
+    delete before.restartRequest;
+
+    const after = evidence({
+      session: 417,
+      started: '2026-06-08T23:00:00.000Z',
+      windowReason: 'startup_restore',
+      windowUpdatedAt: '2026-06-08T23:00:04.000Z',
+      currentLane: {
+        status: 'none',
+        activeLane: null,
+        activeLanePresent: false,
+        objective: null,
+      },
+      restartRequest: {
+        requestId: 'restart-416-test',
+        sourceSessionId: 416,
+        git: {
+          headCommit: 'testhead123456',
+        },
+        openWork: [],
+        topPriorities: [],
+      },
+      terminalOverrides: {
+        2: {
+          scrollback: ['fresh Builder startup body after respawn'],
+        },
+      },
+    });
+
+    const result = verifyRestartSurvival(after, before);
+    const dropCheck = result.checks.find((entry) => entry.id === 'in_progress_not_silently_dropped');
+
+    expect(dropCheck.status).toBe('PASS');
+    expect(dropCheck.evidence.legacyBaselineNoOpenWork).toBe(true);
+    expect(result.status).toBe('PASS');
   });
 
   it('fails when a baseline pane body disappears across restart', () => {
