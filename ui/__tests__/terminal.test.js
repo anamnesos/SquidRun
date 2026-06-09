@@ -2773,3 +2773,126 @@ describe('terminal.js module', () => {
     });
   });
 });
+
+describe('Bug A: settle redraw + fit telemetry', () => {
+  let paneSeq = 0;
+  let PANE;
+  let term;
+  let fitAddon;
+  let ptyResize;
+  let recordFit;
+  let content;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    PANE = `bugA-${++paneSeq}`; // unique pane per test: module-level settle state must not leak
+    ptyResize = jest.fn();
+    recordFit = jest.fn();
+    global.window.squidrun.pty.resize = ptyResize;
+    global.window.squidrun.pty.recordFitTelemetry = recordFit;
+    content = 'frame-A';
+    term = {
+      cols: 80,
+      rows: 24,
+      write: jest.fn((_data, cb) => { if (cb) cb(); }),
+      refresh: jest.fn(),
+      scrollToBottom: jest.fn(),
+      buffer: { active: { baseY: 0, getLine: () => ({ translateToString: () => content }) } },
+    };
+    fitAddon = { fit: jest.fn(), proposeDimensions: jest.fn(() => ({ cols: 80, rows: 24 })) };
+    terminal.terminals.set(PANE, term);
+    terminal.fitAddons.set(PANE, fitAddon);
+  });
+
+  afterEach(() => {
+    terminal._internals.clearTerminalSettleRedraw(PANE);
+    terminal.terminals.delete(PANE);
+    terminal.fitAddons.delete(PANE);
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  test('applyTerminalPtyResize re-pokes on identical geometry ONLY with forceApply (Oracle bar a)', () => {
+    terminal._internals.applyTerminalPtyResize(PANE, term, { operation: 'seed' });
+    expect(ptyResize).toHaveBeenCalledTimes(1); // first apply seeds geometry
+    ptyResize.mockClear();
+
+    terminal._internals.applyTerminalPtyResize(PANE, term, { operation: 'noop_same_dims' });
+    expect(ptyResize).not.toHaveBeenCalled(); // same dims, no force -> skipped (the bug)
+
+    terminal._internals.applyTerminalPtyResize(PANE, term, { operation: 'settle_redraw', forceApply: true });
+    expect(ptyResize).toHaveBeenCalledTimes(1); // forceApply re-pokes the PTY on same dims (the fix)
+  });
+
+  test('captureTerminalFrameSignature changes iff visible content changes', () => {
+    const a = terminal._internals.captureTerminalFrameSignature(term);
+    expect(terminal._internals.captureTerminalFrameSignature(term)).toBe(a);
+    content = 'frame-B';
+    expect(terminal._internals.captureTerminalFrameSignature(term)).not.toBe(a);
+  });
+
+  test('captureTerminalFitCoherence flags drift between xterm and proposed dims', () => {
+    expect(terminal._internals.captureTerminalFitCoherence(PANE, term, fitAddon).coherent).toBe(true);
+    fitAddon.proposeDimensions = jest.fn(() => ({ cols: 100, rows: 24 }));
+    expect(terminal._internals.captureTerminalFitCoherence(PANE, term, fitAddon).coherent).toBe(false);
+  });
+
+  test('settle redraw forces one re-poke and emits painted=true when the frame repainted', () => {
+    terminal._internals.scheduleSettleRedraw(PANE, term, fitAddon);
+    jest.advanceTimersByTime(250); // debounce (200ms) elapses -> performSettleRedraw fires
+    expect(ptyResize).toHaveBeenCalled(); // forceApply re-poke on same dims
+
+    content = 'redrawn-frame'; // simulate the agent TUI repainting after the re-poke
+    jest.advanceTimersByTime(200); // paint sample (140ms) elapses -> telemetry emitted
+    expect(recordFit).toHaveBeenCalledTimes(1);
+    const payload = recordFit.mock.calls[0][0];
+    expect(payload.paneId).toBe(PANE);
+    expect(payload.operation).toBe('settle_redraw');
+    expect(payload.painted).toBe(true);
+    expect(payload.coherent).toBe(true);
+    expect(payload.quietSettle).toBe(true); // no streaming write before the re-poke -> evidence-grade
+  });
+
+  test('quietSettle=true when the burst was quiet before the re-poke', () => {
+    terminal._internals.performSettleRedraw(PANE, term, fitAddon); // no prior queueTerminalWrite
+    jest.advanceTimersByTime(200);
+    expect(recordFit.mock.calls[0][0].quietSettle).toBe(true);
+  });
+
+  test('quietSettle=false when a streaming write landed just before the re-poke (confound excluded)', () => {
+    terminal._internals.queueTerminalWrite(PANE, term, 'mid-stream-chunk'); // stamps lastWriteAt = now
+    terminal._internals.performSettleRedraw(PANE, term, fitAddon); // re-poke in the same tick -> not quiet
+    jest.advanceTimersByTime(200);
+    const payload = recordFit.mock.calls.find((c) => c[0].operation === 'settle_redraw')[0];
+    expect(payload.quietSettle).toBe(false);
+  });
+
+  test('settle redraw rate-limits forced re-pokes (protects steady_state_event_rates)', () => {
+    terminal._internals.scheduleSettleRedraw(PANE, term, fitAddon);
+    jest.advanceTimersByTime(250); // first re-poke fires
+    const firstCount = ptyResize.mock.calls.length;
+    expect(firstCount).toBeGreaterThan(0);
+
+    terminal._internals.scheduleSettleRedraw(PANE, term, fitAddon); // again, well within MIN_INTERVAL (1100ms)
+    jest.advanceTimersByTime(250); // debounce elapses but cooldown has not
+    expect(ptyResize.mock.calls.length).toBe(firstCount); // no second re-poke yet
+  });
+
+  test('settle telemetry is best-effort: a rejecting recordFitTelemetry (handler absent pre-restart) does not throw', () => {
+    recordFit.mockImplementation(() => Promise.reject(new Error('No handler registered for terminal-fit-telemetry')));
+    expect(() => {
+      terminal._internals.scheduleSettleRedraw(PANE, term, fitAddon);
+      jest.advanceTimersByTime(250);
+      jest.advanceTimersByTime(200);
+    }).not.toThrow();
+    expect(recordFit).toHaveBeenCalled();
+  });
+
+  test('painted=false when the frame did not change after the re-poke (X inert -> Y signal)', () => {
+    terminal._internals.scheduleSettleRedraw(PANE, term, fitAddon);
+    jest.advanceTimersByTime(250);
+    jest.advanceTimersByTime(200); // no content mutation -> before == after
+    const payload = recordFit.mock.calls[0][0];
+    expect(payload.painted).toBe(false);
+  });
+});

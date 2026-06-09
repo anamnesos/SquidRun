@@ -1027,4 +1027,29 @@ describe('PTY Handlers', () => {
       expect(result).toEqual([]);
     });
   });
+
+  describe('terminal-fit-telemetry (Bug A)', () => {
+    test('rejects a payload with no paneId without writing', async () => {
+      const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+      const result = await harness.invoke('terminal-fit-telemetry', {});
+      expect(result).toEqual({ ignored: true, reason: 'missing_pane_id' });
+      expect(writeSpy).not.toHaveBeenCalled();
+      writeSpy.mockRestore();
+    });
+
+    test('appendTerminalFitTelemetry caps the file at 300 lines (no unbounded growth)', () => {
+      const existing = Array.from({ length: 305 }, (_, i) => JSON.stringify({ paneId: '1', ts: i })).join('\n');
+      jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+      jest.spyOn(fs, 'readFileSync').mockReturnValue(existing);
+      let written = '';
+      jest.spyOn(fs, 'writeFileSync').mockImplementation((_p, data) => { written = data; });
+
+      _internals.appendTerminalFitTelemetry({ paneId: '1', ts: 999, painted: true });
+
+      const lines = written.trim().split('\n');
+      expect(lines.length).toBe(300);
+      expect(lines[lines.length - 1]).toContain('"ts":999');
+      jest.restoreAllMocks();
+    });
+  });
 });

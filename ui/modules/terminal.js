@@ -141,6 +141,10 @@ const terminalPaintRefreshTimers = new Map(); // `${paneId}:${delayMs}` -> timer
 const terminalStreamingFitTimers = new Map(); // paneId -> timer ID
 const terminalStreamingLastFitAt = new Map(); // paneId -> timestamp
 const terminalUserScrollUntil = new Map(); // paneId -> timestamp while auto-bottom is paused
+const terminalSettleRedrawTimers = new Map(); // paneId -> timer ID (post-burst settle redraw)
+const terminalSettleRedrawFirstReqAt = new Map(); // paneId -> timestamp of first settle request in burst
+const terminalSettleRedrawLastAt = new Map(); // paneId -> timestamp of last applied settle redraw
+const terminalLastWriteAt = new Map(); // paneId -> timestamp of last PTY chunk that mutated the frame
 
 const HIGH_WATERMARK = 500000; // 500KB - pause producer
 const LOW_WATERMARK = 50000;   // 50KB - resume producer
@@ -151,6 +155,16 @@ const TERMINAL_WRITE_FRAME_TIME_BUDGET_MS = 8;
 const TERMINAL_WRITE_FRAME_YIELD_MS = 16;
 const TERMINAL_STREAMING_FIT_MIN_INTERVAL_MS = 350;
 const TERMINAL_STREAMING_FIT_SETTLE_MS = 160;
+// Bug A: post-burst settle redraw. Fires once after streaming output goes quiet
+// (DEBOUNCE), or at least once per MAX_DEFER during sustained streaming, but never
+// more often than MIN_INTERVAL — keeping forced PTY re-pokes at <=~0.9/sec so the
+// steady_state_event_rates proof (RESIZE_STEADY_STATE_LIMIT_PER_SEC=1) stays green.
+const TERMINAL_SETTLE_REDRAW_DEBOUNCE_MS = 200;
+const TERMINAL_SETTLE_REDRAW_MAX_DEFER_MS = 1200;
+const TERMINAL_SETTLE_REDRAW_MIN_INTERVAL_MS = 1100;
+// Delay between the forced re-poke and the paint-outcome sample. Gives the PTY/agent
+// time to emit its redraw so the frame-signature delta reflects an actual repaint.
+const TERMINAL_SETTLE_REDRAW_PAINT_SAMPLE_MS = 140;
 const TERMINAL_USER_SCROLL_HOLD_MS = 1800;
 const TERMINAL_SCROLL_FALLBACK_DELAY_MS = 24;
 const TERMINAL_WHEEL_PIXEL_LINE = 40;
@@ -354,6 +368,7 @@ function resetTerminalWriteQueue(paneId) {
   const id = String(paneId);
   clearTerminalWriteFlushTimer(id);
   clearTerminalStreamingFit(id);
+  clearTerminalSettleRedraw(id);
   terminalWriteQueues.delete(id);
   terminalWriting.delete(id);
   terminalWatermarks.set(id, 0);
@@ -530,7 +545,7 @@ function refreshTerminalViewport(paneId, terminal, fitAddon = null, options = {}
     }
 
     try {
-      applyTerminalPtyResize(id, terminal, { operation });
+      applyTerminalPtyResize(id, terminal, { operation, forceApply: options.forceApply === true });
     } catch (err) {
       log.warn(`Terminal ${id}`, `Paint refresh resize failed: ${err?.message || err}`);
     }
@@ -595,6 +610,182 @@ function scheduleStreamingViewportFit(paneId, terminal, fitAddon = null) {
     });
   }, delay);
   terminalStreamingFitTimers.set(id, timer);
+}
+
+function clearTerminalSettleRedraw(paneId) {
+  const id = String(paneId);
+  const timer = terminalSettleRedrawTimers.get(id);
+  if (timer) {
+    clearTimeout(timer);
+    terminalSettleRedrawTimers.delete(id);
+  }
+  terminalSettleRedrawFirstReqAt.delete(id);
+}
+
+// Cheap FNV-1a hash of the visible viewport rows. Used as a paint-outcome signature:
+// if the signature changes across the forced re-poke, the agent TUI actually redrew.
+function captureTerminalFrameSignature(terminal) {
+  const active = terminal?.buffer?.active;
+  if (!active || typeof active.getLine !== 'function') return null;
+  const rows = Math.max(0, Number(terminal?.rows) || 0);
+  const baseY = Math.max(0, Number(active.baseY) || 0);
+  let hash = 0x811c9dc5;
+  let chars = 0;
+  for (let i = 0; i < rows; i += 1) {
+    const line = active.getLine(baseY + i);
+    const text = line && typeof line.translateToString === 'function'
+      ? line.translateToString(true)
+      : '';
+    for (let j = 0; j < text.length; j += 1) {
+      hash ^= text.charCodeAt(j);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    hash ^= 0x0a; // row separator so row boundaries affect the signature
+    hash = Math.imul(hash, 0x01000193);
+    chars += text.length;
+  }
+  return `${(hash >>> 0).toString(16)}:${rows}:${chars}`;
+}
+
+function captureTerminalFitCoherence(paneId, terminal, fitAddon) {
+  const id = String(paneId);
+  const xtermCols = Math.trunc(Number(terminal?.cols)) || null;
+  const xtermRows = Math.trunc(Number(terminal?.rows)) || null;
+  let proposedCols = null;
+  let proposedRows = null;
+  try {
+    if (fitAddon && typeof fitAddon.proposeDimensions === 'function') {
+      const proposed = fitAddon.proposeDimensions();
+      if (proposed) {
+        proposedCols = Math.trunc(Number(proposed.cols)) || null;
+        proposedRows = Math.trunc(Number(proposed.rows)) || null;
+      }
+    }
+  } catch {
+    // proposeDimensions can throw if the container is detached; leave as null.
+  }
+  const applied = terminalAppliedPtyGeometries.get(id) || null;
+  const appliedCols = applied ? Math.trunc(Number(applied.cols)) || null : null;
+  const appliedRows = applied ? Math.trunc(Number(applied.rows)) || null : null;
+  const proposedCoherent = proposedCols == null || proposedRows == null
+    ? true
+    : (proposedCols === xtermCols && proposedRows === xtermRows);
+  const appliedCoherent = appliedCols == null || appliedRows == null
+    ? true
+    : (appliedCols === xtermCols && appliedRows === xtermRows);
+  return {
+    xtermCols,
+    xtermRows,
+    proposedCols,
+    proposedRows,
+    appliedCols,
+    appliedRows,
+    coherent: Boolean(xtermCols && xtermRows && proposedCoherent && appliedCoherent),
+  };
+}
+
+function emitTerminalFitTelemetry(payload) {
+  try {
+    const record = window?.squidrun?.pty?.recordFitTelemetry;
+    if (typeof record === 'function') {
+      const result = record(payload);
+      // The main-process handler only exists after a full restart; on a renderer-only
+      // reload it is absent and ipc.invoke rejects. Swallow it — telemetry is best-effort.
+      if (result && typeof result.then === 'function') {
+        result.catch(() => {});
+      }
+    }
+  } catch (err) {
+    log.warn(`Terminal ${payload?.paneId}`, `Fit telemetry emit failed: ${err?.message || err}`);
+  }
+}
+
+// Bug A corrective: after a streaming burst, force ONE real re-poke (forceFit +
+// forceApply) so applyTerminalPtyResize calls pty.resize even when geometry is
+// unchanged — mirroring what a manual window resize does (PTY resize -> TUI redraw),
+// which is the only thing that clears the persisted deformation. Captures a paint-
+// outcome signature before/after so the proof can tell whether ConPTY actually
+// repainted (X) vs needing an xterm-side recompute (Y).
+function performSettleRedraw(paneId, terminal, fitAddon) {
+  const id = String(paneId);
+  if (terminals.get(id) !== terminal || !rendererOwnsPtyGeometry(id)) return;
+  const resolvedFit = fitAddon || fitAddons.get(id);
+  const rePokeTs = Date.now();
+  // painted is only attributable to the re-poke when the streaming burst had already
+  // gone quiet BEFORE the re-poke. On the MAX_DEFER path the settle fires mid-stream,
+  // so concurrent writes would flip painted=true regardless of the re-poke (false-X).
+  // We gate on PRE-re-poke quiescence rather than "no write in the after-window",
+  // because a genuine redraw IS delivered as a write in that after-window — excluding
+  // it would make painted=true impossible and the proof unable to ever confirm X.
+  const lastWriteAt = Number(terminalLastWriteAt.get(id)) || 0;
+  const quietSettle = (rePokeTs - lastWriteAt) >= TERMINAL_SETTLE_REDRAW_DEBOUNCE_MS;
+  const beforeSignature = captureTerminalFrameSignature(terminal);
+
+  refreshTerminalViewport(id, terminal, resolvedFit, {
+    operation: 'settle_redraw',
+    forceFit: true,
+    forceApply: true,
+  });
+
+  const coherence = captureTerminalFitCoherence(id, terminal, resolvedFit);
+  terminalSettleRedrawLastAt.set(id, rePokeTs);
+
+  setTimeout(() => {
+    if (terminals.get(id) !== terminal) return;
+    const afterSignature = captureTerminalFrameSignature(terminal);
+    emitTerminalFitTelemetry({
+      paneId: id,
+      operation: 'settle_redraw',
+      ts: Date.now(),
+      ...coherence,
+      quietSettle,
+      beforeSignature,
+      afterSignature,
+      painted: Boolean(beforeSignature && afterSignature && beforeSignature !== afterSignature),
+    });
+  }, TERMINAL_SETTLE_REDRAW_PAINT_SAMPLE_MS);
+}
+
+function scheduleSettleRedraw(paneId, terminal, fitAddon = null) {
+  const id = String(paneId);
+  if (!id || !terminal || !rendererOwnsPtyGeometry(id)) return;
+  // The settle redraw exists to capture a paint-outcome signature; skip terminals
+  // with no renderable buffer (nothing to repaint or measure).
+  if (!terminal.buffer || !terminal.buffer.active) return;
+  const now = Date.now();
+  const firstReqAt = terminalSettleRedrawFirstReqAt.get(id) || now;
+  terminalSettleRedrawFirstReqAt.set(id, firstReqAt);
+
+  const existing = terminalSettleRedrawTimers.get(id);
+  if (existing) clearTimeout(existing);
+
+  // Debounce on quiet, but never defer past MAX_DEFER during sustained streaming.
+  const burstElapsed = Math.max(0, now - firstReqAt);
+  const delay = burstElapsed >= TERMINAL_SETTLE_REDRAW_MAX_DEFER_MS
+    ? 0
+    : Math.min(TERMINAL_SETTLE_REDRAW_DEBOUNCE_MS, TERMINAL_SETTLE_REDRAW_MAX_DEFER_MS - burstElapsed);
+
+  const timer = setTimeout(() => {
+    terminalSettleRedrawTimers.delete(id);
+    if (terminals.get(id) !== terminal) return;
+    // Rate-limit the forced re-poke to protect steady_state_event_rates (<=1/sec).
+    const sinceLast = Date.now() - (Number(terminalSettleRedrawLastAt.get(id)) || 0);
+    if (sinceLast < TERMINAL_SETTLE_REDRAW_MIN_INTERVAL_MS) {
+      // Too soon — re-arm for the remaining cooldown without resetting the burst clock.
+      const wait = TERMINAL_SETTLE_REDRAW_MIN_INTERVAL_MS - sinceLast;
+      const retry = setTimeout(() => {
+        terminalSettleRedrawTimers.delete(id);
+        if (terminals.get(id) !== terminal) return;
+        terminalSettleRedrawFirstReqAt.delete(id);
+        performSettleRedraw(id, terminal, fitAddon);
+      }, wait);
+      terminalSettleRedrawTimers.set(id, retry);
+      return;
+    }
+    terminalSettleRedrawFirstReqAt.delete(id);
+    performSettleRedraw(id, terminal, fitAddon);
+  }, delay);
+  terminalSettleRedrawTimers.set(id, timer);
 }
 
 function setupTerminalWheelScrollGuard(paneId, container, terminal, options = {}) {
@@ -718,7 +909,9 @@ function queueTerminalWrite(paneId, terminal, data) {
 
   // Add data to queue
   queue.push({ data: payload, byteLen });
+  terminalLastWriteAt.set(id, Date.now()); // for the settle quiescence gate (Bug A painted validity)
   scheduleStreamingViewportFit(id, terminal, fitAddons.get(id));
+  scheduleSettleRedraw(id, terminal, fitAddons.get(id));
 
   // Start processing if not already writing
   if (!terminalWriteFlushTimers.has(id)) {
@@ -1487,6 +1680,9 @@ function teardownTerminalPane(paneId) {
   terminalOwnFitContainerSizes.delete(id);
   terminalStreamingLastFitAt.delete(id);
   terminalUserScrollUntil.delete(id);
+  clearTerminalSettleRedraw(id);
+  terminalSettleRedrawLastAt.delete(id);
+  terminalLastWriteAt.delete(id);
   clearStartupInjection(id);
   detachTerminalInputBridge(id);
   detachPtyListeners(id);
@@ -3922,6 +4118,11 @@ module.exports = {
     fitTerminalForPane,
     shouldSuppressOwnFitResizeObserver,
     scheduleStreamingViewportFit,
+    scheduleSettleRedraw,
+    performSettleRedraw,
+    clearTerminalSettleRedraw,
+    captureTerminalFrameSignature,
+    captureTerminalFitCoherence,
     scheduleDeferredTerminalResize,
     clearDeferredTerminalResize,
     scheduleTerminalPaintRefresh,

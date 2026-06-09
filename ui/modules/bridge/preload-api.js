@@ -69,6 +69,7 @@ function createPreloadApi(ipcRenderer) {
       pause: (paneId) => ipc.invoke('pty-pause', paneId),
       resume: (paneId) => ipc.invoke('pty-resume', paneId),
       resize: (paneId, cols, rows, kernelMeta = null) => ipc.invoke('pty-resize', paneId, cols, rows, kernelMeta),
+      recordFitTelemetry: (payload = {}) => ipc.invoke('terminal-fit-telemetry', payload),
       kill: (paneId) => ipc.invoke('pty-kill', paneId),
       onData: (paneId, callback) => {
         const channel = toPaneChannel('pty-data-', paneId);

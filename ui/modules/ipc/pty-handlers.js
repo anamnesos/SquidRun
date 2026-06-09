@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { resolvePaneCwd } = require('../../config');
+const { resolvePaneCwd, resolveCoordPath } = require('../../config');
 const {
   hasCodexDangerouslyBypassFlag,
   hasCodexAskForApprovalFlag,
@@ -180,6 +180,34 @@ function isPaneHostSender(event) {
     || ''
   ).toLowerCase();
   return frameUrl.includes('/pane-host.html') || frameUrl.includes('\\pane-host.html');
+}
+
+const TERMINAL_FIT_TELEMETRY_MAX_LINES = 300;
+let _terminalFitTelemetryPath = null;
+function getTerminalFitTelemetryPath() {
+  if (!_terminalFitTelemetryPath) {
+    _terminalFitTelemetryPath = resolveCoordPath(path.join('runtime', 'terminal-fit-telemetry.jsonl'), { forWrite: true });
+  }
+  return _terminalFitTelemetryPath;
+}
+
+// Bounded append: keep only the last N lines so this diagnostic never grows unbounded
+// (no-orphan-artifacts). Bug A's proof reads the tail to assert fit-coherence + redraw outcome.
+function appendTerminalFitTelemetry(record) {
+  const filePath = getTerminalFitTelemetryPath();
+  let lines = [];
+  try {
+    if (fs.existsSync(filePath)) {
+      lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/).filter(Boolean);
+    }
+  } catch {
+    lines = [];
+  }
+  lines.push(JSON.stringify(record));
+  if (lines.length > TERMINAL_FIT_TELEMETRY_MAX_LINES) {
+    lines = lines.slice(lines.length - TERMINAL_FIT_TELEMETRY_MAX_LINES);
+  }
+  fs.writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf8');
 }
 
 function buildChunkKernelMeta(kernelMeta, chunkIndex) {
@@ -586,6 +614,40 @@ function registerPtyHandlers(ctx, deps = {}) {
     return { ignored: false };
   });
 
+  // Bug A: renderer-side fit-coherence + redraw paint-outcome telemetry for the
+  // post-burst settle redraw. Pane-host mirrors must not write geometry telemetry.
+  ipcMain.handle('terminal-fit-telemetry', (event, payload = {}) => {
+    if (isPaneHostSender(event)) {
+      return { ignored: true, reason: 'pane_host_telemetry_blocked' };
+    }
+    const paneId = payload && payload.paneId != null ? String(payload.paneId) : '';
+    if (!paneId) {
+      return { ignored: true, reason: 'missing_pane_id' };
+    }
+    try {
+      appendTerminalFitTelemetry({
+        paneId,
+        operation: typeof payload.operation === 'string' ? payload.operation : 'settle_redraw',
+        ts: Number(payload.ts) || Date.now(),
+        xtermCols: payload.xtermCols ?? null,
+        xtermRows: payload.xtermRows ?? null,
+        proposedCols: payload.proposedCols ?? null,
+        proposedRows: payload.proposedRows ?? null,
+        appliedCols: payload.appliedCols ?? null,
+        appliedRows: payload.appliedRows ?? null,
+        coherent: payload.coherent === true,
+        quietSettle: payload.quietSettle === true,
+        painted: payload.painted === true,
+        beforeSignature: typeof payload.beforeSignature === 'string' ? payload.beforeSignature : null,
+        afterSignature: typeof payload.afterSignature === 'string' ? payload.afterSignature : null,
+      });
+      return { ok: true };
+    } catch (err) {
+      log.warn('PTY', `terminal-fit-telemetry write failed: ${err?.message || err}`);
+      return { ok: false, error: String(err?.message || err) };
+    }
+  });
+
   ipcMain.handle('pty-kill', (event, paneId) => {
     const daemonClient = getDaemonClientForPane(paneId);
     if (daemonClient && daemonClient.connected) {
@@ -707,6 +769,7 @@ function unregisterPtyHandlers(ctx) {
     ipcMain.removeHandler('clipboard-write');
     ipcMain.removeHandler('input-edit-action');
     ipcMain.removeHandler('pty-resize');
+    ipcMain.removeHandler('terminal-fit-telemetry');
     ipcMain.removeHandler('pty-kill');
     ipcMain.removeHandler('intent-update');
     ipcMain.removeHandler('spawn-claude');
@@ -722,5 +785,7 @@ module.exports = {
   _internals: {
     isInsideSquidRunPrivateRoot,
     resolveWindowsClaudeTempDir,
+    appendTerminalFitTelemetry,
+    getTerminalFitTelemetryPath,
   },
 };
