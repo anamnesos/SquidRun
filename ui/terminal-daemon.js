@@ -52,6 +52,12 @@ const {
   loadRestartScrollbackSnapshot,
   saveRestartScrollbackSnapshot,
 } = require('./modules/terminal-restart-scrollback-store');
+const {
+  resumeStrategyForCommand,
+  claudeSessionExists,
+  resolveResumeAppendFlags,
+} = require('./modules/cli-resume-invocation');
+const { ensurePaneSessionId } = require('./modules/pane-session-id-store');
 
 // ============================================================
 // D1: DAEMON LOGGING TO FILE
@@ -427,6 +433,7 @@ function checkGhostText(paneId, data) {
 
 const SESSION_FILE_PATH = resolveCoordPath('runtime/session-state.json', { forWrite: true });
 const RESTART_SCROLLBACK_FILE_PATH = resolveCoordPath('runtime/terminal-restart-scrollback.json', { forWrite: true });
+const PANE_SESSION_IDS_FILE_PATH = resolveCoordPath('runtime/pane-session-ids.json', { forWrite: true });
 let restartScrollbackSnapshot = loadRestartScrollbackSnapshot(RESTART_SCROLLBACK_FILE_PATH);
 let restartScrollbackSaveTimer = null;
 
@@ -1306,10 +1313,12 @@ function getShell() {
   return os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash';
 }
 
-function getShellCommandInvocation(command = '') {
+function getShellCommandInvocation(command = '', appendFlags = '') {
   const shell = getShell();
-  const text = String(command || '').trim();
+  let text = String(command || '').trim();
   if (!text) return { command: shell, args: [] };
+  const extra = String(appendFlags || '').trim();
+  if (extra) text = `${text} ${extra}`;
   if (os.platform() === 'win32') {
     return {
       command: shell,
@@ -1419,6 +1428,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     const mockPid = 90000 + parseInt(paneId); // Fake PID for identification
 
     const terminalInfo = {
+      paneId: String(paneId),
       pty: null,
       pid: mockPid,
       alive: true,
@@ -1457,10 +1467,28 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
 
   // NORMAL MODE: Spawn real PTY
   const spawnCommandOnCreate = options.spawnCommandOnCreate === true && Boolean(paneCommand);
+  // Restart continuity: id-addressed CLI session resume (shared-cwd-safe).
+  // claude panes get a stable per-pane UUID; create-vs-resume gates on whether
+  // that CLI session ALREADY EXISTS in claude's store (NOT on the scrollback
+  // snapshot). codex arms stay cold by design (no pin-at-creation + shared cwd).
+  let resumeAppendFlags = '';
+  if (spawnCommandOnCreate) {
+    if (resumeStrategyForCommand(paneCommand) === 'session-id') {
+      const { sessionId } = ensurePaneSessionId(PANE_SESSION_IDS_FILE_PATH, paneId);
+      const sessionExists = claudeSessionExists(workDir, sessionId);
+      const decision = resolveResumeAppendFlags({ command: paneCommand, sessionId, sessionExists });
+      resumeAppendFlags = decision.flags;
+      logInfo(`[resume] pane ${paneId}: ${decision.mode} (${decision.cli}) sessionId=${sessionId}${decision.flags ? ` -> ${decision.flags}` : ''}`);
+    } else {
+      // Explicit, logged cold-start so it reads as a deliberate v1 limit.
+      const decision = resolveResumeAppendFlags({ command: paneCommand });
+      logInfo(`[resume] pane ${paneId}: cold-start — ${decision.reason}`);
+    }
+  }
   const invocation = spawnCommandOnCreate
-    ? getShellCommandInvocation(paneCommand)
+    ? getShellCommandInvocation(paneCommand, resumeAppendFlags)
     : { command: getShell(), args: [] };
-  logInfo(`Spawning terminal for pane ${paneId} in ${workDir}${spawnCommandOnCreate ? ` with command: ${paneCommand}` : ''}`);
+  logInfo(`Spawning terminal for pane ${paneId} in ${workDir}${spawnCommandOnCreate ? ` with command: ${paneCommand}${resumeAppendFlags ? ` ${resumeAppendFlags}` : ''}` : ''}`);
 
   const ptyProcess = pty.spawn(invocation.command, invocation.args, {
     name: 'xterm-256color',
@@ -1472,6 +1500,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   });
 
   const terminalInfo = {
+    paneId: String(paneId),
     pty: ptyProcess,
     pid: ptyProcess.pid,
     alive: true,
