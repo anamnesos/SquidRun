@@ -229,6 +229,134 @@ describe('hm-squid-room-restart-proof', () => {
     }));
   });
 
+  it('parses live TrustQuote arm receipts from comms metadata and Pane/env binding prose', () => {
+    const sessionScope = 'app-session-418:squid-room';
+    const receipts = parseArmReceipts([
+      {
+        rowId: 68833,
+        sessionId: sessionScope,
+        sender: 'trustquote-app',
+        status: 'routed',
+        rawBody: [
+          '(TRUSTQUOTE APP STARTUP RECEIPT): TrustQuote App online in D:\\projects\\TrustQuote.',
+          'Pane/env binding: role=trustquote-app, pane=trustquote-app,',
+          'session=app-session-418:squid-room, window=squid-room.',
+        ].join(' '),
+      },
+      {
+        rowId: 68838,
+        sessionId: sessionScope,
+        senderRole: 'trustquote-schedule-dispatch',
+        status: 'routed',
+        metadata: {
+          project: {
+            name: 'TrustQuote',
+            path: 'D:\\projects\\TrustQuote',
+            session_id: sessionScope,
+          },
+          sender: { role: 'trustquote-schedule-dispatch' },
+          session_id: sessionScope,
+        },
+        rawBody: [
+          '[TRUSTQUOTE SCHEDULE DISPATCH STARTUP CORRECTION / S418]',
+          'Live env proof: SQUIDRUN_ROLE=trustquote-schedule-dispatch;',
+          'SQUIDRUN_PANE_ID=trustquote-schedule-dispatch;',
+          'SQUIDRUN_SESSION_SCOPE_ID=app-session-418:squid-room;',
+          'SQUIDRUN_PROFILE=main.',
+        ].join(' '),
+      },
+    ], { sessionScope });
+
+    expect(receipts['trustquote-app']).toEqual(expect.objectContaining({
+      rowId: 68833,
+      sender: 'trustquote-app',
+      role: 'trustquote-app',
+      paneId: 'trustquote-app',
+      sessionScope,
+      windowKey: 'squid-room',
+      cwd: 'D:\\projects\\TrustQuote',
+      status: 'routed',
+    }));
+    expect(receipts['trustquote-schedule-dispatch']).toEqual(expect.objectContaining({
+      rowId: 68838,
+      sender: 'trustquote-schedule-dispatch',
+      role: 'trustquote-schedule-dispatch',
+      paneId: 'trustquote-schedule-dispatch',
+      sessionScope,
+      cwd: 'D:\\projects\\TrustQuote',
+      status: 'routed',
+    }));
+  });
+
+  it('accepts routed comms-row identity metadata as primary startup receipt proof', () => {
+    const sessionScope = 'app-session-418:squid-room';
+    const receipts = parseArmReceipts([
+      {
+        rowId: 68839,
+        status: 'routed',
+        metadata_json: JSON.stringify({
+          session_id: sessionScope,
+          sender: { role: 'trustquote-invoice' },
+          project: { name: 'TrustQuote', path: 'D:\\projects\\TrustQuote' },
+        }),
+        rawBody: 'TrustQuote invoice arm online. Ready for routed assignment.',
+      },
+    ], { sessionScope });
+
+    expect(receipts['trustquote-invoice']).toEqual(expect.objectContaining({
+      rowId: 68839,
+      sender: 'trustquote-invoice',
+      role: 'trustquote-invoice',
+      paneId: 'trustquote-invoice',
+      sessionScope,
+      cwd: 'D:\\projects\\TrustQuote',
+      status: 'routed',
+    }));
+  });
+
+  it('rejects prior-session and sessionless routed arm rows when proving current receipts', () => {
+    const sessionScope = 'app-session-418:squid-room';
+    const receipts = parseArmReceipts([
+      {
+        rowId: 68830,
+        sessionId: 'app-session-417:squid-room',
+        senderRole: 'trustquote-app',
+        status: 'routed',
+        metadata: {
+          sender: { role: 'trustquote-app' },
+          project: { path: 'D:\\projects\\TrustQuote' },
+        },
+        rawBody: 'TrustQuote app historical routed receipt with plausible cwd.',
+      },
+      {
+        rowId: 68831,
+        senderRole: 'trustquote-invoice',
+        status: 'routed',
+        metadata: {
+          sender: { role: 'trustquote-invoice' },
+          project: { path: 'D:\\projects\\TrustQuote' },
+        },
+        rawBody: 'TrustQuote invoice routed receipt missing session.',
+      },
+      {
+        rowId: 68832,
+        sessionId: 'app-session-417:squid-room',
+        senderRole: 'trustquote-schedule-dispatch',
+        status: 'routed',
+        rawBody: [
+          'Live env proof: SQUIDRUN_ROLE=trustquote-schedule-dispatch;',
+          'SQUIDRUN_PANE_ID=trustquote-schedule-dispatch;',
+          'SQUIDRUN_SESSION_SCOPE_ID=app-session-417:squid-room;',
+          'SQUIDRUN_WORKING_DIR=D:/projects/TrustQuote.',
+        ].join(' '),
+      },
+    ], { sessionScope });
+
+    expect(receipts['trustquote-app']).toBeUndefined();
+    expect(receipts['trustquote-invoice']).toBeUndefined();
+    expect(receipts['trustquote-schedule-dispatch']).toBeUndefined();
+  });
+
   it('fails when baseline does not prove active mid-work', () => {
     const before = buildBaselineSnapshot(evidence({
       session: 416,
