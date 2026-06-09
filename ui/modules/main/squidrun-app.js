@@ -1383,6 +1383,10 @@ class SquidRunApp {
     try {
       const result = startBidirectionalWakeWatchdogRunner({
         projectRoot: options.projectRoot || getProjectRoot(),
+        // App-lifecycle generation token: a daemon carrying a different (prior)
+        // token is reaped + replaced on app start, so a pre-restart orphan can't
+        // persist with stale code behind the pidfile lock.
+        appGenerationId: this.commsSessionScopeId || null,
       });
       if (result?.started === true) {
         log.warn(
