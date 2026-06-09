@@ -154,6 +154,7 @@ const TERMINAL_STREAMING_FIT_SETTLE_MS = 160;
 const TERMINAL_USER_SCROLL_HOLD_MS = 1800;
 const TERMINAL_SCROLL_FALLBACK_DELAY_MS = 24;
 const TERMINAL_WHEEL_PIXEL_LINE = 40;
+const TERMINAL_SCROLL_PROBE_TARGET_PROPERTY = '__squidrunTerminalScrollProbeTarget';
 const PROMOTION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 // WebGL rendering: disabled by default to reduce memory usage.
@@ -605,6 +606,34 @@ function setupTerminalWheelScrollGuard(paneId, container, terminal, options = {}
     ...(options.signal ? { signal: options.signal } : {}),
   });
   return true;
+}
+
+function attachTerminalScrollProbeTarget(paneId, container, terminal) {
+  if (!container || !terminal) return false;
+  try {
+    Object.defineProperty(container, TERMINAL_SCROLL_PROBE_TARGET_PROPERTY, {
+      value: {
+        paneId: String(paneId),
+        terminal,
+      },
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+    return true;
+  } catch (err) {
+    log.warn(`Terminal ${paneId}`, `Scroll probe target attach failed: ${err?.message || err}`);
+    return false;
+  }
+}
+
+function detachTerminalScrollProbeTarget(paneId) {
+  if (typeof document === 'undefined') return;
+  const container = document.getElementById(`terminal-${String(paneId)}`);
+  if (!container) return;
+  try {
+    delete container[TERMINAL_SCROLL_PROBE_TARGET_PROPERTY];
+  } catch (_) {}
 }
 
 function scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon = null) {
@@ -1452,6 +1481,7 @@ function teardownTerminalPane(paneId) {
 
   cleanupResizeObserver(id);
   clearTerminalPaintRefresh(id);
+  detachTerminalScrollProbeTarget(id);
   terminalAppliedPtyGeometries.delete(id);
   terminalOwnFitSuppressUntil.delete(id);
   terminalOwnFitContainerSizes.delete(id);
@@ -2553,6 +2583,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 
   const terminal = createTerminalInstance();
   const { fitAddon } = setupTerminalAddons(paneId, terminal, container);
+  attachTerminalScrollProbeTarget(paneId, container, terminal);
 
   terminal.open(container);
   if (rendererOwnsPtyGeometry(paneId)) {
@@ -2820,6 +2851,7 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
 
   const terminal = createTerminalInstance();
   const { fitAddon } = setupTerminalAddons(paneId, terminal, container);
+  attachTerminalScrollProbeTarget(paneId, container, terminal);
 
   terminal.open(container);
   if (rendererOwnsPtyGeometry(paneId)) {

@@ -9,6 +9,8 @@ describe('app-control-service', () => {
     expect(normalizeAction('close-trustquote-window')).toBe('close-trustquote-workspace');
     expect(normalizeAction('close-window')).toBe('close-app-window');
     expect(normalizeAction('close-app-window')).toBe('close-app-window');
+    expect(normalizeAction('scroll-probe')).toBe('terminal-scroll-probe');
+    expect(normalizeAction('probe-terminal-scroll')).toBe('terminal-scroll-probe');
   });
 
   test('reload-renderers reloads every live window without restarting the main process', () => {
@@ -121,6 +123,92 @@ describe('app-control-service', () => {
       success: false,
       action: 'restart-telegram-poller',
       reason: 'restart_unavailable',
+    }));
+  });
+
+  test('terminal-scroll-probe is unavailable in packaged builds', () => {
+    const result = executeAppControlAction({
+      isPackaged: true,
+      getAppWindow: jest.fn(),
+    }, 'terminal-scroll-probe', {
+      windowKey: 'squid-room',
+      containerId: 'terminal-trustquote-app',
+      op: 'dispatchKey',
+      key: 'PageUp',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      action: 'terminal-scroll-probe',
+      reason: 'terminal_scroll_probe_dev_only',
+    }));
+  });
+
+  test('terminal-scroll-probe validates explicit window, container, and op input', () => {
+    const result = executeAppControlAction({
+      isPackaged: false,
+      getAppWindow: jest.fn(),
+    }, 'terminal-scroll-probe', {
+      windowKey: '',
+      containerId: 'bad container id',
+      op: 'dispatchKey',
+      key: 'Escape',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      action: 'terminal-scroll-probe',
+      reason: 'terminal_scroll_probe_invalid_payload',
+    }));
+    expect(result.errors).toEqual(expect.arrayContaining([
+      'windowKey_required',
+      'containerId_invalid',
+      'key_unsupported',
+    ]));
+  });
+
+  test('terminal-scroll-probe executes a fixed textarea key probe against the requested renderer window', async () => {
+    const executeJavaScript = jest.fn().mockResolvedValue({
+      success: true,
+      requestedWindowKey: 'squid-room',
+      windowKey: 'squid-room',
+      containerId: 'terminal-trustquote-app',
+      paneId: 'trustquote-app',
+      op: 'dispatchKey',
+      key: 'PageUp',
+      dispatchTarget: 'xterm-helper-textarea',
+      before: { viewportY: 26 },
+      after: { viewportY: 12 },
+      moved: true,
+    });
+    const getAppWindow = jest.fn(() => ({
+      isDestroyed: () => false,
+      webContents: { executeJavaScript },
+    }));
+
+    const result = await executeAppControlAction({
+      isPackaged: false,
+      getAppWindow,
+    }, 'terminal-scroll-probe', {
+      windowKey: 'squid-room',
+      containerId: 'terminal-trustquote-app',
+      op: 'dispatchKey',
+      key: 'PageUp',
+    });
+
+    expect(getAppWindow).toHaveBeenCalledWith('squid-room');
+    expect(executeJavaScript).toHaveBeenCalledTimes(1);
+    const [script, userGesture] = executeJavaScript.mock.calls[0];
+    expect(userGesture).toBe(true);
+    expect(script).toContain('__squidrunTerminalScrollProbeTarget');
+    expect(script).toContain('xterm-helper-textarea');
+    expect(script).toContain('KeyboardEvent');
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'terminal-scroll-probe',
+      requestedWindowKey: 'squid-room',
+      dispatchTarget: 'xterm-helper-textarea',
+      moved: true,
     }));
   });
 

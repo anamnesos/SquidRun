@@ -15,7 +15,7 @@ const DEFAULT_RESPONSE_TIMEOUT_MS = 5000;
 
 function usage() {
   console.log('Usage: node hm-app.js <command> [options]');
-  console.log('Commands: reload-renderers, restart-telegram-poller, open-mira-lab, open-live-task-audit-sidecar, open-squid-room, open-trustquote-workspace, close-trustquote-workspace, close-app-window, drive-mira-lab');
+  console.log('Commands: reload-renderers, restart-telegram-poller, open-mira-lab, open-live-task-audit-sidecar, open-squid-room, open-trustquote-workspace, close-trustquote-workspace, close-app-window, drive-mira-lab, terminal-scroll-probe');
   console.log('Options:');
   console.log('  --role <role>               Sender role (default: builder)');
   console.log(`  --port <port>               WebSocket port (default: ${DEFAULT_PORT})`);
@@ -26,6 +26,14 @@ function usage() {
   console.log('  --speaker-role <role>       Speaker role attached to the prompt (default: james)');
   console.log('  --session-id <id>           Optional Mira Lab session id');
   console.log('  --timeout-ms <ms>           Renderer round-trip timeout (default: 10000)');
+  console.log('terminal-scroll-probe options:');
+  console.log('  --window-key <key>          Explicit target renderer window key');
+  console.log('  --container-id <id>         Terminal container id, e.g. terminal-trustquote-app');
+  console.log('  --op <op>                   scrollLines | dispatchWheel | dispatchKey');
+  console.log('  --lines <n>                 Lines for scrollLines');
+  console.log('  --delta-y <n>               Wheel deltaY for dispatchWheel');
+  console.log('  --key <PageUp|PageDown>     Key for dispatchKey');
+  console.log('  --wait-ms <ms>              Optional post-event wait (default: 120)');
   console.log('Examples:');
   console.log('  node hm-app.js reload-renderers');
   console.log('  node hm-app.js open-mira-lab');
@@ -35,6 +43,7 @@ function usage() {
   console.log('  node hm-app.js close-trustquote-workspace');
   console.log('  node hm-app.js close-app-window --window-key trustquote');
   console.log('  node hm-app.js drive-mira-lab --prompt "are we still talking?" --pane builder');
+  console.log('  node hm-app.js terminal-scroll-probe --window-key squid-room --container-id terminal-trustquote-app --op dispatchKey --key PageUp');
 }
 
 function parseArgs(argv) {
@@ -97,6 +106,7 @@ function normalizeCommand(command) {
   ) return 'close-trustquote-workspace';
   if (normalized === 'close-window' || normalized === 'window-close' || normalized === 'close-app-window') return 'close-app-window';
   if (normalized === 'drive-mira-lab' || normalized === 'mira-lab-drive' || normalized === 'mira-lab-renderer-prompt') return 'mira-lab-renderer-prompt';
+  if (normalized === 'scroll-probe' || normalized === 'probe-terminal-scroll') return 'terminal-scroll-probe';
   return normalized;
 }
 
@@ -222,6 +232,7 @@ async function main() {
     'close-trustquote-workspace',
     'close-app-window',
     'mira-lab-renderer-prompt',
+    'terminal-scroll-probe',
   ]);
   if (!allowedCommands.has(command)) {
     console.error(`Unsupported command: ${command}`);
@@ -256,6 +267,24 @@ async function main() {
       process.exit(1);
     }
     payload = { windowKey };
+  }
+  if (command === 'terminal-scroll-probe') {
+    const op = asString(getOption(options, 'op', getOption(options, 'operation', '')), '');
+    const windowKey = asString(getOption(options, 'window-key', getOption(options, 'window', '')), '');
+    const containerId = asString(getOption(options, 'container-id', ''), '');
+    if (!op || !windowKey || !containerId) {
+      console.error('terminal-scroll-probe requires --window-key <key> --container-id <id> --op <scrollLines|dispatchWheel|dispatchKey>');
+      process.exit(1);
+    }
+    payload = {
+      windowKey,
+      containerId,
+      op,
+      lines: asNumber(getOption(options, 'lines', null), null),
+      deltaY: asNumber(getOption(options, 'delta-y', getOption(options, 'deltaY', null)), null),
+      key: asString(getOption(options, 'key', ''), ''),
+      waitMs: asNumber(getOption(options, 'wait-ms', getOption(options, 'wait', null)), null),
+    };
   }
 
   const response = await run(command, {
