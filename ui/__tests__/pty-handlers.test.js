@@ -1029,6 +1029,24 @@ describe('PTY Handlers', () => {
   });
 
   describe('terminal-fit-telemetry (Bug A)', () => {
+    test('preload bridge allowlist exposes terminal-fit-telemetry', async () => {
+      const { isAllowedInvokeChannel } = require('../modules/bridge/channel-policy');
+      const { createPreloadApi } = require('../modules/bridge/preload-api');
+      const ipcRenderer = {
+        invoke: jest.fn().mockResolvedValue({ ok: true }),
+        send: jest.fn(),
+        on: jest.fn(),
+        removeListener: jest.fn(),
+        removeAllListeners: jest.fn(),
+      };
+
+      const api = createPreloadApi(ipcRenderer);
+      await expect(api.pty.recordFitTelemetry({ paneId: '1' })).resolves.toEqual({ ok: true });
+
+      expect(isAllowedInvokeChannel('terminal-fit-telemetry')).toBe(true);
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('terminal-fit-telemetry', { paneId: '1' });
+    });
+
     test('rejects a payload with no paneId without writing', async () => {
       const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
       const result = await harness.invoke('terminal-fit-telemetry', {});
