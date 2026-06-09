@@ -22,6 +22,7 @@ const DEFAULT_PID_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wa
 const DEFAULT_STATUS_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wake-watchdog-status.json'), { forWrite: true });
 const DEFAULT_LOG_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wake-watchdog.log'), { forWrite: true });
 const DEFAULT_START_LOCK_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wake-watchdog-start.lock'), { forWrite: true });
+const DEFAULT_CURRENT_LANE_PATH = resolveCoordPath(path.join('handoffs', 'current-lane.json'));
 const DEFAULT_ARCHITECT_SILENCE_MS = 8 * 60 * 1000;
 const DEFAULT_ORACLE_SILENCE_MS = 10 * 60 * 1000;
 const CHILD_START_GRACE_MS = 10_000;
@@ -453,6 +454,26 @@ function isActiveWindow(nowMs = Date.now()) {
     || (hour >= 16 && hour < 20);
 }
 
+// The active-window "silent >Xm, status check" peer-wake nag can't tell a peer
+// that finished and is idle-by-design from one stalled mid-task. When there is
+// no open lane, the whole team is legitimately idle and the poke is the same
+// false-state signal class as the Blocked badge / heartbeat-stale alerts —
+// suppress it. Missing/unreadable lane state defaults to "no pending work"
+// (quiet): the nag is internal noise, not a safety signal, and the dead-pane
+// auto-recovery path (separate) still catches an actually-dead CLI.
+function hasPendingTeamWork(currentLanePath = DEFAULT_CURRENT_LANE_PATH) {
+  try {
+    const lane = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    if (!lane || typeof lane !== 'object') return false;
+    if (toNumber(lane.activeLaneCount, 0) > 0) return true;
+    if (lane.activeLane && typeof lane.activeLane === 'object') return true;
+    if (lane.continuity && toText(lane.continuity.next_action)) return true;
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
 function latestSeenAt(filters = {}, nowMs = Date.now()) {
   const rows = queryCommsJournalEntries({
     ...filters,
@@ -480,6 +501,8 @@ async function runHeartbeatCycle(options = {}) {
   const oracleSilenceMs = Math.max(60_000, toNumber(options.oracleSilenceMs, DEFAULT_ORACLE_SILENCE_MS));
   const architectSilenceMinutes = Math.round(architectSilenceMs / 60_000);
   const oracleSilenceMinutes = Math.round(oracleSilenceMs / 60_000);
+  const currentLanePath = path.resolve(toText(options.currentLanePath, DEFAULT_CURRENT_LANE_PATH));
+  const pendingTeamWork = hasPendingTeamWork(currentLanePath);
   const state = loadState(statePath);
 
   const architectLastSeenAt = latestSeenAt({
@@ -498,6 +521,7 @@ async function runHeartbeatCycle(options = {}) {
   const agentPaneDeliverySignals = [];
 
   if (isActiveWindow(nowMs)
+    && pendingTeamWork
     && Number.isFinite(architectLastSeenMs)
     && (nowMs - architectLastSeenMs) >= architectSilenceMs
     && shouldRepoke(state.architect?.lastPokeAt, nowMs, architectSilenceMs)) {
@@ -520,6 +544,7 @@ async function runHeartbeatCycle(options = {}) {
   }
 
   if (isActiveWindow(nowMs)
+    && pendingTeamWork
     && Number.isFinite(oracleLastSeenMs)
     && (nowMs - oracleLastSeenMs) >= oracleSilenceMs
     && shouldRepoke(state.oracle?.lastPokeAt, nowMs, oracleSilenceMs)) {
@@ -851,6 +876,7 @@ module.exports = {
   buildRunnerStatusSnapshot,
   defaultState,
   isActiveWindow,
+  hasPendingTeamWork,
   readRunnerStatus,
   loadState,
   persistState,
