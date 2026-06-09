@@ -141,6 +141,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/main/cli-identity.js: Exports CliIdentityManager.
 - ui/modules/main/comms-journal.js: Exports appendCommsJournalEntry, queryCommsJournalEntries, closeCommsJournalStores, resolveDefaultEvidenceLedgerDbPath, ....
 - ui/modules/main/codex-desktop-inbound-transport.js: Probes the installed Codex Desktop/CLI/App Server/Windows UI surfaces and emits a fail-closed SquidRun verdict for whether a real visible SquidRun-to-Codex Desktop inbound message transport exists.
+- ui/modules/main/codex-desktop-capability-awareness.js: Builds the Codex Desktop capability status from current process availability, app-control route ownership, attention-inbox counts, and desktop transport proof. The legacy `codex-heartbeat.json` reader/CLI was retired; do not revive `hm-codex-heartbeat-check.js` as availability proof.
 - ui/modules/main/evidence-ledger-ingest.js: Exports REQUIRED_FIELDS, normalizeEnvelope, validateEnvelope, buildEdgeRows, ....
 - ui/modules/main/evidence-ledger-investigator.js: Exports EvidenceLedgerInvestigator.
 - ui/modules/main/evidence-ledger-memory-seed.js: Exports stableId, deriveSeedRecords, seedDecisionMemory.
@@ -240,6 +241,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/voice-broker-lease-store.js: Voice broker lease/session state store helpers.
 - ui/modules/task-parser.js: Exports parseTaskInput and lightweight legal/financial/medical problem-intake detection metadata for orchestration triggers.
 - ui/scripts/hm-codex-desktop-transport.js: CLI wrapper for `probe`, `study`, and workspace `summon` around the Codex Desktop inbound-transport probe. It can write the probe report under `.squidrun/runtime/` and never claims queue/polling as visible inbound delivery.
+- ui/scripts/hm-codex-capability-status.js: CLI wrapper for Codex Desktop process/app-control/attention-inbox/desktop-transport capability status. It intentionally does not read the retired Codex heartbeat file.
 - ui/modules/team-memory/backfill.js: Exports runBackfill, buildBackfillRecord, resolveDefaultEvidenceLedgerDbPath.
 - ui/modules/team-memory/claims.js: Exports TeamMemoryClaims, CLAIM_TYPES, CLAIM_STATUS, CONSENSUS_POSITIONS, ....
 - ui/modules/team-memory/comms-tagged-extractor.js: Exports TAG_RULES, extractTaggedItems, buildTaggedClaimRecord, extractTaggedClaimsFromComms, ....

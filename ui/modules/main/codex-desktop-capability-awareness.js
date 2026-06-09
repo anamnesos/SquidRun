@@ -8,10 +8,6 @@ const { getProjectRoot, resolveCoordPath } = require('../../config');
 const {
   DEFAULT_REPORT_RELATIVE_PATH: CODEX_DESKTOP_TRANSPORT_REPORT_RELATIVE_PATH,
 } = require('./codex-desktop-inbound-transport');
-const {
-  DEFAULT_INSTANCE_ID,
-  evaluateHeartbeat,
-} = require('../../scripts/hm-codex-heartbeat-check');
 
 const STATUS_SCHEMA = 'squidrun.codex_desktop_capability_awareness.v0';
 const DEFAULT_STATUS_RELATIVE_PATH = path.join('runtime', 'codex-desktop-capability-status-v0.json');
@@ -265,48 +261,6 @@ function inspectAttentionInbox(projectRoot, options = {}) {
   };
 }
 
-function inspectHeartbeatFreshness(projectRoot, options = {}) {
-  if (options.heartbeat && typeof options.heartbeat === 'object') {
-    return options.heartbeat;
-  }
-
-  const instance = toOptionalString(options.instance, DEFAULT_INSTANCE_ID);
-  const nowMs = resolveNowMs(options.nowMs);
-  try {
-    const result = evaluateHeartbeat(projectRoot, instance, nowMs);
-    const reason = toOptionalString(result.reason, 'unknown');
-    const status = result.ok === true
-      ? 'fresh'
-      : (reason === 'missing_heartbeat'
-        ? 'missing'
-        : (reason === 'stale_heartbeat' ? 'stale' : 'not_proven'));
-    return {
-      status,
-      proven_fresh: result.ok === true,
-      reason,
-      proof: result.ok === true ? 'fresh' : 'not_proven',
-      instance: result.instance || instance,
-      heartbeat_path: normalizePathForMetadata(result.heartbeatPath || ''),
-      stale_minutes: result.staleMinutes ?? null,
-      age_minutes: result.ageMinutes ?? null,
-      timestamp: result.ts || null,
-    };
-  } catch (err) {
-    return {
-      status: 'unknown',
-      proven_fresh: false,
-      reason: 'heartbeat_check_failed',
-      proof: 'not_proven',
-      instance,
-      heartbeat_path: null,
-      stale_minutes: null,
-      age_minutes: null,
-      timestamp: null,
-      error: err.message || String(err),
-    };
-  }
-}
-
 function inspectDesktopTransportRoute(projectRoot, options = {}) {
   const route = inspectScriptRoute(
     projectRoot,
@@ -336,12 +290,9 @@ function inspectDesktopTransportRoute(projectRoot, options = {}) {
   };
 }
 
-function resolveAggregateStatus(processAvailability, heartbeat, attentionInbox) {
-  if (processAvailability?.status === 'available' && heartbeat?.proven_fresh === true) {
-    return 'process_available_heartbeat_fresh';
-  }
+function resolveAggregateStatus(processAvailability, attentionInbox) {
   if (processAvailability?.status === 'available') {
-    return 'process_available_heartbeat_not_proven';
+    return 'process_available_not_monitored';
   }
   if (attentionInbox?.status === 'loaded') {
     return 'routes_discoverable_process_not_running_or_unproven';
@@ -355,7 +306,6 @@ function buildCodexDesktopCapabilityStatus(options = {}) {
   const generatedAt = toOptionalString(options.generatedAt, null) || asIso(options.now || nowMs, nowMs);
   const processAvailability = inspectCodexProcessAvailability(projectRoot, { ...options, nowMs });
   const attentionInbox = inspectAttentionInbox(projectRoot, { ...options, nowMs });
-  const heartbeat = inspectHeartbeatFreshness(projectRoot, { ...options, nowMs });
   const desktopTransport = inspectDesktopTransportRoute(projectRoot, options);
   const capabilityStatusRoute = inspectScriptRoute(
     projectRoot,
@@ -369,19 +319,12 @@ function buildCodexDesktopCapabilityStatus(options = {}) {
     'node ui/scripts/hm-codex-attention.js list --all',
     'Durable Codex attention inbox for structured requests and proof packets.'
   );
-  const heartbeatRoute = inspectScriptRoute(
-    projectRoot,
-    'hm-codex-heartbeat-check.js',
-    'node ui/scripts/hm-codex-heartbeat-check.js --instance james-main',
-    'Read-only Codex heartbeat freshness check; missing or stale heartbeat is not process death.'
-  );
-
   return {
     ok: true,
     schema: STATUS_SCHEMA,
     version: 1,
     generated_at: generatedAt,
-    status: resolveAggregateStatus(processAvailability, heartbeat, attentionInbox),
+    status: resolveAggregateStatus(processAvailability, attentionInbox),
     project_root: normalizePathForMetadata(projectRoot),
     acceptance_context: {
       user_correction_source: USER_CORRECTION_SOURCE_MESSAGE_ID,
@@ -408,22 +351,20 @@ function buildCodexDesktopCapabilityStatus(options = {}) {
         total_count: attentionInbox.total_count,
       },
       hmCodexDesktopTransport: desktopTransport,
-      hmCodexHeartbeatCheck: heartbeatRoute,
     },
     freshness: {
-      heartbeat,
       attentionInbox,
     },
     recommended_routes: [
       {
         id: 'hm_codex_capability_status',
-        use_for: 'Discover current Codex Desktop/process route availability, app-control route, attention inbox counts, desktop transport boundary, and heartbeat proof.',
+        use_for: 'Discover current Codex Desktop/process route availability, app-control route, attention inbox counts, and desktop transport boundary.',
         command: capabilityStatusRoute.command,
       },
       {
         id: 'codex_desktop_computer_use_app_control',
         use_for: 'Visible app/browser/desktop QA, app-control work, screenshot-backed inspection, and foreground SquidRun interaction.',
-        readiness_source: 'process availability plus current Codex agent session capability; heartbeat freshness is reported separately.',
+        readiness_source: 'process availability plus current Codex agent session capability; dead legacy heartbeat files are not used.',
       },
       {
         id: 'hm_codex_attention',
@@ -435,15 +376,10 @@ function buildCodexDesktopCapabilityStatus(options = {}) {
         use_for: 'Probe or focus/summon a Codex workspace; not a visible thread injection path.',
         command: desktopTransport.command,
       },
-      {
-        id: 'hm_codex_heartbeat_check',
-        use_for: 'Check whether the Codex heartbeat is fresh, stale, missing, or not proven.',
-        command: heartbeatRoute.command,
-      },
     ],
     boundaries: [
-      'Do not treat a missing or stale heartbeat as proof that all Codex routes are unavailable.',
-      'Do not treat process presence or route definitions as proof of a fresh heartbeat.',
+      'Do not use the retired codex-heartbeat.json file as live Codex Desktop availability proof.',
+      'Do not treat process presence or route definitions as proof of visible message injection.',
       'Do not claim local SquidRun can push a visible message into an already-running Codex Desktop thread unless a future supported hook proves it.',
       'Do not change credentials, OpenAI account state, relay settings, TrustQuote, or trading/account actions from this status path.',
     ],
@@ -454,9 +390,8 @@ function renderCodexDesktopCapabilityMarkdown(status = {}) {
   const processAvailability = status.availability?.codexDesktopProcess || {};
   const appControl = status.availability?.computerUseAppControl || {};
   const inbox = status.freshness?.attentionInbox || {};
-  const heartbeat = status.freshness?.heartbeat || {};
   const desktopTransport = status.availability?.hmCodexDesktopTransport || {};
-  const statusLabel = status.status === 'process_available_heartbeat_not_proven'
+  const statusLabel = status.status === 'process_available_not_monitored'
     ? 'available, not monitored'
     : (status.status || 'unknown');
   return [
@@ -465,9 +400,8 @@ function renderCodexDesktopCapabilityMarkdown(status = {}) {
     `- Process/App: ${processAvailability.status || 'unknown'} (processes=${Number(processAvailability.process_count || 0)}, visible_windows=${Number(processAvailability.visible_window_count || 0)})`,
     `- App-Control Route: ${appControl.status || 'unknown'} (source=${appControl.source_message_id || 'unknown'})`,
     `- Attention Inbox: active=${Number(inbox.active_count || 0)}, completed=${Number(inbox.completed_count || 0)}, total=${Number(inbox.total_count || 0)}, freshness=${inbox.polling_freshness || 'unknown'}`,
-    `- Heartbeat: ${heartbeat.status || 'unknown'} (${heartbeat.proof || 'not_proven'}${heartbeat.reason ? `; reason=${heartbeat.reason}` : ''})`,
     `- Desktop Transport: summon=${desktopTransport.can_summon_workspace === true ? 'yes' : 'no'}, visible_injection=${desktopTransport.visible_injection_proven === true ? 'proven' : 'not_proven'}`,
-    '- Tools: hm-codex-capability-status, hm-codex-attention, hm-codex-desktop-transport, hm-codex-heartbeat-check',
+    '- Tools: hm-codex-capability-status, hm-codex-attention, hm-codex-desktop-transport',
     `- Boundary: ${Array.isArray(status.boundaries) && status.boundaries.length > 0 ? status.boundaries[0] : 'route availability and freshness are separate facts.'}`,
     '',
   ].join('\n');
@@ -515,7 +449,6 @@ module.exports = {
   defaultRunner,
   inspectAttentionInbox,
   inspectCodexProcessAvailability,
-  inspectHeartbeatFreshness,
   renderCodexDesktopCapabilityMarkdown,
   resolveStatusPath,
   writeStatusReport,

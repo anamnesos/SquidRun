@@ -1598,9 +1598,8 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   const codexProcess = codexDesktop.availability?.codexDesktopProcess || {};
   const codexAppControl = codexDesktop.availability?.computerUseAppControl || {};
   const codexInbox = codexDesktop.freshness?.attentionInbox || {};
-  const codexHeartbeat = codexDesktop.freshness?.heartbeat || {};
   const codexTransport = codexDesktop.availability?.hmCodexDesktopTransport || {};
-  const codexStatusLabel = codexDesktop.status === 'process_available_heartbeat_not_proven'
+  const codexStatusLabel = codexDesktop.status === 'process_available_not_monitored'
     ? 'available, not monitored'
     : (codexDesktop.status || 'unknown');
   lines.push('');
@@ -1609,9 +1608,8 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   lines.push(`- Process/App: ${codexProcess.status || 'unknown'} (processes=${Number(codexProcess.process_count || 0)}, visible_windows=${Number(codexProcess.visible_window_count || 0)})`);
   lines.push(`- App-Control Route: ${codexAppControl.status || 'unknown'}${codexAppControl.source_message_id ? ` (source=${codexAppControl.source_message_id})` : ''}`);
   lines.push(`- Attention Inbox: active=${Number(codexInbox.active_count || 0)}, completed=${Number(codexInbox.completed_count || 0)}, total=${Number(codexInbox.total_count || 0)}, freshness=${codexInbox.polling_freshness || 'unknown'}`);
-  lines.push(`- Heartbeat: ${codexHeartbeat.status || 'unknown'} (${codexHeartbeat.proof || 'not_proven'}${codexHeartbeat.reason ? `; reason=${codexHeartbeat.reason}` : ''})`);
   lines.push(`- Desktop Transport: summon=${codexTransport.can_summon_workspace === true ? 'yes' : 'no'}, visible_injection=${codexTransport.visible_injection_proven === true ? 'proven' : 'not_proven'}`);
-  lines.push('- Tools: hm-codex-capability-status, hm-codex-attention, hm-codex-desktop-transport, hm-codex-heartbeat-check');
+  lines.push('- Tools: hm-codex-capability-status, hm-codex-attention, hm-codex-desktop-transport');
 
   const localModels = snapshot.systemCapabilities?.localModels || {};
   const sleepExtraction = localModels.sleepExtraction || {};
