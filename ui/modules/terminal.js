@@ -140,7 +140,6 @@ const terminalWriteFrameBudgets = new Map(); // paneId -> { startedAt, bytes, ch
 const terminalPaintRefreshTimers = new Map(); // `${paneId}:${delayMs}` -> timer ID
 const terminalStreamingFitTimers = new Map(); // paneId -> timer ID
 const terminalStreamingLastFitAt = new Map(); // paneId -> timestamp
-const terminalUserScrollUntil = new Map(); // paneId -> timestamp while auto-bottom is paused
 const terminalSettleRedrawTimers = new Map(); // paneId -> timer ID (post-burst settle redraw)
 const terminalSettleRedrawFirstReqAt = new Map(); // paneId -> timestamp of first settle request in burst
 const terminalSettleRedrawLastAt = new Map(); // paneId -> timestamp of last applied settle redraw
@@ -165,7 +164,11 @@ const TERMINAL_SETTLE_REDRAW_MIN_INTERVAL_MS = 1100;
 // Delay between the forced re-poke and the paint-outcome sample. Gives the PTY/agent
 // time to emit its redraw so the frame-signature delta reflects an actual repaint.
 const TERMINAL_SETTLE_REDRAW_PAINT_SAMPLE_MS = 140;
-const TERMINAL_USER_SCROLL_HOLD_MS = 1800;
+// Auto-follow is position-based: a viewport within this many rows of the bottom
+// counts as "at bottom" and resumes auto-scroll; scrolled further up preserves
+// the user's position. Tolerance (not strict equality) absorbs the 1-frame lag
+// where a just-written line bumps baseY before the viewport auto-follows.
+const TERMINAL_AT_BOTTOM_EPSILON_ROWS = 2;
 const TERMINAL_SCROLL_FALLBACK_DELAY_MS = 24;
 const TERMINAL_WHEEL_PIXEL_LINE = 40;
 const TERMINAL_SCROLL_PROBE_TARGET_PROPERTY = '__squidrunTerminalScrollProbeTarget';
@@ -422,12 +425,13 @@ function getTerminalViewportY(terminal) {
   return getTerminalScrollbackInfo(terminal).viewportY;
 }
 
+// Guards that a wheel/keyboard event is a real scroll on scrollable content.
+// Its return value drives focus + wheel-fallback scheduling; it no longer marks
+// any time window — auto-follow authority is purely viewport position now.
 function markTerminalUserScroll(paneId, terminal, event = {}) {
-  const id = String(paneId);
   if (!terminalHasScrollableScrollback(terminal)) return false;
   const deltaY = Number(event.deltaY);
   if (Number.isFinite(deltaY) && deltaY === 0) return false;
-  terminalUserScrollUntil.set(id, Date.now() + TERMINAL_USER_SCROLL_HOLD_MS);
   return true;
 }
 
@@ -511,13 +515,22 @@ function handleTerminalKeyboardScroll(paneId, terminal, event = {}) {
   return true;
 }
 
-function shouldPreserveTerminalUserScroll(paneId) {
-  const id = String(paneId);
-  const until = Number(terminalUserScrollUntil.get(id)) || 0;
-  if (until <= 0) return false;
-  if (Date.now() <= until) return true;
-  terminalUserScrollUntil.delete(id);
-  return false;
+// Viewport position is the SINGLE authority for auto-follow (no time window):
+// preserve the user's scroll whenever the viewport sits more than a small bottom
+// tolerance above baseY. At/near the bottom, auto-follow resumes.
+//
+// The tolerance is load-bearing, not cosmetic: when the user is following at the
+// bottom and an agent line lands, baseY increments the instant the line is
+// written but the viewport hasn't auto-followed yet, so for that frame
+// viewportY < baseY. A strict `viewportY < baseY` predicate would read that as
+// "scrolled up" and suppress the follow, sticking one line short mid-stream (the
+// opposite-but-equal bug). The tolerance absorbs that transient lag; a genuine
+// user scroll-up is always many rows (a wheel notch is ~3 lines, PageUp a full
+// page), so real scroll-backs are well outside it.
+function shouldPreserveTerminalUserScroll(paneId, terminal = null) {
+  if (!terminal || !terminalHasScrollableScrollback(terminal)) return false;
+  const { baseY, viewportY } = getTerminalScrollbackInfo(terminal);
+  return (baseY - viewportY) > TERMINAL_AT_BOTTOM_EPSILON_ROWS;
 }
 
 function refreshTerminalViewport(paneId, terminal, fitAddon = null, options = {}) {
@@ -563,7 +576,7 @@ function refreshTerminalViewport(paneId, terminal, fitAddon = null, options = {}
   try {
     if (
       options.scrollToBottom !== false
-      && !shouldPreserveTerminalUserScroll(id)
+      && !shouldPreserveTerminalUserScroll(id, terminal)
       && typeof terminal.scrollToBottom === 'function'
     ) {
       terminal.scrollToBottom();
@@ -1795,7 +1808,6 @@ function teardownTerminalPane(paneId) {
   terminalOwnFitSuppressUntil.delete(id);
   terminalOwnFitContainerSizes.delete(id);
   terminalStreamingLastFitAt.delete(id);
-  terminalUserScrollUntil.delete(id);
   clearTerminalSettleRedraw(id);
   terminalSettleRedrawLastAt.delete(id);
   terminalLastWriteAt.delete(id);
@@ -4266,7 +4278,6 @@ module.exports = {
     terminalPaintRefreshTimers,
     terminalStreamingFitTimers,
     terminalStreamingLastFitAt,
-    terminalUserScrollUntil,
     resizeDebounceTimers,
     terminalAppliedPtyGeometries,
     terminalOwnFitSuppressUntil,
@@ -4277,7 +4288,7 @@ module.exports = {
     TERMINAL_WRITE_FRAME_BYTE_BUDGET,
     TERMINAL_STREAMING_FIT_MIN_INTERVAL_MS,
     TERMINAL_STREAMING_FIT_SETTLE_MS,
-    TERMINAL_USER_SCROLL_HOLD_MS,
+    TERMINAL_AT_BOTTOM_EPSILON_ROWS,
     TERMINAL_SCROLL_FALLBACK_DELAY_MS,
     RESIZE_INPUT_MAX_DEFER_MS,
     RESIZE_OWN_FIT_OBSERVER_SUPPRESS_MS,
