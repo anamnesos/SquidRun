@@ -827,6 +827,122 @@ function detachTerminalScrollProbeTarget(paneId) {
   } catch (_) {}
 }
 
+function snapshotTerminalScrollState(terminal) {
+  const buffer = terminal && terminal.buffer && terminal.buffer.active ? terminal.buffer.active : {};
+  const baseY = Math.max(0, Number(buffer.baseY) || 0);
+  const viewportY = Math.max(0, Number(buffer.viewportY) || 0);
+  const cursorY = Math.max(0, Number(buffer.cursorY) || 0);
+  const rows = Math.max(0, Number(terminal && terminal.rows) || 0);
+  const length = Math.max(0, Number(buffer.length) || 0);
+  const populatedRows = length || (baseY + cursorY + 1);
+  return {
+    baseY,
+    viewportY,
+    cursorY,
+    rows,
+    length,
+    scrollbackRows: Math.max(0, populatedRows - rows),
+  };
+}
+
+// Runs the terminal scroll-probe in the renderer ISOLATED world, where the
+// xterm Terminal instance, its DOM listeners, and the scroll-probe expando
+// actually live. The probe used to be injected as a string into the main world
+// via webContents.executeJavaScript, but the expando set here via
+// Object.defineProperty is bound to this world's DOM wrapper and is invisible
+// to the main world — so every probe returned terminal_probe_target_unavailable
+// (the Bug B proof-seam failure). The main-world injection now delegates here
+// through the contextBridge so the read context matches where the target lives.
+function runTerminalScrollProbe(probe = {}) {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+  if (typeof document === 'undefined') {
+    return { success: false, reason: 'terminal_probe_no_document', ...probe };
+  }
+  const container = document.getElementById(probe.containerId);
+  if (!container) {
+    return { success: false, reason: 'container_not_found', ...probe };
+  }
+  const target = container[TERMINAL_SCROLL_PROBE_TARGET_PROPERTY];
+  const terminal = target && target.terminal;
+  if (!terminal) {
+    return { success: false, reason: 'terminal_probe_target_unavailable', ...probe };
+  }
+  const before = snapshotTerminalScrollState(terminal);
+  const result = {
+    success: true,
+    windowKey: String(document.body && document.body.dataset ? document.body.dataset.windowKey || '' : ''),
+    requestedWindowKey: probe.windowKey,
+    containerId: probe.containerId,
+    paneId: target.paneId || null,
+    op: probe.op,
+    before,
+    after: null,
+    moved: false,
+    dispatchAccepted: null,
+    dispatchTarget: null,
+  };
+  if (probe.op === 'scrollLines') {
+    if (typeof terminal.scrollLines !== 'function') {
+      return { ...result, success: false, reason: 'scrollLines_unavailable' };
+    }
+    terminal.scrollLines(Number(probe.lines));
+    result.lines = Number(probe.lines);
+    result.after = snapshotTerminalScrollState(terminal);
+    result.moved = result.after.viewportY !== before.viewportY;
+    return result;
+  }
+  if (probe.op === 'dispatchWheel') {
+    const event = new WheelEvent('wheel', {
+      deltaY: Number(probe.deltaY),
+      deltaMode: 0,
+      bubbles: true,
+      cancelable: true,
+    });
+    result.deltaY = Number(probe.deltaY);
+    result.dispatchTarget = 'container';
+    result.dispatchAccepted = container.dispatchEvent(event);
+    return wait(probe.waitMs).then(() => {
+      result.after = snapshotTerminalScrollState(terminal);
+      result.moved = result.after.viewportY !== before.viewportY;
+      return result;
+    });
+  }
+  if (probe.op === 'dispatchKey') {
+    const helper = container.querySelector('textarea.xterm-helper-textarea, .xterm-helper-textarea');
+    if (!helper) {
+      return { ...result, success: false, reason: 'xterm_helper_textarea_not_found' };
+    }
+    const key = String(probe.key || '');
+    const keyCode = key === 'PageUp' ? 33 : 34;
+    if (typeof helper.focus === 'function') {
+      try {
+        helper.focus({ preventScroll: true });
+      } catch (_) {
+        helper.focus();
+      }
+    }
+    const event = new KeyboardEvent('keydown', {
+      key,
+      code: key,
+      keyCode,
+      which: keyCode,
+      bubbles: true,
+      cancelable: true,
+    });
+    result.key = key;
+    result.dispatchTarget = 'xterm-helper-textarea';
+    result.helperFocused = document.activeElement === helper;
+    result.dispatchAccepted = helper.dispatchEvent(event);
+    return wait(probe.waitMs).then(() => {
+      result.after = snapshotTerminalScrollState(terminal);
+      result.moved = result.after.viewportY !== before.viewportY;
+      result.defaultPrevented = event.defaultPrevented === true;
+      return result;
+    });
+  }
+  return { ...result, success: false, reason: 'op_unsupported' };
+}
+
 function scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon = null) {
   scheduleTerminalPaintRefresh(paneId, terminal, fitAddon, 0);
   scheduleTerminalPaintRefresh(paneId, terminal, fitAddon, 80);
@@ -4096,6 +4212,9 @@ module.exports = {
   // Contract promotion runtime wiring
   runPromotionCheck,
   stopPromotionCheckTimer,
+  // Scroll-probe seam: runs in the isolated world where the terminal lives,
+  // invoked from the main-world probe injection via the contextBridge.
+  runTerminalScrollProbe,
   _internals: {
     get promotionCheckTimer() { return promotionCheckTimer; },
     set promotionCheckTimer(v) { promotionCheckTimer = v; },

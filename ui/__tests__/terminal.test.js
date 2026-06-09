@@ -2896,3 +2896,72 @@ describe('Bug A: settle redraw + fit telemetry', () => {
     expect(payload.painted).toBe(false);
   });
 });
+
+describe('runTerminalScrollProbe (Bug B proof seam)', () => {
+  const PROBE_PROP = '__squidrunTerminalScrollProbeTarget';
+
+  function makeTarget({ viewportY = 100, baseY = 100, length = 124, cursorY = 0 } = {}) {
+    const buffer = { active: { baseY, viewportY, cursorY, length } };
+    const term = {
+      rows: 24,
+      buffer,
+      scrollLines: jest.fn((n) => {
+        buffer.active.viewportY = Math.max(0, buffer.active.viewportY + Number(n));
+      }),
+    };
+    return { paneId: 'trustquote-app', terminal: term };
+  }
+
+  beforeEach(() => {
+    mockDocument.getElementById.mockReset();
+    mockDocument.activeElement = null;
+  });
+
+  it('returns container_not_found when the container is missing', () => {
+    mockDocument.getElementById.mockReturnValue(null);
+    const res = terminal.runTerminalScrollProbe({ containerId: 'nope', op: 'scrollLines', lines: -10 });
+    expect(res.reason).toBe('container_not_found');
+    expect(res.success).toBe(false);
+  });
+
+  it('still returns terminal_probe_target_unavailable when the expando is absent', () => {
+    mockDocument.getElementById.mockReturnValue({});
+    const res = terminal.runTerminalScrollProbe({ containerId: 'terminal-x', op: 'scrollLines', lines: -10 });
+    expect(res.reason).toBe('terminal_probe_target_unavailable');
+    expect(res.success).toBe(false);
+  });
+
+  it('reads real scrollback and reports movement once the read context matches the target world', () => {
+    const target = makeTarget({ viewportY: 100, baseY: 100, length: 124 });
+    mockDocument.getElementById.mockReturnValue({ [PROBE_PROP]: target });
+
+    const res = terminal.runTerminalScrollProbe({
+      containerId: 'terminal-trustquote-app',
+      windowKey: 'squid-room',
+      op: 'scrollLines',
+      lines: -10,
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.paneId).toBe('trustquote-app');
+    expect(res.before.scrollbackRows).toBe(100); // length 124 - rows 24
+    expect(target.terminal.scrollLines).toHaveBeenCalledWith(-10);
+    expect(res.after.viewportY).toBe(90);
+    expect(res.moved).toBe(true);
+  });
+
+  it('reports xterm_helper_textarea_not_found for dispatchKey with no helper textarea', () => {
+    const target = makeTarget();
+    mockDocument.getElementById.mockReturnValue({
+      [PROBE_PROP]: target,
+      querySelector: jest.fn(() => null),
+    });
+    const res = terminal.runTerminalScrollProbe({
+      containerId: 'terminal-x',
+      op: 'dispatchKey',
+      key: 'PageUp',
+      waitMs: 0,
+    });
+    expect(res.reason).toBe('xterm_helper_textarea_not_found');
+  });
+});

@@ -171,112 +171,23 @@ function normalizeTerminalScrollProbePayload(payload = {}) {
   };
 }
 
+// The injected script runs in the renderer MAIN world. The terminal instances
+// and the __squidrunTerminalScrollProbeTarget expando live in the preload
+// ISOLATED world (terminal.js is reached through the contextBridge), so a
+// main-world read of the expando is always undefined — every probe returned
+// terminal_probe_target_unavailable. Instead of reading the target directly,
+// delegate to terminal.runTerminalScrollProbe over the bridge so the probe runs
+// in the same world as the terminal it measures.
 function buildTerminalScrollProbeScript(probe) {
   const serializedProbe = JSON.stringify(probe).replace(/</g, '\\u003c');
   return `(() => {
     const probe = ${serializedProbe};
-    const targetProperty = '__squidrunTerminalScrollProbeTarget';
-    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
-    const snapshot = (terminal) => {
-      const buffer = terminal && terminal.buffer && terminal.buffer.active ? terminal.buffer.active : {};
-      const baseY = Math.max(0, Number(buffer.baseY) || 0);
-      const viewportY = Math.max(0, Number(buffer.viewportY) || 0);
-      const cursorY = Math.max(0, Number(buffer.cursorY) || 0);
-      const rows = Math.max(0, Number(terminal && terminal.rows) || 0);
-      const length = Math.max(0, Number(buffer.length) || 0);
-      const populatedRows = length || (baseY + cursorY + 1);
-      return {
-        baseY,
-        viewportY,
-        cursorY,
-        rows,
-        length,
-        scrollbackRows: Math.max(0, populatedRows - rows),
-      };
-    };
-    const container = document.getElementById(probe.containerId);
-    if (!container) {
-      return { success: false, reason: 'container_not_found', ...probe };
+    const bridge = (typeof window !== 'undefined' && (window.squidrun || window.squidrunAPI)) || null;
+    const terminalApi = bridge && bridge.rendererModules ? bridge.rendererModules.terminal : null;
+    if (!terminalApi || typeof terminalApi.runTerminalScrollProbe !== 'function') {
+      return { success: false, reason: 'terminal_probe_bridge_unavailable', ...probe };
     }
-    const target = container[targetProperty];
-    const terminal = target && target.terminal;
-    if (!terminal) {
-      return { success: false, reason: 'terminal_probe_target_unavailable', ...probe };
-    }
-    const before = snapshot(terminal);
-    const result = {
-      success: true,
-      windowKey: String(document && document.body && document.body.dataset ? document.body.dataset.windowKey || '' : ''),
-      requestedWindowKey: probe.windowKey,
-      containerId: probe.containerId,
-      paneId: target.paneId || null,
-      op: probe.op,
-      before,
-      after: null,
-      moved: false,
-      dispatchAccepted: null,
-      dispatchTarget: null,
-    };
-    if (probe.op === 'scrollLines') {
-      if (typeof terminal.scrollLines !== 'function') {
-        return { ...result, success: false, reason: 'scrollLines_unavailable' };
-      }
-      terminal.scrollLines(Number(probe.lines));
-      result.lines = Number(probe.lines);
-      result.after = snapshot(terminal);
-      result.moved = result.after.viewportY !== before.viewportY;
-      return result;
-    }
-    if (probe.op === 'dispatchWheel') {
-      const event = new WheelEvent('wheel', {
-        deltaY: Number(probe.deltaY),
-        deltaMode: 0,
-        bubbles: true,
-        cancelable: true,
-      });
-      result.deltaY = Number(probe.deltaY);
-      result.dispatchTarget = 'container';
-      result.dispatchAccepted = container.dispatchEvent(event);
-      return wait(probe.waitMs).then(() => {
-        result.after = snapshot(terminal);
-        result.moved = result.after.viewportY !== before.viewportY;
-        return result;
-      });
-    }
-    if (probe.op === 'dispatchKey') {
-      const helper = container.querySelector('textarea.xterm-helper-textarea, .xterm-helper-textarea');
-      if (!helper) {
-        return { ...result, success: false, reason: 'xterm_helper_textarea_not_found' };
-      }
-      const key = String(probe.key || '');
-      const keyCode = key === 'PageUp' ? 33 : 34;
-      if (typeof helper.focus === 'function') {
-        try {
-          helper.focus({ preventScroll: true });
-        } catch (_) {
-          helper.focus();
-        }
-      }
-      const event = new KeyboardEvent('keydown', {
-        key,
-        code: key,
-        keyCode,
-        which: keyCode,
-        bubbles: true,
-        cancelable: true,
-      });
-      result.key = key;
-      result.dispatchTarget = 'xterm-helper-textarea';
-      result.helperFocused = document.activeElement === helper;
-      result.dispatchAccepted = helper.dispatchEvent(event);
-      return wait(probe.waitMs).then(() => {
-        result.after = snapshot(terminal);
-        result.moved = result.after.viewportY !== before.viewportY;
-        result.defaultPrevented = event.defaultPrevented === true;
-        return result;
-      });
-    }
-    return { ...result, success: false, reason: 'op_unsupported' };
+    return Promise.resolve(terminalApi.runTerminalScrollProbe(probe));
   })();`;
 }
 
