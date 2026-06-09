@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: true });
 
@@ -15,10 +16,15 @@ const {
 const { sendAgentAlert } = require('./hm-agent-alert');
 const { buildOracleWakeMessage } = require('./hm-oracle-wake-context');
 
-const DEFAULT_STATE_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wake-state.json'), { forWrite: true });
 const DEFAULT_INTERVAL_MS = 60 * 1000;
+const DEFAULT_STATE_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wake-state.json'), { forWrite: true });
+const DEFAULT_PID_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wake-watchdog.pid'), { forWrite: true });
+const DEFAULT_STATUS_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wake-watchdog-status.json'), { forWrite: true });
+const DEFAULT_LOG_PATH = resolveCoordPath(path.join('runtime', 'bidirectional-wake-watchdog.log'), { forWrite: true });
 const DEFAULT_ARCHITECT_SILENCE_MS = 8 * 60 * 1000;
 const DEFAULT_ORACLE_SILENCE_MS = 10 * 60 * 1000;
+const CHILD_START_GRACE_MS = 10_000;
+const MIN_STATUS_STALE_AFTER_MS = 90_000;
 
 function toText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -46,6 +52,187 @@ function readJson(filePath, fallback = null) {
 function writeJson(filePath, payload) {
   ensureDir(filePath);
   fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+}
+
+function appendLog(filePath, message) {
+  ensureDir(filePath);
+  fs.appendFileSync(filePath, `${new Date().toISOString()} ${message}\n`, 'utf8');
+}
+
+function readPidInfo(pidPath = DEFAULT_PID_PATH) {
+  try {
+    const stat = fs.statSync(pidPath);
+    return {
+      pid: Number.parseInt(fs.readFileSync(pidPath, 'utf8').trim(), 10),
+      mtimeMs: Number(stat.mtimeMs || 0),
+    };
+  } catch {
+    return { pid: null, mtimeMs: 0 };
+  }
+}
+
+function readStatusInfo(statusPath = DEFAULT_STATUS_PATH) {
+  try {
+    const stat = fs.statSync(statusPath);
+    return {
+      value: JSON.parse(fs.readFileSync(statusPath, 'utf8')),
+      mtimeMs: Number(stat.mtimeMs || 0),
+    };
+  } catch {
+    return { value: null, mtimeMs: 0 };
+  }
+}
+
+function isPidAlive(pid) {
+  const numeric = Number(pid);
+  if (!Number.isInteger(numeric) || numeric <= 0) return false;
+  try {
+    process.kill(numeric, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function timestampMs(value) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function buildRunnerStatusSnapshot({
+  pid = null,
+  pidAlive = false,
+  pidMtimeMs = 0,
+  statusFile = null,
+  statusMtimeMs = 0,
+  nowMs = Date.now(),
+} = {}) {
+  const numericPid = Number(pid);
+  const validPid = Number.isInteger(numericPid) && numericPid > 0 ? numericPid : null;
+  const statusPid = Number(statusFile?.pid);
+  const statusMatchesPid = Boolean(
+    validPid
+    && statusFile
+    && Number.isInteger(statusPid)
+    && statusPid === validPid
+  );
+  const pidAgeMs = pidMtimeMs > 0 ? Math.max(0, nowMs - pidMtimeMs) : Infinity;
+  const intervalMs = Math.max(30_000, toNumber(statusFile?.intervalMs, DEFAULT_INTERVAL_MS));
+  const statusStaleAfterMs = Math.max(MIN_STATUS_STALE_AFTER_MS, intervalMs * 3);
+  const statusUpdatedAtMs = timestampMs(statusFile?.heartbeatAt || statusFile?.updatedAt) || Number(statusMtimeMs) || 0;
+  const statusAgeMs = statusUpdatedAtMs > 0 ? Math.max(0, nowMs - statusUpdatedAtMs) : Infinity;
+  const statusFresh = Boolean(statusMatchesPid && statusAgeMs <= statusStaleAfterMs);
+  const starting = Boolean(validPid && pidAlive && !statusMatchesPid && pidAgeMs <= CHILD_START_GRACE_MS);
+  const running = Boolean(pidAlive && statusMatchesPid && statusFresh && statusFile?.running !== false);
+  const staleHeartbeat = Boolean(pidAlive && statusMatchesPid && statusFile?.running !== false && !statusFresh);
+  const stalePid = Boolean(validPid && !pidAlive);
+  const unknownLivePid = Boolean(validPid && pidAlive && !statusMatchesPid && !starting);
+  const reason = running
+    ? null
+    : (starting ? 'bidirectional_wake_watchdog_starting'
+      : (staleHeartbeat ? 'stale_bidirectional_wake_watchdog_status'
+        : (unknownLivePid ? 'unknown_live_bidirectional_wake_watchdog_pid'
+          : (stalePid ? 'stale_bidirectional_wake_watchdog_pid' : 'not_running'))));
+
+  return {
+    ok: true,
+    running,
+    starting,
+    pid: running || starting || staleHeartbeat ? validPid : null,
+    stalePid: stalePid ? validPid : null,
+    staleHeartbeat,
+    unknownLivePid: unknownLivePid ? validPid : null,
+    statusFresh,
+    statusAgeMs: Number.isFinite(statusAgeMs) ? statusAgeMs : null,
+    statusStaleAfterMs,
+    reason,
+    pidPath: DEFAULT_PID_PATH,
+    statusPath: DEFAULT_STATUS_PATH,
+    logPath: DEFAULT_LOG_PATH,
+    runner: statusFile || null,
+  };
+}
+
+function readRunnerStatus() {
+  const pidInfo = readPidInfo();
+  const statusInfo = readStatusInfo();
+  return buildRunnerStatusSnapshot({
+    pid: pidInfo.pid,
+    pidAlive: isPidAlive(pidInfo.pid),
+    pidMtimeMs: pidInfo.mtimeMs,
+    statusFile: statusInfo.value,
+    statusMtimeMs: statusInfo.mtimeMs,
+  });
+}
+
+function cleanupRunnerMetadata() {
+  try {
+    fs.rmSync(DEFAULT_PID_PATH, { force: true });
+  } catch {
+    // Best effort stale metadata cleanup.
+  }
+  try {
+    fs.rmSync(DEFAULT_STATUS_PATH, { force: true });
+  } catch {
+    // Best effort stale metadata cleanup.
+  }
+}
+
+function summarizeHeartbeatResult(result = {}) {
+  const recoveryActions = Array.isArray(result?.agentPaneRecovery?.actions)
+    ? result.agentPaneRecovery.actions
+    : [];
+  return {
+    ok: result?.ok === true,
+    statePath: result?.statePath || null,
+    stateUpdatedAt: result?.state?.updatedAt || null,
+    alertCount: Array.isArray(result?.alerts) ? result.alerts.length : 0,
+    alerts: Array.isArray(result?.alerts)
+      ? result.alerts.map((entry) => ({
+        target: entry?.target || null,
+        ok: entry?.result?.ok === true,
+      }))
+      : [],
+    agentPaneRecovery: result?.agentPaneRecovery ? {
+      ok: result.agentPaneRecovery.ok === true,
+      status: result.agentPaneRecovery.status || null,
+      actionCount: recoveryActions.length,
+      actions: recoveryActions.map((action) => ({
+        kind: action?.kind || null,
+        paneId: action?.paneId || null,
+        role: action?.role || null,
+        reason: action?.reason || null,
+      })),
+    } : null,
+  };
+}
+
+function writeRunnerStatus(payload = {}) {
+  const now = new Date().toISOString();
+  writeJson(DEFAULT_STATUS_PATH, {
+    version: 1,
+    role: 'bidirectional-wake-watchdog',
+    pid: process.pid,
+    updatedAt: now,
+    heartbeatAt: now,
+    ...payload,
+  });
+}
+
+function resolveLaunchExecutable(env = process.env) {
+  const override = toText(env.SQUIDRUN_BIDIRECTIONAL_WAKE_NODE_PATH || env.SQUIDRUN_NODE_PATH, '');
+  if (override) return override;
+  const npmNodeExecPath = toText(env.npm_node_execpath, '');
+  if (npmNodeExecPath && /(?:^|[\\/])node(?:\.exe)?$/i.test(npmNodeExecPath)) {
+    return npmNodeExecPath;
+  }
+  return process.execPath || (process.platform === 'win32' ? 'node.exe' : 'node');
+}
+
+function cleanNodeChildEnv(env = process.env) {
+  const childEnv = { ...env };
+  delete childEnv.ELECTRON_RUN_AS_NODE;
+  return childEnv;
 }
 
 function defaultState() {
@@ -258,6 +445,188 @@ async function runHeartbeatCycle(options = {}) {
   };
 }
 
+async function runScheduledLoop(options = {}) {
+  const statePath = path.resolve(toText(options.statePath, DEFAULT_STATE_PATH));
+  const intervalMs = Math.max(30_000, toNumber(options.intervalMs, DEFAULT_INTERVAL_MS));
+  const agentPaneAutoRecovery = options.agentPaneAutoRecovery;
+  let runCount = 0;
+  let stopping = false;
+
+  ensureDir(DEFAULT_PID_PATH);
+  fs.writeFileSync(DEFAULT_PID_PATH, String(process.pid), 'utf8');
+  appendLog(DEFAULT_LOG_PATH, `[start] pid=${process.pid} intervalMs=${intervalMs} statePath=${statePath}`);
+
+  const writeStatus = (extra = {}) => {
+    writeRunnerStatus({
+      running: !stopping,
+      intervalMs,
+      statePath,
+      runCount,
+      ...extra,
+    });
+  };
+
+  const shutdown = (signal = 'shutdown') => {
+    if (stopping) return;
+    stopping = true;
+    appendLog(DEFAULT_LOG_PATH, `[stop] pid=${process.pid} signal=${signal}`);
+    writeStatus({
+      running: false,
+      status: 'stopped',
+      stoppedAt: new Date().toISOString(),
+      stopReason: signal,
+    });
+    try {
+      const currentPid = Number.parseInt(fs.readFileSync(DEFAULT_PID_PATH, 'utf8').trim(), 10);
+      if (currentPid === process.pid) {
+        fs.rmSync(DEFAULT_PID_PATH, { force: true });
+      }
+    } catch {
+      // Best effort pid cleanup.
+    }
+  };
+
+  process.on('SIGTERM', () => {
+    shutdown('SIGTERM');
+    process.exit(0);
+  });
+  process.on('SIGINT', () => {
+    shutdown('SIGINT');
+    process.exit(0);
+  });
+
+  while (!stopping) {
+    const startedAtMs = Date.now();
+    const startedAt = new Date(startedAtMs).toISOString();
+    writeStatus({
+      status: 'running_cycle',
+      currentRunStartedAt: startedAt,
+      lastError: null,
+    });
+
+    try {
+      const result = await runHeartbeatCycle({ statePath, intervalMs, agentPaneAutoRecovery });
+      runCount += 1;
+      const finishedAtMs = Date.now();
+      const nextRunAtMs = finishedAtMs + intervalMs;
+      const summary = summarizeHeartbeatResult(result);
+      writeStatus({
+        status: 'waiting',
+        lastRunStartedAt: startedAt,
+        lastRunFinishedAt: new Date(finishedAtMs).toISOString(),
+        nextRunAt: new Date(nextRunAtMs).toISOString(),
+        lastResult: summary,
+      });
+      appendLog(
+        DEFAULT_LOG_PATH,
+        `[cycle] runCount=${runCount} ok=${summary.ok} stateUpdatedAt=${summary.stateUpdatedAt || 'null'}`
+      );
+      console.log(JSON.stringify(result, null, 2));
+    } catch (error) {
+      runCount += 1;
+      const finishedAtMs = Date.now();
+      const nextRunAtMs = finishedAtMs + intervalMs;
+      const message = error?.stack || error?.message || String(error);
+      writeStatus({
+        status: 'waiting_after_error',
+        lastRunStartedAt: startedAt,
+        lastRunFinishedAt: new Date(finishedAtMs).toISOString(),
+        nextRunAt: new Date(nextRunAtMs).toISOString(),
+        lastError: message,
+      });
+      appendLog(DEFAULT_LOG_PATH, `[error] runCount=${runCount} ${message}`);
+      console.error(message);
+    }
+
+    if (!stopping) {
+      await sleep(intervalMs);
+    }
+  }
+}
+
+function startRunner(options = {}) {
+  const current = readRunnerStatus();
+  if (current.running) {
+    return { ok: true, alreadyRunning: true, ...current };
+  }
+  if (current.starting) {
+    return { ok: true, alreadyStarting: true, ...current };
+  }
+  if (current.staleHeartbeat && current.pid) {
+    try {
+      process.kill(current.pid, 'SIGTERM');
+      appendLog(DEFAULT_LOG_PATH, `[cleanup] stopped stale runner pid=${current.pid}`);
+    } catch (error) {
+      appendLog(DEFAULT_LOG_PATH, `[cleanup-warning] failed to stop stale runner pid=${current.pid}: ${error.message}`);
+    }
+  }
+  if (current.stalePid || current.staleHeartbeat || current.unknownLivePid) {
+    cleanupRunnerMetadata();
+  }
+
+  const statePath = path.resolve(toText(options.statePath, DEFAULT_STATE_PATH));
+  const intervalMs = Math.max(30_000, toNumber(options.intervalMs, DEFAULT_INTERVAL_MS));
+  const childArgs = [
+    __filename,
+    'run',
+    '--state',
+    statePath,
+    '--interval-ms',
+    String(intervalMs),
+  ];
+  if (options.agentPaneAutoRecovery === false) {
+    childArgs.push('--no-agent-pane-auto-recovery');
+  }
+
+  ensureDir(DEFAULT_LOG_PATH);
+  const out = fs.openSync(DEFAULT_LOG_PATH, 'a');
+  const executable = resolveLaunchExecutable();
+  const projectRoot = path.resolve(process.env.SQUIDRUN_PROJECT_ROOT || path.join(__dirname, '..', '..'));
+  const child = spawn(executable, childArgs, {
+    cwd: projectRoot,
+    detached: true,
+    stdio: ['ignore', out, out],
+    env: {
+      ...cleanNodeChildEnv(process.env),
+      SQUIDRUN_PROJECT_ROOT: projectRoot,
+    },
+    windowsHide: true,
+  });
+  child.unref();
+  fs.writeFileSync(DEFAULT_PID_PATH, String(child.pid), 'utf8');
+  appendLog(DEFAULT_LOG_PATH, `[spawn] pid=${child.pid} executable=${executable} intervalMs=${intervalMs}`);
+  return {
+    ok: true,
+    started: true,
+    pid: child.pid,
+    intervalMs,
+    statePath,
+    pidPath: DEFAULT_PID_PATH,
+    statusPath: DEFAULT_STATUS_PATH,
+    logPath: DEFAULT_LOG_PATH,
+    executable,
+  };
+}
+
+function stopRunner() {
+  const current = readRunnerStatus();
+  const pid = current.pid || current.stalePid;
+  if (pid && isPidAlive(pid)) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch (error) {
+      return { ok: false, reason: 'stop_failed', error: error.message, ...current };
+    }
+  }
+  cleanupRunnerMetadata();
+  return {
+    ok: true,
+    stopped: Boolean(pid),
+    pid: pid || null,
+    previousStatus: current,
+  };
+}
+
 async function runCli(argv = parseCliArgs()) {
   const command = toText(argv.positional[0], 'run').toLowerCase();
   const statePath = path.resolve(toText(getOption(argv.options, 'state', DEFAULT_STATE_PATH)));
@@ -272,11 +641,32 @@ async function runCli(argv = parseCliArgs()) {
     return result;
   }
 
-  while (true) {
-    const result = await runHeartbeatCycle({ statePath, intervalMs, agentPaneAutoRecovery });
+  if (command === 'status') {
+    const result = readRunnerStatus();
     console.log(JSON.stringify(result, null, 2));
-    await sleep(intervalMs);
+    return result;
   }
+
+  if (command === 'start') {
+    const result = startRunner({ statePath, intervalMs, agentPaneAutoRecovery });
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+
+  if (command === 'stop') {
+    const result = stopRunner();
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+
+  if (command === 'restart') {
+    stopRunner();
+    const result = startRunner({ statePath, intervalMs, agentPaneAutoRecovery });
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+
+  return runScheduledLoop({ statePath, intervalMs, agentPaneAutoRecovery });
 }
 
 if (require.main === module) {
@@ -290,11 +680,20 @@ module.exports = {
   DEFAULT_ARCHITECT_SILENCE_MS,
   DEFAULT_INTERVAL_MS,
   DEFAULT_ORACLE_SILENCE_MS,
+  DEFAULT_LOG_PATH,
+  DEFAULT_PID_PATH,
+  DEFAULT_STATUS_PATH,
   DEFAULT_STATE_PATH,
+  buildRunnerStatusSnapshot,
   defaultState,
   isActiveWindow,
+  readRunnerStatus,
   loadState,
   persistState,
   runCli,
   runHeartbeatCycle,
+  runScheduledLoop,
+  startRunner,
+  stopRunner,
+  summarizeHeartbeatResult,
 };
