@@ -63,6 +63,62 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
     expect(childProcess.spawn).not.toHaveBeenCalled();
   });
 
+  test('startRunner no-ops when the live runner carries the current generation token', () => {
+    const statusPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog-status.json');
+    const pidPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog.pid');
+    fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+    fs.writeFileSync(pidPath, String(process.pid), 'utf8');
+    fs.writeFileSync(statusPath, JSON.stringify({
+      version: 1,
+      role: 'bidirectional-wake-watchdog',
+      pid: process.pid,
+      appGenerationId: 'app-gen-current',
+      running: true,
+      intervalMs: 60_000,
+      heartbeatAt: new Date().toISOString(),
+    }, null, 2), 'utf8');
+
+    const result = moduleUnderTest.startRunner({ projectRoot: tempRoot, appGenerationId: 'app-gen-current' });
+
+    expect(result).toEqual(expect.objectContaining({ ok: true, alreadyRunning: true }));
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+  });
+
+  test('startRunner reaps + replaces a live runner from a prior generation', () => {
+    // process.kill must be stubbed: the fake orphan pid is reported alive (sig 0)
+    // and SIGTERM is a no-op so the jest worker is not actually signalled.
+    const killSpy = jest.spyOn(process, 'kill').mockImplementation(() => true);
+    const orphanPid = 999999;
+    const statusPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog-status.json');
+    const pidPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog.pid');
+    fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+    fs.writeFileSync(pidPath, String(orphanPid), 'utf8');
+    fs.writeFileSync(statusPath, JSON.stringify({
+      version: 1,
+      role: 'bidirectional-wake-watchdog',
+      pid: orphanPid,
+      appGenerationId: 'app-gen-PRIOR',
+      running: true,
+      intervalMs: 60_000,
+      heartbeatAt: new Date().toISOString(),
+    }, null, 2), 'utf8');
+
+    const result = moduleUnderTest.startRunner({ projectRoot: tempRoot, appGenerationId: 'app-gen-NEW' });
+
+    // The prior-generation orphan was SIGTERM'd...
+    expect(killSpy).toHaveBeenCalledWith(orphanPid, 'SIGTERM');
+    // ...and a fresh daemon was spawned carrying the new generation token.
+    expect(result).toEqual(expect.objectContaining({ ok: true, started: true }));
+    expect(childProcess.spawn).toHaveBeenCalledTimes(1);
+    expect(childProcess.spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Array),
+      expect.objectContaining({
+        env: expect.objectContaining({ SQUIDRUN_WAKE_APP_GENERATION: 'app-gen-NEW' }),
+      })
+    );
+  });
+
   test('startRunner spawns a singleton child when no fresh runner exists', () => {
     const result = moduleUnderTest.startRunner({ projectRoot: tempRoot });
 

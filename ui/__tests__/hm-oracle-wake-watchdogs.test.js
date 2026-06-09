@@ -345,6 +345,61 @@ describe('oracle wake watchdog context', () => {
     expect(mismatched.reason).toBe('unknown_live_bidirectional_wake_watchdog_pid');
   });
 
+  test('buildRunnerStatusSnapshot flags a live runner from a prior generation as stale', () => {
+    const nowMs = Date.parse('2026-04-19T05:40:00.000Z');
+    const base = {
+      pid: 1234,
+      pidAlive: true,
+      pidMtimeMs: nowMs - 60_000,
+      statusMtimeMs: nowMs - 30_000,
+      nowMs,
+    };
+    const liveStatus = (appGenerationId) => ({
+      pid: 1234,
+      running: true,
+      intervalMs: 60_000,
+      heartbeatAt: new Date(nowMs - 30_000).toISOString(),
+      ...(appGenerationId === undefined ? {} : { appGenerationId }),
+    });
+
+    // Same token -> healthy, leave it.
+    const matched = buildRunnerStatusSnapshot({
+      ...base,
+      statusFile: liveStatus('gen-current'),
+      currentGenerationId: 'gen-current',
+    });
+    expect(matched.running).toBe(true);
+    expect(matched.staleGeneration).toBe(false);
+    expect(matched.reason).toBeNull();
+
+    // Prior token -> stale generation, must be reaped.
+    const priorGen = buildRunnerStatusSnapshot({
+      ...base,
+      statusFile: liveStatus('gen-prior'),
+      currentGenerationId: 'gen-current',
+    });
+    expect(priorGen.running).toBe(true);
+    expect(priorGen.staleGeneration).toBe(true);
+    expect(priorGen.reason).toBe('stale_bidirectional_wake_watchdog_generation');
+
+    // Pre-fix orphan carrying no token, but a current generation is known -> stale.
+    const noToken = buildRunnerStatusSnapshot({
+      ...base,
+      statusFile: liveStatus(undefined),
+      currentGenerationId: 'gen-current',
+    });
+    expect(noToken.staleGeneration).toBe(true);
+
+    // No current generation supplied (CLI/no-app path) -> never stale on token.
+    const noContext = buildRunnerStatusSnapshot({
+      ...base,
+      statusFile: liveStatus('gen-prior'),
+    });
+    expect(noContext.running).toBe(true);
+    expect(noContext.staleGeneration).toBe(false);
+    expect(noContext.reason).toBeNull();
+  });
+
   test('bidirectional wake watchdog runner summary keeps probe status compact', () => {
     const summary = summarizeHeartbeatResult({
       ok: true,

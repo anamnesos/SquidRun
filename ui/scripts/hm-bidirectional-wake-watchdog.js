@@ -109,6 +109,7 @@ function buildRunnerStatusSnapshot({
   statusFile = null,
   statusMtimeMs = 0,
   nowMs = Date.now(),
+  currentGenerationId = null,
 } = {}) {
   const numericPid = Number(pid);
   const validPid = Number.isInteger(numericPid) && numericPid > 0 ? numericPid : null;
@@ -130,8 +131,18 @@ function buildRunnerStatusSnapshot({
   const staleHeartbeat = Boolean(pidAlive && statusMatchesPid && statusFile?.running !== false && !statusFresh);
   const stalePid = Boolean(validPid && !pidAlive);
   const unknownLivePid = Boolean(validPid && pidAlive && !statusMatchesPid && !starting);
+  // Generation token: the app lifecycle id stamped into the daemon status at
+  // spawn. A live daemon whose token != the current app's token (or that carries
+  // no token at all, e.g. a pre-fix orphan) belongs to a prior app lifecycle and
+  // must be reaped + replaced even though its pid is alive and its heartbeat is
+  // fresh — that is the exact hole that let a pre-restart daemon persist. Only
+  // evaluated when the caller supplies the current generation (app start path);
+  // the CLI/no-context path leaves it false and preserves prior behavior.
+  const wantGeneration = toText(currentGenerationId, '');
+  const runnerGeneration = toText(statusFile?.appGenerationId, '');
+  const staleGeneration = Boolean((running || starting) && wantGeneration && runnerGeneration !== wantGeneration);
   const reason = running
-    ? null
+    ? (staleGeneration ? 'stale_bidirectional_wake_watchdog_generation' : null)
     : (starting ? 'bidirectional_wake_watchdog_starting'
       : (staleHeartbeat ? 'stale_bidirectional_wake_watchdog_status'
         : (unknownLivePid ? 'unknown_live_bidirectional_wake_watchdog_pid'
@@ -144,6 +155,8 @@ function buildRunnerStatusSnapshot({
     pid: running || starting || staleHeartbeat ? validPid : null,
     stalePid: stalePid ? validPid : null,
     staleHeartbeat,
+    staleGeneration,
+    generationId: runnerGeneration || null,
     unknownLivePid: unknownLivePid ? validPid : null,
     statusFresh,
     statusAgeMs: Number.isFinite(statusAgeMs) ? statusAgeMs : null,
@@ -156,7 +169,7 @@ function buildRunnerStatusSnapshot({
   };
 }
 
-function readRunnerStatus() {
+function readRunnerStatus({ currentGenerationId = null } = {}) {
   const pidInfo = readPidInfo();
   const statusInfo = readStatusInfo();
   return buildRunnerStatusSnapshot({
@@ -165,6 +178,7 @@ function readRunnerStatus() {
     pidMtimeMs: pidInfo.mtimeMs,
     statusFile: statusInfo.value,
     statusMtimeMs: statusInfo.mtimeMs,
+    currentGenerationId,
   });
 }
 
@@ -351,6 +365,7 @@ function writeRunnerStatus(payload = {}) {
     version: 1,
     role: 'bidirectional-wake-watchdog',
     pid: process.pid,
+    appGenerationId: toText(process.env.SQUIDRUN_WAKE_APP_GENERATION) || null,
     updatedAt: now,
     heartbeatAt: now,
     ...payload,
@@ -708,22 +723,27 @@ async function runScheduledLoop(options = {}) {
 }
 
 function startRunner(options = {}) {
-  const current = readRunnerStatus();
-  if (current.running) {
-    return { ok: true, alreadyRunning: true, ...current };
+  const generationId = toText(options.appGenerationId, '');
+  const current = readRunnerStatus({ currentGenerationId: generationId });
+  // A live daemon from the current app lifecycle is healthy — leave it. A live
+  // daemon from a PRIOR lifecycle (stale generation) survived a restart and may
+  // run stale code: reap + replace it regardless of pid liveness or the start
+  // lock. This closes the hole where a pre-restart orphan held the pidfile and
+  // auto-start skipped spawning a fresh instance.
+  if ((current.running || current.starting) && !current.staleGeneration) {
+    return current.running
+      ? { ok: true, alreadyRunning: true, ...current }
+      : { ok: true, alreadyStarting: true, ...current };
   }
-  if (current.starting) {
-    return { ok: true, alreadyStarting: true, ...current };
-  }
-  if (current.staleHeartbeat && current.pid) {
+  if ((current.staleHeartbeat || current.staleGeneration) && current.pid) {
     try {
       process.kill(current.pid, 'SIGTERM');
-      appendLog(DEFAULT_LOG_PATH, `[cleanup] stopped stale runner pid=${current.pid}`);
+      appendLog(DEFAULT_LOG_PATH, `[cleanup] reaped runner pid=${current.pid} staleGeneration=${Boolean(current.staleGeneration)} staleHeartbeat=${Boolean(current.staleHeartbeat)}`);
     } catch (error) {
-      appendLog(DEFAULT_LOG_PATH, `[cleanup-warning] failed to stop stale runner pid=${current.pid}: ${error.message}`);
+      appendLog(DEFAULT_LOG_PATH, `[cleanup-warning] failed to stop runner pid=${current.pid}: ${error.message}`);
     }
   }
-  if (current.stalePid || current.staleHeartbeat || current.unknownLivePid) {
+  if (current.stalePid || current.staleHeartbeat || current.unknownLivePid || current.staleGeneration) {
     cleanupRunnerMetadata();
   }
 
@@ -738,12 +758,20 @@ function startRunner(options = {}) {
   }
 
   try {
-    const rechecked = readRunnerStatus();
-    if (rechecked.running) {
-      return { ok: true, alreadyRunning: true, ...rechecked };
+    const rechecked = readRunnerStatus({ currentGenerationId: generationId });
+    if ((rechecked.running || rechecked.starting) && !rechecked.staleGeneration) {
+      return rechecked.running
+        ? { ok: true, alreadyRunning: true, ...rechecked }
+        : { ok: true, alreadyStarting: true, ...rechecked };
     }
-    if (rechecked.starting) {
-      return { ok: true, alreadyStarting: true, ...rechecked };
+    if (rechecked.staleGeneration && rechecked.pid) {
+      try {
+        process.kill(rechecked.pid, 'SIGTERM');
+        appendLog(DEFAULT_LOG_PATH, `[cleanup] reaped stale-generation runner pid=${rechecked.pid} after lock`);
+      } catch (error) {
+        appendLog(DEFAULT_LOG_PATH, `[cleanup-warning] failed to stop stale-generation runner pid=${rechecked.pid}: ${error.message}`);
+      }
+      cleanupRunnerMetadata();
     }
 
     const statePath = path.resolve(toText(options.statePath, DEFAULT_STATE_PATH));
@@ -775,6 +803,7 @@ function startRunner(options = {}) {
       env: {
         ...cleanNodeChildEnv(process.env),
         SQUIDRUN_PROJECT_ROOT: projectRoot,
+        ...(generationId ? { SQUIDRUN_WAKE_APP_GENERATION: generationId } : {}),
       },
       windowsHide: true,
     });
