@@ -88,6 +88,225 @@ body.squid-room-workspace .pane-layout.has-expanded-pane .side-panes-container .
   display: block !important;
 }
 
+body.squid-room-workspace .squid-room-pet-pane {
+  overflow: hidden;
+  border: 1px solid rgba(0, 240, 255, 0.2);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(0, 240, 255, 0.16), transparent 42%),
+    linear-gradient(180deg, rgba(10, 17, 28, 0.96), rgba(4, 8, 15, 0.98));
+}
+
+.squid-room-pet-shell {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 100%;
+  padding: 12px;
+  gap: 8px;
+}
+
+.squid-room-pet-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.squid-room-pet-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.squid-room-pet-eyebrow {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.squid-room-pet-title strong {
+  color: var(--color-text);
+  font-size: 15px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.squid-room-pet-state {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(0, 240, 255, 0.28);
+  border-radius: 999px;
+  color: var(--color-primary);
+  background: rgba(0, 240, 255, 0.08);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.squid-room-pet-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 1 1 104px;
+  min-height: 92px;
+  overflow: hidden;
+  z-index: 1;
+}
+
+.squid-room-pet-sprite {
+  position: relative;
+  width: clamp(74px, 16%, 98px);
+  aspect-ratio: 1 / 1.08;
+  transform-origin: 50% 78%;
+  animation: squid-room-pet-bob 1.8s ease-in-out infinite;
+  z-index: 1;
+}
+
+.squid-room-pet-sprite-oracle {
+  animation-duration: 2.25s;
+}
+
+.squid-room-pet-head {
+  position: absolute;
+  inset: 10% 16% 32%;
+  border-radius: 48% 48% 42% 42%;
+  background:
+    radial-gradient(circle at 35% 32%, rgba(255, 255, 255, 0.78) 0 6%, transparent 7%),
+    linear-gradient(145deg, rgba(101, 231, 255, 0.96), rgba(35, 123, 255, 0.94));
+  box-shadow: inset -12px -18px 26px rgba(0, 0, 0, 0.22), 0 18px 34px rgba(0, 0, 0, 0.28);
+  clip-path: polygon(50% 0, 83% 18%, 100% 56%, 78% 100%, 22% 100%, 0 56%, 17% 18%);
+}
+
+.squid-room-pet-sprite-oracle .squid-room-pet-head {
+  background:
+    radial-gradient(circle at 35% 32%, rgba(255, 255, 255, 0.76) 0 6%, transparent 7%),
+    linear-gradient(145deg, rgba(194, 151, 255, 0.96), rgba(83, 112, 255, 0.94));
+}
+
+.squid-room-pet-face {
+  position: absolute;
+  left: 50%;
+  top: 36%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  width: 58%;
+  height: 28%;
+  border: 1px solid rgba(5, 12, 22, 0.5);
+  border-radius: 999px;
+  color: rgba(3, 13, 23, 0.86);
+  background: rgba(236, 253, 255, 0.88);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: clamp(18px, 2.2vw, 30px);
+  font-weight: 800;
+  letter-spacing: 0;
+  z-index: 2;
+}
+
+.squid-room-pet-arms span,
+.squid-room-pet-tentacles span {
+  position: absolute;
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(101, 231, 255, 0.94), rgba(35, 123, 255, 0.9));
+  transform-origin: 50% 0;
+}
+
+.squid-room-pet-sprite-oracle .squid-room-pet-arms span,
+.squid-room-pet-sprite-oracle .squid-room-pet-tentacles span {
+  background: linear-gradient(180deg, rgba(194, 151, 255, 0.94), rgba(83, 112, 255, 0.9));
+}
+
+.squid-room-pet-arms span {
+  top: 44%;
+  width: 13%;
+  height: 42%;
+  animation: squid-room-pet-wave 1.4s ease-in-out infinite;
+}
+
+.squid-room-pet-arms span:first-child {
+  left: 7%;
+  transform: rotate(30deg);
+}
+
+.squid-room-pet-arms span:last-child {
+  right: 7%;
+  transform: rotate(-30deg);
+  animation-delay: 0.25s;
+}
+
+.squid-room-pet-tentacles span {
+  top: 64%;
+  width: 9%;
+  height: 33%;
+  animation: squid-room-pet-tentacle 1.2s ease-in-out infinite;
+}
+
+.squid-room-pet-tentacles span:nth-child(1) { left: 24%; transform: rotate(16deg); animation-delay: 0s; }
+.squid-room-pet-tentacles span:nth-child(2) { left: 35%; transform: rotate(7deg); animation-delay: 0.08s; }
+.squid-room-pet-tentacles span:nth-child(3) { left: 46%; transform: rotate(0deg); animation-delay: 0.16s; }
+.squid-room-pet-tentacles span:nth-child(4) { left: 57%; transform: rotate(-7deg); animation-delay: 0.24s; }
+.squid-room-pet-tentacles span:nth-child(5) { left: 68%; transform: rotate(-16deg); animation-delay: 0.32s; }
+
+.squid-room-pet-shadow {
+  position: absolute;
+  bottom: 8%;
+  width: clamp(84px, 20%, 128px);
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  filter: blur(4px);
+}
+
+.squid-room-pet-bubble {
+  position: relative;
+  min-height: 38px;
+  padding: 9px 11px;
+  border: 1px solid rgba(116, 139, 166, 0.24);
+  border-radius: 8px;
+  color: var(--color-text);
+  background: rgba(7, 11, 18, 0.78);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  z-index: 2;
+}
+
+.squid-room-pet-bubble::before {
+  content: "";
+  position: absolute;
+  left: 24px;
+  top: -7px;
+  width: 12px;
+  height: 12px;
+  border-left: 1px solid rgba(116, 139, 166, 0.24);
+  border-top: 1px solid rgba(116, 139, 166, 0.24);
+  background: rgba(7, 11, 18, 0.92);
+  transform: rotate(45deg);
+}
+
+@keyframes squid-room-pet-bob {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-8px) rotate(1deg); }
+}
+
+@keyframes squid-room-pet-wave {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -8px; }
+}
+
+@keyframes squid-room-pet-tentacle {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 7px; }
+}
+
 body.squid-room-workspace .pane-layout.has-squid-room-team-collapsed {
   min-height: 0;
 }

@@ -210,7 +210,7 @@ describe('workspace pane shell', () => {
     expect(doc.getElementById('terminal-trustquote-builder')).toBeFalsy();
   });
 
-  test('Squid Room hides Architect and renders mirrored team panes plus live TrustQuote PTY mounts', () => {
+  test('Squid Room hides Architect and renders Builder/Oracle pets plus live TrustQuote PTY mounts', () => {
     const doc = makeDocument();
     const terminal = { setActivePaneIds: jest.fn(), setPaneRuntimeOverride: jest.fn() };
     doc.getElementById('squidRoomSurface').hidden = true;
@@ -219,14 +219,12 @@ describe('workspace pane shell', () => {
 
     expect(result).toEqual(expect.objectContaining({
       workspaceKey: 'squid-room',
-      paneIds: ['2', '3', 'trustquote-lead', 'trustquote-schedule-dispatch', 'trustquote-app', 'trustquote-invoice'],
+      paneIds: ['trustquote-lead', 'trustquote-schedule-dispatch', 'trustquote-app', 'trustquote-invoice'],
       teamPaneIds: ['2', '3'],
     }));
     expect(doc.body.classList.contains('squid-room-workspace')).toBe(true);
     expect(doc.body.classList.contains('trustquote-workspace')).toBe(false);
     expect(terminal.setActivePaneIds).toHaveBeenCalledWith([
-      '2',
-      '3',
       'trustquote-lead',
       'trustquote-schedule-dispatch',
       'trustquote-app',
@@ -255,14 +253,23 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.pane[data-pane-id="1"]').hidden).toBe(true);
     expect(doc.querySelector('.pane[data-pane-id="2"]').hidden).toBe(false);
     expect(doc.querySelector('.pane[data-pane-id="3"]').hidden).toBe(false);
+    expect(doc.querySelector('.pane[data-pane-id="2"]').classList.contains('squid-room-pet-pane')).toBe(true);
+    expect(doc.querySelector('.pane[data-pane-id="3"]').classList.contains('squid-room-pet-pane')).toBe(true);
+    expect(doc.querySelector('.pane[data-pane-id="2"]').dataset.squidRoomPet).toBe('builder');
+    expect(doc.querySelector('.pane[data-pane-id="3"]').dataset.squidRoomPet).toBe('oracle');
+    expect(doc.querySelector('.pane[data-pane-id="2"]').dataset.squidRoomLabel).toBe('Builder Squid');
+    expect(doc.querySelector('.pane[data-pane-id="3"]').dataset.squidRoomLabel).toBe('Oracle Squid');
+    expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.squid-room-pet-bubble').textContent).toBe('Working the active fix.');
+    expect(doc.querySelector('.pane[data-pane-id="3"]').querySelector('.squid-room-pet-bubble').textContent).toBe('Checking the proof.');
     expect(doc.querySelector('.squid-room-team-header')).toBeTruthy();
+    expect(doc.querySelector('.squid-room-team-eyebrow').textContent).toBe('Pets');
     expect(doc.querySelector('.squid-room-team-expand-btn').dataset.paneId).toBe('2');
     expect(doc.querySelector('.squid-room-team-expand-btn').dataset.tooltip).toContain('Builder + Oracle');
     expect(doc.querySelector('.squid-room-team-expand-btn').dataset.expanded).toBe('true');
     expect(doc.querySelector('.squid-room-team-expand-btn').getAttribute('aria-expanded')).toBe('true');
     expect(doc.querySelector('.squid-room-team-expand-btn').querySelector('.squid-room-team-toggle-label').textContent).toBe('Collapse');
-    expect(doc.getElementById('terminal-2').hidden).toBe(false);
-    expect(doc.getElementById('terminal-3').classList.contains('squid-room-terminal-hidden')).toBe(false);
+    expect(doc.getElementById('terminal-2')).toBeFalsy();
+    expect(doc.getElementById('terminal-3')).toBeFalsy();
     expect(doc.getElementById('terminal-trustquote-builder')).toBeFalsy();
     expect(doc.getElementById('terminal-trustquote-lead')).toBeTruthy();
     expect(doc.getElementById('terminal-trustquote-schedule-dispatch')).toBeTruthy();
