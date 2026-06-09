@@ -48,6 +48,17 @@ function normalizeToken(value, fallback = null) {
     || fallback;
 }
 
+function normalizeFilenameToken(value, fallback = null) {
+  const normalized = normalizeToken(value, fallback);
+  if (!normalized) return fallback;
+  return normalized
+    .replace(/[<>:"/\\|?*\x00-\x1F]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/[. ]+$/g, '')
+    .replace(/^_+|_+$/g, '')
+    || fallback;
+}
+
 function splitListValue(value) {
   if (Array.isArray(value)) return value.flatMap((entry) => splitListValue(entry));
   const text = toOptionalString(value, null);
@@ -130,7 +141,7 @@ function resolveCompletionPath(id, options = {}) {
 }
 
 function normalizeRequestId(value) {
-  return normalizeToken(value, null);
+  return normalizeFilenameToken(value, null);
 }
 
 function normalizePriority(value) {
@@ -144,7 +155,10 @@ function normalizeStatus(value, fallback = 'requested') {
 }
 
 function createRequestId(input = {}, nowIso = asIso(input.now)) {
-  const target = normalizeToken(input.work_item_id || input.workItemId || input.reason || 'codex-attention', 'codex-attention');
+  const target = normalizeFilenameToken(
+    input.work_item_id || input.workItemId || input.reason || 'codex-attention',
+    'codex-attention'
+  );
   const stamp = nowIso.replace(/[^0-9]/g, '').slice(0, 14) || String(Date.now());
   return `codex-attention-${stamp}-${target.slice(0, 48)}`;
 }

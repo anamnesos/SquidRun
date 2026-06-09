@@ -139,6 +139,38 @@ describe('codex-attention-bridge', () => {
     expect(after).toBe(before);
   });
 
+  test('sanitizes generated and explicit request ids for Windows filenames', () => {
+    const generated = bridge.createCodexAttentionRequest({
+      requested_by: 'architect',
+      reason: 'Bug #6: attention slug EINVAL? fix <now>',
+      window: 'main',
+      priority: 'urgent',
+    }, {
+      bridgeRoot,
+      now: '2026-05-30T22:32:30.000Z',
+    });
+
+    expect(generated.request.id).toBe('codex-attention-20260530223230-bug_6_attention_slug_einval_fix_now');
+    expect(path.basename(generated.request_path)).toBe(`${generated.request.id}.json`);
+    expect(path.basename(generated.request_path)).not.toMatch(/[<>:"/\\|?*]/);
+    expect(fs.existsSync(generated.request_path)).toBe(true);
+
+    const explicit = bridge.createCodexAttentionRequest({
+      id: 'manual:attention/request*bad?',
+      requested_by: 'architect',
+      reason: 'Explicit invalid id should be file safe',
+      window: 'main',
+    }, {
+      bridgeRoot,
+      now: '2026-05-30T22:32:31.000Z',
+    });
+
+    expect(explicit.request.id).toBe('manual_attention_request_bad');
+    expect(path.basename(explicit.request_path)).toBe('manual_attention_request_bad.json');
+    expect(path.basename(explicit.request_path)).not.toMatch(/[<>:"/\\|?*]/);
+    expect(fs.existsSync(explicit.request_path)).toBe(true);
+  });
+
   test('ack and complete record lifecycle and attach Codex proof to the work item', () => {
     ledger.openWorkItem({
       id: 'wi-proof-target',
