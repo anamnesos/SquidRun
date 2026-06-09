@@ -59,6 +59,14 @@ if (!bridgeApi) {
 
 const rendererModules = bridgeApi.rendererModules;
 if (!rendererModules || typeof rendererModules !== 'object') {
+  const loadError = bridgeApi.rendererModulesLoadError;
+  if (loadError && (loadError.message || loadError.stack)) {
+    const detail = loadError.stack || loadError.message;
+    const surfaced = new Error(`[renderer bridge] rendererModules failed to load in preload: ${loadError.message || 'unknown error'}`);
+    surfaced.cause = loadError;
+    console.error(`[renderer bridge] preload rendererModules load error:\n${detail}`);
+    throw surfaced;
+  }
   throw new Error('[renderer bridge] Missing rendererModules preload export');
 }
 

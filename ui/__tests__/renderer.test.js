@@ -286,6 +286,42 @@ describe('renderer.js smoke tests', () => {
       expect(window.squidrun.rendererModules.miraLiveEntrypoint).toBeDefined();
     });
 
+    it('surfaces the preload rendererModulesLoadError instead of the generic message', () => {
+      const savedBridge = global.window.squidrun;
+      const savedApiBridge = global.window.squidrunAPI;
+      const savedError = console.error;
+      console.error = jest.fn();
+      const loadError = {
+        message: 'boom from createRendererModules',
+        stack: 'Error: boom from createRendererModules\n    at preload.js:1:1',
+      };
+      const failingBridge = {
+        invoke: jest.fn().mockResolvedValue({}),
+        send: jest.fn(),
+        on: jest.fn(() => jest.fn()),
+        removeListener: jest.fn(),
+        rendererModules: null,
+        rendererModulesLoadError: loadError,
+      };
+      global.window.squidrun = failingBridge;
+      global.window.squidrunAPI = failingBridge;
+
+      try {
+        expect(() => {
+          jest.isolateModules(() => {
+            require('../renderer');
+          });
+        }).toThrow('boom from createRendererModules');
+        expect(console.error).toHaveBeenCalledWith(
+          expect.stringContaining('preload rendererModules load error')
+        );
+      } finally {
+        console.error = savedError;
+        global.window.squidrun = savedBridge;
+        global.window.squidrunAPI = savedApiBridge;
+      }
+    });
+
   });
 
   describe('command bar routing', () => {
