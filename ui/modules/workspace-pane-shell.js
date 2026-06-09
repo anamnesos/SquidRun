@@ -15,7 +15,8 @@ const SQUID_ROOM_PET_PANE_SPECS = Object.freeze([
   {
     paneId: '2',
     petId: 'builder',
-    title: 'Builder Squid',
+    assetRef: 'codex',
+    title: 'Builder',
     role: 'Builder',
     state: 'running',
     stateLabel: 'Working',
@@ -24,7 +25,8 @@ const SQUID_ROOM_PET_PANE_SPECS = Object.freeze([
   {
     paneId: '3',
     petId: 'oracle',
-    title: 'Oracle Squid',
+    assetRef: 'hoots',
+    title: 'Oracle',
     role: 'Oracle',
     state: 'review',
     stateLabel: 'Reviewing',
@@ -256,22 +258,15 @@ function createSquidRoomLivePane(doc, spec) {
 }
 
 function createSquidRoomPetArtwork(doc, spec) {
-  const sprite = createElement(doc, 'div', {
-    className: `squid-room-pet-sprite squid-room-pet-sprite-${spec.petId}`,
+  return createElement(doc, 'div', {
+    className: `squid-room-codex-pet squid-room-codex-pet-${spec.assetRef}`,
+    dataset: {
+      avatarAssetRef: spec.assetRef,
+      avatarState: spec.state,
+      squidRoomPetSprite: 'true',
+    },
     attributes: { 'aria-hidden': 'true' },
   });
-  sprite.appendChild(createElement(doc, 'div', { className: 'squid-room-pet-head' }));
-  sprite.appendChild(createElement(doc, 'div', { className: 'squid-room-pet-face' }, spec.petId === 'builder' ? '>' : '*'));
-  const arms = createElement(doc, 'div', { className: 'squid-room-pet-arms' });
-  arms.appendChild(createElement(doc, 'span'));
-  arms.appendChild(createElement(doc, 'span'));
-  sprite.appendChild(arms);
-  const tentacles = createElement(doc, 'div', { className: 'squid-room-pet-tentacles' });
-  for (let i = 0; i < 5; i += 1) {
-    tentacles.appendChild(createElement(doc, 'span'));
-  }
-  sprite.appendChild(tentacles);
-  return sprite;
 }
 
 function renderSquidRoomPetPane(doc, pane, spec) {
@@ -285,6 +280,7 @@ function renderSquidRoomPetPane(doc, pane, spec) {
   pane.dataset.squidRoomState = spec.state;
   pane.dataset.squidRoomRole = spec.role;
   pane.dataset.squidRoomLabel = spec.title;
+  pane.dataset.squidRoomPetAsset = spec.assetRef;
 
   const shell = createElement(doc, 'div', { className: 'squid-room-pet-shell' });
   const header = createElement(doc, 'div', { className: 'squid-room-pet-header' });
@@ -296,10 +292,6 @@ function renderSquidRoomPetPane(doc, pane, spec) {
 
   const stage = createElement(doc, 'div', { className: 'squid-room-pet-stage' });
   stage.appendChild(createSquidRoomPetArtwork(doc, spec));
-  stage.appendChild(createElement(doc, 'div', {
-    className: 'squid-room-pet-shadow',
-    attributes: { 'aria-hidden': 'true' },
-  }));
 
   shell.appendChild(header);
   shell.appendChild(stage);
