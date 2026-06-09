@@ -24,6 +24,9 @@ const {
   readBootstrapState: readMiraLabVerifyBootstrapState,
   formatStartupStaleMarker: formatMiraLabVerifyBootstrapStaleMarker,
 } = require('./mira-lab-verify-bootstrap-state');
+const {
+  writeAndFormatRestartContinuityResumeBlock,
+} = require('./main/restart-continuity-resume-manifest');
 
 const MIRA_PRESENCE_RUNTIME_STATE_SUMMARY_FILENAME = 'mira-presence-runtime-state-summary.json';
 const MIRA_PRESENCE_RESTART_ACCOUNTING_SCHEMA =
@@ -645,6 +648,12 @@ function readStartupBriefingForInjection(options = {}) {
       options
     )
     : '';
+  const restartContinuityResumeBlock = isMainProfile(startupScopeKey)
+    ? writeAndFormatRestartContinuityResumeBlock({
+      ...options,
+      currentLaneSnapshot,
+    })
+    : '';
   const currentLaneBlock = formatCurrentLaneBlock(currentLaneSnapshot, options);
   const recentCommsBlock = formatRecentCommsWindow(readRecentCurrentScopeComms(options), options);
   const miraLabBootstrapBlock = isMainProfile(startupScopeKey)
@@ -654,6 +663,7 @@ function readStartupBriefingForInjection(options = {}) {
     startupDurableBlock,
     miraPresenceRestartAccountingBlock,
     miraLabBootstrapBlock,
+    restartContinuityResumeBlock,
     currentLaneBlock,
     recentCommsBlock,
   ].filter(Boolean).join('\n\n');
