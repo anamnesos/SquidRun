@@ -15,7 +15,7 @@ const SQUID_ROOM_PET_PANE_SPECS = Object.freeze([
   {
     paneId: '2',
     petId: 'builder',
-    assetRef: 'codex',
+    assetRef: 'builder-squid',
     title: 'Builder',
     role: 'Builder',
     state: 'running',
@@ -25,7 +25,7 @@ const SQUID_ROOM_PET_PANE_SPECS = Object.freeze([
   {
     paneId: '3',
     petId: 'oracle',
-    assetRef: 'hoots',
+    assetRef: 'oracle-squid',
     title: 'Oracle',
     role: 'Oracle',
     state: 'review',

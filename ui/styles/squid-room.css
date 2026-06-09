@@ -170,12 +170,12 @@ body.squid-room-workspace .squid-room-pet-pane {
   z-index: 1;
 }
 
-.squid-room-codex-pet-codex {
-  background-image: url("../assets/codex-pets/codex.webp");
+.squid-room-codex-pet-builder-squid {
+  background-image: url("../assets/squid-room-pets/builder-squid.png");
 }
 
-.squid-room-codex-pet-hoots {
-  background-image: url("../assets/codex-pets/hoots.webp");
+.squid-room-codex-pet-oracle-squid {
+  background-image: url("../assets/squid-room-pets/oracle-squid.png");
 }
 
 .squid-room-pet-bubble {
