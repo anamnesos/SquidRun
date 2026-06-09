@@ -18,7 +18,11 @@ const { sendAgentAlert } = require('../scripts/hm-agent-alert');
 const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
 const { buildOracleWakeMessage } = require('../scripts/hm-oracle-wake-context');
 const { runWakeCycle } = require('../scripts/hm-oracle-wake-watchdog');
-const { runHeartbeatCycle } = require('../scripts/hm-bidirectional-wake-watchdog');
+const {
+  buildRunnerStatusSnapshot,
+  runHeartbeatCycle,
+  summarizeHeartbeatResult,
+} = require('../scripts/hm-bidirectional-wake-watchdog');
 
 describe('oracle wake watchdog context', () => {
   let tempDir;
@@ -160,6 +164,91 @@ describe('oracle wake watchdog context', () => {
       expect.stringContaining('topMovers=ORDI/USD -33.0% @ 3.8765'),
       expect.any(Object)
     );
+  });
+
+  test('bidirectional wake watchdog runner status requires a live fresh matching runner', () => {
+    const nowMs = Date.parse('2026-04-19T05:40:00.000Z');
+    const fresh = buildRunnerStatusSnapshot({
+      pid: 1234,
+      pidAlive: true,
+      pidMtimeMs: nowMs - 60_000,
+      statusFile: {
+        pid: 1234,
+        running: true,
+        intervalMs: 60_000,
+        heartbeatAt: new Date(nowMs - 30_000).toISOString(),
+      },
+      statusMtimeMs: nowMs - 30_000,
+      nowMs,
+    });
+    expect(fresh.running).toBe(true);
+    expect(fresh.reason).toBeNull();
+
+    const stale = buildRunnerStatusSnapshot({
+      pid: 1234,
+      pidAlive: true,
+      pidMtimeMs: nowMs - 10 * 60_000,
+      statusFile: {
+        pid: 1234,
+        running: true,
+        intervalMs: 60_000,
+        heartbeatAt: new Date(nowMs - 4 * 60_000).toISOString(),
+      },
+      statusMtimeMs: nowMs - 4 * 60_000,
+      nowMs,
+    });
+    expect(stale.running).toBe(false);
+    expect(stale.staleHeartbeat).toBe(true);
+    expect(stale.reason).toBe('stale_bidirectional_wake_watchdog_status');
+
+    const mismatched = buildRunnerStatusSnapshot({
+      pid: 1234,
+      pidAlive: true,
+      pidMtimeMs: nowMs - 60_000,
+      statusFile: {
+        pid: 5678,
+        running: true,
+        intervalMs: 60_000,
+        heartbeatAt: new Date(nowMs - 30_000).toISOString(),
+      },
+      statusMtimeMs: nowMs - 30_000,
+      nowMs,
+    });
+    expect(mismatched.running).toBe(false);
+    expect(mismatched.unknownLivePid).toBe(1234);
+    expect(mismatched.reason).toBe('unknown_live_bidirectional_wake_watchdog_pid');
+  });
+
+  test('bidirectional wake watchdog runner summary keeps probe status compact', () => {
+    const summary = summarizeHeartbeatResult({
+      ok: true,
+      statePath: 'state.json',
+      state: { updatedAt: '2026-04-19T05:40:00.000Z' },
+      alerts: [
+        { target: 'oracle', result: { ok: true, stdout: 'verbose delivery output' } },
+      ],
+      agentPaneRecovery: {
+        ok: true,
+        status: 'actions_taken',
+        actions: [
+          { kind: 'restart', paneId: '3', role: 'oracle', reason: 'dead', extra: 'not persisted' },
+        ],
+      },
+    });
+
+    expect(summary).toEqual({
+      ok: true,
+      statePath: 'state.json',
+      stateUpdatedAt: '2026-04-19T05:40:00.000Z',
+      alertCount: 1,
+      alerts: [{ target: 'oracle', ok: true }],
+      agentPaneRecovery: {
+        ok: true,
+        status: 'actions_taken',
+        actionCount: 1,
+        actions: [{ kind: 'restart', paneId: '3', role: 'oracle', reason: 'dead' }],
+      },
+    });
   });
 
   test('bidirectional watchdog can route accepted-unverified peer wake into pane auto-recovery', async () => {
