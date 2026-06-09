@@ -7,6 +7,19 @@ const path = require('path');
 const os = require('os');
 const { app, Menu } = require('electron');
 
+// --- Occluded/background window throttling fix (must run before app is ready) ---
+// Symptom (James, S422): when the main pane-host window is fully COVERED by the
+// Squid Room window, the Architect/Builder panes freeze and only "catch up at 10x"
+// once uncovered. Per-window `backgroundThrottling: false` does NOT cover this case:
+// on Windows, Chromium's CalculateNativeWinOcclusion feature marks a fully-covered
+// window as occluded, flips its page visibility to "hidden", and pauses rAF/timers/
+// compositor for that renderer. These switches keep occluded/background renderers live.
+// NOTE: command-line switches only take effect at launch, so this activates on next restart.
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+
 if (process.env.NODE_PATH) {
   try {
     require('module').Module._initPaths();

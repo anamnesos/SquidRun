@@ -4986,6 +4986,9 @@ class SquidRunApp {
         nodeIntegration: false,
         contextIsolation: true,
         sandbox: false,
+        // Keep the renderer live when the window is hidden/minimized/occluded (S422).
+        // This is the visible main/app window the user actually looks at.
+        backgroundThrottling: false,
         preload: path.join(__dirname, '..', '..', 'preload.js'),
       },
       title: windowTitle,

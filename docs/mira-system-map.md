@@ -658,6 +658,15 @@ Checkpoint reports must say, in plain English:
 - Whether any restart or process-start path is truly required.
 - What remains parked, prototype, archive, or delete-after-parity.
 
+### Checkpoint 2026-06-09 — occlusion/background-throttle fix (non-semantic for Mira)
+
+- Map row/capability changed: NONE. The S422 occluded-renderer fix adds process-wide Chromium switches in `ui/main.js` and `backgroundThrottling: false` to three `BrowserWindow` web-preferences, one of which is the Mira Lab window (`ui/modules/main/mira-lab-window.js`). This is a renderer-liveness flag only; it does not change the Mira Lab window's route, capability, status, inventory row (still `TRANSITION / DELETE-AFTER-PARITY`), or any visible-reply/anti-leak truth.
+- Continue or stop: team continues. No James acceptance surface is touched — the change keeps an already-live renderer from being throttled while occluded; it does not add, move, or activate a Mira capability.
+- Evidence: patch verified present, no second `disable-features` appendSwitch (no clobber), window test suite green. Diagnosis Architect, verify+commit Builder.
+- Restart/process-start required: YES to *activate* (command-line switches bind at launch only), but the fix is committed and unproven until a post-restart occlusion test; it changes no Mira route, so no Mira-specific restart gate applies.
+- Parked/prototype/archive/delete-after-parity: unchanged.
+- `JAMES ACTION: NONE`
+
 ## Source-Of-Truth Update Rule
 
 Any Mira feature, route, capability, removal, migration, or cleanup must update this file in the same PR or commit.
