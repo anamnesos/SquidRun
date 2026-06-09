@@ -454,6 +454,15 @@ jest.mock('../scripts/hm-telegram-poller-watchdog', () => ({
   })),
 }));
 
+jest.mock('../scripts/hm-bidirectional-wake-watchdog', () => ({
+  startRunner: jest.fn(() => ({
+    ok: true,
+    alreadyRunning: true,
+    running: true,
+    pid: 2468,
+  })),
+}));
+
 jest.mock('../scripts/hm-session-summary', () => ({
   generateSessionSummary: jest.fn(async () => ({
     ok: true,
@@ -2611,6 +2620,7 @@ describe('SquidRunApp', () => {
       const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
       const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
       const { checkAndRecoverTelegramPoller } = require('../scripts/hm-telegram-poller-watchdog');
+      const { startRunner: startBidirectionalWakeWatchdogRunner } = require('../scripts/hm-bidirectional-wake-watchdog');
       const teamMemory = require('../modules/team-memory');
       createHealthSnapshot.mockReturnValueOnce({
         generatedAt: '2026-03-13T00:00:00.000Z',
@@ -2689,6 +2699,17 @@ describe('SquidRunApp', () => {
       }));
       expect(checkAndRecoverTelegramPoller.mock.invocationCallOrder[0])
         .toBeLessThan(createHealthSnapshot.mock.invocationCallOrder[0]);
+      expect(startBidirectionalWakeWatchdogRunner).toHaveBeenCalledWith(expect.objectContaining({
+        projectRoot: '/test',
+      }));
+      expect(startBidirectionalWakeWatchdogRunner.mock.invocationCallOrder[0])
+        .toBeLessThan(createHealthSnapshot.mock.invocationCallOrder[0]);
+      expect(result.bidirectionalWakeWatchdog).toEqual(expect.objectContaining({
+        ok: true,
+        alreadyRunning: true,
+        running: true,
+        pid: 2468,
+      }));
       expect(createHealthSnapshot.mock.calls[0][0].bridgeStatus).toEqual(expect.objectContaining({
         state: expect.any(String),
       }));
@@ -2699,6 +2720,7 @@ describe('SquidRunApp', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
       const { checkAndRecoverTelegramPoller } = require('../scripts/hm-telegram-poller-watchdog');
+      const { startRunner: startBidirectionalWakeWatchdogRunner } = require('../scripts/hm-bidirectional-wake-watchdog');
       evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
         session: 777,
         status: 'ACTIVE',
@@ -2716,7 +2738,13 @@ describe('SquidRunApp', () => {
         skipped: true,
         reason: 'profile_not_owner',
       });
+      expect(result.bidirectionalWakeWatchdog).toEqual({
+        ok: true,
+        skipped: true,
+        reason: 'profile_not_owner',
+      });
       expect(checkAndRecoverTelegramPoller).not.toHaveBeenCalled();
+      expect(startBidirectionalWakeWatchdogRunner).not.toHaveBeenCalled();
       expect(writeFileAtomic).toHaveBeenCalledWith(
         expect.stringContaining('startup-health-eunbyeol.md'),
         expect.any(String)

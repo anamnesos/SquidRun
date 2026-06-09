@@ -581,7 +581,11 @@ function startRunner(options = {}) {
   ensureDir(DEFAULT_LOG_PATH);
   const out = fs.openSync(DEFAULT_LOG_PATH, 'a');
   const executable = resolveLaunchExecutable();
-  const projectRoot = path.resolve(process.env.SQUIDRUN_PROJECT_ROOT || path.join(__dirname, '..', '..'));
+  const projectRoot = path.resolve(
+    toText(options.projectRoot, '')
+    || process.env.SQUIDRUN_PROJECT_ROOT
+    || path.join(__dirname, '..', '..')
+  );
   const child = spawn(executable, childArgs, {
     cwd: projectRoot,
     detached: true,
