@@ -138,6 +138,9 @@ const terminalPaused = new Map(); // paneId -> boolean (is PTY paused)
 const terminalWriteFlushTimers = new Map(); // paneId -> timer ID
 const terminalWriteFrameBudgets = new Map(); // paneId -> { startedAt, bytes, chunks }
 const terminalPaintRefreshTimers = new Map(); // `${paneId}:${delayMs}` -> timer ID
+const terminalStreamingFitTimers = new Map(); // paneId -> timer ID
+const terminalStreamingLastFitAt = new Map(); // paneId -> timestamp
+const terminalUserScrollUntil = new Map(); // paneId -> timestamp while auto-bottom is paused
 
 const HIGH_WATERMARK = 500000; // 500KB - pause producer
 const LOW_WATERMARK = 50000;   // 50KB - resume producer
@@ -146,6 +149,9 @@ const TERMINAL_WRITE_FRAME_BYTE_BUDGET = 64 * 1024;
 const TERMINAL_WRITE_FRAME_CHUNK_BUDGET = 8;
 const TERMINAL_WRITE_FRAME_TIME_BUDGET_MS = 8;
 const TERMINAL_WRITE_FRAME_YIELD_MS = 16;
+const TERMINAL_STREAMING_FIT_MIN_INTERVAL_MS = 350;
+const TERMINAL_STREAMING_FIT_SETTLE_MS = 160;
+const TERMINAL_USER_SCROLL_HOLD_MS = 1800;
 const PROMOTION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 // WebGL rendering: disabled by default to reduce memory usage.
@@ -344,6 +350,7 @@ function recordTerminalWriteFrame(paneId, byteLen) {
 function resetTerminalWriteQueue(paneId) {
   const id = String(paneId);
   clearTerminalWriteFlushTimer(id);
+  clearTerminalStreamingFit(id);
   terminalWriteQueues.delete(id);
   terminalWriting.delete(id);
   terminalWatermarks.set(id, 0);
@@ -361,22 +368,73 @@ function clearTerminalPaintRefresh(paneId) {
   }
 }
 
-function refreshTerminalViewport(paneId, terminal, fitAddon = null) {
+function clearTerminalStreamingFit(paneId) {
+  const id = String(paneId);
+  const timer = terminalStreamingFitTimers.get(id);
+  if (timer) {
+    clearTimeout(timer);
+    terminalStreamingFitTimers.delete(id);
+  }
+}
+
+function getTerminalScrollbackInfo(terminal) {
+  const activeBuffer = terminal?.buffer?.active || {};
+  const baseY = Math.max(0, Number(activeBuffer.baseY) || 0);
+  const viewportY = Math.max(0, Number(activeBuffer.viewportY) || 0);
+  const cursorY = Math.max(0, Number(activeBuffer.cursorY) || 0);
+  const rows = Math.max(0, Number(terminal?.rows) || 0);
+  const length = Math.max(0, Number(activeBuffer.length) || 0);
+  const populatedRows = length || (baseY + cursorY + 1);
+  return {
+    baseY,
+    viewportY,
+    cursorY,
+    rows,
+    length,
+    scrollbackRows: Math.max(0, populatedRows - rows),
+  };
+}
+
+function terminalHasScrollableScrollback(terminal) {
+  const info = getTerminalScrollbackInfo(terminal);
+  return info.scrollbackRows > 0 || info.baseY > 0;
+}
+
+function markTerminalUserScroll(paneId, terminal, event = {}) {
+  const id = String(paneId);
+  if (!terminalHasScrollableScrollback(terminal)) return false;
+  const deltaY = Number(event.deltaY);
+  if (Number.isFinite(deltaY) && deltaY === 0) return false;
+  terminalUserScrollUntil.set(id, Date.now() + TERMINAL_USER_SCROLL_HOLD_MS);
+  return true;
+}
+
+function shouldPreserveTerminalUserScroll(paneId) {
+  const id = String(paneId);
+  const until = Number(terminalUserScrollUntil.get(id)) || 0;
+  if (until <= 0) return false;
+  if (Date.now() <= until) return true;
+  terminalUserScrollUntil.delete(id);
+  return false;
+}
+
+function refreshTerminalViewport(paneId, terminal, fitAddon = null, options = {}) {
   const id = String(paneId);
   if (!terminal) return;
+  const operation = options.operation || 'paint_refresh';
 
   if (!rendererOwnsPtyGeometry(id)) {
     emitPtyGeometrySkipped(id, 'secondary_squid_room_mirror_geometry_blocked', {
-      operation: 'paint_refresh',
+      operation,
     });
   } else {
     try {
       if (fitAddon && typeof fitAddon.fit === 'function') {
-        if (terminalContainerChangedSinceLastApply(id)) {
-          fitTerminalForPane(id, fitAddon, 'paint_refresh');
+        if (options.forceFit === true || terminalContainerChangedSinceLastApply(id)) {
+          fitTerminalForPane(id, fitAddon, operation);
         } else {
           emitTerminalResizeSkipped(id, 'paint_refresh_container_unchanged', {
-            operation: 'paint_refresh',
+            operation,
           });
         }
       }
@@ -385,7 +443,7 @@ function refreshTerminalViewport(paneId, terminal, fitAddon = null) {
     }
 
     try {
-      applyTerminalPtyResize(id, terminal, { operation: 'paint_refresh' });
+      applyTerminalPtyResize(id, terminal, { operation });
     } catch (err) {
       log.warn(`Terminal ${id}`, `Paint refresh resize failed: ${err?.message || err}`);
     }
@@ -401,7 +459,11 @@ function refreshTerminalViewport(paneId, terminal, fitAddon = null) {
   }
 
   try {
-    if (typeof terminal.scrollToBottom === 'function') {
+    if (
+      options.scrollToBottom !== false
+      && !shouldPreserveTerminalUserScroll(id)
+      && typeof terminal.scrollToBottom === 'function'
+    ) {
       terminal.scrollToBottom();
     }
   } catch (err) {
@@ -409,20 +471,54 @@ function refreshTerminalViewport(paneId, terminal, fitAddon = null) {
   }
 }
 
-function scheduleTerminalPaintRefresh(paneId, terminal, fitAddon = null, delayMs = 0) {
+function scheduleTerminalPaintRefresh(paneId, terminal, fitAddon = null, delayMs = 0, options = {}) {
   const id = String(paneId);
   if (!id || !terminal) return;
   const delay = Math.max(0, Number(delayMs) || 0);
-  const key = `${id}:${delay}`;
+  const key = `${id}:${delay}:${options.operation || 'paint_refresh'}:${options.forceFit === true ? 'force' : 'normal'}`;
   const existingTimer = terminalPaintRefreshTimers.get(key);
   if (existingTimer) clearTimeout(existingTimer);
 
   const timer = setTimeout(() => {
     terminalPaintRefreshTimers.delete(key);
     if (terminals.get(id) !== terminal) return;
-    refreshTerminalViewport(id, terminal, fitAddon || fitAddons.get(id));
+    refreshTerminalViewport(id, terminal, fitAddon || fitAddons.get(id), options);
   }, delay);
   terminalPaintRefreshTimers.set(key, timer);
+}
+
+function scheduleStreamingViewportFit(paneId, terminal, fitAddon = null) {
+  const id = String(paneId);
+  if (!id || !terminal || !rendererOwnsPtyGeometry(id)) return;
+  clearTerminalStreamingFit(id);
+  const now = Date.now();
+  const lastFitAt = Number(terminalStreamingLastFitAt.get(id)) || 0;
+  const elapsed = Math.max(0, now - lastFitAt);
+  const delay = elapsed >= TERMINAL_STREAMING_FIT_MIN_INTERVAL_MS
+    ? 0
+    : Math.min(TERMINAL_STREAMING_FIT_SETTLE_MS, TERMINAL_STREAMING_FIT_MIN_INTERVAL_MS - elapsed);
+
+  const timer = setTimeout(() => {
+    terminalStreamingFitTimers.delete(id);
+    if (terminals.get(id) !== terminal) return;
+    terminalStreamingLastFitAt.set(id, Date.now());
+    refreshTerminalViewport(id, terminal, fitAddon || fitAddons.get(id), {
+      operation: 'streaming_viewport_sync',
+      forceFit: true,
+    });
+  }, delay);
+  terminalStreamingFitTimers.set(id, timer);
+}
+
+function setupTerminalWheelScrollGuard(paneId, container, terminal, options = {}) {
+  if (!container || typeof container.addEventListener !== 'function' || !terminal) return false;
+  container.addEventListener('wheel', (event) => {
+    markTerminalUserScroll(paneId, terminal, event);
+  }, {
+    passive: true,
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  return true;
 }
 
 function scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon = null) {
@@ -443,19 +539,20 @@ function scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon = null) {
  * @param {string} data - Data to write
  */
 function queueTerminalWrite(paneId, terminal, data) {
+  const id = String(paneId);
   const payload = typeof data === 'string' ? data : String(data ?? '');
   const byteLen = Buffer.byteLength(payload, 'utf8');
 
   // Initialize state for this pane if needed
-  if (!terminalWriteQueues.has(paneId)) {
-    terminalWriteQueues.set(paneId, []);
-    terminalWriting.set(paneId, false);
-    terminalWatermarks.set(paneId, 0);
-    terminalPaused.set(paneId, false);
+  if (!terminalWriteQueues.has(id)) {
+    terminalWriteQueues.set(id, []);
+    terminalWriting.set(id, false);
+    terminalWatermarks.set(id, 0);
+    terminalPaused.set(id, false);
   }
 
-  const queue = terminalWriteQueues.get(paneId);
-  let currentWatermark = terminalWatermarks.get(paneId) || 0;
+  const queue = terminalWriteQueues.get(id);
+  let currentWatermark = terminalWatermarks.get(id) || 0;
   let droppedBytes = 0;
   let droppedEntries = 0;
 
@@ -474,42 +571,43 @@ function queueTerminalWrite(paneId, terminal, data) {
   // If a single incoming chunk cannot fit (in-flight bytes already exceed cap),
   // drop the new chunk instead of allowing unbounded growth.
   if ((currentWatermark + byteLen) > TERMINAL_QUEUE_MAX_BYTES) {
-    terminalWatermarks.set(paneId, currentWatermark);
-    maybeResumePtyProducer(paneId, currentWatermark);
+    terminalWatermarks.set(id, currentWatermark);
+    maybeResumePtyProducer(id, currentWatermark);
     if (droppedEntries > 0) {
-      log.warn(`Terminal ${paneId}`, `Dropped ${droppedEntries} queued chunk(s), ${droppedBytes} bytes to enforce queue cap`);
+      log.warn(`Terminal ${id}`, `Dropped ${droppedEntries} queued chunk(s), ${droppedBytes} bytes to enforce queue cap`);
     }
-    log.warn(`Terminal ${paneId}`, `Dropped incoming terminal chunk (${byteLen} bytes) - queue cap ${TERMINAL_QUEUE_MAX_BYTES} reached`);
+    log.warn(`Terminal ${id}`, `Dropped incoming terminal chunk (${byteLen} bytes) - queue cap ${TERMINAL_QUEUE_MAX_BYTES} reached`);
     return;
   }
 
   if (droppedEntries > 0) {
-    log.warn(`Terminal ${paneId}`, `Dropped ${droppedEntries} queued chunk(s), ${droppedBytes} bytes to enforce queue cap`);
+    log.warn(`Terminal ${id}`, `Dropped ${droppedEntries} queued chunk(s), ${droppedBytes} bytes to enforce queue cap`);
   }
 
   // Update watermark (bytes in flight + queued to xterm)
   currentWatermark += byteLen;
-  terminalWatermarks.set(paneId, currentWatermark);
+  terminalWatermarks.set(id, currentWatermark);
 
   // If watermark exceeds high threshold, pause the PTY producer
   if (
-    rendererOwnsPtyGeometry(paneId)
+    rendererOwnsPtyGeometry(id)
     && currentWatermark > HIGH_WATERMARK
-    && !terminalPaused.get(paneId)
+    && !terminalPaused.get(id)
   ) {
     if (window.squidrun?.pty?.pause) {
-      window.squidrun.pty.pause(paneId);
-      terminalPaused.set(paneId, true);
-      log.info(`Terminal ${paneId}`, `High watermark reached (${currentWatermark} bytes) - PTY paused`);
+      window.squidrun.pty.pause(id);
+      terminalPaused.set(id, true);
+      log.info(`Terminal ${id}`, `High watermark reached (${currentWatermark} bytes) - PTY paused`);
     }
   }
 
   // Add data to queue
   queue.push({ data: payload, byteLen });
+  scheduleStreamingViewportFit(id, terminal, fitAddons.get(id));
 
   // Start processing if not already writing
-  if (!terminalWriteFlushTimers.has(paneId)) {
-    flushTerminalQueue(paneId, terminal);
+  if (!terminalWriteFlushTimers.has(id)) {
+    flushTerminalQueue(id, terminal);
   }
 }
 
@@ -529,8 +627,14 @@ function flushTerminalQueue(paneId, terminal) {
   if (!queue || queue.length === 0) {
     const paneFitAddon = fitAddons.get(String(paneId));
     if (paneFitAddon) {
-      scheduleTerminalPaintRefresh(paneId, terminal, paneFitAddon, 0);
-      scheduleTerminalPaintRefresh(paneId, terminal, paneFitAddon, 120);
+      scheduleTerminalPaintRefresh(paneId, terminal, paneFitAddon, 0, {
+        operation: 'write_queue_drain',
+        forceFit: true,
+      });
+      scheduleTerminalPaintRefresh(paneId, terminal, paneFitAddon, 120, {
+        operation: 'write_queue_settle',
+        forceFit: true,
+      });
     }
     return;
   }
@@ -564,7 +668,9 @@ function flushTerminalQueue(paneId, terminal) {
 
     const paneFitAddon = fitAddons.get(String(paneId));
     if (paneFitAddon) {
-      scheduleTerminalPaintRefresh(paneId, terminal, paneFitAddon, 16);
+      scheduleTerminalPaintRefresh(paneId, terminal, paneFitAddon, 16, {
+        operation: 'write_chunk_paint',
+      });
     }
 
     const nextDelayMs = recordTerminalWriteFrame(paneId, byteLen);
@@ -1262,6 +1368,9 @@ function teardownTerminalPane(paneId) {
   clearTerminalPaintRefresh(id);
   terminalAppliedPtyGeometries.delete(id);
   terminalOwnFitSuppressUntil.delete(id);
+  terminalOwnFitContainerSizes.delete(id);
+  terminalStreamingLastFitAt.delete(id);
+  terminalUserScrollUntil.delete(id);
   clearStartupInjection(id);
   detachTerminalInputBridge(id);
   detachPtyListeners(id);
@@ -2460,6 +2569,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
   });
 
   setupCopyPaste(container, terminal, paneId, 'Connected', { signal: paneSignal });
+  setupTerminalWheelScrollGuard(paneId, container, terminal, { signal: paneSignal });
 
   terminals.set(paneId, terminal);
   fitAddons.set(paneId, fitAddon);
@@ -2722,6 +2832,7 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
   });
 
   setupCopyPaste(container, terminal, paneId, 'Reconnected', { signal: paneSignal });
+  setupTerminalWheelScrollGuard(paneId, container, terminal, { signal: paneSignal });
 
   terminals.set(paneId, terminal);
   fitAddons.set(paneId, fitAddon);
@@ -3091,6 +3202,7 @@ const deferredResizeTimers = new Map(); // paneId -> timer ID
 const deferredResizeFirstRequestedAt = new Map(); // paneId -> timestamp
 const terminalAppliedPtyGeometries = new Map(); // paneId -> last cols/rows actually sent to PTY
 const terminalOwnFitSuppressUntil = new Map(); // paneId -> timestamp while self-fit ResizeObserver callbacks are ignored
+const terminalOwnFitContainerSizes = new Map(); // paneId -> container size at self-fit time
 
 const RESIZE_OBSERVER_DEBOUNCE_MS = 150;
 const RESIZE_INPUT_DEFER_MS = 150;
@@ -3155,14 +3267,34 @@ function terminalContainerChangedSinceLastApply(paneId) {
 function markOwnTerminalFit(paneId) {
   const id = String(paneId);
   terminalOwnFitSuppressUntil.set(id, Date.now() + RESIZE_OWN_FIT_OBSERVER_SUPPRESS_MS);
+  const containerSize = getTerminalContainerSize(id);
+  if (containerSize) {
+    terminalOwnFitContainerSizes.set(id, containerSize);
+  } else {
+    terminalOwnFitContainerSizes.delete(id);
+  }
 }
 
 function shouldSuppressOwnFitResizeObserver(paneId) {
   const id = String(paneId);
   const until = Number(terminalOwnFitSuppressUntil.get(id)) || 0;
   if (until <= 0) return false;
-  if (Date.now() <= until) return true;
+  if (Date.now() <= until) {
+    const fittedContainerSize = terminalOwnFitContainerSizes.get(id);
+    const currentContainerSize = getTerminalContainerSize(id);
+    if (
+      fittedContainerSize
+      && currentContainerSize
+      && !containerSizeApproximatelyEqual(fittedContainerSize, currentContainerSize)
+    ) {
+      terminalOwnFitSuppressUntil.delete(id);
+      terminalOwnFitContainerSizes.delete(id);
+      return false;
+    }
+    return true;
+  }
   terminalOwnFitSuppressUntil.delete(id);
+  terminalOwnFitContainerSizes.delete(id);
   return false;
 }
 
@@ -3380,6 +3512,8 @@ function cleanupResizeObserver(paneId) {
     clearTimeout(timer);
     resizeDebounceTimers.delete(paneId);
   }
+  terminalOwnFitSuppressUntil.delete(String(paneId));
+  terminalOwnFitContainerSizes.delete(String(paneId));
   clearDeferredTerminalResize(paneId);
 }
 
@@ -3655,15 +3789,22 @@ module.exports = {
     getStartupWindowContext,
     getPaneIdentityLabel,
     queueTerminalWrite,
+    refreshTerminalViewport,
     resizeSinglePane,
     setupResizeObserver,
     applyTerminalPtyResize,
     fitTerminalForPane,
     shouldSuppressOwnFitResizeObserver,
+    scheduleStreamingViewportFit,
     scheduleDeferredTerminalResize,
     clearDeferredTerminalResize,
     scheduleTerminalPaintRefresh,
     scheduleTerminalAttachPaintRefresh,
+    getTerminalScrollbackInfo,
+    terminalHasScrollableScrollback,
+    markTerminalUserScroll,
+    shouldPreserveTerminalUserScroll,
+    setupTerminalWheelScrollGuard,
     rendererOwnsPtyGeometry,
     isSecondarySquidRoomMirrorPane,
     terminalWriteFlushTimers,
@@ -3671,13 +3812,20 @@ module.exports = {
     terminalWatermarks,
     terminalPaused,
     terminalPaintRefreshTimers,
+    terminalStreamingFitTimers,
+    terminalStreamingLastFitAt,
+    terminalUserScrollUntil,
     resizeDebounceTimers,
     terminalAppliedPtyGeometries,
     terminalOwnFitSuppressUntil,
+    terminalOwnFitContainerSizes,
     deferredResizeTimers,
     deferredResizeFirstRequestedAt,
     TERMINAL_WRITE_FRAME_YIELD_MS,
     TERMINAL_WRITE_FRAME_BYTE_BUDGET,
+    TERMINAL_STREAMING_FIT_MIN_INTERVAL_MS,
+    TERMINAL_STREAMING_FIT_SETTLE_MS,
+    TERMINAL_USER_SCROLL_HOLD_MS,
     RESIZE_INPUT_MAX_DEFER_MS,
     RESIZE_OWN_FIT_OBSERVER_SUPPRESS_MS,
   },

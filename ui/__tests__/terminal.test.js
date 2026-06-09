@@ -196,12 +196,22 @@ describe('terminal.js module', () => {
       clearTimeout(timer);
     }
     terminal._internals.terminalPaintRefreshTimers.clear();
+    for (const timer of terminal._internals.terminalStreamingFitTimers.values()) {
+      clearTimeout(timer);
+    }
+    terminal._internals.terminalStreamingFitTimers.clear();
+    terminal._internals.terminalStreamingLastFitAt.clear();
+    terminal._internals.terminalUserScrollUntil.clear();
+    ['1', '2', '3', 'trustquote-app', 'trustquote-lead', 'trustquote-invoice', 'trustquote-schedule-dispatch'].forEach((paneId) => {
+      terminal.resetTerminalWriteQueue(paneId);
+    });
     for (const timer of terminal._internals.resizeDebounceTimers.values()) {
       clearTimeout(timer);
     }
     terminal._internals.resizeDebounceTimers.clear();
     terminal._internals.terminalAppliedPtyGeometries.clear();
     terminal._internals.terminalOwnFitSuppressUntil.clear();
+    terminal._internals.terminalOwnFitContainerSizes.clear();
     for (const timer of terminal._internals.deferredResizeTimers.values()) {
       clearTimeout(timer);
     }
@@ -1212,6 +1222,102 @@ describe('terminal.js module', () => {
       }
     });
 
+    test('A rendering: allows ResizeObserver refit when container changes during own-fit suppression window', () => {
+      const originalResizeObserver = global.ResizeObserver;
+      const observe = jest.fn();
+      let observerCallback;
+      global.ResizeObserver = jest.fn((callback) => {
+        observerCallback = callback;
+        return {
+          observe,
+          unobserve: jest.fn(),
+          disconnect: jest.fn(),
+        };
+      });
+      const container = {
+        clientWidth: 800,
+        clientHeight: 420,
+        getBoundingClientRect: jest.fn(() => ({
+          width: container.clientWidth,
+          height: container.clientHeight,
+        })),
+      };
+      mockDocument.getElementById.mockImplementation((id) => (
+        id === 'terminal-1' ? container : null
+      ));
+      terminal._internals.terminalAppliedPtyGeometries.set('1', {
+        cols: 120,
+        rows: 40,
+        containerWidth: 800,
+        containerHeight: 420,
+      });
+      const mockTerminalObj = { cols: 120, rows: 40 };
+      const fitAddon = {
+        fit: jest.fn(() => {
+          mockTerminalObj.cols = 130;
+          mockTerminalObj.rows = 46;
+        }),
+      };
+      terminal.fitAddons.set('1', fitAddon);
+      terminal.terminals.set('1', mockTerminalObj);
+
+      try {
+        terminal._internals.setupResizeObserver('1');
+        terminal._internals.fitTerminalForPane('1', fitAddon, 'test_fit');
+        container.clientWidth = 900;
+        container.clientHeight = 500;
+        observerCallback();
+        jest.advanceTimersByTime(300);
+
+        expect(observe).toHaveBeenCalledWith(container);
+        expect(fitAddon.fit).toHaveBeenCalledTimes(2);
+        expect(mockSquidRun.pty.resize).toHaveBeenCalledWith('1', 130, 46);
+      } finally {
+        global.ResizeObserver = originalResizeObserver;
+      }
+    });
+
+    test('A rendering: schedules bounded viewport fit during streaming without PTY resize when container is stable', () => {
+      const stableContainer = {
+        clientWidth: 800,
+        clientHeight: 420,
+        getBoundingClientRect: jest.fn(() => ({ width: 800, height: 420 })),
+      };
+      mockDocument.getElementById.mockImplementation((id) => (
+        id === 'terminal-1' ? stableContainer : null
+      ));
+      terminal._internals.terminalAppliedPtyGeometries.set('1', {
+        cols: 120,
+        rows: 40,
+        containerWidth: 800,
+        containerHeight: 420,
+      });
+      const mockTerminalObj = {
+        cols: 120,
+        rows: 40,
+        write: jest.fn(),
+        refresh: jest.fn(),
+        scrollToBottom: jest.fn(),
+      };
+      const fitAddon = {
+        fit: jest.fn(() => {
+          mockTerminalObj.cols = 121;
+          mockTerminalObj.rows = 40;
+        }),
+      };
+      terminal.fitAddons.set('1', fitAddon);
+      terminal.terminals.set('1', mockTerminalObj);
+
+      terminal._internals.queueTerminalWrite('1', mockTerminalObj, 'streaming chunk');
+      expect(terminal._internals.terminalStreamingFitTimers.has('1')).toBe(true);
+      jest.advanceTimersByTime(terminal._internals.TERMINAL_STREAMING_FIT_SETTLE_MS);
+
+      expect(fitAddon.fit).toHaveBeenCalledTimes(1);
+      expect(mockTerminalObj.refresh).toHaveBeenCalledWith(0, 39);
+      expect(mockSquidRun.pty.resize).not.toHaveBeenCalled();
+      terminal.resetTerminalWriteQueue('1');
+    });
+
     test('skips fit and pty resize for squid-room mirrors of shared main panes', () => {
       jest.useFakeTimers();
       terminal.setStartupWindowContext({
@@ -1409,6 +1515,113 @@ describe('terminal.js module', () => {
 
       expect(mockSquidRun.pty.resume).not.toHaveBeenCalled();
       expect(terminal._internals.terminalPaused.get('3')).toBe(false);
+    });
+  });
+
+  describe('B scrollback accessibility', () => {
+    test('B scrollback: counts xterm scrollback rows independently of rendering fit state', () => {
+      const terminalObj = {
+        rows: 24,
+        buffer: {
+          active: {
+            baseY: 72,
+            viewportY: 48,
+            cursorY: 12,
+            length: 96,
+          },
+        },
+      };
+
+      const info = terminal._internals.getTerminalScrollbackInfo(terminalObj);
+
+      expect(info.scrollbackRows).toBe(72);
+      expect(terminal._internals.terminalHasScrollableScrollback(terminalObj)).toBe(true);
+    });
+
+    test('B scrollback: passive wheel guard preserves user scroll from auto-bottom during output', () => {
+      const stableContainer = {
+        clientWidth: 800,
+        clientHeight: 420,
+        getBoundingClientRect: jest.fn(() => ({ width: 800, height: 420 })),
+      };
+      mockDocument.getElementById.mockImplementation((id) => (
+        id === 'terminal-1' ? stableContainer : null
+      ));
+      const terminalObj = {
+        cols: 120,
+        rows: 24,
+        buffer: {
+          active: {
+            baseY: 40,
+            viewportY: 10,
+            cursorY: 4,
+            length: 64,
+          },
+        },
+        refresh: jest.fn(),
+        scrollToBottom: jest.fn(),
+      };
+      const fitAddon = { fit: jest.fn() };
+      terminal.terminals.set('1', terminalObj);
+      terminal.fitAddons.set('1', fitAddon);
+
+      expect(terminal._internals.markTerminalUserScroll('1', terminalObj, { deltaY: -120 })).toBe(true);
+      terminal._internals.refreshTerminalViewport('1', terminalObj, fitAddon, {
+        operation: 'scrollback_access_probe',
+        forceFit: true,
+      });
+
+      expect(terminalObj.refresh).toHaveBeenCalledWith(0, 23);
+      expect(terminalObj.scrollToBottom).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(terminal._internals.TERMINAL_USER_SCROLL_HOLD_MS + 1);
+      terminal._internals.refreshTerminalViewport('1', terminalObj, fitAddon, {
+        operation: 'scrollback_access_probe_after_hold',
+        forceFit: true,
+      });
+      expect(terminalObj.scrollToBottom).toHaveBeenCalledTimes(1);
+    });
+
+    test('B scrollback: installs a passive wheel listener without swallowing xterm wheel handling', () => {
+      let wheelHandler;
+      const container = {
+        addEventListener: jest.fn((type, handler) => {
+          if (type === 'wheel') wheelHandler = handler;
+        }),
+      };
+      const terminalObj = {
+        rows: 24,
+        buffer: {
+          active: {
+            baseY: 12,
+            viewportY: 2,
+            cursorY: 3,
+            length: 40,
+          },
+        },
+      };
+      const signal = {};
+
+      const installed = terminal._internals.setupTerminalWheelScrollGuard('1', container, terminalObj, { signal });
+
+      expect(installed).toBe(true);
+      expect(container.addEventListener).toHaveBeenCalledWith(
+        'wheel',
+        expect.any(Function),
+        expect.objectContaining({ passive: true, signal })
+      );
+
+      const event = { deltaY: -120, preventDefault: jest.fn() };
+      wheelHandler(event);
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(terminal._internals.shouldPreserveTerminalUserScroll('1')).toBe(true);
+    });
+
+    test('B scrollback: xterm viewport CSS keeps scroll overflow on the viewport layer', () => {
+      const css = fs.readFileSync(path.join(__dirname, '../styles/layout.css'), 'utf8');
+
+      expect(css).toMatch(/\.pane-terminal\s+\.xterm-viewport\s*\{[^}]*overflow-y:\s*auto\s*!important/s);
+      expect(css).toMatch(/\.pane-terminal\s*\{[^}]*overflow:\s*hidden/s);
     });
   });
 
