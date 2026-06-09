@@ -145,6 +145,7 @@ describe('oracle wake watchdog context', () => {
       staleDistancePct: 0.015,
       oracleSilenceMs: 10 * 60 * 1000,
       architectSilenceMs: 8 * 60 * 1000,
+      agentPaneAutoRecovery: false,
     });
 
     expect(result.ok).toBe(true);
@@ -159,5 +160,102 @@ describe('oracle wake watchdog context', () => {
       expect.stringContaining('topMovers=ORDI/USD -33.0% @ 3.8765'),
       expect.any(Object)
     );
+  });
+
+  test('bidirectional watchdog can route accepted-unverified peer wake into pane auto-recovery', async () => {
+    const nowMs = Date.parse('2026-04-19T05:30:00.000Z');
+    jest.spyOn(Date, 'now').mockReturnValue(nowMs);
+    queryCommsJournalEntries.mockImplementation(({ senderRole, targetRole, direction }) => {
+      if (senderRole === 'architect' && targetRole === 'oracle' && direction === 'outbound') {
+        return [{ sentAtMs: nowMs - (2 * 60 * 1000) }];
+      }
+      if (senderRole === 'oracle' && direction === 'outbound') {
+        return [{ sentAtMs: nowMs - (20 * 60 * 1000) }];
+      }
+      return [];
+    });
+    sendAgentAlert.mockImplementation((message, options) => {
+      if (options?.targets?.includes('oracle')) {
+        return {
+          ok: true,
+          targets: ['oracle'],
+          results: [{ target: 'oracle', ok: true, stdout: 'Accepted by oracle but unverified: accepted.unverified' }],
+        };
+      }
+      return {
+        ok: true,
+        targets: options?.targets || [],
+        results: [],
+      };
+    });
+    const restartPane = jest.fn(() => ({ ok: true }));
+    const notifyArchitect = jest.fn(() => ({ ok: true }));
+    const probePane = jest.fn(() => ({ success: false, reason: 'agent_not_running' }));
+    const agentRecoveryStatePath = path.join(tempDir, 'agent-pane-auto-recovery-state.json');
+    const agentRecoveryEventsPath = path.join(tempDir, 'agent-pane-auto-recovery-events.jsonl');
+
+    const result = await runHeartbeatCycle({
+      statePath: bidirectionalStatePath,
+      watchRulesPath,
+      watchStatePath,
+      marketScannerStatePath,
+      staleDistancePct: 0.015,
+      oracleSilenceMs: 10 * 60 * 1000,
+      architectSilenceMs: 8 * 60 * 1000,
+      agentPaneAutoRecovery: {
+        statePath: agentRecoveryStatePath,
+        eventsPath: agentRecoveryEventsPath,
+        paneSpecs: [{ paneId: '3', role: 'oracle' }],
+        config: {
+          bootGraceMs: 8 * 60 * 1000,
+          deadConfirmCount: 2,
+          deadSustainMs: 60 * 1000,
+          deadProbeAfterMs: 0,
+          probeCooldownMs: 0,
+          wedgedConfirmCount: 2,
+          wedgedMinMs: 0,
+        },
+        state: {
+          version: 1,
+          panes: {
+            '3': {
+              paneId: '3',
+              role: 'oracle',
+              deadFirstAtMs: nowMs - (2 * 60 * 1000),
+              deadCount: 1,
+            },
+          },
+        },
+        scrollbackSnapshot: {
+          panes: {
+            '3': {
+              paneId: '3',
+              createdAt: nowMs - (20 * 60 * 1000),
+              lastActivity: nowMs - (20 * 60 * 1000),
+              scrollbackSha256: 'oracle-hash',
+            },
+          },
+        },
+        latestCommsByRole: { oracle: nowMs - (20 * 60 * 1000) },
+        appStartedAtMs: nowMs - (20 * 60 * 1000),
+        probePane,
+        restartPane,
+        notifyArchitect,
+      },
+    });
+
+    expect(probePane).toHaveBeenCalledWith('3', expect.any(Object));
+    expect(restartPane).toHaveBeenCalledWith('3', expect.any(Object));
+    expect(notifyArchitect).toHaveBeenCalledWith(
+      expect.stringContaining('Restarting pane'),
+      expect.any(Object)
+    );
+    expect(result.agentPaneRecovery.actions).toEqual([
+      expect.objectContaining({
+        kind: 'restart',
+        paneId: '3',
+        reason: 'dead',
+      }),
+    ]);
   });
 });

@@ -8,6 +8,10 @@ require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: t
 
 const { resolveCoordPath } = require('../config');
 const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
+const {
+  buildAlertDeliverySignals,
+  runAgentPaneAutoRecoveryCycle,
+} = require('../modules/main/agent-pane-auto-recovery');
 const { sendAgentAlert } = require('./hm-agent-alert');
 const { buildOracleWakeMessage } = require('./hm-oracle-wake-context');
 
@@ -167,6 +171,7 @@ async function runHeartbeatCycle(options = {}) {
   const architectLastSeenMs = new Date(toText(architectLastSeenAt, '')).getTime();
   const oracleLastSeenMs = new Date(toText(oracleLastSeenAt, '')).getTime();
   const alerts = [];
+  const agentPaneDeliverySignals = [];
 
   if (isActiveWindow(nowMs)
     && Number.isFinite(architectLastSeenMs)
@@ -179,6 +184,13 @@ async function runHeartbeatCycle(options = {}) {
       cwd: process.env.SQUIDRUN_PROJECT_ROOT || path.join(__dirname, '..', '..'),
       env: process.env,
     });
+    agentPaneDeliverySignals.push(...buildAlertDeliverySignals({
+      paneId: '1',
+      role: 'architect',
+      alertResult: result,
+      message,
+      nowMs,
+    }));
     state.architect.lastPokeAt = nowIso;
     alerts.push({ target: 'architect', result, message });
   }
@@ -202,8 +214,33 @@ async function runHeartbeatCycle(options = {}) {
       cwd: process.env.SQUIDRUN_PROJECT_ROOT || path.join(__dirname, '..', '..'),
       env: process.env,
     });
+    agentPaneDeliverySignals.push(...buildAlertDeliverySignals({
+      paneId: '3',
+      role: 'oracle',
+      alertResult: result,
+      message,
+      nowMs,
+    }));
     state.oracle.lastPokeAt = nowIso;
     alerts.push({ target: 'oracle', result, message });
+  }
+
+  let agentPaneRecovery = null;
+  const recoveryOptions = options.agentPaneAutoRecovery && typeof options.agentPaneAutoRecovery === 'object'
+    ? options.agentPaneAutoRecovery
+    : {};
+  const recoveryEnabled = options.agentPaneAutoRecovery !== false
+    && String(process.env.SQUIDRUN_AGENT_PANE_AUTO_RECOVERY || '').trim().toLowerCase() !== '0'
+    && String(process.env.SQUIDRUN_AGENT_PANE_AUTO_RECOVERY || '').trim().toLowerCase() !== 'false';
+  if (recoveryEnabled) {
+    agentPaneRecovery = await runAgentPaneAutoRecoveryCycle({
+      nowMs,
+      ...recoveryOptions,
+      deliverySignals: [
+        ...agentPaneDeliverySignals,
+        ...(Array.isArray(recoveryOptions.deliverySignals) ? recoveryOptions.deliverySignals : []),
+      ],
+    });
   }
 
   state.intervalMs = intervalMs;
@@ -217,6 +254,7 @@ async function runHeartbeatCycle(options = {}) {
     statePath,
     state,
     alerts,
+    agentPaneRecovery,
   };
 }
 
@@ -224,15 +262,18 @@ async function runCli(argv = parseCliArgs()) {
   const command = toText(argv.positional[0], 'run').toLowerCase();
   const statePath = path.resolve(toText(getOption(argv.options, 'state', DEFAULT_STATE_PATH)));
   const intervalMs = Math.max(30_000, toNumber(getOption(argv.options, 'interval-ms', DEFAULT_INTERVAL_MS), DEFAULT_INTERVAL_MS));
+  const agentPaneAutoRecovery = getOption(argv.options, 'no-agent-pane-auto-recovery', false) === true
+    ? false
+    : undefined;
 
   if (command === 'once') {
-    const result = await runHeartbeatCycle({ statePath, intervalMs });
+    const result = await runHeartbeatCycle({ statePath, intervalMs, agentPaneAutoRecovery });
     console.log(JSON.stringify(result, null, 2));
     return result;
   }
 
   while (true) {
-    const result = await runHeartbeatCycle({ statePath, intervalMs });
+    const result = await runHeartbeatCycle({ statePath, intervalMs, agentPaneAutoRecovery });
     console.log(JSON.stringify(result, null, 2));
     await sleep(intervalMs);
   }
