@@ -22,6 +22,7 @@ const {
 const SCHEMA = 'squidrun.squid_room.restart_survival_proof.v0';
 const DEFAULT_BASELINE_PATH = resolveCoordPath('runtime/squid-room-restart-survival-baseline.json', { forWrite: true });
 const DEFAULT_PROOF_PATH = resolveCoordPath('runtime/squid-room-restart-survival-proof.json', { forWrite: true });
+const DEFAULT_STREAMING_FIT_PROOF_PATH = resolveCoordPath('runtime/squid-room-streaming-fit-proof.json', { forWrite: true });
 
 const REQUIRED_MAIN_PANES = ['1', '2', '3'];
 const TRUSTQUOTE_CWD = 'D:/projects/TrustQuote';
@@ -45,6 +46,7 @@ function usage() {
     'Usage:',
     '  node ui/scripts/hm-squid-room-restart-proof.js baseline [--json] [--out <path>]',
     '  node ui/scripts/hm-squid-room-restart-proof.js verify [--json] [--baseline <path>] [--out <path>] [--allow-same-session]',
+    '  node ui/scripts/hm-squid-room-restart-proof.js streaming-fit [--json] [--out <path>]   (Bug A: fit-coherence + redraw outcome)',
     '',
     'The intended gate flow is:',
     '  1. Run baseline before the restart.',
@@ -286,6 +288,29 @@ function parseBusTraceLines(lines, sinceMs = 0) {
     if (!byPane[paneId]) byPane[paneId] = {};
     byPane[paneId][event] = (byPane[paneId][event] || 0) + 1;
     byPane[paneId].total = (byPane[paneId].total || 0) + 1;
+  }
+  return byPane;
+}
+
+// Bug A: parse renderer-side fit telemetry (terminal-fit-telemetry.jsonl). Returns the
+// LATEST settle record per pane — fit-coherence + paint outcome (painted boolean).
+function parseFitTelemetryLines(lines, sinceMs = 0) {
+  const byPane = {};
+  for (const line of lines) {
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const ts = Number(row.ts) || 0;
+    if (sinceMs && ts && ts < sinceMs) continue;
+    const paneId = String(row.paneId || '');
+    if (!paneId) continue;
+    const prev = byPane[paneId];
+    if (!prev || ts >= (Number(prev.ts) || 0)) {
+      byPane[paneId] = row;
+    }
   }
   return byPane;
 }
@@ -618,6 +643,7 @@ function collectEvidence(options = {}) {
   const sessionStatePath = options.sessionStatePath || resolveCoordPath('runtime/session-state.json');
   const daemonLogPath = options.daemonLogPath || resolveCoordPath('runtime/daemon.log');
   const busTracePath = options.busTracePath || resolveCoordPath('runtime/bus-reliability-trace.jsonl');
+  const fitTelemetryPath = options.fitTelemetryPath || resolveCoordPath('runtime/terminal-fit-telemetry.jsonl');
   const currentLanePath = options.currentLanePath || resolveCoordPath('handoffs/current-lane.json');
 
   const appStatus = readJson(appStatusPath, {});
@@ -629,6 +655,7 @@ function collectEvidence(options = {}) {
   const eventWindowSec = options.eventWindowSec || DEFAULT_EVENT_WINDOW_SEC;
   const daemonEventsByPane = parseDaemonEvents(readLogLines(daemonLogPath), startedMs, nowMs, eventWindowSec);
   const busEventsByPane = parseBusTraceLines(readLogLines(busTracePath), startedMs);
+  const fitTelemetryByPane = parseFitTelemetryLines(readLogLines(fitTelemetryPath), startedMs);
   const commsRows = readCommsRows({
     sessionScope,
     commsRowsPath: options.commsRowsPath,
@@ -647,8 +674,10 @@ function collectEvidence(options = {}) {
       sessionStatePath,
       daemonLogPath,
       busTracePath,
+      fitTelemetryPath,
       currentLanePath,
     },
+    fitTelemetryByPane,
     appStatus,
     windowState,
     currentLane,
@@ -1043,6 +1072,99 @@ function verifyEventRates(evidence, options = {}) {
   });
 }
 
+// Bug A check 1: fit-coherence. After a settle redraw the renderer's xterm geometry
+// must agree with the container-proposed dims and the last PTY-applied dims (no drift).
+function verifyFitCoherence(evidence) {
+  const telemetry = evidence.fitTelemetryByPane || {};
+  const present = REQUIRED_MAIN_PANES.filter((paneId) => telemetry[paneId]);
+  if (present.length === 0) {
+    return check('UNKNOWN', 'fit_coherence_during_streaming',
+      'No settle-redraw fit telemetry recorded yet. Stream output in a pane, then re-run.', {
+        expectedPath: evidence.paths?.fitTelemetryPath || null,
+      }, false);
+  }
+  const incoherent = present.filter((paneId) => telemetry[paneId]?.coherent !== true);
+  if (incoherent.length) {
+    return check('FAIL', 'fit_coherence_during_streaming',
+      'A pane reported incoherent viewport geometry after the settle redraw (xterm/proposed/applied disagree).', {
+        offenders: Object.fromEntries(incoherent.map((paneId) => [paneId, {
+          xterm: [telemetry[paneId]?.xtermCols, telemetry[paneId]?.xtermRows],
+          proposed: [telemetry[paneId]?.proposedCols, telemetry[paneId]?.proposedRows],
+          applied: [telemetry[paneId]?.appliedCols, telemetry[paneId]?.appliedRows],
+        }])),
+      });
+  }
+  return check('PASS', 'fit_coherence_during_streaming',
+    'Viewport geometry is coherent (xterm == proposed == applied) for all panes with telemetry.', {
+      panes: Object.fromEntries(present.map((paneId) => [paneId, {
+        xterm: [telemetry[paneId]?.xtermCols, telemetry[paneId]?.xtermRows],
+      }])),
+    });
+}
+
+// Bug A check 2: redraw OUTCOME. The forced same-dims re-poke must produce an actual
+// paint delta (painted=true) — evidence the agent TUI repainted on Windows ConPTY (X).
+// painted=false => (X) is inert on this platform; iterate to the (Y) xterm recompute.
+function verifyRedrawOutcome(evidence) {
+  const telemetry = evidence.fitTelemetryByPane || {};
+  // painted is ONLY evidence-grade on a quiet settle: if the burst was still streaming
+  // into the re-poke, concurrent writes flip painted regardless of the re-poke (false-X).
+  // Confounded (quietSettle!==true) records are excluded entirely, never counted as PASS.
+  const quiet = REQUIRED_MAIN_PANES.filter((paneId) => telemetry[paneId]?.quietSettle === true);
+  const confounded = REQUIRED_MAIN_PANES.filter((paneId) => telemetry[paneId] && telemetry[paneId].quietSettle !== true);
+  if (quiet.length === 0) {
+    return check('UNKNOWN', 'redraw_outcome_on_settle',
+      'No quiet-settle paint-outcome telemetry yet (only mid-stream/confounded records). Stream output, let it go quiet, then re-run.', {
+        expectedPath: evidence.paths?.fitTelemetryPath || null,
+        confoundedPanes: confounded,
+      }, false);
+  }
+  const noPaint = quiet.filter((paneId) => telemetry[paneId]?.painted !== true);
+  if (noPaint.length) {
+    return check('FAIL', 'redraw_outcome_on_settle',
+      'Quiet-settle re-poke produced NO paint delta on some panes — same-dims ConPTY re-poke (X) is inert here; iterate to (Y) xterm dimension recompute.', {
+        offenders: Object.fromEntries(noPaint.map((paneId) => [paneId, {
+          beforeSignature: telemetry[paneId]?.beforeSignature || null,
+          afterSignature: telemetry[paneId]?.afterSignature || null,
+        }])),
+        confoundedExcluded: confounded,
+      });
+  }
+  return check('PASS', 'redraw_outcome_on_settle',
+    'Quiet-settle re-poke produced a paint delta (TUI repainted) for all evaluated panes — (X) works on this platform; confounded mid-stream records excluded.', {
+      panes: quiet,
+      confoundedExcluded: confounded,
+    });
+}
+
+function verifyStreamingFit(evidence) {
+  const checks = [verifyFitCoherence(evidence), verifyRedrawOutcome(evidence)];
+  checks.sort((a, b) => statusRank(b.status) - statusRank(a.status));
+  const status = latestOverallStatus(checks);
+  return {
+    schema: SCHEMA,
+    kind: 'streaming_fit_verification',
+    generatedAt: evidence.generatedAt,
+    status,
+    decision: status === 'PASS'
+      ? 'streaming_fit_gate_met'
+      : 'streaming_fit_gate_not_met',
+    gitHead: evidence.gitHead,
+    appSession: evidence.appStatus?.session || null,
+    sessionScope: evidence.sessionScope || null,
+    summary: {
+      pass: checks.filter((entry) => entry.status === 'PASS').length,
+      warn: checks.filter((entry) => entry.status === 'WARN').length,
+      fail: checks.filter((entry) => entry.status === 'FAIL').length,
+      unknown: checks.filter((entry) => entry.status === 'UNKNOWN').length,
+    },
+    checks,
+    sourceRefs: {
+      fitTelemetryPath: evidence.paths?.fitTelemetryPath || null,
+    },
+  };
+}
+
 function verifyRestartSurvival(evidence, baseline, options = {}) {
   const checks = [];
 
@@ -1170,6 +1292,28 @@ function main(argv = process.argv) {
     return result.status === 'FAIL' ? 1 : 0;
   }
 
+  if (args.command === 'streaming-fit') {
+    const evidence = collectEvidence({
+      commsRowsPath: args.commsRowsPath,
+      eventWindowSec: args.eventWindowSec,
+      receiptWaitMs: args.receiptWaitMs,
+    });
+    const result = verifyStreamingFit(evidence);
+    const outputPath = args.outPath || DEFAULT_STREAMING_FIT_PROOF_PATH;
+    writeJson(outputPath, result);
+    if (args.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(`Squid Room streaming-fit (Bug A) proof: ${result.status}`);
+      console.log(`decision: ${result.decision}`);
+      console.log(outputPath ? `proof: ${outputPath}` : '');
+      for (const entry of result.checks || []) {
+        console.log(`${entry.status} ${entry.id}: ${entry.why}`);
+      }
+    }
+    return result.status === 'FAIL' ? 1 : 0;
+  }
+
   throw new Error(`Unknown command: ${args.command}`);
 }
 
@@ -1189,6 +1333,10 @@ module.exports = {
   REQUIRED_PANES,
   buildBaselineSnapshot,
   verifyRestartSurvival,
+  verifyStreamingFit,
+  verifyFitCoherence,
+  verifyRedrawOutcome,
+  collectEvidence,
   parseArmReceipts,
   summarizeTerminal,
   summarizeSessionState,
@@ -1196,4 +1344,5 @@ module.exports = {
   buildEventRates,
   parseDaemonEvents,
   parseBusTraceLines,
+  parseFitTelemetryLines,
 };
