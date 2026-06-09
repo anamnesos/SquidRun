@@ -31,6 +31,15 @@
 - `electron-builder` available via `npx` (not globally installed); use `--config.npmRebuild=false` if Spectre libs are missing on Windows.
 - Codex Desktop on Windows can be opened/focused to a workspace with `codex app <path>`, and SquidRun can run separate Codex work through `codex exec` or a SquidRun-owned `codex app-server` process. As of the 2026-05-31 probe, there is no supported local SquidRun-to-existing-Codex-Desktop visible message injection path: the `codex://` protocol is registered but has no documented prompt/message payload, the Desktop app server is private/unreachable from the CLI proxy on Windows, and UI Automation does not expose a unique safe composer target. Treat queue/poll/plugin/skill approaches as Codex-pull helpers, not true push transport.
 
+## Pane Agent Liveness & Recovery (S418)
+
+- **A pane's CLI process can die while its PTY stays alive.** When that happens, `hm-send`/injection still "succeeds" — text is typed into the dead shell and Enter is pressed — but the agent never responds. Symptom signature: `app.log` shows `[Delivery] ... post_enter_output_timeout` for the pane, and `hm-send` returns `accepted.unverified`.
+- **`app-status.json` `paneHost.readyPanes` does NOT prove the agent CLI is alive** — it reflects PTY/pane-host readiness, not the process inside. It listed all panes "ready" for ~30 min while Builder+Oracle CLIs were dead. Never certify agent liveness from readyPanes alone.
+- **Authoritative liveness checks, in order:** (1) a fresh `hm-comms` check-in / message from that role; (2) the main-window render showing a live "Working" spinner (capture `--window-key main`, Read the PNG); (3) `node ui/scripts/hm-pane.js nudge <paneId>` → `agent_not_running` means dead, BUT a mid-boot Codex also returns `agent_not_running` for ~5-7 min and does not register a WS client — so `agent_not_running` ≠ permanently dead during boot. Cross-check with the render.
+- **Recover a dead pane CLI:** `node ui/scripts/hm-pane.js restart <paneId>` (also: `interrupt`, `nudge`, `enter`). This respawns the agent, which cold-boots the ~27KB startup context (slow for Codex) and picks up queued directives via the startup handoff (materialized from `comms_journal`), so re-sending lost messages is usually unnecessary.
+- **The wake-watchdog (`hm-bidirectional-wake-watchdog.js`) only pokes *silent* agents; it does not detect a *dead* CLI (`agent_not_running`) or respawn it.** Auto-recovery for dead panes is a known gap (task #5).
+- **Renderer reload preserves agents.** For renderer-side changes (`ui/modules/*` UI, e.g. `terminal.js`) use `node ui/scripts/hm-app.js reload-renderers` — it reloads `[main, squid-room, pane-host]` windows via the `reattachTerminal` path WITHOUT restarting the Electron main process, so agent PTYs/scrollback survive. Far cheaper and safer than a full restart; only main-process/daemon changes need a real restart.
+
 ## Side Profile Startup Isolation
 
 - Non-main profile windows must not read or inject the main startup briefing/current-lane continuity as a fallback.
