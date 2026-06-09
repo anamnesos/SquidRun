@@ -130,6 +130,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/logger.js: Exports logger.
 - ui/modules/main/activity-manager.js: Exports ActivityManager.
 - ui/modules/main/agent-task-resolution.js: Shared current-lane/task-resolution helper used by `squidrun-app`, `auto-handoff-materializer`, `startup-ai-briefing`, and `hm-session-summary` to parse agent refs, detect later ACK/complete/supersede closure rows, and derive the active current-session lane from `comms_journal` evidence.
+- ui/modules/main/app-control-service.js: Main-process WebSocket app-control action service for bounded app operations. `terminal-scroll-probe` is intentional durable dev-only proof tooling for terminal-interaction fixes such as scrollback and restart proof without depending on OS-input delivery or a human verification loop. It is inert when `app.isPackaged`/`ctx.isPackaged` is true or `NODE_ENV=production`, uses a fixed `webContents.executeJavaScript` script rather than arbitrary eval, accepts only explicit `windowKey`/sanitized `containerId` plus allowlisted operations (`scrollLines`, `dispatchWheel`, `dispatchKey` with PageUp/PageDown), and returns viewport before/after movement proof.
 - ui/modules/main/app-context.js: Exports new.
 - ui/modules/main/arm-apply-queue.js: Evidence-ledger-backed apply-request queue for lead/arm proposals; persists category/risk/evidence/status, forces high-risk/alias categories through approval-required state, requires real James/user/Architect comms approval rows before executable marking, and keeps dispatch as a no-executor/no-side-effect stub.
 - ui/modules/main/arm-registry.js: Evidence-ledger-backed app-room arm registry wrapper; persists desired arm manifests under canonical app-room sentinel session ids (`app-room:<id>`), records role/pane/session check-in proofs from real `comms_journal` evidence, evaluates readiness against `readinessSessionId`, and rejects forged/stale/route-only readiness claims.
@@ -261,7 +262,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/team-memory/worker-client.js: Exports initializeRuntime, executeOperation, closeRuntime, resetForTests, ....
 - ui/modules/team-memory/worker.js: Child-process worker entrypoint for async runtime tasks.
 - ui/modules/telegram-poller.js: Exports start, stop, isRunning, _internals, ....
-- ui/modules/terminal.js: Exports PANE_IDS, terminals, fitAddons, setStatusCallbacks, ....
+- ui/modules/terminal.js: Exports PANE_IDS, terminals, fitAddons, setStatusCallbacks, .... Terminal containers intentionally attach a non-enumerable `__squidrunTerminalScrollProbeTarget` reference for the dev-only `terminal-scroll-probe` action; this gives the fixed proof script access to the live xterm instance while avoiding global arbitrary renderer evaluation.
 - ui/modules/terminal/agent-colors.js: Exports attachAgentColors, AGENT_COLORS.
 - ui/modules/terminal/injection.js: Terminal injection helpers Extracted from terminal.js to isolate fragile send/verify logic.
 - ui/modules/terminal/recovery.js: Terminal recovery helpers (unstick, restart, sweeper) Extracted from terminal.js to isolate recovery logic.

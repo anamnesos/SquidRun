@@ -3916,6 +3916,8 @@ class SquidRunApp {
             return executeAppControlAction(
               {
                 mainWindow: this.ctx.mainWindow,
+                isPackaged: app.isPackaged === true,
+                getAppWindow: (windowKey) => this.getAppWindow(windowKey),
                 getAppWindows: () => this.getAppWindows(),
                 getPaneHostWindows: () => this.paneHostWindowManager?.getPaneHostWindows?.() || [],
                 restartTelegramPoller: (payload = {}) => this.restartTelegramPoller(payload),
