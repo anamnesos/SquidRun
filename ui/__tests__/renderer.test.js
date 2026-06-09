@@ -324,6 +324,41 @@ describe('renderer.js smoke tests', () => {
 
   });
 
+  describe('classifySquidRoomPetState', () => {
+    const classify = (body, role = 'builder') =>
+      renderer.classifySquidRoomPetState({ body }, role);
+
+    it('does NOT flag Blocked when blocked/fail/error appear only as work topic', () => {
+      // These are the exact shapes the team produces while actively working —
+      // they must read as active, not as a stuck pane.
+      expect(classify('(BUILDER #95): preload rendererModules failed to load is now surfaced; gates passed, tree clean').label)
+        .not.toBe('Blocked');
+      expect(classify('Closed the blank-pane blocker in f0f14964; no errors, all green').label)
+        .not.toBe('Blocked');
+      expect(classify('(ORACLE #3): restart-risk pass found one gap in the error path', 'oracle').label)
+        .not.toBe('Blocked');
+      expect(classify('dirty-renderer gate CLOSED, Bug A telemetry proven').label)
+        .not.toBe('Blocked');
+    });
+
+    it('still flags Blocked on a genuine stuck self-report', () => {
+      expect(classify("(BUILDER): blocked on the missing IPC channel, can't proceed").label)
+        .toBe('Blocked');
+      expect(classify('I am stuck on the daemon handshake and giving up for now').label)
+        .toBe('Blocked');
+    });
+
+    it('a resolution mention overrides a stale blocker self-report in the same line', () => {
+      expect(classify('was blocked on the bridge but that is now fixed and landed').label)
+        .not.toBe('Blocked');
+    });
+
+    it('maps active work and review messages to Working/Reviewing', () => {
+      expect(classify('working the active fix, committing now').label).toBe('Working');
+      expect(classify('verifying the proof and reviewing the diff', 'oracle').label).toBe('Reviewing');
+    });
+  });
+
   describe('command bar routing', () => {
     beforeEach(() => {
       require('../modules/terminal').broadcast.mockClear();
