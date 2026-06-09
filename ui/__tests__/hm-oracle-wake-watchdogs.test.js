@@ -20,6 +20,7 @@ const { buildOracleWakeMessage } = require('../scripts/hm-oracle-wake-context');
 const { runWakeCycle } = require('../scripts/hm-oracle-wake-watchdog');
 const {
   buildRunnerStatusSnapshot,
+  hasPendingTeamWork,
   runHeartbeatCycle,
   summarizeHeartbeatResult,
 } = require('../scripts/hm-bidirectional-wake-watchdog');
@@ -31,6 +32,8 @@ describe('oracle wake watchdog context', () => {
   let marketScannerStatePath;
   let oracleWakeStatePath;
   let bidirectionalStatePath;
+  let activeLanePath;
+  let idleLanePath;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -41,6 +44,23 @@ describe('oracle wake watchdog context', () => {
     marketScannerStatePath = path.join(tempDir, 'market-scanner-state.json');
     oracleWakeStatePath = path.join(tempDir, 'oracle-wake-state.json');
     bidirectionalStatePath = path.join(tempDir, 'bidirectional-wake-state.json');
+
+    // Active-window peer-wake pokes only fire when there is open team work.
+    activeLanePath = path.join(tempDir, 'current-lane-active.json');
+    fs.writeFileSync(activeLanePath, JSON.stringify({
+      version: 1,
+      status: 'active',
+      activeLane: { id: 'lane-bug-b' },
+      activeLaneCount: 1,
+    }, null, 2));
+    idleLanePath = path.join(tempDir, 'current-lane-idle.json');
+    fs.writeFileSync(idleLanePath, JSON.stringify({
+      version: 1,
+      status: 'none',
+      activeLane: null,
+      activeLaneCount: 0,
+      continuity: { next_action: null },
+    }, null, 2));
 
     fs.writeFileSync(watchRulesPath, JSON.stringify({
       version: 1,
@@ -151,6 +171,7 @@ describe('oracle wake watchdog context', () => {
 
     const result = await runHeartbeatCycle({
       statePath: bidirectionalStatePath,
+      currentLanePath: activeLanePath,
       watchRulesPath,
       watchStatePath,
       marketScannerStatePath,
@@ -193,6 +214,7 @@ describe('oracle wake watchdog context', () => {
 
     const result = await runHeartbeatCycle({
       statePath: bidirectionalStatePath,
+      currentLanePath: activeLanePath,
       watchRulesPath,
       watchStatePath,
       marketScannerStatePath,
@@ -213,6 +235,61 @@ describe('oracle wake watchdog context', () => {
       expect.objectContaining({ role: 'oracle-peer-wake' })
     );
     expect(result.alerts).toEqual([]);
+  });
+
+  test('active-window peer-wake is suppressed when there is no open team lane', async () => {
+    // 13:20Z = 06:20 PT (active window), both peers past their silence
+    // thresholds — but the current lane is idle-by-design (status none, no
+    // active lane), so the "finished + idle" state must not be poked.
+    const nowMs = Date.parse('2026-04-19T13:20:00.000Z');
+    jest.spyOn(Date, 'now').mockReturnValue(nowMs);
+    queryCommsJournalEntries.mockImplementation(({ senderRole, targetRole, direction }) => {
+      if (senderRole === 'architect' && targetRole === 'oracle' && direction === 'outbound') {
+        return [{ sentAtMs: nowMs - (30 * 60 * 1000) }];
+      }
+      if (senderRole === 'oracle' && targetRole === 'architect' && direction === 'outbound') {
+        return [{ sentAtMs: nowMs - (30 * 60 * 1000) }];
+      }
+      return [];
+    });
+
+    const result = await runHeartbeatCycle({
+      statePath: bidirectionalStatePath,
+      currentLanePath: idleLanePath,
+      watchRulesPath,
+      watchStatePath,
+      marketScannerStatePath,
+      staleDistancePct: 0.015,
+      oracleSilenceMs: 10 * 60 * 1000,
+      architectSilenceMs: 8 * 60 * 1000,
+      agentPaneAutoRecovery: false,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sendAgentAlert).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ role: 'architect-peer-wake' })
+    );
+    expect(sendAgentAlert).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ role: 'oracle-peer-wake' })
+    );
+    expect(result.alerts).toEqual([]);
+  });
+
+  test('hasPendingTeamWork reads the current-lane signal', () => {
+    expect(hasPendingTeamWork(activeLanePath)).toBe(true);
+    expect(hasPendingTeamWork(idleLanePath)).toBe(false);
+    expect(hasPendingTeamWork(path.join(tempDir, 'does-not-exist.json'))).toBe(false);
+
+    const nextActionPath = path.join(tempDir, 'current-lane-next-action.json');
+    fs.writeFileSync(nextActionPath, JSON.stringify({
+      status: 'none',
+      activeLane: null,
+      activeLaneCount: 0,
+      continuity: { next_action: 'finish the scroll-probe re-proof' },
+    }, null, 2));
+    expect(hasPendingTeamWork(nextActionPath)).toBe(true);
   });
 
   test('bidirectional wake watchdog runner status requires a live fresh matching runner', () => {
@@ -336,6 +413,7 @@ describe('oracle wake watchdog context', () => {
 
     const result = await runHeartbeatCycle({
       statePath: bidirectionalStatePath,
+      currentLanePath: activeLanePath,
       watchRulesPath,
       watchStatePath,
       marketScannerStatePath,
