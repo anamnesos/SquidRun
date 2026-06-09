@@ -69,6 +69,12 @@ describe('oracle wake watchdog context', () => {
     }, null, 2));
 
     fs.writeFileSync(marketScannerStatePath, JSON.stringify({
+      // lastScanAt makes the scan "live" so cached movers are surfaced (the
+      // 500f4887 stale-mover gate suppresses movers without a fresh lastScanAt).
+      // Real-now keeps the scan fresh for real-timer tests, and is in the future
+      // relative to the past timestamps the bidirectional tests mock, so its
+      // age is non-positive and never reads as stale.
+      lastScanAt: new Date().toISOString(),
       assets: [
         { coin: 'ZRO', ticker: 'ZRO/USD', price: 2.5, volumeUsd24h: 33355078.51, change24hPct: 0.117 },
       ],
@@ -129,7 +135,9 @@ describe('oracle wake watchdog context', () => {
   });
 
   test('bidirectional wake watchdog injects the same context into Oracle repokes', async () => {
-    const nowMs = Date.parse('2026-04-19T05:20:00.000Z');
+    // 13:20Z = 06:20 America/Los_Angeles — inside an active window so the
+    // peer-wake poke is not suppressed by the off-hours gate.
+    const nowMs = Date.parse('2026-04-19T13:20:00.000Z');
     jest.spyOn(Date, 'now').mockReturnValue(nowMs);
     queryCommsJournalEntries.mockImplementation(({ senderRole, targetRole, direction }) => {
       if (senderRole === 'architect' && targetRole === 'oracle' && direction === 'outbound') {
@@ -164,6 +172,47 @@ describe('oracle wake watchdog context', () => {
       expect.stringContaining('topMovers=ORDI/USD -33.0% @ 3.8765'),
       expect.any(Object)
     );
+  });
+
+  test('bidirectional wake watchdog suppresses BOTH peer-wake nags outside the active window', async () => {
+    // 05:20Z = 22:20 America/Los_Angeles — off-hours. Intentional silence is
+    // expected; neither peer should nag the other for it. Crash/dead-pane
+    // detection (agentPaneAutoRecovery) is a separate path and is not gated.
+    const nowMs = Date.parse('2026-04-19T05:20:00.000Z');
+    jest.spyOn(Date, 'now').mockReturnValue(nowMs);
+    queryCommsJournalEntries.mockImplementation(({ senderRole, targetRole, direction }) => {
+      // Both peers are well past their silence thresholds...
+      if (senderRole === 'architect' && targetRole === 'oracle' && direction === 'outbound') {
+        return [{ sentAtMs: nowMs - (30 * 60 * 1000) }];
+      }
+      if (senderRole === 'oracle' && targetRole === 'architect' && direction === 'outbound') {
+        return [{ sentAtMs: nowMs - (30 * 60 * 1000) }];
+      }
+      return [];
+    });
+
+    const result = await runHeartbeatCycle({
+      statePath: bidirectionalStatePath,
+      watchRulesPath,
+      watchStatePath,
+      marketScannerStatePath,
+      staleDistancePct: 0.015,
+      oracleSilenceMs: 10 * 60 * 1000,
+      architectSilenceMs: 8 * 60 * 1000,
+      agentPaneAutoRecovery: false,
+    });
+
+    expect(result.ok).toBe(true);
+    // ...yet no peer-wake nag is emitted in either direction off-hours.
+    expect(sendAgentAlert).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ role: 'architect-peer-wake' })
+    );
+    expect(sendAgentAlert).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ role: 'oracle-peer-wake' })
+    );
+    expect(result.alerts).toEqual([]);
   });
 
   test('bidirectional wake watchdog runner status requires a live fresh matching runner', () => {
@@ -252,7 +301,9 @@ describe('oracle wake watchdog context', () => {
   });
 
   test('bidirectional watchdog can route accepted-unverified peer wake into pane auto-recovery', async () => {
-    const nowMs = Date.parse('2026-04-19T05:30:00.000Z');
+    // 13:30Z = 06:30 America/Los_Angeles — active window, so the peer-wake poke
+    // fires and can be routed into pane auto-recovery.
+    const nowMs = Date.parse('2026-04-19T13:30:00.000Z');
     jest.spyOn(Date, 'now').mockReturnValue(nowMs);
     queryCommsJournalEntries.mockImplementation(({ senderRole, targetRole, direction }) => {
       if (senderRole === 'architect' && targetRole === 'oracle' && direction === 'outbound') {

@@ -519,7 +519,8 @@ async function runHeartbeatCycle(options = {}) {
     alerts.push({ target: 'architect', result, message });
   }
 
-  if (Number.isFinite(oracleLastSeenMs)
+  if (isActiveWindow(nowMs)
+    && Number.isFinite(oracleLastSeenMs)
     && (nowMs - oracleLastSeenMs) >= oracleSilenceMs
     && shouldRepoke(state.oracle?.lastPokeAt, nowMs, oracleSilenceMs)) {
     const message = await buildOracleWakeMessage(
