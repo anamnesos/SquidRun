@@ -513,10 +513,44 @@ let headerSessionBadgeRetryTimer = null;
 let headerSessionBadgeRetryAttempts = 0;
 let squidRoomLivePaneEnsureTimer = null;
 let squidRoomPetStatusTimer = null;
+const squidRoomPetAnimationTimers = new Map();
 const squidRoomLivePaneSpawnAttempts = new Map();
 const SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS = 15000;
 const SQUID_ROOM_PET_STATUS_REFRESH_MS = 12000;
 const SQUID_ROOM_PET_STATUS_CHANNEL = 'evidence-ledger:query-comms-journal';
+const SQUID_ROOM_PET_ATLAS_COLUMNS = 8;
+const SQUID_ROOM_PET_ATLAS_ROWS = 9;
+const SQUID_ROOM_PET_IDLE_FRAMES = Object.freeze([
+  { rowIndex: 0, columnIndex: 0, frameDurationMs: 280 },
+  { rowIndex: 0, columnIndex: 1, frameDurationMs: 110 },
+  { rowIndex: 0, columnIndex: 2, frameDurationMs: 110 },
+  { rowIndex: 0, columnIndex: 3, frameDurationMs: 140 },
+  { rowIndex: 0, columnIndex: 4, frameDurationMs: 140 },
+  { rowIndex: 0, columnIndex: 5, frameDurationMs: 320 },
+]);
+const SQUID_ROOM_PET_IDLE_LOOP_FRAMES = Object.freeze(
+  SQUID_ROOM_PET_IDLE_FRAMES.map((frame) => Object.freeze({
+    ...frame,
+    frameDurationMs: frame.frameDurationMs * 6,
+  }))
+);
+
+function makeSquidRoomPetFrames(rowIndex, frameCount, frameDurationMs, lastFrameDurationMs) {
+  return Object.freeze(Array.from({ length: frameCount }, (_unused, columnIndex) => Object.freeze({
+    rowIndex,
+    columnIndex,
+    frameDurationMs: columnIndex === frameCount - 1 ? lastFrameDurationMs : frameDurationMs,
+  })));
+}
+
+const SQUID_ROOM_PET_STATE_FRAMES = Object.freeze({
+  failed: makeSquidRoomPetFrames(5, 8, 140, 240),
+  idle: SQUID_ROOM_PET_IDLE_FRAMES,
+  jumping: makeSquidRoomPetFrames(4, 5, 140, 280),
+  review: makeSquidRoomPetFrames(8, 6, 150, 280),
+  running: makeSquidRoomPetFrames(7, 6, 120, 220),
+  waiting: makeSquidRoomPetFrames(6, 6, 150, 260),
+});
 
 function getCurrentWindowContext() {
   return windowTeamBootstrap.getState();
@@ -545,6 +579,101 @@ function getSquidRoomLivePaneElements() {
 
 function getSquidRoomPetPaneElements() {
   return Array.from(document.querySelectorAll('[data-squid-room-pet]'));
+}
+
+function getSquidRoomPetSpriteElements() {
+  return Array.from(document.querySelectorAll('[data-squid-room-pet-sprite="true"]'));
+}
+
+function getSquidRoomPetBackgroundPosition(frame) {
+  const column = Number(frame?.columnIndex || 0);
+  const row = Number(frame?.rowIndex || 0);
+  const x = column / (SQUID_ROOM_PET_ATLAS_COLUMNS - 1) * 100;
+  const y = row / (SQUID_ROOM_PET_ATLAS_ROWS - 1) * 100;
+  return `${x}% ${y}%`;
+}
+
+function getSquidRoomPetAnimationPlan(state, prefersReducedMotion = false) {
+  const normalizedState = SQUID_ROOM_PET_STATE_FRAMES[state] ? state : 'idle';
+  const baseFrames = SQUID_ROOM_PET_STATE_FRAMES[normalizedState] || SQUID_ROOM_PET_IDLE_FRAMES;
+  if (prefersReducedMotion) return { frames: [baseFrames[0]], loopStartIndex: null };
+  if (normalizedState === 'idle') {
+    return { frames: SQUID_ROOM_PET_IDLE_LOOP_FRAMES, loopStartIndex: 0 };
+  }
+  const activeFrames = [...baseFrames, ...baseFrames, ...baseFrames];
+  return {
+    frames: [...activeFrames, ...SQUID_ROOM_PET_IDLE_LOOP_FRAMES],
+    loopStartIndex: activeFrames.length,
+  };
+}
+
+function getSquidRoomPetReducedMotionPreference() {
+  try {
+    return window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function stopSquidRoomPetAnimation(sprite) {
+  const active = squidRoomPetAnimationTimers.get(sprite);
+  if (active?.timer) window.clearTimeout(active.timer);
+  squidRoomPetAnimationTimers.delete(sprite);
+}
+
+function pruneSquidRoomPetAnimations() {
+  for (const [sprite, active] of squidRoomPetAnimationTimers.entries()) {
+    if (!sprite?.isConnected) {
+      if (active?.timer) window.clearTimeout(active.timer);
+      squidRoomPetAnimationTimers.delete(sprite);
+    }
+  }
+}
+
+function animateSquidRoomPetSprite(sprite, state) {
+  if (!sprite) return;
+  const normalizedState = SQUID_ROOM_PET_STATE_FRAMES[state] ? state : 'idle';
+  const prefersReducedMotion = getSquidRoomPetReducedMotionPreference();
+  const existing = squidRoomPetAnimationTimers.get(sprite);
+  if (existing?.state === normalizedState && existing?.reducedMotion === prefersReducedMotion) return;
+  stopSquidRoomPetAnimation(sprite);
+
+  const plan = getSquidRoomPetAnimationPlan(normalizedState, prefersReducedMotion);
+  const frames = plan.frames.length ? plan.frames : SQUID_ROOM_PET_IDLE_LOOP_FRAMES;
+  let frameIndex = 0;
+  sprite.dataset.avatarState = normalizedState;
+  sprite.style.backgroundPosition = getSquidRoomPetBackgroundPosition(frames[frameIndex]);
+  if (frames.length <= 1) {
+    squidRoomPetAnimationTimers.set(sprite, { state: normalizedState, reducedMotion: prefersReducedMotion, timer: null });
+    return;
+  }
+
+  const step = () => {
+    const frame = frames[frameIndex];
+    const timer = window.setTimeout(() => {
+      frameIndex += 1;
+      if (frameIndex >= frames.length) {
+        frameIndex = plan.loopStartIndex == null ? 0 : plan.loopStartIndex;
+      }
+      sprite.style.backgroundPosition = getSquidRoomPetBackgroundPosition(frames[frameIndex]);
+      step();
+    }, frame.frameDurationMs);
+    squidRoomPetAnimationTimers.set(sprite, {
+      state: normalizedState,
+      reducedMotion: prefersReducedMotion,
+      timer,
+    });
+  };
+  step();
+}
+
+function refreshSquidRoomPetAnimations() {
+  pruneSquidRoomPetAnimations();
+  for (const sprite of getSquidRoomPetSpriteElements()) {
+    const pane = sprite.closest?.('[data-squid-room-pet]');
+    const state = String(pane?.dataset?.squidRoomState || sprite.dataset?.avatarState || 'idle').trim().toLowerCase();
+    animateSquidRoomPetSprite(sprite, state);
+  }
 }
 
 function stripSquidRoomMessageNoise(value) {
@@ -580,11 +709,11 @@ function summarizeSquidRoomPetMessage(row = {}, role = '') {
 
 function classifySquidRoomPetState(row = {}, role = '') {
   const text = stripSquidRoomMessageNoise(getSquidRoomCommsText(row)).toLowerCase();
-  if (/\b(blocked|blocker|failed|fail|error|stuck|cannot|can't)\b/.test(text)) {
-    return { state: 'failed', label: 'Blocked' };
-  }
-  if (/\b(wait|waiting|hold|stood down|stand down|pending)\b/.test(text)) {
+  if (/\b(watchdog|no response|no .{0,40} reply|nudged|wait|waiting|hold|stood down|stand down|pending)\b/.test(text)) {
     return { state: 'waiting', label: 'Waiting' };
+  }
+  if (/\b(blocked|failed|failure|fail|error|stuck|cannot|can't)\b/.test(text)) {
+    return { state: 'failed', label: 'Blocked' };
   }
   if (role === 'oracle' || /\b(verify|verifying|review|reviewing|check|checking|proof|audit)\b/.test(text)) {
     return { state: 'review', label: 'Reviewing' };
@@ -619,6 +748,11 @@ function updateSquidRoomPetPane(pane, row) {
   const message = summarizeSquidRoomPetMessage(row, role);
   pane.dataset.squidRoomState = state.state;
   pane.dataset.squidRoomLastRowId = String(row.rowId || row.row_id || '');
+  const sprite = pane.querySelector?.('[data-squid-room-pet-sprite="true"]');
+  if (sprite) {
+    sprite.dataset.avatarState = state.state;
+    animateSquidRoomPetSprite(sprite, state.state);
+  }
   const stateEl = pane.querySelector?.('.squid-room-pet-state');
   if (stateEl) stateEl.textContent = state.label;
   const bubble = pane.querySelector?.('.squid-room-pet-bubble');
@@ -629,6 +763,7 @@ async function refreshSquidRoomPetStatus(windowContext = getCurrentWindowContext
   if (!isSquidRoomWindowContext(windowContext)) return { ok: false, skipped: true, reason: 'not_squid_room' };
   const petPanes = getSquidRoomPetPaneElements();
   if (petPanes.length === 0) return { ok: false, skipped: true, reason: 'no_pet_panes' };
+  refreshSquidRoomPetAnimations();
 
   const updates = [];
   for (const pane of petPanes) {
@@ -643,6 +778,7 @@ async function refreshSquidRoomPetStatus(windowContext = getCurrentWindowContext
       log.warn('SquidRoom', `Pet status refresh failed for ${role}: ${err?.message || err}`);
     }
   }
+  refreshSquidRoomPetAnimations();
   return { ok: true, updates };
 }
 
@@ -1046,6 +1182,7 @@ function handleRendererWindowContext(payload = {}) {
     configureWorkspacePaneShell(windowContext, terminal, document);
     scheduleSquidRoomLivePaneEnsure(windowContext, 300);
     scheduleSquidRoomPetStatusRefresh(windowContext, 600);
+    refreshSquidRoomPetAnimations();
   }
   applyWindowChrome(windowContext);
   refreshSquidRoomSurfaceForContext(windowContext);

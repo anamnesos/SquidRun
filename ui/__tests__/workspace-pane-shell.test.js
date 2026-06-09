@@ -257,8 +257,12 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.pane[data-pane-id="3"]').classList.contains('squid-room-pet-pane')).toBe(true);
     expect(doc.querySelector('.pane[data-pane-id="2"]').dataset.squidRoomPet).toBe('builder');
     expect(doc.querySelector('.pane[data-pane-id="3"]').dataset.squidRoomPet).toBe('oracle');
-    expect(doc.querySelector('.pane[data-pane-id="2"]').dataset.squidRoomLabel).toBe('Builder Squid');
-    expect(doc.querySelector('.pane[data-pane-id="3"]').dataset.squidRoomLabel).toBe('Oracle Squid');
+    expect(doc.querySelector('.pane[data-pane-id="2"]').dataset.squidRoomPetAsset).toBe('codex');
+    expect(doc.querySelector('.pane[data-pane-id="3"]').dataset.squidRoomPetAsset).toBe('hoots');
+    expect(doc.querySelector('.pane[data-pane-id="2"]').dataset.squidRoomLabel).toBe('Builder');
+    expect(doc.querySelector('.pane[data-pane-id="3"]').dataset.squidRoomLabel).toBe('Oracle');
+    expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.squid-room-codex-pet-codex')).toBeTruthy();
+    expect(doc.querySelector('.pane[data-pane-id="3"]').querySelector('.squid-room-codex-pet-hoots')).toBeTruthy();
     expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.squid-room-pet-bubble').textContent).toBe('Working the active fix.');
     expect(doc.querySelector('.pane[data-pane-id="3"]').querySelector('.squid-room-pet-bubble').textContent).toBe('Checking the proof.');
     expect(doc.querySelector('.squid-room-team-header')).toBeTruthy();
