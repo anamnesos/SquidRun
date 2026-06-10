@@ -207,6 +207,9 @@ describe('Mira live what-now answer v0', () => {
       'source_stale:app_status:older_than_stale_after_ms',
     ]));
     expect(answer.answer_text).toContain('Stale:');
+    // Threshold-crossed lines carry an inline [stale] tag so the reader never
+    // has to do threshold math from the raw age.
+    expect(answer.answer_text).toMatch(/Session 382[^\n]*\[stale\]/);
   });
 
   test('queue candidates are offered as labeled next moves but never create lane authority', () => {
