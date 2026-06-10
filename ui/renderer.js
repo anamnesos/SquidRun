@@ -3672,13 +3672,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Self-healing recovery actions
-  ipcRenderer.on('nudge-pane', (event, data) => {
-    const paneId = data?.paneId;
-    if (paneId) {
-      terminal.nudgePane(String(paneId));
-    }
-  });
-
   ipcRenderer.on('pane-enter', async (event, data) => {
     const paneId = String(data?.paneId || '');
     if (!paneId) return;
@@ -3719,20 +3712,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (paneId) {
       terminal.sendUnstick(String(paneId));
     }
-  });
-
-  ipcRenderer.on('restart-pane', (event, data) => {
-    const paneId = data?.paneId;
-    if (paneId) {
-      terminal.restartPane(String(paneId));
-    }
-  });
-
-  ipcRenderer.on('restart-all-panes', () => {
-    const panes = terminal.PANE_IDS;
-    panes.forEach((paneId, index) => {
-      setTimeout(() => terminal.restartPane(String(paneId)), index * 200);
-    });
   });
 
   if (typeof disposeEarlyWindowContextListener === 'function') {
