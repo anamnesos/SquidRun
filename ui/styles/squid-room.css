@@ -585,11 +585,23 @@ body.squid-room-workspace .squid-room-team-actions [data-tooltip]:hover::before 
   white-space: nowrap;
 }
 
-/* Wave 3 (S426): the core pair's switcher WORKS from the room - the change
-   listener binds at DOMContentLoaded (static panes), main arbitrates the
-   switch, and the renderer treats this window as a mirror: UI sync only,
-   respawn stays with the owner (main) window. Arms keep read-only badges -
-   their IDs are unsupported by the switch path. */
+/* Wave 3 (S426): the core pair's switcher works FROM the room - the pet
+   header carries a real model selector (the pet render wipes the static pane
+   markup, so it is re-created there), wired by the delegated change listener
+   in model-selector.js. Main arbitrates the switch; this window is a mirror:
+   UI sync only, respawn stays with the owner (main) window. Arms keep
+   read-only badges - their IDs are unsupported by the switch path. */
+.squid-room-pet-model-selector {
+  flex: 0 0 auto;
+  min-width: 72px;
+  margin-left: 8px;
+  padding: 2px 6px;
+  border: 1px solid rgba(116, 139, 166, 0.32);
+  border-radius: 6px;
+  background: rgba(7, 11, 18, 0.6);
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
 
 .squid-room-live-panes .pane-terminal {
   flex: 1 1 auto;
