@@ -274,6 +274,13 @@ function createPaneRestartArbiter(options = {}) {
     return { ok: true, completed: true, paneId, claimId, cooldownUntil: now + cooldownMs };
   }
 
+  function getActiveClaim(paneIdValue) {
+    const paneId = toNonEmptyString(String(paneIdValue || ''));
+    if (!paneId) return null;
+    const active = activeByPane.get(paneId);
+    return active ? publicClaim(active) : null;
+  }
+
   function getSnapshot() {
     return {
       active: Array.from(activeByPane.values()).map(publicClaim),
@@ -286,6 +293,7 @@ function createPaneRestartArbiter(options = {}) {
     validate,
     authorizeOperation,
     complete,
+    getActiveClaim,
     getSnapshot,
     cooldownMs,
   };

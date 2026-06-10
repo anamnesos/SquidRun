@@ -969,6 +969,106 @@ describe('PTY Handlers', () => {
     });
   });
 
+  describe('claim-less lifecycle ops during an active restart lease', () => {
+    const activeLease = { claimId: 'lease-1', paneId: '1' };
+
+    test('claim-less pty-kill is rejected while a lease is open for the pane', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        getActiveClaim: jest.fn(() => activeLease),
+      };
+
+      const result = await harness.invoke('pty-kill', '1');
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        error: 'restart_claim_denied',
+        reason: 'restart_in_progress_claim_required',
+        stage: 'pty-kill',
+      }));
+      expect(deps.paneRestartArbiter.getActiveClaim).toHaveBeenCalledWith('1');
+      expect(ctx.daemonClient.kill).not.toHaveBeenCalled();
+    });
+
+    test('claim-less pty-create is rejected while a lease is open for the pane', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        getActiveClaim: jest.fn(() => activeLease),
+      };
+
+      const result = await harness.invoke('pty-create', '1', '/test/dir');
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        error: 'restart_claim_denied',
+        reason: 'restart_in_progress_claim_required',
+        stage: 'pty-create',
+      }));
+      expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+    });
+
+    test('claim-less spawn-claude is rejected while a lease is open for the pane', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        getActiveClaim: jest.fn(() => activeLease),
+      };
+
+      const result = await harness.invoke('spawn-claude', '1', '/test/dir');
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        error: 'restart_claim_denied',
+        reason: 'restart_in_progress_claim_required',
+        stage: 'spawn-claude',
+      }));
+      expect(deps.recordSessionStart).not.toHaveBeenCalled();
+    });
+
+    test('claim-less lifecycle ops stay legal when no lease is open', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        getActiveClaim: jest.fn(() => null),
+      };
+
+      const killResult = await harness.invoke('pty-kill', '1');
+      const createResult = await harness.invoke('pty-create', '1', '/test/dir');
+
+      expect(killResult).toEqual(expect.objectContaining({ success: true }));
+      expect(createResult).toEqual(expect.objectContaining({ paneId: '1' }));
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('1');
+      expect(ctx.daemonClient.spawn).toHaveBeenCalled();
+    });
+
+    test('claim-less ops stay legal when the arbiter lacks getActiveClaim (back-compat)', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        authorizeOperation: jest.fn(() => ({ ok: true })),
+      };
+
+      const killResult = await harness.invoke('pty-kill', '1');
+
+      expect(killResult).toEqual(expect.objectContaining({ success: true }));
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('1');
+    });
+
+    test('claim-bearing lifecycle ops are unaffected by the claim-less guard', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        getActiveClaim: jest.fn(() => activeLease),
+        authorizeOperation: jest.fn(() => ({ ok: true, claim: { claimId: 'lease-1' } })),
+      };
+
+      const result = await harness.invoke('pty-kill', '1', {
+        requireRestartClaim: true,
+        restartClaimId: 'lease-1',
+      });
+
+      expect(result).toEqual(expect.objectContaining({ success: true, restarted: true }));
+      expect(deps.paneRestartArbiter.getActiveClaim).not.toHaveBeenCalled();
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('1');
+    });
+  });
+
   describe('startup-injection-claim', () => {
     test('preload bridge allowlist exposes atomic startup injection claim channel', async () => {
       const { isAllowedInvokeChannel } = require('../modules/bridge/channel-policy');
