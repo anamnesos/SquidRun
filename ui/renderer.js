@@ -1734,6 +1734,7 @@ function createFallbackRendererApi() {
       clipboardPasteText: (text) => ipcRenderer.invoke('clipboard-paste-text', text),
       resize: (paneId, cols, rows, kernelMeta = null) => ipcRenderer.invoke('pty-resize', paneId, cols, rows, kernelMeta),
       claimStartupInjection: (payload = {}) => ipcRenderer.invoke('startup-injection-claim', payload),
+      releaseStartupInjection: (payload = {}) => ipcRenderer.invoke('startup-injection-release', payload),
       kill: (paneId) => ipcRenderer.invoke('pty-kill', paneId),
       pause: (paneId) => ipcRenderer.invoke('pty-pause', paneId),
       resume: (paneId) => ipcRenderer.invoke('pty-resume', paneId),

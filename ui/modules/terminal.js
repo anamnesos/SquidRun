@@ -26,6 +26,7 @@ const TERMINAL_EVENT_SOURCE = 'terminal.js';
 const SQUID_ROOM_WINDOW_KEY = 'squid-room';
 const SQUID_ROOM_MIRRORED_TEAM_PANE_IDS = new Set(['2', '3']);
 const STARTUP_INJECTION_CLAIM_CHANNEL = 'startup-injection-claim';
+const STARTUP_INJECTION_RELEASE_CHANNEL = 'startup-injection-release';
 const { attachAgentColors } = require('./terminal/agent-colors');
 const {
   PANE_IDS,
@@ -2234,6 +2235,7 @@ async function runStartupIdentityAttempt(paneId, state, reason) {
     } else {
       state.completed = true;
       startupInjectionState.delete(id);
+      await releaseStartupInjectionArm(id, state, 'exhausted_retries');
       log.error('spawnAgent', `Identity injection exhausted retries for pane ${id} after ${maxAttempts} attempts`);
     }
     return;
@@ -2278,6 +2280,37 @@ async function claimStartupInjectionArm(paneId, options = {}) {
   return invokeBridge(STARTUP_INJECTION_CLAIM_CHANNEL, payload);
 }
 
+async function releaseStartupInjectionArm(paneId, state, reason) {
+  const id = String(paneId);
+  const claimId = String(state?.startupClaimId || '').trim();
+  if (!claimId) return false;
+  const payload = {
+    paneId: id,
+    claimId,
+    reason: reason || 'unspecified',
+  };
+
+  try {
+    const apiRelease = window?.squidrun?.pty?.releaseStartupInjection;
+    const result = typeof apiRelease === 'function'
+      ? await apiRelease(payload)
+      : await invokeBridge(STARTUP_INJECTION_RELEASE_CHANNEL, payload);
+    if (!result?.released) {
+      log.warn(
+        'spawnAgent',
+        `Startup injection claim release skipped for pane ${id}: ${result?.reason || 'not_released'}`
+      );
+    }
+    return result?.released === true;
+  } catch (err) {
+    log.warn(
+      'spawnAgent',
+      `Startup injection claim release failed for pane ${id}: ${err?.message || err}`
+    );
+    return false;
+  }
+}
+
 async function armStartupInjection(paneId, options = {}) {
   const id = String(paneId);
   let claimResult;
@@ -2304,6 +2337,9 @@ async function armStartupInjection(paneId, options = {}) {
       'spawnAgent',
       `Startup injection already armed locally for pane ${id}, skipping duplicate arm (${options.source || 'unknown'})`
     );
+    await releaseStartupInjectionArm(id, {
+      startupClaimId: claimResult?.claim?.claimId,
+    }, 'local_duplicate_arm');
     return false;
   }
 
@@ -2320,6 +2356,7 @@ async function armStartupInjection(paneId, options = {}) {
     identityMsg: null,
     timeoutId: null,
     sendTimeoutId: null,
+    startupClaimId: claimResult?.claim?.claimId || null,
   };
 
   // Gemini CLI takes 8-12s to start (github.com/google-gemini/gemini-cli/issues/4544)

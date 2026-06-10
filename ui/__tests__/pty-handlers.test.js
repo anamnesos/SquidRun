@@ -835,7 +835,9 @@ describe('PTY Handlers', () => {
       const { isAllowedInvokeChannel } = require('../modules/bridge/channel-policy');
       const { createPreloadApi } = require('../modules/bridge/preload-api');
       const ipcRenderer = {
-        invoke: jest.fn().mockResolvedValue({ ok: true, claimed: true }),
+        invoke: jest.fn()
+          .mockResolvedValueOnce({ ok: true, claimed: true })
+          .mockResolvedValueOnce({ ok: true, released: true }),
         send: jest.fn(),
         on: jest.fn(),
         removeListener: jest.fn(),
@@ -845,11 +847,18 @@ describe('PTY Handlers', () => {
       const api = createPreloadApi(ipcRenderer);
       await expect(api.pty.claimStartupInjection({ paneId: '1', source: 'spawn' }))
         .resolves.toEqual({ ok: true, claimed: true });
+      await expect(api.pty.releaseStartupInjection({ paneId: '1', claimId: 'claim-1' }))
+        .resolves.toEqual({ ok: true, released: true });
 
       expect(isAllowedInvokeChannel('startup-injection-claim')).toBe(true);
+      expect(isAllowedInvokeChannel('startup-injection-release')).toBe(true);
       expect(ipcRenderer.invoke).toHaveBeenCalledWith('startup-injection-claim', {
         paneId: '1',
         source: 'spawn',
+      });
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('startup-injection-release', {
+        paneId: '1',
+        claimId: 'claim-1',
       });
     });
 
@@ -884,6 +893,56 @@ describe('PTY Handlers', () => {
           source: 'main-window',
           windowKey: 'main',
         }),
+      }));
+    });
+
+    test('claim release requires the matching claimId and preserves claims on mismatch', async () => {
+      const first = await harness.invoke('startup-injection-claim', {
+        paneId: '1',
+        source: 'main-window',
+      });
+
+      const mismatch = await harness.invoke('startup-injection-release', {
+        paneId: '1',
+        claimId: 'wrong-claim',
+      });
+      const stillDenied = await harness.invoke('startup-injection-claim', {
+        paneId: '1',
+        source: 'second-renderer',
+      });
+
+      expect(mismatch).toEqual(expect.objectContaining({
+        ok: false,
+        released: false,
+        paneId: '1',
+        reason: 'claim_id_mismatch',
+      }));
+      expect(stillDenied).toEqual(expect.objectContaining({
+        ok: true,
+        claimed: false,
+        reason: 'startup_injection_already_claimed',
+      }));
+
+      const released = await harness.invoke('startup-injection-release', {
+        paneId: '1',
+        claimId: first.claim.claimId,
+      });
+      const reclaimed = await harness.invoke('startup-injection-claim', {
+        paneId: '1',
+        source: 'after-release',
+      });
+
+      expect(released).toEqual(expect.objectContaining({
+        ok: true,
+        released: true,
+        paneId: '1',
+        claim: expect.objectContaining({ claimId: first.claim.claimId }),
+      }));
+      expect(reclaimed).toEqual(expect.objectContaining({
+        ok: true,
+        claimed: true,
+        paneId: '1',
+        claim: expect.objectContaining({ source: 'after-release' }),
       }));
     });
 
