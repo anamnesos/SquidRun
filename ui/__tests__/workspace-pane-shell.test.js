@@ -282,7 +282,11 @@ describe('workspace pane shell', () => {
     for (const paneId of ['trustquote-lead', 'trustquote-schedule-dispatch', 'trustquote-app', 'trustquote-invoice']) {
       const pane = doc.querySelector(`.pane[data-pane-id="${paneId}"]`);
       expect(pane.querySelector('.agent-avatar').innerHTML).toContain('avatar-icon');
-      expect(pane.querySelector(`.model-selector[data-pane-id="${paneId}"]`).value).toBe('codex');
+      // Arm tiles carry a READ-ONLY model badge (S426: the old dropdown was
+      // unwired in dynamically created tiles and arm IDs are unsupported by
+      // the switch path). No dropdown may render here.
+      expect(pane.querySelector(`.model-badge[data-pane-id="${paneId}"]`).dataset.model).toBe('codex');
+      expect(pane.querySelector('.model-selector')).toBeFalsy();
       expect(pane.querySelector(`.pane-role-info-btn[data-pane-id="${paneId}"]`).innerHTML).toContain('pane-btn-icon');
       expect(pane.querySelector('.interrupt-btn').innerHTML).toContain('pane-btn-icon');
       expect(pane.querySelector('.unstick-btn').innerHTML).toContain('pane-btn-icon');

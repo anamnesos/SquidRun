@@ -8,6 +8,10 @@ const {
   TRUSTQUOTE_PROJECT_PATH,
   getTrustQuoteDayToDayArmSpecs,
 } = require('./trustquote-arm-specs');
+const {
+  applyWindowChrome,
+  resolveWindowChromeClass,
+} = require('./window-chrome');
 
 const SQUID_ROOM_WORKSPACE_KEY = 'squid-room';
 const SQUID_ROOM_TEAM_PANE_IDS = Object.freeze(['2', '3']);
@@ -154,28 +158,19 @@ function createRoleInfoButton(doc, paneId) {
   });
 }
 
-function createModelSelector(doc, paneId) {
-  const selector = createElement(doc, 'select', {
-    className: 'model-selector',
-    id: `model-selector-${paneId}`,
-    title: 'Switch model for this pane',
-    dataset: {
-      paneId,
-      previousValue: 'codex',
-    },
-  });
-  for (const [value, label] of [
-    ['claude', 'Claude'],
-    ['codex', 'Codex'],
-    ['gemini', 'Gemini'],
-  ]) {
-    selector.appendChild(createElement(doc, 'option', {
-      value,
-      selected: value === 'codex',
-    }, label));
-  }
-  selector.value = 'codex';
-  return selector;
+// Room arm tiles render the model as a READ-ONLY badge, not a dropdown: the
+// previous selector was never wired (no change listener on dynamically
+// created tiles) and arm IDs are rejected by the main switch path
+// (PANE_IDS=1/2/3) - a dead control that silently lied about its value.
+// Oracle audit S426; a working room switcher is a separate feature decision.
+function createModelBadge(doc, paneId, model = 'codex') {
+  const label = String(model || 'codex');
+  return createElement(doc, 'span', {
+    className: 'model-badge',
+    id: `model-badge-${paneId}`,
+    title: `Model for this arm (read-only): ${label}`,
+    dataset: { paneId, model: label },
+  }, label.charAt(0).toUpperCase() + label.slice(1));
 }
 
 function createSquidRoomLivePane(doc, spec) {
@@ -223,7 +218,7 @@ function createSquidRoomLivePane(doc, spec) {
   }));
 
   const headerRight = createElement(doc, 'div', { className: 'pane-header-right' });
-  headerRight.appendChild(createModelSelector(doc, spec.paneId));
+  headerRight.appendChild(createModelBadge(doc, spec.paneId, 'codex'));
   headerRight.appendChild(createElement(doc, 'span', {
     className: 'agent-health',
     id: `health-${spec.paneId}`,
@@ -535,6 +530,11 @@ function configureWorkspacePaneShell(windowContext = {}, terminal = null, doc = 
   if (!resolvedDocument) {
     return { workspaceKey: 'main', paneIds: [] };
   }
+
+  // Chrome renders by window class from a deliberate allow-list - every
+  // window decides its chrome here, never by inheriting main's header.
+  const windowChromeClass = resolveWindowChromeClass(windowContext);
+  applyWindowChrome(resolvedDocument, windowChromeClass);
 
   const workspaceKey = windowContext?.windowKey || windowContext?.profileName || 'main';
   let result = { workspaceKey: 'main', paneIds: null };

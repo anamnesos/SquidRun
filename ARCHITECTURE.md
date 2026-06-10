@@ -223,6 +223,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/sms-poller.js: Exports start, stop, isRunning, _internals, ....
 - ui/modules/surface-capture-events.js: In-memory Electron-main capture event ledger that binds visible-pane screenshot claims to app-recorded window/pane/path/timestamp/image hashes.
 - ui/modules/trustquote-arm-specs.js: Shared TrustQuote day-to-day arm definitions for Squid Room live panes and the arm registry seed. Keeps the four canonical arms (TrustQuote Lead, Schedule Dispatch, TrustQuote App, Invoice) in one source with pane ids, route targets, cwd, command, and startup text.
+- ui/modules/window-chrome.js: Per-window-class chrome allow-list (main / squid-room / client-profile / work-room): each class names the EXACT header controls and regions that render; everything else is hidden by default. Applied at renderer boot via workspace-pane-shell. Inheritance-minus-exceptions is forbidden here by design (S426 identity lane).
 - ui/modules/window-team-bootstrap.js: Renderer-side window-context bootstrap that tracks `windowKey`, startup source bundle metadata, and secondary-window auto-boot rules.
 - ui/mira-lab.html: Dev-only standalone Mira Lab prototype shell, intentionally separate from the normal SquidRun right panel and dashboard chrome.
 - ui/mira-lab-renderer.js: Mira Lab renderer logic for the prototype conversation/lab surface.
