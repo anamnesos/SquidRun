@@ -123,6 +123,7 @@ function renderRepairSections(lines, result) {
     `planned_actions: ${result.summary.actionCount}`,
     `planned_inserts: ${result.summary.insertCount}`,
     `planned_resyncs: ${result.summary.resyncCount || 0}`,
+    `planned_rekeys: ${result.summary.rekeyCount || 0}`,
     `planned_duplicate_merges: ${result.summary.duplicateMergeCount}`,
     `planned_source_heading_merges: ${result.summary.sourceHeadingMergeCount || 0}`,
     `planned_orphan_deletes: ${result.summary.orphanDeleteCount}`,
@@ -143,6 +144,10 @@ function renderRepairSections(lines, result) {
       }
       if (action.kind === 'resync_source_heading') {
         lines.push(`- RESYNC ${action.entry.sourcePath} :: ${action.entry.heading || '(no heading)'} :: keep=${action.survivorNodeId} :: delete=${action.loserNodeIds.join(', ') || '-'}`);
+        continue;
+      }
+      if (action.kind === 'rekey_stale_stable_key') {
+        lines.push(`- REKEY ${action.nodeId} :: ${action.entry.sourcePath} :: ${action.entry.heading || '(no heading)'} :: ${action.fromStableKey} -> ${action.toStableKey}`);
         continue;
       }
       if (action.kind === 'collapse_duplicate_hash') {
@@ -168,6 +173,7 @@ function renderRepairSections(lines, result) {
       `applied_actions: ${result.execution.appliedActions}`,
       `inserted_nodes: ${result.execution.insertedNodes}`,
       `resynced_nodes: ${result.execution.resyncedNodes || 0}`,
+      `rekeyed_nodes: ${result.execution.rekeyedNodes || 0}`,
       `deleted_nodes: ${result.execution.deletedNodes}`,
       `merged_duplicate_groups: ${result.execution.mergedDuplicateGroups}`,
       `merged_source_heading_groups: ${result.execution.mergedSourceHeadingGroups || 0}`,

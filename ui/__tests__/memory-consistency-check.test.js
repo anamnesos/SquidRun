@@ -1195,4 +1195,202 @@ describe('memory consistency check', () => {
     evidenceDb.close();
     expect(auditCount).toBe(1);
   });
+
+  describe('rekey_stale_stable_key', () => {
+    function seedEntriesWithShiftedSection(db, entries, { staleIndex = 0, shift = 7 } = {}) {
+      entries.forEach((entry, index) => {
+        const metadata = index === staleIndex
+          ? { ...entry.metadata, sectionIndex: Number(entry.metadata.sectionIndex || 0) + shift }
+          : entry.metadata;
+        insertKnowledgeNode(db, {
+          nodeId: `node-${index + 1}`,
+          sourcePath: entry.sourcePath,
+          title: entry.title,
+          heading: entry.heading,
+          content: entry.content,
+          contentHash: entry.contentHash,
+          metadata,
+        }, helpers);
+      });
+    }
+
+    test('rekeys a shifted-section node in place with zero deletes and preserved edges', () => {
+      const {
+        collectKnowledgeEntries,
+        planMemoryConsistencyRepair,
+        runMemoryConsistencyRepair,
+      } = helpers;
+      const { resolveWorkspacePaths } = require('../modules/memory-search');
+
+      const paths = resolveWorkspacePaths({ projectRoot: tempDir });
+      const entries = collectKnowledgeEntries(paths);
+      const dbPath = path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db');
+      const evidenceLedgerDbPath = path.join(tempDir, 'runtime', 'evidence-ledger.db');
+      fs.mkdirSync(path.dirname(evidenceLedgerDbPath), { recursive: true });
+
+      const db = createDatabase(dbPath);
+      createCognitiveSchema(db);
+      seedEntriesWithShiftedSection(db, entries);
+      db.prepare('INSERT INTO edges (source_node_id, target_node_id, relation_type, weight) VALUES (?, ?, ?, ?)')
+        .run('node-1', 'node-2', 'related', 1.0);
+      db.prepare('INSERT INTO edges (source_node_id, target_node_id, relation_type, weight) VALUES (?, ?, ?, ?)')
+        .run('node-2', 'node-1', 'related', 1.0);
+      const beforeNodeCount = Number(db.prepare('SELECT COUNT(*) AS count FROM nodes').get().count || 0);
+      db.close();
+
+      const plan = planMemoryConsistencyRepair({ projectRoot: tempDir });
+      expect(plan.summary.rekeyCount).toBe(1);
+      expect(plan.summary.deleteCount).toBe(0);
+      expect(plan.actions).toEqual([
+        expect.objectContaining({
+          kind: 'rekey_stale_stable_key',
+          nodeId: 'node-1',
+          toStableKey: entries[0].stableKey,
+          deleteCount: 0,
+        }),
+      ]);
+      expect(plan.actions[0].fromStableKey).not.toBe(entries[0].stableKey);
+
+      const result = runMemoryConsistencyRepair({
+        projectRoot: tempDir,
+        evidenceLedgerDbPath,
+        repairScope: 'missing-only',
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.execution.rekeyedNodes).toBe(1);
+      expect(result.execution.deletedNodes).toBe(0);
+      expect(result.execution.insertedNodes).toBe(0);
+      expect(result.execution.failures).toEqual([]);
+      expect(result.summary.deferredSkippedCount).toBe(0);
+      expect(result.postCheck.status).toBe('in_sync');
+      expect(result.postCheck.summary.duplicateSourceHeadingCount).toBe(0);
+
+      const verifyDb = createDatabase(dbPath);
+      const afterNodeCount = Number(verifyDb.prepare('SELECT COUNT(*) AS count FROM nodes').get().count || 0);
+      const rekeyedNode = verifyDb.prepare('SELECT node_id, content_hash, metadata_json FROM nodes WHERE node_id = ?').get('node-1');
+      const edgeRows = verifyDb.prepare('SELECT source_node_id, target_node_id FROM edges ORDER BY source_node_id').all();
+      verifyDb.close();
+
+      expect(afterNodeCount).toBe(beforeNodeCount);
+      expect(rekeyedNode.content_hash).toBe(entries[0].contentHash);
+      const metadata = JSON.parse(rekeyedNode.metadata_json);
+      expect(metadata.sectionIndex).toBe(entries[0].metadata.sectionIndex);
+      expect(metadata.repairMode).toBe('stale_stable_key_rekey');
+      expect(edgeRows).toEqual([
+        { source_node_id: 'node-1', target_node_id: 'node-2' },
+        { source_node_id: 'node-2', target_node_id: 'node-1' },
+      ]);
+
+      const evidenceDb = createDatabase(evidenceLedgerDbPath);
+      const auditCount = Number(evidenceDb.prepare(`
+        SELECT COUNT(*) AS count
+        FROM ledger_events
+        WHERE type = ?
+      `).get('memory.consistency.repair').count || 0);
+      evidenceDb.close();
+      expect(auditCount).toBe(1);
+    });
+
+    test('is idempotent: second run after rekey plans zero actions and zero rekey skips', () => {
+      const {
+        collectKnowledgeEntries,
+        planMemoryConsistencyRepair,
+        runMemoryConsistencyRepair,
+      } = helpers;
+      const { resolveWorkspacePaths } = require('../modules/memory-search');
+
+      const paths = resolveWorkspacePaths({ projectRoot: tempDir });
+      const entries = collectKnowledgeEntries(paths);
+      const dbPath = path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db');
+      const evidenceLedgerDbPath = path.join(tempDir, 'runtime', 'evidence-ledger.db');
+      fs.mkdirSync(path.dirname(evidenceLedgerDbPath), { recursive: true });
+
+      const db = createDatabase(dbPath);
+      createCognitiveSchema(db);
+      seedEntriesWithShiftedSection(db, entries);
+      db.close();
+
+      const firstRun = runMemoryConsistencyRepair({ projectRoot: tempDir, evidenceLedgerDbPath });
+      expect(firstRun.ok).toBe(true);
+      expect(firstRun.execution.rekeyedNodes).toBe(1);
+
+      const secondPlan = planMemoryConsistencyRepair({ projectRoot: tempDir });
+      expect(secondPlan.summary.actionCount).toBe(0);
+      expect(secondPlan.summary.rekeyCount).toBe(0);
+      expect(secondPlan.skipped.filter((entry) => String(entry.kind || '').startsWith('rekey_skipped'))).toEqual([]);
+      expect(secondPlan.detection.status).toBe('in_sync');
+    });
+
+    test('skips with a visible reason when identical content maps to multiple live chunks', () => {
+      const {
+        collectKnowledgeEntries,
+        planMemoryConsistencyRepair,
+      } = helpers;
+      const { resolveWorkspacePaths } = require('../modules/memory-search');
+
+      fs.writeFileSync(
+        path.join(tempDir, 'workspace', 'knowledge', 'ambiguous.md'),
+        [
+          '# Ambiguous',
+          '',
+          '## Repeated',
+          '',
+          '- Same canonical text.',
+          '',
+          '## Repeated',
+          '',
+          '- Same canonical text.',
+        ].join('\n')
+      );
+
+      const paths = resolveWorkspacePaths({ projectRoot: tempDir });
+      const entries = collectKnowledgeEntries(paths);
+      const ambiguousEntries = entries.filter((entry) => entry.sourcePath.endsWith('ambiguous.md'));
+      expect(ambiguousEntries.length).toBeGreaterThan(1);
+      expect(new Set(ambiguousEntries.map((entry) => entry.contentHash)).size).toBe(1);
+
+      const dbPath = path.join(tempDir, '.squidrun', 'runtime', 'cognitive-memory.db');
+      const db = createDatabase(dbPath);
+      createCognitiveSchema(db);
+      entries
+        .filter((entry) => !entry.sourcePath.endsWith('ambiguous.md'))
+        .forEach((entry, index) => {
+          insertKnowledgeNode(db, {
+            nodeId: `node-clean-${index + 1}`,
+            sourcePath: entry.sourcePath,
+            title: entry.title,
+            heading: entry.heading,
+            content: entry.content,
+            contentHash: entry.contentHash,
+            metadata: entry.metadata,
+          }, helpers);
+        });
+      insertKnowledgeNode(db, {
+        nodeId: 'node-ambiguous-stale',
+        sourcePath: ambiguousEntries[0].sourcePath,
+        title: ambiguousEntries[0].title,
+        heading: ambiguousEntries[0].heading,
+        content: ambiguousEntries[0].content,
+        contentHash: ambiguousEntries[0].contentHash,
+        metadata: { ...ambiguousEntries[0].metadata, sectionIndex: 9 },
+      }, helpers);
+      db.close();
+
+      const plan = planMemoryConsistencyRepair({ projectRoot: tempDir });
+
+      expect(plan.summary.rekeyCount).toBe(0);
+      expect(plan.actions.filter((action) => action.kind === 'rekey_stale_stable_key')).toEqual([]);
+      const rekeySkips = plan.skipped.filter((entry) => entry.kind === 'rekey_skipped_ambiguous_content_hash');
+      expect(rekeySkips).toEqual([
+        expect.objectContaining({
+          kind: 'rekey_skipped_ambiguous_content_hash',
+          nodeId: 'node-ambiguous-stale',
+          contentHash: ambiguousEntries[0].contentHash,
+          blockers: ['ambiguous_content_hash'],
+          reason: expect.stringContaining('ambiguous'),
+        }),
+      ]);
+    });
+  });
 });

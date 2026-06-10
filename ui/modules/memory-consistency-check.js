@@ -731,6 +731,7 @@ function buildPlanSummary(actions = [], skipped = []) {
     actionCount: actions.length,
     insertCount: actions.filter((action) => action.kind === 'insert_missing_chunk').length,
     resyncCount: actions.filter((action) => action.kind === 'resync_source_heading').length,
+    rekeyCount: actions.filter((action) => action.kind === 'rekey_stale_stable_key').length,
     duplicateMergeCount: actions.filter((action) => action.kind === 'collapse_duplicate_hash').length,
     sourceHeadingMergeCount: actions.filter((action) => action.kind === 'resync_source_heading' && action.loserNodeIds.length > 0).length,
     orphanDeleteCount: actions.filter((action) => action.kind === 'delete_revision_skew_orphan').length,
@@ -775,7 +776,11 @@ function applyRepairScopeToPlan(plan, scopeValue) {
   const scopedActions = [];
   const deferredActions = [];
   for (const action of plan.actions) {
-    if (action.kind === 'insert_missing_chunk' || action.kind === 'resync_source_heading') {
+    if (
+      action.kind === 'insert_missing_chunk'
+      || action.kind === 'resync_source_heading'
+      || action.kind === 'rekey_stale_stable_key'
+    ) {
       scopedActions.push(action);
     } else {
       deferredActions.push(action);
@@ -876,11 +881,104 @@ function planMemoryConsistencyRepair(options = {}) {
     }
 
     const entriesBySourceHeadingKey = new Map();
+    const entriesByContentHash = new Map();
+    const liveEntryStableKeys = new Set();
     for (const entry of analysis.knowledgeEntries) {
       const list = entriesBySourceHeadingKey.get(entry.sourceHeadingKey) || [];
       list.push(entry);
       entriesBySourceHeadingKey.set(entry.sourceHeadingKey, list);
+      const hashList = entriesByContentHash.get(entry.contentHash) || [];
+      hashList.push(entry);
+      entriesByContentHash.set(entry.contentHash, hashList);
+      liveEntryStableKeys.add(entry.stableKey);
     }
+
+    const activeNodesByContentHash = new Map();
+    for (const node of analysis.knowledgeNodes) {
+      if (duplicateLoserIds.has(node.nodeId)) continue;
+      const list = activeNodesByContentHash.get(node.contentHash) || [];
+      list.push(node);
+      activeNodesByContentHash.set(node.contentHash, list);
+    }
+
+    // Stale stable-key rekey: the node's content is canonical for a live chunk,
+    // but a file reorg drifted its stored section/chunk ordinals, so its derived
+    // stableKey no longer matches any live entry. Every other repair flow is
+    // orphan- or mismatch-scoped, so without this action the node survives every
+    // repair run while the analysis keeps flagging it as surplus. Guard
+    // rejections MUST surface as skipped entries — silent residue is the exact
+    // blind spot this action exists to close.
+    const rekeySkipsReported = new Set();
+    const planStaleStableKeyRekey = (entry) => {
+      const exactMatchingNodes = activeNodesByStableKey.get(entry.stableKey) || [];
+      if (exactMatchingNodes.length > 0) return false;
+      const hashMatchedNodes = (activeNodesByContentHash.get(entry.contentHash) || [])
+        .filter((node) => node.stableKey !== entry.stableKey)
+        .filter((node) => !sourceHeadingHandledNodeIds.has(node.nodeId));
+      if (hashMatchedNodes.length === 0) return false;
+      const skipRekey = (kind, blocker, reason) => {
+        const dedupeKey = `${kind}|${entry.contentHash}`;
+        if (rekeySkipsReported.has(dedupeKey)) return false;
+        rekeySkipsReported.add(dedupeKey);
+        plan.skipped.push({
+          kind,
+          driftType: 'stale_stable_key',
+          nodeId: hashMatchedNodes.map((node) => node.nodeId).join(', '),
+          sourcePath: entry.sourcePath,
+          heading: entry.heading,
+          contentHash: entry.contentHash,
+          reason,
+          blockers: [blocker],
+        });
+        return false;
+      };
+      const sameHashEntries = entriesByContentHash.get(entry.contentHash) || [];
+      if (sameHashEntries.length > 1) {
+        return skipRekey(
+          'rekey_skipped_ambiguous_content_hash',
+          'ambiguous_content_hash',
+          `Content hash maps to ${sameHashEntries.length} live knowledge chunks; rekey target is ambiguous.`
+        );
+      }
+      const staleNodes = hashMatchedNodes.filter((node) => !liveEntryStableKeys.has(node.stableKey));
+      if (staleNodes.length === 0) {
+        return skipRekey(
+          'rekey_skipped_node_key_still_live',
+          'node_stable_key_still_live',
+          'Candidate node stableKey still maps to a live knowledge chunk; not strictly stale.'
+        );
+      }
+      if (staleNodes.length > 1) {
+        return skipRekey(
+          'rekey_skipped_multiple_candidate_nodes',
+          'multiple_candidate_nodes',
+          `${staleNodes.length} stale nodes share this content hash; expected exactly one after duplicate collapse.`
+        );
+      }
+      const node = staleNodes[0];
+      sourceHeadingHandledNodeIds.add(node.nodeId);
+      plan.actions.push({
+        id: `action-${plan.actions.length + 1}`,
+        kind: 'rekey_stale_stable_key',
+        driftType: 'stale_stable_key',
+        safe: true,
+        nodeId: node.nodeId,
+        fromStableKey: node.stableKey,
+        toStableKey: entry.stableKey,
+        deleteCount: 0,
+        entry: {
+          sourceKey: entry.sourceKey,
+          sourcePath: entry.sourcePath,
+          title: entry.title,
+          heading: entry.heading,
+          contentHash: entry.contentHash,
+          metadata: entry.metadata,
+          lastModifiedMs: entry.lastModifiedMs,
+        },
+        reason: 'Node content matches the live knowledge chunk but its stored section/chunk ordinals are stale; update stableKey metadata in place with no deletes.',
+      });
+      return true;
+    };
 
     analysis.knowledgeEntries.forEach((entry) => {
       const exactMatchingNodes = activeNodesByStableKey.get(entry.stableKey) || [];
@@ -901,7 +999,12 @@ function planMemoryConsistencyRepair(options = {}) {
         if (!survivor) return;
         const losers = resyncNodes.filter((node) => node.nodeId !== survivor.nodeId);
         const needsResync = survivor.contentHash !== entry.contentHash || losers.length > 0;
-        if (!needsResync) return;
+        if (!needsResync) {
+          // Content already matches but the node may sit at a stale stableKey
+          // (multi-chunk headings reach here via content-matched loose nodes).
+          planStaleStableKeyRekey(entry);
+          return;
+        }
         const profiles = resyncNodes.map((node) => buildNodeRelationalProfile(node, edgeCounts, traceRows, leaseCounts));
         survivorProfileOverrides.set(survivor.nodeId, aggregateProfiles(profiles));
         [survivor, ...losers].forEach((node) => sourceHeadingHandledNodeIds.add(node.nodeId));
@@ -934,7 +1037,12 @@ function planMemoryConsistencyRepair(options = {}) {
         return;
       }
 
-      if (!analysis.missingKnowledgeEntries.some((missing) => missing.contentHash === entry.contentHash)) return;
+      if (!analysis.missingKnowledgeEntries.some((missing) => missing.contentHash === entry.contentHash)) {
+        // Entry content exists in cognitive memory but no node sits at its
+        // stableKey — the single-entry-heading shape of the stale-key drift.
+        planStaleStableKeyRekey(entry);
+        return;
+      }
       if (sourceHeadingEntries.length === 1 && looseMatchingNodes.length > 0) {
         const survivor = chooseSourceHeadingSurvivor(looseMatchingNodes, entry);
         if (!survivor) return;
@@ -2396,6 +2504,7 @@ function runMemoryConsistencyRepair(options = {}) {
       skippedActions: plan.skipped.length,
       insertedNodes: 0,
       resyncedNodes: 0,
+      rekeyedNodes: 0,
       deletedNodes: 0,
       mergedDuplicateGroups: 0,
       mergedSourceHeadingGroups: 0,
@@ -2510,6 +2619,67 @@ function runMemoryConsistencyRepair(options = {}) {
           heading: action.entry.heading,
           contentHash: action.entry.contentHash,
           deletedNodes: action.loserNodeIds.length,
+        }, nowMs, options.sessionId || null));
+        continue;
+      }
+
+      if (action.kind === 'rekey_stale_stable_key') {
+        const node = loadKnowledgeNodeById(db, availableNodeColumns, action.nodeId);
+        if (!node) {
+          result.execution.failures.push({
+            action: action.id,
+            reason: 'rekey_node_missing',
+          });
+          continue;
+        }
+        if (node.contentHash !== action.entry.contentHash) {
+          result.execution.skippedActions += 1;
+          continue;
+        }
+        const mergedMetadata = {
+          ...(node.metadata && typeof node.metadata === 'object' && !Array.isArray(node.metadata) ? node.metadata : {}),
+          ...(action.entry.metadata && typeof action.entry.metadata === 'object' && !Array.isArray(action.entry.metadata) ? action.entry.metadata : {}),
+          repairedBy: 'hm-memory-consistency',
+          repairMode: 'stale_stable_key_rekey',
+          repairedAt: new Date(nowMs).toISOString(),
+        };
+        const rekeyedStableKey = buildKnowledgeStableKey({
+          sourceType: node.sourceType,
+          sourcePath: node.sourcePath,
+          heading: node.heading,
+          metadata: mergedMetadata,
+        });
+        if (rekeyedStableKey !== action.toStableKey) {
+          result.execution.failures.push({
+            action: action.id,
+            reason: 'rekey_stable_key_mismatch',
+          });
+          continue;
+        }
+        const setPairs = [];
+        if (availableNodeColumns.includes('metadata_json')) {
+          setPairs.push(['metadata_json', JSON.stringify(mergedMetadata)]);
+        }
+        if (availableNodeColumns.includes('updated_at_ms')) {
+          setPairs.push(['updated_at_ms', nowMs]);
+        }
+        if (setPairs.length > 0) {
+          db.prepare(`
+            UPDATE nodes
+            SET ${setPairs.map(([column]) => `${column} = ?`).join(', ')}
+            WHERE node_id = ?
+          `).run(...setPairs.map(([, value]) => value), action.nodeId);
+        }
+        result.execution.rekeyedNodes += 1;
+        result.execution.appliedActions += 1;
+        auditQueue.push(buildAuditEvent('rekey_stale_stable_key', {
+          driftType: action.driftType,
+          nodeId: action.nodeId,
+          fromStableKey: action.fromStableKey,
+          toStableKey: action.toStableKey,
+          sourcePath: action.entry.sourcePath,
+          heading: action.entry.heading,
+          contentHash: action.entry.contentHash,
         }, nowMs, options.sessionId || null));
         continue;
       }
