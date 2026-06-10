@@ -203,7 +203,12 @@ describe('Terminal Events', () => {
         pty: {
           create: jest.fn().mockResolvedValue(undefined),
           write: jest.fn().mockResolvedValue(undefined),
-          claimStartupInjection: jest.fn().mockResolvedValue({ ok: true, claimed: true }),
+          claimStartupInjection: jest.fn().mockResolvedValue({
+            ok: true,
+            claimed: true,
+            claim: { claimId: 'startup-claim-default' },
+          }),
+          releaseStartupInjection: jest.fn().mockResolvedValue({ ok: true, released: true }),
           clipboardWriteText: jest.fn().mockResolvedValue({ success: true }),
           resize: jest.fn(),
           kill: jest.fn().mockResolvedValue(undefined),
@@ -366,6 +371,39 @@ describe('Terminal Events', () => {
         && args[1].includes('# SQUIDRUN SESSION:')
       ));
       expect(startupCall).toBeUndefined();
+    });
+
+    test('spawn startup identity releases its claim after exhausted retries', async () => {
+      global.window.squidrun.pty.claimStartupInjection.mockResolvedValueOnce({
+        ok: true,
+        claimed: true,
+        claim: { claimId: 'claim-exhausted-retries' },
+      });
+      mockInjectionController.sendToPane
+        .mockImplementationOnce((id, message, options = {}) => {
+          options.onComplete?.({ success: false, reason: 'forced_failure_1' });
+        })
+        .mockImplementationOnce((id, message, options = {}) => {
+          options.onComplete?.({ success: false, reason: 'forced_failure_2' });
+        })
+        .mockImplementationOnce((id, message, options = {}) => {
+          options.onComplete?.({ success: false, reason: 'forced_failure_3' });
+        });
+
+      terminal.terminals.set('1', { write: jest.fn() });
+      const spawnPromise = terminal.spawnAgent('1');
+      await jest.advanceTimersByTimeAsync(150);
+      await spawnPromise;
+
+      // startup timeout + identity delay + two retry delays
+      await jest.advanceTimersByTimeAsync(12200);
+
+      expect(mockInjectionController.sendToPane).toHaveBeenCalledTimes(3);
+      expect(global.window.squidrun.pty.releaseStartupInjection).toHaveBeenCalledWith({
+        paneId: '1',
+        claimId: 'claim-exhausted-retries',
+        reason: 'exhausted_retries',
+      });
     });
 
     test('spawn startup identity routes Gemini pane through injection controller before fallback paths', async () => {

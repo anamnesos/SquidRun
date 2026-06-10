@@ -32,6 +32,7 @@ const WRITE_ACK_TIMEOUT_MS = 2500;
 const PANE_SESSION_IDS_FILE_PATH = resolveCoordPath(path.join('runtime', 'pane-session-ids.json'), { forWrite: true });
 const CLAUDE_RESUME_FLAG_PATTERN = /(?:^|\s)(?:--session-id|--resume)(?:=|\s+)\S+/i;
 const STARTUP_INJECTION_CLAIM_CHANNEL = 'startup-injection-claim';
+const STARTUP_INJECTION_RELEASE_CHANNEL = 'startup-injection-release';
 const INPUT_EDIT_ACTIONS = Object.freeze({
   undo: 'undo',
   cut: 'cut',
@@ -259,6 +260,39 @@ function createStartupInjectionClaimStore() {
       return claims.delete(id);
     },
 
+    release(paneId, claimId) {
+      const id = String(paneId || '').trim();
+      const releaseClaimId = String(claimId || '').trim();
+      if (!id) {
+        return { ok: false, released: false, reason: 'pane_id_required' };
+      }
+      if (!releaseClaimId) {
+        return { ok: false, released: false, paneId: id, reason: 'claim_id_required' };
+      }
+
+      const existing = claims.get(id);
+      if (!existing) {
+        return { ok: true, released: false, paneId: id, reason: 'claim_not_found' };
+      }
+      if (existing.claimId !== releaseClaimId) {
+        return {
+          ok: false,
+          released: false,
+          paneId: id,
+          reason: 'claim_id_mismatch',
+          claim: { ...existing },
+        };
+      }
+
+      claims.delete(id);
+      return {
+        ok: true,
+        released: true,
+        paneId: id,
+        claim: { ...existing },
+      };
+    },
+
     get(paneId) {
       const claim = claims.get(String(paneId || '').trim());
       return claim ? { ...claim } : null;
@@ -481,6 +515,23 @@ function registerPtyHandlers(ctx, deps = {}) {
       log.info(
         'PTY',
         `Startup injection claim denied for pane ${String(request.paneId || '').trim() || 'unknown'}: ${result.reason}`
+      );
+    }
+    return result;
+  });
+
+  ipcMain.handle(STARTUP_INJECTION_RELEASE_CHANNEL, (event, payload = {}) => {
+    const request = payload && typeof payload === 'object' ? payload : { paneId: payload };
+    const result = startupInjectionClaims.release(request.paneId, request.claimId);
+    if (result.released) {
+      log.info(
+        'PTY',
+        `Startup injection claim released for pane ${result.paneId} (${request.reason || 'unspecified'})`
+      );
+    } else {
+      log.info(
+        'PTY',
+        `Startup injection claim release skipped for pane ${String(request.paneId || '').trim() || 'unknown'}: ${result.reason}`
       );
     }
     return result;
@@ -946,6 +997,7 @@ function unregisterPtyHandlers(ctx) {
     ipcMain.removeHandler('pty-kill');
     ipcMain.removeHandler('intent-update');
     ipcMain.removeHandler(STARTUP_INJECTION_CLAIM_CHANNEL);
+    ipcMain.removeHandler(STARTUP_INJECTION_RELEASE_CHANNEL);
     ipcMain.removeHandler('spawn-claude');
     ipcMain.removeHandler('get-claude-state');
     ipcMain.removeHandler('get-daemon-terminals');

@@ -87,6 +87,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'pty-write',
   'pty-write-chunked',
   'startup-injection-claim',
+  'startup-injection-release',
   'terminal-fit-telemetry',
   'read-friction',
   'read-shared-context',
