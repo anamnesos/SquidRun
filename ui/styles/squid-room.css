@@ -228,7 +228,12 @@ body.squid-room-workspace .pane-layout.has-squid-room-team-collapsed {
 }
 
 body.squid-room-workspace .side-panes-container.squid-room-team-collapsed {
-  flex: 0 0 auto;
+  /* Full width even when collapsed: flex 0 0 auto shrank the container's
+     MAIN axis (width) so the right-aligned toggle jumped to the far left.
+     James's acceptance: Collapse/Expand is one stationary click target -
+     the button must not move between states (S426 wave-1 polish). */
+  flex: 1 1 auto;
+  width: 100%;
   min-height: 0;
   align-content: start;
   gap: 0;
