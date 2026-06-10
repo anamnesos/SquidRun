@@ -1820,11 +1820,21 @@ class SquidRunApp {
         const triggerPaths = this.getScopedTelegramTriggerPaths(activeProfile);
         if (!triggerPaths || triggerPaths.length === 0) return;
 
-        const triggerPath = triggerPaths[0];
-        if (!triggerPath || !fs.existsSync(triggerPath)) return;
+        let triggerPath = null;
+        let fileContent = '';
 
-        const fileContent = fs.readFileSync(triggerPath, 'utf8');
-        if (!fileContent.trim()) return;
+        for (const tp of triggerPaths) {
+          if (fs.existsSync(tp)) {
+            const content = fs.readFileSync(tp, 'utf8');
+            if (content.trim()) {
+              triggerPath = tp;
+              fileContent = content;
+              break;
+            }
+          }
+        }
+
+        if (!triggerPath) return;
 
         log.info('Telegram', `Draining scoped trigger file payload (${fileContent.length} bytes): ${triggerPath}`);
 
