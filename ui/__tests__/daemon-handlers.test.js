@@ -5,6 +5,7 @@
 
 // Mock dependencies before requiring the module
 const fs = require('fs');
+const path = require('path');
 
 jest.mock('../modules/renderer-bridge', () => ({
   invokeBridge: jest.fn().mockResolvedValue({}),
@@ -302,6 +303,45 @@ describe('daemon-handlers.js module', () => {
       expect(onBridge).toHaveBeenCalledWith('daemon-reconnected', expect.any(Function));
       expect(onBridge).toHaveBeenCalledWith('daemon-disconnected', expect.any(Function));
       expect(onBridge).toHaveBeenCalledWith('inject-message', expect.any(Function));
+    });
+
+    test('owns nudge and restart channels without renderer.js duplicate listeners', () => {
+      const ipcHandlers = {};
+      onBridge.mockImplementation((channel, handler) => {
+        ipcHandlers[channel] = handler;
+        return jest.fn();
+      });
+
+      daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+      for (const channel of ['nudge-pane', 'restart-pane', 'restart-all-panes']) {
+        const matchingRegistrations = onBridge.mock.calls.filter(([registeredChannel]) => registeredChannel === channel);
+        expect(matchingRegistrations).toHaveLength(1);
+        expect(typeof ipcHandlers[channel]).toBe('function');
+      }
+
+      ipcHandlers['nudge-pane']({}, { paneId: '2' });
+      ipcHandlers['restart-pane']({}, { paneId: '3' });
+      ipcHandlers['restart-all-panes']({}, {});
+
+      expect(terminal.nudgePane).toHaveBeenCalledTimes(1);
+      expect(terminal.nudgePane).toHaveBeenCalledWith('2');
+      expect(terminal.restartPane).toHaveBeenCalledTimes(1);
+      expect(terminal.restartPane).toHaveBeenCalledWith('3');
+      expect(terminal.freshStartAll).toHaveBeenCalledTimes(1);
+
+      const uiRoot = path.resolve(__dirname, '..');
+      const rendererSource = fs.readFileSync(path.join(uiRoot, 'renderer.js'), 'utf8');
+      for (const channel of ['nudge-pane', 'restart-pane', 'restart-all-panes']) {
+        expect(rendererSource).not.toMatch(new RegExp(`ipcRenderer\\.on\\(['"]${channel}['"]`));
+      }
+
+      const rendererHtmlEntrypoints = fs.readdirSync(uiRoot)
+        .filter((name) => name.endsWith('.html'))
+        .filter((name) => /<script\b[^>]*\bsrc=["']renderer\.js["'][^>]*>/i
+          .test(fs.readFileSync(path.join(uiRoot, name), 'utf8')));
+      expect(rendererHtmlEntrypoints).toEqual(['index.html']);
+      expect(rendererSource).toContain('daemonHandlers.setupDaemonListeners(');
     });
   });
 
