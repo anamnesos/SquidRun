@@ -246,13 +246,23 @@ const TELEGRAM_REPLY_GUARD_JOURNAL_GRACE_MS = Math.max(
   0,
   Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_JOURNAL_GRACE_MS || '5000', 10) || 5_000
 );
-// Pane output is printed BEFORE the architect runs `hm-send telegram`, so an
-// immediate debt nag races the egress. Defer the pane-output nag this long, then
-// re-check the journal: a telegram reply that lands inside the window suppresses
-// the nag entirely, and only one nag is ever emitted per inbound.
+// Pane output is printed BEFORE the architect runs `hm-send telegram`, and a
+// real reply takes minutes of context reads, not seconds. The pane-output nag
+// uses a SLIDING IDLE window: every new output line re-arms the timer, so debt
+// asserts only when the pane goes quiet without telegram egress. On expiry the
+// journal is re-checked - a reply that landed suppresses the nag entirely, and
+// only one nag is ever emitted per inbound.
 const TELEGRAM_REPLY_GUARD_EMIT_GRACE_MS = Math.max(
   0,
-  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_EMIT_GRACE_MS || '6000', 10) || 6_000
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_EMIT_GRACE_MS || '90000', 10) || 90_000
+);
+// Continuous output must not dodge the debt forever: the nag fires no later
+// than this long after the first un-replied output, even if the pane never
+// goes idle. Kept under TELEGRAM_REPLY_WINDOW_MS (5 min) so the capped nag
+// still lands while the guard is fresh.
+const TELEGRAM_REPLY_GUARD_MAX_DEFER_MS = Math.max(
+  TELEGRAM_REPLY_GUARD_EMIT_GRACE_MS,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_MAX_DEFER_MS || '240000', 10) || 240_000
 );
 const TELEGRAM_REPLY_GUARD_JOURNAL_DIAGNOSTIC_THROTTLE_MS = Math.max(
   5_000,
@@ -532,6 +542,26 @@ function toNonEmptyString(value) {
   if (value === null || value === undefined) return null;
   const normalized = String(value).trim();
   return normalized || null;
+}
+
+// Matches CSI sequences (ESC [ ... cmd), OSC strings (ESC ] ... BEL/ST), and
+// single-char ESC controls - the building blocks of TUI repaint frames.
+const PTY_ANSI_CONTROL_PATTERN = new RegExp(
+  '\\u001b\\[[0-9;?]*[ -\\/]*[@-~]'
+  + '|\\u001b\\][^\\u0007\\u001b]*(?:\\u0007|\\u001b\\\\)?'
+  + '|\\u001b[@-_]',
+  'g'
+);
+
+// Reduce a raw PTY chunk to its printable payload: strip ANSI control
+// sequences and control characters, collapse whitespace. Used to tell
+// meaningful agent output apart from status-line/spinner repaint noise.
+function extractPrintablePtyPayload(text) {
+  return String(text || '')
+    .replace(PTY_ANSI_CONTROL_PATTERN, '')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function toBooleanFlag(value, fallback = false) {
@@ -12845,12 +12875,24 @@ class SquidRunApp {
     this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
 
     // Don't nag synchronously — the architect prints pane output BEFORE running
-    // `hm-send telegram`, so an immediate emit races the egress. Defer one grace
-    // window, then re-check the journal; emit at most ONE nag per inbound, and
-    // none at all if a telegram reply lands inside the window.
-    this.scheduleDeferredTelegramReplyDebtNag(normalizedPaneId, guard, {
-      outputPreview: visibleText.slice(0, 240),
-    });
+    // `hm-send telegram`, and a real reply takes minutes. The deferred timer is
+    // a sliding idle window, but ONLY meaningful output may re-arm it: Claude
+    // panes repaint their status line/spinner continuously while idle, and raw
+    // re-arms would make the idle window unreachable exactly when it matters.
+    // Frames with no printable payload, or whose digit-normalized payload
+    // matches the previous frame (timer-tick repaints), never re-arm; whatever
+    // repaint noise leaks past this is bounded by the absolute cap.
+    const hasPendingDeferredNag = this.pendingTelegramReplyGuardEmitTimers.has(normalizedPaneId)
+      && toNonEmptyString(guard.deferredPaneOutputNagMessageId) === toNonEmptyString(guard.messageId);
+    const printablePayload = extractPrintablePtyPayload(visibleText);
+    const rearmPayloadKey = printablePayload ? printablePayload.replace(/\d+/g, '#').slice(0, 2000) : '';
+    const meaningfulOutput = Boolean(rearmPayloadKey) && rearmPayloadKey !== guard.deferredPaneOutputRearmPayloadKey;
+    if (!hasPendingDeferredNag || meaningfulOutput) {
+      if (rearmPayloadKey) guard.deferredPaneOutputRearmPayloadKey = rearmPayloadKey;
+      this.scheduleDeferredTelegramReplyDebtNag(normalizedPaneId, guard, {
+        outputPreview: visibleText.slice(0, 240),
+      });
+    }
     return {
       ok: false,
       status: 'telegram_reply_requirement_pending_grace',
@@ -12861,19 +12903,27 @@ class SquidRunApp {
   scheduleDeferredTelegramReplyDebtNag(paneId, guard = {}, options = {}) {
     const normalizedPaneId = toNonEmptyString(paneId) || '1';
     const messageId = toNonEmptyString(guard.messageId);
-    // At most one nag per inbound: skip if already emitted, or a deferred emit is
-    // already pending for this same inbound.
+    // At most one nag per inbound: never re-arm once emitted.
     if (messageId && guard.paneOutputNagEmittedForMessageId === messageId) return false;
-    if (this.pendingTelegramReplyGuardEmitTimers.has(normalizedPaneId)
-        && guard.deferredPaneOutputNagMessageId === messageId) {
-      return false;
+    const nowMs = Date.now();
+    // Sliding idle window: every output line for the same inbound re-arms the
+    // timer, so the nag fires only after the pane goes QUIET without egress -
+    // an architect mid-reply (context reads, composing) is not in debt yet.
+    if (guard.deferredPaneOutputNagMessageId !== messageId
+        || !Number.isFinite(Number(guard.deferredPaneOutputNagFirstViolationAtMs))
+        || Number(guard.deferredPaneOutputNagFirstViolationAtMs) <= 0) {
+      guard.deferredPaneOutputNagFirstViolationAtMs = nowMs;
     }
     guard.deferredPaneOutputNagMessageId = messageId;
     guard.deferredPaneOutputNagPreview = toNonEmptyString(options.outputPreview)
       || guard.lastPaneOutputPreview || null;
     this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
     this.clearPendingTelegramReplyGuardEmitTimer(normalizedPaneId);
-    const delayMs = Math.max(0, Number(options.graceMs ?? TELEGRAM_REPLY_GUARD_EMIT_GRACE_MS) || 0);
+    const idleMs = Math.max(0, Number(options.graceMs ?? TELEGRAM_REPLY_GUARD_EMIT_GRACE_MS) || 0);
+    // Continuous output cannot defer past the absolute cap from first violation.
+    const capAtMs = Number(guard.deferredPaneOutputNagFirstViolationAtMs)
+      + Math.max(0, Number(options.maxDeferMs ?? TELEGRAM_REPLY_GUARD_MAX_DEFER_MS) || 0);
+    const delayMs = Math.max(0, Math.min(idleMs, capAtMs - nowMs));
     const timer = setTimeout(() => {
       this.pendingTelegramReplyGuardEmitTimers.delete(normalizedPaneId);
       this.emitDeferredTelegramReplyDebtNagIfStillUnsatisfied(normalizedPaneId, messageId);
