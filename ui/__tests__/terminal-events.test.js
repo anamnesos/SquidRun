@@ -203,6 +203,7 @@ describe('Terminal Events', () => {
         pty: {
           create: jest.fn().mockResolvedValue(undefined),
           write: jest.fn().mockResolvedValue(undefined),
+          claimStartupInjection: jest.fn().mockResolvedValue({ ok: true, claimed: true }),
           clipboardWriteText: jest.fn().mockResolvedValue({ success: true }),
           resize: jest.fn(),
           kill: jest.fn().mockResolvedValue(undefined),
@@ -337,6 +338,34 @@ describe('Terminal Events', () => {
         verifySubmitAccepted: true,
         onComplete: expect.any(Function),
       }));
+    });
+
+    test('spawn startup identity does not arm when atomic claim is denied', async () => {
+      global.window.squidrun.pty.claimStartupInjection.mockResolvedValueOnce({
+        ok: true,
+        claimed: false,
+        reason: 'startup_injection_already_claimed',
+      });
+
+      terminal.terminals.set('1', { write: jest.fn() });
+      const spawnPromise = terminal.spawnAgent('1');
+      await jest.advanceTimersByTimeAsync(150);
+      await spawnPromise;
+      await jest.advanceTimersByTimeAsync(8200);
+
+      expect(global.window.squidrun.pty.claimStartupInjection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paneId: '1',
+          source: 'spawn',
+          modelType: 'claude',
+        })
+      );
+      const startupCall = mockInjectionController.sendToPane.mock.calls.find((args) => (
+        args[0] === '1'
+        && typeof args[1] === 'string'
+        && args[1].includes('# SQUIDRUN SESSION:')
+      ));
+      expect(startupCall).toBeUndefined();
     });
 
     test('spawn startup identity routes Gemini pane through injection controller before fallback paths', async () => {

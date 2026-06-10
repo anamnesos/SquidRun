@@ -25,6 +25,7 @@ const { isTrustQuotePaneId } = require('./work-room-terminal-visibility');
 const TERMINAL_EVENT_SOURCE = 'terminal.js';
 const SQUID_ROOM_WINDOW_KEY = 'squid-room';
 const SQUID_ROOM_MIRRORED_TEAM_PANE_IDS = new Set(['2', '3']);
+const STARTUP_INJECTION_CLAIM_CHANNEL = 'startup-injection-claim';
 const { attachAgentColors } = require('./terminal/agent-colors');
 const {
   PANE_IDS,
@@ -2259,15 +2260,53 @@ function triggerStartupInjection(paneId, state, reason) {
   scheduleStartupIdentityAttempt(String(paneId), state, reason, identityDelayMs);
 }
 
-function armStartupInjection(paneId, options = {}) {
+async function claimStartupInjectionArm(paneId, options = {}) {
   const id = String(paneId);
-  if (!options.force && hasPendingStartupInjection(id)) {
-    log.info(
+  const context = normalizeStartupWindowContext(startupWindowContext);
+  const payload = {
+    paneId: id,
+    source: options.source || 'unknown',
+    modelType: options.modelType || 'claude',
+    isGemini: Boolean(options.isGemini),
+    windowKey: getCurrentRendererWindowKey(),
+    profileName: context.profileName,
+  };
+  const apiClaim = window?.squidrun?.pty?.claimStartupInjection;
+  if (typeof apiClaim === 'function') {
+    return apiClaim(payload);
+  }
+  return invokeBridge(STARTUP_INJECTION_CLAIM_CHANNEL, payload);
+}
+
+async function armStartupInjection(paneId, options = {}) {
+  const id = String(paneId);
+  let claimResult;
+  try {
+    claimResult = await claimStartupInjectionArm(id, options);
+  } catch (err) {
+    log.warn(
       'spawnAgent',
-      `Startup injection already armed for pane ${id}, skipping duplicate arm (${options.source || 'unknown'})`
+      `Startup injection claim failed for pane ${id}; refusing to arm (${err?.message || err})`
     );
     return false;
   }
+
+  if (!claimResult || claimResult.claimed !== true) {
+    log.info(
+      'spawnAgent',
+      `Startup injection claim denied for pane ${id}, skipping arm (${claimResult?.reason || 'claim_denied'})`
+    );
+    return false;
+  }
+
+  if (!options.force && hasPendingStartupInjection(id)) {
+    log.info(
+      'spawnAgent',
+      `Startup injection already armed locally for pane ${id}, skipping duplicate arm (${options.source || 'unknown'})`
+    );
+    return false;
+  }
+
   clearStartupInjection(id);
   const state = {
     buffer: '',
@@ -3038,7 +3077,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
     if (runtimeOverride.spawnCommandOnCreate === true && runtimeOverride.command) {
       const commandText = String(runtimeOverride.command || '').trim().toLowerCase();
       const modelType = commandText.includes('gemini') ? 'gemini' : commandText.includes('codex') ? 'codex' : 'claude';
-      armStartupInjection(paneId, {
+      await armStartupInjection(paneId, {
         modelType,
         isGemini: modelType === 'gemini',
         source: 'spawn-command-on-create',
@@ -3348,7 +3387,7 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
     const isGemini = isGeminiPane(paneId);
     const isCodexReattach = isCodexPane(String(paneId));
     const modelType = isGemini ? 'gemini' : isCodexReattach ? 'codex' : 'claude';
-    const armed = armStartupInjection(paneId, { modelType, isGemini, source: 'reattach' });
+    const armed = await armStartupInjection(paneId, { modelType, isGemini, source: 'reattach' });
     // Seed detector with restored scrollback so ready-pattern detection can fire
     // immediately instead of waiting for new daemon output.
     if (armed && scrollback && scrollback.length > 0) {
@@ -3496,7 +3535,7 @@ async function spawnAgent(paneId, model = null) {
       if (runtimeOverride.spawnCommandOnCreate === true) {
         const commandText = String(result.command || '').trim().toLowerCase();
         const modelType = commandText.includes('gemini') ? 'gemini' : commandText.includes('codex') ? 'codex' : 'claude';
-        armStartupInjection(paneId, {
+        await armStartupInjection(paneId, {
           modelType,
           isGemini: modelType === 'gemini',
           source: 'spawn-command-on-create-retry',
@@ -3550,7 +3589,7 @@ async function spawnAgent(paneId, model = null) {
       const isGemini = model ? model === 'gemini' : isGeminiPane(paneId);
       const isCodexSpawn = model ? model === 'codex' : isCodexPane(String(paneId));
       const modelType = isGemini ? 'gemini' : isCodexSpawn ? 'codex' : 'claude';
-      armStartupInjection(paneId, { modelType, isGemini, source: 'spawn' });
+      await armStartupInjection(paneId, { modelType, isGemini, source: 'spawn' });
 
     }
     updatePaneStatus(paneId, 'Working');
