@@ -131,15 +131,31 @@ function normalizeTerminalScrollProbePayload(payload = {}) {
   const normalizedOp = op.toLowerCase();
   const errors = [];
 
-  if (!windowKey) errors.push('windowKey_required');
-  if (!containerId) errors.push('containerId_required');
-  if (containerId && !/^[A-Za-z0-9_-]+$/.test(containerId)) errors.push('containerId_invalid');
+  const selector = String(input.selector || '').trim();
 
   let operation = null;
   if (normalizedOp === 'scrolllines' || normalizedOp === 'scroll-lines') operation = 'scrollLines';
   if (normalizedOp === 'dispatchwheel' || normalizedOp === 'dispatch-wheel' || normalizedOp === 'wheel') operation = 'dispatchWheel';
   if (normalizedOp === 'dispatchkey' || normalizedOp === 'dispatch-key' || normalizedOp === 'key') operation = 'dispatchKey';
+  if (normalizedOp === 'dispatchclick' || normalizedOp === 'dispatch-click' || normalizedOp === 'click') operation = 'dispatchClick';
+  if (normalizedOp === 'dispatchhover' || normalizedOp === 'dispatch-hover' || normalizedOp === 'hover') operation = 'dispatchHover';
+  if (normalizedOp === 'clearhover' || normalizedOp === 'clear-hover') operation = 'clearHover';
   if (!operation) errors.push('op_unsupported');
+
+  // Selector-based UI interaction ops (S426 UX audit tooling) target
+  // arbitrary elements; terminal-scroll ops keep requiring the container id.
+  const isSelectorOp = operation === 'dispatchClick'
+    || operation === 'dispatchHover'
+    || operation === 'clearHover';
+
+  if (!windowKey) errors.push('windowKey_required');
+  if (isSelectorOp) {
+    if (!selector) errors.push('selector_required');
+    if (selector && selector.length > 300) errors.push('selector_too_long');
+  } else {
+    if (!containerId) errors.push('containerId_required');
+    if (containerId && !/^[A-Za-z0-9_-]+$/.test(containerId)) errors.push('containerId_invalid');
+  }
 
   const lines = Number(input.lines);
   const deltaY = Number(input.deltaY);
@@ -162,6 +178,7 @@ function normalizeTerminalScrollProbePayload(payload = {}) {
     probe: {
       windowKey,
       containerId,
+      selector,
       op: operation,
       lines,
       deltaY,

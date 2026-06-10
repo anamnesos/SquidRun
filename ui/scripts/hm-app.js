@@ -29,7 +29,8 @@ function usage() {
   console.log('terminal-scroll-probe options:');
   console.log('  --window-key <key>          Explicit target renderer window key');
   console.log('  --container-id <id>         Terminal container id, e.g. terminal-trustquote-app');
-  console.log('  --op <op>                   scrollLines | dispatchWheel | dispatchKey');
+  console.log('  --op <op>                   scrollLines | dispatchWheel | dispatchKey | dispatchClick | dispatchHover | clearHover');
+  console.log('  --selector <css>            Target element for dispatchClick/dispatchHover (S426 UX-audit ops)');
   console.log('  --lines <n>                 Lines for scrollLines');
   console.log('  --delta-y <n>               Wheel deltaY for dispatchWheel');
   console.log('  --key <PageUp|PageDown>     Key for dispatchKey');
@@ -272,13 +273,16 @@ async function main() {
     const op = asString(getOption(options, 'op', getOption(options, 'operation', '')), '');
     const windowKey = asString(getOption(options, 'window-key', getOption(options, 'window', '')), '');
     const containerId = asString(getOption(options, 'container-id', ''), '');
-    if (!op || !windowKey || !containerId) {
-      console.error('terminal-scroll-probe requires --window-key <key> --container-id <id> --op <scrollLines|dispatchWheel|dispatchKey>');
+    const selector = asString(getOption(options, 'selector', ''), '');
+    const selectorOp = /^(dispatch-?click|click|dispatch-?hover|hover|clear-?hover)$/i.test(op);
+    if (!op || !windowKey || (!containerId && !selectorOp) || (selectorOp && !selector && !/^clear-?hover$/i.test(op))) {
+      console.error('terminal-scroll-probe requires --window-key <key> and either --container-id <id> --op <scrollLines|dispatchWheel|dispatchKey> or --selector <css> --op <dispatchClick|dispatchHover|clearHover>');
       process.exit(1);
     }
     payload = {
       windowKey,
       containerId,
+      selector: selector || (selectorOp ? 'body' : ''),
       op,
       lines: asNumber(getOption(options, 'lines', null), null),
       deltaY: asNumber(getOption(options, 'delta-y', getOption(options, 'deltaY', null)), null),
