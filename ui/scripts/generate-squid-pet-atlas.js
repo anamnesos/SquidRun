@@ -20,6 +20,9 @@
  * shapes/look directions for thinking vs working states.
  */
 
+const harness = require('./headless-harness-bootstrap');
+harness.init({ name: 'generate-squid-pet-atlas' });
+
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');
