@@ -868,10 +868,91 @@ function snapshotTerminalScrollState(terminal) {
 // to the main world — so every probe returned terminal_probe_target_unavailable
 // (the Bug B proof-seam failure). The main-world injection now delegates here
 // through the contextBridge so the read context matches where the target lives.
+const UI_PROBE_HOVER_CLASS = 'squidrun-ui-probe-hover';
+const UI_PROBE_HOVER_STYLE_ID = 'squidrun-ui-probe-hover-style';
+
+// Selector-based UI interaction ops (S426 UX audit tooling). Click fires
+// synthetic listeners faithfully; hover CANNOT trigger CSS :hover from
+// synthetic events, so forceHover ALSO injects a style rule that renders the
+// data-tooltip layer exactly as :hover would - the clipping geometry under
+// audit is identical, and that is the honest limit of the tool.
+function runUiInteractionProbe(probe = {}) {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+  const element = document.querySelector(probe.selector);
+  if (!element) {
+    return { success: false, reason: 'selector_not_found', selector: probe.selector, op: probe.op };
+  }
+  const rect = element.getBoundingClientRect?.() || {};
+  const base = {
+    success: true,
+    op: probe.op,
+    selector: probe.selector,
+    windowKey: String(document.body?.dataset?.windowKey || ''),
+    tagName: element.tagName || null,
+    elementId: element.id || null,
+    rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
+    disabled: element.disabled === true,
+  };
+  if (probe.op === 'dispatchClick') {
+    const opts = { bubbles: true, cancelable: true, view: window };
+    element.dispatchEvent(new MouseEvent('pointerdown', opts));
+    element.dispatchEvent(new MouseEvent('mousedown', opts));
+    element.dispatchEvent(new MouseEvent('pointerup', opts));
+    element.dispatchEvent(new MouseEvent('mouseup', opts));
+    const accepted = element.dispatchEvent(new MouseEvent('click', opts));
+    return wait(probe.waitMs).then(() => ({
+      ...base,
+      dispatchAccepted: accepted,
+      activeElementId: document.activeElement?.id || null,
+    }));
+  }
+  if (probe.op === 'dispatchHover') {
+    const opts = { bubbles: true, cancelable: true, view: window };
+    element.dispatchEvent(new MouseEvent('pointerover', opts));
+    element.dispatchEvent(new MouseEvent('mouseover', opts));
+    element.dispatchEvent(new MouseEvent('mouseenter', { ...opts, bubbles: false }));
+    if (!document.getElementById(UI_PROBE_HOVER_STYLE_ID)) {
+      const style = document.createElement('style');
+      style.id = UI_PROBE_HOVER_STYLE_ID;
+      style.textContent = [
+        `.${UI_PROBE_HOVER_CLASS}[data-tooltip]::after,`,
+        `.${UI_PROBE_HOVER_CLASS}[data-tooltip]::before {`,
+        '  opacity: 1 !important;',
+        '}',
+      ].join('\n');
+      document.head.appendChild(style);
+    }
+    document.querySelectorAll(`.${UI_PROBE_HOVER_CLASS}`).forEach((other) => {
+      if (other !== element) other.classList.remove(UI_PROBE_HOVER_CLASS);
+    });
+    element.classList.add(UI_PROBE_HOVER_CLASS);
+    return wait(probe.waitMs).then(() => ({
+      ...base,
+      hoverForced: true,
+      hasDataTooltip: Boolean(element.dataset?.tooltip),
+      title: element.getAttribute?.('title') || null,
+    }));
+  }
+  if (probe.op === 'clearHover') {
+    document.querySelectorAll(`.${UI_PROBE_HOVER_CLASS}`).forEach((other) => {
+      other.classList.remove(UI_PROBE_HOVER_CLASS);
+    });
+    document.getElementById(UI_PROBE_HOVER_STYLE_ID)?.remove();
+    return { ...base, hoverCleared: true };
+  }
+  return { ...base, success: false, reason: 'op_unsupported' };
+}
+
 function runTerminalScrollProbe(probe = {}) {
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
   if (typeof document === 'undefined') {
     return { success: false, reason: 'terminal_probe_no_document', ...probe };
+  }
+  if (probe.op === 'dispatchClick' || probe.op === 'dispatchHover' || probe.op === 'clearHover') {
+    if (!probe.selector || typeof probe.selector !== 'string') {
+      return { success: false, reason: 'selector_required', op: probe.op };
+    }
+    return runUiInteractionProbe(probe);
   }
   const container = document.getElementById(probe.containerId);
   if (!container) {
@@ -914,8 +995,19 @@ function runTerminalScrollProbe(probe = {}) {
       cancelable: true,
     });
     result.deltaY = Number(probe.deltaY);
-    result.dispatchTarget = 'container';
-    result.dispatchAccepted = container.dispatchEvent(event);
+    // Dispatch at the DEEP xterm element, like a real cursor wheel: a real
+    // wheel targets the element under the pointer and bubbles UP through
+    // xterm's viewport listener. Dispatching on the container started the
+    // event ABOVE those listeners (bubbling never descends), so the old probe
+    // could never move xterm regardless of live wheel health (S426 audit).
+    const deepTarget = container.querySelector('.xterm-screen')
+      || container.querySelector('.xterm-viewport')
+      || container.querySelector('.xterm')
+      || container;
+    result.dispatchTarget = deepTarget === container
+      ? 'container'
+      : (deepTarget.className?.baseVal || deepTarget.className || 'xterm-child');
+    result.dispatchAccepted = deepTarget.dispatchEvent(event);
     return wait(probe.waitMs).then(() => {
       result.after = snapshotTerminalScrollState(terminal);
       result.moved = result.after.viewportY !== before.viewportY;
