@@ -56,6 +56,12 @@ describe('Terminal Recovery Controller', () => {
       write: jest.fn().mockResolvedValue(undefined),
       kill: jest.fn().mockResolvedValue(undefined),
       create: jest.fn().mockResolvedValue(undefined),
+      beginPaneRestart: jest.fn().mockResolvedValue({
+        ok: true,
+        granted: true,
+        claim: { claimId: 'restart-claim-1', paneId: '1' },
+      }),
+      completePaneRestart: jest.fn().mockResolvedValue({ ok: true, completed: true }),
       sendTrustedEnter: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -354,8 +360,23 @@ describe('Terminal Recovery Controller', () => {
 
       expect(result).toBe(true);
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Restarting...');
-      expect(mockPty.kill).toHaveBeenCalledWith('1');
-      expect(mockOptions.spawnAgent).toHaveBeenCalledWith('1', null);
+      expect(mockPty.kill).toHaveBeenCalledWith('1', expect.objectContaining({
+        restartClaimId: 'restart-claim-1',
+        requireRestartClaim: true,
+      }));
+      expect(mockPty.create).toHaveBeenCalledWith('1', undefined, expect.objectContaining({
+        restartClaimId: 'restart-claim-1',
+        requireRestartClaim: true,
+      }));
+      expect(mockOptions.spawnAgent).toHaveBeenCalledWith('1', null, expect.objectContaining({
+        restartClaimId: 'restart-claim-1',
+        requireRestartClaim: true,
+      }));
+      expect(mockPty.completePaneRestart).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '1',
+        claimId: 'restart-claim-1',
+        status: 'completed',
+      }));
     });
 
     test('passes model parameter to spawnAgent when provided', async () => {
@@ -364,7 +385,9 @@ describe('Terminal Recovery Controller', () => {
       const result = await promise;
 
       expect(result).toBe(true);
-      expect(mockOptions.spawnAgent).toHaveBeenCalledWith('1', 'gemini');
+      expect(mockOptions.spawnAgent).toHaveBeenCalledWith('1', 'gemini', expect.objectContaining({
+        restartClaimId: 'restart-claim-1',
+      }));
       expect(mockOptions.syncTerminalInputBridge).toHaveBeenCalledWith('1', { modelHint: 'gemini' });
     });
 
@@ -375,8 +398,84 @@ describe('Terminal Recovery Controller', () => {
       await jest.advanceTimersByTimeAsync(300);
       const result = await promise;
 
-      expect(result).toBe(true); // Still tries to spawn
+      expect(result).toBe(false);
+      expect(mockPty.create).not.toHaveBeenCalled();
+      expect(mockOptions.spawnAgent).not.toHaveBeenCalled();
+      expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Restart failed');
       expect(log.error).toHaveBeenCalledWith('Terminal', expect.stringContaining('Failed to kill'), expect.any(Error));
+      expect(mockPty.completePaneRestart).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '1',
+        claimId: 'restart-claim-1',
+        status: 'failed',
+        reason: 'pty_kill_failed',
+      }));
+    });
+
+    test('stops when main-side restart lifecycle refuses a duplicate claim consumer', async () => {
+      mockPty.kill.mockResolvedValueOnce({
+        success: false,
+        error: 'restart_claim_denied',
+        reason: 'restart_operation_already_consumed',
+      });
+
+      const result = await controller.restartPane('1', null, {
+        restartClaim: { claimId: 'restart-claim-duplicate', paneId: '1' },
+      });
+
+      expect(result).toBe(false);
+      expect(mockPty.create).not.toHaveBeenCalled();
+      expect(mockOptions.spawnAgent).not.toHaveBeenCalled();
+      expect(mockPty.completePaneRestart).not.toHaveBeenCalled();
+    });
+
+    test('coalesces when a restart claim is already active', async () => {
+      mockPty.beginPaneRestart.mockResolvedValueOnce({
+        ok: true,
+        granted: false,
+        coalesced: true,
+        reason: 'restart_in_progress',
+      });
+
+      const result = await controller.restartPane('1');
+
+      expect(result).toBe(true);
+      expect(mockPty.kill).not.toHaveBeenCalled();
+      expect(mockPty.create).not.toHaveBeenCalled();
+      expect(mockOptions.spawnAgent).not.toHaveBeenCalled();
+      expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Restart queued');
+    });
+
+    test('two racing restart consumers produce one spawn and one startup claim window', async () => {
+      let restartHeldResolve;
+      const restartHeld = new Promise((resolve) => { restartHeldResolve = resolve; });
+      mockPty.beginPaneRestart
+        .mockResolvedValueOnce({
+          ok: true,
+          granted: true,
+          claim: { claimId: 'restart-claim-race', paneId: '1' },
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          granted: false,
+          coalesced: true,
+          reason: 'restart_in_progress',
+        });
+      mockOptions.spawnAgent.mockImplementationOnce(async () => {
+        await restartHeld;
+        await global.window.squidrun.pty.claimStartupInjection?.({ paneId: '1', source: 'spawn' });
+      });
+      mockPty.claimStartupInjection = jest.fn().mockResolvedValue({ ok: true, claimed: true });
+
+      const first = controller.restartPane('1');
+      const second = controller.restartPane('1');
+      await jest.advanceTimersByTimeAsync(300);
+      restartHeldResolve();
+      await Promise.all([first, second]);
+
+      expect(mockOptions.spawnAgent).toHaveBeenCalledTimes(1);
+      expect(mockPty.claimStartupInjection).toHaveBeenCalledTimes(1);
+      expect(mockPty.kill).toHaveBeenCalledTimes(1);
+      expect(mockPty.create).toHaveBeenCalledTimes(1);
     });
 
     test('recreates PTY for Codex panes', async () => {
@@ -388,7 +487,10 @@ describe('Terminal Recovery Controller', () => {
       const result = await promise;
 
       expect(result).toBe(true);
-      expect(mockPty.create).toHaveBeenCalledWith('2');
+      expect(mockPty.create).toHaveBeenCalledWith('2', undefined, expect.objectContaining({
+        restartClaimId: 'restart-claim-1',
+        requireRestartClaim: true,
+      }));
       expect(log.info).toHaveBeenCalledWith('Terminal', 'Recreated PTY for pane 2');
     });
 
@@ -435,7 +537,10 @@ describe('Terminal Recovery Controller', () => {
       await promise;
 
       expect(log.info).toHaveBeenCalledWith('Unstick', 'Pane 1: restart');
-      expect(mockPty.kill).toHaveBeenCalledWith('1');
+      expect(mockPty.kill).toHaveBeenCalledWith('1', expect.objectContaining({
+        restartClaimId: 'restart-claim-1',
+        requireRestartClaim: true,
+      }));
     });
 
     test('resets escalation state after timeout', async () => {

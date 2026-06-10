@@ -40,7 +40,6 @@ jest.mock('../modules/terminal', () => ({
   restartPane: jest.fn(),
   nudgePane: jest.fn(),
   sendUnstick: jest.fn(),
-  freshStartAll: jest.fn(),
   registerCodexPane: jest.fn(),
   unregisterCodexPane: jest.fn(),
   toggleInputLock: jest.fn(),

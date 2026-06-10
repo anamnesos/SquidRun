@@ -9,6 +9,7 @@ class AppContext {
     this.windows = new Map();
     this.daemonClient = null;
     this.recoveryManager = null;
+    this.paneRestartArbiter = null;
     this.pluginManager = null;
     this.backupManager = null;
     this.externalNotifier = null;
@@ -88,6 +89,10 @@ class AppContext {
 
   setRecoveryManager(manager) {
     this.recoveryManager = manager;
+  }
+
+  setPaneRestartArbiter(arbiter) {
+    this.paneRestartArbiter = arbiter;
   }
 
   setPluginManager(manager) {

@@ -110,7 +110,6 @@ jest.mock('../modules/terminal', () => ({
   restartPane: jest.fn(),
   aggressiveNudge: jest.fn(),
   nudgePane: jest.fn(),
-  freshStartAll: jest.fn(),
 }));
 
 // Mock tabs module

@@ -155,6 +155,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/main/live-task-audit-sidecar.js: Builds the Task Audit sidecar snapshot from typed work items, current-lane reconciliation, and the canonical `.squidrun/runtime/live-task-audit-sidecar/task-audit-items.json` state file; the legacy `future-items.json` file is not read and should not be recreated.
 - ui/modules/main/missing-arm-watchdog.js: Stage-based missing-arm watchdog wrapper around the durable registry state; advances expected -> nudge -> escalate -> satisfied with injectable sender and canonical Architect escalation sink while tests can exercise stages without real timers.
 - ui/modules/main/pane-control-service.js: Exports executePaneControlAction, detectPaneModel, normalizeAction.
+- ui/modules/main/pane-restart-arbiter.js: Main-process pane restart arbiter that grants one active restart claim per pane, routes ownership by visible window, coalesces duplicate restart requests, and authorizes the destructive restart lifecycle (`pty-kill` -> `pty-create` -> `spawn-claude`) exactly once per claim.
 - ui/modules/main/telegram-poller-worker.js: Child-process Telegram inbound poller owner; it is the only runtime `getUpdates` loop and sends inbound messages back to `SquidRunApp` through the inbound-poller service IPC boundary.
 - ui/modules/main/pane-host-window-manager.js: Creates/manages hidden pane-host BrowserWindows and routes bridge messages into pane-host renderers.
 - ui/modules/main/settings-manager.js: Exports SettingsManager.
@@ -362,6 +363,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - Trigger/watch path: `ui/modules/watcher.js` watches trigger/message/workspace paths and calls `ui/modules/triggers.js` for routing and delivery tracking.
 - PTY injection path: `ui/modules/main/squidrun-app.js` routes to hidden pane host first (`pane-host-inject`), with visible renderer fallback.
 - Hidden pane host architecture: one hidden BrowserWindow per pane, with explicit ready/ack/outcome signaling to main process for delivery verification.
+- Pane restart ownership: destructive pane restart lifecycle is main-side-arbitrated. Core panes are owned by the main window; Squid Room app arms are owned by the Squid Room window. The renderer may process only the restart claim sent by main, and main authorizes `pty-kill`, `pty-create`, and `spawn-claude` once per claim. The deleted `restart-all-panes`/`freshStartAll` chain had no live invoker; any future restart-all/fresh-start feature must be built through the arbiter and must include a cold-start override that clears or skips pane-session ids so "fresh" does not resume pinned UUID sessions.
 
 ## 5) CROSS-DEVICE RELAY
 - Topology: `Architect (Device A) <-> WebSocket Relay <-> Architect (Device B)`.

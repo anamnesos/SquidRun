@@ -1913,10 +1913,57 @@ function scheduleStartupIdentityAttempt(paneId, state, reason, delayMs) {
   const safeDelayMs = Math.max(0, Number(delayMs) || 0);
   state.sendTimeoutId = setTimeout(() => {
     runStartupIdentityAttempt(paneId, state, reason).catch((err) => {
-      log.error('spawnAgent', `Startup identity attempt crashed for pane ${paneId}:`, err);
+      log.error('spawnAgent', `Startup identity attempt crashed for pane ${paneId}: ${formatSerializedError(err)}`);
       startupInjectionState.delete(String(paneId));
     });
   }, safeDelayMs);
+}
+
+function serializeErrorForLog(err) {
+  if (!err || typeof err !== 'object') {
+    return { message: String(err || 'unknown_error') };
+  }
+  return {
+    name: err.name || 'Error',
+    message: err.message || String(err),
+    stack: err.stack || null,
+    code: err.code || null,
+    reason: err.reason || null,
+    status: err.status || null,
+    applied: err.applied === true,
+  };
+}
+
+function formatSerializedError(err) {
+  try {
+    return JSON.stringify(serializeErrorForLog(err));
+  } catch (_) {
+    return String(err?.message || err || 'unknown_error');
+  }
+}
+
+function buildStartupIdentitySendError(sendResult = {}) {
+  const error = new Error(sendResult?.reason || 'startup_identity_send_failed');
+  error.reason = sendResult?.reason || null;
+  error.status = sendResult?.status || null;
+  error.signal = sendResult?.signal || null;
+  error.applied = sendResult?.applied === true;
+  error.pendingInputObserved = sendResult?.pendingInputObserved === true;
+  return error;
+}
+
+function reportStartupIdentityTerminalFailure(paneId, err, reason = 'terminal_failure') {
+  const id = String(paneId);
+  const terminal = terminals.get(id);
+  const detail = err?.reason || err?.message || reason;
+  if (terminal && typeof terminal.write === 'function') {
+    queueTerminalWrite(
+      id,
+      terminal,
+      `\r\n[Startup identity injection failed: ${detail}. Restart pane to retry.]\r\n`
+    );
+  }
+  updatePaneStatus(id, 'Startup identity failed');
 }
 
 async function sendStartupIdentityViaInjection(paneId, identityMsg) {
@@ -2209,8 +2256,12 @@ async function runStartupIdentityAttempt(paneId, state, reason) {
     let deliveryMethod = 'send-to-pane';
     const sendResult = await sendStartupIdentityViaInjection(id, identityMsg);
     if (!sendResult?.success) {
-      if (!state.isGemini) {
-        throw new Error(sendResult?.reason || 'startup_identity_send_failed');
+      const sendError = buildStartupIdentitySendError(sendResult);
+      if (sendResult?.applied === true) {
+        state.identityPayloadApplied = true;
+      }
+      if (!state.isGemini || sendResult?.applied === true) {
+        throw sendError;
       }
       // Gemini fallback: send direct PTY writes if injection queue rejects startup delivery.
       await window.squidrun.pty.write(id, identityMsg);
@@ -2229,14 +2280,26 @@ async function runStartupIdentityAttempt(paneId, state, reason) {
       `Identity injected for ${PANE_ROLES[id] || 'Pane ' + id} (pane ${id}) [ready:${reason}] [attempt:${attempt}/${maxAttempts}] [${deliveryMethod}]`
     );
   } catch (err) {
-    log.error('spawnAgent', `Identity injection failed for pane ${id} (attempt ${attempt}/${maxAttempts}):`, err);
-    if (attempt < maxAttempts) {
+    log.error(
+      'spawnAgent',
+      `Identity injection failed for pane ${id} (attempt ${attempt}/${maxAttempts}): ${formatSerializedError(err)}`
+    );
+    const payloadAlreadyApplied = err?.applied === true || state.identityPayloadApplied === true;
+    if (attempt < maxAttempts && !payloadAlreadyApplied) {
       scheduleStartupIdentityAttempt(id, state, reason, retryDelayMs);
     } else {
       state.completed = true;
       startupInjectionState.delete(id);
-      await releaseStartupInjectionArm(id, state, 'exhausted_retries');
-      log.error('spawnAgent', `Identity injection exhausted retries for pane ${id} after ${maxAttempts} attempts`);
+      const releaseReason = attempt >= maxAttempts
+        ? 'exhausted_retries'
+        : 'startup_identity_payload_already_applied';
+      await releaseStartupInjectionArm(id, state, releaseReason);
+      reportStartupIdentityTerminalFailure(id, err, releaseReason);
+      if (attempt >= maxAttempts) {
+        log.error('spawnAgent', `Identity injection exhausted retries for pane ${id} after ${maxAttempts} attempts`);
+      } else {
+        log.error('spawnAgent', `Identity injection stopped for pane ${id}: startup payload already applied`);
+      }
     }
     return;
   }
@@ -2354,6 +2417,7 @@ async function armStartupInjection(paneId, options = {}) {
     source: options.source || 'unknown',
     attemptCount: 0,
     identityMsg: null,
+    identityPayloadApplied: false,
     timeoutId: null,
     sendTimeoutId: null,
     startupClaimId: claimResult?.claim?.claimId || null,
@@ -3529,7 +3593,7 @@ function broadcast(message, options = {}) {
 
 // Spawn agent CLI in a pane
 // model param: optional override for model type (used by model switch to bypass stale cache)
-async function spawnAgent(paneId, model = null) {
+async function spawnAgent(paneId, model = null, options = {}) {
   // Defense in depth: Early exit if no terminal exists for this pane
   // This catches race conditions where terminal creation is still in progress but
   // user somehow triggers spawn before UI fully updates
@@ -3561,7 +3625,10 @@ async function spawnAgent(paneId, model = null) {
       result = { success: true, command: runtimeOverride.command, runtimeOverride: true };
     } else {
       try {
-        result = await window.squidrun.claude.spawn(paneId);
+        const hasSpawnOptions = options && typeof options === 'object' && Object.keys(options).length > 0;
+        result = hasSpawnOptions
+          ? await window.squidrun.claude.spawn(paneId, undefined, options)
+          : await window.squidrun.claude.spawn(paneId);
       } catch (err) {
         log.error(`spawnAgent ${paneId}`, 'Spawn failed:', err);
         updatePaneStatus(paneId, 'Spawn failed');
@@ -3663,61 +3730,6 @@ async function killAllTerminals() {
     }
   }
   updateConnectionStatus('All terminals killed');
-}
-
-// Fresh start - kill all and spawn new sessions without context
-async function freshStartAll() {
-  const confirmed = confirm(
-    'Fresh Start will:\n\n' +
-    '� Kill all 6 terminals\n' +
-    '� Start new agent sessions with NO previous context\n\n' +
-    'All current conversations will be lost.\n\n' +
-    'Continue?'
-  );
-
-  if (!confirmed) {
-    updateConnectionStatus('Fresh start cancelled');
-    return;
-  }
-
-  updateConnectionStatus('Fresh start: killing all terminals...');
-
-  // Kill all terminals and reset identity tracking
-  for (const paneId of getActivePaneIds()) {
-    try {
-      await window.squidrun.pty.kill(paneId);
-    } catch (err) {
-      log.error(`Terminal ${paneId}`, 'Failed to kill pane', err);
-    } finally {
-      // Reset codex identity tracking so new session gets identity header
-      resetCodexIdentity(paneId);
-      teardownTerminalPane(paneId);
-    }
-  }
-
-  // Wait for terminals to close
-  await new Promise(resolve => setTimeout(resolve, 500));
-
-  updateConnectionStatus('Fresh start: recreating terminals...');
-
-  // Recreate terminal instances and PTYs
-  for (const paneId of getActivePaneIds()) {
-    try {
-      await initTerminal(paneId);
-    } catch (err) {
-      log.error(`Terminal ${paneId}`, 'Failed to create terminal', err);
-    }
-  }
-
-  // Wait for terminals to be ready
-  await new Promise(resolve => setTimeout(resolve, 300));
-
-  // Spawn agents with fresh sessions
-  for (const paneId of getActivePaneIds()) {
-    await spawnAgent(paneId);
-  }
-
-  updateConnectionStatus('Fresh start complete - new sessions started');
 }
 
 // ResizeObserver-based resize — fires when .pane-terminal elements actually change size
@@ -4260,7 +4272,6 @@ module.exports = {
   sendUnstick,         // ESC keyboard event to unstick agents
   aggressiveNudge,     // ESC + Enter for more forceful unstick
   aggressiveNudgeAll,  // Aggressive nudge all panes with stagger
-  freshStartAll,
   handleResize,
   getTerminal,
   getFocusedPane,

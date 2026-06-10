@@ -33,6 +33,8 @@ const PANE_SESSION_IDS_FILE_PATH = resolveCoordPath(path.join('runtime', 'pane-s
 const CLAUDE_RESUME_FLAG_PATTERN = /(?:^|\s)(?:--session-id|--resume)(?:=|\s+)\S+/i;
 const STARTUP_INJECTION_CLAIM_CHANNEL = 'startup-injection-claim';
 const STARTUP_INJECTION_RELEASE_CHANNEL = 'startup-injection-release';
+const PANE_RESTART_BEGIN_CHANNEL = 'pane-restart-begin';
+const PANE_RESTART_COMPLETE_CHANNEL = 'pane-restart-complete';
 const INPUT_EDIT_ACTIONS = Object.freeze({
   undo: 'undo',
   cut: 'cut',
@@ -454,6 +456,7 @@ function registerPtyHandlers(ctx, deps = {}) {
   const { broadcastClaudeState, recordSessionStart, recordSessionLifecycle, updateIntentState } = deps;
   const getRecoveryManager = () => deps?.recoveryManager || ctx.recoveryManager;
   const getFirmwareManager = () => deps?.firmwareManager || ctx.firmwareManager;
+  const getPaneRestartArbiter = () => deps?.paneRestartArbiter || ctx.paneRestartArbiter;
   const getDaemonClientForPane = (paneId) => {
     if (typeof deps?.getDaemonClientForPane === 'function') {
       const scopedClient = deps.getDaemonClientForPane(paneId);
@@ -489,6 +492,58 @@ function registerPtyHandlers(ctx, deps = {}) {
   )
     ? providedStartupInjectionClaims
     : createStartupInjectionClaimStore();
+
+  function normalizeRestartLifecycleOptions(options) {
+    return options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+  }
+
+  function validateRestartLifecycleClaim(event, paneId, options, stage) {
+    const lifecycleOptions = normalizeRestartLifecycleOptions(options);
+    const restartClaimId = toNonEmptyString(String(lifecycleOptions.restartClaimId || ''));
+    const requireRestartClaim = lifecycleOptions.requireRestartClaim === true || Boolean(restartClaimId);
+    if (!requireRestartClaim) {
+      return { ok: true, restart: false, options: lifecycleOptions };
+    }
+    if (!restartClaimId) {
+      return { ok: false, restart: true, reason: 'missing_restart_claim', paneId, stage, options: lifecycleOptions };
+    }
+    const arbiter = getPaneRestartArbiter();
+    if (!arbiter || (typeof arbiter.authorizeOperation !== 'function' && typeof arbiter.validate !== 'function')) {
+      return { ok: false, restart: true, reason: 'pane_restart_arbiter_unavailable', paneId, stage, options: lifecycleOptions };
+    }
+    const check = typeof arbiter.authorizeOperation === 'function'
+      ? arbiter.authorizeOperation.bind(arbiter)
+      : arbiter.validate.bind(arbiter);
+    const result = check({
+      paneId,
+      claimId: restartClaimId,
+      webContents: event?.sender || null,
+      stage,
+      operation: stage,
+    });
+    if (!result?.ok) {
+      return {
+        ok: false,
+        restart: true,
+        reason: result?.reason || 'restart_claim_denied',
+        paneId,
+        stage,
+        options: lifecycleOptions,
+      };
+    }
+    return { ok: true, restart: true, claim: result.claim, options: lifecycleOptions };
+  }
+
+  function restartClaimDeniedResult(validation, stage) {
+    const reason = validation?.reason || 'restart_claim_denied';
+    log.warn('PTY', `${stage}: refused restart lifecycle operation for pane ${validation?.paneId || 'unknown'} (${reason})`);
+    return {
+      success: false,
+      error: 'restart_claim_denied',
+      reason,
+      stage,
+    };
+  }
 
   function resolveFirmwarePathForPane(paneId) {
     if (!isFirmwareEnabled()) return null;
@@ -537,6 +592,54 @@ function registerPtyHandlers(ctx, deps = {}) {
     return result;
   });
 
+  ipcMain.handle(PANE_RESTART_BEGIN_CHANNEL, (event, payload = {}) => {
+    const request = payload && typeof payload === 'object' ? payload : { paneId: payload };
+    const arbiter = getPaneRestartArbiter();
+    if (!arbiter || typeof arbiter.begin !== 'function') {
+      return { ok: false, granted: false, reason: 'pane_restart_arbiter_unavailable' };
+    }
+    const result = arbiter.begin({
+      paneId: request.paneId,
+      source: request.source || 'renderer-restart',
+      requestId: request.requestId || null,
+      webContents: event?.sender || null,
+    });
+    if (result.granted) {
+      log.info('PTY', `Pane restart claim granted for pane ${result.paneId} (${result.claim?.source || 'unknown'})`);
+    } else {
+      log.info(
+        'PTY',
+        `Pane restart claim denied/coalesced for pane ${String(request.paneId || '').trim() || 'unknown'}: ${result.reason || 'not_granted'}`
+      );
+    }
+    return result;
+  });
+
+  ipcMain.handle(PANE_RESTART_COMPLETE_CHANNEL, (event, payload = {}) => {
+    const request = payload && typeof payload === 'object' ? payload : {};
+    const arbiter = getPaneRestartArbiter();
+    if (!arbiter || typeof arbiter.complete !== 'function') {
+      return { ok: false, completed: false, reason: 'pane_restart_arbiter_unavailable' };
+    }
+    const result = arbiter.complete({
+      paneId: request.paneId,
+      claimId: request.claimId,
+      status: request.status || null,
+      reason: request.reason || null,
+      error: request.error || null,
+      webContents: event?.sender || null,
+    });
+    if (result.completed) {
+      log.info('PTY', `Pane restart claim completed for pane ${result.paneId} (${request.status || 'unknown'})`);
+    } else {
+      log.info(
+        'PTY',
+        `Pane restart claim completion skipped for pane ${String(request.paneId || '').trim() || 'unknown'}: ${result.reason || 'not_completed'}`
+      );
+    }
+    return result;
+  });
+
   ipcMain.handle('pty-create', async (event, paneId, workingDir, options = {}) => {
     const daemonClient = getDaemonClientForPane(paneId);
     if (!daemonClient || !daemonClient.connected) {
@@ -545,6 +648,10 @@ function registerPtyHandlers(ctx, deps = {}) {
     }
 
     const ptyOptions = options && typeof options === 'object' ? options : {};
+    const restartClaim = validateRestartLifecycleClaim(event, paneId, ptyOptions, 'pty-create');
+    if (!restartClaim.ok) {
+      return restartClaimDeniedResult(restartClaim, 'pty-create');
+    }
     const preferWorkingDir = ptyOptions.preferWorkingDir === true || ptyOptions.spawnCommandOnCreate === true;
     const paneRoot = resolvePaneCwd(paneId, {
       paneProjects: getPaneProjects(),
@@ -851,16 +958,25 @@ function registerPtyHandlers(ctx, deps = {}) {
     }
   });
 
-  ipcMain.handle('pty-kill', (event, paneId) => {
+  ipcMain.handle('pty-kill', (event, paneId, options = {}) => {
+    const killOptions = normalizeRestartLifecycleOptions(options);
+    const restartClaim = validateRestartLifecycleClaim(event, paneId, killOptions, 'pty-kill');
+    if (!restartClaim.ok) {
+      return restartClaimDeniedResult(restartClaim, 'pty-kill');
+    }
     startupInjectionClaims.clear(paneId);
     const daemonClient = getDaemonClientForPane(paneId);
     if (daemonClient && daemonClient.connected) {
       const recoveryManager = getRecoveryManager();
       if (paneId && recoveryManager?.markExpectedExit) {
-        recoveryManager.markExpectedExit(paneId, 'manual-kill');
+        recoveryManager.markExpectedExit(
+          paneId,
+          restartClaim.restart ? (killOptions.expectedExitReason || 'restart') : 'manual-kill'
+        );
       }
       daemonClient.kill(paneId);
     }
+    return { success: true, paneId, restarted: restartClaim.restart === true };
   });
 
   ipcMain.handle('intent-update', async (event, payload = {}) => {
@@ -870,7 +986,12 @@ function registerPtyHandlers(ctx, deps = {}) {
     return updateIntentState(payload);
   });
 
-  ipcMain.handle('spawn-claude', async (event, paneId, _workingDir) => {
+  ipcMain.handle('spawn-claude', async (event, paneId, _workingDir, options = {}) => {
+    const spawnOptions = normalizeRestartLifecycleOptions(options);
+    const restartClaim = validateRestartLifecycleClaim(event, paneId, spawnOptions, 'spawn-claude');
+    if (!restartClaim.ok) {
+      return restartClaimDeniedResult(restartClaim, 'spawn-claude');
+    }
     // Dry-run mode - simulate without spawning real agents
     if (ctx.currentSettings.dryRun) {
       ctx.agentRunning.set(paneId, 'running');
@@ -998,6 +1119,8 @@ function unregisterPtyHandlers(ctx) {
     ipcMain.removeHandler('intent-update');
     ipcMain.removeHandler(STARTUP_INJECTION_CLAIM_CHANNEL);
     ipcMain.removeHandler(STARTUP_INJECTION_RELEASE_CHANNEL);
+    ipcMain.removeHandler(PANE_RESTART_BEGIN_CHANNEL);
+    ipcMain.removeHandler(PANE_RESTART_COMPLETE_CHANNEL);
     ipcMain.removeHandler('spawn-claude');
     ipcMain.removeHandler('get-claude-state');
     ipcMain.removeHandler('get-daemon-terminals');

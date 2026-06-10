@@ -725,6 +725,49 @@ describe('SquidRunApp', () => {
         'trustquote-invoice',
       ]));
     });
+
+    it('routes restart ownership to main for core panes and Squid Room for arm panes', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const mainWindow = createReadyTrustQuoteWindow({
+        getTitle: jest.fn().mockReturnValue('SquidRun'),
+      });
+      const squidRoomWindow = createReadyTrustQuoteWindow({
+        getTitle: jest.fn().mockReturnValue('SquidRun - Squid Room'),
+      });
+      mockAppContext.setMainWindow(mainWindow);
+      mockAppContext.setWindow('squid-room', squidRoomWindow);
+
+      const coreRestart = app.requestPaneRestart('2', { source: 'test-core' });
+      expect(coreRestart).toEqual(expect.objectContaining({
+        ok: true,
+        granted: true,
+        delivered: true,
+        ownerWindowKey: 'main',
+      }));
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith('restart-pane', expect.objectContaining({
+        paneId: '2',
+        source: 'test-core',
+        restartClaimId: expect.any(String),
+      }));
+      expect(squidRoomWindow.webContents.send).not.toHaveBeenCalled();
+
+      mainWindow.webContents.send.mockClear();
+      squidRoomWindow.webContents.send.mockClear();
+
+      const armRestart = app.requestPaneRestart('trustquote-app', { source: 'test-arm' });
+      expect(armRestart).toEqual(expect.objectContaining({
+        ok: true,
+        granted: true,
+        delivered: true,
+        ownerWindowKey: 'squid-room',
+      }));
+      expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('restart-pane', expect.objectContaining({
+        paneId: 'trustquote-app',
+        source: 'test-arm',
+        restartClaimId: expect.any(String),
+      }));
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+    });
   });
 
   describe('TrustQuote workspace routing', () => {

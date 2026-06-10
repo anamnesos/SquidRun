@@ -1,7 +1,7 @@
 /**
  * Auto-Nudge and Health Monitoring IPC Handlers
  * Channels: nudge-agent, nudge-all-stuck, nudge-pane, restart-pane,
- *           restart-all-panes, get-agent-health
+ *           get-agent-health
  */
 
 const log = require('../logger');
@@ -10,6 +10,11 @@ const { PANE_IDS } = require('../../config');
 function registerAutoNudgeHandlers(ctx, deps) {
   const { ipcMain } = ctx;
   const getRecoveryManager = () => deps?.recoveryManager || ctx.recoveryManager;
+  const requestPaneRestart = (paneId, info = {}) => (
+    typeof deps?.requestPaneRestart === 'function'
+      ? deps.requestPaneRestart(paneId, info)
+      : null
+  );
 
   // Task #29: Get agent health data for Health tab
   ipcMain.handle('get-agent-health', () => {
@@ -88,40 +93,32 @@ function registerAutoNudgeHandlers(ctx, deps) {
       return { success: false, error: 'paneId required' };
     }
 
+    const restartResult = requestPaneRestart(paneId, {
+      source: 'auto-nudge-handlers',
+      reason: 'manual-restart',
+    });
+    if (restartResult) {
+      log.info('Health', `Restart requested for pane ${paneId} (${restartResult.reason || 'granted'})`);
+      return {
+        success: restartResult.ok !== false,
+        paneId,
+        coalesced: restartResult.coalesced === true,
+        reason: restartResult.reason || null,
+      };
+    }
+
     const recoveryManager = getRecoveryManager();
     if (recoveryManager?.markExpectedExit) {
       recoveryManager.markExpectedExit(paneId, 'manual-restart');
     }
 
-    // Send to renderer to use restartPane (handles kill + respawn)
+    // Fallback for older tests/contexts that do not inject the main restart arbiter.
     if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
       ctx.mainWindow.webContents.send('restart-pane', { paneId });
     }
 
     log.info('Health', `Restart requested for pane ${paneId}`);
     return { success: true, paneId };
-  });
-
-  // Task #29: Restart all panes
-  ipcMain.handle('restart-all-panes', () => {
-    if (!ctx.daemonClient || !ctx.daemonClient.connected) {
-      return { success: false, error: 'Daemon not connected' };
-    }
-
-    const recoveryManager = getRecoveryManager();
-    if (recoveryManager?.markExpectedExit) {
-      for (const paneId of PANE_IDS) {
-        recoveryManager.markExpectedExit(String(paneId), 'manual-restart-all');
-      }
-    }
-
-    // Send to renderer to trigger restart all
-    if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
-      ctx.mainWindow.webContents.send('restart-all-panes', {});
-    }
-
-    log.info('Health', 'Restart all panes requested');
-    return { success: true };
   });
 
   ipcMain.handle('nudge-agent', (event, paneId, message) => {
@@ -179,7 +176,6 @@ function unregisterAutoNudgeHandlers(ctx) {
     ipcMain.removeHandler('get-agent-health');
     ipcMain.removeHandler('nudge-pane');
     ipcMain.removeHandler('restart-pane');
-    ipcMain.removeHandler('restart-all-panes');
     ipcMain.removeHandler('nudge-agent');
     ipcMain.removeHandler('nudge-all-stuck');
 }

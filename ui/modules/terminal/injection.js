@@ -1150,6 +1150,7 @@ function createInjectionController(options = {}) {
       });
     }
 
+    let payloadApplied = false;
     try {
       let appliedInjectionMethod = capabilities.appliedMethod;
       let usedClipboardPaste = false;
@@ -1275,6 +1276,7 @@ function createInjectionController(options = {}) {
         correlationId: corrId,
         source: EVENT_SOURCE,
       });
+      payloadApplied = true;
     } catch (err) {
       if (capabilities.displayName === 'Gemini') {
         log.error(`doSendToPane ${id}`, 'Gemini PTY write failed:', err);
@@ -1340,7 +1342,7 @@ function createInjectionController(options = {}) {
           source: EVENT_SOURCE,
         });
         markPotentiallyStuck(id);
-        finishWithClear({ success: false, reason: 'enter_failed' });
+        finishWithClear({ success: false, reason: 'enter_failed', applied: payloadApplied });
         return;
       }
 
@@ -1437,6 +1439,7 @@ function createInjectionController(options = {}) {
           ? {
             success: false,
             verified: false,
+            applied: payloadApplied,
             signal: finalVerifyResult.signal,
             status: 'submit_not_accepted',
             reason: finalVerifyResult.signal || 'submit_not_accepted',
@@ -1573,7 +1576,7 @@ function createInjectionController(options = {}) {
             source: EVENT_SOURCE,
           });
           markPotentiallyStuck(id);
-          finishWithClear({ success: false, reason: 'enter_failed' });
+          finishWithClear({ success: false, reason: 'enter_failed', applied: payloadApplied });
           return;
         }
 
@@ -1643,6 +1646,7 @@ function createInjectionController(options = {}) {
           finishWithClear({
             success: false,
             verified: false,
+            applied: payloadApplied,
             signal: failureSignal,
             status: 'submit_not_accepted',
             reason: failureSignal,

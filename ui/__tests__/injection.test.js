@@ -1392,6 +1392,7 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({
         success: false,
         verified: false,
+        applied: true,
         signal: 'no_acceptance_signal',
         status: 'submit_not_accepted',
         reason: 'no_acceptance_signal',
@@ -1443,6 +1444,7 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({
         success: false,
         verified: false,
+        applied: true,
         signal: 'output_transition_without_prompt_disallowed',
         status: 'submit_not_accepted',
         reason: 'output_transition_without_prompt_disallowed',
@@ -1494,6 +1496,7 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({
         success: false,
         verified: false,
+        applied: true,
         signal: 'prompt_transition_without_output',
         status: 'submit_not_accepted',
         reason: 'prompt_transition_without_output',
@@ -1550,6 +1553,7 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({
         success: false,
         verified: false,
+        applied: true,
         signal: 'input_buffer_pending',
         status: 'submit_not_accepted',
         reason: 'input_buffer_pending',
@@ -1638,6 +1642,7 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({
         success: false,
         verified: false,
+        applied: true,
         signal: 'input_buffer_pending',
         status: 'submit_not_accepted',
         reason: 'input_buffer_pending',
@@ -2226,6 +2231,7 @@ describe('Terminal Injection', () => {
         expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
         expect(onComplete).toHaveBeenCalledWith({
           success: false,
+          applied: true,
           reason: 'enter_failed',
         });
       }
