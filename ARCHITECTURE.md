@@ -291,6 +291,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/scripts/hm-codebase-index.js: Deterministic codebase inventory generator/checker built from `git ls-files --cached --others --exclude-standard`.
 - ui/scripts/doc-lint.js: Lints `.squidrun/build/*.md` docs for active-item caps, required metadata fields, and stale-marker correctness.
 - ui/scripts/evidence-ledger-seed-memory.js: Seeds Evidence Ledger decision memory from context snapshot markdown/JSON with deterministic IDs.
+- ui/scripts/headless-harness-bootstrap.js: MANDATORY first require for every offscreen Electron audit/probe rig: swallows EPIPE on closed parent pipes, handles uncaughtException to a log file (NO native dialogs - S426 incident: replica crashes popped error dialogs on James's desktop), muzzles dialog.showErrorBox, marks the process via SQUIDRUN_HEADLESS_HARNESS=1.
 - ui/scripts/generate-squid-pet-atlas.js: Parts-based generator for the Squid Room pet sprite atlases (`ui/assets/squid-room-pets/*.png`); run a copy under Electron from outside `ui/` (single-instance lock) with `SQUID_PET_ATLAS_OUT` pointing back at the assets dir.
 - ui/scripts/hm-arm-state.js: Explicit read-only CLI for the arm-state projection read model; prints desired/ready/missing, watchdog, and apply-queue state only when invoked and does not wire into TrustQuote room open/readiness behavior.
 - ui/scripts/hm-bg.js: Background Builder control CLI; uses WebSocket for live PTY agents and the durable supervisor queue CLI for queued work.

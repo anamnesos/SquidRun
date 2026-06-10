@@ -32,6 +32,9 @@
  *                (skip with SQUID_PET_ATLAS_DEGRAIN=0).
  */
 
+const harness = require('./headless-harness-bootstrap');
+harness.init({ name: 'advance-squid-pet-atlas' });
+
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');
