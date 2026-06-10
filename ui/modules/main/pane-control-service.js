@@ -18,6 +18,7 @@ function normalizeAction(action) {
   if (normalized === 'interrupt-pane') return 'interrupt';
   if (normalized === 'restart-pane') return 'restart';
   if (normalized === 'nudge-pane' || normalized === 'nudge-agent') return 'nudge';
+  if (normalized === 'switch-pane-model' || normalized === 'model-switch') return 'switch-model';
   return normalized;
 }
 
@@ -189,6 +190,30 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
       action: normalizedAction,
       method: 'nudge-pane',
     };
+  }
+
+  if (normalizedAction === 'switch-model') {
+    const model = asNonEmptyString(String(normalizedPayload.model || '').toLowerCase());
+    if (!model) {
+      return { success: false, reason: 'missing_model', paneId, action: normalizedAction };
+    }
+    if (typeof ctx.switchPaneModel !== 'function') {
+      return { success: false, reason: 'model_switch_unavailable', paneId, action: normalizedAction };
+    }
+    // Shares the renderer dropdown's main-side flow (executePaneModelSwitch);
+    // the respawn it signals acquires a restart-arbiter lease in the renderer.
+    return Promise.resolve(ctx.switchPaneModel(paneId, model)).then((result) => {
+      const succeeded = result?.success === true;
+      return {
+        success: succeeded,
+        paneId,
+        action: normalizedAction,
+        method: 'switch-pane-model',
+        model,
+        reason: succeeded ? null : (result?.reason || result?.error || 'model_switch_failed'),
+        activeClaimId: result?.activeClaimId || null,
+      };
+    });
   }
 
   log.warn('PaneControl', `Unsupported pane-control action: ${normalizedAction}`);

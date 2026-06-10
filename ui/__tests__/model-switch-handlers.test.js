@@ -28,7 +28,8 @@ jest.mock('../config', () => require('./helpers/mock-config').mockDefaultConfig)
 const path = require('path');
 const fs = require('fs');
 const { ipcMain } = require('electron');
-const { registerModelSwitchHandlers } = require('../modules/ipc/model-switch-handlers');
+const { registerModelSwitchHandlers, executePaneModelSwitch } = require('../modules/ipc/model-switch-handlers');
+const { executePaneControlAction } = require('../modules/main/pane-control-service');
 
 describe('registerModelSwitchHandlers', () => {
   let mockCtx;
@@ -301,13 +302,112 @@ describe('registerModelSwitchHandlers', () => {
 
     it('should handle numeric paneId correctly', async () => {
       const switchPromise = switchHandler({}, { paneId: 1, model: 'claude' });
-      
+
       // Simulate exit
       mockCtx.daemonClient._killedHandler('1');
-      
+
       const result = await switchPromise;
       expect(result.success).toBe(true);
       expect(result.paneId).toBe(1);
+    });
+  });
+
+  describe('executePaneModelSwitch (shared flow / remote entry points)', () => {
+    it('is blocked while a restart lease is open, leaves the lease undisturbed, and succeeds after completion', async () => {
+      let activeClaim = { claimId: 'lease-1', paneId: '1', source: 'watchdog' };
+      const paneRestartArbiter = {
+        getActiveClaim: jest.fn(() => activeClaim),
+      };
+
+      const blocked = await executePaneModelSwitch(mockCtx, { paneId: '1', model: 'codex' }, {
+        saveSettings: mockDeps.saveSettings,
+        paneRestartArbiter,
+      });
+
+      expect(blocked).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'model_switch_blocked_restart_in_progress',
+        activeClaimId: 'lease-1',
+        paneId: '1',
+      }));
+      expect(paneRestartArbiter.getActiveClaim).toHaveBeenCalledWith('1');
+      expect(mockCtx.recoveryManager.markExpectedExit).not.toHaveBeenCalled();
+      expect(mockCtx.daemonClient.kill).not.toHaveBeenCalled();
+      expect(mockDeps.saveSettings).not.toHaveBeenCalled();
+      expect(mockCtx.mainWindow.webContents.send).not.toHaveBeenCalled();
+
+      // Lease completes (arbiter releases it) - second attempt succeeds
+      activeClaim = null;
+      const retryPromise = executePaneModelSwitch(mockCtx, { paneId: '1', model: 'codex' }, {
+        saveSettings: mockDeps.saveSettings,
+        paneRestartArbiter,
+      });
+      mockCtx.daemonClient._killedHandler('1');
+      const retry = await retryPromise;
+
+      expect(retry).toEqual(expect.objectContaining({ success: true, model: 'codex' }));
+      expect(mockCtx.daemonClient.kill).toHaveBeenCalledWith('1');
+      expect(mockDeps.saveSettings).toHaveBeenCalledWith({ paneCommands: mockCtx.currentSettings.paneCommands });
+    });
+
+    it('WS pane-control switch-model path persists settings and signals pane-model-changed exactly once', async () => {
+      const paneControlCtx = {
+        switchPaneModel: (paneId, model) => executePaneModelSwitch(mockCtx, { paneId, model }, {
+          saveSettings: mockDeps.saveSettings,
+          paneRestartArbiter: { getActiveClaim: jest.fn(() => null) },
+        }),
+      };
+
+      const resultPromise = executePaneControlAction(paneControlCtx, 'switch-model', { paneId: '1', model: 'codex' });
+      mockCtx.daemonClient._killedHandler('1');
+      const result = await resultPromise;
+
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        paneId: '1',
+        action: 'switch-model',
+        method: 'switch-pane-model',
+        model: 'codex',
+      }));
+      expect(mockCtx.currentSettings.paneCommands['1']).toBe('codex');
+      expect(mockDeps.saveSettings).toHaveBeenCalledTimes(1);
+      expect(mockDeps.saveSettings).toHaveBeenCalledWith({ paneCommands: mockCtx.currentSettings.paneCommands });
+      const modelChangedSends = mockCtx.mainWindow.webContents.send.mock.calls
+        .filter(([channel]) => channel === 'pane-model-changed');
+      expect(modelChangedSends).toEqual([
+        ['pane-model-changed', { paneId: '1', model: 'codex' }],
+      ]);
+    });
+
+    it('rejects an invalid model through the WS path without touching the pane', async () => {
+      const paneControlCtx = {
+        switchPaneModel: (paneId, model) => executePaneModelSwitch(mockCtx, { paneId, model }, {
+          saveSettings: mockDeps.saveSettings,
+          paneRestartArbiter: { getActiveClaim: jest.fn(() => null) },
+        }),
+      };
+
+      const result = await executePaneControlAction(paneControlCtx, 'switch-model', { paneId: '1', model: 'not-a-model' });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'Unknown model',
+        paneId: '1',
+      }));
+      expect(mockCtx.daemonClient.kill).not.toHaveBeenCalled();
+      expect(mockDeps.saveSettings).not.toHaveBeenCalled();
+      expect(mockCtx.mainWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
+    it('normalizes model casing from remote callers', async () => {
+      const switchPromise = executePaneModelSwitch(mockCtx, { paneId: '1', model: 'Codex' }, {
+        saveSettings: mockDeps.saveSettings,
+      });
+      mockCtx.daemonClient._killedHandler('1');
+      const result = await switchPromise;
+
+      expect(result).toEqual(expect.objectContaining({ success: true, model: 'codex' }));
+      expect(mockCtx.currentSettings.paneCommands['1']).toBe('codex');
     });
   });
 });

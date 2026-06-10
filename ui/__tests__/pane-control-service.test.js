@@ -130,4 +130,56 @@ describe('pane-control-service', () => {
     const result = executePaneControlAction(ctx, 'nudge', { paneId: '2', message: 'Check status' });
     expect(result).toEqual(expect.objectContaining({ success: false, reason: 'agent_not_running', paneId: '2' }));
   });
+
+  test('normalizeAction resolves switch-model aliases', () => {
+    expect(normalizeAction('switch-model')).toBe('switch-model');
+    expect(normalizeAction('switch-pane-model')).toBe('switch-model');
+    expect(normalizeAction('model-switch')).toBe('switch-model');
+  });
+
+  test('switch-model requires a model', () => {
+    ctx.switchPaneModel = jest.fn();
+    const result = executePaneControlAction(ctx, 'switch-model', { paneId: '2' });
+    expect(result).toEqual(expect.objectContaining({ success: false, reason: 'missing_model', paneId: '2' }));
+    expect(ctx.switchPaneModel).not.toHaveBeenCalled();
+  });
+
+  test('switch-model fails when the shared flow is not wired', () => {
+    const result = executePaneControlAction(ctx, 'switch-model', { paneId: '2', model: 'claude' });
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'model_switch_unavailable',
+      paneId: '2',
+    }));
+  });
+
+  test('switch-model delegates to the shared flow and maps success', async () => {
+    ctx.switchPaneModel = jest.fn().mockResolvedValue({ success: true, paneId: '2', model: 'claude' });
+    const result = await executePaneControlAction(ctx, 'switch-model', { paneId: '2', model: 'Claude' });
+
+    expect(ctx.switchPaneModel).toHaveBeenCalledWith('2', 'claude');
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      paneId: '2',
+      action: 'switch-model',
+      method: 'switch-pane-model',
+      model: 'claude',
+    }));
+  });
+
+  test('switch-model propagates a lease-blocked rejection with its reason', async () => {
+    ctx.switchPaneModel = jest.fn().mockResolvedValue({
+      success: false,
+      reason: 'model_switch_blocked_restart_in_progress',
+      activeClaimId: 'lease-1',
+    });
+    const result = await executePaneControlAction(ctx, 'switch-model', { paneId: '2', model: 'claude' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'model_switch_blocked_restart_in_progress',
+      activeClaimId: 'lease-1',
+      paneId: '2',
+    }));
+  });
 });
