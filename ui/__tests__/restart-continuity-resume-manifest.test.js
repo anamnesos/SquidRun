@@ -412,11 +412,37 @@ describe('restart-continuity-resume-manifest', () => {
   });
 
   test('reports stale markers, source refs, and hashes', () => {
+    // Relative dates only: a pinned calendar nowMs rots as the real clock
+    // advances, because writeQueue stamps updatedAt with write-time (correct
+    // production semantics - hm-task-queue.js writeQueue). Anchor nowMs to the
+    // real clock and write the queue fixture file DIRECTLY so its stamp stays
+    // a deterministic 61 minutes in the past.
+    const nowMs = Date.now();
+    const staleAfterMs = 30 * 60 * 1000;
+    const staleStamp = new Date(nowMs - 61 * 60 * 1000).toISOString();
+    writeJson(path.join(tempRoot, '.squidrun', 'handoffs', 'current-lane.json'), {
+      version: 1,
+      generatedAt: staleStamp,
+      sessionId: 'app-session-418',
+      source: 'comms_journal',
+      status: 'none',
+      activeLane: null,
+    });
+    writeJson(path.join(tempRoot, '.squidrun', 'runtime', 'agent-task-queue.json'), {
+      version: 1,
+      updatedAt: staleStamp,
+      agents: {
+        architect: { active: null, pending: [], history: [] },
+        builder: { active: null, pending: [], history: [] },
+        oracle: { active: null, pending: [], history: [] },
+      },
+    });
+
     const result = manifest.buildRestartContinuityResumeManifest({
       projectRoot: tempRoot,
-      nowMs: Date.parse('2026-06-09T07:05:00.000Z'),
-      staleAfterMs: 30 * 60 * 1000,
-      head: { short_sha: 'testhead4', committed_at: '2026-06-09T07:04:00.000Z', subject: 'test' },
+      nowMs,
+      staleAfterMs,
+      head: { short_sha: 'testhead4', committed_at: new Date(nowMs - 60 * 1000).toISOString(), subject: 'test' },
     });
 
     expect(result.source_refs.current_lane).toEqual(expect.objectContaining({
