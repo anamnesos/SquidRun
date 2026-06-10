@@ -6,6 +6,39 @@ const DEFAULT_PROVIDER_LIMIT = 5;
 const DEFAULT_PROVIDER_TIMEOUT_MS = 900;
 const RECALL_START = '[SQUIDRUN MEMORY RECALL]';
 const RECALL_END = '[/SQUIDRUN MEMORY RECALL]';
+// Memory recall is noise on a trivial one-liner ("what up bro") — it staples 3
+// stale session summaries onto a message that references no past work. Gate it:
+// recall fires only when the inbound message is substantive (>= this length) OR
+// contains a work-referencing token. Both numbers/patterns are tunable here.
+const MEMORY_RECALL_MIN_MESSAGE_LENGTH = 24;
+const MEMORY_RECALL_WORK_REFERENCE_PATTERN = new RegExp(
+  [
+    // trading vocabulary + common tickers James references
+    'trade|trading|position|order|stop|pnl|wallet|funding|hyperliquid|alpaca',
+    'btc|eth|sol|doge|hype|coin|price|long|short|market|chart',
+    // build / runtime / ops vocabulary
+    'squidrun|squid ?room|pane|arm|restart|commit|deploy|build|fix|bug|test|daemon',
+    'memory|recall|status|update|progress|task|spec|gate|review',
+    // products / cases / people
+    'trustquote|plumbhalo|telegram|invoice|case|eunbyul|eunbyeol|은별|hillstate|qeline',
+    // temporal / referential phrasing that points back at prior work
+    'earlier|before|yesterday|last (session|time|night|week)|previous|remember|recall',
+    "what about|where (are|is|did|were)|did you|how('?s| is| are) (the|it|things)|the one",
+  ].join('|'),
+  'i'
+);
+
+// Decide whether an inbound message plausibly references past work and should
+// receive memory recall. Substantive (long) messages always qualify; short ones
+// qualify only if they carry a work-referencing token. Trivial greetings/acks
+// ("yo", "what up bro", "thanks") fall through to false → inject nothing.
+function messageReferencesPastWork(message, options = {}) {
+  const text = String(message || '').trim();
+  if (!text) return false;
+  const minLength = clampInt(options.minLength, MEMORY_RECALL_MIN_MESSAGE_LENGTH, 1, 4000);
+  if (text.length >= minLength) return true;
+  return MEMORY_RECALL_WORK_REFERENCE_PATTERN.test(text);
+}
 const PROFILE_SCOPE_KEYS = Object.freeze([
   'profile',
   'profileName',
@@ -702,6 +735,8 @@ function prependRecallToMessage(message, recall, options = {}) {
   const text = String(message || '');
   if (!text.trim()) return text;
   if (text.includes(RECALL_START)) return text;
+  // Trivial one-liners get no recall block injected (not even an empty one).
+  if (!messageReferencesPastWork(text, options)) return text;
   const block = formatRecallForPaneMessage(recall, options);
   if (!block) return text;
   return `${block}\n\n${text}`;
@@ -712,8 +747,10 @@ module.exports = {
   DEFAULT_PROVIDER_LIMIT,
   DEFAULT_PROVIDER_TIMEOUT_MS,
   DEFAULT_RRF_K,
+  MEMORY_RECALL_MIN_MESSAGE_LENGTH,
   RECALL_END,
   RECALL_START,
+  messageReferencesPastWork,
   createCognitiveMemoryProvider,
   createDefaultMemoryBroker,
   createEvidenceLedgerProvider,
