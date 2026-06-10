@@ -522,10 +522,12 @@ function validateLiveWhatNowAnswer(answer = {}, evidence = {}) {
 }
 
 function buildAnswerTextV2({ happening, next, staleMarkers, health, jamesActionLine }) {
-  const lines = happening.map((line) => `${line.text} (${line.source_ref}, ${formatAge(line.age_ms)})`);
+  // Inline [stale] on threshold-crossed lines so the reader never has to do
+  // threshold math from the raw age (Oracle follow-up on cdc180ff).
+  const lines = happening.map((line) => `${line.text} (${line.source_ref}, ${formatAge(line.age_ms)}${line.stale ? ' [stale]' : ''})`);
   if (health?.present && (health.overall && health.overall !== 'PASS')) {
     const warningText = (health.warnings || [])[0];
-    lines.push(`Health: ${health.overall}${Number.isFinite(health.score) ? ` ${health.score}/100` : ''}${warningText ? ` - ${warningText}` : ''} (${EVIDENCE_SOURCE_REFS.startup_health}, ${formatAge(health.age_ms)})`);
+    lines.push(`Health: ${health.overall}${Number.isFinite(health.score) ? ` ${health.score}/100` : ''}${warningText ? ` - ${warningText}` : ''} (${EVIDENCE_SOURCE_REFS.startup_health}, ${formatAge(health.age_ms)}${health.stale ? ' [stale]' : ''})`);
   }
   if (staleMarkers.length > 0) {
     lines.push(`Stale: ${staleMarkers.slice(0, 3).join('; ')}`);
@@ -560,7 +562,13 @@ function buildMiraLiveWhatNowAnswerV0(input = {}, options = {}) {
     };
   }
 
-  const materializedSnapshot = readMaterializedCurrentLane(projectRoot, options.currentLaneSnapshot);
+  // An EXPLICIT currentLaneSnapshot (including null) is authoritative for
+  // callers/tests; only an absent option falls through to the on-disk file.
+  const materializedSnapshot = options.currentLaneSnapshot !== undefined
+    ? (options.currentLaneSnapshot && typeof options.currentLaneSnapshot === 'object' && !Array.isArray(options.currentLaneSnapshot)
+      ? options.currentLaneSnapshot
+      : null)
+    : readMaterializedCurrentLane(projectRoot, null);
   const liveRows = readLiveCommsRows({
     commsRows: options.commsRows,
     commsReader: options.commsReader,
@@ -621,22 +629,23 @@ function buildMiraLiveWhatNowAnswerV0(input = {}, options = {}) {
       : 'panes ready')
     : 'pane state unknown';
 
+  const laneEvidenceSource = authority.source === 'live_comms_journal'
+    ? evidence.sources.comms_journal
+    : evidence.sources.current_lane;
   const happening = [];
   happening.push({
     text: `${sessionLabel}, ${paneText}`,
     source_ref: EVIDENCE_SOURCE_REFS.app_status,
     age_ms: appStatus.age_ms,
+    stale: appStatus.stale === true,
   });
   happening.push({
     text: activeLane
       ? `Lane: ${firstObjectiveSentence(activeLane.objective)} (${activeLane.status})`
       : 'No active lane',
-    source_ref: authority.source === 'live_comms_journal'
-      ? EVIDENCE_SOURCE_REFS.comms_journal
-      : EVIDENCE_SOURCE_REFS.current_lane,
-    age_ms: authority.source === 'live_comms_journal'
-      ? evidence.sources.comms_journal.age_ms
-      : evidence.sources.current_lane.age_ms,
+    source_ref: laneEvidenceSource.source_ref,
+    age_ms: laneEvidenceSource.age_ms,
+    stale: laneEvidenceSource.stale === true,
   });
   const reconciliation = evidence.sources.work_items?.reconciliation;
   const activeWorkItemId = trimText(reconciliation?.activeWorkItemId, 80);
@@ -645,16 +654,14 @@ function buildMiraLiveWhatNowAnswerV0(input = {}, options = {}) {
       text: `In flight: work item ${activeWorkItemId} (${trimText(reconciliation.status, 24) || 'OK'})`,
       source_ref: EVIDENCE_SOURCE_REFS.work_items,
       age_ms: evidence.sources.work_items.age_ms,
+      stale: evidence.sources.work_items.stale === true,
     });
   } else if (recentChanges.length > 0) {
     happening.push({
       text: `Recent: ${recentChanges[0].summary}`,
-      source_ref: authority.source === 'live_comms_journal'
-        ? EVIDENCE_SOURCE_REFS.comms_journal
-        : EVIDENCE_SOURCE_REFS.current_lane,
-      age_ms: authority.source === 'live_comms_journal'
-        ? evidence.sources.comms_journal.age_ms
-        : evidence.sources.current_lane.age_ms,
+      source_ref: laneEvidenceSource.source_ref,
+      age_ms: laneEvidenceSource.age_ms,
+      stale: laneEvidenceSource.stale === true,
     });
   }
 
