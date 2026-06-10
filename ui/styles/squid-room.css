@@ -237,6 +237,12 @@ body.squid-room-workspace .side-panes-container.squid-room-team-collapsed {
   min-height: 0;
   align-content: start;
   gap: 0;
+  /* Collapsed bar is 42px tall and the toggle's down-flipped tooltip lives
+     below it - the container's overflow:hidden clipped it to a sliver
+     (measured: box bottom 132 vs tooltip 135-159). Hidden serves nothing
+     here: the panes are display:none while collapsed. Same overflow-clip
+     family as the section-toggle residual, caught by the states-matrix gate. */
+  overflow: visible;
 }
 
 body.squid-room-workspace .side-panes-container.squid-room-team-collapsed > .pane {
@@ -444,6 +450,20 @@ details.squid-room-app:not([open]) .squid-room-live-panes {
      far right) anchor their tooltip to the RIGHT edge of the button instead
      of center-translate, so the text can never ride off the window.
    The 16 tile down-flip survivors keep the layout.css rule untouched. */
+
+/* Collapsed-state escape (James, wave-2 residual): when the section is
+   collapsed the box is only bar-height, so the down-flipped tooltip extends
+   past it and the box's overflow:hidden eats it (measured: box bottom 519 vs
+   tooltip bottom 537). Collapsed sections release overflow; the summary
+   keeps the rounded corners the box clip used to provide. */
+details.squid-room-app:not([open]) {
+  overflow: visible;
+}
+
+details.squid-room-app:not([open]) > summary.squid-room-app-header {
+  border-radius: 7px;
+}
+
 body.squid-room-workspace .squid-room-app-header [data-tooltip]::after {
   bottom: auto;
   top: calc(100% + 6px);
