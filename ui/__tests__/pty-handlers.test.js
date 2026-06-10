@@ -10,6 +10,11 @@ const {
 } = require('./helpers/ipc-harness');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const { encodeClaudeProjectDir } = require('../modules/cli-resume-invocation');
+const { loadPaneSessionIds } = require('../modules/pane-session-id-store');
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 // Mock electron clipboard
 jest.mock('electron', () => ({
@@ -44,12 +49,16 @@ describe('PTY Handlers', () => {
   let harness;
   let ctx;
   let deps;
+  let tmpDir;
 
   beforeEach(() => {
     jest.useFakeTimers();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-handlers-'));
     harness = createIpcHarness();
     ctx = createDefaultContext({ ipcMain: harness.ipcMain });
     deps = createDepsMock();
+    deps.paneSessionIdsFilePath = path.join(tmpDir, 'pane-session-ids.json');
+    deps.resumeHomeDir = path.join(tmpDir, 'home');
     registerPtyHandlers(ctx, deps);
   });
 
@@ -57,6 +66,7 @@ describe('PTY Handlers', () => {
     jest.runOnlyPendingTimers();
     jest.useRealTimers();
     jest.clearAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   describe('windows temp compatibility', () => {
@@ -820,11 +830,113 @@ describe('PTY Handlers', () => {
     });
   });
 
+  describe('startup-injection-claim', () => {
+    test('preload bridge allowlist exposes atomic startup injection claim channel', async () => {
+      const { isAllowedInvokeChannel } = require('../modules/bridge/channel-policy');
+      const { createPreloadApi } = require('../modules/bridge/preload-api');
+      const ipcRenderer = {
+        invoke: jest.fn().mockResolvedValue({ ok: true, claimed: true }),
+        send: jest.fn(),
+        on: jest.fn(),
+        removeListener: jest.fn(),
+        removeAllListeners: jest.fn(),
+      };
+
+      const api = createPreloadApi(ipcRenderer);
+      await expect(api.pty.claimStartupInjection({ paneId: '1', source: 'spawn' }))
+        .resolves.toEqual({ ok: true, claimed: true });
+
+      expect(isAllowedInvokeChannel('startup-injection-claim')).toBe(true);
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('startup-injection-claim', {
+        paneId: '1',
+        source: 'spawn',
+      });
+    });
+
+    test('atomically grants the first per-pane claim and denies later claimants', async () => {
+      const first = await harness.invoke('startup-injection-claim', {
+        paneId: '1',
+        source: 'main-window',
+        windowKey: 'main',
+      });
+      const second = await harness.invoke('startup-injection-claim', {
+        paneId: '1',
+        source: 'squid-room',
+        windowKey: 'squid-room',
+      });
+
+      expect(first).toEqual(expect.objectContaining({
+        ok: true,
+        claimed: true,
+        paneId: '1',
+        claim: expect.objectContaining({
+          paneId: '1',
+          source: 'main-window',
+          windowKey: 'main',
+        }),
+      }));
+      expect(second).toEqual(expect.objectContaining({
+        ok: true,
+        claimed: false,
+        paneId: '1',
+        reason: 'startup_injection_already_claimed',
+        claim: expect.objectContaining({
+          source: 'main-window',
+          windowKey: 'main',
+        }),
+      }));
+    });
+
+    test('pty-create starts a new lifecycle and clears the prior claim', async () => {
+      ctx.daemonClient.connected = true;
+
+      await harness.invoke('startup-injection-claim', { paneId: '2', source: 'first-renderer' });
+      const denied = await harness.invoke('startup-injection-claim', { paneId: '2', source: 'second-renderer' });
+      expect(denied.claimed).toBe(false);
+
+      await harness.invoke('pty-create', '2', '/workspace');
+      const reclaimed = await harness.invoke('startup-injection-claim', { paneId: '2', source: 'new-pty' });
+
+      expect(reclaimed).toEqual(expect.objectContaining({
+        ok: true,
+        claimed: true,
+        paneId: '2',
+        claim: expect.objectContaining({ source: 'new-pty' }),
+      }));
+    });
+
+    test('pty-kill clears the prior claim', async () => {
+      ctx.daemonClient.connected = true;
+
+      await harness.invoke('startup-injection-claim', { paneId: '3', source: 'first-renderer' });
+      await harness.invoke('pty-kill', '3');
+      const reclaimed = await harness.invoke('startup-injection-claim', { paneId: '3', source: 'after-kill' });
+
+      expect(reclaimed).toEqual(expect.objectContaining({
+        ok: true,
+        claimed: true,
+        paneId: '3',
+        claim: expect.objectContaining({ source: 'after-kill' }),
+      }));
+    });
+  });
+
   describe('spawn-claude', () => {
     beforeEach(() => {
       ctx.currentSettings.allowAllPermissions = true;
       ctx.currentSettings.autonomyConsentGiven = true;
     });
+
+    const extractResumeId = (command) => {
+      const match = String(command || '').match(/(?:--session-id|--resume)\s+([0-9a-f-]{36})/i);
+      return match ? match[1] : null;
+    };
+
+    const writeClaudeSession = (cwd, sessionId) => {
+      const dir = path.join(deps.resumeHomeDir, '.claude', 'projects', encodeClaudeProjectDir(cwd));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), '{}\n');
+    };
 
     test('simulates spawn in dry-run mode', async () => {
       ctx.currentSettings.dryRun = true;
@@ -833,6 +945,7 @@ describe('PTY Handlers', () => {
       expect(result).toEqual({ success: true, command: null, dryRun: true });
       expect(ctx.agentRunning.get('1')).toBe('running');
       expect(deps.broadcastClaudeState).toHaveBeenCalled();
+      expect(fs.existsSync(deps.paneSessionIdsFilePath)).toBe(false);
     });
 
     test('returns error when daemon not connected', async () => {
@@ -918,7 +1031,7 @@ describe('PTY Handlers', () => {
 
       const result = await harness.invoke('spawn-claude', '1', '/dir');
 
-      expect(result.command).toBe('claude --dangerously-skip-permissions');
+      expect(result.command).toMatch(/^claude --dangerously-skip-permissions --session-id [0-9a-f-]{36}$/);
     });
 
     test('adds --system-prompt-file for claude when firmware injection is enabled', async () => {
@@ -959,7 +1072,8 @@ describe('PTY Handlers', () => {
       const claude = await harness.invoke('spawn-claude', '1', '/dir');
       const codex = await harness.invoke('spawn-claude', '2', '/dir');
 
-      expect(claude.command).toBe('claude');
+      expect(claude.command).toMatch(/^claude --session-id [0-9a-f-]{36}$/);
+      expect(claude.command).not.toContain('--dangerously-skip-permissions');
       expect(codex.command).toBe('codex');
     });
 
@@ -971,8 +1085,79 @@ describe('PTY Handlers', () => {
       const claude = await harness.invoke('spawn-claude', '1', '/dir');
       const codex = await harness.invoke('spawn-claude', '2', '/dir');
 
-      expect(claude.command).toBe('claude');
+      expect(claude.command).toMatch(/^claude --session-id [0-9a-f-]{36}$/);
+      expect(claude.command).not.toContain('--dangerously-skip-permissions');
       expect(codex.command).toBe('codex');
+    });
+
+    test('registered spawn-claude composes distinct --session-id flags for panes 1/2/3', async () => {
+      const cwd = 'D:\\projects\\squidrun';
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '1': 'claude', '2': 'claude', '3': 'claude' };
+      ctx.currentSettings.paneProjects = { '1': cwd, '2': cwd, '3': cwd };
+
+      const pane1 = await harness.invoke('spawn-claude', '1', '/ignored');
+      const pane2 = await harness.invoke('spawn-claude', '2', '/ignored');
+      const pane3 = await harness.invoke('spawn-claude', '3', '/ignored');
+
+      const ids = [pane1, pane2, pane3].map((result) => extractResumeId(result.command));
+      expect(ids).toHaveLength(3);
+      expect(ids.every((id) => UUID_RE.test(id))).toBe(true);
+      expect(new Set(ids).size).toBe(3);
+      expect(pane1.command).toBe(`claude --session-id ${ids[0]}`);
+      expect(pane2.command).toBe(`claude --session-id ${ids[1]}`);
+      expect(pane3.command).toBe(`claude --session-id ${ids[2]}`);
+
+      const store = loadPaneSessionIds(deps.paneSessionIdsFilePath);
+      expect(store.panes).toEqual(expect.objectContaining({
+        '1': ids[0],
+        '2': ids[1],
+        '3': ids[2],
+      }));
+    });
+
+    test('registered spawn-claude re-probes session existence and switches create to resume', async () => {
+      const cwd = 'D:\\projects\\squidrun';
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '1': 'claude' };
+      ctx.currentSettings.paneProjects = { '1': cwd };
+
+      const first = await harness.invoke('spawn-claude', '1', '/ignored');
+      const sessionId = extractResumeId(first.command);
+      expect(first.command).toBe(`claude --session-id ${sessionId}`);
+
+      writeClaudeSession(cwd, sessionId);
+      const second = await harness.invoke('spawn-claude', '1', '/ignored');
+
+      expect(second.command).toBe(`claude --resume ${sessionId}`);
+    });
+
+    test('registered spawn-claude does not append duplicate resume flags when command is already pinned', async () => {
+      const pinnedId = '11111111-1111-4111-8111-111111111111';
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '1': `claude --session-id ${pinnedId}` };
+
+      const result = await harness.invoke('spawn-claude', '1', '/ignored');
+
+      expect(result.command).toBe(`claude --session-id ${pinnedId}`);
+      expect((result.command.match(/--session-id/g) || []).length).toBe(1);
+      expect(fs.existsSync(deps.paneSessionIdsFilePath)).toBe(false);
+    });
+
+    test('registered spawn-claude leaves codex cold-start commands unpinned', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '2': 'codex --interactive' };
+
+      const result = await harness.invoke('spawn-claude', '2', '/ignored');
+
+      expect(result.command).toBe('codex --interactive');
+      expect(result.command).not.toContain('--session-id');
+      expect(result.command).not.toContain('--resume');
+      expect(fs.existsSync(deps.paneSessionIdsFilePath)).toBe(false);
     });
   });
 

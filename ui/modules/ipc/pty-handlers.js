@@ -14,6 +14,12 @@ const {
   hasCodexAskForApprovalFlag,
 } = require('../codex-utils');
 const {
+  resumeStrategyForCommand,
+  claudeSessionExists,
+  resolveResumeAppendFlags,
+} = require('../cli-resume-invocation');
+const { ensurePaneSessionId } = require('../pane-session-id-store');
+const {
   DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
   DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
 } = require('../inject-message-ipc');
@@ -23,6 +29,9 @@ const MIN_CHUNK_SIZE = 64;
 const MAX_CHUNK_SIZE = 8192;
 const DEFAULT_AUTO_CHUNK_THRESHOLD_BYTES = DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES;
 const WRITE_ACK_TIMEOUT_MS = 2500;
+const PANE_SESSION_IDS_FILE_PATH = resolveCoordPath(path.join('runtime', 'pane-session-ids.json'), { forWrite: true });
+const CLAUDE_RESUME_FLAG_PATTERN = /(?:^|\s)(?:--session-id|--resume)(?:=|\s+)\S+/i;
+const STARTUP_INJECTION_CLAIM_CHANNEL = 'startup-injection-claim';
 const INPUT_EDIT_ACTIONS = Object.freeze({
   undo: 'undo',
   cut: 'cut',
@@ -145,6 +154,120 @@ function resolveWindowsClaudeTempDir(cwd, env = process.env) {
 
 function hasClaudeSystemPromptFlag(command) {
   return /--system-prompt-file(?:\s|=)/i.test(String(command || ''));
+}
+
+function hasClaudeResumeFlag(command) {
+  return CLAUDE_RESUME_FLAG_PATTERN.test(String(command || ''));
+}
+
+function appendResumeFlagsToAgentCommand({
+  paneId,
+  command,
+  cwd,
+  idStorePath = PANE_SESSION_IDS_FILE_PATH,
+  homeDir = null,
+  ensurePaneSessionIdOptions = {},
+} = {}) {
+  const baseCommand = String(command || '').trim();
+  if (!baseCommand) {
+    return {
+      command: baseCommand,
+      decision: { mode: 'cold', reason: 'empty command' },
+    };
+  }
+
+  if (resumeStrategyForCommand(baseCommand) !== 'session-id') {
+    return {
+      command: baseCommand,
+      decision: resolveResumeAppendFlags({ command: baseCommand }),
+    };
+  }
+
+  if (hasClaudeResumeFlag(baseCommand)) {
+    return {
+      command: baseCommand,
+      decision: {
+        ...resolveResumeAppendFlags({ command: baseCommand }),
+        mode: 'already-pinned',
+        reason: 'claude resume/session flag already present',
+      },
+    };
+  }
+
+  const { sessionId, generated } = ensurePaneSessionId(idStorePath, paneId, ensurePaneSessionIdOptions);
+  const sessionExists = claudeSessionExists(cwd, sessionId, {
+    ...(homeDir ? { homeDir } : {}),
+  });
+  const decision = resolveResumeAppendFlags({
+    command: baseCommand,
+    sessionId,
+    sessionExists,
+  });
+  return {
+    command: decision.flags ? `${baseCommand} ${decision.flags}` : baseCommand,
+    decision: {
+      ...decision,
+      cwd,
+      idStorePath,
+      generated,
+    },
+  };
+}
+
+function createStartupInjectionClaimStore() {
+  const claims = new Map();
+
+  return {
+    claim(paneId, details = {}) {
+      const id = String(paneId || '').trim();
+      if (!id) {
+        return { ok: false, claimed: false, reason: 'pane_id_required' };
+      }
+
+      const existing = claims.get(id);
+      if (existing) {
+        return {
+          ok: true,
+          claimed: false,
+          reason: 'startup_injection_already_claimed',
+          paneId: id,
+          claim: { ...existing },
+        };
+      }
+
+      const claim = {
+        claimId: `startup-${id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+        paneId: id,
+        claimedAt: Date.now(),
+        source: toNonEmptyString(details?.source) || 'unknown',
+        modelType: toNonEmptyString(details?.modelType) || null,
+        windowKey: toNonEmptyString(details?.windowKey) || null,
+        profileName: toNonEmptyString(details?.profileName) || null,
+      };
+      claims.set(id, claim);
+      return {
+        ok: true,
+        claimed: true,
+        paneId: id,
+        claim: { ...claim },
+      };
+    },
+
+    clear(paneId) {
+      const id = String(paneId || '').trim();
+      if (!id) return false;
+      return claims.delete(id);
+    },
+
+    get(paneId) {
+      const claim = claims.get(String(paneId || '').trim());
+      return claim ? { ...claim } : null;
+    },
+
+    clearAll() {
+      claims.clear();
+    },
+  };
 }
 
 function getPaneCommandForRuntime(ctx, paneId) {
@@ -322,6 +445,16 @@ function registerPtyHandlers(ctx, deps = {}) {
     }
   };
   const isFirmwareEnabled = () => ctx?.currentSettings?.firmwareInjectionEnabled === true;
+  const paneSessionIdsFilePath = deps.paneSessionIdsFilePath || PANE_SESSION_IDS_FILE_PATH;
+  const resumeHomeDir = deps.resumeHomeDir || null;
+  const providedStartupInjectionClaims = deps.startupInjectionClaims;
+  const startupInjectionClaims = (
+    providedStartupInjectionClaims
+    && typeof providedStartupInjectionClaims.claim === 'function'
+    && typeof providedStartupInjectionClaims.clear === 'function'
+  )
+    ? providedStartupInjectionClaims
+    : createStartupInjectionClaimStore();
 
   function resolveFirmwarePathForPane(paneId) {
     if (!isFirmwareEnabled()) return null;
@@ -335,6 +468,23 @@ function registerPtyHandlers(ctx, deps = {}) {
     }
     return result.firmwarePath;
   }
+
+  ipcMain.handle(STARTUP_INJECTION_CLAIM_CHANNEL, (event, payload = {}) => {
+    const request = payload && typeof payload === 'object' ? payload : { paneId: payload };
+    const result = startupInjectionClaims.claim(request.paneId, request);
+    if (result.claimed) {
+      log.info(
+        'PTY',
+        `Startup injection claim granted for pane ${result.paneId} (${result.claim?.source || 'unknown'})`
+      );
+    } else {
+      log.info(
+        'PTY',
+        `Startup injection claim denied for pane ${String(request.paneId || '').trim() || 'unknown'}: ${result.reason}`
+      );
+    }
+    return result;
+  });
 
   ipcMain.handle('pty-create', async (event, paneId, workingDir, options = {}) => {
     const daemonClient = getDaemonClientForPane(paneId);
@@ -393,6 +543,8 @@ function registerPtyHandlers(ctx, deps = {}) {
         log.warn('Firmware', `Failed to resolve Gemini firmware for pane ${paneId}: ${err.message}`);
       }
     }
+
+    startupInjectionClaims.clear(paneId);
 
     const spawnCommandOnCreate = ptyOptions.spawnCommandOnCreate === true && Boolean(paneCommand);
     const spawnOptions = { paneCommand };
@@ -649,6 +801,7 @@ function registerPtyHandlers(ctx, deps = {}) {
   });
 
   ipcMain.handle('pty-kill', (event, paneId) => {
+    startupInjectionClaims.clear(paneId);
     const daemonClient = getDaemonClientForPane(paneId);
     if (daemonClient && daemonClient.connected) {
       const recoveryManager = getRecoveryManager();
@@ -737,6 +890,26 @@ function registerPtyHandlers(ctx, deps = {}) {
       }
     }
 
+    const workDir = resolvePaneCwd(paneId, {
+      paneProjects: getPaneProjects(),
+      projectRoot: getActiveProjectRoot(),
+    }) || process.cwd();
+    const resumeCommand = appendResumeFlagsToAgentCommand({
+      paneId,
+      command: agentCmd,
+      cwd: workDir,
+      idStorePath: paneSessionIdsFilePath,
+      homeDir: resumeHomeDir,
+    });
+    agentCmd = resumeCommand.command;
+    if (resumeCommand.decision) {
+      const decision = resumeCommand.decision;
+      log.info(
+        'PTY',
+        `[resume] spawn-claude pane ${paneId}: ${decision.mode || 'cold'}${decision.cli ? ` (${decision.cli})` : ''}${decision.sessionId ? ` sessionId=${decision.sessionId}` : ''}${decision.flags ? ` -> ${decision.flags}` : ''}${decision.reason ? ` - ${decision.reason}` : ''}`
+      );
+    }
+
     return { success: true, command: agentCmd };
   });
 
@@ -772,6 +945,7 @@ function unregisterPtyHandlers(ctx) {
     ipcMain.removeHandler('terminal-fit-telemetry');
     ipcMain.removeHandler('pty-kill');
     ipcMain.removeHandler('intent-update');
+    ipcMain.removeHandler(STARTUP_INJECTION_CLAIM_CHANNEL);
     ipcMain.removeHandler('spawn-claude');
     ipcMain.removeHandler('get-claude-state');
     ipcMain.removeHandler('get-daemon-terminals');
@@ -785,6 +959,9 @@ module.exports = {
   _internals: {
     isInsideSquidRunPrivateRoot,
     resolveWindowsClaudeTempDir,
+    hasClaudeResumeFlag,
+    appendResumeFlagsToAgentCommand,
+    createStartupInjectionClaimStore,
     appendTerminalFitTelemetry,
     getTerminalFitTelemetryPath,
   },

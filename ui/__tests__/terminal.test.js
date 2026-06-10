@@ -78,6 +78,7 @@ const mockSquidRun = {
   pty: {
     create: jest.fn().mockResolvedValue(),
     write: jest.fn().mockResolvedValue(),
+    claimStartupInjection: jest.fn().mockResolvedValue({ ok: true, claimed: true }),
     clipboardWriteText: jest.fn().mockResolvedValue({ success: true }),
     clipboardPasteText: jest.fn().mockResolvedValue({ success: true, method: 'insertText', insertedLength: 0 }),
     kill: jest.fn().mockResolvedValue(),
