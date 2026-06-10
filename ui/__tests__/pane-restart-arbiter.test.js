@@ -124,4 +124,31 @@ describe('pane restart arbiter', () => {
     expect(arbiter.complete({ paneId: '3', claimId, webContents: owner }))
       .toEqual(expect.objectContaining({ ok: true, completed: true }));
   });
+
+  test('getActiveClaim reports the lease only while it is open', () => {
+    const webContents = createWebContents('owner');
+    const arbiter = createPaneRestartArbiter({
+      cooldownMs: 0,
+      resolveOwner: () => ({
+        ownerWindowKey: 'main',
+        webContents,
+        requiresWebContents: true,
+      }),
+    });
+
+    expect(arbiter.getActiveClaim('4')).toBeNull();
+    expect(arbiter.getActiveClaim('')).toBeNull();
+
+    const begin = arbiter.begin({ paneId: '4', source: 'manual', webContents });
+    const claimId = begin.claim.claimId;
+
+    expect(arbiter.getActiveClaim('4')).toEqual(expect.objectContaining({
+      claimId,
+      paneId: '4',
+    }));
+    expect(arbiter.getActiveClaim('5')).toBeNull();
+
+    arbiter.complete({ paneId: '4', claimId, webContents });
+    expect(arbiter.getActiveClaim('4')).toBeNull();
+  });
 });

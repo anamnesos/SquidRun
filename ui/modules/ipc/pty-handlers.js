@@ -502,6 +502,24 @@ function registerPtyHandlers(ctx, deps = {}) {
     const restartClaimId = toNonEmptyString(String(lifecycleOptions.restartClaimId || ''));
     const requireRestartClaim = lifecycleOptions.requireRestartClaim === true || Boolean(restartClaimId);
     if (!requireRestartClaim) {
+      // Claim-less lifecycle ops are legal only while no restart lease is active
+      // for the pane; otherwise a concurrent flow could double-kill/double-spawn
+      // around the lease holder (the S425 restart-storm shape).
+      const arbiter = getPaneRestartArbiter();
+      const activeClaim = arbiter && typeof arbiter.getActiveClaim === 'function'
+        ? arbiter.getActiveClaim(paneId)
+        : null;
+      if (activeClaim) {
+        return {
+          ok: false,
+          restart: false,
+          reason: 'restart_in_progress_claim_required',
+          paneId,
+          stage,
+          activeClaimId: activeClaim.claimId,
+          options: lifecycleOptions,
+        };
+      }
       return { ok: true, restart: false, options: lifecycleOptions };
     }
     if (!restartClaimId) {
