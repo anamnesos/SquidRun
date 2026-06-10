@@ -4,13 +4,21 @@
   display: none;
 }
 
+/* WAVE 1 (S426 UX audit): the room is a FLOWING SCROLLABLE COLUMN. Sections
+   take their natural height, collapse shrinks to the summary/header bar and
+   FREES the space, and the column scrolls when content exceeds the viewport.
+   Fixed viewport bands are forbidden in this workspace. */
 body.squid-room-workspace .terminals-section {
   background: linear-gradient(180deg, rgba(8, 12, 20, 0.98) 0%, rgba(6, 9, 15, 0.98) 100%);
   gap: 8px;
+  overflow-y: auto;
 }
 
 body.squid-room-workspace .pane-layout {
-  flex: 0 0 clamp(260px, 30vh, 420px);
+  /* Expanded pets band keeps its designed height, but as content height in a
+     flowing column - not a viewport-pinned flex basis. */
+  flex: 0 0 auto;
+  height: clamp(260px, 30vh, 420px);
   min-height: 0;
   padding: 8px 8px 0;
   overflow: visible;
@@ -212,28 +220,11 @@ body.squid-room-workspace .squid-room-pet-pane {
   transform: rotate(45deg);
 }
 
+/* Collapsed team band = its header bar only. The clamp height dies with the
+   collapse - this was James's photographed void (F2). */
 body.squid-room-workspace .pane-layout.has-squid-room-team-collapsed {
   min-height: 0;
-}
-
-/* Collapse folds the CONTAINER (James, S426): when no app section is open,
-   the surface gives up its viewport band entirely - the collapsed section
-   shrinks to its header strip and the pets band reclaims the space - instead
-   of a collapsed header floating above a dead void. */
-body.squid-room-workspace #squidRoomSurface:not(:has(details.squid-room-app[open])) {
-  flex: 0 0 auto;
-  min-height: 0;
-}
-
-body.squid-room-workspace #squidRoomSurface:not(:has(details.squid-room-app[open])) .squid-room-grid {
-  flex: 0 0 auto;
   height: auto;
-  grid-template-rows: none;
-  grid-auto-rows: auto;
-}
-
-body.squid-room-workspace:has(#squidRoomSurface:not(:has(details.squid-room-app[open]))) .pane-layout {
-  flex: 1 1 auto;
 }
 
 body.squid-room-workspace .side-panes-container.squid-room-team-collapsed {
@@ -252,9 +243,12 @@ body.squid-room-workspace .side-panes-container.squid-room-team-collapsed .squid
 }
 
 body.squid-room-workspace #squidRoomSurface {
-  flex: 1 1 auto;
+  /* Content-sized in the flowing column; the COLUMN owns scrolling. Dropping
+     overflow:hidden also removes the surface-level tooltip clip ancestor
+     (F3 above-bucket; geometry finalized in wave 2). */
+  flex: 0 0 auto;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 body.squid-room-workspace #squidRoomSurface:not([hidden]) {
@@ -292,19 +286,19 @@ body.squid-room-workspace #squidRoomSurface:not([hidden]) {
 }
 
 .squid-room-grid {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
-  height: 100%;
+  height: auto;
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  grid-auto-rows: auto;
   gap: 10px;
 }
 
 .squid-room-app {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  height: 100%;
+  grid-template-rows: auto auto;
+  height: auto;
   border: 1px solid rgba(116, 139, 166, 0.24);
   border-radius: 8px;
   background: rgba(11, 16, 26, 0.78);
@@ -461,11 +455,11 @@ details.squid-room-app:not([open]) .squid-room-live-panes {
 
 .squid-room-live-panes {
   display: grid;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 260px;
-  height: 100%;
+  height: auto;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  grid-auto-rows: minmax(260px, 1fr);
+  grid-auto-rows: minmax(300px, auto);
   align-items: stretch;
   gap: 10px;
   padding: 0 12px 12px;
@@ -592,7 +586,9 @@ body.squid-room-workspace .side-panes-container .model-selector {
 
 @media (max-width: 1100px), (max-height: 760px) {
   body.squid-room-workspace .pane-layout {
-    flex-basis: clamp(220px, 28vh, 320px);
+    /* Same flowing model at small sizes - height, never a pinned basis; the
+       collapsed rule (height:auto) outranks this by specificity. */
+    height: clamp(220px, 28vh, 320px);
   }
 
   .squid-room-header {
