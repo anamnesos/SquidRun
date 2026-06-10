@@ -41,4 +41,33 @@ describe('hm-pane CLI helpers', () => {
   test('buildPayload throws when paneId is missing', () => {
     expect(() => hmPane.buildPayload('enter', ['enter'], new Map())).toThrow('paneId is required');
   });
+
+  test('normalizeCommand handles switch-model aliases', () => {
+    expect(hmPane.normalizeCommand('switch-model')).toBe('switch-model');
+    expect(hmPane.normalizeCommand('switch-pane-model')).toBe('switch-model');
+    expect(hmPane.normalizeCommand('model-switch')).toBe('switch-model');
+  });
+
+  test('toAction maps switch-model', () => {
+    expect(hmPane.toAction('switch-model')).toBe('switch-model');
+  });
+
+  test('buildPayload creates switch-model payload from positional model', () => {
+    const payload = hmPane.buildPayload('switch-model', ['switch-model', '2', 'Claude'], new Map());
+    expect(payload).toEqual({ paneId: '2', model: 'claude' });
+  });
+
+  test('buildPayload prefers --model over positional model', () => {
+    const payload = hmPane.buildPayload(
+      'switch-model',
+      ['switch-model', '2', 'codex'],
+      new Map([['model', 'gemini']])
+    );
+    expect(payload).toEqual({ paneId: '2', model: 'gemini' });
+  });
+
+  test('buildPayload throws when model is missing for switch-model', () => {
+    expect(() => hmPane.buildPayload('switch-model', ['switch-model', '2'], new Map()))
+      .toThrow('model is required');
+  });
 });

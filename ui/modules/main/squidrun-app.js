@@ -135,6 +135,7 @@ const {
 const { executeTransitionLedgerOperation } = require('../ipc/transition-ledger-handlers');
 const { executeGitHubOperation } = require('../ipc/github-handlers');
 const { executePaneControlAction } = require('./pane-control-service');
+const { executePaneModelSwitch } = require('../ipc/model-switch-handlers');
 const { executeAppControlAction } = require('./app-control-service');
 const { createPaneRestartArbiter } = require('./pane-restart-arbiter');
 const miraLabHandlersModule = require('../ipc/mira-lab-handlers');
@@ -4025,6 +4026,10 @@ class SquidRunApp {
                 recoveryManager: this.ctx.recoveryManager,
                 agentRunning: this.ctx.agentRunning,
                 requestPaneRestart: (paneId, info = {}) => this.requestPaneRestart(paneId, info),
+                switchPaneModel: (paneId, model) => executePaneModelSwitch(this.ctx, { paneId, model }, {
+                  saveSettings: (s) => this.settings.saveSettings(s),
+                  paneRestartArbiter: this.paneRestartArbiter,
+                }),
               },
               data.message.action,
               data.message.payload || {}

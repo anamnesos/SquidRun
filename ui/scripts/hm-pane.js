@@ -7,6 +7,7 @@
  *   interrupt <paneId>
  *   restart <paneId>
  *   nudge <paneId> [message]
+ *   switch-model <paneId> <claude|codex|gemini>
  */
 
 const WebSocket = require('ws');
@@ -16,8 +17,8 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
 const DEFAULT_RESPONSE_TIMEOUT_MS = 5000;
 
 function usage() {
-  console.log('Usage: node hm-pane.js <command> <paneId> [message] [options]');
-  console.log('Commands: enter, interrupt, restart, nudge');
+  console.log('Usage: node hm-pane.js <command> <paneId> [message|model] [options]');
+  console.log('Commands: enter, interrupt, restart, nudge, switch-model');
   console.log('Common options:');
   console.log('  --role <role>               Sender role (default: builder)');
   console.log('  --port <port>               WebSocket port (default: 9900)');
@@ -28,6 +29,7 @@ function usage() {
   console.log('  node hm-pane.js interrupt 2');
   console.log('  node hm-pane.js restart 3');
   console.log('  node hm-pane.js nudge 2 "Status check?"');
+  console.log('  node hm-pane.js switch-model 2 claude');
 }
 
 function parseArgs(argv) {
@@ -83,6 +85,7 @@ function normalizeCommand(command) {
   if (normalized === 'kill') return 'interrupt';
   if (normalized === 'enter-pane') return 'enter';
   if (normalized === 'nudge-pane' || normalized === 'nudge-agent') return 'nudge';
+  if (normalized === 'switch-pane-model' || normalized === 'model-switch') return 'switch-model';
   return normalized;
 }
 
@@ -92,6 +95,7 @@ function toAction(command) {
     case 'interrupt':
     case 'restart':
     case 'nudge':
+    case 'switch-model':
       return command;
     default:
       throw new Error(`Unsupported command: ${command}`);
@@ -114,6 +118,13 @@ function buildPayload(command, positional, options) {
     const messageFromPositional = positional.slice(2).join(' ').trim();
     const message = asString(getOption(options, 'message', messageFromPositional), '');
     if (message) payload.message = message;
+  }
+  if (command === 'switch-model') {
+    const model = asString(getOption(options, 'model', positional[2] || ''), '').toLowerCase();
+    if (!model) {
+      throw new Error('model is required (claude|codex|gemini)');
+    }
+    payload.model = model;
   }
   return payload;
 }
@@ -229,7 +240,7 @@ async function main() {
     process.exit(1);
   }
 
-  const allowedCommands = new Set(['enter', 'interrupt', 'restart', 'nudge']);
+  const allowedCommands = new Set(['enter', 'interrupt', 'restart', 'nudge', 'switch-model']);
   if (!allowedCommands.has(command)) {
     console.error(`Unsupported command: ${command}`);
     usage();
