@@ -165,13 +165,13 @@ maybeDescribe('arm state projection IPC handler', () => {
       },
     }));
     expect(response.registry).toEqual(expect.objectContaining({
-      desiredCount: 3,
+      desiredCount: 4,
       readyCount: 0,
-      missingCount: 3,
+      missingCount: 4,
     }));
     expect(response.watchdogs.summary).toEqual(expect.objectContaining({
-      open: 3,
-      expected: 3,
+      open: 4,
+      expected: 4,
     }));
     expect(response.applyQueue.summary).toEqual(expect.objectContaining({
       pendingApproval: 1,
@@ -239,9 +239,9 @@ maybeDescribe('arm state projection IPC handler', () => {
     expect(response.registry).toEqual(expect.objectContaining({
       sessionId: 'app-room:trustquote',
       readinessSessionId: 'app-session-missing:trustquote',
-      desiredCount: 3,
+      desiredCount: 4,
       readyCount: 0,
-      missingCount: 3,
+      missingCount: 4,
     }));
     expect(response.sideEffects).toEqual({
       writesPerformed: 0,
