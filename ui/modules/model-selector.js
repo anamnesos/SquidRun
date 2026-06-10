@@ -66,6 +66,38 @@ async function initModelSelectors() {
 /**
  * Setup change listeners on model selector dropdowns
  */
+// Only the pane's OWNER window respawns on completion; mirror windows (the
+// squid room) sync UI only. The arbiter would deny a non-owner respawn
+// anyway - this guard keeps the denial noise out of the logs.
+function isPaneOwnerWindow() {
+  const windowKey = document.body?.dataset?.windowKey || 'main';
+  return windowKey === 'main';
+}
+
+// Until the running main fans pane-model-changed out to every window, a
+// mirror window's dropdown would stay disabled forever after a switch it
+// initiated (wave 3, S426). Confirm against settings via an IPC channel the
+// running main already has, then re-enable with the truthful value. Harmless
+// after the fan-out lands: completion usually wins the race and re-enables
+// first, and the confirm just agrees.
+function scheduleSwitchCompletionFallback(select, paneId) {
+  setTimeout(async () => {
+    if (!select.isConnected || select.disabled === false) return;
+    try {
+      const paneCommands = await invokeBridge('get-pane-commands');
+      const confirmed = detectModelFamily(paneCommands?.[paneId]);
+      select.value = confirmed;
+      select.dataset.previousValue = confirmed;
+      setPaneCliAttribute(paneId, confirmed);
+      log.info('ModelSelector', `Pane ${paneId} switch confirmed via settings poll: ${confirmed}`);
+    } catch (err) {
+      log.warn('ModelSelector', `Switch confirmation poll failed for pane ${paneId}: ${err?.message || err}`);
+    } finally {
+      select.disabled = false;
+    }
+  }, 4000);
+}
+
 function setupModelSelectorListeners() {
   document.querySelectorAll('.model-selector').forEach(select => {
     select.addEventListener('change', async (e) => {
@@ -85,6 +117,7 @@ function setupModelSelectorListeners() {
 
         e.target.dataset.previousValue = model;
         log.info('ModelSelector', `Pane ${paneId} switched to ${model}`);
+        scheduleSwitchCompletionFallback(e.target, paneId);
       } catch (err) {
         log.error('ModelSelector', `Switch failed for pane ${paneId}:`, err);
         showStatusNotice(`Switch failed: ${err.message}`, 'error');
@@ -104,6 +137,20 @@ function setupModelChangeListener() {
 
     // Update data-cli attribute immediately on model switch
     setPaneCliAttribute(paneId, model);
+
+    // Mirror windows sync UI only - the switch may have been initiated in
+    // another window, so the value must follow the completion, not the
+    // dropdown's last local state.
+    if (select) {
+      select.value = model;
+      select.dataset.previousValue = model;
+    }
+
+    if (!isPaneOwnerWindow()) {
+      if (select) select.disabled = false;
+      log.info('ModelSelector', `Pane ${paneId} model change synced (mirror window, no respawn)`);
+      return;
+    }
 
     try {
       await settings.refreshSettingsFromMain();

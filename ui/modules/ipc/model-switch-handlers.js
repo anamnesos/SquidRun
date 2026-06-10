@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Model Switch IPC Handlers
  * Channels: switch-pane-model, get-pane-commands
  *
@@ -17,6 +17,13 @@ const {
 const TRIGGERS_PATH = typeof resolveCoordPath === 'function'
   ? resolveCoordPath('triggers', { forWrite: true })
   : path.join(__dirname, '..', '..', '..', 'workspace', 'triggers');
+
+// Under plain node (jest), require('electron') resolves to a path string -
+// guard so tests exercise the deps/mainWindow seams instead.
+let BrowserWindow = null;
+try {
+  ({ BrowserWindow } = require('electron'));
+} catch (_) { /* non-electron host */ }
 
 /**
  * Shared main-side model-switch flow. Both entry points - the renderer
@@ -157,9 +164,30 @@ async function executePaneModelSwitch(ctx, payload = {}, deps = {}) {
       log.warn('ModelSwitch', `Failed to broadcast model switch: ${err.message}`);
     }
 
-    // Signal renderer to respawn
-    if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
-      ctx.mainWindow.webContents.send('pane-model-changed', { paneId, model });
+    // Signal renderers. Every open window gets the completion (wave 3, S426:
+    // the squid room mirrors core panes and its dropdown was stuck disabled
+    // waiting on a signal that only reached mainWindow). Windows without the
+    // pane no-op; respawn stays owner-window-only - the renderer guards on
+    // windowKey and the pane-restart arbiter denies non-owner respawns
+    // regardless. deps.sendPaneModelChanged is the injectable seam.
+    // ACTIVATION: next app restart (main loads this module at boot).
+    const completionPayload = { paneId, model };
+    if (typeof deps.sendPaneModelChanged === 'function') {
+      try {
+        deps.sendPaneModelChanged(completionPayload);
+      } catch (err) {
+        log.warn('ModelSwitch', `pane-model-changed fan-out failed: ${err.message}`);
+      }
+    } else if (BrowserWindow && typeof BrowserWindow.getAllWindows === 'function') {
+      for (const win of BrowserWindow.getAllWindows()) {
+        try {
+          if (!win.isDestroyed()) win.webContents.send('pane-model-changed', completionPayload);
+        } catch (err) {
+          log.warn('ModelSwitch', `pane-model-changed send failed: ${err.message}`);
+        }
+      }
+    } else if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
+      ctx.mainWindow.webContents.send('pane-model-changed', completionPayload);
     }
 
     return { success: true, paneId, model };

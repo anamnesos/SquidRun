@@ -585,11 +585,11 @@ body.squid-room-workspace .squid-room-team-actions [data-tooltip]:hover::before 
   white-space: nowrap;
 }
 
-/* The mirrored core pair keeps no switcher in the room either - the real
-   selectors live in the main window, which owns those pane lifecycles. */
-body.squid-room-workspace .side-panes-container .model-selector {
-  display: none;
-}
+/* Wave 3 (S426): the core pair's switcher WORKS from the room - the change
+   listener binds at DOMContentLoaded (static panes), main arbitrates the
+   switch, and the renderer treats this window as a mirror: UI sync only,
+   respawn stays with the owner (main) window. Arms keep read-only badges -
+   their IDs are unsupported by the switch path. */
 
 .squid-room-live-panes .pane-terminal {
   flex: 1 1 auto;
