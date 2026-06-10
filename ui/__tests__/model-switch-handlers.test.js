@@ -208,6 +208,26 @@ describe('registerModelSwitchHandlers', () => {
       expect(result).toEqual({ success: true, paneId: '1', model: 'gemini' });
     });
 
+    it('fans pane-model-changed out via deps.sendPaneModelChanged when provided (wave 3)', async () => {
+      const sendPaneModelChanged = jest.fn();
+      const { executePaneModelSwitch } = require('../modules/ipc/model-switch-handlers');
+      const switchPromise = executePaneModelSwitch(
+        mockCtx,
+        { paneId: '2', model: 'claude' },
+        { ...mockDeps, sendPaneModelChanged }
+      );
+      mockCtx.daemonClient._killedHandler('2');
+      const result = await switchPromise;
+      expect(result.success).toBe(true);
+      // The seam carries the completion; mainWindow-only send must NOT fire
+      // (the squid room's dropdown depended on exactly this fan-out).
+      expect(sendPaneModelChanged).toHaveBeenCalledWith({ paneId: '2', model: 'claude' });
+      expect(mockCtx.mainWindow.webContents.send).not.toHaveBeenCalledWith(
+        'pane-model-changed',
+        { paneId: '2', model: 'claude' }
+      );
+    });
+
     it('should proceed after a timeout if exit event is not received', async () => {
       const logger = require('../modules/logger');
 
