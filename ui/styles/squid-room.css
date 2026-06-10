@@ -45,7 +45,17 @@ body.squid-room-workspace .side-panes-container {
   justify-content: space-between;
   gap: 12px;
   min-height: 38px;
-  padding: 0 4px 4px;
+  /* Right padding matches the 8px pane-shell gutter so the Collapse button
+     aligns with the pane content edge instead of jamming the window edge. */
+  padding: 0 8px 4px;
+}
+
+/* The team toggle stacks .squid-room-app-toggle-btn with the generic
+   .expand-btn, whose 22px fixed square would freeze this labeled button at
+   exactly min-width and clip/jam the label. Size it by its content. */
+.squid-room-app-toggle-btn.expand-btn {
+  width: auto;
+  height: auto;
 }
 
 .squid-room-team-title {
@@ -504,6 +514,7 @@ details.squid-room-app:not([open]) .squid-room-live-panes {
     align-items: flex-start;
     justify-content: stretch;
     gap: 6px;
+    row-gap: 7px;
   }
 
   .squid-room-live-pane .pane-title {
@@ -511,11 +522,19 @@ details.squid-room-app:not([open]) .squid-room-live-panes {
     width: 100%;
   }
 
+  /* Controls row spans the full width with the action cluster pinned right
+     (selector + health left, actions + lock right) for main-pane-header
+     parity instead of clumping everything left with dead space. */
   .squid-room-live-pane .pane-header-right {
     flex: 1 1 100%;
     width: 100%;
     justify-content: flex-start;
+    align-items: center;
     gap: 6px;
+  }
+
+  .squid-room-live-pane .pane-header-right .pane-actions {
+    margin-left: auto;
   }
 
   .squid-room-live-pane .pane-actions {
