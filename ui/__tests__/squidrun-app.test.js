@@ -10174,4 +10174,33 @@ describe('SquidRunApp', () => {
       );
     });
   });
+
+  describe('Scoped Telegram Trigger Drain Poller', () => {
+    let app;
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+    });
+    it('scoped trigger drain poller exits early if profile is main or undefined', () => {
+      jest.useFakeTimers();
+      const getPathsSpy = jest.spyOn(app, 'getScopedTelegramTriggerPaths');
+      
+      app.activeProfileName = undefined;
+      app.startScopedTelegramTriggerDrainPoller();
+      expect(getPathsSpy).not.toHaveBeenCalled();
+
+      app.activeProfileName = 'main';
+      app.startScopedTelegramTriggerDrainPoller();
+      expect(getPathsSpy).not.toHaveBeenCalled();
+
+      app.activeProfileName = 'eunbyeol';
+      getPathsSpy.mockReturnValue([]); 
+      app.startScopedTelegramTriggerDrainPoller();
+      
+      jest.advanceTimersByTime(11000); 
+      expect(getPathsSpy).toHaveBeenCalledWith('eunbyeol');
+
+      getPathsSpy.mockRestore();
+      jest.useRealTimers();
+    });
+  });
 });

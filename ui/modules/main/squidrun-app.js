@@ -1800,6 +1800,87 @@ class SquidRunApp {
     return workspacePath;
   }
 
+  
+
+  startScopedTelegramTriggerDrainPoller() {
+    // Only run the drain poller if we are a profile daemon (not main)
+    const activeProfile = this.activeProfileName || getActiveProfileName();
+    if (!activeProfile || isMainProfile(activeProfile)) {
+      log.info('Telegram', 'Skipping scoped trigger drain poller (main profile or undefined).');
+      return;
+    }
+
+    log.info('Telegram', `Starting scoped trigger drain poller for profile: ${activeProfile} (~60s interval)`);
+
+    let isDraining = false;
+    const drainTriggerFile = async () => {
+      if (isDraining) return;
+      isDraining = true;
+      try {
+        const triggerPaths = this.getScopedTelegramTriggerPaths(activeProfile);
+        if (!triggerPaths || triggerPaths.length === 0) return;
+
+        const triggerPath = triggerPaths[0];
+        if (!triggerPath || !fs.existsSync(triggerPath)) return;
+
+        const fileContent = fs.readFileSync(triggerPath, 'utf8');
+        if (!fileContent.trim()) return;
+
+        log.info('Telegram', `Draining scoped trigger file payload (${fileContent.length} bytes): ${triggerPath}`);
+
+        // Inject the whole file as a single payload
+        const result = await this.deliverScopedTelegramInboundWithRetry(activeProfile, fileContent, { targetRole: 'architect', sender: 'system' });
+        
+        if (result?.verified) {
+          const dateStr = new Date().toISOString().split('T')[0];
+          for (const currentPath of triggerPaths) {
+            if (!fs.existsSync(currentPath)) continue;
+            
+            const currentContent = fs.readFileSync(currentPath, 'utf8');
+            if (!currentContent.trim()) continue;
+
+            const archiveDir = path.join(path.dirname(currentPath), 'drained');
+            const archivePath = path.join(archiveDir, `architect-${dateStr}.txt`);
+            try {
+              fs.mkdirSync(archiveDir, { recursive: true });
+              const separator = fs.existsSync(archivePath) ? '\n' : '';
+              fs.appendFileSync(archivePath, `${separator}${currentContent}`, 'utf8');
+              // Safely empty the trigger file now that we have injected and archived
+              fs.writeFileSync(currentPath, '', 'utf8');
+              log.info('Telegram', `Successfully drained and archived trigger file to ${archivePath}`);
+            } catch (err) {
+              log.warn('Telegram', `Failed to archive or truncate trigger file: ${err.message}`);
+            }
+          }
+        } else {
+          log.warn('Telegram', `Failed to inject drained payload, keeping trigger files. Status: ${result?.status}`);
+        }
+      } catch (err) {
+        log.warn('Telegram', `Error in drain poller: ${err.message}`);
+      } finally {
+        isDraining = false;
+      }
+    };
+
+    // Run once on startup after a small delay to let the pane settle
+    this.drainPollerTimeout = setTimeout(() => {
+      drainTriggerFile();
+      // And then run every 60 seconds
+      this.drainPollerInterval = setInterval(drainTriggerFile, 60 * 1000);
+    }, 10 * 1000);
+  }
+
+  stopScopedTelegramTriggerDrainPoller() {
+    if (this.drainPollerTimeout) {
+      clearTimeout(this.drainPollerTimeout);
+      this.drainPollerTimeout = null;
+    }
+    if (this.drainPollerInterval) {
+      clearInterval(this.drainPollerInterval);
+      this.drainPollerInterval = null;
+    }
+  }
+
   async initializeStartupSessionScope(options = {}) {
     const opts = options && typeof options === 'object' ? options : {};
     const finalizeSessionScope = async (result) => {
@@ -3876,6 +3957,7 @@ class SquidRunApp {
     await this.initializeStartupSessionScope({
       sessionNumber: this.getCurrentAppStatusSessionNumber(),
     });
+    this.startScopedTelegramTriggerDrainPoller();
     const durableTelegramReplyHydration = this.hydratePendingTelegramReplyGuardsFromObligations({
       sessionId: this.commsSessionScopeId || null,
     });
@@ -9991,8 +10073,8 @@ class SquidRunApp {
       target: targetRaw,
       priority: 'urgent',
       ackRequired: true,
-      attempt: 1,
-      maxAttempts: 1,
+      attempt: options.attempt || 1,
+      maxAttempts: options.maxAttempts || 1,
     });
     dispatchMessage.metadata = {
       ...(dispatchMessage.metadata && typeof dispatchMessage.metadata === 'object' ? dispatchMessage.metadata : {}),
@@ -10077,7 +10159,7 @@ class SquidRunApp {
     let lastResult = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        lastResult = await this.deliverScopedTelegramInboundToProfileWindow(windowKey, message, options);
+        lastResult = await this.deliverScopedTelegramInboundToProfileWindow(windowKey, message, { ...options, attempt, maxAttempts });
       } catch (err) {
         lastResult = {
           ok: false, accepted: false, queued: false, verified: false, userVisible: false,
