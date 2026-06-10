@@ -264,6 +264,31 @@ function createSquidRoomPetArtwork(doc, spec) {
   });
 }
 
+function createPetModelSelector(doc, paneId, currentModel) {
+  const model = ['claude', 'codex', 'gemini'].includes(currentModel) ? currentModel : 'claude';
+  const selector = createElement(doc, 'select', {
+    className: 'model-selector squid-room-pet-model-selector',
+    id: `model-selector-${paneId}`,
+    title: 'Switch model for this pane',
+    dataset: {
+      paneId,
+      previousValue: model,
+    },
+  });
+  for (const [value, label] of [
+    ['claude', 'Claude'],
+    ['codex', 'Codex'],
+    ['gemini', 'Gemini'],
+  ]) {
+    selector.appendChild(createElement(doc, 'option', {
+      value,
+      selected: value === model,
+    }, label));
+  }
+  selector.value = model;
+  return selector;
+}
+
 function renderSquidRoomPetPane(doc, pane, spec) {
   if (!doc || !pane || !spec) return null;
   if (Array.isArray(pane.childNodes)) pane.childNodes.length = 0;
@@ -284,6 +309,13 @@ function renderSquidRoomPetPane(doc, pane, spec) {
   title.appendChild(createElement(doc, 'strong', {}, spec.title));
   header.appendChild(title);
   header.appendChild(createElement(doc, 'span', { className: 'squid-room-pet-state' }, spec.stateLabel));
+  // Core-pair switcher (wave 3, S426): the pet render wipes the static pane
+  // markup including its model selector, which is why the room had no
+  // working switcher. The dropdown re-created here is wired by the
+  // DELEGATED change listener in model-selector.js (binding survives any
+  // re-render); initModelSelectors syncs the value from settings at boot,
+  // and pane.dataset.cli seeds it across re-renders meanwhile.
+  header.appendChild(createPetModelSelector(doc, spec.paneId, pane.dataset.cli));
 
   const stage = createElement(doc, 'div', { className: 'squid-room-pet-stage' });
   stage.appendChild(createSquidRoomPetArtwork(doc, spec));

@@ -98,33 +98,42 @@ function scheduleSwitchCompletionFallback(select, paneId) {
   }, 4000);
 }
 
+let modelSelectorDelegationBound = false;
+
+// DELEGATED listener (wave 3, S426): the squid room creates its pet-pane
+// selectors at shell-config time and can re-render them on window-context
+// updates - per-node binding at DOMContentLoaded left re-created dropdowns
+// silently dead (the original v2-dropdown debacle class). One document-level
+// listener covers every .model-selector that ever exists.
 function setupModelSelectorListeners() {
-  document.querySelectorAll('.model-selector').forEach(select => {
-    select.addEventListener('change', async (e) => {
-      const paneId = e.target.dataset.paneId;
-      const model = e.target.value;
-      const previousValue = e.target.dataset.previousValue || 'claude';
+  if (modelSelectorDelegationBound) return;
+  modelSelectorDelegationBound = true;
+  document.addEventListener('change', async (event) => {
+    const select = event.target;
+    if (!select || !select.classList || !select.classList.contains('model-selector')) return;
+    const paneId = select.dataset.paneId;
+    const model = select.value;
+    const previousValue = select.dataset.previousValue || 'claude';
 
-      e.target.disabled = true;
-      showStatusNotice(`Switching pane ${paneId} to ${model} - session will restart...`);
+    select.disabled = true;
+    showStatusNotice(`Switching pane ${paneId} to ${model} - session will restart...`);
 
-      try {
-        const result = await invokeBridge('switch-pane-model', { paneId, model });
+    try {
+      const result = await invokeBridge('switch-pane-model', { paneId, model });
 
-        if (!result.success) {
-          throw new Error(result.error);
-        }
-
-        e.target.dataset.previousValue = model;
-        log.info('ModelSelector', `Pane ${paneId} switched to ${model}`);
-        scheduleSwitchCompletionFallback(e.target, paneId);
-      } catch (err) {
-        log.error('ModelSelector', `Switch failed for pane ${paneId}:`, err);
-        showStatusNotice(`Switch failed: ${err.message}`, 'error');
-        e.target.value = previousValue; // Rollback UI
-        e.target.disabled = false;
+      if (!result.success) {
+        throw new Error(result.error);
       }
-    });
+
+      select.dataset.previousValue = model;
+      log.info('ModelSelector', `Pane ${paneId} switched to ${model}`);
+      scheduleSwitchCompletionFallback(select, paneId);
+    } catch (err) {
+      log.error('ModelSelector', `Switch failed for pane ${paneId}:`, err);
+      showStatusNotice(`Switch failed: ${err.message}`, 'error');
+      select.value = previousValue; // Rollback UI
+      select.disabled = false;
+    }
   });
 }
 

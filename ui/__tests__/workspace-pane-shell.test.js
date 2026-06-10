@@ -263,6 +263,14 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.pane[data-pane-id="3"]').dataset.squidRoomLabel).toBe('Oracle');
     expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.squid-room-codex-pet-builder-squid')).toBeTruthy();
     expect(doc.querySelector('.pane[data-pane-id="3"]').querySelector('.squid-room-codex-pet-oracle-squid')).toBeTruthy();
+    // Wave 3 (S426): the core pair switches models FROM the room - the pet
+    // header re-creates the selector the pet render wipes (wired by the
+    // delegated change listener in model-selector.js).
+    for (const corePaneId of ['2', '3']) {
+      const petSelector = doc.querySelector(`.pane[data-pane-id="${corePaneId}"]`).querySelector('.model-selector');
+      expect(petSelector).toBeTruthy();
+      expect(petSelector.dataset.paneId).toBe(corePaneId);
+    }
     expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.squid-room-pet-bubble').textContent).toBe('Working the active fix.');
     expect(doc.querySelector('.pane[data-pane-id="3"]').querySelector('.squid-room-pet-bubble').textContent).toBe('Checking the proof.');
     expect(doc.querySelector('.squid-room-team-header')).toBeTruthy();
