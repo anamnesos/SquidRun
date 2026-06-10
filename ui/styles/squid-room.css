@@ -437,6 +437,53 @@ details.squid-room-app:not([open]) .squid-room-live-panes {
   box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.25);
 }
 
+/* WAVE 2 (S426 UX audit, F3): tooltip geometry in the room.
+   - Above-bucket surface controls (section header toggles) flip DOWN like
+     the proven pane-action rule, so they can never clip at a top edge.
+   - Edge-anchored controls (team toggle, section toggle - both live at the
+     far right) anchor their tooltip to the RIGHT edge of the button instead
+     of center-translate, so the text can never ride off the window.
+   The 16 tile down-flip survivors keep the layout.css rule untouched. */
+body.squid-room-workspace .squid-room-app-header [data-tooltip]::after {
+  bottom: auto;
+  top: calc(100% + 6px);
+  z-index: calc(var(--z-tooltip) + 10);
+}
+
+body.squid-room-workspace .squid-room-app-header [data-tooltip]::before {
+  bottom: auto;
+  top: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--color-bg-light);
+  margin-bottom: 0;
+  margin-top: -6px;
+  z-index: calc(var(--z-tooltip) + 10);
+}
+
+body.squid-room-workspace .squid-room-app-header-right [data-tooltip]::after,
+body.squid-room-workspace .squid-room-team-actions [data-tooltip]::after {
+  left: auto;
+  right: 0;
+  transform: translateY(4px);
+}
+
+body.squid-room-workspace .squid-room-app-header-right [data-tooltip]:hover::after,
+body.squid-room-workspace .squid-room-team-actions [data-tooltip]:hover::after {
+  transform: translateY(0);
+}
+
+body.squid-room-workspace .squid-room-app-header-right [data-tooltip]::before,
+body.squid-room-workspace .squid-room-team-actions [data-tooltip]::before {
+  left: auto;
+  right: 12px;
+  transform: none;
+}
+
+body.squid-room-workspace .squid-room-app-header-right [data-tooltip]:hover::before,
+body.squid-room-workspace .squid-room-team-actions [data-tooltip]:hover::before {
+  transform: translateY(2px);
+}
+
 .squid-room-counts {
   display: flex;
   flex-wrap: wrap;
