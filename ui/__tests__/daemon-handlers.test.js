@@ -30,7 +30,6 @@ jest.mock('../modules/terminal', () => ({
   initTerminal: jest.fn().mockResolvedValue(),
   spawnAgent: jest.fn().mockResolvedValue(),
   restartPane: jest.fn(),
-  freshStartAll: jest.fn(),
   nudgePane: jest.fn(),
   hasPendingStartupInjection: jest.fn(() => false),
 }));
@@ -314,27 +313,34 @@ describe('daemon-handlers.js module', () => {
 
       daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
 
-      for (const channel of ['nudge-pane', 'restart-pane', 'restart-all-panes']) {
+      for (const channel of ['nudge-pane', 'restart-pane']) {
         const matchingRegistrations = onBridge.mock.calls.filter(([registeredChannel]) => registeredChannel === channel);
         expect(matchingRegistrations).toHaveLength(1);
         expect(typeof ipcHandlers[channel]).toBe('function');
       }
 
       ipcHandlers['nudge-pane']({}, { paneId: '2' });
-      ipcHandlers['restart-pane']({}, { paneId: '3' });
-      ipcHandlers['restart-all-panes']({}, {});
-
+      ipcHandlers['restart-pane']({}, {
+        paneId: '3',
+        source: 'test-restart',
+        requestId: 'req-3',
+        restartClaim: { claimId: 'restart-claim-3', paneId: '3' },
+      });
       expect(terminal.nudgePane).toHaveBeenCalledTimes(1);
       expect(terminal.nudgePane).toHaveBeenCalledWith('2');
       expect(terminal.restartPane).toHaveBeenCalledTimes(1);
-      expect(terminal.restartPane).toHaveBeenCalledWith('3');
-      expect(terminal.freshStartAll).toHaveBeenCalledTimes(1);
+      expect(terminal.restartPane).toHaveBeenCalledWith('3', null, expect.objectContaining({
+        source: 'test-restart',
+        requestId: 'req-3',
+        restartClaim: { claimId: 'restart-claim-3', paneId: '3' },
+      }));
 
       const uiRoot = path.resolve(__dirname, '..');
       const rendererSource = fs.readFileSync(path.join(uiRoot, 'renderer.js'), 'utf8');
       for (const channel of ['nudge-pane', 'restart-pane', 'restart-all-panes']) {
         expect(rendererSource).not.toMatch(new RegExp(`ipcRenderer\\.on\\(['"]${channel}['"]`));
       }
+      expect(onBridge.mock.calls.some(([channel]) => channel === 'restart-all-panes')).toBe(false);
 
       const rendererHtmlEntrypoints = fs.readdirSync(uiRoot)
         .filter((name) => name.endsWith('.html'))

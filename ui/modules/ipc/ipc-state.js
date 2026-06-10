@@ -6,6 +6,7 @@
   watcher: null,
   triggers: null,
   recoveryManager: null,
+  paneRestartArbiter: null,
   pluginManager: null,
   backupManager: null,
   usageStats: null,
@@ -29,6 +30,7 @@ function initState(deps = {}) {
   assign('watcher');
   assign('triggers');
   assign('recoveryManager');
+  assign('paneRestartArbiter');
   assign('pluginManager');
   assign('backupManager');
   assign('usageStats');

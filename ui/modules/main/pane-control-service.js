@@ -124,6 +124,23 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
       return { success: false, reason: 'window_not_available', paneId, action: normalizedAction };
     }
 
+    const restartResult = typeof ctx.requestPaneRestart === 'function'
+      ? ctx.requestPaneRestart(paneId, {
+        source: 'pane-control-service',
+        reason: 'manual-restart',
+      })
+      : null;
+    if (restartResult) {
+      return {
+        success: restartResult.ok !== false,
+        paneId,
+        action: normalizedAction,
+        method: 'restart-pane',
+        coalesced: restartResult.coalesced === true,
+        reason: restartResult.reason || null,
+      };
+    }
+
     if (recoveryManager && typeof recoveryManager.markExpectedExit === 'function') {
       recoveryManager.markExpectedExit(paneId, 'manual-restart');
     }

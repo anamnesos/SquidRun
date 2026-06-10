@@ -238,7 +238,6 @@ const RENDERER_IPC_CHANNELS = Object.freeze([
   'pane-enter',
   'unstick-pane',
   'restart-pane',
-  'restart-all-panes',
   'agent-stuck-detected',
   'pane-cli-identity',
   'daemon-connected',
@@ -1725,7 +1724,7 @@ async function runStartupPreflightCheck() {
 function createFallbackRendererApi() {
   return {
     pty: {
-      create: (paneId, workingDir) => ipcRenderer.invoke('pty-create', paneId, workingDir),
+      create: (paneId, workingDir, options = {}) => ipcRenderer.invoke('pty-create', paneId, workingDir, options),
       write: (paneId, data, kernelMeta = null) => ipcRenderer.invoke('pty-write', paneId, data, kernelMeta),
       writeChunked: (paneId, fullText, options = {}, kernelMeta = null) =>
         ipcRenderer.invoke('pty-write-chunked', paneId, fullText, options, kernelMeta),
@@ -1735,7 +1734,9 @@ function createFallbackRendererApi() {
       resize: (paneId, cols, rows, kernelMeta = null) => ipcRenderer.invoke('pty-resize', paneId, cols, rows, kernelMeta),
       claimStartupInjection: (payload = {}) => ipcRenderer.invoke('startup-injection-claim', payload),
       releaseStartupInjection: (payload = {}) => ipcRenderer.invoke('startup-injection-release', payload),
-      kill: (paneId) => ipcRenderer.invoke('pty-kill', paneId),
+      beginPaneRestart: (payload = {}) => ipcRenderer.invoke('pane-restart-begin', payload),
+      completePaneRestart: (payload = {}) => ipcRenderer.invoke('pane-restart-complete', payload),
+      kill: (paneId, options = {}) => ipcRenderer.invoke('pty-kill', paneId, options),
       pause: (paneId) => ipcRenderer.invoke('pty-pause', paneId),
       resume: (paneId) => ipcRenderer.invoke('pty-resume', paneId),
       onData: (paneId, callback) => {
@@ -1783,7 +1784,7 @@ function createFallbackRendererApi() {
       editAction: (action) => ipcRenderer.invoke('input-edit-action', action),
     },
     claude: {
-      spawn: (paneId, workingDir) => ipcRenderer.invoke('spawn-claude', paneId, workingDir),
+      spawn: (paneId, workingDir, options = {}) => ipcRenderer.invoke('spawn-claude', paneId, workingDir, options),
     },
     paneHost: {
       inject: (paneId, payload = {}) => ipcRenderer.invoke('pane-host-inject', paneId, payload),

@@ -136,6 +136,7 @@ const { executeTransitionLedgerOperation } = require('../ipc/transition-ledger-h
 const { executeGitHubOperation } = require('../ipc/github-handlers');
 const { executePaneControlAction } = require('./pane-control-service');
 const { executeAppControlAction } = require('./app-control-service');
+const { createPaneRestartArbiter } = require('./pane-restart-arbiter');
 const miraLabHandlersModule = require('../ipc/mira-lab-handlers');
 const armStateProjectionHandlersModule = require('../ipc/arm-state-projection-handlers');
 const {
@@ -846,6 +847,14 @@ class SquidRunApp {
     this.cliIdentity = managers.cliIdentity;
     this.firmwareManager = managers.firmwareManager;
     this.kernelBridge = createKernelBridge(() => this.ctx.mainWindow);
+    this.paneRestartArbiter = createPaneRestartArbiter({
+      resolveOwner: (paneId) => this.resolvePaneRestartOwner(paneId),
+    });
+    if (typeof this.ctx.setPaneRestartArbiter === 'function') {
+      this.ctx.setPaneRestartArbiter(this.paneRestartArbiter);
+    } else {
+      this.ctx.paneRestartArbiter = this.paneRestartArbiter;
+    }
     this.paneHostWindowManager = createPaneHostWindowManager({
       getCurrentSettings: () => this.ctx.currentSettings || {},
       onLifecycleEvent: (event) => this.handlePaneHostLifecycleEvent(event),
@@ -2709,6 +2718,69 @@ class SquidRunApp {
     return this.getVisibleWindowKeysForPane(paneId)[0] || 'main';
   }
 
+  resolvePaneRestartOwner(paneId) {
+    const id = String(paneId || '').trim();
+    const ownerWindowKey = isSquidRoomArmPaneId(id) ? 'squid-room' : 'main';
+    const ownerWindow = this.getAppWindow(ownerWindowKey);
+    const webContents = ownerWindow && typeof ownerWindow.isDestroyed === 'function' && !ownerWindow.isDestroyed()
+      ? ownerWindow.webContents
+      : null;
+    return {
+      ownerWindowKey,
+      webContents,
+      requiresWebContents: true,
+    };
+  }
+
+  requestPaneRestart(paneId, info = {}) {
+    const id = String(paneId || '').trim();
+    if (!id) return { ok: false, granted: false, reason: 'missing_pane_id' };
+    const owner = this.resolvePaneRestartOwner(id);
+    const ownerWindow = this.getAppWindow(owner.ownerWindowKey);
+    if (!this.canSendToWindow(ownerWindow)) {
+      return {
+        ok: false,
+        granted: false,
+        reason: 'restart_owner_unavailable',
+        paneId: id,
+        ownerWindowKey: owner.ownerWindowKey,
+      };
+    }
+    const result = this.paneRestartArbiter.begin({
+      paneId: id,
+      source: info.source || 'main-request',
+      requestId: info.requestId || info.actionId || null,
+      webContents: ownerWindow.webContents,
+    });
+    if (!result?.granted) {
+      log.info('PaneRestart', `Coalesced/denied restart for pane ${id}: ${result?.reason || 'not_granted'}`);
+      return result;
+    }
+    const delivered = this.sendToVisibleWindow('restart-pane', {
+      paneId: id,
+      source: info.source || 'main-request',
+      requestId: info.requestId || info.actionId || null,
+      restartClaim: result.claim,
+      restartClaimId: result.claim?.claimId || null,
+    }, { windowKey: owner.ownerWindowKey });
+    if (!delivered) {
+      this.paneRestartArbiter.complete({
+        paneId: id,
+        claimId: result.claim?.claimId,
+        status: 'delivery_failed',
+        reason: 'restart_owner_send_failed',
+      });
+      return {
+        ok: false,
+        granted: false,
+        reason: 'restart_owner_send_failed',
+        paneId: id,
+        ownerWindowKey: owner.ownerWindowKey,
+      };
+    }
+    return { ...result, delivered: true, ownerWindowKey: owner.ownerWindowKey };
+  }
+
   getVisibleWindowKeysForPane(paneId) {
     const normalizedPaneId = String(paneId || '');
     if (isSquidRoomArmPaneId(normalizedPaneId)) return ['squid-room'];
@@ -3952,6 +4024,7 @@ class SquidRunApp {
                 currentSettings: this.ctx.currentSettings,
                 recoveryManager: this.ctx.recoveryManager,
                 agentRunning: this.ctx.agentRunning,
+                requestPaneRestart: (paneId, info = {}) => this.requestPaneRestart(paneId, info),
               },
               data.message.action,
               data.message.payload || {}
@@ -6223,6 +6296,7 @@ class SquidRunApp {
       usageStats: this.ctx.usageStats,
       sessionStartTimes: this.ctx.sessionStartTimes,
       recoveryManager: this.ctx.recoveryManager,
+      paneRestartArbiter: this.paneRestartArbiter,
       pluginManager: this.ctx.pluginManager,
       backupManager: this.ctx.backupManager,
     });
@@ -6255,6 +6329,8 @@ class SquidRunApp {
       getRuntimeLifecycleState: () => this.runtimeLifecycleState,
       performFullShutdown: (reason) => this.performFullShutdown(reason || 'ipc-full-restart'),
       getDaemonClientForPane: (paneId) => this.getDaemonClientForPane(paneId),
+      paneRestartArbiter: this.paneRestartArbiter,
+      requestPaneRestart: (paneId, info = {}) => this.requestPaneRestart(paneId, info),
       createMiraLabWindow: (opts = {}) => miraLabWindowModule.createMiraLabWindow({ BrowserWindow, ...opts }),
       sendAgentMessage: (target, body, metadata = {}) => {
         const PANE_BY_ROLE = { architect: '1', builder: '2', oracle: '3' };
@@ -8285,13 +8361,10 @@ class SquidRunApp {
         return cmd.includes('codex');
       },
       requestRestart: (paneId, info = {}) => {
-        if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
-          this.ctx.mainWindow.webContents.send('restart-pane', {
-            paneId: String(paneId),
-            source: 'recovery',
-            ...info,
-          });
-        }
+        return this.requestPaneRestart(paneId, {
+          source: 'recovery',
+          ...info,
+        });
       },
       requestUnstick: (paneId, info = {}) => {
         if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {

@@ -6,6 +6,7 @@
   'watcher',
   'triggers',
   'recoveryManager',
+  'paneRestartArbiter',
   'pluginManager',
   'backupManager',
   'usageStats',

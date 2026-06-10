@@ -966,19 +966,21 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
   });
 
   registerScopedIpcListener('daemon-core', 'restart-pane', (event, data) => {
-    const { paneId } = data || {};
+    const {
+      paneId,
+      source,
+      requestId,
+      restartClaim,
+      restartClaimId,
+    } = data || {};
     const term = getTerminal();
     if (paneId && typeof term?.restartPane === 'function') {
       log.info('Health', `Restarting pane ${paneId}`);
-      term.restartPane(String(paneId));
-    }
-  });
-
-  registerScopedIpcListener('daemon-core', 'restart-all-panes', () => {
-    log.info('Health', 'Restarting all panes');
-    const term = getTerminal();
-    if (typeof term?.freshStartAll === 'function') {
-      term.freshStartAll();
+      term.restartPane(String(paneId), null, {
+        source: source || 'daemon-restart-pane',
+        requestId: requestId || null,
+        restartClaim: restartClaim || (restartClaimId ? { claimId: restartClaimId } : null),
+      });
     }
   });
 

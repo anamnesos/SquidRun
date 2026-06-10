@@ -1750,28 +1750,6 @@ describe('terminal.js module', () => {
     });
   });
 
-  describe('freshStartAll', () => {
-    test('should show confirmation dialog', async () => {
-      confirm.mockReturnValue(false);
-
-      await terminal.freshStartAll();
-
-      expect(confirm).toHaveBeenCalled();
-    });
-
-    test('should cancel if user declines', async () => {
-      confirm.mockReturnValue(false);
-      const connectionCb = jest.fn();
-      terminal.setStatusCallbacks(null, connectionCb);
-
-      await terminal.freshStartAll();
-
-      expect(connectionCb).toHaveBeenCalledWith('Fresh start cancelled');
-      expect(mockSquidRun.pty.kill).not.toHaveBeenCalled();
-    });
-
-  });
-
   describe('spawnAgent', () => {
     test('should skip if no terminal exists', async () => {
       terminal.terminals.clear();
@@ -2263,25 +2241,6 @@ describe('terminal.js module', () => {
     test('isCodexPane should handle null settings', () => {
       mockSquidRun.settings.get.mockReturnValue(null);
       expect(terminal.isCodexPane('1')).toBe(false);
-    });
-  });
-
-  describe('freshStartAll edge cases', () => {
-    test('should proceed when confirmed', async () => {
-      jest.useRealTimers();
-      confirm.mockReturnValue(true);
-
-      // Setup terminals to be cleared
-      const mockTerminal = { clear: jest.fn() };
-      terminal.terminals.set('1', mockTerminal);
-
-      const connectionCb = jest.fn();
-      terminal.setStatusCallbacks(null, connectionCb);
-
-      await terminal.freshStartAll();
-
-      expect(connectionCb).toHaveBeenCalledWith('Fresh start: killing all terminals...');
-      jest.useFakeTimers();
     });
   });
 

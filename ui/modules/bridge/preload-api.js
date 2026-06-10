@@ -72,7 +72,9 @@ function createPreloadApi(ipcRenderer) {
       recordFitTelemetry: (payload = {}) => ipc.invoke('terminal-fit-telemetry', payload),
       claimStartupInjection: (payload = {}) => ipc.invoke('startup-injection-claim', payload),
       releaseStartupInjection: (payload = {}) => ipc.invoke('startup-injection-release', payload),
-      kill: (paneId) => ipc.invoke('pty-kill', paneId),
+      beginPaneRestart: (payload = {}) => ipc.invoke('pane-restart-begin', payload),
+      completePaneRestart: (payload = {}) => ipc.invoke('pane-restart-complete', payload),
+      kill: (paneId, options = {}) => ipc.invoke('pty-kill', paneId, options),
       onData: (paneId, callback) => {
         const channel = toPaneChannel('pty-data-', paneId);
         return ipc.on(channel, callback);
@@ -98,7 +100,7 @@ function createPreloadApi(ipcRenderer) {
     },
 
     claude: {
-      spawn: (paneId, workingDir) => ipc.invoke('spawn-claude', paneId, workingDir),
+      spawn: (paneId, workingDir, options = {}) => ipc.invoke('spawn-claude', paneId, workingDir, options),
     },
 
     paneHost: {

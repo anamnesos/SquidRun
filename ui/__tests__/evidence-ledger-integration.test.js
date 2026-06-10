@@ -59,7 +59,6 @@ jest.mock('../modules/terminal', () => ({
   initTerminal: jest.fn().mockResolvedValue(),
   spawnAgent: jest.fn().mockResolvedValue(),
   restartPane: jest.fn(),
-  freshStartAll: jest.fn(),
   nudgePane: jest.fn(),
 }));
 

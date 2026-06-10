@@ -199,60 +199,180 @@ function createRecoveryController(options = {}) {
     }
   }
 
-  async function restartPane(paneId, model = null) {
+  async function acquireRestartClaim(paneId, options = {}) {
     const id = String(paneId);
+    const providedClaim = options?.restartClaim && typeof options.restartClaim === 'object'
+      ? options.restartClaim
+      : null;
+    const providedClaimId = providedClaim?.claimId || options?.restartClaimId || null;
+    if (providedClaimId) {
+      return {
+        ok: true,
+        granted: true,
+        claim: {
+          ...(providedClaim || {}),
+          claimId: String(providedClaimId),
+          paneId: id,
+        },
+        source: options.source || 'pregranted',
+      };
+    }
+    const begin = window?.squidrun?.pty?.beginPaneRestart;
+    if (typeof begin !== 'function') {
+      return { ok: false, granted: false, reason: 'pane_restart_begin_unavailable' };
+    }
+    return begin({
+      paneId: id,
+      source: options.source || 'renderer-restart',
+      requestId: options.requestId || null,
+    });
+  }
+
+  function buildRestartLifecycleOptions(restartLease, extra = {}) {
+    const claimId = restartLease?.claim?.claimId || null;
+    return {
+      ...extra,
+      requireRestartClaim: true,
+      restartClaimId: claimId,
+      restartClaim: restartLease?.claim || null,
+      expectedExitReason: 'restart',
+    };
+  }
+
+  async function completeRestartClaim(paneId, restartLease, payload = {}) {
+    const complete = window?.squidrun?.pty?.completePaneRestart;
+    const claimId = restartLease?.claim?.claimId || null;
+    if (typeof complete !== 'function' || !claimId) return;
+    try {
+      await complete({
+        paneId: String(paneId),
+        claimId,
+        status: payload.status || 'completed',
+        reason: payload.reason || null,
+        error: payload.error || null,
+      });
+    } catch (err) {
+      log.warn('Terminal', `Failed to complete restart claim for pane ${paneId}: ${err?.message || err}`);
+    }
+  }
+
+  function isLifecycleFailureResult(result) {
+    if (!result || typeof result !== 'object') return false;
+    if (result.success === false || result.ok === false) return true;
+    if (Object.prototype.hasOwnProperty.call(result, 'error') && result.error) return true;
+    return false;
+  }
+
+  function assertLifecycleResult(stage, result) {
+    if (!isLifecycleFailureResult(result)) return result;
+    const reason = result.reason || result.error || 'unknown';
+    const err = new Error(`${stage} failed: ${reason}`);
+    err.result = result;
+    throw err;
+  }
+
+  function isRestartClaimDenialError(err) {
+    const result = err?.result;
+    if (!result || typeof result !== 'object') return false;
+    const error = String(result.error || '').trim();
+    const reason = String(result.reason || '').trim();
+    return error === 'restart_claim_denied'
+      || reason === 'missing_restart_claim'
+      || reason === 'pane_restart_arbiter_unavailable'
+      || reason.startsWith('restart_claim_')
+      || reason.startsWith('restart_operation_');
+  }
+
+  async function restartPane(paneId, model = null, options = {}) {
+    const id = String(paneId);
+    const restartLease = await acquireRestartClaim(id, options);
+    if (!restartLease?.granted) {
+      const reason = restartLease?.reason || 'restart_claim_not_granted';
+      log.info('Terminal', `Restart for pane ${id} coalesced/denied: ${reason}`);
+      setPaneStatus(id, reason === 'restart_in_progress' || reason === 'restart_cooldown_active'
+        ? 'Restart queued'
+        : 'Restart blocked');
+      return restartLease?.ok !== false;
+    }
+
+    let completion = { status: 'failed', reason: 'unknown' };
+    let shouldCompleteRestartClaim = true;
     setPaneStatus(id, 'Restarting...');
     if (typeof markIgnoreNextExit === 'function') {
       markIgnoreNextExit(id);
     }
     try {
-      await window.squidrun.pty.kill(id);
-    } catch (err) {
-      log.error('Terminal', `Failed to kill pane ${id} for restart:`, err);
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 250));
-
-    // Reset identity tracking so new session gets fresh identity header
-    if (typeof resetCodexIdentity === 'function') {
-      resetCodexIdentity(id);
-    }
-    // Reset write queue state to prevent frozen pane
-    if (typeof resetTerminalWriteQueue === 'function') {
-      resetTerminalWriteQueue(id);
-    }
-
-    // Clear terminal display so we don't detect stale prompts from the previous session
-    const terminal = terminals.get(id);
-    if (terminal) {
-      terminal.clear();
-      log.info('Terminal', `Cleared xterm for pane ${id} during restart`);
-    }
-
-    // All panes need PTY recreated after kill - the kill destroys the PTY entirely
-    // This applies to Claude, Codex, AND Gemini panes
-    try {
-      await window.squidrun.pty.create(id);
-      log.info('Terminal', `Recreated PTY for pane ${id}`);
-    } catch (err) {
-      log.error('Terminal', `Failed to recreate PTY for pane ${id}:`, err);
-      setPaneStatus(id, 'Restart failed');
-      return false;
-    }
-
-    if (typeof spawnAgent === 'function') {
       try {
-        await spawnAgent(id, model);
-        if (typeof syncTerminalInputBridge === 'function') {
-          syncTerminalInputBridge(id, { modelHint: model });
-        }
+        const killResult = await window.squidrun.pty.kill(id, buildRestartLifecycleOptions(restartLease));
+        assertLifecycleResult('pty-kill', killResult);
       } catch (err) {
-        log.error('Terminal', `Failed to spawn Claude for pane ${id}:`, err);
-        setPaneStatus(id, 'Spawn failed');
+        log.error('Terminal', `Failed to kill pane ${id} for restart:`, err);
+        setPaneStatus(id, 'Restart failed');
+        completion = { status: 'failed', reason: 'pty_kill_failed', error: err?.message || String(err) };
+        if (isRestartClaimDenialError(err)) {
+          shouldCompleteRestartClaim = false;
+        }
         return false;
       }
+
+      await new Promise(resolve => setTimeout(resolve, 250));
+
+      // Reset identity tracking so new session gets fresh identity header
+      if (typeof resetCodexIdentity === 'function') {
+        resetCodexIdentity(id);
+      }
+      // Reset write queue state to prevent frozen pane
+      if (typeof resetTerminalWriteQueue === 'function') {
+        resetTerminalWriteQueue(id);
+      }
+
+      // Clear terminal display so we don't detect stale prompts from the previous session
+      const terminal = terminals.get(id);
+      if (terminal) {
+        terminal.clear();
+        log.info('Terminal', `Cleared xterm for pane ${id} during restart`);
+      }
+
+      // All panes need PTY recreated after kill - the kill destroys the PTY entirely
+      // This applies to Claude, Codex, AND Gemini panes
+      try {
+        const createResult = await window.squidrun.pty.create(id, undefined, buildRestartLifecycleOptions(restartLease));
+        assertLifecycleResult('pty-create', createResult);
+        log.info('Terminal', `Recreated PTY for pane ${id}`);
+      } catch (err) {
+        log.error('Terminal', `Failed to recreate PTY for pane ${id}:`, err);
+        setPaneStatus(id, 'Restart failed');
+        completion = { status: 'failed', reason: 'pty_create_failed', error: err?.message || String(err) };
+        if (isRestartClaimDenialError(err)) {
+          shouldCompleteRestartClaim = false;
+        }
+        return false;
+      }
+
+      if (typeof spawnAgent === 'function') {
+        try {
+          const spawnResult = await spawnAgent(id, model, buildRestartLifecycleOptions(restartLease));
+          assertLifecycleResult('spawn-claude', spawnResult);
+          if (typeof syncTerminalInputBridge === 'function') {
+            syncTerminalInputBridge(id, { modelHint: model });
+          }
+        } catch (err) {
+          log.error('Terminal', `Failed to spawn Claude for pane ${id}:`, err);
+          setPaneStatus(id, 'Spawn failed');
+          completion = { status: 'failed', reason: 'spawn_failed', error: err?.message || String(err) };
+          if (isRestartClaimDenialError(err)) {
+            shouldCompleteRestartClaim = false;
+          }
+          return false;
+        }
+      }
+      completion = { status: 'completed', reason: 'restart_completed' };
+      return true;
+    } finally {
+      if (shouldCompleteRestartClaim) {
+        await completeRestartClaim(id, restartLease, completion);
+      }
     }
-    return true;
   }
 
   async function unstickEscalation(paneId) {

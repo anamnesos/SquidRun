@@ -123,6 +123,39 @@ describe('PTY Handlers', () => {
       expect(result).toEqual({ error: 'Daemon not connected' });
     });
 
+    test('refuses restart create without a valid restart claim', async () => {
+      ctx.daemonClient.connected = true;
+
+      const result = await harness.invoke('pty-create', '1', '/test/dir', { requireRestartClaim: true });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'missing_restart_claim',
+        stage: 'pty-create',
+      }));
+      expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+    });
+
+    test('allows restart create with a valid restart claim', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        authorizeOperation: jest.fn(() => ({ ok: true, claim: { claimId: 'restart-claim-create' } })),
+      };
+
+      const result = await harness.invoke('pty-create', '1', '/test/dir', {
+        requireRestartClaim: true,
+        restartClaimId: 'restart-claim-create',
+      });
+
+      expect(result).toEqual(expect.objectContaining({ paneId: '1' }));
+      expect(deps.paneRestartArbiter.authorizeOperation).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '1',
+        claimId: 'restart-claim-create',
+        operation: 'pty-create',
+      }));
+      expect(ctx.daemonClient.spawn).toHaveBeenCalled();
+    });
+
     test('spawns terminal with resolver cwd when available', async () => {
       ctx.daemonClient.connected = true;
       const result = await harness.invoke('pty-create', '1', '/fallback/dir');
@@ -828,6 +861,112 @@ describe('PTY Handlers', () => {
 
       expect(ctx.daemonClient.kill).not.toHaveBeenCalled();
     });
+
+    test('refuses restart kill without a valid restart claim', async () => {
+      ctx.daemonClient.connected = true;
+      const result = await harness.invoke('pty-kill', '1', { requireRestartClaim: true });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'missing_restart_claim',
+      }));
+      expect(ctx.daemonClient.kill).not.toHaveBeenCalled();
+    });
+
+    test('allows restart kill with a valid restart claim', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        authorizeOperation: jest.fn(() => ({ ok: true, claim: { claimId: 'restart-claim-1' } })),
+      };
+
+      const result = await harness.invoke('pty-kill', '1', {
+        requireRestartClaim: true,
+        restartClaimId: 'restart-claim-1',
+      });
+
+      expect(result).toEqual(expect.objectContaining({ success: true, restarted: true }));
+      expect(deps.paneRestartArbiter.authorizeOperation).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '1',
+        claimId: 'restart-claim-1',
+        operation: 'pty-kill',
+      }));
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('1');
+    });
+  });
+
+  describe('pane-restart claims', () => {
+    test('preload bridge allowlist exposes pane restart claim channels', async () => {
+      const { isAllowedInvokeChannel } = require('../modules/bridge/channel-policy');
+      const { createPreloadApi } = require('../modules/bridge/preload-api');
+      const ipcRenderer = {
+        invoke: jest.fn()
+          .mockResolvedValueOnce({ ok: true, granted: true })
+          .mockResolvedValueOnce({ ok: true, completed: true }),
+        send: jest.fn(),
+        on: jest.fn(),
+        removeListener: jest.fn(),
+        removeAllListeners: jest.fn(),
+      };
+
+      const api = createPreloadApi(ipcRenderer);
+      await expect(api.pty.beginPaneRestart({ paneId: '1', source: 'manual' }))
+        .resolves.toEqual({ ok: true, granted: true });
+      await expect(api.pty.completePaneRestart({ paneId: '1', claimId: 'restart-claim-1' }))
+        .resolves.toEqual({ ok: true, completed: true });
+
+      expect(isAllowedInvokeChannel('pane-restart-begin')).toBe(true);
+      expect(isAllowedInvokeChannel('pane-restart-complete')).toBe(true);
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('pane-restart-begin', {
+        paneId: '1',
+        source: 'manual',
+      });
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('pane-restart-complete', {
+        paneId: '1',
+        claimId: 'restart-claim-1',
+      });
+    });
+
+    test('begin and complete delegate to the main-side pane restart arbiter', async () => {
+      const sender = { id: 42 };
+      deps.paneRestartArbiter = {
+        begin: jest.fn(() => ({
+          ok: true,
+          granted: true,
+          paneId: '1',
+          claim: { claimId: 'restart-claim-1' },
+        })),
+        complete: jest.fn(() => ({
+          ok: true,
+          completed: true,
+          paneId: '1',
+          claimId: 'restart-claim-1',
+        })),
+      };
+
+      const begin = await harness.handlers.get('pane-restart-begin')(
+        { sender },
+        { paneId: '1', source: 'manual', requestId: 'req-1' }
+      );
+      const complete = await harness.handlers.get('pane-restart-complete')(
+        { sender },
+        { paneId: '1', claimId: 'restart-claim-1', status: 'completed' }
+      );
+
+      expect(begin).toEqual(expect.objectContaining({ ok: true, granted: true }));
+      expect(complete).toEqual(expect.objectContaining({ ok: true, completed: true }));
+      expect(deps.paneRestartArbiter.begin).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '1',
+        source: 'manual',
+        requestId: 'req-1',
+        webContents: sender,
+      }));
+      expect(deps.paneRestartArbiter.complete).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '1',
+        claimId: 'restart-claim-1',
+        status: 'completed',
+        webContents: sender,
+      }));
+    });
   });
 
   describe('startup-injection-claim', () => {
@@ -1012,6 +1151,42 @@ describe('PTY Handlers', () => {
       const result = await harness.invoke('spawn-claude', '1', '/dir');
 
       expect(result).toEqual({ success: false, error: 'Daemon not connected' });
+    });
+
+    test('refuses restart spawn without a valid restart claim', async () => {
+      ctx.daemonClient.connected = true;
+
+      const result = await harness.invoke('spawn-claude', '1', '/dir', { requireRestartClaim: true });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'missing_restart_claim',
+        stage: 'spawn-claude',
+      }));
+      expect(ctx.agentRunning.get('1')).toBeUndefined();
+      expect(deps.recordSessionStart).not.toHaveBeenCalled();
+    });
+
+    test('allows restart spawn with a valid restart claim', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '1': 'claude' };
+      deps.paneRestartArbiter = {
+        authorizeOperation: jest.fn(() => ({ ok: true, claim: { claimId: 'restart-claim-spawn' } })),
+      };
+
+      const result = await harness.invoke('spawn-claude', '1', '/dir', {
+        requireRestartClaim: true,
+        restartClaimId: 'restart-claim-spawn',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.command).toContain('claude');
+      expect(deps.paneRestartArbiter.authorizeOperation).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '1',
+        claimId: 'restart-claim-spawn',
+        operation: 'spawn-claude',
+      }));
+      expect(deps.recordSessionStart).toHaveBeenCalledWith('1');
     });
 
     test('spawns claude with permission flags', async () => {
