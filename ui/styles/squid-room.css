@@ -216,6 +216,26 @@ body.squid-room-workspace .pane-layout.has-squid-room-team-collapsed {
   min-height: 0;
 }
 
+/* Collapse folds the CONTAINER (James, S426): when no app section is open,
+   the surface gives up its viewport band entirely - the collapsed section
+   shrinks to its header strip and the pets band reclaims the space - instead
+   of a collapsed header floating above a dead void. */
+body.squid-room-workspace #squidRoomSurface:not(:has(details.squid-room-app[open])) {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+body.squid-room-workspace #squidRoomSurface:not(:has(details.squid-room-app[open])) .squid-room-grid {
+  flex: 0 0 auto;
+  height: auto;
+  grid-template-rows: none;
+  grid-auto-rows: auto;
+}
+
+body.squid-room-workspace:has(#squidRoomSurface:not(:has(details.squid-room-app[open]))) .pane-layout {
+  flex: 1 1 auto;
+}
+
 body.squid-room-workspace .side-panes-container.squid-room-team-collapsed {
   flex: 0 0 auto;
   min-height: 0;
@@ -481,10 +501,28 @@ details.squid-room-app:not([open]) .squid-room-live-panes {
   min-width: 0;
 }
 
-/* The model switcher must stay visible at any pane width - never shrink it away. */
-.squid-room-live-pane .model-selector {
+/* Arm tiles render a READ-ONLY model badge (S426): the room offers no model
+   switching - lifecycle ownership lives in the main window per the arbiter
+   owner map, and the old dropdown was an unwired control that lied. */
+.model-badge {
   flex: 0 0 auto;
-  min-width: 72px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(116, 139, 166, 0.28);
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  background: rgba(7, 11, 18, 0.5);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* The mirrored core pair keeps no switcher in the room either - the real
+   selectors live in the main window, which owns those pane lifecycles. */
+body.squid-room-workspace .side-panes-container .model-selector {
+  display: none;
 }
 
 .squid-room-live-panes .pane-terminal {
