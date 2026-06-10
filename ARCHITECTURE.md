@@ -343,6 +343,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/scripts/hm-visual-utils.js: Shared helpers for hm-visual-capture URL candidate resolution (explicit/cache/heuristic), readiness probes, cache persistence, and artifact layout/writers.
 - ui/scripts/hm-transition.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-twitter.js: Exports parseArgs, getTwitterConfig, getMissingConfigKeys, percentEncode, ....
+- ui/scripts/hm-what-now.js: Read-only Mission Control CLI: prints the live what-now answer (7-source evidence bundle from `live-what-now-answer-v0`) as a human block or `--json`; no send/WS imports by gate criterion.
 - ui/scripts/install-supervisor-task.ps1: PowerShell installer for registering the durable supervisor as a Windows scheduled task.
 - ui/scripts/local_embedder.py: Python helper worker for local embeddings.
 - ui/scripts/postinstall-electron-rebuild.js: npm postinstall guard that first probes `better-sqlite3` under the Electron runtime ABI, then runs a targeted `electron-rebuild -f -o better-sqlite3` only when the native module cannot load.
