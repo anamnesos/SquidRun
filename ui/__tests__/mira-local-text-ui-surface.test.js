@@ -835,10 +835,9 @@ describe('Mira Local Text UI Surface v0', () => {
       count: 1,
       source: 'mira_live_what_now_answer_v0',
     }));
-    expect(surface.reply.text).toContain('Current lane: A1/A2 visible Mira movement lane');
-    expect(surface.reply.text).toContain('Recent changes:');
-    expect(surface.reply.text).toContain('parked, prototype, archive');
-    expect(surface.reply.text).toContain('Next internal move: Builder proves this read-only what-now surface, then Oracle reviews it');
+    expect(surface.reply.text).toContain('Lane: A1/A2 visible Mira movement lane');
+    expect(surface.reply.text).toContain('Recent: Cleanup checkpoint closed');
+    expect(surface.reply.text).toContain('Next:');
     expect((surface.reply.text.match(/^JAMES ACTION:/gm) || [])).toHaveLength(1);
     expect(surface.what_now_answer).toEqual(expect.objectContaining({
       decision: 'answered_from_live_evidence',

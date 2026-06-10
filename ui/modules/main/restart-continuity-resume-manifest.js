@@ -991,6 +991,7 @@ function writeAndFormatRestartContinuityResumeBlock(options = {}) {
 
 module.exports = {
   DEFAULT_ARTIFACT_RELATIVE_PATH,
+  DEFAULT_STALE_AFTER_MS,
   SCHEMA,
   STARTUP_BLOCK_SCHEMA,
   buildRestartContinuityResumeManifest,
@@ -998,6 +999,10 @@ module.exports = {
   evaluateScope,
   formatRestartContinuityResumeBlock,
   resolveManifestPath,
+  // Shared per-source staleness classifier (proven correct in 3b2f38c6's
+  // root-cause): other read models (live what-now) reuse it instead of
+  // re-deriving a second, possibly divergent classifier.
+  sourceFreshness,
   writeAndFormatRestartContinuityResumeBlock,
   writeRestartContinuityResumeManifest,
 };
