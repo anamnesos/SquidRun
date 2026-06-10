@@ -7348,19 +7348,23 @@ describe('SquidRunApp', () => {
         sender: 'james',
       });
 
+      jest.useFakeTimers();
       const result = guardedApp.inspectPaneOutputForReplyGuards('1', 'I answered in the pane only.', {
         outputKind: 'agent_visible_output',
       });
 
+      // The nag is deferred a grace window (so a quick Telegram reply suppresses it).
       expect(result).toEqual(expect.objectContaining({
         ok: false,
-        status: 'telegram_reply_requirement_unresolved',
+        status: 'telegram_reply_requirement_pending_grace',
         guard: expect.objectContaining({
           status: 'telegram_reply_required_unresolved',
           violationCount: 1,
           lastPaneOutputPreview: 'I answered in the pane only.',
         }),
       }));
+      expect(mockManagers.activity.logActivity).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(7000);
       expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
         'agent_response_debt',
         '1',
@@ -7403,15 +7407,18 @@ describe('SquidRunApp', () => {
         violationCount: 1,
         agentDebtNoticeTargetRoles: ['architect'],
       }));
+      jest.useRealTimers();
     });
 
-    it('keeps ignored Telegram reply warnings unresolved instead of treating pane output as satisfaction', () => {
+    it('emits a single deferred nag for repeated pane output on the same inbound (no multi-fire)', () => {
+      jest.useFakeTimers();
       app.markPendingTelegramReplyGuard({
         paneId: '1',
         messageId: 'telegram-in-throttled-unresolved-1',
         chatId: '1111111111',
         sender: 'james',
       });
+      const emitSpy = jest.spyOn(app, 'emitTelegramReplyRequirementNotice');
 
       app.inspectPaneOutputForReplyGuards('1', 'first pane-only answer', {
         outputKind: 'agent_visible_output',
@@ -7420,9 +7427,10 @@ describe('SquidRunApp', () => {
         outputKind: 'agent_visible_output',
       });
 
+      // Both calls defer; the second does not schedule a second timer.
       expect(result).toEqual(expect.objectContaining({
         ok: false,
-        status: 'telegram_reply_requirement_unresolved_throttled',
+        status: 'telegram_reply_requirement_pending_grace',
         guard: expect.objectContaining({
           messageId: 'telegram-in-throttled-unresolved-1',
           status: 'telegram_reply_required_unresolved',
@@ -7430,11 +7438,15 @@ describe('SquidRunApp', () => {
           lastPaneOutputPreview: 'second pane-only answer',
         }),
       }));
+      expect(emitSpy).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(7000);
+      expect(emitSpy).toHaveBeenCalledTimes(1); // one inbound -> one nag, despite two output lines
       expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
         messageId: 'telegram-in-throttled-unresolved-1',
         status: 'telegram_reply_required_unresolved',
         violationCount: 2,
       }));
+      jest.useRealTimers();
     });
 
     it('routes unanswered Telegram reply requirements to agent lanes instead of James-facing notices', async () => {
@@ -7830,6 +7842,7 @@ describe('SquidRunApp', () => {
         sender: 'james',
       });
 
+      jest.useFakeTimers();
       const result = guardedApp.inspectPaneOutputForReplyGuards(
         '1',
         '[Telegram from James]: yes, fixed it, deploying',
@@ -7838,8 +7851,9 @@ describe('SquidRunApp', () => {
 
       expect(result).toEqual(expect.objectContaining({
         ok: false,
-        status: 'telegram_reply_requirement_unresolved',
+        status: 'telegram_reply_requirement_pending_grace',
       }));
+      jest.advanceTimersByTime(7000);
       expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
         'project-warning',
         expect.anything()
@@ -7853,6 +7867,7 @@ describe('SquidRunApp', () => {
           agentSideOnly: true,
         })
       );
+      jest.useRealTimers();
     });
 
     it('routes response debt when quoted reply-target marker text lacks injected-echo metadata', () => {
@@ -7877,6 +7892,7 @@ describe('SquidRunApp', () => {
         sender: 'james',
       });
 
+      jest.useFakeTimers();
       const result = guardedApp.inspectPaneOutputForReplyGuards(
         '1',
         'Noting [SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]; the answer is X',
@@ -7885,8 +7901,9 @@ describe('SquidRunApp', () => {
 
       expect(result).toEqual(expect.objectContaining({
         ok: false,
-        status: 'telegram_reply_requirement_unresolved',
+        status: 'telegram_reply_requirement_pending_grace',
       }));
+      jest.advanceTimersByTime(7000);
       expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
         'project-warning',
         expect.anything()
@@ -7900,6 +7917,7 @@ describe('SquidRunApp', () => {
           agentSideOnly: true,
         })
       );
+      jest.useRealTimers();
     });
 
     it('clears the pending Telegram reply guard after real Telegram egress', async () => {
@@ -7914,7 +7932,7 @@ describe('SquidRunApp', () => {
         outputKind: 'agent_visible_output',
       })).toEqual(expect.objectContaining({
         ok: false,
-        status: 'telegram_reply_requirement_unresolved',
+        status: 'telegram_reply_requirement_pending_grace',
       }));
 
       const result = await app.routeTelegramReply({
@@ -8632,7 +8650,7 @@ describe('SquidRunApp', () => {
 
         expect(result).toEqual(expect.objectContaining({
           ok: false,
-          status: 'telegram_reply_requirement_unresolved',
+          status: 'telegram_reply_requirement_pending_grace',
           guard: expect.objectContaining({
             messageId: 'telegram-in-cross-chat-1',
             status: 'telegram_reply_required_unresolved',
@@ -8641,6 +8659,7 @@ describe('SquidRunApp', () => {
         expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
           messageId: 'telegram-in-cross-chat-1',
         }));
+        jest.advanceTimersByTime(7000); // the cross-chat egress does not satisfy -> nag fires once
         expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
           'agent_response_debt',
           '1',
@@ -8696,7 +8715,7 @@ describe('SquidRunApp', () => {
 
         expect(result).toEqual(expect.objectContaining({
           ok: false,
-          status: 'telegram_reply_requirement_unresolved',
+          status: 'telegram_reply_requirement_pending_grace',
           guard: expect.objectContaining({
             messageId: 'telegram-in-pre-inbound-1',
             status: 'telegram_reply_required_unresolved',
@@ -9147,6 +9166,88 @@ describe('SquidRunApp', () => {
     it('stores pending pane deliveries in the canonical runtime directory', () => {
       expect(app.getPendingPaneDeliveryQueuePath()).toBe('/test/workspace/runtime/pending-pane-deliveries.json');
       expect(app.getPendingPaneDeliveryQueuePath()).not.toContain('/.squidrun/runtime/');
+    });
+  });
+
+  describe('Telegram reply-debt nag (deferred, grace-suppressed, at-most-once)', () => {
+    let app;
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      app = new SquidRunApp(mockAppContext, mockManagers);
+    });
+
+    afterEach(() => {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    });
+
+    function seedGuard() {
+      const now = Date.now();
+      const guard = {
+        paneId: '1',
+        messageId: 'tg-in-1',
+        sender: 'user',
+        chatId: '111',
+        telegramChatId: '111',
+        windowKey: 'main',
+        profileName: 'main',
+        sessionScopeId: 'app-session-1',
+        createdAtMs: now,
+        expiresAtMs: now + 5 * 60 * 1000,
+        status: 'pending_telegram_egress',
+        requiresTelegramEgress: true,
+        violationCount: 0,
+        warningCount: 0,
+        lastWarningAtMs: 0,
+      };
+      app.pendingTelegramReplyGuards.set('1', guard);
+      return guard;
+    }
+
+    it('emits exactly ONE nag for an inbound with no egress, even across multiple output lines', () => {
+      seedGuard();
+      const emit = jest.spyOn(app, 'emitTelegramReplyRequirementNotice').mockReturnValue(true);
+      jest.spyOn(app, 'reconcilePendingTelegramReplyGuardWithJournal').mockReturnValue(null);
+
+      app.inspectPaneOutputForReplyGuards('1', 'thinking out loud line 1', { outputKind: 'agent_visible_output' });
+      app.inspectPaneOutputForReplyGuards('1', 'thinking out loud line 2', { outputKind: 'agent_visible_output' });
+      app.inspectPaneOutputForReplyGuards('1', 'thinking out loud line 3', { outputKind: 'agent_visible_output' });
+
+      // Deferred — nothing emitted synchronously (this is what kills the race).
+      expect(emit).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(7000); // past the 6s emit grace
+      expect(emit).toHaveBeenCalledTimes(1);
+    });
+
+    it('emits ZERO nags when a telegram reply lands within the grace window', () => {
+      seedGuard();
+      const emit = jest.spyOn(app, 'emitTelegramReplyRequirementNotice').mockReturnValue(true);
+      // not satisfied at output time, but a matching egress is found on the deferred re-check
+      jest.spyOn(app, 'reconcilePendingTelegramReplyGuardWithJournal')
+        .mockReturnValueOnce(null)
+        .mockReturnValue({ ok: true, status: 'telegram_reply_requirement_satisfied_by_journal' });
+
+      app.inspectPaneOutputForReplyGuards('1', 'pane-only answer to James', { outputKind: 'agent_visible_output' });
+      jest.advanceTimersByTime(7000);
+
+      expect(emit).not.toHaveBeenCalled();
+    });
+
+    it('does not re-fire after the single nag for the same inbound', () => {
+      seedGuard();
+      const emit = jest.spyOn(app, 'emitTelegramReplyRequirementNotice').mockReturnValue(true);
+      jest.spyOn(app, 'reconcilePendingTelegramReplyGuardWithJournal').mockReturnValue(null);
+
+      app.inspectPaneOutputForReplyGuards('1', 'line A', { outputKind: 'agent_visible_output' });
+      jest.advanceTimersByTime(7000);
+      expect(emit).toHaveBeenCalledTimes(1);
+
+      // more output for the SAME inbound after the nag -> no second nag
+      app.inspectPaneOutputForReplyGuards('1', 'line B', { outputKind: 'agent_visible_output' });
+      jest.advanceTimersByTime(7000);
+      expect(emit).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -203,6 +203,7 @@ const {
 const {
   createDefaultMemoryBroker,
   prependRecallToMessage,
+  messageReferencesPastWork,
 } = require('../memory-broker');
 const {
   readPairedConfig,
@@ -235,10 +236,6 @@ const TELEGRAM_REPLY_WINDOW_MS = Number.parseInt(
   process.env.SQUIDRUN_TELEGRAM_REPLY_WINDOW_MS || String(5 * 60 * 1000),
   10
 );
-const TELEGRAM_REPLY_GUARD_WARNING_THROTTLE_MS = Math.max(
-  5_000,
-  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_WARNING_THROTTLE_MS || '30000', 10) || 30_000
-);
 const TELEGRAM_REPLY_GUARD_JOURNAL_RECONCILE_INTERVAL_MS = Math.max(
   1_000,
   Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_JOURNAL_RECONCILE_INTERVAL_MS || '5000', 10) || 5_000
@@ -246,6 +243,14 @@ const TELEGRAM_REPLY_GUARD_JOURNAL_RECONCILE_INTERVAL_MS = Math.max(
 const TELEGRAM_REPLY_GUARD_JOURNAL_GRACE_MS = Math.max(
   0,
   Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_JOURNAL_GRACE_MS || '5000', 10) || 5_000
+);
+// Pane output is printed BEFORE the architect runs `hm-send telegram`, so an
+// immediate debt nag races the egress. Defer the pane-output nag this long, then
+// re-check the journal: a telegram reply that lands inside the window suppresses
+// the nag entirely, and only one nag is ever emitted per inbound.
+const TELEGRAM_REPLY_GUARD_EMIT_GRACE_MS = Math.max(
+  0,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_EMIT_GRACE_MS || '6000', 10) || 6_000
 );
 const TELEGRAM_REPLY_GUARD_JOURNAL_DIAGNOSTIC_THROTTLE_MS = Math.max(
   5_000,
@@ -917,6 +922,7 @@ class SquidRunApp {
     };
     this.pendingTelegramReplyGuards = new Map();
     this.pendingTelegramReplyGuardTimers = new Map();
+    this.pendingTelegramReplyGuardEmitTimers = new Map();
     this.pendingTelegramReplyGuardJournalReconcileTimer = null;
     this.telegramReplyDedupe = new Map();
     this.telegramStrayCorrectionReplies = new Map();
@@ -11822,6 +11828,11 @@ class SquidRunApp {
     if (!this.memoryBroker || typeof this.memoryBroker.recall !== 'function') {
       return originalMessage;
     }
+    // Skip recall entirely for trivial one-liners that reference no past work —
+    // avoids both the provider hits and stapling stale summaries onto "what up bro".
+    if (!messageReferencesPastWork(originalMessage)) {
+      return originalMessage;
+    }
 
     try {
       const query = toNonEmptyString(recallContext.recallQuery) || originalMessage;
@@ -12702,6 +12713,7 @@ class SquidRunApp {
       return false;
     }
     this.clearPendingTelegramReplyGuardTimer(normalizedPaneId);
+    this.clearPendingTelegramReplyGuardEmitTimer(normalizedPaneId);
     this.pendingTelegramReplyGuards.delete(normalizedPaneId);
     this.clearPendingTelegramReplyGuardJournalReconcileTimerIfIdle();
     return true;
@@ -12754,26 +12766,86 @@ class SquidRunApp {
     guard.lastPaneOutputPreview = visibleText.slice(0, 240);
     this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
 
-    if ((nowMs - Number(guard.lastWarningAtMs || 0)) < TELEGRAM_REPLY_GUARD_WARNING_THROTTLE_MS) {
-      return {
-        ok: false,
-        status: 'telegram_reply_requirement_unresolved_throttled',
-        guard: { ...guard },
-      };
-    }
+    // Don't nag synchronously — the architect prints pane output BEFORE running
+    // `hm-send telegram`, so an immediate emit races the egress. Defer one grace
+    // window, then re-check the journal; emit at most ONE nag per inbound, and
+    // none at all if a telegram reply lands inside the window.
+    this.scheduleDeferredTelegramReplyDebtNag(normalizedPaneId, guard, {
+      outputPreview: visibleText.slice(0, 240),
+    });
+    return {
+      ok: false,
+      status: 'telegram_reply_requirement_pending_grace',
+      guard: { ...guard },
+    };
+  }
 
+  scheduleDeferredTelegramReplyDebtNag(paneId, guard = {}, options = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const messageId = toNonEmptyString(guard.messageId);
+    // At most one nag per inbound: skip if already emitted, or a deferred emit is
+    // already pending for this same inbound.
+    if (messageId && guard.paneOutputNagEmittedForMessageId === messageId) return false;
+    if (this.pendingTelegramReplyGuardEmitTimers.has(normalizedPaneId)
+        && guard.deferredPaneOutputNagMessageId === messageId) {
+      return false;
+    }
+    guard.deferredPaneOutputNagMessageId = messageId;
+    guard.deferredPaneOutputNagPreview = toNonEmptyString(options.outputPreview)
+      || guard.lastPaneOutputPreview || null;
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+    this.clearPendingTelegramReplyGuardEmitTimer(normalizedPaneId);
+    const delayMs = Math.max(0, Number(options.graceMs ?? TELEGRAM_REPLY_GUARD_EMIT_GRACE_MS) || 0);
+    const timer = setTimeout(() => {
+      this.pendingTelegramReplyGuardEmitTimers.delete(normalizedPaneId);
+      this.emitDeferredTelegramReplyDebtNagIfStillUnsatisfied(normalizedPaneId, messageId);
+    }, delayMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    this.pendingTelegramReplyGuardEmitTimers.set(normalizedPaneId, timer);
+    return true;
+  }
+
+  clearPendingTelegramReplyGuardEmitTimer(paneId = '1') {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const timer = this.pendingTelegramReplyGuardEmitTimers.get(normalizedPaneId);
+    if (timer) {
+      clearTimeout(timer);
+      this.pendingTelegramReplyGuardEmitTimers.delete(normalizedPaneId);
+    }
+  }
+
+  emitDeferredTelegramReplyDebtNagIfStillUnsatisfied(paneId, messageId) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    if (!guard) return { ok: true, status: 'no_pending_guard' };
+    if (toNonEmptyString(guard.messageId) !== toNonEmptyString(messageId)) {
+      return { ok: true, status: 'superseded_inbound' };
+    }
+    if (this.isTerminalPendingTelegramReplyGuard(guard)) {
+      return { ok: true, status: 'terminal_guard' };
+    }
+    // A telegram reply may have landed during the grace window — re-check first.
+    const journalSatisfaction = this.reconcilePendingTelegramReplyGuardWithJournal(normalizedPaneId, guard);
+    if (journalSatisfaction) {
+      return { ok: true, status: journalSatisfaction.status, satisfaction: journalSatisfaction };
+    }
+    if (guard.paneOutputNagEmittedForMessageId === toNonEmptyString(guard.messageId)) {
+      return { ok: true, status: 'already_nagged' };
+    }
+    const nowMs = Date.now();
+    guard.lastWarningAtMs = nowMs;
+    guard.warningCount = Number(guard.warningCount || 0) + 1;
+    guard.paneOutputNagEmittedForMessageId = toNonEmptyString(guard.messageId);
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
     const warning = [
       'TELEGRAM REPLY REQUIREMENT UNRESOLVED',
       `Pane ${normalizedPaneId} produced visible output after Telegram inbound ${guard.messageId}.`,
       "That output did not satisfy the Telegram reply debt. Use `hm-send telegram ...` or explicitly report the Telegram route block.",
     ].join(' ');
-    guard.lastWarningAtMs = nowMs;
-    guard.warningCount = Number(guard.warningCount || 0) + 1;
-    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
     this.emitTelegramReplyRequirementNotice(guard, {
       type: 'warning',
       reason: 'pane_output_without_telegram_egress',
-      outputPreview: visibleText.slice(0, 240),
+      outputPreview: guard.deferredPaneOutputNagPreview || guard.lastPaneOutputPreview || null,
       message: warning,
     });
     return {
@@ -13249,6 +13321,9 @@ class SquidRunApp {
     this.clearPendingTelegramReplyGuardJournalReconcileTimer();
     for (const paneId of Array.from(this.pendingTelegramReplyGuardTimers.keys())) {
       this.clearPendingTelegramReplyGuardTimer(paneId);
+    }
+    for (const paneId of Array.from(this.pendingTelegramReplyGuardEmitTimers.keys())) {
+      this.clearPendingTelegramReplyGuardEmitTimer(paneId);
     }
     this.clearDaemonConnectTimeout();
     this.clearWebSocketStartRetry();

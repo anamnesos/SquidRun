@@ -1,8 +1,10 @@
 const {
   RECALL_START,
+  MEMORY_RECALL_MIN_MESSAGE_LENGTH,
   createMemoryBroker,
   formatRecallForPaneMessage,
   prependRecallToMessage,
+  messageReferencesPastWork,
 } = require('../modules/memory-broker');
 
 describe('memory-broker', () => {
@@ -292,5 +294,37 @@ describe('memory-broker', () => {
     expect(block).toContain('vector_cognitive - Preference: James wants non-jargon plain English updates.');
     expect(prependRecallToMessage('Update me.', recall)).toContain('\n\nUpdate me.');
     expect(prependRecallToMessage(`${RECALL_START}\nold`, recall)).toBe(`${RECALL_START}\nold`);
+  });
+
+  describe('recall gating (messageReferencesPastWork)', () => {
+    test('trivial greetings/acks do NOT reference past work', () => {
+      for (const msg of ['yo', 'what up bro', 'thanks', 'ok', 'lol', 'hey', '👍']) {
+        expect(messageReferencesPastWork(msg)).toBe(false);
+      }
+    });
+
+    test('short messages with a work-referencing token DO', () => {
+      for (const msg of ['btc?', 'restart?', 'status', 'any update?', 'where are we']) {
+        expect(messageReferencesPastWork(msg)).toBe(true);
+      }
+    });
+
+    test('substantive messages (>= threshold) always qualify even without a keyword', () => {
+      const longCasual = 'a'.repeat(MEMORY_RECALL_MIN_MESSAGE_LENGTH);
+      expect(messageReferencesPastWork(longCasual)).toBe(true);
+      expect(messageReferencesPastWork('x')).toBe(false);
+    });
+
+    test('prependRecallToMessage injects nothing for a trivial one-liner', () => {
+      const recall = {
+        ok: true,
+        results: [{ rank: 1, sourceKind: 'vector_cognitive', title: 'Old', excerpt: 'stale session summary', ref: 'm:1' }],
+      };
+      // trivial -> returned unchanged, no recall block
+      expect(prependRecallToMessage('what up bro', recall)).toBe('what up bro');
+      expect(prependRecallToMessage('what up bro', recall)).not.toContain(RECALL_START);
+      // work-referencing -> recall block injected
+      expect(prependRecallToMessage('what is the trade status?', recall)).toContain(RECALL_START);
+    });
   });
 });
