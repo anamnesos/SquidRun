@@ -80,20 +80,29 @@ describe('DaemonClient', () => {
       profileClient.disconnect();
     });
 
-    test('spawns profile-scoped daemon with matching profile env', async () => {
-      const profileClient = new DaemonClient({ profileName: 'trustquote' });
+    test('spawns daemon through the running Electron binary as node', async () => {
+      const profileClient = new DaemonClient({
+        profileName: 'trustquote',
+        daemonEnv: {
+          ELECTRON_RUN_AS_NODE: 'stale',
+          Electron_Run_As_Node: 'stale-case-variant',
+        },
+      });
 
       await profileClient._spawnDaemon();
 
       expect(spawn).toHaveBeenCalledWith(
-        expect.any(String),
+        process.execPath,
         [expect.stringContaining('terminal-daemon.js')],
         expect.objectContaining({
           env: expect.objectContaining({
             SQUIDRUN_PROFILE: 'trustquote',
+            ELECTRON_RUN_AS_NODE: '1',
           }),
         })
       );
+      const env = spawn.mock.calls[0][2].env;
+      expect(env.Electron_Run_As_Node).toBeUndefined();
     });
 
     test('should extend EventEmitter', () => {
@@ -250,6 +259,26 @@ describe('DaemonClient', () => {
         SQUIDRUN_ROLE: 'Architect',
         SQUIDRUN_PANE_ID: '1',
       }));
+    });
+
+    test('strips Electron-as-Node from pane spawn env', async () => {
+      await client.connect();
+
+      client.spawn('2', '/tmp', false, null, {
+        ELECTRON_RUN_AS_NODE: '1',
+        Electron_Run_As_Node: '1',
+        KEEP_ME: 'yes',
+      });
+
+      const sentData = mockSocket.write.mock.calls[0][0];
+      const parsed = JSON.parse(sentData.replace('\n', ''));
+
+      expect(parsed.env).toEqual(expect.objectContaining({
+        SQUIDRUN_PANE_ID: '2',
+        KEEP_ME: 'yes',
+      }));
+      expect(parsed.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+      expect(parsed.env.Electron_Run_As_Node).toBeUndefined();
     });
 
     test('should return false when not connected', () => {

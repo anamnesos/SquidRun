@@ -44,6 +44,15 @@ describe('Startup Source Of Truth', () => {
     expect(terminalDaemon).not.toContain('shared_context.md');
   });
 
+  test('terminal daemon does not pass Electron-as-Node mode to pane PTYs', () => {
+    const terminalDaemon = fs.readFileSync(path.join(UI_ROOT, 'terminal-daemon.js'), 'utf-8');
+
+    expect(terminalDaemon).toContain('delete runtimeEnv[key]');
+    expect(terminalDaemon).toContain("key.toUpperCase() === 'ELECTRON_RUN_AS_NODE'");
+    expect(terminalDaemon.indexOf("key.toUpperCase() === 'ELECTRON_RUN_AS_NODE'"))
+      .toBeLessThan(terminalDaemon.indexOf('pty.spawn(invocation.command'));
+  });
+
   test('legacy docs in docs/roles are explicit archive stubs', () => {
     const roleDocs = [
       path.join('docs', 'roles', 'ARCH.md'),
