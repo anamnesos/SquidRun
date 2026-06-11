@@ -528,3 +528,85 @@ describe('hm-telegram', () => {
     }
   });
 });
+
+describe('hm-telegram strict allowlist (fail-closed installs)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    appendCommsJournalEntry.mockReturnValue({ ok: true });
+    hmTelegram.resetRateLimiterStateForTests();
+    jest.useRealTimers();
+  });
+
+  test('isChatAllowed keeps the fail-open default but fails closed under strict', () => {
+    expect(hmTelegram.isChatAllowed('123456', [])).toBe(true);
+    expect(hmTelegram.isChatAllowed('123456', [], { strict: false })).toBe(true);
+    expect(hmTelegram.isChatAllowed('123456', [], { strict: true })).toBe(false);
+    expect(hmTelegram.isChatAllowed('123456', ['123456'], { strict: true })).toBe(true);
+    expect(hmTelegram.isChatAllowed('999999', ['123456'], { strict: true })).toBe(false);
+  });
+
+  test('getTelegramConfig parses TELEGRAM_CHAT_ALLOWLIST_STRICT flag forms', () => {
+    const base = {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '123456',
+    };
+
+    expect(hmTelegram.getTelegramConfig({ ...base }).chatAllowlistStrict).toBe(false);
+    for (const value of ['1', 'true', 'TRUE', 'yes', 'on']) {
+      expect(hmTelegram.getTelegramConfig({
+        ...base,
+        TELEGRAM_CHAT_ALLOWLIST_STRICT: value,
+      }).chatAllowlistStrict).toBe(true);
+    }
+    for (const value of ['0', 'false', 'off', '', '   ']) {
+      expect(hmTelegram.getTelegramConfig({
+        ...base,
+        TELEGRAM_CHAT_ALLOWLIST_STRICT: value,
+      }).chatAllowlistStrict).toBe(false);
+    }
+  });
+
+  test('sendTelegram under strict with a lost allowlist blocks every chat', async () => {
+    const result = await hmTelegram.sendTelegram('blocked outbound', {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '8754356993',
+      TELEGRAM_CHAT_ALLOWLIST_STRICT: '1',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('not allowlisted');
+    expect(https.request).not.toHaveBeenCalled();
+  });
+
+  test('sendTelegram under strict still sends to an allowlisted chat', async () => {
+    mockTelegramResponse(200, {
+      ok: true,
+      result: {
+        message_id: 555,
+        chat: { id: 8754356993 },
+      },
+    });
+
+    const result = await hmTelegram.sendTelegram('allowed outbound', {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '8754356993',
+      TELEGRAM_CHAT_ALLOWLIST: '8754356993',
+      TELEGRAM_CHAT_ALLOWLIST_STRICT: '1',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(https.request).toHaveBeenCalledTimes(1);
+  });
+
+  test('sendTelegramPhoto under strict with a lost allowlist is blocked before file access', async () => {
+    const result = await hmTelegram.sendTelegramPhoto('does-not-exist.png', 'caption', {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '8754356993',
+      TELEGRAM_CHAT_ALLOWLIST_STRICT: '1',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('not allowlisted');
+    expect(https.request).not.toHaveBeenCalled();
+  });
+});

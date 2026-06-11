@@ -92,6 +92,17 @@ if (fallbackEnvPath) {
   require('dotenv').config({ path: fallbackEnvPath });
 }
 
+// Installed builds keep Telegram credentials in <dataRoot>/.squidrun/settings/telegram.json;
+// the overlay only fills env keys the .env loads above left unset, so explicit env always wins.
+try {
+  const overlayDataRoot = installedDataRoot || resolveInstalledDataRoot();
+  if (overlayDataRoot.source !== 'default-external-workspace') {
+    require('./modules/telegram-credentials').applyTelegramEnvOverlay({ dataRoot: overlayDataRoot.path });
+  }
+} catch (_) {
+  // Credential overlay is best effort; a missing or unreadable settings file must never block boot.
+}
+
 // Enforce single-instance ownership to prevent duplicate watcher/process
 // trees from racing on .squidrun trigger files.
 const singleInstanceLock = isMainProfile(activeProfileName)
