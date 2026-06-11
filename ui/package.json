@@ -31,6 +31,7 @@
     "package:all": "electron-builder -mwl --publish=never",
     "release": "electron-builder --publish=always",
     "release:draft": "electron-builder --publish=always --draft",
+    "release:split": "node scripts/hm-stage-split-release.js",
     "clean": "rimraf dist out coverage",
     "prebuild": "npm run clean",
     "postbuild": "echo 'Build complete!'",

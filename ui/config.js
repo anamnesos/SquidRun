@@ -14,6 +14,11 @@ const {
   getProfilePipePath,
   getProfileProjectRootOverride,
 } = require('./profile');
+const {
+  DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+  resolveExplicitDataRoot,
+  resolveInstalledDataRoot,
+} = require('./modules/installed-data-root');
 
 function envFlagEnabled(name, defaultValue = true) {
   const raw = process.env[name];
@@ -32,7 +37,6 @@ const PIPE_PATH = getProfilePipePath(ACTIVE_PROFILE, os.platform());
 const LEGACY_WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
 const PROJECT_ROOT_FALLBACK = path.resolve(path.join(LEGACY_WORKSPACE_PATH, '..'));
 const PROJECT_ROOT_DISCOVERY_CWD = path.resolve(path.join(__dirname, '..'));
-const EXTERNAL_WORKSPACE_DIRNAME = 'SquidRun';
 
 function isPackagedRuntimePath(targetPath = '') {
   const normalized = String(targetPath || '')
@@ -50,6 +54,11 @@ function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
   const profileRoot = getProfileProjectRootOverride(ACTIVE_PROFILE);
   if (profileRoot) {
     return profileRoot;
+  }
+
+  const explicitDataRoot = resolveExplicitDataRoot(process.env);
+  if (explicitDataRoot?.path) {
+    return explicitDataRoot.path;
   }
 
   // Explicit env var takes priority — set by .squidrun/bin/ shell launchers.
@@ -70,7 +79,14 @@ function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
     // Fall back when git is unavailable or cwd is not in a git worktree.
   }
   if (isPackagedRuntimePath(startDir)) {
-    return path.join(os.homedir(), EXTERNAL_WORKSPACE_DIRNAME);
+    return resolveInstalledDataRoot({
+      cwd: process.cwd(),
+      defaultDirName: DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+      execPath: process.execPath,
+      homePath: os.homedir(),
+      resourcesPath: process.resourcesPath,
+      runtimePath: startDir,
+    }).path;
   }
   // Check if __dirname is inside .squidrun/bin/runtime — packaged bin layout.
   const normalizedDir = startDir.replace(/\\/g, '/');
@@ -494,4 +510,6 @@ module.exports = {
   getCoordRoots,
   resolveCoordPath,
   resolveGlobalPath,
+  discoverProjectRoot,
+  isPackagedRuntimePath,
 };
