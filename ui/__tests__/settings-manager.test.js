@@ -392,6 +392,140 @@ describe('SettingsManager packaged persistence defaults', () => {
     expect(persisted.operatingMode).toBe('project');
   });
 
+  test('seeds packaged userData settings from provisioned data-root settings when absent', () => {
+    app.isPackaged = true;
+    const provisioned = {
+      autoSpawn: true,
+      allowAllPermissions: true,
+      autonomyConsentGiven: true,
+      autonomyConsentChoice: 'enabled',
+      paneCommands: { '1': 'claude', '2': 'claude', '3': 'codex' },
+      paneProjects: {
+        '1': 'D:\\SquidRun\\Eunbyeol\\workspace',
+        '2': 'D:\\SquidRun\\Eunbyeol\\workspace',
+        '3': 'D:\\SquidRun\\Eunbyeol\\workspace',
+      },
+      userName: '은별',
+    };
+
+    const ctx = {};
+    const manager = new SettingsManager(ctx);
+    const provisionedPath = manager.resolveProvisionedSettingsPath();
+    let userDataExists = false;
+    let writtenSettingsRaw = null;
+    fs.existsSync.mockImplementation((targetPath) => (
+      String(targetPath) === provisionedPath
+      || (String(targetPath) === manager.settingsPath && userDataExists)
+    ));
+    fs.readFileSync.mockImplementation((targetPath) => {
+      if (String(targetPath) === provisionedPath) return JSON.stringify(provisioned);
+      if (String(targetPath) === manager.settingsPath) return writtenSettingsRaw || '';
+      return '';
+    });
+    fs.writeFileSync.mockImplementation((targetPath, data) => {
+      if (String(targetPath) === `${manager.settingsPath}.tmp`) {
+        writtenSettingsRaw = data;
+        userDataExists = true;
+      }
+    });
+
+    const loaded = manager.loadSettings();
+
+    const settingsWrite = fs.writeFileSync.mock.calls.find((call) => String(call[0]).endsWith('settings.json.tmp'));
+    expect(settingsWrite).toBeDefined();
+    expect(settingsWrite[0]).toBe(`${manager.settingsPath}.tmp`);
+    const persisted = JSON.parse(settingsWrite[1]);
+    expect(persisted.userName).toBe('은별');
+    expect(persisted.autonomyConsentGiven).toBe(true);
+    expect(persisted.paneCommands['3']).toBe('codex');
+    expect(loaded.userName).toBe('은별');
+    expect(loaded.paneProjects['1']).toBe('D:\\SquidRun\\Eunbyeol\\workspace');
+  });
+
+  test('seeds packaged userData settings from provisioned data-root settings when userData is default skeleton', () => {
+    app.isPackaged = true;
+
+    const ctx = {};
+    const manager = new SettingsManager(ctx);
+    const provisionedPath = manager.resolveProvisionedSettingsPath();
+    const provisioned = {
+      ...manager.defaultSettings,
+      allowAllPermissions: true,
+      autonomyConsentGiven: true,
+      autonomyConsentChoice: 'enabled',
+      paneCommands: { '1': 'claude', '2': 'claude', '3': 'codex' },
+      paneProjects: {
+        '1': 'D:\\SquidRun\\Eunbyeol\\workspace',
+        '2': 'D:\\SquidRun\\Eunbyeol\\workspace',
+        '3': 'D:\\SquidRun\\Eunbyeol\\workspace',
+      },
+      userName: '은별',
+    };
+    fs.existsSync.mockImplementation((targetPath) => (
+      String(targetPath) === manager.settingsPath
+      || String(targetPath) === provisionedPath
+    ));
+    let writtenSettingsRaw = null;
+    fs.readFileSync.mockImplementation((targetPath) => {
+      if (String(targetPath) === manager.settingsPath) {
+        return writtenSettingsRaw || JSON.stringify(manager.defaultSettings);
+      }
+      if (String(targetPath) === provisionedPath) return JSON.stringify(provisioned);
+      return '';
+    });
+    fs.writeFileSync.mockImplementation((targetPath, data) => {
+      if (String(targetPath) === `${manager.settingsPath}.tmp`) {
+        writtenSettingsRaw = data;
+      }
+    });
+
+    const loaded = manager.loadSettings();
+
+    const settingsWrite = fs.writeFileSync.mock.calls.find((call) => String(call[0]).endsWith('settings.json.tmp'));
+    expect(settingsWrite).toBeDefined();
+    const persisted = JSON.parse(settingsWrite[1]);
+    expect(persisted.userName).toBe('은별');
+    expect(persisted.paneCommands['3']).toBe('codex');
+    expect(loaded.autonomyConsentGiven).toBe(true);
+  });
+
+  test('does not seed packaged userData settings after runtime mutations', () => {
+    app.isPackaged = true;
+
+    const ctx = {};
+    const manager = new SettingsManager(ctx);
+    const provisionedPath = manager.resolveProvisionedSettingsPath();
+    const runtimeSettings = {
+      ...manager.defaultSettings,
+      paneCommands: { ...manager.defaultSettings.paneCommands, '2': 'claude' },
+    };
+    const provisioned = {
+      ...manager.defaultSettings,
+      autonomyConsentGiven: true,
+      paneCommands: { '1': 'claude', '2': 'claude', '3': 'codex' },
+      userName: '은별',
+    };
+    fs.existsSync.mockImplementation((targetPath) => (
+      String(targetPath) === manager.settingsPath
+      || String(targetPath) === provisionedPath
+    ));
+    fs.readFileSync.mockImplementation((targetPath) => {
+      if (String(targetPath) === manager.settingsPath) return JSON.stringify(runtimeSettings);
+      if (String(targetPath) === provisionedPath) return JSON.stringify(provisioned);
+      return '';
+    });
+
+    const loaded = manager.loadSettings();
+
+    expect(fs.writeFileSync).not.toHaveBeenCalledWith(
+      `${manager.settingsPath}.tmp`,
+      expect.any(String),
+      'utf-8'
+    );
+    expect(loaded.paneCommands['2']).toBe('claude');
+    expect(loaded.userName).toBe('');
+  });
+
   test('saveSettings logs detailed diagnostics when packaged write fails', () => {
     app.isPackaged = true;
     fs.writeFileSync.mockImplementationOnce(() => {
@@ -421,6 +555,7 @@ describe('SettingsManager packaged persistence defaults', () => {
 describe('SettingsManager SMTP credential persistence', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    app.isPackaged = false;
   });
 
   test('obfuscates smtpPass at rest while keeping plaintext in memory', () => {
