@@ -296,6 +296,7 @@ function createPaneRestartArbiter(options = {}) {
     getActiveClaim,
     getSnapshot,
     cooldownMs,
+    resolveOwner,
   };
 }
 
@@ -304,3 +305,4 @@ module.exports = {
   RESTART_OPERATION_ORDER,
   createPaneRestartArbiter,
 };
+
