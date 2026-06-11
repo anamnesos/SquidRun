@@ -16,6 +16,7 @@ const { DaemonClient } = require('../daemon-client');
 const { ROLE_ID_MAP, getSquidrunRoot } = require('../config');
 const { getProfileWebSocketPort } = require('../profile');
 const { run: captureScreenshot } = require('./hm-screenshot');
+const { resolveCliWebSocketPort } = require('./hm-ws-port');
 const {
   TRUSTQUOTE_WORKSPACE_KEY,
   isTrustQuoteWorkspace,
@@ -29,7 +30,9 @@ const DEFAULT_WAIT_MS = 8000;
 const DEFAULT_POLL_MS = 500;
 const DEFAULT_OUTPUT_DELTA_CHARS = 20;
 const DEFAULT_CAPTURE_PORT = Number.parseInt(
-  process.env.HM_SEND_CAPTURE_PORT || process.env.HM_SEND_MAIN_PORT || String(getProfileWebSocketPort('main')),
+  process.env.HM_SEND_CAPTURE_PORT
+    || process.env.HM_SEND_MAIN_PORT
+    || String(resolveCliWebSocketPort({ profileName: 'main', cwd: process.cwd() })),
   10
 );
 

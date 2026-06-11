@@ -27,6 +27,7 @@ const {
   resolveCoordRoot,
   resolveCoordPath,
   resolveGlobalPath,
+  resolveWebSocketPortInfo,
   getPaneDisplayName,
 } = require('../config');
 
@@ -196,6 +197,92 @@ describe('config.js', () => {
         }
         fs.rmSync(dataRoot, { recursive: true, force: true });
       }
+    });
+
+    test('resolves installed websocket port from explicit data-root settings', () => {
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-config-ws-root-'));
+      const settingsDir = path.join(dataRoot, '.squidrun', 'settings');
+
+      try {
+        fs.mkdirSync(settingsDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(settingsDir, 'websocket.json'),
+          `${JSON.stringify({ schema: 'squidrun.websocket_settings.v1', port: 9901 }, null, 2)}\n`,
+          'utf8'
+        );
+        process.env.SQUIDRUN_PROFILE = 'main';
+        process.env.SQUIDRUN_DATA_ROOT = dataRoot;
+
+        jest.isolateModules(() => {
+          const isolatedConfig = require('../config');
+          expect(isolatedConfig.resolveWebSocketPortInfo({
+            env: process.env,
+            profileName: 'main',
+          })).toEqual(expect.objectContaining({
+            port: 9901,
+            settingsPath: path.join(dataRoot, '.squidrun', 'settings', 'websocket.json'),
+          }));
+        });
+      } finally {
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+      }
+    });
+
+    test('resolves installed websocket port from packaged install manifest', () => {
+      const installRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-config-ws-manifest-'));
+      const manifestPath = path.join(installRoot, 'squidrun-install.json');
+      const dataRoot = path.join(installRoot, 'instance-data');
+      const runtimePath = path.join(installRoot, 'resources', 'app.asar', 'ui');
+
+      try {
+        fs.writeFileSync(
+          manifestPath,
+          `${JSON.stringify({ dataRoot: 'instance-data', webSocketPort: 9901 }, null, 2)}\n`,
+          'utf8'
+        );
+        expect(resolveWebSocketPortInfo({
+          env: {},
+          profileName: 'main',
+          runtimePath,
+          startDir: runtimePath,
+          homePath: path.join(installRoot, 'home'),
+        })).toEqual(expect.objectContaining({
+          port: 9901,
+          manifestPath,
+          dataRoot: path.resolve(dataRoot),
+        }));
+      } finally {
+        fs.rmSync(installRoot, { recursive: true, force: true });
+      }
+    });
+
+    test('keeps dev main websocket default on 9900 and scoped profile fallback on 9901', () => {
+      expect(resolveWebSocketPortInfo({
+        env: { SQUIDRUN_PROFILE: 'main' },
+        profileName: 'main',
+      })).toEqual(expect.objectContaining({
+        port: 9900,
+        source: 'profile:main',
+      }));
+      expect(resolveWebSocketPortInfo({
+        env: { SQUIDRUN_PROFILE: 'scoped' },
+        profileName: 'scoped',
+      })).toEqual(expect.objectContaining({
+        port: 9901,
+        source: 'profile:scoped',
+      }));
     });
 
     test('discovers packaged install manifest from app.asar runtime path', () => {

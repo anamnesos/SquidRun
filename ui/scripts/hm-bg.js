@@ -15,8 +15,9 @@
 const path = require('path');
 const { spawnSync } = require('child_process');
 const WebSocket = require('ws');
+const { resolveCliWebSocketPort } = require('./hm-ws-port');
 
-const DEFAULT_PORT = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
+const DEFAULT_PORT = resolveCliWebSocketPort();
 const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
 const DEFAULT_RESPONSE_TIMEOUT_MS = 5000;
 const SUPERVISOR_SCRIPT_PATH = path.join(__dirname, 'hm-supervisor.js');
@@ -26,7 +27,7 @@ function usage() {
   console.log('Commands: spawn, enqueue, list, queue-status, kill, kill-all, map');
   console.log('Options:');
   console.log('  --role <role>               Sender role (default: builder)');
-  console.log('  --port <port>               WebSocket port (default: 9900)');
+  console.log(`  --port <port>               WebSocket port (default: ${DEFAULT_PORT})`);
   console.log('  --timeout <ms>              Response timeout (default: 5000)');
   console.log('  --alias <builder-bg-N>      Explicit alias (spawn/kill)');
   console.log('  --slot <1|2|3>              Slot number (spawn)');

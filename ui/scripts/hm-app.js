@@ -8,8 +8,9 @@
  */
 
 const WebSocket = require('ws');
+const { resolveCliWebSocketPort } = require('./hm-ws-port');
 
-const DEFAULT_PORT = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
+const DEFAULT_PORT = resolveCliWebSocketPort();
 const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
 const DEFAULT_RESPONSE_TIMEOUT_MS = 5000;
 

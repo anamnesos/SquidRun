@@ -28,6 +28,7 @@ const {
   closeCommsJournalStores,
 } = require('../modules/main/comms-journal');
 const { sendTelegram, sendTelegramPhoto, normalizeChatId } = require('./hm-telegram');
+const { resolveCliWebSocketPort } = require('./hm-ws-port');
 const { appendVoiceEgressMessage } = require('../modules/voice-broker');
 const {
   detectPermissionAskViolation,
@@ -102,8 +103,10 @@ function resolveEffectiveProfileName(env = process.env, cwd = process.cwd(), con
 function resolveDefaultPort() {
   if (process.env.HM_SEND_PORT) return process.env.HM_SEND_PORT;
   try {
-    const { getProfileWebSocketPort } = require('../profile');
-    const profilePort = getProfileWebSocketPort(resolveEffectiveProfileName(process.env, process.cwd()));
+    const profilePort = resolveCliWebSocketPort({
+      profileName: resolveEffectiveProfileName(process.env, process.cwd()),
+      cwd: process.cwd(),
+    });
     if (Number.isFinite(profilePort)) return String(profilePort);
   } catch {}
   return '9900';
@@ -130,7 +133,7 @@ const SURFACE_CAPTURE_VERIFY_PORT = Number.parseInt(
   process.env.HM_SEND_SURFACE_CAPTURE_VERIFY_PORT
     || process.env.HM_SEND_CAPTURE_PORT
     || process.env.HM_SEND_MAIN_PORT
-    || String(getProfileWebSocketPort('main')),
+    || String(resolveCliWebSocketPort({ profileName: 'main', cwd: process.cwd() })),
   10
 );
 const DEFAULT_DELIVERY_CHECK_TIMEOUT_MS = Number.parseInt(
@@ -1199,7 +1202,7 @@ function getTrustQuoteReverseMainPort() {
     10
   );
   if (Number.isFinite(explicit) && explicit > 0) return explicit;
-  return getProfileWebSocketPort('main');
+  return resolveCliWebSocketPort({ profileName: 'main', cwd: process.cwd() });
 }
 
 function getTrustQuoteSourcePaneId(sourceRole) {
@@ -1612,7 +1615,7 @@ function closeSocket(ws) {
 async function verifySurfaceCaptureEventViaRuntime(request = {}) {
   const port = Number.isFinite(SURFACE_CAPTURE_VERIFY_PORT)
     ? SURFACE_CAPTURE_VERIFY_PORT
-    : getProfileWebSocketPort('main');
+    : resolveCliWebSocketPort({ profileName: 'main', cwd: process.cwd() });
   const socketUrl = `ws://127.0.0.1:${port}`;
   const requestId = `surface-capture-event-verify-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let ws = null;
