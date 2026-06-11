@@ -391,6 +391,54 @@ describe('Terminal Recovery Controller', () => {
       expect(mockOptions.syncTerminalInputBridge).toHaveBeenCalledWith('1', { modelHint: 'gemini' });
     });
 
+    test('preserves runtime override working directory when restarting app arms', async () => {
+      mockOptions.getPaneRuntimeOverride = jest.fn().mockReturnValue({
+        roleId: 'trustquote-app',
+        workingDir: 'D:\\projects\\TrustQuote',
+        command: 'codex --yolo',
+        spawnCommandOnCreate: true,
+      });
+      mockOptions.buildPtyCreateOptionsForRuntimeOverride = jest.fn().mockReturnValue({
+        paneCommand: 'codex --yolo',
+        spawnCommandOnCreate: true,
+        preferWorkingDir: true,
+        env: {
+          SQUIDRUN_ROLE: 'trustquote-app',
+          SQUIDRUN_WORKING_DIR: 'D:\\projects\\TrustQuote',
+        },
+      });
+      controller = createRecoveryController(mockOptions);
+
+      const promise = controller.restartPane('trustquote-app');
+      await jest.advanceTimersByTimeAsync(300);
+      const result = await promise;
+
+      expect(result).toBe(true);
+      expect(mockOptions.buildPtyCreateOptionsForRuntimeOverride).toHaveBeenCalledWith(
+        'trustquote-app',
+        expect.objectContaining({
+          command: 'codex --yolo',
+          workingDir: 'D:\\projects\\TrustQuote',
+        }),
+        'D:\\projects\\TrustQuote'
+      );
+      expect(mockPty.create).toHaveBeenCalledWith(
+        'trustquote-app',
+        'D:\\projects\\TrustQuote',
+        expect.objectContaining({
+          paneCommand: 'codex --yolo',
+          spawnCommandOnCreate: true,
+          preferWorkingDir: true,
+          restartClaimId: 'restart-claim-1',
+          requireRestartClaim: true,
+          env: expect.objectContaining({
+            SQUIDRUN_ROLE: 'trustquote-app',
+            SQUIDRUN_WORKING_DIR: 'D:\\projects\\TrustQuote',
+          }),
+        })
+      );
+    });
+
     test('handles kill failure gracefully', async () => {
       mockPty.kill.mockRejectedValueOnce(new Error('Kill error'));
 

@@ -215,6 +215,48 @@ describe('app-control-service', () => {
     }));
   });
 
+  test('terminal-scroll-probe accepts selector-based dispatchSelect with an explicit value', async () => {
+    const executeJavaScript = jest.fn().mockResolvedValue({
+      success: true,
+      requestedWindowKey: 'squid-room',
+      windowKey: 'squid-room',
+      selector: '#model-selector-3',
+      op: 'dispatchSelect',
+      requestedValue: 'codex',
+      valueAfter: 'codex',
+      disabledAfter: true,
+      changeAccepted: true,
+    });
+    const getAppWindow = jest.fn(() => ({
+      isDestroyed: () => false,
+      webContents: { executeJavaScript },
+    }));
+
+    const result = await executeAppControlAction({
+      isPackaged: false,
+      getAppWindow,
+    }, 'terminal-scroll-probe', {
+      windowKey: 'squid-room',
+      selector: '#model-selector-3',
+      op: 'dispatchSelect',
+      value: 'codex',
+    });
+
+    expect(getAppWindow).toHaveBeenCalledWith('squid-room');
+    const [script, userGesture] = executeJavaScript.mock.calls[0];
+    expect(userGesture).toBe(true);
+    expect(script).toContain('"op":"dispatchSelect"');
+    expect(script).toContain('"selector":"#model-selector-3"');
+    expect(script).toContain('"value":"codex"');
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'terminal-scroll-probe',
+      selector: '#model-selector-3',
+      requestedValue: 'codex',
+      disabledAfter: true,
+    }));
+  });
+
   test('open-mira-lab opens or focuses the Mira Lab window via openAppWindow without restart', async () => {
     const openAppWindow = jest.fn().mockResolvedValue({
       ok: true,

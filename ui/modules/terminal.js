@@ -892,6 +892,7 @@ function runUiInteractionProbe(probe = {}) {
     elementId: element.id || null,
     rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
     disabled: element.disabled === true,
+    valueBefore: 'value' in element ? element.value : null,
   };
   if (probe.op === 'dispatchClick') {
     const opts = { bubbles: true, cancelable: true, view: window };
@@ -933,6 +934,32 @@ function runUiInteractionProbe(probe = {}) {
       title: element.getAttribute?.('title') || null,
     }));
   }
+  if (probe.op === 'dispatchSelect') {
+    if (element.tagName !== 'SELECT') {
+      return { ...base, success: false, reason: 'selector_not_select' };
+    }
+    if (element.disabled === true) {
+      return { ...base, success: false, reason: 'select_disabled' };
+    }
+    const nextValue = String(probe.value || '');
+    const optionExists = Array.from(element.options || []).some((option) => option.value === nextValue);
+    if (!optionExists) {
+      return { ...base, success: false, reason: 'select_option_not_found', requestedValue: nextValue };
+    }
+    element.focus?.();
+    element.value = nextValue;
+    const inputAccepted = element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    const changeAccepted = element.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    return wait(probe.waitMs).then(() => ({
+      ...base,
+      requestedValue: nextValue,
+      valueAfter: element.value,
+      disabledAfter: element.disabled === true,
+      inputAccepted,
+      changeAccepted,
+      activeElementId: document.activeElement?.id || null,
+    }));
+  }
   if (probe.op === 'clearHover') {
     document.querySelectorAll(`.${UI_PROBE_HOVER_CLASS}`).forEach((other) => {
       other.classList.remove(UI_PROBE_HOVER_CLASS);
@@ -948,7 +975,7 @@ function runTerminalScrollProbe(probe = {}) {
   if (typeof document === 'undefined') {
     return { success: false, reason: 'terminal_probe_no_document', ...probe };
   }
-  if (probe.op === 'dispatchClick' || probe.op === 'dispatchHover' || probe.op === 'clearHover') {
+  if (probe.op === 'dispatchClick' || probe.op === 'dispatchHover' || probe.op === 'dispatchSelect' || probe.op === 'clearHover') {
     if (!probe.selector || typeof probe.selector !== 'string') {
       return { success: false, reason: 'selector_required', op: probe.op };
     }
@@ -2742,6 +2769,8 @@ const recoveryController = createRecoveryController({
   resetTerminalWriteQueue,
   syncTerminalInputBridge,
   markIgnoreNextExit,
+  getPaneRuntimeOverride,
+  buildPtyCreateOptionsForRuntimeOverride,
 });
 
 injectionController = createInjectionController({

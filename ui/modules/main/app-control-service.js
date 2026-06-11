@@ -139,6 +139,7 @@ function normalizeTerminalScrollProbePayload(payload = {}) {
   if (normalizedOp === 'dispatchkey' || normalizedOp === 'dispatch-key' || normalizedOp === 'key') operation = 'dispatchKey';
   if (normalizedOp === 'dispatchclick' || normalizedOp === 'dispatch-click' || normalizedOp === 'click') operation = 'dispatchClick';
   if (normalizedOp === 'dispatchhover' || normalizedOp === 'dispatch-hover' || normalizedOp === 'hover') operation = 'dispatchHover';
+  if (normalizedOp === 'dispatchselect' || normalizedOp === 'dispatch-select' || normalizedOp === 'select') operation = 'dispatchSelect';
   if (normalizedOp === 'clearhover' || normalizedOp === 'clear-hover') operation = 'clearHover';
   if (!operation) errors.push('op_unsupported');
 
@@ -146,6 +147,7 @@ function normalizeTerminalScrollProbePayload(payload = {}) {
   // arbitrary elements; terminal-scroll ops keep requiring the container id.
   const isSelectorOp = operation === 'dispatchClick'
     || operation === 'dispatchHover'
+    || operation === 'dispatchSelect'
     || operation === 'clearHover';
 
   if (!windowKey) errors.push('windowKey_required');
@@ -160,6 +162,7 @@ function normalizeTerminalScrollProbePayload(payload = {}) {
   const lines = Number(input.lines);
   const deltaY = Number(input.deltaY);
   const key = String(input.key || '').trim();
+  const value = String(input.value || '').trim();
   const waitMs = Math.max(0, Math.min(1000, Number(input.waitMs ?? input.delayMs ?? 120) || 120));
 
   if (operation === 'scrollLines' && (!Number.isFinite(lines) || lines === 0)) {
@@ -170,6 +173,9 @@ function normalizeTerminalScrollProbePayload(payload = {}) {
   }
   if (operation === 'dispatchKey' && !['PageUp', 'PageDown'].includes(key)) {
     errors.push('key_unsupported');
+  }
+  if (operation === 'dispatchSelect' && !value) {
+    errors.push('value_required');
   }
 
   return {
@@ -183,6 +189,7 @@ function normalizeTerminalScrollProbePayload(payload = {}) {
       lines,
       deltaY,
       key,
+      value,
       waitMs,
     },
   };
