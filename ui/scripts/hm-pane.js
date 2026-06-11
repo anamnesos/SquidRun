@@ -11,6 +11,11 @@
  */
 
 const WebSocket = require('ws');
+const {
+  DEFAULT_PROFILE,
+  isMainProfile,
+  normalizeProfileName,
+} = require('../profile');
 
 const DEFAULT_PORT = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
 const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
@@ -21,6 +26,8 @@ function usage() {
   console.log('Commands: enter, interrupt, restart, nudge, switch-model');
   console.log('Common options:');
   console.log('  --role <role>               Sender role (default: builder)');
+  console.log('  --target-profile <profile>  Assert receiver profile (default: SQUIDRUN_PROFILE/main)');
+  console.log('  --target-window <window>    Assert receiver window key (default: profile/main)');
   console.log('  --port <port>               WebSocket port (default: 9900)');
   console.log('  --timeout <ms>              Response timeout (default: 5000)');
   console.log('  --payload-json <json>       Raw payload JSON (advanced)');
@@ -69,6 +76,25 @@ function asNumber(value, fallback = null) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return numeric;
+}
+
+function buildTargetInstanceAssertion(options) {
+  const profileName = normalizeProfileName(
+    getOption(options, 'target-profile',
+      getOption(options, 'profile', process.env.SQUIDRUN_PROFILE || DEFAULT_PROFILE))
+  );
+  const windowKey = normalizeProfileName(
+    getOption(options, 'target-window',
+      getOption(options, 'window-key', isMainProfile(profileName) ? DEFAULT_PROFILE : profileName))
+  );
+  const sessionScopeId = asString(
+    getOption(options, 'target-session-scope-id',
+      getOption(options, 'session-scope-id', '')),
+    ''
+  );
+  const targetInstance = { profileName, windowKey };
+  if (sessionScopeId) targetInstance.sessionScopeId = sessionScopeId;
+  return targetInstance;
 }
 
 function parseJsonOption(raw, label) {
@@ -125,6 +151,9 @@ function buildPayload(command, positional, options) {
       throw new Error('model is required (claude|codex|gemini)');
     }
     payload.model = model;
+  }
+  if (command === 'restart' || command === 'switch-model') {
+    payload.targetInstance = buildTargetInstanceAssertion(options);
   }
   return payload;
 }
@@ -206,7 +235,14 @@ async function run(action, payload, options) {
 
   const ws = new WebSocket(`ws://127.0.0.1:${port}`);
   await waitForMatch(ws, (msg) => msg.type === 'welcome', DEFAULT_CONNECT_TIMEOUT_MS, 'Connection timeout');
-  ws.send(JSON.stringify({ type: 'register', role }));
+  ws.send(JSON.stringify({
+    type: 'register',
+    role,
+    profileName: payload?.targetInstance?.profileName || process.env.SQUIDRUN_PROFILE || DEFAULT_PROFILE,
+    windowKey: payload?.targetInstance?.windowKey || (isMainProfile(process.env.SQUIDRUN_PROFILE || DEFAULT_PROFILE)
+      ? DEFAULT_PROFILE
+      : normalizeProfileName(process.env.SQUIDRUN_PROFILE || DEFAULT_PROFILE)),
+  }));
   await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
 
   ws.send(JSON.stringify({
@@ -278,6 +314,7 @@ module.exports = {
   getOption,
   normalizeCommand,
   toAction,
+  buildTargetInstanceAssertion,
   buildPayload,
   run,
   main,

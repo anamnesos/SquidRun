@@ -1,4 +1,11 @@
 const log = require('../logger');
+const {
+  DEFAULT_PROFILE,
+  isMainProfile,
+  normalizeProfileName,
+} = require('../../profile');
+
+const INSTANCE_ASSERTED_ACTIONS = new Set(['restart', 'switch-model']);
 
 function asNonEmptyString(value) {
   if (typeof value !== 'string') return null;
@@ -9,6 +16,95 @@ function asNonEmptyString(value) {
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
+}
+
+function normalizeWindowKey(value, profileName = DEFAULT_PROFILE) {
+  const raw = asNonEmptyString(value);
+  if (raw) return normalizeProfileName(raw);
+  return isMainProfile(profileName) ? DEFAULT_PROFILE : profileName;
+}
+
+function normalizeInstanceScope(input = {}) {
+  const profileName = normalizeProfileName(
+    input.profileName
+    || input.profile
+    || input.windowProfile
+    || DEFAULT_PROFILE
+  );
+  return {
+    profileName,
+    windowKey: normalizeWindowKey(input.windowKey || input.window, profileName),
+    sessionScopeId: asNonEmptyString(input.sessionScopeId || input.sessionScope || input.scopeId || ''),
+  };
+}
+
+function extractInstanceAssertion(payload = {}) {
+  const candidate = asObject(
+    payload.targetInstance
+    || payload.instanceAssertion
+    || payload.instance
+    || payload.targetScope
+    || payload.scope
+  );
+  const source = Object.keys(candidate).length > 0 ? candidate : payload;
+  const hasAssertion = Boolean(
+    asNonEmptyString(source.profileName || source.profile || source.windowProfile || source.targetProfileName || '')
+    || asNonEmptyString(source.windowKey || source.window || source.targetWindowKey || '')
+    || asNonEmptyString(source.sessionScopeId || source.sessionScope || source.scopeId || '')
+  );
+  if (!hasAssertion) return null;
+  return normalizeInstanceScope({
+    profileName: source.profileName || source.profile || source.windowProfile || source.targetProfileName,
+    windowKey: source.windowKey || source.window || source.targetWindowKey,
+    sessionScopeId: source.sessionScopeId || source.sessionScope || source.scopeId,
+  });
+}
+
+function buildRuntimeInstanceScope(ctx = {}) {
+  return normalizeInstanceScope({
+    profileName: ctx.instanceScope?.profileName
+      || ctx.profileName
+      || process.env.SQUIDRUN_PROFILE
+      || DEFAULT_PROFILE,
+    windowKey: ctx.instanceScope?.windowKey
+      || ctx.windowKey
+      || (isMainProfile(ctx.instanceScope?.profileName || ctx.profileName || process.env.SQUIDRUN_PROFILE || DEFAULT_PROFILE)
+        ? DEFAULT_PROFILE
+        : normalizeProfileName(ctx.instanceScope?.profileName || ctx.profileName || process.env.SQUIDRUN_PROFILE || DEFAULT_PROFILE)),
+    sessionScopeId: ctx.instanceScope?.sessionScopeId || ctx.sessionScopeId || null,
+  });
+}
+
+function validateInstanceAssertion(ctx = {}, normalizedAction, payload = {}, paneId = null) {
+  if (!INSTANCE_ASSERTED_ACTIONS.has(normalizedAction)) return null;
+  const expected = extractInstanceAssertion(payload);
+  const actual = buildRuntimeInstanceScope(ctx);
+  if (!expected) {
+    return {
+      success: false,
+      reason: 'missing_instance_assertion',
+      paneId,
+      action: normalizedAction,
+      actualInstance: actual,
+    };
+  }
+  const mismatchField = ['profileName', 'windowKey', 'sessionScopeId'].find((field) => (
+    expected[field] && actual[field] && expected[field] !== actual[field]
+  ));
+  if (!mismatchField) return null;
+  log.warn(
+    'PaneControl',
+    `Rejected ${normalizedAction} for pane ${paneId || 'unknown'}: expected ${mismatchField}=${expected[mismatchField]} actual=${actual[mismatchField]}`
+  );
+  return {
+    success: false,
+    reason: 'instance_assertion_mismatch',
+    paneId,
+    action: normalizedAction,
+    mismatchField,
+    expectedInstance: expected,
+    actualInstance: actual,
+  };
 }
 
 function normalizeAction(action) {
@@ -118,6 +214,9 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
   }
 
   if (normalizedAction === 'restart') {
+    const assertionError = validateInstanceAssertion(ctx, normalizedAction, normalizedPayload, paneId);
+    if (assertionError) return assertionError;
+
     if (!isDaemonAvailable(daemonClient)) {
       return { success: false, reason: 'daemon_not_connected', paneId, action: normalizedAction };
     }
@@ -197,6 +296,9 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
     if (!model) {
       return { success: false, reason: 'missing_model', paneId, action: normalizedAction };
     }
+    const assertionError = validateInstanceAssertion(ctx, normalizedAction, normalizedPayload, paneId);
+    if (assertionError) return assertionError;
+
     if (typeof ctx.switchPaneModel !== 'function') {
       return { success: false, reason: 'model_switch_unavailable', paneId, action: normalizedAction };
     }
@@ -228,5 +330,8 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
 module.exports = {
   executePaneControlAction,
   detectPaneModel,
+  extractInstanceAssertion,
+  normalizeInstanceScope,
   normalizeAction,
+  validateInstanceAssertion,
 };

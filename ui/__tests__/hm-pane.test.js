@@ -54,7 +54,11 @@ describe('hm-pane CLI helpers', () => {
 
   test('buildPayload creates switch-model payload from positional model', () => {
     const payload = hmPane.buildPayload('switch-model', ['switch-model', '2', 'Claude'], new Map());
-    expect(payload).toEqual({ paneId: '2', model: 'claude' });
+    expect(payload).toEqual({
+      paneId: '2',
+      model: 'claude',
+      targetInstance: { profileName: 'main', windowKey: 'main' },
+    });
   });
 
   test('buildPayload prefers --model over positional model', () => {
@@ -63,7 +67,23 @@ describe('hm-pane CLI helpers', () => {
       ['switch-model', '2', 'codex'],
       new Map([['model', 'gemini']])
     );
-    expect(payload).toEqual({ paneId: '2', model: 'gemini' });
+    expect(payload).toEqual({
+      paneId: '2',
+      model: 'gemini',
+      targetInstance: { profileName: 'main', windowKey: 'main' },
+    });
+  });
+
+  test('buildPayload adds explicit target profile assertions for destructive commands', () => {
+    const payload = hmPane.buildPayload(
+      'switch-model',
+      ['switch-model', '3', 'claude'],
+      new Map([
+        ['target-profile', 'sideprofile'],
+        ['target-window', 'sideprofile'],
+      ])
+    );
+    expect(payload.targetInstance).toEqual({ profileName: 'sideprofile', windowKey: 'sideprofile' });
   });
 
   test('buildPayload throws when model is missing for switch-model', () => {
