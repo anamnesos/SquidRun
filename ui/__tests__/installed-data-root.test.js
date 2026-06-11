@@ -13,6 +13,8 @@ const {
   resolveDataRootRuntimePath,
   resolveInstalledElectronUserDataPath,
   resolveInstalledGlobalStateRoot,
+  resolveInstalledPipeDiscriminator,
+  computeDataRootPipeDiscriminator,
 } = require('../modules/installed-data-root');
 
 describe('installed-data-root', () => {
@@ -79,6 +81,34 @@ describe('installed-data-root', () => {
     expect(resolveInstalledGlobalStateRoot(resolved)).toBe(
       path.join(path.resolve(dataRoot), '.squidrun', 'global-state')
     );
+  });
+
+  test('derives a per-install pipe discriminator only for pinned roots', () => {
+    const dataRoot = path.join(tempRoot, 'pinned-pipe-root');
+    const envRoot = resolveInstalledDataRoot({
+      env: { SQUIDRUN_DATA_ROOT: dataRoot },
+      homePath: path.join(tempRoot, 'home'),
+    });
+    const defaultRoot = resolveInstalledDataRoot({
+      env: {},
+      homePath: path.join(tempRoot, 'home'),
+    });
+
+    // Pinned install → a stable short hash; default/dev root → null (legacy pipe).
+    const disc = resolveInstalledPipeDiscriminator(envRoot);
+    expect(disc).toMatch(/^[0-9a-f]{10}$/);
+    expect(resolveInstalledPipeDiscriminator(defaultRoot)).toBeNull();
+
+    // Stable + case/separator/trailing-slash insensitive so app and daemon agree.
+    expect(computeDataRootPipeDiscriminator(dataRoot)).toBe(disc);
+    expect(computeDataRootPipeDiscriminator(`${dataRoot}\\`)).toBe(disc);
+    expect(computeDataRootPipeDiscriminator(dataRoot.toUpperCase())).toBe(disc);
+
+    // Different roots → different pipes.
+    expect(computeDataRootPipeDiscriminator(path.join(tempRoot, 'other-install')))
+      .not.toBe(disc);
+    expect(computeDataRootPipeDiscriminator('')).toBeNull();
+    expect(computeDataRootPipeDiscriminator(null)).toBeNull();
   });
 
   test('applies pinned Electron userData path to the app before the instance lock', () => {

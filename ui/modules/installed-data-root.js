@@ -3,6 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 
 const DEFAULT_EXTERNAL_WORKSPACE_DIRNAME = 'SquidRun';
 const INSTALL_MANIFEST_FILENAMES = Object.freeze([
@@ -106,6 +107,28 @@ function applyInstalledElectronUserDataPath(electronApp, result, options = {}) {
 
 function resolveInstalledGlobalStateRoot(result) {
   return resolvePinnedInstalledRuntimePath(result, GLOBAL_STATE_RELPATH);
+}
+
+// The terminal daemon's named pipe is a per-machine discovery channel keyed only
+// by profile name, so two installs that both run as profile=main would collide on
+// the same pipe and one would join the other's daemon. Derive a stable, short
+// discriminator from the data-root path so each pinned install gets its OWN pipe.
+// Case/separator-insensitive and trailing-slash-stripped so the app process and
+// the detached daemon (which resolve the same root from env or manifest) always
+// compute the identical pipe name.
+function computeDataRootPipeDiscriminator(dataRootPath) {
+  const root = toNonEmptyString(dataRootPath);
+  if (!root) return null;
+  const normalized = path.resolve(root).replace(/[\\/]+$/, '').toLowerCase();
+  return crypto.createHash('sha1').update(normalized).digest('hex').slice(0, 10);
+}
+
+// Only pinned installs (env:/manifest: source) get a per-install pipe; the dev /
+// default root keeps the legacy unsuffixed pipe so existing main instances are
+// completely unchanged (no migration, no breakage).
+function resolveInstalledPipeDiscriminator(result) {
+  if (!isPinnedInstalledDataRoot(result)) return null;
+  return computeDataRootPipeDiscriminator(result.path);
 }
 
 function parseInstallManifest(manifestPath) {
@@ -220,5 +243,7 @@ module.exports = {
   resolveInstalledElectronUserDataPath,
   resolveInstalledDataRoot,
   resolveInstalledGlobalStateRoot,
+  resolveInstalledPipeDiscriminator,
+  computeDataRootPipeDiscriminator,
   resolvePinnedInstalledRuntimePath,
 };

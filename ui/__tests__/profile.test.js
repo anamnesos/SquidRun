@@ -35,6 +35,31 @@ describe('profile helpers', () => {
     expect(getProfileWebSocketPort('scoped')).toBe(9901);
   });
 
+  test('keeps the legacy pipe for the dev/main root but gives each install its own', () => {
+    // No discriminator (legacy/dev main) — explicit null forces the unsuffixed pipe.
+    const legacyMain = getProfilePipePath('main', 'win32', { installDiscriminator: null });
+    expect(legacyMain).toBe('\\\\.\\pipe\\squidrun-terminal');
+
+    // A pinned install (profile=main, de-scoped) gets a per-install suffix so it
+    // can never join the dev/main daemon — the cross-bind closed by construction.
+    const installA = getProfilePipePath('main', 'win32', { dataRoot: 'D:\\SquidRun\\InstanceA' });
+    expect(installA).toMatch(/^\\\\\.\\pipe\\squidrun-terminal-[0-9a-f]{10}$/);
+    expect(installA).not.toBe(legacyMain);
+
+    // Distinct roots → distinct pipes; same root (case/slash variants) → same pipe.
+    const installB = getProfilePipePath('main', 'win32', { dataRoot: 'D:\\SquidRun\\InstanceB' });
+    expect(installB).not.toBe(installA);
+    expect(getProfilePipePath('main', 'win32', { dataRoot: 'd:\\squidrun\\instancea\\' })).toBe(installA);
+
+    // Explicit discriminator composes onto a non-main profile too.
+    expect(getProfilePipePath('scoped', 'win32', { installDiscriminator: 'abc1234567' }))
+      .toBe('\\\\.\\pipe\\squidrun-terminal-scoped-abc1234567');
+
+    // Unix socket form carries the discriminator identically.
+    expect(getProfilePipePath('main', 'linux', { dataRoot: 'D:\\SquidRun\\InstanceA' }))
+      .toMatch(/^\/tmp\/squidrun-terminal-[0-9a-f]{10}\.sock$/);
+  });
+
   test('resolves explicit profile project roots without affecting main', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-scoped-root-'));
     try {
