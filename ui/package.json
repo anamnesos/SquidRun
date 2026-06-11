@@ -99,6 +99,7 @@
     "asarUnpack": [
       "terminal-daemon.js",
       "config.js",
+      "profile.js",
       "modules/**",
       "node_modules/better-sqlite3/**",
       "node_modules/node-pty/**",
