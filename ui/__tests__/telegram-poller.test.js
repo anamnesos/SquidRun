@@ -120,6 +120,29 @@ describe('telegram-poller', () => {
     expect(telegramPoller.isRunning()).toBe(false);
   });
 
+  test('worker keepAlive keeps poll timer referenced', () => {
+    const originalSetInterval = global.setInterval;
+    const timer = { unref: jest.fn() };
+    jest.spyOn(global, 'setInterval').mockImplementation(() => timer);
+
+    const started = telegramPoller.start({
+      env: {
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '123456',
+      },
+      pollIntervalMs: 2000,
+      keepAlive: true,
+      onMessage: jest.fn(),
+    });
+
+    expect(started).toBe(true);
+    expect(timer.unref).not.toHaveBeenCalled();
+
+    telegramPoller.stop();
+    global.setInterval.mockRestore();
+    global.setInterval = originalSetInterval;
+  });
+
   test('pollNow emits inbound messages once and deduplicates by update_id offset', async () => {
     const onMessage = jest.fn();
 
