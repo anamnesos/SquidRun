@@ -1271,10 +1271,12 @@ function applyWindowChrome(windowContext = getCurrentWindowContext()) {
     : getCurrentWindowContext();
   const windowKey = String(normalized?.windowKey || 'main').trim() || 'main';
   const profileName = String(normalized?.profileName || 'main').trim() || 'main';
+  const sessionScopeId = String(normalized?.sessionScopeId || '').trim();
   const lifecycleMode = getWindowLifecycleMode(normalized);
   if (document.body) {
     document.body.dataset.windowKey = windowKey;
     document.body.dataset.profileName = profileName;
+    document.body.dataset.sessionScopeId = sessionScopeId;
   }
   if (profileName === 'scoped') {
     document.title = 'SquidRun - Scoped';

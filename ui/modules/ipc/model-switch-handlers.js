@@ -73,10 +73,24 @@ function buildCompletionPayload({
     ? paneRestartArbiter.resolveOwner(paneId)
     : {};
   const ownerWindowKey = resolvedOwner?.ownerWindowKey || 'main';
+  const ownerProfileName = resolvedOwner?.ownerProfileName || resolvedOwner?.profileName || null;
+  const ownerSessionScopeId = resolvedOwner?.ownerSessionScopeId || resolvedOwner?.sessionScopeId || null;
+  const ownerInstance = resolvedOwner?.ownerInstance || (ownerProfileName || ownerSessionScopeId
+    ? {
+      profileName: ownerProfileName,
+      windowKey: ownerWindowKey,
+      sessionScopeId: ownerSessionScopeId,
+    }
+    : null);
   return {
     paneId,
     model,
     ownerWindowKey,
+    ...(ownerProfileName ? { ownerProfileName } : {}),
+    ...(ownerSessionScopeId ? { ownerSessionScopeId } : {}),
+    ...((ownerInstance?.profileName || ownerInstance?.windowKey || ownerInstance?.sessionScopeId)
+      ? { ownerInstance }
+      : {}),
     ...(command ? { command } : {}),
   };
 }

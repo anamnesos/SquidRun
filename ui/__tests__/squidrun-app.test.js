@@ -768,6 +768,68 @@ describe('SquidRunApp', () => {
       }));
       expect(mainWindow.webContents.send).not.toHaveBeenCalled();
     });
+
+    it('routes restart ownership to the active profile window for colliding core pane ids', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.activeProfileName = 'sideprofile';
+      app.commsSessionScopeId = 'app-session-428';
+      app.setLaunchWindowProfile({
+        profileName: 'sideprofile',
+        windowKey: 'sideprofile',
+        includeMainWindow: false,
+        standaloneWindow: true,
+      });
+      const mainWindow = createReadyTrustQuoteWindow({
+        getTitle: jest.fn().mockReturnValue('SquidRun'),
+      });
+      const profileWindow = createReadyTrustQuoteWindow({
+        getTitle: jest.fn().mockReturnValue('SquidRun - sideprofile'),
+      });
+      app.registerAppWindow('main', mainWindow, {
+        profileName: 'main',
+        sessionScopeId: 'app-session-428',
+      });
+      app.registerAppWindow('sideprofile', profileWindow, {
+        profileName: 'sideprofile',
+        sessionScopeId: 'app-session-428:sideprofile',
+      });
+
+      const owner = app.resolvePaneRestartOwner('3');
+      expect(owner).toEqual(expect.objectContaining({
+        ownerWindowKey: 'sideprofile',
+        ownerProfileName: 'sideprofile',
+        ownerSessionScopeId: 'app-session-428:sideprofile',
+        ownerInstance: {
+          profileName: 'sideprofile',
+          windowKey: 'sideprofile',
+          sessionScopeId: 'app-session-428:sideprofile',
+        },
+      }));
+
+      const result = app.requestPaneRestart('3', { source: 'test-profile' });
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        granted: true,
+        delivered: true,
+        ownerWindowKey: 'sideprofile',
+      }));
+      expect(profileWindow.webContents.send).toHaveBeenCalledWith('restart-pane', expect.objectContaining({
+        paneId: '3',
+        source: 'test-profile',
+        restartClaim: expect.objectContaining({
+          ownerWindowKey: 'sideprofile',
+          ownerProfileName: 'sideprofile',
+          ownerSessionScopeId: 'app-session-428:sideprofile',
+          ownerInstance: {
+            profileName: 'sideprofile',
+            windowKey: 'sideprofile',
+            sessionScopeId: 'app-session-428:sideprofile',
+          },
+        }),
+        restartClaimId: expect.any(String),
+      }));
+      expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('restart-pane', expect.anything());
+    });
   });
 
   describe('TrustQuote workspace routing', () => {

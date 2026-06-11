@@ -1059,6 +1059,7 @@ class SquidRunApp {
       windowKey: 'main',
       standaloneWindow: false,
     };
+    this.appWindowInstanceScopes = new Map();
   }
 
   isBundledRuntimePath(targetPath = '') {
@@ -2840,15 +2841,45 @@ class SquidRunApp {
     return this.getVisibleWindowKeysForPane(paneId)[0] || 'main';
   }
 
+  getPaneRestartOwnerCandidateWindowKeys(paneId) {
+    const id = String(paneId || '').trim();
+    if (isSquidRoomArmPaneId(id)) return ['squid-room'];
+    const candidates = [];
+    const addCandidate = (value) => {
+      const key = toNonEmptyString(value);
+      if (key && !candidates.includes(key)) candidates.push(key);
+    };
+    const activeProfile = normalizeProfileName(this.activeProfileName || getActiveProfileName() || 'main');
+    const launchProfile = this.getLaunchWindowProfile?.() || {};
+    if (!isMainProfile(activeProfile)) {
+      addCandidate(launchProfile.windowKey && launchProfile.windowKey !== 'main'
+        ? launchProfile.windowKey
+        : activeProfile);
+      addCandidate(activeProfile);
+    }
+    if (!isMainProfile(launchProfile.profileName || 'main') && launchProfile.windowKey !== 'main') {
+      addCandidate(launchProfile.windowKey);
+    }
+    addCandidate('main');
+    return candidates;
+  }
+
   resolvePaneRestartOwner(paneId) {
     const id = String(paneId || '').trim();
-    const ownerWindowKey = isSquidRoomArmPaneId(id) ? 'squid-room' : 'main';
+    const candidateWindowKeys = this.getPaneRestartOwnerCandidateWindowKeys(id);
+    const ownerWindowKey = candidateWindowKeys.find((windowKey) => (
+      this.canSendToWindow(this.getAppWindow(windowKey))
+    )) || candidateWindowKeys[0] || 'main';
     const ownerWindow = this.getAppWindow(ownerWindowKey);
+    const ownerInstance = this.getAppWindowInstanceScope(ownerWindowKey);
     const webContents = ownerWindow && typeof ownerWindow.isDestroyed === 'function' && !ownerWindow.isDestroyed()
       ? ownerWindow.webContents
       : null;
     return {
       ownerWindowKey,
+      ownerProfileName: ownerInstance.profileName,
+      ownerSessionScopeId: ownerInstance.sessionScopeId,
+      ownerInstance,
       webContents,
       requiresWebContents: true,
     };
@@ -5229,7 +5260,11 @@ class SquidRunApp {
       },
       title: windowTitle,
     });
-    this.registerAppWindow(windowKey, windowRef, { lifecycleRoot });
+    this.registerAppWindow(windowKey, windowRef, {
+      lifecycleRoot,
+      profileName: windowProfileName,
+      sessionScopeId: this.getWindowSessionScopeId(windowKey),
+    });
     this.enforceMenuSuppression(windowRef);
 
     if (lifecycleRoot) {
@@ -6262,11 +6297,43 @@ class SquidRunApp {
     return [];
   }
 
+  buildAppWindowInstanceScope(windowKey = 'main', options = {}) {
+    const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+    const profileName = normalizeProfileName(
+      options.profileName
+      || (isTrustQuoteWorkspace(normalizedWindowKey)
+        ? TRUSTQUOTE_WORKSPACE_KEY
+        : (normalizedWindowKey === 'squid-room'
+          ? 'main'
+          : (normalizedWindowKey === 'main' ? this.activeProfileName : normalizedWindowKey)))
+      || 'main'
+    );
+    const sessionScopeId = toNonEmptyString(options.sessionScopeId)
+      || this.getWindowSessionScopeId(normalizedWindowKey);
+    return {
+      profileName,
+      windowKey: normalizedWindowKey,
+      sessionScopeId,
+    };
+  }
+
+  getAppWindowInstanceScope(windowKey = 'main') {
+    const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+    const registered = this.appWindowInstanceScopes?.get?.(normalizedWindowKey);
+    if (registered) return { ...registered };
+    return this.buildAppWindowInstanceScope(normalizedWindowKey);
+  }
+
   registerAppWindow(windowKey, windowRef, options = {}) {
+    const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
     if (typeof this.ctx.setWindow === 'function') {
-      this.ctx.setWindow(windowKey, windowRef);
+      this.ctx.setWindow(normalizedWindowKey, windowRef);
     }
-    if (String(windowKey || 'main') === 'main') {
+    this.appWindowInstanceScopes.set(
+      normalizedWindowKey,
+      this.buildAppWindowInstanceScope(normalizedWindowKey, options)
+    );
+    if (normalizedWindowKey === 'main') {
       this.ctx.mainWindow = windowRef;
       if (typeof this.ctx.setMainWindow === 'function') {
         this.ctx.setMainWindow(windowRef);
@@ -6283,11 +6350,13 @@ class SquidRunApp {
   }
 
   unregisterAppWindow(windowKey) {
+    const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+    this.appWindowInstanceScopes.delete(normalizedWindowKey);
     if (typeof this.ctx.deleteWindow === 'function') {
-      this.ctx.deleteWindow(windowKey);
+      this.ctx.deleteWindow(normalizedWindowKey);
       return;
     }
-    if (String(windowKey || 'main') === 'main') {
+    if (normalizedWindowKey === 'main') {
       this.ctx.mainWindow = null;
     }
   }

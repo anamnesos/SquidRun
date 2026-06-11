@@ -109,6 +109,43 @@ function isPaneOwnerWindow() {
   return windowKey === 'main';
 }
 
+function getRendererInstanceScope() {
+  const bodyDataset = document.body?.dataset || {};
+  return {
+    windowKey: String(bodyDataset.windowKey || 'main').trim() || 'main',
+    profileName: String(bodyDataset.profileName || 'main').trim() || 'main',
+    sessionScopeId: String(bodyDataset.sessionScopeId || '').trim(),
+  };
+}
+
+function resolveOwnerAssertion(payload = {}) {
+  const ownerInstance = payload.ownerInstance && typeof payload.ownerInstance === 'object'
+    ? payload.ownerInstance
+    : {};
+  const ownerWindowKey = String(ownerInstance.windowKey || payload.ownerWindowKey || '').trim();
+  const ownerProfileName = String(ownerInstance.profileName || payload.ownerProfileName || '').trim();
+  const ownerSessionScopeId = String(ownerInstance.sessionScopeId || payload.ownerSessionScopeId || '').trim();
+  return {
+    windowKey: ownerWindowKey,
+    profileName: ownerProfileName,
+    sessionScopeId: ownerSessionScopeId,
+  };
+}
+
+function isOwnerAssertionMatch(payload = {}) {
+  const expected = resolveOwnerAssertion(payload);
+  const actual = getRendererInstanceScope();
+  if (!expected.windowKey && !expected.profileName && !expected.sessionScopeId) {
+    return isPaneOwnerWindow();
+  }
+  for (const field of ['windowKey', 'profileName', 'sessionScopeId']) {
+    if (expected[field] && expected[field] !== actual[field]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Until the running main fans pane-model-changed out to every window, a
 // mirror window's dropdown would stay disabled forever after a switch it
 // initiated (wave 3, S426). Confirm against settings via an IPC channel the
@@ -135,7 +172,7 @@ function scheduleSwitchCompletionFallback(select, paneId) {
 
 let modelSelectorDelegationBound = false;
 
-// DELEGATED listener (wave 3, S426): the squid room creates its pet-pane
+// DELEGATED listener (wave 3, S426): the squid room creates its arm-tile
 // selectors at shell-config time and can re-render them on window-context
 // updates - per-node binding at DOMContentLoaded left re-created dropdowns
 // silently dead (the original v2-dropdown debacle class). One document-level
@@ -176,7 +213,8 @@ function setupModelSelectorListeners() {
  * Setup IPC listener for model change completion
  */
 function setupModelChangeListener() {
-  registerScopedIpcListener('model-selector', 'pane-model-changed', async (event, { paneId, model, ownerWindowKey, command }) => {
+  registerScopedIpcListener('model-selector', 'pane-model-changed', async (event, payload = {}) => {
+    const { paneId, model, command } = payload;
     const select = document.querySelector(`.model-selector[data-pane-id="${paneId}"]`);
 
     // Update data-cli attribute immediately on model switch
@@ -191,9 +229,13 @@ function setupModelChangeListener() {
       select.dataset.previousValue = model;
     }
 
-    const myWindowKey = document.body?.dataset?.windowKey || 'main';
-    const isOwner = ownerWindowKey ? ownerWindowKey === myWindowKey : isPaneOwnerWindow();
-    log.info('ModelSelector', `Pane ${paneId} debug - ownerWindowKey: ${ownerWindowKey}, myWindowKey: ${myWindowKey}, isOwner: ${isOwner}`);
+    const myInstance = getRendererInstanceScope();
+    const ownerAssertion = resolveOwnerAssertion(payload);
+    const isOwner = isOwnerAssertionMatch(payload);
+    log.info(
+      'ModelSelector',
+      `Pane ${paneId} owner assertion - expected=${JSON.stringify(ownerAssertion)} actual=${JSON.stringify(myInstance)} isOwner=${isOwner}`
+    );
 
     if (!isOwner) {
       if (select) select.disabled = false;
@@ -223,4 +265,9 @@ module.exports = {
   setupModelSelectorListeners,
   setupModelChangeListener,
   setPaneCliAttribute,
+  _internals: {
+    getRendererInstanceScope,
+    resolveOwnerAssertion,
+    isOwnerAssertionMatch,
+  },
 };
