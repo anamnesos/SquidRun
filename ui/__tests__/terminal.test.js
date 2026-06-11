@@ -1349,6 +1349,19 @@ describe('terminal.js module', () => {
       expect(mockSquidRun.pty.resize).not.toHaveBeenCalled();
     });
 
+    test('skips startup injection ownership for squid-room mirrors of shared main panes', () => {
+      terminal.setStartupWindowContext({
+        windowKey: 'squid-room',
+        profileName: 'main',
+        sessionScopeId: 'app-session-430:squid-room',
+      });
+
+      expect(terminal._internals.rendererOwnsStartupInjection('1')).toBe(false);
+      expect(terminal._internals.rendererOwnsStartupInjection('2')).toBe(false);
+      expect(terminal._internals.rendererOwnsStartupInjection('3')).toBe(false);
+      expect(terminal._internals.rendererOwnsStartupInjection('trustquote-app')).toBe(true);
+    });
+
     test('keeps squid-room TrustQuote arms authoritative for their own PTY geometry', () => {
       jest.useFakeTimers();
       terminal.setStartupWindowContext({
@@ -2128,6 +2141,27 @@ describe('terminal.js module', () => {
       await terminal.reattachTerminal('1', 'scrollback content');
 
       expect(terminal.terminals.has('1')).toBe(true);
+    });
+
+    test('does not arm pane 1 startup injection from squid-room mirror reattach', async () => {
+      terminal.terminals.delete('1');
+      terminal.setStartupWindowContext({
+        windowKey: 'squid-room',
+        profileName: 'main',
+        sessionScopeId: 'app-session-430:squid-room',
+      });
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+
+      await terminal.reattachTerminal('1', '', {
+        createdAt: Date.now(),
+      });
+
+      expect(terminal.terminals.has('1')).toBe(true);
+      expect(mockSquidRun.pty.claimStartupInjection).not.toHaveBeenCalled();
+      expect(terminal.hasPendingStartupInjection('1')).toBe(false);
     });
 
     test('recreates runtime override panes during reattach when the daemon PTY cwd is wrong', async () => {

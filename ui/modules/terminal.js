@@ -29,6 +29,7 @@ const {
 const TERMINAL_EVENT_SOURCE = 'terminal.js';
 const SQUID_ROOM_WINDOW_KEY = 'squid-room';
 const SQUID_ROOM_MIRRORED_TEAM_PANE_IDS = new Set(['2', '3']);
+const SQUID_ROOM_STARTUP_SHARED_PANE_IDS = new Set(['1', '2', '3']);
 const STARTUP_INJECTION_CLAIM_CHANNEL = 'startup-injection-claim';
 const STARTUP_INJECTION_RELEASE_CHANNEL = 'startup-injection-release';
 const { attachAgentColors } = require('./terminal/agent-colors');
@@ -2267,6 +2268,13 @@ function rendererOwnsPtyGeometry(paneId) {
   return !isSecondarySquidRoomMirrorPane(paneId);
 }
 
+function rendererOwnsStartupInjection(paneId) {
+  const id = String(paneId || '').trim();
+  if (!SQUID_ROOM_STARTUP_SHARED_PANE_IDS.has(id)) return true;
+  const context = normalizeStartupWindowContext(startupWindowContext);
+  return context.windowKey !== SQUID_ROOM_WINDOW_KEY;
+}
+
 function emitPtyGeometrySkipped(paneId, reason, payload = {}) {
   bus.emit('fit.skipped', {
     paneId,
@@ -3610,6 +3618,7 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
   const terminalAge = options.createdAt ? (Date.now() - options.createdAt) : Infinity;
   const shouldArmStartupOnReattach =
     String(paneId) === '1' &&
+    rendererOwnsStartupInjection(paneId) &&
     terminalAge < REATTACH_INJECTION_WINDOW_MS &&
     !hasStartupSessionHeader(scrollback, paneId);
   if (shouldArmStartupOnReattach) {
@@ -4557,6 +4566,7 @@ module.exports = {
     shouldPreserveTerminalUserScroll,
     setupTerminalWheelScrollGuard,
     rendererOwnsPtyGeometry,
+    rendererOwnsStartupInjection,
     isSecondarySquidRoomMirrorPane,
     terminalWriteFlushTimers,
     terminalWriteFrameBudgets,
