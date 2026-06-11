@@ -8,6 +8,8 @@ const {
   resolveWorkspacePaths,
 } = require('./memory-search');
 const { resolveDefaultCognitiveMemoryDbPath } = require('./cognitive-memory-store');
+const { getActiveProfile } = require('../config');
+const { isMainProfile, normalizeProfileName } = require('../profile');
 const { EvidenceLedgerStore } = require('./main/evidence-ledger-store');
 
 const REQUIRED_NODE_COLUMNS = Object.freeze([
@@ -113,11 +115,135 @@ function hashKnowledgeNodeIdentity(input = {}) {
   return crypto.createHash('sha256').update(`${sourceType}|${sourcePath}|${heading}|${content}`, 'utf8').digest('hex');
 }
 
+function safeRealpath(targetPath) {
+  const resolved = path.resolve(String(targetPath || ''));
+  try {
+    return fs.existsSync(resolved) ? fs.realpathSync.native(resolved) : resolved;
+  } catch {
+    return resolved;
+  }
+}
+
+function pathsEqual(left, right) {
+  return normalizePath(path.resolve(String(left || ''))).toLowerCase()
+    === normalizePath(path.resolve(String(right || ''))).toLowerCase();
+}
+
+function isPathInside(parentPath, childPath) {
+  const parent = path.resolve(String(parentPath || ''));
+  const child = path.resolve(String(childPath || ''));
+  const relative = path.relative(parent, child);
+  return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function rebaseWorkspacePath(targetPath, fromWorkspaceDir, toWorkspaceDir) {
+  const relative = path.relative(path.resolve(fromWorkspaceDir), path.resolve(targetPath));
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    return path.resolve(targetPath);
+  }
+  return path.resolve(toWorkspaceDir, relative);
+}
+
 function resolveCognitiveMemoryDbPath(options = {}, paths = resolveWorkspacePaths(options)) {
   return path.resolve(String(options.dbPath || options.cognitiveDbPath || resolveDefaultCognitiveMemoryDbPath({
     projectRoot: paths.projectRoot,
     profileName: options.profileName,
   })));
+}
+
+function resolveSharedMainScopeFromWorkspace(realWorkspaceDir) {
+  const mainProjectRoot = path.dirname(path.resolve(realWorkspaceDir));
+  const mainCognitiveDbPath = path.join(mainProjectRoot, '.squidrun', 'runtime', 'cognitive-memory.db');
+  if (!fs.existsSync(mainCognitiveDbPath)) return null;
+  return {
+    mainProjectRoot,
+    mainCognitiveDbPath: path.resolve(mainCognitiveDbPath),
+  };
+}
+
+function buildScopeInfo(base = {}) {
+  const cognitiveDbPath = path.resolve(base.cognitiveDbPath);
+  return {
+    evaluatedScope: base.evaluatedScope,
+    requestedProfile: base.requestedProfile,
+    reason: base.reason,
+    requestedProjectRoot: base.requestedProjectRoot,
+    effectiveProjectRoot: base.effectiveProjectRoot,
+    workspaceDir: base.workspaceDir,
+    workspaceDirRealpath: base.workspaceDirRealpath,
+    knowledgeDir: base.knowledgeDir,
+    knowledgeDirRealpath: base.knowledgeDirRealpath,
+    cognitiveDbPath,
+    cognitiveDbPathRealpath: safeRealpath(cognitiveDbPath),
+    profileCognitiveDbPath: base.profileCognitiveDbPath || null,
+  };
+}
+
+function resolveMemoryConsistencyScope(options = {}) {
+  const originalPaths = resolveWorkspacePaths(options);
+  const profileCognitiveDbPath = resolveCognitiveMemoryDbPath(options, originalPaths);
+  const requestedProfile = normalizeProfileName(options.profileName || getActiveProfile());
+  const explicitCognitiveDbPath = options.dbPath != null || options.cognitiveDbPath != null;
+  const workspaceDirRealpath = safeRealpath(originalPaths.workspaceDir);
+  const knowledgeDirRealpath = safeRealpath(originalPaths.knowledgeDir);
+  const baseScope = {
+    evaluatedScope: explicitCognitiveDbPath
+      ? 'explicit'
+      : (isMainProfile(requestedProfile) ? 'main' : 'profile'),
+    requestedProfile,
+    reason: explicitCognitiveDbPath
+      ? 'explicit_cognitive_db_path'
+      : (isMainProfile(requestedProfile) ? 'main_profile_default' : 'profile_default'),
+    requestedProjectRoot: originalPaths.projectRoot,
+    effectiveProjectRoot: originalPaths.projectRoot,
+    workspaceDir: originalPaths.workspaceDir,
+    workspaceDirRealpath,
+    knowledgeDir: originalPaths.knowledgeDir,
+    knowledgeDirRealpath,
+    cognitiveDbPath: profileCognitiveDbPath,
+    profileCognitiveDbPath,
+  };
+
+  if (
+    !explicitCognitiveDbPath
+    && !isMainProfile(requestedProfile)
+    && fs.existsSync(originalPaths.workspaceDir)
+    && !pathsEqual(originalPaths.workspaceDir, workspaceDirRealpath)
+    && !isPathInside(originalPaths.projectRoot, workspaceDirRealpath)
+  ) {
+    const mainScope = resolveSharedMainScopeFromWorkspace(workspaceDirRealpath);
+    if (mainScope) {
+      const effectivePaths = {
+        ...originalPaths,
+        projectRoot: mainScope.mainProjectRoot,
+        workspaceDir: workspaceDirRealpath,
+        knowledgeDir: rebaseWorkspacePath(originalPaths.knowledgeDir, originalPaths.workspaceDir, workspaceDirRealpath),
+        memoryDir: rebaseWorkspacePath(originalPaths.memoryDir, originalPaths.workspaceDir, workspaceDirRealpath),
+        dbPath: rebaseWorkspacePath(originalPaths.dbPath, originalPaths.workspaceDir, workspaceDirRealpath),
+        modelCacheDir: rebaseWorkspacePath(originalPaths.modelCacheDir, originalPaths.workspaceDir, workspaceDirRealpath),
+        siblingRoot: path.dirname(mainScope.mainProjectRoot),
+      };
+      return {
+        paths: effectivePaths,
+        cognitiveDbPath: mainScope.mainCognitiveDbPath,
+        scope: buildScopeInfo({
+          ...baseScope,
+          evaluatedScope: 'shared-main',
+          reason: 'profile_workspace_junction_to_shared_corpus',
+          effectiveProjectRoot: mainScope.mainProjectRoot,
+          workspaceDir: effectivePaths.workspaceDir,
+          knowledgeDir: effectivePaths.knowledgeDir,
+          cognitiveDbPath: mainScope.mainCognitiveDbPath,
+        }),
+      };
+    }
+  }
+
+  return {
+    paths: originalPaths,
+    cognitiveDbPath: profileCognitiveDbPath,
+    scope: buildScopeInfo(baseScope),
+  };
 }
 
 function listNodeColumns(db) {
@@ -155,12 +281,14 @@ function buildSample(rows = [], limit = DEFAULT_SAMPLE_LIMIT) {
   return rows.slice(0, Math.max(1, limit)).map((entry) => ({ ...entry }));
 }
 
-function createBaseResult(paths, cognitiveDbPath, knowledgeEntries) {
+function createBaseResult(paths, cognitiveDbPath, knowledgeEntries, scopeInfo = null) {
   return {
     ok: true,
     checkedAt: new Date().toISOString(),
     status: 'in_sync',
     synced: true,
+    evaluatedScope: scopeInfo?.evaluatedScope || 'unknown',
+    scope: scopeInfo,
     workspaceDir: paths.workspaceDir,
     knowledgeDir: paths.knowledgeDir,
     cognitiveDbPath,
@@ -299,14 +427,16 @@ function analyzeMemoryConsistency(options = {}) {
       Number.parseInt(String(options.sampleLimit || `${DEFAULT_SAMPLE_LIMIT}`), 10) || DEFAULT_SAMPLE_LIMIT
     )
   );
-  const paths = resolveWorkspacePaths(options);
-  const cognitiveDbPath = resolveCognitiveMemoryDbPath(options, paths);
+  const scopeResolution = resolveMemoryConsistencyScope(options);
+  const paths = scopeResolution.paths;
+  const cognitiveDbPath = scopeResolution.cognitiveDbPath;
   const knowledgeDirExists = fs.existsSync(paths.knowledgeDir);
   const knowledgeEntries = knowledgeDirExists ? collectKnowledgeEntries(paths, options) : [];
-  const result = createBaseResult(paths, cognitiveDbPath, knowledgeEntries);
+  const result = createBaseResult(paths, cognitiveDbPath, knowledgeEntries, scopeResolution.scope);
   const analysis = {
     ok: true,
     paths,
+    scope: scopeResolution.scope,
     sampleLimit,
     cognitiveDbPath,
     knowledgeEntries,
@@ -808,6 +938,8 @@ function planMemoryConsistencyRepair(options = {}) {
     workspaceDir: analysis.paths.workspaceDir,
     knowledgeDir: analysis.paths.knowledgeDir,
     cognitiveDbPath: analysis.cognitiveDbPath,
+    evaluatedScope: analysis.scope?.evaluatedScope || 'unknown',
+    scope: analysis.scope,
     detection: analysis.result,
     actions: [],
     skipped: [],
@@ -1696,6 +1828,8 @@ function planOrphanMigration(options = {}) {
     workspaceDir: analysis.paths.workspaceDir,
     knowledgeDir: analysis.paths.knowledgeDir,
     cognitiveDbPath: analysis.cognitiveDbPath,
+    evaluatedScope: analysis.scope?.evaluatedScope || 'unknown',
+    scope: analysis.scope,
     detection: analysis.result,
     actions: [],
     skipped: [],
@@ -2140,6 +2274,8 @@ function planGuardedOrphanDeletes(options = {}) {
     workspaceDir: analysis.paths.workspaceDir,
     knowledgeDir: analysis.paths.knowledgeDir,
     cognitiveDbPath: analysis.cognitiveDbPath,
+    evaluatedScope: analysis.scope?.evaluatedScope || 'unknown',
+    scope: analysis.scope,
     detection: analysis.result,
     targets,
     actions: [],
@@ -2791,6 +2927,7 @@ module.exports = {
   planGuardedOrphanDeletes,
   planOrphanMigration,
   planMemoryConsistencyRepair,
+  resolveMemoryConsistencyScope,
   resolveCognitiveMemoryDbPath,
   runGuardedOrphanDeletes,
   runMemoryConsistencyCheck,

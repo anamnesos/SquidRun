@@ -104,8 +104,11 @@ function insertKnowledgeNode(db, input = {}, helpers) {
 describe('memory consistency check', () => {
   let tempDir;
   let helpers;
+  let originalProfile;
 
   beforeEach(() => {
+    originalProfile = process.env.SQUIDRUN_PROFILE;
+    process.env.SQUIDRUN_PROFILE = 'main';
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-memory-consistency-'));
     fs.mkdirSync(path.join(tempDir, 'workspace', 'knowledge'), { recursive: true });
     fs.mkdirSync(path.join(tempDir, 'workspace', 'memory'), { recursive: true });
@@ -133,6 +136,11 @@ describe('memory consistency check', () => {
   afterEach(() => {
     if (tempDir) {
       fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+    if (originalProfile === undefined) {
+      delete process.env.SQUIDRUN_PROFILE;
+    } else {
+      process.env.SQUIDRUN_PROFILE = originalProfile;
     }
     jest.resetModules();
   });
@@ -167,6 +175,74 @@ describe('memory consistency check', () => {
     expect(result.summary.missingInCognitiveCount).toBe(0);
     expect(result.summary.orphanedNodeCount).toBe(0);
     expect(result.summary.duplicateKnowledgeHashCount).toBe(0);
+  });
+
+  test('side-profile shared workspace junction compares shared corpus against main DB', () => {
+    const { collectKnowledgeEntries, runMemoryConsistencyCheck } = helpers;
+    const { resolveWorkspacePaths } = require('../modules/memory-search');
+
+    const mainRoot = path.join(tempDir, 'main-root');
+    const profileRoot = path.join(tempDir, 'profiles', 'eunbyeol', 'workspace');
+    const mainWorkspace = path.join(mainRoot, 'workspace');
+    fs.mkdirSync(path.join(mainWorkspace, 'knowledge'), { recursive: true });
+    fs.mkdirSync(path.join(mainWorkspace, 'memory'), { recursive: true });
+    fs.mkdirSync(path.join(mainRoot, '.squidrun', 'runtime'), { recursive: true });
+    fs.mkdirSync(path.join(profileRoot, '.squidrun', 'runtime-eunbyeol'), { recursive: true });
+    fs.symlinkSync(mainWorkspace, path.join(profileRoot, 'workspace'), process.platform === 'win32' ? 'junction' : 'dir');
+
+    fs.writeFileSync(
+      path.join(mainWorkspace, 'knowledge', 'shared.md'),
+      [
+        '# Shared',
+        '',
+        '## Main Corpus',
+        '',
+        '- This corpus belongs to the main cognitive DB.',
+      ].join('\n')
+    );
+
+    const mainPaths = resolveWorkspacePaths({ projectRoot: mainRoot });
+    const entries = collectKnowledgeEntries(mainPaths);
+    const mainDbPath = path.join(mainRoot, '.squidrun', 'runtime', 'cognitive-memory.db');
+    const mainDb = createDatabase(mainDbPath);
+    createCognitiveSchema(mainDb);
+    entries.forEach((entry, index) => {
+      insertKnowledgeNode(mainDb, {
+        nodeId: `main-node-${index + 1}`,
+        sourcePath: entry.sourcePath,
+        title: entry.title,
+        heading: entry.heading,
+        content: entry.content,
+        contentHash: entry.contentHash,
+        metadata: entry.metadata,
+      }, helpers);
+    });
+    mainDb.close();
+
+    const profileDb = createDatabase(path.join(profileRoot, '.squidrun', 'runtime-eunbyeol', 'cognitive-memory.db'));
+    createCognitiveSchema(profileDb);
+    profileDb.close();
+
+    const result = runMemoryConsistencyCheck({
+      projectRoot: profileRoot,
+      profileName: 'eunbyeol',
+    });
+
+    expect(result.status).toBe('in_sync');
+    expect(result.synced).toBe(true);
+    expect(result.evaluatedScope).toBe('shared-main');
+    expect(result.scope).toEqual(expect.objectContaining({
+      requestedProfile: 'eunbyeol',
+      reason: 'profile_workspace_junction_to_shared_corpus',
+      requestedProjectRoot: path.resolve(profileRoot),
+      effectiveProjectRoot: path.resolve(mainRoot),
+      profileCognitiveDbPath: path.resolve(profileRoot, '.squidrun', 'runtime-eunbyeol', 'cognitive-memory.db'),
+      cognitiveDbPath: path.resolve(mainDbPath),
+    }));
+    expect(result.workspaceDir).toBe(fs.realpathSync.native(mainWorkspace));
+    expect(result.cognitiveDbPath).toBe(path.resolve(mainDbPath));
+    expect(result.summary.knowledgeEntryCount).toBe(entries.length);
+    expect(result.summary.knowledgeNodeCount).toBe(entries.length);
   });
 
   test('dry-run plans safe repair actions without mutating the DB', () => {
