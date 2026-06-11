@@ -2,6 +2,7 @@ const { executePaneControlAction, detectPaneModel, normalizeAction } = require('
 
 describe('pane-control-service', () => {
   let ctx;
+  const targetInstance = { profileName: 'main', windowKey: 'main' };
 
   beforeEach(() => {
     ctx = {
@@ -30,6 +31,11 @@ describe('pane-control-service', () => {
         ['2', 'running'],
         ['3', 'running'],
       ]),
+      instanceScope: {
+        profileName: 'main',
+        windowKey: 'main',
+        sessionScopeId: 'app-session-test',
+      },
     };
   });
 
@@ -104,10 +110,22 @@ describe('pane-control-service', () => {
   });
 
   test('restart marks expected exit and sends restart-pane event', () => {
-    const result = executePaneControlAction(ctx, 'restart', { paneId: '1' });
+    const result = executePaneControlAction(ctx, 'restart', { paneId: '1', targetInstance });
     expect(result).toEqual(expect.objectContaining({ success: true, method: 'restart-pane', paneId: '1' }));
     expect(ctx.recoveryManager.markExpectedExit).toHaveBeenCalledWith('1', 'manual-restart');
     expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('restart-pane', { paneId: '1' });
+  });
+
+  test('restart requires an instance assertion', () => {
+    const result = executePaneControlAction(ctx, 'restart', { paneId: '1' });
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'missing_instance_assertion',
+      paneId: '1',
+      action: 'restart',
+    }));
+    expect(ctx.recoveryManager.markExpectedExit).not.toHaveBeenCalled();
+    expect(ctx.mainWindow.webContents.send).not.toHaveBeenCalled();
   });
 
   test('nudge without message routes to nudge-pane event', () => {
@@ -139,13 +157,13 @@ describe('pane-control-service', () => {
 
   test('switch-model requires a model', () => {
     ctx.switchPaneModel = jest.fn();
-    const result = executePaneControlAction(ctx, 'switch-model', { paneId: '2' });
+    const result = executePaneControlAction(ctx, 'switch-model', { paneId: '2', targetInstance });
     expect(result).toEqual(expect.objectContaining({ success: false, reason: 'missing_model', paneId: '2' }));
     expect(ctx.switchPaneModel).not.toHaveBeenCalled();
   });
 
   test('switch-model fails when the shared flow is not wired', () => {
-    const result = executePaneControlAction(ctx, 'switch-model', { paneId: '2', model: 'claude' });
+    const result = executePaneControlAction(ctx, 'switch-model', { paneId: '2', model: 'claude', targetInstance });
     expect(result).toEqual(expect.objectContaining({
       success: false,
       reason: 'model_switch_unavailable',
@@ -155,7 +173,7 @@ describe('pane-control-service', () => {
 
   test('switch-model delegates to the shared flow and maps success', async () => {
     ctx.switchPaneModel = jest.fn().mockResolvedValue({ success: true, paneId: '2', model: 'claude' });
-    const result = await executePaneControlAction(ctx, 'switch-model', { paneId: '2', model: 'Claude' });
+    const result = await executePaneControlAction(ctx, 'switch-model', { paneId: '2', model: 'Claude', targetInstance });
 
     expect(ctx.switchPaneModel).toHaveBeenCalledWith('2', 'claude');
     expect(result).toEqual(expect.objectContaining({
@@ -173,7 +191,7 @@ describe('pane-control-service', () => {
       reason: 'model_switch_blocked_restart_in_progress',
       activeClaimId: 'lease-1',
     });
-    const result = await executePaneControlAction(ctx, 'switch-model', { paneId: '2', model: 'claude' });
+    const result = await executePaneControlAction(ctx, 'switch-model', { paneId: '2', model: 'claude', targetInstance });
 
     expect(result).toEqual(expect.objectContaining({
       success: false,
@@ -181,5 +199,22 @@ describe('pane-control-service', () => {
       activeClaimId: 'lease-1',
       paneId: '2',
     }));
+  });
+
+  test('switch-model rejects instance assertion mismatches before invoking the shared flow', async () => {
+    ctx.switchPaneModel = jest.fn().mockResolvedValue({ success: true });
+    const result = await executePaneControlAction(ctx, 'switch-model', {
+      paneId: '2',
+      model: 'claude',
+      targetInstance: { profileName: 'eunbyeol', windowKey: 'eunbyeol' },
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'instance_assertion_mismatch',
+      mismatchField: 'profileName',
+      paneId: '2',
+    }));
+    expect(ctx.switchPaneModel).not.toHaveBeenCalled();
   });
 });

@@ -202,7 +202,11 @@ describe('registerModelSwitchHandlers', () => {
       });
 
       // Verify renderer was signaled
-      expect(mockCtx.mainWindow.webContents.send).toHaveBeenCalledWith('pane-model-changed', { paneId: '1', model: 'gemini' });
+      expect(mockCtx.mainWindow.webContents.send).toHaveBeenCalledWith('pane-model-changed', {
+        paneId: '1',
+        model: 'gemini',
+        ownerWindowKey: 'main',
+      });
 
       // Verify success result
       expect(result).toEqual({ success: true, paneId: '1', model: 'gemini' });
@@ -221,7 +225,11 @@ describe('registerModelSwitchHandlers', () => {
       expect(result.success).toBe(true);
       // The seam carries the completion; mainWindow-only send must NOT fire
       // (the squid room's dropdown depended on exactly this fan-out).
-      expect(sendPaneModelChanged).toHaveBeenCalledWith({ paneId: '2', model: 'claude' });
+      expect(sendPaneModelChanged).toHaveBeenCalledWith({
+        paneId: '2',
+        model: 'claude',
+        ownerWindowKey: 'main',
+      });
       expect(mockCtx.mainWindow.webContents.send).not.toHaveBeenCalledWith(
         'pane-model-changed',
         { paneId: '2', model: 'claude' }
@@ -251,7 +259,11 @@ describe('registerModelSwitchHandlers', () => {
       expect(mockDeps.saveSettings).toHaveBeenCalledWith({ paneCommands: mockCtx.currentSettings.paneCommands });
 
       // Verify renderer was still signaled
-      expect(mockCtx.mainWindow.webContents.send).toHaveBeenCalledWith('pane-model-changed', { paneId: '3', model: 'claude' });
+      expect(mockCtx.mainWindow.webContents.send).toHaveBeenCalledWith('pane-model-changed', {
+        paneId: '3',
+        model: 'claude',
+        ownerWindowKey: 'main',
+      });
 
       // Verify it still returns success
       expect(result).toEqual({ success: true, paneId: '3', model: 'claude' });
@@ -372,13 +384,18 @@ describe('registerModelSwitchHandlers', () => {
 
     it('WS pane-control switch-model path persists settings and signals pane-model-changed exactly once', async () => {
       const paneControlCtx = {
+        instanceScope: { profileName: 'main', windowKey: 'main' },
         switchPaneModel: (paneId, model) => executePaneModelSwitch(mockCtx, { paneId, model }, {
           saveSettings: mockDeps.saveSettings,
           paneRestartArbiter: { getActiveClaim: jest.fn(() => null) },
         }),
       };
 
-      const resultPromise = executePaneControlAction(paneControlCtx, 'switch-model', { paneId: '1', model: 'codex' });
+      const resultPromise = executePaneControlAction(paneControlCtx, 'switch-model', {
+        paneId: '1',
+        model: 'codex',
+        targetInstance: { profileName: 'main', windowKey: 'main' },
+      });
       mockCtx.daemonClient._killedHandler('1');
       const result = await resultPromise;
 
@@ -395,19 +412,24 @@ describe('registerModelSwitchHandlers', () => {
       const modelChangedSends = mockCtx.mainWindow.webContents.send.mock.calls
         .filter(([channel]) => channel === 'pane-model-changed');
       expect(modelChangedSends).toEqual([
-        ['pane-model-changed', { paneId: '1', model: 'codex' }],
+        ['pane-model-changed', { paneId: '1', model: 'codex', ownerWindowKey: 'main' }],
       ]);
     });
 
     it('rejects an invalid model through the WS path without touching the pane', async () => {
       const paneControlCtx = {
+        instanceScope: { profileName: 'main', windowKey: 'main' },
         switchPaneModel: (paneId, model) => executePaneModelSwitch(mockCtx, { paneId, model }, {
           saveSettings: mockDeps.saveSettings,
           paneRestartArbiter: { getActiveClaim: jest.fn(() => null) },
         }),
       };
 
-      const result = await executePaneControlAction(paneControlCtx, 'switch-model', { paneId: '1', model: 'not-a-model' });
+      const result = await executePaneControlAction(paneControlCtx, 'switch-model', {
+        paneId: '1',
+        model: 'not-a-model',
+        targetInstance: { profileName: 'main', windowKey: 'main' },
+      });
 
       expect(result).toEqual(expect.objectContaining({
         success: false,

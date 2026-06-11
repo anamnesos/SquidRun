@@ -4140,6 +4140,8 @@ class SquidRunApp {
           }
 
           if (data.message.type === 'pane-control') {
+            const paneControlProfileName = normalizeProfileName(this.activeProfileName || getActiveProfileName());
+            const paneControlWindowKey = isMainProfile(paneControlProfileName) ? 'main' : paneControlProfileName;
             return executePaneControlAction(
               {
                 daemonClient: this.ctx.daemonClient,
@@ -4147,6 +4149,11 @@ class SquidRunApp {
                 currentSettings: this.ctx.currentSettings,
                 recoveryManager: this.ctx.recoveryManager,
                 agentRunning: this.ctx.agentRunning,
+                instanceScope: {
+                  profileName: paneControlProfileName,
+                  windowKey: paneControlWindowKey,
+                  sessionScopeId: this.getWindowSessionScopeId(paneControlWindowKey),
+                },
                 requestPaneRestart: (paneId, info = {}) => this.requestPaneRestart(paneId, info),
                 switchPaneModel: (paneId, model) => executePaneModelSwitch(this.ctx, { paneId, model }, {
                   saveSettings: (s) => this.settings.saveSettings(s),
