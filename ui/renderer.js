@@ -1543,8 +1543,12 @@ function markSettingsLoaded() {
   checkInitComplete();
 }
 
-function markTerminalsReady() {
+function markTerminalsReady(autoSpawnHandled = false) {
   initState.terminalsReady = true;
+  if (autoSpawnHandled === true) {
+    initState.autoSpawnChecked = true;
+    log.info('Init', 'Terminals ready; auto-spawn already handled by daemon command-on-create');
+  }
   log.info('Init', 'Terminals ready');
 
   checkInitComplete();

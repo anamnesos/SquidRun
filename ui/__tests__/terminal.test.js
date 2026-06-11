@@ -1852,6 +1852,29 @@ describe('terminal.js module', () => {
       expect(connectionCb).toHaveBeenCalledWith('All agents running');
       jest.useFakeTimers();
     });
+
+    test('skips panes already launched by daemon command-on-create', async () => {
+      jest.useRealTimers();
+      mockSquidRun.claude.spawn.mockClear();
+      mockSquidRun.daemon.terminalSnapshot.mockResolvedValue({
+        ok: true,
+        terminals: [
+          { paneId: '1', alive: true, mode: 'pty-command' },
+          { paneId: '2', alive: true, mode: 'pty-command' },
+          { paneId: '3', alive: true, mode: 'pty-command' },
+        ],
+      });
+
+      for (const paneId of terminal.PANE_IDS) {
+        terminal.terminals.set(paneId, { write: jest.fn() });
+      }
+
+      await terminal.spawnAllAgents();
+
+      expect(mockSquidRun.claude.spawn).not.toHaveBeenCalled();
+      expect(mockSquidRun.pty.write).not.toHaveBeenCalled();
+      jest.useFakeTimers();
+    });
   });
 
   describe('message queue processing', () => {
@@ -1962,6 +1985,29 @@ describe('terminal.js module', () => {
       expect(mockSquidRun.daemon.terminalSnapshot).not.toHaveBeenCalled();
       expect(mockSquidRun.pty.create).toHaveBeenCalledWith('2', '/test/cwd');
       expect(terminal.terminals.has('2')).toBe(true);
+    });
+
+    test('creates fresh standard panes with configured daemon spawn commands when requested', async () => {
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '1': 'claude', '2': 'claude', '3': 'codex' },
+      });
+
+      await terminal.initTerminal('3', { spawnCommandOnCreate: true });
+
+      expect(mockSquidRun.daemon.terminalSnapshot).not.toHaveBeenCalled();
+      expect(mockSquidRun.pty.create).toHaveBeenCalledWith(
+        '3',
+        '/test/cwd',
+        expect.objectContaining({
+          paneCommand: 'codex',
+          spawnCommandOnCreate: true,
+          preferWorkingDir: true,
+        })
+      );
     });
 
     test('should enforce xterm scrollback cap in constructor options', async () => {
