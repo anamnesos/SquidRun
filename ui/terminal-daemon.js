@@ -1419,6 +1419,12 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     PATH: augmentedPath,
     ...(options.env && typeof options.env === 'object' ? options.env : {}),
   };
+  // The daemon may run as Electron-as-Node; pane CLIs must not inherit that mode.
+  for (const key of Object.keys(runtimeEnv)) {
+    if (key.toUpperCase() === 'ELECTRON_RUN_AS_NODE') {
+      delete runtimeEnv[key];
+    }
+  }
   if (paneRuntime === 'claude') {
     runtimeEnv.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = 'false';
   }

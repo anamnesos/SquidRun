@@ -21,6 +21,16 @@ const ASAR_UNPACKED_DIR = __dirname.replace('app.asar', 'app.asar.unpacked');
 const DAEMON_SCRIPT = path.join(ASAR_UNPACKED_DIR, 'terminal-daemon.js');
 const DAEMON_PID_FILE = resolveCoordPath('runtime/daemon.pid', { forWrite: true });
 
+function stripElectronRunAsNode(env) {
+  if (!env || typeof env !== 'object') return env;
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === 'ELECTRON_RUN_AS_NODE') {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
 class DaemonClient extends EventEmitter {
   constructor(options = {}) {
     super();
@@ -405,56 +415,25 @@ class DaemonClient extends EventEmitter {
     this.emit('reconnect-failed');
   }
 
-  _resolveNodeBinary() {
-    if (os.platform() !== 'darwin') return 'node';
-
-    const candidates = [
-      '/opt/homebrew/bin/node',
-      '/usr/local/bin/node',
-      '/opt/local/bin/node',
-    ];
-
-    try {
-      const home = os.homedir();
-      // NVM default
-      const nvmDefaultAlias = path.join(home, '.nvm', 'alias', 'default');
-      if (fs.existsSync(nvmDefaultAlias)) {
-        const version = fs.readFileSync(nvmDefaultAlias, 'utf8').trim();
-        if (version) {
-          candidates.unshift(path.join(home, '.nvm', 'versions', 'node', version, 'bin', 'node'));
-        }
-      }
-      // N/Volta/fnm
-      candidates.unshift(path.join(home, '.volta', 'bin', 'node'));
-      candidates.unshift(path.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin', 'node'));
-    } catch (err) {
-      // Ignore homedir access errors
-    }
-
-    for (const p of candidates) {
-      if (fs.existsSync(p)) return p;
-    }
-
-    return 'node';
-  }
-
   /**
    * Spawn the daemon process (detached)
    */
   async _spawnDaemon() {
     return new Promise((resolve) => {
-      const nodeBin = this._resolveNodeBinary();
-      log.info('DaemonClient', `Spawning daemon with ${nodeBin}`, DAEMON_SCRIPT);
+      const daemonEnv = stripElectronRunAsNode({
+        ...process.env,
+        ...this.daemonEnv,
+      });
+      daemonEnv.ELECTRON_RUN_AS_NODE = '1';
+
+      log.info('DaemonClient', `Spawning daemon with Electron-as-Node ${process.execPath}`, DAEMON_SCRIPT);
 
       // Spawn as detached process so it survives parent exit
-      const daemon = spawn(nodeBin, [DAEMON_SCRIPT], {
+      const daemon = spawn(process.execPath, [DAEMON_SCRIPT], {
         detached: true,
         stdio: 'ignore', // Don't inherit stdio - daemon runs independently
         cwd: ASAR_UNPACKED_DIR,
-        env: {
-          ...process.env,
-          ...this.daemonEnv,
-        },
+        env: daemonEnv,
       });
 
       // Unref so parent can exit without waiting
@@ -501,6 +480,7 @@ class DaemonClient extends EventEmitter {
       SQUIDRUN_PANE_ID: id,
       ...incomingEnv,
     };
+    stripElectronRunAsNode(spawnEnv);
     const payload = {
       action: 'spawn',
       paneId: id,
