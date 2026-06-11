@@ -61,6 +61,68 @@ function writeRegistry(projectRoot, liveInstance = {}, templateInstance = {}) {
   });
 }
 
+function writeMultiInstanceRegistry(projectRoot, profileWorkspaceRoot) {
+  const mainInstance = {
+    id: 'james-main',
+    profile: 'main',
+    coordPath: '.squidrun/coord',
+    architectInbox: '.squidrun/coord/architect-inbox.jsonl',
+    appStatusPath: '.squidrun/app-status.json',
+  };
+  const clientInstance = {
+    id: 'client-sideprofile',
+    profile: 'sideprofile',
+    coordPath: '.squidrun/coord-sideprofile',
+    architectInbox: '.squidrun/coord-sideprofile/architect-inbox.jsonl',
+    appStatusPath: '.squidrun/app-status-sideprofile.json',
+    allowedRuntimePaths: [
+      '.squidrun/runtime-sideprofile',
+      '.squidrun/settings-sideprofile',
+    ],
+  };
+  writeJson(path.join(projectRoot, '.squidrun', 'operator-registry.template.json'), {
+    schemaVersion: 1,
+    instances: [mainInstance, clientInstance],
+  });
+  writeJson(path.join(projectRoot, '.squidrun', 'operator-registry.json'), {
+    schemaVersion: 1,
+    instances: [mainInstance, clientInstance],
+  });
+  writeJson(path.join(projectRoot, '.squidrun', 'app-status.json'), {
+    lastUpdated: '2026-06-11T06:00:00.000Z',
+    settingsPersistence: {
+      cwd: path.join(projectRoot, 'ui'),
+      userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui',
+    },
+  });
+  writeJson(path.join(projectRoot, '.squidrun', 'app-status-sideprofile.json'), {
+    lastUpdated: '2026-05-04T00:04:54.639Z',
+    session: 186,
+    settingsPersistence: {
+      cwd: path.join(projectRoot, 'ui'),
+      userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\sideprofile',
+    },
+  });
+  fs.mkdirSync(path.join(projectRoot, '.squidrun', 'coord-sideprofile'), { recursive: true });
+  if (profileWorkspaceRoot) {
+    writeJson(path.join(profileWorkspaceRoot, '.squidrun', 'link.json'), {
+      squidrun_root: projectRoot,
+      workspace: profileWorkspaceRoot,
+      profile: 'sideprofile',
+    });
+    writeJson(path.join(profileWorkspaceRoot, '.squidrun', 'app-status-sideprofile.json'), {
+      lastUpdated: '2026-06-11T06:16:51.396Z',
+      session: 212,
+      settingsPersistence: {
+        cwd: path.join(projectRoot, 'ui'),
+        settingsPath: path.join(profileWorkspaceRoot, '.squidrun', 'settings-sideprofile', 'settings.json'),
+        appStatusPath: path.join(profileWorkspaceRoot, '.squidrun', 'app-status-sideprofile.json'),
+        userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\sideprofile',
+      },
+    });
+  }
+}
+
 function processRowsWithDescendants() {
   return [
     {
@@ -137,6 +199,39 @@ function orphanSweepRows() {
       Name: 'claude.exe',
       ExecutablePath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\npm\\claude.exe',
       CommandLine: 'claude --dangerously-skip-permissions',
+    },
+  ];
+}
+
+function duplexProcessRows(projectRoot = 'D:\\projects\\squidrun') {
+  return [
+    {
+      ProcessId: 100,
+      ParentProcessId: 10,
+      Name: 'electron.exe',
+      ExecutablePath: `${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe`,
+      CommandLine: `"${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe" .`,
+    },
+    {
+      ProcessId: 101,
+      ParentProcessId: 100,
+      Name: 'electron.exe',
+      ExecutablePath: `${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe`,
+      CommandLine: `"${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe" --type=renderer --user-data-dir="C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui" --app-path="${projectRoot}\\ui"`,
+    },
+    {
+      ProcessId: 200,
+      ParentProcessId: 20,
+      Name: 'electron.exe',
+      ExecutablePath: `${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe`,
+      CommandLine: `"${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe" . --profile=sideprofile --window=sideprofile --standalone-window`,
+    },
+    {
+      ProcessId: 201,
+      ParentProcessId: 200,
+      Name: 'electron.exe',
+      ExecutablePath: `${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe`,
+      CommandLine: `"${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe" --type=renderer --user-data-dir="C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\sideprofile" --app-path="${projectRoot}\\ui"`,
     },
   ];
 }
@@ -243,6 +338,113 @@ describe('hm-restart-execute', () => {
         matchReason: 'direct_project_match',
       }),
     ]);
+  });
+
+  test('selects only the requested client instance in a live-duplex process set', () => {
+    const instanceConfig = {
+      id: 'client-sideprofile',
+      profile: 'sideprofile',
+      appStatusPath: path.join(tempRoot, '.squidrun', 'app-status-sideprofile.json'),
+      appStatus: {
+        settingsPersistence: {
+          userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\sideprofile',
+        },
+      },
+    };
+
+    const processes = restartExecute.selectSquidRunElectronProcesses(
+      'D:\\projects\\squidrun',
+      duplexProcessRows(),
+      { instanceConfig }
+    );
+
+    expect(processes).toEqual([
+      expect.objectContaining({
+        pid: 200,
+        matchReason: expect.stringContaining('instance'),
+      }),
+    ]);
+  });
+
+  test('shutdown refuses ambiguous project-root Electron when no instance attribution exists', async () => {
+    const killed = [];
+    const instanceConfig = {
+      id: 'client-sideprofile',
+      profile: 'sideprofile',
+      appStatusPath: path.join(tempRoot, '.squidrun', 'app-status-sideprofile.json'),
+    };
+
+    const result = await restartExecute.shutdownElectronProcesses('D:\\projects\\squidrun', {
+      instanceConfig,
+      processRows: [
+        {
+          ProcessId: 100,
+          ParentProcessId: 10,
+          Name: 'electron.exe',
+          ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+          CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" .',
+        },
+      ],
+      killProcess: (pid) => killed.push(pid),
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'no_instance_attributed_process',
+    }));
+    expect(killed).toEqual([]);
+  });
+
+  test('loads client registry from shared root and prefers the fresh profile app-status path', () => {
+    const profileWorkspaceRoot = path.join(tempRoot, '.squidrun', 'profiles', 'sideprofile', 'workspace');
+    writeMultiInstanceRegistry(tempRoot, profileWorkspaceRoot);
+
+    const instanceConfig = restartExecute.loadInstanceConfig(profileWorkspaceRoot, 'client-sideprofile');
+
+    expect(instanceConfig.registryRoot).toBe(tempRoot);
+    expect(instanceConfig.profileWorkspaceRoot).toBe(profileWorkspaceRoot);
+    expect(instanceConfig.appStatusPath).toBe(path.join(
+      profileWorkspaceRoot,
+      '.squidrun',
+      'app-status-sideprofile.json'
+    ));
+  });
+
+  test('default relaunch replays captured instance commandLine and env when registry launchCommand is absent', () => {
+    const instanceConfig = {
+      id: 'client-sideprofile',
+      profile: 'sideprofile',
+      registryRoot: tempRoot,
+      profileWorkspaceRoot: path.join(tempRoot, '.squidrun', 'profiles', 'sideprofile', 'workspace'),
+      appStatusPath: path.join(tempRoot, '.squidrun', 'profiles', 'sideprofile', 'workspace', '.squidrun', 'app-status-sideprofile.json'),
+      launchCommand: {},
+    };
+    writeJson(instanceConfig.appStatusPath, {
+      settingsPersistence: {
+        cwd: path.join(tempRoot, 'ui'),
+        userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\sideprofile',
+      },
+    });
+
+    const launch = restartExecute.defaultLaunchCommand(tempRoot, instanceConfig, {
+      commandLine: '"C:\\Program Files\\Electron\\electron.exe" . --profile=sideprofile --window=sideprofile --standalone-window',
+      cwd: path.join(tempRoot, 'ui'),
+      env: {
+        SQUIDRUN_PROFILE: 'sideprofile',
+        SQUIDRUN_WINDOW_KEY: 'sideprofile',
+        KEEP_FOR_RELAUNCH: '1',
+      },
+    });
+
+    expect(launch.command).toBe('C:\\Program Files\\Electron\\electron.exe');
+    expect(launch.args).toEqual(['.', '--profile=sideprofile', '--window=sideprofile', '--standalone-window']);
+    expect(launch.cwd).toBe(path.join(tempRoot, 'ui'));
+    expect(launch.env).toEqual(expect.objectContaining({
+      SQUIDRUN_PROFILE: 'sideprofile',
+      SQUIDRUN_WINDOW_KEY: 'sideprofile',
+      SQUIDRUN_INSTANCE_ID: 'client-sideprofile',
+      KEEP_FOR_RELAUNCH: '1',
+    }));
   });
 
   test('shutdown kills Electron descendants deepest first before the parent', async () => {
