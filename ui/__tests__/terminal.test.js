@@ -178,6 +178,7 @@ describe('terminal.js module', () => {
     // Reset mocks
     mockSquidRun.invoke.mockResolvedValue({ ok: true });
     mockSquidRun.daemon.terminalSnapshot.mockResolvedValue({ ok: false, terminals: [] });
+    mockSquidRun.pty.create.mockResolvedValue();
     mockSquidRun.pty.write.mockResolvedValue();
     mockSquidRun.claude.spawn.mockResolvedValue({ success: true, command: 'claude' });
     delete mockSquidRun.paneHost;
@@ -2005,9 +2006,38 @@ describe('terminal.js module', () => {
         expect.objectContaining({
           paneCommand: 'codex',
           spawnCommandOnCreate: true,
-          preferWorkingDir: true,
         })
       );
+      const createOptions = mockSquidRun.pty.create.mock.calls[0][2];
+      expect(createOptions.preferWorkingDir).toBeUndefined();
+    });
+
+    test('fresh command-on-create initializes standard panes without serial starvation', async () => {
+      jest.useRealTimers();
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '1': 'claude', '2': 'claude', '3': 'codex' },
+      });
+      let resolvePaneOne;
+      mockSquidRun.pty.create.mockImplementation((paneId) => {
+        if (paneId === '1') {
+          return new Promise((resolve) => { resolvePaneOne = resolve; });
+        }
+        return Promise.resolve();
+      });
+
+      const initPromise = terminal.initTerminals({ spawnCommandOnCreate: true });
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockSquidRun.pty.create.mock.calls.map(([paneId]) => paneId)).toEqual(['1', '2', '3']);
+
+      resolvePaneOne();
+      await initPromise;
+      jest.useFakeTimers();
     });
 
     test('should enforce xterm scrollback cap in constructor options', async () => {

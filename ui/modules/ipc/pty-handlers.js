@@ -736,7 +736,7 @@ function registerPtyHandlers(ctx, deps = {}) {
     if (!restartClaim.ok) {
       return restartClaimDeniedResult(restartClaim, 'pty-create');
     }
-    const preferWorkingDir = ptyOptions.preferWorkingDir === true || ptyOptions.spawnCommandOnCreate === true;
+    const preferWorkingDir = ptyOptions.preferWorkingDir === true;
     const paneRoot = resolvePaneCwd(paneId, {
       paneProjects: getPaneProjects(),
       projectRoot: getActiveProjectRoot(),
