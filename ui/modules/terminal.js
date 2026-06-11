@@ -1357,6 +1357,12 @@ async function readDaemonScrollbackForPane(paneId, options = {}) {
   return typeof terminalEntry?.scrollback === 'string' ? terminalEntry.scrollback : '';
 }
 
+function shouldRestoreDaemonScrollbackOnCreate(paneId, options = {}) {
+  if (options.restoreDaemonScrollback === true) return true;
+  if (options.restoreDaemonScrollback === false) return false;
+  return !PANE_IDS.includes(String(paneId || ''));
+}
+
 async function repaintTerminalFromDaemonScrollback(paneId, options = {}) {
   const id = String(paneId || '').trim();
   if (!id) return { ok: false, reason: 'missing_pane' };
@@ -3337,11 +3343,15 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       });
     }
 
-    const restoredScrollback = typeof options.scrollback === 'string'
-      ? options.scrollback
-      : (recreatedForWorkingDir.recreated
-        ? ''
-        : await readDaemonScrollbackForPane(paneId, { timeoutMs: options.snapshotTimeoutMs }));
+    let restoredScrollback = '';
+    if (typeof options.scrollback === 'string') {
+      restoredScrollback = options.scrollback;
+    } else if (
+      !recreatedForWorkingDir.recreated
+      && shouldRestoreDaemonScrollbackOnCreate(paneId, options)
+    ) {
+      restoredScrollback = await readDaemonScrollbackForPane(paneId, { timeoutMs: options.snapshotTimeoutMs });
+    }
     if (restoredScrollback && restoredScrollback.length > 0) {
       queueTerminalWrite(paneId, terminal, trimScrollbackToMaxLines(restoredScrollback));
       scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon);
