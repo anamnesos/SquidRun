@@ -1110,6 +1110,329 @@ describe('WebSocket Delivery Audit', () => {
     expect(leakedToScopedBuilder).toBe(false);
   });
 
+  test('routes main architect to side architect with explicit profile routing metadata', async () => {
+    const scopedArchitect = await connectAndRegister({
+      port,
+      role: 'architect',
+      paneId: '1',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(scopedArchitect);
+    const scopedBuilder = await connectAndRegister({
+      port,
+      role: 'builder',
+      paneId: '2',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(scopedBuilder);
+    const mainArchitect = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainArchitect);
+
+    let leakedToScopedBuilder = false;
+    scopedBuilder.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'message' && msg.content === 'architect-profile-route-main-to-side') {
+          leakedToScopedBuilder = true;
+        }
+      } catch (_err) {
+        // Ignore non-JSON frames.
+      }
+    });
+
+    const messageId = 'architect-profile-route-main-to-side-1';
+    const delivery = waitForMessage(
+      scopedArchitect,
+      (msg) => msg.type === 'message' && msg.content === 'architect-profile-route-main-to-side'
+    );
+    const ackPromise = waitForMessage(
+      mainArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    mainArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'architect',
+      content: 'architect-profile-route-main-to-side',
+      messageId,
+      ackRequired: true,
+      metadata: {
+        routing: {
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+        },
+        sourceAddress: 'architect@main',
+        targetAddress: 'architect@eunbyeol',
+        routeAttribution: {
+          sourceProfileName: 'main',
+          sourceWindowKey: 'main',
+          sourceAddress: 'architect@main',
+          targetProfileName: 'eunbyeol',
+          targetWindowKey: 'eunbyeol',
+          targetAddress: 'architect@eunbyeol',
+        },
+      },
+    }));
+
+    const [ack, received] = await Promise.all([ackPromise, delivery]);
+    await sleep(100);
+    expect(ack.ok).toBe(true);
+    expect(ack.status).toBe('delivered.websocket');
+    expect(received.from).toBe('architect');
+    expect(received.metadata).toEqual(expect.objectContaining({
+      sourceAddress: 'architect@main',
+      targetAddress: 'architect@eunbyeol',
+      routeAttribution: expect.objectContaining({
+        sourceAddress: 'architect@main',
+        targetAddress: 'architect@eunbyeol',
+      }),
+    }));
+    expect(leakedToScopedBuilder).toBe(false);
+  });
+
+  test('routes main architect to side architect through side local handler when no scoped client is registered', async () => {
+    const mainArchitect = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainArchitect);
+
+    onMessageSpy.mockImplementation((payload) => {
+      if (payload?.message?.type === 'send' && payload?.message?.messageId === 'architect-profile-route-main-to-side-handler-1') {
+        return {
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'delivered.verified',
+          paneId: '1',
+          mode: 'side-terminal',
+        };
+      }
+      return undefined;
+    });
+
+    const messageId = 'architect-profile-route-main-to-side-handler-1';
+    const ackPromise = waitForMessage(
+      mainArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    mainArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'architect',
+      content: 'architect-profile-route-main-to-side-handler',
+      messageId,
+      ackRequired: true,
+      metadata: {
+        routing: {
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+        },
+        sourceAddress: 'architect@main',
+        targetAddress: 'architect@eunbyeol',
+        routeAttribution: {
+          sourceProfileName: 'main',
+          sourceWindowKey: 'main',
+          sourceAddress: 'architect@main',
+          targetProfileName: 'eunbyeol',
+          targetWindowKey: 'eunbyeol',
+          targetAddress: 'architect@eunbyeol',
+        },
+      },
+    }));
+
+    const ack = await ackPromise;
+    expect(ack.ok).toBe(true);
+    expect(ack.status).toBe('delivered.verified');
+    expect(ack.wsDeliveryCount).toBe(0);
+    expect(onMessageSpy).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'architect',
+      paneId: '1',
+      message: expect.objectContaining({
+        target: 'architect',
+        messageId,
+      }),
+    }));
+  });
+
+  test('routes side architect to main architect through explicit main profile route', async () => {
+    const scopedArchitect = await connectAndRegister({
+      port,
+      role: 'architect',
+      paneId: '1',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(scopedArchitect);
+
+    onMessageSpy.mockImplementation((payload) => {
+      if (payload?.message?.type === 'send' && payload?.message?.messageId === 'architect-profile-route-side-to-main-1') {
+        return {
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'delivered.verified',
+          paneId: '1',
+          mode: 'main-terminal',
+        };
+      }
+      return undefined;
+    });
+
+    const messageId = 'architect-profile-route-side-to-main-1';
+    const ackPromise = waitForMessage(
+      scopedArchitect,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    scopedArchitect.send(JSON.stringify({
+      type: 'send',
+      target: 'architect',
+      content: 'architect-profile-route-side-to-main',
+      messageId,
+      ackRequired: true,
+      metadata: {
+        routing: {
+          profileName: 'main',
+          windowKey: 'main',
+        },
+        sourceAddress: 'architect@eunbyeol',
+        targetAddress: 'architect@main',
+        routeAttribution: {
+          sourceProfileName: 'eunbyeol',
+          sourceWindowKey: 'eunbyeol',
+          sourceAddress: 'architect@eunbyeol',
+          targetProfileName: 'main',
+          targetWindowKey: 'main',
+          targetAddress: 'architect@main',
+        },
+      },
+    }));
+
+    const ack = await ackPromise;
+    expect(ack.ok).toBe(true);
+    expect(ack.status).toBe('delivered.verified');
+    expect(ack.wsDeliveryCount).toBe(0);
+    expect(onMessageSpy).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'architect',
+      paneId: '1',
+      message: expect.objectContaining({
+        target: 'architect',
+        messageId,
+      }),
+    }));
+  });
+
+  test('blocks non-architect side senders from using the cross-profile architect route', async () => {
+    const mainArchitect = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
+    activeClients.add(mainArchitect);
+    const scopedBuilder = await connectAndRegister({
+      port,
+      role: 'builder',
+      paneId: '2',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(scopedBuilder);
+
+    let leakedToMain = false;
+    mainArchitect.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'message' && msg.content === 'builder-cross-profile-not-allowed') {
+          leakedToMain = true;
+        }
+      } catch (_err) {
+        // Ignore non-JSON frames.
+      }
+    });
+
+    const messageId = 'architect-profile-route-block-builder-1';
+    const ackPromise = waitForMessage(
+      scopedBuilder,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    scopedBuilder.send(JSON.stringify({
+      type: 'send',
+      target: 'architect',
+      content: 'builder-cross-profile-not-allowed',
+      messageId,
+      ackRequired: true,
+      metadata: {
+        routing: {
+          profileName: 'main',
+          windowKey: 'main',
+        },
+      },
+    }));
+
+    const ack = await ackPromise;
+    await sleep(100);
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('cross_profile_scope_mismatch');
+    expect(ack.routeScope).toEqual(expect.objectContaining({ profileName: 'main' }));
+    expect(leakedToMain).toBe(false);
+  });
+
+  test('blocks non-architect main senders from using the cross-profile architect route', async () => {
+    const scopedArchitect = await connectAndRegister({
+      port,
+      role: 'architect',
+      paneId: '1',
+      profileName: 'eunbyeol',
+      windowKey: 'eunbyeol',
+      sessionScopeId: 'app-test:eunbyeol',
+    });
+    activeClients.add(scopedArchitect);
+    const mainBuilder = await connectAndRegister({ port, role: 'builder', paneId: '2', profileName: 'main' });
+    activeClients.add(mainBuilder);
+
+    let leakedToSide = false;
+    scopedArchitect.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'message' && msg.content === 'main-builder-cross-profile-not-allowed') {
+          leakedToSide = true;
+        }
+      } catch (_err) {
+        // Ignore non-JSON frames.
+      }
+    });
+
+    const messageId = 'architect-profile-route-block-main-builder-1';
+    const ackPromise = waitForMessage(
+      mainBuilder,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    mainBuilder.send(JSON.stringify({
+      type: 'send',
+      target: 'architect',
+      content: 'main-builder-cross-profile-not-allowed',
+      messageId,
+      ackRequired: true,
+      metadata: {
+        routing: {
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+        },
+      },
+    }));
+
+    const ack = await ackPromise;
+    await sleep(100);
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('cross_profile_scope_mismatch');
+    expect(ack.routeScope).toEqual(expect.objectContaining({ profileName: 'eunbyeol' }));
+    expect(leakedToSide).toBe(false);
+  });
+
   test('main can route to scoped profile only with explicit routing metadata', async () => {
     const scopedReceiver = await connectAndRegister({
       port,
@@ -1621,7 +1944,7 @@ describe('WebSocket Delivery Audit', () => {
     expect(staleHealth.status).toBe('stale');
   });
 
-  test('reports no route when registered client disconnects', async () => {
+  test('reports local handler route when registered main target client disconnects', async () => {
     const targetClient = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(targetClient);
     const probeClient = await connectAndRegister({ port, role: 'architect', paneId: '1' });
@@ -1643,8 +1966,9 @@ describe('WebSocket Delivery Audit', () => {
     }));
 
     const health = await healthPromise;
-    expect(health.healthy).toBe(false);
-    expect(health.status).toBe('no_route');
+    expect(health.healthy).toBe(true);
+    expect(health.status).toBe('handler_route_available');
+    expect(health.source).toBe('local_message_handler');
     expect(health.paneId).toBe('2');
     expect(health.role).toBe('builder');
   });

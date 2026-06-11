@@ -1108,6 +1108,161 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('requires explicit source profile for cross-profile architect route', async () => {
+    const result = await runHmSend(
+      [
+        'architect',
+        '(ARCHITECT): cross-profile route missing source pin',
+        '--role',
+        'architect',
+        '--target-profile',
+        'eunbyeol',
+        '--timeout',
+        '120',
+        '--retries',
+        '0',
+        '--no-fallback',
+      ],
+      { HM_SEND_PORT: '1' }
+    );
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('Cross-profile architect routes require --source-profile');
+  });
+
+  test('routes cross-profile architect send with explicit source and target attribution', async () => {
+    const registerAttempts = [];
+    const healthChecks = [];
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          registerAttempts.push(msg);
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          healthChecks.push(msg);
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            source: 'client_activity',
+            role: 'architect',
+            paneId: '1',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+            routeBinding: {
+              role: 'architect',
+              paneId: '1',
+              profileName: 'main',
+              windowKey: 'main',
+            },
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            accepted: true,
+            queued: true,
+            verified: false,
+            status: 'delivered.websocket',
+            wsDeliveryCount: 1,
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        [
+          'architect',
+          '(ARCHITECT): explicit source profile proof',
+          '--role',
+          'architect',
+          '--source-profile',
+          'eunbyeol',
+          '--source-window',
+          'eunbyeol',
+          '--target-profile',
+          'main',
+          '--target-window',
+          'main',
+          '--timeout',
+          '120',
+          '--retries',
+          '0',
+          '--no-fallback',
+        ],
+        { HM_SEND_PORT: String(port) }
+      );
+
+      expect(result.code).toBe(0);
+      expect(registerAttempts).toEqual([
+        expect.objectContaining({
+          role: 'architect',
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+        }),
+      ]);
+      expect(healthChecks).toEqual([
+        expect.objectContaining({
+          target: 'architect',
+          metadata: expect.objectContaining({
+            routing: expect.objectContaining({
+              profileName: 'main',
+              windowKey: 'main',
+            }),
+            sourceAddress: 'architect@eunbyeol',
+            targetAddress: 'architect@main',
+            routeAttribution: expect.objectContaining({
+              sourceProfileName: 'eunbyeol',
+              sourceWindowKey: 'eunbyeol',
+              targetProfileName: 'main',
+              targetWindowKey: 'main',
+              sourceAddress: 'architect@eunbyeol',
+              targetAddress: 'architect@main',
+            }),
+          }),
+        }),
+      ]);
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0].metadata).toEqual(expect.objectContaining({
+        routing: expect.objectContaining({
+          profileName: 'main',
+          windowKey: 'main',
+        }),
+        sourceAddress: 'architect@eunbyeol',
+        targetAddress: 'architect@main',
+        routeAttribution: expect.objectContaining({
+          sourceAddress: 'architect@eunbyeol',
+          targetAddress: 'architect@main',
+        }),
+      }));
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('target-profile route failure does not fall back to main trigger', async () => {
     const tempProject = createLinkedProject();
     writeAppStatus(tempProject, 'app-session-389');

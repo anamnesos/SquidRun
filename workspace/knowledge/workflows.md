@@ -126,6 +126,30 @@ Do NOT "simplify" this back to pane-output-only reconcile — the external-proce
 
 - **`hm-restart-request.js` has NO `--help`.** Invoking it with any args (including `--help`) immediately *captures a real restart request* — it writes `.squidrun/coord/restart-request.json` + `restart-handoff.md`. There is no read-only/inspect mode. To inspect safely, `Read` the script or pass `--dry-run` (skips the file writes). Discovered S401 when an exploratory `--help` wrote a spurious `restart-401` record. NOTE: writing the request file alone does NOT trigger a restart — the trigger is a queued item in the Codex Desktop attention inbox (`hm-codex-attention.js create`). A stray request file is harmless-but-confusing cruft; hard-delete it (it's only written, never required-present, by `hm-restart-request.js`).
 
+## Cross-Profile Architect Channel
+
+Use this only for Architect-to-Architect coordination between profile windows. Builders and Oracles do not cross-send into the other profile; they route through their own Architect.
+
+The clean route must pin both sides explicitly. Do not rely on cwd or `SQUIDRUN_PROFILE` inference for cross-profile sends.
+
+Main Architect to Eunbyeol Architect:
+```powershell
+@'
+(ARCHITECT #N): Message body.
+'@ | node ui/scripts/hm-send.js architect --role architect --source-profile main --source-window main --target-profile eunbyeol --target-window eunbyeol --stdin
+```
+
+Eunbyeol Architect to Main Architect:
+```powershell
+@'
+(ARCHITECT #N): Message body.
+'@ | node ui/scripts/hm-send.js architect --role architect --source-profile eunbyeol --source-window eunbyeol --target-profile main --target-window main --stdin
+```
+
+Journal rows for this channel must carry unambiguous window attribution in metadata: `sourceAddress`, `targetAddress`, and `routeAttribution` with `sourceProfileName`, `sourceWindowKey`, `targetProfileName`, and `targetWindowKey`.
+
+Activation boundary: `ui/scripts/hm-send.js` is a CLI process and changes take effect on the next invocation. Route acceptance in `ui/modules/websocket-runtime.js` and broker journal metadata in `ui/modules/main/squidrun-app.js` load only after the relevant Electron main process/window is restarted or otherwise reloaded.
+
 ## Task Delegation Template (Architect -> Builder)
 
 (Re-homed S398 from cognitive memory — lost in the workflows.md rewrite.)
