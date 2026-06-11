@@ -36,6 +36,7 @@ const {
 } = require('../../profile');
 const {
   DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+  isPinnedInstalledDataRoot,
   resolveInstalledDataRoot,
 } = require('../installed-data-root');
 const { createPluginManager } = require('../plugins');
@@ -1060,6 +1061,7 @@ class SquidRunApp {
     this.runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
     this.runtimeLifecycleQueue = Promise.resolve();
     this.activeProfileName = getActiveProfileName();
+    this.installedDeployment = this.resolveInstalledDeployment();
     this.launchWindowProfile = {
       profileName: this.activeProfileName,
       windowKey: 'main',
@@ -1098,6 +1100,41 @@ class SquidRunApp {
       return profileRoot;
     }
     return this.getDefaultExternalWorkspacePath();
+  }
+
+  resolveInstalledDeployment() {
+    try {
+      const homePath = (app && typeof app.getPath === 'function')
+        ? app.getPath('home')
+        : os.homedir();
+      const result = resolveInstalledDataRoot({
+        cwd: process.cwd(),
+        defaultDirName: DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+        execPath: process.execPath,
+        homePath,
+        resourcesPath: process.resourcesPath,
+      });
+      return {
+        active: isPinnedInstalledDataRoot(result),
+        dataRoot: result?.path || null,
+        source: result?.source || null,
+      };
+    } catch (err) {
+      log.warn('Window', `Installed deployment detection failed: ${err.message}`);
+      return {
+        active: false,
+        dataRoot: null,
+        source: null,
+      };
+    }
+  }
+
+  isInstalledDeploymentMainWindow(rawWindowKey = 'main', rawProfileName = null) {
+    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    const profileName = normalizeProfileName(rawProfileName || this.activeProfileName || getActiveProfileName());
+    return windowKey === 'main'
+      && isMainProfile(profileName)
+      && this.installedDeployment?.active === true;
   }
 
   resolveWorkspaceTemplateRoot() {
@@ -5315,7 +5352,8 @@ class SquidRunApp {
       : (this.activeProfileName !== 'main'
         || windowKey !== 'main'
         || this.isStandaloneProfileWindow(windowKey));
-    const standaloneWindow = this.isStandaloneProfileWindow(windowKey);
+    const installedDeploymentWindow = this.isInstalledDeploymentMainWindow(windowKey, windowProfileName);
+    const standaloneWindow = this.isStandaloneProfileWindow(windowKey) || installedDeploymentWindow;
     const lifecycleMode = this.getWindowLifecycleMode(windowKey);
     let initialStartupBundle = null;
     if (skipStartupBundle) {
@@ -5346,6 +5384,7 @@ class SquidRunApp {
       displayOnly: String(displayOnlyWindow),
       skipStartupBundle: String(skipStartupBundle),
       standaloneWindow: String(standaloneWindow),
+      installedDeploymentWindow: String(installedDeploymentWindow),
       lifecycleMode,
       contextReady: 'true',
     };
@@ -7084,7 +7123,8 @@ class SquidRunApp {
       : (this.activeProfileName !== 'main'
         || windowKey !== 'main'
         || this.isStandaloneProfileWindow(windowKey));
-    const standaloneWindow = this.isStandaloneProfileWindow(windowKey);
+    const installedDeploymentWindow = this.isInstalledDeploymentMainWindow(windowKey, windowProfileName);
+    const standaloneWindow = this.isStandaloneProfileWindow(windowKey) || installedDeploymentWindow;
     const lifecycleMode = this.getWindowLifecycleMode(windowKey);
     const startupBundlePath = skipStartupBundle ? '' : this.getProfileStartupBundlePath(windowKey);
 
@@ -7169,6 +7209,7 @@ class SquidRunApp {
           displayOnly: displayOnlyWindow,
           skipStartupBundle,
           standaloneWindow,
+          installedDeploymentWindow,
           lifecycleMode,
         });
       } catch (err) {

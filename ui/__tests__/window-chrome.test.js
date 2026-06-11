@@ -61,6 +61,19 @@ describe('window chrome matrix', () => {
       expect(resolveWindowChromeClass({})).toBe(WINDOW_CHROME_CLASSES.MAIN);
     });
 
+    test('pinned installed main window uses installed operator chrome', () => {
+      expect(resolveWindowChromeClass({
+        windowKey: 'main',
+        profileName: 'main',
+        installedDeploymentWindow: true,
+      })).toBe(WINDOW_CHROME_CLASSES.INSTALLED_OPERATOR);
+      expect(resolveWindowChromeClass({
+        windowKey: 'main',
+        profileName: 'main',
+        standaloneWindow: true,
+      })).toBe(WINDOW_CHROME_CLASSES.INSTALLED_OPERATOR);
+    });
+
     test('squid room window', () => {
       expect(resolveWindowChromeClass({ windowKey: 'squid-room', profileName: 'main' }))
         .toBe(WINDOW_CHROME_CLASSES.SQUID_ROOM);
@@ -123,6 +136,21 @@ describe('window chrome matrix', () => {
       expect(visible(doc, '.status-bar')).toBe(false);
     });
 
+    test('installed operator drops cross-product launchers and keeps maintenance chrome', () => {
+      const doc = buildHeaderDoc();
+      applyWindowChrome(doc, WINDOW_CHROME_CLASSES.INSTALLED_OPERATOR);
+
+      for (const id of ['openSquidRoomBtn', 'openTrustQuoteWorkspaceBtn', 'openMiraLabBtn']) {
+        expect(visible(doc, id)).toBe(false);
+      }
+      for (const id of CHROME_CONTROL_IDS.filter((x) => !['openSquidRoomBtn', 'openTrustQuoteWorkspaceBtn', 'openMiraLabBtn'].includes(x))) {
+        expect(visible(doc, id)).toBe(true);
+      }
+      for (const selector of Object.values(CHROME_REGION_SELECTORS)) {
+        expect(visible(doc, selector)).toBe(true);
+      }
+    });
+
     test('work room shows Close only', () => {
       const doc = buildHeaderDoc();
       applyWindowChrome(doc, WINDOW_CHROME_CLASSES.WORK_ROOM);
@@ -138,6 +166,7 @@ describe('window chrome matrix', () => {
         [WINDOW_CHROME_CLASSES.MAIN, true],
         [WINDOW_CHROME_CLASSES.SQUID_ROOM, false],
         [WINDOW_CHROME_CLASSES.CLIENT_PROFILE, false],
+        [WINDOW_CHROME_CLASSES.INSTALLED_OPERATOR, false],
         [WINDOW_CHROME_CLASSES.WORK_ROOM, false],
       ]) {
         const doc = buildHeaderDoc();
