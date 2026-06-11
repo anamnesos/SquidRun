@@ -310,6 +310,7 @@ describe('PTY Handlers', () => {
     test('pins spawn-on-create Claude arm panes with a per-pane session id', async () => {
       ctx.daemonClient.connected = true;
       const workingDir = 'D:\\projects\\TrustQuote';
+      deps.reapClaudeSessionProcesses.mockResolvedValue({ ok: true, killed: [] });
 
       const result = await harness.invoke('pty-create', 'trustquote-app', workingDir, {
         paneCommand: 'claude',
@@ -345,6 +346,14 @@ describe('PTY Handlers', () => {
           paneCommand: result.paneCommand,
           spawnCommandOnCreate: true,
         }
+      );
+      expect(deps.reapClaudeSessionProcesses).toHaveBeenCalledWith(
+        store.panes['trustquote-app'],
+        expect.objectContaining({
+          paneId: 'trustquote-app',
+          cwd: workingDir,
+          source: 'pty-create',
+        })
       );
     });
 
@@ -1509,6 +1518,29 @@ describe('PTY Handlers', () => {
       expect(second.command).toBe(`claude --resume ${sessionId}`);
     });
 
+    test('registered spawn-claude reaps the pinned Claude session before handing back the command', async () => {
+      const cwd = 'D:\\projects\\squidrun';
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '1': 'claude' };
+      ctx.currentSettings.paneProjects = { '1': cwd };
+      deps.reapClaudeSessionProcesses.mockResolvedValue({ ok: true, killed: [{ pid: 1234 }] });
+
+      const result = await harness.invoke('spawn-claude', '1', '/ignored');
+      const sessionId = extractResumeId(result.command);
+
+      expect(result.command).toBe(`claude --session-id ${sessionId}`);
+      expect(deps.reapClaudeSessionProcesses).toHaveBeenCalledWith(
+        sessionId,
+        expect.objectContaining({
+          paneId: '1',
+          cwd,
+          command: result.command,
+          source: 'spawn-claude',
+        })
+      );
+    });
+
     test('registered spawn-claude does not append duplicate resume flags when command is already pinned', async () => {
       const pinnedId = '11111111-1111-4111-8111-111111111111';
       ctx.daemonClient.connected = true;
@@ -1520,6 +1552,38 @@ describe('PTY Handlers', () => {
       expect(result.command).toBe(`claude --session-id ${pinnedId}`);
       expect((result.command.match(/--session-id/g) || []).length).toBe(1);
       expect(fs.existsSync(deps.paneSessionIdsFilePath)).toBe(false);
+    });
+
+    test('registered spawn-claude remints a fresh pin after an already-in-use collision', async () => {
+      const previousId = '11111111-1111-4111-8111-111111111111';
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '1': `claude --session-id ${previousId}` };
+      fs.mkdirSync(path.dirname(deps.paneSessionIdsFilePath), { recursive: true });
+      fs.writeFileSync(deps.paneSessionIdsFilePath, JSON.stringify({
+        schema: 'squidrun.pane_session_ids.v0',
+        panes: { '1': previousId },
+      }, null, 2));
+      deps.reapClaudeSessionProcesses.mockResolvedValue({ ok: true, killed: [] });
+
+      const result = await harness.invoke('spawn-claude', '1', '/ignored', {
+        remintClaudeSessionId: true,
+      });
+      const nextId = extractResumeId(result.command);
+
+      expect(nextId).toMatch(UUID_RE);
+      expect(nextId).not.toBe(previousId);
+      expect(result.command).toBe(`claude --session-id ${nextId}`);
+      expect(result.remintedClaudeSessionId).toBe(true);
+      expect(result.previousClaudeSessionId).toBe(previousId);
+      expect(loadPaneSessionIds(deps.paneSessionIdsFilePath).panes['1']).toBe(nextId);
+      expect(deps.reapClaudeSessionProcesses).toHaveBeenCalledWith(
+        nextId,
+        expect.objectContaining({
+          paneId: '1',
+          source: 'spawn-claude-remint',
+        })
+      );
     });
 
     test('registered spawn-claude leaves codex cold-start commands unpinned', async () => {

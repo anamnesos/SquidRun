@@ -7,6 +7,10 @@ const {
   FORBIDDEN_CLAUDE_FLAGS,
   detectCli,
   resumeStrategyForCommand,
+  extractClaudeSessionIdFromCommand,
+  hasClaudeResumeFlag,
+  stripClaudeResumeFlags,
+  isClaudeSessionInUseError,
   encodeClaudeProjectDir,
   claudeSessionStorePath,
   claudeSessionExists,
@@ -16,6 +20,7 @@ const {
   ensurePaneSessionId,
   getPaneSessionId,
   loadPaneSessionIds,
+  remintPaneSessionId,
 } = require('../modules/pane-session-id-store');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -44,6 +49,17 @@ describe('cli-resume-invocation', () => {
       const d = resolveResumeAppendFlags({ command: 'claude', sessionId: 'abc', sessionExists: true });
       expect(d.flags).toBe('--resume abc');
       expect(d.mode).toBe('resume');
+    });
+
+    test('recognizes existing claude pin flags without appending duplicates', () => {
+      const d = resolveResumeAppendFlags({
+        command: 'claude --dangerously-skip-permissions --session-id 11111111-1111-4111-8111-111111111111',
+        sessionId: '22222222-2222-4222-8222-222222222222',
+        sessionExists: false,
+      });
+      expect(d.flags).toBe('');
+      expect(d.mode).toBe('already-pinned');
+      expect(d.sessionId).toBe('11111111-1111-4111-8111-111111111111');
     });
 
     test('claude with NO existing session -> --session-id <id> (create)', () => {
@@ -87,6 +103,18 @@ describe('cli-resume-invocation', () => {
 
     test('unknown CLI -> bare command (no flags)', () => {
       expect(resolveResumeAppendFlags({ command: 'weird-cli', sessionId: 'abc', sessionExists: true }).flags).toBe('');
+    });
+
+    test('extracts and strips claude resume flags for remint recovery', () => {
+      const command = 'claude --dangerously-skip-permissions --resume 11111111-1111-4111-8111-111111111111';
+      expect(extractClaudeSessionIdFromCommand(command)).toBe('11111111-1111-4111-8111-111111111111');
+      expect(hasClaudeResumeFlag(command)).toBe(true);
+      expect(stripClaudeResumeFlags(command)).toBe('claude --dangerously-skip-permissions');
+    });
+
+    test('detects claude already-in-use collision output', () => {
+      expect(isClaudeSessionInUseError('Error: session id 11111111-1111-4111-8111-111111111111 is already in use.')).toBe(true);
+      expect(isClaudeSessionInUseError('regular startup output')).toBe(false);
     });
   });
 
@@ -164,6 +192,19 @@ describe('cli-resume-invocation', () => {
       expect(a.generated).toBe(true);
       expect(b.generated).toBe(false);
       expect(a.sessionId).toBe(b.sessionId);
+    });
+
+    test('remintPaneSessionId replaces one pane id without touching siblings', () => {
+      const p1 = ensurePaneSessionId(idStorePath, '1', { generate: () => '11111111-1111-4111-8111-111111111111' });
+      ensurePaneSessionId(idStorePath, '2', { generate: () => '22222222-2222-4222-8222-222222222222' });
+
+      const reminted = remintPaneSessionId(idStorePath, '1', { generate: () => '33333333-3333-4333-8333-333333333333' });
+      const store = loadPaneSessionIds(idStorePath);
+
+      expect(reminted.previousSessionId).toBe(p1.sessionId);
+      expect(reminted.sessionId).toBe('33333333-3333-4333-8333-333333333333');
+      expect(store.panes['1']).toBe('33333333-3333-4333-8333-333333333333');
+      expect(store.panes['2']).toBe('22222222-2222-4222-8222-222222222222');
     });
   });
 });

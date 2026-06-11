@@ -17,8 +17,11 @@ const {
   resumeStrategyForCommand,
   claudeSessionExists,
   resolveResumeAppendFlags,
+  hasClaudeResumeFlag,
+  stripClaudeResumeFlags,
 } = require('../cli-resume-invocation');
-const { ensurePaneSessionId } = require('../pane-session-id-store');
+const { ensurePaneSessionId, remintPaneSessionId } = require('../pane-session-id-store');
+const { reapClaudeSessionProcesses } = require('../claude-session-process-reaper');
 const {
   DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
   DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
@@ -30,7 +33,6 @@ const MAX_CHUNK_SIZE = 8192;
 const DEFAULT_AUTO_CHUNK_THRESHOLD_BYTES = DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES;
 const WRITE_ACK_TIMEOUT_MS = 2500;
 const PANE_SESSION_IDS_FILE_PATH = resolveCoordPath(path.join('runtime', 'pane-session-ids.json'), { forWrite: true });
-const CLAUDE_RESUME_FLAG_PATTERN = /(?:^|\s)(?:--session-id|--resume)(?:=|\s+)\S+/i;
 const STARTUP_INJECTION_CLAIM_CHANNEL = 'startup-injection-claim';
 const STARTUP_INJECTION_RELEASE_CHANNEL = 'startup-injection-release';
 const PANE_RESTART_BEGIN_CHANNEL = 'pane-restart-begin';
@@ -159,10 +161,6 @@ function hasClaudeSystemPromptFlag(command) {
   return /--system-prompt-file(?:\s|=)/i.test(String(command || ''));
 }
 
-function hasClaudeResumeFlag(command) {
-  return CLAUDE_RESUME_FLAG_PATTERN.test(String(command || ''));
-}
-
 function appendResumeFlagsToAgentCommand({
   paneId,
   command,
@@ -170,8 +168,12 @@ function appendResumeFlagsToAgentCommand({
   idStorePath = PANE_SESSION_IDS_FILE_PATH,
   homeDir = null,
   ensurePaneSessionIdOptions = {},
+  remintSessionId = false,
 } = {}) {
-  const baseCommand = String(command || '').trim();
+  const originalCommand = String(command || '').trim();
+  const baseCommand = remintSessionId
+    ? stripClaudeResumeFlags(originalCommand)
+    : originalCommand;
   if (!baseCommand) {
     return {
       command: baseCommand,
@@ -197,7 +199,9 @@ function appendResumeFlagsToAgentCommand({
     };
   }
 
-  const { sessionId, generated } = ensurePaneSessionId(idStorePath, paneId, ensurePaneSessionIdOptions);
+  const { sessionId, generated, previousSessionId, reminted } = remintSessionId
+    ? remintPaneSessionId(idStorePath, paneId, ensurePaneSessionIdOptions)
+    : ensurePaneSessionId(idStorePath, paneId, ensurePaneSessionIdOptions);
   const sessionExists = claudeSessionExists(cwd, sessionId, {
     ...(homeDir ? { homeDir } : {}),
   });
@@ -213,6 +217,8 @@ function appendResumeFlagsToAgentCommand({
       cwd,
       idStorePath,
       generated,
+      previousSessionId,
+      reminted: reminted === true,
     },
   };
 }
@@ -484,6 +490,9 @@ function registerPtyHandlers(ctx, deps = {}) {
   const isFirmwareEnabled = () => ctx?.currentSettings?.firmwareInjectionEnabled === true;
   const paneSessionIdsFilePath = deps.paneSessionIdsFilePath || PANE_SESSION_IDS_FILE_PATH;
   const resumeHomeDir = deps.resumeHomeDir || null;
+  const reapClaudeSessionProcessesForSpawn = typeof deps.reapClaudeSessionProcesses === 'function'
+    ? deps.reapClaudeSessionProcesses
+    : reapClaudeSessionProcesses;
   const providedStartupInjectionClaims = deps.startupInjectionClaims;
   const startupInjectionClaims = (
     providedStartupInjectionClaims
@@ -495,6 +504,36 @@ function registerPtyHandlers(ctx, deps = {}) {
 
   function normalizeRestartLifecycleOptions(options) {
     return options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+  }
+
+  async function reapPinnedClaudeSessionBeforeSpawn(paneId, decision = {}, details = {}) {
+    if (decision?.cli !== 'claude' || !decision?.sessionId) {
+      return { ok: true, skipped: true, reason: 'not_pinned_claude', sessionId: null };
+    }
+    const mode = String(decision.mode || '');
+    if (!['create', 'resume', 'already-pinned'].includes(mode)) {
+      return { ok: true, skipped: true, reason: 'not_spawn_pinned_mode', sessionId: decision.sessionId };
+    }
+    try {
+      const result = await Promise.resolve(reapClaudeSessionProcessesForSpawn(decision.sessionId, {
+        paneId: String(paneId || ''),
+        cwd: details.cwd || decision.cwd || null,
+        command: details.command || null,
+        source: details.source || 'spawn',
+      }));
+      const killedCount = Array.isArray(result?.killed) ? result.killed.length : 0;
+      const failedCount = Array.isArray(result?.failed) ? result.failed.length : 0;
+      if (killedCount > 0 || failedCount > 0) {
+        log.info(
+          'PTY',
+          `[resume] reaped pinned Claude session ${decision.sessionId} for pane ${paneId}: killed=${killedCount} failed=${failedCount}`
+        );
+      }
+      return result || { ok: true, sessionId: decision.sessionId, killed: [] };
+    } catch (err) {
+      log.warn('PTY', `[resume] pinned Claude reap failed for pane ${paneId} session ${decision.sessionId}: ${err.message}`);
+      return { ok: false, sessionId: decision.sessionId, error: err.message };
+    }
   }
 
   function validateRestartLifecycleClaim(event, paneId, options, stage) {
@@ -698,6 +737,11 @@ function registerPtyHandlers(ctx, deps = {}) {
           'PTY',
           `[resume] pty-create pane ${paneId}: ${decision.mode || 'cold'}${decision.cli ? ` (${decision.cli})` : ''}${decision.sessionId ? ` sessionId=${decision.sessionId}` : ''}${decision.flags ? ` -> ${decision.flags}` : ''}${decision.reason ? ` - ${decision.reason}` : ''}`
         );
+        await reapPinnedClaudeSessionBeforeSpawn(paneId, decision, {
+          cwd,
+          command: paneCommand,
+          source: 'pty-create',
+        });
       }
     }
     const runtime = detectCliFromCommand(paneCommand);
@@ -1107,6 +1151,7 @@ function registerPtyHandlers(ctx, deps = {}) {
       cwd: workDir,
       idStorePath: paneSessionIdsFilePath,
       homeDir: resumeHomeDir,
+      remintSessionId: spawnOptions.remintClaudeSessionId === true,
     });
     agentCmd = resumeCommand.command;
     if (resumeCommand.decision) {
@@ -1115,9 +1160,20 @@ function registerPtyHandlers(ctx, deps = {}) {
         'PTY',
         `[resume] spawn-claude pane ${paneId}: ${decision.mode || 'cold'}${decision.cli ? ` (${decision.cli})` : ''}${decision.sessionId ? ` sessionId=${decision.sessionId}` : ''}${decision.flags ? ` -> ${decision.flags}` : ''}${decision.reason ? ` - ${decision.reason}` : ''}`
       );
+      await reapPinnedClaudeSessionBeforeSpawn(paneId, decision, {
+        cwd: workDir,
+        command: agentCmd,
+        source: spawnOptions.remintClaudeSessionId === true ? 'spawn-claude-remint' : 'spawn-claude',
+      });
     }
 
-    return { success: true, command: agentCmd };
+    return {
+      success: true,
+      command: agentCmd,
+      remintedClaudeSessionId: resumeCommand.decision?.reminted === true,
+      previousClaudeSessionId: resumeCommand.decision?.previousSessionId || null,
+      claudeSessionId: resumeCommand.decision?.sessionId || null,
+    };
   });
 
   ipcMain.handle('get-claude-state', () => {

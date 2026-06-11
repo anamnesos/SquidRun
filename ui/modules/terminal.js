@@ -21,6 +21,10 @@ const { createRecoveryController } = require('./terminal/recovery');
 const { getRuntimeInjectionCapabilityDefault } = require('./terminal/injection-capabilities');
 const { readStartupBriefingForInjection } = require('./startup-ai-briefing');
 const { isTrustQuotePaneId } = require('./work-room-terminal-visibility');
+const {
+  extractClaudeSessionIdFromCommand,
+  isClaudeSessionInUseError,
+} = require('./cli-resume-invocation');
 
 const TERMINAL_EVENT_SOURCE = 'terminal.js';
 const SQUID_ROOM_WINDOW_KEY = 'squid-room';
@@ -86,6 +90,7 @@ const lastOutputTime = {};
 const codexIdentityInjected = new Set();
 const codexIdentityTimeouts = new Map();
 const terminalInputBridgeDisposables = new Map();
+const pendingClaudeSessionCollisionRecovery = new Map();
 const TRUSTQUOTE_SOURCE_PANE_BY_ID = Object.freeze({
   'trustquote-builder': '2',
   'trustquote-oracle': '3',
@@ -3338,6 +3343,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 
     detachPtyListeners(paneId);
     const disposeOnData = window.squidrun.pty.onData(paneId, (data) => {
+      void maybeRecoverClaudeSessionCollision(paneId, data);
       // Use flow control to prevent xterm buffer overflow
       queueTerminalWrite(paneId, terminal, data);
       // Track output time for idle detection - only for meaningful activity
@@ -3562,6 +3568,7 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
 
   detachPtyListeners(paneId);
   const disposeOnData = window.squidrun.pty.onData(paneId, (data) => {
+    void maybeRecoverClaudeSessionCollision(paneId, data);
     // Use flow control to prevent xterm buffer overflow
     queueTerminalWrite(paneId, terminal, data);
     // Track output time for idle detection - only for meaningful activity
@@ -3712,6 +3719,77 @@ function broadcast(message, options = {}) {
   updateConnectionStatus('Message sent to Architect');
 }
 
+function rememberClaudeSessionCollisionRecovery(paneId, command) {
+  const id = String(paneId || '');
+  const commandText = String(command || '').trim();
+  const sessionId = extractClaudeSessionIdFromCommand(commandText);
+  if (!id || !sessionId || !/^claude(?:\s|$)/i.test(commandText)) {
+    pendingClaudeSessionCollisionRecovery.delete(id);
+    return;
+  }
+  pendingClaudeSessionCollisionRecovery.set(id, {
+    command: commandText,
+    sessionId,
+    startedAt: Date.now(),
+    attempted: false,
+  });
+}
+
+async function maybeRecoverClaudeSessionCollision(paneId, data) {
+  const id = String(paneId || '');
+  const pending = pendingClaudeSessionCollisionRecovery.get(id);
+  if (!pending || pending.attempted) return;
+  if ((Date.now() - pending.startedAt) > 30000) {
+    pendingClaudeSessionCollisionRecovery.delete(id);
+    return;
+  }
+  if (!isClaudeSessionInUseError(stripAnsiCodes(String(data || '')))) return;
+
+  pending.attempted = true;
+  updatePaneStatus(id, 'Recovering session...');
+  log.warn('spawnAgent', `Claude session ${pending.sessionId} already in use for pane ${id}; reminting and retrying`);
+
+  let result;
+  try {
+    result = await window.squidrun.claude.spawn(id, undefined, {
+      remintClaudeSessionId: true,
+      collisionRecoveryForSessionId: pending.sessionId,
+    });
+  } catch (err) {
+    log.error(`spawnAgent ${id}`, 'Claude collision recovery remint failed:', err);
+    updatePaneStatus(id, 'Spawn failed');
+    return;
+  }
+
+  if (!result?.success || !result.command) {
+    log.error(`spawnAgent ${id}`, 'Claude collision recovery did not return a command:', result);
+    updatePaneStatus(id, 'Spawn failed');
+    return;
+  }
+
+  rememberClaudeSessionCollisionRecovery(id, result.command);
+  const next = pendingClaudeSessionCollisionRecovery.get(id);
+  if (next) next.attempted = true;
+
+  try {
+    await window.squidrun.pty.write(id, '\r');
+    await new Promise(resolve => setTimeout(resolve, 150));
+    await window.squidrun.pty.write(id, result.command);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await window.squidrun.pty.write(id, '\r');
+    log.info('spawnAgent', `Claude pane ${id}: retried with reminted session after in-use collision`);
+    await armStartupInjection(id, {
+      modelType: 'claude',
+      isGemini: false,
+      source: 'spawn-claude-remint',
+    });
+    updatePaneStatus(id, 'Working');
+  } catch (err) {
+    log.error(`spawnAgent ${id}`, 'Claude collision recovery retry failed:', err);
+    updatePaneStatus(id, 'Spawn failed');
+  }
+}
+
 // Spawn agent CLI in a pane
 // model param: optional override for model type (used by model switch to bypass stale cache)
 async function spawnAgent(paneId, model = null, options = {}) {
@@ -3757,6 +3835,7 @@ async function spawnAgent(paneId, model = null, options = {}) {
       }
     }
     if (result.success && result.command) {
+      rememberClaudeSessionCollisionRecovery(paneId, result.command);
       if (runtimeOverride.spawnCommandOnCreate === true) {
         const commandText = String(result.command || '').trim().toLowerCase();
         const modelType = commandText.includes('gemini') ? 'gemini' : commandText.includes('codex') ? 'codex' : 'claude';
