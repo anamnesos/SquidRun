@@ -18,6 +18,7 @@ const {
   DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
   resolveExplicitDataRoot,
   resolveInstalledDataRoot,
+  resolveInstalledGlobalStateRoot,
 } = require('./modules/installed-data-root');
 
 function envFlagEnabled(name, defaultValue = true) {
@@ -100,11 +101,51 @@ function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
   return PROJECT_ROOT_FALLBACK;
 }
 
+function resolveMachineGlobalStateRoot(options = {}) {
+  const env = options.env || process.env;
+  const platform = options.platform || os.platform();
+  const homePath = options.homePath || os.homedir();
+  if (platform === 'win32') {
+    return path.join(env.APPDATA || path.join(homePath, 'AppData', 'Roaming'), 'squidrun');
+  }
+  return path.join(homePath, '.config', 'squidrun');
+}
+
+function resolveGlobalStateRoot(options = {}) {
+  const env = options.env || process.env;
+  const explicitDataRoot = resolveExplicitDataRoot(env);
+  const explicitGlobalStateRoot = resolveInstalledGlobalStateRoot(explicitDataRoot);
+  if (explicitGlobalStateRoot) {
+    return explicitGlobalStateRoot;
+  }
+
+  const startDir = options.startDir || PROJECT_ROOT_DISCOVERY_CWD;
+  const runtimePath = options.runtimePath || startDir;
+  if (isPackagedRuntimePath(runtimePath) || isPackagedRuntimePath(startDir)) {
+    const installedDataRoot = resolveInstalledDataRoot({
+      cwd: options.cwd || process.cwd(),
+      defaultDirName: DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+      env,
+      execPath: options.execPath || process.execPath,
+      homePath: options.homePath || os.homedir(),
+      installDir: options.installDir,
+      manifestPath: options.manifestPath,
+      resourcesPath: options.resourcesPath || process.resourcesPath,
+      runtimePath,
+      startDir,
+    });
+    const installedGlobalStateRoot = resolveInstalledGlobalStateRoot(installedDataRoot);
+    if (installedGlobalStateRoot) {
+      return installedGlobalStateRoot;
+    }
+  }
+
+  return resolveMachineGlobalStateRoot(options);
+}
+
 const DEFAULT_PROJECT_ROOT = discoverProjectRoot();
 const WORKSPACE_PATH = path.join(DEFAULT_PROJECT_ROOT, '.squidrun');
-const GLOBAL_STATE_ROOT = os.platform() === 'win32'
-  ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'squidrun')
-  : path.join(os.homedir(), '.config', 'squidrun');
+const GLOBAL_STATE_ROOT = resolveGlobalStateRoot();
 const legacyCoordFallbackWarnings = new Set();
 let activeProjectRoot = DEFAULT_PROJECT_ROOT;
 
@@ -510,6 +551,8 @@ module.exports = {
   getCoordRoots,
   resolveCoordPath,
   resolveGlobalPath,
+  resolveGlobalStateRoot,
+  resolveMachineGlobalStateRoot,
   discoverProjectRoot,
   isPackagedRuntimePath,
 };

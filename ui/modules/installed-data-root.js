@@ -9,6 +9,9 @@ const INSTALL_MANIFEST_FILENAMES = Object.freeze([
   'squidrun-install.json',
   '.squidrun-install.json',
 ]);
+const DATA_ROOT_RUNTIME_DIRNAME = '.squidrun';
+const ELECTRON_USER_DATA_RELPATH = 'electron-user-data';
+const GLOBAL_STATE_RELPATH = 'global-state';
 const DATA_ROOT_ENV_NAMES = Object.freeze([
   'SQUIDRUN_DATA_ROOT',
   'SQUIDRUN_WORKSPACE_ROOT',
@@ -48,6 +51,61 @@ function resolveExplicitDataRoot(env = process.env) {
     }
   }
   return null;
+}
+
+function isPinnedInstalledDataRoot(result) {
+  const source = toNonEmptyString(result?.source);
+  const dataRoot = toNonEmptyString(result?.path);
+  if (!source || !dataRoot) return false;
+  return source.startsWith('env:') || source.startsWith('manifest:');
+}
+
+function normalizeRuntimeRelPath(relPath = '') {
+  return String(relPath || '')
+    .replace(/^[\\/]+/, '')
+    .replace(/[\\/]+/g, path.sep);
+}
+
+function resolveDataRootRuntimePath(dataRoot, relPath = '') {
+  const root = toNonEmptyString(dataRoot);
+  if (!root) return null;
+  const runtimeRoot = path.join(path.resolve(root), DATA_ROOT_RUNTIME_DIRNAME);
+  const normalizedRelPath = normalizeRuntimeRelPath(relPath);
+  return normalizedRelPath
+    ? path.join(runtimeRoot, normalizedRelPath)
+    : runtimeRoot;
+}
+
+function resolvePinnedInstalledRuntimePath(result, relPath = '') {
+  if (!isPinnedInstalledDataRoot(result)) return null;
+  return resolveDataRootRuntimePath(result.path, relPath);
+}
+
+function resolveInstalledElectronUserDataPath(result) {
+  return resolvePinnedInstalledRuntimePath(result, ELECTRON_USER_DATA_RELPATH);
+}
+
+function applyInstalledElectronUserDataPath(electronApp, result, options = {}) {
+  const userDataPath = resolveInstalledElectronUserDataPath(result);
+  if (!userDataPath || typeof electronApp?.setPath !== 'function') {
+    return {
+      applied: false,
+      path: userDataPath,
+      source: result?.source || null,
+    };
+  }
+  const fsImpl = options.fs || fs;
+  fsImpl.mkdirSync(userDataPath, { recursive: true });
+  electronApp.setPath('userData', userDataPath);
+  return {
+    applied: true,
+    path: userDataPath,
+    source: result.source,
+  };
+}
+
+function resolveInstalledGlobalStateRoot(result) {
+  return resolvePinnedInstalledRuntimePath(result, GLOBAL_STATE_RELPATH);
 }
 
 function parseInstallManifest(manifestPath) {
@@ -147,11 +205,20 @@ function resolveInstalledDataRoot(options = {}) {
 module.exports = {
   DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
   INSTALL_MANIFEST_FILENAMES,
+  DATA_ROOT_RUNTIME_DIRNAME,
+  ELECTRON_USER_DATA_RELPATH,
+  GLOBAL_STATE_RELPATH,
   DATA_ROOT_ENV_NAMES,
   buildInstallManifestCandidates,
+  applyInstalledElectronUserDataPath,
+  isPinnedInstalledDataRoot,
   parseInstallManifest,
+  resolveDataRootRuntimePath,
   resolveDataRootFromInstallManifest,
   resolveExplicitDataRoot,
   resolveExternalWorkspaceDefault,
+  resolveInstalledElectronUserDataPath,
   resolveInstalledDataRoot,
+  resolveInstalledGlobalStateRoot,
+  resolvePinnedInstalledRuntimePath,
 };

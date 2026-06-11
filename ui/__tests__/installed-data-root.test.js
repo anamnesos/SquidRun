@@ -7,7 +7,12 @@ const {
   resolveInstalledDataRoot,
   resolveExternalWorkspaceDefault,
   resolveExplicitDataRoot,
+  applyInstalledElectronUserDataPath,
+  isPinnedInstalledDataRoot,
   parseInstallManifest,
+  resolveDataRootRuntimePath,
+  resolveInstalledElectronUserDataPath,
+  resolveInstalledGlobalStateRoot,
 } = require('../modules/installed-data-root');
 
 describe('installed-data-root', () => {
@@ -36,6 +41,63 @@ describe('installed-data-root', () => {
       source: 'env:SQUIDRUN_DATA_ROOT',
     });
     expect(resolveExplicitDataRoot({ SQUIDRUN_DATA_ROOT: dataRoot }).path).toBe(path.resolve(dataRoot));
+  });
+
+  test('classifies only env and manifest roots as pinned install roots', () => {
+    const dataRoot = path.join(tempRoot, 'pinned-root');
+    const envRoot = resolveInstalledDataRoot({
+      env: { SQUIDRUN_DATA_ROOT: dataRoot },
+      homePath: path.join(tempRoot, 'home'),
+    });
+    const manifestPath = path.join(tempRoot, 'install', 'squidrun-install.json');
+    fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+    fs.writeFileSync(manifestPath, `${JSON.stringify({ dataRoot }, null, 2)}\n`, 'utf8');
+    const manifestRoot = parseInstallManifest(manifestPath);
+    const defaultRoot = resolveInstalledDataRoot({
+      env: {},
+      homePath: path.join(tempRoot, 'home'),
+    });
+
+    expect(isPinnedInstalledDataRoot(envRoot)).toBe(true);
+    expect(isPinnedInstalledDataRoot(manifestRoot)).toBe(true);
+    expect(isPinnedInstalledDataRoot(defaultRoot)).toBe(false);
+  });
+
+  test('builds Electron userData and global state paths under a pinned data root', () => {
+    const dataRoot = path.join(tempRoot, 'eunbyeol');
+    const resolved = resolveInstalledDataRoot({
+      env: { SQUIDRUN_DATA_ROOT: dataRoot },
+      homePath: path.join(tempRoot, 'home'),
+    });
+
+    expect(resolveDataRootRuntimePath(dataRoot, 'nested\\state.json')).toBe(
+      path.join(path.resolve(dataRoot), '.squidrun', 'nested', 'state.json')
+    );
+    expect(resolveInstalledElectronUserDataPath(resolved)).toBe(
+      path.join(path.resolve(dataRoot), '.squidrun', 'electron-user-data')
+    );
+    expect(resolveInstalledGlobalStateRoot(resolved)).toBe(
+      path.join(path.resolve(dataRoot), '.squidrun', 'global-state')
+    );
+  });
+
+  test('applies pinned Electron userData path to the app before the instance lock', () => {
+    const dataRoot = path.join(tempRoot, 'eunbyeol-userdata');
+    const resolved = resolveInstalledDataRoot({
+      env: { SQUIDRUN_DATA_ROOT: dataRoot },
+      homePath: path.join(tempRoot, 'home'),
+    });
+    const electronApp = { setPath: jest.fn() };
+    const fsImpl = { mkdirSync: jest.fn() };
+    const expectedPath = path.join(path.resolve(dataRoot), '.squidrun', 'electron-user-data');
+
+    expect(applyInstalledElectronUserDataPath(electronApp, resolved, { fs: fsImpl })).toEqual({
+      applied: true,
+      path: expectedPath,
+      source: 'env:SQUIDRUN_DATA_ROOT',
+    });
+    expect(fsImpl.mkdirSync).toHaveBeenCalledWith(expectedPath, { recursive: true });
+    expect(electronApp.setPath).toHaveBeenCalledWith('userData', expectedPath);
   });
 
   test('discovers manifest from packaged runtime ancestors', () => {
