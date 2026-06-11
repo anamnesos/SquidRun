@@ -240,7 +240,16 @@ describe('registerModelSwitchHandlers', () => {
       const sendPaneModelChanged = jest.fn();
       const paneRestartArbiter = {
         getActiveClaim: jest.fn(() => null),
-        resolveOwner: jest.fn(() => ({ ownerWindowKey: 'squid-room' })),
+        resolveOwner: jest.fn(() => ({
+          ownerWindowKey: 'squid-room',
+          ownerProfileName: 'main',
+          ownerSessionScopeId: 'app-session-428:squid-room',
+          ownerInstance: {
+            profileName: 'main',
+            windowKey: 'squid-room',
+            sessionScopeId: 'app-session-428:squid-room',
+          },
+        })),
       };
       const { executePaneModelSwitch } = require('../modules/ipc/model-switch-handlers');
 
@@ -265,6 +274,13 @@ describe('registerModelSwitchHandlers', () => {
         paneId: 'trustquote-app',
         model: 'claude',
         ownerWindowKey: 'squid-room',
+        ownerProfileName: 'main',
+        ownerSessionScopeId: 'app-session-428:squid-room',
+        ownerInstance: {
+          profileName: 'main',
+          windowKey: 'squid-room',
+          sessionScopeId: 'app-session-428:squid-room',
+        },
         command: 'claude',
       });
     });

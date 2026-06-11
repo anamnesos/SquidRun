@@ -47,6 +47,9 @@ function publicClaim(claim) {
     paneId: claim.paneId,
     source: claim.source,
     ownerWindowKey: claim.ownerWindowKey,
+    ownerProfileName: claim.ownerProfileName,
+    ownerSessionScopeId: claim.ownerSessionScopeId,
+    ownerInstance: claim.ownerInstance ? { ...claim.ownerInstance } : null,
     generation: claim.generation,
     createdAt: claim.createdAt,
   };
@@ -125,6 +128,19 @@ function createPaneRestartArbiter(options = {}) {
 
     const owner = resolveOwner(paneId, request) || {};
     const ownerWindowKey = toNonEmptyString(owner.ownerWindowKey || owner.windowKey) || 'main';
+    const ownerProfileName = toNonEmptyString(owner.ownerProfileName || owner.profileName);
+    const ownerSessionScopeId = toNonEmptyString(owner.ownerSessionScopeId || owner.sessionScopeId);
+    const ownerInstance = owner.ownerInstance && typeof owner.ownerInstance === 'object'
+      ? {
+        profileName: toNonEmptyString(owner.ownerInstance.profileName) || ownerProfileName,
+        windowKey: toNonEmptyString(owner.ownerInstance.windowKey) || ownerWindowKey,
+        sessionScopeId: toNonEmptyString(owner.ownerInstance.sessionScopeId) || ownerSessionScopeId,
+      }
+      : {
+        profileName: ownerProfileName,
+        windowKey: ownerWindowKey,
+        sessionScopeId: ownerSessionScopeId,
+      };
     const ownerWebContents = owner.webContents || null;
     const requestWebContents = request.webContents || null;
     const claimingWebContents = ownerWebContents || requestWebContents || null;
@@ -163,6 +179,9 @@ function createPaneRestartArbiter(options = {}) {
       paneId,
       source: toNonEmptyString(request.source || request.reason) || 'unknown',
       ownerWindowKey,
+      ownerProfileName,
+      ownerSessionScopeId,
+      ownerInstance,
       generation: ++generationCounter,
       createdAt: now,
       webContents: claimingWebContents,

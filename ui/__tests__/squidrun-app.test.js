@@ -768,6 +768,68 @@ describe('SquidRunApp', () => {
       }));
       expect(mainWindow.webContents.send).not.toHaveBeenCalled();
     });
+
+    it('routes restart ownership to the active profile window for colliding core pane ids', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.activeProfileName = 'eunbyeol';
+      app.commsSessionScopeId = 'app-session-428';
+      app.setLaunchWindowProfile({
+        profileName: 'eunbyeol',
+        windowKey: 'eunbyeol',
+        includeMainWindow: false,
+        standaloneWindow: true,
+      });
+      const mainWindow = createReadyTrustQuoteWindow({
+        getTitle: jest.fn().mockReturnValue('SquidRun'),
+      });
+      const profileWindow = createReadyTrustQuoteWindow({
+        getTitle: jest.fn().mockReturnValue('SquidRun - Eunbyeol'),
+      });
+      app.registerAppWindow('main', mainWindow, {
+        profileName: 'main',
+        sessionScopeId: 'app-session-428',
+      });
+      app.registerAppWindow('eunbyeol', profileWindow, {
+        profileName: 'eunbyeol',
+        sessionScopeId: 'app-session-428:eunbyeol',
+      });
+
+      const owner = app.resolvePaneRestartOwner('3');
+      expect(owner).toEqual(expect.objectContaining({
+        ownerWindowKey: 'eunbyeol',
+        ownerProfileName: 'eunbyeol',
+        ownerSessionScopeId: 'app-session-428:eunbyeol',
+        ownerInstance: {
+          profileName: 'eunbyeol',
+          windowKey: 'eunbyeol',
+          sessionScopeId: 'app-session-428:eunbyeol',
+        },
+      }));
+
+      const result = app.requestPaneRestart('3', { source: 'test-profile' });
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        granted: true,
+        delivered: true,
+        ownerWindowKey: 'eunbyeol',
+      }));
+      expect(profileWindow.webContents.send).toHaveBeenCalledWith('restart-pane', expect.objectContaining({
+        paneId: '3',
+        source: 'test-profile',
+        restartClaim: expect.objectContaining({
+          ownerWindowKey: 'eunbyeol',
+          ownerProfileName: 'eunbyeol',
+          ownerSessionScopeId: 'app-session-428:eunbyeol',
+          ownerInstance: {
+            profileName: 'eunbyeol',
+            windowKey: 'eunbyeol',
+            sessionScopeId: 'app-session-428:eunbyeol',
+          },
+        }),
+        restartClaimId: expect.any(String),
+      }));
+      expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('restart-pane', expect.anything());
+    });
   });
 
   describe('TrustQuote workspace routing', () => {
