@@ -478,21 +478,32 @@ function resolveOutboundChatId(config, options = {}) {
   return normalizeChatId(config?.chatId) || null;
 }
 
-function isChatAllowed(chatId, allowlist = []) {
+function isChatAllowed(chatId, allowlist = [], options = {}) {
   const normalizedChatId = normalizeChatId(chatId);
   if (!normalizedChatId) return false;
-  if (!Array.isArray(allowlist) || allowlist.length < 1) return true;
+  if (!Array.isArray(allowlist) || allowlist.length < 1) {
+    // Strict installs are sandboxed to their allowlist: losing the list must
+    // block every send, not open the door to every chat.
+    return options?.strict !== true;
+  }
   return allowlist.includes(normalizedChatId);
+}
+
+function parseAllowlistStrictFlag(value) {
+  if (typeof value !== 'string') return false;
+  return /^(1|true|yes|on)$/i.test(value.trim());
 }
 
 function getTelegramConfig(env = process.env) {
   const botToken = (env.TELEGRAM_BOT_TOKEN || '').trim();
   const chatId = normalizeChatId(env.TELEGRAM_CHAT_ID || '');
   const chatAllowlist = parseChatAllowlist(env.TELEGRAM_CHAT_ALLOWLIST || '');
+  const chatAllowlistStrict = parseAllowlistStrictFlag(env.TELEGRAM_CHAT_ALLOWLIST_STRICT);
   return {
     botToken,
     chatId,
     chatAllowlist,
+    chatAllowlistStrict,
   };
 }
 
@@ -731,7 +742,7 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
     });
     return { ok: false, error: `Missing required env vars: ${missing.join(', ')}` };
   }
-  if (!isChatAllowed(outboundChatId, config.chatAllowlist)) {
+  if (!isChatAllowed(outboundChatId, config.chatAllowlist, { strict: config.chatAllowlistStrict })) {
     upsertTelegramJournal({
       messageId,
       sessionId,
@@ -893,7 +904,7 @@ async function sendTelegram(message, env = process.env, options = {}) {
       error: `Missing required env vars: ${missing.join(', ')}`,
     };
   }
-  if (!isChatAllowed(outboundChatId, config.chatAllowlist)) {
+  if (!isChatAllowed(outboundChatId, config.chatAllowlist, { strict: config.chatAllowlistStrict })) {
     upsertTelegramJournal({
       messageId,
       sessionId,
