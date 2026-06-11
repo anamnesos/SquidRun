@@ -255,6 +255,41 @@ async function startAckServer(sendAttempts = []) {
 }
 
 describe('hm-send retry behavior', () => {
+  test('uses installed data-root websocket settings as the default port', async () => {
+    const sendAttempts = [];
+    const { server, port } = await startAckServer(sendAttempts);
+    const tempProject = createLinkedProject();
+    const settingsDir = path.join(tempProject, '.squidrun', 'settings');
+
+    try {
+      writeAppStatus(tempProject, 'app-session-installed-ws-port');
+      fs.mkdirSync(settingsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(settingsDir, 'websocket.json'),
+        `${JSON.stringify({ schema: 'squidrun.websocket_settings.v1', port }, null, 2)}\n`,
+        'utf8'
+      );
+
+      const result = await runHmSend(
+        ['builder', '(TEST #1): installed default port', '--timeout', '500', '--retries', '0', '--no-fallback'],
+        {
+          SQUIDRUN_DATA_ROOT: tempProject,
+          SQUIDRUN_PROJECT_ROOT: tempProject,
+          SQUIDRUN_PROFILE: 'main',
+        },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('Delivered to builder');
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0].content).toContain('installed default port');
+    } finally {
+      server.close();
+      fs.rmSync(tempProject, { recursive: true, force: true });
+    }
+  });
+
   test('blocks permission-ask phrases before websocket send and logs the violation', async () => {
     const tempProject = createLinkedProject();
     const logPath = path.join(tempProject, '.squidrun', 'runtime', 'permission-ask-violations.jsonl');

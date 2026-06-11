@@ -12,6 +12,9 @@ const RELEASE_SCHEMA = 'squidrun.split_release.v1';
 const DEFAULT_RECOMMENDED_DATA_ROOTS = Object.freeze({
   eunbyeol: 'D:\\SquidRun\\Eunbyeol',
 });
+const DEFAULT_INSTANCE_WEBSOCKET_PORTS = Object.freeze({
+  eunbyeol: 9901,
+});
 
 function usage() {
   return [
@@ -23,6 +26,7 @@ function usage() {
     '  --source-app <path>     Packaged app dir (default: ui/dist/win-unpacked)',
     '  --output-dir <path>     Release output dir (default: ui/dist/split-releases/<instance>/squidrun-<version>)',
     '  --recommended-data-root <path>  Advisory cutover root recorded in release manifest',
+    '  --websocket-port <port> Per-install WebSocket port (default for eunbyeol: 9901)',
     '  --force                 Allow overwriting files in the staged app directory',
     '  --json                  Print machine-readable result',
     '  --help                  Show this help',
@@ -38,6 +42,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     sourceAppDir: null,
     outputDir: null,
     recommendedDataRoot: null,
+    webSocketPort: null,
     force: false,
     json: false,
     help: false,
@@ -85,6 +90,14 @@ function parseArgs(argv = process.argv.slice(2)) {
       parsed.recommendedDataRoot = readValue(token);
       continue;
     }
+    if (token === '--websocket-port' || token === '--ws-port') {
+      const port = Number.parseInt(readValue(token), 10);
+      if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+        throw new Error(`${token} must be a TCP port from 1 to 65535`);
+      }
+      parsed.webSocketPort = port;
+      continue;
+    }
     throw new Error(`Unknown option: ${token}`);
   }
 
@@ -124,6 +137,9 @@ function buildReleasePlan(options = {}) {
   const recommendedDataRoot = options.recommendedDataRoot
     ? path.resolve(options.recommendedDataRoot)
     : (DEFAULT_RECOMMENDED_DATA_ROOTS[instanceName] || null);
+  const webSocketPort = Number.isInteger(Number(options.webSocketPort))
+    ? Number(options.webSocketPort)
+    : (DEFAULT_INSTANCE_WEBSOCKET_PORTS[instanceName] || null);
 
   return {
     schema: RELEASE_SCHEMA,
@@ -135,6 +151,7 @@ function buildReleasePlan(options = {}) {
     installScriptPath,
     manifestPath,
     recommendedDataRoot,
+    webSocketPort,
     dataRootRequiredAtInstall: true,
   };
 }
@@ -146,6 +163,10 @@ function escapePowerShellSingleQuoted(value) {
 function renderInstallUpdateScript(plan) {
   const version = escapePowerShellSingleQuoted(plan.version);
   const defaultInstanceName = escapePowerShellSingleQuoted(plan.instanceName);
+  const webSocketPort = Number.isInteger(Number(plan.webSocketPort))
+    ? Number(plan.webSocketPort)
+    : (DEFAULT_INSTANCE_WEBSOCKET_PORTS[sanitizeSlug(plan.instanceName)] || null);
+  const webSocketPortLiteral = webSocketPort ? String(webSocketPort) : '$null';
   return [
     'param(',
     '  [Parameter(Mandatory=$true)] [string] $InstallRoot,',
@@ -175,9 +196,19 @@ function renderInstallUpdateScript(plan) {
     '  profile = "main"',
     '  version = $Version',
     '  dataRoot = $DataRootFull',
+    webSocketPort ? `  webSocketPort = ${webSocketPortLiteral}` : null,
     '  generatedAt = (Get-Date).ToUniversalTime().ToString("o")',
     '}',
     '$InstallManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $VersionRoot "squidrun-install.json") -Encoding UTF8',
+    webSocketPort ? '$WebSocketSettingsDir = Join-Path (Join-Path $DataRootFull ".squidrun") "settings"' : null,
+    webSocketPort ? 'New-Item -ItemType Directory -Force -Path $WebSocketSettingsDir | Out-Null' : null,
+    webSocketPort ? '$WebSocketSettings = [ordered]@{' : null,
+    webSocketPort ? '  schema = "squidrun.websocket_settings.v1"' : null,
+    webSocketPort ? `  port = ${webSocketPortLiteral}` : null,
+    webSocketPort ? '  source = "install-or-update.ps1"' : null,
+    webSocketPort ? '  generatedAt = (Get-Date).ToUniversalTime().ToString("o")' : null,
+    webSocketPort ? '}' : null,
+    webSocketPort ? '$WebSocketSettings | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $WebSocketSettingsDir "websocket.json") -Encoding UTF8' : null,
     '',
     '$ExePath = Join-Path $VersionRoot "SquidRun.exe"',
     'if (-not (Test-Path -LiteralPath $ExePath)) { throw "Missing SquidRun.exe in version root: $ExePath" }',
@@ -214,7 +245,7 @@ function renderInstallUpdateScript(plan) {
     '  shortcutPath = $ShortcutPath',
     '} | ConvertTo-Json -Depth 8',
     '',
-  ].join('\r\n');
+  ].filter((line) => line !== null).join('\r\n');
 }
 
 function buildReleaseManifest(plan) {
@@ -245,6 +276,13 @@ function buildReleaseManifest(plan) {
         'git_root_for_dev',
         '%USERPROFILE%/SquidRun_default',
       ],
+    },
+    webSocketContract: {
+      runtimeDefaultPort: plan.webSocketPort || null,
+      installedPortSource: 'squidrun-install.json:webSocketPort or dataRoot/.squidrun/settings/websocket.json:port',
+      mainDevDefaultPort: 9900,
+      scopedProfileCompatibilityPort: 9901,
+      noSharedPortBetweenConcurrentInstalls: true,
     },
   };
 }

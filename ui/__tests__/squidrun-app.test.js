@@ -3463,6 +3463,61 @@ describe('SquidRunApp', () => {
   });
 
   describe('cognitive memory runtime integration', () => {
+    it('starts websocket runtime on installed data-root configured port', async () => {
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-app-ws-root-'));
+      const settingsDir = path.join(dataRoot, '.squidrun', 'settings');
+
+      try {
+        fs.mkdirSync(settingsDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(settingsDir, 'websocket.json'),
+          `${JSON.stringify({ schema: 'squidrun.websocket_settings.v1', port: 9901 }, null, 2)}\n`,
+          'utf8'
+        );
+        process.env.SQUIDRUN_DATA_ROOT = dataRoot;
+        process.env.SQUIDRUN_PROFILE = 'main';
+
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        const websocketServer = require('../modules/websocket-server');
+
+        app.initDaemonClient = jest.fn().mockResolvedValue();
+        app.createWindow = jest.fn().mockResolvedValue();
+        app.startSmsPoller = jest.fn();
+        app.startTelegramPoller = jest.fn();
+        app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+        jest.spyOn(app, 'ensureSupervisorDaemonRunning').mockResolvedValue({ ok: true, alreadyRunning: true });
+
+        await app.init();
+
+        expect(websocketServer.start).toHaveBeenCalledWith(expect.objectContaining({
+          port: 9901,
+          portSource: expect.stringContaining('websocket.json'),
+        }));
+        expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            websocket: expect.objectContaining({
+              desiredPort: 9901,
+              source: expect.stringContaining('websocket.json'),
+            }),
+          }),
+        }));
+      } finally {
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+      }
+    });
+
     it('routes websocket cognitive-memory messages into the runtime handler', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const websocketServer = require('../modules/websocket-server');

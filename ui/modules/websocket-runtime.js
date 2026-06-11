@@ -15,15 +15,17 @@ const {
   resolveCoordPath,
   resolveBackgroundBuilderAlias,
   resolveBackgroundBuilderPaneId,
+  resolveWebSocketPort,
 } = require('../config');
 const {
   DEFAULT_PROFILE,
-  getProfileWebSocketPort,
   isMainProfile,
   normalizeProfileName,
 } = require('../profile');
 
-const DEFAULT_PORT = getProfileWebSocketPort(process.env.SQUIDRUN_PROFILE || 'main');
+const DEFAULT_PORT = resolveWebSocketPort({
+  profileName: process.env.SQUIDRUN_PROFILE || DEFAULT_PROFILE,
+});
 const MESSAGE_ACK_TTL_MS = 60000;
 const ROUTING_STALE_MS = 60000;
 const RATE_LIMIT_WINDOW_MS = 1000;  // 1-second sliding window
@@ -1395,7 +1397,7 @@ function closeClientSocket(info, timeoutMs = 250) {
 /**
  * Start the WebSocket server
  * @param {object} options - Configuration options
- * @param {number} options.port - Port to listen on (default: 9900)
+ * @param {number} options.port - Port to listen on (default: resolved runtime WebSocket port)
  * @param {function} options.onMessage - Handler for incoming messages
  * @returns {Promise<WebSocketServer>}
  */
@@ -1411,7 +1413,9 @@ function start(options = {}) {
     return startInFlightPromise;
   }
 
-  const port = options.port ?? DEFAULT_PORT;
+  const port = options.port ?? resolveWebSocketPort({
+    profileName: process.env.SQUIDRUN_PROFILE || DEFAULT_PROFILE,
+  });
   const nextMessageHandler = options.onMessage || null;
   const nextSessionScopeId = normalizeQueueSessionScopeId(options.sessionScopeId);
 
@@ -1496,9 +1500,13 @@ function start(options = {}) {
         log.error('WebSocket', `Server error: ${err.message}`);
         if (settled) return;
         if (err.code === 'EADDRINUSE') {
-          rejectStart(new Error(`Port ${port} already in use`));
+          const inUseError = new Error(`Port ${port} already in use`);
+          inUseError.code = err.code;
+          inUseError.port = port;
+          rejectStart(inUseError);
           return;
         }
+        err.port = err.port || port;
         rejectStart(err);
       });
 

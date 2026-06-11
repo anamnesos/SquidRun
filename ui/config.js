@@ -9,7 +9,9 @@ const fs = require('fs');
 const { execFileSync } = require('child_process');
 const {
   getActiveProfileName,
+  getProfileWebSocketPort,
   isMainProfile,
+  normalizeProfileName,
   namespaceCoordRelPath,
   getProfilePipePath,
   getProfileProjectRootOverride,
@@ -17,6 +19,7 @@ const {
 const {
   DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
   resolveExplicitDataRoot,
+  resolveDataRootFromInstallManifest,
   resolveInstalledDataRoot,
   resolveInstalledGlobalStateRoot,
 } = require('./modules/installed-data-root');
@@ -33,6 +36,15 @@ function envFlagEnabled(name, defaultValue = true) {
 
 const ACTIVE_PROFILE = getActiveProfileName();
 const PIPE_PATH = getProfilePipePath(ACTIVE_PROFILE, os.platform());
+const DEFAULT_WEBSOCKET_PORT = 9900;
+const WEBSOCKET_SETTINGS_RELPATH = path.join('settings', 'websocket.json');
+const WEBSOCKET_PORT_FIELDS = Object.freeze([
+  'webSocketPort',
+  'websocketPort',
+  'websocket_port',
+  'wsPort',
+  'port',
+]);
 
 // Workspace paths
 const LEGACY_WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
@@ -141,6 +153,127 @@ function resolveGlobalStateRoot(options = {}) {
   }
 
   return resolveMachineGlobalStateRoot(options);
+}
+
+function normalizeWebSocketPort(value) {
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65535) return null;
+  return parsed;
+}
+
+function readJsonFileIfPresent(filePath, options = {}) {
+  const fsImpl = options.fs || fs;
+  try {
+    if (!filePath || !fsImpl.existsSync(filePath)) return null;
+    const parsed = JSON.parse(fsImpl.readFileSync(filePath, 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function getConfiguredWebSocketPort(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  for (const field of WEBSOCKET_PORT_FIELDS) {
+    const port = normalizeWebSocketPort(payload[field]);
+    if (port) return { port, field };
+  }
+  return null;
+}
+
+function resolveDataRootWebSocketSettings(dataRoot, options = {}) {
+  const root = normalizeProjectPath(dataRoot);
+  if (!root) return null;
+  const settingsPath = path.join(root, '.squidrun', WEBSOCKET_SETTINGS_RELPATH);
+  const settings = readJsonFileIfPresent(settingsPath, options);
+  const configured = getConfiguredWebSocketPort(settings);
+  if (!configured) return null;
+  return {
+    port: configured.port,
+    source: `settings:${settingsPath}:${configured.field}`,
+    settingsPath,
+    dataRoot: root,
+    field: configured.field,
+  };
+}
+
+function resolveManifestWebSocketPort(installResult) {
+  const configured = getConfiguredWebSocketPort(installResult?.manifest);
+  if (!configured) return null;
+  const manifestPath = installResult?.manifestPath || null;
+  return {
+    port: configured.port,
+    source: manifestPath
+      ? `manifest:${manifestPath}:${configured.field}`
+      : `manifest:${configured.field}`,
+    manifestPath,
+    dataRoot: installResult?.path || null,
+    field: configured.field,
+  };
+}
+
+function resolveInstallManifestForWebSocket(options = {}) {
+  const startDir = options.startDir || PROJECT_ROOT_DISCOVERY_CWD;
+  const runtimePath = options.runtimePath || startDir;
+  return resolveDataRootFromInstallManifest({
+    cwd: options.cwd || process.cwd(),
+    defaultDirName: DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+    env: options.env || process.env,
+    execPath: options.execPath || process.execPath,
+    homePath: options.homePath || os.homedir(),
+    installDir: options.installDir,
+    manifestPath: options.manifestPath,
+    resourcesPath: options.resourcesPath || process.resourcesPath,
+    runtimePath,
+    startDir,
+  });
+}
+
+function resolveWebSocketPortInfo(options = {}) {
+  const env = options.env || process.env;
+  const explicitPort = Object.prototype.hasOwnProperty.call(options, 'port')
+    ? normalizeWebSocketPort(options.port)
+    : null;
+  if (explicitPort) {
+    return {
+      port: explicitPort,
+      source: 'option:port',
+    };
+  }
+
+  const explicitDataRoot = resolveExplicitDataRoot(env);
+  const explicitDataRootSettings = resolveDataRootWebSocketSettings(explicitDataRoot?.path, options);
+  if (explicitDataRootSettings) {
+    return explicitDataRootSettings;
+  }
+
+  const installResult = resolveInstallManifestForWebSocket(options);
+  const installDataRootSettings = resolveDataRootWebSocketSettings(installResult?.path, options);
+  if (installDataRootSettings) {
+    return installDataRootSettings;
+  }
+
+  const manifestPort = resolveManifestWebSocketPort(installResult);
+  if (manifestPort) {
+    return manifestPort;
+  }
+
+  const profileName = normalizeProfileName(
+    options.profileName
+    || env.SQUIDRUN_PROFILE
+    || getActiveProfileName()
+    || 'main'
+  );
+  const profilePort = getProfileWebSocketPort(profileName, DEFAULT_WEBSOCKET_PORT);
+  return {
+    port: normalizeWebSocketPort(profilePort) || DEFAULT_WEBSOCKET_PORT,
+    source: `profile:${profileName || 'main'}`,
+    profileName: profileName || 'main',
+  };
+}
+
+function resolveWebSocketPort(options = {}) {
+  return resolveWebSocketPortInfo(options).port;
 }
 
 const DEFAULT_PROJECT_ROOT = discoverProjectRoot();
@@ -508,6 +641,9 @@ module.exports = {
   PIPE_PATH,
   WORKSPACE_PATH,
   LEGACY_WORKSPACE_PATH,
+  DEFAULT_WEBSOCKET_PORT,
+  WEBSOCKET_SETTINGS_RELPATH,
+  WEBSOCKET_PORT_FIELDS,
   get PROJECT_ROOT() {
     return getProjectRoot();
   },
@@ -553,6 +689,9 @@ module.exports = {
   resolveGlobalPath,
   resolveGlobalStateRoot,
   resolveMachineGlobalStateRoot,
+  resolveWebSocketPort,
+  resolveWebSocketPortInfo,
+  resolveDataRootWebSocketSettings,
   discoverProjectRoot,
   isPackagedRuntimePath,
 };

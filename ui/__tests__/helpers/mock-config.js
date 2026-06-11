@@ -18,6 +18,9 @@
  *   jest.mock('../config', () => require('./helpers/mock-config').mockWorkspaceOnly);
  */
 
+const fs = require('fs');
+const path = require('path');
+
 const LEGACY_PANE_CWD_FALLBACK = {
   '1': '/test/legacy-pane-cwd/architect',
   '2': '/test/legacy-pane-cwd/builder',
@@ -131,6 +134,38 @@ const mockDefaultConfig = {
       .replace(/[/\\]+/g, '/');
     return `${mockDefaultConfig.WORKSPACE_PATH}/${normalized}`;
   },
+  resolveWebSocketPortInfo: (options = {}) => {
+    const env = options.env || process.env;
+    const dataRoot = typeof env.SQUIDRUN_DATA_ROOT === 'string' && env.SQUIDRUN_DATA_ROOT.trim()
+      ? path.resolve(env.SQUIDRUN_DATA_ROOT)
+      : null;
+    if (dataRoot) {
+      const settingsPath = path.join(dataRoot, '.squidrun', 'settings', 'websocket.json');
+      try {
+        if (fs.existsSync(settingsPath)) {
+          const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+          const port = Number.parseInt(String(parsed?.port || parsed?.webSocketPort || ''), 10);
+          if (Number.isFinite(port) && port > 0 && port <= 65535) {
+            return {
+              port,
+              source: `settings:${settingsPath}:port`,
+              settingsPath,
+              dataRoot,
+            };
+          }
+        }
+      } catch {
+        // Fall through to profile defaults for test fixtures.
+      }
+    }
+    const profileName = String(options.profileName || env.SQUIDRUN_PROFILE || 'main').trim().toLowerCase() || 'main';
+    return {
+      port: profileName === 'scoped' ? 9901 : 9900,
+      source: `profile:${profileName}`,
+      profileName,
+    };
+  },
+  resolveWebSocketPort: (options = {}) => mockDefaultConfig.resolveWebSocketPortInfo(options).port,
   normalizeBackgroundBuilderAlias: (value) => {
     if (typeof value !== 'string') return null;
     const normalized = value.trim().toLowerCase();

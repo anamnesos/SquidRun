@@ -101,6 +101,11 @@ const HEALTH_SCORE_PENALTIES = Object.freeze({
     category: 'transport',
     rationale: 'Inbound Telegram can silently stop even while the worker process remains alive.',
   }),
+  websocket_bind_failed: Object.freeze({
+    points: 12,
+    category: 'transport',
+    rationale: 'The local agent WebSocket failed to bind, so agent commands may silently miss the intended runtime.',
+  }),
   supervisor_heartbeat_stale: Object.freeze({
     points: 12,
     category: 'supervisor',
@@ -499,6 +504,26 @@ function resolveProfileCoordPath(projectRoot, relPath, profileName = DEFAULT_PRO
   return path.join(projectRoot, '.squidrun', namespaceCoordRelPath(relPath, profile));
 }
 
+function normalizeAppStatusWebSocketStatus(rawStatus = null) {
+  if (!rawStatus || typeof rawStatus !== 'object' || Array.isArray(rawStatus)) {
+    return null;
+  }
+  const port = asPositiveInt(rawStatus.port, null);
+  const desiredPort = asPositiveInt(rawStatus.desiredPort ?? rawStatus.desired_port, null);
+  return {
+    running: rawStatus.running === true,
+    port,
+    desiredPort,
+    source: typeof rawStatus.source === 'string' ? rawStatus.source.trim() || null : null,
+    clientCount: asPositiveInt(rawStatus.clientCount ?? rawStatus.client_count, 0),
+    status: typeof rawStatus.status === 'string' ? rawStatus.status.trim() || null : null,
+    warning: typeof rawStatus.warning === 'string' ? rawStatus.warning.trim() || null : null,
+    error: typeof rawStatus.error === 'string' ? rawStatus.error.trim() || null : null,
+    code: typeof rawStatus.code === 'string' ? rawStatus.code.trim() || null : null,
+    lastUpdatedAt: typeof rawStatus.lastUpdatedAt === 'string' ? rawStatus.lastUpdatedAt.trim() || null : null,
+  };
+}
+
 function readAppStatusSnapshot(projectRoot, options = {}) {
   const profileName = normalizeProfileName(options.profileName || DEFAULT_PROFILE);
   const appStatusPath = resolveProfileCoordPath(projectRoot, 'app-status.json', profileName);
@@ -509,6 +534,7 @@ function readAppStatusSnapshot(projectRoot, options = {}) {
       exists: false,
       sessionNumber: null,
       sessionId: null,
+      websocket: null,
       error: null,
     };
   }
@@ -526,6 +552,7 @@ function readAppStatusSnapshot(projectRoot, options = {}) {
       sessionId: typeof parsed?.session_id === 'string'
         ? parsed.session_id.trim() || null
         : (typeof parsed?.sessionId === 'string' ? parsed.sessionId.trim() || null : null),
+      websocket: normalizeAppStatusWebSocketStatus(parsed?.websocket),
       error: null,
     };
   } catch (err) {
@@ -534,6 +561,7 @@ function readAppStatusSnapshot(projectRoot, options = {}) {
       exists: true,
       sessionNumber: null,
       sessionId: null,
+      websocket: null,
       error: err.message,
     };
   }
@@ -1336,6 +1364,22 @@ function buildHealthStatus(snapshot) {
     );
     addPenalty('supervisor_heartbeat_stale');
   }
+  const websocket = snapshot.appStatus?.websocket && typeof snapshot.appStatus.websocket === 'object'
+    ? snapshot.appStatus.websocket
+    : {};
+  if (
+    websocket.warning === 'websocket_bind_failed'
+    || websocket.status === 'bind_failed'
+    || websocket.code === 'EADDRINUSE'
+  ) {
+    warnings.push(
+      'websocket_bind_failed:'
+      + `port=${websocket.desiredPort || websocket.port || 'unknown'},`
+      + `code=${websocket.code || 'unknown'},`
+      + `error=${websocket.error || 'unknown'}`
+    );
+    addPenalty('websocket_bind_failed');
+  }
   const threshold = resolveHealthThreshold(score);
   return {
     level: threshold.level,
@@ -1534,6 +1578,31 @@ function renderStartupHealthMarkdown(snapshot = {}) {
     lines.push('- Probe: optional pending; penalty=0');
   } else if (bridge.enabled === true && bridge.required !== true && bridge.mode !== 'connected') {
     lines.push('- Probe: optional offline; penalty=0');
+  }
+
+  const websocket = snapshot.appStatus?.websocket && typeof snapshot.appStatus.websocket === 'object'
+    ? snapshot.appStatus.websocket
+    : {};
+  if (Object.keys(websocket).length > 0) {
+    const websocketPenalty = Array.isArray(snapshot.status?.penalties)
+      ? snapshot.status.penalties.find((entry) => entry?.code === 'websocket_bind_failed')
+      : null;
+    lines.push('');
+    lines.push('WEBSOCKET RUNTIME');
+    lines.push(
+      `- Bind: ${websocket.running === true ? 'running' : (websocket.status || 'not running')}`
+      + ` (port=${websocket.port || websocket.desiredPort || 'unknown'}, desired=${websocket.desiredPort || 'unknown'}, source=${websocket.source || 'unknown'})`
+    );
+    if (websocket.warning || websocket.error || websocket.code) {
+      lines.push(
+        `- Warning: ${websocket.warning || 'websocket_warning'}`
+        + `; code=${websocket.code || 'unknown'}`
+        + `; error=${websocket.error || 'unknown'}`
+      );
+    }
+    if (websocketPenalty) {
+      lines.push(`- Probe: degraded (bind failed); penalty=${Number(websocketPenalty.points || 0)}`);
+    }
   }
 
   const supervisor = snapshot.supervisor && typeof snapshot.supervisor === 'object'

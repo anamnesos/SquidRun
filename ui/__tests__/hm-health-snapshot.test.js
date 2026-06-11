@@ -1007,6 +1007,68 @@ describe('hm-health-snapshot', () => {
     expect(markdown).toContain('- Recovery: required; hm-startup-health invokes hm-telegram-poller-watchdog recover before rendering this report.');
   });
 
+  test('surfaces websocket bind failure in startup health', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    const nowMs = Date.parse('2026-03-17T07:45:00.000Z');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+    fs.writeFileSync(path.join(tempDir, '.squidrun', 'app-status.json'), JSON.stringify({
+      session: 431,
+      websocket: {
+        running: false,
+        port: 9901,
+        desiredPort: 9901,
+        source: 'settings:D:\\SquidRun\\Eunbyeol\\.squidrun\\settings\\websocket.json:port',
+        status: 'bind_failed',
+        warning: 'websocket_bind_failed',
+        code: 'EADDRINUSE',
+        error: 'Port 9901 already in use',
+      },
+    }, null, 2));
+    fs.writeFileSync(
+      path.join(tempDir, '.squidrun', 'runtime', 'supervisor-status.json'),
+      JSON.stringify({
+        pid: process.pid,
+        state: 'running',
+        pollMs: 4000,
+        heartbeatAtMs: nowMs,
+      }, null, 2)
+    );
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs,
+      jestTimeoutMs: 1000,
+      bridgeStatus: {
+        enabled: true,
+        configured: true,
+        running: true,
+        relayUrl: 'wss://relay.example.test',
+        deviceId: 'LOCAL',
+        state: 'connected',
+      },
+      telegramPoller: {
+        ok: true,
+        status: 'fresh',
+        wedged: false,
+        ageMs: 1000,
+        staleThresholdMs: 600000,
+        updatedAt: '2026-03-17T07:44:59.000Z',
+        statePath: path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json'),
+      },
+    });
+    const markdown = renderStartupHealthMarkdown(snapshot);
+
+    expect(snapshot.status.label).toBe('WARN');
+    expect(snapshot.status.warnings).toContain('websocket_bind_failed:port=9901,code=EADDRINUSE,error=Port 9901 already in use');
+    expect(snapshot.status.penalties).toContainEqual({ code: 'websocket_bind_failed', points: 12 });
+    expect(markdown).toContain('WEBSOCKET RUNTIME');
+    expect(markdown).toContain('Bind: bind_failed (port=9901, desired=9901');
+    expect(markdown).toContain('Probe: degraded (bind failed); penalty=12');
+  });
+
   test('surfaces a stale supervisor heartbeat in startup health', () => {
     const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
     execFileSync.mockReturnValue([

@@ -9,8 +9,9 @@
  */
 
 const WebSocket = require('ws');
+const { resolveCliWebSocketPort } = require('./hm-ws-port');
 
-const DEFAULT_PORT = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
+const DEFAULT_PORT = resolveCliWebSocketPort();
 const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
 const DEFAULT_RESPONSE_TIMEOUT_MS = 5000;
 
@@ -19,7 +20,7 @@ function usage() {
   console.log('Commands: list, approve, reject');
   console.log('Common options:');
   console.log('  --role <role>               Sender role (default: builder)');
-  console.log('  --port <port>               WebSocket port (default: 9900)');
+  console.log(`  --port <port>               WebSocket port (default: ${DEFAULT_PORT})`);
   console.log('  --timeout <ms>              Response timeout (default: 5000)');
   console.log('  --payload-json <json>       Raw payload JSON (advanced)');
   console.log('Examples:');

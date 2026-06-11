@@ -9,9 +9,10 @@ const os = require('os');
 const path = require('path');
 const net = require('net');
 const WebSocket = require('ws');
+const { resolveCliWebSocketPort } = require('./hm-ws-port');
 
 const ROOT_DIR = path.resolve(__dirname, '..', '..');
-const DEFAULT_WS_PORT = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
+const DEFAULT_WS_PORT = resolveCliWebSocketPort();
 const DEFAULT_WS_TIMEOUT_MS = 2500;
 const DEFAULT_DAEMON_TIMEOUT_MS = 2500;
 const APP_LOG_TAIL_LINES = 80;

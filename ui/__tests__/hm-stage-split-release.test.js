@@ -38,6 +38,7 @@ describe('hm-stage-split-release', () => {
       version: '9.8.7',
       sourceAppDir: path.join(uiRoot, 'dist', 'win-unpacked'),
       outputDir: path.join(uiRoot, 'dist', 'split-releases', 'eun-byeol', 'squidrun-9.8.7'),
+      webSocketPort: null,
       dataRootRequiredAtInstall: true,
     }));
     expect(plan.recommendedDataRoot).toBeNull();
@@ -52,6 +53,7 @@ describe('hm-stage-split-release', () => {
     const plan = buildReleasePlan({ uiRoot, instanceName: 'eunbyeol' });
 
     expect(plan.recommendedDataRoot).toBe('D:\\SquidRun\\Eunbyeol');
+    expect(plan.webSocketPort).toBe(9901);
   });
 
   test('renders install/update script with explicit data-root and main-profile launch contract', () => {
@@ -65,6 +67,10 @@ describe('hm-stage-split-release', () => {
     expect(script).toContain('`$env:SQUIDRUN_DATA_ROOT');
     expect(script).toContain('`$env:SQUIDRUN_PROJECT_ROOT');
     expect(script).toContain("`$env:SQUIDRUN_PROFILE = 'main'");
+    expect(script).toContain('webSocketPort = 9901');
+    expect(script).toContain('settings');
+    expect(script).toContain('websocket.json');
+    expect(script).toContain('port = 9901');
   });
 
   test('release manifest records the shared root discovery contract', () => {
@@ -90,6 +96,12 @@ describe('hm-stage-split-release', () => {
     expect(manifest.dataRootContract.discoveryOrder).toContain('squidrun-install.json_or_.squidrun-install.json_near_packaged_runtime');
     expect(manifest.dataRootContract.discoveryOrder.indexOf('squidrun-install.json_or_.squidrun-install.json_near_packaged_runtime'))
       .toBeLessThan(manifest.dataRootContract.discoveryOrder.indexOf('git_root_for_dev'));
+    expect(manifest.webSocketContract).toEqual(expect.objectContaining({
+      runtimeDefaultPort: null,
+      mainDevDefaultPort: 9900,
+      scopedProfileCompatibilityPort: 9901,
+      noSharedPortBetweenConcurrentInstalls: true,
+    }));
   });
 
   test('parses CLI flags', () => {
@@ -99,8 +111,9 @@ describe('hm-stage-split-release', () => {
       json: true,
       force: true,
     }));
-    expect(parseArgs(['--recommended-data-root', 'D:\\SquidRun\\Eunbyeol'])).toEqual(expect.objectContaining({
+    expect(parseArgs(['--recommended-data-root', 'D:\\SquidRun\\Eunbyeol', '--websocket-port', '9901'])).toEqual(expect.objectContaining({
       recommendedDataRoot: 'D:\\SquidRun\\Eunbyeol',
+      webSocketPort: 9901,
     }));
     expect(sanitizeSlug('Eun Byeol')).toBe('eun-byeol');
   });

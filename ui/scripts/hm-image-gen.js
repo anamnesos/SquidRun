@@ -8,8 +8,9 @@
  */
 
 const WebSocket = require('ws');
+const { resolveCliWebSocketPort } = require('./hm-ws-port');
 
-const PORT = 9900;
+const PORT = resolveCliWebSocketPort();
 const TIMEOUT_MS = 90000; // 90s — image gen can be slow
 const args = process.argv.slice(2);
 
