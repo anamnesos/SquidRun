@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
 const { PANE_IDS, PANE_ROLES, resolveCoordPath } = require('../../config');
+const { getTrustQuoteDayToDayArmSpecs } = require('../trustquote-arm-specs');
 const {
   buildGeminiCommand,
   hasGeminiCommand,
@@ -17,6 +18,9 @@ const {
 const TRIGGERS_PATH = typeof resolveCoordPath === 'function'
   ? resolveCoordPath('triggers', { forWrite: true })
   : path.join(__dirname, '..', '..', '..', 'workspace', 'triggers');
+const TRUSTQUOTE_ARM_SPECS_BY_PANE_ID = new Map(
+  getTrustQuoteDayToDayArmSpecs().map((spec) => [String(spec.paneId), spec])
+);
 
 // Under plain node (jest), require('electron') resolves to a path string -
 // guard so tests exercise the deps/mainWindow seams instead.
@@ -24,6 +28,82 @@ let BrowserWindow = null;
 try {
   ({ BrowserWindow } = require('electron'));
 } catch (_) { /* non-electron host */ }
+
+function getTrustQuoteArmSpec(paneId) {
+  return TRUSTQUOTE_ARM_SPECS_BY_PANE_ID.get(String(paneId || '').trim()) || null;
+}
+
+function isCorePaneId(paneId) {
+  return PANE_IDS.includes(String(paneId || ''));
+}
+
+function isSwitchablePaneId(paneId) {
+  return isCorePaneId(paneId) || Boolean(getTrustQuoteArmSpec(paneId));
+}
+
+function buildModelCommands(ctx = {}, id = '') {
+  const paneCommands = ctx.currentSettings?.paneCommands || {};
+  const existingGeminiCommand = paneCommands[id]
+    || Object.values(paneCommands).find(hasGeminiCommand)
+    || '';
+  const geminiModel = resolveGeminiModelId({
+    preferredModel: ctx.currentSettings?.geminiModel,
+    existingCommand: existingGeminiCommand,
+  });
+  return {
+    commands: {
+      'claude': 'claude',
+      'codex': 'codex',
+      'gemini': buildGeminiCommand({
+        preferredModel: geminiModel,
+        existingCommand: existingGeminiCommand,
+      }),
+    },
+    geminiModel,
+  };
+}
+
+function buildCompletionPayload({
+  paneRestartArbiter,
+  paneId,
+  model,
+  command,
+}) {
+  const resolvedOwner = paneRestartArbiter && typeof paneRestartArbiter.resolveOwner === 'function'
+    ? paneRestartArbiter.resolveOwner(paneId)
+    : {};
+  const ownerWindowKey = resolvedOwner?.ownerWindowKey || 'main';
+  return {
+    paneId,
+    model,
+    ownerWindowKey,
+    ...(command ? { command } : {}),
+  };
+}
+
+function sendPaneModelChanged(ctx, deps, payload) {
+  if (typeof deps.sendPaneModelChanged === 'function') {
+    try {
+      deps.sendPaneModelChanged(payload);
+    } catch (err) {
+      log.warn('ModelSwitch', `pane-model-changed fan-out failed: ${err.message}`);
+    }
+    return;
+  }
+  if (BrowserWindow && typeof BrowserWindow.getAllWindows === 'function') {
+    for (const win of BrowserWindow.getAllWindows()) {
+      try {
+        if (!win.isDestroyed()) win.webContents.send('pane-model-changed', payload);
+      } catch (err) {
+        log.warn('ModelSwitch', `pane-model-changed send failed: ${err.message}`);
+      }
+    }
+    return;
+  }
+  if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
+    ctx.mainWindow.webContents.send('pane-model-changed', payload);
+  }
+}
 
 /**
  * Shared main-side model-switch flow. Both entry points - the renderer
@@ -41,7 +121,9 @@ async function executePaneModelSwitch(ctx, payload = {}, deps = {}) {
 
   // Validate paneId
   const id = String(paneId);
-  if (!PANE_IDS.includes(id)) {
+  const armSpec = getTrustQuoteArmSpec(id);
+  const isArmPane = Boolean(armSpec);
+  if (!isSwitchablePaneId(id)) {
     log.warn('ModelSwitch', `Invalid paneId: ${paneId}`);
     return { success: false, error: 'Invalid paneId' };
   }
@@ -76,69 +158,58 @@ async function executePaneModelSwitch(ctx, payload = {}, deps = {}) {
     if (!ctx.currentSettings.paneCommands || typeof ctx.currentSettings.paneCommands !== 'object') {
       ctx.currentSettings.paneCommands = {};
     }
-    const paneCommands = ctx.currentSettings.paneCommands;
-    const existingGeminiCommand = paneCommands[id]
-      || Object.values(paneCommands).find(hasGeminiCommand)
-      || '';
-    const geminiModel = resolveGeminiModelId({
-      preferredModel: ctx.currentSettings.geminiModel,
-      existingCommand: existingGeminiCommand,
-    });
-    const commands = {
-      'claude': 'claude',
-      'codex': 'codex',
-      'gemini': buildGeminiCommand({
-        preferredModel: geminiModel,
-        existingCommand: existingGeminiCommand,
-      }),
-    };
+    const { commands, geminiModel } = buildModelCommands(ctx, id);
 
     if (!commands[model]) {
       log.warn('ModelSwitch', `Unknown model: ${model}`);
       return { success: false, error: 'Unknown model' };
     }
+    const nextCommand = commands[model];
 
     log.info('ModelSwitch', `Switching pane ${paneId} to ${model}`);
 
-    // Mark exit as expected BEFORE killing - prevents recovery manager from auto-restarting
-    // with the old paneCommand before we update settings
-    if (ctx.recoveryManager && typeof ctx.recoveryManager.markExpectedExit === 'function') {
-      ctx.recoveryManager.markExpectedExit(id, 'model-switch');
-    }
+    if (!isArmPane) {
+      // Mark exit as expected BEFORE killing - prevents recovery manager from auto-restarting
+      // with the old paneCommand before we update settings
+      if (ctx.recoveryManager && typeof ctx.recoveryManager.markExpectedExit === 'function') {
+        ctx.recoveryManager.markExpectedExit(id, 'model-switch');
+      }
 
-    // Kill existing process
-    if (ctx.daemonClient && ctx.daemonClient.connected) {
-      ctx.daemonClient.kill(paneId);
-    }
+      // Kill existing process
+      if (ctx.daemonClient && ctx.daemonClient.connected) {
+        ctx.daemonClient.kill(paneId);
+      }
 
-    // Wait for kill confirmation (event-based with fallback timeout)
-    await new Promise(resolve => {
-      const timeout = setTimeout(() => {
-        log.warn('ModelSwitch', `Kill timeout for Pane ${paneId}, proceeding anyway`);
+      // Wait for kill confirmation (event-based with fallback timeout)
+      await new Promise(resolve => {
+        const timeout = setTimeout(() => {
+          log.warn('ModelSwitch', `Kill timeout for Pane ${paneId}, proceeding anyway`);
+          if (ctx.daemonClient) {
+            ctx.daemonClient.off('killed', handler);
+          }
+          resolve();
+        }, 2000);
+
+        const handler = (killedPaneId) => {
+          if (String(killedPaneId) === id) {
+            clearTimeout(timeout);
+            ctx.daemonClient.off('killed', handler);
+            resolve();
+          }
+        };
+
         if (ctx.daemonClient) {
-          ctx.daemonClient.off('killed', handler);
-        }
-        resolve();
-      }, 2000);
-
-      const handler = (killedPaneId) => {
-        if (String(killedPaneId) === id) {
+          ctx.daemonClient.on('killed', handler);
+        } else {
           clearTimeout(timeout);
-          ctx.daemonClient.off('killed', handler);
           resolve();
         }
-      };
+      });
+    }
 
-      if (ctx.daemonClient) {
-        ctx.daemonClient.on('killed', handler);
-      } else {
-        clearTimeout(timeout);
-        resolve();
-      }
-    });
-
-    // Update settings AFTER kill confirmed (per design review)
-    ctx.currentSettings.paneCommands[id] = commands[model];
+    // Update settings AFTER kill confirmed for core panes. Arm panes use
+    // settings as their command authority before the owner-window restart.
+    ctx.currentSettings.paneCommands[id] = nextCommand;
     if (model === 'gemini') {
       ctx.currentSettings.geminiModel = geminiModel;
     }
@@ -155,7 +226,7 @@ async function executePaneModelSwitch(ctx, payload = {}, deps = {}) {
     log.info('ModelSwitch', `Pane ${paneId} now set to ${model}`);
 
     // Broadcast model switch to all agents
-    const role = (PANE_ROLES && PANE_ROLES[id]) || `Pane ${id}`;
+    const role = (PANE_ROLES && PANE_ROLES[id]) || armSpec?.label || `Pane ${id}`;
     const modelName = model.charAt(0).toUpperCase() + model.slice(1);
     try {
       const allTriggerPath = path.join(TRIGGERS_PATH, 'all.txt');
@@ -169,28 +240,18 @@ async function executePaneModelSwitch(ctx, payload = {}, deps = {}) {
     // waiting on a signal that only reached mainWindow). Windows without the
     // pane no-op; respawn stays owner-window-only - the renderer guards on
     // windowKey and the pane-restart arbiter denies non-owner respawns
-    // regardless. deps.sendPaneModelChanged is the injectable seam.
+    // regardless. For arm panes, the owner is squid-room; its renderer updates
+    // the runtime override from the command in this payload before restarting
+    // through the same pane-restart-arbiter path. deps.sendPaneModelChanged is
+    // the injectable seam.
     // ACTIVATION: next app restart (main loads this module at boot).
-    const resolvedOwner = paneRestartArbiter && typeof paneRestartArbiter.resolveOwner === 'function' ? paneRestartArbiter.resolveOwner(id) : {};
-    const ownerWindowKey = resolvedOwner?.ownerWindowKey || 'main';
-    const completionPayload = { paneId, model, ownerWindowKey };
-    if (typeof deps.sendPaneModelChanged === 'function') {
-      try {
-        deps.sendPaneModelChanged(completionPayload);
-      } catch (err) {
-        log.warn('ModelSwitch', `pane-model-changed fan-out failed: ${err.message}`);
-      }
-    } else if (BrowserWindow && typeof BrowserWindow.getAllWindows === 'function') {
-      for (const win of BrowserWindow.getAllWindows()) {
-        try {
-          if (!win.isDestroyed()) win.webContents.send('pane-model-changed', completionPayload);
-        } catch (err) {
-          log.warn('ModelSwitch', `pane-model-changed send failed: ${err.message}`);
-        }
-      }
-    } else if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
-      ctx.mainWindow.webContents.send('pane-model-changed', completionPayload);
-    }
+    const completionPayload = buildCompletionPayload({
+      paneRestartArbiter,
+      paneId,
+      model,
+      command: isArmPane ? nextCommand : '',
+    });
+    sendPaneModelChanged(ctx, deps, completionPayload);
 
     return { success: true, paneId, model };
 }
