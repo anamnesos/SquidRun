@@ -1542,17 +1542,9 @@ class SquidRunApp {
 
     const requiredFiles = [
       'config.js',
-      path.join('scripts', 'hm-send.js'),
-      path.join('scripts', 'hm-comms.js'),
-      path.join('scripts', 'hm-telegram.js'),
-      path.join('modules', 'cross-device-target.js'),
-      path.join('modules', 'bridge-client.js'),
-      path.join('modules', 'logger.js'),
-      path.join('modules', 'buffered-file-writer.js'),
-      path.join('modules', 'comms', 'message-envelope.js'),
-      path.join('modules', 'main', 'comms-journal.js'),
-      path.join('modules', 'main', 'evidence-ledger-store.js'),
-      path.join('modules', 'main', 'evidence-ledger-ingest.js'),
+      'profile.js',
+      'scripts',
+      'modules',
     ];
     for (const relPath of requiredFiles) {
       const sourcePath = path.join(uiRoot, relPath);
@@ -1571,6 +1563,7 @@ class SquidRunApp {
     const unixLaunchers = {
       'hm-send': 'hm-send.js',
       'hm-comms': 'hm-comms.js',
+      'send-long-telegram': 'send-long-telegram.js',
     };
     for (const [commandName, scriptName] of Object.entries(unixLaunchers)) {
       const launcherPath = path.join(binRoot, commandName);
