@@ -19,6 +19,7 @@ const WINDOW_CHROME_CLASSES = Object.freeze({
   MAIN: 'main',
   SQUID_ROOM: 'squid-room',
   CLIENT_PROFILE: 'client-profile',
+  INSTALLED_OPERATOR: 'installed-operator',
   WORK_ROOM: 'work-room',
 });
 
@@ -48,6 +49,17 @@ const FULL_CHROME = Object.freeze({
   regions: Object.freeze(Object.keys(CHROME_REGION_SELECTORS)),
 });
 
+const INSTALLED_OPERATOR_DROPPED_CONTROLS = Object.freeze([
+  'openSquidRoomBtn',
+  'openTrustQuoteWorkspaceBtn',
+  'openMiraLabBtn',
+]);
+
+const INSTALLED_OPERATOR_CHROME = Object.freeze({
+  controls: Object.freeze(CHROME_CONTROL_IDS.filter((id) => !INSTALLED_OPERATOR_DROPPED_CONTROLS.includes(id))),
+  regions: FULL_CHROME.regions,
+});
+
 const CHROME_ALLOWLIST = Object.freeze({
   // James's cockpit: everything renders.
   [WINDOW_CHROME_CLASSES.MAIN]: FULL_CHROME,
@@ -66,6 +78,9 @@ const CHROME_ALLOWLIST = Object.freeze({
     controls: Object.freeze(['fullRestartBtn', 'profileBtn']),
     regions: Object.freeze([]),
   }),
+  // Installed operator consoles (Eunbyeol is the live split install): keep
+  // maintenance chrome, but remove cross-product entry points.
+  [WINDOW_CHROME_CLASSES.INSTALLED_OPERATOR]: INSTALLED_OPERATOR_CHROME,
   // Work rooms (TrustQuote workspace): mark + badge + Close. The right panel
   // starts absent; if a work room proves a need it gets added back named.
   [WINDOW_CHROME_CLASSES.WORK_ROOM]: Object.freeze({
@@ -78,8 +93,16 @@ function resolveWindowChromeClass(windowContext = {}) {
   const windowKey = String(windowContext.windowKey || 'main').trim().toLowerCase();
   const profileName = String(windowContext.profileName || windowContext.profile || 'main').trim().toLowerCase();
   const standalone = windowContext.standaloneWindow === true || windowContext.standaloneWindow === 'true';
+  const installedDeployment = windowContext.installedDeploymentWindow === true
+    || windowContext.installedDeploymentWindow === 'true'
+    || windowContext.installedDeployment === true
+    || windowContext.installedDeployment === 'true'
+    || (standalone && windowKey === 'main' && profileName === 'main');
   if (windowKey === 'squid-room') return WINDOW_CHROME_CLASSES.SQUID_ROOM;
   if (windowKey === 'trustquote') return WINDOW_CHROME_CLASSES.WORK_ROOM;
+  if (windowKey === 'main' && profileName === 'main' && installedDeployment) {
+    return WINDOW_CHROME_CLASSES.INSTALLED_OPERATOR;
+  }
   if (standalone || (profileName !== 'main' && windowKey !== 'main')) {
     return WINDOW_CHROME_CLASSES.CLIENT_PROFILE;
   }

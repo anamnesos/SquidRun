@@ -1857,6 +1857,91 @@ describe('SquidRunApp', () => {
       expect(app.setupWindowListeners.mock.invocationCallOrder[0]).toBeLessThan(loadFile.mock.invocationCallOrder[0]);
     });
 
+    it('keeps default dev main window on normal main chrome context', async () => {
+      await app.createWindow();
+
+      expect(app.ctx.mainWindow.loadFile).toHaveBeenCalledWith(
+        expect.stringContaining('index.html'),
+        expect.objectContaining({
+          query: expect.objectContaining({
+            windowKey: 'main',
+            profileName: 'main',
+            standaloneWindow: 'false',
+            installedDeploymentWindow: 'false',
+            lifecycleMode: 'main-app',
+          }),
+        })
+      );
+    });
+
+    it('marks pinned installed main window for installed operator chrome', async () => {
+      const electron = require('electron');
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-installed-operator-'));
+      try {
+        electron.app.isPackaged = true;
+        electron.app.getPath.mockImplementation((name) => (name === 'home' ? path.join(dataRoot, '..') : '/mock/app/path'));
+        process.env.SQUIDRUN_PROFILE = 'main';
+        process.env.SQUIDRUN_DATA_ROOT = dataRoot;
+
+        const installedApp = new SquidRunApp(mockAppContext, mockManagers);
+        jest.spyOn(installedApp, 'installMainWindowSendInterceptor').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'ensurePaneHostReadyForwarder').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'setupPermissions').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'initModules').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'initPostLoad').mockResolvedValue();
+        jest.spyOn(installedApp, 'restorePersistedSquidRoomWindow').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'schedulePaneHostBootstrap').mockImplementation(() => {});
+
+        await installedApp.createWindow();
+        const mainWindow = installedApp.ctx.mainWindow;
+
+        expect(mainWindow.loadFile).toHaveBeenCalledWith(
+          expect.stringContaining('index.html'),
+          expect.objectContaining({
+            query: expect.objectContaining({
+              windowKey: 'main',
+              profileName: 'main',
+              standaloneWindow: 'true',
+              installedDeploymentWindow: 'true',
+              lifecycleMode: 'main-app',
+            }),
+          })
+        );
+
+        const didFinishLoad = mainWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+        expect(typeof didFinishLoad).toBe('function');
+
+        await didFinishLoad();
+
+        expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+          'window-context',
+          expect.objectContaining({
+            windowKey: 'main',
+            profileName: 'main',
+            standaloneWindow: true,
+            installedDeploymentWindow: true,
+            lifecycleMode: 'main-app',
+          })
+        );
+      } finally {
+        electron.app.isPackaged = false;
+        electron.app.getPath.mockReturnValue('/mock/app/path');
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+      }
+    });
+
     it('does not block createWindow on hidden pane host bootstrap', async () => {
       jest.useFakeTimers();
       const ensurePaneHostWindows = jest
