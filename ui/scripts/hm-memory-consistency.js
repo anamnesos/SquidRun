@@ -72,6 +72,7 @@ function renderBaseReport(result) {
     `workspace: ${result.workspaceDir}`,
     `knowledge_dir: ${result.knowledgeDir}`,
     `cognitive_db: ${result.cognitiveDbPath}`,
+    result.evaluatedScope ? `evaluated_scope: ${result.evaluatedScope}` : null,
     `knowledge_entries: ${result.summary.knowledgeEntryCount}`,
     `knowledge_nodes: ${result.summary.knowledgeNodeCount}`,
     `missing_in_cognitive: ${result.summary.missingInCognitiveCount}`,
@@ -80,7 +81,7 @@ function renderBaseReport(result) {
     `issues: ${result.summary.issueCount}`,
     `synced: ${result.synced ? 'yes' : 'no'}`,
   ];
-  return lines;
+  return lines.filter(Boolean);
 }
 
 function renderDriftSections(lines, result) {
