@@ -90,6 +90,7 @@ describe('InboundPollerService', () => {
       options: expect.objectContaining({
         pollIntervalMs: 5000,
         downloadMedia: false,
+        keepAlive: true,
       }),
     });
 

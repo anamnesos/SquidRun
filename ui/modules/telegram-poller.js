@@ -873,7 +873,7 @@ function start(options = {}) {
       log.warn('Telegram', `Telegram polling tick failed: ${err.message}`);
     });
   }, pollIntervalMs);
-  if (typeof pollTimer.unref === 'function') {
+  if (options.keepAlive !== true && typeof pollTimer.unref === 'function') {
     pollTimer.unref();
   }
 

@@ -81,6 +81,7 @@ class InboundPollerService {
       downloadMedia: options.downloadMedia,
       mediaDownloadRoot: options.mediaDownloadRoot,
       latestScreenshotPath: options.latestScreenshotPath,
+      keepAlive: true,
     };
 
     try {
