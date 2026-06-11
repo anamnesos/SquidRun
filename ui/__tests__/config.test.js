@@ -152,6 +152,52 @@ describe('config.js', () => {
       }
     });
 
+    test('scopes global state to explicit installed data root', () => {
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const previousWorkspaceRoot = process.env.SQUIDRUN_WORKSPACE_ROOT;
+      const previousProjectRoot = process.env.SQUIDRUN_PROJECT_ROOT;
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-config-global-root-'));
+
+      try {
+        process.env.SQUIDRUN_PROFILE = 'main';
+        process.env.SQUIDRUN_DATA_ROOT = dataRoot;
+        delete process.env.SQUIDRUN_WORKSPACE_ROOT;
+        delete process.env.SQUIDRUN_PROJECT_ROOT;
+
+        jest.isolateModules(() => {
+          const isolatedConfig = require('../config');
+          const expectedRoot = path.join(path.resolve(dataRoot), '.squidrun', 'global-state');
+          expect(isolatedConfig.GLOBAL_STATE_ROOT).toBe(expectedRoot);
+          expect(isolatedConfig.resolveGlobalPath('message-state.json')).toBe(
+            path.join(expectedRoot, 'message-state.json')
+          );
+        });
+      } finally {
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        if (previousWorkspaceRoot === undefined) {
+          delete process.env.SQUIDRUN_WORKSPACE_ROOT;
+        } else {
+          process.env.SQUIDRUN_WORKSPACE_ROOT = previousWorkspaceRoot;
+        }
+        if (previousProjectRoot === undefined) {
+          delete process.env.SQUIDRUN_PROJECT_ROOT;
+        } else {
+          process.env.SQUIDRUN_PROJECT_ROOT = previousProjectRoot;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+      }
+    });
+
     test('discovers packaged install manifest from app.asar runtime path', () => {
       const previousProfile = process.env.SQUIDRUN_PROFILE;
       const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
@@ -245,6 +291,57 @@ describe('config.js', () => {
           process.env.SQUIDRUN_PROJECT_ROOT = previousProjectRoot;
         }
         fs.rmSync(repoRoot, { recursive: true, force: true });
+      }
+    });
+
+    test('scopes global state to packaged install manifest data root', () => {
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const previousWorkspaceRoot = process.env.SQUIDRUN_WORKSPACE_ROOT;
+      const previousProjectRoot = process.env.SQUIDRUN_PROJECT_ROOT;
+      const installRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-config-global-manifest-'));
+      const manifestPath = path.join(installRoot, 'squidrun-install.json');
+      const dataRoot = path.join(installRoot, 'instance-data');
+      const runtimePath = path.join(installRoot, 'resources', 'app.asar', 'ui');
+
+      try {
+        process.env.SQUIDRUN_PROFILE = 'main';
+        delete process.env.SQUIDRUN_DATA_ROOT;
+        delete process.env.SQUIDRUN_WORKSPACE_ROOT;
+        delete process.env.SQUIDRUN_PROJECT_ROOT;
+        fs.writeFileSync(manifestPath, `${JSON.stringify({ dataRoot: 'instance-data' }, null, 2)}\n`, 'utf8');
+
+        jest.isolateModules(() => {
+          const isolatedConfig = require('../config');
+          expect(isolatedConfig.resolveGlobalStateRoot({
+            env: {},
+            runtimePath,
+            startDir: runtimePath,
+            homePath: path.join(installRoot, 'home'),
+          })).toBe(path.join(path.resolve(dataRoot), '.squidrun', 'global-state'));
+        });
+      } finally {
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        if (previousWorkspaceRoot === undefined) {
+          delete process.env.SQUIDRUN_WORKSPACE_ROOT;
+        } else {
+          process.env.SQUIDRUN_WORKSPACE_ROOT = previousWorkspaceRoot;
+        }
+        if (previousProjectRoot === undefined) {
+          delete process.env.SQUIDRUN_PROJECT_ROOT;
+        } else {
+          process.env.SQUIDRUN_PROJECT_ROOT = previousProjectRoot;
+        }
+        fs.rmSync(installRoot, { recursive: true, force: true });
       }
     });
 

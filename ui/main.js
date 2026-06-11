@@ -36,32 +36,40 @@ const {
   isMainProfile,
 } = require('./profile');
 const {
+  applyInstalledElectronUserDataPath,
   resolveExplicitDataRoot,
   resolveInstalledDataRoot,
 } = require('./modules/installed-data-root');
 
 const initialLaunchIntent = parseLaunchIntent(process.argv.slice(1));
 const activeProfileName = applyProfileEnv(initialLaunchIntent.profileName || 'main');
-if (!process.env.SQUIDRUN_PROJECT_ROOT) {
-  const profileProjectRoot = getProfileProjectRootOverride(activeProfileName);
-  if (profileProjectRoot) {
-    process.env.SQUIDRUN_PROJECT_ROOT = profileProjectRoot;
-  } else {
-    const explicitDataRoot = resolveExplicitDataRoot(process.env);
-    if (explicitDataRoot?.path) {
-      process.env.SQUIDRUN_PROJECT_ROOT = explicitDataRoot.path;
-    } else if (app.isPackaged === true) {
-      process.env.SQUIDRUN_PROJECT_ROOT = resolveInstalledDataRoot({
-        cwd: process.cwd(),
-        execPath: process.execPath,
-        homePath: typeof app.getPath === 'function' ? app.getPath('home') : os.homedir(),
-        resourcesPath: process.resourcesPath,
-      }).path;
-    }
-  }
+const packagedDataRootOptions = {
+  cwd: process.cwd(),
+  execPath: process.execPath,
+  homePath: typeof app.getPath === 'function' ? app.getPath('home') : os.homedir(),
+  resourcesPath: process.resourcesPath,
+};
+const explicitDataRoot = resolveExplicitDataRoot(process.env);
+const installedDataRoot = (explicitDataRoot || app.isPackaged === true)
+  ? resolveInstalledDataRoot(packagedDataRootOptions)
+  : null;
+const profileProjectRoot = getProfileProjectRootOverride(activeProfileName);
+if (profileProjectRoot) {
+  process.env.SQUIDRUN_PROJECT_ROOT = profileProjectRoot;
+} else if (explicitDataRoot?.path) {
+  process.env.SQUIDRUN_PROJECT_ROOT = explicitDataRoot.path;
+} else if (!process.env.SQUIDRUN_PROJECT_ROOT && app.isPackaged === true && installedDataRoot?.path) {
+  process.env.SQUIDRUN_PROJECT_ROOT = installedDataRoot.path;
 }
 
-if (!isMainProfile(activeProfileName) && typeof app?.getPath === 'function' && typeof app?.setPath === 'function') {
+const installedUserData = applyInstalledElectronUserDataPath(app, installedDataRoot);
+
+if (
+  !installedUserData.applied
+  && !isMainProfile(activeProfileName)
+  && typeof app?.getPath === 'function'
+  && typeof app?.setPath === 'function'
+) {
   try {
     const defaultUserDataPath = app.getPath('userData');
     if (defaultUserDataPath) {
