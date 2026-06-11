@@ -307,6 +307,47 @@ describe('PTY Handlers', () => {
       );
     });
 
+    test('pins spawn-on-create Claude arm panes with a per-pane session id', async () => {
+      ctx.daemonClient.connected = true;
+      const workingDir = 'D:\\projects\\TrustQuote';
+
+      const result = await harness.invoke('pty-create', 'trustquote-app', workingDir, {
+        paneCommand: 'claude',
+        spawnCommandOnCreate: true,
+        preferWorkingDir: true,
+        env: {
+          SQUIDRUN_ROLE: 'trustquote-app',
+          SQUIDRUN_WINDOW_KEY: 'squid-room',
+          SQUIDRUN_WORKING_DIR: workingDir,
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        paneId: 'trustquote-app',
+        cwd: workingDir,
+        spawnCommandOnCreate: true,
+      }));
+      expect(result.paneCommand).toMatch(/^claude --session-id [0-9a-f-]{36}$/);
+      const store = loadPaneSessionIds(deps.paneSessionIdsFilePath);
+      expect(store.panes['trustquote-app']).toBeTruthy();
+      expect(result.paneCommand).toBe(`claude --session-id ${store.panes['trustquote-app']}`);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        'trustquote-app',
+        workingDir,
+        false,
+        null,
+        expect.objectContaining({
+          SQUIDRUN_ROLE: 'trustquote-app',
+          SQUIDRUN_WINDOW_KEY: 'squid-room',
+          SQUIDRUN_WORKING_DIR: workingDir,
+        }),
+        {
+          paneCommand: result.paneCommand,
+          spawnCommandOnCreate: true,
+        }
+      );
+    });
+
     test('spawns codex panes with null mode (interactive PTY, not codex-exec)', async () => {
       ctx.daemonClient.connected = true;
       ctx.currentSettings.paneCommands = { '2': 'codex --mode exec' };

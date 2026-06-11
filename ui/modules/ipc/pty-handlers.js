@@ -681,7 +681,25 @@ function registerPtyHandlers(ctx, deps = {}) {
     const explicitPaneCommand = typeof ptyOptions.paneCommand === 'string'
       ? ptyOptions.paneCommand.trim()
       : '';
-    const paneCommand = explicitPaneCommand || getPaneCommandForRuntime(ctx, paneId);
+    let paneCommand = explicitPaneCommand || getPaneCommandForRuntime(ctx, paneId);
+    const spawnCommandOnCreate = ptyOptions.spawnCommandOnCreate === true && Boolean(paneCommand);
+    if (spawnCommandOnCreate) {
+      const resumeCommand = appendResumeFlagsToAgentCommand({
+        paneId,
+        command: paneCommand,
+        cwd,
+        idStorePath: paneSessionIdsFilePath,
+        homeDir: resumeHomeDir,
+      });
+      paneCommand = resumeCommand.command;
+      if (resumeCommand.decision) {
+        const decision = resumeCommand.decision;
+        log.info(
+          'PTY',
+          `[resume] pty-create pane ${paneId}: ${decision.mode || 'cold'}${decision.cli ? ` (${decision.cli})` : ''}${decision.sessionId ? ` sessionId=${decision.sessionId}` : ''}${decision.flags ? ` -> ${decision.flags}` : ''}${decision.reason ? ` - ${decision.reason}` : ''}`
+        );
+      }
+    }
     const runtime = detectCliFromCommand(paneCommand);
 
     let spawnEnv = (ptyOptions.env && typeof ptyOptions.env === 'object')
@@ -722,7 +740,6 @@ function registerPtyHandlers(ctx, deps = {}) {
 
     startupInjectionClaims.clear(paneId);
 
-    const spawnCommandOnCreate = ptyOptions.spawnCommandOnCreate === true && Boolean(paneCommand);
     const spawnOptions = { paneCommand };
     if (spawnCommandOnCreate) {
       spawnOptions.spawnCommandOnCreate = true;

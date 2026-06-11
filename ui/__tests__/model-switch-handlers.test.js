@@ -236,6 +236,39 @@ describe('registerModelSwitchHandlers', () => {
       );
     });
 
+    it('switches Squid Room arm panes by persisting the arm command and signaling the owner window', async () => {
+      const sendPaneModelChanged = jest.fn();
+      const paneRestartArbiter = {
+        getActiveClaim: jest.fn(() => null),
+        resolveOwner: jest.fn(() => ({ ownerWindowKey: 'squid-room' })),
+      };
+      const { executePaneModelSwitch } = require('../modules/ipc/model-switch-handlers');
+
+      const result = await executePaneModelSwitch(
+        mockCtx,
+        { paneId: 'trustquote-app', model: 'claude' },
+        { ...mockDeps, sendPaneModelChanged, paneRestartArbiter }
+      );
+
+      expect(result).toEqual({ success: true, paneId: 'trustquote-app', model: 'claude' });
+      expect(paneRestartArbiter.getActiveClaim).toHaveBeenCalledWith('trustquote-app');
+      expect(paneRestartArbiter.resolveOwner).toHaveBeenCalledWith('trustquote-app');
+      expect(mockCtx.recoveryManager.markExpectedExit).not.toHaveBeenCalled();
+      expect(mockCtx.daemonClient.kill).not.toHaveBeenCalled();
+      expect(mockCtx.currentSettings.paneCommands['trustquote-app']).toBe('claude');
+      expect(mockDeps.saveSettings).toHaveBeenCalledWith({ paneCommands: mockCtx.currentSettings.paneCommands });
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('all.txt'),
+        '(SYSTEM): TrustQuote App switched to Claude\n'
+      );
+      expect(sendPaneModelChanged).toHaveBeenCalledWith({
+        paneId: 'trustquote-app',
+        model: 'claude',
+        ownerWindowKey: 'squid-room',
+        command: 'claude',
+      });
+    });
+
     it('should proceed after a timeout if exit event is not received', async () => {
       const logger = require('../modules/logger');
 

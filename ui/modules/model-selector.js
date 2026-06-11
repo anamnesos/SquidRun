@@ -32,6 +32,39 @@ function setPaneCliAttribute(paneId, model) {
   if (pane) pane.dataset.cli = model;
 }
 
+function commandForModelFallback(model) {
+  if (model === 'gemini') return 'gemini';
+  if (model === 'codex') return 'codex';
+  return 'claude';
+}
+
+function syncArmRuntimeOverride(paneId, model, command = '') {
+  if (typeof terminal.setPaneRuntimeOverride !== 'function') return;
+  const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+  if (!pane || pane.dataset?.squidRoomLivePane !== 'true') return;
+  const nextCommand = String(
+    command
+    || pane.dataset.squidRoomCommand
+    || terminal.getPaneRuntimeOverride?.(paneId)?.command
+    || commandForModelFallback(model)
+  ).trim();
+  pane.dataset.cli = model;
+  if (nextCommand) pane.dataset.squidRoomCommand = nextCommand;
+  terminal.setPaneRuntimeOverride(paneId, {
+    label: pane.dataset.squidRoomLabel || paneId,
+    roleLabel: pane.dataset.squidRoomLabel || pane.dataset.squidRoomRole || paneId,
+    roleId: pane.dataset.squidRoomRoleId || pane.dataset.squidRoomRouteTarget || paneId,
+    routeTarget: pane.dataset.squidRoomRouteTarget || paneId,
+    provider: model,
+    command: nextCommand,
+    commandSourcePaneId: pane.dataset.squidRoomCommandSourcePaneId,
+    workingDir: pane.dataset.squidRoomWorkingDir,
+    startupMessage: pane.dataset.squidRoomStartupMessage,
+    spawnCommandOnCreate: true,
+    recreateOnWorkingDirMismatch: true,
+  });
+}
+
 /**
  * Initialize model selectors to match current pane commands
  */
@@ -44,7 +77,8 @@ async function initModelSelectors() {
       const runtimeOverride = typeof terminal.getPaneRuntimeOverride === 'function'
         ? terminal.getPaneRuntimeOverride(paneId)
         : null;
-      const cmd = (runtimeOverride?.command || paneCommands[paneId] || 'claude').toLowerCase();
+      const command = paneCommands[paneId] || runtimeOverride?.command || 'claude';
+      const cmd = command.toLowerCase();
 
       // Detect model from command
       const model = detectModelFamily(cmd);
@@ -55,6 +89,7 @@ async function initModelSelectors() {
 
       // Set data-cli attribute on pane element for CSS color binding
       setPaneCliAttribute(paneId, model);
+      syncArmRuntimeOverride(paneId, model, command);
     });
 
     log.info('ModelSelector', 'Initialized from pane commands (data-cli set)');
@@ -141,11 +176,12 @@ function setupModelSelectorListeners() {
  * Setup IPC listener for model change completion
  */
 function setupModelChangeListener() {
-  registerScopedIpcListener('model-selector', 'pane-model-changed', async (event, { paneId, model, ownerWindowKey }) => {
+  registerScopedIpcListener('model-selector', 'pane-model-changed', async (event, { paneId, model, ownerWindowKey, command }) => {
     const select = document.querySelector(`.model-selector[data-pane-id="${paneId}"]`);
 
     // Update data-cli attribute immediately on model switch
     setPaneCliAttribute(paneId, model);
+    syncArmRuntimeOverride(paneId, model, command);
 
     // Mirror windows sync UI only - the switch may have been initiated in
     // another window, so the value must follow the completion, not the
@@ -157,6 +193,7 @@ function setupModelChangeListener() {
 
     const myWindowKey = document.body?.dataset?.windowKey || 'main';
     const isOwner = ownerWindowKey ? ownerWindowKey === myWindowKey : isPaneOwnerWindow();
+    log.info('ModelSelector', `Pane ${paneId} debug - ownerWindowKey: ${ownerWindowKey}, myWindowKey: ${myWindowKey}, isOwner: ${isOwner}`);
 
     if (!isOwner) {
       if (select) select.disabled = false;
@@ -187,4 +224,3 @@ module.exports = {
   setupModelChangeListener,
   setPaneCliAttribute,
 };
-

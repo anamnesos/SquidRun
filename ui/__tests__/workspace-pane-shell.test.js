@@ -263,13 +263,11 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.pane[data-pane-id="3"]').dataset.squidRoomLabel).toBe('Oracle');
     expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.squid-room-codex-pet-builder-squid')).toBeTruthy();
     expect(doc.querySelector('.pane[data-pane-id="3"]').querySelector('.squid-room-codex-pet-oracle-squid')).toBeTruthy();
-    // Wave 3 (S426): the core pair switches models FROM the room - the pet
-    // header re-creates the selector the pet render wipes (wired by the
-    // delegated change listener in model-selector.js).
+    // Builder/Oracle panes live in the main window; Squid Room shows their
+    // pets only, so model controls do not live in the pet header.
     for (const corePaneId of ['2', '3']) {
       const petSelector = doc.querySelector(`.pane[data-pane-id="${corePaneId}"]`).querySelector('.model-selector');
-      expect(petSelector).toBeTruthy();
-      expect(petSelector.dataset.paneId).toBe(corePaneId);
+      expect(petSelector).toBeFalsy();
     }
     expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.squid-room-pet-bubble').textContent).toBe('Working the active fix.');
     expect(doc.querySelector('.pane[data-pane-id="3"]').querySelector('.squid-room-pet-bubble').textContent).toBe('Checking the proof.');
@@ -290,11 +288,12 @@ describe('workspace pane shell', () => {
     for (const paneId of ['trustquote-lead', 'trustquote-schedule-dispatch', 'trustquote-app', 'trustquote-invoice']) {
       const pane = doc.querySelector(`.pane[data-pane-id="${paneId}"]`);
       expect(pane.querySelector('.agent-avatar').innerHTML).toContain('avatar-icon');
-      // Arm tiles carry a READ-ONLY model badge (S426: the old dropdown was
-      // unwired in dynamically created tiles and arm IDs are unsupported by
-      // the switch path). No dropdown may render here.
-      expect(pane.querySelector(`.model-badge[data-pane-id="${paneId}"]`).dataset.model).toBe('codex');
-      expect(pane.querySelector('.model-selector')).toBeFalsy();
+      const armSelector = pane.querySelector(`.model-selector[data-pane-id="${paneId}"]`);
+      expect(armSelector).toBeTruthy();
+      expect(armSelector.classList.contains('squid-room-arm-model-selector')).toBe(true);
+      expect(armSelector.dataset.squidRoomArmModelSelector).toBe('true');
+      expect(armSelector.value).toBe('codex');
+      expect(pane.querySelector(`.model-badge[data-pane-id="${paneId}"]`)).toBeFalsy();
       expect(pane.querySelector(`.pane-role-info-btn[data-pane-id="${paneId}"]`).innerHTML).toContain('pane-btn-icon');
       expect(pane.querySelector('.interrupt-btn').innerHTML).toContain('pane-btn-icon');
       expect(pane.querySelector('.unstick-btn').innerHTML).toContain('pane-btn-icon');

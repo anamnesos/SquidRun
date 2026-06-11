@@ -12,6 +12,7 @@ const {
   applyWindowChrome,
   resolveWindowChromeClass,
 } = require('./window-chrome');
+const rendererSettings = require('./settings');
 
 const SQUID_ROOM_WORKSPACE_KEY = 'squid-room';
 const SQUID_ROOM_TEAM_PANE_IDS = Object.freeze(['2', '3']);
@@ -64,6 +65,23 @@ const SQUID_ROOM_TRUSTQUOTE_ARM_PANES = Object.freeze(getTrustQuoteDayToDayArmSp
 const SQUID_ROOM_PANE_IDS = Object.freeze([
   ...SQUID_ROOM_TRUSTQUOTE_ARM_PANES.map((pane) => pane.paneId),
 ]);
+
+function detectModelFamily(command) {
+  const normalized = String(command || '').trim().toLowerCase();
+  if (normalized.includes('codex')) return 'codex';
+  if (normalized.includes('gemini')) return 'gemini';
+  return 'claude';
+}
+
+function resolveArmCommandFromSettings(paneId, fallback = 'codex') {
+  try {
+    const paneCommands = rendererSettings.getSettings?.()?.paneCommands || {};
+    const command = String(paneCommands[String(paneId)] || '').trim();
+    return command || fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
 
 function getDocument(doc) {
   if (doc && typeof doc.querySelector === 'function') return doc;
@@ -158,22 +176,74 @@ function createRoleInfoButton(doc, paneId) {
   });
 }
 
-// Room arm tiles render the model as a READ-ONLY badge, not a dropdown: the
-// previous selector was never wired (no change listener on dynamically
-// created tiles) and arm IDs are rejected by the main switch path
-// (PANE_IDS=1/2/3) - a dead control that silently lied about its value.
-// Oracle audit S426; a working room switcher is a separate feature decision.
-function createModelBadge(doc, paneId, model = 'codex') {
-  const label = String(model || 'codex');
-  return createElement(doc, 'span', {
-    className: 'model-badge',
-    id: `model-badge-${paneId}`,
-    title: `Model for this arm (read-only): ${label}`,
-    dataset: { paneId, model: label },
-  }, label.charAt(0).toUpperCase() + label.slice(1));
+function createArmModelSelector(doc, paneId, currentModel = 'codex') {
+  const model = ['claude', 'codex', 'gemini'].includes(currentModel) ? currentModel : 'codex';
+  const selector = createElement(doc, 'select', {
+    className: 'model-selector squid-room-arm-model-selector',
+    id: `model-selector-${paneId}`,
+    title: 'Switch model for this arm',
+    dataset: {
+      paneId,
+      previousValue: model,
+      squidRoomArmModelSelector: 'true',
+    },
+  });
+  for (const [value, label] of [
+    ['claude', 'Claude'],
+    ['codex', 'Codex'],
+    ['gemini', 'Gemini'],
+  ]) {
+    selector.appendChild(createElement(doc, 'option', {
+      value,
+      selected: value === model,
+    }, label));
+  }
+  selector.value = model;
+  return selector;
+}
+
+function removeElement(element) {
+  if (!element) return;
+  if (typeof element.remove === 'function') {
+    element.remove();
+    return;
+  }
+  const siblings = element.parentNode?.childNodes;
+  if (Array.isArray(siblings)) {
+    const index = siblings.indexOf(element);
+    if (index >= 0) siblings.splice(index, 1);
+  }
+}
+
+function ensureArmModelSelector(doc, pane, paneId, currentModel = 'codex') {
+  if (!doc || !pane || !paneId) return null;
+  const model = ['claude', 'codex', 'gemini'].includes(currentModel) ? currentModel : 'codex';
+  let selector = pane.querySelector?.(`.model-selector[data-pane-id="${paneId}"]`);
+  if (!selector) {
+    selector = createArmModelSelector(doc, paneId, model);
+    const badge = pane.querySelector?.(`.model-badge[data-pane-id="${paneId}"]`);
+    if (badge?.parentNode) {
+      badge.parentNode.insertBefore?.(selector, badge);
+      removeElement(badge);
+      return selector;
+    }
+    const headerRight = pane.querySelector?.('.pane-header-right') || pane.querySelector?.('.pane-header');
+    const health = pane.querySelector?.(`#health-${paneId}`);
+    if (headerRight && health?.parentNode === headerRight) {
+      headerRight.insertBefore?.(selector, health);
+    } else {
+      headerRight?.appendChild?.(selector);
+    }
+  }
+  selector.value = model;
+  selector.dataset.previousValue = model;
+  selector.dataset.squidRoomArmModelSelector = 'true';
+  return selector;
 }
 
 function createSquidRoomLivePane(doc, spec) {
+  const command = resolveArmCommandFromSettings(spec.paneId, spec.command);
+  const model = detectModelFamily(command);
   const pane = createElement(doc, 'div', {
     className: 'pane squid-room-live-pane',
     dataset: {
@@ -184,10 +254,10 @@ function createSquidRoomLivePane(doc, spec) {
       squidRoomRoleId: spec.roleId || spec.routeTarget || spec.paneId,
       squidRoomRouteTarget: spec.routeTarget || spec.paneId,
       squidRoomWorkingDir: spec.workingDir,
-      squidRoomCommand: spec.command,
+      squidRoomCommand: command,
       squidRoomCommandSourcePaneId: spec.commandSourcePaneId,
       squidRoomStartupMessage: spec.startupMessage,
-      cli: 'codex',
+      cli: model,
     },
   });
 
@@ -218,7 +288,7 @@ function createSquidRoomLivePane(doc, spec) {
   }));
 
   const headerRight = createElement(doc, 'div', { className: 'pane-header-right' });
-  headerRight.appendChild(createModelBadge(doc, spec.paneId, 'codex'));
+  headerRight.appendChild(createArmModelSelector(doc, spec.paneId, model));
   headerRight.appendChild(createElement(doc, 'span', {
     className: 'agent-health',
     id: `health-${spec.paneId}`,
@@ -264,31 +334,6 @@ function createSquidRoomPetArtwork(doc, spec) {
   });
 }
 
-function createPetModelSelector(doc, paneId, currentModel) {
-  const model = ['claude', 'codex', 'gemini'].includes(currentModel) ? currentModel : 'claude';
-  const selector = createElement(doc, 'select', {
-    className: 'model-selector squid-room-pet-model-selector',
-    id: `model-selector-${paneId}`,
-    title: 'Switch model for this pane',
-    dataset: {
-      paneId,
-      previousValue: model,
-    },
-  });
-  for (const [value, label] of [
-    ['claude', 'Claude'],
-    ['codex', 'Codex'],
-    ['gemini', 'Gemini'],
-  ]) {
-    selector.appendChild(createElement(doc, 'option', {
-      value,
-      selected: value === model,
-    }, label));
-  }
-  selector.value = model;
-  return selector;
-}
-
 function renderSquidRoomPetPane(doc, pane, spec) {
   if (!doc || !pane || !spec) return null;
   if (Array.isArray(pane.childNodes)) pane.childNodes.length = 0;
@@ -309,13 +354,6 @@ function renderSquidRoomPetPane(doc, pane, spec) {
   title.appendChild(createElement(doc, 'strong', {}, spec.title));
   header.appendChild(title);
   header.appendChild(createElement(doc, 'span', { className: 'squid-room-pet-state' }, spec.stateLabel));
-  // Core-pair switcher (wave 3, S426): the pet render wipes the static pane
-  // markup including its model selector, which is why the room had no
-  // working switcher. The dropdown re-created here is wired by the
-  // DELEGATED change listener in model-selector.js (binding survives any
-  // re-render); initModelSelectors syncs the value from settings at boot,
-  // and pane.dataset.cli seeds it across re-renders meanwhile.
-  header.appendChild(createPetModelSelector(doc, spec.paneId, pane.dataset.cli));
 
   const stage = createElement(doc, 'div', { className: 'squid-room-pet-stage' });
   stage.appendChild(createSquidRoomPetArtwork(doc, spec));
@@ -403,6 +441,8 @@ function ensureSquidRoomLivePanes(doc) {
 
   const panes = [];
   for (const spec of SQUID_ROOM_TRUSTQUOTE_ARM_PANES) {
+    const command = resolveArmCommandFromSettings(spec.paneId, spec.command);
+    const model = detectModelFamily(command);
     let pane = doc.querySelector?.(`.pane[data-pane-id="${spec.paneId}"]`);
     if (!pane) {
       pane = createSquidRoomLivePane(doc, spec);
@@ -415,10 +455,11 @@ function ensureSquidRoomLivePanes(doc) {
     pane.dataset.squidRoomRoleId = spec.roleId || spec.routeTarget || spec.paneId;
     pane.dataset.squidRoomRouteTarget = spec.routeTarget || spec.paneId;
     pane.dataset.squidRoomWorkingDir = spec.workingDir;
-    pane.dataset.squidRoomCommand = spec.command;
+    pane.dataset.squidRoomCommand = command;
     pane.dataset.squidRoomCommandSourcePaneId = spec.commandSourcePaneId;
     pane.dataset.squidRoomStartupMessage = spec.startupMessage;
-    pane.dataset.cli = 'codex';
+    pane.dataset.cli = model;
+    ensureArmModelSelector(doc, pane, spec.paneId, model);
     panes.push(spec);
   }
   return panes;
@@ -427,13 +468,15 @@ function ensureSquidRoomLivePanes(doc) {
 function configureSquidRoomRuntimeOverrides(terminal, livePanes = SQUID_ROOM_TRUSTQUOTE_ARM_PANES) {
   if (!terminal || typeof terminal.setPaneRuntimeOverride !== 'function') return;
   for (const spec of livePanes) {
+    const command = resolveArmCommandFromSettings(spec.paneId, spec.command);
+    const provider = detectModelFamily(command);
     terminal.setPaneRuntimeOverride(spec.paneId, {
       label: spec.label,
       roleLabel: spec.label,
       roleId: spec.roleId || spec.routeTarget || spec.paneId,
       routeTarget: spec.routeTarget || spec.paneId,
-      provider: 'codex',
-      command: spec.command,
+      provider,
+      command,
       commandSourcePaneId: spec.commandSourcePaneId,
       workingDir: spec.workingDir,
       startupMessage: spec.startupMessage,
