@@ -92,12 +92,14 @@ if (fallbackEnvPath) {
   require('dotenv').config({ path: fallbackEnvPath });
 }
 
-// Installed builds keep Telegram credentials in <dataRoot>/.squidrun/settings/telegram.json;
-// the overlay only fills env keys the .env loads above left unset, so explicit env always wins.
+// Installed builds keep their credentials in <dataRoot>/.squidrun/settings/ files;
+// the overlay only fills env keys the .env loads above left unset (explicit env
+// always wins) and enforces the wallet-class deny as the second wall behind the
+// scrub-launch wrapper.
 try {
   const overlayDataRoot = installedDataRoot || resolveInstalledDataRoot();
   if (overlayDataRoot.source !== 'default-external-workspace') {
-    require('./modules/telegram-credentials').applyTelegramEnvOverlay({ dataRoot: overlayDataRoot.path });
+    require('./modules/install-credentials').applyInstallCredentialEnvOverlay({ dataRoot: overlayDataRoot.path });
   }
 } catch (_) {
   // Credential overlay is best effort; a missing or unreadable settings file must never block boot.
