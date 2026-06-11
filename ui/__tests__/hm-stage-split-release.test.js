@@ -88,6 +88,8 @@ describe('hm-stage-split-release', () => {
     }));
     expect(manifest.dataRootContract.discoveryOrder).toContain('SQUIDRUN_DATA_ROOT');
     expect(manifest.dataRootContract.discoveryOrder).toContain('squidrun-install.json_or_.squidrun-install.json_near_packaged_runtime');
+    expect(manifest.dataRootContract.discoveryOrder.indexOf('squidrun-install.json_or_.squidrun-install.json_near_packaged_runtime'))
+      .toBeLessThan(manifest.dataRootContract.discoveryOrder.indexOf('git_root_for_dev'));
   });
 
   test('parses CLI flags', () => {

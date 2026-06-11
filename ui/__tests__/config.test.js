@@ -5,6 +5,7 @@
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const {
   PIPE_PATH,
   WORKSPACE_PATH,
@@ -195,6 +196,55 @@ describe('config.js', () => {
           process.env.SQUIDRUN_PROJECT_ROOT = previousProjectRoot;
         }
         fs.rmSync(installRoot, { recursive: true, force: true });
+      }
+    });
+
+    test('prefers packaged install manifest over git root when staged inside a worktree', () => {
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const previousWorkspaceRoot = process.env.SQUIDRUN_WORKSPACE_ROOT;
+      const previousProjectRoot = process.env.SQUIDRUN_PROJECT_ROOT;
+      const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-config-git-install-'));
+      const versionRoot = path.join(repoRoot, 'release', 'versions', '0.1.34');
+      const manifestPath = path.join(versionRoot, 'squidrun-install.json');
+      const dataRoot = path.join(repoRoot, 'external-data');
+      const runtimePath = path.join(versionRoot, 'resources', 'app.asar', 'ui');
+
+      try {
+        execFileSync('git', ['init'], { cwd: repoRoot, stdio: 'ignore' });
+        process.env.SQUIDRUN_PROFILE = 'main';
+        delete process.env.SQUIDRUN_DATA_ROOT;
+        delete process.env.SQUIDRUN_WORKSPACE_ROOT;
+        delete process.env.SQUIDRUN_PROJECT_ROOT;
+        fs.mkdirSync(runtimePath, { recursive: true });
+        fs.writeFileSync(manifestPath, `${JSON.stringify({ dataRoot }, null, 2)}\n`, 'utf8');
+
+        jest.isolateModules(() => {
+          const isolatedConfig = require('../config');
+          expect(isolatedConfig.discoverProjectRoot(runtimePath)).toBe(path.resolve(dataRoot));
+        });
+      } finally {
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        if (previousWorkspaceRoot === undefined) {
+          delete process.env.SQUIDRUN_WORKSPACE_ROOT;
+        } else {
+          process.env.SQUIDRUN_WORKSPACE_ROOT = previousWorkspaceRoot;
+        }
+        if (previousProjectRoot === undefined) {
+          delete process.env.SQUIDRUN_PROJECT_ROOT;
+        } else {
+          process.env.SQUIDRUN_PROJECT_ROOT = previousProjectRoot;
+        }
+        fs.rmSync(repoRoot, { recursive: true, force: true });
       }
     });
 
