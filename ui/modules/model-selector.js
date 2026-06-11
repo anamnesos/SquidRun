@@ -141,7 +141,7 @@ function setupModelSelectorListeners() {
  * Setup IPC listener for model change completion
  */
 function setupModelChangeListener() {
-  registerScopedIpcListener('model-selector', 'pane-model-changed', async (event, { paneId, model }) => {
+  registerScopedIpcListener('model-selector', 'pane-model-changed', async (event, { paneId, model, ownerWindowKey }) => {
     const select = document.querySelector(`.model-selector[data-pane-id="${paneId}"]`);
 
     // Update data-cli attribute immediately on model switch
@@ -155,7 +155,10 @@ function setupModelChangeListener() {
       select.dataset.previousValue = model;
     }
 
-    if (!isPaneOwnerWindow()) {
+    const myWindowKey = document.body?.dataset?.windowKey || 'main';
+    const isOwner = ownerWindowKey ? ownerWindowKey === myWindowKey : isPaneOwnerWindow();
+
+    if (!isOwner) {
       if (select) select.disabled = false;
       log.info('ModelSelector', `Pane ${paneId} model change synced (mirror window, no respawn)`);
       return;
@@ -184,3 +187,4 @@ module.exports = {
   setupModelChangeListener,
   setPaneCliAttribute,
 };
+

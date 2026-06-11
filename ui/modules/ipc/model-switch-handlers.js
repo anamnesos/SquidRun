@@ -171,7 +171,9 @@ async function executePaneModelSwitch(ctx, payload = {}, deps = {}) {
     // windowKey and the pane-restart arbiter denies non-owner respawns
     // regardless. deps.sendPaneModelChanged is the injectable seam.
     // ACTIVATION: next app restart (main loads this module at boot).
-    const completionPayload = { paneId, model };
+    const resolvedOwner = paneRestartArbiter && typeof paneRestartArbiter.resolveOwner === 'function' ? paneRestartArbiter.resolveOwner(id) : {};
+    const ownerWindowKey = resolvedOwner?.ownerWindowKey || 'main';
+    const completionPayload = { paneId, model, ownerWindowKey };
     if (typeof deps.sendPaneModelChanged === 'function') {
       try {
         deps.sendPaneModelChanged(completionPayload);
@@ -220,3 +222,4 @@ function unregisterModelSwitchHandlers(ctx) {
 
 registerModelSwitchHandlers.unregister = unregisterModelSwitchHandlers;
 module.exports = { registerModelSwitchHandlers, executePaneModelSwitch };
+
