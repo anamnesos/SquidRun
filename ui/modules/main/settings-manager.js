@@ -32,6 +32,7 @@ const CLI_DISCOVERY_TIMEOUT_MS = 2000;
 const CLI_VERSION_TIMEOUT_MS = 2500;
 const SMTP_PASS_OBFUSCATION_PREFIX = 'obf:v1:';
 const SETTINGS_FILE_NAME = 'settings.json';
+const PROVISIONED_SETTINGS_RELPATH = path.join('settings', SETTINGS_FILE_NAME);
 
 /**
  * @param {unknown} value
@@ -92,6 +93,38 @@ function buildGeminiCommand(options = {}) {
     fallbackModel: options.fallbackModel,
   });
 }
+
+function isPlainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function stableSettingsValue(value) {
+  if (value === undefined) return '__undefined__';
+  return JSON.stringify(sortObjectDeep(value));
+}
+
+function settingsValuesEqual(left, right) {
+  return stableSettingsValue(left) === stableSettingsValue(right);
+}
+
+function sortObjectDeep(value) {
+  if (Array.isArray(value)) return value.map(sortObjectDeep);
+  if (!isPlainObject(value)) return value;
+  return Object.keys(value).sort().reduce((acc, key) => {
+    acc[key] = sortObjectDeep(value[key]);
+    return acc;
+  }, {});
+}
+
+const DEFAULT_SKELETON_SIGNATURE_KEYS = Object.freeze([
+  'autoSpawn',
+  'autonomyConsentGiven',
+  'autonomyConsentChoice',
+  'operatingMode',
+  'paneCommands',
+  'paneProjects',
+  'userName',
+]);
 
 function buildCommandForCli(cli, options = {}) {
   if (cli === 'codex') return 'codex';
@@ -206,6 +239,16 @@ class SettingsManager {
     return path.join(__dirname, '..', '..', SETTINGS_FILE_NAME);
   }
 
+  resolveProvisionedSettingsPath() {
+    if (!this.isPackaged || !isMainProfile(getActiveProfileName())) return null;
+    if (typeof resolveCoordPath !== 'function') return null;
+    try {
+      return resolveCoordPath(PROVISIONED_SETTINGS_RELPATH);
+    } catch {
+      return null;
+    }
+  }
+
   tryGetElectronPath(pathName) {
     if (!this.electronApp || typeof this.electronApp.getPath !== 'function') {
       return { value: null, error: 'electron_app_getPath_unavailable' };
@@ -285,6 +328,97 @@ class SettingsManager {
     fs.renameSync(tempPath, this.settingsPath);
   }
 
+  readSettingsJsonFile(filePath) {
+    if (!filePath || !fs.existsSync(filePath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    return isPlainObject(parsed) ? parsed : null;
+  }
+
+  isDefaultSettingsSkeleton(payload) {
+    if (!isPlainObject(payload)) return false;
+
+    const defaultSettings = this.defaultSettings || createDefaultSettings({ isPackaged: this.isPackaged });
+    for (const key of DEFAULT_SKELETON_SIGNATURE_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(payload, key)) return false;
+      if (!settingsValuesEqual(payload[key], defaultSettings[key])) return false;
+    }
+
+    const defaultKeys = new Set(Object.keys(defaultSettings));
+    for (const [key, value] of Object.entries(payload)) {
+      if (!defaultKeys.has(key)) return false;
+      if (!settingsValuesEqual(value, defaultSettings[key])) return false;
+    }
+    return true;
+  }
+
+  buildProvisionedSettingsForWrite(provisionedSettings) {
+    const payload = JSON.parse(JSON.stringify(provisionedSettings));
+    payload.smtpPass = obfuscateSmtpPassword(payload.smtpPass);
+    return payload;
+  }
+
+  seedPackagedSettingsFromProvisionedIfNeeded() {
+    if (!this.isPackaged || !isMainProfile(getActiveProfileName())) {
+      return { seeded: false, reason: 'not_packaged_main_profile' };
+    }
+
+    const provisionedSettingsPath = this.resolveProvisionedSettingsPath();
+    if (
+      !provisionedSettingsPath
+      || !this.settingsPath
+      || path.resolve(provisionedSettingsPath) === path.resolve(this.settingsPath)
+      || !fs.existsSync(provisionedSettingsPath)
+    ) {
+      return { seeded: false, reason: 'provisioned_settings_missing', provisionedSettingsPath };
+    }
+
+    let existingSettings = null;
+    let existingSettingsPresent = false;
+    try {
+      existingSettingsPresent = fs.existsSync(this.settingsPath);
+      existingSettings = existingSettingsPresent ? this.readSettingsJsonFile(this.settingsPath) : null;
+    } catch (err) {
+      log.warn('Settings', `Installed settings seed skipped; userData settings unreadable: ${err.message}`);
+      return { seeded: false, reason: 'user_data_settings_unreadable', error: err.message };
+    }
+
+    const trigger = !existingSettingsPresent
+      ? 'settings_absent'
+      : (this.isDefaultSettingsSkeleton(existingSettings) ? 'default_skeleton' : null);
+    if (!trigger) {
+      return { seeded: false, reason: 'user_data_settings_authoritative', provisionedSettingsPath };
+    }
+
+    let provisionedSettings = null;
+    try {
+      provisionedSettings = this.readSettingsJsonFile(provisionedSettingsPath);
+    } catch (err) {
+      log.warn('Settings', `Installed settings seed skipped; provisioned settings unreadable: ${err.message}`);
+      return { seeded: false, reason: 'provisioned_settings_unreadable', error: err.message };
+    }
+    if (!isPlainObject(provisionedSettings)) {
+      return { seeded: false, reason: 'provisioned_settings_invalid', provisionedSettingsPath };
+    }
+
+    const payload = this.buildProvisionedSettingsForWrite(provisionedSettings);
+    this.writeSettingsFile(payload);
+    log.info(
+      'Settings',
+      `Seeded packaged userData settings from provisioned data-root settings (${trigger})`,
+      {
+        settingsPath: this.settingsPath,
+        provisionedSettingsPath,
+        trigger,
+      }
+    );
+    return {
+      seeded: true,
+      trigger,
+      settingsPath: this.settingsPath,
+      provisionedSettingsPath,
+    };
+  }
+
   createDefaultSettingsFileIfMissing() {
     if (!this.isPackaged) return;
     if (fs.existsSync(this.settingsPath)) return;
@@ -308,6 +442,7 @@ class SettingsManager {
   loadSettings() {
     try {
       this.refreshRuntimeSettingsContext('load-settings');
+      this.seedPackagedSettingsFromProvisionedIfNeeded();
       this.createDefaultSettingsFileIfMissing();
       if (fs.existsSync(this.settingsPath)) {
         const content = fs.readFileSync(this.settingsPath, 'utf-8');
