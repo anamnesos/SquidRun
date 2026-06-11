@@ -411,6 +411,34 @@ describe('PTY Handlers', () => {
       );
     });
 
+    test('spawn-on-create standard panes use assigned paneProjects cwd without explicit preferWorkingDir', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.autonomyConsentGiven = true;
+      ctx.currentSettings.allowAllPermissions = true;
+      ctx.currentSettings.paneProjects = { '3': 'D:\\SquidRun\\Eunbyeol\\workspace' };
+      ctx.currentSettings.paneCommands = { '3': 'codex' };
+
+      const result = await harness.invoke('pty-create', '3', 'D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-test', {
+        spawnCommandOnCreate: true,
+        paneCommand: 'codex',
+      });
+
+      expect(result.cwd).toBe(path.resolve('D:\\SquidRun\\Eunbyeol\\workspace'));
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '3',
+        path.resolve('D:\\SquidRun\\Eunbyeol\\workspace'),
+        false,
+        null,
+        process.platform === 'win32'
+          ? expect.objectContaining({ TEMP: expect.any(String), TMP: expect.any(String) })
+          : null,
+        {
+          paneCommand: 'codex --yolo',
+          spawnCommandOnCreate: true,
+        }
+      );
+    });
+
     test('adds Claude autonomy flag before spawn-on-create session pinning', async () => {
       ctx.daemonClient.connected = true;
       ctx.currentSettings.autonomyConsentGiven = true;

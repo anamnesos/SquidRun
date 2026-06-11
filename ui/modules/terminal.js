@@ -103,6 +103,7 @@ const paneRuntimeOverrides = new Map();
 const inputLocked = {};
 PANE_IDS.forEach(id => { inputLocked[id] = true; }); // Default: all panes locked
 let activePaneIds = [...PANE_IDS];
+const FRESH_SPAWN_INIT_TIMEOUT_MS = 10000;
 const IS_DARWIN = process.platform === 'darwin';
 const HIDDEN_PANE_HOSTS_ENV_FLAG = (
   typeof process !== 'undefined'
@@ -1658,7 +1659,6 @@ function applyFreshCreateSpawnCommandOptions(paneId, ptyCreateOptions = {}, opti
     ...ptyCreateOptions,
     paneCommand,
     spawnCommandOnCreate: true,
-    preferWorkingDir: true,
   };
 }
 
@@ -2959,18 +2959,45 @@ function sendToPane(paneId, message, options = {}) {
   return injectionController.sendToPane(id, message, options);
 }
 
-  // Initialize all terminals
-  async function initTerminals(options = {}) {
-    const initOptions = options && typeof options === 'object' ? options : {};
-    for (const paneId of getActivePaneIds()) {
-      if (terminals.has(paneId)) continue;
-      await initTerminal(paneId, {
-        ...(initOptions.spawnCommandOnCreate === true ? { spawnCommandOnCreate: true } : {}),
-      });
+function withFreshSpawnInitTimeout(paneId, promise) {
+  let timeoutId = null;
+  const guarded = Promise.resolve(promise)
+    .then(() => ({ paneId, ok: true }))
+    .catch((err) => ({ paneId, ok: false, error: err }));
+  const timeout = new Promise((resolve) => {
+    timeoutId = setTimeout(() => {
+      resolve({ paneId, ok: false, timedOut: true });
+    }, FRESH_SPAWN_INIT_TIMEOUT_MS);
+  });
+  return Promise.race([guarded, timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
+// Initialize all terminals
+async function initTerminals(options = {}) {
+  const initOptions = options && typeof options === 'object' ? options : {};
+  const missingPaneIds = getActivePaneIds().filter((paneId) => !terminals.has(paneId));
+  if (initOptions.spawnCommandOnCreate === true) {
+    const results = await Promise.all(missingPaneIds.map((paneId) => {
+      const promise = initTerminal(paneId, { spawnCommandOnCreate: true });
+      return withFreshSpawnInitTimeout(paneId, promise);
+    }));
+    for (const result of results) {
+      if (result.timedOut) {
+        log.warn('Terminal', `Fresh command-on-create init timed out for pane ${result.paneId}; continuing with other panes`);
+      } else if (result.ok === false) {
+        log.error(`Terminal ${result.paneId}`, 'Fresh command-on-create init failed', result.error);
+      }
     }
-    updateConnectionStatus('All terminals ready');
-    focusPane(getActivePaneIds()[0] || '1');
-  // Start stuck message sweeper for Claude panes
+  } else {
+    for (const paneId of missingPaneIds) {
+      if (terminals.has(paneId)) continue;
+      await initTerminal(paneId);
+    }
+  }
+  updateConnectionStatus('All terminals ready');
+  focusPane(getActivePaneIds()[0] || '1');
   startStuckMessageSweeper();
 }
 
