@@ -25,6 +25,8 @@ function createRecoveryController(options = {}) {
     resetTerminalWriteQueue,
     syncTerminalInputBridge,
     markIgnoreNextExit,
+    getPaneRuntimeOverride,
+    buildPtyCreateOptionsForRuntimeOverride,
   } = options;
 
   // Unstick escalation tracking (nudge -> interrupt -> restart)
@@ -239,6 +241,24 @@ function createRecoveryController(options = {}) {
     };
   }
 
+  function buildRestartPtyCreateArgs(paneId, restartLease) {
+    const id = String(paneId);
+    const runtimeOverride = typeof getPaneRuntimeOverride === 'function'
+      ? (getPaneRuntimeOverride(id) || {})
+      : {};
+    const workingDir = String(runtimeOverride.workingDir || runtimeOverride.cwd || '').trim();
+    const runtimeCreateOptions = typeof buildPtyCreateOptionsForRuntimeOverride === 'function'
+      ? (buildPtyCreateOptionsForRuntimeOverride(id, runtimeOverride, workingDir) || {})
+      : {};
+    return {
+      workingDir: workingDir || undefined,
+      options: {
+        ...runtimeCreateOptions,
+        ...buildRestartLifecycleOptions(restartLease),
+      },
+    };
+  }
+
   async function completeRestartClaim(paneId, restartLease, payload = {}) {
     const complete = window?.squidrun?.pty?.completePaneRestart;
     const claimId = restartLease?.claim?.claimId || null;
@@ -336,7 +356,8 @@ function createRecoveryController(options = {}) {
       // All panes need PTY recreated after kill - the kill destroys the PTY entirely
       // This applies to Claude, Codex, AND Gemini panes
       try {
-        const createResult = await window.squidrun.pty.create(id, undefined, buildRestartLifecycleOptions(restartLease));
+        const ptyCreateArgs = buildRestartPtyCreateArgs(id, restartLease);
+        const createResult = await window.squidrun.pty.create(id, ptyCreateArgs.workingDir, ptyCreateArgs.options);
         assertLifecycleResult('pty-create', createResult);
         log.info('Terminal', `Recreated PTY for pane ${id}`);
       } catch (err) {
