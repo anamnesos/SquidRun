@@ -20,6 +20,14 @@ const {
   reconcileTelegramReplyObligationFromJournal,
 } = require('../modules/main/telegram-reply-obligations');
 require('dotenv').config({ path: path.join(process.env.SQUIDRUN_PROJECT_ROOT || path.resolve(__dirname, '..', '..'), '.env') });
+try {
+  const dataRoot = process.env.SQUIDRUN_PROJECT_ROOT;
+  if (dataRoot) {
+    require('../modules/install-credentials').applyInstallCredentialEnvOverlay({ dataRoot });
+  }
+} catch (_) {
+  // CLI credential overlay is best effort; normal missing-config handling below reports send failures.
+}
 
 const TELEGRAM_RATE_LIMIT_MAX_MESSAGES = 10;
 const TELEGRAM_RATE_LIMIT_WINDOW_MS = 60_000;
