@@ -1645,6 +1645,23 @@ function buildPtyCreateOptionsForRuntimeOverride(paneId, runtimeOverride = {}, w
   };
 }
 
+function applyFreshCreateSpawnCommandOptions(paneId, ptyCreateOptions = {}, options = {}) {
+  const id = String(paneId || '');
+  if (options.spawnCommandOnCreate !== true) return ptyCreateOptions;
+  if (!PANE_IDS.includes(id)) return ptyCreateOptions;
+  if (ptyCreateOptions.spawnCommandOnCreate === true) return ptyCreateOptions;
+
+  const paneCommand = getPaneCommandFromSettings(id);
+  if (!paneCommand) return ptyCreateOptions;
+
+  return {
+    ...ptyCreateOptions,
+    paneCommand,
+    spawnCommandOnCreate: true,
+    preferWorkingDir: true,
+  };
+}
+
 function classifyRuntimeFromIdentity(paneId) {
   const id = String(paneId);
   const entry = paneCliIdentity.get(id);
@@ -2943,10 +2960,13 @@ function sendToPane(paneId, message, options = {}) {
 }
 
   // Initialize all terminals
-  async function initTerminals() {
+  async function initTerminals(options = {}) {
+    const initOptions = options && typeof options === 'object' ? options : {};
     for (const paneId of getActivePaneIds()) {
       if (terminals.has(paneId)) continue;
-      await initTerminal(paneId);
+      await initTerminal(paneId, {
+        ...(initOptions.spawnCommandOnCreate === true ? { spawnCommandOnCreate: true } : {}),
+      });
     }
     updateConnectionStatus('All terminals ready');
     focusPane(getActivePaneIds()[0] || '1');
@@ -3308,7 +3328,8 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       snapshotTimeoutMs: options.snapshotTimeoutMs,
       recreateDelayMs: options.recreateDelayMs,
     });
-    const ptyCreateOptions = buildPtyCreateOptionsForRuntimeOverride(paneId, runtimeOverride, workingDir);
+    let ptyCreateOptions = buildPtyCreateOptionsForRuntimeOverride(paneId, runtimeOverride, workingDir);
+    ptyCreateOptions = applyFreshCreateSpawnCommandOptions(paneId, ptyCreateOptions, options);
     if (Object.keys(ptyCreateOptions).length > 0) {
       await window.squidrun.pty.create(paneId, workingDir, ptyCreateOptions);
     } else {
@@ -3928,6 +3949,11 @@ function isGeminiPane(paneId) {
 async function spawnAllAgents() {
   updateConnectionStatus('Starting agents in all panes...');
   for (const paneId of getActivePaneIds()) {
+    const daemonTerminal = await readDaemonTerminalForPane(paneId, { timeoutMs: 750 });
+    if (daemonTerminal?.alive === true && daemonTerminal?.mode === 'pty-command') {
+      log.info('spawnAgent', `Pane ${paneId} already started by daemon command-on-create; skipping duplicate spawn`);
+      continue;
+    }
     await spawnAgent(paneId);
     // Small delay between panes to prevent race conditions
     await new Promise(resolve => setTimeout(resolve, 200));

@@ -380,6 +380,64 @@ describe('PTY Handlers', () => {
       );
     });
 
+    test('adds autonomy flags to spawn-on-create standard pane commands', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.autonomyConsentGiven = true;
+      ctx.currentSettings.allowAllPermissions = true;
+      ctx.currentSettings.paneCommands = { '3': 'codex' };
+
+      const result = await harness.invoke('pty-create', '3', '/test/dir', {
+        spawnCommandOnCreate: true,
+        paneCommand: 'codex',
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        paneId: '3',
+        paneCommand: 'codex --yolo',
+        spawnCommandOnCreate: true,
+      }));
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '3',
+        expect.any(String),
+        false,
+        null,
+        process.platform === 'win32'
+          ? expect.objectContaining({ TEMP: expect.any(String), TMP: expect.any(String) })
+          : null,
+        {
+          paneCommand: 'codex --yolo',
+          spawnCommandOnCreate: true,
+        }
+      );
+    });
+
+    test('adds Claude autonomy flag before spawn-on-create session pinning', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.autonomyConsentGiven = true;
+      ctx.currentSettings.allowAllPermissions = true;
+      deps.reapClaudeSessionProcesses.mockResolvedValue({ ok: true, killed: [] });
+
+      const result = await harness.invoke('pty-create', '1', '/test/dir', {
+        spawnCommandOnCreate: true,
+        paneCommand: 'claude',
+      });
+
+      expect(result.paneCommand).toMatch(/^claude --dangerously-skip-permissions --session-id [0-9a-f-]{36}$/);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '1',
+        expect.any(String),
+        false,
+        null,
+        process.platform === 'win32'
+          ? expect.objectContaining({ TEMP: expect.any(String), TMP: expect.any(String) })
+          : null,
+        {
+          paneCommand: result.paneCommand,
+          spawnCommandOnCreate: true,
+        }
+      );
+    });
+
     test('spawns with null mode for claude command', async () => {
       ctx.daemonClient.connected = true;
       ctx.currentSettings.paneCommands = { '1': 'claude' };

@@ -663,6 +663,58 @@ describe('daemon-handlers.js module', () => {
         expect(terminal.spawnAgent).not.toHaveBeenCalledWith('2');
       });
 
+      test('fresh terminal create uses daemon command-on-create when autonomy and permissions are granted', async () => {
+        const initTerminalsFn = jest.fn().mockResolvedValue();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        invokeBridge.mockResolvedValueOnce({
+          autoSpawn: true,
+          autonomyConsentGiven: true,
+          allowAllPermissions: true,
+        });
+
+        await ipcHandlers['daemon-connected']({}, { terminals: [] });
+
+        expect(initTerminalsFn).toHaveBeenCalledWith({ spawnCommandOnCreate: true });
+        expect(onTerminalsReadyFn).toHaveBeenCalledWith(true);
+        expect(terminal.spawnAgent).not.toHaveBeenCalled();
+      });
+
+      test('fresh terminal create does not command-spawn without permission grant', async () => {
+        const initTerminalsFn = jest.fn().mockResolvedValue();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        invokeBridge.mockResolvedValueOnce({
+          autoSpawn: true,
+          autonomyConsentGiven: true,
+          allowAllPermissions: false,
+        });
+
+        await ipcHandlers['daemon-connected']({}, { terminals: [] });
+
+        expect(initTerminalsFn).toHaveBeenCalledWith({ spawnCommandOnCreate: false });
+        expect(onTerminalsReadyFn).toHaveBeenCalledWith(false);
+        expect(terminal.spawnAgent).not.toHaveBeenCalled();
+      });
+
       test('does not respawn live PTYs when main resend omits createdAt and scrollback', async () => {
         const initTerminalsFn = jest.fn();
         const reattachTerminalFn = jest.fn().mockResolvedValue();

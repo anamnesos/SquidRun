@@ -115,6 +115,33 @@ function detectCliFromCommand(command) {
   return 'claude';
 }
 
+function applyAutonomyFlagsToAgentCommand(command, settings = {}) {
+  let agentCmd = String(command || '').trim();
+  if (!agentCmd) return agentCmd;
+
+  const autonomyConsentGiven = settings?.autonomyConsentGiven === true;
+  const autonomyEnabled = autonomyConsentGiven && settings?.allowAllPermissions === true;
+  if (!autonomyEnabled) return agentCmd;
+
+  if (agentCmd.startsWith('claude') && !agentCmd.includes('--dangerously-skip-permissions')) {
+    agentCmd = `${agentCmd} --dangerously-skip-permissions`;
+  }
+  if (agentCmd.startsWith('codex')) {
+    const hasDangerouslyBypass = hasCodexDangerouslyBypassFlag(agentCmd);
+    const hasAskForApproval = hasCodexAskForApprovalFlag(agentCmd);
+    const hasYolo = agentCmd.includes('--yolo');
+    if (!hasDangerouslyBypass && !hasYolo) {
+      agentCmd = `${agentCmd} --yolo`;
+    }
+    if (!agentCmd.includes('--yolo') && !hasCodexDangerouslyBypassFlag(agentCmd)
+        && !hasDangerouslyBypass && !hasAskForApproval) {
+      agentCmd = `${agentCmd} -a never`;
+    }
+  }
+
+  return agentCmd;
+}
+
 function resolveWindowsClaudeTempDir(cwd, env = process.env) {
   if (process.platform !== 'win32') return null;
 
@@ -721,6 +748,7 @@ function registerPtyHandlers(ctx, deps = {}) {
       ? ptyOptions.paneCommand.trim()
       : '';
     let paneCommand = explicitPaneCommand || getPaneCommandForRuntime(ctx, paneId);
+    paneCommand = applyAutonomyFlagsToAgentCommand(paneCommand, ctx?.currentSettings || {});
     const spawnCommandOnCreate = ptyOptions.spawnCommandOnCreate === true && Boolean(paneCommand);
     if (spawnCommandOnCreate) {
       const resumeCommand = appendResumeFlagsToAgentCommand({
@@ -1117,29 +1145,7 @@ function registerPtyHandlers(ctx, deps = {}) {
       }
     }
 
-    const autonomyConsentGiven = ctx?.currentSettings?.autonomyConsentGiven === true;
-    const autonomyEnabled = autonomyConsentGiven && ctx?.currentSettings?.allowAllPermissions === true;
-
-    if (autonomyEnabled) {
-      if (agentCmd.startsWith('claude') && !agentCmd.includes('--dangerously-skip-permissions')) {
-        agentCmd = `${agentCmd} --dangerously-skip-permissions`;
-      }
-      if (agentCmd.startsWith('codex')) {
-        const hasDangerouslyBypass = hasCodexDangerouslyBypassFlag(agentCmd);
-        const hasAskForApproval = hasCodexAskForApprovalFlag(agentCmd);
-        const hasYolo = agentCmd.includes('--yolo');
-        // --yolo (alias for --dangerously-bypass-approvals-and-sandbox) conflicts
-        // with -a / --ask-for-approval.  Prefer --yolo when autonomy is enabled.
-        if (!hasDangerouslyBypass && !hasYolo) {
-          agentCmd = `${agentCmd} --yolo`;
-        }
-        // Only add -a if --yolo / --dangerously-bypass wasn't added (they conflict)
-        if (!agentCmd.includes('--yolo') && !hasCodexDangerouslyBypassFlag(agentCmd)
-            && !hasDangerouslyBypass && !hasAskForApproval) {
-          agentCmd = `${agentCmd} -a never`;
-        }
-      }
-    }
+    agentCmd = applyAutonomyFlagsToAgentCommand(agentCmd, ctx?.currentSettings || {});
 
     const workDir = resolvePaneCwd(paneId, {
       paneProjects: getPaneProjects(),

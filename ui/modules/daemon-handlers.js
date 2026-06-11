@@ -878,8 +878,26 @@ async function handleDaemonConnectedPayload(data = {}, initTerminalsFn, reattach
   } else {
     log.info('Daemon', 'No existing terminals, creating new ones...');
     updateConnectionStatus('Creating terminals...');
-    await initTerminalsFn();
+    let spawnCommandOnCreate = false;
+    try {
+      const settings = await invokeBridge('get-settings');
+      spawnCommandOnCreate = settings?.autoSpawn !== false
+        && settings?.autonomyConsentGiven === true
+        && settings?.allowAllPermissions === true;
+      if (spawnCommandOnCreate) {
+        log.info('Daemon', 'Fresh terminal create will spawn configured agents directly in the daemon');
+      } else if (settings?.autonomyConsentGiven !== true || settings?.allowAllPermissions !== true) {
+        log.info('Daemon', 'Fresh terminal auto-spawn blocked pending autonomy consent or permission grant');
+      }
+    } catch (err) {
+      log.warn('Daemon', `Failed to read settings for fresh terminal auto-spawn: ${err.message}`);
+    }
+    await initTerminalsFn({ spawnCommandOnCreate });
     updateConnectionStatus('Ready');
+    if (onTerminalsReadyFn) {
+      onTerminalsReadyFn(spawnCommandOnCreate);
+      return;
+    }
   }
 
   if (onTerminalsReadyFn) {
