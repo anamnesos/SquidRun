@@ -35,6 +35,8 @@ const CLI_RESUME_STRATEGY = {
 // LANDMINE: claude `--fork-session` mints a NEW session id when resuming, which
 // would break per-pane id stability. It must NEVER appear in a built invocation.
 const FORBIDDEN_CLAUDE_FLAGS = ['--fork-session', '-c', '--continue'];
+const CLAUDE_RESUME_FLAG_PATTERN = /(?:^|\s)(?:--session-id|--resume)(?:=|\s+)([^\s"']+)/i;
+const CLAUDE_SESSION_IN_USE_PATTERN = /session(?:\s+id)?[^.\n\r]*already\s+in\s+use|already\s+in\s+use[^.\n\r]*session(?:\s+id)?/i;
 
 // Identify the resume-relevant CLI from the leading executable token only.
 // Does NOT default to any CLI: an unrecognized command returns null.
@@ -54,6 +56,26 @@ function resumeStrategyForCommand(command = '') {
   const cli = detectCli(command);
   if (!cli) return 'none';
   return CLI_RESUME_STRATEGY[cli] || 'none';
+}
+
+function extractClaudeSessionIdFromCommand(command = '') {
+  const match = String(command || '').match(CLAUDE_RESUME_FLAG_PATTERN);
+  return match ? match[1] : null;
+}
+
+function hasClaudeResumeFlag(command = '') {
+  return Boolean(extractClaudeSessionIdFromCommand(command));
+}
+
+function stripClaudeResumeFlags(command = '') {
+  return String(command || '')
+    .replace(/(?:^|\s)(?:--session-id|--resume)(?:=|\s+)(?:"[^"]+"|'[^']+'|\S+)/ig, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isClaudeSessionInUseError(output = '') {
+  return CLAUDE_SESSION_IN_USE_PATTERN.test(String(output || ''));
 }
 
 // claude session store layout (verified by probe):
@@ -90,6 +112,17 @@ function resolveResumeAppendFlags({ command, sessionId, sessionExists } = {}) {
   const strategy = cli ? (CLI_RESUME_STRATEGY[cli] || 'none') : 'none';
 
   if (strategy === 'session-id') {
+    const existingSessionId = extractClaudeSessionIdFromCommand(command);
+    if (existingSessionId) {
+      return {
+        flags: '',
+        cli,
+        strategy,
+        mode: 'already-pinned',
+        sessionId: existingSessionId,
+        reason: 'claude resume/session flag already present',
+      };
+    }
     if (!sessionId) {
       return { flags: '', cli, strategy, mode: 'cold', reason: 'no per-pane session id available' };
     }
@@ -114,8 +147,13 @@ function resolveResumeAppendFlags({ command, sessionId, sessionExists } = {}) {
 module.exports = {
   CLI_RESUME_STRATEGY,
   FORBIDDEN_CLAUDE_FLAGS,
+  CLAUDE_RESUME_FLAG_PATTERN,
   detectCli,
   resumeStrategyForCommand,
+  extractClaudeSessionIdFromCommand,
+  hasClaudeResumeFlag,
+  stripClaudeResumeFlags,
+  isClaudeSessionInUseError,
   encodeClaudeProjectDir,
   claudeSessionStorePath,
   claudeSessionExists,

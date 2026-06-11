@@ -60,6 +60,19 @@ function ensurePaneSessionId(filePath, paneId, options = {}) {
   return { sessionId, generated: true };
 }
 
+function remintPaneSessionId(filePath, paneId, options = {}) {
+  const generate = typeof options.generate === 'function'
+    ? options.generate
+    : () => crypto.randomUUID();
+  const store = loadPaneSessionIds(filePath);
+  const id = normalizePaneId(paneId);
+  const previousSessionId = getPaneSessionId(store, id);
+  const sessionId = generate();
+  store.panes[id] = sessionId;
+  savePaneSessionIds(filePath, store);
+  return { sessionId, previousSessionId, generated: true, reminted: true };
+}
+
 module.exports = {
   SCHEMA,
   normalizeStore,
@@ -67,4 +80,5 @@ module.exports = {
   getPaneSessionId,
   savePaneSessionIds,
   ensurePaneSessionId,
+  remintPaneSessionId,
 };

@@ -56,8 +56,10 @@ const {
   resumeStrategyForCommand,
   claudeSessionExists,
   resolveResumeAppendFlags,
+  stripClaudeResumeFlags,
+  isClaudeSessionInUseError,
 } = require('./modules/cli-resume-invocation');
-const { ensurePaneSessionId } = require('./modules/pane-session-id-store');
+const { ensurePaneSessionId, remintPaneSessionId } = require('./modules/pane-session-id-store');
 
 // ============================================================
 // D1: DAEMON LOGGING TO FILE
@@ -1472,16 +1474,19 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   // that CLI session ALREADY EXISTS in claude's store (NOT on the scrollback
   // snapshot). codex arms stay cold by design (no pin-at-creation + shared cwd).
   let resumeAppendFlags = '';
+  let resumeDecision = null;
   if (spawnCommandOnCreate) {
     if (resumeStrategyForCommand(paneCommand) === 'session-id') {
       const { sessionId } = ensurePaneSessionId(PANE_SESSION_IDS_FILE_PATH, paneId);
       const sessionExists = claudeSessionExists(workDir, sessionId);
       const decision = resolveResumeAppendFlags({ command: paneCommand, sessionId, sessionExists });
+      resumeDecision = decision;
       resumeAppendFlags = decision.flags;
-      logInfo(`[resume] pane ${paneId}: ${decision.mode} (${decision.cli}) sessionId=${sessionId}${decision.flags ? ` -> ${decision.flags}` : ''}`);
+      logInfo(`[resume] pane ${paneId}: ${decision.mode} (${decision.cli}) sessionId=${decision.sessionId || sessionId}${decision.flags ? ` -> ${decision.flags}` : ''}${decision.reason ? ` - ${decision.reason}` : ''}`);
     } else {
       // Explicit, logged cold-start so it reads as a deliberate v1 limit.
       const decision = resolveResumeAppendFlags({ command: paneCommand });
+      resumeDecision = decision;
       logInfo(`[resume] pane ${paneId}: cold-start — ${decision.reason}`);
     }
   }
@@ -1509,6 +1514,10 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     scrollbackMaxSize: normalizeScrollbackMaxSize(options?.scrollbackMaxSize),
     dryRun: false,
     mode: spawnCommandOnCreate ? 'pty-command' : 'pty',
+    paneCommand,
+    resumeAppendFlags,
+    claudeSessionDecision: resumeDecision,
+    claudeCollisionRecoveryAttempted: options.claudeCollisionRecoveryAttempted === true,
     createdAt: Date.now(), // Track terminal creation time (for reattach guard)
     lastActivity: Date.now(), // Track last PTY output
     lastMeaningfulActivity: Date.now(), // Smart Watchdog: last non-spinner output
@@ -1541,6 +1550,35 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     appendToScrollback(terminalInfo, data);
     hydrateTerminalFromRestartSnapshot(terminalInfo, restartScrollbackSnapshot);
     scheduleRestartScrollbackSnapshotSave();
+
+    if (
+      spawnCommandOnCreate
+      && resumeDecision?.cli === 'claude'
+      && resumeDecision?.sessionId
+      && !terminalInfo.claudeCollisionRecoveryAttempted
+      && isClaudeSessionInUseError(data)
+    ) {
+      terminalInfo.claudeCollisionRecoveryAttempted = true;
+      const previousSessionId = resumeDecision.sessionId;
+      const remint = remintPaneSessionId(PANE_SESSION_IDS_FILE_PATH, paneId);
+      const nextCommand = stripClaudeResumeFlags(paneCommand) || 'claude';
+      logWarn(
+        `[resume] Claude session collision for pane ${paneId} sessionId=${previousSessionId}; reminted ${remint.sessionId} and respawning direct PTY command`
+      );
+      try {
+        ptyProcess.kill();
+      } catch (_) {
+        // The process may already have exited after printing the collision.
+      }
+      setTimeout(() => {
+        spawnTerminal(paneId, workDir, dryRun, {
+          ...options,
+          paneCommand: nextCommand,
+          spawnCommandOnCreate: true,
+          claudeCollisionRecoveryAttempted: true,
+        });
+      }, 50);
+    }
 
     broadcast({
       event: 'data',
