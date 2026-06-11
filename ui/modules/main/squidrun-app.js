@@ -33,6 +33,10 @@ const {
   getProfileProjectRootOverride,
   resolveProfileInstructionPath,
 } = require('../../profile');
+const {
+  DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+  resolveInstalledDataRoot,
+} = require('../installed-data-root');
 const { createPluginManager } = require('../plugins');
 const { createBackupManager } = require('../backup-manager');
 const { createRecoveryManager } = require('../recovery-manager');
@@ -352,7 +356,7 @@ const SUPERVISOR_STATUS_STALE_MIN_MS = Math.max(
 );
 const RENDERER_ENTRY_HTML = path.join(__dirname, '..', '..', 'index.html');
 const SHUTDOWN_CONFIRM_MESSAGE = 'This stops panes, daemon, pollers, and background services.\n\nContinue?';
-const EXTERNAL_WORKSPACE_DIRNAME = 'SquidRun';
+const EXTERNAL_WORKSPACE_DIRNAME = DEFAULT_EXTERNAL_WORKSPACE_DIRNAME;
 const ONBOARDING_STATE_FILENAME = 'onboarding-state.json';
 const FRESH_INSTALL_MARKER_FILENAME = 'fresh-install.json';
 const PACKAGED_BIN_RUNTIME_RELATIVE = path.join('.squidrun', 'bin', 'runtime', 'ui');
@@ -1074,7 +1078,24 @@ class SquidRunApp {
     const homePath = (app && typeof app.getPath === 'function')
       ? app.getPath('home')
       : os.homedir();
-    return path.join(homePath, EXTERNAL_WORKSPACE_DIRNAME);
+    return resolveInstalledDataRoot({
+      cwd: process.cwd(),
+      defaultDirName: EXTERNAL_WORKSPACE_DIRNAME,
+      execPath: process.execPath,
+      homePath,
+      resourcesPath: process.resourcesPath,
+    }).path;
+  }
+
+  resolvePackagedWorkspacePath() {
+    const profileRoot = getProfileProjectRootOverride(
+      this.activeProfileName || getActiveProfileName(),
+      process.env
+    );
+    if (profileRoot) {
+      return profileRoot;
+    }
+    return this.getDefaultExternalWorkspacePath();
   }
 
   resolveWorkspaceTemplateRoot() {
@@ -1685,7 +1706,7 @@ class SquidRunApp {
       return null;
     }
 
-    const workspacePath = this.getDefaultExternalWorkspacePath();
+    const workspacePath = this.resolvePackagedWorkspacePath();
     fs.mkdirSync(workspacePath, { recursive: true });
     fs.mkdirSync(path.join(workspacePath, '.squidrun'), { recursive: true });
 

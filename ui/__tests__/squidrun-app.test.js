@@ -1329,6 +1329,44 @@ describe('SquidRunApp', () => {
   });
 
   describe('fresh install marker persistence', () => {
+    it('uses explicit installed data root for packaged workspace bootstrap path', () => {
+      const electron = require('electron');
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const previousWorkspaceRoot = process.env.SQUIDRUN_WORKSPACE_ROOT;
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-packaged-data-root-'));
+      try {
+        electron.app.isPackaged = true;
+        electron.app.getPath.mockImplementation((name) => (name === 'home' ? path.join(dataRoot, '..') : '/mock/app/path'));
+        process.env.SQUIDRUN_PROFILE = 'main';
+        process.env.SQUIDRUN_DATA_ROOT = dataRoot;
+        delete process.env.SQUIDRUN_WORKSPACE_ROOT;
+
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        expect(app.getDefaultExternalWorkspacePath()).toBe(path.resolve(dataRoot));
+        expect(app.resolvePackagedWorkspacePath()).toBe(path.resolve(dataRoot));
+      } finally {
+        electron.app.isPackaged = false;
+        electron.app.getPath.mockReturnValue('/mock/app/path');
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        if (previousWorkspaceRoot === undefined) {
+          delete process.env.SQUIDRUN_WORKSPACE_ROOT;
+        } else {
+          process.env.SQUIDRUN_WORKSPACE_ROOT = previousWorkspaceRoot;
+        }
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+      }
+    });
+
     it('writes fresh-install marker under .squidrun', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-fresh-marker-'));

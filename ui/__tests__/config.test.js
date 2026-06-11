@@ -106,6 +106,98 @@ describe('config.js', () => {
       }
     });
 
+    test('discovers explicit installed data root before SQUIDRUN_PROJECT_ROOT', () => {
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const previousWorkspaceRoot = process.env.SQUIDRUN_WORKSPACE_ROOT;
+      const previousProjectRoot = process.env.SQUIDRUN_PROJECT_ROOT;
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-config-data-root-'));
+      const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-config-project-root-'));
+
+      try {
+        process.env.SQUIDRUN_PROFILE = 'main';
+        process.env.SQUIDRUN_DATA_ROOT = dataRoot;
+        process.env.SQUIDRUN_WORKSPACE_ROOT = path.join(os.tmpdir(), 'unused-workspace-root');
+        process.env.SQUIDRUN_PROJECT_ROOT = projectRoot;
+
+        jest.isolateModules(() => {
+          const isolatedConfig = require('../config');
+          expect(isolatedConfig.getProjectRoot()).toBe(path.resolve(dataRoot));
+          expect(isolatedConfig.resolvePaneCwd('2')).toBe(path.resolve(dataRoot));
+        });
+      } finally {
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        if (previousWorkspaceRoot === undefined) {
+          delete process.env.SQUIDRUN_WORKSPACE_ROOT;
+        } else {
+          process.env.SQUIDRUN_WORKSPACE_ROOT = previousWorkspaceRoot;
+        }
+        if (previousProjectRoot === undefined) {
+          delete process.env.SQUIDRUN_PROJECT_ROOT;
+        } else {
+          process.env.SQUIDRUN_PROJECT_ROOT = previousProjectRoot;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    test('discovers packaged install manifest from app.asar runtime path', () => {
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const previousWorkspaceRoot = process.env.SQUIDRUN_WORKSPACE_ROOT;
+      const previousProjectRoot = process.env.SQUIDRUN_PROJECT_ROOT;
+      const installRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-config-install-'));
+      const manifestPath = path.join(installRoot, 'squidrun-install.json');
+      const dataRoot = path.join(installRoot, 'instance-data');
+      const runtimePath = path.join(installRoot, 'resources', 'app.asar', 'ui');
+
+      try {
+        process.env.SQUIDRUN_PROFILE = 'main';
+        delete process.env.SQUIDRUN_DATA_ROOT;
+        delete process.env.SQUIDRUN_WORKSPACE_ROOT;
+        delete process.env.SQUIDRUN_PROJECT_ROOT;
+        fs.writeFileSync(manifestPath, `${JSON.stringify({ dataRoot: 'instance-data' }, null, 2)}\n`, 'utf8');
+
+        jest.isolateModules(() => {
+          const isolatedConfig = require('../config');
+          expect(isolatedConfig.isPackagedRuntimePath(runtimePath)).toBe(true);
+          expect(isolatedConfig.discoverProjectRoot(runtimePath)).toBe(path.resolve(dataRoot));
+        });
+      } finally {
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        if (previousWorkspaceRoot === undefined) {
+          delete process.env.SQUIDRUN_WORKSPACE_ROOT;
+        } else {
+          process.env.SQUIDRUN_WORKSPACE_ROOT = previousWorkspaceRoot;
+        }
+        if (previousProjectRoot === undefined) {
+          delete process.env.SQUIDRUN_PROJECT_ROOT;
+        } else {
+          process.env.SQUIDRUN_PROJECT_ROOT = previousProjectRoot;
+        }
+        fs.rmSync(installRoot, { recursive: true, force: true });
+      }
+    });
+
     test('resolvePaneCwd should prefer state project fallback when no pane override exists', () => {
       const expected = path.resolve('/tmp/state-project');
       expect(resolvePaneCwd('2', { projectRoot: '/tmp/state-project' })).toBe(expected);
