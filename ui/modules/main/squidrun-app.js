@@ -4358,7 +4358,22 @@ class SquidRunApp {
           if (data.message.type === 'send') {
             const { target, content } = data.message;
             const bridgeTarget = parseCrossDeviceTarget(target);
-            const routeKind = bridgeTarget ? 'bridge' : 'local';
+            const rawMessageMetadata = (
+              data.message?.metadata
+              && typeof data.message.metadata === 'object'
+              && !Array.isArray(data.message.metadata)
+            ) ? data.message.metadata : {};
+            const profileRoutingMetadata = (
+              rawMessageMetadata.routing
+              && typeof rawMessageMetadata.routing === 'object'
+              && !Array.isArray(rawMessageMetadata.routing)
+            ) ? rawMessageMetadata.routing : null;
+            const profileRouteAttribution = (
+              rawMessageMetadata.routeAttribution
+              && typeof rawMessageMetadata.routeAttribution === 'object'
+              && !Array.isArray(rawMessageMetadata.routeAttribution)
+            ) ? rawMessageMetadata.routeAttribution : null;
+            const routeKind = bridgeTarget ? 'bridge' : (profileRoutingMetadata ? 'profile' : 'local');
             const attempt = Number(data.message.attempt || 1);
             const maxAttempts = Number(data.message.maxAttempts || 1);
             const messageId = data.message.messageId || null;
@@ -4468,6 +4483,14 @@ class SquidRunApp {
                   metadata: {
                     source: 'websocket-broker',
                     ...canonicalMetadata,
+                    ...(profileRoutingMetadata ? { routing: profileRoutingMetadata } : {}),
+                    ...(profileRouteAttribution ? { routeAttribution: profileRouteAttribution } : {}),
+                    ...(typeof rawMessageMetadata.sourceAddress === 'string'
+                      ? { sourceAddress: rawMessageMetadata.sourceAddress }
+                      : {}),
+                    ...(typeof rawMessageMetadata.targetAddress === 'string'
+                      ? { targetAddress: rawMessageMetadata.targetAddress }
+                      : {}),
                     routeKind,
                     targetRaw: canonicalEnvelope.target?.raw || target || null,
                     traceId: traceContext?.traceId || traceContext?.correlationId || null,

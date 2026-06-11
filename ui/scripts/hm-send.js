@@ -180,6 +180,7 @@ if (!listDevicesMode && args.length < 2) {
   console.log(`  --timeout: ack timeout in ms (default: ${DEFAULT_ACK_TIMEOUT_MS})`);
   console.log('  --retries: retry count after first send (default: 3)');
   console.log('  --no-fallback: disable trigger file fallback');
+  console.log('  --source-profile: explicitly pin sender profile for cross-profile architect routes');
   console.log('  --target-profile: route to a non-main profile/work-room without changing sender identity');
   console.log('  --bypass-guard: bypass outbound guardrails and log any would-block match');
   process.exit(1);
@@ -198,6 +199,9 @@ let cleanupMessageFilePathOnSuccess = null;
 let useStdin = false;
 let telegramPhotoPath = null;
 let telegramChatIdOverride = null;
+let sourceProfileOverride = null;
+let sourceWindowKeyOverride = null;
+let sourceSessionScopeIdOverride = null;
 let targetProfileOverride = null;
 let targetWindowKeyOverride = null;
 let targetSessionScopeIdOverride = null;
@@ -207,7 +211,7 @@ let bypassGuard = String(process.env.HM_SEND_BYPASS_GUARD || '').trim() === '1';
 // Words starting with "--" that are NOT in this set are treated as message text,
 // which prevents accidental truncation when message content contains "--something".
 const KNOWN_FLAGS = new Set([
-  '--role', '--file', '--stdin', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices', '--chat-id', '--target-profile', '--route-profile', '--target-window', '--target-session', '--target-session-scope', '--bypass-guard',
+  '--role', '--file', '--stdin', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices', '--chat-id', '--source-profile', '--source-window', '--source-session', '--source-session-scope', '--target-profile', '--route-profile', '--target-window', '--target-session', '--target-session-scope', '--bypass-guard',
 ]);
 
 function shouldCleanupMessageFile(filePath) {
@@ -269,6 +273,21 @@ for (; i < args.length; i++) {
   }
   if (token === '--chat-id' && args[i + 1]) {
     telegramChatIdOverride = args[i + 1];
+    i++;
+    continue;
+  }
+  if (token === '--source-profile' && args[i + 1]) {
+    sourceProfileOverride = normalizeProfileName(args[i + 1]);
+    i++;
+    continue;
+  }
+  if (token === '--source-window' && args[i + 1]) {
+    sourceWindowKeyOverride = normalizeProfileName(args[i + 1]);
+    i++;
+    continue;
+  }
+  if ((token === '--source-session' || token === '--source-session-scope') && args[i + 1]) {
+    sourceSessionScopeIdOverride = String(args[i + 1] || '').trim() || null;
     i++;
     continue;
   }
@@ -553,7 +572,8 @@ function applyProjectContext(projectContext = null) {
 }
 
 const localProjectContext = applyProjectContext(resolveLocalProjectContext(process.cwd()));
-const effectiveProfileName = resolveEffectiveProfileName(process.env, process.cwd(), localProjectContext);
+const effectiveProfileName = sourceProfileOverride
+  || resolveEffectiveProfileName(process.env, process.cwd(), localProjectContext);
 
 function getLocalCoordRoot(context = localProjectContext) {
   if (context?.projectPath) {
@@ -1065,7 +1085,7 @@ function chooseSessionId(linkSessionId, runtimeSessionId) {
 }
 
 function getExplicitSessionScopeId(env = process.env) {
-  return normalizeSessionId(env?.SQUIDRUN_SESSION_SCOPE_ID || env?.SQUIDRUN_SESSION_ID || '');
+  return normalizeSessionId(sourceSessionScopeIdOverride || env?.SQUIDRUN_SESSION_SCOPE_ID || env?.SQUIDRUN_SESSION_ID || '');
 }
 
 function scopeSessionIdForEffectiveProfile(sessionId, profileName = effectiveProfileName) {
@@ -1098,10 +1118,14 @@ const projectMetadata = buildProjectMetadata(localProjectContext);
 
 function buildTargetProfileRouteContext() {
   const profileName = normalizeProfileName(targetProfileOverride || '');
-  if (!targetProfileOverride || isMainProfile(profileName)) return null;
+  const senderProfileName = normalizeProfileName(effectiveProfileName);
+  if (!targetProfileOverride) return null;
+  if (isMainProfile(profileName) && isMainProfile(senderProfileName)) return null;
   const windowKey = normalizeProfileName(targetWindowKeyOverride || profileName);
   const sessionScopeId = targetSessionScopeIdOverride
-    || scopeSessionIdForEffectiveProfile(projectMetadata?.session_id || getExplicitSessionScopeId(), profileName);
+    || (profileName === TRUSTQUOTE_PROFILE_NAME
+      ? scopeSessionIdForEffectiveProfile(projectMetadata?.session_id || getExplicitSessionScopeId(), profileName)
+      : null);
   return {
     port: process.env.HM_SEND_PORT ? PORT : getProfileWebSocketPort(profileName),
     targetProfileName: profileName,
@@ -1109,7 +1133,7 @@ function buildTargetProfileRouteContext() {
       routing: {
         profileName,
         windowKey,
-        sessionScopeId,
+        ...(sessionScopeId ? { sessionScopeId } : {}),
       },
     },
   };
@@ -1117,10 +1141,46 @@ function buildTargetProfileRouteContext() {
 
 const targetProfileRouteContext = buildTargetProfileRouteContext();
 
+function buildProfileRouteAttributionMetadata(targetRole, routeContext = null) {
+  if (!routeContext && isMainProfile(effectiveProfileName)) return null;
+  const sourceProfileName = normalizeProfileName(effectiveProfileName || 'main');
+  const sourceWindowKey = normalizeProfileName(
+    sourceWindowKeyOverride
+    || process.env.SQUIDRUN_WINDOW_KEY
+    || sourceProfileName
+  );
+  const targetProfileName = normalizeProfileName(routeContext?.targetProfileName || sourceProfileName);
+  const targetWindowKey = normalizeProfileName(
+    routeContext?.metadata?.routing?.windowKey
+    || targetProfileName
+  );
+  const sourceRole = normalizeRole(role) || String(role || 'cli').trim().toLowerCase() || 'cli';
+  const normalizedTargetRole = normalizeRole(targetRole)
+    || String(targetRole || target || 'unknown').trim().toLowerCase()
+    || 'unknown';
+  const sourceSessionScopeId = projectMetadata?.session_id || null;
+  const targetSessionScopeId = routeContext?.metadata?.routing?.sessionScopeId || null;
+
+  return {
+    sourceAddress: `${sourceRole}@${sourceWindowKey}`,
+    targetAddress: `${normalizedTargetRole}@${targetWindowKey}`,
+    routeAttribution: {
+      sourceProfileName,
+      sourceWindowKey,
+      sourceSessionScopeId,
+      sourceAddress: `${sourceRole}@${sourceWindowKey}`,
+      targetProfileName,
+      targetWindowKey,
+      targetSessionScopeId,
+      targetAddress: `${normalizedTargetRole}@${targetWindowKey}`,
+    },
+  };
+}
+
 function buildRegisterPayload(envelope = null, options = {}) {
   const registerOptions = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
   const profileName = normalizeProfileName(registerOptions.profileName || effectiveProfileName);
-  const windowKey = normalizeProfileName(registerOptions.windowKey || profileName);
+  const windowKey = normalizeProfileName(registerOptions.windowKey || sourceWindowKeyOverride || profileName);
   const sessionScopeId = Object.prototype.hasOwnProperty.call(registerOptions, 'sessionScopeId')
     ? registerOptions.sessionScopeId
     : (envelope?.session_id || projectMetadata?.session_id || null);
@@ -2557,6 +2617,22 @@ async function main() {
     || (bridgeTarget ? bridgeTarget.targetRole : null);
   const trustQuoteReverseRoute = buildTrustQuoteReverseRouteContext(targetRole);
   const forwardProfileRoute = trustQuoteReverseRoute ? null : targetProfileRouteContext;
+  const targetProfileIsCrossProfileArchitectRoute = Boolean(
+    targetProfileOverride
+    && targetRole === 'architect'
+    && normalizeProfileName(targetProfileOverride) !== normalizeProfileName(effectiveProfileName)
+  );
+  if (targetProfileIsCrossProfileArchitectRoute && !sourceProfileOverride) {
+    console.error('Cross-profile architect routes require --source-profile so cwd/env cannot choose sender profile.');
+    closeCommsJournalStores();
+    process.exit(1);
+  }
+  const profileRouteAttributionMetadata = buildProfileRouteAttributionMetadata(targetRole, forwardProfileRoute);
+  const profileRouteDispatchMetadata = {
+    ...(profileRouteAttributionMetadata || {}),
+    ...(trustQuoteReverseRoute ? trustQuoteReverseRoute.metadata : {}),
+    ...(forwardProfileRoute ? forwardProfileRoute.metadata : {}),
+  };
   const outboundMessage = trustQuoteReverseRoute
     ? formatTrustQuoteReverseContent(message, role)
     : message;
@@ -2603,12 +2679,11 @@ async function main() {
     metadata: {
       source: 'hm-send',
       maxAttempts: retries + 1,
-      routeKind: miraInboxMode ? 'mira-inbox' : (bridgeMode ? 'bridge' : 'local'),
+      routeKind: miraInboxMode ? 'mira-inbox' : (bridgeMode ? 'bridge' : (forwardProfileRoute ? 'profile' : 'local')),
       bridgeTarget: bridgeMode ? bridgeTarget.toDevice : null,
       bridgeEnabled: bridgeMode ? isCrossDeviceEnabled(process.env) : null,
       ...envelopeMetadata,
-      ...(trustQuoteReverseRoute ? trustQuoteReverseRoute.metadata : {}),
-      ...(forwardProfileRoute ? forwardProfileRoute.metadata : {}),
+      ...profileRouteDispatchMetadata,
     },
   });
 
@@ -2629,6 +2704,9 @@ async function main() {
     sendResult = await sendViaWebSocketWithAck(envelope, {
       skipHealthCheck: bridgeMode,
       ...(trustQuoteReverseRoute || forwardProfileRoute || {}),
+      metadata: Object.keys(profileRouteDispatchMetadata).length > 0
+        ? profileRouteDispatchMetadata
+        : null,
     });
   } catch (err) {
     wsError = err;

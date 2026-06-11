@@ -294,6 +294,12 @@ function isScopedDiagnosticMessage(message = {}) {
   return channel === 'scoped-diagnostic' || channel === 'profile-diagnostic';
 }
 
+function isArchitectToArchitectTarget(clientInfo = {}, message = {}) {
+  const senderRole = normalizeRoleId(clientInfo.role) || clientInfo.role || null;
+  const targetRole = getTargetRole(message.target);
+  return senderRole === 'architect' && targetRole === 'architect';
+}
+
 function buildRoutingErrorAck(message, traceContext, status, error, details = {}) {
   return {
     type: 'send-ack',
@@ -419,6 +425,14 @@ function resolveRouteScope(clientInfo = {}, message = {}) {
 
   if (!isMainProfile(senderScope.profileName)) {
     if (explicitScope && explicitScope.profileName !== senderScope.profileName) {
+      if (isArchitectToArchitectTarget(clientInfo, message)) {
+        return {
+          ok: true,
+          senderScope,
+          targetScope: explicitScope,
+          failClosed: true,
+        };
+      }
       return {
         ok: false,
         status: 'cross_profile_scope_mismatch',
@@ -441,6 +455,16 @@ function resolveRouteScope(clientInfo = {}, message = {}) {
   }
 
   if (explicitScope && !isMainProfile(explicitScope.profileName)) {
+    if (!isArchitectToArchitectTarget(clientInfo, message) && getTargetRole(message.target) === 'architect') {
+      return {
+        ok: false,
+        status: 'cross_profile_scope_mismatch',
+        error: `Sender role '${clientInfo.role || 'unknown'}' cannot target architect in profile '${explicitScope.profileName}'`,
+        senderScope,
+        targetScope: explicitScope,
+        failClosed: true,
+      };
+    }
     return {
       ok: true,
       senderScope,
@@ -482,11 +506,29 @@ function clientMatchesRouteScope(info, routeScope = {}) {
   return true;
 }
 
-function canUseScopedLocalHandlerRoute(routeScope = {}) {
-  if (!routeScope?.failClosed || !messageHandler) return false;
+function canUseLocalHandlerRoute(routeScope = {}, clientInfo = {}, message = {}) {
+  if (!messageHandler) return false;
+  const target = message?.target;
+  const targetIdentity = resolveTargetIdentity(target);
+  const canonicalLocalTarget = (
+    isCanonicalLocalPaneRoleTarget(target)
+    || (targetIdentity.role && CANONICAL_ROLE_IDS.includes(targetIdentity.role))
+  );
+  if (!canonicalLocalTarget || (!targetIdentity.role && !targetIdentity.paneId)) return false;
   const senderProfile = normalizeScopeProfile(routeScope?.senderScope?.profileName || DEFAULT_PROFILE);
   const targetProfile = normalizeScopeProfile(routeScope?.targetScope?.profileName || DEFAULT_PROFILE);
-  return !isMainProfile(senderProfile) && senderProfile === targetProfile;
+  if (!routeScope?.failClosed) {
+    return isMainProfile(senderProfile) && isMainProfile(targetProfile);
+  }
+  if (isMainProfile(senderProfile) && !isMainProfile(targetProfile)) {
+    return isArchitectToArchitectTarget(clientInfo, message);
+  }
+  if (!isMainProfile(senderProfile) && senderProfile === targetProfile) return true;
+  return (
+    !isMainProfile(senderProfile)
+    && isMainProfile(targetProfile)
+    && isArchitectToArchitectTarget(clientInfo, message)
+  );
 }
 
 function markClientSeen(clientId, source = 'message', now = Date.now()) {
@@ -568,7 +610,7 @@ function getRoutingHealth(target, staleAfterMs = ROUTING_STALE_MS, now = Date.no
     };
   }
 
-  const hasLocalHandlerRoute = canUseScopedLocalHandlerRoute(routeScope);
+  const hasLocalHandlerRoute = canUseLocalHandlerRoute(routeScope, options?.clientInfo || {}, { target });
   let route = null;
   for (const [candidateClientId, info] of clients) {
     if (!info) continue;
@@ -1579,6 +1621,7 @@ async function handleMessage(clientId, rawData) {
     }
     const health = getRoutingHealth(message.target, message.staleAfterMs, Date.now(), routeScope, {
       excludeClientId: clientId,
+      clientInfo,
     });
     if (routeScope.failClosed && health.status === 'no_route') {
       health.status = 'scope_route_unavailable';
@@ -1855,7 +1898,8 @@ async function handleMessage(clientId, rawData) {
       return;
     }
     const matched = matchClientsForTarget(target, routeScope, { excludeClientId: clientId });
-    if (routeScope.failClosed && matched.length === 0 && !canUseScopedLocalHandlerRoute(routeScope)) {
+    const localHandlerRoute = canUseLocalHandlerRoute(routeScope, clientInfo, message);
+    if (routeScope.failClosed && matched.length === 0 && !localHandlerRoute) {
       const ackPayload = buildRoutingErrorAck(
         message,
         ingressTraceContext,
@@ -1874,7 +1918,7 @@ async function handleMessage(clientId, rawData) {
       return;
     }
     // Try WebSocket clients first (for future direct agent-to-agent)
-    if (sendToTarget(target, content, {
+    if ((matched.length > 0 || !localHandlerRoute) && sendToTarget(target, content, {
       from: clientInfo.role || clientId,
       priority,
       metadata: (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) ? metadata : null,
