@@ -67,6 +67,16 @@ function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
     const resolved = path.resolve(envRoot);
     if (fs.existsSync(resolved)) return resolved;
   }
+  if (isPackagedRuntimePath(startDir)) {
+    return resolveInstalledDataRoot({
+      cwd: process.cwd(),
+      defaultDirName: DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+      execPath: process.execPath,
+      homePath: os.homedir(),
+      resourcesPath: process.resourcesPath,
+      runtimePath: startDir,
+    }).path;
+  }
   try {
     const output = execFileSync('git', ['rev-parse', '--show-toplevel'], {
       cwd: startDir,
@@ -77,16 +87,6 @@ function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
     if (resolved) return path.resolve(resolved);
   } catch (_) {
     // Fall back when git is unavailable or cwd is not in a git worktree.
-  }
-  if (isPackagedRuntimePath(startDir)) {
-    return resolveInstalledDataRoot({
-      cwd: process.cwd(),
-      defaultDirName: DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
-      execPath: process.execPath,
-      homePath: os.homedir(),
-      resourcesPath: process.resourcesPath,
-      runtimePath: startDir,
-    }).path;
   }
   // Check if __dirname is inside .squidrun/bin/runtime — packaged bin layout.
   const normalizedDir = startDir.replace(/\\/g, '/');
