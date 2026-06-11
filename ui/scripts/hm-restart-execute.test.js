@@ -236,6 +236,60 @@ function duplexProcessRows(projectRoot = 'D:\\projects\\squidrun') {
   ];
 }
 
+function processRowsWithExecutorAncestry() {
+  return [
+    {
+      ProcessId: 111,
+      ParentProcessId: 99,
+      Name: 'electron.exe',
+      ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+      CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" . --profile=eunbyeol --window=eunbyeol --standalone-window',
+    },
+    {
+      ProcessId: 120,
+      ParentProcessId: 111,
+      Name: 'electron.exe',
+      ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+      CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" --type=renderer --user-data-dir="C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\eunbyeol"',
+    },
+    {
+      ProcessId: 130,
+      ParentProcessId: 111,
+      Name: 'electron.exe',
+      ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+      CommandLine: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\modules\\watcher-worker.js',
+    },
+    {
+      ProcessId: 201,
+      ParentProcessId: 111,
+      Name: 'node.exe',
+      ExecutablePath: 'C:\\Program Files\\nodejs\\node.exe',
+      CommandLine: 'node D:\\projects\\squidrun\\ui\\terminal-daemon.js',
+    },
+    {
+      ProcessId: 202,
+      ParentProcessId: 201,
+      Name: 'powershell.exe',
+      ExecutablePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      CommandLine: 'powershell.exe -NoLogo -NoProfile -Command codex',
+    },
+    {
+      ProcessId: 203,
+      ParentProcessId: 202,
+      Name: 'node.exe',
+      ExecutablePath: 'C:\\Program Files\\nodejs\\node.exe',
+      CommandLine: 'node D:\\projects\\squidrun\\ui\\scripts\\hm-restart-execute.js --instance client-eunbyeol',
+    },
+    {
+      ProcessId: 204,
+      ParentProcessId: 203,
+      Name: 'node.exe',
+      ExecutablePath: 'C:\\Program Files\\nodejs\\node.exe',
+      CommandLine: 'node @modelcontextprotocol/server-github',
+    },
+  ];
+}
+
 describe('hm-restart-execute', () => {
   let tempRoot;
 
@@ -447,7 +501,7 @@ describe('hm-restart-execute', () => {
     }));
   });
 
-  test('shutdown kills Electron descendants deepest first before the parent', async () => {
+  test('shutdown skips pane descendants and kills only Electron descendants before the parent', async () => {
     const killed = [];
 
     const result = await restartExecute.shutdownElectronProcesses('D:\\projects\\squidrun', {
@@ -457,12 +511,47 @@ describe('hm-restart-execute', () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(killed).toEqual([{ pid: 111, role: 'target' }]);
+    expect(result.skipped.map((proc) => proc.pid)).toEqual(expect.arrayContaining([201, 202, 203]));
+  });
+
+  test('shutdown excludes executor pid and ancestor pane chain from kill order and logs attempts before kill', async () => {
+    const killed = [];
+    const killAttempts = [];
+    const instanceConfig = {
+      id: 'client-eunbyeol',
+      profile: 'eunbyeol',
+      appStatusPath: path.join(tempRoot, '.squidrun', 'app-status-eunbyeol.json'),
+      appStatus: {
+        settingsPersistence: {
+          userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\eunbyeol',
+        },
+      },
+    };
+
+    const result = await restartExecute.shutdownElectronProcesses('D:\\projects\\squidrun', {
+      instanceConfig,
+      executorPid: 203,
+      processRows: processRowsWithExecutorAncestry(),
+      onShutdownKillAttempt: (entry) => killAttempts.push(entry),
+      killProcess: (pid, proc) => killed.push({ pid, role: proc.role, name: proc.name }),
+      processExists: jest.fn(() => false),
+    });
+
+    expect(result.ok).toBe(true);
     expect(killed).toEqual([
-      { pid: 203, role: 'descendant' },
-      { pid: 202, role: 'descendant' },
-      { pid: 201, role: 'descendant' },
-      { pid: 111, role: 'target' },
+      { pid: 130, role: 'descendant', name: 'electron.exe' },
+      { pid: 120, role: 'descendant', name: 'electron.exe' },
+      { pid: 111, role: 'target', name: 'electron.exe' },
     ]);
+    expect(result.skipped.map((proc) => proc.pid)).toEqual(expect.arrayContaining([201, 202, 203, 204]));
+    expect(result.killOrder.map((proc) => proc.pid)).not.toEqual(expect.arrayContaining([201, 202, 203, 204]));
+    expect(killAttempts.map((entry) => entry.pid)).toEqual([130, 120, 111]);
+    expect(killAttempts[0]).toEqual(expect.objectContaining({
+      step: 'shutdown_kill_attempt',
+      pid: 130,
+      role: 'descendant',
+    }));
   });
 
   test('shutdown kills only Electron when no descendants exist', async () => {
@@ -564,6 +653,7 @@ describe('hm-restart-execute', () => {
     expect(steps).toEqual([
       'preflight_check',
       'shutdown_start',
+      'shutdown_kill_attempt',
       'shutdown_complete',
       'relaunch_started',
       'relaunch_verification_complete',
@@ -723,7 +813,22 @@ describe('hm-restart-execute', () => {
         pid: null,
         mtimeMs: 1,
       })),
-      processRows: processRowsWithDescendants(),
+      processRows: [
+        {
+          ProcessId: 111,
+          ParentProcessId: 99,
+          Name: 'electron.exe',
+          ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+          CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" .',
+        },
+        {
+          ProcessId: 203,
+          ParentProcessId: 111,
+          Name: 'electron.exe',
+          ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+          CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" --type=renderer --app-path="D:\\projects\\squidrun\\ui"',
+        },
+      ],
       killProcess: jest.fn(),
       processExists: jest.fn((pid) => pid === 203),
       sleep: jest.fn(() => Promise.resolve()),

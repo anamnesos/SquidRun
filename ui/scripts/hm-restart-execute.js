@@ -784,9 +784,41 @@ function collectProcessDescendants(rootPid, rawRows = []) {
   return descendants.sort((left, right) => right.depth - left.depth || right.pid - left.pid);
 }
 
-function buildShutdownKillOrder(targets = [], rawRows = []) {
+function collectProtectedProcessPids(rawRows = [], executorPid = process.pid) {
+  const pid = Number(executorPid);
+  if (!Number.isInteger(pid) || pid <= 0) return new Set();
+  const rows = rawRows.map(asProcessRow).filter((row) => row.pid);
+  const rowsByPid = processRowMap(rows);
+  const protectedPids = new Set([pid]);
+  let current = rowsByPid.get(pid);
+  const seen = new Set([pid]);
+  while (current && current.parentPid && !seen.has(current.parentPid)) {
+    protectedPids.add(current.parentPid);
+    seen.add(current.parentPid);
+    current = rowsByPid.get(current.parentPid);
+  }
+  return protectedPids;
+}
+
+function shouldKillDescendant(proc = {}, protectedPids = new Set()) {
+  if (!proc?.pid) return { kill: false, skipReason: 'invalid_process' };
+  if (protectedPids.has(proc.pid)) {
+    return { kill: false, skipReason: 'protected_executor_ancestry' };
+  }
+  // non-electron descendants are daemon-managed; deliberately skipped — boot reap 34180e62 collects them at next start
+  if (!isElectronProcess(proc)) {
+    return { kill: false, skipReason: 'non_electron_descendant' };
+  }
+  return { kill: true, skipReason: null };
+}
+
+function buildShutdownKillOrder(targets = [], rawRows = [], options = {}) {
   const killOrder = [];
+  const skipped = [];
   const seen = new Set();
+  const protectedPids = options.protectExecutorTree === false
+    ? new Set()
+    : collectProtectedProcessPids(rawRows, options.executorPid);
   const add = (proc, role) => {
     if (!proc?.pid || seen.has(proc.pid)) return;
     seen.add(proc.pid);
@@ -795,14 +827,31 @@ function buildShutdownKillOrder(targets = [], rawRows = []) {
       role,
     });
   };
+  const skip = (proc, role, skipReason) => {
+    if (!proc?.pid) return;
+    skipped.push({
+      ...proc,
+      role,
+      skipReason,
+    });
+  };
   for (const target of targets) {
     for (const descendant of collectProcessDescendants(target.pid, rawRows)) {
+      const policy = shouldKillDescendant(descendant, protectedPids);
+      if (!policy.kill) {
+        skip(descendant, 'descendant', policy.skipReason);
+        continue;
+      }
       add(descendant, 'descendant');
     }
   }
   for (const target of targets) {
     add(target, 'target');
   }
+  Object.defineProperty(killOrder, 'skipped', {
+    enumerable: false,
+    value: skipped.sort((left, right) => right.depth - left.depth || right.pid - left.pid),
+  });
   return killOrder;
 }
 
@@ -951,6 +1000,28 @@ async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 }
 
+function recordShutdownKillAttempt(options = {}, proc = {}, index = 0, total = 0) {
+  const entry = {
+    step: 'shutdown_kill_attempt',
+    index,
+    total,
+    pid: proc.pid,
+    role: proc.role || null,
+    name: proc.name || null,
+    matchReason: proc.matchReason || null,
+    commandLine: proc.commandLine || null,
+  };
+  if (typeof options.onShutdownKillAttempt === 'function') {
+    options.onShutdownKillAttempt(entry);
+  }
+  if (options.instanceConfig?.coordPath) {
+    try {
+      logStep(options.instanceConfig, 'shutdown_kill_attempt', entry);
+    } catch {}
+  }
+  return entry;
+}
+
 function buildRelaunchSource(processes = []) {
   const target = processes.find((proc) => proc?.instanceAttributed) || processes[0] || null;
   if (!target) return null;
@@ -997,9 +1068,15 @@ async function shutdownElectronProcesses(projectRoot, options = {}) {
       killed,
     };
   }
-  const killOrder = buildShutdownKillOrder(processes, processRows);
-  for (const proc of killOrder) {
+  const killOrder = buildShutdownKillOrder(processes, processRows, {
+    executorPid: options.executorPid,
+    protectExecutorTree: options.protectExecutorTree,
+  });
+  const skipped = killOrder.skipped || [];
+  for (let index = 0; index < killOrder.length; index += 1) {
+    const proc = killOrder[index];
     try {
+      recordShutdownKillAttempt(options, proc, index, killOrder.length);
       killProcess(proc.pid, proc);
       killed.push(proc);
     } catch (error) {
@@ -1013,6 +1090,7 @@ async function shutdownElectronProcesses(projectRoot, options = {}) {
         error: error?.message || String(error),
         processes,
         killOrder,
+        skipped,
         killed,
       };
     }
@@ -1021,7 +1099,7 @@ async function shutdownElectronProcesses(projectRoot, options = {}) {
   while (nowFn() <= deadline) {
     const stillAlive = killed.filter((proc) => exists(proc.pid));
     if (stillAlive.length === 0) {
-      return { ok: true, processes, killOrder, killed, relaunchSource: buildRelaunchSource(processes) };
+      return { ok: true, processes, killOrder, skipped, killed, relaunchSource: buildRelaunchSource(processes) };
     }
     await sleepFn(Math.min(250, Math.max(0, deadline - nowFn())));
   }
@@ -1033,6 +1111,7 @@ async function shutdownElectronProcesses(projectRoot, options = {}) {
       reason: 'orphan_descendants',
       processes,
       killOrder,
+      skipped,
       killed,
       orphanDescendants,
       stillAlive,
@@ -1043,6 +1122,7 @@ async function shutdownElectronProcesses(projectRoot, options = {}) {
     reason: 'shutdown_timeout',
     processes,
     killOrder,
+    skipped,
     killed,
     stillAlive,
   };
