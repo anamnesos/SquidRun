@@ -1951,6 +1951,19 @@ describe('terminal.js module', () => {
       expect(terminal.fitAddons.has('1')).toBe(true);
     });
 
+    test('does not block standard pane creation on daemon scrollback snapshots', async () => {
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+
+      await terminal.initTerminal('2');
+
+      expect(mockSquidRun.daemon.terminalSnapshot).not.toHaveBeenCalled();
+      expect(mockSquidRun.pty.create).toHaveBeenCalledWith('2', '/test/cwd');
+      expect(terminal.terminals.has('2')).toBe(true);
+    });
+
     test('should enforce xterm scrollback cap in constructor options', async () => {
       const mockContainer = {
         addEventListener: jest.fn(),
