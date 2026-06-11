@@ -3,6 +3,11 @@
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const {
+  resolveInstalledDataRoot,
+  resolveInstalledPipeDiscriminator,
+  computeDataRootPipeDiscriminator,
+} = require('./modules/installed-data-root');
 
 const DEFAULT_PROFILE = 'main';
 const SCOPED_PROFILE_CHAT_ID = '2222222222';
@@ -119,11 +124,38 @@ function namespaceCoordRelPath(relPath, profileName) {
   return normalizedRelPath;
 }
 
-function getProfilePipePath(profileName = null, platform = os.platform()) {
+// Resolve the per-install pipe discriminator. Self-resolving (not caller-passed)
+// so every consumer — the config PIPE_PATH constant, the daemon client, and the
+// detached daemon process — derives the SAME pipe from the same data root without
+// threading the value through call sites. Options override for determinism/tests:
+//   { installDiscriminator } - explicit value (or null to force the legacy pipe)
+//   { dataRoot }             - hash this path
+//   { env }                  - env used for install resolution (default process.env)
+function resolvePipeDiscriminator(options = {}) {
+  if (Object.prototype.hasOwnProperty.call(options, 'installDiscriminator')) {
+    return toNonEmptyString(options.installDiscriminator);
+  }
+  if (options.dataRoot) {
+    return computeDataRootPipeDiscriminator(options.dataRoot);
+  }
+  try {
+    const resolved = resolveInstalledDataRoot({ env: options.env || process.env });
+    return resolveInstalledPipeDiscriminator(resolved);
+  } catch (_) {
+    // Pipe resolution must never throw at startup; fall back to the legacy pipe.
+    return null;
+  }
+}
+
+function getProfilePipePath(profileName = null, platform = os.platform(), options = {}) {
   const normalizedProfile = normalizeProfileName(profileName || DEFAULT_PROFILE);
-  const pipeBaseName = isMainProfile(normalizedProfile)
+  let pipeBaseName = isMainProfile(normalizedProfile)
     ? 'squidrun-terminal'
     : `squidrun-terminal-${normalizedProfile}`;
+  const discriminator = resolvePipeDiscriminator(options);
+  if (discriminator) {
+    pipeBaseName = `${pipeBaseName}-${discriminator}`;
+  }
   return platform === 'win32'
     ? `\\\\.\\pipe\\${pipeBaseName}`
     : `/tmp/${pipeBaseName}.sock`;
