@@ -763,12 +763,22 @@ const WATCHDOG_ACCEPTED_DELIVERY_STATUSES = new Set([
   'submit_pending_input',
 ]);
 
+const SCOPED_TELEGRAM_TERMINAL_ACCEPTED_STATUSES = new Set([
+  'accepted.unverified',
+  'accepted.daemon_pty_unverified',
+  'submit_pending_input',
+]);
+
 function normalizeWatchdogDeliveryStatus(value) {
   return toNonEmptyString(value)?.toLowerCase() || '';
 }
 
 function isWatchdogAcceptedDeliveryStatus(value) {
   return WATCHDOG_ACCEPTED_DELIVERY_STATUSES.has(normalizeWatchdogDeliveryStatus(value));
+}
+
+function isScopedTelegramTerminalAcceptedStatus(value) {
+  return SCOPED_TELEGRAM_TERMINAL_ACCEPTED_STATUSES.has(normalizeWatchdogDeliveryStatus(value));
 }
 
 function isFyiClassAgentMessage(content) {
@@ -10592,11 +10602,11 @@ class SquidRunApp {
     }
   }
 
-  // Retry-until-verified wrapper around the single-shot delivery. Each attempt
+  // Retry-until-final wrapper around the single-shot delivery. Each attempt
   // opens a fresh socket and re-dispatches, with exponential backoff, so a pane
   // that is busy mid-turn on the first attempt can still be reached once it
-  // settles — instead of giving up immediately (the old maxAttempts:1 behaviour).
-  // Bounded; the append trigger fallback still catches anything that never verifies.
+  // settles. Accepted-but-unverified results are terminal: the runtime has taken
+  // ownership and re-dispatching the same inbound creates duplicate pane turns.
   async deliverScopedTelegramInboundWithRetry(windowKey, message, options = {}) {
     const hardening = this.isScopedInboundHardeningEnabled();
     const maxAttempts = hardening
@@ -10619,6 +10629,17 @@ class SquidRunApp {
         };
       }
       if (lastResult?.verified === true && lastResult?.userVisible === true) {
+        return lastResult;
+      }
+      if (
+        lastResult?.accepted === true
+        && isScopedTelegramTerminalAcceptedStatus(lastResult?.status)
+      ) {
+        log.info(
+          'Telegram',
+          `Scoped Telegram inbound to ${windowKey} accepted without PTY verification `
+            + `(attempt ${attempt}/${maxAttempts}, status=${lastResult.status}); not retrying`
+        );
         return lastResult;
       }
       if (attempt < maxAttempts) {
