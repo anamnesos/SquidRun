@@ -2944,6 +2944,28 @@ describe('SquidRunApp', () => {
       expect(teamMemory.initializeTeamMemoryRuntime).not.toHaveBeenCalled();
     });
 
+    it('skips Telegram poller recovery for pinned installed deployments', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const { checkAndRecoverTelegramPoller } = require('../scripts/hm-telegram-poller-watchdog');
+      app.installedDeployment = {
+        active: true,
+        dataRoot: 'D:\\SquidRun\\Eunbyeol',
+        source: 'env',
+      };
+
+      const result = await app.runStartupHealthTelegramPollerAutoRecover({
+        projectRoot: 'D:\\SquidRun\\Eunbyeol',
+        profileName: 'main',
+      });
+
+      expect(result).toEqual({
+        ok: true,
+        skipped: true,
+        reason: 'installed_deployment_app_poller_owner',
+      });
+      expect(checkAndRecoverTelegramPoller).not.toHaveBeenCalled();
+    });
+
     it('skips Telegram poller recovery for side-profile startup health artifacts', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');

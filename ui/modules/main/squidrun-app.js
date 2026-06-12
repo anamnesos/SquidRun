@@ -1469,6 +1469,9 @@ class SquidRunApp {
     if (options.enabled === false) {
       return { ok: true, skipped: true, reason: 'disabled' };
     }
+    if (this.installedDeployment?.active === true) {
+      return { ok: true, skipped: true, reason: 'installed_deployment_app_poller_owner' };
+    }
     const profileName = normalizeProfileName(options.profileName || getActiveProfileName());
     if (!isMainProfile(profileName)) {
       return { ok: true, skipped: true, reason: 'profile_not_owner' };
