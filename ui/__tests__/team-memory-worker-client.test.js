@@ -51,6 +51,7 @@ describe('team-memory worker client', () => {
   beforeEach(() => {
     jest.resetModules();
     process.env.SQUIDRUN_TEAM_MEMORY_WORKER_REQUEST_TIMEOUT_MS = '20';
+    process.env.SQUIDRUN_TEAM_MEMORY_WORKER_IDLE_CLOSE_TIMEOUT_MS = '25';
     stallNextRequest = false;
     workers = [];
     forkMock = jest.fn(() => {
@@ -73,6 +74,7 @@ describe('team-memory worker client', () => {
   afterEach(async () => {
     await client.resetForTests();
     delete process.env.SQUIDRUN_TEAM_MEMORY_WORKER_REQUEST_TIMEOUT_MS;
+    delete process.env.SQUIDRUN_TEAM_MEMORY_WORKER_IDLE_CLOSE_TIMEOUT_MS;
   });
 
   test('initializeRuntime forks worker and resolves', async () => {
@@ -103,6 +105,21 @@ describe('team-memory worker client', () => {
     });
     expect(forkMock).toHaveBeenCalledTimes(1);
     expect(workers[0].kill).toHaveBeenCalledTimes(1);
+
+    const second = await client.executeOperation('health', {}, {});
+    expect(second.ok).toBe(true);
+    expect(forkMock).toHaveBeenCalledTimes(2);
+  });
+
+  test('closes idle worker intentionally before later reuse', async () => {
+    const first = await client.executeOperation('health', {}, {});
+    expect(first.ok).toBe(true);
+    expect(forkMock).toHaveBeenCalledTimes(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(workers[0].send).toHaveBeenCalledWith(expect.objectContaining({ type: 'close' }));
+    expect(workers[0].connected).toBe(false);
 
     const second = await client.executeOperation('health', {}, {});
     expect(second.ok).toBe(true);
