@@ -3,6 +3,7 @@ const os = require('os');
 const path = require('path');
 
 const {
+  INPUT_SHADOW_RECOVERY_CONSUMER,
   appendInputShadowLog,
   _internals,
 } = require('../modules/input-shadow-log');
@@ -54,6 +55,33 @@ describe('input shadow log', () => {
         text,
       });
       expect(entry.ts).toEqual(expect.any(String));
+      expect(result.rotation.consumer).toBe(INPUT_SHADOW_RECOVERY_CONSUMER);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('rotates with a multi-session recovery consumer marker', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'input-shadow-log-rotate-'));
+    const logPath = path.join(tempRoot, 'runtime', 'user-input-shadow.jsonl');
+
+    try {
+      fs.mkdirSync(path.dirname(logPath), { recursive: true });
+      fs.writeFileSync(logPath, 'x'.repeat(64), 'utf8');
+
+      const result = appendInputShadowLog(
+        { paneId: '2', source: 'pty-write', text: 'after rotation', byteLen: 14 },
+        { logPath, rotateMaxBytes: 32, rotateMaxFiles: 2 }
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.rotation).toEqual(expect.objectContaining({
+        rotated: true,
+        consumer: INPUT_SHADOW_RECOVERY_CONSUMER,
+      }));
+      expect(fs.existsSync(`${logPath}.1`)).toBe(true);
+      const entry = JSON.parse(fs.readFileSync(logPath, 'utf8').trim());
+      expect(entry.text).toBe('after rotation');
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

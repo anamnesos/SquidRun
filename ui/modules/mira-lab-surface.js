@@ -55,6 +55,7 @@ const {
 const {
   readMiraCalendarMessageCuriosity,
 } = require('./mira-calendar-message-curiosity');
+const { appendJsonlWithRotation } = require('./runtime-log-rotation');
 
 const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
 const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
@@ -80,6 +81,14 @@ const MIRA_ACTIVE_INITIATIVE_SCHEMA = 'squidrun.mira_lab.active_initiative_v0';
 const MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA = 'squidrun.mira_lab.active_initiative_outcome_v0';
 const MIRA_READ_ONLY_CODE_MODE_SCHEMA = 'squidrun.mira_lab.read_only_code_mode_v0';
 const MIRA_QUIET_CURIOSITY_SCHEDULE_SCHEMA = 'squidrun.mira_lab.quiet_curiosity_schedule_v0';
+const MIRA_LAB_RUNTIME_ROTATE_MAX_BYTES = 10 * 1024 * 1024;
+const MIRA_LAB_RUNTIME_ROTATE_MAX_FILES = 3;
+const MIRA_LAB_RUNTIME_ROTATION_CONSUMER = 'mira_lab_runtime_scans';
+const ROTATED_MIRA_RUNTIME_FILENAMES = new Set([
+  'mira-lab-replies.jsonl',
+  'mira-curiosity-items.jsonl',
+  'mira-curiosity-bursts.jsonl',
+]);
 const AGENT_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
 const SPEAKER_ROLES = Object.freeze(['james', 'mira', ...AGENT_ROLES]);
 const REQUESTER_PANES = Object.freeze(['architect', 'builder', 'oracle', 'james']);
@@ -213,8 +222,30 @@ function transcriptPath(projectRoot, sessionId) {
 }
 
 function appendJsonl(filePath, entry) {
+  if (isMiraRuntimeJsonlPath(filePath)) {
+    return appendJsonlWithRotation(filePath, entry, {
+      maxBytes: MIRA_LAB_RUNTIME_ROTATE_MAX_BYTES,
+      maxFiles: MIRA_LAB_RUNTIME_ROTATE_MAX_FILES,
+      consumer: MIRA_LAB_RUNTIME_ROTATION_CONSUMER,
+    });
+  }
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`, 'utf8');
+  return {
+    ok: true,
+    path: filePath,
+    rotation: {
+      rotated: false,
+      reason: 'non_runtime_jsonl',
+      consumer: 'mira_lab_non_runtime_file',
+    },
+  };
+}
+
+function isMiraRuntimeJsonlPath(filePath) {
+  const normalized = path.resolve(String(filePath || '')).replace(/\\/g, '/').toLowerCase();
+  if (!normalized.includes('/.squidrun/runtime/')) return false;
+  return ROTATED_MIRA_RUNTIME_FILENAMES.has(path.basename(normalized));
 }
 
 function readJsonl(filePath) {
@@ -6002,7 +6033,7 @@ function classifyReplyDecision({ replyText, gateOk, languageGateOk, attachmentVi
   return { decision: 'fail', reasonClass: 'gate_annotation' };
 }
 
-function buildPromptReplyTurns({ generatedAt, sessionId, prompt, replyText, decision, gateSummary, transcriptPathStr, speakerRole, visibleText, replaySource }) {
+function buildPromptReplyTurns({ generatedAt, sessionId, prompt, decision, gateSummary, transcriptPathStr, speakerRole, visibleText, replaySource }) {
   const role = normalizeSpeakerRole(speakerRole) || 'james';
   const direction = AGENT_ROLES.includes(role) ? 'agent_to_mira' : 'james_to_mira';
   const promptTurn = {
@@ -6128,7 +6159,6 @@ async function buildReplayPromptReplyResult({
     generatedAt,
     sessionId: transcriptSessionId,
     prompt,
-    replyText,
     decision,
     gateSummary,
     transcriptPathStr,
@@ -6172,8 +6202,7 @@ async function buildReplayPromptReplyResult({
     },
     transcript_path: transcriptPathStr,
   };
-  fs.mkdirSync(path.dirname(auditPathStr), { recursive: true });
-  fs.appendFileSync(auditPathStr, `${JSON.stringify(auditEntry)}\n`, 'utf8');
+  appendJsonl(auditPathStr, auditEntry);
 
   const requesterEnvelope = buildRequesterEnvelope({
     decision,
@@ -6519,7 +6548,6 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     generatedAt,
     sessionId: transcriptSessionId,
     prompt,
-    replyText,
     decision,
     gateSummary,
     transcriptPathStr,
@@ -6575,7 +6603,7 @@ async function buildMiraLabPromptReply(payload = {}, options = {}) {
     transcript_path: transcriptPathStr,
   };
   fs.mkdirSync(path.dirname(auditPathStr), { recursive: true });
-  fs.appendFileSync(auditPathStr, `${JSON.stringify(auditEntry)}\n`, 'utf8');
+  appendJsonl(auditPathStr, auditEntry);
 
   const requesterEnvelope = buildRequesterEnvelope({
     decision,
@@ -7184,6 +7212,9 @@ module.exports = {
   MIRA_CURRICULUM_SKILLS_SCHEMA,
   MIRA_CURIOSITY_ITEM_SCHEMA,
   MIRA_CURIOSITY_SOURCE_REGISTRY,
+  MIRA_LAB_RUNTIME_ROTATE_MAX_BYTES,
+  MIRA_LAB_RUNTIME_ROTATE_MAX_FILES,
+  MIRA_LAB_RUNTIME_ROTATION_CONSUMER,
   MIRA_ACTIVE_INITIATIVE_SCHEMA,
   MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
   MIRA_ACTIVE_INITIATIVE_OUTCOME_STATUSES,
@@ -7237,4 +7268,7 @@ module.exports = {
   selfDirectionQueuePath,
   transcriptPath,
   validateSafeFallbackOrNull,
+  _internals: {
+    isMiraRuntimeJsonlPath,
+  },
 };
