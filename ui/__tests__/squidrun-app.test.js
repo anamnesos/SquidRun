@@ -10889,11 +10889,91 @@ describe('SquidRunApp', () => {
       getPathsSpy.mockReturnValue([]); 
       app.startScopedTelegramTriggerDrainPoller();
       
-      jest.advanceTimersByTime(11000); 
+      jest.advanceTimersByTime(11000);
       expect(getPathsSpy).toHaveBeenCalledWith('eunbyeol');
 
       getPathsSpy.mockRestore();
       jest.useRealTimers();
+    });
+
+    it('drains and archives the trigger file when delivery is accepted without PTY verification', async () => {
+      jest.useFakeTimers();
+      const triggerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-drain-accepted-'));
+      const triggerPath = path.join(triggerDir, 'architect.txt');
+      fs.writeFileSync(triggerPath, '[Telegram from @Rachelchoi]: payload\n', 'utf8');
+
+      app.activeProfileName = 'eunbyeol';
+      const getPathsSpy = jest.spyOn(app, 'getScopedTelegramTriggerPaths').mockReturnValue([triggerPath]);
+      const deliverSpy = jest.spyOn(app, 'deliverScopedTelegramInboundWithRetry').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: false,
+        verified: false,
+        userVisible: false,
+        status: 'accepted.daemon_pty_unverified',
+      });
+
+      app.startScopedTelegramTriggerDrainPoller();
+      await jest.advanceTimersByTimeAsync(11000);
+
+      expect(deliverSpy).toHaveBeenCalledTimes(1);
+      expect(fs.readFileSync(triggerPath, 'utf8')).toBe('');
+      const archivePath = path.join(triggerDir, 'drained', `architect-${new Date().toISOString().split('T')[0]}.txt`);
+      expect(fs.existsSync(archivePath)).toBe(true);
+      expect(fs.readFileSync(archivePath, 'utf8')).toContain('payload');
+
+      // Subsequent cycles must not re-inject the drained payload.
+      await jest.advanceTimersByTimeAsync(60 * 1000 * 3);
+      expect(deliverSpy).toHaveBeenCalledTimes(1);
+
+      app.stopScopedTelegramTriggerDrainPoller();
+      getPathsSpy.mockRestore();
+      deliverSpy.mockRestore();
+      jest.useRealTimers();
+      fs.rmSync(triggerDir, { recursive: true, force: true });
+    });
+
+    it('backs off on failed drains and quarantines the payload after max consecutive failures', async () => {
+      jest.useFakeTimers();
+      const triggerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-drain-quarantine-'));
+      const triggerPath = path.join(triggerDir, 'architect.txt');
+      fs.writeFileSync(triggerPath, '[Telegram from @Rachelchoi]: stuck payload\n', 'utf8');
+
+      app.activeProfileName = 'eunbyeol';
+      const getPathsSpy = jest.spyOn(app, 'getScopedTelegramTriggerPaths').mockReturnValue([triggerPath]);
+      const deliverSpy = jest.spyOn(app, 'deliverScopedTelegramInboundWithRetry').mockResolvedValue({
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        userVisible: false,
+        status: 'scoped_runtime_unavailable',
+      });
+
+      app.startScopedTelegramTriggerDrainPoller();
+      await jest.advanceTimersByTimeAsync(11000);
+      expect(deliverSpy).toHaveBeenCalledTimes(1);
+
+      // Backoff after the first failure is 60s, so the next 60s tick is the
+      // earliest allowed retry; failures 2..5 each take progressively longer.
+      // 31 minutes of ticks is enough for the full 1+2+4+8 minute backoff run.
+      await jest.advanceTimersByTimeAsync(31 * 60 * 1000);
+
+      expect(deliverSpy).toHaveBeenCalledTimes(5);
+      expect(fs.readFileSync(triggerPath, 'utf8')).toBe('');
+      const archivePath = path.join(triggerDir, 'drained', `architect-${new Date().toISOString().split('T')[0]}.txt`);
+      expect(fs.readFileSync(archivePath, 'utf8')).toContain('quarantined');
+      expect(fs.readFileSync(archivePath, 'utf8')).toContain('stuck payload');
+
+      // After quarantine the file is empty; no further injections occur.
+      await jest.advanceTimersByTimeAsync(5 * 60 * 1000);
+      expect(deliverSpy).toHaveBeenCalledTimes(5);
+
+      app.stopScopedTelegramTriggerDrainPoller();
+      getPathsSpy.mockRestore();
+      deliverSpy.mockRestore();
+      jest.useRealTimers();
+      fs.rmSync(triggerDir, { recursive: true, force: true });
     });
   });
 });

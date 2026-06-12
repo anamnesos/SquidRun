@@ -45,9 +45,11 @@ If you remember the prior session AND the session number has NOT incremented, th
 happen. Never re-stage a restart that already worked — verify the session number first.
 
 **Packaged-install caveat (S443, from the Eunbyeol stall trace):** a packaged (installed-exe) main process
-writes NOTHING to `app.log` — log-based boot signals only work on dev installs run via `npm start`. For
-packaged installs (Eunbyeol's standalone, future customer installs), verify boot via `app-status.json`
-session/started fields and the process table, never via app.log presence/recency.
+can write NOTHING to `app.log` when the logger path is blacked out. For packaged installs (Eunbyeol's
+standalone, future customer installs), verify boot via `app-status.json` session/started fields and the
+process table, and read `.squidrun/runtime/boot-sequence.jsonl` for synchronous boot breadcrumbs. If
+`.squidrun/runtime/logger-blackout.jsonl` exists, treat it as proof that the logger swallowed at least one
+dir/write/stream failure and fall back to breadcrumbs/process evidence instead of app.log recency.
 
 ### Why there's no shortcut
 

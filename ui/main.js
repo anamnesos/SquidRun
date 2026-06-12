@@ -5,6 +5,7 @@
 
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
 const { app, Menu } = require('electron');
 
 // --- Occluded/background window throttling fix (must run before app is ready) ---
@@ -122,6 +123,30 @@ process.stderr.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 
 // Global error handlers — prevent main process crash on unhandled errors
 const log = require('./modules/logger');
+const { resolveCoordPath } = require('./config');
+
+function appendMainBootSequenceBreadcrumb(step, details = {}) {
+  try {
+    const filePath = resolveCoordPath(path.join('runtime', 'boot-sequence.jsonl'), { forWrite: true });
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.appendFileSync(
+      filePath,
+      `${JSON.stringify({
+        schema: 'squidrun.boot_sequence.v1',
+        source: 'main.js',
+        step,
+        t: Date.now(),
+        iso: new Date().toISOString(),
+        pid: process.pid,
+        ...(details && typeof details === 'object' ? details : {}),
+      })}\n`,
+      'utf8'
+    );
+  } catch {
+    // This is a last-ditch breadcrumb path; never let diagnostics block boot.
+  }
+}
+
 function enforceMenuSuppression(windowRef = null) {
   try {
     Menu.setApplicationMenu(null);
@@ -203,7 +228,12 @@ app.on('browser-window-created', (_event, windowRef) => {
 // 3. Electron Lifecycle Hooks
 app.whenReady().then(() => {
   enforceMenuSuppression();
+  appendMainBootSequenceBreadcrumb('main:when-ready:init-start');
   squidrunApp.init().catch((err) => {
+    appendMainBootSequenceBreadcrumb('main:init-catch', {
+      error: err?.message || String(err),
+      stack: err?.stack || null,
+    });
     log.error('[Main] App init failed:', err?.message || err);
     log.error('[Main] Stack:', err?.stack);
   });

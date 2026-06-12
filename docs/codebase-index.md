@@ -414,7 +414,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/live-task-audit-sidecar.test.js` | test | 17900 |
 | `ui/__tests__/local-embedder.test.js` | test | 14089 |
 | `ui/__tests__/local-model-capabilities.test.js` | test | 2509 |
-| `ui/__tests__/logger.test.js` | test | 8889 |
+| `ui/__tests__/logger.test.js` | test | 10450 |
 | `ui/__tests__/main-installed-data-root.test.js` | test | 1127 |
 | `ui/__tests__/mcp-autoconfig-handlers.test.js` | test | 4987 |
 | `ui/__tests__/mcp-bridge.test.js` | test | 28446 |
@@ -595,7 +595,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
 | `ui/__tests__/squid-room-surface.test.js` | test | 14236 |
-| `ui/__tests__/squidrun-app.test.js` | test | 413009 |
+| `ui/__tests__/squidrun-app.test.js` | test | 421989 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 2483 |
 | `ui/__tests__/state-handlers.test.js` | test | 8772 |
@@ -789,7 +789,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/live-ops-disabled.js` | source | 4928 |
 | `ui/modules/local-embedder.js` | source | 2961 |
 | `ui/modules/local-model-capabilities.js` | source | 5853 |
-| `ui/modules/logger.js` | source | 5157 |
+| `ui/modules/logger.js` | source | 7343 |
 | `ui/modules/main/activity-manager.js` | source | 4478 |
 | `ui/modules/main/agent-pane-auto-recovery.js` | source | 25740 |
 | `ui/modules/main/agent-task-resolution.js` | source | 27351 |
@@ -827,7 +827,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/pty-output-filter.js` | source | 7793 |
 | `ui/modules/main/restart-continuity-resume-manifest.js` | source | 34903 |
 | `ui/modules/main/settings-manager.js` | source | 26444 |
-| `ui/modules/main/squidrun-app.js` | source | 550773 |
+| `ui/modules/main/squidrun-app.js` | source | 561778 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 3021 |
 | `ui/modules/main/telegram-reply-obligations.js` | source | 13086 |
 | `ui/modules/main/trustquote-arm-registry-seed.js` | source | 7307 |
@@ -1032,7 +1032,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/live-task-audit-preview.html` | asset | 2014 |
 | `ui/live-task-audit-sidecar-renderer.js` | source | 25887 |
 | `ui/live-task-audit-sidecar.html` | asset | 1739 |
-| `ui/main.js` | source | 8914 |
+| `ui/main.js` | source | 9906 |
 | `ui/mcp-server.js` | source | 22417 |
 | `ui/mira-lab-renderer.js` | source | 13296 |
 | `ui/mira-lab.html` | asset | 1613 |
@@ -1226,7 +1226,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | Path | Kind | Bytes |
 | --- | --- | ---: |
 | `workspace/knowledge/architecture-decisions.md` | doc | 48451 |
-| `workspace/knowledge/codex-desktop-restart.md` | doc | 7819 |
+| `workspace/knowledge/codex-desktop-restart.md` | doc | 8041 |
 | `workspace/knowledge/consultation-schema.md` | doc | 1739 |
 | `workspace/knowledge/exogenous-triggers-spec.md` | doc | 2942 |
 | `workspace/knowledge/hyperliquid-rate-limit-broker-plan.md` | doc | 1570 |
@@ -1241,4 +1241,4 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `workspace/knowledge/trustquote-field-workflow.md` | doc | 2349 |
 | `workspace/knowledge/unlock-trading-routine.md` | doc | 2489 |
 | `workspace/knowledge/unlock-watchlist.md` | doc | 1669 |
-| `workspace/knowledge/workflows.md` | doc | 27237 |
+| `workspace/knowledge/workflows.md` | doc | 27845 |

@@ -27,6 +27,7 @@ describe('logger', () => {
     // Create fs mock
     fsMock = {
       mkdirSync: jest.fn(),
+      appendFileSync: jest.fn(),
       appendFile: jest.fn((filePath, data, encoding, cb) => cb(null)),
     };
 
@@ -194,12 +195,52 @@ describe('logger', () => {
       expect(process.stdout.write).toHaveBeenCalled();
     });
 
+    test('emits one synchronous blackout marker when buffered file writes fail', async () => {
+      fsMock.appendFile.mockImplementation((filePath, data, encoding, cb) => {
+        cb(new Error('Write failed'));
+      });
+
+      logger.info('Test', 'first');
+      logger.info('Test', 'second');
+      await logger._flushForTesting();
+
+      const stderrLines = process.stderr.write.mock.calls
+        .map((call) => String(call[0] || ''))
+        .filter((line) => line.includes('[LOGGER BLACKOUT]'));
+      expect(stderrLines).toHaveLength(1);
+      expect(fsMock.appendFileSync).toHaveBeenCalledTimes(1);
+      expect(fsMock.appendFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('logger-blackout.jsonl'),
+        expect.stringContaining('"reason":"buffered_log_write_failed"'),
+        'utf8'
+      );
+    });
+
     test('continues if mkdir fails', () => {
       fsMock.mkdirSync.mockImplementation(() => {
         throw new Error('Mkdir failed');
       });
 
       expect(() => logger.info('Test', 'message')).not.toThrow();
+    });
+
+    test('emits blackout marker when log directory creation is swallowed', () => {
+      fsMock.mkdirSync.mockImplementation((dirPath) => {
+        if (String(dirPath).includes('logs')) {
+          throw new Error('Mkdir failed');
+        }
+      });
+
+      expect(() => logger.info('Test', 'message')).not.toThrow();
+
+      expect(process.stderr.write).toHaveBeenCalledWith(
+        expect.stringContaining('[LOGGER BLACKOUT]')
+      );
+      expect(fsMock.appendFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('logger-blackout.jsonl'),
+        expect.stringContaining('"reason":"ensure_log_dir_failed"'),
+        'utf8'
+      );
     });
   });
 

@@ -41,13 +41,74 @@ const LOG_FLUSH_INTERVAL_MS = 500;
 const LOG_ROTATE_MAX_BYTES = 10 * 1024 * 1024;
 const LOG_ROTATE_MAX_FILES = 3;
 const MIRROR_STATE_KEY = Symbol.for('squidrun.logger.mirrorState');
+let loggerBlackoutMarkerEmitted = false;
+
+function resolveLoggerBlackoutMarkerPath() {
+  if (typeof resolveCoordPath === 'function') {
+    try {
+      return resolveCoordPath(path.join('runtime', 'logger-blackout.jsonl'), { forWrite: true });
+    } catch (_err) {
+      // Fall back below when coord resolution is unavailable.
+    }
+  }
+  if (!WORKSPACE_PATH) return null;
+  return path.join(WORKSPACE_PATH, '.squidrun', 'runtime', 'logger-blackout.jsonl');
+}
+
+function normalizeError(err) {
+  if (!err) return { message: 'unknown', code: null, stack: null };
+  if (err instanceof Error) {
+    return {
+      message: err.message || String(err),
+      code: err.code || null,
+      stack: err.stack || null,
+    };
+  }
+  return {
+    message: String(err),
+    code: err && typeof err === 'object' ? err.code || null : null,
+    stack: null,
+  };
+}
+
+function emitLoggerBlackoutMarker(reason, err) {
+  if (loggerBlackoutMarkerEmitted) return false;
+  loggerBlackoutMarkerEmitted = true;
+  const error = normalizeError(err);
+  const marker = {
+    schema: 'squidrun.logger_blackout.v1',
+    t: Date.now(),
+    iso: new Date().toISOString(),
+    pid: process.pid,
+    reason: String(reason || 'logger_failure'),
+    error,
+  };
+  try {
+    process.stderr.write(
+      `[LOGGER BLACKOUT] ${marker.iso} ${marker.reason}: ${error.message}\n`
+    );
+  } catch (_stderrErr) {
+    // If stderr is gone too, the sync marker below is the remaining channel.
+  }
+
+  const markerPath = resolveLoggerBlackoutMarkerPath();
+  if (!markerPath) return true;
+  try {
+    fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+    fs.appendFileSync(markerPath, `${JSON.stringify(marker)}\n`, 'utf8');
+  } catch (_markerErr) {
+    // Never let diagnostic fallback take the app down.
+  }
+  return true;
+}
 
 function ensureLogDir() {
   if (logDirReady || !LOG_DIR) return;
   try {
     fs.mkdirSync(LOG_DIR, { recursive: true });
     logDirReady = true;
-  } catch (_err) {
+  } catch (err) {
+    emitLoggerBlackoutMarker('ensure_log_dir_failed', err);
     // If file logging fails, keep console logging working
   }
 }
@@ -56,6 +117,7 @@ const bufferedWriter = createBufferedFileWriter({
   filePath: LOG_FILE_PATH,
   flushIntervalMs: LOG_FLUSH_INTERVAL_MS,
   ensureDir: ensureLogDir,
+  onError: (err) => emitLoggerBlackoutMarker('buffered_log_write_failed', err),
   rotateMaxBytes: LOG_ROTATE_MAX_BYTES,
   rotateMaxFiles: LOG_ROTATE_MAX_FILES,
 });
@@ -74,7 +136,7 @@ function formatMsg(level, subsystem, message, extra) {
   return [prefix, message];
 }
 
-function createMirrorWriter(stream) {
+function createMirrorWriter(stream, streamName = 'unknown') {
   if (!stream || typeof stream.write !== 'function') {
     return () => {};
   }
@@ -83,8 +145,9 @@ function createMirrorWriter(stream) {
     listenerAttached: false,
   };
   stream[MIRROR_STATE_KEY] = state;
-  const markBroken = () => {
+  const markBroken = (err = null) => {
     state.disabled = true;
+    emitLoggerBlackoutMarker(`${streamName}_stream_broken`, err);
     if (state.listenerAttached) {
       try { stream.removeListener('error', markBroken); } catch {}
       state.listenerAttached = false;
@@ -102,16 +165,16 @@ function createMirrorWriter(stream) {
     if (state.disabled || !line || stream.destroyed || stream.writable === false) return;
     try {
       stream.write(line, (error) => {
-        if (error) markBroken();
+        if (error) markBroken(error);
       });
-    } catch {
-      markBroken();
+    } catch (err) {
+      markBroken(err);
     }
   };
 }
 
-const writeStdout = createMirrorWriter(process.stdout);
-const writeStderr = createMirrorWriter(process.stderr);
+const writeStdout = createMirrorWriter(process.stdout, 'stdout');
+const writeStderr = createMirrorWriter(process.stderr, 'stderr');
 
 function write(level, subsystem, message, extra) {
   if (LEVELS[level] < minLevel) return;
@@ -136,7 +199,8 @@ function write(level, subsystem, message, extra) {
   ensureLogDir();
   try {
     bufferedWriter.write(lineWithNewline);
-  } catch (_err) {
+  } catch (err) {
+    emitLoggerBlackoutMarker('buffered_log_write_throw', err);
     // Ignore file logging errors to avoid breaking runtime
   }
 }
