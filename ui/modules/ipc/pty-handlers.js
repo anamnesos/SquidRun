@@ -490,6 +490,14 @@ function registerPtyHandlers(ctx, deps = {}) {
   const getRecoveryManager = () => deps?.recoveryManager || ctx.recoveryManager;
   const getFirmwareManager = () => deps?.firmwareManager || ctx.firmwareManager;
   const getPaneRestartArbiter = () => deps?.paneRestartArbiter || ctx.paneRestartArbiter;
+  const normalizeInstalledDeployment = (value) => (
+    value && typeof value === 'object' && !Array.isArray(value) ? value : null
+  );
+  const getInstalledDeployment = () => (
+    normalizeInstalledDeployment(deps?.installedDeployment)
+    || normalizeInstalledDeployment(ctx.installedDeployment)
+    || null
+  );
   const getDaemonClientForPane = (paneId) => {
     if (typeof deps?.getDaemonClientForPane === 'function') {
       const scopedClient = deps.getDaemonClientForPane(paneId);
@@ -515,6 +523,11 @@ function registerPtyHandlers(ctx, deps = {}) {
     }
   };
   const isFirmwareEnabled = () => ctx?.currentSettings?.firmwareInjectionEnabled === true;
+  const getInstalledPaneDataRoot = () => {
+    const deployment = getInstalledDeployment();
+    const dataRoot = toNonEmptyString(deployment?.dataRoot);
+    return deployment?.active === true && dataRoot ? path.resolve(dataRoot) : null;
+  };
   const paneSessionIdsFilePath = deps.paneSessionIdsFilePath || PANE_SESSION_IDS_FILE_PATH;
   const resumeHomeDir = deps.resumeHomeDir || null;
   const reapClaudeSessionProcessesForSpawn = typeof deps.reapClaudeSessionProcesses === 'function'
@@ -777,6 +790,11 @@ function registerPtyHandlers(ctx, deps = {}) {
     let spawnEnv = (ptyOptions.env && typeof ptyOptions.env === 'object')
       ? { ...ptyOptions.env }
       : null;
+
+    const installedPaneDataRoot = getInstalledPaneDataRoot();
+    if (installedPaneDataRoot) {
+      spawnEnv = { ...(spawnEnv || {}), SQUIDRUN_DATA_ROOT: installedPaneDataRoot };
+    }
 
     if (process.platform === 'win32') {
       const userProfile = process.env.USERPROFILE || '';

@@ -7,6 +7,7 @@
   'triggers',
   'recoveryManager',
   'paneRestartArbiter',
+  'installedDeployment',
   'pluginManager',
   'backupManager',
   'usageStats',

@@ -439,6 +439,52 @@ describe('PTY Handlers', () => {
       );
     });
 
+    test('injects installed data root into pane spawn env for packaged installs', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.installedDeployment = {
+        active: true,
+        dataRoot: 'D:\\SquidRun\\sideprofile',
+        source: 'manifest:D:\\SquidRun\\sideprofile\\versions\\0.1.34-test\\squidrun-install.json',
+      };
+      ctx.currentSettings.paneProjects = { '3': 'D:\\SquidRun\\sideprofile\\workspace' };
+      ctx.currentSettings.paneCommands = { '3': 'codex' };
+
+      await harness.invoke('pty-create', '3', 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-test', {
+        spawnCommandOnCreate: true,
+        paneCommand: 'codex',
+        env: {
+          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
+        },
+      });
+
+      const spawnCall = ctx.daemonClient.spawn.mock.calls[0];
+      expect(spawnCall[4]).toEqual(expect.objectContaining({
+        SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
+        SQUIDRUN_DATA_ROOT: path.resolve('D:\\SquidRun\\sideprofile'),
+      }));
+    });
+
+    test('does not inject data root into pane spawn env for dev main', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.installedDeployment = {
+        active: false,
+        dataRoot: 'D:\\SquidRun\\sideprofile',
+        source: 'default',
+      };
+
+      await harness.invoke('pty-create', '2', 'D:\\projects\\squidrun', {
+        env: {
+          SQUIDRUN_PROJECT_ROOT: 'D:\\projects\\squidrun',
+        },
+      });
+
+      const spawnCall = ctx.daemonClient.spawn.mock.calls[0];
+      expect(spawnCall[4]).toEqual(expect.objectContaining({
+        SQUIDRUN_PROJECT_ROOT: 'D:\\projects\\squidrun',
+      }));
+      expect(spawnCall[4].SQUIDRUN_DATA_ROOT).toBeUndefined();
+    });
+
     test('adds Claude autonomy flag before spawn-on-create session pinning', async () => {
       ctx.daemonClient.connected = true;
       ctx.currentSettings.autonomyConsentGiven = true;
