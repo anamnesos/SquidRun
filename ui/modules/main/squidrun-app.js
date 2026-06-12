@@ -3613,6 +3613,7 @@ class SquidRunApp {
 
   notifyRendererDaemonTimeout(reason = 'daemon_connect_timeout') {
     if (this.daemonConnectedForStartup) return;
+    if (this.daemonTimeoutNotified) return;
     const delivered = this.sendToAllWindows('daemon-timeout', {
       timeoutMs: DAEMON_CONNECT_TIMEOUT_MS,
       reason,
@@ -3620,6 +3621,41 @@ class SquidRunApp {
     });
     if (delivered) {
       this.daemonTimeoutNotified = true;
+    }
+  }
+
+  async awaitDaemonStartupStepWithTimeout(stepName, runStep, timeoutResult) {
+    let timeoutTimer = null;
+    let settled = false;
+    const timeoutReason = `${stepName}_timeout`;
+    const timeoutPromise = new Promise((resolve) => {
+      timeoutTimer = setTimeout(() => {
+        if (settled) return;
+        this.daemonTimeoutTriggered = true;
+        log.warn('Daemon', `${stepName} did not settle within ${DAEMON_CONNECT_TIMEOUT_MS}ms`);
+        this.notifyRendererDaemonTimeout(timeoutReason);
+        resolve(
+          typeof timeoutResult === 'function'
+            ? timeoutResult(timeoutReason)
+            : timeoutResult
+        );
+      }, DAEMON_CONNECT_TIMEOUT_MS);
+
+      if (timeoutTimer && typeof timeoutTimer.unref === 'function') {
+        timeoutTimer.unref();
+      }
+    });
+
+    try {
+      return await Promise.race([
+        Promise.resolve().then(runStep),
+        timeoutPromise,
+      ]);
+    } finally {
+      settled = true;
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
     }
   }
 
@@ -4242,18 +4278,30 @@ class SquidRunApp {
     this.usage.loadUsageStats();
 
     // 9. Initialize PTY daemon connection (heavy startup work begins after window is shown).
-    const daemonConnected = await this.initDaemonClient();
+    this.scheduleDaemonConnectTimeout();
+    const daemonConnected = await this.awaitDaemonStartupStepWithTimeout(
+      'init_daemon_client',
+      () => this.initDaemonClient({ preserveConnectTimeout: true }),
+      false
+    );
+    if (daemonConnected) {
+      this.daemonConnectedForStartup = true;
+      this.clearDaemonConnectTimeout();
+    }
     if (!daemonConnected) {
       log.warn('Daemon', 'Initial daemon connect attempt failed; waiting for reconnect/timeout fallback');
     }
-    const supervisorResult = await this.ensureSupervisorDaemonRunning('app-init');
+    const supervisorResult = await this.awaitDaemonStartupStepWithTimeout(
+      'ensure_supervisor_daemon_running',
+      () => this.ensureSupervisorDaemonRunning('app-init'),
+      (reason) => ({ ok: false, reason, timedOut: true })
+    );
     if (!supervisorResult?.ok) {
       log.warn(
         'Supervisor',
         `Bootstrap failed during init: ${supervisorResult?.error || supervisorResult?.reason || 'unknown'}`
       );
     }
-    this.scheduleDaemonConnectTimeout();
     this.backgroundAgentManager.start();
     this.settings.writeAppStatus({
       incrementSession: true,
@@ -8968,8 +9016,11 @@ class SquidRunApp {
     this.daemonClientListeners.push({ eventName, listener });
   }
 
-  async initDaemonClient() {
-    this.clearDaemonConnectTimeout();
+  async initDaemonClient(options = {}) {
+    const { preserveConnectTimeout = false } = options || {};
+    if (!preserveConnectTimeout) {
+      this.clearDaemonConnectTimeout();
+    }
     this.daemonConnectedForStartup = false;
     this.daemonTimeoutTriggered = false;
     this.daemonTimeoutNotified = false;
