@@ -146,7 +146,7 @@ Compounding: the npm shim summon route (`codex app <path>`) **fails silently** (
 
 ## G3. Watchdog response-expectation false positives
 
-The 3am watchdog's failure class, named: (a) it treats `[FYI]`-grade messages as tasks that owe a response, and (b) it reads delivery-status `failed` rows produced by the OLD strict verifier — rows that were false negatives all along (the busy-pane bug, C1). Both inputs manufacture phantom non-responsiveness. **Verdict: FIX — tune to the new status vocabulary (`accepted.unverified`, `submit_pending_input`) and exempt FYI-class messages from response expectation.** Tuning was gated on the arrival eval confirming the new statuses; that gate cleared (G4). Builder queue item 5.
+The 3am watchdog's failure class, named: (a) it treats `[FYI]`-grade messages as tasks that owe a response, and (b) it reads delivery-status `failed` rows produced by the OLD strict verifier — rows that were false negatives all along (the busy-pane bug, C1). Both inputs manufacture phantom non-responsiveness. **Verdict: FIX — tune to the new status vocabulary (`accepted.unverified`, `submit_pending_input`) and exempt FYI-class messages from response expectation.** Tuning was gated on the arrival eval confirming the new statuses; that gate cleared (G4). **EXECUTED bb2f5a1d**: FYI-class exempted before task detection; accepted vocabulary covers all three new statuses incl. `accepted.daemon_pty_unverified` (discovered in the field this session); old rows marked `failed` are retroactively read as accepted when the accepted token appears in ack/finalOutcome/failureReason metadata — closing both false-positive sources, forward and historical.
 
 ## G4. Arrival eval contract — PASS (the C1/D2 fixes are live-proven)
 
@@ -175,8 +175,8 @@ Four rules, S298-derived: (1) default HARD-DELETE for regenerable caches, retire
 
 ## Updated queues (v2)
 
-**EXECUTED (session 443, all Architect-approved)**: restart-execute launch target (a7b9ce7e) · A1 permission-ask demotion + A3 coworker-lint demotion + B1 LOOK-lane exemption (e2a777d1, field-proven) · H1 transcript-index kill (a8b768d3) · E4 deletion batch (c5edb8c4, 41 files / ~51MB) · E3 rotation caps (06e92146, consumer-aware).
-**Builder remaining**: poller-heartbeat supervisor alarm (in flight) · G3 watchdog tuning incl. `accepted.daemon_pty_unverified` in the accepted set · B2 briefing format pass (not urgent) · D1 scoped-invalidation spec (filed).
+**EXECUTED (session 443, all Architect-approved)**: restart-execute launch target (a7b9ce7e) · A1 permission-ask demotion + A3 coworker-lint demotion + B1 LOOK-lane exemption (e2a777d1, field-proven) · H1 transcript-index kill (a8b768d3) · E4 deletion batch (c5edb8c4, 41 files / ~51MB) · E3 rotation caps (06e92146, consumer-aware) · G3 watchdog tuning (bb2f5a1d, forward + retroactive).
+**Builder remaining**: poller-heartbeat supervisor alarm (in flight) · B2 briefing format pass (not urgent) · D1 scoped-invalidation spec (filed).
 **Oracle next pass**: B5 + C3 consumers · `submit_pending_input` field watch (standing) · Mira Lab verifier 3/4-flake watch (capture JSON if it recurs).
 
 *Census v1 by Oracle S442; v2 addenda + H dispositions S443; v3 execution fold S443. Terminal-state standard (Architect #31): every verdict ends kept-with-reason, fixed-and-proven, or killed-with-inventory.*
