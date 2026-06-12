@@ -13,6 +13,10 @@ const {
   resolveWindowChromeClass,
 } = require('./window-chrome');
 const rendererSettings = require('./settings');
+const {
+  CLAUDE_MODEL_SELECTOR_OPTIONS,
+  selectorValueForCommand,
+} = require('./claude-model-options');
 
 const SQUID_ROOM_WORKSPACE_KEY = 'squid-room';
 const SQUID_ROOM_TEAM_PANE_IDS = Object.freeze(['2', '3']);
@@ -176,29 +180,31 @@ function createRoleInfoButton(doc, paneId) {
   });
 }
 
-function createArmModelSelector(doc, paneId, currentModel = 'codex') {
+function createArmModelSelector(doc, paneId, currentModel = 'codex', currentCommand = '') {
   const model = ['claude', 'codex', 'gemini'].includes(currentModel) ? currentModel : 'codex';
+  const selectorValue = selectorValueForCommand(currentCommand, model);
   const selector = createElement(doc, 'select', {
     className: 'model-selector squid-room-arm-model-selector',
     id: `model-selector-${paneId}`,
     title: 'Switch model for this arm',
     dataset: {
       paneId,
-      previousValue: model,
+      previousValue: selectorValue,
       squidRoomArmModelSelector: 'true',
     },
   });
-  for (const [value, label] of [
-    ['claude', 'Claude'],
-    ['codex', 'Codex'],
-    ['gemini', 'Gemini'],
+  for (const option of [
+    ...CLAUDE_MODEL_SELECTOR_OPTIONS,
+    { value: 'codex', label: 'Codex' },
+    { value: 'gemini', label: 'Gemini' },
   ]) {
     selector.appendChild(createElement(doc, 'option', {
-      value,
-      selected: value === model,
-    }, label));
+      value: option.value,
+      selected: option.value === selectorValue,
+      dataset: option.model ? { claudeModel: option.model } : undefined,
+    }, option.label));
   }
-  selector.value = model;
+  selector.value = selectorValue;
   return selector;
 }
 
@@ -215,12 +221,13 @@ function removeElement(element) {
   }
 }
 
-function ensureArmModelSelector(doc, pane, paneId, currentModel = 'codex') {
+function ensureArmModelSelector(doc, pane, paneId, currentModel = 'codex', currentCommand = '') {
   if (!doc || !pane || !paneId) return null;
   const model = ['claude', 'codex', 'gemini'].includes(currentModel) ? currentModel : 'codex';
+  const selectorValue = selectorValueForCommand(currentCommand, model);
   let selector = pane.querySelector?.(`.model-selector[data-pane-id="${paneId}"]`);
   if (!selector) {
-    selector = createArmModelSelector(doc, paneId, model);
+    selector = createArmModelSelector(doc, paneId, model, currentCommand);
     const badge = pane.querySelector?.(`.model-badge[data-pane-id="${paneId}"]`);
     if (badge?.parentNode) {
       badge.parentNode.insertBefore?.(selector, badge);
@@ -235,8 +242,8 @@ function ensureArmModelSelector(doc, pane, paneId, currentModel = 'codex') {
       headerRight?.appendChild?.(selector);
     }
   }
-  selector.value = model;
-  selector.dataset.previousValue = model;
+  selector.value = selectorValue;
+  selector.dataset.previousValue = selectorValue;
   selector.dataset.squidRoomArmModelSelector = 'true';
   return selector;
 }
@@ -288,7 +295,7 @@ function createSquidRoomLivePane(doc, spec) {
   }));
 
   const headerRight = createElement(doc, 'div', { className: 'pane-header-right' });
-  headerRight.appendChild(createArmModelSelector(doc, spec.paneId, model));
+  headerRight.appendChild(createArmModelSelector(doc, spec.paneId, model, command));
   headerRight.appendChild(createElement(doc, 'span', {
     className: 'agent-health',
     id: `health-${spec.paneId}`,
@@ -459,7 +466,7 @@ function ensureSquidRoomLivePanes(doc) {
     pane.dataset.squidRoomCommandSourcePaneId = spec.commandSourcePaneId;
     pane.dataset.squidRoomStartupMessage = spec.startupMessage;
     pane.dataset.cli = model;
-    ensureArmModelSelector(doc, pane, spec.paneId, model);
+    ensureArmModelSelector(doc, pane, spec.paneId, model, command);
     panes.push(spec);
   }
   return panes;

@@ -15,6 +15,13 @@ const {
   hasGeminiCommand,
   resolveGeminiModelId,
 } = require('../gemini-command');
+const {
+  normalizeClaudeModelId,
+} = require('../cli-resume-invocation');
+const {
+  claudeModelForSelectorValue,
+  selectorValueForClaudeModel,
+} = require('../claude-model-options');
 const TRIGGERS_PATH = typeof resolveCoordPath === 'function'
   ? resolveCoordPath('triggers', { forWrite: true })
   : path.join(__dirname, '..', '..', '..', 'workspace', 'triggers');
@@ -41,7 +48,34 @@ function isSwitchablePaneId(paneId) {
   return isCorePaneId(paneId) || Boolean(getTrustQuoteArmSpec(paneId));
 }
 
-function buildModelCommands(ctx = {}, id = '') {
+function buildClaudeCommand(claudeModel = '') {
+  const model = normalizeClaudeModelId(claudeModel);
+  return model ? `claude --model ${model}` : 'claude';
+}
+
+function resolveModelSwitchSelection(payload = {}) {
+  const rawModel = String(payload?.model || '').trim().toLowerCase();
+  const hasClaudeModelPayload = Object.prototype.hasOwnProperty.call(payload || {}, 'claudeModel');
+  const payloadClaudeModel = normalizeClaudeModelId(payload?.claudeModel || '');
+  if (rawModel.startsWith('claude:')) {
+    const selectorClaudeModel = claudeModelForSelectorValue(rawModel);
+    return {
+      model: 'claude',
+      claudeModel: payloadClaudeModel || selectorClaudeModel || normalizeClaudeModelId(rawModel.slice('claude:'.length)),
+      hasClaudeModelSelection: true,
+    };
+  }
+  if (rawModel === 'claude') {
+    return {
+      model: 'claude',
+      claudeModel: payloadClaudeModel,
+      hasClaudeModelSelection: hasClaudeModelPayload,
+    };
+  }
+  return { model: rawModel, claudeModel: '', hasClaudeModelSelection: false };
+}
+
+function buildModelCommands(ctx = {}, id = '', options = {}) {
   const paneCommands = ctx.currentSettings?.paneCommands || {};
   const existingGeminiCommand = paneCommands[id]
     || Object.values(paneCommands).find(hasGeminiCommand)
@@ -52,7 +86,7 @@ function buildModelCommands(ctx = {}, id = '') {
   });
   return {
     commands: {
-      'claude': 'claude',
+      'claude': buildClaudeCommand(options.claudeModel),
       'codex': 'codex',
       'gemini': buildGeminiCommand({
         preferredModel: geminiModel,
@@ -68,6 +102,7 @@ function buildCompletionPayload({
   paneId,
   model,
   command,
+  claudeModel,
 }) {
   const resolvedOwner = paneRestartArbiter && typeof paneRestartArbiter.resolveOwner === 'function'
     ? paneRestartArbiter.resolveOwner(paneId)
@@ -92,6 +127,10 @@ function buildCompletionPayload({
       ? { ownerInstance }
       : {}),
     ...(command ? { command } : {}),
+    ...(claudeModel ? {
+      claudeModel,
+      selectorValue: selectorValueForClaudeModel(claudeModel),
+    } : {}),
   };
 }
 
@@ -131,7 +170,8 @@ function sendPaneModelChanged(ctx, deps, payload) {
 async function executePaneModelSwitch(ctx, payload = {}, deps = {}) {
   const { saveSettings } = deps;
   const { paneId } = payload || {};
-  const model = String(payload?.model || '').trim().toLowerCase();
+  const selection = resolveModelSwitchSelection(payload);
+  const { model, claudeModel, hasClaudeModelSelection } = selection;
 
   // Validate paneId
   const id = String(paneId);
@@ -172,7 +212,9 @@ async function executePaneModelSwitch(ctx, payload = {}, deps = {}) {
     if (!ctx.currentSettings.paneCommands || typeof ctx.currentSettings.paneCommands !== 'object') {
       ctx.currentSettings.paneCommands = {};
     }
-    const { commands, geminiModel } = buildModelCommands(ctx, id);
+    const { commands, geminiModel } = buildModelCommands(ctx, id, {
+      claudeModel: hasClaudeModelSelection ? claudeModel : '',
+    });
 
     if (!commands[model]) {
       log.warn('ModelSwitch', `Unknown model: ${model}`);
@@ -227,12 +269,18 @@ async function executePaneModelSwitch(ctx, payload = {}, deps = {}) {
     if (model === 'gemini') {
       ctx.currentSettings.geminiModel = geminiModel;
     }
+    if (model === 'claude' && hasClaudeModelSelection) {
+      ctx.currentSettings.claudeModel = claudeModel || '';
+    }
 
     // Persist to settings.json
     if (typeof saveSettings === 'function') {
       const settingsPatch = { paneCommands: ctx.currentSettings.paneCommands };
       if (model === 'gemini') {
         settingsPatch.geminiModel = geminiModel;
+      }
+      if (model === 'claude' && hasClaudeModelSelection) {
+        settingsPatch.claudeModel = ctx.currentSettings.claudeModel;
       }
       saveSettings(settingsPatch);
     }
@@ -264,10 +312,16 @@ async function executePaneModelSwitch(ctx, payload = {}, deps = {}) {
       paneId,
       model,
       command: isArmPane ? nextCommand : '',
+      claudeModel,
     });
     sendPaneModelChanged(ctx, deps, completionPayload);
 
-    return { success: true, paneId, model };
+    return {
+      success: true,
+      paneId,
+      model,
+      ...(claudeModel ? { claudeModel, selectorValue: selectorValueForClaudeModel(claudeModel) } : {}),
+    };
 }
 
 function registerModelSwitchHandlers(ctx, deps = {}) {
@@ -296,5 +350,12 @@ function unregisterModelSwitchHandlers(ctx) {
 }
 
 registerModelSwitchHandlers.unregister = unregisterModelSwitchHandlers;
-module.exports = { registerModelSwitchHandlers, executePaneModelSwitch };
+module.exports = {
+  registerModelSwitchHandlers,
+  executePaneModelSwitch,
+  _internals: {
+    buildClaudeCommand,
+    resolveModelSwitchSelection,
+  },
+};
 

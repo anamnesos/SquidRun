@@ -293,6 +293,14 @@ describe('workspace pane shell', () => {
       expect(armSelector.classList.contains('squid-room-arm-model-selector')).toBe(true);
       expect(armSelector.dataset.squidRoomArmModelSelector).toBe('true');
       expect(armSelector.value).toBe('codex');
+      expect(armSelector.childNodes.map((option) => option.value)).toEqual([
+        'claude',
+        'claude:fable',
+        'claude:opus',
+        'claude:sonnet',
+        'codex',
+        'gemini',
+      ]);
       expect(pane.querySelector(`.model-badge[data-pane-id="${paneId}"]`)).toBeFalsy();
       expect(pane.querySelector(`.pane-role-info-btn[data-pane-id="${paneId}"]`).innerHTML).toContain('pane-btn-icon');
       expect(pane.querySelector('.interrupt-btn').innerHTML).toContain('pane-btn-icon');
