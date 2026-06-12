@@ -127,6 +127,17 @@ function resolveSquidrunScriptRoot(options = {}) {
   return configuredRoot;
 }
 
+function resolveCommsScriptPath(squidrunRoot, scriptName) {
+  const candidates = [
+    path.join(squidrunRoot, 'ui', 'scripts', scriptName),
+    path.join(squidrunRoot, '.squidrun', 'bin', 'runtime', 'ui', 'scripts', scriptName),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return candidates[0];
+}
+
 function writeProjectBootstrapFiles(projectPath, deps = {}) {
   const projectRoot = path.resolve(projectPath);
   const squidrunRoot = resolveSquidrunScriptRoot();
@@ -138,8 +149,8 @@ function writeProjectBootstrapFiles(projectPath, deps = {}) {
   const linkPayload = {
     squidrun_root: normalizeToPosix(squidrunRoot),
     comms: {
-      hm_send: normalizeToPosix(path.join(squidrunRoot, 'ui', 'scripts', 'hm-send.js')),
-      hm_comms: normalizeToPosix(path.join(squidrunRoot, 'ui', 'scripts', 'hm-comms.js')),
+      hm_send: normalizeToPosix(resolveCommsScriptPath(squidrunRoot, 'hm-send.js')),
+      hm_comms: normalizeToPosix(resolveCommsScriptPath(squidrunRoot, 'hm-comms.js')),
     },
     workspace: normalizeToPosix(projectRoot),
     session_id: sessionId,
@@ -792,6 +803,7 @@ registerProjectHandlers.unregister = unregisterProjectHandlers;
 module.exports = {
   registerProjectHandlers,
   _internals: {
+    resolveCommsScriptPath,
     resolveSquidrunScriptRoot,
   },
 };

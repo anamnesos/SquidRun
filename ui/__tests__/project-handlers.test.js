@@ -174,6 +174,14 @@ describe('Project Handlers', () => {
       expect(_internals.resolveSquidrunScriptRoot({ configuredRoot, appRoot })).toBe(appRoot);
     });
 
+    test('resolves comms scripts from packaged runtime when source checkout is absent', () => {
+      const standaloneRoot = path.resolve('/standalone/install');
+      const runtimeHmSend = path.join(standaloneRoot, '.squidrun', 'bin', 'runtime', 'ui', 'scripts', 'hm-send.js');
+      fs.existsSync.mockImplementation((filePath) => path.resolve(filePath) === runtimeHmSend);
+
+      expect(_internals.resolveCommsScriptPath(standaloneRoot, 'hm-send.js')).toBe(runtimeHmSend);
+    });
+
     test('surfaces startup rebind failure and keeps runtime lifecycle recoverable', async () => {
       log.warn.mockClear();
       initializeEvidenceLedgerRuntime.mockImplementationOnce(() => {

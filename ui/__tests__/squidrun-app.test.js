@@ -1942,6 +1942,105 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('generates packaged runtime manifest and memory dependencies', () => {
+      const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-packaged-bin-'));
+      const uiRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-packaged-ui-'));
+      try {
+        const files = [
+          'config.js',
+          'profile.js',
+          'scripts/hm-send.js',
+          'scripts/hm-comms.js',
+          'scripts/send-long-telegram.js',
+          'modules/runtime-config.js',
+          'node_modules/ws/index.js',
+          'node_modules/dotenv/lib/main.js',
+          'node_modules/sqlite-vec/index.js',
+          'node_modules/sqlite-vec-windows-x64/vec0.dll',
+          'node_modules/@xenova/transformers/index.js',
+          'node_modules/@huggingface/jinja/index.js',
+          'node_modules/onnxruntime-node/bin/napi-v3/win32/x64/onnxruntime_binding.node',
+          'node_modules/onnxruntime-common/dist/index.js',
+          'node_modules/onnxruntime-web/dist/ort.min.js',
+          'node_modules/onnx-proto/index.js',
+          'node_modules/protobufjs/index.js',
+        ];
+        for (const relPath of files) {
+          const filePath = path.join(uiRoot, relPath);
+          fs.mkdirSync(path.dirname(filePath), { recursive: true });
+          fs.writeFileSync(filePath, 'module.exports = {};\n');
+        }
+        const packageManifests = {
+          'node_modules/ws/package.json': { name: 'ws', version: '8.18.0' },
+          'node_modules/dotenv/package.json': { name: 'dotenv', version: '17.2.3' },
+          'node_modules/sqlite-vec/package.json': {
+            name: 'sqlite-vec',
+            version: '0.1.9',
+            optionalDependencies: { 'sqlite-vec-windows-x64': '0.1.9' },
+          },
+          'node_modules/sqlite-vec-windows-x64/package.json': { name: 'sqlite-vec-windows-x64', version: '0.1.9' },
+          'node_modules/@xenova/transformers/package.json': {
+            name: '@xenova/transformers',
+            version: '2.17.2',
+            dependencies: {
+              '@huggingface/jinja': '^0.2.2',
+              'onnxruntime-web': '1.14.0',
+            },
+            optionalDependencies: { 'onnxruntime-node': '1.14.0' },
+          },
+          'node_modules/@huggingface/jinja/package.json': { name: '@huggingface/jinja', version: '0.2.2' },
+          'node_modules/onnxruntime-node/package.json': {
+            name: 'onnxruntime-node',
+            version: '1.14.0',
+            dependencies: { 'onnxruntime-common': '~1.14.0' },
+          },
+          'node_modules/onnxruntime-common/package.json': { name: 'onnxruntime-common', version: '1.14.0' },
+          'node_modules/onnxruntime-web/package.json': {
+            name: 'onnxruntime-web',
+            version: '1.14.0',
+            dependencies: {
+              'onnx-proto': '^4.0.4',
+              'onnxruntime-common': '1.14.0',
+            },
+          },
+          'node_modules/onnx-proto/package.json': {
+            name: 'onnx-proto',
+            version: '4.0.4',
+            dependencies: { protobufjs: '^7.5.8' },
+          },
+          'node_modules/protobufjs/package.json': { name: 'protobufjs', version: '7.5.8' },
+        };
+        for (const [relPath, payload] of Object.entries(packageManifests)) {
+          const filePath = path.join(uiRoot, relPath);
+          fs.mkdirSync(path.dirname(filePath), { recursive: true });
+          fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`);
+        }
+        const packagedApp = new SquidRunApp(mockAppContext, mockManagers);
+        jest.spyOn(packagedApp, 'resolvePackagedUiRoot').mockReturnValue(uiRoot);
+
+        packagedApp.ensurePackagedCommsBin(workspace);
+        const runtimeRoot = path.join(workspace, '.squidrun', 'bin', 'runtime', 'ui');
+        const runtimePackage = JSON.parse(fs.readFileSync(path.join(runtimeRoot, 'package.json'), 'utf8'));
+
+        expect(runtimePackage.dependencies).toEqual({
+          '@xenova/transformers': '^2.17.2',
+          dotenv: '^17.2.3',
+          'sqlite-vec': '^0.1.9',
+          ws: '^8.18.0',
+        });
+        expect(fs.existsSync(path.join(runtimeRoot, 'node_modules', 'sqlite-vec', 'index.js'))).toBe(true);
+        expect(fs.existsSync(path.join(runtimeRoot, 'node_modules', 'sqlite-vec-windows-x64', 'vec0.dll'))).toBe(true);
+        expect(fs.existsSync(path.join(runtimeRoot, 'node_modules', '@xenova', 'transformers', 'index.js'))).toBe(true);
+        expect(fs.existsSync(path.join(runtimeRoot, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v3', 'win32', 'x64', 'onnxruntime_binding.node'))).toBe(true);
+        expect(fs.existsSync(path.join(runtimeRoot, 'node_modules', 'onnxruntime-common', 'dist', 'index.js'))).toBe(true);
+        expect(fs.existsSync(path.join(runtimeRoot, 'node_modules', 'onnx-proto', 'index.js'))).toBe(true);
+        expect(fs.existsSync(path.join(workspace, 'workspace', 'memory', 'models'))).toBe(true);
+      } finally {
+        fs.rmSync(workspace, { recursive: true, force: true });
+        fs.rmSync(uiRoot, { recursive: true, force: true });
+      }
+    });
+
     it('does not block createWindow on hidden pane host bootstrap', async () => {
       jest.useFakeTimers();
       const ensurePaneHostWindows = jest
@@ -2515,6 +2614,34 @@ describe('SquidRunApp', () => {
         }));
         expect(payload.comms.hm_send).toContain('/ui/scripts/hm-send.js');
       } finally {
+        fs.rmSync(profileRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('writes profile-local link metadata to packaged runtime scripts when source scripts are absent', () => {
+      const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-eunbyeol-profile-'));
+      const runtimeRoot = path.resolve(path.join(__dirname, '..', '..', '.squidrun', 'bin', 'runtime', 'ui', 'scripts'));
+      const runtimeHmSend = path.join(runtimeRoot, 'hm-send.js');
+      const runtimeHmComms = path.join(runtimeRoot, 'hm-comms.js');
+      const originalExistsSync = fs.existsSync;
+      jest.spyOn(fs, 'existsSync').mockImplementation((filePath) => {
+        const resolved = path.resolve(filePath);
+        if (resolved === runtimeHmSend || resolved === runtimeHmComms) return true;
+        if (resolved.endsWith(path.join('ui', 'scripts', 'hm-send.js'))
+          || resolved.endsWith(path.join('ui', 'scripts', 'hm-comms.js'))) {
+          return false;
+        }
+        return originalExistsSync(filePath);
+      });
+      try {
+        app.commsSessionScopeId = 'app-test';
+        const linkPath = app.ensureProfileWorkspaceLink('eunbyeol', profileRoot);
+        const payload = JSON.parse(fs.readFileSync(linkPath, 'utf8'));
+
+        expect(payload.comms.hm_send).toBe(runtimeHmSend.replace(/\\/g, '/'));
+        expect(payload.comms.hm_comms).toBe(runtimeHmComms.replace(/\\/g, '/'));
+      } finally {
+        fs.existsSync.mockRestore();
         fs.rmSync(profileRoot, { recursive: true, force: true });
       }
     });

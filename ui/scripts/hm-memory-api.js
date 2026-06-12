@@ -1,9 +1,27 @@
 #!/usr/bin/env node
 
-const {
-  CognitiveMemoryApi,
-  DEFAULT_INGEST_CONFIDENCE,
-} = require('../modules/cognitive-memory-api');
+function isMissingDependencyError(err) {
+  return Boolean(err) && (err.code === 'MODULE_NOT_FOUND' || err.code === 'ERR_MODULE_NOT_FOUND');
+}
+
+function reportMemoryUnavailable(err) {
+  const detail = String(err && err.message ? err.message : err).split('\n')[0];
+  process.stdout.write(`${JSON.stringify({
+    ok: false,
+    error: 'memory_search_unavailable',
+    message: `Memory search unavailable: runtime bundle is missing a dependency (${detail}). Run "npm install" in .squidrun/bin/runtime/ui to restore it.`,
+  }, null, 2)}\n`);
+  process.exit(2);
+}
+
+let CognitiveMemoryApi;
+let DEFAULT_INGEST_CONFIDENCE;
+try {
+  ({ CognitiveMemoryApi, DEFAULT_INGEST_CONFIDENCE } = require('../modules/cognitive-memory-api'));
+} catch (err) {
+  if (isMissingDependencyError(err)) reportMemoryUnavailable(err);
+  throw err;
+}
 
 function parseArgs(argv) {
   const args = Array.isArray(argv) ? argv.slice() : [];
@@ -148,6 +166,7 @@ async function main(argv = process.argv.slice(2)) {
 
 if (require.main === module) {
   main().catch((err) => {
+    if (isMissingDependencyError(err)) reportMemoryUnavailable(err);
     process.stderr.write(`${err.message}\n`);
     process.exit(1);
   });

@@ -362,6 +362,13 @@ const EXTERNAL_WORKSPACE_DIRNAME = DEFAULT_EXTERNAL_WORKSPACE_DIRNAME;
 const ONBOARDING_STATE_FILENAME = 'onboarding-state.json';
 const FRESH_INSTALL_MARKER_FILENAME = 'fresh-install.json';
 const PACKAGED_BIN_RUNTIME_RELATIVE = path.join('.squidrun', 'bin', 'runtime', 'ui');
+const PACKAGED_RUNTIME_DEPENDENCIES = Object.freeze({
+  '@xenova/transformers': '^2.17.2',
+  dotenv: '^17.2.3',
+  'sqlite-vec': '^0.1.9',
+  ws: '^8.18.0',
+});
+const PACKAGED_MEMORY_MODEL_CACHE_RELATIVE = path.join('workspace', 'memory', 'models');
 const WINDOWS_APP_USER_MODEL_ID = 'com.squidrun.app';
 const AUTONOMOUS_SMOKE_RUNNER_PATH = path.join(__dirname, '..', '..', 'scripts', 'hm-smoke-runner.js');
 const HM_SEND_SCRIPT_PATH = path.join(__dirname, '..', '..', 'scripts', 'hm-send.js');
@@ -1607,13 +1614,12 @@ class SquidRunApp {
       this.copyPathRecursive(sourcePath, destinationPath);
     }
 
-    const moduleDeps = ['ws', 'dotenv'];
-    for (const depName of moduleDeps) {
-      this.copyPathRecursive(
-        path.join(uiRoot, 'node_modules', depName),
-        path.join(runtimeRoot, 'node_modules', depName)
-      );
+    const copiedDependencies = new Set();
+    for (const depName of Object.keys(PACKAGED_RUNTIME_DEPENDENCIES)) {
+      this.copyPackagedRuntimeDependency(uiRoot, runtimeRoot, depName, copiedDependencies);
     }
+    this.writePackagedRuntimePackageJson(runtimeRoot);
+    this.ensurePackagedMemoryModelCache(workspacePath);
 
     const unixLaunchers = {
       'hm-send': 'hm-send.js',
@@ -1656,6 +1662,67 @@ class SquidRunApp {
     }
 
     return binRoot;
+  }
+
+  resolveNodeModulePackagePath(nodeModulesRoot, packageName) {
+    const normalizedName = toNonEmptyString(packageName);
+    if (!nodeModulesRoot || !normalizedName) return null;
+    return path.join(nodeModulesRoot, ...normalizedName.split('/'));
+  }
+
+  copyPackagedRuntimeDependency(uiRoot, runtimeRoot, packageName, copiedDependencies = new Set(), options = {}) {
+    const normalizedName = toNonEmptyString(packageName);
+    if (!uiRoot || !runtimeRoot || !normalizedName) return false;
+    if (copiedDependencies.has(normalizedName)) return true;
+    copiedDependencies.add(normalizedName);
+
+    const sourceRoot = this.resolveNodeModulePackagePath(path.join(uiRoot, 'node_modules'), normalizedName);
+    const destinationRoot = this.resolveNodeModulePackagePath(path.join(runtimeRoot, 'node_modules'), normalizedName);
+    if (!sourceRoot || !destinationRoot || !fs.existsSync(sourceRoot)) {
+      if (!options.optional) {
+        log.warn('ProjectLifecycle', `Packaged runtime dependency missing from source bundle: ${normalizedName}`);
+      }
+      return false;
+    }
+
+    this.copyPathRecursive(sourceRoot, destinationRoot);
+
+    const manifest = this.readJsonFileSafe(path.join(sourceRoot, 'package.json'), null);
+    const dependencies = manifest && typeof manifest === 'object' && manifest.dependencies && typeof manifest.dependencies === 'object'
+      ? Object.keys(manifest.dependencies)
+      : [];
+    const optionalDependencies = manifest && typeof manifest === 'object' && manifest.optionalDependencies && typeof manifest.optionalDependencies === 'object'
+      ? Object.keys(manifest.optionalDependencies)
+      : [];
+
+    for (const dependencyName of dependencies) {
+      this.copyPackagedRuntimeDependency(uiRoot, runtimeRoot, dependencyName, copiedDependencies);
+    }
+    for (const dependencyName of optionalDependencies) {
+      this.copyPackagedRuntimeDependency(uiRoot, runtimeRoot, dependencyName, copiedDependencies, { optional: true });
+    }
+
+    return true;
+  }
+
+  writePackagedRuntimePackageJson(runtimeRoot) {
+    if (!runtimeRoot) return null;
+    const manifestPath = path.join(runtimeRoot, 'package.json');
+    const payload = {
+      name: 'squidrun-runtime-ui',
+      private: true,
+      description: 'Runtime CLI bundle for the SquidRun standalone overlay install. Declares deps so npm installs do not prune sibling packages.',
+      dependencies: PACKAGED_RUNTIME_DEPENDENCIES,
+    };
+    this.writeFileAtomic(manifestPath, `${JSON.stringify(payload, null, 2)}\n`);
+    return manifestPath;
+  }
+
+  ensurePackagedMemoryModelCache(workspacePath) {
+    if (!workspacePath) return null;
+    const cachePath = path.join(workspacePath, PACKAGED_MEMORY_MODEL_CACHE_RELATIVE);
+    fs.mkdirSync(cachePath, { recursive: true });
+    return cachePath;
   }
 
   getOnboardingStatePath(workspacePath = null) {
@@ -6408,11 +6475,17 @@ class SquidRunApp {
     const coordRoot = path.join(resolvedProfileRoot, '.squidrun');
     const linkPath = path.join(coordRoot, 'link.json');
     const squidrunRoot = path.resolve(path.join(__dirname, '..', '..', '..'));
+    const resolveCommsScript = (scriptName) => {
+      const primary = path.join(squidrunRoot, 'ui', 'scripts', scriptName);
+      if (fs.existsSync(primary)) return primary;
+      const runtimeCopy = path.join(squidrunRoot, '.squidrun', 'bin', 'runtime', 'ui', 'scripts', scriptName);
+      return fs.existsSync(runtimeCopy) ? runtimeCopy : primary;
+    };
     const payload = {
       squidrun_root: normalizeToPosixPath(squidrunRoot),
       comms: {
-        hm_send: normalizeToPosixPath(path.join(squidrunRoot, 'ui', 'scripts', 'hm-send.js')),
-        hm_comms: normalizeToPosixPath(path.join(squidrunRoot, 'ui', 'scripts', 'hm-comms.js')),
+        hm_send: normalizeToPosixPath(resolveCommsScript('hm-send.js')),
+        hm_comms: normalizeToPosixPath(resolveCommsScript('hm-comms.js')),
       },
       workspace: normalizeToPosixPath(path.resolve(resolvedProfileRoot)),
       session_id: this.getWindowSessionScopeId(normalizedProfile),
