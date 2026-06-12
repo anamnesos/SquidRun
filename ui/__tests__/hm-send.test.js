@@ -324,6 +324,41 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('warns on coworker lint for agent-to-agent sends even when legacy hard env is set', async () => {
+    const tempProject = createLinkedProject();
+    const sendAttempts = [];
+    const { server, port } = await startAckServer(sendAttempts);
+    const logPath = path.join(tempProject, '.squidrun', 'runtime', 'coworker-lint-violations.jsonl');
+
+    try {
+      const result = await runHmSend(
+        ['architect', 'Good catch on the guard false positive.', '--role', 'builder', '--timeout', '80', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port), HM_SEND_COWORKER_LINT_HARD: '1' },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(result.stdout).toContain('Delivered to architect');
+      expect(result.stderr).toContain('WARN: coworker-output-lint');
+      expect(result.stderr).toContain('send continuing');
+      expect(result.stderr).not.toContain('BLOCKED: coworker-output-lint');
+      expect(fs.existsSync(logPath)).toBe(true);
+      const entries = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        type: 'coworker_lint',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        violation_class: 'sycophancy_opener',
+        enforcement_mode: 'soft_warn',
+      });
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('blocks permission-ask phrases for user-facing sends and logs the violation', async () => {
     const tempProject = createLinkedProject();
     const logPath = path.join(tempProject, '.squidrun', 'runtime', 'permission-ask-violations.jsonl');
