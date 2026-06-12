@@ -59,6 +59,7 @@ describe('PTY Handlers', () => {
     deps = createDepsMock();
     deps.paneSessionIdsFilePath = path.join(tmpDir, 'pane-session-ids.json');
     deps.resumeHomeDir = path.join(tmpDir, 'home');
+    deps.claudeModelHomeDir = path.join(tmpDir, 'claude-model-home');
     registerPtyHandlers(ctx, deps);
   });
 
@@ -1648,6 +1649,38 @@ describe('PTY Handlers', () => {
       const second = await harness.invoke('spawn-claude', '1', '/ignored');
 
       expect(second.command).toBe(`claude --resume ${sessionId}`);
+    });
+
+    test('registered spawn-claude injects the selected Claude model before resume flags', async () => {
+      const cwd = 'D:\\projects\\squidrun';
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.claudeModel = 'claude-fable-5[1m]';
+      ctx.currentSettings.paneCommands = { '1': 'claude' };
+      ctx.currentSettings.paneProjects = { '1': cwd };
+
+      const first = await harness.invoke('spawn-claude', '1', '/ignored');
+      const sessionId = extractResumeId(first.command);
+      expect(first.command).toBe(`claude --model claude-fable-5 --session-id ${sessionId}`);
+
+      writeClaudeSession(cwd, sessionId);
+      const second = await harness.invoke('spawn-claude', '1', '/ignored');
+
+      expect(second.command).toBe(`claude --model claude-fable-5 --resume ${sessionId}`);
+    });
+
+    test('registered spawn-claude preserves an explicit pane command Claude model', async () => {
+      const cwd = 'D:\\projects\\squidrun';
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.claudeModel = 'claude-fable-5';
+      ctx.currentSettings.paneCommands = { '1': 'claude --model opus' };
+      ctx.currentSettings.paneProjects = { '1': cwd };
+
+      const result = await harness.invoke('spawn-claude', '1', '/ignored');
+      const sessionId = extractResumeId(result.command);
+
+      expect(result.command).toBe(`claude --model opus --session-id ${sessionId}`);
     });
 
     test('registered spawn-claude reaps the pinned Claude session before handing back the command', async () => {

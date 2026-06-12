@@ -10,6 +10,10 @@ const {
   extractClaudeSessionIdFromCommand,
   hasClaudeResumeFlag,
   stripClaudeResumeFlags,
+  normalizeClaudeModelId,
+  parseClaudeModelFromCommand,
+  readClaudeDefaultModel,
+  ensureClaudeModelFlag,
   isClaudeSessionInUseError,
   encodeClaudeProjectDir,
   claudeSessionStorePath,
@@ -110,6 +114,33 @@ describe('cli-resume-invocation', () => {
       expect(extractClaudeSessionIdFromCommand(command)).toBe('11111111-1111-4111-8111-111111111111');
       expect(hasClaudeResumeFlag(command)).toBe(true);
       expect(stripClaudeResumeFlags(command)).toBe('claude --dangerously-skip-permissions');
+    });
+
+    test('parses and preserves explicit claude model flags', () => {
+      expect(parseClaudeModelFromCommand('claude --model opus')).toBe('opus');
+      expect(parseClaudeModelFromCommand('claude --model=claude-fable-5')).toBe('claude-fable-5');
+      expect(parseClaudeModelFromCommand('claude --model "claude-sonnet-4-6"')).toBe('claude-sonnet-4-6');
+      expect(ensureClaudeModelFlag('claude --model opus', { preferredModel: 'fable' })).toBe('claude --model opus');
+    });
+
+    test('normalizes Claude settings model values before appending', () => {
+      expect(normalizeClaudeModelId(' claude-fable-5[1m] ')).toBe('claude-fable-5');
+      expect(normalizeClaudeModelId('\u001b[1mopus\u001b[0m')).toBe('opus');
+      expect(normalizeClaudeModelId('bad model with spaces')).toBe('');
+      expect(ensureClaudeModelFlag('claude', { preferredModel: 'claude-fable-5[1m]' }))
+        .toBe('claude --model claude-fable-5');
+    });
+
+    test('reads Claude user default model from an injectable settings path', () => {
+      const settingsPath = path.join(os.tmpdir(), `claude-settings-${Date.now()}-${Math.random()}.json`);
+      fs.writeFileSync(settingsPath, JSON.stringify({ model: 'claude-fable-5[1m]' }), 'utf8');
+      try {
+        expect(readClaudeDefaultModel({ settingsPath })).toBe('claude-fable-5');
+        expect(ensureClaudeModelFlag('claude --dangerously-skip-permissions', { settingsPath }))
+          .toBe('claude --dangerously-skip-permissions --model claude-fable-5');
+      } finally {
+        fs.rmSync(settingsPath, { force: true });
+      }
     });
 
     test('detects claude already-in-use collision output', () => {
