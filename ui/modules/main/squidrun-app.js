@@ -6760,6 +6760,7 @@ class SquidRunApp {
       sessionStartTimes: this.ctx.sessionStartTimes,
       recoveryManager: this.ctx.recoveryManager,
       paneRestartArbiter: this.paneRestartArbiter,
+      installedDeployment: this.installedDeployment,
       pluginManager: this.ctx.pluginManager,
       backupManager: this.ctx.backupManager,
     });
@@ -6790,6 +6791,7 @@ class SquidRunApp {
       startRuntimeLifecycle: (reason) => this.startRuntimeServices(reason || 'ipc-start'),
       stopRuntimeLifecycle: (reason) => this.stopRuntimeServices(reason || 'ipc-stop'),
       getRuntimeLifecycleState: () => this.runtimeLifecycleState,
+      installedDeployment: this.installedDeployment,
       performFullShutdown: (reason) => this.performFullShutdown(reason || 'ipc-full-restart'),
       getDaemonClientForPane: (paneId) => this.getDaemonClientForPane(paneId),
       paneRestartArbiter: this.paneRestartArbiter,

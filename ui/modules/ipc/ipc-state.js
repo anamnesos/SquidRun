@@ -7,6 +7,7 @@
   triggers: null,
   recoveryManager: null,
   paneRestartArbiter: null,
+  installedDeployment: null,
   pluginManager: null,
   backupManager: null,
   usageStats: null,
@@ -31,6 +32,7 @@ function initState(deps = {}) {
   assign('triggers');
   assign('recoveryManager');
   assign('paneRestartArbiter');
+  assign('installedDeployment');
   assign('pluginManager');
   assign('backupManager');
   assign('usageStats');
