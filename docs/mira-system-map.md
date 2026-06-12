@@ -573,6 +573,16 @@ node ui/scripts/mira-system-map-guard.js --staged
 
 ## Inventory
 
+E3 runtime retention note (2026-06-12): live Mira runtime append logs now use bounded
+tail rotation instead of unbounded growth. `mira-lab-replies.jsonl`,
+`mira-curiosity-items.jsonl`, and `mira-curiosity-bursts.jsonl` keep a tight
+runtime-scan tail through `ui/modules/runtime-log-rotation.js`; the oldest
+rotated segment is deleted with a recorded count/reason rather than archived.
+`user-input-shadow.jsonl` keeps a larger multi-day/multi-session tail because
+`workspace/knowledge/recovering-lost-user-input.md` is its recovery consumer.
+This is a retention/inventory change only; it does not promote Mira route,
+autonomy, Telegram, or external-action authority.
+
 | Family | Paths | Purpose / Why Built | Status Tag | Current Capability Today | What It Is Not | Dependencies / Tests | Risk If Removed | Next Evidence Gate |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | New Mira product boundary | `mira/README.md`, `mira/import-disposition-manifest.json`, `mira/state/README.md` | Defines Mira as a product extracted from SquidRun and records import/delete policy. Built to stop adding Mira back as another SquidRun tab. | PROTOTYPE / KEEP | Gives the team a clearer product frame and migration boundary. | Not a live runtime, Telegram owner, or replacement for SquidRun agents. | Import disposition docs; `ui/__tests__/mira-product-foundation.test.js`. | Losing it re-blurs Mira, SquidRun, and agent roles. | Keep aligned with this map on every Mira feature/removal. |

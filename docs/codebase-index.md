@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1137
+- Total files listed: 1139
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -20,8 +20,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 103
 - scripts: 1
 - tools: 3
-- ui/__tests__: 426
-- ui/modules: 352
+- ui/__tests__: 427
+- ui/modules: 353
 - ui/other: 34
 - ui/scripts: 138
 - ui/styles: 18
@@ -34,8 +34,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - file: 1
 - jsonl: 1
 - script: 139
-- source: 415
-- test: 427
+- source: 416
+- test: 428
 
 ## Files
 
@@ -71,7 +71,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/diagrams-reference.md` | doc | 16076 |
 | `docs/event-kernel-spec.md` | doc | 24652 |
 | `docs/Gasline Tankless Diagram 32 Lyell St.excalidraw` | doc | 97568 |
-| `docs/gate-census-2026-06-12.md` | doc | 23290 |
+| `docs/gate-census-2026-06-12.md` | doc | 24713 |
 | `docs/github-integration-spec.md` | doc | 6260 |
 | `docs/guide/install.md` | doc | 3205 |
 | `docs/guide/limitations.md` | doc | 4393 |
@@ -87,7 +87,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/mira-north-star-roadmap.md` | doc | 8530 |
 | `docs/mira-pc-embodiment-permission-v0.md` | doc | 10045 |
 | `docs/mira-presence-runtime-acceptance-v0.md` | doc | 16200 |
-| `docs/mira-system-map.md` | doc | 127390 |
+| `docs/mira-system-map.md` | doc | 128057 |
 | `docs/mira-voice-audio-intake-v0.md` | doc | 9440 |
 | `docs/models/base-instructions.md` | doc | 2070 |
 | `docs/models/claude-notes.md` | doc | 1161 |
@@ -399,7 +399,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/inject-message-ipc.test.js` | test | 4845 |
 | `ui/__tests__/injection-events.test.js` | test | 25354 |
 | `ui/__tests__/injection.test.js` | test | 92516 |
-| `ui/__tests__/input-shadow-log.test.js` | test | 2000 |
+| `ui/__tests__/input-shadow-log.test.js` | test | 3120 |
 | `ui/__tests__/install-credentials.test.js` | test | 11888 |
 | `ui/__tests__/installed-data-root.test.js` | test | 6939 |
 | `ui/__tests__/ipc-handlers.test.js` | test | 5078 |
@@ -480,7 +480,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-import-status.test.js` | test | 3773 |
 | `ui/__tests__/mira-lab-default-ui.test.js` | test | 12201 |
 | `ui/__tests__/mira-lab-prompt-reply.test.js` | test | 92147 |
-| `ui/__tests__/mira-lab-surface.test.js` | test | 174937 |
+| `ui/__tests__/mira-lab-surface.test.js` | test | 176005 |
 | `ui/__tests__/mira-lab-verify-bootstrap-state.test.js` | test | 6292 |
 | `ui/__tests__/mira-live-entrypoint.test.js` | test | 2824 |
 | `ui/__tests__/mira-live-internal-handoff-approval-v0.test.js` | test | 19434 |
@@ -576,6 +576,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/renderer.test.js` | test | 26679 |
 | `ui/__tests__/resource-handlers.test.js` | test | 20429 |
 | `ui/__tests__/restart-continuity-resume-manifest.test.js` | test | 19111 |
+| `ui/__tests__/runtime-log-rotation.test.js` | test | 2274 |
 | `ui/__tests__/scheduler-handlers.test.js` | test | 10860 |
 | `ui/__tests__/scheduler.test.js` | test | 27737 |
 | `ui/__tests__/scoped-context-firewall.test.js` | test | 2030 |
@@ -710,7 +711,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/image-gen.js` | source | 10327 |
 | `ui/modules/ingress-envelope.js` | source | 5196 |
 | `ui/modules/inject-message-ipc.js` | source | 3468 |
-| `ui/modules/input-shadow-log.js` | source | 2698 |
+| `ui/modules/input-shadow-log.js` | source | 3374 |
 | `ui/modules/install-credentials.js` | source | 7973 |
 | `ui/modules/installed-data-root.js` | source | 8340 |
 | `ui/modules/ipc-handlers.js` | source | 2972 |
@@ -893,7 +894,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/mira-direct-channel-readiness.js` | source | 8634 |
 | `ui/modules/mira-email-curiosity.js` | source | 14795 |
 | `ui/modules/mira-environment-curiosity.js` | source | 12067 |
-| `ui/modules/mira-lab-surface.js` | source | 325785 |
+| `ui/modules/mira-lab-surface.js` | source | 326850 |
 | `ui/modules/mira-lab-verify-bootstrap-state.js` | source | 5927 |
 | `ui/modules/mira-live-entrypoint.js` | source | 3409 |
 | `ui/modules/mira-local-text-ui-surface.js` | source | 55055 |
@@ -927,6 +928,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/renderer-ipc-registry.js` | source | 1377 |
 | `ui/modules/replay/debug-replay.js` | source | 20207 |
 | `ui/modules/runtime-config.js` | source | 1525 |
+| `ui/modules/runtime-log-rotation.js` | source | 3271 |
 | `ui/modules/scheduler.js` | source | 16158 |
 | `ui/modules/scoped-context-firewall.js` | source | 4734 |
 | `ui/modules/service-lifecycle-registry.js` | source | 5004 |
@@ -1233,7 +1235,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `workspace/knowledge/paper-trading-cycle-protocol.md` | doc | 1684 |
 | `workspace/knowledge/projects.md` | doc | 1096 |
 | `workspace/knowledge/README.md` | doc | 242 |
-| `workspace/knowledge/recovering-lost-user-input.md` | doc | 3336 |
+| `workspace/knowledge/recovering-lost-user-input.md` | doc | 3613 |
 | `workspace/knowledge/runtime-environment.md` | doc | 12789 |
 | `workspace/knowledge/trading-operations.md` | doc | 13351 |
 | `workspace/knowledge/trustquote-field-workflow.md` | doc | 2349 |

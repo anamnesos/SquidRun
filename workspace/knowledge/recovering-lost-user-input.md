@@ -7,6 +7,7 @@ Use this when James reports that a long typed or pasted pane message reached the
    ```powershell
    Get-Content .squidrun\runtime\user-input-shadow.jsonl | Select-String "2026-04-26T09:"
    ```
+   E3 retention note: this shadow log is a recovery input, not a disposable audit diary. Its rotation cap deliberately keeps a multi-day/multi-session tail and names this runbook as the consumer; any future cap tightening must preserve enough history for this recovery procedure.
 
 2. Compare `byteLen` for the same pane/text at `source: "ipc-handler"` and `source: "pty-write"`. For long inputs that the IPC handler chunks, compare the `ipc-handler` row against the sum of the adjacent `pty-write` rows in the same burst.
    - If `ipc-handler` is larger than `pty-write`, bytes were dropped between Electron IPC and the terminal daemon.

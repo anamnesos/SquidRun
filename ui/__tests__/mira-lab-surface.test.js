@@ -9,6 +9,7 @@ const {
   MIRA_CURIOSITY_BURST_SCHEMA,
   MIRA_CURRICULUM_SKILLS_SCHEMA,
   MIRA_CURIOSITY_ITEM_SCHEMA,
+  MIRA_LAB_RUNTIME_ROTATE_MAX_BYTES,
   MIRA_CURIOSITY_SOURCE_REGISTRY,
   MIRA_ACTIVE_INITIATIVE_SCHEMA,
   MIRA_ACTIVE_INITIATIVE_OUTCOME_SCHEMA,
@@ -53,6 +54,7 @@ const {
   selfDirectionReviewAuditPath,
   selfDirectionQueuePath,
   transcriptPath,
+  _internals,
 } = require('../modules/mira-lab-surface');
 const {
   MIRA_LAB_OPEN_CHANNEL,
@@ -135,6 +137,29 @@ describe('Mira Lab sidecar surface', () => {
   afterEach(() => {
     if (projectRoot) fs.rmSync(projectRoot, { recursive: true, force: true });
     projectRoot = null;
+  });
+
+  test('rotates only E3 Mira Lab runtime JSONL families before appending', async () => {
+    projectRoot = tempProject();
+    const itemsPath = curiosityItemsPath(projectRoot);
+    fs.mkdirSync(path.dirname(itemsPath), { recursive: true });
+    fs.writeFileSync(itemsPath, 'x'.repeat(MIRA_LAB_RUNTIME_ROTATE_MAX_BYTES), 'utf8');
+
+    const result = await runMiraCuriosityBurst({
+      source: 'repo_files',
+      dispatch: false,
+    }, {
+      projectRoot,
+      generatedAt: '2026-06-12T16:33:00.000Z',
+      repoStatusText: ' M ui/modules/mira-lab-surface.js\n',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fs.existsSync(`${itemsPath}.1`)).toBe(true);
+    expect(readJsonl(itemsPath)).toHaveLength(result.item_count);
+    expect(_internals.isMiraRuntimeJsonlPath(curiosityItemsPath(projectRoot))).toBe(true);
+    expect(_internals.isMiraRuntimeJsonlPath(curiosityBurstsPath(projectRoot))).toBe(true);
+    expect(_internals.isMiraRuntimeJsonlPath(selfDirectionQueuePath(projectRoot))).toBe(false);
   });
 
   test('records durable transcript turns and projects agent messages into comms journal shape', async () => {

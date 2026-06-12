@@ -1,11 +1,14 @@
 'use strict';
 
-const fs = require('fs');
 const path = require('path');
 
 const { resolveCoordPath } = require('../config');
+const { appendJsonlWithRotation } = require('./runtime-log-rotation');
 
 const MAX_SHADOW_TEXT_BYTES = 8 * 1024;
+const INPUT_SHADOW_RECOVERY_CONSUMER = 'workspace/knowledge/recovering-lost-user-input.md';
+const DEFAULT_INPUT_SHADOW_ROTATE_MAX_BYTES = 64 * 1024 * 1024;
+const DEFAULT_INPUT_SHADOW_ROTATE_MAX_FILES = 7;
 const DEFAULT_INPUT_SHADOW_LOG_PATH = resolveCoordPath(
   path.join('runtime', 'user-input-shadow.jsonl'),
   { forWrite: true }
@@ -76,9 +79,16 @@ function appendInputShadowLog(input = {}, options = {}) {
       entry.truncationMarker = truncated.truncationMarker;
     }
 
-    fs.mkdirSync(path.dirname(logPath), { recursive: true });
-    fs.appendFileSync(logPath, `${JSON.stringify(entry)}\n`, 'utf8');
-    return { ok: true, path: logPath, entry };
+    const writeResult = appendJsonlWithRotation(logPath, entry, {
+      maxBytes: Number.isFinite(Number(options.rotateMaxBytes))
+        ? Number(options.rotateMaxBytes)
+        : DEFAULT_INPUT_SHADOW_ROTATE_MAX_BYTES,
+      maxFiles: Number.isFinite(Number(options.rotateMaxFiles))
+        ? Number(options.rotateMaxFiles)
+        : DEFAULT_INPUT_SHADOW_ROTATE_MAX_FILES,
+      consumer: INPUT_SHADOW_RECOVERY_CONSUMER,
+    });
+    return { ok: true, path: logPath, entry, rotation: writeResult.rotation };
   } catch (_) {
     return { ok: false, dropped: true };
   }
@@ -86,6 +96,9 @@ function appendInputShadowLog(input = {}, options = {}) {
 
 module.exports = {
   MAX_SHADOW_TEXT_BYTES,
+  INPUT_SHADOW_RECOVERY_CONSUMER,
+  DEFAULT_INPUT_SHADOW_ROTATE_MAX_BYTES,
+  DEFAULT_INPUT_SHADOW_ROTATE_MAX_FILES,
   DEFAULT_INPUT_SHADOW_LOG_PATH,
   appendInputShadowLog,
   _internals: {
