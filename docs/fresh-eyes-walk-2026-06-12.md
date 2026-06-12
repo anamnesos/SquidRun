@@ -38,7 +38,7 @@ Shared feeling, three phrasings: half cathedral, half construction site (Oracle)
 4. The consumer door: real product guide + first-run onboarding; README waypoint paragraph.
 5. Ledger-to-human timeline ("what your team did today") — nearly free, pure product.
 6. Noise bootstrap: NODE_NO_WARNINGS + dotenv quiet + default log level in one shared entry, with regression tests that fail on vendor tips in command output. **This week.**
-7. `modelPromptReceipt` provider adapters, Claude-first (post-restart; Oracle research pass on codex/gemini hooks).
+7. `modelPromptReceipt` provider adapters — upgraded S444 from Claude-first to UNIVERSAL: Oracle's research pass found all three CLIs support UserPromptSubmit-class hooks (Codex: hooks.json/config.toml, payload carries the prompt text; Gemini: .gemini/settings.json, sync stdin/stdout; Claude: proven in our production). One receipt contract, three thin adapters; build-time verifications (PTY-injection probes, version floors, per-arm config) are the lane's step zero.
 8. Avatars everywhere, terminals one tap below (squid room first, main window direction).
 9. Promote the mind, fence the lab.
 
