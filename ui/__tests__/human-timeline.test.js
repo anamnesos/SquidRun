@@ -185,4 +185,178 @@ describe('human-timeline snapshot', () => {
       }),
     ]));
   });
+
+  test('does not render implicit needs-you asks from prior sessions', () => {
+    const rows = [
+      {
+        rowId: 10,
+        messageId: 'old-ask',
+        sessionId: 'app-session-444',
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'telegram',
+        direction: 'outbound',
+        status: 'acked',
+        brokeredAtMs: Date.parse('2026-06-12T15:00:00.000Z'),
+        rawBody: 'James, do you approve the old session cleanup?',
+      },
+      {
+        rowId: 11,
+        messageId: 'current-ask',
+        sessionId: 'app-session-445',
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'telegram',
+        direction: 'outbound',
+        status: 'acked',
+        brokeredAtMs: Date.parse('2026-06-12T16:00:00.000Z'),
+        rawBody: 'James, do you approve the current session cleanup?',
+      },
+    ];
+
+    const snapshot = timeline.buildHumanTimelineSnapshot({
+      nowMs: Date.parse('2026-06-12T17:00:00.000Z'),
+      sessionId: 'app-session-445',
+      queryCommsJournalEntries: jest.fn(() => rows),
+      queryTelegramReplyObligations: jest.fn(() => []),
+      readTaskAuditItems: jest.fn(() => ({ ok: true, status: 'OK', items: [] })),
+      queryGitCommits: jest.fn(() => []),
+      appStatusPath: 'missing-app-status.json',
+    });
+
+    expect(snapshot.needsYou.items).toEqual([
+      expect.objectContaining({
+        refs: expect.objectContaining({ commsRowId: 11 }),
+        detail: 'James, do you approve the current session cleanup?',
+      }),
+    ]);
+  });
+
+  test('does not render prior-session task-audit needs in a current-session strip', () => {
+    const snapshot = timeline.buildHumanTimelineSnapshot({
+      nowMs: Date.parse('2026-06-12T17:00:00.000Z'),
+      sessionId: 'app-session-445',
+      queryCommsJournalEntries: jest.fn(() => []),
+      queryTelegramReplyObligations: jest.fn(() => []),
+      readTaskAuditItems: jest.fn(() => ({
+        ok: true,
+        status: 'OK',
+        items: [
+          {
+            id: 'old-task',
+            title: 'Old session task needs James',
+            status: 'needs_james_verification',
+            nextAction: 'James verifies the old session output.',
+            updatedAt: '2026-06-12T15:00:00.000Z',
+            sessionId: 'app-session-444',
+          },
+          {
+            id: 'current-task',
+            title: 'Current session task needs James',
+            status: 'needs_james_verification',
+            nextAction: 'James verifies the current session output.',
+            updatedAt: '2026-06-12T16:00:00.000Z',
+            sessionId: 'app-session-445',
+          },
+        ],
+      })),
+      queryGitCommits: jest.fn(() => []),
+      appStatusPath: 'missing-app-status.json',
+    });
+
+    expect(snapshot.needsYou.items).toEqual([
+      expect.objectContaining({
+        refs: expect.objectContaining({ kind: 'task_audit_item', itemId: 'current-task' }),
+      }),
+    ]);
+  });
+
+  test('does not treat status captions about what needs you as asks', () => {
+    const rows = [
+      {
+        rowId: 30,
+        messageId: 'status-caption',
+        sessionId: 'app-session-445',
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'telegram',
+        direction: 'outbound',
+        status: 'acked',
+        brokeredAtMs: Date.parse('2026-06-12T16:00:00.000Z'),
+        rawBody: 'First look: what your team did and what needs you, in sentences instead of scrollback.',
+      },
+    ];
+
+    const snapshot = timeline.buildHumanTimelineSnapshot({
+      nowMs: Date.parse('2026-06-12T17:00:00.000Z'),
+      sessionId: 'app-session-445',
+      queryCommsJournalEntries: jest.fn(() => rows),
+      queryTelegramReplyObligations: jest.fn(() => []),
+      readTaskAuditItems: jest.fn(() => ({ ok: true, status: 'OK', items: [] })),
+      queryGitCommits: jest.fn(() => []),
+      appStatusPath: 'missing-app-status.json',
+    });
+
+    expect(snapshot.needsYou.items).toEqual([]);
+  });
+
+  test('resolves implicit needs-you asks when a later outbound answers the same thread', () => {
+    const rows = [
+      {
+        rowId: 20,
+        messageId: 'answered-ask',
+        sessionId: 'app-session-445',
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'telegram',
+        direction: 'outbound',
+        status: 'acked',
+        brokeredAtMs: Date.parse('2026-06-12T16:00:00.000Z'),
+        rawBody: 'James, do you approve the Today page cleanup?',
+        metadata: { chatId: '1234' },
+      },
+      {
+        rowId: 21,
+        messageId: 'team-answer',
+        sessionId: 'app-session-445',
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'telegram',
+        direction: 'outbound',
+        status: 'acked',
+        brokeredAtMs: Date.parse('2026-06-12T16:05:00.000Z'),
+        rawBody: 'Handled now. The Today page cleanup is finished.',
+        metadata: { chatId: '1234' },
+      },
+      {
+        rowId: 22,
+        messageId: 'unanswered-ask',
+        sessionId: 'app-session-445',
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'telegram',
+        direction: 'outbound',
+        status: 'acked',
+        brokeredAtMs: Date.parse('2026-06-12T16:10:00.000Z'),
+        rawBody: 'James, do you approve the next current-session step?',
+        metadata: { chatId: '5678' },
+      },
+    ];
+
+    const snapshot = timeline.buildHumanTimelineSnapshot({
+      nowMs: Date.parse('2026-06-12T17:00:00.000Z'),
+      sessionId: 'app-session-445',
+      queryCommsJournalEntries: jest.fn(() => rows),
+      queryTelegramReplyObligations: jest.fn(() => []),
+      readTaskAuditItems: jest.fn(() => ({ ok: true, status: 'OK', items: [] })),
+      queryGitCommits: jest.fn(() => []),
+      appStatusPath: 'missing-app-status.json',
+    });
+
+    expect(snapshot.needsYou.items).toHaveLength(1);
+    expect(snapshot.needsYou.items[0]).toEqual(expect.objectContaining({
+      refs: expect.objectContaining({ commsRowId: 22 }),
+      detail: 'James, do you approve the next current-session step?',
+    }));
+  });
 });
