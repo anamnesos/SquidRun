@@ -10,6 +10,7 @@ const { fork } = require('child_process');
 const log = require('../logger');
 const smsPoller = require('../sms-poller');
 const telegramPoller = require('../telegram-poller');
+const { buildNodeWorkerForkOptions } = require('../node-worker-fork-options');
 
 const TELEGRAM_WORKER_PATH = path.join(__dirname, 'telegram-poller-worker.js');
 const TELEGRAM_STOP_KILL_TIMEOUT_MS = 2000;
@@ -48,12 +49,12 @@ class InboundPollerService {
     }
 
     this.telegramOnMessage = typeof options.onMessage === 'function' ? options.onMessage : null;
-    const worker = this.forkProcess(this.telegramWorkerPath, [], {
+    const worker = this.forkProcess(this.telegramWorkerPath, [], buildNodeWorkerForkOptions({
       env: {
         ...process.env,
         SQUIDRUN_TELEGRAM_POLLER_WORKER: '1',
       },
-    });
+    }));
     worker.__squidrunIntentionalStop = false;
     this.telegramWorker = worker;
 

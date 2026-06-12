@@ -1,6 +1,7 @@
 const path = require('path');
 const { fork } = require('child_process');
 const log = require('./logger');
+const { buildNodeWorkerForkOptions } = require('./node-worker-fork-options');
 
 const WORKER_PATH = path.join(__dirname, 'comms-worker.js');
 const REQUEST_TIMEOUT_MS = parsePositiveInt(
@@ -176,12 +177,12 @@ function ensureWorker() {
     return workerProcess;
   }
 
-  const worker = fork(WORKER_PATH, [], {
+  const worker = fork(WORKER_PATH, [], buildNodeWorkerForkOptions({
     env: {
       ...process.env,
       SQUIDRUN_COMMS_WORKER: '1',
     },
-  });
+  }));
 
   worker.on('message', (msg) => {
     handleWorkerMessage(worker, msg).catch((err) => {
