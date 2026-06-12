@@ -54,8 +54,17 @@ const explicitDataRoot = resolveExplicitDataRoot(process.env);
 const installedDataRoot = (explicitDataRoot || app.isPackaged === true)
   ? resolveInstalledDataRoot(packagedDataRootOptions)
   : null;
+const pinnedInstalledDataRoot = installedDataRoot?.path
+  && installedDataRoot.source !== 'default-external-workspace'
+  ? installedDataRoot
+  : null;
+if (pinnedInstalledDataRoot?.path && !process.env.SQUIDRUN_DATA_ROOT) {
+  process.env.SQUIDRUN_DATA_ROOT = pinnedInstalledDataRoot.path;
+}
 const profileProjectRoot = getProfileProjectRootOverride(activeProfileName);
-if (profileProjectRoot) {
+if (pinnedInstalledDataRoot?.path) {
+  process.env.SQUIDRUN_PROJECT_ROOT = pinnedInstalledDataRoot.path;
+} else if (profileProjectRoot) {
   process.env.SQUIDRUN_PROJECT_ROOT = profileProjectRoot;
 } else if (explicitDataRoot?.path) {
   process.env.SQUIDRUN_PROJECT_ROOT = explicitDataRoot.path;
