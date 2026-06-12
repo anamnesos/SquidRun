@@ -335,6 +335,14 @@ const DAEMON_CONNECT_TIMEOUT_MS = Math.max(
   1000,
   Number.parseInt(process.env.SQUIDRUN_DAEMON_CONNECT_TIMEOUT_MS || '15000', 10) || 15000
 );
+const BOOT_SESSION_SCOPE_TIMEOUT_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.SQUIDRUN_BOOT_SESSION_SCOPE_TIMEOUT_MS || '20000', 10) || 20000
+);
+const BOOT_STARTUP_HEALTH_TIMEOUT_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.SQUIDRUN_BOOT_STARTUP_HEALTH_TIMEOUT_MS || '20000', 10) || 20000
+);
 const VISIBLE_INJECT_DELIVERY_DEDUPE_TTL_MS = Math.max(
   10000,
   Number.parseInt(process.env.SQUIDRUN_VISIBLE_INJECT_DEDUPE_TTL_MS || '300000', 10) || 300000
@@ -1112,6 +1120,7 @@ class SquidRunApp {
     this.daemonConnectedForStartup = false;
     this.daemonTimeoutTriggered = false;
     this.daemonTimeoutNotified = false;
+    this.bootSequenceId = `boot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.packagedOnboardingState = null;
     this.shuttingDown = false;
     this.fullShutdownPromise = null;
@@ -3686,6 +3695,104 @@ class SquidRunApp {
     }
   }
 
+  getBootSequencePath() {
+    return resolveCoordPath(path.join('runtime', 'boot-sequence.jsonl'), { forWrite: true });
+  }
+
+  appendBootSequenceBreadcrumb(step, details = {}) {
+    const stepName = String(step || '').trim();
+    if (!stepName) return false;
+    try {
+      const breadcrumb = {
+        schema: 'squidrun.boot_sequence.v1',
+        bootSequenceId: this.bootSequenceId || null,
+        step: stepName,
+        t: Date.now(),
+        iso: new Date().toISOString(),
+        pid: process.pid,
+        profile: this.activeProfileName || getActiveProfileName(),
+        ...(
+          details && typeof details === 'object' && !Array.isArray(details)
+            ? details
+            : {}
+        ),
+      };
+      const filePath = this.getBootSequencePath();
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.appendFileSync(filePath, `${JSON.stringify(breadcrumb)}\n`, 'utf8');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  writeBootHeartbeat(stage, details = {}) {
+    if (!this.settings || typeof this.settings.writeAppStatus !== 'function') return;
+    const stageName = String(stage || 'unknown').trim() || 'unknown';
+    this.settings.writeAppStatus({
+      statusPatch: {
+        boot: {
+          sequenceId: this.bootSequenceId || null,
+          stage: stageName,
+          lastHeartbeatAt: new Date().toISOString(),
+          pid: process.pid,
+          profile: this.activeProfileName || getActiveProfileName(),
+          ...(
+            details && typeof details === 'object' && !Array.isArray(details)
+              ? details
+              : {}
+          ),
+        },
+      },
+    });
+  }
+
+  async awaitBootStepWithTimeout(stepName, runStep, {
+    timeoutMs = BOOT_SESSION_SCOPE_TIMEOUT_MS,
+    timeoutResult = null,
+  } = {}) {
+    let timeoutTimer = null;
+    let settled = false;
+    const timeoutReason = `${stepName}_timeout`;
+    const timeoutPromise = new Promise((resolve) => {
+      timeoutTimer = setTimeout(() => {
+        if (settled) return;
+        log.warn('BootSequence', `${stepName} exceeded ${timeoutMs}ms; continuing degraded`);
+        this.appendBootSequenceBreadcrumb(stepName, {
+          event: 'timeout',
+          timeoutMs,
+          reason: timeoutReason,
+        });
+        resolve(
+          typeof timeoutResult === 'function'
+            ? timeoutResult(timeoutReason)
+            : timeoutResult
+        );
+      }, timeoutMs);
+
+      if (timeoutTimer && typeof timeoutTimer.unref === 'function') {
+        timeoutTimer.unref();
+      }
+    });
+
+    this.appendBootSequenceBreadcrumb(stepName, { event: 'start', timeoutMs });
+    try {
+      const result = await Promise.race([
+        Promise.resolve().then(runStep),
+        timeoutPromise,
+      ]);
+      if (!settled) {
+        this.appendBootSequenceBreadcrumb(stepName, { event: 'settled' });
+      }
+      return result;
+    } finally {
+      settled = true;
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+    }
+  }
+
   async awaitDaemonStartupStepWithTimeout(stepName, runStep, timeoutResult) {
     let timeoutTimer = null;
     let settled = false;
@@ -3695,6 +3802,11 @@ class SquidRunApp {
         if (settled) return;
         this.daemonTimeoutTriggered = true;
         log.warn('Daemon', `${stepName} did not settle within ${DAEMON_CONNECT_TIMEOUT_MS}ms`);
+        this.appendBootSequenceBreadcrumb(stepName, {
+          event: 'timeout',
+          timeoutMs: DAEMON_CONNECT_TIMEOUT_MS,
+          reason: timeoutReason,
+        });
         this.notifyRendererDaemonTimeout(timeoutReason);
         resolve(
           typeof timeoutResult === 'function'
@@ -3708,11 +3820,16 @@ class SquidRunApp {
       }
     });
 
+    this.appendBootSequenceBreadcrumb(stepName, { event: 'start', timeoutMs: DAEMON_CONNECT_TIMEOUT_MS });
     try {
-      return await Promise.race([
+      const result = await Promise.race([
         Promise.resolve().then(runStep),
         timeoutPromise,
       ]);
+      if (!settled) {
+        this.appendBootSequenceBreadcrumb(stepName, { event: 'settled' });
+      }
+      return result;
     } finally {
       settled = true;
       if (timeoutTimer) {
@@ -4267,11 +4384,14 @@ class SquidRunApp {
 
   async init() {
     log.info('App', 'Initializing SquidRun Application');
+    this.appendBootSequenceBreadcrumb('init:start');
 
     // 1. Load settings
+    this.appendBootSequenceBreadcrumb('init:step-1:load-settings');
     this.settings.loadSettings();
 
     // 1.1 Packaged app bootstrap: ensure a writable external workspace exists.
+    this.appendBootSequenceBreadcrumb('init:step-1.1:packaged-workspace-bootstrap');
     const packagedWorkspacePath = this.ensurePackagedWorkspaceBootstrap();
     if (packagedWorkspacePath) {
       log.info('ProjectLifecycle', `Using packaged external workspace: ${packagedWorkspacePath}`);
@@ -4280,12 +4400,16 @@ class SquidRunApp {
     this.kickoffStartupBriefingGeneration('app-init');
 
     // 2. Create the requested startup window(s) as early as possible so users see immediate startup feedback.
+    this.appendBootSequenceBreadcrumb('init:step-2:launch-windows:start');
     await this.launchWindowsForProfile(this.launchWindowProfile);
+    this.appendBootSequenceBreadcrumb('init:step-2:launch-windows:done');
+    this.writeBootHeartbeat('windows_launched');
 
     // Profile-specific desktop shortcuts are owned outside the default app
     // bootstrap so they can carry explicit project-root/env overrides.
 
     // 3. Generate firmware files on startup when feature flag is enabled.
+    this.appendBootSequenceBreadcrumb('init:step-3:firmware-preflight');
     if (this.firmwareManager && typeof this.firmwareManager.ensureStartupFirmwareIfEnabled === 'function') {
       try {
         const firmwareResult = this.firmwareManager.ensureStartupFirmwareIfEnabled({ preflight: true });
@@ -4298,10 +4422,12 @@ class SquidRunApp {
     }
 
     // 4. Auto-detect installed CLIs and patch invalid paneCommands (startup only)
+    this.appendBootSequenceBreadcrumb('init:step-4:auto-detect-clis');
     if (typeof this.settings.autoDetectPaneCommandsOnStartup === 'function') {
       this.settings.autoDetectPaneCommandsOnStartup();
     }
 
+    this.appendBootSequenceBreadcrumb('init:step-4.1:refresh-system-capabilities');
     try {
       await this.refreshSystemCapabilities({ projectRoot: getProjectRoot() });
     } catch (err) {
@@ -4322,6 +4448,7 @@ class SquidRunApp {
     );
 
     // 6. Setup external notifications
+    this.appendBootSequenceBreadcrumb('init:step-6:external-notifications');
     this.ctx.setExternalNotifier(createExternalNotifier({
       getSettings: () => this.ctx.currentSettings,
       log,
@@ -4334,12 +4461,15 @@ class SquidRunApp {
     }
 
     // 7. Load activity log
+    this.appendBootSequenceBreadcrumb('init:step-7:activity-log');
     this.activity.loadActivityLog();
 
     // 8. Load usage stats
+    this.appendBootSequenceBreadcrumb('init:step-8:usage-stats');
     this.usage.loadUsageStats();
 
     // 9. Initialize PTY daemon connection (heavy startup work begins after window is shown).
+    this.appendBootSequenceBreadcrumb('init:step-9:daemon-startup');
     this.scheduleDaemonConnectTimeout();
     const daemonConnected = await this.awaitDaemonStartupStepWithTimeout(
       'init_daemon_client',
@@ -4365,16 +4495,40 @@ class SquidRunApp {
       );
     }
     this.backgroundAgentManager.start();
+    this.appendBootSequenceBreadcrumb('init:step-9:background-agent-manager-started');
     this.settings.writeAppStatus({
       incrementSession: true,
       sessionFloor: this.getStartupSessionFloor(),
+    });
+    this.appendBootSequenceBreadcrumb('init:step-9:app-status-session-written', {
+      session: this.getCurrentAppStatusSessionNumber(),
     });
     // Notify renderer to refresh session badge after session number is written.
     this.sendToVisibleWindow('session-updated', {
       session: this.getCurrentAppStatusSessionNumber(),
     });
-    await this.initializeStartupSessionScope({
-      sessionNumber: this.getCurrentAppStatusSessionNumber(),
+    const startupScopeResult = await this.awaitBootStepWithTimeout(
+      'initialize_startup_session_scope',
+      () => this.initializeStartupSessionScope({
+        sessionNumber: this.getCurrentAppStatusSessionNumber(),
+      }),
+      {
+        timeoutMs: BOOT_SESSION_SCOPE_TIMEOUT_MS,
+        timeoutResult: (reason) => ({ ok: false, reason, timedOut: true }),
+      }
+    );
+    if (startupScopeResult?.ok === false) {
+      log.warn(
+        'BootSequence',
+        `Startup session scope degraded: ${startupScopeResult.reason || startupScopeResult.error || 'unknown'}`
+      );
+      this.writeBootHeartbeat('startup_session_scope_degraded', {
+        reason: startupScopeResult.reason || startupScopeResult.error || 'unknown',
+      });
+    }
+    this.appendBootSequenceBreadcrumb('init:step-9:startup-session-scope-complete', {
+      degraded: startupScopeResult?.ok === false,
+      reason: startupScopeResult?.reason || null,
     });
     this.startScopedTelegramTriggerDrainPoller();
     const durableTelegramReplyHydration = this.hydratePendingTelegramReplyGuardsFromObligations({
@@ -4386,10 +4540,27 @@ class SquidRunApp {
         `Durable reply-obligation hydration failed: ${durableTelegramReplyHydration.reason || 'unknown'}`
       );
     }
+    this.appendBootSequenceBreadcrumb('init:step-9:telegram-startup-hooks-complete');
     try {
-      const startupHealthResult = await this.refreshStartupHealthArtifacts({
-        sessionNumber: this.getCurrentAppStatusSessionNumber(),
-      });
+      const startupHealthResult = await this.awaitBootStepWithTimeout(
+        'refresh_startup_health_artifacts',
+        () => this.refreshStartupHealthArtifacts({
+          sessionNumber: this.getCurrentAppStatusSessionNumber(),
+        }),
+        {
+          timeoutMs: BOOT_STARTUP_HEALTH_TIMEOUT_MS,
+          timeoutResult: (reason) => ({ ok: false, reason, timedOut: true }),
+        }
+      );
+      if (startupHealthResult?.ok === false) {
+        log.warn(
+          'BootSequence',
+          `Startup health artifact refresh degraded: ${startupHealthResult.reason || startupHealthResult.error || 'unknown'}`
+        );
+        this.writeBootHeartbeat('startup_health_degraded', {
+          reason: startupHealthResult.reason || startupHealthResult.error || 'unknown',
+        });
+      }
       if (
         startupHealthResult?.ingestResult?.ok === false
         && startupHealthResult?.ingestResult?.skipped !== true
@@ -4404,13 +4575,16 @@ class SquidRunApp {
     }
 
     // 10. Register sleep/wake listeners for laptop resilience.
+    this.appendBootSequenceBreadcrumb('init:step-10:power-monitor-listeners');
     this.setupPowerMonitorListeners();
 
     // 11. Setup global IPC forwarders
+    this.appendBootSequenceBreadcrumb('init:step-11:ipc-forwarders');
     this.ensureCliIdentityForwarder();
     this.ensureTriggerDeliveryAckForwarder();
 
     // 12. Start WebSocket server for instant agent messaging
+    this.appendBootSequenceBreadcrumb('init:step-12:websocket-start');
     let webSocketStartOptions = null;
     const webSocketPortInfo = this.resolveWebSocketRuntimePortInfo();
     try {
@@ -5361,13 +5535,22 @@ class SquidRunApp {
       await websocketServer.start(webSocketStartOptions);
       this.clearWebSocketStartRetry();
       this.recordWebSocketStartSuccess(webSocketPortInfo);
+      this.appendBootSequenceBreadcrumb('init:step-12:websocket-started', {
+        port: webSocketPortInfo.port,
+        source: webSocketPortInfo.source || null,
+      });
     } catch (err) {
       log.error('WebSocket', `Failed to start server: ${err.message}`);
       this.recordWebSocketStartFailure(err, webSocketPortInfo);
+      this.appendBootSequenceBreadcrumb('init:step-12:websocket-start-failed', {
+        error: err.message,
+        code: err.code || null,
+      });
       this.refreshStartupHealthAfterWebSocketFailure();
       this.scheduleWebSocketStartRetry(webSocketStartOptions, err);
     }
 
+    this.appendBootSequenceBreadcrumb('init:step-13:pollers-and-bridge');
     this.startSmsPoller();
     // Telegram must have one getUpdates owner. Duplicate pollers race offsets
     // and lose messages; the old standalone long-poll relay was removed for
@@ -5377,6 +5560,12 @@ class SquidRunApp {
     this.startBridgeClient();
     this.startAutoHandoffMaterializer();
 
+    this.writeBootHeartbeat('init_complete', {
+      session: this.getCurrentAppStatusSessionNumber(),
+    });
+    this.appendBootSequenceBreadcrumb('init:complete', {
+      session: this.getCurrentAppStatusSessionNumber(),
+    });
     log.info('App', 'Initialization complete');
   }
 
