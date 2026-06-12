@@ -3266,6 +3266,36 @@ function setupEventListeners() {
     }));
   });
 
+  const handleFreshSessionButtonClick = async (event) => {
+    const btn = event.target?.closest?.('.fresh-session-btn');
+    if (!btn) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const paneId = btn.dataset.paneId;
+    if (!paneId) return;
+    if (!confirm(`Start a fresh session for pane ${paneId}?\n\nThis cold-starts only this pane on its current model and sends the SquidRun startup context.`)) {
+      return;
+    }
+
+    log.info('FreshSession', `Fresh session restart for pane ${paneId}`);
+    showStatusNotice(`Starting fresh session for pane ${paneId}...`);
+    btn.disabled = true;
+    try {
+      const success = await terminal.restartPane(paneId, null, {
+        source: 'renderer-fresh-session-button',
+        freshSession: true,
+      });
+      if (!success) {
+        showStatusNotice(`Fresh session failed for pane ${paneId}`, 'error');
+        log.warn('FreshSession', `Fresh session restart returned false for pane ${paneId}`);
+      }
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  document.addEventListener('click', handleFreshSessionButtonClick);
+  registerRendererLifecycleCleanup(() => document.removeEventListener('click', handleFreshSessionButtonClick));
+
 
   // ESC collapse handler consolidated into setupEventListeners keyboard shortcuts listener
 

@@ -779,6 +779,7 @@ function registerPtyHandlers(ctx, deps = {}) {
     let paneCommand = explicitPaneCommand || getPaneCommandForRuntime(ctx, paneId);
     paneCommand = applyAutonomyFlagsToAgentCommand(paneCommand, ctx?.currentSettings || {});
     const spawnCommandOnCreate = ptyOptions.spawnCommandOnCreate === true && Boolean(paneCommand);
+    let resumeDecision = null;
     if (spawnCommandOnCreate) {
       const resumeCommand = appendResumeFlagsToAgentCommand({
         paneId,
@@ -790,8 +791,10 @@ function registerPtyHandlers(ctx, deps = {}) {
         claudeModelHomeDir,
         claudeModelSettingsPath,
         claudeModelEnv,
+        remintSessionId: ptyOptions.remintClaudeSessionId === true,
       });
       paneCommand = resumeCommand.command;
+      resumeDecision = resumeCommand.decision || null;
       if (resumeCommand.decision) {
         const decision = resumeCommand.decision;
         log.info(
@@ -801,7 +804,7 @@ function registerPtyHandlers(ctx, deps = {}) {
         await reapPinnedClaudeSessionBeforeSpawn(paneId, decision, {
           cwd,
           command: paneCommand,
-          source: 'pty-create',
+          source: ptyOptions.remintClaudeSessionId === true ? 'pty-create-remint' : 'pty-create',
         });
       }
     }
@@ -859,7 +862,16 @@ function registerPtyHandlers(ctx, deps = {}) {
     } else {
       daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, null, spawnOptions);
     }
-    return { paneId, cwd, dryRun: ctx.currentSettings.dryRun, paneCommand, spawnCommandOnCreate };
+    return {
+      paneId,
+      cwd,
+      dryRun: ctx.currentSettings.dryRun,
+      paneCommand,
+      spawnCommandOnCreate,
+      remintedClaudeSessionId: resumeDecision?.reminted === true,
+      previousClaudeSessionId: resumeDecision?.previousSessionId || null,
+      claudeSessionId: resumeDecision?.sessionId || null,
+    };
   });
 
   ipcMain.handle('pty-write', async (event, paneId, data, kernelMeta = null) => {

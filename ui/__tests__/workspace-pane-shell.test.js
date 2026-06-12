@@ -303,6 +303,7 @@ describe('workspace pane shell', () => {
       ]);
       expect(pane.querySelector(`.model-badge[data-pane-id="${paneId}"]`)).toBeFalsy();
       expect(pane.querySelector(`.pane-role-info-btn[data-pane-id="${paneId}"]`).innerHTML).toContain('pane-btn-icon');
+      expect(pane.querySelector(`.fresh-session-btn[data-pane-id="${paneId}"]`).innerHTML).toContain('pane-btn-icon');
       expect(pane.querySelector('.interrupt-btn').innerHTML).toContain('pane-btn-icon');
       expect(pane.querySelector('.unstick-btn').innerHTML).toContain('pane-btn-icon');
       expect(pane.querySelector('.kickoff-btn').innerHTML).toContain('pane-btn-icon');

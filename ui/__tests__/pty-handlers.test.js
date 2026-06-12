@@ -412,6 +412,35 @@ describe('PTY Handlers', () => {
       );
     });
 
+    test('fresh spawn-on-create Claude panes remint only the requested pane session id', async () => {
+      ctx.daemonClient.connected = true;
+      const workingDir = 'D:\\projects\\TrustQuote';
+      fs.mkdirSync(path.dirname(deps.paneSessionIdsFilePath), { recursive: true });
+      fs.writeFileSync(deps.paneSessionIdsFilePath, JSON.stringify({
+        schema: 'squidrun.pane_session_ids.v0',
+        panes: {
+          'trustquote-app': '11111111-1111-4111-8111-111111111111',
+          'trustquote-invoice': '22222222-2222-4222-8222-222222222222',
+        },
+      }, null, 2), 'utf8');
+
+      const result = await harness.invoke('pty-create', 'trustquote-app', workingDir, {
+        paneCommand: 'claude',
+        spawnCommandOnCreate: true,
+        preferWorkingDir: true,
+        remintClaudeSessionId: true,
+      });
+      const store = loadPaneSessionIds(deps.paneSessionIdsFilePath);
+
+      expect(result.remintedClaudeSessionId).toBe(true);
+      expect(result.previousClaudeSessionId).toBe('11111111-1111-4111-8111-111111111111');
+      expect(result.claudeSessionId).toMatch(UUID_RE);
+      expect(result.claudeSessionId).not.toBe(result.previousClaudeSessionId);
+      expect(store.panes['trustquote-app']).toBe(result.claudeSessionId);
+      expect(store.panes['trustquote-invoice']).toBe('22222222-2222-4222-8222-222222222222');
+      expect(result.paneCommand).toBe(`claude --session-id ${result.claudeSessionId}`);
+    });
+
     test('spawn-on-create standard panes use assigned paneProjects cwd without explicit preferWorkingDir', async () => {
       ctx.daemonClient.connected = true;
       ctx.currentSettings.autonomyConsentGiven = true;
