@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1150
+- Total files listed: 1153
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -20,10 +20,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 103
 - scripts: 1
 - tools: 3
-- ui/__tests__: 429
-- ui/modules: 356
+- ui/__tests__: 430
+- ui/modules: 357
 - ui/other: 37
-- ui/scripts: 138
+- ui/scripts: 139
 - ui/styles: 19
 - workspace/knowledge: 17
 
@@ -33,9 +33,9 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - doc: 97
 - file: 1
 - jsonl: 1
-- script: 139
-- source: 421
-- test: 430
+- script: 140
+- source: 422
+- test: 431
 
 ## Files
 
@@ -70,7 +70,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/device-to-device-diagram.svg` | doc | 42933 |
 | `docs/diagrams-reference.md` | doc | 16076 |
 | `docs/event-kernel-spec.md` | doc | 24652 |
-| `docs/fresh-eyes-walk-2026-06-12.md` | doc | 6530 |
+| `docs/fresh-eyes-walk-2026-06-12.md` | doc | 6886 |
 | `docs/Gasline Tankless Diagram 32 Lyell St.excalidraw` | doc | 97568 |
 | `docs/gate-census-2026-06-12.md` | doc | 37896 |
 | `docs/github-integration-spec.md` | doc | 6260 |
@@ -395,7 +395,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/hm-visible-pane-submit-harness.test.js` | test | 6296 |
 | `ui/__tests__/hm-voice-broker.test.js` | test | 4413 |
 | `ui/__tests__/hm-what-now.test.js` | test | 2831 |
-| `ui/__tests__/human-timeline.test.js` | test | 6854 |
+| `ui/__tests__/human-timeline.test.js` | test | 12922 |
 | `ui/__tests__/image-gen.test.js` | test | 12705 |
 | `ui/__tests__/inbound-poller-service.test.js` | test | 5214 |
 | `ui/__tests__/ingress-envelope.test.js` | test | 2607 |
@@ -531,6 +531,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/mira-work-evidence-gate.test.js` | test | 3157 |
 | `ui/__tests__/missing-arm-watchdog.test.js` | test | 7780 |
 | `ui/__tests__/mocks/electron.js` | test | 2473 |
+| `ui/__tests__/model-prompt-receipt.test.js` | test | 6021 |
 | `ui/__tests__/model-selector.test.js` | test | 3066 |
 | `ui/__tests__/model-switch-handlers.test.js` | test | 21736 |
 | `ui/__tests__/node-worker-fork-options.test.js` | test | 2118 |
@@ -650,7 +651,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/voice-broker.test.js` | test | 44789 |
 | `ui/__tests__/watcher-worker.test.js` | test | 5936 |
 | `ui/__tests__/watcher.test.js` | test | 36814 |
-| `ui/__tests__/websocket-delivery.test.js` | test | 79502 |
+| `ui/__tests__/websocket-delivery.test.js` | test | 81785 |
 | `ui/__tests__/websocket-runtime-paths.test.js` | test | 2394 |
 | `ui/__tests__/websocket-runtime-queue.test.js` | test | 10280 |
 | `ui/__tests__/websocket-server.test.js` | test | 6449 |
@@ -699,7 +700,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/contract-promotion.js` | source | 8291 |
 | `ui/modules/contracts.js` | source | 3046 |
 | `ui/modules/cross-device-target.js` | source | 2360 |
-| `ui/modules/daemon-handlers.js` | source | 57102 |
+| `ui/modules/daemon-handlers.js` | source | 57411 |
 | `ui/modules/daemon-snapshot.js` | source | 2031 |
 | `ui/modules/diagnostic-log.js` | source | 1992 |
 | `ui/modules/event-bus.js` | source | 22926 |
@@ -819,7 +820,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/firmware-manager.js` | source | 13578 |
 | `ui/modules/main/github-service.js` | source | 26183 |
 | `ui/modules/main/human-timeline-sidecar-window.js` | source | 1880 |
-| `ui/modules/main/human-timeline.js` | source | 23075 |
+| `ui/modules/main/human-timeline.js` | source | 25673 |
 | `ui/modules/main/inbound-poller-service.js` | source | 5959 |
 | `ui/modules/main/kernel-bridge.js` | source | 5190 |
 | `ui/modules/main/launch-intent.js` | source | 2928 |
@@ -833,7 +834,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/pty-output-filter.js` | source | 7793 |
 | `ui/modules/main/restart-continuity-resume-manifest.js` | source | 34903 |
 | `ui/modules/main/settings-manager.js` | source | 26444 |
-| `ui/modules/main/squidrun-app.js` | source | 575964 |
+| `ui/modules/main/squidrun-app.js` | source | 576168 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 3021 |
 | `ui/modules/main/telegram-reply-obligations.js` | source | 13086 |
 | `ui/modules/main/trustquote-arm-registry-seed.js` | source | 7307 |
@@ -912,6 +913,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/mira-web-research-curiosity.js` | source | 8052 |
 | `ui/modules/mira-work-continuation-curiosity.js` | source | 5125 |
 | `ui/modules/mira-work-evidence-gate.js` | source | 10021 |
+| `ui/modules/model-prompt-receipt.js` | source | 19184 |
 | `ui/modules/model-selector.js` | source | 12069 |
 | `ui/modules/node-worker-fork-options.js` | source | 847 |
 | `ui/modules/noise-bootstrap.js` | source | 1061 |
@@ -1016,7 +1018,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/voice-broker.js` | source | 50616 |
 | `ui/modules/watcher-worker.js` | source | 6316 |
 | `ui/modules/watcher.js` | source | 58460 |
-| `ui/modules/websocket-runtime.js` | source | 76908 |
+| `ui/modules/websocket-runtime.js` | source | 77754 |
 | `ui/modules/websocket-server.js` | source | 2022 |
 | `ui/modules/window-chrome.js` | source | 6226 |
 | `ui/modules/window-team-bootstrap.js` | source | 5806 |
@@ -1204,6 +1206,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/jest-staged.js` | script | 4184 |
 | `ui/scripts/local_embedder.py` | script | 1205 |
 | `ui/scripts/mira-system-map-guard.js` | script | 9173 |
+| `ui/scripts/model-prompt-receipt-adapter.js` | script | 2567 |
 | `ui/scripts/postinstall-electron-rebuild.js` | script | 3426 |
 | `ui/scripts/runtime-ui-paths.js` | script | 597 |
 | `ui/scripts/send-long-telegram.js` | script | 3078 |
@@ -1236,7 +1239,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 | Path | Kind | Bytes |
 | --- | --- | ---: |
-| `workspace/knowledge/architecture-decisions.md` | doc | 50884 |
+| `workspace/knowledge/architecture-decisions.md` | doc | 50959 |
 | `workspace/knowledge/codex-desktop-restart.md` | doc | 8041 |
 | `workspace/knowledge/consultation-schema.md` | doc | 1739 |
 | `workspace/knowledge/exogenous-triggers-spec.md` | doc | 2942 |

@@ -9,6 +9,11 @@ jest.mock('../modules/logger', () => ({
   error: jest.fn(),
 }));
 
+process.env.SQUIDRUN_MODEL_PROMPT_RECEIPT_WAIT_MS = '25';
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const WebSocket = require('ws');
 const websocketServer = require('../modules/websocket-server');
 
@@ -1903,6 +1908,64 @@ describe('WebSocket Delivery Audit', () => {
       messageId,
       ok: true,
     }));
+  });
+
+  test('overlays cached delivery-check ACK with modelPromptReceipt proof', async () => {
+    const tempReceiptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-ws-receipts-'));
+    process.env.SQUIDRUN_MODEL_PROMPT_RECEIPT_DIR = tempReceiptDir;
+    try {
+      const receiver = await connectAndRegister({ port, role: 'builder', paneId: '2' });
+      activeClients.add(receiver);
+      const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+      activeClients.add(sender);
+
+      const messageId = 'delivery-check-receipt-overlay-1';
+      const ackPromise = waitForMessage(sender, (msg) => msg.type === 'send-ack' && msg.messageId === messageId);
+      sender.send(JSON.stringify({
+        type: 'send',
+        target: 'builder',
+        content: 'receipt-overlay-payload',
+        messageId,
+        ackRequired: true,
+      }));
+      const ack = await ackPromise;
+      expect(ack.ok).toBe(true);
+
+      const { appendModelPromptReceipt } = require('../modules/model-prompt-receipt');
+      appendModelPromptReceipt({
+        runtime: 'codex',
+        hookEventName: 'UserPromptSubmit',
+        payload: {
+          prompt: `receipt\n[SQUIDRUN_RECEIPT event=prompt_submit deliveryId=${messageId} messageId=${messageId}]`,
+        },
+      });
+
+      const requestId = 'delivery-check-receipt-overlay-request-1';
+      const checkPromise = waitForMessage(
+        sender,
+        (msg) => msg.type === 'delivery-check-result' && msg.requestId === requestId
+      );
+      sender.send(JSON.stringify({
+        type: 'delivery-check',
+        requestId,
+        messageId,
+      }));
+
+      const check = await checkPromise;
+      expect(check.ack).toEqual(expect.objectContaining({
+        type: 'send-ack',
+        messageId,
+        status: 'prompt_submitted.in_band',
+        verified: true,
+      }));
+      expect(check.ack.modelPromptReceipt).toEqual(expect.objectContaining({
+        semanticEvent: 'prompt_submit',
+        payloadDropped: true,
+      }));
+    } finally {
+      delete process.env.SQUIDRUN_MODEL_PROMPT_RECEIPT_DIR;
+      fs.rmSync(tempReceiptDir, { recursive: true, force: true });
+    }
   });
 
   test('tracks routing health and reports stale targets by threshold', async () => {
