@@ -9,18 +9,57 @@ const DEFAULT_REQUEST_TIMEOUT_MS = parsePositiveInt(
   15000
 );
 const DEFAULT_CLOSE_TIMEOUT_MS = 2000;
+const DEFAULT_IDLE_CLOSE_TIMEOUT_MS = parseNonNegativeInt(
+  Number.parseInt(process.env.SQUIDRUN_TEAM_MEMORY_WORKER_IDLE_CLOSE_TIMEOUT_MS || '5000', 10),
+  5000
+);
 
 let workerProcess = null;
 let requestCounter = 0;
 const pendingRequests = new Map();
+let idleCloseTimer = null;
+let idleClosePromise = null;
 
 function parsePositiveInt(value, fallback) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function parseNonNegativeInt(value, fallback) {
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
 function nextRequestId() {
   requestCounter += 1;
   return `team-memory-${Date.now()}-${requestCounter}`;
+}
+
+function clearIdleCloseTimer() {
+  if (!idleCloseTimer) return;
+  clearTimeout(idleCloseTimer);
+  idleCloseTimer = null;
+}
+
+function scheduleIdleClose(worker) {
+  if (!worker || worker.__squidrunClosing === true || worker.__squidrunIntentionalStop === true) return;
+  if (DEFAULT_IDLE_CLOSE_TIMEOUT_MS <= 0) return;
+  if (workerProcess !== worker || pendingRequests.size > 0 || idleClosePromise) return;
+
+  clearIdleCloseTimer();
+  idleCloseTimer = setTimeout(() => {
+    idleCloseTimer = null;
+    if (workerProcess !== worker || pendingRequests.size > 0 || worker.__squidrunClosing === true) return;
+    idleClosePromise = closeRuntime({
+      killTimeoutMs: DEFAULT_CLOSE_TIMEOUT_MS,
+      reason: 'idle',
+    }).catch((err) => {
+      log.warn('TeamMemoryWorker', `Idle close failed: ${err.message}`);
+    }).finally(() => {
+      idleClosePromise = null;
+    });
+  }, DEFAULT_IDLE_CLOSE_TIMEOUT_MS);
+  if (typeof idleCloseTimer.unref === 'function') {
+    idleCloseTimer.unref();
+  }
 }
 
 function clearPendingRequest(reqId) {
@@ -40,6 +79,7 @@ function rejectAllPending(error) {
 
 function quarantineWorker(worker, reason = 'unresponsive') {
   if (!worker) return;
+  clearIdleCloseTimer();
   if (workerProcess === worker) {
     workerProcess = null;
   }
@@ -58,7 +98,7 @@ function quarantineWorker(worker, reason = 'unresponsive') {
   }
 }
 
-function handleWorkerMessage(msg) {
+function handleWorkerMessage(worker, msg) {
   if (!msg || typeof msg !== 'object') return;
   if (msg.type !== 'response' || !msg.reqId) return;
 
@@ -67,16 +107,22 @@ function handleWorkerMessage(msg) {
 
   if (msg.ok) {
     entry.resolve(msg.result);
+    if (pendingRequests.size === 0) {
+      scheduleIdleClose(worker);
+    }
     return;
   }
 
   const err = new Error(msg.error || 'team-memory worker request failed');
   err.code = msg.code || 'TEAM_MEMORY_WORKER_ERROR';
   entry.reject(err);
+  if (pendingRequests.size === 0) {
+    scheduleIdleClose(worker);
+  }
 }
 
 function attachWorkerListeners(worker) {
-  worker.on('message', handleWorkerMessage);
+  worker.on('message', (msg) => handleWorkerMessage(worker, msg));
 
   worker.on('error', (err) => {
     log.error('TeamMemoryWorker', `Worker process error: ${err.message}`);
@@ -99,10 +145,11 @@ function attachWorkerListeners(worker) {
 }
 
 function ensureWorkerProcess() {
-  if (workerProcess && workerProcess.connected) {
+  if (workerProcess && workerProcess.connected && workerProcess.__squidrunClosing !== true) {
     return workerProcess;
   }
 
+  clearIdleCloseTimer();
   const worker = fork(WORKER_PATH, [], buildNodeWorkerForkOptions({
     env: {
       ...process.env,
@@ -119,6 +166,7 @@ function sendRequestWithWorker(worker, type, payload = {}, timeoutMs = DEFAULT_R
     return Promise.reject(new Error('team-memory worker unavailable'));
   }
 
+  clearIdleCloseTimer();
   return new Promise((resolve, reject) => {
     const reqId = nextRequestId();
     const timer = setTimeout(() => {
@@ -160,10 +208,15 @@ async function executeOperation(action, payload = {}, options = {}) {
 }
 
 async function closeRuntime(options = {}) {
+  clearIdleCloseTimer();
   const worker = workerProcess;
   if (!worker) return;
 
   worker.__squidrunIntentionalStop = true;
+  worker.__squidrunClosing = true;
+  if (workerProcess === worker) {
+    workerProcess = null;
+  }
   const killTimeoutMs = Number(options.killTimeoutMs) || DEFAULT_CLOSE_TIMEOUT_MS;
   let exitHandler = null;
   const exitPromise = new Promise((resolve) => {
@@ -190,9 +243,11 @@ async function closeRuntime(options = {}) {
 }
 
 async function resetForTests() {
+  clearIdleCloseTimer();
   await closeRuntime({ killTimeoutMs: 100 });
   workerProcess = null;
   requestCounter = 0;
+  idleClosePromise = null;
 }
 
 module.exports = {
