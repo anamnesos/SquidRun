@@ -156,12 +156,25 @@ Run as first action post-restart, per contract: (1) busy-pane probe EVAL-PROBE-4
 
 From Codex Desktop's executor run: `hm-restart-execute`'s default launch path started `electron.exe hm-bidirectional-wake-watchdog.js` — the wake-watchdog helper — instead of the main app; the executor had to kill the helper and launch via `npm start` manually. The restart still proved PASS, but only because the executor improvised. **Verdict: FIX (Builder queue item 1) — FIXED at a7b9ce7e, session 443.** Census note: the restart path had never been exercised end-to-end by the actual executor before tonight; live-fire found in one run what no review had.
 
+## H. Bucket-2 dispositions — SIGNED (Architect #27, session 443)
+
+Per-item evidence pass run post-restart; both default-KILLs stand. Two census claims corrected in the process: transcript-index is NOT wired in squidrun-app.js (zero matches — the v1/G1 claim was wrong), and oracle-watch-promotions was NOT "written by the live watcher" (the watcher was retired May 1).
+
+### H1. transcript-index family — **KILL code + artifact (signed)**
+`ui/modules/transcript-index.js` + `startup-transcript-context.js` + CLIs `hm-transcript-index.js` / `hm-startup-transcript-context.js` + their tests, and the 28MB regenerable-cache artifact (+ meta). Evidence: zero live invokers anywhere in the repo; ARCHITECTURE.md:312's "injected into pane SessionStart hooks" is stale (no hook references it); last build 2026-05-10 — nobody even rebuilt it in a month. Recall is superseded by evidence ledger (70,422 rows) + cognitive memory DB + comms_journal. **Three execution caveats, ONE commit (Builder)**: (1) relocate `resolveClaudeTranscriptProjectsDir` — live consumer `startup-ai-briefing.js` imports it; (2) disposition `recall-boundary.test.js` (imports `parseClaudeTranscriptRecord`) with the module; (3) fix ARCHITECTURE.md:312-313 + codebase-index rows in the same commit.
+
+### H2. oracle-watch-promotion-decisions.jsonl — **KILL artifact via E4 batch; no code kill exists (signed)**
+Writer was `oracle-watch-engine.js` in the private live-ops overlay — deliberately removed in the May 1 public cleanup (supervisor-status: `state=disabled, reason=live_ops_removed_from_public_core`; backup dir `public-cleanup-2026-05-01-live-ops`). All sibling artifacts froze at the identical timestamp 2026-05-01 11:00:07 — a retirement signature, not abandonment. No reader in the repo. Supervisor's disabled-state seam STAYS as the documented revival hook. Siblings (state.json, April flags/proofs) ride the same batch. **Rules-file ruling (Architect #27): `oracle-watch-rules.json` is KEPT** — config encoding James's trading doctrine (S289 references it by name), not a log; it is what a revived live-ops lane would actually want.
+
+### H3. Archival policy (governs the E4 batch) — **SIGNED (Architect #28), batch approved IN FULL**
+Four rules, S298-derived: (1) default HARD-DELETE for regenerable caches, retired-engine logs, and parked-lane diagnostics — no archive dirs, no .bak, no quarantine suffixes; (2) the record is the inventory, not the bytes — path/size/mtime-span/one-line description go in the census + commit message before deletion; (3) archive is the exception and needs a named consumer + retrieval scenario written next to it (none found in tonight's batch); (4) revival recovers code from git, never logs — a revived feature writes fresh artifacts. Approved batch ~115MB: oracle-watch residue minus rules.json, voice-diagnostics.jsonl 39MB, Bucket-1 parked-lane debug fossils ~880KB. Mira fossils included per Architect #28's deciding argument: the presence lane's own doctrine excludes parked/prototype/archive evidence from route authority, so even a revived lane would not consume the stale state — rule 4 governs. **Execution requirements (Architect #28, one commit)**: (1) per-item inventory in census + commit message per rule 2; (2) re-verify against `.squidrun/protected-files.json` at execution time, not from v1 census memory; (3) `oracle-watch-rules.json` untouched per #27; (4) the transcript-index artifact rides the H1 code-kill commit, NOT this batch — each commit self-contained. E3 rotation inherits rule 2.
+
 ---
 
 ## Updated queues (v2)
 
-**Architect arbitration**: B1 LOOK-lane scope (approved S442) · Bucket-2 label-or-kill sign-off · E4 artifact deletion sign-off (Bucket 1/3 framing now applies).
-**Builder execution**: ~~restart-execute launch target~~ (a7b9ce7e) · poller-heartbeat supervisor alarm (in flight) · A1+A3 demotion · B1 LOOK-lane exemption · E3 rotation caps · G3 watchdog tuning (now unblocked).
-**Oracle next pass**: B5 + C3 consumers · archival policy proposal for parked-lane dead artifacts · `submit_pending_input` field watch.
+**Architect arbitration**: B1 LOOK-lane scope (approved S442) · ~~Bucket-2 label-or-kill~~ (SIGNED, H1/H2) · archival policy sign-off (H3, gates all deletions).
+**Builder execution**: ~~restart-execute launch target~~ (a7b9ce7e) · poller-heartbeat supervisor alarm (in flight) · A1+A3 demotion (A1 live-proven S443: "your call" warned-and-continued agent-to-agent) · B1 LOOK-lane exemption · E3 rotation caps (rotated-out segments get deleted, not hoarded, per H3 rule 2) · G3 watchdog tuning incl. new `accepted.daemon_pty_unverified` status in the accepted set · H1 kill commit (three caveats, one commit) · E4 deletion batch (after H3 sign-off, with pre-delete inventory).
+**Oracle next pass**: B5 + C3 consumers · `submit_pending_input` field watch · pre-delete inventory for the E4 batch.
 
-*Census v2 by Oracle, session 443.*
+*Census v2 by Oracle, session 443. H section (dispositions + policy) added same session post-sign-off.*
