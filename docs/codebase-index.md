@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1143
+- Total files listed: 1137
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -20,10 +20,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 103
 - scripts: 1
 - tools: 3
-- ui/__tests__: 428
-- ui/modules: 354
+- ui/__tests__: 426
+- ui/modules: 352
 - ui/other: 34
-- ui/scripts: 140
+- ui/scripts: 138
 - ui/styles: 18
 - workspace/knowledge: 17
 
@@ -33,9 +33,9 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - doc: 95
 - file: 1
 - jsonl: 1
-- script: 141
-- source: 417
-- test: 429
+- script: 139
+- source: 415
+- test: 427
 
 ## Files
 
@@ -112,7 +112,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | 2728 |
 | `.gitignore` | config | 4598 |
 | `AGENTS.md` | doc | 6432 |
-| `ARCHITECTURE.md` | doc | 72448 |
+| `ARCHITECTURE.md` | doc | 71854 |
 | `CLAUDE-AI.md` | doc | 3856 |
 | `CLAUDE.md` | doc | 2161 |
 | `CODE_OF_CONDUCT.md` | doc | 5185 |
@@ -564,7 +564,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/protocol.test.js` | test | 5295 |
 | `ui/__tests__/pty-handlers.test.js` | test | 73878 |
 | `ui/__tests__/pty-output-filter.test.js` | test | 3547 |
-| `ui/__tests__/recall-boundary.test.js` | test | 1262 |
+| `ui/__tests__/recall-boundary.test.js` | test | 945 |
 | `ui/__tests__/recall-feedback.test.js` | test | 9009 |
 | `ui/__tests__/recovery-handlers.test.js` | test | 11088 |
 | `ui/__tests__/recovery-manager.test.js` | test | 23125 |
@@ -597,7 +597,6 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/squidrun-app.test.js` | test | 407272 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 2483 |
-| `ui/__tests__/startup-transcript-context.test.js` | test | 10069 |
 | `ui/__tests__/state-handlers.test.js` | test | 8772 |
 | `ui/__tests__/status-strip.test.js` | test | 3782 |
 | `ui/__tests__/supervisor-daemon-memory-index.test.js` | test | 3949 |
@@ -627,7 +626,6 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/test-execution-handlers.test.js` | test | 10226 |
 | `ui/__tests__/test-notification-handlers.test.js` | test | 8456 |
 | `ui/__tests__/token-utils.test.js` | test | 5466 |
-| `ui/__tests__/transcript-index.test.js` | test | 4531 |
 | `ui/__tests__/transition-ledger-handlers.test.js` | test | 5270 |
 | `ui/__tests__/transition-ledger.test.js` | test | 23199 |
 | `ui/__tests__/triggers-full.test.js` | test | 25051 |
@@ -938,8 +936,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/sms-poller.js` | source | 18982 |
 | `ui/modules/sqlite-compat.js` | source | 1389 |
 | `ui/modules/squid-room-surface.js` | source | 10303 |
-| `ui/modules/startup-ai-briefing.js` | source | 54632 |
-| `ui/modules/startup-transcript-context.js` | source | 11881 |
+| `ui/modules/startup-ai-briefing.js` | source | 55200 |
 | `ui/modules/status-strip.js` | source | 6375 |
 | `ui/modules/supervisor/index.js` | source | 339 |
 | `ui/modules/supervisor/migrations.js` | source | 2584 |
@@ -993,7 +990,6 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/terminal/injection.js` | source | 76328 |
 | `ui/modules/terminal/recovery.js` | source | 21139 |
 | `ui/modules/token-utils.js` | source | 1573 |
-| `ui/modules/transcript-index.js` | source | 13166 |
 | `ui/modules/transition-ledger.js` | source | 37486 |
 | `ui/modules/triggers.js` | source | 37576 |
 | `ui/modules/triggers/metrics.js` | source | 6048 |
@@ -1171,7 +1167,6 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-stage-split-release.js` | script | 13451 |
 | `ui/scripts/hm-startup-ai-briefing.js` | script | 1294 |
 | `ui/scripts/hm-startup-health.js` | script | 6501 |
-| `ui/scripts/hm-startup-transcript-context.js` | script | 1621 |
 | `ui/scripts/hm-supervisor.js` | script | 5200 |
 | `ui/scripts/hm-surface-audit.js` | script | 8678 |
 | `ui/scripts/hm-task-queue.js` | script | 36868 |
@@ -1180,7 +1175,6 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-telegram-reply-guard-probe.js` | script | 4754 |
 | `ui/scripts/hm-telegram-routing.js` | script | 9813 |
 | `ui/scripts/hm-telegram.js` | script | 35933 |
-| `ui/scripts/hm-transcript-index.js` | script | 2651 |
 | `ui/scripts/hm-transition.js` | script | 9560 |
 | `ui/scripts/hm-trigger.js` | script | 4496 |
 | `ui/scripts/hm-trustquote-room-prereqs.js` | script | 1956 |
