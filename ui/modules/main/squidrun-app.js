@@ -339,6 +339,10 @@ const BOOT_SESSION_SCOPE_TIMEOUT_MS = Math.max(
   1000,
   Number.parseInt(process.env.SQUIDRUN_BOOT_SESSION_SCOPE_TIMEOUT_MS || '20000', 10) || 20000
 );
+const BOOT_LAUNCH_WINDOWS_TIMEOUT_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.SQUIDRUN_BOOT_LAUNCH_WINDOWS_TIMEOUT_MS || '20000', 10) || 20000
+);
 const BOOT_STARTUP_HEALTH_TIMEOUT_MS = Math.max(
   1000,
   Number.parseInt(process.env.SQUIDRUN_BOOT_STARTUP_HEALTH_TIMEOUT_MS || '20000', 10) || 20000
@@ -4406,9 +4410,31 @@ class SquidRunApp {
 
     // 2. Create the requested startup window(s) as early as possible so users see immediate startup feedback.
     this.appendBootSequenceBreadcrumb('init:step-2:launch-windows:start');
-    await this.launchWindowsForProfile(this.launchWindowProfile);
-    this.appendBootSequenceBreadcrumb('init:step-2:launch-windows:done');
-    this.writeBootHeartbeat('windows_launched');
+    const launchWindowsResult = await this.awaitBootStepWithTimeout(
+      'launch_windows_for_profile',
+      () => this.launchWindowsForProfile(this.launchWindowProfile),
+      {
+        timeoutMs: BOOT_LAUNCH_WINDOWS_TIMEOUT_MS,
+        timeoutResult: (reason) => ({ ok: false, reason, timedOut: true }),
+      }
+    );
+    if (launchWindowsResult?.ok === false) {
+      log.warn(
+        'BootSequence',
+        `Startup window launch degraded: ${launchWindowsResult.reason || launchWindowsResult.error || 'unknown'}`
+      );
+      this.writeBootHeartbeat('launch_windows_degraded', {
+        reason: launchWindowsResult.reason || launchWindowsResult.error || 'unknown',
+      });
+    }
+    this.appendBootSequenceBreadcrumb('init:step-2:launch-windows:done', {
+      degraded: launchWindowsResult?.ok === false,
+      reason: launchWindowsResult?.reason || null,
+    });
+    this.writeBootHeartbeat('windows_launched', {
+      degraded: launchWindowsResult?.ok === false,
+      reason: launchWindowsResult?.reason || null,
+    });
 
     // Profile-specific desktop shortcuts are owned outside the default app
     // bootstrap so they can carry explicit project-root/env overrides.
@@ -5763,6 +5789,9 @@ class SquidRunApp {
   async createWindow() {
     const rawOptions = arguments[0] && typeof arguments[0] === 'object' ? arguments[0] : {};
     const windowKey = String(rawOptions.windowKey || 'main').trim() || 'main';
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:start`, {
+      lifecycleRoot: rawOptions.lifecycleRoot === true,
+    });
     const displayOnlyWindow = toBooleanFlag(rawOptions.displayOnly, false);
     const skipStartupBundle = displayOnlyWindow || toBooleanFlag(rawOptions.skipStartupBundle, false);
     const windowTeam = String(rawOptions.windowTeam || windowKey).trim() || windowKey;
@@ -5772,6 +5801,7 @@ class SquidRunApp {
       || (windowKey === 'main' && !this.canSendToWindow(this.ctx.mainWindow));
     const existingWindow = this.getAppWindow(windowKey);
     if (this.canSendToWindow(existingWindow)) {
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:reuse-existing`);
       if (typeof existingWindow.show === 'function') existingWindow.show();
       return;
     }
@@ -5796,8 +5826,17 @@ class SquidRunApp {
       initialStartupBundle = this.buildTrustQuoteWorkspaceStartupBundle();
     } else if (this.activeProfileName !== 'scoped' && windowKey !== 'scoped' && (this.activeProfileName !== 'main' || windowKey !== 'main')) {
       try {
+        this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:startup-bundle:start`, {
+          profileName: windowKey === 'main' ? this.activeProfileName : windowKey,
+        });
         initialStartupBundle = await this.writeProfileStartupBundle(windowKey === 'main' ? this.activeProfileName : windowKey);
+        this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:startup-bundle:done`, {
+          bundleReady: Boolean(initialStartupBundle?.bundlePath && initialStartupBundle?.text),
+        });
       } catch (err) {
+        this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:startup-bundle:failed`, {
+          error: err?.message || String(err),
+        });
         log.warn('Window', `Failed to prebuild ${windowKey} startup bundle before renderer load: ${err.message}`);
       }
     }
@@ -5823,6 +5862,11 @@ class SquidRunApp {
       contextReady: 'true',
     };
 
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:browser-window:start`, {
+      lifecycleRoot,
+      profileName: windowProfileName,
+      skipStartupBundle,
+    });
     const windowRef = new BrowserWindow({
       width: 1400,
       height: 800,
@@ -5840,20 +5884,33 @@ class SquidRunApp {
       },
       title: windowTitle,
     });
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:browser-window:done`, {
+      lifecycleRoot,
+    });
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:register:start`, {
+      sessionScopeId: this.getWindowSessionScopeId(windowKey),
+    });
     this.registerAppWindow(windowKey, windowRef, {
       lifecycleRoot,
       profileName: windowProfileName,
       sessionScopeId: this.getWindowSessionScopeId(windowKey),
     });
     this.enforceMenuSuppression(windowRef);
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:register:done`, {
+      lifecycleRoot,
+    });
 
     if (lifecycleRoot) {
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:lifecycle-root-hooks:start`);
       this.installMainWindowSendInterceptor();
       this.ensurePaneHostReadyForwarder();
       this.setupPermissions();
 
       // Register IPC handlers and load listeners before renderer startup to avoid startup races.
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:init-modules:start`);
       this.initModules();
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:init-modules:done`);
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:setup-window-listeners:start`);
       this.setupWindowListeners(windowRef, {
         windowKey,
         windowTeam,
@@ -5863,7 +5920,10 @@ class SquidRunApp {
         displayOnly: displayOnlyWindow,
         skipStartupBundle,
       });
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:setup-window-listeners:done`);
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:lifecycle-root-hooks:done`);
     } else {
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:setup-window-listeners:start`);
       this.setupWindowListeners(windowRef, {
         windowKey,
         windowTeam,
@@ -5873,9 +5933,16 @@ class SquidRunApp {
         displayOnly: displayOnlyWindow,
         skipStartupBundle,
       });
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:setup-window-listeners:done`);
     }
 
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:load-file:dispatch`, {
+      rendererEntry: RENDERER_ENTRY_HTML,
+    });
     windowRef.loadFile(RENDERER_ENTRY_HTML, { query }).catch((err) => {
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:load-file:failed`, {
+        error: err?.message || String(err),
+      });
       log.error('Window', `Failed to load renderer entry ${RENDERER_ENTRY_HTML}: ${err.message}`);
       this.activity.logActivity('error', 'system', 'Renderer failed to load', {
         reason: 'load_file_failed',
@@ -5887,6 +5954,7 @@ class SquidRunApp {
     if (lifecycleRoot) {
       // Hidden pane host windows are non-critical; defer to a separate task so
       // main-window listeners/post-load init always install first.
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:pane-host-bootstrap:schedule`);
       this.schedulePaneHostBootstrap();
 
       const devToolsAllowedByEnv = process.env.SQUIDRUN_DEBUG === '1' || process.env.NODE_ENV === 'development';
@@ -5895,6 +5963,9 @@ class SquidRunApp {
       }
     }
 
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:return`, {
+      lifecycleRoot,
+    });
   }
 
   setLaunchWindowProfile(profile = {}) {
@@ -5918,24 +5989,39 @@ class SquidRunApp {
   }
 
   async launchWindowsForProfile(profile = null) {
+    this.appendBootSequenceBreadcrumb('launchWindowsForProfile:start');
     const nextProfile = profile && typeof profile === 'object'
       ? this.setLaunchWindowProfile(profile)
       : this.getLaunchWindowProfile();
     const windowKey = toNonEmptyString(nextProfile.windowKey) || 'main';
     const includeMainWindow = nextProfile.includeMainWindow === true || windowKey === 'main';
+    this.appendBootSequenceBreadcrumb('launchWindowsForProfile:resolved-profile', {
+      windowKey,
+      includeMainWindow,
+      focusWindowKey: nextProfile.focusWindowKey || windowKey,
+    });
 
     if (includeMainWindow) {
+      this.appendBootSequenceBreadcrumb('launchWindowsForProfile:open-main:start');
       await this.openAppWindow('main', {
         lifecycleRoot: this.getOpenAppWindowCount() === 0,
       });
+      this.appendBootSequenceBreadcrumb('launchWindowsForProfile:open-main:done');
     }
     if (windowKey !== 'main') {
+      this.appendBootSequenceBreadcrumb(`launchWindowsForProfile:open-${windowKey}:start`);
       await this.openAppWindow(windowKey, {
         lifecycleRoot: this.getOpenAppWindowCount() === 0,
       });
+      this.appendBootSequenceBreadcrumb(`launchWindowsForProfile:open-${windowKey}:done`);
     }
 
+    this.appendBootSequenceBreadcrumb('launchWindowsForProfile:focus:start', {
+      focusWindowKey: nextProfile.focusWindowKey || windowKey,
+    });
     this.focusAppWindow(nextProfile.focusWindowKey || windowKey);
+    this.appendBootSequenceBreadcrumb('launchWindowsForProfile:focus:done');
+    this.appendBootSequenceBreadcrumb('launchWindowsForProfile:return');
     return nextProfile;
   }
 
@@ -6124,6 +6210,9 @@ class SquidRunApp {
 
   async openAppWindow(rawWindowKey = 'main', options = {}) {
     const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:start`, {
+      lifecycleRoot: options.lifecycleRoot === true,
+    });
     if (windowKey === 'mira-lab') {
       const existing = this.getAppWindow(windowKey);
       if (this.canSendToWindow(existing)) {
@@ -6215,7 +6304,12 @@ class SquidRunApp {
     const isSquidRoomWindow = isSquidRoomWindowKey(windowKey);
     let trustQuoteReadiness = null;
     if (isTrustQuoteWorkspace(windowKey)) {
+      this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:trustquote-prep:start`);
       trustQuoteReadiness = await this.prepareTrustQuoteWorkspaceOpen();
+      this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:trustquote-prep:done`, {
+        ok: trustQuoteReadiness.ok,
+        reason: trustQuoteReadiness.reason || null,
+      });
       if (!trustQuoteReadiness.ok) {
         return {
           ok: false,
@@ -6226,6 +6320,7 @@ class SquidRunApp {
         };
       }
     }
+    this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:create-window:start`);
     await this.createWindow({
       windowKey,
       windowTeam: isSquidRoomWindow ? 'squid-room' : windowKey,
@@ -6238,10 +6333,15 @@ class SquidRunApp {
       skipStartupBundle: isSquidRoomWindow ? true : undefined,
       lifecycleRoot: options.lifecycleRoot === true,
     });
+    this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:create-window:done`);
     if (isSquidRoomWindow) {
       this.writeSquidRoomWindowState(true, options.restoredFromState ? 'startup_restore' : 'open_app_window');
     }
+    this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:focus:start`);
     const focused = this.focusAppWindow(windowKey);
+    this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:focus:done`, {
+      focused,
+    });
     if (isTrustQuoteWorkspace(windowKey)) {
       const verification = this.verifyAppWindowVisible(windowKey, windowTitle);
       if (!verification.ok) {
@@ -6286,6 +6386,9 @@ class SquidRunApp {
         trustQuoteSessionScopeId: trustQuoteReadiness.routeOwner?.status?.plan?.sessionScopeId || null,
       };
     }
+    this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:return`, {
+      focused,
+    });
     return {
       ok: true,
       windowKey,

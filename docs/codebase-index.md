@@ -595,7 +595,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
 | `ui/__tests__/squid-room-surface.test.js` | test | 14236 |
-| `ui/__tests__/squidrun-app.test.js` | test | 424653 |
+| `ui/__tests__/squidrun-app.test.js` | test | 426065 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 2483 |
 | `ui/__tests__/state-handlers.test.js` | test | 8772 |
@@ -827,7 +827,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/pty-output-filter.js` | source | 7793 |
 | `ui/modules/main/restart-continuity-resume-manifest.js` | source | 34903 |
 | `ui/modules/main/settings-manager.js` | source | 26444 |
-| `ui/modules/main/squidrun-app.js` | source | 562082 |
+| `ui/modules/main/squidrun-app.js` | source | 567325 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 3021 |
 | `ui/modules/main/telegram-reply-obligations.js` | source | 13086 |
 | `ui/modules/main/trustquote-arm-registry-seed.js` | source | 7307 |
