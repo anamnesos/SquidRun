@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SquidRun Today</title>
+  <link rel="stylesheet" href="styles/human-timeline.css">
+</head>
+<body>
+  <main class="human-timeline-shell" id="humanTimelineRoot">
+    <header class="human-timeline-header">
+      <div>
+        <p class="human-timeline-eyebrow">SquidRun</p>
+        <h1>Today</h1>
+        <p class="human-timeline-subtitle">What your team did and what needs you.</p>
+      </div>
+      <div class="human-timeline-meta">
+        <span data-human-timeline-window>Today</span>
+        <span data-human-timeline-updated>Not loaded</span>
+        <button id="humanTimelineRefresh" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <section class="human-timeline-band human-timeline-needs-band" aria-label="Needs you">
+      <div class="human-timeline-section-heading">
+        <h2>Needs You</h2>
+        <div class="human-timeline-count-group">
+          <span data-human-timeline-need-count>0</span>
+          <span data-human-timeline-need-overflow></span>
+        </div>
+      </div>
+      <div class="human-timeline-needs" data-human-timeline-needs></div>
+    </section>
+
+    <section class="human-timeline-band" aria-label="Team feed">
+      <div class="human-timeline-section-heading">
+        <h2>Team Feed</h2>
+        <span data-human-timeline-feed-count>0</span>
+      </div>
+      <div class="human-timeline-feed" data-human-timeline-feed></div>
+    </section>
+
+    <footer class="human-timeline-footer" data-human-timeline-footer></footer>
+  </main>
+  <script src="human-timeline-feed.js"></script>
+  <script src="human-timeline-sidecar-renderer.js"></script>
+</body>
+</html>

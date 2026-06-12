@@ -31,6 +31,16 @@ function normalizeAction(action) {
     return 'open-live-task-audit-sidecar';
   }
   if (
+    normalized === 'open-human-timeline-sidecar'
+    || normalized === 'human-timeline-sidecar'
+    || normalized === 'human-timeline'
+    || normalized === 'timeline'
+    || normalized === 'today-feed'
+    || normalized === 'open-today-feed'
+  ) {
+    return 'open-human-timeline-sidecar';
+  }
+  if (
     normalized === 'open-squid-room'
     || normalized === 'squid-room'
     || normalized === 'squid-room-open'
@@ -367,6 +377,38 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
       })
       .catch((error) => {
         log.warn('AppControl', `Live task/audit sidecar open failed: ${error.message}`);
+        return {
+          success: false,
+          reason: 'open_window_failed',
+          action: normalizedAction,
+          error: error.message,
+        };
+      });
+  }
+
+  if (normalizedAction === 'open-human-timeline-sidecar') {
+    if (typeof ctx.openAppWindow !== 'function') {
+      return {
+        success: false,
+        reason: 'open_window_unavailable',
+        action: normalizedAction,
+      };
+    }
+    return Promise.resolve()
+      .then(() => ctx.openAppWindow('human-timeline-sidecar', payload))
+      .then((result) => {
+        const settled = result && typeof result === 'object' ? result : {};
+        return {
+          success: Boolean(settled.ok),
+          action: normalizedAction,
+          windowKey: settled.windowKey || 'human-timeline-sidecar',
+          status: settled.status || (settled.ok ? 'opened' : 'open_failed'),
+          reason: settled.ok ? undefined : (settled.reason || 'open_window_failed'),
+          note: 'Human timeline sidecar opened/focused without restarting the Electron main process.',
+        };
+      })
+      .catch((error) => {
+        log.warn('AppControl', `Human timeline sidecar open failed: ${error.message}`);
         return {
           success: false,
           reason: 'open_window_failed',

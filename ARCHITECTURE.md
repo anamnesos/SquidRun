@@ -17,6 +17,9 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 This is a curated orientation map for agents, not a complete generated inventory. Use `git ls-files`, `rg --files`, and the runtime health/index scripts for full-codebase discovery.
 - ui/config.js: Shared runtime constants and path resolution (project root, coord root, pane cwd, trigger targets, role maps).
 - ui/daemon-client.js: Electron-side daemon client for PTY lifecycle, reconnect logic, write-ack tracking, and kernel event forwarding.
+- ui/human-timeline-feed.js: Portable Today feed renderer component; consumes an injected snapshot loader and can be remounted into the main window later without depending on a side-window IPC channel.
+- ui/human-timeline-sidecar-renderer.js: Side-window adapter that invokes the read-only `human-timeline:snapshot` IPC channel and refreshes the portable Today feed component.
+- ui/human-timeline-sidecar.html: Standalone Today side-window document for the human timeline surface.
 - ui/index.html: Main renderer shell (3-pane layout, broadcast input, settings panel, right tabs, and startup overlays).
 - ui/jsconfig.json: Scoped JavaScript type-check configuration for the first-stage JSDoc + `checkJs` gate (`tsc --noEmit`) over selected contract-heavy modules.
 - ui/pane-host.html: Hidden pane-host window document that mounts xterm and loads `pane-host-renderer.js`.
@@ -24,6 +27,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/preload.js: Context-isolated bridge bootstrap exposing `window.squidrun` / `window.squidrunAPI` and renderer module adapters.
 - ui/renderer.js: Main renderer entrypoint wiring terminals, IPC listeners, settings/tabs, pane controls, and command dispatch UX.
 - ui/styles/base.css: Design-system base stylesheet (tokens, resets, global UX primitives, context-menu styling, and motion/accessibility rules).
+- ui/styles/human-timeline.css: Styling for the standalone Today feed surface with fixed-card dimensions, Needs You emphasis, responsive header layout, and footer exclusion messaging.
 - ui/terminal-daemon.js: Detached PTY daemon process that owns terminal sessions, transport protocol handling, and daemon-side event kernel.
 - ui/modules/agent-templates.js: Built-in agent templates library Provides curated configurations for common team setups.
 - ui/modules/backup-manager.js: Backup Manager Automated backups of .squidrun/config/state with restore points and versioning.
@@ -152,8 +156,8 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/main/inbound-poller-service.js: Owns main-process inbound Telegram/SMS poller lifecycle behind a small service boundary so channel handling can move out of Electron without changing message routing callbacks.
 - ui/modules/main/kernel-bridge.js: Exports KernelBridge, createKernelBridge, BRIDGE_VERSION, BRIDGE_EVENT_CHANNEL, ....
 - ui/modules/main/launch-intent.js: Normalizes `--window` / standalone launch flags so secondary windows can cold-open with their own top-level lifecycle while still sharing the runtime when needed.
-- ui/modules/main/human-timeline.js: Builds the read-only human timeline snapshot from `comms_journal` and Telegram reply obligations; output is jargon-filtered into portable Today feed / Needs You items for user-facing surfaces.
-- ui/modules/main/human-timeline-sidecar-window.js: Creates the first standalone Electron delivery vehicle for the portable human timeline feed; the sidecar owns window chrome only, while the feed renderer remains reusable for later main-window promotion.
+- ui/modules/main/human-timeline.js: Builds the read-only Today snapshot from existing comms, git, Telegram reply obligations, and Task Audit items; collapses agent chatter into human outcomes, caps Needs You, and counts excluded foreign-world rows without writing source data.
+- ui/modules/main/human-timeline-sidecar-window.js: Creates the standalone Electron delivery vehicle for the portable Today feed; window chrome stays separate from the reusable feed renderer so later main-window promotion is a remount, not a rewrite.
 - ui/modules/main/live-task-audit-sidecar.js: Builds the Task Audit sidecar snapshot from typed work items, current-lane reconciliation, and the canonical `.squidrun/runtime/live-task-audit-sidecar/task-audit-items.json` state file; the legacy `future-items.json` file is not read and should not be recreated.
 - ui/modules/main/missing-arm-watchdog.js: Stage-based missing-arm watchdog wrapper around the durable registry state; advances expected -> nudge -> escalate -> satisfied with injectable sender and canonical Architect escalation sink while tests can exercise stages without real timers.
 - ui/modules/main/pane-control-service.js: Exports executePaneControlAction, detectPaneModel, normalizeAction.

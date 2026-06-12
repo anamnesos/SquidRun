@@ -49,6 +49,7 @@ const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
 const miraLabWindowModule = require('./mira-lab-window');
 const liveTaskAuditSidecarWindowModule = require('./live-task-audit-sidecar-window');
+const humanTimelineSidecarWindowModule = require('./human-timeline-sidecar-window');
 const { resolveRuntimeInt } = require('../runtime-config');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const TELEGRAM_PENDING_REPLAY_GRACE_MS = 10 * 60 * 1000;
@@ -129,6 +130,9 @@ const {
 const {
   buildLiveTaskAuditSnapshot,
 } = require('./live-task-audit-sidecar');
+const {
+  buildHumanTimelineSnapshot,
+} = require('./human-timeline');
 const {
   buildGuardFiringPatternEvent,
   buildGuardPreflightEvent,
@@ -6480,6 +6484,51 @@ class SquidRunApp {
         };
       }
     }
+    if (windowKey === 'human-timeline-sidecar') {
+      const existing = this.getAppWindow(windowKey);
+      if (this.canSendToWindow(existing)) {
+        if (existing.webContents && typeof existing.webContents.reloadIgnoringCache === 'function') {
+          existing.webContents.reloadIgnoringCache();
+        } else if (typeof existing.reload === 'function') {
+          existing.reload();
+        }
+        this.focusAppWindow(windowKey);
+        return {
+          ok: true,
+          windowKey,
+          title: 'SquidRun Today',
+          status: 'reused_existing_reloaded',
+        };
+      }
+      try {
+        const result = humanTimelineSidecarWindowModule.createHumanTimelineSidecarWindow({ BrowserWindow }) || {};
+        const win = result.window || null;
+        if (!win) {
+          return {
+            ok: false,
+            windowKey,
+            reason: 'human_timeline_sidecar_window_factory_returned_no_window',
+          };
+        }
+        this.registerAppWindow(windowKey, win);
+        this.enforceMenuSuppression(win);
+        this.setupWindowListeners(win, { windowKey, lifecycleRoot: false });
+        this.focusAppWindow(windowKey);
+        return {
+          ok: true,
+          windowKey,
+          title: 'SquidRun Today',
+          htmlPath: result.htmlPath || null,
+          preloadPath: result.preloadPath || null,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          windowKey,
+          reason: err?.message || 'human_timeline_sidecar_window_open_failed',
+        };
+      }
+    }
     const windowTitle = windowKey === 'main'
       ? 'SquidRun'
       : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`;
@@ -7499,6 +7548,10 @@ class SquidRunApp {
 
     ipcMain.removeHandler('live-task-audit-sidecar:snapshot');
     ipcMain.handle('live-task-audit-sidecar:snapshot', () => buildLiveTaskAuditSnapshot({
+      sessionId: this.commsSessionScopeId || null,
+    }));
+    ipcMain.removeHandler('human-timeline:snapshot');
+    ipcMain.handle('human-timeline:snapshot', () => buildHumanTimelineSnapshot({
       sessionId: this.commsSessionScopeId || null,
     }));
     armStateProjectionHandlersModule.registerArmStateProjectionHandlers({ ipcMain });
