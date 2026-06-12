@@ -171,6 +171,24 @@ function readProcessListText() {
   }
 }
 
+function normalizeRootPath(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  return path.resolve(value.trim());
+}
+
+function resolveExpectedDataRoot(projectRoot = null, env = process.env) {
+  return normalizeRootPath(env.SQUIDRUN_DATA_ROOT)
+    || normalizeRootPath(projectRoot)
+    || normalizeRootPath(env.SQUIDRUN_PROJECT_ROOT)
+    || resolveProjectRoot(projectRoot);
+}
+
+function fingerprintTelegramToken(token) {
+  if (typeof token !== 'string' || !token.trim()) return null;
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(token.trim()).digest('hex').slice(0, 16);
+}
+
 function listMainTelegramWorkerProcesses(options = {}) {
   const processListText = typeof options.processListText === 'string'
     ? options.processListText
@@ -190,8 +208,55 @@ function listMainTelegramWorkerProcesses(options = {}) {
     .filter((entry) => !Number.isInteger(entry.pid) || entry.pid !== process.pid);
 }
 
+function readPollerOwnerState(options = {}) {
+  const projectRoot = resolveProjectRoot(options.projectRoot);
+  const statePath = options.statePath ? path.resolve(String(options.statePath)) : resolvePollerStatePath(projectRoot);
+  const read = readJsonFile(statePath);
+  const poller = read.value?.poller && typeof read.value.poller === 'object' && !Array.isArray(read.value.poller)
+    ? read.value.poller
+    : null;
+  return {
+    ok: read.ok,
+    exists: read.exists,
+    statePath,
+    poller,
+    error: read.error,
+  };
+}
+
+function listOwnedMainTelegramWorkerProcesses(options = {}) {
+  const projectRoot = resolveProjectRoot(options.projectRoot);
+  const processes = Array.isArray(options.processes)
+    ? options.processes
+    : listMainTelegramWorkerProcesses(options);
+  const owner = options.ownerState || readPollerOwnerState({
+    projectRoot,
+    statePath: options.statePath,
+  });
+  const poller = owner.poller || null;
+  const ownerPid = Number.parseInt(String(poller?.pid ?? ''), 10);
+  if (!Number.isInteger(ownerPid) || ownerPid <= 0 || ownerPid === process.pid) return [];
+
+  const expectedDataRoot = resolveExpectedDataRoot(projectRoot, options.env || process.env);
+  const pollerDataRoot = normalizeRootPath(poller.dataRoot);
+  if (pollerDataRoot && expectedDataRoot && pollerDataRoot.toLowerCase() !== expectedDataRoot.toLowerCase()) {
+    return [];
+  }
+
+  const expectedTokenFingerprint = fingerprintTelegramToken((options.env || process.env).TELEGRAM_BOT_TOKEN);
+  if (
+    poller.tokenFingerprint
+    && expectedTokenFingerprint
+    && poller.tokenFingerprint !== expectedTokenFingerprint
+  ) {
+    return [];
+  }
+
+  return processes.filter((entry) => Number.parseInt(String(entry?.pid ?? ''), 10) === ownerPid);
+}
+
 function isMainTelegramWorkerAlive(options = {}) {
-  return listMainTelegramWorkerProcesses(options).length > 0;
+  return listOwnedMainTelegramWorkerProcesses(options).length > 0;
 }
 
 function writeWatchdogLog(projectRoot, message) {
@@ -400,9 +465,15 @@ async function recoverWedgedTelegramPoller(options = {}) {
     writeWatchdogLog(projectRoot, `[recover] app-control restart failed reason=${reason} error=${appRestart?.error || appRestart?.result?.reason || appRestart?.reason || 'unknown'}`);
   }
   const workers = listMainTelegramWorkerProcesses({
+    projectRoot,
     processListText: typeof options.processListText === 'string' ? options.processListText : undefined,
   });
-  const killResult = killMainTelegramWorkers(workers, {
+  const ownedWorkers = listOwnedMainTelegramWorkerProcesses({
+    projectRoot,
+    processes: workers,
+    env: options.env || process.env,
+  });
+  const killResult = killMainTelegramWorkers(ownedWorkers, {
     dryRun: options.dryRun === true,
   });
   if (killResult.killed.length > 0) {

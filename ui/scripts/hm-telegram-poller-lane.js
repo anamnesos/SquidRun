@@ -16,6 +16,7 @@ const PID_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.log');
 const KEEPALIVE_INTERVAL_MS = 60_000;
 const MAIN_TELEGRAM_WORKER_PATTERN = /modules[\\/]+main[\\/]+telegram-poller-worker\.js/i;
+const POLLER_STATE_REL_PATH = path.join('.squidrun', 'runtime', 'telegram-poller-state.json');
 
 function usage() {
   console.log('Usage: node ui/scripts/hm-telegram-poller-lane.js <start|stop|status|run>');
@@ -61,7 +62,82 @@ function readProcessListText() {
   }
 }
 
+function normalizeRootPath(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  return path.resolve(value.trim());
+}
+
+function resolveExpectedDataRoot(env = process.env) {
+  return normalizeRootPath(env.SQUIDRUN_DATA_ROOT)
+    || normalizeRootPath(getProjectRoot())
+    || normalizeRootPath(env.SQUIDRUN_PROJECT_ROOT);
+}
+
+function readJsonFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolvePollerStatePath(projectRoot = getProjectRoot()) {
+  return path.join(path.resolve(String(projectRoot || getProjectRoot() || process.cwd())), POLLER_STATE_REL_PATH);
+}
+
+function readMainTelegramWorkerOwner(options = {}) {
+  const statePath = options.statePath ? path.resolve(String(options.statePath)) : resolvePollerStatePath();
+  const state = readJsonFile(statePath);
+  const poller = state?.poller && typeof state.poller === 'object' && !Array.isArray(state.poller)
+    ? state.poller
+    : null;
+  if (!poller) return null;
+  const ownerPid = Number.parseInt(String(poller.pid ?? ''), 10);
+  if (!Number.isInteger(ownerPid) || ownerPid <= 0 || ownerPid === process.pid) return null;
+
+  const expectedDataRoot = resolveExpectedDataRoot(options.env || process.env);
+  const pollerDataRoot = normalizeRootPath(poller.dataRoot);
+  if (pollerDataRoot && expectedDataRoot && pollerDataRoot.toLowerCase() !== expectedDataRoot.toLowerCase()) {
+    return null;
+  }
+  return {
+    pid: ownerPid,
+    dataRoot: pollerDataRoot || null,
+    statePath,
+  };
+}
+
+function listMainTelegramWorkerProcesses(options = {}) {
+  const processListText = typeof options.processListText === 'string'
+    ? options.processListText
+    : readProcessListText();
+  if (!processListText) return [];
+  return processListText
+    .split(/\r?\n/)
+    .map((line) => {
+      const text = line.trim();
+      if (!text || !MAIN_TELEGRAM_WORKER_PATTERN.test(text)) return null;
+      const match = text.match(/^\s*(\d+)/);
+      const pid = match ? Number.parseInt(match[1], 10) : null;
+      return { pid, commandLine: text };
+    })
+    .filter(Boolean)
+    .filter((entry) => !Number.isInteger(entry.pid) || entry.pid !== process.pid);
+}
+
 function isMainTelegramWorkerAlive(options = {}) {
+  const owner = options.owner || readMainTelegramWorkerOwner(options);
+  if (!owner) return false;
+  return listMainTelegramWorkerProcesses(options)
+    .some((entry) => {
+      const pid = Number.parseInt(String(entry?.pid ?? ''), 10);
+      return pid === owner.pid;
+    });
+}
+
+function hasAnyMainTelegramWorkerProcess(options = {}) {
   const processListText = typeof options.processListText === 'string'
     ? options.processListText
     : readProcessListText();
@@ -96,13 +172,16 @@ function writeLog(message) {
 function status() {
   const pid = readPid();
   const running = isPidAlive(pid);
+  const owner = readMainTelegramWorkerOwner();
   return {
     ok: true,
     running,
     pid: running ? pid : null,
     pidPath: PID_PATH,
     logPath: LOG_PATH,
-    mainWorkerRunning: isMainTelegramWorkerAlive(),
+    mainWorkerRunning: isMainTelegramWorkerAlive({ owner }),
+    anyMainWorkerRunning: hasAnyMainTelegramWorkerProcess(),
+    mainWorkerOwner: owner,
   };
 }
 

@@ -32,6 +32,23 @@ let statePath = null;
 let cursorKey = null;
 let delayedMarkerMs = DEFAULT_STARTUP_GRACE_MS;
 let backlogBackstopDropMs = DEFAULT_BACKLOG_BACKSTOP_DROP_MS;
+let pollerDataRoot = null;
+
+function normalizeRootPath(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  return path.resolve(value.trim());
+}
+
+function fingerprintTelegramToken(token) {
+  if (typeof token !== 'string' || !token.trim()) return null;
+  return crypto.createHash('sha256').update(token.trim()).digest('hex').slice(0, 16);
+}
+
+function resolvePollerDataRoot(env = process.env) {
+  return normalizeRootPath(env.SQUIDRUN_DATA_ROOT)
+    || normalizeRootPath(env.SQUIDRUN_PROJECT_ROOT)
+    || null;
+}
 
 function getTelegramConfig(env = process.env) {
   const botToken = (env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -346,6 +363,9 @@ function persistPollerHeartbeat(filePath, key, details = {}) {
     cursorKey: key || priorPoller.cursorKey || null,
     pid: process.pid,
     profile: details.profile || priorPoller.profile || null,
+    dataRoot: details.dataRoot || priorPoller.dataRoot || null,
+    tokenFingerprint: details.tokenFingerprint || priorPoller.tokenFingerprint || null,
+    chatId: details.chatId ?? priorPoller.chatId ?? null,
     nextOffset: normalizeOffset(details.nextOffset) ?? normalizeOffset(priorPoller.nextOffset),
     lastPollAt: nowIso,
     lastPollStatus: details.status || priorPoller.lastPollStatus || 'unknown',
@@ -828,10 +848,13 @@ async function pollNow() {
     heartbeatError = err.message;
   } finally {
     persistPollerHeartbeat(statePath, cursorKey, {
+      chatId: config?.chatId ?? null,
+      dataRoot: pollerDataRoot,
       error: heartbeatError,
       nextOffset,
       profile: config?.profile || 'main',
       status: heartbeatStatus,
+      tokenFingerprint: fingerprintTelegramToken(config?.botToken),
     });
     pollInFlight = false;
   }
@@ -860,6 +883,7 @@ function start(options = {}) {
     ? path.resolve(options.latestScreenshotPath)
     : resolveDefaultLatestScreenshotPath();
   statePath = resolveStatePath(options);
+  pollerDataRoot = resolvePollerDataRoot(options.env || process.env);
   cursorKey = getConfigCursorKey(config);
   nextOffset = readPersistedOffset(statePath, cursorKey) ?? normalizeOffset(options.initialOffset) ?? 0;
   delayedMarkerMs = resolveStartupGraceMs(options);
@@ -906,6 +930,7 @@ function stop() {
   mediaDownloadRoot = null;
   latestScreenshotPath = null;
   statePath = null;
+  pollerDataRoot = null;
   cursorKey = null;
   delayedMarkerMs = DEFAULT_STARTUP_GRACE_MS;
   backlogBackstopDropMs = DEFAULT_BACKLOG_BACKSTOP_DROP_MS;

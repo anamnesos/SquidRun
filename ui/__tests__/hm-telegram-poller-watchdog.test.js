@@ -166,6 +166,15 @@ describe('hm-telegram-poller-watchdog', () => {
       ageMs: 43 * 60 * 1000,
       staleThresholdMs: 10 * 60 * 1000,
     };
+    writeJson(path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json'), {
+      version: 1,
+      updatedAt: '2026-06-06T04:00:00.000Z',
+      poller: {
+        pid: 68752,
+        dataRoot: tempDir,
+        lastPollStatus: 'ok_empty',
+      },
+    });
     const runAppRestart = jest.fn(() => ({
       ok: false,
       result: {
@@ -207,6 +216,56 @@ describe('hm-telegram-poller-watchdog', () => {
       freshness,
       expect.objectContaining({ reason: 'telegram-poller-freshness-stale:43m' })
     );
+  });
+
+  test('failed app restart does not kill a foreign install worker with the same script name', async () => {
+    const freshness = {
+      status: 'stale',
+      wedged: true,
+      ageMs: 43 * 60 * 1000,
+      staleThresholdMs: 10 * 60 * 1000,
+    };
+    writeJson(path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json'), {
+      version: 1,
+      updatedAt: '2026-06-06T04:00:00.000Z',
+      poller: {
+        pid: 99999,
+        dataRoot: tempDir,
+        lastPollStatus: 'ok_empty',
+      },
+    });
+    const runAppRestart = jest.fn(() => ({
+      ok: false,
+      result: {
+        success: false,
+        reason: 'app_control_unavailable',
+      },
+    }));
+    const startStandaloneLane = jest.fn(() => ({
+      ok: true,
+      started: true,
+      pid: 470996,
+    }));
+
+    const recovery = await recoverWedgedTelegramPoller({
+      projectRoot: tempDir,
+      freshness,
+      dryRun: true,
+      isMainWorkerAlive: () => false,
+      notifyJames: jest.fn(() => ({ ok: true, message: 'restored' })),
+      processListText: '68752 node D:\\projects\\squidrun\\ui\\modules\\main\\telegram-poller-worker.js',
+      runAppRestart,
+      startStandaloneLane,
+      standaloneStatus: { running: false },
+    });
+
+    expect(recovery).toEqual(expect.objectContaining({
+      ok: true,
+      action: 'standalone_lane',
+      recovered: true,
+    }));
+    expect(recovery.killResult.killed).toEqual([]);
+    expect(startStandaloneLane).toHaveBeenCalledTimes(1);
   });
 
   test('existing standalone lane is restarted instead of starting an app worker', async () => {

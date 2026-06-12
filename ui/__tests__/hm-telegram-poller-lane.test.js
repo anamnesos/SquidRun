@@ -10,6 +10,11 @@ const {
 } = require('../scripts/hm-telegram-poller-lane');
 
 describe('hm-telegram-poller-lane', () => {
+  function writeJson(filePath, value) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  }
+
   test('formats inbound videos with saved media path for Architect', () => {
     expect(formatInbound('', '@james', {
       updateId: 10,
@@ -92,12 +97,54 @@ describe('hm-telegram-poller-lane', () => {
     expect(forwardToProfileTrigger).not.toHaveBeenCalled();
   });
 
-  test('detects a running main app Telegram worker so standalone lane does not fight getUpdates', () => {
-    expect(isMainTelegramWorkerAlive({
-      processListText: [
-        '1234 D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\modules\\main\\telegram-poller-worker.js',
-      ].join('\n'),
-    })).toBe(true);
+  test('detects only the root-owned main app Telegram worker so standalone lane does not fight getUpdates', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-lane-owner-'));
+    const statePath = path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json');
+    try {
+      writeJson(statePath, {
+        version: 1,
+        updatedAt: '2026-06-12T18:00:00.000Z',
+        poller: {
+          pid: 1234,
+          dataRoot: tempDir,
+        },
+      });
+
+      expect(isMainTelegramWorkerAlive({
+        env: { SQUIDRUN_DATA_ROOT: tempDir },
+        statePath,
+        processListText: [
+          '1234 D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\modules\\main\\telegram-poller-worker.js',
+        ].join('\n'),
+      })).toBe(true);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('does not treat a foreign install Telegram worker as this lane owner by process name alone', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-lane-foreign-'));
+    const statePath = path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json');
+    try {
+      writeJson(statePath, {
+        version: 1,
+        updatedAt: '2026-06-12T18:00:00.000Z',
+        poller: {
+          pid: 9999,
+          dataRoot: tempDir,
+        },
+      });
+
+      expect(isMainTelegramWorkerAlive({
+        env: { SQUIDRUN_DATA_ROOT: tempDir },
+        statePath,
+        processListText: [
+          '1234 D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\modules\\main\\telegram-poller-worker.js',
+        ].join('\n'),
+      })).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   test('does not treat unrelated Telegram Desktop as the main app poller', () => {

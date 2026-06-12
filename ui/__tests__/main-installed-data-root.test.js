@@ -23,4 +23,25 @@ describe('main.js installed data root startup ordering', () => {
     expect(inheritedIndex).toBeGreaterThanOrEqual(0);
     expect(explicitIndex).toBeLessThan(inheritedIndex);
   });
+
+  test('promotes pinned installed roots into SQUIDRUN_DATA_ROOT before loading config consumers', () => {
+    const dataRootPromotionIndex = mainSource.indexOf('process.env.SQUIDRUN_DATA_ROOT = pinnedInstalledDataRoot.path;');
+    const configRequireIndex = mainSource.indexOf("const { resolveCoordPath } = require('./config');");
+
+    expect(dataRootPromotionIndex).toBeGreaterThanOrEqual(0);
+    expect(configRequireIndex).toBeGreaterThanOrEqual(0);
+    expect(dataRootPromotionIndex).toBeLessThan(configRequireIndex);
+  });
+
+  test('uses pinned installed roots as SQUIDRUN_PROJECT_ROOT even when an inherited project root exists', () => {
+    const pinnedProjectRootIndex = mainSource.indexOf('process.env.SQUIDRUN_PROJECT_ROOT = pinnedInstalledDataRoot.path;');
+    const inheritedGuardIndex = mainSource.indexOf('} else if (!process.env.SQUIDRUN_PROJECT_ROOT');
+    const configRequireIndex = mainSource.indexOf("const { resolveCoordPath } = require('./config');");
+
+    expect(pinnedProjectRootIndex).toBeGreaterThanOrEqual(0);
+    expect(inheritedGuardIndex).toBeGreaterThanOrEqual(0);
+    expect(configRequireIndex).toBeGreaterThanOrEqual(0);
+    expect(pinnedProjectRootIndex).toBeLessThan(inheritedGuardIndex);
+    expect(pinnedProjectRootIndex).toBeLessThan(configRequireIndex);
+  });
 });

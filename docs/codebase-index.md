@@ -384,8 +384,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/hm-startup-health.test.js` | test | 3585 |
 | `ui/__tests__/hm-supervisor.test.js` | test | 894 |
 | `ui/__tests__/hm-task-queue.test.js` | test | 25538 |
-| `ui/__tests__/hm-telegram-poller-lane.test.js` | test | 4283 |
-| `ui/__tests__/hm-telegram-poller-watchdog.test.js` | test | 7296 |
+| `ui/__tests__/hm-telegram-poller-lane.test.js` | test | 5924 |
+| `ui/__tests__/hm-telegram-poller-watchdog.test.js` | test | 9052 |
 | `ui/__tests__/hm-telegram-routing.test.js` | test | 7906 |
 | `ui/__tests__/hm-telegram.test.js` | test | 19985 |
 | `ui/__tests__/hm-transition.test.js` | test | 2309 |
@@ -415,7 +415,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/local-embedder.test.js` | test | 14089 |
 | `ui/__tests__/local-model-capabilities.test.js` | test | 2509 |
 | `ui/__tests__/logger.test.js` | test | 10450 |
-| `ui/__tests__/main-installed-data-root.test.js` | test | 1127 |
+| `ui/__tests__/main-installed-data-root.test.js` | test | 2424 |
 | `ui/__tests__/mcp-autoconfig-handlers.test.js` | test | 4987 |
 | `ui/__tests__/mcp-bridge.test.js` | test | 28446 |
 | `ui/__tests__/mcp-handlers.test.js` | test | 6477 |
@@ -984,7 +984,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/team-memory/worker-client.js` | source | 7914 |
 | `ui/modules/team-memory/worker.js` | source | 2317 |
 | `ui/modules/telegram-credentials.js` | source | 3788 |
-| `ui/modules/telegram-poller.js` | source | 33172 |
+| `ui/modules/telegram-poller.js` | source | 34143 |
 | `ui/modules/terminal-restart-scrollback-store.js` | source | 5680 |
 | `ui/modules/terminal.js` | source | 171021 |
 | `ui/modules/terminal/agent-colors.js` | source | 10161 |
@@ -1032,7 +1032,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/live-task-audit-preview.html` | asset | 2014 |
 | `ui/live-task-audit-sidecar-renderer.js` | source | 25887 |
 | `ui/live-task-audit-sidecar.html` | asset | 1739 |
-| `ui/main.js` | source | 9906 |
+| `ui/main.js` | source | 10300 |
 | `ui/mcp-server.js` | source | 22417 |
 | `ui/mira-lab-renderer.js` | source | 13296 |
 | `ui/mira-lab.html` | asset | 1613 |
@@ -1172,8 +1172,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-supervisor.js` | script | 5200 |
 | `ui/scripts/hm-surface-audit.js` | script | 8678 |
 | `ui/scripts/hm-task-queue.js` | script | 36868 |
-| `ui/scripts/hm-telegram-poller-lane.js` | script | 12597 |
-| `ui/scripts/hm-telegram-poller-watchdog.js` | script | 16652 |
+| `ui/scripts/hm-telegram-poller-lane.js` | script | 15524 |
+| `ui/scripts/hm-telegram-poller-watchdog.js` | script | 19197 |
 | `ui/scripts/hm-telegram-reply-guard-probe.js` | script | 4754 |
 | `ui/scripts/hm-telegram-routing.js` | script | 9813 |
 | `ui/scripts/hm-telegram.js` | script | 35933 |
