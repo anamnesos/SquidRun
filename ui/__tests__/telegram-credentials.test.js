@@ -4,6 +4,7 @@ const path = require('path');
 
 const {
   TELEGRAM_SETTINGS_RELATIVE_PATH,
+  BRIDGE_RELAY_MODE_ENV_KEY,
   applyTelegramEnvOverlay,
   buildTelegramEnvOverlay,
   readTelegramSettings,
@@ -60,6 +61,7 @@ describe('telegram-credentials', () => {
     expect(result.ok).toBe(true);
     expect(result.source).toBe(path.join(root, TELEGRAM_SETTINGS_RELATIVE_PATH));
     expect(result.applied.sort()).toEqual([
+      BRIDGE_RELAY_MODE_ENV_KEY,
       'TELEGRAM_BOT_TOKEN',
       'TELEGRAM_CHAT_ALLOWLIST',
       'TELEGRAM_CHAT_ALLOWLIST_STRICT',
@@ -69,6 +71,7 @@ describe('telegram-credentials', () => {
     expect(env.TELEGRAM_CHAT_ID).toBe('8754356993');
     expect(env.TELEGRAM_CHAT_ALLOWLIST).toBe('8754356993');
     expect(env.TELEGRAM_CHAT_ALLOWLIST_STRICT).toBe('1');
+    expect(env[BRIDGE_RELAY_MODE_ENV_KEY]).toBe('off');
     expect(result.relayMode).toBe('off');
   });
 

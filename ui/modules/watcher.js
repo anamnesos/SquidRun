@@ -1002,6 +1002,42 @@ function handleTriggerFileWithRetry(filePath, filename, attempt = 0, lastKnownSi
   triggers.handleTriggerFile(filePath, filename);
 }
 
+function drainExistingTriggerFiles() {
+  if (!triggers) return { scanned: 0, queued: 0 };
+
+  let scanned = 0;
+  let queued = 0;
+  for (const triggerPath of TRIGGER_PATHS) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(triggerPath, { withFileTypes: true });
+    } catch (err) {
+      log.warn('FastTrigger', `Initial trigger drain skipped for ${triggerPath}: ${err.message}`);
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.txt')) continue;
+      const filePath = path.join(triggerPath, entry.name);
+      scanned += 1;
+      try {
+        const stats = fs.statSync(filePath);
+        if (stats.size <= 0) continue;
+      } catch (err) {
+        log.info('FastTrigger', `Initial trigger drain could not stat ${entry.name}: ${err.message}`);
+        continue;
+      }
+      queued += 1;
+      handleTriggerFileWithRetry(filePath, entry.name);
+    }
+  }
+
+  if (queued > 0) {
+    log.info('FastTrigger', `Initial trigger drain queued ${queued}/${scanned} existing trigger file(s)`);
+  }
+  return { scanned, queued };
+}
+
 /**
  * Start the fast trigger watcher (UX-9)
  * Uses aggressive polling for sub-50ms message delivery
@@ -1035,6 +1071,7 @@ function startTriggerWatcher() {
   );
 
   log.info('FastTrigger', `Watching ${TRIGGER_PATHS.join(', ')} with 300ms polling`);
+  drainExistingTriggerFiles();
 }
 
 /**
@@ -1752,6 +1789,7 @@ module.exports = {
     getQueueMutationChainSize: () => queueMutationChains.size,
     clearQueueMutationChains: () => queueMutationChains.clear(),
     getTriggerPaths: () => [...TRIGGER_PATHS],
+    drainExistingTriggerFiles,
     isRuntimeNoopFileChange,
     getWatcherWorkerFreshness,
     WATCHER_WORKER_READY_TIMEOUT_MS,

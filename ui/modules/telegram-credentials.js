@@ -9,6 +9,7 @@ const path = require('path');
 // env / .env loads left unset, so explicit env always wins and dev trees are
 // unaffected.
 const TELEGRAM_SETTINGS_RELATIVE_PATH = path.join('.squidrun', 'settings', 'telegram.json');
+const BRIDGE_RELAY_MODE_ENV_KEY = 'SQUIDRUN_BRIDGE_RELAY_MODE';
 
 function toNonEmptyString(value) {
   if (typeof value !== 'string') return null;
@@ -71,6 +72,9 @@ function buildTelegramEnvOverlay(settings) {
       overlay.TELEGRAM_CHAT_ALLOWLIST_STRICT = '1';
     }
   }
+  if (toNonEmptyString(settings.relayMode)?.toLowerCase() === 'off') {
+    overlay[BRIDGE_RELAY_MODE_ENV_KEY] = 'off';
+  }
   return overlay;
 }
 
@@ -98,6 +102,7 @@ function applyTelegramEnvOverlay(options = {}) {
 }
 
 module.exports = {
+  BRIDGE_RELAY_MODE_ENV_KEY,
   TELEGRAM_SETTINGS_RELATIVE_PATH,
   applyTelegramEnvOverlay,
   buildTelegramEnvOverlay,

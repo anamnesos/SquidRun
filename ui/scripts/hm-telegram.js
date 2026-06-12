@@ -19,7 +19,10 @@ const {
 const {
   reconcileTelegramReplyObligationFromJournal,
 } = require('../modules/main/telegram-reply-obligations');
-require('dotenv').config({ path: path.join(process.env.SQUIDRUN_PROJECT_ROOT || path.resolve(__dirname, '..', '..'), '.env') });
+require('dotenv').config({
+  path: path.join(process.env.SQUIDRUN_PROJECT_ROOT || path.resolve(__dirname, '..', '..'), '.env'),
+  quiet: true,
+});
 try {
   const dataRoot = process.env.SQUIDRUN_PROJECT_ROOT;
   if (dataRoot) {

@@ -10807,6 +10807,7 @@ describe('SquidRunApp', () => {
         'SQUIDRUN_RELAY_SECRET',
         'SQUIDRUN_DEVICE_ID',
         'SQUIDRUN_PROFILE',
+        'SQUIDRUN_BRIDGE_RELAY_MODE',
       ];
       const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
       try {
@@ -10823,6 +10824,37 @@ describe('SquidRunApp', () => {
           deviceId: 'VIGIL-SCOPED',
           relayUrl: 'wss://relay.example.test',
         }));
+      } finally {
+        for (const key of envKeys) {
+          if (previousEnv[key] === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = previousEnv[key];
+          }
+        }
+      }
+    });
+
+    it('keeps the bridge disabled when install settings set relayMode off', () => {
+      const envKeys = [
+        'SQUIDRUN_CROSS_DEVICE',
+        'SQUIDRUN_RELAY_URL',
+        'SQUIDRUN_RELAY_SECRET',
+        'SQUIDRUN_DEVICE_ID',
+        'SQUIDRUN_BRIDGE_RELAY_MODE',
+      ];
+      const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+      try {
+        process.env.SQUIDRUN_CROSS_DEVICE = '1';
+        process.env.SQUIDRUN_RELAY_URL = 'wss://relay.example.test';
+        process.env.SQUIDRUN_RELAY_SECRET = 'shared';
+        process.env.SQUIDRUN_DEVICE_ID = 'VIGIL';
+        process.env.SQUIDRUN_BRIDGE_RELAY_MODE = 'off';
+
+        expect(app.resolveEnvBridgeRuntimeConfig()).toBeNull();
+        app.refreshBridgeRuntimeConfig();
+        expect(app.bridgeEnabled).toBe(false);
+        expect(app.bridgeRuntimeConfig).toBeNull();
       } finally {
         for (const key of envKeys) {
           if (previousEnv[key] === undefined) {

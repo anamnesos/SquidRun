@@ -321,7 +321,7 @@ function formatInbound(text, from, metadata = {}) {
 }
 
 function runLane() {
-  require('dotenv').config({ path: path.join(getProjectRoot(), '.env') });
+  require('dotenv').config({ path: path.join(getProjectRoot(), '.env'), quiet: true });
   if (isMainTelegramWorkerAlive() && !allowsStandaloneLaneWithMainWorker()) {
     writeLog('[blocked] main telegram-poller-worker is already running; standalone lane would cause Telegram 409 conflicts');
     process.exit(2);

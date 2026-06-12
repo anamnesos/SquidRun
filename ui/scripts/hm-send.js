@@ -4,6 +4,9 @@
  * Usage: node hm-send.js <target> <message> [--role <role>] [--priority urgent]
  */
 
+require('../modules/noise-bootstrap').installNoiseGuards();
+try { require('../modules/logger').setLevel('warn'); } catch (_) {}
+
 const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');

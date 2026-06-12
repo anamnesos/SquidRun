@@ -3,6 +3,8 @@
  * Configures global mocks and test utilities
  */
 
+require('../modules/noise-bootstrap').installNoiseGuards();
+
 // Suppress console output during tests (optional - comment out for debugging)
 // global.console = {
 //   ...console,

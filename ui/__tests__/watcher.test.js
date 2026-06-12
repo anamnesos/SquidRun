@@ -357,6 +357,23 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
+  test('startTriggerWatcher drains pre-existing trigger files despite ignoreInitial', () => {
+    jest.useFakeTimers();
+    const { watcher, tempDir, triggers, childProcessMock } = setupWatcher();
+    const triggerPath = path.join(tempDir, 'triggers');
+    fs.mkdirSync(triggerPath, { recursive: true });
+    const triggerFile = path.join(triggerPath, 'architect.txt');
+    fs.writeFileSync(triggerFile, 'Queued before watcher boot', 'utf-8');
+
+    watcher.startTriggerWatcher();
+    jest.advanceTimersByTime(50);
+
+    expect(childProcessMock.fork).toHaveBeenCalledTimes(1);
+    expect(triggers.handleTriggerFile).toHaveBeenCalledWith(triggerFile, 'architect.txt');
+
+    cleanupDir(tempDir);
+  });
+
   test('trigger routing only accepts configured trigger roots', () => {
     jest.useFakeTimers();
     const { watcher, tempDir, triggers } = setupWatcher({
