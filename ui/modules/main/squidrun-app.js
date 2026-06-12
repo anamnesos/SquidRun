@@ -79,6 +79,9 @@ const {
 } = require('../../scripts/hm-telegram-routing');
 const { createInboundPollerService } = require('./inbound-poller-service');
 const {
+  appendReceiptMarkerToPrompt,
+} = require('../model-prompt-receipt');
+const {
   shouldTriggerAutonomousSmoke,
   buildSmokeRunnerArgs,
   formatSmokeResultMessage,
@@ -8624,7 +8627,7 @@ class SquidRunApp {
     meta = null,
   } = {}) {
     const normalizedPaneId = toNonEmptyString(paneId) || '1';
-    const text = String(message || '');
+    let text = String(message || '');
     if (!text.trim()) {
       return { ok: false, accepted: false, queued: false, verified: false, status: 'invalid_message' };
     }
@@ -8646,6 +8649,10 @@ class SquidRunApp {
       || toNonEmptyString(traceContext?.correlationId)
       || toNonEmptyString(messageId)
       || null;
+    text = appendReceiptMarkerToPrompt(text, {
+      deliveryId: traceId || messageId,
+      messageId: messageId || traceId,
+    });
     const kernelMeta = {
       eventId: `${normalizedPaneId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
       correlationId: traceId || undefined,

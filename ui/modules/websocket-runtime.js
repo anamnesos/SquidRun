@@ -22,6 +22,10 @@ const {
   isMainProfile,
   normalizeProfileName,
 } = require('../profile');
+const {
+  applyModelPromptReceiptToAck,
+  waitForModelPromptReceipt,
+} = require('./model-prompt-receipt');
 
 const DEFAULT_PORT = resolveWebSocketPort({
   profileName: process.env.SQUIDRUN_PROFILE || DEFAULT_PROFILE,
@@ -39,6 +43,7 @@ const CONTENT_DEDUPE_TTL_MS = Number.parseInt(process.env.SQUIDRUN_COMMS_CONTENT
 const OUTBOUND_QUEUE_MAX_ENTRIES = Number.parseInt(process.env.SQUIDRUN_COMMS_QUEUE_MAX_ENTRIES || '500', 10);
 const OUTBOUND_QUEUE_MAX_AGE_MS = Number.parseInt(process.env.SQUIDRUN_COMMS_QUEUE_MAX_AGE_MS || String(30 * 60 * 1000), 10);
 const OUTBOUND_QUEUE_FLUSH_INTERVAL_MS = Number.parseInt(process.env.SQUIDRUN_COMMS_QUEUE_FLUSH_INTERVAL_MS || '30000', 10);
+const MODEL_PROMPT_RECEIPT_WAIT_MS = Number.parseInt(process.env.SQUIDRUN_MODEL_PROMPT_RECEIPT_WAIT_MS || '1200', 10);
 const DEFAULT_QUEUE_SESSION_SCOPE = 'default';
 const CANONICAL_ROLE_IDS = ['architect', 'builder', 'oracle'];
 const CANONICAL_ROLE_TO_PANE = new Map(
@@ -1298,11 +1303,15 @@ function getDeliveryCheckResult(messageId) {
   pruneExpiredMessageAcks();
   const cached = recentMessageAcks.get(normalizedMessageId);
   if (cached?.ackPayload) {
+    const ack = applyModelPromptReceiptToAck(cached.ackPayload, {
+      messageId: normalizedMessageId,
+      deliveryId: normalizedMessageId,
+    });
     return {
       known: true,
       status: 'cached',
       messageId: normalizedMessageId,
-      ack: cached.ackPayload,
+      ack,
       pending: false,
     };
   }
@@ -2047,7 +2056,7 @@ async function handleMessage(clientId, rawData) {
       }
     }
 
-    const ackPayload = {
+    let ackPayload = {
       type: 'send-ack',
       messageId: message.messageId || null,
       ok,
@@ -2067,6 +2076,18 @@ async function handleMessage(clientId, rawData) {
       parentEventId: ingressTraceContext?.parentEventId || null,
       timestamp: Date.now(),
     };
+    await waitForModelPromptReceipt(
+      {
+        messageId: message.messageId || null,
+        deliveryId: handlerAck?.deliveryId || handlerAck?.details?.deliveryId || message.messageId || null,
+      },
+      handlerAck,
+      { timeoutMs: MODEL_PROMPT_RECEIPT_WAIT_MS }
+    );
+    ackPayload = applyModelPromptReceiptToAck(ackPayload, {
+      messageId: message.messageId || null,
+      deliveryId: handlerAck?.deliveryId || handlerAck?.details?.deliveryId || message.messageId || null,
+    }, handlerAck);
     emitAckLatencyMetric(clientId, clientInfo, message, ackPayload, receivedAtMs);
     sendJson(clientInfo.ws, ackPayload);
     finalizeAckTracking(ackPayload);

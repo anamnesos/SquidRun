@@ -40,6 +40,9 @@ const {
   appendBusTraceEvent,
   createPayloadFingerprint,
 } = require('./bus-reliability-trace');
+const {
+  appendReceiptMarkerToPrompt,
+} = require('./model-prompt-receipt');
 
 // Above this byte count, route inject-message payloads through the
 // renderer's clipboard-paste path instead of chunked PTY writes to avoid
@@ -1309,6 +1312,12 @@ function processThrottleQueue(paneId) {
     traceContext,
   });
   routedMessage = materialized.message;
+  if (!isStartupInjection && (deliveryId || traceMessageId)) {
+    routedMessage = appendReceiptMarkerToPrompt(routedMessage, {
+      deliveryId: deliveryId || traceMessageId,
+      messageId: traceMessageId || deliveryId,
+    });
+  }
 
   if (message.trim() === '(UNSTICK)') {
     log.info('Daemon', `Sending UNSTICK (ESC) to pane ${paneId}`);
