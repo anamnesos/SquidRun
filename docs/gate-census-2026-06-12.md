@@ -208,6 +208,14 @@ Closing line, the eunbyeol Architect's words, earned: **"the manifest-first bind
 
 C4 final disposition (deferred from Architect #52): the lane owner chose to ride boot 3 → the member-5 fix (556a8ff8) entered her line at the boot-4 re-cut (a2b95b60 ⊃ 556a8ff8) — the reopener resolved itself; her served build carries the complete family fix.
 
+## G9. live-task-audit sidecar — **KEEP-WITH-REASON; the code is alive, the PRACTICE lapsed** (James-delegated, S444)
+
+Registry check first (the binding method rule): an owning contract EXISTS — workflows.md "Task Audit Sidecar Discipline" defines it as "the persistent shared model of what is still broken, disabled, half-wired, or easy for a cold session to misinterpret," with honest-status field rules and an explicit anti-parking clause. Consumers, all three real: **agents** read/write `task-audit-items.json` per the discipline (the surface-claim guard's S404 state-verb gap is tracked here by id — a census-grade open issue whose ONLY record is this file); **James** opens the sidecar window (hm-app open command + command palette); **Codex Desktop** browser-proofs the preview server (`/task-audit-preview`, wired into the image-analysis dispatch path in workflows.md). Kills on the board: it caught its own store corruption (c3913bda); 19 of 44 items resolved with evidence-cited rationale (e.g. the EXPO/DDR5 audit resolved against live Win32_PhysicalMemory).
+
+**The defect is the practice, not the feature**: zero updates since June 7 — 40+ sessions of silence, including TODAY, when the gate census catalogued exactly the broken/disabled/half-wired class this sidecar exists to hold and mirrored none of it. 25 open items are S390-401 vintage with unknown currency (a 6-item PC-hardware to_do batch, several needs-james/deferred-judgment items).
+
+**Verdict: KEEP, no kill inventory. Two requirements**: (a) re-arm the practice — census/checkpoint findings matching the sidecar's class get mirrored as entries at the seam where they're found (the same rule that keeps the system map honest); (b) a currency pass on the 25 open items, morning-scale. Forward connection: the needs-james/deferred-judgment items are exactly the "needs you" detection class for the human timeline — the sidecar is a timeline SOURCE, which makes it more load-bearing under the fresh-eyes agenda, not less.
+
 ---
 
 ## Updated queues (v2)
