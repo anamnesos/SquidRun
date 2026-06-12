@@ -50,13 +50,23 @@ describe('hm-telegram-poller-watchdog', () => {
       ageMs: 20 * 60 * 1000,
     }));
 
-    const runAppRestart = jest.fn(() => ({
-      ok: true,
-      result: {
-        success: true,
-        started: true,
-      },
-    }));
+    const runAppRestart = jest.fn(() => {
+      writeJson(path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json'), {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        poller: {
+          lastPollStatus: 'ok_empty',
+          nextOffset: 808,
+        },
+      });
+      return {
+        ok: true,
+        result: {
+          success: true,
+          started: true,
+        },
+      };
+    });
     const notifyJames = jest.fn(() => ({ ok: true, message: 'restored' }));
     const startStandaloneLane = jest.fn();
 
@@ -65,6 +75,7 @@ describe('hm-telegram-poller-watchdog', () => {
       freshness,
       runAppRestart,
       notifyJames,
+      appRestartVerifyMs: 1,
       startStandaloneLane,
       standaloneStatus: { running: false },
     });
@@ -91,6 +102,61 @@ describe('hm-telegram-poller-watchdog', () => {
     );
     expect(watchdogLog).toContain('[detect] status=stale');
     expect(watchdogLog).toContain('[recover] app-control restart succeeded');
+  });
+
+  test('successful app restart is not trusted until freshness is verified', async () => {
+    const freshness = {
+      status: 'stale',
+      wedged: true,
+      ageMs: 20 * 60 * 1000,
+      staleThresholdMs: 10 * 60 * 1000,
+    };
+    writeJson(path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json'), {
+      version: 1,
+      updatedAt: '2026-06-06T04:00:00.000Z',
+      poller: {
+        lastPollStatus: 'ok_empty',
+        nextOffset: 808,
+      },
+    });
+
+    const runAppRestart = jest.fn(() => ({
+      ok: true,
+      result: {
+        success: true,
+        started: true,
+      },
+    }));
+    const startStandaloneLane = jest.fn(() => ({
+      ok: true,
+      started: true,
+      pid: 470996,
+    }));
+    const notifyJames = jest.fn(() => ({ ok: true, message: 'restored' }));
+
+    const recovery = await recoverWedgedTelegramPoller({
+      projectRoot: tempDir,
+      freshness,
+      appRestartVerifyMs: 1,
+      isMainWorkerAlive: () => false,
+      notifyJames,
+      processListText: '',
+      runAppRestart,
+      startStandaloneLane,
+      standaloneStatus: { running: false },
+    });
+
+    expect(recovery).toEqual(expect.objectContaining({
+      ok: true,
+      action: 'standalone_lane',
+      recovered: true,
+    }));
+    expect(startStandaloneLane).toHaveBeenCalledTimes(1);
+    const watchdogLog = fs.readFileSync(
+      path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-watchdog.log'),
+      'utf8'
+    );
+    expect(watchdogLog).toContain('app-control restart UNVERIFIED');
   });
 
   test('failed app restart kills the stale worker before choosing standalone lane fallback', async () => {

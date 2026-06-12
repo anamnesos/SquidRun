@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { resolveRuntimeUiScriptPath } = require('./runtime-ui-paths');
 
 const { getProjectRoot } = require('../config');
 
@@ -224,10 +225,11 @@ function notifyJames(projectRoot, freshness, options = {}) {
   const message = typeof options.message === 'string' && options.message.trim()
     ? options.message.trim()
     : `Telegram inbound was stale for about ${formatDurationMinutes(freshness?.ageMs)} min; I restarted the poller so inbound messages are flowing again.`;
-  const hmSendPath = path.join(resolveProjectRoot(projectRoot), 'ui', 'scripts', 'hm-send.js');
+  const resolvedRoot = resolveProjectRoot(projectRoot);
+  const hmSendPath = resolveRuntimeUiScriptPath(resolvedRoot, 'hm-send.js');
   const result = spawnSync(process.execPath, [hmSendPath, 'telegram', '--stdin', '--role', 'system'], {
-    cwd: resolveProjectRoot(projectRoot),
-    env: { ...process.env, SQUIDRUN_PROJECT_ROOT: resolveProjectRoot(projectRoot) },
+    cwd: resolvedRoot,
+    env: { ...process.env, SQUIDRUN_PROJECT_ROOT: resolvedRoot },
     input: message,
     encoding: 'utf8',
     timeout: 20_000,
@@ -371,22 +373,32 @@ async function recoverWedgedTelegramPoller(options = {}) {
   const appRestartSuccess = appRestart?.ok !== false
     && (appRestart?.result?.success === true || appRestart?.success === true);
   if (appRestartSuccess) {
-    writeWatchdogLog(projectRoot, `[recover] app-control restart succeeded reason=${reason}`);
-    const notice = typeof options.notifyJames === 'function'
-      ? await Promise.resolve(options.notifyJames(projectRoot, freshness, { reason }))
-      : notifyJames(projectRoot, freshness, { reason });
-    return {
-      ok: true,
-      action: 'app_restart',
-      recovered: true,
-      reason,
-      freshness,
-      appRestart,
-      notice,
-    };
+    const verifyDelayMs = asPositiveMs(options.appRestartVerifyMs, 15_000);
+    if (options.dryRun !== true) {
+      sleepMs(verifyDelayMs);
+    }
+    const postRestart = options.dryRun === true
+      ? { wedged: false }
+      : inspectTelegramPollerFreshness(options);
+    if (!postRestart.wedged) {
+      writeWatchdogLog(projectRoot, `[recover] app-control restart succeeded reason=${reason}`);
+      const notice = typeof options.notifyJames === 'function'
+        ? await Promise.resolve(options.notifyJames(projectRoot, freshness, { reason }))
+        : notifyJames(projectRoot, freshness, { reason });
+      return {
+        ok: true,
+        action: 'app_restart',
+        recovered: true,
+        reason,
+        freshness,
+        appRestart,
+        notice,
+      };
+    }
+    writeWatchdogLog(projectRoot, `[recover] app-control restart UNVERIFIED (still stale after ${verifyDelayMs}ms wait) reason=${reason}; falling through to lane recovery`);
+  } else {
+    writeWatchdogLog(projectRoot, `[recover] app-control restart failed reason=${reason} error=${appRestart?.error || appRestart?.result?.reason || appRestart?.reason || 'unknown'}`);
   }
-
-  writeWatchdogLog(projectRoot, `[recover] app-control restart failed reason=${reason} error=${appRestart?.error || appRestart?.result?.reason || appRestart?.reason || 'unknown'}`);
   const workers = listMainTelegramWorkerProcesses({
     processListText: typeof options.processListText === 'string' ? options.processListText : undefined,
   });

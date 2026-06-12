@@ -16,6 +16,7 @@ const DEFAULT_INBOUND_MEDIA_DIR = path.join('runtime', 'telegram-inbound-media')
 const DEFAULT_LATEST_SCREENSHOT_PATH = path.join('screenshots', 'latest.png');
 const DEFAULT_POLLER_STATE_PATH = path.join('runtime', 'telegram-poller-state.json');
 const DEFAULT_STARTUP_GRACE_MS = 10 * 60 * 1000;
+const DEFAULT_BACKLOG_BACKSTOP_DROP_MS = 24 * 60 * 60 * 1000;
 
 let running = false;
 let pollTimer = null;
@@ -29,7 +30,8 @@ let mediaDownloadRoot = null;
 let latestScreenshotPath = null;
 let statePath = null;
 let cursorKey = null;
-let startupDropBeforeMs = 0;
+let delayedMarkerMs = DEFAULT_STARTUP_GRACE_MS;
+let backlogBackstopDropMs = DEFAULT_BACKLOG_BACKSTOP_DROP_MS;
 
 function getTelegramConfig(env = process.env) {
   const botToken = (env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -229,13 +231,6 @@ function parseMessageTimestampMs(message) {
   return Math.floor(dateSeconds * 1000);
 }
 
-function shouldDropStaleStartupMessage(message, dropBeforeMs = startupDropBeforeMs) {
-  if (!Number.isFinite(dropBeforeMs) || dropBeforeMs <= 0) return false;
-  const timestampMs = parseMessageTimestampMs(message);
-  if (timestampMs === null) return false;
-  return timestampMs < dropBeforeMs;
-}
-
 function resolveWritableCoordPath(relPath) {
   try {
     return resolveCoordPath(relPath, { forWrite: true });
@@ -370,6 +365,18 @@ function resolveStartupGraceMs(options = {}) {
     if (Number.isFinite(parsed) && parsed >= 0) return parsed;
   }
   return DEFAULT_STARTUP_GRACE_MS;
+}
+
+function resolveBacklogBackstopDropMs(options = {}) {
+  const candidates = [
+    options.backlogBackstopDropMs,
+    options.env?.TELEGRAM_INBOUND_BACKSTOP_DROP_MS,
+  ];
+  for (const candidate of candidates) {
+    const parsed = Number(candidate);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return DEFAULT_BACKLOG_BACKSTOP_DROP_MS;
 }
 
 function resolveDefaultMediaDownloadRoot(env = process.env) {
@@ -717,18 +724,21 @@ async function pollNow() {
         continue;
       }
 
-      if (shouldDropStaleStartupMessage(message)) {
+      const messageTimestampMs = parseMessageTimestampMs(message);
+      const messageAgeMs = messageTimestampMs === null ? 0 : Math.max(0, Date.now() - messageTimestampMs);
+      if (backlogBackstopDropMs > 0 && messageAgeMs > backlogBackstopDropMs) {
         persistNextOffset(statePath, cursorKey, nextOffset, {
-          action: 'dropped_stale_startup',
+          action: 'dropped_backlog_backstop',
           chatId: parsedChatId,
           mediaFileId,
           messageId,
           profile: config.profile || 'main',
           updateId,
         });
+        const bodyPreview = String(message.text || message.caption || '').slice(0, 80);
         log.warn(
           'Telegram',
-          `Dropped stale inbound Telegram update ${updateId} during startup drain (message=${messageId ?? 'unknown'} chat=${parsedChatId ?? 'unknown'} timestamp=${parseMessageTimestampMs(message) ?? 'unknown'} dropBefore=${startupDropBeforeMs})`
+          `DROPPED backlog update ${updateId} past the ${Math.round(backlogBackstopDropMs / 3600000)}h backstop (message=${messageId ?? 'unknown'} chat=${parsedChatId ?? 'unknown'} ageMs=${messageAgeMs} bodyPreview=${JSON.stringify(bodyPreview)}) - no-drop policy backstop, loss logged deliberately`
         );
         continue;
       }
@@ -762,13 +772,16 @@ async function pollNow() {
         );
       }
 
-      const displayText = buildInboundDisplayText(message, selectedMedia);
+      let displayText = buildInboundDisplayText(message, selectedMedia);
       if (!displayText) {
         log.warn(
           'Telegram',
           `Skipping inbound Telegram update ${updateId} because no display text could be derived (hasPhoto=${photoArray ? 'yes' : 'no'} hasDocument=${document ? 'yes' : 'no'})`
         );
         continue;
+      }
+      if (delayedMarkerMs > 0 && messageAgeMs > delayedMarkerMs) {
+        displayText = `[delayed: ${Math.max(1, Math.round(messageAgeMs / 60000))}m old] ${displayText}`;
       }
 
       if (typeof onMessage === 'function') {
@@ -849,8 +862,8 @@ function start(options = {}) {
   statePath = resolveStatePath(options);
   cursorKey = getConfigCursorKey(config);
   nextOffset = readPersistedOffset(statePath, cursorKey) ?? normalizeOffset(options.initialOffset) ?? 0;
-  const startedAtMs = Number.isFinite(options.startedAtMs) ? options.startedAtMs : Date.now();
-  startupDropBeforeMs = Math.max(0, startedAtMs - resolveStartupGraceMs(options));
+  delayedMarkerMs = resolveStartupGraceMs(options);
+  backlogBackstopDropMs = resolveBacklogBackstopDropMs(options);
   pollInFlight = false;
   running = true;
 
@@ -858,12 +871,10 @@ function start(options = {}) {
     'Telegram',
     `Telegram poller cursor loaded (offset=${nextOffset}, state=${statePath || 'disabled'})`
   );
-  if (startupDropBeforeMs > 0) {
-    log.info(
-      'Telegram',
-      `Telegram startup stale-message drain enabled (dropBefore=${new Date(startupDropBeforeMs).toISOString()})`
-    );
-  }
+  log.info(
+    'Telegram',
+    `Telegram backlog policy: no-drop; delayed-marker after ${delayedMarkerMs}ms; backstop drop ${backlogBackstopDropMs > 0 ? `${backlogBackstopDropMs}ms (always logged)` : 'disabled'}`
+  );
   log.info(
     'Telegram',
     `Telegram inbound media downloads ${mediaDownloadEnabled ? 'enabled' : 'disabled'} (root=${mediaDownloadRoot || 'n/a'})`
@@ -896,7 +907,8 @@ function stop() {
   latestScreenshotPath = null;
   statePath = null;
   cursorKey = null;
-  startupDropBeforeMs = 0;
+  delayedMarkerMs = DEFAULT_STARTUP_GRACE_MS;
+  backlogBackstopDropMs = DEFAULT_BACKLOG_BACKSTOP_DROP_MS;
 }
 
 function isRunning() {
@@ -926,7 +938,7 @@ const _internals = {
   readPersistedOffset,
   persistNextOffset,
   persistPollerHeartbeat,
-  shouldDropStaleStartupMessage,
+  resolveBacklogBackstopDropMs,
 };
 
 module.exports = {

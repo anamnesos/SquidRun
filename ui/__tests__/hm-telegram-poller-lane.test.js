@@ -1,7 +1,12 @@
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
 const {
   dispatchInboundTelegramMessage,
   formatInbound,
   isMainTelegramWorkerAlive,
+  resolveRuntimeUiScriptPath,
 } = require('../scripts/hm-telegram-poller-lane');
 
 describe('hm-telegram-poller-lane', () => {
@@ -102,5 +107,18 @@ describe('hm-telegram-poller-lane', () => {
         '2345 node D:\\projects\\squidrun\\ui\\scripts\\hm-telegram-poller-lane.js run',
       ].join('\n'),
     })).toBe(false);
+  });
+
+  test('resolves hm-send from runtime bin when source ui scripts are absent', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-lane-runtime-path-'));
+    try {
+      const runtimeHmSend = path.join(tempDir, '.squidrun', 'bin', 'runtime', 'ui', 'scripts', 'hm-send.js');
+      fs.mkdirSync(path.dirname(runtimeHmSend), { recursive: true });
+      fs.writeFileSync(runtimeHmSend, 'module.exports = {};\n', 'utf8');
+
+      expect(resolveRuntimeUiScriptPath(tempDir, 'hm-send.js')).toBe(runtimeHmSend);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
