@@ -66,6 +66,10 @@ function rowTimeMs(row = {}) {
   return toMs(row.brokeredAtMs, toMs(row.sentAtMs, toMs(row.updatedAtMs, 0)));
 }
 
+function rowMetadata(row = {}) {
+  return row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+}
+
 function lower(value) {
   return String(value || '').toLowerCase();
 }
@@ -124,6 +128,24 @@ function parseSessionNumber(sessionId) {
   return match ? Number.parseInt(match[1], 10) : null;
 }
 
+function readAppStatus(options = {}) {
+  try {
+    return JSON.parse(fs.readFileSync(appStatusPath(options), 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function currentSessionId(options = {}) {
+  const explicit = toOptionalString(options.sessionId, null);
+  if (explicit) return explicit;
+  const parsed = readAppStatus(options);
+  const sessionNumber = Number(parsed?.session);
+  return Number.isInteger(sessionNumber) && sessionNumber > 0
+    ? `app-session-${sessionNumber}`
+    : null;
+}
+
 function displayTime(ms) {
   if (!Number.isFinite(ms) || ms <= 0) return '';
   return new Intl.DateTimeFormat(undefined, {
@@ -175,7 +197,7 @@ function entryBase({ id, at, kind, headline, detail, actors, refs, needsYou = fa
 }
 
 function metadataProfile(row = {}) {
-  const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const metadata = rowMetadata(row);
   return toOptionalString(
     metadata.profileName
     || metadata.profile
@@ -306,22 +328,81 @@ function collapsedMilestoneEntries(rows = []) {
 function hasInboundReplyWithin(row = {}, rows = [], windowMs = 4 * 60 * 60 * 1000) {
   const at = rowTimeMs(row);
   if (!at) return false;
+  const threadKey = rowThreadKey(row);
   return rows.some((candidate) => {
     const candidateAt = rowTimeMs(candidate);
     if (candidateAt <= at || candidateAt > at + windowMs) return false;
-    const sender = lower(candidate.senderRole);
-    const direction = lower(candidate.direction);
-    const channel = lower(candidate.channel);
-    return (sender === 'user' || direction === 'inbound') && ['telegram', 'sms', 'voice', 'user'].includes(channel);
+    return rowThreadKey(candidate) === threadKey && isUserInbound(candidate);
   });
 }
 
-function rowNeedsUser(row = {}, rows = []) {
-  const text = lower(row.rawBody);
+function rowThreadKey(row = {}) {
+  const metadata = rowMetadata(row);
   const channel = lower(row.channel);
   const target = lower(row.targetRole);
-  const outboundToJames = lower(row.direction) === 'outbound'
+  const sender = lower(row.senderRole);
+  const threadId = toOptionalString(
+    metadata.threadId
+    || metadata.thread_id
+    || metadata.conversationId
+    || metadata.conversation_id
+    || metadata.chatId
+    || metadata.telegramChatId
+    || metadata.routedChatId
+    || metadata.replyContextChatId
+    || metadata.envelope?.metadata?.chatId
+    || metadata.envelope?.metadata?.telegramChatId
+    || null,
+    null
+  );
+  if (threadId) return `${channel || 'unknown'}:${threadId}`;
+  if (channel) return `${channel}:${target || sender || 'user'}`;
+  return `${sender}>${target}`;
+}
+
+function isUserInbound(row = {}) {
+  const sender = lower(row.senderRole);
+  const direction = lower(row.direction);
+  const channel = lower(row.channel);
+  return (sender === 'user' || direction === 'inbound') && ['telegram', 'sms', 'voice', 'user'].includes(channel);
+}
+
+function isOutboundToUser(row = {}) {
+  const channel = lower(row.channel);
+  const target = lower(row.targetRole);
+  return lower(row.direction) === 'outbound'
     && (target === 'user' || ['telegram', 'sms', 'voice', 'user'].includes(channel));
+}
+
+function hasLaterOutboundInThread(row = {}, rows = []) {
+  const at = rowTimeMs(row);
+  if (!at) return false;
+  const threadKey = rowThreadKey(row);
+  return rows.some((candidate) => (
+    rowTimeMs(candidate) > at
+    && rowThreadKey(candidate) === threadKey
+    && isOutboundToUser(candidate)
+  ));
+}
+
+function isCurrentSessionRow(row = {}, sessionId = null) {
+  if (!sessionId) return true;
+  return toOptionalString(row.sessionId, null) === sessionId;
+}
+
+function isCurrentSessionTaskAuditItem(item = {}, sessionId = null) {
+  if (!sessionId) return true;
+  const itemSessionId = toOptionalString(item.sessionId, null);
+  return !itemSessionId || itemSessionId === sessionId;
+}
+
+function rowNeedsUser(row = {}, rows = [], options = {}) {
+  if (!isCurrentSessionRow(row, options.currentSessionId || null)) return false;
+  if (hasLaterOutboundInThread(row, rows)) return false;
+  const text = lower(row.rawBody);
+  if (/\bwhat needs you\b/.test(text)) return false;
+  const target = lower(row.targetRole);
+  const outboundToJames = isOutboundToUser(row);
   const directedQuestion = /\?/.test(String(row.rawBody || ''))
     && outboundToJames
     && (/\bjames\b/.test(text) || /\byou\b|\byour\b/.test(text) || target === 'user');
@@ -331,8 +412,8 @@ function rowNeedsUser(row = {}, rows = []) {
     && !hasInboundReplyWithin(row, rows);
 }
 
-function needFromRow(row = {}, rows = []) {
-  if (!rowNeedsUser(row, rows)) return null;
+function needFromRow(row = {}, rows = [], options = {}) {
+  if (!rowNeedsUser(row, rows, options)) return null;
   const timestampMs = rowTimeMs(row);
   return entryBase({
     id: `need-comms-${row.rowId || row.messageId || timestampMs}`,
@@ -415,12 +496,8 @@ function appStatusPath(options = {}) {
 
 function restartEntry(options = {}) {
   const filePath = appStatusPath(options);
-  let parsed = null;
-  try {
-    parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch (_) {
-    return null;
-  }
+  const parsed = readAppStatus(options);
+  if (!parsed) return null;
   const startedMs = toMs(parsed.started, 0);
   if (!startedMs) return null;
   const sessionId = `app-session-${parsed.session || ''}`;
@@ -498,6 +575,7 @@ function isForeignTaskAuditItem(item = {}) {
 }
 
 function readTaskAuditNeeds(options = {}) {
+  const currentSession = options.currentSessionId || null;
   const readItems = typeof options.readTaskAuditItems === 'function'
     ? options.readTaskAuditItems
     : readTaskAuditItems;
@@ -507,6 +585,7 @@ function readTaskAuditNeeds(options = {}) {
     const foreign = items.filter(isForeignTaskAuditItem).length;
     const needs = items
       .filter((item) => !isForeignTaskAuditItem(item))
+      .filter((item) => isCurrentSessionTaskAuditItem(item, currentSession))
       .filter((item) => NEEDS_YOU_TASK_AUDIT_STATUSES.has(lower(item.status)))
       .map(needFromTaskAuditItem);
     return {
@@ -533,7 +612,7 @@ function buildHumanTimelineSnapshot(options = {}) {
   const maxRows = Math.max(1, Math.min(50_000, Number(options.maxRows) || DEFAULT_MAX_ROWS));
   const maxFeedItems = Math.max(1, Math.min(49, Number(options.maxFeedItems) || DEFAULT_MAX_FEED_ITEMS));
   const maxNeedsYouItems = Math.max(1, Math.min(5, Number(options.maxNeedsYouItems) || DEFAULT_MAX_NEEDS_YOU_ITEMS));
-  const sessionId = toOptionalString(options.sessionId, null);
+  const sessionId = currentSessionId(options);
   const queryRows = typeof options.queryCommsJournalEntries === 'function'
     ? options.queryCommsJournalEntries
     : queryCommsJournalEntries;
@@ -576,7 +655,7 @@ function buildHumanTimelineSnapshot(options = {}) {
   }
   obligations = Array.isArray(obligations) ? obligations.filter(Boolean) : [];
 
-  const taskAuditNeeds = readTaskAuditNeeds(options);
+  const taskAuditNeeds = readTaskAuditNeeds({ ...options, currentSessionId: sessionId });
   const restart = restartEntry(options);
   const userEntries = localRows.filter(isUserFacingRow).map(userEntryFromRow);
   const arcEntries = collapsedMilestoneEntries(localRows);
@@ -589,7 +668,9 @@ function buildHumanTimelineSnapshot(options = {}) {
     ...changeEntries,
   ])).slice(0, maxFeedItems);
 
-  const rowNeeds = localRows.map((row) => needFromRow(row, localRows)).filter(Boolean);
+  const rowNeeds = localRows
+    .map((row) => needFromRow(row, localRows, { currentSessionId: sessionId }))
+    .filter(Boolean);
   const obligationNeeds = obligations.map(needFromObligation);
   const allNeedsYouItems = sortNewestFirst(dedupeById([
     ...obligationNeeds,
