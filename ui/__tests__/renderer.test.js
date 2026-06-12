@@ -323,6 +323,34 @@ describe('renderer.js smoke tests', () => {
 
   });
 
+  describe('startup overlay daemon replay', () => {
+    it('marks the startup overlay daemon as connected when recovery replayed a missed daemon event', () => {
+      const state = { daemonConnected: false };
+
+      const connected = renderer.syncStartupOverlayDaemonReplay(state, {
+        ok: true,
+        replayed: true,
+        terminalCount: 3,
+      });
+
+      expect(connected).toBe(true);
+      expect(state.daemonConnected).toBe(true);
+    });
+
+    it('does not mark the startup overlay daemon connected for skipped recovery results', () => {
+      const state = { daemonConnected: false };
+
+      const connected = renderer.syncStartupOverlayDaemonReplay(state, {
+        ok: true,
+        skipped: true,
+        reason: 'snapshot_unavailable',
+      });
+
+      expect(connected).toBe(false);
+      expect(state.daemonConnected).toBe(false);
+    });
+  });
+
   describe('classifySquidRoomPetState', () => {
     const classify = (body, role = 'builder') =>
       renderer.classifySquidRoomPetState({ body }, role);

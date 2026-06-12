@@ -1617,6 +1617,17 @@ async function recoverMissedDaemonConnectedAfterReload(daemonListenerController)
   return { ok: true, replayed: true, terminalCount: snapshot.terminals.length };
 }
 
+function syncStartupOverlayDaemonReplay(startupOverlayState, replayResult = null) {
+  if (
+    startupOverlayState
+    && typeof startupOverlayState === 'object'
+    && replayResult?.replayed === true
+  ) {
+    startupOverlayState.daemonConnected = true;
+  }
+  return startupOverlayState?.daemonConnected === true;
+}
+
 function dismissStartupLoadingOverlay() {
   const overlay = document.getElementById('startupLoadingOverlay');
   if (!overlay || overlay.dataset.dismissed === 'true') return;
@@ -3821,7 +3832,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     terminal.setReconnectedToExisting,
     markTerminalsReady
   );
-  await recoverMissedDaemonConnectedAfterReload(daemonListenerController);
+  const daemonReplayResult = await recoverMissedDaemonConnectedAfterReload(daemonListenerController);
+  syncStartupOverlayDaemonReplay(startupOverlayState, daemonReplayResult);
   await ensureSquidRoomLivePaneAgents(getCurrentWindowContext(), { force: true });
 
   // Load initial project path
@@ -3989,5 +4001,6 @@ if (typeof module !== 'undefined' && module.exports) {
     normalizeSquidRoomWorkingDirForCompare,
     renderSquidRoomProjectionInline,
     classifySquidRoomPetState,
+    syncStartupOverlayDaemonReplay,
   };
 }

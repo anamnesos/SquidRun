@@ -386,7 +386,12 @@ function asString(value, fallback = '') {
   return String(value);
 }
 
-function resolveSupervisorLaunchExecutable() {
+function isAsarScriptPath(scriptPath) {
+  const normalized = String(scriptPath || '').replace(/\\/g, '/').toLowerCase();
+  return normalized.includes('/app.asar/');
+}
+
+function resolveSupervisorLaunchExecutable(scriptPath = SUPERVISOR_DAEMON_SCRIPT) {
   const override = toNonEmptyString(process.env.SQUIDRUN_SUPERVISOR_NODE_PATH);
   if (override) {
     return {
@@ -404,6 +409,16 @@ function resolveSupervisorLaunchExecutable() {
     return {
       executable: currentExecPath,
       env: { ...process.env },
+    };
+  }
+
+  if (isAsarScriptPath(scriptPath) && currentExecPath) {
+    return {
+      executable: currentExecPath,
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+      },
     };
   }
 
@@ -8325,7 +8340,7 @@ class SquidRunApp {
     }
 
     try {
-      const { executable, env } = resolveSupervisorLaunchExecutable();
+      const { executable, env } = resolveSupervisorLaunchExecutable(runtimePaths.daemonScriptPath);
       const child = spawn(
         executable,
         [
