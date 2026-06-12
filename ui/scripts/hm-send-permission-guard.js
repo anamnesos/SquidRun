@@ -125,6 +125,7 @@ function appendPermissionAskViolation(record = {}, options = {}) {
     phrase: toText(record.phrase, null),
     pattern: toText(record.pattern, null),
     contentPreview: toText(record.contentPreview, ''),
+    enforcement_mode: toText(record.enforcement_mode, 'hard_block'),
     occurredAt: toText(record.occurredAt, new Date().toISOString()),
   };
   appendJsonLine(logPath, payload);
