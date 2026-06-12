@@ -1987,9 +1987,42 @@ class SquidRunApp {
 
     log.info('Telegram', `Starting scoped trigger drain poller for profile: ${activeProfile} (~60s interval)`);
 
+    const maxConsecutiveFailures = Math.max(
+      1,
+      Number.parseInt(String(process.env.SQUIDRUN_SCOPED_TELEGRAM_DRAIN_MAX_FAILURES || '5'), 10) || 5
+    );
+
     let isDraining = false;
+    let consecutiveDrainFailures = 0;
+    let nextDrainAttemptAtMs = 0;
+
+    const archiveAndTruncateTriggerFiles = (triggerPaths, marker = '') => {
+      const dateStr = new Date().toISOString().split('T')[0];
+      for (const currentPath of triggerPaths) {
+        if (!fs.existsSync(currentPath)) continue;
+
+        const currentContent = fs.readFileSync(currentPath, 'utf8');
+        if (!currentContent.trim()) continue;
+
+        const archiveDir = path.join(path.dirname(currentPath), 'drained');
+        const archivePath = path.join(archiveDir, `architect-${dateStr}.txt`);
+        try {
+          fs.mkdirSync(archiveDir, { recursive: true });
+          const separator = fs.existsSync(archivePath) ? '\n' : '';
+          const prefix = marker ? `${marker}\n` : '';
+          fs.appendFileSync(archivePath, `${separator}${prefix}${currentContent}`, 'utf8');
+          // Safely empty the trigger file now that we have injected and archived
+          fs.writeFileSync(currentPath, '', 'utf8');
+          log.info('Telegram', `Successfully drained and archived trigger file to ${archivePath}`);
+        } catch (err) {
+          log.warn('Telegram', `Failed to archive or truncate trigger file: ${err.message}`);
+        }
+      }
+    };
+
     const drainTriggerFile = async () => {
       if (isDraining) return;
+      if (Date.now() < nextDrainAttemptAtMs) return;
       isDraining = true;
       try {
         const triggerPaths = this.getScopedTelegramTriggerPaths(activeProfile);
@@ -2009,37 +2042,56 @@ class SquidRunApp {
           }
         }
 
-        if (!triggerPath) return;
+        if (!triggerPath) {
+          consecutiveDrainFailures = 0;
+          nextDrainAttemptAtMs = 0;
+          return;
+        }
 
         log.info('Telegram', `Draining scoped trigger file payload (${fileContent.length} bytes): ${triggerPath}`);
 
         // Inject the whole file as a single payload
         const result = await this.deliverScopedTelegramInboundWithRetry(activeProfile, fileContent, { targetRole: 'architect', sender: 'system' });
-        
-        if (result?.verified) {
-          const dateStr = new Date().toISOString().split('T')[0];
-          for (const currentPath of triggerPaths) {
-            if (!fs.existsSync(currentPath)) continue;
-            
-            const currentContent = fs.readFileSync(currentPath, 'utf8');
-            if (!currentContent.trim()) continue;
 
-            const archiveDir = path.join(path.dirname(currentPath), 'drained');
-            const archivePath = path.join(archiveDir, `architect-${dateStr}.txt`);
-            try {
-              fs.mkdirSync(archiveDir, { recursive: true });
-              const separator = fs.existsSync(archivePath) ? '\n' : '';
-              fs.appendFileSync(archivePath, `${separator}${currentContent}`, 'utf8');
-              // Safely empty the trigger file now that we have injected and archived
-              fs.writeFileSync(currentPath, '', 'utf8');
-              log.info('Telegram', `Successfully drained and archived trigger file to ${archivePath}`);
-            } catch (err) {
-              log.warn('Telegram', `Failed to archive or truncate trigger file: ${err.message}`);
-            }
+        // Accepted-but-unverified is terminal here for the same reason it is
+        // terminal in the retry wrapper: the runtime has taken ownership of the
+        // payload, so re-injecting it next poll burns a duplicate pane turn. A
+        // continuously busy pane never PTY-verifies, which previously made this
+        // 60s loop re-inject the same payload forever.
+        const acceptedTerminal = result?.accepted === true
+          && isScopedTelegramTerminalAcceptedStatus(result?.status);
+
+        if (result?.verified || acceptedTerminal) {
+          if (acceptedTerminal) {
+            log.info('Telegram', `Drained payload accepted without PTY verification (status=${result.status}); archiving without re-injection`);
           }
-        } else {
-          log.warn('Telegram', `Failed to inject drained payload, keeping trigger files. Status: ${result?.status}`);
+          archiveAndTruncateTriggerFiles(triggerPaths);
+          consecutiveDrainFailures = 0;
+          nextDrainAttemptAtMs = 0;
+          return;
         }
+
+        consecutiveDrainFailures += 1;
+        if (consecutiveDrainFailures >= maxConsecutiveFailures) {
+          log.warn(
+            'Telegram',
+            `Drain payload failed ${consecutiveDrainFailures} consecutive times (status=${result?.status}); quarantining to drained archive to stop re-injection`
+          );
+          archiveAndTruncateTriggerFiles(
+            triggerPaths,
+            `[quarantined ${new Date().toISOString()} after ${consecutiveDrainFailures} failed drain attempts, last status=${result?.status}]`
+          );
+          consecutiveDrainFailures = 0;
+          nextDrainAttemptAtMs = 0;
+          return;
+        }
+
+        const backoffMs = Math.min(15 * 60 * 1000, 60 * 1000 * (2 ** (consecutiveDrainFailures - 1)));
+        nextDrainAttemptAtMs = Date.now() + backoffMs;
+        log.warn(
+          'Telegram',
+          `Failed to inject drained payload (attempt ${consecutiveDrainFailures}/${maxConsecutiveFailures}, status=${result?.status}); keeping trigger files, next drain in ${Math.round(backoffMs / 1000)}s`
+        );
       } catch (err) {
         log.warn('Telegram', `Error in drain poller: ${err.message}`);
       } finally {
