@@ -3637,6 +3637,41 @@ describe('SquidRunApp', () => {
       expect(heartbeatIndex).toBeLessThan(sessionIncrementIndex);
     });
 
+    it('continues boot with a degraded heartbeat when startup window launch never settles', async () => {
+      jest.useFakeTimers();
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+
+        app.launchWindowsForProfile = jest.fn().mockImplementation(() => new Promise(() => {}));
+        app.initDaemonClient = jest.fn().mockImplementation(async () => {
+          mockAppContext.daemonClient = {};
+        });
+        app.startSmsPoller = jest.fn();
+        app.startTelegramPoller = jest.fn();
+        app.initializeStartupSessionScope = jest.fn().mockResolvedValue({ ok: true });
+        app.refreshStartupHealthArtifacts = jest.fn().mockResolvedValue({ ok: true });
+
+        const initPromise = app.init();
+        await jest.advanceTimersByTimeAsync(0);
+        await jest.advanceTimersByTimeAsync(20000);
+        await initPromise;
+
+        expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            boot: expect.objectContaining({
+              stage: 'launch_windows_degraded',
+              reason: 'launch_windows_for_profile_timeout',
+            }),
+          }),
+        }));
+        expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(expect.objectContaining({
+          incrementSession: true,
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('continues boot with a degraded heartbeat when startup session scope never settles', async () => {
       jest.useFakeTimers();
       try {
