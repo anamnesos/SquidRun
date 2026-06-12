@@ -3029,6 +3029,76 @@ describe('SquidRunApp', () => {
       // initializeStartupSessionScope is always called now (session always increments on app launch)
     });
 
+    it('continues app init loudly when daemon client connect never settles', async () => {
+      jest.useFakeTimers();
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        const timeoutSendSpy = jest.spyOn(app, 'sendToAllWindows').mockReturnValue(true);
+
+        app.initDaemonClient = jest.fn(() => new Promise(() => {}));
+        app.createWindow = jest.fn().mockResolvedValue();
+        app.startSmsPoller = jest.fn();
+        app.startTelegramPoller = jest.fn();
+        app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+        jest.spyOn(app, 'ensureSupervisorDaemonRunning').mockResolvedValue({ ok: true, alreadyRunning: true });
+
+        const initPromise = app.init();
+        await jest.advanceTimersByTimeAsync(0);
+
+        expect(app.initDaemonClient).toHaveBeenCalledWith({ preserveConnectTimeout: true });
+        expect(mockManagers.settings.writeAppStatus).not.toHaveBeenCalledWith(expect.objectContaining({
+          incrementSession: true,
+        }));
+
+        await jest.advanceTimersByTimeAsync(15000);
+        await initPromise;
+
+        expect(app.daemonTimeoutTriggered).toBe(true);
+        expect(app.daemonTimeoutNotified).toBe(true);
+        expect(timeoutSendSpy).toHaveBeenCalledWith('daemon-timeout', expect.objectContaining({
+          reason: 'daemon_connect_timeout',
+        }));
+        expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(expect.objectContaining({
+          incrementSession: true,
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('continues app init loudly when supervisor daemon bootstrap never settles', async () => {
+      jest.useFakeTimers();
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+
+        app.initDaemonClient = jest.fn().mockResolvedValue(true);
+        app.createWindow = jest.fn().mockResolvedValue();
+        app.startSmsPoller = jest.fn();
+        app.startTelegramPoller = jest.fn();
+        app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+        jest.spyOn(app, 'ensureSupervisorDaemonRunning').mockImplementation(() => new Promise(() => {}));
+
+        const initPromise = app.init();
+        await jest.advanceTimersByTimeAsync(0);
+
+        expect(app.initDaemonClient).toHaveBeenCalledWith({ preserveConnectTimeout: true });
+        expect(app.ensureSupervisorDaemonRunning).toHaveBeenCalledWith('app-init');
+        expect(mockManagers.settings.writeAppStatus).not.toHaveBeenCalledWith(expect.objectContaining({
+          incrementSession: true,
+        }));
+
+        await jest.advanceTimersByTimeAsync(15000);
+        await initPromise;
+
+        expect(app.daemonTimeoutTriggered).toBe(true);
+        expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(expect.objectContaining({
+          incrementSession: true,
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('writes startup health artifacts without forcing team memory init', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
