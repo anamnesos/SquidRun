@@ -1,6 +1,7 @@
 const path = require('path');
 const { fork } = require('child_process');
 const log = require('../logger');
+const { buildNodeWorkerForkOptions } = require('../node-worker-fork-options');
 
 const WORKER_PATH = path.join(__dirname, 'worker.js');
 const DEFAULT_REQUEST_TIMEOUT_MS = parsePositiveInt(
@@ -102,12 +103,12 @@ function ensureWorkerProcess() {
     return workerProcess;
   }
 
-  const worker = fork(WORKER_PATH, [], {
+  const worker = fork(WORKER_PATH, [], buildNodeWorkerForkOptions({
     env: {
       ...process.env,
       SQUIDRUN_TEAM_MEMORY_WORKER: '1',
     },
-  });
+  }));
   attachWorkerListeners(worker);
   workerProcess = worker;
   return workerProcess;

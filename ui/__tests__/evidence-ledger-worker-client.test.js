@@ -90,6 +90,49 @@ describe('evidence-ledger-worker-client', () => {
     }));
   });
 
+  test('uses electron-as-node fork options when running from packaged Electron', async () => {
+    const originalExecPath = process.execPath;
+    const originalVersions = process.versions;
+    Object.defineProperty(process, 'execPath', {
+      configurable: true,
+      writable: true,
+      value: 'D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-test\\sr-electron.exe',
+    });
+    Object.defineProperty(process, 'versions', {
+      configurable: true,
+      value: {
+        ...originalVersions,
+        electron: '28.3.3',
+      },
+    });
+
+    try {
+      await client.initializeRuntime({ runtimeOptions: {} });
+
+      expect(forkMock).toHaveBeenCalledWith(
+        expect.stringContaining('evidence-ledger-worker.js'),
+        [],
+        expect.objectContaining({
+          execPath: 'D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-test\\sr-electron.exe',
+          env: expect.objectContaining({
+            SQUIDRUN_EVIDENCE_LEDGER_WORKER: '1',
+            ELECTRON_RUN_AS_NODE: '1',
+          }),
+        })
+      );
+    } finally {
+      Object.defineProperty(process, 'execPath', {
+        configurable: true,
+        writable: true,
+        value: originalExecPath,
+      });
+      Object.defineProperty(process, 'versions', {
+        configurable: true,
+        value: originalVersions,
+      });
+    }
+  });
+
   test('executeOperation respawns worker after unexpected exit', async () => {
     const first = await client.executeOperation('get-context', {}, {});
     expect(first.ok).toBe(true);

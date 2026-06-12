@@ -16,6 +16,7 @@ const {
   getSquidrunRoot,
 } = require('../config');
 const log = require('./logger');
+const { buildNodeWorkerForkOptions } = require('./node-worker-fork-options');
 const { TRIGGER_READ_RETRY_MS, WATCHER_DEBOUNCE_MS } = require('./constants');
 const organicUI = require('./ipc/organic-ui-handlers');
 
@@ -836,12 +837,12 @@ function stopWatcherWorker(watcherName, workerRefName, { reason = 'stop', clearR
 }
 
 function startWatcherWorker(watcherName, onEvent, restartFn) {
-  const worker = fork(WATCHER_WORKER_PATH, [], {
+  const worker = fork(WATCHER_WORKER_PATH, [], buildNodeWorkerForkOptions({
     env: {
       ...process.env,
       SQUIDRUN_WATCHER_NAME: watcherName,
     },
-  });
+  }));
   attachWatcherWorkerFreshness(worker, watcherName, restartFn);
 
   worker.on('message', (msg) => {

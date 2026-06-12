@@ -108,4 +108,70 @@ describe('InboundPollerService', () => {
     service.stopTelegram();
     expect(worker.send).toHaveBeenCalledWith({ type: 'shutdown' });
   });
+
+  test('uses electron-as-node fork options for packaged Telegram worker', () => {
+    const worker = new EventEmitter();
+    worker.connected = true;
+    worker.send = jest.fn();
+    worker.kill = jest.fn();
+    const forkProcess = jest.fn(() => worker);
+    const originalExecPath = process.execPath;
+    const originalVersions = process.versions;
+    Object.defineProperty(process, 'execPath', {
+      configurable: true,
+      writable: true,
+      value: 'D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-test\\sr-electron.exe',
+    });
+    Object.defineProperty(process, 'versions', {
+      configurable: true,
+      value: {
+        ...originalVersions,
+        electron: '28.3.3',
+      },
+    });
+
+    try {
+      const service = createInboundPollerService({
+        smsPoller: { start: jest.fn(), stop: jest.fn() },
+        telegramPoller: {
+          stop: jest.fn(),
+          _internals: {
+            getTelegramConfig: jest.fn(() => ({ botToken: 'token', chatId: 8754356993 })),
+          },
+        },
+        forkProcess,
+        telegramWorkerPath: 'telegram-worker.js',
+        useTelegramWorker: true,
+      });
+
+      expect(service.startTelegram({
+        env: {
+          TELEGRAM_BOT_TOKEN: 'token',
+          TELEGRAM_CHAT_ID: '8754356993',
+        },
+      })).toBe(true);
+
+      expect(forkProcess).toHaveBeenCalledWith(
+        'telegram-worker.js',
+        [],
+        expect.objectContaining({
+          execPath: 'D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-test\\sr-electron.exe',
+          env: expect.objectContaining({
+            SQUIDRUN_TELEGRAM_POLLER_WORKER: '1',
+            ELECTRON_RUN_AS_NODE: '1',
+          }),
+        })
+      );
+    } finally {
+      Object.defineProperty(process, 'execPath', {
+        configurable: true,
+        writable: true,
+        value: originalExecPath,
+      });
+      Object.defineProperty(process, 'versions', {
+        configurable: true,
+        value: originalVersions,
+      });
+    }
+  });
 });
