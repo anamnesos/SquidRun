@@ -19,10 +19,10 @@ const { resolveCoordPath } = require('../config');
 //     reply "Sorry about that ..." → FAIL the lint (apology preamble)
 //     reply leading with a fix or technical noun → PASS
 //
-// Default behavior: SOFT — log violations to coworker-lint-violations.jsonl,
-// return a soft `warn` result so hm-send can continue the send. Set
-// HM_SEND_COWORKER_LINT_HARD=1 to hard-block (same semantics as the
-// permission-ask gate).
+// Default behavior: SOFT — log violations to coworker-lint-violations.jsonl
+// so hm-send can continue the send. This lint is permanently warn-only for
+// agent-to-agent sends; user-facing permission asks are enforced by the
+// separate permission-ask guard.
 //
 // Skips:
 //   - Telegram / user / self-routing targets.
@@ -168,10 +168,6 @@ function detectCoworkerLintViolation(input = {}) {
   };
 }
 
-function isHardBlockMode() {
-  return String(process.env.HM_SEND_COWORKER_LINT_HARD || '').trim() === '1';
-}
-
 function appendCoworkerLintViolation(record = {}, options = {}) {
   const logPath = toText(options.logPath, DEFAULT_COWORKER_LINT_VIOLATIONS_PATH);
   const payload = {
@@ -185,7 +181,7 @@ function appendCoworkerLintViolation(record = {}, options = {}) {
     pattern: toText(record.pattern, null),
     window: toText(record.window, ''),
     contentPreview: toText(record.contentPreview, ''),
-    enforcement_mode: isHardBlockMode() ? 'hard_block' : 'soft_warn',
+    enforcement_mode: 'soft_warn',
     occurredAt: toText(record.occurredAt, new Date().toISOString()),
   };
   appendJsonLine(logPath, payload);
@@ -263,7 +259,6 @@ module.exports = {
   appendCoworkerLintViolation,
   appendCoworkerLintBypass,
   summarizeCoworkerLintViolations,
-  isHardBlockMode,
   _internals: {
     findCoworkerLintMatch,
     firstWindow,

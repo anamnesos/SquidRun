@@ -44,7 +44,6 @@ const {
   detectCoworkerLintViolation,
   appendCoworkerLintViolation,
   appendCoworkerLintBypass,
-  isHardBlockMode: isCoworkerLintHardBlock,
 } = require('./hm-send-coworker-output-lint');
 const {
   detectCommsLivenessViolation,
@@ -954,7 +953,6 @@ async function runOutputGuards({ messageId, targetRole } = {}) {
     bypass: '0',
   });
   if (coworkerLintViolation) {
-    const hardBlock = isCoworkerLintHardBlock();
     const logResult = appendCoworkerLintViolation(
       {
         ...coworkerLintViolation,
@@ -962,17 +960,9 @@ async function runOutputGuards({ messageId, targetRole } = {}) {
       },
       { logPath: resolveGuardLogPath('coworker-lint-violations.jsonl') }
     );
-    if (hardBlock) {
-      writeGuardBlock([
-        `BLOCKED: coworker-output-lint '${coworkerLintViolation.violation_class}' opener '${coworkerLintViolation.phrase}'.`,
-        'Lead with the action, technical noun, or direct answer. Drop the apology/preamble/sycophancy opener.',
-        `Log: ${logResult.path}`,
-      ]);
-      return { ok: false, type: 'coworker_lint', violation: coworkerLintViolation };
-    }
     writeGuardBlock([
       `WARN: coworker-output-lint '${coworkerLintViolation.violation_class}' opener '${coworkerLintViolation.phrase}' — logged, send continuing.`,
-      'Set HM_SEND_COWORKER_LINT_HARD=1 to enforce hard-block.',
+      'Agent-to-agent style lint is warn-only; user-facing permission asks still hard-block.',
       `Log: ${logResult.path}`,
     ]);
   }
