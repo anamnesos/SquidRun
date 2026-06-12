@@ -5,8 +5,39 @@
  * worker is active. Messages cross back to SquidRunApp through IPC only.
  */
 
+const fs = require('fs');
+const path = require('path');
 const telegramPoller = require('../telegram-poller');
 const log = require('../logger');
+
+function resolveCrashLogPath() {
+  // Walk up until we find the install's .squidrun/runtime. The depth differs
+  // between source checkouts, asar.unpacked builds, and overlay bundles.
+  let dir = __dirname;
+  for (let i = 0; i < 8; i += 1) {
+    const candidate = path.join(dir, '.squidrun', 'runtime');
+    if (fs.existsSync(candidate)) {
+      return path.join(candidate, 'telegram-poller-worker-crash.log');
+    }
+    dir = path.dirname(dir);
+  }
+  return null;
+}
+
+function reportFatalWorkerError(kind, err) {
+  // The shared logger buffers file writes, so logging and immediately exiting
+  // can lose the stack. Persist synchronously before shutdown.
+  const detail = err && err.stack ? err.stack : String(err);
+  const line = `${new Date().toISOString()} [telegram-poller-worker] ${kind}: ${detail}\n`;
+  try { fs.writeSync(2, line); } catch { /* stderr may be closed */ }
+  try {
+    const crashLog = resolveCrashLogPath();
+    if (crashLog) fs.appendFileSync(crashLog, line);
+  } catch { /* diagnostics must not block shutdown */ }
+  try {
+    log.error('Telegram', `Telegram poller worker ${kind}: ${err && err.message ? err.message : String(err)}`);
+  } catch { /* logger itself may be the failure */ }
+}
 
 function send(message) {
   if (typeof process.send === 'function') {
@@ -69,11 +100,10 @@ process.on('disconnect', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
 process.on('SIGINT', () => shutdown(0));
 process.on('uncaughtException', (err) => {
-  log.error('Telegram', `Telegram poller worker uncaught exception: ${err.message}`);
+  reportFatalWorkerError('uncaught exception', err);
   shutdown(1);
 });
 process.on('unhandledRejection', (reason) => {
-  const message = reason instanceof Error ? reason.message : String(reason);
-  log.error('Telegram', `Telegram poller worker unhandled rejection: ${message}`);
+  reportFatalWorkerError('unhandled rejection', reason);
   shutdown(1);
 });

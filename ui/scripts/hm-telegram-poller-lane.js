@@ -9,6 +9,7 @@ const { getProjectRoot, resolveCoordPath } = require('../config');
 const { buildProfileTelegramEnv, getProfileProjectRootOverride } = require('../profile');
 const telegramPoller = require('../modules/telegram-poller');
 const { resolveTelegramInboundRoute } = require('./hm-telegram-routing');
+const { resolveRuntimeUiScriptPath } = require('./runtime-ui-paths');
 
 const RUNTIME_DIR = resolveCoordPath('runtime', { forWrite: true });
 const PID_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.pid');
@@ -107,7 +108,7 @@ function status() {
 
 function sendToArchitect(message) {
   const projectRoot = getProjectRoot();
-  const hmSendPath = path.join(projectRoot, 'ui', 'scripts', 'hm-send.js');
+  const hmSendPath = resolveRuntimeUiScriptPath(projectRoot, 'hm-send.js');
   const run = spawnSync(process.execPath, [hmSendPath, 'architect', '--stdin', '--role', 'system'], {
     cwd: projectRoot,
     env: { ...process.env, SQUIDRUN_PROJECT_ROOT: projectRoot },
@@ -293,7 +294,7 @@ function runLane() {
   process.on('SIGINT', shutdown);
 }
 
-function startLane() {
+function startLane(options = {}) {
   const current = status();
   if (current.running) return { ok: true, alreadyRunning: true, ...current };
   if (current.mainWorkerRunning && !allowsStandaloneLaneWithMainWorker()) {
@@ -317,6 +318,22 @@ function startLane() {
   });
   child.unref();
   fs.writeFileSync(PID_PATH, String(child.pid), 'utf8');
+  const startupVerifyMs = Number.isFinite(options.startupVerifyMs) ? Math.max(0, options.startupVerifyMs) : 4000;
+  if (startupVerifyMs > 0) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, startupVerifyMs);
+  }
+  const isAlive = typeof options.isPidAlive === 'function' ? options.isPidAlive(child.pid) : isPidAlive(child.pid);
+  if (!isAlive) {
+    return {
+      ok: false,
+      started: false,
+      reason: 'lane_child_died_immediately',
+      pid: child.pid,
+      note: `Lane child exited within ${startupVerifyMs}ms of spawn; see ${LOG_PATH} for its output.`,
+      pidPath: PID_PATH,
+      logPath: LOG_PATH,
+    };
+  }
   return { ok: true, started: true, pid: child.pid, pidPath: PID_PATH, logPath: LOG_PATH };
 }
 
@@ -365,6 +382,7 @@ module.exports = {
   getProfileTelegramTriggerPaths,
   isMainTelegramWorkerAlive,
   isPidAlive,
+  resolveRuntimeUiScriptPath,
   status,
   startLane,
   stopLane,

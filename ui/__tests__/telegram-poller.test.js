@@ -311,9 +311,10 @@ describe('telegram-poller', () => {
     }
   });
 
-  test('startup drain drops stale Telegram backlog while accepting fresh updates', async () => {
+  test('startup drain marks delayed Telegram backlog while accepting fresh updates', async () => {
     const onMessage = jest.fn();
     const startedAtMs = Date.parse('2026-05-08T04:00:00.000Z');
+    jest.spyOn(Date, 'now').mockReturnValue(startedAtMs);
 
     telegramPoller.start({
       env: {
@@ -351,8 +352,18 @@ describe('telegram-poller', () => {
 
     await telegramPoller._internals.pollNow();
 
-    expect(onMessage).toHaveBeenCalledTimes(1);
-    expect(onMessage).toHaveBeenCalledWith(
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage).toHaveBeenNthCalledWith(
+      1,
+      '[delayed: 60m old] [Photo received]',
+      '@james',
+      expect.objectContaining({
+        updateId: 60,
+        messageId: 8,
+      })
+    );
+    expect(onMessage).toHaveBeenNthCalledWith(
+      2,
       'fresh after startup',
       '@james',
       expect.objectContaining({
@@ -360,9 +371,47 @@ describe('telegram-poller', () => {
         messageId: 9,
       })
     );
+    expect(log.warn).not.toHaveBeenCalledWith(
+      'Telegram',
+      expect.stringContaining('Dropped stale inbound Telegram update')
+    );
+  });
+
+  test('backstop drops very old Telegram backlog loudly', async () => {
+    const onMessage = jest.fn();
+    const nowMs = Date.parse('2026-05-08T04:00:00.000Z');
+    jest.spyOn(Date, 'now').mockReturnValue(nowMs);
+
+    telegramPoller.start({
+      env: {
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '123456',
+      },
+      onMessage,
+      downloadMedia: false,
+      startupGraceMs: 60 * 1000,
+      backlogBackstopDropMs: 60 * 60 * 1000,
+    });
+
+    mockTelegramUpdates([
+      {
+        update_id: 70,
+        message: {
+          message_id: 18,
+          date: Math.floor(Date.parse('2026-05-08T02:00:00.000Z') / 1000),
+          chat: { id: 123456 },
+          from: { username: 'james' },
+          text: 'old enough for backstop',
+        },
+      },
+    ]);
+
+    await telegramPoller._internals.pollNow();
+
+    expect(onMessage).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledWith(
       'Telegram',
-      expect.stringContaining('Dropped stale inbound Telegram update 60')
+      expect.stringContaining('DROPPED backlog update 70')
     );
   });
 
