@@ -2447,6 +2447,49 @@ describe('SquidRunApp', () => {
       expect(app.ctx.getWindow('live-task-audit-sidecar')).toBe(sidecarWindow);
     });
 
+    it('openAppWindow("human-timeline-sidecar") creates the standalone Today feed sidecar', async () => {
+      const enforceMenuSpy = jest.spyOn(app, 'enforceMenuSuppression');
+      const result = await app.openAppWindow('human-timeline-sidecar');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        windowKey: 'human-timeline-sidecar',
+        title: 'SquidRun Today',
+      }));
+      expect(result.htmlPath).toMatch(/human-timeline-sidecar\.html$/);
+      expect(result.preloadPath).toMatch(/preload\.js$/);
+
+      expect(app.ctx.setWindow).toHaveBeenCalledWith('human-timeline-sidecar', expect.any(Object));
+      const sidecarWindow = app.ctx.getWindow('human-timeline-sidecar');
+      expect(sidecarWindow).toBeTruthy();
+      expect(sidecarWindow).not.toBe(app.ctx.mainWindow);
+      expect(sidecarWindow.loadFile).toHaveBeenCalledWith(expect.stringMatching(/human-timeline-sidecar\.html$/));
+      expect(sidecarWindow.focus).toHaveBeenCalled();
+      expect(enforceMenuSpy).toHaveBeenCalledWith(sidecarWindow);
+      expect(app.setupWindowListeners).toHaveBeenCalledWith(
+        sidecarWindow,
+        expect.objectContaining({ windowKey: 'human-timeline-sidecar', lifecycleRoot: false }),
+      );
+    });
+
+    it('openAppWindow("human-timeline-sidecar") reloads a reused sidecar before focusing it', async () => {
+      await app.openAppWindow('human-timeline-sidecar');
+      const sidecarWindow = app.ctx.getWindow('human-timeline-sidecar');
+      sidecarWindow.focus.mockClear();
+      sidecarWindow.webContents.reloadIgnoringCache.mockClear();
+
+      const result = await app.openAppWindow('human-timeline-sidecar');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        windowKey: 'human-timeline-sidecar',
+        status: 'reused_existing_reloaded',
+      }));
+      expect(sidecarWindow.webContents.reloadIgnoringCache).toHaveBeenCalledTimes(1);
+      expect(sidecarWindow.focus).toHaveBeenCalled();
+      expect(app.ctx.getWindow('human-timeline-sidecar')).toBe(sidecarWindow);
+    });
+
     it('closing a standalone Scoped profile window quits that profile process cleanly', async () => {
       app.setupWindowListeners.mockRestore();
       const shutdownSpy = jest.spyOn(app, 'performFullShutdown').mockResolvedValue({ success: true });

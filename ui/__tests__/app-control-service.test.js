@@ -11,6 +11,8 @@ describe('app-control-service', () => {
     expect(normalizeAction('close-app-window')).toBe('close-app-window');
     expect(normalizeAction('scroll-probe')).toBe('terminal-scroll-probe');
     expect(normalizeAction('probe-terminal-scroll')).toBe('terminal-scroll-probe');
+    expect(normalizeAction('timeline')).toBe('open-human-timeline-sidecar');
+    expect(normalizeAction('today-feed')).toBe('open-human-timeline-sidecar');
   });
 
   test('reload-renderers reloads every live window without restarting the main process', () => {
@@ -331,6 +333,25 @@ describe('app-control-service', () => {
       status: 'opened',
     }));
     expect(result.note).toMatch(/sidecar opened\/focused without restarting/i);
+  });
+
+  test('open-human-timeline-sidecar opens the Today feed without restart', async () => {
+    const openAppWindow = jest.fn().mockResolvedValue({
+      ok: true,
+      windowKey: 'human-timeline-sidecar',
+      status: 'opened',
+    });
+
+    const result = await executeAppControlAction({ openAppWindow }, 'timeline');
+
+    expect(openAppWindow).toHaveBeenCalledWith('human-timeline-sidecar', {});
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'open-human-timeline-sidecar',
+      windowKey: 'human-timeline-sidecar',
+      status: 'opened',
+    }));
+    expect(result.note).toMatch(/without restarting the Electron main process/i);
   });
 
   test('open-squid-room opens a main-profile surface window with auto-boot disabled', async () => {
