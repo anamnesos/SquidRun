@@ -152,6 +152,8 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/main/inbound-poller-service.js: Owns main-process inbound Telegram/SMS poller lifecycle behind a small service boundary so channel handling can move out of Electron without changing message routing callbacks.
 - ui/modules/main/kernel-bridge.js: Exports KernelBridge, createKernelBridge, BRIDGE_VERSION, BRIDGE_EVENT_CHANNEL, ....
 - ui/modules/main/launch-intent.js: Normalizes `--window` / standalone launch flags so secondary windows can cold-open with their own top-level lifecycle while still sharing the runtime when needed.
+- ui/modules/main/human-timeline.js: Builds the read-only human timeline snapshot from `comms_journal` and Telegram reply obligations; output is jargon-filtered into portable Today feed / Needs You items for user-facing surfaces.
+- ui/modules/main/human-timeline-sidecar-window.js: Creates the first standalone Electron delivery vehicle for the portable human timeline feed; the sidecar owns window chrome only, while the feed renderer remains reusable for later main-window promotion.
 - ui/modules/main/live-task-audit-sidecar.js: Builds the Task Audit sidecar snapshot from typed work items, current-lane reconciliation, and the canonical `.squidrun/runtime/live-task-audit-sidecar/task-audit-items.json` state file; the legacy `future-items.json` file is not read and should not be recreated.
 - ui/modules/main/missing-arm-watchdog.js: Stage-based missing-arm watchdog wrapper around the durable registry state; advances expected -> nudge -> escalate -> satisfied with injectable sender and canonical Architect escalation sink while tests can exercise stages without real timers.
 - ui/modules/main/pane-control-service.js: Exports executePaneControlAction, detectPaneModel, normalizeAction.
@@ -414,6 +416,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - `workspace/knowledge/runtime-environment.md`: shared device registry and machine/runtime environment quirks. **Tracked**.
 - `docs/diagrams-reference.md`: ASCII templates for system topology (Agent Message Flow and Knowledge & Memory System) intended for Excalidraw visualization.
 - `docs/gate-census-2026-06-12.md`: evidence-based keep/fix/kill census of all guards, hooks, verifiers, contracts, and Mira Lab scaffolds (S442 mandate from James). Kill rationales recorded in-doc; contested kills arbitrated by Architect, executed by Builder.
+- `docs/timeline-data-spec-v0.md`: data spec for the human timeline surface (fresh-eyes agenda item 5) — source mapping over comms_journal/ledger/sidecar, plain-language translation rules, needs-you detection, world-coherence filter. Oracle-owned; Builder builds against it.
 - `ROLES.md`: canonical role boundaries/startup baseline/operating rules. **Tracked**.
 - `CLAUDE.md`, `GEMINI.md`, `AGENTS.md`: CLI-specific config files auto-read by Claude Code, Gemini CLI, and Codex CLI respectively. Each contains CLI quirks + mandatory directive to read `ROLES.md`. **Tracked**.
 
