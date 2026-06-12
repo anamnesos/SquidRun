@@ -1,26 +1,14 @@
-const { parseClaudeTranscriptRecord } = require('../modules/transcript-index');
+const { stripRecallBlocks } = require('../modules/memory-recall');
 const { extractCandidates } = require('../scripts/hm-memory-extract');
 
 describe('recall anti-loop boundary', () => {
-  test('transcript parsing strips delivery-only recall blocks', () => {
-    const record = parseClaudeTranscriptRecord({
-      type: 'user',
-      message: {
-        role: 'user',
-        content: [{
-          type: 'text',
-          text: 'Check the latest evidence note.\n\n[SQUIDRUN RECALL START]\nRECALL resultSetId=recall-1\n1. [memory_search/corpus] Some old memory\n[SQUIDRUN RECALL END]',
-        }],
-      },
-      sessionId: 'sess-1',
-      timestamp: '2026-04-03T12:00:00.000Z',
-    }, {
-      sourceFile: 'D:/projects/squidrun/tmp.jsonl',
-      lineNumber: 1,
-    });
+  test('memory recall stripping removes delivery-only recall blocks', () => {
+    const text = stripRecallBlocks(
+      'Check the latest evidence note.\n\n[SQUIDRUN RECALL START]\nRECALL resultSetId=recall-1\n1. [memory_search/corpus] Some old memory\n[SQUIDRUN RECALL END]'
+    ).trim();
 
-    expect(record.text).toBe('Check the latest evidence note.');
-    expect(record.text).not.toContain('Some old memory');
+    expect(text).toBe('Check the latest evidence note.');
+    expect(text).not.toContain('Some old memory');
   });
 
   test('memory extraction ignores recall-only fragments', () => {

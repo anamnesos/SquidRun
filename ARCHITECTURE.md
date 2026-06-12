@@ -272,7 +272,6 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/terminal/agent-colors.js: Exports attachAgentColors, AGENT_COLORS.
 - ui/modules/terminal/injection.js: Terminal injection helpers Extracted from terminal.js to isolate fragile send/verify logic.
 - ui/modules/terminal/recovery.js: Terminal recovery helpers (unstick, restart, sweeper) Extracted from terminal.js to isolate recovery logic.
-- ui/modules/transcript-index.js: Claude transcript indexing/search module that parses `~/.claude/projects/<project>/*.jsonl` into cited runtime records for startup recovery and transcript-backed memory retrieval.
 - ui/modules/token-utils.js: Exports estimateTokens, truncateToTokenBudget.
 - ui/modules/transition-ledger.js: Exports init, stop, reset, getTransition, ....
 - ui/modules/triggers.js: Exports init, setSelfHealing, setPluginManager, setWatcher, ....
@@ -309,8 +308,6 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/scripts/hm-investigate.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-memory-api.js: Cognitive memory CLI for direct node operations; supports `retrieve`, `ingest`, `patch`, `salience`, and `set-immune` over the cognitive-memory store.
 - ui/scripts/hm-memory-broker.js: Unified recall CLI exposing the memory broker contract for agent tool paths, returning ranked JSON or a compact pane-ready recall block.
-- ui/scripts/hm-startup-transcript-context.js: Startup helper CLI that builds the automatic transcript-recall block injected into pane SessionStart hooks from active items plus recent comms.
-- ui/scripts/hm-transcript-index.js: Transcript-index CLI that builds/searches `.squidrun/runtime/transcript-index.jsonl` from Claude session JSONL archives under `~/.claude/projects/`.
 - ui/scripts/hm-memory-consistency.js: On-demand CLI that reports drift between tracked knowledge markdown and knowledge-backed cognitive-memory nodes.
 - ui/scripts/hm-memory-extract.js: Extracts memory candidates from runtime/session artifacts for staged promotion review.
 - ui/scripts/hm-memory-index.js: Builds or refreshes the cognitive/vector memory index from workspace knowledge files.

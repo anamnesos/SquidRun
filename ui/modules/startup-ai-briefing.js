@@ -3,10 +3,10 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env'), quiet: true });
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { getProjectRoot, resolveCoordPath } = require('../config');
 const { isMainProfile, namespaceCoordRelPath, normalizeProfileName } = require('../profile');
-const { resolveClaudeTranscriptProjectsDir } = require('./transcript-index');
 const { queryCommsJournalEntries } = require('./main/comms-journal');
 const {
   isAgentTaskResolvedByLaterSignal,
@@ -111,6 +111,22 @@ function resolveCoordFile(relativePath, options = {}) {
   } catch (_) {
     return path.join(projectRoot, '.squidrun', relativePath);
   }
+}
+
+function slugProjectPath(projectRoot) {
+  return String(projectRoot || '')
+    .replace(/[:]/g, '-')
+    .replace(/[\\/]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function resolveClaudeTranscriptProjectsDir(options = {}) {
+  const explicit = toText(options.projectsDir || process.env.SQUIDRUN_CLAUDE_PROJECTS_DIR, '');
+  if (explicit) return path.resolve(explicit);
+
+  const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
+  const slug = slugProjectPath(projectRoot);
+  return path.join(os.homedir(), '.claude', 'projects', slug);
 }
 
 function resolveBriefingPath(options = {}) {
@@ -1450,6 +1466,7 @@ module.exports = {
   resolveMiraPresenceRuntimeStateSummaryPath,
   _internals: {
     listRecentTranscriptFiles,
+    resolveClaudeTranscriptProjectsDir,
     renderTranscriptForPrompt,
     buildTranscriptCorpus,
     normalizeTranscriptEntry,
