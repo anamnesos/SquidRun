@@ -5,6 +5,8 @@ let stallNextRequest = false;
 function createWorkerStub() {
   const worker = new EventEmitter();
   worker.connected = true;
+  worker.stdout = { resume: jest.fn() };
+  worker.stderr = { resume: jest.fn() };
   worker.send = jest.fn((msg) => {
     if (stallNextRequest && msg.type !== 'close') {
       stallNextRequest = false;
@@ -82,6 +84,11 @@ describe('team-memory worker client', () => {
     expect(result.ok).toBe(true);
     expect(result.echoedType).toBe('init');
     expect(forkMock).toHaveBeenCalledTimes(1);
+    expect(forkMock).toHaveBeenCalledWith(expect.any(String), [], expect.objectContaining({
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    }));
+    expect(workers[0].stdout.resume).toHaveBeenCalledTimes(1);
+    expect(workers[0].stderr.resume).toHaveBeenCalledTimes(1);
   });
 
   test('executeOperation respawns worker after unexpected exit', async () => {
