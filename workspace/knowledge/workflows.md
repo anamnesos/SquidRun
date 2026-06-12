@@ -167,6 +167,16 @@ PRIORITY: <now / next / backlog>
 ```
 Comms cadence: Builder sends initial ACK + plan, then delta updates only on state change. No noise.
 
+## Shared Git Index Commit Hygiene (standing rule, S442)
+
+All three panes share ONE working directory and ONE git index. `git add <paths> && git commit` commits **everything already staged**, not just the paths you added — so "docs-only commit" is fiction unless the index is clean. Proven live S442: Oracle's census commit (313c4449) silently swept in Builder's complete staged-but-uncommitted fix pass; content survived (both authors verified) but attribution was wrong and the race could have shipped half-finished work.
+
+Standing rule (Architect-ratified S442, applies to every pane):
+1. **Before committing while another pane is active, claim the index**: announce "claiming the git index" via hm-send to the other panes (or in the room).
+2. **Check `git status --short` first** — if files you don't own are staged, STOP and coordinate; do not commit over them.
+3. **Commit only paths you own.** If you find someone else's staged work, the stager commits it, not you.
+4. Corollary from the same night: **never cite the session-start git snapshot as live tree state** — it fossilizes within minutes. Run `git status` fresh before any claim about the tree.
+
 ## Memory-Consistency Drift Cleanup (`hm-memory-consistency.js`)
 
 Procedure to clear cognitive-memory drift for good (verified end-to-end S404, missing 10→0 / orphans 18→0). The naive `--dry-run` breakdown is misleading in two places — do NOT hand it out as the recipe without these corrections.
