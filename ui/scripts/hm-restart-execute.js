@@ -375,7 +375,8 @@ function sourceHasInstanceMarker(source = {}, instanceConfig = {}) {
   if (!text) return false;
   if (isMainProfileName(profile)) {
     return !/\s--profile=(?!main\b)[^\s"]+/i.test(` ${text}`)
-      && !text.includes('/squidrun-ui/');
+      && !text.includes('/squidrun-ui/')
+      && !text.includes('/ui/scripts/');
   }
   const normalizedProfile = normalizeForProcessMatch(profile);
   return text.includes(`--profile=${normalizedProfile}`)
@@ -390,6 +391,7 @@ function sourceHasInstanceMarker(source = {}, instanceConfig = {}) {
 
 function defaultLaunchCommand(projectRoot, instanceConfig, relaunchSource = null) {
   const appStatus = readJson(instanceConfig.appStatusPath, {});
+  const profile = getInstanceProfile(instanceConfig);
   if (hasLaunchCommand(instanceConfig.launchCommand)) {
     const cwd = instanceConfig.launchCommand?.cwd
       || appStatus?.settingsPersistence?.cwd
@@ -408,7 +410,11 @@ function defaultLaunchCommand(projectRoot, instanceConfig, relaunchSource = null
     };
   }
 
-  if (relaunchSource?.commandLine && sourceHasInstanceMarker(relaunchSource, instanceConfig)) {
+  if (
+    !isMainProfileName(profile)
+    && relaunchSource?.commandLine
+    && sourceHasInstanceMarker(relaunchSource, instanceConfig)
+  ) {
     const parsed = parseCommandLine(relaunchSource.commandLine);
     if (parsed?.command) {
       return {
@@ -425,7 +431,7 @@ function defaultLaunchCommand(projectRoot, instanceConfig, relaunchSource = null
     }
   }
 
-  if (!isMainProfileName(getInstanceProfile(instanceConfig))) {
+  if (!isMainProfileName(profile)) {
     const error = new Error('Missing instance-attributed launch command for side-profile relaunch');
     error.code = 'MISSING_INSTANCE_LAUNCH_CONTEXT';
     throw error;
@@ -554,6 +560,7 @@ function isPrimaryElectronProcess(row = {}, options = {}) {
   }
   if (commandLine.includes(' --type=')) return false;
   if (commandLine.includes('/modules/')) return false;
+  if (commandLine.includes('/ui/scripts/')) return false;
   if (commandLine.includes('--standalone-window') && !options.allowStandalone) return false;
   return true;
 }
