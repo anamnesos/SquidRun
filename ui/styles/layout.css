@@ -705,6 +705,7 @@ body.trustquote-workspace .workspace-hidden-pane {
 }
 
 /* Pane button tooltips — positioned below to avoid .pane overflow:hidden clipping */
+.pane-header-right > .pane-action-btn[data-tooltip]::after,
 .pane-actions [data-tooltip]::after,
 .lock-icon[data-tooltip]::after {
   bottom: auto;
@@ -713,11 +714,13 @@ body.trustquote-workspace .workspace-hidden-pane {
   z-index: calc(var(--z-tooltip) + 10);
 }
 
+.pane-header-right > .pane-action-btn[data-tooltip]:hover::after,
 .pane-actions [data-tooltip]:hover::after,
 .lock-icon[data-tooltip]:hover::after {
   transform: translateX(-50%) translateY(0);
 }
 
+.pane-header-right > .pane-action-btn[data-tooltip]::before,
 .pane-actions [data-tooltip]::before,
 .lock-icon[data-tooltip]::before {
   bottom: auto;
@@ -730,6 +733,7 @@ body.trustquote-workspace .workspace-hidden-pane {
   z-index: calc(var(--z-tooltip) + 10);
 }
 
+.pane-header-right > .pane-action-btn[data-tooltip]:hover::before,
 .pane-actions [data-tooltip]:hover::before,
 .lock-icon[data-tooltip]:hover::before {
   transform: translateX(-50%) translateY(2px);
