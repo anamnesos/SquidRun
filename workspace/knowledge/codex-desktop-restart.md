@@ -37,10 +37,12 @@ with an empty Codex inbox will sit there forever.
 
 ### How you know a restart really happened
 
-**Continuity is the proof.** A real restart spawns a brand-new Architect with **zero memory** of the prior
-conversation. So: if you still remember what you were doing before, the restart did **not** happen — you'd
-be a different, memory-less Architect if it had. Don't dig through logs to answer "did it restart"; the
-answer is in whether you remember.
+**Session evidence is the proof — NOT memory.** (Corrected S442: the old "if you still remember, it didn't
+restart" test became INVERTED when warm resume went production at S425/S426 — core panes now come back
+**remembering everything** via `--resume` pins.) Check `app-status.json`: a real restart shows the session
+number incremented and a fresh `started` timestamp, with `[resume]` spawn lines and one process per pane.
+If you remember the prior session AND the session number has NOT incremented, then the restart didn't
+happen. Never re-stage a restart that already worked — verify the session number first.
 
 ### Why there's no shortcut
 

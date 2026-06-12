@@ -86,9 +86,12 @@ that is the wrong box. James has had to explain this repeatedly; do not make him
   ```
 - After creating, verify `active_count` went to ≥1 so you KNOW it is queued (don't assume).
 
-**Restart proof = continuity test.** If you still remember the prior session's conversation, the restart did
-NOT happen — a real restart spawns a fresh Architect with no memory of it. Don't dig through logs to answer
-"did it restart"; you'd be a new Architect if it had.
+**Restart proof = session evidence, NOT memory.** (Corrected S442 by Oracle — the old "if you remember, it
+didn't restart" test is INVERTED since warm resume went production at S425/S426: core panes come back
+REMEMBERING everything via `--resume` pins.) Real proof a restart happened: `app-status.json` session number
+incremented + fresh `started` timestamp, `[resume]` spawn lines, one process per pane. If you remember the
+prior session AND the session number has NOT incremented, THEN the restart didn't happen. Do not re-stage a
+restart that already worked.
 
 **Why `coord/restart-request.json` still matters:** it is the staged record (HEAD, clean-tree, reason) that
 the executor/Codex reads as the source of truth for *what* to load. Keep it fresh (clean tree, real HEAD) AND
