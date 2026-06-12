@@ -20,6 +20,7 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
     childProcess.spawn.mockClear();
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-bidir-wake-runner-'));
     jest.doMock('../config', () => ({
+      ROLE_ID_MAP: { architect: '1', builder: '2', oracle: '3' },
       getProjectRoot: () => tempRoot,
       resolveCoordPath: (relPath) => path.join(
         tempRoot,
@@ -28,6 +29,7 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
           .replace(/^[/\\]+/, '')
           .replace(/[/\\]+/g, path.sep)
       ),
+      resolveWebSocketPortInfo: () => ({ port: 9900, source: 'test' }),
     }));
     moduleUnderTest = require('../scripts/hm-bidirectional-wake-watchdog');
   });
