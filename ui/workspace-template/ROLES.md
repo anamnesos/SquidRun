@@ -185,9 +185,9 @@ Use this order before any restart approval:
 
 1. Builder completes fixes and validation tests.
 2. Architect performs independent verification.
-3. Oracle performs restart-risk review (startup/state/artifact risks).
+3. Oracle performs restart-risk review (startup/state/artifact risks — including executor blast radius: every side-profile/standalone install with processes on this machine gets an explicit "unaffected by the kill phase" line item).
 4. Oracle performs documentation pass for session learnings and changed behavior (paths, session semantics, operational workflow).
 
-Restart is blocked until all four steps are complete.
+Restart is blocked until all four steps are complete. Post-restart verification must likewise confirm side-profile/standalone install processes survived the kill phase, not just the main install's own panes.
 
 For side-profile windows such as Eunbyeol, restart readiness also requires an automated scoped handshake before any live relaunch is treated as ready: the side Architect identifies profile/window/context, confirms it is not main SquidRun/trading context, confirms plain Builder/Oracle targets stay same-profile only, confirms the Architect-to-Architect diagnostic channel when needed, and completes a scoped send/receive test without main leakage or replay. The proof must come from a harness/test first; the user must not be asked to watch panes as the verifier.
