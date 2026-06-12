@@ -4353,6 +4353,23 @@ describe('SquidRunApp', () => {
       jest.useRealTimers();
     });
 
+    it('does not watchdog FYI-class messages even when they contain task-like words', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'oracle',
+        content: '[FYI] Context updated. Please check if local state changed; do not respond.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
     it('does not watchdog machine-readable consultation JSON payloads', () => {
       jest.useFakeTimers();
       const app = new SquidRunApp(mockAppContext, mockManagers);
@@ -4485,6 +4502,72 @@ describe('SquidRunApp', () => {
 
       jest.advanceTimersByTime(90 * 1000);
       expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it.each([
+      'accepted.unverified',
+      'submit_pending_input',
+      'accepted.daemon_pty_unverified',
+    ])('cancels the watchdog after %s delivery status', (deliveryStatus) => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: '[TASK] Fix the delivery pipeline.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      });
+      app.maybeResolveAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        deliveryAccepted: false,
+        deliveryStatus,
+      });
+
+      jest.advanceTimersByTime(90 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('suppresses a stale watchdog when a later target response has accepted daemon status', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      queryCommsJournalEntries.mockReturnValue([
+        {
+          messageId: 'm-builder-daemon-response',
+          senderRole: 'builder',
+          targetRole: 'architect',
+          channel: 'ws',
+          direction: 'outbound',
+          status: 'failed',
+          ackStatus: 'accepted.daemon_pty_unverified',
+          rawBody: '(BUILDER #8): I have this in hand.',
+          brokeredAtMs: new Date('2026-03-28T10:10:15').getTime(),
+          metadata: {
+            failureReason: 'accepted.daemon_pty_unverified',
+          },
+        },
+      ]);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-336';
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: '(ARCHITECT #12): TASK: startup-health bridge probe accuracy.',
+        sentAtMs: new Date('2026-03-28T10:10:00').getTime(),
+      });
+
+      jest.advanceTimersByTime(30 * 1000);
+
+      expect(spawn).not.toHaveBeenCalled();
+      expect(app.pendingAgentResponseWatchdogs.size).toBe(0);
 
       jest.useRealTimers();
     });

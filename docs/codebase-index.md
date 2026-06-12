@@ -71,7 +71,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/diagrams-reference.md` | doc | 16076 |
 | `docs/event-kernel-spec.md` | doc | 24652 |
 | `docs/Gasline Tankless Diagram 32 Lyell St.excalidraw` | doc | 97568 |
-| `docs/gate-census-2026-06-12.md` | doc | 24713 |
+| `docs/gate-census-2026-06-12.md` | doc | 25032 |
 | `docs/github-integration-spec.md` | doc | 6260 |
 | `docs/guide/install.md` | doc | 3205 |
 | `docs/guide/limitations.md` | doc | 4393 |
@@ -595,7 +595,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
 | `ui/__tests__/squid-room-surface.test.js` | test | 14236 |
-| `ui/__tests__/squidrun-app.test.js` | test | 407272 |
+| `ui/__tests__/squidrun-app.test.js` | test | 410077 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 2483 |
 | `ui/__tests__/state-handlers.test.js` | test | 8772 |
@@ -792,7 +792,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/logger.js` | source | 5157 |
 | `ui/modules/main/activity-manager.js` | source | 4478 |
 | `ui/modules/main/agent-pane-auto-recovery.js` | source | 25740 |
-| `ui/modules/main/agent-task-resolution.js` | source | 25576 |
+| `ui/modules/main/agent-task-resolution.js` | source | 27351 |
 | `ui/modules/main/app-context.js` | source | 2592 |
 | `ui/modules/main/app-control-service.js` | source | 18957 |
 | `ui/modules/main/arm-apply-queue.js` | source | 3377 |
@@ -827,7 +827,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/pty-output-filter.js` | source | 7793 |
 | `ui/modules/main/restart-continuity-resume-manifest.js` | source | 34903 |
 | `ui/modules/main/settings-manager.js` | source | 26444 |
-| `ui/modules/main/squidrun-app.js` | source | 547837 |
+| `ui/modules/main/squidrun-app.js` | source | 549193 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 3021 |
 | `ui/modules/main/telegram-reply-obligations.js` | source | 13086 |
 | `ui/modules/main/trustquote-arm-registry-seed.js` | source | 7307 |

@@ -757,10 +757,36 @@ function isExplicitAgentTaskRequest(content) {
   return /^(analy[sz]e|review|investigat(?:e|ion)?|check|verify|confirm|resend|reply|read|write|implement|fix|summari[sz]e|ask|send)\b/i.test(text);
 }
 
+const WATCHDOG_ACCEPTED_DELIVERY_STATUSES = new Set([
+  'accepted.unverified',
+  'accepted.daemon_pty_unverified',
+  'submit_pending_input',
+]);
+
+function normalizeWatchdogDeliveryStatus(value) {
+  return toNonEmptyString(value)?.toLowerCase() || '';
+}
+
+function isWatchdogAcceptedDeliveryStatus(value) {
+  return WATCHDOG_ACCEPTED_DELIVERY_STATUSES.has(normalizeWatchdogDeliveryStatus(value));
+}
+
+function isFyiClassAgentMessage(content) {
+  const text = stripLeadingAgentSequencePrefix(content);
+  if (!text) return false;
+  return (
+    /^\[FYI\](?:\s|$)/i.test(text)
+    || /^FYI\b\s*(?::|[\u2014\u2013-])?/i.test(text)
+    || /\btype\s*[:=]\s*['"]?FYI['"]?\b/i.test(text)
+    || /^\[SQUIDRUN SYNC\][\s\S]*\b\[FYI\]\b/i.test(text)
+  );
+}
+
 function shouldWatchdogAgentTask(content) {
   const text = toNonEmptyString(content);
   if (!text) return false;
   if (isStructuredConsultationReplyPayload(text)) return false;
+  if (isFyiClassAgentMessage(text)) return false;
   if (isAcknowledgementOnlyAgentUpdate(text)) return false;
   if (/\bno (further )?(acknowledg(e)?ment|reply) needed\b/i.test(text)) return false;
   if (/\bno reply needed\b/i.test(text)) return false;
@@ -5107,6 +5133,7 @@ class SquidRunApp {
                 senderRole: senderRoleForJournal,
                 targetRole: canonicalEnvelope.target?.role || targetRoleForJournal || String(paneId),
                 deliveryAccepted: result?.accepted !== false || result?.verified === true,
+                deliveryStatus: result?.status || null,
               });
               const payload = {
                 ok: Boolean(result?.verified),
@@ -7649,6 +7676,11 @@ class SquidRunApp {
         || status === 'acked'
         || metadata.deliveryAccepted === true
         || metadata.deliveryVerified === true
+        || isWatchdogAcceptedDeliveryStatus(status)
+        || isWatchdogAcceptedDeliveryStatus(ackStatus)
+        || isWatchdogAcceptedDeliveryStatus(metadata.finalOutcome)
+        || isWatchdogAcceptedDeliveryStatus(metadata.failureReason)
+        || isWatchdogAcceptedDeliveryStatus(metadata.reason)
         || ackStatus === 'delivered.verified'
       ) {
         return {
@@ -9634,7 +9666,9 @@ class SquidRunApp {
   }
 
   getCommsJournalFinalDeliveryState(result = {}) {
-    const accepted = result?.accepted === true || result?.verified === true;
+    const accepted = result?.accepted === true
+      || result?.verified === true
+      || isWatchdogAcceptedDeliveryStatus(result?.status);
     const verified = result?.verified === true;
     const ackStatus = toNonEmptyString(result?.status)
       || (verified ? 'delivered.verified' : (accepted ? 'accepted.unverified' : 'delivery_failed'));
@@ -9921,7 +9955,9 @@ class SquidRunApp {
       sentAtMs: entry.sentAtMs || 0,
       brokeredAtMs: entry.sentAtMs || 0,
     };
-    if (Array.isArray(rows) && rows.length > 0 && isAgentTaskResolvedByLaterSignal(taskRow, rows, -1)) {
+    if (Array.isArray(rows) && rows.length > 0 && isAgentTaskResolvedByLaterSignal(taskRow, rows, -1, {
+      acceptAcceptedDeliveryStatus: true,
+    })) {
       return {
         resolved: true,
         reason: 'comms_journal_later_resolution',
@@ -10104,10 +10140,16 @@ class SquidRunApp {
     };
   }
 
-  maybeResolveAgentResponseWatchdog({ senderRole = null, targetRole = null, deliveryAccepted = false } = {}) {
+  maybeResolveAgentResponseWatchdog({
+    senderRole = null,
+    targetRole = null,
+    deliveryAccepted = false,
+    deliveryStatus = null,
+    status = null,
+  } = {}) {
     const normalizedSenderRole = normalizeWatchdogAgentRole(senderRole);
     const normalizedTargetRole = normalizeWatchdogAgentRole(targetRole);
-    if (!deliveryAccepted) return false;
+    if (!deliveryAccepted && !isWatchdogAcceptedDeliveryStatus(deliveryStatus || status)) return false;
     if (!normalizedSenderRole || !normalizedTargetRole) return false;
     if (normalizedSenderRole === normalizedTargetRole) return false;
     return this.clearAgentResponseWatchdog(normalizedTargetRole, normalizedSenderRole);

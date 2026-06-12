@@ -17,6 +17,11 @@ const MIDLINE_CURRENT_SESSION_TASK_PATTERN = new RegExp(`\\bNEW\\s+CURRENT[-\\s]
 const CURRENT_LANE_PATTERN = new RegExp(`^(?:[-*]\\s*)?(?:CURRENT\\s+(?:LANE|PRIORITY|FOCUS)|ACTIVE\\s+LANE|FOCUS)${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
 const TASK_PATTERN = new RegExp(`^(?:[-*]\\s*)?TASK${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
 const OBJECTIVE_PATTERN = new RegExp(`^(?:[-*]\\s*)?OBJECTIVE${DIRECTIVE_SEPARATOR_PATTERN}(.+)$`, 'i');
+const ACCEPTED_DELIVERY_STATUSES = new Set([
+  'accepted.unverified',
+  'accepted.daemon_pty_unverified',
+  'submit_pending_input',
+]);
 const OBJECTIVE_OVERLAP_STOP_WORDS = new Set([
   'action',
   'active',
@@ -57,6 +62,33 @@ function toOptionalString(value, fallback = null) {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
   return text ? text : fallback;
+}
+
+function normalizeDeliveryStatus(value) {
+  return toOptionalString(value, '')?.toLowerCase() || '';
+}
+
+function rowHasAcceptedDeliveryStatus(row = {}) {
+  const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  if (metadata.deliveryAccepted === true || metadata.deliveryVerified === true) return true;
+  const candidates = [
+    row.status,
+    row.ackStatus,
+    row.ack_status,
+    row.errorCode,
+    row.error_code,
+    metadata.status,
+    metadata.ackStatus,
+    metadata.ack_status,
+    metadata.finalOutcome,
+    metadata.final_outcome,
+    metadata.failureReason,
+    metadata.failure_reason,
+    metadata.reason,
+    metadata.errorCode,
+    metadata.error_code,
+  ];
+  return candidates.some((candidate) => ACCEPTED_DELIVERY_STATUSES.has(normalizeDeliveryStatus(candidate)));
 }
 
 function normalizeAgentRole(value) {
@@ -224,14 +256,28 @@ function isAgentTaskResolvedByLaterSignal(taskRow = {}, rows = [], startIndex = 
 
   const taskTs = toEventTsMs(taskRow);
   const begin = Number.isInteger(startIndex) && startIndex >= 0 ? startIndex + 1 : 0;
+  const acceptAcceptedDeliveryStatus = options.acceptAcceptedDeliveryStatus === true;
   for (let index = begin; index < rows.length; index += 1) {
     const candidate = rows[index];
     if (!candidate || candidate === taskRow) continue;
     if (Number.isFinite(taskTs) && taskTs > 0 && toEventTsMs(candidate) < taskTs) continue;
+    if (acceptAcceptedDeliveryStatus && isLaterAcceptedDeliveryResponseRow(taskRow, candidate)) return true;
     if (isLaterAgentClosureRow(taskRow, candidate, options)) return true;
     if (isLaterObjectiveCloseoutRow(taskRow, candidate)) return true;
   }
   return false;
+}
+
+function isLaterAcceptedDeliveryResponseRow(taskRow = {}, candidateRow = {}) {
+  if (!rowHasAcceptedDeliveryStatus(candidateRow)) return false;
+  const taskSender = normalizeAgentRole(taskRow?.senderRole);
+  const taskTarget = normalizeAgentRole(taskRow?.targetRole);
+  const candidateSender = normalizeAgentRole(candidateRow?.senderRole);
+  const candidateTarget = normalizeAgentRole(candidateRow?.targetRole);
+  if (!taskSender || !taskTarget || !candidateSender) return false;
+  if (candidateSender !== taskTarget) return false;
+  if (candidateTarget && candidateTarget !== taskSender) return false;
+  return true;
 }
 
 function stripAgentPrefix(line = '') {
