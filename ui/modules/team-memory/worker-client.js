@@ -98,6 +98,17 @@ function quarantineWorker(worker, reason = 'unresponsive') {
   }
 }
 
+function drainWorkerStream(stream) {
+  if (!stream) return;
+  if (typeof stream.resume === 'function') {
+    stream.resume();
+    return;
+  }
+  if (typeof stream.on === 'function') {
+    stream.on('data', () => {});
+  }
+}
+
 function handleWorkerMessage(worker, msg) {
   if (!msg || typeof msg !== 'object') return;
   if (msg.type !== 'response' || !msg.reqId) return;
@@ -122,6 +133,11 @@ function handleWorkerMessage(worker, msg) {
 }
 
 function attachWorkerListeners(worker) {
+  // Packaged GUI parents do not provide reliable inherited stdio handles.
+  // Keep the worker pipes drained so child logging cannot break the process.
+  drainWorkerStream(worker.stdout);
+  drainWorkerStream(worker.stderr);
+
   worker.on('message', (msg) => handleWorkerMessage(worker, msg));
 
   worker.on('error', (err) => {
@@ -151,6 +167,7 @@ function ensureWorkerProcess() {
 
   clearIdleCloseTimer();
   const worker = fork(WORKER_PATH, [], buildNodeWorkerForkOptions({
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     env: {
       ...process.env,
       SQUIDRUN_TEAM_MEMORY_WORKER: '1',
