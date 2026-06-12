@@ -107,6 +107,14 @@ starts the helper instead of the app. The process selector must also reject Elec
 helpers as primary app targets. Regression command for this script-level test file:
 `npm --prefix ui test -- --roots scripts --runTestsByPath scripts/hm-restart-execute.test.js --runInBand`.
 
+**Codex attention poller heartbeat alarm (S443):** Codex Desktop now writes
+`.squidrun/runtime/codex-attention-bridge/poller-heartbeat.json` during its attention-poller cycle. Startup
+health reads that file and emits `codex_attention_poller_heartbeat_stale` when an existing heartbeat is stale
+or unreadable. Default threshold is 15 minutes, overrideable with
+`SQUIDRUN_CODEX_ATTENTION_POLLER_HEARTBEAT_STALE_MS` or
+`--codex-attention-poller-heartbeat-stale-ms=<ms>`. This is the tripwire for "the restart hand is absent":
+do not use retired `.squidrun/coord/codex-heartbeat.json` for this.
+
 **S400/S405 Codex Desktop cleanup boundary** (S405 split-verdict after 3-way consensus — Oracle over-deletion, Codex `.codex/automations` check, Architect in-repo grep). Keep the live/current surfaces only:
 - `.squidrun/runtime/codex-attention-bridge` — **VERIFIED LIVE** restart + coordination path (`watch-codex-attention-requests`). This is the one that matters.
 - `.squidrun/runtime/codex-desktop-capability-status-v0.json`
