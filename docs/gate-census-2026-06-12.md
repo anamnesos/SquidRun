@@ -181,6 +181,8 @@ Four rules, S298-derived: (1) default HARD-DELETE for regenerable caches, retire
 
 *(Related docs fix shipped with this entry: packaged-install boot signals — a packaged main process writes nothing to app.log; verification guidance added to workspace/knowledge/codex-desktop-restart.md.)*
 
+**G6c. Boot-stall fix — EXECUTED 7f8bfed6.** The stall itself (SquidRunApp init could await daemon/supervisor connects that never settle, before the timeout was armed — boot hangs silently short of app-status/session writes): fix pre-arms the timeout and races `initDaemonClient`/`ensureSupervisorDaemonRunning`, so a non-settling connect fails LOUDLY and init always reaches the app-status write. No watcher cadence/regex changes (G6a stays an open next-pass audit). 268/268 squidrun-app tests. Census-relevant shape: a silent infinite await is the consumer-liveness failure (G2) inside our own boot path — same class, now with the same fail-loud remedy.
+
 ---
 
 ## Updated queues (v2)
