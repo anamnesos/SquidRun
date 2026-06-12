@@ -89,7 +89,7 @@ Freshness audit of `.squidrun/runtime/` artifacts, 2026-06-12:
 ### E1. Mira Lab core (lab-replies, verify-bootstrap, lab-surface) — **KEEP for now**
 Demonstrably alive this morning. Owned by the presence-runtime acceptance lane (docs/mira-presence-runtime-acceptance-v0.md). Not a census kill; any change routes through that lane's owner.
 
-### E2. May fossils (self-direction, curriculum, initiatives, direct-routes, event-queue, proofs) — **KILL-CANDIDATE (feature-level, Architect arbitrates)**
+### E2. May fossils (self-direction, curriculum, initiatives, direct-routes, event-queue, proofs) — **SUPERSEDED — see G1 (v2 correction). Original verdict below was WRONG; kept for the record.**
 Live code references exist (scheduler.js, mira-lab-surface.js, mira-source-action-substrate.js, hm-mira-self-direction.js) but zero artifact writes in a month — the features stopped running, the code remains. This matches James's "some unused anymore, like Mira Lab" verbatim. Kill = code + artifacts together per no-orphan rule; that's a feature decision above Oracle's pay grade. *Recommendation: kill the self-direction/curriculum/initiative loops unless Architect knows a planned revival; they were superseded by the what-now evidence bundle (cdc180ff) and the presence lane.*
 
 ### E3. Unbounded JSONL growth (curiosity 67MB, input-shadow 39MB, lab-replies 2.3MB) — **FIX**
@@ -118,3 +118,50 @@ All have live writers and real purposes (input-shadow backs lost-input recovery,
 3. E3 rotation caps; E4 artifact deletion on Architect's sign-off.
 
 *Census v1 by Oracle, session 442. NEEDS-CHECK items (B5, C3) roll to the next pass.*
+
+---
+
+# Census v2 addenda — Session 443 (2026-06-12, post-restart)
+
+Restart fired 16:04:16Z onto HEAD 40eb1e0f (session 442→443, warm resume on all three core panes). The arrival eval contract PASSED — details in G4. These addenda record what the restart itself taught, plus the correction the census owes its own E section.
+
+## G1. E2 CORRECTION — the census's own exhibit
+
+**Census v1's E2 verdict was wrong, and the error is a gate-census lesson in itself**: I built a kill list from artifact mtimes without consulting `docs/mira-system-map.md` — a maintained disposition registry that already PARKs most of those families by design. The map guard even runs in pre-commit (gate 7) and had passed twice that night without anyone asking what it guarded.
+
+Corrected classification (evidence pass, S442 night, read-only):
+- **Bucket 1 — PARKED BY DESIGN, not kill candidates (code stays)**: self-direction + curiosity family (map: TRANSITION/PARK), curriculum-skills / active-initiatives / direct-routes (written by `mira-lab-surface.js`, the map's LIVE workhorse — killing them is feature surgery on live code, not fossil sweeping), voice transport (TRANSITION/PARK with heartbeat-gated semantics), event-queue + pending-intents (LEGACY/PARK-UNTIL-BRIDGE-PARITY — explicit unmet deletion precondition). Nuance: curiosity-bursts/items are still being written (June 11) even while the initiative loop is parked.
+- **Bucket 2 — GENUINELY UNCHARTED, the entire remaining kill surface (label-or-kill, morning queue)**: `transcript-index.jsonl` (28MB, dead since May 9, module wired in squidrun-app.js, zero map coverage) and `oracle-watch-promotion-decisions.jsonl` (9.3MB, dead since May 1, written by the live watcher, zero map coverage). Either each gets a map row with a park reason, or it dies code+artifact per no-orphan.
+- **Bucket 3 — unaffected**: retention/rotation (E3) and archival of parked-lane dead artifacts proceed regardless.
+
+**New census method rule (binding on all future verdicts): no kill-candidate verdict without first checking for an owning contract/map/registry row.** Artifact age tells you a lane is quiet; only the disposition registry tells you whether quiet is *parked* or *abandoned*.
+
+## G2. Consumer-liveness — a missing gate class
+
+The restart staged at 02:34 could never have fired: **Codex Desktop — the system's only restart hand — was not running, and its poller had been dead for DAYS** (June 7-8 items rotting in its inbox). The "6 codex processes" in capability status were npm CLI binaries, i.e. our own arms. Two instruments had already said so — `process_available_not_monitored` and `active_requests_index_stale` — and neither was a tripwire; both were diary entries nobody read as "your restart trigger has no consumer."
+
+Compounding: the npm shim summon route (`codex app <path>`) **fails silently** (exit 0, no app). The working route is the MSIX shell: `Start-Process shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App`. And even with the app visibly up 12+ minutes, automation did not auto-run on launch — the restart waited for James's one-action morning step.
+
+**Verdict: new KEEP-class gate — consumer-liveness checks on every queue assumed to be draining.** First instance already in flight: Codex Desktop now writes `.squidrun/runtime/codex-attention-bridge/poller-heartbeat.json`; supervisor alarms on staleness (Builder queue). Generalization: any `*-inbox`/`*-queue`/`*-requests` artifact with a status like `requested` must have a freshness check on its *consumer*, not just its content.
+
+## G3. Watchdog response-expectation false positives
+
+The 3am watchdog's failure class, named: (a) it treats `[FYI]`-grade messages as tasks that owe a response, and (b) it reads delivery-status `failed` rows produced by the OLD strict verifier — rows that were false negatives all along (the busy-pane bug, C1). Both inputs manufacture phantom non-responsiveness. **Verdict: FIX — tune to the new status vocabulary (`accepted.unverified`, `submit_pending_input`) and exempt FYI-class messages from response expectation.** Tuning was gated on the arrival eval confirming the new statuses; that gate cleared (G4). Builder queue item 5.
+
+## G4. Arrival eval contract — PASS (the C1/D2 fixes are live-proven)
+
+Run as first action post-restart, per contract: (1) busy-pane probe EVAL-PROBE-443-A → Builder counted **exactly 1 visible copy**, queued cleanly mid-fix; every inbound this session arrived single-copy vs. last night's universal duplicates. (2) `accepted.unverified` ack (attempt 1, no retry) → **no trigger fallback written, pending-deliveries untouched**. (3) `submit_pending_input` not field-induced (jamming a composer crosses actor routing); fail-closed path test-covered in 313c4449; watch instruction stands — first natural occurrence, check triggers/ + target pane. (4) Mira Lab verifier 4/4 on independent re-run (one uncaptured 3/4 flake ~6 min after boot, bracketed by two clean runs — watch-item: capture JSON if it recurs). (5) paneHost block current: degraded=false, boot-stamped lastCheckedAt — **the immortal fossil block (D2) is gone; C1's mode-off clean-block write works on the real startup path.**
+
+## G5. hm-restart-execute launch-target defect (executor's exhibit)
+
+From Codex Desktop's executor run: `hm-restart-execute`'s default launch path started `electron.exe hm-bidirectional-wake-watchdog.js` — the wake-watchdog helper — instead of the main app; the executor had to kill the helper and launch via `npm start` manually. The restart still proved PASS, but only because the executor improvised. **Verdict: FIX (Builder queue item 1) — FIXED at a7b9ce7e, session 443.** Census note: the restart path had never been exercised end-to-end by the actual executor before tonight; live-fire found in one run what no review had.
+
+---
+
+## Updated queues (v2)
+
+**Architect arbitration**: B1 LOOK-lane scope (approved S442) · Bucket-2 label-or-kill sign-off · E4 artifact deletion sign-off (Bucket 1/3 framing now applies).
+**Builder execution**: ~~restart-execute launch target~~ (a7b9ce7e) · poller-heartbeat supervisor alarm (in flight) · A1+A3 demotion · B1 LOOK-lane exemption · E3 rotation caps · G3 watchdog tuning (now unblocked).
+**Oracle next pass**: B5 + C3 consumers · archival policy proposal for parked-lane dead artifacts · `submit_pending_input` field watch.
+
+*Census v2 by Oracle, session 443.*
