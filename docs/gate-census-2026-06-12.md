@@ -93,7 +93,7 @@ Demonstrably alive this morning. Owned by the presence-runtime acceptance lane (
 Live code references exist (scheduler.js, mira-lab-surface.js, mira-source-action-substrate.js, hm-mira-self-direction.js) but zero artifact writes in a month — the features stopped running, the code remains. This matches James's "some unused anymore, like Mira Lab" verbatim. Kill = code + artifacts together per no-orphan rule; that's a feature decision above Oracle's pay grade. *Recommendation: kill the self-direction/curriculum/initiative loops unless Architect knows a planned revival; they were superseded by the what-now evidence bundle (cdc180ff) and the presence lane.*
 
 ### E3. Unbounded JSONL growth (curiosity 67MB, input-shadow 39MB, lab-replies 2.3MB) — **FIX**
-All have live writers and real purposes (input-shadow backs lost-input recovery, documented in workspace/knowledge/recovering-lost-user-input.md). None have rotation. 145MB+ of append-only JSONL on a runtime dir is a slow-motion liability. *Verdict: retention/rotation cap, Builder-sized, not urgent.*
+All have live writers and real purposes (input-shadow backs lost-input recovery, documented in workspace/knowledge/recovering-lost-user-input.md). None have rotation. 145MB+ of append-only JSONL on a runtime dir is a slow-motion liability. *Verdict: retention/rotation cap, Builder-sized, not urgent.* **EXECUTED 06e92146**: shared bounded JSONL rotation; 10MB×3 caps on Mira lab-reply and curiosity logs; 64MB×7 on user-input-shadow because its consumer (lost-input recovery) needs a multi-day tail — consumer-aware caps, per the H3-rule-2 discipline (oldest segment deleted with count/reason, no hoarding). Map + codebase-index updated in-commit.
 
 ### E4. Dead diagnostics (voice-diagnostics 39MB, transcript-index 28MB, oracle-watch-promotions 9.3MB) — **KILL-CANDIDATE (artifacts), NEEDS-CHECK (code)**
 ~76MB of month-dead logs. Artifact deletion is low-risk; whether the writing code dies too depends on the voice-lane and transcript-index feature decisions. *Recommendation: delete artifacts now, decide code at the feature level.*
@@ -175,8 +175,8 @@ Four rules, S298-derived: (1) default HARD-DELETE for regenerable caches, retire
 
 ## Updated queues (v2)
 
-**EXECUTED (session 443, all Architect-approved)**: restart-execute launch target (a7b9ce7e) · A1 permission-ask demotion + A3 coworker-lint demotion + B1 LOOK-lane exemption (e2a777d1, field-proven) · H1 transcript-index kill (a8b768d3) · E4 deletion batch (c5edb8c4, 41 files / ~51MB).
-**Builder remaining**: poller-heartbeat supervisor alarm (in flight) · E3 rotation caps (rotated-out segments deleted, not hoarded, per H3 rule 2) · G3 watchdog tuning incl. `accepted.daemon_pty_unverified` in the accepted set · B2 briefing format pass (not urgent) · D1 scoped-invalidation spec (filed).
+**EXECUTED (session 443, all Architect-approved)**: restart-execute launch target (a7b9ce7e) · A1 permission-ask demotion + A3 coworker-lint demotion + B1 LOOK-lane exemption (e2a777d1, field-proven) · H1 transcript-index kill (a8b768d3) · E4 deletion batch (c5edb8c4, 41 files / ~51MB) · E3 rotation caps (06e92146, consumer-aware).
+**Builder remaining**: poller-heartbeat supervisor alarm (in flight) · G3 watchdog tuning incl. `accepted.daemon_pty_unverified` in the accepted set · B2 briefing format pass (not urgent) · D1 scoped-invalidation spec (filed).
 **Oracle next pass**: B5 + C3 consumers · `submit_pending_input` field watch (standing) · Mira Lab verifier 3/4-flake watch (capture JSON if it recurs).
 
 *Census v1 by Oracle S442; v2 addenda + H dispositions S443; v3 execution fold S443. Terminal-state standard (Architect #31): every verdict ends kept-with-reason, fixed-and-proven, or killed-with-inventory.*
