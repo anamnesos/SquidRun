@@ -86,6 +86,8 @@ describe('DaemonClient', () => {
         daemonEnv: {
           ELECTRON_RUN_AS_NODE: 'stale',
           Electron_Run_As_Node: 'stale-case-variant',
+          SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\Eunbyeol',
+          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Eunbyeol',
         },
       });
 
@@ -97,6 +99,8 @@ describe('DaemonClient', () => {
         expect.objectContaining({
           env: expect.objectContaining({
             SQUIDRUN_PROFILE: 'trustquote',
+            SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\Eunbyeol',
+            SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Eunbyeol',
             ELECTRON_RUN_AS_NODE: '1',
           }),
         })

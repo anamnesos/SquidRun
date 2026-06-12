@@ -52,6 +52,7 @@ const liveTaskAuditSidecarWindowModule = require('./live-task-audit-sidecar-wind
 const { resolveRuntimeInt } = require('../runtime-config');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const TELEGRAM_PENDING_REPLAY_GRACE_MS = 10 * 60 * 1000;
+const ROOT_COHERENCE_MARKER_RELPATH = path.join('runtime', 'root-coherence-assert.jsonl');
 
 // Import sub-modules
 const triggers = require('../triggers');
@@ -582,6 +583,20 @@ function toNonEmptyString(value) {
   if (value === null || value === undefined) return null;
   const normalized = String(value).trim();
   return normalized || null;
+}
+
+function normalizeRootForCompare(value) {
+  const normalized = toNonEmptyString(value);
+  if (!normalized) return null;
+  return path.resolve(normalized).replace(/[\\/]+$/, '').toLowerCase();
+}
+
+function rootContainsPath(root, targetPath) {
+  const rootText = toNonEmptyString(root);
+  const targetText = toNonEmptyString(targetPath);
+  if (!rootText || !targetText) return false;
+  const relative = path.relative(path.resolve(rootText), path.resolve(targetText));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 // Matches CSI sequences (ESC [ ... cmd), OSC strings (ESC ] ... BEL/ST), and
@@ -3708,6 +3723,164 @@ class SquidRunApp {
     return resolveCoordPath(path.join('runtime', 'boot-sequence.jsonl'), { forWrite: true });
   }
 
+  getRootCoherenceMarkerPaths(expectedRoot = null) {
+    const paths = [];
+    const root = toNonEmptyString(expectedRoot);
+    if (root) {
+      paths.push(path.join(path.resolve(root), '.squidrun', ROOT_COHERENCE_MARKER_RELPATH));
+    }
+    try {
+      paths.push(resolveCoordPath(ROOT_COHERENCE_MARKER_RELPATH, { forWrite: true }));
+    } catch {
+      // If coord resolution is the broken part, the manifest-root marker above remains.
+    }
+    return Array.from(new Set(paths.map((entry) => path.resolve(entry))));
+  }
+
+  appendRootCoherenceMarker(payload = {}) {
+    const expectedRoot = payload.expectedRoot || this.installedDeployment?.dataRoot || null;
+    const marker = {
+      schema: 'squidrun.root_coherence_assert.v1',
+      t: Date.now(),
+      iso: new Date().toISOString(),
+      pid: process.pid,
+      bootSequenceId: this.bootSequenceId || null,
+      ...payload,
+    };
+    try {
+      process.stderr.write(
+        `[ROOT COHERENCE] ${marker.iso} ${marker.reason || 'root_coherence_mismatch'}\n`
+      );
+    } catch {
+      // stderr is best effort only.
+    }
+    for (const markerPath of this.getRootCoherenceMarkerPaths(expectedRoot)) {
+      try {
+        fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+        fs.appendFileSync(markerPath, `${JSON.stringify(marker)}\n`, 'utf8');
+      } catch {
+        // Diagnostic fallback must not hide the original mismatch.
+      }
+    }
+    return marker;
+  }
+
+  writeRootCoherenceDegradedStatus(payload = {}) {
+    const expectedRoot = payload.expectedRoot || this.installedDeployment?.dataRoot || null;
+    const statusPatch = {
+      boot: {
+        sequenceId: this.bootSequenceId || null,
+        stage: 'root_coherence_failed',
+        reason: payload.reason || 'root_coherence_mismatch',
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    const candidatePaths = [
+      expectedRoot ? path.join(path.resolve(expectedRoot), '.squidrun', 'app-status.json') : null,
+      payload.appStatusPath || null,
+    ].filter(Boolean);
+    for (const appStatusPath of Array.from(new Set(candidatePaths.map((entry) => path.resolve(entry))))) {
+      try {
+        let existing = {};
+        if (fs.existsSync(appStatusPath)) {
+          const parsed = JSON.parse(fs.readFileSync(appStatusPath, 'utf8'));
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            existing = parsed;
+          }
+        }
+        const next = {
+          ...existing,
+          boot: {
+            ...(existing.boot && typeof existing.boot === 'object' ? existing.boot : {}),
+            ...statusPatch.boot,
+          },
+        };
+        fs.mkdirSync(path.dirname(appStatusPath), { recursive: true });
+        fs.writeFileSync(appStatusPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+      } catch {
+        // Best effort; the sync marker is the authoritative failure evidence.
+      }
+    }
+  }
+
+  resolveRootCoherencePaths() {
+    const websocketPortInfo = resolveWebSocketPortInfo({
+      env: process.env,
+      profileName: this.activeProfileName || getActiveProfileName(),
+    });
+    const settingsPath = websocketPortInfo?.settingsPath
+      || (this.installedDeployment?.dataRoot
+        ? path.join(this.installedDeployment.dataRoot, '.squidrun', 'settings', 'websocket.json')
+        : null);
+    const runtimePath = resolveCoordPath('runtime', { forWrite: true });
+    const crumbPath = this.getBootSequencePath();
+    const appStatusPath = typeof this.settings?.resolveAppStatusPath === 'function'
+      ? this.settings.resolveAppStatusPath()
+      : resolveCoordPath('app-status.json', { forWrite: true });
+    return {
+      settingsPath,
+      runtimePath,
+      crumbPath,
+      appStatusPath,
+      websocketPortInfo,
+    };
+  }
+
+  assertRootCoherenceAtBoot() {
+    if (this.installedDeployment?.active !== true) {
+      return { ok: true, skipped: true, reason: 'not_installed_deployment' };
+    }
+    const expectedRoot = this.installedDeployment?.dataRoot
+      ? path.resolve(this.installedDeployment.dataRoot)
+      : null;
+    if (!expectedRoot) {
+      return { ok: true, skipped: true, reason: 'missing_installed_data_root' };
+    }
+    const paths = this.resolveRootCoherencePaths();
+    const checks = {
+      settingsPath: paths.settingsPath,
+      runtimePath: paths.runtimePath,
+      crumbPath: paths.crumbPath,
+      appStatusPath: paths.appStatusPath,
+    };
+    const mismatches = Object.entries(checks)
+      .filter(([, targetPath]) => !rootContainsPath(expectedRoot, targetPath))
+      .map(([name, targetPath]) => ({
+        name,
+        path: targetPath || null,
+        normalizedRoot: normalizeRootForCompare(targetPath ? path.dirname(targetPath) : null),
+      }));
+    if (mismatches.length === 0) {
+      this.appendBootSequenceBreadcrumb('root-coherence:ok', {
+        expectedRoot,
+        settingsSource: paths.websocketPortInfo?.source || null,
+      });
+      return {
+        ok: true,
+        expectedRoot,
+        paths: checks,
+      };
+    }
+
+    const reason = 'root_coherence_mismatch';
+    const payload = {
+      ok: false,
+      reason,
+      expectedRoot,
+      source: this.installedDeployment?.source || null,
+      paths: checks,
+      mismatches,
+      settingsSource: paths.websocketPortInfo?.source || null,
+    };
+    this.appendBootSequenceBreadcrumb('root-coherence:failed', payload);
+    this.appendRootCoherenceMarker(payload);
+    this.writeRootCoherenceDegradedStatus({
+      ...payload,
+      appStatusPath: paths.appStatusPath,
+    });
+    throw new Error(`Root coherence assertion failed: ${mismatches.map((entry) => entry.name).join(', ')}`);
+  }
+
   appendBootSequenceBreadcrumb(step, details = {}) {
     const stepName = String(step || '').trim();
     if (!stepName) return false;
@@ -4396,6 +4569,7 @@ class SquidRunApp {
     this.appendBootSequenceBreadcrumb('init:start');
 
     // 1. Load settings
+    this.assertRootCoherenceAtBoot();
     this.appendBootSequenceBreadcrumb('init:step-1:load-settings');
     this.settings.loadSettings();
 

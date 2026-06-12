@@ -10,6 +10,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const config = require('../config');
 const { resolveRuntimeInt } = require('../modules/runtime-config');
 
 jest.mock('child_process', () => {
@@ -709,6 +710,48 @@ describe('SquidRunApp', () => {
 
       expect(app.cliIdentityForwarderRegistered).toBe(false);
       expect(app.triggerAckForwarderRegistered).toBe(false);
+    });
+
+    it('fails loud when packaged root resolution disagrees with the manifest data root', () => {
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-root-coherent-data-'));
+      const heuristicRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-root-coherent-wrong-'));
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.installedDeployment = {
+          active: true,
+          dataRoot,
+          source: path.join(dataRoot, 'squidrun-install.json'),
+        };
+        const markerPath = path.join(dataRoot, '.squidrun', 'runtime', 'root-coherence-assert.jsonl');
+        app.getRootCoherenceMarkerPaths = jest.fn(() => [markerPath]);
+        app.getBootSequencePath = jest.fn(() => path.join(heuristicRoot, '.squidrun', 'runtime', 'boot-sequence.jsonl'));
+        app.resolveRootCoherencePaths = jest.fn(() => ({
+          settingsPath: path.join(dataRoot, '.squidrun', 'settings', 'websocket.json'),
+          runtimePath: path.join(heuristicRoot, '.squidrun', 'runtime'),
+          crumbPath: path.join(heuristicRoot, '.squidrun', 'runtime', 'boot-sequence.jsonl'),
+          appStatusPath: path.join(heuristicRoot, '.squidrun', 'app-status.json'),
+          websocketPortInfo: {
+            source: `settings:${path.join(dataRoot, '.squidrun', 'settings', 'websocket.json')}:port`,
+          },
+        }));
+
+        expect(() => app.assertRootCoherenceAtBoot()).toThrow(/Root coherence assertion failed/);
+
+        const marker = fs.readFileSync(markerPath, 'utf8');
+        expect(marker).toContain('"reason":"root_coherence_mismatch"');
+        expect(marker).toContain('runtimePath');
+        const dataRootStatus = JSON.parse(fs.readFileSync(
+          path.join(dataRoot, '.squidrun', 'app-status.json'),
+          'utf8'
+        ));
+        expect(dataRootStatus.boot).toEqual(expect.objectContaining({
+          stage: 'root_coherence_failed',
+          reason: 'root_coherence_mismatch',
+        }));
+      } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+        fs.rmSync(heuristicRoot, { recursive: true, force: true });
+      }
     });
 
     it('includes Squid Room arm panes in hidden pane host coverage when enabled', () => {
@@ -4022,6 +4065,7 @@ describe('SquidRunApp', () => {
     it('starts websocket runtime on installed data-root configured port', async () => {
       const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
       const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const previousProjectRoot = config.getProjectRoot();
       const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-app-ws-root-'));
       const settingsDir = path.join(dataRoot, '.squidrun', 'settings');
 
@@ -4034,9 +4078,19 @@ describe('SquidRunApp', () => {
         );
         process.env.SQUIDRUN_DATA_ROOT = dataRoot;
         process.env.SQUIDRUN_PROFILE = 'main';
+        config.setProjectRoot(dataRoot);
 
         const app = new SquidRunApp(mockAppContext, mockManagers);
         const websocketServer = require('../modules/websocket-server');
+        jest.spyOn(app, 'resolveRootCoherencePaths').mockReturnValue({
+          settingsPath: path.join(dataRoot, '.squidrun', 'settings', 'websocket.json'),
+          runtimePath: path.join(dataRoot, '.squidrun', 'runtime'),
+          crumbPath: path.join(dataRoot, '.squidrun', 'runtime', 'boot-sequence.jsonl'),
+          appStatusPath: path.join(dataRoot, '.squidrun', 'app-status.json'),
+          websocketPortInfo: {
+            source: `settings:${path.join(dataRoot, '.squidrun', 'settings', 'websocket.json')}:port`,
+          },
+        });
 
         app.initDaemonClient = jest.fn().mockResolvedValue();
         app.createWindow = jest.fn().mockResolvedValue();
@@ -4070,6 +4124,7 @@ describe('SquidRunApp', () => {
         } else {
           process.env.SQUIDRUN_PROFILE = previousProfile;
         }
+        config.setProjectRoot(previousProjectRoot);
         fs.rmSync(dataRoot, { recursive: true, force: true });
       }
     });

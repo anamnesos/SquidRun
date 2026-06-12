@@ -71,7 +71,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/diagrams-reference.md` | doc | 16076 |
 | `docs/event-kernel-spec.md` | doc | 24652 |
 | `docs/Gasline Tankless Diagram 32 Lyell St.excalidraw` | doc | 97568 |
-| `docs/gate-census-2026-06-12.md` | doc | 28170 |
+| `docs/gate-census-2026-06-12.md` | doc | 33599 |
 | `docs/github-integration-spec.md` | doc | 6260 |
 | `docs/guide/install.md` | doc | 3205 |
 | `docs/guide/limitations.md` | doc | 4393 |
@@ -284,7 +284,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/cross-device-target.test.js` | test | 2891 |
 | `ui/__tests__/daemon-handlers.test.js` | test | 54920 |
 | `ui/__tests__/daemon-snapshot.test.js` | test | 2336 |
-| `ui/__tests__/daemon.test.js` | test | 19932 |
+| `ui/__tests__/daemon.test.js` | test | 20166 |
 | `ui/__tests__/debug-replay-handlers.test.js` | test | 28695 |
 | `ui/__tests__/device-pairing-handlers.test.js` | test | 1603 |
 | `ui/__tests__/diagnostic-log.test.js` | test | 3548 |
@@ -352,7 +352,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/helpers/real-config.js` | test | 2090 |
 | `ui/__tests__/hm-app.test.js` | test | 1051 |
 | `ui/__tests__/hm-bg.test.js` | test | 1886 |
-| `ui/__tests__/hm-bidirectional-wake-watchdog-runner.test.js` | test | 9652 |
+| `ui/__tests__/hm-bidirectional-wake-watchdog-runner.test.js` | test | 9790 |
 | `ui/__tests__/hm-claim-cli-e2e.test.js` | test | 5315 |
 | `ui/__tests__/hm-codebase-index.test.js` | test | 2391 |
 | `ui/__tests__/hm-comms-liveness-guard.test.js` | test | 19224 |
@@ -595,7 +595,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
 | `ui/__tests__/squid-room-surface.test.js` | test | 14236 |
-| `ui/__tests__/squidrun-app.test.js` | test | 426065 |
+| `ui/__tests__/squidrun-app.test.js` | test | 428920 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 2483 |
 | `ui/__tests__/state-handlers.test.js` | test | 8772 |
@@ -827,7 +827,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/pty-output-filter.js` | source | 7793 |
 | `ui/modules/main/restart-continuity-resume-manifest.js` | source | 34903 |
 | `ui/modules/main/settings-manager.js` | source | 26444 |
-| `ui/modules/main/squidrun-app.js` | source | 567325 |
+| `ui/modules/main/squidrun-app.js` | source | 573632 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 3021 |
 | `ui/modules/main/telegram-reply-obligations.js` | source | 13086 |
 | `ui/modules/main/trustquote-arm-registry-seed.js` | source | 7307 |
