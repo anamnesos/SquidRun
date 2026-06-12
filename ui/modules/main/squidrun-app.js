@@ -789,6 +789,11 @@ function isScopedTelegramTerminalAcceptedStatus(value) {
   return SCOPED_TELEGRAM_TERMINAL_ACCEPTED_STATUSES.has(normalizeWatchdogDeliveryStatus(value));
 }
 
+function isTerminalAcceptedDeliveryResult(result) {
+  return result?.accepted === true
+    && WATCHDOG_ACCEPTED_DELIVERY_STATUSES.has(normalizeWatchdogDeliveryStatus(result?.status));
+}
+
 function isFyiClassAgentMessage(content) {
   const text = stripLeadingAgentSequencePrefix(content);
   if (!text) return false;
@@ -8508,7 +8513,7 @@ class SquidRunApp {
           item.fromRole || null,
           { traceContext: item.traceContext || null, awaitDelivery: true, meta: item.meta || null }
         );
-        if (result?.verified === true) {
+        if (result?.verified === true || isTerminalAcceptedDeliveryResult(result)) {
           deliveredCount += 1;
           continue;
         }
@@ -14065,7 +14070,10 @@ class SquidRunApp {
             telegramMessageId: messageId,
             sender,
           }).then((result) => {
-            if (result?.verified === true && result?.userVisible === true) {
+            if (
+              (result?.verified === true && result?.userVisible === true)
+              || isTerminalAcceptedDeliveryResult(result)
+            ) {
               log.info(
                 'Telegram',
                 `Scoped Telegram inbound injected into ${inboundWindowKey} Architect pane (${inboundMessageId})`
