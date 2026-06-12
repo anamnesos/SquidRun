@@ -55,8 +55,17 @@ False-negatived on busy panes (`output_transition_without_prompt_disallowed`) �
 ### C2. trigger-file fallback + FastTrigger — **KEEP**
 The reason delivery survived tonight despite the verifier bug. Redundancy with a clean handoff contract. *Verdict: keep.*
 
-### C3. pending-pane-deliveries-quarantine.jsonl — **NEEDS-CHECK**
-Live code references exist; consumer semantics unaudited.
+### C3. pending-pane-deliveries-quarantine.jsonl — **ANSWERED by the C4 sweep (S443)**
+Consumer identified: `flushPendingPaneDeliveries` (squidrun-app.js:8460) replays the pending queue and `recordPendingPaneDeliveryDrop` feeds the quarantine file. The audit found the consumer carries the C4 family defect — see C4 member 4.
+
+### C4. The delivery-incident family — one class, one law (S443, Architect #48 / Builder's framing)
+All 24h delivery incidents are one class: **a component holds a payload copy keyed on PTY-verification that a busy pane can never produce. The law: drop-on-ACCEPT; verify is telemetry, not a retry gate.** Sweep run S443 with Builder's fingerprint (`verified === true` gating cleanup/requeue adjacent to a retry/interval):
+1. hm-send FastTrigger replay — FIXED c8bb9a63/313c4449 (the original).
+2. Scoped trigger drain poller eternal re-injection — FIXED aaf08378 (drop-on-accepted-terminal at squidrun-app.js:2073, law in the comment).
+3. Scoped Telegram retry wrapper — FIXED bd4bed6e (terminal-accepted stops retries, :10875).
+4. **CONFIRMED fourth member, OPEN: `flushPendingPaneDeliveries` requeue (:8511)** — items leave the queue only on `verified === true`; accepted-unverified goes back into `remaining` with attemptCount+1 (max 5). Busy pane ⇒ up to 4 duplicate re-deliveries. Builder-shaped fix: treat terminal-accepted as delivered.
+5. **CANDIDATE fifth, needs Builder confirmation: scoped Telegram fallback chain (:14068 → handleScopedTelegramInboundFallback :10901)** — caller requires `verified && userVisible`, so the wrapper's terminal-accepted return falls through to a fallback that unconditionally writes a trigger — possible second copy unless `forwardScopedTelegramInboundToProfileWindow` dedupes.
+Remaining sweep hits triaged as lawful telemetry (status mapping, no payload retention). Shared-index note (Architect #48 ruling after the second same-hour race): a claim covers ALL of one agent's lanes, one committer at a time; a third cross-agent race triggers the tooling conversation.
 
 ## D. Contracts and status scaffolds
 
