@@ -18,6 +18,7 @@ const {
   ensureGeminiModelFlag,
   parseGeminiModelFromCommand,
 } = require('../gemini-command');
+const { normalizeClaudeModelId } = require('../cli-resume-invocation');
 
 /** @typedef {import('../../types/contracts').AppStatusPayload} AppStatusPayload */
 /** @typedef {import('../../types/contracts').AppStatusWriteOptions} AppStatusWriteOptions */
@@ -181,6 +182,7 @@ function createDefaultSettings({ isPackaged = false } = {}) {
     operatingMode: isPackaged ? 'project' : 'developer',
     firmwareInjectionEnabled: false,
     localModelEnabled: false,
+    claudeModel: '',
     geminiModel,
     paneProjects: { '1': null, '2': null, '3': null },
     paneCommands: {
@@ -464,6 +466,7 @@ class SettingsManager {
         const paneCommands = { ...this.defaultSettings.paneCommands, ...(loaded.paneCommands || {}) };
         const paneProjects = { ...this.defaultSettings.paneProjects, ...(loaded.paneProjects || {}) };
         const existingGeminiCommand = Object.values(paneCommands).find(hasGeminiCommand) || '';
+        const claudeModel = normalizeClaudeModelId(loaded.claudeModel || '');
         const geminiModel = resolveGeminiModelId({
           preferredModel: loaded.geminiModel,
           existingCommand: existingGeminiCommand,
@@ -482,6 +485,7 @@ class SettingsManager {
         Object.assign(this.ctx.currentSettings, this.defaultSettings, loaded, {
           paneCommands,
           paneProjects,
+          claudeModel,
           geminiModel,
         });
       }

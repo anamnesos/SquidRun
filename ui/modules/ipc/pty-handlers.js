@@ -19,6 +19,7 @@ const {
   resolveResumeAppendFlags,
   hasClaudeResumeFlag,
   stripClaudeResumeFlags,
+  ensureClaudeModelFlag,
 } = require('../cli-resume-invocation');
 const { ensurePaneSessionId, remintPaneSessionId } = require('../pane-session-id-store');
 const { reapClaudeSessionProcesses } = require('../claude-session-process-reaper');
@@ -196,11 +197,21 @@ function appendResumeFlagsToAgentCommand({
   homeDir = null,
   ensurePaneSessionIdOptions = {},
   remintSessionId = false,
+  claudeModel = '',
+  claudeModelHomeDir = null,
+  claudeModelSettingsPath = null,
+  claudeModelEnv = null,
 } = {}) {
   const originalCommand = String(command || '').trim();
-  const baseCommand = remintSessionId
+  const strippedCommand = remintSessionId
     ? stripClaudeResumeFlags(originalCommand)
     : originalCommand;
+  const baseCommand = ensureClaudeModelFlag(strippedCommand, {
+    preferredModel: claudeModel,
+    ...(claudeModelHomeDir ? { homeDir: claudeModelHomeDir } : {}),
+    ...(claudeModelSettingsPath ? { settingsPath: claudeModelSettingsPath } : {}),
+    ...(claudeModelEnv ? { env: claudeModelEnv } : {}),
+  });
   if (!baseCommand) {
     return {
       command: baseCommand,
@@ -530,6 +541,11 @@ function registerPtyHandlers(ctx, deps = {}) {
   };
   const paneSessionIdsFilePath = deps.paneSessionIdsFilePath || PANE_SESSION_IDS_FILE_PATH;
   const resumeHomeDir = deps.resumeHomeDir || null;
+  const claudeModelHomeDir = Object.prototype.hasOwnProperty.call(deps, 'claudeModelHomeDir')
+    ? deps.claudeModelHomeDir
+    : null;
+  const claudeModelSettingsPath = deps.claudeModelSettingsPath || null;
+  const claudeModelEnv = deps.claudeModelEnv || null;
   const reapClaudeSessionProcessesForSpawn = typeof deps.reapClaudeSessionProcesses === 'function'
     ? deps.reapClaudeSessionProcesses
     : reapClaudeSessionProcesses;
@@ -770,6 +786,10 @@ function registerPtyHandlers(ctx, deps = {}) {
         cwd,
         idStorePath: paneSessionIdsFilePath,
         homeDir: resumeHomeDir,
+        claudeModel: ctx?.currentSettings?.claudeModel,
+        claudeModelHomeDir,
+        claudeModelSettingsPath,
+        claudeModelEnv,
       });
       paneCommand = resumeCommand.command;
       if (resumeCommand.decision) {
@@ -1175,6 +1195,10 @@ function registerPtyHandlers(ctx, deps = {}) {
       cwd: workDir,
       idStorePath: paneSessionIdsFilePath,
       homeDir: resumeHomeDir,
+      claudeModel: ctx?.currentSettings?.claudeModel,
+      claudeModelHomeDir,
+      claudeModelSettingsPath,
+      claudeModelEnv,
       remintSessionId: spawnOptions.remintClaudeSessionId === true,
     });
     agentCmd = resumeCommand.command;

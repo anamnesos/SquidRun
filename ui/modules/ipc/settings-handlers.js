@@ -19,6 +19,7 @@ const SETTING_KEY_ALLOWLIST = new Set([
   'autonomyConsentChoice',
   'autonomyConsentGiven',
   'autonomyConsentUpdatedAt',
+  'claudeModel',
   'costAlertEnabled',
   'costAlertThreshold',
   'devTools',

@@ -36,6 +36,7 @@ const CLI_RESUME_STRATEGY = {
 // would break per-pane id stability. It must NEVER appear in a built invocation.
 const FORBIDDEN_CLAUDE_FLAGS = ['--fork-session', '-c', '--continue'];
 const CLAUDE_RESUME_FLAG_PATTERN = /(?:^|\s)(?:--session-id|--resume)(?:=|\s+)([^\s"']+)/i;
+const CLAUDE_MODEL_FLAG_PATTERN = /(?:^|\s)--model(?:=|\s+)(?:"([^"]+)"|'([^']+)'|([^\s"']+))/i;
 const CLAUDE_SESSION_IN_USE_PATTERN = /session(?:\s+id)?[^.\n\r]*already\s+in\s+use|already\s+in\s+use[^.\n\r]*session(?:\s+id)?/i;
 
 // Identify the resume-relevant CLI from the leading executable token only.
@@ -72,6 +73,56 @@ function stripClaudeResumeFlags(command = '') {
     .replace(/(?:^|\s)(?:--session-id|--resume)(?:=|\s+)(?:"[^"]+"|'[^']+'|\S+)/ig, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function normalizeClaudeModelId(value = '') {
+  const cleaned = String(value || '')
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\[\d+(?:;\d+)*m\]/g, '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .trim();
+  if (!cleaned) return '';
+  return /^[a-z0-9][a-z0-9._:-]*$/i.test(cleaned) ? cleaned : '';
+}
+
+function parseClaudeModelFromCommand(command = '') {
+  const match = String(command || '').match(CLAUDE_MODEL_FLAG_PATTERN);
+  return match ? normalizeClaudeModelId(match[1] || match[2] || match[3] || '') : '';
+}
+
+function readClaudeDefaultModel(options = {}) {
+  const explicit = normalizeClaudeModelId(options.preferredModel || options.model || '');
+  if (explicit) return explicit;
+
+  const env = options.env || process.env;
+  const envModel = normalizeClaudeModelId(
+    env.SQUIDRUN_CLAUDE_MODEL
+    || env.CLAUDE_CODE_MODEL
+    || env.ANTHROPIC_MODEL
+    || ''
+  );
+  if (envModel) return envModel;
+
+  try {
+    const settingsPath = options.settingsPath
+      || path.join(options.homeDir || os.homedir(), '.claude', 'settings.json');
+    if (!settingsPath || !fs.existsSync(settingsPath)) return '';
+    const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return normalizeClaudeModelId(parsed?.model || '');
+  } catch {
+    return '';
+  }
+}
+
+function ensureClaudeModelFlag(command = '', options = {}) {
+  const text = String(command || '').trim();
+  if (!text || detectCli(text) !== 'claude') return text;
+  const existing = parseClaudeModelFromCommand(text);
+  if (existing) return text;
+
+  const model = readClaudeDefaultModel(options);
+  return model ? `${text} --model ${model}` : text;
 }
 
 function isClaudeSessionInUseError(output = '') {
@@ -148,11 +199,16 @@ module.exports = {
   CLI_RESUME_STRATEGY,
   FORBIDDEN_CLAUDE_FLAGS,
   CLAUDE_RESUME_FLAG_PATTERN,
+  CLAUDE_MODEL_FLAG_PATTERN,
   detectCli,
   resumeStrategyForCommand,
   extractClaudeSessionIdFromCommand,
   hasClaudeResumeFlag,
   stripClaudeResumeFlags,
+  normalizeClaudeModelId,
+  parseClaudeModelFromCommand,
+  readClaudeDefaultModel,
+  ensureClaudeModelFlag,
   isClaudeSessionInUseError,
   encodeClaudeProjectDir,
   claudeSessionStorePath,
