@@ -502,6 +502,11 @@ function createInjectionController(options = {}) {
     };
   }
 
+  function shouldTreatOutputTransitionAsAcceptedUnverified(verifyResult = {}) {
+    return verifyResult?.outputTransitionObserved === true
+      && verifyResult?.pendingInputObserved !== true;
+  }
+
   function getBackoffStartMs() {
     return Math.max(100, Number(QUEUE_RETRY_MS) || 0, Number(QUEUE_DEFER_BACKOFF_START_MS) || 100);
   }
@@ -1427,6 +1432,7 @@ function createInjectionController(options = {}) {
       }
 
       if (!finalVerifyResult.accepted) {
+        const outputTransitionAcceptedUnverified = shouldTreatOutputTransitionAsAcceptedUnverified(finalVerifyResult);
         log.warn(
           `doSendToPane ${id}`,
           `hm-send fast path submit remained unverified; signal=${finalVerifyResult.signal} outputTransition=${finalVerifyResult.outputTransitionObserved ? 'yes' : 'no'} promptTransition=${finalVerifyResult.promptTransitionObserved ? 'yes' : 'no'}`
@@ -1435,7 +1441,17 @@ function createInjectionController(options = {}) {
         lastTypedTime[id] = Date.now();
         lastOutputTime[id] = Date.now();
         const strictSubmitRequired = isCodexCapability || hmSendFastEnter || isStartupInjection;
-        finishWithClear(strictSubmitRequired
+        finishWithClear(outputTransitionAcceptedUnverified
+          ? {
+            success: true,
+            verified: false,
+            applied: payloadApplied,
+            signal: finalVerifyResult.signal,
+            status: 'accepted.unverified',
+            reason: finalVerifyResult.signal || 'output_transition_only',
+            pendingInputObserved: false,
+          }
+          : strictSubmitRequired
           ? {
             success: false,
             verified: false,
@@ -1630,7 +1646,17 @@ function createInjectionController(options = {}) {
       let submitVerified = true;
       if (!submitAccepted) {
         const strictSubmitRequired = isCodexCapability || hmSendFastEnter || isStartupInjection;
-        if (strictSubmitRequired) {
+        if (strictSubmitRequired && shouldTreatOutputTransitionAsAcceptedUnverified(lastSubmitVerifyResult)) {
+          submitVerified = false;
+          submitAccepted = {
+            accepted: true,
+            signal: lastSubmitVerifyResult?.signal || 'output_transition_only',
+          };
+          log.warn(
+            `doSendToPane ${id}`,
+            `Submit acceptance saw output transition without prompt; treating as accepted.unverified to avoid duplicate fallback replay`
+          );
+        } else if (strictSubmitRequired) {
           bus.emit('inject.failed', {
             paneId: id,
             payload: { reason: 'submit_not_accepted', method: capabilities.submitMethod },

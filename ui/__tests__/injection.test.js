@@ -1400,7 +1400,7 @@ describe('Terminal Injection', () => {
       });
     });
 
-    test('hm-send fast path does not treat bare output transitions as verified acceptance', async () => {
+    test('hm-send fast path treats bare output transitions as accepted-unverified without replay-worthy failure', async () => {
       let promptText = 'codex> ';
       terminals.set('1', {
         _squidrunBypass: false,
@@ -1442,11 +1442,11 @@ describe('Terminal Injection', () => {
       await promise;
 
       expect(onComplete).toHaveBeenCalledWith({
-        success: false,
+        success: true,
         verified: false,
         applied: true,
         signal: 'output_transition_without_prompt_disallowed',
-        status: 'submit_not_accepted',
+        status: 'accepted.unverified',
         reason: 'output_transition_without_prompt_disallowed',
         pendingInputObserved: false,
       });

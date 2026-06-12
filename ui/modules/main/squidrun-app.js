@@ -2420,6 +2420,21 @@ class SquidRunApp {
   }
 
   derivePaneHostStatusFromLiveTerminals(terminals = null) {
+    if (!this.isHiddenPaneHostModeEnabled()) {
+      this.paneHostReady.clear();
+      this.paneHostMissingPanes.clear();
+      this.paneHostLastErrorReason = null;
+      this.paneHostLastErrorAt = null;
+      return {
+        hiddenModeEnabled: false,
+        degraded: false,
+        missingPanes: [],
+        readyPanes: [],
+        lastErrorReason: null,
+        lastErrorAt: null,
+      };
+    }
+
     const terminalList = Array.isArray(terminals)
       ? terminals
       : (this.ctx.daemonClient?.getTerminals?.() || []);
