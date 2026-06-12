@@ -1296,6 +1296,41 @@ describe('daemon-handlers.js module', () => {
         });
       });
 
+      test('should emit accepted-unverified outcome without failure UI when terminal reports busy output-only acceptance', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
+          setTimeout(() => options.onComplete({
+            success: true,
+            verified: false,
+            status: 'accepted.unverified',
+            reason: 'output_transition_without_prompt_disallowed',
+          }), 0);
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+        injectHandler({}, { panes: ['3'], message: 'msg', deliveryId: 'delivery-output-only-1' });
+        jest.advanceTimersByTime(0);
+
+        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'delivered');
+        expect(uiView.showDeliveryFailed).not.toHaveBeenCalledWith('3', expect.anything());
+        expect(sendBridge).toHaveBeenCalledWith('trigger-delivery-outcome', {
+          deliveryId: 'delivery-output-only-1',
+          messageId: 'delivery-output-only-1',
+          paneId: '3',
+          accepted: true,
+          verified: false,
+          status: 'accepted.unverified',
+          reason: 'output_transition_without_prompt_disallowed',
+        });
+        expect(sendBridge).not.toHaveBeenCalledWith(
+          'trigger-delivery-outcome',
+          expect.objectContaining({ deliveryId: 'delivery-output-only-1', accepted: false })
+        );
+      });
+
       test('should emit failed outcome when terminal reports submit_not_accepted', () => {
         let injectHandler;
         onBridge.mockImplementation((channel, handler) => {
