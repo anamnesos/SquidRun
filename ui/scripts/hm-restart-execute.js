@@ -540,6 +540,19 @@ function processText(row = {}) {
   ].map((value) => normalizeForProcessMatch(value)).join(' ');
 }
 
+function includesPathUnderRoot(text = '', rootPath = '') {
+  const normalizedText = normalizeForProcessMatch(text);
+  const normalizedRoot = normalizeForProcessMatch(rootPath).replace(/\/+$/, '');
+  if (!normalizedText || !normalizedRoot) return false;
+  let index = normalizedText.indexOf(normalizedRoot);
+  while (index !== -1) {
+    const after = normalizedText[index + normalizedRoot.length] || '';
+    if (!after || after === '/' || /[\s"';&|)]/.test(after)) return true;
+    index = normalizedText.indexOf(normalizedRoot, index + 1);
+  }
+  return false;
+}
+
 function isElectronProcess(row = {}) {
   const name = normalizeForProcessMatch(row.name);
   const executablePath = normalizeForProcessMatch(row.executablePath);
@@ -567,13 +580,7 @@ function isPrimaryElectronProcess(row = {}, options = {}) {
 
 function isProjectRelatedProcess(row = {}, projectRoot = '') {
   const text = processText(row);
-  const root = normalizeForProcessMatch(projectRoot);
-  return Boolean(
-    (root && text.includes(root))
-    || text.includes('/squidrun/')
-    || text.includes('squidrun-ui')
-    || text.includes('squidrun')
-  );
+  return includesPathUnderRoot(text, projectRoot);
 }
 
 function processSummary(row = {}, matchReason = null, extra = {}) {
