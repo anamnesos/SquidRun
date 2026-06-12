@@ -394,6 +394,20 @@ describe('hm-restart-execute', () => {
     ]);
   });
 
+  test('does not select Electron-hosted script helpers as restart targets', () => {
+    const processes = restartExecute.selectSquidRunElectronProcesses('D:\\projects\\squidrun', [
+      {
+        ProcessId: 500,
+        ParentProcessId: 42,
+        Name: 'electron.exe',
+        ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+        CommandLine: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\scripts\\hm-bidirectional-wake-watchdog.js run',
+      },
+    ]);
+
+    expect(processes).toEqual([]);
+  });
+
   test('selects only the requested client instance in a live-duplex process set', () => {
     const instanceConfig = {
       id: 'client-eunbyeol',
@@ -498,6 +512,36 @@ describe('hm-restart-execute', () => {
       SQUIDRUN_WINDOW_KEY: 'eunbyeol',
       SQUIDRUN_INSTANCE_ID: 'client-eunbyeol',
       KEEP_FOR_RELAUNCH: '1',
+    }));
+  });
+
+  test('default main relaunch ignores captured helper commandLine and uses npm start', () => {
+    const instanceConfig = {
+      id: 'james-main',
+      profile: 'main',
+      registryRoot: tempRoot,
+      appStatusPath: path.join(tempRoot, '.squidrun', 'app-status.json'),
+      launchCommand: {},
+    };
+    writeJson(instanceConfig.appStatusPath, {
+      settingsPersistence: {
+        cwd: path.join(tempRoot, 'ui'),
+      },
+    });
+
+    const launch = restartExecute.defaultLaunchCommand(tempRoot, instanceConfig, {
+      commandLine: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\scripts\\hm-bidirectional-wake-watchdog.js run',
+      cwd: path.join(tempRoot, 'ui'),
+      instanceAttributed: true,
+    });
+
+    expect(launch.command).toBe(process.platform === 'win32' ? 'npm.cmd' : 'npm');
+    expect(launch.args).toEqual(['start']);
+    expect(launch.cwd).toBe(path.join(tempRoot, 'ui'));
+    expect(launch.env).toEqual(expect.objectContaining({
+      SQUIDRUN_PROFILE: 'main',
+      SQUIDRUN_WINDOW_KEY: 'main',
+      SQUIDRUN_INSTANCE_ID: 'james-main',
     }));
   });
 

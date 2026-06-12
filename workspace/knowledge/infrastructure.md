@@ -99,6 +99,14 @@ put the trigger in the Codex inbox. Both. The transport that would let the app p
 into Codex Desktop is unsupported (`hm-codex-desktop-transport.js` reports `can_inject_visible_message:false`,
 `can_summon_workspace:true`), which is why the inbox-poll is the path.
 
+**`hm-restart-execute.js` launch-target guard (S443):** main-profile relaunch must resolve to the app launcher
+(`npm start` from `ui/`) unless an explicit registry `launchCommand` exists. Do not replay a captured
+`electron.exe <script>` command line for main SquidRun: after the old app dies, a surviving helper such as
+`ui/scripts/hm-bidirectional-wake-watchdog.js` can be the only remaining Electron process and replaying it
+starts the helper instead of the app. The process selector must also reject Electron-hosted `ui/scripts/*`
+helpers as primary app targets. Regression command for this script-level test file:
+`npm --prefix ui test -- --roots scripts --runTestsByPath scripts/hm-restart-execute.test.js --runInBand`.
+
 **S400/S405 Codex Desktop cleanup boundary** (S405 split-verdict after 3-way consensus — Oracle over-deletion, Codex `.codex/automations` check, Architect in-repo grep). Keep the live/current surfaces only:
 - `.squidrun/runtime/codex-attention-bridge` — **VERIFIED LIVE** restart + coordination path (`watch-codex-attention-requests`). This is the one that matters.
 - `.squidrun/runtime/codex-desktop-capability-status-v0.json`
