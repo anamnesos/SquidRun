@@ -7283,6 +7283,35 @@ describe('SquidRunApp', () => {
       expect(deliverySpy).not.toHaveBeenCalled();
     });
 
+    it('does not write scoped Telegram fallback triggers after terminal accepted runtime delivery', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+      jest.spyOn(app, 'deliverScopedTelegramInboundWithRetry').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: false,
+        userVisible: false,
+        status: 'accepted.daemon_pty_unverified',
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('accepted no fallback', 'scoped', { chatId: 2222222222, updateId: 108 });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(forwardSpy).not.toHaveBeenCalled();
+      expect(deliverySpy).not.toHaveBeenCalled();
+    });
+
     it('routes Eunbyeol Telegram inbound through the Eunbyeol scoped runtime even when the window is registered', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
@@ -9635,6 +9664,46 @@ describe('SquidRunApp', () => {
 
       try {
         const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'test-replay' });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 1,
+          remainingCount: 0,
+        }));
+        const persisted = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+        expect(persisted.items).toEqual([]);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('clears queued pane deliveries once pane delivery is terminal accepted', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-accepted-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'telegram-in-accepted-replay',
+            paneId: '1',
+            message: '[Telegram from scoped]: accepted replay',
+            messageId: 'telegram-in-accepted-replay',
+            channel: 'telegram',
+            sender: 'scoped',
+            attemptCount: 1,
+          },
+        ],
+      }));
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: false,
+        verified: false,
+        status: 'accepted.daemon_pty_unverified',
+      });
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'test-accepted-replay' });
 
         expect(result).toEqual(expect.objectContaining({
           ok: true,
