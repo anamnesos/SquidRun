@@ -90,4 +90,28 @@ describe('model-selector owner assertions', () => {
       ownerSessionScopeId: 'app-session-428:eunbyeol',
     })).toBe(false);
   });
+
+  test('resolves concrete Claude selector values into claudeModel payload fields', () => {
+    const select = {
+      value: 'claude:fable',
+      selectedOptions: [{
+        textContent: 'Claude Fable 5',
+        dataset: { claudeModel: 'claude-fable-5[1m]' },
+      }],
+    };
+
+    expect(_internals.resolveSelectedModel(select)).toEqual({
+      model: 'claude',
+      selectorValue: 'claude:fable',
+      claudeModel: 'claude-fable-5',
+    });
+  });
+
+  test('generic Claude selector value clears the UI-managed claudeModel override', () => {
+    expect(_internals.resolveSelectedModel({ value: 'claude', selectedOptions: [] })).toEqual({
+      model: 'claude',
+      selectorValue: 'claude',
+      claudeModel: '',
+    });
+  });
 });

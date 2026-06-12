@@ -212,6 +212,72 @@ describe('registerModelSwitchHandlers', () => {
       expect(result).toEqual({ success: true, paneId: '1', model: 'gemini' });
     });
 
+    it('persists a concrete Claude selector pick to paneCommands and claudeModel', async () => {
+      const switchPromise = switchHandler({}, {
+        paneId: '1',
+        model: 'claude',
+        claudeModel: 'claude-fable-5[1m]',
+      });
+      mockCtx.daemonClient._killedHandler('1');
+      const result = await switchPromise;
+
+      expect(mockCtx.currentSettings.paneCommands['1']).toBe('claude --model claude-fable-5');
+      expect(mockCtx.currentSettings.claudeModel).toBe('claude-fable-5');
+      expect(mockDeps.saveSettings).toHaveBeenCalledWith({
+        paneCommands: mockCtx.currentSettings.paneCommands,
+        claudeModel: 'claude-fable-5',
+      });
+      expect(mockCtx.mainWindow.webContents.send).toHaveBeenCalledWith('pane-model-changed', {
+        paneId: '1',
+        model: 'claude',
+        ownerWindowKey: 'main',
+        claudeModel: 'claude-fable-5',
+        selectorValue: 'claude:fable',
+      });
+      expect(result).toEqual({
+        success: true,
+        paneId: '1',
+        model: 'claude',
+        claudeModel: 'claude-fable-5',
+        selectorValue: 'claude:fable',
+      });
+    });
+
+    it('accepts compact Claude model selector values from remote switch-model callers', async () => {
+      const switchPromise = switchHandler({}, { paneId: '1', model: 'claude:opus' });
+      mockCtx.daemonClient._killedHandler('1');
+      const result = await switchPromise;
+
+      expect(mockCtx.currentSettings.paneCommands['1']).toBe('claude --model opus');
+      expect(mockCtx.currentSettings.claudeModel).toBe('opus');
+      expect(mockDeps.saveSettings).toHaveBeenCalledWith({
+        paneCommands: mockCtx.currentSettings.paneCommands,
+        claudeModel: 'opus',
+      });
+      expect(result).toEqual({
+        success: true,
+        paneId: '1',
+        model: 'claude',
+        claudeModel: 'opus',
+        selectorValue: 'claude:opus',
+      });
+    });
+
+    it('clears a UI-managed Claude model override when generic Claude is selected', async () => {
+      mockCtx.currentSettings.claudeModel = 'opus';
+      const switchPromise = switchHandler({}, { paneId: '1', model: 'claude', claudeModel: '' });
+      mockCtx.daemonClient._killedHandler('1');
+      const result = await switchPromise;
+
+      expect(mockCtx.currentSettings.paneCommands['1']).toBe('claude');
+      expect(mockCtx.currentSettings.claudeModel).toBe('');
+      expect(mockDeps.saveSettings).toHaveBeenCalledWith({
+        paneCommands: mockCtx.currentSettings.paneCommands,
+        claudeModel: '',
+      });
+      expect(result).toEqual({ success: true, paneId: '1', model: 'claude' });
+    });
+
     it('fans pane-model-changed out via deps.sendPaneModelChanged when provided (wave 3)', async () => {
       const sendPaneModelChanged = jest.fn();
       const { executePaneModelSwitch } = require('../modules/ipc/model-switch-handlers');

@@ -7,7 +7,7 @@
  *   interrupt <paneId>
  *   restart <paneId>
  *   nudge <paneId> [message]
- *   switch-model <paneId> <claude|codex|gemini>
+ *   switch-model <paneId> <claude|claude:fable|claude:opus|claude:sonnet|codex|gemini>
  */
 
 const WebSocket = require('ws');
@@ -37,7 +37,7 @@ function usage() {
   console.log('  node hm-pane.js interrupt 2');
   console.log('  node hm-pane.js restart 3');
   console.log('  node hm-pane.js nudge 2 "Status check?"');
-  console.log('  node hm-pane.js switch-model 2 claude');
+  console.log('  node hm-pane.js switch-model 2 claude:fable');
 }
 
 function parseArgs(argv) {
@@ -149,7 +149,7 @@ function buildPayload(command, positional, options) {
   if (command === 'switch-model') {
     const model = asString(getOption(options, 'model', positional[2] || ''), '').toLowerCase();
     if (!model) {
-      throw new Error('model is required (claude|codex|gemini)');
+      throw new Error('model is required (claude|claude:fable|claude:opus|claude:sonnet|codex|gemini)');
     }
     payload.model = model;
   }

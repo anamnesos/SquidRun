@@ -9,6 +9,12 @@ const terminal = require('./terminal');
 const settings = require('./settings');
 const { showStatusNotice } = require('./notifications');
 const { registerScopedIpcListener } = require('./renderer-ipc-registry');
+const {
+  claudeModelForSelectorValue,
+  normalizeClaudeModelId,
+  selectorValueForCommand,
+  selectorValueForClaudeModel,
+} = require('./claude-model-options');
 
 /**
  * Detect model family from a command string
@@ -17,9 +23,37 @@ const { registerScopedIpcListener } = require('./renderer-ipc-registry');
  */
 function detectModelFamily(cmd) {
   const lower = (cmd || 'claude').toLowerCase();
+  if (lower.startsWith('claude:')) return 'claude';
   if (lower.includes('codex')) return 'codex';
   if (lower.includes('gemini')) return 'gemini';
   return 'claude';
+}
+
+function hasSelectorValue(select, value) {
+  if (!select || !value) return false;
+  return Array.from(select.options || []).some((option) => option.value === value);
+}
+
+function setSelectorValue(select, selectorValue, modelFamily) {
+  if (!select) return modelFamily || 'claude';
+  const nextValue = hasSelectorValue(select, selectorValue) ? selectorValue : (modelFamily || 'claude');
+  select.value = nextValue;
+  select.dataset.previousValue = nextValue;
+  return nextValue;
+}
+
+function resolveSelectedModel(select) {
+  const selectorValue = String(select?.value || 'claude').trim().toLowerCase();
+  const model = detectModelFamily(selectorValue);
+  const option = select?.selectedOptions?.[0] || null;
+  const claudeModel = model === 'claude'
+    ? normalizeClaudeModelId(option?.dataset?.claudeModel || claudeModelForSelectorValue(selectorValue))
+    : '';
+  return {
+    model,
+    selectorValue,
+    ...(model === 'claude' ? { claudeModel } : {}),
+  };
 }
 
 /**
@@ -82,10 +116,8 @@ async function initModelSelectors() {
 
       // Detect model from command
       const model = detectModelFamily(cmd);
-      select.value = model;
-
-      // Store previous value for rollback
-      select.dataset.previousValue = select.value;
+      const selectorValue = selectorValueForCommand(command, model);
+      setSelectorValue(select, selectorValue, model);
 
       // Set data-cli attribute on pane element for CSS color binding
       setPaneCliAttribute(paneId, model);
@@ -157,9 +189,10 @@ function scheduleSwitchCompletionFallback(select, paneId) {
     if (!select.isConnected || select.disabled === false) return;
     try {
       const paneCommands = await invokeBridge('get-pane-commands');
-      const confirmed = detectModelFamily(paneCommands?.[paneId]);
-      select.value = confirmed;
-      select.dataset.previousValue = confirmed;
+      const command = paneCommands?.[paneId] || '';
+      const confirmed = detectModelFamily(command);
+      const selectorValue = selectorValueForCommand(command, confirmed);
+      setSelectorValue(select, selectorValue, confirmed);
       setPaneCliAttribute(paneId, confirmed);
       log.info('ModelSelector', `Pane ${paneId} switch confirmed via settings poll: ${confirmed}`);
     } catch (err) {
@@ -184,21 +217,27 @@ function setupModelSelectorListeners() {
     const select = event.target;
     if (!select || !select.classList || !select.classList.contains('model-selector')) return;
     const paneId = select.dataset.paneId;
-    const model = select.value;
+    const selected = resolveSelectedModel(select);
+    const { model, selectorValue, claudeModel } = selected;
     const previousValue = select.dataset.previousValue || 'claude';
+    const selectedLabel = select.selectedOptions?.[0]?.textContent?.trim() || selectorValue;
 
     select.disabled = true;
-    showStatusNotice(`Switching pane ${paneId} to ${model} - session will restart...`);
+    showStatusNotice(`Switching pane ${paneId} to ${selectedLabel} - session will restart...`);
 
     try {
-      const result = await invokeBridge('switch-pane-model', { paneId, model });
+      const result = await invokeBridge('switch-pane-model', {
+        paneId,
+        model,
+        ...(model === 'claude' ? { claudeModel } : {}),
+      });
 
       if (!result.success) {
         throw new Error(result.error);
       }
 
-      select.dataset.previousValue = model;
-      log.info('ModelSelector', `Pane ${paneId} switched to ${model}`);
+      select.dataset.previousValue = selectorValue;
+      log.info('ModelSelector', `Pane ${paneId} switched to ${selectorValue}`);
       scheduleSwitchCompletionFallback(select, paneId);
     } catch (err) {
       log.error('ModelSelector', `Switch failed for pane ${paneId}:`, err);
@@ -214,7 +253,7 @@ function setupModelSelectorListeners() {
  */
 function setupModelChangeListener() {
   registerScopedIpcListener('model-selector', 'pane-model-changed', async (event, payload = {}) => {
-    const { paneId, model, command } = payload;
+    const { paneId, model, command, claudeModel } = payload;
     const select = document.querySelector(`.model-selector[data-pane-id="${paneId}"]`);
 
     // Update data-cli attribute immediately on model switch
@@ -225,8 +264,9 @@ function setupModelChangeListener() {
     // another window, so the value must follow the completion, not the
     // dropdown's last local state.
     if (select) {
-      select.value = model;
-      select.dataset.previousValue = model;
+      const selectorValue = payload.selectorValue
+        || (model === 'claude' && claudeModel ? selectorValueForClaudeModel(claudeModel) : selectorValueForCommand(command, model));
+      setSelectorValue(select, selectorValue, model);
     }
 
     const myInstance = getRendererInstanceScope();
@@ -269,5 +309,6 @@ module.exports = {
     getRendererInstanceScope,
     resolveOwnerAssertion,
     isOwnerAssertionMatch,
+    resolveSelectedModel,
   },
 };

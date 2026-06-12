@@ -61,6 +61,15 @@ describe('hm-pane CLI helpers', () => {
     });
   });
 
+  test('buildPayload preserves compact Claude selector model values', () => {
+    const payload = hmPane.buildPayload('switch-model', ['switch-model', '2', 'Claude:Fable'], new Map());
+    expect(payload).toEqual({
+      paneId: '2',
+      model: 'claude:fable',
+      targetInstance: { profileName: 'main', windowKey: 'main' },
+    });
+  });
+
   test('buildPayload prefers --model over positional model', () => {
     const payload = hmPane.buildPayload(
       'switch-model',
