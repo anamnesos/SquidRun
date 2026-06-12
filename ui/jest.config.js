@@ -26,6 +26,7 @@ module.exports = {
   moduleNameMapper: {
     '^electron$': '<rootDir>/__tests__/mocks/electron.js',
   },
+  setupFiles: ['<rootDir>/__tests__/noise-setup.js'],
   // Setup file for global mocks
   setupFilesAfterEnv: ['<rootDir>/__tests__/setup.js'],
   // Increase timeout for async tests

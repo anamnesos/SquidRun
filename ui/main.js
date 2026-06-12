@@ -8,6 +8,8 @@ const os = require('os');
 const fs = require('fs');
 const { app, Menu } = require('electron');
 
+require('./modules/noise-bootstrap').installNoiseGuards();
+
 // --- Occluded/background window throttling fix (must run before app is ready) ---
 // Symptom (James, S422): when the main pane-host window is fully COVERED by the
 // Squid Room window, the Architect/Builder panes freeze and only "catch up at 10x"
@@ -90,7 +92,7 @@ if (
   }
 }
 
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 const fallbackEnvPath = process.env.SQUIDRUN_PROJECT_ROOT
   ? path.join(process.env.SQUIDRUN_PROJECT_ROOT, '.env')
   : (process.platform === 'darwin'
@@ -99,7 +101,7 @@ const fallbackEnvPath = process.env.SQUIDRUN_PROJECT_ROOT
       : null);
 // Fill missing env vars from an external path when packaged mac builds cannot persist bundle .env.
 if (fallbackEnvPath) {
-  require('dotenv').config({ path: fallbackEnvPath });
+  require('dotenv').config({ path: fallbackEnvPath, quiet: true });
 }
 
 // Installed builds keep their credentials in <dataRoot>/.squidrun/settings/ files;

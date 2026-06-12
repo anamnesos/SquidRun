@@ -54,6 +54,13 @@ const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const TELEGRAM_PENDING_REPLAY_GRACE_MS = 10 * 60 * 1000;
 const ROOT_COHERENCE_MARKER_RELPATH = path.join('runtime', 'root-coherence-assert.jsonl');
 
+function isBridgeRelayModeOff(env = process.env) {
+  const mode = String(env?.SQUIDRUN_BRIDGE_RELAY_MODE || env?.SQUIDRUN_RELAY_MODE || '')
+    .trim()
+    .toLowerCase();
+  return mode === 'off' || mode === 'disabled' || mode === 'false' || mode === '0';
+}
+
 // Import sub-modules
 const triggers = require('../triggers');
 const watcher = require('../watcher');
@@ -1074,7 +1081,8 @@ class SquidRunApp {
     this.squidRoomWindowStatePath = resolveCoordPath('runtime/squid-room-window-state.json', { forWrite: true });
     this.squidRoomRestoreAttempted = false;
     this.pendingPaneDeliveryReplayPromise = Promise.resolve();
-    this.bridgeEnabled = Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env);
+    this.bridgeEnabled = !isBridgeRelayModeOff(process.env)
+      && (Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env));
     this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getProfileDeviceId(process.env, getActiveProfileName()) || null;
     this.bridgeRelayStatus = {
       enabled: this.bridgeEnabled === true,
@@ -12285,6 +12293,7 @@ class SquidRunApp {
   }
 
   resolveEnvBridgeRuntimeConfig() {
+    if (isBridgeRelayModeOff(process.env)) return null;
     if (!isCrossDeviceEnabled(process.env)) return null;
     const profileName = getActiveProfileName();
     const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim() || DEFAULT_BRIDGE_RELAY_URL;
@@ -12305,6 +12314,7 @@ class SquidRunApp {
   }
 
   resolveBridgeRuntimeConfig() {
+    if (isBridgeRelayModeOff(process.env)) return null;
     const profileName = getActiveProfileName();
     const pairedResult = readPairedConfig();
     if (pairedResult?.ok && pairedResult.config) {
@@ -12327,7 +12337,8 @@ class SquidRunApp {
 
   refreshBridgeRuntimeConfig() {
     this.bridgeRuntimeConfig = this.resolveBridgeRuntimeConfig();
-    this.bridgeEnabled = Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env);
+    this.bridgeEnabled = !isBridgeRelayModeOff(process.env)
+      && (Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env));
     this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getProfileDeviceId(process.env, getActiveProfileName()) || null;
     this.bridgeRelayStatus.enabled = this.bridgeEnabled === true;
     this.bridgeRelayStatus.configured = Boolean(this.bridgeRuntimeConfig?.relayUrl && this.bridgeDeviceId);

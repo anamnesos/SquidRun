@@ -6,6 +6,9 @@
  *   history
  */
 
+require('../modules/noise-bootstrap').installNoiseGuards();
+try { require('../modules/logger').setLevel('warn'); } catch (_) {}
+
 const fs = require('fs');
 const path = require('path');
 const {
