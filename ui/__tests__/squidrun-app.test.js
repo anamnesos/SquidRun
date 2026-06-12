@@ -3424,7 +3424,7 @@ describe('SquidRunApp', () => {
       fs.rmSync(runtimePaths.tempRoot, { recursive: true, force: true });
     });
 
-    it('uses system node instead of electron to launch the supervisor daemon', () => {
+    it('uses system node instead of electron to launch the unpacked dev supervisor daemon', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const runtimePaths = createSupervisorRuntimeFixture();
       const originalExecPath = process.execPath;
@@ -3471,6 +3471,76 @@ describe('SquidRunApp', () => {
           })
         );
         expect(spawn.mock.calls[0][2].env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+      } finally {
+        Object.defineProperty(process, 'execPath', {
+          configurable: true,
+          writable: true,
+          value: originalExecPath,
+        });
+        Object.defineProperty(process, 'versions', {
+          configurable: true,
+          value: originalVersions,
+        });
+        fs.rmSync(runtimePaths.tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('uses electron-as-node to launch a packaged app.asar supervisor daemon', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const runtimePaths = createSupervisorRuntimeFixture();
+      const asarRoot = path.join(runtimePaths.tempRoot, 'resources', 'app.asar');
+      const asarDaemonScriptPath = path.join(asarRoot, 'supervisor-daemon.js');
+      const originalExecPath = process.execPath;
+      const originalVersions = process.versions;
+
+      fs.mkdirSync(asarRoot, { recursive: true });
+      fs.writeFileSync(asarDaemonScriptPath, '// packaged supervisor fixture\n');
+      jest.spyOn(app, 'getSupervisorRuntimePaths').mockReturnValue({
+        ...runtimePaths,
+        daemonScriptPath: asarDaemonScriptPath,
+      });
+
+      Object.defineProperty(process, 'execPath', {
+        configurable: true,
+        writable: true,
+        value: 'D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-test\\sr-electron.exe',
+      });
+      Object.defineProperty(process, 'versions', {
+        configurable: true,
+        value: {
+          ...originalVersions,
+          electron: '28.3.3',
+        },
+      });
+
+      try {
+        const result = app.spawnSupervisorDaemon('test-packaged-runtime');
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          spawned: true,
+        }));
+        expect(spawn).toHaveBeenCalledWith(
+          'D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-test\\sr-electron.exe',
+          [
+            asarDaemonScriptPath,
+            '--pid-path',
+            runtimePaths.pidPath,
+            '--status-path',
+            runtimePaths.statusPath,
+            '--log-path',
+            runtimePaths.logPath,
+          ],
+          expect.objectContaining({
+            cwd: '/test',
+            detached: true,
+            windowsHide: true,
+            stdio: 'ignore',
+            env: expect.objectContaining({
+              ELECTRON_RUN_AS_NODE: '1',
+            }),
+          })
+        );
       } finally {
         Object.defineProperty(process, 'execPath', {
           configurable: true,
