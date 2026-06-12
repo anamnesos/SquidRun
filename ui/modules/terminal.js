@@ -1659,6 +1659,7 @@ function applyFreshCreateSpawnCommandOptions(paneId, ptyCreateOptions = {}, opti
     ...ptyCreateOptions,
     paneCommand,
     spawnCommandOnCreate: true,
+    ...(options.remintClaudeSessionId === true ? { remintClaudeSessionId: true } : {}),
   };
 }
 

@@ -241,6 +241,12 @@ function createRecoveryController(options = {}) {
     };
   }
 
+  function buildFreshSessionOptions(options = {}) {
+    return options?.freshSession === true
+      ? { remintClaudeSessionId: true }
+      : {};
+  }
+
   function buildRestartPtyCreateArgs(paneId, restartLease) {
     const id = String(paneId);
     const runtimeOverride = typeof getPaneRuntimeOverride === 'function'
@@ -255,6 +261,7 @@ function createRecoveryController(options = {}) {
       options: {
         ...runtimeCreateOptions,
         ...buildRestartLifecycleOptions(restartLease),
+        ...buildFreshSessionOptions(restartLease?.options || {}),
       },
     };
   }
@@ -314,6 +321,7 @@ function createRecoveryController(options = {}) {
         : 'Restart blocked');
       return restartLease?.ok !== false;
     }
+    restartLease.options = options && typeof options === 'object' ? { ...options } : {};
 
     let completion = { status: 'failed', reason: 'unknown' };
     let shouldCompleteRestartClaim = true;
@@ -372,7 +380,10 @@ function createRecoveryController(options = {}) {
 
       if (typeof spawnAgent === 'function') {
         try {
-          const spawnResult = await spawnAgent(id, model, buildRestartLifecycleOptions(restartLease));
+          const spawnResult = await spawnAgent(id, model, {
+            ...buildRestartLifecycleOptions(restartLease),
+            ...buildFreshSessionOptions(options),
+          });
           assertLifecycleResult('spawn-claude', spawnResult);
           if (typeof syncTerminalInputBridge === 'function') {
             syncTerminalInputBridge(id, { modelHint: model });
