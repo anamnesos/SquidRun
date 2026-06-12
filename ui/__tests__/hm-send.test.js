@@ -290,14 +290,48 @@ describe('hm-send retry behavior', () => {
     }
   });
 
-  test('blocks permission-ask phrases before websocket send and logs the violation', async () => {
+  test('warns on permission-ask phrases for agent-to-agent sends without blocking delivery', async () => {
+    const tempProject = createLinkedProject();
+    const sendAttempts = [];
+    const { server, port } = await startAckServer(sendAttempts);
+    const logPath = path.join(tempProject, '.squidrun', 'runtime', 'permission-ask-violations.jsonl');
+
+    try {
+      const result = await runHmSend(
+        ['architect', 'test should I send this?', '--role', 'oracle', '--timeout', '80', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port) },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(result.stdout).toContain('Delivered to architect');
+      expect(result.stderr).toContain('WARN: permission-ask phrase detected');
+      expect(result.stderr).toContain('send continuing');
+      expect(fs.existsSync(logPath)).toBe(true);
+      const entries = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        type: 'permission_ask',
+        senderRole: 'oracle',
+        targetRole: 'architect',
+        phrase: 'should I',
+        enforcement_mode: 'soft_warn',
+      });
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('blocks permission-ask phrases for user-facing sends and logs the violation', async () => {
     const tempProject = createLinkedProject();
     const logPath = path.join(tempProject, '.squidrun', 'runtime', 'permission-ask-violations.jsonl');
 
     try {
       const result = await runHmSend(
-        ['architect', 'test should I send this?', '--timeout', '80', '--retries', '0', '--no-fallback'],
-        { HM_SEND_PORT: '1' },
+        ['telegram', 'test should I send this?', '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
+        { TELEGRAM_BOT_TOKEN: '123:test' },
         { cwd: tempProject }
       );
 
@@ -309,8 +343,10 @@ describe('hm-send retry behavior', () => {
       expect(entries).toHaveLength(1);
       expect(entries[0]).toMatchObject({
         type: 'permission_ask',
-        targetRole: 'architect',
+        senderRole: 'architect',
+        targetRole: 'telegram',
         phrase: 'should I',
+        enforcement_mode: 'hard_block',
       });
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
@@ -1696,6 +1732,84 @@ describe('hm-send retry behavior', () => {
     expect(result.code).toBe(1);
     expect(sendAttempts).toHaveLength(1);
     expect(result.stderr).toContain('submit_not_accepted');
+  });
+
+  test('does not trigger fallback when ACK status is submit_pending_input', async () => {
+    const tempProject = createLinkedProject();
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+    const triggerPath = getTriggerPath('builder.txt');
+    const hadOriginal = fs.existsSync(triggerPath);
+    const originalContent = hadOriginal ? fs.readFileSync(triggerPath, 'utf8') : null;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: false,
+            accepted: false,
+            verified: false,
+            status: 'submit_pending_input',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['builder', '(TEST #1d): no fallback pending input', '--timeout', '80', '--retries', '2'],
+        { HM_SEND_PORT: String(port) },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(1);
+      expect(sendAttempts).toHaveLength(1);
+      expect(result.stderr).toContain('submit_pending_input');
+      expect(result.stderr).not.toContain('Wrote trigger fallback');
+      expect(fs.existsSync(triggerPath)).toBe(hadOriginal);
+      if (hadOriginal) {
+        expect(fs.readFileSync(triggerPath, 'utf8')).toBe(originalContent);
+      }
+    } finally {
+      if (hadOriginal) {
+        fs.writeFileSync(triggerPath, originalContent, 'utf8');
+      } else if (fs.existsSync(triggerPath)) {
+        fs.unlinkSync(triggerPath);
+      }
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 
   test('does not retry when ACK status is accepted.unverified', async () => {

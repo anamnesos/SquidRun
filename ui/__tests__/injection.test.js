@@ -1452,6 +1452,46 @@ describe('Terminal Injection', () => {
       });
     });
 
+    test('hm-send fast path does not downgrade output transitions when pending-input probe is unavailable', async () => {
+      terminals.set('1', { _squidrunBypass: false });
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId === '1' && data === '\r') {
+          lastOutputTime['1'] = Date.now();
+        }
+        return Promise.resolve(undefined);
+      });
+      const onComplete = jest.fn();
+
+      const strictController = createInjectionController({
+        ...mockOptions,
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          INJECTION_LOCK_TIMEOUT_MS: 3000,
+        },
+      });
+
+      const promise = strictController.doSendToPane(
+        '1',
+        'hm payload\r',
+        onComplete,
+        { messageId: 'hm-output-only-blind-probe', traceId: 'hm-output-only-blind-probe' },
+        { hmSendFastEnter: true }
+      );
+
+      await jest.advanceTimersByTimeAsync(2500);
+      await promise;
+
+      expect(onComplete).toHaveBeenCalledWith({
+        success: false,
+        verified: false,
+        applied: true,
+        signal: 'output_transition_without_prompt_probe_disallowed',
+        status: 'submit_not_accepted',
+        reason: 'output_transition_without_prompt_probe_disallowed',
+        pendingInputObserved: false,
+      });
+    });
+
     test('hm-send fast path does not treat prompt-only transitions as verified acceptance', async () => {
       let promptText = 'codex> ';
       terminals.set('1', {
@@ -1555,7 +1595,7 @@ describe('Terminal Injection', () => {
         verified: false,
         applied: true,
         signal: 'input_buffer_pending',
-        status: 'submit_not_accepted',
+        status: 'submit_pending_input',
         reason: 'input_buffer_pending',
         pendingInputObserved: true,
       });
@@ -1644,7 +1684,7 @@ describe('Terminal Injection', () => {
         verified: false,
         applied: true,
         signal: 'input_buffer_pending',
-        status: 'submit_not_accepted',
+        status: 'submit_pending_input',
         reason: 'input_buffer_pending',
         pendingInputObserved: true,
       });

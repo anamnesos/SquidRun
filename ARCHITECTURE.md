@@ -416,6 +416,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - `workspace/user-profile.json`: user-editable profile used by agent startup behavior. **Tracked**.
 - `workspace/knowledge/runtime-environment.md`: shared device registry and machine/runtime environment quirks. **Tracked**.
 - `docs/diagrams-reference.md`: ASCII templates for system topology (Agent Message Flow and Knowledge & Memory System) intended for Excalidraw visualization.
+- `docs/gate-census-2026-06-12.md`: evidence-based keep/fix/kill census of all guards, hooks, verifiers, contracts, and Mira Lab scaffolds (S442 mandate from James). Kill rationales recorded in-doc; contested kills arbitrated by Architect, executed by Builder.
 - `ROLES.md`: canonical role boundaries/startup baseline/operating rules. **Tracked**.
 - `CLAUDE.md`, `GEMINI.md`, `AGENTS.md`: CLI-specific config files auto-read by Claude Code, Gemini CLI, and Codex CLI respectively. Each contains CLI quirks + mandatory directive to read `ROLES.md`. **Tracked**.
 

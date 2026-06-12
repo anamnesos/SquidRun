@@ -2759,6 +2759,36 @@ describe('SquidRunApp', () => {
       );
     });
 
+    it('clears stale degraded pane-host status on mode-off bootstrap early return', async () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = false;
+      app.paneHostMissingPanes = new Set(['1', '2', '3']);
+      app.paneHostReady = new Set(['trustquote-invoice']);
+      app.paneHostLastErrorReason = 'bootstrap_ready_signal_missing';
+      app.paneHostLastErrorAt = '2026-06-12T07:09:07.638Z';
+
+      await app.ensurePaneHostWindows();
+
+      expect(app.paneHostWindowManager.ensurePaneWindows).not.toHaveBeenCalled();
+      expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
+      expect(Array.from(app.paneHostReady)).toEqual([]);
+      expect(app.paneHostLastErrorReason).toBeNull();
+      expect(app.paneHostLastErrorAt).toBeNull();
+      expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            paneHost: expect.objectContaining({
+              hiddenModeEnabled: false,
+              degraded: false,
+              missingPanes: [],
+              readyPanes: [],
+              lastErrorReason: null,
+              lastErrorAt: null,
+            }),
+          }),
+        })
+      );
+    });
+
     it('clears stale dynamic pane-host degradation from a live daemon terminal', () => {
       app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
       app.paneHostMissingPanes = new Set(['trustquote-invoice']);

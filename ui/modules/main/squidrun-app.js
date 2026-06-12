@@ -2766,7 +2766,10 @@ class SquidRunApp {
 
   async ensurePaneHostWindows() {
     const paneIds = this.getHiddenPaneHostPaneIds();
-    if (!paneIds.length) return;
+    if (!paneIds.length) {
+      this.updatePaneHostStatus();
+      return;
+    }
     try {
       await this.paneHostWindowManager.ensurePaneWindows(paneIds);
       log.info('PaneHost', `Hidden pane host windows created for panes: ${paneIds.join(', ')}`);

@@ -299,7 +299,7 @@ function createInjectionController(options = {}) {
   function probePendingInputBuffer(paneId, pendingInputText = '') {
     const lineText = getCurrentPromptLineText(paneId);
     if (!lineText) {
-      return { pending: false, lineText: '' };
+      return { pending: false, lineText: '', available: false };
     }
     const normalizedLine = normalizePendingProbeText(lineText);
     const hasPromptPrefix = (
@@ -309,7 +309,7 @@ function createInjectionController(options = {}) {
       || /(?:^|[\w./~:-]+)[$#]\s+\S/.test(lineText)
     );
     if (!hasPromptPrefix) {
-      return { pending: false, lineText };
+      return { pending: false, lineText, available: true };
     }
 
     const fragment = getPendingInputFragments(pendingInputText)
@@ -318,6 +318,7 @@ function createInjectionController(options = {}) {
       pending: Boolean(fragment),
       lineText,
       fragment: fragment || null,
+      available: true,
     };
   }
 
@@ -400,6 +401,7 @@ function createInjectionController(options = {}) {
                 signal: 'output_transition_without_prompt_probe_disallowed',
                 outputTransitionObserved: true,
                 promptTransitionObserved: false,
+                pendingInputProbeAvailable: false,
               };
             }
             return {
@@ -407,6 +409,7 @@ function createInjectionController(options = {}) {
               signal: 'output_transition_prompt_probe_unavailable',
               outputTransitionObserved: true,
               promptTransitionObserved: false,
+              pendingInputProbeAvailable: false,
             };
           }
           await sleep(SUBMIT_ACCEPT_POLL_MS);
@@ -417,6 +420,7 @@ function createInjectionController(options = {}) {
           signal: 'prompt_probe_unavailable_no_output',
           outputTransitionObserved: false,
           promptTransitionObserved: false,
+          pendingInputProbeAvailable: false,
         };
       }
 
@@ -425,12 +429,14 @@ function createInjectionController(options = {}) {
         signal: 'prompt_probe_unavailable',
         outputTransitionObserved: false,
         promptTransitionObserved: false,
+        pendingInputProbeAvailable: false,
       };
     }
 
     const start = Date.now();
     let outputTransitionObserved = false;
     let promptTransitionObserved = false;
+    let pendingInputProbeAvailable = false;
     while ((Date.now() - start) < SUBMIT_ACCEPT_VERIFY_WINDOW_MS) {
       const outputTsAfter = getLastOutputTimestamp(paneId);
       if (outputTsAfter > outputTsBefore) {
@@ -438,6 +444,7 @@ function createInjectionController(options = {}) {
       }
 
       const pendingInput = probePendingInputBuffer(paneId, pendingInputText);
+      pendingInputProbeAvailable = pendingInputProbeAvailable || pendingInput.available === true;
       if (pendingInput.pending) {
         return {
           accepted: false,
@@ -445,6 +452,7 @@ function createInjectionController(options = {}) {
           outputTransitionObserved,
           promptTransitionObserved,
           pendingInputObserved: true,
+          pendingInputProbeAvailable,
           pendingInputLine: pendingInput.lineText.slice(-160),
         };
       }
@@ -460,6 +468,7 @@ function createInjectionController(options = {}) {
           signal: outputTransitionObserved ? 'prompt_and_output_transition' : 'prompt_transition',
           outputTransitionObserved,
           promptTransitionObserved,
+          pendingInputProbeAvailable,
         };
       }
 
@@ -472,6 +481,7 @@ function createInjectionController(options = {}) {
         signal: 'prompt_transition_without_output',
         outputTransitionObserved,
         promptTransitionObserved,
+        pendingInputProbeAvailable,
       };
     }
 
@@ -484,6 +494,7 @@ function createInjectionController(options = {}) {
           signal: 'output_transition_without_prompt_disallowed',
           outputTransitionObserved,
           promptTransitionObserved,
+          pendingInputProbeAvailable,
         };
       }
       return {
@@ -491,6 +502,7 @@ function createInjectionController(options = {}) {
         signal: allowOutputTransitionOnly ? 'output_transition_allowed' : 'output_transition_prompt_unavailable',
         outputTransitionObserved,
         promptTransitionObserved,
+        pendingInputProbeAvailable,
       };
     }
 
@@ -499,11 +511,13 @@ function createInjectionController(options = {}) {
       signal: outputTransitionObserved ? 'output_transition_only' : 'no_acceptance_signal',
       outputTransitionObserved,
       promptTransitionObserved,
+      pendingInputProbeAvailable,
     };
   }
 
   function shouldTreatOutputTransitionAsAcceptedUnverified(verifyResult = {}) {
     return verifyResult?.outputTransitionObserved === true
+      && verifyResult?.pendingInputProbeAvailable === true
       && verifyResult?.pendingInputObserved !== true;
   }
 
@@ -1457,7 +1471,7 @@ function createInjectionController(options = {}) {
             verified: false,
             applied: payloadApplied,
             signal: finalVerifyResult.signal,
-            status: 'submit_not_accepted',
+            status: finalVerifyResult.pendingInputObserved === true ? 'submit_pending_input' : 'submit_not_accepted',
             reason: finalVerifyResult.signal || 'submit_not_accepted',
             pendingInputObserved: Boolean(finalVerifyResult.pendingInputObserved),
           }
@@ -1669,12 +1683,15 @@ function createInjectionController(options = {}) {
             `Submit acceptance not observed after ${maxSubmitAttempts} attempt(s); reporting submit_not_accepted`
           );
           const failureSignal = lastSubmitVerifyResult?.signal || 'submit_not_accepted';
+          const failureStatus = lastSubmitVerifyResult?.pendingInputObserved === true
+            ? 'submit_pending_input'
+            : 'submit_not_accepted';
           finishWithClear({
             success: false,
             verified: false,
             applied: payloadApplied,
             signal: failureSignal,
-            status: 'submit_not_accepted',
+            status: failureStatus,
             reason: failureSignal,
             pendingInputObserved: Boolean(lastSubmitVerifyResult?.pendingInputObserved),
           });

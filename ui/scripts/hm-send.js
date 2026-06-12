@@ -129,6 +129,7 @@ const DEFAULT_ACK_TIMEOUT_MS = Math.max(
   (Number.isFinite(DEFAULT_TRIGGER_VERIFY_TIMEOUT_MS) ? DEFAULT_TRIGGER_VERIFY_TIMEOUT_MS : 5000)
     + (Number.isFinite(DEFAULT_ACK_TIMEOUT_BUFFER_MS) ? DEFAULT_ACK_TIMEOUT_BUFFER_MS : 1500)
 );
+const AGENT_TO_AGENT_TARGETS = new Set(['architect', 'builder', 'oracle']);
 const SURFACE_CAPTURE_VERIFY_PORT = Number.parseInt(
   process.env.HM_SEND_SURFACE_CAPTURE_VERIFY_PORT
     || process.env.HM_SEND_CAPTURE_PORT
@@ -924,18 +925,28 @@ async function runOutputGuards({ messageId, targetRole } = {}) {
     bypass: '0',
   });
   if (permissionViolation) {
+    const permissionWarnOnly = AGENT_TO_AGENT_TARGETS.has(normalizedGuardTarget);
     const logResult = appendPermissionAskViolation(
       {
         ...permissionViolation,
         messageId,
+        enforcement_mode: permissionWarnOnly ? 'soft_warn' : 'hard_block',
       },
       { logPath: resolveGuardLogPath('permission-ask-violations.jsonl') }
     );
-    writeGuardBlock([
-      `BLOCKED: permission-ask phrase detected '${permissionViolation.phrase}'. Rewrite as a decision.`,
-      `Log: ${logResult.path}`,
-    ]);
-    return { ok: false, type: 'permission_ask', violation: permissionViolation };
+    if (permissionWarnOnly) {
+      writeGuardBlock([
+        `WARN: permission-ask phrase detected '${permissionViolation.phrase}' for agent-to-agent send - logged, send continuing.`,
+        'User-facing targets still hard-block permission asks.',
+        `Log: ${logResult.path}`,
+      ]);
+    } else {
+      writeGuardBlock([
+        `BLOCKED: permission-ask phrase detected '${permissionViolation.phrase}'. Rewrite as a decision.`,
+        `Log: ${logResult.path}`,
+      ]);
+      return { ok: false, type: 'permission_ask', violation: permissionViolation };
+    }
   }
 
   const coworkerLintViolation = detectCoworkerLintViolation({
@@ -2048,7 +2059,12 @@ function shouldRetryAck(ack) {
   if (ack.accepted === true) return false;
   const status = String(ack.status || '').toLowerCase();
   if (!status) return true;
-  if (status === 'invalid_target' || status === 'submit_not_accepted' || status === 'accepted.unverified') return false;
+  if (
+    status === 'invalid_target'
+    || status === 'submit_not_accepted'
+    || status === 'submit_pending_input'
+    || status === 'accepted.unverified'
+  ) return false;
   return true;
 }
 
@@ -2325,6 +2341,8 @@ function getIsolationFailureStatus(result = null) {
 }
 
 function shouldFailClosedWithoutFallback(result = null, error = null) {
+  const status = String(result?.ack?.status || '').toLowerCase();
+  if (status === 'submit_pending_input') return true;
   if (getIsolationFailureStatus(result)) return true;
   if (targetProfileRouteContext && (error || !result?.ok)) return true;
   if (isProfileScopedCanonicalTarget(target) && (error || !result?.ok)) return true;
