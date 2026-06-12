@@ -44,6 +44,11 @@ number incremented and a fresh `started` timestamp, with `[resume]` spawn lines 
 If you remember the prior session AND the session number has NOT incremented, then the restart didn't
 happen. Never re-stage a restart that already worked — verify the session number first.
 
+**Packaged-install caveat (S443, from the Eunbyeol stall trace):** a packaged (installed-exe) main process
+writes NOTHING to `app.log` — log-based boot signals only work on dev installs run via `npm start`. For
+packaged installs (Eunbyeol's standalone, future customer installs), verify boot via `app-status.json`
+session/started fields and the process table, never via app.log presence/recency.
+
 ### Why there's no shortcut
 
 There is no supported way for the SquidRun app to push a message straight into Codex Desktop's screen
