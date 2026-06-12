@@ -183,8 +183,16 @@ function checkEnvVariables() {
 
 function checkRelayConnectivity() {
   return new Promise((resolve) => {
+    const crossDeviceEnabled = isCrossDeviceEnabled(process.env);
     const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim();
     if (!relayUrl) {
+      if (!crossDeviceEnabled) {
+        resolve(makeCheck('relay', 'Relay Connectivity', true, 'Relay disabled; cross-device mode is off', {
+          crossDeviceEnabled,
+          skipped: true,
+        }));
+        return;
+      }
       resolve(makeCheck('relay', 'Relay Connectivity', false, 'SQUIDRUN_RELAY_URL is not set'));
       return;
     }
@@ -277,4 +285,5 @@ registerPreflightHandlers.unregister = unregisterPreflightHandlers;
 module.exports = {
   registerPreflightHandlers,
   runPreflightChecks,
+  checkRelayConnectivity,
 };
