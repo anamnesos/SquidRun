@@ -7347,7 +7347,7 @@ describe('SquidRunApp', () => {
       }
     });
 
-    it('retries scoped Telegram runtime delivery until user-visible verification', async () => {
+    it('retries scoped Telegram runtime delivery until user-visible verification after unavailable results', async () => {
       jest.useFakeTimers();
       const previousAttempts = process.env.SQUIDRUN_SCOPED_TELEGRAM_MAX_ATTEMPTS;
       const previousBackoff = process.env.SQUIDRUN_SCOPED_TELEGRAM_RETRY_BASE_MS;
@@ -7355,11 +7355,11 @@ describe('SquidRunApp', () => {
       process.env.SQUIDRUN_SCOPED_TELEGRAM_RETRY_BASE_MS = '1';
       const firstFailure = {
         ok: false,
-        accepted: true,
-        queued: true,
+        accepted: false,
+        queued: false,
         verified: false,
         userVisible: false,
-        status: 'accepted.unverified',
+        status: 'scoped_runtime_unavailable',
       };
       const success = {
         ok: true,
@@ -7396,6 +7396,28 @@ describe('SquidRunApp', () => {
         }
         jest.useRealTimers();
       }
+    });
+
+    it.each([
+      'accepted.unverified',
+      'accepted.daemon_pty_unverified',
+      'submit_pending_input',
+    ])('does not retry scoped Telegram runtime delivery after terminal %s status', async (status) => {
+      const acceptedResult = {
+        ok: false,
+        accepted: true,
+        queued: true,
+        verified: false,
+        userVisible: false,
+        status,
+      };
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow')
+        .mockResolvedValue(acceptedResult);
+
+      await expect(
+        app.deliverScopedTelegramInboundWithRetry('scoped', 'retry payload', { messageId: 'telegram-in-accepted' })
+      ).resolves.toBe(acceptedResult);
+      expect(scopedRuntimeSpy).toHaveBeenCalledTimes(1);
     });
 
     it('includes saved file path in pane injection for inbound Telegram photos', async () => {
