@@ -156,21 +156,21 @@ function processRowsWithDescendants() {
   ];
 }
 
-function orphanSweepRows() {
+function orphanSweepRows(projectRoot = 'D:\\projects\\squidrun') {
   return [
     {
       ProcessId: 500,
       ParentProcessId: 99,
       Name: 'electron.exe',
-      ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
-      CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" .',
+      ExecutablePath: `${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe`,
+      CommandLine: `"${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe" .`,
     },
     {
       ProcessId: 501,
       ParentProcessId: 500,
       Name: 'node.exe',
       ExecutablePath: 'C:\\Program Files\\nodejs\\node.exe',
-      CommandLine: 'node D:\\projects\\squidrun\\ui\\terminal-daemon.js',
+      CommandLine: `node ${projectRoot}\\ui\\terminal-daemon.js`,
     },
     {
       ProcessId: 502,
@@ -184,7 +184,7 @@ function orphanSweepRows() {
       ParentProcessId: 42,
       Name: 'node.exe',
       ExecutablePath: 'C:\\Program Files\\nodejs\\node.exe',
-      CommandLine: 'node D:\\projects\\squidrun\\ui\\terminal-daemon.js',
+      CommandLine: `node ${projectRoot}\\ui\\terminal-daemon.js`,
     },
     {
       ProcessId: 41552,
@@ -232,6 +232,46 @@ function duplexProcessRows(projectRoot = 'D:\\projects\\squidrun') {
       Name: 'electron.exe',
       ExecutablePath: `${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe`,
       CommandLine: `"${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe" --type=renderer --user-data-dir="C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\eunbyeol" --app-path="${projectRoot}\\ui"`,
+    },
+  ];
+}
+
+function mainAndStandaloneInstallRows() {
+  return [
+    {
+      ProcessId: 700,
+      ParentProcessId: 10,
+      Name: 'electron.exe',
+      ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+      CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" .',
+    },
+    {
+      ProcessId: 701,
+      ParentProcessId: 700,
+      Name: 'electron.exe',
+      ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+      CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" --type=renderer --app-path="D:\\projects\\squidrun\\ui"',
+    },
+    {
+      ProcessId: 800,
+      ParentProcessId: 20,
+      Name: 'sr-electron.exe',
+      ExecutablePath: 'D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-171113b6\\sr-electron.exe',
+      CommandLine: '"D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-171113b6\\sr-electron.exe"',
+    },
+    {
+      ProcessId: 801,
+      ParentProcessId: 800,
+      Name: 'sr-electron.exe',
+      ExecutablePath: 'D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-171113b6\\sr-electron.exe',
+      CommandLine: 'D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-171113b6\\sr-electron.exe D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-171113b6\\resources\\app.asar\\supervisor-daemon.js',
+    },
+    {
+      ProcessId: 802,
+      ParentProcessId: 800,
+      Name: 'sr-electron.exe',
+      ExecutablePath: 'D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-171113b6\\sr-electron.exe',
+      CommandLine: 'D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-171113b6\\sr-electron.exe D:\\SquidRun\\Eunbyeol\\versions\\0.1.34-171113b6\\resources\\app.asar.unpacked\\terminal-daemon.js',
     },
   ];
 }
@@ -333,7 +373,7 @@ describe('hm-restart-execute', () => {
     ]));
   });
 
-  test('discovers the parent Electron process from tasklist output', () => {
+  test('does not infer a restart target from process name or window title without a root path', () => {
     const tasklistOutput = [
       '"Image Name","PID","Session Name","Session#","Mem Usage","Status","User Name","CPU Time","Window Title"',
       '"electron.exe","29364","Console","1","150,000 K","Running","EXAMPLE\\ExampleUser","0:01:00","SquidRun"',
@@ -344,14 +384,7 @@ describe('hm-restart-execute', () => {
       tasklistOutput,
     });
 
-    expect(processes).toEqual([
-      expect.objectContaining({
-        pid: 29364,
-        name: 'electron.exe',
-        windowTitle: 'SquidRun',
-        matchReason: 'direct_project_match',
-      }),
-    ]);
+    expect(processes).toEqual([]);
   });
 
   test('selects only the top-level main SquidRun Electron parent from process rows', () => {
@@ -392,6 +425,33 @@ describe('hm-restart-execute', () => {
         matchReason: 'direct_project_match',
       }),
     ]);
+  });
+
+  test('main restart selection ignores standalone installs outside the main root', () => {
+    const processes = restartExecute.selectSquidRunElectronProcesses(
+      'D:\\projects\\squidrun',
+      mainAndStandaloneInstallRows(),
+      {
+        instanceConfig: {
+          id: 'james-main',
+          profile: 'main',
+          appStatusPath: path.join(tempRoot, '.squidrun', 'app-status.json'),
+          appStatus: {
+            settingsPersistence: {
+              userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui',
+            },
+          },
+        },
+      }
+    );
+
+    expect(processes).toEqual([
+      expect.objectContaining({
+        pid: 700,
+        matchReason: expect.stringContaining('instance_main'),
+      }),
+    ]);
+    expect(processes.map((proc) => proc.pid)).not.toEqual(expect.arrayContaining([800, 801, 802]));
   });
 
   test('does not select Electron-hosted script helpers as restart targets', () => {
@@ -617,6 +677,30 @@ describe('hm-restart-execute', () => {
 
     expect(result.ok).toBe(true);
     expect(killed).toEqual([{ pid: 111, role: 'target' }]);
+  });
+
+  test('shutdown for main install does not kill standalone Eunbyeol processes', async () => {
+    const killed = [];
+
+    const result = await restartExecute.shutdownElectronProcesses('D:\\projects\\squidrun', {
+      instanceConfig: {
+        id: 'james-main',
+        profile: 'main',
+        appStatusPath: path.join(tempRoot, '.squidrun', 'app-status.json'),
+        appStatus: {
+          settingsPersistence: {
+            userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui',
+          },
+        },
+      },
+      processRows: mainAndStandaloneInstallRows(),
+      killProcess: (pid, proc) => killed.push({ pid, role: proc.role, executablePath: proc.executablePath }),
+      processExists: jest.fn(() => false),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(killed.map((proc) => proc.pid)).toEqual([701, 700]);
+    expect(killed.map((proc) => proc.executablePath).join('\n')).not.toContain('D:\\SquidRun\\Eunbyeol');
   });
 
   test('orphan sweep excludes fresh Electron descendants and kills stale terminal tree', async () => {
@@ -862,15 +946,15 @@ describe('hm-restart-execute', () => {
           ProcessId: 111,
           ParentProcessId: 99,
           Name: 'electron.exe',
-          ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
-          CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" .',
+          ExecutablePath: path.join(tempRoot, 'ui', 'node_modules', 'electron', 'dist', 'electron.exe'),
+          CommandLine: `"${path.join(tempRoot, 'ui', 'node_modules', 'electron', 'dist', 'electron.exe')}" .`,
         },
         {
           ProcessId: 203,
           ParentProcessId: 111,
           Name: 'electron.exe',
-          ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
-          CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" --type=renderer --app-path="D:\\projects\\squidrun\\ui"',
+          ExecutablePath: path.join(tempRoot, 'ui', 'node_modules', 'electron', 'dist', 'electron.exe'),
+          CommandLine: `"${path.join(tempRoot, 'ui', 'node_modules', 'electron', 'dist', 'electron.exe')}" --type=renderer --app-path="${path.join(tempRoot, 'ui')}"`,
         },
       ],
       killProcess: jest.fn(),
@@ -943,7 +1027,7 @@ describe('hm-restart-execute', () => {
       killProcess: (pid, proc) => killed.push({ pid, role: proc.role }),
       spawn: jest.fn(() => ({ pid: 222, unref: jest.fn() })),
       sweepOrphans: true,
-      orphanSweepProcessRows: orphanSweepRows(),
+      orphanSweepProcessRows: orphanSweepRows(tempRoot),
       runNodeScript: jest.fn(),
     });
 

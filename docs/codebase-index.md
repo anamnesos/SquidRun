@@ -71,7 +71,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/diagrams-reference.md` | doc | 16076 |
 | `docs/event-kernel-spec.md` | doc | 24652 |
 | `docs/Gasline Tankless Diagram 32 Lyell St.excalidraw` | doc | 97568 |
-| `docs/gate-census-2026-06-12.md` | doc | 25032 |
+| `docs/gate-census-2026-06-12.md` | doc | 26265 |
 | `docs/github-integration-spec.md` | doc | 6260 |
 | `docs/guide/install.md` | doc | 3205 |
 | `docs/guide/limitations.md` | doc | 4393 |
@@ -208,7 +208,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `relay/package.json` | config | 262 |
 | `relay/README.md` | doc | 576 |
 | `relay/server.js` | source | 26220 |
-| `ROLES.md` | doc | 20786 |
+| `ROLES.md` | doc | 21291 |
 | `start-squidrun.bat` | script | 36 |
 | `telegram-poller.js` | source | 6954 |
 
@@ -1052,7 +1052,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/workspace-template/CODEX.md` | doc | 3289 |
 | `ui/workspace-template/GEMINI.md` | doc | 2736 |
 | `ui/workspace-template/PRODUCT-GUIDE.md` | doc | 6321 |
-| `ui/workspace-template/ROLES.md` | doc | 13270 |
+| `ui/workspace-template/ROLES.md` | doc | 13618 |
 | `ui/workspace-template/user-profile.json` | config | 231 |
 
 ### ui/scripts
@@ -1149,8 +1149,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-preflight.js` | script | 2404 |
 | `ui/scripts/hm-promotion.js` | script | 7566 |
 | `ui/scripts/hm-reddit.js` | script | 9957 |
-| `ui/scripts/hm-restart-execute.js` | script | 50254 |
-| `ui/scripts/hm-restart-execute.test.js` | test | 36857 |
+| `ui/scripts/hm-restart-execute.js` | script | 50633 |
+| `ui/scripts/hm-restart-execute.test.js` | test | 40241 |
 | `ui/scripts/hm-restart-request.js` | script | 13697 |
 | `ui/scripts/hm-restart-verify.js` | script | 9173 |
 | `ui/scripts/hm-screenshot-window.ps1` | script | 3812 |
