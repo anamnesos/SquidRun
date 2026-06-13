@@ -226,9 +226,6 @@ function readPollerOwnerState(options = {}) {
 
 function listOwnedMainTelegramWorkerProcesses(options = {}) {
   const projectRoot = resolveProjectRoot(options.projectRoot);
-  const processes = Array.isArray(options.processes)
-    ? options.processes
-    : listMainTelegramWorkerProcesses(options);
   const owner = options.ownerState || readPollerOwnerState({
     projectRoot,
     statePath: options.statePath,
@@ -252,6 +249,9 @@ function listOwnedMainTelegramWorkerProcesses(options = {}) {
     return [];
   }
 
+  const processes = Array.isArray(options.processes)
+    ? options.processes
+    : listMainTelegramWorkerProcesses(options);
   return processes.filter((entry) => Number.parseInt(String(entry?.pid ?? ''), 10) === ownerPid);
 }
 

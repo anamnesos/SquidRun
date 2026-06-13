@@ -38,8 +38,14 @@ class InboundPollerService {
       return this.telegramPoller.start(options);
     }
 
+    const workerEnv = {
+      ...process.env,
+      ...(options.env || {}),
+      SQUIDRUN_TELEGRAM_POLLER_WORKER: '1',
+    };
+
     const getTelegramConfig = this.telegramPoller?._internals?.getTelegramConfig;
-    if (typeof getTelegramConfig === 'function' && !getTelegramConfig(options.env || process.env)) {
+    if (typeof getTelegramConfig === 'function' && !getTelegramConfig(workerEnv)) {
       return false;
     }
 
@@ -50,10 +56,7 @@ class InboundPollerService {
 
     this.telegramOnMessage = typeof options.onMessage === 'function' ? options.onMessage : null;
     const worker = this.forkProcess(this.telegramWorkerPath, [], buildNodeWorkerForkOptions({
-      env: {
-        ...process.env,
-        SQUIDRUN_TELEGRAM_POLLER_WORKER: '1',
-      },
+      env: workerEnv,
     }));
     worker.__squidrunIntentionalStop = false;
     this.telegramWorker = worker;
@@ -77,7 +80,7 @@ class InboundPollerService {
     }
 
     const workerOptions = {
-      env: options.env || process.env,
+      env: workerEnv,
       pollIntervalMs: options.pollIntervalMs,
       downloadMedia: options.downloadMedia,
       mediaDownloadRoot: options.mediaDownloadRoot,

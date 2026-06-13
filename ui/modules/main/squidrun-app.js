@@ -79,6 +79,10 @@ const {
 } = require('../../scripts/hm-telegram-routing');
 const { createInboundPollerService } = require('./inbound-poller-service');
 const {
+  readTelegramSettings,
+  resolveTelegramSettingsPath,
+} = require('../telegram-credentials');
+const {
   appendReceiptMarkerToPrompt,
 } = require('../model-prompt-receipt');
 const {
@@ -605,12 +609,23 @@ function normalizeRootForCompare(value) {
   return path.resolve(normalized).replace(/[\\/]+$/, '').toLowerCase();
 }
 
+function resolveRootPath(value) {
+  const normalized = toNonEmptyString(value);
+  return normalized ? path.resolve(normalized) : null;
+}
+
 function rootContainsPath(root, targetPath) {
   const rootText = toNonEmptyString(root);
   const targetText = toNonEmptyString(targetPath);
   if (!rootText || !targetText) return false;
   const relative = path.relative(path.resolve(rootText), path.resolve(targetText));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function fingerprintSecret(value) {
+  const text = toNonEmptyString(value);
+  if (!text) return null;
+  return createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
 // Matches CSI sequences (ESC [ ... cmd), OSC strings (ESC ] ... BEL/ST), and
@@ -3832,13 +3847,55 @@ class SquidRunApp {
     const appStatusPath = typeof this.settings?.resolveAppStatusPath === 'function'
       ? this.settings.resolveAppStatusPath()
       : resolveCoordPath('app-status.json', { forWrite: true });
+    const telegramWorkerEnv = this.buildTelegramPollerEnv();
+    const telegramPollerStatePath = toNonEmptyString(telegramWorkerEnv.TELEGRAM_POLLER_STATE_PATH)
+      || (telegramWorkerEnv.SQUIDRUN_DATA_ROOT
+        ? path.join(path.resolve(telegramWorkerEnv.SQUIDRUN_DATA_ROOT), '.squidrun', 'runtime', 'telegram-poller-state.json')
+        : null);
+    const telegramSettingsPath = this.installedDeployment?.dataRoot
+      ? resolveTelegramSettingsPath(this.installedDeployment.dataRoot)
+      : null;
     return {
       settingsPath,
       runtimePath,
       crumbPath,
       appStatusPath,
+      telegramPollerDataRoot: telegramWorkerEnv.SQUIDRUN_DATA_ROOT || null,
+      telegramPollerProjectRoot: telegramWorkerEnv.SQUIDRUN_PROJECT_ROOT || null,
+      telegramPollerStatePath,
+      telegramSettingsPath,
+      telegramWorkerEnv,
       websocketPortInfo,
     };
+  }
+
+  buildTelegramPollerEnv(baseEnv = process.env) {
+    const expectedRoot = this.installedDeployment?.active === true && this.installedDeployment?.dataRoot
+      ? path.resolve(this.installedDeployment.dataRoot)
+      : null;
+    const dataRoot = expectedRoot
+      || resolveRootPath(baseEnv.SQUIDRUN_DATA_ROOT)
+      || resolveRootPath(getProjectRoot())
+      || resolveRootPath(baseEnv.SQUIDRUN_PROJECT_ROOT);
+    const projectRoot = expectedRoot
+      || resolveRootPath(baseEnv.SQUIDRUN_PROJECT_ROOT)
+      || dataRoot;
+    const rootForState = dataRoot || projectRoot;
+    const nextEnv = {
+      ...buildProfileTelegramEnv(baseEnv, this.activeProfileName),
+      SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
+    };
+    if (dataRoot) nextEnv.SQUIDRUN_DATA_ROOT = path.resolve(dataRoot);
+    if (projectRoot) nextEnv.SQUIDRUN_PROJECT_ROOT = path.resolve(projectRoot);
+    if (rootForState) {
+      nextEnv.TELEGRAM_POLLER_STATE_PATH = path.join(
+        path.resolve(rootForState),
+        '.squidrun',
+        'runtime',
+        'telegram-poller-state.json'
+      );
+    }
+    return nextEnv;
   }
 
   assertRootCoherenceAtBoot() {
@@ -3851,12 +3908,31 @@ class SquidRunApp {
     if (!expectedRoot) {
       return { ok: true, skipped: true, reason: 'missing_installed_data_root' };
     }
-    const paths = this.resolveRootCoherencePaths();
+    const rawPaths = this.resolveRootCoherencePaths();
+    const telegramWorkerEnv = rawPaths.telegramWorkerEnv || this.buildTelegramPollerEnv();
+    const telegramPollerDataRoot = rawPaths.telegramPollerDataRoot || telegramWorkerEnv.SQUIDRUN_DATA_ROOT || expectedRoot;
+    const telegramPollerProjectRoot = rawPaths.telegramPollerProjectRoot || telegramWorkerEnv.SQUIDRUN_PROJECT_ROOT || expectedRoot;
+    const telegramPollerStatePath = rawPaths.telegramPollerStatePath
+      || telegramWorkerEnv.TELEGRAM_POLLER_STATE_PATH
+      || path.join(expectedRoot, '.squidrun', 'runtime', 'telegram-poller-state.json');
+    const telegramSettingsPath = rawPaths.telegramSettingsPath || resolveTelegramSettingsPath(expectedRoot);
+    const paths = {
+      ...rawPaths,
+      telegramPollerDataRoot,
+      telegramPollerProjectRoot,
+      telegramPollerStatePath,
+      telegramSettingsPath,
+      telegramWorkerEnv,
+    };
     const checks = {
       settingsPath: paths.settingsPath,
       runtimePath: paths.runtimePath,
       crumbPath: paths.crumbPath,
       appStatusPath: paths.appStatusPath,
+      telegramPollerDataRoot: paths.telegramPollerDataRoot,
+      telegramPollerProjectRoot: paths.telegramPollerProjectRoot,
+      telegramPollerStatePath: paths.telegramPollerStatePath,
+      telegramSettingsPath: paths.telegramSettingsPath,
     };
     const mismatches = Object.entries(checks)
       .filter(([, targetPath]) => !rootContainsPath(expectedRoot, targetPath))
@@ -3865,6 +3941,27 @@ class SquidRunApp {
         path: targetPath || null,
         normalizedRoot: normalizeRootForCompare(targetPath ? path.dirname(targetPath) : null),
       }));
+    const telegramSettings = readTelegramSettings(paths.telegramSettingsPath);
+    const expectedTelegramTokenFingerprint = fingerprintSecret(telegramSettings?.botToken);
+    const actualTelegramTokenFingerprint = fingerprintSecret(paths.telegramWorkerEnv?.TELEGRAM_BOT_TOKEN);
+    if (expectedTelegramTokenFingerprint && expectedTelegramTokenFingerprint !== actualTelegramTokenFingerprint) {
+      mismatches.push({
+        name: 'telegramWorkerTokenFingerprint',
+        path: paths.telegramSettingsPath || null,
+        expectedFingerprint: expectedTelegramTokenFingerprint,
+        actualFingerprint: actualTelegramTokenFingerprint,
+      });
+    }
+    const expectedTelegramChatId = normalizeChatId(telegramSettings?.ownerChatId ?? telegramSettings?.chatId);
+    const actualTelegramChatId = normalizeChatId(paths.telegramWorkerEnv?.TELEGRAM_CHAT_ID);
+    if (expectedTelegramChatId && expectedTelegramChatId !== actualTelegramChatId) {
+      mismatches.push({
+        name: 'telegramWorkerChatId',
+        path: paths.telegramSettingsPath || null,
+        expectedChatId: expectedTelegramChatId,
+        actualChatId: actualTelegramChatId,
+      });
+    }
     if (mismatches.length === 0) {
       this.appendBootSequenceBreadcrumb('root-coherence:ok', {
         expectedRoot,
@@ -14263,8 +14360,7 @@ class SquidRunApp {
       return;
     }
     const telegramEnv = {
-      ...buildProfileTelegramEnv(process.env, this.activeProfileName),
-      SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
+      ...this.buildTelegramPollerEnv(process.env),
     };
     const started = this.inboundPollerService.startTelegram({
       env: telegramEnv,

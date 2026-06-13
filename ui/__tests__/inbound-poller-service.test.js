@@ -67,6 +67,9 @@ describe('InboundPollerService', () => {
       env: {
         TELEGRAM_BOT_TOKEN: 'token',
         TELEGRAM_CHAT_ID: '123',
+        SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\sideprofile',
+        SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
+        TELEGRAM_POLLER_STATE_PATH: 'D:\\SquidRun\\sideprofile\\.squidrun\\runtime\\telegram-poller-state.json',
       },
       onMessage,
       pollIntervalMs: 5000,
@@ -80,6 +83,9 @@ describe('InboundPollerService', () => {
       expect.objectContaining({
         env: expect.objectContaining({
           SQUIDRUN_TELEGRAM_POLLER_WORKER: '1',
+          SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\sideprofile',
+          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
+          TELEGRAM_POLLER_STATE_PATH: 'D:\\SquidRun\\sideprofile\\.squidrun\\runtime\\telegram-poller-state.json',
         }),
       })
     );
@@ -88,6 +94,11 @@ describe('InboundPollerService', () => {
     expect(worker.send).toHaveBeenCalledWith({
       type: 'start',
       options: expect.objectContaining({
+        env: expect.objectContaining({
+          SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\sideprofile',
+          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
+          TELEGRAM_POLLER_STATE_PATH: 'D:\\SquidRun\\sideprofile\\.squidrun\\runtime\\telegram-poller-state.json',
+        }),
         pollIntervalMs: 5000,
         downloadMedia: false,
         keepAlive: true,
@@ -148,6 +159,8 @@ describe('InboundPollerService', () => {
         env: {
           TELEGRAM_BOT_TOKEN: 'token',
           TELEGRAM_CHAT_ID: 'REDACTED-CHAT-ID',
+          SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\sideprofile',
+          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
         },
       })).toBe(true);
 
@@ -158,6 +171,8 @@ describe('InboundPollerService', () => {
           execPath: 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-test\\sr-electron.exe',
           env: expect.objectContaining({
             SQUIDRUN_TELEGRAM_POLLER_WORKER: '1',
+            SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\sideprofile',
+            SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
             ELECTRON_RUN_AS_NODE: '1',
           }),
         })
