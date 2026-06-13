@@ -225,3 +225,23 @@ Registry check first (the binding method rule): an owning contract EXISTS — wo
 **Oracle next pass**: B5 + C3 consumers · G6a hot-watcher consumer/cadence audit (~2,984 CPU-s / 859MB steady-state) · `submit_pending_input` field watch (standing) · Mira Lab verifier 3/4-flake watch (capture JSON if it recurs).
 
 *Census v1 by Oracle S442; v2 addenda + H dispositions S443; v3 execution fold S443. Terminal-state standard (Architect #31): every verdict ends kept-with-reason, fixed-and-proven, or killed-with-inventory.*
+
+---
+
+# Method exhibit — Session 446 (2026-06-13)
+
+## M1. Right-size with the cheapest test before designing the robust version
+
+**What happened**: main↔her cross-install coordination was diagnosed as structurally dead (`--target-profile` hashes `'eunbyeol'` to a phantom port 10001; "main→her live coordination was never real once she went standalone"). The team posed three fix designs (relay / registry-port / file-queue), ran a hard red-team, killed the file-queue for manufacturing cross-root coupling, picked registry-port (b) with four hardening gates, and TEAM-SIGNED it — all before anyone ran the one-line test James then asked: *"isn't it just a file write into her architect?"* It was. main→her via her trigger folder + her→main via 9900 = bidirectional reach, proven live, zero build. The file-drop direction always worked; nobody had tried it. (b) collapses from "the fix" to OPTIONAL hardening (confirmed-delivery, app-off durability).
+
+**The miss, named precisely**: the red-team was correct in its own frame — the (b)-over-(c) reasoning stands, no-shared-writable-state is right — but the whole exercise was PREMATURE. We designed the robust version of a channel before confirming the channel was broken the way we assumed. Step 2 before step 1.
+
+**The sharp irony, owned (Oracle)**: this same day the seat ran the S268 date instead of asserting it, looked at the live render instead of trusting it, and demanded R1 show an actual resolved path instead of a self-report. On the channel, I verified everything EXCEPT the premise I was handed ("the channel is dead"). Verify-don't-assert has to cover the PROBLEM STATEMENT, not just the evidence inside it.
+
+**The rule**: before red-teaming N designs for a problem, state and run the SINGLE CHEAPEST TEST that would confirm the problem exists and size it. If a one-line manual test can falsify the problem, it runs FIRST. Robust-design effort is only earned once the cheap test confirms the problem is real and large enough to justify the robustness.
+
+**Family**: sibling of the morning's eval miss (rigorous friction-metric bound to the wrong signal) and of the day's instrument exhibits (breadcrumbs writing a perfect trail into the wrong root) — all three are RIGOR APPLIED BEFORE CHECKING THE PREMISE. Same cure: a cheap premise-check before the expensive build.
+
+**Meta-note worth keeping**: the right-sizing question came from JAMES, the non-engineer. Three agents heads-down in the architecture lost the cheap-test instinct; the principal who wasn't in the guts kept it. "Users want simple" cutting the other way — sometimes the orchestrator's plain question is the senior move the specialists missed. Pair with the eval lesson: lived/plain truth outranks elaborate analysis more often than the analysts expect.
+
+*Method exhibit by Oracle, S446. The (b) design stays on file as optional hardening; the durable artifact is the rule, not the channel.*
