@@ -268,6 +268,53 @@ describe('hm-telegram-poller-watchdog', () => {
     expect(startStandaloneLane).toHaveBeenCalledTimes(1);
   });
 
+  test('failed app restart refuses same-pid worker when token ownership does not match', async () => {
+    const freshness = {
+      status: 'stale',
+      wedged: true,
+      ageMs: 43 * 60 * 1000,
+      staleThresholdMs: 10 * 60 * 1000,
+    };
+    writeJson(path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json'), {
+      version: 1,
+      updatedAt: '2026-06-06T04:00:00.000Z',
+      poller: {
+        pid: 68752,
+        dataRoot: tempDir,
+        tokenFingerprint: 'foreign-token-fp',
+        lastPollStatus: 'ok_empty',
+      },
+    });
+    const startStandaloneLane = jest.fn(() => ({
+      ok: true,
+      started: true,
+      pid: 470996,
+    }));
+
+    const recovery = await recoverWedgedTelegramPoller({
+      projectRoot: tempDir,
+      env: {
+        TELEGRAM_BOT_TOKEN: 'owned-token',
+        SQUIDRUN_DATA_ROOT: tempDir,
+      },
+      freshness,
+      dryRun: true,
+      isMainWorkerAlive: () => false,
+      notifyJames: jest.fn(() => ({ ok: true, message: 'restored' })),
+      processListText: '68752 node D:\\projects\\squidrun\\ui\\modules\\main\\telegram-poller-worker.js',
+      runAppRestart: jest.fn(() => ({
+        ok: false,
+        result: { success: false, reason: 'app_control_unavailable' },
+      })),
+      startStandaloneLane,
+      standaloneStatus: { running: false },
+    });
+
+    expect(recovery.killResult.killed).toEqual([]);
+    expect(recovery.killResult.skipped).toEqual([]);
+    expect(startStandaloneLane).toHaveBeenCalledTimes(1);
+  });
+
   test('existing standalone lane is restarted instead of starting an app worker', async () => {
     const freshness = {
       status: 'stale',

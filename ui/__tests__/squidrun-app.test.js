@@ -754,6 +754,55 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('fails loud when the Telegram worker env would use a foreign installed token', () => {
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-root-telegram-data-'));
+      const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+      const previousChatId = process.env.TELEGRAM_CHAT_ID;
+      try {
+        fs.mkdirSync(path.join(dataRoot, '.squidrun', 'settings'), { recursive: true });
+        fs.writeFileSync(
+          path.join(dataRoot, '.squidrun', 'settings', 'telegram.json'),
+          JSON.stringify({
+            botToken: 'owned-eunbyeol-token',
+            ownerChatId: '8754356993',
+          }, null, 2),
+          'utf8'
+        );
+        process.env.TELEGRAM_BOT_TOKEN = 'main-token-leak';
+        process.env.TELEGRAM_CHAT_ID = '5613428850';
+
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.installedDeployment = {
+          active: true,
+          dataRoot,
+          source: path.join(dataRoot, 'squidrun-install.json'),
+        };
+        const markerPath = path.join(dataRoot, '.squidrun', 'runtime', 'root-coherence-assert.jsonl');
+        app.getRootCoherenceMarkerPaths = jest.fn(() => [markerPath]);
+        app.getBootSequencePath = jest.fn(() => path.join(dataRoot, '.squidrun', 'runtime', 'boot-sequence.jsonl'));
+        app.settings.resolveAppStatusPath = jest.fn(() => path.join(dataRoot, '.squidrun', 'app-status.json'));
+
+        expect(() => app.assertRootCoherenceAtBoot()).toThrow(/Root coherence assertion failed/);
+
+        const marker = fs.readFileSync(markerPath, 'utf8');
+        expect(marker).toContain('telegramWorkerTokenFingerprint');
+        expect(marker).toContain('telegramWorkerChatId');
+        expect(marker).toContain('telegramPollerStatePath');
+      } finally {
+        if (previousToken === undefined) {
+          delete process.env.TELEGRAM_BOT_TOKEN;
+        } else {
+          process.env.TELEGRAM_BOT_TOKEN = previousToken;
+        }
+        if (previousChatId === undefined) {
+          delete process.env.TELEGRAM_CHAT_ID;
+        } else {
+          process.env.TELEGRAM_CHAT_ID = previousChatId;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+      }
+    });
+
     it('includes Squid Room arm panes in hidden pane host coverage when enabled', () => {
       mockAppContext.currentSettings.hiddenPaneHostsEnabled = true;
       const app = new SquidRunApp(mockAppContext, mockManagers);
