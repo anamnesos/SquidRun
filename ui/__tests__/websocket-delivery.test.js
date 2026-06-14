@@ -175,6 +175,80 @@ describe('WebSocket Delivery Audit', () => {
     expect(received.from).toBe('architect');
   });
 
+  test('routes TrustQuote arm targets through the local pane handler when no arm WebSocket client is registered', async () => {
+    const routeScope = {
+      profileName: 'main',
+      windowKey: 'squid-room',
+      sessionScopeId: 'app-test:squid-room',
+    };
+    const worker = await connectAndRegister({
+      port,
+      role: 'trustquote-invoice',
+      paneId: 'trustquote-invoice',
+      ...routeScope,
+    });
+    activeClients.add(worker);
+
+    const requestId = 'trustquote-arm-handler-health-1';
+    const healthPromise = waitForMessage(
+      worker,
+      (msg) => msg.type === 'health-check-result' && msg.requestId === requestId
+    );
+    worker.send(JSON.stringify({
+      type: 'health-check',
+      target: 'trustquote-lead',
+      requestId,
+    }));
+    const health = await healthPromise;
+    expect(health.healthy).toBe(true);
+    expect(health.status).toBe('handler_route_available');
+    expect(health.source).toBe('local_message_handler');
+    expect(health.role).toBe('trustquote-lead');
+    expect(health.paneId).toBe('trustquote-lead');
+
+    onMessageSpy.mockImplementation((payload) => {
+      if (payload?.message?.type === 'send' && payload?.message?.messageId === 'trustquote-arm-handler-1') {
+        return {
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'delivered.verified',
+          paneId: 'trustquote-lead',
+          mode: 'daemon-pty',
+        };
+      }
+      return undefined;
+    });
+
+    const messageId = 'trustquote-arm-handler-1';
+    const ackPromise = waitForMessage(
+      worker,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+    worker.send(JSON.stringify({
+      type: 'send',
+      target: 'trustquote-lead',
+      content: 'invoice status',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const ack = await ackPromise;
+    expect(ack.ok).toBe(true);
+    expect(ack.status).toBe('delivered.verified');
+    expect(ack.wsDeliveryCount).toBe(0);
+    expect(onMessageSpy).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'trustquote-invoice',
+      paneId: 'trustquote-invoice',
+      message: expect.objectContaining({
+        type: 'send',
+        target: 'trustquote-lead',
+        messageId,
+      }),
+    }));
+  });
+
   test('blocks non-main canonical target from falling back to main profile', async () => {
     const mainReceiver = await connectAndRegister({ port, role: 'builder', paneId: '2', profileName: 'main' });
     activeClients.add(mainReceiver);
