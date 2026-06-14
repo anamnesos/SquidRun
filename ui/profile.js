@@ -11,7 +11,6 @@ const {
 
 const DEFAULT_PROFILE = 'main';
 const SCOPED_PROFILE_CHAT_ID = '2222222222';
-const DEFAULT_MAIN_TELEGRAM_CHAT_ID = '5613428850';
 const PROFILE_SCOPED_DIRS = new Set([
   'runtime',
   'settings',
@@ -256,7 +255,7 @@ function buildProfileTelegramEnv(env = process.env, profileName = null) {
   nextEnv.TELEGRAM_AUTHORIZED_CHAT_IDS = sanitizeChatList(env?.TELEGRAM_AUTHORIZED_CHAT_IDS, denySet);
   nextEnv.TELEGRAM_CHAT_ALLOWLIST = sanitizeChatList(env?.TELEGRAM_CHAT_ALLOWLIST, denySet);
   if (String(nextEnv.TELEGRAM_CHAT_ID || '').trim() === SCOPED_PROFILE_CHAT_ID) {
-    nextEnv.TELEGRAM_CHAT_ID = DEFAULT_MAIN_TELEGRAM_CHAT_ID;
+    delete nextEnv.TELEGRAM_CHAT_ID;
   }
   return nextEnv;
 }
