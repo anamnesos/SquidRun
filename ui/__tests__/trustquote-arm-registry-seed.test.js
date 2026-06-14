@@ -82,6 +82,13 @@ maybeDescribe('TrustQuote arm registry seed', () => {
       'trustquote-app',
       'trustquote-invoice',
     ]);
+    expect(manifest.arms
+      .filter((arm) => arm.armKind === 'domain')
+      .map((arm) => arm.metadata?.reportsTo)).toEqual([
+      'trustquote-lead',
+      'trustquote-lead',
+      'trustquote-lead',
+    ]);
     expect(manifest.metadata).toEqual(expect.objectContaining({
       manifestScope: 'app_room',
       readinessSessionId: 'app-session-777:trustquote',

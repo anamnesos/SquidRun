@@ -87,6 +87,7 @@ function trustQuoteDayToDayArms() {
     displayName: spec.displayName,
     dataSources: spec.dataSources,
     permissions: spec.permissions,
+    metadata: spec.reportsTo ? { reportsTo: spec.reportsTo } : {},
     checkInObligation: {
       required: true,
       proofKind: 'startup_check_in',
