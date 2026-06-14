@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1153
+- Total files listed: 1596
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -16,26 +16,34 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - .github: 2
 - .squidrun: 1
 - benchmarks: 2
-- docs: 42
+- docs: 44
 - root: 103
 - scripts: 1
 - tools: 3
 - ui/__tests__: 430
-- ui/modules: 357
-- ui/other: 37
-- ui/scripts: 139
+- ui/modules: 358
+- ui/other: 475
+- ui/scripts: 141
 - ui/styles: 19
 - workspace/knowledge: 17
 
 ## Summary By Kind
-- asset: 30
-- config: 31
-- doc: 97
+- asar: 1
+- asset: 31
+- bin: 2
+- blockmap: 1
+- config: 35
+- dat: 1
+- dll: 6
+- doc: 99
+- exe: 3
 - file: 1
 - jsonl: 1
-- script: 140
-- source: 422
+- pak: 58
+- script: 142
+- source: 783
 - test: 431
+- txt: 1
 
 ## Files
 
@@ -65,6 +73,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | --- | --- | ---: |
 | `docs/agent-templates.md` | doc | 1312 |
 | `docs/background-builder-agents-spec.md` | doc | 10011 |
+| `docs/backlog-execution-plan-s446.md` | doc | 8204 |
 | `docs/codebase-index.md` | doc | - |
 | `docs/csm-1b-benchmark-prep.md` | doc | 8073 |
 | `docs/device-to-device-diagram.svg` | doc | 42933 |
@@ -72,7 +81,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/event-kernel-spec.md` | doc | 24652 |
 | `docs/fresh-eyes-walk-2026-06-12.md` | doc | 6886 |
 | `docs/Gasline Tankless Diagram 32 Lyell St.excalidraw` | doc | 97568 |
-| `docs/gate-census-2026-06-12.md` | doc | 37896 |
+| `docs/gate-census-2026-06-12.md` | doc | 40838 |
 | `docs/github-integration-spec.md` | doc | 6260 |
 | `docs/guide/install.md` | doc | 3205 |
 | `docs/guide/limitations.md` | doc | 4393 |
@@ -94,6 +103,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `docs/models/claude-notes.md` | doc | 1161 |
 | `docs/models/codex-notes.md` | doc | 1081 |
 | `docs/models/gemini-notes.md` | doc | 1321 |
+| `docs/pc-hardware-backlog.md` | doc | 5836 |
 | `docs/plugins.md` | doc | 3351 |
 | `docs/protocol-spec.md` | doc | 9640 |
 | `docs/roles/ARCH.md` | doc | 264 |
@@ -284,7 +294,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/coord-path-integration.test.js` | test | 2224 |
 | `ui/__tests__/cross-device-bridge-e2e.test.js` | test | 11888 |
 | `ui/__tests__/cross-device-target.test.js` | test | 2891 |
-| `ui/__tests__/daemon-handlers.test.js` | test | 54920 |
+| `ui/__tests__/daemon-handlers.test.js` | test | 55348 |
 | `ui/__tests__/daemon-snapshot.test.js` | test | 2336 |
 | `ui/__tests__/daemon.test.js` | test | 20166 |
 | `ui/__tests__/debug-replay-handlers.test.js` | test | 28695 |
@@ -382,12 +392,12 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/hm-sms.test.js` | test | 3616 |
 | `ui/__tests__/hm-squid-room-restart-proof.test.js` | test | 16807 |
 | `ui/__tests__/hm-squid-room-streaming-fit.test.js` | test | 3896 |
-| `ui/__tests__/hm-stage-split-release.test.js` | test | 4823 |
+| `ui/__tests__/hm-stage-split-release.test.js` | test | 4959 |
 | `ui/__tests__/hm-startup-health.test.js` | test | 3585 |
 | `ui/__tests__/hm-supervisor.test.js` | test | 894 |
 | `ui/__tests__/hm-task-queue.test.js` | test | 25538 |
 | `ui/__tests__/hm-telegram-poller-lane.test.js` | test | 5924 |
-| `ui/__tests__/hm-telegram-poller-watchdog.test.js` | test | 9052 |
+| `ui/__tests__/hm-telegram-poller-watchdog.test.js` | test | 10556 |
 | `ui/__tests__/hm-telegram-routing.test.js` | test | 7906 |
 | `ui/__tests__/hm-telegram.test.js` | test | 19985 |
 | `ui/__tests__/hm-transition.test.js` | test | 2309 |
@@ -395,9 +405,9 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/hm-visible-pane-submit-harness.test.js` | test | 6296 |
 | `ui/__tests__/hm-voice-broker.test.js` | test | 4413 |
 | `ui/__tests__/hm-what-now.test.js` | test | 2831 |
-| `ui/__tests__/human-timeline.test.js` | test | 12922 |
+| `ui/__tests__/human-timeline.test.js` | test | 20661 |
 | `ui/__tests__/image-gen.test.js` | test | 12705 |
-| `ui/__tests__/inbound-poller-service.test.js` | test | 5214 |
+| `ui/__tests__/inbound-poller-service.test.js` | test | 6174 |
 | `ui/__tests__/ingress-envelope.test.js` | test | 2607 |
 | `ui/__tests__/inject-message-ipc.test.js` | test | 4845 |
 | `ui/__tests__/injection-events.test.js` | test | 25354 |
@@ -562,7 +572,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/presence-state.test.js` | test | 1631 |
 | `ui/__tests__/problem-orchestrator.test.js` | test | 5079 |
 | `ui/__tests__/process-handlers.test.js` | test | 10914 |
-| `ui/__tests__/profile.test.js` | test | 5682 |
+| `ui/__tests__/profile.test.js` | test | 6244 |
 | `ui/__tests__/project-handlers.test.js` | test | 30636 |
 | `ui/__tests__/project-room-envelope.test.js` | test | 28006 |
 | `ui/__tests__/project-rooms-ui.test.js` | test | 15444 |
@@ -600,7 +610,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/sms-poller.test.js` | test | 8013 |
 | `ui/__tests__/social-move-classifier-v0.test.js` | test | 26226 |
 | `ui/__tests__/squid-room-surface.test.js` | test | 14236 |
-| `ui/__tests__/squidrun-app.test.js` | test | 432122 |
+| `ui/__tests__/squidrun-app.test.js` | test | 436720 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
 | `ui/__tests__/startup-source-of-truth.test.js` | test | 2483 |
 | `ui/__tests__/state-handlers.test.js` | test | 8772 |
@@ -624,7 +634,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/team-memory-worker-client.test.js` | test | 4155 |
 | `ui/__tests__/telegram-credentials.test.js` | test | 7002 |
 | `ui/__tests__/telegram-poller.test.js` | test | 26002 |
-| `ui/__tests__/telegram-reply-obligations.test.js` | test | 7913 |
+| `ui/__tests__/telegram-reply-obligations.test.js` | test | 9165 |
 | `ui/__tests__/template-handlers.test.js` | test | 19093 |
 | `ui/__tests__/terminal-events.test.js` | test | 15315 |
 | `ui/__tests__/terminal-restart-scrollback-store.test.js` | test | 2878 |
@@ -819,9 +829,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/evidence-ledger-store.js` | source | 138322 |
 | `ui/modules/main/firmware-manager.js` | source | 13578 |
 | `ui/modules/main/github-service.js` | source | 26183 |
+| `ui/modules/main/human-timeline-headline-cache.js` | source | 6342 |
 | `ui/modules/main/human-timeline-sidecar-window.js` | source | 1880 |
-| `ui/modules/main/human-timeline.js` | source | 25673 |
-| `ui/modules/main/inbound-poller-service.js` | source | 5959 |
+| `ui/modules/main/human-timeline.js` | source | 29433 |
+| `ui/modules/main/inbound-poller-service.js` | source | 5983 |
 | `ui/modules/main/kernel-bridge.js` | source | 5190 |
 | `ui/modules/main/launch-intent.js` | source | 2928 |
 | `ui/modules/main/live-task-audit-sidecar-window.js` | source | 1966 |
@@ -834,9 +845,9 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/pty-output-filter.js` | source | 7793 |
 | `ui/modules/main/restart-continuity-resume-manifest.js` | source | 34903 |
 | `ui/modules/main/settings-manager.js` | source | 26444 |
-| `ui/modules/main/squidrun-app.js` | source | 576168 |
+| `ui/modules/main/squidrun-app.js` | source | 583763 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 3021 |
-| `ui/modules/main/telegram-reply-obligations.js` | source | 13086 |
+| `ui/modules/main/telegram-reply-obligations.js` | source | 13323 |
 | `ui/modules/main/trustquote-arm-registry-seed.js` | source | 7307 |
 | `ui/modules/main/usage-manager.js` | source | 2909 |
 | `ui/modules/main/work-item-ledger.js` | source | 43938 |
@@ -1034,6 +1045,444 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/assets/squidrun-favicon.ico` | asset | 110916 |
 | `ui/config.js` | source | 21743 |
 | `ui/daemon-client.js` | source | 23604 |
+| `ui/dist-4c186a10/builder-debug.yml` | config | 8402 |
+| `ui/dist-4c186a10/latest.yml` | config | 348 |
+| `ui/dist-4c186a10/SquidRun Setup 0.1.34.exe` | exe | 218596315 |
+| `ui/dist-4c186a10/SquidRun Setup 0.1.34.exe.blockmap` | blockmap | 217782 |
+| `ui/dist-4c186a10/win-unpacked/chrome_100_percent.pak` | pak | 167733 |
+| `ui/dist-4c186a10/win-unpacked/chrome_200_percent.pak` | pak | 227823 |
+| `ui/dist-4c186a10/win-unpacked/d3dcompiler_47.dll` | dll | 4916712 |
+| `ui/dist-4c186a10/win-unpacked/ffmpeg.dll` | dll | 2877440 |
+| `ui/dist-4c186a10/win-unpacked/icudtl.dat` | dat | 10717392 |
+| `ui/dist-4c186a10/win-unpacked/libEGL.dll` | dll | 478208 |
+| `ui/dist-4c186a10/win-unpacked/libGLESv2.dll` | dll | 7808512 |
+| `ui/dist-4c186a10/win-unpacked/LICENSE.electron.txt` | txt | 1096 |
+| `ui/dist-4c186a10/win-unpacked/LICENSES.chromium.html` | asset | 9142459 |
+| `ui/dist-4c186a10/win-unpacked/locales/af.pak` | pak | 475987 |
+| `ui/dist-4c186a10/win-unpacked/locales/am.pak` | pak | 774206 |
+| `ui/dist-4c186a10/win-unpacked/locales/ar.pak` | pak | 848943 |
+| `ui/dist-4c186a10/win-unpacked/locales/bg.pak` | pak | 881843 |
+| `ui/dist-4c186a10/win-unpacked/locales/bn.pak` | pak | 1138948 |
+| `ui/dist-4c186a10/win-unpacked/locales/ca.pak` | pak | 536688 |
+| `ui/dist-4c186a10/win-unpacked/locales/cs.pak` | pak | 552003 |
+| `ui/dist-4c186a10/win-unpacked/locales/da.pak` | pak | 499433 |
+| `ui/dist-4c186a10/win-unpacked/locales/de.pak` | pak | 534385 |
+| `ui/dist-4c186a10/win-unpacked/locales/el.pak` | pak | 966750 |
+| `ui/dist-4c186a10/win-unpacked/locales/en-GB.pak` | pak | 434881 |
+| `ui/dist-4c186a10/win-unpacked/locales/en-US.pak` | pak | 438820 |
+| `ui/dist-4c186a10/win-unpacked/locales/es-419.pak` | pak | 528171 |
+| `ui/dist-4c186a10/win-unpacked/locales/es.pak` | pak | 528159 |
+| `ui/dist-4c186a10/win-unpacked/locales/et.pak` | pak | 479354 |
+| `ui/dist-4c186a10/win-unpacked/locales/fa.pak` | pak | 786229 |
+| `ui/dist-4c186a10/win-unpacked/locales/fi.pak` | pak | 489527 |
+| `ui/dist-4c186a10/win-unpacked/locales/fil.pak` | pak | 554334 |
+| `ui/dist-4c186a10/win-unpacked/locales/fr.pak` | pak | 572576 |
+| `ui/dist-4c186a10/win-unpacked/locales/gu.pak` | pak | 1117670 |
+| `ui/dist-4c186a10/win-unpacked/locales/he.pak` | pak | 688870 |
+| `ui/dist-4c186a10/win-unpacked/locales/hi.pak` | pak | 1176726 |
+| `ui/dist-4c186a10/win-unpacked/locales/hr.pak` | pak | 533826 |
+| `ui/dist-4c186a10/win-unpacked/locales/hu.pak` | pak | 574850 |
+| `ui/dist-4c186a10/win-unpacked/locales/id.pak` | pak | 473577 |
+| `ui/dist-4c186a10/win-unpacked/locales/it.pak` | pak | 521539 |
+| `ui/dist-4c186a10/win-unpacked/locales/ja.pak` | pak | 637276 |
+| `ui/dist-4c186a10/win-unpacked/locales/kn.pak` | pak | 1280837 |
+| `ui/dist-4c186a10/win-unpacked/locales/ko.pak` | pak | 538740 |
+| `ui/dist-4c186a10/win-unpacked/locales/lt.pak` | pak | 578461 |
+| `ui/dist-4c186a10/win-unpacked/locales/lv.pak` | pak | 577630 |
+| `ui/dist-4c186a10/win-unpacked/locales/ml.pak` | pak | 1332459 |
+| `ui/dist-4c186a10/win-unpacked/locales/mr.pak` | pak | 1094665 |
+| `ui/dist-4c186a10/win-unpacked/locales/ms.pak` | pak | 496447 |
+| `ui/dist-4c186a10/win-unpacked/locales/nb.pak` | pak | 482576 |
+| `ui/dist-4c186a10/win-unpacked/locales/nl.pak` | pak | 496419 |
+| `ui/dist-4c186a10/win-unpacked/locales/pl.pak` | pak | 556829 |
+| `ui/dist-4c186a10/win-unpacked/locales/pt-BR.pak` | pak | 523253 |
+| `ui/dist-4c186a10/win-unpacked/locales/pt-PT.pak` | pak | 524567 |
+| `ui/dist-4c186a10/win-unpacked/locales/ro.pak` | pak | 543759 |
+| `ui/dist-4c186a10/win-unpacked/locales/ru.pak` | pak | 893079 |
+| `ui/dist-4c186a10/win-unpacked/locales/sk.pak` | pak | 561212 |
+| `ui/dist-4c186a10/win-unpacked/locales/sl.pak` | pak | 539150 |
+| `ui/dist-4c186a10/win-unpacked/locales/sr.pak` | pak | 830811 |
+| `ui/dist-4c186a10/win-unpacked/locales/sv.pak` | pak | 484580 |
+| `ui/dist-4c186a10/win-unpacked/locales/sw.pak` | pak | 510585 |
+| `ui/dist-4c186a10/win-unpacked/locales/ta.pak` | pak | 1320024 |
+| `ui/dist-4c186a10/win-unpacked/locales/te.pak` | pak | 1220352 |
+| `ui/dist-4c186a10/win-unpacked/locales/th.pak` | pak | 1027321 |
+| `ui/dist-4c186a10/win-unpacked/locales/tr.pak` | pak | 521272 |
+| `ui/dist-4c186a10/win-unpacked/locales/uk.pak` | pak | 891667 |
+| `ui/dist-4c186a10/win-unpacked/locales/ur.pak` | pak | 780171 |
+| `ui/dist-4c186a10/win-unpacked/locales/vi.pak` | pak | 616935 |
+| `ui/dist-4c186a10/win-unpacked/locales/zh-CN.pak` | pak | 445903 |
+| `ui/dist-4c186a10/win-unpacked/locales/zh-TW.pak` | pak | 441078 |
+| `ui/dist-4c186a10/win-unpacked/resources.pak` | pak | 5331889 |
+| `ui/dist-4c186a10/win-unpacked/resources/app-update.yml` | config | 95 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar` | asar | 576065614 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/config.js` | source | 21743 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/agent-templates.js` | source | 2941 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/analysis/doc-generator.js` | source | 31812 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ansi.js` | source | 189 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/backup-manager.js` | source | 15821 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/bridge-client.js` | source | 37954 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/bridge/channel-policy.js` | source | 5546 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/bridge/preload-api.js` | source | 9046 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/bridge/renderer-modules.js` | source | 1005 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/bridge/safe-ipc.js` | source | 3924 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/buffered-file-writer.js` | source | 5113 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/bus-reliability-trace.js` | source | 7822 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/capability-planner.js` | source | 6232 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/claude-model-options.js` | source | 2424 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/claude-session-process-reaper.js` | source | 6403 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/cli-resume-invocation.js` | source | 8327 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/codex-utils.js` | source | 474 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/cognitive-memory-antibody.js` | source | 30090 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/cognitive-memory-api.js` | source | 55366 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/cognitive-memory-immunity.js` | source | 15884 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/cognitive-memory-sleep.js` | source | 38611 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/cognitive-memory-store.js` | source | 31732 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/command-palette.js` | source | 6890 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/comms-worker-client.js` | source | 13133 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/comms-worker.js` | source | 4506 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/comms/message-envelope.js` | source | 6399 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/compaction-detector.js` | source | 14847 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/confidence-surface.js` | source | 2977 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/constants.js` | source | 5682 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/context-compressor.js` | source | 22801 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/contract-promotion-service.js` | source | 9284 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/contract-promotion.js` | source | 8291 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/contracts.js` | source | 3046 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/cross-device-target.js` | source | 2360 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/daemon-handlers.js` | source | 57411 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/daemon-snapshot.js` | source | 2031 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/diagnostic-log.js` | source | 1992 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/event-bus.js` | source | 22926 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/experiment/index.js` | source | 2533 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/experiment/profiles.js` | source | 7347 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/experiment/runtime.js` | source | 39158 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/experiment/worker-client.js` | source | 5549 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/experiment/worker.js` | source | 2308 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/external-notifications.js` | source | 9126 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/feature-capabilities.js` | source | 593 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/formatters.js` | source | 2798 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/gemini-command.js` | source | 2736 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/image-gen.js` | source | 10327 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ingress-envelope.js` | source | 5196 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/inject-message-ipc.js` | source | 3468 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/input-shadow-log.js` | source | 3374 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/install-credentials.js` | source | 7973 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/installed-data-root.js` | source | 8340 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc-handlers.js` | source | 2972 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/agent-claims-handlers.js` | source | 997 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/agent-metrics-handlers.js` | source | 14899 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/arm-state-projection-handlers.js` | source | 3302 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/auto-handoff-handlers.js` | source | 1458 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/auto-nudge-handlers.js` | source | 6509 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/background-processes.js` | source | 1380 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/backup-handlers.js` | source | 2490 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/checkpoint-handlers.js` | source | 9156 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/cognitive-memory-handlers.js` | source | 4879 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/completion-detection-handlers.js` | source | 2406 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/completion-quality-handlers.js` | source | 5536 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/conflict-detection-handlers.js` | source | 692 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/contract-promotion-handlers.js` | source | 1176 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/debug-replay-handlers.js` | source | 11470 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/device-pairing-handlers.js` | source | 4065 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/error-handlers.js` | source | 6600 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/evidence-ledger-handlers.js` | source | 6413 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/evidence-ledger-runtime.js` | source | 22372 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/evidence-ledger-worker-client.js` | source | 5718 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/evidence-ledger-worker.js` | source | 2441 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/external-notification-handlers.js` | source | 1117 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/friction-handlers.js` | source | 3092 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/git-handlers.js` | source | 15070 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/github-handlers.js` | source | 8897 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/handler-registry.js` | source | 7739 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/index.js` | source | 2129 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/ipc-state.js` | source | 1400 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/knowledge-graph-handlers.js` | source | 4704 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/knowledge-handlers.js` | source | 1857 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/mcp-autoconfig-handlers.js` | source | 3451 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/mcp-handlers.js` | source | 2254 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/message-queue-handlers.js` | source | 3881 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/mira-coordinator-snapshot-handlers.js` | source | 1280 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/mira-lab-handlers.js` | source | 9625 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/mira-local-text-ui-surface-handlers.js` | source | 4497 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/model-switch-handlers.js` | source | 12976 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/oracle-handlers.js` | source | 5663 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/organic-ui-handlers.js` | source | 10244 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/output-validation-handlers.js` | source | 5191 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/owned-work-handlers.js` | source | 712 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/perf-audit-handlers.js` | source | 6542 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/plugin-handlers.js` | source | 2937 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/precommit-handlers.js` | source | 5757 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/preflight-handlers.js` | source | 9559 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/process-handlers.js` | source | 7759 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/project-handlers.js` | source | 26857 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/pty-handlers.js` | source | 47969 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/recovery-handlers.js` | source | 3731 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/resource-handlers.js` | source | 8183 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/scheduler-handlers.js` | source | 2860 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/screenshot-handlers.js` | source | 9507 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/session-history-handlers.js` | source | 1266 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/session-summary-handlers.js` | source | 3210 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/settings-handlers.js` | source | 15914 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/shared-context-handlers.js` | source | 1525 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/smart-routing-handlers.js` | source | 2205 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/state-handlers.js` | source | 4036 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/task-parser-handlers.js` | source | 3287 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/task-pool-handlers.js` | source | 12857 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/team-memory-handlers.js` | source | 3907 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/template-handlers.js` | source | 9381 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/test-execution-handlers.js` | source | 8188 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/test-notification-handlers.js` | source | 4064 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/transition-ledger-handlers.js` | source | 6460 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/user-profile-handlers.js` | source | 8234 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/voice-broker-handlers.js` | source | 4047 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/whisper-handlers.js` | source | 3916 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ipc/workflow-handlers.js` | source | 27872 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/knowledge-base.js` | source | 10260 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/knowledge/knowledge-graph-service.js` | source | 1539 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/knowledge/knowledge-graph-store.js` | source | 20065 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/live-ops-disabled.js` | source | 4928 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/local-embedder.js` | source | 2961 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/local-model-capabilities.js` | source | 5853 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/logger.js` | source | 7343 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/activity-manager.js` | source | 4478 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/agent-pane-auto-recovery.js` | source | 25740 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/agent-task-resolution.js` | source | 27351 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/app-context.js` | source | 2592 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/app-control-service.js` | source | 20441 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/arm-apply-queue.js` | source | 3377 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/arm-registry.js` | source | 5538 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/arm-state-projection.js` | source | 10834 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/auto-handoff-materializer.js` | source | 67376 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/autonomous-smoke.js` | source | 4864 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/background-agent-manager.js` | source | 22675 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/cli-identity.js` | source | 2710 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/codex-attention-bridge.js` | source | 20738 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/codex-desktop-capability-awareness.js` | source | 17729 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/codex-desktop-inbound-transport.js` | source | 26915 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/comms-journal.js` | source | 2489 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/device-pairing-store.js` | source | 3087 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/evidence-ledger-ingest.js` | source | 7473 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/evidence-ledger-investigator.js` | source | 37081 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/evidence-ledger-memory-seed.js` | source | 6772 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/evidence-ledger-memory.js` | source | 34273 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/evidence-ledger-store.js` | source | 138322 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/firmware-manager.js` | source | 13578 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/github-service.js` | source | 26183 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/human-timeline-sidecar-window.js` | source | 1880 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/human-timeline.js` | source | 25673 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/inbound-poller-service.js` | source | 5983 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/kernel-bridge.js` | source | 5190 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/launch-intent.js` | source | 2928 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/live-task-audit-sidecar-window.js` | source | 1966 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/live-task-audit-sidecar.js` | source | 29792 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/mira-lab-window.js` | source | 1901 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/missing-arm-watchdog.js` | source | 3032 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/pane-control-service.js` | source | 11459 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/pane-host-window-manager.js` | source | 12289 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/pane-restart-arbiter.js` | source | 10741 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/pty-output-filter.js` | source | 7793 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/restart-continuity-resume-manifest.js` | source | 34903 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/settings-manager.js` | source | 26444 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/squidrun-app.js` | source | 580628 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/telegram-poller-worker.js` | source | 3021 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/telegram-reply-obligations.js` | source | 13086 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/trustquote-arm-registry-seed.js` | source | 7307 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/usage-manager.js` | source | 2909 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/main/work-item-ledger.js` | source | 43938 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mcp-bridge.js` | source | 21053 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/memory-broker.js` | source | 27167 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/memory-consistency-check.js` | source | 110422 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/memory-ingest/delivery.js` | source | 43438 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/memory-ingest/journal.js` | source | 16198 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/memory-ingest/lifecycle.js` | source | 8512 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/memory-ingest/promotion.js` | source | 17321 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/memory-ingest/router.js` | source | 4469 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/memory-ingest/schema.js` | source | 8024 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/memory-ingest/service.js` | source | 38214 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/memory-ingest/shutdown-marker.js` | source | 2914 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/memory-recall.js` | source | 41325 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/memory-search.js` | source | 46252 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-automation-scheduler-curiosity.js` | source | 7824 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-browser-history-curiosity.js` | source | 8668 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-calendar-message-curiosity.js` | source | 20349 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-coordinator-snapshot-channel.js` | source | 146 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/autonomy-substrate-v0.js` | source | 17244 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/coordinator-snapshot-v0.js` | source | 28844 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/developmental-understanding-v1.js` | source | 5788 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/durable-state-seed-v0.js` | source | 58606 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/eval-runner.js` | source | 11944 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/experience-v0.js` | source | 31756 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/growth-loop-v0.js` | source | 61479 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/identity-anchor-v0.js` | source | 56600 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/intent-queue.js` | source | 36946 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/live-direct-channel-status-v0.js` | source | 11105 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/live-internal-handoff-approval-v0.js` | source | 23557 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/live-internal-handoff-preview-v0.js` | source | 14028 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/live-internal-request-draft-v0.js` | source | 13282 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/live-what-now-answer-v0.js` | source | 29811 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/local-acceptance.js` | source | 40506 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/local-text-session-v0.js` | source | 44591 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/memory-candidate-staging-v1.js` | source | 5911 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/milestone-readiness.js` | source | 34015 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/mira-architect-route-v0.js` | source | 6551 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/mira-language-rules-v0.js` | source | 6726 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/mira-persona-loader-v0.js` | source | 6809 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/mira-presence-current-scope-state-v0.js` | source | 9735 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/mira-presence-runtime-state-v0.js` | source | 29187 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/mira-progress-proof-inputs-v0.js` | source | 24121 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/mira-progress-v0.js` | source | 25005 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/mutation-patch.js` | source | 58719 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/orientation.js` | source | 27473 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/perception.js` | source | 51939 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/presence-runtime-read-path-v0.js` | source | 65967 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/presence-v0.js` | source | 25040 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/profiles.js` | source | 27388 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/proposal-validator.js` | source | 19000 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/pulse.js` | source | 25860 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/readiness.js` | source | 51096 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/relationship-presence-v1.js` | source | 44510 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/snapshot.js` | source | 53515 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/social-move-classifier-v0.js` | source | 32072 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/tentative-understanding-store-v1.js` | source | 10401 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/text-model-attachment-v1.js` | source | 61133 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/typed-capability-roundtable-v0.js` | source | 44439 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-core/typed-restart-continuity-context-v0.js` | source | 14635 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-direct-channel-readiness.js` | source | 8634 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-email-curiosity.js` | source | 14795 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-environment-curiosity.js` | source | 12067 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-lab-surface.js` | source | 326850 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-lab-verify-bootstrap-state.js` | source | 5927 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-live-entrypoint.js` | source | 3409 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-local-text-ui-surface.js` | source | 55055 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-memory-curiosity.js` | source | 5599 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-runtime-curiosity.js` | source | 9391 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-source-action-substrate.js` | source | 11397 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-telegram-turn-candidate.js` | source | 5689 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-visual-asset-curiosity.js` | source | 9123 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-web-research-curiosity.js` | source | 8052 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-work-continuation-curiosity.js` | source | 5125 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/mira-work-evidence-gate.js` | source | 10021 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/model-prompt-receipt.js` | source | 19184 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/model-selector.js` | source | 12069 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/node-worker-fork-options.js` | source | 847 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/noise-bootstrap.js` | source | 1061 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/notifications.js` | source | 3828 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/oracle-verdict-visibility.js` | source | 6596 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/owned-work-continue-broker.js` | source | 6743 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/owned-work-summary.js` | source | 4198 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/pane-session-id-store.js` | source | 3030 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/pane-visibility.js` | source | 14322 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/performance-data.js` | source | 1542 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/phone-voice-client.js` | source | 21309 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/pipeline.js` | source | 12233 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/plugins/index.js` | source | 104 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/plugins/plugin-manager.js` | source | 15296 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/presence-state.js` | source | 5417 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/problem-orchestrator.js` | source | 18707 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/project-room-envelope.js` | source | 33904 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/project-rooms.js` | source | 11988 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/recovery-manager.js` | source | 20614 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/renderer-bridge.js` | source | 3330 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/renderer-ipc-registry.js` | source | 1377 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/replay/debug-replay.js` | source | 20207 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/runtime-config.js` | source | 1525 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/runtime-log-rotation.js` | source | 3271 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/scheduler.js` | source | 16158 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/scoped-context-firewall.js` | source | 4734 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/service-lifecycle-registry.js` | source | 5004 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/settings.js` | source | 16950 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/shared-state.js` | source | 10485 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/smart-routing.js` | source | 11068 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/sms-poller.js` | source | 18982 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/sqlite-compat.js` | source | 1389 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/squid-room-surface.js` | source | 10303 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/startup-ai-briefing.js` | source | 55200 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/status-strip.js` | source | 6375 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/supervisor/index.js` | source | 339 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/supervisor/migrations.js` | source | 2584 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/supervisor/migrations/001-initial-schema.js` | source | 1641 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/supervisor/store.js` | source | 21164 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/surface-capture-events.js` | source | 5366 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/tabs.js` | source | 4284 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/tabs/api-keys.js` | source | 7616 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/tabs/bridge.js` | source | 28404 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/tabs/comms-console.js` | source | 26275 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/tabs/oracle.js` | source | 8728 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/tabs/screenshots.js` | source | 9472 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/tabs/utils.js` | source | 424 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/tabs/voice-broker.js` | source | 46857 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/task-parser.js` | source | 8943 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/backfill.js` | source | 9039 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/claims.js` | source | 42439 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/comms-tagged-extractor.js` | source | 9195 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/daily-integration.js` | source | 16164 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/guards.js` | source | 18009 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/index.js` | source | 18044 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/integrity-checker.js` | source | 10452 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations.js` | source | 4026 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/001-initial-schema.js` | source | 5477 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/002-phase1-compat.js` | source | 3827 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/003-phase2-search.js` | source | 1730 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/004-phase4-patterns.js` | source | 1863 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/005-phase5-guards.js` | source | 2475 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/006-phase6-experiments.js` | source | 5087 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/007-phase6b-pending-proof.js` | source | 2585 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/008-phase6c-contradiction-resolution.js` | source | 1859 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/009-phase7-memory-ingest.js` | source | 4286 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/010-phase8-memory-ingest-recovery.js` | source | 1393 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/011-phase9-memory-promotion-lifecycle.js` | source | 3661 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/012-phase10-memory-delivery.js` | source | 3470 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/013-phase10b-memory-class-expansion.js` | source | 8908 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/014-phase10c-promotion-correction-links.js` | source | 833 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/migrations/015-phase11-recall-feedback.js` | source | 2935 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/patterns.js` | source | 17687 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/recall-feedback.js` | source | 15930 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/runtime.js` | source | 19136 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/store.js` | source | 5814 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/worker-client.js` | source | 7914 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/team-memory/worker.js` | source | 2317 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/telegram-credentials.js` | source | 4004 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/telegram-poller.js` | source | 34143 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/terminal-restart-scrollback-store.js` | source | 5680 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/terminal.js` | source | 171021 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/terminal/agent-colors.js` | source | 10161 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/terminal/injection-capabilities.js` | source | 4493 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/terminal/injection.js` | source | 76328 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/terminal/recovery.js` | source | 21139 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/token-utils.js` | source | 1573 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/transition-ledger.js` | source | 37486 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/triggers.js` | source | 37576 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/triggers/metrics.js` | source | 6048 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/triggers/routing.js` | source | 11053 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/triggers/sequencing.js` | source | 8061 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/trustquote-arm-specs.js` | source | 6032 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/trustquote-work-room-prerequisites.js` | source | 18697 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/trustquote-work-room-route-owner-supervisor.js` | source | 14513 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/trustquote-work-room-route-owner.js` | source | 25904 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/ui-view.js` | source | 17306 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/utils.js` | source | 1881 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/utils/transcript-store.js` | source | 1537 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/voice-broker-lease-contract.js` | source | 15971 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/voice-broker-lease-store.js` | source | 6371 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/voice-broker.js` | source | 50616 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/watcher-worker.js` | source | 6316 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/watcher.js` | source | 58460 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/websocket-runtime.js` | source | 77754 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/websocket-server.js` | source | 2022 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/window-chrome.js` | source | 6226 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/window-team-bootstrap.js` | source | 5806 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/work-room-terminal-visibility.js` | source | 1931 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/modules/workspace-pane-shell.js` | source | 24467 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/profile.js` | source | 10100 |
+| `ui/dist-4c186a10/win-unpacked/resources/app.asar.unpacked/terminal-daemon.js` | source | 81256 |
+| `ui/dist-4c186a10/win-unpacked/resources/elevate.exe` | exe | 107520 |
+| `ui/dist-4c186a10/win-unpacked/snapshot_blob.bin` | bin | 276794 |
+| `ui/dist-4c186a10/win-unpacked/SquidRun.exe` | exe | 176887296 |
+| `ui/dist-4c186a10/win-unpacked/v8_context_snapshot.bin` | bin | 642377 |
+| `ui/dist-4c186a10/win-unpacked/vk_swiftshader_icd.json` | config | 106 |
+| `ui/dist-4c186a10/win-unpacked/vk_swiftshader.dll` | dll | 5238784 |
+| `ui/dist-4c186a10/win-unpacked/vulkan-1.dll` | dll | 947200 |
 | `ui/eslint.config.js` | source | 794 |
 | `ui/human-timeline-feed.js` | source | 4319 |
 | `ui/human-timeline-sidecar-renderer.js` | source | 1558 |
@@ -1053,7 +1502,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/pane-host-renderer.js` | source | 37684 |
 | `ui/pane-host.html` | asset | 1143 |
 | `ui/preload.js` | source | 2269 |
-| `ui/profile.js` | source | 10187 |
+| `ui/profile.js` | source | 10100 |
 | `ui/renderer.js` | source | 152759 |
 | `ui/supervisor-daemon.js` | source | 259782 |
 | `ui/terminal-daemon.js` | source | 81256 |
@@ -1161,6 +1610,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-preflight.js` | script | 2404 |
 | `ui/scripts/hm-promotion.js` | script | 7566 |
 | `ui/scripts/hm-reddit.js` | script | 9957 |
+| `ui/scripts/hm-refresh-human-timeline-headlines.js` | script | 5937 |
 | `ui/scripts/hm-restart-execute.js` | script | 50633 |
 | `ui/scripts/hm-restart-execute.test.js` | test | 40241 |
 | `ui/scripts/hm-restart-request.js` | script | 13697 |
@@ -1178,7 +1628,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-smoke-runner.js` | script | 97515 |
 | `ui/scripts/hm-sms.js` | script | 10818 |
 | `ui/scripts/hm-squid-room-restart-proof.js` | script | 48034 |
-| `ui/scripts/hm-stage-split-release.js` | script | 13451 |
+| `ui/scripts/hm-stage-split-release.js` | script | 13565 |
 | `ui/scripts/hm-startup-ai-briefing.js` | script | 1294 |
 | `ui/scripts/hm-startup-health.js` | script | 6501 |
 | `ui/scripts/hm-supervisor.js` | script | 5200 |
@@ -1189,6 +1639,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-telegram-reply-guard-probe.js` | script | 4754 |
 | `ui/scripts/hm-telegram-routing.js` | script | 9813 |
 | `ui/scripts/hm-telegram.js` | script | 35948 |
+| `ui/scripts/hm-timeline-gate.js` | script | 7229 |
 | `ui/scripts/hm-transition.js` | script | 9560 |
 | `ui/scripts/hm-trigger.js` | script | 4496 |
 | `ui/scripts/hm-trustquote-room-prereqs.js` | script | 1956 |

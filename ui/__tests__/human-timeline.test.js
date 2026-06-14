@@ -1,6 +1,117 @@
 const timeline = require('../modules/main/human-timeline');
 
 describe('human-timeline snapshot', () => {
+  test('renders approved cached human headlines for commits and task-audit needs', () => {
+    const nowMs = Date.parse('2026-06-14T08:00:00.000Z');
+    const commit = {
+      sha: 'abc1234',
+      atMs: Date.parse('2026-06-14T07:30:00.000Z'),
+      subject: 'Harden split release launchers against Telegram env leaks',
+    };
+    const taskItem = {
+      id: 'surface-claim-guard-state-verb-gap-404',
+      title: 'Surface-claim guard: present-tense state verbs pass the claim check',
+      status: 'pending_james_go',
+      nextAction: 'James decides whether this gap matters now.',
+      updatedAt: '2026-06-14T07:40:00.000Z',
+      sessionId: 'app-session-444',
+    };
+    const headlineCache = {
+      entries: {
+        'git_commit:abc1234': {
+          status: 'approved',
+          sourceHash: 'wrong-hash',
+          headline: 'This stale line must not render.',
+        },
+      },
+    };
+    const cacheModule = require('../modules/main/human-timeline-headline-cache');
+    const approvedCommit = cacheModule.approveHeadlineCandidate(
+      cacheModule.sourceFromCommit(commit),
+      'The team made the separate app launches safer.',
+      { headlineCache, write: false, nowMs }
+    );
+    expect(approvedCommit.ok).toBe(true);
+    const approvedTask = cacheModule.approveHeadlineCandidate(
+      cacheModule.sourceFromTaskAuditItem(taskItem),
+      'James needs to decide whether that claim-check gap matters now.',
+      { headlineCache: approvedCommit.cache, write: false, nowMs }
+    );
+    expect(approvedTask.ok).toBe(true);
+
+    const snapshot = timeline.buildHumanTimelineSnapshot({
+      nowMs,
+      queryCommsJournalEntries: jest.fn(() => []),
+      queryTelegramReplyObligations: jest.fn(() => []),
+      readTaskAuditItems: jest.fn(() => ({ ok: true, status: 'OK', items: [taskItem] })),
+      queryGitCommits: jest.fn(() => [commit]),
+      headlineCache: approvedTask.cache,
+      appStatusPath: 'missing-app-status.json',
+    });
+
+    expect(snapshot.feed.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'change',
+        headline: 'The team made the separate app launches safer.',
+        refs: expect.objectContaining({ headlineSourceKey: 'git_commit:abc1234' }),
+      }),
+    ]));
+    expect(snapshot.needsYou.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        headline: 'James needs to decide whether that claim-check gap matters now.',
+        refs: expect.objectContaining({
+          headlineSourceKey: 'task_audit_item:surface-claim-guard-state-verb-gap-404',
+        }),
+      }),
+    ]));
+  });
+
+  test('collects raw headline sources for commits and pending task-audit items', () => {
+    const sources = timeline.collectHumanTimelineHeadlineSources({
+      nowMs: Date.parse('2026-06-14T08:00:00.000Z'),
+      queryGitCommits: jest.fn(() => [
+        {
+          sha: 'abc1234',
+          atMs: Date.parse('2026-06-14T07:30:00.000Z'),
+          subject: 'Remove hardcoded main Telegram chat fallback',
+        },
+      ]),
+      readTaskAuditItems: jest.fn(() => ({
+        ok: true,
+        status: 'OK',
+        items: [
+          {
+            id: 'task-needs-james',
+            title: 'Phase 3 needs James go-ahead',
+            status: 'pending_james_go',
+            nextAction: 'James chooses whether to start the next phase.',
+          },
+          {
+            id: 'task-resolved',
+            title: 'Resolved item',
+            status: 'resolved',
+          },
+        ],
+      })),
+    });
+
+    expect(sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'git_commit',
+        id: 'abc1234',
+        sourceText: 'Remove hardcoded main Telegram chat fallback',
+      }),
+      expect.objectContaining({
+        kind: 'task_audit_item',
+        id: 'task-needs-james',
+        sourceText: expect.stringContaining('Phase 3 needs James go-ahead'),
+      }),
+    ]));
+    expect(sources).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'task-resolved' }),
+    ]));
+  });
+
   test('defaults to a rolling 24-hour window instead of local midnight', () => {
     const nowMs = Date.parse('2026-06-14T07:01:00.000Z');
     const expectedSinceMs = nowMs - (24 * 60 * 60 * 1000);

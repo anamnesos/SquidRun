@@ -15,6 +15,12 @@ const {
   readTaskAuditItems,
 } = require('./live-task-audit-sidecar');
 const {
+  cachedHeadlineForSource,
+  sourceKey,
+  sourceFromCommit,
+  sourceFromTaskAuditItem,
+} = require('./human-timeline-headline-cache');
+const {
   getProjectRoot,
   resolveCoordPath,
 } = require('../../config');
@@ -474,21 +480,33 @@ function isFreshTelegramObligation(obligation = {}, nowMs = Date.now(), options 
   return openedAtMs >= Math.max(0, toMs(nowMs, Date.now()) - visibleMs);
 }
 
-function needFromTaskAuditItem(item = {}) {
+function approvedCachedHeadline(source, fallback, options = {}) {
+  const cached = source ? cachedHeadlineForSource(source, options) : null;
+  if (!cached?.headline) return { headline: fallback, cached: false };
+  return { headline: cached.headline, cached: true };
+}
+
+function needFromTaskAuditItem(item = {}, options = {}) {
   const timestampMs = toMs(item.updatedAt || item.createdAt || item.timestamp, Date.now());
   const detail = [item.nextAction, item.rationale].map((part) => detailText(part, '')).filter(Boolean).join(' ');
+  const source = sourceFromTaskAuditItem(item);
+  const fallbackHeadline = firstSentence(item.title, 'A saved task needs your input.');
+  const approved = approvedCachedHeadline(source, fallbackHeadline, options);
   return entryBase({
     id: `need-task-audit-${item.id || timestampMs}`,
     at: timestampMs,
     kind: 'needs-you',
-    headline: firstSentence(item.title, 'A saved task needs your input.'),
-    detail: detail || 'A saved task needs your input before it can move.',
+    headline: approved.headline,
+    detail: approved.cached
+      ? 'This stays visible until you give the team the missing input.'
+      : (detail || 'A saved task needs your input before it can move.'),
     actors: ['james', ...((Array.isArray(item.ownerRoles) ? item.ownerRoles : []).map(actorName))],
     refs: {
       kind: 'task_audit_item',
       itemId: item.id || null,
       sourceRef: item.sourceRef || item.source?.ref || null,
       sessionId: item.sessionId || null,
+      headlineSourceKey: source ? `${source.kind}:${source.id}` : null,
     },
     needsYou: true,
     sessionId: item.sessionId,
@@ -562,7 +580,7 @@ function queryGitCommits(sinceMs, untilMs, options = {}) {
   }
 }
 
-function changeEntryFromCommit(commit = {}) {
+function changeEntryFromCommit(commit = {}, options = {}) {
   const subject = firstSentence(commit.subject, 'The team saved a change.');
   const normalized = subject.replace(/[.]+$/, '');
   const lowerSubject = lower(normalized);
@@ -575,14 +593,20 @@ function changeEntryFromCommit(commit = {}) {
   else if (lowerSubject.startsWith('guard ')) headline = `The team guarded ${normalized.slice(6)}.`;
   else if (lowerSubject.startsWith('retire ')) headline = `The team retired ${normalized.slice(7)}.`;
   else if (lowerSubject.startsWith('save ')) headline = `The team saved ${normalized.slice(5)}.`;
+  const source = sourceFromCommit(commit);
+  const approved = approvedCachedHeadline(source, headline, options);
   return entryBase({
     id: `git-${commit.sha}`,
     at: toMs(commit.atMs, Date.now()),
     kind: 'change',
-    headline,
-    detail: detailText(commit.subject, subject),
+    headline: approved.headline,
+    detail: approved.cached ? '' : detailText(commit.subject, subject),
     actors: ['system'],
-    refs: { kind: 'git', sha: commit.sha || null },
+    refs: {
+      kind: 'git',
+      sha: commit.sha || null,
+      headlineSourceKey: source ? `${source.kind}:${source.id}` : null,
+    },
     tone: 'good',
   });
 }
@@ -610,7 +634,7 @@ function readTaskAuditNeeds(options = {}) {
     const needs = items
       .filter((item) => !isForeignTaskAuditItem(item))
       .filter((item) => NEEDS_YOU_TASK_AUDIT_STATUSES.has(lower(item.status)))
-      .map(needFromTaskAuditItem);
+      .map((item) => needFromTaskAuditItem(item, options));
     return {
       items: needs,
       sourcePath: result?.taskAuditItemsPath || result?.sourcePath || null,
@@ -626,6 +650,36 @@ function readTaskAuditNeeds(options = {}) {
       excludedForeignCount: 0,
     };
   }
+}
+
+function collectHumanTimelineHeadlineSources(options = {}) {
+  const nowMs = toMs(options.nowMs ?? options.now, Date.now());
+  const sinceMs = toMs(options.sinceMs, defaultTimelineSinceMs(nowMs));
+  const untilMs = toMs(options.untilMs, nowMs);
+  const readItems = typeof options.readTaskAuditItems === 'function'
+    ? options.readTaskAuditItems
+    : readTaskAuditItems;
+  let taskItems = [];
+  try {
+    const result = readItems(options);
+    taskItems = Array.isArray(result?.items) ? result.items : [];
+  } catch (_) {
+    taskItems = [];
+  }
+  const sources = [
+    ...queryGitCommits(sinceMs, untilMs, options).map(sourceFromCommit),
+    ...taskItems
+      .filter((item) => !isForeignTaskAuditItem(item))
+      .filter((item) => NEEDS_YOU_TASK_AUDIT_STATUSES.has(lower(item.status)))
+      .map(sourceFromTaskAuditItem),
+  ].filter((source) => source && sourceKey(source));
+  const seen = new Set();
+  return sources.filter((source) => {
+    const key = sourceKey(source);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function buildHumanTimelineSnapshot(options = {}) {
@@ -688,7 +742,8 @@ function buildHumanTimelineSnapshot(options = {}) {
   const restart = restartEntry(options);
   const userEntries = localRows.filter(isUserFacingRow).map(userEntryFromRow);
   const arcEntries = collapsedMilestoneEntries(localRows);
-  const changeEntries = queryGitCommits(sinceMs, untilMs, options).map(changeEntryFromCommit);
+  const changeEntries = queryGitCommits(sinceMs, untilMs, options)
+    .map((commit) => changeEntryFromCommit(commit, options));
 
   const feedItems = sortNewestFirst(dedupeById([
     ...(restart ? [restart] : []),
@@ -768,6 +823,7 @@ function buildHumanTimelineSnapshot(options = {}) {
 module.exports = {
   SNAPSHOT_SCHEMA,
   buildHumanTimelineSnapshot,
+  collectHumanTimelineHeadlineSources,
   cleanBody,
   collapsedMilestoneEntries,
   eventFromRow: userEntryFromRow,
