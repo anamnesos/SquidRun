@@ -1,6 +1,42 @@
 const timeline = require('../modules/main/human-timeline');
 
 describe('human-timeline snapshot', () => {
+  test('defaults to a rolling 24-hour window instead of local midnight', () => {
+    const nowMs = Date.parse('2026-06-14T07:01:00.000Z');
+    const expectedSinceMs = nowMs - (24 * 60 * 60 * 1000);
+    const queryCommsJournalEntries = jest.fn(() => []);
+    const queryTelegramReplyObligations = jest.fn(() => []);
+    const queryGitCommits = jest.fn(() => []);
+
+    const snapshot = timeline.buildHumanTimelineSnapshot({
+      nowMs,
+      queryCommsJournalEntries,
+      queryTelegramReplyObligations,
+      readTaskAuditItems: jest.fn(() => ({ ok: true, status: 'OK', items: [] })),
+      queryGitCommits,
+      appStatusPath: 'missing-app-status.json',
+    });
+
+    expect(snapshot.window).toEqual(expect.objectContaining({
+      label: 'Today',
+      mode: 'rolling_24h',
+      since: new Date(expectedSinceMs).toISOString(),
+      until: new Date(nowMs).toISOString(),
+    }));
+    expect(queryCommsJournalEntries).toHaveBeenCalledWith(expect.objectContaining({
+      sinceMs: expectedSinceMs,
+      untilMs: nowMs,
+    }), expect.any(Object));
+    expect(queryTelegramReplyObligations).toHaveBeenCalledWith(expect.objectContaining({
+      sinceMs: expectedSinceMs,
+      untilMs: nowMs,
+    }), expect.any(Object));
+    expect(queryGitCommits).toHaveBeenCalledWith(expect.objectContaining({
+      sinceMs: expectedSinceMs,
+      untilMs: nowMs,
+    }));
+  });
+
   test('builds a read-only today feed with collapsed team arcs and no raw agent jargon', () => {
     const rows = [
       {
