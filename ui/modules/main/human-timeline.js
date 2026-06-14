@@ -585,7 +585,6 @@ function readTaskAuditNeeds(options = {}) {
     const foreign = items.filter(isForeignTaskAuditItem).length;
     const needs = items
       .filter((item) => !isForeignTaskAuditItem(item))
-      .filter((item) => isCurrentSessionTaskAuditItem(item, currentSession))
       .filter((item) => NEEDS_YOU_TASK_AUDIT_STATUSES.has(lower(item.status)))
       .map(needFromTaskAuditItem);
     return {
