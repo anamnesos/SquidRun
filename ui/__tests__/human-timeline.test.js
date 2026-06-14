@@ -506,6 +506,51 @@ describe('human-timeline snapshot', () => {
     expect(snapshot.needsYou.items).toEqual([]);
   });
 
+  test('does not reflect the team\'s own status/screenshot captions back into needs-you (self-referential feedback loop)', () => {
+    const rows = [
+      {
+        // GAP 1 reproduction: an hm-screenshot --send-telegram caption that landed with no
+        // valid timestamp (at=0) and literally contains "Needs You = 3". Caught by BOTH the
+        // timestamp gate and the [photo]/"needs you =" self-reference guard.
+        rowId: 41,
+        messageId: 'photo-caption-no-ts',
+        sessionId: 'app-session-447',
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'telegram',
+        direction: 'outbound',
+        status: 'acked',
+        rawBody: '[photo] LIVE. Your front door Today is painting the real thing. Needs You = the 3 that actually need you.',
+      },
+      {
+        // A surface-status row WITH a valid timestamp — must still be excluded by the
+        // self-reference guard alone, not just the timestamp gate.
+        rowId: 42,
+        messageId: 'surface-status-ts',
+        sessionId: 'app-session-447',
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'telegram',
+        direction: 'outbound',
+        status: 'acked',
+        brokeredAtMs: Date.parse('2026-06-14T18:44:00.000Z'),
+        rawBody: 'Needs You = 3, Team Feed on the rolling window. The front door is live.',
+      },
+    ];
+
+    const snapshot = timeline.buildHumanTimelineSnapshot({
+      nowMs: Date.parse('2026-06-14T18:50:00.000Z'),
+      sessionId: 'app-session-447',
+      queryCommsJournalEntries: jest.fn(() => rows),
+      queryTelegramReplyObligations: jest.fn(() => []),
+      readTaskAuditItems: jest.fn(() => ({ ok: true, status: 'OK', items: [] })),
+      queryGitCommits: jest.fn(() => []),
+      appStatusPath: 'missing-app-status.json',
+    });
+
+    expect(snapshot.needsYou.items).toEqual([]);
+  });
+
   test('resolves implicit needs-you asks when a later outbound answers the same thread', () => {
     const rows = [
       {

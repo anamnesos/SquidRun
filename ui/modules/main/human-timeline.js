@@ -408,11 +408,31 @@ function isCurrentSessionTaskAuditItem(item = {}, sessionId = null) {
   return !itemSessionId || itemSessionId === sessionId;
 }
 
+function isSelfReferentialSurfaceRow(row = {}, text = lower(row.rawBody)) {
+  const raw = String(row.rawBody || '');
+  // Screenshot/photo captions (hm-screenshot --send-telegram) are STATUS reports about a
+  // surface, never an ask from the team to James.
+  if (/^\s*\[photo\]/i.test(raw)) return true;
+  // Rows that narrate the Needs You / Today / front-door surface itself — the team's own
+  // status ABOUT the surface must never bounce back IN as an item ON the surface.
+  if (/needs you\s*[=:]/.test(text)) return true;
+  if (/\bfront door\b/.test(text) && /\b(today|needs you|team feed)\b/.test(text)) return true;
+  return false;
+}
+
 function rowNeedsUser(row = {}, rows = [], options = {}) {
   if (!isCurrentSessionRow(row, options.currentSessionId || null)) return false;
+  // Data-quality gate: a needs-you row with no valid timestamp cannot be staleness-bounded and
+  // is almost always synthetic/self-referential (e.g. a screenshot caption that lands with at=0),
+  // not a real ask. No time => no need. Consistent with the !at convention used by the helpers above.
+  const at = rowTimeMs(row);
+  if (!Number.isFinite(at) || at <= 0) return false;
   if (hasLaterOutboundInThread(row, rows)) return false;
   const text = lower(row.rawBody);
   if (/\bwhat needs you\b/.test(text)) return false;
+  // Self-reference guard: the team's own status/screenshot rows about the surface (the feedback
+  // loop where an "it's live, Needs You = 3" caption gets reflected back IN as a need).
+  if (isSelfReferentialSurfaceRow(row, text)) return false;
   const target = lower(row.targetRole);
   const outboundToJames = isOutboundToUser(row);
   const directedQuestion = /\?/.test(String(row.rawBody || ''))
