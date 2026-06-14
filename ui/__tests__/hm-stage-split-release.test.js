@@ -64,6 +64,7 @@ describe('hm-stage-split-release', () => {
 
     expect(script).toContain('[Parameter(Mandatory=$true)] [string] $DataRoot');
     expect(script).toContain('squidrun-install.json');
+    expect(script).toContain('Get-ChildItem Env:TELEGRAM_* -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue');
     expect(script).toContain('`$env:SQUIDRUN_DATA_ROOT');
     expect(script).toContain('`$env:SQUIDRUN_PROJECT_ROOT');
     expect(script).toContain("`$env:SQUIDRUN_PROFILE = 'main'");
