@@ -215,10 +215,12 @@ function evaluateTelegramReplyCandidate(obligation = {}, row = {}, options = {})
   }
 
   const obligationSessionId = toNonEmptyString(obligation.sessionId || obligation.session_id || obligation.sessionScopeId);
+  const obligationChatId = normalizeChatId(obligation.chatId || obligation.chat_id || obligation.telegramChatId);
   if (obligationSessionId && !base.sessionId) {
     return rejectCandidate(row, 'missing_session_id', { expectedSessionId: obligationSessionId });
   }
-  if (obligationSessionId && base.sessionId !== obligationSessionId) {
+  const sameChatProven = Boolean(obligationChatId && base.chatId && base.chatId === obligationChatId);
+  if (obligationSessionId && base.sessionId !== obligationSessionId && !sameChatProven) {
     return rejectCandidate(row, 'session_mismatch', { expectedSessionId: obligationSessionId });
   }
 
@@ -232,7 +234,6 @@ function evaluateTelegramReplyCandidate(obligation = {}, row = {}, options = {})
     });
   }
 
-  const obligationChatId = normalizeChatId(obligation.chatId || obligation.chat_id || obligation.telegramChatId);
   if (obligationChatId && base.chatId && base.chatId !== obligationChatId) {
     return rejectCandidate(row, 'chat_mismatch', { expectedChatId: obligationChatId });
   }
@@ -280,7 +281,8 @@ function queryTelegramEgressCandidates(store, obligation = {}, options = {}) {
     limit: Math.max(1, Math.min(5000, Number(options.limit) || 500)),
   };
   const sessionId = toNonEmptyString(obligation.sessionId || obligation.session_id || obligation.sessionScopeId);
-  if (sessionId) filters.sessionId = sessionId;
+  const chatId = normalizeChatId(obligation.chatId || obligation.chat_id || obligation.telegramChatId);
+  if (sessionId && !chatId) filters.sessionId = sessionId;
   return store.queryCommsJournal(filters);
 }
 

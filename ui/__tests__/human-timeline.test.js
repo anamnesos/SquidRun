@@ -4,6 +4,7 @@ describe('human-timeline snapshot', () => {
   test('defaults to a rolling 24-hour window instead of local midnight', () => {
     const nowMs = Date.parse('2026-06-14T07:01:00.000Z');
     const expectedSinceMs = nowMs - (24 * 60 * 60 * 1000);
+    const expectedTelegramSinceMs = nowMs - (12 * 60 * 60 * 1000);
     const queryCommsJournalEntries = jest.fn(() => []);
     const queryTelegramReplyObligations = jest.fn(() => []);
     const queryGitCommits = jest.fn(() => []);
@@ -28,7 +29,7 @@ describe('human-timeline snapshot', () => {
       untilMs: nowMs,
     }), expect.any(Object));
     expect(queryTelegramReplyObligations).toHaveBeenCalledWith(expect.objectContaining({
-      sinceMs: expectedSinceMs,
+      sinceMs: expectedTelegramSinceMs,
       untilMs: nowMs,
     }), expect.any(Object));
     expect(queryGitCommits).toHaveBeenCalledWith(expect.objectContaining({
@@ -220,6 +221,48 @@ describe('human-timeline snapshot', () => {
         refs: expect.objectContaining({ kind: 'task_audit_item', itemId: 'task-1' }),
       }),
     ]));
+  });
+
+  test('does not surface stale open Telegram reply obligations as current needs', () => {
+    const nowMs = Date.parse('2026-06-12T17:00:00.000Z');
+    const queryTelegramReplyObligations = jest.fn(() => [
+      {
+        obligationId: 'fresh-obl',
+        inboundMessageId: 'fresh-in',
+        sessionId: 'app-session-444',
+        openedAtMs: Date.parse('2026-06-12T16:00:00.000Z'),
+      },
+      {
+        obligationId: 'stale-obl',
+        inboundMessageId: 'stale-in',
+        sessionId: 'app-session-444',
+        openedAtMs: Date.parse('2026-06-11T16:00:00.000Z'),
+      },
+    ]);
+
+    const snapshot = timeline.buildHumanTimelineSnapshot({
+      nowMs,
+      queryCommsJournalEntries: jest.fn(() => []),
+      queryTelegramReplyObligations,
+      readTaskAuditItems: jest.fn(() => ({ ok: true, status: 'OK', items: [] })),
+      queryGitCommits: jest.fn(() => []),
+      appStatusPath: 'missing-app-status.json',
+    });
+
+    expect(queryTelegramReplyObligations).toHaveBeenCalledWith(expect.objectContaining({
+      sinceMs: Date.parse('2026-06-12T05:00:00.000Z'),
+      untilMs: nowMs,
+    }), expect.any(Object));
+    expect(snapshot.needsYou.items).toEqual([
+      expect.objectContaining({
+        refs: expect.objectContaining({
+          kind: 'telegram_reply_obligation',
+          obligationId: 'fresh-obl',
+        }),
+      }),
+    ]);
+    expect(snapshot.sources.telegramReplyObligationsVisibleHours).toBe(12);
+    expect(snapshot.sources.telegramReplyObligationsExcludedStaleCount).toBe(1);
   });
 
   test('does not render implicit needs-you asks from prior sessions', () => {

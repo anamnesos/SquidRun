@@ -24,6 +24,7 @@ const DEFAULT_MAX_ROWS = 5000;
 const DEFAULT_MAX_FEED_ITEMS = 44;
 const DEFAULT_MAX_NEEDS_YOU_ITEMS = 5;
 const DEFAULT_TIMELINE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_TELEGRAM_OBLIGATION_VISIBLE_MS = 12 * 60 * 60 * 1000;
 const FOREIGN_SESSION_IDS = new Set(['app-session-446']);
 const NEEDS_YOU_TASK_AUDIT_STATUSES = new Set([
   'needs_james_verification',
@@ -455,6 +456,24 @@ function needFromObligation(obligation = {}) {
   });
 }
 
+function telegramObligationOpenedAtMs(obligation = {}) {
+  return toMs(obligation.openedAtMs, toMs(obligation.createdAtMs, 0));
+}
+
+function telegramObligationVisibleWindowMs(options = {}) {
+  const value = Number(options.telegramObligationVisibleMs);
+  if (Number.isFinite(value) && value >= 0) return Math.floor(value);
+  return DEFAULT_TELEGRAM_OBLIGATION_VISIBLE_MS;
+}
+
+function isFreshTelegramObligation(obligation = {}, nowMs = Date.now(), options = {}) {
+  const visibleMs = telegramObligationVisibleWindowMs(options);
+  if (visibleMs <= 0) return true;
+  const openedAtMs = telegramObligationOpenedAtMs(obligation);
+  if (!Number.isFinite(openedAtMs) || openedAtMs <= 0) return false;
+  return openedAtMs >= Math.max(0, toMs(nowMs, Date.now()) - visibleMs);
+}
+
 function needFromTaskAuditItem(item = {}) {
   const timestampMs = toMs(item.updatedAt || item.createdAt || item.timestamp, Date.now());
   const detail = [item.nextAction, item.rationale].map((part) => detailText(part, '')).filter(Boolean).join(' ');
@@ -644,10 +663,14 @@ function buildHumanTimelineSnapshot(options = {}) {
 
   let obligations = [];
   let obligationError = null;
+  const telegramObligationSinceMs = Math.max(
+    sinceMs,
+    Math.max(0, nowMs - telegramObligationVisibleWindowMs(options))
+  );
   try {
     obligations = queryObligations({
       status: 'open',
-      sinceMs,
+      sinceMs: telegramObligationSinceMs,
       untilMs,
       order: 'asc',
       limit: 50,
@@ -658,6 +681,8 @@ function buildHumanTimelineSnapshot(options = {}) {
     obligations = [];
   }
   obligations = Array.isArray(obligations) ? obligations.filter(Boolean) : [];
+  const freshObligations = obligations.filter((obligation) => isFreshTelegramObligation(obligation, nowMs, options));
+  const staleObligationCount = Math.max(0, obligations.length - freshObligations.length);
 
   const taskAuditNeeds = readTaskAuditNeeds({ ...options, currentSessionId: sessionId });
   const restart = restartEntry(options);
@@ -675,7 +700,7 @@ function buildHumanTimelineSnapshot(options = {}) {
   const rowNeeds = localRows
     .map((row) => needFromRow(row, localRows, { currentSessionId: sessionId }))
     .filter(Boolean);
-  const obligationNeeds = obligations.map(needFromObligation);
+  const obligationNeeds = freshObligations.map(needFromObligation);
   const allNeedsYouItems = sortNewestFirst(dedupeById([
     ...obligationNeeds,
     ...taskAuditNeeds.items,
@@ -730,6 +755,8 @@ function buildHumanTimelineSnapshot(options = {}) {
       evidenceLedgerDbPath: dbPath,
       commsJournal: rowError ? 'unavailable' : 'read',
       telegramReplyObligations: obligationError ? 'unavailable' : 'read',
+      telegramReplyObligationsVisibleHours: telegramObligationVisibleWindowMs(options) / (60 * 60 * 1000),
+      telegramReplyObligationsExcludedStaleCount: staleObligationCount,
       taskAuditItems: taskAuditNeeds.status,
       taskAuditItemsPath: taskAuditNeeds.sourcePath,
       readOnly: true,
@@ -746,5 +773,6 @@ module.exports = {
   eventFromRow: userEntryFromRow,
   needFromRow,
   defaultTimelineSinceMs,
+  isFreshTelegramObligation,
   startOfLocalDayMs,
 };

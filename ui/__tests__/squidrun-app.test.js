@@ -9009,6 +9009,64 @@ describe('SquidRunApp', () => {
       }));
     });
 
+    it('satisfies the latest durable Telegram reply obligation even if the live guard was lost', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const nowMs = Date.parse('2026-06-14T08:40:00.000Z');
+      jest.useFakeTimers({ now: nowMs });
+      try {
+        queryTelegramReplyObligations.mockReturnValue([
+          {
+            obligationId: 'telegram-reply-lost-guard-1',
+            inboundMessageId: 'telegram-in-lost-guard-1',
+            chatId: '1111111111',
+            sessionId: 'app-session-before',
+            paneId: '1',
+            status: 'open',
+            openedAtMs: nowMs - 10_000,
+          },
+        ]);
+
+        const result = await app.routeTelegramReply({
+          target: 'telegram',
+          content: 'Back through Telegram.',
+          messageId: 'telegram-out-lost-guard-1',
+          chatId: '1111111111',
+        });
+
+        expect(sendRoutedTelegramMessage).toHaveBeenCalled();
+        expect(queryTelegramReplyObligations).toHaveBeenCalledWith(expect.objectContaining({
+          status: 'open',
+          chatId: '1111111111',
+          untilMs: nowMs,
+          order: 'desc',
+        }));
+        expect(satisfyTelegramReplyObligation).toHaveBeenCalledWith(
+          expect.objectContaining({
+            obligationId: 'telegram-reply-lost-guard-1',
+            inboundMessageId: 'telegram-in-lost-guard-1',
+            satisfiedAtMs: nowMs,
+            satisfiedByMessageId: 'telegram-out-lost-guard-1',
+            satisfactionSource: 'squidrun-app.route-telegram-reply',
+            satisfaction: expect.objectContaining({
+              reason: 'same_chat_telegram_delivery_confirmed',
+              chatId: '1111111111',
+            }),
+          }),
+          expect.any(Object)
+        );
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_delivered',
+          durableSatisfaction: expect.objectContaining({
+            ok: true,
+            status: 'satisfied',
+          }),
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('clears pending Telegram reply debt from an acked hm-send Telegram journal row', () => {
       const sessionId = 'app-session-telegram-dedupe';
       const createdAtMs = Date.parse('2026-05-31T20:35:00.000Z');
