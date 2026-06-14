@@ -667,6 +667,10 @@ describe('Scheduler Module', () => {
           sources: ['runtime_comms', 'memory_broker'],
           reason: 'manual',
         }));
+        expect(quietRunner.mock.calls[0][0].command).toBe(
+          'node ui/scripts/hm-mira-self-direction.js curiosity-burst --source runtime_comms,memory_broker --json'
+        );
+        expect(quietRunner.mock.calls[0][0].command).not.toContain('--route-interesting');
         expect(mockTriggers.routeTask).not.toHaveBeenCalled();
         expect(updated.history).toHaveLength(1);
         expect(updated.history[0]).toEqual(expect.objectContaining({

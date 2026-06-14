@@ -214,7 +214,6 @@ function defaultQuietCuriosityCommandRunner({ projectRoot, sources }) {
     'curiosity-burst',
     '--source',
     sources.join(','),
-    '--route-interesting',
     '--json',
   ], {
     cwd: root,
@@ -234,6 +233,12 @@ function defaultQuietCuriosityCommandRunner({ projectRoot, sources }) {
     error: result.error ? result.error.message : null,
     parsed,
   };
+}
+
+function quietCuriosityCommand(schedule, sources) {
+  const command = schedule.metadata?.command_harness
+    || `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${sources.join(',')} --json`;
+  return String(command).replace(/\s+--route-interesting\b/g, '');
 }
 
 function createScheduler({
@@ -343,8 +348,7 @@ function createScheduler({
 
   function runQuietCuriosityTask(schedule, reason = 'scheduled') {
     const sources = quietCuriositySources(schedule);
-    const command = schedule.metadata?.command_harness
-      || `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${sources.join(',')} --route-interesting --json`;
+    const command = quietCuriosityCommand(schedule, sources);
     const runner = typeof quietCuriosityCommandRunner === 'function'
       ? quietCuriosityCommandRunner
       : defaultQuietCuriosityCommandRunner;

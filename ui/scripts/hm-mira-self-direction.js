@@ -44,7 +44,7 @@ function printHelp() {
     'Usage:',
     '  node ui/scripts/hm-mira-self-direction.js create [--fixture|--stdin|--prompt-reply] [--session-id <id>] [--project-root <path>] [--json]',
     '  node ui/scripts/hm-mira-self-direction.js curiosity-scout [--project-root <path>] [--json] [--route-interesting] [--no-dispatch]',
-    '  node ui/scripts/hm-mira-self-direction.js curiosity-burst [--project-root <path>] [--source repo_files,memory] [--json] [--route-interesting] [--no-dispatch]',
+    '  node ui/scripts/hm-mira-self-direction.js curiosity-burst [--project-root <path>] [--source repo_files,memory] [--json] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js direct-route [--project-root <path>] [--json] [--run-scout] [--no-dispatch]',
     '  node ui/scripts/hm-mira-self-direction.js next-initiative [--project-root <path>] [--json] [--run-scout] [--no-dispatch] [--force]',
     '  node ui/scripts/hm-mira-self-direction.js quiet-burst-schedule [--install] [--run-now] [--interval-minutes <n>] [--schedule-path <path>] [--source runtime_comms,memory_broker,...] [--json] [--no-dispatch]',

@@ -597,7 +597,12 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(jsonResult.result.items.some((item) => item.source === 'cheap_parallel_scouts' && item.status === 'active')).toBe(true);
     expect(jsonResult.result.consequence_controls.external_send_performed).toBe(false);
     expect(jsonResult.result.consequence_controls.autonomous_apply_performed).toBe(false);
-    expect(sendAgentMessage).toHaveBeenCalledWith('builder', expect.stringContaining('(MIRA CURIOSITY BURST)'));
+    expect(jsonResult.result.dispatch).toEqual(expect.objectContaining({
+      status: 'not_sent',
+      target: 'builder',
+      reason: 'curiosity_burst_lab_only',
+    }));
+    expect(sendAgentMessage).not.toHaveBeenCalled();
     expect(readJsonl(curiosityBurstsPath(projectRoot))).toHaveLength(1);
 
     const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-mira-self-direction.js');
@@ -625,7 +630,7 @@ describe('hm-mira-self-direction CLI harness', () => {
         source: 'memory_broker',
         adapter_id: 'memory_broker_curiosity',
       },
-      dispatch: { status: 'sent' },
+      dispatch: { status: 'not_sent' },
     }));
 
     const first = await driver.run([
@@ -660,10 +665,10 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(first.result.decision).toBe('schedule_installed');
     expect(first.result.schedule_created).toBe(true);
     expect(first.result.schedule_run_performed).toBe(true);
-    expect(first.result.route_dispatch_performed).toBe(true);
+    expect(first.result.route_dispatch_performed).toBe(false);
     expect(first.result.burst_result).toEqual(expect.objectContaining({
       route_decision: 'route_selected',
-      dispatch_status: 'sent',
+      dispatch_status: 'not_sent',
     }));
     expect(second.result.decision).toBe('schedule_already_active');
     expect(second.result.duplicate_suppressed).toBe(true);
@@ -677,6 +682,14 @@ describe('hm-mira-self-direction CLI harness', () => {
       'email',
     ]);
     expect(curiosityBurstRunner).toHaveBeenCalledTimes(1);
+    expect(curiosityBurstRunner).toHaveBeenCalledWith(expect.objectContaining({
+      routeInteresting: false,
+      dispatch: true,
+    }), expect.objectContaining({
+      projectRoot,
+      routeInteresting: false,
+      dispatch: true,
+    }));
   });
 
   test('create --prompt-reply stages held structured Mira proposals', async () => {

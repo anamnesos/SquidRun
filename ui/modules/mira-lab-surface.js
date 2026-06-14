@@ -2947,9 +2947,9 @@ function buildParallelScoutFollowthroughPlan(context = {}) {
     cadence: 'quiet_interval',
     candidate_sources: candidateSources,
     max_sources: candidateSources.length,
-    command_harness: `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${candidateSources.join(',')} --route-interesting --no-dispatch`,
-    followup_rule: 'Route the strongest internal follow-up only if the burst changes a decision; otherwise record a no-op outcome so Mira advances.',
-    route_strongest_internal_followup: true,
+    command_harness: `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${candidateSources.join(',')} --no-dispatch`,
+    followup_rule: 'Write the strongest internal follow-up to the lab only if the burst changes a decision; otherwise record a no-op outcome so Mira advances.',
+    route_strongest_internal_followup: false,
     dispatch_performed: false,
     schedule_created: false,
     schedule_run_performed: false,
@@ -2970,7 +2970,7 @@ function cheapParallelScoutsCuriosityAdapter(context = {}) {
     why_interesting: 'This gives Mira initiative during quiet intervals without waiting for one giant prompt or a single serial scout.',
     hypothesis: 'Cheap bursts surface routeable questions fastest when comms, unified memory, environment, work continuation, browser, and email signals are inspected together.',
     suggested_question: `Should Mira run the reviewed curiosity-burst source mix (${sourceText}) during the next quiet interval?`,
-    possible_action: `Run ${plan.command_harness}; then route only the strongest changed-decision follow-up or record a no-op outcome.`,
+    possible_action: `Run ${plan.command_harness}; then write any strongest changed-decision follow-up to the lab or record a no-op outcome.`,
     route_hint: 'builder',
     sensitivity_hint: 'local_runtime_planning',
     parallel_scout_plan: plan,
@@ -3126,7 +3126,7 @@ function buildAccelerationCuriosityItems(context) {
       why_interesting: 'Parallel scouting is how Mira starts noticing more than the current prompt without becoming slow or heavy.',
       hypothesis: 'Small bounded bursts can surface questions faster than one large serial sweep.',
       suggested_question: 'Which curiosity-burst source mix should Mira run during the next quiet interval?',
-      possible_action: `Run ${parallelScoutPlan.command_harness}; then route only the strongest changed-decision follow-up or record a no-op outcome.`,
+      possible_action: `Run ${parallelScoutPlan.command_harness}; then write any strongest changed-decision follow-up to the lab or record a no-op outcome.`,
       route_hint: 'builder',
       sensitivity_hint: 'local_runtime_planning',
       parallel_scout_plan: parallelScoutPlan,
@@ -3451,99 +3451,6 @@ function curiosityBurstRouteMessageHash(message) {
   return text ? stableHash(text) : null;
 }
 
-function curiosityBurstRouteDedupeCooldownMs(payload = {}, options = {}) {
-  return Math.max(0, Math.min(
-    7 * 24 * 60 * 60 * 1000,
-    Number(
-      payload.routeDedupeCooldownMs
-      || payload.route_dedupe_cooldown_ms
-      || options.routeDedupeCooldownMs
-      || options.route_dedupe_cooldown_ms
-      || 24 * 60 * 60 * 1000
-    ) || 0
-  ));
-}
-
-function curiosityBurstRouteDedupEnabled(payload = {}, options = {}) {
-  return payload.force !== true
-    && options.force !== true
-    && payload.dedupe !== false
-    && options.dedupe !== false
-    && curiosityBurstRouteDedupeCooldownMs(payload, options) > 0;
-}
-
-function curiosityBurstNoopRouteEligible(route = {}) {
-  return route
-    && route.decision === 'route_selected'
-    && route.apply_now !== true
-    && trimText(route.source) === 'memory_broker'
-    && trimText(route.adapter_id) === 'unified_memory_broker_curiosity'
-    && AGENT_ROLES.includes(trimText(route.target_role));
-}
-
-function loggedCuriosityBurstRouteHash(row = {}) {
-  return trimText(row.route_message_hash || row.route_output?.route_message_hash)
-    || curiosityBurstRouteMessageHash(row.route_message);
-}
-
-function recentMatchingCuriosityBurstNoopRoute(logPath, route, generatedAt, routeMessageHash, cooldownMs) {
-  if (!logPath || !routeMessageHash) return null;
-  const nowMs = parseTimestampMs(generatedAt) ?? Date.now();
-  const rows = readJsonl(logPath).slice(-500).reverse();
-  for (const row of rows) {
-    if (!row || row.schema !== MIRA_CURIOSITY_BURST_SCHEMA) continue;
-    const rowRoute = row.route_output || {};
-    if (trimText(rowRoute.decision) !== 'route_selected') continue;
-    if (rowRoute.apply_now === true || /(?:^|\n)apply_now=true(?:\n|$)/i.test(trimText(row.route_message))) continue;
-    const rowMs = parseTimestampMs(row.generated_at);
-    if (rowMs === null || nowMs - rowMs > cooldownMs) continue;
-    if (trimText(rowRoute.target_role) !== trimText(route.target_role)) continue;
-    if (trimText(rowRoute.source) !== trimText(route.source)) continue;
-    if (trimText(rowRoute.adapter_id) !== trimText(route.adapter_id)) continue;
-    const dispatchStatus = trimText(row.dispatch?.status);
-    if (dispatchStatus !== 'sent') continue;
-    const rowDedupeKey = trimText(rowRoute.route_dedupe_key);
-    const routeDedupeKey = trimText(route.route_dedupe_key);
-    if (rowDedupeKey && routeDedupeKey && rowDedupeKey !== routeDedupeKey) continue;
-    if (loggedCuriosityBurstRouteHash(row) !== routeMessageHash) continue;
-    return {
-      burst_id: row.burst_id || null,
-      generated_at: row.generated_at || null,
-      target_role: rowRoute.target_role || null,
-      source: rowRoute.source || null,
-      adapter_id: rowRoute.adapter_id || null,
-      top_result_id: rowRoute.top_result_id || null,
-      route_message_hash: routeMessageHash,
-      route_dedupe_key: route.route_dedupe_key || null,
-      dispatch_status: dispatchStatus || null,
-    };
-  }
-  return null;
-}
-
-function curiosityBurstAlreadyRoutedSuppression(burst = {}, payload = {}, options = {}) {
-  const route = burst.route_output || {};
-  if (!curiosityBurstNoopRouteEligible(route)) return null;
-  if (!curiosityBurstRouteDedupEnabled(payload, options)) return null;
-  const routeMessageHash = curiosityBurstRouteMessageHash(burst.route_message);
-  const cooldownMs = curiosityBurstRouteDedupeCooldownMs(payload, options);
-  const previousRoute = recentMatchingCuriosityBurstNoopRoute(
-    burst.burst_log_path,
-    route,
-    burst.generated_at,
-    routeMessageHash,
-    cooldownMs,
-  );
-  if (!previousRoute) return null;
-  return {
-    reason: 'already_routed',
-    route_message_hash: routeMessageHash,
-    route_dedupe_key: route.route_dedupe_key || null,
-    duplicate_cooldown_ms: cooldownMs,
-    previous_route: previousRoute,
-  };
-}
-
 async function runMiraCuriosityBurst(payload = {}, options = {}) {
   const generatedAt = generatedAtFromOptions(options, payload);
   const projectRoot = projectRootFromOptions(options, payload);
@@ -3683,40 +3590,17 @@ async function runMiraCuriosityBurst(payload = {}, options = {}) {
     };
   }
   const routeInteresting = payload.routeInteresting || options.routeInteresting;
-  const dispatchWanted = routeInteresting && payload.dispatch !== false && options.dispatch !== false;
-  const alreadyRouted = dispatchWanted
-    ? curiosityBurstAlreadyRoutedSuppression(burst, payload, options)
-    : null;
-  if (alreadyRouted) {
-    burst.route_output = {
-      ...burst.route_output,
-      decision: 'already_routed',
-      original_decision: 'route_selected',
-      reason: 'unchanged_apply_now_false_memory_broker_route_already_routed',
-      already_routed: true,
-      suppression: alreadyRouted,
-      route_message_hash: alreadyRouted.route_message_hash,
-    };
+  const dispatchRequested = routeInteresting && payload.dispatch !== false && options.dispatch !== false;
+  if (
+    dispatchRequested
+    && burst.route_output?.decision === 'route_selected'
+    && AGENT_ROLES.includes(burst.route_output.target_role)
+  ) {
     burst.dispatch = {
       status: 'not_sent',
       target: burst.route_output.target_role,
       internal_only: true,
-      reason: 'already_routed',
-      suppression: alreadyRouted,
-    };
-  }
-  if (
-    dispatchWanted
-    && burst.route_output?.decision === 'route_selected'
-    && typeof options.sendAgentMessage === 'function'
-    && AGENT_ROLES.includes(burst.route_output.target_role)
-  ) {
-    const dispatchResult = await options.sendAgentMessage(burst.route_output.target_role, burst.route_message);
-    burst.dispatch = {
-      status: 'sent',
-      target: burst.route_output.target_role,
-      internal_only: true,
-      result: dispatchResult || null,
+      reason: 'curiosity_burst_lab_only',
     };
   }
   appendJsonl(burstLogPath, burst);
@@ -4233,7 +4117,7 @@ function schedulerReviewedCuriosityBurstPlan(item = {}) {
     review_owner: 'architect',
     review_required_before_schedule_creation: true,
     candidate_sources: candidateSources,
-    command_harness: `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${candidateSources.join(',')} --route-interesting --no-dispatch`,
+    command_harness: `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${candidateSources.join(',')} --no-dispatch`,
     followup_code_mode_practice_step: 'Use hm-mira-self-direction code-mode separately when the reviewed burst output needs deeper local JSONL/source inspection.',
     trigger_basis: 'no_active_scheduler_entries',
     schedule_count: numberSignal(item.scheduler_schedule_count),
@@ -4340,15 +4224,15 @@ function writeJsonAtomic(filePath, payload) {
 }
 
 function quietCuriosityCommandHarness(sources) {
-  return `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${sources.join(',')} --route-interesting --json`;
+  return `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${sources.join(',')} --json`;
 }
 
 function quietCuriosityScheduleInput(sources) {
   const command = quietCuriosityCommandHarness(sources);
   return [
-    'Run Mira quiet curiosity burst and route only the strongest changed internal follow-up.',
+    'Run Mira quiet curiosity burst and write any strongest changed follow-up to the lab without pane dispatch.',
     `Command: ${command}`,
-    'If the burst reports no actionable route, record a no-op implemented outcome so Mira advances.',
+    'If the burst reports no actionable follow-up, record a no-op implemented outcome so Mira advances.',
     'Do not send external messages, read email bodies, mutate labels/calendars/schedules, deploy, trade, or perform customer/auth actions.',
   ].join(' ');
 }
@@ -4384,7 +4268,7 @@ function buildQuietCuriositySchedulePayload({ sources, intervalMs, generatedAt }
       schema: MIRA_QUIET_CURIOSITY_SCHEDULE_SCHEMA,
       sources,
       command_harness: command,
-      followup_rule: 'Route the strongest internal follow-up only if the burst changes a decision; otherwise record a no-op outcome.',
+      followup_rule: 'Write the strongest internal follow-up to the lab only if the burst changes a decision; otherwise record a no-op outcome.',
       internal_only: true,
       external_send_performed: false,
       body_read_required: false,
@@ -4510,14 +4394,14 @@ async function ensureMiraQuietCuriositySchedule(payload = {}, options = {}) {
       : runMiraCuriosityBurst;
     burstResult = await runner({
       sources,
-      routeInteresting: true,
+      routeInteresting: false,
       dispatch,
     }, {
       ...options,
       projectRoot,
       generatedAt,
       dispatch,
-      routeInteresting: true,
+      routeInteresting: false,
     });
   }
 
