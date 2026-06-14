@@ -123,4 +123,17 @@ describe('profile helpers', () => {
     expect(scopedEnv.TELEGRAM_AUTHORIZED_CHAT_IDS).toBe('');
     expect(scopedEnv.TELEGRAM_SCOPED_CHAT_IDS).toBe('2222222222');
   });
+
+  test('does not rewrite a scoped Telegram chat id to a hardcoded main chat fallback', () => {
+    const mainEnv = buildProfileTelegramEnv({
+      TELEGRAM_CHAT_ID: '2222222222',
+      TELEGRAM_CHAT_ALLOWLIST: '2222222222,333333',
+      TELEGRAM_AUTHORIZED_CHAT_IDS: '2222222222,444444',
+    }, 'main');
+
+    expect(mainEnv).not.toHaveProperty('TELEGRAM_CHAT_ID');
+    expect(mainEnv.TELEGRAM_CHAT_ALLOWLIST).toBe('333333');
+    expect(mainEnv.TELEGRAM_AUTHORIZED_CHAT_IDS).toBe('444444');
+    expect(mainEnv.TELEGRAM_SCOPED_CHAT_IDS).toBe('2222222222');
+  });
 });
