@@ -26,6 +26,9 @@ const {
   applyModelPromptReceiptToAck,
   waitForModelPromptReceipt,
 } = require('./model-prompt-receipt');
+const {
+  getTrustQuoteArmPaneIds,
+} = require('./trustquote-arm-specs');
 
 const DEFAULT_PORT = resolveWebSocketPort({
   profileName: process.env.SQUIDRUN_PROFILE || DEFAULT_PROFILE,
@@ -53,6 +56,11 @@ const CANONICAL_ROLE_TO_PANE = new Map(
 );
 const PANE_TO_CANONICAL_ROLE = new Map(
   Array.from(CANONICAL_ROLE_TO_PANE.entries()).map(([role, paneId]) => [paneId, role])
+);
+const TRUSTQUOTE_ARM_TARGET_IDS = new Set(
+  getTrustQuoteArmPaneIds()
+    .map((paneId) => String(paneId || '').trim().toLowerCase())
+    .filter(Boolean)
 );
 const SIDE_CONTEXT_PATTERN = /\b(eunbyeol|eunby[e]?ol|rachel|side-window|case\s+(?:file|folder|context)|scoped\s+case)\b/i;
 const MAIN_CONTEXT_PATTERN = /\b(main\s+(?:builder|architect|oracle)|trading|trade|hood|hyperliquid|ci\s+fix)\b/i;
@@ -132,6 +140,11 @@ function getRoleForPaneId(paneId) {
 
 function isCanonicalLocalPaneRoleTarget(target) {
   return Boolean(normalizeRoleId(target));
+}
+
+function isTrustQuoteArmTarget(target) {
+  const normalized = String(target || '').trim().toLowerCase();
+  return TRUSTQUOTE_ARM_TARGET_IDS.has(normalized);
 }
 
 function normalizeScopeProfile(value) {
@@ -519,6 +532,7 @@ function canUseLocalHandlerRoute(routeScope = {}, clientInfo = {}, message = {})
   const targetIdentity = resolveTargetIdentity(target);
   const canonicalLocalTarget = (
     isCanonicalLocalPaneRoleTarget(target)
+    || isTrustQuoteArmTarget(target)
     || (targetIdentity.role && CANONICAL_ROLE_IDS.includes(targetIdentity.role))
   );
   if (!canonicalLocalTarget || (!targetIdentity.role && !targetIdentity.paneId)) return false;
@@ -566,6 +580,13 @@ function resolveTargetIdentity(target) {
   const rawTarget = String(target).trim().toLowerCase();
   if (!rawTarget) {
     return { role: null, paneId: null };
+  }
+
+  if (TRUSTQUOTE_ARM_TARGET_IDS.has(rawTarget)) {
+    return {
+      role: rawTarget,
+      paneId: rawTarget,
+    };
   }
 
   const backgroundPaneId = typeof resolveBackgroundBuilderPaneId === 'function'

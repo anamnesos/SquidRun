@@ -4347,6 +4347,48 @@ describe('SquidRunApp', () => {
       ]);
     });
 
+    it('routes TrustQuote arm hm-send targets into their PTY panes', async () => {
+      const { app, options } = await initWebSocketApp();
+      const write = jest.fn().mockReturnValue(true);
+      app.ctx.daemonClient = {
+        connected: true,
+        write,
+      };
+
+      const result = await options.onMessage({
+        role: 'trustquote-invoice',
+        paneId: 'trustquote-invoice',
+        traceContext: { traceId: 'hm-arm-to-lead-1' },
+        message: {
+          type: 'send',
+          target: 'trustquote-lead',
+          content: '(TRUSTQUOTE-INVOICE #1): status for lead',
+          messageId: 'hm-arm-to-lead-1',
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        accepted: true,
+        paneId: 'trustquote-lead',
+        status: 'accepted.daemon_pty_unverified',
+        mode: 'daemon-pty',
+      }));
+      expect(write).toHaveBeenCalledWith(
+        'trustquote-lead',
+        expect.stringContaining('(TRUSTQUOTE-INVOICE #1): status for lead'),
+        expect.objectContaining({
+          source: 'squidrun-app.direct-pane-delivery',
+        })
+      );
+      expect(write).toHaveBeenCalledWith(
+        'trustquote-lead',
+        '\r',
+        expect.objectContaining({
+          source: 'squidrun-app.direct-pane-delivery',
+        })
+      );
+    });
+
     it('finalizes comms journal rows as routed for accepted but unverified local delivery timeouts', async () => {
       const { options, triggers, evidenceLedger } = await initWebSocketApp();
       triggers.sendDirectMessage.mockResolvedValueOnce({

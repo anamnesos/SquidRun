@@ -5303,6 +5303,9 @@ class SquidRunApp {
               if (targetPaneIdForJournal === '1') return 'architect';
               if (targetPaneIdForJournal === '2') return 'builder';
               if (targetPaneIdForJournal === '3') return 'oracle';
+              if (SQUID_ROOM_ARM_PANE_ID_SET.has(String(targetPaneIdForJournal || ''))) {
+                return String(targetPaneIdForJournal);
+              }
               const backgroundAlias = resolveBackgroundBuilderAlias(targetPaneIdForJournal || target);
               if (backgroundAlias) return backgroundAlias;
               if (this.isTelegramReplyTarget(target)) return this.normalizeOutboundTarget(target);
@@ -10993,6 +10996,10 @@ class SquidRunApp {
     // Direct paneId
     if (PANE_IDS.includes(targetRaw)) {
       return targetRaw;
+    }
+
+    if (SQUID_ROOM_ARM_PANE_ID_SET.has(targetLower)) {
+      return targetLower;
     }
 
     // Role name lookup
