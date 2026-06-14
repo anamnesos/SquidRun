@@ -2,6 +2,8 @@
 
 const TRUSTQUOTE_PROJECT_PATH = 'D:\\projects\\TrustQuote';
 const TRUSTQUOTE_ARM_COMMAND = 'codex --yolo';
+const TRUSTQUOTE_HM_SEND_COMMAND = 'node D:\\projects\\squidrun\\ui\\scripts\\hm-send.js';
+const TRUSTQUOTE_HM_SEND_SCOPE_NOTE = 'These Squid Room arm panes already run with SQUIDRUN_PROFILE=main and SQUIDRUN_WINDOW_KEY=squid-room; do not add an explicit trustquote target-profile flag.';
 
 const TRUSTQUOTE_DAY_TO_DAY_ARM_SPECS = Object.freeze([
   {
@@ -33,7 +35,10 @@ const TRUSTQUOTE_DAY_TO_DAY_ARM_SPECS = Object.freeze([
       'Work in D:\\projects\\TrustQuote.',
       'Use SquidRun evidence and current local files only. Do not claim production/deploy/readiness without proof.',
       'You are this app\'s funnel. Collect your worker arms\' status and send ONE consolidated update to the Architect with the roster/status.',
+      `Send the one consolidated update UP with: ${TRUSTQUOTE_HM_SEND_COMMAND} architect --stdin --role trustquote-lead`,
       'Pass the Architect\'s instructions DOWN to the right worker. The Architect talks to you, not the swarm.',
+      `Pass a message DOWN with: ${TRUSTQUOTE_HM_SEND_COMMAND} trustquote-app --stdin --role trustquote-lead (or target trustquote-invoice / trustquote-schedule-dispatch).`,
+      TRUSTQUOTE_HM_SEND_SCOPE_NOTE,
       'Coordinate as a TrustQuote app arm inside Squid Room; this is not the main SquidRun Builder pane.',
     ],
   },
@@ -69,7 +74,8 @@ const TRUSTQUOTE_DAY_TO_DAY_ARM_SPECS = Object.freeze([
       'TrustQuote arm role: Schedule Dispatch.',
       'Work in D:\\projects\\TrustQuote.',
       'Focus on TrustQuote calendar, dispatch, schedule, dashboard, workflow, and work-state evidence when assigned.',
-      'Report your status and work to your LEAD via hm-send trustquote-lead, not directly to the Architect.',
+      `Report your status and work to your LEAD with: ${TRUSTQUOTE_HM_SEND_COMMAND} trustquote-lead --stdin --role trustquote-schedule-dispatch. Do not report directly to the Architect.`,
+      TRUSTQUOTE_HM_SEND_SCOPE_NOTE,
       'Coordinate as a TrustQuote app arm inside Squid Room; this is not the main SquidRun Oracle pane.',
     ],
   },
@@ -104,7 +110,8 @@ const TRUSTQUOTE_DAY_TO_DAY_ARM_SPECS = Object.freeze([
       'TrustQuote arm role: TrustQuote App.',
       'Work in D:\\projects\\TrustQuote.',
       'Focus on TrustQuote app runtime, dashboard/UI, browser proof, data/API seams, and workflow-state evidence when assigned.',
-      'Report your status and work to your LEAD via hm-send trustquote-lead, not directly to the Architect.',
+      `Report your status and work to your LEAD with: ${TRUSTQUOTE_HM_SEND_COMMAND} trustquote-lead --stdin --role trustquote-app. Do not report directly to the Architect.`,
+      TRUSTQUOTE_HM_SEND_SCOPE_NOTE,
       'Coordinate as a TrustQuote app arm inside Squid Room; this is not the main SquidRun Builder pane.',
     ],
   },
@@ -141,7 +148,8 @@ const TRUSTQUOTE_DAY_TO_DAY_ARM_SPECS = Object.freeze([
       'TrustQuote arm role: Invoice.',
       'Work in D:\\projects\\TrustQuote.',
       'Focus on TrustQuote invoice, quote, document, payment, and money-flow evidence when assigned.',
-      'Report your status and work to your LEAD via hm-send trustquote-lead, not directly to the Architect.',
+      `Report your status and work to your LEAD with: ${TRUSTQUOTE_HM_SEND_COMMAND} trustquote-lead --stdin --role trustquote-invoice. Do not report directly to the Architect.`,
+      TRUSTQUOTE_HM_SEND_SCOPE_NOTE,
       'Coordinate as a TrustQuote app arm inside Squid Room; this is not the main SquidRun Builder pane.',
     ],
   },
@@ -180,6 +188,8 @@ function getTrustQuoteArmPaneIds() {
 module.exports = {
   TRUSTQUOTE_ARM_COMMAND,
   TRUSTQUOTE_DAY_TO_DAY_ARM_SPECS,
+  TRUSTQUOTE_HM_SEND_COMMAND,
+  TRUSTQUOTE_HM_SEND_SCOPE_NOTE,
   TRUSTQUOTE_PROJECT_PATH,
   buildTrustQuoteArmStartupMessage,
   getTrustQuoteArmPaneIds,
