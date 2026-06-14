@@ -186,7 +186,7 @@ function seedTrustQuoteArmRegistry(options = {}) {
     };
   }
 
-  const seedResult = upsertArmRegistryManifest(manifest, { dbPath: opts.dbPath, nowMs });
+  const seedResult = upsertArmRegistryManifest(manifest, { dbPath: opts.dbPath, nowMs, hardDeleteMissingArms: true });
   if (!seedResult.ok) {
     return {
       ...seedResult,

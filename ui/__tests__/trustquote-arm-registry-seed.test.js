@@ -140,6 +140,58 @@ maybeDescribe('TrustQuote arm registry seed', () => {
     expect(armCount).toBe(4);
   });
 
+  test('hard-prunes stale prior-taxonomy arms on reseed', () => {
+    const first = seedTrustQuoteArmRegistry({
+      dbPath,
+      mainSessionId: 'app-session-999',
+      nowMs: 20_000,
+    });
+    expect(first.ok).toBe(true);
+    closeArmRegistryStores();
+
+    const store = new EvidenceLedgerStore({ dbPath });
+    expect(store.init().ok).toBe(true);
+    const legacy = buildTrustQuoteArmRegistryManifest({
+      mainSessionId: 'app-session-999',
+      nowMs: 21_000,
+    });
+    legacy.arms.push(
+      {
+        armKey: 'money-documents',
+        role: 'trustquote-money-documents',
+        paneId: 'trustquote-money-documents',
+        routeTarget: 'trustquote-money-documents',
+        armKind: 'domain',
+        displayName: 'Money + Documents',
+      },
+      {
+        armKey: 'work-schedule',
+        role: 'trustquote-work-schedule',
+        paneId: 'trustquote-work-schedule',
+        routeTarget: 'trustquote-work-schedule',
+        armKind: 'domain',
+        displayName: 'Work + Schedule',
+      }
+    );
+    expect(store.upsertArmRegistryManifest(legacy, { nowMs: 21_000 }).ok).toBe(true);
+    expect(store.queryArmRegistryArms({ appRoomId: 'trustquote', limit: 1000 })
+      .map((arm) => arm.armKey)).toEqual(expect.arrayContaining(['money-documents', 'work-schedule']));
+    store.close();
+
+    const reseed = seedTrustQuoteArmRegistry({
+      dbPath,
+      mainSessionId: 'app-session-999',
+      nowMs: 22_000,
+    });
+    expect(reseed.ok).toBe(true);
+    expect(reseed.registry.arms.map((arm) => arm.armKey).sort()).toEqual([
+      'app',
+      'invoice',
+      'lead',
+      'schedule-dispatch',
+    ]);
+  });
+
   test('dry-run reports the manifest without writing registry rows', () => {
     const result = seedTrustQuoteArmRegistry({
       dbPath,
