@@ -1288,7 +1288,7 @@ describe('Mira Lab sidecar surface', () => {
       plan_kind: 'reviewed_parallel_curiosity_burst',
       cadence: 'quiet_interval',
       candidate_sources: ['runtime_comms', 'memory_broker', 'environment_apps', 'work_continuation', 'browser_history', 'email'],
-      route_strongest_internal_followup: true,
+      route_strongest_internal_followup: false,
       dispatch_performed: false,
       schedule_created: false,
       external_send_performed: false,
@@ -1385,11 +1385,12 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.route_message).toContain('(MIRA CURIOSITY BURST)');
     expect(result.route_message).toContain('apply_now=false');
     expect(result.dispatch).toEqual(expect.objectContaining({
-      status: 'sent',
+      status: 'not_sent',
       target: 'builder',
       internal_only: true,
+      reason: 'curiosity_burst_lab_only',
     }));
-    expect(sendAgentMessage).toHaveBeenCalledWith('builder', expect.stringContaining('automation_scheduler_curiosity'));
+    expect(sendAgentMessage).not.toHaveBeenCalled();
     expect(result.no_mutation_performed).toBe(true);
     expect(result.consequence_controls).toEqual(expect.objectContaining({
       internal_only: true,
@@ -1453,7 +1454,7 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.no_mutation_performed).toBe(true);
   });
 
-  test('curiosity burst records already_routed instead of redispatching unchanged memory-broker no-op routes', async () => {
+  test('curiosity burst records unchanged memory-broker no-op route candidates without dispatching', async () => {
     projectRoot = tempProject();
     const memoryBrokerCuriosityReader = () => ({
       ok: true,
@@ -1499,42 +1500,32 @@ describe('Mira Lab sidecar surface', () => {
       apply_now: false,
     }));
     expect(first.dispatch).toEqual(expect.objectContaining({
-      status: 'sent',
+      status: 'not_sent',
       target: 'builder',
+      reason: 'curiosity_burst_lab_only',
     }));
     expect(second.route_output).toEqual(expect.objectContaining({
-      decision: 'already_routed',
-      original_decision: 'route_selected',
+      decision: 'route_selected',
       target_role: 'builder',
       source: 'memory_broker',
       adapter_id: 'unified_memory_broker_curiosity',
-      already_routed: true,
+      top_result_id: 'node-3d62696f-3aaa-4c90-9236-39e7e251bfff',
       route_message_hash: first.route_output.route_message_hash,
-    }));
-    expect(second.route_output.suppression).toEqual(expect.objectContaining({
-      reason: 'already_routed',
-      route_message_hash: first.route_output.route_message_hash,
-      previous_route: expect.objectContaining({
-        burst_id: first.burst_id,
-        target_role: 'builder',
-        source: 'memory_broker',
-        adapter_id: 'unified_memory_broker_curiosity',
-      }),
     }));
     expect(second.dispatch).toEqual(expect.objectContaining({
       status: 'not_sent',
       target: 'builder',
-      reason: 'already_routed',
+      reason: 'curiosity_burst_lab_only',
     }));
     expect(second.route_message).toContain('apply_now=false');
-    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessage).not.toHaveBeenCalled();
 
     const bursts = readJsonl(curiosityBurstsPath(projectRoot));
     expect(bursts).toHaveLength(2);
-    expect(bursts[1].route_output.decision).toBe('already_routed');
+    expect(bursts[1].route_output.decision).toBe('route_selected');
   });
 
-  test('curiosity burst does not let an unsent memory-broker no-op suppress the first real dispatch', async () => {
+  test('curiosity burst keeps memory-broker no-op candidates lab-only even with a sender available', async () => {
     projectRoot = tempProject();
     const memoryBrokerCuriosityReader = () => ({
       ok: true,
@@ -1575,7 +1566,9 @@ describe('Mira Lab sidecar surface', () => {
       route_message_hash: firstRealDispatch.route_output.route_message_hash,
     }));
     expect(unsent.dispatch).toEqual(expect.objectContaining({
-      status: 'queued_not_sent',
+      status: 'not_sent',
+      target: 'builder',
+      reason: 'curiosity_burst_lab_only',
     }));
     expect(firstRealDispatch.route_output).toEqual(expect.objectContaining({
       decision: 'route_selected',
@@ -1584,15 +1577,16 @@ describe('Mira Lab sidecar surface', () => {
       apply_now: false,
     }));
     expect(firstRealDispatch.dispatch).toEqual(expect.objectContaining({
-      status: 'sent',
+      status: 'not_sent',
       target: 'builder',
+      reason: 'curiosity_burst_lab_only',
     }));
-    expect(sendAgentMessage).toHaveBeenCalledTimes(1);
+    expect(sendAgentMessage).not.toHaveBeenCalled();
 
     const bursts = readJsonl(curiosityBurstsPath(projectRoot));
     expect(bursts).toHaveLength(2);
-    expect(bursts[0].dispatch.status).toBe('queued_not_sent');
-    expect(bursts[1].dispatch.status).toBe('sent');
+    expect(bursts[0].dispatch.status).toBe('not_sent');
+    expect(bursts[1].dispatch.status).toBe('not_sent');
   });
 
   test('curiosity burst does not suppress explicit apply_now true routes', async () => {
@@ -1639,10 +1633,11 @@ describe('Mira Lab sidecar surface', () => {
     }));
     expect(second.route_message).toContain('apply_now=true');
     expect(second.dispatch).toEqual(expect.objectContaining({
-      status: 'sent',
+      status: 'not_sent',
       target: 'builder',
+      reason: 'curiosity_burst_lab_only',
     }));
-    expect(sendAgentMessage).toHaveBeenCalledTimes(2);
+    expect(sendAgentMessage).not.toHaveBeenCalled();
   });
 
   test('curiosity burst does not route empty work-continuation items', async () => {
@@ -2866,9 +2861,9 @@ describe('Mira Lab sidecar surface', () => {
         cadence: 'quiet_interval',
         candidate_sources: ['runtime_comms', 'memory_broker', 'environment_apps', 'work_continuation', 'browser_history', 'email'],
         max_sources: 6,
-        command_harness: 'node ui/scripts/hm-mira-self-direction.js curiosity-burst --source runtime_comms,memory_broker,environment_apps,work_continuation,browser_history,email --route-interesting --no-dispatch',
-        followup_rule: 'Route the strongest internal follow-up only if the burst changes a decision; otherwise record a no-op outcome so Mira advances.',
-        route_strongest_internal_followup: true,
+        command_harness: 'node ui/scripts/hm-mira-self-direction.js curiosity-burst --source runtime_comms,memory_broker,environment_apps,work_continuation,browser_history,email --no-dispatch',
+        followup_rule: 'Write the strongest internal follow-up to the lab only if the burst changes a decision; otherwise record a no-op outcome so Mira advances.',
+        route_strongest_internal_followup: false,
         dispatch_performed: false,
         schedule_created: false,
         schedule_run_performed: false,
@@ -2889,8 +2884,8 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.work_order.action).toContain('record a no-op outcome');
     expect(result.evidence).toEqual(expect.arrayContaining([
       'parallel_scout_sources=runtime_comms,memory_broker,environment_apps,work_continuation,browser_history,email',
-      'parallel_scout_command=node ui/scripts/hm-mira-self-direction.js curiosity-burst --source runtime_comms,memory_broker,environment_apps,work_continuation,browser_history,email --route-interesting --no-dispatch',
-      'parallel_scout_followup_rule=Route the strongest internal follow-up only if the burst changes a decision; otherwise record a no-op outcome so Mira advances.',
+      'parallel_scout_command=node ui/scripts/hm-mira-self-direction.js curiosity-burst --source runtime_comms,memory_broker,environment_apps,work_continuation,browser_history,email --no-dispatch',
+      'parallel_scout_followup_rule=Write the strongest internal follow-up to the lab only if the burst changes a decision; otherwise record a no-op outcome so Mira advances.',
     ]));
     expect(result.route_message).toContain('parallel_scout_command=node ui/scripts/hm-mira-self-direction.js curiosity-burst');
     expect(result.consequence_controls).toEqual(expect.objectContaining({
@@ -3222,7 +3217,8 @@ describe('Mira Lab sidecar surface', () => {
       'browser_history',
       'email',
     ]);
-    expect(result.command_harness).toContain('curiosity-burst --source runtime_comms,memory_broker,environment_apps,work_continuation,browser_history,email --route-interesting');
+    expect(result.command_harness).toContain('curiosity-burst --source runtime_comms,memory_broker,environment_apps,work_continuation,browser_history,email --json');
+    expect(result.command_harness).not.toContain('--route-interesting');
     expect(result.schedule).toEqual(expect.objectContaining({
       id: 'mira-quiet-curiosity-burst-v1',
       name: 'Mira quiet curiosity burst',
@@ -3309,7 +3305,7 @@ describe('Mira Lab sidecar surface', () => {
         source: 'memory_broker',
         adapter_id: 'memory_broker_curiosity',
       },
-      dispatch: { status: 'sent' },
+      dispatch: { status: 'not_sent' },
     }));
 
     const result = await ensureMiraQuietCuriositySchedule({
@@ -3325,20 +3321,20 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.decision).toBe('schedule_ready_for_install');
     expect(result.schedule_created).toBe(false);
     expect(result.schedule_run_performed).toBe(true);
-    expect(result.route_dispatch_performed).toBe(true);
+    expect(result.route_dispatch_performed).toBe(false);
     expect(result.burst_result).toEqual(expect.objectContaining({
       decision: 'burst_completed',
       route_decision: 'route_selected',
       route_source: 'memory_broker',
-      dispatch_status: 'sent',
+      dispatch_status: 'not_sent',
     }));
     expect(burstRunner).toHaveBeenCalledWith(expect.objectContaining({
-      routeInteresting: true,
+      routeInteresting: false,
       dispatch: true,
     }), expect.objectContaining({
       projectRoot,
       dispatch: true,
-      routeInteresting: true,
+      routeInteresting: false,
     }));
     expect(fs.existsSync(schedulerStatePath)).toBe(false);
   });
