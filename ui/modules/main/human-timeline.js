@@ -23,6 +23,7 @@ const SNAPSHOT_SCHEMA = 'squidrun.human_timeline.snapshot.v0';
 const DEFAULT_MAX_ROWS = 5000;
 const DEFAULT_MAX_FEED_ITEMS = 44;
 const DEFAULT_MAX_NEEDS_YOU_ITEMS = 5;
+const DEFAULT_TIMELINE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const FOREIGN_SESSION_IDS = new Set(['app-session-446']);
 const NEEDS_YOU_TASK_AUDIT_STATUSES = new Set([
   'needs_james_verification',
@@ -60,6 +61,10 @@ function startOfLocalDayMs(nowMs) {
   const date = new Date(nowMs);
   date.setHours(0, 0, 0, 0);
   return date.getTime();
+}
+
+function defaultTimelineSinceMs(nowMs) {
+  return Math.max(0, toMs(nowMs, Date.now()) - DEFAULT_TIMELINE_WINDOW_MS);
 }
 
 function rowTimeMs(row = {}) {
@@ -606,7 +611,7 @@ function readTaskAuditNeeds(options = {}) {
 
 function buildHumanTimelineSnapshot(options = {}) {
   const nowMs = toMs(options.nowMs ?? options.now, Date.now());
-  const sinceMs = toMs(options.sinceMs, startOfLocalDayMs(nowMs));
+  const sinceMs = toMs(options.sinceMs, defaultTimelineSinceMs(nowMs));
   const untilMs = toMs(options.untilMs, nowMs);
   const maxRows = Math.max(1, Math.min(50_000, Number(options.maxRows) || DEFAULT_MAX_ROWS));
   const maxFeedItems = Math.max(1, Math.min(49, Number(options.maxFeedItems) || DEFAULT_MAX_FEED_ITEMS));
@@ -700,6 +705,7 @@ function buildHumanTimelineSnapshot(options = {}) {
     },
     window: {
       label: 'Today',
+      mode: 'rolling_24h',
       since: asIso(sinceMs),
       until: asIso(untilMs),
     },
@@ -739,5 +745,6 @@ module.exports = {
   collapsedMilestoneEntries,
   eventFromRow: userEntryFromRow,
   needFromRow,
+  defaultTimelineSinceMs,
   startOfLocalDayMs,
 };
