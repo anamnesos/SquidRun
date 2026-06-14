@@ -927,6 +927,10 @@ describe('daemon-handlers.js module', () => {
     });
 
     describe('Throttle Queue UI Side Effects', () => {
+      const withPromptReceipt = (message, deliveryId, messageId = deliveryId) => (
+        `${message}\n[SQUIDRUN_RECEIPT event=prompt_submit deliveryId=${deliveryId} messageId=${messageId}]`
+      );
+
       test('should flash pane header via uiView', () => {
         let injectHandler;
         onBridge.mockImplementation((channel, handler) => {
@@ -957,7 +961,7 @@ describe('daemon-handlers.js module', () => {
 
         expect(terminal.sendToPane).toHaveBeenCalledWith(
           '2',
-          'msg',
+          withPromptReceipt('msg', 'delivery-1', 'trace-1'),
           expect.objectContaining({
             traceContext: expect.objectContaining({
               traceId: 'trace-1',
@@ -1057,7 +1061,7 @@ describe('daemon-handlers.js module', () => {
 
         expect(terminal.sendToPane).toHaveBeenCalledWith(
           '2',
-          longPayload,
+          withPromptReceipt(longPayload, 'delivery-long-1', 'trace-long-1'),
           expect.objectContaining({
             clipboardPasteThresholdBytes: 1024,
             traceContext: expect.objectContaining({ traceId: 'trace-long-1' }),
@@ -1113,7 +1117,7 @@ describe('daemon-handlers.js module', () => {
 
         expect(terminal.sendToPane).toHaveBeenCalledWith(
           '2',
-          'msg',
+          withPromptReceipt('msg', 'delivery-hm-1', 'hm-abc123'),
           expect.objectContaining({
             hmSendFastEnter: true,
           })
@@ -1197,7 +1201,7 @@ describe('daemon-handlers.js module', () => {
         expect(terminal.sendToPane).toHaveBeenCalledTimes(1);
         expect(terminal.sendToPane).toHaveBeenCalledWith(
           '2',
-          message,
+          withPromptReceipt(message, 'delivery-chunked-1', 'trace-chunked-1'),
           expect.objectContaining({
             traceContext: expect.objectContaining({
               traceId: 'trace-chunked-1',
@@ -1260,7 +1264,7 @@ describe('daemon-handlers.js module', () => {
         expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'pending');
         expect(terminal.sendToPane).toHaveBeenCalledWith(
           '3',
-          'msg',
+          withPromptReceipt('msg', 'delivery-pending-1'),
           expect.objectContaining({
             deliveryId: 'delivery-pending-1',
           })

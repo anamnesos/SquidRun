@@ -5261,6 +5261,8 @@ describe('SquidRunApp', () => {
   });
 
   describe('deliverPaneMessageViaDaemonPty', () => {
+    const withPromptReceipt = (message, id) => `${message}\n[SQUIDRUN_RECEIPT event=prompt_submit deliveryId=${id} messageId=${id}]`;
+
     it('writes Codex paste terminator before Enter on the direct daemon route', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.ctx.currentSettings = {
@@ -5280,7 +5282,7 @@ describe('SquidRunApp', () => {
       });
 
       expect(app.ctx.daemonClient.write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
-        ['1', 'hello architect'],
+        ['1', withPromptReceipt('hello architect', 'direct-codex-1')],
         ['1', '\u001b[201~'],
         ['1', '\r'],
       ]);
@@ -5315,7 +5317,7 @@ describe('SquidRunApp', () => {
       });
 
       expect(app.ctx.daemonClient.write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
-        ['2', 'short direct message'],
+        ['2', withPromptReceipt('short direct message', 'direct-no-duplicate-1')],
         ['2', '\r'],
       ]);
       expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
@@ -5380,7 +5382,7 @@ describe('SquidRunApp', () => {
       });
 
       expect(app.ctx.daemonClient.write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
-        ['2', 'hello builder'],
+        ['2', withPromptReceipt('hello builder', 'direct-claude-1')],
         ['2', '\r'],
       ]);
     });
@@ -5504,7 +5506,7 @@ describe('SquidRunApp', () => {
       });
 
       expect(app.ctx.daemonClient.write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
-        ['1', 'hello architect'],
+        ['1', withPromptReceipt('hello architect', 'direct-codex-reject-1')],
         ['1', '\u001b[201~'],
       ]);
       expect(result).toEqual(expect.objectContaining({
