@@ -769,7 +769,7 @@ function resolveReadinessSessionId(filters = {}, registry = {}) {
   ) || toOptionalString(
     filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id,
     null
-  ) || toOptionalString(registry.readinessSessionId || registry.sessionId, null);
+  ) || toOptionalString(registry.metadata?.readinessSessionId || registry.readinessSessionId || registry.sessionId, null);
 }
 
 function normalizeArmStatus(value) {
@@ -2019,6 +2019,7 @@ class EvidenceLedgerStore {
 
     const incomingKeys = new Set(normalizedArms.map((arm) => arm.armKey));
     const replaceArms = options.replaceArms !== false && armsInput.length > 0;
+    const hardDeleteMissingArms = options.hardDeleteMissingArms === true;
     const countSourceArms = armsInput.length > 0 ? normalizedArms : existingArms;
     const activeRequiredArms = countSourceArms.filter((arm) => arm.required && arm.status !== 'disabled');
     const readyCount = activeRequiredArms.filter((arm) => arm.status === 'ready').length;
@@ -2159,6 +2160,13 @@ class EvidenceLedgerStore {
       if (replaceArms) {
         for (const arm of existingArms) {
           if (incomingKeys.has(arm.armKey)) continue;
+          if (hardDeleteMissingArms) {
+            this.db.prepare('DELETE FROM arm_checkin_proofs WHERE arm_id = ?').run(arm.armId);
+            this.db.prepare('DELETE FROM arm_missing_watchdogs WHERE arm_id = ?').run(arm.armId);
+            this.db.prepare('DELETE FROM arm_apply_requests WHERE arm_id = ?').run(arm.armId);
+            this.db.prepare('DELETE FROM arm_registry_arms WHERE arm_id = ?').run(arm.armId);
+            continue;
+          }
           this.db.prepare(`
             UPDATE arm_registry_arms
             SET status = 'disabled', required = 0, updated_at_ms = ?

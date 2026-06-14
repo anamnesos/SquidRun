@@ -220,6 +220,51 @@ maybeDescribe('arm state projection', () => {
     expect(queryArmApplyRequests({ status: 'approval_required' }, { dbPath })).toEqual(beforeQueue);
   });
 
+  test('uses registry metadata readiness session when projection has no explicit session', () => {
+    const seededManifest = {
+      ...manifest(),
+      metadata: {
+        readinessSessionId: 'app-session-406:trustquote',
+      },
+    };
+    expect(upsertArmRegistryManifest(seededManifest, { dbPath, nowMs: 1_000 }).ok).toBe(true);
+    const leadRow = seedCommsCheckin(dbPath, {
+      messageId: 'hm-lead-ready-from-metadata-session',
+      role: 'trustquote-lead',
+      paneId: 'trustquote-lead',
+      sessionId: 'app-session-406:trustquote',
+    }, 2_000);
+    expect(recordArmCheckinProof({
+      appRoomId: 'trustquote',
+      sessionId: 'app-session-406:trustquote',
+      armKey: 'lead',
+      role: 'trustquote-lead',
+      paneId: 'trustquote-lead',
+      proofKind: 'startup_check_in',
+      messageId: 'hm-lead-ready-from-metadata-session',
+      commsRowId: leadRow.rowId,
+      env: {
+        SQUIDRUN_ROLE: 'trustquote-lead',
+        SQUIDRUN_PANE_ID: 'trustquote-lead',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+      },
+    }, { dbPath, nowMs: 2_000 }).ok).toBe(true);
+
+    const projection = buildArmStateProjection({
+      appRoomId: 'trustquote',
+    }, { dbPath, nowMs: 3_000 });
+
+    expect(projection.registry).toEqual(expect.objectContaining({
+      readinessSessionId: 'app-session-406:trustquote',
+      readyCount: 1,
+      missingCount: 1,
+    }));
+    expect(projection.arms.find((arm) => arm.armKey === 'lead')).toEqual(expect.objectContaining({
+      status: 'ready',
+      latestAcceptedCheckin: expect.objectContaining({ messageId: 'hm-lead-ready-from-metadata-session' }),
+    }));
+  });
+
   test('does not attach a stale accepted check-in after arm identity changes', () => {
     expect(upsertArmRegistryManifest(manifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
     const billingRow = seedCommsCheckin(dbPath, {

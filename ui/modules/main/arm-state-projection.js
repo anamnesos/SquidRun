@@ -72,7 +72,7 @@ function resolveReadinessSessionId(filters = {}, registry = {}) {
   ) || toOptionalString(
     filters.sessionId || filters.session_id || filters.sessionScopeId || filters.session_scope_id,
     null
-  ) || toOptionalString(registry.sessionId, null);
+  ) || toOptionalString(registry.metadata?.readinessSessionId || registry.readinessSessionId || registry.sessionId, null);
 }
 
 function summarizeWatchdogs(watchdogs = [], nowMs) {
