@@ -12044,7 +12044,14 @@ class SquidRunApp {
           sessionId: routeSessionScopeId || this.commsSessionScopeId || null,
           satisfiedAtMs: Date.now(),
         })
-        : null;
+        : this.satisfyLatestDurableTelegramReplyObligationForTelegramEgress({
+          source: 'squidrun-app.route-telegram-reply',
+          reason: 'same_chat_telegram_delivery_confirmed',
+          egressMessageId: sentMessageId || null,
+          chatId: result.chatId || replyChatId || null,
+          sessionId: routeSessionScopeId || this.commsSessionScopeId || null,
+          satisfiedAtMs: Date.now(),
+        });
       this.clearPendingTelegramReplyGuard({
         paneId: guardPaneId,
         chatId: replyChatId || null,
@@ -13499,6 +13506,64 @@ class SquidRunApp {
       return result;
     } catch (err) {
       log.warn('TelegramReplyRequirement', `Durable reply obligation satisfaction failed: ${err.message}`);
+      return { ok: false, status: 'exception', reason: err.message };
+    }
+  }
+
+  satisfyLatestDurableTelegramReplyObligationForTelegramEgress(evidence = {}, options = {}) {
+    const chatId = normalizeChatId(evidence.chatId || evidence.telegramChatId || null);
+    if (!chatId) {
+      return { ok: false, status: 'skipped', reason: 'chat_id_required' };
+    }
+    const queryFn = typeof options.queryTelegramReplyObligations === 'function'
+      ? options.queryTelegramReplyObligations
+      : queryTelegramReplyObligations;
+    const satisfyFn = typeof options.satisfyTelegramReplyObligation === 'function'
+      ? options.satisfyTelegramReplyObligation
+      : satisfyTelegramReplyObligation;
+    const satisfiedAtMs = Number(evidence.satisfiedAtMs || evidence.egressAtMs || evidence.sentAtMs || Date.now());
+    const normalizedSatisfiedAtMs = Number.isFinite(satisfiedAtMs) && satisfiedAtMs > 0
+      ? Math.floor(satisfiedAtMs)
+      : Date.now();
+    let obligations = [];
+    try {
+      obligations = queryFn({
+        status: 'open',
+        chatId,
+        untilMs: normalizedSatisfiedAtMs,
+        order: 'desc',
+        limit: 20,
+      }) || [];
+    } catch (err) {
+      log.warn('TelegramReplyRequirement', `Failed finding durable reply obligation for Telegram egress: ${err.message}`);
+      return { ok: false, status: 'query_failed', reason: err.message };
+    }
+    const obligation = (Array.isArray(obligations) ? obligations : [])
+      .find((candidate) => String(candidate.status || '').toLowerCase() === 'open') || null;
+    if (!obligation) {
+      return { ok: false, status: 'not_found', reason: 'no_open_obligation_for_chat' };
+    }
+    try {
+      return satisfyFn({
+        obligationId: obligation.obligationId || null,
+        inboundMessageId: obligation.inboundMessageId || null,
+        satisfiedAtMs: normalizedSatisfiedAtMs,
+        satisfiedByMessageId: toNonEmptyString(evidence.egressMessageId || evidence.messageId || null),
+        satisfiedByRowId: Number.isFinite(Number(evidence.egressRowId))
+          ? Math.floor(Number(evidence.egressRowId))
+          : null,
+        satisfactionSource: toNonEmptyString(evidence.source) || 'squidrun-app.telegram-egress-durable-fallback',
+        satisfaction: {
+          reason: toNonEmptyString(evidence.reason) || 'same_chat_telegram_delivery_confirmed',
+          chatId,
+          sessionId: toNonEmptyString(evidence.sessionId || null),
+          replyToMessageId: toNonEmptyString(evidence.replyToMessageId || obligation.inboundMessageId || null),
+        },
+      }, {
+        nowMs: options.nowMs,
+      });
+    } catch (err) {
+      log.warn('TelegramReplyRequirement', `Durable reply obligation fallback satisfaction failed: ${err.message}`);
       return { ok: false, status: 'exception', reason: err.message };
     }
   }

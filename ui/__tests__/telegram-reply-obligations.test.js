@@ -245,4 +245,41 @@ maybeDescribe('telegram reply obligations', () => {
       }),
     }));
   });
+
+  test('reconciles same-chat Telegram egress across app session changes', () => {
+    store.upsertTelegramReplyObligation({
+      inboundMessageId: 'telegram-in-before-restart',
+      chatId: '111111',
+      sessionId: 'app-session-before-restart',
+      paneId: '1',
+      openedAtMs: 10_000,
+      deadlineAtMs: 20_000,
+    }, { nowMs: 10_000 });
+
+    seedAckedTelegram(store, {
+      messageId: 'telegram-out-after-restart',
+      sessionId: 'app-session-after-restart',
+      timestampMs: 12_000,
+      chatId: '111111',
+      replyToMessageId: 'telegram-in-before-restart',
+    });
+    store.close();
+    store = null;
+
+    const reconciled = reconcileTelegramReplyObligationFromJournal({
+      inboundMessageId: 'telegram-in-before-restart',
+    }, { dbPath });
+
+    expect(reconciled.ok).toBe(true);
+    expect(reconciled.status).toBe('satisfied');
+    expect(reconciled.matchedCandidate).toEqual(expect.objectContaining({
+      messageId: 'telegram-out-after-restart',
+      sessionId: 'app-session-after-restart',
+      reason: 'exact_reply_to_match',
+    }));
+    expect(reconciled.satisfaction.obligation).toEqual(expect.objectContaining({
+      status: 'satisfied',
+      satisfiedByMessageId: 'telegram-out-after-restart',
+    }));
+  });
 });
