@@ -232,7 +232,7 @@ describe('human-timeline snapshot', () => {
     ]);
   });
 
-  test('does not render prior-session task-audit needs in a current-session strip', () => {
+  test('renders persistent task-audit needs across sessions', () => {
     const snapshot = timeline.buildHumanTimelineSnapshot({
       nowMs: Date.parse('2026-06-12T17:00:00.000Z'),
       sessionId: 'app-session-445',
@@ -243,20 +243,28 @@ describe('human-timeline snapshot', () => {
         status: 'OK',
         items: [
           {
-            id: 'old-task',
-            title: 'Old session task needs James',
-            status: 'needs_james_verification',
-            nextAction: 'James verifies the old session output.',
+            id: 'trustquote-phase-3',
+            title: 'TrustQuote phase 3 needs James go-ahead',
+            status: 'pending_james_go',
+            nextAction: 'James decides when to start the next TrustQuote product phase.',
             updatedAt: '2026-06-12T15:00:00.000Z',
             sessionId: 'app-session-444',
           },
           {
-            id: 'current-task',
-            title: 'Current session task needs James',
-            status: 'needs_james_verification',
-            nextAction: 'James verifies the current session output.',
+            id: 'trustquote-business-rules',
+            title: 'TrustQuote lead business rules',
+            status: 'needs_james_input_over_time',
+            nextAction: 'James answers case-triggered business-rule questions as they come up.',
             updatedAt: '2026-06-12T16:00:00.000Z',
             sessionId: 'app-session-445',
+          },
+          {
+            id: 'resolved-old-task',
+            title: 'Resolved old task',
+            status: 'resolved',
+            nextAction: 'No action needed.',
+            updatedAt: '2026-06-12T14:00:00.000Z',
+            sessionId: 'app-session-444',
           },
         ],
       })),
@@ -264,11 +272,19 @@ describe('human-timeline snapshot', () => {
       appStatusPath: 'missing-app-status.json',
     });
 
-    expect(snapshot.needsYou.items).toEqual([
+    expect(snapshot.needsYou.items).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        refs: expect.objectContaining({ kind: 'task_audit_item', itemId: 'current-task' }),
+        refs: expect.objectContaining({ kind: 'task_audit_item', itemId: 'trustquote-phase-3' }),
       }),
-    ]);
+      expect.objectContaining({
+        refs: expect.objectContaining({ kind: 'task_audit_item', itemId: 'trustquote-business-rules' }),
+      }),
+    ]));
+    expect(snapshot.needsYou.items).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        refs: expect.objectContaining({ kind: 'task_audit_item', itemId: 'resolved-old-task' }),
+      }),
+    ]));
   });
 
   test('does not treat status captions about what needs you as asks', () => {
