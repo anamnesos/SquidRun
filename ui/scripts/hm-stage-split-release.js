@@ -214,6 +214,7 @@ function renderInstallUpdateScript(plan) {
     'if (-not (Test-Path -LiteralPath $ExePath)) { throw "Missing SquidRun.exe in version root: $ExePath" }',
     '$LauncherPath = Join-Path $InstallRootFull ("Launch-" + $InstanceName + "-SquidRun.ps1")',
     '$Launcher = @(',
+    '  "Get-ChildItem Env:TELEGRAM_* -ErrorAction SilentlyContinue | Remove-Item -ErrorAction SilentlyContinue"',
     "  \"`$env:SQUIDRUN_DATA_ROOT = '\" + $DataRootFull.Replace(\"'\", \"''\") + \"'\"",
     "  \"`$env:SQUIDRUN_PROJECT_ROOT = '\" + $DataRootFull.Replace(\"'\", \"''\") + \"'\"",
     "  \"`$env:SQUIDRUN_PROFILE = 'main'\"",
