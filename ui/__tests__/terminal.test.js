@@ -531,6 +531,12 @@ describe('terminal.js module', () => {
       expect(oracleCaps.enterMethod).toBe('pty');
       expect(oracleCaps.submitMethod).toBe('trustquote-pty-enter');
       expect(oracleCaps.requiresFocusForEnter).toBe(false);
+
+      const leadCaps = terminal.getPaneInjectionCapabilities('trustquote-lead');
+      expect(leadCaps.displayName).toBe('Claude');
+      expect(leadCaps.enterMethod).toBe('pty');
+      expect(leadCaps.submitMethod).toBe('trustquote-pty-enter');
+      expect(leadCaps.requiresFocusForEnter).toBe(false);
     });
 
     test('returns safe generic defaults for unknown runtimes', () => {

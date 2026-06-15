@@ -942,6 +942,28 @@ describe('Terminal Injection', () => {
       });
     });
 
+    test('uses TrustQuote PTY Enter fallback for arm panes without a textarea', async () => {
+      const fallbackController = createInjectionController({
+        ...mockOptions,
+        getPaneCapabilities: jest.fn().mockReturnValue(null),
+      });
+      document.querySelector.mockReturnValue(null);
+      terminals.set('trustquote-lead', { buffer: { active: null } });
+
+      const onComplete = jest.fn();
+      await fallbackController.doSendToPane('trustquote-lead', 'lead route', onComplete);
+      await jest.advanceTimersByTimeAsync(200);
+
+      expect(mockPty.write).toHaveBeenCalledWith(
+        'trustquote-lead',
+        expect.stringMatching(timestampedPayloadRegex('lead route')),
+        expect.any(Object)
+      );
+      expect(mockPty.write).toHaveBeenCalledWith('trustquote-lead', '\r', expect.any(Object));
+      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
+      expect(onComplete).toHaveBeenCalledWith({ success: true });
+    });
+
     test('threads inject metadata into PTY kernelMeta', async () => {
       const capabilityOptions = {
         ...mockOptions,

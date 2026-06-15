@@ -1,3 +1,5 @@
+const { isTrustQuotePaneId } = require('../work-room-terminal-visibility');
+
 function toNonNegativeNumber(value, fallback) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -98,6 +100,27 @@ function getRuntimeInjectionCapabilityDefaults(options = {}) {
       enterFailureReason: 'enter_failed',
       displayName: 'Generic',
     },
+    trustquote: {
+      mode: 'pty',
+      modeLabel: 'trustquote-pty',
+      appliedMethod: 'trustquote-pty',
+      submitMethod: 'trustquote-pty-enter',
+      bypassGlobalLock: true,
+      applyCompactionGate: false,
+      requiresFocusForEnter: false,
+      enterMethod: 'pty',
+      enterDelayMs: claudeEnterDelayMs,
+      sanitizeMultiline: false,
+      clearLineBeforeWrite: true,
+      useChunkedWrite: true,
+      verifySubmitAccepted: false,
+      deferSubmitWhilePaneActive: false,
+      scaleEnterDelayByPayload: false,
+      typingGuardWhenBypassing: true,
+      sanitizeTransform: 'none',
+      enterFailureReason: 'pty_enter_failed',
+      displayName: 'TrustQuote',
+    },
   };
 }
 
@@ -110,6 +133,7 @@ function getRuntimeInjectionCapabilityDefault(runtimeKey, options = {}) {
 function resolveInjectionRuntimeKey(paneId, helpers = {}) {
   const id = String(paneId || '');
   const fallback = String(helpers.fallback || 'claude');
+  if (isTrustQuotePaneId(id)) return 'trustquote';
   const isCodex = typeof helpers.isCodexPane === 'function' ? helpers.isCodexPane(id) : false;
   if (isCodex) return 'codex';
   const isGemini = typeof helpers.isGeminiPane === 'function' ? helpers.isGeminiPane(id) : false;

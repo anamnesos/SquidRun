@@ -28,6 +28,7 @@ const TRIGGERS_PATH = typeof resolveCoordPath === 'function'
 const TRUSTQUOTE_ARM_SPECS_BY_PANE_ID = new Map(
   getTrustQuoteDayToDayArmSpecs().map((spec) => [String(spec.paneId), spec])
 );
+const DEFAULT_TRUSTQUOTE_ARM_CLAUDE_MODEL = 'opus';
 
 // Under plain node (jest), require('electron') resolves to a path string -
 // guard so tests exercise the deps/mainWindow seams instead.
@@ -48,8 +49,9 @@ function isSwitchablePaneId(paneId) {
   return isCorePaneId(paneId) || Boolean(getTrustQuoteArmSpec(paneId));
 }
 
-function buildClaudeCommand(claudeModel = '') {
-  const model = normalizeClaudeModelId(claudeModel);
+function buildClaudeCommand(claudeModel = '', options = {}) {
+  const model = normalizeClaudeModelId(claudeModel)
+    || (options.isArmPane ? DEFAULT_TRUSTQUOTE_ARM_CLAUDE_MODEL : '');
   return model ? `claude --model ${model}` : 'claude';
 }
 
@@ -86,7 +88,9 @@ function buildModelCommands(ctx = {}, id = '', options = {}) {
   });
   return {
     commands: {
-      'claude': buildClaudeCommand(options.claudeModel),
+      'claude': buildClaudeCommand(options.claudeModel, {
+        isArmPane: Boolean(getTrustQuoteArmSpec(id)),
+      }),
       'codex': 'codex',
       'gemini': buildGeminiCommand({
         preferredModel: geminiModel,
