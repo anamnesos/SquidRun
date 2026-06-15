@@ -302,7 +302,7 @@ describe('registerModelSwitchHandlers', () => {
       );
     });
 
-    it('switches Squid Room arm panes by persisting the arm command and signaling the owner window', async () => {
+    it('switches Squid Room arm panes by persisting an Opus-pinned Claude command and signaling the owner window', async () => {
       const sendPaneModelChanged = jest.fn();
       const paneRestartArbiter = {
         getActiveClaim: jest.fn(() => null),
@@ -321,33 +321,33 @@ describe('registerModelSwitchHandlers', () => {
 
       const result = await executePaneModelSwitch(
         mockCtx,
-        { paneId: 'trustquote-app', model: 'claude' },
+        { paneId: 'trustquote-lead', model: 'claude' },
         { ...mockDeps, sendPaneModelChanged, paneRestartArbiter }
       );
 
-      expect(result).toEqual({ success: true, paneId: 'trustquote-app', model: 'claude' });
-      expect(paneRestartArbiter.getActiveClaim).toHaveBeenCalledWith('trustquote-app');
-      expect(paneRestartArbiter.resolveOwner).toHaveBeenCalledWith('trustquote-app');
+      expect(result).toEqual({ success: true, paneId: 'trustquote-lead', model: 'claude' });
+      expect(paneRestartArbiter.getActiveClaim).toHaveBeenCalledWith('trustquote-lead');
+      expect(paneRestartArbiter.resolveOwner).toHaveBeenCalledWith('trustquote-lead');
       expect(mockCtx.recoveryManager.markExpectedExit).not.toHaveBeenCalled();
       expect(mockCtx.daemonClient.kill).not.toHaveBeenCalled();
-      expect(mockCtx.currentSettings.paneCommands['trustquote-app']).toBe('claude');
+      expect(mockCtx.currentSettings.paneCommands['trustquote-lead']).toBe('claude --model opus');
       expect(mockDeps.saveSettings).toHaveBeenCalledWith({ paneCommands: mockCtx.currentSettings.paneCommands });
       expect(fs.writeFileSync).toHaveBeenCalledWith(
         expect.stringContaining('all.txt'),
-        '(SYSTEM): TrustQuote App switched to Claude\n'
+        '(SYSTEM): TrustQuote Lead switched to Claude\n'
       );
       expect(sendPaneModelChanged).toHaveBeenCalledWith({
-        paneId: 'trustquote-app',
+        paneId: 'trustquote-lead',
         model: 'claude',
         ownerWindowKey: 'squid-room',
         ownerProfileName: 'main',
         ownerSessionScopeId: 'app-session-428:squid-room',
         ownerInstance: {
           profileName: 'main',
-          windowKey: 'squid-room',
-          sessionScopeId: 'app-session-428:squid-room',
-        },
-        command: 'claude',
+            windowKey: 'squid-room',
+            sessionScopeId: 'app-session-428:squid-room',
+          },
+        command: 'claude --model opus',
       });
     });
 

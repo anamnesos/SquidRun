@@ -19,6 +19,7 @@ describe('work-room terminal visibility', () => {
     routeOwner: 'trustquote-work-room-route-owner',
     roomId: 'trustquote',
   };
+  const trustQuoteLead = { paneId: 'trustquote-lead', alive: true };
 
   test('main workspace hides TrustQuote route-owner terminals', () => {
     expect(filterTerminalsForWorkspace([
@@ -28,17 +29,19 @@ describe('work-room terminal visibility', () => {
     ], 'main')).toEqual([mainTerminal]);
   });
 
-  test('TrustQuote workspace shows tagged Builder and Oracle terminals only', () => {
+  test('TrustQuote workspace shows tagged Builder, Oracle, and arm terminals', () => {
     expect(filterTerminalsForWorkspace([
       mainTerminal,
       trustQuoteBuilder,
       trustQuoteOracle,
-    ], 'trustquote')).toEqual([trustQuoteBuilder, trustQuoteOracle]);
+      trustQuoteLead,
+    ], 'trustquote')).toEqual([trustQuoteBuilder, trustQuoteOracle, trustQuoteLead]);
   });
 
   test('TrustQuote pane ids count as real work-room terminals even without preview UI data', () => {
     expect(isTrustQuoteWorkRoomTerminal({ paneId: 'trustquote-builder', alive: true })).toBe(true);
     expect(isTrustQuoteWorkRoomTerminal({ paneId: 'trustquote-oracle', alive: true })).toBe(true);
+    expect(isTrustQuoteWorkRoomTerminal({ paneId: 'trustquote-lead', alive: true })).toBe(true);
     expect(isTrustQuoteWorkRoomTerminal({ paneId: '2', alive: true })).toBe(false);
   });
 

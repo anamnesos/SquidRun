@@ -11,6 +11,7 @@ const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { DaemonClient } = require('../daemon-client');
 const {
   LEGACY_ROLE_ALIASES,
   ROLE_ID_MAP,
@@ -63,6 +64,9 @@ const {
   buildTriggerFallbackDescriptor,
   buildSpecialTargetRequest,
 } = require('../modules/comms/message-envelope');
+const {
+  getTrustQuoteArmPaneIds,
+} = require('../modules/trustquote-arm-specs');
 const {
   appendBusTraceEvent,
   createPayloadFingerprint,
@@ -132,6 +136,11 @@ const DEFAULT_ACK_TIMEOUT_MS = Math.max(
     + (Number.isFinite(DEFAULT_ACK_TIMEOUT_BUFFER_MS) ? DEFAULT_ACK_TIMEOUT_BUFFER_MS : 1500)
 );
 const AGENT_TO_AGENT_TARGETS = new Set(['architect', 'builder', 'oracle']);
+const TRUSTQUOTE_ARM_TARGET_IDS = new Set(
+  getTrustQuoteArmPaneIds()
+    .map((paneId) => String(paneId || '').trim().toLowerCase())
+    .filter(Boolean)
+);
 const SURFACE_CAPTURE_VERIFY_PORT = Number.parseInt(
   process.env.HM_SEND_SURFACE_CAPTURE_VERIFY_PORT
     || process.env.HM_SEND_CAPTURE_PORT
@@ -1708,6 +1717,8 @@ function normalizeRole(targetInput) {
 
 function resolvePaneIdForRole(roleName) {
   const normalized = String(roleName || '').trim().toLowerCase();
+  const trustQuoteArmPaneId = normalizeTrustQuoteArmTarget(normalized);
+  if (trustQuoteArmPaneId) return trustQuoteArmPaneId;
   if (normalized === 'architect') return '1';
   if (normalized === 'builder') return '2';
   if (normalized === 'oracle') return '3';
@@ -1761,6 +1772,15 @@ function isMiraInboxTarget(targetInput) {
 
 function isExplicitTelegramTarget(targetInput) {
   return String(targetInput || '').trim().toLowerCase() === 'telegram';
+}
+
+function normalizeTrustQuoteArmTarget(targetInput) {
+  const normalized = String(targetInput || '').trim().toLowerCase();
+  return TRUSTQUOTE_ARM_TARGET_IDS.has(normalized) ? normalized : null;
+}
+
+function isTrustQuoteArmTarget(targetInput) {
+  return Boolean(normalizeTrustQuoteArmTarget(targetInput));
 }
 
 function metadataIndicatesTelegramOrigin(metadata = null) {
@@ -1977,6 +1997,13 @@ function buildTriggerFallbackContent(content, messageId, metadata = null) {
 }
 
 function writeTriggerFallback(targetInput, descriptorOrContent, options = {}) {
+  if (isTrustQuoteArmTarget(targetInput)) {
+    return {
+      ok: false,
+      error: `TrustQuote arm target '${targetInput}' does not have a trigger-file fallback; use websocket local-handler or daemon PTY delivery`,
+    };
+  }
+
   const roleName = normalizeRole(targetInput);
   if (!roleName) {
     return {
@@ -2051,6 +2078,7 @@ function shouldRetryAck(ack) {
   if (!ack || ack.ok) return false;
   if (ack.accepted === true) return false;
   const status = String(ack.status || '').toLowerCase();
+  if (isTrustQuoteArmTarget(target) && status === 'missing_textarea') return false;
   if (!status) return true;
   if (
     status === 'invalid_target'
@@ -2068,6 +2096,143 @@ function previewMessage(content) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getTrustQuoteArmEnterDelayMs() {
+  const parsed = Number.parseInt(String(process.env.HM_SEND_TRUSTQUOTE_ARM_ENTER_DELAY_MS || ''), 10);
+  if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  return process.platform === 'win32' ? 500 : 150;
+}
+
+function buildTrustQuoteArmDaemonMeta(envelope = {}, phase = 'payload') {
+  const messageId = envelope?.message_id || `hm-send-${Date.now()}`;
+  return {
+    eventId: `${messageId}-${phase}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    traceId: messageId,
+    correlationId: messageId,
+    messageId,
+    source: 'hm-send-trustquote-arm-daemon-fallback',
+    phase,
+    senderRole: envelope?.sender?.role || role || 'cli',
+    targetRole: envelope?.target?.role || envelope?.target?.raw || target || null,
+    sessionScopeId: envelope?.session_id || null,
+  };
+}
+
+function daemonWriteAccepted(ack = null) {
+  if (!ack || ack.success !== true) return false;
+  const status = String(ack.status || '').toLowerCase();
+  return status === 'accepted';
+}
+
+async function refreshDaemonTerminals(client, timeoutMs = 1500) {
+  if (!client || typeof client.list !== 'function') return [];
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (terminals = []) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (typeof client.off === 'function') client.off('list', onList);
+      resolve(Array.isArray(terminals) ? terminals : []);
+    };
+    const onList = (terminals) => finish(terminals);
+    const timer = setTimeout(() => finish(client.getTerminals?.() || []), Math.max(250, timeoutMs));
+    if (typeof timer.unref === 'function') timer.unref();
+    if (typeof client.on === 'function') client.on('list', onList);
+    const sent = client.list();
+    if (sent === false) finish(client.getTerminals?.() || []);
+  });
+}
+
+async function sendTrustQuoteArmViaDaemon(envelope = {}) {
+  const paneId = normalizeTrustQuoteArmTarget(envelope?.target?.raw || target);
+  if (!paneId) {
+    return { ok: false, error: `not a TrustQuote arm target: ${target}` };
+  }
+
+  const daemonClient = new DaemonClient({ profileName: 'main' });
+  try {
+    const connected = await daemonClient.connect();
+    if (!connected) {
+      return { ok: false, error: 'daemon_connect_failed' };
+    }
+
+    let terminal = typeof daemonClient.getTerminal === 'function' ? daemonClient.getTerminal(paneId) : null;
+    if (!terminal || terminal.alive !== true) {
+      await refreshDaemonTerminals(daemonClient);
+      terminal = typeof daemonClient.getTerminal === 'function' ? daemonClient.getTerminal(paneId) : null;
+    }
+    if (!terminal || terminal.alive !== true) {
+      return {
+        ok: false,
+        error: `daemon_terminal_unavailable:${paneId}`,
+        paneId,
+      };
+    }
+
+    const writeAck = await daemonClient.writeAndWaitAck(
+      paneId,
+      String(envelope.content || ''),
+      buildTrustQuoteArmDaemonMeta(envelope, 'payload'),
+      { timeoutMs: 2500 }
+    );
+    if (!daemonWriteAccepted(writeAck)) {
+      return {
+        ok: false,
+        error: writeAck?.error || writeAck?.status || 'daemon_payload_write_failed',
+        paneId,
+        writeAck,
+      };
+    }
+
+    await sleep(getTrustQuoteArmEnterDelayMs());
+
+    const enterAck = await daemonClient.writeAndWaitAck(
+      paneId,
+      '\r',
+      buildTrustQuoteArmDaemonMeta(envelope, 'submit-enter'),
+      { timeoutMs: 2500 }
+    );
+    if (!daemonWriteAccepted(enterAck)) {
+      return {
+        ok: false,
+        error: enterAck?.error || enterAck?.status || 'daemon_enter_write_failed',
+        paneId,
+        writeAck,
+        enterAck,
+      };
+    }
+
+    return {
+      ok: true,
+      accepted: true,
+      delivered: false,
+      verified: false,
+      status: 'accepted.unverified',
+      mode: 'daemon-pty',
+      paneId,
+      writeAck,
+      enterAck,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err?.message || 'daemon_delivery_exception',
+      paneId,
+    };
+  } finally {
+    if (typeof daemonClient.disconnect === 'function') {
+      daemonClient.disconnect();
+    }
+  }
+}
+
+function shouldTryTrustQuoteArmDaemonFallback(result = null, targetInput = target) {
+  if (!isTrustQuoteArmTarget(targetInput)) return false;
+  if (bridgeTarget || targetProfileRouteContext) return false;
+  if (result?.ok === true) return false;
+  return true;
 }
 
 function shouldFallbackForUnverifiedSend(result, targetInput) {
@@ -2627,6 +2792,7 @@ async function main() {
   const bridgeMode = Boolean(bridgeTarget);
   const messageId = `hm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const targetRole = normalizeRole(target)
+    || normalizeTrustQuoteArmTarget(target)
     || (isSpecialTarget(target) ? String(target).trim().toLowerCase() : null)
     || (bridgeTarget ? bridgeTarget.targetRole : null);
   const trustQuoteReverseRoute = buildTrustQuoteReverseRouteContext(targetRole);
@@ -2834,6 +3000,69 @@ async function main() {
         process.exit(0);
       }
       console.error(`WebSocket failed and special-target fallback failed: ${fallbackResult.error}`);
+      closeCommsJournalStores();
+      process.exit(1);
+    }
+
+    if (shouldTryTrustQuoteArmDaemonFallback(sendResult, target)) {
+      const daemonFallback = await sendTrustQuoteArmViaDaemon(envelope);
+      if (daemonFallback.ok) {
+        const reason = sendResult?.ack
+          ? `ack=${sendResult.ack.status}`
+          : sendResult?.deliveryCheck
+            ? `delivery-check=${sendResult.deliveryCheck.status || 'unknown'}`
+          : sendResult?.skippedByHealth
+            ? `health=${sendResult?.health?.status || 'unknown'}`
+          : (sendResult?.error || wsError?.message || 'no_ack');
+        await emitCommsEventBestEffort('comms.delivery.failed', {
+          messageId: envelope.message_id,
+          target: envelope.target?.raw || target,
+          role: envelope.sender?.role || role,
+          sender: envelope.sender,
+          target_meta: envelope.target,
+          session_id: envelope.session_id,
+          timestamp_ms: envelope.timestamp_ms,
+          project: envelope.project,
+          reason,
+          attemptsUsed: sendResult?.attemptsUsed ?? (retries + 1),
+          maxAttempts: retries + 1,
+          fallbackUsed: true,
+          fallbackPath: `daemon:${daemonFallback.paneId}`,
+          fallbackMode: daemonFallback.mode,
+          ts: Date.now(),
+        });
+        appendLocalCommsJournalEntry({
+          messageId: envelope.message_id,
+          sessionId: envelope.session_id || null,
+          senderRole: envelope.sender?.role || role,
+          targetRole: envelope.target?.role || target,
+          channel: daemonFallback.mode || 'daemon-pty',
+          direction: 'outbound',
+          sentAtMs: Date.now(),
+          rawBody: envelope.content,
+          status: daemonFallback.status,
+          attempt: (sendResult?.attemptsUsed ?? (retries + 1)) + 1,
+          ackStatus: daemonFallback.status,
+          metadata: {
+            source: 'hm-send',
+            routeKind: 'trustquote-arm-daemon-fallback',
+            fallbackUsed: true,
+            fallbackMode: daemonFallback.mode,
+            fallbackPaneId: daemonFallback.paneId,
+            wsReason: reason,
+            verifiedByPaneLook: false,
+            ...envelopeMetadata,
+          },
+        });
+        console.log(
+          `Accepted by ${target} via TrustQuote arm daemon fallback but unverified: ${previewMessage(message)} `
+          + `(ack: ${daemonFallback.status}, ws: ${reason}, pane: ${daemonFallback.paneId}). `
+          + 'Visible pane confirmation is still required.'
+        );
+        closeCommsJournalStores();
+        process.exit(0);
+      }
+      console.error(`WebSocket failed and TrustQuote arm daemon fallback failed: ${daemonFallback.error || 'unknown error'}`);
       closeCommsJournalStores();
       process.exit(1);
     }

@@ -1,7 +1,15 @@
 'use strict';
 
+const {
+  getTrustQuoteArmPaneIds,
+} = require('./trustquote-arm-specs');
+
 const TRUSTQUOTE_WORKSPACE_KEY = 'trustquote';
-const TRUSTQUOTE_PANE_IDS = Object.freeze(['trustquote-builder', 'trustquote-oracle']);
+const TRUSTQUOTE_PANE_IDS = Object.freeze(Array.from(new Set([
+  'trustquote-builder',
+  'trustquote-oracle',
+  ...getTrustQuoteArmPaneIds(),
+])));
 
 function toText(value, fallback = '') {
   const text = String(value || '').trim();
