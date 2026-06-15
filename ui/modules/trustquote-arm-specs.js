@@ -74,6 +74,7 @@ const TRUSTQUOTE_DAY_TO_DAY_ARM_SPECS = Object.freeze([
       'TrustQuote arm role: Schedule Dispatch.',
       'Work in D:\\projects\\TrustQuote.',
       'Focus on TrustQuote calendar, dispatch, schedule, dashboard, workflow, and work-state evidence when assigned.',
+      'Before creating a client/customer for any schedule entry or job, ALWAYS search existing customers first and link to the existing record - never create a duplicate. James should never have to say "existing client".',
       `Report your status and work to your LEAD with: ${TRUSTQUOTE_HM_SEND_COMMAND} trustquote-lead --stdin --role trustquote-schedule-dispatch. Do not report directly to the Architect.`,
       TRUSTQUOTE_HM_SEND_SCOPE_NOTE,
       'Coordinate as a TrustQuote app arm inside Squid Room; this is not the main SquidRun Oracle pane.',
