@@ -51,6 +51,13 @@ const miraLabWindowModule = require('./mira-lab-window');
 const liveTaskAuditSidecarWindowModule = require('./live-task-audit-sidecar-window');
 const humanTimelineSidecarWindowModule = require('./human-timeline-sidecar-window');
 const { resolveRuntimeInt } = require('../runtime-config');
+const {
+  toNonEmptyString,
+  normalizeRootForCompare,
+  resolveRootPath,
+  rootContainsPath,
+  normalizeToPosixPath,
+} = require('./squidrun-root-paths');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const TELEGRAM_PENDING_REPLAY_GRACE_MS = 10 * 60 * 1000;
 const ROOT_COHERENCE_MARKER_RELPATH = path.join('runtime', 'root-coherence-assert.jsonl');
@@ -597,31 +604,6 @@ const ALLOWED_RUNTIME_LIFECYCLE_TRANSITIONS = Object.freeze({
   [RUNTIME_LIFECYCLE_STATE.STOPPING]: new Set([RUNTIME_LIFECYCLE_STATE.STOPPED]),
 });
 
-function toNonEmptyString(value) {
-  if (value === null || value === undefined) return null;
-  const normalized = String(value).trim();
-  return normalized || null;
-}
-
-function normalizeRootForCompare(value) {
-  const normalized = toNonEmptyString(value);
-  if (!normalized) return null;
-  return path.resolve(normalized).replace(/[\\/]+$/, '').toLowerCase();
-}
-
-function resolveRootPath(value) {
-  const normalized = toNonEmptyString(value);
-  return normalized ? path.resolve(normalized) : null;
-}
-
-function rootContainsPath(root, targetPath) {
-  const rootText = toNonEmptyString(root);
-  const targetText = toNonEmptyString(targetPath);
-  if (!rootText || !targetText) return false;
-  const relative = path.relative(path.resolve(rootText), path.resolve(targetText));
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
 function fingerprintSecret(value) {
   const text = toNonEmptyString(value);
   if (!text) return null;
@@ -745,10 +727,6 @@ function closeSocketBestEffort(ws) {
       resolve();
     }
   });
-}
-
-function normalizeToPosixPath(value) {
-  return String(value || '').replace(/\\/g, '/');
 }
 
 function formatLocalClockTime(value = Date.now()) {
