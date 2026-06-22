@@ -13,6 +13,7 @@ const {
   isPidAlive,
   normalizeIntervalMs,
   readStatus,
+  readShadowLedger,
   runShadowLoop,
   runShadowTick,
 } = require('../modules/main/the-tell-shadow-runner');
@@ -132,8 +133,13 @@ function tailLedger(flags) {
   const ledgerPath = flagPath(flags, 'ledger', DEFAULT_LEDGER_PATH);
   const last = Math.max(1, Math.min(200, Number.parseInt(String(flags.last || '20'), 10) || 20));
   try {
-    const lines = fs.readFileSync(ledgerPath, 'utf8').trim().split(/\r?\n/).filter(Boolean);
-    return { ok: true, ledgerPath, rows: lines.slice(-last).map((line) => JSON.parse(line)) };
+    const ledger = readShadowLedger(ledgerPath);
+    return {
+      ok: true,
+      ledgerPath,
+      shadowStartedAtMs: ledger.shadowStartedAtMs,
+      rows: ledger.rows.slice(-last),
+    };
   } catch (error) {
     return { ok: false, ledgerPath, reason: error.code === 'ENOENT' ? 'missing_ledger' : error.message };
   }
