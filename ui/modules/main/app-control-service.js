@@ -41,6 +41,14 @@ function normalizeAction(action) {
     return 'open-human-timeline-sidecar';
   }
   if (
+    normalized === 'open-spine-overlay'
+    || normalized === 'spine-overlay'
+    || normalized === 'spine'
+    || normalized === 'alive-os'
+  ) {
+    return 'open-spine-overlay';
+  }
+  if (
     normalized === 'open-squid-room'
     || normalized === 'squid-room'
     || normalized === 'squid-room-open'
@@ -409,6 +417,38 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
       })
       .catch((error) => {
         log.warn('AppControl', `Human timeline sidecar open failed: ${error.message}`);
+        return {
+          success: false,
+          reason: 'open_window_failed',
+          action: normalizedAction,
+          error: error.message,
+        };
+      });
+  }
+
+  if (normalizedAction === 'open-spine-overlay') {
+    if (typeof ctx.openAppWindow !== 'function') {
+      return {
+        success: false,
+        reason: 'open_window_unavailable',
+        action: normalizedAction,
+      };
+    }
+    return Promise.resolve()
+      .then(() => ctx.openAppWindow('spine-overlay', payload))
+      .then((result) => {
+        const settled = result && typeof result === 'object' ? result : {};
+        return {
+          success: Boolean(settled.ok),
+          action: normalizedAction,
+          windowKey: settled.windowKey || 'spine-overlay',
+          status: settled.status || (settled.ok ? 'opened' : 'open_failed'),
+          reason: settled.ok ? undefined : (settled.reason || 'open_window_failed'),
+          note: 'Spine overlay opened/focused as an isolated read-only surface.',
+        };
+      })
+      .catch((error) => {
+        log.warn('AppControl', `Spine overlay open failed: ${error.message}`);
         return {
           success: false,
           reason: 'open_window_failed',

@@ -108,6 +108,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'set-setting',
   'spawn-claude',
   'spawn-process',
+  'spine-overlay:snapshot',
   'switch-pane-model',
   'update-task-status',
   'save-user-profile',

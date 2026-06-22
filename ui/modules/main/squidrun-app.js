@@ -50,6 +50,7 @@ const { createPaneHostWindowManager } = require('./pane-host-window-manager');
 const miraLabWindowModule = require('./mira-lab-window');
 const liveTaskAuditSidecarWindowModule = require('./live-task-audit-sidecar-window');
 const humanTimelineSidecarWindowModule = require('./human-timeline-sidecar-window');
+const spineOverlayWindowModule = require('./spine-overlay-window');
 const { resolveRuntimeInt } = require('../runtime-config');
 const {
   toNonEmptyString,
@@ -147,6 +148,9 @@ const {
 const {
   buildHumanTimelineSnapshot,
 } = require('./human-timeline');
+const {
+  buildSpineOverlaySnapshotAsync,
+} = require('./spine-overlay-snapshot');
 const {
   buildGuardFiringPatternEvent,
   buildGuardPreflightEvent,
@@ -6610,6 +6614,51 @@ class SquidRunApp {
         };
       }
     }
+    if (windowKey === 'spine-overlay') {
+      const existing = this.getAppWindow(windowKey);
+      if (this.canSendToWindow(existing)) {
+        if (existing.webContents && typeof existing.webContents.reloadIgnoringCache === 'function') {
+          existing.webContents.reloadIgnoringCache();
+        } else if (typeof existing.reload === 'function') {
+          existing.reload();
+        }
+        this.focusAppWindow(windowKey);
+        return {
+          ok: true,
+          windowKey,
+          title: 'SquidRun Spine Overlay',
+          status: 'reused_existing_reloaded',
+        };
+      }
+      try {
+        const result = spineOverlayWindowModule.createSpineOverlayWindow({ BrowserWindow }) || {};
+        const win = result.window || null;
+        if (!win) {
+          return {
+            ok: false,
+            windowKey,
+            reason: 'spine_overlay_window_factory_returned_no_window',
+          };
+        }
+        this.registerAppWindow(windowKey, win);
+        this.enforceMenuSuppression(win);
+        this.setupWindowListeners(win, { windowKey, lifecycleRoot: false });
+        this.focusAppWindow(windowKey);
+        return {
+          ok: true,
+          windowKey,
+          title: 'SquidRun Spine Overlay',
+          htmlPath: result.htmlPath || null,
+          preloadPath: result.preloadPath || null,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          windowKey,
+          reason: err?.message || 'spine_overlay_window_open_failed',
+        };
+      }
+    }
     const windowTitle = windowKey === 'main'
       ? 'SquidRun'
       : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`;
@@ -7635,6 +7684,8 @@ class SquidRunApp {
     ipcMain.handle('human-timeline:snapshot', () => buildHumanTimelineSnapshot({
       sessionId: this.commsSessionScopeId || null,
     }));
+    ipcMain.removeHandler('spine-overlay:snapshot');
+    ipcMain.handle('spine-overlay:snapshot', () => buildSpineOverlaySnapshotAsync());
     armStateProjectionHandlersModule.registerArmStateProjectionHandlers({ ipcMain });
 
     ipcMain.removeHandler('close-app-window');
