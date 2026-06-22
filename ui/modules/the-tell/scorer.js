@@ -245,7 +245,7 @@ function scoreTypedSignal(sig, ctx) {
     case 'promise:collision': return scorePromiseCollision(sig, facts, ctx.nowMs);
     case 'trustquote:job-margin': return scoreTrustQuoteJobMargin(sig, facts, ctx.nowMs);
     case 'trustquote:invoice-aging': return scoreTrustQuoteInvoiceAging(sig, facts, ctx.nowMs);
-    case 'trustquote:job-proof-stale': return scoreTrustQuoteJobProof(sig, facts, ctx.nowMs);
+    case 'trustquote:job-tasks-incomplete': return scoreTrustQuoteTasksIncomplete(sig, facts, ctx.nowMs);
     default: return finalizeSignal(sig, { gateReason: 'unknown_signal_type' });
   }
 }
@@ -525,40 +525,43 @@ function scoreTrustQuoteInvoiceAging(sig, facts, nowMs) {
   return finalizeSignal(sig, { S, B, W, C, materialityOk, gateReason, speech, snapshot: { amount, daysOverdue: Math.floor(daysOverdue), pendingJob } });
 }
 
-// --- trustquote:job-proof-stale — billable job missing required proof. Anti stale-sync false read.
-function scoreTrustQuoteJobProof(sig, facts, nowMs) {
-  const required = Array.isArray(facts.proofRequired) ? facts.proofRequired : [];
-  const present = new Set(Array.isArray(facts.proofPresent) ? facts.proofPresent : []);
-  const missing = required.filter((p) => !present.has(p));
+// --- trustquote:job-tasks-incomplete — billable job with unfinished jobTasks. MIRRORS the app's
+// canonical isTasksIncomplete (non-proposal + getTaskSummary incomplete>0). Re-grounded from the old
+// "job-proof-stale", which mirrored a "missing proof" concept TrustQuote does NOT have (a fake authority
+// I'd built; caught in the canonical audit). The regret: he's about to bill/close something not done.
+function scoreTrustQuoteTasksIncomplete(sig, facts, nowMs) {
+  const isProposal = facts.isProposal === true || String(facts.documentType || '').toLowerCase() === 'quote';
+  const tasksTotal = Number(facts.tasksTotal);
+  const tasksIncomplete = Number(facts.tasksIncomplete);
   const jobValue = Number(facts.jobValue);
   const billable = facts.jobStatus === 'complete' || facts.jobStatus === 'billable';
-  // anti stale-sync false read: only trust a "missing" verdict if the proof state synced recently;
-  // a stale sync showing "missing" when proof was attached offline = the wrong-read that burns trust.
-  const syncFresh = isNum(facts.proofSyncedAtMs) && (nowMs - facts.proofSyncedAtMs) < 24 * 3600000;
+  // canonical isTasksIncomplete: non-proposal AND has tasks AND at least one incomplete.
+  const canonicalIncomplete = !isProposal && isNum(tasksTotal) && tasksTotal > 0 && isNum(tasksIncomplete) && tasksIncomplete > 0;
 
   const S = clamp01((isNum(jobValue) ? jobValue : 0) / THRESHOLDS.SEVERITY_REF_USD);
-  const B = 1; // the app never surfaces the proof gap; he's blind unless told
-  const W = (billable && facts.customerReachable !== false) ? 1 : 0; // still fixable
-  const C = (missing.length > 0 && syncFresh) ? 1 : 0;
-  const materialityOk = missing.length > 0 && billable && isNum(jobValue) && jobValue >= SIGNAL_THRESHOLDS.MATERIALITY_USD_FLOOR;
+  const B = 1; // the app doesn't surface "you're about to bill an unfinished job"; blind unless told
+  const W = (billable && facts.customerReachable !== false) ? 1 : 0; // still fixable before it's closed/billed
+  const C = canonicalIncomplete ? 1 : 0; // hard fact from the app's own task data, not a guess
+  const materialityOk = canonicalIncomplete && billable && isNum(jobValue) && jobValue >= SIGNAL_THRESHOLDS.MATERIALITY_USD_FLOOR;
 
-  const gateReason = missing.length === 0 ? 'proof_complete'
-    : !syncFresh ? 'proof_state_stale_unverified'
+  const gateReason = isProposal ? 'proposal_not_a_job'
+    : !(isNum(tasksTotal) && tasksTotal > 0) ? 'no_tasks_tracked'
+    : !(tasksIncomplete > 0) ? 'tasks_complete'
     : !billable ? 'job_not_billable_yet'
     : jobValue < SIGNAL_THRESHOLDS.MATERIALITY_USD_FLOOR ? 'below_materiality_floor' : null;
 
   const speech = {
-    claim: `Job is billable but missing proof: ${missing.join(', ')}.`,
-    whyNow: `$${jobValue} job marked ${facts.jobStatus} with no ${missing.join('/')} on file — payment/dispute risk.`,
+    claim: `You're about to bill a $${jobValue} job that isn't finished — ${tasksIncomplete} of ${tasksTotal} tasks aren't done.`,
+    whyNow: `Marked ${facts.jobStatus}, but ${tasksIncomplete}/${tasksTotal} jobTasks are still open. Closing/billing it now risks a callback or a dispute.`,
     receipts: [
       { label: 'Job', value: `$${jobValue} (${facts.jobStatus})`, source: facts?.rawRefs?.docId || 'TrustQuote jobs' },
-      { label: 'Missing', value: missing.join(', '), source: 'computed' },
+      { label: 'Tasks', value: `${tasksIncomplete} of ${tasksTotal} incomplete`, source: 'jobTypes[].jobTasks (getTaskSummary)' },
     ],
-    proposedAction: { text: `Get the ${missing[0]} now`, reversible: true, executionMode: 'dry-run', dryRunLabel: `I'll flag what's missing for your okay — I don't contact the customer on my own.`, alt: 'Leave it' },
-    pushback: `If you've got the proof elsewhere, say so and I'll stop.`,
-    verify: { jobDocId: sig.rawRefs?.docId ?? sig.id, jobValue, missing, proofSyncedAtMs: facts.proofSyncedAtMs },
+    proposedAction: { text: `Finish the open tasks first`, reversible: true, executionMode: 'dry-run', dryRunLabel: `I'll flag the open tasks for your okay — I don't change the job on my own.`, alt: 'Bill it as-is' },
+    pushback: `If those tasks are done and just not checked off, say so and I'll stop.`,
+    verify: { jobDocId: sig.rawRefs?.docId ?? sig.id, jobValue, tasksTotal, tasksIncomplete, isProposal },
   };
-  return finalizeSignal(sig, { S, B, W, C, materialityOk, gateReason, speech, snapshot: { jobValue, missing, syncFresh } });
+  return finalizeSignal(sig, { S, B, W, C, materialityOk, gateReason, speech, snapshot: { jobValue, tasksTotal, tasksIncomplete } });
 }
 
 // --- top-level evaluation: one-at-a-time + cooldown + contract emission (trading + signals) ---
@@ -712,7 +715,7 @@ module.exports = {
   scorePromiseCollision,
   scoreTrustQuoteJobMargin,
   scoreTrustQuoteInvoiceAging,
-  scoreTrustQuoteJobProof,
+  scoreTrustQuoteTasksIncomplete,
   collisionFeasibility,
   finalizeSignal,
   deriveMetrics,
