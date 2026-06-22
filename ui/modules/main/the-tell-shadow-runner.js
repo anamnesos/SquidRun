@@ -8,7 +8,7 @@ const { supportedScorerSignals } = require('./spine-overlay-snapshot');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
 const RUNTIME_ROOT = path.join(PROJECT_ROOT, '.squidrun', 'runtime');
-const DEFAULT_LEDGER_PATH = path.join(RUNTIME_ROOT, 'the-tell-shadow-ledger.jsonl');
+const DEFAULT_LEDGER_PATH = path.join(RUNTIME_ROOT, 'the-tell-shadow-ledger.json');
 const DEFAULT_STATUS_PATH = path.join(RUNTIME_ROOT, 'the-tell-shadow-status.json');
 const DEFAULT_PID_PATH = path.join(RUNTIME_ROOT, 'the-tell-shadow-runner.pid');
 const DEFAULT_INTERVAL_MS = 20 * 60 * 1000;
@@ -22,16 +22,36 @@ function ensureParent(filePath) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 }
 
-function appendJsonl(filePath, rows) {
-  if (!Array.isArray(rows) || rows.length === 0) return;
-  ensureParent(filePath);
-  const body = `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`;
-  fs.appendFileSync(filePath, body, 'utf8');
-}
-
 function writeJson(filePath, data) {
   ensureParent(filePath);
   fs.writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+}
+
+function readShadowLedger(filePath = DEFAULT_LEDGER_PATH) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return {
+      shadowStartedAtMs: asFiniteNumber(parsed.shadowStartedAtMs, null),
+      rows: Array.isArray(parsed.rows) ? parsed.rows : [],
+    };
+  } catch (error) {
+    if (error.code === 'ENOENT') return { shadowStartedAtMs: null, rows: [] };
+    throw error;
+  }
+}
+
+function appendShadowRows(filePath, rows, startedAtMs) {
+  if (!Array.isArray(rows) || rows.length === 0) return { shadowStartedAtMs: startedAtMs, rows: [] };
+  const existing = readShadowLedger(filePath);
+  const shadowStartedAtMs = existing.shadowStartedAtMs || startedAtMs;
+  const ledger = {
+    schema: 'squidrun.the_tell.shadow.ledger.v1',
+    shadowStartedAtMs,
+    updatedAtMs: rows.reduce((max, row) => Math.max(max, asFiniteNumber(row.ts, 0) || 0), 0),
+    rows: [...existing.rows, ...rows],
+  };
+  writeJson(filePath, ledger);
+  return ledger;
 }
 
 function asFiniteNumber(value, fallback = null) {
@@ -139,20 +159,19 @@ function buildSpokeRow({ runId, tickId, nowMs, emission }) {
   const winner = emission?._winner;
   const signal = winner?._sig || {};
   return {
-    schema: 'squidrun.the_tell.shadow.row.v1',
-    mode: 'shadow',
-    rowType: 'spoke',
+    ts: nowMs,
+    type: 'spoke',
+    signalClass: signal.type || winner?.type || null,
+    key: signal.id || winner?.key || null,
+    claim: emission.claim || null,
+    regretScore: emission.regretScore || 0,
+    verify: verifyRefsForSignal(signal, emission),
+    review: { verdict: 'pending', by: null, at: null },
     runId,
     tickId,
-    observedAt: nowIso(nowMs),
     source: emission.source || signal.source || 'unverified',
     context: emission.context || signal.context || signal.type || null,
-    signalType: signal.type || winner?.type || null,
-    signalId: signal.id || winner?.key || null,
     rawRefs: signal.rawRefs || {},
-    verifyRefs: verifyRefsForSignal(signal, emission),
-    regretScore: emission.regretScore || 0,
-    claim: emission.claim || null,
     whyNow: emission.whyNow || null,
     proposedAction: {
       ...(emission.proposedAction || {}),
@@ -162,10 +181,6 @@ function buildSpokeRow({ runId, tickId, nowMs, emission }) {
     pushback: emission.pushback || null,
     dryRun: true,
     readOnly: true,
-    architectVerdict: null,
-    architectVerdictAllowed: ['real-catch', 'false-alarm-I\'d-have-caught', 'genuinely-useful'],
-    reviewed: false,
-    architectReview: null,
   };
 }
 
@@ -174,18 +189,17 @@ function buildSwallowedRows({ runId, tickId, nowMs, emission, signalById }) {
   return swallowed.map((entry) => {
     const signal = signalById.get(entry.key) || null;
     return {
-      schema: 'squidrun.the_tell.shadow.row.v1',
-      mode: 'shadow',
-      rowType: 'swallowed',
+      ts: nowMs,
+      type: 'swallowed',
+      signalClass: entry.signal || signal?.type || null,
+      key: entry.key || signal?.id || null,
+      reason: entry.reason || null,
       runId,
       tickId,
-      observedAt: nowIso(nowMs),
       source: emission.source || signal?.source || 'unverified',
       context: entry.context || signal?.context || signal?.type || entry.signal || null,
-      signalType: entry.signal || signal?.type || null,
-      signalId: entry.key || signal?.id || null,
       rawRefs: signal?.rawRefs || {},
-      verifyRefs: signal ? verifyRefsForSignal(signal, {}) : {
+      verify: signal ? verifyRefsForSignal(signal, {}) : {
         system: 'trustquote',
         firestore: [],
         numbers: entry.snapshot || {},
@@ -193,25 +207,22 @@ function buildSwallowedRows({ runId, tickId, nowMs, emission, signalById }) {
         receipts: [],
       },
       regretScore: entry.regretScore || 0,
-      reason: entry.reason || null,
       wouldHaveSaid: entry.wouldHaveSaid || null,
       snapshot: entry.snapshot || {},
       dryRun: true,
       readOnly: true,
-      reviewed: false,
-      architectReview: null,
     };
   });
 }
 
 function buildTickRow({ runId, tickId, nowMs, trustQuoteRead, supportedCount, rows, emission }) {
   return {
-    schema: 'squidrun.the_tell.shadow.tick.v1',
-    mode: 'shadow',
-    rowType: 'tick',
+    schema: 'squidrun.the_tell.shadow.status.v1',
+    type: 'tick',
     runId,
     tickId,
-    observedAt: nowIso(nowMs),
+    ts: nowMs,
+    checkedAt: nowIso(nowMs),
     source: trustQuoteRead?.source || emission?.source || 'unverified',
     ok: trustQuoteRead?.ok === true,
     readOnly: true,
@@ -222,8 +233,8 @@ function buildTickRow({ runId, tickId, nowMs, trustQuoteRead, supportedCount, ro
       events: trustQuoteRead?.data?.eventCount || 0,
       parked: trustQuoteRead?.data?.parkedCount || 0,
       supportedSignals: supportedCount,
-      spokeRows: rows.filter((row) => row.rowType === 'spoke').length,
-      swallowedRows: rows.filter((row) => row.rowType === 'swallowed').length,
+      spokeRows: rows.filter((row) => row.type === 'spoke').length,
+      swallowedRows: rows.filter((row) => row.type === 'swallowed').length,
     },
     reason: trustQuoteRead?.reason || null,
   };
@@ -267,7 +278,7 @@ async function runShadowTick(options = {}) {
   }
   rows.push(...buildSwallowedRows({ runId, tickId, nowMs, emission, signalById }));
   const tickRow = buildTickRow({ runId, tickId, nowMs, trustQuoteRead, supportedCount: supportedSignals.length, rows, emission });
-  appendJsonl(ledgerPath, [tickRow, ...rows]);
+  const ledger = appendShadowRows(ledgerPath, rows, nowMs);
   const status = {
     ok: true,
     running: Boolean(options.running),
@@ -277,10 +288,11 @@ async function runShadowTick(options = {}) {
     ledgerPath,
     intervalMs: options.intervalMs || null,
     lastTick: tickRow,
+    ledgerRows: ledger.rows.length,
     lastError: null,
   };
   writeJson(statusPath, status);
-  return { ok: true, runId, tickId, ledgerPath, statusPath, rows: [tickRow, ...rows], emission, trustQuoteRead };
+  return { ok: true, runId, tickId, ledgerPath, statusPath, rows: [tickRow, ...rows], ledger, emission, trustQuoteRead };
 }
 
 async function runShadowLoop(options = {}) {
@@ -370,6 +382,7 @@ module.exports = {
   isPidAlive,
   normalizeIntervalMs,
   readStatus,
+  readShadowLedger,
   runShadowLoop,
   runShadowTick,
   verifyRefsForSignal,

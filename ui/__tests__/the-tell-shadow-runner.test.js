@@ -8,6 +8,7 @@ const {
   verifyRefsForSignal,
   MIN_INTERVAL_MS,
 } = require('../modules/main/the-tell-shadow-runner');
+const { evaluatePromotionGate } = require('../modules/the-tell/promotion-gate');
 
 describe('the tell shadow runner', () => {
   let tempDir;
@@ -21,7 +22,7 @@ describe('the tell shadow runner', () => {
   });
 
   test('writes spoke rows with verify refs, review verdict slot, claim, and regret score', async () => {
-    const ledgerPath = path.join(tempDir, 'shadow.jsonl');
+    const ledgerPath = path.join(tempDir, 'shadow.json');
     const statusPath = path.join(tempDir, 'status.json');
     const nowMs = Date.parse('2026-06-22T19:00:00.000Z');
     const signal = {
@@ -78,36 +79,37 @@ describe('the tell shadow runner', () => {
     });
 
     expect(result.rows).toHaveLength(2);
-    const rows = fs.readFileSync(ledgerPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
-    const spoke = rows.find((row) => row.rowType === 'spoke');
+    const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
+    expect(ledger.shadowStartedAtMs).toBe(nowMs);
+    const spoke = ledger.rows.find((row) => row.type === 'spoke');
     expect(spoke).toEqual(expect.objectContaining({
-      schema: 'squidrun.the_tell.shadow.row.v1',
-      mode: 'shadow',
-      rowType: 'spoke',
-      signalType: 'trustquote:invoice-aging',
-      signalId: 'jobs:invoice-1:invoice-aging',
+      ts: nowMs,
+      type: 'spoke',
+      signalClass: 'trustquote:invoice-aging',
+      key: 'jobs:invoice-1:invoice-aging',
       claim: 'Invoice is overdue.',
       regretScore: 0.91,
-      architectVerdict: null,
-      architectVerdictAllowed: ['real-catch', 'false-alarm-I\'d-have-caught', 'genuinely-useful'],
+      review: { verdict: 'pending', by: null, at: null },
       dryRun: true,
       readOnly: true,
     }));
-    expect(spoke.verifyRefs.firestore).toEqual([expect.objectContaining({
+    expect(spoke.verify.firestore).toEqual([expect.objectContaining({
       collection: 'jobs',
       docId: 'invoice-1',
       path: 'jobs/invoice-1',
     })]);
-    expect(spoke.verifyRefs.numbers).toEqual(expect.objectContaining({
+    expect(spoke.verify.numbers).toEqual(expect.objectContaining({
       invoiceAmount: 36500,
       balanceDue: 36500,
       dueMs: signal.facts.dueMs,
     }));
     expect(JSON.parse(fs.readFileSync(statusPath, 'utf8')).lastTick.counts.spokeRows).toBe(1);
+    const gate = evaluatePromotionGate(ledger, { nowMs: nowMs + 6 * 86400000 });
+    expect(gate.perClass['trustquote:invoice-aging'].blockers).toContain('1_unreviewed_spoke_rows');
   });
 
   test('writes swallowed rows with structured reasons and signal refs', async () => {
-    const ledgerPath = path.join(tempDir, 'shadow.jsonl');
+    const ledgerPath = path.join(tempDir, 'shadow.json');
     const signal = {
       type: 'trustquote:job-margin',
       id: 'quotes:quote-1:job-margin',
@@ -147,18 +149,18 @@ describe('the tell shadow runner', () => {
       })),
     });
 
-    const rows = fs.readFileSync(ledgerPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
-    const swallowed = rows.find((row) => row.rowType === 'swallowed');
+    const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
+    const swallowed = ledger.rows.find((row) => row.type === 'swallowed');
     expect(swallowed).toEqual(expect.objectContaining({
-      rowType: 'swallowed',
-      signalType: 'trustquote:job-margin',
-      signalId: 'quotes:quote-1:job-margin',
+      type: 'swallowed',
+      signalClass: 'trustquote:job-margin',
+      key: 'quotes:quote-1:job-margin',
       reason: 'insufficient_history_for_floor',
       regretScore: 0,
       dryRun: true,
       readOnly: true,
     }));
-    expect(swallowed.verifyRefs.firestore).toEqual([expect.objectContaining({
+    expect(swallowed.verify.firestore).toEqual([expect.objectContaining({
       collection: 'quotes',
       docId: 'quote-1',
     })]);
