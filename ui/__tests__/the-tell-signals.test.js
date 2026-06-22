@@ -162,3 +162,64 @@ describe('the spine spans domains — one interrupt across his whole world', () 
     expect(out.regretScore).toBe(0);
   });
 });
+
+// ---------- promise:collision — SCHEDULE/booking mode (interval overlap, not deadlines) ----------
+describe('promise:collision — confirmed scheduled bookings that overlap', () => {
+  const book = (overrides = {}) => sig({
+    id: 'sched1', type: 'promise:collision', context: 'promise:collision:schedule',
+    facts: {
+      commitments: [
+        { id: 'b1', who: 'Deepika', relationshipWeight: 0.7, what: 'water heater install', startMs: hrs(1), durationMin: 120, confirmed: true, customerId: 'cust-A', madeInContextRef: 'job:455' },
+        { id: 'b2', who: 'Charles', relationshipWeight: 0.8, what: 'rough-in', startMs: hrs(2), durationMin: 120, confirmed: true, customerId: 'cust-B', madeInContextRef: 'job:456' },
+      ],
+      ...overrides,
+    },
+  });
+
+  test('SPEAKS when two CONFIRMED jobs are booked over the same time', () => {
+    const out = run([book()]);
+    expect(out.speak).toBe(true);
+    expect(out.claim).toMatch(/can't be at both/i);
+    expect(out.proposedAction.executionMode).toBe('dry-run');
+    expect(out.verify || out.proposedAction).toBeTruthy();
+  });
+
+  test('SILENT when one of the bookings is only tentative (no tentative holds)', () => {
+    const out = run([book({
+      commitments: [
+        { id: 'b1', who: 'Deepika', relationshipWeight: 0.7, what: 'install', startMs: hrs(1), durationMin: 120, confirmed: true, madeInContextRef: 'job:455' },
+        { id: 'b2', who: 'Charles', relationshipWeight: 0.8, what: 'rough-in', startMs: hrs(2), durationMin: 120, confirmed: false, madeInContextRef: 'job:456' },
+      ],
+    })]);
+    expect(out.speak).toBe(false);
+    expect(out.swallowed[0].reason).toBe('tentative_bookings_not_confirmed');
+  });
+
+  test('SILENT when two confirmed bookings do NOT overlap', () => {
+    const out = run([book({
+      commitments: [
+        { id: 'b1', who: 'Deepika', relationshipWeight: 0.7, what: 'install', startMs: hrs(1), durationMin: 60, confirmed: true, madeInContextRef: 'job:455' },
+        { id: 'b2', who: 'Charles', relationshipWeight: 0.8, what: 'rough-in', startMs: hrs(3), durationMin: 60, confirmed: true, madeInContextRef: 'job:456' },
+      ],
+    })]);
+    expect(out.speak).toBe(false);
+    expect(out.swallowed[0].reason).toBe('bookings_do_not_overlap');
+  });
+
+  test('SILENT with only a single confirmed booking', () => {
+    const out = run([book({
+      commitments: [{ id: 'b1', who: 'Deepika', relationshipWeight: 0.7, what: 'install', startMs: hrs(1), durationMin: 120, confirmed: true, madeInContextRef: 'job:455' }],
+    })]);
+    expect(out.speak).toBe(false);
+    expect(out.swallowed[0].reason).toBe('no_two_confirmed_bookings');
+  });
+});
+
+describe('defense-in-depth — a deleted tombstone is never a live signal', () => {
+  test('SILENT on an isDeleted doc even if it would otherwise speak', () => {
+    const out = run([sig({ id: 'del1', type: 'trustquote:job-margin', context: 'trustquote:job-margin:dead',
+      facts: { isDeleted: true, bidAmount: 95000, jobType: 'rough-in', bidMarginPct: 0.18, historicalMargin: { floorPct: 0.30, sampleCount: 5 }, bidStatus: 'ready-to-send' } })]);
+    expect(out.speak).toBe(false);
+    expect(out.swallowed[0].reason).toBe('deleted_tombstone');
+  });
+});
