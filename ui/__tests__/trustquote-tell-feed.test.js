@@ -1,5 +1,6 @@
 const {
   buildTrustQuoteFactSignalsFromDocs,
+  buildScheduleCollisionFact,
   DEFAULT_PARKED_TRUSTQUOTE_CUSTOMER_IDS,
   DRAFT_MARGIN_MAX_AGE_MS,
   isDeletedTrustQuoteDoc,
@@ -187,6 +188,118 @@ describe('trustquote tell feed', () => {
     expect(signals).toEqual([]);
     expect(isDeletedTrustQuoteDoc({ data: { isDeleted: '1' } })).toBe(true);
     expect(isDeletedTrustQuoteDoc({ data: { deletedBy: 'james' } })).toBe(true);
+  });
+
+  test('emits schedule collision commitments only for confirmed fixed-time bookings', () => {
+    const nowMs = Date.parse('2026-06-22T16:50:00.000Z');
+    const startMs = nowMs + 60 * 60 * 1000;
+    const signals = buildTrustQuoteFactSignalsFromDocs({
+      nowMs,
+      source: 'live',
+      parkedCustomerIds: [],
+      events: [{
+        id: 'event-a',
+        data: {
+          businessId: 'zDPMRRIlMiVJBOMhBbqrMk2iMI72',
+          status: 'scheduled',
+          start: startMs,
+          end: startMs + 90 * 60 * 1000,
+          title: 'Water heater install',
+          clientName: 'Deepika',
+          customerId: 'customer-a',
+          jobId: 'job-a',
+        },
+      }, {
+        id: 'event-b',
+        data: {
+          businessId: 'zDPMRRIlMiVJBOMhBbqrMk2iMI72',
+          status: 'scheduled',
+          start: startMs + 30 * 60 * 1000,
+          end: startMs + 120 * 60 * 1000,
+          title: 'Rough-in',
+          clientName: 'Charles Saulus',
+          customerId: 'customer-b',
+          jobId: 'job-b',
+        },
+      }, {
+        id: 'event-tentative',
+        data: {
+          status: 'tentative',
+          start: startMs,
+          end: startMs + 60 * 60 * 1000,
+          title: 'Maybe',
+          clientName: 'Tentative',
+          customerId: 'customer-c',
+        },
+      }, {
+        id: 'event-all-day',
+        data: {
+          status: 'scheduled',
+          start: Date.parse('2026-06-23T00:00:00.000Z'),
+          end: Date.parse('2026-06-23T23:59:59.999Z'),
+          title: 'All day block',
+          clientName: 'All Day',
+          customerId: 'customer-d',
+        },
+      }],
+    });
+
+    const collision = signals.find((signal) => signal.type === 'promise:collision');
+    expect(collision).toEqual(expect.objectContaining({
+      id: 'calendar-events:schedule-overlap:promise-collision',
+      source: 'live',
+      rawRefs: expect.objectContaining({
+        collection: 'calendar-events',
+        eventIds: ['event-a', 'event-b'],
+      }),
+    }));
+    expect(collision.facts.commitments).toEqual([
+      expect.objectContaining({
+        id: 'event-a',
+        who: 'Deepika',
+        what: 'Water heater install',
+        startMs,
+        endMs: startMs + 90 * 60 * 1000,
+        durationMin: 90,
+        confirmed: true,
+        relationshipWeight: 0.7,
+        customerId: 'customer-a',
+        madeInContextRef: 'job:job-a',
+        rawRef: 'calendar-events/event-a',
+      }),
+      expect.objectContaining({
+        id: 'event-b',
+        who: 'Charles Saulus',
+        what: 'Rough-in',
+        confirmed: true,
+        madeInContextRef: 'job:job-b',
+      }),
+    ]);
+  });
+
+  test('schedule feed parks customers and tombstones before commitments reach MIND', () => {
+    const nowMs = Date.parse('2026-06-22T16:50:00.000Z');
+    const startMs = nowMs + 60 * 60 * 1000;
+    const signal = buildScheduleCollisionFact([{
+      id: 'parked-event',
+      data: {
+        status: 'scheduled',
+        start: startMs,
+        end: startMs + 60 * 60 * 1000,
+        customerId: DEFAULT_PARKED_TRUSTQUOTE_CUSTOMER_IDS[0],
+      },
+    }, {
+      id: 'deleted-event',
+      data: {
+        status: 'scheduled',
+        start: startMs,
+        end: startMs + 60 * 60 * 1000,
+        customerId: 'live-customer',
+        deletedAt: { seconds: 1 },
+      },
+    }], nowMs, 'live');
+
+    expect(signal).toBeNull();
   });
 
   test('still emits margin facts for recent draft quotes', () => {

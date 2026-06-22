@@ -6,7 +6,9 @@ const { normalizeSource } = require('../the-tell/scorer');
 const DEFAULT_TRUSTQUOTE_ROOT = process.env.TRUSTQUOTE_ROOT || 'D:\\projects\\TrustQuote';
 const TRUSTQUOTE_BUSINESS_ID = 'zDPMRRIlMiVJBOMhBbqrMk2iMI72';
 const READ_COLLECTIONS = Object.freeze(['jobs', 'quotes']);
+const CALENDAR_COLLECTION = 'calendar-events';
 const DRAFT_MARGIN_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const MAX_HARD_BOOKING_DURATION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PARKED_TRUSTQUOTE_CUSTOMER_IDS = Object.freeze([
   'gkbmoefFvpwToedb4s8w',
 ]);
@@ -49,6 +51,10 @@ function getCustomerId(data) {
   return toText(data?.customerId || data?.clientId || data?.clientInfo?.id || data?.clientInfo?.customerId, '');
 }
 
+function getEventCustomerId(data) {
+  return toText(data?.customerId || data?.clientId || data?.clientInfo?.id || data?.clientInfo?.customerId, '');
+}
+
 function getCustomerIdentityKey(doc) {
   const customerId = getCustomerId(doc.data || {});
   return customerId ? `trustquote:customer:${customerId}` : `trustquote:${doc.collection}:${doc.id}`;
@@ -67,6 +73,11 @@ function parkedCustomerIdsFromEnv() {
 
 function isParkedCustomerDoc(doc, parkedCustomerIds) {
   const customerId = getCustomerId(doc.data || {});
+  return Boolean(customerId && parkedCustomerIds.has(customerId));
+}
+
+function isParkedEventDoc(doc, parkedCustomerIds) {
+  const customerId = getEventCustomerId(doc.data || {});
   return Boolean(customerId && parkedCustomerIds.has(customerId));
 }
 
@@ -164,6 +175,84 @@ function baseSignal(doc, type, nowMs, source, facts) {
   };
 }
 
+function eventLabel(data) {
+  const client = toText(data.clientName || data.customerName || [data.clientFirstName, data.clientLastName].filter(Boolean).join(' '), '');
+  return client || 'scheduled customer';
+}
+
+function eventWorkLabel(data) {
+  return toText(data.title || data.description || data.type || data.eventType, 'scheduled job');
+}
+
+function normalizedScheduleStatus(data) {
+  // Mirrors TrustQuote calendar hooks: missing status defaults to scheduled.
+  return toText(data.status, 'scheduled').toLowerCase();
+}
+
+function isScheduledStatus(data) {
+  return normalizedScheduleStatus(data) === 'scheduled';
+}
+
+function bookingIntervalMs(data) {
+  const startMs = timestampMs(data.start || data.startTime || data.scheduledStart || data.scheduledAt);
+  const endMs = timestampMs(data.end || data.endTime || data.scheduledEnd);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  const durationMs = endMs - startMs;
+  const startDate = new Date(startMs);
+  const endDate = new Date(endMs);
+  const looksAllDay = startDate.getUTCHours() === 0
+    && startDate.getUTCMinutes() === 0
+    && endDate.getUTCHours() === 23
+    && endDate.getUTCMinutes() === 59;
+  if (looksAllDay || durationMs > MAX_HARD_BOOKING_DURATION_MS) return null;
+  return { startMs, endMs, durationMin: Math.round(durationMs / 60000) };
+}
+
+function buildScheduleCollisionFact(events = [], nowMs, source, parkedCustomerIds = parkedCustomerIdsFromEnv()) {
+  const normalizedSource = normalizeSource(source);
+  const parkedSet = normalizeParkedCustomerIds(parkedCustomerIds);
+  const commitments = [];
+  for (const event of events) {
+    const doc = { ...event, collection: event.collection || CALENDAR_COLLECTION };
+    const data = doc.data || {};
+    if (isDeletedTrustQuoteDoc(doc) || isParkedEventDoc(doc, parkedSet)) continue;
+    if (!isScheduledStatus(data)) continue;
+    const interval = bookingIntervalMs(data);
+    if (!interval || interval.endMs <= nowMs) continue;
+    const customerId = getEventCustomerId(data);
+    const linkedId = toText(data.jobId || data.invoiceId || data.linkedJobId || data.quoteId || doc.id, doc.id);
+    commitments.push({
+      id: doc.id,
+      who: eventLabel(data),
+      what: eventWorkLabel(data),
+      startMs: interval.startMs,
+      endMs: interval.endMs,
+      durationMin: interval.durationMin,
+      confirmed: true,
+      relationshipWeight: 0.7,
+      customerId,
+      madeInContextRef: `job:${linkedId}`,
+      rawRef: `calendar-events/${doc.id}`,
+    });
+  }
+  if (commitments.length === 0) return null;
+  return {
+    type: 'promise:collision',
+    id: 'calendar-events:schedule-overlap:promise-collision',
+    context: 'promise:collision:schedule',
+    source: normalizedSource,
+    observedAtMs: nowMs,
+    rawRefs: {
+      system: 'trustquote',
+      collection: CALENDAR_COLLECTION,
+      docId: 'schedule-overlap',
+      businessId: TRUSTQUOTE_BUSINESS_ID,
+      eventIds: commitments.map((commitment) => commitment.id),
+    },
+    facts: { commitments },
+  };
+}
+
 function buildJobMarginFact(doc, nowMs, source) {
   const data = doc.data || {};
   const jobTypes = Array.isArray(data.jobTypes) ? data.jobTypes : [];
@@ -245,6 +334,7 @@ function buildProofStaleFact(doc, nowMs, source) {
 function buildTrustQuoteFactSignalsFromDocs({
   jobs = [],
   quotes = [],
+  events = [],
   nowMs = Date.now(),
   source = 'unverified',
   parkedCustomerIds = parkedCustomerIdsFromEnv(),
@@ -265,6 +355,8 @@ function buildTrustQuoteFactSignalsFromDocs({
     if (aging) signals.push(aging);
     if (proof) signals.push(proof);
   }
+  const scheduleCollision = buildScheduleCollisionFact(events, nowMs, normalizedSource, parkedCustomerIds);
+  if (scheduleCollision) signals.push(scheduleCollision);
   return signals;
 }
 
@@ -313,17 +405,22 @@ async function fetchTrustQuoteReadOnlySignals(options = {}) {
   try {
     const { admin, app } = initializeAdmin(root);
     const db = admin.firestore(app);
-    const [jobs, quotes] = await Promise.all(READ_COLLECTIONS.map((collection) => readCollection(db, collection, businessId, limit)));
+    const [jobs, quotes, events] = await Promise.all([
+      ...READ_COLLECTIONS.map((collection) => readCollection(db, collection, businessId, limit)),
+      readCollection(db, CALENDAR_COLLECTION, businessId, Math.max(limit, 200)),
+    ]);
     const signals = buildTrustQuoteFactSignalsFromDocs({
       jobs,
       quotes,
+      events,
       nowMs,
       source: 'live',
       parkedCustomerIds: options.parkedCustomerIds,
     });
     const parkedSet = normalizeParkedCustomerIds(options.parkedCustomerIds ?? parkedCustomerIdsFromEnv());
     const allDocs = [...jobs, ...quotes];
-    const parkedCount = allDocs.filter((doc) => isParkedCustomerDoc(doc, parkedSet)).length;
+    const parkedCount = allDocs.filter((doc) => isParkedCustomerDoc(doc, parkedSet)).length
+      + events.filter((doc) => isParkedEventDoc(doc, parkedSet)).length;
     return {
       ok: true,
       source: 'live',
@@ -332,6 +429,7 @@ async function fetchTrustQuoteReadOnlySignals(options = {}) {
       root,
       data: {
         counts: { jobs: jobs.length, quotes: quotes.length },
+        eventCount: events.length,
         parkedCount,
         signals,
       },
@@ -344,15 +442,18 @@ async function fetchTrustQuoteReadOnlySignals(options = {}) {
       businessId,
       root,
       reason: error.message || 'trustquote_read_failed',
-      data: { counts: { jobs: 0, quotes: 0 }, signals: [] },
+      data: { counts: { jobs: 0, quotes: 0 }, eventCount: 0, signals: [] },
     };
   }
 }
 
 module.exports = {
   DEFAULT_TRUSTQUOTE_ROOT,
+  CALENDAR_COLLECTION,
   DRAFT_MARGIN_MAX_AGE_MS,
+  MAX_HARD_BOOKING_DURATION_MS,
   DEFAULT_PARKED_TRUSTQUOTE_CUSTOMER_IDS,
+  buildScheduleCollisionFact,
   TRUSTQUOTE_BUSINESS_ID,
   buildTrustQuoteFactSignalsFromDocs,
   fetchTrustQuoteReadOnlySignals,
