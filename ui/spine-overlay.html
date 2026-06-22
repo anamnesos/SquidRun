@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SquidRun Spine Overlay</title>
+  <link rel="stylesheet" href="styles/spine-overlay.css">
+</head>
+<body>
+  <main class="spine-shell" id="spineShell" data-context="work-life" data-rift="closed">
+    <canvas id="spineField" class="spine-field" aria-hidden="true"></canvas>
+
+    <section class="spine-edge spine-edge-top" aria-hidden="true"></section>
+    <section class="spine-edge spine-edge-right" aria-hidden="true"></section>
+    <section class="spine-edge spine-edge-bottom" aria-hidden="true"></section>
+    <section class="spine-edge spine-edge-left" aria-hidden="true"></section>
+
+    <header class="spine-header">
+      <div>
+        <p class="spine-kicker">SPINE / LATTICE v0</p>
+        <h1>read-only attention instrument</h1>
+      </div>
+      <div class="spine-safety">
+        <span>work/life read-only</span>
+        <span>no send/write channel</span>
+        <span id="spineSource" hidden>source live</span>
+        <span id="spineUpdated">waiting</span>
+      </div>
+    </header>
+
+    <section id="scenarioBanner" class="scenario-banner" hidden>
+      <strong>SCENARIO REPLAY</strong>
+      <span>not live account state</span>
+    </section>
+
+    <section class="spine-rift" id="spineRift" aria-live="polite">
+      <div class="rift-vector" aria-hidden="true"></div>
+      <div class="rift-artifact">
+        <div class="artifact-stamp">
+          <span id="artifactContext">WORK/LIFE</span>
+          <span id="artifactScore">regret 0.00</span>
+        </div>
+        <h2 id="artifactClaim">No interrupt earned.</h2>
+        <p id="artifactWhy">The overlay is watching local runtime status and staying quiet until the scorer crosses threshold.</p>
+
+        <div class="artifact-receipts" id="artifactReceipts"></div>
+
+        <div class="artifact-action">
+          <p class="artifact-action-label">reversible action latch</p>
+          <p id="artifactAction">Stay quiet. Keep watching read-only status.</p>
+          <button id="artifactConfirm" class="artifact-confirm" type="button" disabled>dry-run only: drafts/logs, no send</button>
+        </div>
+
+        <p class="artifact-pushback" id="artifactPushback" hidden></p>
+      </div>
+    </section>
+
+    <aside class="spine-ledger">
+      <p class="ledger-label">silence ledger</p>
+      <div id="swallowedLedger" class="ledger-lines"></div>
+    </aside>
+
+    <section class="spine-mouth" aria-label="Voice presence placeholder">
+      <div class="mouth-band" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+      <p id="mouthLine">voice deferred: the mouth only speaks verified state</p>
+    </section>
+  </main>
+
+  <script src="spine-overlay-renderer.js"></script>
+</body>
+</html>

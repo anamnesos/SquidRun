@@ -126,6 +126,10 @@ function createPreloadApi(ipcRenderer) {
       brokerStatusLocal: () => readVoiceBrokerStatusSnapshot(),
     },
 
+    spine: {
+      snapshot: (payload = {}) => ipc.invoke('spine-overlay:snapshot', payload),
+    },
+
     mira: {
       coordinatorSnapshot: (payload = {}) => ipc.invoke('mira:coordinator-snapshot', payload),
       approveInternalHandoffSend: (payload = {}) => ipc.invoke('mira:internal-handoff-approval-send', payload),
