@@ -1,0 +1,78 @@
+{
+  "generatedFrom": "TrustQuote lib/domain/dashboard-workflows.ts :: filterInvoicesByFilterQueue(..., \"tasks\") (real isTasksIncomplete/getTaskSummary)",
+  "nowMs": 1782147600000,
+  "cases": [
+    {
+      "name": "proposal_incomplete",
+      "invoice": {
+        "id": "p1",
+        "isProposal": true,
+        "tasksTotal": 2,
+        "tasksIncomplete": 1
+      },
+      "canonical": {
+        "tasksIncomplete": false
+      }
+    },
+    {
+      "name": "nonproposal_all_complete",
+      "invoice": {
+        "id": "j1",
+        "isProposal": false,
+        "tasksTotal": 2,
+        "tasksIncomplete": 0
+      },
+      "canonical": {
+        "tasksIncomplete": false
+      }
+    },
+    {
+      "name": "nonproposal_some_incomplete",
+      "invoice": {
+        "id": "j2",
+        "isProposal": false,
+        "tasksTotal": 2,
+        "tasksIncomplete": 1
+      },
+      "canonical": {
+        "tasksIncomplete": true
+      }
+    },
+    {
+      "name": "nonproposal_all_incomplete",
+      "invoice": {
+        "id": "j3",
+        "isProposal": false,
+        "tasksTotal": 1,
+        "tasksIncomplete": 1
+      },
+      "canonical": {
+        "tasksIncomplete": true
+      }
+    },
+    {
+      "name": "nonproposal_no_tasks",
+      "invoice": {
+        "id": "j4",
+        "isProposal": false,
+        "tasksTotal": 0,
+        "tasksIncomplete": 0
+      },
+      "canonical": {
+        "tasksIncomplete": false
+      }
+    },
+    {
+      "name": "nonproposal_multi_jobtype_mixed",
+      "invoice": {
+        "id": "j5",
+        "isProposal": false,
+        "tasksTotal": 3,
+        "tasksIncomplete": 1
+      },
+      "canonical": {
+        "tasksIncomplete": true
+      }
+    }
+  ]
+}
