@@ -105,6 +105,7 @@ PANE_IDS.forEach(id => { inputLocked[id] = true; }); // Default: all panes locke
 let activePaneIds = [...PANE_IDS];
 const FRESH_SPAWN_INIT_TIMEOUT_MS = 10000;
 const IS_DARWIN = process.platform === 'darwin';
+const FRESH_STARTUP_INJECTION_WINDOW_MS = 60000;
 const HIDDEN_PANE_HOSTS_ENV_FLAG = (
   typeof process !== 'undefined'
   && process
@@ -3673,17 +3674,14 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
   // - Pane 1 only (do not re-trigger Builder/Oracle startup on light reloads)
   // - Skip if terminal has been alive for >60s (injection cycle already completed or failed)
   // - Skip if identity marker is already present in scrollback
-  const REATTACH_INJECTION_WINDOW_MS = 60000;
   const terminalAge = options.createdAt ? (Date.now() - options.createdAt) : Infinity;
   const shouldArmStartupOnReattach =
     String(paneId) === '1' &&
     rendererOwnsStartupInjection(paneId) &&
-    terminalAge < REATTACH_INJECTION_WINDOW_MS &&
+    terminalAge < FRESH_STARTUP_INJECTION_WINDOW_MS &&
     !hasStartupSessionHeader(scrollback, paneId);
   if (shouldArmStartupOnReattach) {
-    const isGemini = isGeminiPane(paneId);
-    const isCodexReattach = isCodexPane(String(paneId));
-    const modelType = isGemini ? 'gemini' : isCodexReattach ? 'codex' : 'claude';
+    const { modelType, isGemini } = getStartupModelForPane(paneId);
     const armed = await armStartupInjection(paneId, { modelType, isGemini, source: 'reattach' });
     // Seed detector with restored scrollback so ready-pattern detection can fire
     // immediately instead of waiting for new daemon output.
@@ -3973,12 +3971,64 @@ function isGeminiPane(paneId) {
   return classifyRuntimeFromIdentity(paneId) === 'gemini';
 }
 
+function getStartupModelForPane(paneId) {
+  const isGemini = isGeminiPane(paneId);
+  const isCodex = isCodexPane(String(paneId));
+  return {
+    modelType: isGemini ? 'gemini' : isCodex ? 'codex' : 'claude',
+    isGemini,
+  };
+}
+
+function parseDaemonCreatedAtMs(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+async function armStartupInjectionForDaemonStartedPane(paneId, daemonTerminal = {}) {
+  const id = String(paneId);
+  if (!PANE_IDS.includes(id)) return false;
+  if (!rendererOwnsStartupInjection(id)) return false;
+  if (hasPendingStartupInjection(id)) return false;
+  if (hasStartupSessionHeader(daemonTerminal?.scrollback || '', id)) return false;
+
+  const createdAtMs = parseDaemonCreatedAtMs(daemonTerminal?.createdAt);
+  if (!createdAtMs) return false;
+  const terminalAge = Date.now() - createdAtMs;
+  if (terminalAge < 0 || terminalAge > FRESH_STARTUP_INJECTION_WINDOW_MS) return false;
+
+  const { modelType, isGemini } = getStartupModelForPane(id);
+  const armed = await armStartupInjection(id, {
+    modelType,
+    isGemini,
+    source: 'daemon-command-on-create',
+  });
+  if (armed && daemonTerminal?.scrollback) {
+    handleStartupOutput(id, daemonTerminal.scrollback);
+  }
+  if (armed) {
+    log.info('spawnAgent', `Daemon command-on-create armed startup injection for pane ${id}`);
+  }
+  return armed;
+}
+
 // Spawn agents in all panes
 async function spawnAllAgents() {
   updateConnectionStatus('Starting agents in all panes...');
   for (const paneId of getActivePaneIds()) {
     const daemonTerminal = await readDaemonTerminalForPane(paneId, { timeoutMs: 750 });
-    if (daemonTerminal?.alive === true && daemonTerminal?.mode === 'pty-command') {
+    if (
+      PANE_IDS.includes(String(paneId))
+      && daemonTerminal?.alive === true
+      && daemonTerminal?.mode === 'pty-command'
+    ) {
+      await armStartupInjectionForDaemonStartedPane(paneId, daemonTerminal);
       log.info('spawnAgent', `Pane ${paneId} already started by daemon command-on-create; skipping duplicate spawn`);
       continue;
     }
@@ -4594,6 +4644,8 @@ module.exports = {
     startPromotionCheckTimer,
     initPromotionEngine,
     buildStartupIdentityMessage,
+    clearStartupInjection,
+    parseDaemonCreatedAtMs,
     fetchStartupHealthSummary,
     fetchStartupAiBriefing,
     normalizeStartupWindowContext,
