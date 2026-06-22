@@ -219,8 +219,8 @@ describe('spine overlay v0', () => {
         },
       },
       {
-        type: 'trustquote:job-proof-stale',
-        id: 'quotes:aging-quote:job-proof-stale',
+        type: 'trustquote:unknown-signal',
+        id: 'quotes:aging-quote:unknown-signal',
         source: 'live',
         observedAtMs: nowMs,
         rawRefs: { docId: 'aging-quote' },
@@ -268,10 +268,58 @@ describe('spine overlay v0', () => {
     }));
     expect(snapshot.swallowed).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        signal: 'trustquote:job-proof-stale',
+        signal: 'trustquote:unknown-signal',
         reason: expect.stringContaining('does not support'),
       }),
     ]));
+  });
+
+  test('passes job task completion signals through to the widened MIND', () => {
+    const nowMs = Date.parse('2026-06-22T16:55:00.000Z');
+    const signals = [{
+      type: 'trustquote:job-tasks-incomplete',
+      id: 'jobs:tasks-open:job-tasks-incomplete',
+      source: 'live',
+      observedAtMs: nowMs,
+      rawRefs: {
+        system: 'trustquote',
+        collection: 'jobs',
+        docId: 'tasks-open',
+        businessId: 'zDPMRRIlMiVJBOMhBbqrMk2iMI72',
+      },
+      facts: {
+        isProposal: false,
+        tasksTotal: 2,
+        tasksIncomplete: 1,
+        jobValue: 800,
+        jobStatus: 'billable',
+        customerReachable: true,
+      },
+    }];
+
+    expect(supportedScorerSignals(signals).map((signal) => signal.type)).toEqual(['trustquote:job-tasks-incomplete']);
+
+    const snapshot = buildSpineOverlaySnapshot({
+      nowMs,
+      supervisorRead: { ok: true, filePath: 'runtime/crypto-trading-supervisor-state.json', data: {} },
+      attributionRead: { ok: true, filePath: 'runtime/agent-position-attribution.json', data: { positions: {} } },
+      nativeRead: { ok: true, filePath: 'runtime/hyperliquid-native-state.json', data: {} },
+      trustQuoteRead: {
+        ok: true,
+        source: 'live',
+        checkedAt: new Date(nowMs).toISOString(),
+        root: 'D:\\projects\\TrustQuote',
+        data: { parkedCount: 0, signals },
+      },
+    });
+
+    expect(snapshot).toEqual(expect.objectContaining({
+      source: 'live',
+      context: 'trustquote:job-tasks-incomplete',
+      speak: true,
+      claim: expect.stringContaining("isn't finished"),
+    }));
+    expect(snapshot.live.trustQuoteSignalCount).toBe(1);
   });
 
   test('does not treat closed or zero-size attribution positions as open', () => {

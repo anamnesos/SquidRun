@@ -70,12 +70,19 @@ function liveSignal(overrides) {
   };
 }
 
+const pricingModule = {
+  calculateBaseTotal: (quantity, price) => Number(quantity || 1) * Number(price || 0),
+  calculateServiceTotal: (job) => Number(job.quantity || 1) * Number(job.price || 0),
+  calculateGrandTotal: (subtotal, discount) => Math.max(0, subtotal - Number(discount || 0)),
+};
+
 describe('The Tell Feed->MIND->BODY seam contract', () => {
   test('TrustQuote live feed emits raw facts with provenance, not BODY judgment fields', () => {
     const signals = buildTrustQuoteFactSignalsFromDocs({
       nowMs: NOW,
       source: 'live',
       parkedCustomerIds: [],
+      pricingModule,
       jobs: [{
         id: 'job-469',
         data: {
@@ -93,6 +100,14 @@ describe('The Tell Feed->MIND->BODY seam contract', () => {
           clientInfo: { email: 'customer@example.com', firstName: 'Deepika' },
           photoCount: 0,
           customerId: 'customer-deepika',
+          jobTypes: [{
+            type: 'Leak repair',
+            price: '34359.19',
+            jobTasks: [
+              { id: 'diagnose', name: 'Diagnose', completed: true },
+              { id: 'repair', name: 'Repair', completed: false },
+            ],
+          }],
         },
       }],
       quotes: [{
@@ -103,6 +118,9 @@ describe('The Tell Feed->MIND->BODY seam contract', () => {
           type: 'quote',
           status: 'ready',
           total: 24000,
+          jobTypes: [
+            { type: 'Sewer Line Replacement', price: '24000' },
+          ],
           updatedAt: NOW,
           customerId: 'customer-ready',
           clientInfo: { firstName: 'Ready', lastName: 'Quote' },
@@ -126,8 +144,18 @@ describe('The Tell Feed->MIND->BODY seam contract', () => {
     const byType = new Map(signals.map((signal) => [signal.type, signal]));
     expectFeedSignalContract(byType.get('trustquote:job-margin'), ['bidAmount', 'historicalMargin', 'bidStatus', 'customerIdentityKey']);
     expectFeedSignalContract(byType.get('trustquote:invoice-aging'), ['invoiceAmount', 'dueMs', 'isPendingJob', 'status']);
-    expectFeedSignalContract(byType.get('trustquote:job-proof-stale'), ['jobValue', 'proofRequired', 'proofPresent']);
+    expectFeedSignalContract(byType.get('trustquote:job-tasks-incomplete'), ['taskSummary', 'tasksTotal', 'tasksIncomplete', 'isProposal', 'isPendingJob']);
     expectFeedSignalContract(byType.get('promise:collision'), ['commitments']);
+    expect(byType.has('trustquote:job-proof-stale')).toBe(false);
+    expect(byType.get('trustquote:job-tasks-incomplete').facts).toEqual(expect.objectContaining({
+      tasksTotal: 2,
+      tasksIncomplete: 1,
+    }));
+    expect(byType.get('trustquote:job-tasks-incomplete').facts.taskSummary).toEqual(expect.objectContaining({
+      total: 2,
+      completed: 1,
+      incomplete: 1,
+    }));
     expect(byType.get('promise:collision').facts.commitments[0]).toEqual(expect.objectContaining({
       confirmed: true,
       startMs: expect.any(Number),
