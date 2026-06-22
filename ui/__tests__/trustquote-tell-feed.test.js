@@ -2,6 +2,7 @@ const {
   buildTrustQuoteFactSignalsFromDocs,
   DEFAULT_PARKED_TRUSTQUOTE_CUSTOMER_IDS,
   DRAFT_MARGIN_MAX_AGE_MS,
+  isDeletedTrustQuoteDoc,
   timestampMs,
 } = require('../modules/main/trustquote-tell-feed');
 
@@ -150,6 +151,42 @@ describe('trustquote tell feed', () => {
 
     expect(signals.some((signal) => signal.type === 'trustquote:invoice-aging')).toBe(false);
     expect(signals).toEqual([]);
+  });
+
+  test('filters deleted TrustQuote tombstones before any signal is built', () => {
+    const nowMs = Date.parse('2026-06-22T16:50:00.000Z');
+    const signals = buildTrustQuoteFactSignalsFromDocs({
+      nowMs,
+      source: 'live',
+      parkedCustomerIds: [],
+      quotes: [{
+        id: 'deleted-pending-quote',
+        data: {
+          invoiceNumber: '001',
+          status: 'pending',
+          total: 850,
+          isDeleted: true,
+          deletedAt: { seconds: 1778364321 },
+          deletedBy: 'james',
+          updatedAt: nowMs,
+        },
+      }],
+      jobs: [{
+        id: 'deleted-job-string-flag',
+        data: {
+          invoiceNumber: '002',
+          type: 'job',
+          status: 'sent',
+          total: 1000,
+          isDeleted: 'true',
+          updatedAt: nowMs,
+        },
+      }],
+    });
+
+    expect(signals).toEqual([]);
+    expect(isDeletedTrustQuoteDoc({ data: { isDeleted: '1' } })).toBe(true);
+    expect(isDeletedTrustQuoteDoc({ data: { deletedBy: 'james' } })).toBe(true);
   });
 
   test('still emits margin facts for recent draft quotes', () => {

@@ -70,6 +70,16 @@ function isParkedCustomerDoc(doc, parkedCustomerIds) {
   return Boolean(customerId && parkedCustomerIds.has(customerId));
 }
 
+function isDeletedTrustQuoteDoc(doc) {
+  const data = doc?.data || {};
+  const flag = String(data.isDeleted ?? '').trim().toLowerCase();
+  return data.isDeleted === true
+    || flag === 'true'
+    || flag === '1'
+    || Boolean(data.deletedAt)
+    || Boolean(data.deletedBy);
+}
+
 function getDocTotal(data) {
   return toNumber(data?.total ?? data?.grandTotal ?? data?.subtotal ?? data?.amount ?? data?.invoiceTotal, 0);
 }
@@ -244,7 +254,7 @@ function buildTrustQuoteFactSignalsFromDocs({
   const docs = [
     ...jobs.map((doc) => ({ ...doc, collection: doc.collection || 'jobs' })),
     ...quotes.map((doc) => ({ ...doc, collection: doc.collection || 'quotes' })),
-  ].filter((doc) => !doc.data?.isDeleted && !doc.data?.deletedAt && !isParkedCustomerDoc(doc, parkedSet));
+  ].filter((doc) => !isDeletedTrustQuoteDoc(doc) && !isParkedCustomerDoc(doc, parkedSet));
 
   const signals = [];
   for (const doc of docs) {
@@ -346,6 +356,7 @@ module.exports = {
   TRUSTQUOTE_BUSINESS_ID,
   buildTrustQuoteFactSignalsFromDocs,
   fetchTrustQuoteReadOnlySignals,
+  isDeletedTrustQuoteDoc,
   normalizeParkedCustomerIds,
   timestampMs,
 };
