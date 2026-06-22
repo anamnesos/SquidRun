@@ -223,9 +223,10 @@ const SIGNAL_THRESHOLDS = Object.freeze({
   MATERIALITY_USD_FLOOR: 40,    // don't speak on a trivial $ discrepancy (his economy)
   INVOICE_OVERDUE_DAYS: 14,     // MIRROR TrustQuote canonical: dashboard-workflows.ts OVERDUE_DAYS=14 (don't reinvent)
   INVOICE_WRITEOFF_DAYS: 90,    // beyond this, collection is moot -> window closed
-  COLLISION_BUFFER_MIN: 30,     // required time must overflow available by this margin to call it impossible
+  COLLISION_BUFFER_MIN: 30,     // (deadline mode) required time must overflow available by this margin to call it impossible
   COLLISION_MIN_LEAD_MIN: 30,   // at least one side still renegotiable this far out, or it's too late
   RELATIONSHIP_FLOOR: 0.5,      // a collision must touch someone/something that actually matters
+  SCHEDULE_OVERLAP_MIN_MIN: 10, // (booking mode) two confirmed appointments must overlap >= this to count (ignore boundary touches)
 });
 
 function scoreTypedSignal(sig, ctx) {
@@ -235,6 +236,10 @@ function scoreTypedSignal(sig, ctx) {
   const custId = facts.customerId ?? sig?.rawRefs?.customerId ?? facts.customerIdentityKey;
   if (custId != null && ctx?.parked?.has(String(custId))) {
     return finalizeSignal(sig, { gateReason: 'parked_customer' });
+  }
+  // Defense-in-depth (Builder filters at the feed too): a deleted/tombstoned doc is never a live signal.
+  if (facts.isDeleted === true || sig?.rawRefs?.isDeleted === true) {
+    return finalizeSignal(sig, { gateReason: 'deleted_tombstone' });
   }
   switch (sig?.type) {
     case 'promise:collision': return scorePromiseCollision(sig, facts, ctx.nowMs);
@@ -258,9 +263,89 @@ function finalizeSignal(sig, parts) {
   };
 }
 
-// --- promise:collision — the sharp one. Fires ONLY on real-hours impossibility, never vague overlap.
+// --- promise:collision — the sharp one. Two modes, dispatched by data shape:
+//   BOOKINGS (fixed-time appointments, startMs+end) -> interval OVERLAP ("can't be two places at once").
+//   DEADLINES (dueMs+durationMin) -> EDF real-hours infeasibility ("can't get it all done in time").
+// Both fire ONLY on undeniable facts; tentative/soft inputs -> silent.
 function scorePromiseCollision(sig, facts, nowMs) {
   const all = Array.isArray(facts.commitments) ? facts.commitments : [];
+  const hasBookings = all.some((c) => c && (isNum(c.startMs) || isNum(c.windowStartMs)));
+  if (hasBookings) return scoreScheduleCollision(sig, all, nowMs);
+  return scoreDeadlineCollision(sig, facts, all, nowMs);
+}
+
+// fixed-time appointment interval, or null if it isn't a real booking
+function bookingInterval(c) {
+  const start = isNum(c.startMs) ? c.startMs : (isNum(c.windowStartMs) ? c.windowStartMs : null);
+  if (!isNum(start)) return null;
+  const end = isNum(c.endMs) ? c.endMs : (isNum(c.durationMin) ? start + c.durationMin * 60000 : null);
+  return isNum(end) && end > start ? { start, end } : null;
+}
+
+// max pairwise overlap (minutes) among confirmed bookings + the binding pair
+function maxConfirmedOverlap(items) {
+  let best = { overlapMin: 0, pair: null };
+  for (let i = 0; i < items.length; i += 1) {
+    for (let j = i + 1; j < items.length; j += 1) {
+      const a = items[i], b = items[j];
+      const overlap = (Math.min(a._iv.end, b._iv.end) - Math.max(a._iv.start, b._iv.start)) / 60000;
+      if (overlap > best.overlapMin) best = { overlapMin: overlap, pair: [a, b] };
+    }
+  }
+  return best;
+}
+
+// BOOKING MODE: two CONFIRMED appointments whose times overlap. Undeniable, zero estimation.
+function scoreScheduleCollision(sig, all, nowMs) {
+  const bookings = all.map((c) => ({ ...c, _iv: bookingInterval(c) })).filter((x) => x._iv && x._iv.end > nowMs);
+  const confirmed = bookings.filter((x) => x.confirmed === true);
+  const tentativeInPlay = bookings.some((x) => x.confirmed !== true);
+
+  const ov = maxConfirmedOverlap(confirmed);
+  const overlapMin = ov.overlapMin;
+  const pair = ov.pair || [];
+
+  // C: a real overlap between two CONFIRMED bookings is a hard fact, no estimation. Tentative holds never count.
+  const C = (confirmed.length >= 2 && overlapMin >= SIGNAL_THRESHOLDS.SCHEDULE_OVERLAP_MIN_MIN) ? 1 : 0;
+  const contexts = new Set(pair.map((c) => c.madeInContextRef).filter(Boolean));
+  const B = contexts.size >= 2 ? 1 : (overlapMin > 0 ? 0.3 : 0); // separately-booked = blind to the clash
+  const leadMin = pair.length ? (Math.min(pair[0]._iv.start, pair[1]._iv.start) - nowMs) / 60000 : 0;
+  const W = clamp01(leadMin / (SIGNAL_THRESHOLDS.COLLISION_MIN_LEAD_MIN * 2));
+  const S = pair.length ? Math.max(...pair.map((c) => clamp01(Number(c.relationshipWeight) || 0))) : 0;
+
+  const materialityOk = confirmed.length >= 2 && overlapMin >= SIGNAL_THRESHOLDS.SCHEDULE_OVERLAP_MIN_MIN
+    && S >= SIGNAL_THRESHOLDS.RELATIONSHIP_FLOOR;
+
+  const gateReason = confirmed.length < 2 ? (tentativeInPlay ? 'tentative_bookings_not_confirmed' : 'no_two_confirmed_bookings')
+    : overlapMin < SIGNAL_THRESHOLDS.SCHEDULE_OVERLAP_MIN_MIN ? 'bookings_do_not_overlap'
+    : S < SIGNAL_THRESHOLDS.RELATIONSHIP_FLOOR ? 'below_materiality_floor'
+    : W <= 0 ? 'too_late_to_move' : null;
+
+  const a = pair[0] || {}, b = pair[1] || {};
+  const t = (c) => (c._iv ? new Date(c._iv.start).toISOString().slice(11, 16) : '?');
+  const speech = {
+    claim: `You've got two confirmed jobs booked over the same time — ${a.what} for ${a.who} and ${b.what} for ${b.who}. You can't be at both.`,
+    whyNow: `${a.what} (${t(a)}) and ${b.what} (${t(b)}) overlap by ${Math.round(overlapMin)} min. They were booked separately, so the clash was invisible.`,
+    receipts: pair.map((c) => ({ label: c.who, value: `${c.what} — ${t(c)} to ${c._iv ? new Date(c._iv.end).toISOString().slice(11, 16) : '?'}`, source: c.madeInContextRef || 'jobs' })),
+    proposedAction: {
+      text: `Reschedule ${b.what}`, reversible: true, executionMode: 'dry-run',
+      dryRunLabel: `Draft the move to ${b.who} — I'll write it for your okay, I don't reschedule anything on my own.`,
+      alt: `Move ${a.what} instead`,
+    },
+    pushback: `If one of these already moved or got cancelled, say so and I'll drop it.`,
+    verify: {
+      bookings: pair.map((c) => ({ contextRef: c.madeInContextRef, customerId: c.customerId, startMs: c._iv?.start, endMs: c._iv?.end, confirmed: c.confirmed })),
+      overlapMin: Math.round(overlapMin),
+    },
+  };
+  return finalizeSignal(sig, {
+    S, B, W, C, materialityOk, gateReason, speech,
+    snapshot: { confirmedCount: confirmed.length, overlapMin: Math.round(overlapMin), leadMin: Math.round(leadMin), worstWeight: S },
+  });
+}
+
+// DEADLINE MODE (original): hard deliverables that can't all be DONE in the available hours by their due times.
+function scoreDeadlineCollision(sig, facts, all, nowMs) {
   // Only HARD, still-future commitments with CONCRETE durations can establish impossibility.
   const hard = all.filter((c) => c && c.hardness === 'hard' && isNum(c.dueMs) && c.dueMs > nowMs && isNum(c.durationMin) && c.durationMin > 0);
   const softInPlay = all.some((c) => c && c.hardness === 'hard' && (!isNum(c.durationMin) || !isNum(c.dueMs)));
