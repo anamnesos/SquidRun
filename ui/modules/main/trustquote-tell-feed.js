@@ -12,6 +12,7 @@ const MAX_HARD_BOOKING_DURATION_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_PARKED_TRUSTQUOTE_CUSTOMER_IDS = Object.freeze([
   'gkbmoefFvpwToedb4s8w',
 ]);
+const pricingCache = new Map();
 
 function toNumber(value, fallback = null) {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -95,6 +96,38 @@ function getDocTotal(data) {
   return toNumber(data?.total ?? data?.grandTotal ?? data?.subtotal ?? data?.amount ?? data?.invoiceTotal, 0);
 }
 
+function loadTrustQuotePricing(root = DEFAULT_TRUSTQUOTE_ROOT) {
+  const resolvedRoot = path.resolve(root || DEFAULT_TRUSTQUOTE_ROOT);
+  if (pricingCache.has(resolvedRoot)) return pricingCache.get(resolvedRoot);
+  const previousCwd = process.cwd();
+  try {
+    process.chdir(resolvedRoot);
+    require(require.resolve('tsx/cjs', { paths: [resolvedRoot] }));
+    const pricing = require(path.join(resolvedRoot, 'lib', 'pricing', 'invoicePricing.ts'));
+    const required = ['calculateBaseTotal', 'calculateServiceTotal', 'calculateGrandTotal'];
+    for (const fn of required) {
+      if (typeof pricing[fn] !== 'function') throw new Error(`trustquote_pricing_missing_${fn}`);
+    }
+    pricingCache.set(resolvedRoot, pricing);
+    return pricing;
+  } finally {
+    process.chdir(previousCwd);
+  }
+}
+
+function getCanonicalDocTotal(data, root = DEFAULT_TRUSTQUOTE_ROOT, pricingModule = null) {
+  const jobTypes = Array.isArray(data?.jobTypes) ? data.jobTypes : [];
+  if (jobTypes.length === 0) return null;
+  try {
+    const pricing = pricingModule || loadTrustQuotePricing(root);
+    const subtotal = jobTypes.reduce((sum, job) => sum + pricing.calculateServiceTotal(job), 0);
+    const total = pricing.calculateGrandTotal(subtotal, data?.discount ?? data?.discountAmount ?? 0);
+    return Number.isFinite(total) ? total : null;
+  } catch {
+    return null;
+  }
+}
+
 function getBalanceDue(data) {
   const explicit = toNumber(data?.balanceDue, null);
   if (explicit !== null) return explicit;
@@ -115,13 +148,20 @@ function serviceTypes(jobTypes) {
     .filter(Boolean);
 }
 
-function proofPresent(data) {
-  const present = [];
-  if (toNumber(data?.photoCount, 0) > 0) present.push('photos');
-  if (Array.isArray(data?.photoUrls) && data.photoUrls.length > 0) present.push('photoUrls');
-  if (Array.isArray(data?.mediaAssets) && data.mediaAssets.length > 0) present.push('mediaAssets');
-  if (data?.warrantiesActivated) present.push('warrantyActivation');
-  return present;
+function getTaskSummary(jobTypes) {
+  const tasks = Array.isArray(jobTypes)
+    ? jobTypes.flatMap((job) => Array.isArray(job?.jobTasks) ? job.jobTasks : [])
+    : [];
+  const incompleteTasks = tasks.filter((task) => !task?.completed);
+  return {
+    total: tasks.length,
+    completed: tasks.length - incompleteTasks.length,
+    incomplete: incompleteTasks.length,
+    incompleteTaskIds: incompleteTasks
+      .map((task) => toText(task?.id || task?.taskId || task?.name || task?.label || task?.title, ''))
+      .filter(Boolean)
+      .slice(0, 8),
+  };
 }
 
 function normalizedBidStatus(data) {
@@ -253,11 +293,11 @@ function buildScheduleCollisionFact(events = [], nowMs, source, parkedCustomerId
   };
 }
 
-function buildJobMarginFact(doc, nowMs, source) {
+function buildJobMarginFact(doc, nowMs, source, root = DEFAULT_TRUSTQUOTE_ROOT, pricingModule = null) {
   const data = doc.data || {};
   const jobTypes = Array.isArray(data.jobTypes) ? data.jobTypes : [];
   const types = serviceTypes(jobTypes);
-  const bidPrice = getDocTotal(data);
+  const bidPrice = getCanonicalDocTotal(data, root, pricingModule);
   if (bidPrice <= 0) return null;
   const bidStatus = normalizedBidStatus(data);
   const lastUserViewMs = timestampMs(data.lastViewedAt || data.lastOpenedAt || data.updatedAt || data.createdAt);
@@ -268,6 +308,7 @@ function buildJobMarginFact(doc, nowMs, source) {
   return baseSignal(doc, 'trustquote:job-margin', nowMs, source, {
     bidAmount: bidPrice,
     bidPrice,
+    pricingSource: 'trustquote:lib/pricing/invoicePricing.ts',
     bidCost: toNumber(data.bidCost ?? data.cost ?? data.materialCost ?? data.materialsCost, null),
     bidMarginPct: toNumber(data.bidMarginPct ?? data.marginPct ?? data.margin, null),
     jobType: types[0] || toText(data.type, doc.collection === 'quotes' ? 'quote' : 'job'),
@@ -279,6 +320,30 @@ function buildJobMarginFact(doc, nowMs, source) {
     },
     bidStatus,
     lastUserViewMs,
+    customerId: getCustomerId(data),
+    customerIdentityKey: getCustomerIdentityKey(doc),
+    customerLabel: getClientLabel(data),
+    docNumber: getDocNumber(doc),
+  });
+}
+
+function buildTasksIncompleteFact(doc, nowMs, source, root = DEFAULT_TRUSTQUOTE_ROOT, pricingModule = null) {
+  const data = doc.data || {};
+  if (isProposalDoc(doc, data)) return null;
+  const jobTypes = Array.isArray(data.jobTypes) ? data.jobTypes : [];
+  const taskSummary = getTaskSummary(jobTypes);
+  if (taskSummary.total === 0 || taskSummary.incomplete === 0) return null;
+  const canonicalValue = getCanonicalDocTotal(data, root, pricingModule);
+
+  return baseSignal(doc, 'trustquote:job-tasks-incomplete', nowMs, source, {
+    taskSummary,
+    tasksTotal: taskSummary.total,
+    tasksIncomplete: taskSummary.incomplete,
+    jobValue: canonicalValue ?? getDocTotal(data),
+    jobStatus: toText(data.status || data.jobStatus || data.type, 'unknown'),
+    isProposal: false,
+    isPendingJob: isPendingJobDoc(doc, data),
+    customerReachable: Boolean(data.lastEmailSentTo || data.lastSmsSentTo || data.clientEmail || data.clientPhone || data.clientInfo?.email || data.clientInfo?.phone),
     customerId: getCustomerId(data),
     customerIdentityKey: getCustomerIdentityKey(doc),
     customerLabel: getClientLabel(data),
@@ -312,25 +377,6 @@ function buildInvoiceAgingFact(doc, nowMs, source) {
   });
 }
 
-function buildProofStaleFact(doc, nowMs, source) {
-  const data = doc.data || {};
-  if (isProposalDoc(doc, data)) return null;
-  const jobValue = getDocTotal(data);
-  if (jobValue <= 0) return null;
-  return baseSignal(doc, 'trustquote:job-proof-stale', nowMs, source, {
-    jobValue,
-    jobStatus: toText(data.status || data.jobStatus || data.type, 'unknown'),
-    proofRequired: ['photos'],
-    proofPresent: proofPresent(data),
-    proofSyncedAtMs: timestampMs(data.mediaSyncedAt || data.photosSyncedAt || data.updatedAt || data.createdAt),
-    customerReachable: Boolean(data.clientEmail || data.clientPhone || data.clientInfo?.email || data.clientInfo?.phone),
-    customerId: getCustomerId(data),
-    customerIdentityKey: getCustomerIdentityKey(doc),
-    customerLabel: getClientLabel(data),
-    docNumber: getDocNumber(doc),
-  });
-}
-
 function buildTrustQuoteFactSignalsFromDocs({
   jobs = [],
   quotes = [],
@@ -338,6 +384,8 @@ function buildTrustQuoteFactSignalsFromDocs({
   nowMs = Date.now(),
   source = 'unverified',
   parkedCustomerIds = parkedCustomerIdsFromEnv(),
+  trustQuoteRoot = DEFAULT_TRUSTQUOTE_ROOT,
+  pricingModule = null,
 } = {}) {
   const normalizedSource = normalizeSource(source);
   const parkedSet = normalizeParkedCustomerIds(parkedCustomerIds);
@@ -348,12 +396,12 @@ function buildTrustQuoteFactSignalsFromDocs({
 
   const signals = [];
   for (const doc of docs) {
-    const margin = buildJobMarginFact(doc, nowMs, normalizedSource);
+    const margin = buildJobMarginFact(doc, nowMs, normalizedSource, trustQuoteRoot, pricingModule);
     const aging = buildInvoiceAgingFact(doc, nowMs, normalizedSource);
-    const proof = buildProofStaleFact(doc, nowMs, normalizedSource);
+    const tasks = buildTasksIncompleteFact(doc, nowMs, normalizedSource, trustQuoteRoot, pricingModule);
     if (margin) signals.push(margin);
     if (aging) signals.push(aging);
-    if (proof) signals.push(proof);
+    if (tasks) signals.push(tasks);
   }
   const scheduleCollision = buildScheduleCollisionFact(events, nowMs, normalizedSource, parkedCustomerIds);
   if (scheduleCollision) signals.push(scheduleCollision);

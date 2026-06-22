@@ -14,6 +14,7 @@ const TRADING_PARKED_REASON = 'parked_by_user';
 const SUPPORTED_SIGNAL_TYPES = new Set([
   'trustquote:job-margin',
   'trustquote:invoice-aging',
+  'trustquote:job-tasks-incomplete',
   'promise:collision',
 ]);
 

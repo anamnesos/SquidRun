@@ -7,13 +7,55 @@ const {
   timestampMs,
 } = require('../modules/main/trustquote-tell-feed');
 
+function parsePrice(value) {
+  if (!value) return 0;
+  if (typeof value === 'number') return value;
+  return Number(String(value).replace(/,/g, '')) || 0;
+}
+
+function parseQuantity(value) {
+  if (!value) return 1;
+  if (typeof value === 'number') return value;
+  return Number(String(value)) || 1;
+}
+
+function toCents(value) {
+  return Math.round(parsePrice(value) * 100);
+}
+
+function fromCents(value) {
+  return Math.round(value) / 100;
+}
+
+function makePricingModule() {
+  const pricing = {};
+  pricing.calculateBaseTotal = jest.fn((quantity, price) => fromCents(parseQuantity(quantity) * toCents(price)));
+  pricing.calculateServiceTotal = jest.fn((job) => {
+    const qty = parseQuantity(job.quantity || '1');
+    const base = pricing.calculateBaseTotal(qty, job.price || '0');
+    const addOnsPerUnit = (job.addOns || []).reduce((sum, addOn) => {
+      return sum + Math.round(toCents(addOn.price || '0') * parseQuantity(addOn.quantity || '1'));
+    }, 0);
+    return fromCents(toCents(base) + Math.round(addOnsPerUnit * qty));
+  });
+  pricing.calculateGrandTotal = jest.fn((subtotal, discount) => fromCents(Math.max(0, toCents(subtotal) - toCents(discount || 0))));
+  return pricing;
+}
+
 describe('trustquote tell feed', () => {
+  let pricingModule;
+
+  beforeEach(() => {
+    pricingModule = makePricingModule();
+  });
+
   test('emits raw TrustQuote facts without MIND judgment fields', () => {
     const nowMs = Date.parse('2026-06-22T16:50:00.000Z');
     const signals = buildTrustQuoteFactSignalsFromDocs({
       nowMs,
       source: 'live',
       parkedCustomerIds: [],
+      pricingModule,
       quotes: [{
         id: 'NpVMdNLeSPsyI8BUnHFO',
         data: {
@@ -77,7 +119,7 @@ describe('trustquote tell feed', () => {
     }
   });
 
-  test('fails source closed and emits invoice-aging/proof facts as raw fields for pending jobs only', () => {
+  test('fails source closed and emits invoice-aging facts as raw fields for pending jobs only', () => {
     const signals = buildTrustQuoteFactSignalsFromDocs({
       nowMs: Date.parse('2026-06-22T16:50:00.000Z'),
       source: '',
@@ -100,7 +142,7 @@ describe('trustquote tell feed', () => {
       }],
     });
 
-    expect(signals.map((signal) => signal.source)).toEqual(['unverified', 'unverified', 'unverified']);
+    expect(signals.map((signal) => signal.source)).toEqual(['unverified']);
     expect(signals).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'trustquote:invoice-aging',
@@ -114,16 +156,62 @@ describe('trustquote tell feed', () => {
           lastChasedMs: 1781000000000,
         }),
       }),
-      expect.objectContaining({
-        type: 'trustquote:job-proof-stale',
-        facts: expect.objectContaining({
-          jobValue: 34359.19,
-          jobStatus: 'sent',
-          proofRequired: ['photos'],
-          proofPresent: [],
-        }),
-      }),
     ]));
+    expect(signals.some((signal) => signal.type === 'trustquote:job-proof-stale')).toBe(false);
+  });
+
+  test('emits job-tasks-incomplete facts from TrustQuote jobTasks, not proof fields', () => {
+    const nowMs = Date.parse('2026-06-22T16:50:00.000Z');
+    const signals = buildTrustQuoteFactSignalsFromDocs({
+      nowMs,
+      source: 'live',
+      parkedCustomerIds: [],
+      jobs: [{
+        id: 'job-with-open-tasks',
+        data: {
+          invoiceNumber: 470,
+          type: 'job',
+          status: 'sent',
+          paymentStatus: 'partial',
+          total: 1200,
+          balanceDue: 200,
+          customerId: 'customer-tasks',
+          clientInfo: { firstName: 'Tasky' },
+          photoCount: 0,
+          jobTypes: [{
+            type: 'Water heater',
+            price: '1200',
+            jobTasks: [
+              { id: 'pull-permit', name: 'Pull permit', completed: false },
+              { id: 'install', name: 'Install', completed: true },
+            ],
+          }],
+        },
+      }],
+    });
+
+    const tasks = signals.find((signal) => signal.type === 'trustquote:job-tasks-incomplete');
+    expect(tasks).toEqual(expect.objectContaining({
+      id: 'jobs:job-with-open-tasks:job-tasks-incomplete',
+      source: 'live',
+      facts: expect.objectContaining({
+        jobStatus: 'sent',
+        isProposal: false,
+        isPendingJob: true,
+        tasksTotal: 2,
+        tasksIncomplete: 1,
+        jobValue: 1200,
+        taskSummary: {
+          total: 2,
+          completed: 1,
+          incomplete: 1,
+          incompleteTaskIds: ['pull-permit'],
+        },
+      }),
+    }));
+    expect(tasks.facts).not.toHaveProperty('proofRequired');
+    expect(tasks.facts).not.toHaveProperty('proofPresent');
+    expect(signals.some((signal) => signal.type === 'trustquote:job-proof-stale')).toBe(false);
   });
 
   test('does not emit invoice-aging or margin for stale draft quotes even when old and unpaid', () => {
@@ -132,6 +220,7 @@ describe('trustquote tell feed', () => {
       nowMs,
       source: 'live',
       parkedCustomerIds: [],
+      pricingModule,
       quotes: [{
         id: 'draft-yash-quote',
         data: {
@@ -160,6 +249,7 @@ describe('trustquote tell feed', () => {
       nowMs,
       source: 'live',
       parkedCustomerIds: [],
+      pricingModule,
       quotes: [{
         id: 'deleted-pending-quote',
         data: {
@@ -308,6 +398,7 @@ describe('trustquote tell feed', () => {
       nowMs,
       source: 'live',
       parkedCustomerIds: [],
+      pricingModule,
       quotes: [{
         id: 'recent-draft-quote',
         data: {
@@ -317,6 +408,7 @@ describe('trustquote tell feed', () => {
           isProposal: true,
           status: 'draft',
           total: 9000,
+          jobTypes: [{ type: 'Drain repair', price: '9000' }],
           updatedAt: nowMs - DRAFT_MARGIN_MAX_AGE_MS + 1000,
           customerId: 'recent-draft-customer',
           clientInfo: { firstName: 'Recent', lastName: 'Draft' },
@@ -336,11 +428,13 @@ describe('trustquote tell feed', () => {
       nowMs: Date.parse('2026-06-22T16:50:00.000Z'),
       source: 'live',
       parkedCustomerIds: [],
+      pricingModule,
       quotes: [{
         id: 'same-first-name-different-doc',
         data: {
           invoiceNumber: '110',
           total: 12000,
+          jobTypes: [{ type: 'Cleanout', price: '12000' }],
           status: 'ready',
           clientInfo: { firstName: 'Charles' },
         },
@@ -363,11 +457,13 @@ describe('trustquote tell feed', () => {
     const signals = buildTrustQuoteFactSignalsFromDocs({
       nowMs: Date.parse('2026-06-22T16:50:00.000Z'),
       source: 'live',
+      pricingModule,
       quotes: [{
         id: 'parked-charles-quote',
         data: {
           invoiceNumber: '109',
           total: 24000,
+          jobTypes: [{ type: 'Parked job', price: '24000' }],
           status: 'ready',
           customerId: DEFAULT_PARKED_TRUSTQUOTE_CUSTOMER_IDS[0],
           clientInfo: { firstName: 'Charles', lastName: 'Long' },
@@ -377,6 +473,7 @@ describe('trustquote tell feed', () => {
         data: {
           invoiceNumber: '110',
           total: 12000,
+          jobTypes: [{ type: 'Available job', price: '12000' }],
           status: 'ready',
           customerId: 'available-customer',
           clientInfo: { firstName: 'Available', lastName: 'Customer' },
@@ -390,6 +487,44 @@ describe('trustquote tell feed', () => {
     expect(signals.some((signal) => signal.type === 'trustquote:job-proof-stale')).toBe(false);
     expect(JSON.stringify(signals)).not.toContain('Charles');
     expect(JSON.stringify(signals)).not.toContain(DEFAULT_PARKED_TRUSTQUOTE_CUSTOMER_IDS[0]);
+  });
+
+  test('margin bid amount uses TrustQuote canonical pricing instead of stored total shortcuts', () => {
+    const signals = buildTrustQuoteFactSignalsFromDocs({
+      nowMs: Date.parse('2026-06-22T16:50:00.000Z'),
+      source: 'live',
+      parkedCustomerIds: [],
+      pricingModule,
+      quotes: [{
+        id: 'priced-through-canonical-module',
+        data: {
+          invoiceNumber: '115',
+          total: 9999,
+          status: 'ready',
+          discount: 7,
+          jobTypes: [{
+            type: 'Fixture install',
+            quantity: '2',
+            price: '10',
+            addOns: [{ name: 'Valve', price: '3', quantity: '2' }],
+          }, {
+            type: 'Service call',
+            quantity: '1',
+            price: '50',
+          }],
+        },
+      }],
+    });
+
+    const margin = signals.find((signal) => signal.type === 'trustquote:job-margin');
+    expect(margin.facts).toEqual(expect.objectContaining({
+      bidAmount: 75,
+      bidPrice: 75,
+      pricingSource: 'trustquote:lib/pricing/invoicePricing.ts',
+    }));
+    expect(pricingModule.calculateBaseTotal).toHaveBeenCalled();
+    expect(pricingModule.calculateServiceTotal).toHaveBeenCalledTimes(2);
+    expect(pricingModule.calculateGrandTotal).toHaveBeenCalledWith(82, 7);
   });
 
   test('normalizes Firestore timestamp-like values', () => {
