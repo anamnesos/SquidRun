@@ -189,6 +189,7 @@ describe('terminal.js module', () => {
     mockDocument.activeElement = null;
     mockContractPromotion.checkPromotions.mockReturnValue([]);
     terminal.stopPromotionCheckTimer();
+    terminal.setActivePaneIds(terminal.PANE_IDS);
     terminal.setInputLocked('1', true);
     terminal.setInputLocked('2', true);
     terminal.setInputLocked('3', true);
@@ -210,6 +211,7 @@ describe('terminal.js module', () => {
     terminal._internals.terminalStreamingLastFitAt.clear();
     ['1', '2', '3', 'trustquote-app', 'trustquote-lead', 'trustquote-invoice', 'trustquote-schedule-dispatch'].forEach((paneId) => {
       terminal.resetTerminalWriteQueue(paneId);
+      terminal._internals.clearStartupInjection(paneId);
     });
     for (const timer of terminal._internals.resizeDebounceTimers.values()) {
       clearTimeout(timer);
@@ -1860,15 +1862,18 @@ describe('terminal.js module', () => {
       jest.useFakeTimers();
     });
 
-    test('skips panes already launched by daemon command-on-create', async () => {
+    test('arms startup injection while skipping panes already launched by daemon command-on-create', async () => {
       jest.useRealTimers();
       mockSquidRun.claude.spawn.mockClear();
+      mockSettings.getSettings.mockReturnValue({ paneCommands: { '1': 'claude', '2': 'codex', '3': 'claude' } });
+      terminal.registerCodexPane('2');
+      const createdAt = Date.now();
       mockSquidRun.daemon.terminalSnapshot.mockResolvedValue({
         ok: true,
         terminals: [
-          { paneId: '1', alive: true, mode: 'pty-command' },
-          { paneId: '2', alive: true, mode: 'pty-command' },
-          { paneId: '3', alive: true, mode: 'pty-command' },
+          { paneId: '1', alive: true, mode: 'pty-command', createdAt, scrollback: '' },
+          { paneId: '2', alive: true, mode: 'pty-command', createdAt, scrollback: '' },
+          { paneId: '3', alive: true, mode: 'pty-command', createdAt, scrollback: '' },
         ],
       });
 
@@ -1880,6 +1885,184 @@ describe('terminal.js module', () => {
 
       expect(mockSquidRun.claude.spawn).not.toHaveBeenCalled();
       expect(mockSquidRun.pty.write).not.toHaveBeenCalled();
+      expect(mockSquidRun.pty.claimStartupInjection).toHaveBeenCalledTimes(3);
+      expect(mockSquidRun.pty.claimStartupInjection).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '2',
+        source: 'daemon-command-on-create',
+        modelType: 'codex',
+        windowKey: 'main',
+        profileName: 'main',
+      }));
+      terminal.unregisterCodexPane('2');
+      jest.useFakeTimers();
+    });
+
+    test('does not arm daemon-started pane when restored scrollback already has its session header', async () => {
+      jest.useRealTimers();
+      mockSquidRun.claude.spawn.mockClear();
+      terminal.setActivePaneIds(['2']);
+      mockSquidRun.daemon.terminalSnapshot.mockResolvedValue({
+        ok: true,
+        terminals: [
+          {
+            paneId: '2',
+            alive: true,
+            mode: 'pty-command',
+            createdAt: Date.now(),
+            scrollback: '# SQUIDRUN SESSION: Builder - Started 2026-06-22',
+          },
+        ],
+      });
+
+      terminal.terminals.set('2', { write: jest.fn() });
+
+      await terminal.spawnAllAgents();
+
+      expect(mockSquidRun.claude.spawn).not.toHaveBeenCalled();
+      expect(mockSquidRun.pty.claimStartupInjection).not.toHaveBeenCalled();
+      terminal.setActivePaneIds(terminal.PANE_IDS);
+      jest.useFakeTimers();
+    });
+
+    test('does not arm daemon-started pane when createdAt is missing', async () => {
+      jest.useRealTimers();
+      mockSquidRun.claude.spawn.mockClear();
+      terminal.setActivePaneIds(['2']);
+      mockSquidRun.daemon.terminalSnapshot.mockResolvedValue({
+        ok: true,
+        terminals: [
+          { paneId: '2', alive: true, mode: 'pty-command', scrollback: '' },
+        ],
+      });
+      terminal.terminals.set('2', { write: jest.fn() });
+
+      await terminal.spawnAllAgents();
+
+      expect(mockSquidRun.claude.spawn).not.toHaveBeenCalled();
+      expect(mockSquidRun.pty.claimStartupInjection).not.toHaveBeenCalled();
+      terminal.setActivePaneIds(terminal.PANE_IDS);
+      jest.useFakeTimers();
+    });
+
+    test('arms daemon-started pane with a fresh ISO createdAt timestamp', async () => {
+      jest.useRealTimers();
+      mockSquidRun.claude.spawn.mockClear();
+      terminal.setActivePaneIds(['2']);
+      mockSquidRun.daemon.terminalSnapshot.mockResolvedValue({
+        ok: true,
+        terminals: [
+          {
+            paneId: '2',
+            alive: true,
+            mode: 'pty-command',
+            createdAt: new Date().toISOString(),
+            scrollback: '',
+          },
+        ],
+      });
+      terminal.terminals.set('2', { write: jest.fn() });
+
+      await terminal.spawnAllAgents();
+
+      expect(mockSquidRun.claude.spawn).not.toHaveBeenCalled();
+      expect(mockSquidRun.pty.claimStartupInjection).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '2',
+        source: 'daemon-command-on-create',
+      }));
+      terminal.setActivePaneIds(terminal.PANE_IDS);
+      jest.useFakeTimers();
+    });
+
+    test('does not arm daemon-started shared panes from squid-room mirror context', async () => {
+      jest.useRealTimers();
+      mockSquidRun.claude.spawn.mockClear();
+      terminal.setActivePaneIds(['2']);
+      terminal.setStartupWindowContext({
+        windowKey: 'squid-room',
+        profileName: 'main',
+        sessionScopeId: 'app-session-454:squid-room',
+      });
+      mockSquidRun.daemon.terminalSnapshot.mockResolvedValue({
+        ok: true,
+        terminals: [
+          { paneId: '2', alive: true, mode: 'pty-command', createdAt: Date.now(), scrollback: '' },
+        ],
+      });
+      terminal.terminals.set('2', { write: jest.fn() });
+
+      await terminal.spawnAllAgents();
+
+      expect(mockSquidRun.claude.spawn).not.toHaveBeenCalled();
+      expect(mockSquidRun.pty.claimStartupInjection).not.toHaveBeenCalled();
+      terminal.setActivePaneIds(terminal.PANE_IDS);
+      terminal.setStartupWindowContext({ windowKey: 'main', profileName: 'main' });
+      jest.useFakeTimers();
+    });
+
+    test('does not skip spawnAgent for daemon-started non-core arm panes', async () => {
+      jest.useRealTimers();
+      mockSquidRun.claude.spawn.mockClear();
+      terminal.setActivePaneIds(['trustquote-app']);
+      terminal.setPaneRuntimeOverride('trustquote-app', {
+        roleId: 'trustquote-app',
+        routeTarget: 'trustquote-app',
+        command: 'codex',
+        spawnCommandOnCreate: true,
+      });
+      mockSquidRun.daemon.terminalSnapshot.mockResolvedValue({
+        ok: true,
+        terminals: [
+          {
+            paneId: 'trustquote-app',
+            alive: true,
+            mode: 'pty-command',
+            createdAt: Date.now(),
+            scrollback: '',
+          },
+        ],
+      });
+      terminal.terminals.set('trustquote-app', { write: jest.fn() });
+
+      await terminal.spawnAllAgents();
+
+      expect(mockSquidRun.pty.claimStartupInjection).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: 'trustquote-app',
+        source: 'spawn-command-on-create-retry',
+        modelType: 'codex',
+      }));
+      terminal.clearPaneRuntimeOverride('trustquote-app');
+      terminal.setActivePaneIds(terminal.PANE_IDS);
+      jest.useFakeTimers();
+    });
+
+    test('normal spawn path remains mutually exclusive with daemon command-on-create startup arm', async () => {
+      jest.useRealTimers();
+      terminal.setActivePaneIds(['2']);
+      mockSettings.getSettings.mockReturnValue({ paneCommands: { '2': 'codex' } });
+      terminal.registerCodexPane('2');
+      mockSquidRun.daemon.terminalSnapshot.mockResolvedValue({
+        ok: true,
+        terminals: [
+          { paneId: '2', alive: false, mode: 'pty-command', createdAt: Date.now(), scrollback: '' },
+        ],
+      });
+      mockSquidRun.claude.spawn.mockResolvedValue({ success: true, command: 'codex' });
+      terminal.terminals.set('2', { write: jest.fn() });
+
+      await terminal.spawnAllAgents();
+
+      expect(mockSquidRun.claude.spawn).toHaveBeenCalledTimes(1);
+      expect(mockSquidRun.pty.claimStartupInjection).toHaveBeenCalledTimes(1);
+      expect(mockSquidRun.pty.claimStartupInjection).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '2',
+        source: 'spawn',
+        modelType: 'codex',
+      }));
+      expect(mockSquidRun.pty.claimStartupInjection).not.toHaveBeenCalledWith(expect.objectContaining({
+        source: 'daemon-command-on-create',
+      }));
+      terminal.unregisterCodexPane('2');
+      terminal.setActivePaneIds(terminal.PANE_IDS);
       jest.useFakeTimers();
     });
   });
