@@ -9,6 +9,7 @@ const { readSystemCapabilitiesSnapshot } = require('../modules/local-model-capab
 const {
   buildCodexDesktopCapabilityStatus,
 } = require('../modules/main/codex-desktop-capability-awareness');
+const { PROMOTION } = require('../modules/the-tell/promotion-gate');
 
 const KEY_MODULE_PATHS = Object.freeze({
   recovery_manager: path.join('ui', 'modules', 'recovery-manager.js'),
@@ -116,6 +117,21 @@ const HEALTH_SCORE_PENALTIES = Object.freeze({
     category: 'codex_desktop',
     rationale: 'A stale Codex attention poller heartbeat means the external restart hand may be absent.',
   }),
+  the_tell_shadow_runner_stale: Object.freeze({
+    points: 6,
+    category: 'the_tell',
+    rationale: 'The Tell shadow runner is quiet long enough to need operator attention but not long enough to break promotion continuity.',
+  }),
+  the_tell_shadow_runner_blind: Object.freeze({
+    points: 8,
+    category: 'the_tell',
+    rationale: 'The Tell shadow runner is alive but its latest tick failed to observe TrustQuote data.',
+  }),
+  the_tell_shadow_runner_dead: Object.freeze({
+    points: 15,
+    category: 'the_tell',
+    rationale: 'The Tell shadow runner has crossed the promotion gate continuity-break threshold.',
+  }),
 });
 
 const BRIDGE_ENV_KEYS = Object.freeze([
@@ -131,6 +147,7 @@ const DEFAULT_SUPERVISOR_POLL_MS = 4000;
 const DEFAULT_SUPERVISOR_STATUS_STALE_MULTIPLIER = 4;
 const DEFAULT_SUPERVISOR_STATUS_STALE_MIN_MS = 15000;
 const DEFAULT_CODEX_ATTENTION_POLLER_HEARTBEAT_STALE_MS = 15 * 60 * 1000;
+const DEFAULT_THE_TELL_SHADOW_RUNNER_STALE_MS = PROMOTION.MAX_OBSERVATION_GAP_MS;
 const MEMORY_CONSISTENCY_REVIEW_SKIP_KIND_ALLOWLIST = Object.freeze([
   'ambiguous_multi_target',
   'deleted_source_orphan',
@@ -177,6 +194,12 @@ function getInspectTelegramPollerFreshness() {
 function asPositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function asNonNegativeInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return parsed;
 }
 
@@ -426,6 +449,17 @@ function getCodexAttentionPollerHeartbeatStaleMs(options = {}) {
   );
 }
 
+function getTheTellShadowRunnerStaleMs(options = {}) {
+  const env = options.env && typeof options.env === 'object' ? options.env : process.env;
+  return Math.max(
+    60 * 1000,
+    asPositiveInt(
+      options.theTellShadowRunnerStaleMs ?? env.SQUIDRUN_THE_TELL_SHADOW_RUNNER_STALE_MS,
+      DEFAULT_THE_TELL_SHADOW_RUNNER_STALE_MS
+    )
+  );
+}
+
 function inspectCodexAttentionPollerHeartbeat(projectRoot, options = {}) {
   if (
     options.codexAttentionPollerHeartbeat
@@ -483,7 +517,7 @@ function inspectCodexAttentionPollerHeartbeat(projectRoot, options = {}) {
       heartbeatAtMs: normalizedHeartbeatAtMs,
       heartbeatAgeMs,
       staleThresholdMs,
-      activeCount: asPositiveInt(parsed.active_count ?? parsed.activeCount, null),
+      activeCount: asNonNegativeInt(parsed.active_count ?? parsed.activeCount, null),
       session: asPositiveInt(parsed.session, null),
       source: asNonEmptyString(parsed.source) || null,
       stale: staleReasons.length > 0,
@@ -505,6 +539,186 @@ function inspectCodexAttentionPollerHeartbeat(projectRoot, options = {}) {
       source: null,
       stale: true,
       staleReasons: ['heartbeat_read_error'],
+      error: err.message,
+    };
+  }
+}
+
+function latestSuccessfulTickFromLedger(ledgerPath) {
+  if (!ledgerPath || !safeStat(ledgerPath)?.isFile()) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
+    const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
+    let latest = null;
+    for (const row of rows) {
+      if (!row || row.type !== 'tick' || !isFiniteNumberValue(row.ts)) continue;
+      const ts = Math.floor(Number(row.ts));
+      if (latest === null || ts > latest.ts) {
+        latest = {
+          ts,
+          checkedAt: asNonEmptyString(row.checkedAt || row.observedAt) || null,
+          tickId: asNonEmptyString(row.tickId) || null,
+        };
+      }
+    }
+    return latest;
+  } catch {
+    return null;
+  }
+}
+
+function classifyTheTellShadowRunner({
+  lastTickAgeMs,
+  lastActivityType,
+  staleThresholdMs = DEFAULT_THE_TELL_SHADOW_RUNNER_STALE_MS,
+  statusFilePresent,
+}) {
+  if (statusFilePresent !== true) {
+    return { status: 'missing', stale: false, staleReasons: [] };
+  }
+  if (lastActivityType && lastActivityType !== 'tick') {
+    return { status: 'blind', stale: true, staleReasons: [`last_tick_${lastActivityType}`] };
+  }
+  if (!isFiniteNumberValue(lastTickAgeMs)) {
+    return { status: 'dead', stale: true, staleReasons: ['no_successful_tick'] };
+  }
+  const ageMs = Number(lastTickAgeMs);
+  if (ageMs >= staleThresholdMs) {
+    return { status: 'dead', stale: true, staleReasons: ['last_tick_dead'] };
+  }
+  if (ageMs >= 3 * 60 * 60 * 1000) {
+    return { status: 'stale', stale: true, staleReasons: ['last_tick_stale'] };
+  }
+  if (ageMs >= 40 * 60 * 1000) {
+    return { status: 'aging', stale: false, staleReasons: [] };
+  }
+  return { status: 'fresh', stale: false, staleReasons: [] };
+}
+
+function inspectTheTellShadowRunner(projectRoot, options = {}) {
+  if (
+    options.theTellShadowRunner
+    && typeof options.theTellShadowRunner === 'object'
+    && !Array.isArray(options.theTellShadowRunner)
+  ) {
+    return options.theTellShadowRunner;
+  }
+
+  const profileName = normalizeProfileName(options.profileName || DEFAULT_PROFILE);
+  const statusPath = options.theTellShadowStatusPath
+    ? path.resolve(String(options.theTellShadowStatusPath))
+    : resolveProfileCoordPath(projectRoot, path.join('runtime', 'the-tell-shadow-status.json'), profileName);
+  const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+  const staleThresholdMs = getTheTellShadowRunnerStaleMs(options);
+  const stat = safeStat(statusPath);
+  if (!stat || !stat.isFile()) {
+    return {
+      ok: true,
+      status: 'missing',
+      path: statusPath,
+      statusFilePresent: false,
+      running: false,
+      runId: null,
+      tickId: null,
+      lastTickAt: null,
+      lastTickAtMs: null,
+      lastTickAgeMs: null,
+      lastActivityAt: null,
+      lastActivityAtMs: null,
+      lastActivityAgeMs: null,
+      lastActivityType: null,
+      staleThresholdMs,
+      intervalMs: null,
+      ledgerRows: null,
+      ledgerPath: null,
+      counts: null,
+      stale: false,
+      staleReasons: [],
+      error: null,
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+    const lastTick = parsed.lastTick && typeof parsed.lastTick === 'object' && !Array.isArray(parsed.lastTick)
+      ? parsed.lastTick
+      : {};
+    const ledgerPath = asNonEmptyString(parsed.ledgerPath) || resolveProfileCoordPath(projectRoot, path.join('runtime', 'the-tell-shadow-ledger.json'), profileName);
+    const latestSuccessfulTick = latestSuccessfulTickFromLedger(ledgerPath);
+    const lastActivityAt = asNonEmptyString(lastTick.checkedAt || parsed.checkedAt || lastTick.observedAt) || null;
+    const rawLastActivityMs = isFiniteNumberValue(lastTick.ts)
+      ? Number(lastTick.ts)
+      : (lastActivityAt ? Date.parse(lastActivityAt) : NaN);
+    const lastActivityAtMs = Number.isFinite(rawLastActivityMs) ? Math.floor(rawLastActivityMs) : null;
+    const lastActivityAgeMs = lastActivityAtMs !== null ? Math.max(0, nowMs - lastActivityAtMs) : null;
+    const statusSuccessfulTick = (lastTick.type || lastTick.rowType) === 'tick' && isFiniteNumberValue(lastTick.ts)
+      ? {
+        ts: Math.floor(Number(lastTick.ts)),
+        checkedAt: lastActivityAt,
+        tickId: asNonEmptyString(lastTick.tickId) || null,
+      }
+      : null;
+    const successfulTick = latestSuccessfulTick || statusSuccessfulTick;
+    const lastTickAtMs = successfulTick ? successfulTick.ts : null;
+    const lastTickAt = successfulTick?.checkedAt || (lastTickAtMs !== null ? new Date(lastTickAtMs).toISOString() : null);
+    const lastTickAgeMs = lastTickAtMs !== null ? Math.max(0, nowMs - lastTickAtMs) : null;
+    const lastActivityType = asNonEmptyString(lastTick.type || lastTick.rowType) || null;
+    const classification = classifyTheTellShadowRunner({
+      lastTickAgeMs,
+      lastActivityType,
+      staleThresholdMs,
+      statusFilePresent: true,
+    });
+
+    return {
+      ok: parsed.ok === true && classification.stale !== true,
+      status: classification.status,
+      path: statusPath,
+      statusFilePresent: true,
+      running: parsed.running === true,
+      runId: asNonEmptyString(parsed.runId) || null,
+      tickId: successfulTick?.tickId || asNonEmptyString(parsed.tickId || lastTick.tickId) || null,
+      lastTickAt,
+      lastTickAtMs,
+      lastTickAgeMs,
+      lastActivityAt,
+      lastActivityAtMs,
+      lastActivityAgeMs,
+      lastActivityType,
+      staleThresholdMs,
+      intervalMs: asPositiveInt(parsed.intervalMs || lastTick.intervalMs, null),
+      ledgerRows: asNonNegativeInt(parsed.ledgerRows, null),
+      ledgerPath,
+      counts: lastTick.counts && typeof lastTick.counts === 'object' && !Array.isArray(lastTick.counts)
+        ? lastTick.counts
+        : null,
+      stale: classification.stale,
+      staleReasons: classification.staleReasons,
+      error: parsed.lastError || null,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 'read_error',
+      path: statusPath,
+      statusFilePresent: true,
+      running: false,
+      runId: null,
+      tickId: null,
+      lastTickAt: null,
+      lastTickAtMs: null,
+      lastTickAgeMs: null,
+      lastActivityAt: null,
+      lastActivityAtMs: null,
+      lastActivityAgeMs: null,
+      lastActivityType: null,
+      staleThresholdMs,
+      intervalMs: null,
+      ledgerRows: null,
+      ledgerPath: null,
+      counts: null,
+      stale: true,
+      staleReasons: ['status_read_error'],
       error: err.message,
     };
   }
@@ -1469,7 +1683,8 @@ function buildHealthStatus(snapshot) {
     && typeof snapshot.codexAttentionPollerHeartbeat === 'object'
     ? snapshot.codexAttentionPollerHeartbeat
     : {};
-  if (codexAttentionPollerHeartbeat.stale === true) {
+  const codexAttentionActiveCount = asNonNegativeInt(codexAttentionPollerHeartbeat.activeCount, 0);
+  if (codexAttentionPollerHeartbeat.stale === true && codexAttentionActiveCount > 0) {
     const staleReasons = Array.isArray(codexAttentionPollerHeartbeat.staleReasons)
       && codexAttentionPollerHeartbeat.staleReasons.length > 0
       ? codexAttentionPollerHeartbeat.staleReasons.join(',')
@@ -1482,6 +1697,28 @@ function buildHealthStatus(snapshot) {
       + `threshold_ms=${codexAttentionPollerHeartbeat.staleThresholdMs ?? 'unknown'}`
     );
     addPenalty('codex_attention_poller_heartbeat_stale');
+  }
+  const theTellShadowRunner = snapshot.theTellShadowRunner
+    && typeof snapshot.theTellShadowRunner === 'object'
+    ? snapshot.theTellShadowRunner
+    : {};
+  if (['stale', 'blind', 'dead', 'read_error'].includes(theTellShadowRunner.status)) {
+    const staleReasons = Array.isArray(theTellShadowRunner.staleReasons)
+      && theTellShadowRunner.staleReasons.length > 0
+      ? theTellShadowRunner.staleReasons.join(',')
+      : 'unknown';
+    const warningCode = theTellShadowRunner.status === 'dead' || theTellShadowRunner.status === 'read_error'
+      ? 'the_tell_shadow_runner_dead'
+      : (theTellShadowRunner.status === 'blind' ? 'the_tell_shadow_runner_blind' : 'the_tell_shadow_runner_stale');
+    warnings.push(
+      `${warningCode}:`
+      + `status=${theTellShadowRunner.status || 'unknown'},`
+      + `reasons=${staleReasons},`
+      + `last_tick_age_ms=${theTellShadowRunner.lastTickAgeMs ?? 'unknown'},`
+      + `last_activity_age_ms=${theTellShadowRunner.lastActivityAgeMs ?? 'unknown'},`
+      + `threshold_ms=${theTellShadowRunner.staleThresholdMs ?? 'unknown'}`
+    );
+    addPenalty(warningCode);
   }
   const websocket = snapshot.appStatus?.websocket && typeof snapshot.appStatus.websocket === 'object'
     ? snapshot.appStatus.websocket
@@ -1546,6 +1783,10 @@ function createHealthSnapshot(options = {}) {
     profileName,
   });
   const codexAttentionPollerHeartbeat = inspectCodexAttentionPollerHeartbeat(projectRoot, options);
+  const theTellShadowRunner = inspectTheTellShadowRunner(projectRoot, {
+    ...options,
+    profileName,
+  });
 
   const snapshot = {
     generatedAt,
@@ -1568,6 +1809,7 @@ function createHealthSnapshot(options = {}) {
     systemCapabilities,
     codexDesktopCapability,
     codexAttentionPollerHeartbeat,
+    theTellShadowRunner,
     telegramPoller,
     supervisor,
   };
@@ -1603,6 +1845,50 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   const cognitiveMemory = snapshot.databases?.cognitiveMemory || {};
   lines.push(`- Evidence ledger DB: ${evidenceLedger.exists ? `present, rows=${Number(evidenceLedger.rowCount || 0)}` : 'missing'}`);
   lines.push(`- Cognitive memory DB: ${cognitiveMemory.exists ? `present, rows=${Number(cognitiveMemory.rowCount || 0)}` : 'missing'}`);
+
+  const theTellShadowRunner = snapshot.theTellShadowRunner
+    && typeof snapshot.theTellShadowRunner === 'object'
+    ? snapshot.theTellShadowRunner
+    : {};
+  const shadowLastTickText = isFiniteNumberValue(theTellShadowRunner.lastTickAtMs)
+    ? new Date(Number(theTellShadowRunner.lastTickAtMs)).toISOString()
+    : (theTellShadowRunner.lastTickAt || 'no successful tick');
+  const shadowLastTickAgeText = isFiniteNumberValue(theTellShadowRunner.lastTickAgeMs)
+    ? `${Math.round(Number(theTellShadowRunner.lastTickAgeMs) / 1000)}s old`
+    : 'age unknown';
+  const shadowLastActivityText = isFiniteNumberValue(theTellShadowRunner.lastActivityAtMs)
+    ? new Date(Number(theTellShadowRunner.lastActivityAtMs)).toISOString()
+    : (theTellShadowRunner.lastActivityAt || 'no activity');
+  const shadowLastActivityAgeText = isFiniteNumberValue(theTellShadowRunner.lastActivityAgeMs)
+    ? `${Math.round(Number(theTellShadowRunner.lastActivityAgeMs) / 1000)}s old`
+    : 'age unknown';
+  const shadowThresholdText = isFiniteNumberValue(theTellShadowRunner.staleThresholdMs)
+    ? `${Math.round(Number(theTellShadowRunner.staleThresholdMs) / 60000)}m dead threshold`
+    : 'dead threshold unknown';
+  lines.push('');
+  lines.push('THE TELL SHADOW RUNNER');
+  lines.push(`- Freshness: ${theTellShadowRunner.status || 'unknown'} (${shadowLastTickText}; ${shadowLastTickAgeText}; ${shadowThresholdText})`);
+  lines.push(`- Last Activity: type=${theTellShadowRunner.lastActivityType || 'unknown'} (${shadowLastActivityText}; ${shadowLastActivityAgeText})`);
+  lines.push(`- Running: ${theTellShadowRunner.running === true ? 'yes' : 'no'}, ledger_rows=${theTellShadowRunner.ledgerRows ?? 'unknown'}, interval_ms=${theTellShadowRunner.intervalMs ?? 'unknown'}`);
+  if (theTellShadowRunner.counts && typeof theTellShadowRunner.counts === 'object') {
+    lines.push(
+      '- Last Tick Counts: '
+      + `jobs=${Number(theTellShadowRunner.counts.jobs || 0)}, `
+      + `quotes=${Number(theTellShadowRunner.counts.quotes || 0)}, `
+      + `events=${Number(theTellShadowRunner.counts.events || 0)}, `
+      + `spoke=${Number(theTellShadowRunner.counts.spokeRows || 0)}, `
+      + `swallowed=${Number(theTellShadowRunner.counts.swallowedRows || 0)}`
+    );
+  }
+  if (Array.isArray(theTellShadowRunner.staleReasons) && theTellShadowRunner.staleReasons.length > 0) {
+    lines.push(`- Stale Reasons: ${theTellShadowRunner.staleReasons.join(', ')}`);
+  }
+  if (theTellShadowRunner.path) {
+    lines.push(`- State Path: ${theTellShadowRunner.path}`);
+  }
+  if (theTellShadowRunner.ledgerPath) {
+    lines.push(`- Ledger Path: ${theTellShadowRunner.ledgerPath}`);
+  }
 
   const memoryConsistency = snapshot.memoryConsistency && typeof snapshot.memoryConsistency === 'object'
     ? snapshot.memoryConsistency
@@ -2059,9 +2345,11 @@ module.exports = {
   getAcceptedSourceHeadingResidue,
   getPenaltyPoints,
   getCodexAttentionPollerHeartbeatStaleMs,
+  getTheTellShadowRunnerStaleMs,
   getSupervisorStatusFreshnessWindowMs,
   getStartupHealthFileName,
   inspectCodexAttentionPollerHeartbeat,
+  inspectTheTellShadowRunner,
   inspectSupervisorHeartbeat,
   inspectTelegramPoller,
   inspectSqliteDb,

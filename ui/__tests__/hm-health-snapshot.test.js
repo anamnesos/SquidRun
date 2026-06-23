@@ -1240,6 +1240,237 @@ describe('hm-health-snapshot', () => {
     expect(snapshot.status.penalties).not.toContainEqual(expect.objectContaining({ code: 'codex_attention_poller_heartbeat_stale' }));
   });
 
+  test('keeps a stale idle Codex attention poller heartbeat visible but unscored', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const nowMs = Date.parse('2026-06-12T16:30:00.000Z');
+    const heartbeatDir = path.join(tempDir, '.squidrun', 'runtime', 'codex-attention-bridge');
+    fs.mkdirSync(heartbeatDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(heartbeatDir, 'poller-heartbeat.json'),
+      JSON.stringify({
+        at: '2026-06-12T16:04:36.147Z',
+        active_count: 0,
+        source: 'codex-desktop-poller',
+        session: 443,
+      }, null, 2)
+    );
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs,
+      jestTimeoutMs: 1000,
+      env: {},
+      codexAttentionPollerHeartbeatStaleMs: 15 * 60 * 1000,
+    });
+    const markdown = renderStartupHealthMarkdown(snapshot);
+
+    expect(snapshot.codexAttentionPollerHeartbeat).toEqual(expect.objectContaining({
+      status: 'stale',
+      stale: true,
+      activeCount: 0,
+      staleReasons: ['heartbeat_stale'],
+    }));
+    expect(snapshot.status.score).toBe(100);
+    expect(snapshot.status.warnings).not.toContainEqual(expect.stringContaining('codex_attention_poller_heartbeat_stale'));
+    expect(snapshot.status.penalties).not.toContainEqual(expect.objectContaining({ code: 'codex_attention_poller_heartbeat_stale' }));
+    expect(markdown).toContain('CODEX ATTENTION POLLER HEARTBEAT');
+    expect(markdown).toContain('- Freshness: stale');
+    expect(markdown).toContain('- Active Requests At Last Poll: 0');
+  });
+
+  test('surfaces The Tell shadow runner aging without scoring short hiccups', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const nowMs = Date.parse('2026-06-12T16:30:00.000Z');
+    const tickMs = nowMs - 60 * 60 * 1000;
+    fs.writeFileSync(
+      path.join(tempDir, '.squidrun', 'runtime', 'the-tell-shadow-status.json'),
+      JSON.stringify({
+        ok: true,
+        running: true,
+        runId: 'the-tell-shadow:test',
+        tickId: 'tick-aging',
+        checkedAt: new Date(tickMs).toISOString(),
+        intervalMs: 20 * 60 * 1000,
+        ledgerRows: 4,
+        lastTick: {
+          type: 'tick',
+          tickId: 'tick-aging',
+          ts: tickMs,
+          checkedAt: new Date(tickMs).toISOString(),
+          counts: {
+            jobs: 2,
+            quotes: 1,
+            events: 3,
+            spokeRows: 0,
+            swallowedRows: 1,
+          },
+        },
+      }, null, 2)
+    );
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs,
+      jestTimeoutMs: 1000,
+      env: {},
+    });
+    const markdown = renderStartupHealthMarkdown(snapshot);
+
+    expect(snapshot.theTellShadowRunner).toEqual(expect.objectContaining({
+      status: 'aging',
+      stale: false,
+      lastTickAgeMs: 60 * 60 * 1000,
+    }));
+    expect(snapshot.status.score).toBe(100);
+    expect(snapshot.status.warnings).not.toContainEqual(expect.stringContaining('the_tell_shadow_runner'));
+    expect(snapshot.status.penalties).not.toContainEqual(expect.objectContaining({ code: expect.stringContaining('the_tell_shadow_runner') }));
+    expect(markdown).toContain('THE TELL SHADOW RUNNER');
+    expect(markdown).toContain('- Freshness: aging');
+  });
+
+  test('warns and scores The Tell shadow runner stale before the gate continuity break', () => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const nowMs = Date.parse('2026-06-12T16:30:00.000Z');
+    const tickMs = nowMs - 4 * 60 * 60 * 1000;
+    fs.writeFileSync(
+      path.join(tempDir, '.squidrun', 'runtime', 'the-tell-shadow-status.json'),
+      JSON.stringify({
+        ok: true,
+        running: true,
+        tickId: 'tick-stale',
+        intervalMs: 20 * 60 * 1000,
+        ledgerRows: 4,
+        lastTick: {
+          type: 'tick',
+          tickId: 'tick-stale',
+          ts: tickMs,
+          checkedAt: new Date(tickMs).toISOString(),
+        },
+      }, null, 2)
+    );
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs,
+      jestTimeoutMs: 1000,
+      env: {},
+    });
+
+    expect(snapshot.theTellShadowRunner).toEqual(expect.objectContaining({
+      status: 'stale',
+      stale: true,
+      staleReasons: ['last_tick_stale'],
+    }));
+    expect(snapshot.status.label).toBe('WARN');
+    expect(snapshot.status.score).toBe(94);
+    expect(snapshot.status.warnings).toContainEqual(expect.stringContaining('the_tell_shadow_runner_stale:status=stale'));
+    expect(snapshot.status.penalties).toContainEqual({ code: 'the_tell_shadow_runner_stale', points: 6 });
+  });
+
+  test('marks The Tell shadow runner dead at the gate continuity-break threshold', () => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const nowMs = Date.parse('2026-06-12T16:30:00.000Z');
+    const tickMs = nowMs - 25 * 60 * 60 * 1000;
+    fs.writeFileSync(
+      path.join(tempDir, '.squidrun', 'runtime', 'the-tell-shadow-status.json'),
+      JSON.stringify({
+        ok: true,
+        running: true,
+        tickId: 'tick-dead',
+        intervalMs: 20 * 60 * 1000,
+        ledgerRows: 4,
+        lastTick: {
+          type: 'tick',
+          tickId: 'tick-dead',
+          ts: tickMs,
+          checkedAt: new Date(tickMs).toISOString(),
+        },
+      }, null, 2)
+    );
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs,
+      jestTimeoutMs: 1000,
+      env: {},
+    });
+
+    expect(snapshot.theTellShadowRunner).toEqual(expect.objectContaining({
+      status: 'dead',
+      stale: true,
+      staleReasons: ['last_tick_dead'],
+    }));
+    expect(snapshot.status.label).toBe('WARN');
+    expect(snapshot.status.score).toBe(85);
+    expect(snapshot.status.warnings).toContainEqual(expect.stringContaining('the_tell_shadow_runner_dead:status=dead'));
+    expect(snapshot.status.penalties).toContainEqual({ code: 'the_tell_shadow_runner_dead', points: 15 });
+  });
+
+  test('does not count The Tell shadow runner tick_failed as fresh observation', () => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const nowMs = Date.parse('2026-06-12T16:30:00.000Z');
+    const tickMs = nowMs - 20 * 60 * 1000;
+    fs.writeFileSync(
+      path.join(tempDir, '.squidrun', 'runtime', 'the-tell-shadow-status.json'),
+      JSON.stringify({
+        ok: false,
+        running: true,
+        tickId: 'tick-failed',
+        intervalMs: 20 * 60 * 1000,
+        ledgerRows: 4,
+        lastTick: {
+          type: 'tick_failed',
+          tickId: 'tick-failed',
+          ts: tickMs,
+          checkedAt: new Date(tickMs).toISOString(),
+        },
+      }, null, 2)
+    );
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs,
+      jestTimeoutMs: 1000,
+      env: {},
+    });
+
+    expect(snapshot.theTellShadowRunner).toEqual(expect.objectContaining({
+      status: 'blind',
+      stale: true,
+      lastActivityType: 'tick_failed',
+      staleReasons: ['last_tick_tick_failed'],
+    }));
+    expect(snapshot.status.label).toBe('WARN');
+    expect(snapshot.status.score).toBe(92);
+    expect(snapshot.status.warnings).toContainEqual(expect.stringContaining('the_tell_shadow_runner_blind:status=blind'));
+    expect(snapshot.status.penalties).toContainEqual({ code: 'the_tell_shadow_runner_blind', points: 8 });
+  });
+
   test('writes side-profile startup health to the suffixed on-demand artifact path', () => {
     const { main } = require('../scripts/hm-health-snapshot');
     execFileSync.mockReturnValue([
@@ -1333,6 +1564,18 @@ describe('hm-health-snapshot', () => {
     expect(HEALTH_SCORE_PENALTIES.codex_attention_poller_heartbeat_stale).toEqual(expect.objectContaining({
       points: 15,
       category: 'codex_desktop',
+    }));
+    expect(HEALTH_SCORE_PENALTIES.the_tell_shadow_runner_stale).toEqual(expect.objectContaining({
+      points: 6,
+      category: 'the_tell',
+    }));
+    expect(HEALTH_SCORE_PENALTIES.the_tell_shadow_runner_blind).toEqual(expect.objectContaining({
+      points: 8,
+      category: 'the_tell',
+    }));
+    expect(HEALTH_SCORE_PENALTIES.the_tell_shadow_runner_dead).toEqual(expect.objectContaining({
+      points: 15,
+      category: 'the_tell',
     }));
     expect(getPenaltyPoints('missing_key_modules', { count: 2 })).toBe(8);
     expect(resolveHealthThreshold(100)).toEqual(expect.objectContaining({ label: 'OK' }));
