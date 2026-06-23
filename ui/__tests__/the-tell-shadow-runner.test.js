@@ -166,8 +166,144 @@ describe('the tell shadow runner', () => {
     })]);
   });
 
+  test('writes tick rows into the ledger even when silence has no supported signals', async () => {
+    const ledgerPath = path.join(tempDir, 'shadow.json');
+    const statusPath = path.join(tempDir, 'status.json');
+    const nowMs = Date.parse('2026-06-22T19:00:00.000Z');
+
+    const result = await runShadowTick({
+      nowMs,
+      runId: 'shadow-test',
+      tickId: 'tick-silent',
+      ledgerPath,
+      statusPath,
+      intervalMs: 1200000,
+      fetchTrustQuoteReadOnlySignals: jest.fn(async () => ({
+        ok: true,
+        source: 'live',
+        data: { counts: { jobs: 2, quotes: 1 }, eventCount: 3, parkedCount: 0, signals: [] },
+      })),
+      evaluate: jest.fn(),
+    });
+
+    expect(result.rows).toHaveLength(1);
+    const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
+    expect(ledger.rows).toEqual([expect.objectContaining({
+      schema: 'squidrun.the_tell.shadow.ledger.v1',
+      type: 'tick',
+      runId: 'shadow-test',
+      tickId: 'tick-silent',
+      ts: nowMs,
+      source: 'live',
+      ok: true,
+      readOnly: true,
+      dryRun: true,
+      intervalMs: 1200000,
+      counts: expect.objectContaining({
+        jobs: 2,
+        quotes: 1,
+        events: 3,
+        supportedSignals: 0,
+        spokeRows: 0,
+        swallowedRows: 0,
+      }),
+    })]);
+    expect(JSON.parse(fs.readFileSync(statusPath, 'utf8')).lastTick.type).toBe('tick');
+  });
+
+  test('writes failed tick rows that do not satisfy promotion-gate observation continuity', async () => {
+    const ledgerPath = path.join(tempDir, 'shadow.json');
+    const statusPath = path.join(tempDir, 'status.json');
+    const nowMs = Date.parse('2026-06-22T19:00:00.000Z');
+
+    await runShadowTick({
+      nowMs,
+      runId: 'shadow-test',
+      tickId: 'tick-failed-read',
+      ledgerPath,
+      statusPath,
+      intervalMs: 1200000,
+      fetchTrustQuoteReadOnlySignals: jest.fn(async () => ({
+        ok: false,
+        source: 'unverified',
+        reason: 'trustquote_firestore_read_failed',
+        data: { counts: { jobs: 0, quotes: 0 }, eventCount: 0, parkedCount: 0, signals: [] },
+      })),
+      evaluate: jest.fn(),
+    });
+
+    const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
+    expect(ledger.rows).toEqual([expect.objectContaining({
+      type: 'tick_failed',
+      ok: false,
+      reason: 'trustquote_firestore_read_failed',
+      readOnly: true,
+      dryRun: true,
+    })]);
+
+    const gate = evaluatePromotionGate({
+      shadowStartedAtMs: nowMs - 8 * 86400000,
+      rows: ledger.rows,
+    }, { nowMs });
+    expect(gate.continuouslyObserved).toBe(false);
+    expect(gate.observation.reason).toBe('no_observation_ticks_in_window');
+  });
+
   test('normalizes intervals to avoid hammering Firestore', () => {
     expect(normalizeIntervalMs(1000)).toBe(MIN_INTERVAL_MS);
+  });
+
+  test('caps ledger rows while preserving the original shadow start time', async () => {
+    const ledgerPath = path.join(tempDir, 'shadow.json');
+    const statusPath = path.join(tempDir, 'status.json');
+    const baseMs = Date.parse('2026-06-22T19:00:00.000Z');
+    const makeTick = (offset, key) => {
+      const signal = {
+        type: 'trustquote:job-margin',
+        id: key,
+        source: 'live',
+        observedAtMs: baseMs + offset,
+        rawRefs: { system: 'trustquote', collection: 'jobs', docId: key },
+        facts: { bidAmount: offset, bidPrice: offset, historicalMargin: { floorPct: null, sampleCount: 0, jobIds: [] } },
+      };
+      return runShadowTick({
+        nowMs: baseMs + offset,
+        ledgerPath,
+        statusPath,
+        maxLedgerRows: 100,
+        fetchTrustQuoteReadOnlySignals: jest.fn(async () => ({
+          ok: true,
+          source: 'live',
+          data: { counts: { jobs: 1, quotes: 0 }, eventCount: 0, parkedCount: 0, signals: [signal] },
+        })),
+        evaluate: jest.fn(() => ({
+          source: 'live',
+          regretScore: 0,
+          context: 'trustquote:job-margin',
+          speak: false,
+          swallowed: [{
+            key,
+            signal: 'trustquote:job-margin',
+            reason: 'insufficient_history_for_floor',
+            snapshot: { bidAmount: offset },
+          }],
+        })),
+      });
+    };
+
+    for (let index = 0; index < 105; index += 1) {
+      await makeTick(index, `signal-${index}`);
+    }
+
+    const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
+    expect(ledger.shadowStartedAtMs).toBe(baseMs);
+    expect(ledger.rows).toHaveLength(100);
+    expect(ledger.rows[0].type).toBe('tick');
+    expect(ledger.rows[99].key).toBe('signal-104');
+    const swallowedRows = ledger.rows.filter((row) => row.type === 'swallowed');
+    expect(swallowedRows[0].key).toBe('signal-55');
+    expect(swallowedRows[49].key).toBe('signal-104');
+    expect(ledger.rows.filter((row) => row.type === 'tick')).toHaveLength(50);
   });
 
   test('extracts verify refs from TrustQuote rawRefs and numbers', () => {

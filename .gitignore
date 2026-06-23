@@ -127,6 +127,7 @@ workspace/build/integration/
 # Test coverage
 ui/coverage/
 ui/coverage-output.txt
+ui/dist-*/
 
 # Temp scripts and debug artifacts
 CLAUDE.scoped.md

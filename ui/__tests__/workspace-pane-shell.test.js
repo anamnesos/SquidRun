@@ -1,4 +1,5 @@
 const { configureWorkspacePaneShell } = require('../modules/workspace-pane-shell');
+const { TRUSTQUOTE_PANE_IDS } = require('../modules/work-room-terminal-visibility');
 
 class FakeClassList {
   constructor(initial = '') {
@@ -186,8 +187,8 @@ describe('workspace pane shell', () => {
 
     const result = configureWorkspacePaneShell({ windowKey: 'trustquote' }, terminal, doc);
 
-    expect(result.paneIds).toEqual(['trustquote-builder', 'trustquote-oracle']);
-    expect(terminal.setActivePaneIds).toHaveBeenCalledWith(['trustquote-builder', 'trustquote-oracle']);
+    expect(result.paneIds).toEqual(TRUSTQUOTE_PANE_IDS);
+    expect(terminal.setActivePaneIds).toHaveBeenCalledWith(TRUSTQUOTE_PANE_IDS);
     expect(doc.querySelector('.pane[data-pane-id="1"]').hidden).toBe(true);
     expect(doc.getElementById('terminal-trustquote-builder')).toBeTruthy();
     expect(doc.getElementById('terminal-trustquote-oracle')).toBeTruthy();

@@ -13,6 +13,7 @@ const DEFAULT_STATUS_PATH = path.join(RUNTIME_ROOT, 'the-tell-shadow-status.json
 const DEFAULT_PID_PATH = path.join(RUNTIME_ROOT, 'the-tell-shadow-runner.pid');
 const DEFAULT_INTERVAL_MS = 20 * 60 * 1000;
 const MIN_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_MAX_LEDGER_ROWS = 5000;
 
 function nowIso(nowMs = Date.now()) {
   return new Date(nowMs).toISOString();
@@ -40,15 +41,16 @@ function readShadowLedger(filePath = DEFAULT_LEDGER_PATH) {
   }
 }
 
-function appendShadowRows(filePath, rows, startedAtMs) {
+function appendShadowRows(filePath, rows, startedAtMs, maxRows = process.env.SQUIDRUN_THE_TELL_SHADOW_LEDGER_MAX_ROWS) {
   if (!Array.isArray(rows) || rows.length === 0) return { shadowStartedAtMs: startedAtMs, rows: [] };
   const existing = readShadowLedger(filePath);
   const shadowStartedAtMs = existing.shadowStartedAtMs || startedAtMs;
+  const retainedRows = [...existing.rows, ...rows].slice(-normalizeMaxLedgerRows(maxRows));
   const ledger = {
     schema: 'squidrun.the_tell.shadow.ledger.v1',
     shadowStartedAtMs,
     updatedAtMs: rows.reduce((max, row) => Math.max(max, asFiniteNumber(row.ts, 0) || 0), 0),
-    rows: [...existing.rows, ...rows],
+    rows: retainedRows,
   };
   writeJson(filePath, ledger);
   return ledger;
@@ -62,6 +64,12 @@ function asFiniteNumber(value, fallback = null) {
 function normalizeIntervalMs(value) {
   const numeric = asFiniteNumber(value, DEFAULT_INTERVAL_MS);
   return Math.max(MIN_INTERVAL_MS, numeric || DEFAULT_INTERVAL_MS);
+}
+
+function normalizeMaxLedgerRows(value) {
+  const numeric = asFiniteNumber(value, null);
+  if (!Number.isInteger(numeric) || numeric <= 0) return DEFAULT_MAX_LEDGER_ROWS;
+  return Math.max(100, numeric);
 }
 
 function firestoreRefs(rawRefs = {}) {
@@ -215,7 +223,7 @@ function buildSwallowedRows({ runId, tickId, nowMs, emission, signalById }) {
   });
 }
 
-function buildTickRow({ runId, tickId, nowMs, trustQuoteRead, supportedCount, rows, emission }) {
+function buildTickRow({ runId, tickId, nowMs, trustQuoteRead, supportedCount, rows, emission, intervalMs = null }) {
   return {
     schema: 'squidrun.the_tell.shadow.status.v1',
     type: 'tick',
@@ -227,6 +235,7 @@ function buildTickRow({ runId, tickId, nowMs, trustQuoteRead, supportedCount, ro
     ok: trustQuoteRead?.ok === true,
     readOnly: true,
     dryRun: true,
+    intervalMs,
     counts: {
       jobs: trustQuoteRead?.data?.counts?.jobs || 0,
       quotes: trustQuoteRead?.data?.counts?.quotes || 0,
@@ -237,6 +246,25 @@ function buildTickRow({ runId, tickId, nowMs, trustQuoteRead, supportedCount, ro
       swallowedRows: rows.filter((row) => row.type === 'swallowed').length,
     },
     reason: trustQuoteRead?.reason || null,
+  };
+}
+
+function buildLedgerTickRow(tickRow = {}) {
+  const ok = tickRow.ok === true;
+  return {
+    schema: 'squidrun.the_tell.shadow.ledger.v1',
+    type: ok ? 'tick' : 'tick_failed',
+    runId: tickRow.runId || null,
+    tickId: tickRow.tickId || null,
+    ts: tickRow.ts || null,
+    checkedAt: tickRow.checkedAt || null,
+    source: tickRow.source || 'unverified',
+    ok,
+    readOnly: true,
+    dryRun: true,
+    intervalMs: tickRow.intervalMs || null,
+    counts: tickRow.counts || {},
+    reason: tickRow.reason || null,
   };
 }
 
@@ -277,8 +305,19 @@ async function runShadowTick(options = {}) {
     rows.push(buildSpokeRow({ runId, tickId, nowMs, emission }));
   }
   rows.push(...buildSwallowedRows({ runId, tickId, nowMs, emission, signalById }));
-  const tickRow = buildTickRow({ runId, tickId, nowMs, trustQuoteRead, supportedCount: supportedSignals.length, rows, emission });
-  const ledger = appendShadowRows(ledgerPath, rows, nowMs);
+  const tickRow = buildTickRow({
+    runId,
+    tickId,
+    nowMs,
+    trustQuoteRead,
+    supportedCount: supportedSignals.length,
+    rows,
+    emission,
+    intervalMs: options.intervalMs || null,
+  });
+  const livenessRow = buildLedgerTickRow(tickRow);
+  const ledgerRows = [livenessRow, ...rows];
+  const ledger = appendShadowRows(ledgerPath, ledgerRows, nowMs, options.maxLedgerRows);
   const status = {
     ok: true,
     running: Boolean(options.running),
@@ -374,13 +413,16 @@ function isPidAlive(pid) {
 module.exports = {
   DEFAULT_INTERVAL_MS,
   DEFAULT_LEDGER_PATH,
+  DEFAULT_MAX_LEDGER_ROWS,
   DEFAULT_PID_PATH,
   DEFAULT_STATUS_PATH,
   MIN_INTERVAL_MS,
+  buildLedgerTickRow,
   buildSpokeRow,
   buildSwallowedRows,
   isPidAlive,
   normalizeIntervalMs,
+  normalizeMaxLedgerRows,
   readStatus,
   readShadowLedger,
   runShadowLoop,
