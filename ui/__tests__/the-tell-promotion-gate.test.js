@@ -13,7 +13,18 @@ const spoke = (signalClass, verdict, tsDaysAgo) => ({
   claim: 'x', regretScore: 0.9, verify: { docId: 'd' },
   review: verdict === 'pending' ? { verdict: 'pending' } : { verdict, by: 'architect', at: dAgo(tsDaysAgo - 0.1) },
 });
-const ledger = (shadowDaysAgo, rows) => ({ shadowStartedAtMs: dAgo(shadowDaysAgo), rows });
+// liveness ticks the runner appends every tick (incl. silent ones); default 12h spacing < 25h tolerance
+const tickRows = (shadowDaysAgo, stepHours = 12) => {
+  const rows = [];
+  for (let t = dAgo(shadowDaysAgo); t <= NOW; t += stepHours * 3600000) rows.push({ ts: t, type: 'tick', intervalMs: 20 * 60000 });
+  if (rows.length === 0 || rows[rows.length - 1].ts < NOW) rows.push({ ts: NOW, type: 'tick', intervalMs: 20 * 60000 });
+  return rows;
+};
+// by default the window is continuously observed (ticks present); pass { noTicks } or custom ticks to break it
+const ledger = (shadowDaysAgo, rows, opts = {}) => ({
+  shadowStartedAtMs: dAgo(shadowDaysAgo),
+  rows: [...(opts.ticks ? opts.ticks : (opts.noTicks ? [] : tickRows(shadowDaysAgo))), ...rows],
+});
 const run = (lg, over = {}) => evaluatePromotionGate(lg, { nowMs: NOW, ...over });
 
 describe('Rung-2 promotion gate — evidence-forced, a query over the ledger (no gut)', () => {
@@ -94,5 +105,51 @@ describe('our-concept classes have no app-truth oracle — never promoted by thi
     expect(PROMOTION.VERDICTS).toEqual(['useful', 'real_catch', 'false_alarm', 'pending']);
     expect(PROMOTION.ORACLE_BACKED_CLASSES).toContain(OVERDUE);
     expect(PROMOTION.ORACLE_BACKED_CLASSES).toContain(TASKS);
+  });
+});
+
+describe('observation continuity — never CERTIFY trust on dead time (the HIGH audit finding)', () => {
+  test('BLOCKS when the window has NO liveness ticks (runner never proved it was watching)', () => {
+    // perfect-looking evidence but zero observation proof = could be 7 days of a dead runner
+    const out = run(ledger(8, [spoke(OVERDUE, 'useful', 5), spoke(OVERDUE, 'useful', 1)], { noTicks: true }));
+    expect(out.continuouslyObserved).toBe(false);
+    expect(out.perClass[OVERDUE].promotable).toBe(false);
+    expect(out.perClass[OVERDUE].blockers.some((b) => /not_continuously_observed/.test(b))).toBe(true);
+  });
+
+  test('THE SILENT-STALL: runner died mid-window (ticks stop 2 days ago) -> trailing gap blocks promotion', () => {
+    // ticks for the first part of the window, then nothing for the last ~2 days = a dead runner
+    const ticks = [];
+    for (let t = dAgo(8); t <= dAgo(2); t += 12 * 3600000) ticks.push({ ts: t, type: 'tick', intervalMs: 20 * 60000 });
+    const out = run(ledger(8, [spoke(OVERDUE, 'useful', 5)], { ticks }));
+    expect(out.continuouslyObserved).toBe(false);
+    expect(out.observation.reason).toBe('observation_gap_exceeds_tolerance');
+    expect(out.perClass[OVERDUE].promotable).toBe(false);
+  });
+
+  test('BLOCKS on a multi-day hole in the middle of the window', () => {
+    const ticks = [
+      { ts: dAgo(8), type: 'tick' }, { ts: dAgo(7), type: 'tick' },
+      // 4-day hole here
+      { ts: dAgo(3), type: 'tick' }, { ts: dAgo(1), type: 'tick' }, { ts: NOW, type: 'tick' },
+    ];
+    const out = run(ledger(8, [spoke(OVERDUE, 'useful', 5)], { ticks }));
+    expect(out.continuouslyObserved).toBe(false);
+    expect(out.perClass[OVERDUE].promotable).toBe(false);
+  });
+
+  test('TOLERATES an overnight sleep (gap < 25h) and still promotes when continuously-enough observed', () => {
+    // ticks every ~20h (a nightly sleep) span the window — under the 25h tolerance
+    const ticks = [];
+    for (let t = dAgo(8); t <= NOW; t += 20 * 3600000) ticks.push({ ts: t, type: 'tick' });
+    ticks.push({ ts: NOW, type: 'tick' });
+    const out = run(ledger(8, [spoke(OVERDUE, 'useful', 5), spoke(OVERDUE, 'useful', 1)], { ticks }));
+    expect(out.continuouslyObserved).toBe(true);
+    expect(out.perClass[OVERDUE].promotable).toBe(true);
+  });
+
+  test('continuity is gate-wide: a dead window blocks EVERY class, even a perfectly-reviewed one', () => {
+    const out = run(ledger(8, [spoke(OVERDUE, 'useful', 5), spoke(TASKS, 'useful', 4)], { noTicks: true }));
+    expect(out.promote).toEqual([]);
   });
 });
