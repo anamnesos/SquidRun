@@ -189,10 +189,6 @@ const {
   verifySurfaceCaptureEvent,
 } = require('../surface-capture-events');
 const {
-  TRUSTQUOTE_WORKSPACE_KEY,
-  isTrustQuoteWorkspace,
-  isTrustQuotePaneId,
-  isWorkRoomRouteOwnerTerminal,
   filterTerminalsForWorkspace,
 } = require('../work-room-terminal-visibility');
 const {
@@ -202,15 +198,6 @@ const {
 const {
   getTrustQuoteArmPaneIds,
 } = require('../trustquote-arm-specs');
-const {
-  materializeTrustQuoteWorkRoomPrerequisites,
-} = require('../trustquote-work-room-prerequisites');
-const {
-  probeTrustQuoteRouteOwner,
-  readRouteOwnerStatus,
-  startTrustQuoteRouteOwner,
-  stopTrustQuoteRouteOwner,
-} = require('../trustquote-work-room-route-owner-supervisor');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
 const { createBufferedFileWriter } = require('../buffered-file-writer');
 const {
@@ -937,8 +924,6 @@ class SquidRunApp {
     }
     this.lastDaemonOutputAtMs = Date.now();
     this.daemonClientListeners = [];
-    this.profileDaemonClients = new Map();
-    this.profileDaemonClientListeners = new Map();
     this.consoleLogPath = path.join(WORKSPACE_PATH, 'console.log');
     this.consoleLogWriter = createBufferedFileWriter({
       filePath: this.consoleLogPath,
@@ -3172,436 +3157,8 @@ class SquidRunApp {
     return delivered;
   }
 
-  sendTrustQuoteDaemonConnected(terminals = []) {
-    const visibleTerminals = this.filterTerminalsForVisibleShell(terminals, {
-      windowKey: TRUSTQUOTE_WORKSPACE_KEY,
-    });
-    return this.sendToVisibleWindow('daemon-connected', {
-      terminals: visibleTerminals,
-      windowKey: TRUSTQUOTE_WORKSPACE_KEY,
-    }, { windowKey: TRUSTQUOTE_WORKSPACE_KEY });
-  }
-
   getDaemonClientForPane(paneId) {
-    if (isTrustQuotePaneId(paneId)) {
-      return this.profileDaemonClients.get(TRUSTQUOTE_WORKSPACE_KEY) || null;
-    }
     return this.ctx.daemonClient || null;
-  }
-
-  attachTrustQuoteDaemonClientListeners(client) {
-    if (!client || typeof client.on !== 'function') return;
-    if (this.profileDaemonClientListeners.has(TRUSTQUOTE_WORKSPACE_KEY)) return;
-
-    const listeners = [];
-    const attach = (eventName, listener) => {
-      client.on(eventName, listener);
-      listeners.push({ eventName, listener });
-    };
-
-    attach('data', (paneId, data) => {
-      if (!isTrustQuotePaneId(paneId)) return;
-      this.sendToVisibleWindow(`pty-data-${paneId}`, data, { windowKey: TRUSTQUOTE_WORKSPACE_KEY });
-    });
-
-    attach('exit', (paneId, code) => {
-      if (!isTrustQuotePaneId(paneId)) return;
-      this.sendToVisibleWindow(`pty-exit-${paneId}`, code, { windowKey: TRUSTQUOTE_WORKSPACE_KEY });
-    });
-
-    attach('killed', (paneId) => {
-      if (!isTrustQuotePaneId(paneId)) return;
-      this.sendToVisibleWindow(`pty-exit-${paneId}`, null, { windowKey: TRUSTQUOTE_WORKSPACE_KEY });
-    });
-
-    attach('spawned', () => {
-      this.sendTrustQuoteDaemonConnected(client.getTerminals?.() || []);
-    });
-
-    attach('connected', (terminals = []) => {
-      this.sendTrustQuoteDaemonConnected(terminals);
-    });
-
-    attach('reconnected', () => {
-      this.sendTrustQuoteDaemonConnected(client.getTerminals?.() || []);
-      this.sendToVisibleWindow('daemon-reconnected', null, { windowKey: TRUSTQUOTE_WORKSPACE_KEY });
-    });
-
-    attach('disconnected', () => {
-      this.sendToVisibleWindow('daemon-disconnected', null, { windowKey: TRUSTQUOTE_WORKSPACE_KEY });
-    });
-
-    this.profileDaemonClientListeners.set(TRUSTQUOTE_WORKSPACE_KEY, { client, listeners });
-  }
-
-  async ensureTrustQuoteDaemonClient() {
-    const existing = this.profileDaemonClients.get(TRUSTQUOTE_WORKSPACE_KEY);
-    if (existing?.connected) return existing;
-
-    const client = existing || new DaemonClient({ profileName: TRUSTQUOTE_WORKSPACE_KEY });
-    if (!existing) {
-      this.profileDaemonClients.set(TRUSTQUOTE_WORKSPACE_KEY, client);
-      this.attachTrustQuoteDaemonClientListeners(client);
-    }
-
-    await client.connect();
-    return client;
-  }
-
-  readTrustQuoteRouteOwnerStatus() {
-    try {
-      return readRouteOwnerStatus({ squidrunRoot: this.resolveTrustQuoteSquidrunRoot() });
-    } catch (err) {
-      log.warn('Window', `Failed to read TrustQuote route-owner status: ${err.message}`);
-      return null;
-    }
-  }
-
-  resolveTrustQuoteSquidrunRoot() {
-    const linkCandidates = [
-      path.join(getProjectRoot(), '.squidrun', 'link.json'),
-      path.join(WORKSPACE_PATH, 'link.json'),
-    ];
-    for (const linkPath of linkCandidates) {
-      const link = this.readJsonFileSafe(linkPath, null);
-      const squidrunRoot = toNonEmptyString(link?.squidrun_root || link?.squidrunRoot);
-      if (squidrunRoot) return path.resolve(squidrunRoot);
-    }
-    return path.resolve(__dirname, '..', '..', '..');
-  }
-
-  getTrustQuoteMainSessionScopeId(squidrunRoot = this.resolveTrustQuoteSquidrunRoot()) {
-    const status = this.readJsonFileSafe(path.join(squidrunRoot, '.squidrun', 'app-status.json'), null);
-    const sessionNumber = Number(status?.session);
-    if (Number.isInteger(sessionNumber) && sessionNumber > 0) {
-      return `app-session-${sessionNumber}`;
-    }
-    const currentScope = toNonEmptyString(this.commsSessionScopeId);
-    if (currentScope) {
-      const sessionMatch = currentScope.match(/^app-session-\d+/i);
-      return sessionMatch ? sessionMatch[0] : currentScope.replace(/:trustquote$/i, '');
-    }
-    const managerStatus = typeof this.settings?.readAppStatus === 'function'
-      ? this.settings.readAppStatus()
-      : null;
-    const managerSession = Number(managerStatus?.session);
-    if (Number.isInteger(managerSession) && managerSession > 0) {
-      return `app-session-${managerSession}`;
-    }
-    return null;
-  }
-
-  isTrustQuoteRouteOwnerCurrent(status = null, expectedMainSessionScopeId = '') {
-    const expectedMain = toNonEmptyString(expectedMainSessionScopeId);
-    if (!expectedMain || !status?.running) return false;
-    if (toNonEmptyString(status?.state).toLowerCase() !== 'running') return false;
-    const actualMain = toNonEmptyString(status?.plan?.mainSessionScopeId);
-    const actualRoom = toNonEmptyString(status?.plan?.sessionScopeId);
-    return actualMain === expectedMain && actualRoom === `${expectedMain}:trustquote`;
-  }
-
-  isTrustQuoteRouteOwnerProbeReady(probe = null) {
-    return probe?.ok === true
-      && probe?.reachable !== false
-      && probe?.contract?.status === 'proven'
-      && probe?.contract?.canRouteTask === true;
-  }
-
-  getTrustQuoteRouteOwnerProbeFailureReason(probe = null) {
-    if (!probe) return 'trustquote_route_owner_start_timeout';
-    if (probe.reachable === false) return 'trustquote_route_owner_probe_unreachable';
-    return 'trustquote_route_owner_probe_blocked';
-  }
-
-  async waitForTrustQuoteRouteOwnerCurrent(options = {}) {
-    const squidrunRoot = toNonEmptyString(options.squidrunRoot) || this.resolveTrustQuoteSquidrunRoot();
-    const expectedMainSessionScopeId = toNonEmptyString(options.expectedMainSessionScopeId)
-      || this.getTrustQuoteMainSessionScopeId(squidrunRoot);
-    const timeoutMs = Number.isFinite(Number(options.timeoutMs)) ? Number(options.timeoutMs) : 5000;
-    const probeTimeoutMs = Number.isFinite(Number(options.probeTimeoutMs)) ? Number(options.probeTimeoutMs) : 3000;
-    const deadline = Date.now() + timeoutMs;
-    let lastStatus = null;
-    let lastProbe = null;
-    while (Date.now() <= deadline) {
-      lastStatus = this.readTrustQuoteRouteOwnerStatus();
-      if (this.isTrustQuoteRouteOwnerCurrent(lastStatus, expectedMainSessionScopeId)) {
-        const syncResult = this.syncTrustQuoteWorkspaceArtifactsWithLiveRouteOwner();
-        if (!syncResult?.ok) {
-          return {
-            ok: false,
-            reason: syncResult?.reason || 'trustquote_workspace_artifact_sync_failed',
-            status: lastStatus,
-            syncResult,
-          };
-        }
-        lastProbe = await probeTrustQuoteRouteOwner({
-          squidrunRoot,
-          mainSessionScopeId: expectedMainSessionScopeId,
-          projectPath: toNonEmptyString(lastStatus?.plan?.projectPath) || undefined,
-          timeoutMs: probeTimeoutMs,
-        });
-        if (this.isTrustQuoteRouteOwnerProbeReady(lastProbe)) {
-          return { ok: true, status: lastStatus, probe: lastProbe };
-        }
-        return {
-          ok: false,
-          reason: this.getTrustQuoteRouteOwnerProbeFailureReason(lastProbe),
-          status: lastStatus,
-          probe: lastProbe,
-        };
-      }
-      if (lastStatus?.state === 'failed') {
-        return {
-          ok: false,
-          reason: 'trustquote_route_owner_start_failed',
-          status: lastStatus,
-        };
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    return {
-      ok: false,
-      reason: this.getTrustQuoteRouteOwnerProbeFailureReason(lastProbe),
-      status: lastStatus,
-      probe: lastProbe,
-    };
-  }
-
-  async ensureTrustQuoteRouteOwnerCurrent() {
-    const squidrunRoot = this.resolveTrustQuoteSquidrunRoot();
-    const expectedMainSessionScopeId = this.getTrustQuoteMainSessionScopeId(squidrunRoot);
-    if (!expectedMainSessionScopeId) {
-      return {
-        ok: false,
-        reason: 'trustquote_main_session_scope_missing',
-        squidrunRoot,
-      };
-    }
-
-    let status = this.readTrustQuoteRouteOwnerStatus();
-    const actualMainSessionScopeId = toNonEmptyString(status?.plan?.mainSessionScopeId);
-    const routeOwnerOptions = {
-      squidrunRoot,
-      mainSessionScopeId: expectedMainSessionScopeId,
-      projectPath: toNonEmptyString(status?.plan?.projectPath) || undefined,
-      attachExistingTerminals: true,
-      killTerminalsOnStop: false,
-      launchAgents: false,
-    };
-
-    if (this.isTrustQuoteRouteOwnerCurrent(status, expectedMainSessionScopeId)) {
-      const current = await this.waitForTrustQuoteRouteOwnerCurrent({
-        squidrunRoot,
-        expectedMainSessionScopeId,
-      });
-      if (!current.ok) {
-        return {
-          ...current,
-          expectedMainSessionScopeId,
-          actualMainSessionScopeId,
-        };
-      }
-      return {
-        ok: true,
-        status: current.status,
-        probe: current.probe,
-        squidrunRoot,
-        expectedMainSessionScopeId,
-      };
-    }
-
-    if (status?.running && actualMainSessionScopeId && actualMainSessionScopeId !== expectedMainSessionScopeId) {
-      const stopped = await stopTrustQuoteRouteOwner({
-        ...routeOwnerOptions,
-        reason: 'session_scope_changed',
-      });
-      if (stopped?.ok === false || stopped?.stopped === false) {
-        return {
-          ok: false,
-          reason: 'trustquote_route_owner_stale_scope_stop_failed',
-          status,
-          stopResult: stopped,
-          expectedMainSessionScopeId,
-          actualMainSessionScopeId,
-        };
-      }
-      status = this.readTrustQuoteRouteOwnerStatus();
-    }
-
-    if (
-      status?.running
-      && actualMainSessionScopeId === expectedMainSessionScopeId
-      && toNonEmptyString(status?.state).toLowerCase() !== 'running'
-    ) {
-      const stopped = await stopTrustQuoteRouteOwner({
-        ...routeOwnerOptions,
-        reason: 'route_owner_not_ready',
-      });
-      if (stopped?.ok === false || stopped?.stopped === false) {
-        return {
-          ok: false,
-          reason: 'trustquote_route_owner_unready_stop_failed',
-          status,
-          stopResult: stopped,
-          expectedMainSessionScopeId,
-          actualMainSessionScopeId,
-        };
-      }
-      status = this.readTrustQuoteRouteOwnerStatus();
-    }
-
-    if (!this.isTrustQuoteRouteOwnerCurrent(status, expectedMainSessionScopeId)) {
-      const started = startTrustQuoteRouteOwner(routeOwnerOptions);
-      if (started?.ok === false) {
-        return {
-          ok: false,
-          reason: started.reason || 'trustquote_route_owner_start_failed',
-          startResult: started,
-          status,
-          expectedMainSessionScopeId,
-          actualMainSessionScopeId,
-        };
-      }
-      const current = await this.waitForTrustQuoteRouteOwnerCurrent({
-        squidrunRoot,
-        expectedMainSessionScopeId,
-      });
-      if (!current.ok) {
-        return {
-          ...current,
-          startResult: started,
-          expectedMainSessionScopeId,
-          actualMainSessionScopeId,
-        };
-      }
-      status = current.status;
-    }
-
-    return {
-      ok: true,
-      status,
-      squidrunRoot,
-      expectedMainSessionScopeId,
-      resynchronized: actualMainSessionScopeId !== expectedMainSessionScopeId,
-    };
-  }
-
-  getTrustQuoteRouteOwnerSessionScopeId() {
-    const status = this.readTrustQuoteRouteOwnerStatus();
-    return status?.running
-      && toNonEmptyString(status?.state).toLowerCase() === 'running'
-      && toNonEmptyString(status?.plan?.sessionScopeId)
-      ? status.plan.sessionScopeId
-      : null;
-  }
-
-  syncTrustQuoteWorkspaceArtifactsWithLiveRouteOwner() {
-    const status = this.readTrustQuoteRouteOwnerStatus();
-    const squidrunRoot = this.resolveTrustQuoteSquidrunRoot();
-    const expectedMainSessionScopeId = this.getTrustQuoteMainSessionScopeId(squidrunRoot);
-    const mainSessionScopeId = status?.running && toNonEmptyString(status?.plan?.mainSessionScopeId)
-      ? status.plan.mainSessionScopeId
-      : null;
-    if (!mainSessionScopeId) {
-      return {
-        ok: false,
-        reason: 'trustquote_route_owner_not_running_or_unscoped',
-        status,
-      };
-    }
-    if (expectedMainSessionScopeId && mainSessionScopeId !== expectedMainSessionScopeId) {
-      return {
-        ok: false,
-        reason: 'trustquote_route_owner_stale_session_scope',
-        expectedMainSessionScopeId,
-        actualMainSessionScopeId: mainSessionScopeId,
-        status,
-      };
-    }
-
-    try {
-      const materialized = materializeTrustQuoteWorkRoomPrerequisites({
-        write: true,
-        squidrunRoot,
-        projectPath: status.plan?.projectPath,
-        mainSessionScopeId: expectedMainSessionScopeId || mainSessionScopeId,
-      });
-      return {
-        ok: true,
-        status,
-        materialized,
-      };
-    } catch (err) {
-      log.warn('Window', `Failed to sync TrustQuote workspace artifacts: ${err.message}`);
-      return {
-        ok: false,
-        reason: 'trustquote_workspace_artifact_sync_failed',
-        error: err.message,
-        status,
-      };
-    }
-  }
-
-  buildTrustQuoteWorkspaceStartupBundle() {
-    const syncResult = this.syncTrustQuoteWorkspaceArtifactsWithLiveRouteOwner();
-    if (!syncResult?.ok) {
-      log.warn('Window', `TrustQuote startup bundle sync skipped: ${syncResult?.reason || 'unknown'}`);
-      return null;
-    }
-
-    const artifacts = syncResult.materialized?.artifacts || {};
-    const paths = artifacts.paths || {};
-    const bundlePath = toNonEmptyString(paths.startupBundlePath);
-    const text = toNonEmptyString(artifacts.startupBundle)
-      || (bundlePath ? this.readTextFileSafe(bundlePath).trim() : '');
-    if (!bundlePath || !text) return null;
-
-    return {
-      ok: true,
-      sessionScopeId: toNonEmptyString(artifacts.sessionScopeId) || this.getWindowSessionScopeId(TRUSTQUOTE_WORKSPACE_KEY),
-      sourcePaths: [
-        paths.linkPath,
-        paths.agentsPath,
-        paths.rolesPath,
-      ].filter(Boolean),
-      bundlePath,
-      text,
-    };
-  }
-
-  async prepareTrustQuoteWorkspaceOpen() {
-    const routeOwner = await this.ensureTrustQuoteRouteOwnerCurrent();
-    if (!routeOwner.ok) return routeOwner;
-
-    const syncResult = this.syncTrustQuoteWorkspaceArtifactsWithLiveRouteOwner();
-    if (!syncResult?.ok) return syncResult;
-
-    const bundle = this.buildTrustQuoteWorkspaceStartupBundle();
-    if (!bundle?.bundlePath || !bundle?.text) {
-      return {
-        ok: false,
-        reason: 'trustquote_startup_bundle_unavailable',
-        status: syncResult.status,
-      };
-    }
-
-    try {
-      await this.ensureTrustQuoteDaemonClient();
-    } catch (err) {
-      return {
-        ok: false,
-        reason: 'trustquote_daemon_client_unavailable',
-        error: err.message,
-        status: syncResult.status,
-      };
-    }
-
-    return {
-      ok: true,
-      routeOwner,
-      syncResult,
-      bundle,
-    };
   }
 
   canSendToWindow(windowRef) {
@@ -5003,9 +4560,7 @@ class SquidRunApp {
                 windowKey,
                 requestId: data.message.requestId || null,
                 runId: toNonEmptyString(payload.runId) || null,
-                validateWindowReadiness: isTrustQuoteWorkspace(windowKey)
-                  ? () => this.probeTrustQuoteWindowReadiness(windowKey)
-                  : undefined,
+                validateWindowReadiness: undefined,
               });
 
               // Legacy mode: if no requestId is present, push event result to requester role/client.
@@ -5972,8 +5527,7 @@ class SquidRunApp {
     const displayOnlyWindow = toBooleanFlag(rawOptions.displayOnly, false);
     const skipStartupBundle = displayOnlyWindow || toBooleanFlag(rawOptions.skipStartupBundle, false);
     const windowTeam = String(rawOptions.windowTeam || windowKey).trim() || windowKey;
-    const windowProfileName = toNonEmptyString(rawOptions.profileName)
-      || (isTrustQuoteWorkspace(windowKey) ? TRUSTQUOTE_WORKSPACE_KEY : this.activeProfileName);
+    const windowProfileName = toNonEmptyString(rawOptions.profileName) || this.activeProfileName;
     const lifecycleRoot = rawOptions.lifecycleRoot === true
       || (windowKey === 'main' && !this.canSendToWindow(this.ctx.mainWindow));
     const existingWindow = this.getAppWindow(windowKey);
@@ -5999,8 +5553,6 @@ class SquidRunApp {
     let initialStartupBundle = null;
     if (skipStartupBundle) {
       initialStartupBundle = null;
-    } else if (isTrustQuoteWorkspace(windowKey)) {
-      initialStartupBundle = this.buildTrustQuoteWorkspaceStartupBundle();
     } else if (this.activeProfileName !== 'scoped' && windowKey !== 'scoped' && (this.activeProfileName !== 'main' || windowKey !== 'main')) {
       try {
         this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:startup-bundle:start`, {
@@ -6263,128 +5815,6 @@ class SquidRunApp {
     };
   }
 
-  async probeTrustQuoteWindowReadiness(rawWindowKey = TRUSTQUOTE_WORKSPACE_KEY) {
-    const windowKey = String(rawWindowKey || TRUSTQUOTE_WORKSPACE_KEY).trim() || TRUSTQUOTE_WORKSPACE_KEY;
-    const window = this.getAppWindow(windowKey);
-    if (!this.canSendToWindow(window)) {
-      return {
-        ok: false,
-        reason: 'trustquote_window_not_registered',
-        windowKey,
-      };
-    }
-    if (!window.webContents || typeof window.webContents.executeJavaScript !== 'function') {
-      return {
-        ok: false,
-        reason: 'trustquote_window_readiness_probe_unavailable',
-        windowKey,
-      };
-    }
-
-    const script = `(() => {
-      const visible = (el) => {
-        if (!el) return false;
-        const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
-        const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : { width: 0, height: 0 };
-        return rect.width > 0
-          && rect.height > 0
-          && (!style || (style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0.01));
-      };
-      const textOf = (selector) => {
-        const el = document.querySelector(selector);
-        return el ? String(el.textContent || '').trim() : '';
-      };
-      const overlay = document.getElementById('startupLoadingOverlay');
-      const overlayVisible = visible(overlay) && !overlay.classList.contains('hidden');
-      const startupText = textOf('#startupLoadingText');
-      const startupStage = textOf('#startupLoadingStageText');
-      const startupPercent = textOf('#startupLoadingPercent');
-      const paneSpecs = [
-        { id: 'trustquote-builder', fallbackId: '2' },
-        { id: 'trustquote-oracle', fallbackId: '3' },
-      ];
-      const panes = paneSpecs.map((spec) => {
-        const pane = document.querySelector(
-          '.pane[data-pane-id="' + spec.id + '"],'
-          + '.pane[data-pane-id="' + spec.fallbackId + '"],'
-          + '.pane[data-workspace-source-pane-id="' + spec.fallbackId + '"]'
-        );
-        const effectivePaneId = pane && pane.dataset && pane.dataset.paneId
-          ? pane.dataset.paneId
-          : spec.id;
-        const terminal = document.getElementById('terminal-' + effectivePaneId)
-          || document.getElementById('terminal-' + spec.id)
-          || document.getElementById('terminal-' + spec.fallbackId);
-        const xterm = terminal ? terminal.querySelector('.xterm, .xterm-screen, .xterm-viewport') : null;
-        return {
-          paneId: spec.id,
-          effectivePaneId,
-          paneVisible: visible(pane),
-          terminalVisible: visible(terminal),
-          hasTerminalShell: Boolean(xterm),
-        };
-      });
-      const blockers = [];
-      if (overlayVisible) blockers.push('startup_overlay_visible');
-      if (/^0\\s*%$/.test(startupPercent)) blockers.push('startup_progress_zero');
-      for (const pane of panes) {
-        if (!pane.paneVisible) blockers.push('pane_' + pane.paneId + '_missing');
-        else if (!pane.terminalVisible || !pane.hasTerminalShell) blockers.push('pane_' + pane.paneId + '_terminal_unusable');
-      }
-      return {
-        ok: blockers.length === 0,
-        reason: blockers.length === 0 ? null : 'trustquote_workroom_unusable',
-        blockers,
-        overlayVisible,
-        startupText,
-        startupStage,
-        startupPercent,
-        panes,
-      };
-    })();`;
-
-    try {
-      const readiness = await window.webContents.executeJavaScript(script, true);
-      if (!readiness || typeof readiness !== 'object') {
-        return {
-          ok: false,
-          reason: 'trustquote_window_readiness_probe_empty',
-          windowKey,
-        };
-      }
-      return {
-        windowKey,
-        ...readiness,
-        reason: readiness.ok ? null : (readiness.reason || 'trustquote_workroom_unusable'),
-      };
-    } catch (err) {
-      return {
-        ok: false,
-        reason: 'trustquote_window_readiness_probe_failed',
-        error: err?.message || String(err),
-        windowKey,
-      };
-    }
-  }
-
-  async waitForTrustQuoteWindowReadiness(rawWindowKey = TRUSTQUOTE_WORKSPACE_KEY, options = {}) {
-    const timeoutMs = Number.isFinite(Number(options.timeoutMs)) ? Number(options.timeoutMs) : 8000;
-    const intervalMs = Number.isFinite(Number(options.intervalMs)) ? Number(options.intervalMs) : 250;
-    const deadline = Date.now() + timeoutMs;
-    let last = null;
-    do {
-      last = await this.probeTrustQuoteWindowReadiness(rawWindowKey);
-      if (last.ok) return last;
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    } while (Date.now() < deadline);
-    return {
-      ...(last || {}),
-      ok: false,
-      reason: last?.reason || 'trustquote_workroom_readiness_timeout',
-      timedOut: true,
-    };
-  }
-
   async openAppWindow(rawWindowKey = 'main', options = {}) {
     const windowKey = String(rawWindowKey || 'main').trim() || 'main';
     this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:start`, {
@@ -6569,33 +5999,13 @@ class SquidRunApp {
       ? 'SquidRun'
       : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`;
     const isSquidRoomWindow = isSquidRoomWindowKey(windowKey);
-    let trustQuoteReadiness = null;
-    if (isTrustQuoteWorkspace(windowKey)) {
-      this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:trustquote-prep:start`);
-      trustQuoteReadiness = await this.prepareTrustQuoteWorkspaceOpen();
-      this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:trustquote-prep:done`, {
-        ok: trustQuoteReadiness.ok,
-        reason: trustQuoteReadiness.reason || null,
-      });
-      if (!trustQuoteReadiness.ok) {
-        return {
-          ok: false,
-          windowKey,
-          title: windowTitle,
-          reason: trustQuoteReadiness.reason || 'trustquote_workspace_prerequisite_failed',
-          details: trustQuoteReadiness,
-        };
-      }
-    }
     this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:create-window:start`);
     await this.createWindow({
       windowKey,
       windowTeam: isSquidRoomWindow ? 'squid-room' : windowKey,
       title: windowTitle,
-      profileName: isTrustQuoteWorkspace(windowKey)
-        ? TRUSTQUOTE_WORKSPACE_KEY
-        : (isSquidRoomWindow ? 'main' : undefined),
-      autoBootAgents: isTrustQuoteWorkspace(windowKey) || isSquidRoomWindow ? false : undefined,
+      profileName: isSquidRoomWindow ? 'main' : undefined,
+      autoBootAgents: isSquidRoomWindow ? false : undefined,
       displayOnly: isSquidRoomWindow ? true : undefined,
       skipStartupBundle: isSquidRoomWindow ? true : undefined,
       lifecycleRoot: options.lifecycleRoot === true,
@@ -6609,50 +6019,6 @@ class SquidRunApp {
     this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:focus:done`, {
       focused,
     });
-    if (isTrustQuoteWorkspace(windowKey)) {
-      const verification = this.verifyAppWindowVisible(windowKey, windowTitle);
-      if (!verification.ok) {
-        return {
-          ok: false,
-          windowKey,
-          title: windowTitle,
-          status: 'open_unverified',
-          reason: verification.reason || 'trustquote_window_not_visible',
-          details: {
-            trustQuoteReadiness,
-            verification,
-            focused,
-          },
-        };
-      }
-      const readiness = await this.waitForTrustQuoteWindowReadiness(windowKey);
-      if (!readiness.ok) {
-        return {
-          ok: false,
-          windowKey,
-          title: windowTitle,
-          status: 'open_unusable',
-          reason: readiness.reason || 'trustquote_workroom_unusable',
-          details: {
-            trustQuoteReadiness,
-            verification,
-            workroomReadiness: readiness,
-            focused,
-          },
-        };
-      }
-      return {
-        ok: true,
-        windowKey,
-        title: windowTitle,
-        status: 'opened',
-        focused,
-        visible: verification.visible,
-        verifiedTitle: verification.title,
-        workroomReadiness: readiness,
-        trustQuoteSessionScopeId: trustQuoteReadiness.routeOwner?.status?.plan?.sessionScopeId || null,
-      };
-    }
     this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:return`, {
       focused,
     });
@@ -6771,10 +6137,6 @@ class SquidRunApp {
 
   getWindowSessionScopeId(windowKey = 'main') {
     const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
-    if (isTrustQuoteWorkspace(normalizedWindowKey)) {
-      const liveSessionScopeId = this.getTrustQuoteRouteOwnerSessionScopeId();
-      if (liveSessionScopeId) return liveSessionScopeId;
-    }
     const baseScopeId = toNonEmptyString(this.commsSessionScopeId) || `app-${process.pid}-${Date.now()}`;
     if (normalizedWindowKey === 'main' && !isMainProfile(this.activeProfileName)) {
       return `${baseScopeId}:${this.activeProfileName}`;
@@ -6879,19 +6241,6 @@ class SquidRunApp {
       window.webContents.send('state-changed', watcher.readState());
     } catch (err) {
       log.warn('Window', `Failed to seed state for ${windowKey}: ${err.message}`);
-    }
-
-    if (isTrustQuoteWorkspace(windowKey)) {
-      void this.ensureTrustQuoteDaemonClient()
-        .then((client) => {
-          if (!this.canSendToWindow(window)) return;
-          const terminals = this.filterTerminalsForVisibleShell(client.getTerminals?.() || [], { windowKey });
-          window.webContents.send('daemon-connected', { terminals, windowKey });
-        })
-        .catch((err) => {
-          log.warn('Window', `Failed to seed TrustQuote daemon state for ${windowKey}: ${err.message}`);
-        });
-      return;
     }
 
     if (this.ctx.daemonClient?.connected) {
@@ -7257,11 +6606,9 @@ class SquidRunApp {
     const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
     const profileName = normalizeProfileName(
       options.profileName
-      || (isTrustQuoteWorkspace(normalizedWindowKey)
-        ? TRUSTQUOTE_WORKSPACE_KEY
-        : (normalizedWindowKey === 'squid-room'
-          ? 'main'
-          : (normalizedWindowKey === 'main' ? this.activeProfileName : normalizedWindowKey)))
+      || (normalizedWindowKey === 'squid-room'
+        ? 'main'
+        : (normalizedWindowKey === 'main' ? this.activeProfileName : normalizedWindowKey))
       || 'main'
     );
     const sessionScopeId = toNonEmptyString(options.sessionScopeId)
@@ -7932,8 +7279,7 @@ class SquidRunApp {
     const windowTeam = String(options.windowTeam || windowKey).trim() || windowKey;
     const displayOnlyWindow = toBooleanFlag(options.displayOnly, false);
     const skipStartupBundle = displayOnlyWindow || toBooleanFlag(options.skipStartupBundle, false);
-    const windowProfileName = toNonEmptyString(options.profileName)
-      || (isTrustQuoteWorkspace(windowKey) ? TRUSTQUOTE_WORKSPACE_KEY : this.activeProfileName);
+    const windowProfileName = toNonEmptyString(options.profileName) || this.activeProfileName;
     const isPrimaryWindow = windowKey === 'main';
     const lifecycleRoot = options.lifecycleRoot === true;
     const shouldAutoBootWindowAgents = displayOnlyWindow || toBooleanFlag(options.autoBootAgents, true) === false
@@ -7997,8 +7343,6 @@ class SquidRunApp {
       let startupBundle = null;
       if (skipStartupBundle) {
         startupBundle = null;
-      } else if (isTrustQuoteWorkspace(windowKey)) {
-        startupBundle = this.buildTrustQuoteWorkspaceStartupBundle();
       } else if (this.activeProfileName === 'scoped' || windowKey === 'scoped') {
         try {
           startupBundle = await this.injectScopedStartupBundle();
@@ -9670,9 +9014,6 @@ class SquidRunApp {
 
     const handlePaneExit = (paneId, code, metadata = null) => {
       const cachedTerminal = this.ctx.daemonClient?.getTerminal?.(paneId) || null;
-      if (isWorkRoomRouteOwnerTerminal(metadata) || isWorkRoomRouteOwnerTerminal(cachedTerminal)) {
-        return;
-      }
       if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
         return;
       }
@@ -9704,9 +9045,6 @@ class SquidRunApp {
     this.attachDaemonClientListener('data', (paneId, data) => {
       this.lastDaemonOutputAtMs = Date.now();
       const terminalMetadata = this.ctx.daemonClient?.getTerminal?.(paneId) || null;
-      if (isWorkRoomRouteOwnerTerminal(terminalMetadata)) {
-        return;
-      }
       const isBackgroundPane = this.backgroundAgentManager.isBackgroundPaneId(paneId);
       this.backgroundAgentManager.handleDaemonData(paneId, data);
       if (isBackgroundPane) {
@@ -9782,9 +9120,6 @@ class SquidRunApp {
 
     this.attachDaemonClientListener('spawned', (paneId, pid, dryRun, metadata) => {
       log.info('Daemon', `Terminal spawned for pane ${paneId}, PID: ${pid}`);
-      if (isWorkRoomRouteOwnerTerminal(metadata)) {
-        return;
-      }
       if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
         return;
       }
@@ -9801,9 +9136,6 @@ class SquidRunApp {
 
       if (terminals && terminals.length > 0) {
         for (const term of terminals) {
-          if (isWorkRoomRouteOwnerTerminal(term)) {
-            continue;
-          }
           if (this.backgroundAgentManager.isBackgroundPaneId(term?.paneId)) {
             continue;
           }
@@ -9832,7 +9164,7 @@ class SquidRunApp {
         this.broadcastClaudeState();
       }
       if (terminals && terminals.length > 0) {
-        const deadTerminals = terminals.filter(term => term.alive === false && !isWorkRoomRouteOwnerTerminal(term));
+        const deadTerminals = terminals.filter(term => term.alive === false);
         for (const term of deadTerminals) {
           const paneId = String(term.paneId);
           log.warn('Daemon', `Detected dead terminal for pane ${paneId} on connect - scheduling recovery`);

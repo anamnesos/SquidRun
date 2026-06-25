@@ -1223,8 +1223,7 @@ function getWindowLifecycleMode(windowContext = getCurrentWindowContext()) {
 }
 
 function getWorkspaceSwitchKey(windowContext = getCurrentWindowContext()) {
-  const rawKey = String(windowContext?.windowKey || 'main').trim().toLowerCase();
-  return rawKey === 'trustquote' ? 'trustquote' : 'main';
+  return 'main';
 }
 
 function updateWorkspaceSwitcher(windowContext = getCurrentWindowContext()) {
@@ -1242,9 +1241,7 @@ async function openWorkspaceFromSwitch(targetKey) {
   const activeKey = getWorkspaceSwitchKey();
   if (!normalizedTarget || normalizedTarget === activeKey) return;
 
-  const payload = normalizedTarget === 'trustquote'
-    ? { windowKey: 'trustquote', profileName: 'trustquote', autoBootAgents: false }
-    : { windowKey: 'main' };
+  const payload = { windowKey: 'main' };
   try {
     await ipcRenderer.invoke('open-app-window', payload);
   } catch (err) {
@@ -1560,7 +1557,7 @@ async function requestDaemonTerminalSnapshotAfterReload(timeoutMs = 1500) {
     || window?.squidrun?.daemon?.terminalSnapshot
     || window?.squidrunAPI?.daemon?.terminalSnapshot;
 
-  if (windowContext.windowKey !== 'trustquote' && typeof directSnapshotFn === 'function') {
+  if (typeof directSnapshotFn === 'function') {
     try {
       const snapshot = await directSnapshotFn({ timeoutMs, windowKey: windowContext.windowKey });
       if (snapshot?.ok && Array.isArray(snapshot.terminals)) {

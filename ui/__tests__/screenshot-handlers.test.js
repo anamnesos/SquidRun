@@ -218,12 +218,12 @@ describe('Screenshot Handlers', () => {
 
     test('fails TrustQuote proof status when readiness validator reports a bootstrapping workroom', async () => {
       fs.existsSync.mockReturnValue(true);
-      const image = { toPNG: jest.fn(() => Buffer.from('trustquote-boot-overlay')) };
+      const image = { toPNG: jest.fn(() => Buffer.from('window-boot-overlay')) };
       ctx.mainWindow.webContents.capturePage = jest.fn().mockResolvedValue(image);
       ctx.mainWindow.webContents.executeJavaScript = jest.fn();
       const validateWindowReadiness = jest.fn().mockResolvedValue({
         ok: false,
-        reason: 'trustquote_workroom_unusable',
+        reason: 'window_unusable',
         blockers: [
           'startup_overlay_visible',
           'startup_progress_zero',
@@ -233,20 +233,20 @@ describe('Screenshot Handlers', () => {
       });
 
       const result = await captureScreenshot(ctx, {
-        windowKey: 'trustquote',
+        windowKey: 'squid-room',
         validateWindowReadiness,
       });
 
       expect(result).toEqual(expect.objectContaining({
         success: false,
-        reason: 'trustquote_workroom_unusable',
+        reason: 'window_unusable',
         path: expect.stringContaining('capture-'),
         imageSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         captureEvent: expect.objectContaining({
-          windowKey: 'trustquote',
+          windowKey: 'squid-room',
           imageSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         }),
-        workroomReadiness: expect.objectContaining({
+        windowReadiness: expect.objectContaining({
           startupPercent: '0%',
           blockers: expect.arrayContaining([
             'startup_overlay_visible',
@@ -256,7 +256,7 @@ describe('Screenshot Handlers', () => {
         }),
       }));
       expect(validateWindowReadiness).toHaveBeenCalledWith(expect.objectContaining({
-        windowKey: 'trustquote',
+        windowKey: 'squid-room',
         paneId: null,
         scope: 'all',
         path: expect.stringContaining('capture-'),

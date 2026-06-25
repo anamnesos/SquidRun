@@ -92,10 +92,6 @@ const codexIdentityInjected = new Set();
 const codexIdentityTimeouts = new Map();
 const terminalInputBridgeDisposables = new Map();
 const pendingClaudeSessionCollisionRecovery = new Map();
-const TRUSTQUOTE_SOURCE_PANE_BY_ID = Object.freeze({
-  'trustquote-builder': '2',
-  'trustquote-oracle': '3',
-});
 const paneRuntimeOverrides = new Map();
 
 // Per-pane input lock - panes locked by default (view-only), toggle to unlock for direct typing
@@ -1602,7 +1598,7 @@ function getPaneCommandFromSettings(paneId) {
   if (typeof runtimeOverride.command === 'string' && runtimeOverride.command.trim()) {
     return runtimeOverride.command.trim();
   }
-  const sourcePaneId = runtimeOverride.commandSourcePaneId || TRUSTQUOTE_SOURCE_PANE_BY_ID[id] || null;
+  const sourcePaneId = runtimeOverride.commandSourcePaneId || null;
   const cmd = paneCommands[id] || (sourcePaneId ? paneCommands[sourcePaneId] : '') || '';
   return typeof cmd === 'string' ? cmd : '';
 }

@@ -90,10 +90,6 @@ describe('window chrome matrix', () => {
         .toBe(WINDOW_CHROME_CLASSES.CLIENT_PROFILE);
     });
 
-    test('work room window', () => {
-      expect(resolveWindowChromeClass({ windowKey: 'trustquote', profileName: 'trustquote' }))
-        .toBe(WINDOW_CHROME_CLASSES.WORK_ROOM);
-    });
   });
 
   describe('allow-list application (default-deny)', () => {
@@ -129,7 +125,7 @@ describe('window chrome matrix', () => {
       expect(visible(doc, 'fullRestartBtn')).toBe(true);
       expect(visible(doc, 'profileBtn')).toBe(true);
       // Product-boundary controls a client must never see:
-      for (const id of ['selectProjectBtn', 'settingsBtn', 'openSquidRoomBtn', 'openTrustQuoteWorkspaceBtn', 'openMiraLabBtn', 'panelBtn', 'dryRunIndicator', 'ciStatusIndicator']) {
+      for (const id of ['selectProjectBtn', 'settingsBtn', 'openSquidRoomBtn', 'openMiraLabBtn', 'panelBtn', 'dryRunIndicator', 'ciStatusIndicator']) {
         expect(visible(doc, id)).toBe(false);
       }
       expect(visible(doc, '#rightPanel')).toBe(false);
@@ -140,10 +136,10 @@ describe('window chrome matrix', () => {
       const doc = buildHeaderDoc();
       applyWindowChrome(doc, WINDOW_CHROME_CLASSES.INSTALLED_OPERATOR);
 
-      for (const id of ['openSquidRoomBtn', 'openTrustQuoteWorkspaceBtn', 'openMiraLabBtn']) {
+      for (const id of ['openSquidRoomBtn', 'openMiraLabBtn']) {
         expect(visible(doc, id)).toBe(false);
       }
-      for (const id of CHROME_CONTROL_IDS.filter((x) => !['openSquidRoomBtn', 'openTrustQuoteWorkspaceBtn', 'openMiraLabBtn'].includes(x))) {
+      for (const id of CHROME_CONTROL_IDS.filter((x) => !['openSquidRoomBtn', 'openMiraLabBtn'].includes(x))) {
         expect(visible(doc, id)).toBe(true);
       }
       for (const selector of Object.values(CHROME_REGION_SELECTORS)) {

@@ -1242,7 +1242,7 @@ function registerPtyHandlers(ctx, deps = {}) {
 
   ipcMain.handle('get-daemon-terminals', (event, options = {}) => {
     const windowKey = String(options?.windowKey || '').trim().toLowerCase();
-    const paneId = String(options?.paneId || (windowKey === 'trustquote' ? 'trustquote-builder' : '')).trim();
+    const paneId = String(options?.paneId || '').trim();
     const daemonClient = paneId ? getDaemonClientForPane(paneId) : ctx.daemonClient;
     if (daemonClient) {
       return daemonClient.getTerminals();

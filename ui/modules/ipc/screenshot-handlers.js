@@ -119,10 +119,10 @@ async function captureScreenshot(ctx, options = {}) {
           ...result,
           success: false,
           reason: readiness?.reason || 'window_capture_not_ready',
-          workroomReadiness: readiness || null,
+          windowReadiness: readiness || null,
         };
       }
-      result.workroomReadiness = readiness;
+      result.windowReadiness = readiness;
     }
 
     return result;

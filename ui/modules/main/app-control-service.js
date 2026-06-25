@@ -56,22 +56,6 @@ function normalizeAction(action) {
     return 'open-squid-room';
   }
   if (
-    normalized === 'open-trustquote-workspace'
-    || normalized === 'trustquote-workspace'
-    || normalized === 'open-trustquote'
-    || normalized === 'trustquote'
-  ) {
-    return 'open-trustquote-workspace';
-  }
-  if (
-    normalized === 'close-trustquote-workspace'
-    || normalized === 'close-trustquote'
-    || normalized === 'trustquote-close'
-    || normalized === 'close-trustquote-window'
-  ) {
-    return 'close-trustquote-workspace';
-  }
-  if (
     normalized === 'close-app-window'
     || normalized === 'close-window'
     || normalized === 'window-close'
@@ -116,7 +100,6 @@ function canExecuteJavaScript(windowRef) {
 }
 
 function getCloseWindowKey(action, payload = {}) {
-  if (action === 'close-trustquote-workspace') return 'trustquote';
   if (typeof payload === 'string') return payload.trim() || 'main';
   if (!payload || typeof payload !== 'object') return 'main';
   return String(payload.windowKey || payload.key || payload.window || 'main').trim() || 'main';
@@ -497,39 +480,7 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
       });
   }
 
-  if (normalizedAction === 'open-trustquote-workspace') {
-    if (typeof ctx.openAppWindow !== 'function') {
-      return {
-        success: false,
-        reason: 'open_window_unavailable',
-        action: normalizedAction,
-      };
-    }
-    return Promise.resolve()
-      .then(() => ctx.openAppWindow('trustquote', { autoBootAgents: false, profileName: 'trustquote' }))
-      .then((result) => {
-        const settled = result && typeof result === 'object' ? result : {};
-        return {
-          success: Boolean(settled.ok),
-          action: normalizedAction,
-          windowKey: settled.windowKey || 'trustquote',
-          status: settled.status || (settled.ok ? 'opened' : 'open_failed'),
-          reason: settled.ok ? undefined : (settled.reason || 'open_window_failed'),
-          note: 'TrustQuote workspace opened/focused without starting duplicate agents.',
-        };
-      })
-      .catch((error) => {
-        log.warn('AppControl', `TrustQuote workspace open failed: ${error.message}`);
-        return {
-          success: false,
-          reason: 'open_window_failed',
-          action: normalizedAction,
-          error: error.message,
-        };
-      });
-  }
-
-  if (normalizedAction === 'close-app-window' || normalizedAction === 'close-trustquote-workspace') {
+  if (normalizedAction === 'close-app-window') {
     const windowKey = getCloseWindowKey(normalizedAction, payload);
     if (windowKey === 'main') {
       return {

@@ -1,9 +1,6 @@
 'use strict';
 
 const {
-  buildTrustQuoteReadinessCard,
-} = require('./project-room-envelope');
-const {
   readInitialWindowContextFromLocation,
 } = require('./window-team-bootstrap');
 
@@ -24,7 +21,6 @@ const PROJECT_ROOMS = Object.freeze([
     ],
     jamesAction: 'JAMES ACTION: NONE',
   }),
-  Object.freeze(buildTrustQuoteReadinessCard()),
   Object.freeze({
     id: 'mira-build',
     label: 'Mira Build',

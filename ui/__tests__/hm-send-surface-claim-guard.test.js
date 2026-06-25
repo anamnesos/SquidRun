@@ -24,27 +24,27 @@ function userRow(rawBody, offsetMs, id = 'row') {
 }
 
 function writeSurfaceArtifact(tempDir, options = {}) {
-  const runDir = path.join(tempDir, options.runDir || 'visible-pane-submit', options.runId || 'trustquote-builder-run');
+  const runDir = path.join(tempDir, options.runDir || 'visible-pane-submit', options.runId || 'trustquote-app-run');
   const currentDir = path.join(runDir, 'current');
   fs.mkdirSync(currentDir, { recursive: true });
   const screenshotPath = path.join(currentDir, options.fileName || 'screenshot.png');
   fs.writeFileSync(screenshotPath, 'not actually a png but enough for path/provenance tests');
-  const windowKey = options.windowKey || 'trustquote';
-  const paneId = options.paneId || 'trustquote-builder';
-  const targetRole = options.targetRole || 'builder';
+  const windowKey = options.windowKey || 'squid-room';
+  const paneId = options.paneId || 'trustquote-app';
+  const targetRole = options.targetRole || 'trustquote-app';
   const imageSha256 = options.imageSha256 || 'a'.repeat(64);
   const eventId = options.eventId || 'capture-event-1';
   fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({
     schema: 'squidrun.visible_pane_submit_harness.v0',
     producer: 'hm-visible-pane-submit-harness',
-    runId: options.runId || 'trustquote-builder-run',
+    runId: options.runId || 'trustquote-app-run',
     generatedAt: new Date(options.generatedAtMs || NOW_MS).toISOString(),
     windowKey,
     paneId,
     terminalId: paneId,
     targetRole,
     screenshotPath,
-    observedStateSummary: options.observedStateSummary || 'target=builder; pane=trustquote-builder; window=trustquote; outputDeltaChars=120; postSubmitOutputObserved=true',
+    observedStateSummary: options.observedStateSummary || 'target=trustquote-app; pane=trustquote-app; window=squid-room; outputDeltaChars=120; postSubmitOutputObserved=true',
     surface: {
       kind: 'visible_pane_submit',
       source: 'same-window-user-surface',
@@ -62,7 +62,7 @@ function writeSurfaceArtifact(tempDir, options = {}) {
       eventSource: options.eventSource || 'squidrun-electron-main-capture-event',
       eventRecordedAt: new Date(options.generatedAtMs || NOW_MS).toISOString(),
       imageSha256,
-      runId: options.runId || 'trustquote-builder-run',
+      runId: options.runId || 'trustquote-app-run',
       requestedWindowKey: options.requestedWindowKey || windowKey,
       windowKey,
       requestedPaneId: options.requestedPaneId || paneId,
@@ -75,7 +75,7 @@ function writeSurfaceArtifact(tempDir, options = {}) {
     },
     summary: {
       screenshotPath,
-      observedStateSummary: options.observedStateSummary || 'target=builder; pane=trustquote-builder; window=trustquote; outputDeltaChars=120; postSubmitOutputObserved=true',
+      observedStateSummary: options.observedStateSummary || 'target=trustquote-app; pane=trustquote-app; window=squid-room; outputDeltaChars=120; postSubmitOutputObserved=true',
     },
   }, null, 2));
   return screenshotPath;
@@ -242,7 +242,7 @@ describe('hm-send surface claim guard', () => {
         captureEventVerifier: verifiedCaptureEvent,
       })).toEqual(expect.objectContaining({
         ok: true,
-        provenancePath: path.join(tempDir, 'visible-pane-submit', 'trustquote-builder-run', 'manifest.json'),
+        provenancePath: path.join(tempDir, 'visible-pane-submit', 'trustquote-app-run', 'manifest.json'),
       }));
       const violation = detectSurfaceClaimGuardViolation({
         content,
@@ -325,7 +325,7 @@ describe('hm-send surface claim guard', () => {
       expect(validateSurfaceArtifact(screenshotPath, { nowMs: NOW_MS, content })).toEqual(expect.objectContaining({
         ok: false,
         reason: 'surface_claim_window_mismatch',
-        expectedWindowKey: 'trustquote',
+        expectedWindowKey: 'squid-room',
       }));
       const violation = detectSurfaceClaimGuardViolation({
         content,

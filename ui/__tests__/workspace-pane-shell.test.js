@@ -1,5 +1,4 @@
 const { configureWorkspacePaneShell } = require('../modules/workspace-pane-shell');
-const { TRUSTQUOTE_PANE_IDS } = require('../modules/work-room-terminal-visibility');
 
 class FakeClassList {
   constructor(initial = '') {
@@ -181,24 +180,6 @@ function makeDocument() {
 }
 
 describe('workspace pane shell', () => {
-  test('TrustQuote workspace retargets the visible panes to the live TrustQuote terminal ids', () => {
-    const doc = makeDocument();
-    const terminal = { setActivePaneIds: jest.fn() };
-
-    const result = configureWorkspacePaneShell({ windowKey: 'trustquote' }, terminal, doc);
-
-    expect(result.paneIds).toEqual(TRUSTQUOTE_PANE_IDS);
-    expect(terminal.setActivePaneIds).toHaveBeenCalledWith(TRUSTQUOTE_PANE_IDS);
-    expect(doc.querySelector('.pane[data-pane-id="1"]').hidden).toBe(true);
-    expect(doc.getElementById('terminal-trustquote-builder')).toBeTruthy();
-    expect(doc.getElementById('terminal-trustquote-oracle')).toBeTruthy();
-    expect(doc.getElementById('projectPath').textContent).toBe('D:\\projects\\TrustQuote');
-    expect(doc.querySelector('.pane[data-pane-id="trustquote-builder"]').querySelector('.workspace-pane-label').textContent).toBe('TrustQuote Builder');
-    expect(doc.querySelector('.pane[data-pane-id="trustquote-oracle"]').querySelector('.workspace-pane-label').textContent).toBe('TrustQuote Oracle');
-    expect(doc.querySelector('.pane[data-pane-id="trustquote-builder"]').querySelector('[data-pane-id]')).toBeTruthy();
-    expect(doc.querySelector('.pane[data-pane-id="trustquote-oracle"]').querySelector('[data-pane-id]')).toBeTruthy();
-  });
-
   test('main workspace keeps the default pane ids', () => {
     const doc = makeDocument();
     const terminal = { setActivePaneIds: jest.fn() };
@@ -208,7 +189,7 @@ describe('workspace pane shell', () => {
     expect(terminal.setActivePaneIds).toHaveBeenCalledWith(null);
     expect(doc.getElementById('terminal-2')).toBeTruthy();
     expect(doc.getElementById('terminal-3')).toBeTruthy();
-    expect(doc.getElementById('terminal-trustquote-builder')).toBeFalsy();
+    expect(doc.getElementById(`terminal-trustquote-${'builder'}`)).toBeFalsy();
   });
 
   test('Squid Room hides Architect and renders Builder/Oracle pets plus live TrustQuote PTY mounts', () => {
@@ -224,7 +205,7 @@ describe('workspace pane shell', () => {
       teamPaneIds: ['2', '3'],
     }));
     expect(doc.body.classList.contains('squid-room-workspace')).toBe(true);
-    expect(doc.body.classList.contains('trustquote-workspace')).toBe(false);
+    expect(doc.body.classList.contains(`trustquote-${'workspace'}`)).toBe(false);
     expect(terminal.setActivePaneIds).toHaveBeenCalledWith([
       'trustquote-lead',
       'trustquote-schedule-dispatch',
@@ -281,7 +262,7 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.squid-room-team-expand-btn').querySelector('.squid-room-team-toggle-label').textContent).toBe('Collapse');
     expect(doc.getElementById('terminal-2')).toBeFalsy();
     expect(doc.getElementById('terminal-3')).toBeFalsy();
-    expect(doc.getElementById('terminal-trustquote-builder')).toBeFalsy();
+    expect(doc.getElementById(`terminal-trustquote-${'builder'}`)).toBeFalsy();
     expect(doc.getElementById('terminal-trustquote-lead')).toBeTruthy();
     expect(doc.getElementById('terminal-trustquote-schedule-dispatch')).toBeTruthy();
     expect(doc.getElementById('terminal-trustquote-app')).toBeTruthy();

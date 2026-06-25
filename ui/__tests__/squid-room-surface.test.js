@@ -290,7 +290,7 @@ describe('squid-room-surface', () => {
       document: doc,
       invoke,
       getWindowContext: () => ({
-        windowKey: 'trustquote',
+        windowKey: 'main',
         sessionScopeId: 'app-session-406:trustquote',
       }),
     });

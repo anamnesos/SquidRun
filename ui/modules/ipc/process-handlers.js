@@ -219,7 +219,7 @@ function registerProcessHandlers(ctx, deps = {}) {
 
   ipcMain.handle('get-daemon-terminal-snapshot', (event, options = {}) => {
     const windowKey = String(options?.windowKey || '').trim().toLowerCase();
-    const scopedPaneId = windowKey === 'trustquote' ? 'trustquote-builder' : '';
+    const scopedPaneId = '';
     const daemonClient = scopedPaneId && typeof deps?.getDaemonClientForPane === 'function'
       ? (deps.getDaemonClientForPane(scopedPaneId) || ctx.daemonClient)
       : ctx.daemonClient;
@@ -228,7 +228,7 @@ function registerProcessHandlers(ctx, deps = {}) {
       : [];
     return {
       ok: daemonClient?.connected === true,
-      source: windowKey === 'trustquote' ? 'trustquote-daemon-client' : 'main-daemon-client',
+      source: 'main-daemon-client',
       terminals: Array.isArray(terminals) ? terminals : [],
     };
   });
