@@ -9,10 +9,6 @@ const DEFAULT_SURFACE_ARTIFACT_MAX_AGE_MS = 45 * 60 * 1000;
 const VISIBLE_PANE_SUBMIT_MANIFEST_SCHEMA = 'squidrun.visible_pane_submit_harness.v0';
 const VISIBLE_PANE_SUBMIT_PRODUCER = 'hm-visible-pane-submit-harness';
 const SURFACE_CAPTURE_EVENT_SOURCE = 'squidrun-electron-main-capture-event';
-const TRUSTQUOTE_PANE_BY_ROLE = Object.freeze({
-  builder: 'trustquote-builder',
-  oracle: 'trustquote-oracle',
-});
 const FORBIDDEN_SURFACE_KEYS = new Set([
   'local',
   'localhost',
@@ -267,7 +263,7 @@ function pathHasForbiddenCaptureSegment(filePath) {
 function inferExpectedSurface(content = '') {
   const text = asText(content).toLowerCase();
   if (/\btrustquote\b/.test(text)) {
-    return { windowKey: 'trustquote' };
+    return { windowKey: 'squid-room' };
   }
   return {};
 }
@@ -343,13 +339,6 @@ function validateVisiblePaneSubmitManifest(manifest, imagePath, options = {}) {
   const expectedSurface = inferExpectedSurface(options.content || '');
   if (expectedSurface.windowKey && windowKey !== expectedSurface.windowKey) {
     return { ok: false, reason: 'surface_claim_window_mismatch', expectedWindowKey: expectedSurface.windowKey };
-  }
-
-  if (windowKey === 'trustquote') {
-    const expectedPane = TRUSTQUOTE_PANE_BY_ROLE[targetRole];
-    if (expectedPane && paneId !== expectedPane) {
-      return { ok: false, reason: 'surface_claim_pane_mismatch', expectedPaneId: expectedPane };
-    }
   }
 
   if (typeof options.captureEventVerifier !== 'function') {

@@ -72,17 +72,17 @@ describe('DaemonClient', () => {
     });
 
     test('can target a profile-scoped terminal daemon pipe', async () => {
-      const profileClient = new DaemonClient({ profileName: 'trustquote' });
+      const profileClient = new DaemonClient({ profileName: 'eunbyeol' });
 
       await profileClient.connect();
 
-      expect(net.createConnection).toHaveBeenCalledWith(getProfilePipePath('trustquote', process.platform));
+      expect(net.createConnection).toHaveBeenCalledWith(getProfilePipePath('eunbyeol', process.platform));
       profileClient.disconnect();
     });
 
     test('spawns daemon through the running Electron binary as node', async () => {
       const profileClient = new DaemonClient({
-        profileName: 'trustquote',
+        profileName: 'eunbyeol',
         daemonEnv: {
           ELECTRON_RUN_AS_NODE: 'stale',
           Electron_Run_As_Node: 'stale-case-variant',
@@ -98,7 +98,7 @@ describe('DaemonClient', () => {
         [expect.stringContaining('terminal-daemon.js')],
         expect.objectContaining({
           env: expect.objectContaining({
-            SQUIDRUN_PROFILE: 'trustquote',
+            SQUIDRUN_PROFILE: 'eunbyeol',
             SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\Eunbyeol',
             SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Eunbyeol',
             ELECTRON_RUN_AS_NODE: '1',
@@ -471,9 +471,6 @@ describe('DaemonClient', () => {
         pid: 9999,
         mode: 'pty',
         createdAt: 123,
-        workRoomRouteOwner: true,
-        routeOwner: 'trustquote-work-room-route-owner',
-        roomId: 'trustquote',
       }) + '\n';
       mockSocket.emit('data', msg);
 
@@ -484,11 +481,6 @@ describe('DaemonClient', () => {
       expect(client.terminals.has('1')).toBe(true);
       expect(client.terminals.get('1').pid).toBe(9999);
       expect(client.terminals.get('1').createdAt).toBe(123);
-      expect(client.terminals.get('1')).toEqual(expect.objectContaining({
-        workRoomRouteOwner: true,
-        routeOwner: 'trustquote-work-room-route-owner',
-        roomId: 'trustquote',
-      }));
     });
 
     test('should not mark a newer cached terminal dead from a stale exit event', async () => {

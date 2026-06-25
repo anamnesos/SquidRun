@@ -17,10 +17,6 @@ const { ROLE_ID_MAP, getSquidrunRoot } = require('../config');
 const { getProfileWebSocketPort } = require('../profile');
 const { run: captureScreenshot } = require('./hm-screenshot');
 const { resolveCliWebSocketPort } = require('./hm-ws-port');
-const {
-  TRUSTQUOTE_WORKSPACE_KEY,
-  isTrustQuoteWorkspace,
-} = require('../modules/work-room-terminal-visibility');
 
 const MANIFEST_SCHEMA = 'squidrun.visible_pane_submit_harness.v0';
 const PRODUCER = 'hm-visible-pane-submit-harness';
@@ -35,11 +31,6 @@ const DEFAULT_CAPTURE_PORT = Number.parseInt(
     || String(resolveCliWebSocketPort({ profileName: 'main', cwd: process.cwd() })),
   10
 );
-
-const TRUSTQUOTE_PANE_BY_ROLE = Object.freeze({
-  builder: 'trustquote-builder',
-  oracle: 'trustquote-oracle',
-});
 
 function usage() {
   console.log('Usage: node hm-visible-pane-submit-harness.js run --window-key <key> --target-role <role> --message <text> [options]');
@@ -108,9 +99,6 @@ function resolvePaneId({ windowKey = 'main', targetRole = '', paneId = '' } = {}
   if (explicit) return explicit;
   const normalizedWindow = asText(windowKey, 'main').toLowerCase();
   const normalizedRole = asText(targetRole, '').toLowerCase();
-  if (isTrustQuoteWorkspace(normalizedWindow)) {
-    return TRUSTQUOTE_PANE_BY_ROLE[normalizedRole] || '';
-  }
   return asText(ROLE_ID_MAP?.[normalizedRole], '');
 }
 
@@ -135,7 +123,7 @@ function collectHarnessOptions(parsed) {
     role: asText(getOption(options, 'role', 'builder'), 'builder').toLowerCase(),
     port: asPositiveInt(
       getOption(options, 'port', ''),
-      getProfileWebSocketPort(isTrustQuoteWorkspace(windowKey) ? TRUSTQUOTE_WORKSPACE_KEY : windowKey)
+      getProfileWebSocketPort(windowKey)
     ),
     capturePort: asPositiveInt(getOption(options, 'capture-port', ''), DEFAULT_CAPTURE_PORT),
     waitMs: asPositiveInt(getOption(options, 'wait-ms', ''), DEFAULT_WAIT_MS),
@@ -471,9 +459,7 @@ async function runHarness(params, deps = {}) {
 
   const nowMs = typeof deps.nowMs === 'function' ? deps.nowMs() : Date.now();
   const DaemonClientImpl = deps.DaemonClient || DaemonClient;
-  const client = deps.daemonClient || new DaemonClientImpl({
-    profileName: isTrustQuoteWorkspace(params.windowKey) ? TRUSTQUOTE_WORKSPACE_KEY : undefined,
-  });
+  const client = deps.daemonClient || new DaemonClientImpl({});
   if (typeof client.connect === 'function') {
     const connected = await client.connect();
     if (connected === false) throw new Error('terminal daemon unavailable');

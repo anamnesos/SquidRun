@@ -5,8 +5,6 @@ const {
 
 describe('app-control-service', () => {
   test('normalizeAction resolves close-window aliases', () => {
-    expect(normalizeAction('close-trustquote')).toBe('close-trustquote-workspace');
-    expect(normalizeAction('close-trustquote-window')).toBe('close-trustquote-workspace');
     expect(normalizeAction('close-window')).toBe('close-app-window');
     expect(normalizeAction('close-app-window')).toBe('close-app-window');
     expect(normalizeAction('scroll-probe')).toBe('terminal-scroll-probe');
@@ -379,47 +377,6 @@ describe('app-control-service', () => {
     expect(result.note).toMatch(/main-profile surface window/i);
   });
 
-  test('open-trustquote-workspace opens the real workspace without auto-booting duplicate agents', async () => {
-    const openAppWindow = jest.fn().mockResolvedValue({
-      ok: true,
-      windowKey: 'trustquote',
-      status: 'opened',
-    });
-
-    const result = await executeAppControlAction({ openAppWindow }, 'open-trustquote-workspace');
-
-    expect(openAppWindow).toHaveBeenCalledWith('trustquote', {
-      autoBootAgents: false,
-      profileName: 'trustquote',
-    });
-    expect(result).toEqual(expect.objectContaining({
-      success: true,
-      action: 'open-trustquote-workspace',
-      windowKey: 'trustquote',
-      status: 'opened',
-    }));
-    expect(result.note).toMatch(/without starting duplicate agents/i);
-  });
-
-  test('close-trustquote-workspace delegates to the existing non-main close path', async () => {
-    const closeAppWindow = jest.fn().mockResolvedValue({
-      ok: true,
-      windowKey: 'trustquote',
-      status: 'closed',
-    });
-
-    const result = await executeAppControlAction({ closeAppWindow }, 'close-trustquote-workspace');
-
-    expect(closeAppWindow).toHaveBeenCalledWith('trustquote');
-    expect(result).toEqual(expect.objectContaining({
-      success: true,
-      action: 'close-trustquote-workspace',
-      windowKey: 'trustquote',
-      status: 'closed',
-    }));
-    expect(result.note).toMatch(/without stopping the Electron main process/i);
-  });
-
   test('close-app-window refuses main before calling the app close hook', async () => {
     const closeAppWindow = jest.fn();
 
@@ -439,19 +396,19 @@ describe('app-control-service', () => {
   test('close-app-window surfaces missing non-main windows without stopping the app', async () => {
     const closeAppWindow = jest.fn().mockResolvedValue({
       ok: false,
-      windowKey: 'trustquote',
+      windowKey: 'squid-room',
       reason: 'window_not_found',
     });
 
     const result = await executeAppControlAction({ closeAppWindow }, 'close-app-window', {
-      windowKey: 'trustquote',
+      windowKey: 'squid-room',
     });
 
-    expect(closeAppWindow).toHaveBeenCalledWith('trustquote');
+    expect(closeAppWindow).toHaveBeenCalledWith('squid-room');
     expect(result).toEqual(expect.objectContaining({
       success: false,
       action: 'close-app-window',
-      windowKey: 'trustquote',
+      windowKey: 'squid-room',
       reason: 'window_not_found',
     }));
   });

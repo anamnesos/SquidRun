@@ -31,7 +31,6 @@ const CHROME_CONTROL_IDS = Object.freeze([
   'profileBtn',
   'settingsBtn',
   'openSquidRoomBtn',
-  'openTrustQuoteWorkspaceBtn',
   'openMiraLabBtn',
   'panelBtn',
   'dryRunIndicator',
@@ -51,7 +50,6 @@ const FULL_CHROME = Object.freeze({
 
 const INSTALLED_OPERATOR_DROPPED_CONTROLS = Object.freeze([
   'openSquidRoomBtn',
-  'openTrustQuoteWorkspaceBtn',
   'openMiraLabBtn',
 ]);
 
@@ -81,8 +79,8 @@ const CHROME_ALLOWLIST = Object.freeze({
   // Installed operator consoles (Eunbyeol is the live split install): keep
   // maintenance chrome, but remove cross-product entry points.
   [WINDOW_CHROME_CLASSES.INSTALLED_OPERATOR]: INSTALLED_OPERATOR_CHROME,
-  // Work rooms (TrustQuote workspace): mark + badge + Close. The right panel
-  // starts absent; if a work room proves a need it gets added back named.
+  // Work rooms: mark + badge + Close. The right panel starts absent; if a
+  // work room proves a need it gets added back named.
   [WINDOW_CHROME_CLASSES.WORK_ROOM]: Object.freeze({
     controls: Object.freeze(['fullRestartBtn']),
     regions: Object.freeze([]),
@@ -99,7 +97,6 @@ function resolveWindowChromeClass(windowContext = {}) {
     || windowContext.installedDeployment === 'true'
     || (standalone && windowKey === 'main' && profileName === 'main');
   if (windowKey === 'squid-room') return WINDOW_CHROME_CLASSES.SQUID_ROOM;
-  if (windowKey === 'trustquote') return WINDOW_CHROME_CLASSES.WORK_ROOM;
   if (windowKey === 'main' && profileName === 'main' && installedDeployment) {
     return WINDOW_CHROME_CLASSES.INSTALLED_OPERATOR;
   }

@@ -24,8 +24,8 @@ describe('surface-capture-events', () => {
 
     try {
       const event = recordSurfaceCaptureEvent({
-        windowKey: 'trustquote',
-        paneId: 'trustquote-builder',
+        windowKey: 'squid-room',
+        paneId: 'trustquote-app',
         scope: 'pane',
         path: sourcePath,
         buffer,
@@ -39,8 +39,8 @@ describe('surface-capture-events', () => {
         imageSha256: sha256Buffer(buffer),
         screenshotPath,
         returnedPath: sourcePath,
-        windowKey: 'trustquote',
-        paneId: 'trustquote-builder',
+        windowKey: 'squid-room',
+        paneId: 'trustquote-app',
         scope: 'pane',
         runId: 'run-1',
       }, {
@@ -63,8 +63,8 @@ describe('surface-capture-events', () => {
         imageSha256: sha256Buffer(buffer),
         screenshotPath,
         returnedPath: screenshotPath,
-        windowKey: 'trustquote',
-        paneId: 'trustquote-builder',
+        windowKey: 'squid-room',
+        paneId: 'trustquote-app',
         scope: 'pane',
         runId: 'run-1',
       })).toEqual(expect.objectContaining({
@@ -86,8 +86,8 @@ describe('surface-capture-events', () => {
 
     try {
       const event = recordSurfaceCaptureEvent({
-        windowKey: 'trustquote',
-        paneId: 'trustquote-builder',
+        windowKey: 'squid-room',
+        paneId: 'trustquote-app',
         scope: 'pane',
         path: sourcePath,
         buffer,
@@ -100,8 +100,8 @@ describe('surface-capture-events', () => {
         imageSha256: sha256Buffer(buffer),
         screenshotPath,
         returnedPath: sourcePath,
-        windowKey: 'trustquote',
-        paneId: 'trustquote-builder',
+        windowKey: 'squid-room',
+        paneId: 'trustquote-app',
         scope: 'pane',
         runId: 'run-1',
       })).toEqual(expect.objectContaining({

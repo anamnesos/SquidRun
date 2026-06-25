@@ -19,7 +19,7 @@ describe('TrustQuote arm specs', () => {
     );
     expect(lead.startupMessage).toContain('trustquote-invoice / trustquote-schedule-dispatch');
     expect(lead.startupMessage).toContain(TRUSTQUOTE_HM_SEND_SCOPE_NOTE);
-    expect(lead.startupMessage).not.toContain('--target-profile trustquote');
+    expect(lead.startupMessage).not.toContain('--target-profile');
 
     expect(domainArms.map((spec) => spec.reportsTo)).toEqual([
       'trustquote-lead',
@@ -32,7 +32,7 @@ describe('TrustQuote arm specs', () => {
       );
       expect(spec.startupMessage).toContain('Do not report directly to the Architect');
       expect(spec.startupMessage).toContain(TRUSTQUOTE_HM_SEND_SCOPE_NOTE);
-      expect(spec.startupMessage).not.toContain('--target-profile trustquote');
+      expect(spec.startupMessage).not.toContain('--target-profile');
     }
   });
 });

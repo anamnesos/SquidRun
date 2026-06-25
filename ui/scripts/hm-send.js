@@ -166,10 +166,6 @@ const MAX_RETRIES = 5;
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 const SPECIAL_USER_TARGETS = new Set(['user', 'telegram']);
 const INTERNAL_INBOX_TARGETS = new Set(['mira']);
-const TRUSTQUOTE_PROFILE_NAME = 'trustquote';
-const TRUSTQUOTE_ROUTE_OWNER_ID = 'trustquote-work-room-route-owner';
-const TRUSTQUOTE_REVERSE_TARGETS = new Set(['architect']);
-const TRUSTQUOTE_REVERSE_SOURCE_ROLES = new Set(['builder', 'oracle']);
 const args = process.argv.slice(2);
 const listDevicesMode = args.includes('--list-devices');
 const DEFAULT_ROLE_BY_PANE = Object.freeze({
@@ -1107,9 +1103,7 @@ function getExplicitSessionScopeId(env = process.env) {
 function scopeSessionIdForEffectiveProfile(sessionId, profileName = effectiveProfileName) {
   const normalizedSessionId = normalizeSessionId(sessionId);
   if (!normalizedSessionId) return null;
-  if (normalizeProfileName(profileName) !== TRUSTQUOTE_PROFILE_NAME) return normalizedSessionId;
-  if (normalizedSessionId.endsWith(`:${TRUSTQUOTE_PROFILE_NAME}`)) return normalizedSessionId;
-  return `${normalizedSessionId}:${TRUSTQUOTE_PROFILE_NAME}`;
+  return normalizedSessionId;
 }
 
 function buildProjectMetadata(context = localProjectContext) {
@@ -1138,10 +1132,7 @@ function buildTargetProfileRouteContext() {
   if (!targetProfileOverride) return null;
   if (isMainProfile(profileName) && isMainProfile(senderProfileName)) return null;
   const windowKey = normalizeProfileName(targetWindowKeyOverride || profileName);
-  const sessionScopeId = targetSessionScopeIdOverride
-    || (profileName === TRUSTQUOTE_PROFILE_NAME
-      ? scopeSessionIdForEffectiveProfile(projectMetadata?.session_id || getExplicitSessionScopeId(), profileName)
-      : null);
+  const sessionScopeId = targetSessionScopeIdOverride || null;
   return {
     port: process.env.HM_SEND_PORT ? PORT : getProfileWebSocketPort(profileName),
     targetProfileName: profileName,
@@ -1206,89 +1197,6 @@ function buildRegisterPayload(envelope = null, options = {}) {
     profileName,
     windowKey,
     sessionScopeId,
-  };
-}
-
-function getTrustQuoteReverseMainPort() {
-  const explicit = Number.parseInt(
-    String(process.env.HM_SEND_TRUSTQUOTE_REVERSE_PORT || process.env.HM_SEND_MAIN_PORT || ''),
-    10
-  );
-  if (Number.isFinite(explicit) && explicit > 0) return explicit;
-  return resolveCliWebSocketPort({ profileName: 'main', cwd: process.cwd() });
-}
-
-function getTrustQuoteSourcePaneId(sourceRole) {
-  const envPane = String(process.env.SQUIDRUN_PANE_ID || '').trim();
-  if (envPane) return envPane;
-  if (sourceRole === 'builder') return 'trustquote-builder';
-  if (sourceRole === 'oracle') return 'trustquote-oracle';
-  return null;
-}
-
-function formatTrustQuoteReverseContent(content, sourceRole) {
-  const text = String(content || '');
-  const normalizedRole = normalizeRole(sourceRole);
-  if (!TRUSTQUOTE_REVERSE_SOURCE_ROLES.has(normalizedRole)) return text;
-  if (/^\(TRUSTQUOTE-(?:BUILDER|ORACLE)(?:\s+#[^)]+)?\):/i.test(text.trimStart())) {
-    return text;
-  }
-  const roleLabel = normalizedRole.toUpperCase();
-  const replaced = text.replace(
-    new RegExp(`^\\((${roleLabel})([^)]*)\\):`, 'i'),
-    `(TRUSTQUOTE-${roleLabel}$2):`
-  );
-  if (replaced !== text) return replaced;
-  return `(TRUSTQUOTE-${roleLabel}): ${text}`;
-}
-
-function buildTrustQuoteReverseRouteContext(targetRole) {
-  const normalizedSourceRole = normalizeRole(role);
-  if (normalizeProfileName(effectiveProfileName) !== TRUSTQUOTE_PROFILE_NAME) return null;
-  if (!TRUSTQUOTE_REVERSE_TARGETS.has(targetRole)) return null;
-  if (!TRUSTQUOTE_REVERSE_SOURCE_ROLES.has(normalizedSourceRole)) return null;
-
-  const sourcePaneId = getTrustQuoteSourcePaneId(normalizedSourceRole);
-  const sessionScopeId = String(process.env.SQUIDRUN_SESSION_SCOPE_ID || projectMetadata?.session_id || '').trim() || null;
-  const sourceProjectPath = String(projectMetadata?.path || process.env.SQUIDRUN_PROJECT_ROOT || '').trim() || null;
-  return {
-    port: getTrustQuoteReverseMainPort(),
-    register: {
-      profileName: 'main',
-      windowKey: 'main',
-      sessionScopeId: null,
-      role: normalizedSourceRole,
-    },
-    metadata: {
-      sender: {
-        role: normalizedSourceRole,
-        roomRole: normalizedSourceRole,
-        profileName: TRUSTQUOTE_PROFILE_NAME,
-        windowKey: TRUSTQUOTE_PROFILE_NAME,
-        paneId: sourcePaneId,
-        terminalPaneId: sourcePaneId,
-      },
-      room: {
-        id: TRUSTQUOTE_PROFILE_NAME,
-        sourceRoomId: TRUSTQUOTE_PROFILE_NAME,
-        sourceWindowKey: TRUSTQUOTE_PROFILE_NAME,
-        sourceProjectPath,
-        targetRoomId: 'main',
-        targetRole: 'architect',
-        visibility: 'cross_room_summary',
-        sessionScopeId,
-        dispatch: 'trustquote_reverse_relay',
-      },
-      trustQuoteReverseRelay: {
-        sourceProfile: TRUSTQUOTE_PROFILE_NAME,
-        sourceWindowKey: TRUSTQUOTE_PROFILE_NAME,
-        sourceRole: normalizedSourceRole,
-        sourcePaneId,
-        targetProfile: 'main',
-        targetRole: 'architect',
-        sessionScopeId,
-      },
-    },
   };
 }
 
@@ -2384,80 +2292,6 @@ async function queryDeliveryCheckBestEffort(ws, messageId, options = {}) {
   return null;
 }
 
-function isTrustQuoteRouteOwnerTarget(targetInput = target, routeContext = null) {
-  const routeProfile = normalizeProfileName(routeContext?.targetProfileName || '');
-  if (
-    normalizeProfileName(effectiveProfileName) !== TRUSTQUOTE_PROFILE_NAME
-    && routeProfile !== TRUSTQUOTE_PROFILE_NAME
-  ) {
-    return false;
-  }
-  const normalizedTarget = normalizeRole(targetInput);
-  return normalizedTarget === 'builder' || normalizedTarget === 'oracle';
-}
-
-function normalizeTrustQuoteRouteOwnerHealth(health, targetInput = target, routeContext = null) {
-  if (!isTrustQuoteRouteOwnerTarget(targetInput, routeContext)) return health;
-  const normalizedTarget = normalizeRole(targetInput) || String(targetInput || '').trim().toLowerCase();
-  const expectedSessionScopeId = routeContext?.metadata?.routing?.sessionScopeId
-    || scopeSessionIdForEffectiveProfile(projectMetadata?.session_id || getExplicitSessionScopeId());
-  const base = health && typeof health === 'object' ? health : {};
-  const routeBinding = base.routeBinding && typeof base.routeBinding === 'object' ? base.routeBinding : null;
-  const blocked = (status, error) => ({
-    ...base,
-    type: base.type || 'health-check-result',
-    target: base.target || normalizedTarget || targetInput || null,
-    healthy: false,
-    status,
-    error,
-    failClosed: true,
-    routeOwnerRequired: TRUSTQUOTE_ROUTE_OWNER_ID,
-    expectedSessionScopeId: expectedSessionScopeId || null,
-  });
-
-  if (!health) {
-    return blocked(
-      'trustquote_route_owner_health_unavailable',
-      `TrustQuote route-owner health check did not return for target '${normalizedTarget}'.`
-    );
-  }
-  if (base.healthy === true && String(base.source || '').toLowerCase() !== 'client_activity') {
-    return blocked(
-      'trustquote_route_owner_unhealthy',
-      `TrustQuote target '${normalizedTarget}' must be backed by route-owner client_activity; got ${base.source || base.status || 'unknown'}.`
-    );
-  }
-  if (base.healthy !== true || String(base.status || '').toLowerCase() !== 'healthy') {
-    const status = String(base.status || '').toLowerCase();
-    return blocked(
-      status === 'scope_route_unavailable' || status === 'cross_profile_scope_mismatch'
-        ? status
-        : 'trustquote_route_owner_unhealthy',
-      `TrustQuote route-owner target '${normalizedTarget}' is not healthy (${base.status || 'unknown'}).`
-    );
-  }
-  if (
-    !routeBinding
-    || routeBinding.routeOwner !== TRUSTQUOTE_ROUTE_OWNER_ID
-    || routeBinding.roomId !== TRUSTQUOTE_PROFILE_NAME
-  ) {
-    return blocked(
-      'trustquote_route_owner_unhealthy',
-      `TrustQuote target '${normalizedTarget}' is not bound to ${TRUSTQUOTE_ROUTE_OWNER_ID}.`
-    );
-  }
-  if (
-    expectedSessionScopeId
-    && routeBinding.sessionScopeId !== expectedSessionScopeId
-  ) {
-    return blocked(
-      'trustquote_route_owner_session_mismatch',
-      `TrustQuote route-owner target '${normalizedTarget}' is scoped to '${routeBinding.sessionScopeId || '<missing>'}', expected '${expectedSessionScopeId}'.`
-    );
-  }
-  return health;
-}
-
 function isTargetHealthBlocking(health, targetInput = target) {
   if (!health || typeof health !== 'object') return false;
   const status = String(health.status || '').toLowerCase();
@@ -2470,9 +2304,6 @@ function isTargetHealthBlocking(health, targetInput = target) {
   if (
     status === 'scope_route_unavailable'
     || status === 'cross_profile_scope_mismatch'
-    || status === 'trustquote_route_owner_health_unavailable'
-    || status === 'trustquote_route_owner_unhealthy'
-    || status === 'trustquote_route_owner_session_mismatch'
   ) {
     return true;
   }
@@ -2576,11 +2407,7 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
   await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
 
   if (!skipHealthCheck) {
-    const health = normalizeTrustQuoteRouteOwnerHealth(
-      await queryTargetHealthBestEffort(ws, opts),
-      target,
-      targetProfileRouteContext
-    );
+    const health = await queryTargetHealthBestEffort(ws, opts);
     if (isTargetHealthBlocking(health, target)) {
       await closeSocket(ws);
       traceComplete({
@@ -2795,8 +2622,7 @@ async function main() {
     || normalizeTrustQuoteArmTarget(target)
     || (isSpecialTarget(target) ? String(target).trim().toLowerCase() : null)
     || (bridgeTarget ? bridgeTarget.targetRole : null);
-  const trustQuoteReverseRoute = buildTrustQuoteReverseRouteContext(targetRole);
-  const forwardProfileRoute = trustQuoteReverseRoute ? null : targetProfileRouteContext;
+  const forwardProfileRoute = targetProfileRouteContext;
   const targetProfileIsCrossProfileArchitectRoute = Boolean(
     targetProfileOverride
     && targetRole === 'architect'
@@ -2810,12 +2636,9 @@ async function main() {
   const profileRouteAttributionMetadata = buildProfileRouteAttributionMetadata(targetRole, forwardProfileRoute);
   const profileRouteDispatchMetadata = {
     ...(profileRouteAttributionMetadata || {}),
-    ...(trustQuoteReverseRoute ? trustQuoteReverseRoute.metadata : {}),
     ...(forwardProfileRoute ? forwardProfileRoute.metadata : {}),
   };
-  const outboundMessage = trustQuoteReverseRoute
-    ? formatTrustQuoteReverseContent(message, role)
-    : message;
+  const outboundMessage = message;
   const miraInboxMode = isMiraInboxTarget(targetRole);
   const guardResult = await runOutputGuards({ messageId, targetRole });
   if (guardResult?.ok !== true) {
@@ -2883,7 +2706,7 @@ async function main() {
   try {
     sendResult = await sendViaWebSocketWithAck(envelope, {
       skipHealthCheck: bridgeMode,
-      ...(trustQuoteReverseRoute || forwardProfileRoute || {}),
+      ...(forwardProfileRoute || {}),
       metadata: Object.keys(profileRouteDispatchMetadata).length > 0
         ? profileRouteDispatchMetadata
         : null,

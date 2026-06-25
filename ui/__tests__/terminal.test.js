@@ -512,7 +512,7 @@ describe('terminal.js module', () => {
       expect(caps.verifySubmitAccepted).toBe(true);
     });
 
-    test('uses source pane runtime and PTY Enter for TrustQuote route-owned panes', () => {
+    test('uses source pane runtime and PTY Enter for live TrustQuote arm panes', () => {
       mockSettings.getSettings.mockReturnValue({
         hiddenPaneHostsEnabled: false,
         paneCommands: {
@@ -521,24 +521,17 @@ describe('terminal.js module', () => {
         },
       });
 
-      const builderCaps = terminal.getPaneInjectionCapabilities('trustquote-builder');
-      expect(builderCaps.displayName).toBe('Codex');
-      expect(builderCaps.enterMethod).toBe('pty');
-      expect(builderCaps.submitMethod).toBe('trustquote-pty-enter');
-      expect(builderCaps.requiresFocusForEnter).toBe(false);
-      expect(builderCaps.verifySubmitAccepted).toBe(true);
-
-      const oracleCaps = terminal.getPaneInjectionCapabilities('trustquote-oracle');
-      expect(oracleCaps.displayName).toBe('Claude');
-      expect(oracleCaps.enterMethod).toBe('pty');
-      expect(oracleCaps.submitMethod).toBe('trustquote-pty-enter');
-      expect(oracleCaps.requiresFocusForEnter).toBe(false);
-
       const leadCaps = terminal.getPaneInjectionCapabilities('trustquote-lead');
       expect(leadCaps.displayName).toBe('Claude');
       expect(leadCaps.enterMethod).toBe('pty');
       expect(leadCaps.submitMethod).toBe('trustquote-pty-enter');
       expect(leadCaps.requiresFocusForEnter).toBe(false);
+
+      const appCaps = terminal.getPaneInjectionCapabilities('trustquote-app');
+      expect(appCaps.displayName).toBe('Claude');
+      expect(appCaps.enterMethod).toBe('pty');
+      expect(appCaps.submitMethod).toBe('trustquote-pty-enter');
+      expect(appCaps.requiresFocusForEnter).toBe(false);
     });
 
     test('returns safe generic defaults for unknown runtimes', () => {

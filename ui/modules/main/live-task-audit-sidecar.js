@@ -161,7 +161,7 @@ function classifyTaskAuditSection(item = {}) {
   if (projectSection) return projectSection;
 
   const haystack = haystackForSection(item);
-  if (/\btrustquote\b|trustquote-work-room|work-room|route-owner|prod-readiness|staging|deploy/.test(haystack)) {
+  if (/\btrustquote\b|prod-readiness|staging|deploy/.test(haystack)) {
     return 'TrustQuote';
   }
   if (/\bmira\b|presence-runtime|north-star|voice-transport|a3_a4|a3|a4/.test(haystack)) {

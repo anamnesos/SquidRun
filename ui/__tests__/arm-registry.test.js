@@ -585,19 +585,19 @@ maybeDescribe('arm registry', () => {
     seedCommsCheckin(dbPath, {
       messageId: 'hm-wrong-pane',
       role: 'trustquote-schedule-dispatch',
-      paneId: 'trustquote-builder',
+      paneId: 'trustquote-app',
     }, 3_000);
     const wrongPane = recordArmCheckinProof({
       appRoomId: 'trustquote',
       sessionId: 'app-session-406:trustquote',
       armKey: 'schedule-dispatch',
       role: 'trustquote-schedule-dispatch',
-      paneId: 'trustquote-builder',
+      paneId: 'trustquote-app',
       proofKind: 'startup_check_in',
       messageId: 'hm-wrong-pane',
       env: {
         SQUIDRUN_ROLE: 'trustquote-schedule-dispatch',
-        SQUIDRUN_PANE_ID: 'trustquote-builder',
+        SQUIDRUN_PANE_ID: 'trustquote-app',
         SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
       },
     }, { dbPath, nowMs: 3_000 });

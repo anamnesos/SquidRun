@@ -5,60 +5,11 @@
 - Relay: hosted on Railway (`wss://relay-production-2c27.up.railway.app`).
 - Telegram bot: configured via `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` in `.env`.
 
-## TrustQuote route-owner supervisor: ELECTRON_RUN_AS_NODE launch fix (S404)
-
-**Root cause (the stuck-STARTING bug):** `startTrustQuoteRouteOwner` in `trustquote-work-room-route-owner-supervisor.js` spawned `process.execPath` to run the route-owner script. Inside the Electron main process `process.execPath` is `electron.exe`, and spawning it **without** `ELECTRON_RUN_AS_NODE=1` launches a second full Electron app, not Node — so the route-owner script never executed, the supervisor sat at `state=STARTING` forever, and room port **9979 never bound**. Downstream symptom: the main-side readiness probe raced an 8s DOM check against a supervisor that would never reach ready, producing a false `workroom_unusable`.
-
-**Fix:** `resolveRouteOwnerLaunchExecutable()` injects `ELECTRON_RUN_AS_NODE=1` into the spawn env when `process.execPath` is electron (skips it when already Node, or when not inside Electron); overridable via `SQUIDRUN_TRUSTQUOTE_ROUTE_OWNER_NODE_PATH` / `SQUIDRUN_SUPERVISOR_NODE_PATH`. Plus state-correctness gating in `squidrun-app.js`: readiness now requires `status.state==='running'` AND a proven route probe (`canRouteTask`); `isTrustQuoteRouteOwnerCurrent` and `getTrustQuoteRouteOwnerSessionScopeId` no longer accept a bare `running:true` with a non-`running` state.
-
-**Restart-safety (verified S404 Oracle gate):** a running-but-not-`running` supervisor (e.g. a stale `STARTING` one) is stopped and relaunched on the next workspace-open. The stop path is **terminal-safe**: `ensureTrustQuoteRouteOwnerCurrent` always passes `killTerminalsOnStop:false` + `attachExistingTerminals:true`, so `stopTrustQuoteRouteOwner` SIGTERMs only the supervisor pid and never cleans up the attached agent terminals James can see. Stale cross-session supervisors are caught by the `session_scope_changed` stop branch; same-session not-ready ones by the `route_owner_not_ready` branch — so a stuck supervisor cannot deadlock a fresh launch. `ensure` is one-shot per workspace-open (not a loop), so a persistent failure returns a clean error rather than thrashing stop/start. Caveat (low, forward-looking): the `RUN_AS_NODE=1` env is inherited by any child the route-owner spawns; today it runs `--no-launch-agents`/attach-only so it spawns none, but if agent-launch is ever enabled, confirm the agent spawn strips `ELECTRON_RUN_AS_NODE` so the codex/claude CLIs don't inherit it.
-
-### Manually (re)opening the TrustQuote agents from the Architect CLI (S406)
-
-When James says "open the TrustQuote agents" and the room is dead, the symptom is `hm-send … --target-profile trustquote` returning **`scope_route_unavailable`** (route-owner alive but scoped to a previous `app-session-N`) or **`ECONNREFUSED 127.0.0.1:9979`** (no supervisor at all). After an app restart the side work-room does **not** always auto-relaunch under the new session scope.
-
-Procedure (Architect pane, project root):
-1. Diagnose: `node ui/scripts/hm-trustquote-room-route-owner.js status` (and `probe`). Check `sessionScopeId` matches the current `app-session-N` from `.squidrun/app-status.json`.
-2. If scoped to an old session: `node ui/scripts/hm-trustquote-room-route-owner.js stop` (terminal-safe — kills only the supervisor pid).
-3. Relaunch persistently:
-   `node ui/scripts/hm-trustquote-room-route-owner.js start --launch-agents --allow-live-agents --session app-session-<N> --status-file D:\projects\squidrun\.squidrun\runtime\trustquote-work-room-route-owner\status.json`
-   - `--allow-live-agents` is **required** alongside `--launch-agents`, else `start` refuses with `live_agent_launch_requires_explicit_allow`.
-4. Verify: `status` shows `state:running`; port 9979 OPEN; a generic `hm-send.js builder --target-profile trustquote --file <ping>` returns `delivered.websocket` (the real liveness proof — process-alive is not enough).
-
-**CRITICAL — use `start`, NOT `run`, for persistence.** The `start` command spawns the supervisor `detached:true` + `child.unref()` + `windowsHide:true` (see `startTrustQuoteRouteOwner`), so it survives the launching shell. Launching `run` directly as a backgrounded shell command (e.g. via a tool's `run_in_background`) ties the supervisor's lifetime to that shell task — when the task is reaped the supervisor dies, port 9979 closes, and the room silently drops. This bit S406: a backgrounded `run` looked healthy for ~70 min then died on task reap. Content-guard note: the room's content filter rejects main-context-looking bodies (`MAIN_CONTEXT_PATTERN`) — send generic liveness pings via `--file`, not inline strings full of session/lane/main-architect wording.
-
-### TrustQuote work-room canonical lifecycle and S406 regression map
-
-This is the intended TrustQuote room flow, not just a recovery command:
-
-1. The visible opener is `open-trustquote-workspace`, which calls `openAppWindow('trustquote', { autoBootAgents:false, profileName:'trustquote' })`. The TrustQuote window must not auto-spawn duplicate default panes.
-2. Before the window renders as usable, `openAppWindow('trustquote')` must ensure the route owner is current for the main session, materialize `D:/projects/TrustQuote/.squidrun/link.json`, `current-workstream.json`, and `.squidrun/runtime/window-teams/trustquote/startup-bundle.md`, then require a proven route-owner probe with `canRouteTask:true`.
-3. The route owner owns the TrustQuote agent terminals. Its plan must bind `trustquote-builder` to Builder and `trustquote-oracle` to Oracle with `SQUIDRUN_PROFILE=trustquote`, `SQUIDRUN_SESSION_SCOPE_ID=app-session-<N>:trustquote`, `SQUIDRUN_PROJECT_ROOT=D:/projects/TrustQuote`, and role-specific `SQUIDRUN_ROLE`/`SQUIDRUN_PANE_ID`.
-4. For newly spawned TrustQuote agents, the route-owner launch path must deliver the per-role startup binding and first check-in instruction. The normal main-pane path does this through renderer `terminal.js:spawnAgent()` -> startup identity injection, but route-owner starts its own terminals and cannot assume renderer `spawnAgent()` will run.
-5. The first live proof for identity is not process-alive or env metadata. It is distinct TrustQuote Builder and TrustQuote Oracle check-ins landing in `hm-comms` under the TrustQuote scope/session, with the agents acknowledging the generated startup sources and TrustQuote playbook.
-6. The visible window must retarget the shell to `trustquote-builder` and `trustquote-oracle` (`workspace-pane-shell.js`) and readiness must check those retargeted panes, not just fallback pane `2`/`3`.
-
-#### TrustQuote arm manifest vs readiness scope (S407)
+## TrustQuote arm manifest vs readiness scope (S407)
 
 The Squid Room desired-arm manifest is durable app-room state, not session state. Its registry row must be keyed by the canonical sentinel `app-room:trustquote`, which is intentionally format-distinct from `app-session-N:trustquote` and survives restarts. Current room readiness stays session-scoped through `readinessSessionId`: check-ins, missing-watchdogs, apply requests, and desired/ready/missing counts are evaluated against the current session, for example `app-session-408:trustquote`.
 
 The projection path must resolve the canonical manifest directly, then recompute readiness against the requested/current session. A fresh 408 projection is expected to find the `app-room:trustquote` manifest with `desired=3`, `ready=0`, and `missing=3` until fresh 408 identity check-ins land. Startup must not auto-seed or auto-migrate this manifest; explicit seed/migration tooling must target `app-room:trustquote`, treat an already-canonical row as `already_canonical`, and refuse duplicate canonical plus legacy rows as a blocker instead of repairing them silently.
-
-S406 regression inventory, ranked:
-
-1. **Critical - startup identity/check-in bypass.** `trustquote-work-room-route-owner.js` had correct role/env data in `buildTrustQuoteRouteOwnerPlan()`, but the spawned-agent path used `spawnRoleTerminal()` plus `launchRoleAgent()`, and `launchRoleAgent()` only wrote the bare CLI command. The renderer startup identity path (`terminal.js:spawnAgent()` / startup injection) did not run, so Codex could resume stale same-workspace context and both panes could behave like TrustQuote Builder. This is a route-owner launch/bootstrap bug, not a terminal-daemon bug. `terminal-daemon.js` explicitly leaves identity injection to renderer startup handling.
-2. **High - session/artifact desync.** `openAppWindow` must refresh `link.json`, `current-workstream.json`, and the startup bundle before treating a route owner as current. A running supervisor for the wrong `app-session-N` or a stale workstream can make the backend look alive while the room contract is stale.
-3. **High - visible opener removed or hidden.** The header/open-room affordance regressed across the room-switcher/header changes, leaving a headless route owner that could be healthy while James had no visible TrustQuote room window.
-4. **Medium - readiness checked fallback panes.** Readiness must prefer `trustquote-builder` and `trustquote-oracle`; pane `2`/`3` are fallback/source-pane identifiers only after retargeting. Treating fallback IDs as authority lets the window lie about the room.
-5. **Medium - proof surfaces can disagree.** As of the S406 audit snapshot, `hm-trustquote-room-route-owner.js probe --json` returned `contract.status="proven"` and `canRouteTask:true` with builder/oracle `source:"client_activity"`, while `D:/projects/TrustQuote/.squidrun/work-rooms/trustquote/current-workstream.json` still said `routeStatus:"unproven"` with `live_builder_route_missing` and `live_oracle_route_missing`. Re-probe and refresh artifacts before claiming current status.
-
-Three independent seams can lie and must be reconciled separately:
-
-- **Identity seam:** spawned CLI can be alive and correctly env-bound but still acting from stale Codex/Gemini context unless role-specific startup binding and check-in proof land.
-- **Backend/session seam:** status pid, port 9979, and route heartbeats can be alive for the wrong session or stale artifacts unless the session scope and route-owner probe match the current `app-session-N:trustquote`.
-- **Window/readiness seam:** a visible shell can show panes or labels while the actual route-binding lives elsewhere. Trust the retargeted pane IDs plus route binding, not generic pane `2`/`3` alone.
-
-Use this proof order for future claims: current main session -> materialized TrustQuote artifacts -> route-owner status `state:"running"` for the same session -> route-owner probe with `canRouteTask:true` and client_activity routes -> distinct Builder/Oracle startup check-ins -> visible TrustQuote window readiness on `trustquote-builder` and `trustquote-oracle`.
 
 ## How restarts ACTUALLY happen (READ THIS BEFORE STAGING ANY RESTART)
 

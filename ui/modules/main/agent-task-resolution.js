@@ -1,7 +1,3 @@
-const {
-  canUseCommsRowAsMainLaneAuthority,
-} = require('../project-room-envelope');
-
 const AGENT_ROLE_ALIASES = new Map([
   ['arch', 'architect'],
   ['architect', 'architect'],
@@ -130,6 +126,10 @@ function canSetCurrentLaneFromRow(row = {}) {
   const senderRole = normalizeAgentRole(row?.senderRole);
   if (senderRole && senderRole !== 'architect') return false;
   return canSetCurrentLaneFromBody(row?.rawBody || '');
+}
+
+function canUseCommsRowAsMainLaneAuthority() {
+  return true;
 }
 
 function extractAgentRefs(rawBody) {
