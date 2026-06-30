@@ -7674,9 +7674,12 @@ describe('SquidRunApp', () => {
         }),
         expect.objectContaining({ limit: 4, providerLimit: 3 })
       );
-      expect(triggers.sendDirectMessage.mock.calls[0][1]).toContain('[SQUIDRUN MEMORY RECALL]');
-      expect(triggers.sendDirectMessage.mock.calls[0][1]).toContain('James wants non-jargon plain English updates.');
-      expect(triggers.sendDirectMessage.mock.calls[0][1]).toContain('[Telegram from james]: what did you do?');
+      const deliveredMessage = triggers.sendDirectMessage.mock.calls[0][1];
+      expect(deliveredMessage).toContain('[SQUIDRUN MEMORY RECALL]');
+      expect(deliveredMessage).toContain('James wants non-jargon plain English updates.');
+      expect(deliveredMessage).toContain('[Telegram from james]: what did you do?');
+      expect(deliveredMessage.indexOf('[Telegram from james]: what did you do?'))
+        .toBeLessThan(deliveredMessage.indexOf('[SQUIDRUN MEMORY RECALL]'));
     });
 
     it('passes profile scope into recall and delivery metadata for scoped human messages', async () => {
