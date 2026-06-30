@@ -1,4 +1,5 @@
 const {
+  DEFAULT_RECALL_BLOCK_MAX_CHARS,
   RECALL_START,
   MEMORY_RECALL_MIN_MESSAGE_LENGTH,
   createMemoryBroker,
@@ -292,8 +293,34 @@ describe('memory-broker', () => {
     const block = formatRecallForPaneMessage(recall);
     expect(block).toContain(RECALL_START);
     expect(block).toContain('vector_cognitive - Preference: James wants non-jargon plain English updates.');
-    expect(prependRecallToMessage('Update me.', recall)).toContain('\n\nUpdate me.');
+    expect(prependRecallToMessage('Update me.', recall)).toMatch(/^Update me\.\n\n\[SQUIDRUN MEMORY RECALL\]/);
     expect(prependRecallToMessage(`${RECALL_START}\nold`, recall)).toBe(`${RECALL_START}\nold`);
+  });
+
+  test('keeps inbound message before capped recall context', () => {
+    const inbound = '[Telegram from james]: this is the actual body that must not disappear behind memory recall';
+    const recall = {
+      ok: true,
+      results: Array.from({ length: 8 }, (_, index) => ({
+        rank: index + 1,
+        sourceKind: 'vector_cognitive',
+        title: `Very long memory title ${index} ${'x'.repeat(200)}`,
+        excerpt: `Long recalled text ${index} ${'y'.repeat(800)}`,
+        ref: `memory:${index}:${'z'.repeat(400)}`,
+      })),
+    };
+
+    const injected = prependRecallToMessage(inbound, recall, {
+      limit: 8,
+      maxChars: 700,
+    });
+
+    expect(injected.startsWith(`${inbound}\n\n${RECALL_START}`)).toBe(true);
+    expect(injected).toContain('memory recall capped');
+    expect(injected).toContain('[/SQUIDRUN MEMORY RECALL]');
+    const recallBlock = injected.slice(inbound.length + 2);
+    expect(recallBlock.length).toBeLessThanOrEqual(700);
+    expect(DEFAULT_RECALL_BLOCK_MAX_CHARS).toBeGreaterThan(700);
   });
 
   describe('recall gating (messageReferencesPastWork)', () => {

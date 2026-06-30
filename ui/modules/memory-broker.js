@@ -4,6 +4,7 @@ const DEFAULT_RRF_K = 60;
 const DEFAULT_LIMIT = 6;
 const DEFAULT_PROVIDER_LIMIT = 5;
 const DEFAULT_PROVIDER_TIMEOUT_MS = 900;
+const DEFAULT_RECALL_BLOCK_MAX_CHARS = 2200;
 const RECALL_START = '[SQUIDRUN MEMORY RECALL]';
 const RECALL_END = '[/SQUIDRUN MEMORY RECALL]';
 // Memory recall is noise on a trivial one-liner ("what up bro") — it staples 3
@@ -717,18 +718,24 @@ function formatRecallForPaneMessage(recall, options = {}) {
     ? result.results.slice(0, clampInt(options.limit, DEFAULT_LIMIT, 1, 20))
     : [];
   if (result.ok === false || items.length === 0) return '';
+  const maxChars = clampInt(options.maxChars, DEFAULT_RECALL_BLOCK_MAX_CHARS, 400, 10000);
   const lines = [
     RECALL_START,
     'Use this as ranked private retrieval context. Prefer current evidence over stale memory.',
   ];
   for (const item of items) {
     const label = asText(item.sourceKind, item.source, 'memory');
-    const title = item.title ? `${item.title}: ` : '';
-    const ref = item.ref ? ` (${item.ref})` : '';
+    const title = item.title ? `${oneLine(item.title, 80)}: ` : '';
+    const ref = item.ref ? ` (${oneLine(item.ref, 120)})` : '';
     lines.push(`${item.rank}. ${label} - ${title}${oneLine(item.excerpt, 220)}${ref}`);
   }
   lines.push(RECALL_END);
-  return lines.join('\n');
+  const block = lines.join('\n');
+  if (block.length <= maxChars) return block;
+  const closing = `\n${RECALL_END}`;
+  const notice = '\n... [memory recall capped to keep the inbound message body visible]';
+  const budget = Math.max(0, maxChars - closing.length - notice.length);
+  return `${block.slice(0, budget).trimEnd()}${notice}${closing}`;
 }
 
 function prependRecallToMessage(message, recall, options = {}) {
@@ -739,13 +746,16 @@ function prependRecallToMessage(message, recall, options = {}) {
   if (!messageReferencesPastWork(text, options)) return text;
   const block = formatRecallForPaneMessage(recall, options);
   if (!block) return text;
-  return `${block}\n\n${text}`;
+  // Historical function name; delivery order is body-first so long recall
+  // blocks cannot hide or truncate the human inbound message.
+  return `${text}\n\n${block}`;
 }
 
 module.exports = {
   DEFAULT_LIMIT,
   DEFAULT_PROVIDER_LIMIT,
   DEFAULT_PROVIDER_TIMEOUT_MS,
+  DEFAULT_RECALL_BLOCK_MAX_CHARS,
   DEFAULT_RRF_K,
   MEMORY_RECALL_MIN_MESSAGE_LENGTH,
   RECALL_END,
