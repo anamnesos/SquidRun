@@ -734,14 +734,17 @@ function shouldWatchdogAgentTask(content) {
   if (isStructuredConsultationReplyPayload(text)) return false;
   if (isFyiClassAgentMessage(text)) return false;
   if (isAcknowledgementOnlyAgentUpdate(text)) return false;
-  if (/\bno (further )?(acknowledg(e)?ment|reply) needed\b/i.test(text)) return false;
-  if (/\bno reply needed\b/i.test(text)) return false;
   if (/\bstanding by\b/i.test(text)) return false;
   if (/\[WATCHDOG\]/i.test(text)) return false;
   return isExplicitAgentTaskRequest(text);
 }
 
 const WATCHDOG_ELIGIBLE_AGENT_ROLES = new Set(['architect', 'builder', 'oracle']);
+const WATCHDOG_INTENTIONAL_AUTONOMY_STATES = new Set([
+  'auto_proceed',
+  'intentional_hold',
+  'no_ack_needed',
+]);
 
 function normalizeWatchdogAgentRole(role) {
   const normalized = toNonEmptyString(role)?.toLowerCase();
@@ -806,6 +809,93 @@ function buildWatchdogCorrelation(entry = {}) {
     workItemIds: extractWatchdogWorkItemIds(content),
     rawContent: content,
   };
+}
+
+function normalizeIntentionalAutonomyState(value) {
+  const normalized = toNonEmptyString(value)
+    ?.toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (!normalized || !WATCHDOG_INTENTIONAL_AUTONOMY_STATES.has(normalized)) return null;
+  return normalized;
+}
+
+function findIntentionalAutonomyState(value) {
+  const direct = normalizeIntentionalAutonomyState(value);
+  if (direct) return direct;
+  if (!value || typeof value !== 'object') return null;
+  if (value.autoProceed === true || value.auto_proceed === true) return 'auto_proceed';
+  if (value.intentionalHold === true || value.intentional_hold === true) return 'intentional_hold';
+  if (value.noAckNeeded === true || value.no_ack_needed === true) return 'no_ack_needed';
+
+  const candidateKeys = [
+    'agentResponseWatchdogState',
+    'responseWatchdogState',
+    'watchdogState',
+    'autonomyState',
+    'ackState',
+    'acknowledgementState',
+    'state',
+    'status',
+    'mode',
+    'policy',
+    'reason',
+  ];
+  for (const key of candidateKeys) {
+    const nested = normalizeIntentionalAutonomyState(value[key]);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function findRecordIntentionalAutonomyState(record = {}, depth = 0, seen = new Set()) {
+  if (!record || typeof record !== 'object') return null;
+  if (depth > 4 || seen.has(record)) return null;
+  seen.add(record);
+  const direct = findIntentionalAutonomyState(record);
+  if (direct) return direct;
+  const candidateKeys = [
+    'agentResponseWatchdog',
+    'responseWatchdog',
+    'watchdog',
+    'routeHealthRequirement',
+    'route_health_requirement',
+    'autonomy',
+    'ackPolicy',
+    'ack_policy',
+    'envelope',
+    'metadata',
+    'meta',
+  ];
+  for (const key of candidateKeys) {
+    const nested = findRecordIntentionalAutonomyState(record[key], depth + 1, seen);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function rowMatchesWatchdogResponseDirection(row = {}, senderRole = null, targetRole = null) {
+  const expectedSender = normalizeWatchdogAgentRole(senderRole);
+  const expectedTarget = normalizeWatchdogAgentRole(targetRole);
+  const rowSender = normalizeWatchdogAgentRole(row.senderRole || row.sender || row.fromRole);
+  const rowTarget = normalizeWatchdogAgentRole(row.targetRole || row.target || row.toRole);
+  if (!expectedSender || !expectedTarget || !rowSender) return false;
+  if (rowSender !== expectedTarget) return false;
+  if (rowTarget && rowTarget !== expectedSender) return false;
+  return true;
+}
+
+function findLedgerIntentionalAutonomyResolution(rows = [], senderRole = null, targetRole = null) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  for (const row of rows) {
+    if (!rowMatchesWatchdogResponseDirection(row, senderRole, targetRole)) continue;
+    const state = findRecordIntentionalAutonomyState(row);
+    if (!state) continue;
+    return {
+      row,
+      state,
+    };
+  }
+  return null;
 }
 
 function proofRoleForWatchdogTarget(targetRole) {
@@ -1035,6 +1125,7 @@ class SquidRunApp {
     this.paneHostReadyIpcRegistered = false;
     this.paneHostReadyListener = null;
     this.visibleInjectDeliveryCache = new Map();
+    this.lastInjectRouteBlock = null;
     this.mainWindowSendRaw = null;
     this.mainWindowSendInterceptInstalled = false;
     this.websocketStartRetryTimer = null;
@@ -3651,7 +3742,7 @@ class SquidRunApp {
     }
   }
 
-  buildVisibleInjectDeliveryDedupeKey(packet = {}, paneId = '', windowKey = 'main', messageId = null) {
+  buildVisibleInjectDeliveryDedupeKey(packet = {}, paneId = '', windowKey = 'main', messageId = null, options = {}) {
     const stableMessageId = toNonEmptyString(messageId)
       || toNonEmptyString(packet?.traceContext?.messageId)
       || toNonEmptyString(packet?.traceContext?.traceId)
@@ -3662,10 +3753,27 @@ class SquidRunApp {
     const normalizedWindowKey = toNonEmptyString(windowKey) || 'main';
     const normalizedPaneId = toNonEmptyString(paneId);
     if (!normalizedPaneId) return null;
+    const normalizedSessionScope = toNonEmptyString(options.sessionScopeId)
+      || toNonEmptyString(packet?.meta?.sessionScopeId)
+      || toNonEmptyString(packet?.meta?.session_scope_id)
+      || toNonEmptyString(packet?.meta?.sessionId)
+      || toNonEmptyString(packet?.meta?.session_id)
+      || 'unknown-session';
+    const normalizedProfile = toNonEmptyString(options.profileName)
+      || toNonEmptyString(packet?.meta?.profileName)
+      || toNonEmptyString(packet?.meta?.profile)
+      || normalizedWindowKey;
+    const normalizedRouteKind = toNonEmptyString(options.routeKind)
+      || toNonEmptyString(packet?.meta?.routeKind)
+      || toNonEmptyString(packet?.meta?.route_kind)
+      || (packet?.startupInjection || packet?.meta?.startupInjection ? 'startup' : 'inject');
     const chunkIndex = packet?.ipcChunk ? Number(packet.ipcChunk.index) : 0;
     const chunkCount = packet?.ipcChunk ? Number(packet.ipcChunk.count) : 1;
     return [
       normalizedWindowKey,
+      normalizedProfile,
+      normalizedSessionScope,
+      normalizedRouteKind,
       normalizedPaneId,
       stableMessageId,
       Number.isFinite(chunkIndex) ? chunkIndex : 0,
@@ -3673,8 +3781,8 @@ class SquidRunApp {
     ].join('|');
   }
 
-  hasVisibleInjectDelivery(packet = {}, paneId = '', windowKey = 'main', messageId = null, now = Date.now()) {
-    const dedupeKey = this.buildVisibleInjectDeliveryDedupeKey(packet, paneId, windowKey, messageId);
+  hasVisibleInjectDelivery(packet = {}, paneId = '', windowKey = 'main', messageId = null, now = Date.now(), options = {}) {
+    const dedupeKey = this.buildVisibleInjectDeliveryDedupeKey(packet, paneId, windowKey, messageId, options);
     if (!dedupeKey) return { duplicate: false, dedupeKey: null };
     this.pruneVisibleInjectDeliveryCache(now);
     const entry = this.visibleInjectDeliveryCache.get(dedupeKey);
@@ -3687,22 +3795,93 @@ class SquidRunApp {
     return { duplicate: false, dedupeKey };
   }
 
-  hasVisibleInjectDeliveryForMessage(paneId = '', windowKey = 'main', messageId = null, now = Date.now()) {
+  hasVisibleInjectDeliveryForMessage(paneId = '', windowKey = 'main', messageId = null, now = Date.now(), options = {}) {
     const stableMessageId = toNonEmptyString(messageId);
     const normalizedPaneId = toNonEmptyString(paneId);
     if (!stableMessageId || !normalizedPaneId) return false;
     const normalizedWindowKey = toNonEmptyString(windowKey) || 'main';
+    const normalizedProfile = toNonEmptyString(options.profileName);
+    const normalizedSessionScope = toNonEmptyString(options.sessionScopeId);
+    const normalizedRouteKind = toNonEmptyString(options.routeKind);
     this.pruneVisibleInjectDeliveryCache(now);
-    const prefix = [
-      normalizedWindowKey,
-      normalizedPaneId,
-      stableMessageId,
-    ].join('|') + '|';
     for (const [dedupeKey, entry] of this.visibleInjectDeliveryCache.entries()) {
-      if (!dedupeKey.startsWith(prefix)) continue;
+      const parts = String(dedupeKey || '').split('|');
+      const matchesModernKey = parts.length >= 8
+        && parts[0] === normalizedWindowKey
+        && (!normalizedProfile || parts[1] === normalizedProfile)
+        && (!normalizedSessionScope || parts[2] === normalizedSessionScope)
+        && (!normalizedRouteKind || parts[3] === normalizedRouteKind)
+        && parts[4] === normalizedPaneId
+        && parts[5] === stableMessageId;
+      const matchesLegacyKey = parts.length < 8 && dedupeKey.startsWith([
+        normalizedWindowKey,
+        normalizedPaneId,
+        stableMessageId,
+      ].join('|') + '|');
+      if (!matchesModernKey && !matchesLegacyKey) continue;
       if (Number(entry?.expiresAt || 0) > now) return true;
     }
     return false;
+  }
+
+  normalizeInjectRouteMetadata(packet = {}, fallbackWindowKey = 'main') {
+    const meta = packet?.meta && typeof packet.meta === 'object' ? packet.meta : {};
+    const windowKey = toNonEmptyString(packet?.windowKey)
+      || toNonEmptyString(meta.windowKey)
+      || toNonEmptyString(meta.window)
+      || toNonEmptyString(fallbackWindowKey)
+      || 'main';
+    return {
+      windowKey,
+      profileName: toNonEmptyString(meta.profileName)
+        || toNonEmptyString(meta.profile)
+        || null,
+      sessionScopeId: toNonEmptyString(meta.sessionScopeId)
+        || toNonEmptyString(meta.session_scope_id)
+        || toNonEmptyString(meta.sessionId)
+        || toNonEmptyString(meta.session_id)
+        || null,
+      routeKind: toNonEmptyString(meta.routeKind)
+        || toNonEmptyString(meta.route_kind)
+        || (packet?.startupInjection || meta.startupInjection ? 'startup' : null),
+    };
+  }
+
+  validateInjectRouteMetadata(packet = {}, paneId = '', targetWindowKey = 'main') {
+    const normalizedTargetWindowKey = toNonEmptyString(targetWindowKey) || 'main';
+    const routeMetadata = this.normalizeInjectRouteMetadata(packet, normalizedTargetWindowKey);
+    const targetScope = this.getAppWindowInstanceScope(normalizedTargetWindowKey);
+    const reasons = [];
+    const expectedWindowKey = toNonEmptyString(targetScope.windowKey) || normalizedTargetWindowKey;
+    const expectedProfileName = toNonEmptyString(targetScope.profileName) || null;
+    const expectedSessionScopeId = toNonEmptyString(targetScope.sessionScopeId) || null;
+
+    if (routeMetadata.windowKey && routeMetadata.windowKey !== expectedWindowKey) {
+      reasons.push(`window_mismatch:${routeMetadata.windowKey}->${expectedWindowKey}`);
+    }
+    if (routeMetadata.profileName && expectedProfileName && routeMetadata.profileName !== expectedProfileName) {
+      reasons.push(`profile_mismatch:${routeMetadata.profileName}->${expectedProfileName}`);
+    }
+    if (routeMetadata.sessionScopeId && expectedSessionScopeId && routeMetadata.sessionScopeId !== expectedSessionScopeId) {
+      reasons.push(`session_scope_mismatch:${routeMetadata.sessionScopeId}->${expectedSessionScopeId}`);
+    }
+
+    if (reasons.length === 0) {
+      return {
+        ok: true,
+        routeMetadata,
+        targetScope,
+      };
+    }
+
+    return {
+      ok: false,
+      reason: 'inject_route_metadata_mismatch',
+      blockers: reasons,
+      paneId: toNonEmptyString(paneId) || null,
+      routeMetadata,
+      targetScope,
+    };
   }
 
   recordVisibleInjectDelivery(dedupeKey, now = Date.now()) {
@@ -3772,6 +3951,31 @@ class SquidRunApp {
       }
       const targetWindowKey = packet?.windowKey || packet?.meta?.windowKey || 'main';
       const normalizedTargetWindowKey = String(targetWindowKey || 'main').trim() || 'main';
+      const routeValidation = this.validateInjectRouteMetadata(packet, paneId, normalizedTargetWindowKey);
+      if (!routeValidation.ok) {
+        this.lastInjectRouteBlock = routeValidation;
+        appendBusTraceEvent({
+          eventType: 'pane_ipc_handoff_blocked',
+          messageId: messageId || null,
+          deliveryId: packet.deliveryId || null,
+          paneId,
+          deliveryPath: 'metadata_route_guard',
+          success: false,
+          reason: routeValidation.reason,
+          blockers: routeValidation.blockers,
+          routeMetadata: routeValidation.routeMetadata,
+          targetScope: routeValidation.targetScope,
+          packetBytes,
+          chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+          chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+          startupInjection,
+        });
+        log.warn(
+          'InjectIPC',
+          `Blocked inject route for pane ${paneId}: ${routeValidation.reason} (${routeValidation.blockers.join(', ')})`
+        );
+        continue;
+      }
       const preferHiddenPaneHost = packet?.meta?.preferHiddenPaneHost === true
         || payload?.meta?.preferHiddenPaneHost === true;
       const disableVisibleFallback = packet?.meta?.disableVisibleFallback === true
@@ -3790,7 +3994,11 @@ class SquidRunApp {
         const deliveryPath = normalizedTargetWindowKey === 'main'
           ? 'visible_window'
           : 'visible_window_scoped';
-        const dedupe = this.hasVisibleInjectDelivery(packet, paneId, targetWindowKey, messageId);
+        const dedupe = this.hasVisibleInjectDelivery(packet, paneId, targetWindowKey, messageId, Date.now(), {
+          sessionScopeId: packet?.meta?.sessionScopeId || packet?.meta?.session_id || packet?.meta?.sessionId,
+          profileName: packet?.meta?.profileName || packet?.meta?.profile,
+          routeKind: startupInjection ? 'startup' : (packet?.meta?.routeKind || packet?.meta?.route_kind || deliveryPath),
+        });
         if (dedupe.duplicate) {
           appendBusTraceEvent({
             eventType: 'pane_ipc_handoff_deduped',
@@ -5175,6 +5383,7 @@ class SquidRunApp {
                 content: canonicalEnvelope.content,
                 sentAtMs: canonicalEnvelope.timestamp_ms || nowMs,
                 sourceMessageId: canonicalEnvelope.message_id || null,
+                responseWatchdogState: findRecordIntentionalAutonomyState(data.message?.metadata),
               });
               this.maybeResolveAgentResponseWatchdog({
                 senderRole: senderRoleForJournal,
@@ -9869,6 +10078,7 @@ class SquidRunApp {
     content = '',
     sentAtMs = Date.now(),
     sourceMessageId = null,
+    responseWatchdogState = null,
   } = {}) {
     const normalizedSenderRole = normalizeWatchdogAgentRole(senderRole);
     const normalizedTargetRole = normalizeWatchdogAgentRole(targetRole);
@@ -9921,6 +10131,7 @@ class SquidRunApp {
       watchdogMs,
       sentAtMs,
       sourceMessageId: toNonEmptyString(sourceMessageId) || null,
+      responseWatchdogState: normalizeIntentionalAutonomyState(responseWatchdogState),
       senderRole: normalizedSenderRole,
       targetRole: normalizedTargetRole,
       content,
@@ -9952,6 +10163,18 @@ class SquidRunApp {
     const correlation = buildWatchdogCorrelation(entry);
     const evidence = [];
     const blockers = [];
+    const pendingWatchdogState = findRecordIntentionalAutonomyState(entry);
+    if (pendingWatchdogState) {
+      return {
+        resolved: true,
+        reason: `watchdog_${pendingWatchdogState}`,
+        evidence: [{
+          source: 'pending_watchdog',
+          status: pendingWatchdogState,
+        }],
+        blockers: [],
+      };
+    }
 
     let rows = [];
     try {
@@ -9965,6 +10188,21 @@ class SquidRunApp {
       log.warn('Watchdog', `Failed querying comms journal for response proof: ${error.message}`);
       blockers.push(`comms_journal:query_failed:${error.message}`);
       rows = [];
+    }
+
+    const ledgerIntentional = findLedgerIntentionalAutonomyResolution(rows, normalizedSenderRole, normalizedTargetRole);
+    if (ledgerIntentional) {
+      return {
+        resolved: true,
+        reason: `comms_journal_${ledgerIntentional.state}`,
+        evidence: [{
+          source: 'comms_journal',
+          rowId: ledgerIntentional.row.rowId || null,
+          messageId: ledgerIntentional.row.messageId || null,
+          status: ledgerIntentional.state,
+        }],
+        blockers: [],
+      };
     }
 
     const taskRow = {
@@ -10076,6 +10314,22 @@ class SquidRunApp {
       };
     }
 
+    const intentional = matches
+      .map((item) => ({ item, state: findRecordIntentionalAutonomyState(item) }))
+      .find((candidate) => candidate.state);
+    if (intentional) {
+      return {
+        resolved: true,
+        reason: `work_item_${intentional.state}`,
+        evidence: [{
+          source: 'work_items',
+          workItemId: intentional.item.id,
+          status: intentional.state,
+        }],
+        blockers: [],
+      };
+    }
+
     return {
       resolved: false,
       reason: 'work_item_still_active',
@@ -10141,6 +10395,22 @@ class SquidRunApp {
           currentLanePath,
           laneId: activeLane.workItemId || activeLane.laneId || activeLane.sourceRef || null,
           status: activeLane.status || parsed.status || null,
+        }],
+        blockers: [],
+      };
+    }
+
+    const intentionalState = findRecordIntentionalAutonomyState(activeLane)
+      || findRecordIntentionalAutonomyState(parsed);
+    if (intentionalState) {
+      return {
+        resolved: true,
+        reason: `current_lane_${intentionalState}`,
+        evidence: [{
+          source: 'current_lane',
+          currentLanePath,
+          laneId: activeLane.workItemId || activeLane.laneId || activeLane.sourceRef || null,
+          status: intentionalState,
         }],
         blockers: [],
       };
@@ -14146,6 +14416,3 @@ class SquidRunApp {
 }
 
 module.exports = SquidRunApp;
-
-
-
