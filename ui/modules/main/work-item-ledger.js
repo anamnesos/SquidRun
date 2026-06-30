@@ -316,6 +316,25 @@ function normalizeRouteHealthRequirement(value) {
   return { required: false };
 }
 
+function normalizeJsonSafeObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_) {
+    return null;
+  }
+}
+
+function normalizeJamesCheckpoint(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (value.required !== true) return null;
+  return {
+    required: true,
+    reason: toOptionalString(value.reason, 'approval_required_checkpoint'),
+    policy: toOptionalString(value.policy, 'approval_required'),
+  };
+}
+
 function normalizeArtifactRef(input = {}) {
   const artifactPath = toOptionalString(input.path || input.artifactPath, null);
   const ref = toOptionalString(input.ref || input.artifactRef || artifactPath, null);
@@ -407,6 +426,9 @@ function normalizeWorkItem(raw = {}, options = {}) {
     riskClass: normalizeRiskClass(raw.riskClass, 'caution'),
     prodGateProfile: toOptionalString(raw.prodGateProfile, null),
     routeHealthRequirement: normalizeRouteHealthRequirement(raw.routeHealthRequirement || raw.routeHealthJson || raw.requireRouteHealth),
+    observedSignal: normalizeJsonSafeObject(raw.observedSignal),
+    suggestedNextCommand: toOptionalString(raw.suggestedNextCommand || raw.nextCommand, null),
+    jamesCheckpoint: normalizeJamesCheckpoint(raw.jamesCheckpoint),
     requiredProofs: Array.isArray(raw.requiredProofs)
       ? raw.requiredProofs.map((proof) => ({
         role: normalizeProofRole(proof.role || proof),
@@ -1155,6 +1177,9 @@ function deriveWorkItemCurrentLaneSnapshot(options = {}) {
       riskClass: active.riskClass,
       prodGateProfile: active.prodGateProfile,
       routeHealthRequirement: active.routeHealthRequirement,
+      observedSignal: active.observedSignal,
+      suggestedNextCommand: active.suggestedNextCommand,
+      jamesCheckpoint: active.jamesCheckpoint,
       sideEffectCaps: active.sideEffectCaps,
       requiredProofs: active.requiredProofs,
       proofState: active.proofState,

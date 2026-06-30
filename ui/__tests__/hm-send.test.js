@@ -8,6 +8,7 @@ const os = require('os');
 const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
+const { namespaceCoordRelPath, normalizeProfileName } = require('../profile');
 const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
 
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
@@ -133,8 +134,10 @@ function writeAppStatus(tempProject, sessionId = 'app-session-777') {
   return sessionId;
 }
 
-function seedCommsJournal(tempProject, entry = {}, nowMs = Date.now()) {
-  const dbPath = path.join(tempProject, '.squidrun', 'runtime', 'evidence-ledger.db');
+function seedCommsJournal(tempProject, entry = {}, nowMs = Date.now(), options = {}) {
+  const profileName = normalizeProfileName(options.profileName || 'main');
+  const ledgerRelPath = namespaceCoordRelPath(path.join('runtime', 'evidence-ledger.db'), profileName);
+  const dbPath = path.join(tempProject, '.squidrun', ledgerRelPath);
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const store = new EvidenceLedgerStore({ dbPath, enabled: true });
   expect(store.init().ok).toBe(true);
@@ -145,6 +148,26 @@ function seedCommsJournal(tempProject, entry = {}, nowMs = Date.now()) {
     store.close();
   }
   return dbPath;
+}
+
+function seedRoutedCommsJournalRow(tempProject, msg = {}, overrides = {}) {
+  return seedCommsJournal(tempProject, {
+    messageId: msg.messageId,
+    sessionId: overrides.sessionId || 'app-session-hm-send-route-proof',
+    senderRole: overrides.senderRole || msg.role || 'cli',
+    targetRole: overrides.targetRole || msg.target || 'builder',
+    channel: 'ws',
+    direction: 'outbound',
+    sentAtMs: Date.now(),
+    brokeredAtMs: Date.now(),
+    rawBody: overrides.rawBody || msg.content || '',
+    status: overrides.status || 'routed',
+    ackStatus: overrides.ackStatus || 'accepted.unverified',
+    metadata: {
+      source: 'test-runtime-route-proof',
+      ...(overrides.metadata || {}),
+    },
+  }, Date.now(), { profileName: overrides.profileName || 'main' });
 }
 
 function createTelegramHttpsMockPreload() {
@@ -845,8 +868,9 @@ describe('hm-send retry behavior', () => {
             ok: true,
             accepted: true,
             queued: true,
-            verified: false,
-            status: 'delivered.websocket',
+            verified: true,
+            userVisible: true,
+            status: 'delivered.verified',
             wsDeliveryCount: 1,
             timestamp: Date.now(),
           }));
@@ -903,8 +927,8 @@ describe('hm-send retry behavior', () => {
           windowKey: 'eunbyeol',
         }),
       }));
-      expect(result.stdout).toContain('Accepted by builder but unverified');
-      expect(result.stdout).toContain('delivered.websocket');
+      expect(result.stdout).toContain('Delivered to builder');
+      expect(result.stdout).toContain('ack: delivered.verified');
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
       await new Promise((resolve) => server.close(resolve));
@@ -934,6 +958,8 @@ describe('hm-send retry behavior', () => {
   });
 
   test('routes cross-profile architect send with explicit source and target attribution', async () => {
+    const tempProject = createLinkedProject();
+    writeAppStatus(tempProject, 'app-session-hm-send-cross-profile');
     const registerAttempts = [];
     const healthChecks = [];
     const sendAttempts = [];
@@ -980,14 +1006,32 @@ describe('hm-send retry behavior', () => {
         }
         if (msg.type === 'send') {
           sendAttempts.push(msg);
+          seedRoutedCommsJournalRow(tempProject, msg, {
+            profileName: 'eunbyeol',
+            sessionId: 'app-session-hm-send-cross-profile',
+            ackStatus: 'delivered.websocket',
+            metadata: {
+              routing: {
+                profileName: 'main',
+                windowKey: 'main',
+              },
+              routeAttribution: {
+                sourceProfileName: 'eunbyeol',
+                sourceWindowKey: 'eunbyeol',
+                targetProfileName: 'main',
+                targetWindowKey: 'main',
+              },
+            },
+          });
           ws.send(JSON.stringify({
             type: 'send-ack',
             messageId: msg.messageId,
             ok: true,
             accepted: true,
             queued: true,
-            verified: false,
-            status: 'delivered.websocket',
+            verified: true,
+            userVisible: true,
+            status: 'delivered.verified',
             wsDeliveryCount: 1,
             timestamp: Date.now(),
           }));
@@ -1016,7 +1060,8 @@ describe('hm-send retry behavior', () => {
           '0',
           '--no-fallback',
         ],
-        { HM_SEND_PORT: String(port) }
+        { HM_SEND_PORT: String(port) },
+        { cwd: tempProject }
       );
 
       expect(result.code).toBe(0);
@@ -1062,6 +1107,7 @@ describe('hm-send retry behavior', () => {
         }),
       }));
     } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
       await new Promise((resolve) => server.close(resolve));
     }
   });
@@ -1607,7 +1653,9 @@ describe('hm-send retry behavior', () => {
     expect(result.stdout).toContain('ack: routed');
   });
 
-  test('treats accepted-but-unverified ack as success without fallback and reports truthful status', async () => {
+  test('accepts accepted-but-unverified ack only after ledger route proof confirms routed row', async () => {
+    const tempProject = createLinkedProject();
+    writeAppStatus(tempProject, 'app-session-hm-send-route-proof');
     const sendAttempts = [];
     let server;
 
@@ -1652,6 +1700,10 @@ describe('hm-send retry behavior', () => {
         }
         if (msg.type === 'send') {
           sendAttempts.push(msg);
+          seedRoutedCommsJournalRow(tempProject, msg, {
+            sessionId: 'app-session-hm-send-route-proof',
+            ackStatus: 'routed_unverified',
+          });
           ws.send(JSON.stringify({
             type: 'send-ack',
             messageId: msg.messageId,
@@ -1666,20 +1718,211 @@ describe('hm-send retry behavior', () => {
       });
     });
 
-    const result = await runHmSend(
-      ['builder', '(TEST #2c): accepted-unverified', '--timeout', '80', '--retries', '1', '--no-fallback'],
-      { HM_SEND_PORT: String(port) }
-    );
+    try {
+      const result = await runHmSend(
+        ['builder', '(TEST #2c): accepted-unverified', '--timeout', '80', '--retries', '1', '--no-fallback'],
+        { HM_SEND_PORT: String(port) },
+        { cwd: tempProject }
+      );
 
-    await new Promise((resolve) => server.close(resolve));
-
-    expect(result.code).toBe(0);
-    expect(sendAttempts).toHaveLength(1);
-    expect(result.stdout).toContain('Accepted by builder but unverified');
-    expect(result.stdout).toContain('ack: routed_unverified');
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(result.stdout).toContain('Route proof confirmed for builder');
+      expect(result.stdout).toContain('route: routed');
+      expect(result.stdout).toContain('ack: routed_unverified');
+      expect(result.stdout).toContain('Visible delivery is not claimed');
+      expect(result.stdout).not.toContain('Delivered to builder');
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 
-  test('does not trigger fallback for accepted-but-unverified delivery by default', async () => {
+  test('accepts missing ACK only when ledger route proof confirms routed row', async () => {
+    const tempProject = createLinkedProject();
+    writeAppStatus(tempProject, 'app-session-hm-send-missing-ack-proof');
+    const triggerPath = path.join(tempProject, '.squidrun', 'triggers', 'builder.txt');
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'heartbeat') {
+          ws.send(JSON.stringify({
+            type: 'heartbeat-ack',
+            role: msg.role || null,
+            paneId: msg.paneId || null,
+            status: 'ok',
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'delivery-check') {
+          ws.send(JSON.stringify({
+            type: 'delivery-check-result',
+            requestId: msg.requestId,
+            messageId: msg.messageId,
+            known: false,
+            status: 'missing_ack',
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          seedRoutedCommsJournalRow(tempProject, msg, {
+            sessionId: 'app-session-hm-send-missing-ack-proof',
+            ackStatus: 'missing_ack',
+          });
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['builder', '(TEST #2c1): missing ack route proof', '--timeout', '80', '--retries', '0'],
+        {
+          HM_SEND_PORT: String(port),
+          HM_SEND_ROUTE_PROOF_TIMEOUT_MS: '500',
+          HM_SEND_ROUTE_PROOF_RETRY_MS: '10',
+        },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(result.stdout).toContain('Route proof confirmed for builder after transport ambiguity');
+      expect(result.stdout).toContain('route: routed');
+      expect(result.stdout).toContain('ack: missing_ack');
+      expect(result.stdout).toContain('Visible delivery is not claimed');
+      expect(result.stderr).not.toContain('Wrote trigger fallback');
+      expect(fs.existsSync(triggerPath)).toBe(false);
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('fails closed when ledger route proof is for the wrong session', async () => {
+    const tempProject = createLinkedProject();
+    writeAppStatus(tempProject, 'app-session-hm-send-right-session');
+    const triggerPath = path.join(tempProject, '.squidrun', 'triggers', 'builder.txt');
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'heartbeat') {
+          ws.send(JSON.stringify({
+            type: 'heartbeat-ack',
+            role: msg.role || null,
+            paneId: msg.paneId || null,
+            status: 'ok',
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          seedRoutedCommsJournalRow(tempProject, msg, {
+            sessionId: 'app-session-hm-send-wrong-session',
+            ackStatus: 'accepted.unverified',
+          });
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            accepted: true,
+            queued: true,
+            verified: false,
+            userVisible: false,
+            status: 'accepted.unverified',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['builder', '(TEST #2c1b): wrong session route proof', '--timeout', '80', '--retries', '0'],
+        {
+          HM_SEND_PORT: String(port),
+          HM_SEND_ROUTE_PROOF_TIMEOUT_MS: '500',
+          HM_SEND_ROUTE_PROOF_RETRY_MS: '10',
+        },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(1);
+      expect(sendAttempts).toHaveLength(1);
+      expect(result.stderr).toContain('ledger route proof is missing');
+      expect(result.stderr).toContain('proof: ledger_route_wrong_session');
+      expect(result.stdout).not.toContain('Route proof confirmed');
+      expect(result.stdout).not.toContain('Delivered to builder');
+      expect(result.stderr).not.toContain('Wrote trigger fallback');
+      expect(fs.existsSync(triggerPath)).toBe(false);
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('fails closed without fallback when accepted-but-unverified delivery has no routed ledger row', async () => {
     const tempProject = createLinkedProject();
     const triggerPath = path.join(tempProject, '.squidrun', 'triggers', 'builder.txt');
     const sendAttempts = [];
@@ -1744,13 +1987,18 @@ describe('hm-send retry behavior', () => {
     try {
       const result = await runHmSend(
         ['builder', '(TEST #2c2): accepted-unverified no fallback', '--timeout', '80', '--retries', '0'],
-        { HM_SEND_PORT: String(port) },
+        {
+          HM_SEND_PORT: String(port),
+          HM_SEND_ROUTE_PROOF_TIMEOUT_MS: '80',
+          HM_SEND_ROUTE_PROOF_RETRY_MS: '10',
+        },
         { cwd: tempProject }
       );
 
-      expect(result.code).toBe(0);
+      expect(result.code).toBe(1);
       expect(sendAttempts).toHaveLength(1);
-      expect(result.stdout).toContain('Accepted by builder but unverified');
+      expect(result.stderr).toContain('ledger route proof is missing');
+      expect(result.stderr).toContain('proof: ledger_route_missing');
       expect(result.stderr).not.toContain('Forced trigger fallback');
       expect(result.stderr).not.toContain('Wrote trigger fallback');
       expect(fs.existsSync(triggerPath)).toBe(false);
@@ -1760,7 +2008,7 @@ describe('hm-send retry behavior', () => {
     }
   });
 
-  test('does not report websocket-only ack as visible delivery', async () => {
+  test('does not report websocket-only ack as visible delivery even with misleading visible flags', async () => {
     const sendAttempts = [];
     let server;
 
@@ -1811,8 +2059,8 @@ describe('hm-send retry behavior', () => {
             ok: true,
             accepted: true,
             queued: true,
-            verified: false,
-            userVisible: false,
+            verified: true,
+            userVisible: true,
             status: 'delivered.websocket',
             timestamp: Date.now(),
           }));
@@ -1822,19 +2070,23 @@ describe('hm-send retry behavior', () => {
 
     const result = await runHmSend(
       ['builder', '(TEST #2d): websocket-only', '--timeout', '80', '--retries', '1', '--no-fallback'],
-      { HM_SEND_PORT: String(port) }
+      {
+        HM_SEND_PORT: String(port),
+        HM_SEND_ROUTE_PROOF_TIMEOUT_MS: '80',
+        HM_SEND_ROUTE_PROOF_RETRY_MS: '10',
+      }
     );
 
     await new Promise((resolve) => server.close(resolve));
 
-    expect(result.code).toBe(0);
+    expect(result.code).toBe(1);
     expect(sendAttempts).toHaveLength(1);
-    expect(result.stdout).toContain('Accepted by builder but unverified');
-    expect(result.stdout).toContain('ack: delivered.websocket');
+    expect(result.stderr).toContain('ledger route proof is missing');
+    expect(result.stderr).toContain('ack: delivered.websocket');
     expect(result.stdout).not.toContain('Delivered to builder');
   });
 
-  test('does not report accepted.unverified ack as visible delivery', async () => {
+  test('does not report accepted.unverified ack as visible delivery even with misleading visible flags', async () => {
     const sendAttempts = [];
     let server;
 
@@ -1885,8 +2137,8 @@ describe('hm-send retry behavior', () => {
             ok: true,
             accepted: true,
             queued: true,
-            verified: false,
-            userVisible: false,
+            verified: true,
+            userVisible: true,
             status: 'accepted.unverified',
             timestamp: Date.now(),
           }));
@@ -1896,15 +2148,19 @@ describe('hm-send retry behavior', () => {
 
     const result = await runHmSend(
       ['builder', '(TEST #2e): accepted unverified', '--timeout', '80', '--retries', '1', '--no-fallback'],
-      { HM_SEND_PORT: String(port) }
+      {
+        HM_SEND_PORT: String(port),
+        HM_SEND_ROUTE_PROOF_TIMEOUT_MS: '80',
+        HM_SEND_ROUTE_PROOF_RETRY_MS: '10',
+      }
     );
 
     await new Promise((resolve) => server.close(resolve));
 
-    expect(result.code).toBe(0);
+    expect(result.code).toBe(1);
     expect(sendAttempts).toHaveLength(1);
-    expect(result.stdout).toContain('Accepted by builder but unverified');
-    expect(result.stdout).toContain('ack: accepted.unverified');
+    expect(result.stderr).toContain('ledger route proof is missing');
+    expect(result.stderr).toContain('ack: accepted.unverified');
     expect(result.stdout).not.toContain('Delivered to builder');
   });
 
@@ -2927,7 +3183,7 @@ describe('hm-send retry behavior', () => {
               ok: true,
               verified: true,
               userVisible: true,
-              status: 'delivered.websocket',
+              status: 'delivered.verified',
               timestamp: Date.now(),
             },
             timestamp: Date.now(),
@@ -2944,6 +3200,112 @@ describe('hm-send retry behavior', () => {
 
       expect(result.code).toBe(0);
       expect(sendAttempts).toHaveLength(2);
+      expect(result.stdout).toContain('Delivered to builder');
+      expect(result.stdout).toContain('ack: delivered.verified');
+      expect(result.stderr).not.toContain('Wrote trigger fallback');
+      if (hadOriginal) {
+        expect(fs.readFileSync(triggerPath, 'utf8')).toBe(originalContent);
+      } else {
+        expect(fs.existsSync(triggerPath)).toBe(false);
+      }
+    } finally {
+      if (hadOriginal) {
+        fs.writeFileSync(triggerPath, originalContent, 'utf8');
+      } else if (fs.existsSync(triggerPath)) {
+        fs.unlinkSync(triggerPath);
+      }
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('fails closed when delivery-check reports websocket-only delivery with misleading visible flags', async () => {
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+    const triggerPath = getTriggerPath('builder.txt');
+    const hadOriginal = fs.existsSync(triggerPath);
+    const originalContent = hadOriginal ? fs.readFileSync(triggerPath, 'utf8') : null;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'heartbeat') {
+          ws.send(JSON.stringify({
+            type: 'heartbeat-ack',
+            role: msg.role || null,
+            paneId: msg.paneId || null,
+            status: 'ok',
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          return;
+        }
+        if (msg.type === 'delivery-check') {
+          ws.send(JSON.stringify({
+            type: 'delivery-check-result',
+            requestId: msg.requestId,
+            messageId: msg.messageId,
+            known: true,
+            status: 'cached',
+            pending: false,
+            ack: {
+              type: 'send-ack',
+              messageId: msg.messageId,
+              ok: true,
+              verified: true,
+              userVisible: true,
+              status: 'delivered.websocket',
+              timestamp: Date.now(),
+            },
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['builder', '(TEST #5b): delivery-check-websocket-only', '--timeout', '80', '--retries', '1'],
+        {
+          HM_SEND_PORT: String(port),
+          HM_SEND_ROUTE_PROOF_TIMEOUT_MS: '80',
+          HM_SEND_ROUTE_PROOF_RETRY_MS: '10',
+        }
+      );
+
+      expect(result.code).toBe(1);
+      expect(sendAttempts).toHaveLength(2);
+      expect(result.stderr).toContain('ledger route proof is missing');
+      expect(result.stderr).toContain('ack: delivered.websocket');
+      expect(result.stdout).not.toContain('Delivered to builder');
       expect(result.stderr).not.toContain('Wrote trigger fallback');
       if (hadOriginal) {
         expect(fs.readFileSync(triggerPath, 'utf8')).toBe(originalContent);

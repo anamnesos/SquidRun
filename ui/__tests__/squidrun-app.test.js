@@ -938,6 +938,153 @@ describe('SquidRunApp', () => {
       expect(app.visibleInjectDeliveryCache.size).toBe(1);
     });
 
+    it('dedupes repeated startup/session injections by metadata identity before body text', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-462';
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+
+      const payload = {
+        panes: ['2'],
+        startupInjection: true,
+        message: 'Startup context original body.',
+        deliveryId: 'delivery-startup-session-1',
+        traceContext: {
+          messageId: 'hm-startup-session-duplicate-1',
+        },
+        meta: {
+          startupInjection: true,
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-462',
+          routeKind: 'startup',
+        },
+      };
+
+      expect(app.routeInjectMessage(payload)).toBe(true);
+      expect(app.routeInjectMessage({
+        ...payload,
+        message: 'Startup context retry with changed body text.',
+      })).toBe(true);
+
+      const injectCalls = sendToVisibleWindow.mock.calls.filter(([channel]) => channel === 'inject-message');
+      expect(injectCalls).toHaveLength(1);
+      expect(app.visibleInjectDeliveryCache.size).toBe(1);
+      const [dedupeKey] = app.visibleInjectDeliveryCache.keys();
+      expect(dedupeKey).toContain('main|main|app-session-462|startup|2|hm-startup-session-duplicate-1|');
+    });
+
+    it('routes fresh startup/session injections when message ids differ', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-462';
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+      const basePayload = {
+        panes: ['2'],
+        startupInjection: true,
+        message: 'Startup context body.',
+        meta: {
+          startupInjection: true,
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-462',
+          routeKind: 'startup',
+        },
+      };
+
+      expect(app.routeInjectMessage({
+        ...basePayload,
+        traceContext: { messageId: 'hm-startup-session-fresh-1' },
+      })).toBe(true);
+      expect(app.routeInjectMessage({
+        ...basePayload,
+        traceContext: { messageId: 'hm-startup-session-fresh-2' },
+      })).toBe(true);
+
+      const injectCalls = sendToVisibleWindow.mock.calls.filter(([channel]) => channel === 'inject-message');
+      expect(injectCalls).toHaveLength(2);
+      expect(app.visibleInjectDeliveryCache.size).toBe(2);
+    });
+
+    it('routes correct metadata even when body text mentions another profile', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.activeProfileName = 'main';
+      app.commsSessionScopeId = 'app-session-462';
+      app.registerAppWindow('main', createReadyTrustQuoteWindow(), {
+        profileName: 'main',
+        sessionScopeId: 'app-session-462',
+      });
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+
+      expect(app.routeInjectMessage({
+        panes: ['2'],
+        message: 'This body says Eunbyeol/scoped, but the envelope belongs to main.',
+        traceContext: { messageId: 'hm-route-metadata-correct-body-misleading' },
+        meta: {
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-462',
+          routeKind: 'agent_message',
+        },
+      })).toBe(true);
+
+      expect(sendToVisibleWindow).toHaveBeenCalledWith(
+        'inject-message',
+        expect.objectContaining({
+          message: 'This body says Eunbyeol/scoped, but the envelope belongs to main.',
+          meta: expect.objectContaining({
+            windowKey: 'main',
+            profileName: 'main',
+            sessionScopeId: 'app-session-462',
+          }),
+        }),
+        { windowKey: 'main' }
+      );
+      expect(app.lastInjectRouteBlock).toBeNull();
+    });
+
+    it('blocks wrong metadata even when body text looks plausible for the target window', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.activeProfileName = 'main';
+      app.commsSessionScopeId = 'app-session-462';
+      app.registerAppWindow('main', createReadyTrustQuoteWindow(), {
+        profileName: 'main',
+        sessionScopeId: 'app-session-462',
+      });
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+
+      expect(app.routeInjectMessage({
+        panes: ['2'],
+        message: 'Builder, this is for the main current session. Please handle it here.',
+        traceContext: { messageId: 'hm-route-metadata-wrong-body-plausible' },
+        meta: {
+          windowKey: 'main',
+          profileName: 'eunbyeol',
+          sessionScopeId: 'app-session-462:eunbyeol',
+          routeKind: 'agent_message',
+        },
+      })).toBe(false);
+
+      expect(sendToVisibleWindow).not.toHaveBeenCalled();
+      expect(app.lastInjectRouteBlock).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'inject_route_metadata_mismatch',
+        paneId: '2',
+        blockers: expect.arrayContaining([
+          'profile_mismatch:eunbyeol->main',
+          'session_scope_mismatch:app-session-462:eunbyeol->app-session-462',
+        ]),
+        routeMetadata: expect.objectContaining({
+          windowKey: 'main',
+          profileName: 'eunbyeol',
+          sessionScopeId: 'app-session-462:eunbyeol',
+        }),
+        targetScope: expect.objectContaining({
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-462',
+        }),
+      }));
+    });
+
     it('does not cache failed side-profile visible-window handoffs', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const sendToVisibleWindow = jest
@@ -4133,6 +4280,45 @@ describe('SquidRunApp', () => {
       jest.useRealTimers();
     });
 
+    it('still watchdogs explicit tasks when no-reply-needed is body text only', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-body-only-'));
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogWorkItemRoot = path.join(tempRoot, 'runtime', 'work-items');
+        app.agentResponseWatchdogCurrentLanePath = path.join(tempRoot, 'handoffs', 'current-lane.json');
+
+        expect(app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'builder',
+          sourceMessageId: 'm-architect-builder-body-only',
+          content: '(ARCHITECT #204): Verify the watchdog no-reply body text and report. No reply needed.',
+          sentAtMs: new Date('2026-05-30T10:06:30').getTime(),
+        })).toBe(true);
+
+        jest.advanceTimersByTime(30 * 1000);
+
+        expect(spawn).toHaveBeenCalledWith(
+          'node',
+          expect.arrayContaining([
+            expect.stringContaining(path.join('scripts', 'hm-send.js')),
+            'architect',
+            expect.stringContaining('[WATCHDOG] No response from builder for task sent at 10:06. Check if task was received.'),
+            '--role',
+            'system',
+          ]),
+          expect.objectContaining({ windowsHide: true })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
     it('does not watchdog FYI-class messages even when they contain task-like words', () => {
       jest.useFakeTimers();
       const app = new SquidRunApp(mockAppContext, mockManagers);
@@ -4482,6 +4668,166 @@ describe('SquidRunApp', () => {
           sourceMessageId: 'm-architect-current-lane-terminal',
           content: '(ARCHITECT #202): Verify current-lane terminal suppression.',
           sentAtMs: new Date('2026-05-30T10:04:30').getTime(),
+        });
+
+        jest.advanceTimersByTime(30 * 1000);
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
+    it('suppresses response watchdog when pending entry has explicit no_ack_needed state', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: '(BUILDER #205): Verify the route-proof gate and report.',
+        responseWatchdogState: 'no_ack_needed',
+        sentAtMs: new Date('2026-05-30T10:07:30').getTime(),
+      })).toBe(true);
+
+      jest.advanceTimersByTime(30 * 1000);
+
+      expect(spawn).not.toHaveBeenCalled();
+      expect(app.pendingAgentResponseWatchdogs.size).toBe(0);
+
+      jest.useRealTimers();
+    });
+
+    it('suppresses response watchdog when later ledger metadata has explicit no_ack_needed state', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      queryCommsJournalEntries.mockReturnValue([
+        {
+          rowId: 73001,
+          messageId: 'm-architect-intentional-autonomy-ledger',
+          senderRole: 'architect',
+          targetRole: 'builder',
+          channel: 'ws',
+          direction: 'outbound',
+          status: 'routed',
+          rawBody: '(ARCHITECT #205): Received; broad-autonomy mode means no per-increment ack.',
+          brokeredAtMs: new Date('2026-05-30T10:07:45').getTime(),
+          metadata: {
+            routeHealthRequirement: {
+              required: false,
+              responseWatchdogState: 'no_ack_needed',
+            },
+          },
+        },
+      ]);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-389';
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: '(BUILDER #205): Verify the route-proof gate and report.',
+        sentAtMs: new Date('2026-05-30T10:07:30').getTime(),
+      });
+
+      jest.advanceTimersByTime(30 * 1000);
+
+      expect(queryCommsJournalEntries).toHaveBeenCalledWith({
+        sessionId: 'app-session-389',
+        sinceMs: new Date('2026-05-30T10:07:30').getTime(),
+        order: 'asc',
+        limit: 500,
+      });
+      expect(spawn).not.toHaveBeenCalled();
+      expect(app.pendingAgentResponseWatchdogs.size).toBe(0);
+
+      jest.useRealTimers();
+    });
+
+    it('suppresses response watchdog when correlated WorkItem has explicit intentional_hold route state', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-work-item-intentional-'));
+      const workItemRoot = path.join(tempRoot, 'runtime', 'work-items');
+      try {
+        openWorkItem({
+          id: 'wi-watchdog-intentional-hold',
+          session: 'app-session-389',
+          profile: 'main',
+          window: 'main',
+          sourceMessageIds: ['m-architect-oracle-intentional-hold'],
+          objective: 'Oracle verify intentional autonomy hold suppression',
+          ownerRoles: ['oracle'],
+          routeHealthRequirement: {
+            required: false,
+            responseWatchdogState: 'intentional_hold',
+          },
+        }, {
+          workItemRoot,
+          now: '2026-05-30T10:08:00.000Z',
+        });
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogWorkItemRoot = workItemRoot;
+
+        app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: 'm-architect-oracle-intentional-hold',
+          content: '(ARCHITECT #206): Verify wi-watchdog-intentional-hold and report.',
+          sentAtMs: new Date('2026-05-30T10:08:30').getTime(),
+        });
+
+        jest.advanceTimersByTime(30 * 1000);
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
+    it('suppresses response watchdog when correlated current-lane has explicit auto_proceed route state', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-current-lane-auto-proceed-'));
+      const currentLanePath = path.join(tempRoot, 'handoffs', 'current-lane.json');
+      try {
+        fs.mkdirSync(path.dirname(currentLanePath), { recursive: true });
+        fs.writeFileSync(currentLanePath, JSON.stringify({
+          version: 1,
+          source: 'work_item',
+          status: 'active',
+          activeLane: {
+            laneId: 'app-session-389:architect-207:m-architect-current-lane-auto-proceed',
+            sourceMessageId: 'm-architect-current-lane-auto-proceed',
+            sourceRef: 'architect#207',
+            objective: 'Oracle verify current-lane auto-proceed suppression',
+            status: 'active',
+            routeHealthRequirement: {
+              required: false,
+              responseWatchdogState: 'auto_proceed',
+            },
+          },
+        }, null, 2));
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogCurrentLanePath = currentLanePath;
+
+        app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: 'm-architect-current-lane-auto-proceed',
+          content: '(ARCHITECT #207): Verify current-lane auto-proceed suppression.',
+          sentAtMs: new Date('2026-05-30T10:09:30').getTime(),
         });
 
         jest.advanceTimersByTime(30 * 1000);
@@ -10706,6 +11052,7 @@ describe('SquidRunApp', () => {
 
     it('drains and archives the trigger file when delivery is accepted without PTY verification', async () => {
       jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-06-30T12:00:00.000Z'));
       const triggerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-drain-accepted-'));
       const triggerPath = path.join(triggerDir, 'architect.txt');
       fs.writeFileSync(triggerPath, '[Telegram from @Rachelchoi]: payload\n', 'utf8');
@@ -10743,6 +11090,7 @@ describe('SquidRunApp', () => {
 
     it('backs off on failed drains and quarantines the payload after max consecutive failures', async () => {
       jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-06-30T12:00:00.000Z'));
       const triggerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-drain-quarantine-'));
       const triggerPath = path.join(triggerDir, 'architect.txt');
       fs.writeFileSync(triggerPath, '[Telegram from @Rachelchoi]: stuck payload\n', 'utf8');

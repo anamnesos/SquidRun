@@ -160,10 +160,20 @@ const DELIVERY_CHECK_RETRY_DELAY_MS = Number.parseInt(
   process.env.HM_SEND_DELIVERY_CHECK_RETRY_MS || '250',
   10
 );
+const DEFAULT_ROUTE_PROOF_TIMEOUT_MS = Number.parseInt(
+  process.env.HM_SEND_ROUTE_PROOF_TIMEOUT_MS || '2500',
+  10
+);
+const DEFAULT_ROUTE_PROOF_RETRY_MS = Number.parseInt(
+  process.env.HM_SEND_ROUTE_PROOF_RETRY_MS || '100',
+  10
+);
 const FORCE_FALLBACK_ON_UNVERIFIED = process.env.HM_SEND_FORCE_FALLBACK_ON_UNVERIFIED === '1';
 const DEFAULT_RETRIES = 3;
 const MAX_RETRIES = 5;
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
+const LEDGER_ROUTE_PROOF_CONFIRMED_STATUSES = new Set(['routed', 'acked']);
+const LEDGER_ROUTE_PROOF_FAILED_STATUSES = new Set(['failed']);
 const SPECIAL_USER_TARGETS = new Set(['user', 'telegram']);
 const INTERNAL_INBOX_TARGETS = new Set(['mira']);
 const args = process.argv.slice(2);
@@ -2162,10 +2172,261 @@ function shouldFallbackForUnverifiedSend(result, targetInput) {
 function ackIndicatesVisibleDelivery(ack = null) {
   if (!ack || ack.ok !== true) return false;
   const status = String(ack.status || '').toLowerCase();
+  if (ackStatusRequiresLedgerRouteProof(status)) return false;
   return ack.verified === true
     || ack.userVisible === true
     || status === 'delivered.verified'
     || status === 'telegram_delivered';
+}
+
+function normalizeRouteProofStatus(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeRouteProofProfile(value) {
+  const normalized = normalizeProfileName(value || '');
+  return normalized || null;
+}
+
+function buildLedgerRouteProofStatus(envelope = {}, row = null, options = {}) {
+  const messageId = String(envelope?.message_id || '').trim();
+  if (!row) {
+    return {
+      proofConfirmed: false,
+      deliveryProofStatus: options.timedOut ? 'ledger_route_missing' : 'ledger_route_pending',
+      messageId,
+      requiredLedgerStatus: 'routed',
+      row: null,
+      timedOut: options.timedOut === true,
+    };
+  }
+
+  const rowMessageId = String(row.messageId || '').trim();
+  const expectedSessionId = normalizeSessionId(envelope?.session_id || projectMetadata?.session_id || '');
+  const rowSessionId = normalizeSessionId(row.sessionId || row.metadata?.session_id || '');
+  const routeAttribution = row.metadata?.routeAttribution && typeof row.metadata.routeAttribution === 'object'
+    ? row.metadata.routeAttribution
+    : {};
+  const routingMetadata = row.metadata?.routing && typeof row.metadata.routing === 'object'
+    ? row.metadata.routing
+    : {};
+
+  if (messageId && rowMessageId && rowMessageId !== messageId) {
+    return {
+      proofConfirmed: false,
+      deliveryProofStatus: 'ledger_route_wrong_message',
+      messageId,
+      requiredLedgerStatus: 'routed',
+      row,
+      rowStatus: row.status || null,
+      rowId: row.rowId || null,
+    };
+  }
+
+  if (expectedSessionId && rowSessionId && rowSessionId !== expectedSessionId) {
+    return {
+      proofConfirmed: false,
+      deliveryProofStatus: 'ledger_route_wrong_session',
+      messageId,
+      expectedSessionId,
+      rowSessionId,
+      requiredLedgerStatus: 'routed',
+      row,
+      rowStatus: row.status || null,
+      rowId: row.rowId || null,
+    };
+  }
+
+  if (String(row.direction || '').toLowerCase() !== 'outbound') {
+    return {
+      proofConfirmed: false,
+      deliveryProofStatus: 'ledger_route_wrong_direction',
+      messageId,
+      requiredLedgerStatus: 'routed',
+      row,
+      rowStatus: row.status || null,
+      rowId: row.rowId || null,
+    };
+  }
+
+  const expectedSourceProfile = normalizeRouteProofProfile(effectiveProfileName || 'main');
+  const rowSourceProfile = normalizeRouteProofProfile(
+    routeAttribution.sourceProfileName
+      || row.metadata?.sourceProfileName
+      || row.metadata?.profileName
+      || row.metadata?.profile
+      || ''
+  );
+  if (rowSourceProfile && expectedSourceProfile && rowSourceProfile !== expectedSourceProfile) {
+    return {
+      proofConfirmed: false,
+      deliveryProofStatus: 'ledger_route_wrong_source_profile',
+      messageId,
+      expectedSourceProfile,
+      rowSourceProfile,
+      requiredLedgerStatus: 'routed',
+      row,
+      rowStatus: row.status || null,
+      rowId: row.rowId || null,
+    };
+  }
+
+  if (targetProfileRouteContext) {
+    const expectedTargetProfile = normalizeRouteProofProfile(targetProfileRouteContext.targetProfileName);
+    const rowTargetProfile = normalizeRouteProofProfile(
+      routeAttribution.targetProfileName
+        || routingMetadata.profileName
+        || row.metadata?.targetProfileName
+        || ''
+    );
+    if (!rowTargetProfile || rowTargetProfile !== expectedTargetProfile) {
+      return {
+        proofConfirmed: false,
+        deliveryProofStatus: 'ledger_route_wrong_target_profile',
+        messageId,
+        expectedTargetProfile,
+        rowTargetProfile,
+        requiredLedgerStatus: 'routed',
+        row,
+        rowStatus: row.status || null,
+        rowId: row.rowId || null,
+      };
+    }
+
+    const expectedTargetSessionId = normalizeSessionId(targetProfileRouteContext.metadata?.routing?.sessionScopeId || '');
+    const rowTargetSessionId = normalizeSessionId(routeAttribution.targetSessionScopeId || routingMetadata.sessionScopeId || '');
+    if (expectedTargetSessionId && rowTargetSessionId && rowTargetSessionId !== expectedTargetSessionId) {
+      return {
+        proofConfirmed: false,
+        deliveryProofStatus: 'ledger_route_wrong_target_session',
+        messageId,
+        expectedTargetSessionId,
+        rowTargetSessionId,
+        requiredLedgerStatus: 'routed',
+        row,
+        rowStatus: row.status || null,
+        rowId: row.rowId || null,
+      };
+    }
+  }
+
+  const rowStatus = normalizeRouteProofStatus(row.status);
+  if (LEDGER_ROUTE_PROOF_CONFIRMED_STATUSES.has(rowStatus)) {
+    return {
+      proofConfirmed: true,
+      deliveryProofStatus: 'ledger_route_confirmed',
+      messageId,
+      requiredLedgerStatus: 'routed',
+      row,
+      rowStatus,
+      rowId: row.rowId || null,
+    };
+  }
+
+  if (LEDGER_ROUTE_PROOF_FAILED_STATUSES.has(rowStatus)) {
+    return {
+      proofConfirmed: false,
+      deliveryProofStatus: 'ledger_route_failed',
+      messageId,
+      requiredLedgerStatus: 'routed',
+      row,
+      rowStatus,
+      rowId: row.rowId || null,
+      errorCode: row.errorCode || null,
+    };
+  }
+
+  return {
+    proofConfirmed: false,
+    deliveryProofStatus: options.timedOut ? 'ledger_route_missing' : 'ledger_route_pending',
+    messageId,
+    requiredLedgerStatus: 'routed',
+    row,
+    rowStatus,
+    rowId: row.rowId || null,
+    timedOut: options.timedOut === true,
+  };
+}
+
+function getRouteProofOptions() {
+  return {
+    timeoutMs: normalizePositiveInt(DEFAULT_ROUTE_PROOF_TIMEOUT_MS, 2500, 0),
+    retryDelayMs: normalizePositiveInt(DEFAULT_ROUTE_PROOF_RETRY_MS, 100, 0),
+  };
+}
+
+async function waitForLedgerRouteProof(envelope = {}, options = {}) {
+  const opts = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+  const timeoutMs = normalizePositiveInt(opts.timeoutMs, 2500, 0);
+  const retryDelayMs = normalizePositiveInt(opts.retryDelayMs, 100, 0);
+  const messageId = String(envelope?.message_id || '').trim();
+  if (!messageId) {
+    return buildLedgerRouteProofStatus(envelope, null, { timedOut: true });
+  }
+
+  const deadlineMs = Date.now() + timeoutMs;
+  let latestProof = null;
+  while (true) {
+    let row = null;
+    try {
+      row = queryLocalCommsJournalEntries({
+        messageId,
+        order: 'desc',
+        limit: 1,
+      })[0] || null;
+    } catch (_) {
+      row = null;
+    }
+
+    latestProof = buildLedgerRouteProofStatus(envelope, row);
+    if (
+      latestProof.proofConfirmed
+      || latestProof.deliveryProofStatus === 'ledger_route_failed'
+      || latestProof.deliveryProofStatus.startsWith('ledger_route_wrong_')
+    ) {
+      return latestProof;
+    }
+
+    if (Date.now() >= deadlineMs) {
+      return buildLedgerRouteProofStatus(envelope, row, { timedOut: true });
+    }
+    await sleep(retryDelayMs);
+  }
+}
+
+function shouldSeekLedgerRouteProofAfterTransportFailure(result = null, error = null) {
+  if (!result || result.ok === true) return false;
+  const status = normalizeRouteProofStatus(result?.ack?.status || result?.deliveryCheck?.status || '');
+  if (ackStatusRequiresLedgerRouteProof(status)) {
+    return true;
+  }
+  const errorText = String(result?.error || error?.message || '').toLowerCase();
+  return errorText.includes('ack timeout');
+}
+
+function ackStatusRequiresLedgerRouteProof(value) {
+  const status = normalizeRouteProofStatus(value);
+  if (!status) return true;
+  return (
+    status.includes('unverified')
+    || status.includes('timeout')
+    || status === 'delivered.websocket'
+    || status.includes('daemon')
+  );
+}
+
+function acceptedTransportRequiresLedgerRouteProof(result = null) {
+  if (!result || result.ok !== true) return false;
+  const status = normalizeRouteProofStatus(result?.ack?.status || '');
+  if (ackStatusRequiresLedgerRouteProof(status)) return true;
+  return result.delivered === false && !status;
+}
+
+function formatLedgerRouteProofLine(prefix, proof, ackStatus, attemptCount) {
+  const rowId = proof?.rowId ? `, row: ${proof.rowId}` : '';
+  const rowStatus = proof?.rowStatus ? proof.rowStatus : proof?.deliveryProofStatus || 'unknown';
+  const attemptText = Number.isFinite(Number(attemptCount)) ? `, attempt ${attemptCount}` : '';
+  return `${prefix} (ack: ${ackStatus || 'none'}, route: ${rowStatus}${rowId}${attemptText}). Visible delivery is not claimed.`;
 }
 
 function normalizeConnectedDevices(input) {
@@ -2716,6 +2977,35 @@ async function main() {
   }
 
   if (sendResult?.ok) {
+    const requiresLedgerRouteProof = acceptedTransportRequiresLedgerRouteProof(sendResult);
+    if (requiresLedgerRouteProof) {
+      const ledgerRouteProof = await waitForLedgerRouteProof(envelope, getRouteProofOptions());
+      sendResult = {
+        ...sendResult,
+        deliveryProofStatus: ledgerRouteProof.deliveryProofStatus,
+        ledgerRouteProof,
+      };
+      if (ledgerRouteProof.proofConfirmed) {
+        console.log(formatLedgerRouteProofLine(
+          `Route proof confirmed for ${target}: ${previewMessage(message)}`,
+          ledgerRouteProof,
+          sendResult.ack?.status || null,
+          sendResult.attemptsUsed
+        ));
+        closeCommsJournalStores();
+        process.exit(0);
+      }
+      console.error(
+        `Transport accepted by ${target} but ledger route proof is missing: ${previewMessage(message)} `
+        + `(ack: ${sendResult.ack?.status || 'unknown'}, `
+        + `proof: ${sendResult.deliveryProofStatus || 'ledger_route_missing'}, `
+        + `message_id: ${envelope.message_id}). `
+        + 'Check `node ui/scripts/hm-comms.js history --json --limit 20` before claiming delivery or resending.'
+      );
+      closeCommsJournalStores();
+      process.exit(1);
+    }
+
     if (enableFallback && shouldFallbackForUnverifiedSend(sendResult, target)) {
       const fallbackResult = writeTriggerFallback(target, buildTriggerFallbackDescriptor(envelope));
       if (fallbackResult.ok) {
@@ -2758,8 +3048,8 @@ async function main() {
     if (sendResult.delivered === false) {
       console.log(
         `Accepted by ${target} but unverified: ${previewMessage(message)} `
-        + `(ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed}). `
-        + 'Delivery may already have happened; avoid immediate resend.'
+        + `(ack: ${sendResult.ack?.status || 'unknown'}, attempt ${sendResult.attemptsUsed}). `
+        + 'Visible delivery is not claimed.'
       );
     } else {
       console.log(`Delivered to ${target}: ${previewMessage(message)} (ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed})`);
@@ -2805,6 +3095,25 @@ async function main() {
     }
     closeCommsJournalStores();
     process.exit(1);
+  }
+
+  if (shouldSeekLedgerRouteProofAfterTransportFailure(sendResult, wsError)) {
+    const ledgerRouteProof = await waitForLedgerRouteProof(envelope, getRouteProofOptions());
+    if (ledgerRouteProof.proofConfirmed) {
+      const ackStatus = sendResult?.ack?.status
+        || sendResult?.deliveryCheck?.status
+        || sendResult?.error
+        || wsError?.message
+        || 'missing_ack';
+      console.log(formatLedgerRouteProofLine(
+        `Route proof confirmed for ${target} after transport ambiguity: ${previewMessage(message)}`,
+        ledgerRouteProof,
+        ackStatus,
+        sendResult?.attemptsUsed ?? null
+      ));
+      closeCommsJournalStores();
+      process.exit(0);
+    }
   }
 
   if (enableFallback) {
