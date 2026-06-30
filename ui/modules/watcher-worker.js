@@ -32,12 +32,118 @@ const TRIGGER_PATHS = getTriggerWatchPaths();
 const MESSAGE_QUEUE_DIR = path.join(WORKSPACE_PATH, 'messages');
 const WORKSPACE_WATCH_POLL_INTERVAL_MS = 5000;
 const WATCHER_HEARTBEAT_INTERVAL_MS = 5000;
+const WORKSPACE_WATCH_TARGETS_ENV = 'SQUIDRUN_WORKSPACE_WATCH_TARGETS_JSON';
+const WORKSPACE_WATCH_RELATIVE_PATHS = Object.freeze([
+  'plan.md',
+  'plan-approved.md',
+  'plan-feedback.md',
+  'checkpoint.md',
+  'checkpoint-approved.md',
+  'checkpoint-issues.md',
+  'friction-resolution.md',
+  'improvements.md',
+  'shared_context.md',
+  'blockers.md',
+  'errors.md',
+  'app-status.json',
+  path.join('handoffs', 'session.md'),
+  path.join('runtime', 'active-cases.json'),
+  'pipeline.json',
+  'review.json',
+  'task-pool.json',
+]);
+const WORKSPACE_WATCH_RELATIVE_DIRS = Object.freeze([
+  'friction',
+]);
+const RUNTIME_NOOP_DIR_RE = /[\\/]\.squidrun[\\/](?:logs(?:-[^\\/]+)?|runtime(?:-[^\\/]+)?)(?:[\\/]|$)/;
 const RUNTIME_NOOP_FILE_RE = /[\\/](?:logs(?:-[^\\/]+)?|runtime(?:-[^\\/]+)?)[\\/](?:app\.log|daemon\.log|supervisor\.log|supervisor-status\.json|session\.md|last-session\.md|user-input-shadow\.jsonl|bus-reliability-trace\.jsonl|team-memory-pattern-spool\.jsonl|evidence-ledger\.db-(?:wal|shm))$/;
 const ROOT_RUNTIME_NOOP_FILE_RE = /[\\/]\.squidrun[\\/](?:app-status\.json|perf-profile\.json|supervisor-status\.json|session\.md|last-session\.md)$/;
 
 function isRuntimeNoopPath(filePath = '') {
   const normalized = String(filePath || '');
-  return RUNTIME_NOOP_FILE_RE.test(normalized) || ROOT_RUNTIME_NOOP_FILE_RE.test(normalized);
+  return RUNTIME_NOOP_DIR_RE.test(normalized)
+    || RUNTIME_NOOP_FILE_RE.test(normalized)
+    || ROOT_RUNTIME_NOOP_FILE_RE.test(normalized);
+}
+
+function uniqueResolvedPaths(paths = []) {
+  return Array.from(new Set(paths
+    .filter((targetPath) => typeof targetPath === 'string' && targetPath.trim())
+    .map((targetPath) => path.resolve(targetPath))));
+}
+
+function getCoordWatchPaths(relPath) {
+  const paths = [];
+  if (typeof resolveCoordPath === 'function') {
+    paths.push(resolveCoordPath(relPath, { forWrite: true }));
+  }
+  if (paths.length === 0) {
+    paths.push(...getCoordWatchRoots().map((root) => path.join(root, relPath)));
+  }
+  return uniqueResolvedPaths(paths);
+}
+
+function getDefaultWorkspaceWatchTargets() {
+  return uniqueResolvedPaths([
+    ...WORKSPACE_WATCH_RELATIVE_PATHS.flatMap((relPath) => getCoordWatchPaths(relPath)),
+    ...WORKSPACE_WATCH_RELATIVE_DIRS.flatMap((relPath) => getCoordWatchPaths(relPath)),
+  ]);
+}
+
+function parseWorkspaceWatchTargetsEnv() {
+  const raw = process.env[WORKSPACE_WATCH_TARGETS_ENV];
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    const targets = uniqueResolvedPaths(parsed);
+    return targets.length > 0 ? targets : null;
+  } catch {
+    return null;
+  }
+}
+
+function getWorkspaceWatchTargets() {
+  return parseWorkspaceWatchTargetsEnv() || getDefaultWorkspaceWatchTargets();
+}
+
+function normalizeForPathMatch(filePath = '') {
+  return path.resolve(String(filePath || '')).toLowerCase();
+}
+
+function isSameOrNestedPath(candidate, target) {
+  const normalizedCandidate = normalizeForPathMatch(candidate);
+  const normalizedTarget = normalizeForPathMatch(target);
+  return normalizedCandidate === normalizedTarget
+    || normalizedCandidate.startsWith(`${normalizedTarget}${path.sep}`)
+    || normalizedTarget.startsWith(`${normalizedCandidate}${path.sep}`);
+}
+
+function createAllowedWorkspacePathMatcher(targetPaths = []) {
+  const targets = uniqueResolvedPaths(targetPaths);
+  return (filePath = '') => targets.some((targetPath) => isSameOrNestedPath(filePath, targetPath));
+}
+
+function createWorkspaceIgnoredMatcher(targetPaths = []) {
+  const isAllowedWorkspacePath = createAllowedWorkspacePathMatcher(targetPaths);
+  const ignoredPatterns = [
+    /node_modules[\\/]/,
+    /\.git[\\/]/,
+    /instances[\\/]/,
+    /backups[\\/]/,
+    /context-snapshots[\\/]/,
+    /logs[\\/]/,
+    RUNTIME_NOOP_DIR_RE,
+    RUNTIME_NOOP_FILE_RE,
+    ROOT_RUNTIME_NOOP_FILE_RE,
+    /state\.json$/,
+    /triggers(?:-[^\\/]+)?[\\/]/,
+  ];
+  return (filePath) => {
+    if (isAllowedWorkspacePath(filePath)) return false;
+    const normalized = String(filePath || '');
+    return ignoredPatterns.some((pattern) => pattern.test(normalized));
+  };
 }
 
 function emit(payload) {
@@ -70,26 +176,16 @@ function watcherFreshnessPayload(watcherName, watcher, ready, reason) {
 }
 
 function buildWatcherConfigs() {
+  const workspaceTargetPath = getWorkspaceWatchTargets();
   return {
     workspace: {
-      targetPath: WORKSPACE_PATH,
+      targetPath: workspaceTargetPath,
       options: {
         ignoreInitial: true,
         persistent: true,
         usePolling: true,
         interval: WORKSPACE_WATCH_POLL_INTERVAL_MS,
-        ignored: [
-          /node_modules[\\/]/,
-          /\.git[\\/]/,
-          /instances[\\/]/,
-          /backups[\\/]/,
-          /context-snapshots[\\/]/,
-          /logs[\\/]/,
-          RUNTIME_NOOP_FILE_RE,
-          ROOT_RUNTIME_NOOP_FILE_RE,
-          /state\.json$/,
-          /triggers(?:-[^\\/]+)?[\\/]/,
-        ],
+        ignored: createWorkspaceIgnoredMatcher(workspaceTargetPath),
       },
     },
     trigger: {
@@ -123,9 +219,12 @@ function buildWatcherConfigs() {
 function registerWatcher(watcherName, cfg, activeWatchers = []) {
   const watcher = chokidar.watch(cfg.targetPath, cfg.options);
   let ready = false;
+  const isAllowedWorkspacePath = watcherName === 'workspace'
+    ? createAllowedWorkspacePathMatcher(Array.isArray(cfg.targetPath) ? cfg.targetPath : [cfg.targetPath])
+    : null;
 
   function emitFileEvent(type, filePath) {
-    if (watcherName === 'workspace' && isRuntimeNoopPath(filePath)) return;
+    if (watcherName === 'workspace' && isRuntimeNoopPath(filePath) && !isAllowedWorkspacePath(filePath)) return;
     emit({ type, path: filePath, watcherName });
   }
 
@@ -213,6 +312,10 @@ if (require.main === module) {
 module.exports = {
   WATCHER_HEARTBEAT_INTERVAL_MS,
   buildWatcherConfigs,
+  createAllowedWorkspacePathMatcher,
+  createWorkspaceIgnoredMatcher,
+  getDefaultWorkspaceWatchTargets,
+  getWorkspaceWatchTargets,
   getTriggerWatchPaths,
   isRuntimeNoopPath,
   main,

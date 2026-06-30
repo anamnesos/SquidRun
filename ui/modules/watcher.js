@@ -71,6 +71,27 @@ const TRIGGER_READ_MAX_ATTEMPTS = 3;
 const triggerRetryTimers = new Map();
 const WORKSPACE_WATCH_POLL_INTERVAL_MS = 5000;
 const WATCHER_WORKER_PATH = path.join(__dirname, 'watcher-worker.js');
+const WORKSPACE_WATCH_TARGETS_ENV = 'SQUIDRUN_WORKSPACE_WATCH_TARGETS_JSON';
+const WORKSPACE_WATCH_RELATIVE_PATHS = Object.freeze([
+  'plan.md',
+  'plan-approved.md',
+  'plan-feedback.md',
+  'checkpoint.md',
+  'checkpoint-approved.md',
+  'checkpoint-issues.md',
+  'friction-resolution.md',
+  'improvements.md',
+  ...SYNC_FILES,
+  'app-status.json',
+  path.join('handoffs', 'session.md'),
+  path.join('runtime', 'active-cases.json'),
+  'pipeline.json',
+  'review.json',
+  'task-pool.json',
+]);
+const WORKSPACE_WATCH_RELATIVE_DIRS = Object.freeze([
+  'friction',
+]);
 const WATCHER_WORKER_RESTART_DELAY_MS = 1000;
 const WATCHER_WORKER_READY_TIMEOUT_MS = 30000;
 const WATCHER_WORKER_STALE_TIMEOUT_MS = 15000;
@@ -468,12 +489,34 @@ function transition(newState) {
 // WATCHER_DEBOUNCE_MS imported from constants.js
 let debounceTimer = null;
 let pendingFileChanges = new Set();
+const RUNTIME_NOOP_DIR_RE = /[\\/]\.squidrun[\\/](?:logs(?:-[^\\/]+)?|runtime(?:-[^\\/]+)?)(?:[\\/]|$)/;
 const RUNTIME_NOOP_FILE_RE = /[\\/](?:logs(?:-[^\\/]+)?|runtime(?:-[^\\/]+)?)[\\/](?:app\.log|daemon\.log|supervisor\.log|supervisor-status\.json|session\.md|last-session\.md|user-input-shadow\.jsonl|bus-reliability-trace\.jsonl|team-memory-pattern-spool\.jsonl|evidence-ledger\.db-(?:wal|shm))$/;
 const ROOT_RUNTIME_NOOP_FILE_RE = /[\\/]\.squidrun[\\/](?:app-status\.json|perf-profile\.json|supervisor-status\.json|session\.md|last-session\.md)$/;
 
 function isRuntimeNoopFileChange(filePath = '') {
   const normalized = String(filePath || '');
-  return RUNTIME_NOOP_FILE_RE.test(normalized) || ROOT_RUNTIME_NOOP_FILE_RE.test(normalized);
+  return RUNTIME_NOOP_DIR_RE.test(normalized)
+    || RUNTIME_NOOP_FILE_RE.test(normalized)
+    || ROOT_RUNTIME_NOOP_FILE_RE.test(normalized);
+}
+
+function uniqueResolvedPaths(paths = []) {
+  return Array.from(new Set(paths
+    .filter((targetPath) => typeof targetPath === 'string' && targetPath.trim())
+    .map((targetPath) => path.resolve(targetPath))));
+}
+
+function getWorkspaceWatchTargets() {
+  return uniqueResolvedPaths([
+    ...WORKSPACE_WATCH_RELATIVE_PATHS.flatMap((relPath) => getCoordWatchPaths(relPath)),
+    ...WORKSPACE_WATCH_RELATIVE_DIRS.flatMap((relPath) => getCoordWatchPaths(relPath)),
+    ...customWatches.keys(),
+  ]);
+}
+
+function isCustomWatchPath(filePath = '') {
+  if (!filePath) return false;
+  return customWatches.has(path.resolve(filePath));
 }
 
 function notifySyncFileChanged(filename) {
@@ -492,7 +535,7 @@ function notifySyncFileChanged(filename) {
  * @param {string} filePath - Path to changed file
  */
 function handleFileChangeDebounced(filePath) {
-  if (isRuntimeNoopFileChange(filePath)) {
+  if (isRuntimeNoopFileChange(filePath) && !isCustomWatchPath(filePath)) {
     return;
   }
 
@@ -525,7 +568,7 @@ function handleFileChangeDebounced(filePath) {
  * @param {string} filePath - Path to changed file
  */
 function handleFileChangeCore(filePath) {
-  if (isRuntimeNoopFileChange(filePath)) {
+  if (isRuntimeNoopFileChange(filePath) && !isCustomWatchPath(filePath)) {
     return;
   }
 
@@ -836,10 +879,12 @@ function stopWatcherWorker(watcherName, workerRefName, { reason = 'stop', clearR
   return true;
 }
 
-function startWatcherWorker(watcherName, onEvent, restartFn) {
+function startWatcherWorker(watcherName, onEvent, restartFn, options = {}) {
+  const extraEnv = options.env && typeof options.env === 'object' ? options.env : {};
   const worker = fork(WATCHER_WORKER_PATH, [], buildNodeWorkerForkOptions({
     env: {
       ...process.env,
+      ...extraEnv,
       SQUIDRUN_WATCHER_NAME: watcherName,
     },
   }));
@@ -903,6 +948,7 @@ function startWatcher() {
     stopWatcherWorker('workspace', 'workspace', { reason: 'restart', clearRestart: false });
   }
 
+  const workspaceWatchTargets = getWorkspaceWatchTargets();
   workspaceWatcher = startWatcherWorker(
     'workspace',
     (filePath, eventType) => {
@@ -910,10 +956,15 @@ function startWatcher() {
         handleFileChangeDebounced(filePath);
       }
     },
-    () => startWatcher()
+    () => startWatcher(),
+    {
+      env: {
+        [WORKSPACE_WATCH_TARGETS_ENV]: JSON.stringify(workspaceWatchTargets),
+      },
+    }
   );
 
-  log.info('Watcher', `Watching ${WORKSPACE_PATH} with ${WORKSPACE_WATCH_POLL_INTERVAL_MS}ms polling`);
+  log.info('Watcher', `Watching ${workspaceWatchTargets.length} workspace target(s) with ${WORKSPACE_WATCH_POLL_INTERVAL_MS}ms polling`);
 }
 
 function stopWatcher() {
@@ -1109,7 +1160,13 @@ function addWatch(filePath, onChange) {
   if (!filePath || typeof onChange !== 'function') {
     return false;
   }
-  customWatches.set(path.resolve(filePath), onChange);
+  const resolvedPath = path.resolve(filePath);
+  const isNewWatch = !customWatches.has(resolvedPath);
+  customWatches.set(resolvedPath, onChange);
+  if (isNewWatch && isWatcherWorkerRunning(workspaceWatcher)) {
+    log.info('Watcher', `Restarting workspace watcher to include custom watch: ${resolvedPath}`);
+    startWatcher();
+  }
   return true;
 }
 
@@ -1789,6 +1846,7 @@ module.exports = {
     getQueueMutationChainSize: () => queueMutationChains.size,
     clearQueueMutationChains: () => queueMutationChains.clear(),
     getTriggerPaths: () => [...TRIGGER_PATHS],
+    getWorkspaceWatchTargets,
     drainExistingTriggerFiles,
     isRuntimeNoopFileChange,
     getWatcherWorkerFreshness,
