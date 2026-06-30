@@ -171,6 +171,9 @@ describe('watcher module', () => {
 
     watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'logs', 'app.log'));
     watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'runtime', 'daemon.log'));
+    watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'runtime', 'terminal-fit-telemetry.jsonl'));
+    watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'runtime', 'session-state.json'));
+    watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'runtime', 'team-memory.sqlite'));
     watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'runtime-eunbyeol', 'session.md'));
     watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'perf-profile.json'));
     jest.runOnlyPendingTimers();
@@ -184,6 +187,8 @@ describe('watcher module', () => {
       expect.stringContaining('File changed:')
     );
     expect(watcher._internals.isRuntimeNoopFileChange('D:/repo/.squidrun/logs/app.log')).toBe(true);
+    expect(watcher._internals.isRuntimeNoopFileChange('D:/repo/.squidrun/runtime/terminal-fit-telemetry.jsonl')).toBe(true);
+    expect(watcher._internals.isRuntimeNoopFileChange('D:/repo/.squidrun/runtime/team-memory.sqlite')).toBe(true);
     expect(watcher._internals.isRuntimeNoopFileChange('D:/repo/.squidrun/perf-profile.json')).toBe(true);
     expect(watcher._internals.isRuntimeNoopFileChange(path.join('D:', 'repo', 'workspace', 'plan.md'))).toBe(false);
   });
@@ -571,6 +576,16 @@ describe('watcher module', () => {
         }),
       })
     );
+    const targetsJson = childProcessMock.fork.mock.calls[0][2].env.SQUIDRUN_WORKSPACE_WATCH_TARGETS_JSON;
+    const targets = JSON.parse(targetsJson);
+    expect(targets).toEqual(expect.arrayContaining([
+      path.resolve(tempDir, 'plan.md'),
+      path.resolve(tempDir, 'shared_context.md'),
+      path.resolve(tempDir, 'runtime', 'active-cases.json'),
+      path.resolve(tempDir, 'task-pool.json'),
+      path.resolve(tempDir, 'friction'),
+    ]));
+    expect(targets).not.toContain(path.resolve(tempDir));
 
     watcher.stopWatcher();
     expect(workerInstance.kill).toHaveBeenCalled();
@@ -587,6 +602,36 @@ describe('watcher module', () => {
     expect(firstWorker.kill).toHaveBeenCalledTimes(1);
     expect(childProcessMock.fork).toHaveBeenCalledTimes(2);
 
+    cleanupDir(tempDir);
+  });
+
+  test('addWatch restarts running workspace worker with custom target included', () => {
+    const { watcher, childProcessMock, getWorker, tempDir } = setupWatcher();
+    const customPath = path.join(tempDir, '.squidrun', 'runtime', 'active-cases.json');
+
+    watcher.startWatcher();
+    const firstWorker = getWorker(0);
+    watcher.addWatch(customPath, jest.fn());
+
+    expect(firstWorker.kill).toHaveBeenCalledTimes(1);
+    expect(childProcessMock.fork).toHaveBeenCalledTimes(2);
+    const targetsJson = childProcessMock.fork.mock.calls[1][2].env.SQUIDRUN_WORKSPACE_WATCH_TARGETS_JSON;
+    expect(JSON.parse(targetsJson)).toContain(path.resolve(customPath));
+
+    cleanupDir(tempDir);
+  });
+
+  test('custom runtime watch paths are not dropped by runtime-noop filtering', () => {
+    jest.useFakeTimers();
+    const { watcher, tempDir } = setupWatcher();
+    const customPath = path.join(tempDir, '.squidrun', 'runtime', 'active-cases.json');
+    const onChange = jest.fn();
+
+    watcher.addWatch(customPath, onChange);
+    watcher.handleFileChange(customPath);
+    jest.runOnlyPendingTimers();
+
+    expect(onChange).toHaveBeenCalledWith(customPath);
     cleanupDir(tempDir);
   });
 

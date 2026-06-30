@@ -17,6 +17,7 @@ describe('watcher-worker.js', () => {
     jest.useRealTimers();
     jest.resetModules();
     jest.clearAllMocks();
+    delete process.env.SQUIDRUN_WORKSPACE_WATCH_TARGETS_JSON;
   });
 
   test('trigger watcher uses profile-namespaced coord path', () => {
@@ -25,9 +26,9 @@ describe('watcher-worker.js', () => {
     const worker = loadWorkerWithConfig({
       WORKSPACE_PATH: workspacePath,
       resolveCoordPath: (relPath, options = {}) => {
-        expect(relPath).toBe('triggers');
         expect(options).toEqual(expect.objectContaining({ forWrite: true }));
-        return triggerPath;
+        if (relPath === 'triggers') return triggerPath;
+        return path.join(workspacePath, '.squidrun', relPath);
       },
       getCoordRoots: () => [path.join(workspacePath, '.squidrun')],
     });
@@ -46,11 +47,11 @@ describe('watcher-worker.js', () => {
     });
     const ignored = worker.buildWatcherConfigs().workspace.options.ignored;
 
-    expect(ignored.some((pattern) => pattern.test('D:/repo/.squidrun/triggers/architect.txt'))).toBe(true);
-    expect(ignored.some((pattern) => pattern.test('D:/repo/.squidrun/triggers-client-profile/architect.txt'))).toBe(true);
+    expect(ignored('D:/repo/.squidrun/triggers/architect.txt')).toBe(true);
+    expect(ignored('D:/repo/.squidrun/triggers-client-profile/architect.txt')).toBe(true);
   });
 
-  test('workspace watcher ignores runtime files that only create log churn', () => {
+  test('workspace watcher ignores runtime paths that only create log churn', () => {
     const workspacePath = path.join('D:', 'tmp', 'squidrun-test');
     const worker = loadWorkerWithConfig({
       WORKSPACE_PATH: workspacePath,
@@ -59,13 +60,56 @@ describe('watcher-worker.js', () => {
     });
     const ignored = worker.buildWatcherConfigs().workspace.options.ignored;
 
-    expect(ignored.some((pattern) => pattern.test('D:/repo/.squidrun/logs/app.log'))).toBe(true);
-    expect(ignored.some((pattern) => pattern.test('D:/repo/.squidrun/runtime/daemon.log'))).toBe(true);
-    expect(ignored.some((pattern) => pattern.test('D:/repo/.squidrun/runtime-eunbyeol/session.md'))).toBe(true);
-    expect(ignored.some((pattern) => pattern.test('D:/repo/.squidrun/perf-profile.json'))).toBe(true);
+    expect(ignored('D:/repo/.squidrun/logs/app.log')).toBe(true);
+    expect(ignored('D:/repo/.squidrun/runtime/daemon.log')).toBe(true);
+    expect(ignored('D:/repo/.squidrun/runtime/terminal-fit-telemetry.jsonl')).toBe(true);
+    expect(ignored('D:/repo/.squidrun/runtime/session-state.json')).toBe(true);
+    expect(ignored('D:/repo/.squidrun/runtime/team-memory.sqlite')).toBe(true);
+    expect(ignored('D:/repo/.squidrun/runtime')).toBe(true);
+    expect(ignored('D:/repo/.squidrun/runtime-eunbyeol/session.md')).toBe(true);
+    expect(ignored('D:/repo/.squidrun/perf-profile.json')).toBe(true);
     expect(worker.isRuntimeNoopPath('D:/repo/.squidrun/logs/app.log')).toBe(true);
+    expect(worker.isRuntimeNoopPath('D:/repo/.squidrun/runtime/terminal-fit-telemetry.jsonl')).toBe(true);
+    expect(worker.isRuntimeNoopPath('D:/repo/.squidrun/runtime/team-memory.sqlite')).toBe(true);
     expect(worker.isRuntimeNoopPath('D:/repo/.squidrun/perf-profile.json')).toBe(true);
     expect(worker.isRuntimeNoopPath('D:/repo/workspace/plan.md')).toBe(false);
+  });
+
+  test('workspace watcher uses bounded workflow targets instead of the whole repo', () => {
+    const workspacePath = path.join('D:', 'tmp', 'squidrun-test');
+    const coordRoot = path.join(workspacePath, '.squidrun');
+    const worker = loadWorkerWithConfig({
+      WORKSPACE_PATH: workspacePath,
+      resolveCoordPath: (relPath) => path.join(coordRoot, relPath),
+      getCoordRoots: () => [coordRoot],
+    });
+    const cfg = worker.buildWatcherConfigs().workspace;
+
+    expect(cfg.targetPath).toEqual(expect.arrayContaining([
+      path.resolve(coordRoot, 'plan.md'),
+      path.resolve(coordRoot, 'shared_context.md'),
+      path.resolve(coordRoot, 'runtime', 'active-cases.json'),
+      path.resolve(coordRoot, 'task-pool.json'),
+      path.resolve(coordRoot, 'friction'),
+    ]));
+    expect(cfg.targetPath).not.toContain(path.resolve(workspacePath));
+  });
+
+  test('workspace watcher allows explicit runtime custom targets', () => {
+    const workspacePath = path.join('D:', 'tmp', 'squidrun-test');
+    const coordRoot = path.join(workspacePath, '.squidrun');
+    const activeCasesPath = path.join(coordRoot, 'runtime', 'active-cases.json');
+    process.env.SQUIDRUN_WORKSPACE_WATCH_TARGETS_JSON = JSON.stringify([activeCasesPath]);
+    const worker = loadWorkerWithConfig({
+      WORKSPACE_PATH: workspacePath,
+      resolveCoordPath: (relPath) => path.join(coordRoot, relPath),
+      getCoordRoots: () => [coordRoot],
+    });
+    const cfg = worker.buildWatcherConfigs().workspace;
+
+    expect(cfg.targetPath).toEqual([path.resolve(activeCasesPath)]);
+    expect(cfg.options.ignored(activeCasesPath)).toBe(false);
+    expect(cfg.options.ignored(path.join(coordRoot, 'runtime', 'team-memory.sqlite'))).toBe(true);
   });
 
   test('registered chokidar watcher emits ready and heartbeat freshness messages', () => {
