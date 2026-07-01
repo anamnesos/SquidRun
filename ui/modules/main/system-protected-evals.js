@@ -12,6 +12,7 @@ const CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE = 'phase4e.route_inject_visible_dedupe
 const CASE_ID_TELEGRAM_RECALL_BODY_FIRST = 'phase4f.telegram_recall_body_first';
 const CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF = 'phase4g.telegram_reply_debt_requires_proven_egress';
 const CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY = 'phase4h.telegram_poller_restart_is_poller_only';
+const CASE_ID_TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES = 'phase4i.task_queue_parked_never_auto_dispatches';
 
 const DEFAULT_REPO_ROOT = path.resolve(__dirname, '../../..');
 const FULL_AGENT_MESSAGE_PATH_RE = /(?:^|\s)(?:\.squidrun[\\/]+)?coord[\\/]+full-agent-messages[\\/]+[A-Za-z0-9._-]+\.txt\b/i;
@@ -1080,6 +1081,142 @@ const TELEGRAM_POLLER_RESTART_BOUNDARY_CASE = Object.freeze({
   ]),
 });
 
+const TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES_CASE = Object.freeze({
+  id: CASE_ID_TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES,
+  phase: 'phase4i',
+  title: 'parked owned work never auto-dispatches',
+  protectedBehavior: 'Owned work in parked state is durable across restarts but is not wake-eligible, cannot activate/continue/unblock, and requires explicit unpark before it can enter the executable queue again.',
+  protectedZeroFail: true,
+  authorityPolicy: 'system_eval_only_no_dispatch',
+  sideEffects: Object.freeze({
+    runtime: false,
+    network: false,
+    writes: false,
+    externalSends: false,
+    restart: false,
+  }),
+  sourceRefs: Object.freeze([
+    Object.freeze({
+      id: 'task_queue_declares_parked_state',
+      path: 'ui/scripts/hm-task-queue.js',
+      anchor: 'const VALID_STATES',
+      requiredText: "'parked'",
+      reason: 'The queue schema must recognize parked as a first-class durable state.',
+    }),
+    Object.freeze({
+      id: 'task_queue_wake_states_exclude_parked',
+      path: 'ui/scripts/hm-task-queue.js',
+      anchor: 'const WAKE_DISPATCH_STATES',
+      requiredText: "const WAKE_DISPATCH_STATES = new Set(['queued', 'blocked', 'waiting']);",
+      reason: 'Wake candidate collection must not include parked work.',
+    }),
+    Object.freeze({
+      id: 'task_queue_wake_eligibility_refuses_parked',
+      path: 'ui/scripts/hm-task-queue.js',
+      anchor: 'function isWakeEligible',
+      requiredText: "normalizeState(task.state, 'queued') === 'parked'",
+      reason: 'A parked task must fail the wake-eligible predicate even if it is restart-persistent.',
+    }),
+    Object.freeze({
+      id: 'task_queue_activate_refuses_parked',
+      path: 'ui/scripts/hm-task-queue.js',
+      anchor: 'function activateTask',
+      requiredText: "reason: 'task_parked'",
+      reason: 'Activation must require an explicit unpark transition first.',
+    }),
+    Object.freeze({
+      id: 'task_queue_continue_refuses_parked',
+      path: 'ui/scripts/hm-task-queue.js',
+      anchor: 'function continueTask',
+      requiredText: "reason: 'task_parked'",
+      reason: 'Dispatcher continuation must fail closed if a parked task ever reaches it.',
+    }),
+    Object.freeze({
+      id: 'task_queue_unblock_refuses_parked',
+      path: 'ui/scripts/hm-task-queue.js',
+      anchor: 'function unblockTask',
+      requiredText: "reason: 'task_parked'",
+      reason: 'Unblock must not become an implicit unpark path.',
+    }),
+    Object.freeze({
+      id: 'task_queue_unpark_is_explicit_queued_transition',
+      path: 'ui/scripts/hm-task-queue.js',
+      anchor: 'function unparkTask',
+      requiredText: "state: 'queued'",
+      reason: 'Unpark is the explicit transition back into the executable queue.',
+    }),
+    Object.freeze({
+      id: 'task_queue_migrates_parked_history_convention',
+      path: 'ui/scripts/hm-task-queue.js',
+      anchor: 'function normalizeBucket',
+      requiredText: 'isParkedHistoryTask(task)',
+      reason: 'The old parked_not_executed history convention must become pending parked work.',
+    }),
+  ]),
+  testRefs: Object.freeze([
+    Object.freeze({
+      id: 'parked_requires_explicit_unpark_fixture',
+      path: 'ui/__tests__/hm-task-queue.test.js',
+      testName: 'parks owned work durably and requires explicit unpark before activation or continuation',
+      requiredText: Object.freeze([
+        "reason: 'task_parked'",
+        'queue.unparkTask',
+        "state: 'queued'",
+        'restartPersistence: true',
+      ]),
+    }),
+    Object.freeze({
+      id: 'parked_never_auto_dispatches_fixture',
+      path: 'ui/__tests__/hm-task-queue.test.js',
+      testName: 'keeps parked work out of wake candidates and never auto-dispatches it',
+      requiredText: Object.freeze([
+        'expect(result.candidates).toEqual([])',
+        'expect(result.dispatched).toEqual([])',
+        'expect(dispatcher).not.toHaveBeenCalled()',
+        "state: 'parked'",
+      ]),
+    }),
+    Object.freeze({
+      id: 'parked_history_migration_fixture',
+      path: 'ui/__tests__/hm-task-queue.test.js',
+      testName: 'migrates parked_not_executed history into pending parked work',
+      requiredText: Object.freeze([
+        "completionReason: 'parked_not_executed'",
+        'expect(state.agents.builder.history).toEqual([])',
+        "state: 'parked'",
+        'migratedFromHistoryCompletionReason',
+      ]),
+    }),
+  ]),
+  focusedCommands: Object.freeze([
+    'node ui/scripts/hm-system-protected-evals.js --case phase4i.task_queue_parked_never_auto_dispatches --pretty',
+    'npm --prefix ui test -- system-protected-evals.test.js --runInBand',
+    'npm --prefix ui test -- hm-task-queue.test.js --runInBand --testNamePattern "parks owned work durably and requires explicit unpark before activation or continuation|keeps parked work out of wake candidates and never auto-dispatches it|migrates parked_not_executed history into pending parked work"',
+  ]),
+  expectedRegressionFailures: Object.freeze([
+    Object.freeze({
+      id: 'parked_added_to_wake_dispatch_states',
+      mutation: 'Add parked to WAKE_DISPATCH_STATES or remove the parked wake-eligibility refusal.',
+      expectedFailedCheckIds: Object.freeze(['task_queue_wake_states_exclude_parked', 'task_queue_parked_wake_exclusion']),
+    }),
+    Object.freeze({
+      id: 'activation_or_continue_allows_parked',
+      mutation: 'Remove task_parked refusals from activateTask or continueTask.',
+      expectedFailedCheckIds: Object.freeze(['task_queue_parked_cannot_activate_continue_or_unblock']),
+    }),
+    Object.freeze({
+      id: 'unpark_not_explicit',
+      mutation: 'Let unblock/activate silently convert parked work into executable queued work.',
+      expectedFailedCheckIds: Object.freeze(['task_queue_unpark_is_only_explicit_transition']),
+    }),
+    Object.freeze({
+      id: 'parked_history_migration_removed',
+      mutation: 'Keep parked_not_executed tasks in history instead of pending parked state.',
+      expectedFailedCheckIds: Object.freeze(['task_queue_parked_history_migrates_to_pending']),
+    }),
+  ]),
+});
+
 const PROTECTED_SYSTEM_EVALS = Object.freeze([
   ACCEPTED_UNVERIFIED_CASE,
   FULL_MATERIALIZED_MESSAGE_CASE,
@@ -1089,6 +1226,7 @@ const PROTECTED_SYSTEM_EVALS = Object.freeze([
   TELEGRAM_RECALL_BODY_FIRST_CASE,
   TELEGRAM_REPLY_EGRESS_PROOF_CASE,
   TELEGRAM_POLLER_RESTART_BOUNDARY_CASE,
+  TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES_CASE,
 ]);
 
 function normalizeRelPath(value) {
@@ -2251,6 +2389,105 @@ function validateTelegramPollerRestartBoundarySemantics(evalCase, options = {}) 
   return checks;
 }
 
+function validateTaskQueueParkedSemantics(evalCase, options = {}) {
+  const queueText = readProjectFile('ui/scripts/hm-task-queue.js', options);
+  const queueTestText = readProjectFile('ui/__tests__/hm-task-queue.test.js', options);
+  const validStatesBlock = extractFunctionBlock(queueText, 'const VALID_STATES');
+  const wakeStatesBlock = extractFunctionBlock(queueText, 'const WAKE_DISPATCH_STATES');
+  const wakeEligibleBlock = extractFunctionBlock(queueText, 'function isWakeEligible');
+  const normalizeBucketBlock = extractFunctionBlock(queueText, 'function normalizeBucket');
+  const activateBlock = extractFunctionBlock(queueText, 'function activateTask');
+  const continueBlock = extractFunctionBlock(queueText, 'function continueTask');
+  const unblockBlock = extractFunctionBlock(queueText, 'function unblockTask');
+  const parkBlock = extractFunctionBlock(queueText, 'function parkTask');
+  const unparkBlock = extractFunctionBlock(queueText, 'function unparkTask');
+  const checks = [];
+
+  checks.push(makeCheck(
+    'task_queue_parked_state_is_first_class_schema',
+    queueText.includes('const QUEUE_SCHEMA_VERSION = 3;')
+      && validStatesBlock.includes("'parked'")
+      && queueText.includes('function parkTask')
+      && queueText.includes('function unparkTask')
+      && queueText.includes('PARKED_HISTORY_COMPLETION_REASON'),
+    'task queue declares parked as a first-class schema state with park/unpark helpers and migration constant',
+    { path: 'ui/scripts/hm-task-queue.js' }
+  ));
+
+  checks.push(makeCheck(
+    'task_queue_parked_wake_exclusion',
+    wakeStatesBlock.includes("'queued'")
+      && wakeStatesBlock.includes("'blocked'")
+      && wakeStatesBlock.includes("'waiting'")
+      && !wakeStatesBlock.includes("'parked'")
+      && wakeEligibleBlock.includes("normalizeState(task.state, 'queued') === 'parked'")
+      && wakeEligibleBlock.indexOf("normalizeState(task.state, 'queued') === 'parked'") < wakeEligibleBlock.indexOf('WAKE_DISPATCH_STATES.has'),
+    'parked tasks are excluded both from WAKE_DISPATCH_STATES and the wake-eligible predicate',
+    {
+      path: 'ui/scripts/hm-task-queue.js',
+      wakeStatesAnchor: 'const WAKE_DISPATCH_STATES',
+      wakeEligibleAnchor: 'function isWakeEligible',
+    }
+  ));
+
+  checks.push(makeCheck(
+    'task_queue_parked_cannot_activate_continue_or_unblock',
+    activateBlock.includes("reason: 'task_parked'")
+      && continueBlock.includes("reason: 'task_parked'")
+      && unblockBlock.includes("reason: 'task_parked'")
+      && activateBlock.includes('isParkedTask(bucket.pending[index])')
+      && continueBlock.includes('isParkedTask(found.task)')
+      && unblockBlock.includes('isParkedTask(found.task)'),
+    'activate, continue, and unblock all refuse parked tasks with task_parked',
+    { path: 'ui/scripts/hm-task-queue.js' }
+  ));
+
+  checks.push(makeCheck(
+    'task_queue_park_action_moves_active_to_pending_parked',
+    parkBlock.includes("state: 'parked'")
+      && parkBlock.includes('restartPersistence: true')
+      && parkBlock.includes('bucket.active = null;')
+      && parkBlock.includes('bucket.pending.unshift(parked)')
+      && parkBlock.includes('blockedReason: parkedReason'),
+    'parkTask makes active work non-active pending parked work with restart persistence',
+    { path: 'ui/scripts/hm-task-queue.js', anchor: 'function parkTask' }
+  ));
+
+  checks.push(makeCheck(
+    'task_queue_unpark_is_only_explicit_transition',
+    unparkBlock.includes("reason: 'task_id_required'")
+      && unparkBlock.includes("reason: 'task_not_parked'")
+      && unparkBlock.includes("state: 'queued'")
+      && unblockBlock.includes("reason: 'task_parked'")
+      && activateBlock.includes("reason: 'task_parked'"),
+    'only unparkTask can convert parked work back to queued, and it requires an explicit task id',
+    { path: 'ui/scripts/hm-task-queue.js', anchor: 'function unparkTask' }
+  ));
+
+  checks.push(makeCheck(
+    'task_queue_parked_history_migrates_to_pending',
+    normalizeBucketBlock.includes('isParkedHistoryTask(task)')
+      && normalizeBucketBlock.includes('toParkedTask(task, agent)')
+      && normalizeBucketBlock.includes('pending.push(parked)')
+      && normalizeBucketBlock.includes('retainedHistory.push(task)'),
+    'normalizeBucket migrates parked_not_executed history entries into pending parked tasks while retaining normal history',
+    { path: 'ui/scripts/hm-task-queue.js', anchor: 'function normalizeBucket' }
+  ));
+
+  checks.push(makeCheck(
+    'task_queue_parked_focused_fixtures_prove_non_dispatch',
+    queueTestText.includes("it('parks owned work durably and requires explicit unpark before activation or continuation'")
+      && queueTestText.includes("it('keeps parked work out of wake candidates and never auto-dispatches it'")
+      && queueTestText.includes('expect(dispatcher).not.toHaveBeenCalled()')
+      && queueTestText.includes("it('migrates parked_not_executed history into pending parked work'")
+      && queueTestText.includes("completionReason: 'parked_not_executed'"),
+    'hm-task-queue focused fixtures cover explicit unpark, no auto-dispatch, and parked history migration',
+    { path: 'ui/__tests__/hm-task-queue.test.js' }
+  ));
+
+  return checks;
+}
+
 function validateCaseMetadata(evalCase) {
   const sideEffects = evalCase.sideEffects || {};
   return [
@@ -2319,6 +2556,9 @@ function validateProtectedSystemEvalCase(evalCase, options = {}) {
   }
   if (evalCase.id === CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY) {
     checks.push(...validateTelegramPollerRestartBoundarySemantics(evalCase, options));
+  }
+  if (evalCase.id === CASE_ID_TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES) {
+    checks.push(...validateTaskQueueParkedSemantics(evalCase, options));
   }
   const failures = checks.filter((check) => !check.ok);
   return {
@@ -2407,6 +2647,7 @@ module.exports = {
   CASE_ID_TELEGRAM_RECALL_BODY_FIRST,
   CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF,
   CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY,
+  CASE_ID_TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES,
   CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE,
   PROTECTED_SYSTEM_EVALS,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
@@ -2428,6 +2669,7 @@ module.exports = {
     validateTelegramRecallBodyFirstSemantics,
     validateTelegramReplyEgressProofSemantics,
     validateTelegramPollerRestartBoundarySemantics,
+    validateTaskQueueParkedSemantics,
     validateWatchdogAutonomySemantics,
   },
 };

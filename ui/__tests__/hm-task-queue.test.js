@@ -63,7 +63,7 @@ describe('hm-task-queue', () => {
     }));
 
     const saved = JSON.parse(fs.readFileSync(queue.getQueuePath(), 'utf8'));
-    expect(saved.version).toBe(2);
+    expect(saved.version).toBe(3);
     expect(saved.agents.builder.pending).toHaveLength(1);
     expect(saved.agents.builder.pending[0]).toEqual(expect.objectContaining({
       owner: 'builder',
@@ -103,7 +103,7 @@ describe('hm-task-queue', () => {
 
     const { state } = queue.readQueue();
 
-    expect(state.version).toBe(2);
+    expect(state.version).toBe(3);
     expect(state.agents.builder.pending[0]).toEqual(expect.objectContaining({
       taskId: 'legacy-pending-1',
       owner: 'builder',
@@ -306,6 +306,129 @@ describe('hm-task-queue', () => {
     }));
   });
 
+  it('parks owned work durably and requires explicit unpark before activation or continuation', () => {
+    const enqueued = queue.enqueueTask({
+      agent: 'builder',
+      title: 'Parked follow-up',
+      message: 'Fix the smoke harness later',
+      nextStep: 'Open the smoke harness',
+      wakeTrigger: 'post-wake',
+      riskClass: 'safe',
+    });
+
+    const parked = queue.parkTask({
+      agent: 'builder',
+      taskId: enqueued.task.taskId,
+      reason: 'Parked by James priority shift',
+    });
+
+    expect(parked).toEqual(expect.objectContaining({
+      ok: true,
+      task: expect.objectContaining({
+        taskId: enqueued.task.taskId,
+        state: 'parked',
+        status: 'parked',
+        restartPersistence: true,
+        blockedReason: 'Parked by James priority shift',
+      }),
+    }));
+
+    expect(queue.activateTask({
+      agent: 'builder',
+      taskId: enqueued.task.taskId,
+    })).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'task_parked',
+    }));
+    expect(queue.continueTask({
+      agent: 'builder',
+      taskId: enqueued.task.taskId,
+    })).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'task_parked',
+    }));
+    expect(queue.unblockTask({
+      agent: 'builder',
+      taskId: enqueued.task.taskId,
+    })).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'task_parked',
+    }));
+
+    const second = queue.enqueueTask({
+      agent: 'builder',
+      message: 'A normal queued task can still activate',
+      riskClass: 'safe',
+    });
+    expect(queue.activateTask({ agent: 'builder' }).task.taskId).toBe(second.task.taskId);
+    queue.completeActiveTask({ agent: 'builder', reason: 'normal_task_done' });
+
+    const unparked = queue.unparkTask({
+      agent: 'builder',
+      taskId: enqueued.task.taskId,
+      nextStep: 'Explicitly resumed after unpark',
+    });
+    expect(unparked.task).toEqual(expect.objectContaining({
+      taskId: enqueued.task.taskId,
+      state: 'queued',
+      blockedReason: null,
+      nextStep: 'Explicitly resumed after unpark',
+    }));
+
+    const activated = queue.activateTask({
+      agent: 'builder',
+      taskId: enqueued.task.taskId,
+    });
+    expect(activated.task).toEqual(expect.objectContaining({
+      taskId: enqueued.task.taskId,
+      state: 'active',
+      nextStep: 'Explicitly resumed after unpark',
+    }));
+  });
+
+  it('migrates parked_not_executed history into pending parked work', () => {
+    queue.writeQueue({
+      version: 2,
+      agents: {
+        builder: {
+          pending: [],
+          active: null,
+          history: [
+            {
+              taskId: 'builder-parked-history',
+              owner: 'builder',
+              state: 'done',
+              status: 'done',
+              riskClass: 'safe',
+              message: 'Fix the smoke harness later',
+              nextStep: 'Patch the smoke harness',
+              completionReason: 'parked_not_executed',
+              restartPersistence: false,
+            },
+          ],
+        },
+      },
+    });
+
+    const { state } = queue.readQueue();
+
+    expect(state.agents.builder.pending).toEqual([
+      expect.objectContaining({
+        taskId: 'builder-parked-history',
+        state: 'parked',
+        status: 'parked',
+        blockedReason: queue.DEFAULT_PARKED_REASON,
+        restartPersistence: true,
+        completionReason: null,
+        metadata: expect.objectContaining({
+          migratedFromHistoryCompletionReason: 'parked_not_executed',
+        }),
+      }),
+    ]);
+    expect(state.agents.builder.history).toEqual([]);
+    expect(queue.collectWakeCandidates({ wakeTrigger: 'post-wake' }).candidates).toEqual([]);
+  });
+
   it('moves an active task into history on complete', () => {
     queue.writeQueue({
       version: 1,
@@ -501,6 +624,14 @@ describe('hm-task-queue', () => {
       expect(queue.main(['activate', '--agent', 'oracle'])).toBe(0);
       expect(queue.main(['fail', '--agent', 'oracle', '--reason', 'failed_by_cli'])).toBe(0);
 
+      expect(queue.main(['enqueue', '--agent', 'oracle', '--message', 'Parked CLI task'])).toBe(0);
+      const cliParkedTaskId = queue.readQueue().state.agents.oracle.pending[0].taskId;
+      expect(queue.main(['park', '--agent', 'oracle', '--task-id', cliParkedTaskId, '--reason', 'parked_by_cli'])).toBe(0);
+      expect(queue.main(['activate', '--agent', 'oracle', '--task-id', cliParkedTaskId])).toBe(1);
+      expect(queue.main(['unpark', '--agent', 'oracle', '--task-id', cliParkedTaskId, '--next-step', 'resume_by_cli'])).toBe(0);
+      expect(queue.main(['activate', '--agent', 'oracle', '--task-id', cliParkedTaskId])).toBe(0);
+      expect(queue.main(['complete', '--agent', 'oracle', '--reason', 'unparked_by_cli'])).toBe(0);
+
       const saved = JSON.parse(fs.readFileSync(queue.getQueuePath(), 'utf8'));
       expect(saved.agents.builder.history).toEqual(expect.arrayContaining([
         expect.objectContaining({
@@ -513,6 +644,10 @@ describe('hm-task-queue', () => {
         expect.objectContaining({
           state: 'failed',
           completionReason: 'failed_by_cli',
+        }),
+        expect.objectContaining({
+          state: 'done',
+          completionReason: 'unparked_by_cli',
         }),
       ]));
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('builder: pending=1 active=none history=0'));
@@ -733,6 +868,52 @@ describe('hm-task-queue', () => {
       state: 'blocked',
       blockedReason: queue.DEFAULT_APPROVAL_HOLD_REASON,
       riskClass: 'approval_required',
+    }));
+  });
+
+  it('keeps parked work out of wake candidates and never auto-dispatches it', async () => {
+    const now = Date.parse('2026-05-04T12:00:00Z');
+    queue.writeQueue({
+      version: 3,
+      agents: {
+        builder: {
+          pending: [
+            {
+              taskId: 'builder-parked',
+              owner: 'builder',
+              state: 'parked',
+              riskClass: 'safe',
+              message: 'Parked follow-up must not wake',
+              nextStep: 'Explicit unpark first',
+              blockedReason: 'Parked by priority shift',
+              wakeTrigger: 'post-wake',
+              restartPersistence: true,
+            },
+          ],
+          active: null,
+          history: [],
+        },
+      },
+    });
+    const dispatcher = jest.fn(async (candidate) => ({
+      ok: true,
+      emittedPrompt: candidate.prompt,
+    }));
+
+    const result = await queue.dispatchWakeCandidates({
+      wakeTrigger: 'post-wake',
+      nowMs: now,
+      dispatcher,
+    });
+
+    expect(result.candidates).toEqual([]);
+    expect(result.dispatched).toEqual([]);
+    expect(dispatcher).not.toHaveBeenCalled();
+    const saved = queue.readQueue().state;
+    expect(saved.agents.builder.active).toBeNull();
+    expect(saved.agents.builder.pending[0]).toEqual(expect.objectContaining({
+      taskId: 'builder-parked',
+      state: 'parked',
     }));
   });
 
