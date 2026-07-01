@@ -8,6 +8,7 @@ const {
   CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY,
   CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ,
   CASE_ID_ROUTE_METADATA_GUARD,
+  CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE,
   CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
   buildSystemProtectedEvalRunPlan,
@@ -533,5 +534,106 @@ describe('system protected evals', () => {
 
     expect(report.ok).toBe(false);
     expect(failedCheckIds(report)).toContain('watchdog_unresolved_blocker_fixture_fires');
+  });
+
+  test('registers Phase 4E route inject visible dedupe as a protected eval', () => {
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE],
+      generatedAt: '2026-06-30T00:00:00.000Z',
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.summary).toEqual(expect.objectContaining({
+      caseCount: 1,
+      protectedZeroFailCount: 1,
+      passed: 1,
+      failed: 0,
+    }));
+    expect(report.focusedCommands).toEqual(expect.arrayContaining([
+      expect.stringContaining('hm-system-protected-evals.js --case phase4e.route_inject_visible_dedupe_metadata_identity'),
+      expect.stringContaining('squidrun-app.test.js'),
+    ]));
+    expect(checkIds(report)).toEqual(expect.arrayContaining([
+      'route_inject_dedupe_key_includes_metadata_identity',
+      'route_inject_cache_detects_duplicate_entry',
+      'route_inject_dedupe_checks_before_visible_delivery',
+      'route_inject_duplicate_branch_skips_resend',
+      'route_inject_cache_recorded_only_after_successful_delivery',
+      'route_inject_side_profile_duplicate_fixture',
+      'route_inject_startup_body_drift_duplicate_fixture',
+      'route_inject_fresh_message_ids_still_route_fixture',
+      'route_inject_failed_handoff_not_cached_fixture',
+    ]));
+  });
+
+  test('Phase 4E exposes visible dedupe source refs and focused routeInjectMessage fixtures', () => {
+    const plan = buildSystemProtectedEvalRunPlan({
+      caseIds: [CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE],
+    });
+    const [evalCase] = plan.cases;
+
+    expect(evalCase.id).toBe(CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE);
+    expect(evalCase.sourceRefs.map((ref) => ref.id)).toEqual([
+      'squidrun_app_visible_dedupe_key_stable_message_id',
+      'squidrun_app_visible_dedupe_key_metadata_scope',
+      'squidrun_app_visible_dedupe_key_route_kind',
+      'squidrun_app_visible_dedupe_duplicate_result',
+      'squidrun_app_route_inject_uses_visible_dedupe_before_delivery',
+      'squidrun_app_route_inject_records_cache_after_delivery',
+    ]);
+    expect(evalCase.testRefs.map((ref) => ref.testName)).toEqual(expect.arrayContaining([
+      'dedupes repeated side-profile visible-window injections by messageId',
+      'dedupes repeated startup/session injections by metadata identity before body text',
+      'routes fresh startup/session injections when message ids differ',
+      'does not cache failed side-profile visible-window handoffs',
+    ]));
+    expect(evalCase.expectedRegressionFailures.map((failure) => failure.id)).toEqual([
+      'dedupe_metadata_scope_removed',
+      'failed_handoff_cached',
+      'fresh_ids_collapsed_or_body_drift_required',
+    ]);
+  });
+
+  test('Phase 4E fails if visible dedupe key drops metadata scope', () => {
+    const squidrunApp = readRel('ui/modules/main/squidrun-app.js')
+      .replace('      normalizedSessionScope,\n', '')
+      .replace('      normalizedRouteKind,\n', '');
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE],
+      fileTextOverrides: defaultOverrides({ squidrunApp }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('source_ref_squidrun_app_visible_dedupe_key_metadata_scope');
+    expect(failedCheckIds(report)).toContain('source_ref_squidrun_app_visible_dedupe_key_route_kind');
+    expect(failedCheckIds(report)).toContain('route_inject_dedupe_key_includes_metadata_identity');
+  });
+
+  test('Phase 4E fails if failed visible handoffs can be cached before success', () => {
+    const squidrunApp = readRel('ui/modules/main/squidrun-app.js').replace(
+      "        if (delivered) {\n          this.recordVisibleInjectDelivery(dedupe.dedupeKey);\n          routed = true;\n        }\n",
+      "        this.recordVisibleInjectDelivery(dedupe.dedupeKey);\n        if (delivered) {\n          routed = true;\n        }\n"
+    );
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE],
+      fileTextOverrides: defaultOverrides({ squidrunApp }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('route_inject_cache_recorded_only_after_successful_delivery');
+  });
+
+  test('Phase 4E fails if fresh IDs or body-drift duplicate fixtures are removed', () => {
+    const squidrunAppTest = readRel('ui/__tests__/squidrun-app.test.js')
+      .replace('Startup context retry with changed body text.', 'Startup context retry with unchanged body text.')
+      .replace('hm-startup-session-fresh-2', 'hm-startup-session-fresh-1');
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE],
+      fileTextOverrides: defaultOverrides({ squidrunAppTest }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('route_inject_startup_body_drift_duplicate_fixture');
+    expect(failedCheckIds(report)).toContain('route_inject_fresh_message_ids_still_route_fixture');
   });
 });
