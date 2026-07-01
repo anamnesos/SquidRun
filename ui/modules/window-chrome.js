@@ -30,6 +30,7 @@ const CHROME_CONTROL_IDS = Object.freeze([
   'fullRestartBtn',
   'profileBtn',
   'settingsBtn',
+  'openHumanTimelineBtn',
   'openSquidRoomBtn',
   'openMiraLabBtn',
   'panelBtn',
@@ -39,6 +40,7 @@ const CHROME_CONTROL_IDS = Object.freeze([
 
 const CHROME_REGION_SELECTORS = Object.freeze({
   right_panel: '#rightPanel',
+  state_bar: '.state-bar',
   status_bar: '.status-bar',
   project_indicator: '.project-indicator',
 });

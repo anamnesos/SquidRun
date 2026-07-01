@@ -382,7 +382,36 @@ describe('renderer.js smoke tests', () => {
 
     it('maps active work and review messages to Working/Reviewing', () => {
       expect(classify('working the active fix, committing now').label).toBe('Working');
+      expect(classify('fixing the visual delta now; proof follows after capture').label).toBe('Working');
       expect(classify('verifying the proof and reviewing the diff', 'oracle').label).toBe('Reviewing');
+    });
+  });
+
+  describe('buildSquidRoomPetFace', () => {
+    it('keeps ledger jargon out of the visible face while preserving raw details', () => {
+      const rawBody = '[AGENT MSG - reply via hm-send.js] (BUILDER #45): Oracle #169 received. UP-SCHEDULE rowId 73590 sha256:abcdef1234567890 Work landed. messageId=hm-1782942934977-15v1uv';
+      const face = renderer.buildSquidRoomPetFace({
+        body: rawBody,
+      }, 'builder');
+
+      expect(face.face).toBe('Work landed.');
+      expect(face.face).not.toMatch(/sha256|rowId|messageId|UP-SCHEDULE|hm-1782942934977|Oracle #169/);
+      expect(face.raw).toBe(rawBody);
+      expect(face.hasRawDetails).toBe(true);
+
+      expect(renderer.buildSquidRoomPetFace({
+        body: '(ORACLE #169-fyi): Foundation increment gated CONSTITUTION PASS.',
+      }, 'oracle').face).toBe('Foundation increment gated CONSTITUTION PASS.');
+    });
+  });
+
+  describe('getSquidRoomPetMotionClass', () => {
+    it('maps output age to active, settling, then resting motion classes', () => {
+      const now = Date.parse('2026-07-01T22:00:00.000Z');
+
+      expect(renderer.getSquidRoomPetMotionClass({ createdAt: '2026-07-01T21:59:45.000Z' }, now)).toBe('is-active');
+      expect(renderer.getSquidRoomPetMotionClass({ createdAt: '2026-07-01T21:57:00.000Z' }, now)).toBe('is-settling');
+      expect(renderer.getSquidRoomPetMotionClass({ createdAt: '2026-07-01T21:45:00.000Z' }, now)).toBe('is-resting');
     });
   });
 
@@ -689,7 +718,7 @@ describe('renderer.js smoke tests', () => {
   });
 
   describe('Squid Room inline projection fallback', () => {
-    it('renders Arms count from projection without a bottom arm-list render', () => {
+    it('renders arm count from projection without a bottom arm-list render', () => {
       const elements = {
         status: { textContent: 'stale' },
         counts: { innerHTML: '' },
@@ -713,7 +742,7 @@ describe('renderer.js smoke tests', () => {
         counts: { desired: 3, ready: 3, missing: 0 },
       }));
       expect(elements.status.textContent).toBe('');
-      expect(elements.counts.innerHTML).toContain('Arms count 3');
+      expect(elements.counts.innerHTML).toContain('3 arms');
       expect(elements.root.dataset.projectionStatus).toBe('loaded');
     });
   });

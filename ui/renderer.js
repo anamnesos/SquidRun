@@ -523,8 +523,10 @@ let squidRoomPetStatusTimer = null;
 const squidRoomPetAnimationTimers = new Map();
 const squidRoomLivePaneSpawnAttempts = new Map();
 const SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS = 15000;
-const SQUID_ROOM_PET_STATUS_REFRESH_MS = 12000;
+const SQUID_ROOM_PET_STATUS_REFRESH_MS = 10000;
 const SQUID_ROOM_PET_STATUS_CHANNEL = 'evidence-ledger:query-comms-journal';
+const SQUID_ROOM_PET_ACTIVE_AGE_MS = 30000;
+const SQUID_ROOM_PET_SETTLING_AGE_MS = 5 * 60 * 1000;
 const SQUID_ROOM_PET_ATLAS_COLUMNS = 8;
 const SQUID_ROOM_PET_ATLAS_ROWS = 9;
 const SQUID_ROOM_PET_IDLE_FRAMES = Object.freeze([
@@ -686,9 +688,23 @@ function refreshSquidRoomPetAnimations() {
 function stripSquidRoomMessageNoise(value) {
   return stripSquidRoomAnsi(String(value || ''))
     .replace(/\[AGENT MSG[^\]]*\]\s*/gi, '')
-    .replace(/^\((?:BUILDER|ORACLE|ARCHITECT|CODEX|SYSTEM)\s*(?:#\d+)?(?:\s*->\s*[A-Z-]+)?\):\s*/i, '')
+    .replace(/^\((?:BUILDER|ORACLE|ARCHITECT|CODEX|SYSTEM)\s*(?:#\d+(?:-[\w-]+)?)?(?:\s*->\s*[A-Z-]+)?\):\s*/i, '')
     .replace(/^(?:BUILDER|ORACLE|ARCHITECT|CODEX|SYSTEM)\s*:\s*/i, '')
     .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripSquidRoomFaceJargon(value) {
+  return String(value || '')
+    .replace(/\b(?:builder|oracle|architect)\s*#\d+\s+received\.?\s*/gi, '')
+    .replace(/\bsha256[:=]?[0-9a-f]{8,64}\b/gi, '')
+    .replace(/\b(?:rowId|row|messageId|deliveryId)\s*[:#=]?\s*[A-Za-z0-9._:-]+\b/gi, '')
+    .replace(/\bhm-\d{10,}-[a-z0-9]+\b/gi, '')
+    .replace(/\btrc-[0-9a-f-]{12,}\b/gi, '')
+    .replace(/\bUP[-_\s]+[A-Z0-9_-]+(?:\s+[A-Z0-9_-]+){0,4}\b/g, '')
+    .replace(/\s*[\[\(]\s*CURRENT PROJECT[^\]\)]*[\]\)]\s*/gi, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
     .trim();
 }
 
@@ -706,12 +722,67 @@ function isSquidRoomPetNoiseRow(row = {}, role = '') {
 }
 
 function summarizeSquidRoomPetMessage(row = {}, role = '') {
-  const raw = stripSquidRoomMessageNoise(getSquidRoomCommsText(row));
+  const raw = stripSquidRoomFaceJargon(stripSquidRoomMessageNoise(getSquidRoomCommsText(row)));
   const fallback = role === 'oracle' ? 'Checking the proof.' : 'Working the active fix.';
   if (!raw) return fallback;
   const firstSentence = raw.split(/(?<=[.!?])\s+/)[0] || raw;
   const text = firstSentence.length > 128 ? `${firstSentence.slice(0, 125).trim()}...` : firstSentence;
   return text || fallback;
+}
+
+function buildSquidRoomPetFace(row = {}, role = '') {
+  const raw = getSquidRoomCommsText(row);
+  const strippedRaw = stripSquidRoomMessageNoise(raw);
+  const face = summarizeSquidRoomPetMessage(row, role);
+  const normalizedRaw = strippedRaw.replace(/\s+/g, ' ').trim();
+  const normalizedFace = face.replace(/\s+/g, ' ').trim();
+  return {
+    face,
+    raw: raw || strippedRaw || '',
+    hasRawDetails: Boolean(normalizedRaw && normalizedRaw !== normalizedFace),
+  };
+}
+
+function getSquidRoomPetRowTimestampMs(row = {}) {
+  const candidates = [
+    row.timestampMs,
+    row.timestamp_ms,
+    row.createdAtMs,
+    row.created_at_ms,
+    row.createdAt,
+    row.created_at,
+    row.timestamp,
+    row.ts,
+    row.time,
+    row.sentAt,
+    row.sent_at,
+  ];
+  for (const candidate of candidates) {
+    if (candidate === undefined || candidate === null || candidate === '') continue;
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return candidate > 0 && candidate < 10000000000 ? candidate * 1000 : candidate;
+    }
+    if (candidate instanceof Date) {
+      const dateMs = candidate.getTime();
+      if (Number.isFinite(dateMs)) return dateMs;
+    }
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric < 10000000000 ? numeric * 1000 : numeric;
+    }
+    const parsed = Date.parse(String(candidate));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function getSquidRoomPetMotionClass(row = {}, nowMs = Date.now()) {
+  const timestampMs = getSquidRoomPetRowTimestampMs(row);
+  if (!timestampMs) return 'is-resting';
+  const ageMs = Math.max(0, Number(nowMs) - timestampMs);
+  if (ageMs < SQUID_ROOM_PET_ACTIVE_AGE_MS) return 'is-active';
+  if (ageMs < SQUID_ROOM_PET_SETTLING_AGE_MS) return 'is-settling';
+  return 'is-resting';
 }
 
 // A pane is only "Blocked" when its latest message is a genuine self-report of
@@ -730,10 +801,13 @@ function classifySquidRoomPetState(row = {}, role = '') {
   if (/\b(watchdog|no response|no .{0,40} reply|nudged|wait|waiting|hold|stood down|stand down|pending)\b/.test(text)) {
     return { state: 'waiting', label: 'Waiting' };
   }
+  if (role !== 'oracle' && /\b(work|working|build|building|patch|fix|fixing|implement|commit|spawn)\b/.test(text)) {
+    return { state: 'running', label: 'Working' };
+  }
   if (role === 'oracle' || /\b(verify|verifying|review|reviewing|check|checking|proof|audit)\b/.test(text)) {
     return { state: 'review', label: 'Reviewing' };
   }
-  if (/\b(work|working|build|building|patch|fix|implement|commit|spawn)\b/.test(text)) {
+  if (/\b(work|working|build|building|patch|fix|fixing|implement|commit|spawn)\b/.test(text)) {
     return { state: 'running', label: 'Working' };
   }
   return { state: 'idle', label: 'Ready' };
@@ -760,18 +834,40 @@ function updateSquidRoomPetPane(pane, row) {
   if (!pane || !row) return;
   const role = String(pane.dataset?.squidRoomPet || '').trim().toLowerCase();
   const state = classifySquidRoomPetState(row, role);
-  const message = summarizeSquidRoomPetMessage(row, role);
+  const face = buildSquidRoomPetFace(row, role);
+  const motionClass = getSquidRoomPetMotionClass(row);
   pane.dataset.squidRoomState = state.state;
   pane.dataset.squidRoomLastRowId = String(row.rowId || row.row_id || '');
+  pane.dataset.squidRoomMotion = motionClass;
   const sprite = pane.querySelector?.('[data-squid-room-pet-sprite="true"]');
   if (sprite) {
     sprite.dataset.avatarState = state.state;
     animateSquidRoomPetSprite(sprite, state.state);
   }
+  const stage = pane.querySelector?.('.squid-room-pet-stage');
+  if (stage?.classList) {
+    stage.classList.toggle('is-active', motionClass === 'is-active');
+    stage.classList.toggle('is-settling', motionClass === 'is-settling');
+    stage.classList.toggle('is-resting', motionClass === 'is-resting');
+  }
   const stateEl = pane.querySelector?.('.squid-room-pet-state');
   if (stateEl) stateEl.textContent = state.label;
   const bubble = pane.querySelector?.('.squid-room-pet-bubble');
-  if (bubble) bubble.textContent = message;
+  if (bubble) {
+    const textNode = bubble.querySelector?.('.face-line-text');
+    if (textNode) {
+      textNode.textContent = face.face;
+    } else {
+      bubble.textContent = face.face;
+    }
+    const details = bubble.querySelector?.('.face-details');
+    const rawNode = bubble.querySelector?.('.face-raw');
+    if (rawNode) rawNode.textContent = face.raw;
+    if (details) {
+      details.hidden = !face.hasRawDetails;
+      details.open = false;
+    }
+  }
 }
 
 async function refreshSquidRoomPetStatus(windowContext = getCurrentWindowContext()) {
@@ -1084,7 +1180,7 @@ function renderSquidRoomProjectionInline(projection = {}, elements = getSquidRoo
     elements.status.textContent = ok ? '' : 'Projection unavailable';
   }
   if (elements.counts) {
-    elements.counts.innerHTML = `<span>Arms count ${desired}</span>`;
+    elements.counts.innerHTML = `<span>${desired} arms</span>`;
   }
   if (elements.root) {
     elements.root.dataset.projectionStatus = ok ? 'loaded' : 'unavailable';
@@ -4028,6 +4124,9 @@ if (typeof module !== 'undefined' && module.exports) {
     normalizeSquidRoomWorkingDirForCompare,
     renderSquidRoomProjectionInline,
     classifySquidRoomPetState,
+    buildSquidRoomPetFace,
+    getSquidRoomPetMotionClass,
+    getSquidRoomPetRowTimestampMs,
     syncStartupOverlayDaemonReplay,
   };
 }
