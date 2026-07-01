@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1186
+- Total files listed: 1188
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -20,8 +20,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 103
 - scripts: 1
 - tools: 3
-- ui/__tests__: 447
-- ui/modules: 366
+- ui/__tests__: 448
+- ui/modules: 367
 - ui/other: 39
 - ui/scripts: 142
 - ui/styles: 20
@@ -34,8 +34,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - file: 1
 - jsonl: 1
 - script: 143
-- source: 432
-- test: 448
+- source: 433
+- test: 449
 
 ## Files
 
@@ -115,7 +115,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | 2728 |
 | `.gitignore` | config | 4607 |
 | `AGENTS.md` | doc | 6432 |
-| `ARCHITECTURE.md` | doc | 76904 |
+| `ARCHITECTURE.md` | doc | 77377 |
 | `CLAUDE-AI.md` | doc | 3856 |
 | `CLAUDE.md` | doc | 2161 |
 | `CODE_OF_CONDUCT.md` | doc | 5185 |
@@ -608,6 +608,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/squid-room-surface.test.js` | test | 14230 |
 | `ui/__tests__/squidrun-app-growth-guard.test.js` | test | 1549 |
 | `ui/__tests__/squidrun-app.test.js` | test | 420321 |
+| `ui/__tests__/squidrun-authority-dispatcher.test.js` | test | 14354 |
 | `ui/__tests__/squidrun-root-paths.test.js` | test | 2172 |
 | `ui/__tests__/squidrun-salience-engine.test.js` | test | 10053 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
@@ -858,6 +859,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/spine-overlay-snapshot.js` | source | 19884 |
 | `ui/modules/main/spine-overlay-window.js` | source | 2060 |
 | `ui/modules/main/squidrun-app.js` | source | 555189 |
+| `ui/modules/main/squidrun-authority-dispatcher.js` | source | 20305 |
 | `ui/modules/main/squidrun-root-paths.js` | source | 1700 |
 | `ui/modules/main/squidrun-salience-engine.js` | source | 19464 |
 | `ui/modules/main/startup-output-utils.js` | source | 2486 |
