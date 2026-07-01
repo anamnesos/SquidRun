@@ -11,6 +11,7 @@ const CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE = 'phase4d.watchdog_autonomy_evidence_n
 const CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE = 'phase4e.route_inject_visible_dedupe_metadata_identity';
 const CASE_ID_TELEGRAM_RECALL_BODY_FIRST = 'phase4f.telegram_recall_body_first';
 const CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF = 'phase4g.telegram_reply_debt_requires_proven_egress';
+const CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY = 'phase4h.telegram_poller_restart_is_poller_only';
 
 const DEFAULT_REPO_ROOT = path.resolve(__dirname, '../../..');
 const FULL_AGENT_MESSAGE_PATH_RE = /(?:^|\s)(?:\.squidrun[\\/]+)?coord[\\/]+full-agent-messages[\\/]+[A-Za-z0-9._-]+\.txt\b/i;
@@ -913,6 +914,172 @@ const TELEGRAM_REPLY_EGRESS_PROOF_CASE = Object.freeze({
   ]),
 });
 
+const TELEGRAM_POLLER_RESTART_BOUNDARY_CASE = Object.freeze({
+  id: CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY,
+  phase: 'phase4h',
+  title: 'Telegram poller restart stays poller-only',
+  protectedBehavior: 'The restart-telegram-poller action may restart Telegram intake only; it must not reload renderer panes, claim to activate restart-bound main-process formatter changes, or collapse into reload-renderers/main restart semantics.',
+  protectedZeroFail: true,
+  authorityPolicy: 'system_eval_only_no_dispatch',
+  sideEffects: Object.freeze({
+    runtime: false,
+    network: false,
+    writes: false,
+    externalSends: false,
+    restart: false,
+  }),
+  sourceRefs: Object.freeze([
+    Object.freeze({
+      id: 'app_control_restart_alias_separate_from_renderer_reload',
+      path: 'ui/modules/main/app-control-service.js',
+      anchor: 'function normalizeAction(action)',
+      requiredText: "return 'restart-telegram-poller';",
+      reason: 'App-control normalization keeps Telegram poller restart aliases out of the renderer reload action.',
+    }),
+    Object.freeze({
+      id: 'app_control_restart_branch_delegates_polling_only',
+      path: 'ui/modules/main/app-control-service.js',
+      anchor: "if (normalizedAction === 'restart-telegram-poller')",
+      requiredText: 'const result = ctx.restartTelegramPoller(payload);',
+      reason: 'The app-control restart branch delegates to the Telegram poller lifecycle hook instead of enumerating windows.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_app_control_wires_restart_hook',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: "if (data.message.type === 'app-control')",
+      requiredText: 'restartTelegramPoller: (payload = {}) => this.restartTelegramPoller(payload)',
+      reason: 'The WebSocket app-control context wires the restart action to SquidRunApp restartTelegramPoller.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_restart_poller_note_no_pane_reload',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'restartTelegramPoller(payload = {})',
+      requiredText: 'Telegram poller restart requested without reloading panes.',
+      reason: 'The app-level restart method explicitly states that poller restart does not reload panes.',
+    }),
+    Object.freeze({
+      id: 'service_lifecycle_telegram_poller_restart_action',
+      path: 'ui/modules/service-lifecycle-registry.js',
+      anchor: "id: 'telegram-poller'",
+      requiredText: "restartAction: 'restart-telegram-poller'",
+      reason: 'The lifecycle registry exposes Telegram poller restart as its own service action.',
+    }),
+    Object.freeze({
+      id: 'hm_app_restart_aliases_route_to_poller_restart',
+      path: 'ui/scripts/hm-app.js',
+      anchor: 'function normalizeCommand(command)',
+      requiredText: "return 'restart-telegram-poller';",
+      reason: 'The CLI alias layer preserves restart-telegram and reload-telegram-poller as poller-only actions.',
+    }),
+  ]),
+  testRefs: Object.freeze([
+    Object.freeze({
+      id: 'app_control_restart_delegates_fixture',
+      path: 'ui/__tests__/app-control-service.test.js',
+      testName: 'restart-telegram-poller delegates to the app poller lifecycle without reloading panes',
+      requiredText: Object.freeze([
+        "action: 'restart-telegram-poller'",
+        'expect(restartTelegramPoller).toHaveBeenCalledWith({ reason: \'test\' })',
+      ]),
+    }),
+    Object.freeze({
+      id: 'app_control_restart_no_window_reload_fixture',
+      path: 'ui/__tests__/app-control-service.test.js',
+      testName: 'restart-telegram-poller does not inspect or reload side-profile windows',
+      requiredText: Object.freeze([
+        'window reload path must not be used for Telegram restart',
+        'expect(getAppWindows).not.toHaveBeenCalled()',
+        'expect(getPaneHostWindows).not.toHaveBeenCalled()',
+      ]),
+    }),
+    Object.freeze({
+      id: 'app_control_restart_unavailable_fixture',
+      path: 'ui/__tests__/app-control-service.test.js',
+      testName: 'restart-telegram-poller reports unavailable when the app lacks a restart hook',
+      requiredText: Object.freeze([
+        "reason: 'restart_unavailable'",
+      ]),
+    }),
+    Object.freeze({
+      id: 'app_control_renderer_reload_contrast_fixture',
+      path: 'ui/__tests__/app-control-service.test.js',
+      testName: 'reload-renderers reloads every live window without restarting the main process',
+      requiredText: Object.freeze([
+        'getPaneHostWindows',
+        'expect(paneHostReload).toHaveBeenCalledTimes(1)',
+      ]),
+    }),
+    Object.freeze({
+      id: 'squidrun_app_restart_no_pane_reload_fixture',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'restarts the Telegram poller without reloading app panes',
+      requiredText: Object.freeze([
+        'expect(reloadEunbyeol).not.toHaveBeenCalled()',
+        'Telegram poller restart requested without reloading panes.',
+      ]),
+    }),
+    Object.freeze({
+      id: 'service_lifecycle_telegram_poller_fixture',
+      path: 'ui/__tests__/service-lifecycle-registry.test.js',
+      testName: 'defines Telegram poller restart as service-only and pane-safe',
+      requiredText: Object.freeze([
+        "restartAction: 'restart-telegram-poller'",
+        'requiresMainRestart: false',
+        'affectsTerminals: false',
+        'safeRestart: true',
+        'Restarts remote message intake without touching panes.',
+      ]),
+    }),
+    Object.freeze({
+      id: 'hm_app_restart_alias_fixture',
+      path: 'ui/__tests__/hm-app.test.js',
+      testName: 'keeps Telegram poller restart aliases separate from renderer reload aliases',
+      requiredText: Object.freeze([
+        "expect(normalizeCommand('restart-telegram')).toBe('restart-telegram-poller')",
+        "expect(normalizeCommand('reload-telegram-poller')).toBe('restart-telegram-poller')",
+        "expect(normalizeCommand('restart-telegram-poller')).toBe('restart-telegram-poller')",
+        "expect(normalizeCommand('reload')).toBe('reload-renderers')",
+        "expect(normalizeCommand('reload-renderer')).toBe('reload-renderers')",
+      ]),
+    }),
+  ]),
+  focusedCommands: Object.freeze([
+    'node ui/scripts/hm-system-protected-evals.js --case phase4h.telegram_poller_restart_is_poller_only --pretty',
+    'npm --prefix ui test -- system-protected-evals.test.js --runInBand',
+    'npm --prefix ui test -- app-control-service.test.js --runInBand --testNamePattern "restart-telegram-poller delegates to the app poller lifecycle without reloading panes|restart-telegram-poller does not inspect or reload side-profile windows|restart-telegram-poller reports unavailable when the app lacks a restart hook|reload-renderers reloads every live window without restarting the main process"',
+    'npm --prefix ui test -- squidrun-app.test.js --runInBand --testNamePattern "restarts the Telegram poller without reloading app panes"',
+    'npm --prefix ui test -- service-lifecycle-registry.test.js --runInBand --testNamePattern "defines Telegram poller restart as service-only and pane-safe"',
+    'npm --prefix ui test -- hm-app.test.js --runInBand --testNamePattern "keeps Telegram poller restart aliases separate from renderer reload aliases"',
+  ]),
+  expectedRegressionFailures: Object.freeze([
+    Object.freeze({
+      id: 'telegram_restart_alias_collapsed_to_renderer_reload',
+      mutation: 'Map restart-telegram/reload-telegram-poller aliases to reload-renderers.',
+      expectedFailedCheckIds: Object.freeze(['telegram_poller_restart_aliases_stay_separate_from_reload_renderers']),
+    }),
+    Object.freeze({
+      id: 'telegram_restart_branch_reloads_windows',
+      mutation: 'Make the restart-telegram-poller branch enumerate app/pane-host windows or call reloadIgnoringCache.',
+      expectedFailedCheckIds: Object.freeze(['telegram_poller_restart_branch_does_not_reload_windows']),
+    }),
+    Object.freeze({
+      id: 'telegram_restart_app_note_or_boundary_removed',
+      mutation: 'Remove the no-pane-reload note or make SquidRunApp.restartTelegramPoller touch panes.',
+      expectedFailedCheckIds: Object.freeze(['telegram_poller_app_restart_stops_and_starts_poller_only']),
+    }),
+    Object.freeze({
+      id: 'telegram_lifecycle_registry_drift',
+      mutation: 'Mark telegram-poller as main-restart/terminal-impacting or set its restart action to reload-renderers.',
+      expectedFailedCheckIds: Object.freeze(['telegram_poller_lifecycle_registry_is_service_only']),
+    }),
+    Object.freeze({
+      id: 'telegram_restart_no_reload_fixture_removed',
+      mutation: 'Remove or rename the no-window-reload or CLI alias fixtures.',
+      expectedFailedCheckIds: Object.freeze(['test_ref_app_control_restart_no_window_reload_fixture', 'test_ref_hm_app_restart_alias_fixture']),
+    }),
+  ]),
+});
+
 const PROTECTED_SYSTEM_EVALS = Object.freeze([
   ACCEPTED_UNVERIFIED_CASE,
   FULL_MATERIALIZED_MESSAGE_CASE,
@@ -921,6 +1088,7 @@ const PROTECTED_SYSTEM_EVALS = Object.freeze([
   ROUTE_INJECT_VISIBLE_DEDUPE_CASE,
   TELEGRAM_RECALL_BODY_FIRST_CASE,
   TELEGRAM_REPLY_EGRESS_PROOF_CASE,
+  TELEGRAM_POLLER_RESTART_BOUNDARY_CASE,
 ]);
 
 function normalizeRelPath(value) {
@@ -1913,6 +2081,176 @@ function validateTelegramReplyEgressProofSemantics(evalCase, options = {}) {
   return checks;
 }
 
+function validateTelegramPollerRestartBoundarySemantics(evalCase, options = {}) {
+  const appControlText = readProjectFile('ui/modules/main/app-control-service.js', options);
+  const squidrunAppText = readProjectFile('ui/modules/main/squidrun-app.js', options);
+  const lifecycleText = readProjectFile('ui/modules/service-lifecycle-registry.js', options);
+  const hmAppText = readProjectFile('ui/scripts/hm-app.js', options);
+  const appControlTestText = readProjectFile('ui/__tests__/app-control-service.test.js', options);
+  const squidrunAppTestText = readProjectFile('ui/__tests__/squidrun-app.test.js', options);
+  const lifecycleTestText = readProjectFile('ui/__tests__/service-lifecycle-registry.test.js', options);
+  const hmAppTestText = readProjectFile('ui/__tests__/hm-app.test.js', options);
+  const normalizeActionBlock = extractFunctionBlock(appControlText, 'function normalizeAction(action)');
+  const reloadBranch = extractFunctionBlock(appControlText, "if (normalizedAction === 'reload-renderers')");
+  const restartBranch = extractFunctionBlock(appControlText, "if (normalizedAction === 'restart-telegram-poller')");
+  const appControlContextBlock = extractFunctionBlock(squidrunAppText, "if (data.message.type === 'app-control')");
+  const appRestartBlock = extractFunctionBlock(squidrunAppText, 'restartTelegramPoller(payload = {})');
+  const hmAppNormalizeBlock = extractFunctionBlock(hmAppText, 'function normalizeCommand(command)');
+  const lifecycleTelegramStart = lifecycleText.indexOf("id: 'telegram-poller'");
+  const lifecycleTelegramEnd = lifecycleTelegramStart >= 0
+    ? lifecycleText.indexOf("id: 'voice-broker'", lifecycleTelegramStart)
+    : -1;
+  const lifecycleTelegramBlock = lifecycleTelegramStart >= 0
+    ? lifecycleText.slice(lifecycleTelegramStart, lifecycleTelegramEnd >= 0 ? lifecycleTelegramEnd : lifecycleText.length)
+    : '';
+  const checks = [];
+
+  checks.push(makeCheck(
+    'telegram_poller_restart_aliases_stay_separate_from_reload_renderers',
+    normalizeActionBlock.includes("normalized === 'restart-telegram-poller'")
+      && normalizeActionBlock.includes("normalized === 'reload-telegram-poller'")
+      && normalizeActionBlock.includes("normalized === 'restart-telegram'")
+      && normalizeActionBlock.includes("return 'restart-telegram-poller';")
+      && normalizeActionBlock.includes("return 'reload-renderers';")
+      && hmAppNormalizeBlock.includes("normalized === 'restart-telegram'")
+      && hmAppNormalizeBlock.includes("normalized === 'reload-telegram-poller'")
+      && hmAppNormalizeBlock.includes("return 'restart-telegram-poller';")
+      && hmAppNormalizeBlock.includes("normalized === 'reload'")
+      && hmAppNormalizeBlock.includes("normalized === 'reload-renderer'")
+      && hmAppNormalizeBlock.includes("return 'reload-renderers';"),
+    'app-control and hm-app aliases keep Telegram poller restart separate from renderer reload',
+    {
+      path: 'ui/modules/main/app-control-service.js',
+      companionPath: 'ui/scripts/hm-app.js',
+    }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_poller_restart_branch_delegates_to_polling_hook',
+    restartBranch.includes('typeof ctx.restartTelegramPoller !== \'function\'')
+      && restartBranch.includes('const result = ctx.restartTelegramPoller(payload);')
+      && restartBranch.includes('action: normalizedAction')
+      && !restartBranch.includes('getAppWindows')
+      && !restartBranch.includes('getPaneHostWindows')
+      && !restartBranch.includes('reloadIgnoringCache')
+      && !restartBranch.includes('reload-renderers')
+      && !restartBranch.includes('restart-electron-main'),
+    'restart-telegram-poller branch delegates to the poller hook and does not inspect/reload renderer windows',
+    {
+      path: 'ui/modules/main/app-control-service.js',
+      anchor: "if (normalizedAction === 'restart-telegram-poller')",
+    }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_poller_renderer_reload_branch_remains_separate',
+    reloadBranch.includes('ctx.getAppWindows()')
+      && reloadBranch.includes('ctx.getPaneHostWindows()')
+      && reloadBranch.includes('windowRef.webContents.reloadIgnoringCache()')
+      && reloadBranch.includes("action: normalizedAction")
+      && !reloadBranch.includes('restartTelegramPoller'),
+    'renderer reload remains a distinct branch that reloads windows without invoking Telegram poller restart',
+    {
+      path: 'ui/modules/main/app-control-service.js',
+      anchor: "if (normalizedAction === 'reload-renderers')",
+    }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_poller_app_control_context_wires_restart_hook',
+    appControlContextBlock.includes('restartTelegramPoller: (payload = {}) => this.restartTelegramPoller(payload)')
+      && appControlContextBlock.includes('getAppWindows: () => this.getAppWindows()')
+      && appControlContextBlock.includes('getPaneHostWindows: () => this.paneHostWindowManager?.getPaneHostWindows?.() || []'),
+    'SquidRunApp app-control context exposes both branches while wiring Telegram restart to restartTelegramPoller',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: "if (data.message.type === 'app-control')",
+    }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_poller_app_restart_stops_and_starts_poller_only',
+    appRestartBlock.includes('this.inboundPollerService.stopTelegram();')
+      && appRestartBlock.includes('const started = this.startTelegramPoller();')
+      && appRestartBlock.includes('Telegram poller restart requested without reloading panes.')
+      && !appRestartBlock.includes('reloadIgnoringCache')
+      && !appRestartBlock.includes('getAppWindows')
+      && !appRestartBlock.includes('getPaneHostWindows')
+      && !appRestartBlock.includes('reload-renderers'),
+    'SquidRunApp.restartTelegramPoller stops/starts Telegram intake and preserves the no-pane-reload boundary note',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'restartTelegramPoller(payload = {})',
+    }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_poller_lifecycle_registry_is_service_only',
+    lifecycleTelegramBlock.includes("restartAction: 'restart-telegram-poller'")
+      && lifecycleTelegramBlock.includes('requiresMainRestart: false')
+      && lifecycleTelegramBlock.includes('affectsTerminals: false')
+      && lifecycleTelegramBlock.includes('safeRestart: true')
+      && lifecycleTelegramBlock.includes('Restarts remote message intake without touching panes.')
+      && !lifecycleTelegramBlock.includes("restartAction: 'reload-renderers'")
+      && !lifecycleTelegramBlock.includes("restartAction: 'restart-electron-main'")
+      && lifecycleText.includes("id: 'main-ipc'")
+      && lifecycleText.includes("restartAction: 'restart-electron-main'")
+      && lifecycleText.includes('requiresMainRestart: true'),
+    'service lifecycle registry marks Telegram poller as a pane-safe service restart, distinct from main IPC restart',
+    {
+      path: 'ui/modules/service-lifecycle-registry.js',
+      anchor: "id: 'telegram-poller'",
+    }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_poller_app_control_no_window_reload_fixture',
+    appControlTestText.includes("test('restart-telegram-poller delegates to the app poller lifecycle without reloading panes'")
+      && appControlTestText.includes("test('restart-telegram-poller does not inspect or reload side-profile windows'")
+      && appControlTestText.includes('window reload path must not be used for Telegram restart')
+      && appControlTestText.includes('expect(getAppWindows).not.toHaveBeenCalled()')
+      && appControlTestText.includes('expect(getPaneHostWindows).not.toHaveBeenCalled()')
+      && appControlTestText.includes("test('reload-renderers reloads every live window without restarting the main process'"),
+    'app-control focused fixtures prove restart-poller avoids window reload paths and reload-renderers remains the contrast path',
+    { path: 'ui/__tests__/app-control-service.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_poller_squidrun_app_no_pane_reload_fixture',
+    squidrunAppTestText.includes("it('restarts the Telegram poller without reloading app panes'")
+      && squidrunAppTestText.includes('expect(reloadEunbyeol).not.toHaveBeenCalled()')
+      && squidrunAppTestText.includes('Telegram poller restart requested without reloading panes.'),
+    'SquidRunApp focused fixture proves restartTelegramPoller does not reload panes and keeps the boundary note',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_poller_lifecycle_registry_fixture',
+    lifecycleTestText.includes("test('defines Telegram poller restart as service-only and pane-safe'")
+      && lifecycleTestText.includes("restartAction: 'restart-telegram-poller'")
+      && lifecycleTestText.includes('requiresMainRestart: false')
+      && lifecycleTestText.includes('affectsTerminals: false')
+      && lifecycleTestText.includes('safeRestart: true')
+      && lifecycleTestText.includes('Restarts remote message intake without touching panes.'),
+    'service-lifecycle-registry focused fixture protects Telegram poller restart metadata',
+    { path: 'ui/__tests__/service-lifecycle-registry.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_poller_hm_app_alias_fixture',
+    hmAppTestText.includes("test('keeps Telegram poller restart aliases separate from renderer reload aliases'")
+      && hmAppTestText.includes("expect(normalizeCommand('restart-telegram')).toBe('restart-telegram-poller')")
+      && hmAppTestText.includes("expect(normalizeCommand('reload-telegram-poller')).toBe('restart-telegram-poller')")
+      && hmAppTestText.includes("expect(normalizeCommand('restart-telegram-poller')).toBe('restart-telegram-poller')")
+      && hmAppTestText.includes("expect(normalizeCommand('reload')).toBe('reload-renderers')")
+      && hmAppTestText.includes("expect(normalizeCommand('reload-renderer')).toBe('reload-renderers')"),
+    'hm-app focused fixture protects CLI alias separation for poller restart versus renderer reload',
+    { path: 'ui/__tests__/hm-app.test.js' }
+  ));
+
+  return checks;
+}
+
 function validateCaseMetadata(evalCase) {
   const sideEffects = evalCase.sideEffects || {};
   return [
@@ -1978,6 +2316,9 @@ function validateProtectedSystemEvalCase(evalCase, options = {}) {
   }
   if (evalCase.id === CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF) {
     checks.push(...validateTelegramReplyEgressProofSemantics(evalCase, options));
+  }
+  if (evalCase.id === CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY) {
+    checks.push(...validateTelegramPollerRestartBoundarySemantics(evalCase, options));
   }
   const failures = checks.filter((check) => !check.ok);
   return {
@@ -2065,6 +2406,7 @@ module.exports = {
   CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE,
   CASE_ID_TELEGRAM_RECALL_BODY_FIRST,
   CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF,
+  CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY,
   CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE,
   PROTECTED_SYSTEM_EVALS,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
@@ -2085,6 +2427,7 @@ module.exports = {
     validateRequiredRefs,
     validateTelegramRecallBodyFirstSemantics,
     validateTelegramReplyEgressProofSemantics,
+    validateTelegramPollerRestartBoundarySemantics,
     validateWatchdogAutonomySemantics,
   },
 };

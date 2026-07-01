@@ -50,4 +50,15 @@ describe('service-lifecycle-registry', () => {
     }));
     expect(findServiceLifecycle('missing')).toBeNull();
   });
+
+  test('defines Telegram poller restart as service-only and pane-safe', () => {
+    expect(findServiceLifecycle('telegram-poller')).toEqual(expect.objectContaining({
+      label: 'Telegram poller',
+      restartAction: 'restart-telegram-poller',
+      requiresMainRestart: false,
+      affectsTerminals: false,
+      safeRestart: true,
+      userImpact: 'Restarts remote message intake without touching panes.',
+    }));
+  });
 });

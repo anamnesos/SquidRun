@@ -7654,6 +7654,7 @@ describe('SquidRunApp', () => {
         success: true,
         started: true,
         reason: 'test-reload',
+        note: 'Telegram poller restart requested without reloading panes.',
       }));
       expect(app.inboundPollerService.stopTelegram).toHaveBeenCalledTimes(1);
       expect(app.startTelegramPoller).toHaveBeenCalledTimes(1);
