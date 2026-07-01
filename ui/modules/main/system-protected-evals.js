@@ -10,6 +10,7 @@ const CASE_ID_ROUTE_METADATA_GUARD = 'phase4c.route_metadata_guard_metadata_firs
 const CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE = 'phase4d.watchdog_autonomy_evidence_not_body_text';
 const CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE = 'phase4e.route_inject_visible_dedupe_metadata_identity';
 const CASE_ID_TELEGRAM_RECALL_BODY_FIRST = 'phase4f.telegram_recall_body_first';
+const CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF = 'phase4g.telegram_reply_debt_requires_proven_egress';
 
 const DEFAULT_REPO_ROOT = path.resolve(__dirname, '../../..');
 const FULL_AGENT_MESSAGE_PATH_RE = /(?:^|\s)(?:\.squidrun[\\/]+)?coord[\\/]+full-agent-messages[\\/]+[A-Za-z0-9._-]+\.txt\b/i;
@@ -754,6 +755,164 @@ const TELEGRAM_RECALL_BODY_FIRST_CASE = Object.freeze({
   ]),
 });
 
+const TELEGRAM_REPLY_EGRESS_PROOF_CASE = Object.freeze({
+  id: CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF,
+  phase: 'phase4g',
+  title: 'Telegram reply debt requires proven egress',
+  protectedBehavior: 'A pending Telegram reply requirement is satisfied only by proven acked Telegram egress; pane-only output and unproven, wrong-session, wrong-chat, or stale journal rows must not clear the debt.',
+  protectedZeroFail: true,
+  authorityPolicy: 'system_eval_only_no_dispatch',
+  sideEffects: Object.freeze({
+    runtime: false,
+    network: false,
+    writes: false,
+    externalSends: false,
+    restart: false,
+  }),
+  sourceRefs: Object.freeze([
+    Object.freeze({
+      id: 'telegram_reply_debt_requires_proven_egress_row',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'isProvenTelegramEgressJournalRow(row = {})',
+      requiredText: "String(row.ackStatus || '').toLowerCase() === 'telegram_delivered'",
+      reason: 'Only an acked outbound Telegram delivery row may satisfy reply debt.',
+    }),
+    Object.freeze({
+      id: 'telegram_reply_debt_queries_session_scoped_outbound_telegram',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'getAckedTelegramEgressForPendingGuardResult(guard = {}, options = {})',
+      requiredText: "channel: 'telegram'",
+      reason: 'Journal reconciliation must query Telegram outbound rows for the pending guard session and time window.',
+    }),
+    Object.freeze({
+      id: 'telegram_reply_debt_rejects_wrong_session_chat_and_time',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'getAckedTelegramEgressForPendingGuardResult(guard = {}, options = {})',
+      requiredText: 'if (this.getCommsJournalRowSessionId(candidate) !== guardSessionId) return false;',
+      reason: 'Wrong-session rows must fail before the debt can clear.',
+    }),
+    Object.freeze({
+      id: 'telegram_reply_debt_pane_output_is_not_satisfaction',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'inspectPaneOutputForReplyGuards(paneId, text, options = {})',
+      requiredText: "status: 'telegram_reply_requirement_pending_grace'",
+      reason: 'Visible pane output alone keeps the guard pending and unresolved.',
+    }),
+    Object.freeze({
+      id: 'telegram_reply_debt_deferred_nag_rechecks_journal',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'emitDeferredTelegramReplyDebtNagIfStillUnsatisfied(paneId, messageId)',
+      requiredText: "reason: 'pane_output_without_telegram_egress'",
+      reason: 'Deferred warning must still be grounded in missing Telegram egress, not local pane output.',
+    }),
+  ]),
+  testRefs: Object.freeze([
+    Object.freeze({
+      id: 'telegram_reply_debt_acked_positive_fixture',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'clears pending Telegram reply debt from an acked hm-send Telegram journal row',
+      requiredText: Object.freeze([
+        "status: 'acked'",
+        "ackStatus: 'telegram_delivered'",
+        "status: 'telegram_reply_requirement_satisfied_by_journal'",
+        "expect(app.getPendingTelegramReplyRequirement('1')).toBeNull()",
+      ]),
+    }),
+    Object.freeze({
+      id: 'telegram_reply_debt_pane_only_fixture',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'keeps Telegram reply requirements unresolved when a pane answers without Telegram egress',
+      requiredText: Object.freeze([
+        'I answered in the pane only.',
+        "status: 'telegram_reply_requirement_pending_grace'",
+        "reason: 'pane_output_without_telegram_egress'",
+      ]),
+    }),
+    Object.freeze({
+      id: 'telegram_reply_debt_wrong_chat_fixture',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'keeps reply debt unresolved when the acked Telegram journal row is for another chat',
+      requiredText: Object.freeze([
+        'hm-telegram-other-chat',
+        "chatId: '2222222222'",
+        "status: 'telegram_reply_requirement_pending_grace'",
+      ]),
+    }),
+    Object.freeze({
+      id: 'telegram_reply_debt_wrong_session_fixture',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'keeps reply debt unresolved when the acked Telegram journal row is for another session',
+      requiredText: Object.freeze([
+        'hm-telegram-other-session',
+        "sessionId: otherSessionId",
+        "expect(satisfyTelegramReplyObligation).not.toHaveBeenCalled()",
+        "expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({",
+      ]),
+    }),
+    Object.freeze({
+      id: 'telegram_reply_debt_pre_inbound_fixture',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'keeps reply debt unresolved when the acked Telegram journal row predates the inbound guard',
+      requiredText: Object.freeze([
+        'hm-telegram-before-inbound',
+        'sentAtMs: createdAtMs - 6000',
+        "status: 'telegram_reply_requirement_pending_grace'",
+      ]),
+    }),
+    Object.freeze({
+      id: 'telegram_reply_debt_same_chat_adjacent_allowed_fixture',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'clears reply debt when a same-chat delivered Telegram row is tied to an adjacent inbound',
+      requiredText: Object.freeze([
+        'hm-telegram-other-inbound',
+        "replyToMessageId: 'telegram-in-previous-1'",
+        "status: 'telegram_reply_requirement_satisfied_by_journal'",
+      ]),
+    }),
+    Object.freeze({
+      id: 'telegram_reply_obligation_probe_rejection_fixture',
+      path: 'ui/__tests__/telegram-reply-obligations.test.js',
+      testName: 'probe explains rejected and matched Telegram egress candidates',
+      requiredText: Object.freeze([
+        'telegram-out-before',
+        'telegram-out-cross-chat',
+        'telegram-out-not-proven',
+        'before_reply_obligation_window',
+        'chat_mismatch',
+        'not_proven_telegram_egress',
+      ]),
+    }),
+  ]),
+  focusedCommands: Object.freeze([
+    'node ui/scripts/hm-system-protected-evals.js --case phase4g.telegram_reply_debt_requires_proven_egress --pretty',
+    'npm --prefix ui test -- system-protected-evals.test.js --runInBand',
+    'npm --prefix ui test -- squidrun-app.test.js --runInBand --testNamePattern "Telegram reply requirements unresolved when a pane answers without Telegram egress|clears pending Telegram reply debt from an acked hm-send Telegram journal row|acked Telegram journal row is for another chat|acked Telegram journal row is for another session|acked Telegram journal row predates the inbound guard|same-chat delivered Telegram row is tied to an adjacent inbound"',
+    'npm --prefix ui test -- telegram-reply-obligations.test.js --runInBand --testNamePattern "probe explains rejected and matched Telegram egress candidates|reconciles same-chat adjacent replyTo egress without accepting cross-chat replies"',
+  ]),
+  expectedRegressionFailures: Object.freeze([
+    Object.freeze({
+      id: 'telegram_ack_proof_weakened',
+      mutation: 'Allow recorded/unverified/non-telegram rows to satisfy Telegram reply debt.',
+      expectedFailedCheckIds: Object.freeze(['telegram_reply_debt_proven_egress_requires_acked_telegram_delivery']),
+    }),
+    Object.freeze({
+      id: 'telegram_session_chat_or_time_guard_removed',
+      mutation: 'Drop session, chat, or since-window checks from Telegram reply debt reconciliation.',
+      expectedFailedCheckIds: Object.freeze(['telegram_reply_debt_reconciliation_rejects_wrong_session_chat_and_time']),
+    }),
+    Object.freeze({
+      id: 'pane_output_treated_as_satisfaction',
+      mutation: 'Treat visible pane output as satisfying Telegram reply debt.',
+      expectedFailedCheckIds: Object.freeze(['telegram_reply_debt_pane_output_stays_pending_fixture']),
+    }),
+    Object.freeze({
+      id: 'wrong_session_fixture_removed',
+      mutation: 'Remove or rename the wrong-session Telegram egress fixture.',
+      expectedFailedCheckIds: Object.freeze(['test_ref_telegram_reply_debt_wrong_session_fixture']),
+    }),
+  ]),
+});
+
 const PROTECTED_SYSTEM_EVALS = Object.freeze([
   ACCEPTED_UNVERIFIED_CASE,
   FULL_MATERIALIZED_MESSAGE_CASE,
@@ -761,6 +920,7 @@ const PROTECTED_SYSTEM_EVALS = Object.freeze([
   WATCHDOG_AUTONOMY_EVIDENCE_CASE,
   ROUTE_INJECT_VISIBLE_DEDUPE_CASE,
   TELEGRAM_RECALL_BODY_FIRST_CASE,
+  TELEGRAM_REPLY_EGRESS_PROOF_CASE,
 ]);
 
 function normalizeRelPath(value) {
@@ -1594,6 +1754,165 @@ function validateTelegramRecallBodyFirstSemantics(evalCase, options = {}) {
   return checks;
 }
 
+function validateTelegramReplyEgressProofSemantics(evalCase, options = {}) {
+  const appText = readProjectFile('ui/modules/main/squidrun-app.js', options);
+  const appTestText = readProjectFile('ui/__tests__/squidrun-app.test.js', options);
+  const obligationTestText = readProjectFile('ui/__tests__/telegram-reply-obligations.test.js', options);
+  const provenBlock = extractFunctionBlock(appText, 'isProvenTelegramEgressJournalRow(row = {})');
+  const reconcileBlock = extractFunctionBlock(appText, 'getAckedTelegramEgressForPendingGuardResult(guard = {}, options = {})');
+  const inspectBlock = extractFunctionBlock(appText, 'inspectPaneOutputForReplyGuards(paneId, text, options = {})');
+  const deferredBlock = extractFunctionBlock(appText, 'emitDeferredTelegramReplyDebtNagIfStillUnsatisfied(paneId, messageId)');
+  const checks = [];
+
+  checks.push(makeCheck(
+    'telegram_reply_debt_proven_egress_requires_acked_telegram_delivery',
+    provenBlock.includes("String(row.channel || '').toLowerCase() === 'telegram'")
+      && provenBlock.includes("String(row.direction || '').toLowerCase() === 'outbound'")
+      && provenBlock.includes("String(row.status || '').toLowerCase() === 'acked'")
+      && provenBlock.includes("String(row.ackStatus || '').toLowerCase() === 'telegram_delivered'")
+      && provenBlock.includes('(hasTelegramTargetSignal || hasUserTelegramTargetSignal)'),
+    'proven Telegram egress requires outbound acked telegram_delivered delivery with a Telegram/user target signal',
+    { path: 'ui/modules/main/squidrun-app.js', anchor: 'isProvenTelegramEgressJournalRow(row = {})' }
+  ));
+
+  const queryIndex = reconcileBlock.indexOf('rows = queryFn({');
+  const sessionQueryIndex = reconcileBlock.indexOf('sessionId: guardSessionId');
+  const channelQueryIndex = reconcileBlock.indexOf("channel: 'telegram'");
+  const directionQueryIndex = reconcileBlock.indexOf("direction: 'outbound'");
+  const sinceQueryIndex = queryIndex >= 0 ? reconcileBlock.indexOf('sinceMs,', queryIndex) : -1;
+  checks.push(makeCheck(
+    'telegram_reply_debt_reconciliation_queries_scoped_outbound_telegram',
+    queryIndex >= 0
+      && sessionQueryIndex > queryIndex
+      && channelQueryIndex > queryIndex
+      && directionQueryIndex > queryIndex
+      && sinceQueryIndex > queryIndex,
+    'journal reconciliation queries only session-scoped outbound Telegram rows since the pending guard window',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'getAckedTelegramEgressForPendingGuardResult(guard = {}, options = {})',
+      queryIndex,
+      sessionQueryIndex,
+      channelQueryIndex,
+      directionQueryIndex,
+      sinceQueryIndex,
+    }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_reply_debt_reconciliation_rejects_wrong_session_chat_and_time',
+    reconcileBlock.includes('if (this.getCommsJournalRowSessionId(candidate) !== guardSessionId) return false;')
+      && reconcileBlock.includes('if (rowTimestampMs < sinceMs) return false;')
+      && reconcileBlock.includes('if (guardChatId && rowChatId && rowChatId !== guardChatId) return false;'),
+    'journal reconciliation rejects wrong-session, stale, and cross-chat Telegram rows before satisfaction',
+    { path: 'ui/modules/main/squidrun-app.js', anchor: 'getAckedTelegramEgressForPendingGuardResult(guard = {}, options = {})' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_reply_debt_allows_exact_or_same_chat_adjacent_match',
+    reconcileBlock.includes('if (!replyToMessageId || replyToMessageId === guardMessageId) return true;')
+      && reconcileBlock.includes('return Boolean(guardChatId && rowChatId && guardChatId === rowChatId);'),
+    'journal reconciliation permits exact replyTo matches and same-chat adjacent replies without accepting cross-chat rows',
+    { path: 'ui/modules/main/squidrun-app.js', anchor: 'getAckedTelegramEgressForPendingGuardResult(guard = {}, options = {})' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_reply_debt_pane_output_requires_journal_satisfaction_first',
+    inspectBlock.includes('const journalSatisfaction = this.reconcilePendingTelegramReplyGuardWithJournal(normalizedPaneId, guard);')
+      && inspectBlock.includes("status: journalSatisfaction.status")
+      && inspectBlock.includes("guard.status = 'telegram_reply_required_unresolved'")
+      && inspectBlock.includes("status: 'telegram_reply_requirement_pending_grace'"),
+    'pane output checks journal satisfaction first, then keeps visible-only output pending/unresolved',
+    { path: 'ui/modules/main/squidrun-app.js', anchor: 'inspectPaneOutputForReplyGuards(paneId, text, options = {})' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_reply_debt_deferred_warning_rechecks_journal_before_nag',
+    deferredBlock.includes('const journalSatisfaction = this.reconcilePendingTelegramReplyGuardWithJournal(normalizedPaneId, guard);')
+      && deferredBlock.includes("reason: 'pane_output_without_telegram_egress'")
+      && deferredBlock.includes("status: 'telegram_reply_requirement_unresolved'"),
+    'deferred reply-debt warning rechecks journal egress before emitting a pane-output debt warning',
+    { path: 'ui/modules/main/squidrun-app.js', anchor: 'emitDeferredTelegramReplyDebtNagIfStillUnsatisfied(paneId, messageId)' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_reply_debt_acked_positive_fixture',
+    appTestText.includes("it('clears pending Telegram reply debt from an acked hm-send Telegram journal row'")
+      && appTestText.includes("status: 'acked'")
+      && appTestText.includes("ackStatus: 'telegram_delivered'")
+      && appTestText.includes("status: 'telegram_reply_requirement_satisfied_by_journal'")
+      && appTestText.includes("expect(app.getPendingTelegramReplyRequirement('1')).toBeNull()"),
+    'focused squidrun-app test proves an acked Telegram journal row clears the pending guard',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_reply_debt_pane_output_stays_pending_fixture',
+    appTestText.includes("it('keeps Telegram reply requirements unresolved when a pane answers without Telegram egress'")
+      && appTestText.includes('I answered in the pane only.')
+      && appTestText.includes("status: 'telegram_reply_requirement_pending_grace'")
+      && appTestText.includes("reason: 'pane_output_without_telegram_egress'"),
+    'focused squidrun-app test proves pane-only answers do not satisfy Telegram reply debt',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_reply_debt_wrong_chat_fixture',
+    appTestText.includes("it('keeps reply debt unresolved when the acked Telegram journal row is for another chat'")
+      && appTestText.includes('hm-telegram-other-chat')
+      && appTestText.includes("chatId: '2222222222'")
+      && appTestText.includes("status: 'telegram_reply_requirement_pending_grace'"),
+    'focused squidrun-app test proves cross-chat Telegram rows do not satisfy the guard',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_reply_debt_wrong_session_fixture',
+    appTestText.includes("it('keeps reply debt unresolved when the acked Telegram journal row is for another session'")
+      && appTestText.includes('hm-telegram-other-session')
+      && appTestText.includes('sessionId: otherSessionId')
+      && appTestText.includes('expect(satisfyTelegramReplyObligation).not.toHaveBeenCalled()')
+      && appTestText.includes("expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({"),
+    'focused squidrun-app test proves wrong-session Telegram rows do not satisfy the guard',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_reply_debt_pre_inbound_fixture',
+    appTestText.includes("it('keeps reply debt unresolved when the acked Telegram journal row predates the inbound guard'")
+      && appTestText.includes('hm-telegram-before-inbound')
+      && appTestText.includes('sentAtMs: createdAtMs - 6000')
+      && appTestText.includes("status: 'telegram_reply_requirement_pending_grace'"),
+    'focused squidrun-app test proves stale pre-inbound Telegram rows do not satisfy the guard',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_reply_debt_same_chat_adjacent_allowed_fixture',
+    appTestText.includes("it('clears reply debt when a same-chat delivered Telegram row is tied to an adjacent inbound'")
+      && appTestText.includes('hm-telegram-other-inbound')
+      && appTestText.includes("replyToMessageId: 'telegram-in-previous-1'")
+      && appTestText.includes("status: 'telegram_reply_requirement_satisfied_by_journal'"),
+    'focused squidrun-app test proves same-chat adjacent replies remain valid egress proof',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_reply_obligation_probe_rejects_unproven_wrong_chat_and_stale_candidates',
+    obligationTestText.includes("test('probe explains rejected and matched Telegram egress candidates'")
+      && obligationTestText.includes('telegram-out-before')
+      && obligationTestText.includes('telegram-out-cross-chat')
+      && obligationTestText.includes('telegram-out-not-proven')
+      && obligationTestText.includes('before_reply_obligation_window')
+      && obligationTestText.includes('chat_mismatch')
+      && obligationTestText.includes('not_proven_telegram_egress'),
+    'focused durable obligation probe explains stale, cross-chat, and unproven rejection reasons',
+    { path: 'ui/__tests__/telegram-reply-obligations.test.js' }
+  ));
+
+  return checks;
+}
+
 function validateCaseMetadata(evalCase) {
   const sideEffects = evalCase.sideEffects || {};
   return [
@@ -1656,6 +1975,9 @@ function validateProtectedSystemEvalCase(evalCase, options = {}) {
   }
   if (evalCase.id === CASE_ID_TELEGRAM_RECALL_BODY_FIRST) {
     checks.push(...validateTelegramRecallBodyFirstSemantics(evalCase, options));
+  }
+  if (evalCase.id === CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF) {
+    checks.push(...validateTelegramReplyEgressProofSemantics(evalCase, options));
   }
   const failures = checks.filter((check) => !check.ok);
   return {
@@ -1742,6 +2064,7 @@ module.exports = {
   CASE_ID_ROUTE_METADATA_GUARD,
   CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE,
   CASE_ID_TELEGRAM_RECALL_BODY_FIRST,
+  CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF,
   CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE,
   PROTECTED_SYSTEM_EVALS,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
@@ -1761,6 +2084,7 @@ module.exports = {
     validateRouteInjectVisibleDedupeSemantics,
     validateRequiredRefs,
     validateTelegramRecallBodyFirstSemantics,
+    validateTelegramReplyEgressProofSemantics,
     validateWatchdogAutonomySemantics,
   },
 };
