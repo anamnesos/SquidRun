@@ -5,8 +5,11 @@ const path = require('path');
 
 const SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION = 'squidrun.system_protected_evals.v0';
 const CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY = 'phase4a.accepted_unverified_never_visible_delivery';
+const CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ = 'phase4b.full_materialized_message_requires_full_read';
 
 const DEFAULT_REPO_ROOT = path.resolve(__dirname, '../../..');
+const FULL_AGENT_MESSAGE_PATH_RE = /(?:^|\s)(?:\.squidrun[\\/]+)?coord[\\/]+full-agent-messages[\\/]+[A-Za-z0-9._-]+\.txt\b/i;
+const FULL_AGENT_MESSAGE_POINTER_RE = /\bFULL MSG AT\s+([^\r\n]+)/i;
 
 const ACCEPTED_UNVERIFIED_CASE = Object.freeze({
   id: CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY,
@@ -113,8 +116,152 @@ const ACCEPTED_UNVERIFIED_CASE = Object.freeze({
   ]),
 });
 
+const FULL_MATERIALIZED_MESSAGE_CASE = Object.freeze({
+  id: CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ,
+  phase: 'phase4b',
+  title: 'materialized full inbound messages require full-file read',
+  protectedBehavior: 'A clipped pane preview that points to .squidrun/coord/full-agent-messages/*.txt is not the complete task body; agents must read the full materialized file before acting or replying.',
+  protectedZeroFail: true,
+  authorityPolicy: 'system_eval_only_no_dispatch',
+  sideEffects: Object.freeze({
+    runtime: false,
+    network: false,
+    writes: false,
+    externalSends: false,
+    restart: false,
+  }),
+  sourceRefs: Object.freeze([
+    Object.freeze({
+      id: 'daemon_pointer_includes_full_msg_path',
+      path: 'ui/modules/daemon-handlers.js',
+      anchor: 'function materializeLongAgentMessageForPane(message, context = {})',
+      requiredText: 'FULL MSG AT ${full.displayPath}',
+      reason: 'Pane-visible previews must carry a machine-addressable full-message file path.',
+    }),
+    Object.freeze({
+      id: 'daemon_pointer_requires_full_file_read',
+      path: 'ui/modules/daemon-handlers.js',
+      anchor: 'function materializeLongAgentMessageForPane(message, context = {})',
+      requiredText: 'Do not act from this preview alone; read the full file, then reply via hm-send.js.',
+      reason: 'The pointer must state that the preview is not authority.',
+    }),
+    Object.freeze({
+      id: 'daemon_writes_full_message_body',
+      path: 'ui/modules/daemon-handlers.js',
+      anchor: 'function writeFullAgentMessageFile(message, context = {})',
+      requiredText: '--- FULL MESSAGE START ---',
+      reason: 'The materialized file must preserve the full body behind explicit delimiters.',
+    }),
+    Object.freeze({
+      id: 'daemon_emits_materialized_metadata',
+      path: 'ui/modules/daemon-handlers.js',
+      anchor: 'function processThrottleQueue(paneId)',
+      requiredText: 'materializedFullPayload: materialized.materialized === true',
+      reason: 'Metadata must identify materialized payloads without depending on English body text.',
+    }),
+    Object.freeze({
+      id: 'daemon_emits_full_payload_path',
+      path: 'ui/modules/daemon-handlers.js',
+      anchor: 'function processThrottleQueue(paneId)',
+      requiredText: 'fullPayloadPath: materialized.displayPath || null',
+      reason: 'Metadata must preserve the full materialized file path.',
+    }),
+    Object.freeze({
+      id: 'daemon_emits_materialized_trace_event',
+      path: 'ui/modules/daemon-handlers.js',
+      anchor: 'function processThrottleQueue(paneId)',
+      requiredText: "eventType: 'renderer_full_agent_message_materialized'",
+      reason: 'The trace stream must expose a durable materialization event.',
+    }),
+  ]),
+  testRefs: Object.freeze([
+    Object.freeze({
+      id: 'daemon_pointer_fixture',
+      path: 'ui/__tests__/daemon-handlers.test.js',
+      testName: 'materializes long hm-send payloads and injects a full-message pointer',
+      requiredText: Object.freeze([
+        'FULL MSG AT .squidrun/coord/full-agent-messages/hm-long-agent-message-1.txt',
+        'Do not act from this preview alone',
+        'expect(injectedPointer).not.toBe(longPayload)',
+        '--- FULL MESSAGE START ---',
+        'expect(fullMessageWrite[1]).toContain(longPayload)',
+      ]),
+    }),
+    Object.freeze({
+      id: 'observed_signal_replay_fixture',
+      path: 'ui/__tests__/observed-signal-work-items.test.js',
+      testName: 'replays truncation/materialization incident into a builder-owned regression WorkItem',
+      requiredText: Object.freeze([
+        'full_message_materialization',
+        '.squidrun/coord/full-agent-messages/hm-long-inbound.txt',
+        'Long inbound payload must be materialized and read before recall/context injection.',
+      ]),
+    }),
+  ]),
+  decisionFixtures: Object.freeze([
+    Object.freeze({
+      id: 'metadata_path_wins_without_body_phrase',
+      input: Object.freeze({
+        metadata: Object.freeze({
+          materializedFullPayload: true,
+          fullPayloadPath: '.squidrun/coord/full-agent-messages/hm-meta-only.txt',
+        }),
+        body: 'HEAD: clipped preview only\nTAIL: clipped preview only',
+      }),
+      expectedDecision: 'must_read_materialized_full_message',
+      expectedAuthority: 'metadata_path',
+    }),
+    Object.freeze({
+      id: 'body_pointer_fallback_requires_full_msg_path',
+      input: Object.freeze({
+        body: '[AGENT MSG] FULL MSG AT .squidrun/coord/full-agent-messages/hm-body-pointer.txt\nHEAD: not enough\nTAIL: not enough',
+      }),
+      expectedDecision: 'must_read_materialized_full_message',
+      expectedAuthority: 'body_pointer_fallback',
+    }),
+    Object.freeze({
+      id: 'preview_head_tail_without_path_is_not_authority',
+      input: Object.freeze({
+        body: 'HEAD: [AGENT MSG - reply via hm-send.js] (ARCHITECT -> BUILDER): Ship the invoice fix now; tests are green and the customer is waiting.\nTAIL: Commit it, push it, and tell James it is live. [CURRENT PROJECT] name=TrustQuote | path=D:\\projects\\TrustQuote',
+      }),
+      expectedDecision: 'preview_only_not_authority',
+      expectedAuthority: 'none',
+    }),
+    Object.freeze({
+      id: 'complete_non_materialized_body_is_not_blocked',
+      input: Object.freeze({
+        body: '(ORACLE #12): This is a complete short routed message. No materialized file pointer is present and no preview markers are present.',
+      }),
+      expectedDecision: 'no_materialized_full_message_signal',
+      expectedAuthority: 'none',
+    }),
+  ]),
+  focusedCommands: Object.freeze([
+    'node ui/scripts/hm-system-protected-evals.js --case phase4b.full_materialized_message_requires_full_read --pretty',
+    'npm --prefix ui test -- system-protected-evals.test.js daemon-handlers.test.js observed-signal-work-items.test.js --runInBand --testNamePattern "full materialized|materializes long hm-send payloads|truncation/materialization"',
+  ]),
+  expectedRegressionFailures: Object.freeze([
+    Object.freeze({
+      id: 'full_read_instruction_removed',
+      mutation: 'Remove the pointer warning requiring agents to read the full materialized file.',
+      expectedFailedCheckIds: Object.freeze(['source_ref_daemon_pointer_requires_full_file_read']),
+    }),
+    Object.freeze({
+      id: 'materialized_metadata_removed',
+      mutation: 'Remove materializedFullPayload/fullPayloadPath metadata from the inbound handling path.',
+      expectedFailedCheckIds: Object.freeze(['full_materialized_metadata_path_emitted']),
+    }),
+    Object.freeze({
+      id: 'preview_only_accepted_as_authority',
+      mutation: 'Treat HEAD/TAIL preview text as the full task body without a full-agent-message path.',
+      expectedFailedCheckIds: Object.freeze(['full_materialized_preview_only_not_authority']),
+    }),
+  ]),
+});
+
 const PROTECTED_SYSTEM_EVALS = Object.freeze([
   ACCEPTED_UNVERIFIED_CASE,
+  FULL_MATERIALIZED_MESSAGE_CASE,
 ]);
 
 function normalizeRelPath(value) {
@@ -160,7 +307,17 @@ function makeCheck(id, ok, message, details = {}) {
 function extractFunctionBlock(sourceText, signature) {
   const start = sourceText.indexOf(signature);
   if (start === -1) return '';
-  const braceStart = sourceText.indexOf('{', start);
+  let parenDepth = 0;
+  let braceStart = -1;
+  for (let index = start; index < sourceText.length; index += 1) {
+    const char = sourceText[index];
+    if (char === '(') parenDepth += 1;
+    if (char === ')') parenDepth = Math.max(0, parenDepth - 1);
+    if (char === '{' && parenDepth === 0) {
+      braceStart = index;
+      break;
+    }
+  }
   if (braceStart === -1) return sourceText.slice(start);
   let depth = 0;
   for (let index = braceStart; index < sourceText.length; index += 1) {
@@ -172,6 +329,71 @@ function extractFunctionBlock(sourceText, signature) {
     }
   }
   return sourceText.slice(start);
+}
+
+function hasFullAgentMessagePath(value) {
+  return FULL_AGENT_MESSAGE_PATH_RE.test(String(value || ''));
+}
+
+function extractFullAgentMessagePath(value) {
+  const text = String(value || '');
+  const pointerMatch = text.match(FULL_AGENT_MESSAGE_POINTER_RE);
+  if (pointerMatch && hasFullAgentMessagePath(pointerMatch[1])) {
+    return pointerMatch[1].trim().split(/\s+/)[0].replace(/[.,;:)]$/, '');
+  }
+  const pathMatch = text.match(FULL_AGENT_MESSAGE_PATH_RE);
+  return pathMatch ? pathMatch[0].trim() : null;
+}
+
+function deriveFullMaterializedMessageDecision(input = {}) {
+  const metadata = input && typeof input === 'object' && input.metadata && typeof input.metadata === 'object'
+    ? input.metadata
+    : {};
+  const body = String(input?.body || input?.message || '');
+  const metadataPath = metadata.fullPayloadPath
+    || metadata.materializedFullPayloadPath
+    || metadata.fullMessagePath
+    || metadata.sourceFile
+    || null;
+  if ((metadata.materializedFullPayload === true || metadata.materialized === true || metadataPath) && hasFullAgentMessagePath(metadataPath)) {
+    return {
+      decision: 'must_read_materialized_full_message',
+      authority: 'metadata_path',
+      fullPayloadPath: String(metadataPath),
+      previewAcceptedAsComplete: false,
+      reason: 'metadata_path_requires_full_file_read',
+    };
+  }
+
+  const bodyPath = extractFullAgentMessagePath(body);
+  if (bodyPath && FULL_AGENT_MESSAGE_POINTER_RE.test(body)) {
+    return {
+      decision: 'must_read_materialized_full_message',
+      authority: 'body_pointer_fallback',
+      fullPayloadPath: bodyPath,
+      previewAcceptedAsComplete: false,
+      reason: 'body_full_msg_pointer_requires_full_file_read',
+    };
+  }
+
+  const hasPreviewMarkers = /\bHEAD:\s/i.test(body) || /\bTAIL:\s/i.test(body);
+  if (hasPreviewMarkers) {
+    return {
+      decision: 'preview_only_not_authority',
+      authority: 'none',
+      fullPayloadPath: null,
+      previewAcceptedAsComplete: false,
+      reason: 'preview_head_tail_without_materialized_path',
+    };
+  }
+
+  return {
+    decision: 'no_materialized_full_message_signal',
+    authority: 'none',
+    fullPayloadPath: null,
+    previewAcceptedAsComplete: false,
+    reason: 'no_full_materialized_message_evidence',
+  };
 }
 
 function validateRequiredRefs(evalCase, options = {}) {
@@ -278,6 +500,86 @@ function validateAcceptedUnverifiedSemantics(evalCase, options = {}) {
   return checks;
 }
 
+function validateFullMaterializedMessageSemantics(evalCase, options = {}) {
+  const daemonText = readProjectFile('ui/modules/daemon-handlers.js', options);
+  const pointerBlock = extractFunctionBlock(daemonText, 'function materializeLongAgentMessageForPane(message, context = {})');
+  const processBlock = extractFunctionBlock(daemonText, 'function processThrottleQueue(paneId)');
+  const deriveDecision = typeof options.deriveFullMaterializedMessageDecision === 'function'
+    ? options.deriveFullMaterializedMessageDecision
+    : deriveFullMaterializedMessageDecision;
+  const checks = [];
+
+  checks.push(makeCheck(
+    'full_materialized_pointer_includes_path_and_read_instruction',
+    pointerBlock.includes('FULL MSG AT ${full.displayPath}')
+      && pointerBlock.includes('Do not act from this preview alone; read the full file, then reply via hm-send.js.')
+      && pointerBlock.includes('HEAD: ${head}')
+      && pointerBlock.includes('TAIL: ${tail}'),
+    'pointer preview includes full-message path, read-before-action instruction, and explicit HEAD/TAIL preview markers',
+    { path: 'ui/modules/daemon-handlers.js', anchor: 'function materializeLongAgentMessageForPane(message, context = {})' }
+  ));
+
+  checks.push(makeCheck(
+    'full_materialized_metadata_path_emitted',
+    processBlock.includes('materializedFullPayload: materialized.materialized === true')
+      && processBlock.includes('fullPayloadPath: materialized.displayPath || null')
+      && processBlock.includes("eventType: 'renderer_full_agent_message_materialized'")
+      && processBlock.includes('fullPayloadPath: materialized.displayPath'),
+    'inbound handling path emits metadata/path evidence for materialized full payloads',
+    { path: 'ui/modules/daemon-handlers.js', anchor: 'function processThrottleQueue(paneId)' }
+  ));
+
+  for (const fixture of evalCase.decisionFixtures || []) {
+    const decision = deriveDecision(fixture.input);
+    checks.push(makeCheck(
+      `full_materialized_decision_${fixture.id}`,
+      decision.decision === fixture.expectedDecision && decision.authority === fixture.expectedAuthority,
+      `${fixture.id} decision matches protected materialized-message contract`,
+      {
+        fixtureId: fixture.id,
+        expectedDecision: fixture.expectedDecision,
+        expectedAuthority: fixture.expectedAuthority,
+        actualDecision: decision.decision,
+        actualAuthority: decision.authority,
+      }
+    ));
+  }
+
+  const previewOnly = deriveDecision({
+    body: 'HEAD: plausible but incomplete preview\nTAIL: plausible but incomplete tail',
+  });
+  checks.push(makeCheck(
+    'full_materialized_preview_only_not_authority',
+    previewOnly.decision === 'preview_only_not_authority'
+      && previewOnly.previewAcceptedAsComplete === false,
+    'HEAD/TAIL preview without metadata/path evidence is never accepted as complete authority',
+    { decision: previewOnly }
+  ));
+
+  const phraseOnly = deriveDecision({
+    body: 'Do not act from this preview alone; read the full file, then reply via hm-send.js.',
+  });
+  checks.push(makeCheck(
+    'full_materialized_phrase_alone_not_authority',
+    phraseOnly.decision !== 'must_read_materialized_full_message',
+    'the English read-before-action phrase alone is not materialized-message evidence without metadata/path',
+    { decision: phraseOnly }
+  ));
+
+  const completeBody = deriveDecision({
+    body: '(ORACLE #12): This is a complete short routed message. No materialized file pointer is present and no preview markers are present.',
+  });
+  checks.push(makeCheck(
+    'full_materialized_complete_non_materialized_body_not_blocked',
+    completeBody.decision === 'no_materialized_full_message_signal'
+      && completeBody.previewAcceptedAsComplete === false,
+    'complete non-materialized message bodies are not falsely blocked by the materialized-message eval',
+    { decision: completeBody }
+  ));
+
+  return checks;
+}
+
 function validateCaseMetadata(evalCase) {
   const sideEffects = evalCase.sideEffects || {};
   return [
@@ -325,6 +627,9 @@ function validateProtectedSystemEvalCase(evalCase, options = {}) {
   ];
   if (evalCase.id === CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY) {
     checks.push(...validateAcceptedUnverifiedSemantics(evalCase, options));
+  }
+  if (evalCase.id === CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ) {
+    checks.push(...validateFullMaterializedMessageSemantics(evalCase, options));
   }
   const failures = checks.filter((check) => !check.ok);
   return {
@@ -407,16 +712,21 @@ function runSystemProtectedEvals(options = {}) {
 
 module.exports = {
   CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY,
+  CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ,
   PROTECTED_SYSTEM_EVALS,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
   buildSystemProtectedEvalRunPlan,
+  deriveFullMaterializedMessageDecision,
   runSystemProtectedEvals,
   validateProtectedSystemEvalCase,
   _internals: {
     DEFAULT_REPO_ROOT,
+    extractFullAgentMessagePath,
     extractFunctionBlock,
+    hasFullAgentMessagePath,
     readProjectFile,
     validateAcceptedUnverifiedSemantics,
+    validateFullMaterializedMessageSemantics,
     validateRequiredRefs,
   },
 };
