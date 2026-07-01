@@ -8,6 +8,7 @@ const CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY = 'phase4a.accepted_unverifie
 const CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ = 'phase4b.full_materialized_message_requires_full_read';
 const CASE_ID_ROUTE_METADATA_GUARD = 'phase4c.route_metadata_guard_metadata_first';
 const CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE = 'phase4d.watchdog_autonomy_evidence_not_body_text';
+const CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE = 'phase4e.route_inject_visible_dedupe_metadata_identity';
 
 const DEFAULT_REPO_ROOT = path.resolve(__dirname, '../../..');
 const FULL_AGENT_MESSAGE_PATH_RE = /(?:^|\s)(?:\.squidrun[\\/]+)?coord[\\/]+full-agent-messages[\\/]+[A-Za-z0-9._-]+\.txt\b/i;
@@ -520,11 +521,143 @@ const WATCHDOG_AUTONOMY_EVIDENCE_CASE = Object.freeze({
   ]),
 });
 
+const ROUTE_INJECT_VISIBLE_DEDUPE_CASE = Object.freeze({
+  id: CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE,
+  phase: 'phase4e',
+  title: 'route injection visible dedupe preserves metadata identity',
+  protectedBehavior: 'Visible-window pane injection dedupe collapses repeat delivery only by stable message metadata scope; fresh message IDs still route, and failed visible handoffs are not cached as delivered.',
+  protectedZeroFail: true,
+  authorityPolicy: 'system_eval_only_no_dispatch',
+  sideEffects: Object.freeze({
+    runtime: false,
+    network: false,
+    writes: false,
+    externalSends: false,
+    restart: false,
+  }),
+  sourceRefs: Object.freeze([
+    Object.freeze({
+      id: 'squidrun_app_visible_dedupe_key_stable_message_id',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'buildVisibleInjectDeliveryDedupeKey(packet = {}, paneId = \'\', windowKey = \'main\', messageId = null, options = {})',
+      requiredText: 'const stableMessageId = toNonEmptyString(messageId)',
+      reason: 'Visible inject dedupe must be anchored by a stable message identity, not pane body text.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_visible_dedupe_key_metadata_scope',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'buildVisibleInjectDeliveryDedupeKey(packet = {}, paneId = \'\', windowKey = \'main\', messageId = null, options = {})',
+      requiredText: 'normalizedSessionScope,',
+      reason: 'Startup/session duplicate collapse must include session scope in the dedupe key.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_visible_dedupe_key_route_kind',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'buildVisibleInjectDeliveryDedupeKey(packet = {}, paneId = \'\', windowKey = \'main\', messageId = null, options = {})',
+      requiredText: 'normalizedRouteKind,',
+      reason: 'Startup/session duplicate collapse must keep route kind separate from generic visible delivery.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_visible_dedupe_duplicate_result',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'hasVisibleInjectDelivery(packet = {}, paneId = \'\', windowKey = \'main\', messageId = null, now = Date.now(), options = {})',
+      requiredText: 'return { duplicate: true, dedupeKey };',
+      reason: 'Existing visible inject deliveries must short-circuit as duplicate route proof, not resend.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_route_inject_uses_visible_dedupe_before_delivery',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'routeInjectMessage(payload = {})',
+      requiredText: 'const dedupe = this.hasVisibleInjectDelivery(packet, paneId, targetWindowKey, messageId, Date.now(), {',
+      reason: 'routeInjectMessage must check the visible-inject dedupe cache before visible-window delivery.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_route_inject_records_cache_after_delivery',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'routeInjectMessage(payload = {})',
+      requiredText: 'this.recordVisibleInjectDelivery(dedupe.dedupeKey);',
+      reason: 'Visible-inject cache is delivery proof only after a successful visible-window handoff.',
+    }),
+  ]),
+  testRefs: Object.freeze([
+    Object.freeze({
+      id: 'side_profile_visible_duplicate_by_message_id',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'dedupes repeated side-profile visible-window injections by messageId',
+      requiredText: Object.freeze([
+        'hm-eunbyeol-visible-replay-1',
+        "windowKey: 'eunbyeol'",
+        "profileName: 'eunbyeol'",
+        'expect(injectCalls).toHaveLength(1)',
+        'expect(app.visibleInjectDeliveryCache.size).toBe(1)',
+      ]),
+    }),
+    Object.freeze({
+      id: 'startup_session_body_drift_duplicate',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'dedupes repeated startup/session injections by metadata identity before body text',
+      requiredText: Object.freeze([
+        'Startup context retry with changed body text.',
+        "sessionScopeId: 'app-session-462'",
+        "routeKind: 'startup'",
+        "hm-startup-session-duplicate-1",
+        "expect(dedupeKey).toContain('main|main|app-session-462|startup|2|hm-startup-session-duplicate-1|')",
+      ]),
+    }),
+    Object.freeze({
+      id: 'fresh_startup_message_ids_still_route',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'routes fresh startup/session injections when message ids differ',
+      requiredText: Object.freeze([
+        'hm-startup-session-fresh-1',
+        'hm-startup-session-fresh-2',
+        'expect(injectCalls).toHaveLength(2)',
+        'expect(app.visibleInjectDeliveryCache.size).toBe(2)',
+      ]),
+    }),
+    Object.freeze({
+      id: 'failed_visible_handoff_not_cached',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'does not cache failed side-profile visible-window handoffs',
+      requiredText: Object.freeze([
+        '.mockReturnValueOnce(false)',
+        '.mockReturnValueOnce(true)',
+        'expect(app.routeInjectMessage(payload)).toBe(false)',
+        'expect(app.routeInjectMessage(payload)).toBe(true)',
+        "expect(sendToVisibleWindow.mock.calls.filter(([channel]) => channel === 'inject-message')).toHaveLength(2)",
+      ]),
+    }),
+  ]),
+  focusedCommands: Object.freeze([
+    'node ui/scripts/hm-system-protected-evals.js --case phase4e.route_inject_visible_dedupe_metadata_identity --pretty',
+    'npm --prefix ui test -- system-protected-evals.test.js --runInBand',
+    'npm --prefix ui test -- squidrun-app.test.js --runInBand --testNamePattern "dedupes repeated side-profile visible-window injections by messageId|dedupes repeated startup/session injections by metadata identity before body text|routes fresh startup/session injections when message ids differ|does not cache failed side-profile visible-window handoffs"',
+  ]),
+  expectedRegressionFailures: Object.freeze([
+    Object.freeze({
+      id: 'dedupe_metadata_scope_removed',
+      mutation: 'Remove session/profile/route-kind/message-id identity from the visible inject dedupe key.',
+      expectedFailedCheckIds: Object.freeze(['route_inject_dedupe_key_includes_metadata_identity']),
+    }),
+    Object.freeze({
+      id: 'failed_handoff_cached',
+      mutation: 'Record visible inject cache before sendToVisibleWindow returns delivered=true.',
+      expectedFailedCheckIds: Object.freeze(['route_inject_cache_recorded_only_after_successful_delivery']),
+    }),
+    Object.freeze({
+      id: 'fresh_ids_collapsed_or_body_drift_required',
+      mutation: 'Treat changed body text or distinct fresh message IDs as the duplicate authority.',
+      expectedFailedCheckIds: Object.freeze(['route_inject_startup_body_drift_duplicate_fixture']),
+    }),
+  ]),
+});
+
 const PROTECTED_SYSTEM_EVALS = Object.freeze([
   ACCEPTED_UNVERIFIED_CASE,
   FULL_MATERIALIZED_MESSAGE_CASE,
   ROUTE_METADATA_GUARD_CASE,
   WATCHDOG_AUTONOMY_EVIDENCE_CASE,
+  ROUTE_INJECT_VISIBLE_DEDUPE_CASE,
 ]);
 
 function normalizeRelPath(value) {
@@ -1079,6 +1212,178 @@ function validateWatchdogAutonomySemantics(evalCase, options = {}) {
   return checks;
 }
 
+function validateRouteInjectVisibleDedupeSemantics(evalCase, options = {}) {
+  const appText = readProjectFile('ui/modules/main/squidrun-app.js', options);
+  const appTestText = readProjectFile('ui/__tests__/squidrun-app.test.js', options);
+  const keyBlock = extractFunctionBlock(
+    appText,
+    'buildVisibleInjectDeliveryDedupeKey(packet = {}, paneId = \'\', windowKey = \'main\', messageId = null, options = {})'
+  );
+  const cacheBlock = extractFunctionBlock(
+    appText,
+    'hasVisibleInjectDelivery(packet = {}, paneId = \'\', windowKey = \'main\', messageId = null, now = Date.now(), options = {})'
+  );
+  const routeBlock = extractFunctionBlock(appText, 'routeInjectMessage(payload = {})');
+  const checks = [];
+
+  const identityTerms = [
+    'normalizedWindowKey',
+    'normalizedProfile',
+    'normalizedSessionScope',
+    'normalizedRouteKind',
+    'normalizedPaneId',
+    'stableMessageId',
+    'chunkIndex',
+    'chunkCount',
+  ];
+  const keyReturnStartIndex = keyBlock.indexOf('return [');
+  const keyReturnEndIndex = keyBlock.indexOf("].join('|')", keyReturnStartIndex);
+  const keyReturnBlock = keyReturnStartIndex >= 0 && keyReturnEndIndex > keyReturnStartIndex
+    ? keyBlock.slice(keyReturnStartIndex, keyReturnEndIndex + "].join('|')".length)
+    : '';
+  const keyUsesBodyText = keyReturnBlock.includes('packet.message')
+    || keyReturnBlock.includes('packet?.message')
+    || keyReturnBlock.includes('payload.message')
+    || keyReturnBlock.includes('createPayloadFingerprint')
+    || keyReturnBlock.includes('payloadFingerprint');
+  checks.push(makeCheck(
+    'route_inject_dedupe_key_includes_metadata_identity',
+    identityTerms.every((term) => keyReturnBlock.includes(term))
+      && keyReturnBlock.includes("].join('|')")
+      && !keyUsesBodyText,
+    'visible inject dedupe key includes window/profile/session/route/pane/message/chunk identity and excludes body text',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'buildVisibleInjectDeliveryDedupeKey(packet = {}, paneId = \'\', windowKey = \'main\', messageId = null, options = {})',
+      identityTerms,
+      keyReturnStartIndex,
+      keyReturnEndIndex,
+      keyUsesBodyText,
+    }
+  ));
+
+  checks.push(makeCheck(
+    'route_inject_cache_detects_duplicate_entry',
+    cacheBlock.includes('const entry = this.visibleInjectDeliveryCache.get(dedupeKey);')
+      && cacheBlock.includes('Number(entry.expiresAt) > now')
+      && cacheBlock.includes('return { duplicate: true, dedupeKey };')
+      && cacheBlock.includes('this.visibleInjectDeliveryCache.delete(dedupeKey);'),
+    'visible inject dedupe cache only reports unexpired entries as duplicate and prunes stale entries',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'hasVisibleInjectDelivery(packet = {}, paneId = \'\', windowKey = \'main\', messageId = null, now = Date.now(), options = {})',
+    }
+  ));
+
+  const dedupeCallIndex = routeBlock.indexOf('const dedupe = this.hasVisibleInjectDelivery(packet, paneId, targetWindowKey, messageId, Date.now(), {');
+  const duplicateBranchIndex = routeBlock.indexOf('if (dedupe.duplicate)', dedupeCallIndex);
+  const visibleDeliveryIndex = routeBlock.indexOf("const delivered = this.sendToVisibleWindow('inject-message'", dedupeCallIndex);
+  checks.push(makeCheck(
+    'route_inject_dedupe_checks_before_visible_delivery',
+    dedupeCallIndex >= 0
+      && duplicateBranchIndex > dedupeCallIndex
+      && visibleDeliveryIndex > duplicateBranchIndex,
+    'routeInjectMessage checks visible-inject dedupe before visible-window delivery',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'routeInjectMessage(payload = {})',
+      dedupeCallIndex,
+      duplicateBranchIndex,
+      visibleDeliveryIndex,
+    }
+  ));
+
+  const duplicateBranch = duplicateBranchIndex >= 0 && visibleDeliveryIndex > duplicateBranchIndex
+    ? routeBlock.slice(duplicateBranchIndex, visibleDeliveryIndex)
+    : '';
+  checks.push(makeCheck(
+    'route_inject_duplicate_branch_skips_resend',
+    duplicateBranch.includes("eventType: 'pane_ipc_handoff_deduped'")
+      && duplicateBranch.includes('success: true')
+      && duplicateBranch.includes('routed = true;')
+      && duplicateBranch.includes('continue;')
+      && !duplicateBranch.includes("sendToVisibleWindow('inject-message'"),
+    'duplicate visible-inject path records a deduped handoff and skips resend',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'routeInjectMessage(payload = {})',
+      duplicateBranchLength: duplicateBranch.length,
+    }
+  ));
+
+  const recordCallIndex = routeBlock.indexOf('this.recordVisibleInjectDelivery(dedupe.dedupeKey);', visibleDeliveryIndex);
+  const deliveredBlockIndex = routeBlock.lastIndexOf('if (delivered) {', recordCallIndex);
+  const continueAfterRecordIndex = routeBlock.indexOf('continue;', recordCallIndex);
+  const firstRecordIndex = routeBlock.indexOf('this.recordVisibleInjectDelivery(dedupe.dedupeKey);');
+  checks.push(makeCheck(
+    'route_inject_cache_recorded_only_after_successful_delivery',
+    visibleDeliveryIndex >= 0
+      && deliveredBlockIndex > visibleDeliveryIndex
+      && recordCallIndex > deliveredBlockIndex
+      && firstRecordIndex === recordCallIndex
+      && continueAfterRecordIndex > recordCallIndex,
+    'visible-inject delivery cache is recorded only inside the successful delivered branch',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'routeInjectMessage(payload = {})',
+      visibleDeliveryIndex,
+      deliveredBlockIndex,
+      recordCallIndex,
+      firstRecordIndex,
+      continueAfterRecordIndex,
+    }
+  ));
+
+  checks.push(makeCheck(
+    'route_inject_side_profile_duplicate_fixture',
+    appTestText.includes("it('dedupes repeated side-profile visible-window injections by messageId'")
+      && appTestText.includes('hm-eunbyeol-visible-replay-1')
+      && appTestText.includes("windowKey: 'eunbyeol'")
+      && appTestText.includes("profileName: 'eunbyeol'")
+      && appTestText.includes('expect(injectCalls).toHaveLength(1)')
+      && appTestText.includes('expect(app.visibleInjectDeliveryCache.size).toBe(1)'),
+    'focused routeInjectMessage test proves side-profile duplicate visible-window inject collapses by message/window/profile',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'route_inject_startup_body_drift_duplicate_fixture',
+    appTestText.includes("it('dedupes repeated startup/session injections by metadata identity before body text'")
+      && appTestText.includes('Startup context retry with changed body text.')
+      && appTestText.includes("sessionScopeId: 'app-session-462'")
+      && appTestText.includes("routeKind: 'startup'")
+      && appTestText.includes('hm-startup-session-duplicate-1')
+      && appTestText.includes("expect(dedupeKey).toContain('main|main|app-session-462|startup|2|hm-startup-session-duplicate-1|')"),
+    'focused routeInjectMessage test proves startup/session duplicate collapse is metadata-first and body-drift tolerant',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'route_inject_fresh_message_ids_still_route_fixture',
+    appTestText.includes("it('routes fresh startup/session injections when message ids differ'")
+      && appTestText.includes('hm-startup-session-fresh-1')
+      && appTestText.includes('hm-startup-session-fresh-2')
+      && appTestText.includes('expect(injectCalls).toHaveLength(2)')
+      && appTestText.includes('expect(app.visibleInjectDeliveryCache.size).toBe(2)'),
+    'focused routeInjectMessage test proves distinct fresh message IDs still route',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'route_inject_failed_handoff_not_cached_fixture',
+    appTestText.includes("it('does not cache failed side-profile visible-window handoffs'")
+      && appTestText.includes('.mockReturnValueOnce(false)')
+      && appTestText.includes('.mockReturnValueOnce(true)')
+      && appTestText.includes('expect(app.routeInjectMessage(payload)).toBe(false)')
+      && appTestText.includes('expect(app.routeInjectMessage(payload)).toBe(true)')
+      && appTestText.includes("expect(sendToVisibleWindow.mock.calls.filter(([channel]) => channel === 'inject-message')).toHaveLength(2)"),
+    'focused routeInjectMessage test proves failed visible handoffs are not cached and can retry',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  return checks;
+}
+
 function validateCaseMetadata(evalCase) {
   const sideEffects = evalCase.sideEffects || {};
   return [
@@ -1135,6 +1440,9 @@ function validateProtectedSystemEvalCase(evalCase, options = {}) {
   }
   if (evalCase.id === CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE) {
     checks.push(...validateWatchdogAutonomySemantics(evalCase, options));
+  }
+  if (evalCase.id === CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE) {
+    checks.push(...validateRouteInjectVisibleDedupeSemantics(evalCase, options));
   }
   const failures = checks.filter((check) => !check.ok);
   return {
@@ -1219,6 +1527,7 @@ module.exports = {
   CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY,
   CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ,
   CASE_ID_ROUTE_METADATA_GUARD,
+  CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE,
   CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE,
   PROTECTED_SYSTEM_EVALS,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
@@ -1235,6 +1544,7 @@ module.exports = {
     validateAcceptedUnverifiedSemantics,
     validateFullMaterializedMessageSemantics,
     validateRouteMetadataGuardSemantics,
+    validateRouteInjectVisibleDedupeSemantics,
     validateRequiredRefs,
     validateWatchdogAutonomySemantics,
   },
