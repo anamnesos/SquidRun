@@ -9640,6 +9640,64 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('keeps reply debt unresolved when the acked Telegram journal row is for another session', () => {
+      const sessionId = 'app-session-telegram-current-session';
+      const otherSessionId = 'app-session-telegram-other-session';
+      const createdAtMs = Date.parse('2026-05-31T20:37:30.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-wrong-session-1',
+          chatId: '1111111111',
+          sender: 'james',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            messageId: 'hm-telegram-other-session',
+            sessionId: otherSessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs + 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              chatId: '1111111111',
+              envelope: {
+                session_id: otherSessionId,
+                target: { raw: 'telegram', role: 'telegram' },
+              },
+            },
+          },
+        ]);
+
+        const result = app.inspectPaneOutputForReplyGuards('1', 'wrong session still owes Telegram', {
+          outputKind: 'agent_visible_output',
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: false,
+          status: 'telegram_reply_requirement_pending_grace',
+          guard: expect.objectContaining({
+            messageId: 'telegram-in-wrong-session-1',
+            status: 'telegram_reply_required_unresolved',
+          }),
+        }));
+        expect(satisfyTelegramReplyObligation).not.toHaveBeenCalled();
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-wrong-session-1',
+          sessionScopeId: sessionId,
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('clears reply debt when a same-chat delivered Telegram row is tied to an adjacent inbound', () => {
       const sessionId = 'app-session-telegram-cross-inbound';
       const createdAtMs = Date.parse('2026-05-31T20:38:00.000Z');

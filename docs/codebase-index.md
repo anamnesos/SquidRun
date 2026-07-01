@@ -115,7 +115,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | 2728 |
 | `.gitignore` | config | 4607 |
 | `AGENTS.md` | doc | 6432 |
-| `ARCHITECTURE.md` | doc | 75789 |
+| `ARCHITECTURE.md` | doc | 75927 |
 | `CLAUDE-AI.md` | doc | 3856 |
 | `CLAUDE.md` | doc | 2161 |
 | `CODE_OF_CONDUCT.md` | doc | 5185 |
@@ -606,7 +606,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/spine-overlay.test.js` | test | 14248 |
 | `ui/__tests__/squid-room-surface.test.js` | test | 14230 |
 | `ui/__tests__/squidrun-app-growth-guard.test.js` | test | 1549 |
-| `ui/__tests__/squidrun-app.test.js` | test | 418097 |
+| `ui/__tests__/squidrun-app.test.js` | test | 420245 |
 | `ui/__tests__/squidrun-root-paths.test.js` | test | 2172 |
 | `ui/__tests__/squidrun-salience-engine.test.js` | test | 10053 |
 | `ui/__tests__/startup-ai-briefing.test.js` | test | 43242 |
@@ -616,7 +616,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/supervisor-daemon-memory-index.test.js` | test | 3949 |
 | `ui/__tests__/supervisor-store.test.js` | test | 5964 |
 | `ui/__tests__/surface-capture-events.test.js` | test | 3641 |
-| `ui/__tests__/system-protected-evals.test.js` | test | 33864 |
+| `ui/__tests__/system-protected-evals.test.js` | test | 39359 |
 | `ui/__tests__/task-parser-handlers.test.js` | test | 10195 |
 | `ui/__tests__/task-parser.test.js` | test | 4212 |
 | `ui/__tests__/task-pool-handlers.test.js` | test | 4325 |
@@ -859,7 +859,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/squidrun-root-paths.js` | source | 1700 |
 | `ui/modules/main/squidrun-salience-engine.js` | source | 19464 |
 | `ui/modules/main/startup-output-utils.js` | source | 2486 |
-| `ui/modules/main/system-protected-evals.js` | source | 85040 |
+| `ui/modules/main/system-protected-evals.js` | source | 102976 |
 | `ui/modules/main/telegram-poller-worker.js` | source | 3021 |
 | `ui/modules/main/telegram-reply-obligations.js` | source | 13323 |
 | `ui/modules/main/the-tell-shadow-runner.js` | source | 13677 |

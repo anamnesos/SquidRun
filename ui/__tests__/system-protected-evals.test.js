@@ -10,6 +10,7 @@ const {
   CASE_ID_ROUTE_METADATA_GUARD,
   CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE,
   CASE_ID_TELEGRAM_RECALL_BODY_FIRST,
+  CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF,
   CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
   buildSystemProtectedEvalRunPlan,
@@ -34,6 +35,7 @@ function defaultOverrides(overrides = {}) {
     'ui/__tests__/memory-broker.test.js': overrides.memoryBrokerTest || readRel('ui/__tests__/memory-broker.test.js'),
     'ui/modules/main/squidrun-app.js': overrides.squidrunApp || readRel('ui/modules/main/squidrun-app.js'),
     'ui/__tests__/squidrun-app.test.js': overrides.squidrunAppTest || readRel('ui/__tests__/squidrun-app.test.js'),
+    'ui/__tests__/telegram-reply-obligations.test.js': overrides.telegramReplyObligationsTest || readRel('ui/__tests__/telegram-reply-obligations.test.js'),
   };
 }
 
@@ -721,5 +723,101 @@ describe('system protected evals', () => {
     expect(report.ok).toBe(false);
     expect(failedCheckIds(report)).toContain('test_ref_telegram_body_inside_first_injection_window_fixture');
     expect(failedCheckIds(report)).toContain('telegram_reply_target_body_inside_first_injection_window_fixture');
+  });
+
+  test('registers Phase 4G Telegram reply-debt egress proof as a protected eval', () => {
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF],
+      generatedAt: '2026-06-30T00:00:00.000Z',
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.summary).toEqual(expect.objectContaining({
+      caseCount: 1,
+      protectedZeroFailCount: 1,
+      passed: 1,
+      failed: 0,
+    }));
+    expect(report.focusedCommands).toEqual(expect.arrayContaining([
+      expect.stringContaining('hm-system-protected-evals.js --case phase4g.telegram_reply_debt_requires_proven_egress'),
+      expect.stringContaining('squidrun-app.test.js'),
+      expect.stringContaining('telegram-reply-obligations.test.js'),
+    ]));
+    expect(checkIds(report)).toEqual(expect.arrayContaining([
+      'telegram_reply_debt_proven_egress_requires_acked_telegram_delivery',
+      'telegram_reply_debt_reconciliation_queries_scoped_outbound_telegram',
+      'telegram_reply_debt_reconciliation_rejects_wrong_session_chat_and_time',
+      'telegram_reply_debt_pane_output_requires_journal_satisfaction_first',
+      'telegram_reply_debt_deferred_warning_rechecks_journal_before_nag',
+      'telegram_reply_debt_acked_positive_fixture',
+      'telegram_reply_debt_pane_output_stays_pending_fixture',
+      'telegram_reply_debt_wrong_chat_fixture',
+      'telegram_reply_debt_wrong_session_fixture',
+      'telegram_reply_debt_pre_inbound_fixture',
+      'telegram_reply_debt_same_chat_adjacent_allowed_fixture',
+      'telegram_reply_obligation_probe_rejects_unproven_wrong_chat_and_stale_candidates',
+    ]));
+  });
+
+  test('Phase 4G exposes source refs, focused fixtures, and mutation boundaries', () => {
+    const plan = buildSystemProtectedEvalRunPlan({
+      caseIds: [CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF],
+    });
+    const [evalCase] = plan.cases;
+
+    expect(evalCase.id).toBe(CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF);
+    expect(evalCase.sourceRefs.map((ref) => ref.id)).toEqual([
+      'telegram_reply_debt_requires_proven_egress_row',
+      'telegram_reply_debt_queries_session_scoped_outbound_telegram',
+      'telegram_reply_debt_rejects_wrong_session_chat_and_time',
+      'telegram_reply_debt_pane_output_is_not_satisfaction',
+      'telegram_reply_debt_deferred_nag_rechecks_journal',
+    ]);
+    expect(evalCase.testRefs.map((ref) => ref.testName)).toEqual(expect.arrayContaining([
+      'clears pending Telegram reply debt from an acked hm-send Telegram journal row',
+      'keeps Telegram reply requirements unresolved when a pane answers without Telegram egress',
+      'keeps reply debt unresolved when the acked Telegram journal row is for another chat',
+      'keeps reply debt unresolved when the acked Telegram journal row is for another session',
+      'keeps reply debt unresolved when the acked Telegram journal row predates the inbound guard',
+      'clears reply debt when a same-chat delivered Telegram row is tied to an adjacent inbound',
+      'probe explains rejected and matched Telegram egress candidates',
+    ]));
+    expect(evalCase.expectedRegressionFailures.map((failure) => failure.id)).toEqual([
+      'telegram_ack_proof_weakened',
+      'telegram_session_chat_or_time_guard_removed',
+      'pane_output_treated_as_satisfaction',
+      'wrong_session_fixture_removed',
+    ]);
+  });
+
+  test('Phase 4G fails if proven Telegram egress ACK proof is weakened', () => {
+    const squidrunApp = readRel('ui/modules/main/squidrun-app.js')
+      .replace("&& String(row.status || '').toLowerCase() === 'acked'", '&& true')
+      .replace("&& String(row.ackStatus || '').toLowerCase() === 'telegram_delivered'", '&& true');
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF],
+      fileTextOverrides: defaultOverrides({ squidrunApp }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('telegram_reply_debt_proven_egress_requires_acked_telegram_delivery');
+  });
+
+  test('Phase 4G fails if session or wrong-session fixture guard is removed', () => {
+    const squidrunApp = readRel('ui/modules/main/squidrun-app.js')
+      .replace('if (this.getCommsJournalRowSessionId(candidate) !== guardSessionId) return false;', 'if (false) return false;');
+    const squidrunAppTest = readRel('ui/__tests__/squidrun-app.test.js')
+      .replace('keeps reply debt unresolved when the acked Telegram journal row is for another session', 'renamed wrong-session Telegram fixture')
+      .replace('expect(satisfyTelegramReplyObligation).not.toHaveBeenCalled()', 'expect(satisfyTelegramReplyObligation).toHaveBeenCalled()');
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF],
+      fileTextOverrides: defaultOverrides({ squidrunApp, squidrunAppTest }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('source_ref_telegram_reply_debt_rejects_wrong_session_chat_and_time');
+    expect(failedCheckIds(report)).toContain('telegram_reply_debt_reconciliation_rejects_wrong_session_chat_and_time');
+    expect(failedCheckIds(report)).toContain('test_ref_telegram_reply_debt_wrong_session_fixture');
+    expect(failedCheckIds(report)).toContain('telegram_reply_debt_wrong_session_fixture');
   });
 });
