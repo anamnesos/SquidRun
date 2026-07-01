@@ -9,6 +9,7 @@ const CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ = 'phase4b.full_materializ
 const CASE_ID_ROUTE_METADATA_GUARD = 'phase4c.route_metadata_guard_metadata_first';
 const CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE = 'phase4d.watchdog_autonomy_evidence_not_body_text';
 const CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE = 'phase4e.route_inject_visible_dedupe_metadata_identity';
+const CASE_ID_TELEGRAM_RECALL_BODY_FIRST = 'phase4f.telegram_recall_body_first';
 
 const DEFAULT_REPO_ROOT = path.resolve(__dirname, '../../..');
 const FULL_AGENT_MESSAGE_PATH_RE = /(?:^|\s)(?:\.squidrun[\\/]+)?coord[\\/]+full-agent-messages[\\/]+[A-Za-z0-9._-]+\.txt\b/i;
@@ -652,12 +653,114 @@ const ROUTE_INJECT_VISIBLE_DEDUPE_CASE = Object.freeze({
   ]),
 });
 
+const TELEGRAM_RECALL_BODY_FIRST_CASE = Object.freeze({
+  id: CASE_ID_TELEGRAM_RECALL_BODY_FIRST,
+  phase: 'phase4f',
+  title: 'Telegram inbound recall never hides the human body',
+  protectedBehavior: 'Human/Telegram inbound formatting must keep the raw body before memory recall context; the Telegram reply-target guard stays small, and long recall is capped so the human body appears inside the first pane-injection window.',
+  protectedZeroFail: true,
+  authorityPolicy: 'system_eval_only_no_dispatch',
+  sideEffects: Object.freeze({
+    runtime: false,
+    network: false,
+    writes: false,
+    externalSends: false,
+    restart: false,
+  }),
+  sourceRefs: Object.freeze([
+    Object.freeze({
+      id: 'memory_broker_recall_returns_body_before_block',
+      path: 'ui/modules/memory-broker.js',
+      anchor: 'function prependRecallToMessage(message, recall, options = {})',
+      requiredText: 'return `${text}\\n\\n${block}`;',
+      reason: 'The shared recall formatter must append recall after the human body, not prepend it.',
+    }),
+    Object.freeze({
+      id: 'memory_broker_recall_cap_notice_preserves_body_visibility',
+      path: 'ui/modules/memory-broker.js',
+      anchor: 'function formatRecallForPaneMessage(recall, options = {})',
+      requiredText: '... [memory recall capped to keep the inbound message body visible]',
+      reason: 'Long recall blocks must be capped with an explicit body-visibility reason.',
+    }),
+    Object.freeze({
+      id: 'telegram_reply_target_guard_is_small_fixed_header',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'buildTelegramReplyTargetPaneMessage(message, recallContext = {})',
+      requiredText: '[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]',
+      reason: 'Telegram inbound messages carry a fixed reply-target guard rather than unbounded recall/header text before the body.',
+    }),
+    Object.freeze({
+      id: 'telegram_reply_target_wraps_body_after_guard',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'buildTelegramReplyTargetPaneMessage(message, recallContext = {})',
+      requiredText: 'return `${guardLines.join(\'\\n\')}\\n\\n${text}`;',
+      reason: 'The reply-target guard is the only allowed prefix before the already body-first messageWithRecall text.',
+    }),
+  ]),
+  testRefs: Object.freeze([
+    Object.freeze({
+      id: 'memory_broker_long_recall_body_first_fixture',
+      path: 'ui/__tests__/memory-broker.test.js',
+      testName: 'keeps inbound message before capped recall context',
+      requiredText: Object.freeze([
+        'this is the actual body that must not disappear behind memory recall',
+        'expect(injected.startsWith(`${inbound}\\n\\n${RECALL_START}`)).toBe(true)',
+        'expect(recallBlock.length).toBeLessThanOrEqual(700)',
+      ]),
+    }),
+    Object.freeze({
+      id: 'telegram_body_inside_first_injection_window_fixture',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'keeps Telegram body inside first injection window before long recall context',
+      requiredText: Object.freeze([
+        'synthetic emergency update body that must be visible before any recall context or large header',
+        'expect(headerText.length).toBeLessThan(512)',
+        'expect(bodyIndex).toBeLessThan(1024)',
+        'expect(Buffer.byteLength(deliveredMessage.slice(0, bodyIndex), \'utf8\')).toBeLessThan(1024)',
+        'expect(bodyIndex).toBeLessThan(recallIndex)',
+      ]),
+    }),
+    Object.freeze({
+      id: 'unified_telegram_recall_body_before_block_fixture',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'prepends unified memory broker recall when ranked context exists',
+      requiredText: Object.freeze([
+        "expect(deliveredMessage.indexOf('[Telegram from james]: what did you do?'))",
+        ".toBeLessThan(deliveredMessage.indexOf('[SQUIDRUN MEMORY RECALL]'))",
+      ]),
+    }),
+  ]),
+  focusedCommands: Object.freeze([
+    'node ui/scripts/hm-system-protected-evals.js --case phase4f.telegram_recall_body_first --pretty',
+    'npm --prefix ui test -- system-protected-evals.test.js --runInBand',
+    'npm --prefix ui test -- memory-broker.test.js squidrun-app.test.js --runInBand --testNamePattern "keeps inbound message before capped recall context|keeps Telegram body inside first injection window before long recall context|prepends unified memory broker recall when ranked context exists"',
+  ]),
+  expectedRegressionFailures: Object.freeze([
+    Object.freeze({
+      id: 'recall_before_body',
+      mutation: 'Change prependRecallToMessage to return recall before the human body.',
+      expectedFailedCheckIds: Object.freeze(['telegram_recall_formatter_returns_body_before_recall']),
+    }),
+    Object.freeze({
+      id: 'oversized_header_before_body',
+      mutation: 'Let Telegram reply-target/header text grow enough that the body starts after the first 1024-byte pane-injection window.',
+      expectedFailedCheckIds: Object.freeze(['telegram_reply_target_body_inside_first_injection_window_fixture']),
+    }),
+    Object.freeze({
+      id: 'telegram_body_first_fixture_removed',
+      mutation: 'Remove or rename the focused Telegram body-first fixture.',
+      expectedFailedCheckIds: Object.freeze(['test_ref_telegram_body_inside_first_injection_window_fixture']),
+    }),
+  ]),
+});
+
 const PROTECTED_SYSTEM_EVALS = Object.freeze([
   ACCEPTED_UNVERIFIED_CASE,
   FULL_MATERIALIZED_MESSAGE_CASE,
   ROUTE_METADATA_GUARD_CASE,
   WATCHDOG_AUTONOMY_EVIDENCE_CASE,
   ROUTE_INJECT_VISIBLE_DEDUPE_CASE,
+  TELEGRAM_RECALL_BODY_FIRST_CASE,
 ]);
 
 function normalizeRelPath(value) {
@@ -1384,6 +1487,113 @@ function validateRouteInjectVisibleDedupeSemantics(evalCase, options = {}) {
   return checks;
 }
 
+function validateTelegramRecallBodyFirstSemantics(evalCase, options = {}) {
+  const memoryBrokerText = readProjectFile('ui/modules/memory-broker.js', options);
+  const appText = readProjectFile('ui/modules/main/squidrun-app.js', options);
+  const memoryBrokerTestText = readProjectFile('ui/__tests__/memory-broker.test.js', options);
+  const appTestText = readProjectFile('ui/__tests__/squidrun-app.test.js', options);
+  const prependBlock = extractFunctionBlock(memoryBrokerText, 'function prependRecallToMessage(message, recall, options = {})');
+  const formatBlock = extractFunctionBlock(memoryBrokerText, 'function formatRecallForPaneMessage(recall, options = {})');
+  const replyTargetBlock = extractFunctionBlock(appText, 'buildTelegramReplyTargetPaneMessage(message, recallContext = {})');
+  const deliverBlock = extractFunctionBlock(appText, 'async deliverHumanMessageWithRecall(message, recallContext = {}, logLabel = \'HumanMessage\')');
+  const checks = [];
+
+  const bodyFirstReturnIndex = prependBlock.indexOf('return `${text}\\n\\n${block}`;');
+  const recallFirstReturnIndex = prependBlock.indexOf('return `${block}\\n\\n${text}`;');
+  const blockCreationIndex = prependBlock.indexOf('const block = formatRecallForPaneMessage(recall, options);');
+  checks.push(makeCheck(
+    'telegram_recall_formatter_returns_body_before_recall',
+    bodyFirstReturnIndex >= 0
+      && recallFirstReturnIndex === -1
+      && (blockCreationIndex === -1 || bodyFirstReturnIndex > blockCreationIndex),
+    'shared recall formatter returns the human body before the recall block',
+    {
+      path: 'ui/modules/memory-broker.js',
+      anchor: 'function prependRecallToMessage(message, recall, options = {})',
+      bodyFirstReturnIndex,
+      recallFirstReturnIndex,
+      blockCreationIndex,
+    }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_recall_block_is_capped_for_body_visibility',
+    formatBlock.includes('const maxChars = clampInt(options.maxChars, DEFAULT_RECALL_BLOCK_MAX_CHARS, 400, 10000);')
+      && formatBlock.includes('... [memory recall capped to keep the inbound message body visible]')
+      && formatBlock.includes('return `${block.slice(0, budget).trimEnd()}${notice}${closing}`;'),
+    'long memory recall blocks are capped with a body-visibility notice',
+    { path: 'ui/modules/memory-broker.js', anchor: 'function formatRecallForPaneMessage(recall, options = {})' }
+  ));
+
+  const messageWithRecallIndex = deliverBlock.indexOf('const messageWithRecall = await this.buildHumanMessageWithUnifiedRecall(message, recallContext, logLabel);');
+  const replyTargetWrapIndex = deliverBlock.indexOf('? this.buildTelegramReplyTargetPaneMessage(messageWithRecall, recallContext)');
+  const deliverCallIndex = deliverBlock.indexOf('const result = await this.deliverPaneMessageReliably({');
+  checks.push(makeCheck(
+    'telegram_delivery_wraps_body_first_recall_before_reliable_delivery',
+    messageWithRecallIndex >= 0
+      && replyTargetWrapIndex > messageWithRecallIndex
+      && deliverCallIndex > replyTargetWrapIndex,
+    'Telegram delivery builds body-first recall text before adding reply-target guard and reliable pane delivery',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'async deliverHumanMessageWithRecall(message, recallContext = {}, logLabel = \'HumanMessage\')',
+      messageWithRecallIndex,
+      replyTargetWrapIndex,
+      deliverCallIndex,
+    }
+  ));
+
+  const guardLineCount = (replyTargetBlock.match(/\[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED\]|Source: Telegram from|Reply via `hm-send telegram \.\.\.`|\[END SQUIDRUN REPLY TARGET\]/g) || []).length;
+  checks.push(makeCheck(
+    'telegram_reply_target_header_is_fixed_and_bounded',
+    replyTargetBlock.includes('const guardLines = [')
+      && replyTargetBlock.includes('[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]')
+      && replyTargetBlock.includes('[END SQUIDRUN REPLY TARGET]')
+      && replyTargetBlock.includes('Reply via `hm-send telegram ...`')
+      && replyTargetBlock.includes('return `${guardLines.join(\'\\n\')}\\n\\n${text}`;')
+      && guardLineCount === 4,
+    'Telegram reply-target header is a small fixed guard before the already body-first payload',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'buildTelegramReplyTargetPaneMessage(message, recallContext = {})',
+      guardLineCount,
+    }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_memory_broker_long_recall_body_first_fixture',
+    memoryBrokerTestText.includes("test('keeps inbound message before capped recall context'")
+      && memoryBrokerTestText.includes('this is the actual body that must not disappear behind memory recall')
+      && memoryBrokerTestText.includes('expect(injected.startsWith(`${inbound}\\n\\n${RECALL_START}`)).toBe(true)')
+      && memoryBrokerTestText.includes('expect(recallBlock.length).toBeLessThanOrEqual(700)'),
+    'focused memory-broker test proves long recall stays after the human body and is capped',
+    { path: 'ui/__tests__/memory-broker.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_reply_target_body_inside_first_injection_window_fixture',
+    appTestText.includes("it('keeps Telegram body inside first injection window before long recall context'")
+      && appTestText.includes('synthetic emergency update body that must be visible before any recall context or large header')
+      && appTestText.includes('expect(headerText.length).toBeLessThan(512)')
+      && appTestText.includes('expect(bodyIndex).toBeLessThan(1024)')
+      && appTestText.includes("expect(Buffer.byteLength(deliveredMessage.slice(0, bodyIndex), 'utf8')).toBeLessThan(1024)")
+      && appTestText.includes('expect(bodyIndex).toBeLessThan(recallIndex)'),
+    'focused Telegram delivery test proves the body appears before recall inside the 1024-byte failure window',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_unified_recall_existing_fixture_body_before_block',
+    appTestText.includes("it('prepends unified memory broker recall when ranked context exists'")
+      && appTestText.includes("expect(deliveredMessage.indexOf('[Telegram from james]: what did you do?'))")
+      && appTestText.includes(".toBeLessThan(deliveredMessage.indexOf('[SQUIDRUN MEMORY RECALL]'))"),
+    'existing unified Telegram recall fixture keeps the Telegram body before memory recall',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  return checks;
+}
+
 function validateCaseMetadata(evalCase) {
   const sideEffects = evalCase.sideEffects || {};
   return [
@@ -1443,6 +1653,9 @@ function validateProtectedSystemEvalCase(evalCase, options = {}) {
   }
   if (evalCase.id === CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE) {
     checks.push(...validateRouteInjectVisibleDedupeSemantics(evalCase, options));
+  }
+  if (evalCase.id === CASE_ID_TELEGRAM_RECALL_BODY_FIRST) {
+    checks.push(...validateTelegramRecallBodyFirstSemantics(evalCase, options));
   }
   const failures = checks.filter((check) => !check.ok);
   return {
@@ -1528,6 +1741,7 @@ module.exports = {
   CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ,
   CASE_ID_ROUTE_METADATA_GUARD,
   CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE,
+  CASE_ID_TELEGRAM_RECALL_BODY_FIRST,
   CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE,
   PROTECTED_SYSTEM_EVALS,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
@@ -1546,6 +1760,7 @@ module.exports = {
     validateRouteMetadataGuardSemantics,
     validateRouteInjectVisibleDedupeSemantics,
     validateRequiredRefs,
+    validateTelegramRecallBodyFirstSemantics,
     validateWatchdogAutonomySemantics,
   },
 };
