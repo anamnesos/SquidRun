@@ -8,6 +8,7 @@ const {
   CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY,
   CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ,
   CASE_ID_ROUTE_METADATA_GUARD,
+  CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
   buildSystemProtectedEvalRunPlan,
   deriveFullMaterializedMessageDecision,
@@ -428,5 +429,109 @@ describe('system protected evals', () => {
     expect(report.ok).toBe(false);
     expect(failedCheckIds(report)).toContain('test_ref_wrong_session_metadata_plausible_body_blocks');
     expect(failedCheckIds(report)).toContain('route_metadata_wrong_session_fixture_blocks');
+  });
+
+  test('registers Phase 4D watchdog autonomy evidence as a protected eval', () => {
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE],
+      generatedAt: '2026-06-30T00:00:00.000Z',
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.summary).toEqual(expect.objectContaining({
+      caseCount: 1,
+      protectedZeroFailCount: 1,
+      passed: 1,
+      failed: 0,
+    }));
+    expect(report.focusedCommands).toEqual(expect.arrayContaining([
+      expect.stringContaining('hm-system-protected-evals.js --case phase4d.watchdog_autonomy_evidence_not_body_text'),
+      expect.stringContaining('squidrun-app.test.js'),
+    ]));
+    expect(checkIds(report)).toEqual(expect.arrayContaining([
+      'watchdog_autonomy_states_declared',
+      'watchdog_pending_autonomy_state_checked',
+      'watchdog_ledger_autonomy_state_checked_before_generic_resolution',
+      'watchdog_work_item_and_current_lane_checked_before_unresolved',
+      'watchdog_work_item_and_current_lane_autonomy_sources',
+      'watchdog_unresolved_fails_open_with_blockers',
+      'watchdog_body_only_no_reply_fixture_still_fires',
+      'watchdog_evidence_backed_autonomy_fixtures_suppress',
+      'watchdog_unresolved_blocker_fixture_fires',
+    ]));
+  });
+
+  test('Phase 4D exposes watchdog source refs and focused watchdog fixtures', () => {
+    const plan = buildSystemProtectedEvalRunPlan({
+      caseIds: [CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE],
+    });
+    const [evalCase] = plan.cases;
+
+    expect(evalCase.id).toBe(CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE);
+    expect(evalCase.sourceRefs.map((ref) => ref.id)).toEqual([
+      'squidrun_app_watchdog_autonomy_states_declared',
+      'squidrun_app_watchdog_pending_state_checked',
+      'squidrun_app_watchdog_ledger_state_checked',
+      'squidrun_app_watchdog_work_item_checked',
+      'squidrun_app_watchdog_current_lane_checked',
+      'squidrun_app_watchdog_unresolved_blockers',
+    ]);
+    expect(evalCase.testRefs.map((ref) => ref.testName)).toEqual(expect.arrayContaining([
+      'still watchdogs explicit tasks when no-reply-needed is body text only',
+      'suppresses response watchdog when pending entry has explicit no_ack_needed state',
+      'suppresses response watchdog when later ledger metadata has explicit no_ack_needed state',
+      'suppresses response watchdog when correlated WorkItem has explicit intentional_hold route state',
+      'suppresses response watchdog when correlated current-lane has explicit auto_proceed route state',
+      'reports exact correlation blockers before architect-to-oracle watchdog fires',
+    ]));
+    expect(evalCase.expectedRegressionFailures.map((failure) => failure.id)).toEqual([
+      'body_text_suppression_allowed',
+      'evidence_backed_autonomy_states_ignored',
+      'unresolved_task_no_longer_fires',
+    ]);
+  });
+
+  test('Phase 4D fails if pending autonomy evidence is ignored', () => {
+    const squidrunApp = readRel('ui/modules/main/squidrun-app.js').replace(
+      '    const pendingWatchdogState = findRecordIntentionalAutonomyState(entry);\n',
+      '    const pendingWatchdogState = null;\n'
+    );
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE],
+      fileTextOverrides: defaultOverrides({ squidrunApp }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('source_ref_squidrun_app_watchdog_pending_state_checked');
+    expect(failedCheckIds(report)).toContain('watchdog_pending_autonomy_state_checked');
+  });
+
+  test('Phase 4D fails if body-only no-reply wording is no longer proven to fire', () => {
+    const squidrunAppTest = readRel('ui/__tests__/squidrun-app.test.js').replace(
+      'Verify the watchdog no-reply body text and report. No reply needed.',
+      'Status only. No reply needed.'
+    );
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE],
+      fileTextOverrides: defaultOverrides({ squidrunAppTest }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report).some((id) => id.startsWith('test_ref_body_only_no_reply_still_fires_contains_'))).toBe(true);
+    expect(failedCheckIds(report)).toContain('watchdog_body_only_no_reply_fixture_still_fires');
+  });
+
+  test('Phase 4D fails if unresolved task blocker reporting is removed', () => {
+    const squidrunAppTest = readRel('ui/__tests__/squidrun-app.test.js').replace(
+      'Closure correlation blockers: comms_journal:no_later_resolution; work_items:no_correlating_work_item; current_lane:missing.',
+      'No correlation blockers reported.'
+    );
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE],
+      fileTextOverrides: defaultOverrides({ squidrunAppTest }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('watchdog_unresolved_blocker_fixture_fires');
   });
 });

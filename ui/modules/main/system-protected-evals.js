@@ -7,6 +7,7 @@ const SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION = 'squidrun.system_protected_evals.v0
 const CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY = 'phase4a.accepted_unverified_never_visible_delivery';
 const CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ = 'phase4b.full_materialized_message_requires_full_read';
 const CASE_ID_ROUTE_METADATA_GUARD = 'phase4c.route_metadata_guard_metadata_first';
+const CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE = 'phase4d.watchdog_autonomy_evidence_not_body_text';
 
 const DEFAULT_REPO_ROOT = path.resolve(__dirname, '../../..');
 const FULL_AGENT_MESSAGE_PATH_RE = /(?:^|\s)(?:\.squidrun[\\/]+)?coord[\\/]+full-agent-messages[\\/]+[A-Za-z0-9._-]+\.txt\b/i;
@@ -374,10 +375,156 @@ const ROUTE_METADATA_GUARD_CASE = Object.freeze({
   ]),
 });
 
+const WATCHDOG_AUTONOMY_EVIDENCE_CASE = Object.freeze({
+  id: CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE,
+  phase: 'phase4d',
+  title: 'watchdog autonomy suppression is evidence-backed',
+  protectedBehavior: 'Agent response watchdog suppression can come from explicit pending/comms-ledger/WorkItem/current-lane autonomy state, but body-only no-reply wording cannot silence explicit tasks and unresolved tasks still fire with blockers.',
+  protectedZeroFail: true,
+  authorityPolicy: 'system_eval_only_no_dispatch',
+  sideEffects: Object.freeze({
+    runtime: false,
+    network: false,
+    writes: false,
+    externalSends: false,
+    restart: false,
+  }),
+  sourceRefs: Object.freeze([
+    Object.freeze({
+      id: 'squidrun_app_watchdog_autonomy_states_declared',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'const WATCHDOG_INTENTIONAL_AUTONOMY_STATES = new Set([',
+      requiredText: "'intentional_hold'",
+      reason: 'Intentional autonomy states must be explicit metadata values, not inferred from body prose.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_watchdog_pending_state_checked',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'evaluateAgentResponseWatchdogEvidence(entry = {})',
+      requiredText: 'const pendingWatchdogState = findRecordIntentionalAutonomyState(entry);',
+      reason: 'Pending watchdog metadata must be an authoritative suppression source.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_watchdog_ledger_state_checked',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'evaluateAgentResponseWatchdogEvidence(entry = {})',
+      requiredText: 'const ledgerIntentional = findLedgerIntentionalAutonomyResolution(rows, normalizedSenderRole, normalizedTargetRole);',
+      reason: 'Comms journal metadata must be checked for explicit autonomy state before unresolved tasks fire.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_watchdog_work_item_checked',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'evaluateAgentResponseWatchdogEvidence(entry = {})',
+      requiredText: 'const workItemEvidence = this.findWorkItemWatchdogResolution(correlation, normalizedTargetRole);',
+      reason: 'Correlated WorkItems must be consulted before firing a stale response watchdog.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_watchdog_current_lane_checked',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'evaluateAgentResponseWatchdogEvidence(entry = {})',
+      requiredText: 'const currentLaneEvidence = this.findCurrentLaneWatchdogResolution(correlation);',
+      reason: 'Current-lane state must be consulted before firing a stale response watchdog.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_watchdog_unresolved_blockers',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'evaluateAgentResponseWatchdogEvidence(entry = {})',
+      requiredText: "reason: 'no_terminal_or_acknowledged_evidence'",
+      reason: 'Unresolved watchdogs must fail open with an actionable reason instead of silently suppressing.',
+    }),
+  ]),
+  testRefs: Object.freeze([
+    Object.freeze({
+      id: 'body_only_no_reply_still_fires',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'still watchdogs explicit tasks when no-reply-needed is body text only',
+      requiredText: Object.freeze([
+        'Verify the watchdog no-reply body text and report. No reply needed.',
+        'expect(spawn).toHaveBeenCalledWith',
+        '[WATCHDOG] No response from builder for task sent at 10:06. Check if task was received.',
+      ]),
+    }),
+    Object.freeze({
+      id: 'pending_no_ack_metadata_suppresses',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'suppresses response watchdog when pending entry has explicit no_ack_needed state',
+      requiredText: Object.freeze([
+        "responseWatchdogState: 'no_ack_needed'",
+        'expect(spawn).not.toHaveBeenCalled()',
+        'expect(app.pendingAgentResponseWatchdogs.size).toBe(0)',
+      ]),
+    }),
+    Object.freeze({
+      id: 'ledger_no_ack_metadata_suppresses',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'suppresses response watchdog when later ledger metadata has explicit no_ack_needed state',
+      requiredText: Object.freeze([
+        "responseWatchdogState: 'no_ack_needed'",
+        'routeHealthRequirement',
+        'expect(queryCommsJournalEntries).toHaveBeenCalledWith',
+        'expect(spawn).not.toHaveBeenCalled()',
+      ]),
+    }),
+    Object.freeze({
+      id: 'work_item_intentional_hold_suppresses',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'suppresses response watchdog when correlated WorkItem has explicit intentional_hold route state',
+      requiredText: Object.freeze([
+        "id: 'wi-watchdog-intentional-hold'",
+        "responseWatchdogState: 'intentional_hold'",
+        'expect(spawn).not.toHaveBeenCalled()',
+      ]),
+    }),
+    Object.freeze({
+      id: 'current_lane_auto_proceed_suppresses',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'suppresses response watchdog when correlated current-lane has explicit auto_proceed route state',
+      requiredText: Object.freeze([
+        "responseWatchdogState: 'auto_proceed'",
+        "source: 'work_item'",
+        'expect(spawn).not.toHaveBeenCalled()',
+      ]),
+    }),
+    Object.freeze({
+      id: 'unresolved_explicit_task_reports_blockers',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'reports exact correlation blockers before architect-to-oracle watchdog fires',
+      requiredText: Object.freeze([
+        'Verify the watchdog blocker report and reply.',
+        'Closure correlation blockers: comms_journal:no_later_resolution; work_items:no_correlating_work_item; current_lane:missing.',
+        'expect(spawn).toHaveBeenCalledWith',
+      ]),
+    }),
+  ]),
+  focusedCommands: Object.freeze([
+    'node ui/scripts/hm-system-protected-evals.js --case phase4d.watchdog_autonomy_evidence_not_body_text --pretty',
+    'npm --prefix ui test -- system-protected-evals.test.js --runInBand',
+    'npm --prefix ui test -- squidrun-app.test.js --runInBand --testNamePattern "explicit tasks when no-reply-needed is body text only|pending entry has explicit no_ack_needed state|later ledger metadata has explicit no_ack_needed state|correlated WorkItem has explicit intentional_hold route state|correlated current-lane has explicit auto_proceed route state|reports exact correlation blockers"',
+  ]),
+  expectedRegressionFailures: Object.freeze([
+    Object.freeze({
+      id: 'body_text_suppression_allowed',
+      mutation: 'Treat body-only no-reply wording as enough to suppress an explicit task.',
+      expectedFailedCheckIds: Object.freeze(['watchdog_body_only_no_reply_fixture_still_fires']),
+    }),
+    Object.freeze({
+      id: 'evidence_backed_autonomy_states_ignored',
+      mutation: 'Ignore explicit pending/comms-ledger/WorkItem/current-lane autonomy state.',
+      expectedFailedCheckIds: Object.freeze(['watchdog_pending_autonomy_state_checked']),
+    }),
+    Object.freeze({
+      id: 'unresolved_task_no_longer_fires',
+      mutation: 'Stop unresolved explicit tasks from firing with correlation blockers.',
+      expectedFailedCheckIds: Object.freeze(['watchdog_unresolved_fails_open_with_blockers']),
+    }),
+  ]),
+});
+
 const PROTECTED_SYSTEM_EVALS = Object.freeze([
   ACCEPTED_UNVERIFIED_CASE,
   FULL_MATERIALIZED_MESSAGE_CASE,
   ROUTE_METADATA_GUARD_CASE,
+  WATCHDOG_AUTONOMY_EVIDENCE_CASE,
 ]);
 
 function normalizeRelPath(value) {
@@ -801,6 +948,137 @@ function validateRouteMetadataGuardSemantics(evalCase, options = {}) {
   return checks;
 }
 
+function validateWatchdogAutonomySemantics(evalCase, options = {}) {
+  const appText = readProjectFile('ui/modules/main/squidrun-app.js', options);
+  const appTestText = readProjectFile('ui/__tests__/squidrun-app.test.js', options);
+  const evidenceBlock = extractFunctionBlock(appText, 'evaluateAgentResponseWatchdogEvidence(entry = {})');
+  const workItemBlock = extractFunctionBlock(appText, 'findWorkItemWatchdogResolution(correlation = {}, targetRole = null)');
+  const currentLaneBlock = extractFunctionBlock(appText, 'findCurrentLaneWatchdogResolution(correlation = {})');
+  const checks = [];
+
+  checks.push(makeCheck(
+    'watchdog_autonomy_states_declared',
+    appText.includes('WATCHDOG_INTENTIONAL_AUTONOMY_STATES')
+      && appText.includes("'auto_proceed'")
+      && appText.includes("'intentional_hold'")
+      && appText.includes("'no_ack_needed'"),
+    'watchdog autonomy states are explicit metadata values',
+    { path: 'ui/modules/main/squidrun-app.js', anchor: 'WATCHDOG_INTENTIONAL_AUTONOMY_STATES' }
+  ));
+
+  const pendingStateIndex = evidenceBlock.indexOf('const pendingWatchdogState = findRecordIntentionalAutonomyState(entry);');
+  const queryRowsIndex = evidenceBlock.indexOf('queryCommsJournalEntries({');
+  checks.push(makeCheck(
+    'watchdog_pending_autonomy_state_checked',
+    pendingStateIndex >= 0
+      && (queryRowsIndex === -1 || pendingStateIndex < queryRowsIndex)
+      && evidenceBlock.includes('reason: `watchdog_${pendingWatchdogState}`')
+      && evidenceBlock.includes("source: 'pending_watchdog'")
+      && evidenceBlock.includes('status: pendingWatchdogState'),
+    'pending watchdog metadata can explicitly suppress before ledger fallback',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'evaluateAgentResponseWatchdogEvidence(entry = {})',
+      pendingStateIndex,
+      queryRowsIndex,
+    }
+  ));
+
+  const ledgerIntentionalIndex = evidenceBlock.indexOf('const ledgerIntentional = findLedgerIntentionalAutonomyResolution(rows, normalizedSenderRole, normalizedTargetRole);');
+  const taskRowIndex = evidenceBlock.indexOf('const taskRow = {');
+  checks.push(makeCheck(
+    'watchdog_ledger_autonomy_state_checked_before_generic_resolution',
+    ledgerIntentionalIndex >= 0
+      && (taskRowIndex === -1 || ledgerIntentionalIndex < taskRowIndex)
+      && evidenceBlock.includes('reason: `comms_journal_${ledgerIntentional.state}`')
+      && evidenceBlock.includes("source: 'comms_journal'")
+      && evidenceBlock.includes('status: ledgerIntentional.state'),
+    'comms-ledger autonomy metadata can explicitly suppress before generic response heuristics',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'evaluateAgentResponseWatchdogEvidence(entry = {})',
+      ledgerIntentionalIndex,
+      taskRowIndex,
+    }
+  ));
+
+  const workItemIndex = evidenceBlock.indexOf('const workItemEvidence = this.findWorkItemWatchdogResolution(correlation, normalizedTargetRole);');
+  const currentLaneIndex = evidenceBlock.indexOf('const currentLaneEvidence = this.findCurrentLaneWatchdogResolution(correlation);');
+  const finalUnresolvedIndex = evidenceBlock.indexOf("reason: 'no_terminal_or_acknowledged_evidence'");
+  checks.push(makeCheck(
+    'watchdog_work_item_and_current_lane_checked_before_unresolved',
+    workItemIndex >= 0
+      && currentLaneIndex > workItemIndex
+      && finalUnresolvedIndex > currentLaneIndex,
+    'correlated WorkItem/current-lane evidence is checked before unresolved watchdog firing',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'evaluateAgentResponseWatchdogEvidence(entry = {})',
+      workItemIndex,
+      currentLaneIndex,
+      finalUnresolvedIndex,
+    }
+  ));
+
+  checks.push(makeCheck(
+    'watchdog_work_item_and_current_lane_autonomy_sources',
+    workItemBlock.includes('const intentional = matches')
+      && workItemBlock.includes('state: findRecordIntentionalAutonomyState(item)')
+      && workItemBlock.includes('reason: `work_item_${intentional.state}`')
+      && currentLaneBlock.includes('const intentionalState = findRecordIntentionalAutonomyState(activeLane)')
+      && currentLaneBlock.includes('|| findRecordIntentionalAutonomyState(parsed)')
+      && currentLaneBlock.includes('reason: `current_lane_${intentionalState}`'),
+    'WorkItem and current-lane explicit autonomy state can suppress stale watchdogs',
+    { path: 'ui/modules/main/squidrun-app.js' }
+  ));
+
+  checks.push(makeCheck(
+    'watchdog_unresolved_fails_open_with_blockers',
+    evidenceBlock.includes("reason: 'no_terminal_or_acknowledged_evidence'")
+      && evidenceBlock.includes("blockers.push('comms_journal:no_later_resolution')")
+      && evidenceBlock.includes('blockers.push(...workItemEvidence.blockers)')
+      && evidenceBlock.includes('blockers.push(...currentLaneEvidence.blockers)')
+      && evidenceBlock.includes('resolved: false'),
+    'unresolved explicit tasks fail open to a watchdog with actionable blockers',
+    { path: 'ui/modules/main/squidrun-app.js', anchor: 'evaluateAgentResponseWatchdogEvidence(entry = {})' }
+  ));
+
+  checks.push(makeCheck(
+    'watchdog_body_only_no_reply_fixture_still_fires',
+    appTestText.includes("it('still watchdogs explicit tasks when no-reply-needed is body text only'")
+      && appTestText.includes('Verify the watchdog no-reply body text and report. No reply needed.')
+      && appTestText.includes('expect(spawn).toHaveBeenCalledWith')
+      && appTestText.includes('[WATCHDOG] No response from builder for task sent at 10:06. Check if task was received.'),
+    'focused watchdog test proves body-only no-reply wording cannot suppress explicit tasks',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'watchdog_evidence_backed_autonomy_fixtures_suppress',
+    appTestText.includes("it('suppresses response watchdog when pending entry has explicit no_ack_needed state'")
+      && appTestText.includes("it('suppresses response watchdog when later ledger metadata has explicit no_ack_needed state'")
+      && appTestText.includes("it('suppresses response watchdog when correlated WorkItem has explicit intentional_hold route state'")
+      && appTestText.includes("it('suppresses response watchdog when correlated current-lane has explicit auto_proceed route state'")
+      && appTestText.includes("responseWatchdogState: 'no_ack_needed'")
+      && appTestText.includes("responseWatchdogState: 'intentional_hold'")
+      && appTestText.includes("responseWatchdogState: 'auto_proceed'"),
+    'focused watchdog tests prove evidence-backed autonomy state suppresses false watchdogs',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'watchdog_unresolved_blocker_fixture_fires',
+    appTestText.includes("it('reports exact correlation blockers before architect-to-oracle watchdog fires'")
+      && appTestText.includes('Verify the watchdog blocker report and reply.')
+      && appTestText.includes('Closure correlation blockers: comms_journal:no_later_resolution; work_items:no_correlating_work_item; current_lane:missing.')
+      && appTestText.includes('expect(spawn).toHaveBeenCalledWith'),
+    'focused watchdog test proves unresolved tasks still fire with actionable blockers',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  return checks;
+}
+
 function validateCaseMetadata(evalCase) {
   const sideEffects = evalCase.sideEffects || {};
   return [
@@ -854,6 +1132,9 @@ function validateProtectedSystemEvalCase(evalCase, options = {}) {
   }
   if (evalCase.id === CASE_ID_ROUTE_METADATA_GUARD) {
     checks.push(...validateRouteMetadataGuardSemantics(evalCase, options));
+  }
+  if (evalCase.id === CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE) {
+    checks.push(...validateWatchdogAutonomySemantics(evalCase, options));
   }
   const failures = checks.filter((check) => !check.ok);
   return {
@@ -938,6 +1219,7 @@ module.exports = {
   CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY,
   CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ,
   CASE_ID_ROUTE_METADATA_GUARD,
+  CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE,
   PROTECTED_SYSTEM_EVALS,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
   buildSystemProtectedEvalRunPlan,
@@ -954,5 +1236,6 @@ module.exports = {
     validateFullMaterializedMessageSemantics,
     validateRouteMetadataGuardSemantics,
     validateRequiredRefs,
+    validateWatchdogAutonomySemantics,
   },
 };
