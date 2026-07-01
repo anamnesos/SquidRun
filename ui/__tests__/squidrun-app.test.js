@@ -8071,6 +8071,56 @@ describe('SquidRunApp', () => {
         .toBeLessThan(deliveredMessage.indexOf('[SQUIDRUN MEMORY RECALL]'));
     });
 
+    it('keeps Telegram body inside first injection window before long recall context', async () => {
+      const triggers = require('../modules/triggers');
+      const telegramBody = '[Telegram from james]: synthetic emergency update body that must be visible before any recall context or large header.';
+      mockManagers.memoryBroker = {
+        recall: jest.fn(async () => ({
+          ok: true,
+          results: Array.from({ length: 8 }, (_, index) => ({
+            rank: index + 1,
+            sourceKind: 'vector_cognitive',
+            title: `Long recall title ${index} ${'x'.repeat(100)}`,
+            excerpt: `Long recall excerpt ${index} ${'y'.repeat(600)}`,
+            ref: `memory:telegram-body-first:${index}:${'z'.repeat(200)}`,
+          })),
+        })),
+      };
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+
+      await app.deliverHumanMessageWithRecall(
+        telegramBody,
+        {
+          paneId: '1',
+          channel: 'telegram',
+          sender: 'james',
+          messageId: 'telegram-in-body-first-1',
+          recallLimit: 8,
+        },
+        'Telegram'
+      );
+
+      const deliveredMessage = triggers.sendDirectMessage.mock.calls[0][1];
+      const headerEndIndex = deliveredMessage.indexOf('\n\n');
+      const headerText = deliveredMessage.slice(0, headerEndIndex);
+      const bodyIndex = deliveredMessage.indexOf(telegramBody);
+      const recallIndex = deliveredMessage.indexOf('[SQUIDRUN MEMORY RECALL]');
+
+      expect(deliveredMessage.startsWith('[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]')).toBe(true);
+      expect(headerText.length).toBeLessThan(512);
+      expect(bodyIndex).toBeGreaterThan(headerEndIndex);
+      expect(bodyIndex).toBeLessThan(1024);
+      expect(Buffer.byteLength(deliveredMessage.slice(0, bodyIndex), 'utf8')).toBeLessThan(1024);
+      expect(bodyIndex).toBeLessThan(recallIndex);
+      expect(deliveredMessage).toContain('memory recall capped');
+    });
+
     it('passes profile scope into recall and delivery metadata for scoped human messages', async () => {
       const triggers = require('../modules/triggers');
       mockManagers.memoryBroker = {

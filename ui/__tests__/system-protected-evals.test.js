@@ -9,6 +9,7 @@ const {
   CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ,
   CASE_ID_ROUTE_METADATA_GUARD,
   CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE,
+  CASE_ID_TELEGRAM_RECALL_BODY_FIRST,
   CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
   buildSystemProtectedEvalRunPlan,
@@ -29,6 +30,8 @@ function defaultOverrides(overrides = {}) {
     'ui/modules/daemon-handlers.js': overrides.daemonHandlers || readRel('ui/modules/daemon-handlers.js'),
     'ui/__tests__/daemon-handlers.test.js': overrides.daemonHandlersTest || readRel('ui/__tests__/daemon-handlers.test.js'),
     'ui/__tests__/observed-signal-work-items.test.js': overrides.observedSignalTest || readRel('ui/__tests__/observed-signal-work-items.test.js'),
+    'ui/modules/memory-broker.js': overrides.memoryBroker || readRel('ui/modules/memory-broker.js'),
+    'ui/__tests__/memory-broker.test.js': overrides.memoryBrokerTest || readRel('ui/__tests__/memory-broker.test.js'),
     'ui/modules/main/squidrun-app.js': overrides.squidrunApp || readRel('ui/modules/main/squidrun-app.js'),
     'ui/__tests__/squidrun-app.test.js': overrides.squidrunAppTest || readRel('ui/__tests__/squidrun-app.test.js'),
   };
@@ -635,5 +638,88 @@ describe('system protected evals', () => {
     expect(report.ok).toBe(false);
     expect(failedCheckIds(report)).toContain('route_inject_startup_body_drift_duplicate_fixture');
     expect(failedCheckIds(report)).toContain('route_inject_fresh_message_ids_still_route_fixture');
+  });
+
+  test('registers Phase 4F Telegram recall body-first as a protected eval', () => {
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TELEGRAM_RECALL_BODY_FIRST],
+      generatedAt: '2026-06-30T00:00:00.000Z',
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.summary).toEqual(expect.objectContaining({
+      caseCount: 1,
+      protectedZeroFailCount: 1,
+      passed: 1,
+      failed: 0,
+    }));
+    expect(report.focusedCommands).toEqual(expect.arrayContaining([
+      expect.stringContaining('hm-system-protected-evals.js --case phase4f.telegram_recall_body_first'),
+      expect.stringContaining('memory-broker.test.js'),
+      expect.stringContaining('squidrun-app.test.js'),
+    ]));
+    expect(checkIds(report)).toEqual(expect.arrayContaining([
+      'telegram_recall_formatter_returns_body_before_recall',
+      'telegram_recall_block_is_capped_for_body_visibility',
+      'telegram_delivery_wraps_body_first_recall_before_reliable_delivery',
+      'telegram_reply_target_header_is_fixed_and_bounded',
+      'telegram_memory_broker_long_recall_body_first_fixture',
+      'telegram_reply_target_body_inside_first_injection_window_fixture',
+      'telegram_unified_recall_existing_fixture_body_before_block',
+    ]));
+  });
+
+  test('Phase 4F exposes body-first source refs and focused fixtures', () => {
+    const plan = buildSystemProtectedEvalRunPlan({
+      caseIds: [CASE_ID_TELEGRAM_RECALL_BODY_FIRST],
+    });
+    const [evalCase] = plan.cases;
+
+    expect(evalCase.id).toBe(CASE_ID_TELEGRAM_RECALL_BODY_FIRST);
+    expect(evalCase.sourceRefs.map((ref) => ref.id)).toEqual([
+      'memory_broker_recall_returns_body_before_block',
+      'memory_broker_recall_cap_notice_preserves_body_visibility',
+      'telegram_reply_target_guard_is_small_fixed_header',
+      'telegram_reply_target_wraps_body_after_guard',
+    ]);
+    expect(evalCase.testRefs.map((ref) => ref.testName)).toEqual(expect.arrayContaining([
+      'keeps inbound message before capped recall context',
+      'keeps Telegram body inside first injection window before long recall context',
+      'prepends unified memory broker recall when ranked context exists',
+    ]));
+    expect(evalCase.expectedRegressionFailures.map((failure) => failure.id)).toEqual([
+      'recall_before_body',
+      'oversized_header_before_body',
+      'telegram_body_first_fixture_removed',
+    ]);
+  });
+
+  test('Phase 4F fails if recall is returned before the human body', () => {
+    const memoryBroker = readRel('ui/modules/memory-broker.js').replace(
+      'return `${text}\\n\\n${block}`;',
+      'return `${block}\\n\\n${text}`;'
+    );
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TELEGRAM_RECALL_BODY_FIRST],
+      fileTextOverrides: defaultOverrides({ memoryBroker }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('source_ref_memory_broker_recall_returns_body_before_block');
+    expect(failedCheckIds(report)).toContain('telegram_recall_formatter_returns_body_before_recall');
+  });
+
+  test('Phase 4F fails if Telegram body-first injection-window fixture is removed', () => {
+    const squidrunAppTest = readRel('ui/__tests__/squidrun-app.test.js')
+      .replace('keeps Telegram body inside first injection window before long recall context', 'renamed Telegram recall ordering fixture')
+      .replace('expect(bodyIndex).toBeLessThan(1024)', 'expect(bodyIndex).toBeGreaterThan(1024)');
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TELEGRAM_RECALL_BODY_FIRST],
+      fileTextOverrides: defaultOverrides({ squidrunAppTest }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('test_ref_telegram_body_inside_first_injection_window_fixture');
+    expect(failedCheckIds(report)).toContain('telegram_reply_target_body_inside_first_injection_window_fixture');
   });
 });
