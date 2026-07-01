@@ -187,6 +187,8 @@ describe('workspace pane shell', () => {
     configureWorkspacePaneShell({ windowKey: 'main' }, terminal, doc);
 
     expect(terminal.setActivePaneIds).toHaveBeenCalledWith(null);
+    expect(doc.body.classList.contains('squid-room')).toBe(false);
+    expect(doc.querySelector('.abyss-motes')).toBeFalsy();
     expect(doc.getElementById('terminal-2')).toBeTruthy();
     expect(doc.getElementById('terminal-3')).toBeTruthy();
     expect(doc.getElementById(`terminal-trustquote-${'builder'}`)).toBeFalsy();
@@ -205,6 +207,9 @@ describe('workspace pane shell', () => {
       teamPaneIds: ['2', '3'],
     }));
     expect(doc.body.classList.contains('squid-room-workspace')).toBe(true);
+    expect(doc.body.classList.contains('squid-room')).toBe(true);
+    expect(doc.querySelector('.abyss-motes')).toBeTruthy();
+    expect(doc.querySelector('.abyss-motes').childNodes).toHaveLength(12);
     expect(doc.body.classList.contains(`trustquote-${'workspace'}`)).toBe(false);
     expect(terminal.setActivePaneIds).toHaveBeenCalledWith([
       'trustquote-lead',
@@ -245,14 +250,20 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.pane[data-pane-id="3"]').dataset.squidRoomLabel).toBe('Oracle');
     expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.squid-room-codex-pet-builder-squid')).toBeTruthy();
     expect(doc.querySelector('.pane[data-pane-id="3"]').querySelector('.squid-room-codex-pet-oracle-squid')).toBeTruthy();
+    expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.squid-room-pet-eyebrow')).toBeFalsy();
+    expect(doc.querySelector('.pane[data-pane-id="3"]').querySelector('.squid-room-pet-eyebrow')).toBeFalsy();
+    expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.verb-chip').textContent).toBe('Working');
+    expect(doc.querySelector('.pane[data-pane-id="3"]').querySelector('.verb-chip').textContent).toBe('Reviewing');
+    expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.pet-glow')).toBeTruthy();
+    expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.bubble-1')).toBeTruthy();
     // Builder/Oracle panes live in the main window; Squid Room shows their
     // pets only, so model controls do not live in the pet header.
     for (const corePaneId of ['2', '3']) {
       const petSelector = doc.querySelector(`.pane[data-pane-id="${corePaneId}"]`).querySelector('.model-selector');
       expect(petSelector).toBeFalsy();
     }
-    expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.squid-room-pet-bubble').textContent).toBe('Working the active fix.');
-    expect(doc.querySelector('.pane[data-pane-id="3"]').querySelector('.squid-room-pet-bubble').textContent).toBe('Checking the proof.');
+    expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.face-line-text').textContent).toBe('Working the active fix.');
+    expect(doc.querySelector('.pane[data-pane-id="3"]').querySelector('.face-line-text').textContent).toBe('Checking the proof.');
     expect(doc.querySelector('.squid-room-team-header')).toBeTruthy();
     expect(doc.querySelector('.squid-room-team-eyebrow').textContent).toBe('Pets');
     expect(doc.querySelector('.squid-room-team-expand-btn').dataset.paneId).toBe('2');

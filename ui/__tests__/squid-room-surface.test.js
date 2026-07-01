@@ -210,7 +210,7 @@ describe('squid-room-surface', () => {
       includeRows: true,
     });
     expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Arms count 3');
+    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('3 arms');
     expect(doc.getElementById('squidRoomSurface').dataset).toEqual(expect.objectContaining({
       projectionStatus: 'loaded',
       projectionOnly: 'true',
@@ -258,7 +258,7 @@ describe('squid-room-surface', () => {
       includeRows: true,
     });
     expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Arms count 3');
+    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('3 arms');
     expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).not.toContain('Missing 3');
   });
 
@@ -278,7 +278,7 @@ describe('squid-room-surface', () => {
     expect(result.ok).toBe(false);
     expect(result.model.status).toBe('Unavailable');
     expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Projection unavailable');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Arms count 0');
+    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('0 arms');
     expect(doc.getElementById('squidRoomSurface').dataset.projectionStatus).toBe('unavailable');
   });
 
@@ -317,7 +317,7 @@ describe('squid-room-surface', () => {
 
     expect(model.ok).toBe(false);
     expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Projection unavailable');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('Arms count 0');
+    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('0 arms');
   });
 
   test('collapses and expands Builder and Oracle as a local Squid Room team container', () => {

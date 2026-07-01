@@ -123,7 +123,7 @@ function renderSquidRoomProjection(projection, elements) {
   const model = buildSquidRoomModel(projection);
   if (elements.status) elements.status.textContent = model.ok ? '' : 'Projection unavailable';
   if (elements.counts) {
-    elements.counts.innerHTML = `<span>Arms count ${model.counts.desired}</span>`;
+    elements.counts.innerHTML = `<span>${model.counts.desired} arms</span>`;
   }
   if (elements.root) {
     elements.root.dataset.projectionStatus = model.ok ? 'loaded' : 'unavailable';

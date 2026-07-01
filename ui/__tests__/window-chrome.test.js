@@ -111,6 +111,7 @@ describe('window chrome matrix', () => {
         expect(visible(doc, id)).toBe(false);
       }
       expect(visible(doc, '#rightPanel')).toBe(false);
+      expect(visible(doc, '.state-bar')).toBe(false);
       // The status strip advertises main-window semantics that are lies in
       // the room (Ctrl+1-4 / Enter-to-Mira) - it must not render.
       expect(visible(doc, '.status-bar')).toBe(false);

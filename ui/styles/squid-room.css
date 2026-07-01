@@ -1,5 +1,29 @@
 /* Squid Room display window */
 
+@font-face {
+  font-family: "Chakra Petch";
+  src: url("../assets/fonts/ChakraPetch-Medium.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Chakra Petch";
+  src: url("../assets/fonts/ChakraPetch-SemiBold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "SquidRoomDisplay";
+  src: url("../assets/fonts/ChakraPetch-SemiBold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
 .squid-room-surface {
   display: none;
 }
@@ -689,5 +713,876 @@ body.squid-room-workspace .squid-room-team-actions [data-tooltip]:hover::before 
     min-height: 220px;
     gap: 8px;
     padding: 0 10px 10px;
+  }
+}
+
+/* Bioluminescent Abyss foundation: presentation only, no terminal ownership. */
+body.squid-room-workspace {
+  --squid-room-display-font: "SquidRoomDisplay", "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+  --squid-room-body-font: "Segoe UI", system-ui, sans-serif;
+  --squid-room-abyss-0: #020610;
+  --squid-room-abyss-1: #06111f;
+  --squid-room-glass: rgba(13, 22, 33, 0.72);
+  --squid-room-glass-strong: rgba(7, 13, 23, 0.84);
+  --squid-room-line: rgba(94, 234, 212, 0.14);
+  --squid-room-line-strong: rgba(94, 234, 212, 0.32);
+  --squid-room-teal: #5eead4;
+  --squid-room-teal-soft: rgba(94, 234, 212, 0.12);
+  --squid-room-amber: #f7b955;
+  --squid-room-amber-soft: rgba(247, 185, 85, 0.13);
+  color: var(--color-text);
+  background:
+    radial-gradient(circle at 47% -10%, rgba(94, 234, 212, 0.08), transparent 31%),
+    radial-gradient(circle at 8% 4%, rgba(49, 104, 138, 0.12), transparent 28%),
+    linear-gradient(180deg, var(--squid-room-abyss-1) 0%, var(--squid-room-abyss-0) 100%);
+  font-family: var(--squid-room-body-font);
+}
+
+body.squid-room-workspace .header,
+body.squid-room-workspace .terminals-section {
+  position: relative;
+  z-index: 0;
+}
+
+body.squid-room-workspace .header {
+  min-height: 46px;
+  padding: 8px 16px;
+  border-bottom: 1px solid rgba(94, 234, 212, 0.12);
+  background:
+    linear-gradient(180deg, rgba(6, 13, 24, 0.86), rgba(4, 8, 15, 0.78)),
+    radial-gradient(circle at 36% 0%, rgba(94, 234, 212, 0.07), transparent 42%);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+body.squid-room-workspace .header h1,
+body.squid-room-workspace .squid-room-title,
+body.squid-room-workspace .squid-room-app-title,
+body.squid-room-workspace .squid-room-team-title strong,
+body.squid-room-workspace .squid-room-pet-title strong,
+body.squid-room-workspace .squid-room-live-pane .pane-title {
+  font-family: var(--squid-room-display-font);
+  letter-spacing: 0;
+}
+
+body.squid-room-workspace .header h1 {
+  color: rgba(221, 255, 250, 0.94);
+  font-size: 18px;
+  text-shadow: 0 0 22px rgba(94, 234, 212, 0.14);
+}
+
+body.squid-room-workspace .header-session-badge {
+  min-height: 24px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border-color: rgba(94, 234, 212, 0.17);
+  background: rgba(5, 12, 22, 0.64);
+  color: rgba(205, 238, 235, 0.72);
+  font-family: var(--squid-room-body-font);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+body.squid-room-workspace .terminals-section {
+  isolation: isolate;
+  gap: 16px;
+  padding: 14px;
+  background:
+    radial-gradient(circle at 52% 0%, rgba(94, 234, 212, 0.08), transparent 32%),
+    radial-gradient(circle at 94% 24%, rgba(37, 99, 235, 0.08), transparent 30%),
+    radial-gradient(circle at 14% 78%, rgba(15, 118, 110, 0.1), transparent 34%),
+    linear-gradient(180deg, rgba(4, 11, 21, 0.98), rgba(1, 5, 12, 0.99));
+  scrollbar-color: rgba(94, 234, 212, 0.28) rgba(4, 9, 17, 0.78);
+}
+
+body.squid-room-workspace .terminals-section::before,
+body.squid-room-workspace .terminals-section::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+body.squid-room-workspace .terminals-section::before {
+  z-index: 0;
+  opacity: 0.78;
+  background-image:
+    radial-gradient(circle at 8% 12%, rgba(167, 243, 208, 0.12) 0 1px, transparent 2px),
+    radial-gradient(circle at 18% 54%, rgba(94, 234, 212, 0.07) 0 1px, transparent 2px),
+    radial-gradient(circle at 27% 28%, rgba(125, 211, 252, 0.08) 0 1px, transparent 2px),
+    radial-gradient(circle at 34% 76%, rgba(45, 212, 191, 0.07) 0 1px, transparent 2px),
+    radial-gradient(circle at 42% 42%, rgba(167, 243, 208, 0.1) 0 1px, transparent 2px),
+    radial-gradient(circle at 51% 18%, rgba(94, 234, 212, 0.07) 0 1px, transparent 2px),
+    radial-gradient(circle at 58% 64%, rgba(125, 211, 252, 0.09) 0 1px, transparent 2px),
+    radial-gradient(circle at 66% 36%, rgba(45, 212, 191, 0.07) 0 1px, transparent 2px),
+    radial-gradient(circle at 74% 82%, rgba(167, 243, 208, 0.09) 0 1px, transparent 2px),
+    radial-gradient(circle at 81% 20%, rgba(94, 234, 212, 0.08) 0 1px, transparent 2px),
+    radial-gradient(circle at 88% 48%, rgba(125, 211, 252, 0.07) 0 1px, transparent 2px),
+    radial-gradient(circle at 93% 74%, rgba(45, 212, 191, 0.1) 0 1px, transparent 2px),
+    radial-gradient(circle at 12% 88%, rgba(94, 234, 212, 0.08) 0 1px, transparent 2px),
+    radial-gradient(circle at 48% 91%, rgba(167, 243, 208, 0.07) 0 1px, transparent 2px);
+  animation: squid-room-mote-drift 104s linear infinite;
+}
+
+body.squid-room-workspace .terminals-section::after {
+  z-index: 0;
+  background:
+    radial-gradient(ellipse at center, transparent 0%, transparent 45%, rgba(0, 0, 0, 0.34) 100%),
+    linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.28) 100%);
+}
+
+@keyframes squid-room-mote-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(0, -32px, 0); }
+}
+
+body.squid-room-workspace .pane-layout,
+body.squid-room-workspace #squidRoomSurface {
+  position: relative;
+  z-index: 1;
+}
+
+body.squid-room-workspace .pane-layout {
+  height: clamp(292px, 31vh, 430px);
+  padding: 0;
+  background: transparent;
+}
+
+body.squid-room-workspace .side-panes-container,
+body.squid-room-workspace .squid-room-header,
+body.squid-room-workspace .squid-room-app,
+body.squid-room-workspace .squid-room-pet-shell,
+body.squid-room-workspace .squid-room-live-panes .pane {
+  border: 1px solid var(--squid-room-line);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(18, 30, 43, 0.72), rgba(6, 13, 23, 0.82)),
+    var(--squid-room-glass);
+  box-shadow:
+    inset 0 1px 0 rgba(221, 255, 250, 0.06),
+    0 16px 36px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+body.squid-room-workspace .side-panes-container {
+  gap: 12px;
+  padding: 12px;
+}
+
+body.squid-room-workspace .side-panes-container .pane {
+  background: transparent;
+}
+
+body.squid-room-workspace .squid-room-team-header,
+body.squid-room-workspace .squid-room-app-header,
+body.squid-room-workspace .squid-room-pet-header,
+body.squid-room-workspace .squid-room-live-panes .pane-header {
+  border-bottom-color: rgba(94, 234, 212, 0.11);
+}
+
+body.squid-room-workspace .squid-room-team-header {
+  min-height: 40px;
+  padding: 0 0 8px;
+}
+
+body.squid-room-workspace .squid-room-team-title,
+body.squid-room-workspace .squid-room-pet-title {
+  align-items: start;
+  gap: 4px;
+}
+
+body.squid-room-workspace .squid-room-eyebrow,
+body.squid-room-workspace .squid-room-team-eyebrow,
+body.squid-room-workspace .squid-room-pet-eyebrow,
+body.squid-room-workspace .squid-room-app-status {
+  color: rgba(184, 215, 211, 0.64);
+  letter-spacing: 0;
+}
+
+body.squid-room-workspace .squid-room-title {
+  color: rgba(226, 255, 250, 0.96);
+  font-size: 20px;
+}
+
+body.squid-room-workspace .squid-room-app-title {
+  color: var(--squid-room-teal);
+  font-size: 17px;
+}
+
+body.squid-room-workspace .squid-room-pet-shell {
+  padding: 12px;
+  gap: 8px;
+  overflow: hidden;
+}
+
+body.squid-room-workspace .squid-room-pet-stage::before {
+  content: "";
+  position: absolute;
+  width: min(62%, 164px);
+  aspect-ratio: 1;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(94, 234, 212, 0.16), transparent 62%);
+  filter: blur(10px);
+  transform: translateY(8px);
+}
+
+body.squid-room-workspace .squid-room-codex-pet {
+  filter: drop-shadow(0 0 16px rgba(94, 234, 212, 0.18));
+}
+
+body.squid-room-workspace .squid-room-pet-state {
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid rgba(94, 234, 212, 0.24);
+  border-radius: 999px;
+  color: rgba(221, 255, 250, 0.92);
+  background: rgba(94, 234, 212, 0.08);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+body.squid-room-workspace .squid-room-pet-bubble {
+  border: 1px solid rgba(94, 234, 212, 0.12);
+  border-radius: 10px;
+  color: rgba(229, 244, 242, 0.92);
+  background: rgba(3, 8, 15, 0.58);
+  font-size: 13px;
+}
+
+body.squid-room-workspace .squid-room-pet-bubble::before {
+  border-left: 1px solid rgba(94, 234, 212, 0.12);
+  border-top: 1px solid rgba(94, 234, 212, 0.12);
+  background: rgba(3, 8, 15, 0.58);
+}
+
+body.squid-room-workspace #squidRoomSurface:not([hidden]) {
+  gap: 14px;
+  padding: 0;
+}
+
+body.squid-room-workspace .squid-room-header {
+  min-height: 54px;
+  padding: 10px 12px;
+}
+
+body.squid-room-workspace .squid-room-app {
+  overflow: visible;
+}
+
+body.squid-room-workspace .squid-room-app-header {
+  padding: 12px 14px;
+}
+
+body.squid-room-workspace .squid-room-counts span {
+  min-height: 28px;
+  border-color: rgba(94, 234, 212, 0.18);
+  border-radius: 999px;
+  color: rgba(226, 255, 250, 0.91);
+  background: rgba(94, 234, 212, 0.08);
+  font-family: var(--squid-room-display-font);
+  letter-spacing: 0;
+}
+
+body.squid-room-workspace .squid-room-refresh,
+body.squid-room-workspace .squid-room-app-toggle-btn,
+body.squid-room-workspace .squid-room-pane-menu-trigger,
+body.squid-room-workspace .squid-room-pane-menu-panel .pane-action-btn,
+body.squid-room-workspace .squid-room-pane-menu-panel .lock-icon,
+body.squid-room-workspace .squid-room-pane-menu-panel .pane-role-info-btn,
+body.squid-room-workspace .squid-room-pane-menu-panel .fresh-session-btn {
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  border-radius: 8px;
+  color: rgba(221, 255, 250, 0.9);
+  background: rgba(6, 14, 24, 0.64);
+  box-shadow: inset 0 1px 0 rgba(221, 255, 250, 0.05);
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+body.squid-room-workspace .squid-room-refresh:hover,
+body.squid-room-workspace .squid-room-app-toggle-btn:hover,
+body.squid-room-workspace .squid-room-pane-menu-trigger:hover,
+body.squid-room-workspace .squid-room-pane-menu[open] .squid-room-pane-menu-trigger,
+body.squid-room-workspace .squid-room-pane-menu-panel .pane-action-btn:hover,
+body.squid-room-workspace .squid-room-pane-menu-panel .lock-icon:hover,
+body.squid-room-workspace .squid-room-pane-menu-panel .pane-role-info-btn:hover,
+body.squid-room-workspace .squid-room-pane-menu-panel .fresh-session-btn:hover {
+  border-color: var(--squid-room-line-strong);
+  color: var(--squid-room-teal);
+  background: var(--squid-room-teal-soft);
+  box-shadow: 0 0 18px rgba(94, 234, 212, 0.12);
+}
+
+body.squid-room-workspace .squid-room-live-panes {
+  gap: 12px;
+  padding: 0 14px 14px;
+  grid-auto-rows: minmax(310px, auto);
+}
+
+body.squid-room-workspace .squid-room-live-panes .pane {
+  overflow: visible;
+  border-color: rgba(94, 234, 212, 0.16);
+}
+
+body.squid-room-workspace .squid-room-live-panes .pane-header {
+  min-height: 46px;
+  padding: 9px 10px;
+  background: rgba(2, 8, 16, 0.32);
+}
+
+body.squid-room-workspace .squid-room-live-panes .pane-terminal {
+  border-top: 1px solid rgba(94, 234, 212, 0.08);
+  background: rgba(1, 5, 10, 0.82);
+}
+
+body.squid-room-workspace .squid-room-live-pane .agent-badge {
+  display: none;
+}
+
+body.squid-room-workspace .squid-room-live-pane[data-pane-id="trustquote-lead"] {
+  border-color: rgba(247, 185, 85, 0.38);
+  box-shadow:
+    inset 3px 0 0 rgba(247, 185, 85, 0.72),
+    inset 0 1px 0 rgba(255, 246, 220, 0.06),
+    0 16px 36px rgba(0, 0, 0, 0.3);
+}
+
+body.squid-room-workspace .squid-room-live-pane[data-pane-id="trustquote-lead"] .pane-title::after {
+  content: "Lead";
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  margin-left: 8px;
+  padding: 0 7px;
+  border: 1px solid rgba(247, 185, 85, 0.38);
+  border-radius: 999px;
+  color: #ffe5ad;
+  background: var(--squid-room-amber-soft);
+  font-family: var(--squid-room-body-font);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+body.squid-room-workspace .model-selector.squid-room-arm-model-selector {
+  min-width: 132px;
+  height: 30px;
+  border-color: rgba(94, 234, 212, 0.18);
+  border-radius: 8px;
+  background: rgba(1, 6, 13, 0.72);
+  color: rgba(221, 255, 250, 0.9);
+  font-size: 12px;
+}
+
+body.squid-room-workspace .squid-room-pane-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+body.squid-room-workspace .squid-room-pane-menu-trigger {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--squid-room-display-font);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  list-style: none;
+}
+
+body.squid-room-workspace .squid-room-pane-menu-trigger::-webkit-details-marker {
+  display: none;
+}
+
+body.squid-room-workspace .squid-room-pane-menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 100;
+  display: grid;
+  gap: 8px;
+  min-width: 224px;
+  padding: 10px;
+  border: 1px solid rgba(94, 234, 212, 0.2);
+  border-radius: 12px;
+  background: rgba(5, 12, 21, 0.94);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.46), 0 0 0 1px rgba(221, 255, 250, 0.04);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+body.squid-room-workspace .squid-room-pane-menu-panel .agent-health {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(94, 234, 212, 0.12);
+  border-radius: 7px;
+  color: rgba(184, 215, 211, 0.68);
+  background: rgba(1, 6, 13, 0.58);
+  font-size: 11px;
+}
+
+body.squid-room-workspace .squid-room-pane-menu-panel .pane-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+body.squid-room-workspace .squid-room-pane-menu-panel .pane-action-btn,
+body.squid-room-workspace .squid-room-pane-menu-panel .fresh-session-btn,
+body.squid-room-workspace .squid-room-pane-menu-panel .lock-icon,
+body.squid-room-workspace .squid-room-pane-menu-panel .pane-role-info-btn {
+  width: 30px;
+  height: 30px;
+  margin: 0;
+}
+
+body.squid-room-workspace .pane-btn-icon,
+body.squid-room-workspace .avatar-icon {
+  stroke-width: 1.8;
+}
+
+body.squid-room-workspace .squid-room-team-collapsed {
+  border-color: rgba(94, 234, 212, 0.18);
+}
+
+@media (max-width: 1100px), (max-height: 760px) {
+  body.squid-room-workspace .terminals-section {
+    padding: 10px;
+    gap: 12px;
+  }
+
+  body.squid-room-workspace .side-panes-container {
+    padding: 10px;
+  }
+
+  body.squid-room-workspace .squid-room-live-panes {
+    grid-auto-rows: minmax(240px, auto);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.squid-room-workspace .terminals-section::before {
+    animation: none;
+  }
+
+  body.squid-room-workspace .squid-room-refresh,
+  body.squid-room-workspace .squid-room-app-toggle-btn,
+  body.squid-room-workspace .squid-room-pane-menu-trigger,
+  body.squid-room-workspace .squid-room-pane-menu-panel .pane-action-btn,
+  body.squid-room-workspace .squid-room-pane-menu-panel .lock-icon,
+  body.squid-room-workspace .squid-room-pane-menu-panel .pane-role-info-btn,
+  body.squid-room-workspace .squid-room-pane-menu-panel .fresh-session-btn {
+    transition: none;
+  }
+}
+
+/* Architect canonical abyss foundation, scoped to the Squid Room window. */
+body.squid-room {
+  --abyss-void: #060a14;
+  --abyss-deep: #0a1220;
+  --abyss-panel: rgba(12, 22, 34, 0.72);
+  --abyss-panel-strong: rgba(8, 16, 27, 0.88);
+  --glass-border: rgba(160, 255, 239, 0.16);
+  --glass-border-strong: rgba(160, 255, 239, 0.34);
+  --lumen: #72f0e0;
+  --lumen-soft: rgba(114, 240, 224, 0.12);
+  --lumen-faint: rgba(114, 240, 224, 0.06);
+  --lead-amber: #ffbf5c;
+  --lead-amber-soft: rgba(255, 191, 92, 0.16);
+  --text-high: rgba(236, 255, 252, 0.96);
+  --text-mid: rgba(198, 223, 220, 0.72);
+  --text-low: rgba(164, 190, 188, 0.58);
+  --font-display: "Chakra Petch", "Segoe UI", sans-serif;
+  --font-ui: "Segoe UI", system-ui, sans-serif;
+  --squid-room-display-font: var(--font-display);
+  --squid-room-body-font: var(--font-ui);
+  background:
+    radial-gradient(circle at 48% -8%, rgba(114, 240, 224, 0.1), transparent 30%),
+    radial-gradient(circle at 9% 12%, rgba(48, 93, 126, 0.16), transparent 28%),
+    linear-gradient(180deg, var(--abyss-deep), var(--abyss-void));
+  color: var(--text-high);
+  font-family: var(--font-ui);
+}
+
+body.squid-room .abyss-motes {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+body.squid-room .abyss-motes span {
+  position: absolute;
+  bottom: -24px;
+  width: 2px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(176, 255, 243, 0.72);
+  box-shadow: 0 0 10px rgba(114, 240, 224, 0.65);
+  animation: abyss-mote-rise 24s linear infinite;
+}
+
+@keyframes abyss-mote-rise {
+  from {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.72;
+  }
+  82% {
+    opacity: 0.54;
+  }
+  to {
+    transform: translate3d(18px, -110vh, 0);
+    opacity: 0;
+  }
+}
+
+body.squid-room .header,
+body.squid-room .terminals-section {
+  position: relative;
+  z-index: 1;
+}
+
+body.squid-room .terminals-section {
+  background:
+    radial-gradient(circle at 52% 0%, rgba(114, 240, 224, 0.08), transparent 32%),
+    radial-gradient(circle at 92% 24%, rgba(67, 125, 174, 0.1), transparent 30%),
+    radial-gradient(circle at 12% 76%, rgba(43, 185, 158, 0.1), transparent 34%),
+    linear-gradient(180deg, rgba(5, 12, 23, 0.98), rgba(2, 6, 14, 0.99));
+}
+
+body.squid-room .glass,
+body.squid-room .panel,
+body.squid-room .side-panes-container,
+body.squid-room .squid-room-header,
+body.squid-room .squid-room-app,
+body.squid-room .squid-room-live-panes .pane {
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(20, 35, 49, 0.7), rgba(7, 15, 26, 0.86)),
+    var(--abyss-panel);
+  box-shadow:
+    inset 0 1px 0 rgba(236, 255, 252, 0.06),
+    0 18px 42px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+body.squid-room .room-title,
+body.squid-room .section-title,
+body.squid-room .pane-title,
+body.squid-room .squid-room-title,
+body.squid-room .squid-room-app-title,
+body.squid-room .squid-room-team-title strong,
+body.squid-room .squid-room-pet-title strong,
+body.squid-room .squid-room-live-pane .pane-title {
+  font-family: var(--font-display);
+  letter-spacing: 0.02em;
+}
+
+body.squid-room .eyebrow,
+body.squid-room .squid-room-eyebrow,
+body.squid-room .squid-room-team-eyebrow,
+body.squid-room .squid-room-app-status {
+  color: var(--text-low);
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+body.squid-room .squid-room-team-title strong,
+body.squid-room .squid-room-pet-title strong {
+  color: var(--text-high);
+}
+
+body.squid-room .squid-room-pet-title {
+  display: block;
+}
+
+body.squid-room .squid-room-pet-eyebrow {
+  display: none;
+}
+
+body.squid-room .squid-room-team-header {
+  min-height: 34px;
+  padding: 0 0 7px;
+}
+
+body.squid-room .pane-layout {
+  height: clamp(300px, 32vh, 390px);
+}
+
+body.squid-room .squid-room-pet-shell {
+  padding: 10px 12px 11px;
+  gap: 7px;
+  overflow: visible;
+}
+
+body.squid-room .squid-room-pet-header {
+  min-height: 22px;
+}
+
+body.squid-room .pet-stage,
+body.squid-room .squid-room-pet-stage {
+  position: relative;
+  flex: 0 0 106px;
+  min-height: 106px;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+}
+
+body.squid-room .pet-glow {
+  position: absolute;
+  width: min(58%, 118px);
+  aspect-ratio: 1;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(114, 240, 224, 0.18), transparent 64%);
+  filter: blur(11px);
+  transform: translateY(8px);
+}
+
+body.squid-room .pet,
+body.squid-room .squid-room-codex-pet {
+  width: clamp(66px, 20%, 86px);
+  z-index: 2;
+  filter: drop-shadow(0 0 16px rgba(114, 240, 224, 0.2));
+}
+
+body.squid-room .pet-stage .bubble {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(168, 255, 244, 0.62);
+  box-shadow: 0 0 10px rgba(114, 240, 224, 0.58);
+  opacity: 0.58;
+  animation: squid-room-bubble-drift 8s ease-in-out infinite;
+}
+
+body.squid-room .pet-stage .bubble-1 {
+  left: 27%;
+  top: 62%;
+}
+
+body.squid-room .pet-stage .bubble-2 {
+  right: 28%;
+  top: 38%;
+  animation-delay: -2.6s;
+}
+
+body.squid-room .pet-stage .bubble-3 {
+  left: 54%;
+  top: 20%;
+  animation-delay: -5.1s;
+}
+
+@keyframes squid-room-bubble-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 6px, 0) scale(0.78);
+    opacity: 0.25;
+  }
+  45% {
+    transform: translate3d(6px, -10px, 0) scale(1);
+    opacity: 0.72;
+  }
+}
+
+body.squid-room .pet-stage.is-active .pet-glow {
+  background: radial-gradient(circle, rgba(114, 240, 224, 0.25), transparent 66%);
+}
+
+body.squid-room .pet-stage.is-settling .bubble {
+  opacity: 0.38;
+  animation-duration: 12s;
+}
+
+body.squid-room .pet-stage.is-resting .bubble,
+body.squid-room .pet-stage.is-resting .pet-glow {
+  opacity: 0.24;
+  animation-duration: 18s;
+}
+
+body.squid-room .chip,
+body.squid-room .squid-room-counts span,
+body.squid-room .squid-room-pet-state {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid rgba(114, 240, 224, 0.22);
+  border-radius: 999px;
+  color: var(--text-high);
+  background: var(--lumen-soft);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+body.squid-room .verb-chip {
+  align-self: center;
+  margin-top: 0;
+}
+
+body.squid-room .face-line,
+body.squid-room .squid-room-pet-bubble {
+  position: relative;
+  min-height: 36px;
+  padding: 8px 58px 8px 10px;
+  border: 1px solid rgba(114, 240, 224, 0.13);
+  border-radius: 8px;
+  color: var(--text-high);
+  background: rgba(3, 8, 15, 0.6);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+body.squid-room .face-line-text {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+body.squid-room .face-details {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  margin: 0;
+}
+
+body.squid-room .face-details[open] {
+  position: static;
+  margin-top: 6px;
+}
+
+body.squid-room .details-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 6px;
+  border: 1px solid rgba(114, 240, 224, 0.17);
+  border-radius: 999px;
+  color: var(--text-mid);
+  background: rgba(114, 240, 224, 0.07);
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  list-style: none;
+}
+
+body.squid-room .details-toggle::-webkit-details-marker {
+  display: none;
+}
+
+body.squid-room .face-raw {
+  display: none;
+  max-height: 72px;
+  margin: 6px 0 0;
+  padding: 7px;
+  overflow: auto;
+  border-radius: 6px;
+  color: var(--text-mid);
+  background: rgba(0, 0, 0, 0.28);
+  font: 11px/1.35 Consolas, "SFMono-Regular", monospace;
+  white-space: pre-wrap;
+}
+
+body.squid-room .face-details[open] .face-raw,
+body.squid-room .face-raw.open {
+  display: block;
+}
+
+body.squid-room .btn,
+body.squid-room .squid-room-refresh,
+body.squid-room .squid-room-app-toggle-btn,
+body.squid-room .squid-room-pane-menu-trigger,
+body.squid-room .squid-room-pane-menu-panel .pane-action-btn,
+body.squid-room .squid-room-pane-menu-panel .lock-icon,
+body.squid-room .squid-room-pane-menu-panel .pane-role-info-btn,
+body.squid-room .squid-room-pane-menu-panel .fresh-session-btn,
+body.squid-room #fullRestartBtn {
+  border: 1px solid rgba(114, 240, 224, 0.22);
+  border-radius: 8px;
+  color: var(--text-high);
+  background: rgba(6, 14, 24, 0.66);
+  box-shadow: inset 0 1px 0 rgba(236, 255, 252, 0.05);
+}
+
+body.squid-room .btn:hover,
+body.squid-room .squid-room-refresh:hover,
+body.squid-room .squid-room-app-toggle-btn:hover,
+body.squid-room .squid-room-pane-menu-trigger:hover,
+body.squid-room .squid-room-pane-menu[open] .squid-room-pane-menu-trigger {
+  border-color: var(--glass-border-strong);
+  color: var(--lumen);
+  background: var(--lumen-soft);
+}
+
+body.squid-room #fullRestartBtn:hover {
+  border-color: rgba(255, 126, 126, 0.42);
+  color: #ffb3b3;
+  background: rgba(255, 93, 93, 0.09);
+}
+
+body.squid-room .squid-room-live-pane[data-pane-id="trustquote-lead"],
+body.squid-room .squid-room-live-pane.is-lead {
+  border-color: rgba(255, 191, 92, 0.42);
+  box-shadow:
+    inset 3px 0 0 rgba(255, 191, 92, 0.8),
+    inset 0 1px 0 rgba(255, 246, 220, 0.06),
+    0 18px 42px rgba(0, 0, 0, 0.34);
+}
+
+body.squid-room .lead-tag,
+body.squid-room .squid-room-live-pane[data-pane-id="trustquote-lead"] .pane-title::after {
+  border-color: rgba(255, 191, 92, 0.42);
+  color: #ffe4ad;
+  background: var(--lead-amber-soft);
+}
+
+body.squid-room .squid-room-live-pane.pane-expanded,
+body.squid-room .squid-room-live-panes .pane-expanded {
+  min-height: min(780px, calc(100vh - 170px));
+}
+
+body.squid-room .squid-room-live-pane.pane-expanded .pane-terminal,
+body.squid-room .squid-room-live-panes .pane-expanded .pane-terminal {
+  min-height: min(600px, calc(100vh - 250px));
+}
+
+@media (max-width: 1100px), (max-height: 760px) {
+  body.squid-room .pane-layout {
+    height: clamp(276px, 32vh, 340px);
+  }
+
+  body.squid-room .pet-stage,
+  body.squid-room .squid-room-pet-stage {
+    flex-basis: 94px;
+    min-height: 94px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.squid-room .abyss-motes span,
+  body.squid-room .pet-stage .bubble {
+    animation: none;
   }
 }
