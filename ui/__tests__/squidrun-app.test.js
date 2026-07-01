@@ -1085,6 +1085,49 @@ describe('SquidRunApp', () => {
       }));
     });
 
+    it('blocks wrong session metadata even when body text looks plausible for the target window', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.activeProfileName = 'main';
+      app.commsSessionScopeId = 'app-session-462';
+      app.registerAppWindow('main', createReadyTrustQuoteWindow(), {
+        profileName: 'main',
+        sessionScopeId: 'app-session-462',
+      });
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+
+      expect(app.routeInjectMessage({
+        panes: ['2'],
+        message: 'Builder, this body says main profile and current session; metadata says otherwise.',
+        traceContext: { messageId: 'hm-route-metadata-wrong-session-body-plausible' },
+        meta: {
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-999',
+          routeKind: 'agent_message',
+        },
+      })).toBe(false);
+
+      expect(sendToVisibleWindow).not.toHaveBeenCalled();
+      expect(app.lastInjectRouteBlock).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'inject_route_metadata_mismatch',
+        paneId: '2',
+        blockers: expect.arrayContaining([
+          'session_scope_mismatch:app-session-999->app-session-462',
+        ]),
+        routeMetadata: expect.objectContaining({
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-999',
+        }),
+        targetScope: expect.objectContaining({
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-462',
+        }),
+      }));
+    });
+
     it('does not cache failed side-profile visible-window handoffs', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const sendToVisibleWindow = jest

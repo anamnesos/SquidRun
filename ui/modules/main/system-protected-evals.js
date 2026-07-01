@@ -6,6 +6,7 @@ const path = require('path');
 const SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION = 'squidrun.system_protected_evals.v0';
 const CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY = 'phase4a.accepted_unverified_never_visible_delivery';
 const CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ = 'phase4b.full_materialized_message_requires_full_read';
+const CASE_ID_ROUTE_METADATA_GUARD = 'phase4c.route_metadata_guard_metadata_first';
 
 const DEFAULT_REPO_ROOT = path.resolve(__dirname, '../../..');
 const FULL_AGENT_MESSAGE_PATH_RE = /(?:^|\s)(?:\.squidrun[\\/]+)?coord[\\/]+full-agent-messages[\\/]+[A-Za-z0-9._-]+\.txt\b/i;
@@ -259,9 +260,124 @@ const FULL_MATERIALIZED_MESSAGE_CASE = Object.freeze({
   ]),
 });
 
+const ROUTE_METADATA_GUARD_CASE = Object.freeze({
+  id: CASE_ID_ROUTE_METADATA_GUARD,
+  phase: 'phase4c',
+  title: 'route metadata guard stays metadata-first',
+  protectedBehavior: 'Pane injection route metadata is authoritative when present: body text cannot override wrong profile/session/window metadata, and metadata mismatch must fail closed without main/default fallback.',
+  protectedZeroFail: true,
+  authorityPolicy: 'system_eval_only_no_dispatch',
+  sideEffects: Object.freeze({
+    runtime: false,
+    network: false,
+    writes: false,
+    externalSends: false,
+    restart: false,
+  }),
+  sourceRefs: Object.freeze([
+    Object.freeze({
+      id: 'squidrun_app_metadata_validator_mismatch_reason',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'validateInjectRouteMetadata(packet = {}, paneId = \'\', targetWindowKey = \'main\')',
+      requiredText: "reason: 'inject_route_metadata_mismatch'",
+      reason: 'Wrong route metadata must expose an actionable block reason.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_metadata_validator_profile_mismatch',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'validateInjectRouteMetadata(packet = {}, paneId = \'\', targetWindowKey = \'main\')',
+      requiredText: 'profile_mismatch:${routeMetadata.profileName}->${expectedProfileName}',
+      reason: 'Profile metadata mismatch must be detected before body fallback.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_metadata_validator_session_mismatch',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'validateInjectRouteMetadata(packet = {}, paneId = \'\', targetWindowKey = \'main\')',
+      requiredText: 'session_scope_mismatch:${routeMetadata.sessionScopeId}->${expectedSessionScopeId}',
+      reason: 'Session metadata mismatch must be detected before body fallback.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_route_metadata_guard_before_delivery',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'routeInjectMessage(payload = {})',
+      requiredText: 'const routeValidation = this.validateInjectRouteMetadata(packet, paneId, normalizedTargetWindowKey);',
+      reason: 'Route metadata must be validated before visible or hidden delivery is attempted.',
+    }),
+    Object.freeze({
+      id: 'squidrun_app_route_metadata_guard_block_event',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'routeInjectMessage(payload = {})',
+      requiredText: "deliveryPath: 'metadata_route_guard'",
+      reason: 'Metadata mismatch must leave an auditable blocked handoff event.',
+    }),
+  ]),
+  testRefs: Object.freeze([
+    Object.freeze({
+      id: 'correct_metadata_misleading_body_routes',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'routes correct metadata even when body text mentions another profile',
+      requiredText: Object.freeze([
+        'This body says Eunbyeol/scoped, but the envelope belongs to main.',
+        "expect(app.routeInjectMessage({",
+        "profileName: 'main'",
+        "sessionScopeId: 'app-session-462'",
+        'expect(app.lastInjectRouteBlock).toBeNull()',
+      ]),
+    }),
+    Object.freeze({
+      id: 'wrong_profile_metadata_plausible_body_blocks',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'blocks wrong metadata even when body text looks plausible for the target window',
+      requiredText: Object.freeze([
+        'Builder, this is for the main current session. Please handle it here.',
+        "expect(app.routeInjectMessage({",
+        'expect(sendToVisibleWindow).not.toHaveBeenCalled()',
+        "reason: 'inject_route_metadata_mismatch'",
+        'profile_mismatch:eunbyeol->main',
+        'session_scope_mismatch:app-session-462:eunbyeol->app-session-462',
+      ]),
+    }),
+    Object.freeze({
+      id: 'wrong_session_metadata_plausible_body_blocks',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'blocks wrong session metadata even when body text looks plausible for the target window',
+      requiredText: Object.freeze([
+        'Builder, this body says main profile and current session; metadata says otherwise.',
+        "expect(app.routeInjectMessage({",
+        'expect(sendToVisibleWindow).not.toHaveBeenCalled()',
+        "reason: 'inject_route_metadata_mismatch'",
+        'session_scope_mismatch:app-session-999->app-session-462',
+      ]),
+    }),
+  ]),
+  focusedCommands: Object.freeze([
+    'node ui/scripts/hm-system-protected-evals.js --case phase4c.route_metadata_guard_metadata_first --pretty',
+    'npm --prefix ui test -- system-protected-evals.test.js --runInBand',
+    'npm --prefix ui test -- squidrun-app.test.js --runInBand --testNamePattern "routes correct metadata even when body text mentions another profile|blocks wrong metadata even when body text looks plausible for the target window|blocks wrong session metadata even when body text looks plausible for the target window"',
+  ]),
+  expectedRegressionFailures: Object.freeze([
+    Object.freeze({
+      id: 'metadata_guard_removed',
+      mutation: 'Remove or bypass validateInjectRouteMetadata before pane injection delivery.',
+      expectedFailedCheckIds: Object.freeze(['route_metadata_guard_runs_before_delivery']),
+    }),
+    Object.freeze({
+      id: 'body_override_wrong_metadata',
+      mutation: 'Allow plausible body text to override wrong profile/session metadata.',
+      expectedFailedCheckIds: Object.freeze(['route_metadata_wrong_profile_fixture_blocks']),
+    }),
+    Object.freeze({
+      id: 'metadata_mismatch_main_fallback_allowed',
+      mutation: 'Let metadata mismatch fall through to visible/main/default fallback instead of continuing fail-closed.',
+      expectedFailedCheckIds: Object.freeze(['route_metadata_mismatch_blocks_before_visible_fallback']),
+    }),
+  ]),
+});
+
 const PROTECTED_SYSTEM_EVALS = Object.freeze([
   ACCEPTED_UNVERIFIED_CASE,
   FULL_MATERIALIZED_MESSAGE_CASE,
+  ROUTE_METADATA_GUARD_CASE,
 ]);
 
 function normalizeRelPath(value) {
@@ -419,7 +535,10 @@ function validateRequiredRefs(evalCase, options = {}) {
     const relPath = normalizeRelPath(ref.path);
     if (!testCache.has(relPath)) testCache.set(relPath, readProjectFile(relPath, options));
     const text = testCache.get(relPath);
-    const testNameOk = text.includes(`test('${ref.testName}'`) || text.includes(`test("${ref.testName}"`);
+    const testNameOk = text.includes(`test('${ref.testName}'`)
+      || text.includes(`test("${ref.testName}"`)
+      || text.includes(`it('${ref.testName}'`)
+      || text.includes(`it("${ref.testName}"`);
     checks.push(makeCheck(
       `test_ref_${ref.id}`,
       testNameOk,
@@ -580,6 +699,108 @@ function validateFullMaterializedMessageSemantics(evalCase, options = {}) {
   return checks;
 }
 
+function validateRouteMetadataGuardSemantics(evalCase, options = {}) {
+  const appText = readProjectFile('ui/modules/main/squidrun-app.js', options);
+  const appTestText = readProjectFile('ui/__tests__/squidrun-app.test.js', options);
+  const validatorBlock = extractFunctionBlock(
+    appText,
+    'validateInjectRouteMetadata(packet = {}, paneId = \'\', targetWindowKey = \'main\')'
+  );
+  const routeBlock = extractFunctionBlock(appText, 'routeInjectMessage(payload = {})');
+  const checks = [];
+
+  checks.push(makeCheck(
+    'route_metadata_validator_detects_profile_and_session_mismatch',
+    validatorBlock.includes("reason: 'inject_route_metadata_mismatch'")
+      && validatorBlock.includes('profile_mismatch:${routeMetadata.profileName}->${expectedProfileName}')
+      && validatorBlock.includes('session_scope_mismatch:${routeMetadata.sessionScopeId}->${expectedSessionScopeId}'),
+    'metadata validator detects profile/session mismatch with actionable block reason',
+    { path: 'ui/modules/main/squidrun-app.js', anchor: 'validateInjectRouteMetadata(packet = {}, paneId = \'\', targetWindowKey = \'main\')' }
+  ));
+
+  const routeValidationIndex = routeBlock.indexOf('const routeValidation = this.validateInjectRouteMetadata(packet, paneId, normalizedTargetWindowKey);');
+  const routeValidationBlockIndex = routeBlock.indexOf('if (!routeValidation.ok)');
+  const visibleWindowIndex = routeBlock.indexOf('const visibleWindowAvailable');
+  const hiddenPaneHostIndex = routeBlock.indexOf('this.pendingPaneDeliveries.set');
+  const firstDeliveryIndex = [
+    routeBlock.indexOf("this.sendToVisibleWindow('inject-message'"),
+    hiddenPaneHostIndex,
+  ].filter((index) => index >= 0).sort((left, right) => left - right)[0] ?? -1;
+
+  checks.push(makeCheck(
+    'route_metadata_guard_runs_before_delivery',
+    routeValidationIndex >= 0
+      && routeValidationBlockIndex > routeValidationIndex
+      && (visibleWindowIndex === -1 || routeValidationBlockIndex < visibleWindowIndex)
+      && (firstDeliveryIndex === -1 || routeValidationBlockIndex < firstDeliveryIndex),
+    'route metadata is validated before visible/default/hidden pane delivery can happen',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'routeInjectMessage(payload = {})',
+      routeValidationIndex,
+      routeValidationBlockIndex,
+      visibleWindowIndex,
+      firstDeliveryIndex,
+    }
+  ));
+
+  const mismatchBlockEnd = routeBlock.indexOf('const preferHiddenPaneHost', routeValidationBlockIndex);
+  const mismatchBlock = routeValidationBlockIndex >= 0
+    ? routeBlock.slice(routeValidationBlockIndex, mismatchBlockEnd >= 0 ? mismatchBlockEnd : undefined)
+    : '';
+  checks.push(makeCheck(
+    'route_metadata_mismatch_blocks_before_visible_fallback',
+    mismatchBlock.includes('this.lastInjectRouteBlock = routeValidation;')
+      && mismatchBlock.includes("deliveryPath: 'metadata_route_guard'")
+      && mismatchBlock.includes('success: false')
+      && mismatchBlock.includes('continue;')
+      && !mismatchBlock.includes("this.sendToVisibleWindow('inject-message'"),
+    'metadata mismatch records an auditable block and cannot fall through to visible/default fallback',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'routeInjectMessage(payload = {})',
+      mismatchBlockLength: mismatchBlock.length,
+    }
+  ));
+
+  checks.push(makeCheck(
+    'route_metadata_correct_metadata_fixture_routes',
+    appTestText.includes("it('routes correct metadata even when body text mentions another profile'")
+      && appTestText.includes('This body says Eunbyeol/scoped, but the envelope belongs to main.')
+      && appTestText.includes("expect(app.routeInjectMessage({")
+      && appTestText.includes("profileName: 'main'")
+      && appTestText.includes("sessionScopeId: 'app-session-462'")
+      && appTestText.includes('expect(app.lastInjectRouteBlock).toBeNull()'),
+    'focused routeInjectMessage test proves correct metadata routes despite misleading body',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'route_metadata_wrong_profile_fixture_blocks',
+    appTestText.includes("it('blocks wrong metadata even when body text looks plausible for the target window'")
+      && appTestText.includes('Builder, this is for the main current session. Please handle it here.')
+      && appTestText.includes('expect(sendToVisibleWindow).not.toHaveBeenCalled()')
+      && appTestText.includes("reason: 'inject_route_metadata_mismatch'")
+      && appTestText.includes('profile_mismatch:eunbyeol->main')
+      && appTestText.includes('session_scope_mismatch:app-session-462:eunbyeol->app-session-462'),
+    'focused routeInjectMessage test proves wrong profile/session metadata blocks tempting body text',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'route_metadata_wrong_session_fixture_blocks',
+    appTestText.includes("it('blocks wrong session metadata even when body text looks plausible for the target window'")
+      && appTestText.includes('Builder, this body says main profile and current session; metadata says otherwise.')
+      && appTestText.includes('expect(sendToVisibleWindow).not.toHaveBeenCalled()')
+      && appTestText.includes("reason: 'inject_route_metadata_mismatch'")
+      && appTestText.includes('session_scope_mismatch:app-session-999->app-session-462'),
+    'focused routeInjectMessage test proves wrong session metadata alone blocks tempting body text',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  return checks;
+}
+
 function validateCaseMetadata(evalCase) {
   const sideEffects = evalCase.sideEffects || {};
   return [
@@ -630,6 +851,9 @@ function validateProtectedSystemEvalCase(evalCase, options = {}) {
   }
   if (evalCase.id === CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ) {
     checks.push(...validateFullMaterializedMessageSemantics(evalCase, options));
+  }
+  if (evalCase.id === CASE_ID_ROUTE_METADATA_GUARD) {
+    checks.push(...validateRouteMetadataGuardSemantics(evalCase, options));
   }
   const failures = checks.filter((check) => !check.ok);
   return {
@@ -713,6 +937,7 @@ function runSystemProtectedEvals(options = {}) {
 module.exports = {
   CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY,
   CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ,
+  CASE_ID_ROUTE_METADATA_GUARD,
   PROTECTED_SYSTEM_EVALS,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
   buildSystemProtectedEvalRunPlan,
@@ -727,6 +952,7 @@ module.exports = {
     readProjectFile,
     validateAcceptedUnverifiedSemantics,
     validateFullMaterializedMessageSemantics,
+    validateRouteMetadataGuardSemantics,
     validateRequiredRefs,
   },
 };

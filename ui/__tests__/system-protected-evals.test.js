@@ -7,6 +7,7 @@ const { spawnSync } = require('child_process');
 const {
   CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY,
   CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ,
+  CASE_ID_ROUTE_METADATA_GUARD,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
   buildSystemProtectedEvalRunPlan,
   deriveFullMaterializedMessageDecision,
@@ -26,6 +27,8 @@ function defaultOverrides(overrides = {}) {
     'ui/modules/daemon-handlers.js': overrides.daemonHandlers || readRel('ui/modules/daemon-handlers.js'),
     'ui/__tests__/daemon-handlers.test.js': overrides.daemonHandlersTest || readRel('ui/__tests__/daemon-handlers.test.js'),
     'ui/__tests__/observed-signal-work-items.test.js': overrides.observedSignalTest || readRel('ui/__tests__/observed-signal-work-items.test.js'),
+    'ui/modules/main/squidrun-app.js': overrides.squidrunApp || readRel('ui/modules/main/squidrun-app.js'),
+    'ui/__tests__/squidrun-app.test.js': overrides.squidrunAppTest || readRel('ui/__tests__/squidrun-app.test.js'),
   };
 }
 
@@ -328,5 +331,102 @@ describe('system protected evals', () => {
     expect(report.ok).toBe(false);
     expect(failedCheckIds(report)).toContain('full_materialized_decision_preview_head_tail_without_path_is_not_authority');
     expect(failedCheckIds(report)).toContain('full_materialized_preview_only_not_authority');
+  });
+
+  test('registers Phase 4C route metadata guard as metadata-first protected eval', () => {
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_ROUTE_METADATA_GUARD],
+      generatedAt: '2026-06-30T00:00:00.000Z',
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.summary).toEqual(expect.objectContaining({
+      caseCount: 1,
+      protectedZeroFailCount: 1,
+      passed: 1,
+      failed: 0,
+    }));
+    expect(report.focusedCommands).toEqual(expect.arrayContaining([
+      expect.stringContaining('hm-system-protected-evals.js --case phase4c.route_metadata_guard_metadata_first'),
+      expect.stringContaining('squidrun-app.test.js'),
+    ]));
+    expect(checkIds(report)).toEqual(expect.arrayContaining([
+      'route_metadata_validator_detects_profile_and_session_mismatch',
+      'route_metadata_guard_runs_before_delivery',
+      'route_metadata_mismatch_blocks_before_visible_fallback',
+      'route_metadata_correct_metadata_fixture_routes',
+      'route_metadata_wrong_profile_fixture_blocks',
+      'route_metadata_wrong_session_fixture_blocks',
+    ]));
+  });
+
+  test('Phase 4C exposes route metadata source refs and focused routeInjectMessage fixtures', () => {
+    const plan = buildSystemProtectedEvalRunPlan({
+      caseIds: [CASE_ID_ROUTE_METADATA_GUARD],
+    });
+    const [evalCase] = plan.cases;
+
+    expect(evalCase.id).toBe(CASE_ID_ROUTE_METADATA_GUARD);
+    expect(evalCase.sourceRefs.map((ref) => ref.id)).toEqual([
+      'squidrun_app_metadata_validator_mismatch_reason',
+      'squidrun_app_metadata_validator_profile_mismatch',
+      'squidrun_app_metadata_validator_session_mismatch',
+      'squidrun_app_route_metadata_guard_before_delivery',
+      'squidrun_app_route_metadata_guard_block_event',
+    ]);
+    expect(evalCase.testRefs.map((ref) => ref.testName)).toEqual(expect.arrayContaining([
+      'routes correct metadata even when body text mentions another profile',
+      'blocks wrong metadata even when body text looks plausible for the target window',
+      'blocks wrong session metadata even when body text looks plausible for the target window',
+    ]));
+    expect(evalCase.expectedRegressionFailures.map((failure) => failure.id)).toEqual([
+      'metadata_guard_removed',
+      'body_override_wrong_metadata',
+      'metadata_mismatch_main_fallback_allowed',
+    ]);
+  });
+
+  test('Phase 4C fails if route metadata validation is bypassed before delivery', () => {
+    const squidrunApp = readRel('ui/modules/main/squidrun-app.js').replace(
+      '      const routeValidation = this.validateInjectRouteMetadata(packet, paneId, normalizedTargetWindowKey);\n',
+      '      const routeValidation = { ok: true, routeMetadata: {}, targetScope: {} };\n'
+    );
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_ROUTE_METADATA_GUARD],
+      fileTextOverrides: defaultOverrides({ squidrunApp }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('source_ref_squidrun_app_route_metadata_guard_before_delivery');
+    expect(failedCheckIds(report)).toContain('route_metadata_guard_runs_before_delivery');
+  });
+
+  test('Phase 4C fails if metadata mismatch can fall through to visible/default fallback', () => {
+    const squidrunApp = readRel('ui/modules/main/squidrun-app.js').replace(
+      "        log.warn(\n          'InjectIPC',\n          `Blocked inject route for pane ${paneId}: ${routeValidation.reason} (${routeValidation.blockers.join(', ')})`\n        );\n        continue;\n",
+      "        log.warn(\n          'InjectIPC',\n          `Blocked inject route for pane ${paneId}: ${routeValidation.reason} (${routeValidation.blockers.join(', ')})`\n        );\n"
+    );
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_ROUTE_METADATA_GUARD],
+      fileTextOverrides: defaultOverrides({ squidrunApp }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('route_metadata_mismatch_blocks_before_visible_fallback');
+  });
+
+  test('Phase 4C fails if the wrong-session tempting-body fixture is removed', () => {
+    const squidrunAppTest = readRel('ui/__tests__/squidrun-app.test.js').replace(
+      'blocks wrong session metadata even when body text looks plausible for the target window',
+      'renamed wrong session route metadata fixture'
+    );
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_ROUTE_METADATA_GUARD],
+      fileTextOverrides: defaultOverrides({ squidrunAppTest }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('test_ref_wrong_session_metadata_plausible_body_blocks');
+    expect(failedCheckIds(report)).toContain('route_metadata_wrong_session_fixture_blocks');
   });
 });
