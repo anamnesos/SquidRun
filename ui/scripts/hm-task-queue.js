@@ -7,8 +7,8 @@ const { resolveCoordPath } = require('../config');
 const VALID_AGENTS = new Set(['architect', 'builder', 'oracle']);
 const DEFAULT_QUEUE_RELATIVE_PATH = path.join('runtime', 'agent-task-queue.json');
 const DEFAULT_HISTORY_LIMIT = 50;
-const QUEUE_SCHEMA_VERSION = 2;
-const VALID_STATES = new Set(['queued', 'active', 'blocked', 'waiting', 'done', 'failed']);
+const QUEUE_SCHEMA_VERSION = 3;
+const VALID_STATES = new Set(['queued', 'active', 'blocked', 'waiting', 'parked', 'done', 'failed']);
 const VALID_RISK_CLASSES = new Set(['safe', 'caution', 'approval_required']);
 const WAKE_DISPATCH_STATES = new Set(['queued', 'blocked', 'waiting']);
 const WAKE_DISPATCH_RISKS = new Set(['safe', 'caution']);
@@ -16,6 +16,8 @@ const APPROVAL_REQUIRED_PATTERN = /\b(customer|client|invoice|payment|refund|cha
 const SAFE_PATTERN = /\b(doc|docs|documentation|test|tests|unit test|lint|typecheck|format|static|read-only|inspect|investigate|report)\b/i;
 const CAUTION_PATTERN = /\b(infra|debug|diagnose|fix|patch|code|refactor|restartless|routing|watcher|queue|schema|migration)\b/i;
 const DEFAULT_APPROVAL_HOLD_REASON = 'Approval required before owned-work resume';
+const PARKED_HISTORY_COMPLETION_REASON = 'parked_not_executed';
+const DEFAULT_PARKED_REASON = 'Parked: explicit unpark required before dispatch';
 
 function getQueuePath() {
   try {
@@ -218,16 +220,74 @@ function normalizeTask(task, agent) {
   };
 }
 
+function isParkedTask(task) {
+  return normalizeState(task?.state || task?.status, 'queued') === 'parked';
+}
+
+function isParkedHistoryTask(task) {
+  if (!task || typeof task !== 'object') return false;
+  const completionReason = trimText(task.completionReason);
+  return isParkedTask(task) || completionReason === PARKED_HISTORY_COMPLETION_REASON;
+}
+
+function toParkedTask(task, agent) {
+  const completionReason = trimText(task?.completionReason);
+  const parked = normalizeTask({
+    ...task,
+    state: 'parked',
+    status: 'parked',
+    blockedReason: trimText(task?.blockedReason) || DEFAULT_PARKED_REASON,
+    restartPersistence: true,
+    completedAtMs: 0,
+    completionReason: null,
+    metadata: {
+      ...(task?.metadata && typeof task.metadata === 'object' ? task.metadata : {}),
+      migratedFromHistoryCompletionReason: completionReason || null,
+    },
+  }, agent);
+  if (parked) {
+    parked.restartPersistence = true;
+    parked.completedAtMs = 0;
+    parked.completionReason = null;
+  }
+  return parked;
+}
+
 function normalizeBucket(bucket, agent) {
   const input = bucket && typeof bucket === 'object' ? bucket : {};
+  const pending = Array.isArray(input.pending)
+    ? input.pending.map((task) => normalizeTask(task, agent)).filter(Boolean)
+    : [];
+  const activeTask = normalizeTask(input.active, agent);
+  let active = activeTask;
+  if (activeTask && isParkedTask(activeTask)) {
+    pending.push({
+      ...activeTask,
+      blockedReason: activeTask.blockedReason || DEFAULT_PARKED_REASON,
+      restartPersistence: true,
+    });
+    active = null;
+  }
+  const history = Array.isArray(input.history)
+    ? input.history.map((task) => normalizeTask(task, agent)).filter(Boolean)
+    : [];
+  const seenPendingTaskIds = new Set(pending.map((task) => task.taskId).filter(Boolean));
+  const retainedHistory = [];
+  for (const task of history) {
+    if (isParkedHistoryTask(task)) {
+      const parked = toParkedTask(task, agent);
+      if (parked && !seenPendingTaskIds.has(parked.taskId)) {
+        pending.push(parked);
+        seenPendingTaskIds.add(parked.taskId);
+      }
+      continue;
+    }
+    retainedHistory.push(task);
+  }
   return {
-    pending: Array.isArray(input.pending)
-      ? input.pending.map((task) => normalizeTask(task, agent)).filter(Boolean)
-      : [],
-    active: normalizeTask(input.active, agent),
-    history: Array.isArray(input.history)
-      ? input.history.map((task) => normalizeTask(task, agent)).filter(Boolean).slice(-DEFAULT_HISTORY_LIMIT)
-      : [],
+    pending,
+    active,
+    history: retainedHistory.slice(-DEFAULT_HISTORY_LIMIT),
   };
 }
 
@@ -384,6 +444,7 @@ function wakeTriggerMatches(task, trigger) {
 function isWakeEligible(task, options = {}) {
   const nowMs = toTimestampMs(options.nowMs || options.now, Date.now());
   if (!task || task.restartPersistence === false) return false;
+  if (normalizeState(task.state, 'queued') === 'parked') return false;
   if (!WAKE_DISPATCH_STATES.has(normalizeState(task.state, 'queued'))) return false;
   if (!isContinueAfterDue(task, nowMs)) return false;
   if (!wakeTriggerMatches(task, options.wakeTrigger || options.trigger)) return false;
@@ -596,9 +657,16 @@ function activateTask(input = {}, options = {}) {
     return { ok: false, queuePath, reason: 'active_task_exists', task: bucket.active };
   }
   const taskId = trimText(input.taskId);
-  const index = taskId ? bucket.pending.findIndex((task) => task.taskId === taskId) : 0;
+  const index = taskId
+    ? bucket.pending.findIndex((task) => task.taskId === taskId)
+    : bucket.pending.findIndex((task) => !isParkedTask(task));
   if (index < 0 || !bucket.pending[index]) {
+    const parked = !taskId ? bucket.pending.find((task) => isParkedTask(task)) : null;
+    if (parked) return { ok: false, queuePath, reason: 'task_parked', task: parked };
     return { ok: false, queuePath, reason: 'no_pending_task' };
+  }
+  if (isParkedTask(bucket.pending[index])) {
+    return { ok: false, queuePath, reason: 'task_parked', task: bucket.pending[index] };
   }
   const [task] = bucket.pending.splice(index, 1);
   bucket.active = updateTaskAdvanced(task, {
@@ -621,6 +689,7 @@ function blockTask(input = {}, options = {}) {
   const bucket = state.agents[agent] || createEmptyBucket();
   const found = findTaskInBucket(bucket, input.taskId);
   if (!found.task) return { ok: false, queuePath, reason: 'task_not_found' };
+  if (isParkedTask(found.task)) return { ok: false, queuePath, reason: 'task_parked', task: found.task };
   const blocked = updateTaskAdvanced(found.task, {
     state: 'blocked',
     blockedReason,
@@ -644,6 +713,7 @@ function unblockTask(input = {}, options = {}) {
   const bucket = state.agents[agent] || createEmptyBucket();
   const found = findTaskInBucket(bucket, input.taskId);
   if (!found.task) return { ok: false, queuePath, reason: 'task_not_found' };
+  if (isParkedTask(found.task)) return { ok: false, queuePath, reason: 'task_parked', task: found.task };
   const unblocked = updateTaskAdvanced(found.task, {
     state: found.location === 'active' ? 'active' : 'queued',
     blockedReason: null,
@@ -667,6 +737,9 @@ function continueTask(input = {}, options = {}) {
   const bucket = state.agents[agent] || createEmptyBucket();
   const found = findTaskInBucket(bucket, input.taskId);
   if (!found.task) return { ok: false, queuePath, reason: 'task_not_found' };
+  if (isParkedTask(found.task)) {
+    return { ok: false, queuePath, reason: 'task_parked', task: found.task };
+  }
   if (found.task.riskClass === 'approval_required') {
     return { ok: false, queuePath, reason: 'approval_required', task: found.task };
   }
@@ -687,6 +760,69 @@ function continueTask(input = {}, options = {}) {
   state.agents[agent] = bucket;
   writeQueue(state, queuePath);
   return { ok: true, queuePath, task: continued };
+}
+
+function parkTask(input = {}, options = {}) {
+  const agent = normalizeAgent(input.agent || options.agent);
+  if (!agent) throw new Error('invalid_agent');
+  const parkedReason = trimText(input.parkedReason || input.reason || input.blockedReason) || DEFAULT_PARKED_REASON;
+  const queuePath = options.queuePath || getQueuePath();
+  const { state } = readQueue(queuePath);
+  const bucket = state.agents[agent] || createEmptyBucket();
+  const found = findTaskInBucket(bucket, input.taskId);
+  if (!found.task) return { ok: false, queuePath, reason: 'task_not_found' };
+  const parked = updateTaskAdvanced(found.task, {
+    state: 'parked',
+    blockedReason: parkedReason,
+    wakeTrigger: input.wakeTrigger || found.task.wakeTrigger,
+    continueAfter: input.continueAfter || found.task.continueAfter,
+    nextStep: input.nextStep || found.task.nextStep,
+    handoffSummary: input.handoffSummary || found.task.handoffSummary,
+    restartPersistence: true,
+    completionReason: null,
+    completedAtMs: 0,
+  });
+  parked.restartPersistence = true;
+  parked.completedAtMs = 0;
+  parked.completionReason = null;
+  if (found.location === 'active') {
+    bucket.active = null;
+    bucket.pending.unshift(parked);
+  } else {
+    bucket.pending[found.index] = parked;
+  }
+  state.agents[agent] = bucket;
+  writeQueue(state, queuePath);
+  return { ok: true, queuePath, task: parked };
+}
+
+function unparkTask(input = {}, options = {}) {
+  const agent = normalizeAgent(input.agent || options.agent);
+  if (!agent) throw new Error('invalid_agent');
+  const taskId = trimText(input.taskId);
+  if (!taskId) return { ok: false, queuePath: options.queuePath || getQueuePath(), reason: 'task_id_required' };
+  const queuePath = options.queuePath || getQueuePath();
+  const { state } = readQueue(queuePath);
+  const bucket = state.agents[agent] || createEmptyBucket();
+  const index = bucket.pending.findIndex((task) => task.taskId === taskId);
+  if (index < 0 || !bucket.pending[index]) {
+    return { ok: false, queuePath, reason: 'task_not_found' };
+  }
+  if (!isParkedTask(bucket.pending[index])) {
+    return { ok: false, queuePath, reason: 'task_not_parked', task: bucket.pending[index] };
+  }
+  const unparked = updateTaskAdvanced(bucket.pending[index], {
+    state: 'queued',
+    blockedReason: null,
+    wakeTrigger: input.wakeTrigger || bucket.pending[index].wakeTrigger,
+    continueAfter: input.continueAfter || bucket.pending[index].continueAfter,
+    nextStep: input.nextStep || bucket.pending[index].nextStep,
+    handoffSummary: input.handoffSummary || bucket.pending[index].handoffSummary,
+  });
+  bucket.pending[index] = unparked;
+  state.agents[agent] = bucket;
+  writeQueue(state, queuePath);
+  return { ok: true, queuePath, task: unparked };
 }
 
 function closeActiveTask(input = {}, options = {}, closeState = 'done') {
@@ -764,6 +900,8 @@ function usage() {
   console.log('          [--completion-sentinel <text>] [--idle-completion-ms <ms>] [--response-timeout-ms <ms>]');
   console.log('  list');
   console.log('  activate --agent <architect|builder|oracle> [--task-id <id>] [--next-step <text>]');
+  console.log('  park --agent <architect|builder|oracle> [--task-id <id>] --reason <text> [--next-step <text>]');
+  console.log('  unpark --agent <architect|builder|oracle> --task-id <id> [--next-step <text>]');
   console.log('  block --agent <architect|builder|oracle> [--task-id <id>] --reason <text> [--wake-trigger <text>] [--continue-after <time>]');
   console.log('  unblock --agent <architect|builder|oracle> [--task-id <id>] [--next-step <text>]');
   console.log('  continue --agent <architect|builder|oracle> [--task-id <id>] [--next-step <text>]');
@@ -899,6 +1037,34 @@ function main(argv = process.argv.slice(2)) {
     return result.ok ? 0 : 1;
   }
 
+  if (command === 'park') {
+    const result = parkTask({
+      agent: getOption(options, 'agent'),
+      taskId: getOption(options, 'task-id'),
+      reason: getOption(options, 'reason'),
+      blockedReason: getOption(options, 'blocked-reason'),
+      nextStep: getOption(options, 'next-step'),
+      wakeTrigger: getOption(options, 'wake-trigger'),
+      continueAfter: getOption(options, 'continue-after'),
+      handoffSummary: getOption(options, 'handoff-summary'),
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
+
+  if (command === 'unpark') {
+    const result = unparkTask({
+      agent: getOption(options, 'agent'),
+      taskId: getOption(options, 'task-id'),
+      nextStep: getOption(options, 'next-step'),
+      wakeTrigger: getOption(options, 'wake-trigger'),
+      continueAfter: getOption(options, 'continue-after'),
+      handoffSummary: getOption(options, 'handoff-summary'),
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return result.ok ? 0 : 1;
+  }
+
   if (command === 'unblock') {
     const result = unblockTask({
       agent: getOption(options, 'agent'),
@@ -999,6 +1165,8 @@ if (require.main === module) {
 module.exports = {
   DEFAULT_QUEUE_RELATIVE_PATH,
   DEFAULT_APPROVAL_HOLD_REASON,
+  DEFAULT_PARKED_REASON,
+  PARKED_HISTORY_COMPLETION_REASON,
   QUEUE_SCHEMA_VERSION,
   VALID_AGENTS,
   VALID_STATES,
@@ -1018,6 +1186,8 @@ module.exports = {
   enqueueTask,
   listQueue,
   activateTask,
+  parkTask,
+  unparkTask,
   blockTask,
   unblockTask,
   continueTask,

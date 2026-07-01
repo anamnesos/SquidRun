@@ -12,6 +12,7 @@ const {
   CASE_ID_TELEGRAM_RECALL_BODY_FIRST,
   CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF,
   CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY,
+  CASE_ID_TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES,
   CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
   buildSystemProtectedEvalRunPlan,
@@ -29,6 +30,8 @@ function defaultOverrides(overrides = {}) {
   return {
     'ui/scripts/hm-send.js': overrides.hmSend || readRel('ui/scripts/hm-send.js'),
     'ui/__tests__/hm-send.test.js': overrides.hmSendTest || readRel('ui/__tests__/hm-send.test.js'),
+    'ui/scripts/hm-task-queue.js': overrides.hmTaskQueue || readRel('ui/scripts/hm-task-queue.js'),
+    'ui/__tests__/hm-task-queue.test.js': overrides.hmTaskQueueTest || readRel('ui/__tests__/hm-task-queue.test.js'),
     'ui/modules/daemon-handlers.js': overrides.daemonHandlers || readRel('ui/modules/daemon-handlers.js'),
     'ui/__tests__/daemon-handlers.test.js': overrides.daemonHandlersTest || readRel('ui/__tests__/daemon-handlers.test.js'),
     'ui/__tests__/observed-signal-work-items.test.js': overrides.observedSignalTest || readRel('ui/__tests__/observed-signal-work-items.test.js'),
@@ -967,5 +970,114 @@ describe('system protected evals', () => {
     expect(failedCheckIds(report)).toContain('telegram_poller_lifecycle_registry_is_service_only');
     expect(failedCheckIds(report)).toContain('test_ref_service_lifecycle_telegram_poller_fixture');
     expect(failedCheckIds(report)).toContain('telegram_poller_lifecycle_registry_fixture');
+  });
+
+  test('registers Phase 4I task queue parked state as a protected eval', () => {
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES],
+      generatedAt: '2026-07-01T00:00:00.000Z',
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.summary).toEqual(expect.objectContaining({
+      caseCount: 1,
+      protectedZeroFailCount: 1,
+      passed: 1,
+      failed: 0,
+    }));
+    expect(report.focusedCommands).toEqual(expect.arrayContaining([
+      expect.stringContaining('hm-system-protected-evals.js --case phase4i.task_queue_parked_never_auto_dispatches'),
+      expect.stringContaining('hm-task-queue.test.js'),
+    ]));
+    expect(checkIds(report)).toEqual(expect.arrayContaining([
+      'task_queue_parked_state_is_first_class_schema',
+      'task_queue_parked_wake_exclusion',
+      'task_queue_parked_cannot_activate_continue_or_unblock',
+      'task_queue_park_action_moves_active_to_pending_parked',
+      'task_queue_unpark_is_only_explicit_transition',
+      'task_queue_parked_history_migrates_to_pending',
+      'task_queue_parked_focused_fixtures_prove_non_dispatch',
+    ]));
+  });
+
+  test('Phase 4I exposes source refs, focused fixtures, and mutation boundaries', () => {
+    const plan = buildSystemProtectedEvalRunPlan({
+      caseIds: [CASE_ID_TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES],
+    });
+    const [evalCase] = plan.cases;
+
+    expect(evalCase.id).toBe(CASE_ID_TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES);
+    expect(evalCase.sourceRefs.map((ref) => ref.id)).toEqual([
+      'task_queue_declares_parked_state',
+      'task_queue_wake_states_exclude_parked',
+      'task_queue_wake_eligibility_refuses_parked',
+      'task_queue_activate_refuses_parked',
+      'task_queue_continue_refuses_parked',
+      'task_queue_unblock_refuses_parked',
+      'task_queue_unpark_is_explicit_queued_transition',
+      'task_queue_migrates_parked_history_convention',
+    ]);
+    expect(evalCase.testRefs.map((ref) => ref.testName)).toEqual(expect.arrayContaining([
+      'parks owned work durably and requires explicit unpark before activation or continuation',
+      'keeps parked work out of wake candidates and never auto-dispatches it',
+      'migrates parked_not_executed history into pending parked work',
+    ]));
+    expect(evalCase.expectedRegressionFailures.map((failure) => failure.id)).toEqual([
+      'parked_added_to_wake_dispatch_states',
+      'activation_or_continue_allows_parked',
+      'unpark_not_explicit',
+      'parked_history_migration_removed',
+    ]);
+  });
+
+  test('Phase 4I fails if parked work becomes wake-dispatch eligible', () => {
+    const hmTaskQueue = readRel('ui/scripts/hm-task-queue.js')
+      .replace(
+        "const WAKE_DISPATCH_STATES = new Set(['queued', 'blocked', 'waiting']);",
+        "const WAKE_DISPATCH_STATES = new Set(['queued', 'blocked', 'waiting', 'parked']);"
+      )
+      .replace("  if (normalizeState(task.state, 'queued') === 'parked') return false;\n", '');
+    const hmTaskQueueTest = readRel('ui/__tests__/hm-task-queue.test.js')
+      .replace('expect(dispatcher).not.toHaveBeenCalled();', 'expect(dispatcher).toHaveBeenCalled();');
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES],
+      fileTextOverrides: defaultOverrides({ hmTaskQueue, hmTaskQueueTest }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('source_ref_task_queue_wake_states_exclude_parked');
+    expect(failedCheckIds(report)).toContain('source_ref_task_queue_wake_eligibility_refuses_parked');
+    expect(failedCheckIds(report)).toContain('task_queue_parked_wake_exclusion');
+    expect(failedCheckIds(report)).toContain('task_queue_parked_focused_fixtures_prove_non_dispatch');
+  });
+
+  test('Phase 4I fails if parked work can activate or continue without unpark', () => {
+    const hmTaskQueue = readRel('ui/scripts/hm-task-queue.js')
+      .replace(/  if \(isParkedTask\(bucket\.pending\[index\]\)\) \{\n    return \{ ok: false, queuePath, reason: 'task_parked', task: bucket\.pending\[index\] \};\n  \}\n/, '')
+      .replace(/  if \(isParkedTask\(found\.task\)\) \{\n    return \{ ok: false, queuePath, reason: 'task_parked', task: found\.task \};\n  \}\n/, '');
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES],
+      fileTextOverrides: defaultOverrides({ hmTaskQueue }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('task_queue_parked_cannot_activate_continue_or_unblock');
+  });
+
+  test('Phase 4I fails if parked_not_executed migration is removed', () => {
+    const hmTaskQueue = readRel('ui/scripts/hm-task-queue.js')
+      .replace('    if (isParkedHistoryTask(task)) {', '    if (false && isParkedHistoryTask(task)) {')
+      .replace('        pending.push(parked);', '        retainedHistory.push(parked);');
+    const hmTaskQueueTest = readRel('ui/__tests__/hm-task-queue.test.js')
+      .replace('migrates parked_not_executed history into pending parked work', 'renamed parked history fixture');
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES],
+      fileTextOverrides: defaultOverrides({ hmTaskQueue, hmTaskQueueTest }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('task_queue_parked_history_migrates_to_pending');
+    expect(failedCheckIds(report)).toContain('test_ref_parked_history_migration_fixture');
+    expect(failedCheckIds(report)).toContain('task_queue_parked_focused_fixtures_prove_non_dispatch');
   });
 });
