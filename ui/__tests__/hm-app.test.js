@@ -19,4 +19,13 @@ describe('hm-app CLI command normalization', () => {
     expect(normalizeCommand('window-close')).toBe('close-app-window');
     expect(normalizeCommand('close-app-window')).toBe('close-app-window');
   });
+
+  test('keeps Telegram poller restart aliases separate from renderer reload aliases', () => {
+    expect(normalizeCommand('restart-telegram')).toBe('restart-telegram-poller');
+    expect(normalizeCommand('reload-telegram-poller')).toBe('restart-telegram-poller');
+    expect(normalizeCommand('restart-telegram-poller')).toBe('restart-telegram-poller');
+    expect(normalizeCommand('reload')).toBe('reload-renderers');
+    expect(normalizeCommand('reload-renderer')).toBe('reload-renderers');
+    expect(normalizeCommand('reload-renderers')).toBe('reload-renderers');
+  });
 });

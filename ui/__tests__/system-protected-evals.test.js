@@ -11,6 +11,7 @@ const {
   CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE,
   CASE_ID_TELEGRAM_RECALL_BODY_FIRST,
   CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF,
+  CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY,
   CASE_ID_WATCHDOG_AUTONOMY_EVIDENCE,
   SYSTEM_PROTECTED_EVAL_SCHEMA_VERSION,
   buildSystemProtectedEvalRunPlan,
@@ -33,8 +34,14 @@ function defaultOverrides(overrides = {}) {
     'ui/__tests__/observed-signal-work-items.test.js': overrides.observedSignalTest || readRel('ui/__tests__/observed-signal-work-items.test.js'),
     'ui/modules/memory-broker.js': overrides.memoryBroker || readRel('ui/modules/memory-broker.js'),
     'ui/__tests__/memory-broker.test.js': overrides.memoryBrokerTest || readRel('ui/__tests__/memory-broker.test.js'),
+    'ui/modules/main/app-control-service.js': overrides.appControl || readRel('ui/modules/main/app-control-service.js'),
+    'ui/__tests__/app-control-service.test.js': overrides.appControlTest || readRel('ui/__tests__/app-control-service.test.js'),
     'ui/modules/main/squidrun-app.js': overrides.squidrunApp || readRel('ui/modules/main/squidrun-app.js'),
     'ui/__tests__/squidrun-app.test.js': overrides.squidrunAppTest || readRel('ui/__tests__/squidrun-app.test.js'),
+    'ui/modules/service-lifecycle-registry.js': overrides.serviceLifecycle || readRel('ui/modules/service-lifecycle-registry.js'),
+    'ui/__tests__/service-lifecycle-registry.test.js': overrides.serviceLifecycleTest || readRel('ui/__tests__/service-lifecycle-registry.test.js'),
+    'ui/scripts/hm-app.js': overrides.hmApp || readRel('ui/scripts/hm-app.js'),
+    'ui/__tests__/hm-app.test.js': overrides.hmAppTest || readRel('ui/__tests__/hm-app.test.js'),
     'ui/__tests__/telegram-reply-obligations.test.js': overrides.telegramReplyObligationsTest || readRel('ui/__tests__/telegram-reply-obligations.test.js'),
   };
 }
@@ -819,5 +826,146 @@ describe('system protected evals', () => {
     expect(failedCheckIds(report)).toContain('telegram_reply_debt_reconciliation_rejects_wrong_session_chat_and_time');
     expect(failedCheckIds(report)).toContain('test_ref_telegram_reply_debt_wrong_session_fixture');
     expect(failedCheckIds(report)).toContain('telegram_reply_debt_wrong_session_fixture');
+  });
+
+  test('registers Phase 4H Telegram poller restart boundary as a protected eval', () => {
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY],
+      generatedAt: '2026-06-30T00:00:00.000Z',
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.summary).toEqual(expect.objectContaining({
+      caseCount: 1,
+      protectedZeroFailCount: 1,
+      passed: 1,
+      failed: 0,
+    }));
+    expect(report.focusedCommands).toEqual(expect.arrayContaining([
+      expect.stringContaining('hm-system-protected-evals.js --case phase4h.telegram_poller_restart_is_poller_only'),
+      expect.stringContaining('app-control-service.test.js'),
+      expect.stringContaining('squidrun-app.test.js'),
+      expect.stringContaining('service-lifecycle-registry.test.js'),
+      expect.stringContaining('hm-app.test.js'),
+    ]));
+    expect(checkIds(report)).toEqual(expect.arrayContaining([
+      'telegram_poller_restart_aliases_stay_separate_from_reload_renderers',
+      'telegram_poller_restart_branch_delegates_to_polling_hook',
+      'telegram_poller_renderer_reload_branch_remains_separate',
+      'telegram_poller_app_control_context_wires_restart_hook',
+      'telegram_poller_app_restart_stops_and_starts_poller_only',
+      'telegram_poller_lifecycle_registry_is_service_only',
+      'telegram_poller_app_control_no_window_reload_fixture',
+      'telegram_poller_squidrun_app_no_pane_reload_fixture',
+      'telegram_poller_lifecycle_registry_fixture',
+      'telegram_poller_hm_app_alias_fixture',
+    ]));
+  });
+
+  test('Phase 4H exposes source refs, focused fixtures, and mutation boundaries', () => {
+    const plan = buildSystemProtectedEvalRunPlan({
+      caseIds: [CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY],
+    });
+    const [evalCase] = plan.cases;
+
+    expect(evalCase.id).toBe(CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY);
+    expect(evalCase.sourceRefs.map((ref) => ref.id)).toEqual([
+      'app_control_restart_alias_separate_from_renderer_reload',
+      'app_control_restart_branch_delegates_polling_only',
+      'squidrun_app_app_control_wires_restart_hook',
+      'squidrun_app_restart_poller_note_no_pane_reload',
+      'service_lifecycle_telegram_poller_restart_action',
+      'hm_app_restart_aliases_route_to_poller_restart',
+    ]);
+    expect(evalCase.testRefs.map((ref) => ref.testName)).toEqual(expect.arrayContaining([
+      'restart-telegram-poller delegates to the app poller lifecycle without reloading panes',
+      'restart-telegram-poller does not inspect or reload side-profile windows',
+      'restart-telegram-poller reports unavailable when the app lacks a restart hook',
+      'reload-renderers reloads every live window without restarting the main process',
+      'restarts the Telegram poller without reloading app panes',
+      'defines Telegram poller restart as service-only and pane-safe',
+      'keeps Telegram poller restart aliases separate from renderer reload aliases',
+    ]));
+    expect(evalCase.expectedRegressionFailures.map((failure) => failure.id)).toEqual([
+      'telegram_restart_alias_collapsed_to_renderer_reload',
+      'telegram_restart_branch_reloads_windows',
+      'telegram_restart_app_note_or_boundary_removed',
+      'telegram_lifecycle_registry_drift',
+      'telegram_restart_no_reload_fixture_removed',
+    ]);
+  });
+
+  test('Phase 4H fails if Telegram restart aliases collapse into renderer reload', () => {
+    const appControl = readRel('ui/modules/main/app-control-service.js')
+      .replace("return 'restart-telegram-poller';", "return 'reload-renderers';");
+    const hmApp = readRel('ui/scripts/hm-app.js')
+      .replace("if (normalized === 'restart-telegram' || normalized === 'reload-telegram-poller') return 'restart-telegram-poller';", "if (normalized === 'restart-telegram' || normalized === 'reload-telegram-poller') return 'reload-renderers';");
+    const hmAppTest = readRel('ui/__tests__/hm-app.test.js')
+      .replace("expect(normalizeCommand('restart-telegram')).toBe('restart-telegram-poller')", "expect(normalizeCommand('restart-telegram')).toBe('reload-renderers')");
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY],
+      fileTextOverrides: defaultOverrides({ appControl, hmApp, hmAppTest }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('source_ref_app_control_restart_alias_separate_from_renderer_reload');
+    expect(failedCheckIds(report)).toContain('telegram_poller_restart_aliases_stay_separate_from_reload_renderers');
+    expect(failedCheckIds(report)).toContain('telegram_poller_hm_app_alias_fixture');
+  });
+
+  test('Phase 4H fails if restart-telegram-poller enters the renderer reload path', () => {
+    const appControl = readRel('ui/modules/main/app-control-service.js')
+      .replace(
+        'const result = ctx.restartTelegramPoller(payload);',
+        'ctx.getAppWindows();\n      windowRef.webContents.reloadIgnoringCache();\n      const result = ctx.restartTelegramPoller(payload);'
+      );
+    const appControlTest = readRel('ui/__tests__/app-control-service.test.js')
+      .replace('expect(getAppWindows).not.toHaveBeenCalled();', 'expect(getAppWindows).toHaveBeenCalled();')
+      .replace('expect(getPaneHostWindows).not.toHaveBeenCalled();', 'expect(getPaneHostWindows).toHaveBeenCalled();');
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY],
+      fileTextOverrides: defaultOverrides({ appControl, appControlTest }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('telegram_poller_restart_branch_delegates_to_polling_hook');
+    expect(failedCheckIds(report)).toContain('telegram_poller_app_control_no_window_reload_fixture');
+  });
+
+  test('Phase 4H fails if app-level restart loses the no-pane-reload boundary', () => {
+    const squidrunApp = readRel('ui/modules/main/squidrun-app.js')
+      .replace('Telegram poller restart requested without reloading panes.', 'Telegram poller restart requested.');
+    const squidrunAppTest = readRel('ui/__tests__/squidrun-app.test.js')
+      .replace('Telegram poller restart requested without reloading panes.', 'Telegram poller restart requested.');
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY],
+      fileTextOverrides: defaultOverrides({ squidrunApp, squidrunAppTest }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('source_ref_squidrun_app_restart_poller_note_no_pane_reload');
+    expect(failedCheckIds(report)).toContain('telegram_poller_app_restart_stops_and_starts_poller_only');
+    expect(failedCheckIds(report)).toContain('telegram_poller_squidrun_app_no_pane_reload_fixture');
+  });
+
+  test('Phase 4H fails if lifecycle registry makes Telegram poller restart main-bound or terminal-impacting', () => {
+    const serviceLifecycle = readRel('ui/modules/service-lifecycle-registry.js')
+      .replace("restartAction: 'restart-telegram-poller'", "restartAction: 'reload-renderers'")
+      .replace('requiresMainRestart: false', 'requiresMainRestart: true')
+      .replace('affectsTerminals: false', 'affectsTerminals: true')
+      .replace('safeRestart: true', 'safeRestart: false')
+      .replace('Restarts remote message intake without touching panes.', 'Reloads panes to refresh Telegram intake.');
+    const serviceLifecycleTest = readRel('ui/__tests__/service-lifecycle-registry.test.js')
+      .replace('defines Telegram poller restart as service-only and pane-safe', 'renamed Telegram lifecycle fixture');
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY],
+      fileTextOverrides: defaultOverrides({ serviceLifecycle, serviceLifecycleTest }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('source_ref_service_lifecycle_telegram_poller_restart_action');
+    expect(failedCheckIds(report)).toContain('telegram_poller_lifecycle_registry_is_service_only');
+    expect(failedCheckIds(report)).toContain('test_ref_service_lifecycle_telegram_poller_fixture');
+    expect(failedCheckIds(report)).toContain('telegram_poller_lifecycle_registry_fixture');
   });
 });
