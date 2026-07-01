@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1183
+- Total files listed: 1186
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.
@@ -20,10 +20,10 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 103
 - scripts: 1
 - tools: 3
-- ui/__tests__: 446
-- ui/modules: 365
+- ui/__tests__: 447
+- ui/modules: 366
 - ui/other: 39
-- ui/scripts: 141
+- ui/scripts: 142
 - ui/styles: 20
 - workspace/knowledge: 17
 
@@ -33,9 +33,9 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - doc: 98
 - file: 1
 - jsonl: 1
-- script: 142
-- source: 431
-- test: 447
+- script: 143
+- source: 432
+- test: 448
 
 ## Files
 
@@ -115,7 +115,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | 2728 |
 | `.gitignore` | config | 4607 |
 | `AGENTS.md` | doc | 6432 |
-| `ARCHITECTURE.md` | doc | 76134 |
+| `ARCHITECTURE.md` | doc | 76904 |
 | `CLAUDE-AI.md` | doc | 3856 |
 | `CLAUDE.md` | doc | 2161 |
 | `CODE_OF_CONDUCT.md` | doc | 5185 |
@@ -536,6 +536,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/missing-arm-watchdog.test.js` | test | 7780 |
 | `ui/__tests__/mocks/electron.js` | test | 2473 |
 | `ui/__tests__/model-prompt-receipt.test.js` | test | 6021 |
+| `ui/__tests__/model-replay-job-packet.test.js` | test | 8908 |
 | `ui/__tests__/model-selector.test.js` | test | 3066 |
 | `ui/__tests__/model-switch-handlers.test.js` | test | 21789 |
 | `ui/__tests__/node-worker-fork-options.test.js` | test | 2118 |
@@ -846,6 +847,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/main/live-task-audit-sidecar.js` | source | 29749 |
 | `ui/modules/main/mira-lab-window.js` | source | 1901 |
 | `ui/modules/main/missing-arm-watchdog.js` | source | 3032 |
+| `ui/modules/main/model-replay-job-packet.js` | source | 19866 |
 | `ui/modules/main/observed-signal-work-items.js` | source | 13673 |
 | `ui/modules/main/pane-control-service.js` | source | 11459 |
 | `ui/modules/main/pane-host-window-manager.js` | source | 12289 |
@@ -1178,6 +1180,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-mira-reply.js` | script | 3555 |
 | `ui/scripts/hm-mira-self-direction.js` | script | 25560 |
 | `ui/scripts/hm-mira-visible-presence-proof.js` | script | 3472 |
+| `ui/scripts/hm-model-replay-job-packet.js` | script | 2874 |
 | `ui/scripts/hm-oracle-wake-context.js` | script | 10575 |
 | `ui/scripts/hm-oracle-wake-watchdog.js` | script | 5079 |
 | `ui/scripts/hm-pane.js` | script | 9576 |
