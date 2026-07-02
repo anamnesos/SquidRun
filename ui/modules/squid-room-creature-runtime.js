@@ -54,6 +54,14 @@ function resizeBinding(binding) {
   const height = Math.max(1, stage.clientHeight || 0);
   const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
   if (binding.cssWidth === width && binding.cssHeight === height && binding.dpr === dpr) return;
+  // CORONER SUPPORT: every backing-store reallocation is logged. Canvas
+  // resize thrash (layout oscillation -> width/height reassigned -> new
+  // native backing each time) is the prime suspect for the RSS explosions
+  // that survive the gradient fix - this line convicts or acquits it.
+  log.info(
+    'SquidRoomCreature',
+    `canvas resize ${binding.canvas?.dataset?.squidRoomCreature || '?'}: ${binding.cssWidth}x${binding.cssHeight}@${binding.dpr} -> ${width}x${height}@${dpr}`
+  );
   binding.cssWidth = width;
   binding.cssHeight = height;
   binding.dpr = dpr;
