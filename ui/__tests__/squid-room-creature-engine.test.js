@@ -24,7 +24,7 @@ describe('squid room creature engine (P1.7)', () => {
   });
 
   test('identity: builder is blue-family, oracle is purple-family', () => {
-    expect(PALETTES.builder.mantleMid).toMatch(/^#2f7fd0$/i);
+    expect(PALETTES.builder.mantleMid).toMatch(/^#3a7bd6$/i);
     expect(PALETTES.oracle.mantleMid).toMatch(/^#7e57c8$/i);
     const builder = createSquidCreature({ petId: 'builder' });
     const oracle = createSquidCreature({ petId: 'oracle' });
