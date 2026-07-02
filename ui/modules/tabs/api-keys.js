@@ -95,7 +95,7 @@ async function saveApiKeys() {
 
     if (result.success) {
       if (statusEl) {
-        statusEl.textContent = 'Saved! Available immediately.';
+        statusEl.textContent = 'Saved! App features see it now; running agent panes pick it up on their next restart.';
         statusEl.className = 'api-keys-status success';
       }
       API_KEY_FIELDS.forEach(({ inputId }) => {
