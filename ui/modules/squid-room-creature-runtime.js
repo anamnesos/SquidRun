@@ -285,6 +285,19 @@ function renderFrame(nowMs) {
       resizeBinding(binding);
       // Viewport rect cached on the same cadence (layout read, not per-frame).
       binding.canvasRect = binding.canvas.getBoundingClientRect();
+      // OCCLUSION LAW: measure the REAL opaque section bar and report it in
+      // engine-local coordinates - targets avoid it, drifters evacuate it.
+      const barEl = (binding.canvas.ownerDocument || document).querySelector?.('.squid-room-header');
+      if (barEl && binding.canvasRect) {
+        const barRect = barEl.getBoundingClientRect();
+        const scale = binding.scale || 1;
+        engine.setExclusionBand(
+          (barRect.top - binding.canvasRect.top) / scale - 30, // face-height pad
+          (barRect.bottom - binding.canvasRect.top) / scale + 8
+        );
+      } else {
+        engine.setExclusionBand(null, null);
+      }
     }
     if (!reduced) {
       engine.setCurrent(currentX, currentY);
