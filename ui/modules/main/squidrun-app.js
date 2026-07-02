@@ -6832,7 +6832,17 @@ class SquidRunApp {
   getAppWindowInstanceScope(windowKey = 'main') {
     const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
     const registered = this.appWindowInstanceScopes?.get?.(normalizedWindowKey);
-    if (registered) return { ...registered };
+    if (registered) {
+      // S463 Bug 2: windows register during boot BEFORE
+      // initializeStartupSessionScope upgrades commsSessionScopeId from the
+      // pid fallback (app-<pid>-<ts>) to the canonical app-session id, so the
+      // registry froze a value no renderer ever sees and owner assertions
+      // could never match. Serve the LIVE scope id instead of the frozen one.
+      return {
+        ...registered,
+        sessionScopeId: this.getWindowSessionScopeId(normalizedWindowKey),
+      };
+    }
     return this.buildAppWindowInstanceScope(normalizedWindowKey);
   }
 
