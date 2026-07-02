@@ -82,10 +82,31 @@ function anchorHeadElements(binding, nowMs) {
   }
 }
 
+// FLIGHT RECORDER (S463 coroner support): the room's renderer died silently
+// after ~19 minutes with no trace. Until the main-side coroner activates at
+// the next restart, the render loop logs a memory heartbeat every ~30s -
+// if the renderer dies again, the LAST heartbeat in app.log is the autopsy
+// (climbing heap = leak; flat heap = external kill/GPU).
+let lastHeartbeatAt = 0;
+function logMemoryHeartbeat(nowMs) {
+  if (nowMs - lastHeartbeatAt < 30000) return;
+  lastHeartbeatAt = nowMs;
+  try {
+    const heap = (typeof performance !== 'undefined' && performance.memory)
+      ? Math.round(performance.memory.usedJSHeapSize / 1048576)
+      : null;
+    const rss = (typeof process !== 'undefined' && typeof process.memoryUsage === 'function')
+      ? Math.round(process.memoryUsage().rss / 1048576)
+      : null;
+    log.info('SquidRoomCreature', `heartbeat heapMB=${heap} rssMB=${rss} bindings=${mounted.size}`);
+  } catch (_) { /* heartbeat must never hurt the loop */ }
+}
+
 function renderFrame(nowMs) {
   rafHandle = null;
   const dtMs = lastFrameAt ? Math.min(64, nowMs - lastFrameAt) : 16;
   lastFrameAt = nowMs;
+  logMemoryHeartbeat(nowMs);
 
   const hidden = typeof document !== 'undefined' && document.hidden === true;
   const reduced = prefersReducedMotion();

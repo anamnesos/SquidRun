@@ -7549,6 +7549,50 @@ class SquidRunApp {
       log.info('Window', 'did-start-loading');
     });
 
+    // CORONER (S463): a renderer died silently in the squid room with no
+    // trace anywhere - that is only allowed to happen once. Record the
+    // reason/exitCode + process metrics for every renderer death and
+    // unresponsive stall to a runtime file AND the main log.
+    // ACTIVATION: next app restart (window-creation code runs in main).
+    const recordWindowDeath = (kind, details = {}) => {
+      const report = {
+        at: new Date().toISOString(),
+        kind,
+        windowKey,
+        ...details,
+        appMetrics: (() => {
+          try {
+            return app.getAppMetrics().map((metric) => ({
+              type: metric.type,
+              pid: metric.pid,
+              workingSetMB: metric.memory?.workingSetSize
+                ? Math.round(metric.memory.workingSetSize / 1024)
+                : null,
+            }));
+          } catch (_) { return null; }
+        })(),
+      };
+      log.error('WindowCoroner', `${kind} (${windowKey}): ${JSON.stringify({ ...details })}`);
+      try {
+        const coronerPath = resolveCoordPath('runtime/window-coroner.jsonl', { forWrite: true });
+        fs.appendFileSync(coronerPath, `${JSON.stringify(report)}\n`);
+      } catch (err) {
+        log.warn('WindowCoroner', `Failed to persist report: ${err.message}`);
+      }
+    };
+    window.webContents.on('render-process-gone', (_event, details) => {
+      recordWindowDeath('render-process-gone', {
+        reason: details?.reason || null,
+        exitCode: details?.exitCode ?? null,
+      });
+    });
+    window.webContents.on('unresponsive', () => {
+      recordWindowDeath('unresponsive', {});
+    });
+    window.webContents.on('responsive', () => {
+      log.info('WindowCoroner', `responsive again (${windowKey})`);
+    });
+
     window.webContents.on('dom-ready', () => {
       log.info('Window', 'dom-ready');
     });
