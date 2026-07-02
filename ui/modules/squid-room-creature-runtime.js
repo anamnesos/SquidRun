@@ -72,7 +72,9 @@ function resizeBinding(binding) {
   // The creature is authored at a fixed body size (~64 units tall); scale it
   // with the stage so it keeps the presence the sprites had (~half the band
   // height) instead of shrinking into a smudge inside a big ocean.
-  binding.scale = Math.max(0.8, Math.min(3.4, height / 210));
+  // Cap tighter now that the ocean is the whole window - a viewport-height
+  // stage at 3.4x made kaiju, not pets.
+  binding.scale = Math.max(0.8, Math.min(1.6, height / 210));
   canvas.width = Math.round(width * dpr);
   canvas.height = Math.round(height * dpr);
   // Engine simulates in the UNSCALED logical space; the draw transform
