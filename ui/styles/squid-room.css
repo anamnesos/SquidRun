@@ -2561,3 +2561,12 @@ body.squid-room-workspace .pane-layout {
 body.squid-room .squid-room-creature {
   pointer-events: auto;
 }
+
+/* Slice 1 follow-up: with the ocean at window scale, the creature cards get
+   the upper open-space region (not viewport-height kaiju stages). */
+body.squid-room .squid-room-creature {
+  top: 6vh;
+  bottom: auto;
+  height: 40vh;
+  min-height: 240px;
+}
