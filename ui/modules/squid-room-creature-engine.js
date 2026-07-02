@@ -32,17 +32,19 @@ const TWO_PI = Math.PI * 2;
 
 const PALETTES = Object.freeze({
   builder: Object.freeze({
-    mantleTop: '#5ac8f0',
-    mantleMid: '#2f7fd0',
+    mantleTop: '#6ab0f0',
+    mantleMid: '#3a7bd6',
     mantleDeep: '#1b4f96',
     rim: 'rgba(120, 226, 255, 0.85)',
     finMembrane: 'rgba(90, 190, 240, 0.55)',
-    tentacle: '#2e6fc0',
+    tentacle: '#3d7ed8',
     tentacleTip: '#9fdcff',
+    outline: '#132b4d',
     visor: '#0a1220',
     visorRim: 'rgba(190, 216, 240, 0.8)',
     eye: '#25f0e2',
     eyeCore: '#eaffff',
+    eyeSparkle: true,
     glow: 'rgba(60, 190, 255, 0.34)',
     ink: 'rgba(16, 42, 80, 0.85)',
   }),
@@ -52,12 +54,15 @@ const PALETTES = Object.freeze({
     mantleDeep: '#4d2f8c',
     rim: 'rgba(214, 178, 255, 0.85)',
     finMembrane: 'rgba(178, 140, 235, 0.55)',
-    tentacle: '#6d4ab8',
+    tentacle: '#8a63d6',
     tentacleTip: '#ddc2ff',
+    outline: '#2a1852',
     visor: '#100a1e',
     visorRim: 'rgba(214, 198, 240, 0.8)',
     eye: '#7fd8ff',
     eyeCore: '#f4fbff',
+    eyeSparkle: true,
+    spots: 'rgba(72, 44, 128, 0.4)',
     glow: 'rgba(150, 110, 255, 0.32)',
     ink: 'rgba(40, 20, 78, 0.85)',
   }),
@@ -140,8 +145,8 @@ function rangePick(rng, [min, max]) {
 }
 
 function createTentacle(rng, {
-  segments = 9,
-  segmentLength = 9,
+  segments = 6,
+  segmentLength = 5,
   spread = 0,
 } = {}) {
   const points = [];
@@ -161,7 +166,9 @@ function createSquidCreature(options = {}) {
   const petId = options.petId === 'oracle' ? 'oracle' : 'builder';
   const palette = PALETTES[petId];
   const rng = createRng(Number(options.seed) || (petId === 'oracle' ? 1013 : 509));
-  const tentacleCount = clamp(Number(options.tentacleCount) || 8, 6, 8);
+  // Six arms: the sprite shows six distinct sausages across the rim - eight
+  // thick arms on this rim width fuse into a solid sheet no fan can open.
+  const tentacleCount = clamp(Number(options.tentacleCount) || 6, 5, 8);
 
   const state = {
     petId,
@@ -199,10 +206,15 @@ function createSquidCreature(options = {}) {
     thinkingCurl: 0,
     elapsedMs: 0,
     reducedMotion: options.reducedMotion === true,
+    // WAVE 2 CHARACTER SHEET (the pixel sprite's proportions): mantle is
+    // ~66% of body mass, the arm skirt SHORT and STUBBY (~32% of height) -
+    // 5 segments x ~5.2 units per arm, hanging as a cohesive skirt.
+    // FAT STUBBY CONES (art direction pass-9): short chains, finger-chunky
+    // at the base, blunt light tips - plush toy legs, not streamers.
     tentacles: Array.from({ length: tentacleCount }, (_, index) => createTentacle(rng, {
       spread: (index - (tentacleCount - 1) / 2) / ((tentacleCount - 1) / 2),
-      segments: 9,
-      segmentLength: 8 + rng() * 2.4,
+      segments: 5,
+      segmentLength: 4.4 + rng() * 0.5,
     })),
   };
 
@@ -363,8 +375,12 @@ function createSquidCreature(options = {}) {
     // crown-relative angle gives max lean on horizontal travel, zero on pure
     // vertical, and no wrap discontinuity anywhere. The paper-flip stays
     // dead: orientation changes are continuous by construction.
-    const leanTarget = 0.6 * Math.sin(normalizeAngle(state.heading + Math.PI / 2));
-    state.lean = lerp(state.lean ?? 0, leanTarget, clamp(speed / 200, 0.02, 0.12));
+    // Lean scales with SPEED: a resting creature hangs upright (the sprite's
+    // pose), a darting one tilts into travel.
+    const leanTarget = 0.6
+      * Math.sin(normalizeAngle(state.heading + Math.PI / 2))
+      * clamp(speed / 60, 0, 1);
+    state.lean = lerp(state.lean ?? 0, leanTarget, clamp(speed / 200, 0.03, 0.12));
 
     // Mantle breathing (micro-life) - stronger at rest.
     state.breathPhase += dtMs / 1000;
@@ -393,9 +409,14 @@ function createSquidCreature(options = {}) {
 
     for (const tentacle of state.tentacles) {
       tentacle.phase += dt * (1.6 + streaming * 2.2) * prof.undulation;
-      const spreadAngle = bodyRotation + Math.PI / 2 + tentacle.spread * lerp(0.8, 0.25, streaming);
-      const localX = tentacle.spread * 17 * state.squash;
-      const localY = 16 * (2 - state.squash);
+      // Splayed skirt fan of DISTINCT fat little arms. SIGN MATTERS: canvas
+      // angles run clockwise, so a rightward splay (spread=+1) is PI/2
+      // MINUS the fan angle - the PLUS form points every arm's rest line at
+      // the OPPOSITE side and the hold pinches the skirt into a beard (the
+      // pass-4..7 fused-cone bug, caught by tip-position instrumentation).
+      const spreadAngle = bodyRotation + Math.PI / 2 - tentacle.spread * lerp(0.5, 0.18, streaming);
+      const localX = tentacle.spread * 21 * state.squash;
+      const localY = 15 * (2 - state.squash);
       const anchorX = state.x + localX * cosR - localY * sinR;
       const anchorY = state.y + localX * sinR + localY * cosR;
 
@@ -409,10 +430,9 @@ function createSquidCreature(options = {}) {
         point.py = point.y;
         point.x = nx;
         point.y = ny + 14 * dt; // faint sink = water weight
-        // Undulation: perpendicular sway along the chain while gliding.
-        // Calm amplitudes - tentacles should ripple, never tangle.
+        // Undulation: gentle skirt flutter - stubby arms ripple subtly.
         const sway = Math.sin(tentacle.phase + index * 0.5)
-          * (0.28 + streaming * 0.7) * prof.undulation
+          * (0.16 + streaming * 0.4) * prof.undulation
           * (index / points.length);
         point.x += Math.cos(spreadAngle + Math.PI / 2) * sway;
         point.y += Math.sin(spreadAngle + Math.PI / 2) * sway;
@@ -420,10 +440,17 @@ function createSquidCreature(options = {}) {
         // a soft pull toward it keeps the eight arms ORGANIZED as a loose
         // cone instead of tangling like wet hair. Streaming releases the
         // hold so darts still sweep the arms into a trailing bundle.
-        const restX = anchorX + Math.cos(spreadAngle) * index * tentacle.segmentLength * 0.92;
-        const restY = anchorY + Math.sin(spreadAngle) * index * tentacle.segmentLength * 0.92;
-        // Slightly firmer toward the tips so ends settle instead of fraying.
-        const holdStrength = (0.035 + 0.03 * (index / points.length)) * (1 - streaming * 0.8);
+        // Rest line BOWS outward along the chain (fan angle grows toward the
+        // tip): each arm curves like the sprite's little banana sausages
+        // instead of pointing straight.
+        const bowAngle = spreadAngle
+          - tentacle.spread * 0.5 * (index / points.length)
+          * lerp(1, 0.3, streaming);
+        const restX = anchorX + Math.cos(bowAngle) * index * tentacle.segmentLength * 0.92;
+        const restY = anchorY + Math.sin(bowAngle) * index * tentacle.segmentLength * 0.92;
+        // Firm hold keeps the skirt cohesive; streaming releases it a little
+        // so darts read as a cute skirt flutter.
+        const holdStrength = (0.05 + 0.035 * (index / points.length)) * (1 - streaming * 0.6);
         point.x += (restX - point.x) * holdStrength;
         point.y += (restY - point.y) * holdStrength;
         // Thinking curl: tips pull inward slightly.
@@ -544,22 +571,23 @@ function createSquidCreature(options = {}) {
   // ---------------------------------------------------------------------
 
   function drawTentacles(ctx) {
-    // Tapered ribbons: each segment stroked at its own width, thick at the
-    // mantle skirt, fine at the tip - reads as flesh, not wire.
+    // CHARACTER SHEET arms: short, THICK, round-tipped - each roughly 1/5 of
+    // the mantle width at its base, overlapping neighbors into a cohesive
+    // plush skirt. Flat cel tones, no thin lines anywhere.
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    for (const tentacle of state.tentacles) {
+    // Two-row skirt like the sprite: BACK arms in the deep tone first, FRONT
+    // arms in the main tone on top - overlapping thick arms stay READABLE as
+    // separate arms instead of fusing into a mitten.
+    // Each arm = OUTLINE pass (the sprite's pixel-art separator) then color
+    // on top. The final segment is drawn in the LIGHT tip color so the blunt
+    // rounded END of the arm itself is the tip - no separate bead-spheres.
+    const strokeArm = (tentacle, colorMain, colorTip, widthRoot, widthTip) => {
       const points = tentacle.points;
-      const gradient = ctx.createLinearGradient(
-        points[0].x, points[0].y,
-        points[points.length - 1].x, points[points.length - 1].y
-      );
-      gradient.addColorStop(0, state.palette.tentacle);
-      gradient.addColorStop(1, state.palette.tentacleTip);
-      ctx.strokeStyle = gradient;
       for (let index = 1; index < points.length; index += 1) {
         const t = index / (points.length - 1);
-        ctx.lineWidth = lerp(5.4, 2.1, t);
+        ctx.strokeStyle = (colorTip && index === points.length - 1) ? colorTip : colorMain;
+        ctx.lineWidth = lerp(widthRoot, widthTip, t);
         ctx.beginPath();
         ctx.moveTo(points[index - 1].x, points[index - 1].y);
         if (index < points.length - 1) {
@@ -571,7 +599,33 @@ function createSquidCreature(options = {}) {
         }
         ctx.stroke();
       }
+    };
+    const drawArm = (tentacle, color) => {
+      strokeArm(tentacle, state.palette.outline, null, 14 + 2.6, 7 + 2.2);
+      strokeArm(tentacle, color, state.palette.tentacleTip, 14, 7);
+    };
+    for (let index = 0; index < state.tentacles.length; index += 1) {
+      if (index % 2 === 0) drawArm(state.tentacles[index], state.palette.mantleDeep);
     }
+    for (let index = 0; index < state.tentacles.length; index += 1) {
+      if (index % 2 === 1) drawArm(state.tentacles[index], state.palette.tentacle);
+    }
+  }
+
+  // Chunky mantle path (CHARACTER SHEET: big, round, slightly wider than
+  // tall). Reused for fill and for clipping the cel-shade bands.
+  function traceMantlePath(ctx) {
+    // ONION-CHUBBY dome with the sprite's soft POINTED CROWN: widest at the
+    // fin line (slightly below mid), rounding tightly into the skirt rim.
+    ctx.beginPath();
+    ctx.moveTo(0, -44);
+    ctx.bezierCurveTo(8, -43, 16, -36, 21, -28);
+    ctx.bezierCurveTo(30, -18, 34.5, -11, 34.5, -2);
+    ctx.bezierCurveTo(35, 10, 20, 17.5, 0, 18);
+    ctx.bezierCurveTo(-20, 17.5, -35, 10, -34.5, -2);
+    ctx.bezierCurveTo(-34.5, -11, -30, -18, -21, -28);
+    ctx.bezierCurveTo(-16, -36, -8, -43, 0, -44);
+    ctx.closePath();
   }
 
   function drawMantle(ctx) {
@@ -580,50 +634,69 @@ function createSquidCreature(options = {}) {
     ctx.save();
     ctx.scale(squashX, squashY);
 
-    // Body glow (bioluminescence).
-    const glow = ctx.createRadialGradient(0, -6, 4, 0, -4, 44);
+    // Body glow (bioluminescence) - soft, behind the body.
+    const glow = ctx.createRadialGradient(0, -6, 4, 0, -4, 46);
     glow.addColorStop(0, state.palette.glow);
     glow.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(0, -4, 44, 0, TWO_PI);
+    ctx.arc(0, -4, 46, 0, TWO_PI);
     ctx.fill();
 
-    // Mantle: rounded dome, slightly tapered toward the crown.
-    const mantle = ctx.createLinearGradient(0, -40, 0, 20);
-    mantle.addColorStop(0, state.palette.mantleTop);
-    mantle.addColorStop(0.55, state.palette.mantleMid);
-    mantle.addColorStop(1, state.palette.mantleDeep);
-    ctx.beginPath();
-    ctx.moveTo(0, -42);
-    ctx.bezierCurveTo(17, -40, 26, -22, 25, -4);
-    ctx.bezierCurveTo(24.5, 12, 14, 20, 0, 20.5);
-    ctx.bezierCurveTo(-14, 20, -24.5, 12, -25, -4);
-    ctx.bezierCurveTo(-26, -22, -17, -40, 0, -42);
-    ctx.closePath();
-    ctx.fillStyle = mantle;
+    // Cel shading, sprite-style: flat mid tone base, flat light cap, flat
+    // deep under-band. No airbrush gradient anywhere.
+    // Cartoon outline first (sprite charm), then the cel fills over it.
+    traceMantlePath(ctx);
+    ctx.strokeStyle = state.palette.outline;
+    ctx.lineWidth = 5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+    traceMantlePath(ctx);
+    ctx.fillStyle = state.palette.mantleMid;
     ctx.fill();
-
-    // Rim light along the crown.
+    ctx.save();
+    traceMantlePath(ctx);
+    ctx.clip();
+    // Light cap: upper third.
+    ctx.fillStyle = state.palette.mantleTop;
     ctx.beginPath();
-    ctx.moveTo(-14, -34);
-    ctx.quadraticCurveTo(0, -44, 14, -34);
+    ctx.ellipse(0, -27, 26, 17, 0, 0, TWO_PI);
+    ctx.fill();
+    // Deep band: lower rim where the skirt hangs.
+    ctx.fillStyle = state.palette.mantleDeep;
+    ctx.beginPath();
+    ctx.ellipse(0, 20, 36, 9, 0, 0, TWO_PI);
+    ctx.fill();
+    // Mottled spots (oracle charm): a few soft darker freckles, cel-flat,
+    // deterministic positions.
+    if (state.palette.spots) {
+      ctx.fillStyle = state.palette.spots;
+      for (const [sx, sy, sr] of [[-15, -20, 3], [11, -25, 2.4], [19, -9, 2.8], [-22, -4, 2.2], [4, -13, 1.8]]) {
+        ctx.beginPath();
+        ctx.ellipse(sx, sy, sr, sr * 0.8, 0, 0, TWO_PI);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+
+    // Rim light along the crown - chunky, not a hairline.
+    ctx.beginPath();
+    ctx.moveTo(-13, -33);
+    ctx.quadraticCurveTo(0, -45, 13, -33);
     ctx.strokeStyle = state.palette.rim;
-    ctx.lineWidth = 2.4;
+    ctx.lineWidth = 3.2;
     ctx.lineCap = 'round';
-    ctx.globalAlpha = 0.8;
+    ctx.globalAlpha = 0.85;
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    // Side fins: small waving membranes hugging the upper mantle.
-    const finWave = Math.sin(state.elapsedMs / 260) * 3 * (0.4 + Math.hypot(state.vx, state.vy) / 160);
-    ctx.globalAlpha = 0.55;
+    // Small round side fins hugging the upper mantle.
+    const finWave = Math.sin(state.elapsedMs / 260) * 2.4 * (0.4 + Math.hypot(state.vx, state.vy) / 160);
+    ctx.globalAlpha = 0.88;
+    ctx.fillStyle = state.palette.finMembrane;
     for (const side of [-1, 1]) {
       ctx.beginPath();
-      ctx.moveTo(side * 20, -22);
-      ctx.quadraticCurveTo(side * (31 + finWave), -16 + finWave * side * 0.4, side * 22, -6);
-      ctx.quadraticCurveTo(side * 26, -14, side * 20, -22);
-      ctx.fillStyle = state.palette.finMembrane;
+      ctx.ellipse(side * 34, -3 + finWave * side * 0.3, 9.5, 6.5 + Math.abs(finWave) * 0.4, side * 0.35, 0, TWO_PI);
       ctx.fill();
     }
     ctx.globalAlpha = 1;
@@ -631,52 +704,70 @@ function createSquidCreature(options = {}) {
   }
 
   function drawFace(ctx) {
-    // Visor: dark rounded window on the mantle front.
+    // Visor: the SOUL - big dark rounded window, ~60% of the mantle width,
+    // centered on the face. Chunky rim, sprite-faithful.
     ctx.save();
     ctx.scale(state.squash, (2 - state.squash));
     ctx.beginPath();
-    const visorW = 34;
-    const visorH = 22;
-    const radius = 10;
-    ctx.moveTo(-visorW / 2 + radius, -6 - visorH / 2);
-    ctx.arcTo(visorW / 2, -6 - visorH / 2, visorW / 2, -6 + visorH / 2, radius);
-    ctx.arcTo(visorW / 2, -6 + visorH / 2, -visorW / 2, -6 + visorH / 2, radius);
-    ctx.arcTo(-visorW / 2, -6 + visorH / 2, -visorW / 2, -6 - visorH / 2, radius);
-    ctx.arcTo(-visorW / 2, -6 - visorH / 2, visorW / 2, -6 - visorH / 2, radius);
+    // Big visor at MOUTH LEVEL - the reference faces occupy the bottom half
+    // of the mantle (art direction pass-3: +18% size, dropped low).
+    const visorW = 45;
+    const visorH = 30;
+    const visorY = 1;
+    const radius = 14;
+    ctx.moveTo(-visorW / 2 + radius, visorY - visorH / 2);
+    ctx.arcTo(visorW / 2, visorY - visorH / 2, visorW / 2, visorY + visorH / 2, radius);
+    ctx.arcTo(visorW / 2, visorY + visorH / 2, -visorW / 2, visorY + visorH / 2, radius);
+    ctx.arcTo(-visorW / 2, visorY + visorH / 2, -visorW / 2, visorY - visorH / 2, radius);
+    ctx.arcTo(-visorW / 2, visorY - visorH / 2, visorW / 2, visorY - visorH / 2, radius);
     ctx.closePath();
     ctx.fillStyle = state.palette.visor;
     ctx.fill();
     ctx.strokeStyle = state.palette.visorRim;
-    ctx.lineWidth = 1.4;
-    ctx.globalAlpha = 0.7;
+    ctx.lineWidth = 2.2;
+    ctx.globalAlpha = 0.75;
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    // Eyes: glowing capsules with saccade offset + blink. The blink value
-    // decays 1 -> 0; openness makes a V (open -> shut mid-blink -> open).
+    // Eyes: BIG glowing capsules (the sprite's charm) with saccade offset,
+    // blink, and a slight squash while jetting (free cuteness per the
+    // character sheet). Blink decays 1 -> 0; openness makes a V.
     const openness = state.blink === 0
       ? 1
       : clamp(Math.abs(2 * state.blink - 1), 0.06, 1);
+    const jetSquash = lerp(1, state.squash, 0.6);
     for (const side of [-1, 1]) {
-      const eyeX = side * 8 + state.saccade.x;
-      const eyeY = -6 + state.saccade.y;
+      const eyeX = side * 10.5 + state.saccade.x;
+      const eyeY = visorY + state.saccade.y;
       ctx.save();
       ctx.translate(eyeX, eyeY);
-      ctx.scale(1, openness);
-      const glow = ctx.createRadialGradient(0, 0, 0.6, 0, 0, 7);
+      ctx.scale(1, openness * jetSquash);
+      const glow = ctx.createRadialGradient(0, 0, 0.8, 0, 0, 9);
       glow.addColorStop(0, state.palette.eyeCore);
       glow.addColorStop(0.45, state.palette.eye);
       glow.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.globalAlpha = 0.5 + state.eyeGlow * 0.5;
       ctx.fillStyle = glow;
       ctx.beginPath();
-      ctx.arc(0, 0, 6.4, 0, TWO_PI);
+      ctx.arc(0, 0, 8.2, 0, TWO_PI);
       ctx.fill();
       ctx.globalAlpha = 1;
+      // Tall pill core - the sprite's signature eye shape.
       ctx.fillStyle = state.palette.eyeCore;
       ctx.beginPath();
-      ctx.ellipse(0, 0, 1.8, 2.6, 0, 0, TWO_PI);
+      ctx.ellipse(0, 0, 2.3, 4.6, 0, 0, TWO_PI);
       ctx.fill();
+      // Sparkle highlights (wet, alive - the sprite's charm). Offset onto
+      // the colored glow EDGE - centered on the white core they vanish.
+      if (state.palette.eyeSparkle) {
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(-3, -3.4, 1.15, 0, TWO_PI);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(2.8, 2.2, 0.6, 0, TWO_PI);
+        ctx.fill();
+      }
       ctx.restore();
     }
     ctx.restore();
@@ -716,16 +807,33 @@ function createSquidCreature(options = {}) {
 
   function draw(ctx) {
     drawEffects(ctx);
-    // Tentacle points live in WORLD space (they trail through the water, not
-    // rigidly on the body): paint them first so the mantle sits on top.
-    drawTentacles(ctx);
+    // Under-glow: soft bioluminescent pool beneath the creature that seats
+    // it in the water (the grounding the CSS contact-shadow used to give).
+    ctx.save();
+    ctx.globalAlpha = 0.5 + state.eyeGlow * 0.3;
+    const underGlow = ctx.createRadialGradient(state.x, state.y + 30, 2, state.x, state.y + 30, 34);
+    underGlow.addColorStop(0, state.palette.glow);
+    underGlow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = underGlow;
+    ctx.beginPath();
+    ctx.ellipse(state.x, state.y + 30, 34, 14, 0, 0, TWO_PI);
+    ctx.fill();
+    ctx.restore();
+    // Sprite-faithful layering: MANTLE behind, ARMS hanging in front of the
+    // lower rim (world space - they trail through the water), FACE on top so
+    // the arm roots tuck under the visor's chin exactly like the reference.
+    const bodyRotation = (state.lean || 0) + state.bank;
     ctx.save();
     ctx.translate(state.x, state.y);
     // Swim orientation: near-upright body that LEANS into travel plus the
-    // banking roll - continuous everywhere, readable everywhere. The face
-    // rides the body; at <=~35deg of total lean it never needs rescuing.
-    ctx.rotate((state.lean || 0) + state.bank);
+    // banking roll - continuous everywhere, readable everywhere.
+    ctx.rotate(bodyRotation);
     drawMantle(ctx);
+    ctx.restore();
+    drawTentacles(ctx);
+    ctx.save();
+    ctx.translate(state.x, state.y);
+    ctx.rotate(bodyRotation);
     drawFace(ctx);
     ctx.restore();
   }
