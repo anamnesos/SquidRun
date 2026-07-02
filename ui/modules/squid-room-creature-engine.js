@@ -338,8 +338,19 @@ function createSquidCreature(options = {}) {
     const { width, height } = state.bounds;
     const lift = profile().driftLift;
     state.targetX = margin + rng() * (width - margin * 2);
+    // BEHIND-GLASS PATROL (wave 4): the lower half of the swim space lies
+    // behind the frosted station cards. Mostly open space (75%), occasional
+    // glass passes - and if currently low, ALWAYS surface next (never park
+    // behind glass; keeps the glow moving and the creature discoverable).
+    const currentlyLow = state.y > height * 0.5;
+    const wantGlassPass = !currentlyLow && rng() < 0.25 && height > 260;
+    const yMin = margin;
+    const yMax = wantGlassPass
+      ? height - margin * 0.6
+      : Math.min(height * 0.45, height - margin);
+    const ySpan = Math.max(20, yMax - (wantGlassPass ? height * 0.55 : yMin));
     state.targetY = clamp(
-      margin + rng() * (height - margin * 2) + lift,
+      (wantGlassPass ? height * 0.55 : yMin) + rng() * ySpan + lift,
       margin,
       height - margin * 0.6
     );
