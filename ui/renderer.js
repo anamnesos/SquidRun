@@ -522,6 +522,8 @@ let squidRoomLivePaneEnsureTimer = null;
 let squidRoomPetStatusTimer = null;
 const squidRoomPetAnimationTimers = new Map();
 const squidRoomPetCelebrationState = new Map();
+const squidRoomPetSpeechTimers = new Map();
+const squidRoomPetFlourishTimers = new Map();
 const squidRoomLivePaneSpawnAttempts = new Map();
 const SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS = 15000;
 const SQUID_ROOM_PET_STATUS_REFRESH_MS = 10000;
@@ -530,6 +532,10 @@ const SQUID_ROOM_PET_ACTIVE_AGE_MS = 30000;
 const SQUID_ROOM_PET_SETTLING_AGE_MS = 5 * 60 * 1000;
 const SQUID_ROOM_PET_CELEBRATION_COOLDOWN_MS = 10 * 60 * 1000;
 const SQUID_ROOM_PET_CELEBRATION_DURATION_MS = 1500;
+const SQUID_ROOM_PET_SPEECH_VISIBLE_MS = 10000;
+const SQUID_ROOM_PET_SPEECH_MAX_CHARS = 42;
+const SQUID_ROOM_PET_FLOURISH_MIN_MS = 45000;
+const SQUID_ROOM_PET_FLOURISH_RANGE_MS = 75000;
 const SQUID_ROOM_PET_ATLAS_COLUMNS = 8;
 const SQUID_ROOM_PET_ATLAS_ROWS = 9;
 const SQUID_ROOM_PET_IDLE_FRAMES = Object.freeze([
@@ -746,6 +752,147 @@ function buildSquidRoomPetFace(row = {}, role = '') {
   };
 }
 
+function truncateSquidRoomSpeechText(value, maxChars = SQUID_ROOM_PET_SPEECH_MAX_CHARS) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const limit = Math.max(8, Number(maxChars) || SQUID_ROOM_PET_SPEECH_MAX_CHARS);
+  if (text.length <= limit) return text;
+  const slice = text.slice(0, Math.max(0, limit - 3)).trimEnd();
+  return `${slice.replace(/[,:;.\s]+$/g, '')}...`;
+}
+
+function buildSquidRoomPetSpeechText(state = {}, face = {}, maxChars = SQUID_ROOM_PET_SPEECH_MAX_CHARS) {
+  const label = String(state?.label || 'Ready').trim();
+  const line = String(face?.face || '').trim();
+  const full = line ? `${label}: ${line}` : label;
+  return {
+    full,
+    short: truncateSquidRoomSpeechText(full, maxChars),
+  };
+}
+
+function getSquidRoomSpeechTimerKey(pane) {
+  return String(pane?.dataset?.squidRoomPet || pane?.dataset?.squidRoomSourcePaneId || '').trim()
+    || String(pane?.id || Math.random()).trim();
+}
+
+function clearSquidRoomPetSpeechTimer(pane) {
+  const key = getSquidRoomSpeechTimerKey(pane);
+  const active = squidRoomPetSpeechTimers.get(key);
+  if (active?.decayTimer) window.clearTimeout(active.decayTimer);
+  if (active?.settleTimer) window.clearTimeout(active.settleTimer);
+  squidRoomPetSpeechTimers.delete(key);
+}
+
+function setSquidRoomPetSpeechBubbleText(bubble, text) {
+  if (!bubble) return;
+  const textNode = bubble.querySelector?.('.speech-line-text');
+  if (textNode) {
+    textNode.textContent = text;
+  } else {
+    bubble.textContent = text;
+  }
+}
+
+function bindSquidRoomPetSpeechBubble(pane) {
+  const bubble = pane?.querySelector?.('.squid-room-pet-speech');
+  if (!bubble || bubble.dataset?.squidRoomSpeechBound === 'true') return bubble;
+  if (bubble.dataset) bubble.dataset.squidRoomSpeechBound = 'true';
+  const toggleExpanded = (event) => {
+    event?.stopPropagation?.();
+    const expanded = bubble.classList?.toggle?.('is-expanded') === true;
+    bubble.classList?.remove?.('is-compact');
+    setSquidRoomPetSpeechBubbleText(
+      bubble,
+      expanded
+        ? String(bubble.dataset?.fullText || bubble.dataset?.shortText || '')
+        : String(bubble.dataset?.shortText || bubble.dataset?.fullText || '')
+    );
+  };
+  bubble.addEventListener?.('click', toggleExpanded);
+  bubble.addEventListener?.('keydown', (event) => {
+    if (event?.key !== 'Enter' && event?.key !== ' ') return;
+    event.preventDefault?.();
+    toggleExpanded(event);
+  });
+  bubble.setAttribute?.('role', 'button');
+  bubble.setAttribute?.('tabindex', '0');
+  bubble.setAttribute?.('aria-label', 'Show full activity text');
+  return bubble;
+}
+
+function updateSquidRoomPetSpeech(pane, row = {}, state = {}, face = {}) {
+  const bubble = bindSquidRoomPetSpeechBubble(pane);
+  if (!bubble) return false;
+  const rowKey = getSquidRoomPetRowIdentity(row) || `${getSquidRoomPetRowTimestampMs(row) || 'no-time'}:${face.face}`;
+  const speech = buildSquidRoomPetSpeechText(state, face);
+  if (bubble.dataset) {
+    bubble.dataset.fullText = speech.full;
+    bubble.dataset.shortText = speech.short;
+  }
+
+  const isNewRow = pane?.dataset?.squidRoomSpeechRowId !== rowKey;
+  if (!isNewRow) {
+    if (!bubble.classList?.contains?.('is-compact') && !bubble.classList?.contains?.('is-expanded')) {
+      setSquidRoomPetSpeechBubbleText(bubble, speech.short);
+    }
+    return false;
+  }
+
+  clearSquidRoomPetSpeechTimer(pane);
+  if (pane?.dataset) pane.dataset.squidRoomSpeechRowId = rowKey;
+  bubble.classList?.remove?.('is-compact', 'is-expanded');
+  bubble.classList?.add?.('is-speaking');
+  setSquidRoomPetSpeechBubbleText(bubble, speech.short);
+
+  const stage = pane?.querySelector?.('.squid-room-pet-stage');
+  stage?.classList?.add?.('has-new-message');
+  if (getSquidRoomPetReducedMotionPreference()) {
+    bubble.classList?.remove?.('is-speaking');
+    stage?.classList?.remove?.('has-new-message');
+    return true;
+  }
+
+  const key = getSquidRoomSpeechTimerKey(pane);
+  const settleTimer = window.setTimeout(() => {
+    bubble.classList?.remove?.('is-speaking');
+    stage?.classList?.remove?.('has-new-message');
+  }, 900);
+  const decayTimer = window.setTimeout(() => {
+    if (!bubble.isConnected || bubble.classList?.contains?.('is-expanded')) return;
+    bubble.classList?.add?.('is-compact');
+    setSquidRoomPetSpeechBubbleText(bubble, '...');
+  }, SQUID_ROOM_PET_SPEECH_VISIBLE_MS);
+  squidRoomPetSpeechTimers.set(key, { decayTimer, settleTimer });
+  return true;
+}
+
+function scheduleSquidRoomPetFlourish(pane, row = {}) {
+  if (!pane || getSquidRoomPetReducedMotionPreference()) return false;
+  const role = String(pane.dataset?.squidRoomPet || '').trim().toLowerCase();
+  if (!role) return false;
+  const rowKey = getSquidRoomPetRowIdentity(row) || `${getSquidRoomPetRowTimestampMs(row) || 'ambient'}`;
+  const active = squidRoomPetFlourishTimers.get(role);
+  if (active?.rowKey === rowKey && active?.timer) return false;
+  if (active?.timer) window.clearTimeout(active.timer);
+
+  const delayMs = SQUID_ROOM_PET_FLOURISH_MIN_MS + Math.floor(Math.random() * SQUID_ROOM_PET_FLOURISH_RANGE_MS);
+  const timer = window.setTimeout(() => {
+    if (!pane.isConnected || pane.dataset?.squidRoomFlourishRowId !== rowKey) return;
+    const stage = pane.querySelector?.('.squid-room-pet-stage');
+    if (!stage?.classList) return;
+    const variants = ['is-flourish-spin', 'is-flourish-dash', 'is-flourish-blink'];
+    const variant = variants[Math.floor(Math.random() * variants.length)] || variants[0];
+    stage.classList.add('is-flourishing', variant);
+    window.setTimeout(() => {
+      stage.classList.remove('is-flourishing', variant);
+      scheduleSquidRoomPetFlourish(pane, row);
+    }, 1400);
+  }, delayMs);
+  if (pane.dataset) pane.dataset.squidRoomFlourishRowId = rowKey;
+  squidRoomPetFlourishTimers.set(role, { rowKey, timer });
+  return true;
+}
+
 function getSquidRoomPetRowTimestampMs(row = {}) {
   const candidates = [
     row.timestampMs,
@@ -935,19 +1082,21 @@ function updateSquidRoomPetPane(pane, row) {
     stage.classList.toggle('is-settling', motionClass === 'is-settling');
     stage.classList.toggle('is-resting', motionClass === 'is-resting');
     triggerSquidRoomPetCelebration(pane, row);
+    scheduleSquidRoomPetFlourish(pane, row);
   }
   const stateEl = pane.querySelector?.('.squid-room-pet-state');
   if (stateEl) stateEl.textContent = state.label;
-  const bubble = pane.querySelector?.('.squid-room-pet-bubble');
-  if (bubble) {
-    const textNode = bubble.querySelector?.('.face-line-text');
+  updateSquidRoomPetSpeech(pane, row, state, face);
+  const caption = pane.querySelector?.('.squid-room-pet-caption');
+  if (caption) {
+    const textNode = caption.querySelector?.('.face-line-text');
     if (textNode) {
       textNode.textContent = face.face;
     } else {
-      bubble.textContent = face.face;
+      caption.textContent = face.face;
     }
-    const details = bubble.querySelector?.('.face-details');
-    const rawNode = bubble.querySelector?.('.face-raw');
+    const details = caption.querySelector?.('.face-details');
+    const rawNode = caption.querySelector?.('.face-raw');
     if (rawNode) rawNode.textContent = face.raw;
     if (details) {
       details.hidden = !face.hasRawDetails;
@@ -2625,6 +2774,139 @@ function initSquidRoomAppSectionToggles(doc = document) {
   });
 }
 
+function getSquidRoomPaneMenuFixedPosition(triggerRect = {}, panelRect = {}, viewport = {}) {
+  const gap = 8;
+  const margin = 10;
+  const width = Math.max(180, Number(panelRect.width) || 224);
+  const height = Math.max(80, Number(panelRect.height) || 220);
+  const viewportWidth = Math.max(width + margin * 2, Number(viewport.width) || 0);
+  const viewportHeight = Math.max(height + margin * 2, Number(viewport.height) || 0);
+  const triggerLeft = Number(triggerRect.left) || 0;
+  const triggerRight = Number(triggerRect.right) || triggerLeft;
+  const triggerTop = Number(triggerRect.top) || 0;
+  const triggerBottom = Number(triggerRect.bottom) || triggerTop;
+
+  const maxLeft = viewportWidth - width - margin;
+  const left = Math.min(Math.max(triggerRight - width, margin), maxLeft);
+  let top = triggerBottom + gap;
+  let placement = 'below';
+  if (top + height > viewportHeight - margin && triggerTop - height - gap >= margin) {
+    top = triggerTop - height - gap;
+    placement = 'above';
+  }
+  const maxTop = viewportHeight - height - margin;
+  top = Math.min(Math.max(top, margin), maxTop);
+  return { left, top, width, placement };
+}
+
+function positionSquidRoomPaneMenu(menu) {
+  if (!menu?.open) return false;
+  const panel = menu.querySelector?.('.squid-room-pane-menu-panel');
+  const trigger = menu.querySelector?.('.squid-room-pane-menu-trigger');
+  if (!panel || !trigger || typeof trigger.getBoundingClientRect !== 'function') return false;
+  const doc = menu.ownerDocument || document;
+  const view = doc.defaultView || window;
+  const triggerRect = trigger.getBoundingClientRect();
+  const panelRect = typeof panel.getBoundingClientRect === 'function'
+    ? panel.getBoundingClientRect()
+    : { width: 224, height: 220 };
+  const position = getSquidRoomPaneMenuFixedPosition(triggerRect, panelRect, {
+    width: view.innerWidth,
+    height: view.innerHeight,
+  });
+  panel.style.position = 'fixed';
+  panel.style.left = `${Math.round(position.left)}px`;
+  panel.style.top = `${Math.round(position.top)}px`;
+  panel.style.right = 'auto';
+  panel.style.width = `${Math.round(position.width)}px`;
+  panel.style.zIndex = '10000';
+  panel.dataset.placement = position.placement;
+  menu.classList?.add?.('is-fixed-positioned');
+  return true;
+}
+
+function closeOtherSquidRoomPaneMenus(currentMenu, doc = document) {
+  const menus = doc?.querySelectorAll?.('.squid-room-pane-menu[open]');
+  if (!menus) return;
+  menus.forEach((menu) => {
+    if (menu !== currentMenu) menu.open = false;
+  });
+}
+
+function initSquidRoomPaneMenus(doc = document) {
+  const menus = doc?.querySelectorAll?.('.squid-room-pane-menu');
+  if (!menus) return;
+  menus.forEach((menu) => {
+    if (menu.dataset?.squidRoomPaneMenuBound === 'true') {
+      positionSquidRoomPaneMenu(menu);
+      return;
+    }
+    if (menu.dataset) menu.dataset.squidRoomPaneMenuBound = 'true';
+    menu.addEventListener?.('toggle', () => {
+      if (menu.open) {
+        closeOtherSquidRoomPaneMenus(menu, doc);
+        positionSquidRoomPaneMenu(menu);
+      }
+    });
+  });
+  if (doc?.body?.dataset?.squidRoomPaneMenuGlobalBound === 'true') return;
+  if (doc?.body?.dataset) doc.body.dataset.squidRoomPaneMenuGlobalBound = 'true';
+  const reposition = () => {
+    doc.querySelectorAll?.('.squid-room-pane-menu[open]')?.forEach((menu) => {
+      positionSquidRoomPaneMenu(menu);
+    });
+  };
+  const view = doc.defaultView || window;
+  view.addEventListener?.('resize', reposition);
+  view.addEventListener?.('scroll', reposition, true);
+  doc.addEventListener?.('click', (event) => {
+    const target = event?.target;
+    if (target?.closest?.('.squid-room-pane-menu')) return;
+    doc.querySelectorAll?.('.squid-room-pane-menu[open]')?.forEach((menu) => {
+      menu.open = false;
+    });
+  });
+}
+
+function setSquidRoomTerminalDrawerOpen(open, doc = document) {
+  const drawer = doc?.querySelector?.('#squidRoomTerminalDrawer');
+  if (!drawer?.classList) return false;
+  const isOpen = Boolean(open);
+  const wasOpen = drawer.classList.contains('is-open');
+  if (wasOpen === isOpen) return false;
+  drawer.classList.toggle('is-open', isOpen);
+  drawer.setAttribute?.('aria-hidden', String(!isOpen));
+  doc.querySelectorAll?.('[data-squid-room-terminal-drawer-open="true"]')?.forEach((button) => {
+    button.setAttribute?.('aria-expanded', String(isOpen));
+  });
+  return true;
+}
+
+function initSquidRoomTerminalDrawer(doc = document) {
+  if (!doc?.body || doc.body.dataset?.squidRoomTerminalDrawerBound === 'true') return;
+  if (doc.body.dataset) doc.body.dataset.squidRoomTerminalDrawerBound = 'true';
+  doc.addEventListener?.('click', (event) => {
+    const target = event?.target;
+    if (!target?.closest) return;
+    if (target.closest('[data-squid-room-terminal-drawer-close="true"]')) {
+      event.preventDefault?.();
+      setSquidRoomTerminalDrawerOpen(false, doc);
+      return;
+    }
+    if (target.closest('[data-squid-room-terminal-drawer-open="true"]')) {
+      event.preventDefault?.();
+      setSquidRoomTerminalDrawerOpen(true, doc);
+    }
+  });
+  doc.addEventListener?.('keydown', (event) => {
+    if (event?.key !== 'Enter' && event?.key !== ' ') return;
+    const target = event?.target;
+    if (!target?.closest?.('[data-squid-room-terminal-drawer-open="true"]')) return;
+    event.preventDefault?.();
+    setSquidRoomTerminalDrawerOpen(true, doc);
+  });
+}
+
 function emitPaneVisibilityChangedForExpandClick(event, eventBus = bus) {
   const button = getExpandButtonFromEvent(event);
   const paneId = button?.dataset?.paneId;
@@ -2831,6 +3113,12 @@ function setupEventListeners() {
     if (e.ctrlKey && terminal.PANE_IDS.includes(e.key)) {
       e.preventDefault();
       terminal.focusPane(e.key);
+      return;
+    }
+    if (e.key === 'Escape' && setSquidRoomTerminalDrawerOpen(false, document)) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
       return;
     }
     // ESC to collapse expanded pane
@@ -3543,6 +3831,8 @@ function setupEventListeners() {
   document.addEventListener('click', handleSquidRoomAppToggleClick);
   registerRendererLifecycleCleanup(() => document.removeEventListener('click', handleSquidRoomAppToggleClick));
   initSquidRoomAppSectionToggles();
+  initSquidRoomPaneMenus();
+  initSquidRoomTerminalDrawer();
 
   // Role bundle info button + modal
   document.querySelectorAll('.pane-role-info-btn').forEach(btn => {
@@ -4211,6 +4501,10 @@ if (typeof module !== 'undefined' && module.exports) {
     renderSquidRoomProjectionInline,
     classifySquidRoomPetState,
     buildSquidRoomPetFace,
+    buildSquidRoomPetSpeechText,
+    truncateSquidRoomSpeechText,
+    getSquidRoomPaneMenuFixedPosition,
+    setSquidRoomTerminalDrawerOpen,
     isSquidRoomPetCelebrationEvent,
     triggerSquidRoomPetCelebration,
     getSquidRoomPetMotionClass,

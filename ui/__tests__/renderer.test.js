@@ -405,6 +405,21 @@ describe('renderer.js smoke tests', () => {
     });
   });
 
+  describe('buildSquidRoomPetSpeechText', () => {
+    it('derives short speech from the honest state plus de-jargoned face line', () => {
+      const speech = renderer.buildSquidRoomPetSpeechText(
+        { label: 'Working' },
+        { face: 'Fixing the Lead dropdown without leaking into the terminal pane.' },
+        42
+      );
+
+      expect(speech.full).toBe('Working: Fixing the Lead dropdown without leaking into the terminal pane.');
+      expect(speech.short.length).toBeLessThanOrEqual(42);
+      expect(speech.short).toMatch(/^Working: Fixing/);
+      expect(speech.short).not.toMatch(/rowId|sha256|messageId/);
+    });
+  });
+
   describe('getSquidRoomPetMotionClass', () => {
     it('maps output age to active, settling, then resting motion classes', () => {
       const now = Date.parse('2026-07-01T22:00:00.000Z');
@@ -412,6 +427,31 @@ describe('renderer.js smoke tests', () => {
       expect(renderer.getSquidRoomPetMotionClass({ createdAt: '2026-07-01T21:59:45.000Z' }, now)).toBe('is-active');
       expect(renderer.getSquidRoomPetMotionClass({ createdAt: '2026-07-01T21:57:00.000Z' }, now)).toBe('is-settling');
       expect(renderer.getSquidRoomPetMotionClass({ createdAt: '2026-07-01T21:45:00.000Z' }, now)).toBe('is-resting');
+    });
+  });
+
+  describe('getSquidRoomPaneMenuFixedPosition', () => {
+    it('clamps the Lead menu inside the viewport instead of opening offscreen', () => {
+      const position = renderer.getSquidRoomPaneMenuFixedPosition(
+        { left: 8, right: 40, top: 120, bottom: 152 },
+        { width: 224, height: 160 },
+        { width: 320, height: 500 }
+      );
+
+      expect(position.left).toBeGreaterThanOrEqual(10);
+      expect(position.left + position.width).toBeLessThanOrEqual(310);
+      expect(position.placement).toBe('below');
+    });
+
+    it('flips above when the menu would bleed into the terminal area below', () => {
+      const position = renderer.getSquidRoomPaneMenuFixedPosition(
+        { left: 260, right: 292, top: 420, bottom: 452 },
+        { width: 224, height: 180 },
+        { width: 360, height: 500 }
+      );
+
+      expect(position.placement).toBe('above');
+      expect(position.top).toBeLessThan(420);
     });
   });
 
