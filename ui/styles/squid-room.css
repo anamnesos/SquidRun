@@ -787,13 +787,14 @@ body.squid-room-workspace .header-session-badge {
 body.squid-room-workspace .terminals-section {
   isolation: isolate;
   gap: 16px;
-  padding: 14px;
+  padding: 14px 14px 22px;
   background:
     radial-gradient(circle at 52% 0%, rgba(94, 234, 212, 0.08), transparent 32%),
     radial-gradient(circle at 94% 24%, rgba(37, 99, 235, 0.08), transparent 30%),
     radial-gradient(circle at 14% 78%, rgba(15, 118, 110, 0.1), transparent 34%),
-    linear-gradient(180deg, rgba(4, 11, 21, 0.98), rgba(1, 5, 12, 0.99));
-  scrollbar-color: rgba(94, 234, 212, 0.28) rgba(4, 9, 17, 0.78);
+    radial-gradient(ellipse at 50% 100%, rgba(94, 234, 212, 0.045), transparent 42%),
+    linear-gradient(180deg, rgba(4, 11, 21, 0.98) 0%, rgba(1, 5, 12, 0.99) 72%, rgba(0, 1, 4, 1) 100%);
+  scrollbar-color: rgba(94, 234, 212, 0.45) rgba(4, 9, 17, 0.78);
 }
 
 body.squid-room-workspace .terminals-section::before,
@@ -821,15 +822,19 @@ body.squid-room-workspace .terminals-section::before {
     radial-gradient(circle at 88% 48%, rgba(125, 211, 252, 0.07) 0 1px, transparent 2px),
     radial-gradient(circle at 93% 74%, rgba(45, 212, 191, 0.1) 0 1px, transparent 2px),
     radial-gradient(circle at 12% 88%, rgba(94, 234, 212, 0.08) 0 1px, transparent 2px),
-    radial-gradient(circle at 48% 91%, rgba(167, 243, 208, 0.07) 0 1px, transparent 2px);
+    radial-gradient(circle at 48% 91%, rgba(167, 243, 208, 0.07) 0 1px, transparent 2px),
+    radial-gradient(circle at 23% 118%, rgba(167, 243, 208, 0.08) 0 1px, transparent 2px),
+    radial-gradient(circle at 61% 132%, rgba(94, 234, 212, 0.07) 0 1px, transparent 2px),
+    radial-gradient(circle at 86% 112%, rgba(125, 211, 252, 0.06) 0 1px, transparent 2px);
   animation: squid-room-mote-drift 104s linear infinite;
 }
 
 body.squid-room-workspace .terminals-section::after {
   z-index: 0;
   background:
+    radial-gradient(ellipse at 50% 100%, rgba(94, 234, 212, 0.055), transparent 40%),
     radial-gradient(ellipse at center, transparent 0%, transparent 45%, rgba(0, 0, 0, 0.34) 100%),
-    linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.28) 100%);
+    linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.28) 76%, rgba(0, 0, 0, 0.48) 100%);
 }
 
 @keyframes squid-room-mote-drift {
@@ -1027,6 +1032,7 @@ body.squid-room-workspace .squid-room-live-panes {
 body.squid-room-workspace .squid-room-live-panes .pane {
   overflow: visible;
   border-color: rgba(94, 234, 212, 0.16);
+  padding-bottom: 12px;
 }
 
 body.squid-room-workspace .squid-room-live-panes .pane-header {
@@ -1036,8 +1042,10 @@ body.squid-room-workspace .squid-room-live-panes .pane-header {
 }
 
 body.squid-room-workspace .squid-room-live-panes .pane-terminal {
+  flex: 1 1 calc(100% - 12px);
   border-top: 1px solid rgba(94, 234, 212, 0.08);
   background: rgba(1, 5, 10, 0.82);
+  max-height: calc(100% - 12px);
 }
 
 body.squid-room-workspace .squid-room-live-pane .agent-badge {
@@ -1156,7 +1164,7 @@ body.squid-room-workspace .squid-room-team-collapsed {
 
 @media (max-width: 1100px), (max-height: 760px) {
   body.squid-room-workspace .terminals-section {
-    padding: 10px;
+    padding: 10px 10px 20px;
     gap: 12px;
   }
 
@@ -1260,7 +1268,8 @@ body.squid-room .terminals-section {
     radial-gradient(circle at 52% 0%, rgba(114, 240, 224, 0.08), transparent 32%),
     radial-gradient(circle at 92% 24%, rgba(67, 125, 174, 0.1), transparent 30%),
     radial-gradient(circle at 12% 76%, rgba(43, 185, 158, 0.1), transparent 34%),
-    linear-gradient(180deg, rgba(5, 12, 23, 0.98), rgba(2, 6, 14, 0.99));
+    radial-gradient(ellipse at 50% 100%, rgba(114, 240, 224, 0.04), transparent 42%),
+    linear-gradient(180deg, rgba(5, 12, 23, 0.98) 0%, rgba(2, 6, 14, 0.99) 72%, rgba(0, 1, 4, 1) 100%);
 }
 
 body.squid-room .glass,
@@ -1347,6 +1356,43 @@ body.squid-room .squid-room-pet-stage {
   overflow: visible;
 }
 
+body.squid-room .squid-room-pet-filters {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+body.squid-room .pet-caustics {
+  position: absolute;
+  inset: 4px 16% 10px;
+  z-index: 0;
+  border-radius: 999px;
+  opacity: 0.065;
+  background:
+    radial-gradient(ellipse at 42% 34%, rgba(207, 255, 247, 0.78), transparent 18%),
+    repeating-radial-gradient(ellipse at 50% 52%, rgba(114, 240, 224, 0.34) 0 1px, transparent 2px 10px);
+  filter: blur(3px);
+  mix-blend-mode: screen;
+  animation: squid-room-caustic-drift 16s ease-in-out infinite;
+}
+
+body.squid-room .pet-contact-shadow {
+  position: absolute;
+  left: 50%;
+  bottom: 11px;
+  z-index: 1;
+  width: min(54%, 98px);
+  height: 17px;
+  border-radius: 999px;
+  background: radial-gradient(ellipse, rgba(0, 0, 0, 0.42), transparent 72%);
+  filter: blur(7px);
+  opacity: 0.56;
+  transform: translateX(-50%) scaleX(1);
+  animation: squid-room-contact-breathe 5.6s ease-in-out infinite;
+}
+
 body.squid-room .pet-glow {
   position: absolute;
   width: min(58%, 118px);
@@ -1362,6 +1408,26 @@ body.squid-room .squid-room-codex-pet {
   width: clamp(66px, 20%, 86px);
   z-index: 2;
   filter: drop-shadow(0 0 16px rgba(114, 240, 224, 0.2));
+  transform-origin: 50% 58%;
+  will-change: transform, filter;
+}
+
+body.squid-room .pet-ink-burst {
+  position: absolute;
+  left: 50%;
+  top: 47%;
+  z-index: 3;
+  width: 92px;
+  height: 58px;
+  border-radius: 48% 52% 45% 55%;
+  background:
+    radial-gradient(circle at 40% 46%, rgba(114, 240, 224, 0.2), transparent 34%),
+    radial-gradient(circle at 57% 40%, rgba(87, 151, 205, 0.18), transparent 42%),
+    radial-gradient(ellipse at 50% 50%, rgba(4, 10, 20, 0.5), transparent 68%);
+  filter: blur(6px);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.52);
+  pointer-events: none;
 }
 
 body.squid-room .pet-stage .bubble {
@@ -1404,8 +1470,110 @@ body.squid-room .pet-stage .bubble-3 {
   }
 }
 
+@keyframes squid-room-caustic-drift {
+  0%,
+  100% {
+    transform: translate3d(-4px, 1px, 0) rotate(-1deg) scale(0.98);
+  }
+  50% {
+    transform: translate3d(5px, -2px, 0) rotate(1.2deg) scale(1.03);
+  }
+}
+
+@keyframes squid-room-contact-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: translateX(-50%) scaleX(0.9);
+  }
+  46% {
+    opacity: 0.62;
+    transform: translateX(-50%) scaleX(1.08);
+  }
+}
+
+@keyframes squid-room-liquid-active {
+  0%,
+  100% {
+    filter: url("#squid-room-liquid-active-a") drop-shadow(0 0 20px rgba(114, 240, 224, 0.32));
+    transform: translate3d(-1px, 2px, 0) rotate(-1.2deg) scale(1.015);
+  }
+  50% {
+    filter: url("#squid-room-liquid-active-b") drop-shadow(0 0 22px rgba(114, 240, 224, 0.4));
+    transform: translate3d(2px, -2px, 0) rotate(1deg) scale(1.035);
+  }
+}
+
+@keyframes squid-room-liquid-settling {
+  0%,
+  100% {
+    filter: url("#squid-room-liquid-settling-a") drop-shadow(0 0 16px rgba(114, 240, 224, 0.24));
+    transform: translate3d(-0.5px, 1px, 0) rotate(-0.6deg) scale(1.005);
+  }
+  50% {
+    filter: url("#squid-room-liquid-settling-b") drop-shadow(0 0 17px rgba(114, 240, 224, 0.28));
+    transform: translate3d(1px, -1px, 0) rotate(0.5deg) scale(1.018);
+  }
+}
+
+@keyframes squid-room-liquid-resting {
+  0%,
+  100% {
+    filter: url("#squid-room-liquid-resting") drop-shadow(0 0 11px rgba(114, 240, 224, 0.14));
+    transform: translate3d(0, 0.5px, 0) scale(1);
+  }
+  50% {
+    filter: url("#squid-room-liquid-resting") drop-shadow(0 0 12px rgba(114, 240, 224, 0.16));
+    transform: translate3d(0, -0.5px, 0) scale(1.005);
+  }
+}
+
+@keyframes squid-room-ink-puff {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.52) rotate(-4deg);
+  }
+  18% {
+    opacity: 0.72;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -62%) scale(1.45) rotate(7deg);
+  }
+}
+
+@keyframes squid-room-celebration-wiggle {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+  }
+  20% {
+    transform: translate3d(-5px, -2px, 0) rotate(-5deg) scale(1.05);
+  }
+  42% {
+    transform: translate3d(4px, 2px, 0) rotate(4deg) scale(1.04);
+  }
+  64% {
+    transform: translate3d(-2px, -1px, 0) rotate(-2deg) scale(1.02);
+  }
+}
+
 body.squid-room .pet-stage.is-active .pet-glow {
   background: radial-gradient(circle, rgba(114, 240, 224, 0.25), transparent 66%);
+}
+
+body.squid-room .pet-stage.is-active .pet,
+body.squid-room .pet-stage.is-active .squid-room-codex-pet {
+  animation: squid-room-liquid-active 4.4s ease-in-out infinite;
+}
+
+body.squid-room .pet-stage.is-active .pet-caustics {
+  opacity: 0.08;
+  animation-duration: 12s;
+}
+
+body.squid-room .pet-stage.is-active .pet-contact-shadow {
+  animation-duration: 4.2s;
 }
 
 body.squid-room .pet-stage.is-settling .bubble {
@@ -1413,10 +1581,51 @@ body.squid-room .pet-stage.is-settling .bubble {
   animation-duration: 12s;
 }
 
+body.squid-room .pet-stage.is-settling .pet,
+body.squid-room .pet-stage.is-settling .squid-room-codex-pet {
+  animation: squid-room-liquid-settling 7.8s ease-in-out infinite;
+}
+
+body.squid-room .pet-stage.is-settling .pet-caustics {
+  opacity: 0.052;
+  animation-duration: 20s;
+}
+
+body.squid-room .pet-stage.is-settling .pet-contact-shadow {
+  opacity: 0.46;
+  animation-duration: 7.4s;
+}
+
 body.squid-room .pet-stage.is-resting .bubble,
 body.squid-room .pet-stage.is-resting .pet-glow {
   opacity: 0.24;
   animation-duration: 18s;
+}
+
+body.squid-room .pet-stage.is-resting .pet,
+body.squid-room .pet-stage.is-resting .squid-room-codex-pet {
+  animation: squid-room-liquid-resting 16s ease-in-out infinite;
+}
+
+body.squid-room .pet-stage.is-resting .pet-caustics {
+  opacity: 0.028;
+  animation-duration: 30s;
+}
+
+body.squid-room .pet-stage.is-resting .pet-contact-shadow {
+  opacity: 0.34;
+  animation-duration: 13s;
+}
+
+body.squid-room .pet-stage.is-celebrating .pet-ink-burst {
+  animation: squid-room-ink-puff 1.5s ease-out both;
+}
+
+body.squid-room .pet-stage.is-celebrating .pet,
+body.squid-room .pet-stage.is-celebrating .squid-room-codex-pet {
+  animation:
+    squid-room-celebration-wiggle 1.5s ease-out both,
+    squid-room-liquid-active 4.4s ease-in-out infinite;
 }
 
 body.squid-room .chip,
@@ -1582,7 +1791,24 @@ body.squid-room .squid-room-live-panes .pane-expanded .pane-terminal {
 
 @media (prefers-reduced-motion: reduce) {
   body.squid-room .abyss-motes span,
-  body.squid-room .pet-stage .bubble {
-    animation: none;
+  body.squid-room .pet-stage .bubble,
+  body.squid-room .pet-stage .pet,
+  body.squid-room .pet-stage .squid-room-codex-pet,
+  body.squid-room .pet-stage .pet-glow,
+  body.squid-room .pet-stage .pet-caustics,
+  body.squid-room .pet-stage .pet-contact-shadow,
+  body.squid-room .pet-stage .pet-ink-burst {
+    animation: none !important;
+  }
+
+  body.squid-room .pet-stage .pet,
+  body.squid-room .pet-stage .squid-room-codex-pet {
+    filter: none !important;
+    transform: none !important;
+  }
+
+  body.squid-room .pet-stage .pet-caustics,
+  body.squid-room .pet-stage .pet-ink-burst {
+    opacity: 0 !important;
   }
 }

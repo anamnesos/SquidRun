@@ -343,6 +343,106 @@ function createSquidRoomPetArtwork(doc, spec) {
   });
 }
 
+function createSvgElement(doc, tagName, attrs = {}) {
+  const namespace = 'http://www.w3.org/2000/svg';
+  const element = typeof doc.createElementNS === 'function'
+    ? doc.createElementNS(namespace, tagName)
+    : doc.createElement(tagName);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value !== undefined && value !== null) {
+      if (key === 'class' && element.classList?.add) {
+        String(value).split(/\s+/).filter(Boolean).forEach((className) => {
+          element.classList.add(className);
+        });
+      }
+      element.setAttribute?.(key, String(value));
+    }
+  }
+  return element;
+}
+
+function appendSquidRoomLiquidFilter(doc, defs, id, {
+  baseFrequency,
+  numOctaves = 2,
+  scale = 4,
+  seed = 3,
+} = {}) {
+  const filter = createSvgElement(doc, 'filter', {
+    id,
+    x: '-16%',
+    y: '-16%',
+    width: '132%',
+    height: '132%',
+    'color-interpolation-filters': 'sRGB',
+  });
+  filter.appendChild(createSvgElement(doc, 'feTurbulence', {
+    type: 'fractalNoise',
+    baseFrequency,
+    numOctaves,
+    seed,
+    result: 'squid-room-liquid-noise',
+  }));
+  filter.appendChild(createSvgElement(doc, 'feDisplacementMap', {
+    in: 'SourceGraphic',
+    in2: 'squid-room-liquid-noise',
+    scale,
+    xChannelSelector: 'R',
+    yChannelSelector: 'G',
+  }));
+  defs.appendChild(filter);
+  return filter;
+}
+
+function ensureSquidRoomPetFilters(doc) {
+  const body = doc?.body;
+  if (!body) return null;
+  let svg = body.querySelector?.('.squid-room-pet-filters');
+  if (svg) return svg;
+
+  svg = createSvgElement(doc, 'svg', {
+    class: 'squid-room-pet-filters',
+    width: '0',
+    height: '0',
+    viewBox: '0 0 0 0',
+    focusable: 'false',
+    'aria-hidden': 'true',
+  });
+  const defs = createSvgElement(doc, 'defs');
+  appendSquidRoomLiquidFilter(doc, defs, 'squid-room-liquid-active-a', {
+    baseFrequency: '0.012 0.018',
+    scale: 4.6,
+    seed: 7,
+  });
+  appendSquidRoomLiquidFilter(doc, defs, 'squid-room-liquid-active-b', {
+    baseFrequency: '0.018 0.012',
+    scale: 4.2,
+    seed: 11,
+  });
+  appendSquidRoomLiquidFilter(doc, defs, 'squid-room-liquid-settling-a', {
+    baseFrequency: '0.010 0.014',
+    scale: 3.4,
+    seed: 5,
+  });
+  appendSquidRoomLiquidFilter(doc, defs, 'squid-room-liquid-settling-b', {
+    baseFrequency: '0.014 0.010',
+    scale: 3,
+    seed: 13,
+  });
+  appendSquidRoomLiquidFilter(doc, defs, 'squid-room-liquid-resting', {
+    baseFrequency: '0.008 0.010',
+    scale: 1.6,
+    seed: 17,
+  });
+  svg.appendChild(defs);
+  body.insertBefore?.(svg, body.firstChild || null);
+  return svg;
+}
+
+function removeSquidRoomPetFilters(doc) {
+  const svg = doc?.body?.querySelector?.('.squid-room-pet-filters');
+  svg?.remove?.();
+}
+
 function renderSquidRoomPetPane(doc, pane, spec) {
   if (!doc || !pane || !spec) return null;
   if (Array.isArray(pane.childNodes)) pane.childNodes.length = 0;
@@ -363,11 +463,14 @@ function renderSquidRoomPetPane(doc, pane, spec) {
   header.appendChild(title);
 
   const stage = createElement(doc, 'div', { className: 'squid-room-pet-stage pet-stage is-active' });
+  stage.appendChild(createElement(doc, 'span', { className: 'pet-caustics' }));
+  stage.appendChild(createElement(doc, 'span', { className: 'pet-contact-shadow' }));
   stage.appendChild(createElement(doc, 'span', { className: 'pet-glow' }));
   stage.appendChild(createSquidRoomPetArtwork(doc, spec));
   for (let index = 0; index < 3; index += 1) {
     stage.appendChild(createElement(doc, 'span', { className: `bubble bubble-${index + 1}` }));
   }
+  stage.appendChild(createElement(doc, 'span', { className: 'pet-ink-burst' }));
 
   const stateChip = createElement(doc, 'span', { className: 'squid-room-pet-state chip verb-chip' }, spec.stateLabel);
 
@@ -563,6 +666,7 @@ function configureSquidRoomPaneShell(doc) {
     body.classList.add('squid-room');
   }
   ensureSquidRoomMotes(doc);
+  ensureSquidRoomPetFilters(doc);
 
   const mainPane = doc.querySelector('.pane[data-pane-id="1"], .pane[data-workspace-source-pane-id="1"]');
   setElementHidden(mainPane, true);
@@ -619,6 +723,7 @@ function configureWorkspacePaneShell(windowContext = {}, terminal = null, doc = 
     resolvedDocument.body.classList.remove('squid-room-workspace');
     resolvedDocument.body.classList.remove('squid-room');
     removeSquidRoomMotes(resolvedDocument);
+    removeSquidRoomPetFilters(resolvedDocument);
   }
 
   if (terminal && typeof terminal.setActivePaneIds === 'function') {
@@ -637,5 +742,6 @@ module.exports = {
   SQUID_ROOM_PET_PANE_SPECS,
   SQUID_ROOM_TEAM_PANE_IDS,
   SQUID_ROOM_TRUSTQUOTE_ARM_PANES,
+  ensureSquidRoomPetFilters,
   configureWorkspacePaneShell,
 };

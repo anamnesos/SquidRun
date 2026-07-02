@@ -521,12 +521,15 @@ let headerSessionBadgeRetryAttempts = 0;
 let squidRoomLivePaneEnsureTimer = null;
 let squidRoomPetStatusTimer = null;
 const squidRoomPetAnimationTimers = new Map();
+const squidRoomPetCelebrationState = new Map();
 const squidRoomLivePaneSpawnAttempts = new Map();
 const SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS = 15000;
 const SQUID_ROOM_PET_STATUS_REFRESH_MS = 10000;
 const SQUID_ROOM_PET_STATUS_CHANNEL = 'evidence-ledger:query-comms-journal';
 const SQUID_ROOM_PET_ACTIVE_AGE_MS = 30000;
 const SQUID_ROOM_PET_SETTLING_AGE_MS = 5 * 60 * 1000;
+const SQUID_ROOM_PET_CELEBRATION_COOLDOWN_MS = 10 * 60 * 1000;
+const SQUID_ROOM_PET_CELEBRATION_DURATION_MS = 1500;
 const SQUID_ROOM_PET_ATLAS_COLUMNS = 8;
 const SQUID_ROOM_PET_ATLAS_ROWS = 9;
 const SQUID_ROOM_PET_IDLE_FRAMES = Object.freeze([
@@ -785,6 +788,88 @@ function getSquidRoomPetMotionClass(row = {}, nowMs = Date.now()) {
   return 'is-resting';
 }
 
+function getSquidRoomPetRowIdentity(row = {}) {
+  const candidates = [
+    row.rowId,
+    row.row_id,
+    row.messageId,
+    row.message_id,
+    row.eventId,
+    row.event_id,
+    row.deliveryId,
+    row.delivery_id,
+  ];
+  for (const candidate of candidates) {
+    if (candidate !== undefined && candidate !== null && String(candidate).trim()) {
+      return String(candidate).trim();
+    }
+  }
+  return null;
+}
+
+function getSquidRoomPetRowRole(row = {}) {
+  return String(
+    row.senderRole
+    || row.sender_role
+    || row.sender
+    || row.role
+    || row.sourceRole
+    || row.source_role
+    || ''
+  ).trim().toLowerCase();
+}
+
+function isSquidRoomPetCelebrationEvent(row = {}, role = '') {
+  if (!getSquidRoomPetRowIdentity(row)) return false;
+  const normalizedRole = String(role || '').trim().toLowerCase();
+  const rowRole = getSquidRoomPetRowRole(row);
+  if (rowRole && normalizedRole && rowRole !== normalizedRole) return false;
+
+  const text = stripSquidRoomMessageNoise(getSquidRoomCommsText(row)).toLowerCase();
+  if (!text) return false;
+
+  const oracleGatePass = normalizedRole === 'oracle'
+    && (
+      /\b(?:oracle[-_\s]*)?gate\b.{0,48}\bpass(?:ed)?\b/.test(text)
+      || /\bfinal gate pass\b/.test(text)
+      || /\bconstitution pass\b/.test(text)
+      || /\bseal:\s*pass\b/.test(text)
+      || /\boracle_verify\b/.test(text)
+    );
+  const durableCommit = /\bcommit(?:ted)?\b.{0,80}\b[0-9a-f]{7,40}\b/.test(text)
+    || /\b[0-9a-f]{7,40}\b.{0,80}\bcommit(?:ted)?\b/.test(text)
+    || /\bdurable closeout\b.{0,96}\bcommit\b/.test(text)
+    || (/\bclosed passed\b/.test(text) && /\b(?:commit|durable|worktree clean)\b/.test(text));
+  return oracleGatePass || durableCommit;
+}
+
+function triggerSquidRoomPetCelebration(pane, row = {}, nowMs = Date.now()) {
+  if (!pane || getSquidRoomPetReducedMotionPreference()) return false;
+  const stage = pane.querySelector?.('.squid-room-pet-stage');
+  if (!stage?.classList) return false;
+  const role = String(pane.dataset?.squidRoomPet || '').trim().toLowerCase();
+  if (!isSquidRoomPetCelebrationEvent(row, role)) return false;
+
+  const rowKey = getSquidRoomPetRowIdentity(row);
+  const previous = squidRoomPetCelebrationState.get(role) || {};
+  const elapsed = Number(nowMs) - Number(previous.lastCelebratedAtMs || 0);
+  if (previous.lastRowKey === rowKey) return false;
+  if (elapsed >= 0 && elapsed < SQUID_ROOM_PET_CELEBRATION_COOLDOWN_MS) return false;
+
+  if (previous.timer) window.clearTimeout(previous.timer);
+  pane.dataset.squidRoomCelebrationRowId = rowKey;
+  stage.classList.add('is-celebrating');
+  const timer = window.setTimeout(() => {
+    stage.classList.remove('is-celebrating');
+  }, SQUID_ROOM_PET_CELEBRATION_DURATION_MS);
+  squidRoomPetCelebrationState.set(role, {
+    lastRowKey: rowKey,
+    lastCelebratedAtMs: Number(nowMs),
+    timer,
+  });
+  return true;
+}
+
 // A pane is only "Blocked" when its latest message is a genuine self-report of
 // being stuck — NOT when the message merely mentions blocked/fail/error as the
 // work TOPIC (the team's whole job is discussing bugs, blockers, and failures).
@@ -849,6 +934,7 @@ function updateSquidRoomPetPane(pane, row) {
     stage.classList.toggle('is-active', motionClass === 'is-active');
     stage.classList.toggle('is-settling', motionClass === 'is-settling');
     stage.classList.toggle('is-resting', motionClass === 'is-resting');
+    triggerSquidRoomPetCelebration(pane, row);
   }
   const stateEl = pane.querySelector?.('.squid-room-pet-state');
   if (stateEl) stateEl.textContent = state.label;
@@ -4125,6 +4211,8 @@ if (typeof module !== 'undefined' && module.exports) {
     renderSquidRoomProjectionInline,
     classifySquidRoomPetState,
     buildSquidRoomPetFace,
+    isSquidRoomPetCelebrationEvent,
+    triggerSquidRoomPetCelebration,
     getSquidRoomPetMotionClass,
     getSquidRoomPetRowTimestampMs,
     syncStartupOverlayDaemonReplay,

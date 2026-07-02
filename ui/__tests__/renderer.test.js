@@ -415,6 +415,54 @@ describe('renderer.js smoke tests', () => {
     });
   });
 
+  describe('Squid Room pet celebration events', () => {
+    it('requires a real comms row identity before celebration can trigger', () => {
+      expect(renderer.isSquidRoomPetCelebrationEvent({
+        body: '(ORACLE #170): SOUL-DELTA SEAL: PASS. oracle_verify attached.',
+        senderRole: 'oracle',
+      }, 'oracle')).toBe(false);
+
+      expect(renderer.isSquidRoomPetCelebrationEvent({
+        rowId: 73717,
+        body: '(ORACLE #170): SOUL-DELTA SEAL: PASS. oracle_verify attached.',
+        senderRole: 'oracle',
+      }, 'oracle')).toBe(true);
+
+      expect(renderer.isSquidRoomPetCelebrationEvent({
+        rowId: 73718,
+        body: '(ORACLE #170): SOUL-DELTA SEAL: PASS. oracle_verify attached.',
+        senderRole: 'oracle',
+      }, 'builder')).toBe(false);
+    });
+
+    it('fires only once per real event and enforces a ten minute cooldown per pet', () => {
+      const stage = {
+        classList: {
+          add: jest.fn(),
+          remove: jest.fn(),
+        },
+      };
+      const pane = {
+        dataset: { squidRoomPet: 'builder-p15-test' },
+        querySelector: jest.fn((selector) => (selector === '.squid-room-pet-stage' ? stage : null)),
+      };
+      const now = Date.parse('2026-07-02T00:00:00.000Z');
+      const makeCommitRow = (rowId) => ({
+        rowId,
+        senderRole: 'builder-p15-test',
+        body: `(BUILDER #99): Commit d972b432 closed passed for row ${rowId}.`,
+      });
+
+      expect(renderer.triggerSquidRoomPetCelebration(pane, makeCommitRow('commit-1'), now)).toBe(true);
+      expect(stage.classList.add).toHaveBeenCalledWith('is-celebrating');
+      expect(pane.dataset.squidRoomCelebrationRowId).toBe('commit-1');
+
+      expect(renderer.triggerSquidRoomPetCelebration(pane, makeCommitRow('commit-1'), now + 1000)).toBe(false);
+      expect(renderer.triggerSquidRoomPetCelebration(pane, makeCommitRow('commit-2'), now + (10 * 60 * 1000) - 1)).toBe(false);
+      expect(renderer.triggerSquidRoomPetCelebration(pane, makeCommitRow('commit-3'), now + (10 * 60 * 1000))).toBe(true);
+    });
+  });
+
   describe('command bar routing', () => {
     beforeEach(() => {
       require('../modules/terminal').broadcast.mockClear();
