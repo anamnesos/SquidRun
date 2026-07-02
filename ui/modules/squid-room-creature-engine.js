@@ -185,6 +185,11 @@ function createSquidCreature(options = {}) {
     heading: -Math.PI / 2,
     bank: 0,
     lean: 0,
+    // Wave 4.5 behaviors (pooled).
+    workOrbStrength: 0,
+    workOrbPhase: 0,
+    thoughtTimerMs: 0,
+    thoughtDots: [],
     // Jet cycle.
     jetPhase: JET_PHASE.DRIFT,
     jetPhaseMs: 0,
@@ -338,22 +343,21 @@ function createSquidCreature(options = {}) {
     const { width, height } = state.bounds;
     const lift = profile().driftLift;
     state.targetX = margin + rng() * (width - margin * 2);
-    // BEHIND-GLASS PATROL (wave 4): the lower half of the swim space lies
-    // behind the frosted station cards. Mostly open space (75%), occasional
-    // glass passes - and if currently low, ALWAYS surface next (never park
-    // behind glass; keeps the glow moving and the creature discoverable).
+    // BEHIND-GLASS PATROL (wave 4): mostly open space (75%), occasional
+    // passes behind the FROSTED cards low in the window - and if currently
+    // low, ALWAYS surface next (never parked, always discoverable).
+    // OCCLUSION LAW (Architect defect 1): the opaque section-bar band
+    // (~48-64% of the swim column) is EXCLUDED from targets entirely -
+    // behind-opaque = invisible, not glow-through; creatures only transit
+    // it, never stop in it, so a face is never occluded beyond a pass.
     const currentlyLow = state.y > height * 0.5;
-    const wantGlassPass = !currentlyLow && rng() < 0.25 && height > 260;
-    const yMin = margin;
-    const yMax = wantGlassPass
+    const wantGlassPass = !currentlyLow && rng() < 0.25 && height > 420;
+    const zoneMin = wantGlassPass ? height * 0.66 : margin;
+    const zoneMax = wantGlassPass
       ? height - margin * 0.6
-      : Math.min(height * 0.45, height - margin);
-    const ySpan = Math.max(20, yMax - (wantGlassPass ? height * 0.55 : yMin));
-    state.targetY = clamp(
-      (wantGlassPass ? height * 0.55 : yMin) + rng() * ySpan + lift,
-      margin,
-      height - margin * 0.6
-    );
+      : Math.min(height * 0.44, height - margin);
+    const ySpan = Math.max(20, zoneMax - zoneMin);
+    state.targetY = clamp(zoneMin + rng() * ySpan + lift, margin, height - margin * 0.6);
   }
 
   function beginJet() {
@@ -641,6 +645,61 @@ function createSquidCreature(options = {}) {
       if (burst.ageMs >= burst.lifeMs) state.inkBursts.splice(index, 1);
     }
     if (state.celebrateMs > 0) state.celebrateMs = Math.max(0, state.celebrateMs - dtMs);
+    tickBehavior(dtMs);
+  }
+
+  // -------------------------------------------------------------------
+  // WAVE 4.5 BEHAVIORS: the creature visibly DOES things. Drivers are the
+  // SAME honest activity signal (output age) already ticking the profiles -
+  // richer mapping, zero new signal invention (constitution rows 1-3).
+  // Silhouette-readable from six feet:
+  //   working  -> manipulates a glowing work-orb with its front arms
+  //   settling -> "thinking": slow drift, eyes up-and-aside, thought dots
+  //   resting  -> drowsy: occasional tiny z-dots
+  // All pooled: one orb (phase only), THOUGHT_DOT_MAX dots reused in place.
+  // -------------------------------------------------------------------
+  const THOUGHT_DOT_MAX = 3;
+
+  function tickBehavior(dtMs) {
+    const activity = state.activity;
+    // Work-orb phase advances only while working (orb eases in/out).
+    const orbTarget = activity === 'working' ? 1 : 0;
+    state.workOrbStrength += (orbTarget - state.workOrbStrength) * Math.min(1, dtMs / 420);
+    state.workOrbPhase += dtMs / (activity === 'working' ? 340 : 900);
+    // Thought/z dots: settling thinks (~1.4s cadence), resting snoozes
+    // (~3.8s cadence), working emits none.
+    const cadence = activity === 'settling' ? 1400 : (activity === 'resting' ? 3800 : 0);
+    state.thoughtTimerMs += dtMs;
+    if (cadence && state.thoughtTimerMs >= cadence) {
+      state.thoughtTimerMs = 0;
+      let slot = null;
+      for (const dot of state.thoughtDots) {
+        if (dot.ageMs >= dot.lifeMs) { slot = dot; break; }
+      }
+      if (!slot && state.thoughtDots.length < THOUGHT_DOT_MAX) {
+        slot = { x: 0, y: 0, ageMs: 0, lifeMs: 1, sleepy: false };
+        state.thoughtDots.push(slot);
+      }
+      if (slot) {
+        slot.x = state.x + 10 + rng() * 4;
+        slot.y = state.y - 26;
+        slot.ageMs = 0;
+        slot.lifeMs = activity === 'resting' ? 2600 : 1900;
+        slot.sleepy = activity === 'resting';
+      }
+    }
+    for (const dot of state.thoughtDots) {
+      if (dot.ageMs >= dot.lifeMs) continue;
+      dot.ageMs += dtMs;
+      dot.y -= (dot.sleepy ? 7 : 11) * (dtMs / 1000);
+      dot.x += Math.sin((dot.ageMs + dot.y) / 300) * 0.15;
+    }
+    // Thinking gaze: eyes up-and-aside while settling (overrides saccade).
+    if (activity === 'settling' && state.nextSaccadeInMs < 200) {
+      state.saccade.x = 1.9;
+      state.saccade.y = -1.7;
+      state.nextSaccadeInMs = 900;
+    }
   }
 
   function tick(dtMs) {
@@ -892,6 +951,54 @@ function createSquidCreature(options = {}) {
         ctx.fillStyle = (blob % 2 === 1 && state.palette.inkAccent)
           ? state.palette.inkAccent
           : state.palette.ink;
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    drawBehaviorEffects(ctx);
+  }
+
+  // Wave 4.5 behavior visuals (pooled state, flat fills - no gradients).
+  function drawBehaviorEffects(ctx) {
+    // Work-orb: a small glowing sphere the working creature manipulates in
+    // front of its lower arms; bobs with the manipulation rhythm.
+    if (state.workOrbStrength > 0.05) {
+      const facing = Math.cos(state.heading) >= 0 ? 1 : -1;
+      const orbX = state.x + facing * (16 + Math.sin(state.workOrbPhase * 2.1) * 3);
+      const orbY = state.y + 26 + Math.sin(state.workOrbPhase * 3.2) * 2.5;
+      ctx.save();
+      ctx.globalAlpha = 0.85 * state.workOrbStrength;
+      ctx.fillStyle = state.palette.rim;
+      ctx.beginPath();
+      ctx.arc(orbX, orbY, 4.6, 0, TWO_PI);
+      ctx.fill();
+      ctx.globalAlpha = 0.3 * state.workOrbStrength;
+      ctx.beginPath();
+      ctx.arc(orbX, orbY, 8.4, 0, TWO_PI);
+      ctx.fill();
+      ctx.restore();
+    }
+    // Thought dots (settling) / sleepy z-dots (resting): rise and fade.
+    for (const dot of state.thoughtDots) {
+      if (dot.ageMs >= dot.lifeMs) continue;
+      const life = 1 - dot.ageMs / dot.lifeMs;
+      ctx.save();
+      ctx.globalAlpha = 0.55 * life;
+      if (dot.sleepy) {
+        // A tiny "z" - two short strokes reading as a snooze mark.
+        ctx.strokeStyle = state.palette.rim;
+        ctx.lineWidth = 1.4;
+        const size = 3.2;
+        ctx.beginPath();
+        ctx.moveTo(dot.x - size, dot.y - size);
+        ctx.lineTo(dot.x + size, dot.y - size);
+        ctx.lineTo(dot.x - size, dot.y + size);
+        ctx.lineTo(dot.x + size, dot.y + size);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = state.palette.rim;
+        ctx.beginPath();
+        ctx.arc(dot.x, dot.y, 1.6 + life * 1.2, 0, TWO_PI);
         ctx.fill();
       }
       ctx.restore();
