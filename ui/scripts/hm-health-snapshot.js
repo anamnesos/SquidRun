@@ -112,11 +112,6 @@ const HEALTH_SCORE_PENALTIES = Object.freeze({
     category: 'supervisor',
     rationale: 'A stale supervisor status file means startup health cannot trust the background worker lane.',
   }),
-  codex_attention_poller_heartbeat_stale: Object.freeze({
-    points: 15,
-    category: 'codex_desktop',
-    rationale: 'A stale Codex attention poller heartbeat means the external restart hand may be absent.',
-  }),
   the_tell_shadow_runner_stale: Object.freeze({
     points: 6,
     category: 'the_tell',
@@ -146,7 +141,6 @@ const DEFAULT_BRIDGE_DISCOVERY_MAX_AGE_MS = 10 * 60 * 1000;
 const DEFAULT_SUPERVISOR_POLL_MS = 4000;
 const DEFAULT_SUPERVISOR_STATUS_STALE_MULTIPLIER = 4;
 const DEFAULT_SUPERVISOR_STATUS_STALE_MIN_MS = 15000;
-const DEFAULT_CODEX_ATTENTION_POLLER_HEARTBEAT_STALE_MS = 15 * 60 * 1000;
 const DEFAULT_THE_TELL_SHADOW_RUNNER_STALE_MS = PROMOTION.MAX_OBSERVATION_GAP_MS;
 const MEMORY_CONSISTENCY_REVIEW_SKIP_KIND_ALLOWLIST = Object.freeze([
   'ambiguous_multi_target',
@@ -438,17 +432,6 @@ function readBridgeKnownDevicesCache(projectRoot, options = {}) {
   }
 }
 
-function getCodexAttentionPollerHeartbeatStaleMs(options = {}) {
-  const env = options.env && typeof options.env === 'object' ? options.env : process.env;
-  return Math.max(
-    60 * 1000,
-    asPositiveInt(
-      options.codexAttentionPollerHeartbeatStaleMs ?? env.SQUIDRUN_CODEX_ATTENTION_POLLER_HEARTBEAT_STALE_MS,
-      DEFAULT_CODEX_ATTENTION_POLLER_HEARTBEAT_STALE_MS
-    )
-  );
-}
-
 function getTheTellShadowRunnerStaleMs(options = {}) {
   const env = options.env && typeof options.env === 'object' ? options.env : process.env;
   return Math.max(
@@ -458,90 +441,6 @@ function getTheTellShadowRunnerStaleMs(options = {}) {
       DEFAULT_THE_TELL_SHADOW_RUNNER_STALE_MS
     )
   );
-}
-
-function inspectCodexAttentionPollerHeartbeat(projectRoot, options = {}) {
-  if (
-    options.codexAttentionPollerHeartbeat
-    && typeof options.codexAttentionPollerHeartbeat === 'object'
-    && !Array.isArray(options.codexAttentionPollerHeartbeat)
-  ) {
-    return options.codexAttentionPollerHeartbeat;
-  }
-
-  const heartbeatPath = options.codexAttentionPollerHeartbeatPath
-    ? path.resolve(String(options.codexAttentionPollerHeartbeatPath))
-    : path.join(projectRoot, '.squidrun', 'runtime', 'codex-attention-bridge', 'poller-heartbeat.json');
-  const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
-  const staleThresholdMs = getCodexAttentionPollerHeartbeatStaleMs(options);
-  const stat = safeStat(heartbeatPath);
-  if (!stat || !stat.isFile()) {
-    return {
-      ok: true,
-      status: 'missing',
-      path: heartbeatPath,
-      statusFilePresent: false,
-      heartbeatAt: null,
-      heartbeatAtMs: null,
-      heartbeatAgeMs: null,
-      staleThresholdMs,
-      activeCount: null,
-      session: null,
-      source: null,
-      stale: false,
-      staleReasons: [],
-      error: null,
-    };
-  }
-
-  try {
-    const parsed = JSON.parse(fs.readFileSync(heartbeatPath, 'utf8'));
-    const heartbeatAt = asNonEmptyString(parsed.at || parsed.updatedAt || parsed.updated_at || parsed.heartbeatAt);
-    const heartbeatAtMs = Number.isFinite(Number(parsed.heartbeatAtMs))
-      ? Math.floor(Number(parsed.heartbeatAtMs))
-      : (heartbeatAt ? Date.parse(heartbeatAt) : NaN);
-    const normalizedHeartbeatAtMs = Number.isFinite(heartbeatAtMs) ? heartbeatAtMs : null;
-    const heartbeatAgeMs = normalizedHeartbeatAtMs !== null ? Math.max(0, nowMs - normalizedHeartbeatAtMs) : null;
-    const staleReasons = [];
-    if (normalizedHeartbeatAtMs === null) {
-      staleReasons.push('invalid_timestamp');
-    } else if (heartbeatAgeMs > staleThresholdMs) {
-      staleReasons.push('heartbeat_stale');
-    }
-    return {
-      ok: staleReasons.length === 0,
-      status: staleReasons.length === 0 ? 'fresh' : (normalizedHeartbeatAtMs === null ? 'invalid_timestamp' : 'stale'),
-      path: heartbeatPath,
-      statusFilePresent: true,
-      heartbeatAt,
-      heartbeatAtMs: normalizedHeartbeatAtMs,
-      heartbeatAgeMs,
-      staleThresholdMs,
-      activeCount: asNonNegativeInt(parsed.active_count ?? parsed.activeCount, null),
-      session: asPositiveInt(parsed.session, null),
-      source: asNonEmptyString(parsed.source) || null,
-      stale: staleReasons.length > 0,
-      staleReasons,
-      error: null,
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      status: 'read_error',
-      path: heartbeatPath,
-      statusFilePresent: true,
-      heartbeatAt: null,
-      heartbeatAtMs: null,
-      heartbeatAgeMs: null,
-      staleThresholdMs,
-      activeCount: null,
-      session: null,
-      source: null,
-      stale: true,
-      staleReasons: ['heartbeat_read_error'],
-      error: err.message,
-    };
-  }
 }
 
 function latestSuccessfulTickFromLedger(ledgerPath) {
@@ -1679,25 +1578,6 @@ function buildHealthStatus(snapshot) {
     );
     addPenalty('supervisor_heartbeat_stale');
   }
-  const codexAttentionPollerHeartbeat = snapshot.codexAttentionPollerHeartbeat
-    && typeof snapshot.codexAttentionPollerHeartbeat === 'object'
-    ? snapshot.codexAttentionPollerHeartbeat
-    : {};
-  const codexAttentionActiveCount = asNonNegativeInt(codexAttentionPollerHeartbeat.activeCount, 0);
-  if (codexAttentionPollerHeartbeat.stale === true && codexAttentionActiveCount > 0) {
-    const staleReasons = Array.isArray(codexAttentionPollerHeartbeat.staleReasons)
-      && codexAttentionPollerHeartbeat.staleReasons.length > 0
-      ? codexAttentionPollerHeartbeat.staleReasons.join(',')
-      : 'unknown';
-    warnings.push(
-      'codex_attention_poller_heartbeat_stale:'
-      + `status=${codexAttentionPollerHeartbeat.status || 'unknown'},`
-      + `reasons=${staleReasons},`
-      + `age_ms=${codexAttentionPollerHeartbeat.heartbeatAgeMs ?? 'unknown'},`
-      + `threshold_ms=${codexAttentionPollerHeartbeat.staleThresholdMs ?? 'unknown'}`
-    );
-    addPenalty('codex_attention_poller_heartbeat_stale');
-  }
   const theTellShadowRunner = snapshot.theTellShadowRunner
     && typeof snapshot.theTellShadowRunner === 'object'
     ? snapshot.theTellShadowRunner
@@ -1782,7 +1662,6 @@ function createHealthSnapshot(options = {}) {
     ...options,
     profileName,
   });
-  const codexAttentionPollerHeartbeat = inspectCodexAttentionPollerHeartbeat(projectRoot, options);
   const theTellShadowRunner = inspectTheTellShadowRunner(projectRoot, {
     ...options,
     profileName,
@@ -1808,7 +1687,6 @@ function createHealthSnapshot(options = {}) {
     memoryConsistency,
     systemCapabilities,
     codexDesktopCapability,
-    codexAttentionPollerHeartbeat,
     theTellShadowRunner,
     telegramPoller,
     supervisor,
@@ -2085,37 +1963,11 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   lines.push(`- App-Control Route: ${codexAppControl.status || 'unknown'}${codexAppControl.source_message_id ? ` (source=${codexAppControl.source_message_id})` : ''}`);
   lines.push(`- Attention Inbox: active=${Number(codexInbox.active_count || 0)}, completed=${Number(codexInbox.completed_count || 0)}, total=${Number(codexInbox.total_count || 0)}, freshness=${codexInbox.polling_freshness || 'unknown'}`);
   lines.push(`- Desktop Transport: summon=${codexTransport.can_summon_workspace === true ? 'yes' : 'no'}, visible_injection=${codexTransport.visible_injection_proven === true ? 'proven' : 'not_proven'}`);
-  lines.push('- Tools: hm-codex-capability-status, hm-codex-attention, hm-codex-desktop-transport');
+  lines.push('- Tools: hm-codex-capability-status, hm-codex-desktop-transport');
 
-  const codexPollerHeartbeat = snapshot.codexAttentionPollerHeartbeat
-    && typeof snapshot.codexAttentionPollerHeartbeat === 'object'
-    ? snapshot.codexAttentionPollerHeartbeat
-    : {};
-  const codexPollerHeartbeatText = isFiniteNumberValue(codexPollerHeartbeat.heartbeatAtMs)
-    ? new Date(Number(codexPollerHeartbeat.heartbeatAtMs)).toISOString()
-    : (codexPollerHeartbeat.heartbeatAt || 'no heartbeat');
-  const codexPollerAgeText = isFiniteNumberValue(codexPollerHeartbeat.heartbeatAgeMs)
-    ? `${Math.round(Number(codexPollerHeartbeat.heartbeatAgeMs) / 1000)}s old`
-    : 'age unknown';
-  const codexPollerThresholdText = isFiniteNumberValue(codexPollerHeartbeat.staleThresholdMs)
-    ? `${Math.round(Number(codexPollerHeartbeat.staleThresholdMs) / 1000)}s threshold`
-    : 'threshold unknown';
-  lines.push('');
-  lines.push('CODEX ATTENTION POLLER HEARTBEAT');
-  lines.push(
-    `- Freshness: ${codexPollerHeartbeat.status || 'unknown'}`
-    + ` (${codexPollerHeartbeatText}; ${codexPollerAgeText}; ${codexPollerThresholdText})`
-  );
-  lines.push(`- Active Requests At Last Poll: ${codexPollerHeartbeat.activeCount ?? 'unknown'}`);
-  if (codexPollerHeartbeat.source || codexPollerHeartbeat.session) {
-    lines.push(`- Source: ${codexPollerHeartbeat.source || 'unknown'}${codexPollerHeartbeat.session ? `; session=${codexPollerHeartbeat.session}` : ''}`);
-  }
-  if (codexPollerHeartbeat.path) {
-    lines.push(`- State Path: ${codexPollerHeartbeat.path}`);
-  }
-  if (Array.isArray(codexPollerHeartbeat.staleReasons) && codexPollerHeartbeat.staleReasons.length > 0) {
-    lines.push(`- Stale Reasons: ${codexPollerHeartbeat.staleReasons.join(', ')}`);
-  }
+  // CODEX ATTENTION POLLER HEARTBEAT section deleted (S464 adjudication,
+  // ruled retired infra): the poller died June 13; every startup since
+  // rendered a permanently-stale warning - a lying pixel per the audit.
 
   const localModels = snapshot.systemCapabilities?.localModels || {};
   const sleepExtraction = localModels.sleepExtraction || {};
@@ -2157,7 +2009,6 @@ function parseCliArgs(argv = []) {
     write: false,
     outputPath: null,
     telegramPollerStaleThresholdMs: null,
-    codexAttentionPollerHeartbeatStaleMs: null,
     errors: [],
   };
   const args = Array.isArray(argv) ? argv : [];
@@ -2228,16 +2079,6 @@ function parseCliArgs(argv = []) {
       }
       continue;
     }
-    if (token.startsWith('--codex-attention-poller-heartbeat-stale-ms=')) {
-      const value = token.slice('--codex-attention-poller-heartbeat-stale-ms='.length).trim();
-      const parsedValue = Number(value);
-      if (Number.isFinite(parsedValue) && parsedValue > 0) {
-        parsed.codexAttentionPollerHeartbeatStaleMs = Math.floor(parsedValue);
-      } else {
-        parsed.errors.push(`Invalid Codex attention poller heartbeat threshold: ${value}`);
-      }
-      continue;
-    }
     if (token.startsWith('-')) {
       parsed.errors.push(`Unknown option: ${token}`);
       continue;
@@ -2299,7 +2140,6 @@ function main(argv = process.argv.slice(2), io = {}) {
     projectRoot: parsed.projectRoot || null,
     profileName: parsed.profileName || DEFAULT_PROFILE,
     telegramPollerStaleThresholdMs: parsed.telegramPollerStaleThresholdMs,
-    codexAttentionPollerHeartbeatStaleMs: parsed.codexAttentionPollerHeartbeatStaleMs,
   });
   let writeResult = null;
   if (parsed.write) {
@@ -2344,11 +2184,9 @@ module.exports = {
   buildBridgeSnapshotFromEnv,
   getAcceptedSourceHeadingResidue,
   getPenaltyPoints,
-  getCodexAttentionPollerHeartbeatStaleMs,
   getTheTellShadowRunnerStaleMs,
   getSupervisorStatusFreshnessWindowMs,
   getStartupHealthFileName,
-  inspectCodexAttentionPollerHeartbeat,
   inspectTheTellShadowRunner,
   inspectSupervisorHeartbeat,
   inspectTelegramPoller,

@@ -1150,139 +1150,6 @@ describe('hm-health-snapshot', () => {
     expect(snapshot.status.penalties).not.toContainEqual(expect.objectContaining({ code: 'supervisor_heartbeat_stale' }));
   });
 
-  test('surfaces a stale Codex attention poller heartbeat in startup health', () => {
-    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
-    execFileSync.mockReturnValue([
-      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
-      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
-    ].join('\n'));
-
-    const nowMs = Date.parse('2026-06-12T16:30:00.000Z');
-    const heartbeatDir = path.join(tempDir, '.squidrun', 'runtime', 'codex-attention-bridge');
-    fs.mkdirSync(heartbeatDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(heartbeatDir, 'poller-heartbeat.json'),
-      JSON.stringify({
-        at: '2026-06-12T16:04:36.147Z',
-        active_count: 26,
-        source: 'codex-desktop-policy-s442-manual-cycle',
-        session: 443,
-      }, null, 2)
-    );
-
-    const snapshot = createHealthSnapshot({
-      projectRoot: tempDir,
-      nowMs,
-      jestTimeoutMs: 1000,
-      env: {},
-      codexAttentionPollerHeartbeatStaleMs: 15 * 60 * 1000,
-    });
-    const markdown = renderStartupHealthMarkdown(snapshot);
-
-    expect(snapshot.codexAttentionPollerHeartbeat).toEqual(expect.objectContaining({
-      status: 'stale',
-      stale: true,
-      heartbeatAgeMs: Date.parse('2026-06-12T16:30:00.000Z') - Date.parse('2026-06-12T16:04:36.147Z'),
-      staleThresholdMs: 15 * 60 * 1000,
-      staleReasons: ['heartbeat_stale'],
-      activeCount: 26,
-      session: 443,
-      source: 'codex-desktop-policy-s442-manual-cycle',
-    }));
-    expect(snapshot.status.label).toBe('WARN');
-    expect(snapshot.status.score).toBe(85);
-    expect(snapshot.status.warnings).toContain(
-      `codex_attention_poller_heartbeat_stale:status=stale,reasons=heartbeat_stale,age_ms=${Date.parse('2026-06-12T16:30:00.000Z') - Date.parse('2026-06-12T16:04:36.147Z')},threshold_ms=${15 * 60 * 1000}`
-    );
-    expect(snapshot.status.penalties).toContainEqual({ code: 'codex_attention_poller_heartbeat_stale', points: 15 });
-    expect(markdown).toContain('CODEX ATTENTION POLLER HEARTBEAT');
-    expect(markdown).toContain('- Freshness: stale');
-    expect(markdown).toContain('- Stale Reasons: heartbeat_stale');
-    expect(markdown).toContain('- Source: codex-desktop-policy-s442-manual-cycle; session=443');
-  });
-
-  test('keeps a fresh Codex attention poller heartbeat out of startup health warnings', () => {
-    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
-    execFileSync.mockReturnValue([
-      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
-      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
-    ].join('\n'));
-
-    const nowMs = Date.parse('2026-06-12T16:30:00.000Z');
-    const heartbeatDir = path.join(tempDir, '.squidrun', 'runtime', 'codex-attention-bridge');
-    fs.mkdirSync(heartbeatDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(heartbeatDir, 'poller-heartbeat.json'),
-      JSON.stringify({
-        at: '2026-06-12T16:29:30.000Z',
-        active_count: 1,
-        source: 'codex-desktop-poller',
-        session: 443,
-      }, null, 2)
-    );
-
-    const snapshot = createHealthSnapshot({
-      projectRoot: tempDir,
-      nowMs,
-      jestTimeoutMs: 1000,
-      env: {},
-    });
-
-    expect(snapshot.codexAttentionPollerHeartbeat).toEqual(expect.objectContaining({
-      status: 'fresh',
-      stale: false,
-      heartbeatAgeMs: 30000,
-      staleThresholdMs: 15 * 60 * 1000,
-      staleReasons: [],
-    }));
-    expect(snapshot.status.score).toBe(100);
-    expect(snapshot.status.warnings).not.toContainEqual(expect.stringContaining('codex_attention_poller_heartbeat_stale'));
-    expect(snapshot.status.penalties).not.toContainEqual(expect.objectContaining({ code: 'codex_attention_poller_heartbeat_stale' }));
-  });
-
-  test('keeps a stale idle Codex attention poller heartbeat visible but unscored', () => {
-    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
-    execFileSync.mockReturnValue([
-      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
-      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
-    ].join('\n'));
-
-    const nowMs = Date.parse('2026-06-12T16:30:00.000Z');
-    const heartbeatDir = path.join(tempDir, '.squidrun', 'runtime', 'codex-attention-bridge');
-    fs.mkdirSync(heartbeatDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(heartbeatDir, 'poller-heartbeat.json'),
-      JSON.stringify({
-        at: '2026-06-12T16:04:36.147Z',
-        active_count: 0,
-        source: 'codex-desktop-poller',
-        session: 443,
-      }, null, 2)
-    );
-
-    const snapshot = createHealthSnapshot({
-      projectRoot: tempDir,
-      nowMs,
-      jestTimeoutMs: 1000,
-      env: {},
-      codexAttentionPollerHeartbeatStaleMs: 15 * 60 * 1000,
-    });
-    const markdown = renderStartupHealthMarkdown(snapshot);
-
-    expect(snapshot.codexAttentionPollerHeartbeat).toEqual(expect.objectContaining({
-      status: 'stale',
-      stale: true,
-      activeCount: 0,
-      staleReasons: ['heartbeat_stale'],
-    }));
-    expect(snapshot.status.score).toBe(100);
-    expect(snapshot.status.warnings).not.toContainEqual(expect.stringContaining('codex_attention_poller_heartbeat_stale'));
-    expect(snapshot.status.penalties).not.toContainEqual(expect.objectContaining({ code: 'codex_attention_poller_heartbeat_stale' }));
-    expect(markdown).toContain('CODEX ATTENTION POLLER HEARTBEAT');
-    expect(markdown).toContain('- Freshness: stale');
-    expect(markdown).toContain('- Active Requests At Last Poll: 0');
-  });
-
   test('surfaces The Tell shadow runner aging without scoring short hiccups', () => {
     const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
     execFileSync.mockReturnValue([
@@ -1561,10 +1428,9 @@ describe('hm-health-snapshot', () => {
       points: 12,
       category: 'supervisor',
     }));
-    expect(HEALTH_SCORE_PENALTIES.codex_attention_poller_heartbeat_stale).toEqual(expect.objectContaining({
-      points: 15,
-      category: 'codex_desktop',
-    }));
+    // codex_attention_poller_heartbeat_stale removed (S464 adjudication:
+    // bridge retired; a permanently-stale health warning was a lying pixel).
+    expect(HEALTH_SCORE_PENALTIES.codex_attention_poller_heartbeat_stale).toBeUndefined();
     expect(HEALTH_SCORE_PENALTIES.the_tell_shadow_runner_stale).toEqual(expect.objectContaining({
       points: 6,
       category: 'the_tell',
