@@ -1052,6 +1052,9 @@ function runTerminalScrollProbe(probe = {}) {
     }
     const key = String(probe.key || '');
     const keyCode = key === 'PageUp' ? 33 : 34;
+    // Remote-driven probe: never leave focus on the probed pane (S463
+    // focus-steal guarantee). Restore the user's focus after dispatch.
+    const probeSavedFocus = document.activeElement;
     if (typeof helper.focus === 'function') {
       try {
         helper.focus({ preventScroll: true });
@@ -1059,6 +1062,16 @@ function runTerminalScrollProbe(probe = {}) {
         helper.focus();
       }
     }
+    const restoreProbeFocus = () => {
+      if (document.activeElement !== helper) return;
+      if (probeSavedFocus && probeSavedFocus !== helper && document.body?.contains?.(probeSavedFocus)) {
+        try {
+          probeSavedFocus.focus?.();
+          return;
+        } catch (_) { /* fall through */ }
+      }
+      try { helper.blur?.(); } catch (_) { /* ignore */ }
+    };
     const event = new KeyboardEvent('keydown', {
       key,
       code: key,
@@ -1075,6 +1088,7 @@ function runTerminalScrollProbe(probe = {}) {
       result.after = snapshotTerminalScrollState(terminal);
       result.moved = result.after.viewportY !== before.viewportY;
       result.defaultPrevented = event.defaultPrevented === true;
+      restoreProbeFocus();
       return result;
     });
   }

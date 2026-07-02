@@ -983,9 +983,18 @@ function createInjectionController(options = {}) {
   // Includes diagnostic logging and focus steal prevention (save/restore user focus)
   async function doSendToPane(paneId, message, onComplete, traceContext = null, behaviorOverrides = {}) {
     let completed = false;
+    // Late-bound focus-restore hook: assigned once the target textarea is
+    // known, invoked on EVERY completion (success, failure, timeout, early
+    // return) so no exit path can leave user focus on an injected pane.
+    let restoreFocusHook = () => {};
     const finish = (result) => {
       if (completed) return;
       completed = true;
+      try {
+        restoreFocusHook();
+      } catch (err) {
+        log.warn('Terminal', `Focus restore on finish failed: ${err?.message || err}`);
+      }
       if (onComplete) {
         try {
           onComplete(result);
@@ -1083,7 +1092,12 @@ function createInjectionController(options = {}) {
     const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
     let textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
 
-    if (capabilities.requiresFocusForEnter && !textarea) {
+    // The hm-send fast path submits via PTY writes end to end - it needs no
+    // DOM focus and no textarea. Only the legacy trusted-Enter path (DOM
+    // keyboard dispatch) works through the textarea.
+    const willUseTrustedEnter = capabilities.requiresFocusForEnter && !hmSendFastEnter;
+
+    if (willUseTrustedEnter && !textarea) {
       log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: textarea not found, skipping injection`);
       bus.emit('inject.failed', {
         paneId: id,
@@ -1095,24 +1109,46 @@ function createInjectionController(options = {}) {
       return;
     }
 
+    // FOCUS-STEAL GUARANTEE (S463, James's typing): programmatic injection
+    // must never move USER focus. If injection focuses the pane textarea,
+    // every completion path restores the user's prior focus - and when the
+    // prior focus is gone (body / detached element), the stolen focus is
+    // RELEASED via blur rather than left on the terminal, so keystrokes never
+    // silently land in an injected pane. If the user re-focused something
+    // themselves mid-injection, their choice wins and no restore happens.
     const savedFocus = document.activeElement;
+    let focusMovedByInjection = false;
     const restoreSavedFocus = () => {
-      if (!savedFocus || !textarea || savedFocus === textarea) return;
-      if (!document.body.contains(savedFocus)) return;
+      if (!focusMovedByInjection || !textarea) return;
+      if (document.activeElement !== textarea) return; // user moved on - respect it
+      if (
+        savedFocus
+        && savedFocus !== textarea
+        && document.body.contains(savedFocus)
+        && typeof savedFocus.focus === 'function'
+      ) {
+        try {
+          savedFocus.focus();
+          return;
+        } catch {
+          // Fall through to blur - never keep stolen focus.
+        }
+      }
       try {
-        savedFocus.focus();
+        textarea.blur?.();
       } catch {
-        // Ignore non-focusable elements.
+        // Ignore.
       }
     };
     const scheduleFocusRestore = () => {
-      if (!capabilities.requiresFocusForEnter) return;
+      if (!focusMovedByInjection) return;
       if (typeof requestAnimationFrame === 'function') {
         requestAnimationFrame(() => restoreSavedFocus());
       } else {
         setTimeout(() => restoreSavedFocus(), 0);
       }
     };
+    restoreFocusHook = restoreSavedFocus;
 
     const normalizedText = String(text || '');
     const longMessageBytes = Math.max(1, Number(CLAUDE_LONG_MESSAGE_BYTES) || 1024);
@@ -1134,8 +1170,12 @@ function createInjectionController(options = {}) {
     const shouldAttemptClipboardPaste = preferClipboardPasteForLongMessage
       && payloadBytes >= clipboardPasteThresholdBytes
       && typeof window?.squidrun?.pty?.clipboardPasteText === 'function';
-    if ((capabilities.requiresFocusForEnter || shouldAttemptClipboardPaste) && textarea) {
+    // Focus ONLY when a DOM-level operation genuinely needs it: the trusted
+    // Enter dispatch, or a clipboard paste (which inserts at the focused
+    // element). The hm-send fast path is pure PTY and never focuses.
+    if ((willUseTrustedEnter || shouldAttemptClipboardPaste) && textarea) {
       textarea.focus();
+      focusMovedByInjection = true;
     }
     const enterDelayMs = computeScaledEnterDelayMs(capabilities.enterDelayMs, payloadBytes, capabilities);
     const hmSendFastChunkThresholdBytes = Math.max(
@@ -1581,6 +1621,9 @@ function createInjectionController(options = {}) {
 
         if (capabilities.requiresFocusForEnter && textarea) {
           const focusOk = await focusWithRetry(textarea);
+          if (focusOk) {
+            focusMovedByInjection = true;
+          }
           if (!focusOk) {
             log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: focus failed, proceeding with Enter anyway`);
           } else if (deferForcedExpire && attempt > 1) {
