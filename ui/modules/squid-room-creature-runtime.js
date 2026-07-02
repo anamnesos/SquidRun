@@ -46,17 +46,25 @@ function resizeBinding(binding) {
   binding.cssWidth = width;
   binding.cssHeight = height;
   binding.dpr = dpr;
+  // The creature is authored at a fixed body size (~64 units tall); scale it
+  // with the stage so it keeps the presence the sprites had (~half the band
+  // height) instead of shrinking into a smudge inside a big ocean.
+  binding.scale = Math.max(0.8, Math.min(3.4, height / 210));
   canvas.width = Math.round(width * dpr);
   canvas.height = Math.round(height * dpr);
-  engine.setBounds(width, height);
+  // Engine simulates in the UNSCALED logical space; the draw transform
+  // multiplies dpr * scale, so bounds shrink by the same factor.
+  engine.setBounds(width / binding.scale, height / binding.scale);
 }
 
 function anchorHeadElements(binding, nowMs) {
   if (nowMs - binding.lastAnchorAt < HEAD_ANCHOR_THROTTLE_MS) return;
   binding.lastAnchorAt = nowMs;
   const { engine, speechEl, nameEl } = binding;
-  const headX = engine.state.x;
-  const headY = engine.state.y - 34;
+  // Engine coordinates are logical; the anchor targets CSS pixels.
+  const scale = binding.scale || 1;
+  const headX = engine.state.x * scale;
+  const headY = (engine.state.y - 34) * scale;
   for (const [element, baseKey] of [[speechEl, 'speechBase'], [nameEl, 'nameBase']]) {
     if (!element || !element.isConnected) continue;
     if (!binding[baseKey]) {
@@ -98,8 +106,9 @@ function renderFrame(nowMs) {
     // Reduced motion: a static pose repainted sparsely.
     if (reduced && binding.frameCounter % 60 !== 1) continue;
     const ctx = binding.ctx;
-    ctx.setTransform(binding.dpr, 0, 0, binding.dpr, 0, 0);
-    ctx.clearRect(0, 0, binding.cssWidth, binding.cssHeight);
+    const drawScale = binding.dpr * (binding.scale || 1);
+    ctx.setTransform(drawScale, 0, 0, drawScale, 0, 0);
+    ctx.clearRect(0, 0, binding.cssWidth / (binding.scale || 1), binding.cssHeight / (binding.scale || 1));
     engine.draw(ctx);
     anchorHeadElements(binding, nowMs);
   }
@@ -141,6 +150,7 @@ function mountSquidRoomCreatures(doc = typeof document !== 'undefined' ? documen
       cssWidth: 0,
       cssHeight: 0,
       dpr: 1,
+      scale: 1,
       frameCounter: 0,
       lastAnchorAt: 0,
       speechEl: stage?.querySelector?.('.squid-room-pet-speech') || null,
