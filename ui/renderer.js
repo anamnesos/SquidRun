@@ -4452,8 +4452,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Setup daemon handlers
-  daemonHandlers.setupClaudeStateListener(daemonHandlers.handleSessionTimerState);
+  // Setup daemon handlers (dead session-timer accounting removed, audit #5)
+  daemonHandlers.setupClaudeStateListener();
   daemonHandlers.setupCostAlertListener();
   daemonHandlers.setupRefreshButtons(terminal.sendToPane);
   daemonHandlers.setupSyncIndicator();

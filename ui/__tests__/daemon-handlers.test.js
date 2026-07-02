@@ -512,14 +512,6 @@ describe('daemon-handlers.js module', () => {
     });
   });
 
-  describe('handleSessionTimerState', () => {
-    test('should start timer when running', () => {
-      daemonHandlers.handleSessionTimerState('1', 'running');
-      const totalTime = daemonHandlers.getTotalSessionTime();
-      expect(totalTime).toBeGreaterThanOrEqual(0);
-    });
-  });
-
   describe('showDeliveryIndicator', () => {
     test('should delegate to uiView.showDeliveryIndicator', () => {
       daemonHandlers.showDeliveryIndicator('1', 'delivered');
