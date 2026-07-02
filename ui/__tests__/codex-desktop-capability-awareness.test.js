@@ -243,7 +243,10 @@ describe('codex-desktop-capability-awareness', () => {
     })).toBe(0);
     const parsed = JSON.parse(stdout.chunks.join(''));
     expect(parsed.schema).toBe(awareness.STATUS_SCHEMA);
-    expect(parsed.availability.hmCodexAttention.command).toBe('node ui/scripts/hm-codex-attention.js list --all');
+    // S464: the attention script is deleted; the route must report retired
+    // with NO command, so no agent discovers a dead tool via the manifest.
+    expect(parsed.availability.hmCodexAttention.status).toBe('retired');
+    expect(parsed.availability.hmCodexAttention.command).toBeNull();
     expect(parsed.availability.hmCodexDesktopTransport.visible_injection_proven).toBe(false);
 
     const markdown = awareness.renderCodexDesktopCapabilityMarkdown(parsed);
