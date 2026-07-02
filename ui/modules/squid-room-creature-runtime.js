@@ -197,11 +197,27 @@ function unmountSquidRoomCreatures() {
   lastFrameAt = 0;
 }
 
+// Debug/test accessor returning PLAIN DATA ONLY: the module surface crosses
+// the preload bridge, and non-serializable values (the Map itself) can make
+// the whole export unusable in the page world.
+function getSquidRoomCreatureDebugState() {
+  return [...mounted.entries()].map(([petId, binding]) => ({
+    petId,
+    cssWidth: binding.cssWidth,
+    cssHeight: binding.cssHeight,
+    dpr: binding.dpr,
+    scale: binding.scale,
+    frameCounter: binding.frameCounter,
+    canvasConnected: binding.canvas?.isConnected === true,
+    activity: binding.engine?.state?.activity || null,
+  }));
+}
+
 module.exports = {
   ACTIVITY_BY_MOTION_CLASS,
   celebrateSquidRoomCreature,
+  getSquidRoomCreatureDebugState,
   mountSquidRoomCreatures,
   setSquidRoomCreatureActivity,
   unmountSquidRoomCreatures,
-  _internals: { mounted },
 };
