@@ -249,6 +249,88 @@ function createSquidCreature(options = {}) {
     });
   }
 
+  // -------------------------------------------------------------------
+  // WAVE 3 senses (presence, never invented status):
+  // pointer awareness, click delight, face-toward, shared water current.
+  // -------------------------------------------------------------------
+
+  /**
+   * Report the pointer in ENGINE-LOCAL coordinates (or null when outside
+   * the stage). speedPxMs > ~0.9 on approach reads as a rush -> shy dart.
+   */
+  function setPointer(x, y, speedPxMs = 0) {
+    if (x == null || y == null) {
+      state.pointer = null;
+      return;
+    }
+    state.pointer = { x: Number(x), y: Number(y), speed: Math.max(0, Number(speedPxMs) || 0) };
+  }
+
+  /** Click delight: a happy squash wiggle + bubble burst. Emotional only. */
+  function delight() {
+    if (state.reducedMotion) return;
+    state.delightMs = 1100;
+    spawnJetBubbles(1.2);
+  }
+
+  /** Briefly face a WORLD-space point (comms pulse partner). */
+  function faceToward(x, y, durationMs = 1600) {
+    state.faceTarget = { x: Number(x), y: Number(y), untilMs: state.elapsedMs + durationMs };
+  }
+
+  /** One global water current (slow sine vector set by the runtime). */
+  function setCurrent(cx, cy) {
+    state.current = { x: Number(cx) || 0, y: Number(cy) || 0 };
+  }
+
+  function tickPresence(dtMs) {
+    const dt = dtMs / 1000;
+    // Shared current: everything drifts together.
+    if (state.current) {
+      state.vx += state.current.x * dt;
+      state.vy += state.current.y * dt;
+    }
+    // Delight wiggle: fast squash oscillation, decaying.
+    if (state.delightMs > 0) {
+      state.delightMs = Math.max(0, state.delightMs - dtMs);
+      const t = state.delightMs / 1100;
+      state.squash = 1 + Math.sin(state.elapsedMs / 55) * 0.09 * t;
+    }
+    // Face a comms partner while the pulse travels.
+    if (state.faceTarget && state.elapsedMs < state.faceTarget.untilMs) {
+      const angle = Math.atan2(state.faceTarget.y - state.y, state.faceTarget.x - state.x);
+      state.heading = angleLerp(state.heading, angle, 0.05);
+    } else {
+      state.faceTarget = null;
+    }
+    // Cursor awareness.
+    const pointer = state.pointer;
+    if (!pointer) return;
+    const dx = pointer.x - state.x;
+    const dy = pointer.y - state.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance > 150) return;
+    if (pointer.speed > 0.9 && distance < 90) {
+      // Rush: brief shy dart away (a real jet, aimed opposite).
+      if (state.jetPhase === JET_PHASE.DRIFT) {
+        state.targetX = clamp(state.x - dx * 1.6, 20, state.bounds.width - 20);
+        state.targetY = clamp(state.y - dy * 1.6, 20, state.bounds.height - 20);
+        state.nextJetInMs = 0;
+      }
+      return;
+    }
+    // Curious: face the pointer, drift slightly closer, eyes track it.
+    const angle = Math.atan2(dy, dx);
+    state.heading = angleLerp(state.heading, angle, 0.03);
+    if (distance > 46) {
+      state.vx += Math.cos(angle) * 7 * dt;
+      state.vy += Math.sin(angle) * 7 * dt;
+    }
+    state.saccade.x = clamp(dx / 18, -2.8, 2.8);
+    state.saccade.y = clamp(dy / 24, -2, 2);
+    state.nextSaccadeInMs = 500; // hold gaze while curious
+  }
+
   function pickTarget() {
     const margin = 34;
     const { width, height } = state.bounds;
@@ -634,11 +716,8 @@ function createSquidCreature(options = {}) {
     ctx.save();
     ctx.scale(squashX, squashY);
 
-    // Body glow (bioluminescence) - soft, behind the body.
-    const glow = ctx.createRadialGradient(0, -6, 4, 0, -4, 46);
-    glow.addColorStop(0, state.palette.glow);
-    glow.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = glow;
+    // Body glow (bioluminescence) - soft, behind the body. Cached gradient.
+    ctx.fillStyle = ensureGradients(ctx).bodyGlow;
     ctx.beginPath();
     ctx.arc(0, -4, 46, 0, TWO_PI);
     ctx.fill();
@@ -742,12 +821,8 @@ function createSquidCreature(options = {}) {
       ctx.save();
       ctx.translate(eyeX, eyeY);
       ctx.scale(1, openness * jetSquash);
-      const glow = ctx.createRadialGradient(0, 0, 0.8, 0, 0, 9);
-      glow.addColorStop(0, state.palette.eyeCore);
-      glow.addColorStop(0.45, state.palette.eye);
-      glow.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.globalAlpha = 0.5 + state.eyeGlow * 0.5;
-      ctx.fillStyle = glow;
+      ctx.fillStyle = ensureGradients(ctx).eyeGlow;
       ctx.beginPath();
       ctx.arc(0, 0, 8.2, 0, TWO_PI);
       ctx.fill();
@@ -805,18 +880,40 @@ function createSquidCreature(options = {}) {
     }
   }
 
-  function draw(ctx) {
-    drawEffects(ctx);
-    // Under-glow: soft bioluminescent pool beneath the creature that seats
-    // it in the water (the grounding the CSS contact-shadow used to give).
-    ctx.save();
-    ctx.globalAlpha = 0.5 + state.eyeGlow * 0.3;
-    const underGlow = ctx.createRadialGradient(state.x, state.y + 30, 2, state.x, state.y + 30, 34);
+  // PERF LAW (S463 crash autopsy): ZERO per-frame gradient creation. The
+  // renderer RSS exploded 197MB -> 2.9GB in ~90s with a FLAT JS heap -
+  // native-side shader/paint objects minted every frame. All gradients are
+  // built ONCE per creature (position-independent, drawn in translated
+  // space) and reused forever.
+  let gradientCache = null;
+  function ensureGradients(ctx) {
+    if (gradientCache) return gradientCache;
+    const bodyGlow = ctx.createRadialGradient(0, -6, 4, 0, -4, 46);
+    bodyGlow.addColorStop(0, state.palette.glow);
+    bodyGlow.addColorStop(1, 'rgba(0,0,0,0)');
+    const underGlow = ctx.createRadialGradient(0, 0, 2, 0, 0, 34);
     underGlow.addColorStop(0, state.palette.glow);
     underGlow.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = underGlow;
+    const eyeGlow = ctx.createRadialGradient(0, 0, 0.8, 0, 0, 9);
+    eyeGlow.addColorStop(0, state.palette.eyeCore);
+    eyeGlow.addColorStop(0.45, state.palette.eye);
+    eyeGlow.addColorStop(1, 'rgba(0,0,0,0)');
+    gradientCache = { bodyGlow, underGlow, eyeGlow };
+    return gradientCache;
+  }
+
+  function draw(ctx) {
+    const gradients = ensureGradients(ctx);
+    drawEffects(ctx);
+    // Under-glow: soft bioluminescent pool beneath the creature that seats
+    // it in the water - drawn in TRANSLATED space so the cached gradient is
+    // position-independent.
+    ctx.save();
+    ctx.translate(state.x, state.y + 30);
+    ctx.globalAlpha = 0.5 + state.eyeGlow * 0.3;
+    ctx.fillStyle = gradients.underGlow;
     ctx.beginPath();
-    ctx.ellipse(state.x, state.y + 30, 34, 14, 0, 0, TWO_PI);
+    ctx.ellipse(0, 0, 34, 14, 0, 0, TWO_PI);
     ctx.fill();
     ctx.restore();
     // Sprite-faithful layering: MANTLE behind, ARMS hanging in front of the
