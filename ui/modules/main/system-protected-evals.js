@@ -13,6 +13,7 @@ const CASE_ID_TELEGRAM_RECALL_BODY_FIRST = 'phase4f.telegram_recall_body_first';
 const CASE_ID_TELEGRAM_REPLY_EGRESS_PROOF = 'phase4g.telegram_reply_debt_requires_proven_egress';
 const CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY = 'phase4h.telegram_poller_restart_is_poller_only';
 const CASE_ID_TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES = 'phase4i.task_queue_parked_never_auto_dispatches';
+const CASE_ID_INJECTION_FOCUS_CONTRACT = 'phase4j.injection_focus_contract';
 
 const DEFAULT_REPO_ROOT = path.resolve(__dirname, '../../..');
 const FULL_AGENT_MESSAGE_PATH_RE = /(?:^|\s)(?:\.squidrun[\\/]+)?coord[\\/]+full-agent-messages[\\/]+[A-Za-z0-9._-]+\.txt\b/i;
@@ -1217,6 +1218,131 @@ const TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES_CASE = Object.freeze({
   ]),
 });
 
+const INJECTION_FOCUS_CONTRACT_CASE = Object.freeze({
+  id: CASE_ID_INJECTION_FOCUS_CONTRACT,
+  phase: 'phase4j',
+  title: 'bus injection never steals user focus',
+  protectedBehavior: 'Programmatic PTY injection never moves user keyboard focus: the hm-send fast path performs no DOM focus at all, focus moved for trusted-Enter/clipboard operations is restored on EVERY completion path via the finish() choke point, stolen focus is released via blur when the prior focus element is gone, and a user re-focus mid-injection always wins over restore. (S463: agent traffic into Claude panes stole James\'s typing.)',
+  protectedZeroFail: true,
+  authorityPolicy: 'system_eval_only_no_dispatch',
+  sideEffects: Object.freeze({
+    runtime: false,
+    network: false,
+    writes: false,
+    externalSends: false,
+    restart: false,
+  }),
+  sourceRefs: Object.freeze([
+    Object.freeze({
+      id: 'injection_fast_path_never_requires_focus',
+      path: 'ui/modules/terminal/injection.js',
+      anchor: 'async function doSendToPane(paneId, message, onComplete, traceContext = null, behaviorOverrides = {})',
+      requiredText: 'const willUseTrustedEnter = capabilities.requiresFocusForEnter && !hmSendFastEnter;',
+      reason: 'The hm-send fast path is pure PTY write + PTY Enter; it must be excluded from the focus-requiring gate.',
+    }),
+    Object.freeze({
+      id: 'injection_focus_gated_and_tracked',
+      path: 'ui/modules/terminal/injection.js',
+      anchor: 'async function doSendToPane(paneId, message, onComplete, traceContext = null, behaviorOverrides = {})',
+      requiredText: 'if ((willUseTrustedEnter || shouldAttemptClipboardPaste) && textarea) {',
+      reason: 'Focus may move ONLY for operations that genuinely need DOM focus, and only through this gate.',
+    }),
+    Object.freeze({
+      id: 'injection_focus_move_flagged',
+      path: 'ui/modules/terminal/injection.js',
+      anchor: 'async function doSendToPane(paneId, message, onComplete, traceContext = null, behaviorOverrides = {})',
+      requiredText: 'focusMovedByInjection = true;',
+      reason: 'Every focus move by injection must be tracked so restore can be conditional and guaranteed.',
+    }),
+    Object.freeze({
+      id: 'injection_restore_at_finish_choke_point',
+      path: 'ui/modules/terminal/injection.js',
+      anchor: 'async function doSendToPane(paneId, message, onComplete, traceContext = null, behaviorOverrides = {})',
+      requiredText: 'restoreFocusHook();',
+      reason: 'The restore hook must run inside finish() so every exit path (success, failure, timeout, early return) restores focus.',
+    }),
+    Object.freeze({
+      id: 'injection_user_refocus_wins',
+      path: 'ui/modules/terminal/injection.js',
+      anchor: 'async function doSendToPane(paneId, message, onComplete, traceContext = null, behaviorOverrides = {})',
+      requiredText: 'if (document.activeElement !== textarea) return; // user moved on - respect it',
+      reason: 'Restore fires only while focus is still where injection put it; a user re-focus is never yanked back.',
+    }),
+    Object.freeze({
+      id: 'injection_blur_release_branch',
+      path: 'ui/modules/terminal/injection.js',
+      anchor: 'async function doSendToPane(paneId, message, onComplete, traceContext = null, behaviorOverrides = {})',
+      requiredText: 'textarea.blur?.();',
+      reason: 'When the prior focus element is gone, stolen focus must be RELEASED, never silently left on the terminal.',
+    }),
+  ]),
+  testRefs: Object.freeze([
+    Object.freeze({
+      id: 'fast_path_never_focuses',
+      path: 'ui/__tests__/injection.test.js',
+      testName: 'hm-send fast path NEVER focuses the pane textarea (Claude pane)',
+      requiredText: Object.freeze([
+        'expect(mockTextarea.focus).not.toHaveBeenCalled();',
+      ]),
+    }),
+    Object.freeze({
+      id: 'trusted_path_restores_on_completion',
+      path: 'ui/__tests__/injection.test.js',
+      testName: 'trusted path restores the user focus after completion',
+      requiredText: Object.freeze([
+        'expect(userInput.focus).toHaveBeenCalled();',
+      ]),
+    }),
+    Object.freeze({
+      id: 'restore_on_pty_failure',
+      path: 'ui/__tests__/injection.test.js',
+      testName: 'restores focus even when the PTY write fails',
+      requiredText: Object.freeze([
+        'expect(document.activeElement).toBe(userInput);',
+      ]),
+    }),
+    Object.freeze({
+      id: 'user_refocus_respected',
+      path: 'ui/__tests__/injection.test.js',
+      testName: 'a focus target the user chose mid-injection is respected (no yank-back)',
+      requiredText: Object.freeze([
+        'expect(userInput.focus).not.toHaveBeenCalled();',
+        'expect(document.activeElement).toBe(otherInput);',
+      ]),
+    }),
+    Object.freeze({
+      id: 'blur_release_when_saved_focus_gone',
+      path: 'ui/__tests__/injection.test.js',
+      testName: 'releases stolen focus via blur when the prior focus is gone',
+      requiredText: Object.freeze([
+        'expect(mockTextarea.blur).toHaveBeenCalled();',
+      ]),
+    }),
+  ]),
+  focusedCommands: Object.freeze([
+    'node ui/scripts/hm-system-protected-evals.js --case phase4j.injection_focus_contract --pretty',
+    'npm --prefix ui test -- system-protected-evals.test.js --runInBand',
+    'npm --prefix ui test -- injection.test.js --runInBand --testNamePattern "focus-steal guarantee"',
+  ]),
+  expectedRegressionFailures: Object.freeze([
+    Object.freeze({
+      id: 'fast_path_gains_focus_call',
+      mutation: 'Drop the !hmSendFastEnter exclusion so the fast path focuses the textarea again.',
+      expectedFailedCheckIds: Object.freeze(['source_ref_injection_fast_path_never_requires_focus']),
+    }),
+    Object.freeze({
+      id: 'restore_leaves_finish_choke_point',
+      mutation: 'Remove the restoreFocusHook() call from finish().',
+      expectedFailedCheckIds: Object.freeze(['source_ref_injection_restore_at_finish_choke_point']),
+    }),
+    Object.freeze({
+      id: 'blur_release_removed',
+      mutation: 'Keep stolen focus on the terminal when the saved focus element is detached.',
+      expectedFailedCheckIds: Object.freeze(['source_ref_injection_blur_release_branch', 'test_ref_blur_release_when_saved_focus_gone']),
+    }),
+  ]),
+});
+
 const PROTECTED_SYSTEM_EVALS = Object.freeze([
   ACCEPTED_UNVERIFIED_CASE,
   FULL_MATERIALIZED_MESSAGE_CASE,
@@ -1227,6 +1353,7 @@ const PROTECTED_SYSTEM_EVALS = Object.freeze([
   TELEGRAM_REPLY_EGRESS_PROOF_CASE,
   TELEGRAM_POLLER_RESTART_BOUNDARY_CASE,
   TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES_CASE,
+  INJECTION_FOCUS_CONTRACT_CASE,
 ]);
 
 function normalizeRelPath(value) {
