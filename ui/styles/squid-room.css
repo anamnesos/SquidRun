@@ -2499,3 +2499,65 @@ body.squid-room::before {
   .squid-space-galaxy,
   .squid-space-shooting-star { animation: none !important; }
 }
+
+/* ============================================================
+   WAVE 4 SLICE 1 (binding order): the container dies VISUALLY - the ocean
+   becomes the whole window, headers/captions gone. DOM deletion follows in
+   the structural pass; this slice ships the look.
+   ============================================================ */
+body.squid-room .side-panes-container.squid-room-team-container {
+  position: static;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  overflow: visible;
+}
+
+body.squid-room .squid-room-team-header {
+  display: none !important;
+}
+
+body.squid-room .squid-room-creature-ocean {
+  position: fixed !important;
+  inset: 0 !important;
+  min-height: 100vh;
+  height: 100vh;
+  z-index: 0;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none;
+  overflow: visible !important;
+}
+
+body.squid-room .squid-room-creature-ocean::before {
+  display: none; /* old water hatch overlay - the cosmos owns atmosphere now */
+}
+
+/* Creatures own the full window height (caption band no longer reserved). */
+body.squid-room .squid-room-creature {
+  --pet-caption-band: 0px;
+}
+
+/* The caption/status boxes die (James asked twice). Raw chips included. */
+body.squid-room .squid-room-pet-caption,
+body.squid-room .face-line,
+body.squid-room .face-details {
+  display: none !important;
+}
+
+/* Content sections float above the open cosmos. */
+body.squid-room-workspace .terminals-section {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+
+body.squid-room-workspace .pane-layout {
+  height: clamp(300px, 38vh, 520px);
+  pointer-events: none; /* open space - only creature cards catch clicks */
+}
+
+body.squid-room .squid-room-creature {
+  pointer-events: auto;
+}
