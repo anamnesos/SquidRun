@@ -232,44 +232,6 @@ describe('Precommit Handlers', () => {
     });
   });
 
-  describe('get-ci-status', () => {
-    test('returns null when no status file exists', async () => {
-      fs.existsSync.mockReturnValue(false);
-
-      const result = await harness.invoke('get-ci-status');
-
-      expect(result.success).toBe(true);
-      expect(result.status).toBeNull();
-      expect(result.enabled).toBe(true);
-    });
-
-    test('returns saved status', async () => {
-      fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockReturnValue(JSON.stringify({
-        id: 'ci-123',
-        passed: true,
-        checks: [],
-      }));
-
-      const result = await harness.invoke('get-ci-status');
-
-      expect(result.success).toBe(true);
-      expect(result.status.id).toBe('ci-123');
-    });
-
-    test('handles read error', async () => {
-      fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockImplementation(() => {
-        throw new Error('Read failed');
-      });
-
-      const result = await harness.invoke('get-ci-status');
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('Read failed');
-    });
-  });
-
   describe('set-ci-enabled', () => {
     test('enables CI checks', async () => {
       const result = await harness.invoke('set-ci-enabled', true);

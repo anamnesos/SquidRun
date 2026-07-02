@@ -126,7 +126,7 @@ describe('window chrome matrix', () => {
       expect(visible(doc, 'fullRestartBtn')).toBe(true);
       expect(visible(doc, 'profileBtn')).toBe(true);
       // Product-boundary controls a client must never see:
-      for (const id of ['selectProjectBtn', 'settingsBtn', 'openSquidRoomBtn', 'openMiraLabBtn', 'panelBtn', 'dryRunIndicator', 'ciStatusIndicator']) {
+      for (const id of ['selectProjectBtn', 'settingsBtn', 'openSquidRoomBtn', 'openMiraLabBtn', 'panelBtn', 'dryRunIndicator']) {
         expect(visible(doc, id)).toBe(false);
       }
       expect(visible(doc, '#rightPanel')).toBe(false);

@@ -35,7 +35,6 @@ const CHROME_CONTROL_IDS = Object.freeze([
   'openMiraLabBtn',
   'panelBtn',
   'dryRunIndicator',
-  'ciStatusIndicator',
 ]);
 
 const CHROME_REGION_SELECTORS = Object.freeze({
