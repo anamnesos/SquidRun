@@ -65,6 +65,10 @@ function resizeBinding(binding) {
   binding.cssWidth = width;
   binding.cssHeight = height;
   binding.dpr = dpr;
+  // Layout changed: anchor bases are stale (the clipping/detached-bubble
+  // regression) - recapture on the next anchor pass.
+  binding.speechBase = null;
+  binding.nameBase = null;
   // The creature is authored at a fixed body size (~64 units tall); scale it
   // with the stage so it keeps the presence the sprites had (~half the band
   // height) instead of shrinking into a smudge inside a big ocean.
@@ -79,11 +83,15 @@ function resizeBinding(binding) {
 function anchorHeadElements(binding, nowMs) {
   if (nowMs - binding.lastAnchorAt < HEAD_ANCHOR_THROTTLE_MS) return;
   binding.lastAnchorAt = nowMs;
+  // Bases captured before layout settles produce clipped/detached bubbles -
+  // wait ~1s of frames before first capture.
+  if (binding.frameCounter < 60) return;
   const { engine, speechEl, nameEl } = binding;
-  // Engine coordinates are logical; the anchor targets CSS pixels.
+  // Engine coordinates are logical; the anchor targets CSS pixels. The
+  // bubble rides ABOVE the crown (crown tip ~ -50 logical + margin).
   const scale = binding.scale || 1;
   const headX = engine.state.x * scale;
-  const headY = (engine.state.y - 34) * scale;
+  const headY = (engine.state.y - 58) * scale;
   for (const [element, baseKey] of [[speechEl, 'speechBase'], [nameEl, 'nameBase']]) {
     if (!element || !element.isConnected) continue;
     if (!binding[baseKey]) {
