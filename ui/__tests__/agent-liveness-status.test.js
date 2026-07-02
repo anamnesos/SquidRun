@@ -84,3 +84,20 @@ describe('agent liveness status — the green that cannot lie', () => {
     expect(isStale(NaN, 5000, 10000)).toBe(true);
   });
 });
+
+// >>> REMOVE .skip when taking the per-pane staleness fix (Oracle #195). <<<
+// Gate finding on the 6/6 module: staleness is GLOBAL (lastPollAt), so a
+// half-dead poller (pane 1 fresh, pane 2 silent for minutes) keeps counting
+// pane 2's ancient alive=true as live. A pane's own evidence must expire.
+test('per-pane evidence expires: a pane not polled past staleAfterMs cannot count live', () => {
+  const { createLivenessStatus } = require('../modules/agent-liveness-status');
+  const s = createLivenessStatus({ staleAfterMs: 10000 });
+  s.seed(['1', '2']);
+  s.recordPoll('1', { alive: true }, 1000);
+  s.recordPoll('2', { alive: true }, 1000);
+  // pane 1 keeps polling fresh; pane 2 goes silent
+  s.recordPoll('1', { alive: true }, 30000);
+  const r = s.report(30500);
+  expect(r.tone).not.toBe('ok');           // must not be clean green
+  expect(r.text).not.toBe('2/2 agents live'); // pane 2's evidence expired
+});
