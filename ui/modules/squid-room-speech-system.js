@@ -45,6 +45,35 @@ function rectIntersectsPad(x, y, boxW, boxH, anchorX, anchorY, pad) {
     && y + boxH > anchorY - pad;
 }
 
+function rectIntersectsRect(x, y, w, h, r) {
+  return r && x < r.x + r.w && x + w > r.x && y < r.y + r.h && y + h > r.y;
+}
+
+/**
+ * LAST-LINE JARGON GUARD (defense-in-depth, S463: the typewriter spoke a
+ * commit hash to James). The face pipeline de-jargonizes upstream; this
+ * guard makes the FACE structurally unable to speak machine identifiers
+ * even if that wiring regresses. It strips — it NEVER invents; if stripping
+ * empties the line, the bubble simply doesn't show (fail-dark for text).
+ */
+function sanitizeSpeechText(value) {
+  return String(value || '')
+    .replace(/\bsha256[:=]?\s*[0-9a-f]{8,64}\b/gi, '')
+    .replace(/\b(?=[0-9a-f]{7,40}\b)[a-f]*\d[0-9a-f]*\b/g, '')
+    .replace(/(?:[A-Za-z]:)?(?:[\w.-]+[\\/]){1,}[\w.-]+\.\w{1,6}\b/g, '')
+    // bare filenames without a path prefix (verify-frame 1 left "capture-.png"
+    // debris after the hex strip ate the digits)
+    .replace(/\b[\w.-]+\.(?:png|jpe?g|gif|md|js|ts|tsx|json|css|html|txt|log|pdf|woff2?)\b/gi, '')
+    .replace(/\.squidrun\/[\w/.-]+/g, '')
+    .replace(/\bwi-[a-z0-9][\w-]{5,}\b/gi, '')
+    .replace(/\bhm-\d{10,}-[a-z0-9]+\b/gi, '')
+    .replace(/\b(?:rowId|messageId|deliveryId)\s*[:#=]?\s*[A-Za-z0-9._:-]+\b/gi, '')
+    .replace(/\(\s*[,:;-]*\s*\)/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .trim();
+}
+
 function solveSpeechBox(input = {}) {
   const inset = Number.isFinite(input.inset) ? input.inset : SPEECH_INSET_PX;
   const gap = Number.isFinite(input.gap) ? input.gap : SPEECH_GAP_PX;
@@ -67,18 +96,52 @@ function solveSpeechBox(input = {}) {
 
   // Floating-ui-style fallback chain: preferred quadrant first, then flips.
   // CONTAINMENT ALWAYS WINS over body exclusion — the never-offscreen
-  // guarantee is the contract; staying out of the creature's body zone
-  // (Builder's cross-review finding) is best-effort within it.
+  // guarantee is the contract; staying out of the creature bodies
+  // (cross-review finding + directive: a box may never cover a creature,
+  // especially not its own speaker) is best-effort within it.
+  const avoidRects = Array.isArray(input.avoidRects) ? input.avoidRects : null;
   let chosen = null;
   let first = null;
+  const isClear = (x, y) => {
+    if (rectIntersectsPad(x, y, boxW, boxH, anchorX, anchorY, pad)) return false;
+    if (avoidRects) {
+      for (let i = 0; i < avoidRects.length; i += 1) {
+        if (rectIntersectsRect(x, y, boxW, boxH, avoidRects[i])) return false;
+      }
+    }
+    return true;
+  };
   for (const horiz of [preferRight, !preferRight]) {
     for (const vert of [preferBelow, !preferBelow]) {
-      const x = clampX(horiz ? anchorX + effGap : anchorX - effGap - boxW);
-      const y = clampY(vert ? anchorY + effGap : anchorY - effGap - boxH);
-      const candidate = { x, y, opensRight: horiz, opensBelow: vert };
-      if (!first) first = candidate;
-      if (!rectIntersectsPad(x, y, boxW, boxH, anchorX, anchorY, pad)) {
-        chosen = candidate;
+      let x = clampX(horiz ? anchorX + effGap : anchorX - effGap - boxW);
+      let y = clampY(vert ? anchorY + effGap : anchorY - effGap - boxH);
+      if (!first) first = { x, y, opensRight: horiz, opensBelow: vert };
+      // SLIDE-OUT: fixed anchor offsets aren't enough when a body rect
+      // extends past the gap — push the box beyond every blocking rect's
+      // edge in the opening direction, then re-clamp and recheck.
+      if (!isClear(x, y) && avoidRects) {
+        let slidX = x;
+        for (let i = 0; i < avoidRects.length; i += 1) {
+          const r = avoidRects[i];
+          if (!rectIntersectsRect(slidX, y, boxW, boxH, r)) continue;
+          slidX = horiz ? r.x + r.w + 8 : r.x - boxW - 8;
+        }
+        slidX = clampX(slidX);
+        if (isClear(slidX, y)) {
+          x = slidX;
+        } else {
+          let slidY = y;
+          for (let i = 0; i < avoidRects.length; i += 1) {
+            const r = avoidRects[i];
+            if (!rectIntersectsRect(x, slidY, boxW, boxH, r)) continue;
+            slidY = vert ? r.y + r.h + 8 : r.y - boxH - 8;
+          }
+          slidY = clampY(slidY);
+          if (isClear(x, slidY)) y = slidY;
+        }
+      }
+      if (isClear(x, y)) {
+        chosen = { x, y, opensRight: horiz, opensBelow: vert };
         break;
       }
     }
@@ -202,6 +265,8 @@ function createSquidRoomSpeechSystem(options = {}) {
 
   /** @type {Map<string, ReturnType<typeof buildPetEntry>>} */
   const pets = new Map();
+  /** Pooled avoid-rect scratch — reused every frame, zero alloc. */
+  const avoidPool = [];
 
   function buildPetEntry(petId) {
     const box = doc.createElement('div');
@@ -290,7 +355,8 @@ function createSquidRoomSpeechSystem(options = {}) {
   function setSpeech(petId, payload = {}) {
     const entry = ensurePet(petId);
     const rowIdentity = String(payload.rowIdentity || '');
-    const face = String(payload.face || '').trim();
+    // Last-line guard: strip, never invent. Empty after stripping = silent.
+    const face = sanitizeSpeechText(payload.face);
     if (!face) {
       entry.visible = false;
       entry.box.dataset.visible = 'false';
@@ -357,8 +423,28 @@ function createSquidRoomSpeechSystem(options = {}) {
       const mouthY = Number(anchor.mouthY ?? anchor.headY) || 0;
       const boxW = entry.box.offsetWidth || 0;
       const boxH = entry.box.offsetHeight || 0;
+      // A box may never cover ANY creature — and (verify-frame 1) never
+      // another pet's box either. Collect every anchor's body rect plus the
+      // OTHER pets' current box rects (pooled — entries mutated in place).
+      let avoidCount = 0;
+      for (const key in anchors) {
+        const a = anchors[key];
+        if (!a || !Number.isFinite(a.bodyX)) continue;
+        const slot = avoidPool[avoidCount] || (avoidPool[avoidCount] = { x: 0, y: 0, w: 0, h: 0 });
+        slot.x = a.bodyX; slot.y = a.bodyY; slot.w = a.bodyW; slot.h = a.bodyH;
+        avoidCount += 1;
+      }
+      for (const other of pets.values()) {
+        if (other === entry || !other.visible || !other.hasPosition) continue;
+        const slot = avoidPool[avoidCount] || (avoidPool[avoidCount] = { x: 0, y: 0, w: 0, h: 0 });
+        slot.x = other.posX; slot.y = other.posY;
+        slot.w = other.box.offsetWidth || 0; slot.h = other.box.offsetHeight || 0;
+        avoidCount += 1;
+      }
+      avoidPool.length = avoidCount;
       const solved = solveSpeechBox({
         anchorX: mouthX, anchorY: mouthY, boxW, boxH, viewportW, viewportH,
+        avoidRects: avoidCount ? avoidPool : null,
       });
       entry.targetX = solved.x;
       entry.targetY = solved.y;
@@ -367,8 +453,16 @@ function createSquidRoomSpeechSystem(options = {}) {
         entry.posY = solved.y;
         entry.hasPosition = true;
       } else {
-        // Eased glide toward the solved spot — planted, never jumpy.
-        const k = Math.min(1, GLIDE_EASE_PER_SEC * dtSec);
+        // Eased glide toward the solved spot — planted, never jumpy. BUT if
+        // the CURRENT spot is actually blocked (a creature swam into the
+        // box — 3-frame verification caught the slow-eviction brush), evict
+        // with urgency: calm glide is for aesthetics, not for violations.
+        let blocked = false;
+        for (let i = 0; i < avoidPool.length; i += 1) {
+          if (rectIntersectsRect(entry.posX, entry.posY, boxW, boxH, avoidPool[i])) { blocked = true; break; }
+        }
+        const rate = blocked ? GLIDE_EASE_PER_SEC * 4 : GLIDE_EASE_PER_SEC;
+        const k = Math.min(1, rate * dtSec);
         entry.posX += (entry.targetX - entry.posX) * k;
         entry.posY += (entry.targetY - entry.posY) * k;
       }
@@ -411,6 +505,7 @@ function createSquidRoomSpeechSystem(options = {}) {
 }
 
 module.exports = {
+  BODY_EXCLUSION_PAD_PX,
   CHAIN_DOT_COUNT,
   SPEECH_GAP_PX,
   SPEECH_INSET_PX,
@@ -418,5 +513,6 @@ module.exports = {
   chainDotPhase,
   createSquidRoomSpeechSystem,
   layoutChainDots,
+  sanitizeSpeechText,
   solveSpeechBox,
 };
