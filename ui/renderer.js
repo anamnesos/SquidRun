@@ -1075,6 +1075,16 @@ function updateSquidRoomPetPane(pane, row) {
   // identity gates newness; the runtime throttles rendering. Never invented.
   const rowIdentity = String(row.rowId || row.row_id || '');
   const previousRowIdentity = String(pane.dataset.squidRoomLastRowId || '');
+  // Speech is Oracle's subsystem: forward the HONEST face pipeline output
+  // (short face line + full/raw, keyed by row identity - it never invents).
+  if (typeof squidRoomCreatureRuntime.setSquidRoomCreatureSpeech === 'function') {
+    squidRoomCreatureRuntime.setSquidRoomCreatureSpeech(role, {
+      face: face.face,
+      full: face.raw || face.face,
+      raw: face.raw || '',
+      rowIdentity,
+    });
+  }
   if (rowIdentity && rowIdentity !== previousRowIdentity
     && typeof squidRoomCreatureRuntime.notifySquidRoomComms === 'function') {
     const targetRole = String(row.targetRole || row.target_role || row.target || '').trim().toLowerCase();

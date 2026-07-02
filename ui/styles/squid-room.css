@@ -2577,3 +2577,9 @@ body.squid-room .squid-room-creature {
   height: 82vh;
   min-height: 320px;
 }
+
+/* Speech is Oracle'\''s viewport-solved system now - the old head-anchored
+   bubble dies on wiring (structural DOM removal in the cleanup pass). */
+body.squid-room .squid-room-pet-speech {
+  display: none !important;
+}

@@ -13,6 +13,7 @@
 
 const log = require('./logger');
 const { createSquidCreature } = require('./squid-room-creature-engine');
+const { createSquidRoomSpeechSystem } = require('./squid-room-speech-system');
 
 const ACTIVITY_BY_MOTION_CLASS = Object.freeze({
   'is-active': 'working',
@@ -82,33 +83,64 @@ function resizeBinding(binding) {
   engine.setBounds(width / binding.scale, height / binding.scale);
 }
 
+// SPEECH is ORACLE's subsystem (squid-room-speech-system.js, 15/15 solver
+// contracts): viewport-anchored boxes + bubble-chain tails, offscreen
+// mathematically impossible. This runtime feeds it anchors + text. The old
+// head-anchored speech transform died on wiring (no-orphan rule); only the
+// small NAME tag still rides the head.
+let speechSystem = null;
+const speechAnchors = {}; // pooled - mutated per frame, never reallocated
+
+function ensureSpeechSystem() {
+  if (speechSystem || typeof document === 'undefined') return speechSystem;
+  const layerEl = document.querySelector('.squid-room-creature-ocean') || document.body;
+  if (!layerEl) return null;
+  speechSystem = createSquidRoomSpeechSystem({ layerEl, reducedMotion: prefersReducedMotion() });
+  return speechSystem;
+}
+
+/** Face pipeline entry: forwards honest text to Oracle's speech system. */
+function setSquidRoomCreatureSpeech(petId, payload) {
+  const system = ensureSpeechSystem();
+  if (!system || !payload) return false;
+  system.setSpeech(String(petId || '').trim(), payload);
+  return true;
+}
+
+function updateSpeechAnchor(binding) {
+  const rect = binding.canvasRect;
+  if (!rect) return;
+  const petId = binding.canvas?.dataset?.squidRoomCreature;
+  if (!petId) return;
+  const scale = binding.scale || 1;
+  const state = binding.engine.state;
+  const facing = Math.cos(state.heading) >= 0 ? 1 : -1;
+  const anchor = speechAnchors[petId] || (speechAnchors[petId] = {
+    mouthX: 0, mouthY: 0, headX: 0, headY: 0, facing: 1,
+  });
+  anchor.headX = rect.left + state.x * scale;
+  anchor.headY = rect.top + (state.y - 30) * scale;
+  anchor.mouthX = rect.left + (state.x + facing * 6) * scale;
+  anchor.mouthY = rect.top + (state.y + 6) * scale;
+  anchor.facing = facing;
+}
+
 function anchorHeadElements(binding, nowMs) {
   if (nowMs - binding.lastAnchorAt < HEAD_ANCHOR_THROTTLE_MS) return;
   binding.lastAnchorAt = nowMs;
-  // Bases captured before layout settles produce clipped/detached bubbles -
-  // wait ~1s of frames before first capture.
   if (binding.frameCounter < 60) return;
-  const { engine, speechEl, nameEl } = binding;
-  // Engine coordinates are logical; the anchor targets CSS pixels. The
-  // bubble rides ABOVE the crown (crown tip ~ -50 logical + margin).
+  const { engine, nameEl } = binding;
   const scale = binding.scale || 1;
   const headX = engine.state.x * scale;
   const headY = (engine.state.y - 58) * scale;
-  for (const [element, baseKey] of [[speechEl, 'speechBase'], [nameEl, 'nameBase']]) {
-    if (!element || !element.isConnected) continue;
-    if (!binding[baseKey]) {
-      // Capture the element's CSS-resting position once; the anchor then
-      // moves it RELATIVE to wherever the stylesheet put it.
-      binding[baseKey] = {
-        x: element.offsetLeft + element.offsetWidth / 2,
-        y: element.offsetTop + element.offsetHeight,
-      };
-    }
-    const base = binding[baseKey];
-    const dx = Math.round(headX - base.x);
-    const dy = Math.round(headY - base.y);
-    element.style.transform = `translate(${dx}px, ${dy}px)`;
+  if (!nameEl || !nameEl.isConnected) return;
+  if (!binding.nameBase) {
+    binding.nameBase = {
+      x: nameEl.offsetLeft + nameEl.offsetWidth / 2,
+      y: nameEl.offsetTop + nameEl.offsetHeight,
+    };
   }
+  nameEl.style.transform = `translate(${Math.round(headX - binding.nameBase.x)}px, ${Math.round(headY - binding.nameBase.y)}px)`;
 }
 
 // FLIGHT RECORDER (S463 coroner support): the room's renderer died silently
@@ -260,8 +292,13 @@ function renderFrame(nowMs) {
     ctx.clearRect(0, 0, binding.cssWidth / (binding.scale || 1), binding.cssHeight / (binding.scale || 1));
     engine.draw(ctx);
     anchorHeadElements(binding, nowMs);
+    updateSpeechAnchor(binding);
   }
   if (!hidden && !reduced) drawCommsPulse(nowMs);
+  // Oracle's speech system steps after all creatures: solver + chains +
+  // typewriter advance on frame time (no timers of its own).
+  const speech = ensureSpeechSystem();
+  if (speech && !hidden) speech.frame(nowMs, speechAnchors);
 
   if (liveBindings > 0) {
     rafHandle = window.requestAnimationFrame(renderFrame);
@@ -457,5 +494,6 @@ module.exports = {
   mountSquidRoomCreatures,
   notifySquidRoomComms,
   setSquidRoomCreatureActivity,
+  setSquidRoomCreatureSpeech,
   unmountSquidRoomCreatures,
 };
