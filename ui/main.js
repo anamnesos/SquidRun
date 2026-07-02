@@ -22,6 +22,11 @@ app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
+// LIVE EYES (James's tooling-freedom mandate): localhost-only CDP endpoint
+// so agents can attach playwright/puppeteer to the RUNNING app - live DOM,
+// console, FPS profiling, burst/video capture of motion instead of stills.
+// Chromium binds this to 127.0.0.1 by default. Activates on next restart.
+app.commandLine.appendSwitch('remote-debugging-port', process.env.SQUIDRUN_CDP_PORT || '9223');
 
 if (process.env.NODE_PATH) {
   try {
