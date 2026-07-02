@@ -346,18 +346,34 @@ function createSquidCreature(options = {}) {
     // BEHIND-GLASS PATROL (wave 4): mostly open space (75%), occasional
     // passes behind the FROSTED cards low in the window - and if currently
     // low, ALWAYS surface next (never parked, always discoverable).
-    // OCCLUSION LAW (Architect defect 1): the opaque section-bar band
-    // (~48-64% of the swim column) is EXCLUDED from targets entirely -
-    // behind-opaque = invisible, not glow-through; creatures only transit
-    // it, never stop in it, so a face is never occluded beyond a pass.
-    const currentlyLow = state.y > height * 0.5;
-    const wantGlassPass = !currentlyLow && rng() < 0.25 && height > 420;
-    const zoneMin = wantGlassPass ? height * 0.66 : margin;
+    // OCCLUSION LAW (Architect defect 1): the opaque section-bar band -
+    // REAL measured layout from the runtime, not a magic fraction - is
+    // EXCLUDED from targets entirely; creatures transit it, never stop.
+    const band = state.exclusionBand;
+    const bandTop = band ? band.y0 : height * 0.48;
+    const bandBottom = band ? band.y1 : height * 0.64;
+    const currentlyLow = state.y > bandTop;
+    const wantGlassPass = !currentlyLow && rng() < 0.25
+      && height - bandBottom > 90; // enough visible water below the bar
+    const zoneMin = wantGlassPass ? bandBottom + 20 : margin;
     const zoneMax = wantGlassPass
       ? height - margin * 0.6
-      : Math.min(height * 0.44, height - margin);
+      : Math.max(margin + 20, Math.min(bandTop - 24, height - margin));
     const ySpan = Math.max(20, zoneMax - zoneMin);
     state.targetY = clamp(zoneMin + rng() * ySpan + lift, margin, height - margin * 0.6);
+  }
+
+  /**
+   * OCCLUSION LAW: the runtime measures the OPAQUE section bar's real rect
+   * and reports it in engine-local coordinates; targets avoid it and
+   * drifting creatures evacuate it. null clears (no opaque band).
+   */
+  function setExclusionBand(y0, y1) {
+    if (y0 == null || y1 == null || !(y1 > y0)) {
+      state.exclusionBand = null;
+      return;
+    }
+    state.exclusionBand = { y0: Number(y0), y1: Number(y1) };
   }
 
   function beginJet() {
@@ -389,6 +405,20 @@ function createSquidCreature(options = {}) {
       case JET_PHASE.DRIFT: {
         state.nextJetInMs -= dtMs;
         state.squash = lerp(state.squash, 1, 0.04);
+        // OCCLUSION LAW, evacuation half: a drifting creature inside the
+        // opaque band (real layout, set by the runtime) jets out NOW even
+        // mid-rest - a face is never parked occluded. The 2s grace lets a
+        // normal transit finish without a panic jet.
+        const band = state.exclusionBand;
+        if (band && state.y > band.y0 && state.y < band.y1) {
+          state.occludedMs = (state.occludedMs || 0) + dtMs;
+          if (state.occludedMs > 2000 && state.nextJetInMs > 0) {
+            pickTarget();
+            state.nextJetInMs = 0;
+          }
+        } else {
+          state.occludedMs = 0;
+        }
         if (state.nextJetInMs <= 0) {
           if (rng() < prof.retargetEagerness) pickTarget();
           beginJet();
@@ -1066,6 +1096,7 @@ function createSquidCreature(options = {}) {
     draw,
     setActivity,
     setBounds,
+    setExclusionBand,
     celebrate,
     delight,
     faceToward,
