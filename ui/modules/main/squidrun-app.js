@@ -5948,8 +5948,13 @@ class SquidRunApp {
       this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:pane-host-bootstrap:schedule`);
       this.schedulePaneHostBootstrap();
 
-      const devToolsAllowedByEnv = process.env.SQUIDRUN_DEBUG === '1' || process.env.NODE_ENV === 'development';
-      if (this.ctx.currentSettings.devTools && devToolsAllowedByEnv) {
+      // Honesty audit #3 (S464): the persisted setting IS the authority.
+      // The old env gate (SQUIDRUN_DEBUG/NODE_ENV, never set in James's
+      // packaged build) made the toggle a silent no-op: it persisted and
+      // animated while doing nothing. The toggle now means what it says in
+      // every build - and flipping it live opens/closes immediately via the
+      // set-setting handler.
+      if (this.ctx.currentSettings.devTools) {
         windowRef.webContents.openDevTools();
       }
     }
