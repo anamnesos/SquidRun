@@ -545,8 +545,12 @@ function renderSquidRoomPetPane(doc, pane, spec, options = {}) {
   });
   speech.appendChild(createElement(doc, 'span', { className: 'speech-line-text' }, `${spec.stateLabel}: ${spec.bubble}`));
   motionTrack.appendChild(speech);
-  motionTrack.appendChild(createElement(doc, 'span', { className: 'squid-room-pet-name-label' }, spec.title));
   stage.appendChild(motionTrack);
+  // Name label lives DIRECTLY on the stage: the sprite-era motion track
+  // still carries CSS float animations whose transforms are invisible to
+  // offset* reads - anchoring math inside it can never be right (live-CDP
+  // diagnosis). Stage-local = the same frame as the head anchor.
+  stage.appendChild(createElement(doc, 'span', { className: 'squid-room-pet-name-label' }, spec.title));
 
   const faceLine = createElement(doc, 'div', {
     className: 'squid-room-pet-caption face-line',
