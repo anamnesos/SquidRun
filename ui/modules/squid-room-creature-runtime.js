@@ -133,9 +133,40 @@ function ensureLoop() {
  * skipped; canvases re-created by a shell re-render get fresh bindings.
  */
 function mountSquidRoomCreatures(doc = typeof document !== 'undefined' ? document : null) {
-  if (!doc?.querySelectorAll) return 0;
+  // Prefer this module's OWN document global: in a context-isolated window
+  // the page world's document does not cross the bridge usefully, while the
+  // preload world (where renderer modules live) sees the real DOM directly.
+  const ownDoc = typeof document !== 'undefined' ? document : null;
+  const candidates = [doc, ownDoc].filter((candidate) => candidate?.querySelectorAll);
+  let resolvedDoc = null;
+  let nodeList = [];
+  for (const candidate of candidates) {
+    let found = [];
+    try {
+      found = Array.from(candidate.querySelectorAll('canvas[data-squid-room-creature]') || []);
+    } catch (err) {
+      log.warn('SquidRoomCreature', `querySelectorAll failed on candidate document: ${err?.message || err}`);
+      continue;
+    }
+    if (found.length > 0 || !resolvedDoc) {
+      resolvedDoc = candidate;
+      nodeList = found;
+    }
+    if (found.length > 0) break;
+  }
+  if (!resolvedDoc) return 0;
+  if (nodeList.length === 0) {
+    if (!mountSquidRoomCreatures._loggedEmpty) {
+      mountSquidRoomCreatures._loggedEmpty = true;
+      log.warn(
+        'SquidRoomCreature',
+        `Mount found no creature canvases (docArgUsable=${Boolean(doc?.querySelectorAll)} ownDocUsable=${Boolean(ownDoc?.querySelectorAll)} sameDoc=${doc === ownDoc})`
+      );
+    }
+    return 0;
+  }
   let mountedNow = 0;
-  for (const canvas of doc.querySelectorAll('canvas[data-squid-room-creature]')) {
+  for (const canvas of nodeList) {
     const petId = String(
       canvas.dataset?.squidRoomCreature
       || canvas.getAttribute?.('data-squid-room-creature')
