@@ -585,7 +585,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/renderer-csp.test.js` | test | 606 |
 | `ui/__tests__/renderer-events.test.js` | test | 9747 |
 | `ui/__tests__/renderer-ipc-registry.test.js` | test | 2556 |
-| `ui/__tests__/renderer.test.js` | test | 30264 |
+| `ui/__tests__/renderer.test.js` | test | 31838 |
 | `ui/__tests__/resource-handlers.test.js` | test | 20429 |
 | `ui/__tests__/restart-continuity-resume-manifest.test.js` | test | 19111 |
 | `ui/__tests__/runtime-log-rotation.test.js` | test | 2274 |
@@ -682,7 +682,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/work-item-ledger.test.js` | test | 23012 |
 | `ui/__tests__/work-room-terminal-visibility.test.js` | test | 1804 |
 | `ui/__tests__/workflow-handlers.test.js` | test | 20664 |
-| `ui/__tests__/workspace-pane-shell.test.js` | test | 15121 |
+| `ui/__tests__/workspace-pane-shell.test.js` | test | 16877 |
 
 ### ui/modules
 
@@ -1054,7 +1054,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/window-chrome.js` | source | 6118 |
 | `ui/modules/window-team-bootstrap.js` | source | 5806 |
 | `ui/modules/work-room-terminal-visibility.js` | source | 945 |
-| `ui/modules/workspace-pane-shell.js` | source | 27156 |
+| `ui/modules/workspace-pane-shell.js` | source | 34907 |
 
 ### ui/other
 
@@ -1088,7 +1088,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/pane-host.html` | asset | 1143 |
 | `ui/preload.js` | source | 2269 |
 | `ui/profile.js` | source | 10100 |
-| `ui/renderer.js` | source | 159201 |
+| `ui/renderer.js` | source | 171111 |
 | `ui/spine-overlay-renderer.js` | source | 8869 |
 | `ui/spine-overlay.html` | asset | 2832 |
 | `ui/supervisor-daemon.js` | source | 259782 |
@@ -1263,7 +1263,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/styles/project-rooms.css` | asset | 3686 |
 | `ui/styles/settings-panel.css` | asset | 11422 |
 | `ui/styles/spine-overlay.css` | asset | 9922 |
-| `ui/styles/squid-room.css` | asset | 48979 |
+| `ui/styles/squid-room.css` | asset | 62428 |
 | `ui/styles/state-bar.css` | asset | 3172 |
 | `ui/styles/status-strip.css` | asset | 4654 |
 | `ui/styles/tabs.css` | asset | 2550 |
