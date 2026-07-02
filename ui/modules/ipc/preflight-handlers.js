@@ -7,7 +7,9 @@ const log = require('../logger');
 const { resolveCoordPath, getProjectRoot } = require('../../config');
 const { getLocalDeviceId, isCrossDeviceEnabled } = require('../cross-device-target');
 
-const RELAY_TIMEOUT_MS = 2500;
+// Railway relays cold-start after idle; the first handshake of the morning
+// can take several seconds. 2500ms produced false "checks failed" alarms.
+const RELAY_TIMEOUT_MS = 8000;
 const EXPECTED_NODE_MAJOR = 22;
 const CLI_TIMEOUT_MS = 2000;
 const LOGIN_SHELL_PATH_TIMEOUT_MS = 3000;
@@ -185,14 +187,15 @@ function checkRelayConnectivity() {
   return new Promise((resolve) => {
     const crossDeviceEnabled = isCrossDeviceEnabled(process.env);
     const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim();
+    if (!crossDeviceEnabled) {
+      // A disabled feature must never fail startup, even with a URL configured.
+      resolve(makeCheck('relay', 'Relay Connectivity', true, 'Relay disabled; cross-device mode is off', {
+        crossDeviceEnabled,
+        skipped: true,
+      }));
+      return;
+    }
     if (!relayUrl) {
-      if (!crossDeviceEnabled) {
-        resolve(makeCheck('relay', 'Relay Connectivity', true, 'Relay disabled; cross-device mode is off', {
-          crossDeviceEnabled,
-          skipped: true,
-        }));
-        return;
-      }
       resolve(makeCheck('relay', 'Relay Connectivity', false, 'SQUIDRUN_RELAY_URL is not set'));
       return;
     }
