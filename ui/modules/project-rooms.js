@@ -167,13 +167,19 @@ function getRoomAuthority(roomId = MAIN_ROOM_ID, launchProof = null) {
 }
 
 function resolveMainLaneAuthority(candidate = {}) {
-  const sourceRoomId = normalizeRoomId(
+  // AUTHORITY MUST NOT LAUNDER (S464): normalizeRoomId maps unknown room ids
+  // to main as a rendering fallback - fine for display, catastrophic here.
+  // When the trustquote room was removed from the registry, its lingering
+  // refs silently started normalizing INTO main-room authority. Unknown or
+  // foreign ids are cross-room, full stop.
+  const rawRoomId = String(
     candidate.sourceRoomId
       || candidate.source_room_id
       || candidate.roomId
       || candidate.room_id
       || MAIN_ROOM_ID,
-  );
+  ).trim().toLowerCase();
+  const sourceRoomId = rawRoomId || MAIN_ROOM_ID;
   const sourceRef = String(candidate.sourceRef || candidate.source_ref || '').trim();
 
   if (sourceRoomId !== MAIN_ROOM_ID) {
