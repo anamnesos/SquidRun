@@ -590,6 +590,38 @@ function ensureSquidRoomPetPanes(doc) {
   return panes;
 }
 
+// WAVE 4 deep space: starfield parallax layers + twinkles + distant galaxy
+// + one pooled shooting star, injected once at body level (James 00:25:
+// "cosmic universe type background"). Pure CSS animation - perf-lawful.
+function ensureSquidRoomSpaceLayers(doc) {
+  const body = doc?.body;
+  if (!body || body.querySelector?.('.squid-space-stars')) return null;
+  const stars = createElement(doc, 'div', {
+    className: 'squid-space-stars',
+    attributes: { 'aria-hidden': 'true' },
+  });
+  for (let layer = 1; layer <= 3; layer += 1) {
+    stars.appendChild(createElement(doc, 'span', { className: `star-layer star-layer-${layer}` }));
+  }
+  const twinklePositions = [[12, 18], [34, 52], [58, 9], [76, 44], [88, 71], [22, 83]];
+  twinklePositions.forEach(([x, y], index) => {
+    const twinkle = createElement(doc, 'span', { className: 'star-twinkle' });
+    twinkle.style && (twinkle.style.left = `${x}vw`, twinkle.style.top = `${y}vh`,
+      twinkle.style.animationDelay = `${index * 0.9}s`);
+    stars.appendChild(twinkle);
+  });
+  body.insertBefore?.(stars, body.firstChild || null);
+  body.insertBefore?.(createElement(doc, 'div', {
+    className: 'squid-space-galaxy',
+    attributes: { 'aria-hidden': 'true' },
+  }), stars);
+  body.appendChild?.(createElement(doc, 'div', {
+    className: 'squid-space-shooting-star',
+    attributes: { 'aria-hidden': 'true' },
+  }));
+  return stars;
+}
+
 function ensureSquidRoomTeamHeader(doc, teamContainer) {
   if (!doc || !teamContainer) return null;
   let header = teamContainer.querySelector?.('.squid-room-team-header');
@@ -858,6 +890,7 @@ function configureSquidRoomPaneShell(doc) {
   const miraLiveReply = doc.querySelector('#miraLiveReply');
   setElementHidden(miraLiveReply, true);
 
+  ensureSquidRoomSpaceLayers(doc);
   const teamContainer = doc.querySelector?.('.side-panes-container');
   if (teamContainer) {
     teamContainer.classList?.add?.('squid-room-team-container');
