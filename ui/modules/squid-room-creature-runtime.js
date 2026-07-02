@@ -66,9 +66,7 @@ function resizeBinding(binding) {
   binding.cssWidth = width;
   binding.cssHeight = height;
   binding.dpr = dpr;
-  // Layout changed: anchor bases are stale (the clipping/detached-bubble
-  // regression) - recapture on the next anchor pass.
-  binding.speechBase = null;
+  // Layout changed: the name-tag base is stale - recapture next anchor pass.
   binding.nameBase = null;
   // The creature is authored at a fixed body size (~64 units tall); scale it
   // with the stage so it keeps the presence the sprites had (~half the band
@@ -412,9 +410,7 @@ function mountSquidRoomCreatures(doc = typeof document !== 'undefined' ? documen
       scale: 1,
       frameCounter: 0,
       lastAnchorAt: 0,
-      speechEl: stage?.querySelector?.('.squid-room-pet-speech') || null,
       nameEl: stage?.querySelector?.('.squid-room-pet-name-label') || null,
-      speechBase: null,
       nameBase: null,
     };
     resizeBinding(binding);

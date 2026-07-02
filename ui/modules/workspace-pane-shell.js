@@ -537,19 +537,11 @@ function renderSquidRoomPetPane(doc, pane, spec, options = {}) {
   // The creature canvas fills the whole stage: the procedural squid swims
   // the water region (P1.7); speech/name anchor to its head at runtime.
   stage.appendChild(createSquidRoomPetArtwork(doc, spec));
-  const motionTrack = createElement(doc, 'span', { className: 'pet-motion-track' });
-  const speech = createElement(doc, 'div', {
-    className: 'squid-room-pet-speech',
-    id: `squidRoomPetSpeech-${spec.paneId}`,
-    attributes: { 'aria-live': 'polite' },
-  });
-  speech.appendChild(createElement(doc, 'span', { className: 'speech-line-text' }, `${spec.stateLabel}: ${spec.bubble}`));
-  motionTrack.appendChild(speech);
-  stage.appendChild(motionTrack);
-  // Name label lives DIRECTLY on the stage: the sprite-era motion track
-  // still carries CSS float animations whose transforms are invisible to
-  // offset* reads - anchoring math inside it can never be right (live-CDP
-  // diagnosis). Stage-local = the same frame as the head anchor.
+  // Speech is Oracle's viewport-solved system (squid-room-speech-system);
+  // the old head-anchored bubble + its sprite-era motion track are GONE
+  // (S465 purge - the track's CSS float animation broke name-tag anchoring
+  // from beyond the grave). Name label lives directly on the stage: same
+  // coordinate frame as the head anchor.
   stage.appendChild(createElement(doc, 'span', { className: 'squid-room-pet-name-label' }, spec.title));
 
   const faceLine = createElement(doc, 'div', {
