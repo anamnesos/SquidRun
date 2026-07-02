@@ -889,6 +889,107 @@ describe('Terminal Injection', () => {
     });
   });
 
+  describe('focus-steal guarantee (S463)', () => {
+    // James's report: agent traffic into Claude panes stole his typing.
+    // Contract: programmatic injection never MOVES user focus permanently -
+    // the fast path never focuses at all, and every completion path of the
+    // trusted path restores (or releases) focus.
+    let userInput;
+
+    beforeEach(() => {
+      userInput = {
+        focus: jest.fn(() => { document.activeElement = userInput; }),
+      };
+      mockTextarea.focus = jest.fn(() => { document.activeElement = mockTextarea; });
+      mockTextarea.blur = jest.fn(() => { document.activeElement = document.body; });
+      document.activeElement = userInput;
+    });
+
+    test('hm-send fast path NEVER focuses the pane textarea (Claude pane)', async () => {
+      terminals.set('1', { buffer: { active: null } });
+
+      const onComplete = jest.fn();
+      const run = controller.doSendToPane('1', 'agent message', onComplete, {
+        messageId: 'hm-12345-abc',
+        traceId: 'hm-12345-abc',
+      });
+      await jest.advanceTimersByTimeAsync(15000);
+      await run;
+
+      expect(mockTextarea.focus).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(userInput);
+      expect(onComplete).toHaveBeenCalled();
+    });
+
+    test('trusted path restores the user focus after completion', async () => {
+      terminals.set('1', { buffer: { active: null } });
+
+      const onComplete = jest.fn();
+      const run = controller.doSendToPane('1', 'legacy message', onComplete, null, {
+        verifySubmitAccepted: false,
+      });
+      await jest.advanceTimersByTimeAsync(15000);
+      await run;
+
+      expect(mockTextarea.focus).toHaveBeenCalled();
+      expect(userInput.focus).toHaveBeenCalled();
+      expect(document.activeElement).toBe(userInput);
+    });
+
+    test('restores focus even when the PTY write fails', async () => {
+      terminals.set('1', { buffer: { active: null } });
+      mockPty.write.mockRejectedValue(new Error('pty gone'));
+      mockPty.writeChunked.mockRejectedValue(new Error('pty gone'));
+
+      const onComplete = jest.fn();
+      const run = controller.doSendToPane('1', 'doomed message', onComplete, null, {
+        verifySubmitAccepted: false,
+      });
+      await jest.advanceTimersByTimeAsync(15000);
+      await run;
+
+      expect(onComplete).toHaveBeenCalledWith(
+        expect.objectContaining({ success: false })
+      );
+      expect(document.activeElement).toBe(userInput);
+    });
+
+    test('a focus target the user chose mid-injection is respected (no yank-back)', async () => {
+      terminals.set('1', { buffer: { active: null } });
+      const otherInput = { focus: jest.fn(() => { document.activeElement = otherInput; }) };
+
+      // The user reclaims focus faster than any restore can run: by the time
+      // a restore fires, activeElement is already the user's new choice.
+      mockTextarea.focus = jest.fn(() => {
+        document.activeElement = otherInput;
+      });
+
+      const run = controller.doSendToPane('1', 'msg', jest.fn(), null, {
+        verifySubmitAccepted: false,
+      });
+      await jest.advanceTimersByTimeAsync(15000);
+      await run;
+
+      expect(userInput.focus).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(otherInput);
+    });
+
+    test('releases stolen focus via blur when the prior focus is gone', async () => {
+      terminals.set('1', { buffer: { active: null } });
+      document.body.contains = jest.fn().mockReturnValue(false); // savedFocus detached
+
+      const run = controller.doSendToPane('1', 'msg', jest.fn(), null, {
+        verifySubmitAccepted: false,
+      });
+      await jest.advanceTimersByTimeAsync(15000);
+      await run;
+
+      expect(userInput.focus).not.toHaveBeenCalled();
+      expect(mockTextarea.blur).toHaveBeenCalled();
+      expect(document.activeElement).not.toBe(mockTextarea);
+    });
+  });
+
   describe('doSendToPane', () => {
     test('uses capability-driven safe default path for unknown runtimes', async () => {
       const capabilityOptions = {
@@ -2209,6 +2310,9 @@ describe('Terminal Injection', () => {
       const savedElement = { focus: jest.fn() };
       document.activeElement = savedElement;
       document.body.contains.mockReturnValue(true);
+      // Realistic focus: moving focus updates activeElement (the S463 restore
+      // only fires while focus is still where injection put it).
+      mockTextarea.focus = jest.fn(() => { document.activeElement = mockTextarea; });
 
       await controller.doSendToPane('1', 'test\r', jest.fn());
 
