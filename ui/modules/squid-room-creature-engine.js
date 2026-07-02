@@ -46,7 +46,8 @@ const PALETTES = Object.freeze({
     eyeCore: '#eaffff',
     eyeSparkle: true,
     glow: 'rgba(60, 190, 255, 0.34)',
-    ink: 'rgba(16, 42, 80, 0.85)',
+    ink: 'rgba(13, 74, 104, 0.85)',
+    inkAccent: 'rgba(46, 140, 190, 0.6)',
   }),
   oracle: Object.freeze({
     mantleTop: '#b18ae8',
@@ -64,7 +65,8 @@ const PALETTES = Object.freeze({
     eyeSparkle: true,
     spots: 'rgba(72, 44, 128, 0.4)',
     glow: 'rgba(150, 110, 255, 0.32)',
-    ink: 'rgba(40, 20, 78, 0.85)',
+    ink: 'rgba(84, 44, 140, 0.85)',
+    inkAccent: 'rgba(214, 158, 74, 0.55)',
   }),
 });
 
@@ -641,6 +643,7 @@ function createSquidCreature(options = {}) {
       return;
     }
     tickJetCycle(clamped);
+    tickPresence(clamped);
     tickBody(clamped);
     tickTentacles(clamped);
     tickEyes(clamped);
@@ -873,7 +876,11 @@ function createSquidCreature(options = {}) {
           0,
           TWO_PI
         );
-        ctx.fillStyle = state.palette.ink;
+        // Ink identity: alternate blobs between the creature's ink and its
+        // accent (Builder teal-blue, Oracle violet-amber).
+        ctx.fillStyle = (blob % 2 === 1 && state.palette.inkAccent)
+          ? state.palette.inkAccent
+          : state.palette.ink;
         ctx.fill();
       }
       ctx.restore();
@@ -942,6 +949,10 @@ function createSquidCreature(options = {}) {
     setActivity,
     setBounds,
     celebrate,
+    delight,
+    faceToward,
+    setPointer,
+    setCurrent,
     setReducedMotion(value) { state.reducedMotion = value === true; },
   };
 }

@@ -1070,6 +1070,19 @@ function updateSquidRoomPetPane(pane, row) {
   const state = classifySquidRoomPetState(row, role);
   const face = buildSquidRoomPetFace(row, role);
   const motionClass = getSquidRoomPetMotionClass(row);
+  // HONEST comms pulse (wave 3): a NEW routed ledger row from this core pet
+  // to the OTHER core pet renders as a luminous pulse + mutual turn. Ledger
+  // identity gates newness; the runtime throttles rendering. Never invented.
+  const rowIdentity = String(row.rowId || row.row_id || '');
+  const previousRowIdentity = String(pane.dataset.squidRoomLastRowId || '');
+  if (rowIdentity && rowIdentity !== previousRowIdentity
+    && typeof squidRoomCreatureRuntime.notifySquidRoomComms === 'function') {
+    const targetRole = String(row.targetRole || row.target_role || row.target || '').trim().toLowerCase();
+    const otherPet = role === 'builder' ? 'oracle' : (role === 'oracle' ? 'builder' : null);
+    if (otherPet && targetRole === otherPet) {
+      squidRoomCreatureRuntime.notifySquidRoomComms(role, otherPet);
+    }
+  }
   pane.dataset.squidRoomState = state.state;
   pane.dataset.squidRoomLastRowId = String(row.rowId || row.row_id || '');
   pane.dataset.squidRoomMotion = motionClass;
@@ -2928,6 +2941,14 @@ function initSquidRoomTerminalDrawer(doc = document) {
     }
     if (target.closest('[data-squid-room-terminal-drawer-open="true"]')) {
       event.preventDefault?.();
+      // Click delight (wave 3): a happy wiggle + bubbles from the clicked
+      // creature. Emotional only - all TEXT stays honest; the drawer opens
+      // exactly as before.
+      const creatureCard = target.closest('[data-squid-room-pet]');
+      const petId = creatureCard?.dataset?.squidRoomPet;
+      if (petId && typeof squidRoomCreatureRuntime.delightSquidRoomCreature === 'function') {
+        squidRoomCreatureRuntime.delightSquidRoomCreature(petId);
+      }
       setSquidRoomTerminalDrawerOpen(true, doc);
     }
   });

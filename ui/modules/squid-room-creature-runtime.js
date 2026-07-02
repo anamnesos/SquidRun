@@ -20,12 +20,23 @@ const ACTIVITY_BY_MOTION_CLASS = Object.freeze({
   'is-resting': 'resting',
 });
 
+// WAVE 3 presence constants: pooled + hard-capped per the perf law (the
+// renderer death investigation made zero-per-frame-allocation survival law).
+const COMMS_PULSE_THROTTLE_MS = 10000;
+const CURRENT_PERIOD_MS = 26000;
+const CURRENT_STRENGTH = 3.2;
+
 const HEAD_ANCHOR_THROTTLE_MS = 90;
 
 const mounted = new Map(); // petId -> binding
 let rafHandle = null;
 let lastFrameAt = 0;
 let reducedMotionQuery = null;
+// Presence state (all pooled/preallocated - no per-frame objects).
+let pointerListenerBound = false;
+const pointerState = { x: null, y: null, lastX: null, lastY: null, lastAt: 0, speed: 0 };
+let lastCommsPulseAt = 0;
+const commsPulse = { active: false, fromPetId: null, toPetId: null, startedAt: 0, durationMs: 1600 };
 
 function prefersReducedMotion() {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
@@ -102,11 +113,99 @@ function logMemoryHeartbeat(nowMs) {
   } catch (_) { /* heartbeat must never hurt the loop */ }
 }
 
+// Document-level pointer tracking (one listener, bound once): the creature
+// canvases are pointer-events:none, so awareness reads the pointer at the
+// document level and converts to each binding's engine-local space.
+function ensurePointerListener() {
+  if (pointerListenerBound || typeof document === 'undefined') return;
+  pointerListenerBound = true;
+  document.addEventListener('mousemove', (event) => {
+    const now = Date.now();
+    if (pointerState.lastAt) {
+      const dt = Math.max(1, now - pointerState.lastAt);
+      pointerState.speed = Math.hypot(
+        event.clientX - (pointerState.lastX ?? event.clientX),
+        event.clientY - (pointerState.lastY ?? event.clientY)
+      ) / dt;
+    }
+    pointerState.lastX = event.clientX;
+    pointerState.lastY = event.clientY;
+    pointerState.lastAt = now;
+    pointerState.x = event.clientX;
+    pointerState.y = event.clientY;
+  }, { passive: true });
+  document.addEventListener('mouseleave', () => {
+    pointerState.x = null;
+    pointerState.y = null;
+  }, { passive: true });
+}
+
+function feedPointerToBinding(binding) {
+  const { canvas, engine } = binding;
+  if (pointerState.x == null) {
+    engine.setPointer(null, null);
+    return;
+  }
+  const rect = binding.canvasRect;
+  if (!rect) return;
+  const scale = binding.scale || 1;
+  const localX = (pointerState.x - rect.left) / scale;
+  const localY = (pointerState.y - rect.top) / scale;
+  if (localX < -40 || localY < -40
+    || localX > binding.cssWidth / scale + 40 || localY > binding.cssHeight / scale + 40) {
+    engine.setPointer(null, null);
+    return;
+  }
+  engine.setPointer(localX, localY, pointerState.speed);
+}
+
+function drawCommsPulse(nowMs) {
+  if (!commsPulse.active) return;
+  const from = mounted.get(commsPulse.fromPetId);
+  const to = mounted.get(commsPulse.toPetId);
+  const t = (nowMs - commsPulse.startedAt) / commsPulse.durationMs;
+  if (!from || !to || t >= 1) {
+    commsPulse.active = false;
+    return;
+  }
+  // The pulse travels sender -> receiver, drawn on BOTH canvases in their
+  // own coordinate spaces (the water is split across two canvases; each
+  // renders the segment of the journey it can see).
+  for (const binding of [from, to]) {
+    const rect = binding.canvasRect;
+    const fromRect = from.canvasRect;
+    const toRect = to.canvasRect;
+    if (!rect || !fromRect || !toRect) continue;
+    const scale = binding.scale || 1;
+    // World (viewport) positions of both creatures.
+    const worldFromX = fromRect.left + from.engine.state.x * (from.scale || 1);
+    const worldFromY = fromRect.top + from.engine.state.y * (from.scale || 1);
+    const worldToX = toRect.left + to.engine.state.x * (to.scale || 1);
+    const worldToY = toRect.top + to.engine.state.y * (to.scale || 1);
+    const pulseWorldX = worldFromX + (worldToX - worldFromX) * t;
+    const pulseWorldY = worldFromY + (worldToY - worldFromY) * t;
+    const localX = (pulseWorldX - rect.left) / scale;
+    const localY = (pulseWorldY - rect.top) / scale;
+    const ctx = binding.ctx;
+    ctx.save();
+    ctx.globalAlpha = 0.55 * Math.sin(Math.PI * t);
+    ctx.fillStyle = binding.engine.state.palette.rim;
+    ctx.beginPath();
+    ctx.arc(localX, localY, 5 + Math.sin(t * 18) * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
 function renderFrame(nowMs) {
   rafHandle = null;
   const dtMs = lastFrameAt ? Math.min(64, nowMs - lastFrameAt) : 16;
   lastFrameAt = nowMs;
   logMemoryHeartbeat(nowMs);
+  // Shared water current: one slow global sine vector for everything.
+  const currentPhase = (nowMs % CURRENT_PERIOD_MS) / CURRENT_PERIOD_MS * Math.PI * 2;
+  const currentX = Math.sin(currentPhase) * CURRENT_STRENGTH;
+  const currentY = Math.cos(currentPhase * 0.7) * CURRENT_STRENGTH * 0.4;
 
   const hidden = typeof document !== 'undefined' && document.hidden === true;
   const reduced = prefersReducedMotion();
@@ -122,7 +221,18 @@ function renderFrame(nowMs) {
     if (hidden) continue;
     engine.setReducedMotion(reduced);
     binding.frameCounter = (binding.frameCounter || 0) + 1;
-    if (binding.frameCounter % 30 === 0) resizeBinding(binding);
+    if (binding.frameCounter % 30 === 0) {
+      resizeBinding(binding);
+      // Viewport rect cached on the same cadence (layout read, not per-frame).
+      binding.canvasRect = binding.canvas.getBoundingClientRect();
+    }
+    if (!reduced) {
+      engine.setCurrent(currentX, currentY);
+      feedPointerToBinding(binding);
+    } else {
+      engine.setPointer(null, null);
+      engine.setCurrent(0, 0);
+    }
     engine.tick(dtMs);
     // Reduced motion: a static pose repainted sparsely.
     if (reduced && binding.frameCounter % 60 !== 1) continue;
@@ -133,6 +243,7 @@ function renderFrame(nowMs) {
     engine.draw(ctx);
     anchorHeadElements(binding, nowMs);
   }
+  if (!hidden && !reduced) drawCommsPulse(nowMs);
 
   if (liveBindings > 0) {
     rafHandle = window.requestAnimationFrame(renderFrame);
@@ -221,6 +332,7 @@ function mountSquidRoomCreatures(doc = typeof document !== 'undefined' ? documen
       nameBase: null,
     };
     resizeBinding(binding);
+    binding.canvasRect = canvas.getBoundingClientRect?.() || null;
     if (existing) {
       // Carry activity across re-renders so behavior does not reset.
       binding.engine.setActivity(existing.engine.state.activity);
@@ -229,6 +341,7 @@ function mountSquidRoomCreatures(doc = typeof document !== 'undefined' ? documen
     mountedNow += 1;
     log.info('SquidRoomCreature', `Mounted procedural creature '${petId}' (${binding.cssWidth}x${binding.cssHeight})`);
   }
+  ensurePointerListener();
   ensureLoop();
   return mountedNow;
 }
@@ -246,6 +359,49 @@ function celebrateSquidRoomCreature(petId) {
   const binding = mounted.get(String(petId || '').trim());
   if (!binding) return false;
   binding.engine.celebrate();
+  return true;
+}
+
+/** Click delight: happy wiggle + bubbles. Emotional only - text stays honest. */
+function delightSquidRoomCreature(petId) {
+  const binding = mounted.get(String(petId || '').trim());
+  if (!binding) return false;
+  binding.engine.delight();
+  return true;
+}
+
+/**
+ * HONEST comms visualization: called ONLY when a real routed ledger row
+ * between the core pair is observed. Throttled; coalesces bursts into one
+ * rendered pulse per window. The creatures turn toward each other while the
+ * pulse travels sender -> receiver.
+ */
+function notifySquidRoomComms(fromPetId, toPetId) {
+  const now = Date.now();
+  if (now - lastCommsPulseAt < COMMS_PULSE_THROTTLE_MS) return false;
+  const from = mounted.get(String(fromPetId || '').trim());
+  const to = mounted.get(String(toPetId || '').trim());
+  if (!from || !to || !from.canvasRect || !to.canvasRect) return false;
+  lastCommsPulseAt = now;
+  commsPulse.active = true;
+  commsPulse.fromPetId = String(fromPetId).trim();
+  commsPulse.toPetId = String(toPetId).trim();
+  commsPulse.startedAt = typeof performance !== 'undefined' ? performance.now() : now;
+  // Each creature turns toward the other, in its own engine-local space.
+  const scaleFrom = from.scale || 1;
+  const scaleTo = to.scale || 1;
+  const toWorldX = to.canvasRect.left + to.engine.state.x * scaleTo;
+  const toWorldY = to.canvasRect.top + to.engine.state.y * scaleTo;
+  const fromWorldX = from.canvasRect.left + from.engine.state.x * scaleFrom;
+  const fromWorldY = from.canvasRect.top + from.engine.state.y * scaleFrom;
+  from.engine.faceToward(
+    (toWorldX - from.canvasRect.left) / scaleFrom,
+    (toWorldY - from.canvasRect.top) / scaleFrom
+  );
+  to.engine.faceToward(
+    (fromWorldX - to.canvasRect.left) / scaleTo,
+    (fromWorldY - to.canvasRect.top) / scaleTo
+  );
   return true;
 }
 
@@ -278,8 +434,10 @@ function getSquidRoomCreatureDebugState() {
 module.exports = {
   ACTIVITY_BY_MOTION_CLASS,
   celebrateSquidRoomCreature,
+  delightSquidRoomCreature,
   getSquidRoomCreatureDebugState,
   mountSquidRoomCreatures,
+  notifySquidRoomComms,
   setSquidRoomCreatureActivity,
   unmountSquidRoomCreatures,
 };
