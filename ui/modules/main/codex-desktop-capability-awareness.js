@@ -313,12 +313,15 @@ function buildCodexDesktopCapabilityStatus(options = {}) {
     'node ui/scripts/hm-codex-capability-status.js status --json',
     'Single discoverable Codex Desktop capability/status seam for startup and agent tool awareness.'
   );
-  const attentionRoute = inspectScriptRoute(
-    projectRoot,
-    'hm-codex-attention.js',
-    'node ui/scripts/hm-codex-attention.js list --all',
-    'Durable Codex attention inbox for structured requests and proof packets.'
-  );
+  // hm-codex-attention.js was DELETED (S464 adjudication: bridge retired).
+  // The route reports itself retired so no agent discovers a dead tool;
+  // the archived inbox files remain readable for history.
+  const attentionRoute = {
+    status: 'retired',
+    script: null,
+    command: null,
+    description: 'RETIRED (S464): the codex-attention inbox script was deleted; archived request/proof files remain under runtime history only.',
+  };
   return {
     ok: true,
     schema: STATUS_SCHEMA,
@@ -367,11 +370,6 @@ function buildCodexDesktopCapabilityStatus(options = {}) {
         readiness_source: 'process availability plus current Codex agent session capability; dead legacy heartbeat files are not used.',
       },
       {
-        id: 'hm_codex_attention',
-        use_for: 'Durable structured Codex requests and proof packets with pending/completed counts.',
-        command: attentionRoute.command,
-      },
-      {
         id: 'hm_codex_desktop_transport',
         use_for: 'Probe or focus/summon a Codex workspace; not a visible thread injection path.',
         command: desktopTransport.command,
@@ -401,7 +399,7 @@ function renderCodexDesktopCapabilityMarkdown(status = {}) {
     `- App-Control Route: ${appControl.status || 'unknown'} (source=${appControl.source_message_id || 'unknown'})`,
     `- Attention Inbox: active=${Number(inbox.active_count || 0)}, completed=${Number(inbox.completed_count || 0)}, total=${Number(inbox.total_count || 0)}, freshness=${inbox.polling_freshness || 'unknown'}`,
     `- Desktop Transport: summon=${desktopTransport.can_summon_workspace === true ? 'yes' : 'no'}, visible_injection=${desktopTransport.visible_injection_proven === true ? 'proven' : 'not_proven'}`,
-    '- Tools: hm-codex-capability-status, hm-codex-attention, hm-codex-desktop-transport',
+    '- Tools: hm-codex-capability-status, hm-codex-desktop-transport',
     `- Boundary: ${Array.isArray(status.boundaries) && status.boundaries.length > 0 ? status.boundaries[0] : 'route availability and freshness are separate facts.'}`,
     '',
   ].join('\n');
