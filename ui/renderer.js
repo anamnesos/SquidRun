@@ -147,6 +147,7 @@ const SQUID_ROOM_WINDOW_KEY = squidRoomSurfaceModule.SQUID_ROOM_WINDOW_KEY || 's
 const TRUSTQUOTE_APP_ROOM_ID = squidRoomSurfaceModule.TRUSTQUOTE_APP_ROOM_ID || 'trustquote';
 const { sendMiraLivePrompt, normalizeMiraLiveSessionId } = rendererModules.miraLiveEntrypoint || {};
 const squidRoomCreatureRuntime = rendererModules.squidRoomCreatureRuntime || {};
+let squidRoomCreatureMountReported = false;
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = rendererModules.modelSelector;
 const { PANE_ROLES, PANE_ROLE_BUNDLES } = rendererModules.config;
 const bus = rendererModules.bus;
@@ -1120,9 +1121,26 @@ async function refreshSquidRoomPetStatus(windowContext = getCurrentWindowContext
   const petPanes = getSquidRoomPetPaneElements();
   if (petPanes.length === 0) return { ok: false, skipped: true, reason: 'no_pet_panes' };
   // P1.7: bind procedural creature engines to any creature canvases the
-  // shell rendered (idempotent - re-renders get fresh bindings).
+  // shell rendered (idempotent - re-renders get fresh bindings). NEVER fail
+  // silently: a missing runtime or zero-mount is logged so a blank ocean is
+  // diagnosable from app.log instead of by staring at pixels.
   if (typeof squidRoomCreatureRuntime.mountSquidRoomCreatures === 'function') {
-    squidRoomCreatureRuntime.mountSquidRoomCreatures(document);
+    try {
+      squidRoomCreatureRuntime.mountSquidRoomCreatures(document);
+      if (!squidRoomCreatureMountReported) {
+        squidRoomCreatureMountReported = true;
+        const canvasCount = document.querySelectorAll('canvas[data-squid-room-creature]').length;
+        const bindings = typeof squidRoomCreatureRuntime.getSquidRoomCreatureDebugState === 'function'
+          ? squidRoomCreatureRuntime.getSquidRoomCreatureDebugState()
+          : 'no_debug_accessor';
+        log.info('SquidRoom', `Creature runtime state: canvases=${canvasCount} bindings=${JSON.stringify(bindings)}`);
+      }
+    } catch (err) {
+      log.error('SquidRoom', `Creature mount failed: ${err?.message || err}`);
+    }
+  } else if (!squidRoomCreatureMountReported) {
+    squidRoomCreatureMountReported = true;
+    log.warn('SquidRoom', 'Creature runtime unavailable in rendererModules - procedural pets cannot mount');
   }
   refreshSquidRoomPetAnimations();
 
