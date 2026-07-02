@@ -142,15 +142,23 @@ function anchorHeadElements(binding, nowMs) {
   const headX = engine.state.x * scale;
   const headY = (engine.state.y - 58) * scale;
   if (!nameEl || !nameEl.isConnected) return;
-  // Recapture the CSS resting base every (throttled) pass: offset* ignores
-  // transforms, so this is cheap and self-correcting - a base captured
-  // before fonts/layout settled can never strand the tag again (the
-  // floating detached "Builder" tag in the 3-frame verification).
-  binding.nameBase = {
-    x: nameEl.offsetLeft + nameEl.offsetWidth / 2,
-    y: nameEl.offsetTop + nameEl.offsetHeight,
-  };
-  nameEl.style.transform = `translate(${Math.round(headX - binding.nameBase.x)}px, ${Math.round(headY - binding.nameBase.y)}px)`;
+  // Recapture the CSS resting base every (throttled) pass, ACCUMULATED up
+  // the offsetParent chain to the stage: the label's offsetParent is the
+  // pet-motion-track (positioned), so raw offsetLeft/Top are TRACK-local
+  // while headX/headY are card-local - mixing frames stranded the tags by
+  // exactly the track's position (live-CDP diagnosis, session 464).
+  let baseX = nameEl.offsetLeft + nameEl.offsetWidth / 2;
+  let baseY = nameEl.offsetTop + nameEl.offsetHeight;
+  let parent = nameEl.offsetParent;
+  let hops = 0;
+  while (parent && hops < 4 && !(parent.classList?.contains?.('squid-room-pet-stage'))) {
+    baseX += parent.offsetLeft || 0;
+    baseY += parent.offsetTop || 0;
+    parent = parent.offsetParent;
+    hops += 1;
+  }
+  binding.nameBase = { x: baseX, y: baseY };
+  nameEl.style.transform = `translate(${Math.round(headX - baseX)}px, ${Math.round(headY - baseY)}px)`;
 }
 
 // FLIGHT RECORDER (S463 coroner support): the room's renderer died silently
