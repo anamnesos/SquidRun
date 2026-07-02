@@ -1114,6 +1114,9 @@ function scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon = null) {
  */
 function queueTerminalWrite(paneId, terminal, data) {
   const id = String(paneId);
+  // Suspended hidden mirror: DROP the write entirely - the daemon owns the
+  // history and resume repaints it (S463 drawer-mirror suspension).
+  if (suspendedRenderPanes.has(id)) return;
   const payload = typeof data === 'string' ? data : String(data ?? '');
   const byteLen = Buffer.byteLength(payload, 'utf8');
 
@@ -1373,6 +1376,34 @@ function shouldRestoreDaemonScrollbackOnCreate(paneId, options = {}) {
   if (options.restoreDaemonScrollback === true) return true;
   if (options.restoreDaemonScrollback === false) return false;
   return !PANE_IDS.includes(String(paneId || ''));
+}
+
+// DRAWER-MIRROR SUSPENSION (S463 renderer-death case): rendering xterm
+// mirrors inside a CLOSED drawer is pure waste and the prime suspect for the
+// RSS explosions (onsets correlated to the second with big message bursts
+// into the mirrored panes). While suspended, incoming writes are DROPPED -
+// the daemon owns the truth - and resume repaints the full history from the
+// daemon's scrollback.
+const suspendedRenderPanes = new Set();
+
+function setPaneRenderSuspended(paneId, suspended) {
+  const id = String(paneId || '').trim();
+  if (!id) return false;
+  if (suspended) {
+    if (suspendedRenderPanes.has(id)) return true;
+    suspendedRenderPanes.add(id);
+    resetTerminalWriteQueue(id);
+    log.info(`Terminal ${id}`, 'Render suspended (hidden mirror) - writes dropped, daemon keeps history');
+    return true;
+  }
+  if (!suspendedRenderPanes.delete(id)) return false;
+  log.info(`Terminal ${id}`, 'Render resumed - repainting full history from daemon scrollback');
+  void repaintTerminalFromDaemonScrollback(id, {});
+  return true;
+}
+
+function isPaneRenderSuspended(paneId) {
+  return suspendedRenderPanes.has(String(paneId || '').trim());
 }
 
 async function repaintTerminalFromDaemonScrollback(paneId, options = {}) {
@@ -4647,6 +4678,8 @@ module.exports = {
   // Scroll-probe seam: runs in the isolated world where the terminal lives,
   // invoked from the main-world probe injection via the contextBridge.
   runTerminalScrollProbe,
+  setPaneRenderSuspended,
+  isPaneRenderSuspended,
   _internals: {
     get promotionCheckTimer() { return promotionCheckTimer; },
     set promotionCheckTimer(v) { promotionCheckTimer = v; },

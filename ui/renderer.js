@@ -2914,6 +2914,20 @@ function initSquidRoomPaneMenus(doc = document) {
   });
 }
 
+// Drawer-mirror suspension (S463): mirrors in a CLOSED drawer stop rendering
+// (writes dropped - the daemon owns the history); opening the drawer resumes
+// and repaints full history from daemon scrollback. Three renderer-death
+// explosions each began the moment a big agent packet hit a mirrored pane.
+function setSquidRoomDrawerMirrorsSuspended(suspended, doc = document) {
+  if (typeof terminal?.setPaneRenderSuspended !== 'function') return;
+  const drawer = doc?.querySelector?.('#squidRoomTerminalDrawer');
+  const panes = drawer?.querySelectorAll?.('.pane[data-pane-id]') || [];
+  for (const pane of panes) {
+    const paneId = pane?.dataset?.paneId;
+    if (paneId) terminal.setPaneRenderSuspended(paneId, suspended);
+  }
+}
+
 function setSquidRoomTerminalDrawerOpen(open, doc = document) {
   const drawer = doc?.querySelector?.('#squidRoomTerminalDrawer');
   if (!drawer?.classList) return false;
@@ -2925,12 +2939,21 @@ function setSquidRoomTerminalDrawerOpen(open, doc = document) {
   doc.querySelectorAll?.('[data-squid-room-terminal-drawer-open="true"]')?.forEach((button) => {
     button.setAttribute?.('aria-expanded', String(isOpen));
   });
+  setSquidRoomDrawerMirrorsSuspended(!isOpen, doc);
   return true;
 }
 
 function initSquidRoomTerminalDrawer(doc = document) {
   if (!doc?.body || doc.body.dataset?.squidRoomTerminalDrawerBound === 'true') return;
   if (doc.body.dataset) doc.body.dataset.squidRoomTerminalDrawerBound = 'true';
+  // The drawer starts CLOSED: suspend its mirrors from the first frame
+  // (delayed so pane containers/terminals from shell config exist).
+  setTimeout(() => {
+    const drawer = doc?.querySelector?.('#squidRoomTerminalDrawer');
+    if (drawer && !drawer.classList?.contains?.('is-open')) {
+      setSquidRoomDrawerMirrorsSuspended(true, doc);
+    }
+  }, 1500);
   doc.addEventListener?.('click', (event) => {
     const target = event?.target;
     if (!target?.closest) return;
