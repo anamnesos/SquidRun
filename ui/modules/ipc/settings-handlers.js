@@ -329,6 +329,18 @@ function registerSettingsHandlers(ctx, deps) {
 
     saveSettings(settings);
 
+    // Honesty audit #3 (S464): the DevTools toggle used to persist+animate
+    // while an env gate made it a silent no-op in packaged builds. The
+    // toggle now DOES what it says, immediately: flip on = DevTools open on
+    // the main window, flip off = closed. James owns his app.
+    if (normalizedKey === 'devTools') {
+      const targetWindow = ctx.mainWindow && !ctx.mainWindow.isDestroyed() ? ctx.mainWindow : null;
+      if (targetWindow?.webContents) {
+        if (value) targetWindow.webContents.openDevTools();
+        else targetWindow.webContents.closeDevTools();
+      }
+    }
+
     if (normalizedKey === 'paneProjects') {
       runPreflightForPaneProjectChanges(
         ctx,
