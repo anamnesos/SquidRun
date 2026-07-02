@@ -303,3 +303,89 @@ describe('cross-review fixes — body exclusion + single-frame settle', () => {
     expect(entry.posY).toBe(entry.targetY);
   });
 });
+
+describe('defect fixes — jargon guard + creature avoidance (Architect row 73875)', () => {
+  const { sanitizeSpeechText, solveSpeechBox: solve2 } = require('../modules/squid-room-speech-system');
+
+  test('the face can never speak hashes, paths, or ids — even if upstream regresses', () => {
+    expect(sanitizeSpeechText('committed as e4e03749 Free Squid Room creatures'))
+      .toBe('committed as Free Squid Room creatures');
+    expect(sanitizeSpeechText('proof sha256:9f14760feb2f4b17aec6d056c3f0b941 attached'))
+      .toBe('proof attached');
+    expect(sanitizeSpeechText('see .squidrun/coord/oracle-verify-2026.md for detail'))
+      .toBe('see for detail');
+    expect(sanitizeSpeechText('fixed ui/modules/squid-room-speech-system.js today'))
+      .toBe('fixed today');
+    expect(sanitizeSpeechText('closed wi-squidrun-p17-wave2-anatomy-463 passed'))
+      .toBe('closed passed');
+  });
+
+  test('the guard strips but NEVER invents: hex-like English words survive, pure jargon goes silent', () => {
+    expect(sanitizeSpeechText('the wall was defaced badly')).toBe('the wall was defaced badly');
+    expect(sanitizeSpeechText('sha256:aaaaaaaaaaaaaaaa1111')).toBe('');
+  });
+
+  test('setSpeech with pure-jargon face stays silent instead of inventing', () => {
+    const doc = makeFakeDocument();
+    const layerEl = makeFakeElement('div');
+    const system = createSquidRoomSpeechSystem({ layerEl, document: doc, viewportW: 1200, viewportH: 800 });
+    system.setSpeech('builder', { face: 'sha256:ab12cd34ef56ab12', rowIdentity: 'rj1' });
+    const entry = system._pets.get('builder');
+    expect(entry.box.dataset.visible).toBe('false');
+  });
+
+  test('solver avoids creature body rects when geometry allows', () => {
+    const avoid = [{ x: 500, y: 300, w: 120, h: 140 }];
+    const solved = solve2({
+      anchorX: 560, anchorY: 360, boxW: 300, boxH: 90,
+      viewportW: 1200, viewportH: 800, avoidRects: avoid,
+    });
+    const r = avoid[0];
+    const overlaps = solved.x < r.x + r.w && solved.x + 300 > r.x
+      && solved.y < r.y + r.h && solved.y + 90 > r.y;
+    expect(overlaps).toBe(false);
+    expect(solved.clearsBody).toBe(true);
+  });
+
+  test('containment still beats avoidance when the room is too small', () => {
+    const solved = solve2({
+      anchorX: 160, anchorY: 100, boxW: 280, boxH: 160, viewportW: 320, viewportH: 200,
+      avoidRects: [{ x: 0, y: 0, w: 320, h: 200 }],
+    });
+    expect(solved.x).toBeGreaterThanOrEqual(16);
+    expect(solved.y).toBeGreaterThanOrEqual(16);
+    expect(solved.clearsBody).toBe(false);
+  });
+});
+
+describe('verify-frame-1 fixes — filename debris + box-vs-box', () => {
+  const { sanitizeSpeechText: san } = require('../modules/squid-room-speech-system');
+
+  test('bare filenames strip clean (no "capture-.png" debris)', () => {
+    expect(san('as promised, capture-1782981794410.png: both boxes'))
+      .toBe('as promised,: both boxes');
+    expect(san('see squid-room-speech-system.test.js for contracts'))
+      .toBe('see for contracts');
+  });
+
+  test('two speaking pets never get overlapping boxes', () => {
+    const doc = makeFakeDocument();
+    const layerEl = makeFakeElement('div');
+    const system = createSquidRoomSpeechSystem({ layerEl, document: doc, viewportW: 1200, viewportH: 800 });
+    const anchors = {
+      builder: { mouthX: 500, mouthY: 300, bodyX: 440, bodyY: 240, bodyW: 120, bodyH: 140 },
+      oracle: { mouthX: 700, mouthY: 300, bodyX: 640, bodyY: 240, bodyW: 120, bodyH: 140 },
+    };
+    system.setSpeech('builder', { face: 'builder speaking now', rowIdentity: 'bb1' });
+    system.setSpeech('oracle', { face: 'oracle speaking now', rowIdentity: 'oo1' });
+    system.frame(0, anchors);
+    system.frame(100, anchors);
+    const b = system._pets.get('builder');
+    const o = system._pets.get('oracle');
+    const bw = b.box.offsetWidth; const bh = b.box.offsetHeight;
+    const ow = o.box.offsetWidth; const oh = o.box.offsetHeight;
+    const overlap = b.posX < o.posX + ow && b.posX + bw > o.posX
+      && b.posY < o.posY + oh && b.posY + bh > o.posY;
+    expect(overlap).toBe(false);
+  });
+});

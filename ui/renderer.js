@@ -708,12 +708,24 @@ function stripSquidRoomMessageNoise(value) {
 function stripSquidRoomFaceJargon(value) {
   return String(value || '')
     .replace(/\b(?:builder|oracle|architect)\s*#\d+\s+received\.?\s*/gi, '')
-    .replace(/\bsha256[:=]?[0-9a-f]{8,64}\b/gi, '')
+    .replace(/\bsha256[:=]?\s*[0-9a-f]{8,64}\b/gi, '')
+    // BARE commit/artifact hashes (S463: the typewriter spoke e4e03749 to
+    // James). >=7 hex chars WITH at least one digit, so hex-only English
+    // words ("defaced") survive while real hashes never reach the face.
+    .replace(/\b(?=[0-9a-f]{7,40}\b)[a-f]*\d[0-9a-f]*\b/g, '')
+    // file paths (windows or unix, extension required) + repo-relative refs
+    .replace(/(?:[A-Za-z]:)?(?:[\w.-]+[\\/]){1,}[\w.-]+\.\w{1,6}\b/g, '')
+    .replace(/\b[\w.-]+\.(?:png|jpe?g|gif|md|js|ts|tsx|json|css|html|txt|log|pdf|woff2?)\b/gi, '')
+    .replace(/\.squidrun\/[\w/.-]+/g, '')
+    .replace(/\bwi-[a-z0-9][\w-]{5,}\b/gi, '')
     .replace(/\b(?:rowId|row|messageId|deliveryId)\s*[:#=]?\s*[A-Za-z0-9._:-]+\b/gi, '')
     .replace(/\bhm-\d{10,}-[a-z0-9]+\b/gi, '')
     .replace(/\btrc-[0-9a-f-]{12,}\b/gi, '')
     .replace(/\bUP[-_\s]+[A-Z0-9_-]+(?:\s+[A-Z0-9_-]+){0,4}\b/g, '')
     .replace(/\s*[\[\(]\s*CURRENT PROJECT[^\]\)]*[\]\)]\s*/gi, ' ')
+    // tidy the holes left by removals: empty parens, dangling separators
+    .replace(/\(\s*[,:;-]*\s*\)/g, '')
+    .replace(/\s+[-—]\s+(?=[,.;:!?)]|$)/g, ' ')
     .replace(/\s{2,}/g, ' ')
     .replace(/\s+([,.;:!?])/g, '$1')
     .trim();
