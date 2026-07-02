@@ -507,6 +507,59 @@ function fingerprintSecret(value) {
   return createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
+/**
+ * S464 telegram-loss fix: main-side materializer for oversized direct-pane
+ * payloads. Writes the SAME file contract the renderer's long-hm-send path
+ * uses (coord/full-agent-messages, same header block) and returns a short
+ * pane pointer that always fits under the chunk threshold. The pointer
+ * PRESERVES a leading [Telegram from ...] marker so pane reply-routing
+ * discipline still triggers on materialized user messages.
+ */
+function materializeOversizedPanePayload(text, context = {}) {
+  try {
+    const body = String(text || '');
+    const messageId = toNonEmptyString(context.messageId) || `oversized-${Date.now()}`;
+    const safeSegment = messageId.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/\.{2,}/g, '-').replace(/^[.-]+/, '').slice(0, 80) || 'message';
+    const fullDir = resolveCoordPath('coord/full-agent-messages', { forWrite: true });
+    fs.mkdirSync(fullDir, { recursive: true });
+    const filePath = path.join(fullDir, `${safeSegment}.txt`);
+    const sha256 = createHash('sha256').update(body, 'utf8').digest('hex');
+    const bytes = getUtf8ByteLength(body);
+    fs.writeFileSync(filePath, [
+      'SQUIDRUN FULL AGENT MESSAGE',
+      `createdAt: ${new Date().toISOString()}`,
+      `messageId: ${messageId}`,
+      `deliveryId: ${toNonEmptyString(context.deliveryId) || ''}`,
+      `paneId: ${toNonEmptyString(context.paneId) || ''}`,
+      `bytesUtf8: ${bytes}`,
+      `sha256: ${sha256}`,
+      '',
+      'The pane-visible message was shortened so pane delivery cannot silently drop oversized payloads.',
+      'Read the full message below before acting or replying.',
+      '',
+      '--- FULL MESSAGE START ---',
+      body,
+      '--- FULL MESSAGE END ---',
+      '',
+    ].join('\n'), 'utf8');
+    const displayPath = `.squidrun/coord/full-agent-messages/${safeSegment}.txt`;
+    const telegramMarker = body.match(/^\s*(\[Telegram[^\]]*\])/i);
+    const prefix = telegramMarker ? `${telegramMarker[1]} ` : '';
+    const compact = (value, max) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
+    const pointerText = [
+      `${prefix}(FULL MSG AT ${displayPath})`,
+      `Oversized inbound payload materialized (${bytes} bytes, sha256 ${sha256.slice(0, 12)}...) so pane delivery cannot silently drop it.`,
+      'Do not act from this preview alone; read the full file first.',
+      `HEAD: ${compact(body, 320)}`,
+      `TAIL: ${compact(body.slice(-320), 320)}`,
+    ].join('\n');
+    return { pointerText, filePath, displayPath, bytes, sha256 };
+  } catch (err) {
+    log.error('PaneDelivery', `materializeOversizedPanePayload failed: ${err.message}`);
+    return null;
+  }
+}
+
 // Matches CSI sequences (ESC [ ... cmd), OSC strings (ESC ] ... BEL/ST), and
 // single-char ESC controls - the building blocks of TUI repaint frames.
 const PTY_ANSI_CONTROL_PATTERN = new RegExp(
@@ -8318,10 +8371,51 @@ class SquidRunApp {
     try {
       const payloadBytes = getUtf8ByteLength(text);
       if (payloadBytes >= DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES) {
-        // Codex already skipped this unsafe direct path; Claude did not, which
-        // caused front-clipped long inbound messages. Use the packetized
-        // inject path for all runtimes once the payload is chunk-sized.
+        // S464 top-priority fix: this refusal used to be a SILENT DROP - it
+        // ate James's own Telegram messages twice (telegram-in-808499076,
+        // telegram-msg-808499038). The refusal of the unsafe direct path is
+        // correct; dropping the payload is not. Fall back to the proven
+        // materialize-to-file + short-pane-pointer contract the long
+        // hm-send path already uses: the pointer is always under the chunk
+        // threshold, so the delivery succeeds and nothing is ever eaten.
         const paneRuntime = this.isCodexPaneCommand(normalizedPaneId) ? 'codex' : 'non-codex';
+        const materialized = materializeOversizedPanePayload(text, {
+          messageId: messageId || traceId || null,
+          paneId: normalizedPaneId,
+        });
+        if (materialized && getUtf8ByteLength(materialized.pointerText) < DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES) {
+          appendBusTraceEvent({
+            eventType: 'pane_direct_pty_write_materialized',
+            messageId: messageId || traceId || null,
+            deliveryId: null,
+            paneId: normalizedPaneId,
+            payloadBytes,
+            payloadFingerprint: createPayloadFingerprint(text),
+            success: true,
+            verified: false,
+            status: 'materialized.pointer_fallback',
+            mode: 'daemon-pty',
+            paneRuntime,
+            reason: 'oversized_payload_materialized_to_file',
+          });
+          const acceptedPointer = daemonClient.write(normalizedPaneId, materialized.pointerText, kernelMeta);
+          if (acceptedPointer) {
+            return {
+              ok: true,
+              accepted: true,
+              queued: true,
+              verified: false,
+              status: 'materialized.pointer_fallback',
+              mode: 'daemon-pty',
+              paneId: normalizedPaneId,
+              paneRuntime,
+              materializedPath: materialized.displayPath,
+            };
+          }
+        }
+        // Materialization itself failed - the old skip, but LOUD: this is a
+        // user-payload loss and must never again pass silently.
+        log.error('PaneDelivery', `OVERSIZED PAYLOAD DROPPED for pane ${normalizedPaneId} (${payloadBytes} bytes, ${messageId || traceId || 'no-id'}) - materialize fallback failed`);
         appendBusTraceEvent({
           eventType: 'pane_direct_pty_write_skipped',
           messageId: messageId || traceId || null,
@@ -13915,15 +14009,6 @@ class SquidRunApp {
       : messageWithRecall;
     if (isTelegramInbound) {
       this.applyTelegramReplyTargetMetadata(meta, recallContext);
-      this.markPendingTelegramReplyGuard({
-        paneId: String(recallContext.paneId || '1'),
-        messageId: recallContext.messageId || null,
-        sender: recallContext.sender || 'user',
-        chatId: recallContext.chatId || meta.chatId || meta.telegramChatId || null,
-        windowKey: recallContext.windowKey || meta.windowKey || null,
-        profileName: recallContext.profileName || recallContext.profile || meta.profileName || null,
-        sessionScopeId: recallContext.sessionScopeId || meta.sessionScopeId || null,
-      });
     }
     const result = await this.deliverPaneMessageReliably({
       paneId: String(recallContext.paneId || '1'),
@@ -13938,7 +14023,31 @@ class SquidRunApp {
       sender: recallContext.sender || 'user',
       logLabel,
     });
-    if (!(result?.accepted === true || result?.queued === true || result?.verified === true || result?.ok === true || result?.pendingQueued === true)) {
+    const deliveredOk = result?.accepted === true || result?.queued === true
+      || result?.verified === true || result?.ok === true || result?.pendingQueued === true;
+    if (isTelegramInbound) {
+      // S464 telegram-loss fix (b): a reply debt may only exist for a message
+      // the pane actually RECEIVED. The old order opened the guard before
+      // delivery was attempted, so a dropped payload (telegram-in-808499076)
+      // put the Architect in debt for words he never saw.
+      if (deliveredOk) {
+        this.markPendingTelegramReplyGuard({
+          paneId: String(recallContext.paneId || '1'),
+          messageId: recallContext.messageId || null,
+          sender: recallContext.sender || 'user',
+          chatId: recallContext.chatId || meta.chatId || meta.telegramChatId || null,
+          windowKey: recallContext.windowKey || meta.windowKey || null,
+          profileName: recallContext.profileName || recallContext.profile || meta.profileName || null,
+          sessionScopeId: recallContext.sessionScopeId || meta.sessionScopeId || null,
+        });
+      } else {
+        log.error(
+          logLabel,
+          `TELEGRAM INBOUND NOT DELIVERED to pane ${recallContext.paneId || '1'} (${recallContext.messageId || 'no-id'}, status=${result?.status || result?.error || 'unknown'}) - NO reply debt opened; user message must be recovered/redelivered`
+        );
+      }
+    }
+    if (!deliveredOk) {
       log.warn(logLabel, `Failed to inject inbound message into pane ${recallContext.paneId || '1'} (${result?.error || 'unknown'})`);
     }
     return result;
@@ -14470,3 +14579,5 @@ class SquidRunApp {
 }
 
 module.exports = SquidRunApp;
+// Testable helper (S464 telegram-loss fix): oversized-payload materializer.
+module.exports.materializeOversizedPanePayload = materializeOversizedPanePayload;
