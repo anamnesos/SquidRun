@@ -467,8 +467,6 @@ let syncIndicatorSetup = false;
 const ipcListenerRegistry = new Map();
 
 // Session timers
-const sessionStartTimes = new Map();
-let timerInterval = null;
 
 // Callbacks
 let onConnectionStatusUpdate = null;
@@ -1122,6 +1120,24 @@ function setupCostAlertListener() {
     uiView.showCostAlert(data);
     showToast(data.message, 'warning');
   });
+  // Honesty audit #4 (S464): the cost indicator promised "Estimated session
+  // cost" but NOTHING ever polled get-usage-stats - so neither the meter nor
+  // the threshold alert (whose math lives inside that handler) could ever
+  // fire. One modest poll lights both: live meter, and the alert cadence
+  // finally exists.
+  const COST_METER_POLL_MS = 60 * 1000;
+  const pollCostMeter = async () => {
+    try {
+      const stats = await window.squidrun?.invoke?.('get-usage-stats');
+      const estimated = Number.parseFloat(stats?.estimatedCost);
+      if (Number.isFinite(estimated)) {
+        uiView.updateCostIndicator(estimated, false);
+      }
+    } catch { /* meter poll must never break the shell */ }
+  };
+  const costMeterTimer = setInterval(pollCostMeter, COST_METER_POLL_MS);
+  if (typeof costMeterTimer.unref === 'function') costMeterTimer.unref();
+  void pollCostMeter();
 }
 
 function setupClaudeStateListener(handleTimerStateFn) {
@@ -1131,8 +1147,6 @@ function setupClaudeStateListener(handleTimerStateFn) {
       uiView.updateAgentStatus(paneId, state);
       if (handleTimerStateFn) {
         handleTimerStateFn(paneId, state);
-      } else {
-        handleSessionTimerState(paneId, state);
       }
     }
   });
@@ -1143,11 +1157,6 @@ function teardownDaemonListeners() {
   syncIndicatorSetup = false;
   throttleQueues.clear();
   throttlingPanes.clear();
-  sessionStartTimes.clear();
-  if (timerInterval) {
-    clearInterval(timerInterval);
-    timerInterval = null;
-  }
 }
 
 function setupRefreshButtons(sendToPaneFn) {
@@ -1502,40 +1511,12 @@ function processThrottleQueue(paneId) {
   }
 }
 
-// ============================================================
-// SESSION TIMERS
-// ============================================================
-
-function handleSessionTimerState(paneId, state) {
-  const timerEl = document.getElementById('sessionTimer');
-  if (timerEl) timerEl.classList.add('active');
-  if (state === 'running' && !sessionStartTimes.has(paneId)) {
-    sessionStartTimes.set(paneId, Date.now());
-    startTimerInterval();
-  } else if (state === 'idle' && sessionStartTimes.has(paneId)) {
-    sessionStartTimes.delete(paneId);
-  }
-}
-
-function startTimerInterval() {
-  if (!timerInterval) {
-    timerInterval = setInterval(() => {
-      if (sessionStartTimes.size === 0 && timerInterval) {
-        clearInterval(timerInterval);
-        timerInterval = null;
-      }
-    }, 1000);
-  }
-}
-
-function getTotalSessionTime() {
-  let total = 0;
-  const now = Date.now();
-  for (const startTime of sessionStartTimes.values()) {
-    total += Math.floor((now - startTime) / 1000);
-  }
-  return total;
-}
+// Honesty audit #5 (S464): the per-pane session-timer accounting that lived
+// here (handleSessionTimerState / startTimerInterval / getTotalSessionTime)
+// was dead weight wearing an .active class - it tracked start times and ran
+// a self-clearing interval but NEVER wrote #sessionTimer text; the visible
+// value was always renderer uptime from status-strip.js. Hard-deleted per
+// the no-orphan rule.
 
 // ============================================================
 // PROJECT PICKER
@@ -1577,8 +1558,6 @@ module.exports = {
   setupDaemonListeners,
   handleDaemonConnectedPayload,
   setupSyncIndicator,
-  handleSessionTimerState,
-  getTotalSessionTime,
   selectProject,
   loadInitialProject,
   // Individual listeners for renderer.js
