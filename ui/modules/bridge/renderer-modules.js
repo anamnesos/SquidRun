@@ -16,6 +16,7 @@ function createRendererModules() {
     windowTeamBootstrap: require('../window-team-bootstrap'),
     workspacePaneShell: require('../workspace-pane-shell'),
     squidRoomSurface: require('../squid-room-surface'),
+    squidRoomCreatureRuntime: require('../squid-room-creature-runtime'),
     miraLiveEntrypoint: require('../mira-live-entrypoint'),
     modelSelector: require('../model-selector'),
     config: require('../../config'),

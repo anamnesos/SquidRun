@@ -332,13 +332,15 @@ function createSquidRoomLivePane(doc, spec) {
   return pane;
 }
 
+// P1.7 (S463): pets are PROCEDURAL LIVING CREATURES on a canvas - verlet
+// tentacles, jet propulsion, banking - driven by squid-room-creature-runtime.
+// The sprite atlases retire with honor (files kept, unused).
 function createSquidRoomPetArtwork(doc, spec) {
-  return createElement(doc, 'div', {
-    className: `squid-room-codex-pet squid-room-codex-pet-${spec.assetRef} pet`,
+  return createElement(doc, 'canvas', {
+    className: 'squid-room-creature-canvas',
     dataset: {
+      squidRoomCreature: spec.petId,
       avatarAssetRef: spec.assetRef,
-      avatarState: spec.state,
-      squidRoomPetSprite: 'true',
     },
     attributes: { 'aria-hidden': 'true' },
   });
@@ -531,8 +533,10 @@ function renderSquidRoomPetPane(doc, pane, spec, options = {}) {
 
   const stage = createElement(doc, 'div', { className: 'squid-room-pet-stage pet-stage is-active' });
   stage.appendChild(createElement(doc, 'span', { className: 'pet-caustics' }));
-  stage.appendChild(createElement(doc, 'span', { className: 'pet-contact-shadow' }));
   stage.appendChild(createElement(doc, 'span', { className: 'pet-glow' }));
+  // The creature canvas fills the whole stage: the procedural squid swims
+  // the water region (P1.7); speech/name anchor to its head at runtime.
+  stage.appendChild(createSquidRoomPetArtwork(doc, spec));
   const motionTrack = createElement(doc, 'span', { className: 'pet-motion-track' });
   const speech = createElement(doc, 'div', {
     className: 'squid-room-pet-speech',
@@ -542,15 +546,7 @@ function renderSquidRoomPetPane(doc, pane, spec, options = {}) {
   speech.appendChild(createElement(doc, 'span', { className: 'speech-line-text' }, `${spec.stateLabel}: ${spec.bubble}`));
   motionTrack.appendChild(speech);
   motionTrack.appendChild(createElement(doc, 'span', { className: 'squid-room-pet-name-label' }, spec.title));
-  const artworkWrap = createElement(doc, 'span', { className: 'pet-artwork-wrap' });
-  artworkWrap.appendChild(createSquidRoomPetArtwork(doc, spec));
-  artworkWrap.appendChild(createElement(doc, 'span', { className: 'pet-blink-overlay' }));
-  motionTrack.appendChild(artworkWrap);
   stage.appendChild(motionTrack);
-  for (let index = 0; index < 3; index += 1) {
-    stage.appendChild(createElement(doc, 'span', { className: `bubble bubble-${index + 1}` }));
-  }
-  stage.appendChild(createElement(doc, 'span', { className: 'pet-ink-burst' }));
 
   const faceLine = createElement(doc, 'div', {
     className: 'squid-room-pet-caption face-line',

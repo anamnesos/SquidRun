@@ -269,8 +269,14 @@ describe('workspace pane shell', () => {
     expect(oracleCreature.dataset.squidRoomSourcePaneId).toBe('3');
     expect(builderCreature.dataset.squidRoomPetAsset).toBe('builder-squid');
     expect(oracleCreature.dataset.squidRoomPetAsset).toBe('oracle-squid');
-    expect(builderCreature.querySelector('.squid-room-codex-pet-builder-squid')).toBeTruthy();
-    expect(oracleCreature.querySelector('.squid-room-codex-pet-oracle-squid')).toBeTruthy();
+    // P1.7: procedural creature canvases replace the sprite atlases.
+    const builderCanvas = builderCreature.querySelector('.squid-room-creature-canvas');
+    const oracleCanvas = oracleCreature.querySelector('.squid-room-creature-canvas');
+    expect(builderCanvas).toBeTruthy();
+    expect(oracleCanvas).toBeTruthy();
+    expect(builderCanvas.dataset.squidRoomCreature).toBe('builder');
+    expect(oracleCanvas.dataset.squidRoomCreature).toBe('oracle');
+    expect(builderCreature.querySelector('.squid-room-codex-pet-builder-squid')).toBeFalsy();
     expect(builderCreature.querySelector('.squid-room-pet-name-label').textContent).toBe('Builder');
     expect(oracleCreature.querySelector('.squid-room-pet-name-label').textContent).toBe('Oracle');
     expect(builderCreature.querySelector('.speech-line-text').textContent).toContain('Working');
@@ -279,9 +285,11 @@ describe('workspace pane shell', () => {
     expect(builderCreature.querySelector('.pet-motion-track')).toBeTruthy();
     expect(builderCreature.querySelector('.pet-glow')).toBeTruthy();
     expect(builderCreature.querySelector('.pet-caustics')).toBeTruthy();
-    expect(builderCreature.querySelector('.pet-contact-shadow')).toBeTruthy();
-    expect(builderCreature.querySelector('.pet-ink-burst')).toBeTruthy();
-    expect(builderCreature.querySelector('.bubble-1')).toBeTruthy();
+    // P1.7: bubbles, ink bursts, and grounding shadow are ENGINE-drawn on the
+    // creature canvas now - the CSS effect spans are gone by design.
+    expect(builderCreature.querySelector('.pet-contact-shadow')).toBeFalsy();
+    expect(builderCreature.querySelector('.pet-ink-burst')).toBeFalsy();
+    expect(builderCreature.querySelector('.bubble-1')).toBeFalsy();
     // Builder/Oracle terminal controls live in the drawer; the creatures are
     // presentation-only and cannot duplicate terminal pane ids.
     for (const corePaneId of ['2', '3']) {
