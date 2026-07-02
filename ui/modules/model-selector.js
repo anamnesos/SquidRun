@@ -164,16 +164,47 @@ function resolveOwnerAssertion(payload = {}) {
   };
 }
 
+// Session-scope ids exist in two schemes: the canonical session scheme
+// (app-session-<n>[:window]) and the boot fallback instance scheme
+// (app-<pid>-<ts>[:window]). Comparing ACROSS schemes is meaningless - the
+// values describe the same window through different lenses - and doing so
+// strictly is exactly what broke model switching (S463 Bug 2: the owner
+// registry froze the boot fallback while renderers carried the session
+// scheme, so the true owner demoted itself to mirror and nobody respawned).
+function sessionScopeScheme(value) {
+  const text = String(value || '').trim();
+  if (!text) return 'empty';
+  if (/^app-session-/.test(text)) return 'session';
+  if (/^app-\d+-\d+(?::|$)/.test(text)) return 'instance';
+  return 'other';
+}
+
 function isOwnerAssertionMatch(payload = {}) {
   const expected = resolveOwnerAssertion(payload);
   const actual = getRendererInstanceScope();
   if (!expected.windowKey && !expected.profileName && !expected.sessionScopeId) {
     return isPaneOwnerWindow();
   }
-  for (const field of ['windowKey', 'profileName', 'sessionScopeId']) {
+  // Window identity within one app instance: windowKey + profileName.
+  for (const field of ['windowKey', 'profileName']) {
     if (expected[field] && expected[field] !== actual[field]) {
       return false;
     }
+  }
+  // sessionScopeId stays a HARD reject only when both sides speak the same
+  // scheme (stale-window protection, preserved). A scheme mismatch is a
+  // known cosmetic divergence, never an ownership signal - warn and proceed.
+  if (expected.sessionScopeId && actual.sessionScopeId
+    && expected.sessionScopeId !== actual.sessionScopeId) {
+    const expectedScheme = sessionScopeScheme(expected.sessionScopeId);
+    const actualScheme = sessionScopeScheme(actual.sessionScopeId);
+    if (expectedScheme === actualScheme) {
+      return false;
+    }
+    log.warn(
+      'ModelSelector',
+      `Owner assertion sessionScopeId scheme mismatch ignored (expected=${expected.sessionScopeId} [${expectedScheme}] actual=${actual.sessionScopeId} [${actualScheme}]) - ownership decided by windowKey/profileName`
+    );
   }
   return true;
 }

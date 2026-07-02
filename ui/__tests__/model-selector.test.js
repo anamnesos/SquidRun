@@ -91,6 +91,42 @@ describe('model-selector owner assertions', () => {
     })).toBe(false);
   });
 
+  test('a sessionScopeId SCHEME mismatch never demotes the true owner (S463 Bug 2)', () => {
+    // Exact production values from James's failed pane-2 switch: the owner
+    // registry froze the boot fallback (instance scheme) while the renderer
+    // carried the canonical session scheme. Ownership must fall back to
+    // windowKey + profileName instead of silently skipping the respawn.
+    setRendererScope({
+      windowKey: 'main',
+      profileName: 'main',
+      sessionScopeId: 'app-session-463',
+    });
+
+    expect(_internals.isOwnerAssertionMatch({
+      ownerInstance: {
+        windowKey: 'main',
+        profileName: 'main',
+        sessionScopeId: 'app-5076-1782936074440',
+      },
+    })).toBe(true);
+  });
+
+  test('scheme mismatch still rejects when window identity differs', () => {
+    setRendererScope({
+      windowKey: 'squid-room',
+      profileName: 'main',
+      sessionScopeId: 'app-session-463:squid-room',
+    });
+
+    expect(_internals.isOwnerAssertionMatch({
+      ownerInstance: {
+        windowKey: 'main',
+        profileName: 'main',
+        sessionScopeId: 'app-5076-1782936074440',
+      },
+    })).toBe(false);
+  });
+
   test('resolves concrete Claude selector values into claudeModel payload fields', () => {
     const select = {
       value: 'claude:fable',
