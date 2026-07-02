@@ -2570,3 +2570,10 @@ body.squid-room .squid-room-creature {
   height: 40vh;
   min-height: 240px;
 }
+
+/* Slice 2: swim space extends DOWN behind the glass cards - creatures pass
+   behind the frosted panels as soft colored glows (z 0 under z 1 surface). */
+body.squid-room .squid-room-creature {
+  height: 82vh;
+  min-height: 320px;
+}
