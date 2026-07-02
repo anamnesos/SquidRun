@@ -2869,18 +2869,25 @@ function getSquidRoomPaneMenuFixedPosition(triggerRect = {}, panelRect = {}, vie
 
 function positionSquidRoomPaneMenu(menu) {
   if (!menu?.open) return false;
-  const panel = menu.querySelector?.('.squid-room-pane-menu-panel');
-  const trigger = menu.querySelector?.('.squid-room-pane-menu-trigger');
-  if (!panel || !trigger || typeof trigger.getBoundingClientRect !== 'function') return false;
   const doc = menu.ownerDocument || document;
   const view = doc.defaultView || window;
+  const panel = menu.squidRoomDetachedPanel || menu.querySelector?.('.squid-room-pane-menu-panel');
+  const trigger = menu.querySelector?.('.squid-room-pane-menu-trigger');
+  if (!panel || !trigger || typeof trigger.getBoundingClientRect !== 'function') return false;
+  // Portal: the frosted pane cards use backdrop-filter, which hijacks
+  // position:fixed to be card-relative, and the scroll container clips the
+  // panel at the window bottom. Fixed-at-body is the only escape.
+  if (doc.body && panel.parentNode !== doc.body) {
+    menu.squidRoomDetachedPanel = panel;
+    doc.body.appendChild(panel);
+  }
   const triggerRect = trigger.getBoundingClientRect();
   const panelRect = typeof panel.getBoundingClientRect === 'function'
     ? panel.getBoundingClientRect()
     : { width: 224, height: 220 };
   const position = getSquidRoomPaneMenuFixedPosition(triggerRect, panelRect, {
-    width: view.innerWidth,
-    height: view.innerHeight,
+    width: doc.documentElement?.clientWidth || view.innerWidth,
+    height: doc.documentElement?.clientHeight || view.innerHeight,
   });
   panel.style.position = 'fixed';
   panel.style.left = `${Math.round(position.left)}px`;
@@ -2893,6 +2900,21 @@ function positionSquidRoomPaneMenu(menu) {
   return true;
 }
 
+function restoreSquidRoomPaneMenuPanel(menu) {
+  const panel = menu?.squidRoomDetachedPanel;
+  if (!panel) return;
+  menu.squidRoomDetachedPanel = null;
+  panel.style.position = '';
+  panel.style.left = '';
+  panel.style.top = '';
+  panel.style.right = '';
+  panel.style.width = '';
+  panel.style.zIndex = '';
+  delete panel.dataset.placement;
+  menu.appendChild?.(panel);
+  menu.classList?.remove?.('is-fixed-positioned');
+}
+
 function closeOtherSquidRoomPaneMenus(currentMenu, doc = document) {
   const menus = doc?.querySelectorAll?.('.squid-room-pane-menu[open]');
   if (!menus) return;
@@ -2902,23 +2924,20 @@ function closeOtherSquidRoomPaneMenus(currentMenu, doc = document) {
 }
 
 function initSquidRoomPaneMenus(doc = document) {
-  const menus = doc?.querySelectorAll?.('.squid-room-pane-menu');
-  if (!menus) return;
-  menus.forEach((menu) => {
-    if (menu.dataset?.squidRoomPaneMenuBound === 'true') {
-      positionSquidRoomPaneMenu(menu);
-      return;
-    }
-    if (menu.dataset) menu.dataset.squidRoomPaneMenuBound = 'true';
-    menu.addEventListener?.('toggle', () => {
-      if (menu.open) {
-        closeOtherSquidRoomPaneMenus(menu, doc);
-        positionSquidRoomPaneMenu(menu);
-      }
-    });
-  });
   if (doc?.body?.dataset?.squidRoomPaneMenuGlobalBound === 'true') return;
   if (doc?.body?.dataset) doc.body.dataset.squidRoomPaneMenuGlobalBound = 'true';
+  // Delegated in capture phase ('toggle' does not bubble) so menus inside
+  // app sections built AFTER renderer init still get viewport positioning.
+  doc.addEventListener?.('toggle', (event) => {
+    const menu = event?.target;
+    if (!menu?.classList?.contains?.('squid-room-pane-menu')) return;
+    if (menu.open) {
+      closeOtherSquidRoomPaneMenus(menu, doc);
+      positionSquidRoomPaneMenu(menu);
+    } else {
+      restoreSquidRoomPaneMenuPanel(menu);
+    }
+  }, true);
   const reposition = () => {
     doc.querySelectorAll?.('.squid-room-pane-menu[open]')?.forEach((menu) => {
       positionSquidRoomPaneMenu(menu);
@@ -2930,6 +2949,8 @@ function initSquidRoomPaneMenus(doc = document) {
   doc.addEventListener?.('click', (event) => {
     const target = event?.target;
     if (target?.closest?.('.squid-room-pane-menu')) return;
+    // Open panels are portaled to <body>, so they are not inside the menu.
+    if (target?.closest?.('.squid-room-pane-menu-panel')) return;
     doc.querySelectorAll?.('.squid-room-pane-menu[open]')?.forEach((menu) => {
       menu.open = false;
     });
