@@ -593,33 +593,25 @@ function ensureSquidRoomPetPanes(doc) {
 // WAVE 4 deep space: starfield parallax layers + twinkles + distant galaxy
 // + one pooled shooting star, injected once at body level (James 00:25:
 // "cosmic universe type background"). Pure CSS animation - perf-lawful.
+// FORMATION: the cosmos is the ARCHITECT's hand-authored subsystem
+// (ui/styles/architect-cosmos-layer.css, integrated verbatim). This hook
+// builds his exact DOM contract: one .cosmos div, first child of body.
 function ensureSquidRoomSpaceLayers(doc) {
   const body = doc?.body;
-  if (!body || body.querySelector?.('.squid-space-stars')) return null;
-  const stars = createElement(doc, 'div', {
-    className: 'squid-space-stars',
+  if (!body || body.querySelector?.('.cosmos')) return null;
+  // Retire the builder's interim space layers if a re-render left them.
+  body.querySelector?.('.squid-space-stars')?.remove?.();
+  body.querySelector?.('.squid-space-galaxy')?.remove?.();
+  body.querySelector?.('.squid-space-shooting-star')?.remove?.();
+  const cosmos = createElement(doc, 'div', {
+    className: 'cosmos',
     attributes: { 'aria-hidden': 'true' },
   });
-  for (let layer = 1; layer <= 3; layer += 1) {
-    stars.appendChild(createElement(doc, 'span', { className: `star-layer star-layer-${layer}` }));
+  for (const className of ['stars s1', 'stars s2', 'stars s3', 'nebula n1', 'nebula n2', 'nebula n3', 'galaxy', 'comet']) {
+    cosmos.appendChild(createElement(doc, 'div', { className }));
   }
-  const twinklePositions = [[12, 18], [34, 52], [58, 9], [76, 44], [88, 71], [22, 83]];
-  twinklePositions.forEach(([x, y], index) => {
-    const twinkle = createElement(doc, 'span', { className: 'star-twinkle' });
-    twinkle.style && (twinkle.style.left = `${x}vw`, twinkle.style.top = `${y}vh`,
-      twinkle.style.animationDelay = `${index * 0.9}s`);
-    stars.appendChild(twinkle);
-  });
-  body.insertBefore?.(stars, body.firstChild || null);
-  body.insertBefore?.(createElement(doc, 'div', {
-    className: 'squid-space-galaxy',
-    attributes: { 'aria-hidden': 'true' },
-  }), stars);
-  body.appendChild?.(createElement(doc, 'div', {
-    className: 'squid-space-shooting-star',
-    attributes: { 'aria-hidden': 'true' },
-  }));
-  return stars;
+  body.insertBefore?.(cosmos, body.firstChild || null);
+  return cosmos;
 }
 
 function ensureSquidRoomTeamHeader(doc, teamContainer) {
