@@ -2363,3 +2363,139 @@ body.squid-room .pet-stage.is-flourish-blink .pet-blink-overlay {
     opacity: 0 !important;
   }
 }
+
+/* ============================================================
+   WAVE 4: DEEP SPACE (James 00:25 - "cosmic universe type background").
+   The window root is the habitat; the abyss died unborn. Transform/opacity
+   animations only - the perf law is one dead renderer old.
+   ============================================================ */
+body.squid-room {
+  background:
+    radial-gradient(ellipse at 78% 12%, rgba(150, 110, 255, 0.055), transparent 42%),
+    radial-gradient(ellipse at 18% 68%, rgba(60, 190, 255, 0.05), transparent 46%),
+    radial-gradient(ellipse at 55% 45%, rgba(214, 110, 255, 0.03), transparent 55%),
+    radial-gradient(ellipse at center, #0a0a1e 0%, #070714 55%, #050510 100%);
+}
+
+/* Nebula wisps: creature-colored, independent 200s+ drifts. */
+body.squid-room::before {
+  content: "";
+  position: fixed;
+  inset: -12%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 42% 30% at 30% 25%, rgba(122, 84, 220, 0.075), transparent 70%),
+    radial-gradient(ellipse 36% 26% at 72% 66%, rgba(58, 123, 214, 0.065), transparent 70%),
+    radial-gradient(ellipse 30% 22% at 55% 15%, rgba(214, 110, 200, 0.045), transparent 70%);
+  animation: squid-space-nebula-drift 240s ease-in-out infinite alternate;
+}
+
+@keyframes squid-space-nebula-drift {
+  from { transform: translate3d(-1.5%, -1%, 0) scale(1); }
+  to { transform: translate3d(1.5%, 1.2%, 0) scale(1.06); }
+}
+
+/* Starfield: 3 parallax layers of box-shadow stars, ultra-slow drift. */
+.squid-space-stars {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.squid-space-stars .star-layer {
+  position: absolute;
+  inset: -10% 0 0 0;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.squid-space-stars .star-layer-1 {
+  box-shadow: 8vw 12vh 0 0 rgba(220, 230, 255, .8), 22vw 33vh 0 0 rgba(200, 215, 255, .55), 37vw 8vh 0 0 rgba(235, 240, 255, .7), 51vw 41vh 0 0 rgba(210, 225, 255, .5), 66vw 19vh 0 0 rgba(240, 245, 255, .8), 79vw 55vh 0 0 rgba(205, 220, 255, .6), 91vw 30vh 0 0 rgba(225, 235, 255, .75), 14vw 62vh 0 0 rgba(215, 228, 255, .5), 43vw 71vh 0 0 rgba(230, 238, 255, .65), 72vw 83vh 0 0 rgba(210, 222, 255, .55), 28vw 90vh 0 0 rgba(235, 242, 255, .7), 60vw 95vh 0 0 rgba(220, 232, 255, .5), 5vw 45vh 0 0 rgba(228, 236, 255, .6), 85vw 8vh 0 0 rgba(240, 246, 255, .8), 95vw 68vh 0 0 rgba(218, 230, 255, .55);
+  animation: squid-space-parallax-1 300s linear infinite;
+}
+
+.squid-space-stars .star-layer-2 {
+  box-shadow: 12vw 22vh 0 -0.5px rgba(190, 205, 245, .45), 31vw 47vh 0 -0.5px rgba(180, 198, 240, .4), 47vw 15vh 0 -0.5px rgba(200, 212, 248, .5), 58vw 63vh 0 -0.5px rgba(185, 200, 242, .35), 74vw 36vh 0 -0.5px rgba(195, 210, 246, .45), 88vw 78vh 0 -0.5px rgba(178, 195, 238, .4), 19vw 84vh 0 -0.5px rgba(192, 206, 244, .42), 39vw 92vh 0 -0.5px rgba(186, 202, 240, .38), 67vw 5vh 0 -0.5px rgba(198, 212, 246, .48), 3vw 30vh 0 -0.5px rgba(188, 203, 242, .4), 96vw 50vh 0 -0.5px rgba(194, 208, 244, .44), 53vw 82vh 0 -0.5px rgba(182, 198, 238, .36);
+  animation: squid-space-parallax-2 480s linear infinite;
+}
+
+.squid-space-stars .star-layer-3 {
+  box-shadow: 6vw 55vh 0 -1px rgba(160, 175, 220, .3), 25vw 18vh 0 -1px rgba(150, 168, 215, .25), 44vw 38vh 0 -1px rgba(165, 180, 222, .32), 63vw 72vh 0 -1px rgba(155, 170, 218, .27), 81vw 25vh 0 -1px rgba(162, 178, 220, .3), 93vw 88vh 0 -1px rgba(148, 165, 212, .24), 16vw 70vh 0 -1px rgba(158, 172, 216, .28), 36vw 60vh 0 -1px rgba(152, 168, 214, .25), 70vw 48vh 0 -1px rgba(166, 182, 224, .3), 50vw 28vh 0 -1px rgba(154, 170, 215, .26);
+  animation: squid-space-parallax-3 720s linear infinite;
+}
+
+@keyframes squid-space-parallax-1 { to { transform: translate3d(0, 110vh, 0); } }
+@keyframes squid-space-parallax-2 { to { transform: translate3d(0, 110vh, 0); } }
+@keyframes squid-space-parallax-3 { to { transform: translate3d(0, 110vh, 0); } }
+
+/* A few twinkling stars: opacity-only. */
+.squid-space-stars .star-twinkle {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: rgba(235, 242, 255, 0.9);
+  animation: squid-space-twinkle 4.5s ease-in-out infinite;
+}
+
+@keyframes squid-space-twinkle {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.95; }
+}
+
+/* Distant galaxy: one corner, barely there. */
+.squid-space-galaxy {
+  position: fixed;
+  right: -6%;
+  top: -8%;
+  width: 34vw;
+  height: 34vw;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 50% 18% at 50% 50%, rgba(200, 170, 255, 0.10), transparent 70%),
+    radial-gradient(ellipse 30% 30% at 50% 50%, rgba(150, 120, 230, 0.06), transparent 75%);
+  transform: rotate(-24deg);
+  animation: squid-space-galaxy-breathe 90s ease-in-out infinite alternate;
+}
+
+@keyframes squid-space-galaxy-breathe {
+  from { opacity: 0.75; }
+  to { opacity: 1; }
+}
+
+/* Shooting star: one pooled element, retriggered by the runtime (rare). */
+.squid-space-shooting-star {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 90px;
+  height: 1.5px;
+  z-index: 0;
+  border-radius: 2px;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.95), transparent);
+  opacity: 0;
+}
+
+.squid-space-shooting-star.is-flying {
+  animation: squid-space-shooting 0.9s ease-out 1;
+}
+
+@keyframes squid-space-shooting {
+  0% { opacity: 0.9; transform: translate3d(var(--shoot-x, 20vw), var(--shoot-y, 10vh), 0) rotate(24deg); }
+  100% { opacity: 0; transform: translate3d(calc(var(--shoot-x, 20vw) + 34vw), calc(var(--shoot-y, 10vh) + 16vh), 0) rotate(24deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.squid-room::before,
+  .squid-space-stars .star-layer,
+  .squid-space-stars .star-twinkle,
+  .squid-space-galaxy,
+  .squid-space-shooting-star { animation: none !important; }
+}
