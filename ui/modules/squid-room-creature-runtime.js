@@ -136,12 +136,22 @@ function mountSquidRoomCreatures(doc = typeof document !== 'undefined' ? documen
   if (!doc?.querySelectorAll) return 0;
   let mountedNow = 0;
   for (const canvas of doc.querySelectorAll('canvas[data-squid-room-creature]')) {
-    const petId = String(canvas.dataset.squidRoomCreature || '').trim();
-    if (!petId) continue;
+    const petId = String(
+      canvas.dataset?.squidRoomCreature
+      || canvas.getAttribute?.('data-squid-room-creature')
+      || ''
+    ).trim();
+    if (!petId) {
+      log.warn('SquidRoomCreature', `Mount skip: canvas without pet id (dataset=${typeof canvas.dataset} tag=${canvas.tagName})`);
+      continue;
+    }
     const existing = mounted.get(petId);
     if (existing && existing.canvas === canvas) continue;
-    const ctx = canvas.getContext && canvas.getContext('2d');
-    if (!ctx) continue;
+    const ctx = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
+    if (!ctx) {
+      log.warn('SquidRoomCreature', `Mount skip '${petId}': no 2d context (getContext=${typeof canvas.getContext})`);
+      continue;
+    }
     const stage = canvas.closest?.('.squid-room-pet-stage') || canvas.parentElement;
     const binding = {
       canvas,
