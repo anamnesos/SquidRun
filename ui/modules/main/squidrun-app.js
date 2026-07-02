@@ -519,7 +519,10 @@ function materializeOversizedPanePayload(text, context = {}) {
   try {
     const body = String(text || '');
     const messageId = toNonEmptyString(context.messageId) || `oversized-${Date.now()}`;
-    const safeSegment = messageId.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/\.{2,}/g, '-').replace(/^[.-]+/, '').slice(0, 80) || 'message';
+    // Filename capped at 48 chars: the pointer must fit a 256-byte budget
+    // (DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES) and the path is its
+    // biggest line item.
+    const safeSegment = messageId.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/\.{2,}/g, '-').replace(/^[.-]+/, '').slice(0, 48) || 'message';
     const fullDir = resolveCoordPath('coord/full-agent-messages', { forWrite: true });
     fs.mkdirSync(fullDir, { recursive: true });
     const filePath = path.join(fullDir, `${safeSegment}.txt`);
@@ -543,16 +546,19 @@ function materializeOversizedPanePayload(text, context = {}) {
       '',
     ].join('\n'), 'utf8');
     const displayPath = `.squidrun/coord/full-agent-messages/${safeSegment}.txt`;
+    // S465 live-test lesson: the first pointer format carried HEAD/TAIL
+    // previews (~900 bytes) against a 256-byte direct-write threshold - the
+    // fallback was structurally dead on arrival and the Architect's reboot
+    // brief proved it in the trace. The pointer is now BUDGETED: marker +
+    // path + one directive, hard-trimmed to fit, previews live in the file.
     const telegramMarker = body.match(/^\s*(\[Telegram[^\]]*\])/i);
-    const prefix = telegramMarker ? `${telegramMarker[1]} ` : '';
-    const compact = (value, max) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
-    const pointerText = [
-      `${prefix}(FULL MSG AT ${displayPath})`,
-      `Oversized inbound payload materialized (${bytes} bytes, sha256 ${sha256.slice(0, 12)}...) so pane delivery cannot silently drop it.`,
-      'Do not act from this preview alone; read the full file first.',
-      `HEAD: ${compact(body, 320)}`,
-      `TAIL: ${compact(body.slice(-320), 320)}`,
-    ].join('\n');
+    const prefix = telegramMarker
+      ? `${telegramMarker[1].slice(0, 40)} `
+      : '';
+    let pointerText = `${prefix}FULL MSG AT ${displayPath} (${bytes}B oversized inbound; read the file, then act)`;
+    if (getUtf8ByteLength(pointerText) >= DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES) {
+      pointerText = `${prefix}FULL MSG AT ${displayPath}`;
+    }
     return { pointerText, filePath, displayPath, bytes, sha256 };
   } catch (err) {
     log.error('PaneDelivery', `materializeOversizedPanePayload failed: ${err.message}`);
