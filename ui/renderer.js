@@ -524,7 +524,6 @@ let squidRoomLivePaneEnsureTimer = null;
 let squidRoomPetStatusTimer = null;
 const squidRoomPetAnimationTimers = new Map();
 const squidRoomPetCelebrationState = new Map();
-const squidRoomPetSpeechTimers = new Map();
 const squidRoomPetFlourishTimers = new Map();
 const squidRoomLivePaneSpawnAttempts = new Map();
 const SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS = 15000;
@@ -534,7 +533,6 @@ const SQUID_ROOM_PET_ACTIVE_AGE_MS = 30000;
 const SQUID_ROOM_PET_SETTLING_AGE_MS = 5 * 60 * 1000;
 const SQUID_ROOM_PET_CELEBRATION_COOLDOWN_MS = 10 * 60 * 1000;
 const SQUID_ROOM_PET_CELEBRATION_DURATION_MS = 1500;
-const SQUID_ROOM_PET_SPEECH_VISIBLE_MS = 10000;
 const SQUID_ROOM_PET_SPEECH_MAX_CHARS = 42;
 const SQUID_ROOM_PET_FLOURISH_MIN_MS = 45000;
 const SQUID_ROOM_PET_FLOURISH_RANGE_MS = 75000;
@@ -791,101 +789,6 @@ function buildSquidRoomPetSpeechText(state = {}, face = {}, maxChars = SQUID_ROO
   };
 }
 
-function getSquidRoomSpeechTimerKey(pane) {
-  return String(pane?.dataset?.squidRoomPet || pane?.dataset?.squidRoomSourcePaneId || '').trim()
-    || String(pane?.id || Math.random()).trim();
-}
-
-function clearSquidRoomPetSpeechTimer(pane) {
-  const key = getSquidRoomSpeechTimerKey(pane);
-  const active = squidRoomPetSpeechTimers.get(key);
-  if (active?.decayTimer) window.clearTimeout(active.decayTimer);
-  if (active?.settleTimer) window.clearTimeout(active.settleTimer);
-  squidRoomPetSpeechTimers.delete(key);
-}
-
-function setSquidRoomPetSpeechBubbleText(bubble, text) {
-  if (!bubble) return;
-  const textNode = bubble.querySelector?.('.speech-line-text');
-  if (textNode) {
-    textNode.textContent = text;
-  } else {
-    bubble.textContent = text;
-  }
-}
-
-function bindSquidRoomPetSpeechBubble(pane) {
-  const bubble = pane?.querySelector?.('.squid-room-pet-speech');
-  if (!bubble || bubble.dataset?.squidRoomSpeechBound === 'true') return bubble;
-  if (bubble.dataset) bubble.dataset.squidRoomSpeechBound = 'true';
-  const toggleExpanded = (event) => {
-    event?.stopPropagation?.();
-    const expanded = bubble.classList?.toggle?.('is-expanded') === true;
-    bubble.classList?.remove?.('is-compact');
-    setSquidRoomPetSpeechBubbleText(
-      bubble,
-      expanded
-        ? String(bubble.dataset?.fullText || bubble.dataset?.shortText || '')
-        : String(bubble.dataset?.shortText || bubble.dataset?.fullText || '')
-    );
-  };
-  bubble.addEventListener?.('click', toggleExpanded);
-  bubble.addEventListener?.('keydown', (event) => {
-    if (event?.key !== 'Enter' && event?.key !== ' ') return;
-    event.preventDefault?.();
-    toggleExpanded(event);
-  });
-  bubble.setAttribute?.('role', 'button');
-  bubble.setAttribute?.('tabindex', '0');
-  bubble.setAttribute?.('aria-label', 'Show full activity text');
-  return bubble;
-}
-
-function updateSquidRoomPetSpeech(pane, row = {}, state = {}, face = {}) {
-  const bubble = bindSquidRoomPetSpeechBubble(pane);
-  if (!bubble) return false;
-  const rowKey = getSquidRoomPetRowIdentity(row) || `${getSquidRoomPetRowTimestampMs(row) || 'no-time'}:${face.face}`;
-  const speech = buildSquidRoomPetSpeechText(state, face);
-  if (bubble.dataset) {
-    bubble.dataset.fullText = speech.full;
-    bubble.dataset.shortText = speech.short;
-  }
-
-  const isNewRow = pane?.dataset?.squidRoomSpeechRowId !== rowKey;
-  if (!isNewRow) {
-    if (!bubble.classList?.contains?.('is-compact') && !bubble.classList?.contains?.('is-expanded')) {
-      setSquidRoomPetSpeechBubbleText(bubble, speech.short);
-    }
-    return false;
-  }
-
-  clearSquidRoomPetSpeechTimer(pane);
-  if (pane?.dataset) pane.dataset.squidRoomSpeechRowId = rowKey;
-  bubble.classList?.remove?.('is-compact', 'is-expanded');
-  bubble.classList?.add?.('is-speaking');
-  setSquidRoomPetSpeechBubbleText(bubble, speech.short);
-
-  const stage = pane?.querySelector?.('.squid-room-pet-stage');
-  stage?.classList?.add?.('has-new-message');
-  if (getSquidRoomPetReducedMotionPreference()) {
-    bubble.classList?.remove?.('is-speaking');
-    stage?.classList?.remove?.('has-new-message');
-    return true;
-  }
-
-  const key = getSquidRoomSpeechTimerKey(pane);
-  const settleTimer = window.setTimeout(() => {
-    bubble.classList?.remove?.('is-speaking');
-    stage?.classList?.remove?.('has-new-message');
-  }, 900);
-  const decayTimer = window.setTimeout(() => {
-    if (!bubble.isConnected || bubble.classList?.contains?.('is-expanded')) return;
-    bubble.classList?.add?.('is-compact');
-    setSquidRoomPetSpeechBubbleText(bubble, '...');
-  }, SQUID_ROOM_PET_SPEECH_VISIBLE_MS);
-  squidRoomPetSpeechTimers.set(key, { decayTimer, settleTimer });
-  return true;
-}
 
 function scheduleSquidRoomPetFlourish(pane, row = {}) {
   if (!pane || getSquidRoomPetReducedMotionPreference()) return false;
@@ -1095,10 +998,11 @@ function updateSquidRoomPetPane(pane, row) {
   const rowIdentity = String(row.rowId || row.row_id || '');
   const previousRowIdentity = String(pane.dataset.squidRoomLastRowId || '');
   // Speech is Oracle's subsystem: forward the HONEST face pipeline output
-  // (short face line + full/raw, keyed by row identity - it never invents).
+  // (state-labeled face line + full/raw, keyed by row identity - it never
+  // invents; the label prefix is the same composer the old bubble used).
   if (typeof squidRoomCreatureRuntime.setSquidRoomCreatureSpeech === 'function') {
     squidRoomCreatureRuntime.setSquidRoomCreatureSpeech(role, {
-      face: face.face,
+      face: buildSquidRoomPetSpeechText(state, face).full,
       full: face.raw || face.face,
       raw: face.raw || '',
       rowIdentity,
@@ -1139,7 +1043,6 @@ function updateSquidRoomPetPane(pane, row) {
   }
   const stateEl = pane.querySelector?.('.squid-room-pet-state');
   if (stateEl) stateEl.textContent = state.label;
-  updateSquidRoomPetSpeech(pane, row, state, face);
   const caption = pane.querySelector?.('.squid-room-pet-caption');
   if (caption) {
     const textNode = caption.querySelector?.('.face-line-text');

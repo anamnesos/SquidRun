@@ -279,10 +279,13 @@ describe('workspace pane shell', () => {
     expect(builderCreature.querySelector('.squid-room-codex-pet-builder-squid')).toBeFalsy();
     expect(builderCreature.querySelector('.squid-room-pet-name-label').textContent).toBe('Builder');
     expect(oracleCreature.querySelector('.squid-room-pet-name-label').textContent).toBe('Oracle');
-    expect(builderCreature.querySelector('.speech-line-text').textContent).toContain('Working');
-    expect(oracleCreature.querySelector('.speech-line-text').textContent).toContain('Reviewing');
+    // S465 purge: speech is Oracle's viewport-solved system; the old bubble
+    // and the sprite-era motion track are gone (the track's CSS animation
+    // broke name-tag anchoring from beyond the grave).
+    expect(builderCreature.querySelector('.squid-room-pet-speech')).toBeFalsy();
+    expect(builderCreature.querySelector('.speech-line-text')).toBeFalsy();
     expect(builderCreature.querySelector('.verb-chip')).toBeFalsy();
-    expect(builderCreature.querySelector('.pet-motion-track')).toBeTruthy();
+    expect(builderCreature.querySelector('.pet-motion-track')).toBeFalsy();
     expect(builderCreature.querySelector('.pet-glow')).toBeTruthy();
     expect(builderCreature.querySelector('.pet-caustics')).toBeTruthy();
     // P1.7: bubbles, ink bursts, and grounding shadow are ENGINE-drawn on the
