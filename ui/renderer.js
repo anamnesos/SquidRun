@@ -146,6 +146,7 @@ const SQUID_ROOM_PROJECTION_CHANNEL = squidRoomSurfaceModule.ARM_STATE_PROJECTIO
 const SQUID_ROOM_WINDOW_KEY = squidRoomSurfaceModule.SQUID_ROOM_WINDOW_KEY || 'squid-room';
 const TRUSTQUOTE_APP_ROOM_ID = squidRoomSurfaceModule.TRUSTQUOTE_APP_ROOM_ID || 'trustquote';
 const { sendMiraLivePrompt, normalizeMiraLiveSessionId } = rendererModules.miraLiveEntrypoint || {};
+const squidRoomCreatureRuntime = rendererModules.squidRoomCreatureRuntime || {};
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = rendererModules.modelSelector;
 const { PANE_ROLES, PANE_ROLE_BUNDLES } = rendererModules.config;
 const bus = rendererModules.bus;
@@ -1081,8 +1082,17 @@ function updateSquidRoomPetPane(pane, row) {
     stage.classList.toggle('is-active', motionClass === 'is-active');
     stage.classList.toggle('is-settling', motionClass === 'is-settling');
     stage.classList.toggle('is-resting', motionClass === 'is-resting');
-    triggerSquidRoomPetCelebration(pane, row);
+    const celebrated = triggerSquidRoomPetCelebration(pane, row);
     scheduleSquidRoomPetFlourish(pane, row);
+    // P1.7 procedural creature: honest activity (real output age) drives
+    // behavior; ink puffs fire only when the REAL celebration gate fired.
+    if (typeof squidRoomCreatureRuntime.setSquidRoomCreatureActivity === 'function') {
+      squidRoomCreatureRuntime.setSquidRoomCreatureActivity(role, motionClass);
+    }
+    if (celebrated === true
+      && typeof squidRoomCreatureRuntime.celebrateSquidRoomCreature === 'function') {
+      squidRoomCreatureRuntime.celebrateSquidRoomCreature(role);
+    }
   }
   const stateEl = pane.querySelector?.('.squid-room-pet-state');
   if (stateEl) stateEl.textContent = state.label;
@@ -1109,6 +1119,11 @@ async function refreshSquidRoomPetStatus(windowContext = getCurrentWindowContext
   if (!isSquidRoomWindowContext(windowContext)) return { ok: false, skipped: true, reason: 'not_squid_room' };
   const petPanes = getSquidRoomPetPaneElements();
   if (petPanes.length === 0) return { ok: false, skipped: true, reason: 'no_pet_panes' };
+  // P1.7: bind procedural creature engines to any creature canvases the
+  // shell rendered (idempotent - re-renders get fresh bindings).
+  if (typeof squidRoomCreatureRuntime.mountSquidRoomCreatures === 'function') {
+    squidRoomCreatureRuntime.mountSquidRoomCreatures(document);
+  }
   refreshSquidRoomPetAnimations();
 
   const updates = [];
