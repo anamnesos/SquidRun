@@ -130,17 +130,10 @@ function registerPrecommitHandlers(ctx) {
     return { success: true, ...lastCiCheck };
   });
 
-  ipcMain.handle('get-ci-status', () => {
-    try {
-      if (fs.existsSync(CI_STATUS_PATH)) {
-        const content = fs.readFileSync(CI_STATUS_PATH, 'utf-8');
-        return { success: true, status: JSON.parse(content), enabled: ciEnabled };
-      }
-      return { success: true, status: null, enabled: ciEnabled };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  });
+  // Honesty audit #6 (S464): the get-ci-status handler + the permanently
+  // "CI Idle" header indicator were scaffolding no renderer ever invoked,
+  // updated, or unhid. Hard-deleted per the no-orphan rule (indicator DOM,
+  // chrome allowlist entry, handler, and its tests together).
 
   ipcMain.handle('set-ci-enabled', (event, enabled) => {
     ciEnabled = enabled;
