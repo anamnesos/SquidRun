@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const { configureWorkspacePaneShell } = require('../modules/workspace-pane-shell');
 
 class FakeClassList {
@@ -210,6 +212,7 @@ describe('workspace pane shell', () => {
     expect(doc.body.classList.contains('squid-room')).toBe(true);
     expect(doc.querySelector('.abyss-motes')).toBeTruthy();
     expect(doc.querySelector('.abyss-motes').childNodes).toHaveLength(12);
+    expect(doc.querySelector('.squid-room-pet-filters')).toBeTruthy();
     expect(doc.body.classList.contains(`trustquote-${'workspace'}`)).toBe(false);
     expect(terminal.setActivePaneIds).toHaveBeenCalledWith([
       'trustquote-lead',
@@ -255,6 +258,9 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.verb-chip').textContent).toBe('Working');
     expect(doc.querySelector('.pane[data-pane-id="3"]').querySelector('.verb-chip').textContent).toBe('Reviewing');
     expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.pet-glow')).toBeTruthy();
+    expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.pet-caustics')).toBeTruthy();
+    expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.pet-contact-shadow')).toBeTruthy();
+    expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.pet-ink-burst')).toBeTruthy();
     expect(doc.querySelector('.pane[data-pane-id="2"]').querySelector('.bubble-1')).toBeTruthy();
     // Builder/Oracle panes live in the main window; Squid Room shows their
     // pets only, so model controls do not live in the pet header.
@@ -304,5 +310,16 @@ describe('workspace pane shell', () => {
       expect(pane.querySelector(`.lock-icon[data-pane-id="${paneId}"]`).innerHTML).toContain('pane-btn-icon');
     }
     expect(doc.getElementById('squidRoomSurface').hidden).toBe(false);
+  });
+
+  test('keeps Squid Room P1.5 formatting reserves in CSS', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'squid-room.css'), 'utf8');
+
+    expect(css).toMatch(/body\.squid-room-workspace \.terminals-section\s*\{[^}]*padding:\s*14px 14px 22px/s);
+    expect(css).toMatch(/scrollbar-color:\s*rgba\(94,\s*234,\s*212,\s*0\.45\)/);
+    expect(css).toMatch(/body\.squid-room-workspace \.squid-room-live-panes \.pane\s*\{[^}]*padding-bottom:\s*12px/s);
+    expect(css).toMatch(/body\.squid-room-workspace \.squid-room-live-panes \.pane-terminal\s*\{[^}]*calc\(100% - 12px\)/s);
+    expect(css).toMatch(/radial-gradient\(ellipse at 50% 100%,\s*rgba\(94,\s*234,\s*212,\s*0\.055\)/);
+    expect(css).toMatch(/linear-gradient\(180deg,[^;]*rgba\(0,\s*1,\s*4,\s*1\) 100%\)/s);
   });
 });
