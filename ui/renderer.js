@@ -524,7 +524,6 @@ let squidRoomLivePaneEnsureTimer = null;
 let squidRoomPetStatusTimer = null;
 const squidRoomPetAnimationTimers = new Map();
 const squidRoomPetCelebrationState = new Map();
-const squidRoomPetFlourishTimers = new Map();
 const squidRoomLivePaneSpawnAttempts = new Map();
 const SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS = 15000;
 const SQUID_ROOM_PET_STATUS_REFRESH_MS = 10000;
@@ -534,8 +533,6 @@ const SQUID_ROOM_PET_SETTLING_AGE_MS = 5 * 60 * 1000;
 const SQUID_ROOM_PET_CELEBRATION_COOLDOWN_MS = 10 * 60 * 1000;
 const SQUID_ROOM_PET_CELEBRATION_DURATION_MS = 1500;
 const SQUID_ROOM_PET_SPEECH_MAX_CHARS = 42;
-const SQUID_ROOM_PET_FLOURISH_MIN_MS = 45000;
-const SQUID_ROOM_PET_FLOURISH_RANGE_MS = 75000;
 const SQUID_ROOM_PET_ATLAS_COLUMNS = 8;
 const SQUID_ROOM_PET_ATLAS_ROWS = 9;
 const SQUID_ROOM_PET_IDLE_FRAMES = Object.freeze([
@@ -790,32 +787,10 @@ function buildSquidRoomPetSpeechText(state = {}, face = {}, maxChars = SQUID_ROO
 }
 
 
-function scheduleSquidRoomPetFlourish(pane, row = {}) {
-  if (!pane || getSquidRoomPetReducedMotionPreference()) return false;
-  const role = String(pane.dataset?.squidRoomPet || '').trim().toLowerCase();
-  if (!role) return false;
-  const rowKey = getSquidRoomPetRowIdentity(row) || `${getSquidRoomPetRowTimestampMs(row) || 'ambient'}`;
-  const active = squidRoomPetFlourishTimers.get(role);
-  if (active?.rowKey === rowKey && active?.timer) return false;
-  if (active?.timer) window.clearTimeout(active.timer);
-
-  const delayMs = SQUID_ROOM_PET_FLOURISH_MIN_MS + Math.floor(Math.random() * SQUID_ROOM_PET_FLOURISH_RANGE_MS);
-  const timer = window.setTimeout(() => {
-    if (!pane.isConnected || pane.dataset?.squidRoomFlourishRowId !== rowKey) return;
-    const stage = pane.querySelector?.('.squid-room-pet-stage');
-    if (!stage?.classList) return;
-    const variants = ['is-flourish-spin', 'is-flourish-dash', 'is-flourish-blink'];
-    const variant = variants[Math.floor(Math.random() * variants.length)] || variants[0];
-    stage.classList.add('is-flourishing', variant);
-    window.setTimeout(() => {
-      stage.classList.remove('is-flourishing', variant);
-      scheduleSquidRoomPetFlourish(pane, row);
-    }, 1400);
-  }, delayMs);
-  if (pane.dataset) pane.dataset.squidRoomFlourishRowId = rowKey;
-  squidRoomPetFlourishTimers.set(role, { rowKey, timer });
-  return true;
-}
+// scheduleSquidRoomPetFlourish deleted (S465 purge 2b): its CSS variants
+// died with the sprite-era rules, leaving JS toggling classes with no
+// visual meaning - the wave-4.5 engine behaviors (work-orb, thought dots,
+// z-marks) are the living replacement for "visible doing".
 
 function getSquidRoomPetRowTimestampMs(row = {}) {
   const candidates = [
@@ -1030,7 +1005,6 @@ function updateSquidRoomPetPane(pane, row) {
     stage.classList.toggle('is-settling', motionClass === 'is-settling');
     stage.classList.toggle('is-resting', motionClass === 'is-resting');
     const celebrated = triggerSquidRoomPetCelebration(pane, row);
-    scheduleSquidRoomPetFlourish(pane, row);
     // P1.7 procedural creature: honest activity (real output age) drives
     // behavior; ink puffs fire only when the REAL celebration gate fired.
     if (typeof squidRoomCreatureRuntime.setSquidRoomCreatureActivity === 'function') {

@@ -354,15 +354,17 @@ describe('workspace pane shell', () => {
     expect(css).toMatch(/linear-gradient\(180deg,[^;]*rgba\(0,\s*1,\s*4,\s*1\) 100%\)/s);
   });
 
-  test('keeps Squid Room P1.6 free-creature motion and reduced-motion kill switch', () => {
+  test('sprite-era motion CSS stays dead; live creature surfaces remain', () => {
     const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'squid-room.css'), 'utf8');
 
     expect(css).toMatch(/\.squid-room-creature-ocean/);
-    expect(css).toMatch(/@keyframes squid-room-swim-active/);
-    expect(css).toMatch(/body\.squid-room \.pet-stage\.is-active \.pet-motion-track\s*\{[^}]*squid-room-swim-active/s);
-    expect(css).toMatch(/body\.squid-room \.squid-room-creature\s*\{[^}]*--pet-caption-band:\s*72px[^}]*bottom:\s*var\(--pet-caption-band\)/s);
-    expect(css).toMatch(/body\.squid-room \.squid-room-pet-caption\s*\{[^}]*bottom:\s*calc\(8px - var\(--pet-caption-band\)\)/s);
-    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)\s*\{[^}]*\.pet-stage \.pet-motion-track/s);
+    // S465 purge 2b: the sprite-era swim/track animation library is deleted
+    // (motion is engine-drawn; the track's animation broke name-tag
+    // anchoring from beyond the grave). Pin the absences so it stays dead.
+    expect(css).not.toMatch(/@keyframes squid-room-swim-active/);
+    expect(css).not.toMatch(/\.pet-motion-track/);
+    expect(css).not.toMatch(/\.squid-room-codex-pet/);
+    expect(css).not.toMatch(/\.squid-room-pet-speech/);
     expect(css).toMatch(/\.squid-room-pane-menu\.is-fixed-positioned \.squid-room-pane-menu-panel\s*\{[^}]*position:\s*fixed/s);
   });
 });

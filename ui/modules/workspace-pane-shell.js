@@ -595,10 +595,6 @@ function ensureSquidRoomPetPanes(doc) {
 function ensureSquidRoomSpaceLayers(doc) {
   const body = doc?.body;
   if (!body || body.querySelector?.('.cosmos')) return null;
-  // Retire the builder's interim space layers if a re-render left them.
-  body.querySelector?.('.squid-space-stars')?.remove?.();
-  body.querySelector?.('.squid-space-galaxy')?.remove?.();
-  body.querySelector?.('.squid-space-shooting-star')?.remove?.();
   const cosmos = createElement(doc, 'div', {
     className: 'cosmos',
     attributes: { 'aria-hidden': 'true' },
