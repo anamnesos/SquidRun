@@ -58,7 +58,6 @@ function installRoomDom() {
   const overview = createFakeElement('projectRoomOverview', { roomId: 'main' });
   const tabs = [
     createFakeElement('room-main', { projectRoomTab: 'main' }),
-    createFakeElement('room-trustquote', { projectRoomTab: 'trustquote' }),
     createFakeElement('room-mira-build', { projectRoomTab: 'mira-build' }),
   ];
   const byId = new Map([
@@ -98,7 +97,7 @@ function installEmptyRoomMountDom() {
         return;
       }
       const overview = createFakeElement('projectRoomOverview', { roomId: 'main' });
-      tabs = ['main', 'trustquote', 'mira-build'].map((roomId) => createFakeElement(`room-${roomId}`, {
+      tabs = ['main', 'mira-build'].map((roomId) => createFakeElement(`room-${roomId}`, {
         projectRoomTab: roomId,
       }));
       byId.set('projectRoomOverview', overview);
@@ -155,16 +154,18 @@ describe('project room registry and switcher', () => {
   });
 
   test('exposes exactly the reviewed room ids and excludes unreviewed rooms', () => {
-    expect(projectRooms.getProjectRoomIds()).toEqual(['main', 'trustquote', 'mira-build']);
+    // trustquote was deliberately removed (e16b85e4, dead work-room profile)
+    // - removed rooms must stay excluded, same as never-reviewed ones.
+    expect(projectRooms.getProjectRoomIds()).toEqual(['main', 'mira-build']);
     expect(projectRooms.getProjectRoomIds()).not.toContain('plumbhalo');
+    expect(projectRooms.getProjectRoomIds()).not.toContain('trustquote');
     expect(projectRooms.getProjectRooms().map((room) => room.label)).toEqual([
       'Main',
-      'TrustQuote',
       'Mira Build',
     ]);
   });
 
-  test('explicit debug mount exposes Main, TrustQuote, and Mira Build with Main selected by default', () => {
+  test('explicit debug mount exposes Main and Mira Build with Main selected by default', () => {
     const dom = installRoomDom();
 
     const controller = projectRooms.initProjectRooms({
@@ -182,10 +183,9 @@ describe('project room registry and switcher', () => {
     expect(dom.overview.dataset.roomId).toBe('main');
     expect(dom.overview.innerHTML).toContain('Current work');
     expect(dom.overview.innerHTML).toContain('data-room-card="main"');
-    expect(dom.overview.innerHTML).toContain('data-room-card="trustquote"');
     expect(dom.overview.innerHTML).toContain('data-room-card="mira-build"');
+    expect(dom.overview.innerHTML).not.toContain('data-room-card="trustquote"');
     expect(dom.overview.innerHTML).toContain('Main');
-    expect(dom.overview.innerHTML).toContain('TrustQuote');
     expect(dom.overview.innerHTML).toContain('Mira Build');
     expect(dom.overview.innerHTML).toContain('JAMES ACTION: NONE');
     expect(dom.overview.innerHTML.match(/JAMES ACTION:/g)).toHaveLength(1);
@@ -197,9 +197,9 @@ describe('project room registry and switcher', () => {
     const shellHtml = projectRooms._internals.buildProjectRoomsShellHtml('main');
 
     expect(shellHtml).toContain('data-project-room-tab="main"');
-    expect(shellHtml).toContain('data-project-room-tab="trustquote"');
     expect(shellHtml).toContain('data-project-room-tab="mira-build"');
-    expect(shellHtml).toMatch(/>Main<[\s\S]*>TrustQuote<[\s\S]*>Mira Build</);
+    expect(shellHtml).not.toContain('data-project-room-tab="trustquote"');
+    expect(shellHtml).toMatch(/>Main<[\s\S]*>Mira Build</);
   });
 
   test('explicit debug/status mount initializes tabs from an empty mount point', () => {
@@ -215,9 +215,9 @@ describe('project room registry and switcher', () => {
     expect(dom.root.hidden).toBe(false);
     expect(dom.root.classList.contains('project-rooms-hidden')).toBe(false);
     expect(dom.root.innerHTML).toContain('data-project-room-tab="main"');
-    expect(dom.root.innerHTML).toContain('data-project-room-tab="trustquote"');
     expect(dom.root.innerHTML).toContain('data-project-room-tab="mira-build"');
-    expect(dom.tabs).toHaveLength(3);
+    expect(dom.root.innerHTML).not.toContain('data-project-room-tab="trustquote"');
+    expect(dom.tabs).toHaveLength(2);
     expect(dom.overview.innerHTML).toContain('Current work');
   });
 
@@ -244,18 +244,6 @@ describe('project room registry and switcher', () => {
 
     const controller = projectRooms.initProjectRooms({ documentRef: dom.documentRef });
     dom.tabs[1].click();
-
-    expect(controller.getSelectedRoomId()).toBe('trustquote');
-    expect(dom.root.dataset.selectedRoom).toBe('trustquote');
-    expect(dom.overview.innerHTML).toContain('TrustQuote readiness');
-    expect(dom.overview.innerHTML).toContain('Project: D:/projects/TrustQuote');
-    expect(dom.overview.innerHTML).toContain('Status: preview only');
-    expect(dom.overview.innerHTML).toContain('Review required before launch');
-    expect(invoke).not.toHaveBeenCalled();
-    expect(send).not.toHaveBeenCalled();
-    expect(fetch).not.toHaveBeenCalled();
-
-    dom.tabs[2].click();
 
     expect(controller.getSelectedRoomId()).toBe('mira-build');
     expect(dom.root.dataset.selectedRoom).toBe('mira-build');
