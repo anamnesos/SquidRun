@@ -117,12 +117,20 @@ function updateSpeechAnchor(binding) {
   const facing = Math.cos(state.heading) >= 0 ? 1 : -1;
   const anchor = speechAnchors[petId] || (speechAnchors[petId] = {
     mouthX: 0, mouthY: 0, headX: 0, headY: 0, facing: 1,
+    bodyX: 0, bodyY: 0, bodyW: 0, bodyH: 0,
   });
   anchor.headX = rect.left + state.x * scale;
   anchor.headY = rect.top + (state.y - 30) * scale;
   anchor.mouthX = rect.left + (state.x + facing * 6) * scale;
   anchor.mouthY = rect.top + (state.y + 6) * scale;
   anchor.facing = facing;
+  // Body rect for the speech solver's creature avoidance (directive: a box
+  // may never cover a creature): mantle + tentacle skirt around the body.
+  const bodyHalfW = 58 * scale;
+  anchor.bodyX = rect.left + state.x * scale - bodyHalfW;
+  anchor.bodyY = rect.top + (state.y - 44) * scale;
+  anchor.bodyW = bodyHalfW * 2;
+  anchor.bodyH = 132 * scale;
 }
 
 function anchorHeadElements(binding, nowMs) {
@@ -134,12 +142,14 @@ function anchorHeadElements(binding, nowMs) {
   const headX = engine.state.x * scale;
   const headY = (engine.state.y - 58) * scale;
   if (!nameEl || !nameEl.isConnected) return;
-  if (!binding.nameBase) {
-    binding.nameBase = {
-      x: nameEl.offsetLeft + nameEl.offsetWidth / 2,
-      y: nameEl.offsetTop + nameEl.offsetHeight,
-    };
-  }
+  // Recapture the CSS resting base every (throttled) pass: offset* ignores
+  // transforms, so this is cheap and self-correcting - a base captured
+  // before fonts/layout settled can never strand the tag again (the
+  // floating detached "Builder" tag in the 3-frame verification).
+  binding.nameBase = {
+    x: nameEl.offsetLeft + nameEl.offsetWidth / 2,
+    y: nameEl.offsetTop + nameEl.offsetHeight,
+  };
   nameEl.style.transform = `translate(${Math.round(headX - binding.nameBase.x)}px, ${Math.round(headY - binding.nameBase.y)}px)`;
 }
 
