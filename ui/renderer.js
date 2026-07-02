@@ -707,6 +707,8 @@ function stripSquidRoomMessageNoise(value) {
 
 function stripSquidRoomFaceJargon(value) {
   return String(value || '')
+    // shell-escape artifact from hm-send payloads: '\'' -> plain apostrophe
+    .replace(/'\\''/g, "'")
     .replace(/\b(?:builder|oracle|architect)\s*#\d+\s+received\.?\s*/gi, '')
     .replace(/\bsha256[:=]?\s*[0-9a-f]{8,64}\b/gi, '')
     // BARE commit/artifact hashes (S463: the typewriter spoke e4e03749 to
@@ -723,6 +725,11 @@ function stripSquidRoomFaceJargon(value) {
     .replace(/\btrc-[0-9a-f-]{12,}\b/gi, '')
     .replace(/\bUP[-_\s]+[A-Z0-9_-]+(?:\s+[A-Z0-9_-]+){0,4}\b/g, '')
     .replace(/\s*[\[\(]\s*CURRENT PROJECT[^\]\)]*[\]\)]\s*/gi, ' ')
+    // Husk removal (drop the CLAUSE, not just the token): slash-number runs
+    // left by stripped filenames, dangling slashes, letter-less parens.
+    .replace(/(?:\s*\/\s*\d{4,}\b)+/g, '')
+    .replace(/\s*\/\s*(?=[,.;:)\s]|$)/g, '')
+    .replace(/\(\s*[\d\s/\\.,:;·–—-]*\s*\)/g, '')
     // tidy the holes left by removals: empty parens, dangling separators
     .replace(/\(\s*[,:;-]*\s*\)/g, '')
     .replace(/\s+[-—]\s+(?=[,.;:!?)]|$)/g, ' ')
@@ -4289,7 +4296,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Heartbeat state indicator
+  // Heartbeat state indicator. A frozen-green badge is the one lie a
+  // heartbeat must never tell: if the emitter dies, no event ever comes to
+  // change the class, so the renderer keeps its own staleness deadman - no
+  // event for 2x the advertised interval flips the badge to STALE.
+  let heartbeatStaleTimer = null;
   ipcRenderer.on('heartbeat-state-changed', (event, data) => {
     const { state, interval } = data;
     const indicator = document.getElementById('heartbeatIndicator');
@@ -4305,6 +4316,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       indicator.style.display = 'inline-flex';
 
       log.info('Heartbeat', `State changed: ${state}, interval: ${displayInterval}`);
+
+      if (heartbeatStaleTimer) clearTimeout(heartbeatStaleTimer);
+      const staleAfterMs = Math.max(30000, Number(interval) > 0 ? Number(interval) * 2 : 120000);
+      heartbeatStaleTimer = setTimeout(() => {
+        const staleIndicator = document.getElementById('heartbeatIndicator');
+        if (staleIndicator) {
+          staleIndicator.textContent = 'HB: STALE';
+          staleIndicator.className = 'heartbeat-indicator stale';
+          staleIndicator.style.display = 'inline-flex';
+        }
+        log.warn('Heartbeat', `No heartbeat-state-changed event for ${Math.round(staleAfterMs / 1000)}s; showing STALE`);
+      }, staleAfterMs);
     }
   });
 

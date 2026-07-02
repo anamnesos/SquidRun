@@ -2558,11 +2558,13 @@ describe('terminal.js module', () => {
       const statusCb = jest.fn();
       terminal.setStatusCallbacks(statusCb, null);
 
-      await terminal.spawnAgent('3');
+      const spawned = await terminal.spawnAgent('3');
 
-      // Should still update status but not write command
+      // Honest status: a failed spawn must never present as Working.
+      expect(spawned).toBe(false);
       expect(statusCb).toHaveBeenCalledWith('3', 'Starting...');
-      expect(statusCb).toHaveBeenCalledWith('3', 'Working');
+      expect(statusCb).toHaveBeenCalledWith('3', 'Spawn failed');
+      expect(statusCb).not.toHaveBeenCalledWith('3', 'Working');
       jest.useFakeTimers();
     });
 

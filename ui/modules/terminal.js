@@ -3905,7 +3905,7 @@ async function spawnAgent(paneId, model = null, options = {}) {
   // user somehow triggers spawn before UI fully updates
   if (!terminals.has(paneId)) {
     log.info('spawnAgent', `No terminal for pane ${paneId}, skipping`);
-    return;
+    return false;
   }
 
   updateIntentState(paneId, 'Initializing session...');
@@ -3938,8 +3938,13 @@ async function spawnAgent(paneId, model = null, options = {}) {
       } catch (err) {
         log.error(`spawnAgent ${paneId}`, 'Spawn failed:', err);
         updatePaneStatus(paneId, 'Spawn failed');
-        return;
+        return false;
       }
+    }
+    if (!result?.success) {
+      log.error(`spawnAgent ${paneId}`, 'Spawn returned failure:', result?.error || '(no detail)');
+      updatePaneStatus(paneId, 'Spawn failed');
+      return false;
     }
     if (result.success && result.command) {
       rememberClaudeSessionCollisionRecovery(paneId, result.command);
@@ -3952,7 +3957,7 @@ async function spawnAgent(paneId, model = null, options = {}) {
           source: 'spawn-command-on-create-retry',
         });
         updatePaneStatus(paneId, 'Working');
-        return;
+        return true;
       }
       // Use pty.write directly instead of terminal.paste for reliability
       // terminal.paste() can fail if terminal isn't fully ready
@@ -4004,7 +4009,9 @@ async function spawnAgent(paneId, model = null, options = {}) {
 
     }
     updatePaneStatus(paneId, 'Working');
+    return true;
   }
+  return false;
 }
 
 // Helper to check if a pane is Gemini
@@ -4062,6 +4069,8 @@ async function armStartupInjectionForDaemonStartedPane(paneId, daemonTerminal = 
 // Spawn agents in all panes
 async function spawnAllAgents() {
   updateConnectionStatus('Starting agents in all panes...');
+  const running = [];
+  const failed = [];
   for (const paneId of getActivePaneIds()) {
     const daemonTerminal = await readDaemonTerminalForPane(paneId, { timeoutMs: 750 });
     if (
@@ -4071,13 +4080,19 @@ async function spawnAllAgents() {
     ) {
       await armStartupInjectionForDaemonStartedPane(paneId, daemonTerminal);
       log.info('spawnAgent', `Pane ${paneId} already started by daemon command-on-create; skipping duplicate spawn`);
+      running.push(paneId);
       continue;
     }
-    await spawnAgent(paneId);
+    (await spawnAgent(paneId) ? running : failed).push(paneId);
     // Small delay between panes to prevent race conditions
     await new Promise(resolve => setTimeout(resolve, 200));
   }
-  updateConnectionStatus('All agents running');
+  // Honest status: only claim "all" when every pane actually spawned.
+  if (failed.length === 0) {
+    updateConnectionStatus('All agents running');
+  } else {
+    updateConnectionStatus(`Agents running: ${running.length}/${running.length + failed.length} - failed: pane ${failed.join(', pane ')}`);
+  }
 }
 
 // Kill all terminals

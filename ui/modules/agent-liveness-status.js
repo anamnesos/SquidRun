@@ -41,8 +41,12 @@ function createLivenessStatus({ staleAfterMs }) {
     let live = 0;
     let unpolled = 0;
     const deadPaneIds = [];
+    let expired = 0;
     for (const [id, entry] of panes) {
-      if (entry.alive === true) live += 1;
+      // A pane's OWN evidence must expire (half-dead poller, Oracle #195):
+      // an ancient alive=true is not alive, it is unknown - demote it.
+      if (entry.alive === true && !isStale(entry.polledAt, nowMs, staleAfterMs)) live += 1;
+      else if (entry.alive === true) expired += 1;
       else if (entry.alive === null) unpolled += 1;
       else deadPaneIds.push(id);
     }
@@ -54,7 +58,7 @@ function createLivenessStatus({ staleAfterMs }) {
         deadPaneIds,
       };
     }
-    if (isStale(lastPollAt, nowMs, staleAfterMs)) {
+    if (expired > 0 || isStale(lastPollAt, nowMs, staleAfterMs)) {
       return {
         text: `${live}/${total} agents live (status stale)`,
         tone: 'stale',

@@ -895,7 +895,14 @@ async function handleDaemonConnectedPayload(data = {}, initTerminalsFn, reattach
     } catch (err) {
       log.warn('Daemon', `Failed to read settings for fresh terminal auto-spawn: ${err.message}`);
     }
-    await initTerminalsFn({ spawnCommandOnCreate });
+    try {
+      await initTerminalsFn({ spawnCommandOnCreate });
+    } catch (err) {
+      // Honest status: 'Ready' must mean terminals actually initialized.
+      log.error('Daemon', 'Terminal init failed', err);
+      updateConnectionStatus(`Terminal init failed: ${err.message}`);
+      return;
+    }
     updateConnectionStatus('Ready');
     if (onTerminalsReadyFn) {
       onTerminalsReadyFn(spawnCommandOnCreate);

@@ -390,6 +390,14 @@
   border-color: rgba(240, 160, 0, 0.3);
 }
 
+/* Renderer-side deadman: no heartbeat event for 2x interval. */
+.heartbeat-indicator.stale {
+  background: rgba(240, 160, 0, 0.2);
+  color: var(--color-warning);
+  border-color: rgba(240, 160, 0, 0.42);
+  box-shadow: 0 0 10px rgba(240, 160, 0, 0.28);
+}
+
 .pane-title {
   display: flex;
   align-items: center;
