@@ -511,10 +511,11 @@ function createSquidCreature(options = {}) {
       * clamp(speed / 60, 0, 1);
     state.lean = lerp(state.lean ?? 0, leanTarget, clamp(speed / 200, 0.03, 0.12));
 
-    // Mantle breathing (micro-life) - stronger at rest.
-    state.breathPhase += dtMs / 1000;
+    // Mantle breathing (micro-life) - deeper and HALF TEMPO while asleep
+    // (drowse carries the sleep read now that the z-glyph is gone).
+    state.breathPhase += (dtMs / 1000) * (1 - (state.drowse || 0) * 0.5);
     state.breath = Math.sin(state.breathPhase * (state.activity === 'resting' ? 1.4 : 2.2))
-      * 0.035 * profile().breathing;
+      * 0.035 * (1 + (state.drowse || 0) * 0.4) * profile().breathing;
   }
 
   function tickTentacles(dtMs) {
@@ -631,7 +632,12 @@ function createSquidCreature(options = {}) {
   }
 
   function tickEyes(dtMs) {
-    state.eyeGlow = lerp(state.eyeGlow, profile().eyeGlow, 0.04);
+    // SLEEP LIVES ON THE CREATURE (James 10:49 - the floating Z read as a
+    // detached glitch): resting eases the lids mostly closed, dims the glow,
+    // and slows the breath - the creature IS the indicator.
+    const drowseTarget = state.activity === 'resting' ? 1 : 0;
+    state.drowse = lerp(state.drowse || 0, drowseTarget, Math.min(1, dtMs / 900));
+    state.eyeGlow = lerp(state.eyeGlow, profile().eyeGlow * (1 - state.drowse * 0.55), 0.04);
     state.nextBlinkInMs -= dtMs;
     if (state.blink > 0) {
       state.blink = Math.max(0, state.blink - dtMs / 130);
@@ -696,9 +702,10 @@ function createSquidCreature(options = {}) {
     const orbTarget = activity === 'working' ? 1 : 0;
     state.workOrbStrength += (orbTarget - state.workOrbStrength) * Math.min(1, dtMs / 420);
     state.workOrbPhase += dtMs / (activity === 'working' ? 340 : 900);
-    // Thought/z dots: settling thinks (~1.4s cadence), resting snoozes
-    // (~3.8s cadence), working emits none.
-    const cadence = activity === 'settling' ? 1400 : (activity === 'resting' ? 3800 : 0);
+    // Thought dots: settling thinks (~1.4s cadence). Resting emits NOTHING -
+    // the floating z-glyph read as a detached glitch (James 10:49); sleep is
+    // now carried by the body itself (drowse: lids, glow, breath).
+    const cadence = activity === 'settling' ? 1400 : 0;
     state.thoughtTimerMs += dtMs;
     if (cadence && state.thoughtTimerMs >= cadence) {
       state.thoughtTimerMs = 0;
@@ -914,9 +921,12 @@ function createSquidCreature(options = {}) {
     // Eyes: BIG glowing capsules (the sprite's charm) with saccade offset,
     // blink, and a slight squash while jetting (free cuteness per the
     // character sheet). Blink decays 1 -> 0; openness makes a V.
-    const openness = state.blink === 0
+    const awakeOpenness = state.blink === 0
       ? 1
       : clamp(Math.abs(2 * state.blink - 1), 0.06, 1);
+    // Drowse narrows the lids toward closed (0.14 keeps a sliver of glow -
+    // asleep, not dead); blinking still works underneath while dozing off.
+    const openness = lerp(awakeOpenness, 0.14, state.drowse || 0);
     const jetSquash = lerp(1, state.squash, 0.6);
     for (const side of [-1, 1]) {
       const eyeX = side * 10.5 + state.saccade.x;
