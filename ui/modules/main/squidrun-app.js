@@ -92,6 +92,7 @@ const {
 } = require('../telegram-credentials');
 const {
   appendReceiptMarkerToPrompt,
+  getModelPromptReceipt,
 } = require('../model-prompt-receipt');
 const {
   shouldTriggerAutonomousSmoke,
@@ -8414,22 +8415,68 @@ class SquidRunApp {
           // the write -> settle -> Enter sequence below that every normal
           // payload gets. The pointer now REPLACES the text and falls through
           // to the exact same submit path - one submit mechanism, no copies.
-          text = materialized.pointerText;
-          // Belt-and-suspenders for this class only: one delayed extra Enter.
-          // Idempotent - if the first Enter submitted, the composer is empty
-          // and a lone CR is a no-op; if it did not, this submits instead of
-          // stalling a shift. Removed once a receipt-verified submit exists.
-          setTimeout(() => {
-            try {
-              daemonClient.write(normalizedPaneId, '\r', {
-                ...kernelMeta,
-                eventId: `${normalizedPaneId}-${Date.now()}-ptr-retap`,
-                parentEventId: kernelMeta.eventId,
-                causationId: kernelMeta.eventId,
-                source: 'squidrun-app.direct-pane-delivery.pointer-enter-retap',
-              });
-            } catch { /* pane may be gone; the primary path already reported */ }
-          }, 1500);
+          // v1.2 (nervous-system remodel): the pointer carries its OWN
+          // receipt marker - v1.1's pointer only ever showed receipt
+          // fragments by TAIL-excerpt luck, so the hook could never record
+          // a receipt for it and verification was structurally impossible.
+          text = appendReceiptMarkerToPrompt(materialized.pointerText, {
+            deliveryId: traceId || messageId,
+            messageId: messageId || traceId,
+          });
+          // v1.2 RECEIPT-VERIFIED SUBMIT replacing the blind retap: read the
+          // receipt store (hook-recorded prompt_submit events), never PTY
+          // screens. No receipt after the settle -> ONE retry Enter -> still
+          // no receipt -> LOUD (the trace event is the alertable signal).
+          const receiptId = messageId || traceId || null;
+          if (receiptId) {
+            const verifyPointerSubmit = (attempt) => {
+              try {
+                const receipt = getModelPromptReceipt(receiptId);
+                if (receipt) {
+                  appendBusTraceEvent({
+                    eventType: 'pane_direct_pty_pointer_submit_verified',
+                    messageId: receiptId,
+                    deliveryId: null,
+                    paneId: normalizedPaneId,
+                    success: true,
+                    verified: true,
+                    status: 'pointer_submit_receipt_verified',
+                    mode: 'daemon-pty',
+                    paneRuntime,
+                    reason: `receipt_${receipt.semanticEvent || 'prompt_submit'}_attempt_${attempt}`,
+                  });
+                  return;
+                }
+                if (attempt === 1) {
+                  daemonClient.write(normalizedPaneId, '\r', {
+                    ...kernelMeta,
+                    eventId: `${normalizedPaneId}-${Date.now()}-ptr-retry`,
+                    parentEventId: kernelMeta.eventId,
+                    causationId: kernelMeta.eventId,
+                    source: 'squidrun-app.direct-pane-delivery.pointer-enter-retry',
+                  });
+                  setTimeout(() => verifyPointerSubmit(2), 4000);
+                  return;
+                }
+                log.error('PaneDelivery', `POINTER SUBMIT UNVERIFIED for pane ${normalizedPaneId} (${receiptId}) - no prompt_submit receipt after retry; the message may be sitting in the composer`);
+                appendBusTraceEvent({
+                  eventType: 'pane_direct_pty_pointer_submit_unverified',
+                  messageId: receiptId,
+                  deliveryId: null,
+                  paneId: normalizedPaneId,
+                  success: false,
+                  verified: false,
+                  status: 'pointer_submit_unverified',
+                  mode: 'daemon-pty',
+                  paneRuntime,
+                  reason: 'no_receipt_after_retry',
+                });
+              } catch (err) {
+                log.warn('PaneDelivery', `Pointer submit verify error (${receiptId}): ${err.message}`);
+              }
+            };
+            setTimeout(() => verifyPointerSubmit(1), 4000);
+          }
         } else {
         // Materialization itself failed - the old skip, but LOUD: this is a
         // user-payload loss and must never again pass silently.
