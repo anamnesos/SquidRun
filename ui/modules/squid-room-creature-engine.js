@@ -1120,31 +1120,22 @@ function createSquidCreature(options = {}) {
     const bodyGlow = ctx.createRadialGradient(0, -6, 4, 0, -4, 46);
     bodyGlow.addColorStop(0, state.palette.glow);
     bodyGlow.addColorStop(1, 'rgba(0,0,0,0)');
-    const underGlow = ctx.createRadialGradient(0, 0, 2, 0, 0, 34);
-    underGlow.addColorStop(0, state.palette.glow);
-    underGlow.addColorStop(1, 'rgba(0,0,0,0)');
     const eyeGlow = ctx.createRadialGradient(0, 0, 0.8, 0, 0, 9);
     eyeGlow.addColorStop(0, state.palette.eyeCore);
     eyeGlow.addColorStop(0.45, state.palette.eye);
     eyeGlow.addColorStop(1, 'rgba(0,0,0,0)');
-    gradientCache = { bodyGlow, underGlow, eyeGlow };
+    gradientCache = { bodyGlow, eyeGlow };
     return gradientCache;
   }
 
   function draw(ctx) {
     const gradients = ensureGradients(ctx);
     drawEffects(ctx);
-    // Under-glow: soft bioluminescent pool beneath the creature that seats
-    // it in the water - drawn in TRANSLATED space so the cached gradient is
-    // position-independent.
-    ctx.save();
-    ctx.translate(state.x, state.y + 30);
-    ctx.globalAlpha = 0.5 + state.eyeGlow * 0.3;
-    ctx.fillStyle = gradients.underGlow;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 34, 14, 0, 0, TWO_PI);
-    ctx.fill();
-    ctx.restore();
+    // No under-glow pool: it "seated" the creature in the water — the
+    // pedestal reborn inside the canvas (James caught the haze under the
+    // squids after three CSS pedestals died; the fourth was painted here).
+    // Free swimmers cast nothing beneath them; bioluminescence lives on
+    // the BODY (bodyGlow) and the eyes.
     // Sprite-faithful layering: MANTLE behind, ARMS hanging in front of the
     // lower rim (world space - they trail through the water), FACE on top so
     // the arm roots tuck under the visor's chin exactly like the reference.
