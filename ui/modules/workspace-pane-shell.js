@@ -599,7 +599,13 @@ function ensureSquidRoomSpaceLayers(doc) {
     className: 'cosmos',
     attributes: { 'aria-hidden': 'true' },
   });
-  for (const className of ['stars s1', 'stars s2', 'stars s3', 'nebula n1', 'nebula n2', 'nebula n3', 'galaxy', 'comet']) {
+  for (const className of [
+    'ray r1', 'ray r2', 'ray r3',
+    'stars s1', 'stars s2', 'stars s3',
+    'snow p1', 'snow p2',
+    'veil v1', 'veil v2', 'veil v3',
+    'galaxy', 'comet', 'seafloor',
+  ]) {
     cosmos.appendChild(createElement(doc, 'div', { className }));
   }
   body.insertBefore?.(cosmos, body.firstChild || null);
