@@ -594,22 +594,27 @@ function ensureSquidRoomPetPanes(doc) {
 // builds his exact DOM contract: one .cosmos div, first child of body.
 function ensureSquidRoomSpaceLayers(doc) {
   const body = doc?.body;
-  if (!body || body.querySelector?.('.cosmos')) return null;
-  const cosmos = createElement(doc, 'div', {
-    className: 'cosmos',
+  if (!body) return null;
+  let canvas = body.querySelector?.('.cosmos-canvas');
+  if (canvas) return canvas;
+  // v3 (S466, James: "make the background something different... massive
+  // changes"): the CSS-gradient cosmos is retired; the sky is now PAINTED —
+  // squid-room-cosmos-canvas.js renders fBm nebula clouds + a power-law
+  // starfield once to offscreen layers and composites with parallax +
+  // bounded particles. The runtime starts itself here.
+  canvas = createElement(doc, 'canvas', {
+    className: 'cosmos-canvas',
     attributes: { 'aria-hidden': 'true' },
   });
-  for (const className of [
-    'ray r1', 'ray r2', 'ray r3',
-    'stars s1', 'stars s2', 'stars s3',
-    'snow p1', 'snow p2',
-    'veil v1', 'veil v2', 'veil v3',
-    'galaxy', 'comet', 'seafloor',
-  ]) {
-    cosmos.appendChild(createElement(doc, 'div', { className }));
+  body.insertBefore?.(canvas, body.firstChild || null);
+  try {
+    const { createCosmosCanvasRuntime } = require('./squid-room-cosmos-canvas');
+    const runtime = canvas.getContext ? createCosmosCanvasRuntime({ document: doc, canvas }) : null;
+    runtime?.start?.();
+  } catch (err) {
+    // A background must never take the room down with it.
   }
-  body.insertBefore?.(cosmos, body.firstChild || null);
-  return cosmos;
+  return canvas;
 }
 
 function ensureSquidRoomTeamHeader(doc, teamContainer) {
