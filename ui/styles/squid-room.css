@@ -916,17 +916,6 @@ body.squid-room-workspace .squid-room-pet-shell {
   overflow: hidden;
 }
 
-body.squid-room-workspace .squid-room-pet-stage::before {
-  content: "";
-  position: absolute;
-  width: min(62%, 164px);
-  aspect-ratio: 1;
-  border-radius: 999px;
-  background: radial-gradient(circle, rgba(94, 234, 212, 0.16), transparent 62%);
-  filter: blur(10px);
-  transform: translateY(8px);
-}
-
 body.squid-room-workspace .squid-room-pet-state {
   min-height: 24px;
   padding: 0 9px;
@@ -1357,59 +1346,6 @@ body.squid-room .squid-room-pet-filters {
   height: 0;
   overflow: hidden;
   pointer-events: none;
-}
-
-body.squid-room .pet-caustics {
-  position: absolute;
-  inset: 4px 16% 10px;
-  z-index: 0;
-  border-radius: 999px;
-  opacity: 0.065;
-  background:
-    radial-gradient(ellipse at 42% 34%, rgba(207, 255, 247, 0.78), transparent 18%),
-    repeating-radial-gradient(ellipse at 50% 52%, rgba(114, 240, 224, 0.34) 0 1px, transparent 2px 10px);
-  filter: blur(3px);
-  mix-blend-mode: screen;
-  animation: squid-room-caustic-drift 16s ease-in-out infinite;
-}
-
-body.squid-room .pet-glow {
-  position: absolute;
-  width: min(58%, 118px);
-  aspect-ratio: 1;
-  border-radius: 999px;
-  background: radial-gradient(circle, rgba(114, 240, 224, 0.18), transparent 64%);
-  filter: blur(11px);
-  transform: translateY(8px);
-}
-
-@keyframes squid-room-caustic-drift {
-  0%,
-  100% {
-    transform: translate3d(-4px, 1px, 0) rotate(-1deg) scale(0.98);
-  }
-  50% {
-    transform: translate3d(5px, -2px, 0) rotate(1.2deg) scale(1.03);
-  }
-}
-
-body.squid-room .pet-stage.is-active .pet-glow {
-  background: radial-gradient(circle, rgba(114, 240, 224, 0.25), transparent 66%);
-}
-
-body.squid-room .pet-stage.is-active .pet-caustics {
-  opacity: 0.08;
-  animation-duration: 12s;
-}
-
-body.squid-room .pet-stage.is-settling .pet-caustics {
-  opacity: 0.052;
-  animation-duration: 20s;
-}
-
-body.squid-room .pet-stage.is-resting .pet-caustics {
-  opacity: 0.028;
-  animation-duration: 30s;
 }
 
 body.squid-room .chip,
