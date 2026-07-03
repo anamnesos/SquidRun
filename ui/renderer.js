@@ -577,7 +577,7 @@ function isSquidRoomWindowContext(windowContext = {}) {
   }
   const body = typeof document !== 'undefined' ? document.body : null;
   return body?.dataset?.workspaceKey === SQUID_ROOM_WINDOW_KEY
-    || body?.classList?.contains?.('squid-room-workspace') === true;
+    || body?.classList?.contains?.('sr2-room') === true;
 }
 
 function getSquidRoomSurfaceElements() {

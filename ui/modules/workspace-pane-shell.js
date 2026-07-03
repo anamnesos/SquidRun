@@ -450,7 +450,7 @@ function renderSquidRoomCoreTerminalPane(doc, pane, spec) {
   if (!doc || !pane || !spec) return null;
   if (Array.isArray(pane.childNodes)) pane.childNodes.length = 0;
   pane.innerHTML = '';
-  pane.className = 'pane squid-room-core-terminal-pane';
+  pane.className = 'pane sr2-terminal-pane';
   pane.dataset.paneId = spec.paneId;
   pane.dataset.squidRoomCoreTerminal = 'true';
   pane.dataset.squidRoomLabel = spec.title;
@@ -725,7 +725,7 @@ function ensureSquidRoomCoreTerminalPanes(doc, teamContainer) {
       renderSquidRoomCoreTerminalPane(doc, pane, spec);
     }
     pane.classList?.remove?.('squid-room-pet-pane');
-    pane.classList?.add?.('squid-room-core-terminal-pane');
+    pane.classList?.add?.('sr2-terminal-pane');
     pane.dataset.squidRoomCoreTerminal = 'true';
     pane.dataset.squidRoomLabel = spec.title;
     pane.dataset.squidRoomRole = spec.role;
@@ -852,8 +852,9 @@ function configureSquidRoomPaneShell(doc) {
   const body = doc.body;
   if (body) {
     body.dataset.workspaceKey = SQUID_ROOM_WORKSPACE_KEY;
-    body.classList.add('squid-room-workspace');
-    body.classList.add('squid-room');
+    // Link swap (mount step 3): sr2-room is THE body gate; the legacy
+    // squid-room/squid-room-workspace gates died with squid-room.css.
+    body.classList.add('sr2-room');
   }
   ensureSquidRoomMotes(doc);
   ensureSquidRoomPetFilters(doc);
@@ -913,8 +914,7 @@ function configureWorkspacePaneShell(windowContext = {}, terminal = null, doc = 
   if (isSquidRoomWorkspace(workspaceKey)) {
     result = configureSquidRoomPaneShell(resolvedDocument);
   } else if (resolvedDocument.body) {
-    resolvedDocument.body.classList.remove('squid-room-workspace');
-    resolvedDocument.body.classList.remove('squid-room');
+    resolvedDocument.body.classList.remove('sr2-room');
     removeSquidRoomMotes(resolvedDocument);
     removeSquidRoomPetFilters(resolvedDocument);
   }
