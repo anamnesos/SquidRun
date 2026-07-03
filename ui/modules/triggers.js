@@ -387,6 +387,10 @@ function getDeliveryVerifyTimeoutMs() {
     : 7000;
 }
 
+/**
+ * Canonical delivery-result constructor - THE seam shape (organ 7 slice 2).
+ * @returns {import('../types/contracts').DeliveryResult}
+ */
 function buildDeliveryResult({
   accepted,
   queued,
@@ -927,6 +931,10 @@ function broadcastToAllAgents(message, fromRole = 'user', options = {}) {
   });
 }
 
+/**
+ * Direct cross-pane delivery - hot path for every agent message.
+ * @returns {import('../types/contracts').DeliveryResult | Promise<import('../types/contracts').DeliveryResult>}
+ */
 function sendDirectMessage(targetPanes, message, fromRole = null, options = {}) {
   if (!message) {
     return buildDeliveryResult({
