@@ -293,16 +293,24 @@ function renderFrame(nowMs) {
       binding.canvasRect = binding.canvas.getBoundingClientRect();
       // OCCLUSION LAW: measure the REAL opaque section bar and report it in
       // engine-local coordinates - targets avoid it, drifters evacuate it.
-      const barEl = (binding.canvas.ownerDocument || document).querySelector?.('.squid-room-header');
-      if (barEl && binding.canvasRect) {
-        const barRect = barEl.getBoundingClientRect();
-        const scale = binding.scale || 1;
-        engine.setExclusionBand(
-          (barRect.top - binding.canvasRect.top) / scale - 30, // face-height pad
-          (barRect.bottom - binding.canvasRect.top) / scale + 8
-        );
-      } else {
-        engine.setExclusionBand(null, null);
+      // CUTOFF LAW (Abyssal Cosmos v2): measure the REAL no-go rects each
+      // resize pass - chrome strip above, opaque section top below - and
+      // report them as engine-local swim insets. The engine adds full-body
+      // + name-tag margins and clamps position AND targets.
+      const doc = binding.canvas.ownerDocument || document;
+      const scale = binding.scale || 1;
+      if (binding.canvasRect) {
+        const chromeEl = doc.querySelector?.('.header');
+        const chromeBottom = chromeEl
+          ? chromeEl.getBoundingClientRect().bottom
+          : 64; // measured fallback: the window-chrome strip
+        const barEl = doc.querySelector?.('.squid-room-header');
+        const sectionTop = barEl
+          ? barEl.getBoundingClientRect().top
+          : binding.canvasRect.bottom;
+        const topInset = Math.max(0, (chromeBottom - binding.canvasRect.top) / scale);
+        const bottomInset = Math.max(0, (binding.canvasRect.bottom - sectionTop) / scale);
+        engine.setSwimInsets(topInset, bottomInset);
       }
     }
     if (!reduced) {

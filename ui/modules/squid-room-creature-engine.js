@@ -343,24 +343,54 @@ function createSquidCreature(options = {}) {
     const { width, height } = state.bounds;
     const lift = profile().driftLift;
     state.targetX = margin + rng() * (width - margin * 2);
-    // BEHIND-GLASS PATROL (wave 4): mostly open space (75%), occasional
-    // passes behind the FROSTED cards low in the window - and if currently
-    // low, ALWAYS surface next (never parked, always discoverable).
-    // OCCLUSION LAW (Architect defect 1): the opaque section-bar band -
-    // REAL measured layout from the runtime, not a magic fraction - is
-    // EXCLUDED from targets entirely; creatures transit it, never stop.
-    const band = state.exclusionBand;
-    const bandTop = band ? band.y0 : height * 0.48;
-    const bandBottom = band ? band.y1 : height * 0.64;
-    const currentlyLow = state.y > bandTop;
-    const wantGlassPass = !currentlyLow && rng() < 0.25
-      && height - bandBottom > 90; // enough visible water below the bar
-    const zoneMin = wantGlassPass ? bandBottom + 20 : margin;
-    const zoneMax = wantGlassPass
-      ? height - margin * 0.6
-      : Math.max(margin + 20, Math.min(bandTop - 24, height - margin));
+    // CUTOFF LAW (Abyssal Cosmos v2 direction): the swim envelope is
+    // MEASURED by the runtime - chrome strip above, opaque section below,
+    // full-body margins so face, name tag, and mouth anchor stay whole at
+    // every frame (cutoff is a constitution violation, not a style bug).
+    // Behind-glass passes are gone: below the section top is opaque UI.
+    const env = getSwimEnvelope();
+    // SOFT PREFERENCE BAND: favor the upper-middle water (the veil band
+    // where the glow colors live) via weighting, not walls - 75% of targets
+    // in the band, 25% anywhere in the envelope.
+    const bandTop = env.top;
+    const bandBottom = env.top + (env.bottom - env.top) * 0.55;
+    const wantBand = rng() < 0.75;
+    const zoneMin = wantBand ? bandTop : env.top;
+    const zoneMax = wantBand ? bandBottom : env.bottom;
     const ySpan = Math.max(20, zoneMax - zoneMin);
-    state.targetY = clamp(zoneMin + rng() * ySpan + lift, margin, height - margin * 0.6);
+    state.targetY = clamp(zoneMin + rng() * ySpan + lift, env.top, env.bottom);
+    state.targetX = clamp(state.targetX, env.left, env.right);
+  }
+
+  // Full-body margins in engine-local units: crown + name-tag headroom
+  // above center (~75), arm tips below (~60), mantle width sides (~55).
+  const BODY_MARGIN_TOP = 75;
+  const BODY_MARGIN_BOTTOM = 60;
+  const BODY_MARGIN_SIDE = 55;
+
+  function getSwimEnvelope() {
+    const { width, height } = state.bounds;
+    const insets = state.swimInsets || { top: 0, bottom: 0 };
+    const top = Math.min(insets.top + BODY_MARGIN_TOP, height * 0.45);
+    const bottom = Math.max(top + 40, height - insets.bottom - BODY_MARGIN_BOTTOM);
+    return {
+      top,
+      bottom,
+      left: Math.min(BODY_MARGIN_SIDE, width * 0.3),
+      right: Math.max(width * 0.7, width - BODY_MARGIN_SIDE),
+    };
+  }
+
+  /**
+   * CUTOFF LAW: runtime-measured insets (chrome strip above, opaque section
+   * below) in engine-local units. Position AND targets clamp to the
+   * resulting envelope.
+   */
+  function setSwimInsets(topInset, bottomInset) {
+    state.swimInsets = {
+      top: Math.max(0, Number(topInset) || 0),
+      bottom: Math.max(0, Number(bottomInset) || 0),
+    };
   }
 
   /**
@@ -473,15 +503,15 @@ function createSquidCreature(options = {}) {
     state.x += state.vx * dt;
     state.y += state.vy * dt;
 
-    // Soft wall repulsion keeps the creature inside its water region.
-    const margin = 26;
-    const { width, height } = state.bounds;
-    if (state.x < margin) state.vx += (margin - state.x) * 3.2 * dt * 10;
-    if (state.x > width - margin) state.vx -= (state.x - (width - margin)) * 3.2 * dt * 10;
-    if (state.y < margin) state.vy += (margin - state.y) * 3.2 * dt * 10;
-    if (state.y > height - margin) state.vy -= (state.y - (height - margin)) * 3.2 * dt * 10;
-    state.x = clamp(state.x, 8, width - 8);
-    state.y = clamp(state.y, 8, height - 8);
+    // Soft wall repulsion + HARD clamp against the measured swim envelope:
+    // face, tag, and mouth anchor stay whole at every frame (cutoff law).
+    const env = getSwimEnvelope();
+    if (state.x < env.left + 18) state.vx += (env.left + 18 - state.x) * 3.2 * dt * 10;
+    if (state.x > env.right - 18) state.vx -= (state.x - (env.right - 18)) * 3.2 * dt * 10;
+    if (state.y < env.top + 18) state.vy += (env.top + 18 - state.y) * 3.2 * dt * 10;
+    if (state.y > env.bottom - 18) state.vy -= (state.y - (env.bottom - 18)) * 3.2 * dt * 10;
+    state.x = clamp(state.x, env.left, env.right);
+    state.y = clamp(state.y, env.top, env.bottom);
 
     // Banking: nose follows the velocity vector while moving; bank angle
     // follows the signed turn rate and eases out in drift.
@@ -1107,6 +1137,7 @@ function createSquidCreature(options = {}) {
     setActivity,
     setBounds,
     setExclusionBand,
+    setSwimInsets,
     celebrate,
     delight,
     faceToward,
