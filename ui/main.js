@@ -26,7 +26,24 @@ app.commandLine.appendSwitch('disable-background-timer-throttling');
 // so agents can attach playwright/puppeteer to the RUNNING app - live DOM,
 // console, FPS profiling, burst/video capture of motion instead of stills.
 // Chromium binds this to 127.0.0.1 by default. Activates on next restart.
-app.commandLine.appendSwitch('remote-debugging-port', process.env.SQUIDRUN_CDP_PORT || '9223');
+// GHOST-SQUATTING FIX (S467): a dead app's socket can hold the fixed port
+// in LISTEN forever (pid 39200 squatted 9223 across a relaunch and the
+// LISTEN state faked criterion #4 of the v1.1 proof). The port now rotates
+// per-process and the TRUTH lives in a runtime file tools must read -
+// checking netstat for a fixed port is exactly the stale-evidence class
+// the verdict ledger exists to kill.
+const cdpPort = process.env.SQUIDRUN_CDP_PORT
+  || String(9223 + (process.pid % 89)); // 9223-9311, collision-unlikely
+app.commandLine.appendSwitch('remote-debugging-port', cdpPort);
+try {
+  const cdpPortFile = path.join(__dirname, '..', '.squidrun', 'runtime', 'cdp-port.json');
+  fs.mkdirSync(path.dirname(cdpPortFile), { recursive: true });
+  fs.writeFileSync(cdpPortFile, JSON.stringify({
+    port: Number(cdpPort),
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+  }));
+} catch (_) { /* CDP discovery degrades to probing; never block launch */ }
 
 if (process.env.NODE_PATH) {
   try {
