@@ -2,14 +2,16 @@
 'use strict';
 
 /**
- * PreToolUse hook: route image/visual analysis to Codex Desktop.
+ * PreToolUse hook: route ad-hoc image/visual analysis to Oracle.
  *
- * Current boundary, updated 2026-06-02:
- *   Image / visual analysis belongs to Codex Desktop, not Oracle and not the
- *   Architect pane. Codex Desktop is the actor with desktop/browser vision.
+ * Boundary updated 2026-07-03 (ceremony purge, nervous-system-v1): Codex
+ * Desktop left the machine July 1 and its attention bridge is retired; the
+ * live rule routes ad-hoc image analysis to ORACLE. The LOOK lane
+ * (screenshots/captures) stays open for every pane - it is the mandated
+ * draw -> capture -> LOOK verification path.
  *
  * Trigger: assistant calls Read tool on a file with an image extension.
- * Action: BLOCK the Read with a deterministic Codex Desktop attention path.
+ * Action: BLOCK the Read with the Oracle routing instruction.
  *
  * Failure mode this prevents:
  *   - Read image -> describe what's visible and inject unsupported inference.
@@ -47,7 +49,6 @@ function isLookLaneImageRead(filePath, projectDir = PROJECT_DIR) {
   if (normalized.includes('/.squidrun/screenshots/')) return true;
   if (!normalized.includes('/.squidrun/runtime/')) return false;
   if (!normalized.endsWith('.png')) return false;
-  if (normalized.includes('/codex-attention-bridge/proof-packets/')) return true;
   if (/\/bg-[^/]*verification\//.test(normalized)) return true;
   return /(?:capture|screenshot|copyscreen|window|verification|proof)/.test(path.basename(normalized));
 }
@@ -84,21 +85,18 @@ function evaluateImageReadGuard(parsed, options = {}) {
     return { decision: 'allow', reason: 'explicit_bypass' };
   }
 
-  appendAuditLine(auditPath, 'BLOCKED_CODEX_DESKTOP', filePath);
+  appendAuditLine(auditPath, 'BLOCKED_AD_HOC_IMAGE_READ', filePath);
 
   const absoluteFilePath = path.isAbsolute(filePath)
     ? path.resolve(filePath)
     : path.resolve(projectDir, filePath);
   const safeFilePath = absoluteFilePath.replace(/"/g, '\\"');
-  const reason = `IMAGE READ ROUTING: image / visual analysis belongs to Codex Desktop, not Oracle and not this pane.
+  const reason = `IMAGE READ ROUTING (ceremony purge S467 - Codex Desktop left the machine July 1; its attention bridge is retired): ad-hoc image / visual analysis routes to ORACLE, the designated reviewer with vision.
 
-For LIVE UI surfaces/routes, create a proven Codex Desktop attention item with the actual surface target, e.g.:
-  node ui/scripts/hm-codex-attention.js create --requested-by ${role} --reason "Image / visual analysis request" --url "http://127.0.0.1:8787/task-audit-preview" --check "Describe what is visible in plain English. No source inference, no diagnosis. If Codex Desktop heartbeat is stale or proof is pending, report that exact state."
+Send the request with the absolute path:
+  node ui/scripts/hm-send.js oracle "Visual analysis request from ${role}: read ${safeFilePath} and describe what is visible in plain English. No source inference, no diagnosis."
 
-For this BARE IMAGE FILE, hm-codex-attention has no image/file target field yet. Use the closest real target plus the absolute file path in --check, and label this file-read-via-check path UNPROVEN:
-  node ui/scripts/hm-codex-attention.js create --requested-by ${role} --reason "Image file visual analysis request (UNPROVEN file-read-via-check path)" --target-window main --surface "local-image-file-unproven" --check "UNPROVEN PATH: Codex Desktop is local on this machine, but direct file-path image analysis through hm-codex-attention is not yet proven. Open and read the local image at ${safeFilePath}. Describe what's visible in plain English. No source inference, no diagnosis. If Codex Desktop heartbeat is stale/not_proven or proof remains pending, report that exact state."
-
-If image-file analysis becomes common, add a real image/file target field to the Codex attention bridge schema. Do not fall back to Oracle. LOOK-lane captures under .squidrun/screenshots/ and known runtime proof/capture PNG paths are allowed because they are the mandated visual verification lane. If you need to read another image for non-analysis purposes (file existence check, programmatic byte handling), set HM_ALLOW_IMAGE_READ=1 in env for that one call.`;
+LOOK-lane captures under .squidrun/screenshots/ and known runtime proof/capture PNG paths are ALLOWED for every pane - they are the mandated visual verification lane (draw -> capture -> LOOK). For non-analysis reads (file existence check, programmatic byte handling), set HM_ALLOW_IMAGE_READ=1 in env for that one call.`;
 
   return {
     decision: 'block',

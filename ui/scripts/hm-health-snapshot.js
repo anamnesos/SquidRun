@@ -6,9 +6,6 @@ const { execFileSync } = require('child_process');
 const { getProjectRoot } = require('../config');
 const { DEFAULT_PROFILE, namespaceCoordRelPath, normalizeProfileName } = require('../profile');
 const { readSystemCapabilitiesSnapshot } = require('../modules/local-model-capabilities');
-const {
-  buildCodexDesktopCapabilityStatus,
-} = require('../modules/main/codex-desktop-capability-awareness');
 const { PROMOTION } = require('../modules/the-tell/promotion-gate');
 
 const KEY_MODULE_PATHS = Object.freeze({
@@ -1331,15 +1328,8 @@ function inspectSystemCapabilities(projectRoot, options = {}) {
   };
 }
 
-function inspectCodexDesktopCapability(projectRoot, options = {}) {
-  if (options.codexDesktopCapability && typeof options.codexDesktopCapability === 'object') {
-    return options.codexDesktopCapability;
-  }
-  return buildCodexDesktopCapabilityStatus({
-    ...options,
-    projectRoot,
-  });
-}
+// inspectCodexDesktopCapability deleted (S467 ceremony purge): capability
+// truth for an app that left the machine July 1.
 
 function inspectTelegramPoller(projectRoot, options = {}) {
   const profileName = normalizeProfileName(options.profileName || DEFAULT_PROFILE);
@@ -1652,7 +1642,6 @@ function createHealthSnapshot(options = {}) {
   const bridge = resolveBridgeSnapshot(projectRoot, options);
   const memoryConsistency = inspectMemoryConsistency(projectRoot, { ...options, profileName });
   const systemCapabilities = inspectSystemCapabilities(projectRoot, options);
-  const codexDesktopCapability = inspectCodexDesktopCapability(projectRoot, options);
   const telegramPoller = inspectTelegramPoller(projectRoot, {
     ...options,
     profileName,
@@ -1686,7 +1675,6 @@ function createHealthSnapshot(options = {}) {
     bridge,
     memoryConsistency,
     systemCapabilities,
-    codexDesktopCapability,
     theTellShadowRunner,
     telegramPoller,
     supervisor,
@@ -1946,28 +1934,11 @@ function renderStartupHealthMarkdown(snapshot = {}) {
     lines.push('- Recovery: not needed.');
   }
 
-  const codexDesktop = snapshot.codexDesktopCapability && typeof snapshot.codexDesktopCapability === 'object'
-    ? snapshot.codexDesktopCapability
-    : {};
-  const codexProcess = codexDesktop.availability?.codexDesktopProcess || {};
-  const codexAppControl = codexDesktop.availability?.computerUseAppControl || {};
-  const codexInbox = codexDesktop.freshness?.attentionInbox || {};
-  const codexTransport = codexDesktop.availability?.hmCodexDesktopTransport || {};
-  const codexStatusLabel = codexDesktop.status === 'process_available_not_monitored'
-    ? 'available, not monitored'
-    : (codexDesktop.status || 'unknown');
-  lines.push('');
-  lines.push('CODEX DESKTOP CAPABILITY');
-  lines.push(`- Status: ${codexStatusLabel}${codexStatusLabel !== codexDesktop.status && codexDesktop.status ? ` (${codexDesktop.status})` : ''}`);
-  lines.push(`- Process/App: ${codexProcess.status || 'unknown'} (processes=${Number(codexProcess.process_count || 0)}, visible_windows=${Number(codexProcess.visible_window_count || 0)})`);
-  lines.push(`- App-Control Route: ${codexAppControl.status || 'unknown'}${codexAppControl.source_message_id ? ` (source=${codexAppControl.source_message_id})` : ''}`);
-  lines.push(`- Attention Inbox: active=${Number(codexInbox.active_count || 0)}, completed=${Number(codexInbox.completed_count || 0)}, total=${Number(codexInbox.total_count || 0)}, freshness=${codexInbox.polling_freshness || 'unknown'}`);
-  lines.push(`- Desktop Transport: summon=${codexTransport.can_summon_workspace === true ? 'yes' : 'no'}, visible_injection=${codexTransport.visible_injection_proven === true ? 'proven' : 'not_proven'}`);
-  lines.push('- Tools: hm-codex-capability-status, hm-codex-desktop-transport');
-
-  // CODEX ATTENTION POLLER HEARTBEAT section deleted (S464 adjudication,
-  // ruled retired infra): the poller died June 13; every startup since
-  // rendered a permanently-stale warning - a lying pixel per the audit.
+  // CODEX DESKTOP CAPABILITY section deleted (S467 ceremony purge): the app
+  // left the machine July 1 and the attention bridge is retired - the
+  // section still printed 'available' about a ghost in every startup
+  // report, a lying pixel. The CODEX ATTENTION POLLER HEARTBEAT section
+  // died earlier for the same reason (S464 adjudication).
 
   const localModels = snapshot.systemCapabilities?.localModels || {};
   const sleepExtraction = localModels.sleepExtraction || {};
@@ -2191,7 +2162,6 @@ module.exports = {
   inspectSupervisorHeartbeat,
   inspectTelegramPoller,
   inspectSqliteDb,
-  inspectCodexDesktopCapability,
   listJestTests,
   loadSqliteDriver,
   readBridgeKnownDevicesCache,

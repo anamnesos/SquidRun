@@ -27,13 +27,21 @@ function readPayload(filePath) {
 describe('pre-tool-image-read-guard LOOK lane exemption', () => {
   let projectDir;
   let auditPath;
+  let savedBypass;
 
   beforeEach(() => {
     projectDir = makeTempProject();
     auditPath = path.join(projectDir, '.squidrun', 'runtime', 'image-read-routing.log');
+    // Env-hardening: panes run with HM_ALLOW_IMAGE_READ=1 and jest inherits
+    // it - the block-path tests silently became bypass-allows in pane shells.
+    savedBypass = process.env.HM_ALLOW_IMAGE_READ;
+    delete process.env.HM_ALLOW_IMAGE_READ;
   });
 
-  afterEach(() => cleanupTempDir(projectDir));
+  afterEach(() => {
+    cleanupTempDir(projectDir);
+    if (savedBypass !== undefined) process.env.HM_ALLOW_IMAGE_READ = savedBypass;
+  });
 
   test('allows SquidRun screenshot captures without an env bypass', () => {
     const filePath = path.join(projectDir, '.squidrun', 'screenshots', 'capture-1780825900090.png');
@@ -49,10 +57,6 @@ describe('pre-tool-image-read-guard LOOK lane exemption', () => {
       projectDir
     )).toBe(true);
     expect(isLookLaneImageRead(
-      path.join(projectDir, '.squidrun', 'runtime', 'codex-attention-bridge', 'proof-packets', 'codex-proof.desktop.png'),
-      projectDir
-    )).toBe(true);
-    expect(isLookLaneImageRead(
       path.join(projectDir, '.squidrun', 'runtime', 'codex-window-check', 'after-open-copyscreen.png'),
       projectDir
     )).toBe(true);
@@ -63,9 +67,11 @@ describe('pre-tool-image-read-guard LOOK lane exemption', () => {
     const result = evaluateImageReadGuard(readPayload(filePath), { projectDir, auditPath, role: 'builder' });
 
     expect(result.decision).toBe('block');
-    expect(result.reason).toContain('image / visual analysis belongs to Codex Desktop');
+    // Ceremony purge (S467): routing rewired Codex Desktop -> Oracle.
+    expect(result.reason).toContain('routes to ORACLE');
+    expect(result.reason).not.toContain('hm-codex-attention');
     expect(result.reason).toContain('LOOK-lane captures under .squidrun/screenshots/');
-    expect(fs.readFileSync(auditPath, 'utf8')).toContain('BLOCKED_CODEX_DESKTOP');
+    expect(fs.readFileSync(auditPath, 'utf8')).toContain('BLOCKED_AD_HOC_IMAGE_READ');
   });
 
   test('blocks non-capture runtime image assets', () => {
