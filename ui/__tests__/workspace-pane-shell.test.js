@@ -261,8 +261,9 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.squid-room-terminal-drawer-panes').querySelector('.pane[data-pane-id="3"]')).toBeTruthy();
     const builderCreature = doc.querySelector('[data-squid-room-pet="builder"]');
     const oracleCreature = doc.querySelector('[data-squid-room-pet="oracle"]');
-    expect(builderCreature.classList.contains('squid-room-creature')).toBe(true);
-    expect(oracleCreature.classList.contains('squid-room-creature')).toBe(true);
+    // Room remodel v2 (mount step 2): presentation classes are sr2-.
+    expect(builderCreature.classList.contains('sr2-creature-stage')).toBe(true);
+    expect(oracleCreature.classList.contains('sr2-creature-stage')).toBe(true);
     expect(builderCreature.dataset.paneId).toBeUndefined();
     expect(oracleCreature.dataset.paneId).toBeUndefined();
     expect(builderCreature.dataset.squidRoomSourcePaneId).toBe('2');
@@ -270,15 +271,18 @@ describe('workspace pane shell', () => {
     expect(builderCreature.dataset.squidRoomPetAsset).toBe('builder-squid');
     expect(oracleCreature.dataset.squidRoomPetAsset).toBe('oracle-squid');
     // P1.7: procedural creature canvases replace the sprite atlases.
-    const builderCanvas = builderCreature.querySelector('.squid-room-creature-canvas');
-    const oracleCanvas = oracleCreature.querySelector('.squid-room-creature-canvas');
+    const builderCanvas = builderCreature.querySelector('.sr2-creature-canvas');
+    const oracleCanvas = oracleCreature.querySelector('.sr2-creature-canvas');
     expect(builderCanvas).toBeTruthy();
     expect(oracleCanvas).toBeTruthy();
     expect(builderCanvas.dataset.squidRoomCreature).toBe('builder');
     expect(oracleCanvas.dataset.squidRoomCreature).toBe('oracle');
     expect(builderCreature.querySelector('.squid-room-codex-pet-builder-squid')).toBeFalsy();
-    expect(builderCreature.querySelector('.squid-room-pet-name-label').textContent).toBe('Builder');
-    expect(oracleCreature.querySelector('.squid-room-pet-name-label').textContent).toBe('Oracle');
+    expect(builderCreature.querySelector('.sr2-name-tag').textContent).toBe('Builder');
+    expect(oracleCreature.querySelector('.sr2-name-tag').textContent).toBe('Oracle');
+    // Mount step 2: the caption/face-line corpse is gone from the DOM whole.
+    expect(builderCreature.querySelector('.squid-room-pet-caption')).toBeFalsy();
+    expect(builderCreature.querySelector('.face-details')).toBeFalsy();
     // S465 purge: speech is Oracle's viewport-solved system; the old bubble
     // and the sprite-era motion track are gone (the track's CSS animation
     // broke name-tag anchoring from beyond the grave).
@@ -301,8 +305,10 @@ describe('workspace pane shell', () => {
       const terminalPane = doc.querySelector(`.pane[data-pane-id="${corePaneId}"]`);
       expect(terminalPane.querySelector(`#terminal-${corePaneId}`)).toBeTruthy();
     }
-    expect(builderCreature.querySelector('.face-line-text').textContent).toBe('Working the active fix.');
-    expect(oracleCreature.querySelector('.face-line-text').textContent).toBe('Checking the proof.');
+    // Mount step 2: face-line text left the DOM with the caption corpse -
+    // live text renders only in Oracle's speech layer (constitution V.4).
+    expect(builderCreature.querySelector('.face-line-text')).toBeFalsy();
+    expect(oracleCreature.querySelector('.face-line-text')).toBeFalsy();
     expect(doc.querySelector('.squid-room-team-header')).toBeTruthy();
     expect(doc.querySelector('.squid-room-team-eyebrow').textContent).toBe('Ocean');
     expect(doc.querySelector('.squid-room-team-expand-btn').dataset.paneId).toBe('2');

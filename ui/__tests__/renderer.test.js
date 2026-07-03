@@ -484,7 +484,7 @@ describe('renderer.js smoke tests', () => {
       };
       const pane = {
         dataset: { squidRoomPet: 'builder-p15-test' },
-        querySelector: jest.fn((selector) => (selector === '.squid-room-pet-stage' ? stage : null)),
+        querySelector: jest.fn((selector) => (selector === '.sr2-pet-water' ? stage : null)),
       };
       const now = Date.parse('2026-07-02T00:00:00.000Z');
       const makeCommitRow = (rowId) => ({
