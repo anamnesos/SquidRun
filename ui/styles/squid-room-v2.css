@@ -216,3 +216,45 @@ body.sr2-room ::-webkit-scrollbar-thumb {
   border-radius: 999px;
 }
 body.sr2-room ::-webkit-scrollbar-track { background: transparent; }
+
+/* ============================================================
+   STRUCTURAL STACKING (Builder, mount step 3 fix): the legacy CSS
+   carried the room'\''s z-order to its grave - the sky (fixed, z0)
+   painted OVER everything unpositioned. The stack is constitution III
+   made literal; the gate saw a beautiful empty sky and passed, my eyes
+   did not.
+   ============================================================ */
+
+/* The water: creature layer host (manifest'\''s one exact class). */
+body.sr2-room .squid-room-creature-ocean {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: transparent;
+}
+
+body.sr2-room .squid-room-creature-ocean .sr2-creature-stage {
+  pointer-events: auto;
+}
+
+/* Window chrome + content above the water, below nothing. */
+body.sr2-room .header {
+  position: relative;
+  z-index: 4;
+}
+
+body.sr2-room .terminals-section {
+  position: relative;
+  z-index: 3;
+}
+
+/* The stage chain: every wrapper between ocean and canvas fills the water.
+   (Unstyled intermediates collapsed to zero height - the engines ran in a
+   tiny top-left stage and the ribbons pointed at ghosts.) */
+body.sr2-room .sr2-pet-shell,
+body.sr2-room .sr2-pet-water {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
