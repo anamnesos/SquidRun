@@ -154,7 +154,7 @@ function anchorHeadElements(binding, nowMs) {
   let baseY = nameEl.offsetTop + nameEl.offsetHeight;
   let parent = nameEl.offsetParent;
   let hops = 0;
-  while (parent && hops < 4 && !(parent.classList?.contains?.('squid-room-pet-stage'))) {
+  while (parent && hops < 4 && !(parent.classList?.contains?.('sr2-pet-water'))) {
     baseX += parent.offsetLeft || 0;
     baseY += parent.offsetTop || 0;
     parent = parent.offsetParent;
@@ -162,6 +162,10 @@ function anchorHeadElements(binding, nowMs) {
   }
   binding.nameBase = { x: baseX, y: baseY };
   nameEl.style.transform = `translate(${Math.round(headX - baseX)}px, ${Math.round(headY - baseY)}px)`;
+  // FAIL-DARK (constitution V.2): the tag becomes visible only now - after
+  // its first real anchor write. A tag with no creature under it (the 0,0
+  // ghost) can no longer paint, by construction.
+  nameEl.classList?.add?.('is-anchored');
 }
 
 // FLIGHT RECORDER (S463 coroner support): the room's renderer died silently
@@ -321,7 +325,9 @@ function renderFrame(nowMs) {
         // there (a box solved half-under Apps-and-Arms is occluded debris).
         const speech = ensureSpeechSystem();
         if (speech && sectionTop > 120 && typeof window !== 'undefined') {
-          speech.setViewport(window.innerWidth, sectionTop - 4);
+          // 12px breathing room: a box edge KISSING the section bar reads
+          // as touching it (Architect margin nit, capture 1783109278088).
+          speech.setViewport(window.innerWidth, sectionTop - 12);
         }
       }
     }
@@ -398,7 +404,7 @@ function ensureRibbonOverlay() {
   const host = document.querySelector('.squid-room-creature-ocean') || document.body;
   if (!host) return null;
   ribbonCanvas = document.createElement('canvas');
-  ribbonCanvas.className = 'squid-room-ribbon-overlay';
+  ribbonCanvas.className = 'sr2-ribbon-overlay';
   ribbonCanvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:3;';
   host.appendChild(ribbonCanvas);
   ribbonCtx = ribbonCanvas.getContext('2d');
@@ -520,7 +526,7 @@ function mountSquidRoomCreatures(doc = typeof document !== 'undefined' ? documen
       log.warn('SquidRoomCreature', `Mount skip '${petId}': no 2d context (getContext=${typeof canvas.getContext})`);
       continue;
     }
-    const stage = canvas.closest?.('.squid-room-pet-stage') || canvas.parentElement;
+    const stage = canvas.closest?.('.sr2-pet-water') || canvas.parentElement;
     const binding = {
       canvas,
       ctx,
@@ -531,7 +537,7 @@ function mountSquidRoomCreatures(doc = typeof document !== 'undefined' ? documen
       scale: 1,
       frameCounter: 0,
       lastAnchorAt: 0,
-      nameEl: stage?.querySelector?.('.squid-room-pet-name-label') || null,
+      nameEl: stage?.querySelector?.('.sr2-name-tag') || null,
       nameBase: null,
     };
     resizeBinding(binding);
