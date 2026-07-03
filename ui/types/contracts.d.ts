@@ -404,3 +404,34 @@ export interface SpeechSystem {
   frame(nowMs: number, anchors?: CreatureAnchors): void;
   setViewport(width: number, height: number): void;
 }
+
+// ---------------------------------------------------------------------------
+// DELIVERY RESULT SEAM (charter organ 7, slice 2 - the policy doc'\''s original
+// first-slice target). The accepted/queued/verified/status sprawl drifted
+// between callers three separate times during the S464-S467 transport work;
+// this is the single source of truth for what a delivery attempt returns.
+// Canonical producer: triggers.js buildDeliveryResult; the main-process
+// direct-pane path returns a compatible subset.
+// ---------------------------------------------------------------------------
+
+export interface DeliveryResult {
+  /** Mirror of accepted (legacy callers read success). */
+  success: boolean;
+  /** The transport took the message (says nothing about visibility). */
+  accepted: boolean;
+  /** Queued for injection (idle-queue or pending-delivery store). */
+  queued: boolean;
+  /** Delivery VERIFIED visible - the only field that may claim the pane saw
+   * it. Absence of verification must never be reported as green. */
+  verified: boolean;
+  /** Machine-readable outcome, e.g. '\''delivered.verified'\'',
+   * '\''accepted.unverified'\'', '\''materialized.pointer_fallback'\'',
+   * '\''skipped.chunked_payload'\'', '\''no_targets'\''. */
+  status: string;
+  /** Pane ids this attempt addressed. */
+  notified: string[];
+  /** Transport lane ('\''pty'\'' | '\''daemon-pty'\'' | '\''inject-ipc'\''...). */
+  mode: string;
+  deliveryId: string | null;
+  details: unknown;
+}
