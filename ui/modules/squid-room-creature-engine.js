@@ -290,12 +290,44 @@ function createSquidCreature(options = {}) {
     state.current = { x: Number(cx) || 0, y: Number(cy) || 0 };
   }
 
+  /**
+   * SEPARATION (S467, "the squids are stacked"): the runtime reports the
+   * nearest other creature in the SAME shared coordinate space each frame;
+   * a comfortable-distance spring makes meeting = approach, circle, drift
+   * apart - never overlap. null clears (solo creature).
+   */
+  function setNeighbor(x, y) {
+    if (x == null || y == null) {
+      state.neighbor = null;
+      return;
+    }
+    state.neighbor = { x: Number(x), y: Number(y) };
+  }
+
   function tickPresence(dtMs) {
     const dt = dtMs / 1000;
     // Shared current: everything drifts together.
     if (state.current) {
       state.vx += state.current.x * dt;
       state.vy += state.current.y * dt;
+    }
+    // Creature-vs-creature separation: soft spring engaging at ~1.5 body
+    // widths (~105 logical). Strength ramps as they close, so an approach
+    // becomes a circle-past instead of a merge; targets inside the bubble
+    // re-pick so neither parks on the other.
+    if (state.neighbor) {
+      const ndx = state.x - state.neighbor.x;
+      const ndy = state.y - state.neighbor.y;
+      const ndist = Math.hypot(ndx, ndy) || 1;
+      const ENGAGE = 105;
+      if (ndist < ENGAGE) {
+        const push = ((ENGAGE - ndist) / ENGAGE) * 42 * dt;
+        state.vx += (ndx / ndist) * push * 10;
+        state.vy += (ndy / ndist) * push * 10;
+        const tdx = state.targetX - state.neighbor.x;
+        const tdy = state.targetY - state.neighbor.y;
+        if (Math.hypot(tdx, tdy) < 70) pickTarget();
+      }
     }
     // Delight wiggle: fast squash oscillation, decaying.
     if (state.delightMs > 0) {
@@ -1140,6 +1172,7 @@ function createSquidCreature(options = {}) {
     setBounds,
     setExclusionBand,
     setSwimInsets,
+    setNeighbor,
     celebrate,
     delight,
     faceToward,
