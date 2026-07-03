@@ -441,3 +441,79 @@ body.sr2-room .squid-room-terminal-drawer {
 body.sr2-room .squid-room-terminal-drawer[hidden] {
   display: none;
 }
+
+/* ============================================================
+   LAYER 4c — CHROME DEBT PAID (Builder's declared item, pre-reveal)
+   The Terminals toggle and the drawer chrome get the shore's one
+   pill grammar. No raw default buttons anywhere James looks.
+   ============================================================ */
+
+body.sr2-room .squid-room-terminal-drawer-open {
+  position: fixed;
+  top: 12px;
+  right: 14px;
+  z-index: 4;
+  color: var(--sr2-ink);
+  background: color-mix(in srgb, var(--sr2-abyss-1) 86%, var(--sr2-biolume) 14%);
+  border: 1px solid color-mix(in srgb, var(--sr2-biolume) 26%, transparent);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+
+body.sr2-room .squid-room-terminal-drawer-open:hover {
+  border-color: color-mix(in srgb, var(--sr2-biolume) 48%, transparent);
+  background: color-mix(in srgb, var(--sr2-abyss-1) 76%, var(--sr2-biolume) 24%);
+}
+
+body.sr2-room .squid-room-terminal-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(1, 2, 8, 0.55);
+}
+
+body.sr2-room .squid-room-terminal-drawer-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--sr2-abyss-0);
+  border-top: 1px solid color-mix(in srgb, var(--sr2-biolume) 24%, transparent);
+}
+
+body.sr2-room .squid-room-terminal-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  color: var(--sr2-ink);
+  border-bottom: 1px solid color-mix(in srgb, var(--sr2-biolume) 12%, transparent);
+}
+
+body.sr2-room .squid-room-terminal-drawer-close {
+  color: var(--sr2-ink);
+  background: color-mix(in srgb, var(--sr2-abyss-1) 86%, var(--sr2-biolume) 14%);
+  border: 1px solid color-mix(in srgb, var(--sr2-biolume) 26%, transparent);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+body.sr2-room .squid-room-terminal-drawer-close:hover {
+  border-color: color-mix(in srgb, var(--sr2-biolume) 48%, transparent);
+}
+
+body.sr2-room .squid-room-terminal-drawer-panes {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px 14px;
+  overflow: auto;
+}
