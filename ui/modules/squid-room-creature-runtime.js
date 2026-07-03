@@ -325,6 +325,20 @@ function renderFrame(nowMs) {
     if (!reduced) {
       engine.setCurrent(currentX, currentY);
       feedPointerToBinding(binding);
+      // Separation feed: nearest OTHER creature in the shared frame (both
+      // cards span the full window at equal scale, so engine-local
+      // coordinates are directly comparable).
+      let nearest = null;
+      let nearestDist = Infinity;
+      for (const other of mounted.values()) {
+        if (other === binding) continue;
+        const os = other.engine?.state;
+        if (!os) continue;
+        const d = Math.hypot(os.x - engine.state.x, os.y - engine.state.y);
+        if (d < nearestDist) { nearestDist = d; nearest = os; }
+      }
+      if (nearest) engine.setNeighbor(nearest.x, nearest.y);
+      else engine.setNeighbor(null, null);
     } else {
       engine.setPointer(null, null);
       engine.setCurrent(0, 0);
