@@ -353,3 +353,54 @@ export interface AppStatusWriteOptions {
   session?: number | null;
   statusPatch?: JsonRecord | null;
 }
+
+// ---------------------------------------------------------------------------
+// SQUID ROOM SPEECH SEAM (charter organ 7, first slice - the seam whose
+// prose-contract failure put commit hashes in creature speech, S464).
+// Producer: renderer.js face pipeline + squid-room-creature-runtime.js.
+// Consumer: squid-room-speech-system.js (Oracle-owned module).
+// ---------------------------------------------------------------------------
+
+/** Text fed to a creature speech box. NEVER generated - forwarded from the
+ * honest face pipeline, keyed by ledger row identity. */
+export interface SpeechPayload {
+  /** De-jargonized single-line face text. The ONLY text the typewriter may
+   * speak. Empty/absent = the creature goes silent (strip, never invent). */
+  face: string;
+  /** Full humanized message for the expanded bubble. Defaults to face. */
+  full?: string;
+  /** Raw original text, one click deeper in the expand. Never on the face. */
+  raw?: string;
+  /** Ledger row identity. Same identity = idempotent no-restart; new
+   * identity restarts the typewriter. */
+  rowIdentity?: string;
+}
+
+/** Per-frame creature anchor in speech-layer coordinates. Produced by the
+ * creature runtime from engine state x scale + cached canvas rects. */
+export interface CreatureAnchor {
+  /** Mouth point (bubble-chain origin). */
+  mouthX: number;
+  mouthY: number;
+  /** Head center (solver reference). */
+  headX: number;
+  headY: number;
+  /** +1 facing right, -1 facing left (sign of cos(heading)). */
+  facing?: number;
+  /** Creature body rect for the solver's body-exclusion pad. */
+  bodyX?: number;
+  bodyY?: number;
+  bodyW?: number;
+  bodyH?: number;
+}
+
+/** Map of petId -> anchor passed to SpeechSystem.frame() every rAF tick. */
+export type CreatureAnchors = Record<string, CreatureAnchor>;
+
+export interface SpeechSystem {
+  setSpeech(petId: string, payload?: SpeechPayload): void;
+  /** Advance one frame. Missing anchor for a visible pet = fail-dark (hide,
+   * never guess). */
+  frame(nowMs: number, anchors?: CreatureAnchors): void;
+  setViewport(width: number, height: number): void;
+}
