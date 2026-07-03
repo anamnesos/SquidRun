@@ -112,10 +112,15 @@ function paintNebula(ctx, w, h, prng) {
       const wB = 1.35 - 0.55 * u; // teal favors the left (Builder's side)
       const alphaA = cloudA * wA * depthFade;
       const alphaB = cloudB * wB * depthFade;
-      data[i] = Math.min(255, violet[0] * alphaA + teal[0] * alphaB);
-      data[i + 1] = Math.min(255, violet[1] * alphaA + teal[1] * alphaB);
-      data[i + 2] = Math.min(255, violet[2] * alphaA + teal[2] * alphaB);
-      data[i + 3] = Math.min(255, (alphaA + alphaB) * 235);
+      const aSum = alphaA + alphaB;
+      if (aSum <= 0) continue;
+      // Color stays FULL-saturation (weighted violet/teal blend); the alpha
+      // channel ALONE carries cloud intensity. Multiplying both was double
+      // attenuation — dark murk over a dark base, i.e. invisible clouds.
+      data[i] = (violet[0] * alphaA + teal[0] * alphaB) / aSum;
+      data[i + 1] = (violet[1] * alphaA + teal[1] * alphaB) / aSum;
+      data[i + 2] = (violet[2] * alphaA + teal[2] * alphaB) / aSum;
+      data[i + 3] = Math.min(255, aSum * 235);
     }
   }
   ctx.putImageData(image, 0, 0);
