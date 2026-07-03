@@ -137,8 +137,10 @@ function anchorHeadElements(binding, nowMs) {
   if (binding.frameCounter < 60) return;
   const { engine, nameEl } = binding;
   const scale = binding.scale || 1;
+  // Tags hug the crown (audit finding: floating detached) - same tight
+  // offset for both creatures, riding the same anchor family as speech.
   const headX = engine.state.x * scale;
-  const headY = (engine.state.y - 58) * scale;
+  const headY = (engine.state.y - 42) * scale;
   if (!nameEl || !nameEl.isConnected) return;
   // Recapture the CSS resting base every (throttled) pass, ACCUMULATED up
   // the offsetParent chain to the stage: the label's offsetParent is the
@@ -311,6 +313,13 @@ function renderFrame(nowMs) {
         const topInset = Math.max(0, (chromeBottom - binding.canvasRect.top) / scale);
         const bottomInset = Math.max(0, (binding.canvasRect.bottom - sectionTop) / scale);
         engine.setSwimInsets(topInset, bottomInset);
+        // CUTOFF LAW extends to speech: everything below the section bar is
+        // covered by panels, so the speech solver's usable viewport ends
+        // there (a box solved half-under Apps-and-Arms is occluded debris).
+        const speech = ensureSpeechSystem();
+        if (speech && sectionTop > 120 && typeof window !== 'undefined') {
+          speech.setViewport(window.innerWidth, sectionTop - 4);
+        }
       }
     }
     if (!reduced) {
@@ -333,15 +342,102 @@ function renderFrame(nowMs) {
   }
   if (!hidden && !reduced) drawCommsPulse(nowMs);
   // Oracle's speech system steps after all creatures: solver + chains +
-  // typewriter advance on frame time (no timers of its own).
+  // typewriter advance on frame time (no timers of its own). Its return
+  // value is THE TAIL SEAM (organ 7): pooled box-edge attach points that
+  // the ribbon overlay consumes in this same tick.
   const speech = ensureSpeechSystem();
-  if (speech && !hidden) speech.frame(nowMs, speechAnchors);
+  if (speech && !hidden) {
+    const boxAnchors = speech.frame(nowMs, speechAnchors);
+    if (!reduced) drawRibbons(nowMs, boxAnchors);
+  }
 
   if (liveBindings > 0) {
     rafHandle = window.requestAnimationFrame(renderFrame);
   } else {
     lastFrameAt = 0;
   }
+}
+
+// THE RIBBON TAIL (James's leap, S466): the dotted chain's replacement -
+// ONE full-viewport overlay canvas between creatures and boxes drawing a
+// curved ribbon mouth -> box-attach per speaking creature. PERF LAW: fixed
+// segment count, precomputed alpha ramp, cached colors, pooled point
+// scratch - zero per-frame allocations, zero gradient objects.
+const RIBBON_SEGMENTS = 24;
+const RIBBON_ALPHA_RAMP = (() => {
+  const ramp = new Float32Array(RIBBON_SEGMENTS);
+  for (let i = 0; i < RIBBON_SEGMENTS; i += 1) {
+    const t = i / (RIBBON_SEGMENTS - 1);
+    ramp[i] = 0.12 + 0.55 * Math.sin(Math.PI * (0.15 + 0.85 * t)); // fade in from mouth, strong at box
+  }
+  return ramp;
+})();
+let ribbonCanvas = null;
+let ribbonCtx = null;
+const ribbonScratch = { x: 0, y: 0 };
+
+function ensureRibbonOverlay() {
+  if (ribbonCtx || typeof document === 'undefined') return ribbonCtx;
+  const host = document.querySelector('.squid-room-creature-ocean') || document.body;
+  if (!host) return null;
+  ribbonCanvas = document.createElement('canvas');
+  ribbonCanvas.className = 'squid-room-ribbon-overlay';
+  ribbonCanvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:3;';
+  host.appendChild(ribbonCanvas);
+  ribbonCtx = ribbonCanvas.getContext('2d');
+  return ribbonCtx;
+}
+
+function drawRibbons(nowMs, boxAnchors) {
+  const ctx = ensureRibbonOverlay();
+  if (!ctx) return;
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  if (ribbonCanvas.width !== Math.round(vw * dpr) || ribbonCanvas.height !== Math.round(vh * dpr)) {
+    ribbonCanvas.width = Math.round(vw * dpr);
+    ribbonCanvas.height = Math.round(vh * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, vw, vh);
+  if (!boxAnchors) return;
+  const flowPhase = (nowMs % 2600) / 2600;
+  for (const petId in boxAnchors) {
+    const box = boxAnchors[petId];
+    const mouth = speechAnchors[petId];
+    if (!box || box.visible !== true || !mouth) continue;
+    // Curved path: control points sag toward the water between mouth and box.
+    const mx = mouth.mouthX;
+    const my = mouth.mouthY;
+    const bx = box.attachX;
+    const by = box.attachY;
+    const c1x = mx + (bx - mx) * 0.3;
+    const c1y = my + Math.max(18, Math.abs(bx - mx) * 0.08);
+    const c2x = mx + (bx - mx) * 0.7;
+    const c2y = by + Math.max(12, Math.abs(bx - mx) * 0.05);
+    ctx.strokeStyle = box.color || '#7ad7ff';
+    ctx.lineCap = 'round';
+    let prevX = mx;
+    let prevY = my;
+    for (let i = 1; i < RIBBON_SEGMENTS; i += 1) {
+      const t = i / (RIBBON_SEGMENTS - 1);
+      const u = 1 - t;
+      // Cubic bezier point (pooled scratch, no allocation).
+      ribbonScratch.x = u * u * u * mx + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * bx;
+      ribbonScratch.y = u * u * u * my + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * by;
+      // Flow: a brightness wave travels mouth -> box along the ramp.
+      const flow = 0.75 + 0.25 * Math.sin((t - flowPhase) * Math.PI * 4);
+      ctx.globalAlpha = RIBBON_ALPHA_RAMP[i] * flow;
+      ctx.lineWidth = 3.4 - 1.6 * t;
+      ctx.beginPath();
+      ctx.moveTo(prevX, prevY);
+      ctx.lineTo(ribbonScratch.x, ribbonScratch.y);
+      ctx.stroke();
+      prevX = ribbonScratch.x;
+      prevY = ribbonScratch.y;
+    }
+  }
+  ctx.globalAlpha = 1;
 }
 
 function ensureLoop() {
