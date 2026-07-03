@@ -337,7 +337,7 @@ function createSquidRoomLivePane(doc, spec) {
 // The sprite atlases retire with honor (files kept, unused).
 function createSquidRoomPetArtwork(doc, spec) {
   return createElement(doc, 'canvas', {
-    className: 'squid-room-creature-canvas',
+    className: 'sr2-creature-canvas',
     dataset: {
       squidRoomCreature: spec.petId,
       avatarAssetRef: spec.assetRef,
@@ -506,8 +506,10 @@ function renderSquidRoomPetPane(doc, pane, spec, options = {}) {
   if (Array.isArray(pane.childNodes)) pane.childNodes.length = 0;
   pane.innerHTML = '';
   const presentationOnly = options.presentationOnly === true;
+  // ROOM REMODEL v2 (mount step 2): presentation classes are sr2- declared
+  // (constitution III, whitelist law); data attributes carry behavior.
   pane.className = presentationOnly
-    ? `squid-room-pet-pane squid-room-creature squid-room-creature-${spec.petId}`
+    ? `sr2-creature-stage sr2-creature-${spec.petId}`
     : 'pane squid-room-pet-pane';
   if (presentationOnly) {
     delete pane.dataset.paneId;
@@ -525,13 +527,8 @@ function renderSquidRoomPetPane(doc, pane, spec, options = {}) {
   pane.dataset.squidRoomLabel = spec.title;
   pane.dataset.squidRoomPetAsset = spec.assetRef;
 
-  const shell = createElement(doc, 'div', { className: 'squid-room-pet-shell' });
-  const header = createElement(doc, 'div', { className: 'squid-room-pet-header' });
-  const title = createElement(doc, 'div', { className: 'squid-room-pet-title' });
-  title.appendChild(createElement(doc, 'strong', { className: 'pane-title' }, spec.title));
-  header.appendChild(title);
-
-  const stage = createElement(doc, 'div', { className: 'squid-room-pet-stage pet-stage is-active' });
+  const shell = createElement(doc, 'div', { className: 'sr2-pet-shell' });
+  const stage = createElement(doc, 'div', { className: 'sr2-pet-water is-active' });
   // Pedestal-era glow spans (pet-glow/pet-caustics) are GONE (S466):
   // free-swimming creatures sit on nothing, and the static blurred discs
   // read as smudges under the painted cosmos (James caught them live).
@@ -543,26 +540,10 @@ function renderSquidRoomPetPane(doc, pane, spec, options = {}) {
   // (S465 purge - the track's CSS float animation broke name-tag anchoring
   // from beyond the grave). Name label lives directly on the stage: same
   // coordinate frame as the head anchor.
-  stage.appendChild(createElement(doc, 'span', { className: 'squid-room-pet-name-label' }, spec.title));
-
-  const faceLine = createElement(doc, 'div', {
-    className: 'squid-room-pet-caption face-line',
-    id: `squidRoomPetBubble-${spec.paneId}`,
-    attributes: { 'aria-live': 'polite' },
-  });
-  faceLine.appendChild(createElement(doc, 'span', { className: 'face-line-text' }, spec.bubble));
-  const details = createElement(doc, 'details', { className: 'face-details' });
-  details.hidden = true;
-  details.appendChild(createElement(doc, 'summary', { className: 'details-toggle' }, 'raw'));
-  details.appendChild(createElement(doc, 'pre', {
-    className: 'face-raw',
-    id: `squidRoomPetRaw-${spec.paneId}`,
-  }, ''));
-  faceLine.appendChild(details);
-
-  shell.appendChild(header);
+  stage.appendChild(createElement(doc, 'span', { className: 'sr2-name-tag' }, spec.title));
+  // The caption/face-line corpse dies whole (constitution V.4: text lives in
+  // Oracle's speech layer; raw sits behind his visible click affordance).
   shell.appendChild(stage);
-  stage.appendChild(faceLine);
   pane.appendChild(shell);
   return pane;
 }

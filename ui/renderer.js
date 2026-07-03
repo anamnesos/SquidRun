@@ -891,7 +891,7 @@ function isSquidRoomPetCelebrationEvent(row = {}, role = '') {
 
 function triggerSquidRoomPetCelebration(pane, row = {}, nowMs = Date.now()) {
   if (!pane || getSquidRoomPetReducedMotionPreference()) return false;
-  const stage = pane.querySelector?.('.squid-room-pet-stage');
+  const stage = pane.querySelector?.('.sr2-pet-water');
   if (!stage?.classList) return false;
   const role = String(pane.dataset?.squidRoomPet || '').trim().toLowerCase();
   if (!isSquidRoomPetCelebrationEvent(row, role)) return false;
@@ -1006,7 +1006,7 @@ function updateSquidRoomPetPane(pane, row) {
     sprite.dataset.avatarState = state.state;
     animateSquidRoomPetSprite(sprite, state.state);
   }
-  const stage = pane.querySelector?.('.squid-room-pet-stage');
+  const stage = pane.querySelector?.('.sr2-pet-water');
   if (stage?.classList) {
     stage.classList.toggle('is-active', motionClass === 'is-active');
     stage.classList.toggle('is-settling', motionClass === 'is-settling');
