@@ -66,21 +66,22 @@ function fbm(grid, size, x, y, octaves) {
 
 /* ── layer painters: each runs ONCE per (load|resize) ── */
 
-function paintBase(ctx, w, h) {
+function paintBase(ctx, w, h, tokens) {
   // Deep night, uniformly dark. The old light-at-the-top water column WAS
   // the haze James kept seeing (fog-gate: lifted mean luminance across the
   // whole band); depth is now told by star density and cloud placement,
   // not by paling the water. No surface bloom — a pale radial wash is fog
   // by definition.
   const ramp = ctx.createLinearGradient(0, 0, 0, h);
-  ramp.addColorStop(0.0, '#04060f');
-  ramp.addColorStop(0.5, '#02040c');
-  ramp.addColorStop(1.0, '#010208');
+  const rgb = (t) => `rgb(${t[0]}, ${t[1]}, ${t[2]})`;
+  ramp.addColorStop(0.0, rgb(tokens['--sr2-abyss-2']));
+  ramp.addColorStop(0.5, rgb(tokens['--sr2-abyss-1']));
+  ramp.addColorStop(1.0, rgb(tokens['--sr2-abyss-0']));
   ctx.fillStyle = ramp;
   ctx.fillRect(0, 0, w, h);
 }
 
-function paintNebula(ctx, w, h, prng) {
+function paintNebula(ctx, w, h, prng, tokens) {
   // ASTROPHOTO CLOUDS: a few DEFINED formations, not a wash (fog-gate law).
   // Full-res, domain-warped fBm for filamentary structure; pixels are only
   // computed inside each formation's gaussian window, so the sky between
@@ -92,11 +93,11 @@ function paintNebula(ctx, w, h, prng) {
   const data = image.data;
   const formations = [
     // Oracle's violet nebula — upper right corner
-    { cx: 0.82, cy: 0.14, rx: 0.30, ry: 0.16, color: [138, 92, 226], gain: 3.0, threshold: 0.46, seedOff: 0 },
+    { cx: 0.82, cy: 0.14, rx: 0.30, ry: 0.16, color: tokens['--sr2-violet'], gain: 3.0, threshold: 0.46, seedOff: 0 },
     // Builder's teal nebula — upper left corner
-    { cx: 0.14, cy: 0.20, rx: 0.26, ry: 0.14, color: [72, 190, 214], gain: 2.8, threshold: 0.47, seedOff: 11 },
+    { cx: 0.14, cy: 0.20, rx: 0.26, ry: 0.14, color: tokens['--sr2-teal'], gain: 2.8, threshold: 0.47, seedOff: 11 },
     // small magenta seam — high center, quiet
-    { cx: 0.47, cy: 0.08, rx: 0.14, ry: 0.07, color: [186, 92, 176], gain: 2.4, threshold: 0.50, seedOff: 23 },
+    { cx: 0.47, cy: 0.08, rx: 0.14, ry: 0.07, color: tokens['--sr2-magenta'], gain: 2.4, threshold: 0.50, seedOff: 23 },
   ];
   for (const f of formations) {
     const x0 = Math.max(0, Math.floor((f.cx - f.rx) * w));
@@ -163,10 +164,11 @@ function paintStars(ctx, w, h, prng) {
   }
 }
 
-function paintFloorGlow(ctx, w, h) {
+function paintFloorGlow(ctx, w, h, tokens) {
   // The milky sea: bioluminescent teal at the abyss floor.
   const glow = ctx.createRadialGradient(w * 0.5, h * 1.18, h * 0.05, w * 0.5, h * 1.18, h * 0.55);
-  glow.addColorStop(0, 'rgba(94, 234, 212, 0.09)');
+  const b = tokens['--sr2-biolume'];
+  glow.addColorStop(0, `rgba(${b[0]}, ${b[1]}, ${b[2]}, 0.09)`);
   glow.addColorStop(0.5, 'rgba(74, 196, 182, 0.05)');
   glow.addColorStop(1, 'rgba(74, 196, 182, 0)');
   ctx.fillStyle = glow;
@@ -186,6 +188,38 @@ function spawnParticle(prng, w, h, initial) {
     phase: prng() * Math.PI * 2,
     tw: 0.5 + prng() * 1.5,                  // twinkle rate
   };
+}
+
+/* ── constitution tokens (--sr2-*): CSS custom properties are the source
+      of truth; the constitution's signed values are the fallbacks. ── */
+const SR2_FALLBACKS = {
+  '--sr2-abyss-0': '#010208',
+  '--sr2-abyss-1': '#02040c',
+  '--sr2-abyss-2': '#04060f',
+  '--sr2-teal': '#48bed6',
+  '--sr2-violet': '#8a5ce2',
+  '--sr2-magenta': '#ba5cb0',
+  '--sr2-biolume': '#5eead4',
+};
+
+function hexToRgb(hex) {
+  const m = String(hex).trim().match(/^#?([0-9a-f]{6})$/i);
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function readSr2Tokens(doc, win) {
+  const out = {};
+  let styles = null;
+  try {
+    styles = win?.getComputedStyle?.(doc.documentElement) || null;
+  } catch (_) {}
+  for (const [name, fallback] of Object.entries(SR2_FALLBACKS)) {
+    const raw = styles?.getPropertyValue?.(name);
+    out[name] = hexToRgb(raw && raw.trim() ? raw : fallback) || hexToRgb(fallback);
+  }
+  return out;
 }
 
 function createCosmosCanvasRuntime(options = {}) {
@@ -225,11 +259,12 @@ function createCosmosCanvasRuntime(options = {}) {
     const w = state.width; const h = state.height;
     if (!w || !h) return;
     const prng = createPrng(seed);
+    const tokens = readSr2Tokens(doc, win);
     const base = makeLayer(w, h);
-    paintBase(base.getContext('2d'), w, h);
-    paintFloorGlow(base.getContext('2d'), w, h);
+    paintBase(base.getContext('2d'), w, h, tokens);
+    paintFloorGlow(base.getContext('2d'), w, h, tokens);
     const nebula = makeLayer(w, h, NEBULA_SCALE);
-    paintNebula(nebula.getContext('2d'), nebula.width, nebula.height, prng);
+    paintNebula(nebula.getContext('2d'), nebula.width, nebula.height, prng, tokens);
     const stars = makeLayer(w * 1.06, h); // 6% wider than view = parallax room
     paintStars(stars.getContext('2d'), stars.width, h, prng);
     state.layers = { base, nebula, stars };
