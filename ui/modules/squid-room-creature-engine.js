@@ -352,8 +352,10 @@ function createSquidCreature(options = {}) {
     // SOFT PREFERENCE BAND: favor the upper-middle water (the veil band
     // where the glow colors live) via weighting, not walls - 75% of targets
     // in the band, 25% anywhere in the envelope.
+    // Audit wave: the band reaches into mid-water (0.8) so the room's
+    // center lives - the dead gulf between surface and cards is swimmable.
     const bandTop = env.top;
-    const bandBottom = env.top + (env.bottom - env.top) * 0.55;
+    const bandBottom = env.top + (env.bottom - env.top) * 0.8;
     const wantBand = rng() < 0.75;
     const zoneMin = wantBand ? bandTop : env.top;
     const zoneMax = wantBand ? bandBottom : env.bottom;

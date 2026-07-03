@@ -1833,3 +1833,15 @@ body.squid-room .squid-room-creature {
   height: 82vh;
   min-height: 320px;
 }
+
+/* AUDIT WAVE (S466): the squids could never meet - each lived in a 45%-wide
+   card with a structural gulf between. Both cards now span the full window
+   as overlapping transparent layers: ONE shared swim space, so crossing,
+   circling, and drifting apart can actually happen. */
+body.squid-room .squid-room-creature,
+body.squid-room .squid-room-creature-builder,
+body.squid-room .squid-room-creature-oracle {
+  left: 0;
+  right: 0;
+  width: 100%;
+}
