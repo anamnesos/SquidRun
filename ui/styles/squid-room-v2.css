@@ -102,3 +102,117 @@ body.sr2-room {
     animation: none !important;
   }
 }
+
+/* ============================================================
+   LAYER 4 — THE SHORE SKIN (Architect, constitution VI)
+   Sections are shore: solid, calm, no atmosphere effects.
+   NO backdrop-filter anywhere below this line — frosted glass was
+   the old language and it bred the containing-block trap (S464).
+   Every selector is gated on body.sr2-room (added at the link swap);
+   inner selectors reuse functional app classes, which keeps this
+   sheet free of new class literals: the whitelist stays honest.
+   ============================================================ */
+
+/* The shore itself: where the water ends and the work stands. */
+body.sr2-room .terminals-section {
+  background: transparent; /* open water above the shore line */
+}
+
+body.sr2-room .squid-room-surface,
+body.sr2-room .sr2-shore {
+  background: var(--sr2-abyss-0);
+  border-top: 1px solid color-mix(in srgb, var(--sr2-biolume) 22%, transparent);
+}
+
+/* Section headers: quiet authority, ink on abyss. */
+body.sr2-room .squid-room-surface h2,
+body.sr2-room .squid-room-app-title {
+  color: var(--sr2-ink);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+body.sr2-room .squid-room-app {
+  margin: 10px 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--sr2-biolume) 14%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--sr2-abyss-1) 92%, var(--sr2-biolume) 8%);
+  padding: 10px 12px 14px;
+}
+
+/* Arm cards: solid shore stone — raised, never frosted. */
+body.sr2-room .squid-room-live-panes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+body.sr2-room .squid-room-live-pane {
+  border: 1px solid color-mix(in srgb, var(--sr2-biolume) 16%, transparent);
+  border-radius: 12px;
+  background: var(--sr2-abyss-1);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.4);
+}
+
+body.sr2-room .squid-room-live-pane .pane-header {
+  padding: 8px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--sr2-biolume) 10%, transparent);
+  color: var(--sr2-ink);
+}
+
+body.sr2-room .squid-room-live-pane .pane-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+body.sr2-room .squid-room-live-pane .pane-terminal {
+  background: var(--sr2-abyss-0);
+  border-radius: 0 0 12px 12px;
+}
+
+/* Controls: one quiet pill language for the whole shore (matches the
+   crown tag: abyss glass body, biolume edge, ink text). */
+body.sr2-room .squid-room-surface button,
+body.sr2-room .squid-room-pane-menu-trigger,
+body.sr2-room .squid-room-app-toggle-btn {
+  color: var(--sr2-ink);
+  background: color-mix(in srgb, var(--sr2-abyss-1) 86%, var(--sr2-biolume) 14%);
+  border: 1px solid color-mix(in srgb, var(--sr2-biolume) 26%, transparent);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+body.sr2-room .squid-room-surface button:hover,
+body.sr2-room .squid-room-pane-menu-trigger:hover {
+  border-color: color-mix(in srgb, var(--sr2-biolume) 48%, transparent);
+  background: color-mix(in srgb, var(--sr2-abyss-1) 76%, var(--sr2-biolume) 24%);
+}
+
+/* Pane menu panel: portals to <body> while open (S464 fix preserved) —
+   solid shore stone, not glass. */
+body.sr2-room .squid-room-pane-menu-panel {
+  background: var(--sr2-abyss-0);
+  border: 1px solid color-mix(in srgb, var(--sr2-biolume) 24%, transparent);
+  border-radius: 12px;
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.5);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  min-width: 224px;
+  z-index: 100;
+}
+
+/* Drawer: the shore's workroom — same stone, deeper shadow. */
+body.sr2-room .squid-room-terminal-drawer {
+  background: var(--sr2-abyss-0);
+  border-top: 1px solid color-mix(in srgb, var(--sr2-biolume) 24%, transparent);
+  box-shadow: 0 -14px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* Scrollbars: abyss-quiet. */
+body.sr2-room ::-webkit-scrollbar { width: 10px; height: 10px; }
+body.sr2-room ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--sr2-ink) 14%, transparent);
+  border-radius: 999px;
+}
+body.sr2-room ::-webkit-scrollbar-track { background: transparent; }
