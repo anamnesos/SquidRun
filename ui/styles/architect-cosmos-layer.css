@@ -1,62 +1,125 @@
 /* ═══════════════════════════════════════════════════════════════
-   THE COSMOS — hand-authored by Architect (Fable), 2026-07-02
-   A universe that reads as a universe at first glance.
-   Builder: integrate VERBATIM. One DOM hook required at window root:
-   <div class="cosmos"><div class="stars s1"></div><div class="stars s2"></div>
-   <div class="stars s3"></div><div class="nebula n1"></div><div class="nebula n2"></div>
-   <div class="nebula n3"></div><div class="galaxy"></div><div class="comet"></div></div>
-   placed as the FIRST child of body (z-index below creatures & cards).
-   All animation = transform/opacity only. Reduced-motion = still cosmos.
+   THE ABYSSAL COSMOS v2 — hand-authored by Architect (Fable), 2026-07-03
+   James: "cosmic universe background I think we can do better...
+   think about the squidroom as a whole that makes sense."
+
+   The concept that makes the room make sense: this is not squids in
+   space. It is an ocean so deep and so clear that the stars bleed
+   through the surface. Light comes from ABOVE (the surface), the dark
+   is BELOW (the abyss). Stars live in the upper third, seen through
+   water; the deep belongs to marine snow and bioluminescence. The
+   creatures' glow and the room's teal UI are the same light.
+
+   DOM contract (workspace-pane-shell.js ensureSquidRoomSpaceLayers):
+   <div class="cosmos">
+     <div class="ray r1"/><div class="ray r2"/><div class="ray r3"/>
+     <div class="stars s1"/><div class="stars s2"/><div class="stars s3"/>
+     <div class="snow p1"/><div class="snow p2"/>
+     <div class="veil v1"/><div class="veil v2"/><div class="veil v3"/>
+     <div class="galaxy"/><div class="comet"/><div class="seafloor"/>
+   </div>  — first child of body, z-index below creatures & cards.
+
+   PERF LAW: every gradient painted ONCE at style-resolve; animation is
+   transform/opacity ONLY; no filter animation; masks are static.
+   Reduced-motion = a still ocean.
    ═══════════════════════════════════════════════════════════════ */
 
 .cosmos {
   position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+  /* The water column: light surface above, abyss below. */
   background:
-    radial-gradient(ellipse 130% 90% at 22% 108%, rgba(58, 34, 96, 0.34), transparent 55%),
-    radial-gradient(ellipse 110% 80% at 85% -10%, rgba(20, 52, 84, 0.42), transparent 58%),
-    radial-gradient(ellipse 70% 55% at 62% 42%, rgba(24, 18, 54, 0.5), transparent 70%),
-    linear-gradient(168deg, #05060f 0%, #0a0920 34%, #070b1c 62%, #030409 100%);
+    /* surface glow — where the world above touches the water */
+    radial-gradient(ellipse 140% 42% at 50% -14%, rgba(96, 148, 202, 0.16), transparent 62%),
+    /* creature-glow ambience woven into the column */
+    radial-gradient(ellipse 90% 60% at 78% 8%, rgba(110, 78, 190, 0.10), transparent 60%),
+    radial-gradient(ellipse 100% 64% at 16% 16%, rgba(56, 132, 186, 0.10), transparent 62%),
+    /* the column itself: surface-blue -> mid-water -> abyssal near-black */
+    linear-gradient(178deg,
+      #0a1428 0%,
+      #081020 18%,
+      #060b1c 40%,
+      #04071a 66%,
+      #020411 88%,
+      #01020a 100%);
 }
 
-/* ── STARFIELD: three parallax depths, box-shadow constellations ── */
-.cosmos .stars { position: absolute; inset: -10%; }
-.cosmos .stars::before, .cosmos .stars::after {
+/* ── GOD RAYS: three vast shafts from the surface, slowly swaying.
+      Painted once as long soft gradients; only transform animates. ── */
+.cosmos .ray {
+  position: absolute; top: -12%; height: 86%; opacity: 0.8;
+  transform-origin: 50% -8%;
+  /* fade the shafts out with depth — static mask, painted once */
+  -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,.9) 0%, rgba(0,0,0,.5) 44%, transparent 82%);
+  mask-image: linear-gradient(180deg, rgba(0,0,0,.9) 0%, rgba(0,0,0,.5) 44%, transparent 82%);
+}
+.cosmos .r1 {
+  left: 14%; width: 13vw;
+  background: linear-gradient(100deg, transparent 12%, rgba(132, 176, 220, 0.075) 46%, rgba(132, 176, 220, 0.045) 58%, transparent 88%);
+  animation: ray-sway-a 44s ease-in-out infinite alternate;
+}
+.cosmos .r2 {
+  left: 44%; width: 19vw;
+  background: linear-gradient(97deg, transparent 10%, rgba(120, 168, 214, 0.06) 42%, rgba(150, 190, 228, 0.085) 55%, transparent 90%);
+  animation: ray-sway-b 58s ease-in-out infinite alternate;
+}
+.cosmos .r3 {
+  left: 72%; width: 10vw;
+  background: linear-gradient(103deg, transparent 14%, rgba(140, 182, 224, 0.065) 50%, transparent 86%);
+  animation: ray-sway-a 71s ease-in-out infinite alternate-reverse;
+}
+@keyframes ray-sway-a {
+  0%   { transform: rotate(-1.6deg) translate3d(-0.7vw, 0, 0); opacity: .62; }
+  100% { transform: rotate( 1.3deg) translate3d( 0.9vw, 0, 0); opacity: .95; }
+}
+@keyframes ray-sway-b {
+  0%   { transform: rotate( 1.4deg) translate3d( 0.6vw, 0, 0); opacity: .9; }
+  100% { transform: rotate(-1.1deg) translate3d(-0.8vw, 0, 0); opacity: .58; }
+}
+
+/* ── STARFIELD: real stars, but they belong to the SURFACE world —
+      dense at the top, dissolving by mid-water. Static masks do the
+      depth falloff; coordinates cluster in the upper half. ── */
+.cosmos .stars { position: absolute; inset: -8% -10%; }
+.cosmos .stars::before {
   content: ""; position: absolute; width: 2px; height: 2px; border-radius: 50%;
   background: transparent;
 }
-/* far layer — dense, dim, tiny */
+.cosmos .s1, .cosmos .s2, .cosmos .s3 {
+  -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,1) 0%, rgba(0,0,0,.85) 30%, rgba(0,0,0,.35) 52%, transparent 72%);
+  mask-image: linear-gradient(180deg, rgba(0,0,0,1) 0%, rgba(0,0,0,.85) 30%, rgba(0,0,0,.35) 52%, transparent 72%);
+}
+/* far layer — dense, dim, tiny; upper-water coordinates */
 .cosmos .s1::before { box-shadow:
-  4vw 12vh 0 0 rgba(255,255,255,.38), 11vw 78vh 0 0 rgba(255,255,255,.30), 17vw 34vh 0 0 rgba(210,225,255,.34),
-  23vw 61vh 0 0 rgba(255,255,255,.26), 29vw 8vh  0 0 rgba(255,255,255,.36), 33vw 88vh 0 0 rgba(200,220,255,.28),
-  38vw 45vh 0 0 rgba(255,255,255,.32), 44vw 23vh 0 0 rgba(255,255,255,.24), 49vw 71vh 0 0 rgba(225,235,255,.34),
-  54vw 15vh 0 0 rgba(255,255,255,.30), 58vw 52vh 0 0 rgba(255,255,255,.26), 63vw 83vh 0 0 rgba(255,255,255,.32),
-  68vw 37vh 0 0 rgba(210,230,255,.28), 73vw 64vh 0 0 rgba(255,255,255,.34), 78vw 9vh  0 0 rgba(255,255,255,.26),
-  83vw 47vh 0 0 rgba(255,255,255,.30), 88vw 76vh 0 0 rgba(230,240,255,.28), 92vw 28vh 0 0 rgba(255,255,255,.34),
-  96vw 58vh 0 0 rgba(255,255,255,.24), 7vw  55vh 0 0 rgba(255,255,255,.28), 14vw 92vh 0 0 rgba(255,255,255,.22),
-  20vw 5vh  0 0 rgba(220,235,255,.30), 26vw 40vh 0 0 rgba(255,255,255,.24), 41vw 95vh 0 0 rgba(255,255,255,.28),
-  47vw 3vh  0 0 rgba(255,255,255,.26), 52vw 30vh 0 0 rgba(235,240,255,.30), 61vw 18vh 0 0 rgba(255,255,255,.22),
-  66vw 90vh 0 0 rgba(255,255,255,.28), 71vw 50vh 0 0 rgba(255,255,255,.24), 76vw 26vh 0 0 rgba(255,255,255,.30),
-  81vw 68vh 0 0 rgba(215,230,255,.26), 86vw 14vh 0 0 rgba(255,255,255,.28), 90vw 41vh 0 0 rgba(255,255,255,.22),
-  94vw 86vh 0 0 rgba(255,255,255,.30), 2vw  33vh 0 0 rgba(255,255,255,.26), 9vw  20vh 0 0 rgba(240,245,255,.24);
+  4vw 7vh 0 0 rgba(255,255,255,.38), 11vw 47vh 0 0 rgba(255,255,255,.24), 17vw 20vh 0 0 rgba(210,225,255,.34),
+  23vw 37vh 0 0 rgba(255,255,255,.26), 29vw 5vh  0 0 rgba(255,255,255,.36), 33vw 53vh 0 0 rgba(200,220,255,.22),
+  38vw 27vh 0 0 rgba(255,255,255,.32), 44vw 14vh 0 0 rgba(255,255,255,.24), 49vw 43vh 0 0 rgba(225,235,255,.28),
+  54vw 9vh  0 0 rgba(255,255,255,.30), 58vw 31vh 0 0 rgba(255,255,255,.26), 63vw 50vh 0 0 rgba(255,255,255,.24),
+  68vw 22vh 0 0 rgba(210,230,255,.28), 73vw 38vh 0 0 rgba(255,255,255,.30), 78vw 5vh  0 0 rgba(255,255,255,.26),
+  83vw 28vh 0 0 rgba(255,255,255,.30), 88vw 46vh 0 0 rgba(230,240,255,.24), 92vw 17vh 0 0 rgba(255,255,255,.34),
+  96vw 35vh 0 0 rgba(255,255,255,.24), 7vw  33vh 0 0 rgba(255,255,255,.28), 14vw 55vh 0 0 rgba(255,255,255,.18),
+  20vw 3vh  0 0 rgba(220,235,255,.30), 26vw 24vh 0 0 rgba(255,255,255,.24), 41vw 57vh 0 0 rgba(255,255,255,.20),
+  47vw 2vh  0 0 rgba(255,255,255,.26), 52vw 18vh 0 0 rgba(235,240,255,.30), 61vw 11vh 0 0 rgba(255,255,255,.22),
+  66vw 54vh 0 0 rgba(255,255,255,.20), 71vw 30vh 0 0 rgba(255,255,255,.24), 76vw 16vh 0 0 rgba(255,255,255,.30),
+  81vw 41vh 0 0 rgba(215,230,255,.24), 86vw 8vh  0 0 rgba(255,255,255,.28), 90vw 25vh 0 0 rgba(255,255,255,.22),
+  94vw 52vh 0 0 rgba(255,255,255,.24), 2vw  20vh 0 0 rgba(255,255,255,.26), 9vw  12vh 0 0 rgba(240,245,255,.24);
 }
-/* mid layer — brighter, sparser */
+/* mid layer — brighter, sparser, still surface-bound */
 .cosmos .s2::before { width: 2.5px; height: 2.5px; box-shadow:
-  8vw  26vh 0 0 rgba(255,255,255,.62), 19vw 70vh 0 0 rgba(190,220,255,.55), 27vw 14vh 0 0 rgba(255,255,255,.58),
-  36vw 56vh 0 0 rgba(255,245,230,.52), 45vw 84vh 0 0 rgba(255,255,255,.60), 53vw 38vh 0 0 rgba(205,225,255,.56),
-  62vw 7vh  0 0 rgba(255,255,255,.54), 70vw 62vh 0 0 rgba(255,255,255,.58), 79vw 31vh 0 0 rgba(255,235,215,.52),
-  87vw 79vh 0 0 rgba(255,255,255,.56), 95vw 19vh 0 0 rgba(220,235,255,.60), 13vw 48vh 0 0 rgba(255,255,255,.52),
-  31vw 91vh 0 0 rgba(255,255,255,.54), 58vw 73vh 0 0 rgba(235,225,255,.58), 74vw 44vh 0 0 rgba(255,255,255,.50),
-  91vw 53vh 0 0 rgba(255,255,255,.56), 5vw  67vh 0 0 rgba(255,250,235,.52), 41vw 11vh 0 0 rgba(255,255,255,.58);
+  8vw  16vh 0 0 rgba(255,255,255,.62), 19vw 42vh 0 0 rgba(190,220,255,.48), 27vw 9vh  0 0 rgba(255,255,255,.58),
+  36vw 34vh 0 0 rgba(255,245,230,.46), 45vw 51vh 0 0 rgba(255,255,255,.44), 53vw 23vh 0 0 rgba(205,225,255,.56),
+  62vw 4vh  0 0 rgba(255,255,255,.54), 70vw 38vh 0 0 rgba(255,255,255,.48), 79vw 19vh 0 0 rgba(255,235,215,.52),
+  87vw 48vh 0 0 rgba(255,255,255,.42), 95vw 12vh 0 0 rgba(220,235,255,.60), 13vw 29vh 0 0 rgba(255,255,255,.52),
+  31vw 55vh 0 0 rgba(255,255,255,.38), 58vw 44vh 0 0 rgba(235,225,255,.44), 74vw 27vh 0 0 rgba(255,255,255,.50),
+  91vw 32vh 0 0 rgba(255,255,255,.52), 5vw  40vh 0 0 rgba(255,250,235,.44), 41vw 7vh  0 0 rgba(255,255,255,.58);
 }
-/* near layer — few, bright, slightly colored (these twinkle) */
+/* near layer — few, bright, the ones that twinkle */
 .cosmos .s3::before { width: 3px; height: 3px; box-shadow:
-  16vw 22vh 0 1px rgba(255,255,255,.85), 34vw 76vh 0 1px rgba(180,215,255,.78),
-  57vw 29vh 0 1px rgba(255,255,255,.80), 72vw 85vh 0 1px rgba(255,225,200,.72),
-  84vw 12vh 0 1px rgba(200,230,255,.82), 24vw 51vh 0 1px rgba(255,255,255,.75),
-  93vw 66vh 0 1px rgba(230,210,255,.78), 48vw 60vh 0 1px rgba(255,255,255,.72),
-  65vw 18vh 0 1px rgba(255,255,255,.80), 10vw 88vh 0 1px rgba(210,240,255,.70);
+  16vw 13vh 0 1px rgba(255,255,255,.85), 34vw 46vh 0 1px rgba(180,215,255,.62),
+  57vw 18vh 0 1px rgba(255,255,255,.80), 72vw 51vh 0 1px rgba(255,225,200,.55),
+  84vw 7vh  0 1px rgba(200,230,255,.82), 24vw 31vh 0 1px rgba(255,255,255,.72),
+  93vw 40vh 0 1px rgba(230,210,255,.64), 48vw 36vh 0 1px rgba(255,255,255,.66),
+  65vw 11vh 0 1px rgba(255,255,255,.80), 10vw 53vh 0 1px rgba(210,240,255,.56);
 }
-/* twinkle + parallax drift (transform/opacity only) */
 .cosmos .s3 { animation: star-twinkle 4.2s ease-in-out infinite alternate, drift-near 240s linear infinite; }
 .cosmos .s2 { animation: drift-mid 400s linear infinite; opacity: .92; }
 .cosmos .s1 { animation: drift-far 640s linear infinite; opacity: .85; }
@@ -65,56 +128,109 @@
 @keyframes drift-mid  { to { transform: translate3d(-3.2vw,  1.7vh, 0); } }
 @keyframes drift-near { to { transform: translate3d(-5.0vw,  2.6vh, 0); } }
 
-/* ── NEBULAE: the creatures' colors woven into the sky ── */
-.cosmos .nebula { position: absolute; border-radius: 50%; filter: blur(48px); mix-blend-mode: screen; }
-.cosmos .n1 { /* violet — Oracle's sky */
-  width: 58vw; height: 46vh; left: 55%; top: 6%;
-  background: radial-gradient(ellipse at 40% 55%, rgba(124, 82, 208, 0.24), rgba(88, 48, 160, 0.10) 55%, transparent 74%);
-  animation: nebula-breathe-a 46s ease-in-out infinite alternate;
+/* ── MARINE SNOW: the deep's own weather. Tiny soft motes that RISE —
+      the sea's answer to a starfield. The layer is two viewports tall
+      with duplicated coordinates so the -110vh loop never shows a seam;
+      coordinates live in the lower two thirds of each copy. ── */
+.cosmos .snow { position: absolute; left: -10%; right: -10%; top: 0; height: 220vh; }
+.cosmos .snow::before {
+  content: ""; position: absolute; width: 2px; height: 2px; border-radius: 50%;
+  background: transparent; filter: blur(0.5px);
 }
-.cosmos .n2 { /* teal-blue — Builder's sky */
-  width: 52vw; height: 42vh; left: -8%; top: 22%;
-  background: radial-gradient(ellipse at 60% 45%, rgba(64, 150, 208, 0.20), rgba(40, 96, 160, 0.09) 55%, transparent 75%);
-  animation: nebula-breathe-b 58s ease-in-out infinite alternate;
+.cosmos .p1::before { box-shadow:
+  6vw  62vh 0 0 rgba(178,214,222,.30), 15vw 88vh 0 0 rgba(160,200,214,.22), 24vw 71vh 0 0 rgba(190,225,230,.26),
+  33vw 96vh 0 0 rgba(170,210,220,.20), 42vw 66vh 0 0 rgba(184,220,226,.28), 51vw 82vh 0 0 rgba(160,205,215,.22),
+  60vw 58vh 0 0 rgba(196,228,232,.24), 69vw 92vh 0 0 rgba(168,208,218,.20), 78vw 74vh 0 0 rgba(186,222,228,.26),
+  87vw 63vh 0 0 rgba(172,212,222,.22), 95vw 85vh 0 0 rgba(190,224,230,.24), 11vw 77vh 0 0 rgba(164,206,216,.18),
+  47vw 99vh 0 0 rgba(180,216,224,.22), 74vw 55vh 0 0 rgba(174,214,224,.20), 90vw 70vh 0 0 rgba(188,222,228,.18),
+  6vw  172vh 0 0 rgba(178,214,222,.30), 15vw 198vh 0 0 rgba(160,200,214,.22), 24vw 181vh 0 0 rgba(190,225,230,.26),
+  33vw 206vh 0 0 rgba(170,210,220,.20), 42vw 176vh 0 0 rgba(184,220,226,.28), 51vw 192vh 0 0 rgba(160,205,215,.22),
+  60vw 168vh 0 0 rgba(196,228,232,.24), 69vw 202vh 0 0 rgba(168,208,218,.20), 78vw 184vh 0 0 rgba(186,222,228,.26),
+  87vw 173vh 0 0 rgba(172,212,222,.22), 95vw 195vh 0 0 rgba(190,224,230,.24), 11vw 187vh 0 0 rgba(164,206,216,.18),
+  47vw 209vh 0 0 rgba(180,216,224,.22), 74vw 165vh 0 0 rgba(174,214,224,.20), 90vw 180vh 0 0 rgba(188,222,228,.18);
 }
-.cosmos .n3 { /* deep magenta seam where their skies meet */
-  width: 44vw; height: 34vh; left: 28%; top: 58%;
-  background: radial-gradient(ellipse at 50% 50%, rgba(164, 74, 158, 0.13), rgba(110, 46, 120, 0.06) 60%, transparent 78%);
-  animation: nebula-breathe-a 72s ease-in-out infinite alternate-reverse;
+.cosmos .p2::before { width: 2.5px; height: 2.5px; box-shadow:
+  9vw  68vh 0 0 rgba(150,230,214,.30), 28vw 84vh 0 0 rgba(140,220,206,.24), 45vw 60vh 0 0 rgba(158,236,220,.28),
+  63vw 78vh 0 0 rgba(146,226,210,.22), 81vw 94vh 0 0 rgba(154,232,216,.26), 19vw 100vh 0 0 rgba(142,222,206,.20),
+  55vw 90vh 0 0 rgba(150,230,212,.24), 72vw 64vh 0 0 rgba(160,238,222,.22), 93vw 76vh 0 0 rgba(148,228,212,.20),
+  37vw 72vh 0 0 rgba(156,234,218,.26),
+  9vw  178vh 0 0 rgba(150,230,214,.30), 28vw 194vh 0 0 rgba(140,220,206,.24), 45vw 170vh 0 0 rgba(158,236,220,.28),
+  63vw 188vh 0 0 rgba(146,226,210,.22), 81vw 204vh 0 0 rgba(154,232,216,.26), 19vw 210vh 0 0 rgba(142,222,206,.20),
+  55vw 200vh 0 0 rgba(150,230,212,.24), 72vw 174vh 0 0 rgba(160,238,222,.22), 93vw 186vh 0 0 rgba(148,228,212,.20),
+  37vw 182vh 0 0 rgba(156,234,218,.26);
 }
-@keyframes nebula-breathe-a { 0% { transform: translate3d(0,0,0) scale(1);     opacity: .85; }
-                              100%{ transform: translate3d(-2.5vw,1.4vh,0) scale(1.07); opacity: 1; } }
-@keyframes nebula-breathe-b { 0% { transform: translate3d(0,0,0) scale(1.05);  opacity: .9; }
-                              100%{ transform: translate3d(2vw,-1.2vh,0) scale(1);      opacity: .75; } }
+.cosmos .p1 { animation: snow-rise 150s linear infinite; opacity: .85; }
+.cosmos .p2 { animation: snow-rise 105s linear infinite; opacity: .9; }
+@keyframes snow-rise { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(0.8vw, -110vh, 0); } }
 
-/* ── A DISTANT GALAXY: small, quiet, upper corner ── */
+/* ── LIGHT VEILS: the creatures' colors as broad sheets of light
+      diffusing through water — wide and horizontal, never blobs. ── */
+.cosmos .veil { position: absolute; mix-blend-mode: screen; filter: blur(42px); border-radius: 50%; }
+.cosmos .v1 { /* violet — Oracle's water */
+  width: 84vw; height: 22vh; left: 34%; top: 10%;
+  background: radial-gradient(ellipse at 45% 50%, rgba(124, 82, 208, 0.20), rgba(88, 48, 160, 0.08) 55%, transparent 76%);
+  animation: veil-breathe-a 52s ease-in-out infinite alternate;
+}
+.cosmos .v2 { /* teal-blue — Builder's water */
+  width: 78vw; height: 20vh; left: -16%; top: 24%;
+  background: radial-gradient(ellipse at 58% 48%, rgba(64, 150, 208, 0.18), rgba(40, 96, 160, 0.07) 56%, transparent 78%);
+  animation: veil-breathe-b 66s ease-in-out infinite alternate;
+}
+.cosmos .v3 { /* the seam where their waters meet, deeper and dimmer */
+  width: 66vw; height: 16vh; left: 20%; top: 44%;
+  background: radial-gradient(ellipse at 50% 50%, rgba(150, 78, 168, 0.10), rgba(104, 50, 124, 0.05) 58%, transparent 80%);
+  animation: veil-breathe-a 80s ease-in-out infinite alternate-reverse;
+}
+@keyframes veil-breathe-a {
+  0%   { transform: translate3d(0,0,0) scaleX(1);        opacity: .8; }
+  100% { transform: translate3d(-3vw, 0.8vh, 0) scaleX(1.08); opacity: 1; }
+}
+@keyframes veil-breathe-b {
+  0%   { transform: translate3d(0,0,0) scaleX(1.06);     opacity: .92; }
+  100% { transform: translate3d(2.4vw, -0.6vh, 0) scaleX(1);  opacity: .7; }
+}
+
+/* ── A DISTANT GALAXY, seen through the surface: quiet, upper corner ── */
 .cosmos .galaxy {
-  position: absolute; width: 210px; height: 210px; right: 7%; top: 9%;
+  position: absolute; width: 200px; height: 200px; right: 7%; top: 7%;
   background:
-    radial-gradient(circle at 50% 50%, rgba(255,255,255,.5), rgba(255,240,220,.16) 12%, transparent 22%),
-    conic-gradient(from 40deg, transparent 0deg, rgba(190,205,255,.10) 70deg, transparent 130deg,
-                   rgba(230,200,255,.09) 210deg, transparent 275deg, rgba(190,220,255,.08) 330deg, transparent 360deg);
-  border-radius: 50%; filter: blur(2.5px); opacity: .5; transform: rotate(-24deg) scale(1);
+    radial-gradient(circle at 50% 50%, rgba(255,255,255,.42), rgba(255,240,220,.13) 12%, transparent 22%),
+    conic-gradient(from 40deg, transparent 0deg, rgba(190,205,255,.09) 70deg, transparent 130deg,
+                   rgba(230,200,255,.08) 210deg, transparent 275deg, rgba(190,220,255,.07) 330deg, transparent 360deg);
+  border-radius: 50%; filter: blur(2.5px); opacity: .42; transform: rotate(-24deg);
   animation: galaxy-turn 300s linear infinite;
 }
 @keyframes galaxy-turn { to { transform: rotate(336deg); } }
 
-/* ── SHOOTING STAR: rare, fast, diagonal — one pooled element ── */
+/* ── SHOOTING STAR through the surface: rare, brief, cool-teal tail ── */
 .cosmos .comet {
-  position: absolute; width: 130px; height: 2px; left: -12%; top: 18%;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.9), rgba(160,210,255,.4), transparent);
-  border-radius: 2px; opacity: 0; transform: rotate(16deg);
-  animation: comet-streak 210s linear infinite;   /* visible ~0.7s of every 210s */
+  position: absolute; width: 130px; height: 2px; left: -12%; top: 12%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.9), rgba(150,225,225,.4), transparent);
+  border-radius: 2px; opacity: 0; transform: rotate(14deg);
+  animation: comet-streak 210s linear infinite;
 }
 @keyframes comet-streak {
-  0%, 98.5% { opacity: 0; transform: translate3d(0,0,0) rotate(16deg); }
+  0%, 98.5% { opacity: 0; transform: translate3d(0,0,0) rotate(14deg); }
   98.8%     { opacity: .95; }
-  99.6%     { opacity: 0;  transform: translate3d(120vw, 34vh, 0) rotate(16deg); }
-  100%      { opacity: 0;  transform: translate3d(0,0,0) rotate(16deg); }
+  99.6%     { opacity: 0;  transform: translate3d(120vw, 26vh, 0) rotate(14deg); }
+  100%      { opacity: 0;  transform: translate3d(0,0,0) rotate(14deg); }
 }
+
+/* ── THE MILKY SEA: a faint bioluminescent horizon at the abyss floor —
+      the room's teal, so the UI, the creatures, and the deep agree. ── */
+.cosmos .seafloor {
+  position: absolute; left: -6%; right: -6%; bottom: -2%; height: 26vh;
+  background:
+    radial-gradient(ellipse 120% 90% at 50% 118%, rgba(94, 234, 212, 0.085), rgba(64, 180, 170, 0.035) 48%, transparent 72%),
+    radial-gradient(ellipse 60% 50% at 24% 112%, rgba(70, 190, 180, 0.05), transparent 70%),
+    radial-gradient(ellipse 55% 46% at 78% 115%, rgba(88, 210, 196, 0.045), transparent 72%);
+  animation: seafloor-pulse 38s ease-in-out infinite alternate;
+}
+@keyframes seafloor-pulse { 0% { opacity: .7; } 100% { opacity: 1; } }
 
 /* ── stillness ── */
 @media (prefers-reduced-motion: reduce) {
-  .cosmos .stars, .cosmos .nebula, .cosmos .galaxy, .cosmos .comet { animation: none !important; }
+  .cosmos .stars, .cosmos .snow, .cosmos .veil, .cosmos .galaxy,
+  .cosmos .comet, .cosmos .ray, .cosmos .seafloor { animation: none !important; }
   .cosmos .comet { opacity: 0; }
 }
