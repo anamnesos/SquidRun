@@ -20,11 +20,8 @@ module.exports = Object.freeze({
   // entry here is a debt against the namespace rule).
   classes: Object.freeze([
     'squid-room-creature-ocean', // Builder's canvas layer mount point
-    // DEBT, dies at the link swap (legacy CSS still styles the shore until
-    // the Architect's layer-4 skin lands; these gate that styling):
-    'squid-room', // body gate for legacy room CSS scoping
-    'squid-room-workspace', // body gate for room layout
-    'squid-room-core-terminal-pane', // drawer terminal pane (S408 container-unity)
+    // Link swap complete (mount step 3): the three legacy debt entries
+    // (body gates + drawer pane) resolved - sr2-room is the only body gate.
   ]),
   // Source files whose room-scoped class literals the contract scans.
   presentationSources: Object.freeze([

@@ -197,7 +197,7 @@ describe('workspace pane shell', () => {
     configureWorkspacePaneShell({ windowKey: 'main' }, terminal, doc);
 
     expect(terminal.setActivePaneIds).toHaveBeenCalledWith(null);
-    expect(doc.body.classList.contains('squid-room')).toBe(false);
+    expect(doc.body.classList.contains('sr2-room')).toBe(false);
     expect(doc.querySelector('.abyss-motes')).toBeFalsy();
     expect(doc.getElementById('terminal-2')).toBeTruthy();
     expect(doc.getElementById('terminal-3')).toBeTruthy();
@@ -216,8 +216,10 @@ describe('workspace pane shell', () => {
       paneIds: ['2', '3', 'trustquote-lead', 'trustquote-schedule-dispatch', 'trustquote-app', 'trustquote-invoice'],
       teamPaneIds: ['2', '3'],
     }));
-    expect(doc.body.classList.contains('squid-room-workspace')).toBe(true);
-    expect(doc.body.classList.contains('squid-room')).toBe(true);
+    // Link swap (mount step 3): sr2-room is THE body gate; legacy gates dead.
+    expect(doc.body.classList.contains('sr2-room')).toBe(true);
+    expect(doc.body.classList.contains('squid-room')).toBe(false);
+    expect(doc.body.classList.contains('squid-room-workspace')).toBe(false);
     expect(doc.querySelector('.abyss-motes')).toBeTruthy();
     expect(doc.querySelector('.abyss-motes').childNodes).toHaveLength(12);
     expect(doc.querySelector('.squid-room-pet-filters')).toBeTruthy();
@@ -253,8 +255,8 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.pane[data-pane-id="1"]').hidden).toBe(true);
     expect(doc.querySelector('.pane[data-pane-id="2"]').hidden).toBe(false);
     expect(doc.querySelector('.pane[data-pane-id="3"]').hidden).toBe(false);
-    expect(doc.querySelector('.pane[data-pane-id="2"]').classList.contains('squid-room-core-terminal-pane')).toBe(true);
-    expect(doc.querySelector('.pane[data-pane-id="3"]').classList.contains('squid-room-core-terminal-pane')).toBe(true);
+    expect(doc.querySelector('.pane[data-pane-id="2"]').classList.contains('sr2-terminal-pane')).toBe(true);
+    expect(doc.querySelector('.pane[data-pane-id="3"]').classList.contains('sr2-terminal-pane')).toBe(true);
     expect(doc.querySelector('#squidRoomCreatureOcean')).toBeTruthy();
     expect(doc.querySelector('#squidRoomTerminalDrawer')).toBeTruthy();
     expect(doc.querySelector('.squid-room-terminal-drawer-panes').querySelector('.pane[data-pane-id="2"]')).toBeTruthy();

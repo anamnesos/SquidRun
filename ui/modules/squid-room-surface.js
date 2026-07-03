@@ -160,7 +160,7 @@ function toggleSquidRoomPaneExpansion({
   paneLayout = null,
   expandedPaneId = null,
 } = {}) {
-  if (!body?.classList?.contains?.('squid-room-workspace') || !pane || !paneLayout) {
+  if (!(body?.classList?.contains?.('sr2-room') || body?.dataset?.workspaceKey === 'squid-room') || !pane || !paneLayout) {
     return { handled: false, expandedPaneId };
   }
 

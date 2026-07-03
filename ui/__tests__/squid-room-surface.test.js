@@ -321,7 +321,7 @@ describe('squid-room-surface', () => {
   });
 
   test('collapses and expands Builder and Oracle as a local Squid Room team container', () => {
-    const body = expandableNode({ classes: ['squid-room-workspace'] });
+    const body = expandableNode({ classes: ['sr2-room'] });
     const paneLayout = expandableNode();
     const builderPane = expandableNode({ paneId: '2' });
     const oraclePane = expandableNode({ paneId: '3' });
@@ -389,7 +389,7 @@ describe('squid-room-surface', () => {
   });
 
   test('toggles a TrustQuote live pane within its app container', () => {
-    const body = expandableNode({ classes: ['squid-room-workspace'] });
+    const body = expandableNode({ classes: ['sr2-room'] });
     const paneLayout = expandableNode();
     const leadPane = expandableNode({ paneId: 'trustquote-lead' });
     const invoicePane = expandableNode({
