@@ -212,11 +212,22 @@ body.sr2-room .squid-room-pane-menu-panel {
   z-index: 100;
 }
 
-/* Drawer: the shore's workroom — same stone, deeper shadow. */
+/* Drawer: the shore's workroom — same stone, deeper shadow.
+   CLOSED BY DEFAULT (the hiding transform died with the legacy corpse -
+   the drawer sat permanently open through every reveal attempt): it exists
+   on screen only while .is-open. */
 body.sr2-room .squid-room-terminal-drawer {
+  display: none;
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: 5;
   background: var(--sr2-abyss-0);
   border-top: 1px solid color-mix(in srgb, var(--sr2-biolume) 24%, transparent);
   box-shadow: 0 -14px 40px rgba(0, 0, 0, 0.5);
+}
+
+body.sr2-room .squid-room-terminal-drawer.is-open {
+  display: block;
 }
 
 /* Scrollbars: abyss-quiet. */
