@@ -94,6 +94,43 @@ function formatTensions() {
   }
 }
 
+// Organism charter organ 8 (Agency Layer): proposal standing is COMPUTED
+// from the verdict ledger's resolved outcomes, never from reputation-vibes.
+// Nobody's initiative outlives its accuracy.
+function loadVerdictRecords() {
+  const sources = [
+    path.join(PROJECT_DIR, '.squidrun/runtime/verdict-ledger.json'),
+    path.join(PROJECT_DIR, '.squidrun/coord/verdict-ledger-backfill-s465.json'),
+  ];
+  const records = [];
+  const seen = new Set();
+  for (const src of sources) {
+    try {
+      if (!fs.existsSync(src)) continue;
+      const data = JSON.parse(fs.readFileSync(src, 'utf8'));
+      for (const r of (data.records || (Array.isArray(data) ? data : []))) {
+        if (r && r.id && !seen.has(r.id)) {
+          seen.add(r.id);
+          records.push(r);
+        }
+      }
+    } catch (err) { /* best-effort */ }
+  }
+  return records;
+}
+
+function formatStanding(records, issuer) {
+  try {
+    const { credibility } = require(path.join(PROJECT_DIR, 'ui/modules/verdict-ledger.js'));
+    const c = credibility(records, issuer);
+    if (c.status === 'scored') return `standing: ${(c.accuracy * 100).toFixed(0)}% (n=${c.resolved})`;
+    if (c.resolved > 0 || c.open > 0) return `standing: INSUFFICIENT (n=${c.resolved}, ${c.open} open)`;
+    return 'standing: unmeasured';
+  } catch (err) {
+    return 'standing: unmeasured';
+  }
+}
+
 function formatAgenda() {
   if (!AGENDA_PATH) return '';
 
@@ -105,9 +142,17 @@ function formatAgenda() {
     if (active.length === 0) return '';
 
     let out = '\n=== MY AGENDA (SELF-AUTHORED) ===\n';
-    out += 'These are priorities I set for myself. Not tasks from the user.\n\n';
+    out += 'These are priorities I set for myself. Not tasks from the user.\n';
+    out += 'A STALE goal must be progressed, re-justified, or retired — never silently carried.\n\n';
+    const now = Date.now();
     for (const item of active.slice(0, 5)) {
-      out += `- **${item.title}**: ${item.reason}\n`;
+      const touched = Date.parse(item.last_touched_at || item.created_at || '') || null;
+      const staleDays = touched ? Math.floor((now - touched) / 86400000) : null;
+      const staleness = staleDays === null ? ''
+        : staleDays > 14 ? ` [STALE: untouched ${staleDays}d]`
+          : ` [touched ${staleDays}d ago]`;
+      out += `- **${item.title}**${staleness}: ${item.reason}\n`;
+      if (item.progress) out += `  Progress: ${item.progress}\n`;
     }
     return out + '\n';
   } catch (err) {
@@ -126,12 +171,15 @@ function formatInitiatives() {
     if (active.length === 0) return '';
 
     active.sort((a, b) => (b.attentionScore || 0) - (a.attentionScore || 0));
+    const records = loadVerdictRecords();
 
     let out = '\n=== ACTIVE PROPOSALS ===\n';
-    out += 'Agent-originated initiatives competing for attention.\n\n';
+    out += 'Agent-originated initiatives competing for attention. Standing is MEASURED\n';
+    out += '(verdict-ledger resolved outcomes), not vibes; INSUFFICIENT is honest, not bad.\n\n';
     for (const item of active.slice(0, 5)) {
       const support = item.support || {};
-      out += `- [${item.initiativeId}] **${item.title}** (by ${item.proposedBy}, score: ${item.attentionScore || 0}, +${support.endorsements || 0}/-${support.challenges || 0})\n`;
+      const standing = formatStanding(records, item.proposedBy);
+      out += `- [${item.initiativeId || item.id}] **${item.title}** (by ${item.proposedBy}, ${standing}, +${support.endorsements || 0}/-${support.challenges || 0})\n`;
       if (item.reason) out += `  ${item.reason}\n`;
     }
     return out + '\n';
