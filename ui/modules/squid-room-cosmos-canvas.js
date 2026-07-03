@@ -1,12 +1,14 @@
 /**
- * THE PAINTED COSMOS (v3) — canvas night-ocean, hand-authored by Architect.
+ * THE PHOTOGRAPHED COSMOS (v4) — a real Hubble backplate, living layers on top.
  *
- * James (S466): "make the background universe something different...
- * massive changes... rethink this." v2 refined CSS gradients; this
- * replaces the medium. Real painterly depth needs real pixels:
- * fBm-noise nebula clouds and a power-law starfield are PAINTED ONCE
- * to offscreen layers, then composited each frame with slow parallax
- * plus a bounded particle pass (rising marine snow, twinkling sparks).
+ * James (S467): "are you just trying harder on making it look different
+ * instead of an actual professional game developer approach?" Correct:
+ * studios ship ASSETS, not runtime art. The sky is now a graded NASA
+ * photograph of the Tarantula Nebula (assets/squid-room-backplate-v1.jpg,
+ * attribution alongside) drawn cover-fit as the base plate, with the
+ * living layers — drifting parallax stars, rising marine snow, biolume
+ * sparks — composited over it. Fallback: the dark abyss ramp, so a
+ * missing asset degrades to honest darkness, never to a broken room.
  *
  * PERF LAW (Oracle contract #5 lineage):
  *  - Noise + nebula + stars render exactly ONCE per (load|resize).
@@ -81,59 +83,9 @@ function paintBase(ctx, w, h, tokens) {
   ctx.fillRect(0, 0, w, h);
 }
 
-function paintNebula(ctx, w, h, prng, tokens) {
-  // ASTROPHOTO CLOUDS: a few DEFINED formations, not a wash (fog-gate law).
-  // Full-res, domain-warped fBm for filamentary structure; pixels are only
-  // computed inside each formation's gaussian window, so the sky between
-  // formations stays perfectly dark and the paint stays fast.
-  const size = 128;
-  const gridA = buildNoiseGrid(prng, size);
-  const gridW = buildNoiseGrid(prng, size);
-  const image = ctx.createImageData(w, h);
-  const data = image.data;
-  const formations = [
-    // Oracle's violet nebula — upper right corner
-    { cx: 0.82, cy: 0.14, rx: 0.30, ry: 0.16, color: tokens['--sr2-violet'], gain: 3.0, threshold: 0.46, seedOff: 0 },
-    // Builder's teal nebula — upper left corner
-    { cx: 0.14, cy: 0.20, rx: 0.26, ry: 0.14, color: tokens['--sr2-teal'], gain: 2.8, threshold: 0.47, seedOff: 11 },
-    // small magenta seam — high center, quiet
-    { cx: 0.47, cy: 0.08, rx: 0.14, ry: 0.07, color: tokens['--sr2-magenta'], gain: 2.4, threshold: 0.50, seedOff: 23 },
-  ];
-  for (const f of formations) {
-    const x0 = Math.max(0, Math.floor((f.cx - f.rx) * w));
-    const x1 = Math.min(w, Math.ceil((f.cx + f.rx) * w));
-    const y0 = Math.max(0, Math.floor((f.cy - f.ry) * h));
-    const y1 = Math.min(h, Math.ceil((f.cy + f.ry) * h));
-    for (let y = y0; y < y1; y += 1) {
-      const v = y / h;
-      const dy = (v - f.cy) / f.ry;
-      for (let x = x0; x < x1; x += 1) {
-        const u = x / w;
-        const dx = (u - f.cx) / f.rx;
-        const window = Math.exp(-(dx * dx + dy * dy) * 2.2);
-        if (window < 0.03) continue;
-        // domain warp: filaments instead of blobs
-        const wx = fbm(gridW, size, u * 3.1 + f.seedOff, v * 3.1, 3) - 0.5;
-        const wy = fbm(gridW, size, u * 3.1 + 40 + f.seedOff, v * 3.1 + 40, 3) - 0.5;
-        const n = fbm(gridA, size, (u + wx * 0.35) * 9 + f.seedOff, (v + wy * 0.35) * 9, 6);
-        const cloud = Math.pow(Math.max(0, n - f.threshold) * f.gain, 2.1) * window;
-        if (cloud <= 0.004) continue;
-        const i = (y * w + x) * 4;
-        const a = Math.min(220, cloud * 255);
-        if (a <= data[i + 3]) continue; // keep the stronger formation's pixel
-        data[i] = f.color[0];
-        data[i + 1] = f.color[1];
-        data[i + 2] = f.color[2];
-        data[i + 3] = a;
-      }
-    }
-  }
-  ctx.putImageData(image, 0, 0);
-}
-
 function paintStars(ctx, w, h, prng) {
   // Power-law starfield, upper-weighted: the stars belong to the surface.
-  const count = Math.round(340 + (w * h) / 8000);
+  const count = Math.round(140 + (w * h) / 22000); // light layer: the PLATE has stars; these add parallax life
   for (let s = 0; s < count; s += 1) {
     const x = prng() * w;
     // depth bias: squared distribution pushes stars toward the top
@@ -238,7 +190,8 @@ function createCosmosCanvasRuntime(options = {}) {
 
   const state = {
     running: false,
-    paintCount: 0,          // contract: increments only on load/resize paints
+    backplate: options.backplate || null,
+    paintCount: 0,          // contract: increments only on load/resize/backplate paints
     particles: [],
     layers: null,
     lastFrameAt: 0,
@@ -261,13 +214,22 @@ function createCosmosCanvasRuntime(options = {}) {
     const prng = createPrng(seed);
     const tokens = readSr2Tokens(doc, win);
     const base = makeLayer(w, h);
-    paintBase(base.getContext('2d'), w, h, tokens);
-    paintFloorGlow(base.getContext('2d'), w, h, tokens);
-    const nebula = makeLayer(w, h, NEBULA_SCALE);
-    paintNebula(nebula.getContext('2d'), nebula.width, nebula.height, prng, tokens);
+    const bctx = base.getContext('2d');
+    if (state.backplate && state.backplate.width > 0) {
+      // cover-fit the photograph: fill the frame, crop the overflow
+      const iw = state.backplate.width;
+      const ih = state.backplate.height;
+      const scale = Math.max(w / iw, h / ih);
+      const dw = iw * scale;
+      const dh = ih * scale;
+      bctx.drawImage(state.backplate, (w - dw) / 2, 0, dw, dh);
+    } else {
+      paintBase(bctx, w, h, tokens);
+      paintFloorGlow(bctx, w, h, tokens);
+    }
     const stars = makeLayer(w * 1.06, h); // 6% wider than view = parallax room
     paintStars(stars.getContext('2d'), stars.width, h, prng);
-    state.layers = { base, nebula, stars };
+    state.layers = { base, stars };
     state.paintCount += 1;
   }
 
@@ -295,11 +257,6 @@ function createCosmosCanvasRuntime(options = {}) {
 
     ctx.clearRect(0, 0, w, h);
     ctx.drawImage(layers.base, 0, 0, w, h);
-    // nebula breathes sideways, half-res scaled up
-    const nx = -state.drift.nebula * 0.06;
-    ctx.globalAlpha = 0.96;
-    ctx.drawImage(layers.nebula, nx, 0, w * 1.06, h);
-    ctx.globalAlpha = 1;
     ctx.drawImage(layers.stars, -state.drift.star, 0);
 
     // particle pass — additive, bounded, gradient-free
@@ -359,10 +316,21 @@ function createCosmosCanvasRuntime(options = {}) {
     else start();
   });
 
+  function setBackplate(image) {
+    // The photograph arrives async; swapping it in is a legitimate,
+    // counted repaint (exactly one) — never a per-frame event.
+    state.backplate = image || null;
+    if (state.width && state.height) {
+      paintLayers();
+      compositeFrame(0);
+    }
+  }
+
   return {
     start,
     stop,
     resize,
+    setBackplate,
     get paintCount() { return state.paintCount; },
     get particleCount() { return state.particles.length; },
     get running() { return state.running; },
