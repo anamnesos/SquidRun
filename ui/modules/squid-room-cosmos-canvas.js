@@ -78,8 +78,8 @@ function paintBase(ctx, w, h) {
   ctx.fillRect(0, 0, w, h);
 
   // Surface bloom — the world above touching the water.
-  const bloom = ctx.createRadialGradient(w * 0.5, -h * 0.25, h * 0.05, w * 0.5, -h * 0.25, h * 0.85);
-  bloom.addColorStop(0, 'rgba(110, 160, 214, 0.30)');
+  const bloom = ctx.createRadialGradient(w * 0.5, -h * 0.3, h * 0.05, w * 0.5, -h * 0.3, h * 0.55);
+  bloom.addColorStop(0, 'rgba(110, 160, 214, 0.10)');
   bloom.addColorStop(1, 'rgba(110, 160, 214, 0)');
   ctx.fillStyle = bloom;
   ctx.fillRect(0, 0, w, h);
@@ -104,8 +104,8 @@ function paintNebula(ctx, w, h, prng) {
       const u = x / w;
       const nA = fbm(gridA, size, u * 5.2, v * 3.4, 5);
       const nB = fbm(gridB, size, u * 4.1 + 7, v * 3.0 + 3, 5);
-      const cloudA = Math.pow(Math.max(0, nA - 0.40) * 2.1, 2.0);
-      const cloudB = Math.pow(Math.max(0, nB - 0.42) * 2.1, 2.0);
+      const cloudA = Math.pow(Math.max(0, nA - 0.47) * 2.6, 2.4);
+      const cloudB = Math.pow(Math.max(0, nB - 0.49) * 2.6, 2.4);
       const i = (y * w + x) * 4;
       // additive mix of the two skies, weighted right/left like the room
       const wA = 0.55 + 0.45 * u; // violet favors the right (Oracle's side)
