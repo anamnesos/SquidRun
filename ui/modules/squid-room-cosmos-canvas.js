@@ -25,7 +25,7 @@
 const COSMOS_CANVAS_CLASS = 'cosmos-canvas';
 const MAX_PARTICLES = 140;
 const FRAME_INTERVAL_MS = 33; // ~30fps — the background breathes, it doesn't race
-const NEBULA_SCALE = 0.5;     // nebula painted at half-res, scaled up = free softness
+const NEBULA_SCALE = 1;       // FULL res: scale-up blur read as fog (gate law)
 
 /* ── deterministic PRNG (mulberry32) — same sky for a given seed ── */
 function createPrng(seed) {
@@ -67,60 +67,64 @@ function fbm(grid, size, x, y, octaves) {
 /* ── layer painters: each runs ONCE per (load|resize) ── */
 
 function paintBase(ctx, w, h) {
-  // The water column. Painted top to bottom: surface light -> abyss.
+  // Deep night, uniformly dark. The old light-at-the-top water column WAS
+  // the haze James kept seeing (fog-gate: lifted mean luminance across the
+  // whole band); depth is now told by star density and cloud placement,
+  // not by paling the water. No surface bloom — a pale radial wash is fog
+  // by definition.
   const ramp = ctx.createLinearGradient(0, 0, 0, h);
-  ramp.addColorStop(0.0, '#0d1830');
-  ramp.addColorStop(0.16, '#091226');
-  ramp.addColorStop(0.42, '#060b1c');
-  ramp.addColorStop(0.7, '#03061a');
-  ramp.addColorStop(1.0, '#01020a');
+  ramp.addColorStop(0.0, '#04060f');
+  ramp.addColorStop(0.5, '#02040c');
+  ramp.addColorStop(1.0, '#010208');
   ctx.fillStyle = ramp;
-  ctx.fillRect(0, 0, w, h);
-
-  // Surface bloom — the world above touching the water.
-  const bloom = ctx.createRadialGradient(w * 0.5, -h * 0.3, h * 0.05, w * 0.5, -h * 0.3, h * 0.55);
-  bloom.addColorStop(0, 'rgba(110, 160, 214, 0.10)');
-  bloom.addColorStop(1, 'rgba(110, 160, 214, 0)');
-  ctx.fillStyle = bloom;
   ctx.fillRect(0, 0, w, h);
 }
 
 function paintNebula(ctx, w, h, prng) {
-  // fBm clouds colorized violet (Oracle) and teal (Builder), alpha
-  // shaped by noise^2.2 so structure emerges instead of blob-wash.
+  // ASTROPHOTO CLOUDS: a few DEFINED formations, not a wash (fog-gate law).
+  // Full-res, domain-warped fBm for filamentary structure; pixels are only
+  // computed inside each formation's gaussian window, so the sky between
+  // formations stays perfectly dark and the paint stays fast.
   const size = 128;
   const gridA = buildNoiseGrid(prng, size);
-  const gridB = buildNoiseGrid(prng, size);
+  const gridW = buildNoiseGrid(prng, size);
   const image = ctx.createImageData(w, h);
   const data = image.data;
-  const violet = [124, 82, 208];
-  const teal = [64, 168, 200];
-  for (let y = 0; y < h; y += 1) {
-    const v = y / h;
-    // clouds live in the upper water; dissolve by two-thirds depth
-    const depthFade = Math.max(0, 1 - v * 1.35);
-    if (depthFade <= 0) continue;
-    for (let x = 0; x < w; x += 1) {
-      const u = x / w;
-      const nA = fbm(gridA, size, u * 5.2, v * 3.4, 5);
-      const nB = fbm(gridB, size, u * 4.1 + 7, v * 3.0 + 3, 5);
-      const cloudA = Math.pow(Math.max(0, nA - 0.47) * 2.6, 2.4);
-      const cloudB = Math.pow(Math.max(0, nB - 0.49) * 2.6, 2.4);
-      const i = (y * w + x) * 4;
-      // additive mix of the two skies, weighted right/left like the room
-      const wA = 0.55 + 0.45 * u; // violet favors the right (Oracle's side)
-      const wB = 1.35 - 0.55 * u; // teal favors the left (Builder's side)
-      const alphaA = cloudA * wA * depthFade;
-      const alphaB = cloudB * wB * depthFade;
-      const aSum = alphaA + alphaB;
-      if (aSum <= 0) continue;
-      // Color stays FULL-saturation (weighted violet/teal blend); the alpha
-      // channel ALONE carries cloud intensity. Multiplying both was double
-      // attenuation — dark murk over a dark base, i.e. invisible clouds.
-      data[i] = (violet[0] * alphaA + teal[0] * alphaB) / aSum;
-      data[i + 1] = (violet[1] * alphaA + teal[1] * alphaB) / aSum;
-      data[i + 2] = (violet[2] * alphaA + teal[2] * alphaB) / aSum;
-      data[i + 3] = Math.min(255, aSum * 235);
+  const formations = [
+    // Oracle's violet nebula — upper right corner
+    { cx: 0.82, cy: 0.14, rx: 0.30, ry: 0.16, color: [138, 92, 226], gain: 3.0, threshold: 0.46, seedOff: 0 },
+    // Builder's teal nebula — upper left corner
+    { cx: 0.14, cy: 0.20, rx: 0.26, ry: 0.14, color: [72, 190, 214], gain: 2.8, threshold: 0.47, seedOff: 11 },
+    // small magenta seam — high center, quiet
+    { cx: 0.47, cy: 0.08, rx: 0.14, ry: 0.07, color: [186, 92, 176], gain: 2.4, threshold: 0.50, seedOff: 23 },
+  ];
+  for (const f of formations) {
+    const x0 = Math.max(0, Math.floor((f.cx - f.rx) * w));
+    const x1 = Math.min(w, Math.ceil((f.cx + f.rx) * w));
+    const y0 = Math.max(0, Math.floor((f.cy - f.ry) * h));
+    const y1 = Math.min(h, Math.ceil((f.cy + f.ry) * h));
+    for (let y = y0; y < y1; y += 1) {
+      const v = y / h;
+      const dy = (v - f.cy) / f.ry;
+      for (let x = x0; x < x1; x += 1) {
+        const u = x / w;
+        const dx = (u - f.cx) / f.rx;
+        const window = Math.exp(-(dx * dx + dy * dy) * 2.2);
+        if (window < 0.03) continue;
+        // domain warp: filaments instead of blobs
+        const wx = fbm(gridW, size, u * 3.1 + f.seedOff, v * 3.1, 3) - 0.5;
+        const wy = fbm(gridW, size, u * 3.1 + 40 + f.seedOff, v * 3.1 + 40, 3) - 0.5;
+        const n = fbm(gridA, size, (u + wx * 0.35) * 9 + f.seedOff, (v + wy * 0.35) * 9, 6);
+        const cloud = Math.pow(Math.max(0, n - f.threshold) * f.gain, 2.1) * window;
+        if (cloud <= 0.004) continue;
+        const i = (y * w + x) * 4;
+        const a = Math.min(220, cloud * 255);
+        if (a <= data[i + 3]) continue; // keep the stronger formation's pixel
+        data[i] = f.color[0];
+        data[i + 1] = f.color[1];
+        data[i + 2] = f.color[2];
+        data[i + 3] = a;
+      }
     }
   }
   ctx.putImageData(image, 0, 0);
@@ -162,7 +166,7 @@ function paintStars(ctx, w, h, prng) {
 function paintFloorGlow(ctx, w, h) {
   // The milky sea: bioluminescent teal at the abyss floor.
   const glow = ctx.createRadialGradient(w * 0.5, h * 1.18, h * 0.05, w * 0.5, h * 1.18, h * 0.55);
-  glow.addColorStop(0, 'rgba(94, 234, 212, 0.18)');
+  glow.addColorStop(0, 'rgba(94, 234, 212, 0.09)');
   glow.addColorStop(0.5, 'rgba(74, 196, 182, 0.05)');
   glow.addColorStop(1, 'rgba(74, 196, 182, 0)');
   ctx.fillStyle = glow;
