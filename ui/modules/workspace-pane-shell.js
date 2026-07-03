@@ -513,10 +513,6 @@ function renderSquidRoomPetPane(doc, pane, spec, options = {}) {
     : 'pane squid-room-pet-pane';
   if (presentationOnly) {
     delete pane.dataset.paneId;
-    pane.setAttribute?.('role', 'button');
-    pane.setAttribute?.('tabindex', '0');
-    pane.setAttribute?.('aria-label', `Open ${spec.title} terminal drawer`);
-    pane.dataset.squidRoomTerminalDrawerOpen = 'true';
   } else {
     pane.dataset.paneId = spec.paneId;
   }
@@ -540,7 +536,19 @@ function renderSquidRoomPetPane(doc, pane, spec, options = {}) {
   // (S465 purge - the track's CSS float animation broke name-tag anchoring
   // from beyond the grave). Name label lives directly on the stage: same
   // coordinate frame as the head anchor.
-  stage.appendChild(createElement(doc, 'span', { className: 'sr2-name-tag' }, spec.title));
+  // The drawer-open affordance lives on the NAME TAG - it follows the
+  // creature, so the click target IS the creature. (Full-window overlapping
+  // stages made the whole sky a drawer button: any stray click opened it.)
+  const nameTag = createElement(doc, 'span', {
+    className: 'sr2-name-tag',
+    attributes: {
+      role: 'button',
+      tabindex: '0',
+      'aria-label': `Open ${spec.title} terminal drawer`,
+    },
+    dataset: { squidRoomTerminalDrawerOpen: 'true' },
+  }, spec.title);
+  stage.appendChild(nameTag);
   // The caption/face-line corpse dies whole (constitution V.4: text lives in
   // Oracle's speech layer; raw sits behind his visible click affordance).
   shell.appendChild(stage);

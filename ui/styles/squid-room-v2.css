@@ -48,8 +48,9 @@ body.sr2-room {
   position: absolute;
   inset: 0;
   overflow: visible;
-  pointer-events: auto; /* click = drawer, per wave-3 delight contract */
-  cursor: pointer;
+  /* Full-window overlapping stages must NOT catch clicks - the whole sky
+     became a drawer button. The name tag is the creature's click target. */
+  pointer-events: none;
 }
 
 .sr2-creature-canvas {
@@ -83,7 +84,8 @@ body.sr2-room {
   color: var(--sr2-ink);
   background: rgba(2, 4, 12, 0.72); /* abyss-1 at glass alpha */
   border: 1px solid rgba(94, 234, 212, 0.28); /* biolume edge */
-  pointer-events: none;
+  pointer-events: auto; /* the creature's click target: tag = drawer */
+  cursor: pointer;
   white-space: nowrap;
 }
 
