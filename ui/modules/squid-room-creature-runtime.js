@@ -123,12 +123,15 @@ function updateSpeechAnchor(binding) {
   anchor.mouthY = rect.top + (state.y + 6) * scale;
   anchor.facing = facing;
   // Body rect for the speech solver's creature avoidance (directive: a box
-  // may never cover a creature): mantle + tentacle skirt around the body.
+  // may never cover a creature): mantle + tentacle skirt around the body,
+  // EXTENDED over the crown to cover the name tag (audit close: the tag is
+  // creature presence - a box parked on "Builder" hides who is speaking).
+  // Tag rides at head -42 logical, ~26px tall: top edge moves to -76.
   const bodyHalfW = 58 * scale;
   anchor.bodyX = rect.left + state.x * scale - bodyHalfW;
-  anchor.bodyY = rect.top + (state.y - 44) * scale;
+  anchor.bodyY = rect.top + (state.y - 76) * scale;
   anchor.bodyW = bodyHalfW * 2;
-  anchor.bodyH = 132 * scale;
+  anchor.bodyH = 164 * scale;
 }
 
 function anchorHeadElements(binding, nowMs) {
