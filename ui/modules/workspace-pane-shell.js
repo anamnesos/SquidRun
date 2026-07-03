@@ -532,8 +532,9 @@ function renderSquidRoomPetPane(doc, pane, spec, options = {}) {
   header.appendChild(title);
 
   const stage = createElement(doc, 'div', { className: 'squid-room-pet-stage pet-stage is-active' });
-  stage.appendChild(createElement(doc, 'span', { className: 'pet-caustics' }));
-  stage.appendChild(createElement(doc, 'span', { className: 'pet-glow' }));
+  // Pedestal-era glow spans (pet-glow/pet-caustics) are GONE (S466):
+  // free-swimming creatures sit on nothing, and the static blurred discs
+  // read as smudges under the painted cosmos (James caught them live).
   // The creature canvas fills the whole stage: the procedural squid swims
   // the water region (P1.7); speech/name anchor to its head at runtime.
   stage.appendChild(createSquidRoomPetArtwork(doc, spec));

@@ -286,8 +286,10 @@ describe('workspace pane shell', () => {
     expect(builderCreature.querySelector('.speech-line-text')).toBeFalsy();
     expect(builderCreature.querySelector('.verb-chip')).toBeFalsy();
     expect(builderCreature.querySelector('.pet-motion-track')).toBeFalsy();
-    expect(builderCreature.querySelector('.pet-glow')).toBeTruthy();
-    expect(builderCreature.querySelector('.pet-caustics')).toBeTruthy();
+    // S466: the pedestal-era glow discs are gone too — free-swimming
+    // creatures sit on nothing (James caught the blurred smudges live).
+    expect(builderCreature.querySelector('.pet-glow')).toBeFalsy();
+    expect(builderCreature.querySelector('.pet-caustics')).toBeFalsy();
     // P1.7: bubbles, ink bursts, and grounding shadow are ENGINE-drawn on the
     // creature canvas now - the CSS effect spans are gone by design.
     expect(builderCreature.querySelector('.pet-contact-shadow')).toBeFalsy();
