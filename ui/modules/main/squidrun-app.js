@@ -8409,21 +8409,28 @@ class SquidRunApp {
             paneRuntime,
             reason: 'oversized_payload_materialized_to_file',
           });
-          const acceptedPointer = daemonClient.write(normalizedPaneId, materialized.pointerText, kernelMeta);
-          if (acceptedPointer) {
-            return {
-              ok: true,
-              accepted: true,
-              queued: true,
-              verified: false,
-              status: 'materialized.pointer_fallback',
-              mode: 'daemon-pty',
-              paneId: normalizedPaneId,
-              paneRuntime,
-              materializedPath: materialized.displayPath,
-            };
-          }
-        }
+          // v1.1 (S466, James found pointers sitting UNSUBMITTED in all four
+          // panes for 8 hours): v1.0 wrote the pointer and RETURNED, skipping
+          // the write -> settle -> Enter sequence below that every normal
+          // payload gets. The pointer now REPLACES the text and falls through
+          // to the exact same submit path - one submit mechanism, no copies.
+          text = materialized.pointerText;
+          // Belt-and-suspenders for this class only: one delayed extra Enter.
+          // Idempotent - if the first Enter submitted, the composer is empty
+          // and a lone CR is a no-op; if it did not, this submits instead of
+          // stalling a shift. Removed once a receipt-verified submit exists.
+          setTimeout(() => {
+            try {
+              daemonClient.write(normalizedPaneId, '\r', {
+                ...kernelMeta,
+                eventId: `${normalizedPaneId}-${Date.now()}-ptr-retap`,
+                parentEventId: kernelMeta.eventId,
+                causationId: kernelMeta.eventId,
+                source: 'squidrun-app.direct-pane-delivery.pointer-enter-retap',
+              });
+            } catch { /* pane may be gone; the primary path already reported */ }
+          }, 1500);
+        } else {
         // Materialization itself failed - the old skip, but LOUD: this is a
         // user-payload loss and must never again pass silently.
         log.error('PaneDelivery', `OVERSIZED PAYLOAD DROPPED for pane ${normalizedPaneId} (${payloadBytes} bytes, ${messageId || traceId || 'no-id'}) - materialize fallback failed`);
@@ -8451,6 +8458,7 @@ class SquidRunApp {
           paneId: normalizedPaneId,
           paneRuntime,
         };
+        }
       }
 
       const acceptedText = daemonClient.write(normalizedPaneId, text, kernelMeta);
