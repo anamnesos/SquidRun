@@ -79,7 +79,7 @@ function paintBase(ctx, w, h) {
 
   // Surface bloom — the world above touching the water.
   const bloom = ctx.createRadialGradient(w * 0.5, -h * 0.25, h * 0.05, w * 0.5, -h * 0.25, h * 0.85);
-  bloom.addColorStop(0, 'rgba(110, 160, 214, 0.22)');
+  bloom.addColorStop(0, 'rgba(110, 160, 214, 0.30)');
   bloom.addColorStop(1, 'rgba(110, 160, 214, 0)');
   ctx.fillStyle = bloom;
   ctx.fillRect(0, 0, w, h);
@@ -98,14 +98,14 @@ function paintNebula(ctx, w, h, prng) {
   for (let y = 0; y < h; y += 1) {
     const v = y / h;
     // clouds live in the upper water; dissolve by two-thirds depth
-    const depthFade = Math.max(0, 1 - v * 1.6);
+    const depthFade = Math.max(0, 1 - v * 1.35);
     if (depthFade <= 0) continue;
     for (let x = 0; x < w; x += 1) {
       const u = x / w;
       const nA = fbm(gridA, size, u * 5.2, v * 3.4, 5);
       const nB = fbm(gridB, size, u * 4.1 + 7, v * 3.0 + 3, 5);
-      const cloudA = Math.pow(Math.max(0, nA - 0.44) * 1.9, 2.2);
-      const cloudB = Math.pow(Math.max(0, nB - 0.46) * 1.9, 2.2);
+      const cloudA = Math.pow(Math.max(0, nA - 0.40) * 2.1, 2.0);
+      const cloudB = Math.pow(Math.max(0, nB - 0.42) * 2.1, 2.0);
       const i = (y * w + x) * 4;
       // additive mix of the two skies, weighted right/left like the room
       const wA = 0.55 + 0.45 * u; // violet favors the right (Oracle's side)
@@ -115,7 +115,7 @@ function paintNebula(ctx, w, h, prng) {
       data[i] = Math.min(255, violet[0] * alphaA + teal[0] * alphaB);
       data[i + 1] = Math.min(255, violet[1] * alphaA + teal[1] * alphaB);
       data[i + 2] = Math.min(255, violet[2] * alphaA + teal[2] * alphaB);
-      data[i + 3] = Math.min(255, (alphaA + alphaB) * 170);
+      data[i + 3] = Math.min(255, (alphaA + alphaB) * 235);
     }
   }
   ctx.putImageData(image, 0, 0);
@@ -123,14 +123,14 @@ function paintNebula(ctx, w, h, prng) {
 
 function paintStars(ctx, w, h, prng) {
   // Power-law starfield, upper-weighted: the stars belong to the surface.
-  const count = Math.round(240 + (w * h) / 12000);
+  const count = Math.round(340 + (w * h) / 8000);
   for (let s = 0; s < count; s += 1) {
     const x = prng() * w;
     // depth bias: squared distribution pushes stars toward the top
     const y = Math.pow(prng(), 1.9) * h * 0.72;
     const mag = Math.pow(prng(), 3); // few bright, many dim
     const r = 0.4 + mag * 1.7;
-    const alpha = 0.18 + mag * 0.72;
+    const alpha = 0.26 + mag * 0.74;
     const warm = prng();
     const tint = warm > 0.82 ? '255, 236, 214' : warm > 0.6 ? '196, 224, 255' : '236, 242, 255';
     if (mag > 0.82) {
@@ -157,7 +157,7 @@ function paintStars(ctx, w, h, prng) {
 function paintFloorGlow(ctx, w, h) {
   // The milky sea: bioluminescent teal at the abyss floor.
   const glow = ctx.createRadialGradient(w * 0.5, h * 1.18, h * 0.05, w * 0.5, h * 1.18, h * 0.55);
-  glow.addColorStop(0, 'rgba(94, 234, 212, 0.13)');
+  glow.addColorStop(0, 'rgba(94, 234, 212, 0.18)');
   glow.addColorStop(0.5, 'rgba(74, 196, 182, 0.05)');
   glow.addColorStop(1, 'rgba(74, 196, 182, 0)');
   ctx.fillStyle = glow;
@@ -273,7 +273,7 @@ function createCosmosCanvasRuntime(options = {}) {
         p.y = h + 4;
       }
       const twinkle = p.spark ? (0.35 + 0.65 * Math.abs(Math.sin(p.phase))) : (0.55 + 0.2 * Math.sin(p.phase));
-      const alpha = (p.spark ? 0.5 : 0.24) * twinkle;
+      const alpha = (p.spark ? 0.66 : 0.34) * twinkle;
       ctx.fillStyle = p.spark
         ? `rgba(132, 240, 220, ${alpha})`
         : `rgba(190, 222, 232, ${alpha})`;
