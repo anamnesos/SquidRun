@@ -964,9 +964,16 @@ async function queryLatestSquidRoomPetRow(role) {
 function updateSquidRoomPetPane(pane, row) {
   if (!pane || !row) return;
   const role = String(pane.dataset?.squidRoomPet || '').trim().toLowerCase();
-  const state = classifySquidRoomPetState(row, role);
+  let state = classifySquidRoomPetState(row, role);
   const face = buildSquidRoomPetFace(row, role);
   const motionClass = getSquidRoomPetMotionClass(row);
+  // Body/label reconcile (S466, Architect-approved): the drowse reads
+  // output age; the label must read the SAME source or the box says
+  // "Working" over closed eyes. Resting output age overrides verb labels -
+  // Blocked stays visible regardless (an old blocker still matters).
+  if (motionClass === 'is-resting' && state.state !== 'failed') {
+    state = { state: 'idle', label: 'Resting' };
+  }
   // HONEST comms pulse (wave 3): a NEW routed ledger row from this core pet
   // to the OTHER core pet renders as a luminous pulse + mutual turn. Ledger
   // identity gates newness; the runtime throttles rendering. Never invented.
