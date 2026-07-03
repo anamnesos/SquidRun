@@ -1,0 +1,104 @@
+/* ============================================================
+   SQUID ROOM v2 — THE WHITELIST STYLESHEET (S467 remodel charter)
+   If a pixel can't cite a constitution clause, it doesn't render.
+   Constitution: workspace/specs/squid-room-visual-constitution-v2.md
+   Every color derives from the --sr2-* tokens (clause II). Every class
+   is sr2- declared (clause III). Old room styles are dead the moment
+   index.html links this file instead of them - the corpse dies whole.
+   ============================================================ */
+
+:root {
+  /* II. THE TOKENS - the only palette */
+  --sr2-abyss-0: #010208;
+  --sr2-abyss-1: #02040c;
+  --sr2-abyss-2: #04060f;
+  --sr2-teal: #48bed6;
+  --sr2-violet: #8a5ce2;
+  --sr2-magenta: #ba5cb0;
+  --sr2-biolume: #5eead4;
+  --sr2-ink: #ddfffa;
+}
+
+/* I. THE WORLD - dark is the ground state */
+body.sr2-room {
+  background: var(--sr2-abyss-1);
+  color: var(--sr2-ink);
+}
+
+/* III. THE STACK (whitelist, bottom to top) */
+
+/* Layer 1 - cosmos (Architect): painted once, the only atmosphere owner. */
+.sr2-cosmos-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Layer 2 - creature water (Builder): creatures + engine effects + ribbon.
+   Full-window shared swim space (VI: creatures own the open water). */
+.sr2-water {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.sr2-creature-stage {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: auto; /* click = drawer, per wave-3 delight contract */
+  cursor: pointer;
+}
+
+.sr2-creature-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+.sr2-ribbon-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Crown name tag (VI: tags hug crowns; ink token, biolume edge). */
+.sr2-name-tag {
+  position: absolute;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--sr2-ink);
+  background: rgba(2, 4, 12, 0.72); /* abyss-1 at glass alpha */
+  border: 1px solid rgba(94, 234, 212, 0.28); /* biolume edge */
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Layer 3 is Oracle's (sr-speech-*, self-injected, manifest-declared). */
+
+/* Layer 4 - section shore (Architect skins; structural floor here):
+   solid, calm, no atmosphere above it (VI: sections are shore). */
+.sr2-shore {
+  position: relative;
+  z-index: 3;
+  background: var(--sr2-abyss-0);
+  border-top: 1px solid rgba(94, 234, 212, 0.16); /* the milky-sea line */
+}
+
+/* Reduced motion: still room (IV) - v2 layers stop animating wholesale. */
+@media (prefers-reduced-motion: reduce) {
+  .sr2-cosmos-canvas,
+  .sr2-water,
+  .sr2-ribbon-overlay {
+    animation: none !important;
+  }
+}
