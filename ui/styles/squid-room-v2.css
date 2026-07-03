@@ -258,3 +258,186 @@ body.sr2-room .sr2-pet-water {
   inset: 0;
   overflow: visible;
 }
+
+/* ============================================================
+   LAYER 4b — SHORE STRUCTURE (the bones the dead file took with it)
+   Ported layout-only from legacy squid-room.css at Builder's #62 find:
+   the skin colored a shore that had no skeleton. Geometry only —
+   every visual property still comes from the skin block above.
+   ============================================================ */
+
+/* The room column: water above (fixed overlays), shore flows beneath. */
+body.sr2-room .main-content {
+  overflow: hidden;
+}
+
+body.sr2-room .terminals-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  height: 100%;
+  padding: 10px 10px 20px;
+}
+
+/* The water viewport: the in-flow region the creatures swim over. */
+body.sr2-room .side-panes-container {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 42vh;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  padding: 4px 8px 0;
+  background: transparent;
+}
+
+body.sr2-room .squid-room-team-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+}
+
+body.sr2-room .side-panes-container .pane {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+body.sr2-room .squid-room-pet-pane {
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+
+/* The shore surface: hidden by default, shown by the shell. */
+body.sr2-room .squid-room-surface {
+  display: none;
+}
+
+body.sr2-room .squid-room-surface:not([hidden]) {
+  display: block;
+}
+
+/* App sections: collapsible shore panels. */
+body.sr2-room .squid-room-app {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-rows: auto auto;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.sr2-room details.squid-room-app > summary::-webkit-details-marker {
+  display: none;
+}
+
+body.sr2-room details.squid-room-app:not([open]) .squid-room-live-panes {
+  display: none;
+  padding: 0;
+  gap: 0;
+}
+
+body.sr2-room .squid-room-app-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+body.sr2-room .squid-room-app-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+body.sr2-room .squid-room-app-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 92px;
+  min-height: 32px;
+  padding: 0 10px 0 9px;
+}
+
+/* Arm cards: grid + inner geometry. */
+body.sr2-room .squid-room-live-panes {
+  min-height: 260px;
+  grid-auto-rows: minmax(300px, auto);
+  align-items: stretch;
+  padding: 0 12px 12px;
+}
+
+body.sr2-room .squid-room-live-panes .pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 260px;
+  height: 100%;
+}
+
+body.sr2-room .squid-room-live-panes .pane-header {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+body.sr2-room .squid-room-live-panes .pane-terminal {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+body.sr2-room .squid-room-live-panes.has-expanded-pane {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.sr2-room .squid-room-live-panes.has-expanded-pane .pane:not(.pane-expanded) {
+  display: none !important;
+}
+
+body.sr2-room .squid-room-live-panes .pane.pane-expanded {
+  min-height: min(68vh, 680px);
+}
+
+/* Window chrome strip: the room's top bar stands above the water. */
+body.sr2-room .header {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  padding: 8px 16px;
+  background: var(--sr2-abyss-0);
+  border-bottom: 1px solid color-mix(in srgb, var(--sr2-biolume) 16%, transparent);
+}
+
+/* Drawer geometry: the shore's workroom slides over the bottom. */
+body.sr2-room .squid-room-terminal-drawer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  max-height: 62vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+body.sr2-room .squid-room-terminal-drawer[hidden] {
+  display: none;
+}
