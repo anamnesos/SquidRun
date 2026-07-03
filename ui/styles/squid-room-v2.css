@@ -68,9 +68,13 @@ body.sr2-room {
   pointer-events: none;
 }
 
-/* Crown name tag (VI: tags hug crowns; ink token, biolume edge). */
+/* Crown name tag (VI: tags hug crowns; ink token, biolume edge).
+   FAIL-DARK (V.2): born hidden - a tag paints only after its first anchor
+   write lands (is-anchored). No anchor -> no render, tags included; the
+   0,0 ghost tag cannot exist by construction. */
 .sr2-name-tag {
   position: absolute;
+  visibility: hidden;
   padding: 2px 10px;
   border-radius: 999px;
   font-size: 12px;
@@ -81,6 +85,10 @@ body.sr2-room {
   border: 1px solid rgba(94, 234, 212, 0.28); /* biolume edge */
   pointer-events: none;
   white-space: nowrap;
+}
+
+.sr2-name-tag.is-anchored {
+  visibility: visible;
 }
 
 /* Layer 3 is Oracle's (sr-speech-*, self-injected, manifest-declared). */
