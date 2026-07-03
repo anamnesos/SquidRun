@@ -601,6 +601,15 @@ function ensureSquidRoomSpaceLayers(doc) {
     const { createCosmosCanvasRuntime } = require('./squid-room-cosmos-canvas');
     const runtime = canvas.getContext ? createCosmosCanvasRuntime({ document: doc, canvas }) : null;
     runtime?.start?.();
+    // The sky is a graded NASA photograph (S467: assets over runtime art);
+    // it arrives async and swaps in as one counted repaint. Missing asset
+    // = the dark-ramp fallback, honest darkness over a broken room.
+    const ImageCtor = (doc.defaultView && doc.defaultView.Image) || (typeof Image !== 'undefined' ? Image : null);
+    if (runtime && ImageCtor) {
+      const plate = new ImageCtor();
+      plate.onload = () => runtime.setBackplate(plate);
+      plate.src = 'assets/squid-room-backplate-v1.jpg';
+    }
   } catch (err) {
     // A background must never take the room down with it.
   }

@@ -127,3 +127,17 @@ describe('squid-room cosmos canvas contracts', () => {
     expect(fbm(gridA, 32, 1.37, 2.11, 5)).toBe(fbm(gridB, 32, 1.37, 2.11, 5));
   });
 });
+
+describe('backplate contract (v4: assets over runtime art)', () => {
+  test('setBackplate is exactly one counted repaint, cover-drawn', () => {
+    const { canvas, doc, win } = createFakeEnv();
+    const runtime = createCosmosCanvasRuntime({ document: doc, window: win, canvas, reducedMotion: false, seed: 7 });
+    runtime.start();
+    expect(runtime.paintCount).toBe(1);
+    const fakePlate = { width: 2560, height: 1440 };
+    runtime.setBackplate(fakePlate);
+    expect(runtime.paintCount).toBe(2);   // one repaint, counted
+    for (let i = 0; i < 20; i += 1) runtime.compositeFrame(33);
+    expect(runtime.paintCount).toBe(2);   // never again per frame
+  });
+});
