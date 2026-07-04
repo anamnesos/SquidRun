@@ -120,7 +120,7 @@ describe('system protected evals', () => {
 
   test('fails if accepted.unverified can reach visible-delivery flags before ledger proof', () => {
     const hmSend = readRel('ui/scripts/hm-send.js').replace(
-      '  if (ackStatusRequiresLedgerRouteProof(status)) return false;\n',
+      /  if \(ackStatusRequiresLedgerRouteProof\(status\)\) return false;\r?\n/,
       ''
     );
     const report = runSystemProtectedEvals({
@@ -135,8 +135,8 @@ describe('system protected evals', () => {
 
   test('fails if unverified ACK statuses no longer require ledger route proof', () => {
     const hmSend = readRel('ui/scripts/hm-send.js').replace(
-      "    status.includes('unverified')\n",
-      "    false\n"
+      /function ackStatusRequiresLedgerRouteProof\(value\) \{\r?\n  const status = normalizeRouteProofStatus\(value\);\r?\n  if \(!status\) return true;\r?\n  return \(\r?\n    status\.includes\('unverified'\)\r?\n/,
+      "function ackStatusRequiresLedgerRouteProof(value) {\n  const status = normalizeRouteProofStatus(value);\n  if (!status) return true;\n  return (\n    false\n"
     );
     const report = runSystemProtectedEvals({
       caseIds: [CASE_ID_ACCEPTED_UNVERIFIED_VISIBLE_DELIVERY],
@@ -297,7 +297,7 @@ describe('system protected evals', () => {
 
   test('Phase 4B fails if full-file read requirement is removed from the pointer source', () => {
     const daemonHandlers = readRel('ui/modules/daemon-handlers.js').replace(
-      "      'Do not act from this preview alone; read the full file, then reply via hm-send.js.',\n",
+      /      'Do not act from this preview alone; read the full file, then reply via hm-send\.js\.',\r?\n/,
       ''
     );
     const report = runSystemProtectedEvals({
@@ -312,9 +312,9 @@ describe('system protected evals', () => {
 
   test('Phase 4B fails if materialized path metadata is removed from the inbound path', () => {
     const daemonHandlers = readRel('ui/modules/daemon-handlers.js')
-      .replace('    materializedFullPayload: materialized.materialized === true,\n', '')
-      .replace('    fullPayloadPath: materialized.displayPath || null,\n', '')
-      .replace('      fullPayloadPath: materialized.displayPath,\n', '');
+      .replace(/    materializedFullPayload: materialized\.materialized === true,\r?\n/, '')
+      .replace(/    fullPayloadPath: materialized\.displayPath \|\| null,\r?\n/, '')
+      .replace(/      fullPayloadPath: materialized\.displayPath,\r?\n/, '');
     const report = runSystemProtectedEvals({
       caseIds: [CASE_ID_FULL_MATERIALIZED_MESSAGE_REQUIRES_READ],
       fileTextOverrides: defaultOverrides({ daemonHandlers }),
@@ -405,7 +405,7 @@ describe('system protected evals', () => {
 
   test('Phase 4C fails if route metadata validation is bypassed before delivery', () => {
     const squidrunApp = readRel('ui/modules/main/squidrun-app.js').replace(
-      '      const routeValidation = this.validateInjectRouteMetadata(packet, paneId, normalizedTargetWindowKey);\n',
+      /      const routeValidation = this\.validateInjectRouteMetadata\(packet, paneId, normalizedTargetWindowKey\);\r?\n/,
       '      const routeValidation = { ok: true, routeMetadata: {}, targetScope: {} };\n'
     );
     const report = runSystemProtectedEvals({
@@ -420,7 +420,7 @@ describe('system protected evals', () => {
 
   test('Phase 4C fails if metadata mismatch can fall through to visible/default fallback', () => {
     const squidrunApp = readRel('ui/modules/main/squidrun-app.js').replace(
-      "        log.warn(\n          'InjectIPC',\n          `Blocked inject route for pane ${paneId}: ${routeValidation.reason} (${routeValidation.blockers.join(', ')})`\n        );\n        continue;\n",
+      /        log\.warn\(\r?\n          'InjectIPC',\r?\n          `Blocked inject route for pane \$\{paneId\}: \$\{routeValidation\.reason\} \(\$\{routeValidation\.blockers\.join\(', '\)\}\)`\r?\n        \);\r?\n        continue;\r?\n/,
       "        log.warn(\n          'InjectIPC',\n          `Blocked inject route for pane ${paneId}: ${routeValidation.reason} (${routeValidation.blockers.join(', ')})`\n        );\n"
     );
     const report = runSystemProtectedEvals({
@@ -509,7 +509,7 @@ describe('system protected evals', () => {
 
   test('Phase 4D fails if pending autonomy evidence is ignored', () => {
     const squidrunApp = readRel('ui/modules/main/squidrun-app.js').replace(
-      '    const pendingWatchdogState = findRecordIntentionalAutonomyState(entry);\n',
+      /    const pendingWatchdogState = findRecordIntentionalAutonomyState\(entry\);\r?\n/,
       '    const pendingWatchdogState = null;\n'
     );
     const report = runSystemProtectedEvals({
@@ -611,8 +611,8 @@ describe('system protected evals', () => {
 
   test('Phase 4E fails if visible dedupe key drops metadata scope', () => {
     const squidrunApp = readRel('ui/modules/main/squidrun-app.js')
-      .replace('      normalizedSessionScope,\n', '')
-      .replace('      normalizedRouteKind,\n', '');
+      .replace(/      normalizedSessionScope,\r?\n/, '')
+      .replace(/      normalizedRouteKind,\r?\n/, '');
     const report = runSystemProtectedEvals({
       caseIds: [CASE_ID_ROUTE_INJECT_VISIBLE_DEDUPE],
       fileTextOverrides: defaultOverrides({ squidrunApp }),
@@ -626,7 +626,7 @@ describe('system protected evals', () => {
 
   test('Phase 4E fails if failed visible handoffs can be cached before success', () => {
     const squidrunApp = readRel('ui/modules/main/squidrun-app.js').replace(
-      "        if (delivered) {\n          this.recordVisibleInjectDelivery(dedupe.dedupeKey);\n          routed = true;\n        }\n",
+      /        if \(delivered\) \{\r?\n          this\.recordVisibleInjectDelivery\(dedupe\.dedupeKey\);\r?\n          routed = true;\r?\n        \}\r?\n/,
       "        this.recordVisibleInjectDelivery(dedupe.dedupeKey);\n        if (delivered) {\n          routed = true;\n        }\n"
     );
     const report = runSystemProtectedEvals({

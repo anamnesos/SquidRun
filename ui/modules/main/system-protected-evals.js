@@ -67,7 +67,7 @@ const ACCEPTED_UNVERIFIED_CASE = Object.freeze({
         'verified: true',
         "expect(result.stderr).toContain('ledger route proof is missing')",
         "expect(result.stderr).toContain('ack: accepted.unverified')",
-        "expect(result.stdout).not.toContain('Delivered to builder')",
+        "expect(result.stdout).not.toContain('delivered to builder')",
       ]),
     }),
     Object.freeze({
@@ -87,7 +87,7 @@ const ACCEPTED_UNVERIFIED_CASE = Object.freeze({
       testName: 'fails closed without fallback when accepted-but-unverified delivery has no routed ledger row',
       requiredText: Object.freeze([
         "expect(result.stderr).toContain('ledger route proof is missing')",
-        "expect(result.stdout).not.toContain('Delivered to builder')",
+        "expect(result.stdout).not.toContain('delivered to builder')",
       ]),
     }),
     Object.freeze({
@@ -1587,7 +1587,7 @@ function validateAcceptedUnverifiedSemantics(evalCase, options = {}) {
       && hmSendTestText.includes("status: 'accepted.unverified'")
       && hmSendTestText.includes('userVisible: true')
       && hmSendTestText.includes('verified: true')
-      && hmSendTestText.includes("expect(result.stdout).not.toContain('Delivered to builder')"),
+      && hmSendTestText.includes("expect(result.stdout).not.toContain('delivered to builder')"),
     'hm-send focused test protects misleading accepted.unverified visible flags',
     { path: 'ui/__tests__/hm-send.test.js' }
   ));
