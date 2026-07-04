@@ -59,7 +59,7 @@ function rectIntersectsRect(x, y, w, h, r) {
  * even if that wiring regresses. It strips — it NEVER invents; if stripping
  * empties the line, the bubble simply doesn't show (fail-dark for text).
  */
-const { stripMachineJargon } = require('./face-jargon-core');
+const { sanitizeHumanFaceText } = require('./face-jargon-core');
 
 function sanitizeSpeechText(value) {
   const withoutHeaders = String(value || '')
@@ -72,7 +72,7 @@ function sanitizeSpeechText(value) {
   // SHARED CORE (S468 dedup): the machine-identifier strip lives ONCE in
   // face-jargon-core.js — this and renderer's stripSquidRoomFaceJargon
   // drifted three times in one day as hand-maintained twins.
-  return stripMachineJargon(withoutHeaders);
+  return sanitizeHumanFaceText(withoutHeaders);
 }
 
 function solveSpeechBox(input = {}) {
