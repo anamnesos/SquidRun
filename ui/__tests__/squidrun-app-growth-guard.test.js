@@ -18,7 +18,7 @@ const path = require('path');
  * many, or - as a last resort with justification in the PR - raise CEILING.
  * Never silently bump it to make red go green.
  */
-const CEILING = 14863;
+const CEILING = 14674;
 
 describe('squidrun-app.js god-object growth guard', () => {
   const filePath = path.join(__dirname, '..', 'modules', 'main', 'squidrun-app.js');

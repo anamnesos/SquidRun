@@ -6236,8 +6236,22 @@ describe('SquidRunApp', () => {
   describe('Telegram poller wiring', () => {
     let app;
 
+    function forceTriggerDeliveryPath(targetApp) {
+      jest.spyOn(targetApp, 'deliverPaneMessageViaDaemonPty').mockResolvedValue({
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'daemon_unavailable',
+      });
+    }
+
     beforeEach(() => {
+      const triggers = require('../modules/triggers');
+      triggers.sendDirectMessage.mockReset();
+      triggers.sendDirectMessage.mockReturnValue({ success: true });
       app = new SquidRunApp(mockAppContext, mockManagers);
+      forceTriggerDeliveryPath(app);
     });
 
     it('wires Telegram command callbacks to pane 1 trigger injection', async () => {
@@ -8047,6 +8061,7 @@ describe('SquidRunApp', () => {
         })),
       };
       app = new SquidRunApp(mockAppContext, mockManagers);
+      forceTriggerDeliveryPath(app);
       triggers.sendDirectMessage.mockResolvedValueOnce({
         accepted: true,
         queued: true,
@@ -8100,6 +8115,7 @@ describe('SquidRunApp', () => {
         })),
       };
       app = new SquidRunApp(mockAppContext, mockManagers);
+      forceTriggerDeliveryPath(app);
       triggers.sendDirectMessage.mockResolvedValueOnce({
         accepted: true,
         queued: true,
@@ -8151,6 +8167,7 @@ describe('SquidRunApp', () => {
         })),
       };
       app = new SquidRunApp(mockAppContext, mockManagers);
+      forceTriggerDeliveryPath(app);
       triggers.sendDirectMessage.mockResolvedValueOnce({
         accepted: true,
         queued: true,
@@ -10838,6 +10855,9 @@ describe('SquidRunApp', () => {
     let app;
 
     beforeEach(() => {
+      const triggers = require('../modules/triggers');
+      triggers.sendDirectMessage.mockReset();
+      triggers.sendDirectMessage.mockReturnValue({ success: true });
       app = new SquidRunApp(mockAppContext, mockManagers);
       app.bridgeEnabled = true;
       app.bridgeRuntimeConfig = {
