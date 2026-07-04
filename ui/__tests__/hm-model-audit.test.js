@@ -6,7 +6,16 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { tallyModelsByDay, mergeTallies, auditDir, findOffendingTurns } = require('../scripts/hm-model-audit');
+const {
+  tallyModelsByDay,
+  mergeTallies,
+  auditDir,
+  findOffendingTurns,
+  modelMatchesExpected,
+  resolveExpectedModelForTranscript,
+  createStateChangeAlertFilter,
+  findOffendingTurnsForTranscript,
+} = require('../scripts/hm-model-audit');
 
 const line = (ts, model) => JSON.stringify({ timestamp: ts, message: { model } });
 
@@ -61,5 +70,124 @@ describe('hm-model-audit', () => {
     expect(findOffendingTurns(lines, 'claude-fable-5')).toEqual([
       { model: 'claude-opus-4-8', timestamp: '2026-07-04T11:02:00Z' },
     ]);
+  });
+
+  test('watch core: compact settings model matches full served model family', () => {
+    expect(modelMatchesExpected('claude-opus-4-8', 'opus')).toBe(true);
+    expect(modelMatchesExpected('claude-sonnet-4-6', 'sonnet')).toBe(true);
+    expect(modelMatchesExpected('claude-fable-5', 'fable')).toBe(true);
+    expect(modelMatchesExpected('claude-opus-4-8', 'claude-fable-5')).toBe(false);
+  });
+
+  test('settings expectation maps transcript session to owning pane command first', () => {
+    const settings = {
+      claudeModel: 'opus',
+      paneCommands: {
+        '1': 'claude --model claude-fable-5',
+        '2': 'codex',
+      },
+    };
+    const paneSessionIds = {
+      panes: {
+        '1': 'session-for-architect',
+        '2': 'session-for-builder',
+      },
+    };
+
+    expect(resolveExpectedModelForTranscript('session-for-architect.jsonl', { settings, paneSessionIds }))
+      .toEqual({
+        expectedModel: 'claude-fable-5',
+        paneId: '1',
+        source: 'pane-command',
+      });
+    expect(resolveExpectedModelForTranscript('session-for-builder.jsonl', { settings, paneSessionIds }).expectedModel)
+      .toBe('');
+  });
+
+  test('settings expectation falls back to global claudeModel for generic Claude pane command', () => {
+    const settings = {
+      claudeModel: 'opus',
+      paneCommands: {
+        '1': 'claude',
+      },
+    };
+    const paneSessionIds = { panes: { '1': 'session-for-architect' } };
+
+    expect(resolveExpectedModelForTranscript('session-for-architect.jsonl', { settings, paneSessionIds }))
+      .toEqual({
+        expectedModel: 'opus',
+        paneId: '1',
+        source: 'settings-claudeModel',
+      });
+  });
+
+  test('settings-derived gate: opus setting makes opus transcript silent and fable transcript alarm', () => {
+    const context = {
+      settings: {
+        paneCommands: { '1': 'claude --model opus' },
+      },
+      paneSessionIds: { panes: { '1': 'architect-session' } },
+    };
+
+    expect(findOffendingTurnsForTranscript(
+      'architect-session.jsonl',
+      [line('2026-07-04T11:00:00Z', 'claude-opus-4-8')],
+      context
+    )).toEqual([]);
+    expect(findOffendingTurnsForTranscript(
+      'architect-session.jsonl',
+      [line('2026-07-04T11:01:00Z', 'claude-fable-5')],
+      context
+    )).toEqual([
+      {
+        file: 'architect-session.jsonl',
+        model: 'claude-fable-5',
+        timestamp: '2026-07-04T11:01:00Z',
+        expectedModel: 'opus',
+        paneId: '1',
+        source: 'pane-command',
+      },
+    ]);
+  });
+
+  test('settings-derived gate follows an opus to fable flip without restart state', () => {
+    const paneSessionIds = { panes: { '1': 'architect-session' } };
+    const opusSettings = { paneCommands: { '1': 'claude --model opus' } };
+    const fableSettings = { paneCommands: { '1': 'claude --model claude-fable-5' } };
+    const opusTurn = [line('2026-07-04T11:02:00Z', 'claude-opus-4-8')];
+
+    expect(findOffendingTurnsForTranscript(
+      'architect-session.jsonl',
+      opusTurn,
+      { settings: opusSettings, paneSessionIds }
+    )).toEqual([]);
+    expect(findOffendingTurnsForTranscript(
+      'architect-session.jsonl',
+      opusTurn,
+      { settings: fableSettings, paneSessionIds }
+    )).toEqual([
+      {
+        file: 'architect-session.jsonl',
+        model: 'claude-opus-4-8',
+        timestamp: '2026-07-04T11:02:00Z',
+        expectedModel: 'claude-fable-5',
+        paneId: '1',
+        source: 'pane-command',
+      },
+    ]);
+  });
+
+  test('watch alert filter emits once per substitution state change', () => {
+    const shouldAlert = createStateChangeAlertFilter();
+    const first = { file: 'a.jsonl', expectedModel: 'opus', model: 'claude-fable-5' };
+    const repeat = { file: 'a.jsonl', expectedModel: 'opus', model: 'claude-fable-5' };
+    const changed = { file: 'a.jsonl', expectedModel: 'opus', model: 'claude-sonnet-4-6' };
+    const ok = { file: 'a.jsonl', expectedModel: 'opus', model: 'claude-opus-4-8' };
+
+    expect(shouldAlert(first)).toBe(true);
+    expect(shouldAlert(repeat)).toBe(false);
+    expect(shouldAlert(changed)).toBe(true);
+    expect(shouldAlert(ok)).toBe(false);
+    expect(shouldAlert(first)).toBe(true);
   });
 });
