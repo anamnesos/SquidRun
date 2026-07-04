@@ -305,7 +305,7 @@ describe('cross-device bridge lifecycle e2e', () => {
     );
 
     expect(hmSendResult.code).toBe(0);
-    expect(hmSendResult.stdout).toContain('Delivered to @peer-arch');
+    expect(hmSendResult.stdout).toContain('delivered to @peer-arch');
     expect(hmSendResult.stdout).toContain('bridge_delivered');
 
     expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
