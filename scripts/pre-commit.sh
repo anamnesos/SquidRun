@@ -253,10 +253,32 @@ fi
 echo ""
 
 # =============================================================================
-# Gate 8: Build Doc Hygiene Lint (staged docs only)
+# Gate 8: App Session Literal Guard
 # =============================================================================
 
-echo "Gate 8: Build doc hygiene lint..."
+echo "Gate 8: App session literal guard..."
+
+if [ -f "ui/scripts/hm-app-session-literal-guard.js" ]; then
+    node ui/scripts/hm-app-session-literal-guard.js
+    if [ $? -ne 0 ]; then
+        echo "❌ App session literal guard failed"
+        echo "   Run: node ui/scripts/hm-app-session-literal-guard.js"
+        FAILED=1
+    else
+        echo "✅ App session literal guard passed"
+    fi
+else
+    echo "❌ ui/scripts/hm-app-session-literal-guard.js not found; app session literal guard cannot be skipped"
+    FAILED=1
+fi
+
+echo ""
+
+# =============================================================================
+# Gate 9: Build Doc Hygiene Lint (staged docs only)
+# =============================================================================
+
+echo "Gate 9: Build doc hygiene lint..."
 
 if [ -f "ui/scripts/doc-lint.js" ]; then
     node ui/scripts/doc-lint.js --staged
