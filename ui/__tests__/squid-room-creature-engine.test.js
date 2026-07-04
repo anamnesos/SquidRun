@@ -94,6 +94,24 @@ describe('squid room creature engine (P1.7)', () => {
     }
   });
 
+  test('separation spring breaks exact same-coordinate overlap deterministically', () => {
+    const builder = createSquidCreature({ petId: 'builder', seed: 101 });
+    const oracle = createSquidCreature({ petId: 'oracle', seed: 202 });
+    builder.setBounds(400, 260);
+    oracle.setBounds(400, 260);
+
+    expect(builder.state.x).toBe(oracle.state.x);
+    expect(builder.state.y).toBe(oracle.state.y);
+
+    builder.setNeighbor(oracle.state.x, oracle.state.y);
+    oracle.setNeighbor(builder.state.x, builder.state.y);
+    builder.tick(16);
+    oracle.tick(16);
+
+    expect(builder.state.vx).toBeGreaterThan(0);
+    expect(oracle.state.vx).toBeLessThan(0);
+  });
+
   test('banking: heading follows the velocity vector while moving', () => {
     const creature = createSquidCreature({ petId: 'builder', seed: 13 });
     creature.setBounds(400, 260);

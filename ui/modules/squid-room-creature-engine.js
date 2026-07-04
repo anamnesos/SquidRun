@@ -318,12 +318,16 @@ function createSquidCreature(options = {}) {
     if (state.neighbor) {
       const ndx = state.x - state.neighbor.x;
       const ndy = state.y - state.neighbor.y;
-      const ndist = Math.hypot(ndx, ndy) || 1;
+      const rawDist = Math.hypot(ndx, ndy);
+      const ndist = rawDist || 1;
       const ENGAGE = 105;
       if (ndist < ENGAGE) {
         const push = ((ENGAGE - ndist) / ENGAGE) * 42 * dt;
-        state.vx += (ndx / ndist) * push * 10;
-        state.vy += (ndy / ndist) * push * 10;
+        const fallbackAngle = petId === 'oracle' ? Math.PI : 0;
+        const ux = rawDist > 0.001 ? ndx / ndist : Math.cos(fallbackAngle);
+        const uy = rawDist > 0.001 ? ndy / ndist : Math.sin(fallbackAngle);
+        state.vx += ux * push * 10;
+        state.vy += uy * push * 10;
         const tdx = state.targetX - state.neighbor.x;
         const tdy = state.targetY - state.neighbor.y;
         if (Math.hypot(tdx, tdy) < 70) pickTarget();
