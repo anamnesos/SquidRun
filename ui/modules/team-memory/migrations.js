@@ -10,10 +10,27 @@ const migrationV9 = require('./migrations/009-phase7-memory-ingest');
 const migrationV10 = require('./migrations/010-phase8-memory-ingest-recovery');
 const migrationV11 = require('./migrations/011-phase9-memory-promotion-lifecycle');
 const migrationV12 = require('./migrations/012-phase10-memory-delivery');
+const migrationV13 = require('./migrations/013-phase10b-memory-class-expansion');
 const migrationV14 = require('./migrations/014-phase10c-promotion-correction-links');
 const migrationV15 = require('./migrations/015-phase11-recall-feedback');
 
-const MIGRATIONS = [migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7, migrationV8, migrationV9, migrationV10, migrationV11, migrationV12, migrationV14, migrationV15];
+const MIGRATIONS = [
+  migrationV1,
+  migrationV2,
+  migrationV3,
+  migrationV4,
+  migrationV5,
+  migrationV6,
+  migrationV7,
+  migrationV8,
+  migrationV9,
+  migrationV10,
+  migrationV11,
+  migrationV12,
+  migrationV13,
+  migrationV14,
+  migrationV15,
+];
 const LATEST_MIGRATION_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version || 0;
 
 function toEpochMs(value = Date.now()) {
@@ -75,10 +92,15 @@ function runMigrations(db, options = {}) {
       if (!Number.isFinite(version)) continue;
       if (applied.has(version)) continue;
 
+      const disableForeignKeys = migration.disableForeignKeys === true;
+      if (disableForeignKeys) db.exec('PRAGMA foreign_keys = OFF;');
       db.exec('BEGIN IMMEDIATE;');
       try {
+        const migrationOptions = disableForeignKeys
+          ? { ...options, squidrunManagedTransaction: true }
+          : options;
         if (typeof migration.up === 'function') {
-          migration.up(db, options);
+          migration.up(db, migrationOptions);
         } else {
           db.exec(String(migration.sql || '').trim());
         }
@@ -91,6 +113,8 @@ function runMigrations(db, options = {}) {
       } catch (err) {
         try { db.exec('ROLLBACK;'); } catch {}
         throw err;
+      } finally {
+        if (disableForeignKeys) db.exec('PRAGMA foreign_keys = ON;');
       }
     }
   } catch (err) {
