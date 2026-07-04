@@ -406,6 +406,55 @@ describe('renderer.js smoke tests', () => {
         body: '(ORACLE #169-fyi): Foundation increment gated CONSTITUTION PASS.',
       }, 'oracle').face).toBe('Foundation increment gated CONSTITUTION PASS.');
     });
+
+    it('prefers valid sender-authored face text and keeps raw one click deeper', () => {
+      const rawBody = '(ORACLE #174): Verdict ledger v-20260704173547-174-oracle, kind=verify, subject=face protocol gate PASS.';
+      const face = renderer.buildSquidRoomPetFace({
+        rawBody,
+        metadata: {
+          envelope: {
+            display: {
+              face: 'Face protocol gate passed; capture is clean.',
+            },
+          },
+        },
+      }, 'oracle');
+
+      expect(face.face).toBe('Face protocol gate passed; capture is clean.');
+      expect(face.raw).toBe(rawBody);
+      expect(face.hasRawDetails).toBe(true);
+      expect(face.source).toBe('authored');
+      expect(face.face).not.toMatch(/kind=|subject=|verdict ledger|v-/i);
+    });
+
+    it('fails dark on invalid authored face instead of falling back to raw', () => {
+      const face = renderer.buildSquidRoomPetFace({
+        rawBody: '(BUILDER #55): Work landed in the renderer.',
+        metadata_json: JSON.stringify({
+          envelope: {
+            display: {
+              face: 'Full materialized #hm--cvzmmh read; v--174-oracle kind=verify',
+            },
+          },
+        }),
+      }, 'builder');
+
+      expect(face.face).toBe('');
+      expect(face.raw).toContain('Work landed in the renderer.');
+      expect(face.hasRawDetails).toBe(true);
+      expect(face.source).toBe('authored');
+    });
+
+    it('fails dark on legacy raw fallback rows with materialized ids', () => {
+      const face = renderer.buildSquidRoomPetFace({
+        rawBody: '(BUILDER #21): Full materialized hm-1783190147086-vqdtz2 read. Verified accepted.',
+      }, 'builder');
+
+      expect(face.face).toBe('');
+      expect(face.raw).toContain('Full materialized hm-1783190147086-vqdtz2 read.');
+      expect(face.hasRawDetails).toBe(true);
+      expect(face.source).toBe('legacy');
+    });
   });
 
   describe('buildSquidRoomPetSpeechText', () => {
@@ -420,6 +469,14 @@ describe('renderer.js smoke tests', () => {
       expect(speech.short.length).toBeLessThanOrEqual(42);
       expect(speech.short).toMatch(/^Working: Fixing/);
       expect(speech.short).not.toMatch(/rowId|sha256|messageId/);
+    });
+
+    it('stays silent when the face line is empty', () => {
+      expect(renderer.buildSquidRoomPetSpeechText(
+        { label: 'Working' },
+        { face: '' },
+        42
+      )).toEqual({ full: '', short: '' });
     });
   });
 

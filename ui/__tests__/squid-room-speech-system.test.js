@@ -287,6 +287,18 @@ describe('defect fixes — jargon guard + creature avoidance (Architect row 7387
     expect(sanitizeSpeechText('sha256:aaaaaaaaaaaaaaaa1111')).toBe('');
   });
 
+  test('verdict IDs are not mutilated into v-- husks and husks fail dark', () => {
+    expect(sanitizeSpeechText('checking v-20260704173547-174-oracle now'))
+      .toBe('checking v-20260704173547-174-oracle now');
+    expect(sanitizeSpeechText('checking v--174-oracle now')).toBe('');
+  });
+
+  test('semantic plumbing markers fail dark instead of speaking raw ledger text', () => {
+    expect(sanitizeSpeechText('Verdict ledger v-20260704173547-174-oracle, kind=verify, subject=face protocol'))
+      .toBe('');
+    expect(sanitizeSpeechText('Full materialized #hm--cvzmmh read')).toBe('');
+  });
+
   test('setSpeech with pure-jargon face stays silent instead of inventing', () => {
     const doc = makeFakeDocument();
     const layerEl = makeFakeElement('div');

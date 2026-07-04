@@ -1,6 +1,7 @@
 // @ts-check
 
 /** @typedef {import('../../types/contracts').CanonicalEnvelopeMetadata} CanonicalEnvelopeMetadata */
+/** @typedef {import('../../types/contracts').EnvelopeDisplay} EnvelopeDisplay */
 /** @typedef {import('../../types/contracts').OutboundMessageEnvelope} OutboundMessageEnvelope */
 /** @typedef {import('../../types/contracts').OutboundMessageEnvelopeInput} OutboundMessageEnvelopeInput */
 /** @typedef {import('../../types/contracts').ProjectMetadata} ProjectMetadata */
@@ -74,6 +75,20 @@ function normalizeProjectMetadata(projectInput = null) {
 }
 
 /**
+ * @param {unknown} [displayInput]
+ * @returns {EnvelopeDisplay | null}
+ */
+function normalizeEnvelopeDisplay(displayInput = null) {
+  const display = asObject(displayInput);
+  const face = asNonEmptyString(
+    display.face || display.authored_face || display.authoredFace,
+    null
+  );
+  if (!face) return null;
+  return { face };
+}
+
+/**
  * @param {OutboundMessageEnvelopeInput} [input]
  * @returns {OutboundMessageEnvelope}
  */
@@ -108,6 +123,11 @@ function buildOutboundMessageEnvelope(input = {}) {
     session_id: asNonEmptyString(source.session_id || source.sessionId, null),
     priority: asNonEmptyString(source.priority, null),
     content: asNonEmptyString(source.content, '') || '',
+    display: normalizeEnvelopeDisplay(
+      source.display || {
+        face: source.face || source.authored_face || source.authoredFace,
+      }
+    ),
     sender: {
       role: senderRole,
     },
@@ -130,6 +150,7 @@ function buildCanonicalEnvelopeMetadata(envelopeInput = {}) {
     envelope_version: envelope.version,
     envelope,
     project: envelope.project,
+    display: envelope.display,
     session_id: envelope.session_id,
     sender: envelope.sender,
     target: envelope.target,
@@ -194,5 +215,6 @@ module.exports = {
   buildWebSocketDispatchMessage,
   buildTriggerFallbackDescriptor,
   buildSpecialTargetRequest,
+  normalizeEnvelopeDisplay,
   normalizeProjectMetadata,
 };

@@ -222,6 +222,8 @@ let messageFilePath = null;
 let resolvedMessageFilePath = null;
 let cleanupMessageFilePathOnSuccess = null;
 let useStdin = false;
+let authoredFace = null;
+let authoredFaceFilePath = null;
 let telegramPhotoPath = null;
 let telegramChatIdOverride = null;
 let sourceProfileOverride = null;
@@ -236,7 +238,7 @@ let bypassGuard = String(process.env.HM_SEND_BYPASS_GUARD || '').trim() === '1';
 // Words starting with "--" that are NOT in this set are treated as message text,
 // which prevents accidental truncation when message content contains "--something".
 const KNOWN_FLAGS = new Set([
-  '--role', '--file', '--stdin', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices', '--chat-id', '--source-profile', '--source-window', '--source-session', '--source-session-scope', '--target-profile', '--route-profile', '--target-window', '--target-session', '--target-session-scope', '--bypass-guard',
+  '--role', '--file', '--stdin', '--face', '--face-file', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices', '--chat-id', '--source-profile', '--source-window', '--source-session', '--source-session-scope', '--target-profile', '--route-profile', '--target-window', '--target-session', '--target-session-scope', '--bypass-guard',
 ]);
 
 function shouldCleanupMessageFile(filePath) {
@@ -285,6 +287,24 @@ for (; i < args.length; i++) {
   }
   if (token === '--stdin') {
     useStdin = true;
+    continue;
+  }
+  if (token === '--face') {
+    if (!args[i + 1]) {
+      console.error('--face requires text.');
+      process.exit(1);
+    }
+    authoredFace = args[i + 1];
+    i++;
+    continue;
+  }
+  if (token === '--face-file') {
+    if (!args[i + 1]) {
+      console.error('--face-file requires a file path.');
+      process.exit(1);
+    }
+    authoredFaceFilePath = args[i + 1];
+    i++;
     continue;
   }
   if (token === '--photo') {
@@ -392,6 +412,18 @@ if (!listDevicesMode && messageFilePath) {
     console.error(`Failed to read message file '${resolvedMessageFilePath}': ${err.message}`);
     process.exit(1);
   }
+}
+if (!listDevicesMode && authoredFaceFilePath) {
+  const resolvedFaceFilePath = path.resolve(authoredFaceFilePath);
+  try {
+    authoredFace = fs.readFileSync(resolvedFaceFilePath, 'utf8');
+  } catch (err) {
+    console.error(`Failed to read face file '${resolvedFaceFilePath}': ${err.message}`);
+    process.exit(1);
+  }
+}
+if (!listDevicesMode && authoredFace !== null && authoredFace !== undefined) {
+  authoredFace = String(authoredFace).replace(/\s+/g, ' ').trim() || null;
 }
 if (!listDevicesMode && telegramPhotoPath) {
   const normalizedTarget = String(target || '').trim().toLowerCase();
@@ -2922,6 +2954,7 @@ async function main() {
       pane_id: resolvePaneIdForRole(targetRole),
     },
     content: outboundMessage,
+    display: authoredFace ? { face: authoredFace } : null,
     priority,
     timestamp_ms: Date.now(),
     project: projectMetadata || null,

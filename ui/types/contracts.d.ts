@@ -28,6 +28,10 @@ export interface EnvelopeTarget {
   pane_id: string | null;
 }
 
+export interface EnvelopeDisplay {
+  face: string;
+}
+
 export interface OutboundMessageEnvelope {
   version: string;
   message_id: string | null;
@@ -36,6 +40,7 @@ export interface OutboundMessageEnvelope {
   session_id: string | null;
   priority: string | null;
   content: string;
+  display: EnvelopeDisplay | null;
   sender: EnvelopeParty;
   target: EnvelopeTarget;
   project: ProjectMetadata | null;
@@ -50,6 +55,10 @@ export interface OutboundMessageEnvelopeInput {
   sessionId?: string | null;
   priority?: string | null;
   content?: string | null;
+  display?: Partial<EnvelopeDisplay> | null;
+  face?: string | null;
+  authored_face?: string | null;
+  authoredFace?: string | null;
   sender?: Partial<EnvelopeParty> | null;
   sender_role?: string | null;
   senderRole?: string | null;
@@ -67,6 +76,7 @@ export interface CanonicalEnvelopeMetadata {
   envelope_version: string;
   envelope: OutboundMessageEnvelope;
   project: ProjectMetadata | null;
+  display: EnvelopeDisplay | null;
   session_id: string | null;
   sender: EnvelopeParty;
   target: EnvelopeTarget;

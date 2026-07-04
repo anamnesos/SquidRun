@@ -2793,6 +2793,46 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('stores sender-authored face text in websocket envelope metadata', async () => {
+    const tempProject = createLinkedProject();
+    const sendAttempts = [];
+    const { server, port } = await startAckServer(sendAttempts);
+
+    try {
+      writeAppStatus(tempProject, 'app-session-hm-send-face');
+      const result = await runHmSend(
+        [
+          'builder',
+          '(TEST #face): raw row keeps kind=verify in the body.',
+          '--face',
+          'Face protocol gate passed; capture is clean.',
+          '--role',
+          'oracle',
+          '--timeout',
+          '80',
+          '--retries',
+          '0',
+          '--no-fallback',
+        ],
+        { HM_SEND_PORT: String(port) },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0].content).toContain('kind=verify');
+      expect(sendAttempts[0].metadata.display).toEqual({
+        face: 'Face protocol gate passed; capture is clean.',
+      });
+      expect(sendAttempts[0].metadata.envelope.display).toEqual({
+        face: 'Face protocol gate passed; capture is clean.',
+      });
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('refreshes stale app-session link metadata from current app-status session', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-session-refresh-'));
     const externalProjectPath = path.join(tempRoot, 'external-project');

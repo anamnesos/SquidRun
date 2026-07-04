@@ -717,8 +717,66 @@ function stripSquidRoomFaceJargon(value) {
   return pipelineSpecific.replace(/\s{2,}/g, ' ').trim();
 }
 
+function hasSquidRoomFaceMachineMarker(value) {
+  const marker = rendererModules.faceJargonCore?.hasMachineJargonMarker;
+  if (typeof marker === 'function') return marker(value);
+  const text = String(value || '');
+  return /\bkind\s*=|\bsubject\s*=|\bmaterialized\b|\bverdict\s+ledger\b|\bhm--|\bv--/i.test(text);
+}
+
+function sanitizeSquidRoomFaceText(value) {
+  if (hasSquidRoomFaceMachineMarker(value)) return '';
+  const stripped = stripSquidRoomFaceJargon(value);
+  return hasSquidRoomFaceMachineMarker(stripped) ? '' : stripped;
+}
+
 function getSquidRoomCommsText(row = {}) {
   return String(row?.rawBody || row?.raw_body || row?.body || row?.excerpt || '');
+}
+
+function parseSquidRoomMetadataValue(value) {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_err) {
+    return {};
+  }
+}
+
+function getSquidRoomCommsMetadata(row = {}) {
+  const direct = parseSquidRoomMetadataValue(row?.metadata);
+  if (Object.keys(direct).length > 0) return direct;
+  const json = parseSquidRoomMetadataValue(row?.metadata_json || row?.metadataJson || row?.meta);
+  if (Object.keys(json).length > 0) return json;
+  if (row?.envelope || row?.display) {
+    return {
+      envelope: row.envelope,
+      display: row.display,
+    };
+  }
+  return {};
+}
+
+function getSquidRoomAuthoredFace(row = {}) {
+  const metadata = getSquidRoomCommsMetadata(row);
+  const candidates = [
+    metadata?.envelope?.display?.face,
+    metadata?.display?.face,
+    row?.envelope?.display?.face,
+    row?.display?.face,
+    row?.authoredFace,
+    row?.authored_face,
+    row?.face,
+  ];
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined) continue;
+    const text = String(candidate).replace(/\s+/g, ' ').trim();
+    if (text) return text;
+  }
+  return null;
 }
 
 function isSquidRoomPetNoiseRow(row = {}, role = '') {
@@ -731,24 +789,27 @@ function isSquidRoomPetNoiseRow(row = {}, role = '') {
 }
 
 function summarizeSquidRoomPetMessage(row = {}, role = '') {
-  const raw = stripSquidRoomFaceJargon(stripSquidRoomMessageNoise(getSquidRoomCommsText(row)));
-  const fallback = role === 'oracle' ? 'Checking the proof.' : 'Working the active fix.';
-  if (!raw) return fallback;
+  const raw = sanitizeSquidRoomFaceText(stripSquidRoomMessageNoise(getSquidRoomCommsText(row)));
+  if (!raw) return '';
   const firstSentence = raw.split(/(?<=[.!?])\s+/)[0] || raw;
   const text = firstSentence.length > 128 ? `${firstSentence.slice(0, 125).trim()}...` : firstSentence;
-  return text || fallback;
+  return text || '';
 }
 
 function buildSquidRoomPetFace(row = {}, role = '') {
   const raw = getSquidRoomCommsText(row);
   const strippedRaw = stripSquidRoomMessageNoise(raw);
-  const face = summarizeSquidRoomPetMessage(row, role);
+  const authoredFace = getSquidRoomAuthoredFace(row);
+  const face = authoredFace !== null
+    ? sanitizeSquidRoomFaceText(authoredFace)
+    : summarizeSquidRoomPetMessage(row, role);
   const normalizedRaw = strippedRaw.replace(/\s+/g, ' ').trim();
   const normalizedFace = face.replace(/\s+/g, ' ').trim();
   return {
     face,
     raw: raw || strippedRaw || '',
     hasRawDetails: Boolean(normalizedRaw && normalizedRaw !== normalizedFace),
+    source: authoredFace !== null ? 'authored' : 'legacy',
   };
 }
 
@@ -763,6 +824,9 @@ function truncateSquidRoomSpeechText(value, maxChars = SQUID_ROOM_PET_SPEECH_MAX
 function buildSquidRoomPetSpeechText(state = {}, face = {}, maxChars = SQUID_ROOM_PET_SPEECH_MAX_CHARS) {
   const label = String(state?.label || 'Ready').trim();
   const line = String(face?.face || '').trim();
+  if (!line) {
+    return { full: '', short: '' };
+  }
   const full = line ? `${label}: ${line}` : label;
   return {
     full,
@@ -969,7 +1033,7 @@ function updateSquidRoomPetPane(pane, row) {
   if (typeof squidRoomCreatureRuntime.setSquidRoomCreatureSpeech === 'function') {
     squidRoomCreatureRuntime.setSquidRoomCreatureSpeech(role, {
       face: buildSquidRoomPetSpeechText(state, face).full,
-      full: face.raw || face.face,
+      full: face.face || '',
       raw: face.raw || '',
       rowIdentity,
     });
