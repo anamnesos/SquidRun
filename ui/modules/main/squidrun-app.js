@@ -4115,13 +4115,14 @@ class SquidRunApp {
       const canRouteToHiddenHost = hostWindowPresent && hostReady && !hostLoading;
 
       if (canRouteToHiddenHost) {
+        // startupInjection deleted from the wire (typed-seams item 6): the
+        // pane-host renderer never read it - a field only the sender knew.
         const routedToHost = this.sendPaneHostBridgeEvent(paneId, 'inject-message', {
           message: packet.message,
           messageBytes: packet.messageBytes,
           ipcChunk: packet.ipcChunk || null,
           deliveryId: packet.deliveryId || null,
           traceContext: packet.traceContext || null,
-          startupInjection,
           meta: packet.meta || null,
         });
         if (routedToHost) {
@@ -7032,17 +7033,21 @@ class SquidRunApp {
         }
 
         if (action === 'delivery-ack') {
+          // Typed-seams fix (Architect #4-S468 item 1): the producer sends
+          // messageId too - dropping it broke receipt correlation whenever
+          // deliveryId was null and messageId was the only key.
           this.handleTriggerDeliveryAck({
             deliveryId: payload?.deliveryId || null,
+            messageId: payload?.messageId || null,
             paneId: id,
           });
           return { success: true, paneId: id, action };
         }
 
         if (action === 'delivery-outcome') {
-          const outcome = (payload?.outcome && typeof payload.outcome === 'object')
-            ? { ...payload.outcome }
-            : {};
+          // Item 5: the dead payload.outcome branch is gone - the only
+          // producer sends fields FLAT; the wrapper object never existed.
+          const outcome = {};
           Object.assign(outcome, payload, { paneId: id });
           delete outcome.action;
           this.handleTriggerDeliveryOutcome(outcome);
