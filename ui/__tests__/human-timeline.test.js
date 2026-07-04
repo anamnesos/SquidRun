@@ -234,6 +234,25 @@ describe('human-timeline snapshot', () => {
         status: 'routed',
         brokeredAtMs: Date.parse('2026-06-12T16:26:00.000Z'),
         rawBody: '(BUILDER #1): Foreign window update passed.',
+        metadata: {
+          routing: {
+            profileName: 'eunbyeol',
+            windowKey: 'eunbyeol',
+          },
+        },
+      },
+      {
+        rowId: 8,
+        messageId: 'hm-local-historical-session',
+        sessionId: 'app-session-446',
+        senderRole: 'architect',
+        targetRole: 'user',
+        channel: 'telegram',
+        direction: 'outbound',
+        status: 'acked',
+        brokeredAtMs: Date.parse('2026-06-12T16:27:00.000Z'),
+        rawBody: 'Local provenance beats a historical session id.',
+        metadata: { threadId: 'historical-local-session' },
       },
     ];
 
@@ -263,6 +282,10 @@ describe('human-timeline snapshot', () => {
       expect.objectContaining({
         kind: 'you',
         headline: 'Here is what the team did today.',
+      }),
+      expect.objectContaining({
+        kind: 'you',
+        headline: 'Local provenance beats a historical session id.',
       }),
     ]));
     expect(snapshot.feed.items).not.toEqual(expect.arrayContaining([
@@ -314,6 +337,15 @@ describe('human-timeline snapshot', () => {
             updatedAt: '2026-06-12T16:45:00.000Z',
             sessionId: 'app-session-444',
           },
+          {
+            id: 'task-foreign',
+            title: 'Foreign window needs James input',
+            status: 'pending_james_go',
+            nextAction: 'James checks another install.',
+            updatedAt: '2026-06-12T16:55:00.000Z',
+            sessionId: 'app-session-446',
+            profile: 'eunbyeol',
+          },
         ],
       })),
       queryGitCommits: jest.fn(() => []),
@@ -322,6 +354,7 @@ describe('human-timeline snapshot', () => {
 
     expect(snapshot.needsYou.items).toHaveLength(5);
     expect(snapshot.needsYou.overflowCount).toBe(1);
+    expect(snapshot.footer.excludedForeignCount).toBe(1);
     expect(snapshot.needsYou.items).toEqual(expect.arrayContaining([
       expect.objectContaining({
         headline: 'A Telegram reply is waiting.',

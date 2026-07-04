@@ -31,7 +31,7 @@ const DEFAULT_MAX_FEED_ITEMS = 44;
 const DEFAULT_MAX_NEEDS_YOU_ITEMS = 5;
 const DEFAULT_TIMELINE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_TELEGRAM_OBLIGATION_VISIBLE_MS = 12 * 60 * 60 * 1000;
-const FOREIGN_SESSION_IDS = new Set(['app-session-446']);
+const LOCAL_WORLD_NAMES = new Set(['main', 'default']);
 const NEEDS_YOU_TASK_AUDIT_STATUSES = new Set([
   'needs_james_verification',
   'pending_james_go',
@@ -79,11 +79,24 @@ function rowTimeMs(row = {}) {
 }
 
 function rowMetadata(row = {}) {
-  return row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  return objectValue(row.metadata);
+}
+
+function objectValue(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
 function lower(value) {
   return String(value || '').toLowerCase();
+}
+
+function isForeignWorldName(value) {
+  const text = lower(toOptionalString(value, null));
+  return Boolean(text && !LOCAL_WORLD_NAMES.has(text));
+}
+
+function hasForeignWorldProvenance(values = []) {
+  return values.some(isForeignWorldName);
 }
 
 function cleanBody(value) {
@@ -208,28 +221,39 @@ function entryBase({ id, at, kind, headline, detail, actors, refs, needsYou = fa
   };
 }
 
-function metadataProfile(row = {}) {
+function rowWorldProvenanceValues(row = {}) {
   const metadata = rowMetadata(row);
-  return toOptionalString(
-    metadata.profileName
-    || metadata.profile
-    || metadata.windowProfile
-    || metadata.route?.profile
-    || metadata.routing?.profile
-    || null,
-    null
-  );
+  const route = objectValue(metadata.route);
+  const routing = objectValue(metadata.routing);
+  const routeAttribution = objectValue(metadata.routeAttribution);
+  const project = objectValue(metadata.project);
+  const envelope = objectValue(metadata.envelope);
+  const envelopeProject = objectValue(envelope.project);
+  return [
+    row.profileName,
+    row.profile,
+    row.windowProfile,
+    metadata.profileName,
+    metadata.profile,
+    metadata.windowProfile,
+    route.profileName,
+    route.profile,
+    routing.profileName,
+    routing.profile,
+    routeAttribution.sourceProfileName,
+    routeAttribution.targetProfileName,
+    project.profileName,
+    project.profile,
+    envelopeProject.profileName,
+    envelopeProject.profile,
+    routing.windowKey,
+    routeAttribution.sourceWindowKey,
+    routeAttribution.targetWindowKey,
+  ];
 }
 
-function isForeignWorldRow(row = {}, options = {}) {
-  const sessionId = toOptionalString(row.sessionId, null);
-  const foreignSessionIds = options.foreignSessionIds instanceof Set
-    ? options.foreignSessionIds
-    : FOREIGN_SESSION_IDS;
-  if (sessionId && foreignSessionIds.has(sessionId)) return true;
-  const profile = metadataProfile(row);
-  if (profile && !['main', 'default'].includes(lower(profile))) return true;
-  return false;
+function isForeignWorldRow(row = {}) {
+  return hasForeignWorldProvenance(rowWorldProvenanceValues(row));
 }
 
 function isUserFacingRow(row = {}) {
@@ -631,15 +655,28 @@ function changeEntryFromCommit(commit = {}, options = {}) {
   });
 }
 
-function itemProfile(item = {}) {
-  return toOptionalString(item.profile || item.windowKey || item.project?.profile || null, null);
+function taskAuditWorldProvenanceValues(item = {}) {
+  const project = objectValue(item.project);
+  const routing = objectValue(item.routing);
+  const routeAttribution = objectValue(item.routeAttribution);
+  return [
+    item.profileName,
+    item.profile,
+    project.profileName,
+    project.profile,
+    routing.profileName,
+    routing.profile,
+    routeAttribution.sourceProfileName,
+    routeAttribution.targetProfileName,
+    item.windowKey,
+    routing.windowKey,
+    routeAttribution.sourceWindowKey,
+    routeAttribution.targetWindowKey,
+  ];
 }
 
 function isForeignTaskAuditItem(item = {}) {
-  const profile = itemProfile(item);
-  if (profile && !['main', 'default'].includes(lower(profile))) return true;
-  if (FOREIGN_SESSION_IDS.has(toOptionalString(item.sessionId, null))) return true;
-  return false;
+  return hasForeignWorldProvenance(taskAuditWorldProvenanceValues(item));
 }
 
 function readTaskAuditNeeds(options = {}) {
