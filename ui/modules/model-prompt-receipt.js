@@ -149,8 +149,11 @@ function extractReceiptMarker(promptText) {
   const fields = parseMarkerTokens(markerMatch[1]);
   const semanticEvent = toNonEmptyString(fields.event) || SEMANTIC_EVENT;
   if (semanticEvent !== SEMANTIC_EVENT) return null;
-  const deliveryId = toNonEmptyString(fields.deliveryId) || toNonEmptyString(fields.delivery_id);
-  const messageId = toNonEmptyString(fields.messageId) || toNonEmptyString(fields.message_id);
+  // Snake_case tolerance deleted (typed-seams item 3): buildReceiptMarker
+  // only ever emits camelCase; a parser wider than its producer is the
+  // no-orphan class.
+  const deliveryId = toNonEmptyString(fields.deliveryId);
+  const messageId = toNonEmptyString(fields.messageId);
   const receiptId = deliveryId || messageId;
   if (!receiptId) return null;
   return {
@@ -317,12 +320,13 @@ function getModelPromptReceipt(id) {
 }
 
 function getReceiptForAck(message = {}, handlerAck = null) {
+  // handlerAck.handlerResult deleted (typed-seams item 2): coerceAckResult
+  // never exposes it - the read was always undefined.
   const ids = [
     message.deliveryId,
     message.messageId,
     handlerAck?.deliveryId,
     handlerAck?.details?.deliveryId,
-    handlerAck?.handlerResult?.deliveryId,
   ].map(toNonEmptyString).filter(Boolean);
   for (const id of ids) {
     const receipt = getModelPromptReceipt(id);
