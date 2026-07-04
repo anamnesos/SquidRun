@@ -65,6 +65,10 @@ const {
   buildSpecialTargetRequest,
 } = require('../modules/comms/message-envelope');
 const {
+  classifyAckOutcome,
+  formatAckLine,
+} = require('../modules/comms/ack-outcome');
+const {
   getTrustQuoteArmPaneIds,
 } = require('../modules/trustquote-arm-specs');
 const {
@@ -3029,31 +3033,23 @@ async function main() {
           ts: Date.now(),
         });
         console.warn(
-          `Accepted by ${target} but unverified: ${previewMessage(message)} `
-          + `(ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed}). `
+          `${formatAckLine(target, previewMessage(message), classifyAckOutcome(sendResult))} `
           + `Forced trigger fallback: ${fallbackResult.path}`
         );
         closeCommsJournalStores();
         process.exit(0);
       }
       console.warn(
-        `Accepted by ${target} but unverified: ${previewMessage(message)} `
-        + `(ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed}). `
+        `${formatAckLine(target, previewMessage(message), classifyAckOutcome(sendResult))} `
         + `Forced fallback failed: ${fallbackResult.error}`
       );
       closeCommsJournalStores();
       process.exit(0);
     }
 
-    if (sendResult.delivered === false) {
-      console.log(
-        `Accepted by ${target} but unverified: ${previewMessage(message)} `
-        + `(ack: ${sendResult.ack?.status || 'unknown'}, attempt ${sendResult.attemptsUsed}). `
-        + 'Visible delivery is not claimed.'
-      );
-    } else {
-      console.log(`Delivered to ${target}: ${previewMessage(message)} (ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed})`);
-    }
+    // Ack-vocabulary collapse (nervous-system-v1): one classifier, three
+    // receipt-backed states; the raw status rides parenthesized.
+    console.log(formatAckLine(target, previewMessage(message), classifyAckOutcome(sendResult)));
     closeCommsJournalStores();
     process.exit(0);
   }

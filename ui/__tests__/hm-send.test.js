@@ -304,7 +304,7 @@ describe('hm-send retry behavior', () => {
       );
 
       expect(result.code).toBe(0);
-      expect(result.stdout).toContain('Delivered to builder');
+      expect(result.stdout).toContain('delivered to builder');
       expect(sendAttempts).toHaveLength(1);
       expect(sendAttempts[0].content).toContain('installed default port');
     } finally {
@@ -328,7 +328,7 @@ describe('hm-send retry behavior', () => {
 
       expect(result.code).toBe(0);
       expect(sendAttempts).toHaveLength(1);
-      expect(result.stdout).toContain('Delivered to architect');
+      expect(result.stdout).toContain('delivered to architect');
       expect(result.stderr).toContain('WARN: permission-ask phrase detected');
       expect(result.stderr).toContain('send continuing');
       expect(fs.existsSync(logPath)).toBe(true);
@@ -362,7 +362,7 @@ describe('hm-send retry behavior', () => {
 
       expect(result.code).toBe(0);
       expect(sendAttempts).toHaveLength(1);
-      expect(result.stdout).toContain('Delivered to architect');
+      expect(result.stdout).toContain('delivered to architect');
       expect(result.stderr).toContain('WARN: coworker-output-lint');
       expect(result.stderr).toContain('send continuing');
       expect(result.stderr).not.toContain('BLOCKED: coworker-output-lint');
@@ -426,7 +426,7 @@ describe('hm-send retry behavior', () => {
 
       expect(result.code).toBe(0);
       expect(sendAttempts).toHaveLength(1);
-      expect(result.stdout).toContain('Delivered to architect');
+      expect(result.stdout).toContain('delivered to architect');
       expect(fs.existsSync(bypassLogPath)).toBe(true);
       const entries = fs.readFileSync(bypassLogPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
       expect(entries).toHaveLength(1);
@@ -457,7 +457,7 @@ describe('hm-send retry behavior', () => {
 
       expect(result.code).toBe(0);
       expect(sendAttempts).toHaveLength(1);
-      expect(result.stdout).toContain('Delivered to architect');
+      expect(result.stdout).toContain('delivered to architect');
       expect(result.stderr).toContain("WARN: comms-liveness 'dead_packet_opener'");
       expect(result.stderr).toContain('send continuing');
       expect(fs.existsSync(logPath)).toBe(true);
@@ -614,7 +614,7 @@ describe('hm-send retry behavior', () => {
 
       expect(result.code).toBe(0);
       expect(sendAttempts).toHaveLength(1);
-      expect(result.stdout).toContain('Delivered to builder');
+      expect(result.stdout).toContain('delivered to builder');
       expect(fs.existsSync(logPath)).toBe(false);
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
@@ -670,7 +670,7 @@ describe('hm-send retry behavior', () => {
 
       expect(result.code).toBe(0);
       expect(sendAttempts).toHaveLength(1);
-      expect(result.stdout).toContain('Delivered to architect');
+      expect(result.stdout).toContain('delivered to architect');
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
       await new Promise((resolve) => server.close(resolve));
@@ -741,7 +741,7 @@ describe('hm-send retry behavior', () => {
       );
 
       expect(result.code).toBe(0);
-      expect(result.stdout).toContain('Delivered to builder');
+      expect(result.stdout).toContain('delivered to builder');
       expect(registerAttempts[0]).toEqual(expect.objectContaining({
         role: 'architect',
         profileName: 'eunbyeol',
@@ -927,8 +927,8 @@ describe('hm-send retry behavior', () => {
           windowKey: 'eunbyeol',
         }),
       }));
-      expect(result.stdout).toContain('Delivered to builder');
-      expect(result.stdout).toContain('ack: delivered.verified');
+      expect(result.stdout).toContain('delivered to builder');
+      expect(result.stdout).toContain('(delivered.verified');
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
       await new Promise((resolve) => server.close(resolve));
@@ -1650,7 +1650,7 @@ describe('hm-send retry behavior', () => {
 
     expect(result.code).toBe(0);
     expect(sendAttempts).toHaveLength(1);
-    expect(result.stdout).toContain('ack: routed');
+    expect(result.stdout).toContain('(routed');
   });
 
   test('accepts accepted-but-unverified ack only after ledger route proof confirms routed row', async () => {
@@ -1731,7 +1731,7 @@ describe('hm-send retry behavior', () => {
       expect(result.stdout).toContain('route: routed');
       expect(result.stdout).toContain('ack: routed_unverified');
       expect(result.stdout).toContain('Visible delivery is not claimed');
-      expect(result.stdout).not.toContain('Delivered to builder');
+      expect(result.stdout).not.toContain('delivered to builder');
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
       await new Promise((resolve) => server.close(resolve));
@@ -1913,7 +1913,7 @@ describe('hm-send retry behavior', () => {
       expect(result.stderr).toContain('ledger route proof is missing');
       expect(result.stderr).toContain('proof: ledger_route_wrong_session');
       expect(result.stdout).not.toContain('Route proof confirmed');
-      expect(result.stdout).not.toContain('Delivered to builder');
+      expect(result.stdout).not.toContain('delivered to builder');
       expect(result.stderr).not.toContain('Wrote trigger fallback');
       expect(fs.existsSync(triggerPath)).toBe(false);
     } finally {
@@ -2083,7 +2083,7 @@ describe('hm-send retry behavior', () => {
     expect(sendAttempts).toHaveLength(1);
     expect(result.stderr).toContain('ledger route proof is missing');
     expect(result.stderr).toContain('ack: delivered.websocket');
-    expect(result.stdout).not.toContain('Delivered to builder');
+    expect(result.stdout).not.toContain('delivered to builder');
   });
 
   test('does not report accepted.unverified ack as visible delivery even with misleading visible flags', async () => {
@@ -2161,7 +2161,7 @@ describe('hm-send retry behavior', () => {
     expect(sendAttempts).toHaveLength(1);
     expect(result.stderr).toContain('ledger route proof is missing');
     expect(result.stderr).toContain('ack: accepted.unverified');
-    expect(result.stdout).not.toContain('Delivered to builder');
+    expect(result.stdout).not.toContain('delivered to builder');
   });
 
   test('blocks websocket send attempts when target health is invalid_target', async () => {
@@ -2281,7 +2281,7 @@ describe('hm-send retry behavior', () => {
     expect(result.code).toBe(0);
     expect(sendAttempts).toHaveLength(1);
     expect(sendAttempts[0].target).toBe('user');
-    expect(result.stdout).toContain('ack: telegram_delivered');
+    expect(result.stdout).toContain('(telegram_delivered');
   });
 
   test('blocks user target after current-session Telegram inbound evidence even outside reply window', async () => {
@@ -2698,7 +2698,7 @@ describe('hm-send retry behavior', () => {
 
     expect(result.code).toBe(0);
     expect(sendAttempts).toHaveLength(1);
-    expect(result.stdout).toContain('ack: routed');
+    expect(result.stdout).toContain('(routed');
   });
 
   test('includes project context metadata in websocket send payload', async () => {
@@ -3200,8 +3200,8 @@ describe('hm-send retry behavior', () => {
 
       expect(result.code).toBe(0);
       expect(sendAttempts).toHaveLength(2);
-      expect(result.stdout).toContain('Delivered to builder');
-      expect(result.stdout).toContain('ack: delivered.verified');
+      expect(result.stdout).toContain('delivered to builder');
+      expect(result.stdout).toContain('(delivered.verified');
       expect(result.stderr).not.toContain('Wrote trigger fallback');
       if (hadOriginal) {
         expect(fs.readFileSync(triggerPath, 'utf8')).toBe(originalContent);
@@ -3305,7 +3305,7 @@ describe('hm-send retry behavior', () => {
       expect(sendAttempts).toHaveLength(2);
       expect(result.stderr).toContain('ledger route proof is missing');
       expect(result.stderr).toContain('ack: delivered.websocket');
-      expect(result.stdout).not.toContain('Delivered to builder');
+      expect(result.stdout).not.toContain('delivered to builder');
       expect(result.stderr).not.toContain('Wrote trigger fallback');
       if (hadOriginal) {
         expect(fs.readFileSync(triggerPath, 'utf8')).toBe(originalContent);
@@ -3528,7 +3528,7 @@ describe('hm-send retry behavior', () => {
     expect(sendAttempts).toHaveLength(1);
     expect(sendAttempts[0].target).toBe('@peer-arch');
     expect(sendAttempts[0]?.metadata?.envelope?.target?.role).toBe('architect');
-    expect(result.stdout).toContain('Delivered to @peer-arch');
+    expect(result.stdout).toContain('delivered to @peer-arch');
   });
 
   test.skip('--list-devices queries discovery, prints table, and writes cache', async () => {
