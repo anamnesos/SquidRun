@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { tallyModelsByDay, mergeTallies, auditDir } = require('../scripts/hm-model-audit');
+const { tallyModelsByDay, mergeTallies, auditDir, findOffendingTurns } = require('../scripts/hm-model-audit');
 
 const line = (ts, model) => JSON.stringify({ timestamp: ts, message: { model } });
 
@@ -49,5 +49,17 @@ describe('hm-model-audit', () => {
     });
     expect(Object.keys(result.byFile).sort()).toEqual(['a.jsonl', 'b.jsonl']);
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('watch core: flags substitutions, ignores expected + synthetic turns', () => {
+    const lines = [
+      line('2026-07-04T11:00:00Z', 'claude-fable-5'),     // expected — quiet
+      line('2026-07-04T11:01:00Z', '<synthetic>'),        // bookkeeping — quiet
+      line('2026-07-04T11:02:00Z', 'claude-opus-4-8'),    // ALERT
+      'garbage "model" line',
+    ];
+    expect(findOffendingTurns(lines, 'claude-fable-5')).toEqual([
+      { model: 'claude-opus-4-8', timestamp: '2026-07-04T11:02:00Z' },
+    ]);
   });
 });
