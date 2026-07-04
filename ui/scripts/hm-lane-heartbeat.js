@@ -30,21 +30,26 @@ const INTERVAL_S_DEFAULT = 120;
 const POKE_COOLDOWN_MIN = 7;
 const MAX_POKES_BEFORE_STALL = 3;
 
-function readLedgerLastOutboundMs(roles) {
-  // Parse `hm-comms.js history` text: "YYYY-MM-DD HH:MM:SS.mmm sender -> target ..."
-  const out = execFileSync(process.execPath, [
-    path.join(SCRIPTS_DIR, 'hm-comms.js'), 'history', '--limit', '120',
-  ], { encoding: 'utf8', timeout: 30000 });
+/** Pure: newest outbound timestampMs per role from hm-comms --json rows. */
+function lastOutboundFromRows(rows, roles) {
   const last = {};
-  for (const line of out.split('\n')) {
-    const m = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\.\d+\s+(\S+)\s+->/);
-    if (!m) continue;
-    const [, ts, sender] = m;
-    if (!roles.includes(sender)) continue;
-    const ms = new Date(ts.replace(' ', 'T') + 'Z').getTime();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const sender = row && row.sender;
+    const ms = row && Number(row.timestampMs);
+    if (!sender || !roles.includes(sender) || !Number.isFinite(ms)) continue;
     if (!last[sender] || ms > last[sender]) last[sender] = ms;
   }
   return last;
+}
+
+function readLedgerLastOutboundMs(roles) {
+  // --json is the seam contract (CommsJournalJsonRow); the rendered text
+  // format is display-only and must never be parsed (S468 doctrine:
+  // never regex another process's human-facing output).
+  const out = execFileSync(process.execPath, [
+    path.join(SCRIPTS_DIR, 'hm-comms.js'), 'history', '--limit', '120', '--json',
+  ], { encoding: 'utf8', timeout: 30000 });
+  return lastOutboundFromRows(JSON.parse(out).rows, roles);
 }
 
 /** Pure decision core — contract-tested. */
@@ -146,4 +151,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { decidePokes, cycle };
+module.exports = { decidePokes, cycle, lastOutboundFromRows };
