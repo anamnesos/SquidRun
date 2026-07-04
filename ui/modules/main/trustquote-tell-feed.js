@@ -276,6 +276,29 @@ function buildScheduleCollisionFact(events = [], nowMs, source, parkedCustomerId
     });
   }
   if (commitments.length === 0) return null;
+  // CAPACITY PRODUCER (S467 born-blind audit: the scorer consumed
+  // facts.availableWindows/existingBusyMin that NOTHING produced — the
+  // sensor was structurally silent forever, reading as "no collisions").
+  // Windows are GENEROUS work hours (8:00-18:00, Mon-Sat) across the
+  // commitment horizon: generosity biases toward FEWER collision calls,
+  // so when the sensor does speak, even a generous calendar could not fit
+  // the promises — the one-interrupt precision bar. existingBusyMin stays
+  // 0 BY CONSTRUCTION: every booked interval already rides commitments,
+  // and the scorer accumulates their durations itself (no double-count).
+  const horizonEndMs = Math.min(
+    commitments.reduce((m, c) => Math.max(m, c.endMs), nowMs) + 24 * 3600000,
+    nowMs + 14 * 24 * 3600000
+  );
+  const availableWindows = [];
+  const day = new Date(nowMs);
+  day.setHours(0, 0, 0, 0);
+  for (let t = day.getTime(); t < horizonEndMs; t += 24 * 3600000) {
+    const d = new Date(t);
+    if (d.getDay() === 0) continue; // Sundays off
+    const startMs = Math.max(t + 8 * 3600000, nowMs);
+    const endMs = Math.min(t + 18 * 3600000, horizonEndMs);
+    if (endMs > startMs) availableWindows.push({ startMs, endMs });
+  }
   return {
     type: 'promise:collision',
     id: 'calendar-events:schedule-overlap:promise-collision',
@@ -289,11 +312,83 @@ function buildScheduleCollisionFact(events = [], nowMs, source, parkedCustomerId
       businessId: TRUSTQUOTE_BUSINESS_ID,
       eventIds: commitments.map((commitment) => commitment.id),
     },
-    facts: { commitments },
+    facts: { commitments, availableWindows, existingBusyMin: 0 },
   };
 }
 
-function buildJobMarginFact(doc, nowMs, source, root = DEFAULT_TRUSTQUOTE_ROOT, pricingModule = null) {
+/**
+ * HISTORICAL MARGIN INDEX (tell-sensors-v2: the S467 audit found this field
+ * hardcoded to {floorPct:null,sampleCount:0} — the sensor starved on a stub
+ * for 11 days, 2,746 swallows). Wedge-style grounding ported from the
+ * pricing wedge's laws: comparables grouped by NORMALIZED type, floor only
+ * at n>=3 (small-n honesty), LEAVE-ONE-OUT (a bid never grounds itself —
+ * the eval-leakage law), transacted docs only (paid = market-accepted).
+ */
+// The WEDGE normalizer is the source of truth for job-type grouping
+// (tell-sensors-v2 probe: the old local slug split 'Whole Home Water
+// Repipe (2 Bath)' away from the repipe family and starved the floor —
+// 8/10 live drafts were silent on granularity, not honesty).
+const { normalizeJobType: normalizeWedgeJobType } = require('../the-tell/normalize-job-type');
+
+function normalizeTellJobType(value) {
+  return normalizeWedgeJobType(value);
+}
+
+function isTransactedDoc(data) {
+  const pay = String(data.paymentStatus || '').toLowerCase();
+  return pay === 'paid' || pay === 'overpaid';
+}
+
+function buildMarginIndex(docs, root = DEFAULT_TRUSTQUOTE_ROOT, pricingModule = null) {
+  const byType = new Map(); // type -> [{docId, marginPct}]
+  for (const doc of docs) {
+    const data = doc.data || {};
+    if (!isTransactedDoc(data)) continue;
+    const price = getCanonicalDocTotal(data, root, pricingModule);
+    if (!(price > 0)) continue;
+    const marginPct = toNumber(data.bidMarginPct ?? data.marginPct ?? data.margin, null)
+      ?? (Number.isFinite(toNumber(data.bidCost ?? data.cost ?? data.materialCost ?? data.materialsCost, NaN))
+        ? (price - toNumber(data.bidCost ?? data.cost ?? data.materialCost ?? data.materialsCost, 0)) / price
+        : null);
+    // PRICE always indexes (his corpus holds prices, not costs — S451 law);
+    // marginPct rides along only when cost data actually exists.
+    for (const t of serviceTypes(Array.isArray(data.jobTypes) ? data.jobTypes : [])) {
+      const key = normalizeTellJobType(t);
+      if (!key) continue;
+      if (!byType.has(key)) byType.set(key, []);
+      byType.get(key).push({ docId: doc.id, marginPct: Number.isFinite(marginPct) ? marginPct : null, priceUsd: price });
+    }
+  }
+  return byType;
+}
+
+function lookupHistoricalMargin(marginIndex, jobTypes, selfDocId) {
+  const empty = { floorPct: null, sampleCount: 0, jobIds: [], priceFloorUsd: null, priceSampleCount: 0 };
+  if (!marginIndex) return empty;
+  for (const t of jobTypes || []) {
+    const rows = (marginIndex.get(normalizeTellJobType(t)) || [])
+      .filter((r) => r.docId !== selfDocId); // leave-one-out: never self-grounded
+    if (rows.length < 3) continue;
+    const out = { ...empty, jobIds: rows.map((r) => r.docId).slice(0, 12) };
+    // PRICE floor (always available at n>=3): p25 of what he actually
+    // charged for this normalized type — the floor speaks his own numbers.
+    const prices = rows.map((r) => r.priceUsd).filter(Number.isFinite).sort((a, b) => a - b);
+    if (prices.length >= 3) {
+      out.priceFloorUsd = prices[Math.floor(prices.length * 0.25)];
+      out.priceSampleCount = prices.length;
+    }
+    // MARGIN floor only when cost data genuinely exists at n>=3.
+    const margins = rows.map((r) => r.marginPct).filter(Number.isFinite).sort((a, b) => a - b);
+    if (margins.length >= 3) {
+      out.floorPct = margins[Math.floor(margins.length * 0.25)];
+      out.sampleCount = margins.length;
+    }
+    return out;
+  }
+  return empty;
+}
+
+function buildJobMarginFact(doc, nowMs, source, root = DEFAULT_TRUSTQUOTE_ROOT, pricingModule = null, marginIndex = null) {
   const data = doc.data || {};
   const jobTypes = Array.isArray(data.jobTypes) ? data.jobTypes : [];
   const types = serviceTypes(jobTypes);
@@ -313,17 +408,16 @@ function buildJobMarginFact(doc, nowMs, source, root = DEFAULT_TRUSTQUOTE_ROOT, 
     bidMarginPct: toNumber(data.bidMarginPct ?? data.marginPct ?? data.margin, null),
     jobType: types[0] || toText(data.type, doc.collection === 'quotes' ? 'quote' : 'job'),
     jobTypes: types,
-    historicalMargin: {
-      floorPct: null,
-      sampleCount: 0,
-      jobIds: [],
-    },
+    historicalMargin: lookupHistoricalMargin(marginIndex, types, doc.id),
     bidStatus,
     lastUserViewMs,
     customerId: getCustomerId(data),
     customerIdentityKey: getCustomerIdentityKey(doc),
     customerLabel: getClientLabel(data),
     docNumber: getDocNumber(doc),
+    // consumer reads facts.invoiceLabel for claim text — was never produced
+    // (S467 audit: undefined would have rendered in the ONE interrupt)
+    invoiceLabel: [getClientLabel(data), getDocNumber(doc) ? `#${getDocNumber(doc)}` : ''].filter(Boolean).join(' '),
   });
 }
 
@@ -395,8 +489,11 @@ function buildTrustQuoteFactSignalsFromDocs({
   ].filter((doc) => !isDeletedTrustQuoteDoc(doc) && !isParkedCustomerDoc(doc, parkedSet));
 
   const signals = [];
+  // One index per tick over the full transacted snapshot — every margin
+  // fact grounds on the same comparables the wedge law defines.
+  const marginIndex = buildMarginIndex(docs, trustQuoteRoot, pricingModule);
   for (const doc of docs) {
-    const margin = buildJobMarginFact(doc, nowMs, normalizedSource, trustQuoteRoot, pricingModule);
+    const margin = buildJobMarginFact(doc, nowMs, normalizedSource, trustQuoteRoot, pricingModule, marginIndex);
     const aging = buildInvoiceAgingFact(doc, nowMs, normalizedSource);
     const tasks = buildTasksIncompleteFact(doc, nowMs, normalizedSource, trustQuoteRoot, pricingModule);
     if (margin) signals.push(margin);

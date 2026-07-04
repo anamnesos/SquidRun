@@ -437,10 +437,24 @@ function scoreTrustQuoteJobMargin(sig, facts, nowMs) {
     : (isNum(facts.bidPrice) && isNum(facts.bidCost) && facts.bidPrice > 0 ? (facts.bidPrice - facts.bidCost) / facts.bidPrice : null);
   const hist = facts.historicalMargin || {};
   const floorPct = Number(hist.floorPct);
-  const sampleCount = Number(hist.sampleCount) || 0;
-  const underPct = (isNum(floorPct) && isNum(bidMarginPct)) ? Math.max(0, floorPct - bidMarginPct) : 0;
-  const underUsd = underPct * (isNum(bidAmount) ? bidAmount : 0);
-  const enoughHistory = sampleCount >= SIGNAL_THRESHOLDS.MARGIN_MIN_HISTORY;
+  const marginSamples = Number(hist.sampleCount) || 0;
+  const priceFloorUsd = Number(hist.priceFloorUsd);
+  const priceSamples = Number(hist.priceSampleCount) || 0;
+  // FLOOR MODE (tell-sensors-v2): margin floor when cost data exists in
+  // history; otherwise PRICE floor — his corpus holds prices, not costs
+  // (S451 law). The mode marker keeps speech honest about WHAT it floors.
+  const marginModeOk = marginSamples >= SIGNAL_THRESHOLDS.MARGIN_MIN_HISTORY && isNum(floorPct) && isNum(bidMarginPct);
+  const priceModeOk = !marginModeOk && priceSamples >= SIGNAL_THRESHOLDS.MARGIN_MIN_HISTORY
+    && isNum(priceFloorUsd) && priceFloorUsd > 0 && isNum(bidAmount);
+  const floorMode = marginModeOk ? 'margin' : priceModeOk ? 'price' : null;
+  const sampleCount = floorMode === 'price' ? priceSamples : marginSamples;
+  const underPct = floorMode === 'margin' ? Math.max(0, floorPct - bidMarginPct)
+    : floorMode === 'price' ? Math.max(0, (priceFloorUsd - bidAmount) / priceFloorUsd)
+      : 0;
+  const underUsd = floorMode === 'price'
+    ? Math.max(0, priceFloorUsd - bidAmount)
+    : underPct * (isNum(bidAmount) ? bidAmount : 0);
+  const enoughHistory = floorMode !== null;
   const sent = facts.bidStatus === 'sent';
   const imminence = facts.bidStatus === 'ready-to-send' ? 1 : facts.bidStatus === 'draft' ? 0.6 : 0;
 
@@ -455,14 +469,23 @@ function scoreTrustQuoteJobMargin(sig, facts, nowMs) {
     : underPct <= 0 ? 'at_or_above_floor'
     : underUsd < SIGNAL_THRESHOLDS.MATERIALITY_USD_FLOOR ? 'below_materiality_floor' : null;
 
-  const suggested = isNum(bidAmount) ? (bidAmount * (1 + underPct)).toFixed(0) : null;
+  const suggested = floorMode === 'price' && isNum(priceFloorUsd) ? priceFloorUsd.toFixed(0)
+    : isNum(bidAmount) ? (bidAmount * (1 + underPct)).toFixed(0) : null;
   const speech = {
-    claim: `This ${facts.jobType || 'job'} bid is ${(underPct * 100).toFixed(0)}% under your own floor — about $${underUsd.toFixed(0)} below what you usually clear on these.`,
-    whyNow: `Your last ${sampleCount} ${facts.jobType || ''} jobs floored at ${(floorPct * 100).toFixed(0)}% margin; this one's at ${(bidMarginPct * 100).toFixed(0)}%. It's ${facts.bidStatus}.`,
+    claim: floorMode === 'price'
+      ? `This ${facts.jobType || 'job'} bid is $${underUsd.toFixed(0)} under what you usually charge for these.`
+      : `This ${facts.jobType || 'job'} bid is ${(underPct * 100).toFixed(0)}% under your own floor — about $${underUsd.toFixed(0)} below what you usually clear on these.`,
+    whyNow: floorMode === 'price'
+      ? `Your last ${sampleCount} ${facts.jobType || ''} jobs floored at $${isNum(priceFloorUsd) ? priceFloorUsd.toFixed(0) : '?'}; this bid is $${isNum(bidAmount) ? bidAmount.toFixed(0) : '?'}. It's ${facts.bidStatus}.`
+      : `Your last ${sampleCount} ${facts.jobType || ''} jobs floored at ${(floorPct * 100).toFixed(0)}% margin; this one's at ${(bidMarginPct * 100).toFixed(0)}%. It's ${facts.bidStatus}.`,
     receipts: [
       { label: 'Firestore doc', value: `${sig.rawRefs?.collection || 'jobs'}/${sig.rawRefs?.docId || sig.id}`, source: 'TrustQuote Firestore' },
-      { label: 'Bid', value: `$${bidAmount} @ ${(bidMarginPct * 100).toFixed(0)}% margin`, source: sig.rawRefs?.docId || 'TrustQuote jobs' },
-      { label: 'Your floor', value: `${(floorPct * 100).toFixed(0)}% over ${sampleCount} past jobs`, source: 'TrustQuote history' },
+      floorMode === 'price'
+        ? { label: 'Bid', value: `$${bidAmount}`, source: sig.rawRefs?.docId || 'TrustQuote jobs' }
+        : { label: 'Bid', value: `$${bidAmount} @ ${(bidMarginPct * 100).toFixed(0)}% margin`, source: sig.rawRefs?.docId || 'TrustQuote jobs' },
+      floorMode === 'price'
+        ? { label: 'Your floor', value: `$${isNum(priceFloorUsd) ? priceFloorUsd.toFixed(0) : '?'} over ${sampleCount} past jobs (price basis)`, source: 'TrustQuote history' }
+        : { label: 'Your floor', value: `${(floorPct * 100).toFixed(0)}% over ${sampleCount} past jobs`, source: 'TrustQuote history' },
       { label: 'Under by', value: `-$${underUsd.toFixed(0)}`, source: 'computed' },
     ],
     proposedAction: {
@@ -475,10 +498,11 @@ function scoreTrustQuoteJobMargin(sig, facts, nowMs) {
     verify: {
       quoteDocId: sig.rawRefs?.docId ?? sig.id,
       comparableJobIds: Array.isArray(hist.jobIds) ? hist.jobIds : [],
-      floorPct, bidMarginPct, sampleCount, underUsd: Math.round(underUsd),
+      floorMode, floorPct, priceFloorUsd: isNum(priceFloorUsd) ? Math.round(priceFloorUsd) : null,
+      bidMarginPct, sampleCount, underUsd: Math.round(underUsd),
     },
   };
-  return finalizeSignal(sig, { S, B, W, C, materialityOk, gateReason, speech, snapshot: { underUsd: Math.round(underUsd), underPct, sampleCount, bidStatus: facts.bidStatus } });
+  return finalizeSignal(sig, { S, B, W, C, materialityOk, gateReason, speech, snapshot: { underUsd: Math.round(underUsd), underPct, sampleCount, floorMode, bidStatus: facts.bidStatus } });
 }
 
 // --- trustquote:invoice-aging — genuinely overdue (not a data lag), still collectable, not yet chased.

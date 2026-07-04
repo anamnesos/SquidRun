@@ -15,7 +15,11 @@ const { createSandbox, destroySandbox, listSandboxes, prove, sandboxRoot } = req
 function makeFixtureRepo(base) {
   const repo = path.join(base, 'repo');
   fs.mkdirSync(repo, { recursive: true });
-  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  // Scrub hook-injected GIT_* env (pre-commit gate) — same rule as the tool.
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
+  );
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', env });
   git('init', '-q');
   git('config', 'user.email', 'fixture@test');
   git('config', 'user.name', 'fixture');

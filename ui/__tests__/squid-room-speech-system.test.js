@@ -1,11 +1,8 @@
 'use strict';
 
 const {
-  CHAIN_DOT_COUNT,
   SPEECH_INSET_PX,
-  chainDotPhase,
   createSquidRoomSpeechSystem,
-  layoutChainDots,
   solveSpeechBox,
 } = require('../modules/squid-room-speech-system');
 
@@ -126,40 +123,6 @@ describe('speech viewport solver — offscreen is mathematically impossible', ()
   });
 });
 
-describe('bubble chain — pooled, deterministic, mouth-to-box', () => {
-  test('dot phases are deterministic (no randomness)', () => {
-    for (let i = 0; i < CHAIN_DOT_COUNT; i += 1) {
-      expect(chainDotPhase(i)).toBe(chainDotPhase(i));
-    }
-  });
-
-  test('layout mutates the pooled array in place with finite arc positions', () => {
-    const pool = Array.from({ length: CHAIN_DOT_COUNT }, () => ({ x: 0, y: 0, scale: 0 }));
-    const before = pool.slice();
-    layoutChainDots(pool, 100, 500, 400, 200, 1000, false);
-    for (let i = 0; i < pool.length; i += 1) {
-      expect(pool[i]).toBe(before[i]); // same objects — zero alloc
-      expect(Number.isFinite(pool[i].x)).toBe(true);
-      expect(Number.isFinite(pool[i].y)).toBe(true);
-      expect(pool[i].scale).toBeGreaterThan(0);
-    }
-    expect(Math.abs(pool[0].x - 100)).toBeLessThan(Math.abs(pool[0].x - 400));
-    const last = pool[pool.length - 1];
-    expect(Math.abs(last.x - 400)).toBeLessThan(Math.abs(last.x - 100));
-  });
-
-  test('reduced motion removes the per-frame bob (stable positions)', () => {
-    const a = Array.from({ length: CHAIN_DOT_COUNT }, () => ({ x: 0, y: 0, scale: 0 }));
-    const b = Array.from({ length: CHAIN_DOT_COUNT }, () => ({ x: 0, y: 0, scale: 0 }));
-    layoutChainDots(a, 100, 500, 400, 200, 1000, true);
-    layoutChainDots(b, 100, 500, 400, 200, 9999, true);
-    for (let i = 0; i < a.length; i += 1) {
-      expect(a[i].x).toBeCloseTo(b[i].x, 6);
-      expect(a[i].y).toBeCloseTo(b[i].y, 6);
-    }
-  });
-});
-
 describe('speech system — typewriter, identity, honesty', () => {
   function build(options = {}) {
     const doc = makeFakeDocument();
@@ -233,7 +196,6 @@ describe('speech system — typewriter, identity, honesty', () => {
     system.frame(0, {});
     const entry = system._pets.get('builder');
     expect(entry.box.dataset.visible).toBe('false');
-    for (const dot of entry.dots) expect(dot.style.opacity).toBe('0');
   });
 
   test('DOM nodes are pooled: repeated frames create nothing new', () => {
@@ -387,5 +349,194 @@ describe('verify-frame-1 fixes — filename debris + box-vs-box', () => {
     const overlap = b.posX < o.posX + ow && b.posX + bw > o.posX
       && b.posY < o.posY + oh && b.posY + bh > o.posY;
     expect(overlap).toBe(false);
+  });
+});
+
+describe('day-mandate fixes — least-harm fallback + husk removal', () => {
+  const mod = require('../modules/squid-room-speech-system');
+
+  test('blocked-everywhere geometry parks on OWN body, never the other creature', () => {
+    // Two bodies flanking the anchor so every quadrant candidate intersects
+    // something; own body weight 1 vs other 3 must pull the box onto own.
+    const own = { x: 500, y: 300, w: 400, h: 400, weight: 1 };
+    const other = { x: 100, y: 100, w: 1000, h: 700, weight: 3 };
+    const solved = mod.solveSpeechBox({
+      anchorX: 700, anchorY: 500, boxW: 300, boxH: 90,
+      viewportW: 1200, viewportH: 800, avoidRects: [other, own],
+    });
+    const overlapArea = (r) => {
+      const ox = Math.min(solved.x + 300, r.x + r.w) - Math.max(solved.x, r.x);
+      const oy = Math.min(solved.y + 90, r.y + r.h) - Math.max(solved.y, r.y);
+      return Math.max(0, ox) * Math.max(0, oy);
+    };
+    // Weighted harm of the chosen spot must be no worse than any of the four
+    // naive quadrant candidates (the old blind-first behavior).
+    expect(solved.clearsBody).toBe(false);
+    expect(overlapArea(own) * 1 + overlapArea(other) * 3)
+      .toBeLessThanOrEqual(300 * 90 * 3);
+    expect(overlapArea(other)).toBeLessThan(300 * 90); // never fully on the other
+  });
+
+  test('husk removal drops slash-number runs and letter-less parens', () => {
+    expect(mod.sanitizeSpeechText('verified (captures / 133332 / 153552, 55s span) done'))
+      .toBe('verified (captures, 55s span) done');
+    expect(mod.sanitizeSpeechText('checked ( 12345 / 67890 ) fine')).toBe('checked fine');
+    expect(mod.sanitizeSpeechText('suites 18/18 green, 3/4 quadrants'))
+      .toBe('suites 18/18 green, 3/4 quadrants'); // small legit ratios survive
+  });
+});
+
+test('shell-escape artifacts become plain apostrophes on the face', () => {
+  const { sanitizeSpeechText } = require('../modules/squid-room-speech-system');
+  const escaped = "the label" + String.fromCharCode(39, 92, 39, 39) + "s offsets were stale";
+  expect(sanitizeSpeechText(escaped)).toBe("the label's offsets were stale");
+});
+
+describe('polish lane — hysteresis, asymmetric yield, flowing tails (James 10:49)', () => {
+  function build2() {
+    const doc = makeFakeDocument();
+    const layerEl = makeFakeElement('div');
+    return createSquidRoomSpeechSystem({ layerEl, document: doc, viewportW: 1600, viewportH: 900 });
+  }
+  const mkAnchor = (x, y) => ({ mouthX: x, mouthY: y, bodyX: x - 60, bodyY: y - 50, bodyW: 120, bodyH: 140 });
+
+  test('sub-deadband anchor wiggle never re-solves: the box has weight', () => {
+    const sys = build2();
+    sys.setSpeech('builder', { face: 'weighted box', rowIdentity: 'h1' });
+    sys.frame(0, { builder: mkAnchor(400, 400) });
+    const e = sys._pets.get('builder');
+    const t0x = e.targetX; const t0y = e.targetY;
+    // 120 frames of +/-10px wiggle (inside the 28px deadband)
+    for (let f = 1; f <= 120; f += 1) {
+      const wob = (f % 2 ? 10 : -10);
+      sys.frame(f * 16, { builder: mkAnchor(400 + wob, 400 + wob) });
+      expect(e.targetX).toBe(t0x);
+      expect(e.targetY).toBe(t0y);
+    }
+  });
+
+  test('two colliding boxes settle: junior yields, senior stands, no thrash', () => {
+    const sys = build2();
+    sys.setSpeech('builder', { face: 'senior box message', rowIdentity: 'h2' });
+    sys.setSpeech('oracle', { face: 'junior box message', rowIdentity: 'h3' });
+    const anchors = { builder: mkAnchor(700, 400), oracle: mkAnchor(760, 400) };
+    const b = sys._pets.get('builder');
+    const o = sys._pets.get('oracle');
+    for (let f = 0; f <= 60; f += 1) sys.frame(f * 16, anchors);
+    const bT = { x: b.targetX, y: b.targetY };
+    const oT = { x: o.targetX, y: o.targetY };
+    // 120 more frames with static anchors: targets must be FROZEN (no oscillation)
+    for (let f = 61; f <= 180; f += 1) {
+      sys.frame(f * 16, anchors);
+      expect(b.targetX).toBe(bT.x); expect(b.targetY).toBe(bT.y);
+      expect(o.targetX).toBe(oT.x); expect(o.targetY).toBe(oT.y);
+    }
+    // and the settled boxes do not overlap each other
+    const bw = b.box.offsetWidth, bh = b.box.offsetHeight;
+    const ow = o.box.offsetWidth, oh = o.box.offsetHeight;
+    const overlap = b.posX < o.posX + ow && b.posX + bw > o.posX
+      && b.posY < o.posY + oh && b.posY + bh > o.posY;
+    expect(overlap).toBe(false);
+  });
+
+  test('facing flip does not teleport the chain base: smoothed mouth is bounded per frame', () => {
+    const sys = build2();
+    sys.setSpeech('builder', { face: 'flip test', rowIdentity: 'h4' });
+    sys.frame(0, { builder: mkAnchor(400, 400) });
+    sys.frame(16, { builder: mkAnchor(400, 400) });
+    const e = sys._pets.get('builder');
+    const before = e.mouthSX;
+    // facing flip: raw mouth jumps 20px instantly
+    sys.frame(32, { builder: mkAnchor(420, 400) });
+    expect(Math.abs(e.mouthSX - before)).toBeLessThan(8); // absorbed, not teleported
+  });
+
+});
+
+describe('rethink lane — glass skin lifecycle + ribbon seam (Builder #57)', () => {
+  const { SPEECH_GLOW } = require('../modules/squid-room-speech-system');
+  function build3(opts = {}) {
+    const doc = makeFakeDocument();
+    const layerEl = makeFakeElement('div');
+    return createSquidRoomSpeechSystem({ layerEl, document: doc, viewportW: 1600, viewportH: 900, ...opts });
+  }
+  const A = { builder: { mouthX: 400, mouthY: 400 }, oracle: { mouthX: 1100, mouthY: 400 } };
+
+  test('frame() returns the typed seam: attach point on the box edge, speaker color, pooled identity', () => {
+    const sys = build3();
+    sys.setSpeech('builder', { face: 'seam test message', rowIdentity: 's1' });
+    const out1 = sys.frame(0, A);
+    const e = sys._pets.get('builder');
+    const a = out1.builder;
+    expect(a.visible).toBe(true);
+    expect(a.color).toBe(SPEECH_GLOW.builder);
+    expect(a.attachX).toBeGreaterThanOrEqual(e.posX);
+    expect(a.attachX).toBeLessThanOrEqual(e.posX + e.box.offsetWidth);
+    expect([e.posY, e.posY + e.box.offsetHeight]).toContain(a.attachY); // on top or bottom edge
+    const out2 = sys.frame(16, A);
+    expect(out2.builder).toBe(out1.builder); // pooled — zero per-frame alloc
+  });
+
+  test('seam goes dark with the box: fail-dark anchor loss -> visible false same frame', () => {
+    const sys = build3();
+    sys.setSpeech('builder', { face: 'dark test', rowIdentity: 's2' });
+    sys.frame(0, A);
+    const out = sys.frame(16, {}); // anchors gone
+    expect(out.builder.visible).toBe(false);
+  });
+
+  test('entrance blooms from the mouth-side corner: data-anim + opens attrs set', () => {
+    const sys = build3();
+    sys.setSpeech('builder', { face: 'enter test', rowIdentity: 's3' });
+    const e = sys._pets.get('builder');
+    expect(e.box.dataset.anim).toBe('enter');
+    sys.frame(0, A);
+    expect(['true', 'false']).toContain(e.box.dataset.opensRight);
+    expect(['true', 'false']).toContain(e.box.dataset.opensBelow);
+  });
+
+  test('exit dissolves then hides: anim=exit, seam dark immediately, hidden after the dissolve', () => {
+    const sys = build3();
+    sys.setSpeech('builder', { face: 'exit test', rowIdentity: 's4' });
+    sys.frame(0, A);
+    sys.setSpeech('builder', { face: '', rowIdentity: 's5' }); // message ends
+    const e = sys._pets.get('builder');
+    expect(e.box.dataset.anim).toBe('exit');
+    const mid = sys.frame(100, A); // mid-dissolve: still rendered, seam dark
+    expect(e.box.dataset.visible).toBe('true');
+    expect(mid.builder.visible).toBe(false);
+    sys.frame(400, A); // past EXIT_DISSOLVE_MS
+    expect(e.box.dataset.visible).toBe('false');
+    expect(e.visible).toBe(false);
+  });
+
+  test('reduced motion: no enter/exit animation, instant hide (accessibility honesty)', () => {
+    const sys = build3({ reducedMotion: true });
+    sys.setSpeech('builder', { face: 'rm test', rowIdentity: 's6' });
+    const e = sys._pets.get('builder');
+    expect(e.box.dataset.anim).toBe('');
+    sys.frame(0, A);
+    sys.setSpeech('builder', { face: '', rowIdentity: 's7' });
+    expect(e.box.dataset.visible).toBe('false'); // instant, no dissolve
+  });
+
+  test('shell carries the skin, box carries position: text still renders through the shell', () => {
+    const sys = build3({ reducedMotion: true });
+    sys.setSpeech('builder', { face: 'shell test', rowIdentity: 's8' });
+    sys.frame(0, A);
+    const e = sys._pets.get('builder');
+    expect(e.textEl.textContent).toBe('shell test');
+    expect(e.box.children.length).toBe(1); // exactly the shell between box and content
+  });
+});
+
+describe('window audit fixes — headers are not speech, debris never renders', () => {
+  const { sanitizeSpeechText: san2 } = require('../modules/squid-room-speech-system');
+
+  test('agent-ref headers with em-dash tails strip; the honest verb survives', () => {
+    expect(san2('Resting: (ORACLE #204 — RETHINK LANE SHIPPED, live): All five items in one pass'))
+      .toBe('Resting: All five items in one pass');
+    expect(san2('(BUILDER #57 - THE TAIL SEAM, one message per protocol): Ribbon accepted, and one geometry correction'))
+      .toBe('Ribbon accepted, and one geometry correction');
   });
 });

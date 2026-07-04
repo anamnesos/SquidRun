@@ -16,7 +16,10 @@ function asString(value) {
   return String(value).trim();
 }
 
-function normalizeRole(value) {
+// S468 ruling: this is NOT pane-role normalization — journal rows carry
+// OPEN-VOCABULARY party tokens (trustquote-lead, telegram, user) that are
+// legal here. Renamed from normalizeRole; passthrough is deliberate.
+function normalizePartyToken(value) {
   const text = asString(value).toLowerCase();
   if (!text) return '';
   if (text === '1') return 'architect';
@@ -62,13 +65,13 @@ function extractOracleVerdict(body) {
 }
 
 function inferSenderRole(row = {}, body = '') {
-  const explicit = normalizeRole(row.senderRole ?? row.sender_role ?? row.fromRole ?? row.from_role);
+  const explicit = normalizePartyToken(row.senderRole ?? row.sender_role ?? row.fromRole ?? row.from_role);
   if (explicit) return explicit;
   return ORACLE_PREFIX_RE.test(body) ? 'oracle' : '';
 }
 
 function isArchitectMainTarget(row = {}) {
-  const role = normalizeRole(row.targetRole ?? row.target_role ?? row.toRole ?? row.to_role ?? row.target);
+  const role = normalizePartyToken(row.targetRole ?? row.target_role ?? row.toRole ?? row.to_role ?? row.target);
   return !role || role === 'architect';
 }
 
@@ -125,7 +128,7 @@ function classifyOracleVerdictRow(row = {}) {
     status: normalizeStatus(row.status) || null,
     ackStatus: normalizeStatus(row.ackStatus ?? row.ack_status ?? normalizeMetadata(row.metadata).finalOutcome) || null,
     senderRole,
-    targetRole: normalizeRole(row.targetRole ?? row.target_role ?? row.toRole ?? row.to_role ?? row.target) || null,
+    targetRole: normalizePartyToken(row.targetRole ?? row.target_role ?? row.toRole ?? row.to_role ?? row.target) || null,
     body,
   };
 }

@@ -2,6 +2,7 @@
  * Comms Console tab module
  * Live monitor for agent-to-agent and external channel comms.
  */
+const { normalizeRole: coreNormalizeRole } = require('../role-scope-core');
 
 const { invokeBridge } = require('../renderer-bridge');
 const {
@@ -84,11 +85,16 @@ function inferRoleFromBody(body) {
   return null;
 }
 
+// S468 tail: the pure pane-role slice delegates to the canonical core;
+// everything below is the console's own DISPLAY domain (telegram/cli/
+// external/background aliases over an open vocabulary) and stays local.
 function normalizeRole(value) {
   if (typeof value !== 'string') return null;
   const raw = value.trim();
   if (!raw) return null;
   const lower = raw.toLowerCase();
+  const canon = coreNormalizeRole(lower);
+  if (canon) return canon;
   const backgroundAlias = typeof resolveBackgroundBuilderAlias === 'function'
     ? resolveBackgroundBuilderAlias(lower)
     : null;

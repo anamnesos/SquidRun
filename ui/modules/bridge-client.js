@@ -1,4 +1,5 @@
 const WebSocket = require('ws');
+const { normalizeRoleParty } = require('./role-scope-core');
 const log = require('./logger');
 const {
   normalizeDeviceId,
@@ -141,11 +142,14 @@ function normalizeConnectedDevices(input) {
   return Array.from(normalized).sort();
 }
 
+// S468 tail: list elements validate through the canonical RoleParty
+// contract — junk tokens from remote discovery no longer flow into
+// routing authority (unknown -> dropped, not passed through).
 function normalizeRoleList(input) {
   if (!Array.isArray(input)) return [];
   const normalized = new Set();
   for (const value of input) {
-    const role = asNonEmptyString(value).toLowerCase();
+    const role = normalizeRoleParty(asNonEmptyString(value));
     if (role) normalized.add(role);
   }
   return Array.from(normalized).sort();

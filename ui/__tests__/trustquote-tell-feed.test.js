@@ -99,7 +99,7 @@ describe('trustquote tell feed', () => {
         bidMarginPct: null,
         jobType: 'Property Line Cleanout',
         jobTypes: ['Property Line Cleanout', 'Sewer Line Replacement', 'Drain Re-pipe Crawlspace'],
-        historicalMargin: { floorPct: null, sampleCount: 0, jobIds: [] },
+        historicalMargin: { floorPct: null, sampleCount: 0, jobIds: [], priceFloorUsd: null, priceSampleCount: 0 },
         bidStatus: 'ready-to-send',
         customerId: 'cust-charles-long',
         customerIdentityKey: 'trustquote:customer:cust-charles-long',

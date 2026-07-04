@@ -48,14 +48,10 @@ function toTrimmedString(value) {
   return value.trim();
 }
 
-function normalizeRole(value) {
-  const role = toTrimmedString(value).toLowerCase();
-  if (!role) return '';
-  if (role === 'builder' || role === '2') return 'builder';
-  if (role === 'architect' || role === '1') return 'architect';
-  if (role === 'oracle' || role === '3') return 'oracle';
-  return role;
-}
+// S468 role-scope-consolidation: canonical core (unknown -> null; the
+// builder-only authority gate below behaves identically, minus junk
+// tokens flowing into results).
+const { normalizeRole } = require('../role-scope-core');
 
 function detectRuntime(command) {
   const normalized = String(command || '').trim().toLowerCase();

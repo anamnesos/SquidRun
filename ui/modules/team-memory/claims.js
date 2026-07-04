@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { normalizeRoleParty } = require('../role-scope-core');
 const { LEGACY_ROLE_ALIASES, ROLE_ID_MAP, ROLE_NAMES } = require('../../config');
 
 const CLAIM_TYPES = new Set(['fact', 'decision', 'hypothesis', 'negative']);
@@ -58,9 +59,14 @@ function asTimestamp(value, fallback = Date.now()) {
   return Math.floor(numeric);
 }
 
+// S468 tail: canon slice via core (covers specials+known+pane aliases);
+// the explicit fallback is a legal RoleParty caller default (canon:
+// callers decide null policy). Legacy/pane maps kept as belt.
 function normalizeRole(value, fallback = 'system') {
   const raw = asString(value, '').toLowerCase();
   if (!raw) return fallback;
+  const party = normalizeRoleParty(raw);
+  if (party) return party;
   if (SPECIAL_ROLE_IDS.has(raw)) return raw;
   if (CANONICAL_ROLE_IDS.has(raw)) return raw;
   if (LEGACY_ROLE_ALIASES?.[raw]) return LEGACY_ROLE_ALIASES[raw];

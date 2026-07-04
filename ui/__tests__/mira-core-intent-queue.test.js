@@ -315,6 +315,7 @@ describe('mira core intent queue v0', () => {
           acceptance('repo-mutation-review-required-or-blocked').inputSignals.request,
         ].filter(Boolean),
         source_refs: acceptance('safe-research-intent-accepted-pending-local-acceptance').inputSignals.source_refs,
+        sessionId: 'app-session-326', // S468: session flows FROM signals; the prod fixture-literal fallback is dead
       },
       nowMs: Date.parse('2026-05-06T00:00:00.000Z'),
     });

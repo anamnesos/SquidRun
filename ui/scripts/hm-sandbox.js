@@ -30,8 +30,15 @@ const path = require('path');
 const SANDBOX_ROOT_NAME = 'squidrun-siege-sandboxes';
 
 function git(repo, args, options = {}) {
+  // Scrub inherited GIT_* env: when this runs inside a git hook (pre-commit
+  // jest gate), GIT_INDEX_FILE/GIT_DIR leak into children and break
+  // `worktree add` with phantom index.lock paths. A sandbox tool must not
+  // inherit the caller's git identity anyway.
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')),
+  );
   return execFileSync('git', ['-C', repo, ...args], {
-    encoding: 'utf8', timeout: 60000, ...options,
+    encoding: 'utf8', timeout: 60000, env, ...options,
   }).trim();
 }
 
