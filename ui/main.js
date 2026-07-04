@@ -35,15 +35,10 @@ app.commandLine.appendSwitch('disable-background-timer-throttling');
 const cdpPort = process.env.SQUIDRUN_CDP_PORT
   || String(9223 + (process.pid % 89)); // 9223-9311, collision-unlikely
 app.commandLine.appendSwitch('remote-debugging-port', cdpPort);
-try {
-  const cdpPortFile = path.join(__dirname, '..', '.squidrun', 'runtime', 'cdp-port.json');
-  fs.mkdirSync(path.dirname(cdpPortFile), { recursive: true });
-  fs.writeFileSync(cdpPortFile, JSON.stringify({
-    port: Number(cdpPort),
-    pid: process.pid,
-    startedAt: new Date().toISOString(),
-  }));
-} catch (_) { /* CDP discovery degrades to probing; never block launch */ }
+// NOTE: cdp-port.json is written AFTER the single-instance lock is won (see
+// below) - at the 16:54 S467 boundary, dying twin instances wrote the file
+// then lost the lock, poisoning it with stillborn ports (last-writer-wins).
+// The switch must be appended here (pre-ready); the TRUTH file must not.
 
 if (process.env.NODE_PATH) {
   try {
@@ -148,6 +143,18 @@ if (singleInstanceLock === false) {
   app.quit();
   process.exit(0);
 }
+
+// LOCK WON (or non-main profile): only now may this instance claim the CDP
+// truth file - a loser twin can no longer poison it (ceremony purge item 5).
+try {
+  const cdpPortFile = path.join(__dirname, '..', '.squidrun', 'runtime', 'cdp-port.json');
+  fs.mkdirSync(path.dirname(cdpPortFile), { recursive: true });
+  fs.writeFileSync(cdpPortFile, JSON.stringify({
+    port: Number(cdpPort),
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+  }));
+} catch (_) { /* CDP discovery degrades to probing; never block launch */ }
 
 // Suppress EPIPE errors on stdout/stderr — broken pipes from console.log
 // must not crash the app (common when renderer disconnects or pipes close)
