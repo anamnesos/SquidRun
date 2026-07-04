@@ -435,3 +435,331 @@ export interface DeliveryResult {
   deliveryId: string | null;
   details: unknown;
 }
+
+// ---------------------------------------------------------------------------
+// VERDICT LEDGER SEAM (charter organ 2 — credibility is MEASURED).
+// Producer: ui/modules/verdict-ledger.js createVerdict/resolveVerdict/
+// supersedeVerdict/sweepExpired. Disk: ui/modules/verdict-ledger-store.js
+// (.squidrun/runtime/verdict-ledger.json, root MUST be a bare array).
+// Consumer: ui/scripts/hm-hook-injection.js (credibility standing).
+// KNOWN DEBT (S468 seam audit): resolve/supersede/sweep have no production
+// caller yet — open verdicts cannot transition until resolution is wired
+// into the gates; the store module is bypassed by the hook reader.
+// ---------------------------------------------------------------------------
+
+export type VerdictKind = 'gate' | 'verify' | 'audit-finding' | 'claim' | 'constitution';
+export type VerdictOpenStatus = 'open' | 'pends';
+export type VerdictResolvedStatus = 'held' | 'failed' | 'mixed' | 'expired' | 'superseded';
+export type VerdictStatus = VerdictOpenStatus | VerdictResolvedStatus;
+
+export interface VerdictOutcome {
+  status: VerdictStatus;
+  pendsOn: string | null;
+  resolvedAt: string | null;
+  resolver: string | null;
+  note: string | null;
+  supersededBy: string | null;
+}
+
+export interface VerdictRecord {
+  id: string;
+  issuedAt: string;
+  issuer: string;
+  kind: VerdictKind;
+  subject: string;
+  statement: string;
+  evidence: string;
+  /** 'live' | 'backfill-s465' — provenance, never authority. */
+  source: string;
+  expiresAt: string | null;
+  outcome: VerdictOutcome;
+}
+
+/** credibility() output — what hm-hook-injection formats into standing. */
+export interface VerdictCredibility {
+  issuer: string;
+  status: string;
+  accuracy: number | null;
+  resolved: number;
+  open: number;
+  expired: number;
+}
+
+// ---------------------------------------------------------------------------
+// LANE / WORK SEAM. Three distinct shapes — they are NOT one system:
+// lanes (hm-lane.js, .squidrun/runtime/lanes.json), agent task queue
+// (hm-task-queue.js, .squidrun/runtime/agent-task-queue.json, cross-read by
+// work-item-ledger.normalizeQueueActiveTask), and comms journal rows
+// (hm-comms.js --json; heartbeat idle detection consumes THIS, never the
+// rendered text).
+// ---------------------------------------------------------------------------
+
+/** 'stalled' is written only by hm-lane-heartbeat after MAX_POKES; only a
+ * manual `reopen` revives a stalled lane — by design, not omission. */
+export type LaneStatus = 'open' | 'done' | 'blocked' | 'stalled';
+
+export interface LaneRecord {
+  id: string;
+  /** MUST be a real comms sender role (architect|builder|oracle|...) or the
+   * heartbeat's idle detection never sees the owner's activity. */
+  owner: string;
+  objective: string;
+  status: LaneStatus;
+  openedAtMs: number;
+  updatedAtMs: number;
+  pokes: number;
+  lastPokeAtMs: number;
+  reason: string | null;
+}
+
+export interface LanesFile {
+  version: 1;
+  lanes: Record<string, LaneRecord>;
+}
+
+/** Cross-module read of an agent-task-queue active task
+ * (work-item-ledger.normalizeQueueActiveTask). updatedAt derives from the
+ * producer's ms fields — null when the task has no timestamp, never "now". */
+export interface QueueActiveTaskView {
+  agent: string;
+  taskId: string;
+  title: string | null;
+  state: string;
+  status: string;
+  source: string | null;
+  updatedAt: string | null;
+  lastAdvancedAt: number | null;
+}
+
+/** One row of `hm-comms.js history --json` (toJsonRows). The rendered text
+ * table is display-only; machine consumers use this shape. */
+export interface CommsJournalJsonRow {
+  rowId: number;
+  messageId: string | null;
+  sessionId: string | null;
+  sender: string | null;
+  target: string | null;
+  status: string | null;
+  scope: string | null;
+  timestampMs: number;
+  timestamp: string;
+  excerpt: string;
+  rawBody: string;
+}
+
+// ---------------------------------------------------------------------------
+// MODEL PROMPT RECEIPT SEAM (transport v1.2 — the proof a prompt landed).
+// Producer: UserPromptSubmit hook -> model-prompt-receipt-adapter.js ->
+// model-prompt-receipt.js appendModelPromptReceipt. Canonical read source is
+// receipts-state.json (receiptsByDeliveryId), NOT the jsonl sink.
+// Consumers: websocket-runtime.js verify loop, squidrun-app.js pointer
+// submit verifier (applyModelPromptReceiptToAck / getModelPromptReceipt).
+// ---------------------------------------------------------------------------
+
+export interface ModelPromptReceipt {
+  schema: 'modelPromptReceipt.v0';
+  timestamp: string;
+  status: string;
+  semanticEvent: 'prompt_submit';
+  runtime: 'claude' | 'codex' | 'gemini';
+  versionFloor: string;
+  hookEventName: string;
+  deliveryId: string;
+  messageId: string;
+  proofRank: number;
+  promptHash: string;
+  promptBytes: number;
+  payloadDropped: true;
+}
+
+/** extractReceiptMarker() result for the in-prompt marker
+ * `[SQUIDRUN_RECEIPT event=... deliveryId=... messageId=...]`.
+ * buildReceiptMarker emits camelCase only; extractReceiptMarker's
+ * snake_case acceptance is legacy tolerance, not a producer contract. */
+export interface ExtractedReceiptMarker {
+  semanticEvent: 'prompt_submit';
+  /** Resolved receipt id (deliveryId, falling back to messageId). */
+  deliveryId: string;
+  /** deliveryId exactly as present in the marker, or null. */
+  rawDeliveryId: string | null;
+  messageId: string;
+  /** Raw token map parsed from the marker body. */
+  fields: Record<string, string>;
+}
+
+// ---------------------------------------------------------------------------
+// PANE-HOST IPC SEAM. Producer main-process side: squidrun-app.js
+// sendPaneHostBridgeEvent (kernel:bridge-event, envelope
+// {source:'pane-host', type, paneId, ...data}); packets built by
+// inject-message-ipc.js. Consumer: pane-host-renderer.js handlePaneHostEvent.
+// Reverse direction: pane-host-renderer sendPaneHostAction ->
+// squidrun-app.js 'pane-host-inject' handler (action-routed).
+// ---------------------------------------------------------------------------
+
+export interface IpcChunkInfo {
+  groupId: string;
+  index: number;
+  count: number;
+  chunkBytes: number;
+  totalBytes: number;
+}
+
+export interface InjectMessageBridgePayload {
+  message: string;
+  messageBytes: number;
+  ipcChunk: IpcChunkInfo | null;
+  deliveryId: string | null;
+  traceContext: { messageId?: string; traceId?: string; correlationId?: string } | null;
+  startupInjection?: boolean;
+  meta: (JsonRecord & {
+    runtimeHint?: string;
+    codexPane?: boolean;
+    ipcChunked?: boolean;
+    ipcOriginalBytes?: number;
+  }) | null;
+}
+
+export interface PaneHostBridgeEvent extends JsonRecord {
+  source: 'pane-host';
+  type: string;
+  paneId: string;
+}
+
+export interface DispatchEnterAction {
+  action: 'dispatch-enter';
+}
+
+export interface DeliveryAckAction {
+  action: 'delivery-ack';
+  deliveryId: string | null;
+  messageId: string | null;
+}
+
+/** Fields are FLAT on the payload (no nested `outcome` object) — the
+ * handler's `payload.outcome` branch is legacy tolerance. */
+export interface DeliveryOutcomeAction {
+  action: 'delivery-outcome';
+  deliveryId: string | null;
+  messageId: string | null;
+  paneId: string;
+  accepted: boolean;
+  verified: boolean;
+  status: string;
+  reason: string | null;
+  pendingInputObserved: boolean;
+}
+
+export type PaneHostInjectAction =
+  | DispatchEnterAction
+  | DeliveryAckAction
+  | DeliveryOutcomeAction;
+
+// ---------------------------------------------------------------------------
+// CANONICAL ROLE + SCOPE (S468 consolidation charter — Oracle's lane builds
+// the core modules AGAINST these; declared from the body-hash evidence, not
+// taste). normalizeRole existed as 9 copies / 8 bodies; normalizeScope as
+// 14 copies / 5 bodies spanning TWO unrelated concepts.
+//
+// THE ONE TRUE ROLE CONTRACT:
+//  - trim + lowercase
+//  - alias map: '1'|'main' -> 'architect'; '2' -> 'builder'; '3' -> 'oracle'
+//  - unknown/empty -> null. NEVER 'architect' (the intent-queue/
+//    local-acceptance fallback silently misroutes to pane 1), never ''
+//    (falsy null in worse clothing), never passthrough (junk flows into
+//    routing). Callers decide policy on null EXPLICITLY.
+//  - broader parties (user/james/mira/system) are RoleParty — validated
+//    where they are legal, never silently coerced to a pane role.
+//
+// THE SCOPE RULING: only ingress-envelope + the mira-core family normalize
+// the ROUTING scope envelope and may consolidate. hm-initiative's scope
+// (an enum) and memory-ingest's scope (freeform tag) are different domains
+// wearing the same name — RENAME those, do not consolidate them.
+// Fixture literals found as production fallbacks ('app-session-326',
+// 'session-328') are corruption; the core must default sessionId to null.
+// ---------------------------------------------------------------------------
+
+export type KnownRole = 'architect' | 'builder' | 'oracle';
+export type RoleParty = KnownRole | 'user' | 'james' | 'mira' | 'system';
+
+/** Canonical signature for the one role normalizer (Oracle's core module). */
+export type NormalizeRole = (value: unknown) => KnownRole | null;
+
+/** The routing scope envelope. Defaults live at the INGRESS boundary only:
+ * profileName 'main', windowKey := profileName. Unknown ids are null. */
+export interface ScopeEnvelope {
+  profileName: string;
+  windowKey: string;
+  sessionId: string | null;
+  deviceId: string | null;
+  projectPath: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// PANE STATUS SEAM. There is deliberately NO single pane-status object —
+// three vocabularies serve three layers. Typing them separately makes the
+// splits visible instead of papered over:
+//  1. comms-text classifier (renderer.js classifySquidRoomPetState)
+//  2. creature body activity (engine setActivity — motion, not meaning)
+//  3. agent liveness (agent-liveness-status.js — process, not work)
+// ---------------------------------------------------------------------------
+
+export type SquidRoomPetState = 'failed' | 'waiting' | 'running' | 'review' | 'idle';
+
+export interface SquidRoomPetClassification {
+  state: SquidRoomPetState;
+  /** Human label ('Blocked'|'Waiting'|'Working'|'Reviewing'|'Ready'|'Resting');
+   * lossy — never recover state from label. */
+  label: string;
+}
+
+/** The ONLY values squid-room-creature-engine.setActivity accepts. */
+export type CreatureActivity = 'working' | 'settling' | 'resting';
+
+/** Renderer motion classes mapped to activities by
+ * squid-room-creature-runtime.ACTIVITY_BY_MOTION_CLASS. */
+export type CreatureMotionClass = 'is-active' | 'is-settling' | 'is-resting';
+
+export interface AgentLivenessEntry {
+  alive: boolean | null;
+  polledAt: number;
+}
+
+export interface AgentLivenessReport {
+  text: string;
+  tone: 'pending' | 'stale' | 'degraded' | 'ok';
+  deadPaneIds: string[];
+}
+
+// ---------------------------------------------------------------------------
+// CREATURE ENGINE SEAM (engine <-> runtime edge; the speech edge is typed
+// above as SpeechPayload/CreatureAnchor). The engine emits ~40 state fields
+// but the runtime consumes exactly these — type the CONSUMED surface, not
+// the internal one, so the seam stays narrow on purpose.
+// ---------------------------------------------------------------------------
+
+export interface CreatureEngineConsumedState {
+  petId: string;
+  x: number;
+  y: number;
+  /** Radians; runtime derives facing = sign(cos(heading)). */
+  heading: number;
+  activity: CreatureActivity;
+  palette: { rim: string } & JsonRecord;
+}
+
+export interface SquidCreatureEngine {
+  readonly state: CreatureEngineConsumedState & JsonRecord;
+  tick(dtMs: number): void;
+  draw(ctx: unknown): void;
+  setActivity(activity: CreatureActivity): void;
+  setBounds(width: number, height: number): void;
+  setExclusionBand(y0: number, y1: number): void;
+  setSwimInsets(top: number, bottom: number): void;
+  setNeighbor(x: number, y: number): void;
+  celebrate(): void;
+  delight(): void;
+  faceToward(x: number, y: number, durationMs: number): void;
+  setPointer(x: number, y: number, speedPxMs: number): void;
+  setCurrent(cx: number, cy: number): void;
+  setReducedMotion(reduced: boolean): void;
+}

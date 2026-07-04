@@ -918,7 +918,14 @@ function normalizeQueueActiveTask(agent, task = {}) {
     state: normalizeToken(task.state || task.status, 'active'),
     status: normalizeToken(task.status || task.state, 'active'),
     source: toOptionalString(task.source, null),
-    updatedAt: toOptionalString(task.updatedAt, null),
+    // hm-task-queue tasks never carry updatedAt (only ms fields); derive it
+    // so this field stops being always-null across the seam. No timestamp
+    // means null — never a fabricated "now".
+    updatedAt: toOptionalString(task.updatedAt, null)
+      || (Number.isFinite(Number(task.lastAdvancedAt || task.lastDispatchAtMs || task.enqueuedAtMs))
+        && Number(task.lastAdvancedAt || task.lastDispatchAtMs || task.enqueuedAtMs) > 0
+        ? asIso(task.lastAdvancedAt || task.lastDispatchAtMs || task.enqueuedAtMs)
+        : null),
     lastAdvancedAt: task.lastAdvancedAt || task.lastDispatchAtMs || null,
   };
 }
