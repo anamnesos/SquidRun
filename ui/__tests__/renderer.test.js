@@ -247,6 +247,9 @@ describe('renderer.js smoke tests', () => {
       statusStrip: require('../modules/status-strip'),
       paneVisibility: require('../modules/pane-visibility'),
       windowTeamBootstrap: require('../modules/window-team-bootstrap'),
+      // S468 dedup: real shared modules, so tests exercise the real strip
+      ansi: require('../modules/ansi'),
+      faceJargonCore: require('../modules/face-jargon-core'),
       miraLiveEntrypoint: require('../modules/mira-live-entrypoint'),
       modelSelector: require('../modules/model-selector'),
       config: require('../config'),

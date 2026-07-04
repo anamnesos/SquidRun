@@ -184,9 +184,9 @@ function normalizeProfileName(value) {
   return String(value || 'main').trim() || 'main';
 }
 
-function normalizeRole(value) {
-  return String(value || 'architect').trim().toLowerCase() || 'architect';
-}
+// S468 role-scope-consolidation: the local architect-fallback normalizer
+// was THE misroute bug (canon: unknown -> null; callers decide policy).
+const { normalizeRole } = require('../role-scope-core');
 
 function normalizeScope(inputSignals = {}, request = {}) {
   const envelopeScope = inputSignals.envelopeScope || {};
@@ -199,7 +199,7 @@ function normalizeScope(inputSignals = {}, request = {}) {
   );
   return {
     profileName,
-    sessionId: envelopeScope.sessionId || request.sessionId || inputSignals.sessionId || inputSignals.fixtureA?.sessionId || 'app-session-326',
+    sessionId: envelopeScope.sessionId || request.sessionId || inputSignals.sessionId || inputSignals.fixtureA?.sessionId || null,
     deviceId: envelopeScope.deviceId || request.deviceId || inputSignals.deviceId || inputSignals.fixtureA?.deviceId || 'VIGIL',
   };
 }
@@ -208,7 +208,7 @@ function envelopeScope(inputSignals = {}) {
   const envelope = inputSignals.envelopeScope || {};
   return {
     profileName: normalizeProfileName(envelope.profile || inputSignals.profile || inputSignals.fixtureA?.profile || 'main'),
-    sessionId: envelope.sessionId || inputSignals.sessionId || inputSignals.fixtureA?.sessionId || 'app-session-326',
+    sessionId: envelope.sessionId || inputSignals.sessionId || inputSignals.fixtureA?.sessionId || null,
     deviceId: envelope.deviceId || inputSignals.deviceId || inputSignals.fixtureA?.deviceId || 'VIGIL',
   };
 }

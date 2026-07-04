@@ -169,9 +169,8 @@ function normalizeProfileName(value) {
   return String(value || 'main').trim() || 'main';
 }
 
-function normalizeRole(value) {
-  return String(value || 'architect').trim().toLowerCase() || 'architect';
-}
+// S468 role-scope-consolidation: same misroute-fallback twin as intent-queue.
+const { normalizeRole } = require('../role-scope-core');
 
 function currentContext(inputSignals = {}) {
   const current = inputSignals.currentContext || {};
@@ -429,6 +428,11 @@ function classifyAcceptance(inputSignals = {}, intentRef, context, role, risk, s
   if (intentRef.status !== 'pending_local_acceptance') {
     failure = 'non_pending';
     reasons.push('non_pending_intent');
+  } else if (target === null) {
+    // S468 canon: unknown target is a FAILURE, not an implicit architect
+    // (the old coercion let junk targets bypass the builder/oracle blocks)
+    failure = 'unknown_target';
+    reasons.push('unknown_target_role');
   } else if (target === 'builder') {
     failure = 'builder_direct_target';
     reasons.push('direct_builder_target_blocked');

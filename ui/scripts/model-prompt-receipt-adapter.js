@@ -68,6 +68,17 @@ function emitHookResponse(result = {}) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  // DIAGNOSTIC BREADCRUMB (S468 receipt-store silence): prove whether the
+  // pane hook EXECUTES and what payload shape it receives. Remove after the
+  // silent-skip class is diagnosed.
+  try {
+    const fsDbg = require('fs');
+    fsDbg.appendFileSync(
+      'D:/squidrun-tmp/receipt-adapter-breadcrumbs.log',
+      `${new Date().toISOString()} argv=${JSON.stringify(process.argv.slice(2))} stdinTTY=${process.stdin.isTTY === true}\n`,
+      'utf8'
+    );
+  } catch { /* diagnostics never break the hook */ }
   if (args.command === 'install') {
     const result = installModelPromptReceiptHooks({ projectRoot: args.projectRoot || process.cwd() });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
@@ -76,6 +87,14 @@ async function main() {
 
   const raw = await readStdin();
   const payload = parsePayload(raw);
+  try {
+    const fsDbg = require('fs');
+    fsDbg.appendFileSync(
+      'D:/squidrun-tmp/receipt-adapter-breadcrumbs.log',
+      `${new Date().toISOString()} payloadKeys=${JSON.stringify(Object.keys(payload || {}))} hasMarker=${String(payload.prompt || '').includes('[SQUIDRUN_RECEIPT')}\n`,
+      'utf8'
+    );
+  } catch { /* diagnostics never break the hook */ }
 
   if (args.trustCheckOnly) {
     const record = appendTrustCheckBreadcrumb({ payload });

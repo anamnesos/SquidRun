@@ -18,7 +18,10 @@ function normalizeKind(value) {
   return (toNonEmptyString(value) || 'telegram').toLowerCase();
 }
 
-function normalizeRole(value) {
+// S468 ruling #3: this is CHANNEL-KEY derivation (underscore rewrite over
+// an open vocabulary), not pane-role normalization — renamed to end the
+// name collision with the canonical core.
+function normalizeChannelRoleKey(value) {
   return (toNonEmptyString(value) || '').toLowerCase().replace(/[\s-]+/g, '_');
 }
 
@@ -45,7 +48,7 @@ function getBotRef(channel) {
 }
 
 function normalizeChannel(channel = {}, fallbackRole = '') {
-  const role = normalizeRole(channel.role || channel.owner || fallbackRole);
+  const role = normalizeChannelRoleKey(channel.role || channel.owner || fallbackRole);
   const kind = normalizeKind(channel.kind || channel.channelKind);
   const chatId = normalizeChatId(channel.chatId || channel.chatRef);
   const botRef = getBotRef(channel);
@@ -59,7 +62,7 @@ function normalizeChannel(channel = {}, fallbackRole = '') {
 }
 
 function isCurrentSquidRunOpsChannel(channel) {
-  const role = normalizeRole(channel?.role || channel?.owner || channel?.label);
+  const role = normalizeChannelRoleKey(channel?.role || channel?.owner || channel?.label);
   if (role === 'squidrun_team_ops' || role === 'current_squidrun_team_ops') return true;
   if (role === 'squidrun' || role === 'team_ops' || role === 'ops') return true;
   return channel?.isCurrentSquidRunTeamOps === true;

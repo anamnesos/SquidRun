@@ -573,7 +573,8 @@
           "risk_tier": "tier0_read_only",
           "action_class": "read_only_research",
           "payload_summary": "Review false-memory eval evidence gaps."
-        }
+        },
+        "sessionId": "app-session-326"
       },
       "expectedRecord": {
         "status": "pending_local_acceptance",
@@ -603,7 +604,8 @@
           "action_class": "offline_reminder",
           "payload_summary": "Remind local Architect to review Mira Core acceptance fixtures.",
           "expires_at": "2026-05-08T03:00:00.000Z"
-        }
+        },
+        "sessionId": "app-session-326"
       },
       "expectedRecord": {
         "status": "pending_local_acceptance",
@@ -637,7 +639,8 @@
             "action_class": "trade_or_financial_action",
             "risk_tier": "tier4_financial_or_irreversible"
           }
-        ]
+        ],
+        "sessionId": "app-session-326"
       },
       "expectedRecords": [
         {
@@ -677,7 +680,8 @@
           "risk_tier": "tier2_repo_mutation",
           "action_class": "repo_mutation",
           "payload_summary": "Edit files for Mira Core implementation."
-        }
+        },
+        "sessionId": "app-session-326"
       },
       "expectedRecord": {
         "allowedStatuses": [
@@ -706,7 +710,8 @@
             "action_class": "local_shell_execution",
             "risk_tier": "tier2_repo_mutation"
           }
-        ]
+        ],
+        "sessionId": "app-session-326"
       },
       "expectedRecords": [
         {
@@ -749,7 +754,8 @@
             "risk_tier": "tier0_read_only",
             "action_class": "read_only_research"
           }
-        ]
+        ],
+        "sessionId": "app-session-326"
       },
       "expectedRecords": [
         {
@@ -807,7 +813,8 @@
           "action_class": "offline_reminder",
           "source_ref_generated_at": "2026-05-01T00:00:00.000Z",
           "expires_at": "2026-05-05T00:00:00.000Z"
-        }
+        },
+        "sessionId": "app-session-326"
       },
       "expectedRecord": {
         "status": "expired",
@@ -838,7 +845,8 @@
           "raw terminal scrollback",
           "screenshot OCR text",
           "customer private note"
-        ]
+        ],
+        "sessionId": "app-session-326"
       },
       "expectedRecord": {
         "payload_redaction_status": "blocked",
@@ -918,7 +926,8 @@
       "inputSignals": {
         "requestedPhase": "phase_8_intent_record_preparation",
         "serverAvailable": true,
-        "localArmsOnline": false
+        "localArmsOnline": false,
+        "sessionId": "app-session-326"
       },
       "expectedOutput": {
         "intent_records": {

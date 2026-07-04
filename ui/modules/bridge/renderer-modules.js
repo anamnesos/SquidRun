@@ -17,6 +17,10 @@ function createRendererModules() {
     workspacePaneShell: require('../workspace-pane-shell'),
     squidRoomSurface: require('../squid-room-surface'),
     squidRoomCreatureRuntime: require('../squid-room-creature-runtime'),
+    // S468 weaker-duplicate hunt: package-backed ANSI strip (OSC hyperlinks,
+    // charset selects) replaces the renderer's hand-rolled CSI-only regex.
+    ansi: require('../ansi'),
+    faceJargonCore: require('../face-jargon-core'),
     miraLiveEntrypoint: require('../mira-live-entrypoint'),
     modelSelector: require('../model-selector'),
     config: require('../../config'),

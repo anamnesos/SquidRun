@@ -5216,7 +5216,7 @@ describe('SquidRunApp', () => {
       ]);
     });
 
-    it('skips direct PTY writes for payloads that require chunked verified injection', async () => {
+    it('materializes oversized codex payloads to a marked pointer and SUBMITS (v1.1/v1.2 - the drop is dead)', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.ctx.currentSettings = {
         paneCommands: {
@@ -5234,18 +5234,21 @@ describe('SquidRunApp', () => {
         messageId: 'direct-codex-long-1',
       });
 
-      expect(app.ctx.daemonClient.write).not.toHaveBeenCalled();
+      // v1.0 pinned skip-and-drop here; that class ate James's words twice.
+      // v1.1+ writes a marked pointer through the ONE submit path.
+      const calls = app.ctx.daemonClient.write.mock.calls;
+      expect(calls[0][1]).toContain('FULL MSG AT');
+      expect(calls[0][1]).toContain('SQUIDRUN_RECEIPT'); // v1.2 marker
+      expect(calls.some((call) => call[1] === '\r')).toBe(true); // the Enter
       expect(result).toEqual(expect.objectContaining({
-        accepted: false,
-        verified: false,
-        status: 'skipped.chunked_payload',
+        ok: true,
+        accepted: true,
         mode: 'daemon-pty',
         paneId: '1',
-        paneRuntime: 'codex',
       }));
     });
 
-    it('skips direct PTY writes for long Claude payloads instead of one-shotting the pane', async () => {
+    it('materializes oversized Claude payloads to a marked pointer and SUBMITS (v1.1/v1.2)', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.ctx.currentSettings = {
         paneCommands: {
@@ -5263,14 +5266,15 @@ describe('SquidRunApp', () => {
         messageId: 'direct-claude-long-1',
       });
 
-      expect(app.ctx.daemonClient.write).not.toHaveBeenCalled();
+      const calls = app.ctx.daemonClient.write.mock.calls;
+      expect(calls[0][1]).toContain('FULL MSG AT');
+      expect(calls[0][1]).toContain('SQUIDRUN_RECEIPT');
+      expect(calls.some((call) => call[1] === '\r')).toBe(true);
       expect(result).toEqual(expect.objectContaining({
-        accepted: false,
-        verified: false,
-        status: 'skipped.chunked_payload',
+        ok: true,
+        accepted: true,
         mode: 'daemon-pty',
         paneId: '1',
-        paneRuntime: 'non-codex',
       }));
     });
 
@@ -5302,18 +5306,26 @@ describe('SquidRunApp', () => {
         messageId: 'claude-long-fallback-1',
       });
 
-      expect(app.ctx.daemonClient.write).not.toHaveBeenCalled();
-      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
-        ['1'],
-        message,
-        'oracle',
-        expect.objectContaining({ awaitDelivery: true })
-      );
-      expect(result).toEqual(expect.objectContaining({
-        accepted: true,
-        verified: true,
-        status: 'delivered.verified',
-      }));
+      // v1.1/v1.2: the daemon-pty path no longer refuses long payloads - it
+      // materializes a marked pointer and submits, so the reliable path can
+      // succeed without falling through to the trigger path at all.
+      const wrote = app.ctx.daemonClient.write.mock.calls;
+      if (wrote.length > 0) {
+        expect(wrote[0][1]).toContain('FULL MSG AT');
+        expect(result).toEqual(expect.objectContaining({ ok: true, accepted: true }));
+      } else {
+        expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
+          ['1'],
+          message,
+          'oracle',
+          expect.objectContaining({ awaitDelivery: true })
+        );
+        expect(result).toEqual(expect.objectContaining({
+          accepted: true,
+          verified: true,
+          status: 'delivered.verified',
+        }));
+      }
     });
 
     it('fails closed when direct Codex paste terminator write is rejected', async () => {
@@ -8335,16 +8347,21 @@ describe('SquidRunApp', () => {
         await Promise.resolve();
         await Promise.resolve();
 
+        // Ceremony purge SHRINK (S468): ONE agent alert per inbound, then the
+        // ledger holds it - the old contract pinned the 2-alert barrage
+        // (nag + expiry) this choke exists to kill.
         expect(guardedApp.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
           messageId: 'telegram-in-expire-1',
           status: 'telegram_reply_required_expired_unresolved',
           unresolvedReason: 'reply_window_expired',
-          agentDebtNoticeAttemptCount: 2,
+          agentDebtNoticeAttemptCount: 1,
           agentDebtNoticeTargetRoles: ['architect'],
           agentDebtNoticeError: null,
           requiresTelegramEgress: true,
         }));
         expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+        // The expiry still writes its ledger row (nothing lost) - but its
+        // AGENT ALERT is suppressed (agentAlert: null): the ledger holds it.
         expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
           'agent_response_debt',
           '1',
@@ -8358,23 +8375,21 @@ describe('SquidRunApp', () => {
             status: 'telegram_reply_required_expired_unresolved',
             reason: 'reply_window_expired',
             requiresTelegramEgress: true,
-            agentAlert: expect.objectContaining({
-              ok: true,
-              route: 'agent_hm_send',
-              targetRoles: ['architect'],
-            }),
+            agentAlert: null,
           })
         );
         expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
           'project-warning',
           expect.anything()
         );
+        // The ONE alert that fires is the first (the deferred pane-output
+        // nag); the expiry alert is choked - its text never hits the wire.
         expect(spawn).toHaveBeenCalledWith(
           'node',
           expect.arrayContaining([
             expect.stringContaining(path.join('scripts', 'hm-send.js')),
             'architect',
-            expect.stringContaining('Pane 1 still owes Telegram egress for inbound telegram-in-expire-1.'),
+            expect.stringContaining('telegram-in-expire-1'),
             '--role',
             'system',
           ]),
@@ -8382,6 +8397,10 @@ describe('SquidRunApp', () => {
             windowsHide: true,
           })
         );
+        const spawnedTexts = spawn.mock.calls
+          .filter((call) => Array.isArray(call[1]) && call[1].some((arg) => String(arg).includes('telegram-in-expire-1')))
+          .map((call) => call[1].join(' '));
+        expect(spawnedTexts.some((text) => text.includes('still owes Telegram egress'))).toBe(false);
         const laterPaneOutput = guardedApp.inspectPaneOutputForReplyGuards('1', 'still pane-only later', {
           outputKind: 'agent_visible_output',
         });
@@ -8390,7 +8409,8 @@ describe('SquidRunApp', () => {
           status: 'telegram_reply_requirement_expired_unresolved',
           guard: expect.objectContaining({
             status: 'telegram_reply_required_expired_unresolved',
-            agentDebtNoticeAttemptCount: 2,
+            // SHRINK: still exactly ONE alert even after later pane output.
+            agentDebtNoticeAttemptCount: 1,
           }),
         }));
         expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();

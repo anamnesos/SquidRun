@@ -154,9 +154,13 @@ function sourceAge(generatedAt, nowMs, staleAfterMs) {
   };
 }
 
+// S468 role-scope-consolidation: the old body PASSED THROUGH unknown roles
+// ((role || null)) — junk flowed into typed lane rows. Canon: validate as
+// RoleParty (pane roles + user/james/mira/system), unknown -> null.
+const { normalizeRoleParty } = require('../role-scope-core');
+
 function normalizeRole(value) {
-  const role = trimText(value, 40).toLowerCase();
-  return ['architect', 'builder', 'oracle', 'james', 'mira'].includes(role) ? role : (role || null);
+  return normalizeRoleParty(value);
 }
 
 function projectCurrentLane(snapshot, options = {}) {

@@ -7,32 +7,31 @@
  * the box is anchored to the VIEWPORT, the tail is anchored to the CREATURE.
  * The box position is solved as a viewport-constrained problem (flip+shift,
  * >=16px inside every edge — offscreen is mathematically impossible while
- * the viewport can hold the box). The tail is a chain of small rising
- * bubbles from the creature's mouth to the planted box, re-solved every
- * frame as the creature swims.
+ * the viewport can hold the box). The TAIL is drawn by Builder's canvas
+ * ribbon overlay, which consumes the pooled attach records frame() returns
+ * (same-tick seam, Builder #57); this module owns the attach geometry only.
  *
  * HONESTY (cosmos constitution row 8): this module NEVER generates text.
  * It renders exactly what setSpeech() receives from the real face pipeline,
  * and the expanded state carries the verbatim raw line. Typewriter reveals
  * real text over time; reduced motion reveals it instantly.
  *
- * PERF LAW: all DOM nodes are created once per pet and pooled (fixed-size
- * bubble chain). The frame path allocates no objects and no closures; the
- * only unavoidable allocation while a message is actively typing is the
- * revealed-substring, which is small, bounded, and stops at full reveal.
+ * PERF LAW: all DOM nodes are created once per pet and pooled. The frame
+ * path allocates no objects and no closures; the only unavoidable
+ * allocation while a message is actively typing is the revealed-substring,
+ * which is small, bounded, and stops at full reveal.
  */
 
 const SPEECH_INSET_PX = 16;
 const SPEECH_GAP_PX = 22;
 const TYPEWRITER_CHARS_PER_SEC = 35;
-const CHAIN_DOT_COUNT = 7;
 const SWAY_AMPLITUDE_PX = 2.4;
 const SWAY_PERIOD_MS = 4200;
 const GLIDE_EASE_PER_SEC = 6; // exponential approach rate toward solved spot
 // Polish lane (James 10:49): boxes have weight, tails flow.
 const SOLVE_DEADBAND_PX = 28; // anchor must move this far to trigger a re-solve
 const MOUTH_SMOOTH_PER_SEC = 14; // chain-base lerp: tracks swimming, absorbs facing flips
-const DOT_FLOW_PER_SEC = 10; // dot render-state approach rate toward layout
+const EXIT_DISSOLVE_MS = 240; // rethink lane: dissolve-toward-creature duration
 
 /**
  * Pure viewport solver — the testable heart of the system.
@@ -60,31 +59,20 @@ function rectIntersectsRect(x, y, w, h, r) {
  * even if that wiring regresses. It strips — it NEVER invents; if stripping
  * empties the line, the bubble simply doesn't show (fail-dark for text).
  */
+const { stripMachineJargon } = require('./face-jargon-core');
+
 function sanitizeSpeechText(value) {
-  return String(value || '')
-    // shell-escape artifact from hm-send payloads: '\'' is an escaped
-    // apostrophe, not speech ("label'\''s offsets" on a live face)
-    .replace(/'\\''/g, "'")
-    .replace(/\bsha256[:=]?\s*[0-9a-f]{8,64}\b/gi, '')
-    .replace(/\b(?=[0-9a-f]{7,40}\b)[a-f]*\d[0-9a-f]*\b/g, '')
-    .replace(/(?:[A-Za-z]:)?(?:[\w.-]+[\\/]){1,}[\w.-]+\.\w{1,6}\b/g, '')
-    // bare filenames without a path prefix (verify-frame 1 left "capture-.png"
-    // debris after the hex strip ate the digits)
-    .replace(/\b[\w.-]+\.(?:png|jpe?g|gif|md|js|ts|tsx|json|css|html|txt|log|pdf|woff2?)\b/gi, '')
-    .replace(/\.squidrun\/[\w/.-]+/g, '')
-    .replace(/\bwi-[a-z0-9][\w-]{5,}\b/gi, '')
-    .replace(/\bhm-\d{10,}-[a-z0-9]+\b/gi, '')
-    .replace(/\b(?:rowId|messageId|deliveryId)\s*[:#=]?\s*[A-Za-z0-9._:-]+\b/gi, '')
-    // Husk removal (drop the CLAUSE, not just the token): slash-number runs
-    // left by stripped filenames ("/ 133332 / 153552"), dangling slashes,
-    // and parentheticals reduced to digits/punctuation with no letters.
-    .replace(/(?:\s*\/\s*\d{4,}\b)+/g, '')
-    .replace(/\s*\/\s*(?=[,.;:)\s]|$)/g, '')
-    .replace(/\(\s*[\d\s/\\.,:;·–—-]*\s*\)/g, '')
-    .replace(/\(\s*[,:;-]*\s*\)/g, '')
-    .replace(/\s{2,}/g, ' ')
-    .replace(/\s+([,.;:!?])/g, '$1')
-    .trim();
+  const withoutHeaders = String(value || '')
+    // LAYER-SPECIFIC (stays here): agent-ref report headers — address
+    // labels are not speech; the honest verb label SURVIVES the strip
+    // (S466 window audit)
+    .replace(/^(\s*(?:Resting|Working|Reviewing|Blocked):\s*)?\((?:BUILDER|ORACLE|ARCHITECT|CODEX|SYSTEM)[^)]{0,120}\):?\s*/i, '$1')
+    // unclosed header parens: strip to the end of the quoted directive
+    .replace(/^(\s*(?:Resting|Working|Reviewing|Blocked):\s*)?\((?:BUILDER|ORACLE|ARCHITECT|CODEX|SYSTEM)[^)]{0,300}?['’]\s+(?=[A-Z])/i, '$1');
+  // SHARED CORE (S468 dedup): the machine-identifier strip lives ONCE in
+  // face-jargon-core.js — this and renderer's stripSquidRoomFaceJargon
+  // drifted three times in one day as hand-maintained twins.
+  return stripMachineJargon(withoutHeaders);
 }
 
 function solveSpeechBox(input = {}) {
@@ -214,90 +202,103 @@ function solveSpeechBox(input = {}) {
   };
 }
 
-/** Deterministic per-dot bob phase — no randomness, stable across frames. */
-function chainDotPhase(index) {
-  return (index * 0.83) % (Math.PI * 2);
-}
 
-/**
- * Fills `out` (a pooled array of {x,y,scale}) with chain dot positions along
- * a gentle quadratic arc from the mouth to the box tail point. Zero alloc:
- * mutates the pooled entries in place.
- */
-function layoutChainDots(out, mouthX, mouthY, tailX, tailY, nowMs, reducedMotion) {
-  const count = out.length;
-  // Control point bows the chain slightly upward (bubbles rise).
-  const cx = (mouthX + tailX) / 2;
-  const cy = Math.min(mouthY, tailY) - 26;
-  for (let i = 0; i < count; i += 1) {
-    const t = (i + 1) / (count + 1);
-    const omt = 1 - t;
-    let x = omt * omt * mouthX + 2 * omt * t * cx + t * t * tailX;
-    let y = omt * omt * mouthY + 2 * omt * t * cy + t * t * tailY;
-    if (!reducedMotion) {
-      const phase = chainDotPhase(i) + (nowMs / 900);
-      x += Math.sin(phase) * 1.6;
-      y += Math.cos(phase * 0.8) * 1.2;
-    }
-    const dot = out[i];
-    dot.x = x;
-    dot.y = y;
-    dot.scale = 0.55 + t * 0.65; // grows toward the box, classic idiom
-  }
-}
 
 const SPEECH_STYLE_ID = 'squid-room-speech-system-style';
+// Creature glow palette = the constitution's tokens (II) as LITERALS —
+// the ribbon draws on canvas where CSS vars can't resolve, so the seam
+// carries the token VALUES; the CSS below derives from the token NAMES.
+const SPEECH_GLOW = Object.freeze({
+  builder: '#48bed6', // --sr2-teal
+  oracle: '#8a5ce2', // --sr2-violet
+});
 const SPEECH_CSS = `
 .sr-speech-layer { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
 .sr-speech-box {
-  position: absolute; left: 0; top: 0; max-width: 340px; min-width: 60px;
-  padding: 10px 14px 11px; pointer-events: auto; cursor: default;
-  color: rgba(224, 252, 248, 0.94); font-size: 13px; line-height: 1.45;
-  background: rgba(7, 16, 27, 0.88);
-  border: 1px solid rgba(94, 234, 212, 0.30);
-  border-radius: 3px;
-  /* pixel-skin: stepped corner notches, no smooth curves */
-  clip-path: polygon(
-    0 6px, 3px 6px, 3px 3px, 6px 3px, 6px 0,
-    calc(100% - 6px) 0, calc(100% - 6px) 3px, calc(100% - 3px) 3px, calc(100% - 3px) 6px, 100% 6px,
-    100% calc(100% - 6px), calc(100% - 3px) calc(100% - 6px), calc(100% - 3px) calc(100% - 3px), calc(100% - 6px) calc(100% - 3px), calc(100% - 6px) 100%,
-    6px 100%, 6px calc(100% - 3px), 3px calc(100% - 3px), 3px calc(100% - 6px), 0 calc(100% - 6px)
-  );
-  box-shadow: 0 0 18px rgba(94, 234, 212, 0.10), inset 0 0 12px rgba(94, 234, 212, 0.05);
-  will-change: transform; transition: opacity 240ms ease;
+  position: absolute; left: 0; top: 0; max-width: 380px; min-width: 80px;
+  pointer-events: auto; cursor: default;
+  /* Constitution II: derive from token NAMES; fallbacks mirror the
+     constitution's literal values for pre-mount resilience only. */
+  --sr-glow: var(--sr2-teal, #48bed6);
+  will-change: transform; transition: opacity 260ms ease;
 }
+.sr-speech-box[data-pet="oracle"] { --sr-glow: var(--sr2-violet, #8a5ce2); }
 .sr-speech-box[data-visible="false"] { opacity: 0; pointer-events: none; }
-.sr-speech-box[data-pet="oracle"] { border-color: rgba(192, 132, 252, 0.32); }
-.sr-speech-cursor {
-  display: inline-block; width: 7px; height: 13px; margin-left: 2px;
-  vertical-align: -2px; background: rgba(94, 234, 212, 0.85);
+/* The skin lives on the SHELL so enter/exit scale never fights the
+   positioning transform on the box. An organic glass capsule, lit from
+   within by the speaker's glow — creature-born, not UI debris. */
+.sr-speech-shell {
+  padding: 13px 17px 14px;
+  color: var(--sr2-ink, #ddfffa); font-size: 14.5px; line-height: 1.5;
+  background:
+    linear-gradient(155deg,
+      color-mix(in oklab, var(--sr-glow) 13%, color-mix(in srgb, var(--sr2-abyss-2, #04060f) 62%, transparent)) 0%,
+      color-mix(in srgb, var(--sr2-abyss-1, #02040c) 66%, transparent) 42%,
+      color-mix(in oklab, var(--sr-glow) 7%, color-mix(in srgb, var(--sr2-abyss-0, #010208) 72%, transparent)) 100%);
+  backdrop-filter: blur(12px) saturate(1.25);
+  -webkit-backdrop-filter: blur(12px) saturate(1.25);
+  border: 1px solid color-mix(in oklab, var(--sr-glow) 42%, transparent);
+  border-radius: 22px;
+  box-shadow:
+    0 0 28px -8px var(--sr-glow),
+    0 6px 24px -12px rgba(0, 0, 0, 0.8),
+    inset 0 0 22px -14px var(--sr-glow),
+    inset 0 1px 0 color-mix(in oklab, var(--sr-glow) 24%, transparent);
+  transform-origin: center;
 }
-.sr-speech-box[data-pet="oracle"] .sr-speech-cursor { background: rgba(192, 132, 252, 0.85); }
+/* Asymmetric corner: the tight corner points at the speaker's mouth. */
+.sr-speech-box[data-opens-right="true"][data-opens-below="true"] .sr-speech-shell { border-top-left-radius: 7px; transform-origin: left top; }
+.sr-speech-box[data-opens-right="true"][data-opens-below="false"] .sr-speech-shell { border-bottom-left-radius: 7px; transform-origin: left bottom; }
+.sr-speech-box[data-opens-right="false"][data-opens-below="true"] .sr-speech-shell { border-top-right-radius: 7px; transform-origin: right top; }
+.sr-speech-box[data-opens-right="false"][data-opens-below="false"] .sr-speech-shell { border-bottom-right-radius: 7px; transform-origin: right bottom; }
+.sr-speech-lead {
+  display: block; margin-bottom: 3px;
+  font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: color-mix(in oklab, var(--sr-glow) 85%, white);
+  opacity: 0.85;
+}
+@keyframes sr-speech-enter {
+  0% { transform: scale(0.86); opacity: 0; }
+  70% { transform: scale(1.025); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes sr-speech-exit {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0; }
+}
+.sr-speech-box[data-anim="enter"] .sr-speech-shell { animation: sr-speech-enter 320ms cubic-bezier(0.34, 1.3, 0.5, 1) both; }
+.sr-speech-box[data-anim="exit"] .sr-speech-shell { animation: sr-speech-exit 240ms ease-in both; }
+.sr-speech-cursor {
+  display: inline-block; width: 7px; height: 14px; margin-left: 2px;
+  vertical-align: -2px; border-radius: 2px;
+  background: color-mix(in oklab, var(--sr-glow) 85%, white);
+}
 .sr-speech-box[data-typing="false"] .sr-speech-cursor { display: none; }
 @keyframes sr-cursor-glint { 0%, 45% { opacity: 1; } 55%, 100% { opacity: 0.15; } }
 .sr-speech-cursor { animation: sr-cursor-glint 0.9s steps(2, start) infinite; }
 .sr-speech-full { display: none; }
 .sr-speech-raw {
-  display: none; margin-top: 8px; padding-top: 7px;
-  border-top: 1px dashed rgba(94, 234, 212, 0.22);
+  display: none; margin-top: 9px; padding-top: 8px;
+  border-top: 1px dashed color-mix(in oklab, var(--sr-glow) 28%, transparent);
   font-family: var(--squid-room-mono-font, monospace); font-size: 11px;
-  color: rgba(170, 210, 205, 0.72); word-break: break-word;
+  /* Constitution II: secondary text = ink dimmed to 0.72 */
+  color: color-mix(in srgb, var(--sr2-ink, #ddfffa) 72%, transparent); word-break: break-word;
 }
-.sr-speech-box.is-expanded { max-width: 480px; z-index: 7; }
+.sr-speech-box.is-expanded { max-width: 500px; z-index: 7; }
 .sr-speech-box.is-expanded .sr-speech-text { display: none; }
 .sr-speech-box.is-expanded .sr-speech-full { display: block; }
 .sr-speech-box.is-expanded .sr-speech-raw[data-has-raw="true"] { display: block; }
-.sr-speech-dot {
-  position: absolute; left: 0; top: 0; width: 7px; height: 7px;
-  border-radius: 999px; pointer-events: none;
-  background: rgba(168, 255, 244, 0.55);
-  box-shadow: 0 0 7px rgba(114, 240, 224, 0.45);
-  will-change: transform; image-rendering: pixelated;
+.sr-speech-hint {
+  position: absolute; right: 9px; bottom: 5px;
+  font-size: 11px; line-height: 1; opacity: 0.35; pointer-events: none;
+  color: color-mix(in oklab, var(--sr-glow) 80%, white);
 }
-.sr-speech-dot[data-pet="oracle"] { background: rgba(216, 180, 254, 0.55); box-shadow: 0 0 7px rgba(192, 132, 252, 0.45); }
+.sr-speech-box.is-expanded .sr-speech-hint { opacity: 0; }
 @media (prefers-reduced-motion: reduce) {
   .sr-speech-cursor { animation: none; opacity: 1; }
   .sr-speech-box { transition: none; }
+  .sr-speech-box[data-anim="enter"] .sr-speech-shell,
+  .sr-speech-box[data-anim="exit"] .sr-speech-shell { animation: none; }
 }
 `;
 
@@ -322,6 +323,10 @@ function createSquidRoomSpeechSystem(options = {}) {
   const pets = new Map();
   /** Pooled avoid-rect scratch — reused every frame, zero alloc. */
   const avoidPool = [];
+  /** Pooled ribbon-seam record returned from frame() (Builder #57):
+   *  Record<petId, {attachX, attachY, visible, color}> — same-tick consume,
+   *  pooled objects mutated in place, zero per-frame alloc. */
+  const seamRecord = {};
 
   function buildPetEntry(petId) {
     const box = doc.createElement('div');
@@ -329,6 +334,15 @@ function createSquidRoomSpeechSystem(options = {}) {
     box.dataset.pet = petId;
     box.dataset.visible = 'false';
     box.dataset.typing = 'false';
+    box.dataset.opensRight = 'true';
+    box.dataset.opensBelow = 'true';
+    // Shell carries the glass skin + enter/exit scale so animation never
+    // fights the positioning transform on the box itself.
+    const shell = doc.createElement('div');
+    shell.className = 'sr-speech-shell';
+    const lead = doc.createElement('span');
+    lead.className = 'sr-speech-lead';
+    lead.textContent = petId;
     const text = doc.createElement('span');
     text.className = 'sr-speech-text';
     const cursor = doc.createElement('span');
@@ -338,27 +352,21 @@ function createSquidRoomSpeechSystem(options = {}) {
     const raw = doc.createElement('div');
     raw.className = 'sr-speech-raw';
     raw.dataset.hasRaw = 'false';
-    box.appendChild(text);
-    box.appendChild(cursor);
-    box.appendChild(full);
-    box.appendChild(raw);
+    shell.appendChild(lead);
+    shell.appendChild(text);
+    shell.appendChild(cursor);
+    shell.appendChild(full);
+    shell.appendChild(raw);
+    // Discoverability affordance (window audit): a feature nobody can
+    // discover is a feature that doesn't exist.
+    const hint = doc.createElement('span');
+    hint.className = 'sr-speech-hint';
+    hint.textContent = '⌄';
+    shell.appendChild(hint);
+    box.appendChild(shell);
     box.addEventListener('mouseenter', () => box.classList.add('is-expanded'));
     box.addEventListener('mouseleave', () => box.classList.remove('is-expanded'));
     layerEl?.appendChild?.(box);
-
-    const dots = [];
-    const dotStates = [];
-    const dotRender = [];
-    for (let i = 0; i < CHAIN_DOT_COUNT; i += 1) {
-      const dot = doc.createElement('div');
-      dot.className = 'sr-speech-dot';
-      dot.dataset.pet = petId;
-      dot.style.opacity = '0';
-      layerEl?.appendChild?.(dot);
-      dots.push(dot);
-      dotStates.push({ x: 0, y: 0, scale: 1 });
-      dotRender.push({ x: 0, y: 0, scale: 1, opacity: 0 });
-    }
 
     return {
       petId,
@@ -366,9 +374,6 @@ function createSquidRoomSpeechSystem(options = {}) {
       textEl: text,
       fullEl: full,
       rawEl: raw,
-      dots,
-      dotStates,
-      dotRender,
       faceText: '',
       fullText: '',
       rawText: '',
@@ -397,6 +402,12 @@ function createSquidRoomSpeechSystem(options = {}) {
       // senior ones; seniors ignore junior BOXES (still avoid creatures).
       // Mutual dodging is what made two boxes thrash.
       priority: pets.size,
+      // Exit-dissolve lifecycle: frame() stamps exitStartMs and hides after
+      // the dissolve. Fail-dark (missing anchor) stays INSTANT.
+      exiting: false,
+      exitStartMs: NaN,
+      // Ribbon seam (Builder #57): pooled anchor returned from frame().
+      tailAnchor: { attachX: 0, attachY: 0, visible: false, color: SPEECH_GLOW[petId] || SPEECH_GLOW.builder },
     };
   }
 
@@ -431,12 +442,26 @@ function createSquidRoomSpeechSystem(options = {}) {
     // Last-line guard: strip, never invent. Empty after stripping = silent.
     const face = sanitizeSpeechText(payload.face);
     if (!face) {
-      entry.visible = false;
-      entry.box.dataset.visible = 'false';
+      // Exit = dissolve toward the creature (frame() completes the hide);
+      // an already-hidden box just stays dark.
+      if (entry.visible && !reducedMotion) {
+        entry.exiting = true;
+        entry.exitStartMs = NaN;
+        entry.box.dataset.anim = 'exit';
+      } else {
+        entry.visible = false;
+        entry.box.dataset.visible = 'false';
+      }
       return;
     }
     if (rowIdentity && rowIdentity === entry.rowIdentity) return;
     entry.rowIdentity = rowIdentity;
+    // Entrance: the shell blooms from the mouth-side corner (CSS keys the
+    // transform-origin off data-opens-*). Retrigger by clearing first.
+    entry.exiting = false;
+    entry.exitStartMs = NaN;
+    entry.box.dataset.anim = '';
+    if (!reducedMotion) entry.box.dataset.anim = 'enter';
     // Single-frame settle (Builder's cross-review): a NEW message must SNAP
     // to its freshly-solved spot on its first frame — gliding from the old
     // message's position drew the chain to a box still in flight.
@@ -466,9 +491,20 @@ function createSquidRoomSpeechSystem(options = {}) {
       if (!entry.visible || !anchor) {
         // fail-dark: no anchor -> hide, never guess (instant, honesty first)
         entry.box.dataset.visible = 'false';
-        for (let i = 0; i < entry.dots.length; i += 1) {
-          entry.dots[i].style.opacity = '0';
-          if (entry.dotRender[i]) entry.dotRender[i].opacity = 0;
+        entry.tailAnchor.visible = false;
+        seamRecord[entry.petId] = entry.tailAnchor;
+        continue;
+      }
+      // Exit dissolve: frame time completes the hide (no timers).
+      if (entry.exiting) {
+        if (!Number.isFinite(entry.exitStartMs)) entry.exitStartMs = nowMs;
+        entry.tailAnchor.visible = false;
+        seamRecord[entry.petId] = entry.tailAnchor;
+        if (nowMs - entry.exitStartMs >= EXIT_DISSOLVE_MS) {
+          entry.exiting = false;
+          entry.visible = false;
+          entry.box.dataset.visible = 'false';
+          entry.box.dataset.anim = '';
         }
         continue;
       }
@@ -559,6 +595,9 @@ function createSquidRoomSpeechSystem(options = {}) {
         entry.solveAnchorY = mouthY;
         entry.lastBoxW = boxW;
         entry.lastBoxH = boxH;
+        // Asymmetric capsule corner + entrance origin point at the mouth.
+        entry.box.dataset.opensRight = String(solved.opensRight);
+        entry.box.dataset.opensBelow = String(solved.opensBelow);
       }
       if (!entry.hasPosition || reducedMotion) {
         entry.posX = entry.targetX;
@@ -593,33 +632,24 @@ function createSquidRoomSpeechSystem(options = {}) {
         entry.mouthSY += (mouthY - entry.mouthSY) * mk;
       }
 
-      // Chain: mouth -> nearest point on the box edge facing the anchor.
+      // Tail endpoint: mouth -> nearest point on the box edge facing the
+      // anchor. The dotted chain is DEAD (no-orphan: Builder's canvas ribbon
+      // consumes these attach records same-tick and draws the connection).
       const tailX = Math.min(Math.max(entry.mouthSX, entry.posX), entry.posX + boxW);
       const tailY = entry.posY + boxH / 2 <= entry.mouthSY ? entry.posY + boxH : entry.posY;
-      layoutChainDots(entry.dotStates, entry.mouthSX, entry.mouthSY, tailX, tailY, nowMs, reducedMotion);
-      // DOTS FLOW (James: 'go in and out, weird positions'): render state
-      // lerps toward the layout, opacity eases in — dots move like beads on
-      // a string instead of popping to freshly computed spots.
-      const dk = reducedMotion ? 1 : Math.min(1, DOT_FLOW_PER_SEC * dtSec);
-      for (let i = 0; i < entry.dots.length; i += 1) {
-        const s = entry.dotStates[i];
-        const r = entry.dotRender[i];
-        if (r.opacity <= 0.001) { r.x = s.x; r.y = s.y; r.scale = s.scale; } // invisible dots snap
-        r.x += (s.x - r.x) * dk;
-        r.y += (s.y - r.y) * dk;
-        r.scale += (s.scale - r.scale) * dk;
-        r.opacity += (1 - r.opacity) * dk;
-        const dot = entry.dots[i];
-        dot.style.opacity = r.opacity.toFixed(3);
-        dot.style.transform = `translate3d(${r.x}px, ${r.y}px, 0) scale(${r.scale})`;
-      }
+      entry.tailAnchor.attachX = tailX;
+      entry.tailAnchor.attachY = tailY;
+      entry.tailAnchor.visible = true;
+      seamRecord[entry.petId] = entry.tailAnchor;
     }
+    // Ribbon seam (Builder #57): consumed in the SAME rAF tick — pooled
+    // objects, mutated in place, no polling, no per-frame allocation.
+    return seamRecord;
   }
 
   function destroy() {
     for (const entry of pets.values()) {
       entry.box.remove?.();
-      for (const dot of entry.dots) dot.remove?.();
     }
     pets.clear();
   }
@@ -636,13 +666,11 @@ function createSquidRoomSpeechSystem(options = {}) {
 
 module.exports = {
   BODY_EXCLUSION_PAD_PX,
-  CHAIN_DOT_COUNT,
   SPEECH_GAP_PX,
+  SPEECH_GLOW,
   SPEECH_INSET_PX,
   TYPEWRITER_CHARS_PER_SEC,
-  chainDotPhase,
   createSquidRoomSpeechSystem,
-  layoutChainDots,
   sanitizeSpeechText,
   solveSpeechBox,
 };

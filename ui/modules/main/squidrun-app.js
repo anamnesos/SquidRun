@@ -13474,10 +13474,29 @@ class SquidRunApp {
     } else {
       log.warn('TelegramReplyRequirement', notice);
     }
-    const agentAlert = this.routeTelegramReplyRequirementAgentAlert(guard, notice, {
-      severity: type,
-      reason,
-    });
+    // Ceremony purge SHRINK (inventory: ONE notice, then the ledger holds
+    // it): three emitters - deferred nag, agent escalation, expiry - each
+    // correctly capped per-guard, still stacked into a 3-alerts-in-2-min
+    // barrage for one inbound (July 2). This funnel now chokes the AGENT
+    // ALERT to one per inbound; the activity ledger below still records
+    // every occurrence, so nothing is lost - only the nagging.
+    const inboundKey = toNonEmptyString(guard.messageId);
+    const alreadyAlerted = inboundKey && guard.debtAlertEmittedForMessageId === inboundKey;
+    let agentAlert = null;
+    if (!alreadyAlerted) {
+      agentAlert = this.routeTelegramReplyRequirementAgentAlert(guard, notice, {
+        severity: type,
+        reason,
+      });
+      if (inboundKey) {
+        guard.debtAlertEmittedForMessageId = inboundKey;
+        const latestGuard = this.pendingTelegramReplyGuards.get(paneId);
+        if (latestGuard && toNonEmptyString(latestGuard.messageId) === inboundKey) {
+          latestGuard.debtAlertEmittedForMessageId = inboundKey;
+          this.pendingTelegramReplyGuards.set(paneId, latestGuard);
+        }
+      }
+    }
     const details = {
       source: 'telegram-reply-requirement',
       debtKind: 'telegram_reply_required',

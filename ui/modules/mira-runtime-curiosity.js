@@ -140,10 +140,13 @@ function readGrowth(options = {}) {
 
 function readIntent(options = {}) {
   try {
+    const sessionId = trimText(options.sessionId || options.sessionScopeId)
+      || 'mira-runtime-curiosity-local-session';
     const output = buildMiraCoreIntentQueue({
       generatedAt: options.generatedAt,
       nowMs: options.nowMs,
       inputSignals: {
+        sessionId,
         requests: [{
           requested_by: 'mira',
           target_role: 'architect',
