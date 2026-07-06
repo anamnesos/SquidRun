@@ -56,7 +56,7 @@ into Codex Desktop is unsupported (`hm-codex-desktop-transport.js` reports `can_
 `ui/scripts/hm-bidirectional-wake-watchdog.js` can be the only remaining Electron process and replaying it
 starts the helper instead of the app. The process selector must also reject Electron-hosted `ui/scripts/*`
 helpers as primary app targets. Regression command for this script-level test file:
-`npm --prefix ui test -- --roots scripts --runTestsByPath scripts/hm-restart-execute.test.js --runInBand`.
+`npm --prefix ui test -- --runTestsByPath __tests__/hm-restart-execute.test.js --runInBand`.
 
 **Codex attention poller heartbeat alarm (S443):** Codex Desktop now writes
 `.squidrun/runtime/codex-attention-bridge/poller-heartbeat.json` during its attention-poller cycle. Startup

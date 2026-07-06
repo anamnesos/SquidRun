@@ -17,7 +17,7 @@ function isUiJavaScriptFile(filePath = '') {
 }
 
 function isUiTestFile(filePath = '') {
-  return /^ui\/(?:.*\/)?__tests__\/.+\.test\.js$/i.test(String(filePath || '').trim());
+  return /^ui\/.+\.test\.js$/i.test(String(filePath || '').trim());
 }
 
 function toUiRelativePath(filePath = '') {
