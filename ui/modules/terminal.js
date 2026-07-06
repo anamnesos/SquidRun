@@ -1309,19 +1309,19 @@ const STARTUP_READY_PATTERNS = [
 
 // Terminal theme configuration - Cyberpunk
 const TERMINAL_THEME = {
-  background: '#0a0a0f',
-  foreground: '#e8eaf0',
+  background: '#0b0f18',
+  foreground: '#c9d4e3',
   cursor: '#00f0ff',
-  cursorAccent: '#0a0a0f',
+  cursorAccent: '#0b0f18',
   selection: 'rgba(0, 240, 255, 0.25)',
-  black: '#0a0a0f',
+  black: '#0b0f18',
   red: '#ff2040',
   green: '#00e676',
   yellow: '#f0a000',
   blue: '#3a7bff',
   magenta: '#bb86fc',
   cyan: '#00f0ff',
-  white: '#e8eaf0',
+  white: '#c9d4e3',
   brightBlack: '#5c6a80',
   brightRed: '#ff5c72',
   brightGreen: '#54f0a2',
@@ -1335,9 +1335,9 @@ const TERMINAL_THEME = {
 // Terminal options
 const TERMINAL_OPTIONS = {
   theme: TERMINAL_THEME,
-  fontFamily: "'Cascadia Code', 'Consolas', 'Monaco', monospace",
-  fontSize: 13,
-  lineHeight: 1.25,
+  fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Consolas', 'Monaco', monospace",
+  fontSize: 13.5,
+  lineHeight: 1.35,
   letterSpacing: 0,
   minimumContrastRatio: 4.5,
   fontWeightBold: 600,

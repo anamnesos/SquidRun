@@ -11,6 +11,8 @@ describe('app-control-service', () => {
     expect(normalizeAction('probe-terminal-scroll')).toBe('terminal-scroll-probe');
     expect(normalizeAction('timeline')).toBe('open-human-timeline-sidecar');
     expect(normalizeAction('today-feed')).toBe('open-human-timeline-sidecar');
+    expect(normalizeAction('visual-capture')).toBe('open-visual-capture-window');
+    expect(normalizeAction('open-capture-window')).toBe('open-visual-capture-window');
   });
 
   test('reload-renderers reloads every live window without restarting the main process', () => {
@@ -375,6 +377,32 @@ describe('app-control-service', () => {
       status: 'opened',
     }));
     expect(result.note).toMatch(/main-profile surface window/i);
+  });
+
+  test('open-visual-capture-window opens a disposable non-main window without auto-booting agents', async () => {
+    const openAppWindow = jest.fn().mockResolvedValue({
+      ok: true,
+      windowKey: 'visual-capture',
+      status: 'opened',
+    });
+
+    const result = await executeAppControlAction({ openAppWindow }, 'open-visual-capture-window');
+
+    expect(openAppWindow).toHaveBeenCalledWith('visual-capture', {
+      autoBootAgents: false,
+      profileName: 'main',
+      windowTeam: 'main',
+      displayOnly: false,
+      skipStartupBundle: true,
+      title: 'SquidRun - Visual Capture',
+    });
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'open-visual-capture-window',
+      windowKey: 'visual-capture',
+      status: 'opened',
+    }));
+    expect(result.note).toMatch(/without reloading the live main renderer/i);
   });
 
   test('close-app-window refuses main before calling the app close hook', async () => {

@@ -82,6 +82,23 @@
   align-items: center;
 }
 
+.header-actions #fullRestartBtn {
+  position: relative;
+  order: 10;
+  margin-left: var(--space-4);
+}
+
+.header-actions #fullRestartBtn::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--space-3));
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: rgba(107, 130, 160, 0.28);
+  pointer-events: none;
+}
+
 /* ============================================================
    BUTTONS - Core Styles
    ============================================================ */
@@ -121,12 +138,13 @@
 }
 
 .profile-btn {
-  border-color: rgba(0, 240, 255, 0.3);
-  color: var(--color-primary);
+  border-color: rgba(107, 130, 160, 0.32);
+  color: var(--color-text);
 }
 
 .profile-btn:hover {
-  border-color: rgba(0, 240, 255, 0.55);
+  border-color: rgba(0, 240, 255, 0.5);
+  color: var(--color-primary);
 }
 
 .profile-modal-overlay {

@@ -6275,12 +6275,12 @@ class SquidRunApp {
     this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:create-window:start`);
     await this.createWindow({
       windowKey,
-      windowTeam: isSquidRoomWindow ? 'squid-room' : windowKey,
-      title: windowTitle,
-      profileName: isSquidRoomWindow ? 'main' : undefined,
-      autoBootAgents: isSquidRoomWindow ? false : undefined,
-      displayOnly: isSquidRoomWindow ? true : undefined,
-      skipStartupBundle: isSquidRoomWindow ? true : undefined,
+      windowTeam: isSquidRoomWindow ? 'squid-room' : (options.windowTeam || windowKey),
+      title: options.title || windowTitle,
+      profileName: isSquidRoomWindow ? 'main' : options.profileName,
+      autoBootAgents: isSquidRoomWindow ? false : options.autoBootAgents,
+      displayOnly: isSquidRoomWindow ? true : options.displayOnly,
+      skipStartupBundle: isSquidRoomWindow ? true : options.skipStartupBundle,
       lifecycleRoot: options.lifecycleRoot === true,
     });
     this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:create-window:done`);

@@ -504,8 +504,8 @@ if (typeof window !== 'undefined') {
   const ENTER_TIMEOUT_MS = readPositiveIntFromQuery(params, 'enterTimeoutMs', 5000);
 
   const TERMINAL_FONT_FAMILY = isDarwin
-    ? "'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace"
-    : "'Cascadia Code', 'Consolas', 'Monaco', monospace";
+    ? "'JetBrains Mono', 'SF Mono', 'Menlo', 'Monaco', monospace"
+    : "'JetBrains Mono', 'Cascadia Code', 'Consolas', 'Monaco', monospace";
 
   const terminalRoot = document.getElementById('paneHostRoot');
   if (!terminalRoot) {
@@ -936,19 +936,19 @@ if (typeof window !== 'undefined') {
 
     const terminal = new TerminalCtor({
       theme: {
-        background: '#0a0a0f',
-        foreground: '#e8eaf0',
+        background: '#0b0f18',
+        foreground: '#c9d4e3',
         cursor: '#00f0ff',
-        cursorAccent: '#0a0a0f',
+        cursorAccent: '#0b0f18',
         selection: 'rgba(0, 240, 255, 0.25)',
-        black: '#0a0a0f',
+        black: '#0b0f18',
         red: '#ff2040',
         green: '#00e676',
         yellow: '#f0a000',
         blue: '#3a7bff',
         magenta: '#bb86fc',
         cyan: '#00f0ff',
-        white: '#e8eaf0',
+        white: '#c9d4e3',
         brightBlack: '#5c6a80',
         brightRed: '#ff5c72',
         brightGreen: '#54f0a2',
@@ -959,8 +959,8 @@ if (typeof window !== 'undefined') {
         brightWhite: '#ffffff',
       },
       fontFamily: TERMINAL_FONT_FAMILY,
-      fontSize: 13,
-      lineHeight: 1.25,
+      fontSize: 13.5,
+      lineHeight: 1.35,
       letterSpacing: 0,
       minimumContrastRatio: 4.5,
       fontWeightBold: 600,

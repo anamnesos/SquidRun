@@ -56,6 +56,14 @@ function normalizeAction(action) {
     return 'open-squid-room';
   }
   if (
+    normalized === 'open-visual-capture-window'
+    || normalized === 'visual-capture-window'
+    || normalized === 'visual-capture'
+    || normalized === 'open-capture-window'
+  ) {
+    return 'open-visual-capture-window';
+  }
+  if (
     normalized === 'close-app-window'
     || normalized === 'close-window'
     || normalized === 'window-close'
@@ -471,6 +479,46 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
       })
       .catch((error) => {
         log.warn('AppControl', `Squid Room open failed: ${error.message}`);
+        return {
+          success: false,
+          reason: 'open_window_failed',
+          action: normalizedAction,
+          error: error.message,
+        };
+      });
+  }
+
+  if (normalizedAction === 'open-visual-capture-window') {
+    if (typeof ctx.openAppWindow !== 'function') {
+      return {
+        success: false,
+        reason: 'open_window_unavailable',
+        action: normalizedAction,
+      };
+    }
+    const captureWindowOptions = {
+      autoBootAgents: false,
+      profileName: 'main',
+      windowTeam: 'main',
+      displayOnly: false,
+      skipStartupBundle: true,
+      title: 'SquidRun - Visual Capture',
+    };
+    return Promise.resolve()
+      .then(() => ctx.openAppWindow('visual-capture', captureWindowOptions))
+      .then((result) => {
+        const settled = result && typeof result === 'object' ? result : {};
+        return {
+          success: Boolean(settled.ok),
+          action: normalizedAction,
+          windowKey: settled.windowKey || 'visual-capture',
+          status: settled.status || (settled.ok ? 'opened' : 'open_failed'),
+          reason: settled.ok ? undefined : (settled.reason || 'open_window_failed'),
+          note: 'Disposable visual-capture window opened without reloading the live main renderer.',
+        };
+      })
+      .catch((error) => {
+        log.warn('AppControl', `Visual capture window open failed: ${error.message}`);
         return {
           success: false,
           reason: 'open_window_failed',

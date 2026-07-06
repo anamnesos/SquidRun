@@ -58,12 +58,51 @@ describe('UI design wave contracts', () => {
   test('hidden pane host terminals share the visible terminal legibility floor', () => {
     const paneHost = read('pane-host-renderer.js');
 
-    expect(paneHost).toContain("'Cascadia Code', 'Consolas', 'Monaco', monospace");
-    expect(paneHost).toContain('lineHeight: 1.25');
+    expect(paneHost).toContain("'JetBrains Mono', 'Cascadia Code', 'Consolas', 'Monaco', monospace");
+    expect(paneHost).toContain('lineHeight: 1.35');
     expect(paneHost).toContain('letterSpacing: 0');
     expect(paneHost).toContain('minimumContrastRatio: 4.5');
     expect(paneHost).toContain('fontWeightBold: 600');
     expect(paneHost).toContain("brightBlack: '#5c6a80'");
+  });
+
+  test('brand and mono fonts are bundled and wired to design tokens', () => {
+    const baseCss = read('styles', 'base.css');
+    const terminal = read('modules', 'terminal.js');
+
+    expect(baseCss).toContain("url('../assets/fonts/SpaceGrotesk-Regular.woff2')");
+    expect(baseCss).toContain("url('../assets/fonts/SpaceGrotesk-Medium.woff2')");
+    expect(baseCss).toContain("url('../assets/fonts/SpaceGrotesk-Bold.woff2')");
+    expect(baseCss).toContain("url('../assets/fonts/JetBrainsMono-Regular.woff2')");
+    expect(baseCss).toContain("url('../assets/fonts/JetBrainsMono-Bold.woff2')");
+    expect(baseCss).toContain("--font-system: 'Space Grotesk'");
+    expect(baseCss).toContain("--font-mono: 'JetBrains Mono'");
+    expect(terminal).toContain("fontFamily: \"'JetBrains Mono', 'Cascadia Code', 'Consolas', 'Monaco', monospace\"");
+  });
+
+  test('header buttons use one quiet hierarchy with restart separated', () => {
+    const layoutCss = read('styles', 'layout.css');
+    const settingsCss = read('styles', 'settings-panel.css');
+
+    expect(settingsCss).toMatch(/\.btn-folder\s*{[^}]*rgba\(107, 130, 160, 0\.32\)[^}]*color: var\(--color-text\);/s);
+    expect(settingsCss).toMatch(/\.btn-restart\s*{[^}]*rgba\(107, 130, 160, 0\.32\)[^}]*color: var\(--color-text\);/s);
+    expect(settingsCss).toMatch(/\.btn-restart:hover\s*{[^}]*color: var\(--color-warning\);/s);
+    expect(layoutCss).toMatch(/\.header-actions #fullRestartBtn\s*{[^}]*order: 10;[^}]*margin-left: var\(--space-4\);/s);
+    expect(layoutCss).toContain('.header-actions #fullRestartBtn::before');
+  });
+
+  test('xterm inverse rows are toned down against the pane surface', () => {
+    const terminal = read('modules', 'terminal.js');
+    const paneHost = read('pane-host-renderer.js');
+
+    expect(terminal).toContain("background: '#0b0f18'");
+    expect(terminal).toContain("foreground: '#c9d4e3'");
+    expect(terminal).toContain("white: '#c9d4e3'");
+    expect(terminal).toContain('fontSize: 13.5');
+    expect(terminal).toContain('lineHeight: 1.35');
+    expect(paneHost).toContain("background: '#0b0f18'");
+    expect(paneHost).toContain("foreground: '#c9d4e3'");
+    expect(paneHost).toContain("white: '#c9d4e3'");
   });
 
   test('preload installs the local script shebang loader before importing script-backed APIs', () => {
