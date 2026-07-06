@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const restartExecute = require('./hm-restart-execute');
+const restartExecute = require('../scripts/hm-restart-execute');
 
 function writeJson(filePath, payload) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });

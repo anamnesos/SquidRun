@@ -1200,7 +1200,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/scripts/hm-reddit.js` | script | 9957 |
 | `ui/scripts/hm-refresh-human-timeline-headlines.js` | script | 5937 |
 | `ui/scripts/hm-restart-execute.js` | script | 50633 |
-| `ui/scripts/hm-restart-execute.test.js` | test | 40241 |
+| `ui/__tests__/hm-restart-execute.test.js` | test | 40249 |
 | `ui/scripts/hm-restart-request.js` | script | 13697 |
 | `ui/scripts/hm-restart-verify.js` | script | 9173 |
 | `ui/scripts/hm-screenshot-window.ps1` | script | 3812 |

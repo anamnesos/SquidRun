@@ -47,6 +47,28 @@ describe('jest-staged helper', () => {
     expect(plan.relatedFiles).toEqual([]);
   });
 
+  test('recognizes script-level test files moved into Jest roots', () => {
+    const plan = buildJestPlan(
+      [
+        'ui/scripts/hm-restart-execute.js',
+        'ui/__tests__/hm-restart-execute.test.js',
+      ],
+      (filePath) => (
+        filePath.endsWith('hm-restart-execute.test.js')
+          ? "+  test('requires a fresh green preflight before touching processes', async () => {"
+          : ''
+      )
+    );
+
+    expect(plan.targetedRuns).toEqual([
+      expect.objectContaining({
+        uiPath: '__tests__/hm-restart-execute.test.js',
+        testNames: ['requires a fresh green preflight before touching processes'],
+      }),
+    ]);
+    expect(plan.relatedFiles).toEqual([]);
+  });
+
   test('falls back to related tests when only source files are staged', () => {
     const plan = buildJestPlan(
       [
