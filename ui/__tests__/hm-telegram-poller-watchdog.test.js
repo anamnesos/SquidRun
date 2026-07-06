@@ -211,11 +211,42 @@ describe('hm-telegram-poller-watchdog', () => {
       dryRun: true,
     }]);
     expect(startStandaloneLane).toHaveBeenCalledTimes(1);
-    expect(notifyJames).toHaveBeenCalledWith(
-      tempDir,
+    expect(notifyJames).not.toHaveBeenCalled();
+    expect(recovery.notice).toBeNull();
+  });
+
+  test('dry-run app restart success does not send a live recovered notice', async () => {
+    const freshness = {
+      status: 'stale',
+      wedged: true,
+      ageMs: 20 * 60 * 1000,
+      staleThresholdMs: 10 * 60 * 1000,
+    };
+    const runAppRestart = jest.fn(() => ({
+      ok: true,
+      result: {
+        success: true,
+        started: true,
+      },
+    }));
+    const notifyJames = jest.fn(() => ({ ok: true, message: 'restored' }));
+
+    const recovery = await recoverWedgedTelegramPoller({
+      projectRoot: tempDir,
       freshness,
-      expect.objectContaining({ reason: 'telegram-poller-freshness-stale:43m' })
-    );
+      dryRun: true,
+      runAppRestart,
+      notifyJames,
+      standaloneStatus: { running: false },
+    });
+
+    expect(recovery).toEqual(expect.objectContaining({
+      ok: true,
+      action: 'app_restart',
+      recovered: true,
+      notice: null,
+    }));
+    expect(notifyJames).not.toHaveBeenCalled();
   });
 
   test('failed app restart does not kill a foreign install worker with the same script name', async () => {
@@ -356,5 +387,40 @@ describe('hm-telegram-poller-watchdog', () => {
       freshness,
       expect.objectContaining({ reason: 'telegram-poller-freshness-stale:11m' })
     );
+  });
+
+  test('dry-run standalone lane restart does not send a live recovered notice', async () => {
+    const freshness = {
+      status: 'stale',
+      wedged: true,
+      ageMs: 11 * 60 * 1000,
+      staleThresholdMs: 10 * 60 * 1000,
+    };
+    const runAppRestart = jest.fn();
+    const restartStandaloneLane = jest.fn();
+    const notifyJames = jest.fn(() => ({ ok: true, message: 'restored' }));
+
+    const recovery = await recoverWedgedTelegramPoller({
+      projectRoot: tempDir,
+      freshness,
+      dryRun: true,
+      notifyJames,
+      restartStandaloneLane,
+      runAppRestart,
+      standaloneStatus: {
+        running: true,
+        pid: 470996,
+      },
+    });
+
+    expect(recovery).toEqual(expect.objectContaining({
+      ok: true,
+      action: 'standalone_lane_restart',
+      recovered: true,
+      notice: null,
+    }));
+    expect(runAppRestart).not.toHaveBeenCalled();
+    expect(restartStandaloneLane).not.toHaveBeenCalled();
+    expect(notifyJames).not.toHaveBeenCalled();
   });
 });
