@@ -33,6 +33,8 @@ describe('profile helpers', () => {
     expect(getProfilePipePath('scoped', 'win32')).toContain('squidrun-terminal-scoped');
     expect(getProfileWebSocketPort('main')).toBe(9900);
     expect(getProfileWebSocketPort('scoped')).toBe(9901);
+    expect(getProfileWebSocketPort('eunbyeol')).toBe(9901);
+    expect(getProfileWebSocketPort('eunbyeol')).not.toBe(10001);
   });
 
   test('keeps the legacy pipe for the dev/main root but gives each install its own', () => {

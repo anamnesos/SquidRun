@@ -268,7 +268,7 @@ describe('config.js', () => {
       }
     });
 
-    test('keeps dev main websocket default on 9900 and scoped profile fallback on 9901', () => {
+    test('keeps dev main websocket default on 9900 and side profile fallbacks on 9901', () => {
       expect(resolveWebSocketPortInfo({
         env: { SQUIDRUN_PROFILE: 'main' },
         profileName: 'main',
@@ -282,6 +282,13 @@ describe('config.js', () => {
       })).toEqual(expect.objectContaining({
         port: 9901,
         source: 'profile:scoped',
+      }));
+      expect(resolveWebSocketPortInfo({
+        env: { SQUIDRUN_PROFILE: 'eunbyeol' },
+        profileName: 'eunbyeol',
+      })).toEqual(expect.objectContaining({
+        port: 9901,
+        source: 'profile:eunbyeol',
       }));
     });
 
