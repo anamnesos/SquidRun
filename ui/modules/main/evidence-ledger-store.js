@@ -3800,6 +3800,24 @@ class EvidenceLedgerStore {
     let removedEdges = 0;
     let removedArchivedDecisions = 0;
     let removedSnapshots = 0;
+    const reclaim = {
+      attempted: false,
+      ok: true,
+      error: null,
+      walCheckpoint: {
+        attempted: false,
+        ok: null,
+        error: null,
+      },
+      incrementalVacuum: {
+        attempted: false,
+        ok: null,
+        autoVacuumMode: null,
+        effective: false,
+        skippedReason: null,
+        error: null,
+      },
+    };
 
     try {
       this.db.exec('BEGIN IMMEDIATE;');
@@ -3859,6 +3877,46 @@ class EvidenceLedgerStore {
       removedSnapshots = Number(snapshotResult?.changes || 0);
 
       this.db.exec('COMMIT;');
+      const removedTotal = removedByAge
+        + removedByCap
+        + removedEdges
+        + removedArchivedDecisions
+        + removedSnapshots;
+      if (removedTotal > 0 && options.reclaim !== false) {
+        reclaim.attempted = true;
+        reclaim.walCheckpoint.attempted = true;
+        try {
+          this.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+          reclaim.walCheckpoint.ok = true;
+        } catch (checkpointErr) {
+          reclaim.ok = false;
+          reclaim.error = checkpointErr.message;
+          reclaim.walCheckpoint.ok = false;
+          reclaim.walCheckpoint.error = checkpointErr.message;
+          log.warn('EvidenceLedger', `Prune WAL checkpoint failed: ${checkpointErr.message}`);
+        }
+
+        try {
+          const autoVacuumRow = this.db.prepare('PRAGMA auto_vacuum').get();
+          const autoVacuumMode = Number(Object.values(autoVacuumRow || {})[0] ?? 0);
+          reclaim.incrementalVacuum.autoVacuumMode = Number.isFinite(autoVacuumMode) ? autoVacuumMode : null;
+          if (autoVacuumMode === 2) {
+            reclaim.incrementalVacuum.attempted = true;
+            this.db.exec('PRAGMA incremental_vacuum;');
+            reclaim.incrementalVacuum.ok = true;
+            reclaim.incrementalVacuum.effective = true;
+          } else {
+            reclaim.incrementalVacuum.ok = true;
+            reclaim.incrementalVacuum.skippedReason = 'auto_vacuum_not_incremental';
+          }
+        } catch (vacuumErr) {
+          reclaim.ok = false;
+          reclaim.error = reclaim.error || vacuumErr.message;
+          reclaim.incrementalVacuum.ok = false;
+          reclaim.incrementalVacuum.error = vacuumErr.message;
+          log.warn('EvidenceLedger', `Prune incremental vacuum check failed: ${vacuumErr.message}`);
+        }
+      }
       return {
         ok: true,
         status: 'pruned',
@@ -3867,6 +3925,8 @@ class EvidenceLedgerStore {
         removedEdges,
         removedArchivedDecisions,
         removedSnapshots,
+        removedTotal,
+        reclaim,
       };
     } catch (err) {
       try { this.db.exec('ROLLBACK;'); } catch {}

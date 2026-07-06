@@ -303,6 +303,16 @@ maybeDescribe('evidence-ledger-store', () => {
     const pruned = store.prune({ nowMs: 10000, retentionMs: 1000, maxRows: 3 });
     expect(pruned.ok).toBe(true);
     expect(pruned.removedByAge + pruned.removedByCap).toBeGreaterThanOrEqual(4);
+    expect(pruned.reclaim).toEqual(expect.objectContaining({
+      attempted: true,
+      walCheckpoint: expect.objectContaining({
+        attempted: true,
+      }),
+      incrementalVacuum: expect.objectContaining({
+        effective: false,
+        skippedReason: 'auto_vacuum_not_incremental',
+      }),
+    }));
 
     const all = store.queryEvents({ traceId: 'trc-p', limit: 20 });
     expect(all.length).toBeLessThanOrEqual(3);

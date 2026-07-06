@@ -144,12 +144,9 @@ const {
   listWorkItems,
   TERMINAL_STATES: WORK_ITEM_TERMINAL_STATES,
 } = require('./work-item-ledger');
-const {
-  buildLiveTaskAuditSnapshot,
-} = require('./live-task-audit-sidecar');
-const {
-  buildHumanTimelineSnapshot,
-} = require('./human-timeline');
+const { buildLiveTaskAuditSnapshot } = require('./live-task-audit-sidecar');
+const { buildHumanTimelineSnapshot } = require('./human-timeline');
+const { createEvidenceLedgerPruneHousekeeping } = require('./evidence-ledger-prune-housekeeping');
 const {
   buildSpineOverlaySnapshotAsync,
 } = require('./spine-overlay-snapshot');
@@ -162,10 +159,7 @@ const {
   buildDeliveryFailurePatternEvent,
   buildIntentUpdatePatternEvent,
 } = require('../team-memory/daily-integration');
-const {
-  executeEvidenceLedgerOperation,
-  closeSharedRuntime,
-} = require('../ipc/evidence-ledger-handlers');
+const { executeEvidenceLedgerOperation, closeSharedRuntime } = require('../ipc/evidence-ledger-handlers');
 const {
   executeCognitiveMemoryOperation,
   closeSharedCognitiveMemoryRuntime,
@@ -1176,6 +1170,7 @@ class SquidRunApp {
     this.autoHandoffWriteInFlight = false;
     this.autoHandoffWritePromise = null;
     this.autoHandoffEnabled = AUTO_HANDOFF_ENABLED && process.env.NODE_ENV !== 'test';
+    this.evidenceLedgerPruneHousekeeping = createEvidenceLedgerPruneHousekeeping({ executeEvidenceLedgerOperation, log });
     this.paneHostReady = new Set();
     this.paneHostMissingPanes = new Set();
     this.paneHostLastErrorReason = null;
@@ -5593,6 +5588,7 @@ class SquidRunApp {
     this.startTelegramPoller();
     this.startBridgeClient();
     this.startAutoHandoffMaterializer();
+    this.evidenceLedgerPruneHousekeeping.start();
 
     this.writeBootHeartbeat('init_complete', {
       session: this.getCurrentAppStatusSessionNumber(),
@@ -14613,6 +14609,7 @@ class SquidRunApp {
       log.warn('EvidenceLedger', `Session-end capture error during shutdown: ${err.message}`);
     }
     this.paneHostWindowManager.closeAllPaneWindows();
+    await this.evidenceLedgerPruneHousekeeping.stop({ wait: true });
     await this.stopAutoHandoffMaterializer({ flush: true });
     contextCompressor.shutdown();
     teamMemory.stopIntegritySweep();

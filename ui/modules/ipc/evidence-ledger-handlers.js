@@ -18,6 +18,7 @@
  * - evidence-ledger:get-issues
  * - evidence-ledger:get-roadmap
  * - evidence-ledger:get-completions
+ * - evidence-ledger:prune
  */
 
 const log = require('../logger');
@@ -47,6 +48,7 @@ const EVIDENCE_LEDGER_CHANNEL_ACTIONS = new Map([
   ['evidence-ledger:get-completions', 'get-completions'],
   ['evidence-ledger:query-comms-journal', 'query-comms-journal'],
   ['evidence-ledger:upsert-comms-journal', 'upsert-comms-journal'],
+  ['evidence-ledger:prune', 'prune'],
 ]);
 
 function asObject(value) {
