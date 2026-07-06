@@ -73,6 +73,7 @@ describe('InboundPollerService', () => {
       },
       onMessage,
       pollIntervalMs: 5000,
+      requestTimeoutMs: 25000,
       downloadMedia: false,
     });
 
@@ -100,6 +101,7 @@ describe('InboundPollerService', () => {
           TELEGRAM_POLLER_STATE_PATH: 'D:\\SquidRun\\Eunbyeol\\.squidrun\\runtime\\telegram-poller-state.json',
         }),
         pollIntervalMs: 5000,
+        requestTimeoutMs: 25000,
         downloadMedia: false,
         keepAlive: true,
       }),

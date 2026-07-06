@@ -82,6 +82,7 @@ class InboundPollerService {
     const workerOptions = {
       env: workerEnv,
       pollIntervalMs: options.pollIntervalMs,
+      requestTimeoutMs: options.requestTimeoutMs,
       downloadMedia: options.downloadMedia,
       mediaDownloadRoot: options.mediaDownloadRoot,
       latestScreenshotPath: options.latestScreenshotPath,

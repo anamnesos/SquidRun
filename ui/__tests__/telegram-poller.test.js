@@ -86,6 +86,18 @@ function mockTelegramRequestSequence(handlers = {}) {
   });
 }
 
+function emitJsonResponse(response, payload, decoder = null) {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8');
+  if (decoder) {
+    response.emit('data', decoder.write(body));
+    const remainder = decoder.end();
+    if (remainder) response.emit('data', remainder);
+  } else {
+    response.emit('data', body);
+  }
+  response.emit('end');
+}
+
 describe('telegram-poller', () => {
   afterEach(() => {
     telegramPoller.stop();
@@ -305,6 +317,90 @@ describe('telegram-poller', () => {
         profile: 'main',
       }));
       expect(Date.parse(persisted.poller.lastPollAt)).not.toBeNaN();
+    } finally {
+      telegramPoller.stop();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('pollNow times out a hung getUpdates request and clears in-flight for the next poll', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-poller-timeout-'));
+    const statePath = path.join(tempDir, 'telegram-poller-state.json');
+    const onMessage = jest.fn();
+    let callIndex = 0;
+    const requests = [];
+
+    try {
+      telegramPoller.start({
+        env: {
+          TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+          TELEGRAM_CHAT_ID: '123456',
+        },
+        onMessage,
+        requestTimeoutMs: 25,
+        statePath,
+      });
+
+      https.request.mockImplementation((options, onResponse) => {
+        callIndex += 1;
+        const index = callIndex;
+        const response = new EventEmitter();
+        response.statusCode = 200;
+        let decoder = null;
+        response.setEncoding = jest.fn((encoding) => {
+          decoder = new StringDecoder(encoding);
+        });
+
+        const request = new EventEmitter();
+        request.setTimeout = jest.fn((ms, cb) => {
+          request.timeoutMs = ms;
+          request.timeoutCb = cb;
+          return request;
+        });
+        request.destroy = jest.fn((err) => {
+          request.emit('error', err);
+        });
+        request.end = jest.fn(() => {
+          if (index !== 2) return;
+          onResponse(response);
+          emitJsonResponse(response, {
+            ok: true,
+            result: [{
+              update_id: 77,
+              message: {
+                message_id: 9,
+                chat: { id: 123456 },
+                from: { username: 'james' },
+                text: 'after timeout',
+              },
+            }],
+          }, decoder);
+        });
+        requests.push({ options, request });
+        return request;
+      });
+
+      const firstPoll = telegramPoller._internals.pollNow();
+      expect(requests).toHaveLength(1);
+      expect(requests[0].request.timeoutMs).toBe(25);
+      requests[0].request.timeoutCb();
+      await firstPoll;
+
+      const persistedAfterTimeout = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      expect(persistedAfterTimeout.poller.lastPollStatus).toBe('request_timeout');
+      expect(persistedAfterTimeout.poller.lastError).toContain('telegram_request_timeout');
+
+      await telegramPoller._internals.pollNow();
+
+      expect(requests).toHaveLength(2);
+      expect(onMessage).toHaveBeenCalledWith(
+        'after timeout',
+        '@james',
+        expect.objectContaining({
+          updateId: 77,
+          messageId: 9,
+        })
+      );
     } finally {
       telegramPoller.stop();
       fs.rmSync(tempDir, { recursive: true, force: true });

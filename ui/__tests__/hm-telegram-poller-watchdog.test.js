@@ -104,6 +104,33 @@ describe('hm-telegram-poller-watchdog', () => {
     expect(watchdogLog).toContain('[recover] app-control restart succeeded');
   });
 
+  test('freshness uses poller lastPollAt over a recently touched state file', () => {
+    writeJson(path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json'), {
+      version: 1,
+      updatedAt: '2026-06-06T04:20:00.000Z',
+      poller: {
+        lastPollAt: '2026-06-06T04:00:00.000Z',
+        lastPollStatus: 'ok_empty',
+        nextOffset: 808,
+      },
+    });
+
+    const freshness = inspectTelegramPollerFreshness({
+      projectRoot: tempDir,
+      nowMs: Date.parse('2026-06-06T04:20:00.000Z'),
+      staleThresholdMs: 10 * 60 * 1000,
+    });
+
+    expect(freshness).toEqual(expect.objectContaining({
+      status: 'stale',
+      wedged: true,
+      ageMs: 20 * 60 * 1000,
+      lastPollAt: '2026-06-06T04:00:00.000Z',
+      updatedAt: '2026-06-06T04:20:00.000Z',
+      freshnessSource: 'poller.lastPollAt',
+    }));
+  });
+
   test('successful app restart is not trusted until freshness is verified', async () => {
     const freshness = {
       status: 'stale',
