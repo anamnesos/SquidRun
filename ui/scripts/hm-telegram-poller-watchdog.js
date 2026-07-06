@@ -104,26 +104,37 @@ function inspectTelegramPollerFreshness(options = {}) {
     };
   }
 
+  const poller = read.value?.poller && typeof read.value.poller === 'object' && !Array.isArray(read.value.poller)
+    ? read.value.poller
+    : null;
+  const lastPollAt = typeof poller?.lastPollAt === 'string' && poller.lastPollAt.trim()
+    ? poller.lastPollAt.trim()
+    : null;
   const updatedAt = typeof read.value?.updatedAt === 'string' && read.value.updatedAt.trim()
     ? read.value.updatedAt.trim()
     : null;
-  const updatedAtMs = updatedAt ? Date.parse(updatedAt) : NaN;
-  if (!Number.isFinite(updatedAtMs)) {
+  const freshnessAt = lastPollAt || updatedAt;
+  const freshnessSource = lastPollAt ? 'poller.lastPollAt' : 'state.updatedAt';
+  const freshnessAtMs = freshnessAt ? Date.parse(freshnessAt) : NaN;
+  if (!Number.isFinite(freshnessAtMs)) {
     return {
       ok: false,
-      status: 'state_invalid_timestamp',
+      status: lastPollAt ? 'poller_invalid_last_poll_at' : 'state_invalid_timestamp',
       wedged: true,
       statePath,
       staleThresholdMs,
       nowMs,
       ageMs: null,
+      lastPollAt,
       updatedAt,
+      freshnessAt,
+      freshnessSource,
       appUp: true,
       appState,
     };
   }
 
-  const ageMs = Math.max(0, nowMs - updatedAtMs);
+  const ageMs = Math.max(0, nowMs - freshnessAtMs);
   const wedged = ageMs > staleThresholdMs;
   return {
     ok: !wedged,
@@ -133,10 +144,13 @@ function inspectTelegramPollerFreshness(options = {}) {
     staleThresholdMs,
     nowMs,
     ageMs,
+    lastPollAt,
     updatedAt,
+    freshnessAt,
+    freshnessSource,
     appUp: true,
     appState,
-    poller: read.value?.poller || null,
+    poller,
     cursorCount: read.value?.cursors && typeof read.value.cursors === 'object'
       ? Object.keys(read.value.cursors).length
       : 0,

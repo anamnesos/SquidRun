@@ -17,6 +17,7 @@ const DEFAULT_LATEST_SCREENSHOT_PATH = path.join('screenshots', 'latest.png');
 const DEFAULT_POLLER_STATE_PATH = path.join('runtime', 'telegram-poller-state.json');
 const DEFAULT_STARTUP_GRACE_MS = 10 * 60 * 1000;
 const DEFAULT_BACKLOG_BACKSTOP_DROP_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_TELEGRAM_REQUEST_TIMEOUT_MS = 30 * 1000;
 
 let running = false;
 let pollTimer = null;
@@ -33,6 +34,12 @@ let cursorKey = null;
 let delayedMarkerMs = DEFAULT_STARTUP_GRACE_MS;
 let backlogBackstopDropMs = DEFAULT_BACKLOG_BACKSTOP_DROP_MS;
 let pollerDataRoot = null;
+let telegramRequestTimeoutMs = DEFAULT_TELEGRAM_REQUEST_TIMEOUT_MS;
+
+function asPositiveMs(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
 
 function normalizeRootPath(value) {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -104,8 +111,66 @@ function buildUpdatesPath(currentConfig, offset) {
   return `/bot${currentConfig.botToken}/getUpdates?${query.toString()}`;
 }
 
-function requestTelegram(method, path) {
+function resolveTelegramRequestTimeoutMs(options = {}) {
+  return asPositiveMs(
+    options.requestTimeoutMs
+      ?? options.env?.TELEGRAM_POLLER_REQUEST_TIMEOUT_MS
+      ?? options.env?.TELEGRAM_REQUEST_TIMEOUT_MS,
+    DEFAULT_TELEGRAM_REQUEST_TIMEOUT_MS
+  );
+}
+
+function createTelegramRequestTimeoutError(timeoutMs, requestPath) {
+  const err = new Error(`telegram_request_timeout:${timeoutMs}ms:${requestPath}`);
+  err.code = 'TELEGRAM_REQUEST_TIMEOUT';
+  err.timeoutMs = timeoutMs;
+  return err;
+}
+
+function armRequestDeadline(request, requestPath, timeoutMs, rejectOnce) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return null;
+  const onTimeout = () => {
+    const err = createTelegramRequestTimeoutError(timeoutMs, requestPath);
+    rejectOnce(err);
+    try {
+      if (request && typeof request.destroy === 'function') {
+        request.destroy(err);
+      }
+    } catch {
+      // The promise is already rejected; destroy is best effort.
+    }
+  };
+  if (request && typeof request.setTimeout === 'function') {
+    request.setTimeout(timeoutMs, onTimeout);
+  }
+  const timer = setTimeout(onTimeout, timeoutMs);
+  if (typeof timer.unref === 'function') timer.unref();
+  return timer;
+}
+
+function requestTelegram(method, path, options = {}) {
+  const timeoutMs = asPositiveMs(options.timeoutMs, telegramRequestTimeoutMs);
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let deadlineTimer = null;
+    const clearDeadline = () => {
+      if (deadlineTimer) {
+        clearTimeout(deadlineTimer);
+        deadlineTimer = null;
+      }
+    };
+    const resolveOnce = (value) => {
+      if (settled) return;
+      settled = true;
+      clearDeadline();
+      resolve(value);
+    };
+    const rejectOnce = (err) => {
+      if (settled) return;
+      settled = true;
+      clearDeadline();
+      reject(err);
+    };
     const request = https.request(
       {
         hostname: 'api.telegram.org',
@@ -120,21 +185,44 @@ function requestTelegram(method, path) {
           responseBody += chunk;
         });
         response.on('end', () => {
-          resolve({
+          resolveOnce({
             statusCode: response.statusCode || 0,
             body: responseBody,
           });
         });
+        response.on('error', rejectOnce);
       }
     );
 
-    request.on('error', reject);
+    request.on('error', rejectOnce);
+    deadlineTimer = armRequestDeadline(request, path, timeoutMs, rejectOnce);
     request.end();
   });
 }
 
-function requestTelegramBuffer(method, requestPath) {
+function requestTelegramBuffer(method, requestPath, options = {}) {
+  const timeoutMs = asPositiveMs(options.timeoutMs, telegramRequestTimeoutMs);
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let deadlineTimer = null;
+    const clearDeadline = () => {
+      if (deadlineTimer) {
+        clearTimeout(deadlineTimer);
+        deadlineTimer = null;
+      }
+    };
+    const resolveOnce = (value) => {
+      if (settled) return;
+      settled = true;
+      clearDeadline();
+      resolve(value);
+    };
+    const rejectOnce = (err) => {
+      if (settled) return;
+      settled = true;
+      clearDeadline();
+      reject(err);
+    };
     const request = https.request(
       {
         hostname: 'api.telegram.org',
@@ -148,15 +236,17 @@ function requestTelegramBuffer(method, requestPath) {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         });
         response.on('end', () => {
-          resolve({
+          resolveOnce({
             statusCode: response.statusCode || 0,
             body: Buffer.concat(chunks),
           });
         });
+        response.on('error', rejectOnce);
       }
     );
 
-    request.on('error', reject);
+    request.on('error', rejectOnce);
+    deadlineTimer = armRequestDeadline(request, requestPath, timeoutMs, rejectOnce);
     request.end();
   });
 }
@@ -844,7 +934,7 @@ async function pollNow() {
     }
   } catch (err) {
     log.warn('Telegram', `Telegram polling error: ${err.message}`);
-    heartbeatStatus = 'request_error';
+    heartbeatStatus = err?.code === 'TELEGRAM_REQUEST_TIMEOUT' ? 'request_timeout' : 'request_error';
     heartbeatError = err.message;
   } finally {
     persistPollerHeartbeat(statePath, cursorKey, {
@@ -888,6 +978,7 @@ function start(options = {}) {
   nextOffset = readPersistedOffset(statePath, cursorKey) ?? normalizeOffset(options.initialOffset) ?? 0;
   delayedMarkerMs = resolveStartupGraceMs(options);
   backlogBackstopDropMs = resolveBacklogBackstopDropMs(options);
+  telegramRequestTimeoutMs = resolveTelegramRequestTimeoutMs(options);
   pollInFlight = false;
   running = true;
 
@@ -934,6 +1025,7 @@ function stop() {
   cursorKey = null;
   delayedMarkerMs = DEFAULT_STARTUP_GRACE_MS;
   backlogBackstopDropMs = DEFAULT_BACKLOG_BACKSTOP_DROP_MS;
+  telegramRequestTimeoutMs = DEFAULT_TELEGRAM_REQUEST_TIMEOUT_MS;
 }
 
 function isRunning() {
@@ -964,6 +1056,7 @@ const _internals = {
   persistNextOffset,
   persistPollerHeartbeat,
   resolveBacklogBackstopDropMs,
+  resolveTelegramRequestTimeoutMs,
 };
 
 module.exports = {
