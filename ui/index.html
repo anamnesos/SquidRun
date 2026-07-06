@@ -4,8 +4,7 @@
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:* https://api.openai.com; font-src 'self'">
   <title>SquidRun</title>
-  <link rel="icon" type="image/png" sizes="32x32" href="assets/squidrun-favicon-32.png">
-  <link rel="icon" type="image/png" sizes="16x16" href="assets/squidrun-favicon-16.png">
+  <link rel="icon" type="image/x-icon" href="assets/squidrun-favicon.ico">
   <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
   <link rel="stylesheet" href="styles/base.css">
   <link rel="stylesheet" href="styles/layout.css">
@@ -23,7 +22,11 @@
 <body>
   <div class="startup-loading-overlay" id="startupLoadingOverlay" aria-live="polite">
     <div class="startup-loading-content">
-      <img class="startup-loading-logo" src="assets/squidrun-logo.png" alt="SquidRun logo">
+      <svg class="startup-loading-logo" viewBox="0 0 40 40" role="img" aria-label="SquidRun logo">
+        <path d="M20 5c7.2 0 12 5.2 12 12.6 0 5.8-4.2 10.4-12 10.4S8 23.4 8 17.6C8 10.2 12.8 5 20 5Z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/>
+        <path d="M15 29c-1.6 2-3.6 3.6-6 4.8M18 29c-.8 2.3-1.3 4.5-1.5 6.8M22 29c.8 2.3 1.3 4.5 1.5 6.8M25 29c1.6 2 3.6 3.6 6 4.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M16 17.5h.01M24 17.5h.01" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+      </svg>
       <div class="startup-loading-spinner" aria-hidden="true"></div>
       <div class="startup-loading-copy">
         <span class="startup-loading-text" id="startupLoadingText">Starting SquidRun...</span>

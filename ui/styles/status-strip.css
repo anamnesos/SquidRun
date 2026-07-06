@@ -68,7 +68,7 @@
 }
 
 .status-segment.done:hover {
-  background: rgba(0, 240, 255, 0.15);
+  background: rgba(0, 230, 118, 0.15);
 }
 
 .status-segment.running {
@@ -76,7 +76,7 @@
 }
 
 .status-segment.running:hover {
-  background: rgba(110, 198, 255, 0.15);
+  background: rgba(0, 240, 255, 0.15);
 }
 
 .status-segment.running .status-segment-icon {
