@@ -200,6 +200,11 @@ function createCosmosCanvasRuntime(options = {}) {
     height: 0,
     drift: { star: 0, nebula: 0 },
   };
+  let rendererWindowHidden = false;
+
+  function isRendererHidden() {
+    return doc.hidden === true || rendererWindowHidden === true;
+  }
 
   function makeLayer(w, h, scale = 1) {
     const layer = doc.createElement('canvas');
@@ -287,6 +292,10 @@ function createCosmosCanvasRuntime(options = {}) {
 
   function frame(now) {
     if (!state.running) return;
+    if (isRendererHidden()) {
+      stop();
+      return;
+    }
     const elapsed = state.lastFrameAt ? now - state.lastFrameAt : FRAME_INTERVAL_MS;
     if (elapsed >= FRAME_INTERVAL_MS) {
       state.lastFrameAt = now;
@@ -298,6 +307,7 @@ function createCosmosCanvasRuntime(options = {}) {
   function start() {
     resize();
     if (reducedMotion) { compositeFrame(0); return; } // one still frame, no loop
+    if (isRendererHidden()) return;
     if (state.running) return;
     state.running = true;
     state.lastFrameAt = 0;
@@ -312,9 +322,23 @@ function createCosmosCanvasRuntime(options = {}) {
 
   win?.addEventListener?.('resize', resize);
   doc.addEventListener?.('visibilitychange', () => {
-    if (doc.hidden) stop();
+    if (isRendererHidden()) stop();
     else start();
   });
+  const bridge = win?.squidrun || win?.squidrunAPI;
+  if (bridge && typeof bridge.on === 'function') {
+    try {
+      bridge.on('window-visibility-changed', (payload = {}) => {
+        rendererWindowHidden = payload?.hidden === true
+          || payload?.minimized === true
+          || payload?.visible === false;
+        if (isRendererHidden()) stop();
+        else start();
+      });
+    } catch (_) {
+      // The bridge can be unavailable in node-env tests and isolated previews.
+    }
+  }
 
   function setBackplate(image) {
     // The photograph arrives async; swapping it in is a legitimate,

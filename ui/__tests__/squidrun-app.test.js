@@ -1833,6 +1833,57 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('emits window visibility state for minimize and restore events', () => {
+      const visibilityApp = new SquidRunApp(mockAppContext, mockManagers);
+      const handlers = new Map();
+      const windowRef = {
+        on: jest.fn((eventName, handler) => {
+          handlers.set(eventName, handler);
+        }),
+        isDestroyed: jest.fn().mockReturnValue(false),
+        isMinimized: jest.fn().mockReturnValue(false),
+        isVisible: jest.fn().mockReturnValue(true),
+        webContents: {
+          on: jest.fn(),
+          send: jest.fn(),
+        },
+      };
+
+      visibilityApp.setupWindowListeners(windowRef, {
+        windowKey: 'squid-room',
+        displayOnly: true,
+        skipStartupBundle: true,
+      });
+
+      windowRef.isMinimized.mockReturnValue(true);
+      handlers.get('minimize')();
+      expect(windowRef.webContents.send).toHaveBeenCalledWith(
+        'window-visibility-changed',
+        expect.objectContaining({
+          windowKey: 'squid-room',
+          reason: 'minimize',
+          hidden: true,
+          minimized: true,
+          visible: true,
+        })
+      );
+
+      windowRef.webContents.send.mockClear();
+      windowRef.isMinimized.mockReturnValue(false);
+      windowRef.isVisible.mockReturnValue(true);
+      handlers.get('restore')();
+      expect(windowRef.webContents.send).toHaveBeenCalledWith(
+        'window-visibility-changed',
+        expect.objectContaining({
+          windowKey: 'squid-room',
+          reason: 'restore',
+          hidden: false,
+          minimized: false,
+          visible: true,
+        })
+      );
+    });
+
     it('routes visible-window sends to the requested secondary window without clobbering main', async () => {
       await app.createWindow();
       const primaryWindow = app.ctx.mainWindow;

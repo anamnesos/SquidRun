@@ -12,11 +12,13 @@ const { createMountedRoom } = require('./helpers/squid-room-mount-harness');
 describe('squid-room runtime mount harness', () => {
   let harness;
   let runtime;
+  let mountedCount;
 
   beforeAll(() => {
     harness = createMountedRoom({ petIds: ['builder', 'oracle'] });
     jest.resetModules();
     runtime = require('../modules/squid-room-creature-runtime');
+    mountedCount = runtime.mountSquidRoomCreatures(harness.doc);
   });
 
   afterAll(() => {
@@ -25,8 +27,7 @@ describe('squid-room runtime mount harness', () => {
   });
 
   test('runtime mounts both creatures against the fake surface', () => {
-    const mounted = runtime.mountSquidRoomCreatures(harness.doc);
-    expect(mounted).toBe(2);
+    expect(mountedCount).toBe(2);
     const debug = runtime.getSquidRoomCreatureDebugState();
     expect(debug.map((b) => b.petId).sort()).toEqual(['builder', 'oracle']);
   });
@@ -51,5 +52,18 @@ describe('squid-room runtime mount harness', () => {
     harness.step(2, 16);
     const resumed = runtime.getSquidRoomCreatureDebugState().map((b) => b.frameCounter);
     expect(resumed[0]).toBeGreaterThan(after[0]); // visible again = work resumes
+  });
+
+  test('window visibility event render-skips while minimized and resumes after restore', () => {
+    const before = runtime.getSquidRoomCreatureDebugState().map((b) => b.frameCounter);
+    harness.fireBridgeEvent('window-visibility-changed', { hidden: true, reason: 'minimize' });
+    harness.step(30, 16);
+    const after = runtime.getSquidRoomCreatureDebugState().map((b) => b.frameCounter);
+    expect(after).toEqual(before);
+
+    harness.fireBridgeEvent('window-visibility-changed', { hidden: false, visible: true, reason: 'restore' });
+    harness.step(2, 16);
+    const resumed = runtime.getSquidRoomCreatureDebugState().map((b) => b.frameCounter);
+    expect(resumed[0]).toBeGreaterThan(after[0]);
   });
 });

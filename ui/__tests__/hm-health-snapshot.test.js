@@ -1188,7 +1188,7 @@ describe('hm-health-snapshot', () => {
   });
 
   test('marks The Tell shadow runner dead at the gate continuity-break threshold', () => {
-    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
     execFileSync.mockReturnValue([
       path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
       path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
@@ -1219,16 +1219,21 @@ describe('hm-health-snapshot', () => {
       jestTimeoutMs: 1000,
       env: {},
     });
+    const markdown = renderStartupHealthMarkdown(snapshot);
 
     expect(snapshot.theTellShadowRunner).toEqual(expect.objectContaining({
       status: 'dead',
       stale: true,
+      reportedRunning: true,
+      running: false,
+      tickFresh: false,
       staleReasons: ['last_tick_dead'],
     }));
     expect(snapshot.status.label).toBe('WARN');
     expect(snapshot.status.score).toBe(85);
     expect(snapshot.status.warnings).toContainEqual(expect.stringContaining('the_tell_shadow_runner_dead:status=dead'));
     expect(snapshot.status.penalties).toContainEqual({ code: 'the_tell_shadow_runner_dead', points: 15 });
+    expect(markdown).toContain('- Running: no, reported_running=yes, tick_fresh=no');
   });
 
   test('does not count The Tell shadow runner tick_failed as fresh observation', () => {

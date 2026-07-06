@@ -687,14 +687,33 @@ function sendStaggered(panes, message, meta = {}) {
     parentEventId: meta?.parentEventId || null,
   });
   const payloadMeta = withDefaultProfileWindowMeta(meta?.meta);
+  const requireImmediateDispatch = meta?.requireImmediateDispatch === true;
   if (!mainWindow || mainWindow.isDestroyed()) return false;
   const deliveryId = meta?.deliveryId;
   let immediateDispatchCount = 0;
+  let immediateFailureCount = 0;
+  const emitDispatchFailure = (paneId, stage) => {
+    log.warn('Trigger', `sendStaggered ${stage} dispatch failed for pane ${paneId}`);
+    if (deliveryId) {
+      handleDeliveryOutcome(deliveryId, paneId, {
+        accepted: false,
+        verified: false,
+        status: 'dispatch_failed',
+        reason: `${stage}_dispatch_failed`,
+      });
+    }
+  };
   panes.forEach((paneId, index) => {
-    const delay = panes.length === 1 || isPriority ? 0 : (index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS);
+    const delay = panes.length === 1 || isPriority || requireImmediateDispatch
+      ? 0
+      : (index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS);
     if (delay === 0) {
       const targetWindow = mainWindow;
-      if (!targetWindow || targetWindow.isDestroyed()) return;
+      if (!targetWindow || targetWindow.isDestroyed()) {
+        immediateFailureCount += 1;
+        emitDispatchFailure(paneId, 'immediate');
+        return;
+      }
       const dispatched = dispatchInjectMessage({
         panes: [paneId],
         message,
@@ -705,13 +724,17 @@ function sendStaggered(panes, message, meta = {}) {
       if (dispatched) {
         immediateDispatchCount += 1;
       } else {
-        log.warn('Trigger', `sendStaggered immediate dispatch failed for pane ${paneId}`);
+        immediateFailureCount += 1;
+        emitDispatchFailure(paneId, 'immediate');
       }
       return;
     }
     setTimeout(() => {
       const targetWindow = mainWindow;
-      if (!targetWindow || targetWindow.isDestroyed()) return;
+      if (!targetWindow || targetWindow.isDestroyed()) {
+        emitDispatchFailure(paneId, 'delayed');
+        return;
+      }
       const dispatched = dispatchInjectMessage({
         panes: [paneId],
         message,
@@ -720,12 +743,12 @@ function sendStaggered(panes, message, meta = {}) {
         meta: payloadMeta,
       });
       if (!dispatched) {
-        log.warn('Trigger', `sendStaggered delayed dispatch failed for pane ${paneId}`);
+        emitDispatchFailure(paneId, 'delayed');
       }
     }, delay);
   });
-  if (panes.length === 1 || isPriority) {
-    return immediateDispatchCount > 0;
+  if (panes.length === 1 || isPriority || requireImmediateDispatch) {
+    return immediateFailureCount === 0 && immediateDispatchCount === panes.length;
   }
   return true;
 }
@@ -784,6 +807,17 @@ function handleTriggerFile(filePath, filename) {
       log.warn('Trigger', `Failed to clean up processing file ${processingPath} during ${stage}: ${err.message}`);
     }
   };
+  const requeueProcessingFile = (reason = 'dispatch_failed') => {
+    try {
+      fs.renameSync(processingPath, filePath);
+      log.warn('Trigger', `Requeued trigger file ${filePath} after ${reason}`);
+      return { success: false, reason, requeued: true };
+    } catch (err) {
+      log.warn('Trigger', `Failed to requeue trigger file ${filePath} after ${reason}: ${err.message}`);
+      return { success: false, reason: 'requeue_failed', requeued: false, error: err.message };
+    }
+  };
+  let cleanupProcessing = true;
 
   let message;
   try {
@@ -807,7 +841,6 @@ function handleTriggerFile(filePath, filename) {
         log.warn('Trigger', `Skipping duplicate fallback messageId ${fallbackMessageId}`);
         return { success: false, reason: 'duplicate_message_id' };
       }
-      markRecentTriggerId(fallbackMessageId);
     }
 
     if (!message) return { success: false, reason: 'empty' };
@@ -845,7 +878,18 @@ function handleTriggerFile(filePath, filename) {
     emitOrganicMessageRoute(parsed.sender, targets);
 
     metrics.recordSent('pty', 'trigger', targets);
-    sendStaggered(targets, formatTriggerMessage(message), { deliveryId, traceContext });
+    const dispatched = sendStaggered(targets, formatTriggerMessage(message), {
+      deliveryId,
+      traceContext,
+      requireImmediateDispatch: true,
+    });
+    if (!dispatched) {
+      cleanupProcessing = false;
+      return requeueProcessingFile('dispatch_failed');
+    }
+    if (fallbackMessageId) {
+      markRecentTriggerId(fallbackMessageId);
+    }
     logTriggerActivity('Trigger file (PTY)', targets, message, {
       file: filename,
       resolvedFile: resolvedFilename,
@@ -855,7 +899,7 @@ function handleTriggerFile(filePath, filename) {
     });
     return { success: true, notified: targets, mode: 'pty', deliveryId };
   } finally {
-    cleanupProcessingFile('post_read_processing');
+    if (cleanupProcessing) cleanupProcessingFile('post_read_processing');
   }
 }
 

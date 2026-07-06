@@ -54,10 +54,11 @@ echo ""
 
 echo "Gate 2: JavaScript linting (ESLint)..."
 
-# Check if eslint is available in ui/node_modules
-if [ -f "ui/node_modules/.bin/eslint" ] || [ -f "ui/node_modules/.bin/eslint.cmd" ]; then
+# Check if eslint is available by package entrypoint. The .bin shims can rot on
+# Windows while the package is installed; a missing entrypoint is a failed gate.
+if [ -f "ui/node_modules/eslint/bin/eslint.js" ]; then
     cd ui
-    npx eslint "**/*.js" --quiet 2>/dev/null
+    node ./node_modules/eslint/bin/eslint.js "**/*.js" --quiet
     if [ $? -ne 0 ]; then
         echo "❌ ESLint found issues"
         FAILED=1
@@ -66,8 +67,9 @@ if [ -f "ui/node_modules/.bin/eslint" ] || [ -f "ui/node_modules/.bin/eslint.cmd
     fi
     cd ..
 else
-    echo "⚠️  ESLint not installed, skipping JavaScript lint"
+    echo "❌ ESLint entrypoint missing; JavaScript lint gate cannot run"
     echo "   Install with: cd ui && npm install --save-dev eslint"
+    FAILED=1
 fi
 
 echo ""
@@ -174,8 +176,8 @@ echo ""
 
 echo "Gate 5: Jest unit tests..."
 
-# Check if Jest is available in ui/node_modules
-if [ -f "ui/node_modules/.bin/jest" ] || [ -f "ui/node_modules/.bin/jest.cmd" ]; then
+# Check if Jest is available by package entrypoint. Do not trust .bin shims.
+if [ -f "ui/node_modules/jest/bin/jest.js" ]; then
     node ui/scripts/jest-staged.js
     JEST_EXIT=$?
 
@@ -187,8 +189,9 @@ if [ -f "ui/node_modules/.bin/jest" ] || [ -f "ui/node_modules/.bin/jest.cmd" ];
         echo "✅ Jest tests passed"
     fi
 else
-    echo "⚠️  Jest not installed, skipping unit tests"
+    echo "❌ Jest entrypoint missing; unit-test gate cannot run"
     echo "   Install with: cd ui && npm install"
+    FAILED=1
 fi
 
 echo ""

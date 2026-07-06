@@ -169,4 +169,22 @@ describe('app-session literal guard', () => {
     expect(hookText).toContain('app session literal guard cannot be skipped');
     expect(hookText).toContain('FAILED=1');
   });
+
+  test('pre-commit JavaScript gates use package entrypoints and fail closed when tooling is missing', () => {
+    const hookText = fs.readFileSync(path.join(repoRoot, 'scripts/pre-commit.sh'), 'utf8');
+    const installedHookText = fs.readFileSync(path.join(repoRoot, '.git/hooks/pre-commit'), 'utf8');
+
+    for (const text of [hookText, installedHookText]) {
+      expect(text).toContain('ui/node_modules/eslint/bin/eslint.js');
+      expect(text).toContain('node ./node_modules/eslint/bin/eslint.js "**/*.js" --quiet');
+      expect(text).toContain('ui/node_modules/jest/bin/jest.js');
+      expect(text).toContain('node ui/scripts/jest-staged.js');
+      expect(text).toContain('ESLint entrypoint missing; JavaScript lint gate cannot run');
+      expect(text).toContain('Jest entrypoint missing; unit-test gate cannot run');
+      expect(text).not.toContain('ui/node_modules/.bin/eslint');
+      expect(text).not.toContain('ui/node_modules/.bin/jest');
+      expect(text).not.toContain('skipping JavaScript lint');
+      expect(text).not.toContain('skipping unit tests');
+    }
+  });
 });

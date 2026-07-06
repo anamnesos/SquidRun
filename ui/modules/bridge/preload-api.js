@@ -5,21 +5,68 @@ const path = require('path');
 
 const { createSafeIpc } = require('./safe-ipc');
 const { requestDaemonTerminalSnapshot } = require('../daemon-snapshot');
+const {
+  buildStatusSnapshot: buildVoiceBrokerStatusSnapshot,
+  isPidAlive: isVoiceBrokerPidAlive,
+} = require('../../scripts/hm-voice-broker');
 
-function readVoiceBrokerStatusSnapshot() {
-  const projectRoot = path.resolve(__dirname, '..', '..', '..');
-  const statusPath = path.join(projectRoot, '.squidrun', 'runtime', 'voice-broker-status.json');
-  const raw = fs.readFileSync(statusPath, 'utf8');
-  const broker = JSON.parse(raw);
-  const running = Boolean(broker?.running && broker?.address?.port);
+function readJsonInfo(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    return {
+      value: JSON.parse(fs.readFileSync(filePath, 'utf8')),
+      mtimeMs: Number(stat.mtimeMs || 0),
+    };
+  } catch {
+    return { value: null, mtimeMs: 0 };
+  }
+}
+
+function readPidInfo(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    return {
+      pid: Number.parseInt(fs.readFileSync(filePath, 'utf8').trim(), 10),
+      mtimeMs: Number(stat.mtimeMs || 0),
+    };
+  } catch {
+    return { pid: null, mtimeMs: 0 };
+  }
+}
+
+function readVoiceBrokerStatusSnapshot(options = {}) {
+  const projectRoot = options.projectRoot
+    ? path.resolve(String(options.projectRoot))
+    : path.resolve(__dirname, '..', '..', '..');
+  const statusPath = options.statusPath
+    ? path.resolve(String(options.statusPath))
+    : path.join(projectRoot, '.squidrun', 'runtime', 'voice-broker-status.json');
+  const pidPath = options.pidPath
+    ? path.resolve(String(options.pidPath))
+    : path.join(projectRoot, '.squidrun', 'runtime', 'voice-broker.pid');
+  const statusInfo = readJsonInfo(statusPath);
+  const pidInfo = readPidInfo(pidPath);
+  const lane = buildVoiceBrokerStatusSnapshot({
+    pid: pidInfo.pid,
+    pidAlive: isVoiceBrokerPidAlive(pidInfo.pid),
+    pidMtimeMs: pidInfo.mtimeMs,
+    statusFile: statusInfo.value,
+    statusMtimeMs: statusInfo.mtimeMs,
+    nowMs: Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now(),
+  });
+  const broker = statusInfo.value && typeof statusInfo.value === 'object' && !Array.isArray(statusInfo.value)
+    ? statusInfo.value
+    : {};
+  const running = Boolean(lane.running && broker?.address?.port);
   const ready = Boolean(broker?.config?.openaiApiKeyPresent);
   return {
     ok: true,
-    state: ready ? (running ? 'running' : 'stopped') : 'not_ready',
+    state: ready ? (running ? 'running' : (lane.starting ? 'starting' : 'stopped')) : 'not_ready',
     ready,
     running,
     notReadyReasons: ready ? [] : ['openai_api_key_missing'],
     lane: {
+      ...lane,
       running,
       broker,
     },
@@ -215,4 +262,5 @@ function createPreloadApi(ipcRenderer) {
 
 module.exports = {
   createPreloadApi,
+  readVoiceBrokerStatusSnapshot,
 };

@@ -10,9 +10,9 @@ const {
   DEFAULT_LEDGER_PATH,
   DEFAULT_PID_PATH,
   DEFAULT_STATUS_PATH,
+  inspectShadowRunnerStatus,
   isPidAlive,
   normalizeIntervalMs,
-  readStatus,
   readShadowLedger,
   runShadowLoop,
   runShadowTick,
@@ -45,7 +45,7 @@ function printUsage() {
     '  node scripts/hm-the-tell-shadow.js once [--ledger <path>] [--status <path>]',
     '  node scripts/hm-the-tell-shadow.js start [--interval-ms <n>] [--no-immediate] [--ledger <path>] [--status <path>] [--pid <path>]',
     '  node scripts/hm-the-tell-shadow.js daemon [--interval-ms <n>] [--no-immediate] [--ledger <path>] [--status <path>] [--pid <path>]',
-    '  node scripts/hm-the-tell-shadow.js status [--status <path>] [--pid <path>]',
+    '  node scripts/hm-the-tell-shadow.js status [--status <path>] [--ledger <path>] [--pid <path>]',
     '  node scripts/hm-the-tell-shadow.js stop [--pid <path>]',
     '  node scripts/hm-the-tell-shadow.js tail [--ledger <path>] [--last <n>]',
   ].join('\n'));
@@ -75,16 +75,33 @@ function readPid(pidPath) {
 
 function startDetached(flags) {
   const options = commonOptions(flags);
-  const existingPid = readPid(options.pidPath);
-  if (isPidAlive(existingPid)) {
+  const current = inspectShadowRunnerStatus({
+    statusPath: options.statusPath,
+    ledgerPath: options.ledgerPath,
+    pidPath: options.pidPath,
+    requirePid: true,
+  });
+  if (current.running === true) {
     return {
       ok: true,
       alreadyRunning: true,
-      pid: Number(existingPid),
+      pid: current.pid,
+      status: current.status,
+      reportedRunning: current.reportedRunning,
+      tickFresh: current.tickFresh,
+      lastTickAt: current.lastTickAt,
+      lastTickAgeMs: current.lastTickAgeMs,
       pidPath: options.pidPath,
       ledgerPath: options.ledgerPath,
       statusPath: options.statusPath,
     };
+  }
+  if (current.pidAlive === true && current.pid) {
+    try {
+      process.kill(current.pid, 'SIGTERM');
+    } catch {
+      // Best effort cleanup before spawning a fresh shadow runner.
+    }
   }
 
   const args = [
@@ -174,13 +191,15 @@ async function main() {
     return;
   }
   if (command === 'status') {
-    const pidPath = flagPath(flags, 'pid', DEFAULT_PID_PATH);
-    const pid = readPid(pidPath);
+    const options = commonOptions(flags);
     console.log(JSON.stringify({
-      ...readStatus(flagPath(flags, 'status', DEFAULT_STATUS_PATH)),
-      pid: pid ? Number(pid) : null,
-      pidAlive: isPidAlive(pid),
-      pidPath,
+      ...inspectShadowRunnerStatus({
+        statusPath: options.statusPath,
+        ledgerPath: options.ledgerPath,
+        pidPath: options.pidPath,
+        requirePid: true,
+      }),
+      pidPath: options.pidPath,
     }, null, 2));
     return;
   }

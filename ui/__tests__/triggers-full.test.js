@@ -77,6 +77,7 @@ describe('triggers.js module', () => {
     // Reset module state (as much as possible via exported functions)
     triggers.setWatcher(null);
     triggers.setInjectMessageRouter(null);
+    triggers.init(global.window, new Map([['1', 'running'], ['2', 'running'], ['3', 'running']]), null);
     // Reset window mock
     global.window.webContents.send.mockClear();
     global.window.isDestroyed.mockReturnValue(false);
@@ -89,6 +90,11 @@ describe('triggers.js module', () => {
     if (!fs.appendFileSync) fs.appendFileSync = jest.fn();
     fs.appendFileSync.mockImplementation(() => {});
     fs.existsSync.mockReturnValue(false);
+    fs.renameSync.mockClear();
+    fs.unlinkSync.mockClear();
+    fs.readFileSync.mockClear();
+    fs.writeFileSync.mockClear();
+    fs.existsSync.mockClear();
   });
 
   afterEach(() => {
@@ -250,6 +256,34 @@ describe('triggers.js module', () => {
         .filter(([channel]) => channel === 'inject-message').length;
 
       expect(injectCountAfterSecond).toBe(injectCountAfterFirst);
+    });
+
+    test('requeues trigger file and keeps HM messageId retryable when dispatch fails', () => {
+      fs.readFileSync.mockReturnValue('[HM-MESSAGE-ID:hm-retry-1]\n(ORACLE): retry me');
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+      global.window.isDestroyed.mockReturnValue(true);
+
+      const first = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+
+      expect(first).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'dispatch_failed',
+        requeued: true,
+      }));
+      expect(fs.renameSync).toHaveBeenCalledWith('/path/architect.txt', '/path/architect.txt.processing');
+      expect(fs.renameSync).toHaveBeenCalledWith('/path/architect.txt.processing', '/path/architect.txt');
+      expect(fs.unlinkSync).not.toHaveBeenCalledWith('/path/architect.txt.processing');
+
+      global.window.isDestroyed.mockReturnValue(false);
+      const second = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+      expect(second.success).toBe(true);
+      jest.runAllTimers();
+      expect(global.window.webContents.send).toHaveBeenCalledWith(
+        'inject-message',
+        expect.objectContaining({
+          message: expect.stringContaining('retry me'),
+        })
+      );
     });
   });
 
@@ -429,6 +463,36 @@ describe('triggers.js module', () => {
         'Trigger',
         expect.stringContaining('Inject message dispatch failed: Object has been destroyed')
       );
+    });
+
+    test('reports delayed stagger dispatch failures as delivery outcomes', () => {
+      const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0);
+      const outcomes = [];
+      const off = triggers.onDeliveryAck((deliveryId, paneId, outcome) => {
+        outcomes.push({ deliveryId, paneId, outcome });
+      });
+      try {
+        triggers.init(global.window, new Map([['1', 'running'], ['2', 'running']]), null);
+
+        const result = triggers.sendDirectMessage(['1', '2'], '(ARCHITECT #508): delayed fail proof', 'architect');
+        expect(result).toEqual(expect.objectContaining({ accepted: true, queued: true }));
+
+        global.window.isDestroyed.mockReturnValue(true);
+        jest.runAllTimers();
+
+        expect(outcomes).toEqual([expect.objectContaining({
+          paneId: '2',
+          outcome: expect.objectContaining({
+            accepted: false,
+            verified: false,
+            status: 'dispatch_failed',
+            reason: 'delayed_dispatch_failed',
+          }),
+        })]);
+      } finally {
+        off();
+        randomSpy.mockRestore();
+      }
     });
 
     test('sendDirectMessage awaitDelivery returns explicit failure when delivery outcome reports submit_not_accepted', async () => {

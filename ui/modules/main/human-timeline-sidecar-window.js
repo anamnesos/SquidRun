@@ -19,7 +19,6 @@ const FORCED_WEB_PREFERENCES = Object.freeze({
   contextIsolation: true,
   nodeIntegration: false,
   sandbox: false,
-  backgroundThrottling: false,
 });
 
 function resolveHtmlPath(value) {

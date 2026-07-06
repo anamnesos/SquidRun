@@ -7,6 +7,7 @@ const { getProjectRoot } = require('../config');
 const { DEFAULT_PROFILE, namespaceCoordRelPath, normalizeProfileName } = require('../profile');
 const { readSystemCapabilitiesSnapshot } = require('../modules/local-model-capabilities');
 const { PROMOTION } = require('../modules/the-tell/promotion-gate');
+const { inspectShadowRunnerStatus } = require('../modules/main/the-tell-shadow-runner');
 
 const KEY_MODULE_PATHS = Object.freeze({
   recovery_manager: path.join('ui', 'modules', 'recovery-manager.js'),
@@ -440,57 +441,6 @@ function getTheTellShadowRunnerStaleMs(options = {}) {
   );
 }
 
-function latestSuccessfulTickFromLedger(ledgerPath) {
-  if (!ledgerPath || !safeStat(ledgerPath)?.isFile()) return null;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
-    const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
-    let latest = null;
-    for (const row of rows) {
-      if (!row || row.type !== 'tick' || !isFiniteNumberValue(row.ts)) continue;
-      const ts = Math.floor(Number(row.ts));
-      if (latest === null || ts > latest.ts) {
-        latest = {
-          ts,
-          checkedAt: asNonEmptyString(row.checkedAt || row.observedAt) || null,
-          tickId: asNonEmptyString(row.tickId) || null,
-        };
-      }
-    }
-    return latest;
-  } catch {
-    return null;
-  }
-}
-
-function classifyTheTellShadowRunner({
-  lastTickAgeMs,
-  lastActivityType,
-  staleThresholdMs = DEFAULT_THE_TELL_SHADOW_RUNNER_STALE_MS,
-  statusFilePresent,
-}) {
-  if (statusFilePresent !== true) {
-    return { status: 'missing', stale: false, staleReasons: [] };
-  }
-  if (lastActivityType && lastActivityType !== 'tick') {
-    return { status: 'blind', stale: true, staleReasons: [`last_tick_${lastActivityType}`] };
-  }
-  if (!isFiniteNumberValue(lastTickAgeMs)) {
-    return { status: 'dead', stale: true, staleReasons: ['no_successful_tick'] };
-  }
-  const ageMs = Number(lastTickAgeMs);
-  if (ageMs >= staleThresholdMs) {
-    return { status: 'dead', stale: true, staleReasons: ['last_tick_dead'] };
-  }
-  if (ageMs >= 3 * 60 * 60 * 1000) {
-    return { status: 'stale', stale: true, staleReasons: ['last_tick_stale'] };
-  }
-  if (ageMs >= 40 * 60 * 1000) {
-    return { status: 'aging', stale: false, staleReasons: [] };
-  }
-  return { status: 'fresh', stale: false, staleReasons: [] };
-}
-
 function inspectTheTellShadowRunner(projectRoot, options = {}) {
   if (
     options.theTellShadowRunner
@@ -504,120 +454,22 @@ function inspectTheTellShadowRunner(projectRoot, options = {}) {
   const statusPath = options.theTellShadowStatusPath
     ? path.resolve(String(options.theTellShadowStatusPath))
     : resolveProfileCoordPath(projectRoot, path.join('runtime', 'the-tell-shadow-status.json'), profileName);
+  const ledgerPath = options.theTellShadowLedgerPath
+    ? path.resolve(String(options.theTellShadowLedgerPath))
+    : resolveProfileCoordPath(projectRoot, path.join('runtime', 'the-tell-shadow-ledger.json'), profileName);
+  const pidPath = options.theTellShadowPidPath
+    ? path.resolve(String(options.theTellShadowPidPath))
+    : resolveProfileCoordPath(projectRoot, path.join('runtime', 'the-tell-shadow-runner.pid'), profileName);
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
   const staleThresholdMs = getTheTellShadowRunnerStaleMs(options);
-  const stat = safeStat(statusPath);
-  if (!stat || !stat.isFile()) {
-    return {
-      ok: true,
-      status: 'missing',
-      path: statusPath,
-      statusFilePresent: false,
-      running: false,
-      runId: null,
-      tickId: null,
-      lastTickAt: null,
-      lastTickAtMs: null,
-      lastTickAgeMs: null,
-      lastActivityAt: null,
-      lastActivityAtMs: null,
-      lastActivityAgeMs: null,
-      lastActivityType: null,
-      staleThresholdMs,
-      intervalMs: null,
-      ledgerRows: null,
-      ledgerPath: null,
-      counts: null,
-      stale: false,
-      staleReasons: [],
-      error: null,
-    };
-  }
-
-  try {
-    const parsed = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
-    const lastTick = parsed.lastTick && typeof parsed.lastTick === 'object' && !Array.isArray(parsed.lastTick)
-      ? parsed.lastTick
-      : {};
-    const ledgerPath = asNonEmptyString(parsed.ledgerPath) || resolveProfileCoordPath(projectRoot, path.join('runtime', 'the-tell-shadow-ledger.json'), profileName);
-    const latestSuccessfulTick = latestSuccessfulTickFromLedger(ledgerPath);
-    const lastActivityAt = asNonEmptyString(lastTick.checkedAt || parsed.checkedAt || lastTick.observedAt) || null;
-    const rawLastActivityMs = isFiniteNumberValue(lastTick.ts)
-      ? Number(lastTick.ts)
-      : (lastActivityAt ? Date.parse(lastActivityAt) : NaN);
-    const lastActivityAtMs = Number.isFinite(rawLastActivityMs) ? Math.floor(rawLastActivityMs) : null;
-    const lastActivityAgeMs = lastActivityAtMs !== null ? Math.max(0, nowMs - lastActivityAtMs) : null;
-    const statusSuccessfulTick = (lastTick.type || lastTick.rowType) === 'tick' && isFiniteNumberValue(lastTick.ts)
-      ? {
-        ts: Math.floor(Number(lastTick.ts)),
-        checkedAt: lastActivityAt,
-        tickId: asNonEmptyString(lastTick.tickId) || null,
-      }
-      : null;
-    const successfulTick = latestSuccessfulTick || statusSuccessfulTick;
-    const lastTickAtMs = successfulTick ? successfulTick.ts : null;
-    const lastTickAt = successfulTick?.checkedAt || (lastTickAtMs !== null ? new Date(lastTickAtMs).toISOString() : null);
-    const lastTickAgeMs = lastTickAtMs !== null ? Math.max(0, nowMs - lastTickAtMs) : null;
-    const lastActivityType = asNonEmptyString(lastTick.type || lastTick.rowType) || null;
-    const classification = classifyTheTellShadowRunner({
-      lastTickAgeMs,
-      lastActivityType,
-      staleThresholdMs,
-      statusFilePresent: true,
-    });
-
-    return {
-      ok: parsed.ok === true && classification.stale !== true,
-      status: classification.status,
-      path: statusPath,
-      statusFilePresent: true,
-      running: parsed.running === true,
-      runId: asNonEmptyString(parsed.runId) || null,
-      tickId: successfulTick?.tickId || asNonEmptyString(parsed.tickId || lastTick.tickId) || null,
-      lastTickAt,
-      lastTickAtMs,
-      lastTickAgeMs,
-      lastActivityAt,
-      lastActivityAtMs,
-      lastActivityAgeMs,
-      lastActivityType,
-      staleThresholdMs,
-      intervalMs: asPositiveInt(parsed.intervalMs || lastTick.intervalMs, null),
-      ledgerRows: asNonNegativeInt(parsed.ledgerRows, null),
-      ledgerPath,
-      counts: lastTick.counts && typeof lastTick.counts === 'object' && !Array.isArray(lastTick.counts)
-        ? lastTick.counts
-        : null,
-      stale: classification.stale,
-      staleReasons: classification.staleReasons,
-      error: parsed.lastError || null,
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      status: 'read_error',
-      path: statusPath,
-      statusFilePresent: true,
-      running: false,
-      runId: null,
-      tickId: null,
-      lastTickAt: null,
-      lastTickAtMs: null,
-      lastTickAgeMs: null,
-      lastActivityAt: null,
-      lastActivityAtMs: null,
-      lastActivityAgeMs: null,
-      lastActivityType: null,
-      staleThresholdMs,
-      intervalMs: null,
-      ledgerRows: null,
-      ledgerPath: null,
-      counts: null,
-      stale: true,
-      staleReasons: ['status_read_error'],
-      error: err.message,
-    };
-  }
+  return inspectShadowRunnerStatus({
+    statusPath,
+    ledgerPath,
+    pidPath,
+    nowMs,
+    staleThresholdMs,
+    requirePid: false,
+  });
 }
 
 function walkFiles(rootPath, predicate = null, results = []) {
@@ -1735,7 +1587,12 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   lines.push('THE TELL SHADOW RUNNER');
   lines.push(`- Freshness: ${theTellShadowRunner.status || 'unknown'} (${shadowLastTickText}; ${shadowLastTickAgeText}; ${shadowThresholdText})`);
   lines.push(`- Last Activity: type=${theTellShadowRunner.lastActivityType || 'unknown'} (${shadowLastActivityText}; ${shadowLastActivityAgeText})`);
-  lines.push(`- Running: ${theTellShadowRunner.running === true ? 'yes' : 'no'}, ledger_rows=${theTellShadowRunner.ledgerRows ?? 'unknown'}, interval_ms=${theTellShadowRunner.intervalMs ?? 'unknown'}`);
+  lines.push(
+    `- Running: ${theTellShadowRunner.running === true ? 'yes' : 'no'}`
+    + `, reported_running=${theTellShadowRunner.reportedRunning === true ? 'yes' : 'no'}`
+    + `, tick_fresh=${theTellShadowRunner.tickFresh === true ? 'yes' : 'no'}`
+    + `, ledger_rows=${theTellShadowRunner.ledgerRows ?? 'unknown'}, interval_ms=${theTellShadowRunner.intervalMs ?? 'unknown'}`
+  );
   if (theTellShadowRunner.counts && typeof theTellShadowRunner.counts === 'object') {
     lines.push(
       '- Last Tick Counts: '

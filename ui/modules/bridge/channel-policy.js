@@ -181,6 +181,7 @@ const ON_CHANNELS = Object.freeze([
   'watchdog-alert',
   'bridge:pairing-state',
   'window-context',
+  'window-visibility-changed',
 ]);
 
 const DYNAMIC_ON_CHANNEL_PATTERNS = Object.freeze([

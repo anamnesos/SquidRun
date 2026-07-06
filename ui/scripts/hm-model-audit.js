@@ -31,6 +31,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
 const {
   detectCli,
   normalizeClaudeModelId,
@@ -40,6 +41,13 @@ const {
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const DEFAULT_SETTINGS_PATH = path.resolve(__dirname, '..', 'settings.json');
 const DEFAULT_PANE_SESSION_IDS_PATH = path.join(PROJECT_ROOT, '.squidrun', 'runtime', 'pane-session-ids.json');
+const DEFAULT_RUNTIME_DIR = path.join(PROJECT_ROOT, '.squidrun', 'runtime');
+const DEFAULT_WATCH_PID_PATH = path.join(DEFAULT_RUNTIME_DIR, 'hm-model-audit-watch.pid');
+const DEFAULT_WATCH_STATUS_PATH = path.join(DEFAULT_RUNTIME_DIR, 'hm-model-audit-watch-status.json');
+const DEFAULT_WATCH_OUT_LOG_PATH = path.join(DEFAULT_RUNTIME_DIR, 'hm-model-audit-watch.out.log');
+const DEFAULT_WATCH_ERR_LOG_PATH = path.join(DEFAULT_RUNTIME_DIR, 'hm-model-audit-watch.err.log');
+const WATCH_START_GRACE_MS = 10 * 1000;
+const WATCH_MIN_STALE_AFTER_MS = 30 * 1000;
 
 /** Pure: fold transcript lines into { day: { model: count } }. */
 function tallyModelsByDay(lines, { since = '' } = {}) {
@@ -139,6 +147,66 @@ function readJsonFile(filePath) {
   }
 }
 
+function ensureParent(filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+}
+
+function writeJson(filePath, payload) {
+  ensureParent(filePath);
+  fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+function nowIso(nowMs = Date.now()) {
+  return new Date(nowMs).toISOString();
+}
+
+function asPositiveInt(value, fallback = null) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const integer = Math.floor(numeric);
+  return integer > 0 ? integer : fallback;
+}
+
+function readPidInfo(pidPath = DEFAULT_WATCH_PID_PATH) {
+  try {
+    const stat = fs.statSync(pidPath);
+    return {
+      pid: asPositiveInt(fs.readFileSync(pidPath, 'utf8').trim(), null),
+      mtimeMs: Number(stat.mtimeMs || 0),
+    };
+  } catch {
+    return { pid: null, mtimeMs: 0 };
+  }
+}
+
+function isPidAlive(pid) {
+  const numeric = asPositiveInt(pid, null);
+  if (!numeric) return false;
+  try {
+    process.kill(numeric, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readStatusInfo(statusPath = DEFAULT_WATCH_STATUS_PATH) {
+  try {
+    const stat = fs.statSync(statusPath);
+    return {
+      value: JSON.parse(fs.readFileSync(statusPath, 'utf8')),
+      mtimeMs: Number(stat.mtimeMs || 0),
+    };
+  } catch {
+    return { value: null, mtimeMs: 0 };
+  }
+}
+
+function timestampMs(value) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function sessionIdFromTranscriptFile(file = '') {
   return path.basename(String(file || '')).replace(/\.jsonl$/i, '');
 }
@@ -169,6 +237,21 @@ function expectedModelFromPaneSettings(settings = {}, paneId = '') {
   if (settingsModel) return { expectedModel: settingsModel, source: 'settings-claudeModel' };
 
   return { expectedModel: '', source: 'missing-claude-model' };
+}
+
+function expectedModelsFromSettings(settings = {}) {
+  const paneCommands = settings?.paneCommands && typeof settings.paneCommands === 'object'
+    ? settings.paneCommands
+    : {};
+  return Object.keys(paneCommands)
+    .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
+    .map((paneId) => {
+      const expected = expectedModelFromPaneSettings(settings, paneId);
+      return expected.expectedModel
+        ? { paneId: String(paneId), expectedModel: expected.expectedModel, source: expected.source }
+        : null;
+    })
+    .filter(Boolean);
 }
 
 function resolveExpectedModelForTranscript(file, options = {}) {
@@ -220,11 +303,97 @@ function createStateChangeAlertFilter() {
 }
 
 function loadWatchContext(options = {}) {
+  const settings = readJsonFile(options.settingsPath || DEFAULT_SETTINGS_PATH) || {};
+  const explicitExpect = normalizeClaudeModelId(options.expect || '');
   return {
     explicitExpect: options.expect || '',
-    settings: readJsonFile(options.settingsPath || DEFAULT_SETTINGS_PATH) || {},
+    settings,
     paneSessionIds: readJsonFile(options.paneSessionIdsPath || DEFAULT_PANE_SESSION_IDS_PATH) || {},
+    expectedModels: explicitExpect
+      ? [{ paneId: '', expectedModel: explicitExpect, source: 'explicit-expect' }]
+      : expectedModelsFromSettings(settings),
   };
+}
+
+function buildWatchStatusSnapshot({
+  pid = null,
+  pidAlive = false,
+  pidMtimeMs = 0,
+  statusFile = null,
+  nowMs = Date.now(),
+} = {}) {
+  const validPid = asPositiveInt(pid, null);
+  const statusPid = asPositiveInt(statusFile?.pid, null);
+  const statusMatchesPid = Boolean(validPid && statusFile && statusPid === validPid);
+  const pidAgeMs = pidMtimeMs > 0 ? Math.max(0, nowMs - pidMtimeMs) : Infinity;
+  const intervalMs = Math.max(1000, asPositiveInt(statusFile?.intervalMs, asPositiveInt(statusFile?.intervalS, 60) * 1000));
+  const statusStaleAfterMs = Math.max(WATCH_MIN_STALE_AFTER_MS, intervalMs * 3);
+  const heartbeatAtMs = asPositiveInt(statusFile?.heartbeatAtMs, null)
+    || timestampMs(statusFile?.heartbeatAt)
+    || timestampMs(statusFile?.updatedAt)
+    || 0;
+  const statusAgeMs = heartbeatAtMs > 0 ? Math.max(0, nowMs - heartbeatAtMs) : Infinity;
+  const statusFresh = Boolean(statusMatchesPid && statusAgeMs <= statusStaleAfterMs);
+  const starting = Boolean(validPid && pidAlive && !statusMatchesPid && pidAgeMs <= WATCH_START_GRACE_MS);
+  const stopped = statusFile?.running === false || statusFile?.state === 'stopped';
+  const running = Boolean(validPid && pidAlive && statusMatchesPid && statusFresh && !stopped);
+  const stalePid = Boolean(validPid && !pidAlive);
+  const staleStatus = Boolean(statusFile && validPid && !statusMatchesPid);
+  const staleHeartbeat = Boolean(validPid && pidAlive && statusMatchesPid && !stopped && !statusFresh);
+  const unknownLivePid = Boolean(validPid && pidAlive && !statusMatchesPid && !starting);
+  const reason = running
+    ? null
+    : (starting ? 'model_audit_watch_starting'
+      : (staleHeartbeat ? 'stale_model_audit_watch_status'
+        : (staleStatus ? 'stale_model_audit_watch_pid_mismatch'
+          : (unknownLivePid ? 'unknown_live_model_audit_watch_pid'
+            : (stalePid ? 'stale_model_audit_watch_pid' : 'not_running')))));
+
+  return {
+    ok: true,
+    running,
+    starting,
+    pid: running || starting || staleHeartbeat || staleStatus || unknownLivePid ? validPid : null,
+    stalePid: stalePid ? validPid : null,
+    staleStatus,
+    staleHeartbeat,
+    unknownLivePid: unknownLivePid ? validPid : null,
+    statusFresh,
+    statusAgeMs: Number.isFinite(statusAgeMs) ? statusAgeMs : null,
+    statusStaleAfterMs,
+    reason,
+    pidPath: DEFAULT_WATCH_PID_PATH,
+    statusPath: DEFAULT_WATCH_STATUS_PATH,
+    outLogPath: DEFAULT_WATCH_OUT_LOG_PATH,
+    errLogPath: DEFAULT_WATCH_ERR_LOG_PATH,
+    watcher: statusFile || null,
+  };
+}
+
+function watchStatus(options = {}) {
+  const pidPath = options.pidPath || DEFAULT_WATCH_PID_PATH;
+  const statusPath = options.statusPath || DEFAULT_WATCH_STATUS_PATH;
+  const pidInfo = readPidInfo(pidPath);
+  const statusInfo = readStatusInfo(statusPath);
+  return {
+    ...buildWatchStatusSnapshot({
+      pid: pidInfo.pid,
+      pidAlive: isPidAlive(pidInfo.pid),
+      pidMtimeMs: pidInfo.mtimeMs,
+      statusFile: statusInfo.value,
+      statusMtimeMs: statusInfo.mtimeMs,
+      nowMs: Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now(),
+    }),
+    pidPath,
+    statusPath,
+  };
+}
+
+function cleanupWatchMetadata(options = {}) {
+  const pidPath = options.pidPath || DEFAULT_WATCH_PID_PATH;
+  const statusPath = options.statusPath || DEFAULT_WATCH_STATUS_PATH;
+  try { fs.rmSync(pidPath, { force: true }); } catch {}
+  try { fs.rmSync(statusPath, { force: true }); } catch {}
 }
 
 function watch(dir, {
@@ -233,57 +402,256 @@ function watch(dir, {
   alert,
   settingsPath = DEFAULT_SETTINGS_PATH,
   paneSessionIdsPath = DEFAULT_PANE_SESSION_IDS_PATH,
+  pidPath = DEFAULT_WATCH_PID_PATH,
+  statusPath = DEFAULT_WATCH_STATUS_PATH,
 }) {
   const offsets = new Map(); // file -> bytes already scanned
   const shouldAlert = createStateChangeAlertFilter();
+  const intervalSeconds = Math.max(1, Number(intervalS) || 60);
+  const intervalMs = intervalSeconds * 1000;
+  let tickCount = 0;
+  let stopping = false;
+
+  ensureParent(pidPath);
+  fs.writeFileSync(pidPath, String(process.pid), 'utf8');
+
+  const writeStatus = (extra = {}) => {
+    const nowMs = Date.now();
+    const context = loadWatchContext({ expect, settingsPath, paneSessionIdsPath });
+    writeJson(statusPath, {
+      schema: 'squidrun.model_audit.watch.status.v1',
+      pid: process.pid,
+      running: !stopping,
+      state: stopping ? 'stopping' : 'running',
+      updatedAt: nowIso(nowMs),
+      heartbeatAt: nowIso(nowMs),
+      heartbeatAtMs: nowMs,
+      dir,
+      intervalS: intervalSeconds,
+      intervalMs,
+      settingsPath,
+      paneSessionIdsPath,
+      explicitExpect: normalizeClaudeModelId(expect) || null,
+      expectSource: normalizeClaudeModelId(expect) ? 'explicit-expect' : 'settings',
+      expectedModels: context.expectedModels,
+      tickCount,
+      ...extra,
+    });
+  };
+
+  const stop = (signal = 'stopped') => {
+    if (stopping) return;
+    stopping = true;
+    const nowMs = Date.now();
+    writeStatus({
+      running: false,
+      state: 'stopped',
+      stoppedAt: nowIso(nowMs),
+      stopReason: signal,
+    });
+    try {
+      const currentPid = readPidInfo(pidPath).pid;
+      if (currentPid === process.pid) fs.rmSync(pidPath, { force: true });
+    } catch {}
+  };
+
+  process.once('SIGTERM', () => {
+    stop('SIGTERM');
+    process.exit(0);
+  });
+  process.once('SIGINT', () => {
+    stop('SIGINT');
+    process.exit(0);
+  });
+
   const tick = () => {
+    const startedAtMs = Date.now();
+    let filesScanned = 0;
+    let alertsSent = 0;
     let files;
-    try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl')); } catch { return; }
-    const watchContext = loadWatchContext({ expect, settingsPath, paneSessionIdsPath });
-    for (const file of files) {
-      const full = path.join(dir, file);
-      let size;
-      try { size = fs.statSync(full).size; } catch { continue; }
-      const from = offsets.get(file) ?? size; // first sight: only future turns
-      offsets.set(file, size);
-      if (size <= from) continue;
-      let chunk;
-      try {
-        const fd = fs.openSync(full, 'r');
-        const buf = Buffer.alloc(size - from);
-        fs.readSync(fd, buf, 0, buf.length, from);
-        fs.closeSync(fd);
-        chunk = buf.toString('utf8');
-      } catch { continue; }
-      const expected = resolveExpectedModelForTranscript(file, watchContext);
-      if (!expected.expectedModel) continue;
-      for (const turn of scanModelTurns(chunk.split('\n'), expected.expectedModel)) {
-        const event = {
-          file,
-          model: turn.model,
-          timestamp: turn.timestamp,
-          expectedModel: expected.expectedModel,
-          paneId: expected.paneId,
-          source: expected.source,
-        };
-        if (!shouldAlert(event)) continue;
-        const paneNote = event.paneId ? ` pane ${event.paneId}` : '';
-        alert(`MODEL SUBSTITUTION: ${file}${paneNote} logged ${event.model} at ${event.timestamp} (expected ${event.expectedModel} from ${event.source})`);
+    try {
+      files = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+      const watchContext = loadWatchContext({ expect, settingsPath, paneSessionIdsPath });
+      for (const file of files) {
+        const full = path.join(dir, file);
+        let size;
+        try { size = fs.statSync(full).size; } catch { continue; }
+        filesScanned += 1;
+        const from = offsets.get(file) ?? size; // first sight: only future turns
+        offsets.set(file, size);
+        if (size <= from) continue;
+        let chunk;
+        try {
+          const fd = fs.openSync(full, 'r');
+          const buf = Buffer.alloc(size - from);
+          fs.readSync(fd, buf, 0, buf.length, from);
+          fs.closeSync(fd);
+          chunk = buf.toString('utf8');
+        } catch { continue; }
+        const expected = resolveExpectedModelForTranscript(file, watchContext);
+        if (!expected.expectedModel) continue;
+        for (const turn of scanModelTurns(chunk.split('\n'), expected.expectedModel)) {
+          const event = {
+            file,
+            model: turn.model,
+            timestamp: turn.timestamp,
+            expectedModel: expected.expectedModel,
+            paneId: expected.paneId,
+            source: expected.source,
+          };
+          if (!shouldAlert(event)) continue;
+          const paneNote = event.paneId ? ` pane ${event.paneId}` : '';
+          alert(`MODEL SUBSTITUTION: ${file}${paneNote} logged ${event.model} at ${event.timestamp} (expected ${event.expectedModel} from ${event.source})`);
+          alertsSent += 1;
+        }
       }
+      tickCount += 1;
+      writeStatus({
+        state: 'waiting',
+        lastTickAt: nowIso(),
+        lastTickStartedAt: nowIso(startedAtMs),
+        lastTickDurationMs: Math.max(0, Date.now() - startedAtMs),
+        lastTick: {
+          ok: true,
+          filesScanned,
+          alertsSent,
+        },
+        lastError: null,
+      });
+    } catch (error) {
+      tickCount += 1;
+      writeStatus({
+        state: 'waiting_after_error',
+        lastTickAt: nowIso(),
+        lastTickStartedAt: nowIso(startedAtMs),
+        lastTickDurationMs: Math.max(0, Date.now() - startedAtMs),
+        lastTick: {
+          ok: false,
+          filesScanned,
+          alertsSent,
+        },
+        lastError: error.message || String(error),
+      });
     }
   };
+  writeStatus({ state: 'starting', lastError: null });
   tick();
-  setInterval(tick, intervalS * 1000);
+  setInterval(tick, intervalMs);
   const expectLabel = expect ? `explicit:${expect}` : `settings:${settingsPath}`;
-  console.log(`model watch running: expect=${expectLabel}, interval=${intervalS}s, dir=${dir}`);
+  console.log(`model watch running: expect=${expectLabel}, interval=${intervalSeconds}s, dir=${dir}`);
 }
 
-function main() {
-  const args = process.argv.slice(2);
-  const flag = (name) => {
-    const i = args.indexOf(`--${name}`);
-    return i >= 0 ? args[i + 1] : null;
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForPidExit(pid, timeoutMs = 3000) {
+  const startedAt = Date.now();
+  while (isPidAlive(pid) && Date.now() - startedAt < timeoutMs) {
+    await delay(100);
+  }
+  return !isPidAlive(pid);
+}
+
+function startWatch(options = {}) {
+  const current = watchStatus(options);
+  if (current.running === true) {
+    return { ok: true, alreadyRunning: true, ...current };
+  }
+  if ((current.staleHeartbeat || current.staleStatus || current.unknownLivePid) && current.pid) {
+    try { process.kill(current.pid, 'SIGTERM'); } catch {}
+  }
+  if (current.stalePid || current.staleHeartbeat || current.staleStatus || current.unknownLivePid) {
+    cleanupWatchMetadata(options);
+  }
+
+  const dir = options.dir || path.join(os.homedir(), '.claude', 'projects', 'D--projects-squidrun');
+  const intervalS = Math.max(1, Number(options.intervalS) || 60);
+  const settingsPath = options.settingsPath || DEFAULT_SETTINGS_PATH;
+  const paneSessionIdsPath = options.paneSessionIdsPath || DEFAULT_PANE_SESSION_IDS_PATH;
+  const pidPath = options.pidPath || DEFAULT_WATCH_PID_PATH;
+  const statusPath = options.statusPath || DEFAULT_WATCH_STATUS_PATH;
+  const outLogPath = options.outLogPath || DEFAULT_WATCH_OUT_LOG_PATH;
+  const errLogPath = options.errLogPath || DEFAULT_WATCH_ERR_LOG_PATH;
+
+  ensureParent(outLogPath);
+  ensureParent(errLogPath);
+  const args = [
+    __filename,
+    'watch',
+    '--dir', dir,
+    '--interval-s', String(intervalS),
+    '--settings', settingsPath,
+    '--pane-session-ids', paneSessionIdsPath,
+    '--pid', pidPath,
+    '--status', statusPath,
+  ];
+  const expect = normalizeClaudeModelId(options.expect || '');
+  if (expect) args.push('--expect', expect);
+  const out = fs.openSync(outLogPath, 'a');
+  const err = fs.openSync(errLogPath, 'a');
+  const child = spawn(process.execPath, args, {
+    cwd: PROJECT_ROOT,
+    detached: true,
+    stdio: ['ignore', out, err],
+    windowsHide: true,
+  });
+  child.unref();
+  ensureParent(pidPath);
+  fs.writeFileSync(pidPath, String(child.pid), 'utf8');
+  return {
+    ok: true,
+    started: true,
+    pid: child.pid,
+    pidPath,
+    statusPath,
+    outLogPath,
+    errLogPath,
+    dir,
+    intervalS,
+    settingsPath,
+    paneSessionIdsPath,
+    expect: expect || null,
+    expectSource: expect ? 'explicit-expect' : 'settings',
   };
+}
+
+function stopWatch(options = {}) {
+  const current = watchStatus(options);
+  const pid = current.pid || current.stalePid;
+  if (!pid || !isPidAlive(pid)) {
+    cleanupWatchMetadata(options);
+    return { ok: true, stopped: false, reason: 'not_running', pidPath: options.pidPath || DEFAULT_WATCH_PID_PATH };
+  }
+  process.kill(pid, 'SIGTERM');
+  return { ok: true, stopped: true, pid, pidPath: options.pidPath || DEFAULT_WATCH_PID_PATH };
+}
+
+async function restartWatch(options = {}) {
+  const stop = stopWatch(options);
+  if (stop.pid) await waitForPidExit(stop.pid);
+  return {
+    ok: true,
+    action: 'restart-model-audit-watch',
+    stop,
+    start: startWatch(options),
+  };
+}
+
+function parseCliArgs(args) {
+  return {
+    flag: (name) => {
+      const i = args.indexOf(`--${name}`);
+      return i >= 0 ? args[i + 1] : null;
+    },
+    has: (name) => args.includes(`--${name}`),
+  };
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const parsed = parseCliArgs(args);
+  const flag = parsed.flag;
   const dir = flag('dir')
     || path.join(os.homedir(), '.claude', 'projects', 'D--projects-squidrun');
 
@@ -294,6 +662,8 @@ function main() {
       intervalS: Number(flag('interval-s')) || 60,
       settingsPath: flag('settings') || DEFAULT_SETTINGS_PATH,
       paneSessionIdsPath: flag('pane-session-ids') || DEFAULT_PANE_SESSION_IDS_PATH,
+      pidPath: flag('pid') || DEFAULT_WATCH_PID_PATH,
+      statusPath: flag('status') || DEFAULT_WATCH_STATUS_PATH,
       alert: (message) => {
         console.error(`${new Date().toISOString()} ${message}`);
         try {
@@ -308,10 +678,30 @@ function main() {
     });
     return;
   }
+  if (['start', 'status', 'stop', 'restart'].includes(args[0])) {
+    const watchOptions = {
+      dir,
+      expect: flag('expect') || '',
+      intervalS: Number(flag('interval-s')) || 60,
+      settingsPath: flag('settings') || DEFAULT_SETTINGS_PATH,
+      paneSessionIdsPath: flag('pane-session-ids') || DEFAULT_PANE_SESSION_IDS_PATH,
+      pidPath: flag('pid') || DEFAULT_WATCH_PID_PATH,
+      statusPath: flag('status') || DEFAULT_WATCH_STATUS_PATH,
+      outLogPath: flag('out-log') || DEFAULT_WATCH_OUT_LOG_PATH,
+      errLogPath: flag('err-log') || DEFAULT_WATCH_ERR_LOG_PATH,
+    };
+    const result = args[0] === 'start'
+      ? startWatch(watchOptions)
+      : (args[0] === 'status'
+        ? watchStatus(watchOptions)
+        : (args[0] === 'stop' ? stopWatch(watchOptions) : await restartWatch(watchOptions)));
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
 
   const result = auditDir(dir, {
     since: flag('since') || '',
-    perFile: args.includes('--per-file'),
+    perFile: parsed.has('per-file'),
   });
   console.log(JSON.stringify(result, null, 2));
   // Human-readable tail: the question people actually ask.
@@ -322,9 +712,19 @@ function main() {
   }
 }
 
-if (require.main === module) main();
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.stack || error.message || String(error));
+    process.exitCode = 1;
+  });
+}
 
 module.exports = {
+  DEFAULT_WATCH_ERR_LOG_PATH,
+  DEFAULT_WATCH_OUT_LOG_PATH,
+  DEFAULT_WATCH_PID_PATH,
+  DEFAULT_WATCH_STATUS_PATH,
+  WATCH_MIN_STALE_AFTER_MS,
   tallyModelsByDay,
   mergeTallies,
   auditDir,
@@ -335,8 +735,14 @@ module.exports = {
   sessionIdFromTranscriptFile,
   findPaneIdForSession,
   expectedModelFromPaneSettings,
+  expectedModelsFromSettings,
   resolveExpectedModelForTranscript,
   findOffendingTurnsForTranscript,
   createStateChangeAlertFilter,
   loadWatchContext,
+  buildWatchStatusSnapshot,
+  watchStatus,
+  startWatch,
+  stopWatch,
+  restartWatch,
 };
