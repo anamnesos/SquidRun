@@ -677,6 +677,29 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('allows case context in named side profiles', async () => {
+    const tempProject = createLinkedProject();
+    const sendAttempts = [];
+    const { server, port } = await startAckServer(sendAttempts);
+    const logPath = path.join(tempProject, '.squidrun', 'runtime-eunbyeol', 'context-leak-violations.jsonl');
+
+    try {
+      const result = await runHmSend(
+        ['architect', '(BUILDER #1): case-operations status update', '--timeout', '80', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'eunbyeol' },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(result.stdout).toContain('delivered to architect');
+      expect(fs.existsSync(logPath)).toBe(false);
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('allows side-profile --no-fallback delivery when health reports same-profile handler route', async () => {
     const sendAttempts = [];
     const registerAttempts = [];
