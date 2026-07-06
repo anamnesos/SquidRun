@@ -1793,6 +1793,29 @@ describe('terminal.js module', () => {
       jest.useFakeTimers();
     });
 
+    test('consumes fresh next spawn setting for direct agent spawn', async () => {
+      jest.useRealTimers();
+      terminal.terminals.set('1', { write: jest.fn() });
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '1': 'claude' },
+        freshPaneSessionOnNextSpawn: { '1': true, '3': true },
+      });
+
+      await terminal.spawnAgent('1');
+
+      expect(mockSquidRun.claude.spawn).toHaveBeenCalledWith(
+        '1',
+        undefined,
+        expect.objectContaining({ remintClaudeSessionId: true })
+      );
+      expect(mockSquidRun.invoke).toHaveBeenCalledWith(
+        'set-setting',
+        'freshPaneSessionOnNextSpawn',
+        { '3': true }
+      );
+      jest.useFakeTimers();
+    });
+
     test('should spawn Codex pane via PTY (same as Claude)', async () => {
       jest.useRealTimers();
       terminal.registerCodexPane('1');
@@ -2192,6 +2215,34 @@ describe('terminal.js module', () => {
       );
       const createOptions = mockSquidRun.pty.create.mock.calls[0][2];
       expect(createOptions.preferWorkingDir).toBeUndefined();
+    });
+
+    test('fresh next spawn setting remints command-on-create and clears one-shot flag', async () => {
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '1': 'claude', '2': 'claude', '3': 'codex' },
+        freshPaneSessionOnNextSpawn: { '1': true, '3': true },
+      });
+
+      await terminal.initTerminal('1', { spawnCommandOnCreate: true });
+
+      expect(mockSquidRun.pty.create).toHaveBeenCalledWith(
+        '1',
+        '/test/cwd',
+        expect.objectContaining({
+          paneCommand: 'claude',
+          spawnCommandOnCreate: true,
+          remintClaudeSessionId: true,
+        })
+      );
+      expect(mockSquidRun.invoke).toHaveBeenCalledWith(
+        'set-setting',
+        'freshPaneSessionOnNextSpawn',
+        { '3': true }
+      );
     });
 
     test('fresh command-on-create initializes standard panes without serial starvation', async () => {

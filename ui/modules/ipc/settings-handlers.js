@@ -28,6 +28,7 @@ const SETTING_KEY_ALLOWLIST = new Set([
   'emailNotificationsEnabled',
   'externalNotificationsEnabled',
   'firmwareInjectionEnabled',
+  'freshPaneSessionOnNextSpawn',
   'hiddenPaneHostsEnabled',
   'mcpAutoConfig',
   'notifications',
@@ -69,6 +70,16 @@ function normalizeDirectoryPath(value) {
 function asPaneProjects(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
+}
+
+function normalizeFreshPaneSessionOnNextSpawn(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return ['1', '2', '3'].reduce((acc, paneId) => {
+    if (value[paneId] === true) {
+      acc[paneId] = true;
+    }
+    return acc;
+  }, {});
 }
 
 function getChangedPaneProjectTargets(previousPaneProjects, nextPaneProjects) {
@@ -301,28 +312,32 @@ function registerSettingsHandlers(ctx, deps) {
       ? { ...asPaneProjects(settings.paneProjects) }
       : null;
 
-    settings[normalizedKey] = value;
+    const valueForStore = normalizedKey === 'freshPaneSessionOnNextSpawn'
+      ? normalizeFreshPaneSessionOnNextSpawn(value)
+      : value;
+
+    settings[normalizedKey] = valueForStore;
 
     if (normalizedKey === 'allowAllPermissions') {
       settings.autonomyConsentGiven = true;
-      settings.autonomyConsentChoice = value ? 'enabled' : 'declined';
+      settings.autonomyConsentChoice = valueForStore ? 'enabled' : 'declined';
       settings.autonomyConsentUpdatedAt = new Date().toISOString();
     }
-    if (normalizedKey === 'autonomyConsentGiven' && value !== true) {
+    if (normalizedKey === 'autonomyConsentGiven' && valueForStore !== true) {
       settings.autonomyConsentChoice = 'pending';
       settings.autonomyConsentUpdatedAt = null;
     }
 
     // Operating mode drives firmware injection
     if (normalizedKey === 'operatingMode') {
-      settings.firmwareInjectionEnabled = value === 'project';
-      if (value !== 'project' && ctx.watcher?.writeState && ctx.watcher?.readState) {
+      settings.firmwareInjectionEnabled = valueForStore === 'project';
+      if (valueForStore !== 'project' && ctx.watcher?.writeState && ctx.watcher?.readState) {
         const currentState = ctx.watcher.readState() || {};
         if (currentState.project) {
           ctx.watcher.writeState({ ...currentState, project: null });
         }
       }
-      if (value !== 'project' && ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
+      if (valueForStore !== 'project' && ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
         ctx.mainWindow.webContents.send('project-changed', null);
       }
     }
@@ -336,7 +351,7 @@ function registerSettingsHandlers(ctx, deps) {
     if (normalizedKey === 'devTools') {
       const targetWindow = ctx.mainWindow && !ctx.mainWindow.isDestroyed() ? ctx.mainWindow : null;
       if (targetWindow?.webContents) {
-        if (value) targetWindow.webContents.openDevTools();
+        if (valueForStore) targetWindow.webContents.openDevTools();
         else targetWindow.webContents.closeDevTools();
       }
     }
@@ -352,7 +367,7 @@ function registerSettingsHandlers(ctx, deps) {
     }
 
     if (normalizedKey === 'watcherEnabled') {
-      if (value) {
+      if (valueForStore) {
         ctx.watcher.startWatcher();
       } else {
         ctx.watcher.stopWatcher();
