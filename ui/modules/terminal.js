@@ -1660,6 +1660,53 @@ function getPaneCommandFromSettings(paneId) {
   return typeof cmd === 'string' ? cmd : '';
 }
 
+function normalizeFreshPaneSessionOnNextSpawn(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return PANE_IDS.reduce((acc, paneId) => {
+    if (value[paneId] === true) {
+      acc[paneId] = true;
+    }
+    return acc;
+  }, {});
+}
+
+function isFreshPaneSessionOnNextSpawnArmed(paneId, settingsObj = getSettingsSafe()) {
+  const id = String(paneId || '');
+  if (!PANE_IDS.includes(id)) return false;
+  const armedPanes = normalizeFreshPaneSessionOnNextSpawn(settingsObj?.freshPaneSessionOnNextSpawn);
+  return armedPanes[id] === true;
+}
+
+function buildFreshSessionSpawnOptions(paneId, options = {}) {
+  const nextOptions = options && typeof options === 'object' ? { ...options } : {};
+  const shouldConsumeFreshFlag = isFreshPaneSessionOnNextSpawnArmed(paneId);
+  if (shouldConsumeFreshFlag) {
+    nextOptions.remintClaudeSessionId = true;
+  }
+  return { options: nextOptions, shouldConsumeFreshFlag };
+}
+
+async function consumeFreshPaneSessionOnNextSpawn(paneId) {
+  const id = String(paneId || '');
+  if (!PANE_IDS.includes(id)) return false;
+  const settingsObj = getSettingsSafe();
+  const armedPanes = normalizeFreshPaneSessionOnNextSpawn(settingsObj?.freshPaneSessionOnNextSpawn);
+  if (armedPanes[id] !== true) return false;
+  delete armedPanes[id];
+
+  try {
+    await invokeBridge('set-setting', 'freshPaneSessionOnNextSpawn', armedPanes);
+    if (typeof settings.refreshSettingsFromMain === 'function') {
+      await settings.refreshSettingsFromMain({ applyUi: true });
+    }
+    log.info('fresh-next-spawn', `Consumed fresh session flag for pane ${id}`);
+    return true;
+  } catch (err) {
+    log.warn('fresh-next-spawn', `Failed to clear fresh session flag for pane ${id}:`, err?.message || err);
+    return false;
+  }
+}
+
 function buildPtyCreateOptionsForRuntimeOverride(paneId, runtimeOverride = {}, workingDir = '') {
   const command = typeof runtimeOverride.command === 'string'
     ? runtimeOverride.command.trim()
@@ -1702,9 +1749,16 @@ function buildPtyCreateOptionsForRuntimeOverride(paneId, runtimeOverride = {}, w
 
 function applyFreshCreateSpawnCommandOptions(paneId, ptyCreateOptions = {}, options = {}) {
   const id = String(paneId || '');
-  if (options.spawnCommandOnCreate !== true) return ptyCreateOptions;
+  const shouldSpawnCommandOnCreate = options.spawnCommandOnCreate === true
+    || ptyCreateOptions.spawnCommandOnCreate === true;
+  if (!shouldSpawnCommandOnCreate) return ptyCreateOptions;
   if (!PANE_IDS.includes(id)) return ptyCreateOptions;
-  if (ptyCreateOptions.spawnCommandOnCreate === true) return ptyCreateOptions;
+  if (ptyCreateOptions.spawnCommandOnCreate === true) {
+    return {
+      ...ptyCreateOptions,
+      ...(options.remintClaudeSessionId === true ? { remintClaudeSessionId: true } : {}),
+    };
+  }
 
   const paneCommand = getPaneCommandFromSettings(id);
   if (!paneCommand) return ptyCreateOptions;
@@ -3410,12 +3464,16 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       snapshotTimeoutMs: options.snapshotTimeoutMs,
       recreateDelayMs: options.recreateDelayMs,
     });
+    const freshSessionSpawn = buildFreshSessionSpawnOptions(paneId, options);
     let ptyCreateOptions = buildPtyCreateOptionsForRuntimeOverride(paneId, runtimeOverride, workingDir);
-    ptyCreateOptions = applyFreshCreateSpawnCommandOptions(paneId, ptyCreateOptions, options);
+    ptyCreateOptions = applyFreshCreateSpawnCommandOptions(paneId, ptyCreateOptions, freshSessionSpawn.options);
     if (Object.keys(ptyCreateOptions).length > 0) {
       await window.squidrun.pty.create(paneId, workingDir, ptyCreateOptions);
     } else {
       await window.squidrun.pty.create(paneId, workingDir);
+    }
+    if (freshSessionSpawn.shouldConsumeFreshFlag && ptyCreateOptions.remintClaudeSessionId === true) {
+      await consumeFreshPaneSessionOnNextSpawn(paneId);
     }
     updatePaneStatus(paneId, 'Connected');
     if (runtimeOverride.spawnCommandOnCreate === true && runtimeOverride.command) {
@@ -3943,10 +4001,15 @@ async function spawnAgent(paneId, model = null, options = {}) {
       result = { success: true, command: runtimeOverride.command, runtimeOverride: true };
     } else {
       try {
-        const hasSpawnOptions = options && typeof options === 'object' && Object.keys(options).length > 0;
+        const freshSessionSpawn = buildFreshSessionSpawnOptions(paneId, options);
+        const spawnOptions = freshSessionSpawn.options;
+        const hasSpawnOptions = spawnOptions && typeof spawnOptions === 'object' && Object.keys(spawnOptions).length > 0;
         result = hasSpawnOptions
-          ? await window.squidrun.claude.spawn(paneId, undefined, options)
+          ? await window.squidrun.claude.spawn(paneId, undefined, spawnOptions)
           : await window.squidrun.claude.spawn(paneId);
+        if (result?.success && freshSessionSpawn.shouldConsumeFreshFlag && spawnOptions.remintClaudeSessionId === true) {
+          await consumeFreshPaneSessionOnNextSpawn(paneId);
+        }
       } catch (err) {
         log.error(`spawnAgent ${paneId}`, 'Spawn failed:', err);
         updatePaneStatus(paneId, 'Spawn failed');

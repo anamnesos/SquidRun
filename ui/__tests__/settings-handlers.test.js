@@ -176,6 +176,22 @@ describe('Settings Handlers', () => {
       expect(result.notifications).toBe(true);
     });
 
+    test('allows and normalizes one-shot fresh pane session setting', async () => {
+      deps.loadSettings.mockReturnValue({});
+
+      const result = await harness.invoke('set-setting', 'freshPaneSessionOnNextSpawn', {
+        '1': true,
+        '2': false,
+        '3': true,
+        extra: true,
+      });
+
+      expect(deps.saveSettings).toHaveBeenCalledWith({
+        freshPaneSessionOnNextSpawn: { '1': true, '3': true },
+      });
+      expect(result.freshPaneSessionOnNextSpawn).toEqual({ '1': true, '3': true });
+    });
+
     test('runs preflight scan when paneProjects paths change', async () => {
       const previousProject = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-prev-pane-'));
       const nextProject = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-next-pane-'));

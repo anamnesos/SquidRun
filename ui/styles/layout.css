@@ -774,6 +774,12 @@
   background: rgba(0, 240, 255, 0.18);
 }
 
+.pane-action-btn.pending-fresh-session {
+  border-color: rgba(240, 160, 0, 0.45);
+  color: var(--color-warning);
+  background: rgba(240, 160, 0, 0.12);
+}
+
 /* SVG icons inside pane buttons */
 .pane-btn-icon {
   width: 14px;

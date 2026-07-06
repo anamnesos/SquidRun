@@ -17,6 +17,11 @@ let onSettingsLoaded = null;
 let pairingStateUnsubscribe = null;
 let pairingCountdownTimer = null;
 let pairingStateCache = null;
+const FRESH_PANE_SESSION_LABELS = {
+  '1': 'Mira',
+  '2': 'Builder',
+  '3': 'Oracle',
+};
 
 function setConnectionStatusCallback(cb) {
   onConnectionStatusUpdate = cb;
@@ -30,6 +35,48 @@ function updateConnectionStatus(status) {
   if (onConnectionStatusUpdate) {
     onConnectionStatusUpdate(status);
   }
+}
+
+function normalizeFreshPaneSessionOnNextSpawn(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.keys(FRESH_PANE_SESSION_LABELS).reduce((acc, paneId) => {
+    if (value[paneId] === true) {
+      acc[paneId] = true;
+    }
+    return acc;
+  }, {});
+}
+
+function getFreshPaneSessionOnNextSpawn() {
+  return normalizeFreshPaneSessionOnNextSpawn(currentSettings.freshPaneSessionOnNextSpawn);
+}
+
+function applyFreshPaneSessionTogglesToUI() {
+  const armedPanes = getFreshPaneSessionOnNextSpawn();
+  document.querySelectorAll('.pane-fresh-spawn-toggle').forEach((toggle) => {
+    const paneId = String(toggle.dataset.paneId || '');
+    const armed = armedPanes[paneId] === true;
+    toggle.classList.toggle('active', armed);
+    toggle.setAttribute('aria-checked', armed ? 'true' : 'false');
+    if (!toggle.hasAttribute('tabindex')) {
+      toggle.setAttribute('tabindex', '0');
+    }
+    if (!toggle.hasAttribute('role')) {
+      toggle.setAttribute('role', 'switch');
+    }
+  });
+
+  document.querySelectorAll('.fresh-session-btn').forEach((button) => {
+    const paneId = String(button.dataset.paneId || '');
+    const label = FRESH_PANE_SESSION_LABELS[paneId] || `pane ${paneId}`;
+    const armed = armedPanes[paneId] === true;
+    button.classList.toggle('pending-fresh-session', armed);
+    button.dataset.tooltip = armed ? `Fresh next spawn armed for ${label}` : 'Fresh session';
+    button.setAttribute(
+      'aria-label',
+      armed ? `Fresh next spawn armed for ${label}` : `Fresh session for pane ${paneId}`
+    );
+  });
 }
 
 function stopPairingCountdownTimer() {
@@ -226,6 +273,8 @@ function applySettingsToUI() {
     }
   });
 
+  applyFreshPaneSessionTogglesToUI();
+
   window.dispatchEvent(new CustomEvent('squidrun-settings-updated', {
     detail: { ...currentSettings }
   }));
@@ -240,6 +289,25 @@ async function toggleSetting(key) {
     log.info('Settings', `${key} = ${newValue}`);
   } catch (err) {
     log.error('Settings', 'Error toggling setting', err);
+  }
+}
+
+async function setFreshPaneSessionOnNextSpawn(paneId, enabled) {
+  const id = String(paneId || '');
+  if (!Object.prototype.hasOwnProperty.call(FRESH_PANE_SESSION_LABELS, id)) return;
+  try {
+    const next = getFreshPaneSessionOnNextSpawn();
+    if (enabled) {
+      next[id] = true;
+    } else {
+      delete next[id];
+    }
+    currentSettings = await invokeBridge('set-setting', 'freshPaneSessionOnNextSpawn', next);
+    applySettingsToUI();
+    const label = FRESH_PANE_SESSION_LABELS[id] || `pane ${id}`;
+    log.info('Settings', `${label} fresh next spawn ${enabled ? 'armed' : 'cleared'}`);
+  } catch (err) {
+    log.error('Settings', 'Error updating fresh next spawn setting', err);
   }
 }
 
@@ -307,6 +375,31 @@ function setupSettings() {
 
     const triggerToggle = () => {
       toggleSetting(setting);
+    };
+
+    toggle.addEventListener('click', triggerToggle);
+    toggle.addEventListener('keydown', (event) => {
+      if (event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault();
+        triggerToggle();
+      }
+    });
+  });
+
+  document.querySelectorAll('.pane-fresh-spawn-toggle').forEach(toggle => {
+    const paneId = String(toggle.dataset.paneId || '');
+    if (!Object.prototype.hasOwnProperty.call(FRESH_PANE_SESSION_LABELS, paneId)) return;
+
+    if (!toggle.hasAttribute('tabindex')) {
+      toggle.setAttribute('tabindex', '0');
+    }
+    if (!toggle.hasAttribute('role')) {
+      toggle.setAttribute('role', 'switch');
+    }
+
+    const triggerToggle = () => {
+      const armed = getFreshPaneSessionOnNextSpawn()[paneId] === true;
+      void setFreshPaneSessionOnNextSpawn(paneId, !armed);
     };
 
     toggle.addEventListener('click', triggerToggle);
@@ -517,6 +610,8 @@ module.exports = {
   applySettingsToUI,
   toggleSetting,
   getSettings,
+  normalizeFreshPaneSessionOnNextSpawn,
+  setFreshPaneSessionOnNextSpawn,
   requiresAutonomyConsent,
   setAutonomyConsentChoice,
   refreshSettingsFromMain,
