@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { resolveCoordPath } = require('../config');
-const { normalizeProfileName } = require('../profile');
+const { isMainProfile, normalizeProfileName } = require('../profile');
 
 const DEFAULT_CONTEXT_LEAK_VIOLATIONS_PATH = resolveCoordPath(
   path.join('runtime', 'context-leak-violations.jsonl'),
@@ -114,7 +114,7 @@ function shouldEnforceContextLeakGuard(input = {}) {
   const bypass = String(input.bypass || '').trim() === '1';
   if (bypass) return false;
   const profile = normalizeProfileName(input.profile || process.env.SQUIDRUN_PROFILE || 'main');
-  if (profile === 'scoped') return false;
+  if (!isMainProfile(profile)) return false;
   return Boolean(toText(input.content, ''));
 }
 
