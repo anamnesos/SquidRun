@@ -630,6 +630,21 @@ describe('renderer.js smoke tests', () => {
   });
 
   describe('Squid Room live pane helpers', () => {
+    it('uses room-specific startup copy for display-only Squid Room windows', () => {
+      expect(renderer.getStartupLoadingCopy({ windowKey: 'squid-room' })).toEqual(expect.objectContaining({
+        message: 'Opening the Squid Room...',
+        stage: 'Waking the reef...',
+        readyMessage: 'Squid Room ready',
+      }));
+
+      const model = renderer.computeStartupOverlayModel({}, {
+        windowContext: { windowKey: 'squid-room' },
+      });
+
+      expect(model.headline).toBe('Opening the Squid Room...');
+      expect(model.subhead).toBe('Connecting terminals…');
+    });
+
     it('treats the Squid Room DOM marker as active even before async window context catches up', () => {
       const previousBody = global.document.body;
       global.document.body = {

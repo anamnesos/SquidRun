@@ -505,6 +505,25 @@ if (typeof configureWorkspacePaneShell === 'function') {
 const STARTUP_OVERLAY_FADE_MS = 280;
 const DAEMON_TIMEOUT_FALLBACK_MESSAGE = "SquidRun couldn't start the background daemon. Make sure Node.js 18+ is installed and try restarting the app.";
 const STARTUP_LOADING_DEFAULT_MESSAGE = 'Starting SquidRun...';
+const STARTUP_LOADING_DEFAULT_STAGE = 'Bootstrapping workspace...';
+const STARTUP_LOADING_COPY = Object.freeze({
+  main: Object.freeze({
+    message: STARTUP_LOADING_DEFAULT_MESSAGE,
+    stage: STARTUP_LOADING_DEFAULT_STAGE,
+    readyMessage: 'SquidRun ready',
+    readyStage: 'All core services online',
+    degradedStage: 'Started with degraded services',
+    stuckEta: 'Check logs or restart SquidRun',
+  }),
+  squidRoom: Object.freeze({
+    message: 'Opening the Squid Room...',
+    stage: 'Waking the reef...',
+    readyMessage: 'Squid Room ready',
+    readyStage: 'Room surface online',
+    degradedStage: 'Room opened with degraded services',
+    stuckEta: 'Check logs or close this window',
+  }),
+});
 const STARTUP_OVERLAY_ERROR_DISMISS_MS = 12000;
 const STARTUP_OVERLAY_MIN_VISIBLE_MS = 1400;
 const STARTUP_OVERLAY_POLL_MS = 600;
@@ -717,6 +736,12 @@ function stripSquidRoomFaceJargon(value) {
   const core = rendererModules.faceJargonCore?.stripMachineJargon;
   if (typeof core === 'function') return core(pipelineSpecific);
   return pipelineSpecific.replace(/\s{2,}/g, ' ').trim();
+}
+
+function getStartupLoadingCopy(windowContext = {}) {
+  return isSquidRoomWindowContext(windowContext)
+    ? STARTUP_LOADING_COPY.squidRoom
+    : STARTUP_LOADING_COPY.main;
 }
 
 function hasSquidRoomFaceMachineMarker(value) {
@@ -1681,6 +1706,7 @@ function buildStartupChecklistHtml(items = []) {
 }
 
 function computeStartupOverlayModel(status = {}, localState = {}) {
+  const startupCopy = getStartupLoadingCopy(localState?.windowContext || initialWindowContext);
   const paneHost = status?.paneHost || {};
   const readyPanes = Array.isArray(paneHost.readyPanes) ? paneHost.readyPanes : [];
   const missingPanes = Array.isArray(paneHost.missingPanes) ? paneHost.missingPanes : [];
@@ -1753,8 +1779,12 @@ function computeStartupOverlayModel(status = {}, localState = {}) {
     percent: Math.max(6, Math.min(100, Math.round((completedWeight / totalWeight) * 100))),
     ready: items.every((item) => item.state === 'ready'),
     degraded,
-    headline: nextItem?.state === 'ready' ? 'SquidRun ready' : `Loading ${nextItem?.name || 'services'}…`,
-    subhead: nextItem?.detail || 'Bootstrapping workspace…',
+    headline: nextItem?.state === 'ready'
+      ? startupCopy.readyMessage
+      : (isSquidRoomWindowContext(localState?.windowContext || initialWindowContext)
+        ? startupCopy.message
+        : `Loading ${nextItem?.name || 'services'}…`),
+    subhead: nextItem?.detail || startupCopy.stage,
   };
 }
 
@@ -4027,6 +4057,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let startupOverlayResolved = false;
   const startupOverlayStartedAtMs = Date.now();
   const startupOverlayState = {
+    windowContext: initialWindowContext,
     daemonConnected: false,
     capabilitiesLoaded: false,
   };
@@ -4042,9 +4073,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     setStartupLoadingOverlayState(state);
   };
 
+  const initialStartupCopy = getStartupLoadingCopy(initialWindowContext);
   setTrackedStartupLoadingOverlayState({
-    message: STARTUP_LOADING_DEFAULT_MESSAGE,
-    stage: 'Bootstrapping workspace...',
+    message: initialStartupCopy.message,
+    stage: initialStartupCopy.stage,
     eta: 'Estimating...',
     percent: STARTUP_OVERLAY_INITIAL_PERCENT,
     checks: [
@@ -4073,13 +4105,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (reason === 'daemon-timeout') {
       handleDaemonStartupTimeout(payload);
     } else {
+      const startupCopy = getStartupLoadingCopy(startupOverlayState.windowContext);
       const elapsedMs = Date.now() - startupOverlayStartedAtMs;
       const remainingMs = Math.max(0, STARTUP_OVERLAY_MIN_VISIBLE_MS - elapsedMs);
       setTrackedStartupLoadingOverlayState({
-        message: 'SquidRun ready',
+        message: startupCopy.readyMessage,
         stage: reason === 'degraded-startup'
-          ? 'Started with degraded services'
-          : 'All core services online',
+          ? startupCopy.degradedStage
+          : startupCopy.readyStage,
         eta: 'Ready',
         percent: 100,
         hideSpinner: true,
@@ -4102,10 +4135,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   startupOverlayStallTimer = setTimeout(() => {
     if (startupOverlayResolved || startupOverlayLastPercent > STARTUP_OVERLAY_INITIAL_PERCENT) return;
     startupOverlayStalled = true;
+    const startupCopy = getStartupLoadingCopy(startupOverlayState.windowContext);
     setTrackedStartupLoadingOverlayState({
       message: 'Startup is stuck',
       stage: 'The window bridge never reported ready',
-      eta: 'Check logs or restart SquidRun',
+      eta: startupCopy.stuckEta,
       percent: startupOverlayLastPercent,
       error: true,
       hideSpinner: true,
@@ -4607,6 +4641,8 @@ if (typeof module !== 'undefined' && module.exports) {
     syncSquidRoomAppSectionToggle,
     handleGlobalEscapePressed,
     isSquidRoomWindowContext,
+    getStartupLoadingCopy,
+    computeStartupOverlayModel,
     isSquidRoomPaneWrongWorkingDir,
     normalizeSquidRoomWorkingDirForCompare,
     renderSquidRoomProjectionInline,
