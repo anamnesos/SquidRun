@@ -5574,6 +5574,72 @@ describe('SquidRunApp', () => {
     });
   });
 
+  describe('evidence ledger prune housekeeping', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+    });
+
+    it('runs prune through evidence-ledger worker routing with housekeeping source', async () => {
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
+        ok: true,
+        status: 'pruned',
+        removedTotal: 2,
+        reclaim: { attempted: true, ok: true },
+      });
+      app.evidenceLedgerPruneHousekeeping.enabled = true;
+
+      const result = await app.evidenceLedgerPruneHousekeeping.run('unit-test', {
+        maxRows: 10,
+        reclaim: false,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'pruned',
+      }));
+      expect(evidenceLedger.executeEvidenceLedgerOperation).toHaveBeenCalledWith(
+        'prune',
+        expect.objectContaining({
+          maxRows: 10,
+          reclaim: false,
+          reason: 'unit-test',
+        }),
+        expect.objectContaining({
+          source: {
+            via: 'evidence-ledger-housekeeping',
+            role: 'system',
+            paneId: null,
+          },
+        })
+      );
+    });
+
+    it('starts startup prune and daily timer only when enabled', () => {
+      jest.useFakeTimers();
+      app.evidenceLedgerPruneHousekeeping.enabled = true;
+      const runSpy = jest.spyOn(app.evidenceLedgerPruneHousekeeping, 'run').mockResolvedValue({ ok: true });
+
+      try {
+        app.evidenceLedgerPruneHousekeeping.start();
+
+        expect(runSpy).toHaveBeenCalledWith('startup');
+        expect(app.evidenceLedgerPruneHousekeeping.timer).not.toBeNull();
+
+        jest.advanceTimersByTime(24 * 60 * 60 * 1000);
+
+        expect(runSpy).toHaveBeenCalledWith('timer');
+        app.evidenceLedgerPruneHousekeeping.stop();
+        expect(app.evidenceLedgerPruneHousekeeping.timer).toBeNull();
+      } finally {
+        app.evidenceLedgerPruneHousekeeping.stop();
+        jest.useRealTimers();
+      }
+    });
+  });
+
   describe('resolveTargetToPane', () => {
     let app;
 

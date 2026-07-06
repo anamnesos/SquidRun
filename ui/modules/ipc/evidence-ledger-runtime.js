@@ -613,6 +613,17 @@ function executeEvidenceLedgerOperation(action, payload = {}, options = {}) {
           nowMs: toNumberOrFallback(enrichedPayload.nowMs, null),
         });
       }
+      case 'prune': {
+        if (!runtime?.store || typeof runtime.store.prune !== 'function') {
+          return { ok: false, reason: 'unavailable' };
+        }
+        return runtime.store.prune({
+          nowMs: toNumberOrFallback(enrichedPayload.nowMs ?? enrichedPayload.now_ms, null),
+          retentionMs: toNumberOrFallback(enrichedPayload.retentionMs ?? enrichedPayload.retention_ms, null),
+          maxRows: toNumberOrFallback(enrichedPayload.maxRows ?? enrichedPayload.max_rows, null),
+          reclaim: enrichedPayload.reclaim === false ? false : undefined,
+        });
+      }
       default:
         return {
           ok: false,

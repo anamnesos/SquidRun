@@ -224,4 +224,22 @@ maybeDescribe('evidence-ledger IPC integration', () => {
     expect(Array.isArray(roadmap)).toBe(true);
     expect(roadmap.some((item) => item.title.includes('Slice 3 Phase C'))).toBe(true);
   });
+
+  test('prune ipc channel invokes the runtime store prune action', async () => {
+    const result = await harness.invoke('evidence-ledger:prune', {
+      nowMs: 10000,
+      retentionMs: 1000,
+      maxRows: 5000,
+      reclaim: false,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'pruned',
+      removedTotal: expect.any(Number),
+      reclaim: expect.objectContaining({
+        attempted: false,
+      }),
+    }));
+  });
 });

@@ -14,6 +14,7 @@ jest.mock('../modules/ipc/evidence-ledger-runtime', () => ({
 const workerClient = require('../modules/ipc/evidence-ledger-worker-client');
 const runtime = require('../modules/ipc/evidence-ledger-runtime');
 const {
+  registerEvidenceLedgerHandlers,
   initializeEvidenceLedgerRuntime,
   executeEvidenceLedgerOperation,
   closeSharedRuntime,
@@ -34,6 +35,22 @@ describe('evidence-ledger handlers worker routing', () => {
       {},
       expect.objectContaining({
         source: {},
+      }),
+    );
+    expect(runtime.executeEvidenceLedgerOperation).not.toHaveBeenCalled();
+  });
+
+  test('routes prune through the worker broker by default', async () => {
+    const result = await executeEvidenceLedgerOperation('prune', { maxRows: 10 }, {
+      source: { via: 'evidence-ledger-housekeeping', role: 'system' },
+    });
+
+    expect(result).toEqual({ ok: true, source: 'worker' });
+    expect(workerClient.executeOperation).toHaveBeenCalledWith(
+      'prune',
+      { maxRows: 10 },
+      expect.objectContaining({
+        source: { via: 'evidence-ledger-housekeeping', role: 'system' },
       }),
     );
     expect(runtime.executeEvidenceLedgerOperation).not.toHaveBeenCalled();
@@ -86,5 +103,17 @@ describe('evidence-ledger handlers worker routing', () => {
     expect(ctx.ipcMain.removeHandler).toHaveBeenCalled();
     expect(runtime.closeSharedRuntime).not.toHaveBeenCalled();
     expect(workerClient.closeRuntime).not.toHaveBeenCalled();
+  });
+
+  test('registers prune ipc channel', () => {
+    const ctx = {
+      ipcMain: {
+        handle: jest.fn(),
+      },
+    };
+
+    registerEvidenceLedgerHandlers(ctx);
+
+    expect(ctx.ipcMain.handle).toHaveBeenCalledWith('evidence-ledger:prune', expect.any(Function));
   });
 });
