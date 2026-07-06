@@ -2231,13 +2231,17 @@ describe('terminal.js module', () => {
       await terminal.initTerminal('1');
 
       expect(Terminal).toHaveBeenCalledWith(expect.objectContaining({
-        fontFamily: "'Cascadia Code', 'Consolas', 'Monaco', monospace",
+        fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Consolas', 'Monaco', monospace",
+        fontSize: 13.5,
         fontWeightBold: 600,
         letterSpacing: 0,
-        lineHeight: 1.25,
+        lineHeight: 1.35,
         minimumContrastRatio: 4.5,
         scrollback: 2000,
         theme: expect.objectContaining({
+          background: '#0b0f18',
+          foreground: '#c9d4e3',
+          white: '#c9d4e3',
           brightBlack: '#5c6a80',
           brightRed: '#ff5c72',
           brightGreen: '#54f0a2',

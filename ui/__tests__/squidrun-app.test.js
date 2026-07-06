@@ -2317,6 +2317,60 @@ describe('SquidRunApp', () => {
       );
     });
 
+    it('passes visual-capture window options through without auto-booting agents', async () => {
+      app.setupWindowListeners.mockRestore();
+      const bundleSpy = jest.spyOn(app, 'writeProfileStartupBundle').mockResolvedValue({
+        bundlePath: '/test/workspace/runtime/window-teams/visual-capture/startup-bundle.md',
+        sourcePaths: ['/test/profile/AGENTS.md'],
+        text: 'should not be written',
+      });
+
+      await app.openAppWindow('visual-capture', {
+        autoBootAgents: false,
+        profileName: 'main',
+        windowTeam: 'main',
+        displayOnly: false,
+        skipStartupBundle: true,
+        title: 'SquidRun - Visual Capture',
+      });
+      const captureWindow = app.ctx.getWindow('visual-capture');
+      const didFinishLoad = captureWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+      expect(captureWindow.loadFile).toHaveBeenCalledWith(
+        expect.stringContaining('index.html'),
+        expect.objectContaining({
+          query: expect.objectContaining({
+            windowKey: 'visual-capture',
+            windowTeam: 'main',
+            profileName: 'main',
+            startupBundlePath: '',
+            autoBootAgents: 'false',
+            displayOnly: 'false',
+            skipStartupBundle: 'true',
+          }),
+        })
+      );
+
+      await didFinishLoad();
+
+      expect(bundleSpy).not.toHaveBeenCalled();
+      expect(captureWindow.webContents.send).toHaveBeenCalledWith(
+        'window-context',
+        expect.objectContaining({
+          windowKey: 'visual-capture',
+          windowTeam: 'main',
+          profileName: 'main',
+          startupBundlePath: null,
+          startupSourceFiles: [],
+          startupBundleReady: false,
+          autoBootAgents: false,
+          displayOnly: false,
+          skipStartupBundle: true,
+        })
+      );
+    });
+
     it('auto-boots agents for standalone non-main profile windows', async () => {
       app.setupWindowListeners.mockRestore();
       jest.spyOn(app, 'initPostLoad').mockResolvedValue();
