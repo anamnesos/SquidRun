@@ -296,6 +296,12 @@ CREATE INDEX IF NOT EXISTS idx_comms_journal_status
 
 CREATE INDEX IF NOT EXISTS idx_comms_journal_sender_brokered
   ON comms_journal(sender_role, brokered_at_ms);
+
+CREATE INDEX IF NOT EXISTS idx_comms_journal_event_ts
+  ON comms_journal(COALESCE(brokered_at_ms, sent_at_ms, updated_at_ms), row_id);
+
+CREATE INDEX IF NOT EXISTS idx_comms_journal_session_event_ts
+  ON comms_journal(session_id, COALESCE(brokered_at_ms, sent_at_ms, updated_at_ms), row_id);
 `;
 
 const SCHEMA_V5_SQL = `

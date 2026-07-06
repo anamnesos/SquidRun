@@ -280,6 +280,46 @@ maybeDescribe('evidence-ledger-store', () => {
     }));
   });
 
+  test('queryCommsJournal order can use event timestamp expression indexes', () => {
+    expect(store.init().ok).toBe(true);
+
+    for (let i = 0; i < 8; i += 1) {
+      const sessionId = i % 2 === 0 ? 'app-session-a' : 'app-session-b';
+      const result = store.upsertCommsJournal({
+        messageId: `hm-index-${i}`,
+        sessionId,
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        sentAtMs: 1000 + i,
+        brokeredAtMs: i % 3 === 0 ? 2000 + i : null,
+        rawBody: `(BUILDER #${i}): indexed query plan`,
+        status: 'routed',
+      });
+      expect(result.ok).toBe(true);
+    }
+
+    const globalPlan = store.db.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT * FROM comms_journal
+      ORDER BY COALESCE(brokered_at_ms, sent_at_ms, updated_at_ms) DESC, row_id DESC
+      LIMIT ?
+    `).all(5).map((row) => String(row.detail || '').toLowerCase());
+    expect(globalPlan.join('\n')).toContain('idx_comms_journal_event_ts');
+    expect(globalPlan.join('\n')).not.toContain('use temp b-tree');
+
+    const sessionPlan = store.db.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT * FROM comms_journal
+      WHERE session_id = ?
+      ORDER BY COALESCE(brokered_at_ms, sent_at_ms, updated_at_ms) ASC, row_id ASC
+      LIMIT ?
+    `).all('app-session-a', 5).map((row) => String(row.detail || '').toLowerCase());
+    expect(sessionPlan.join('\n')).toContain('idx_comms_journal_session_event_ts');
+    expect(sessionPlan.join('\n')).not.toContain('use temp b-tree');
+  });
+
   test('prune applies ttl and hard-cap', () => {
     store.close();
     store = new EvidenceLedgerStore({
