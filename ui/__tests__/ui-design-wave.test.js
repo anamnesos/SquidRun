@@ -91,6 +91,19 @@ describe('UI design wave contracts', () => {
     expect(layoutCss).toContain('.header-actions #fullRestartBtn::before');
   });
 
+  test('display-only Squid Room hides workstation shell and gets authored splash copy', () => {
+    const html = read('index.html');
+    const layoutCss = read('styles', 'layout.css');
+    const renderer = read('renderer.js');
+
+    expect(html).toContain('data-main-window-shortcuts="true"');
+    expect(layoutCss).toMatch(/body\[data-window-key="squid-room"\] \.command-bar,\s*body\[data-window-key="squid-room"\] #miraLiveReply,/);
+    expect(layoutCss).toContain('body[data-window-key="squid-room"] .status-shortcuts');
+    expect(renderer).toContain("message: 'Opening the Squid Room...'");
+    expect(renderer).toContain("stage: 'Waking the reef...'");
+    expect(renderer).toContain('const initialStartupCopy = getStartupLoadingCopy(initialWindowContext);');
+  });
+
   test('xterm inverse rows are toned down against the pane surface', () => {
     const terminal = read('modules', 'terminal.js');
     const paneHost = read('pane-host-renderer.js');
