@@ -292,6 +292,42 @@ function getQueueItemBytes(item) {
   return new TextEncoder().encode(msg).length;
 }
 
+function traceMessageIdFromContext(traceContext = null, deliveryId = null) {
+  return toNonEmptyString(traceContext?.messageId)
+    || toNonEmptyString(traceContext?.traceId)
+    || toNonEmptyString(traceContext?.correlationId)
+    || toNonEmptyString(deliveryId)
+    || null;
+}
+
+function emitThrottleQueueDrop(paneId, item = {}, reason = 'queue_dropped', details = {}) {
+  const deliveryId = item && typeof item === 'object' ? item.deliveryId : null;
+  const traceContext = item && typeof item === 'object' ? item.traceContext : null;
+  const messageId = traceMessageIdFromContext(traceContext, deliveryId);
+  appendBusTraceEvent({
+    eventType: 'renderer_throttle_queue_dropped',
+    messageId,
+    deliveryId: deliveryId || null,
+    paneId: String(paneId),
+    status: 'queue_dropped',
+    reason,
+    payloadBytes: getQueueItemBytes(item),
+    payloadFingerprint: createPayloadFingerprint(String(item?.message || '')),
+    ...details,
+  });
+  if (deliveryId) {
+    sendBridge('trigger-delivery-outcome', {
+      deliveryId,
+      messageId,
+      paneId: String(paneId),
+      accepted: false,
+      verified: false,
+      status: 'queue_dropped',
+      reason,
+    });
+  }
+}
+
 function pruneIpcChunkAssemblies(now = Date.now()) {
   for (const [key, entry] of ipcChunkAssemblies.entries()) {
     const updatedAt = Number(entry?.updatedAtMs || 0);
@@ -1233,16 +1269,40 @@ function enqueueForThrottle(
     throttleQueues.set(paneId, []);
   }
   const queue = throttleQueues.get(paneId);
+  const traceMessageId = traceMessageIdFromContext(traceContext, deliveryId);
+  const materialized = materializeLongAgentMessageForPane(message, {
+    paneId: String(paneId),
+    deliveryId: deliveryId || null,
+    messageId: traceMessageId,
+    traceContext,
+  });
   const incomingItem = {
-    message,
+    message: materialized.message,
     deliveryId: deliveryId || null,
     traceContext: traceContext || null,
     startupInjection: startupInjection === true,
     meta: (meta && typeof meta === 'object') ? { ...meta } : null,
+    materializedAtEnqueue: materialized.materialized === true,
+    materializedFullPayloadPath: materialized.displayPath || null,
+    materializedOriginalBytes: materialized.originalBytes || null,
   };
   const maxItems = getThrottleQueueMaxItems();
   const maxBytes = getThrottleQueueMaxBytes();
   const incomingBytes = getQueueItemBytes(incomingItem);
+
+  if (materialized.materialized === true) {
+    appendBusTraceEvent({
+      eventType: 'renderer_full_agent_message_materialized',
+      messageId: traceMessageId,
+      deliveryId: deliveryId || null,
+      paneId: String(paneId),
+      payloadBytes: materialized.originalBytes,
+      pointerBytes: materialized.pointerBytes,
+      fullPayloadPath: materialized.displayPath,
+      payloadSha256: materialized.sha256,
+      materializedAt: 'throttle_enqueue',
+    });
+  }
 
   if (incomingBytes > maxBytes) {
     log.warn(
@@ -1253,11 +1313,16 @@ function enqueueForThrottle(
       'ThrottleQueue',
       `Dropped oversize message for pane ${paneId} (${incomingBytes} bytes > ${maxBytes} cap)`
     );
+    emitThrottleQueueDrop(paneId, incomingItem, 'queue_oversize', {
+      maxBytes,
+      incomingBytes,
+    });
     return;
   }
 
   let queueBytes = getThrottleQueueBytes(queue);
   let droppedCount = 0;
+  const droppedItems = [];
   while (
     queue.length >= maxItems
     || ((queueBytes + incomingBytes) > maxBytes && queue.length > 0)
@@ -1265,6 +1330,7 @@ function enqueueForThrottle(
     const dropped = queue.shift();
     queueBytes -= getQueueItemBytes(dropped);
     droppedCount += 1;
+    droppedItems.push(dropped);
   }
 
   if (droppedCount > 0) {
@@ -1273,6 +1339,12 @@ function enqueueForThrottle(
       `Queue cap reached for pane ${paneId}; dropped ${droppedCount} stale message(s) `
       + `(maxItems=${maxItems}, maxBytes=${maxBytes})`
     );
+    for (const dropped of droppedItems) {
+      emitThrottleQueueDrop(paneId, dropped, 'queue_cap_eviction', {
+        maxItems,
+        maxBytes,
+      });
+    }
   }
 
   queue.push(incomingItem);
@@ -1308,11 +1380,7 @@ function processThrottleQueue(paneId) {
   let routedMessage = stripInternalRoutingWrappers(message);
   const deliveryId = item && typeof item === 'object' ? item.deliveryId : null;
   const traceContext = item && typeof item === 'object' ? (item.traceContext || null) : null;
-  const traceMessageId = toNonEmptyString(traceContext?.messageId)
-    || toNonEmptyString(traceContext?.traceId)
-    || toNonEmptyString(traceContext?.correlationId)
-    || deliveryId
-    || null;
+  const traceMessageId = traceMessageIdFromContext(traceContext, deliveryId);
   const injectMeta = item && typeof item === 'object' && item.meta && typeof item.meta === 'object'
     ? { ...item.meta }
     : null;

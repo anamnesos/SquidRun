@@ -1,9 +1,14 @@
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
 const {
   buildStatusSnapshot,
   STATUS_STALE_AFTER_MS,
   isNodeExecutablePath,
   resolveBrokerLaunchCommand,
 } = require('../scripts/hm-voice-broker');
+const { readVoiceBrokerStatusSnapshot } = require('../modules/bridge/preload-api');
 
 describe('hm-voice-broker lane launcher', () => {
   test('falls back to node.exe instead of spawning Electron as the broker runtime', () => {
@@ -119,6 +124,45 @@ describe('hm-voice-broker lane launcher', () => {
         running: true,
       }),
     }));
+  });
+
+  test('preload local broker status rejects stale running:true status files', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-broker-preload-'));
+    try {
+      const runtimeDir = path.join(tempDir, '.squidrun', 'runtime');
+      fs.mkdirSync(runtimeDir, { recursive: true });
+      const nowMs = Date.parse('2026-06-23T20:00:00.000Z');
+      const staleHeartbeatAt = new Date(nowMs - STATUS_STALE_AFTER_MS - 1000).toISOString();
+      fs.writeFileSync(path.join(runtimeDir, 'voice-broker.pid'), String(process.pid), 'utf8');
+      fs.writeFileSync(path.join(runtimeDir, 'voice-broker-status.json'), JSON.stringify({
+        pid: process.pid,
+        running: true,
+        updatedAt: staleHeartbeatAt,
+        heartbeatAt: staleHeartbeatAt,
+        address: { address: '127.0.0.1', port: 61984 },
+        config: { openaiApiKeyPresent: true },
+      }, null, 2));
+
+      const snapshot = readVoiceBrokerStatusSnapshot({ projectRoot: tempDir, nowMs });
+
+      expect(snapshot).toEqual(expect.objectContaining({
+        ready: true,
+        running: false,
+        state: 'stopped',
+      }));
+      expect(snapshot.lane).toEqual(expect.objectContaining({
+        running: false,
+        staleHeartbeat: true,
+        statusFresh: false,
+        reason: 'stale_voice_broker_status',
+      }));
+      expect(snapshot.lane.broker).toEqual(expect.objectContaining({
+        running: true,
+        address: { address: '127.0.0.1', port: 61984 },
+      }));
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   test('keeps a just-spawned broker in starting state until the child writes matching status', () => {

@@ -3,7 +3,10 @@ const os = require('os');
 const path = require('path');
 
 const {
+  inspectShadowRunnerStatus,
   normalizeIntervalMs,
+  normalizeTickDeadlineMs,
+  runShadowLoop,
   runShadowTick,
   verifyRefsForSignal,
   MIN_INTERVAL_MS,
@@ -251,6 +254,161 @@ describe('the tell shadow runner', () => {
 
   test('normalizes intervals to avoid hammering Firestore', () => {
     expect(normalizeIntervalMs(1000)).toBe(MIN_INTERVAL_MS);
+  });
+
+  test('run loop deadlines a hung TrustQuote read and exits after writing tick_failed proof', async () => {
+    jest.useFakeTimers();
+    try {
+      const ledgerPath = path.join(tempDir, 'shadow.json');
+      const statusPath = path.join(tempDir, 'status.json');
+      const pidPath = path.join(tempDir, 'runner.pid');
+      const exitProcess = jest.fn();
+
+      const loop = runShadowLoop({
+        runId: 'shadow-timeout-test',
+        ledgerPath,
+        statusPath,
+        pidPath,
+        intervalMs: MIN_INTERVAL_MS,
+        tickDeadlineMs: 25,
+        fetchTrustQuoteReadOnlySignals: jest.fn(() => new Promise(() => {})),
+        exitProcess,
+      });
+
+      await jest.advanceTimersByTimeAsync(25);
+      await expect(loop).resolves.toEqual(expect.objectContaining({ ok: false }));
+
+      expect(exitProcess).toHaveBeenCalledWith(1);
+      const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
+      expect(ledger.rows).toEqual([expect.objectContaining({
+        type: 'tick_failed',
+        ok: false,
+        reason: 'shadow_tick_timeout',
+        readOnly: true,
+        dryRun: true,
+      })]);
+      const status = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+      expect(status).toEqual(expect.objectContaining({
+        ok: false,
+        running: true,
+        runId: 'shadow-timeout-test',
+        lastErrorCode: 'shadow_tick_timeout',
+        timeoutMs: 25,
+        lastTick: expect.objectContaining({
+          type: 'tick_failed',
+          reason: 'shadow_tick_timeout',
+        }),
+      }));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('normalizes tick deadline to twice the loop interval by default', () => {
+    expect(normalizeTickDeadlineMs(null, MIN_INTERVAL_MS)).toBe(MIN_INTERVAL_MS * 2);
+    expect(normalizeTickDeadlineMs(5, MIN_INTERVAL_MS)).toBe(10);
+  });
+
+  test('status liveness rejects stale running:true without a fresh successful tick', () => {
+    const ledgerPath = path.join(tempDir, 'shadow.json');
+    const statusPath = path.join(tempDir, 'status.json');
+    const pidPath = path.join(tempDir, 'runner.pid');
+    const nowMs = Date.parse('2026-06-23T20:00:00.000Z');
+    const staleTickMs = nowMs - 35 * 60 * 60 * 1000;
+    fs.writeFileSync(pidPath, String(process.pid), 'utf8');
+    fs.writeFileSync(ledgerPath, JSON.stringify({
+      shadowStartedAtMs: staleTickMs,
+      rows: [{
+        type: 'tick',
+        tickId: 'tick-stale',
+        ts: staleTickMs,
+        checkedAt: new Date(staleTickMs).toISOString(),
+      }],
+    }, null, 2));
+    fs.writeFileSync(statusPath, JSON.stringify({
+      ok: true,
+      running: true,
+      runId: 'the-tell-shadow:test',
+      tickId: 'tick-stale',
+      checkedAt: new Date(staleTickMs).toISOString(),
+      ledgerPath,
+      intervalMs: 20 * 60 * 1000,
+      lastTick: {
+        type: 'tick',
+        tickId: 'tick-stale',
+        ts: staleTickMs,
+        checkedAt: new Date(staleTickMs).toISOString(),
+      },
+    }, null, 2));
+
+    const status = inspectShadowRunnerStatus({
+      statusPath,
+      ledgerPath,
+      pidPath,
+      nowMs,
+      requirePid: true,
+    });
+
+    expect(status).toEqual(expect.objectContaining({
+      status: 'dead',
+      stale: true,
+      staleReasons: ['last_tick_dead'],
+      reportedRunning: true,
+      running: false,
+      tickFresh: false,
+      pidAlive: true,
+      lastTickAgeMs: 35 * 60 * 60 * 1000,
+    }));
+  });
+
+  test('status liveness accepts running:true only with a fresh successful tick', () => {
+    const ledgerPath = path.join(tempDir, 'shadow.json');
+    const statusPath = path.join(tempDir, 'status.json');
+    const pidPath = path.join(tempDir, 'runner.pid');
+    const nowMs = Date.parse('2026-06-23T20:00:00.000Z');
+    const tickMs = nowMs - 5 * 60 * 1000;
+    fs.writeFileSync(pidPath, String(process.pid), 'utf8');
+    fs.writeFileSync(ledgerPath, JSON.stringify({
+      shadowStartedAtMs: tickMs,
+      rows: [{
+        type: 'tick',
+        tickId: 'tick-fresh',
+        ts: tickMs,
+        checkedAt: new Date(tickMs).toISOString(),
+      }],
+    }, null, 2));
+    fs.writeFileSync(statusPath, JSON.stringify({
+      ok: true,
+      running: true,
+      runId: 'the-tell-shadow:test',
+      ledgerPath,
+      intervalMs: 20 * 60 * 1000,
+      ledgerRows: 1,
+      lastTick: {
+        type: 'tick',
+        tickId: 'tick-fresh',
+        ts: tickMs,
+        checkedAt: new Date(tickMs).toISOString(),
+      },
+    }, null, 2));
+
+    const status = inspectShadowRunnerStatus({
+      statusPath,
+      ledgerPath,
+      pidPath,
+      nowMs,
+      requirePid: true,
+    });
+
+    expect(status).toEqual(expect.objectContaining({
+      status: 'fresh',
+      stale: false,
+      reportedRunning: true,
+      running: true,
+      tickFresh: true,
+      pidAlive: true,
+      ledgerRows: 1,
+    }));
   });
 
   test('caps ledger rows while preserving the original shadow start time', async () => {

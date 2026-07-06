@@ -1161,6 +1161,79 @@ describe('daemon-handlers.js module', () => {
         }
       });
 
+      test('materializes oversized hm-send payloads before applying throttle byte caps', () => {
+        const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+        const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+        try {
+          let injectHandler;
+          onBridge.mockImplementation((channel, handler) => {
+            if (channel === 'inject-message') injectHandler = handler;
+          });
+          daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+          const oversizedPayload = `(ORACLE #401): ${'x'.repeat((512 * 1024) + 4096)}`;
+          injectHandler({}, {
+            panes: ['1'],
+            message: oversizedPayload,
+            deliveryId: 'delivery-hm-long-over-cap',
+            traceContext: {
+              messageId: 'hm-long-agent-message-over-cap',
+              traceId: 'hm-long-agent-message-over-cap',
+            },
+          });
+
+          expect(writeSpy.mock.calls.some(([filePath]) => (
+            String(filePath).match(/full-agent-messages[\\/]+hm-long-agent-message-over-cap\.txt$/)
+          ))).toBe(true);
+          expect(terminal.sendToPane).toHaveBeenCalledWith(
+            '1',
+            expect.stringContaining('FULL MSG AT .squidrun/coord/full-agent-messages/hm-long-agent-message-over-cap.txt'),
+            expect.objectContaining({
+              hmSendFastEnter: true,
+            })
+          );
+          expect(sendBridge).not.toHaveBeenCalledWith(
+            'trigger-delivery-outcome',
+            expect.objectContaining({
+              deliveryId: 'delivery-hm-long-over-cap',
+              reason: 'queue_oversize',
+            })
+          );
+        } finally {
+          mkdirSpy.mockRestore();
+          writeSpy.mockRestore();
+        }
+      });
+
+      test('emits a delivery outcome when a non-materialized payload exceeds the byte cap', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['1'],
+          message: 'x'.repeat((512 * 1024) + 4096),
+          deliveryId: 'delivery-oversize-drop',
+          traceContext: { traceId: 'trace-oversize-drop' },
+        });
+
+        expect(terminal.sendToPane).not.toHaveBeenCalled();
+        expect(sendBridge).toHaveBeenCalledWith(
+          'trigger-delivery-outcome',
+          expect.objectContaining({
+            deliveryId: 'delivery-oversize-drop',
+            messageId: 'trace-oversize-drop',
+            paneId: '1',
+            accepted: false,
+            verified: false,
+            status: 'queue_dropped',
+            reason: 'queue_oversize',
+          })
+        );
+      });
+
       test('reassembles packetized inject-message payloads before sending to terminal', () => {
         let injectHandler;
         onBridge.mockImplementation((channel, handler) => {
@@ -1426,6 +1499,44 @@ describe('daemon-handlers.js module', () => {
           injectHandler({}, { panes: ['1'], message: `burst-${i}` });
         }
 
+        expect(daemonHandlers._getThrottleQueueDepthForTesting('1')).toBeLessThanOrEqual(200);
+      });
+
+      test('emits delivery outcomes for stale throttle queue evictions', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementation(() => {
+          // Keep pane throttled so later messages remain queued and eviction is observable.
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        for (let i = 0; i < 205; i += 1) {
+          injectHandler({}, {
+            panes: ['1'],
+            message: `burst-${i}`,
+            deliveryId: `delivery-queue-${i}`,
+            traceContext: { traceId: `trace-queue-${i}` },
+          });
+        }
+
+        const evictionOutcomes = sendBridge.mock.calls
+          .filter(([channel, payload]) => (
+            channel === 'trigger-delivery-outcome'
+            && payload?.reason === 'queue_cap_eviction'
+          ));
+        expect(evictionOutcomes.length).toBeGreaterThan(0);
+        expect(evictionOutcomes[0][1]).toEqual(expect.objectContaining({
+          deliveryId: 'delivery-queue-1',
+          messageId: 'trace-queue-1',
+          paneId: '1',
+          accepted: false,
+          verified: false,
+          status: 'queue_dropped',
+          reason: 'queue_cap_eviction',
+        }));
         expect(daemonHandlers._getThrottleQueueDepthForTesting('1')).toBeLessThanOrEqual(200);
       });
 

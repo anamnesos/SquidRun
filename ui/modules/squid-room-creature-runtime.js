@@ -33,6 +33,8 @@ const mounted = new Map(); // petId -> binding
 let rafHandle = null;
 let lastFrameAt = 0;
 let reducedMotionQuery = null;
+let rendererWindowHidden = false;
+let windowVisibilityUnsubscribe = null;
 // Presence state (all pooled/preallocated - no per-frame objects).
 let pointerListenerBound = false;
 const pointerState = { x: null, y: null, lastX: null, lastY: null, lastAt: 0, speed: 0 };
@@ -45,6 +47,29 @@ function prefersReducedMotion() {
     reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
   }
   return reducedMotionQuery.matches === true;
+}
+
+function isRendererHidden() {
+  return (typeof document !== 'undefined' && document.hidden === true)
+    || rendererWindowHidden === true;
+}
+
+function handleWindowVisibility(payload = {}) {
+  rendererWindowHidden = payload?.hidden === true
+    || payload?.minimized === true
+    || payload?.visible === false;
+}
+
+function ensureWindowVisibilityListener() {
+  if (windowVisibilityUnsubscribe || typeof window === 'undefined') return;
+  const bridge = window.squidrun || window.squidrunAPI;
+  if (!bridge || typeof bridge.on !== 'function') return;
+  try {
+    const unsubscribe = bridge.on('window-visibility-changed', handleWindowVisibility);
+    windowVisibilityUnsubscribe = typeof unsubscribe === 'function' ? unsubscribe : () => {};
+  } catch (err) {
+    log.warn('SquidRoomCreature', `window visibility listener failed: ${err?.message || err}`);
+  }
 }
 
 function resizeBinding(binding) {
@@ -282,7 +307,7 @@ function renderFrame(nowMs) {
   const currentX = Math.sin(currentPhase) * CURRENT_STRENGTH;
   const currentY = Math.cos(currentPhase * 0.7) * CURRENT_STRENGTH * 0.4;
 
-  const hidden = typeof document !== 'undefined' && document.hidden === true;
+  const hidden = isRendererHidden();
   const reduced = prefersReducedMotion();
   let liveBindings = 0;
 
@@ -550,6 +575,7 @@ function mountSquidRoomCreatures(doc = typeof document !== 'undefined' ? documen
     mountedNow += 1;
     log.info('SquidRoomCreature', `Mounted procedural creature '${petId}' (${binding.cssWidth}x${binding.cssHeight})`);
   }
+  ensureWindowVisibilityListener();
   ensurePointerListener();
   ensureLoop();
   return mountedNow;
@@ -622,6 +648,11 @@ function unmountSquidRoomCreatures() {
   }
   rafHandle = null;
   lastFrameAt = 0;
+  rendererWindowHidden = false;
+  if (typeof windowVisibilityUnsubscribe === 'function') {
+    try { windowVisibilityUnsubscribe(); } catch (_) {}
+  }
+  windowVisibilityUnsubscribe = null;
 }
 
 // Debug/test accessor returning PLAIN DATA ONLY: the module surface crosses

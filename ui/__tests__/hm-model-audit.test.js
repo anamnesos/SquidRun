@@ -15,6 +15,9 @@ const {
   resolveExpectedModelForTranscript,
   createStateChangeAlertFilter,
   findOffendingTurnsForTranscript,
+  expectedModelsFromSettings,
+  buildWatchStatusSnapshot,
+  WATCH_MIN_STALE_AFTER_MS,
 } = require('../scripts/hm-model-audit');
 
 const line = (ts, model) => JSON.stringify({ timestamp: ts, message: { model } });
@@ -121,6 +124,20 @@ describe('hm-model-audit', () => {
       });
   });
 
+  test('watch status expectation summary is derived from current Claude pane settings', () => {
+    expect(expectedModelsFromSettings({
+      claudeModel: 'claude-fable-5',
+      paneCommands: {
+        '1': 'claude --model claude-fable-5',
+        '2': 'codex',
+        '3': 'claude',
+      },
+    })).toEqual([
+      { paneId: '1', expectedModel: 'claude-fable-5', source: 'pane-command' },
+      { paneId: '3', expectedModel: 'claude-fable-5', source: 'settings-claudeModel' },
+    ]);
+  });
+
   test('settings-derived gate: opus setting makes opus transcript silent and fable transcript alarm', () => {
     const context = {
       settings: {
@@ -189,5 +206,58 @@ describe('hm-model-audit', () => {
     expect(shouldAlert(changed)).toBe(true);
     expect(shouldAlert(ok)).toBe(false);
     expect(shouldAlert(first)).toBe(true);
+  });
+
+  test('watch self-status rejects stale running:true heartbeat even when pid is alive', () => {
+    const nowMs = Date.parse('2026-07-06T12:30:00.000Z');
+    const staleHeartbeatMs = nowMs - WATCH_MIN_STALE_AFTER_MS - 1000;
+
+    const status = buildWatchStatusSnapshot({
+      pid: process.pid,
+      pidAlive: true,
+      pidMtimeMs: nowMs - 60 * 1000,
+      statusFile: {
+        pid: process.pid,
+        running: true,
+        heartbeatAtMs: staleHeartbeatMs,
+        intervalMs: 1000,
+        expectedModels: [{ paneId: '1', expectedModel: 'claude-fable-5', source: 'pane-command' }],
+      },
+      nowMs,
+    });
+
+    expect(status).toEqual(expect.objectContaining({
+      running: false,
+      staleHeartbeat: true,
+      statusFresh: false,
+      reason: 'stale_model_audit_watch_status',
+      pid: process.pid,
+    }));
+    expect(status.statusAgeMs).toBe(WATCH_MIN_STALE_AFTER_MS + 1000);
+  });
+
+  test('watch self-status treats missing heartbeat as not running, not mtime-fresh', () => {
+    const nowMs = Date.parse('2026-07-06T12:30:00.000Z');
+
+    const status = buildWatchStatusSnapshot({
+      pid: process.pid,
+      pidAlive: true,
+      pidMtimeMs: nowMs - 60 * 1000,
+      statusFile: {
+        pid: process.pid,
+        running: true,
+        intervalMs: 1000,
+      },
+      statusMtimeMs: nowMs,
+      nowMs,
+    });
+
+    expect(status).toEqual(expect.objectContaining({
+      running: false,
+      staleHeartbeat: true,
+      statusFresh: false,
+      statusAgeMs: null,
+      reason: 'stale_model_audit_watch_status',
+    }));
   });
 });

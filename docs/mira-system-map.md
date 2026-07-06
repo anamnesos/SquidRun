@@ -670,11 +670,11 @@ Checkpoint reports must say, in plain English:
 - Whether any restart or process-start path is truly required.
 - What remains parked, prototype, archive, or delete-after-parity.
 
-### Checkpoint 2026-06-09 — occlusion/background-throttle fix (non-semantic for Mira)
+### Checkpoint 2026-07-06 — occlusion/background-throttle narrowing (non-semantic for Mira)
 
-- Map row/capability changed: NONE. The S422 occluded-renderer fix adds process-wide Chromium switches in `ui/main.js` and `backgroundThrottling: false` to three `BrowserWindow` web-preferences, one of which is the Mira Lab window (`ui/modules/main/mira-lab-window.js`). This is a renderer-liveness flag only; it does not change the Mira Lab window's route, capability, status, inventory row (still `TRANSITION / DELETE-AFTER-PARITY`), or any visible-reply/anti-leak truth.
-- Continue or stop: team continues. No James acceptance surface is touched — the change keeps an already-live renderer from being throttled while occluded; it does not add, move, or activate a Mira capability.
-- Evidence: patch verified present, no second `disable-features` appendSwitch (no clobber), window test suite green. Diagnosis Architect, verify+commit Builder.
+- Map row/capability changed: NONE. The S422 Wave A narrowing removes the prior process-wide Chromium background/occlusion switches in `ui/main.js` and removes `backgroundThrottling: false` from non-pane windows, including the Mira Lab window (`ui/modules/main/mira-lab-window.js`). Pane-host windows keep the explicit liveness opt-out; visual/lab/sidecar windows return to normal Chromium pause semantics and receive explicit `window-visibility-changed` IPC for renderer loops that need to pause/resume honestly. This does not change the Mira Lab window's route, capability, status, inventory row (still `TRANSITION / DELETE-AFTER-PARITY`), or any visible-reply/anti-leak truth.
+- Continue or stop: team continues. No James acceptance surface is touched; the change narrows idle-CPU/liveness scope and does not add, move, or activate a Mira capability.
+- Evidence: `rg` leaves `backgroundThrottling: false` only in `ui/modules/main/pane-host-window-manager.js`; full Jest green; Oracle Wave A verdict HELD.
 - Restart/process-start required: YES to *activate* (command-line switches bind at launch only), but the fix is committed and unproven until a post-restart occlusion test; it changes no Mira route, so no Mira-specific restart gate applies.
 - Parked/prototype/archive/delete-after-parity: unchanged.
 - `JAMES ACTION: NONE`

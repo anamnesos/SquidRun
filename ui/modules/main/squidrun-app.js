@@ -47,6 +47,7 @@ const { stripAnsi } = require('../ansi');
 const { createKernelBridge } = require('./kernel-bridge');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
+const { emitWindowVisibilityState } = require('./window-visibility-state');
 const miraLabWindowModule = require('./mira-lab-window');
 const liveTaskAuditSidecarWindowModule = require('./live-task-audit-sidecar-window');
 const humanTimelineSidecarWindowModule = require('./human-timeline-sidecar-window');
@@ -5876,9 +5877,6 @@ class SquidRunApp {
         nodeIntegration: false,
         contextIsolation: true,
         sandbox: false,
-        // Keep the renderer live when the window is hidden/minimized/occluded (S422).
-        // This is the visible main/app window the user actually looks at.
-        backgroundThrottling: false,
         preload: path.join(__dirname, '..', '..', 'preload.js'),
       },
       title: windowTitle,
@@ -7582,6 +7580,8 @@ class SquidRunApp {
     const startupBundlePath = skipStartupBundle ? '' : this.getProfileStartupBundlePath(windowKey);
 
     if (!window) return;
+
+    ['minimize', 'hide', 'restore', 'show'].forEach((reason) => window.on(reason, () => emitWindowVisibilityState(window, { windowKey, reason, log })));
 
     window.on('close', (event) => {
       if (!isPrimaryWindow) {

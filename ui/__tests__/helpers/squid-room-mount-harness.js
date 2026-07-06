@@ -136,12 +136,20 @@ function createMountedRoom({ petIds = ['builder', 'oracle'], stageWidth = 780, s
   };
   canvases.forEach((canvas) => { canvas.ownerDocument = doc; });
 
+  const addBridgeListener = (channel, handler) => {
+    const key = `bridge:${channel}`;
+    listeners.set(key, handler);
+    return () => listeners.delete(key);
+  };
+
   const win = {
     matchMedia: () => ({ matches: false, addEventListener: noopListener, addListener: noopListener }),
     requestAnimationFrame: (fn) => { rafQueue.push(fn); return rafQueue.length; },
     cancelAnimationFrame: noopListener,
     setTimeout,
     clearTimeout,
+    squidrun: { on: addBridgeListener },
+    squidrunAPI: { on: addBridgeListener },
   };
 
   const previous = { window: global.window, document: global.document, performance: global.performance };
@@ -165,6 +173,7 @@ function createMountedRoom({ petIds = ['builder', 'oracle'], stageWidth = 780, s
     get pendingFrames() { return rafQueue.length; },
     setHidden(hidden) { doc.hidden = hidden === true; },
     fireDocEvent(type, event) { listeners.get(`doc:${type}`)?.(event); },
+    fireBridgeEvent(channel, payload) { listeners.get(`bridge:${channel}`)?.(payload); },
     destroy() {
       global.window = previous.window;
       global.document = previous.document;

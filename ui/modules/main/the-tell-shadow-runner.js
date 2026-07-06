@@ -14,6 +14,10 @@ const DEFAULT_PID_PATH = path.join(RUNTIME_ROOT, 'the-tell-shadow-runner.pid');
 const DEFAULT_INTERVAL_MS = 20 * 60 * 1000;
 const MIN_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_LEDGER_ROWS = 5000;
+const DEFAULT_LIVENESS_STALE_THRESHOLD_MS = 25 * 60 * 60 * 1000;
+const LIVENESS_STALE_MS = 3 * 60 * 60 * 1000;
+const LIVENESS_AGING_MS = 40 * 60 * 1000;
+const DEFAULT_TICK_DEADLINE_MULTIPLIER = 2;
 
 function nowIso(nowMs = Date.now()) {
   return new Date(nowMs).toISOString();
@@ -39,6 +43,206 @@ function readShadowLedger(filePath = DEFAULT_LEDGER_PATH) {
     if (error.code === 'ENOENT') return { shadowStartedAtMs: null, rows: [] };
     throw error;
   }
+}
+
+function asNonEmptyString(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim();
+}
+
+function asPositiveInt(value, fallback = null) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const integer = Math.floor(numeric);
+  return integer > 0 ? integer : fallback;
+}
+
+function asNonNegativeInt(value, fallback = null) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  const integer = Math.floor(numeric);
+  return integer >= 0 ? integer : fallback;
+}
+
+function latestSuccessfulTickFromLedger(ledgerPath) {
+  if (!ledgerPath) return null;
+  try {
+    const ledger = readShadowLedger(ledgerPath);
+    let latest = null;
+    for (const row of ledger.rows) {
+      if (!row || row.type !== 'tick' || !Number.isFinite(Number(row.ts))) continue;
+      const ts = Math.floor(Number(row.ts));
+      if (latest === null || ts > latest.ts) {
+        latest = {
+          ts,
+          checkedAt: asNonEmptyString(row.checkedAt || row.observedAt) || null,
+          tickId: asNonEmptyString(row.tickId) || null,
+        };
+      }
+    }
+    return latest;
+  } catch {
+    return null;
+  }
+}
+
+function classifyShadowRunnerLiveness({
+  lastTickAgeMs,
+  lastActivityType,
+  staleThresholdMs = DEFAULT_LIVENESS_STALE_THRESHOLD_MS,
+  statusFilePresent,
+}) {
+  if (statusFilePresent !== true) {
+    return { status: 'missing', stale: false, staleReasons: [] };
+  }
+  if (lastActivityType && lastActivityType !== 'tick') {
+    return { status: 'blind', stale: true, staleReasons: [`last_tick_${lastActivityType}`] };
+  }
+  if (!Number.isFinite(Number(lastTickAgeMs))) {
+    return { status: 'dead', stale: true, staleReasons: ['no_successful_tick'] };
+  }
+  const ageMs = Number(lastTickAgeMs);
+  if (ageMs >= staleThresholdMs) {
+    return { status: 'dead', stale: true, staleReasons: ['last_tick_dead'] };
+  }
+  if (ageMs >= LIVENESS_STALE_MS) {
+    return { status: 'stale', stale: true, staleReasons: ['last_tick_stale'] };
+  }
+  if (ageMs >= LIVENESS_AGING_MS) {
+    return { status: 'aging', stale: false, staleReasons: [] };
+  }
+  return { status: 'fresh', stale: false, staleReasons: [] };
+}
+
+function readPid(pidPath = DEFAULT_PID_PATH) {
+  if (!pidPath) return null;
+  try {
+    return asPositiveInt(fs.readFileSync(pidPath, 'utf8').trim(), null);
+  } catch {
+    return null;
+  }
+}
+
+function inspectShadowRunnerStatus(options = {}) {
+  const statusPath = options.statusPath || DEFAULT_STATUS_PATH;
+  const fallbackLedgerPath = options.ledgerPath || DEFAULT_LEDGER_PATH;
+  const pidPath = Object.prototype.hasOwnProperty.call(options, 'pidPath')
+    ? options.pidPath
+    : DEFAULT_PID_PATH;
+  const nowMs = asFiniteNumber(options.nowMs, Date.now());
+  const staleThresholdMs = Math.max(
+    60 * 1000,
+    asFiniteNumber(options.staleThresholdMs, DEFAULT_LIVENESS_STALE_THRESHOLD_MS)
+  );
+  const requirePid = options.requirePid === true;
+  const pid = Object.prototype.hasOwnProperty.call(options, 'pid')
+    ? asPositiveInt(options.pid, null)
+    : readPid(pidPath);
+  const pidAlive = Object.prototype.hasOwnProperty.call(options, 'pidAlive')
+    ? options.pidAlive === true
+    : isPidAlive(pid);
+
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+  } catch (error) {
+    const missing = error.code === 'ENOENT';
+    return {
+      ok: missing,
+      status: missing ? 'missing' : 'read_error',
+      path: statusPath,
+      statusFilePresent: !missing,
+      running: false,
+      reportedRunning: false,
+      tickFresh: false,
+      runId: null,
+      tickId: null,
+      lastTickAt: null,
+      lastTickAtMs: null,
+      lastTickAgeMs: null,
+      lastActivityAt: null,
+      lastActivityAtMs: null,
+      lastActivityAgeMs: null,
+      lastActivityType: null,
+      staleThresholdMs,
+      intervalMs: null,
+      ledgerRows: null,
+      ledgerPath: fallbackLedgerPath,
+      counts: null,
+      stale: !missing,
+      staleReasons: missing ? [] : ['status_read_error'],
+      error: missing ? null : error.message,
+      pid,
+      pidAlive,
+      pidPath: pidPath || null,
+    };
+  }
+
+  const statusObject = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  const lastTick = statusObject.lastTick && typeof statusObject.lastTick === 'object' && !Array.isArray(statusObject.lastTick)
+    ? statusObject.lastTick
+    : {};
+  const ledgerPath = asNonEmptyString(statusObject.ledgerPath) || fallbackLedgerPath;
+  const latestSuccessfulTick = latestSuccessfulTickFromLedger(ledgerPath);
+  const lastActivityAt = asNonEmptyString(lastTick.checkedAt || statusObject.checkedAt || lastTick.observedAt) || null;
+  const rawLastActivityMs = Number.isFinite(Number(lastTick.ts))
+    ? Number(lastTick.ts)
+    : (lastActivityAt ? Date.parse(lastActivityAt) : NaN);
+  const lastActivityAtMs = Number.isFinite(rawLastActivityMs) ? Math.floor(rawLastActivityMs) : null;
+  const lastActivityAgeMs = lastActivityAtMs !== null ? Math.max(0, nowMs - lastActivityAtMs) : null;
+  const lastActivityType = asNonEmptyString(lastTick.type || lastTick.rowType) || null;
+  const statusSuccessfulTick = lastActivityType === 'tick' && Number.isFinite(Number(lastTick.ts))
+    ? {
+      ts: Math.floor(Number(lastTick.ts)),
+      checkedAt: lastActivityAt,
+      tickId: asNonEmptyString(lastTick.tickId) || null,
+    }
+    : null;
+  const successfulTick = latestSuccessfulTick || statusSuccessfulTick;
+  const lastTickAtMs = successfulTick ? successfulTick.ts : null;
+  const lastTickAt = successfulTick?.checkedAt || (lastTickAtMs !== null ? new Date(lastTickAtMs).toISOString() : null);
+  const lastTickAgeMs = lastTickAtMs !== null ? Math.max(0, nowMs - lastTickAtMs) : null;
+  const classification = classifyShadowRunnerLiveness({
+    lastTickAgeMs,
+    lastActivityType,
+    staleThresholdMs,
+    statusFilePresent: true,
+  });
+  const tickFresh = classification.status === 'fresh' || classification.status === 'aging';
+  const reportedRunning = statusObject.running === true;
+  const effectiveRunning = Boolean(reportedRunning && tickFresh && (!requirePid || pidAlive === true));
+
+  return {
+    ok: statusObject.ok === true && classification.stale !== true,
+    status: classification.status,
+    path: statusPath,
+    statusFilePresent: true,
+    running: effectiveRunning,
+    reportedRunning,
+    tickFresh,
+    runId: asNonEmptyString(statusObject.runId) || null,
+    tickId: successfulTick?.tickId || asNonEmptyString(statusObject.tickId || lastTick.tickId) || null,
+    lastTickAt,
+    lastTickAtMs,
+    lastTickAgeMs,
+    lastActivityAt,
+    lastActivityAtMs,
+    lastActivityAgeMs,
+    lastActivityType,
+    staleThresholdMs,
+    intervalMs: asPositiveInt(statusObject.intervalMs || lastTick.intervalMs, null),
+    ledgerRows: asNonNegativeInt(statusObject.ledgerRows, null),
+    ledgerPath,
+    counts: lastTick.counts && typeof lastTick.counts === 'object' && !Array.isArray(lastTick.counts)
+      ? lastTick.counts
+      : null,
+    stale: classification.stale,
+    staleReasons: classification.staleReasons,
+    error: statusObject.lastError || null,
+    pid,
+    pidAlive,
+    pidPath: pidPath || null,
+  };
 }
 
 function appendShadowRows(filePath, rows, startedAtMs, maxRows = process.env.SQUIDRUN_THE_TELL_SHADOW_LEDGER_MAX_ROWS) {
@@ -70,6 +274,38 @@ function normalizeMaxLedgerRows(value) {
   const numeric = asFiniteNumber(value, null);
   if (!Number.isInteger(numeric) || numeric <= 0) return DEFAULT_MAX_LEDGER_ROWS;
   return Math.max(100, numeric);
+}
+
+function normalizeTickDeadlineMs(value, intervalMs = DEFAULT_INTERVAL_MS) {
+  const explicit = asFiniteNumber(value, null);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.max(10, Math.floor(explicit));
+  const interval = normalizeIntervalMs(intervalMs);
+  return Math.max(1000, Math.floor(interval * DEFAULT_TICK_DEADLINE_MULTIPLIER));
+}
+
+function timeoutError(message, details = {}) {
+  const error = new Error(message);
+  error.code = details.code || 'shadow_tick_timeout';
+  error.timeoutMs = details.timeoutMs || null;
+  error.tickId = details.tickId || null;
+  return error;
+}
+
+function withDeadline(promise, deadlineMs, details = {}) {
+  let timeoutId = null;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(timeoutError(details.message || 'shadow_tick_timeout', {
+        code: details.code,
+        timeoutMs: deadlineMs,
+        tickId: details.tickId,
+      }));
+    }, deadlineMs);
+    if (timeoutId && typeof timeoutId.unref === 'function') timeoutId.unref();
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
 }
 
 function firestoreRefs(rawRefs = {}) {
@@ -268,6 +504,73 @@ function buildLedgerTickRow(tickRow = {}) {
   };
 }
 
+function buildFailedTickRow({ runId, tickId, nowMs, intervalMs = null, reason = 'shadow_tick_failed', errorCode = null }) {
+  return {
+    schema: 'squidrun.the_tell.shadow.status.v1',
+    type: 'tick_failed',
+    runId,
+    tickId,
+    ts: nowMs,
+    checkedAt: nowIso(nowMs),
+    source: 'unverified',
+    ok: false,
+    readOnly: true,
+    dryRun: true,
+    intervalMs,
+    counts: {
+      jobs: 0,
+      quotes: 0,
+      events: 0,
+      parked: 0,
+      supportedSignals: 0,
+      spokeRows: 0,
+      swallowedRows: 0,
+    },
+    reason,
+    errorCode,
+  };
+}
+
+function writeFailedTickStatus({
+  ledgerPath = DEFAULT_LEDGER_PATH,
+  statusPath = DEFAULT_STATUS_PATH,
+  runId,
+  tickId,
+  intervalMs,
+  error,
+  running = true,
+  maxLedgerRows = process.env.SQUIDRUN_THE_TELL_SHADOW_LEDGER_MAX_ROWS,
+  nowMs = Date.now(),
+}) {
+  const reason = error?.code || error?.message || 'shadow_tick_failed';
+  const tickRow = buildFailedTickRow({
+    runId,
+    tickId,
+    nowMs,
+    intervalMs,
+    reason,
+    errorCode: error?.code || null,
+  });
+  const livenessRow = buildLedgerTickRow(tickRow);
+  const ledger = appendShadowRows(ledgerPath, [livenessRow], nowMs, maxLedgerRows);
+  const status = {
+    ok: false,
+    running: Boolean(running),
+    runId,
+    tickId,
+    checkedAt: nowIso(nowMs),
+    ledgerPath,
+    intervalMs,
+    lastTick: tickRow,
+    ledgerRows: ledger.rows.length,
+    lastError: error?.message || reason,
+    lastErrorCode: error?.code || null,
+    timeoutMs: error?.timeoutMs || null,
+  };
+  writeJson(statusPath, status);
+  return status;
+}
+
 async function runShadowTick(options = {}) {
   const nowMs = asFiniteNumber(options.nowMs, Date.now());
   const runId = options.runId || `the-tell-shadow:${nowMs}`;
@@ -336,9 +639,14 @@ async function runShadowTick(options = {}) {
 
 async function runShadowLoop(options = {}) {
   const intervalMs = normalizeIntervalMs(options.intervalMs);
+  const tickDeadlineMs = normalizeTickDeadlineMs(options.tickDeadlineMs, intervalMs);
   const runId = options.runId || `the-tell-shadow:${Date.now()}`;
   const statusPath = options.statusPath || DEFAULT_STATUS_PATH;
   const pidPath = options.pidPath || DEFAULT_PID_PATH;
+  const ledgerPath = options.ledgerPath || DEFAULT_LEDGER_PATH;
+  const exitProcess = typeof options.exitProcess === 'function'
+    ? options.exitProcess
+    : ((code) => process.exit(code));
   ensureParent(pidPath);
   fs.writeFileSync(pidPath, String(process.pid), 'utf8');
   writeJson(statusPath, {
@@ -346,8 +654,9 @@ async function runShadowLoop(options = {}) {
     running: true,
     runId,
     startedAt: nowIso(Date.now()),
-    ledgerPath: options.ledgerPath || DEFAULT_LEDGER_PATH,
+    ledgerPath,
     intervalMs,
+    tickDeadlineMs,
     lastTick: null,
     lastError: null,
   });
@@ -358,27 +667,47 @@ async function runShadowLoop(options = {}) {
   process.once('SIGINT', stop);
 
   async function tick() {
+    const tickNowMs = Date.now();
+    const tickId = `${runId}:tick:${tickNowMs}`;
     try {
-      return await runShadowTick({ ...options, runId, intervalMs, running: true });
+      return await withDeadline(
+        runShadowTick({ ...options, runId, tickId, intervalMs, running: true }),
+        tickDeadlineMs,
+        {
+          tickId,
+          code: 'shadow_tick_timeout',
+          message: `shadow_tick_timeout after ${tickDeadlineMs}ms`,
+        }
+      );
     } catch (error) {
-      const status = {
-        ok: false,
-        running: true,
+      const status = writeFailedTickStatus({
+        ledgerPath,
+        statusPath,
         runId,
-        checkedAt: nowIso(Date.now()),
-        ledgerPath: options.ledgerPath || DEFAULT_LEDGER_PATH,
+        tickId,
         intervalMs,
-        lastError: error.message || 'shadow_tick_failed',
-      };
-      writeJson(statusPath, status);
+        error,
+        running: true,
+        maxLedgerRows: options.maxLedgerRows,
+      });
+      if (error?.code === 'shadow_tick_timeout') {
+        stopped = true;
+        exitProcess(1);
+      }
       return status;
     }
   }
 
-  if (options.immediate !== false) await tick();
+  if (options.immediate !== false) {
+    const firstTick = await tick();
+    if (stopped) return firstTick;
+  }
   while (!stopped) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    if (!stopped) await tick();
+    if (!stopped) {
+      const nextTick = await tick();
+      if (stopped) return nextTick;
+    }
   }
   try { fs.unlinkSync(pidPath); } catch {}
   writeJson(statusPath, {
@@ -386,7 +715,7 @@ async function runShadowLoop(options = {}) {
     running: false,
     runId,
     stoppedAt: nowIso(Date.now()),
-    ledgerPath: options.ledgerPath || DEFAULT_LEDGER_PATH,
+    ledgerPath,
     intervalMs,
   });
 }
@@ -412,20 +741,28 @@ function isPidAlive(pid) {
 
 module.exports = {
   DEFAULT_INTERVAL_MS,
+  DEFAULT_LIVENESS_STALE_THRESHOLD_MS,
   DEFAULT_LEDGER_PATH,
   DEFAULT_MAX_LEDGER_ROWS,
   DEFAULT_PID_PATH,
   DEFAULT_STATUS_PATH,
+  DEFAULT_TICK_DEADLINE_MULTIPLIER,
   MIN_INTERVAL_MS,
+  buildFailedTickRow,
   buildLedgerTickRow,
   buildSpokeRow,
   buildSwallowedRows,
+  classifyShadowRunnerLiveness,
+  inspectShadowRunnerStatus,
   isPidAlive,
+  latestSuccessfulTickFromLedger,
   normalizeIntervalMs,
   normalizeMaxLedgerRows,
+  normalizeTickDeadlineMs,
   readStatus,
   readShadowLedger,
   runShadowLoop,
   runShadowTick,
+  writeFailedTickStatus,
   verifyRefsForSignal,
 };

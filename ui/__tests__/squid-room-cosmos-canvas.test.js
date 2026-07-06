@@ -51,11 +51,16 @@ function createFakeCanvas() {
 
 function createFakeEnv({ width = 800, height = 500 } = {}) {
   const canvas = createFakeCanvas();
+  const listeners = new Map();
   const doc = {
     hidden: false,
     createElement: () => createFakeCanvas(),
-    addEventListener: () => {},
+    addEventListener: (type, handler) => listeners.set(`doc:${type}`, handler),
     querySelector: () => canvas,
+  };
+  const addBridgeListener = (channel, handler) => {
+    listeners.set(`bridge:${channel}`, handler);
+    return () => listeners.delete(`bridge:${channel}`);
   };
   const win = {
     innerWidth: width,
@@ -65,8 +70,16 @@ function createFakeEnv({ width = 800, height = 500 } = {}) {
     cancelAnimationFrame() {},
     addEventListener: () => {},
     matchMedia: () => ({ matches: false }),
+    squidrun: { on: addBridgeListener },
   };
-  return { canvas, doc, win };
+  return {
+    canvas,
+    doc,
+    win,
+    fireBridgeEvent(channel, payload) {
+      listeners.get(`bridge:${channel}`)?.(payload);
+    },
+  };
 }
 
 describe('squid-room cosmos canvas contracts', () => {
@@ -117,6 +130,19 @@ describe('squid-room cosmos canvas contracts', () => {
     expect(runtime.paintCount).toBe(1);   // it painted the sky
     expect(runtime.running).toBe(false);  // it did not start a loop
     expect(win.rafCallbacks.length).toBe(0);
+  });
+
+  test('window visibility event pauses and resumes the animation loop', () => {
+    const { canvas, doc, win, fireBridgeEvent } = createFakeEnv();
+    const runtime = createCosmosCanvasRuntime({ document: doc, window: win, canvas, reducedMotion: false, seed: 7 });
+    runtime.start();
+    expect(runtime.running).toBe(true);
+
+    fireBridgeEvent('window-visibility-changed', { hidden: true, reason: 'minimize' });
+    expect(runtime.running).toBe(false);
+
+    fireBridgeEvent('window-visibility-changed', { hidden: false, visible: true, reason: 'restore' });
+    expect(runtime.running).toBe(true);
   });
 
   test('determinism: same seed produces the same sky math', () => {

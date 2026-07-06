@@ -19,8 +19,6 @@ const FORCED_WEB_PREFERENCES = Object.freeze({
   contextIsolation: true,
   nodeIntegration: false,
   sandbox: false,
-  // Keep the renderer live when the window is hidden/minimized/occluded (S422).
-  backgroundThrottling: false,
 });
 
 function resolveHtmlPath(value) {
