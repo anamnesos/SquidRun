@@ -69,6 +69,56 @@ describe('hm-telegram-routing', () => {
     }));
   });
 
+  it('defaults named side profile sends to the Scoped route', () => {
+    const routing = require('../scripts/hm-telegram-routing');
+
+    const defaultRoute = routing.resolveTelegramRoute({
+      env: {
+        SQUIDRUN_PROFILE: 'sideprofile',
+      },
+    });
+
+    expect(defaultRoute.route).toEqual(expect.objectContaining({
+      method: 'send-long-telegram',
+      language: 'ko',
+    }));
+  });
+
+  it('uses configured scoped chat id as the side-profile default route key', () => {
+    fs.writeFileSync(
+      path.join(tempRoot, 'runtime', 'telegram-routing.json'),
+      JSON.stringify({
+        'REDACTED-CHAT-ID': {
+          method: 'send-long-telegram',
+          name: 'Configured Scoped',
+          language: 'ko',
+          profile: 'sideprofile',
+          windowKey: 'sideprofile',
+        },
+        default: {
+          method: 'hm-send-telegram',
+          name: 'Owner',
+          language: 'en',
+        },
+      }),
+      'utf8'
+    );
+    const routing = require('../scripts/hm-telegram-routing');
+
+    const defaultRoute = routing.resolveTelegramRoute({
+      env: {
+        SQUIDRUN_PROFILE: 'sideprofile',
+        TELEGRAM_SCOPED_CHAT_ID: 'REDACTED-CHAT-ID',
+      },
+    });
+
+    expect(defaultRoute.route).toEqual(expect.objectContaining({
+      name: 'Configured Scoped',
+      profile: 'sideprofile',
+      windowKey: 'sideprofile',
+    }));
+  });
+
   it('chunks long routed messages for Scoped', async () => {
     const { sendTelegram } = require('../scripts/hm-telegram');
     const routing = require('../scripts/hm-telegram-routing');

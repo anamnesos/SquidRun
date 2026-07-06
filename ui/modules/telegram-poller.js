@@ -8,6 +8,7 @@ const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
 const { resolveCoordPath } = require('../config');
+const { isMainProfile, normalizeProfileName } = require('../profile');
 const log = require('./logger');
 
 const DEFAULT_POLL_INTERVAL_MS = 5000;
@@ -84,7 +85,7 @@ function getTelegramConfig(env = process.env) {
   // profile can opt into accepting scoped chat IDs centrally, then route them
   // by chatId/windowKey; secondary profiles must not run competing pollers.
   // Fail-safe: without the central-owner flag, main rejects scoped chat IDs.
-  const profile = String(env.SQUIDRUN_PROFILE || '').trim().toLowerCase();
+  const profile = normalizeProfileName(env.SQUIDRUN_PROFILE || 'main');
   const scopedRaw = typeof env.TELEGRAM_SCOPED_CHAT_IDS === 'string'
     ? env.TELEGRAM_SCOPED_CHAT_IDS.trim()
     : '';
@@ -293,10 +294,10 @@ function isAuthorizedChat(message, currentConfig) {
   if (chatId === null) return false;
 
   const scopedIds = Array.isArray(currentConfig.scopedChatIds) ? currentConfig.scopedChatIds : [];
-  const profile = typeof currentConfig.profile === 'string' ? currentConfig.profile : '';
+  const profile = normalizeProfileName(currentConfig.profile || 'main');
 
-  if (profile === 'scoped') {
-    // Scoped window: accept ONLY chats declared as scoped-scoped.
+  if (!isMainProfile(profile)) {
+    // Side profile: accept ONLY chats declared as profile-scoped.
     return scopedIds.includes(chatId);
   }
 
