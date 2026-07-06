@@ -79,11 +79,11 @@
 - Supervisor still tracks open Hyperliquid positions and peak P&L.
 - Giveback alerts matter. Protecting open profit is a real action, not weakness.
 - Do not assume the account is flat or funded from this file. Always verify live.
-- If `hm-defi-status` and consultation payloads disagree about balance or exposure, stop and verify before trading.
+- If the current read-only live state and consultation payloads disagree about balance or exposure, stop and verify before trading.
 - If scanner state files are stale or contradictory, bypass them and pull live `getHistoricalBars`, `getL2Book`, and `getUniverseMarketData` from `ui/modules/trading/hyperliquid-client.js` before calling the board dead.
 
 ## Attribution Discipline
-- The AI startup briefing is transcript-derived context, not a live wallet oracle. It can be useful, but it is not allowed to override `hm-defi-status` or fresh consultation snapshots.
+- The AI startup briefing is transcript-derived context, not a live wallet oracle. It can be useful, but it is not allowed to override current read-only live state or fresh consultation snapshots.
 - Managed-book boundary rule (session 289): a James/manual trade is not part of the SquidRun managed book unless it is explicitly registered into the app's attribution/runtime state for management. Do not curate, explain, or risk-manage it as if it were an Oracle/Architect position just because it shares the same wallet.
 - Shared-wallet nuance (session 289): a manual user-book position can still matter for wallet-capacity awareness if it is consuming real margin in the same account, but that does not make it part of the managed book or give SquidRun ownership over entry/exit decisions.
 - Known external-closer signature: exact-size full flatten, `reduceOnly=true`, `cloid=null`, aggressive IOC-style limit, with no matching SquidRun `execution_reports` row in the same window.
