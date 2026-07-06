@@ -117,6 +117,7 @@ describe('profile helpers', () => {
     expect(mainEnv.TELEGRAM_SCOPED_CHAT_IDS).toBe('2222222222');
 
     const scopedEnv = buildProfileTelegramEnv({
+      TELEGRAM_SCOPED_CHAT_ID: '2222222222',
       TELEGRAM_CHAT_ID: '5613428850',
       TELEGRAM_CHAT_ALLOWLIST: '111111',
     }, 'scoped');
@@ -137,5 +138,47 @@ describe('profile helpers', () => {
     expect(mainEnv.TELEGRAM_CHAT_ALLOWLIST).toBe('333333');
     expect(mainEnv.TELEGRAM_AUTHORIZED_CHAT_IDS).toBe('444444');
     expect(mainEnv.TELEGRAM_SCOPED_CHAT_IDS).toBe('2222222222');
+  });
+
+  test('uses configured scoped Telegram chat id for named side profiles', () => {
+    const sideEnv = buildProfileTelegramEnv({
+      TELEGRAM_SCOPED_CHAT_ID: '8754356993',
+      TELEGRAM_CHAT_ID: '5613428850',
+      TELEGRAM_CHAT_ALLOWLIST: '111111',
+      TELEGRAM_AUTHORIZED_CHAT_IDS: '222222',
+    }, 'eunbyeol');
+
+    expect(sideEnv.TELEGRAM_CHAT_ID).toBe('8754356993');
+    expect(sideEnv.TELEGRAM_CHAT_ALLOWLIST).toBe('');
+    expect(sideEnv.TELEGRAM_AUTHORIZED_CHAT_IDS).toBe('');
+    expect(sideEnv.TELEGRAM_SCOPED_CHAT_IDS).toBe('8754356993');
+
+    const mainEnv = buildProfileTelegramEnv({
+      TELEGRAM_SCOPED_CHAT_ID: '8754356993',
+      TELEGRAM_CHAT_ID: '5613428850',
+      TELEGRAM_CHAT_ALLOWLIST: '8754356993,111111',
+      TELEGRAM_AUTHORIZED_CHAT_IDS: '8754356993,222222',
+    }, 'main');
+
+    expect(mainEnv.TELEGRAM_CHAT_ID).toBe('5613428850');
+    expect(mainEnv.TELEGRAM_CHAT_ALLOWLIST).toBe('111111');
+    expect(mainEnv.TELEGRAM_AUTHORIZED_CHAT_IDS).toBe('222222');
+    expect(mainEnv.TELEGRAM_SCOPED_CHAT_IDS).toBe('8754356993');
+  });
+
+  test('warns when a side profile falls back to the placeholder Telegram chat id', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const sideEnv = buildProfileTelegramEnv({
+        TELEGRAM_CHAT_ID: '5613428850',
+      }, 'eunbyeol');
+
+      expect(sideEnv.TELEGRAM_CHAT_ID).toBe('2222222222');
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[profile] TELEGRAM_SCOPED_CHAT_ID is not configured; using placeholder scoped chat id.'
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

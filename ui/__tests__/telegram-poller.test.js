@@ -904,6 +904,13 @@ describe('telegram-poller', () => {
       expect(telegramPoller._internals.isAuthorizedChat(msg(STRAY_CHAT_ID), config)).toBe(false);
     });
 
+    test('named side profile accepts only scoped chat ids', () => {
+      const config = buildConfig({ SQUIDRUN_PROFILE: 'eunbyeol' });
+      expect(telegramPoller._internals.isAuthorizedChat(msg(SCOPED_PROFILE_CHAT_ID), config)).toBe(true);
+      expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(false);
+      expect(telegramPoller._internals.isAuthorizedChat(msg(STRAY_CHAT_ID), config)).toBe(false);
+    });
+
     test('fail-safe: empty TELEGRAM_SCOPED_CHAT_IDS preserves legacy main-profile behavior', () => {
       const config = telegramPoller._internals.getTelegramConfig({
         TELEGRAM_BOT_TOKEN: 'test-token',

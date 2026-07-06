@@ -1,7 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 const { resolveCoordPath } = require('../config');
-const { SCOPED_PROFILE_CHAT_ID, getActiveProfileName, normalizeProfileName } = require('../profile');
+const {
+  SCOPED_PROFILE_CHAT_ID,
+  getActiveProfileName,
+  isMainProfile,
+  normalizeProfileName,
+  resolveScopedProfileChatId,
+} = require('../profile');
 const { sendTelegram, normalizeChatId } = require('./hm-telegram');
 
 const TELEGRAM_ROUTING_RELATIVE_PATH = path.join('runtime', 'telegram-routing.json');
@@ -119,17 +125,21 @@ function readTelegramRoutingConfig() {
 }
 
 function getProfileDefaultRouteKey(env = process.env) {
-  return getActiveProfileName(env) === 'scoped' ? SCOPED_PROFILE_CHAT_ID : 'default';
+  const profileName = getActiveProfileName(env);
+  return isMainProfile(profileName) ? 'default' : resolveScopedProfileChatId(env);
 }
 
 function resolveTelegramRoute({ chatId = null, env = process.env } = {}) {
   const normalizedChatId = normalizeChatId(chatId);
   const { routes, routingPath, source } = readTelegramRoutingConfig();
   const defaultRouteKey = getProfileDefaultRouteKey(env);
+  const profileScopedFallback = isMainProfile(getActiveProfileName(env))
+    ? null
+    : routes[SCOPED_PROFILE_CHAT_ID];
   const route = cloneRoute(
     (normalizedChatId && routes[normalizedChatId])
       ? routes[normalizedChatId]
-      : (routes[defaultRouteKey] || routes.default)
+      : (routes[defaultRouteKey] || profileScopedFallback || routes.default)
   ) || cloneRoute(DEFAULT_TELEGRAM_ROUTING.default);
 
   return {

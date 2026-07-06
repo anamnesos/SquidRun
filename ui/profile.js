@@ -236,26 +236,55 @@ function sanitizeChatList(value, denySet = new Set()) {
     .join(',');
 }
 
+function normalizeTelegramChatId(value) {
+  const text = toNonEmptyString(String(value || ''));
+  if (!text || !/^-?\d+$/.test(text)) return null;
+  return text;
+}
+
+function resolveScopedProfileChatId(env = process.env, options = {}) {
+  const configured = normalizeTelegramChatId(env?.TELEGRAM_SCOPED_CHAT_ID);
+  if (configured) return configured;
+  if (options.warnOnFallback === true && typeof console !== 'undefined' && typeof console.warn === 'function') {
+    console.warn('[profile] TELEGRAM_SCOPED_CHAT_ID is not configured; using placeholder scoped chat id.');
+  }
+  return SCOPED_PROFILE_CHAT_ID;
+}
+
+function collectScopedTelegramChatIds(env = process.env, scopedProfileChatId = null) {
+  const ids = String(env?.TELEGRAM_SCOPED_CHAT_IDS || '')
+    .split(',')
+    .map((entry) => normalizeTelegramChatId(entry))
+    .filter(Boolean);
+  const directScopedChatId = normalizeTelegramChatId(scopedProfileChatId)
+    || resolveScopedProfileChatId(env);
+  ids.push(directScopedChatId, SCOPED_PROFILE_CHAT_ID);
+  return Array.from(new Set(ids));
+}
+
 function buildProfileTelegramEnv(env = process.env, profileName = null) {
   const normalizedProfile = normalizeProfileName(profileName || env?.SQUIDRUN_PROFILE || DEFAULT_PROFILE);
+  const scopedProfileChatId = resolveScopedProfileChatId(env, {
+    warnOnFallback: !isMainProfile(normalizedProfile),
+  });
   const nextEnv = {
     ...env,
     SQUIDRUN_PROFILE: normalizedProfile,
   };
   nextEnv.TELEGRAM_SCOPED_CHAT_IDS = sanitizeChatList(
-    `${env?.TELEGRAM_SCOPED_CHAT_IDS || ''},${SCOPED_PROFILE_CHAT_ID}`
+    `${env?.TELEGRAM_SCOPED_CHAT_IDS || ''},${scopedProfileChatId}`
   );
-  if (normalizedProfile === 'scoped') {
-    nextEnv.TELEGRAM_CHAT_ID = SCOPED_PROFILE_CHAT_ID;
+  if (!isMainProfile(normalizedProfile)) {
+    nextEnv.TELEGRAM_CHAT_ID = scopedProfileChatId;
     nextEnv.TELEGRAM_AUTHORIZED_CHAT_IDS = '';
     nextEnv.TELEGRAM_CHAT_ALLOWLIST = '';
     return nextEnv;
   }
 
-  const denySet = new Set([SCOPED_PROFILE_CHAT_ID]);
+  const denySet = new Set(collectScopedTelegramChatIds(env, scopedProfileChatId));
   nextEnv.TELEGRAM_AUTHORIZED_CHAT_IDS = sanitizeChatList(env?.TELEGRAM_AUTHORIZED_CHAT_IDS, denySet);
   nextEnv.TELEGRAM_CHAT_ALLOWLIST = sanitizeChatList(env?.TELEGRAM_CHAT_ALLOWLIST, denySet);
-  if (String(nextEnv.TELEGRAM_CHAT_ID || '').trim() === SCOPED_PROFILE_CHAT_ID) {
+  if (denySet.has(String(nextEnv.TELEGRAM_CHAT_ID || '').trim())) {
     delete nextEnv.TELEGRAM_CHAT_ID;
   }
   return nextEnv;
@@ -279,5 +308,6 @@ module.exports = {
   getProfileProjectRootOverride,
   getProfileInstructionFilename,
   resolveProfileInstructionPath,
+  resolveScopedProfileChatId,
   buildProfileTelegramEnv,
 };
