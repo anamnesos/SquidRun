@@ -1307,7 +1307,7 @@ const STARTUP_READY_PATTERNS = [
   { pattern: /how can i help/i, models: ['gemini'] },                                     // Gemini greeting
 ];
 
-// Terminal theme configuration — Cyberpunk
+// Terminal theme configuration - Cyberpunk
 const TERMINAL_THEME = {
   background: '#0a0a0f',
   foreground: '#e8eaf0',
@@ -1322,13 +1322,25 @@ const TERMINAL_THEME = {
   magenta: '#bb86fc',
   cyan: '#00f0ff',
   white: '#e8eaf0',
+  brightBlack: '#5c6a80',
+  brightRed: '#ff5c72',
+  brightGreen: '#54f0a2',
+  brightYellow: '#ffc861',
+  brightBlue: '#6ea1ff',
+  brightMagenta: '#d3a6ff',
+  brightCyan: '#66f5ff',
+  brightWhite: '#ffffff',
 };
 
 // Terminal options
 const TERMINAL_OPTIONS = {
   theme: TERMINAL_THEME,
-  fontFamily: "'Consolas', 'Monaco', 'Courier New', monospace",
+  fontFamily: "'Cascadia Code', 'Consolas', 'Monaco', monospace",
   fontSize: 13,
+  lineHeight: 1.25,
+  letterSpacing: 0,
+  minimumContrastRatio: 4.5,
+  fontWeightBold: 600,
   cursorBlink: true,
   cursorStyle: 'block',
   scrollback: 2000,

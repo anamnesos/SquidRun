@@ -509,6 +509,8 @@ const STARTUP_OVERLAY_ERROR_DISMISS_MS = 12000;
 const STARTUP_OVERLAY_MIN_VISIBLE_MS = 1400;
 const STARTUP_OVERLAY_POLL_MS = 600;
 const STARTUP_OVERLAY_MAX_WAIT_MS = 12000;
+const STARTUP_OVERLAY_STALL_WATCHDOG_MS = 45000;
+const STARTUP_OVERLAY_INITIAL_PERCENT = 6;
 const HEADER_SESSION_BADGE_RETRY_MS = 700;
 const HEADER_SESSION_BADGE_MAX_RETRIES = 8;
 let autonomyOnboardingBusy = false;
@@ -4029,12 +4031,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     capabilitiesLoaded: false,
   };
   let startupOverlayPollTimer = null;
+  let startupOverlayStallTimer = null;
+  let startupOverlayLastPercent = 0;
+  let startupOverlayStalled = false;
 
-  setStartupLoadingOverlayState({
+  const setTrackedStartupLoadingOverlayState = (state = {}) => {
+    if (Number.isFinite(Number(state.percent))) {
+      startupOverlayLastPercent = Math.max(0, Math.min(100, Number(state.percent)));
+    }
+    setStartupLoadingOverlayState(state);
+  };
+
+  setTrackedStartupLoadingOverlayState({
     message: STARTUP_LOADING_DEFAULT_MESSAGE,
-    stage: 'Bootstrapping workspace…',
-    eta: 'Estimating…',
-    percent: 6,
+    stage: 'Bootstrapping workspace...',
+    eta: 'Estimating...',
+    percent: STARTUP_OVERLAY_INITIAL_PERCENT,
     checks: [
       { name: 'UI shell', state: 'ready', detail: 'Renderer mounted' },
       { name: 'Terminal daemon', state: 'loading', detail: 'Connecting terminals…' },
@@ -4054,12 +4066,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       clearInterval(startupOverlayPollTimer);
       startupOverlayPollTimer = null;
     }
+    if (startupOverlayStallTimer) {
+      clearTimeout(startupOverlayStallTimer);
+      startupOverlayStallTimer = null;
+    }
     if (reason === 'daemon-timeout') {
       handleDaemonStartupTimeout(payload);
     } else {
       const elapsedMs = Date.now() - startupOverlayStartedAtMs;
       const remainingMs = Math.max(0, STARTUP_OVERLAY_MIN_VISIBLE_MS - elapsedMs);
-      setStartupLoadingOverlayState({
+      setTrackedStartupLoadingOverlayState({
         message: 'SquidRun ready',
         stage: reason === 'degraded-startup'
           ? 'Started with degraded services'
@@ -4083,8 +4099,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     resolveStartupOverlay('daemon-timeout', payload);
   });
 
+  startupOverlayStallTimer = setTimeout(() => {
+    if (startupOverlayResolved || startupOverlayLastPercent > STARTUP_OVERLAY_INITIAL_PERCENT) return;
+    startupOverlayStalled = true;
+    setTrackedStartupLoadingOverlayState({
+      message: 'Startup is stuck',
+      stage: 'The window bridge never reported ready',
+      eta: 'Check logs or restart SquidRun',
+      percent: startupOverlayLastPercent,
+      error: true,
+      hideSpinner: true,
+    });
+  }, STARTUP_OVERLAY_STALL_WATCHDOG_MS);
+
   const refreshStartupOverlay = async () => {
-    if (startupOverlayResolved) return;
+    if (startupOverlayResolved || startupOverlayStalled) return;
     const elapsedMs = Date.now() - startupOverlayStartedAtMs;
     let serviceStatus = null;
     try {
@@ -4101,7 +4130,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       ? 'Ready'
       : `ETA ${formatStartupElapsed(Math.min(rawEtaMs, STARTUP_OVERLAY_MAX_WAIT_MS))}`;
 
-    setStartupLoadingOverlayState({
+    setTrackedStartupLoadingOverlayState({
       message: model.headline,
       stage: model.subhead,
       eta: etaText,

@@ -1105,11 +1105,11 @@
 }
 
 .command-delivery-status.delivered {
-  color: var(--color-secondary);
+  color: var(--color-success);
 }
 
 .command-delivery-status.failed {
-  color: var(--color-primary);
+  color: var(--color-error);
 }
 
 @keyframes sendingPulse {
@@ -1149,12 +1149,12 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--color-text-dim);
 }
 
 .sync-label {
-  font-size: 9px;
+  font-size: var(--text-xs);
   letter-spacing: 0.5px;
   color: var(--color-text-dim);
 }
@@ -1164,8 +1164,8 @@
   color: var(--color-text-muted);
   background: rgba(10, 10, 15, 0.3);
   border-radius: var(--radius-sm);
-  padding: 1px var(--space-1);
-  font-size: 9px;
+  padding: 2px var(--space-1);
+  font-size: var(--text-xs);
   line-height: 1.2;
   transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
 }
@@ -1177,9 +1177,9 @@
 }
 
 .sync-chip.synced {
-  border-color: var(--color-secondary);
-  color: var(--color-secondary);
-  background: rgba(0, 240, 255, 0.12);
+  border-color: var(--color-success);
+  color: var(--color-success);
+  background: rgba(0, 230, 118, 0.12);
 }
 
 .sync-chip.skipped {
@@ -1670,16 +1670,16 @@
 .command-palette-item:hover,
 .command-palette-item.selected {
   background: linear-gradient(90deg,
-    color-mix(in srgb, var(--color-accent, #00f0ff) 20%, transparent) 0%,
-    color-mix(in srgb, var(--color-accent, #00f0ff) 6%, transparent) 100%);
+    color-mix(in srgb, var(--color-accent, #ff2040) 20%, transparent) 0%,
+    color-mix(in srgb, var(--color-accent, #ff2040) 6%, transparent) 100%);
   transform: translateY(-1px);
   box-shadow: var(--shadow-sm, 0 4px 10px rgba(0, 0, 0, 0.25));
 }
 
 .command-palette-item.selected {
-  border-left: 3px solid var(--color-accent, #00f0ff);
+  border-left: 3px solid var(--color-accent, #ff2040);
   padding-left: calc(var(--space-4, 16px) - 3px);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent, #00f0ff) 35%, transparent),
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent, #ff2040) 35%, transparent),
               var(--shadow-md, 0 8px 18px rgba(0, 0, 0, 0.3));
   transform: translateY(-1px) translateX(1px);
 }
@@ -1719,16 +1719,16 @@
 
 .command-palette-item:hover .icon,
 .command-palette-item.selected .icon {
-  color: var(--color-accent, #00f0ff);
+  color: var(--color-accent, #ff2040);
 }
 
 .command-palette-item.selected .shortcut-hint {
-  color: var(--color-accent, #00f0ff);
-  border-color: color-mix(in srgb, var(--color-accent, #00f0ff) 40%, transparent);
+  color: var(--color-accent, #ff2040);
+  border-color: color-mix(in srgb, var(--color-accent, #ff2040) 40%, transparent);
 }
 
 .command-palette-item:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--color-accent, #00f0ff) 70%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--color-accent, #ff2040) 70%, transparent);
   outline-offset: -2px;
 }
 

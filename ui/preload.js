@@ -2,10 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const Module = require('module');
 const { contextBridge, ipcRenderer } = require('electron');
-const { createPreloadApi } = require('./modules/bridge/preload-api');
-const { createRendererModules } = require('./modules/bridge/renderer-modules');
-
-const bridgeApi = createPreloadApi(ipcRenderer);
 
 function installLocalScriptShebangLoader() {
   const originalLoader = Module._extensions?.['.js'];
@@ -27,6 +23,13 @@ function installLocalScriptShebangLoader() {
   };
 }
 
+installLocalScriptShebangLoader();
+
+const { createPreloadApi } = require('./modules/bridge/preload-api');
+const { createRendererModules } = require('./modules/bridge/renderer-modules');
+
+const bridgeApi = createPreloadApi(ipcRenderer);
+
 function exposeBridgeAliases(exposeFn, api) {
   exposeFn('squidrun', api);
   exposeFn('squidrunAPI', api);
@@ -37,7 +40,6 @@ function exposeBridgeAliases(exposeFn, api) {
 // window.squidrun (through renderer-bridge.js). Without this, they can't
 // find the bridge because contextBridge only exposes to the renderer page.
 exposeBridgeAliases((name, value) => { window[name] = value; }, bridgeApi);
-installLocalScriptShebangLoader();
 
 try {
   bridgeApi.rendererModules = createRendererModules();

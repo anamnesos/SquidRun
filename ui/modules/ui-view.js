@@ -108,6 +108,7 @@ function ensureSyncIndicator() {
     const label = document.createElement('span');
     label.className = 'sync-label';
     label.textContent = 'SYNC';
+    label.dataset.tooltip = 'Context sync status';
     indicator.appendChild(label);
 
     Object.entries(SYNC_FILES).forEach(([file, meta]) => {
@@ -116,6 +117,8 @@ function ensureSyncIndicator() {
       chip.dataset.file = file;
       chip.textContent = meta.label;
       chip.title = `${file} not synced`;
+      chip.dataset.tooltip = `${file} not synced`;
+      chip.setAttribute('aria-label', `${file} not synced`);
       indicator.appendChild(chip);
     });
 
@@ -169,7 +172,10 @@ function updateSyncChip(file, state = {}) {
     parts.push(`source ${state.source}`);
   }
 
-  chip.title = parts.join(' | ');
+  const tooltip = parts.join(' | ');
+  chip.title = tooltip;
+  chip.dataset.tooltip = tooltip;
+  chip.setAttribute('aria-label', tooltip);
 }
 
 /**

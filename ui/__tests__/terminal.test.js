@@ -2222,7 +2222,7 @@ describe('terminal.js module', () => {
       jest.useFakeTimers();
     });
 
-    test('should enforce xterm scrollback cap in constructor options', async () => {
+    test('should enforce xterm scrollback cap and legibility options in constructor options', async () => {
       const mockContainer = {
         addEventListener: jest.fn(),
       };
@@ -2230,7 +2230,22 @@ describe('terminal.js module', () => {
 
       await terminal.initTerminal('1');
 
-      expect(Terminal).toHaveBeenCalledWith(expect.objectContaining({ scrollback: 2000 }));
+      expect(Terminal).toHaveBeenCalledWith(expect.objectContaining({
+        fontFamily: "'Cascadia Code', 'Consolas', 'Monaco', monospace",
+        fontWeightBold: 600,
+        letterSpacing: 0,
+        lineHeight: 1.25,
+        minimumContrastRatio: 4.5,
+        scrollback: 2000,
+        theme: expect.objectContaining({
+          brightBlack: '#5c6a80',
+          brightRed: '#ff5c72',
+          brightGreen: '#54f0a2',
+          brightYellow: '#ffc861',
+          brightCyan: '#66f5ff',
+          brightWhite: '#ffffff',
+        }),
+      }));
     });
 
     test('should restore daemon scrollback when attaching an existing dynamic pane PTY', async () => {
