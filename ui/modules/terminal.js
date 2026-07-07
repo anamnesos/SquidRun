@@ -4592,6 +4592,31 @@ function getTerminal(paneId) {
   return terminals.get(paneId);
 }
 
+function refreshPane(paneId, options = {}) {
+  const id = String(paneId || '');
+  if (!id) return false;
+  const terminal = terminals.get(id);
+  if (!terminal) return false;
+  if (options.resumeRender === true) {
+    setPaneRenderSuspended(id, false);
+  }
+  if (options.replayDaemonScrollback === true) {
+    void repaintTerminalFromDaemonScrollback(id, {
+      timeoutMs: options.snapshotTimeoutMs,
+      clear: options.clear !== false,
+    }).catch((err) => {
+      log.warn(`Terminal ${id}`, `Manual daemon scrollback replay failed: ${err?.message || err}`);
+    });
+  }
+  refreshTerminalViewport(id, terminal, fitAddons.get(id) || null, {
+    operation: options.operation || 'manual_pane_refresh',
+    forceFit: options.forceFit === true,
+    forceApply: options.forceApply === true,
+    scrollToBottom: options.scrollToBottom,
+  });
+  return true;
+}
+
 function getFocusedPane() {
   return focusedPane;
 }
@@ -4745,6 +4770,7 @@ module.exports = {
   aggressiveNudgeAll,  // Aggressive nudge all panes with stagger
   handleResize,
   getTerminal,
+  refreshPane,
   getFocusedPane,
   setReconnectedToExisting,
   resetTerminalWriteQueue, // Reset write queue on pane restart/kill

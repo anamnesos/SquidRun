@@ -1399,7 +1399,7 @@ async function ensureSquidRoomLivePaneAgents(windowContext = getCurrentWindowCon
     const promptOnly = hasSquidRoomShellOnlyPrompt(existingTerm);
     const timedOut = attemptAgeMs !== null && attemptAgeMs > SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS;
     const shouldRespawn = promptOnly || timedOut;
-    if (attempt && options.force !== true && !shouldRespawn) {
+    if (attempt && !shouldRespawn) {
       ensured.push({ paneId: spec.paneId, status: 'spawn_pending', ageMs: attemptAgeMs });
       continue;
     }
