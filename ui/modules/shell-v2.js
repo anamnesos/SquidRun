@@ -1837,7 +1837,7 @@ function appendStationControl(panel, control) {
   return appendExisting(panel, showShellElement(control));
 }
 
-function rebuildCoreStationHeader(doc, pane, paneId, settings = {}) {
+function rebuildCoreStationHeader(doc, pane, paneId) {
   if (!doc || !pane || !paneId) return;
   const header = pane.querySelector?.('.pane-header');
   if (!header) return;
@@ -1848,20 +1848,14 @@ function rebuildCoreStationHeader(doc, pane, paneId, settings = {}) {
   pane.querySelectorAll?.('.expand-btn').forEach((button) => removeElement(button));
 
   if (header.dataset.shellV2Reduced === 'true') {
-    const chipBadge = doc.getElementById?.(`cli-badge-${paneId}`);
-    if (chipBadge && !String(chipBadge.textContent || '').trim()) {
-      chipBadge.textContent = resolvePaneModelLabel(doc, paneId, settings);
-    }
+    header.querySelectorAll?.('.shell-v2-station-chip .cli-badge, .shell-v2-station-chip .shell-v2-station-separator')
+      .forEach((element) => removeElement(element));
     return;
   }
 
   const roleLabel = CORE_STATION_LABELS[paneId] || `Pane ${paneId}`;
-  const modelLabel = resolvePaneModelLabel(doc, paneId, settings);
   const cliBadge = doc.getElementById?.(`cli-badge-${paneId}`);
-  if (cliBadge && !String(cliBadge.textContent || '').trim()) {
-    cliBadge.textContent = modelLabel;
-  }
-  cliBadge?.classList?.add?.('visible');
+  removeElement(cliBadge);
 
   const chip = makeElement(doc, 'span', 'shell-v2-station-chip', {
     dataset: { paneId },
@@ -1870,15 +1864,6 @@ function rebuildCoreStationHeader(doc, pane, paneId, settings = {}) {
   chip.appendChild(makeElement(doc, 'span', 'shell-v2-station-role', {
     textContent: roleLabel,
   }));
-  appendStationSeparator(doc, chip);
-  if (cliBadge) {
-    chip.appendChild(cliBadge);
-  } else {
-    chip.appendChild(makeElement(doc, 'span', 'cli-badge visible', {
-      id: `cli-badge-${paneId}`,
-      textContent: modelLabel,
-    }));
-  }
 
   const needsInput = makeDoorbellSlot(doc, paneId, roleLabel);
 
@@ -1917,7 +1902,7 @@ function rebuildCoreStationHeader(doc, pane, paneId, settings = {}) {
   header.dataset.shellV2Reduced = 'true';
 }
 
-function rebuildMiraStationHeader(doc, pane, settings = {}) {
+function rebuildMiraStationHeader(doc, pane) {
   if (!doc || !pane) return;
   const paneId = '1';
   const header = pane.querySelector?.('.pane-header');
@@ -1927,14 +1912,14 @@ function rebuildMiraStationHeader(doc, pane, settings = {}) {
   header.classList?.add?.('shell-v2-station-header');
   pane.querySelectorAll?.('.agent-badge').forEach((badge) => removeElement(badge));
   pane.querySelectorAll?.('.expand-btn').forEach((button) => removeElement(button));
-  if (header.dataset.shellV2Reduced === 'true') return;
-
-  const modelLabel = resolvePaneModelLabel(doc, paneId, settings);
-  const cliBadge = doc.getElementById?.(`cli-badge-${paneId}`);
-  if (cliBadge && !String(cliBadge.textContent || '').trim()) {
-    cliBadge.textContent = modelLabel;
+  if (header.dataset.shellV2Reduced === 'true') {
+    header.querySelectorAll?.('.shell-v2-station-chip .cli-badge, .shell-v2-station-chip .shell-v2-station-separator')
+      .forEach((element) => removeElement(element));
+    return;
   }
-  cliBadge?.classList?.add?.('visible');
+
+  const cliBadge = doc.getElementById?.(`cli-badge-${paneId}`);
+  removeElement(cliBadge);
 
   const chip = makeElement(doc, 'span', 'shell-v2-station-chip', {
     dataset: { paneId },
@@ -1943,15 +1928,6 @@ function rebuildMiraStationHeader(doc, pane, settings = {}) {
   chip.appendChild(makeElement(doc, 'span', 'shell-v2-station-role', {
     textContent: 'Mira',
   }));
-  appendStationSeparator(doc, chip);
-  if (cliBadge) {
-    chip.appendChild(cliBadge);
-  } else {
-    chip.appendChild(makeElement(doc, 'span', 'cli-badge visible', {
-      id: `cli-badge-${paneId}`,
-      textContent: modelLabel,
-    }));
-  }
 
   const needsInput = makeDoorbellSlot(doc, paneId, 'Mira');
 
@@ -1984,10 +1960,10 @@ function rebuildMiraStationHeader(doc, pane, settings = {}) {
   header.dataset.shellV2Reduced = 'true';
 }
 
-function reduceCoreStationHeaders(doc, sidePanesContainer, settings = {}) {
+function reduceCoreStationHeaders(doc, sidePanesContainer) {
   CORE_STATION_PANE_IDS.forEach((paneId) => {
     const pane = sidePanesContainer?.querySelector?.(`.pane[data-pane-id="${paneId}"]`);
-    rebuildCoreStationHeader(doc, pane, paneId, settings);
+    rebuildCoreStationHeader(doc, pane, paneId);
   });
 }
 
@@ -2266,7 +2242,7 @@ function clearArmZoom(state = {}, doc = null, terminalApi = {}) {
 }
 
 function ensureSquidRoomFloor(doc, views, coreStrip, terminalApi = {}, state = {}, settings = {}, options = {}) {
-  reduceCoreStationHeaders(doc, coreStrip?.querySelector?.('.side-panes-container'), settings);
+  reduceCoreStationHeaders(doc, coreStrip?.querySelector?.('.side-panes-container'));
   const gateProfile = isShellV2GateProfile(options.windowContext, options.env);
   configureShellV2ArmRuntime(terminalApi, {
     skipStartupInjection: gateProfile,
@@ -2516,7 +2492,7 @@ function initShellV2(options = {}) {
     migrateShellV2Settings(doc, windowRef, options.settings || {});
     ensureMiraScreenshotAffordances(doc, views.mira, windowRef, state);
     ensureLabView(doc, views, windowRef);
-    rebuildMiraStationHeader(doc, findPaneIn(required.mainPaneContainer, '1'), options.settings || {});
+    rebuildMiraStationHeader(doc, findPaneIn(required.mainPaneContainer, '1'));
     purgeLegacyPaneExpandButtons(required.sidePanesContainer);
     ensureSquidRoomFloor(doc, views, coreStrip, options.terminal || {}, state, options.settings || {}, {
       windowContext: options.windowContext || {},

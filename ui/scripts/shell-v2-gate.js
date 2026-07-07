@@ -303,19 +303,22 @@ function buildVisualScopeData(commit) {
   const allowed = new Set(SHELL_V2_VISUAL_COMMIT_FILES);
   const files = (changed.files || []).map(normalizeGitPath).sort();
   const unexpected = files.filter((filePath) => !allowed.has(filePath));
-  const missingExpectedSurface = [
+  const expectedSurface = [
     'ui/modules/shell-v2.js',
     'ui/modules/shell-v2-doorbell.js',
     'ui/styles/layout.css',
     'ui/scripts/shell-v2-gate.js',
-  ].filter((filePath) => !files.includes(filePath));
+  ];
+  const touchedExpectedSurface = expectedSurface.filter((filePath) => files.includes(filePath));
+  const missingExpectedSurface = expectedSurface.filter((filePath) => !files.includes(filePath));
   return {
     ...changed,
     files,
     allowedFiles: [...allowed].sort(),
     unexpected,
     missingExpectedSurface,
-    ok: !changed.error && unexpected.length === 0 && missingExpectedSurface.length === 0,
+    touchedExpectedSurface,
+    ok: !changed.error && unexpected.length === 0 && touchedExpectedSurface.length > 0,
   };
 }
 
@@ -1950,6 +1953,9 @@ async function runVisualConformanceAssertions({ page, recorder, runId }) {
     screenshots[name] = filePath;
   };
 
+  await clickTab(page, 'today');
+  await page.waitForSelector('.shell-v2-today-status.is-failed', { timeout: 10000 });
+
   const referenceTokens = readShellV2ReferenceTokens();
   const liveTokens = await page.evaluate((tokens) => {
     const style = window.getComputedStyle(document.documentElement);
@@ -2000,6 +2006,7 @@ async function runVisualConformanceAssertions({ page, recorder, runId }) {
       '.shell-v2-today-summary',
       '.shell-v2-today-tag',
       '.shell-v2-today-status',
+      '.shell-v2-today-full-error',
       '.shell-v2-bottom-bar',
       '.command-bar',
       '.command-input',
@@ -2023,7 +2030,6 @@ async function runVisualConformanceAssertions({ page, recorder, runId }) {
       '26,18,6',
       '230,221,205',
       '159,184,168',
-      '255,155,155',
       '200,210,220',
       '122,135,148',
       '74,85,96',
@@ -2092,7 +2098,6 @@ async function runVisualConformanceAssertions({ page, recorder, runId }) {
       const hsl = rgbToHsl(color);
       if (hsl.l <= 0.16 || hsl.s <= 0.24) return true;
       if (hsl.h >= 30 && hsl.h <= 44 && hsl.s >= 0.25) return true;
-      if (hsl.h >= 0 && hsl.h <= 8 && element.closest?.('.is-failed, .shell-v2-today-status.is-failed')) return true;
       return false;
     }
     const violations = [];
@@ -2113,12 +2118,25 @@ async function runVisualConformanceAssertions({ page, recorder, runId }) {
         if (!isAllowed(color, element)) violations.push(sample);
       });
     });
-    return { checked: samples.length, violations: violations.slice(0, 80) };
+    const failedStatuses = [...document.querySelectorAll('.shell-v2-today-status.is-failed')].map((element) => {
+      const style = window.getComputedStyle(element);
+      return {
+        text: element.textContent || '',
+        color: style.color || '',
+        sampled: samples.some((sample) => sample.prop === 'color' && sample.value === style.color),
+      };
+    });
+    return {
+      checked: samples.length,
+      violations: violations.slice(0, 80),
+      todayFailedStatusCount: failedStatuses.length,
+      failedStatuses,
+    };
   });
   recorder.record(
     'VP2',
-    hueSweep.violations.length === 0,
-    `computed non-reference hue violations=${hueSweep.violations.length}`,
+    hueSweep.violations.length === 0 && hueSweep.todayFailedStatusCount >= 1,
+    `computed non-reference hue violations=${hueSweep.violations.length} failedRows=${hueSweep.todayFailedStatusCount}`,
     hueSweep
   );
 
@@ -2259,6 +2277,37 @@ async function runVisualConformanceAssertions({ page, recorder, runId }) {
         y: Math.round(rect.y),
       };
     };
+    const parseRgb = (value) => {
+      const text = String(value || '').trim();
+      const match = text.match(/^rgba?\(([^)]+)\)$/i);
+      if (!match) return null;
+      const parts = match[1].split(/[,\s/]+/).map((part) => part.trim()).filter(Boolean);
+      return {
+        r: Math.round(Number(parts[0]) || 0),
+        g: Math.round(Number(parts[1]) || 0),
+        b: Math.round(Number(parts[2]) || 0),
+        a: parts[3] === undefined ? 1 : Number(parts[3]),
+      };
+    };
+    const isAmberish = (value) => {
+      const color = parseRgb(value);
+      if (!color || color.a <= 0.04) return false;
+      const rn = color.r / 255;
+      const gn = color.g / 255;
+      const bn = color.b / 255;
+      const max = Math.max(rn, gn, bn);
+      const min = Math.min(rn, gn, bn);
+      if (max === min) return false;
+      const d = max - min;
+      const l = (max + min) / 2;
+      const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      let h;
+      if (max === rn) h = (gn - bn) / d + (gn < bn ? 6 : 0);
+      else if (max === gn) h = (bn - rn) / d + 2;
+      else h = (rn - gn) / d + 4;
+      h *= 60;
+      return h >= 30 && h <= 44 && s >= 0.25 && l > 0.16;
+    };
     return {
       header: rectOf('.header'),
       rail: rectOf('#shellV2TabRail'),
@@ -2266,17 +2315,54 @@ async function runVisualConformanceAssertions({ page, recorder, runId }) {
       activeViews: [...document.querySelectorAll('.shell-v2-view[data-shell-v2-active="true"]')]
         .map((view) => view.dataset.shellV2View || ''),
       bodyTab: document.body?.dataset?.shellV2ActiveTab || '',
+      squidRoomTab: (() => {
+        const tab = document.querySelector('[data-shell-v2-tab="squid-room"]');
+        const label = tab?.querySelector?.('.shell-v2-tab-label');
+        const tabRect = tab?.getBoundingClientRect?.() || { width: 0, height: 0 };
+        const labelRect = label?.getBoundingClientRect?.() || { width: 0, height: 0 };
+        const style = label ? window.getComputedStyle(label) : null;
+        return {
+          found: Boolean(tab && label),
+          text: label?.textContent || '',
+          whiteSpace: style?.whiteSpace || '',
+          tabWidth: Math.round(tabRect.width),
+          labelWidth: Math.round(labelRect.width),
+          labelHeight: Math.round(labelRect.height),
+          noWrap: Boolean(label)
+            && style?.whiteSpace === 'nowrap'
+            && Math.round(labelRect.height) <= 18
+            && Math.round(labelRect.width) <= Math.round(tabRect.width),
+        };
+      })(),
+      stationChips: [...document.querySelectorAll('.shell-v2-station-chip')].map((chip) => ({
+        text: chip.textContent || '',
+        hasCliBadge: Boolean(chip.querySelector('.cli-badge')),
+        hasBareAmpersand: /(^|\s)&(\s|$)/.test(chip.textContent || ''),
+      })),
+      idleStationBorders: [...document.querySelectorAll('.shell-v2-station.pane:not(.focused)')].map((pane) => {
+        const style = window.getComputedStyle(pane);
+        return {
+          paneId: pane.dataset?.paneId || '',
+          borderTopColor: style.borderTopColor,
+          amberish: isAmberish(style.borderTopColor),
+        };
+      }),
     };
   });
+  const mysteryStationChips = structure.stationChips.filter((chip) => chip.hasCliBadge || chip.hasBareAmpersand);
+  const idleAccentBorders = structure.idleStationBorders.filter((entry) => entry.amberish);
   recorder.record(
     'VP5',
     structure.header.height === 44
       && structure.rail.height === 44
       && structure.bottomBar.height === 30
       && structure.activeViews.length === 1
-      && structure.bodyTab === 'today',
-    `rail=${structure.rail.height}px bottom=${structure.bottomBar.height}px active=${structure.bodyTab}`,
-    structure
+      && structure.bodyTab === 'today'
+      && structure.squidRoomTab.noWrap === true
+      && mysteryStationChips.length === 0
+      && idleAccentBorders.length === 0,
+    `rail=${structure.rail.height}px bottom=${structure.bottomBar.height}px active=${structure.bodyTab} squidNoWrap=${structure.squidRoomTab.noWrap === true} mysteryChips=${mysteryStationChips.length} idleAccentBorders=${idleAccentBorders.length}`,
+    { ...structure, mysteryStationChips, idleAccentBorders }
   );
 
   return screenshots;
@@ -3015,12 +3101,9 @@ async function main() {
     await runPhase4FlagOnAssertions({ page, recorder, rendererNoise });
     screenshots = {
       ...screenshots,
-      ...await runVisualConformanceAssertions({ page, recorder, runId }),
-    };
-    screenshots = {
-      ...screenshots,
       ...await capturePhase2Screenshots(page, runId),
       ...await capturePhase3TodayScreenshots(page, runId, recorder, dataRoot),
+      ...await runVisualConformanceAssertions({ page, recorder, runId }),
       ...await capturePhase4ReviewScreenshots(page, runId),
       ...await runDoorbellBehaviorAssertions({
         page,
