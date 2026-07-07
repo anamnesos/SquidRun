@@ -8,6 +8,14 @@ const SHELL_V2_TABS = Object.freeze([
   { id: 'today', label: 'TODAY', shortcut: '3' },
 ]);
 
+const TODAY_FILTERS = Object.freeze([
+  { id: 'all', label: 'All' },
+  { id: 'team', label: 'Team' },
+  { id: 'james', label: 'James' },
+  { id: 'system', label: 'System' },
+]);
+const TODAY_POLL_MS = 5000;
+
 const CORE_STATION_PANE_IDS = Object.freeze(['2', '3']);
 const CORE_STATION_LABELS = Object.freeze({
   '2': 'Builder',
@@ -343,6 +351,640 @@ function reparentPaneContainers(doc, views, mainPaneContainer, sidePanesContaine
   }
 
   return coreStrip;
+}
+
+function createTodayState() {
+  return {
+    filter: 'all',
+    search: '',
+    rows: [],
+    pendingRows: null,
+    newCount: 0,
+    expandedRowIds: new Set(),
+    focusedRowId: null,
+    fullFiles: new Map(),
+    loading: false,
+    error: '',
+    rendered: false,
+  };
+}
+
+function getTodayState(state = {}) {
+  if (!state.today) state.today = createTodayState();
+  return state.today;
+}
+
+function computeTodayWindow(nowMs = Date.now()) {
+  const day = new Date(nowMs);
+  day.setHours(0, 0, 0, 0);
+  const dayStartMs = day.getTime();
+  return {
+    dayStartMs,
+    dayEndMs: dayStartMs + 24 * 60 * 60 * 1000,
+  };
+}
+
+function formatTodayTime(ms) {
+  const numeric = Number(ms);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '--:--';
+  const date = new Date(numeric);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function normalizeRoleName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function displayRoleName(value) {
+  const role = normalizeRoleName(value);
+  if (!role) return 'System';
+  if (role === 'user') return 'James';
+  if (role === 'architect' || role === 'arch') return 'Mira';
+  return role
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
+}
+
+function classifyTodayRow(row = {}) {
+  const sender = normalizeRoleName(row.senderRole);
+  const target = normalizeRoleName(row.targetRole);
+  const channel = normalizeRoleName(row.channel);
+  if (sender === 'user' || target === 'user') return 'james';
+  if (
+    sender === 'system'
+    || target === 'system'
+    || sender === 'daemon'
+    || target === 'daemon'
+    || channel === 'voice'
+  ) {
+    return 'system';
+  }
+  return 'team';
+}
+
+function todayOriginGlyph(row = {}) {
+  const kind = row.todayKind || classifyTodayRow(row);
+  if (kind === 'system') return 'sys';
+  if (kind === 'james') {
+    return normalizeRoleName(row.senderRole) === 'user' ? '⇠' : '⇢';
+  }
+  return '⇄';
+}
+
+function parseTodayTag(rawBody = '', row = {}) {
+  const text = String(rawBody || '').trim();
+  const withoutSpeaker = text.replace(/^\([^)]+\):\s*/, '').trim();
+  const bracket = withoutSpeaker.match(/^\[([^\]\r\n]{1,36})\]/);
+  if (bracket) return bracket[1].trim();
+  const speaker = text.match(/^\(([A-Za-z][A-Za-z/-]*\s+#\d+)\):/);
+  if (speaker) return speaker[1].trim();
+  return String(row.channel || '').trim().toUpperCase() || 'MSG';
+}
+
+function compactTodayExcerpt(rawBody = '', maxChars = 180) {
+  const text = String(rawBody || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '(empty)';
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
+
+function normalizeTodayRows(rows = []) {
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    const normalized = {
+      rowId: row.rowId ?? row.row_id ?? '',
+      messageId: row.messageId ?? row.message_id ?? '',
+      sessionId: row.sessionId ?? row.session_id ?? '',
+      senderRole: row.senderRole ?? row.sender_role ?? '',
+      targetRole: row.targetRole ?? row.target_role ?? '',
+      channel: row.channel ?? '',
+      direction: row.direction ?? '',
+      timestampMs: Number(row.timestampMs ?? row.brokeredAtMs ?? row.sentAtMs ?? row.updatedAtMs ?? 0) || 0,
+      rawBody: typeof row.rawBody === 'string'
+        ? row.rawBody
+        : (typeof row.raw_body === 'string' ? row.raw_body : ''),
+      status: row.status || 'recorded',
+      ackStatus: row.ackStatus ?? row.ack_status ?? '',
+      attempt: row.attempt ?? '',
+      hasFullFile: row.hasFullFile === true,
+    };
+    normalized.todayKind = classifyTodayRow(normalized);
+    normalized.tag = parseTodayTag(normalized.rawBody, normalized);
+    normalized.excerpt = compactTodayExcerpt(normalized.rawBody);
+    return normalized;
+  });
+}
+
+function countTodayKinds(rows = []) {
+  const counts = { all: rows.length, team: 0, james: 0, system: 0 };
+  rows.forEach((row) => {
+    const kind = row.todayKind || classifyTodayRow(row);
+    if (Object.prototype.hasOwnProperty.call(counts, kind)) counts[kind] += 1;
+  });
+  return counts;
+}
+
+function getVisibleTodayRows(today = {}) {
+  const query = String(today.search || '').trim().toLowerCase();
+  return (today.rows || []).filter((row) => {
+    if (today.filter && today.filter !== 'all' && row.todayKind !== today.filter) return false;
+    if (!query) return true;
+    return [
+      row.rawBody,
+      row.senderRole,
+      row.targetRole,
+      row.status,
+      row.tag,
+      row.messageId,
+      row.sessionId,
+    ].some((value) => String(value || '').toLowerCase().includes(query));
+  });
+}
+
+function resolveTodayApi(windowRef = null, options = {}) {
+  if (typeof options.todayJournalApi === 'function') {
+    return {
+      query: options.todayJournalApi,
+      readFull: typeof options.todayFullMessageApi === 'function'
+        ? options.todayFullMessageApi
+        : null,
+    };
+  }
+  const bridge = windowRef?.squidrunAPI || windowRef?.squidrun || {};
+  const invoke = typeof bridge.invoke === 'function'
+    ? bridge.invoke.bind(bridge)
+    : (typeof bridge.ipc?.invoke === 'function' ? bridge.ipc.invoke.bind(bridge.ipc) : null);
+  if (!invoke) return { query: null, readFull: null };
+  return {
+    query: (payload) => invoke('shell-v2:today-journal', payload),
+    readFull: (payload) => invoke('shell-v2:today-full-message', payload),
+  };
+}
+
+function makeTodaySeparator(doc) {
+  return makeElement(doc, 'span', 'shell-v2-today-separator', {
+    textContent: '·',
+    'aria-hidden': 'true',
+  });
+}
+
+function formatTodayParticipants(row = {}) {
+  return `${displayRoleName(row.senderRole)}→${displayRoleName(row.targetRole)}`;
+}
+
+function formatSessionDivider(row = {}) {
+  const sessionId = String(row.sessionId || 'session').trim() || 'session';
+  const match = sessionId.match(/app-session-(\d+)/i);
+  const label = match ? `session ${match[1]}` : sessionId;
+  return `${label} · started ${formatTodayTime(row.timestampMs)}`;
+}
+
+function renderTodayHeader(doc, root, today) {
+  const counts = countTodayKinds(today.rows || []);
+  TODAY_FILTERS.forEach((filter) => {
+    const chip = root.querySelector?.(`[data-today-filter="${filter.id}"]`);
+    if (!chip) return;
+    chip.textContent = `${filter.label} ${counts[filter.id] || 0}`;
+    chip.classList.toggle('active', today.filter === filter.id);
+    chip.setAttribute?.('aria-pressed', today.filter === filter.id ? 'true' : 'false');
+  });
+
+  const search = root.querySelector?.('[data-today-search="true"]');
+  if (search && search.value !== today.search) search.value = today.search || '';
+
+  const collapse = root.querySelector?.('[data-today-collapse-all="true"]');
+  if (collapse) collapse.disabled = today.expandedRowIds.size === 0;
+
+  const pill = root.querySelector?.('[data-today-new-pill="true"]');
+  if (pill) {
+    pill.hidden = !(today.newCount > 0);
+    pill.textContent = today.newCount > 0 ? `${today.newCount} new ↑` : '';
+  }
+}
+
+function renderTodayEmpty(doc, list, text) {
+  const empty = makeElement(doc, 'div', 'shell-v2-today-empty', {
+    textContent: text || 'No journal rows today',
+  });
+  list.appendChild(empty);
+}
+
+function renderTodayExpanded(doc, row, today, api, refreshRender) {
+  const expanded = makeElement(doc, 'div', 'shell-v2-today-expanded');
+  expanded.appendChild(makeElement(doc, 'pre', 'shell-v2-today-raw', {
+    textContent: row.rawBody || '',
+  }));
+  expanded.appendChild(makeElement(doc, 'div', 'shell-v2-today-footer', {
+    textContent: [
+      `msgId=${row.messageId || '-'}`,
+      `rowId=${row.rowId || '-'}`,
+      `sessionId=${row.sessionId || '-'}`,
+      `attempt=${row.attempt === '' || row.attempt === null || row.attempt === undefined ? '-' : row.attempt}`,
+      `ackStatus=${row.ackStatus || '-'}`,
+    ].join(' · '),
+  }));
+
+  if (row.hasFullFile) {
+    const loaded = today.fullFiles.get(String(row.messageId || ''));
+    if (loaded?.ok) {
+      expanded.appendChild(makeElement(doc, 'div', 'shell-v2-today-full-meta', {
+        textContent: `${loaded.bytes} bytes · sha ${loaded.shaShort}`,
+      }));
+      expanded.appendChild(makeElement(doc, 'pre', 'shell-v2-today-full-raw', {
+        textContent: loaded.content || '',
+      }));
+    } else {
+      const button = makeElement(doc, 'button', 'shell-v2-today-full-btn', {
+        type: 'button',
+        textContent: loaded?.loading ? 'Opening...' : 'Open full file',
+      });
+      button.disabled = loaded?.loading === true || !api?.readFull;
+      button.addEventListener?.('click', async (event) => {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        const key = String(row.messageId || '');
+        today.fullFiles.set(key, { loading: true });
+        refreshRender();
+        try {
+          const result = await api.readFull({ messageId: row.messageId });
+          today.fullFiles.set(key, result && typeof result === 'object' ? result : { ok: false, reason: 'read_failed' });
+        } catch (err) {
+          today.fullFiles.set(key, { ok: false, reason: err?.message || 'read_failed' });
+        }
+        refreshRender();
+      });
+      expanded.appendChild(button);
+      if (loaded && loaded.ok === false) {
+        expanded.appendChild(makeElement(doc, 'div', 'shell-v2-today-full-error', {
+          textContent: loaded.reason || 'full file unavailable',
+        }));
+      }
+    }
+  }
+
+  return expanded;
+}
+
+function renderTodayRows(doc, root, today, api) {
+  renderTodayHeader(doc, root, today);
+  const list = root.querySelector?.('[data-today-list="true"]');
+  if (!list) return;
+  clearElement(list);
+
+  if (today.loading && (!today.rows || today.rows.length === 0)) {
+    renderTodayEmpty(doc, list, 'Loading journal rows');
+    return;
+  }
+  if (today.error) {
+    renderTodayEmpty(doc, list, today.error);
+    return;
+  }
+
+  const visibleRows = getVisibleTodayRows(today);
+  today.visibleRowIds = visibleRows.map((row) => String(row.rowId || row.messageId || ''));
+  if (!today.focusedRowId && visibleRows[0]) {
+    today.focusedRowId = String(visibleRows[0].rowId || visibleRows[0].messageId || '');
+  }
+  if (visibleRows.length === 0) {
+    const noRowsToday = (today.rows || []).length === 0 && !String(today.search || '').trim() && today.filter === 'all';
+    renderTodayEmpty(doc, list, noRowsToday ? 'No journal rows today' : 'No journal rows match');
+    return;
+  }
+
+  let previousSession = null;
+  visibleRows.forEach((row) => {
+    const sessionId = String(row.sessionId || '');
+    if (sessionId !== previousSession) {
+      list.appendChild(makeElement(doc, 'div', 'shell-v2-today-session-divider', {
+        textContent: formatSessionDivider(row),
+      }));
+      previousSession = sessionId;
+    }
+
+    const rowId = String(row.rowId || row.messageId || '');
+    const article = makeElement(doc, 'article', `shell-v2-today-row today-kind-${row.todayKind}`, {
+      dataset: {
+        todayRowId: rowId,
+        todayKind: row.todayKind,
+        status: row.status || '',
+      },
+    });
+    article.dataset.todayRowId = rowId;
+    article.dataset.todayKind = row.todayKind;
+    article.dataset.status = row.status || '';
+    const expanded = today.expandedRowIds.has(rowId);
+    article.classList.toggle('is-expanded', expanded);
+    article.classList.toggle('is-focused', today.focusedRowId === rowId);
+
+    const summary = makeElement(doc, 'button', 'shell-v2-today-summary', {
+      type: 'button',
+      'aria-expanded': expanded ? 'true' : 'false',
+      dataset: { todayRowSummary: rowId },
+    });
+    summary.dataset.todayRowSummary = rowId;
+    summary.tabIndex = today.focusedRowId === rowId ? 0 : -1;
+    summary.appendChild(makeElement(doc, 'span', 'shell-v2-today-time', {
+      textContent: formatTodayTime(row.timestampMs),
+    }));
+    summary.appendChild(makeTodaySeparator(doc));
+    summary.appendChild(makeElement(doc, 'span', 'shell-v2-today-origin', {
+      textContent: todayOriginGlyph(row),
+    }));
+    summary.appendChild(makeTodaySeparator(doc));
+    summary.appendChild(makeElement(doc, 'span', 'shell-v2-today-party', {
+      textContent: formatTodayParticipants(row),
+    }));
+    summary.appendChild(makeElement(doc, 'span', 'shell-v2-today-tag', {
+      textContent: `[${row.tag}]`,
+    }));
+    summary.appendChild(makeElement(doc, 'span', 'shell-v2-today-excerpt', {
+      textContent: row.excerpt,
+    }));
+    const status = makeElement(doc, 'span', 'shell-v2-today-status', {
+      textContent: row.status || 'recorded',
+    });
+    if (String(row.status || '').toLowerCase() === 'failed') {
+      status.classList.add('is-failed');
+    }
+    summary.appendChild(status);
+    summary.addEventListener?.('click', () => {
+      today.focusedRowId = rowId;
+      if (today.expandedRowIds.has(rowId)) today.expandedRowIds.delete(rowId);
+      else today.expandedRowIds.add(rowId);
+      renderTodayRows(doc, root, today, api);
+    });
+    article.appendChild(summary);
+
+    if (expanded) {
+      article.appendChild(renderTodayExpanded(doc, row, today, api, () => renderTodayRows(doc, root, today, api)));
+    }
+    list.appendChild(article);
+  });
+}
+
+function setTodayFilter(doc, root, today, filterId, api) {
+  const next = TODAY_FILTERS.some((filter) => filter.id === filterId) ? filterId : 'all';
+  today.filter = next;
+  const first = getVisibleTodayRows(today)[0];
+  today.focusedRowId = first ? String(first.rowId || first.messageId || '') : null;
+  renderTodayRows(doc, root, today, api);
+}
+
+function focusTodayRow(root, rowId) {
+  if (!rowId) return;
+  const summary = root.querySelector?.(`[data-today-row-summary="${rowId}"]`);
+  summary?.focus?.({ preventScroll: true });
+}
+
+function navigateTodayRows(doc, root, today, api, delta) {
+  const rows = getVisibleTodayRows(today);
+  if (rows.length === 0) return;
+  const ids = rows.map((row) => String(row.rowId || row.messageId || ''));
+  const current = ids.indexOf(String(today.focusedRowId || ''));
+  const nextIndex = Math.max(0, Math.min(ids.length - 1, (current < 0 ? 0 : current) + delta));
+  today.focusedRowId = ids[nextIndex];
+  renderTodayRows(doc, root, today, api);
+  focusTodayRow(root, today.focusedRowId);
+}
+
+function toggleFocusedTodayRow(doc, root, today, api) {
+  const rowId = String(today.focusedRowId || '');
+  if (!rowId) return;
+  if (today.expandedRowIds.has(rowId)) today.expandedRowIds.delete(rowId);
+  else today.expandedRowIds.add(rowId);
+  renderTodayRows(doc, root, today, api);
+  focusTodayRow(root, rowId);
+}
+
+function collapseFocusedTodayRow(doc, root, today, api) {
+  const rowId = String(today.focusedRowId || '');
+  if (!rowId || !today.expandedRowIds.has(rowId)) return false;
+  today.expandedRowIds.delete(rowId);
+  renderTodayRows(doc, root, today, api);
+  focusTodayRow(root, rowId);
+  return true;
+}
+
+function applyPendingTodayRows(doc, root, today, api) {
+  if (Array.isArray(today.pendingRows)) {
+    today.rows = today.pendingRows;
+    today.pendingRows = null;
+  }
+  today.newCount = 0;
+  renderTodayRows(doc, root, today, api);
+  const list = root.querySelector?.('[data-today-list="true"]');
+  if (list) list.scrollTop = 0;
+}
+
+function bindTodayKeyboard(doc, root, today, api) {
+  if (root.dataset.todayKeyboardBound === 'true') return;
+  root.addEventListener?.('keydown', (event) => {
+    const targetTag = String(event.target?.tagName || '').toUpperCase();
+    const inTextInput = ['INPUT', 'TEXTAREA'].includes(targetTag);
+    if (inTextInput && event.key !== 'Escape') return;
+
+    if (event.key === 'j' || event.key === 'ArrowDown') {
+      event.preventDefault?.();
+      navigateTodayRows(doc, root, today, api, 1);
+      return;
+    }
+    if (event.key === 'k' || event.key === 'ArrowUp') {
+      event.preventDefault?.();
+      navigateTodayRows(doc, root, today, api, -1);
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault?.();
+      toggleFocusedTodayRow(doc, root, today, api);
+      return;
+    }
+    if (event.key === 'Escape') {
+      if (collapseFocusedTodayRow(doc, root, today, api)) {
+        event.preventDefault?.();
+      }
+      return;
+    }
+    if (['1', '2', '3', '4'].includes(String(event.key || '')) && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault?.();
+      const filter = TODAY_FILTERS[Number(event.key) - 1];
+      setTodayFilter(doc, root, today, filter?.id || 'all', api);
+      return;
+    }
+    if (event.key === '/' && !inTextInput) {
+      event.preventDefault?.();
+      root.querySelector?.('[data-today-search="true"]')?.focus?.();
+    }
+  });
+  root.dataset.todayKeyboardBound = 'true';
+}
+
+function ensureTodayView(doc, view, windowRef, state = {}, options = {}) {
+  if (!doc || !view) return null;
+  ensureClass(view, 'shell-v2-today-view');
+  const today = getTodayState(state);
+  let root = view.querySelector?.('#shellV2TodayRoot');
+  const api = resolveTodayApi(windowRef, options);
+  today.api = api;
+
+  if (!root) {
+    clearElement(view);
+    root = makeElement(doc, 'section', 'shell-v2-today-root', {
+      id: 'shellV2TodayRoot',
+      'aria-label': 'Today journal',
+    });
+    const header = makeElement(doc, 'div', 'shell-v2-today-header');
+    const chips = makeElement(doc, 'div', 'shell-v2-today-chips', {
+      'aria-label': 'Today filters',
+    });
+    TODAY_FILTERS.forEach((filter) => {
+      const chip = makeElement(doc, 'button', 'shell-v2-today-chip', {
+        type: 'button',
+        textContent: `${filter.label} 0`,
+        dataset: { todayFilter: filter.id },
+        'aria-pressed': filter.id === today.filter ? 'true' : 'false',
+      });
+      chip.dataset.todayFilter = filter.id;
+      chip.addEventListener?.('click', () => setTodayFilter(doc, root, today, filter.id, api));
+      chips.appendChild(chip);
+    });
+    const search = makeElement(doc, 'input', 'shell-v2-today-search', {
+      type: 'search',
+      placeholder: 'Search today',
+      dataset: { todaySearch: 'true' },
+      'aria-label': 'Search today',
+    });
+    search.dataset.todaySearch = 'true';
+    search.value = today.search || '';
+    search.addEventListener?.('input', (event) => {
+      today.search = String(event.target?.value || '');
+      const first = getVisibleTodayRows(today)[0];
+      today.focusedRowId = first ? String(first.rowId || first.messageId || '') : null;
+      renderTodayRows(doc, root, today, api);
+    });
+    const collapse = makeElement(doc, 'button', 'shell-v2-today-collapse-all', {
+      type: 'button',
+      textContent: 'Collapse all',
+      dataset: { todayCollapseAll: 'true' },
+    });
+    collapse.dataset.todayCollapseAll = 'true';
+    collapse.addEventListener?.('click', () => {
+      today.expandedRowIds.clear();
+      renderTodayRows(doc, root, today, api);
+    });
+    header.appendChild(chips);
+    header.appendChild(search);
+    header.appendChild(collapse);
+
+    const body = makeElement(doc, 'div', 'shell-v2-today-body');
+    const pill = makeElement(doc, 'button', 'shell-v2-today-new-pill', {
+      type: 'button',
+      textContent: '',
+      hidden: 'true',
+      dataset: { todayNewPill: 'true' },
+    });
+    pill.dataset.todayNewPill = 'true';
+    pill.hidden = true;
+    pill.addEventListener?.('click', () => applyPendingTodayRows(doc, root, today, api));
+    const list = makeElement(doc, 'div', 'shell-v2-today-list', {
+      dataset: { todayList: 'true' },
+      tabindex: '0',
+    });
+    list.dataset.todayList = 'true';
+    list.addEventListener?.('scroll', () => {
+      today.atTop = Number(list.scrollTop || 0) <= 2;
+    });
+    body.appendChild(pill);
+    body.appendChild(list);
+
+    root.appendChild(header);
+    root.appendChild(body);
+    view.appendChild(root);
+    bindTodayKeyboard(doc, root, today, api);
+  }
+
+  renderTodayRows(doc, root, today, api);
+  today.rendered = true;
+  return root;
+}
+
+async function refreshShellV2Today(doc, view, windowRef, state = {}, options = {}, refreshOptions = {}) {
+  const today = getTodayState(state);
+  const root = ensureTodayView(doc, view, windowRef, state, options);
+  const api = today.api || resolveTodayApi(windowRef, options);
+  today.api = api;
+  if (!root || typeof api.query !== 'function') {
+    today.error = 'Today journal IPC unavailable';
+    renderTodayRows(doc, root, today, api);
+    return { ok: false, reason: 'today_ipc_unavailable' };
+  }
+
+  const list = root.querySelector?.('[data-today-list="true"]');
+  const awayFromTop = Number(list?.scrollTop || 0) > 2;
+  const previousTop = today.rows?.[0]?.rowId || null;
+  today.loading = true;
+  today.error = '';
+  renderTodayHeader(doc, root, today);
+
+  try {
+    const windowPayload = computeTodayWindow();
+    const result = await api.query({
+      ...windowPayload,
+      limit: refreshOptions.limit || 5000,
+    });
+    if (!result || result.ok === false) {
+      today.error = result?.reason || 'Today journal query failed';
+      today.loading = false;
+      renderTodayRows(doc, root, today, api);
+      return result || { ok: false, reason: 'today_query_failed' };
+    }
+
+    const rows = normalizeTodayRows(result.rows || []);
+    const nextTop = rows[0]?.rowId || null;
+    if (
+      refreshOptions.preserveScroll !== false
+      && awayFromTop
+      && previousTop
+      && nextTop
+      && String(nextTop) !== String(previousTop)
+    ) {
+      today.pendingRows = rows;
+      const previousNumeric = Number(previousTop);
+      today.newCount = rows.filter((row) => Number(row.rowId) > previousNumeric).length || 1;
+      today.loading = false;
+      renderTodayHeader(doc, root, today);
+      return { ok: true, pending: true, count: rows.length, newCount: today.newCount };
+    }
+
+    today.rows = rows;
+    today.pendingRows = null;
+    today.newCount = 0;
+    today.loading = false;
+    if (!today.focusedRowId && rows[0]) today.focusedRowId = String(rows[0].rowId || rows[0].messageId || '');
+    renderTodayRows(doc, root, today, api);
+    return { ok: true, count: rows.length };
+  } catch (err) {
+    today.loading = false;
+    today.error = err?.message || 'Today journal query failed';
+    renderTodayRows(doc, root, today, api);
+    return { ok: false, reason: today.error };
+  }
+}
+
+function bindTodayWindowButtonShim(doc, switchTab) {
+  const button = doc?.getElementById?.('openHumanTimelineBtn');
+  if (!button || button.dataset.shellV2TodayShim === 'true') return;
+  try {
+    button.onclick = null;
+    button.removeAttribute?.('onclick');
+  } catch (_) {}
+  button.addEventListener?.('click', (event) => {
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+    switchTab('today');
+  });
+  button.dataset.shellV2TodayShim = 'true';
 }
 
 function purgeLegacyPaneExpandButtons(sidePanesContainer) {
@@ -852,6 +1494,38 @@ function initShellV2(options = {}) {
   const state = {
     activeTab: options.defaultTab || 'mira',
     coreExpanded: false,
+    today: createTodayState(),
+  };
+  let todayRefreshTimer = null;
+
+  const refreshToday = (refreshOptions = {}) => refreshShellV2Today(
+    doc,
+    views?.today,
+    windowRef,
+    state,
+    options,
+    refreshOptions
+  );
+
+  const stopTodayPolling = () => {
+    if (!todayRefreshTimer) return;
+    const clearTimer = typeof windowRef?.clearInterval === 'function'
+      ? windowRef.clearInterval.bind(windowRef)
+      : clearInterval;
+    clearTimer(todayRefreshTimer);
+    todayRefreshTimer = null;
+  };
+
+  const startTodayPolling = () => {
+    if (todayRefreshTimer) return;
+    const setTimer = typeof windowRef?.setInterval === 'function'
+      ? windowRef.setInterval.bind(windowRef)
+      : setInterval;
+    todayRefreshTimer = setTimer(() => {
+      if (state.activeTab === 'today') {
+        refreshToday({ preserveScroll: true });
+      }
+    }, TODAY_POLL_MS);
   };
 
   required.body.classList.add('shell-v2-enabled');
@@ -862,8 +1536,15 @@ function initShellV2(options = {}) {
     state.activeTab = tabId;
     updateTabState(doc, required.body, rail, views, state.activeTab);
     if (state.activeTab === 'squid-room') {
+      stopTodayPolling();
       scheduleArmRevealRefit(options.terminal || {}, windowRef);
+    } else if (state.activeTab === 'today') {
+      ensureTodayView(doc, views.today, windowRef, state, options);
+      refreshToday({ preserveScroll: true });
+      startTodayPolling();
+      scheduleRefit(options.terminal || {}, windowRef);
     } else {
+      stopTodayPolling();
       scheduleRefit(options.terminal || {}, windowRef);
     }
     if (typeof options.onTabActivated === 'function') {
@@ -885,6 +1566,8 @@ function initShellV2(options = {}) {
       windowContext: options.windowContext || {},
       env: options.env || {},
     });
+    ensureTodayView(doc, views.today, windowRef, state, options);
+    bindTodayWindowButtonShim(doc, switchTab);
   };
   refreshChrome();
 
@@ -937,6 +1620,7 @@ function initShellV2(options = {}) {
     toggleCoreExpanded,
     isCoreExpanded: () => state.coreExpanded,
     refreshChrome,
+    refreshToday,
     elements: {
       rail,
       views,
@@ -946,6 +1630,7 @@ function initShellV2(options = {}) {
       doc.removeEventListener?.('keydown', onKeyDown, true);
       doc.removeEventListener?.('click', onClick, true);
       doc.removeEventListener?.('shell-v2-toggle-core-expanded', onToggleCoreExpandedEvent);
+      stopTodayPolling();
       if (windowRef?.__squidrunShellV2 === controller) {
         try {
           delete windowRef.__squidrunShellV2;

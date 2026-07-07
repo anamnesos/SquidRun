@@ -555,7 +555,205 @@ async function capturePhase2Screenshots(page, runId) {
   return screenshots;
 }
 
-function mirrorPhase2Screenshots(screenshots = {}) {
+function buildPhase3TodayRows(nowMs = Date.now()) {
+  const day = new Date(nowMs);
+  day.setHours(10, 10, 0, 0);
+  const base = day.getTime();
+  return [
+    {
+      messageId: 'phase3-today-team',
+      sessionId: 'app-session-902',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      sentAtMs: base,
+      brokeredAtMs: base + 10,
+      rawBody: '[TASK] (Architect): Today populated row from the QA ledger.',
+      status: 'routed',
+      ackStatus: 'delivered',
+      attempt: 1,
+      metadata: {},
+    },
+    {
+      messageId: 'phase3-today-james',
+      sessionId: 'app-session-902',
+      senderRole: 'user',
+      targetRole: 'architect',
+      channel: 'telegram',
+      direction: 'inbound',
+      sentAtMs: base - 60000,
+      brokeredAtMs: base - 59980,
+      rawBody: '[FYI] FULL MSG AT .squidrun/coord/full-agent-messages/phase3-today-james.txt',
+      status: 'acked',
+      ackStatus: 'telegram_reply_requirement_satisfied',
+      attempt: 1,
+      metadata: {
+        materializedFullPayload: true,
+        materializedFullPayloadPath: '.squidrun/coord/full-agent-messages/phase3-today-james.txt',
+      },
+    },
+    {
+      messageId: 'phase3-today-system',
+      sessionId: 'app-session-901',
+      senderRole: 'system',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      sentAtMs: base - 120000,
+      brokeredAtMs: base - 119980,
+      rawBody: '[SYS] Deliberate failed row for status accent verification.',
+      status: 'failed',
+      ackStatus: 'n/a',
+      errorCode: 'qa_intentional_failed_status',
+      attempt: 2,
+      metadata: {},
+    },
+  ];
+}
+
+function writePhase3FullMessageFixture(dataRoot) {
+  const fullDir = path.join(dataRoot, '.squidrun', 'coord', 'full-agent-messages');
+  ensureDir(fullDir);
+  const filePath = path.join(fullDir, 'phase3-today-james.txt');
+  const body = [
+    'SQUIDRUN FULL AGENT MESSAGE',
+    `createdAt: ${new Date().toISOString()}`,
+    'messageId: phase3-today-james',
+    'bytesUtf8: 91',
+    '',
+    '--- FULL MESSAGE START ---',
+    '[FYI] James: this is the materialized QA payload for the Today tab.',
+    '--- FULL MESSAGE END ---',
+    '',
+  ].join('\n');
+  fs.writeFileSync(filePath, body, 'utf8');
+  return filePath;
+}
+
+async function seedPhase3TodayRows(page, dataRoot) {
+  writePhase3FullMessageFixture(dataRoot);
+  const rows = buildPhase3TodayRows();
+  return page.evaluate(async (seedRows) => {
+    const bridge = window.squidrunAPI || window.squidrun || {};
+    const invoke = typeof bridge.invoke === 'function'
+      ? bridge.invoke.bind(bridge)
+      : (typeof bridge.ipc?.invoke === 'function' ? bridge.ipc.invoke.bind(bridge.ipc) : null);
+    if (!invoke) return { ok: false, reason: 'bridge_unavailable' };
+    const results = [];
+    for (const row of seedRows) {
+      results.push(await invoke('evidence-ledger:upsert-comms-journal', row));
+    }
+    const controller = window.__squidrunShellV2 || document.body?.__squidrunShellV2Controller;
+    if (controller && typeof controller.refreshToday === 'function') {
+      await controller.refreshToday({ preserveScroll: false });
+    }
+    return {
+      ok: results.every((result) => result?.ok !== false),
+      results,
+    };
+  }, rows);
+}
+
+async function readTodayGateState(page) {
+  return page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.shell-v2-today-row')];
+    const chips = [...document.querySelectorAll('.shell-v2-today-chip')].map((chip) => ({
+      filter: chip.dataset.todayFilter || '',
+      text: chip.textContent || '',
+      active: chip.classList.contains('active'),
+    }));
+    return {
+      rowCount: rows.length,
+      emptyVisible: Boolean(document.querySelector('.shell-v2-today-empty')),
+      expandedCount: document.querySelectorAll('.shell-v2-today-row.is-expanded').length,
+      failedAccentCount: document.querySelectorAll('.shell-v2-today-status.is-failed').length,
+      fullMeta: document.querySelector('.shell-v2-today-full-meta')?.textContent || '',
+      rawExpanded: document.querySelector('.shell-v2-today-raw')?.textContent || '',
+      chips,
+      activeFilter: chips.find((chip) => chip.active)?.filter || '',
+      bodyText: document.body?.innerText || '',
+    };
+  });
+}
+
+async function waitForTodayRowCount(page, count) {
+  await page.waitForFunction((expected) => (
+    document.querySelectorAll('.shell-v2-today-row').length >= expected
+  ), count, { timeout: 10000 });
+}
+
+async function capturePhase3TodayScreenshots(page, runId, recorder, dataRoot) {
+  const screenshotDir = path.join(PROJECT_ROOT, '.squidrun', 'coord', 'shell-v2-phase3', runId);
+  ensureDir(screenshotDir);
+  const screenshots = {};
+  const capture = async (name) => {
+    const filePath = path.join(screenshotDir, `${name}.png`);
+    await page.screenshot({ path: filePath, fullPage: true });
+    screenshots[name] = filePath;
+  };
+
+  await clickTab(page, 'today');
+  await page.waitForSelector('#shellV2TodayRoot', { timeout: 10000 });
+  await page.waitForTimeout(300);
+  await capture('phase3-today-empty');
+  const emptyState = await readTodayGateState(page);
+  recorder.record('T1', emptyState.rowCount === 0 && emptyState.emptyVisible === true, 'Today empty state captured', emptyState);
+
+  const seed = await seedPhase3TodayRows(page, dataRoot);
+  recorder.record('T2', seed.ok === true, 'seeded real QA comms_journal rows via IPC', seed);
+  await waitForTodayRowCount(page, 3);
+  await page.waitForTimeout(250);
+  await capture('phase3-today-populated');
+  const populatedState = await readTodayGateState(page);
+  recorder.record(
+    'T3',
+    populatedState.rowCount >= 3
+      && populatedState.failedAccentCount === 1
+      && populatedState.chips.some((chip) => chip.filter === 'james' && /James\s+1/.test(chip.text)),
+    'Today populated rows/counts/status accent verified',
+    populatedState
+  );
+
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.shell-v2-today-row')]
+      .find((candidate) => /James|FULL MSG AT|phase3-today-james/i.test(candidate.innerText || candidate.textContent || ''));
+    row?.querySelector?.('.shell-v2-today-summary')?.click();
+  });
+  await page.waitForSelector('.shell-v2-today-row.is-expanded', { timeout: 5000 });
+  await page.evaluate(() => document.querySelector('.shell-v2-today-full-btn')?.click());
+  await page.waitForSelector('.shell-v2-today-full-meta', { timeout: 5000 });
+  await page.waitForTimeout(250);
+  await capture('phase3-today-expanded-row');
+  const expandedState = await readTodayGateState(page);
+  recorder.record(
+    'T4',
+    expandedState.expandedCount >= 1
+      && /sha\s+[a-f0-9]{12}/i.test(expandedState.fullMeta)
+      && /FULL MSG AT/.test(expandedState.rawExpanded),
+    'Today expanded row and lazy full-file read verified',
+    expandedState
+  );
+
+  await page.click('[data-today-filter="james"]');
+  await page.waitForFunction(() => (
+    document.querySelectorAll('.shell-v2-today-row').length === 1
+      && document.querySelector('[data-today-filter="james"]')?.classList.contains('active')
+  ), null, { timeout: 5000 });
+  await page.waitForTimeout(250);
+  await capture('phase3-today-chips-filtered');
+  const filteredState = await readTodayGateState(page);
+  recorder.record(
+    'T5',
+    filteredState.rowCount === 1 && filteredState.activeFilter === 'james',
+    'Today James chip filter verified',
+    filteredState
+  );
+
+  return screenshots;
+}
+
+function mirrorScreenshots(screenshots = {}) {
   const mirrorDir = path.join(PROJECT_ROOT, '.squidrun', 'screenshots', 'shell-v2');
   ensureDir(mirrorDir);
   const mirrors = {};
@@ -827,8 +1025,11 @@ async function main() {
     browser = await connectToThrowaway(options.cdpPort);
     const page = await findRendererPage(browser);
     await runAssertions({ page, sharedPortBefore, sharedPortPath, recorder });
-    screenshots = await capturePhase2Screenshots(page, runId);
-    screenshotMirrors = mirrorPhase2Screenshots(screenshots);
+    screenshots = {
+      ...await capturePhase2Screenshots(page, runId),
+      ...await capturePhase3TodayScreenshots(page, runId, recorder, dataRoot),
+    };
+    screenshotMirrors = mirrorScreenshots(screenshots);
     const mirrorOk = Object.keys(screenshots).length > 0
       && Object.keys(screenshots).every((name) => screenshotMirrors[name]?.byteCopy === true);
     if (!mirrorOk) {
