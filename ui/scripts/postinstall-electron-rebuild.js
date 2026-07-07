@@ -92,7 +92,24 @@ function formatProbe(probe) {
 }
 
 function main() {
-  const initial = probeBetterSqlite3();
+  let initial;
+  try {
+    initial = probeBetterSqlite3();
+  } catch (err) {
+    // CI installs with ELECTRON_SKIP_BINARY_DOWNLOAD=1 — no Electron binary
+    // exists by design (tests mock electron; jest runs under node ABI), so an
+    // Electron-ABI rebuild is meaningless there. Skip softly when the absence
+    // was requested; stay loud everywhere else (local/packaged installs need
+    // the probe).
+    const skipRequested = process.env.ELECTRON_SKIP_BINARY_DOWNLOAD === '1'
+      || process.env.SQUIDRUN_SKIP_ELECTRON_REBUILD === '1'
+      || process.env.CI === 'true';
+    if (skipRequested && /electron package unavailable/i.test(err.message)) {
+      console.warn(`[postinstall] Electron binary absent with skip requested (${err.message}); better-sqlite3 Electron rebuild skipped.`);
+      return;
+    }
+    throw err;
+  }
   if (initial.ok) {
     console.log(`[postinstall] better-sqlite3 loads under Electron (${formatProbe(initial)}); rebuild skipped.`);
     return;
