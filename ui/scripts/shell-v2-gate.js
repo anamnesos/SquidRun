@@ -449,14 +449,14 @@ async function readPhase4KillState(page) {
         height: Math.round(rect.height),
       };
     });
+    const controlLabel = (control) => control.id || control.className || control.textContent?.trim() || control.tagName;
     const miraPane = document.querySelector('.main-pane-container .pane[data-pane-id="1"], .pane[data-pane-id="1"]');
     const miraHeader = miraPane?.querySelector?.('.pane-header');
     const miraVisibleControls = [...(miraHeader?.querySelectorAll?.('button, [role=button], summary, select') || [])]
-      .filter((control) => (
-        !control.closest?.('.shell-v2-station-menu-panel')
-        && Boolean(control.offsetWidth || control.offsetHeight)
-      ))
-      .map((control) => control.id || control.className || control.textContent?.trim() || control.tagName);
+      .filter((control) => !control.closest?.('.shell-v2-station-menu-panel'))
+      .map(controlLabel);
+    const miraOverflowControls = [...(miraHeader?.querySelectorAll?.('.shell-v2-station-menu-panel button, .shell-v2-station-menu-panel [role=button], .shell-v2-station-menu-panel summary, .shell-v2-station-menu-panel select') || [])]
+      .map(controlLabel);
     return {
       selectorResults,
       missing: selectorResults.filter((entry) => !entry.present),
@@ -469,6 +469,8 @@ async function readPhase4KillState(page) {
       bottomBarCount: bottomBars.length,
       bottomBarDetails,
       miraVisibleControls,
+      miraOverflowControls,
+      miraReduced: miraHeader?.dataset?.shellV2Reduced === 'true',
     };
   }, KILLED_CONTROLS);
 }
@@ -751,6 +753,7 @@ async function runSettingsOverlayMechanics(page) {
     }));
     results.push({ tabId, result, open, closed });
   }
+  await page.evaluate(() => document.getElementById('shellV2GateFocusProbe')?.remove?.());
 
   await page.click('#settingsBtn');
   await page.waitForFunction(() => document.querySelector('#shellV2SettingsOverlay')?.classList?.contains('open') === true, null, { timeout: 5000 });
@@ -884,7 +887,9 @@ async function runPhase4FlagOnAssertions({ page, recorder, rendererNoise }) {
     killState.bodyShellV2 === true
       && killState.settingsOverlay === true
       && killState.selectorResults.every((entry) => entry.present === false)
-      && killState.miraVisibleControls.length <= 3,
+      && killState.miraReduced === true
+      && killState.miraVisibleControls.length <= 3
+      && killState.miraOverflowControls.length >= 5,
     'flag-on killed controls absent and Mira header reduced',
     killState
   );
@@ -1564,8 +1569,28 @@ async function runAssertions({ page, sharedPortBefore, sharedPortPath, recorder 
     keyResults.push(result);
     if (result.activeTab !== expectedTab || result.paneFocused) keyOwnerOk = false;
   }
+  let altPaneOk = true;
+  const altPaneResults = [];
+  for (const [key, expectedPane, expectedTab] of [['1', '1', 'mira'], ['2', '2', 'squid-room'], ['3', '3', 'squid-room']]) {
+    await page.keyboard.press(`Alt+${key}`);
+    await page.waitForTimeout(150);
+    const result = await page.evaluate(() => {
+      const active = document.activeElement;
+      const focusedPane = document.querySelector('.pane.focused');
+      return {
+        activeTab: document.body?.dataset?.shellV2ActiveTab || '',
+        focusedPaneId: focusedPane?.dataset?.paneId || '',
+        activePaneId: active?.closest?.('.pane')?.dataset?.paneId || '',
+        activeTag: active?.tagName || '',
+        activeId: active?.id || '',
+      };
+    });
+    result.key = key;
+    altPaneResults.push(result);
+    if (result.activeTab !== expectedTab || result.focusedPaneId !== expectedPane) altPaneOk = false;
+  }
   const e2BarsOk = e2Tabs.every((entry) => entry.barCount === 1 && entry.display !== 'none' && entry.height > 0 && !entry.staleShortcut);
-  recorder.record('E2', e2BarsOk && keyOwnerOk, `bars=${e2BarsOk} keyOwner=${keyOwnerOk}`, { e2Tabs, keyResults });
+  recorder.record('E2', e2BarsOk && keyOwnerOk && altPaneOk, `bars=${e2BarsOk} keyOwner=${keyOwnerOk} altPane=${altPaneOk}`, { e2Tabs, keyResults, altPaneResults });
 
   await clickTab(page, 'squid-room');
   await page.evaluate(() => {
