@@ -2407,6 +2407,13 @@ function rendererOwnsStartupInjection(paneId) {
   return context.windowKey !== SQUID_ROOM_WINDOW_KEY;
 }
 
+function shouldSkipStartupInjection(paneId, runtimeOverride = null) {
+  if (runtimeOverride?.skipStartupInjection === true) return true;
+  if (String(process?.env?.SQUIDRUN_SKIP_STARTUP_INJECTION || '').trim() === '1') return true;
+  const context = normalizeStartupWindowContext(startupWindowContext);
+  return context.profileName === 'shellv2qa';
+}
+
 function emitPtyGeometrySkipped(paneId, reason, payload = {}) {
   bus.emit('fit.skipped', {
     paneId,
@@ -3476,7 +3483,11 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       await consumeFreshPaneSessionOnNextSpawn(paneId);
     }
     updatePaneStatus(paneId, 'Connected');
-    if (runtimeOverride.spawnCommandOnCreate === true && runtimeOverride.command) {
+    if (
+      runtimeOverride.spawnCommandOnCreate === true
+      && runtimeOverride.command
+      && !shouldSkipStartupInjection(paneId, runtimeOverride)
+    ) {
       const commandText = String(runtimeOverride.command || '').trim().toLowerCase();
       const modelType = commandText.includes('gemini') ? 'gemini' : commandText.includes('codex') ? 'codex' : 'claude';
       await armStartupInjection(paneId, {
@@ -3789,6 +3800,7 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
   const shouldArmStartupOnReattach =
     String(paneId) === '1' &&
     rendererOwnsStartupInjection(paneId) &&
+    !shouldSkipStartupInjection(paneId, getPaneRuntimeOverride(paneId)) &&
     terminalAge < FRESH_STARTUP_INJECTION_WINDOW_MS &&
     !hasStartupSessionHeader(scrollback, paneId);
   if (shouldArmStartupOnReattach) {
@@ -4026,11 +4038,13 @@ async function spawnAgent(paneId, model = null, options = {}) {
       if (runtimeOverride.spawnCommandOnCreate === true) {
         const commandText = String(result.command || '').trim().toLowerCase();
         const modelType = commandText.includes('gemini') ? 'gemini' : commandText.includes('codex') ? 'codex' : 'claude';
-        await armStartupInjection(paneId, {
-          modelType,
-          isGemini: modelType === 'gemini',
-          source: 'spawn-command-on-create-retry',
-        });
+        if (!shouldSkipStartupInjection(paneId, runtimeOverride)) {
+          await armStartupInjection(paneId, {
+            modelType,
+            isGemini: modelType === 'gemini',
+            source: 'spawn-command-on-create-retry',
+          });
+        }
         updatePaneStatus(paneId, 'Working');
         return true;
       }
@@ -4080,7 +4094,9 @@ async function spawnAgent(paneId, model = null, options = {}) {
       const isGemini = model ? model === 'gemini' : isGeminiPane(paneId);
       const isCodexSpawn = model ? model === 'codex' : isCodexPane(String(paneId));
       const modelType = isGemini ? 'gemini' : isCodexSpawn ? 'codex' : 'claude';
-      await armStartupInjection(paneId, { modelType, isGemini, source: 'spawn' });
+      if (!shouldSkipStartupInjection(paneId, runtimeOverride)) {
+        await armStartupInjection(paneId, { modelType, isGemini, source: 'spawn' });
+      }
 
     }
     updatePaneStatus(paneId, 'Working');
@@ -4118,6 +4134,7 @@ async function armStartupInjectionForDaemonStartedPane(paneId, daemonTerminal = 
   const id = String(paneId);
   if (!PANE_IDS.includes(id)) return false;
   if (!rendererOwnsStartupInjection(id)) return false;
+  if (shouldSkipStartupInjection(id, getPaneRuntimeOverride(id))) return false;
   if (hasPendingStartupInjection(id)) return false;
   if (hasStartupSessionHeader(daemonTerminal?.scrollback || '', id)) return false;
 

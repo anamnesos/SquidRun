@@ -8,7 +8,10 @@ jest.mock('../modules/terminal', () => ({
   focusPane: jest.fn(),
 }));
 
-const { getCommandPaletteCommands } = require('../modules/command-palette');
+const {
+  getCommandPaletteCommands,
+  getShellV2StationCommands,
+} = require('../modules/command-palette');
 
 describe('command-palette', () => {
   test('includes the Scoped window command and routes it to the window opener', () => {
@@ -74,5 +77,42 @@ describe('command-palette', () => {
     }));
     focusMiraCommand.action();
     expect(terminal.focusPane).toHaveBeenCalledWith('1');
+  });
+
+  test('adds Shell V2 station commands for moved header controls and resolves their targets', () => {
+    const clicked = new Set();
+    const targets = new Map();
+    const commands = getShellV2StationCommands();
+    for (const command of commands) {
+      targets.set(command.targetSelector, {
+        click: jest.fn(() => clicked.add(command.targetSelector)),
+      });
+    }
+    const previousDocument = global.document;
+    global.document = {
+      querySelector: jest.fn((selector) => targets.get(selector) || null),
+    };
+
+    try {
+      expect(commands).toHaveLength(12);
+      expect(commands.map((command) => command.id)).toEqual(expect.arrayContaining([
+        'shell-v2-builder-interrupt',
+        'shell-v2-builder-restart',
+        'shell-v2-builder-fresh-session',
+        'shell-v2-builder-lock',
+        'shell-v2-builder-role-info',
+        'shell-v2-builder-health',
+        'shell-v2-oracle-interrupt',
+        'shell-v2-oracle-restart',
+      ]));
+
+      for (const command of commands) {
+        expect(command.targetSelector).toBeTruthy();
+        expect(command.action()).toBe(true);
+        expect(clicked.has(command.targetSelector)).toBe(true);
+      }
+    } finally {
+      global.document = previousDocument;
+    }
   });
 });

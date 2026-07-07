@@ -3229,8 +3229,11 @@ function setupEventListeners() {
       e.preventDefault();
       return;
     }
-    // Ctrl+number to focus panes
+    // Ctrl+number to focus panes. Shell V2 owns Ctrl+1/2/3 for primary tabs.
     if (e.ctrlKey && terminal.PANE_IDS.includes(e.key)) {
+      if (document.body?.classList?.contains('shell-v2-enabled')) {
+        return;
+      }
       e.preventDefault();
       terminal.focusPane(e.key);
       return;

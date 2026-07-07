@@ -6,6 +6,49 @@
 const log = require('./logger');
 const terminal = require('./terminal');
 
+const SHELL_V2_STATION_CONTROLS = Object.freeze([
+  { key: 'interrupt', label: 'Interrupt', selector: (paneId) => `.interrupt-btn[data-pane-id="${paneId}"]` },
+  { key: 'restart', label: 'Restart', selector: (paneId) => `.kickoff-btn[data-pane-id="${paneId}"]` },
+  { key: 'fresh-session', label: 'Fresh Session', selector: (paneId) => `.fresh-session-btn[data-pane-id="${paneId}"]` },
+  { key: 'lock', label: 'Toggle Lock', selector: (paneId) => `#lock-icon-${paneId}` },
+  { key: 'role-info', label: 'Role Info', selector: (paneId) => `.pane-role-info-btn[data-pane-id="${paneId}"]` },
+  { key: 'health', label: 'Health', selector: (paneId) => `#health-${paneId}` },
+]);
+const SHELL_V2_STATIONS = Object.freeze([
+  ['2', 'Builder'],
+  ['3', 'Oracle'],
+]);
+
+function activateCommandTarget(selector) {
+  if (typeof document === 'undefined' || !selector) return false;
+  const target = document.querySelector(selector);
+  if (!target) return false;
+  if (typeof target.click === 'function') {
+    target.click();
+  } else if (typeof target.focus === 'function') {
+    target.focus();
+  }
+  return true;
+}
+
+function getShellV2StationCommands() {
+  const commands = [];
+  for (const [paneId, station] of SHELL_V2_STATIONS) {
+    for (const control of SHELL_V2_STATION_CONTROLS) {
+      const targetSelector = control.selector(paneId);
+      commands.push({
+        id: `shell-v2-${station.toLowerCase()}-${control.key}`,
+        label: `${control.label} ${station}`,
+        icon: '>',
+        category: 'Station',
+        targetSelector,
+        action: () => activateCommandTarget(targetSelector),
+      });
+    }
+  }
+  return commands;
+}
+
 function getCommandPaletteCommands(options = {}) {
   return [
     // Agent Control
@@ -18,6 +61,7 @@ function getCommandPaletteCommands(options = {}) {
     { id: 'focus-1', label: 'Focus Mira (Pane 1)', icon: '1️⃣', category: 'Navigate', shortcut: 'Alt+1', action: () => terminal.focusPane('1') },
     { id: 'focus-2', label: 'Focus Builder (Pane 2)', icon: '2️⃣', category: 'Navigate', shortcut: 'Alt+2', action: () => terminal.focusPane('2') },
     { id: 'focus-3', label: 'Focus Oracle (Pane 3)', icon: '3️⃣', category: 'Navigate', shortcut: 'Alt+3', action: () => terminal.focusPane('3') },
+    ...getShellV2StationCommands(),
 
     // Panels
     { id: 'toggle-settings', label: 'Toggle Settings Panel', icon: '⚙️', category: 'Panels', action: () => document.getElementById('settingsBtn')?.click() },
@@ -183,4 +227,5 @@ function initCommandPalette(options = {}) {
 module.exports = {
   initCommandPalette,
   getCommandPaletteCommands,
+  getShellV2StationCommands,
 };
