@@ -57,7 +57,6 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/experiment/runtime.js: Exports ExperimentRuntime, createExperimentRuntime, initializeExperimentRuntime, executeExperimentOperation, ....
 - ui/modules/experiment/worker-client.js: Exports initializeRuntime, executeOperation, closeRuntime, resetForTests, ....
 - ui/modules/experiment/worker.js: Child-process worker entrypoint for async runtime tasks.
-- ui/modules/external-notifications.js: Exports createExternalNotifier.
 - ui/modules/feature-capabilities.js: Exports getFeatureCapabilities, hasKey.
 - ui/modules/formatters.js: Exports formatDuration, formatTimeSince, formatShort, formatCompound, ....
 - ui/modules/image-gen.js: Exports generateImage, removeHistoryEntryByPath, resolveProvider, detectImageExt, ....
@@ -83,7 +82,6 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/ipc/evidence-ledger-runtime.js: Exports createEvidenceLedgerRuntime, initializeEvidenceLedgerRuntime, executeEvidenceLedgerOperation, closeSharedRuntime, ....
 - ui/modules/ipc/evidence-ledger-worker-client.js: Exports initializeRuntime, executeOperation, closeRuntime, resetForTests, ....
 - ui/modules/ipc/evidence-ledger-worker.js: Child-process worker entrypoint for async runtime tasks.
-- ui/modules/ipc/external-notification-handlers.js: Registers IPC channels (notify-external-test).
 - ui/modules/ipc/friction-handlers.js: Registers IPC channels (list-friction, read-friction, delete-friction, ...).
 - ui/modules/ipc/git-handlers.js: Registers IPC channels (git-status, git-diff, git-log, ...).
 - ui/modules/ipc/github-handlers.js: Exports GITHUB_CHANNEL_ACTIONS, executeGitHubOperation, registerGitHubHandlers, unregisterGitHubHandlers, ....
@@ -219,7 +217,6 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/performance-data.js: Exports DEFAULT_PERFORMANCE, createDefaultPerformance, createPerformanceLoader.
 - ui/modules/capability-planner.js: Static domain capability registry that turns detected legal/financial/medical problems into user-facing "here is what we can do" action plans.
 - ui/modules/problem-orchestrator.js: Phase 1 real-problem orchestration skeleton that owns `.squidrun/runtime/active-cases.json`, dedupes intake records, attaches capability plans, and surfaces oracle timeout/disagreement warnings in case state and startup summaries.
-- ui/modules/project-rooms.js: Read-only room registry and renderer switcher for Main, TrustQuote, and Mira Build overview/status cards; switching rooms changes only local DOM state and does not mutate project context, route ownership, agents, or external channels.
 - ui/modules/project-room-envelope.js: Read-only TrustQuote room envelope/readiness helpers on existing comms metadata; TrustQuote room rows can surface in Main as activity but cannot set Main current-lane authority or launch room agents.
 - ui/modules/pipeline.js: Exports init, setMainWindow, onMessage, markCommitted, ....
 - ui/modules/plugins/index.js: Plugin-module entrypoint that re-exports `createPluginManager`.
@@ -241,7 +238,6 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/mira-lab.html: Dev-only standalone Mira Lab prototype shell, intentionally separate from the normal SquidRun right panel and dashboard chrome.
 - ui/mira-lab-renderer.js: Mira Lab renderer logic for the prototype conversation/lab surface.
 - ui/styles/mira-lab.css: Mira Lab styling, including low-power/reduced-motion rendering fallback.
-- ui/styles/squid-room.css: Display-only Squid Room window styling; hides Architect/command input, keeps Builder/Oracle as the top live pair, and gives the arm-state surface the remaining read-only workspace.
 - ui/modules/status-strip.js: Exports initStatusStrip, shutdownStatusStrip.
 - ui/modules/tabs.js: Exports setConnectionStatusCallback, togglePanel, isPanelOpen, switchTab, .... Manages the existing right-side tabbed utility panel (bridge, screenshots, comms, oracle, voice, api-keys); Mira is no longer mounted as a main SquidRun tab.
 - ui/modules/tabs/api-keys.js: Exports setupApiKeysTab, destroyApiKeysTab, loadApiKeys.
