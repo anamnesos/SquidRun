@@ -210,6 +210,49 @@ describe('relay server security controls', () => {
     expect(String(ack.error || '')).toContain('allowlist');
   });
 
+  test('pairing returns a reconnectable relay secret instead of an unauthenticated pair secret', async () => {
+    const port = await getFreePort();
+    relay = await startRelayServer({
+      port,
+      sharedSecret: 'relay-secret',
+      allowlist: 'LOCAL,PEER',
+    });
+    const url = `ws://127.0.0.1:${port}`;
+    const initiator = await openSocket(url);
+    const joiner = await openSocket(url);
+
+    initiator.send(JSON.stringify({ type: 'register', deviceId: 'LOCAL', sharedSecret: 'relay-secret' }));
+    joiner.send(JSON.stringify({ type: 'register', deviceId: 'PEER', sharedSecret: 'relay-secret' }));
+    await waitForMessage(initiator, (msg) => msg.type === 'register-ack' && msg.ok === true);
+    await waitForMessage(joiner, (msg) => msg.type === 'register-ack' && msg.ok === true);
+
+    initiator.send(JSON.stringify({ type: 'pairing-init' }));
+    const initAck = await waitForMessage(initiator, (msg) => msg.type === 'pairing-init-ack');
+    expect(initAck.code).toMatch(/^[A-Z0-9]{6}$/);
+
+    joiner.send(JSON.stringify({ type: 'pairing-join', code: initAck.code }));
+    const initiatorComplete = await waitForMessage(
+      initiator,
+      (msg) => msg.type === 'pairing-complete' && msg.paired_device_id === 'PEER'
+    );
+    const joinerComplete = await waitForMessage(
+      joiner,
+      (msg) => msg.type === 'pairing-complete' && msg.paired_device_id === 'LOCAL'
+    );
+
+    expect(initiatorComplete.shared_secret).toBe('relay-secret');
+    expect(joinerComplete.shared_secret).toBe('relay-secret');
+
+    const reconnect = await openSocket(url);
+    reconnect.send(JSON.stringify({
+      type: 'register',
+      deviceId: 'LOCAL',
+      sharedSecret: initiatorComplete.shared_secret,
+    }));
+    const reconnectAck = await waitForMessage(reconnect, (msg) => msg.type === 'register-ack');
+    expect(reconnectAck.ok).toBe(true);
+  });
+
   test('rejects xsend payloads targeting non-architect roles', async () => {
     const port = await getFreePort();
     relay = await startRelayServer({

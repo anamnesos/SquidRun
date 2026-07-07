@@ -11073,6 +11073,56 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('uses an env relay secret instead of a stale paired devices secret', () => {
+      const envKeys = [
+        'SQUIDRUN_CROSS_DEVICE',
+        'SQUIDRUN_RELAY_URL',
+        'SQUIDRUN_RELAY_SECRET',
+        'SQUIDRUN_DEVICE_ID',
+        'SQUIDRUN_PROFILE',
+        'SQUIDRUN_BRIDGE_RELAY_MODE',
+      ];
+      const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+      const previousWorkspacePath = config.WORKSPACE_PATH;
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-paired-config-'));
+      try {
+        config.WORKSPACE_PATH = tempRoot;
+        process.env.SQUIDRUN_CROSS_DEVICE = '1';
+        process.env.SQUIDRUN_RELAY_URL = 'wss://relay.example.test';
+        process.env.SQUIDRUN_RELAY_SECRET = 'working-env-secret';
+        process.env.SQUIDRUN_DEVICE_ID = 'VIGIL';
+        delete process.env.SQUIDRUN_PROFILE;
+        delete process.env.SQUIDRUN_BRIDGE_RELAY_MODE;
+        fs.writeFileSync(path.join(tempRoot, 'devices.json'), `${JSON.stringify({
+          device_id: 'VIGIL',
+          shared_secret: 'dead-pair-secret',
+          relay_url: 'wss://paired.example.test',
+          paired_device_id: 'PEER',
+          paired_at: '2026-07-06T22:00:00.000Z',
+        }, null, 2)}\n`, 'utf8');
+
+        const bridgeConfig = app.resolveBridgeRuntimeConfig();
+
+        expect(bridgeConfig).toEqual(expect.objectContaining({
+          source: 'devices.json',
+          relayUrl: 'wss://paired.example.test',
+          deviceId: 'VIGIL',
+          pairedDeviceId: 'PEER',
+          sharedSecret: 'working-env-secret',
+        }));
+      } finally {
+        config.WORKSPACE_PATH = previousWorkspacePath;
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        for (const key of envKeys) {
+          if (previousEnv[key] === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = previousEnv[key];
+          }
+        }
+      }
+    });
+
     it('keeps the bridge disabled when install settings set relayMode off', () => {
       const envKeys = [
         'SQUIDRUN_CROSS_DEVICE',

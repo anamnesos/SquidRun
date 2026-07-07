@@ -201,10 +201,6 @@ function generatePairingCode() {
   return code;
 }
 
-function generatePairingSharedSecret() {
-  return crypto.randomBytes(32).toString('hex');
-}
-
 const wss = new WebSocketServer({ host: HOST, port: PORT });
 const clients = new Map(); // ws -> { id, deviceId, registered, roles, connectedSince, remoteAddress }
 const socketsByDevice = new Map(); // deviceId -> ws
@@ -750,7 +746,7 @@ function handlePairingJoin(ws, frame) {
     return;
   }
 
-  const sharedSecret = generatePairingSharedSecret();
+  const sharedSecret = RELAY_SHARED_SECRET;
   const initiatorPayload = {
     type: 'pairing-complete',
     device_id: initiatorInfo.deviceId,

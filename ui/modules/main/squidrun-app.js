@@ -12243,10 +12243,11 @@ class SquidRunApp {
     if (pairedResult?.ok && pairedResult.config) {
       const baseDeviceId = normalizeDeviceId(pairedResult.config.device_id);
       const deviceId = getProfileDeviceId(process.env, profileName, { baseDeviceId }) || baseDeviceId;
+      const envSharedSecret = String(process.env.SQUIDRUN_RELAY_SECRET || '').trim();
       return {
         source: 'devices.json',
         relayUrl: pairedResult.config.relay_url,
-        sharedSecret: pairedResult.config.shared_secret,
+        sharedSecret: envSharedSecret || pairedResult.config.shared_secret,
         deviceId,
         pairedDeviceId: pairedResult.config.paired_device_id || null,
         pairedAt: pairedResult.config.paired_at || null,
