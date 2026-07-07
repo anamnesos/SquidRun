@@ -60,6 +60,7 @@ expect(criterionIds).toMatchInlineSnapshot(`
   "S3",
   "T5",
   "T6",
+  "V1",
 ]
 `);
   }, 150000);
