@@ -12,6 +12,19 @@ describe('shell-v2 Today journal helper', () => {
   test('derives scope from metadata/session and forces main rows only', () => {
     const rows = [
       {
+        rowId: 4,
+        messageId: 'hm-explicit-main',
+        sessionId: 'app-session-476:shellv2qa',
+        senderRole: 'system',
+        targetRole: 'architect',
+        channel: 'system',
+        direction: 'outbound',
+        brokeredAtMs: 1600,
+        rawBody: '[DOORBELL] explicit main row',
+        status: 'recorded',
+        metadata: { scope: 'main', windowKey: 'main' },
+      },
+      {
         rowId: 3,
         messageId: 'hm-main',
         sessionId: 'app-session-476',
@@ -67,9 +80,11 @@ describe('shell-v2 Today journal helper', () => {
     });
     expect(result.ok).toBe(true);
     expect(result.scope).toBe('main');
-    expect(result.rows.map((row) => row.messageId)).toEqual(['hm-main']);
-    expect(extractRowScopeKey(rows[1])).toBe('scoped');
+    expect(result.rows.map((row) => row.messageId)).toEqual(['hm-explicit-main', 'hm-main']);
+    expect(extractRowScopeKey(rows[0])).toBe('main');
+    expect(extractRowScopeKey(rows[1])).toBe('main');
     expect(extractRowScopeKey(rows[2])).toBe('scoped');
+    expect(extractRowScopeKey(rows[3])).toBe('scoped');
   });
 
   test('lazy full-message read is constrained to coord/full-agent-messages by message id', () => {

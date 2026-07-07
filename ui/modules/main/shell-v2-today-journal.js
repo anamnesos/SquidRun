@@ -58,14 +58,16 @@ function extractSessionScopeSuffix(value) {
 
 function extractRowScopeKey(row = {}) {
   const metadata = parseJsonObject(row.metadata ?? row.metadata_json);
-  const directScope = normalizeScopeKey(
-    metadata.windowKey
+  const directScopeSource = asString(
+    metadata.scope
+    || metadata.windowKey
     || metadata.window_key
     || metadata.profile
     || metadata.profileName
-    || metadata.profile_name
+    || metadata.profile_name,
+    ''
   );
-  if (directScope !== 'main') return directScope;
+  if (directScopeSource) return normalizeScopeKey(directScopeSource);
 
   const sessionScope = extractSessionScopeSuffix(
     metadata.sessionScopeId

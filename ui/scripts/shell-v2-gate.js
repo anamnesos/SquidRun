@@ -4,22 +4,26 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const net = require('net');
 const { spawn, spawnSync } = require('child_process');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const UI_ROOT = path.join(PROJECT_ROOT, 'ui');
 const PHASE5_MANIFEST_PATH = path.join(__dirname, 'shell-v2-phase5-both-modes-dead.json');
+const SHELL_V2_VISUAL_REFERENCE_PATH = path.join(PROJECT_ROOT, 'workspace', 'specs', 'shell-v2-visual-reference.html');
+const DOORBELL_MODULE_PATH = path.join(UI_ROOT, 'modules', 'shell-v2-doorbell.js');
 const PROFILE = 'shellv2qa';
 const HIDDEN_WAIT_MS = 20000;
+const DOORBELL_IDLE_SOAK_MS = 120000;
 const SWITCHES = 12;
 const ATTACH_TIMEOUT_MS = 60000;
 const PANE_TICKS = Object.freeze({
   '2': 'builder',
   '3': 'oracle',
-  'trustquote-lead': 'trustquote-lead',
-  'trustquote-schedule-dispatch': 'trustquote-schedule-dispatch',
-  'trustquote-app': 'trustquote-app',
-  'trustquote-invoice': 'trustquote-invoice',
+  'trustquote-lead': 'tq-lead',
+  'trustquote-schedule-dispatch': 'tq-schedule',
+  'trustquote-app': 'tq-app',
+  'trustquote-invoice': 'tq-invoice',
 });
 const TRUSTQUOTE_ARM_PANE_IDS = Object.freeze(
   Object.keys(PANE_TICKS).filter((paneId) => paneId.startsWith('trustquote-'))
@@ -87,12 +91,50 @@ const PHASE4_REVIEW_SCREENSHOTS = Object.freeze([
 const PHASE5_REVIEW_SCREENSHOTS = Object.freeze([
   'flag-off-legacy-intact',
 ]);
+const VISUAL_DOORBELL_REVIEW_SCREENSHOTS = Object.freeze([
+  'visual-mira',
+  'visual-squid-room',
+  'visual-today',
+  'visual-doorbell-fired',
+  'visual-doorbell-cleared-today',
+]);
+const SHELL_V2_VISUAL_COMMIT_FILES = Object.freeze([
+  'ui/__tests__/evidence-ledger-store.test.js',
+  'ui/__tests__/shell-v2-doorbell.test.js',
+  'ui/__tests__/shell-v2.test.js',
+  'ui/__tests__/shell-v2-today-journal.test.js',
+  'ui/modules/main/evidence-ledger-store.js',
+  'ui/modules/main/shell-v2-today-journal.js',
+  'ui/modules/shell-v2-doorbell.js',
+  'ui/modules/shell-v2.js',
+  'ui/scripts/shell-v2-gate.js',
+  'ui/styles/layout.css',
+]);
+const SHELL_V2_REFERENCE_TOKENS = Object.freeze([
+  '--ink',
+  '--ink-2',
+  '--ink-3',
+  '--ink-4',
+  '--line',
+  '--line-2',
+  '--tx',
+  '--tx-dim',
+  '--tx-faint',
+  '--amber',
+  '--amber-dim',
+  '--ok',
+  '--mono',
+  '--serif',
+  '--u',
+]);
+const DOORBELL_FORBIDDEN_TIMER_RE = /setTimeout|setInterval|setImmediate|requestAnimationFrame|Date\.now|performance\.now/g;
 
 function parseArgs(argv) {
   const options = {
     keepOpen: false,
     headed: false,
     cdpPort: 9527,
+    cdpPortExplicit: false,
     expectCommit: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -101,6 +143,7 @@ function parseArgs(argv) {
     else if (token === '--headed') options.headed = true;
     else if (token === '--cdp-port') {
       options.cdpPort = Number.parseInt(argv[i + 1], 10);
+      options.cdpPortExplicit = true;
       i += 1;
     } else if (token === '--expect-commit') {
       options.expectCommit = String(argv[i + 1] || '').trim() || null;
@@ -119,6 +162,27 @@ function usage() {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function canListenOnPort(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.once('listening', () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+async function findAvailableCdpPortPair(preferredPort) {
+  const preferred = Number.isInteger(preferredPort) && preferredPort > 0 ? preferredPort : 9527;
+  for (let port = preferred; port < preferred + 200; port += 2) {
+    // The gate reserves the next port for the flag-off probe.
+    // Keep the pair stable so evidence paths remain easy to reason about.
+    if (await canListenOnPort(port) && await canListenOnPort(port + 1)) return port;
+  }
+  throw new Error(`No available CDP port pair near ${preferred}`);
 }
 
 function readFileIfPresent(filePath) {
@@ -186,10 +250,171 @@ function readDeletedFilesForWorktree() {
   };
 }
 
+function readChangedFilesForCommit(commit) {
+  const target = String(commit || '').trim();
+  if (!target) return { files: [] };
+  const diff = runGit(['diff', '--name-only', `${target}^`, target]);
+  if (diff.status !== 0) {
+    return { error: diff.stderr || diff.stdout || 'git diff failed', files: [] };
+  }
+  return {
+    files: diff.stdout.split(/\r?\n/)
+      .map(normalizeGitPath)
+      .filter(Boolean)
+      .sort(),
+  };
+}
+
 function sameStringList(left, right) {
   const a = [...left].sort();
   const b = [...right].sort();
   return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function normalizeCssToken(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/\s*,\s*/g, ',');
+}
+
+function readShellV2ReferenceTokens() {
+  const text = fs.readFileSync(SHELL_V2_VISUAL_REFERENCE_PATH, 'utf8');
+  const root = text.match(/:root\s*\{([\s\S]*?)\}/i);
+  if (!root) {
+    throw new Error(`No :root token block found in ${SHELL_V2_VISUAL_REFERENCE_PATH}`);
+  }
+  const tokens = {};
+  for (const match of root[1].matchAll(/(--[A-Za-z0-9_-]+)\s*:\s*([^;]+);/g)) {
+    tokens[match[1]] = normalizeCssToken(match[2]);
+  }
+  return tokens;
+}
+
+function resolveDoorbellIdleSoakMs(options = {}) {
+  if (options.expectCommit) return DOORBELL_IDLE_SOAK_MS;
+  const override = Number.parseInt(String(process.env.SHELL_V2_DB4_IDLE_SOAK_MS || ''), 10);
+  if (Number.isFinite(override) && override >= 0) return override;
+  return DOORBELL_IDLE_SOAK_MS;
+}
+
+function buildVisualScopeData(commit) {
+  const changed = readChangedFilesForCommit(commit);
+  const allowed = new Set(SHELL_V2_VISUAL_COMMIT_FILES);
+  const files = (changed.files || []).map(normalizeGitPath).sort();
+  const unexpected = files.filter((filePath) => !allowed.has(filePath));
+  const missingExpectedSurface = [
+    'ui/modules/shell-v2.js',
+    'ui/modules/shell-v2-doorbell.js',
+    'ui/styles/layout.css',
+    'ui/scripts/shell-v2-gate.js',
+  ].filter((filePath) => !files.includes(filePath));
+  return {
+    ...changed,
+    files,
+    allowedFiles: [...allowed].sort(),
+    unexpected,
+    missingExpectedSurface,
+    ok: !changed.error && unexpected.length === 0 && missingExpectedSurface.length === 0,
+  };
+}
+
+function lineForIndex(text, index) {
+  return text.slice(0, index).split(/\r?\n/).length;
+}
+
+function getFunctionSource(text, name) {
+  const pattern = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`);
+  const match = pattern.exec(text);
+  if (!match) return '';
+  let parenDepth = 0;
+  let sawOpenParen = false;
+  let bodyStart = -1;
+  for (let index = match.index; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '(') {
+      parenDepth += 1;
+      sawOpenParen = true;
+      continue;
+    }
+    if (char === ')') {
+      parenDepth = Math.max(0, parenDepth - 1);
+      continue;
+    }
+    if (sawOpenParen && parenDepth === 0 && char === '{') {
+      bodyStart = index;
+      break;
+    }
+  }
+  if (bodyStart < 0) return '';
+  let depth = 0;
+  let started = false;
+  for (let index = bodyStart; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '{') {
+      depth += 1;
+      started = true;
+    } else if (char === '}') {
+      depth -= 1;
+      if (started && depth === 0) return text.slice(match.index, index + 1);
+    }
+  }
+  return '';
+}
+
+function readDoorbellStaticGateData() {
+  const source = fs.readFileSync(DOORBELL_MODULE_PATH, 'utf8');
+  const moduleExports = require(DOORBELL_MODULE_PATH);
+  const timerHits = [...source.matchAll(DOORBELL_FORBIDDEN_TIMER_RE)].map((match) => ({
+    token: match[0],
+    line: lineForIndex(source, match.index),
+  }));
+  let unknownThrow = false;
+  let unknownError = '';
+  try {
+    moduleExports.validateDoorbellEvent?.('not_a_shell_v2_doorbell_event');
+  } catch (err) {
+    unknownThrow = true;
+    unknownError = err?.message || String(err);
+  }
+  const transitionSource = getFunctionSource(source, 'transitionDoorbell');
+  const ensureSource = getFunctionSource(source, 'ensureDoorbellState');
+  const writePathSource = `${ensureSource}\n${transitionSource}`;
+  const mutationHits = [...source.matchAll(/\b(?:state|doorbell)\.(?:count|sequence|byPane|history)\b\s*(?:=|\.push)/g)]
+    .map((match) => ({
+      token: match[0],
+      line: lineForIndex(source, match.index),
+      inDoorbellWritePath: writePathSource.includes(match[0]),
+    }));
+  const expectedTriggers = ['permission_prompt', 'lead_escalation', 'process_exit'];
+  const expectedEvents = [...expectedTriggers, 'doorbell_ack'];
+  const expectedCallers = [
+    { source: 'pty_permission_prompt_detector', eventName: 'permission_prompt' },
+    { source: 'lead_escalation_message_parser', eventName: 'lead_escalation' },
+    { source: 'pty_process_exit_handler', eventName: 'process_exit' },
+    { source: 'squid_room_tab_ack', eventName: 'doorbell_ack' },
+  ];
+  return {
+    modulePath: DOORBELL_MODULE_PATH,
+    timerHits,
+    triggerEvents: moduleExports.DOORBELL_TRIGGER_EVENTS || [],
+    events: moduleExports.DOORBELL_EVENTS || [],
+    callers: moduleExports.DOORBELL_CHOKEPOINT_CALLERS || [],
+    unknownThrow,
+    unknownError,
+    transitionCallsValidator: /validateDoorbellEvent\s*\(/.test(transitionSource),
+    mutationHits,
+    expectedTriggers,
+    expectedEvents,
+    expectedCallers,
+    db1Ok: unknownThrow
+      && sameStringList(moduleExports.DOORBELL_TRIGGER_EVENTS || [], expectedTriggers)
+      && sameStringList(moduleExports.DOORBELL_EVENTS || [], expectedEvents)
+      && /validateDoorbellEvent\s*\(/.test(transitionSource)
+      && mutationHits.every((hit) => hit.inDoorbellWritePath),
+    db2Ok: timerHits.length === 0,
+    db7Ok: JSON.stringify(moduleExports.DOORBELL_CHOKEPOINT_CALLERS || []) === JSON.stringify(expectedCallers),
+  };
 }
 
 function scanPhase5Residue(manifest) {
@@ -256,20 +481,38 @@ function readCurrentTrackedTestSuites() {
 function buildPhase5ManifestGateData(manifest, options) {
   const expectedDeletedFiles = (manifest.deletedFiles || []).map(normalizeGitPath).sort();
   const diskSurvivors = expectedDeletedFiles.filter((relPath) => fs.existsSync(path.join(PROJECT_ROOT, relPath)));
+  const trackedProbe = expectedDeletedFiles.length > 0
+    ? runGit(['ls-files', '--', ...expectedDeletedFiles])
+    : { status: 0, stdout: '', stderr: '' };
+  const trackedSurvivors = trackedProbe.status === 0
+    ? trackedProbe.stdout.split(/\r?\n/).map(normalizeGitPath).filter(Boolean).sort()
+    : [];
   const deletionDiff = options.expectCommit
     ? readDeletedFilesForCommit(options.expectCommit)
     : readDeletedFilesForWorktree();
   const actualDeletedFiles = (deletionDiff.files || []).map(normalizeGitPath).sort();
   const unexpectedDeletedFiles = actualDeletedFiles.filter((filePath) => !expectedDeletedFiles.includes(filePath));
   const missingDeletedFiles = expectedDeletedFiles.filter((filePath) => !actualDeletedFiles.includes(filePath));
+  const commitCarriesPhase5Deletes = actualDeletedFiles.some((filePath) => expectedDeletedFiles.includes(filePath));
+  const commitDeleteSetOk = commitCarriesPhase5Deletes
+    ? sameStringList(actualDeletedFiles, expectedDeletedFiles)
+    : unexpectedDeletedFiles.length === 0;
   return {
     expectedDeletedFiles,
     actualDeletedFiles,
     diskSurvivors,
+    trackedSurvivors,
     unexpectedDeletedFiles,
     missingDeletedFiles,
+    commitCarriesPhase5Deletes,
+    commitDeleteSetOk,
     diffError: deletionDiff.error || null,
-    exactNameset: !deletionDiff.error && diskSurvivors.length === 0 && sameStringList(actualDeletedFiles, expectedDeletedFiles),
+    trackedProbeError: trackedProbe.status === 0 ? null : (trackedProbe.stderr || trackedProbe.stdout || 'git ls-files failed'),
+    exactNameset: !deletionDiff.error
+      && trackedProbe.status === 0
+      && diskSurvivors.length === 0
+      && trackedSurvivors.length === 0
+      && commitDeleteSetOk,
   };
 }
 
@@ -282,10 +525,12 @@ function buildPhase5JestAccounting(manifest, options) {
   const currentSet = new Set(currentSuites);
   const removedSuitesAbsent = removedSuites.filter((suite) => !currentSet.has(suite));
   const expectedAfter = Number(baseline.jestSuitesBefore || 0) - removedSuites.length;
+  const additiveSuites = currentSuites.filter((suite) => !removedSuites.includes(suite)).length - expectedAfter;
   return {
     before: Number(baseline.jestSuitesBefore || 0),
     after: currentSuites.length,
     expectedAfter,
+    additiveSuites: Math.max(0, additiveSuites),
     removedSuites,
     removedSuitesAbsent,
     skippedHits: skipped.hits || [],
@@ -295,7 +540,7 @@ function buildPhase5JestAccounting(manifest, options) {
       && !current.error
       && (skipped.hits || []).length === 0
       && removedSuitesAbsent.length === removedSuites.length
-      && currentSuites.length === expectedAfter,
+      && currentSuites.length >= expectedAfter,
   };
 }
 
@@ -1695,6 +1940,684 @@ async function capturePhase4ReviewScreenshots(page, runId) {
   return screenshots;
 }
 
+async function runVisualConformanceAssertions({ page, recorder, runId }) {
+  const screenshotDir = path.join(PROJECT_ROOT, '.squidrun', 'coord', 'shell-v2-visual-doorbell', runId);
+  ensureDir(screenshotDir);
+  const screenshots = {};
+  const capture = async (name) => {
+    const filePath = path.join(screenshotDir, `${name}.png`);
+    await page.screenshot({ path: filePath, fullPage: true });
+    screenshots[name] = filePath;
+  };
+
+  const referenceTokens = readShellV2ReferenceTokens();
+  const liveTokens = await page.evaluate((tokens) => {
+    const style = window.getComputedStyle(document.documentElement);
+    const out = {};
+    tokens.forEach((token) => {
+      out[token] = String(style.getPropertyValue(token) || '').trim();
+    });
+    return out;
+  }, SHELL_V2_REFERENCE_TOKENS);
+  const tokenMismatches = SHELL_V2_REFERENCE_TOKENS
+    .filter((token) => normalizeCssToken(referenceTokens[token]) !== normalizeCssToken(liveTokens[token]))
+    .map((token) => ({
+      token,
+      reference: referenceTokens[token] || '',
+      live: liveTokens[token] || '',
+      referenceNormalized: normalizeCssToken(referenceTokens[token]),
+      liveNormalized: normalizeCssToken(liveTokens[token]),
+    }));
+  recorder.record(
+    'VP1',
+    tokenMismatches.length === 0,
+    `reference token mismatches=${tokenMismatches.length}`,
+    { referencePath: SHELL_V2_VISUAL_REFERENCE_PATH, referenceTokens, liveTokens, tokenMismatches }
+  );
+
+  const hueSweep = await page.evaluate(() => {
+    const selectors = [
+      'body.shell-v2-enabled',
+      '.header',
+      '#shellV2TabRail',
+      '.shell-v2-tab',
+      '.shell-v2-tab-doorbell-badge',
+      '.shell-v2-view',
+      '.shell-v2-core-strip',
+      '.shell-v2-station',
+      '.pane',
+      '.pane-header',
+      '.pane-terminal',
+      '.shell-v2-arm-section',
+      '.shell-v2-arm-section-header',
+      '.shell-v2-arm-section-toggle',
+      '.shell-v2-arm-panes',
+      '.shell-v2-arm-pane',
+      '.shell-v2-today-root',
+      '.shell-v2-today-chip',
+      '.shell-v2-today-search',
+      '.shell-v2-today-row',
+      '.shell-v2-today-summary',
+      '.shell-v2-today-tag',
+      '.shell-v2-today-status',
+      '.shell-v2-bottom-bar',
+      '.command-bar',
+      '.command-input',
+      '.voice-btn',
+      '.send-btn',
+      '.mira-live-reply',
+      '.cli-badge',
+    ];
+    const props = [
+      'color',
+      'backgroundColor',
+      'borderTopColor',
+      'borderRightColor',
+      'borderBottomColor',
+      'borderLeftColor',
+      'outlineColor',
+    ];
+    const elements = [...new Set(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))];
+    const exactAllowed = new Set([
+      '232,163,61',
+      '26,18,6',
+      '230,221,205',
+      '159,184,168',
+      '255,155,155',
+      '200,210,220',
+      '122,135,148',
+      '74,85,96',
+      '10,14,20',
+      '13,18,25',
+      '17,24,35',
+      '22,31,44',
+      '8,11,16',
+      '6,9,14',
+      '255,255,255',
+      '0,0,0',
+    ]);
+    function splitNumbers(value) {
+      return String(value || '')
+        .trim()
+        .replace(/\s*\/\s*/g, ',')
+        .split(/[,\s]+/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+    }
+    function parseColor(value) {
+      const text = String(value || '').trim();
+      if (!text || text === 'transparent') return { r: 0, g: 0, b: 0, a: 0 };
+      const rgb = text.match(/^rgba?\((.+)\)$/i);
+      if (rgb) {
+        const parts = splitNumbers(rgb[1]);
+        return {
+          r: Math.round(Number(parts[0]) || 0),
+          g: Math.round(Number(parts[1]) || 0),
+          b: Math.round(Number(parts[2]) || 0),
+          a: parts[3] === undefined ? 1 : Number(parts[3]),
+        };
+      }
+      const srgb = text.match(/^color\(srgb\s+(.+)\)$/i);
+      if (srgb) {
+        const parts = splitNumbers(srgb[1]);
+        return {
+          r: Math.round((Number(parts[0]) || 0) * 255),
+          g: Math.round((Number(parts[1]) || 0) * 255),
+          b: Math.round((Number(parts[2]) || 0) * 255),
+          a: parts[3] === undefined ? 1 : Number(parts[3]),
+        };
+      }
+      return null;
+    }
+    function rgbToHsl({ r, g, b }) {
+      const rn = r / 255;
+      const gn = g / 255;
+      const bn = b / 255;
+      const max = Math.max(rn, gn, bn);
+      const min = Math.min(rn, gn, bn);
+      const l = (max + min) / 2;
+      if (max === min) return { h: 0, s: 0, l };
+      const d = max - min;
+      const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      let h;
+      if (max === rn) h = (gn - bn) / d + (gn < bn ? 6 : 0);
+      else if (max === gn) h = (bn - rn) / d + 2;
+      else h = (rn - gn) / d + 4;
+      return { h: h * 60, s, l };
+    }
+    function isAllowed(color, element) {
+      if (!color || color.a <= 0.04) return true;
+      const key = `${color.r},${color.g},${color.b}`;
+      if (exactAllowed.has(key)) return true;
+      const hsl = rgbToHsl(color);
+      if (hsl.l <= 0.16 || hsl.s <= 0.24) return true;
+      if (hsl.h >= 30 && hsl.h <= 44 && hsl.s >= 0.25) return true;
+      if (hsl.h >= 0 && hsl.h <= 8 && element.closest?.('.is-failed, .shell-v2-today-status.is-failed')) return true;
+      return false;
+    }
+    const violations = [];
+    const samples = [];
+    elements.forEach((element) => {
+      const style = window.getComputedStyle(element);
+      props.forEach((prop) => {
+        const value = style[prop];
+        const color = parseColor(value);
+        if (!color) return;
+        const sample = {
+          selector: element.id ? `#${element.id}` : `.${String(element.className || '').trim().replace(/\s+/g, '.')}`,
+          prop,
+          value,
+          color,
+        };
+        samples.push(sample);
+        if (!isAllowed(color, element)) violations.push(sample);
+      });
+    });
+    return { checked: samples.length, violations: violations.slice(0, 80) };
+  });
+  recorder.record(
+    'VP2',
+    hueSweep.violations.length === 0,
+    `computed non-reference hue violations=${hueSweep.violations.length}`,
+    hueSweep
+  );
+
+  await clickTab(page, 'squid-room');
+  await setTrustQuoteArmExpanded(page, false);
+  await page.waitForTimeout(250);
+  const collapsed = await page.evaluate(() => {
+    const section = document.getElementById('shellV2TrustQuoteSection');
+    const header = section?.querySelector?.('.shell-v2-arm-section-header');
+    const panel = section?.querySelector?.('.shell-v2-arm-panes');
+    const sectionRect = section?.getBoundingClientRect?.() || { height: 0, width: 0 };
+    const headerRect = header?.getBoundingClientRect?.() || { height: 0, width: 0 };
+    const u = Number.parseFloat(window.getComputedStyle(document.documentElement).getPropertyValue('--u')) || 0;
+    const panelStyle = panel ? window.getComputedStyle(panel) : null;
+    const separators = [...document.querySelectorAll('.shell-v2-station-separator')].map((element) => ({
+      text: element.textContent || '',
+      ariaHidden: element.getAttribute('aria-hidden') || '',
+      className: element.className || '',
+    }));
+    return {
+      sectionFound: Boolean(section),
+      collapsed: section?.classList?.contains('is-collapsed') === true,
+      sectionHeight: Math.round(sectionRect.height),
+      headerHeight: Math.round(headerRect.height),
+      u,
+      overage: Math.round(sectionRect.height - headerRect.height),
+      panelHidden: panel?.hidden === true,
+      panelDisplay: panelStyle?.display || '',
+      panelVisible: panel?.hidden !== true && panelStyle?.display !== 'none',
+      separators,
+    };
+  });
+  await capture('visual-squid-room');
+  const separatorOk = collapsed.separators.length >= 2
+    && collapsed.separators.every((entry) => entry.text === '·' && entry.ariaHidden === 'true');
+  recorder.record(
+    'VP3',
+    collapsed.sectionFound === true
+      && collapsed.collapsed === true
+      && collapsed.sectionHeight <= collapsed.headerHeight + collapsed.u
+      && collapsed.panelHidden === true
+      && collapsed.panelDisplay === 'none'
+      && collapsed.panelVisible === false
+      && separatorOk,
+    `collapsed overage=${collapsed.overage}px separators=${collapsed.separators.length}`,
+    collapsed
+  );
+
+  const readMotion = async () => page.evaluate(() => {
+    function splitCssList(value) {
+      const out = [];
+      let current = '';
+      let depth = 0;
+      for (const char of String(value || '')) {
+        if (char === '(') depth += 1;
+        if (char === ')') depth = Math.max(0, depth - 1);
+        if (char === ',' && depth === 0) {
+          out.push(current.trim());
+          current = '';
+        } else {
+          current += char;
+        }
+      }
+      if (current.trim()) out.push(current.trim());
+      return out;
+    }
+    function durationMs(value) {
+      const text = String(value || '').trim();
+      if (!text || text === '0s' || text === '0ms') return 0;
+      if (text.endsWith('ms')) return Number.parseFloat(text) || 0;
+      if (text.endsWith('s')) return (Number.parseFloat(text) || 0) * 1000;
+      return Number.parseFloat(text) || 0;
+    }
+    const selectors = [
+      '.shell-v2-tab',
+      '.shell-v2-view',
+      '.pane-header',
+      '.command-input',
+      '.shell-v2-today-summary',
+      '.shell-v2-today-chip',
+      '.shell-v2-today-new-pill',
+      '.shell-v2-arm-section-toggle',
+      '.shell-v2-station-menu-trigger',
+      '.shell-v2-header-actions button',
+    ];
+    const elements = [...new Set(selectors.flatMap((selector) => [...document.querySelectorAll(selector)]))];
+    const samples = elements.map((element) => {
+      const style = window.getComputedStyle(element);
+      const transitionDurations = splitCssList(style.transitionDuration).map(durationMs);
+      const animationDurations = splitCssList(style.animationDuration).map(durationMs);
+      return {
+        selector: element.id ? `#${element.id}` : `.${String(element.className || '').trim().replace(/\s+/g, '.')}`,
+        transitionDuration: style.transitionDuration,
+        transitionTimingFunction: style.transitionTimingFunction,
+        animationName: style.animationName,
+        animationDuration: style.animationDuration,
+        maxTransitionMs: Math.max(0, ...transitionDurations),
+        maxAnimationMs: Math.max(0, ...animationDurations),
+      };
+    });
+    const easingValues = [...new Set(samples
+      .map((sample) => sample.transitionTimingFunction)
+      .filter((value) => value && value !== 'ease' && value !== 'initial'))];
+    const badDuration = samples.filter((sample) => sample.maxTransitionMs > 150 || sample.maxAnimationMs > 150);
+    const activeAnimations = samples.filter((sample) => sample.animationName && sample.animationName !== 'none' && sample.maxAnimationMs > 0);
+    return { samples, easingValues, badDuration, activeAnimations };
+  });
+  const motion = await readMotion();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.waitForTimeout(100);
+  const reducedMotion = await readMotion();
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  recorder.record(
+    'VP4',
+    motion.badDuration.length === 0
+      && motion.activeAnimations.length === 0
+      && motion.easingValues.every((value) => /^linear(?:,\s*linear)*$/.test(value))
+      && reducedMotion.samples.every((sample) => sample.maxTransitionMs === 0 && sample.maxAnimationMs === 0),
+    `motion max<=150 bad=${motion.badDuration.length} reducedNonzero=${reducedMotion.samples.filter((sample) => sample.maxTransitionMs || sample.maxAnimationMs).length}`,
+    { motion, reducedMotion }
+  );
+
+  await clickTab(page, 'mira');
+  await page.waitForTimeout(250);
+  await capture('visual-mira');
+  await clickTab(page, 'today');
+  await page.waitForTimeout(250);
+  await capture('visual-today');
+  const structure = await page.evaluate(() => {
+    const rectOf = (selector) => {
+      const element = document.querySelector(selector);
+      const rect = element?.getBoundingClientRect?.() || { width: 0, height: 0, x: 0, y: 0 };
+      return {
+        found: Boolean(element),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+      };
+    };
+    return {
+      header: rectOf('.header'),
+      rail: rectOf('#shellV2TabRail'),
+      bottomBar: rectOf('.status-bar.shell-v2-bottom-bar'),
+      activeViews: [...document.querySelectorAll('.shell-v2-view[data-shell-v2-active="true"]')]
+        .map((view) => view.dataset.shellV2View || ''),
+      bodyTab: document.body?.dataset?.shellV2ActiveTab || '',
+    };
+  });
+  recorder.record(
+    'VP5',
+    structure.header.height === 44
+      && structure.rail.height === 44
+      && structure.bottomBar.height === 30
+      && structure.activeViews.length === 1
+      && structure.bodyTab === 'today',
+    `rail=${structure.rail.height}px bottom=${structure.bottomBar.height}px active=${structure.bodyTab}`,
+    structure
+  );
+
+  return screenshots;
+}
+
+async function queryDoorbellJournalRows(page) {
+  return page.evaluate(async () => {
+    const bridge = window.squidrunAPI || window.squidrun || {};
+    const invoke = typeof bridge.invoke === 'function'
+      ? bridge.invoke.bind(bridge)
+      : (typeof bridge.ipc?.invoke === 'function' ? bridge.ipc.invoke.bind(bridge.ipc) : null);
+    if (!invoke) return { ok: false, reason: 'invoke_unavailable', rows: [] };
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const dayStartMs = now.getTime();
+    const result = await invoke('evidence-ledger:query-comms-journal', {
+      sinceMs: dayStartMs,
+      untilMs: dayStartMs + 24 * 60 * 60 * 1000 - 1,
+      order: 'asc',
+      limit: 5000,
+    });
+    const sourceRows = Array.isArray(result) ? result : (Array.isArray(result?.rows) ? result.rows : []);
+    const rows = sourceRows
+      .filter((row) => (
+        /\[DOORBELL\]/.test(String(row.rawBody || row.raw_body || ''))
+        || row.metadata?.shellV2Doorbell === true
+      ))
+      .map((row) => ({
+        rowId: row.rowId ?? row.row_id ?? null,
+        messageId: row.messageId ?? row.message_id ?? '',
+        rawBody: row.rawBody ?? row.raw_body ?? '',
+        senderRole: row.senderRole ?? row.sender_role ?? '',
+        targetRole: row.targetRole ?? row.target_role ?? '',
+        channel: row.channel ?? '',
+        status: row.status ?? '',
+        metadata: row.metadata || {},
+      }));
+    return { ok: Array.isArray(result) || result?.ok === true, rows };
+  });
+}
+
+async function waitForDoorbellJournalRows(page, minCount, timeoutMs = 10000) {
+  const started = Date.now();
+  let last = null;
+  while (Date.now() - started < timeoutMs) {
+    last = await queryDoorbellJournalRows(page);
+    if (last.ok === true && last.rows.length >= minCount) return last;
+    await sleep(250);
+  }
+  return last || { ok: false, reason: 'timeout', rows: [] };
+}
+
+async function readDoorbellDomState(page) {
+  return page.evaluate(() => {
+    const badge = document.querySelector('[data-shell-v2-doorbell-badge="squid-room"]');
+    const markedHeaders = [...document.querySelectorAll('.pane-header.shell-v2-doorbell-on')].map((header) => {
+      const pane = header.closest?.('.pane');
+      return {
+        paneId: pane?.dataset?.paneId || '',
+        eventName: header.getAttribute('data-shell-v2-doorbell-event') || '',
+        text: header.textContent || '',
+      };
+    });
+    const slots = [...document.querySelectorAll('[data-shell-v2-doorbell-slot="true"]')].map((slot) => ({
+      paneId: slot.dataset.paneId || '',
+      eventName: slot.dataset.doorbellEvent || '',
+      text: slot.textContent || '',
+      visible: Boolean(slot.offsetWidth || slot.offsetHeight),
+    }));
+    return {
+      activeTab: document.body?.dataset?.shellV2ActiveTab || '',
+      badgeFound: Boolean(badge),
+      badgeHidden: badge?.hidden === true || window.getComputedStyle(badge).display === 'none',
+      badgeOn: badge?.classList?.contains('on') === true,
+      badgeText: badge?.textContent || '',
+      markedHeaders,
+      slots,
+    };
+  });
+}
+
+async function runDoorbellBehaviorAssertions({ page, recorder, runId, idleSoakMs = DOORBELL_IDLE_SOAK_MS }) {
+  const screenshotDir = path.join(PROJECT_ROOT, '.squidrun', 'coord', 'shell-v2-visual-doorbell', runId);
+  ensureDir(screenshotDir);
+  const screenshots = {};
+  const capture = async (name) => {
+    const filePath = path.join(screenshotDir, `${name}.png`);
+    await page.screenshot({ path: filePath, fullPage: true });
+    screenshots[name] = filePath;
+  };
+
+  await clickTab(page, 'squid-room');
+  await setTrustQuoteArmExpanded(page, true);
+  const idleBeforeRows = await queryDoorbellJournalRows(page);
+  const idleBeforeDom = await readDoorbellDomState(page);
+  await sleep(idleSoakMs);
+  const idleAfterRows = await queryDoorbellJournalRows(page);
+  const idleAfterDom = await readDoorbellDomState(page);
+  recorder.record(
+    'DB4',
+    idleBeforeRows.ok === true
+      && idleAfterRows.ok === true
+      && idleBeforeRows.rows.length === 0
+      && idleAfterRows.rows.length === 0
+      && idleBeforeDom.badgeHidden === true
+      && idleAfterDom.badgeHidden === true
+      && idleAfterDom.badgeOn === false,
+    `idle soak ${idleSoakMs}ms doorbellRows=${idleAfterRows.rows.length} badge=${idleAfterDom.badgeText || 'hidden'}`,
+    { idleBeforeRows, idleBeforeDom, idleAfterRows, idleAfterDom, idleSoakMs }
+  );
+
+  const requiredFireEvents = ['permission_prompt', 'lead_escalation', 'process_exit'];
+  const fireResults = await page.evaluate(() => {
+    const results = [];
+    const record = (name, detail) => {
+      try {
+        document.dispatchEvent(new CustomEvent('shell-v2-doorbell-source-probe', {
+          bubbles: true,
+          detail,
+        }));
+        const entry = { name, ok: true, detail };
+        results.push(entry);
+        return entry;
+      } catch (err) {
+        const entry = { name, ok: false, error: err?.message || String(err) };
+        results.push(entry);
+        return entry;
+      }
+    };
+
+    const probeEnabled = document.body?.dataset?.shellV2DoorbellSourceProbe === 'enabled';
+    if (!probeEnabled) {
+      return {
+        ok: false,
+        reason: 'doorbell_source_probe_unavailable',
+        expectedMinimumCount: 3,
+        results,
+      };
+    }
+
+    record('pty_permission_prompt_detector', {
+      eventName: 'permission_prompt',
+      paneId: '2',
+      data: 'Permission prompt: approve this command',
+    });
+    record('lead_escalation_message_parser', {
+      eventName: 'lead_escalation',
+      panes: ['trustquote-lead'],
+      rawBody: '[LEAD ESCALATION] QA fixture',
+    });
+    record('pty_process_exit_handler', {
+      eventName: 'process_exit',
+      paneId: '3',
+      code: 17,
+    });
+
+    return {
+      ok: results.every((result) => result.ok === true),
+      expectedMinimumCount: 3,
+      results,
+    };
+  });
+  const expectedBadgeCount = Number(fireResults.expectedMinimumCount || requiredFireEvents.length);
+  const firedWait = await page.waitForFunction((expected) => {
+      const badge = document.querySelector('[data-shell-v2-doorbell-badge="squid-room"]');
+      const count = Number.parseInt(badge?.textContent || '0', 10);
+      return badge && badge.hidden !== true && count >= expected && badge.classList.contains('on');
+    }, expectedBadgeCount, { timeout: 10000 })
+      .then(() => ({ ok: true, expectedBadgeCount }))
+      .catch((err) => ({ ok: false, expectedBadgeCount, reason: err?.message || String(err) }));
+  const firedDom = await readDoorbellDomState(page);
+  const firedRows = await waitForDoorbellJournalRows(page, expectedBadgeCount, 20000);
+  await capture('visual-doorbell-fired');
+  const firedEvents = new Set(firedRows.rows.map((row) => row.metadata?.doorbellEvent || ''));
+  const markedPaneIds = new Set(firedDom.markedHeaders.map((entry) => entry.paneId));
+  const firedBadgeCount = Number.parseInt(firedDom.badgeText || '0', 10);
+  const db5Ok = fireResults.ok === true
+    && firedWait.ok === true
+    && firedBadgeCount >= expectedBadgeCount
+    && firedDom.badgeHidden === false
+    && requiredFireEvents.every((eventName) => firedEvents.has(eventName))
+    && ['2', 'trustquote-lead', '3'].every((paneId) => markedPaneIds.has(paneId));
+  recorder.record(
+    'DB5',
+    db5Ok,
+    `badge=${firedDom.badgeText || 'hidden'} events=${[...firedEvents].join('/')}`,
+    { fireResults, firedWait, expectedBadgeCount, firedDom, firedRows }
+  );
+  if (!db5Ok) return screenshots;
+
+  const ackVisit = await page.evaluate(() => {
+    const before = document.body?.dataset?.shellV2ActiveTab || '';
+    document.querySelector('[data-shell-v2-tab="mira"]')?.click?.();
+    const afterMira = document.body?.dataset?.shellV2ActiveTab || '';
+    document.querySelector('[data-shell-v2-tab="squid-room"]')?.click?.();
+    const afterSquidRoom = document.body?.dataset?.shellV2ActiveTab || '';
+    return {
+      before,
+      afterMira,
+      afterSquidRoom,
+      miraFound: Boolean(document.querySelector('[data-shell-v2-tab="mira"]')),
+      squidRoomFound: Boolean(document.querySelector('[data-shell-v2-tab="squid-room"]')),
+    };
+  });
+  const ackWait = await page.waitForFunction(() => {
+    const badge = document.querySelector('[data-shell-v2-doorbell-badge="squid-room"]');
+    return badge && (badge.hidden === true || window.getComputedStyle(badge).display === 'none') && badge.textContent === '';
+  }, null, { timeout: 10000 })
+    .then(() => ({ ok: true }))
+    .catch((err) => ({ ok: false, reason: err?.message || String(err) }));
+  const clearedDom = await readDoorbellDomState(page);
+  const clearedRows = await waitForDoorbellJournalRows(page, 4);
+  await page.waitForTimeout(1000);
+  const afterAckQuietRows = await queryDoorbellJournalRows(page);
+  const ackRows = clearedRows.rows.filter((row) => row.metadata?.doorbellEvent === 'doorbell_ack');
+  const db6Ok = ackWait.ok === true
+    && clearedDom.badgeHidden === true
+    && clearedDom.badgeText === ''
+    && clearedDom.markedHeaders.length === 0
+    && ackRows.length >= 1
+    && afterAckQuietRows.rows.length === clearedRows.rows.length;
+  recorder.record(
+    'DB6',
+    db6Ok,
+    `ackRows=${ackRows.length} rowsAfterQuiet=${afterAckQuietRows.rows.length}`,
+    { ackVisit, ackWait, clearedDom, clearedRows, afterAckQuietRows }
+  );
+  if (!db6Ok) return screenshots;
+
+  await clickTab(page, 'today');
+  const todayReset = await page.evaluate(async () => {
+    const controller = [
+      window.__squidrunShellV2,
+      document.defaultView?.__squidrunShellV2,
+      document.body?.__squidrunShellV2Controller,
+    ].find((candidate) => typeof candidate?.refreshToday === 'function');
+    const search = document.querySelector('[data-today-search="true"]');
+    const searchBefore = search?.value || '';
+    if (search) {
+      search.value = '';
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    document.querySelector('[data-today-filter="all"]')?.click?.();
+    let refreshResult;
+    if (controller) {
+      refreshResult = await controller.refreshToday({ preserveScroll: false });
+    } else {
+      document.dispatchEvent(new CustomEvent('shell-v2-refresh-today', {
+        bubbles: true,
+        detail: { preserveScroll: false },
+      }));
+      refreshResult = { ok: true, method: 'dom_event' };
+    }
+    if (search && search.value) {
+      search.value = '';
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    document.querySelector('[data-today-filter="all"]')?.click?.();
+    const pill = document.querySelector('[data-today-new-pill="true"]');
+    const pillBeforeClick = {
+      found: Boolean(pill),
+      hidden: pill?.hidden === true,
+      text: pill?.textContent || '',
+    };
+    if (pill && pill.hidden !== true) pill.click?.();
+    const list = document.querySelector('[data-today-list="true"]');
+    if (list) list.scrollTop = 0;
+    return {
+      refreshResult,
+      searchBefore,
+      searchAfter: search?.value || '',
+      activeFilter: [...document.querySelectorAll('[data-today-filter]')]
+        .find((chip) => chip.classList.contains('active'))?.dataset?.todayFilter || '',
+      pillBeforeClick,
+      pillAfterClick: {
+        hidden: pill?.hidden === true,
+        text: pill?.textContent || '',
+      },
+      rowCount: document.querySelectorAll('.shell-v2-today-row').length,
+    };
+  });
+  await page.waitForFunction(() => document.body?.dataset?.shellV2ActiveTab === 'today', null, { timeout: 5000 });
+  const todayAckWait = await page.waitForFunction(() => {
+    const text = `${document.body?.innerText || ''}\n${document.body?.textContent || ''}`;
+    return /doorbell[_ ]ack/i.test(text);
+  }, null, { timeout: 10000 })
+    .then(() => ({ ok: true }))
+    .catch((err) => ({ ok: false, reason: err?.message || String(err) }));
+  const todayAckRender = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.shell-v2-today-row')].map((row) => ({
+      rowId: row.dataset.todayRowId || '',
+      kind: row.dataset.todayKind || '',
+      status: row.dataset.status || '',
+      text: row.textContent || '',
+      hasDoorbellAck: /doorbell[_ ]ack/i.test(row.textContent || ''),
+    }));
+    const activeFilter = [...document.querySelectorAll('[data-today-filter]')]
+      .find((chip) => chip.classList.contains('active'))?.dataset?.todayFilter || '';
+    const search = document.querySelector('[data-today-search="true"]');
+    const pill = document.querySelector('[data-today-new-pill="true"]');
+    return {
+      activeFilter,
+      search: search?.value || '',
+      pillHidden: pill?.hidden === true,
+      pillText: pill?.textContent || '',
+      rowCount: rows.length,
+      ackVisible: rows.some((row) => row.hasDoorbellAck),
+      ackRows: rows.filter((row) => row.hasDoorbellAck),
+      firstRows: rows.slice(0, 5),
+    };
+  });
+  await page.waitForTimeout(250);
+  await capture('visual-doorbell-cleared-today');
+
+  const allRows = afterAckQuietRows.rows;
+  const expectedEvents = ['permission_prompt', 'lead_escalation', 'process_exit', 'doorbell_ack'];
+  const rowEvents = allRows.map((row) => row.metadata?.doorbellEvent || '');
+  const receiptRowsOk = allRows.every((row) => (
+    row.senderRole === 'system'
+      && row.channel === 'system'
+      && row.status === 'recorded'
+      && row.metadata?.source === 'shell-v2-doorbell'
+      && row.metadata?.scope === 'main'
+      && row.metadata?.windowKey === 'main'
+      && expectedEvents.includes(row.metadata?.doorbellEvent)
+      && String(row.metadata?.paneId || '').length > 0
+  ));
+  recorder.record(
+    'DB3',
+    allRows.length >= expectedEvents.length
+      && expectedEvents.every((eventName) => rowEvents.includes(eventName))
+      && receiptRowsOk === true
+      && todayAckWait.ok === true
+      && todayAckRender.ackVisible === true,
+    `receipted rows=${allRows.length} events=${rowEvents.join('/')} todayAckVisible=${todayAckRender.ackVisible === true}`,
+    { allRows, expectedEvents, todayReset, todayAckWait, todayAckRender }
+  );
+
+  return screenshots;
+}
+
 function mirrorScreenshots(screenshots = {}) {
   const mirrorDir = path.join(PROJECT_ROOT, '.squidrun', 'screenshots', 'shell-v2');
   ensureDir(mirrorDir);
@@ -1960,6 +2883,10 @@ async function main() {
     usage();
     return;
   }
+  const requestedCdpPort = options.cdpPort;
+  if (options.cdpPortExplicit !== true) {
+    options.cdpPort = await findAvailableCdpPortPair(options.cdpPort);
+  }
 
   const runId = `shell-v2-gate-${Date.now()}`;
   const dataRoot = path.join(PROJECT_ROOT, '.squidrun', 'tmp', runId);
@@ -1976,6 +2903,13 @@ async function main() {
   const verdictPath = path.join(dataRoot, 'shell-v2-gate-verdict.json');
   const recorder = makeRecorder();
   const phase5Manifest = readPhase5Manifest();
+  if (requestedCdpPort !== options.cdpPort) {
+    recorder.record('CDP', true, `default CDP port ${requestedCdpPort} occupied; using ${options.cdpPort}`, {
+      requestedCdpPort,
+      cdpPort: options.cdpPort,
+      flagOffCdpPort: options.cdpPort + 1,
+    });
+  }
 
   let child = null;
   let browser = null;
@@ -1997,7 +2931,7 @@ async function main() {
     recorder.record(
       'D1',
       manifestGate.exactNameset === true,
-      `Phase 5 deletion nameset exact=${manifestGate.exactNameset}`,
+      `Phase 5 deleted files absent=${manifestGate.exactNameset} commitCarriesDeletes=${manifestGate.commitCarriesPhase5Deletes}`,
       {
         manifestPath: PHASE5_MANIFEST_PATH,
         entries: phase5Manifest.entries.map((entry) => ({
@@ -2027,7 +2961,35 @@ async function main() {
         `Phase 5 residue grep hits=${residueHits.length}`,
         { residuePatterns: phase5Manifest.residuePatterns, residueHits }
       );
+
+      const visualScope = buildVisualScopeData(options.expectCommit);
+      recorder.record(
+        'VP6',
+        visualScope.ok === true,
+        `visual commit files=${visualScope.files.length} unexpected=${visualScope.unexpected.length}`,
+        visualScope
+      );
     }
+
+    const doorbellStatic = readDoorbellStaticGateData();
+    recorder.record(
+      'DB1',
+      doorbellStatic.db1Ok === true,
+      `doorbell events=${doorbellStatic.events.join('/')} unknownThrow=${doorbellStatic.unknownThrow}`,
+      doorbellStatic
+    );
+    recorder.record(
+      'DB2',
+      doorbellStatic.db2Ok === true,
+      `doorbell forbidden timer hits=${doorbellStatic.timerHits.length}`,
+      doorbellStatic
+    );
+    recorder.record(
+      'DB7',
+      doorbellStatic.db7Ok === true,
+      `doorbell chokepoints=${doorbellStatic.callers.map((entry) => `${entry.source}:${entry.eventName}`).join('/')}`,
+      doorbellStatic
+    );
 
     screenshots = {
       ...screenshots,
@@ -2053,9 +3015,19 @@ async function main() {
     await runPhase4FlagOnAssertions({ page, recorder, rendererNoise });
     screenshots = {
       ...screenshots,
+      ...await runVisualConformanceAssertions({ page, recorder, runId }),
+    };
+    screenshots = {
+      ...screenshots,
       ...await capturePhase2Screenshots(page, runId),
       ...await capturePhase3TodayScreenshots(page, runId, recorder, dataRoot),
       ...await capturePhase4ReviewScreenshots(page, runId),
+      ...await runDoorbellBehaviorAssertions({
+        page,
+        recorder,
+        runId,
+        idleSoakMs: resolveDoorbellIdleSoakMs(options),
+      }),
     };
     const missingPhase4Screenshots = PHASE4_REVIEW_SCREENSHOTS.filter((name) => !screenshots[name] || !fs.existsSync(screenshots[name]));
     const wrongPhase4Paths = PHASE4_REVIEW_SCREENSHOTS
@@ -2063,20 +3035,28 @@ async function main() {
     const missingPhase5Screenshots = PHASE5_REVIEW_SCREENSHOTS.filter((name) => !screenshots[name] || !fs.existsSync(screenshots[name]));
     const wrongPhase5Paths = PHASE5_REVIEW_SCREENSHOTS
       .filter((name) => screenshots[name] && !screenshots[name].includes(`${path.sep}shell-v2-phase5${path.sep}`));
+    const missingVisualDoorbellScreenshots = VISUAL_DOORBELL_REVIEW_SCREENSHOTS.filter((name) => !screenshots[name] || !fs.existsSync(screenshots[name]));
+    const wrongVisualDoorbellPaths = VISUAL_DOORBELL_REVIEW_SCREENSHOTS
+      .filter((name) => screenshots[name] && !screenshots[name].includes(`${path.sep}shell-v2-visual-doorbell${path.sep}`));
     recorder.record(
       'V1',
       missingPhase4Screenshots.length === 0
         && wrongPhase4Paths.length === 0
         && missingPhase5Screenshots.length === 0
-        && wrongPhase5Paths.length === 0,
-      'Phase 4/5 review screenshots captured under coord paths',
+        && wrongPhase5Paths.length === 0
+        && missingVisualDoorbellScreenshots.length === 0
+        && wrongVisualDoorbellPaths.length === 0,
+      'Phase 4/5/visual-doorbell review screenshots captured under coord paths',
       {
         requiredPhase4: PHASE4_REVIEW_SCREENSHOTS,
         requiredPhase5: PHASE5_REVIEW_SCREENSHOTS,
+        requiredVisualDoorbell: VISUAL_DOORBELL_REVIEW_SCREENSHOTS,
         missingPhase4Screenshots,
         wrongPhase4Paths,
         missingPhase5Screenshots,
         wrongPhase5Paths,
+        missingVisualDoorbellScreenshots,
+        wrongVisualDoorbellPaths,
         screenshots,
       }
     );

@@ -1,6 +1,14 @@
 'use strict';
 
 const workspacePaneShell = require('./workspace-pane-shell');
+const {
+  DOORBELL_ACK_EVENT,
+  DOORBELL_CHOKEPOINT_CALLERS,
+  DOORBELL_EVENTS,
+  DOORBELL_TRIGGER_EVENTS,
+  createDoorbellState,
+  transitionDoorbell,
+} = require('./shell-v2-doorbell');
 
 const SHELL_V2_TABS = Object.freeze([
   { id: 'mira', label: 'MIRA', shortcut: '1' },
@@ -26,6 +34,7 @@ const TODAY_FILTERS = Object.freeze([
   { id: 'system', label: 'System' },
 ]);
 const TODAY_POLL_MS = 5000;
+const SHELL_V2_TODAY_REFRESH_EVENT = 'shell-v2-refresh-today';
 
 const CORE_STATION_PANE_IDS = Object.freeze(['2', '3']);
 const CORE_STATION_LABELS = Object.freeze({
@@ -49,6 +58,21 @@ const SHELL_V2_PANE_SHORTCUTS = Object.freeze({
   '2': { paneId: '2', tabId: 'squid-room' },
   '3': { paneId: '3', tabId: 'squid-room' },
 });
+
+const SHELL_V2_DOORBELL_PERMISSION_PATTERNS = Object.freeze([
+  /\bpermission prompt\b/i,
+  /\bpermission (?:required|needed|requested)\b/i,
+  /\bapproval (?:required|needed|requested)\b/i,
+  /\b(?:allow|approve) (?:this|the) (?:command|action|tool)\b/i,
+  /\bdo you want to (?:continue|proceed)\?\b/i,
+]);
+
+const SHELL_V2_LEAD_ESCALATION_PATTERNS = Object.freeze([
+  /\blead escalation\b/i,
+  /\[lead escalation\]/i,
+  /\bmissing arm escalation\b/i,
+  /\(system response-debt\):/i,
+]);
 
 const MAIN_WINDOW_KEYS = new Set(['', 'main']);
 const stateByDocument = new WeakMap();
@@ -282,13 +306,26 @@ function buildTabRail(doc, header, onSelectTab, tabs = SHELL_V2_TABS) {
   tabs.forEach((tab) => {
     const button = makeElement(doc, 'button', 'shell-v2-tab', {
       type: 'button',
-      textContent: tab.label,
       'data-shell-v2-tab': tab.id,
       'data-shortcut': `Ctrl+${tab.shortcut}`,
       'aria-pressed': 'false',
     });
     button.dataset.shellV2Tab = tab.id;
     button.dataset.shortcut = `Ctrl+${tab.shortcut}`;
+    button.appendChild(makeElement(doc, 'span', 'shell-v2-tab-label', {
+      textContent: tab.label,
+    }));
+    if (tab.id === 'squid-room') {
+      const badge = makeElement(doc, 'span', 'shell-v2-tab-doorbell-badge', {
+        textContent: '',
+        hidden: 'true',
+        dataset: { shellV2DoorbellBadge: 'squid-room' },
+        'aria-label': 'Squid Room needs input',
+      });
+      badge.dataset.shellV2DoorbellBadge = 'squid-room';
+      badge.hidden = true;
+      button.appendChild(badge);
+    }
     button.addEventListener?.('click', () => onSelectTab(tab.id));
     rail.appendChild(button);
   });
@@ -1098,6 +1135,292 @@ function resolveRendererInvoke(windowRef = null) {
     : (typeof bridge.ipc?.invoke === 'function' ? bridge.ipc.invoke.bind(bridge.ipc) : null);
 }
 
+function resolveDoorbellJournalWriter(windowRef = null, options = {}) {
+  if (typeof options.doorbellJournalApi === 'function') return options.doorbellJournalApi;
+  return async (row) => {
+    const invoke = resolveRendererInvoke(windowRef);
+    if (!invoke) return { ok: false, reason: 'doorbell_journal_ipc_unavailable' };
+    return invoke('evidence-ledger:upsert-comms-journal', row);
+  };
+}
+
+function getDoorbellSessionId(doc, options = {}) {
+  const candidates = [
+    options.windowContext?.sessionScopeId,
+    options.windowContext?.sessionId,
+    doc?.getElementById?.('headerSessionBadge')?.textContent,
+  ];
+  for (const candidate of candidates) {
+    const text = String(candidate || '').trim();
+    if (text) return text;
+  }
+  return null;
+}
+
+function makeDoorbellMessageId(eventName, paneId, timestampMs) {
+  const safePane = String(paneId || 'squid-room').replace(/[^A-Za-z0-9_-]/g, '-');
+  const safeEvent = String(eventName || 'event').replace(/[^A-Za-z0-9_-]/g, '-');
+  return `shell-v2-doorbell-${safeEvent}-${safePane}-${timestampMs}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getShellV2DoorbellState(state = {}) {
+  if (!state.doorbell) state.doorbell = createDoorbellState();
+  return state.doorbell;
+}
+
+function makeDoorbellSlot(doc, paneId, label) {
+  const slot = makeElement(doc, 'span', 'shell-v2-needs-input-slot', {
+    dataset: { paneId, shellV2DoorbellSlot: 'true' },
+    'aria-label': `${label || paneId} needs input`,
+  });
+  slot.dataset.paneId = paneId;
+  slot.dataset.shellV2DoorbellSlot = 'true';
+  return slot;
+}
+
+function appendStationSeparator(doc, parent) {
+  return parent?.appendChild?.(makeElement(doc, 'span', 'shell-v2-station-separator', {
+    textContent: '·',
+    'aria-hidden': 'true',
+  })) || null;
+}
+
+function getDoorbellHeaderForSlot(slot) {
+  return slot?.closest?.('.pane-header') || slot?.parentNode || null;
+}
+
+function renderShellV2Doorbell(doc, state = {}) {
+  const doorbell = getShellV2DoorbellState(state);
+  const count = Number(doorbell.count || 0);
+  const badge = doc?.querySelector?.('[data-shell-v2-doorbell-badge="squid-room"]');
+  if (badge) {
+    badge.hidden = count <= 0;
+    badge.textContent = count > 0 ? String(count) : '';
+    badge.classList.toggle('on', count > 0);
+  }
+  const tab = doc?.querySelector?.('[data-shell-v2-tab="squid-room"]');
+  tab?.classList?.toggle?.('has-doorbell', count > 0);
+
+  doc?.querySelectorAll?.('[data-shell-v2-doorbell-slot="true"]').forEach((slot) => {
+    const paneId = String(slot.dataset?.paneId || '');
+    const active = doorbell.byPane?.[paneId] || null;
+    slot.textContent = active ? active.displayText : '';
+    slot.dataset.doorbellEvent = active?.eventName || '';
+    const header = getDoorbellHeaderForSlot(slot);
+    header?.classList?.toggle?.('shell-v2-doorbell-on', Boolean(active));
+    if (active) header?.setAttribute?.('data-shell-v2-doorbell-event', active.eventName);
+    else header?.removeAttribute?.('data-shell-v2-doorbell-event');
+  });
+}
+
+function extractDoorbellPayloadText(payload = {}) {
+  if (typeof payload === 'string') return payload;
+  const candidates = [
+    payload.message,
+    payload.body,
+    payload.content,
+    payload.text,
+    payload.rawBody,
+    payload.raw_body,
+    payload.payload?.message,
+    payload.payload?.body,
+    payload.meta?.message,
+    payload.metadata?.message,
+  ];
+  return candidates
+    .map((value) => String(value || '').trim())
+    .find(Boolean) || '';
+}
+
+function extractDoorbellMetadata(payload = {}) {
+  const metadata = payload?.metadata && typeof payload.metadata === 'object' ? payload.metadata : {};
+  const meta = payload?.meta && typeof payload.meta === 'object' ? payload.meta : {};
+  const structured = metadata.structured || meta.structured || payload?.structured || {};
+  return { ...metadata, ...meta, structured };
+}
+
+function detectShellV2PermissionPrompt(data) {
+  const text = String(data || '');
+  return SHELL_V2_DOORBELL_PERMISSION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function isShellV2LeadEscalationPayload(payload = {}) {
+  const metadata = extractDoorbellMetadata(payload);
+  const structuredType = String(metadata.structured?.type || metadata.structuredType || '').trim().toLowerCase();
+  const kind = String(metadata.kind || metadata.eventName || metadata.doorbellEvent || '').trim().toLowerCase();
+  if (structuredType === 'lead_escalation' || kind === 'lead_escalation') return true;
+  const text = extractDoorbellPayloadText(payload);
+  return SHELL_V2_LEAD_ESCALATION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function resolveDoorbellPaneIdFromPayload(payload = {}, fallback = 'squid-room') {
+  const metadata = extractDoorbellMetadata(payload);
+  const direct = payload.paneId || payload.pane_id || metadata.paneId || metadata.pane_id;
+  if (direct) return String(direct);
+  const panes = Array.isArray(payload.panes) ? payload.panes : [];
+  return panes[0] ? String(panes[0]) : fallback;
+}
+
+function resolveDoorbellLabel(doc, paneId) {
+  const pane = doc?.querySelector?.(`.pane[data-pane-id="${paneId}"]`);
+  return String(
+    pane?.dataset?.squidRoomLabel
+    || pane?.dataset?.squidRoomRole
+    || CORE_STATION_LABELS[paneId]
+    || (paneId === '1' ? 'Mira' : '')
+    || paneId
+  ).trim();
+}
+
+function makeDoorbellPayload(doc, options, eventName, detail = {}) {
+  const timestampMs = Number.isFinite(Number(detail.timestampMs))
+    ? Math.floor(Number(detail.timestampMs))
+    : Date.now();
+  const paneId = String(detail.paneId || 'squid-room');
+  return {
+    ...detail,
+    paneId,
+    label: detail.label || resolveDoorbellLabel(doc, paneId),
+    timestampMs,
+    sessionId: detail.sessionId || getDoorbellSessionId(doc, options),
+    messageId: detail.messageId || makeDoorbellMessageId(eventName, paneId, timestampMs),
+  };
+}
+
+function createShellV2DoorbellController(doc, windowRef, state = {}, options = {}, refreshToday = null) {
+  const doorbell = getShellV2DoorbellState(state);
+  const writeJournal = resolveDoorbellJournalWriter(windowRef, options);
+
+  const applyTransition = async (eventName, detail = {}) => {
+    const payload = makeDoorbellPayload(doc, options, eventName, detail);
+    const result = await transitionDoorbell(doorbell, eventName, payload, { writeJournal });
+    if (result?.ok === true && !result.ignored) {
+      renderShellV2Doorbell(doc, state);
+      if (state.activeTab === 'today' && typeof refreshToday === 'function') {
+        await refreshToday({ preserveScroll: true });
+      }
+    }
+    return result;
+  };
+
+  const fire = (eventName, detail = {}) => applyTransition(eventName, detail);
+  const ack = (detail = {}) => applyTransition(DOORBELL_ACK_EVENT, {
+    paneId: 'squid-room',
+    displayText: 'acknowledged',
+    detail: 'Squid Room doorbell acknowledged',
+    ...detail,
+  });
+
+  const sources = {
+    handlePermissionPrompt: (paneId, data) => {
+      if (!detectShellV2PermissionPrompt(data)) return Promise.resolve({ ok: true, ignored: true });
+      return fire('permission_prompt', {
+        paneId,
+        displayText: 'permission',
+        detail: 'CLI permission prompt detected',
+      });
+    },
+    handleLeadEscalationMessage: (payload = {}) => {
+      if (!isShellV2LeadEscalationPayload(payload)) return Promise.resolve({ ok: true, ignored: true });
+      const paneId = resolveDoorbellPaneIdFromPayload(payload, 'trustquote-lead');
+      return fire('lead_escalation', {
+        paneId,
+        displayText: 'lead escalation',
+        detail: 'Lead escalation message received',
+      });
+    },
+    handleProcessExit: (paneId, code) => fire('process_exit', {
+      paneId,
+      displayText: `exited (${code ?? 'unknown'})`,
+      detail: `Process exited with code ${code ?? 'unknown'}`,
+    }),
+  };
+
+  return {
+    ack,
+    fire,
+    render: () => renderShellV2Doorbell(doc, state),
+    sources,
+  };
+}
+
+function bindShellV2DoorbellSources(doc, windowRef, controller, paneIds = [], options = {}) {
+  const disposers = [];
+  const pty = windowRef?.squidrun?.pty || windowRef?.squidrunAPI?.pty || null;
+  const onData = typeof pty?.onData === 'function' ? pty.onData.bind(pty) : null;
+  const onExit = typeof pty?.onExit === 'function' ? pty.onExit.bind(pty) : null;
+  paneIds.forEach((paneId) => {
+    if (onData) {
+      const dispose = onData(paneId, (data) => {
+        void controller.sources.handlePermissionPrompt(String(paneId), data);
+      });
+      if (typeof dispose === 'function') disposers.push(dispose);
+    }
+    if (onExit) {
+      const dispose = onExit(paneId, (code) => {
+        void controller.sources.handleProcessExit(String(paneId), code);
+      });
+      if (typeof dispose === 'function') disposers.push(dispose);
+    }
+  });
+
+  const bridge = windowRef?.squidrunAPI || windowRef?.squidrun || {};
+  if (typeof bridge.on === 'function') {
+    const dispose = bridge.on('inject-message', (payload) => {
+      void controller.sources.handleLeadEscalationMessage(payload || {});
+    });
+    if (typeof dispose === 'function') disposers.push(dispose);
+  }
+
+  const onLeadEscalation = (event) => {
+    void controller.sources.handleLeadEscalationMessage(event?.detail || {});
+  };
+  doc?.addEventListener?.('shell-v2-lead-escalation-message', onLeadEscalation);
+  disposers.push(() => doc?.removeEventListener?.('shell-v2-lead-escalation-message', onLeadEscalation));
+
+  if (options.enableSourceProbe === true) {
+    doc?.body?.setAttribute?.('data-shell-v2-doorbell-source-probe', 'enabled');
+    const onSourceProbe = (event) => {
+      const detail = event?.detail || {};
+      const eventName = String(detail.eventName || '').trim();
+      if (eventName === 'permission_prompt') {
+        void controller.sources.handlePermissionPrompt(
+          String(detail.paneId || '2'),
+          detail.data || detail.text || 'Permission prompt: approve this command'
+        );
+      } else if (eventName === 'lead_escalation') {
+        void controller.sources.handleLeadEscalationMessage({
+          panes: Array.isArray(detail.panes) ? detail.panes : [detail.paneId || 'trustquote-lead'],
+          metadata: {
+            ...(detail.metadata && typeof detail.metadata === 'object' ? detail.metadata : {}),
+            doorbellEvent: 'lead_escalation',
+          },
+          rawBody: detail.rawBody || '[LEAD ESCALATION] QA fixture',
+        });
+      } else if (eventName === 'process_exit') {
+        void controller.sources.handleProcessExit(
+          String(detail.paneId || '3'),
+          detail.code ?? 17
+        );
+      }
+    };
+    doc?.addEventListener?.('shell-v2-doorbell-source-probe', onSourceProbe);
+    disposers.push(() => {
+      doc?.removeEventListener?.('shell-v2-doorbell-source-probe', onSourceProbe);
+      doc?.body?.removeAttribute?.('data-shell-v2-doorbell-source-probe');
+    });
+  }
+
+  return () => {
+    while (disposers.length > 0) {
+      const dispose = disposers.pop();
+      try {
+        dispose?.();
+      } catch (_) {}
+    }
+  };
+}
+
 function createSettingToggleItem(doc, windowRef, settings, { id, key, label, description }) {
   const item = makeElement(doc, 'div', 'setting-item', {
     title: description,
@@ -1547,7 +1870,7 @@ function rebuildCoreStationHeader(doc, pane, paneId, settings = {}) {
   chip.appendChild(makeElement(doc, 'span', 'shell-v2-station-role', {
     textContent: roleLabel,
   }));
-  appendText(doc, chip, ' · ');
+  appendStationSeparator(doc, chip);
   if (cliBadge) {
     chip.appendChild(cliBadge);
   } else {
@@ -1557,11 +1880,7 @@ function rebuildCoreStationHeader(doc, pane, paneId, settings = {}) {
     }));
   }
 
-  const needsInput = makeElement(doc, 'span', 'shell-v2-needs-input-slot', {
-    dataset: { paneId },
-    'aria-label': `${roleLabel} needs input`,
-  });
-  needsInput.dataset.paneId = paneId;
+  const needsInput = makeDoorbellSlot(doc, paneId, roleLabel);
 
   const menu = makeElement(doc, 'details', 'shell-v2-station-menu', {
     dataset: { paneId },
@@ -1624,7 +1943,7 @@ function rebuildMiraStationHeader(doc, pane, settings = {}) {
   chip.appendChild(makeElement(doc, 'span', 'shell-v2-station-role', {
     textContent: 'Mira',
   }));
-  appendText(doc, chip, ' · ');
+  appendStationSeparator(doc, chip);
   if (cliBadge) {
     chip.appendChild(cliBadge);
   } else {
@@ -1634,11 +1953,7 @@ function rebuildMiraStationHeader(doc, pane, settings = {}) {
     }));
   }
 
-  const needsInput = makeElement(doc, 'span', 'shell-v2-needs-input-slot', {
-    dataset: { paneId },
-    'aria-label': 'Mira needs input',
-  });
-  needsInput.dataset.paneId = paneId;
+  const needsInput = makeDoorbellSlot(doc, paneId, 'Mira');
 
   const menu = makeElement(doc, 'details', 'shell-v2-station-menu shell-v2-mira-menu', {
     dataset: { paneId },
@@ -1764,7 +2079,7 @@ function ensureArmPane(doc, spec, settings = {}) {
     title.appendChild(makeElement(doc, 'span', 'shell-v2-arm-role', {
       textContent: spec.label,
     }));
-    appendText(doc, title, ' · ');
+    appendStationSeparator(doc, title);
     title.appendChild(makeElement(doc, 'span', `cli-badge visible ${model}`, {
       id: `cli-badge-${spec.paneId}`,
       textContent: titleCase(model),
@@ -1776,8 +2091,14 @@ function ensureArmPane(doc, spec, settings = {}) {
       id: `task-${spec.paneId}`,
     }));
     header.appendChild(title);
+    header.appendChild(makeDoorbellSlot(doc, spec.paneId, spec.label));
     header.appendChild(makeArmControlMenu(doc, spec, command));
     pane.appendChild(header);
+  }
+  const header = pane.querySelector?.('.pane-header');
+  if (header && !header.querySelector?.('[data-shell-v2-doorbell-slot="true"]')) {
+    const menu = header.querySelector?.('.shell-v2-arm-menu');
+    header.insertBefore(makeDoorbellSlot(doc, spec.paneId, spec.label), menu || null);
   }
   if (!pane.querySelector?.(`#terminal-${spec.paneId}`)) {
     pane.appendChild(makeElement(doc, 'div', 'pane-terminal', {
@@ -2100,6 +2421,7 @@ function initShellV2(options = {}) {
 
   const enabled = resolveShellV2Enabled(options.settings || {}, options.env || {}, options.windowContext || {});
   if (!enabled) return { enabled: false, reason: 'disabled' };
+  const gateProfile = isShellV2GateProfile(options.windowContext || {}, options.env || {});
 
   const required = getRequiredElements(doc);
   if (!required) return { enabled: false, reason: 'missing_required_elements' };
@@ -2108,6 +2430,7 @@ function initShellV2(options = {}) {
     activeTab: options.defaultTab || 'mira',
     coreExpanded: false,
     today: createTodayState(),
+    doorbell: createDoorbellState(),
   };
   const shellTabs = getShellV2Tabs(options.settings || {});
   if (!shellTabs.some((tab) => tab.id === state.activeTab)) {
@@ -2122,6 +2445,13 @@ function initShellV2(options = {}) {
     state,
     options,
     refreshOptions
+  );
+  const doorbellController = createShellV2DoorbellController(
+    doc,
+    windowRef,
+    state,
+    options,
+    refreshToday
   );
 
   const stopTodayPolling = () => {
@@ -2152,6 +2482,11 @@ function initShellV2(options = {}) {
     if (!shellTabs.some((tab) => tab.id === tabId)) return false;
     state.activeTab = tabId;
     updateTabState(doc, required.body, rail, views, state.activeTab, shellTabs);
+    if (state.activeTab === 'squid-room') {
+      void doorbellController.ack({
+        detail: 'Squid Room doorbell cleared on visit',
+      });
+    }
     if (state.activeTab === 'squid-room') {
       stopTodayPolling();
       scheduleArmRevealRefit(options.terminal || {}, windowRef);
@@ -2190,6 +2525,7 @@ function initShellV2(options = {}) {
     ensureTodayView(doc, views.today, windowRef, state, options);
     bindTodayWindowButtonShim(doc, switchTab);
     removeShellV2KilledChrome(doc);
+    doorbellController.render();
   };
   refreshChrome();
 
@@ -2204,6 +2540,14 @@ function initShellV2(options = {}) {
   const onToggleCoreExpandedEvent = (event) => {
     const detail = event?.detail || {};
     toggleCoreExpanded(typeof detail.expanded === 'boolean' ? detail.expanded : undefined);
+  };
+
+  const onTodayRefreshEvent = (event) => {
+    const detail = event?.detail && typeof event.detail === 'object' ? event.detail : {};
+    void refreshToday({
+      preserveScroll: detail.preserveScroll !== false,
+      limit: detail.limit,
+    });
   };
 
   const onKeyDown = (event) => {
@@ -2245,6 +2589,14 @@ function initShellV2(options = {}) {
   doc.addEventListener?.('keydown', onKeyDown, true);
   doc.addEventListener?.('click', onClick, true);
   doc.addEventListener?.('shell-v2-toggle-core-expanded', onToggleCoreExpandedEvent);
+  doc.addEventListener?.(SHELL_V2_TODAY_REFRESH_EVENT, onTodayRefreshEvent);
+  const stopDoorbellSources = bindShellV2DoorbellSources(
+    doc,
+    windowRef,
+    doorbellController,
+    SHELL_V2_ACTIVE_PANE_IDS,
+    { enableSourceProbe: gateProfile }
+  );
   switchTab(state.activeTab);
 
   const controller = {
@@ -2255,6 +2607,11 @@ function initShellV2(options = {}) {
     isCoreExpanded: () => state.coreExpanded,
     refreshChrome,
     refreshToday,
+    ackDoorbell: doorbellController.ack,
+    doorbellSources: doorbellController.sources,
+    handleDoorbellPermissionPrompt: doorbellController.sources.handlePermissionPrompt,
+    handleDoorbellLeadEscalationMessage: doorbellController.sources.handleLeadEscalationMessage,
+    handleDoorbellProcessExit: doorbellController.sources.handleProcessExit,
     elements: {
       rail,
       views,
@@ -2264,6 +2621,8 @@ function initShellV2(options = {}) {
       doc.removeEventListener?.('keydown', onKeyDown, true);
       doc.removeEventListener?.('click', onClick, true);
       doc.removeEventListener?.('shell-v2-toggle-core-expanded', onToggleCoreExpandedEvent);
+      doc.removeEventListener?.(SHELL_V2_TODAY_REFRESH_EVENT, onTodayRefreshEvent);
+      stopDoorbellSources?.();
       stopTodayPolling();
       if (windowRef?.__squidrunShellV2 === controller) {
         try {
@@ -2298,6 +2657,9 @@ function initShellV2(options = {}) {
 }
 
 module.exports = {
+  DOORBELL_CHOKEPOINT_CALLERS,
+  DOORBELL_EVENTS,
+  DOORBELL_TRIGGER_EVENTS,
   SHELL_V2_TABS,
   getShellV2Tabs,
   initShellV2,
@@ -2310,5 +2672,7 @@ module.exports = {
     resolveShortcutTab,
     blurActivePaneTerminal,
     shouldHandleCoreExpand,
+    detectShellV2PermissionPrompt,
+    isShellV2LeadEscalationPayload,
   },
 };
