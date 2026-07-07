@@ -13,10 +13,13 @@ const {
   findOffendingTurns,
   modelMatchesExpected,
   resolveExpectedModelForTranscript,
+  createAlertPolicy,
   createStateChangeAlertFilter,
   findOffendingTurnsForTranscript,
   expectedModelsFromSettings,
   buildWatchStatusSnapshot,
+  formatAlertMessage,
+  servingNow,
   WATCH_MIN_STALE_AFTER_MS,
 } = require('../scripts/hm-model-audit');
 
@@ -259,5 +262,108 @@ describe('hm-model-audit', () => {
       statusAgeMs: null,
       reason: 'stale_model_audit_watch_status',
     }));
+  });
+
+  describe('createAlertPolicy (2026-07-06 lesson: two 5am pings, then 11 silent Opus hours)', () => {
+    const offendingTurn = (ts) => ({
+      file: 'arch.jsonl',
+      model: 'claude-opus-4-8',
+      timestamp: ts,
+      expectedModel: 'claude-fable-5',
+    });
+    const expectedTurn = { file: 'arch.jsonl', model: 'claude-fable-5', expectedModel: 'claude-fable-5' };
+
+    test('renags on a persisting substitution once per realert window', () => {
+      const policy = createAlertPolicy({ realertMs: 60000 });
+
+      expect(policy(offendingTurn('t0'), 0)).toEqual(expect.objectContaining({
+        kind: 'substitution', offendingSince: 't0', offendingTurns: 1,
+      }));
+      expect(policy(offendingTurn('t1'), 30000)).toBeNull();
+      expect(policy(offendingTurn('t2'), 60000)).toEqual(expect.objectContaining({
+        kind: 'still-offending', offendingSince: 't0', offendingTurns: 3,
+      }));
+      expect(policy(offendingTurn('t3'), 90000)).toBeNull();
+      expect(policy(offendingTurn('t4'), 125000)).toEqual(expect.objectContaining({
+        kind: 'still-offending', offendingTurns: 5,
+      }));
+    });
+
+    test('emits recovery with run accounting, then a fresh substitution on re-offend', () => {
+      const policy = createAlertPolicy({ realertMs: 60000 });
+      policy(offendingTurn('t0'), 0);
+      policy(offendingTurn('t1'), 1000);
+
+      expect(policy(expectedTurn, 2000)).toEqual(expect.objectContaining({
+        kind: 'recovered', offendingSince: 't0', offendingTurns: 2,
+      }));
+      expect(policy(expectedTurn, 3000)).toBeNull();
+      expect(policy(offendingTurn('t5'), 4000)).toEqual(expect.objectContaining({
+        kind: 'substitution', offendingSince: 't5', offendingTurns: 1,
+      }));
+    });
+  });
+
+  test('servingNow reports the last served model per mapped Claude pane', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'model-serving-'));
+    fs.writeFileSync(path.join(dir, 'sess-arch.jsonl'), [
+      line('2026-07-06T10:00:00Z', 'claude-fable-5'),
+      line('2026-07-06T12:29:45Z', 'claude-opus-4-8'),
+      JSON.stringify({ timestamp: '2026-07-06T12:30:00Z', message: { model: '<synthetic>' } }),
+      'trailing junk with "model"',
+    ].join('\n'));
+
+    const rows = servingNow({
+      dir,
+      settings: {
+        paneCommands: {
+          '1': 'claude --model claude-fable-5',
+          '2': 'codex',
+          '3': 'claude --model claude-fable-5',
+        },
+      },
+      paneSessionIds: { panes: { '1': 'sess-arch', '2': 'sess-builder', '3': 'sess-oracle' } },
+    });
+
+    expect(rows).toEqual([
+      {
+        paneId: '1',
+        sessionId: 'sess-arch',
+        expectedModel: 'claude-fable-5',
+        servedModel: 'claude-opus-4-8',
+        servedAt: '2026-07-06T12:29:45Z',
+        ok: false,
+      },
+      {
+        paneId: '3',
+        sessionId: 'sess-oracle',
+        expectedModel: 'claude-fable-5',
+        servedModel: null,
+        servedAt: null,
+        ok: null,
+      },
+    ]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('alert messages carry persistence accounting', () => {
+    expect(formatAlertMessage({
+      kind: 'still-offending',
+      file: 'a.jsonl',
+      model: 'claude-opus-4-8',
+      expectedModel: 'claude-fable-5',
+      offendingSince: '2026-07-06T12:29:45Z',
+      offendingTurns: 675,
+    }, { paneId: '3' })).toContain(
+      'ONGOING: a.jsonl pane 3 still serving claude-opus-4-8 since 2026-07-06T12:29:45Z (675 offending turns'
+    );
+    expect(formatAlertMessage({
+      kind: 'recovered',
+      file: 'a.jsonl',
+      model: 'claude-fable-5',
+      expectedModel: 'claude-fable-5',
+      offendingSince: '2026-07-06T12:29:45Z',
+      offendingTurns: 675,
+    }, { paneId: '3' })).toContain('MODEL RECOVERED: a.jsonl pane 3 back on claude-fable-5');
   });
 });

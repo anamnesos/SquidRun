@@ -282,24 +282,135 @@ function findOffendingTurnsForTranscript(file, lines, options = {}) {
   }));
 }
 
-function createStateChangeAlertFilter() {
+const DEFAULT_REALERT_MS = 60 * 60 * 1000;
+
+/** Alert policy with an injectable clock. Emits `substitution` on a new
+ * offending state, `still-offending` every realertMs while it persists, and
+ * `recovered` when the file returns to its expected model. Born from
+ * 2026-07-06: two 05:28 pings, then ELEVEN silent Opus hours — an ongoing
+ * substitution must renag, and a Fable window opening is signal too. */
+function createAlertPolicy({ realertMs = DEFAULT_REALERT_MS } = {}) {
   const stateByFile = new Map();
-  return (turn = {}) => {
+  return (turn = {}, nowMs = Date.now()) => {
     const file = String(turn.file || '');
     const expectedModel = normalizeClaudeModelId(turn.expectedModel || '');
     const model = normalizeClaudeModelId(turn.model || '');
-    if (!file || !expectedModel || !model) return false;
+    if (!file || !expectedModel || !model) return null;
 
+    const prior = stateByFile.get(file) || null;
     if (modelMatchesExpected(model, expectedModel)) {
       stateByFile.set(file, null);
-      return false;
+      if (!prior) return null;
+      return {
+        kind: 'recovered',
+        file,
+        model,
+        expectedModel,
+        offendingSince: prior.offendingSince,
+        offendingTurns: prior.offendingTurns,
+      };
     }
 
-    const state = `${expectedModel}=>${model}`;
-    if (stateByFile.get(file) === state) return false;
-    stateByFile.set(file, state);
-    return true;
+    const stateKey = `${expectedModel}=>${model}`;
+    if (!prior || prior.stateKey !== stateKey) {
+      const next = {
+        stateKey,
+        offendingSince: turn.timestamp || null,
+        offendingTurns: 1,
+        lastAlertMs: nowMs,
+      };
+      stateByFile.set(file, next);
+      return {
+        kind: 'substitution',
+        file,
+        model,
+        expectedModel,
+        offendingSince: next.offendingSince,
+        offendingTurns: 1,
+      };
+    }
+
+    prior.offendingTurns += 1;
+    if (nowMs - prior.lastAlertMs >= realertMs) {
+      prior.lastAlertMs = nowMs;
+      return {
+        kind: 'still-offending',
+        file,
+        model,
+        expectedModel,
+        offendingSince: prior.offendingSince,
+        offendingTurns: prior.offendingTurns,
+      };
+    }
+    return null;
   };
+}
+
+/** Back-compat boolean filter: true only on a fresh substitution edge. */
+function createStateChangeAlertFilter() {
+  const policy = createAlertPolicy({ realertMs: Infinity });
+  return (turn = {}) => policy(turn, 0)?.kind === 'substitution';
+}
+
+const SERVING_TAIL_BYTES = 512 * 1024;
+
+/** Last real served turn in a transcript, reading only the file tail. */
+function lastServedTurn(filePath, { tailBytes = SERVING_TAIL_BYTES } = {}) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const size = fs.fstatSync(fd).size;
+    const from = Math.max(0, size - tailBytes);
+    const buf = Buffer.alloc(size - from);
+    fs.readSync(fd, buf, 0, buf.length, from);
+    const lines = buf.toString('utf8').split('\n');
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const lineText = lines[i];
+      if (!lineText || !lineText.includes('"model"')) continue;
+      let rec;
+      try { rec = JSON.parse(lineText); } catch { continue; }
+      const model = rec?.message?.model;
+      if (!model || model === '<synthetic>') continue;
+      return { model, timestamp: rec?.timestamp || null };
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+
+/** Who is actually serving each currently-mapped Claude pane right now. */
+function servingNow({
+  dir,
+  settingsPath = DEFAULT_SETTINGS_PATH,
+  paneSessionIdsPath = DEFAULT_PANE_SESSION_IDS_PATH,
+  settings: settingsOverride,
+  paneSessionIds: paneSessionIdsOverride,
+} = {}) {
+  const settings = settingsOverride || readJsonFile(settingsPath) || {};
+  const paneSessionIds = paneSessionIdsOverride || readJsonFile(paneSessionIdsPath) || {};
+  const panes = paneSessionIds?.panes && typeof paneSessionIds.panes === 'object'
+    ? paneSessionIds.panes
+    : {};
+  const rows = [];
+  for (const [paneId, sessionId] of Object.entries(panes)) {
+    const expected = expectedModelFromPaneSettings(settings, paneId);
+    if (!expected.expectedModel) continue; // non-Claude panes (codex, ...) have no expectation
+    const last = sessionId
+      ? lastServedTurn(path.join(dir, `${String(sessionId)}.jsonl`))
+      : null;
+    rows.push({
+      paneId: String(paneId),
+      sessionId: sessionId ? String(sessionId) : null,
+      expectedModel: expected.expectedModel,
+      servedModel: last?.model || null,
+      servedAt: last?.timestamp || null,
+      ok: last ? modelMatchesExpected(last.model, expected.expectedModel) : null,
+    });
+  }
+  return rows.sort((a, b) => a.paneId.localeCompare(b.paneId, undefined, { numeric: true }));
 }
 
 function loadWatchContext(options = {}) {
@@ -396,9 +507,21 @@ function cleanupWatchMetadata(options = {}) {
   try { fs.rmSync(statusPath, { force: true }); } catch {}
 }
 
+function formatAlertMessage(event, { paneId = '', source = '' } = {}) {
+  const paneNote = paneId ? ` pane ${paneId}` : '';
+  if (event.kind === 'still-offending') {
+    return `MODEL SUBSTITUTION ONGOING: ${event.file}${paneNote} still serving ${event.model} since ${event.offendingSince} (${event.offendingTurns} offending turns; expected ${event.expectedModel})`;
+  }
+  if (event.kind === 'recovered') {
+    return `MODEL RECOVERED: ${event.file}${paneNote} back on ${event.model} after ${event.offendingTurns} offending turns (since ${event.offendingSince})`;
+  }
+  return `MODEL SUBSTITUTION: ${event.file}${paneNote} logged ${event.model} at ${event.timestamp} (expected ${event.expectedModel} from ${source})`;
+}
+
 function watch(dir, {
   expect = '',
   intervalS,
+  realertMin,
   alert,
   settingsPath = DEFAULT_SETTINGS_PATH,
   paneSessionIdsPath = DEFAULT_PANE_SESSION_IDS_PATH,
@@ -406,7 +529,8 @@ function watch(dir, {
   statusPath = DEFAULT_WATCH_STATUS_PATH,
 }) {
   const offsets = new Map(); // file -> bytes already scanned
-  const shouldAlert = createStateChangeAlertFilter();
+  const realertMinutes = Math.max(1, Number(realertMin) || 60);
+  const policy = createAlertPolicy({ realertMs: realertMinutes * 60 * 1000 });
   const intervalSeconds = Math.max(1, Number(intervalS) || 60);
   const intervalMs = intervalSeconds * 1000;
   let tickCount = 0;
@@ -491,17 +615,17 @@ function watch(dir, {
         const expected = resolveExpectedModelForTranscript(file, watchContext);
         if (!expected.expectedModel) continue;
         for (const turn of scanModelTurns(chunk.split('\n'), expected.expectedModel)) {
-          const event = {
+          const event = policy({
             file,
             model: turn.model,
             timestamp: turn.timestamp,
             expectedModel: expected.expectedModel,
-            paneId: expected.paneId,
-            source: expected.source,
-          };
-          if (!shouldAlert(event)) continue;
-          const paneNote = event.paneId ? ` pane ${event.paneId}` : '';
-          alert(`MODEL SUBSTITUTION: ${file}${paneNote} logged ${event.model} at ${event.timestamp} (expected ${event.expectedModel} from ${event.source})`);
+          });
+          if (!event) continue;
+          alert(formatAlertMessage(
+            { ...event, timestamp: turn.timestamp },
+            { paneId: expected.paneId, source: expected.source }
+          ));
           alertsSent += 1;
         }
       }
@@ -516,6 +640,7 @@ function watch(dir, {
           filesScanned,
           alertsSent,
         },
+        serving: servingNow({ dir, settingsPath, paneSessionIdsPath }),
         lastError: null,
       });
     } catch (error) {
@@ -576,11 +701,13 @@ function startWatch(options = {}) {
 
   ensureParent(outLogPath);
   ensureParent(errLogPath);
+  const realertMin = Math.max(1, Number(options.realertMin) || 60);
   const args = [
     __filename,
     'watch',
     '--dir', dir,
     '--interval-s', String(intervalS),
+    '--realert-min', String(realertMin),
     '--settings', settingsPath,
     '--pane-session-ids', paneSessionIdsPath,
     '--pid', pidPath,
@@ -655,11 +782,26 @@ async function main() {
   const dir = flag('dir')
     || path.join(os.homedir(), '.claude', 'projects', 'D--projects-squidrun');
 
+  if (args[0] === 'serving') {
+    const rows = servingNow({
+      dir,
+      settingsPath: flag('settings') || DEFAULT_SETTINGS_PATH,
+      paneSessionIdsPath: flag('pane-session-ids') || DEFAULT_PANE_SESSION_IDS_PATH,
+    });
+    console.log(JSON.stringify({ ok: true, serving: rows }, null, 2));
+    for (const row of rows) {
+      const mark = row.ok === null ? 'NO TURNS' : (row.ok ? 'OK' : 'MISMATCH');
+      console.error(`pane ${row.paneId}: served=${row.servedModel || '-'} expected=${row.expectedModel} ${mark} (${row.servedAt || '-'})`);
+    }
+    return;
+  }
+
   if (args[0] === 'watch') {
     const { execFileSync } = require('child_process');
     watch(dir, {
       expect: flag('expect') || '',
       intervalS: Number(flag('interval-s')) || 60,
+      realertMin: Number(flag('realert-min')) || 60,
       settingsPath: flag('settings') || DEFAULT_SETTINGS_PATH,
       paneSessionIdsPath: flag('pane-session-ids') || DEFAULT_PANE_SESSION_IDS_PATH,
       pidPath: flag('pid') || DEFAULT_WATCH_PID_PATH,
@@ -683,6 +825,7 @@ async function main() {
       dir,
       expect: flag('expect') || '',
       intervalS: Number(flag('interval-s')) || 60,
+      realertMin: Number(flag('realert-min')) || 60,
       settingsPath: flag('settings') || DEFAULT_SETTINGS_PATH,
       paneSessionIdsPath: flag('pane-session-ids') || DEFAULT_PANE_SESSION_IDS_PATH,
       pidPath: flag('pid') || DEFAULT_WATCH_PID_PATH,
@@ -720,11 +863,16 @@ if (require.main === module) {
 }
 
 module.exports = {
+  DEFAULT_REALERT_MS,
   DEFAULT_WATCH_ERR_LOG_PATH,
   DEFAULT_WATCH_OUT_LOG_PATH,
   DEFAULT_WATCH_PID_PATH,
   DEFAULT_WATCH_STATUS_PATH,
   WATCH_MIN_STALE_AFTER_MS,
+  createAlertPolicy,
+  formatAlertMessage,
+  lastServedTurn,
+  servingNow,
   tallyModelsByDay,
   mergeTallies,
   auditDir,
