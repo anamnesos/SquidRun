@@ -7,6 +7,17 @@ const SHELL_V2_TABS = Object.freeze([
   { id: 'squid-room', label: 'SQUID ROOM', shortcut: '2' },
   { id: 'today', label: 'TODAY', shortcut: '3' },
 ]);
+const SHELL_V2_LAB_TAB = Object.freeze({ id: 'lab', label: 'LAB', shortcut: '4' });
+
+const SHELL_V2_SETTINGS_SECTIONS = Object.freeze([
+  ['general', 'General'],
+  ['permissions', 'Permissions'],
+  ['voice', 'Voice'],
+  ['cost', 'Cost Alerts'],
+  ['devices', 'Devices'],
+  ['secrets', 'Secrets'],
+  ['profile', 'Profile'],
+]);
 
 const TODAY_FILTERS = Object.freeze([
   { id: 'all', label: 'All' },
@@ -36,6 +47,12 @@ const SHELL_V2_ACTIVE_PANE_IDS = Object.freeze([
 
 const MAIN_WINDOW_KEYS = new Set(['', 'main']);
 const stateByDocument = new WeakMap();
+
+function getShellV2Tabs(settings = {}) {
+  return settings?.devMode === true
+    ? Object.freeze([...SHELL_V2_TABS, SHELL_V2_LAB_TAB])
+    : SHELL_V2_TABS;
+}
 
 function normalizeWindowKey(windowContext = {}) {
   return String(windowContext?.windowKey || 'main').trim().toLowerCase();
@@ -240,7 +257,7 @@ function getRequiredElements(doc) {
   };
 }
 
-function buildTabRail(doc, header, onSelectTab) {
+function buildTabRail(doc, header, onSelectTab, tabs = SHELL_V2_TABS) {
   let rail = doc.getElementById('shellV2TabRail');
   if (rail) return rail;
 
@@ -249,7 +266,7 @@ function buildTabRail(doc, header, onSelectTab) {
     'aria-label': 'Primary views',
   });
 
-  SHELL_V2_TABS.forEach((tab) => {
+  tabs.forEach((tab) => {
     const button = makeElement(doc, 'button', 'shell-v2-tab', {
       type: 'button',
       textContent: tab.label,
@@ -309,11 +326,11 @@ function mergeBottomBar(doc, statusBar) {
   statusBar.querySelectorAll?.('.status-shortcuts').forEach((element) => removeElement(element));
 }
 
-function ensureViews(doc, paneLayout) {
+function ensureViews(doc, paneLayout, tabs = SHELL_V2_TABS) {
   ensureClass(paneLayout, 'shell-v2-pane-layout');
 
   const views = {};
-  SHELL_V2_TABS.forEach((tab) => {
+  tabs.forEach((tab) => {
     let view = paneLayout.querySelector(`.shell-v2-view[data-shell-v2-view="${tab.id}"]`);
     if (!view) {
       view = makeElement(doc, 'section', 'shell-v2-view', {
@@ -351,6 +368,27 @@ function reparentPaneContainers(doc, views, mainPaneContainer, sidePanesContaine
   }
 
   return coreStrip;
+}
+
+function ensureLabView(doc, views, windowRef) {
+  const view = views?.lab;
+  if (!doc || !view || view.dataset.shellV2LabBuilt === 'true') return;
+  ensureClass(view, 'shell-v2-lab-view');
+  const shell = makeElement(doc, 'div', 'shell-v2-lab-shell');
+  shell.appendChild(makeElement(doc, 'div', 'shell-v2-lab-title', {
+    textContent: 'Mira Lab',
+  }));
+  const button = makeElement(doc, 'button', 'shell-v2-lab-open', {
+    type: 'button',
+    textContent: 'Open Mira Lab',
+  });
+  button.addEventListener?.('click', () => {
+    const invoke = resolveRendererInvoke(windowRef);
+    if (invoke) void invoke('open-app-window', { windowKey: 'mira-lab' });
+  });
+  shell.appendChild(button);
+  view.appendChild(shell);
+  view.dataset.shellV2LabBuilt = 'true';
 }
 
 function createTodayState() {
@@ -570,8 +608,48 @@ function renderTodayEmpty(doc, list, text) {
   list.appendChild(empty);
 }
 
-function renderTodayExpanded(doc, row, today, api, refreshRender) {
+async function writeClipboardText(windowRef, text) {
+  const value = String(text || '');
+  const clipboard = windowRef?.navigator?.clipboard
+    || (typeof navigator !== 'undefined' ? navigator.clipboard : null);
+  if (clipboard && typeof clipboard.writeText === 'function') {
+    await clipboard.writeText(value);
+    return true;
+  }
+  return false;
+}
+
+function makeTodayCopyButton(doc, label, value, windowRef) {
+  const button = makeElement(doc, 'button', 'shell-v2-today-copy-btn', {
+    type: 'button',
+    textContent: label,
+    dataset: { todayCopy: label.toLowerCase().replace(/\s+/g, '-') },
+  });
+  button.addEventListener?.('click', async (event) => {
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    button.dataset.copyState = 'pending';
+    const ok = await writeClipboardText(windowRef || doc.defaultView || null, value);
+    button.dataset.copyState = ok ? 'copied' : 'failed';
+    try {
+      const EventCtor = (windowRef || doc.defaultView || globalThis)?.CustomEvent;
+      if (typeof EventCtor === 'function') {
+        doc.dispatchEvent(new EventCtor('shell-v2-today-copy', {
+          bubbles: true,
+          detail: { label, value: String(value || ''), ok },
+        }));
+      }
+    } catch (_) {}
+  });
+  return button;
+}
+
+function renderTodayExpanded(doc, row, today, api, refreshRender, windowRef = null) {
   const expanded = makeElement(doc, 'div', 'shell-v2-today-expanded');
+  const actions = makeElement(doc, 'div', 'shell-v2-today-expanded-actions');
+  actions.appendChild(makeTodayCopyButton(doc, 'Copy body', row.rawBody || '', windowRef));
+  actions.appendChild(makeTodayCopyButton(doc, 'Copy id', row.messageId || row.rowId || '', windowRef));
+  expanded.appendChild(actions);
   expanded.appendChild(makeElement(doc, 'pre', 'shell-v2-today-raw', {
     textContent: row.rawBody || '',
   }));
@@ -626,7 +704,7 @@ function renderTodayExpanded(doc, row, today, api, refreshRender) {
   return expanded;
 }
 
-function renderTodayRows(doc, root, today, api) {
+function renderTodayRows(doc, root, today, api, windowRef = null) {
   renderTodayHeader(doc, root, today);
   const list = root.querySelector?.('[data-today-list="true"]');
   if (!list) return;
@@ -712,23 +790,30 @@ function renderTodayRows(doc, root, today, api) {
       today.focusedRowId = rowId;
       if (today.expandedRowIds.has(rowId)) today.expandedRowIds.delete(rowId);
       else today.expandedRowIds.add(rowId);
-      renderTodayRows(doc, root, today, api);
+      renderTodayRows(doc, root, today, api, windowRef);
     });
     article.appendChild(summary);
 
     if (expanded) {
-      article.appendChild(renderTodayExpanded(doc, row, today, api, () => renderTodayRows(doc, root, today, api)));
+      article.appendChild(renderTodayExpanded(
+        doc,
+        row,
+        today,
+        api,
+        () => renderTodayRows(doc, root, today, api, windowRef),
+        windowRef
+      ));
     }
     list.appendChild(article);
   });
 }
 
-function setTodayFilter(doc, root, today, filterId, api) {
+function setTodayFilter(doc, root, today, filterId, api, windowRef = null) {
   const next = TODAY_FILTERS.some((filter) => filter.id === filterId) ? filterId : 'all';
   today.filter = next;
   const first = getVisibleTodayRows(today)[0];
   today.focusedRowId = first ? String(first.rowId || first.messageId || '') : null;
-  renderTodayRows(doc, root, today, api);
+  renderTodayRows(doc, root, today, api, windowRef || today.windowRef || null);
 }
 
 function focusTodayRow(root, rowId) {
@@ -737,47 +822,47 @@ function focusTodayRow(root, rowId) {
   summary?.focus?.({ preventScroll: true });
 }
 
-function navigateTodayRows(doc, root, today, api, delta) {
+function navigateTodayRows(doc, root, today, api, delta, windowRef = null) {
   const rows = getVisibleTodayRows(today);
   if (rows.length === 0) return;
   const ids = rows.map((row) => String(row.rowId || row.messageId || ''));
   const current = ids.indexOf(String(today.focusedRowId || ''));
   const nextIndex = Math.max(0, Math.min(ids.length - 1, (current < 0 ? 0 : current) + delta));
   today.focusedRowId = ids[nextIndex];
-  renderTodayRows(doc, root, today, api);
+  renderTodayRows(doc, root, today, api, windowRef || today.windowRef || null);
   focusTodayRow(root, today.focusedRowId);
 }
 
-function toggleFocusedTodayRow(doc, root, today, api) {
+function toggleFocusedTodayRow(doc, root, today, api, windowRef = null) {
   const rowId = String(today.focusedRowId || '');
   if (!rowId) return;
   if (today.expandedRowIds.has(rowId)) today.expandedRowIds.delete(rowId);
   else today.expandedRowIds.add(rowId);
-  renderTodayRows(doc, root, today, api);
+  renderTodayRows(doc, root, today, api, windowRef || today.windowRef || null);
   focusTodayRow(root, rowId);
 }
 
-function collapseFocusedTodayRow(doc, root, today, api) {
+function collapseFocusedTodayRow(doc, root, today, api, windowRef = null) {
   const rowId = String(today.focusedRowId || '');
   if (!rowId || !today.expandedRowIds.has(rowId)) return false;
   today.expandedRowIds.delete(rowId);
-  renderTodayRows(doc, root, today, api);
+  renderTodayRows(doc, root, today, api, windowRef || today.windowRef || null);
   focusTodayRow(root, rowId);
   return true;
 }
 
-function applyPendingTodayRows(doc, root, today, api) {
+function applyPendingTodayRows(doc, root, today, api, windowRef = null) {
   if (Array.isArray(today.pendingRows)) {
     today.rows = today.pendingRows;
     today.pendingRows = null;
   }
   today.newCount = 0;
-  renderTodayRows(doc, root, today, api);
+  renderTodayRows(doc, root, today, api, windowRef || today.windowRef || null);
   const list = root.querySelector?.('[data-today-list="true"]');
   if (list) list.scrollTop = 0;
 }
 
-function bindTodayKeyboard(doc, root, today, api) {
+function bindTodayKeyboard(doc, root, today, api, windowRef = null) {
   if (root.dataset.todayKeyboardBound === 'true') return;
   root.addEventListener?.('keydown', (event) => {
     const targetTag = String(event.target?.tagName || '').toUpperCase();
@@ -786,21 +871,21 @@ function bindTodayKeyboard(doc, root, today, api) {
 
     if (event.key === 'j' || event.key === 'ArrowDown') {
       event.preventDefault?.();
-      navigateTodayRows(doc, root, today, api, 1);
+      navigateTodayRows(doc, root, today, api, 1, windowRef);
       return;
     }
     if (event.key === 'k' || event.key === 'ArrowUp') {
       event.preventDefault?.();
-      navigateTodayRows(doc, root, today, api, -1);
+      navigateTodayRows(doc, root, today, api, -1, windowRef);
       return;
     }
     if (event.key === 'Enter') {
       event.preventDefault?.();
-      toggleFocusedTodayRow(doc, root, today, api);
+      toggleFocusedTodayRow(doc, root, today, api, windowRef);
       return;
     }
     if (event.key === 'Escape') {
-      if (collapseFocusedTodayRow(doc, root, today, api)) {
+      if (collapseFocusedTodayRow(doc, root, today, api, windowRef)) {
         event.preventDefault?.();
       }
       return;
@@ -808,7 +893,7 @@ function bindTodayKeyboard(doc, root, today, api) {
     if (['1', '2', '3', '4'].includes(String(event.key || '')) && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault?.();
       const filter = TODAY_FILTERS[Number(event.key) - 1];
-      setTodayFilter(doc, root, today, filter?.id || 'all', api);
+      setTodayFilter(doc, root, today, filter?.id || 'all', api, windowRef);
       return;
     }
     if (event.key === '/' && !inTextInput) {
@@ -826,6 +911,7 @@ function ensureTodayView(doc, view, windowRef, state = {}, options = {}) {
   let root = view.querySelector?.('#shellV2TodayRoot');
   const api = resolveTodayApi(windowRef, options);
   today.api = api;
+  today.windowRef = windowRef || null;
 
   if (!root) {
     clearElement(view);
@@ -845,7 +931,7 @@ function ensureTodayView(doc, view, windowRef, state = {}, options = {}) {
         'aria-pressed': filter.id === today.filter ? 'true' : 'false',
       });
       chip.dataset.todayFilter = filter.id;
-      chip.addEventListener?.('click', () => setTodayFilter(doc, root, today, filter.id, api));
+      chip.addEventListener?.('click', () => setTodayFilter(doc, root, today, filter.id, api, windowRef));
       chips.appendChild(chip);
     });
     const search = makeElement(doc, 'input', 'shell-v2-today-search', {
@@ -860,7 +946,7 @@ function ensureTodayView(doc, view, windowRef, state = {}, options = {}) {
       today.search = String(event.target?.value || '');
       const first = getVisibleTodayRows(today)[0];
       today.focusedRowId = first ? String(first.rowId || first.messageId || '') : null;
-      renderTodayRows(doc, root, today, api);
+      renderTodayRows(doc, root, today, api, windowRef);
     });
     const collapse = makeElement(doc, 'button', 'shell-v2-today-collapse-all', {
       type: 'button',
@@ -870,7 +956,7 @@ function ensureTodayView(doc, view, windowRef, state = {}, options = {}) {
     collapse.dataset.todayCollapseAll = 'true';
     collapse.addEventListener?.('click', () => {
       today.expandedRowIds.clear();
-      renderTodayRows(doc, root, today, api);
+      renderTodayRows(doc, root, today, api, windowRef);
     });
     header.appendChild(chips);
     header.appendChild(search);
@@ -885,7 +971,7 @@ function ensureTodayView(doc, view, windowRef, state = {}, options = {}) {
     });
     pill.dataset.todayNewPill = 'true';
     pill.hidden = true;
-    pill.addEventListener?.('click', () => applyPendingTodayRows(doc, root, today, api));
+    pill.addEventListener?.('click', () => applyPendingTodayRows(doc, root, today, api, windowRef));
     const list = makeElement(doc, 'div', 'shell-v2-today-list', {
       dataset: { todayList: 'true' },
       tabindex: '0',
@@ -900,10 +986,10 @@ function ensureTodayView(doc, view, windowRef, state = {}, options = {}) {
     root.appendChild(header);
     root.appendChild(body);
     view.appendChild(root);
-    bindTodayKeyboard(doc, root, today, api);
+    bindTodayKeyboard(doc, root, today, api, windowRef);
   }
 
-  renderTodayRows(doc, root, today, api);
+  renderTodayRows(doc, root, today, api, windowRef);
   today.rendered = true;
   return root;
 }
@@ -915,7 +1001,7 @@ async function refreshShellV2Today(doc, view, windowRef, state = {}, options = {
   today.api = api;
   if (!root || typeof api.query !== 'function') {
     today.error = 'Today journal IPC unavailable';
-    renderTodayRows(doc, root, today, api);
+    renderTodayRows(doc, root, today, api, windowRef);
     return { ok: false, reason: 'today_ipc_unavailable' };
   }
 
@@ -935,7 +1021,7 @@ async function refreshShellV2Today(doc, view, windowRef, state = {}, options = {
     if (!result || result.ok === false) {
       today.error = result?.reason || 'Today journal query failed';
       today.loading = false;
-      renderTodayRows(doc, root, today, api);
+      renderTodayRows(doc, root, today, api, windowRef);
       return result || { ok: false, reason: 'today_query_failed' };
     }
 
@@ -961,12 +1047,12 @@ async function refreshShellV2Today(doc, view, windowRef, state = {}, options = {
     today.newCount = 0;
     today.loading = false;
     if (!today.focusedRowId && rows[0]) today.focusedRowId = String(rows[0].rowId || rows[0].messageId || '');
-    renderTodayRows(doc, root, today, api);
+    renderTodayRows(doc, root, today, api, windowRef);
     return { ok: true, count: rows.length };
   } catch (err) {
     today.loading = false;
     today.error = err?.message || 'Today journal query failed';
-    renderTodayRows(doc, root, today, api);
+    renderTodayRows(doc, root, today, api, windowRef);
     return { ok: false, reason: today.error };
   }
 }
@@ -985,6 +1071,428 @@ function bindTodayWindowButtonShim(doc, switchTab) {
     switchTab('today');
   });
   button.dataset.shellV2TodayShim = 'true';
+}
+
+function findSettingsSectionByTitle(doc, pattern) {
+  const sections = [...(doc?.querySelectorAll?.('#settingsPanel .settings-section') || [])];
+  return sections.find((section) => pattern.test(section.querySelector?.('.settings-section-title')?.textContent || '')) || null;
+}
+
+function resolveRendererInvoke(windowRef = null) {
+  const bridge = windowRef?.squidrunAPI || windowRef?.squidrun || {};
+  return typeof bridge.invoke === 'function'
+    ? bridge.invoke.bind(bridge)
+    : (typeof bridge.ipc?.invoke === 'function' ? bridge.ipc.invoke.bind(bridge.ipc) : null);
+}
+
+function createSettingToggleItem(doc, windowRef, settings, { id, key, label, description }) {
+  const item = makeElement(doc, 'div', 'setting-item', {
+    title: description,
+  });
+  const copy = makeElement(doc, 'div', 'setting-copy');
+  copy.appendChild(makeElement(doc, 'span', 'setting-label', { textContent: label }));
+  copy.appendChild(makeElement(doc, 'span', 'setting-description', { textContent: description }));
+  const toggle = makeElement(doc, 'div', 'toggle', {
+    id,
+    dataset: { setting: key },
+    role: 'switch',
+    tabindex: '0',
+    'aria-label': label,
+  });
+  const apply = (enabled) => {
+    toggle.classList.toggle('active', enabled);
+    toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
+  };
+  apply(settings?.[key] === true);
+  const run = async () => {
+    const next = !toggle.classList.contains('active');
+    apply(next);
+    const invoke = resolveRendererInvoke(windowRef);
+    if (invoke) {
+      try {
+        await invoke('set-setting', key, next);
+      } catch (_) {
+        apply(!next);
+      }
+    }
+  };
+  toggle.addEventListener?.('click', run);
+  toggle.addEventListener?.('keydown', (event) => {
+    if (event.key === ' ' || event.key === 'Enter') {
+      event.preventDefault?.();
+      void run();
+    }
+  });
+  item.appendChild(copy);
+  item.appendChild(toggle);
+  return item;
+}
+
+function appendMovedSection(doc, target, source) {
+  if (!target || !source) return false;
+  appendExisting(target, source);
+  source.classList?.add?.('shell-v2-settings-moved-section');
+  return true;
+}
+
+function createSettingsSectionShell(doc, sectionId, label) {
+  const section = makeElement(doc, 'section', 'shell-v2-settings-section', {
+    id: `shellV2SettingsSection-${sectionId}`,
+    dataset: { shellV2SettingsSection: sectionId },
+    'aria-label': label,
+  });
+  section.dataset.shellV2SettingsSection = sectionId;
+  return section;
+}
+
+function activateSettingsSection(root, sectionId) {
+  if (!root) return;
+  const target = String(sectionId || 'general');
+  root.dataset.activeSection = target;
+  root.querySelectorAll?.('[data-shell-v2-settings-nav]').forEach((button) => {
+    const active = button.dataset.shellV2SettingsNav === target;
+    button.classList.toggle('active', active);
+    button.setAttribute?.('aria-pressed', active ? 'true' : 'false');
+  });
+  root.querySelectorAll?.('[data-shell-v2-settings-section]').forEach((section) => {
+    const active = section.dataset.shellV2SettingsSection === target;
+    section.hidden = !active;
+    section.setAttribute?.('aria-hidden', active ? 'false' : 'true');
+  });
+}
+
+function buildShellV2SettingsOverlay(doc, windowRef, settings = {}) {
+  if (!doc?.body) return null;
+  let overlay = doc.getElementById?.('shellV2SettingsOverlay');
+  if (overlay) return overlay;
+
+  overlay = makeElement(doc, 'div', 'shell-v2-settings-overlay', {
+    id: 'shellV2SettingsOverlay',
+    'aria-hidden': 'true',
+  });
+  const panel = makeElement(doc, 'div', 'shell-v2-settings-dialog', {
+    role: 'dialog',
+    'aria-modal': 'true',
+    'aria-label': 'Settings',
+  });
+  const nav = makeElement(doc, 'nav', 'shell-v2-settings-nav', {
+    'aria-label': 'Settings sections',
+  });
+  const content = makeElement(doc, 'div', 'shell-v2-settings-content');
+
+  SHELL_V2_SETTINGS_SECTIONS.forEach(([sectionId, label]) => {
+    const button = makeElement(doc, 'button', 'shell-v2-settings-nav-item', {
+      type: 'button',
+      textContent: label,
+      dataset: { shellV2SettingsNav: sectionId },
+      'aria-pressed': 'false',
+    });
+    button.dataset.shellV2SettingsNav = sectionId;
+    button.addEventListener?.('click', () => activateSettingsSection(overlay, sectionId));
+    nav.appendChild(button);
+    content.appendChild(createSettingsSectionShell(doc, sectionId, label));
+  });
+
+  const close = makeElement(doc, 'button', 'shell-v2-settings-close', {
+    type: 'button',
+    textContent: 'Close',
+    'aria-label': 'Close settings',
+  });
+  close.addEventListener?.('click', () => {
+    overlay.classList.remove('open');
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.__previousFocus?.focus?.({ preventScroll: true });
+  });
+
+  const general = findSettingsSectionByTitle(doc, /^General$/i);
+  const permissions = findSettingsSectionByTitle(doc, /^Permissions$/i);
+  const voice = findSettingsSectionByTitle(doc, /^Voice/i);
+  const cost = findSettingsSectionByTitle(doc, /^Cost/i);
+  const external = findSettingsSectionByTitle(doc, /^External Notifications$/i);
+  const devices = findSettingsSectionByTitle(doc, /^Devices$/i);
+
+  if (external) removeElement(external);
+
+  appendMovedSection(doc, content.querySelector('[data-shell-v2-settings-section="general"]'), general);
+  appendMovedSection(doc, content.querySelector('[data-shell-v2-settings-section="permissions"]'), permissions);
+  appendMovedSection(doc, content.querySelector('[data-shell-v2-settings-section="cost"]'), cost);
+  appendMovedSection(doc, content.querySelector('[data-shell-v2-settings-section="devices"]'), devices);
+
+  const generalTarget = content.querySelector('[data-shell-v2-settings-section="general"]');
+  if (generalTarget) {
+    const developer = makeElement(doc, 'div', 'shell-v2-settings-developer');
+    developer.appendChild(makeElement(doc, 'div', 'settings-section-title', { textContent: 'Developer' }));
+    const devToolsItem = doc.getElementById?.('toggleDevTools')?.closest?.('.setting-item');
+    if (devToolsItem) appendExisting(developer, devToolsItem);
+    developer.appendChild(createSettingToggleItem(doc, windowRef, settings, {
+      id: 'toggleDevMode',
+      key: 'devMode',
+      label: 'Mira Lab tab',
+      description: 'Show the developer-gated Lab tab in the Shell V2 rail.',
+    }));
+    generalTarget.appendChild(developer);
+  }
+
+  const voiceTarget = content.querySelector('[data-shell-v2-settings-section="voice"]');
+  appendMovedSection(doc, voiceTarget, voice);
+  const voiceTab = doc.getElementById?.('tab-voice');
+  if (voiceTarget && voiceTab) {
+    [...(voiceTab.children || [])].forEach((child) => appendExisting(voiceTarget, child));
+  }
+
+  const secretsTarget = content.querySelector('[data-shell-v2-settings-section="secrets"]');
+  const secretsTab = doc.getElementById?.('tab-api-keys');
+  if (secretsTarget && secretsTab) {
+    [...(secretsTab.children || [])].forEach((child) => appendExisting(secretsTarget, child));
+  }
+
+  const profileTarget = content.querySelector('[data-shell-v2-settings-section="profile"]');
+  const profileSubtitle = doc.getElementById?.('profileModalSubtitle');
+  const profileForm = doc.getElementById?.('profileModalForm');
+  if (profileTarget) {
+    if (profileSubtitle) appendExisting(profileTarget, profileSubtitle);
+    if (profileForm) appendExisting(profileTarget, profileForm);
+  }
+
+  panel.appendChild(nav);
+  panel.appendChild(content);
+  panel.appendChild(close);
+  overlay.appendChild(panel);
+  doc.body.appendChild(overlay);
+  activateSettingsSection(overlay, 'general');
+  return overlay;
+}
+
+function openShellV2SettingsOverlay(doc, overlay, sectionId = 'general') {
+  if (!overlay) return false;
+  overlay.__previousFocus = doc.activeElement || null;
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden', 'false');
+  activateSettingsSection(overlay, sectionId);
+  overlay.querySelector?.(`[data-shell-v2-settings-nav="${sectionId}"]`)?.focus?.({ preventScroll: true });
+  return true;
+}
+
+function bindShellV2SettingsOverlay(doc, overlay, windowRef) {
+  if (!doc || !overlay || overlay.dataset.bound === 'true') return;
+  const settingsBtn = doc.getElementById?.('settingsBtn');
+  settingsBtn?.addEventListener?.('click', (event) => {
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+    openShellV2SettingsOverlay(doc, overlay, overlay.dataset.activeSection || 'general');
+  }, true);
+  doc.addEventListener?.('shell-v2-open-settings', (event) => {
+    openShellV2SettingsOverlay(doc, overlay, event?.detail?.section || 'general');
+  });
+  doc.addEventListener?.('keydown', (event) => {
+    const key = String(event.key || '').toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && key === ',') {
+      event.preventDefault?.();
+      openShellV2SettingsOverlay(doc, overlay, overlay.dataset.activeSection || 'general');
+      return;
+    }
+    if (event.key === 'Escape' && overlay.classList.contains('open')) {
+      event.preventDefault?.();
+      overlay.classList.remove('open');
+      overlay.setAttribute('aria-hidden', 'true');
+      overlay.__previousFocus?.focus?.({ preventScroll: true });
+    }
+  }, true);
+  overlay.addEventListener?.('click', (event) => {
+    if (event.target === overlay) {
+      overlay.classList.remove('open');
+      overlay.setAttribute('aria-hidden', 'true');
+      overlay.__previousFocus?.focus?.({ preventScroll: true });
+    }
+  });
+  overlay.dataset.bound = 'true';
+}
+
+function migrateShellV2Settings(doc, windowRef, settings = {}) {
+  const overlay = buildShellV2SettingsOverlay(doc, windowRef, settings);
+  bindShellV2SettingsOverlay(doc, overlay, windowRef);
+  const settingsPanel = doc.getElementById?.('settingsPanel');
+  if (settingsPanel) removeElement(settingsPanel);
+  return overlay;
+}
+
+function removeShellV2KilledChrome(doc) {
+  [
+    'selectProjectBtn',
+    'profileBtn',
+    'openHumanTimelineBtn',
+    'openSquidRoomBtn',
+    'openMiraLabBtn',
+    'panelBtn',
+  ].forEach((id) => removeElement(doc.getElementById?.(id)));
+
+  const rightPanel = doc.getElementById?.('rightPanel');
+  if (rightPanel) removeElement(rightPanel);
+  doc.querySelectorAll?.('link[href$="styles/project-rooms.css"], link[href$="project-rooms.css"]')
+    .forEach((link) => removeElement(link));
+}
+
+function resolveScreenshotApi(windowRef = null) {
+  const bridge = windowRef?.squidrun || windowRef?.squidrunAPI || {};
+  const screenshot = bridge.screenshot || {};
+  if (typeof screenshot.save === 'function' || typeof screenshot.list === 'function') {
+    return screenshot;
+  }
+  const invoke = resolveRendererInvoke(windowRef);
+  if (!invoke) return {};
+  return {
+    save: (base64Data, originalName) => invoke('save-screenshot', base64Data, originalName),
+    list: (options = null) => invoke('list-screenshots', options),
+  };
+}
+
+function toFileUrl(filePath) {
+  if (!filePath) return '';
+  const normalized = String(filePath).replace(/\\/g, '/');
+  return `file://${encodeURI(normalized)}`;
+}
+
+function renderScreenshotDrawerList(doc, drawer, files = []) {
+  const list = drawer?.querySelector?.('[data-shell-v2-screenshots-list="true"]');
+  if (!list) return;
+  clearElement(list);
+  if (!Array.isArray(files) || files.length === 0) {
+    list.appendChild(makeElement(doc, 'div', 'shell-v2-screenshots-empty', {
+      textContent: 'No screenshots yet',
+    }));
+    return;
+  }
+  files.slice(0, 40).forEach((file) => {
+    const item = makeElement(doc, 'div', 'shell-v2-screenshot-item');
+    item.appendChild(makeElement(doc, 'img', 'shell-v2-screenshot-thumb', {
+      src: toFileUrl(file.path),
+      alt: file.name || 'screenshot',
+    }));
+    item.appendChild(makeElement(doc, 'span', 'shell-v2-screenshot-name', {
+      textContent: file.name || '',
+    }));
+    list.appendChild(item);
+  });
+}
+
+async function openScreenshotsDrawer(doc, drawer, windowRef) {
+  if (!drawer) return false;
+  drawer.classList.add('open');
+  drawer.setAttribute('aria-hidden', 'false');
+  const api = resolveScreenshotApi(windowRef);
+  if (typeof api.list === 'function') {
+    try {
+      const result = await api.list({ limit: 40 });
+      if (result?.success) renderScreenshotDrawerList(doc, drawer, result.files || []);
+    } catch (_) {}
+  }
+  return true;
+}
+
+function addMiraAttachmentChip(doc, tray, result = {}) {
+  if (!tray) return null;
+  tray.hidden = false;
+  tray.setAttribute?.('aria-hidden', 'false');
+  const chip = makeElement(doc, 'span', 'shell-v2-mira-attachment-chip', {
+    dataset: {
+      shellV2MiraAttachment: 'true',
+      path: result.path || '',
+      filename: result.filename || '',
+    },
+    textContent: result.filename || 'image attached',
+  });
+  chip.dataset.shellV2MiraAttachment = 'true';
+  chip.dataset.path = result.path || '';
+  chip.dataset.filename = result.filename || '';
+  tray.appendChild(chip);
+  return chip;
+}
+
+function saveMiraAttachmentFile(doc, windowRef, tray, file) {
+  if (!file || !String(file.type || '').startsWith('image/')) return false;
+  const api = resolveScreenshotApi(windowRef);
+  if (typeof api.save !== 'function') return false;
+  const Reader = windowRef?.FileReader || (typeof FileReader !== 'undefined' ? FileReader : null);
+  if (!Reader) return false;
+  const reader = new Reader();
+  reader.onload = async (event) => {
+    const base64Data = event?.target?.result;
+    if (!base64Data) return;
+    const result = await api.save(base64Data, file.name || 'mira-attachment.png');
+    if (result?.success !== false) {
+      addMiraAttachmentChip(doc, tray, result || {});
+    }
+    reader.onload = null;
+  };
+  reader.readAsDataURL(file);
+  return true;
+}
+
+function ensureMiraScreenshotAffordances(doc, view, windowRef, state = {}) {
+  if (!doc || !view) return;
+  const commandBar = view.querySelector?.('.command-bar');
+  let tray = doc.getElementById?.('shellV2MiraAttachmentTray');
+  if (!tray) {
+    tray = makeElement(doc, 'div', 'shell-v2-mira-attachment-tray', {
+      id: 'shellV2MiraAttachmentTray',
+      hidden: 'true',
+      'aria-hidden': 'true',
+    });
+    if (commandBar?.parentNode) {
+      commandBar.parentNode.insertBefore(tray, commandBar);
+    } else {
+      view.appendChild(tray);
+    }
+  }
+
+  let drawer = doc.getElementById?.('shellV2ScreenshotsDrawer');
+  if (!drawer) {
+    drawer = makeElement(doc, 'aside', 'shell-v2-screenshots-drawer', {
+      id: 'shellV2ScreenshotsDrawer',
+      'aria-hidden': 'true',
+    });
+    const header = makeElement(doc, 'div', 'shell-v2-screenshots-drawer-header');
+    header.appendChild(makeElement(doc, 'span', 'shell-v2-screenshots-title', {
+      textContent: 'Screenshots',
+    }));
+    const close = makeElement(doc, 'button', 'shell-v2-screenshots-close', {
+      type: 'button',
+      textContent: 'Close',
+      'aria-label': 'Close screenshots gallery',
+    });
+    close.addEventListener?.('click', () => {
+      drawer.classList.remove('open');
+      drawer.setAttribute('aria-hidden', 'true');
+    });
+    header.appendChild(close);
+    drawer.appendChild(header);
+    drawer.appendChild(makeElement(doc, 'div', 'shell-v2-screenshots-list', {
+      dataset: { shellV2ScreenshotsList: 'true' },
+    }));
+    view.appendChild(drawer);
+  }
+
+  if (state.miraDropBound === true) return;
+  const openHandler = (event) => {
+    event.preventDefault?.();
+    void openScreenshotsDrawer(doc, drawer, windowRef);
+  };
+  doc.addEventListener?.('shell-v2-open-screenshots', openHandler);
+  view.addEventListener?.('dragover', (event) => {
+    event.preventDefault?.();
+    view.classList.add('shell-v2-mira-dragover');
+  });
+  view.addEventListener?.('dragleave', () => {
+    view.classList.remove('shell-v2-mira-dragover');
+  });
+  view.addEventListener?.('drop', (event) => {
+    event.preventDefault?.();
+    view.classList.remove('shell-v2-mira-dragover');
+    const files = [...(event.dataTransfer?.files || [])];
+    files.forEach((file) => saveMiraAttachmentFile(doc, windowRef, tray, file));
+  });
+  state.miraDropBound = true;
 }
 
 function purgeLegacyPaneExpandButtons(sidePanesContainer) {
@@ -1072,6 +1580,80 @@ function rebuildCoreStationHeader(doc, pane, paneId, settings = {}) {
     doc.getElementById?.(`lock-icon-${paneId}`),
   ];
   controls.forEach((control) => appendStationControl(panel, control));
+  menu.appendChild(trigger);
+  menu.appendChild(panel);
+
+  clearElement(header);
+  header.appendChild(chip);
+  header.appendChild(needsInput);
+  header.appendChild(menu);
+  header.dataset.shellV2Reduced = 'true';
+}
+
+function rebuildMiraStationHeader(doc, pane, settings = {}) {
+  if (!doc || !pane) return;
+  const paneId = '1';
+  const header = pane.querySelector?.('.pane-header');
+  if (!header) return;
+
+  pane.classList?.add?.('shell-v2-station', 'shell-v2-mira-station');
+  header.classList?.add?.('shell-v2-station-header');
+  pane.querySelectorAll?.('.agent-badge').forEach((badge) => removeElement(badge));
+  pane.querySelectorAll?.('.expand-btn').forEach((button) => removeElement(button));
+  if (header.dataset.shellV2Reduced === 'true') return;
+
+  const modelLabel = resolvePaneModelLabel(doc, paneId, settings);
+  const cliBadge = doc.getElementById?.(`cli-badge-${paneId}`);
+  if (cliBadge && !String(cliBadge.textContent || '').trim()) {
+    cliBadge.textContent = modelLabel;
+  }
+  cliBadge?.classList?.add?.('visible');
+
+  const chip = makeElement(doc, 'span', 'shell-v2-station-chip', {
+    dataset: { paneId },
+  });
+  chip.dataset.paneId = paneId;
+  chip.appendChild(makeElement(doc, 'span', 'shell-v2-station-role', {
+    textContent: 'Mira',
+  }));
+  appendText(doc, chip, ' · ');
+  if (cliBadge) {
+    chip.appendChild(cliBadge);
+  } else {
+    chip.appendChild(makeElement(doc, 'span', 'cli-badge visible', {
+      id: `cli-badge-${paneId}`,
+      textContent: modelLabel,
+    }));
+  }
+
+  const needsInput = makeElement(doc, 'span', 'shell-v2-needs-input-slot', {
+    dataset: { paneId },
+    'aria-label': 'Mira needs input',
+  });
+  needsInput.dataset.paneId = paneId;
+
+  const menu = makeElement(doc, 'details', 'shell-v2-station-menu shell-v2-mira-menu', {
+    dataset: { paneId },
+  });
+  menu.dataset.paneId = paneId;
+  const trigger = makeElement(doc, 'summary', 'shell-v2-station-menu-trigger', {
+    textContent: '...',
+    'aria-label': 'Mira station controls',
+    dataset: { tooltip: 'Mira controls' },
+  });
+  const panel = makeElement(doc, 'div', 'shell-v2-station-menu-panel', {
+    'aria-label': 'Mira station controls',
+  });
+  [
+    pane.querySelector?.(`.pane-role-info-btn[data-pane-id="${paneId}"]`),
+    doc.getElementById?.(`model-selector-${paneId}`),
+    pane.querySelector?.(`.fresh-session-btn[data-pane-id="${paneId}"]`),
+    doc.getElementById?.(`health-${paneId}`),
+    pane.querySelector?.(`.interrupt-btn[data-pane-id="${paneId}"]`),
+    pane.querySelector?.(`.unstick-btn[data-pane-id="${paneId}"]`),
+    pane.querySelector?.(`.kickoff-btn[data-pane-id="${paneId}"]`),
+    doc.getElementById?.(`lock-icon-${paneId}`),
+  ].forEach((control) => appendStationControl(panel, control));
   menu.appendChild(trigger);
   menu.appendChild(panel);
 
@@ -1442,9 +2024,9 @@ function dispatchShellEvent(doc, activeTab) {
   } catch (_) {}
 }
 
-function updateTabState(doc, body, rail, views, activeTab) {
+function updateTabState(doc, body, rail, views, activeTab, tabs = SHELL_V2_TABS) {
   body.dataset.shellV2ActiveTab = activeTab;
-  SHELL_V2_TABS.forEach((tab) => {
+  tabs.forEach((tab) => {
     const isActive = tab.id === activeTab;
     const button = rail.querySelector?.(`[data-shell-v2-tab="${tab.id}"]`);
     if (button) {
@@ -1462,10 +2044,10 @@ function updateTabState(doc, body, rail, views, activeTab) {
   dispatchShellEvent(doc, activeTab);
 }
 
-function resolveShortcutTab(event) {
+function resolveShortcutTab(event, tabs = SHELL_V2_TABS) {
   if (!event?.ctrlKey || event.altKey || event.metaKey) return null;
   const key = String(event.key || '');
-  const tab = SHELL_V2_TABS.find((candidate) => candidate.shortcut === key);
+  const tab = tabs.find((candidate) => candidate.shortcut === key);
   return tab?.id || null;
 }
 
@@ -1496,6 +2078,10 @@ function initShellV2(options = {}) {
     coreExpanded: false,
     today: createTodayState(),
   };
+  const shellTabs = getShellV2Tabs(options.settings || {});
+  if (!shellTabs.some((tab) => tab.id === state.activeTab)) {
+    state.activeTab = 'mira';
+  }
   let todayRefreshTimer = null;
 
   const refreshToday = (refreshOptions = {}) => refreshShellV2Today(
@@ -1532,9 +2118,9 @@ function initShellV2(options = {}) {
   required.body.dataset.shellV2Enabled = 'true';
 
   const switchTab = (tabId) => {
-    if (!SHELL_V2_TABS.some((tab) => tab.id === tabId)) return false;
+    if (!shellTabs.some((tab) => tab.id === tabId)) return false;
     state.activeTab = tabId;
-    updateTabState(doc, required.body, rail, views, state.activeTab);
+    updateTabState(doc, required.body, rail, views, state.activeTab, shellTabs);
     if (state.activeTab === 'squid-room') {
       stopTodayPolling();
       scheduleArmRevealRefit(options.terminal || {}, windowRef);
@@ -1553,14 +2139,18 @@ function initShellV2(options = {}) {
     return true;
   };
 
-  const rail = buildTabRail(doc, required.header, switchTab);
-  const views = ensureViews(doc, required.paneLayout);
+  const rail = buildTabRail(doc, required.header, switchTab, shellTabs);
+  const views = ensureViews(doc, required.paneLayout, shellTabs);
   const coreStrip = reparentPaneContainers(doc, views, required.mainPaneContainer, required.sidePanesContainer);
   const refreshChrome = () => {
     required.body.classList.add('shell-v2-enabled');
     required.body.dataset.shellV2Enabled = 'true';
     buildHeaderActions(doc, required.header, required.headerActions);
     mergeBottomBar(doc, required.statusBar);
+    migrateShellV2Settings(doc, windowRef, options.settings || {});
+    ensureMiraScreenshotAffordances(doc, views.mira, windowRef, state);
+    ensureLabView(doc, views, windowRef);
+    rebuildMiraStationHeader(doc, required.mainPaneContainer?.querySelector?.('.pane[data-pane-id="1"]'), options.settings || {});
     purgeLegacyPaneExpandButtons(required.sidePanesContainer);
     ensureSquidRoomFloor(doc, views, coreStrip, options.terminal || {}, state, options.settings || {}, {
       windowContext: options.windowContext || {},
@@ -1568,6 +2158,7 @@ function initShellV2(options = {}) {
     });
     ensureTodayView(doc, views.today, windowRef, state, options);
     bindTodayWindowButtonShim(doc, switchTab);
+    removeShellV2KilledChrome(doc);
   };
   refreshChrome();
 
@@ -1591,7 +2182,7 @@ function initShellV2(options = {}) {
       event.stopImmediatePropagation?.();
       return;
     }
-    const targetTab = resolveShortcutTab(event);
+    const targetTab = resolveShortcutTab(event, shellTabs);
     if (!targetTab) return;
     event.preventDefault?.();
     event.stopPropagation?.();
@@ -1665,6 +2256,7 @@ function initShellV2(options = {}) {
 
 module.exports = {
   SHELL_V2_TABS,
+  getShellV2Tabs,
   initShellV2,
   isShellV2EnvOverrideEnabled,
   resolveShellV2Enabled,

@@ -6,11 +6,14 @@ jest.mock('../modules/logger', () => ({
 
 jest.mock('../modules/terminal', () => ({
   focusPane: jest.fn(),
+  spawnAllAgents: jest.fn(),
 }));
 
 const {
   getCommandPaletteCommands,
+  getShellV2Commands,
   getShellV2StationCommands,
+  smokeCommandPaletteCommands,
 } = require('../modules/command-palette');
 
 describe('command-palette', () => {
@@ -113,6 +116,83 @@ describe('command-palette', () => {
       }
     } finally {
       global.document = previousDocument;
+    }
+  });
+
+  test('Shell V2 command registry resolves every visible verb without legacy killed controls', () => {
+    const terminal = require('../modules/terminal');
+    const openAppWindow = jest.fn();
+    const selectProject = jest.fn();
+    const clicked = [];
+    const selectorTargets = new Map();
+    const commands = getShellV2Commands({ openAppWindow, selectProject });
+    for (const command of commands) {
+      if (command.targetSelector) {
+        selectorTargets.set(command.targetSelector, {
+          click: jest.fn(() => clicked.push(command.targetSelector)),
+          focus: jest.fn(),
+        });
+      }
+    }
+    const previousDocument = global.document;
+    const previousWindow = global.window;
+    const dispatched = [];
+    global.window = {
+      CustomEvent: class CustomEvent {
+        constructor(type, options = {}) {
+          this.type = type;
+          this.detail = options.detail || {};
+        }
+      },
+    };
+    global.document = {
+      body: { classList: { contains: (className) => className === 'shell-v2-enabled' } },
+      querySelector: jest.fn((selector) => selectorTargets.get(selector) || null),
+      getElementById: jest.fn((id) => selectorTargets.get(`#${id}`) || null),
+      dispatchEvent: jest.fn((event) => {
+        dispatched.push(event);
+        return true;
+      }),
+    };
+
+    try {
+      const shellCommands = getCommandPaletteCommands({
+        shellV2Enabled: true,
+        openAppWindow,
+        selectProject,
+      });
+      expect(shellCommands.map((command) => command.id)).not.toEqual(expect.arrayContaining([
+        'toggle-friction',
+        'toggle-panel',
+        'select-project',
+        'open-squid-room',
+      ]));
+
+      const smoke = smokeCommandPaletteCommands(shellCommands, { openAppWindow, selectProject });
+      expect(smoke).toHaveLength(shellCommands.length);
+      expect(smoke.every((entry) => entry.ok)).toBe(true);
+      expect(shellCommands.map((command) => command.id)).toEqual(expect.arrayContaining([
+        'shell-v2-open-settings',
+        'shell-v2-settings-voice',
+        'shell-v2-settings-secrets',
+        'shell-v2-screenshots-gallery',
+        'shell-v2-switch-project',
+      ]));
+
+      for (const command of shellCommands) {
+        expect(() => command.action()).not.toThrow();
+      }
+      expect(terminal.spawnAllAgents).toHaveBeenCalled();
+      expect(terminal.focusPane).toHaveBeenCalledWith('1');
+      expect(openAppWindow).toHaveBeenCalledWith('mira-lab');
+      expect(selectProject).toHaveBeenCalled();
+      expect(dispatched.map((event) => event.type)).toEqual(expect.arrayContaining([
+        'shell-v2-open-settings',
+        'shell-v2-open-screenshots',
+      ]));
+    } finally {
+      global.document = previousDocument;
+      global.window = previousWindow;
     }
   });
 });

@@ -23,6 +23,7 @@ const SETTING_KEY_ALLOWLIST = new Set([
   'costAlertEnabled',
   'costAlertThreshold',
   'devTools',
+  'devMode',
   'discordWebhookUrl',
   'dryRun',
   'emailNotificationsEnabled',

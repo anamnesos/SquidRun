@@ -7,7 +7,6 @@
 // Sub-modules
 
 const screenshots = require('./tabs/screenshots');
-const oracle = require('./tabs/oracle');
 const commsConsole = require('./tabs/comms-console');
 const voiceBroker = require('./tabs/voice-broker');
 
@@ -20,6 +19,7 @@ let onConnectionStatusUpdate = null;
 let storedResizeFn = null;
 let pendingResizeTimer = null;
 const PANEL_RESIZE_DELAY_MS = 350;
+let oracle = null;
 
 // Track panel-level DOM listener cleanup
 let panelCleanupFns = [];
@@ -95,7 +95,7 @@ function destroyAllTabs() {
   // Destroy each tab module
 
   if (typeof screenshots.destroyScreenshots === 'function') screenshots.destroyScreenshots();
-  if (typeof oracle.destroyOracleTab === 'function') oracle.destroyOracleTab();
+  if (oracle && typeof oracle.destroyOracleTab === 'function') oracle.destroyOracleTab();
   if (typeof commsConsole.destroy === 'function') commsConsole.destroy();
   if (typeof voiceBroker.destroyVoiceBrokerTab === 'function') voiceBroker.destroyVoiceBrokerTab();
 
@@ -103,11 +103,26 @@ function destroyAllTabs() {
   if (typeof bridge.destroy === 'function') bridge.destroy();
 }
 
-function setupRightPanel(handleResizeFn, busInstance) {
+function loadOracleTabModule() {
+  if (!oracle) oracle = require('./tabs/oracle');
+  if (typeof window !== 'undefined') {
+    window.__squidrunOracleTabLoaded = true;
+  }
+  return oracle;
+}
+
+function setupRightPanel(handleResizeFn, busInstance, options = {}) {
   // Destroy previous tab state before re-init (prevents listener accumulation)
   destroyAllTabs();
 
   storedResizeFn = handleResizeFn;
+  const shellV2Enabled = options?.shellV2Enabled === true;
+
+  if (shellV2Enabled) {
+    voiceBroker.setupVoiceBrokerTab();
+    apiKeys.setupApiKeysTab();
+    return;
+  }
 
   const panelBtn = document.getElementById('panelBtn');
   if (panelBtn) {
@@ -125,7 +140,7 @@ function setupRightPanel(handleResizeFn, busInstance) {
   // Initialize tabs
 
   screenshots.setupScreenshots(updateConnectionStatus);
-  oracle.setupOracleTab(updateConnectionStatus);
+  loadOracleTabModule().setupOracleTab(updateConnectionStatus);
   if (busInstance) commsConsole.setupCommsConsoleTab(busInstance);
   voiceBroker.setupVoiceBrokerTab();
 

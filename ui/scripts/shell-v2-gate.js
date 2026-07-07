@@ -23,12 +23,54 @@ const PANE_TICKS = Object.freeze({
 const TRUSTQUOTE_ARM_PANE_IDS = Object.freeze(
   Object.keys(PANE_TICKS).filter((paneId) => paneId.startsWith('trustquote-'))
 );
+const KILLED_CONTROLS = Object.freeze([
+  { id: 'project-button', selector: '#selectProjectBtn' },
+  { id: 'profile-button', selector: '#profileBtn' },
+  { id: 'panel-button', selector: '#panelBtn' },
+  { id: 'squid-room-button', selector: '#openSquidRoomBtn' },
+  { id: 'today-window-button', selector: '#openHumanTimelineBtn' },
+  { id: 'mira-lab-button', selector: '#openMiraLabBtn' },
+  { id: 'right-panel', selector: '#rightPanel' },
+  { id: 'panel-tabs', selector: '.panel-tabs' },
+  { id: 'panel-tab-bridge', selector: '.panel-tab[data-tab="bridge"]' },
+  { id: 'panel-tab-comms', selector: '.panel-tab[data-tab="comms"]' },
+  { id: 'panel-tab-screenshots', selector: '.panel-tab[data-tab="screenshots"]' },
+  { id: 'panel-tab-image-gen', selector: '.panel-tab[data-tab="oracle"]' },
+  { id: 'panel-tab-voice', selector: '.panel-tab[data-tab="voice"]' },
+  { id: 'panel-tab-secrets', selector: '.panel-tab[data-tab="api-keys"]' },
+  { id: 'image-gen-pane', selector: '#tab-oracle' },
+  { id: 'image-gen-prompt', selector: '#oraclePromptInput' },
+  { id: 'image-gen-generate', selector: '#oracleGenerateBtn' },
+  { id: 'image-gen-gallery', selector: '#oracleGallery' },
+  { id: 'external-notifications-toggle', selector: '#toggleExternalNotificationsEnabled' },
+  { id: 'slack-webhook', selector: '#slackWebhookField' },
+  { id: 'discord-webhook', selector: '#discordWebhookField' },
+  { id: 'smtp-host', selector: '#smtpHostField' },
+  { id: 'smtp-password', selector: '#smtpPassField' },
+  { id: 'external-test', selector: '#sendExternalTestBtn' },
+  { id: 'project-rooms-css', selector: 'link[href$="project-rooms.css"]' },
+]);
+const SURVIVING_PALETTE_COMMANDS = Object.freeze([
+  'shell-v2-switch-project',
+  'shell-v2-screenshots-gallery',
+  'shell-v2-settings-voice',
+  'shell-v2-settings-secrets',
+  'open-mira-lab',
+  'shutdown',
+]);
+const PHASE4_INTACT_FILES = Object.freeze([
+  path.join(UI_ROOT, 'modules', 'project-rooms.js'),
+  path.join(UI_ROOT, 'styles', 'project-rooms.css'),
+  path.join(UI_ROOT, 'modules', 'tabs', 'oracle.js'),
+  path.join(UI_ROOT, 'modules', 'image-gen.js'),
+]);
 
 function parseArgs(argv) {
   const options = {
     keepOpen: false,
     headed: false,
     cdpPort: 9527,
+    expectCommit: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -36,6 +78,9 @@ function parseArgs(argv) {
     else if (token === '--headed') options.headed = true;
     else if (token === '--cdp-port') {
       options.cdpPort = Number.parseInt(argv[i + 1], 10);
+      i += 1;
+    } else if (token === '--expect-commit') {
+      options.expectCommit = String(argv[i + 1] || '').trim() || null;
       i += 1;
     } else if (token === '--help' || token === '-h') {
       options.help = true;
@@ -46,7 +91,7 @@ function parseArgs(argv) {
 }
 
 function usage() {
-  console.log('Usage: node ui/scripts/shell-v2-gate.js [--keep-open] [--cdp-port <port>]');
+  console.log('Usage: node ui/scripts/shell-v2-gate.js [--keep-open] [--cdp-port <port>] [--expect-commit <sha>]');
 }
 
 function sleep(ms) {
@@ -69,6 +114,39 @@ function getGitHead() {
   });
   if (result.status !== 0) return null;
   return String(result.stdout || '').trim() || null;
+}
+
+function getTrackedGitStatus() {
+  const result = spawnSync('git', ['status', '--porcelain', '--untracked-files=no'], {
+    cwd: PROJECT_ROOT,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (result.status !== 0) {
+    return { ok: false, reason: String(result.stderr || result.stdout || 'git status failed').trim() };
+  }
+  const lines = String(result.stdout || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return { ok: true, dirty: lines.length > 0, lines };
+}
+
+function assertExpectedCommit(options = {}) {
+  const expected = String(options.expectCommit || '').trim();
+  if (!expected) return { ok: true, skipped: true };
+  const head = getGitHead();
+  const status = getTrackedGitStatus();
+  if (!head) {
+    return { ok: false, reason: 'git_head_unavailable', expected, head };
+  }
+  if (head !== expected) {
+    return { ok: false, reason: 'git_head_mismatch', expected, head };
+  }
+  if (!status.ok) {
+    return { ok: false, reason: status.reason || 'git_status_failed', expected, head };
+  }
+  if (status.dirty) {
+    return { ok: false, reason: 'tracked_worktree_dirty', expected, head, dirty: status.lines };
+  }
+  return { ok: true, expected, head, dirty: [] };
 }
 
 function sha256File(filePath) {
@@ -163,7 +241,7 @@ function buildTickCommand(scriptPath, label) {
   return `& ${quoteArg(process.execPath)} ${quoteArg(scriptPath)} ${quoteArg(label)}`;
 }
 
-function writeQaSettings(dataRoot, tickScriptPath) {
+function writeQaSettings(dataRoot, tickScriptPath, overrides = {}) {
   const settingsDir = path.join(dataRoot, '.squidrun', `settings-${PROFILE}`);
   ensureDir(settingsDir);
   const paneCommands = {};
@@ -172,14 +250,15 @@ function writeQaSettings(dataRoot, tickScriptPath) {
   }
   paneCommands['1'] = buildTickCommand(tickScriptPath, 'mira');
   const payload = {
-    autoSpawn: true,
+    autoSpawn: overrides.autoSpawn !== undefined ? Boolean(overrides.autoSpawn) : true,
     autoSync: false,
     notifications: false,
     externalNotificationsEnabled: false,
     notifyOnAlerts: false,
     notifyOnCompletions: false,
     devTools: false,
-    shellV2Enabled: true,
+    devMode: overrides.devMode === true,
+    shellV2Enabled: overrides.shellV2Enabled !== undefined ? Boolean(overrides.shellV2Enabled) : true,
     agentNotify: false,
     watcherEnabled: false,
     allowAllPermissions: false,
@@ -241,10 +320,10 @@ function resolveElectronPath() {
   return electronPath;
 }
 
-function launchThrowaway({ dataRoot, cdpPort, keepOpen = false }) {
+function launchThrowaway({ dataRoot, cdpPort, keepOpen = false, shellV2Env = true }) {
   const env = {
     ...process.env,
-    SQUIDRUN_SHELL_V2: '1',
+    SQUIDRUN_SHELL_V2: shellV2Env ? '1' : '0',
     SQUIDRUN_PROFILE: PROFILE,
     SQUIDRUN_DATA_ROOT: dataRoot,
     SQUIDRUN_CDP_PORT: String(cdpPort),
@@ -300,6 +379,30 @@ async function findRendererPage(browser) {
   throw new Error('No renderer index.html page found over CDP');
 }
 
+function bindRendererNoiseCapture(page) {
+  const noise = [];
+  page.on('console', (message) => {
+    noise.push({
+      type: message.type(),
+      text: message.text(),
+    });
+  });
+  page.on('pageerror', (err) => {
+    noise.push({
+      type: 'pageerror',
+      text: err?.message || String(err),
+    });
+  });
+  return noise;
+}
+
+function findBadRendererNoise(noise = []) {
+  return (Array.isArray(noise) ? noise : []).filter((entry) => (
+    /failed to load resource|err_file_not_found|404|cannot find module|module not found|missing module/i
+      .test(String(entry?.text || ''))
+  ));
+}
+
 function makeRecorder() {
   const checks = [];
   return {
@@ -310,6 +413,92 @@ function makeRecorder() {
     },
     checks,
   };
+}
+
+async function readPhase4KillState(page) {
+  return page.evaluate((controls) => {
+    const selectorResults = controls.map((control) => ({
+      id: control.id,
+      selector: control.selector,
+      present: Boolean(document.querySelector(control.selector)),
+    }));
+    const headerActions = document.querySelector('#shellV2HeaderActions, .header-actions');
+    const visibleHeaderButtons = [...(headerActions?.querySelectorAll?.('button') || [])]
+      .filter((button) => Boolean(button.offsetWidth || button.offsetHeight))
+      .map((button) => button.id || button.textContent?.trim() || '');
+    const railTabs = [...document.querySelectorAll('[data-shell-v2-tab]')]
+      .map((button) => button.dataset.shellV2Tab || button.textContent?.trim() || '');
+    const bottomBars = [...document.querySelectorAll('.shell-v2-bottom-bar, .status-bar')];
+    const bottomBarDetails = bottomBars.map((bar) => {
+      const style = window.getComputedStyle(bar);
+      const rect = bar.getBoundingClientRect();
+      return {
+        id: bar.id || '',
+        className: bar.className || '',
+        display: style.display,
+        visibility: style.visibility,
+        hidden: bar.hidden === true,
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      };
+    });
+    const miraPane = document.querySelector('.main-pane-container .pane[data-pane-id="1"], .pane[data-pane-id="1"]');
+    const miraHeader = miraPane?.querySelector?.('.pane-header');
+    const miraVisibleControls = [...(miraHeader?.querySelectorAll?.('button, [role=button], summary, select') || [])]
+      .filter((control) => (
+        !control.closest?.('.shell-v2-station-menu-panel')
+        && Boolean(control.offsetWidth || control.offsetHeight)
+      ))
+      .map((control) => control.id || control.className || control.textContent?.trim() || control.tagName);
+    return {
+      selectorResults,
+      missing: selectorResults.filter((entry) => !entry.present),
+      present: selectorResults.filter((entry) => entry.present),
+      bodyShellV2: document.body?.classList?.contains('shell-v2-enabled') === true,
+      settingsOverlay: Boolean(document.querySelector('#shellV2SettingsOverlay')),
+      settingsPanel: Boolean(document.querySelector('#settingsPanel')),
+      headerActions: visibleHeaderButtons,
+      railTabs,
+      bottomBarCount: bottomBars.length,
+      bottomBarDetails,
+      miraVisibleControls,
+    };
+  }, KILLED_CONTROLS);
+}
+
+async function readRendererModuleCacheState(page) {
+  return page.evaluate(() => {
+    try {
+      const markers = {
+        projectRoomsLoaded: window.__squidrunProjectRoomsLoaded === true,
+        oracleTabLoaded: window.__squidrunOracleTabLoaded === true,
+      };
+      if (typeof require !== 'function' || !require.cache) {
+        return { available: false, paths: [], ...markers };
+      }
+      const paths = Object.keys(require.cache).map((entry) => entry.replace(/\\/g, '/'));
+      return {
+        available: true,
+        projectRoomsLoaded: markers.projectRoomsLoaded || paths.some((entry) => /ui\/modules\/project-rooms\.js$/i.test(entry)),
+        oracleTabLoaded: markers.oracleTabLoaded || paths.some((entry) => /ui\/modules\/tabs\/oracle\.js$/i.test(entry)),
+        imageGenLoaded: paths.some((entry) => /ui\/modules\/image-gen\.js$/i.test(entry)),
+        matchedPaths: paths.filter((entry) => (
+          /ui\/modules\/(?:project-rooms|image-gen)\.js$/i.test(entry)
+          || /ui\/modules\/tabs\/oracle\.js$/i.test(entry)
+        )),
+      };
+    } catch (err) {
+      return { available: false, error: err?.message || String(err), paths: [] };
+    }
+  });
+}
+
+function readPhase4IntactFiles() {
+  return PHASE4_INTACT_FILES.map((filePath) => ({
+    filePath,
+    present: fs.existsSync(filePath),
+    sha256: sha256File(filePath),
+  }));
 }
 
 function contiguous(seq) {
@@ -415,6 +604,86 @@ async function waitForInitialTicks(page) {
   }, PANE_TICKS, { timeout: 60000 });
 }
 
+async function runFlagOffProbe({ dataRoot, cdpPort, recorder }) {
+  ensureDir(dataRoot);
+  const tickScript = writeTickHarness(dataRoot);
+  writeQaSettings(dataRoot, tickScript, {
+    shellV2Enabled: false,
+    devMode: false,
+    autoSpawn: false,
+  });
+  writeQaProfile(dataRoot);
+  const qaPortPath = path.join(dataRoot, '.squidrun', `runtime-${PROFILE}`, 'cdp-port.json');
+  try {
+    fs.rmSync(qaPortPath, { force: true });
+  } catch (_) {}
+
+  let child = null;
+  let browser = null;
+  let noise = [];
+  try {
+    child = launchThrowaway({ dataRoot, cdpPort, keepOpen: false, shellV2Env: false });
+    child.stdout?.on?.('data', (chunk) => process.stdout.write(`[electron flag-off] ${chunk}`));
+    child.stderr?.on?.('data', (chunk) => process.stderr.write(`[electron flag-off] ${chunk}`));
+    await waitForFile(qaPortPath);
+    browser = await connectToThrowaway(cdpPort);
+    const page = await findRendererPage(browser);
+    noise = bindRendererNoiseCapture(page);
+    await page.waitForSelector('#settingsPanel', { timeout: 30000 });
+    await page.waitForFunction(() => document.readyState === 'complete', null, { timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(1000);
+
+    const killState = await readPhase4KillState(page);
+    const k2Ok = killState.bodyShellV2 === false
+      && killState.settingsPanel === true
+      && killState.selectorResults.every((entry) => entry.present === true);
+    recorder.record('K2', k2Ok, 'flag-off killed controls remain present', killState);
+
+    const s4 = await page.evaluate(() => {
+      const panel = document.querySelector('#settingsPanel');
+      const button = document.querySelector('#settingsBtn');
+      button?.click?.();
+      return {
+        settingsPanel: Boolean(panel),
+        settingsButton: Boolean(button),
+        settingsPanelVisible: panel ? window.getComputedStyle(panel).display !== 'none' : false,
+        hasLegacyExternal: Boolean(document.querySelector('#sendExternalTestBtn')),
+      };
+    });
+    recorder.record('S4', s4.settingsPanel && s4.settingsButton && s4.hasLegacyExternal, 'flag-off legacy settings panel intact', s4);
+
+    const modules = await readRendererModuleCacheState(page);
+    recorder.record(
+      'K5b',
+      modules.projectRoomsLoaded === true
+        && killState.selectorResults.some((entry) => entry.id === 'image-gen-pane' && entry.present === true)
+        && killState.selectorResults.some((entry) => entry.id === 'project-rooms-css' && entry.present === true),
+      'flag-off legacy project rooms load and image-gen surface remains present',
+      { modules, imageGenSurfacePresent: killState.selectorResults.filter((entry) => entry.id.startsWith('image-gen')) }
+    );
+
+    const noiseBad = findBadRendererNoise(noise);
+    recorder.record('N2', noiseBad.length === 0, `flag-off renderer missing-module/404 noise=${noiseBad.length}`, noiseBad);
+
+    recorder.record(
+      'K6b',
+      killState.bottomBarCount === 1 && killState.railTabs.length === 0,
+      `flag-off bottomBars=${killState.bottomBarCount} railTabs=${killState.railTabs.join('/') || 'none'}`,
+      killState
+    );
+  } catch (err) {
+    recorder.record('K2', false, err?.message || String(err));
+  } finally {
+    await closeBrowserFast(browser);
+    const daemonPid = readPidValue(path.join(dataRoot, '.squidrun', `runtime-${PROFILE}`, 'daemon.pid'));
+    const supervisorPid = readPidValue(path.join(dataRoot, '.squidrun', `runtime-${PROFILE}`, 'supervisor.pid'));
+    for (const pid of [child?.pid, daemonPid, supervisorPid]) {
+      killPidTree(pid);
+    }
+    if (child && !child.killed) child.kill();
+  }
+}
+
 async function waitForTickBaseline(page, timeoutMs = 30000) {
   const started = Date.now();
   let last = null;
@@ -433,6 +702,253 @@ async function waitForTickBaseline(page, timeoutMs = 30000) {
 async function clickTab(page, tabId) {
   await page.click(`[data-shell-v2-tab="${tabId}"]`);
   await page.waitForFunction((id) => document.body?.dataset?.shellV2ActiveTab === id, tabId, { timeout: 5000 });
+}
+
+async function runSettingsOverlayMechanics(page) {
+  const tabs = await page.evaluate(() => [...document.querySelectorAll('[data-shell-v2-tab]')]
+    .map((button) => button.dataset.shellV2Tab)
+    .filter(Boolean));
+  const results = [];
+  for (const tabId of tabs) {
+    await clickTab(page, tabId);
+    const result = await page.evaluate(() => {
+      let focusProbe = document.getElementById('shellV2GateFocusProbe');
+      if (!focusProbe) {
+        focusProbe = document.createElement('button');
+        focusProbe.id = 'shellV2GateFocusProbe';
+        focusProbe.type = 'button';
+        focusProbe.textContent = 'focus probe';
+        document.body.appendChild(focusProbe);
+      }
+      focusProbe.focus();
+      return {
+        beforeTab: document.body?.dataset?.shellV2ActiveTab || '',
+        beforeFocus: document.activeElement?.id || '',
+      };
+    });
+    await page.keyboard.press('Control+,');
+    await page.waitForFunction(() => document.querySelector('#shellV2SettingsOverlay')?.classList?.contains('open') === true, null, { timeout: 5000 });
+    const open = await page.evaluate(() => ({
+      activeTab: document.body?.dataset?.shellV2ActiveTab || '',
+      overlayOpen: document.querySelector('#shellV2SettingsOverlay')?.classList?.contains('open') === true,
+      activeSection: document.querySelector('#shellV2SettingsOverlay')?.dataset?.activeSection || '',
+      settingsRailTab: [...document.querySelectorAll('[data-shell-v2-tab]')]
+        .some((button) => /settings/i.test(button.textContent || '')),
+    }));
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelector('#shellV2SettingsOverlay')?.classList?.contains('open') !== true, null, { timeout: 5000 });
+    const closed = await page.evaluate(() => ({
+      activeTab: document.body?.dataset?.shellV2ActiveTab || '',
+      overlayOpen: document.querySelector('#shellV2SettingsOverlay')?.classList?.contains('open') === true,
+      focusAfterClose: document.activeElement?.id || '',
+    }));
+    results.push({ tabId, result, open, closed });
+  }
+
+  await page.click('#settingsBtn');
+  await page.waitForFunction(() => document.querySelector('#shellV2SettingsOverlay')?.classList?.contains('open') === true, null, { timeout: 5000 });
+  const gearOpen = await page.evaluate(() => ({
+    overlayOpen: document.querySelector('#shellV2SettingsOverlay')?.classList?.contains('open') === true,
+    activeSection: document.querySelector('#shellV2SettingsOverlay')?.dataset?.activeSection || '',
+  }));
+  await page.keyboard.press('Escape');
+  return { tabs, results, gearOpen };
+}
+
+async function readSettingsOverlaySections(page) {
+  return page.evaluate(() => {
+    const overlay = document.querySelector('#shellV2SettingsOverlay');
+    const sectionIds = [...(overlay?.querySelectorAll?.('[data-shell-v2-settings-section]') || [])]
+      .map((section) => section.dataset.shellV2SettingsSection);
+    const navIds = [...(overlay?.querySelectorAll?.('[data-shell-v2-settings-nav]') || [])]
+      .map((button) => button.dataset.shellV2SettingsNav);
+    const spotChecks = {
+      general: Boolean(overlay?.querySelector?.('#toggleAutoSpawn')),
+      permissions: Boolean(overlay?.querySelector?.('#toggleAllowAllPermissions')),
+      voice: Boolean(overlay?.querySelector?.('#voiceBrokerPanel')) && Boolean(overlay?.querySelector?.('#toggleVoiceInputEnabled')),
+      cost: Boolean(overlay?.querySelector?.('#costAlertThreshold')),
+      devices: Boolean(overlay?.querySelector?.('#pairingInitBtn')) && Boolean(overlay?.querySelector?.('#pairedDevicesTable')),
+      secrets: Boolean(overlay?.querySelector?.('#apiKeyAnthropic')) && Boolean(overlay?.querySelector?.('#saveApiKeysBtn')),
+      profile: Boolean(overlay?.querySelector?.('#profileNameInput')) && Boolean(overlay?.querySelector?.('#profileModalForm')),
+    };
+    return {
+      overlay: Boolean(overlay),
+      sectionIds,
+      navIds,
+      spotChecks,
+      externalPresent: Boolean(overlay?.querySelector?.('#sendExternalTestBtn, #slackWebhookField, #discordWebhookField, #smtpHostField')),
+    };
+  });
+}
+
+async function runSettingsOverlayStatePreservation(page) {
+  await clickTab(page, 'today');
+  await page.evaluate(() => {
+    const list = document.querySelector('[data-today-list="true"]');
+    if (list) list.scrollTop = 64;
+    const row = document.querySelector('.shell-v2-today-row:not(.is-expanded) .shell-v2-today-summary')
+      || document.querySelector('.shell-v2-today-summary');
+    row?.click?.();
+  });
+  await page.waitForSelector('.shell-v2-today-row.is-expanded', { timeout: 5000 });
+  const before = await page.evaluate(() => ({
+    activeTab: document.body?.dataset?.shellV2ActiveTab || '',
+    expandedCount: document.querySelectorAll('.shell-v2-today-row.is-expanded').length,
+    scrollTop: Number(document.querySelector('[data-today-list="true"]')?.scrollTop || 0),
+    xtermCount: document.querySelectorAll('.xterm').length,
+  }));
+  await page.keyboard.press('Control+,');
+  await page.waitForFunction(() => document.querySelector('#shellV2SettingsOverlay')?.classList?.contains('open') === true, null, { timeout: 5000 });
+  await page.waitForTimeout(750);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('#shellV2SettingsOverlay')?.classList?.contains('open') !== true, null, { timeout: 5000 });
+  const after = await page.evaluate(() => ({
+    activeTab: document.body?.dataset?.shellV2ActiveTab || '',
+    expandedCount: document.querySelectorAll('.shell-v2-today-row.is-expanded').length,
+    scrollTop: Number(document.querySelector('[data-today-list="true"]')?.scrollTop || 0),
+    xtermCount: document.querySelectorAll('.xterm').length,
+  }));
+  return { before, after };
+}
+
+async function runScreenshotAffordanceProbe(page) {
+  await clickTab(page, 'mira');
+  const initial = await page.evaluate(() => ({
+    tray: Boolean(document.querySelector('#shellV2MiraAttachmentTray')),
+    drawer: Boolean(document.querySelector('#shellV2ScreenshotsDrawer')),
+    view: Boolean(document.querySelector('[data-shell-v2-view="mira"]')),
+  }));
+  await page.evaluate(() => {
+    const command = window.__squidrunCommandPalette?.getCommands?.()
+      ?.find((entry) => entry.id === 'shell-v2-screenshots-gallery');
+    command?.action?.();
+  });
+  await page.waitForFunction(() => document.querySelector('#shellV2ScreenshotsDrawer')?.classList?.contains('open') === true, null, { timeout: 1500 })
+    .catch(async () => {
+      await page.evaluate(() => {
+        document.dispatchEvent(new CustomEvent('shell-v2-open-screenshots', { bubbles: true }));
+      });
+      await page.waitForFunction(() => document.querySelector('#shellV2ScreenshotsDrawer')?.classList?.contains('open') === true, null, { timeout: 5000 });
+    });
+  const drawerOpen = await page.evaluate(() => document.querySelector('#shellV2ScreenshotsDrawer')?.classList?.contains('open') === true);
+
+  await page.evaluate(async () => {
+    const view = document.querySelector('[data-shell-v2-view="mira"]');
+    const binary = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=');
+    const bytes = new Uint8Array([...binary].map((char) => char.charCodeAt(0)));
+    const file = new File([bytes], 'phase4-mira-drop.png', { type: 'image/png' });
+    let event;
+    if (typeof DataTransfer === 'function' && typeof DragEvent === 'function') {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+      event = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer });
+    } else {
+      event = new Event('drop', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'dataTransfer', {
+        value: { files: [file] },
+        configurable: true,
+      });
+    }
+    view?.dispatchEvent?.(event);
+  });
+  await page.waitForSelector('[data-shell-v2-mira-attachment="true"]', { state: 'attached', timeout: 10000 });
+  const afterDrop = await page.evaluate(() => ({
+    chips: [...document.querySelectorAll('[data-shell-v2-mira-attachment="true"]')]
+      .map((chip) => ({ text: chip.textContent || '', path: chip.dataset.path || '' })),
+  }));
+  return { initial, drawerOpen, afterDrop };
+}
+
+async function runPhase4FlagOnAssertions({ page, recorder, rendererNoise }) {
+  const killState = await readPhase4KillState(page);
+  recorder.record(
+    'K1',
+    killState.bodyShellV2 === true
+      && killState.settingsOverlay === true
+      && killState.selectorResults.every((entry) => entry.present === false)
+      && killState.miraVisibleControls.length <= 3,
+    'flag-on killed controls absent and Mira header reduced',
+    killState
+  );
+
+  const overlayMechanics = await runSettingsOverlayMechanics(page);
+  const s1Ok = overlayMechanics.results.every((entry) => (
+    entry.open.overlayOpen === true
+      && entry.closed.overlayOpen === false
+      && entry.open.activeTab === entry.result.beforeTab
+      && entry.closed.activeTab === entry.result.beforeTab
+      && entry.closed.focusAfterClose === entry.result.beforeFocus
+      && entry.open.settingsRailTab === false
+  )) && overlayMechanics.gearOpen.overlayOpen === true;
+  recorder.record('S1', s1Ok, 'settings overlay opens from every tab and gear, Esc restores focus', overlayMechanics);
+
+  const settingsSections = await readSettingsOverlaySections(page);
+  const requiredSections = ['general', 'permissions', 'voice', 'cost', 'devices', 'secrets', 'profile'];
+  recorder.record(
+    'S2',
+    settingsSections.overlay === true
+      && requiredSections.every((id) => settingsSections.sectionIds.includes(id) && settingsSections.navIds.includes(id))
+      && Object.values(settingsSections.spotChecks).every(Boolean)
+      && settingsSections.externalPresent === false,
+    'settings overlay sections and live controls present without external notifications',
+    settingsSections
+  );
+
+  const palette = await page.evaluate((requiredIds) => {
+    const api = window.__squidrunCommandPalette;
+    const commands = typeof api?.getCommands === 'function' ? api.getCommands() : [];
+    const smoke = typeof api?.smoke === 'function' ? api.smoke() : [];
+    return {
+      commandIds: commands.map((command) => command.id),
+      smoke,
+      missingRequired: requiredIds.filter((id) => !commands.some((command) => command.id === id)),
+      deadTargets: smoke.filter((entry) => entry.ok !== true),
+      legacyDeadVerbs: commands.filter((command) => ['toggle-friction', 'toggle-panel', 'select-project', 'open-squid-room'].includes(command.id)).map((command) => command.id),
+    };
+  }, SURVIVING_PALETTE_COMMANDS);
+  recorder.record(
+    'K3',
+    palette.missingRequired.length === 0 && palette.deadTargets.length === 0 && palette.legacyDeadVerbs.length === 0,
+    `palette commands=${palette.commandIds.length} deadTargets=${palette.deadTargets.length}`,
+    palette
+  );
+
+  const screenshots = await runScreenshotAffordanceProbe(page);
+  recorder.record(
+    'K4',
+    screenshots.initial.tray === true
+      && screenshots.initial.drawer === true
+      && screenshots.drawerOpen === true
+      && screenshots.afterDrop.chips.length >= 1,
+    'Mira screenshot drawer opens and dropped image becomes attachment chip',
+    screenshots
+  );
+
+  const modules = await readRendererModuleCacheState(page);
+  const intactFiles = readPhase4IntactFiles();
+  const badNoise = findBadRendererNoise(rendererNoise);
+  recorder.record(
+    'K5',
+    modules.projectRoomsLoaded === false
+      && modules.oracleTabLoaded === false
+      && modules.imageGenLoaded !== true
+      && intactFiles.every((entry) => entry.present === true)
+      && badNoise.length === 0,
+    'flag-on killed modules/css not loaded while Phase 4 files remain intact',
+    { modules, intactFiles, badNoise }
+  );
+
+  const k6State = await readPhase4KillState(page);
+  recorder.record(
+    'K6',
+    k6State.bottomBarCount === 1
+      && k6State.railTabs.includes('mira')
+      && k6State.railTabs.includes('squid-room')
+      && k6State.railTabs.includes('today')
+      && k6State.headerActions.every((entry) => ['settingsBtn', 'fullRestartBtn'].includes(entry)),
+    `bottomBars=${k6State.bottomBarCount} rail=${k6State.railTabs.join('/')}`,
+    k6State
+  );
 }
 
 async function setTrustQuoteArmExpanded(page, expanded) {
@@ -612,6 +1128,27 @@ function buildPhase3TodayRows(nowMs = Date.now()) {
   ];
 }
 
+function buildPhase4OverflowRows(prefix, nowMs = Date.now(), count = 60, offset = 0) {
+  const day = new Date(nowMs);
+  day.setHours(11, 20, 0, 0);
+  const base = day.getTime() + offset;
+  return Array.from({ length: count }, (_entry, index) => ({
+    messageId: `${prefix}-overflow-${offset}-${index}`,
+    sessionId: `app-session-${930 + Math.floor(index / 12)}`,
+    senderRole: index % 5 === 0 ? 'user' : (index % 2 === 0 ? 'builder' : 'oracle'),
+    targetRole: index % 5 === 0 ? 'architect' : (index % 2 === 0 ? 'oracle' : 'builder'),
+    channel: index % 5 === 0 ? 'telegram' : 'ws',
+    direction: index % 2 === 0 ? 'outbound' : 'inbound',
+    sentAtMs: base + index * 1000,
+    brokeredAtMs: base + index * 1000 + 10,
+    rawBody: `[FYI] Phase 4 overflow row ${index + 1} for Today list spill verification.`,
+    status: index % 17 === 0 ? 'failed' : 'routed',
+    ackStatus: 'delivered',
+    attempt: 1,
+    metadata: {},
+  }));
+}
+
 function writePhase3FullMessageFixture(dataRoot) {
   const fullDir = path.join(dataRoot, '.squidrun', 'coord', 'full-agent-messages');
   ensureDir(fullDir);
@@ -631,10 +1168,8 @@ function writePhase3FullMessageFixture(dataRoot) {
   return filePath;
 }
 
-async function seedPhase3TodayRows(page, dataRoot) {
-  writePhase3FullMessageFixture(dataRoot);
-  const rows = buildPhase3TodayRows();
-  return page.evaluate(async (seedRows) => {
+async function upsertTodayRows(page, rows, options = {}) {
+  return page.evaluate(async ({ seedRows, refresh }) => {
     const bridge = window.squidrunAPI || window.squidrun || {};
     const invoke = typeof bridge.invoke === 'function'
       ? bridge.invoke.bind(bridge)
@@ -644,15 +1179,22 @@ async function seedPhase3TodayRows(page, dataRoot) {
     for (const row of seedRows) {
       results.push(await invoke('evidence-ledger:upsert-comms-journal', row));
     }
-    const controller = window.__squidrunShellV2 || document.body?.__squidrunShellV2Controller;
-    if (controller && typeof controller.refreshToday === 'function') {
-      await controller.refreshToday({ preserveScroll: false });
+    if (refresh !== false) {
+      const controller = window.__squidrunShellV2 || document.body?.__squidrunShellV2Controller;
+      if (controller && typeof controller.refreshToday === 'function') {
+        await controller.refreshToday({ preserveScroll: false });
+      }
     }
     return {
       ok: results.every((result) => result?.ok !== false),
       results,
     };
-  }, rows);
+  }, { seedRows: rows, refresh: options.refresh !== false });
+}
+
+async function seedPhase3TodayRows(page, dataRoot) {
+  writePhase3FullMessageFixture(dataRoot);
+  return upsertTodayRows(page, buildPhase3TodayRows());
 }
 
 async function readTodayGateState(page) {
@@ -735,6 +1277,57 @@ async function capturePhase3TodayScreenshots(page, runId, recorder, dataRoot) {
     expandedState
   );
 
+  const copyState = await page.evaluate(async () => {
+    window.__shellV2GateClipboardWrites = [];
+    window.__shellV2GateCopyEvents = [];
+    document.addEventListener('shell-v2-today-copy', (event) => {
+      window.__shellV2GateCopyEvents.push(event.detail || {});
+    }, { once: false });
+    try {
+      Object.defineProperty(window.navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          writeText: async (text) => {
+            window.__shellV2GateClipboardWrites.push(String(text || ''));
+          },
+        },
+      });
+    } catch (_) {}
+    document.querySelector('.shell-v2-today-copy-btn[data-today-copy="copy-body"]')?.click?.();
+    document.querySelector('.shell-v2-today-copy-btn[data-today-copy="copy-id"]')?.click?.();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return {
+      buttons: [...document.querySelectorAll('.shell-v2-today-copy-btn')].map((button) => ({
+        copy: button.dataset.todayCopy || '',
+        state: button.dataset.copyState || '',
+        text: button.textContent || '',
+      })),
+      writes: window.__shellV2GateClipboardWrites || [],
+      events: window.__shellV2GateCopyEvents || [],
+    };
+  });
+  recorder.record(
+    'T4b',
+    copyState.buttons.some((button) => button.copy === 'copy-body')
+      && copyState.buttons.some((button) => button.copy === 'copy-id')
+      && copyState.events.some((event) => event.label === 'Copy body' && /FULL MSG AT/.test(event.value || '') && event.ok === true)
+      && copyState.events.some((event) => event.label === 'Copy id' && event.value === 'phase3-today-james' && event.ok === true),
+    'Today expanded row Copy body/Copy id buttons write expected clipboard values',
+    copyState
+  );
+
+  const overlayPreservation = await runSettingsOverlayStatePreservation(page);
+  recorder.record(
+    'S3',
+    overlayPreservation.before.activeTab === 'today'
+      && overlayPreservation.after.activeTab === 'today'
+      && overlayPreservation.before.expandedCount >= 1
+      && overlayPreservation.after.expandedCount >= 1
+      && overlayPreservation.before.xtermCount === overlayPreservation.after.xtermCount,
+    'settings overlay preserves Today expanded row state and pane DOM count',
+    overlayPreservation
+  );
+
   await page.click('[data-today-filter="james"]');
   await page.waitForFunction(() => (
     document.querySelectorAll('.shell-v2-today-row').length === 1
@@ -748,6 +1341,69 @@ async function capturePhase3TodayScreenshots(page, runId, recorder, dataRoot) {
     filteredState.rowCount === 1 && filteredState.activeFilter === 'james',
     'Today James chip filter verified',
     filteredState
+  );
+
+  await page.click('[data-today-filter="all"]');
+  const overflowSeedRows = buildPhase4OverflowRows(runId, Date.now(), 60, 0);
+  const overflowSeed = await upsertTodayRows(page, overflowSeedRows);
+  await waitForTodayRowCount(page, 50);
+  const overflowBefore = await page.evaluate(() => {
+    const list = document.querySelector('[data-today-list="true"]');
+    if (list) list.scrollTop = Math.max(96, Math.floor((list.scrollHeight - list.clientHeight) / 2));
+    return {
+      rowCount: document.querySelectorAll('.shell-v2-today-row').length,
+      scrollTop: Number(list?.scrollTop || 0),
+      scrollHeight: Number(list?.scrollHeight || 0),
+      clientHeight: Number(list?.clientHeight || 0),
+      pillHidden: document.querySelector('[data-today-new-pill="true"]')?.hidden === true,
+    };
+  });
+  const newRows = buildPhase4OverflowRows(runId, Date.now(), 2, 120000);
+  const overflowNewSeed = await upsertTodayRows(page, newRows, { refresh: false });
+  const refreshResult = await page.evaluate(async () => {
+    const controller = window.__squidrunShellV2 || document.body?.__squidrunShellV2Controller;
+    return controller?.refreshToday?.({ preserveScroll: true }) || { ok: false, reason: 'controller_unavailable' };
+  });
+  await page.waitForFunction(() => document.querySelector('[data-today-new-pill="true"]')?.hidden === false, null, { timeout: 5000 });
+  const overflowPending = await page.evaluate(() => {
+    const list = document.querySelector('[data-today-list="true"]');
+    const pill = document.querySelector('[data-today-new-pill="true"]');
+    return {
+      rowCount: document.querySelectorAll('.shell-v2-today-row').length,
+      scrollTop: Number(list?.scrollTop || 0),
+      scrollHeight: Number(list?.scrollHeight || 0),
+      clientHeight: Number(list?.clientHeight || 0),
+      pillHidden: pill?.hidden === true,
+      pillText: pill?.textContent || '',
+    };
+  });
+  await page.click('[data-today-new-pill="true"]');
+  await page.waitForFunction(() => document.querySelector('[data-today-new-pill="true"]')?.hidden === true, null, { timeout: 5000 });
+  const overflowApplied = await page.evaluate(() => {
+    const list = document.querySelector('[data-today-list="true"]');
+    return {
+      rowCount: document.querySelectorAll('.shell-v2-today-row').length,
+      scrollTop: Number(list?.scrollTop || 0),
+      pillHidden: document.querySelector('[data-today-new-pill="true"]')?.hidden === true,
+    };
+  });
+  await page.waitForTimeout(250);
+  await capture('phase4-today-overflow-pill');
+  recorder.record(
+    'T6',
+    overflowSeed.ok === true
+      && overflowNewSeed.ok === true
+      && overflowBefore.scrollHeight > overflowBefore.clientHeight
+      && overflowBefore.scrollTop > 0
+      && overflowPending.rowCount === overflowBefore.rowCount
+      && overflowPending.pillHidden === false
+      && /2 new/.test(overflowPending.pillText)
+      && overflowPending.scrollTop > 0
+      && overflowApplied.rowCount >= overflowBefore.rowCount + 2
+      && overflowApplied.scrollTop === 0
+      && overflowApplied.pillHidden === true,
+    'Today overflow list preserves scroll, shows new-row pill, and applies pending rows on click',
+    { overflowSeed, overflowNewSeed, refreshResult, overflowBefore, overflowPending, overflowApplied }
   );
 
   return screenshots;
@@ -1003,8 +1659,9 @@ async function main() {
   const dataRoot = path.join(PROJECT_ROOT, '.squidrun', 'tmp', runId);
   ensureDir(dataRoot);
   const gitHead = getGitHead();
+  const commitCheck = assertExpectedCommit(options);
   const tickScript = writeTickHarness(dataRoot);
-  writeQaSettings(dataRoot, tickScript);
+  writeQaSettings(dataRoot, tickScript, { shellV2Enabled: true, devMode: true, autoSpawn: true });
   writeQaProfile(dataRoot);
 
   const sharedPortPath = path.join(PROJECT_ROOT, '.squidrun', 'runtime', 'cdp-port.json');
@@ -1017,14 +1674,36 @@ async function main() {
   let browser = null;
   let screenshots = {};
   let screenshotMirrors = {};
+  let rendererNoise = [];
   try {
+    if (options.expectCommit) {
+      recorder.record(
+        'G0',
+        commitCheck.ok === true,
+        commitCheck.ok ? `HEAD matches ${commitCheck.head}` : (commitCheck.reason || 'commit check failed'),
+        commitCheck
+      );
+      if (!commitCheck.ok) throw new Error(`expect-commit failed: ${commitCheck.reason || 'unknown'}`);
+    }
+
+    await runFlagOffProbe({
+      dataRoot: path.join(dataRoot, 'flag-off'),
+      cdpPort: options.cdpPort + 1,
+      recorder,
+    });
+
+    try {
+      fs.rmSync(qaPortPath, { force: true });
+    } catch (_) {}
     child = launchThrowaway({ dataRoot, cdpPort: options.cdpPort, keepOpen: options.keepOpen });
     child.stdout?.on?.('data', (chunk) => process.stdout.write(`[electron] ${chunk}`));
     child.stderr?.on?.('data', (chunk) => process.stderr.write(`[electron] ${chunk}`));
     await waitForFile(qaPortPath);
     browser = await connectToThrowaway(options.cdpPort);
     const page = await findRendererPage(browser);
+    rendererNoise = bindRendererNoiseCapture(page);
     await runAssertions({ page, sharedPortBefore, sharedPortPath, recorder });
+    await runPhase4FlagOnAssertions({ page, recorder, rendererNoise });
     screenshots = {
       ...await capturePhase2Screenshots(page, runId),
       ...await capturePhase3TodayScreenshots(page, runId, recorder, dataRoot),
@@ -1044,9 +1723,12 @@ async function main() {
       profile: PROFILE,
       gitHead,
       keepOpen: options.keepOpen === true,
+      expectCommit: options.expectCommit,
+      commitCheck,
       dataRoot,
       qaPortPath,
       sharedPortPath,
+      rendererNoise,
       screenshots,
       screenshotMirrors,
       checks: recorder.checks,
