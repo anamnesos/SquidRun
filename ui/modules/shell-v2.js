@@ -1221,10 +1221,7 @@ function buildShellV2SettingsOverlay(doc, windowRef, settings = {}) {
   const permissions = findSettingsSectionByTitle(doc, /^Permissions$/i);
   const voice = findSettingsSectionByTitle(doc, /^Voice/i);
   const cost = findSettingsSectionByTitle(doc, /^Cost/i);
-  const external = findSettingsSectionByTitle(doc, /^External Notifications$/i);
   const devices = findSettingsSectionByTitle(doc, /^Devices$/i);
-
-  if (external) removeElement(external);
 
   appendMovedSection(doc, content.querySelector('[data-shell-v2-settings-section="general"]'), general);
   appendMovedSection(doc, content.querySelector('[data-shell-v2-settings-section="permissions"]'), permissions);
@@ -1342,8 +1339,6 @@ function removeShellV2KilledChrome(doc) {
 
   const rightPanel = doc.getElementById?.('rightPanel');
   if (rightPanel) removeElement(rightPanel);
-  doc.querySelectorAll?.('link[href$="styles/project-rooms.css"], link[href$="project-rooms.css"]')
-    .forEach((link) => removeElement(link));
 }
 
 function resolveScreenshotApi(windowRef = null) {
@@ -2066,6 +2061,27 @@ function resolveShortcutPane(event) {
   return SHELL_V2_PANE_SHORTCUTS[String(event.key || '')] || null;
 }
 
+function blurActivePaneTerminal(doc, terminalApi) {
+  const active = doc?.activeElement;
+  const isPaneTerminalFocus = Boolean(
+    active?.closest?.('.pane-terminal')
+      || active?.closest?.('.xterm')
+      || active?.closest?.('.xterm-helper-textarea')
+  );
+  if (!isPaneTerminalFocus) return;
+  try {
+    terminalApi?.blurAllTerminals?.();
+  } catch (_) {}
+  try {
+    active.blur?.();
+  } catch (_) {}
+  if (doc.activeElement === active) {
+    try {
+      doc.body?.focus?.();
+    } catch (_) {}
+  }
+}
+
 function shouldHandleCoreExpand(button) {
   const paneId = String(button?.dataset?.paneId || '');
   return paneId === '2' || paneId === '3';
@@ -2213,6 +2229,7 @@ function initShellV2(options = {}) {
     event.preventDefault?.();
     event.stopPropagation?.();
     event.stopImmediatePropagation?.();
+    blurActivePaneTerminal(doc, options.terminal || {});
     switchTab(targetTab);
   };
 
@@ -2291,6 +2308,7 @@ module.exports = {
     normalizeWindowKey,
     dispatchShellEvent,
     resolveShortcutTab,
+    blurActivePaneTerminal,
     shouldHandleCoreExpand,
   },
 };

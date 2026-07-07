@@ -54,7 +54,6 @@ let messageWatcherDesiredRunning = false;
 let messageWatcherStartGeneration = 0;
 let triggers = null; // Reference to triggers module
 let getSettings = null; // Settings getter for auto-sync control
-let notifyExternal = null; // External notification hook
 const customWatches = new Map(); // File-specific callbacks
 
 const SYNC_FILES = new Set([
@@ -462,23 +461,6 @@ function transition(newState) {
     triggers.notifyAgents(state.active_agents, message);
   }
 
-  if (notifyExternal) {
-    if (newState === States.COMPLETE) {
-      notifyExternal({
-        category: 'completion',
-        title: 'Workflow complete',
-        message: `State transitioned to ${newState}`,
-        meta: { state: newState },
-      });
-    } else if (newState === States.ERROR) {
-      notifyExternal({
-        category: 'alert',
-        title: 'Workflow error',
-        message: `State transitioned to ${newState}`,
-        meta: { state: newState },
-      });
-    }
-  }
 }
 
 // ============================================================
@@ -1150,10 +1132,6 @@ function init(window, triggersModule, settingsGetter = null) {
   triggers = triggersModule;
   getSettings = settingsGetter;
   registerTriggerDeliveryAckListener();
-}
-
-function setExternalNotifier(fn) {
-  notifyExternal = typeof fn === 'function' ? fn : null;
 }
 
 function addWatch(filePath, onChange) {
@@ -1841,7 +1819,6 @@ module.exports = {
   startTriggerWatcher,
   stopTriggerWatcher,
   TRIGGER_PATH,
-  setExternalNotifier,
   _internals: {
     getQueueMutationChainSize: () => queueMutationChains.size,
     clearQueueMutationChains: () => queueMutationChains.clear(),

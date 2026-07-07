@@ -51,10 +51,6 @@ function setDaemonClient(client) {
   ipcState.setDaemonClient(client);
 }
 
-function setExternalNotifier(notifier) {
-  ctx.externalNotifier = notifier;
-}
-
 /**
  * Setup all IPC handlers
  */
@@ -100,7 +96,6 @@ const cleanupProcesses = backgroundController.cleanupProcesses;
 module.exports = {
   init,
   setDaemonClient,
-  setExternalNotifier,
   setupIPCHandlers,
   getBackgroundProcesses,
   cleanupProcesses,

@@ -873,7 +873,7 @@ function configureSquidRoomPaneShell(doc) {
   if (body) {
     body.dataset.workspaceKey = SQUID_ROOM_WORKSPACE_KEY;
     // Link swap (mount step 3): sr2-room is THE body gate; the legacy
-    // squid-room/squid-room-workspace gates died with squid-room.css.
+    // squid-room/squid-room-workspace gates died with the old stylesheet.
     body.classList.add('sr2-room');
   }
   ensureSquidRoomMotes(doc);

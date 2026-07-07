@@ -584,6 +584,12 @@ rotated segment is deleted with a recorded count/reason rather than archived.
 This is a retention/inventory change only; it does not promote Mira route,
 autonomy, Telegram, or external-action authority.
 
+Phase 5 shell cleanup note (2026-07-07): External Notifications runtime/UI/IPC
+was deleted as a dead Shell V2 legacy surface. Mira recent-comms inventory now
+names only the surviving local comms seams: `hm-comms.js`, Telegram poller, and
+SMS poller. This is an inventory cleanup only; it does not promote Mira route,
+autonomy, Telegram, SMS, or external-action authority.
+
 | Family | Paths | Purpose / Why Built | Status Tag | Current Capability Today | What It Is Not | Dependencies / Tests | Risk If Removed | Next Evidence Gate |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | New Mira product boundary | `mira/README.md`, `mira/import-disposition-manifest.json`, `mira/state/README.md` | Defines Mira as a product extracted from SquidRun and records import/delete policy. Built to stop adding Mira back as another SquidRun tab. | PROTOTYPE / KEEP | Gives the team a clearer product frame and migration boundary. | Not a live runtime, Telegram owner, or replacement for SquidRun agents. | Import disposition docs; `ui/__tests__/mira-product-foundation.test.js`. | Losing it re-blurs Mira, SquidRun, and agent roles. | Keep aligned with this map on every Mira feature/removal. |

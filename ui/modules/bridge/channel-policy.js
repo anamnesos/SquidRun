@@ -75,7 +75,6 @@ const INVOKE_CHANNELS = Object.freeze([
   'mira:self-direction-review',
   'mira:internal-handoff-approval-send',
   'mira:local-text-session',
-  'notify-external-test',
   'open-app-window',
   'oracle:deleteImage',
   'oracle:generateImage',

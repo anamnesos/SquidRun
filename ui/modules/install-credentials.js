@@ -27,9 +27,6 @@ const {
 //              must never produce a connection under an inherited/implicit device)
 //   twilio   → overlay  (settings/twilio.json — sid+token are pair-or-nothing;
 //              phoneNumber/smsRecipient apply independently)
-//   smtp     → settings-redaction (the app consumes SMTP from the settings store,
-//              not env, so the per-install treatment is redacting staged
-//              settings.json — see SMTP_SENSITIVE_SETTINGS_KEYS / redactSensitiveSettings)
 //   wallet   → DENY (an install NEVER carries wallet credentials. The wrapper
 //              strips them at boot; this module is the second wall: wallet env
 //              keys are actively removed, and a wallet settings file is never
@@ -38,7 +35,6 @@ const CREDENTIAL_CLASS_POLICIES = Object.freeze({
   telegram: 'overlay',
   relay: 'overlay',
   twilio: 'overlay',
-  smtp: 'settings-redaction',
   wallet: 'deny',
 });
 
@@ -55,19 +51,6 @@ const RELAY_ENV_KEYS = Object.freeze([
   'SQUIDRUN_RELAY_URL',
   'SQUIDRUN_RELAY_SECRET',
   'SQUIDRUN_DEVICE_ID',
-]);
-
-const SMTP_SENSITIVE_SETTINGS_KEYS = Object.freeze([
-  'smtpHost',
-  'smtpPort',
-  'smtpSecure',
-  'smtpRejectUnauthorized',
-  'smtpUser',
-  'smtpPass',
-  'smtpFrom',
-  'smtpTo',
-  'slackWebhookUrl',
-  'discordWebhookUrl',
 ]);
 
 function toNonEmptyString(value) {
@@ -183,21 +166,6 @@ function applyWalletDeny(env, dataRoot) {
   };
 }
 
-function redactSensitiveSettings(settings) {
-  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
-    return { settings: {}, removed: [] };
-  }
-  const clean = { ...settings };
-  const removed = [];
-  for (const key of SMTP_SENSITIVE_SETTINGS_KEYS) {
-    if (key in clean) {
-      delete clean[key];
-      removed.push(key);
-    }
-  }
-  return { settings: clean, removed };
-}
-
 function applyInstallCredentialEnvOverlay(options = {}) {
   const env = options.env || process.env;
   const dataRoot = options.dataRoot;
@@ -223,7 +191,5 @@ module.exports = {
   TWILIO_SETTINGS_RELATIVE_PATH,
   WALLET_SETTINGS_RELATIVE_PATH,
   WALLET_DENY_ENV_KEYS,
-  SMTP_SENSITIVE_SETTINGS_KEYS,
   applyInstallCredentialEnvOverlay,
-  redactSensitiveSettings,
 };

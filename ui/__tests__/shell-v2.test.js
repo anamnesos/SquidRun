@@ -189,6 +189,12 @@ class FakeElement {
   focus() {
     if (this.ownerDocument) this.ownerDocument.activeElement = this;
   }
+
+  blur() {
+    if (this.ownerDocument?.activeElement === this) {
+      this.ownerDocument.activeElement = this.ownerDocument.body;
+    }
+  }
 }
 
 function toDatasetKey(value) {
@@ -327,13 +333,6 @@ function createFakeDocument() {
   ]);
   costSection.appendChild(make('input', { id: 'costAlertThreshold', className: 'threshold-input' }));
   settingsLayout.appendChild(costSection);
-  const externalSection = makeSettingsSection('External Notifications', [
-    makeSettingItem('toggleExternalNotificationsEnabled', 'externalNotificationsEnabled'),
-  ]);
-  externalSection.appendChild(make('input', { id: 'slackWebhookField', className: 'settings-input' }));
-  externalSection.appendChild(make('input', { id: 'discordWebhookField', className: 'settings-input' }));
-  externalSection.appendChild(make('button', { id: 'sendExternalTestBtn', className: 'btn' }));
-  settingsLayout.appendChild(externalSection);
   settingsLayout.appendChild(makeSettingsSection('Devices', [
     make('button', { id: 'pairingInitBtn', className: 'btn' }),
     make('button', { id: 'pairingJoinBtn', className: 'btn' }),
@@ -458,6 +457,7 @@ function initHarness({
     write: jest.fn(),
     kill: jest.fn(),
     focusPane: jest.fn(),
+    blurAllTerminals: jest.fn(),
     getActivePaneIds: jest.fn(() => activePaneIds.slice()),
     setActivePaneIds: jest.fn((paneIds) => {
       activePaneIds = paneIds.slice();
@@ -554,9 +554,6 @@ describe('shell-v2', () => {
     expect(doc.getElementById('rightPanel')).toBeNull();
     expect(doc.querySelector('.panel-tabs')).toBeNull();
     expect(doc.getElementById('settingsPanel')).toBeNull();
-    expect(doc.getElementById('slackWebhookField')).toBeNull();
-    expect(doc.getElementById('discordWebhookField')).toBeNull();
-    expect(doc.getElementById('sendExternalTestBtn')).toBeNull();
 
     const overlay = doc.getElementById('shellV2SettingsOverlay');
     expect(overlay).toBeTruthy();
@@ -601,7 +598,6 @@ describe('shell-v2', () => {
     expect(dom.doc.getElementById('rightPanel')).toBeTruthy();
     expect(dom.doc.querySelector('.panel-tabs')).toBeTruthy();
     expect(dom.doc.getElementById('settingsPanel')).toBeTruthy();
-    expect(dom.doc.getElementById('slackWebhookField')).toBeTruthy();
   });
 
   test('shows the LAB tab only when devMode is enabled', () => {
@@ -675,10 +671,18 @@ describe('shell-v2', () => {
     });
 
     const toSquidRoom = makeEvent('2');
+    const helperTextarea = doc.createElement('textarea');
+    helperTextarea.ownerDocument = doc;
+    helperTextarea.className = 'xterm-helper-textarea';
+    doc.getElementById('terminal-1').appendChild(helperTextarea);
+    helperTextarea.focus();
+
     doc.fire('keydown', toSquidRoom);
     expect(controller.getActiveTab()).toBe('squid-room');
     expect(toSquidRoom.preventDefault).toHaveBeenCalled();
     expect(toSquidRoom.stopImmediatePropagation).toHaveBeenCalled();
+    expect(terminalApi.blurAllTerminals).toHaveBeenCalled();
+    expect(doc.activeElement).toBe(doc.body);
 
     const toToday = makeEvent('3');
     doc.fire('keydown', toToday);

@@ -87,8 +87,6 @@ const BUILTIN_TEMPLATES = [
     config: {
       autoSpawn: true,
       autoSync: false,
-      notifyOnAlerts: true,
-      notifyOnCompletions: true,
       paneCommands: { ...DEFAULT_PANE_COMMANDS },
     },
     paneProjects: {},
@@ -102,7 +100,6 @@ const BUILTIN_TEMPLATES = [
       autoSpawn: true,
       autoSync: false,
       notifications: false,
-      externalNotificationsEnabled: false,
       paneCommands: { ...DEFAULT_PANE_COMMANDS },
     },
     paneProjects: {},

@@ -271,8 +271,8 @@ body.sr2-room .sr2-pet-water {
 }
 
 /* ============================================================
-   LAYER 4b — SHORE STRUCTURE (the bones the dead file took with it)
-   Ported layout-only from legacy squid-room.css at Builder's #62 find:
+   LAYER 4b — SHORE STRUCTURE (the bones the retired room stylesheet took with it)
+   Ported layout-only from the legacy stylesheet at Builder's #62 find:
    the skin colored a shore that had no skeleton. Geometry only —
    every visual property still comes from the skin block above.
    ============================================================ */

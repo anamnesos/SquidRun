@@ -1112,21 +1112,5 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
-  test('setExternalNotifier registers notification callback', () => {
-    const { watcher, tempDir } = setupWatcher();
-    const notifier = jest.fn();
-
-    watcher.setExternalNotifier(notifier);
-
-    // Trigger a transition that calls notifier (e.g. to COMPLETE)
-    watcher.transition(watcher.States.COMPLETE);
-
-    expect(notifier).toHaveBeenCalledWith(expect.objectContaining({
-      category: 'completion',
-      meta: { state: watcher.States.COMPLETE }
-    }));
-
-    cleanupDir(tempDir);
-  });
 });
 

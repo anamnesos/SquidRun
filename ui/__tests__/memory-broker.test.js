@@ -136,9 +136,9 @@ describe('memory-broker', () => {
                 },
                 {
                   id: 'main-tabs',
-                  title: 'Project Rooms UI',
+                  title: 'Main workspace tabs UI',
                   excerpt: 'Main SquidRun tab semantics and profile scoping investigation.',
-                  ref: 'squidrun/project-rooms',
+                  ref: 'squidrun/workspace-tabs',
                   score: 1,
                   metadata: {
                     profileName: 'main',
@@ -255,8 +255,8 @@ describe('memory-broker', () => {
                 {
                   id: 'profile-routing-product',
                   title: 'Eunbyeol profile routing bug',
-                  excerpt: 'Product work: side-profile windows should not inherit main Project Rooms.',
-                  ref: 'ui/modules/project-rooms.js',
+                  excerpt: 'Product work: side-profile windows should not inherit main workspace tabs.',
+                  ref: 'ui/modules/workspace-pane-shell.js',
                 },
               ],
             };

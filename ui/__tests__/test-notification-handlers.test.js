@@ -129,19 +129,6 @@ describe('Test Notification Handlers', () => {
       );
     });
 
-    test('sends external notification when externalNotifier available', async () => {
-      const mockNotify = jest.fn().mockResolvedValue({});
-      ctx.externalNotifier = { notify: mockNotify };
-
-      await harness.invoke('notify-test-failure', { failed: 2, failures: [] });
-
-      expect(mockNotify).toHaveBeenCalledWith({
-        category: 'alert',
-        title: '2 tests failed',
-        message: expect.any(String),
-      });
-    });
-
     test('handles missing mainWindow', async () => {
       ctx.mainWindow.isDestroyed.mockReturnValue(true);
 

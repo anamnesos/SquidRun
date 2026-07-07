@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "baseline": {
+    "phase4Commit": "a2608e962e16c9ff6a5473780bc8dd6f5eee6d55",
+    "jestSuitesBefore": 450,
+    "deletedSuites": [
+      "ui/__tests__/external-notification-handlers.test.js",
+      "ui/__tests__/external-notifications-pruning.test.js",
+      "ui/__tests__/external-notifications.test.js",
+      "ui/__tests__/project-rooms-ui.test.js"
+    ]
+  },
+  "entries": [
+    {
+      "id": "external-notifications-runtime",
+      "kind": "feature",
+      "architectSignoff": "hm-1783424712151-fbkdsj and hm-1783424829403-bdojej",
+      "bothModesDeadEvidence": "Never configured in settings, no live runtime consumer remains after settings block and notify-external-test IPC removal.",
+      "preDeleteConsumerGrep": "rg -n \"createExternalNotifier|registerExternalNotificationHandlers|notify-external-test|externalNotificationsEnabled|External Notifications|slackWebhookUrl|discordWebhookUrl|smtpHost|smtpPass\" ui",
+      "allowedPreDeleteHits": "Only the deleted external notification modules/tests, settings block/defaults/allowlist, bridge policy channel, and null optional notifier seams removed in this commit.",
+      "deletedFiles": [
+        "ui/modules/external-notifications.js",
+        "ui/modules/ipc/external-notification-handlers.js",
+        "ui/__tests__/external-notification-handlers.test.js",
+        "ui/__tests__/external-notifications-pruning.test.js",
+        "ui/__tests__/external-notifications.test.js"
+      ],
+      "removedRuntimeSurfaces": [
+        "External Notifications settings section",
+        "notify-external-test IPC channel",
+        "external notification settings keys/defaults/allowlist"
+      ],
+      "residuePatterns": [
+        "external-notifications",
+        "external-notification-handlers",
+        "notify-external-test",
+        "externalNotificationsEnabled",
+        "notifyOnAlerts",
+        "notifyOnCompletions",
+        "slackWebhookUrl",
+        "discordWebhookUrl",
+        "emailNotificationsEnabled",
+        "smtpHost",
+        "smtpPort",
+        "smtpSecure",
+        "smtpRejectUnauthorized",
+        "smtpUser",
+        "smtpPass",
+        "smtpFrom",
+        "smtpTo",
+        "sendExternalTestBtn",
+        "toggleExternalNotificationsEnabled",
+        "External Notifications"
+      ]
+    },
+    {
+      "id": "project-rooms-orphan",
+      "kind": "feature",
+      "architectSignoff": "hm-1783424712151-fbkdsj and hm-1783424829403-bdojej",
+      "bothModesDeadEvidence": "Legacy loader ran without a #projectRooms DOM root; Shell V2 removes project-room stylesheet links and has no consumer.",
+      "preDeleteConsumerGrep": "rg -n \"project-rooms|projectRooms|__squidrunProjectRoomsLoaded|projectRoomsStylesheet|initProjectRooms\" ui",
+      "allowedPreDeleteHits": "Only the deleted module/CSS/test, renderer loader/link injection, renderer module bridge, shell-v2 cleanup, and gate baseline references removed/rebased in this commit.",
+      "deletedFiles": [
+        "ui/modules/project-rooms.js",
+        "ui/styles/project-rooms.css",
+        "ui/__tests__/project-rooms-ui.test.js"
+      ],
+      "removedRuntimeSurfaces": [
+        "projectRoomsStylesheet legacy link injection",
+        "projectRooms renderer module loader"
+      ],
+      "residuePatterns": [
+        "project-rooms",
+        "projectRooms",
+        "__squidrunProjectRoomsLoaded",
+        "projectRoomsStylesheet",
+        "initProjectRooms"
+      ]
+    },
+    {
+      "id": "legacy-squid-room-stylesheet",
+      "kind": "stylesheet",
+      "architectSignoff": "hm-1783424712151-fbkdsj and hm-1783424829403-bdojej",
+      "bothModesDeadEvidence": "index.html links only squid-room-v2.css; body gate is sr2-room and live tests now pin the v2 stylesheet geometry directly.",
+      "preDeleteConsumerGrep": "rg -n \"squid-room\\.css\" ui",
+      "allowedPreDeleteHits": "Only comments and tests documenting the already-unlinked stylesheet; live style source is squid-room-v2.css.",
+      "deletedFiles": [
+        "ui/styles/squid-room.css"
+      ],
+      "removedRuntimeSurfaces": [
+        "legacy unlinked Squid Room stylesheet"
+      ],
+      "residuePatterns": [
+        "squid-room.css"
+      ]
+    }
+  ]
+}
