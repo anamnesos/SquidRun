@@ -280,6 +280,39 @@ maybeDescribe('evidence-ledger-store', () => {
     }));
   });
 
+  test('upsertCommsJournal preserves system channel for generated receipts', () => {
+    expect(store.init().ok).toBe(true);
+
+    const result = store.upsertCommsJournal({
+      messageId: 'system-doorbell-1',
+      senderRole: 'system',
+      targetRole: 'architect',
+      channel: 'system',
+      direction: 'outbound',
+      sentAtMs: 1300,
+      brokeredAtMs: 1300,
+      rawBody: '[DOORBELL] permission_prompt pane=2',
+      status: 'recorded',
+      metadata: { source: 'shell-v2-doorbell', doorbellEvent: 'permission_prompt' },
+    });
+
+    expect(result.ok).toBe(true);
+    const [row] = store.queryCommsJournal({
+      senderRole: 'system',
+      channel: 'system',
+      limit: 1,
+    });
+    expect(row).toEqual(expect.objectContaining({
+      messageId: 'system-doorbell-1',
+      channel: 'system',
+      rawBody: '[DOORBELL] permission_prompt pane=2',
+      metadata: expect.objectContaining({
+        source: 'shell-v2-doorbell',
+        doorbellEvent: 'permission_prompt',
+      }),
+    }));
+  });
+
   test('queryCommsJournal order can use event timestamp expression indexes', () => {
     expect(store.init().ok).toBe(true);
 

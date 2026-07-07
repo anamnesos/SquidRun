@@ -1,4 +1,5 @@
 const {
+  DOORBELL_CHOKEPOINT_CALLERS,
   initShellV2,
   resolveShellV2Enabled,
 } = require('../modules/shell-v2');
@@ -447,6 +448,7 @@ function initHarness({
   windowContext = { windowKey: 'main' },
   todayJournalApi,
   todayFullMessageApi,
+  doorbellJournalApi,
 } = {}) {
   const dom = createFakeDocument();
   let activePaneIds = ['1', '2', '3'];
@@ -486,8 +488,14 @@ function initHarness({
     terminal: terminalApi,
     todayJournalApi,
     todayFullMessageApi,
+    doorbellJournalApi,
   });
   return { ...dom, terminalApi, controller, clipboardWriteText };
+}
+
+async function flushAsyncWork() {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 describe('shell-v2', () => {
@@ -1049,5 +1057,145 @@ describe('shell-v2', () => {
     pill.eventListeners.click[0]();
     expect(doc.querySelectorAll('.shell-v2-today-row')).toHaveLength(2);
     expect(list.scrollTop).toBe(0);
+  });
+
+  test('Today can refresh through the renderer-owned DOM event', async () => {
+    let rows = [
+      {
+        rowId: 401,
+        messageId: 'hm-old-event-refresh',
+        sessionId: 'app-session-476',
+        senderRole: 'builder',
+        targetRole: 'oracle',
+        channel: 'ws',
+        direction: 'outbound',
+        timestampMs: Date.now(),
+        rawBody: '[ACK] Existing event-refresh row.',
+        status: 'routed',
+      },
+    ];
+    const todayJournalApi = jest.fn(async () => ({ ok: true, rows }));
+    const { doc } = initHarness({ todayJournalApi });
+
+    doc.dispatchEvent(new doc.defaultView.CustomEvent('shell-v2-refresh-today', {
+      detail: { preserveScroll: false },
+    }));
+    await flushAsyncWork();
+
+    expect(doc.querySelectorAll('.shell-v2-today-row')).toHaveLength(1);
+    expect(doc.querySelector('.shell-v2-today-excerpt').textContent).toContain('Existing event-refresh row');
+
+    rows = [
+      {
+        rowId: 402,
+        messageId: 'hm-doorbell-ack',
+        sessionId: 'app-session-476',
+        senderRole: 'system',
+        targetRole: 'architect',
+        channel: 'system',
+        direction: 'internal',
+        timestampMs: Date.now() + 1000,
+        rawBody: '[DOORBELL] doorbell_ack pane=squid-room label=squid-room action=ack',
+        status: 'recorded',
+      },
+      ...rows,
+    ];
+
+    doc.dispatchEvent(new doc.defaultView.CustomEvent('shell-v2-refresh-today', {
+      detail: { preserveScroll: false },
+    }));
+    await flushAsyncWork();
+
+    expect(todayJournalApi).toHaveBeenLastCalledWith(expect.objectContaining({
+      limit: 5000,
+    }));
+    expect(doc.querySelectorAll('.shell-v2-today-row')).toHaveLength(2);
+    expect(doc.querySelector('.shell-v2-today-chip[data-today-filter="system"]').textContent).toBe('System 1');
+    expect(doc.querySelector('.shell-v2-today-excerpt').textContent).toContain('doorbell_ack');
+  });
+
+  test('doorbell events write system receipts, mark stations, and clear on Squid Room visit', async () => {
+    const doorbellJournalApi = jest.fn(async () => ({ ok: true, rowId: 9001 }));
+    const { doc, controller, panes } = initHarness({ doorbellJournalApi });
+
+    expect(typeof controller.handleDoorbellPermissionPrompt).toBe('function');
+    expect(typeof controller.handleDoorbellLeadEscalationMessage).toBe('function');
+    expect(typeof controller.handleDoorbellProcessExit).toBe('function');
+
+    await controller.handleDoorbellPermissionPrompt('2', 'Codex permission prompt detected: approve this command');
+
+    const badge = doc.querySelector('[data-shell-v2-doorbell-badge="squid-room"]');
+    const builderHeader = panes['2'].querySelector('.pane-header');
+    const builderSlot = builderHeader.querySelector('.shell-v2-needs-input-slot');
+    expect(badge.hidden).toBe(false);
+    expect(badge.textContent).toBe('1');
+    expect(builderHeader.classList.contains('shell-v2-doorbell-on')).toBe(true);
+    expect(builderSlot.textContent).toBe('permission');
+    expect(doorbellJournalApi).toHaveBeenCalledWith(expect.objectContaining({
+      senderRole: 'system',
+      targetRole: 'architect',
+      channel: 'system',
+      status: 'recorded',
+      rawBody: expect.stringContaining('permission_prompt'),
+      metadata: expect.objectContaining({
+        scope: 'main',
+        windowKey: 'main',
+        doorbellEvent: 'permission_prompt',
+        paneId: '2',
+      }),
+    }));
+
+    await controller.ackDoorbell({ detail: 'test clear' });
+
+    expect(badge.hidden).toBe(true);
+    expect(badge.textContent).toBe('');
+    expect(builderHeader.classList.contains('shell-v2-doorbell-on')).toBe(false);
+    expect(doorbellJournalApi).toHaveBeenLastCalledWith(expect.objectContaining({
+      rawBody: expect.stringContaining('doorbell_ack'),
+      metadata: expect.objectContaining({
+        doorbellEvent: 'doorbell_ack',
+        nextCount: 0,
+      }),
+    }));
+  });
+
+  test('doorbell source probe is available only in the Shell V2 QA profile', async () => {
+    const normalJournalApi = jest.fn(async () => ({ ok: true, rowId: 9100 }));
+    const normal = initHarness({ doorbellJournalApi: normalJournalApi });
+    expect(normal.doc.body.dataset.shellV2DoorbellSourceProbe).toBeUndefined();
+    normal.doc.dispatchEvent(new normal.doc.defaultView.CustomEvent('shell-v2-doorbell-source-probe', {
+      detail: { eventName: 'permission_prompt', paneId: '2', data: 'Permission prompt: approve this command' },
+    }));
+    await Promise.resolve();
+    expect(normalJournalApi).not.toHaveBeenCalled();
+
+    const qaJournalApi = jest.fn(async () => ({ ok: true, rowId: 9101 }));
+    const qa = initHarness({
+      windowContext: { windowKey: 'main', profileName: 'shellv2qa' },
+      doorbellJournalApi: qaJournalApi,
+    });
+    expect(qa.doc.body.dataset.shellV2DoorbellSourceProbe).toBe('enabled');
+    qa.doc.dispatchEvent(new qa.doc.defaultView.CustomEvent('shell-v2-doorbell-source-probe', {
+      detail: { eventName: 'permission_prompt', paneId: '2', data: 'Permission prompt: approve this command' },
+    }));
+    await Promise.resolve();
+
+    expect(qaJournalApi).toHaveBeenCalledWith(expect.objectContaining({
+      channel: 'system',
+      rawBody: expect.stringContaining('permission_prompt'),
+      metadata: expect.objectContaining({
+        doorbellEvent: 'permission_prompt',
+        paneId: '2',
+      }),
+    }));
+  });
+
+  test('doorbell source map stays limited to the real event callers', () => {
+    expect(DOORBELL_CHOKEPOINT_CALLERS).toEqual([
+      { source: 'pty_permission_prompt_detector', eventName: 'permission_prompt' },
+      { source: 'lead_escalation_message_parser', eventName: 'lead_escalation' },
+      { source: 'pty_process_exit_handler', eventName: 'process_exit' },
+      { source: 'squid_room_tab_ack', eventName: 'doorbell_ack' },
+    ]);
   });
 });
