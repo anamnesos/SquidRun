@@ -54,6 +54,7 @@ class FakeElement {
     this.id = '';
     this.hidden = false;
     this.scrollTop = 0;
+    this.value = '';
     this._className = '';
     this._textContent = '';
     this.classList = new FakeClassList(this);
@@ -184,6 +185,10 @@ class FakeElement {
     if (target === this) return true;
     return (this.children || []).some((child) => child.contains?.(target) === true);
   }
+
+  focus() {
+    if (this.ownerDocument) this.ownerDocument.activeElement = this;
+  }
 }
 
 function toDatasetKey(value) {
@@ -216,6 +221,7 @@ function createFakeDocument() {
   const body = new FakeElement('body');
   const doc = {
     body,
+    activeElement: body,
     defaultView: { CustomEvent: class CustomEvent {
       constructor(type, options = {}) {
         this.type = type;
@@ -365,7 +371,13 @@ function makePane(make, paneId) {
   return pane;
 }
 
-function initHarness({ settings = { shellV2Enabled: true }, env = {}, windowContext = { windowKey: 'main' } } = {}) {
+function initHarness({
+  settings = { shellV2Enabled: true },
+  env = {},
+  windowContext = { windowKey: 'main' },
+  todayJournalApi,
+  todayFullMessageApi,
+} = {}) {
   const dom = createFakeDocument();
   let activePaneIds = ['1', '2', '3'];
   const terminalApi = {
@@ -395,6 +407,8 @@ function initHarness({ settings = { shellV2Enabled: true }, env = {}, windowCont
     env,
     windowContext,
     terminal: terminalApi,
+    todayJournalApi,
+    todayFullMessageApi,
   });
   return { ...dom, terminalApi, controller };
 }
@@ -630,5 +644,181 @@ describe('shell-v2', () => {
         replayDaemonScrollback: true,
       })
     );
+  });
+
+  test('renders Today journal rows with counts, compact grammar, and failed-only status accent', async () => {
+    const now = new Date('2026-07-07T10:00:00').getTime();
+    const todayJournalApi = jest.fn(async () => ({
+      ok: true,
+      rows: [
+        {
+          rowId: 102,
+          messageId: 'hm-team',
+          sessionId: 'app-session-476',
+          senderRole: 'architect',
+          targetRole: 'builder',
+          channel: 'ws',
+          direction: 'outbound',
+          timestampMs: now,
+          rawBody: '[TASK] (Architect): Build the Today tab.',
+          status: 'routed',
+        },
+        {
+          rowId: 101,
+          messageId: 'hm-james',
+          sessionId: 'app-session-476',
+          senderRole: 'user',
+          targetRole: 'architect',
+          channel: 'telegram',
+          direction: 'inbound',
+          timestampMs: now - 60000,
+          rawBody: '[FYI] James sent a field update.',
+          status: 'acked',
+        },
+        {
+          rowId: 100,
+          messageId: 'hm-system',
+          sessionId: 'app-session-475',
+          senderRole: 'system',
+          targetRole: 'builder',
+          channel: 'ws',
+          direction: 'outbound',
+          timestampMs: now - 120000,
+          rawBody: '[SYS] liveness warning',
+          status: 'failed',
+        },
+      ],
+    }));
+    const { doc, controller } = initHarness({ todayJournalApi });
+
+    await controller.refreshToday({ preserveScroll: false });
+
+    expect(todayJournalApi).toHaveBeenCalledWith(expect.objectContaining({
+      dayStartMs: expect.any(Number),
+      dayEndMs: expect.any(Number),
+      limit: 5000,
+    }));
+    expect(doc.querySelectorAll('.shell-v2-today-row')).toHaveLength(3);
+    expect(doc.querySelector('.shell-v2-today-chip[data-today-filter="all"]').textContent).toBe('All 3');
+    expect(doc.querySelector('.shell-v2-today-chip[data-today-filter="team"]').textContent).toBe('Team 1');
+    expect(doc.querySelector('.shell-v2-today-chip[data-today-filter="james"]').textContent).toBe('James 1');
+    expect(doc.querySelector('.shell-v2-today-chip[data-today-filter="system"]').textContent).toBe('System 1');
+    expect(doc.querySelectorAll('.shell-v2-today-party').map((node) => node.textContent)).toEqual([
+      'Mira→Builder',
+      'James→Mira',
+      'System→Builder',
+    ]);
+    expect(doc.querySelectorAll('.shell-v2-today-origin').map((node) => node.textContent)).toEqual(['⇄', '⇠', 'sys']);
+    expect(doc.querySelectorAll('.shell-v2-today-tag').map((node) => node.textContent)).toEqual(['[TASK]', '[FYI]', '[SYS]']);
+    expect(doc.querySelectorAll('.shell-v2-today-status.is-failed')).toHaveLength(1);
+  });
+
+  test('Today filter, row expansion, and lazy full-file read stay in place', async () => {
+    const todayFullMessageApi = jest.fn(async () => ({
+      ok: true,
+      bytes: 42,
+      shaShort: 'abcdef123456',
+      content: 'full materialized body',
+    }));
+    const { doc, controller } = initHarness({
+      todayJournalApi: jest.fn(async () => ({
+        ok: true,
+        rows: [
+          {
+            rowId: 201,
+            messageId: 'hm-team',
+            sessionId: 'app-session-476',
+            senderRole: 'builder',
+            targetRole: 'oracle',
+            channel: 'ws',
+            direction: 'outbound',
+            timestampMs: Date.now(),
+            rawBody: '[ACK] Team-only row.',
+            status: 'routed',
+          },
+          {
+            rowId: 200,
+            messageId: 'hm-james',
+            sessionId: 'app-session-476',
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            timestampMs: Date.now() - 1000,
+            rawBody: '[TASK] FULL MSG AT .squidrun/coord/full-agent-messages/hm-james.txt',
+            status: 'routed',
+            hasFullFile: true,
+          },
+        ],
+      })),
+      todayFullMessageApi,
+    });
+
+    await controller.refreshToday({ preserveScroll: false });
+    doc.querySelector('.shell-v2-today-chip[data-today-filter="james"]').eventListeners.click[0]();
+    expect(doc.querySelectorAll('.shell-v2-today-row')).toHaveLength(1);
+
+    const summary = doc.querySelector('.shell-v2-today-summary');
+    summary.eventListeners.click[0]();
+    expect(doc.querySelector('.shell-v2-today-raw').textContent).toContain('FULL MSG AT');
+    expect(doc.querySelector('.shell-v2-today-footer').textContent).toContain('msgId=hm-james');
+
+    const fullButton = doc.querySelector('.shell-v2-today-full-btn');
+    await fullButton.eventListeners.click[0]({
+      preventDefault: jest.fn(),
+      stopPropagation: jest.fn(),
+    });
+    expect(todayFullMessageApi).toHaveBeenCalledWith({ messageId: 'hm-james' });
+    expect(doc.querySelector('.shell-v2-today-full-meta').textContent).toBe('42 bytes · sha abcdef123456');
+    expect(doc.querySelector('.shell-v2-today-full-raw').textContent).toBe('full materialized body');
+  });
+
+  test('Today refresh does not yank scroll and exposes the new-row pill', async () => {
+    let rows = [
+      {
+        rowId: 301,
+        messageId: 'hm-old',
+        sessionId: 'app-session-476',
+        senderRole: 'builder',
+        targetRole: 'oracle',
+        channel: 'ws',
+        direction: 'outbound',
+        timestampMs: Date.now(),
+        rawBody: '[ACK] Existing row.',
+        status: 'routed',
+      },
+    ];
+    const { doc, controller } = initHarness({
+      todayJournalApi: jest.fn(async () => ({ ok: true, rows })),
+    });
+
+    await controller.refreshToday({ preserveScroll: false });
+    const list = doc.querySelector('[data-today-list="true"]');
+    list.scrollTop = 120;
+    rows = [
+      {
+        rowId: 302,
+        messageId: 'hm-new',
+        sessionId: 'app-session-476',
+        senderRole: 'oracle',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'inbound',
+        timestampMs: Date.now() + 1000,
+        rawBody: '[FYI] New row.',
+        status: 'routed',
+      },
+      ...rows,
+    ];
+
+    await controller.refreshToday({ preserveScroll: true });
+    expect(doc.querySelectorAll('.shell-v2-today-row')).toHaveLength(1);
+    const pill = doc.querySelector('[data-today-new-pill="true"]');
+    expect(pill.hidden).toBe(false);
+    expect(pill.textContent).toBe('1 new ↑');
+
+    pill.eventListeners.click[0]();
+    expect(doc.querySelectorAll('.shell-v2-today-row')).toHaveLength(2);
+    expect(list.scrollTop).toBe(0);
   });
 });

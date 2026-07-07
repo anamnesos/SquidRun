@@ -25,6 +25,8 @@ const INVOKE_CHANNELS = Object.freeze([
   'daemon-is-process-running',
   'evidence-ledger:query-comms-journal',
   'evidence-ledger:upsert-comms-journal',
+  'shell-v2:today-journal',
+  'shell-v2:today-full-message',
   'full-restart',
   'get-activity-log',
   'get-all-pane-projects',
