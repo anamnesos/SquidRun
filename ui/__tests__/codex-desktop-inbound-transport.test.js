@@ -123,6 +123,7 @@ describe('codex-desktop-inbound-transport', () => {
     const result = transport.probeCodexDesktopInboundTransport({
       runner,
       now: '2026-05-30T23:30:00.000Z',
+      platform: 'win32',
     });
 
     expect(result).toEqual(expect.objectContaining({

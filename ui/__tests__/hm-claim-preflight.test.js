@@ -7,7 +7,11 @@
  * reality) and a false "4/4" committed while the suite was red.
  */
 
+const { execFileSync } = require('child_process');
+const path = require('path');
 const { extractClaims, preflight, parseJestCounts } = require('../scripts/hm-claim-preflight');
+
+const repoRoot = path.resolve(__dirname, '../..');
 
 describe('claim preflight: the gate inside the loop', () => {
   test('extracts test counts only near test-ish words', () => {
@@ -24,7 +28,11 @@ describe('claim preflight: the gate inside the loop', () => {
   });
 
   test('a real commit hash passes, a fabricated one is FALSE', () => {
-    const real = preflight('landed in commit e5f39040 today', { skipSuiteRun: true });
+    const realHash = execFileSync('git', ['rev-parse', '--short=8', 'HEAD'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    }).trim();
+    const real = preflight(`landed in commit ${realHash} today`, { skipSuiteRun: true });
     expect(real.findings.filter((f) => f.check === 'real-hash')).toHaveLength(0);
     const fake = preflight('landed in commit 9999999 today', { skipSuiteRun: true });
     expect(fake.ok).toBe(false);

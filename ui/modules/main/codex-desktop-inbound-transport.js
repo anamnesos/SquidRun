@@ -72,6 +72,14 @@ function splitLines(value) {
     .filter(Boolean);
 }
 
+function probePlatform(options = {}) {
+  return toOptionalString(options.platform, process.platform);
+}
+
+function isWindowsProbe(options = {}) {
+  return probePlatform(options) === 'win32';
+}
+
 function defaultRunner(command, args = [], options = {}) {
   const useWindowsCommandShim = process.platform === 'win32' && command === 'codex';
   const spawnCommand = useWindowsCommandShim ? 'cmd.exe' : command;
@@ -185,8 +193,8 @@ function detectCodexCli(runner) {
   };
 }
 
-function detectDesktopProcesses(runner) {
-  if (process.platform !== 'win32') {
+function detectDesktopProcesses(runner, options = {}) {
+  if (!isWindowsProbe(options)) {
     return { supported: false, reason: 'non_windows_host', processes: [] };
   }
   const script = `
@@ -215,8 +223,8 @@ $rows | ConvertTo-Json -Depth 4
   };
 }
 
-function detectDesktopWindows(runner) {
-  if (process.platform !== 'win32') {
+function detectDesktopWindows(runner, options = {}) {
+  if (!isWindowsProbe(options)) {
     return { supported: false, reason: 'non_windows_host', windows: [] };
   }
   const script = `
@@ -269,8 +277,8 @@ $out | ConvertTo-Json -Depth 4
   };
 }
 
-function detectProtocolHandler(runner) {
-  if (process.platform !== 'win32') {
+function detectProtocolHandler(runner, options = {}) {
+  if (!isWindowsProbe(options)) {
     return { supported: false, reason: 'non_windows_host' };
   }
   const script = `
@@ -306,8 +314,8 @@ $registryPresent = Test-Path 'Registry::HKEY_CURRENT_USER\\Software\\Classes\\co
   };
 }
 
-function detectNetworkListeners(runner, processes = {}) {
-  if (process.platform !== 'win32') {
+function detectNetworkListeners(runner, processes = {}, options = {}) {
+  if (!isWindowsProbe(options)) {
     return { supported: false, reason: 'non_windows_host', listeningTcp: [] };
   }
   const appServerPids = (processes.processes || [])
@@ -358,8 +366,8 @@ function detectAppServerAccess(runner) {
   };
 }
 
-function detectUiAutomation(runner, windows = {}) {
-  if (process.platform !== 'win32') {
+function detectUiAutomation(runner, windows = {}, options = {}) {
+  if (!isWindowsProbe(options)) {
     return { supported: false, reason: 'non_windows_host', safePromptTarget: false };
   }
   const codexWindow = (windows.windows || []).find((entry) => String(entry.processName || '').toLowerCase() === 'codex'
@@ -538,12 +546,12 @@ function probeCodexDesktopInboundTransport(options = {}) {
   const runner = options.runner || defaultRunner;
   const nowIso = asIso(options.now);
   const codexCli = detectCodexCli(runner);
-  const processes = detectDesktopProcesses(runner);
-  const windows = detectDesktopWindows(runner);
-  const protocol = detectProtocolHandler(runner);
-  const network = detectNetworkListeners(runner, processes);
+  const processes = detectDesktopProcesses(runner, options);
+  const windows = detectDesktopWindows(runner, options);
+  const protocol = detectProtocolHandler(runner, options);
+  const network = detectNetworkListeners(runner, processes, options);
   const appServer = detectAppServerAccess(runner);
-  const uiAutomation = detectUiAutomation(runner, windows);
+  const uiAutomation = detectUiAutomation(runner, windows, options);
   const official = buildOfficialCapabilityStudy();
   const evidence = {
     official,
