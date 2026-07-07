@@ -17,6 +17,7 @@ function createRendererModules() {
     workspacePaneShell: require('../workspace-pane-shell'),
     squidRoomSurface: require('../squid-room-surface'),
     squidRoomCreatureRuntime: require('../squid-room-creature-runtime'),
+    shellV2: require('../shell-v2'),
     // S468 weaker-duplicate hunt: package-backed ANSI strip (OSC hyperlinks,
     // charset selects) replaces the renderer's hand-rolled CSI-only regex.
     ansi: require('../ansi'),

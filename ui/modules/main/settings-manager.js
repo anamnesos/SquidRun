@@ -138,6 +138,10 @@ function buildCommandForCli(cli, options = {}) {
   return 'claude --permission-mode acceptEdits';
 }
 
+function isShellV2EnvOverrideEnabled(env = process.env) {
+  return String(env?.SQUIDRUN_SHELL_V2 || '').trim() === '1';
+}
+
 /**
  * @param {{ isPackaged?: boolean }} [options]
  * @returns {Record<string, unknown>}
@@ -163,6 +167,7 @@ function createDefaultSettings({ isPackaged = false } = {}) {
     smtpFrom: '',
     smtpTo: '',
     devTools: false,
+    shellV2Enabled: false,
     agentNotify: true,
     watcherEnabled: true,
     allowAllPermissions: false,
@@ -492,6 +497,9 @@ class SettingsManager {
     } catch (err) {
       log.error('Settings', 'Error loading settings', err);
       Object.assign(this.ctx.currentSettings, this.defaultSettings);
+    }
+    if (isShellV2EnvOverrideEnabled()) {
+      this.ctx.currentSettings.shellV2Enabled = true;
     }
     return this.ctx.currentSettings;
   }

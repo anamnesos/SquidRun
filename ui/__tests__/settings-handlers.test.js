@@ -176,6 +176,15 @@ describe('Settings Handlers', () => {
       expect(result.notifications).toBe(true);
     });
 
+    test('allows shellV2Enabled setting updates', async () => {
+      deps.loadSettings.mockReturnValue({ shellV2Enabled: false });
+
+      const result = await harness.invoke('set-setting', 'shellV2Enabled', true);
+
+      expect(deps.saveSettings).toHaveBeenCalledWith({ shellV2Enabled: true });
+      expect(result.shellV2Enabled).toBe(true);
+    });
+
     test('allows and normalizes one-shot fresh pane session setting', async () => {
       deps.loadSettings.mockReturnValue({});
 
