@@ -81,6 +81,7 @@ if (pinnedInstalledDataRoot?.path) {
 } else if (!process.env.SQUIDRUN_PROJECT_ROOT && app.isPackaged === true && installedDataRoot?.path) {
   process.env.SQUIDRUN_PROJECT_ROOT = installedDataRoot.path;
 }
+const { resolveCoordPath } = require('./config');
 
 const installedUserData = applyInstalledElectronUserDataPath(app, installedDataRoot);
 
@@ -138,7 +139,7 @@ if (singleInstanceLock === false) {
 // LOCK WON (or non-main profile): only now may this instance claim the CDP
 // truth file - a loser twin can no longer poison it (ceremony purge item 5).
 try {
-  const cdpPortFile = path.join(__dirname, '..', '.squidrun', 'runtime', 'cdp-port.json');
+  const cdpPortFile = resolveCoordPath(path.join('runtime', 'cdp-port.json'), { forWrite: true });
   fs.mkdirSync(path.dirname(cdpPortFile), { recursive: true });
   fs.writeFileSync(cdpPortFile, JSON.stringify({
     port: Number(cdpPort),
@@ -154,7 +155,6 @@ process.stderr.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 
 // Global error handlers — prevent main process crash on unhandled errors
 const log = require('./modules/logger');
-const { resolveCoordPath } = require('./config');
 
 function appendMainBootSequenceBreadcrumb(step, details = {}) {
   try {

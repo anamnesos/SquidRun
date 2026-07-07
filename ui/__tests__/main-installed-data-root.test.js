@@ -44,4 +44,9 @@ describe('main.js installed data root startup ordering', () => {
     expect(pinnedProjectRootIndex).toBeLessThan(inheritedGuardIndex);
     expect(pinnedProjectRootIndex).toBeLessThan(configRequireIndex);
   });
+
+  test('writes cdp-port.json through the profiled coord path instead of the repo runtime path', () => {
+    expect(mainSource).toContain("resolveCoordPath(path.join('runtime', 'cdp-port.json'), { forWrite: true })");
+    expect(mainSource).not.toContain("path.join(__dirname, '..', '.squidrun', 'runtime', 'cdp-port.json')");
+  });
 });

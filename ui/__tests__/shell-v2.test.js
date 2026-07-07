@@ -45,7 +45,12 @@ class FakeElement {
     this.dataset = {};
     this.attributes = {};
     this.eventListeners = {};
-    this.style = {};
+    this.style = {
+      removeProperty: (name) => {
+        delete this.style[name];
+        if (name === 'display') this.style.display = '';
+      },
+    };
     this.id = '';
     this.hidden = false;
     this.scrollTop = 0;
@@ -88,6 +93,11 @@ class FakeElement {
     return this.attributes[name] || null;
   }
 
+  removeAttribute(name) {
+    delete this.attributes[name];
+    if (name === 'hidden') this.hidden = false;
+  }
+
   appendChild(child) {
     if (!child) return child;
     if (child.parentNode) {
@@ -113,6 +123,29 @@ class FakeElement {
       this.children.splice(index, 0, child);
     }
     return child;
+  }
+
+  removeChild(child) {
+    const index = this.children.indexOf(child);
+    if (index >= 0) {
+      this.children.splice(index, 1);
+      child.parentNode = null;
+      child.parentElement = null;
+    }
+    return child;
+  }
+
+  replaceChildren(...children) {
+    this.children.forEach((child) => {
+      child.parentNode = null;
+      child.parentElement = null;
+    });
+    this.children = [];
+    children.forEach((child) => this.appendChild(child));
+  }
+
+  remove() {
+    this.parentNode?.removeChild?.(this);
   }
 
   addEventListener(type, listener) {
@@ -146,6 +179,11 @@ class FakeElement {
     }
     return null;
   }
+
+  contains(target) {
+    if (target === this) return true;
+    return (this.children || []).some((child) => child.contains?.(target) === true);
+  }
 }
 
 function toDatasetKey(value) {
@@ -162,6 +200,11 @@ function matchesSelector(node, selector) {
     const [, className, dataName, value] = dataMatch;
     const classOk = !className || node.classList.contains(className);
     return classOk && node.dataset[toDatasetKey(dataName)] === value;
+  }
+
+  const multiClassMatch = selector.match(/^\.([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)$/);
+  if (multiClassMatch) {
+    return node.classList.contains(multiClassMatch[1]) && node.classList.contains(multiClassMatch[2]);
   }
 
   if (selector.startsWith('.')) return node.classList.contains(selector.slice(1));
@@ -294,11 +337,27 @@ function createFakeDocument() {
 function makePane(make, paneId) {
   const pane = make('div', { className: 'pane', dataset: { paneId } });
   const header = make('div', { className: 'pane-header' });
+  const title = make('span', { className: 'pane-title', text: paneId === '2' ? 'Builder' : paneId === '3' ? 'Oracle' : 'Mira' });
+  title.appendChild(make('span', { id: `badge-${paneId}`, className: 'agent-badge idle' }));
+  title.appendChild(make('button', { className: 'pane-role-info-btn', dataset: { paneId } }));
+  title.appendChild(make('span', { id: `cli-badge-${paneId}`, className: 'cli-badge' }));
+  title.appendChild(make('span', { id: `project-${paneId}`, className: 'pane-project' }));
+  title.appendChild(make('span', { id: `task-${paneId}`, className: 'agent-task' }));
+  const headerRight = make('div', { className: 'pane-header-right' });
+  const selector = make('select', { id: `model-selector-${paneId}`, className: 'model-selector', dataset: { paneId } });
+  selector.value = paneId === '3' ? 'gemini' : paneId === '2' ? 'codex' : 'claude';
+  headerRight.appendChild(selector);
+  headerRight.appendChild(make('button', { className: 'pane-action-btn fresh-session-btn', dataset: { paneId } }));
+  headerRight.appendChild(make('span', { id: `health-${paneId}`, className: 'agent-health', text: '-' }));
   const actions = make('div', { className: 'pane-actions' });
-  if (paneId !== '1') {
-    actions.appendChild(make('button', { className: 'pane-action-btn expand-btn', dataset: { paneId } }));
-  }
-  header.appendChild(actions);
+  actions.appendChild(make('button', { className: 'pane-action-btn interrupt-btn', dataset: { paneId } }));
+  actions.appendChild(make('button', { className: 'pane-action-btn unstick-btn', dataset: { paneId } }));
+  actions.appendChild(make('button', { className: 'pane-action-btn kickoff-btn', dataset: { paneId } }));
+  if (paneId !== '1') actions.appendChild(make('button', { className: 'pane-action-btn expand-btn', dataset: { paneId } }));
+  headerRight.appendChild(actions);
+  headerRight.appendChild(make('span', { id: `lock-icon-${paneId}`, className: 'lock-icon', dataset: { paneId } }));
+  header.appendChild(title);
+  header.appendChild(headerRight);
   pane.appendChild(header);
   const terminal = make('div', { id: `terminal-${paneId}`, className: 'pane-terminal', text: `pane ${paneId} scrollback` });
   terminal.scrollTop = Number(paneId) * 10;
@@ -308,11 +367,19 @@ function makePane(make, paneId) {
 
 function initHarness({ settings = { shellV2Enabled: true }, env = {}, windowContext = { windowKey: 'main' } } = {}) {
   const dom = createFakeDocument();
+  let activePaneIds = ['1', '2', '3'];
   const terminalApi = {
     handleResize: jest.fn(),
     spawn: jest.fn(),
     write: jest.fn(),
     kill: jest.fn(),
+    focusPane: jest.fn(),
+    getActivePaneIds: jest.fn(() => activePaneIds.slice()),
+    setActivePaneIds: jest.fn((paneIds) => {
+      activePaneIds = paneIds.slice();
+      return activePaneIds.slice();
+    }),
+    setPaneRuntimeOverride: jest.fn(),
   };
   const win = {
     requestAnimationFrame: (fn) => {
@@ -381,6 +448,26 @@ describe('shell-v2', () => {
     expect(doc.getElementById('settingsBtn').hidden).toBe(false);
     expect(doc.getElementById('settingsBtn').style.display).toBe('');
     expect(doc.getElementById('headerSessionBadge').parentNode.classList.contains('status-bar')).toBe(true);
+    expect(doc.querySelector('.status-shortcuts')).toBeNull();
+  });
+
+  test('refreshChrome keeps the bottom bar visible and purges stale shortcut text', () => {
+    const { doc, controller } = initHarness();
+    const statusBar = doc.querySelector('.status-bar');
+    const staleHint = doc.createElement('span');
+    staleHint.className = 'status-shortcuts';
+    staleHint.textContent = 'Press Ctrl+1-4 to focus pane';
+    statusBar.hidden = true;
+    statusBar.style.display = 'none';
+    statusBar.setAttribute('aria-hidden', 'true');
+    statusBar.appendChild(staleHint);
+
+    controller.refreshChrome();
+
+    expect(statusBar.hidden).toBe(false);
+    expect(statusBar.style.display).toBe('');
+    expect(statusBar.getAttribute('aria-hidden')).toBeNull();
+    expect(statusBar.querySelector('.status-shortcuts')).toBeNull();
   });
 
   test('keeps pane DOM identity and scrollback across 50 programmatic switches', () => {
@@ -413,7 +500,7 @@ describe('shell-v2', () => {
   });
 
   test('Ctrl+1/2/3 switches shell tabs before pane-focus shortcuts can run', () => {
-    const { doc, controller } = initHarness();
+    const { doc, controller, terminalApi } = initHarness();
     const makeEvent = (key) => ({
       key,
       ctrlKey: true,
@@ -437,24 +524,94 @@ describe('shell-v2', () => {
     const toMira = makeEvent('1');
     doc.fire('keydown', toMira);
     expect(controller.getActiveTab()).toBe('mira');
+    expect(terminalApi.focusPane).not.toHaveBeenCalled();
   });
 
-  test('Builder and Oracle expand buttons toggle the core strip, not individual pane expansion', () => {
-    const { doc, panes, controller } = initHarness();
-    const expandButton = panes['2'].querySelector('.expand-btn');
-    const event = {
-      target: expandButton,
+  test('removes legacy Builder and Oracle expand buttons and reduces station headers', () => {
+    const { panes, controller } = initHarness();
+
+    for (const paneId of ['2', '3']) {
+      const pane = panes[paneId];
+      const header = pane.querySelector('.pane-header');
+      expect(pane.querySelector('.expand-btn')).toBeNull();
+      expect(pane.querySelector('.agent-badge')).toBeNull();
+      expect(header.dataset.shellV2Reduced).toBe('true');
+      expect(header.children).toHaveLength(3);
+      expect(header.querySelector('.shell-v2-station-chip')).toBeTruthy();
+      expect(header.querySelector('.shell-v2-needs-input-slot').textContent).toBe('');
+      expect(header.querySelector('.shell-v2-station-menu')).toBeTruthy();
+      expect(header.querySelector(`.interrupt-btn[data-pane-id="${paneId}"]`)).toBeTruthy();
+      expect(header.querySelector(`.fresh-session-btn[data-pane-id="${paneId}"]`)).toBeTruthy();
+      expect(header.querySelector(`#health-${paneId}`)).toBeTruthy();
+    }
+
+    controller.refreshChrome();
+    expect(panes['2'].querySelector('.expand-btn')).toBeNull();
+    expect(panes['3'].querySelector('.expand-btn')).toBeNull();
+  });
+
+  test('creates the TrustQuote arm section on existing terminal/runtime paths', () => {
+    const { doc, terminalApi } = initHarness();
+    const section = doc.getElementById('shellV2TrustQuoteSection');
+    const panes = section.querySelectorAll('.shell-v2-arm-pane');
+
+    expect(section).toBeTruthy();
+    expect(section.querySelector('.shell-v2-arm-section-app').textContent).toBe('TrustQuote');
+    expect(section.querySelector('.shell-v2-arm-section-lead').textContent).toBe('Lead');
+    expect(section.querySelector('.shell-v2-arm-section-count').textContent).toBe('4 arms');
+    expect(section.querySelector('.shell-v2-arm-section-report').textContent).toBe('');
+    expect(panes.map((pane) => pane.dataset.paneId)).toEqual([
+      'trustquote-lead',
+      'trustquote-schedule-dispatch',
+      'trustquote-app',
+      'trustquote-invoice',
+    ]);
+    expect(doc.getElementById('terminal-trustquote-lead')).toBeTruthy();
+    expect(terminalApi.setActivePaneIds).toHaveBeenCalledWith(expect.arrayContaining([
+      '1',
+      '2',
+      '3',
+      'trustquote-lead',
+      'trustquote-app',
+    ]));
+    expect(terminalApi.setPaneRuntimeOverride).toHaveBeenCalledWith(
+      'trustquote-lead',
+      expect.objectContaining({
+        roleId: 'trustquote-lead',
+        routeTarget: 'trustquote-lead',
+        spawnCommandOnCreate: true,
+        recreateOnWorkingDirMismatch: true,
+      })
+    );
+  });
+
+  test('arm pane click, double-click zoom, collapse, and Escape restore stay in-room', () => {
+    const { doc, terminalApi } = initHarness();
+    const section = doc.getElementById('shellV2TrustQuoteSection');
+    const appPane = section.querySelector('.shell-v2-arm-pane[data-pane-id="trustquote-app"]');
+    const toggle = section.querySelector('.shell-v2-arm-section-toggle');
+
+    section.eventListeners.click[0]({ target: appPane });
+    expect(appPane.classList.contains('is-main-slot')).toBe(true);
+    expect(terminalApi.focusPane).toHaveBeenCalledWith('trustquote-app');
+
+    section.eventListeners.dblclick[0]({ target: appPane });
+    expect(section.classList.contains('has-temp-zoom')).toBe(true);
+    expect(appPane.classList.contains('is-temp-zoom')).toBe(true);
+
+    const escape = {
+      key: 'Escape',
       preventDefault: jest.fn(),
       stopPropagation: jest.fn(),
       stopImmediatePropagation: jest.fn(),
     };
+    doc.fire('keydown', escape);
+    expect(section.classList.contains('has-temp-zoom')).toBe(false);
+    expect(appPane.classList.contains('is-temp-zoom')).toBe(false);
+    expect(escape.stopImmediatePropagation).toHaveBeenCalled();
 
-    doc.fire('click', event);
-
-    expect(controller.isCoreExpanded()).toBe(true);
-    expect(doc.getElementById('shellV2CoreStrip').classList.contains('shell-v2-core-expanded')).toBe(true);
-    expect(panes['2'].classList.contains('pane-expanded')).toBe(false);
-    expect(panes['3'].classList.contains('pane-expanded')).toBe(false);
-    expect(event.stopImmediatePropagation).toHaveBeenCalled();
+    toggle.eventListeners.click[0]();
+    expect(section.classList.contains('is-collapsed')).toBe(true);
+    expect(section.querySelector('.shell-v2-arm-panes').hidden).toBe(true);
   });
 });

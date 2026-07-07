@@ -1953,15 +1953,192 @@ body.shell-v2-enabled .shell-v2-core-strip {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  gap: 8px;
 }
 
 body.shell-v2-enabled .side-panes-container {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  gap: 8px;
+  min-height: 0;
+}
+
+body.shell-v2-enabled .side-panes-container > .pane {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+body.shell-v2-enabled .shell-v2-station .pane-header,
+body.shell-v2-enabled .shell-v2-arm-pane .pane-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(52px, 0.7fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 8px;
+}
+
+body.shell-v2-enabled .shell-v2-arm-pane .pane-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+body.shell-v2-enabled .shell-v2-station-chip,
+body.shell-v2-enabled .shell-v2-arm-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+body.shell-v2-enabled .shell-v2-station-chip .cli-badge,
+body.shell-v2-enabled .shell-v2-arm-title .cli-badge {
+  display: inline-flex;
+  min-width: max-content;
+}
+
+body.shell-v2-enabled .shell-v2-needs-input-slot {
+  min-width: 0;
+  min-height: 16px;
+}
+
+body.shell-v2-enabled .shell-v2-station-menu {
+  position: relative;
+  justify-self: end;
+}
+
+body.shell-v2-enabled .shell-v2-station-menu-trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  border: 1px solid rgba(113, 137, 167, 0.3);
+  border-radius: var(--radius-sm);
+  background: rgba(20, 28, 44, 0.84);
+  color: var(--color-text);
+  cursor: pointer;
+  list-style: none;
+}
+
+body.shell-v2-enabled .shell-v2-station-menu-trigger::-webkit-details-marker {
+  display: none;
+}
+
+body.shell-v2-enabled .shell-v2-station-menu-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(96px, 1fr));
+  gap: 6px;
+  min-width: 230px;
+  padding: 8px;
+  border: 1px solid rgba(113, 137, 167, 0.28);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-lg);
+}
+
+body.shell-v2-enabled .shell-v2-station-menu-panel .pane-action-btn,
+body.shell-v2-enabled .shell-v2-station-menu-panel .pane-role-info-btn {
+  width: auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  justify-content: center;
+}
+
+body.shell-v2-enabled .shell-v2-station-menu-panel .model-selector {
+  grid-column: 1 / -1;
+  width: 100%;
 }
 
 body.shell-v2-enabled .shell-v2-core-strip.shell-v2-core-expanded .side-panes-container {
   gap: 8px;
+}
+
+body.shell-v2-enabled .shell-v2-arm-section {
+  display: flex;
+  flex: 1 1 42%;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid rgba(113, 137, 167, 0.14);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+body.shell-v2-enabled .shell-v2-arm-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(113, 137, 167, 0.14);
+}
+
+body.shell-v2-enabled .shell-v2-arm-section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 28px;
+  border: 1px solid rgba(113, 137, 167, 0.24);
+  border-radius: var(--radius-sm);
+  background: rgba(20, 28, 44, 0.68);
+  color: var(--color-text);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+body.shell-v2-enabled .shell-v2-arm-section-report {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.shell-v2-enabled .shell-v2-arm-panes {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.3fr) repeat(3, minmax(180px, 1fr));
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px;
+}
+
+body.shell-v2-enabled .shell-v2-arm-pane {
+  min-width: 0;
+  min-height: 190px;
+  cursor: default;
+}
+
+body.shell-v2-enabled .shell-v2-arm-pane.is-main-slot {
+  grid-column: span 2;
+}
+
+body.shell-v2-enabled .shell-v2-arm-pane.is-neighbor {
+  opacity: 0.82;
+}
+
+body.shell-v2-enabled .shell-v2-arm-section.has-temp-zoom .shell-v2-arm-pane.is-temp-zoom {
+  grid-column: 1 / -1;
+  min-height: 46vh;
+}
+
+body.shell-v2-enabled .shell-v2-arm-section.is-collapsed .shell-v2-arm-section-header {
+  border-bottom: 0;
 }
 
 body.shell-v2-enabled .shell-v2-today-view::before {

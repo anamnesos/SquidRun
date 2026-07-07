@@ -800,8 +800,10 @@ function ensureSquidRoomLivePanes(doc) {
   return panes;
 }
 
-function configureSquidRoomRuntimeOverrides(terminal, livePanes = SQUID_ROOM_TRUSTQUOTE_ARM_PANES) {
+function configureSquidRoomRuntimeOverrides(terminal, livePanes = SQUID_ROOM_TRUSTQUOTE_ARM_PANES, options = {}) {
   if (!terminal || typeof terminal.setPaneRuntimeOverride !== 'function') return;
+  const skipStartupInjection = options.skipStartupInjection === true;
+  const spawnCommandOnCreate = options.spawnCommandOnCreate !== false;
   for (const spec of livePanes) {
     const command = resolveArmCommandFromSettings(spec.paneId, spec.command);
     const provider = detectModelFamily(command);
@@ -815,7 +817,8 @@ function configureSquidRoomRuntimeOverrides(terminal, livePanes = SQUID_ROOM_TRU
       commandSourcePaneId: spec.commandSourcePaneId,
       workingDir: spec.workingDir,
       startupMessage: spec.startupMessage,
-      spawnCommandOnCreate: true,
+      spawnCommandOnCreate,
+      ...(skipStartupInjection ? { skipStartupInjection: true } : {}),
       recreateOnWorkingDirMismatch: true,
     });
   }
@@ -952,6 +955,7 @@ module.exports = {
   SQUID_ROOM_PET_PANE_SPECS,
   SQUID_ROOM_TEAM_PANE_IDS,
   SQUID_ROOM_TRUSTQUOTE_ARM_PANES,
+  configureSquidRoomRuntimeOverrides,
   ensureSquidRoomPetFilters,
   configureWorkspacePaneShell,
 };
