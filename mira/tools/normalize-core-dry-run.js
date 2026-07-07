@@ -466,7 +466,16 @@ function formatNormalizedPreview(preview) {
 if (require.main === module) {
   const json = process.argv.includes('--json');
   const apply = process.argv.includes('--apply');
-  const preview = apply ? applyNormalizedCore() : buildNormalizedPreview();
+  const optionValue = (name) => {
+    const index = process.argv.indexOf(name);
+    return index >= 0 ? process.argv[index + 1] : null;
+  };
+  const options = {
+    contractPath: optionValue('--contract') || undefined,
+    reportPath: optionValue('--report') || undefined,
+    approvalPath: optionValue('--approval') || undefined,
+  };
+  const preview = apply ? applyNormalizedCore(options) : buildNormalizedPreview(options);
 
   if (json) {
     console.log(JSON.stringify(preview, null, 2));

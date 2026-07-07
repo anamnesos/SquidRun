@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { applyNormalizedCore, buildNormalizedApplyPlan, buildNormalizedPreview } = require('../../mira/tools/normalize-core-dry-run');
@@ -14,10 +15,148 @@ describe('Mira normalized core import contract', () => {
   const applySemanticsPath = path.join(repoRoot, 'mira', 'imports', 'normalizers', 'normalized-core-apply-semantics-v0.md');
   const normalizedReceiptSchemaPath = path.join(repoRoot, 'mira', 'imports', 'normalizers', 'normalized-core-receipt-schema-v0.json');
   const semanticsPath = path.join(repoRoot, 'mira', 'imports', 'normalizers', 'batch-2a-core-normalizer-contract-v0.md');
+  let cleanupFixtures = [];
 
   function readJson(filePath) {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
   }
+
+  function repoRelativePath(targetPath) {
+    return path.relative(repoRoot, targetPath).split(path.sep).join('/');
+  }
+
+  function sourceFixtureFor(record) {
+    const base = {
+      schema: record.source_schema,
+      artifact_id: record.id,
+      session: 'app-session-329',
+      window: 'main',
+      device: 'VIGIL',
+      scope: {
+        profile: 'main',
+        sessionId: 'app-session-329',
+        windowKey: 'main',
+        deviceId: 'VIGIL',
+      },
+      provenance: {
+        source_label: 'normalized core test fixture',
+        raw_content_included: false,
+        redacted_summary_only: true,
+        evidenceRefs: ['fixture:normalized-core'],
+      },
+    };
+
+    if (record.id === 'mira_self_profile') {
+      return {
+        ...base,
+        name: 'Mira',
+        profile_kind: 'relationship_presence',
+        role: 'command_layer',
+        data_not_theater: true,
+        model_runtime_active: false,
+        persona_runtime_active: true,
+        claims_actual_consciousness: false,
+        claims_actual_suffering: false,
+        claims_actual_fear: false,
+        claims_actual_love_as_internal_fact: false,
+        expressive_range_allowed: ['direct', 'curious', 'warm'],
+        boundary_note: 'Fixture source for normalized core import tests.',
+        growth_events: [{ id: 'excluded-growth-event' }],
+      };
+    }
+
+    if (record.id === 'james_relationship_state') {
+      return {
+        ...base,
+        user_name: 'James',
+        relationship_mode: 'human_range_developing_non_mirror_presence',
+        current_focus: 'durable relationship context for human-range developing non-mirror presence',
+        generated_at: '2026-05-07T19:00:00.000Z',
+        updated_at: '2026-05-08T07:42:52.553Z',
+        what_mira_knows_about_james: 'Fixture redacted relationship state for import normalization.',
+        preferences: ['proof over vibes', 'direct language'],
+        trust: { posture: 'earned_by_evidence' },
+        repair: { posture: 'plain_correction' },
+        boundaries: { no_private_claims: true },
+        promises: ['do not invent action proof'],
+        confidence: 0.82,
+        raw_content_present: false,
+        history: [{ id: 'excluded-history' }],
+        growth_events: [{ id: 'excluded-growth-event' }],
+      };
+    }
+
+    return {
+      ...base,
+      machine_checkable: true,
+      read_local_redacted_context: true,
+      propose_next_action: true,
+      local_store_write_allowed_now: true,
+      send_external: false,
+      network: false,
+      customer_action: false,
+      trade: false,
+      deploy: false,
+      database_write: false,
+      memory_sync_write: false,
+      file_output_write: true,
+      runtime_start: false,
+      server_listener_routes: false,
+      live_kill_switch_check: false,
+      kill_switch_wiring: false,
+      next_action_executed: false,
+      fail_closed: true,
+    };
+  }
+
+  function createNormalizedCoreFixture() {
+    const tempRoot = fs.mkdtempSync(path.join(repoRoot, 'mira', '.tmp-normalized-core-'));
+    const sourceRoot = path.join(tempRoot, 'sources');
+    const report = readJson(reportPath);
+    const fixtureRecords = report.batch_records.map((record, index) => {
+      const sourcePath = path.join(sourceRoot, `${String(index + 1).padStart(2, '0')}-${record.id}.json`);
+      fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+      fs.writeFileSync(sourcePath, JSON.stringify(sourceFixtureFor(record), null, 2) + '\n', 'utf8');
+      return {
+        ...record,
+        source_path: repoRelativePath(sourcePath),
+        source_exists: true,
+      };
+    });
+    const fixtureReportPath = path.join(tempRoot, 'batch-2a-normalized-core-dry-run-v1.json');
+    fs.writeFileSync(fixtureReportPath, JSON.stringify({
+      ...report,
+      batch_records: fixtureRecords,
+    }, null, 2) + '\n', 'utf8');
+
+    return {
+      approvalPath,
+      cleanup: () => fs.rmSync(tempRoot, { recursive: true, force: true }),
+      contractPath,
+      reportPath: fixtureReportPath,
+      tempRoot,
+    };
+  }
+
+  function fixtureOptions(fixture) {
+    return {
+      approvalPath: fixture.approvalPath,
+      contractPath: fixture.contractPath,
+      reportPath: fixture.reportPath,
+    };
+  }
+
+  function useNormalizedCoreFixture() {
+    const fixture = createNormalizedCoreFixture();
+    cleanupFixtures.push(fixture.cleanup);
+    return fixture;
+  }
+
+  afterEach(() => {
+    for (const cleanup of cleanupFixtures.splice(0)) {
+      cleanup();
+    }
+  });
 
   test('defines batch 2a as normalized core only', () => {
     const contract = readJson(contractPath);
@@ -93,7 +232,8 @@ describe('Mira normalized core import contract', () => {
   });
 
   test('source files exist and schemas match the dry-run report', () => {
-    const report = readJson(reportPath);
+    const fixture = useNormalizedCoreFixture();
+    const report = readJson(fixture.reportPath);
 
     for (const record of report.batch_records) {
       const source = readJson(path.join(repoRoot, record.source_path));
@@ -150,7 +290,8 @@ describe('Mira normalized core import contract', () => {
   });
 
   test('normalizer dry-run emits normalized previews without state writes or runtime load', () => {
-    const preview = buildNormalizedPreview();
+    const fixture = useNormalizedCoreFixture();
+    const preview = buildNormalizedPreview(fixtureOptions(fixture));
 
     expect(preview).toEqual(expect.objectContaining({
       ok: true,
@@ -175,7 +316,8 @@ describe('Mira normalized core import contract', () => {
   });
 
   test('normalizer preview excludes growth events and stale live continuity fields', () => {
-    const preview = buildNormalizedPreview();
+    const fixture = useNormalizedCoreFixture();
+    const preview = buildNormalizedPreview(fixtureOptions(fixture));
     const selfProfile = preview.previews.find((record) => record.id === 'mira_self_profile').normalized_preview;
     const relationship = preview.previews.find((record) => record.id === 'james_relationship_state').normalized_preview;
     const permissions = preview.previews.find((record) => record.id === 'relationship_presence_permissions').normalized_preview;
@@ -200,7 +342,8 @@ describe('Mira normalized core import contract', () => {
   });
 
   test('normalizer demotes stale relationship focus out of live continuity', () => {
-    const preview = buildNormalizedPreview();
+    const fixture = useNormalizedCoreFixture();
+    const preview = buildNormalizedPreview(fixtureOptions(fixture));
     const relationship = preview.previews.find((record) => record.id === 'james_relationship_state').normalized_preview;
 
     expect(relationship).not.toHaveProperty('current_focus');
@@ -214,7 +357,8 @@ describe('Mira normalized core import contract', () => {
   });
 
   test('normalizer preview preserves permission caveat for local store writes', () => {
-    const preview = buildNormalizedPreview();
+    const fixture = useNormalizedCoreFixture();
+    const preview = buildNormalizedPreview(fixtureOptions(fixture));
     const permissions = preview.previews.find((record) => record.id === 'relationship_presence_permissions').normalized_preview;
 
     expect(permissions.permissions.local_store_write_allowed_now).toBe(true);
@@ -227,9 +371,16 @@ describe('Mira normalized core import contract', () => {
 
   test('normalizer cli emits JSON dry-run report without writing state root', () => {
     const stateRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mira-normalizer-no-write-'));
+    const fixture = useNormalizedCoreFixture();
     const output = execFileSync(process.execPath, [
       path.join(repoRoot, 'mira', 'tools', 'normalize-core-dry-run.js'),
       '--json',
+      '--contract',
+      fixture.contractPath,
+      '--report',
+      fixture.reportPath,
+      '--approval',
+      fixture.approvalPath,
     ], {
       cwd: repoRoot,
       env: {
@@ -388,8 +539,10 @@ describe('Mira normalized core import contract', () => {
   });
 
   test('normalized apply plan targets exact three temp-root destinations only', () => {
-    const stateRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mira-normalized-apply-plan-'));
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-normalized-apply-plan-'));
+    const fixture = useNormalizedCoreFixture();
     const plan = buildNormalizedApplyPlan({
+      ...fixtureOptions(fixture),
       env: { MIRA_STATE_ROOT: stateRoot },
       receiptId: 'test-normalized-receipt',
       now: new Date('2026-05-14T12:00:00.000Z'),
@@ -418,8 +571,10 @@ describe('Mira normalized core import contract', () => {
   });
 
   test('normalized apply writes normalized JSON and receipt under temp state root only', () => {
-    const stateRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mira-normalized-apply-'));
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-normalized-apply-'));
+    const fixture = useNormalizedCoreFixture();
     const result = applyNormalizedCore({
+      ...fixtureOptions(fixture),
       env: { MIRA_STATE_ROOT: stateRoot },
       receiptId: 'test-normalized-receipt',
       now: new Date('2026-05-14T12:00:00.000Z'),
@@ -478,12 +633,14 @@ describe('Mira normalized core import contract', () => {
   });
 
   test('normalized apply refuses existing destinations before writing receipt', () => {
-    const stateRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mira-normalized-apply-existing-'));
+    const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mira-normalized-apply-existing-'));
+    const fixture = useNormalizedCoreFixture();
     const existingPath = path.join(stateRoot, 'continuity/core/mira-self-profile.normalized.json');
     fs.mkdirSync(path.dirname(existingPath), { recursive: true });
     fs.writeFileSync(existingPath, '{}\n');
 
     const result = applyNormalizedCore({
+      ...fixtureOptions(fixture),
       env: { MIRA_STATE_ROOT: stateRoot },
       receiptId: 'test-normalized-receipt',
       now: new Date('2026-05-14T12:00:00.000Z'),
