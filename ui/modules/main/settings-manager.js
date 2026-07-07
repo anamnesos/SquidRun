@@ -167,6 +167,7 @@ function createDefaultSettings({ isPackaged = false } = {}) {
     smtpFrom: '',
     smtpTo: '',
     devTools: false,
+    devMode: false,
     shellV2Enabled: false,
     agentNotify: true,
     watcherEnabled: true,

@@ -286,6 +286,62 @@ function createFakeDocument() {
   header.appendChild(headerActions);
   body.appendChild(header);
 
+  const profileOverlay = make('div', { id: 'profileModalOverlay', className: 'pane-role-modal-overlay profile-modal-overlay' });
+  profileOverlay.appendChild(make('div', { id: 'profileModalSubtitle', className: 'pane-role-modal-subtitle', text: 'Profile copy' }));
+  const profileForm = make('form', { id: 'profileModalForm', className: 'profile-modal-form' });
+  profileForm.appendChild(make('input', { id: 'profileNameInput', className: 'settings-input' }));
+  profileForm.appendChild(make('button', { id: 'profileModalSave', className: 'btn profile-modal-save' }));
+  profileOverlay.appendChild(profileForm);
+  body.appendChild(profileOverlay);
+
+  const settingsPanel = make('div', { id: 'settingsPanel', className: 'settings-panel' });
+  const settingsShell = make('div', { className: 'settings-shell' });
+  const settingsLayout = make('div', { className: 'settings-layout' });
+  const makeSettingsSection = (title, children = []) => {
+    const section = make('div', { className: 'settings-section' });
+    section.appendChild(make('div', { className: 'settings-section-title', text: title }));
+    const items = make('div', { className: 'settings-items' });
+    children.forEach((child) => items.appendChild(child));
+    section.appendChild(items);
+    return section;
+  };
+  const makeSettingItem = (id, setting) => {
+    const item = make('div', { className: 'setting-item' });
+    item.appendChild(make('span', { className: 'setting-label', text: setting }));
+    item.appendChild(make('div', { id, className: 'toggle', dataset: { setting } }));
+    return item;
+  };
+  settingsLayout.appendChild(makeSettingsSection('General', [
+    makeSettingItem('toggleAutoSpawn', 'autoSpawn'),
+    makeSettingItem('toggleDevTools', 'devTools'),
+  ]));
+  settingsLayout.appendChild(makeSettingsSection('Permissions', [
+    makeSettingItem('toggleAllowAllPermissions', 'allowAllPermissions'),
+  ]));
+  settingsLayout.appendChild(makeSettingsSection('Voice Control', [
+    makeSettingItem('toggleVoiceInputEnabled', 'voiceInputEnabled'),
+    makeSettingItem('toggleVoiceAutoSend', 'voiceAutoSend'),
+  ]));
+  const costSection = makeSettingsSection('Cost Alerts', [
+    makeSettingItem('toggleCostAlertEnabled', 'costAlertEnabled'),
+  ]);
+  costSection.appendChild(make('input', { id: 'costAlertThreshold', className: 'threshold-input' }));
+  settingsLayout.appendChild(costSection);
+  const externalSection = makeSettingsSection('External Notifications', [
+    makeSettingItem('toggleExternalNotificationsEnabled', 'externalNotificationsEnabled'),
+  ]);
+  externalSection.appendChild(make('input', { id: 'slackWebhookField', className: 'settings-input' }));
+  externalSection.appendChild(make('input', { id: 'discordWebhookField', className: 'settings-input' }));
+  externalSection.appendChild(make('button', { id: 'sendExternalTestBtn', className: 'btn' }));
+  settingsLayout.appendChild(externalSection);
+  settingsLayout.appendChild(makeSettingsSection('Devices', [
+    make('button', { id: 'pairingInitBtn', className: 'btn' }),
+    make('button', { id: 'pairingJoinBtn', className: 'btn' }),
+  ]));
+  settingsShell.appendChild(settingsLayout);
+  settingsPanel.appendChild(settingsShell);
+  body.appendChild(settingsPanel);
+
   const stateBar = make('div', { className: 'state-bar' });
   const stateLeft = make('div', { className: 'state-bar-left' });
   const projectIndicator = make('div', { className: 'project-indicator' });
@@ -316,7 +372,22 @@ function createFakeDocument() {
   paneLayout.appendChild(sidePanesContainer);
   terminalsSection.appendChild(paneLayout);
   mainContent.appendChild(terminalsSection);
-  mainContent.appendChild(make('div', { id: 'rightPanel', className: 'right-panel' }));
+  const rightPanel = make('div', { id: 'rightPanel', className: 'right-panel' });
+  const panelTabs = make('div', { className: 'panel-tabs' });
+  ['bridge', 'comms', 'screenshots', 'oracle', 'voice', 'api-keys'].forEach((tab) => {
+    panelTabs.appendChild(make('button', { className: 'panel-tab', text: tab, dataset: { tab } }));
+  });
+  rightPanel.appendChild(panelTabs);
+  const voiceTab = make('div', { id: 'tab-voice', className: 'tab-pane' });
+  voiceTab.appendChild(make('div', { id: 'voiceBrokerPanel', className: 'voice-broker-panel' }));
+  rightPanel.appendChild(voiceTab);
+  const apiKeysTab = make('div', { id: 'tab-api-keys', className: 'tab-pane' });
+  apiKeysTab.appendChild(make('button', { id: 'saveApiKeysBtn', className: 'btn' }));
+  rightPanel.appendChild(apiKeysTab);
+  const oracleTab = make('div', { id: 'tab-oracle', className: 'tab-pane' });
+  oracleTab.appendChild(make('button', { id: 'oracleGenerateBtn', className: 'btn' }));
+  rightPanel.appendChild(oracleTab);
+  mainContent.appendChild(rightPanel);
   body.appendChild(mainContent);
 
   const statusBar = make('div', { className: 'status-bar' });
@@ -380,6 +451,7 @@ function initHarness({
 } = {}) {
   const dom = createFakeDocument();
   let activePaneIds = ['1', '2', '3'];
+  const clipboardWriteText = jest.fn(async () => undefined);
   const terminalApi = {
     handleResize: jest.fn(),
     spawn: jest.fn(),
@@ -399,6 +471,11 @@ function initHarness({
       fn();
       return 1;
     },
+    navigator: {
+      clipboard: {
+        writeText: clipboardWriteText,
+      },
+    },
   };
   const controller = initShellV2({
     document: dom.doc,
@@ -410,7 +487,7 @@ function initHarness({
     todayJournalApi,
     todayFullMessageApi,
   });
-  return { ...dom, terminalApi, controller };
+  return { ...dom, terminalApi, controller, clipboardWriteText };
 }
 
 describe('shell-v2', () => {
@@ -464,6 +541,77 @@ describe('shell-v2', () => {
     expect(doc.getElementById('settingsBtn').style.display).toBe('');
     expect(doc.getElementById('headerSessionBadge').parentNode.classList.contains('status-bar')).toBe(true);
     expect(doc.querySelector('.status-shortcuts')).toBeNull();
+  });
+
+  test('removes Shell V2 killed controls and migrates settings into an overlay', () => {
+    const { doc } = initHarness();
+
+    expect(doc.getElementById('selectProjectBtn')).toBeNull();
+    expect(doc.getElementById('panelBtn')).toBeNull();
+    expect(doc.getElementById('openHumanTimelineBtn')).toBeNull();
+    expect(doc.getElementById('openSquidRoomBtn')).toBeNull();
+    expect(doc.getElementById('openMiraLabBtn')).toBeNull();
+    expect(doc.getElementById('rightPanel')).toBeNull();
+    expect(doc.querySelector('.panel-tabs')).toBeNull();
+    expect(doc.getElementById('settingsPanel')).toBeNull();
+    expect(doc.getElementById('slackWebhookField')).toBeNull();
+    expect(doc.getElementById('discordWebhookField')).toBeNull();
+    expect(doc.getElementById('sendExternalTestBtn')).toBeNull();
+
+    const overlay = doc.getElementById('shellV2SettingsOverlay');
+    expect(overlay).toBeTruthy();
+    expect(overlay.querySelector('[data-shell-v2-settings-nav="general"]')).toBeTruthy();
+    expect(overlay.querySelector('[data-shell-v2-settings-nav="voice"]')).toBeTruthy();
+    expect(overlay.querySelector('[data-shell-v2-settings-nav="secrets"]')).toBeTruthy();
+    expect(overlay.querySelector('[data-shell-v2-settings-nav="profile"]')).toBeTruthy();
+    expect(overlay.querySelector('#toggleDevTools')).toBeTruthy();
+    expect(overlay.querySelector('#toggleDevMode')).toBeTruthy();
+    expect(overlay.querySelector('#voiceBrokerPanel')).toBeTruthy();
+    expect(overlay.querySelector('#saveApiKeysBtn')).toBeTruthy();
+    expect(overlay.querySelector('#profileModalForm')).toBeTruthy();
+
+    const keyEvent = {
+      key: ',',
+      ctrlKey: true,
+      metaKey: false,
+      preventDefault: jest.fn(),
+    };
+    doc.fire('keydown', keyEvent);
+    expect(overlay.classList.contains('open')).toBe(true);
+    expect(keyEvent.preventDefault).toHaveBeenCalled();
+
+    const escape = { key: 'Escape', preventDefault: jest.fn() };
+    doc.fire('keydown', escape);
+    expect(overlay.classList.contains('open')).toBe(false);
+  });
+
+  test('keeps killed legacy controls present when the Shell V2 flag is off', () => {
+    const dom = createFakeDocument();
+    initShellV2({
+      document: dom.doc,
+      settings: { shellV2Enabled: false },
+      windowContext: { windowKey: 'main' },
+    });
+
+    expect(dom.doc.getElementById('selectProjectBtn')).toBeTruthy();
+    expect(dom.doc.getElementById('panelBtn')).toBeTruthy();
+    expect(dom.doc.getElementById('openHumanTimelineBtn')).toBeTruthy();
+    expect(dom.doc.getElementById('openSquidRoomBtn')).toBeTruthy();
+    expect(dom.doc.getElementById('openMiraLabBtn')).toBeTruthy();
+    expect(dom.doc.getElementById('rightPanel')).toBeTruthy();
+    expect(dom.doc.querySelector('.panel-tabs')).toBeTruthy();
+    expect(dom.doc.getElementById('settingsPanel')).toBeTruthy();
+    expect(dom.doc.getElementById('slackWebhookField')).toBeTruthy();
+  });
+
+  test('shows the LAB tab only when devMode is enabled', () => {
+    const disabled = initHarness({ settings: { shellV2Enabled: true, devMode: false } });
+    expect(disabled.doc.getElementById('shellV2TabRail').children).toHaveLength(3);
+    expect(disabled.doc.querySelector('[data-shell-v2-tab="lab"]')).toBeNull();
+
+    const enabled = initHarness({ settings: { shellV2Enabled: true, devMode: true } });
+    expect(enabled.doc.getElementById('shellV2TabRail').children).toHaveLength(4);
+    expect(enabled.doc.querySelector('[data-shell-v2-tab="lab"]')).toBeTruthy();
   });
 
   test('refreshChrome keeps the bottom bar visible and purges stale shortcut text', () => {
@@ -720,7 +868,7 @@ describe('shell-v2', () => {
       shaShort: 'abcdef123456',
       content: 'full materialized body',
     }));
-    const { doc, controller } = initHarness({
+    const { doc, controller, clipboardWriteText } = initHarness({
       todayJournalApi: jest.fn(async () => ({
         ok: true,
         rows: [
@@ -762,6 +910,17 @@ describe('shell-v2', () => {
     summary.eventListeners.click[0]();
     expect(doc.querySelector('.shell-v2-today-raw').textContent).toContain('FULL MSG AT');
     expect(doc.querySelector('.shell-v2-today-footer').textContent).toContain('msgId=hm-james');
+
+    await doc.querySelector('.shell-v2-today-copy-btn[data-today-copy="copy-body"]').eventListeners.click[0]({
+      preventDefault: jest.fn(),
+      stopPropagation: jest.fn(),
+    });
+    await doc.querySelector('.shell-v2-today-copy-btn[data-today-copy="copy-id"]').eventListeners.click[0]({
+      preventDefault: jest.fn(),
+      stopPropagation: jest.fn(),
+    });
+    expect(clipboardWriteText).toHaveBeenNthCalledWith(1, '[TASK] FULL MSG AT .squidrun/coord/full-agent-messages/hm-james.txt');
+    expect(clipboardWriteText).toHaveBeenNthCalledWith(2, 'hm-james');
 
     const fullButton = doc.querySelector('.shell-v2-today-full-btn');
     await fullButton.eventListeners.click[0]({

@@ -130,8 +130,11 @@ const settings = rendererModules.settings;
 const daemonHandlers = rendererModules.daemonHandlers;
 const { showStatusNotice } = rendererModules.notifications;
 const { debounceButton, applyShortcutTooltips } = rendererModules.utils;
-const { initCommandPalette } = rendererModules.commandPalette;
-const projectRooms = rendererModules.projectRooms;
+const {
+  initCommandPalette,
+  getCommandPaletteCommands,
+  smokeCommandPaletteCommands,
+} = rendererModules.commandPalette;
 const { initStatusStrip } = rendererModules.statusStrip;
 const { initPaneVisibilityControls } = rendererModules.paneVisibility;
 const { createWindowTeamBootstrap, readInitialWindowContextFromLocation } = rendererModules.windowTeamBootstrap;
@@ -498,6 +501,8 @@ const windowTeamBootstrap = createWindowTeamBootstrap({
 });
 let squidRoomSurfaceController = null;
 let shellV2Controller = null;
+let rightPanelSetupDone = false;
+let projectRoomsModule = null;
 if (typeof terminal.setStartupWindowContext === 'function') {
   terminal.setStartupWindowContext(initialWindowContext);
 }
@@ -608,6 +613,46 @@ function maybeInitShellV2(reason = 'runtime') {
     return shellV2Controller;
   }
   return null;
+}
+
+function ensureProjectRoomsStyles() {
+  if (document.getElementById('projectRoomsStylesheet')) return;
+  const link = document.createElement('link');
+  link.id = 'projectRoomsStylesheet';
+  link.rel = 'stylesheet';
+  link.href = 'styles/project-rooms.css';
+  document.head?.appendChild?.(link);
+}
+
+function loadProjectRoomsModule() {
+  if (projectRoomsModule) return projectRoomsModule;
+  const loader = rendererModules.projectRooms;
+  if (loader && typeof loader.load === 'function') {
+    projectRoomsModule = loader.load();
+  } else if (loader && typeof loader.initProjectRooms === 'function') {
+    projectRoomsModule = loader;
+  }
+  if (projectRoomsModule && typeof window !== 'undefined') {
+    window.__squidrunProjectRoomsLoaded = true;
+  }
+  return projectRoomsModule;
+}
+
+function setupLegacyProjectRoomsIfNeeded() {
+  if (shellV2Controller?.enabled === true) return;
+  ensureProjectRoomsStyles();
+  const projectRooms = loadProjectRoomsModule();
+  if (projectRooms && typeof projectRooms.initProjectRooms === 'function') {
+    projectRooms.initProjectRooms();
+  }
+}
+
+function setupPanelsAfterSettingsLoaded() {
+  if (rightPanelSetupDone) return;
+  rightPanelSetupDone = true;
+  tabs.setupRightPanel(terminal.handleResize, bus, {
+    shellV2Enabled: shellV2Controller?.enabled === true,
+  });
 }
 
 function isSquidRoomWindowContext(windowContext = {}) {
@@ -1935,6 +1980,8 @@ function markSettingsLoaded() {
   initState.settingsLoaded = true;
   log.info('Init', 'Settings loaded');
   maybeInitShellV2('settings-loaded');
+  setupPanelsAfterSettingsLoaded();
+  setupLegacyProjectRoomsIfNeeded();
   void evaluateProfileOnboardingRequirement();
   checkInitComplete();
 }
@@ -2588,6 +2635,32 @@ async function openProfileModal(options = {}) {
 
   const alreadyOpen = overlay.classList.contains('open');
   setProfileOnboardingMode(enforceName);
+  const shellV2SettingsOverlay = document.getElementById('shellV2SettingsOverlay');
+  if (document.body?.classList?.contains('shell-v2-enabled') && shellV2SettingsOverlay) {
+    document.dispatchEvent(new CustomEvent('shell-v2-open-settings', {
+      bubbles: true,
+      detail: { section: 'profile' },
+    }));
+    if (alreadyOpen && !reload) {
+      return;
+    }
+    if (profileModalBusy) return;
+    setProfileModalBusyState(true);
+    try {
+      const result = await ipcRenderer.invoke('get-user-profile');
+      applyProfileToModal(result?.success ? (result.profile || {}) : {});
+      if (!result?.success) {
+        showStatusNotice(result?.error || 'Failed to load user profile. You can still save a new one.', 'warning', 3200);
+      }
+    } catch (err) {
+      log.error('ProfileModal', `Failed to load profile: ${err?.message || err}`);
+      applyProfileToModal({});
+      showStatusNotice('Failed to load user profile. You can still save a new one.', 'warning', 3200);
+    } finally {
+      setProfileModalBusyState(false);
+    }
+    return;
+  }
   overlay.classList.add('open');
   overlay.setAttribute('aria-hidden', 'false');
 
@@ -4048,9 +4121,19 @@ function setupEventListeners() {
   });
 
   // Command palette (Ctrl+K)
-  initCommandPalette({
+  const commandPaletteOptions = {
     openAppWindow: (windowKey) => ipcRenderer.invoke('open-app-window', { windowKey }),
-  });
+    selectProject: () => daemonHandlers.selectProject(),
+  };
+  initCommandPalette(commandPaletteOptions);
+  if (typeof window !== 'undefined' && typeof getCommandPaletteCommands === 'function') {
+    window.__squidrunCommandPalette = {
+      getCommands: () => getCommandPaletteCommands(commandPaletteOptions),
+      smoke: () => (typeof smokeCommandPaletteCommands === 'function'
+        ? smokeCommandPaletteCommands(getCommandPaletteCommands(commandPaletteOptions), commandPaletteOptions)
+        : []),
+    };
+  }
 
   // Fix: Blur terminals when UI input/textarea gets focus (NOT xterm's internal textarea)
   // This prevents xterm from capturing keyboard input meant for form fields
@@ -4230,10 +4313,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   initMainPaneState();
   bindWorkspaceSwitcher();
   applyWindowChrome(initialWindowContext);
-  if (projectRooms && typeof projectRooms.initProjectRooms === 'function') {
-    projectRooms.initProjectRooms();
-  }
-
   // Enhance shortcut tooltips for controls with keyboard hints
   applyShortcutTooltips();
 
@@ -4492,7 +4571,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Setup UI panels
   settings.setupSettings();
-  tabs.setupRightPanel(terminal.handleResize, bus);  // All tab setup now handled internally
   // Setup daemon listeners (for terminal reconnection)
   // Pass markTerminalsReady callback to fix auto-spawn race condition
   const daemonListenerController = daemonHandlers.setupDaemonListeners(

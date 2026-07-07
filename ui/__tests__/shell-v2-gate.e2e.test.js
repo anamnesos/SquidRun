@@ -26,8 +26,13 @@ describe('shell-v2 committed gate', () => {
       .map((line) => line.match(/^([A-Z]\d[a-z]?):\s+(PASS|FAIL)\b/)?.[1])
       .filter(Boolean);
 
-    expect(criterionIds).toMatchInlineSnapshot(`
+expect(criterionIds).toMatchInlineSnapshot(`
 [
+  "K2",
+  "S4",
+  "K5b",
+  "N2",
+  "K6b",
   "E1",
   "E2",
   "C2",
@@ -40,6 +45,21 @@ describe('shell-v2 committed gate', () => {
   "E5",
   "E6a",
   "E6b",
+  "K1",
+  "S1",
+  "S2",
+  "K3",
+  "K4",
+  "K5",
+  "K6",
+  "T1",
+  "T2",
+  "T3",
+  "T4",
+  "T4b",
+  "S3",
+  "T5",
+  "T6",
 ]
 `);
   }, 150000);
