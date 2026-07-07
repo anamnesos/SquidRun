@@ -243,6 +243,63 @@ describe('registerModelSwitchHandlers', () => {
       });
     });
 
+    it('preserves non-model Claude flags when switching Claude models', async () => {
+      mockCtx.currentSettings.paneCommands['1'] = 'claude --model opus --effort max --dangerously-skip-permissions';
+
+      const switchPromise = switchHandler({}, { paneId: '1', model: 'claude:fable' });
+      mockCtx.daemonClient._killedHandler('1');
+      const result = await switchPromise;
+
+      expect(mockCtx.currentSettings.paneCommands['1'])
+        .toBe('claude --model claude-fable-5 --effort max --dangerously-skip-permissions');
+      expect(mockDeps.saveSettings).toHaveBeenCalledWith({
+        paneCommands: mockCtx.currentSettings.paneCommands,
+        claudeModel: 'claude-fable-5',
+      });
+      expect(result).toEqual({
+        success: true,
+        paneId: '1',
+        model: 'claude',
+        claudeModel: 'claude-fable-5',
+        selectorValue: 'claude:fable',
+      });
+    });
+
+    it('inserts the Claude model flag without dropping existing Claude flags', async () => {
+      mockCtx.currentSettings.paneCommands['1'] = 'claude --effort max --dangerously-skip-permissions';
+
+      const switchPromise = switchHandler({}, { paneId: '1', model: 'claude:fable' });
+      mockCtx.daemonClient._killedHandler('1');
+      await switchPromise;
+
+      expect(mockCtx.currentSettings.paneCommands['1'])
+        .toBe('claude --model claude-fable-5 --effort max --dangerously-skip-permissions');
+    });
+
+    it('uses the settings Claude model when switching from another CLI without carrying flags', async () => {
+      mockCtx.currentSettings.claudeModel = 'claude-fable-5';
+      mockCtx.currentSettings.paneCommands['1'] = 'codex --yolo --dangerously-bypass-approvals-and-sandbox';
+
+      const switchPromise = switchHandler({}, { paneId: '1', model: 'claude' });
+      mockCtx.daemonClient._killedHandler('1');
+      await switchPromise;
+
+      expect(mockCtx.currentSettings.paneCommands['1']).toBe('claude --model claude-fable-5');
+      expect(mockDeps.saveSettings).toHaveBeenCalledWith({
+        paneCommands: mockCtx.currentSettings.paneCommands,
+      });
+    });
+
+    it('replaces Claude with Codex without carrying Claude flags', async () => {
+      mockCtx.currentSettings.paneCommands['1'] = 'claude --model opus --effort max --dangerously-skip-permissions';
+
+      const switchPromise = switchHandler({}, { paneId: '1', model: 'codex' });
+      mockCtx.daemonClient._killedHandler('1');
+      await switchPromise;
+
+      expect(mockCtx.currentSettings.paneCommands['1']).toBe('codex');
+    });
+
     it('accepts compact Claude model selector values from remote switch-model callers', async () => {
       const switchPromise = switchHandler({}, { paneId: '1', model: 'claude:opus' });
       mockCtx.daemonClient._killedHandler('1');
