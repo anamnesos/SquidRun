@@ -745,6 +745,9 @@ describe('shell-v2', () => {
       expect(header.dataset.shellV2Reduced).toBe('true');
       expect(header.children).toHaveLength(3);
       expect(header.querySelector('.shell-v2-station-chip')).toBeTruthy();
+      expect(header.querySelector('.shell-v2-station-chip .cli-badge')).toBeNull();
+      expect(header.querySelector('.shell-v2-station-chip .shell-v2-station-separator')).toBeNull();
+      expect(header.querySelector('.shell-v2-station-role').textContent).toBe(paneId === '2' ? 'Builder' : 'Oracle');
       expect(header.querySelector('.shell-v2-needs-input-slot').textContent).toBe('');
       expect(header.querySelector('.shell-v2-station-menu')).toBeTruthy();
       expect(header.querySelector(`.interrupt-btn[data-pane-id="${paneId}"]`)).toBeTruthy();
@@ -768,6 +771,9 @@ describe('shell-v2', () => {
     expect(header.children).toHaveLength(3);
     expect(header.querySelector('.agent-badge')).toBeNull();
     expect(header.querySelector('.shell-v2-station-chip')).toBeTruthy();
+    expect(header.querySelector('.shell-v2-station-chip .cli-badge')).toBeNull();
+    expect(header.querySelector('.shell-v2-station-chip .shell-v2-station-separator')).toBeNull();
+    expect(header.querySelector('.shell-v2-station-role').textContent).toBe('Mira');
     expect(header.querySelector('.shell-v2-needs-input-slot')).toBeTruthy();
     expect(menu).toBeTruthy();
 

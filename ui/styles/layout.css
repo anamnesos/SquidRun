@@ -2484,7 +2484,7 @@ body.shell-v2-enabled .shell-v2-today-status {
 }
 
 body.shell-v2-enabled .shell-v2-today-status.is-failed {
-  color: #ff9b9b;
+  color: #e6ddcd;
   font-weight: 800;
 }
 
@@ -2545,7 +2545,7 @@ body.shell-v2-enabled .shell-v2-today-full-error {
 }
 
 body.shell-v2-enabled .shell-v2-today-full-error {
-  color: #ffb3b3;
+  color: #e6ddcd;
 }
 
 body.shell-v2-enabled .shell-v2-today-full-btn {
@@ -2778,7 +2778,7 @@ body.shell-v2-enabled .header {
 body.shell-v2-enabled .shell-v2-tab-rail {
   align-self: stretch;
   align-items: stretch;
-  flex: 0 0 44px;
+  flex: 0 0 auto;
   gap: 2px;
   height: 44px;
 }
@@ -2787,6 +2787,7 @@ body.shell-v2-enabled .shell-v2-tab {
   position: relative;
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
   gap: var(--u);
   height: 44px;
   padding: 0 20px;
@@ -2798,7 +2799,12 @@ body.shell-v2-enabled .shell-v2-tab {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.18em;
+  white-space: nowrap;
   transition: color 120ms linear;
+}
+
+body.shell-v2-enabled .shell-v2-tab-label {
+  white-space: nowrap;
 }
 
 body.shell-v2-enabled .shell-v2-tab:hover,
@@ -2896,6 +2902,10 @@ body.shell-v2-enabled .shell-v2-screenshots-drawer {
   border-radius: 4px;
   background: var(--ink-2);
   box-shadow: none;
+}
+
+body.shell-v2-enabled .shell-v2-station.pane[data-cli]:not(.focused) {
+  border-color: var(--line);
 }
 
 body.shell-v2-enabled .pane:hover,
@@ -3377,7 +3387,7 @@ body.shell-v2-enabled .shell-v2-today-excerpt {
 
 body.shell-v2-enabled .shell-v2-today-status.is-failed,
 body.shell-v2-enabled .shell-v2-today-full-error {
-  color: #ff9b9b;
+  color: #e6ddcd;
 }
 
 body.shell-v2-enabled .shell-v2-today-separator {
