@@ -387,7 +387,12 @@ async function setTrustQuoteArmExpanded(page, expanded) {
   }, expanded);
   await page.waitForFunction((targetExpanded) => {
     const section = document.getElementById('shellV2TrustQuoteSection');
-    return section?.dataset?.shellV2Expanded === (targetExpanded ? 'true' : 'false');
+    const panel = section?.querySelector?.('.shell-v2-arm-panes');
+    const sectionStateOk = section?.dataset?.shellV2Expanded === (targetExpanded ? 'true' : 'false');
+    const panelStateOk = targetExpanded
+      ? panel?.hidden === false && window.getComputedStyle(panel).display !== 'none'
+      : panel?.hidden === true && window.getComputedStyle(panel).display === 'none';
+    return sectionStateOk && panelStateOk;
   }, expanded, { timeout: 5000 });
 }
 

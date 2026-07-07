@@ -2118,6 +2118,10 @@ body.shell-v2-enabled .shell-v2-arm-panes {
   padding: 8px;
 }
 
+body.shell-v2-enabled .shell-v2-arm-panes[hidden] {
+  display: none;
+}
+
 body.shell-v2-enabled .shell-v2-arm-pane {
   min-width: 0;
   min-height: 190px;
