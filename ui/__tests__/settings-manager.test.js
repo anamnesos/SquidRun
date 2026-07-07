@@ -89,7 +89,23 @@ describe('SettingsManager CLI auto-detection', () => {
   test('defaults include explicit gemini model in pane command', () => {
     expect(manager.defaultSettings.geminiModel).toBeTruthy();
     expect(manager.defaultSettings.localModelEnabled).toBe(false);
+    expect(manager.defaultSettings.shellV2Enabled).toBe(false);
     expect(manager.defaultSettings.paneCommands['3']).toMatch(/^gemini --yolo --model /);
+  });
+
+  test('SQUIDRUN_SHELL_V2 enables shellV2 in memory without requiring a settings file', () => {
+    const previous = process.env.SQUIDRUN_SHELL_V2;
+    process.env.SQUIDRUN_SHELL_V2 = '1';
+    fs.existsSync.mockImplementation(() => false);
+
+    try {
+      const loaded = manager.loadSettings();
+      expect(loaded.shellV2Enabled).toBe(true);
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.SQUIDRUN_SHELL_V2;
+      else process.env.SQUIDRUN_SHELL_V2 = previous;
+    }
   });
 
   test('does not clobber valid manual paneCommands when referenced CLIs are available', () => {

@@ -137,6 +137,7 @@ const { initPaneVisibilityControls } = rendererModules.paneVisibility;
 const { createWindowTeamBootstrap, readInitialWindowContextFromLocation } = rendererModules.windowTeamBootstrap;
 const { configureWorkspacePaneShell } = rendererModules.workspacePaneShell || {};
 const squidRoomSurfaceModule = rendererModules.squidRoomSurface || {};
+const shellV2 = rendererModules.shellV2 || {};
 const {
   initSquidRoomSurface,
   refreshSquidRoomSurface,
@@ -496,6 +497,7 @@ const windowTeamBootstrap = createWindowTeamBootstrap({
   initialContext: initialWindowContext,
 });
 let squidRoomSurfaceController = null;
+let shellV2Controller = null;
 if (typeof terminal.setStartupWindowContext === 'function') {
   terminal.setStartupWindowContext(initialWindowContext);
 }
@@ -590,6 +592,22 @@ const SQUID_ROOM_PET_STATE_FRAMES = Object.freeze({
 
 function getCurrentWindowContext() {
   return windowTeamBootstrap.getState();
+}
+
+function maybeInitShellV2(reason = 'runtime') {
+  if (shellV2Controller?.enabled === true) return shellV2Controller;
+  if (typeof shellV2.initShellV2 !== 'function') return null;
+  const controller = shellV2.initShellV2({
+    settings: typeof settings.getSettings === 'function' ? settings.getSettings() : {},
+    windowContext: getCurrentWindowContext(),
+    terminal,
+  });
+  if (controller?.enabled === true) {
+    shellV2Controller = controller;
+    log.info('ShellV2', `Enabled (${reason})`);
+    return shellV2Controller;
+  }
+  return null;
 }
 
 function isSquidRoomWindowContext(windowContext = {}) {
@@ -1572,6 +1590,9 @@ function handleRendererWindowContext(payload = {}) {
     refreshSquidRoomPetAnimations();
   }
   applyWindowChrome(windowContext);
+  if (initState.settingsLoaded) {
+    maybeInitShellV2('window-context');
+  }
   refreshSquidRoomSurfaceForContext(windowContext);
   if (!initState.autoSpawnChecked) {
     checkInitComplete();
@@ -1913,6 +1934,7 @@ function checkInitComplete() {
 function markSettingsLoaded() {
   initState.settingsLoaded = true;
   log.info('Init', 'Settings loaded');
+  maybeInitShellV2('settings-loaded');
   void evaluateProfileOnboardingRequirement();
   checkInitComplete();
 }

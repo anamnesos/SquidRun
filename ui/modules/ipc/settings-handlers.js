@@ -40,6 +40,7 @@ const SETTING_KEY_ALLOWLIST = new Set([
   'ptyStuckDetection',
   'ptyStuckThreshold',
   'recentProjects',
+  'shellV2Enabled',
   'slackWebhookUrl',
   'smtpFrom',
   'smtpHost',

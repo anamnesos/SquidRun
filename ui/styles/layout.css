@@ -1846,3 +1846,157 @@ body[data-window-key="squid-room"] .status-shortcuts {
   transform: translate(-50%, 0);
 }
 
+/* Shell V2 Phase 1: flag-gated structural tab shell. */
+body.shell-v2-enabled .header {
+  gap: var(--space-3);
+}
+
+body.shell-v2-enabled .header h1,
+body.shell-v2-enabled .header-actions,
+body.shell-v2-enabled .dry-run-indicator {
+  display: none;
+}
+
+body.shell-v2-enabled .shell-v2-tab-rail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+body.shell-v2-enabled .shell-v2-tab {
+  height: 30px;
+  padding: 0 var(--space-3);
+  border: 1px solid rgba(113, 137, 167, 0.24);
+  border-radius: var(--radius-sm);
+  background: rgba(14, 20, 34, 0.76);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+body.shell-v2-enabled .shell-v2-tab.active,
+body.shell-v2-enabled .shell-v2-tab:focus-visible {
+  border-color: rgba(160, 184, 216, 0.5);
+  color: var(--color-text);
+  outline: none;
+}
+
+body.shell-v2-enabled .shell-v2-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+body.shell-v2-enabled .state-bar {
+  display: none;
+}
+
+body.shell-v2-enabled .right-panel {
+  display: none;
+}
+
+body.shell-v2-enabled .terminals-section {
+  min-width: 0;
+}
+
+body.shell-v2-enabled .pane-layout.shell-v2-pane-layout {
+  position: relative;
+  display: block;
+  flex: 1;
+  gap: 0;
+  padding: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.shell-v2-enabled .shell-v2-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease, visibility 0s linear 120ms;
+}
+
+body.shell-v2-enabled .shell-v2-view[data-shell-v2-active="true"] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+body.shell-v2-enabled .shell-v2-mira-view,
+body.shell-v2-enabled .shell-v2-squid-room-view,
+body.shell-v2-enabled .shell-v2-today-view {
+  padding: 6px;
+}
+
+body.shell-v2-enabled .main-pane-container,
+body.shell-v2-enabled .shell-v2-core-strip,
+body.shell-v2-enabled .side-panes-container {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+body.shell-v2-enabled .shell-v2-core-strip {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+body.shell-v2-enabled .side-panes-container {
+  display: flex;
+  flex-direction: column;
+}
+
+body.shell-v2-enabled .shell-v2-core-strip.shell-v2-core-expanded .side-panes-container {
+  gap: 8px;
+}
+
+body.shell-v2-enabled .shell-v2-today-view::before {
+  content: '';
+  flex: 1;
+  min-height: 0;
+  border: 1px solid rgba(113, 137, 167, 0.14);
+  border-radius: var(--radius-sm);
+}
+
+body.shell-v2-enabled .status-bar.shell-v2-bottom-bar {
+  justify-content: flex-start;
+  gap: var(--space-3);
+  overflow: hidden;
+}
+
+body.shell-v2-enabled .status-bar.shell-v2-bottom-bar > * {
+  flex: 0 0 auto;
+}
+
+body.shell-v2-enabled .status-bar.shell-v2-bottom-bar .project-indicator {
+  min-width: 0;
+  max-width: 42vw;
+}
+
+body.shell-v2-enabled .status-bar.shell-v2-bottom-bar #projectPath {
+  display: inline-block;
+  max-width: 36vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+body.shell-v2-enabled .status-bar.shell-v2-bottom-bar .status-shortcuts {
+  display: none;
+}
+
