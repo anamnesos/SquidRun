@@ -27,7 +27,6 @@ const { registerProcessHandlers } = require('./process-handlers');
 const { registerSessionHistoryHandlers } = require('./session-history-handlers');
 const { registerConflictDetectionHandlers } = require('./conflict-detection-handlers');
 const { registerSettingsHandlers } = require('./settings-handlers');
-const { registerExternalNotificationHandlers } = require('./external-notification-handlers');
 const { registerPtyHandlers } = require('./pty-handlers');
 const { registerGitHandlers } = require('./git-handlers');
 const { registerGitHubHandlers } = require('./github-handlers');
@@ -91,7 +90,6 @@ const DEFAULT_HANDLERS = [
   registerSessionHistoryHandlers,
   registerConflictDetectionHandlers,
   registerSettingsHandlers,
-  registerExternalNotificationHandlers,
   registerPtyHandlers,
   registerGitHandlers,
   registerGitHubHandlers,

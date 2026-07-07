@@ -125,13 +125,6 @@ jest.mock('../modules/recovery-manager', () => ({
   }),
 }));
 
-// Mock external-notifications
-jest.mock('../modules/external-notifications', () => ({
-  createExternalNotifier: jest.fn().mockReturnValue({
-    notify: jest.fn(),
-  }),
-}));
-
 jest.mock('../modules/main/background-agent-manager', () => ({
   createBackgroundAgentManager: jest.fn().mockReturnValue({
     start: jest.fn(),
@@ -220,7 +213,6 @@ jest.mock('../modules/watcher', () => ({
   stopTriggerWatcher: jest.fn(),
   startMessageWatcher: jest.fn(),
   stopMessageWatcher: jest.fn(),
-  setExternalNotifier: jest.fn(),
 }));
 
 // Mock ipc-handlers
@@ -228,7 +220,6 @@ jest.mock('../modules/ipc-handlers', () => ({
   registerHandlers: jest.fn(),
   setupIPCHandlers: jest.fn(),
   setDaemonClient: jest.fn(),
-  setExternalNotifier: jest.fn(),
   cleanupProcesses: jest.fn(),
   cleanup: jest.fn(),
 }));
@@ -523,7 +514,6 @@ describe('SquidRunApp', () => {
       windows,
       daemonClient: null,
       currentSettings: {},
-      externalNotifier: null,
       setMainWindow: jest.fn((window) => {
         mockAppContext.mainWindow = window || null;
         if (window) {
@@ -550,7 +540,6 @@ describe('SquidRunApp', () => {
       }),
       getWindows: jest.fn(() => new Map(windows)),
       setDaemonClient: jest.fn(),
-      setExternalNotifier: jest.fn(),
     };
 
     // Create mock managers

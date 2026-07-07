@@ -10,8 +10,8 @@
  * innerHTML) did NOT escape quotes, and callers interpolate into ATTRIBUTE
  * contexts (bridge.js title="...", voice-broker.js data-state="...") where a
  * bare `"` breaks out. Replaced with the strong 5-entity twin used by the
- * three other copies in the codebase (phone-voice-client / project-rooms /
- * squid-room-surface); also no longer swallows non-string values.
+ * sibling copies in the codebase (phone-voice-client / squid-room-surface);
+ * also no longer swallows non-string values.
  * @param {unknown} value - Value to escape
  * @returns {string} Escaped text
  */

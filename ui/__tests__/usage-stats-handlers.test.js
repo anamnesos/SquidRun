@@ -163,22 +163,6 @@ describe('Usage Stats Handlers', () => {
       });
     });
 
-    test('sends external notification when threshold exceeded and externalNotifier available', async () => {
-      const mockNotify = jest.fn().mockResolvedValue({});
-      ctx.externalNotifier = { notify: mockNotify };
-      ctx.currentSettings.costAlertEnabled = true;
-      ctx.currentSettings.costAlertThreshold = 2.00;
-      ctx.usageStats.totalSessionTimeMs = 6000000; // 100 min = $5.00
-
-      await harness.invoke('get-usage-stats');
-
-      expect(mockNotify).toHaveBeenCalledWith({
-        category: 'alert',
-        title: 'Cost alert',
-        message: expect.stringContaining('$5.00'),
-      });
-    });
-
     test('does not send cost alert when disabled', async () => {
       ctx.currentSettings.costAlertEnabled = false;
       ctx.usageStats.totalSessionTimeMs = 6000000; // $5.00

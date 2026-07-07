@@ -42,7 +42,6 @@ const {
 const { createPluginManager } = require('../plugins');
 const { createBackupManager } = require('../backup-manager');
 const { createRecoveryManager } = require('../recovery-manager');
-const { createExternalNotifier } = require('../external-notifications');
 const { stripAnsi } = require('../ansi');
 const { createKernelBridge } = require('./kernel-bridge');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
@@ -1881,7 +1880,6 @@ class SquidRunApp {
     if (settings.autoSpawn !== false) features.push('auto-spawn');
     if (settings.autonomyConsentGiven === true) features.push('autonomy-consent');
     if (settings.allowAllPermissions === true) features.push('autonomy-enabled');
-    if (settings.externalNotificationsEnabled === true) features.push('external-notifications');
     if (settings.mcpAutoConfig === true) features.push('mcp-autoconfig');
     if (settings.firmwareInjectionEnabled === true) features.push('firmware-injection');
     return features;
@@ -2679,20 +2677,6 @@ class SquidRunApp {
       paneId: id,
       ...(details && typeof details === 'object' ? details : {}),
     });
-    if (this.ctx.externalNotifier && typeof this.ctx.externalNotifier.notify === 'function') {
-      this.ctx.externalNotifier.notify({
-        category: 'alert',
-        title: 'Hidden Pane Host Degraded',
-        message: fallbackMessage,
-        meta: {
-          reason: normalizedReason,
-          paneId: id,
-          ...(details && typeof details === 'object' ? details : {}),
-        },
-      }).catch((notifyErr) => {
-        log.warn('PaneHost', `Failed to emit degraded notification: ${notifyErr.message}`);
-      });
-    }
 
     if (wasMissing && !reasonChanged) return;
     this.updatePaneHostStatus();
@@ -4474,29 +4458,16 @@ class SquidRunApp {
       'Deferring startup worker prewarm (evidence-ledger/team-memory/experiment/comms) until first use'
     );
 
-    // 6. Setup external notifications
-    this.appendBootSequenceBreadcrumb('init:step-6:external-notifications');
-    this.ctx.setExternalNotifier(createExternalNotifier({
-      getSettings: () => this.ctx.currentSettings,
-      log,
-      appName: 'SquidRun',
-    }));
-
-    ipcHandlers.setExternalNotifier(this.ctx.externalNotifier);
-    if (watcher && typeof watcher.setExternalNotifier === 'function') {
-      watcher.setExternalNotifier((payload) => this.ctx.externalNotifier?.notify(payload));
-    }
-
-    // 7. Load activity log
-    this.appendBootSequenceBreadcrumb('init:step-7:activity-log');
+    // 6. Load activity log
+    this.appendBootSequenceBreadcrumb('init:step-6:activity-log');
     this.activity.loadActivityLog();
 
-    // 8. Load usage stats
-    this.appendBootSequenceBreadcrumb('init:step-8:usage-stats');
+    // 7. Load usage stats
+    this.appendBootSequenceBreadcrumb('init:step-7:usage-stats');
     this.usage.loadUsageStats();
 
-    // 9. Initialize PTY daemon connection (heavy startup work begins after window is shown).
-    this.appendBootSequenceBreadcrumb('init:step-9:daemon-startup');
+    // 8. Initialize PTY daemon connection (heavy startup work begins after window is shown).
+    this.appendBootSequenceBreadcrumb('init:step-8:daemon-startup');
     this.scheduleDaemonConnectTimeout();
     const daemonConnected = await this.awaitDaemonStartupStepWithTimeout(
       'init_daemon_client',
@@ -5749,20 +5720,6 @@ class SquidRunApp {
         const paneId = String(this.resolveTargetToPane(entry?.event?.target || '') || '1');
         const message = String(entry.message || 'Team memory guard fired');
         this.activity.logActivity('guard', paneId, message, entry);
-        if ((entry.action === 'warn' || entry.action === 'block') && this.ctx.externalNotifier) {
-          this.ctx.externalNotifier.notify({
-            category: entry.action === 'block' ? 'alert' : 'warning',
-            title: `Team Memory Guard (${entry.action})`,
-            message,
-            meta: {
-              guardId: entry.guardId || null,
-              scope: entry.scope || null,
-              sourcePattern: entry.sourcePattern || null,
-            },
-          }).catch((notifyErr) => {
-            log.warn('TeamMemoryGuard', `Guard notification failed: ${notifyErr.message}`);
-          });
-        }
         this.handleTeamMemoryGuardExperiment(entry).catch((err) => {
           log.warn('TeamMemoryGuard', `Failed block-guard experiment dispatch: ${err.message}`);
         });
@@ -9648,14 +9605,6 @@ class SquidRunApp {
 
     this.attachDaemonClientListener('watchdog-alert', (message, timestamp) => {
       log.warn('Watchdog', `Alert: ${message}`);
-      if (this.ctx.externalNotifier && typeof this.ctx.externalNotifier.notify === 'function') {
-        this.ctx.externalNotifier.notify({
-          category: 'alert',
-          title: 'Watchdog alert',
-          message,
-          meta: { timestamp },
-        }).catch(err => log.error('Notifier', `Failed to send watchdog alert: ${err.message}`));
-      }
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send('watchdog-alert', { message, timestamp });
       }

@@ -462,22 +462,6 @@ function setupSettings() {
     });
   });
 
-  const testExternalBtn = document.getElementById('sendExternalTestBtn');
-  if (testExternalBtn) {
-    testExternalBtn.addEventListener('click', async () => {
-      try {
-        const result = await invokeBridge('notify-external-test', {});
-        if (result && result.success) {
-          log.info('Settings', 'External notification test sent');
-        } else {
-          log.warn('Settings', 'External notification test failed', result?.error || 'unknown');
-        }
-      } catch (err) {
-        log.error('Settings', 'External notification test error', err);
-      }
-    });
-  }
-
   const pairingInitBtn = document.getElementById('pairingInitBtn');
   if (pairingInitBtn) {
     pairingInitBtn.addEventListener('click', async () => {

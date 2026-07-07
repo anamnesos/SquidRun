@@ -12,7 +12,6 @@ class AppContext {
     this.paneRestartArbiter = null;
     this.pluginManager = null;
     this.backupManager = null;
-    this.externalNotifier = null;
     this.firmwareManager = null;
     
     // Agent running state (renamed from claudeRunning - agents can be Claude, Codex, or Gemini)
@@ -101,10 +100,6 @@ class AppContext {
 
   setBackupManager(manager) {
     this.backupManager = manager;
-  }
-
-  setExternalNotifier(notifier) {
-    this.externalNotifier = notifier;
   }
 
   setFirmwareManager(manager) {

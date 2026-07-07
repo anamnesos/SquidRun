@@ -48,7 +48,7 @@ const SOURCE_ACTION_SUBSTRATE_REGISTRY = Object.freeze([
     strategy: SUBSTRATE_STRATEGIES.native_adapter,
     status: 'active',
     priority: 90,
-    existing_seams: ['hm-comms.js history --last', 'telegram-poller.js', 'sms-poller.js', 'external-notifications.js'],
+    existing_seams: ['hm-comms.js history --last', 'telegram-poller.js', 'sms-poller.js'],
     first_probe: 'Read recent internal comms for repeated route pressure, blockers, and unclosed work.',
     why_this_strategy: 'SquidRun already owns pane comms; native reads avoid external message fanout.',
   },

@@ -336,13 +336,6 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
             message: `Cost alert: Session cost ($${costStr}) has exceeded your threshold ($${threshold.toFixed(2)})`
           });
         }
-        if (ctx.externalNotifier && typeof ctx.externalNotifier.notify === 'function') {
-          ctx.externalNotifier.notify({
-            category: 'alert',
-            title: 'Cost alert',
-            message: `Session cost ($${costStr}) exceeded threshold ($${threshold.toFixed(2)})`,
-          }).catch(() => {});
-        }
       }
     }
 

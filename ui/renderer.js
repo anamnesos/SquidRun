@@ -502,7 +502,6 @@ const windowTeamBootstrap = createWindowTeamBootstrap({
 let squidRoomSurfaceController = null;
 let shellV2Controller = null;
 let rightPanelSetupDone = false;
-let projectRoomsModule = null;
 if (typeof terminal.setStartupWindowContext === 'function') {
   terminal.setStartupWindowContext(initialWindowContext);
 }
@@ -613,38 +612,6 @@ function maybeInitShellV2(reason = 'runtime') {
     return shellV2Controller;
   }
   return null;
-}
-
-function ensureProjectRoomsStyles() {
-  if (document.getElementById('projectRoomsStylesheet')) return;
-  const link = document.createElement('link');
-  link.id = 'projectRoomsStylesheet';
-  link.rel = 'stylesheet';
-  link.href = 'styles/project-rooms.css';
-  document.head?.appendChild?.(link);
-}
-
-function loadProjectRoomsModule() {
-  if (projectRoomsModule) return projectRoomsModule;
-  const loader = rendererModules.projectRooms;
-  if (loader && typeof loader.load === 'function') {
-    projectRoomsModule = loader.load();
-  } else if (loader && typeof loader.initProjectRooms === 'function') {
-    projectRoomsModule = loader;
-  }
-  if (projectRoomsModule && typeof window !== 'undefined') {
-    window.__squidrunProjectRoomsLoaded = true;
-  }
-  return projectRoomsModule;
-}
-
-function setupLegacyProjectRoomsIfNeeded() {
-  if (shellV2Controller?.enabled === true) return;
-  ensureProjectRoomsStyles();
-  const projectRooms = loadProjectRoomsModule();
-  if (projectRooms && typeof projectRooms.initProjectRooms === 'function') {
-    projectRooms.initProjectRooms();
-  }
 }
 
 function setupPanelsAfterSettingsLoaded() {
@@ -1981,7 +1948,6 @@ function markSettingsLoaded() {
   log.info('Init', 'Settings loaded');
   maybeInitShellV2('settings-loaded');
   setupPanelsAfterSettingsLoaded();
-  setupLegacyProjectRoomsIfNeeded();
   void evaluateProfileOnboardingRequirement();
   checkInitComplete();
 }

@@ -5,7 +5,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const os = require('os');
 const { spawnSync } = require('child_process');
 const log = require('../logger');
@@ -31,7 +30,6 @@ const CLI_PREFERENCES = {
 };
 const CLI_DISCOVERY_TIMEOUT_MS = 2000;
 const CLI_VERSION_TIMEOUT_MS = 2500;
-const SMTP_PASS_OBFUSCATION_PREFIX = 'obf:v1:';
 const SETTINGS_FILE_NAME = 'settings.json';
 const PROVISIONED_SETTINGS_RELPATH = path.join('settings', SETTINGS_FILE_NAME);
 
@@ -44,47 +42,6 @@ function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric <= 0) return fallback;
   return numeric;
-}
-
-function getSmtpObfuscationKey() {
-  let username = '';
-  try {
-    username = os.userInfo().username || '';
-  } catch {
-    username = process.env.USERNAME || process.env.USER || '';
-  }
-  const seed = `${os.hostname()}|${username}|${process.platform}|${process.arch}`;
-  return crypto.createHash('sha256').update(`squidrun.smtp-password|${seed}`).digest();
-}
-
-function xorWithKey(buffer, key) {
-  if (!Buffer.isBuffer(buffer) || buffer.length === 0) return Buffer.alloc(0);
-  const output = Buffer.alloc(buffer.length);
-  for (let i = 0; i < buffer.length; i += 1) {
-    output[i] = buffer[i] ^ key[i % key.length];
-  }
-  return output;
-}
-
-function obfuscateSmtpPassword(value) {
-  if (typeof value !== 'string' || value.length === 0) return '';
-  if (value.startsWith(SMTP_PASS_OBFUSCATION_PREFIX)) return value;
-  const raw = Buffer.from(value, 'utf-8');
-  const obfuscated = xorWithKey(raw, getSmtpObfuscationKey());
-  return `${SMTP_PASS_OBFUSCATION_PREFIX}${obfuscated.toString('base64')}`;
-}
-
-function deobfuscateSmtpPassword(value) {
-  if (typeof value !== 'string' || value.length === 0) return '';
-  if (!value.startsWith(SMTP_PASS_OBFUSCATION_PREFIX)) return value;
-  const payload = value.slice(SMTP_PASS_OBFUSCATION_PREFIX.length);
-  if (!payload) return '';
-  try {
-    const encoded = Buffer.from(payload, 'base64');
-    return xorWithKey(encoded, getSmtpObfuscationKey()).toString('utf-8');
-  } catch {
-    return '';
-  }
 }
 
 function buildGeminiCommand(options = {}) {
@@ -106,6 +63,15 @@ function stableSettingsValue(value) {
 
 function settingsValuesEqual(left, right) {
   return stableSettingsValue(left) === stableSettingsValue(right);
+}
+
+function pruneUnknownSettings(settings, defaultSettings) {
+  if (!isPlainObject(settings) || !isPlainObject(defaultSettings)) return {};
+  const allowed = new Set(Object.keys(defaultSettings));
+  return Object.entries(settings).reduce((acc, [key, value]) => {
+    if (allowed.has(key)) acc[key] = value;
+    return acc;
+  }, {});
 }
 
 function sortObjectDeep(value) {
@@ -152,20 +118,6 @@ function createDefaultSettings({ isPackaged = false } = {}) {
     autoSpawn: true,
     autoSync: false,
     notifications: false,
-    externalNotificationsEnabled: false,
-    notifyOnAlerts: true,
-    notifyOnCompletions: true,
-    slackWebhookUrl: '',
-    discordWebhookUrl: '',
-    emailNotificationsEnabled: false,
-    smtpHost: '',
-    smtpPort: 587,
-    smtpSecure: false,
-    smtpRejectUnauthorized: true,
-    smtpUser: '',
-    smtpPass: '',
-    smtpFrom: '',
-    smtpTo: '',
     devTools: false,
     devMode: false,
     shellV2Enabled: false,
@@ -360,9 +312,10 @@ class SettingsManager {
   }
 
   buildProvisionedSettingsForWrite(provisionedSettings) {
-    const payload = JSON.parse(JSON.stringify(provisionedSettings));
-    payload.smtpPass = obfuscateSmtpPassword(payload.smtpPass);
-    return payload;
+    return pruneUnknownSettings(
+      JSON.parse(JSON.stringify(provisionedSettings)),
+      this.defaultSettings || createDefaultSettings({ isPackaged: this.isPackaged })
+    );
   }
 
   seedPackagedSettingsFromProvisionedIfNeeded() {
@@ -431,7 +384,6 @@ class SettingsManager {
     if (!this.isPackaged) return;
     if (fs.existsSync(this.settingsPath)) return;
     const persistedDefaults = JSON.parse(JSON.stringify(this.defaultSettings));
-    persistedDefaults.smtpPass = obfuscateSmtpPassword(persistedDefaults.smtpPass);
     this.writeSettingsFile(persistedDefaults);
   }
 
@@ -454,8 +406,7 @@ class SettingsManager {
       this.createDefaultSettingsFileIfMissing();
       if (fs.existsSync(this.settingsPath)) {
         const content = fs.readFileSync(this.settingsPath, 'utf-8');
-        const loaded = JSON.parse(content);
-        loaded.smtpPass = deobfuscateSmtpPassword(loaded.smtpPass);
+        const loaded = pruneUnknownSettings(JSON.parse(content), this.defaultSettings);
 
         // Migration: pre-consent builds had no autonomy consent fields.
         // Preserve prior behavior for existing users by marking consent as resolved.
@@ -509,9 +460,12 @@ class SettingsManager {
     try {
       this.refreshRuntimeSettingsContext('save-settings');
       Object.assign(this.ctx.currentSettings, settings);
+      this.ctx.currentSettings = {
+        ...this.defaultSettings,
+        ...pruneUnknownSettings(this.ctx.currentSettings, this.defaultSettings),
+      };
 
       const persistedSettings = JSON.parse(JSON.stringify(this.ctx.currentSettings));
-      persistedSettings.smtpPass = obfuscateSmtpPassword(persistedSettings.smtpPass);
       this.writeSettingsFile(persistedSettings);
 
       const diagnostics = this.buildSettingsPersistenceDiagnostics();

@@ -10,9 +10,6 @@ function createRendererModules() {
     notifications: require('../notifications'),
     utils: require('../utils'),
     commandPalette: require('../command-palette'),
-    projectRooms: {
-      load: () => require('../project-rooms'),
-    },
     statusStrip: require('../status-strip'),
     paneVisibility: require('../pane-visibility'),
     windowTeamBootstrap: require('../window-team-bootstrap'),

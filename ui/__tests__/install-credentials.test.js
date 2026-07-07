@@ -9,9 +9,7 @@ const {
   TWILIO_SETTINGS_RELATIVE_PATH,
   WALLET_DENY_ENV_KEYS,
   WALLET_SETTINGS_RELATIVE_PATH,
-  SMTP_SENSITIVE_SETTINGS_KEYS,
   applyInstallCredentialEnvOverlay,
-  redactSensitiveSettings,
 } = require('../modules/install-credentials');
 const { TELEGRAM_SETTINGS_RELATIVE_PATH } = require('../modules/telegram-credentials');
 
@@ -224,7 +222,6 @@ describe('install-credentials', () => {
       expect(CREDENTIAL_CLASS_POLICIES.telegram).toBe('overlay');
       expect(CREDENTIAL_CLASS_POLICIES.relay).toBe('overlay');
       expect(CREDENTIAL_CLASS_POLICIES.twilio).toBe('overlay');
-      expect(CREDENTIAL_CLASS_POLICIES.smtp).toBe('settings-redaction');
     });
 
     test('wallet env vars that survive to the overlay are stripped and reported', () => {
@@ -267,42 +264,4 @@ describe('install-credentials', () => {
     });
   });
 
-  describe('smtp redaction (settings-store class, not env)', () => {
-    test('redactSensitiveSettings strips smtp and webhook keys and reports them', () => {
-      const settings = {
-        autoSpawn: true,
-        smtpHost: 'smtp.example.test',
-        smtpUser: 'someone',
-        smtpPass: 'fake_smtp_pass_do_not_use',
-        slackWebhookUrl: 'https://hooks.example.test/x',
-        discordWebhookUrl: 'https://discord.example.test/y',
-        userName: 'Owner',
-      };
-
-      const { settings: clean, removed } = redactSensitiveSettings(settings);
-
-      expect(clean.autoSpawn).toBe(true);
-      expect(clean.userName).toBe('Owner');
-      expect(clean.smtpHost).toBeUndefined();
-      expect(clean.smtpUser).toBeUndefined();
-      expect(clean.smtpPass).toBeUndefined();
-      expect(clean.slackWebhookUrl).toBeUndefined();
-      expect(clean.discordWebhookUrl).toBeUndefined();
-      expect(removed.sort()).toEqual([
-        'discordWebhookUrl', 'slackWebhookUrl', 'smtpHost', 'smtpPass', 'smtpUser',
-      ]);
-      expect(settings.smtpPass).toBe('fake_smtp_pass_do_not_use');
-    });
-
-    test('redaction of junk input is safe', () => {
-      expect(redactSensitiveSettings(null)).toEqual({ settings: {}, removed: [] });
-      expect(redactSensitiveSettings('nope')).toEqual({ settings: {}, removed: [] });
-    });
-
-    test('every smtp key from the live settings shape is covered', () => {
-      for (const key of ['smtpHost', 'smtpPort', 'smtpSecure', 'smtpRejectUnauthorized', 'smtpUser', 'smtpPass', 'smtpFrom', 'smtpTo']) {
-        expect(SMTP_SENSITIVE_SETTINGS_KEYS).toContain(key);
-      }
-    });
-  });
 });

@@ -353,19 +353,18 @@ describe('workspace pane shell', () => {
     expect(doc.getElementById('squidRoomSurface').hidden).toBe(false);
   });
 
-  test('keeps Squid Room P1.5 formatting reserves in CSS', () => {
-    const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'squid-room.css'), 'utf8');
+  test('keeps Squid Room v2 geometry reserves in CSS', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'squid-room-v2.css'), 'utf8');
 
-    expect(css).toMatch(/body\.squid-room-workspace \.terminals-section\s*\{[^}]*padding:\s*14px 14px 22px/s);
-    expect(css).toMatch(/scrollbar-color:\s*rgba\(94,\s*234,\s*212,\s*0\.45\)/);
-    expect(css).toMatch(/body\.squid-room-workspace \.squid-room-live-panes \.pane\s*\{[^}]*padding-bottom:\s*12px/s);
-    expect(css).toMatch(/body\.squid-room-workspace \.squid-room-live-panes \.pane-terminal\s*\{[^}]*calc\(100% - 12px\)/s);
-    expect(css).toMatch(/radial-gradient\(ellipse at 50% 100%,\s*rgba\(94,\s*234,\s*212,\s*0\.055\)/);
-    expect(css).toMatch(/linear-gradient\(180deg,[^;]*rgba\(0,\s*1,\s*4,\s*1\) 100%\)/s);
+    expect(css).toMatch(/body\.sr2-room \.terminals-section\s*\{[^}]*padding:\s*10px 10px 20px/s);
+    expect(css).toMatch(/body\.sr2-room \.side-panes-container\s*\{[^}]*min-height:\s*42vh/s);
+    expect(css).toMatch(/body\.sr2-room \.squid-room-creature-ocean\s*\{[^}]*position:\s*fixed/s);
+    expect(css).toMatch(/body\.sr2-room \.terminals-section\s*\{[^}]*z-index:\s*3/s);
+    expect(css).toMatch(/body\.sr2-room \.squid-room-pane-menu-panel\s*\{[^}]*z-index:\s*100/s);
   });
 
   test('sprite-era motion CSS stays dead; live creature surfaces remain', () => {
-    const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'squid-room.css'), 'utf8');
+    const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'squid-room-v2.css'), 'utf8');
 
     expect(css).toMatch(/\.squid-room-creature-ocean/);
     // S465 purge 2b: the sprite-era swim/track animation library is deleted
@@ -375,6 +374,6 @@ describe('workspace pane shell', () => {
     expect(css).not.toMatch(/\.pet-motion-track/);
     expect(css).not.toMatch(/\.squid-room-codex-pet/);
     expect(css).not.toMatch(/\.squid-room-pet-speech/);
-    expect(css).toMatch(/\.squid-room-pane-menu\.is-fixed-positioned \.squid-room-pane-menu-panel\s*\{[^}]*position:\s*fixed/s);
+    expect(css).toMatch(/\.squid-room-pane-menu-panel\s*\{[^}]*z-index:\s*100/s);
   });
 });

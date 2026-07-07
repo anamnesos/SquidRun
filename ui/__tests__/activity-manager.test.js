@@ -10,7 +10,6 @@ jest.mock('../modules/logger', () => ({
 }));
 
 const ActivityManager = require('../modules/main/activity-manager');
-const { isAgentResponseDebtActivity } = ActivityManager;
 
 function createContext() {
   return {
@@ -23,9 +22,6 @@ function createContext() {
     pluginManager: {
       hasHook: jest.fn().mockReturnValue(false),
       dispatch: jest.fn(),
-    },
-    externalNotifier: {
-      notify: jest.fn().mockResolvedValue({ ok: true }),
     },
   };
 }
@@ -40,7 +36,7 @@ describe('ActivityManager', () => {
     manager = new ActivityManager(ctx);
   });
 
-  it('still sends ordinary error activity to the external notifier', () => {
+  it('records ordinary error activity in the renderer activity stream', () => {
     manager.logActivity('error', '2', 'Build failed', {
       snippet: 'Typecheck failed',
     });
@@ -53,11 +49,6 @@ describe('ActivityManager', () => {
         message: 'Build failed',
       })
     );
-    expect(ctx.externalNotifier.notify).toHaveBeenCalledWith(expect.objectContaining({
-      category: 'alert',
-      title: 'Error detected (pane 2)',
-      message: 'Typecheck failed',
-    }));
   });
 
   it('keeps agent response debt in activity without creating user-facing homework', () => {
@@ -76,11 +67,5 @@ describe('ActivityManager', () => {
         message: expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
       })
     );
-    expect(ctx.externalNotifier.notify).not.toHaveBeenCalled();
-  });
-
-  it('classifies explicit agent_response_debt entries as agent-side only', () => {
-    expect(isAgentResponseDebtActivity('agent_response_debt', 'agent response debt', {})).toBe(true);
-    expect(isAgentResponseDebtActivity('error', 'Renderer failed', { subsystem: 'renderer' })).toBe(false);
   });
 });

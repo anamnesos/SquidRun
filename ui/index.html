@@ -11,8 +11,8 @@
   <link rel="stylesheet" href="styles/panes.css">
   <link rel="stylesheet" href="styles/state-bar.css">
   <!-- Room remodel v2 (S467): the whitelist stylesheet is the ONLY room
-       style source. squid-room.css + architect-cosmos-layer.css died whole
-       at the link swap (constitution: old classes die when v2 mounts). -->
+       style source; old room styles died whole at the link swap
+       (constitution: old classes die when v2 mounts). -->
   <link rel="stylesheet" href="styles/squid-room-v2.css">
   <link rel="stylesheet" href="styles/settings-panel.css">
   <link rel="stylesheet" href="styles/tabs.css">
@@ -289,93 +289,6 @@
           <div class="cost-threshold-setting" title="Dollar amount that triggers a cost warning">
             <label class="setting-label" for="costAlertThreshold">Alert threshold (USD)</label>
             <input type="number" id="costAlertThreshold" class="threshold-input" value="5.00" min="0.01" step="0.50" title="Estimated cost limit before warning">
-          </div>
-        </div>
-
-        <div class="settings-section settings-section-wide">
-          <div class="settings-section-title">External Notifications</div>
-          <p class="settings-section-description">Send alerts and completion updates to webhook and email channels.</p>
-          <div class="settings-items">
-            <div class="setting-item" title="Send external notifications for alerts and completions">
-              <div class="setting-copy">
-                <span class="setting-label">Enable external notifications</span>
-                <span class="setting-description">Master switch for outbound notification delivery.</span>
-              </div>
-              <div class="toggle" id="toggleExternalNotificationsEnabled" data-setting="externalNotificationsEnabled" role="switch" aria-label="Enable external notifications"></div>
-            </div>
-            <div class="setting-item" title="Send alerts (watchdog, cost, errors) to external channels">
-              <div class="setting-copy">
-                <span class="setting-label">Send alert events</span>
-                <span class="setting-description">Includes watchdog warnings, errors, and cost alerts.</span>
-              </div>
-              <div class="toggle" id="toggleNotifyOnAlerts" data-setting="notifyOnAlerts" role="switch" aria-label="Send alert events"></div>
-            </div>
-            <div class="setting-item" title="Send task completion notifications to external channels">
-              <div class="setting-copy">
-                <span class="setting-label">Send completion events</span>
-                <span class="setting-description">Sends notifications when major tasks or flows complete.</span>
-              </div>
-              <div class="toggle" id="toggleNotifyOnCompletions" data-setting="notifyOnCompletions" role="switch" aria-label="Send completion events"></div>
-            </div>
-          </div>
-
-          <div class="settings-subgrid">
-            <div class="setting-field">
-              <label class="setting-label" for="slackWebhookField">Slack webhook</label>
-              <input type="text" id="slackWebhookField" class="settings-input" data-setting="slackWebhookUrl" placeholder="https://hooks.slack.com/..." spellcheck="false">
-            </div>
-            <div class="setting-field">
-              <label class="setting-label" for="discordWebhookField">Discord webhook</label>
-              <input type="text" id="discordWebhookField" class="settings-input" data-setting="discordWebhookUrl" placeholder="https://discord.com/api/webhooks/..." spellcheck="false">
-            </div>
-          </div>
-
-          <div class="settings-items">
-            <div class="setting-item" title="Send notifications via SMTP email">
-              <div class="setting-copy">
-                <span class="setting-label">Email notifications</span>
-                <span class="setting-description">Deliver messages through your SMTP server.</span>
-              </div>
-              <div class="toggle" id="toggleEmailNotificationsEnabled" data-setting="emailNotificationsEnabled" role="switch" aria-label="Email notifications"></div>
-            </div>
-            <div class="setting-item" title="Use SSL/TLS for SMTP (typically port 465)">
-              <div class="setting-copy">
-                <span class="setting-label">SMTP SSL/TLS</span>
-                <span class="setting-description">Use encrypted transport for SMTP delivery.</span>
-              </div>
-              <div class="toggle" id="toggleSmtpSecure" data-setting="smtpSecure" role="switch" aria-label="SMTP SSL/TLS"></div>
-            </div>
-          </div>
-
-          <div class="settings-subgrid settings-two-col">
-            <div class="setting-field">
-              <label class="setting-label" for="smtpHostField">SMTP host</label>
-              <input type="text" id="smtpHostField" class="settings-input" data-setting="smtpHost" placeholder="smtp.example.com" spellcheck="false">
-            </div>
-            <div class="setting-field">
-              <label class="setting-label" for="smtpPortField">SMTP port</label>
-              <input type="number" id="smtpPortField" class="settings-input settings-input-short" data-setting="smtpPort" placeholder="587" min="1" step="1">
-            </div>
-            <div class="setting-field">
-              <label class="setting-label" for="smtpUserField">SMTP user</label>
-              <input type="text" id="smtpUserField" class="settings-input" data-setting="smtpUser" placeholder="user@example.com" spellcheck="false">
-            </div>
-            <div class="setting-field">
-              <label class="setting-label" for="smtpPassField">SMTP password</label>
-              <input type="password" id="smtpPassField" class="settings-input" data-setting="smtpPass" placeholder="app password">
-            </div>
-            <div class="setting-field">
-              <label class="setting-label" for="smtpFromField">From</label>
-              <input type="text" id="smtpFromField" class="settings-input" data-setting="smtpFrom" placeholder="alerts@example.com" spellcheck="false">
-            </div>
-            <div class="setting-field">
-              <label class="setting-label" for="smtpToField">To</label>
-              <input type="text" id="smtpToField" class="settings-input" data-setting="smtpTo" placeholder="you@example.com, team@example.com" spellcheck="false">
-            </div>
-          </div>
-
-          <div class="settings-actions">
-            <button class="btn btn-sm" id="sendExternalTestBtn" title="Send a test external notification">Send Test Notification</button>
           </div>
         </div>
 

@@ -8,6 +8,7 @@ const { spawn, spawnSync } = require('child_process');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const UI_ROOT = path.join(PROJECT_ROOT, 'ui');
+const PHASE5_MANIFEST_PATH = path.join(__dirname, 'shell-v2-phase5-both-modes-dead.json');
 const PROFILE = 'shellv2qa';
 const HIDDEN_WAIT_MS = 20000;
 const SWITCHES = 12;
@@ -50,6 +51,20 @@ const KILLED_CONTROLS = Object.freeze([
   { id: 'external-test', selector: '#sendExternalTestBtn' },
   { id: 'project-rooms-css', selector: 'link[href$="project-rooms.css"]' },
 ]);
+const FLAG_OFF_REBASED_PRESENT_CONTROLS = Object.freeze(
+  KILLED_CONTROLS.filter((entry) => ![
+    'external-notifications-toggle',
+    'slack-webhook',
+    'discord-webhook',
+    'smtp-host',
+    'smtp-password',
+    'external-test',
+    'project-rooms-css',
+  ].includes(entry.id))
+);
+const PHASE5_DELETED_SELECTORS = Object.freeze(
+  KILLED_CONTROLS.filter((entry) => !FLAG_OFF_REBASED_PRESENT_CONTROLS.some((present) => present.id === entry.id))
+);
 const SURVIVING_PALETTE_COMMANDS = Object.freeze([
   'shell-v2-switch-project',
   'shell-v2-screenshots-gallery',
@@ -58,9 +73,7 @@ const SURVIVING_PALETTE_COMMANDS = Object.freeze([
   'open-mira-lab',
   'shutdown',
 ]);
-const PHASE4_INTACT_FILES = Object.freeze([
-  path.join(UI_ROOT, 'modules', 'project-rooms.js'),
-  path.join(UI_ROOT, 'styles', 'project-rooms.css'),
+const PHASE5_DEFERRED_INTACT_FILES = Object.freeze([
   path.join(UI_ROOT, 'modules', 'tabs', 'oracle.js'),
   path.join(UI_ROOT, 'modules', 'image-gen.js'),
 ]);
@@ -70,6 +83,9 @@ const PHASE4_REVIEW_SCREENSHOTS = Object.freeze([
   'phase4-palette-open',
   'phase4-today-copy-affordances',
   'phase4-today-overflow-pill',
+]);
+const PHASE5_REVIEW_SCREENSHOTS = Object.freeze([
+  'flag-off-legacy-intact',
 ]);
 
 function parseArgs(argv) {
@@ -111,6 +127,176 @@ function readFileIfPresent(filePath) {
   } catch {
     return null;
   }
+}
+
+function readPhase5Manifest() {
+  const parsed = JSON.parse(fs.readFileSync(PHASE5_MANIFEST_PATH, 'utf8'));
+  const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+  const deletedFiles = Array.from(new Set(entries.flatMap((entry) => (
+    Array.isArray(entry.deletedFiles) ? entry.deletedFiles : []
+  )))).sort();
+  const residuePatterns = Array.from(new Set(entries.flatMap((entry) => (
+    Array.isArray(entry.residuePatterns) ? entry.residuePatterns : []
+  )))).sort();
+  return { ...parsed, entries, deletedFiles, residuePatterns };
+}
+
+function normalizeGitPath(value) {
+  return String(value || '').replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+function runGit(args) {
+  const result = spawnSync('git', args, {
+    cwd: PROJECT_ROOT,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  return {
+    status: result.status,
+    stdout: String(result.stdout || ''),
+    stderr: String(result.stderr || ''),
+  };
+}
+
+function readDeletedFilesForCommit(commit) {
+  const target = String(commit || '').trim();
+  if (!target) return { files: [] };
+  const diff = runGit(['diff', '--name-only', '--diff-filter=D', `${target}^`, target]);
+  if (diff.status !== 0) {
+    return { error: diff.stderr || diff.stdout || 'git diff failed', files: [] };
+  }
+  return {
+    files: diff.stdout.split(/\r?\n/)
+      .map(normalizeGitPath)
+      .filter(Boolean)
+      .sort(),
+  };
+}
+
+function readDeletedFilesForWorktree() {
+  const diff = runGit(['diff', '--name-only', '--diff-filter=D']);
+  if (diff.status !== 0) {
+    return { error: diff.stderr || diff.stdout || 'git diff failed', files: [] };
+  }
+  return {
+    files: diff.stdout.split(/\r?\n/)
+      .map(normalizeGitPath)
+      .filter(Boolean)
+      .sort(),
+  };
+}
+
+function sameStringList(left, right) {
+  const a = [...left].sort();
+  const b = [...right].sort();
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function scanPhase5Residue(manifest) {
+  const excluded = new Set([
+    normalizeGitPath(path.relative(PROJECT_ROOT, PHASE5_MANIFEST_PATH)),
+    normalizeGitPath(path.relative(PROJECT_ROOT, __filename)),
+  ]);
+  const deletedFiles = new Set((manifest.deletedFiles || []).map(normalizeGitPath));
+  const hits = [];
+  for (const pattern of manifest.residuePatterns || []) {
+    const result = runGit(['grep', '-n', '-F', '--', pattern, 'HEAD', '--', 'ui']);
+    if (result.status !== 0 && result.status !== 1) {
+      hits.push({ pattern, error: result.stderr || result.stdout || 'git grep failed' });
+      continue;
+    }
+    for (const line of result.stdout.split(/\r?\n/).filter(Boolean)) {
+      const match = line.match(/^HEAD:([^:]+):(\d+):(.*)$/);
+      if (!match) continue;
+      const filePath = normalizeGitPath(match[1]);
+      if (excluded.has(filePath) || deletedFiles.has(filePath)) continue;
+      hits.push({ pattern, filePath, line: Number(match[2]), text: match[3] });
+    }
+  }
+  return hits;
+}
+
+function readNewSkippedTests(commit) {
+  const args = commit
+    ? ['diff', '-U0', `${commit}^`, commit, '--', 'ui/__tests__']
+    : ['diff', '-U0', '--', 'ui/__tests__'];
+  const diff = runGit(args);
+  if (diff.status !== 0) {
+    return { error: diff.stderr || diff.stdout || 'git diff failed', hits: [] };
+  }
+  const hits = [];
+  let filePath = '';
+  for (const line of diff.stdout.split(/\r?\n/)) {
+    const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
+    if (fileMatch) {
+      filePath = normalizeGitPath(fileMatch[1]);
+      continue;
+    }
+    if (!line.startsWith('+') || line.startsWith('+++')) continue;
+    if (/\b(?:describe|test|it)\.skip\s*\(/.test(line)) {
+      hits.push({ filePath, text: line.slice(1) });
+    }
+  }
+  return { hits };
+}
+
+function readCurrentTrackedTestSuites() {
+  const files = runGit(['ls-files', 'ui/__tests__/*.test.js']);
+  if (files.status !== 0) {
+    return { error: files.stderr || files.stdout || 'git ls-files failed', suites: [] };
+  }
+  return {
+    suites: files.stdout.split(/\r?\n/)
+      .map(normalizeGitPath)
+      .filter(Boolean)
+      .sort(),
+  };
+}
+
+function buildPhase5ManifestGateData(manifest, options) {
+  const expectedDeletedFiles = (manifest.deletedFiles || []).map(normalizeGitPath).sort();
+  const diskSurvivors = expectedDeletedFiles.filter((relPath) => fs.existsSync(path.join(PROJECT_ROOT, relPath)));
+  const deletionDiff = options.expectCommit
+    ? readDeletedFilesForCommit(options.expectCommit)
+    : readDeletedFilesForWorktree();
+  const actualDeletedFiles = (deletionDiff.files || []).map(normalizeGitPath).sort();
+  const unexpectedDeletedFiles = actualDeletedFiles.filter((filePath) => !expectedDeletedFiles.includes(filePath));
+  const missingDeletedFiles = expectedDeletedFiles.filter((filePath) => !actualDeletedFiles.includes(filePath));
+  return {
+    expectedDeletedFiles,
+    actualDeletedFiles,
+    diskSurvivors,
+    unexpectedDeletedFiles,
+    missingDeletedFiles,
+    diffError: deletionDiff.error || null,
+    exactNameset: !deletionDiff.error && diskSurvivors.length === 0 && sameStringList(actualDeletedFiles, expectedDeletedFiles),
+  };
+}
+
+function buildPhase5JestAccounting(manifest, options) {
+  const baseline = manifest.baseline || {};
+  const removedSuites = (baseline.deletedSuites || []).map(normalizeGitPath).sort();
+  const skipped = readNewSkippedTests(options.expectCommit);
+  const current = readCurrentTrackedTestSuites();
+  const currentSuites = current.suites || [];
+  const currentSet = new Set(currentSuites);
+  const removedSuitesAbsent = removedSuites.filter((suite) => !currentSet.has(suite));
+  const expectedAfter = Number(baseline.jestSuitesBefore || 0) - removedSuites.length;
+  return {
+    before: Number(baseline.jestSuitesBefore || 0),
+    after: currentSuites.length,
+    expectedAfter,
+    removedSuites,
+    removedSuitesAbsent,
+    skippedHits: skipped.hits || [],
+    skippedError: skipped.error || null,
+    suiteListError: current.error || null,
+    ok: !skipped.error
+      && !current.error
+      && (skipped.hits || []).length === 0
+      && removedSuitesAbsent.length === removedSuites.length
+      && currentSuites.length === expectedAfter,
+  };
 }
 
 function getGitHead() {
@@ -260,9 +446,6 @@ function writeQaSettings(dataRoot, tickScriptPath, overrides = {}) {
     autoSpawn: overrides.autoSpawn !== undefined ? Boolean(overrides.autoSpawn) : true,
     autoSync: false,
     notifications: false,
-    externalNotificationsEnabled: false,
-    notifyOnAlerts: false,
-    notifyOnCompletions: false,
     devTools: false,
     devMode: overrides.devMode === true,
     shellV2Enabled: overrides.shellV2Enabled !== undefined ? Boolean(overrides.shellV2Enabled) : true,
@@ -502,8 +685,8 @@ async function readRendererModuleCacheState(page) {
   });
 }
 
-function readPhase4IntactFiles() {
-  return PHASE4_INTACT_FILES.map((filePath) => ({
+function readPhase5DeferredIntactFiles() {
+  return PHASE5_DEFERRED_INTACT_FILES.map((filePath) => ({
     filePath,
     present: fs.existsSync(filePath),
     sha256: sha256File(filePath),
@@ -613,8 +796,11 @@ async function waitForInitialTicks(page) {
   }, PANE_TICKS, { timeout: 60000 });
 }
 
-async function runFlagOffProbe({ dataRoot, cdpPort, recorder }) {
+async function runFlagOffProbe({ dataRoot, cdpPort, recorder, runId }) {
   ensureDir(dataRoot);
+  const screenshots = {};
+  const screenshotDir = path.join(PROJECT_ROOT, '.squidrun', 'coord', 'shell-v2-phase5', runId || path.basename(dataRoot));
+  ensureDir(screenshotDir);
   const tickScript = writeTickHarness(dataRoot);
   writeQaSettings(dataRoot, tickScript, {
     shellV2Enabled: false,
@@ -642,11 +828,32 @@ async function runFlagOffProbe({ dataRoot, cdpPort, recorder }) {
     await page.waitForFunction(() => document.readyState === 'complete', null, { timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(1000);
 
+    const flagOffScreenshot = path.join(screenshotDir, 'flag-off-legacy-intact.png');
+    await page.screenshot({ path: flagOffScreenshot, fullPage: true });
+    screenshots['flag-off-legacy-intact'] = flagOffScreenshot;
+
     const killState = await readPhase4KillState(page);
+    const presentById = new Map(killState.selectorResults.map((entry) => [entry.id, entry.present]));
+    const missingRebasedControls = FLAG_OFF_REBASED_PRESENT_CONTROLS
+      .filter((entry) => presentById.get(entry.id) !== true)
+      .map((entry) => entry.id);
+    const unexpectedDeletedControls = PHASE5_DELETED_SELECTORS
+      .filter((entry) => presentById.get(entry.id) === true)
+      .map((entry) => entry.id);
+    const flagOffTabs = killState.selectorResults
+      .filter((entry) => entry.id.startsWith('panel-tab-') && entry.present === true)
+      .map((entry) => entry.id);
     const k2Ok = killState.bodyShellV2 === false
       && killState.settingsPanel === true
-      && killState.selectorResults.every((entry) => entry.present === true);
-    recorder.record('K2', k2Ok, 'flag-off killed controls remain present', killState);
+      && missingRebasedControls.length === 0
+      && unexpectedDeletedControls.length === 0
+      && flagOffTabs.length === 6;
+    recorder.record('K2', k2Ok, 'flag-off legacy baseline whole after Phase 5 rebase', {
+      ...killState,
+      missingRebasedControls,
+      unexpectedDeletedControls,
+      flagOffTabs,
+    });
 
     const s4 = await page.evaluate(() => {
       const panel = document.querySelector('#settingsPanel');
@@ -656,18 +863,24 @@ async function runFlagOffProbe({ dataRoot, cdpPort, recorder }) {
         settingsPanel: Boolean(panel),
         settingsButton: Boolean(button),
         settingsPanelVisible: panel ? window.getComputedStyle(panel).display !== 'none' : false,
-        hasLegacyExternal: Boolean(document.querySelector('#sendExternalTestBtn')),
+        hasDeletedSettings: Boolean(document.querySelector('#sendExternalTestBtn, #toggleExternalNotificationsEnabled')),
+        hasDevices: Boolean(document.querySelector('#pairingInitBtn')),
       };
     });
-    recorder.record('S4', s4.settingsPanel && s4.settingsButton && s4.hasLegacyExternal, 'flag-off legacy settings panel intact', s4);
+    recorder.record(
+      'S4',
+      s4.settingsPanel && s4.settingsButton && s4.hasDevices && s4.hasDeletedSettings === false,
+      'flag-off legacy settings panel intact after deleted settings rebase',
+      s4
+    );
 
     const modules = await readRendererModuleCacheState(page);
     recorder.record(
       'K5b',
-      modules.projectRoomsLoaded === true
+      modules.projectRoomsLoaded === false
         && killState.selectorResults.some((entry) => entry.id === 'image-gen-pane' && entry.present === true)
-        && killState.selectorResults.some((entry) => entry.id === 'project-rooms-css' && entry.present === true),
-      'flag-off legacy project rooms load and image-gen surface remains present',
+        && killState.selectorResults.some((entry) => entry.id === 'project-rooms-css' && entry.present === false),
+      'flag-off project rooms removed and image-gen surface remains present',
       { modules, imageGenSurfacePresent: killState.selectorResults.filter((entry) => entry.id.startsWith('image-gen')) }
     );
 
@@ -691,6 +904,7 @@ async function runFlagOffProbe({ dataRoot, cdpPort, recorder }) {
     }
     if (child && !child.killed) child.kill();
   }
+  return screenshots;
 }
 
 async function waitForTickBaseline(page, timeoutMs = 30000) {
@@ -786,7 +1000,7 @@ async function readSettingsOverlaySections(page) {
       sectionIds,
       navIds,
       spotChecks,
-      externalPresent: Boolean(overlay?.querySelector?.('#sendExternalTestBtn, #slackWebhookField, #discordWebhookField, #smtpHostField')),
+      deletedSettingsPresent: Boolean(overlay?.querySelector?.('#sendExternalTestBtn, #toggleExternalNotificationsEnabled')),
     };
   });
 }
@@ -912,8 +1126,8 @@ async function runPhase4FlagOnAssertions({ page, recorder, rendererNoise }) {
     settingsSections.overlay === true
       && requiredSections.every((id) => settingsSections.sectionIds.includes(id) && settingsSections.navIds.includes(id))
       && Object.values(settingsSections.spotChecks).every(Boolean)
-      && settingsSections.externalPresent === false,
-    'settings overlay sections and live controls present without external notifications',
+      && settingsSections.deletedSettingsPresent === false,
+    'settings overlay sections and live controls present without deleted settings',
     settingsSections
   );
 
@@ -948,7 +1162,7 @@ async function runPhase4FlagOnAssertions({ page, recorder, rendererNoise }) {
   );
 
   const modules = await readRendererModuleCacheState(page);
-  const intactFiles = readPhase4IntactFiles();
+  const intactFiles = readPhase5DeferredIntactFiles();
   const badNoise = findBadRendererNoise(rendererNoise);
   recorder.record(
     'K5',
@@ -957,7 +1171,7 @@ async function runPhase4FlagOnAssertions({ page, recorder, rendererNoise }) {
       && modules.imageGenLoaded !== true
       && intactFiles.every((entry) => entry.present === true)
       && badNoise.length === 0,
-    'flag-on killed modules/css not loaded while Phase 4 files remain intact',
+    'flag-on killed modules/css not loaded while deferred files remain intact',
     { modules, intactFiles, badNoise }
   );
 
@@ -1761,6 +1975,7 @@ async function main() {
   const qaPortPath = path.join(dataRoot, '.squidrun', `runtime-${PROFILE}`, 'cdp-port.json');
   const verdictPath = path.join(dataRoot, 'shell-v2-gate-verdict.json');
   const recorder = makeRecorder();
+  const phase5Manifest = readPhase5Manifest();
 
   let child = null;
   let browser = null;
@@ -1778,11 +1993,51 @@ async function main() {
       if (!commitCheck.ok) throw new Error(`expect-commit failed: ${commitCheck.reason || 'unknown'}`);
     }
 
-    await runFlagOffProbe({
-      dataRoot: path.join(dataRoot, 'flag-off'),
-      cdpPort: options.cdpPort + 1,
-      recorder,
-    });
+    const manifestGate = buildPhase5ManifestGateData(phase5Manifest, options);
+    recorder.record(
+      'D1',
+      manifestGate.exactNameset === true,
+      `Phase 5 deletion nameset exact=${manifestGate.exactNameset}`,
+      {
+        manifestPath: PHASE5_MANIFEST_PATH,
+        entries: phase5Manifest.entries.map((entry) => ({
+          id: entry.id,
+          architectSignoff: entry.architectSignoff,
+          preDeleteConsumerGrep: entry.preDeleteConsumerGrep,
+          deletedFiles: entry.deletedFiles,
+          removedRuntimeSurfaces: entry.removedRuntimeSurfaces,
+        })),
+        ...manifestGate,
+      }
+    );
+
+    const jestAccounting = buildPhase5JestAccounting(phase5Manifest, options);
+    recorder.record(
+      'D4',
+      jestAccounting.ok === true,
+      `Jest suites ${jestAccounting.before}->${jestAccounting.after}, removed=${jestAccounting.removedSuites.length}, newSkipped=${jestAccounting.skippedHits.length}`,
+      jestAccounting
+    );
+
+    if (options.expectCommit) {
+      const residueHits = scanPhase5Residue(phase5Manifest);
+      recorder.record(
+        'D5',
+        residueHits.length === 0,
+        `Phase 5 residue grep hits=${residueHits.length}`,
+        { residuePatterns: phase5Manifest.residuePatterns, residueHits }
+      );
+    }
+
+    screenshots = {
+      ...screenshots,
+      ...await runFlagOffProbe({
+        dataRoot: path.join(dataRoot, 'flag-off'),
+        cdpPort: options.cdpPort + 1,
+        recorder,
+        runId,
+      }),
+    };
 
     try {
       fs.rmSync(qaPortPath, { force: true });
@@ -1797,6 +2052,7 @@ async function main() {
     await runAssertions({ page, sharedPortBefore, sharedPortPath, recorder });
     await runPhase4FlagOnAssertions({ page, recorder, rendererNoise });
     screenshots = {
+      ...screenshots,
       ...await capturePhase2Screenshots(page, runId),
       ...await capturePhase3TodayScreenshots(page, runId, recorder, dataRoot),
       ...await capturePhase4ReviewScreenshots(page, runId),
@@ -1804,11 +2060,25 @@ async function main() {
     const missingPhase4Screenshots = PHASE4_REVIEW_SCREENSHOTS.filter((name) => !screenshots[name] || !fs.existsSync(screenshots[name]));
     const wrongPhase4Paths = PHASE4_REVIEW_SCREENSHOTS
       .filter((name) => screenshots[name] && !screenshots[name].includes(`${path.sep}shell-v2-phase4${path.sep}`));
+    const missingPhase5Screenshots = PHASE5_REVIEW_SCREENSHOTS.filter((name) => !screenshots[name] || !fs.existsSync(screenshots[name]));
+    const wrongPhase5Paths = PHASE5_REVIEW_SCREENSHOTS
+      .filter((name) => screenshots[name] && !screenshots[name].includes(`${path.sep}shell-v2-phase5${path.sep}`));
     recorder.record(
       'V1',
-      missingPhase4Screenshots.length === 0 && wrongPhase4Paths.length === 0,
-      'Phase 4 review screenshots captured under shell-v2-phase4 coord path',
-      { required: PHASE4_REVIEW_SCREENSHOTS, missingPhase4Screenshots, wrongPhase4Paths, screenshots }
+      missingPhase4Screenshots.length === 0
+        && wrongPhase4Paths.length === 0
+        && missingPhase5Screenshots.length === 0
+        && wrongPhase5Paths.length === 0,
+      'Phase 4/5 review screenshots captured under coord paths',
+      {
+        requiredPhase4: PHASE4_REVIEW_SCREENSHOTS,
+        requiredPhase5: PHASE5_REVIEW_SCREENSHOTS,
+        missingPhase4Screenshots,
+        wrongPhase4Paths,
+        missingPhase5Screenshots,
+        wrongPhase5Paths,
+        screenshots,
+      }
     );
     screenshotMirrors = mirrorScreenshots(screenshots);
     const mirrorOk = Object.keys(screenshots).length > 0
