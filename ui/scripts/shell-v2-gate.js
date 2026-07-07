@@ -64,6 +64,13 @@ const PHASE4_INTACT_FILES = Object.freeze([
   path.join(UI_ROOT, 'modules', 'tabs', 'oracle.js'),
   path.join(UI_ROOT, 'modules', 'image-gen.js'),
 ]);
+const PHASE4_REVIEW_SCREENSHOTS = Object.freeze([
+  'phase4-settings-overlay-open',
+  'phase4-mira-composer-attachment',
+  'phase4-palette-open',
+  'phase4-today-copy-affordances',
+  'phase4-today-overflow-pill',
+]);
 
 function parseArgs(argv) {
   const options = {
@@ -832,6 +839,15 @@ async function runScreenshotAffordanceProbe(page) {
     });
   const drawerOpen = await page.evaluate(() => document.querySelector('#shellV2ScreenshotsDrawer')?.classList?.contains('open') === true);
 
+  await ensureMiraAttachmentChip(page);
+  const afterDrop = await page.evaluate(() => ({
+    chips: [...document.querySelectorAll('[data-shell-v2-mira-attachment="true"]')]
+      .map((chip) => ({ text: chip.textContent || '', path: chip.dataset.path || '' })),
+  }));
+  return { initial, drawerOpen, afterDrop };
+}
+
+async function dispatchMiraImageDrop(page) {
   await page.evaluate(async () => {
     const view = document.querySelector('[data-shell-v2-view="mira"]');
     const binary = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=');
@@ -851,12 +867,14 @@ async function runScreenshotAffordanceProbe(page) {
     }
     view?.dispatchEvent?.(event);
   });
+}
+
+async function ensureMiraAttachmentChip(page) {
+  const hasChip = await page.evaluate(() => Boolean(document.querySelector('[data-shell-v2-mira-attachment="true"]')));
+  if (!hasChip) {
+    await dispatchMiraImageDrop(page);
+  }
   await page.waitForSelector('[data-shell-v2-mira-attachment="true"]', { state: 'attached', timeout: 10000 });
-  const afterDrop = await page.evaluate(() => ({
-    chips: [...document.querySelectorAll('[data-shell-v2-mira-attachment="true"]')]
-      .map((chip) => ({ text: chip.textContent || '', path: chip.dataset.path || '' })),
-  }));
-  return { initial, drawerOpen, afterDrop };
 }
 
 async function runPhase4FlagOnAssertions({ page, recorder, rendererNoise }) {
@@ -1227,10 +1245,17 @@ async function waitForTodayRowCount(page, count) {
 
 async function capturePhase3TodayScreenshots(page, runId, recorder, dataRoot) {
   const screenshotDir = path.join(PROJECT_ROOT, '.squidrun', 'coord', 'shell-v2-phase3', runId);
+  const phase4ScreenshotDir = path.join(PROJECT_ROOT, '.squidrun', 'coord', 'shell-v2-phase4', runId);
   ensureDir(screenshotDir);
+  ensureDir(phase4ScreenshotDir);
   const screenshots = {};
   const capture = async (name) => {
     const filePath = path.join(screenshotDir, `${name}.png`);
+    await page.screenshot({ path: filePath, fullPage: true });
+    screenshots[name] = filePath;
+  };
+  const capturePhase4 = async (name) => {
+    const filePath = path.join(phase4ScreenshotDir, `${name}.png`);
     await page.screenshot({ path: filePath, fullPage: true });
     screenshots[name] = filePath;
   };
@@ -1315,6 +1340,8 @@ async function capturePhase3TodayScreenshots(page, runId, recorder, dataRoot) {
     'Today expanded row Copy body/Copy id buttons write expected clipboard values',
     copyState
   );
+  await page.waitForTimeout(250);
+  await capturePhase4('phase4-today-copy-affordances');
 
   const overlayPreservation = await runSettingsOverlayStatePreservation(page);
   recorder.record(
@@ -1377,6 +1404,8 @@ async function capturePhase3TodayScreenshots(page, runId, recorder, dataRoot) {
       pillText: pill?.textContent || '',
     };
   });
+  await page.waitForTimeout(250);
+  await capturePhase4('phase4-today-overflow-pill');
   await page.click('[data-today-new-pill="true"]');
   await page.waitForFunction(() => document.querySelector('[data-today-new-pill="true"]')?.hidden === true, null, { timeout: 5000 });
   const overflowApplied = await page.evaluate(() => {
@@ -1387,8 +1416,6 @@ async function capturePhase3TodayScreenshots(page, runId, recorder, dataRoot) {
       pillHidden: document.querySelector('[data-today-new-pill="true"]')?.hidden === true,
     };
   });
-  await page.waitForTimeout(250);
-  await capture('phase4-today-overflow-pill');
   recorder.record(
     'T6',
     overflowSeed.ok === true
@@ -1405,6 +1432,46 @@ async function capturePhase3TodayScreenshots(page, runId, recorder, dataRoot) {
     'Today overflow list preserves scroll, shows new-row pill, and applies pending rows on click',
     { overflowSeed, overflowNewSeed, refreshResult, overflowBefore, overflowPending, overflowApplied }
   );
+
+  return screenshots;
+}
+
+async function capturePhase4ReviewScreenshots(page, runId) {
+  const screenshotDir = path.join(PROJECT_ROOT, '.squidrun', 'coord', 'shell-v2-phase4', runId);
+  ensureDir(screenshotDir);
+  const screenshots = {};
+  const capture = async (name) => {
+    const filePath = path.join(screenshotDir, `${name}.png`);
+    await page.screenshot({ path: filePath, fullPage: true });
+    screenshots[name] = filePath;
+  };
+
+  await clickTab(page, 'today');
+  await page.click('#settingsBtn');
+  await page.waitForFunction(() => document.querySelector('#shellV2SettingsOverlay')?.classList?.contains('open') === true, null, { timeout: 5000 });
+  await page.waitForTimeout(250);
+  await capture('phase4-settings-overlay-open');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('#shellV2SettingsOverlay')?.classList?.contains('open') !== true, null, { timeout: 5000 });
+
+  await clickTab(page, 'mira');
+  await page.evaluate(() => {
+    const drawer = document.querySelector('#shellV2ScreenshotsDrawer');
+    drawer?.classList?.remove('open');
+    drawer?.setAttribute?.('aria-hidden', 'true');
+    const palette = document.querySelector('#commandPaletteOverlay');
+    palette?.classList?.remove('open');
+  });
+  await ensureMiraAttachmentChip(page);
+  await page.waitForTimeout(250);
+  await capture('phase4-mira-composer-attachment');
+
+  await page.keyboard.press('Control+K');
+  await page.waitForFunction(() => document.querySelector('#commandPaletteOverlay')?.classList?.contains('open') === true, null, { timeout: 5000 });
+  await page.waitForTimeout(250);
+  await capture('phase4-palette-open');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('#commandPaletteOverlay')?.classList?.contains('open') !== true, null, { timeout: 5000 });
 
   return screenshots;
 }
@@ -1707,7 +1774,17 @@ async function main() {
     screenshots = {
       ...await capturePhase2Screenshots(page, runId),
       ...await capturePhase3TodayScreenshots(page, runId, recorder, dataRoot),
+      ...await capturePhase4ReviewScreenshots(page, runId),
     };
+    const missingPhase4Screenshots = PHASE4_REVIEW_SCREENSHOTS.filter((name) => !screenshots[name] || !fs.existsSync(screenshots[name]));
+    const wrongPhase4Paths = PHASE4_REVIEW_SCREENSHOTS
+      .filter((name) => screenshots[name] && !screenshots[name].includes(`${path.sep}shell-v2-phase4${path.sep}`));
+    recorder.record(
+      'V1',
+      missingPhase4Screenshots.length === 0 && wrongPhase4Paths.length === 0,
+      'Phase 4 review screenshots captured under shell-v2-phase4 coord path',
+      { required: PHASE4_REVIEW_SCREENSHOTS, missingPhase4Screenshots, wrongPhase4Paths, screenshots }
+    );
     screenshotMirrors = mirrorScreenshots(screenshots);
     const mirrorOk = Object.keys(screenshots).length > 0
       && Object.keys(screenshots).every((name) => screenshotMirrors[name]?.byteCopy === true);
