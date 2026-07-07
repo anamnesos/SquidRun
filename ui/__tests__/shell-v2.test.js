@@ -380,6 +380,7 @@ function initHarness({ settings = { shellV2Enabled: true }, env = {}, windowCont
       return activePaneIds.slice();
     }),
     setPaneRuntimeOverride: jest.fn(),
+    refreshPane: jest.fn(() => true),
   };
   const win = {
     requestAnimationFrame: (fn) => {
@@ -560,6 +561,8 @@ describe('shell-v2', () => {
     expect(section.querySelector('.shell-v2-arm-section-lead').textContent).toBe('Lead');
     expect(section.querySelector('.shell-v2-arm-section-count').textContent).toBe('4 arms');
     expect(section.querySelector('.shell-v2-arm-section-report').textContent).toBe('');
+    expect(section.querySelector('[data-shell-v2-lead-report="trustquote-lead"]')).toBeTruthy();
+    expect(section.querySelector('.shell-v2-arm-section-lead-report').id).toBe('shellV2TrustQuoteLeadReport');
     expect(panes.map((pane) => pane.dataset.paneId)).toEqual([
       'trustquote-lead',
       'trustquote-schedule-dispatch',
@@ -613,5 +616,19 @@ describe('shell-v2', () => {
     toggle.eventListeners.click[0]();
     expect(section.classList.contains('is-collapsed')).toBe(true);
     expect(section.querySelector('.shell-v2-arm-panes').hidden).toBe(true);
+
+    terminalApi.refreshPane.mockClear();
+    toggle.eventListeners.click[0]();
+    expect(section.classList.contains('is-collapsed')).toBe(false);
+    expect(terminalApi.refreshPane).toHaveBeenCalledWith(
+      'trustquote-lead',
+      expect.objectContaining({
+        operation: 'shell_v2_arm_reveal',
+        forceFit: true,
+        forceApply: true,
+        resumeRender: true,
+        replayDaemonScrollback: true,
+      })
+    );
   });
 });

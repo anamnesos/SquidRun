@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -19,6 +20,9 @@ const PANE_TICKS = Object.freeze({
   'trustquote-app': 'trustquote-app',
   'trustquote-invoice': 'trustquote-invoice',
 });
+const TRUSTQUOTE_ARM_PANE_IDS = Object.freeze(
+  Object.keys(PANE_TICKS).filter((paneId) => paneId.startsWith('trustquote-'))
+);
 
 function parseArgs(argv) {
   const options = {
@@ -53,6 +57,24 @@ function readFileIfPresent(filePath) {
   try {
     return fs.existsSync(filePath) ? fs.readFileSync(filePath) : null;
   } catch {
+    return null;
+  }
+}
+
+function getGitHead() {
+  const result = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: PROJECT_ROOT,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (result.status !== 0) return null;
+  return String(result.stdout || '').trim() || null;
+}
+
+function sha256File(filePath) {
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  } catch (_) {
     return null;
   }
 }
@@ -128,6 +150,7 @@ function writeTickHarness(dataRoot) {
     "'use strict';",
     "const label = String(process.argv[2] || process.env.SQUIDRUN_ROLE || 'pane').toLowerCase();",
     'let tick = 0;',
+    "console.log(`${label} model tick-harness ready`);",
     "function emit() { tick += 1; console.log(`${label} tick ${tick}`); }",
     'emit();',
     'setInterval(emit, 1000);',
@@ -218,7 +241,7 @@ function resolveElectronPath() {
   return electronPath;
 }
 
-function launchThrowaway({ dataRoot, cdpPort }) {
+function launchThrowaway({ dataRoot, cdpPort, keepOpen = false }) {
   const env = {
     ...process.env,
     SQUIDRUN_SHELL_V2: '1',
@@ -228,12 +251,15 @@ function launchThrowaway({ dataRoot, cdpPort }) {
     SQUIDRUN_SKIP_STARTUP_INJECTION: '1',
     ELECTRON_ENABLE_LOGGING: '1',
   };
-  return spawn(resolveElectronPath(), [UI_ROOT, '--profile', PROFILE], {
+  const child = spawn(resolveElectronPath(), [UI_ROOT, '--profile', PROFILE], {
     cwd: PROJECT_ROOT,
     env,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: keepOpen === true,
+    stdio: keepOpen === true ? 'ignore' : ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
+  if (keepOpen === true) child.unref();
+  return child;
 }
 
 async function waitForFile(filePath, timeoutMs = ATTACH_TIMEOUT_MS) {
@@ -290,8 +316,35 @@ function contiguous(seq) {
   return Array.isArray(seq) && seq.every((value, index) => index === 0 || value === seq[index - 1] + 1);
 }
 
+function hasContiguousRun(entry, minLength = 3) {
+  return Array.isArray(entry?.seq)
+    && entry.seq.length >= minLength
+    && contiguous(entry.seq);
+}
+
 async function readTicks(page) {
   return page.evaluate(async (paneTicks) => {
+    function bestContiguousRun(values) {
+      let best = [];
+      let current = [];
+      for (const value of values) {
+        if (!Number.isFinite(value)) continue;
+        if (current.length === 0 || value === current[current.length - 1] + 1) {
+          current.push(value);
+        } else if (value === current[current.length - 1]) {
+          continue;
+        } else {
+          current = [value];
+        }
+        const bestLast = best.length ? best[best.length - 1] : -Infinity;
+        const currentLast = current[current.length - 1];
+        if (current.length > best.length || (current.length === best.length && currentLast > bestLast)) {
+          best = current.slice();
+        }
+      }
+      return best.slice(-12);
+    }
+
     let snapshot = null;
     try {
       const snapshotFn = window?.squidrun?.daemon?.terminalSnapshot
@@ -311,13 +364,17 @@ async function readTicks(page) {
       const terminal = document.getElementById(`terminal-${paneId}`);
       const xterm = terminal?.querySelector?.('.xterm') || terminal;
       const snapshotText = snapshotByPane.get(String(paneId))?.scrollback || '';
-      const text = `${xterm?.innerText || xterm?.textContent || ''}\n${snapshotText}`;
+      const domText = xterm?.innerText || xterm?.textContent || '';
+      const text = snapshotText || domText;
       const matches = [...text.matchAll(new RegExp(`${label} tick (\\d+)`, 'g'))].map((match) => Number(match[1]));
+      const seq = bestContiguousRun(matches);
       const rect = xterm?.getBoundingClientRect?.() || { x: 0, y: 0, width: 0, height: 0 };
       out[paneId] = {
         label,
-        last: matches.length ? matches[matches.length - 1] : null,
-        seq: matches.slice(-12),
+        source: snapshotText ? 'snapshot' : 'dom',
+        last: matches.length ? Math.max(...matches) : null,
+        seq,
+        rawSeq: matches.slice(-12),
         rect: {
           x: Math.round(rect.x),
           y: Math.round(rect.y),
@@ -350,7 +407,8 @@ async function waitForInitialTicks(page) {
     for (const [paneId, label] of Object.entries(paneTicks)) {
       const terminal = document.getElementById(`terminal-${paneId}`);
       const snapshotText = snapshotByPane.get(String(paneId))?.scrollback || '';
-      const text = `${terminal?.innerText || terminal?.textContent || ''}\n${snapshotText}`;
+      const domText = terminal?.innerText || terminal?.textContent || '';
+      const text = snapshotText || domText;
       if (!new RegExp(`${label} tick \\d+`, 'g').test(text)) return false;
     }
     return true;
@@ -364,7 +422,7 @@ async function waitForTickBaseline(page, timeoutMs = 30000) {
     last = await readTicks(page);
     const ready = Object.keys(PANE_TICKS).every((paneId) => {
       const value = last?.[paneId]?.last;
-      return Number.isFinite(value) && value >= 2 && contiguous(last[paneId].seq);
+      return Number.isFinite(value) && value >= 2 && hasContiguousRun(last[paneId], 2);
     });
     if (ready) return last;
     await sleep(500);
@@ -396,6 +454,77 @@ async function setTrustQuoteArmExpanded(page, expanded) {
   }, expanded, { timeout: 5000 });
 }
 
+async function readTrustQuoteArmPaint(page) {
+  return page.evaluate((paneIds) => {
+    const out = {};
+    for (const paneId of paneIds) {
+      const terminal = document.getElementById(`terminal-${paneId}`);
+      const xterm = terminal?.querySelector?.('.xterm') || terminal;
+      const rows = [...(xterm?.querySelectorAll?.('.xterm-rows > div') || [])];
+      const rowTexts = rows.map((row) => String(row?.innerText || row?.textContent || ''));
+      const paintedRows = rowTexts.filter((text) => /\S/.test(text)).length;
+      const rect = xterm?.getBoundingClientRect?.() || { x: 0, y: 0, width: 0, height: 0 };
+      const style = xterm ? window.getComputedStyle(xterm) : null;
+      out[paneId] = {
+        found: Boolean(xterm),
+        rowCount: rows.length,
+        paintedRows,
+        rect: {
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          w: Math.round(rect.width),
+          h: Math.round(rect.height),
+        },
+        display: style?.display || '',
+        visibility: style?.visibility || '',
+        sample: rowTexts.join(' ').replace(/\s+/g, ' ').trim().slice(0, 160),
+      };
+    }
+    return out;
+  }, TRUSTQUOTE_ARM_PANE_IDS);
+}
+
+async function waitForTrustQuoteArmPaint(page, timeoutMs = 15000) {
+  const started = Date.now();
+  let paint = null;
+  while (Date.now() - started < timeoutMs) {
+    paint = await readTrustQuoteArmPaint(page);
+    const ok = TRUSTQUOTE_ARM_PANE_IDS.every((paneId) => {
+      const entry = paint?.[paneId];
+      return entry?.found === true
+        && entry.paintedRows > 0
+        && entry.rect?.w > 20
+        && entry.rect?.h > 20
+        && entry.display !== 'none'
+        && entry.visibility !== 'hidden';
+    });
+    if (ok) return { ok: true, paint };
+    await sleep(250);
+  }
+  return { ok: false, paint };
+}
+
+async function readLeadReportLine(page) {
+  return page.evaluate(() => {
+    const report = document.querySelector('[data-shell-v2-lead-report="trustquote-lead"]')
+      || document.getElementById('shellV2TrustQuoteLeadReport');
+    const rect = report?.getBoundingClientRect?.() || { width: 0, height: 0 };
+    const style = report ? window.getComputedStyle(report) : null;
+    return {
+      found: Boolean(report),
+      id: report?.id || '',
+      dataTarget: report?.dataset?.shellV2LeadReport || '',
+      text: report?.textContent || '',
+      hidden: report?.hidden === true || style?.display === 'none' || style?.visibility === 'hidden',
+      placeholder: report?.dataset?.placeholder === 'true' || report?.getAttribute?.('data-placeholder') === 'true',
+      rect: {
+        w: Math.round(rect.width),
+        h: Math.round(rect.height),
+      },
+    };
+  });
+}
+
 async function capturePhase2Screenshots(page, runId) {
   const screenshotDir = path.join(PROJECT_ROOT, '.squidrun', 'coord', 'shell-v2-phase2', runId);
   ensureDir(screenshotDir);
@@ -424,6 +553,27 @@ async function capturePhase2Screenshots(page, runId) {
   await capture('phase2-today');
 
   return screenshots;
+}
+
+function mirrorPhase2Screenshots(screenshots = {}) {
+  const mirrorDir = path.join(PROJECT_ROOT, '.squidrun', 'screenshots', 'shell-v2');
+  ensureDir(mirrorDir);
+  const mirrors = {};
+  for (const [name, source] of Object.entries(screenshots)) {
+    if (!source || !fs.existsSync(source)) continue;
+    const mirror = path.join(mirrorDir, `${name}.png`);
+    fs.copyFileSync(source, mirror);
+    const sourceSha256 = sha256File(source);
+    const mirrorSha256 = sha256File(mirror);
+    mirrors[name] = {
+      source,
+      mirror,
+      sourceSha256,
+      mirrorSha256,
+      byteCopy: Boolean(sourceSha256 && sourceSha256 === mirrorSha256),
+    };
+  }
+  return mirrors;
 }
 
 async function runAssertions({ page, sharedPortBefore, sharedPortPath, recorder }) {
@@ -514,7 +664,7 @@ async function runAssertions({ page, sharedPortBefore, sharedPortPath, recorder 
     const after = afterHidden[paneId]?.last;
     if (!Number.isFinite(before) || !Number.isFinite(after)) return false;
     const delta = after - before;
-    return delta >= elapsed - 5 && delta <= elapsed + 5 && contiguous(afterHidden[paneId].seq);
+    return delta >= elapsed - 5 && delta <= elapsed + 5 && hasContiguousRun(afterHidden[paneId]);
   });
   recorder.record('C2', tickContinuity, `hidden=${elapsed.toFixed(1)}s`, { baseline, afterHidden });
 
@@ -542,7 +692,7 @@ async function runAssertions({ page, sharedPortBefore, sharedPortPath, recorder 
   const c1 = Object.keys(PANE_TICKS).every((paneId) => {
     const previous = afterHidden[paneId]?.last;
     const current = post[paneId]?.last;
-    return Number.isFinite(previous) && Number.isFinite(current) && current >= previous && contiguous(post[paneId].seq);
+    return Number.isFinite(previous) && Number.isFinite(current) && current >= previous && hasContiguousRun(post[paneId]);
   });
   recorder.record('C1', c1, 'ticks still advancing after switch churn', post);
 
@@ -621,6 +771,27 @@ async function runAssertions({ page, sharedPortBefore, sharedPortPath, recorder 
     .filter((check) => ['C1', 'C2', 'C3', 'C4', 'C5'].includes(check.id))
     .every((check) => check.ok);
   recorder.record('E5', e5Ok, 'C1-C5 regression criteria');
+
+  await setTrustQuoteArmExpanded(page, false);
+  await page.waitForTimeout(250);
+  await setTrustQuoteArmExpanded(page, true);
+  const armPaint = await waitForTrustQuoteArmPaint(page);
+  recorder.record(
+    'E6a',
+    armPaint.ok === true,
+    `paintedRows=${TRUSTQUOTE_ARM_PANE_IDS.map((paneId) => armPaint.paint?.[paneId]?.paintedRows || 0).join('/')}`,
+    armPaint.paint
+  );
+
+  const leadReport = await readLeadReportLine(page);
+  recorder.record(
+    'E6b',
+    leadReport.found === true
+      && leadReport.dataTarget === 'trustquote-lead'
+      && leadReport.placeholder !== true,
+    `found=${leadReport.found} dataTarget=${leadReport.dataTarget || 'none'} textBytes=${Buffer.byteLength(leadReport.text || '', 'utf8')}`,
+    leadReport
+  );
 }
 
 async function main() {
@@ -633,6 +804,7 @@ async function main() {
   const runId = `shell-v2-gate-${Date.now()}`;
   const dataRoot = path.join(PROJECT_ROOT, '.squidrun', 'tmp', runId);
   ensureDir(dataRoot);
+  const gitHead = getGitHead();
   const tickScript = writeTickHarness(dataRoot);
   writeQaSettings(dataRoot, tickScript);
   writeQaProfile(dataRoot);
@@ -646,15 +818,22 @@ async function main() {
   let child = null;
   let browser = null;
   let screenshots = {};
+  let screenshotMirrors = {};
   try {
-    child = launchThrowaway({ dataRoot, cdpPort: options.cdpPort });
-    child.stdout.on('data', (chunk) => process.stdout.write(`[electron] ${chunk}`));
-    child.stderr.on('data', (chunk) => process.stderr.write(`[electron] ${chunk}`));
+    child = launchThrowaway({ dataRoot, cdpPort: options.cdpPort, keepOpen: options.keepOpen });
+    child.stdout?.on?.('data', (chunk) => process.stdout.write(`[electron] ${chunk}`));
+    child.stderr?.on?.('data', (chunk) => process.stderr.write(`[electron] ${chunk}`));
     await waitForFile(qaPortPath);
     browser = await connectToThrowaway(options.cdpPort);
     const page = await findRendererPage(browser);
     await runAssertions({ page, sharedPortBefore, sharedPortPath, recorder });
     screenshots = await capturePhase2Screenshots(page, runId);
+    screenshotMirrors = mirrorPhase2Screenshots(screenshots);
+    const mirrorOk = Object.keys(screenshots).length > 0
+      && Object.keys(screenshots).every((name) => screenshotMirrors[name]?.byteCopy === true);
+    if (!mirrorOk) {
+      recorder.record('GATE', false, 'screenshot mirror byte-copy failed', { screenshots, screenshotMirrors });
+    }
   } catch (err) {
     recorder.record('GATE', false, err?.message || String(err));
   } finally {
@@ -662,10 +841,13 @@ async function main() {
     const verdict = {
       ok,
       profile: PROFILE,
+      gitHead,
+      keepOpen: options.keepOpen === true,
       dataRoot,
       qaPortPath,
       sharedPortPath,
       screenshots,
+      screenshotMirrors,
       checks: recorder.checks,
       wroteAt: new Date().toISOString(),
     };

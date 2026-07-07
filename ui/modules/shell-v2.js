@@ -601,6 +601,25 @@ function setArmSectionExpanded(section, expanded) {
   }
 }
 
+function ensureLeadReportElement(doc, header) {
+  if (!doc || !header) return null;
+  let report = header.querySelector?.('[data-shell-v2-lead-report="trustquote-lead"]')
+    || header.querySelector?.('#shellV2TrustQuoteLeadReport');
+  if (!report) {
+    report = makeElement(doc, 'span', 'shell-v2-arm-section-report shell-v2-arm-section-lead-report', {
+      id: 'shellV2TrustQuoteLeadReport',
+      dataset: { shellV2LeadReport: 'trustquote-lead' },
+      textContent: '',
+    });
+    header.appendChild(report);
+  }
+  ensureClass(report, 'shell-v2-arm-section-report');
+  ensureClass(report, 'shell-v2-arm-section-lead-report');
+  report.dataset.shellV2LeadReport = 'trustquote-lead';
+  report.setAttribute?.('aria-label', 'Lead last report');
+  return report;
+}
+
 function ensureTrustQuoteArmSection(doc, parent, terminalApi = {}, state = {}, settings = {}) {
   if (!doc || !parent || TRUSTQUOTE_ARM_PANES.length === 0) return null;
   state.armSections = state.armSections || {};
@@ -633,10 +652,7 @@ function ensureTrustQuoteArmSection(doc, parent, terminalApi = {}, state = {}, s
       textContent: `${TRUSTQUOTE_ARM_PANES.length} arms`,
     }));
     header.appendChild(toggle);
-    header.appendChild(makeElement(doc, 'span', 'shell-v2-arm-section-report', {
-      id: 'shellV2TrustQuoteLeadReport',
-      textContent: '',
-    }));
+    ensureLeadReportElement(doc, header);
     const panes = makeElement(doc, 'div', 'shell-v2-arm-panes', {
       id: 'shellV2TrustQuoteArmPanes',
     });
@@ -646,6 +662,7 @@ function ensureTrustQuoteArmSection(doc, parent, terminalApi = {}, state = {}, s
   }
 
   section.dataset.shellV2ArmApp = TRUSTQUOTE_APP_ID;
+  ensureLeadReportElement(doc, section.querySelector?.('.shell-v2-arm-section-header'));
   const panes = section.querySelector?.('.shell-v2-arm-panes');
   TRUSTQUOTE_ARM_PANES.forEach((spec) => {
     appendExisting(panes, ensureArmPane(doc, spec, settings));
@@ -655,7 +672,11 @@ function ensureTrustQuoteArmSection(doc, parent, terminalApi = {}, state = {}, s
     section.querySelector?.('.shell-v2-arm-section-toggle')?.addEventListener?.('click', () => {
       sectionState.expanded = section.dataset.shellV2Expanded !== 'true';
       setArmSectionExpanded(section, sectionState.expanded);
-      scheduleRefit(terminalApi, doc.defaultView || null);
+      if (sectionState.expanded) {
+        scheduleArmRevealRefit(terminalApi, doc.defaultView || null);
+      } else {
+        scheduleRefit(terminalApi, doc.defaultView || null);
+      }
     });
     section.addEventListener?.('click', (event) => {
       if (isInteractiveTarget(event.target)) return;
@@ -716,6 +737,54 @@ function scheduleRefit(terminalApi = {}, windowRef = null) {
     : (fn) => setTimeout(fn, 0);
   requestFrame(() => resize());
   setTimeout(() => resize(), 120);
+}
+
+function refreshTrustQuoteArmPanes(terminalApi = {}) {
+  let refreshed = 0;
+  const refreshPane = typeof terminalApi.refreshPane === 'function'
+    ? terminalApi.refreshPane.bind(terminalApi)
+    : null;
+  const refreshTerminalViewport = typeof terminalApi._internals?.refreshTerminalViewport === 'function'
+    ? terminalApi._internals.refreshTerminalViewport
+    : null;
+
+  for (const paneId of TRUSTQUOTE_ARM_PANE_IDS) {
+    const options = {
+      operation: 'shell_v2_arm_reveal',
+      forceFit: true,
+      forceApply: true,
+      scrollToBottom: true,
+      resumeRender: true,
+      replayDaemonScrollback: true,
+      clear: true,
+      snapshotTimeoutMs: 1500,
+    };
+    if (refreshPane) {
+      if (refreshPane(paneId, options) !== false) refreshed += 1;
+      continue;
+    }
+    if (refreshTerminalViewport && typeof terminalApi.getTerminal === 'function') {
+      const terminal = terminalApi.getTerminal(paneId);
+      const fitAddon = terminalApi.fitAddons?.get?.(paneId) || null;
+      if (terminal) {
+        refreshTerminalViewport(paneId, terminal, fitAddon, options);
+        refreshed += 1;
+      }
+    }
+  }
+  return refreshed;
+}
+
+function scheduleArmRevealRefit(terminalApi = {}, windowRef = null) {
+  scheduleRefit(terminalApi, windowRef);
+  const requestFrame = typeof windowRef?.requestAnimationFrame === 'function'
+    ? windowRef.requestAnimationFrame.bind(windowRef)
+    : (fn) => setTimeout(fn, 0);
+  const refresh = () => refreshTrustQuoteArmPanes(terminalApi);
+  refresh();
+  requestFrame(refresh);
+  setTimeout(refresh, 120);
+  setTimeout(refresh, 320);
 }
 
 function dispatchShellEvent(doc, activeTab) {
@@ -792,7 +861,11 @@ function initShellV2(options = {}) {
     if (!SHELL_V2_TABS.some((tab) => tab.id === tabId)) return false;
     state.activeTab = tabId;
     updateTabState(doc, required.body, rail, views, state.activeTab);
-    scheduleRefit(options.terminal || {}, windowRef);
+    if (state.activeTab === 'squid-room') {
+      scheduleArmRevealRefit(options.terminal || {}, windowRef);
+    } else {
+      scheduleRefit(options.terminal || {}, windowRef);
+    }
     if (typeof options.onTabActivated === 'function') {
       options.onTabActivated(state.activeTab);
     }

@@ -23,7 +23,7 @@ describe('shell-v2 committed gate', () => {
     expect(result.status).toBe(0);
     const criterionIds = String(result.stdout || '')
       .split(/\r?\n/)
-      .map((line) => line.match(/^([A-Z]\d|E\d):\s+(PASS|FAIL)\b/)?.[1])
+      .map((line) => line.match(/^([A-Z]\d[a-z]?):\s+(PASS|FAIL)\b/)?.[1])
       .filter(Boolean);
 
     expect(criterionIds).toMatchInlineSnapshot(`
@@ -38,6 +38,8 @@ describe('shell-v2 committed gate', () => {
   "E4",
   "E3",
   "E5",
+  "E6a",
+  "E6b",
 ]
 `);
   }, 150000);
