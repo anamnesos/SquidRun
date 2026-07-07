@@ -690,6 +690,38 @@ describe('shell-v2', () => {
     expect(terminalApi.focusPane).not.toHaveBeenCalled();
   });
 
+  test('Alt+1/2/3 focuses panes through Shell V2 without stealing Ctrl tab ownership', () => {
+    const { doc, controller, terminalApi } = initHarness();
+    const makeEvent = (key) => ({
+      key,
+      altKey: true,
+      ctrlKey: false,
+      metaKey: false,
+      preventDefault: jest.fn(),
+      stopPropagation: jest.fn(),
+      stopImmediatePropagation: jest.fn(),
+    });
+
+    controller.switchTab('today');
+
+    const toBuilder = makeEvent('2');
+    doc.fire('keydown', toBuilder);
+    expect(controller.getActiveTab()).toBe('squid-room');
+    expect(terminalApi.focusPane).toHaveBeenLastCalledWith('2');
+    expect(toBuilder.preventDefault).toHaveBeenCalled();
+    expect(toBuilder.stopImmediatePropagation).toHaveBeenCalled();
+
+    const toOracle = makeEvent('3');
+    doc.fire('keydown', toOracle);
+    expect(controller.getActiveTab()).toBe('squid-room');
+    expect(terminalApi.focusPane).toHaveBeenLastCalledWith('3');
+
+    const toMira = makeEvent('1');
+    doc.fire('keydown', toMira);
+    expect(controller.getActiveTab()).toBe('mira');
+    expect(terminalApi.focusPane).toHaveBeenLastCalledWith('1');
+  });
+
   test('removes legacy Builder and Oracle expand buttons and reduces station headers', () => {
     const { panes, controller } = initHarness();
 
@@ -711,6 +743,40 @@ describe('shell-v2', () => {
     controller.refreshChrome();
     expect(panes['2'].querySelector('.expand-btn')).toBeNull();
     expect(panes['3'].querySelector('.expand-btn')).toBeNull();
+  });
+
+  test('reduces the Mira header to chip, needs-input slot, and overflow controls', () => {
+    const { panes, controller } = initHarness();
+    const pane = panes['1'];
+    const header = pane.querySelector('.pane-header');
+    const menu = header.querySelector('.shell-v2-mira-menu');
+    const panel = menu.querySelector('.shell-v2-station-menu-panel');
+
+    expect(header.dataset.shellV2Reduced).toBe('true');
+    expect(header.children).toHaveLength(3);
+    expect(header.querySelector('.agent-badge')).toBeNull();
+    expect(header.querySelector('.shell-v2-station-chip')).toBeTruthy();
+    expect(header.querySelector('.shell-v2-needs-input-slot')).toBeTruthy();
+    expect(menu).toBeTruthy();
+
+    const outsideButtons = header.querySelectorAll('button')
+      .filter((button) => !button.closest('.shell-v2-station-menu-panel'));
+    expect(outsideButtons).toHaveLength(0);
+    [
+      '.pane-role-info-btn[data-pane-id="1"]',
+      '.fresh-session-btn[data-pane-id="1"]',
+      '.interrupt-btn[data-pane-id="1"]',
+      '.unstick-btn[data-pane-id="1"]',
+      '.kickoff-btn[data-pane-id="1"]',
+    ].forEach((selector) => {
+      expect(panel.querySelector(selector)).toBeTruthy();
+    });
+    expect(panel.querySelector('#model-selector-1')).toBeNull();
+    expect(panel.querySelector('#health-1')).toBeNull();
+    expect(panel.querySelector('#lock-icon-1')).toBeNull();
+
+    controller.refreshChrome();
+    expect(pane.querySelector('.pane-header').children).toHaveLength(3);
   });
 
   test('creates the TrustQuote arm section on existing terminal/runtime paths', () => {

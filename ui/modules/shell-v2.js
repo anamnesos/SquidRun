@@ -44,6 +44,11 @@ const SHELL_V2_ACTIVE_PANE_IDS = Object.freeze([
   ...CORE_STATION_PANE_IDS,
   ...TRUSTQUOTE_ARM_PANE_IDS,
 ]);
+const SHELL_V2_PANE_SHORTCUTS = Object.freeze({
+  '1': { paneId: '1', tabId: 'mira' },
+  '2': { paneId: '2', tabId: 'squid-room' },
+  '3': { paneId: '3', tabId: 'squid-room' },
+});
 
 const MAIN_WINDOW_KEYS = new Set(['', 'main']);
 const stateByDocument = new WeakMap();
@@ -106,6 +111,14 @@ function appendExisting(parent, child) {
   if (!parent || !child || child.parentNode === parent) return child;
   parent.appendChild(child);
   return child;
+}
+
+function findPaneIn(container, paneId) {
+  if (!container || !paneId) return null;
+  if (container.classList?.contains?.('pane') && String(container.dataset?.paneId || '') === String(paneId)) {
+    return container;
+  }
+  return container.querySelector?.(`.pane[data-pane-id="${paneId}"]`) || null;
 }
 
 function showShellElement(element) {
@@ -1646,13 +1659,10 @@ function rebuildMiraStationHeader(doc, pane, settings = {}) {
   });
   [
     pane.querySelector?.(`.pane-role-info-btn[data-pane-id="${paneId}"]`),
-    doc.getElementById?.(`model-selector-${paneId}`),
     pane.querySelector?.(`.fresh-session-btn[data-pane-id="${paneId}"]`),
-    doc.getElementById?.(`health-${paneId}`),
     pane.querySelector?.(`.interrupt-btn[data-pane-id="${paneId}"]`),
     pane.querySelector?.(`.unstick-btn[data-pane-id="${paneId}"]`),
     pane.querySelector?.(`.kickoff-btn[data-pane-id="${paneId}"]`),
-    doc.getElementById?.(`lock-icon-${paneId}`),
   ].forEach((control) => appendStationControl(panel, control));
   menu.appendChild(trigger);
   menu.appendChild(panel);
@@ -2051,6 +2061,11 @@ function resolveShortcutTab(event, tabs = SHELL_V2_TABS) {
   return tab?.id || null;
 }
 
+function resolveShortcutPane(event) {
+  if (!event?.altKey || event.ctrlKey || event.metaKey) return null;
+  return SHELL_V2_PANE_SHORTCUTS[String(event.key || '')] || null;
+}
+
 function shouldHandleCoreExpand(button) {
   const paneId = String(button?.dataset?.paneId || '');
   return paneId === '2' || paneId === '3';
@@ -2150,7 +2165,7 @@ function initShellV2(options = {}) {
     migrateShellV2Settings(doc, windowRef, options.settings || {});
     ensureMiraScreenshotAffordances(doc, views.mira, windowRef, state);
     ensureLabView(doc, views, windowRef);
-    rebuildMiraStationHeader(doc, required.mainPaneContainer?.querySelector?.('.pane[data-pane-id="1"]'), options.settings || {});
+    rebuildMiraStationHeader(doc, findPaneIn(required.mainPaneContainer, '1'), options.settings || {});
     purgeLegacyPaneExpandButtons(required.sidePanesContainer);
     ensureSquidRoomFloor(doc, views, coreStrip, options.terminal || {}, state, options.settings || {}, {
       windowContext: options.windowContext || {},
@@ -2180,6 +2195,17 @@ function initShellV2(options = {}) {
       event.preventDefault?.();
       event.stopPropagation?.();
       event.stopImmediatePropagation?.();
+      return;
+    }
+    const targetPane = resolveShortcutPane(event);
+    if (targetPane) {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      event.stopImmediatePropagation?.();
+      if (targetPane.tabId && state.activeTab !== targetPane.tabId) {
+        switchTab(targetPane.tabId);
+      }
+      options.terminal?.focusPane?.(targetPane.paneId);
       return;
     }
     const targetTab = resolveShortcutTab(event, shellTabs);
