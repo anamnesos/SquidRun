@@ -16,6 +16,7 @@ const {
   resolveGeminiModelId,
 } = require('../gemini-command');
 const {
+  detectCli,
   normalizeClaudeModelId,
 } = require('../cli-resume-invocation');
 const {
@@ -29,6 +30,7 @@ const TRUSTQUOTE_ARM_SPECS_BY_PANE_ID = new Map(
   getTrustQuoteDayToDayArmSpecs().map((spec) => [String(spec.paneId), spec])
 );
 const DEFAULT_TRUSTQUOTE_ARM_CLAUDE_MODEL = 'opus';
+const CLAUDE_MODEL_FLAG_PATTERN = /(^|\s)--model(?:=|\s+)(?:"[^"]*"|'[^']*'|[^\s"']+)/i;
 
 // Under plain node (jest), require('electron') resolves to a path string -
 // guard so tests exercise the deps/mainWindow seams instead.
@@ -49,9 +51,52 @@ function isSwitchablePaneId(paneId) {
   return isCorePaneId(paneId) || Boolean(getTrustQuoteArmSpec(paneId));
 }
 
+function isClaudeCommand(command = '') {
+  return detectCli(command) === 'claude';
+}
+
+function stripClaudeModelFlag(command = '') {
+  const stripped = String(command || '')
+    .replace(CLAUDE_MODEL_FLAG_PATTERN, (match, prefix = '') => prefix || ' ')
+    .trim();
+  return stripped || 'claude';
+}
+
+function insertClaudeModelFlag(command = '', claudeModel = '') {
+  const model = normalizeClaudeModelId(claudeModel);
+  if (!model) return stripClaudeModelFlag(command);
+  const text = String(command || '').trim();
+  if (!text) return `claude --model ${model}`;
+  const match = text.match(/^(\S+)([\s\S]*)$/);
+  if (!match) return `claude --model ${model}`;
+  const executable = match[1];
+  const rest = match[2] || '';
+  return `${executable} --model ${model}${rest}`.trim();
+}
+
+function rebuildClaudeCommandPreservingFlags(existingCommand = '', claudeModel = '') {
+  const text = String(existingCommand || '').trim();
+  const model = normalizeClaudeModelId(claudeModel);
+  if (!text || !isClaudeCommand(text)) {
+    return model ? `claude --model ${model}` : 'claude';
+  }
+  if (!model) {
+    return stripClaudeModelFlag(text);
+  }
+  if (!CLAUDE_MODEL_FLAG_PATTERN.test(text)) {
+    return insertClaudeModelFlag(text, model);
+  }
+  return text
+    .replace(CLAUDE_MODEL_FLAG_PATTERN, (match, prefix = '') => `${prefix || ''}--model ${model}`)
+    .trim();
+}
+
 function buildClaudeCommand(claudeModel = '', options = {}) {
   const model = normalizeClaudeModelId(claudeModel)
     || (options.isArmPane ? DEFAULT_TRUSTQUOTE_ARM_CLAUDE_MODEL : '');
+  if (options.preserveExistingFlags && isClaudeCommand(options.existingCommand || '')) {
+    return rebuildClaudeCommandPreservingFlags(options.existingCommand, model);
+  }
   return model ? `claude --model ${model}` : 'claude';
 }
 
@@ -79,6 +124,7 @@ function resolveModelSwitchSelection(payload = {}) {
 
 function buildModelCommands(ctx = {}, id = '', options = {}) {
   const paneCommands = ctx.currentSettings?.paneCommands || {};
+  const existingCommand = String(paneCommands[id] || '').trim();
   const existingGeminiCommand = paneCommands[id]
     || Object.values(paneCommands).find(hasGeminiCommand)
     || '';
@@ -90,6 +136,8 @@ function buildModelCommands(ctx = {}, id = '', options = {}) {
     commands: {
       'claude': buildClaudeCommand(options.claudeModel, {
         isArmPane: Boolean(getTrustQuoteArmSpec(id)),
+        existingCommand,
+        preserveExistingFlags: options.preserveClaudeFlags === true,
       }),
       'codex': 'codex',
       'gemini': buildGeminiCommand({
@@ -216,8 +264,13 @@ async function executePaneModelSwitch(ctx, payload = {}, deps = {}) {
     if (!ctx.currentSettings.paneCommands || typeof ctx.currentSettings.paneCommands !== 'object') {
       ctx.currentSettings.paneCommands = {};
     }
+    const existingCommand = String(ctx.currentSettings.paneCommands[id] || '').trim();
+    const targetClaudeModel = hasClaudeModelSelection
+      ? claudeModel
+      : (isArmPane ? '' : normalizeClaudeModelId(ctx.currentSettings.claudeModel || ''));
     const { commands, geminiModel } = buildModelCommands(ctx, id, {
-      claudeModel: hasClaudeModelSelection ? claudeModel : '',
+      claudeModel: targetClaudeModel,
+      preserveClaudeFlags: model === 'claude' && isClaudeCommand(existingCommand),
     });
 
     if (!commands[model]) {
@@ -359,6 +412,7 @@ module.exports = {
   executePaneModelSwitch,
   _internals: {
     buildClaudeCommand,
+    rebuildClaudeCommandPreservingFlags,
     resolveModelSwitchSelection,
   },
 };
