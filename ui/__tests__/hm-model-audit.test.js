@@ -20,10 +20,33 @@ const {
   buildWatchStatusSnapshot,
   formatAlertMessage,
   servingNow,
+  extractModelFallbackRecords,
+  fallbackEventsByDay,
+  findModelFallbacksForTranscript,
   WATCH_MIN_STALE_AFTER_MS,
 } = require('../scripts/hm-model-audit');
 
 const line = (ts, model) => JSON.stringify({ timestamp: ts, message: { model } });
+const fallbackLine = (ts, requestId = 'req-fallback') => JSON.stringify({
+  type: 'assistant',
+  requestId,
+  timestamp: ts,
+  message: {
+    model: 'claude-opus-4-8',
+    content: [
+      { type: 'fallback', from: { model: 'claude-fable-5' }, to: { model: 'claude-opus-4-8' } },
+    ],
+  },
+});
+const refusalLine = (ts, requestId = 'req-fallback', content = "Fable 5's safeguards flagged this message. Switched to Opus 4.8.") => JSON.stringify({
+  type: 'system',
+  subtype: 'model_refusal_fallback',
+  content,
+  originalModel: 'claude-fable-5',
+  fallbackModel: 'claude-opus-4-8',
+  requestId,
+  timestamp: ts,
+});
 
 describe('hm-model-audit', () => {
   test('tallies serving model per day, skips junk and pre-since days', () => {
@@ -64,6 +87,52 @@ describe('hm-model-audit', () => {
     });
     expect(Object.keys(result.byFile).sort()).toEqual(['a.jsonl', 'b.jsonl']);
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('fallback parser extracts explicit fallback and refusal reason records, skips junk', () => {
+    const records = extractModelFallbackRecords([
+      fallbackLine('2026-07-07T01:14:06.134Z', 'req-1'),
+      refusalLine('2026-07-07T01:14:28.063Z', 'req-1'),
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"not fallback"}]}}',
+      'not json but mentions model_refusal_fallback and "fallback"',
+    ]);
+
+    expect(records.fallbacks).toEqual([
+      {
+        timestamp: '2026-07-07T01:14:06.134Z',
+        fromModel: 'claude-fable-5',
+        toModel: 'claude-opus-4-8',
+        requestId: 'req-1',
+      },
+    ]);
+    expect(records.refusalFallbacks).toEqual([
+      {
+        timestamp: '2026-07-07T01:14:28.063Z',
+        reasonExcerpt: "Fable 5's safeguards flagged this message. Switched to Opus 4.8.",
+        requestId: 'req-1',
+        fromModel: 'claude-fable-5',
+        toModel: 'claude-opus-4-8',
+      },
+    ]);
+  });
+
+  test('byDay includes fallback counts without double counting refusal reason lines', () => {
+    const lines = [
+      line('2026-07-07T01:00:00Z', 'claude-fable-5'),
+      fallbackLine('2026-07-07T01:14:06.134Z', 'req-1'),
+      refusalLine('2026-07-07T01:14:28.063Z', 'req-1'),
+      fallbackLine('2026-07-07T02:00:00Z', 'req-2'),
+      fallbackLine('2026-07-06T02:00:00Z', 'old-req'),
+    ];
+
+    expect(tallyModelsByDay(lines, { since: '2026-07-07' })).toEqual({
+      '2026-07-07': {
+        'claude-fable-5': 1,
+        'claude-opus-4-8': 2,
+        fallbacks: 2,
+      },
+    });
+    expect(fallbackEventsByDay(lines, { since: '2026-07-07' })).toEqual({ '2026-07-07': 2 });
   });
 
   test('watch core: flags substitutions, ignores expected + synthetic turns', () => {
@@ -193,6 +262,31 @@ describe('hm-model-audit', () => {
         expectedModel: 'claude-fable-5',
         paneId: '1',
         source: 'pane-command',
+      },
+    ]);
+  });
+
+  test('watch fallback detector maps transcript fallback to pane and carries reason excerpt', () => {
+    const lines = [
+      fallbackLine('2026-07-07T01:14:06.134Z', 'req-1'),
+      refusalLine(
+        '2026-07-07T01:14:28.063Z',
+        'req-1',
+        "Fable 5's safeguards flagged this message. The safeguards are intentionally broad right now and may flag safe routine coding work."
+      ),
+    ];
+
+    expect(findModelFallbacksForTranscript('oracle-session.jsonl', lines, {
+      paneSessionIds: { panes: { '3': 'oracle-session' } },
+    })).toEqual([
+      {
+        file: 'oracle-session.jsonl',
+        paneId: '3',
+        timestamp: '2026-07-07T01:14:06.134Z',
+        fromModel: 'claude-fable-5',
+        toModel: 'claude-opus-4-8',
+        reasonExcerpt: "Fable 5's safeguards flagged this message. The safeguards are intentionally broad right now and may flag safe routine coding work.",
+        requestId: 'req-1',
       },
     ]);
   });
@@ -365,5 +459,19 @@ describe('hm-model-audit', () => {
       offendingSince: '2026-07-06T12:29:45Z',
       offendingTurns: 675,
     }, { paneId: '3' })).toContain('MODEL RECOVERED: a.jsonl pane 3 back on claude-fable-5');
+  });
+
+  test('alert messages format explicit fallback records separately from substitution drift', () => {
+    expect(formatAlertMessage({
+      kind: 'fallback',
+      file: 'oracle-session.jsonl',
+      paneId: '3',
+      timestamp: '2026-07-07T01:14:06.134Z',
+      fromModel: 'claude-fable-5',
+      toModel: 'claude-opus-4-8',
+      reasonExcerpt: "Fable 5's safeguards flagged this message.",
+    }, { paneId: '3' })).toBe(
+      'MODEL FALLBACK: oracle-session.jsonl pane 3 claude-fable-5 -> claude-opus-4-8 at 2026-07-07T01:14:06.134Z reason="Fable 5\'s safeguards flagged this message."'
+    );
   });
 });

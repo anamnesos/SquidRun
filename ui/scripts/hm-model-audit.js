@@ -48,6 +48,87 @@ const DEFAULT_WATCH_OUT_LOG_PATH = path.join(DEFAULT_RUNTIME_DIR, 'hm-model-audi
 const DEFAULT_WATCH_ERR_LOG_PATH = path.join(DEFAULT_RUNTIME_DIR, 'hm-model-audit-watch.err.log');
 const WATCH_START_GRACE_MS = 10 * 1000;
 const WATCH_MIN_STALE_AFTER_MS = 30 * 1000;
+const FALLBACK_REASON_EXCERPT_MAX_CHARS = 140;
+
+function reasonExcerpt(text = '', maxChars = FALLBACK_REASON_EXCERPT_MAX_CHARS) {
+  const compact = String(text || '').replace(/\s+/g, ' ').trim();
+  return compact.length > maxChars ? compact.slice(0, maxChars) : compact;
+}
+
+function parseFallbackRecordsFromLine(line = '') {
+  if (!line || (!line.includes('"fallback"') && !line.includes('model_refusal_fallback'))) {
+    return { fallbacks: [], refusalFallbacks: [] };
+  }
+  let rec;
+  try { rec = JSON.parse(line); } catch { return { fallbacks: [], refusalFallbacks: [] }; }
+
+  const timestamp = rec?.timestamp || null;
+  const requestId = rec?.requestId || null;
+  const fallbacks = [];
+  const content = Array.isArray(rec?.message?.content) ? rec.message.content : [];
+  for (const part of content) {
+    if (part?.type !== 'fallback') continue;
+    const fromModel = part?.from?.model || '';
+    const toModel = part?.to?.model || '';
+    if (!fromModel && !toModel) continue;
+    fallbacks.push({ timestamp, fromModel, toModel, requestId });
+  }
+
+  const refusalFallbacks = [];
+  if (rec?.type === 'system' && rec?.subtype === 'model_refusal_fallback') {
+    refusalFallbacks.push({
+      timestamp,
+      reasonExcerpt: reasonExcerpt(rec?.content || ''),
+      requestId,
+      fromModel: rec?.originalModel || '',
+      toModel: rec?.fallbackModel || '',
+    });
+  }
+
+  return { fallbacks, refusalFallbacks };
+}
+
+function extractModelFallbackRecords(lines) {
+  const records = { fallbacks: [], refusalFallbacks: [] };
+  for (const line of lines) {
+    const parsed = parseFallbackRecordsFromLine(line);
+    records.fallbacks.push(...parsed.fallbacks);
+    records.refusalFallbacks.push(...parsed.refusalFallbacks);
+  }
+  return records;
+}
+
+function matchRefusalFallback(fallback, refusalFallbacks = []) {
+  if (!fallback) return null;
+  if (fallback.requestId) {
+    const requestMatch = refusalFallbacks.find((item) => item.requestId === fallback.requestId);
+    if (requestMatch) return requestMatch;
+  }
+  const fallbackMs = timestampMs(fallback.timestamp);
+  if (!fallbackMs) return refusalFallbacks[0] || null;
+  return refusalFallbacks.find((item) => {
+    const itemMs = timestampMs(item.timestamp);
+    return itemMs && itemMs >= fallbackMs && itemMs - fallbackMs <= 2 * 60 * 1000;
+  }) || refusalFallbacks[0] || null;
+}
+
+function fallbackEventsByDay(lines, { since = '' } = {}) {
+  const counts = {};
+  const seen = new Set();
+  for (const line of lines) {
+    const parsed = parseFallbackRecordsFromLine(line);
+    for (const fallback of parsed.fallbacks) {
+      const day = String(fallback.timestamp || '').slice(0, 10);
+      if (!day || day < since) continue;
+      const key = fallback.requestId
+        || `${fallback.timestamp || ''}|${fallback.fromModel || ''}|${fallback.toModel || ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      counts[day] = (counts[day] || 0) + 1;
+    }
+  }
+  return counts;
+}
 
 /** Pure: fold transcript lines into { day: { model: count } }. */
 function tallyModelsByDay(lines, { since = '' } = {}) {
@@ -61,6 +142,11 @@ function tallyModelsByDay(lines, { since = '' } = {}) {
     if (!model || !day || day < since) continue;
     counts[day] = counts[day] || {};
     counts[day][model] = (counts[day][model] || 0) + 1;
+  }
+  const fallbacks = fallbackEventsByDay(lines, { since });
+  for (const [day, count] of Object.entries(fallbacks)) {
+    counts[day] = counts[day] || {};
+    counts[day].fallbacks = (counts[day].fallbacks || 0) + count;
   }
   return counts;
 }
@@ -280,6 +366,26 @@ function findOffendingTurnsForTranscript(file, lines, options = {}) {
     paneId: expected.paneId,
     source: expected.source,
   }));
+}
+
+function findModelFallbacksForTranscript(file, lines, options = {}) {
+  const paneSessionIds = options.paneSessionIds || {};
+  const sessionId = sessionIdFromTranscriptFile(file);
+  const paneId = findPaneIdForSession(sessionId, paneSessionIds);
+  if (!paneId) return [];
+  const records = extractModelFallbackRecords(lines);
+  return records.fallbacks.map((fallback) => {
+    const reason = matchRefusalFallback(fallback, records.refusalFallbacks);
+    return {
+      file,
+      paneId,
+      timestamp: fallback.timestamp || null,
+      fromModel: fallback.fromModel || reason?.fromModel || '',
+      toModel: fallback.toModel || reason?.toModel || '',
+      reasonExcerpt: reason?.reasonExcerpt || '',
+      requestId: fallback.requestId || reason?.requestId || null,
+    };
+  });
 }
 
 const DEFAULT_REALERT_MS = 60 * 60 * 1000;
@@ -509,6 +615,10 @@ function cleanupWatchMetadata(options = {}) {
 
 function formatAlertMessage(event, { paneId = '', source = '' } = {}) {
   const paneNote = paneId ? ` pane ${paneId}` : '';
+  if (event.kind === 'fallback') {
+    const reason = event.reasonExcerpt ? ` reason="${event.reasonExcerpt}"` : ' reason=unavailable';
+    return `MODEL FALLBACK: ${event.file}${paneNote} ${event.fromModel || '?'} -> ${event.toModel || '?'} at ${event.timestamp || '-'}${reason}`;
+  }
   if (event.kind === 'still-offending') {
     return `MODEL SUBSTITUTION ONGOING: ${event.file}${paneNote} still serving ${event.model} since ${event.offendingSince} (${event.offendingTurns} offending turns; expected ${event.expectedModel})`;
   }
@@ -612,9 +722,14 @@ function watch(dir, {
           fs.closeSync(fd);
           chunk = buf.toString('utf8');
         } catch { continue; }
+        const lines = chunk.split('\n');
+        for (const fallback of findModelFallbacksForTranscript(file, lines, watchContext)) {
+          alert(formatAlertMessage({ kind: 'fallback', ...fallback }, { paneId: fallback.paneId }));
+          alertsSent += 1;
+        }
         const expected = resolveExpectedModelForTranscript(file, watchContext);
         if (!expected.expectedModel) continue;
-        for (const turn of scanModelTurns(chunk.split('\n'), expected.expectedModel)) {
+        for (const turn of scanModelTurns(lines, expected.expectedModel)) {
           const event = policy({
             file,
             model: turn.model,
@@ -887,6 +1002,9 @@ module.exports = {
   resolveExpectedModelForTranscript,
   findOffendingTurnsForTranscript,
   createStateChangeAlertFilter,
+  extractModelFallbackRecords,
+  fallbackEventsByDay,
+  findModelFallbacksForTranscript,
   loadWatchContext,
   buildWatchStatusSnapshot,
   watchStatus,
