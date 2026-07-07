@@ -9,25 +9,39 @@ const {
   formatPlanSummary,
   relativeDestinationInsideRoot,
 } = require('../../mira/tools/plan-reviewed-imports');
+const { createReviewedImportFixture } = require('./helpers/mira-reviewed-import-fixture');
 
 describe('Mira reviewed import dry-run planner', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
   const stateRoot = path.join(repoRoot, 'mira', '.state-dev-test');
+  let cleanupFixtures = [];
+
+  afterEach(() => {
+    for (const cleanup of cleanupFixtures.splice(0)) {
+      cleanup();
+    }
+  });
 
   test('reports all reviewed imports without copying or mutating queue state', () => {
-    const queuePath = path.join(repoRoot, 'mira', 'imports', 'review-queue.json');
+    const fixture = createReviewedImportFixture({ repoRoot });
+    cleanupFixtures.push(fixture.cleanup);
+    const queuePath = fixture.queuePath;
     const before = fs.readFileSync(queuePath, 'utf8');
-    const plan = buildReviewedImportPlan({ env: { MIRA_STATE_ROOT: stateRoot } });
+    const plan = buildReviewedImportPlan({
+      env: { MIRA_STATE_ROOT: fixture.stateRoot },
+      queuePath,
+      contractPath: fixture.contractPath,
+    });
     const after = fs.readFileSync(queuePath, 'utf8');
 
     expect(plan.ok).toBe(true);
     expect(plan.schema).toBe('mira.reviewed_import_plan.v1');
-    expect(plan.state_root).toBe(path.resolve(stateRoot));
+    expect(plan.state_root).toBe(path.resolve(fixture.stateRoot));
     expect(plan.copied).toBe(false);
     expect(plan.moved).toBe(false);
     expect(plan.deleted).toBe(false);
     expect(plan.mutated_queue_status).toBe(false);
-    expect(plan.records.length).toBe(14);
+    expect(plan.records.length).toBe(fixture.queue.records.length);
     expect(plan.records.every((record) => record.status === 'not_imported')).toBe(true);
     expect(plan.records.every((record) => record.source_exists)).toBe(true);
     expect(plan.records.every((record) => record.destination_within_state_root)).toBe(true);
@@ -88,10 +102,16 @@ describe('Mira reviewed import dry-run planner', () => {
   });
 
   test('formats a concise non-mutating dry-run summary', () => {
-    const plan = buildReviewedImportPlan({ env: { MIRA_STATE_ROOT: stateRoot } });
+    const fixture = createReviewedImportFixture({ repoRoot });
+    cleanupFixtures.push(fixture.cleanup);
+    const plan = buildReviewedImportPlan({
+      env: { MIRA_STATE_ROOT: fixture.stateRoot },
+      queuePath: fixture.queuePath,
+      contractPath: fixture.contractPath,
+    });
     const summary = formatPlanSummary(plan);
 
-    expect(summary).toContain('Mira reviewed import dry-run (14 records)');
+    expect(summary).toContain(`Mira reviewed import dry-run (${fixture.queue.records.length} records)`);
     expect(summary).toContain('copied=false moved=false deleted=false mutated_queue_status=false');
   });
 });

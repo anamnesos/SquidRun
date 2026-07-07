@@ -172,9 +172,14 @@ describe('app-session literal guard', () => {
 
   test('pre-commit JavaScript gates use package entrypoints and fail closed when tooling is missing', () => {
     const hookText = fs.readFileSync(path.join(repoRoot, 'scripts/pre-commit.sh'), 'utf8');
-    const installedHookText = fs.readFileSync(path.join(repoRoot, '.git/hooks/pre-commit'), 'utf8');
+    const installedHookPath = path.join(repoRoot, '.git/hooks/pre-commit');
+    const hookTexts = [hookText];
 
-    for (const text of [hookText, installedHookText]) {
+    if (fs.existsSync(installedHookPath)) {
+      hookTexts.push(fs.readFileSync(installedHookPath, 'utf8'));
+    }
+
+    for (const text of hookTexts) {
       expect(text).toContain('ui/node_modules/eslint/bin/eslint.js');
       expect(text).toContain('node ./node_modules/eslint/bin/eslint.js "**/*.js" --quiet');
       expect(text).toContain('ui/node_modules/jest/bin/jest.js');

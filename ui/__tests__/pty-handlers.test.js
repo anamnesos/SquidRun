@@ -1448,6 +1448,12 @@ describe('PTY Handlers', () => {
       fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), '{}\n');
     };
 
+    const makeFixtureCwd = (name = 'squidrun-cwd') => {
+      const cwd = path.join(tmpDir, name);
+      fs.mkdirSync(cwd, { recursive: true });
+      return cwd;
+    };
+
     test('simulates spawn in dry-run mode', async () => {
       ctx.currentSettings.dryRun = true;
       const result = await harness.invoke('spawn-claude', '1', '/dir');
@@ -1637,7 +1643,7 @@ describe('PTY Handlers', () => {
     });
 
     test('registered spawn-claude composes distinct --session-id flags for panes 1/2/3', async () => {
-      const cwd = 'D:\\projects\\squidrun';
+      const cwd = makeFixtureCwd();
       ctx.daemonClient.connected = true;
       ctx.currentSettings.allowAllPermissions = false;
       ctx.currentSettings.paneCommands = { '1': 'claude', '2': 'claude', '3': 'claude' };
@@ -1664,7 +1670,7 @@ describe('PTY Handlers', () => {
     });
 
     test('registered spawn-claude re-probes session existence and switches create to resume', async () => {
-      const cwd = 'D:\\projects\\squidrun';
+      const cwd = makeFixtureCwd();
       ctx.daemonClient.connected = true;
       ctx.currentSettings.allowAllPermissions = false;
       ctx.currentSettings.paneCommands = { '1': 'claude' };
@@ -1681,7 +1687,7 @@ describe('PTY Handlers', () => {
     });
 
     test('registered spawn-claude injects the selected Claude model before resume flags', async () => {
-      const cwd = 'D:\\projects\\squidrun';
+      const cwd = makeFixtureCwd();
       ctx.daemonClient.connected = true;
       ctx.currentSettings.allowAllPermissions = false;
       ctx.currentSettings.claudeModel = 'claude-fable-5[1m]';
@@ -1699,7 +1705,7 @@ describe('PTY Handlers', () => {
     });
 
     test('registered spawn-claude preserves an explicit pane command Claude model', async () => {
-      const cwd = 'D:\\projects\\squidrun';
+      const cwd = makeFixtureCwd();
       ctx.daemonClient.connected = true;
       ctx.currentSettings.allowAllPermissions = false;
       ctx.currentSettings.claudeModel = 'claude-fable-5';
@@ -1713,7 +1719,7 @@ describe('PTY Handlers', () => {
     });
 
     test('registered spawn-claude reaps the pinned Claude session before handing back the command', async () => {
-      const cwd = 'D:\\projects\\squidrun';
+      const cwd = makeFixtureCwd();
       ctx.daemonClient.connected = true;
       ctx.currentSettings.allowAllPermissions = false;
       ctx.currentSettings.paneCommands = { '1': 'claude' };

@@ -225,6 +225,12 @@ https.request = function patchedTelegramRequest(options, callback) {
   return { tempRoot, preloadPath };
 }
 
+function nodeOptionsWithRequire(preloadPath) {
+  const existing = String(process.env.NODE_OPTIONS || '').trim();
+  const requireOption = `--require ${JSON.stringify(preloadPath.replace(/\\/g, '/'))}`;
+  return [existing, requireOption].filter(Boolean).join(' ');
+}
+
 async function startAckServer(sendAttempts = []) {
   let server;
   await new Promise((resolve, reject) => {
@@ -2374,7 +2380,7 @@ describe('hm-send retry behavior', () => {
         TELEGRAM_CHAT_ID: '12345',
         TELEGRAM_CHAT_ALLOWLIST: '12345',
         HM_SEND_TELEGRAM_MOCK_LOG: mockLogPath,
-        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${telegramMock.preloadPath}`.trim(),
+        NODE_OPTIONS: nodeOptionsWithRequire(telegramMock.preloadPath),
       },
       { cwd: tempProject, stdin: '(ARCHITECT #56): Explicit Telegram reply' }
     );
@@ -2496,7 +2502,7 @@ describe('hm-send retry behavior', () => {
         TELEGRAM_CHAT_ID: '12345',
         TELEGRAM_CHAT_ALLOWLIST: '12345',
         HM_SEND_TELEGRAM_MOCK_LOG: mockLogPath,
-        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${telegramMock.preloadPath}`.trim(),
+        NODE_OPTIONS: nodeOptionsWithRequire(telegramMock.preloadPath),
       },
       { cwd: tempProject, stdin: message }
     );
@@ -2590,7 +2596,7 @@ describe('hm-send retry behavior', () => {
         TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
         TELEGRAM_CHAT_ID: '12345',
         TELEGRAM_CHAT_ALLOWLIST: '12345',
-        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${telegramMock.preloadPath}`.trim(),
+        NODE_OPTIONS: nodeOptionsWithRequire(telegramMock.preloadPath),
       },
       { cwd: tempProject }
     );
@@ -2620,7 +2626,7 @@ describe('hm-send retry behavior', () => {
         TELEGRAM_CHAT_ID: '12345',
         TELEGRAM_CHAT_ALLOWLIST: '12345',
         HM_SEND_TELEGRAM_MOCK_STATUS_CODE: '500',
-        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${telegramMock.preloadPath}`.trim(),
+        NODE_OPTIONS: nodeOptionsWithRequire(telegramMock.preloadPath),
       },
       { cwd: tempProject }
     );
@@ -2649,7 +2655,7 @@ describe('hm-send retry behavior', () => {
         TELEGRAM_CHAT_ID: '12345',
         TELEGRAM_CHAT_ALLOWLIST: '12345,2222222222',
         HM_SEND_TELEGRAM_MOCK_LOG: mockLogPath,
-        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require ${telegramMock.preloadPath}`.trim(),
+        NODE_OPTIONS: nodeOptionsWithRequire(telegramMock.preloadPath),
       },
       { cwd: tempProject }
     );

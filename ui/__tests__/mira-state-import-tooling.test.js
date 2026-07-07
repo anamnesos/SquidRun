@@ -5,12 +5,22 @@ const path = require('path');
 
 describe('Mira state/import tooling', () => {
   const repoRoot = path.resolve(__dirname, '..', '..');
-  const queuePath = path.join(repoRoot, 'mira', 'imports', 'review-queue.json');
-  const contractPath = path.join(repoRoot, 'mira', 'state', 'state-root-contract.json');
   const { isForbiddenDestination, validateImportQueue } = require('../../mira/tools/validate-import-queue');
   const { resolveStateRoot } = require('../../mira/tools/resolve-state-root');
+  const { createReviewedImportFixture } = require('./helpers/mira-reviewed-import-fixture');
+  let cleanupFixtures = [];
+
+  afterEach(() => {
+    for (const cleanup of cleanupFixtures.splice(0)) {
+      cleanup();
+    }
+  });
 
   test('keeps all first-pass imports explicit and not imported', () => {
+    const fixture = createReviewedImportFixture({ repoRoot });
+    cleanupFixtures.push(fixture.cleanup);
+    const queuePath = fixture.queuePath;
+    const contractPath = fixture.contractPath;
     const queue = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
     const result = validateImportQueue({ queuePath, contractPath });
 

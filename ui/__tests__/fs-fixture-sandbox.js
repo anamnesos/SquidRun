@@ -51,15 +51,36 @@ function redirectFixturePath(target) {
   return target;
 }
 
+function redirectMkdtempPrefix(target) {
+  const fixtureRedirected = redirectFixturePath(target);
+  if (fixtureRedirected !== target) return fixtureRedirected;
+  if (typeof target !== 'string' || !target) return target;
+  let resolved;
+  try { resolved = path.resolve(target); } catch { return target; }
+  const parsed = path.parse(resolved);
+  if (path.dirname(resolved) === parsed.root && resolved !== parsed.root) {
+    const sandboxed = path.join(SANDBOX_ROOT, path.basename(resolved));
+    try { ORIGINALS.mkdirSync(path.dirname(sandboxed), { recursive: true }); } catch {}
+    return sandboxed;
+  }
+  return target;
+}
+
+function redirectPathForOperation(name, target) {
+  return name === 'mkdtemp' || name === 'mkdtempSync'
+    ? redirectMkdtempPrefix(target)
+    : redirectFixturePath(target);
+}
+
 function wrap(holder, name, argCount) {
   const original = holder[name];
   if (typeof original !== 'function') return;
   const patched = argCount === 2
     ? function patchedFsTwoPath(src, dest, ...rest) {
-      return original.call(this, redirectFixturePath(src), redirectFixturePath(dest), ...rest);
+      return original.call(this, redirectPathForOperation(name, src), redirectPathForOperation(name, dest), ...rest);
     }
     : function patchedFsOnePath(target, ...rest) {
-      return original.call(this, redirectFixturePath(target), ...rest);
+      return original.call(this, redirectPathForOperation(name, target), ...rest);
     };
   // Preserve statics like realpathSync.native (used by Jest itself). The
   // preserved statics bypass redirection — acceptable: internals need them
@@ -106,5 +127,6 @@ module.exports = {
   SANDBOX_ROOT,
   ORIGINALS,
   redirectFixturePath,
+  redirectMkdtempPrefix,
   installFsFixtureSandbox,
 };
