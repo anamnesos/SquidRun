@@ -1421,7 +1421,13 @@ function bindShellV2DoorbellSources(doc, windowRef, controller, paneIds = [], op
   };
 }
 
-function createSettingToggleItem(doc, windowRef, settings, { id, key, label, description }) {
+function createSettingToggleItem(doc, windowRef, settings, {
+  id,
+  key,
+  label,
+  description,
+  defaultEnabled = false,
+}) {
   const item = makeElement(doc, 'div', 'setting-item', {
     title: description,
   });
@@ -1439,7 +1445,8 @@ function createSettingToggleItem(doc, windowRef, settings, { id, key, label, des
     toggle.classList.toggle('active', enabled);
     toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
   };
-  apply(settings?.[key] === true);
+  const hasConfiguredValue = Object.prototype.hasOwnProperty.call(settings || {}, key);
+  apply(hasConfiguredValue ? settings?.[key] === true : defaultEnabled === true);
   const run = async () => {
     const next = !toggle.classList.contains('active');
     apply(next);
@@ -1557,6 +1564,13 @@ function buildShellV2SettingsOverlay(doc, windowRef, settings = {}) {
     developer.appendChild(makeElement(doc, 'div', 'settings-section-title', { textContent: 'Developer' }));
     const devToolsItem = doc.getElementById?.('toggleDevTools')?.closest?.('.setting-item');
     if (devToolsItem) appendExisting(developer, devToolsItem);
+    developer.appendChild(createSettingToggleItem(doc, windowRef, settings, {
+      id: 'togglePaneFailureAlertsEnabled',
+      key: 'paneFailureAlertsEnabled',
+      label: 'Pane failure alerts',
+      description: 'Notify you when a pane exits or a CLI refuses work at its usage limit.',
+      defaultEnabled: true,
+    }));
     developer.appendChild(createSettingToggleItem(doc, windowRef, settings, {
       id: 'toggleDevMode',
       key: 'devMode',

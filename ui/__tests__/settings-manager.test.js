@@ -90,6 +90,7 @@ describe('SettingsManager CLI auto-detection', () => {
     expect(manager.defaultSettings.geminiModel).toBeTruthy();
     expect(manager.defaultSettings.localModelEnabled).toBe(false);
     expect(manager.defaultSettings.shellV2Enabled).toBe(false);
+    expect(manager.defaultSettings.paneFailureAlertsEnabled).toBe(true);
     expect(manager.defaultSettings.paneCommands['3']).toMatch(/^gemini --yolo --model /);
   });
 

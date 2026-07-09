@@ -131,6 +131,7 @@ const {
   extractCurrentLaneDirective,
 } = require('./agent-task-resolution');
 const {
+  appendCommsJournalEntry,
   closeCommsJournalStores,
   queryCommsJournalEntries,
 } = require('./comms-journal');
@@ -244,6 +245,11 @@ const {
   createPayloadFingerprint,
 } = require('../bus-reliability-trace');
 const { createPtyOutputFilter } = require('./pty-output-filter');
+const {
+  createPaneFailureMonitor,
+  isStalePtyGeneration,
+  resolvePaneFailureCliHint,
+} = require('./pane-failure-monitor');
 const IS_DARWIN = process.platform === 'darwin';
 const PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS = IS_DARWIN ? 900 : 1500;
 const PANE_HOST_BOOTSTRAP_LOADING_GRACE_MS = IS_DARWIN ? 20000 : 45000;
@@ -1087,6 +1093,14 @@ class SquidRunApp {
     this.ptyDataFlushTimer = null;
     this.ptyVisibleReleaseTimer = null;
     this.visiblePtyOutputFilter = createPtyOutputFilter();
+    this.paneFailureMonitor = managers.paneFailureMonitor || createPaneFailureMonitor({
+      getSettings: () => this.ctx.currentSettings || {},
+      getSessionId: () => this.commsSessionScopeId || null,
+      getCliHint: (paneId) => resolvePaneFailureCliHint(paneId, this.ctx, this.cliIdentity),
+      appendJournal: (entry) => appendCommsJournalEntry(entry),
+      sendTelegram,
+      log,
+    });
     this.teamMemoryInitialized = false;
     this.teamMemoryInitPromise = null;
     this.teamMemoryInitFailed = false;
@@ -9377,6 +9391,21 @@ class SquidRunApp {
     this.daemonClientListeners.push({ eventName, listener });
   }
 
+  observePaneFailureSignal(methodName, ...args) {
+    try {
+      const result = this.paneFailureMonitor?.[methodName]?.(...args);
+      if (result && typeof result.catch === 'function') {
+        result.catch((err) => {
+          log.warn('PaneFailure', `${methodName} failed: ${err.message}`);
+        });
+      }
+      return result;
+    } catch (err) {
+      log.warn('PaneFailure', `${methodName} failed: ${err.message}`);
+      return null;
+    }
+  }
+
   async initDaemonClient(options = {}) {
     const { preserveConnectTimeout = false } = options || {};
     if (!preserveConnectTimeout) {
@@ -9393,15 +9422,15 @@ class SquidRunApp {
     // Update IPC handlers with daemon client
     ipcHandlers.setDaemonClient(this.ctx.daemonClient);
 
-    const handlePaneExit = (paneId, code, metadata = null) => {
+    const handlePaneExit = (paneId, code, _metadata = null) => {
       const cachedTerminal = this.ctx.daemonClient?.getTerminal?.(paneId) || null;
       if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
-        return;
+        return { ignored: true, reason: 'background_pane', cachedTerminal, recoveryResult: null };
       }
       this.flushBufferedPtyData(paneId);
       this.flushVisibleFilteredPtyData(paneId, { force: true });
       this.visiblePtyOutputFilter.clearPane(paneId);
-      this.ctx.recoveryManager?.handleExit(paneId, code);
+      const recoveryResult = this.ctx.recoveryManager?.handleExit(paneId, code) || null;
       this.usage.recordSessionEnd(paneId);
       this.recordSessionLifecyclePattern({
         paneId,
@@ -9421,6 +9450,7 @@ class SquidRunApp {
       if (this.isHiddenPaneHostModeEnabled()) {
         this.paneHostWindowManager.sendToPaneWindow(String(paneId), `pty-exit-${paneId}`, code);
       }
+      return { ignored: false, cachedTerminal, recoveryResult };
     };
 
     this.attachDaemonClientListener('data', (paneId, data) => {
@@ -9431,6 +9461,8 @@ class SquidRunApp {
       if (isBackgroundPane) {
         return;
       }
+
+      this.observePaneFailureSignal('handlePtyData', paneId, data, terminalMetadata);
 
       this.ctx.recoveryManager?.recordActivity(paneId);
       this.ctx.recoveryManager?.recordPtyOutput?.(paneId, data);
@@ -9488,7 +9520,17 @@ class SquidRunApp {
     this.attachDaemonClientListener('exit', (paneId, code, metadata) => {
       this.startupReadyBuffers.delete(String(paneId));
       this.backgroundAgentManager.handleDaemonExit(paneId, code);
-      handlePaneExit(paneId, code, metadata);
+      const currentTerminal = this.ctx.daemonClient?.getTerminal?.(paneId) || null;
+      if (isStalePtyGeneration(metadata, currentTerminal)) {
+        log.warn('PaneFailure', `Ignored stale exit for pane ${paneId} (event pid=${metadata?.pid}, current pid=${currentTerminal?.pid})`);
+        return;
+      }
+      const paneExit = handlePaneExit(paneId, code, metadata);
+      const recoveryStatus = paneExit?.recoveryResult?.status || null;
+      const expectedRecovery = recoveryStatus === 'expected' || recoveryStatus === 'codex_completed';
+      if (!this.shuttingDown && !this.fullShutdownPromise && !expectedRecovery) {
+        this.observePaneFailureSignal('handlePtyExit', paneId, code, metadata, currentTerminal);
+      }
     });
 
     this.attachDaemonClientListener('killed', (paneId) => {
@@ -9501,6 +9543,7 @@ class SquidRunApp {
 
     this.attachDaemonClientListener('spawned', (paneId, pid, dryRun, metadata) => {
       log.info('Daemon', `Terminal spawned for pane ${paneId}, PID: ${pid}`);
+      this.observePaneFailureSignal('handlePtySpawn', paneId, metadata);
       if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
         return;
       }
