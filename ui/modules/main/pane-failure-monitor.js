@@ -24,23 +24,53 @@ const WORKROOM_LABELS = new Map(
 const WORKROOM_COMMANDS = new Map(
   getTrustQuoteDayToDayArmSpecs().map((spec) => [String(spec.paneId), String(spec.command || '')])
 );
+const ACCOUNT_REFUSAL_SIGNATURES = new Set([
+  'claude_admin_usage_limit',
+  'claude_credit_balance_low',
+  'claude_monthly_limit',
+  'claude_usage_exhausted',
+  'claude_entitlement_disabled',
+  'codex_usage_not_included',
+  'codex_workspace_credits',
+  'codex_workspace_spend_cap',
+]);
 
 // Exact refusal strings from installed CLI builds. Generic 429/rate-limit text is intentionally excluded.
 const LIMIT_SIGNAL_PATTERNS = Object.freeze([
   Object.freeze({
     cliFamily: 'claude',
     signature: 'claude_named_limit',
-    pattern: /you(?:'|\u2019)ve hit your (?:fable 5|weekly|session|opus|sonnet) limit(?:\s|\u00b7|[.!])*(?:resets?|reset\s+at)\b/i,
+    pattern: /(?:^|\n)[^\w\n]{0,6}you(?:'|\u2019)ve (?:hit|reached) your (?:fable 5|weekly|session|opus|sonnet) limit(?=[ \t]*(?:$|\n|\u00b7|[.!][ \t]*(?:$|\n|run \/usage-credits\b|\/model\b)))/i,
   }),
   Object.freeze({
     cliFamily: 'claude',
     signature: 'claude_admin_usage_limit',
-    pattern: /you(?:'|\u2019)ve hit your usage limit(?:\s|\u00b7|[.!])*contact your admin to increase it\b/i,
+    pattern: /(?:^|\n)[^\w\n]{0,6}you(?:'|\u2019)ve hit your usage limit(?:\s|\u00b7|[.!])*contact your admin to increase it\b/i,
+  }),
+  Object.freeze({
+    cliFamily: 'claude',
+    signature: 'claude_usage_limit',
+    pattern: /(?:^|\n)[^\w\n]{0,6}you(?:'|\u2019)ve hit your (?:usage )?limit(?=[ \t]*(?:$|\n|\u00b7|[.!][ \t]*(?:$|\n|run \/usage-credits\b|\/model\b)))/i,
+  }),
+  Object.freeze({
+    cliFamily: 'claude',
+    signature: 'claude_monthly_limit',
+    pattern: /(?:^|\n)[^\w\n]{0,6}you(?:'|\u2019)ve hit your (?:org(?:'|\u2019)s )?monthly (?:spend|usage) limit(?=[ \t]*(?:$|\n|\u00b7|[.!][ \t]*(?:$|\n|run \/usage-credits\b|\/model\b)))/i,
   }),
   Object.freeze({
     cliFamily: 'claude',
     signature: 'claude_usage_exhausted',
-    pattern: /(?:you(?:'|\u2019)re out of (?:usage credits|extra usage)|your org is out of usage(?:\s|\u00b7|[.!])*(?:add funds to continue|contact your admin)|your usage allocation has been disabled by your admin|your group(?:'|\u2019)s usage limit is set to \$0|fable 5 requires usage credits)/i,
+    pattern: /(?:^|\n)[^\w\n]{0,6}(?:you(?:'|\u2019)re out of (?:usage credits|extra usage)|your org is out of usage(?:\s|\u00b7|[.!])*(?:add funds to continue|contact your admin)|your usage allocation has been disabled by your admin|your group(?:'|\u2019)s usage limit is set to \$0|fable 5 requires usage credits)/i,
+  }),
+  Object.freeze({
+    cliFamily: 'claude',
+    signature: 'claude_entitlement_disabled',
+    pattern: /(?:^|\n)[^\w\n]{0,6}(?:your seat type doesn(?:'|\u2019)t include (?:usage(?: credits)?|extra usage)|this service is disabled for your org)(?=[ \t]*(?:$|\n|\u00b7|[.!][ \t]*(?:$|\n|run \/usage-credits\b|\/model\b)))/i,
+  }),
+  Object.freeze({
+    cliFamily: 'claude',
+    signature: 'claude_credit_balance_low',
+    pattern: /(?:^|\n)[^\w\n]{0,6}credit balance (?:is )?too low(?=[ \t]*(?:$|\n|\u00b7|[.!][ \t]*(?:$|\n|run \/usage-credits\b|\/model\b)))/i,
   }),
   Object.freeze({
     cliFamily: 'codex',
@@ -58,9 +88,14 @@ const LIMIT_SIGNAL_PATTERNS = Object.freeze([
     pattern: /you hit your spend cap set (?:in your workspace\.\s+increase your spend cap|by the owner of your workspace\.\s+ask an owner to increase your spend cap) to continue\./i,
   }),
   Object.freeze({
+    cliFamily: 'codex',
+    signature: 'codex_usage_not_included',
+    pattern: /to use codex with your chatgpt plan, upgrade to plus: https:\/\/chatgpt\.com\/explore\/plus\./i,
+  }),
+  Object.freeze({
     cliFamily: 'gemini',
     signature: 'gemini_usage_limit',
-    pattern: /usage limit reached for [A-Za-z0-9._:-]+\./i,
+    pattern: /usage limit reached for (?:all pro models|[A-Za-z0-9._:-]+)\./i,
   }),
 ]);
 
@@ -138,7 +173,15 @@ function paneDisplayName(value) {
 function eventMessage(event = {}) {
   const label = paneDisplayName(event.paneId);
   if (event.eventName === 'usage_limit_refusal') {
-    return `${label} hit its usage limit - replies will silently stop until a fresh session or the limit resets.`;
+    if (ACCOUNT_REFUSAL_SIGNATURES.has(event.signature)) {
+      const provider = {
+        claude: 'Claude',
+        codex: 'Codex',
+        gemini: 'Gemini',
+      }[event.cliFamily] || 'CLI';
+      return `${label} got a ${provider} account, credit, or spend refusal - replies will silently stop until you switch to an eligible model/account or resolve the billing/admin limit.`;
+    }
+    return `${label} hit its usage limit - replies will silently stop until you switch to an available model/session or the limit resets.`;
   }
   const code = event.exitCode === null || event.exitCode === undefined
     ? 'unknown'
