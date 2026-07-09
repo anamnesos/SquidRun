@@ -46,7 +46,16 @@ function makeMonitor(overrides = {}) {
 describe('pane failure limit detector', () => {
   test.each([
     [CLAUDE_LIMIT_FIXTURE, 'claude', 'claude_named_limit'],
+    ["You've hit your Fable 5 limit", 'claude', 'claude_named_limit'],
+    ["You've reached your Fable 5 limit.", 'claude', 'claude_named_limit'],
+    ["You've hit your usage limit \u00b7 resets 8pm", 'claude', 'claude_usage_limit'],
+    ["You've hit your limit", 'claude', 'claude_usage_limit'],
+    ["You've hit your org's monthly spend limit \u00b7 run /usage-credits to ask your admin for a higher limit", 'claude', 'claude_monthly_limit'],
+    ["You've hit your org's monthly usage limit \u00b7 resets 8pm", 'claude', 'claude_monthly_limit'],
     ["You're out of usage credits", 'claude', 'claude_usage_exhausted'],
+    ['Credit balance is too low', 'claude', 'claude_credit_balance_low'],
+    ["Your seat type doesn't include usage credits", 'claude', 'claude_entitlement_disabled'],
+    ['This service is disabled for your org', 'claude', 'claude_entitlement_disabled'],
     [CODEX_LIMIT_FIXTURE, 'codex', 'codex_usage_limit'],
     ["You've reached your usage limit. Increase your limits to continue using codex.", 'codex', 'codex_usage_limit'],
     ["You've reached your workspace credit limit", 'codex', 'codex_workspace_credits'],
@@ -54,7 +63,9 @@ describe('pane failure limit detector', () => {
     ['Your workspace is out of credits. Ask your workspace owner to refill in order to continue.', 'codex', 'codex_workspace_credits'],
     ['You hit your spend cap set in your workspace. Increase your spend cap to continue.', 'codex', 'codex_workspace_spend_cap'],
     ['You hit your spend cap set by the owner of your workspace. Ask an owner to increase your spend cap to continue.', 'codex', 'codex_workspace_spend_cap'],
+    ['To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.', 'codex', 'codex_usage_not_included'],
     ['Usage limit reached for gemini-3-pro.', 'gemini', 'gemini_usage_limit'],
+    ['Usage limit reached for all Pro models.', 'gemini', 'gemini_usage_limit'],
   ])('recognizes an exact CLI refusal fixture', (fixture, cliFamily, signature) => {
     expect(detectPaneLimitSignal(fixture, cliFamily)).toEqual({
       eventName: 'usage_limit_refusal',
@@ -67,17 +78,22 @@ describe('pane failure limit detector', () => {
     ['rate limit exceeded while calling an API', 'claude'],
     ['You have 12% usage remaining', 'claude'],
     ['request failed with status 429', 'codex'],
-    ["const banner = \"You've hit your limit\";", 'claude'],
+    ["const warning = \"You may hit your limit\";", 'claude'],
     [CLAUDE_STARTUP_PROMO_FIXTURE, 'claude'],
-    [CODEX_LIMIT_FIXTURE, 'claude'],
+    ['Your workspace is out of credits. Add credits to continue.', 'claude'],
     [CLAUDE_LIMIT_FIXTURE, 'codex'],
+    ["James, you've hit your Fable 5 limit for the week - want me to switch panes?", 'claude'],
+    ["you've hit your limit of free retries on that API", 'claude'],
+    ["The alert fires when you've hit your usage limit on any pane", 'claude'],
+    ["You've hit your usage limit. This sentence is discussing the detector.", 'claude'],
+    ["You've reached your Fable 5 limit. This sentence is quoting a report.", 'claude'],
   ])('rejects shaped, promotional, or wrong-provider text: %s', (fixture, cliFamily) => {
     expect(detectPaneLimitSignal(fixture, cliFamily)).toBeNull();
   });
 
-  test('documents that quoted verbatim refusal output is indistinguishable at the PTY boundary', () => {
+  test('documents that quoted verbatim refusal on its own line is indistinguishable at the PTY boundary', () => {
     expect(detectPaneLimitSignal(
-      `Forensics dump: ${CLAUDE_LIMIT_FIXTURE}`,
+      `Forensics dump:\n${CLAUDE_LIMIT_FIXTURE}`,
       'claude'
     )).toEqual({
       eventName: 'usage_limit_refusal',
@@ -130,7 +146,7 @@ describe('pane failure notify path', () => {
       eventName: 'usage_limit_refusal',
     }));
     expect(result.message).toBe(
-      'Mira (pane 1) hit its usage limit - replies will silently stop until a fresh session or the limit resets.'
+      'Mira (pane 1) hit its usage limit - replies will silently stop until you switch to an available model/session or the limit resets.'
     );
     expect(appendJournal).toHaveBeenCalledTimes(1);
     expect(appendJournal).toHaveBeenCalledWith(expect.objectContaining({
@@ -277,7 +293,18 @@ describe('pane failure notify path', () => {
       eventName: 'usage_limit_refusal',
       paneId: 'trustquote-schedule-dispatch',
     })).toBe(
-      'Schedule Dispatch workroom pane hit its usage limit - replies will silently stop until a fresh session or the limit resets.'
+      'Schedule Dispatch workroom pane hit its usage limit - replies will silently stop until you switch to an available model/session or the limit resets.'
+    );
+  });
+
+  test('gives account and credit refusals an actionable recovery message', () => {
+    expect(eventMessage({
+      eventName: 'usage_limit_refusal',
+      paneId: '2',
+      cliFamily: 'codex',
+      signature: 'codex_usage_not_included',
+    })).toBe(
+      'Builder (pane 2) got a Codex account, credit, or spend refusal - replies will silently stop until you switch to an eligible model/account or resolve the billing/admin limit.'
     );
   });
 });
