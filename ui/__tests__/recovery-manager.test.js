@@ -64,7 +64,7 @@ describe('Recovery Manager', () => {
   describe('handleExit', () => {
     test('schedules restart after unexpected exit', async () => {
       const manager = createManager();
-      manager.handleExit('1', 1);
+      const result = manager.handleExit('1', 1);
 
       expect(requestRestart).not.toHaveBeenCalled();
       jest.advanceTimersByTime(5000);
@@ -75,16 +75,18 @@ describe('Recovery Manager', () => {
         reason: 'exit-1',
         attempt: 1,
       }));
+      expect(result).toEqual(expect.objectContaining({ status: 'unexpected', exitCode: 1 }));
     });
 
     test('does not restart on expected exit', async () => {
       const manager = createManager();
       manager.markExpectedExit('1', 'manual');
-      manager.handleExit('1', 1);
+      const result = manager.handleExit('1', 1);
       jest.advanceTimersByTime(10000);
       await flush();
 
       expect(requestRestart).not.toHaveBeenCalled();
+      expect(result).toEqual(expect.objectContaining({ status: 'expected', reason: 'manual' }));
     });
 
     test('emits expected exit event', () => {
@@ -114,13 +116,14 @@ describe('Recovery Manager', () => {
       isCodexPane.mockReturnValue(true);
       const manager = createManager();
 
-      manager.handleExit('2', 0);
+      const result = manager.handleExit('2', 0);
       await flush();
 
       expect(requestRestart).toHaveBeenCalledTimes(1);
       expect(requestRestart).toHaveBeenCalledWith('2', expect.objectContaining({
         reason: 'codex-completion',
       }));
+      expect(result).toEqual(expect.objectContaining({ status: 'codex_completed', exitCode: 0 }));
     });
 
     test('codex exit 0 emits codex_completed event', () => {

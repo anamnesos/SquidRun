@@ -121,6 +121,7 @@ function createDefaultSettings({ isPackaged = false } = {}) {
     devTools: false,
     devMode: false,
     shellV2Enabled: false,
+    paneFailureAlertsEnabled: true,
     agentNotify: true,
     watcherEnabled: true,
     allowAllPermissions: false,

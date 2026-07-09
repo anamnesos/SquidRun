@@ -570,6 +570,8 @@ describe('shell-v2', () => {
     expect(overlay.querySelector('[data-shell-v2-settings-nav="secrets"]')).toBeTruthy();
     expect(overlay.querySelector('[data-shell-v2-settings-nav="profile"]')).toBeTruthy();
     expect(overlay.querySelector('#toggleDevTools')).toBeTruthy();
+    expect(overlay.querySelector('#togglePaneFailureAlertsEnabled')).toBeTruthy();
+    expect(overlay.querySelector('#togglePaneFailureAlertsEnabled').classList.contains('active')).toBe(true);
     expect(overlay.querySelector('#toggleDevMode')).toBeTruthy();
     expect(overlay.querySelector('#voiceBrokerPanel')).toBeTruthy();
     expect(overlay.querySelector('#saveApiKeysBtn')).toBeTruthy();

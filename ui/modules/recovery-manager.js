@@ -550,10 +550,11 @@ function createRecoveryManager(options = {}) {
         type: 'exit',
         paneId: String(paneId),
         status: 'expected',
+        exitCode,
         message: `Expected exit (${expected.reason})`,
         timestamp: new Date().toISOString(),
       });
-      return;
+      return { status: 'expected', paneId: String(paneId), exitCode, reason: expected.reason };
     }
 
     // Codex graceful completion (exit code 0) - NOT a failure
@@ -564,6 +565,7 @@ function createRecoveryManager(options = {}) {
         type: 'exit',
         paneId: String(paneId),
         status: 'codex_completed',
+        exitCode,
         message: 'Codex task completed, auto-restarting',
         timestamp: new Date().toISOString(),
       });
@@ -574,7 +576,7 @@ function createRecoveryManager(options = {}) {
       // Mark as expected so the restart itself doesn't trigger another handleExit
       markExpectedExit(paneId, 'codex-auto-restart');
       performRestart(paneId, 'codex-completion');
-      return;
+      return { status: 'codex_completed', paneId: String(paneId), exitCode };
     }
 
     // Unexpected exit - treat as failure
@@ -586,6 +588,7 @@ function createRecoveryManager(options = {}) {
       type: 'exit',
       paneId: String(paneId),
       status: 'unexpected',
+      exitCode,
       message: `Unexpected exit code ${exitCode}`,
       timestamp: new Date().toISOString(),
     });
@@ -593,10 +596,11 @@ function createRecoveryManager(options = {}) {
     const config = getConfig();
     if (state.failureTimestamps.length >= config.circuitMaxFailures) {
       openCircuit(state, 'repeated exits');
-      return;
+      return { status: 'unexpected', paneId: String(paneId), exitCode, circuitOpen: true };
     }
 
-    scheduleRestart(paneId, `exit-${exitCode}`);
+    const restartScheduled = scheduleRestart(paneId, `exit-${exitCode}`);
+    return { status: 'unexpected', paneId: String(paneId), exitCode, restartScheduled };
   }
 
   function handleStuck(paneId, idleMs, source = 'idle') {

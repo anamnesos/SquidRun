@@ -158,6 +158,7 @@ jest.mock('../modules/main/pane-host-window-manager', () => ({
 }));
 
 jest.mock('../modules/main/comms-journal', () => ({
+  appendCommsJournalEntry: jest.fn(() => ({ ok: true, rowId: 1 })),
   closeCommsJournalStores: jest.fn(),
   queryCommsJournalEntries: jest.fn(() => []),
 }));
@@ -564,12 +565,19 @@ describe('SquidRunApp', () => {
       },
       cliIdentity: {
         getIdentity: jest.fn().mockReturnValue(null),
+        getPaneCommandForIdentity: jest.fn().mockReturnValue('claude'),
+        inferAndEmitCliIdentity: jest.fn(),
       },
       contextInjection: {
         inject: jest.fn().mockResolvedValue(),
       },
       firmwareManager: {
         ensureStartupFirmwareIfEnabled: jest.fn(() => ({ ok: true, skipped: true })),
+      },
+      paneFailureMonitor: {
+        handlePtyData: jest.fn().mockResolvedValue({ ok: true, ignored: true }),
+        handlePtyExit: jest.fn().mockResolvedValue({ ok: true, ignored: false }),
+        handlePtySpawn: jest.fn().mockReturnValue({ ok: true, recovered: true }),
       },
     };
   });
@@ -6226,6 +6234,64 @@ describe('SquidRunApp', () => {
       } finally {
         jest.useRealTimers();
       }
+    });
+
+    it('feeds daemon data, exit, and spawn events into the pane failure monitor', async () => {
+      const { getDaemonClient } = require('../daemon-client');
+      const currentTerminal = { paneId: '1', pid: 321, createdAt: '2026-07-09T20:00:00.000Z' };
+      const sharedDaemonClient = {
+        on: jest.fn(),
+        off: jest.fn(),
+        connect: jest.fn().mockResolvedValue(),
+        disconnect: jest.fn(),
+        getTerminal: jest.fn().mockReturnValue(currentTerminal),
+      };
+      getDaemonClient.mockReturnValue(sharedDaemonClient);
+
+      const ctx = {
+        ...mockAppContext,
+        daemonClient: sharedDaemonClient,
+        agentRunning: new Map([['1', 'running']]),
+      };
+      const app = new SquidRunApp(ctx, mockManagers);
+
+      await app.initDaemonClient();
+
+      const dataListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'data')?.[1];
+      const exitListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'exit')?.[1];
+      const spawnedListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'spawned')?.[1];
+      const exitMetadata = { paneId: '1', pid: 321, createdAt: currentTerminal.createdAt };
+      const spawnMetadata = { paneId: '1', pid: 654, createdAt: '2026-07-09T21:00:00.000Z' };
+
+      dataListener('1', "You've hit your usage limit.");
+      exitListener('1', 17, exitMetadata);
+      spawnedListener('1', 654, false, spawnMetadata);
+
+      expect(mockManagers.paneFailureMonitor.handlePtyData).toHaveBeenCalledWith(
+        '1',
+        "You've hit your usage limit.",
+        currentTerminal
+      );
+      expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledWith(
+        '1',
+        17,
+        exitMetadata,
+        currentTerminal
+      );
+      expect(mockManagers.paneFailureMonitor.handlePtySpawn).toHaveBeenCalledWith('1', spawnMetadata);
+
+      ctx.recoveryManager = {
+        handleExit: jest.fn().mockReturnValue({ status: 'expected', reason: 'manual' }),
+      };
+      exitListener('1', 0, exitMetadata);
+      expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledTimes(1);
+
+      exitListener('1', 1, { ...exitMetadata, pid: 999 });
+      expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledTimes(1);
+
+      app.shuttingDown = true;
+      exitListener('1', 0, exitMetadata);
+      expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledTimes(1);
     });
 
     it('cleans up existing daemon client listeners before re-attaching on re-init', async () => {
