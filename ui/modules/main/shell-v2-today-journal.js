@@ -174,7 +174,7 @@ function queryShellV2TodayJournal(payload = {}, deps = {}) {
 
   const mainRows = (Array.isArray(rows) ? rows : [])
     .map(normalizeRow)
-    .filter((row) => row.scope === 'main')
+    .filter((row) => row.scope === 'main' && row.metadata?.todayVisible !== false)
     .slice(0, limit);
 
   return {

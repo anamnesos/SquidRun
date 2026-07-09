@@ -185,6 +185,15 @@ describe('Settings Handlers', () => {
       expect(result.shellV2Enabled).toBe(true);
     });
 
+    test('allows pane failure alert setting updates', async () => {
+      deps.loadSettings.mockReturnValue({ paneFailureAlertsEnabled: true });
+
+      const result = await harness.invoke('set-setting', 'paneFailureAlertsEnabled', false);
+
+      expect(deps.saveSettings).toHaveBeenCalledWith({ paneFailureAlertsEnabled: false });
+      expect(result.paneFailureAlertsEnabled).toBe(false);
+    });
+
     test('allows and normalizes one-shot fresh pane session setting', async () => {
       deps.loadSettings.mockReturnValue({});
 

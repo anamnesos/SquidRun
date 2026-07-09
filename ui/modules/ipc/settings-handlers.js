@@ -32,6 +32,7 @@ const SETTING_KEY_ALLOWLIST = new Set([
   'notifications',
   'operatingMode',
   'paneCommands',
+  'paneFailureAlertsEnabled',
   'paneProjects',
   'ptyStuckDetection',
   'ptyStuckThreshold',
