@@ -48,7 +48,12 @@ describe('pane failure limit detector', () => {
     [CLAUDE_LIMIT_FIXTURE, 'claude', 'claude_named_limit'],
     ["You're out of usage credits", 'claude', 'claude_usage_exhausted'],
     [CODEX_LIMIT_FIXTURE, 'codex', 'codex_usage_limit'],
+    ["You've reached your usage limit. Increase your limits to continue using codex.", 'codex', 'codex_usage_limit'],
     ["You've reached your workspace credit limit", 'codex', 'codex_workspace_credits'],
+    ['Your workspace is out of credits. Add credits to continue.', 'codex', 'codex_workspace_credits'],
+    ['Your workspace is out of credits. Ask your workspace owner to refill in order to continue.', 'codex', 'codex_workspace_credits'],
+    ['You hit your spend cap set in your workspace. Increase your spend cap to continue.', 'codex', 'codex_workspace_spend_cap'],
+    ['You hit your spend cap set by the owner of your workspace. Ask an owner to increase your spend cap to continue.', 'codex', 'codex_workspace_spend_cap'],
     ['Usage limit reached for gemini-3-pro.', 'gemini', 'gemini_usage_limit'],
   ])('recognizes an exact CLI refusal fixture', (fixture, cliFamily, signature) => {
     expect(detectPaneLimitSignal(fixture, cliFamily)).toEqual({
@@ -68,6 +73,17 @@ describe('pane failure limit detector', () => {
     [CLAUDE_LIMIT_FIXTURE, 'codex'],
   ])('rejects shaped, promotional, or wrong-provider text: %s', (fixture, cliFamily) => {
     expect(detectPaneLimitSignal(fixture, cliFamily)).toBeNull();
+  });
+
+  test('documents that quoted verbatim refusal output is indistinguishable at the PTY boundary', () => {
+    expect(detectPaneLimitSignal(
+      `Forensics dump: ${CLAUDE_LIMIT_FIXTURE}`,
+      'claude'
+    )).toEqual({
+      eventName: 'usage_limit_refusal',
+      cliFamily: 'claude',
+      signature: 'claude_named_limit',
+    });
   });
 
   test('keeps eligibility discrete and includes current workroom identities', () => {
@@ -114,7 +130,7 @@ describe('pane failure notify path', () => {
       eventName: 'usage_limit_refusal',
     }));
     expect(result.message).toBe(
-      'Pane 1 hit its usage limit - replies will silently stop until a fresh session or the limit resets.'
+      'Mira (pane 1) hit its usage limit - replies will silently stop until a fresh session or the limit resets.'
     );
     expect(appendJournal).toHaveBeenCalledTimes(1);
     expect(appendJournal).toHaveBeenCalledWith(expect.objectContaining({
@@ -131,10 +147,24 @@ describe('pane failure notify path', () => {
         paneId: '1',
         scope: 'main',
         windowKey: 'main',
+        todayVisible: true,
       }),
     }));
+    const telegramOptions = sendTelegram.mock.calls[0][2];
+    const telegramJournalRow = {
+      messageId: telegramOptions.messageId,
+      sessionId: telegramOptions.sessionId,
+      channel: 'telegram',
+      direction: 'outbound',
+      senderRole: telegramOptions.senderRole,
+      targetRole: telegramOptions.targetRole,
+      sentAtMs: appendJournal.mock.calls[0][0].sentAtMs,
+      rawBody: result.message,
+      status: 'recorded',
+      metadata: telegramOptions.metadata,
+    };
     const today = queryShellV2TodayJournal({ nowMs: 1783630358531 }, {
-      queryEntries: () => [appendJournal.mock.calls[0][0]],
+      queryEntries: () => [telegramJournalRow, appendJournal.mock.calls[0][0]],
     });
     expect(today.rows).toEqual([
       expect.objectContaining({
@@ -155,6 +185,7 @@ describe('pane failure notify path', () => {
         metadata: expect.objectContaining({
           eventName: 'usage_limit_refusal',
           systemMessageId: result.systemMessageId,
+          todayVisible: false,
         }),
       })
     );
@@ -171,7 +202,7 @@ describe('pane failure notify path', () => {
     expect(appendJournal).toHaveBeenCalledTimes(2);
     expect(sendTelegram).toHaveBeenCalledTimes(2);
     expect(sendTelegram.mock.calls[1][0]).toBe(
-      'Pane 2 exited (code 1) - replies will silently stop until the pane is restarted.'
+      'Builder (pane 2) exited (code 1) - replies will silently stop until the pane is restarted.'
     );
 
     expect(monitor.handlePtySpawn('2')).toEqual({
@@ -197,8 +228,8 @@ describe('pane failure notify path', () => {
     expect(appendJournal).toHaveBeenCalledTimes(2);
     expect(sendTelegram).toHaveBeenCalledTimes(2);
     expect(sendTelegram.mock.calls.map((call) => call[0])).toEqual([
-      expect.stringContaining('Pane 1 hit its usage limit'),
-      expect.stringContaining('Pane 3 hit its usage limit'),
+      expect.stringContaining('Mira (pane 1) hit its usage limit'),
+      expect.stringContaining('Oracle (pane 3) hit its usage limit'),
     ]);
   });
 

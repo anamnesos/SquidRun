@@ -9,6 +9,11 @@ const {
 const PANE_FAILURE_ALERT_SETTING = 'paneFailureAlertsEnabled';
 const PANE_FAILURE_BUFFER_MAX = 8192;
 const CORE_PANE_IDS = Object.freeze(['1', '2', '3']);
+const CORE_PANE_LABELS = new Map([
+  ['1', 'Mira (pane 1)'],
+  ['2', 'Builder (pane 2)'],
+  ['3', 'Oracle (pane 3)'],
+]);
 const MONITORED_PANE_IDS = new Set([
   ...CORE_PANE_IDS,
   ...getTrustQuoteArmPaneIds(),
@@ -40,12 +45,17 @@ const LIMIT_SIGNAL_PATTERNS = Object.freeze([
   Object.freeze({
     cliFamily: 'codex',
     signature: 'codex_usage_limit',
-    pattern: /you(?:'|\u2019)ve hit your usage limit\b/i,
+    pattern: /you(?:'|\u2019)ve (?:hit|reached) your usage limit\b/i,
   }),
   Object.freeze({
     cliFamily: 'codex',
     signature: 'codex_workspace_credits',
-    pattern: /(?:you(?:'|\u2019)ve reached your workspace credit limit|your workspace is out of credits\. ask your workspace owner to add more\.|usage limit reached|quota exceeded\. check your plan and billing details\.)/i,
+    pattern: /(?:you(?:'|\u2019)ve reached your workspace credit limit|your workspace is out of credits\.\s+(?:add credits to continue(?: using codex)?\.|ask your workspace owner to (?:add more\.|refill in order to continue\.))|usage limit reached|quota exceeded\. check your plan and billing details\.)/i,
+  }),
+  Object.freeze({
+    cliFamily: 'codex',
+    signature: 'codex_workspace_spend_cap',
+    pattern: /you hit your spend cap set (?:in your workspace\.\s+increase your spend cap|by the owner of your workspace\.\s+ask an owner to increase your spend cap) to continue\./i,
   }),
   Object.freeze({
     cliFamily: 'gemini',
@@ -120,7 +130,7 @@ function isStalePtyGeneration(metadata = null, currentTerminal = null) {
 
 function paneDisplayName(value) {
   const paneId = String(value || '').trim();
-  if (CORE_PANE_IDS.includes(paneId)) return `Pane ${paneId}`;
+  if (CORE_PANE_LABELS.has(paneId)) return CORE_PANE_LABELS.get(paneId);
   const label = WORKROOM_LABELS.get(paneId);
   return label ? `${label} workroom pane` : `Pane ${paneId}`;
 }
@@ -199,6 +209,7 @@ function createPaneFailureMonitor(deps = {}) {
       exitCode: event.exitCode ?? null,
       scope: 'main',
       windowKey: 'main',
+      todayVisible: true,
       workRoomPane: event.metadata?.workRoomRouteOwner === true,
     };
 
@@ -237,6 +248,7 @@ function createPaneFailureMonitor(deps = {}) {
           metadata: {
             ...metadata,
             systemMessageId,
+            todayVisible: false,
           },
         });
       } catch (error) {

@@ -3074,8 +3074,14 @@ class SquidRunApp {
     } catch {
       persistedCommands = null;
     }
-    if (!persistedCommands || typeof persistedCommands !== 'object') return false;
-    return String(persistedCommands[id] || '').toLowerCase().includes('codex');
+    const persistedCommand = persistedCommands && typeof persistedCommands === 'object'
+      ? String(persistedCommands[id] || '')
+      : '';
+    if (persistedCommand.toLowerCase().includes('codex')) return true;
+    if (command.trim() || persistedCommand.trim()) return false;
+
+    const runtimeCommand = resolvePaneFailureCliHint(id, this.ctx, this.cliIdentity);
+    return String(runtimeCommand || '').toLowerCase().includes('codex');
   }
 
   handleTriggerDeliveryAck(data = {}) {
@@ -9287,10 +9293,7 @@ class SquidRunApp {
       getAllActivity: () => this.ctx.daemonClient?.getAllActivity?.() || {},
       getDaemonTerminals: () => this.ctx.daemonClient?.getTerminals?.() || [],
       isPaneRunning: paneId => this.ctx.agentRunning.get(String(paneId)) === 'running',
-      isCodexPane: paneId => {
-        const cmd = this.ctx.currentSettings.paneCommands?.[String(paneId)] || '';
-        return cmd.includes('codex');
-      },
+      isCodexPane: paneId => this.isCodexPaneCommand(paneId),
       requestRestart: (paneId, info = {}) => {
         return this.requestPaneRestart(paneId, {
           source: 'recovery',
@@ -9518,13 +9521,13 @@ class SquidRunApp {
     });
 
     this.attachDaemonClientListener('exit', (paneId, code, metadata) => {
-      this.startupReadyBuffers.delete(String(paneId));
-      this.backgroundAgentManager.handleDaemonExit(paneId, code);
       const currentTerminal = this.ctx.daemonClient?.getTerminal?.(paneId) || null;
       if (isStalePtyGeneration(metadata, currentTerminal)) {
         log.warn('PaneFailure', `Ignored stale exit for pane ${paneId} (event pid=${metadata?.pid}, current pid=${currentTerminal?.pid})`);
         return;
       }
+      this.startupReadyBuffers.delete(String(paneId));
+      this.backgroundAgentManager.handleDaemonExit(paneId, code);
       const paneExit = handlePaneExit(paneId, code, metadata);
       const recoveryStatus = paneExit?.recoveryResult?.status || null;
       const expectedRecovery = recoveryStatus === 'expected' || recoveryStatus === 'codex_completed';

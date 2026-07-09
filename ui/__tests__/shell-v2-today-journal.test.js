@@ -38,6 +38,19 @@ describe('shell-v2 Today journal helper', () => {
         metadata: {},
       },
       {
+        rowId: 5,
+        messageId: 'hm-main-hidden-transport',
+        sessionId: 'app-session-476',
+        senderRole: 'system',
+        targetRole: 'user',
+        channel: 'telegram',
+        direction: 'outbound',
+        brokeredAtMs: 1550,
+        rawBody: 'linked Telegram transport audit',
+        status: 'recorded',
+        metadata: { scope: 'main', todayVisible: false },
+      },
+      {
         rowId: 2,
         messageId: 'hm-side-metadata',
         sessionId: 'app-session-476',
@@ -83,8 +96,9 @@ describe('shell-v2 Today journal helper', () => {
     expect(result.rows.map((row) => row.messageId)).toEqual(['hm-explicit-main', 'hm-main']);
     expect(extractRowScopeKey(rows[0])).toBe('main');
     expect(extractRowScopeKey(rows[1])).toBe('main');
-    expect(extractRowScopeKey(rows[2])).toBe('scoped');
+    expect(extractRowScopeKey(rows[2])).toBe('main');
     expect(extractRowScopeKey(rows[3])).toBe('scoped');
+    expect(extractRowScopeKey(rows[4])).toBe('scoped');
   });
 
   test('lazy full-message read is constrained to coord/full-agent-messages by message id', () => {

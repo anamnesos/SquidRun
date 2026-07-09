@@ -1,3 +1,9 @@
+# Git Fixture Isolation In Commit Hooks
+
+Jest tests that create temporary Git repositories must strip inherited `GIT_*` variables from every fixture Git child process. Pathspec commits run hooks with an alternate `GIT_INDEX_FILE`; if a fixture inherits it, `git add` can rewrite the caller's commit index with blobs stored only in the temporary repository. Fixture cleanup then deletes those objects and later hook gates fail with `fatal: unable to read <object>`.
+
+Build the child environment from `process.env` with every case-insensitive `GIT_` key removed, matching `ui/scripts/hm-sandbox.js`. A regression check can copy the canonical index, run the test with that copy as `GIT_INDEX_FILE`, and prove its hash is unchanged.
+
 # Coworker Output Lint v0
 
 Status: Established during Session 354 (follow-up, not shipped in d82580c).

@@ -5127,6 +5127,37 @@ describe('SquidRunApp', () => {
       expect(result).toEqual({ success: true, paneId: '1' });
     });
 
+    it('uses the default Codex command for workroom panes without explicit settings', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {};
+      mockManagers.settings.loadSettings.mockReturnValue({});
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = app.dispatchPaneHostEnter('trustquote-app');
+
+      expect(app.ctx.daemonClient.write.mock.calls).toEqual([
+        ['trustquote-app', '\u001b[201~'],
+        ['trustquote-app', '\r'],
+      ]);
+      expect(result).toEqual({ success: true, paneId: 'trustquote-app' });
+    });
+
+    it('classifies default Codex workroom exit zero as graceful completion', () => {
+      const { createRecoveryManager } = require('../modules/recovery-manager');
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {};
+      mockManagers.settings.loadSettings.mockReturnValue({});
+      createRecoveryManager.mockClear();
+
+      app.initRecoveryManager();
+
+      const recoveryOptions = createRecoveryManager.mock.calls[0][0];
+      expect(recoveryOptions.isCodexPane('trustquote-app')).toBe(true);
+    });
+
     it('uses persisted settings when current pane command is stale non-Codex', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.ctx.currentSettings = {
@@ -6286,8 +6317,12 @@ describe('SquidRunApp', () => {
       exitListener('1', 0, exitMetadata);
       expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledTimes(1);
 
+      app.startupReadyBuffers.set('1', 'current-generation-ready-prefix');
+      app.backgroundAgentManager.handleDaemonExit.mockClear();
       exitListener('1', 1, { ...exitMetadata, pid: 999 });
       expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledTimes(1);
+      expect(app.startupReadyBuffers.get('1')).toBe('current-generation-ready-prefix');
+      expect(app.backgroundAgentManager.handleDaemonExit).not.toHaveBeenCalled();
 
       app.shuttingDown = true;
       exitListener('1', 0, exitMetadata);
