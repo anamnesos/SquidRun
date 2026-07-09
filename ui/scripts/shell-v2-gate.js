@@ -99,7 +99,9 @@ const VISUAL_DOORBELL_REVIEW_SCREENSHOTS = Object.freeze([
   'visual-doorbell-cleared-today',
 ]);
 const SHELL_V2_VISUAL_COMMIT_FILES = Object.freeze([
+  'docs/mira-system-map.md',
   'ui/__tests__/evidence-ledger-store.test.js',
+  'ui/__tests__/shell-v2-gate.e2e.test.js',
   'ui/__tests__/shell-v2-doorbell.test.js',
   'ui/__tests__/shell-v2.test.js',
   'ui/__tests__/shell-v2-today-journal.test.js',
@@ -209,9 +211,9 @@ function normalizeGitPath(value) {
   return String(value || '').replace(/\\/g, '/').replace(/^\.\//, '');
 }
 
-function runGit(args) {
+function runGit(args, cwd = PROJECT_ROOT) {
   const result = spawnSync('git', args, {
-    cwd: PROJECT_ROOT,
+    cwd,
     encoding: 'utf8',
     windowsHide: true,
   });
@@ -420,15 +422,16 @@ function readDoorbellStaticGateData() {
   };
 }
 
-function scanPhase5Residue(manifest) {
+function scanPhase5Residue(manifest, projectRoot = PROJECT_ROOT) {
+  const resolvedProjectRoot = path.resolve(projectRoot);
   const excluded = new Set([
-    normalizeGitPath(path.relative(PROJECT_ROOT, PHASE5_MANIFEST_PATH)),
-    normalizeGitPath(path.relative(PROJECT_ROOT, __filename)),
+    normalizeGitPath(path.relative(resolvedProjectRoot, PHASE5_MANIFEST_PATH)),
+    normalizeGitPath(path.relative(resolvedProjectRoot, __filename)),
   ]);
   const deletedFiles = new Set((manifest.deletedFiles || []).map(normalizeGitPath));
   const hits = [];
   for (const pattern of manifest.residuePatterns || []) {
-    const result = runGit(['grep', '-n', '-F', '--', pattern, 'HEAD', '--', 'ui']);
+    const result = runGit(['grep', '-n', '-F', '--', pattern, 'HEAD', '--', '.'], resolvedProjectRoot);
     if (result.status !== 0 && result.status !== 1) {
       hits.push({ pattern, error: result.stderr || result.stdout || 'git grep failed' });
       continue;
@@ -3187,7 +3190,13 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err?.stack || err?.message || String(err));
-  process.exit(1);
-});
+module.exports = {
+  scanPhase5Residue,
+};
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err?.stack || err?.message || String(err));
+    process.exit(1);
+  });
+}

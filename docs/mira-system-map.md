@@ -584,11 +584,11 @@ rotated segment is deleted with a recorded count/reason rather than archived.
 This is a retention/inventory change only; it does not promote Mira route,
 autonomy, Telegram, or external-action authority.
 
-Phase 5 shell cleanup note (2026-07-07): External Notifications runtime/UI/IPC
-was deleted as a dead Shell V2 legacy surface. Mira recent-comms inventory now
-names only the surviving local comms seams: `hm-comms.js`, Telegram poller, and
-SMS poller. This is an inventory cleanup only; it does not promote Mira route,
-autonomy, Telegram, SMS, or external-action authority.
+Phase 5 shell cleanup note (2026-07-07): the retired outbound-notification
+runtime/UI/IPC was deleted as a dead Shell V2 legacy surface. Mira recent-comms
+inventory now names only the surviving local comms seams: `hm-comms.js`,
+Telegram poller, and SMS poller. This is an inventory cleanup only; it does not
+promote Mira route, autonomy, Telegram, SMS, or external-action authority.
 
 | Family | Paths | Purpose / Why Built | Status Tag | Current Capability Today | What It Is Not | Dependencies / Tests | Risk If Removed | Next Evidence Gate |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
