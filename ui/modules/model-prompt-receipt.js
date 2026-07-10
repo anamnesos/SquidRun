@@ -471,9 +471,15 @@ function normalizeHookCommand(command) {
   return String(command || '').replace(/\\/g, '/').replace(/\s+/g, ' ').trim();
 }
 
-function hasHookCommand(hooks, command) {
-  const expected = normalizeHookCommand(command);
-  return hooks.some((hook) => normalizeHookCommand(hook?.command) === expected);
+function hookCommandIdentity(command) {
+  const normalized = normalizeHookCommand(command);
+  if (!normalized.includes('model-prompt-receipt-adapter.js')) return `command:${normalized}`;
+
+  const runtime = normalized.match(/--runtime\s+([a-z0-9_-]+)/i)?.[1]?.toLowerCase() || '';
+  const eventName = normalized.match(/--event\s+([a-z0-9_-]+)/i)?.[1]?.toLowerCase() || '';
+  const trustCheckOnly = /(?:^|\s)--trust-check-only(?:\s|$)/i.test(normalized);
+  if (!runtime || !eventName) return `command:${normalized}`;
+  return `model-prompt-receipt:${runtime}:${eventName}:${trustCheckOnly ? 'trust' : 'receipt'}`;
 }
 
 function ensureHookEventCommand(config, eventName, command, options = {}) {
@@ -497,13 +503,34 @@ function ensureHookEventCommand(config, eventName, command, options = {}) {
     entries.push(entry);
   }
 
-  if (hasHookCommand(entry.hooks, command)) return false;
-  entry.hooks.push({
+  const desiredHook = {
     ...(options.name ? { name: options.name } : {}),
     type: 'command',
     command,
     ...(options.description ? { description: options.description } : {}),
-  });
+  };
+  const desiredIdentity = hookCommandIdentity(command);
+  const matchingIndexes = entry.hooks
+    .map((hook, index) => ({ hook, index }))
+    .filter(({ hook }) => hookCommandIdentity(hook?.command) === desiredIdentity)
+    .map(({ index }) => index);
+
+  if (matchingIndexes.length > 0) {
+    const keepIndex = matchingIndexes[0];
+    const nextHooks = entry.hooks.filter((_, index) => (
+      index === keepIndex || !matchingIndexes.includes(index)
+    ));
+    const normalizedIndex = nextHooks.findIndex((hook) => hookCommandIdentity(hook?.command) === desiredIdentity);
+    nextHooks[normalizedIndex] = {
+      ...nextHooks[normalizedIndex],
+      ...desiredHook,
+    };
+    const changed = JSON.stringify(nextHooks) !== JSON.stringify(entry.hooks);
+    if (changed) entry.hooks = nextHooks;
+    return changed;
+  }
+
+  entry.hooks.push(desiredHook);
   return true;
 }
 

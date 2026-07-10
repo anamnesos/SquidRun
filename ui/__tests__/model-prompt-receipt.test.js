@@ -157,4 +157,41 @@ describe('modelPromptReceipt contract', () => {
       fs.rmSync(projectRoot, { recursive: true, force: true });
     }
   });
+
+  test('collapses quoted and unquoted prompt-receipt hook duplicates', () => {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-hook-dedupe-'));
+    try {
+      fs.mkdirSync(path.join(projectRoot, '.codex'), { recursive: true });
+      fs.mkdirSync(path.join(projectRoot, '.claude'), { recursive: true });
+      fs.mkdirSync(path.join(projectRoot, '.gemini'), { recursive: true });
+      fs.writeFileSync(path.join(projectRoot, '.codex', 'hooks.json'), JSON.stringify({ hooks: {} }), 'utf8');
+      fs.writeFileSync(path.join(projectRoot, '.claude', 'settings.json'), JSON.stringify({ hooks: {} }), 'utf8');
+
+      const adapterPath = path.join(projectRoot, 'ui', 'scripts', 'model-prompt-receipt-adapter.js').replace(/\\/g, '/');
+      fs.writeFileSync(path.join(projectRoot, '.gemini', 'settings.json'), JSON.stringify({
+        hooks: {
+          BeforeAgent: [{
+            hooks: [
+              { type: 'command', command: `node ${adapterPath} --runtime gemini --event BeforeAgent` },
+              { type: 'command', command: `node "${adapterPath}" --runtime gemini --event BeforeAgent` },
+            ],
+          }],
+        },
+      }), 'utf8');
+
+      const first = receipt.installModelPromptReceiptHooks({ projectRoot });
+      const second = receipt.installModelPromptReceiptHooks({ projectRoot });
+      const gemini = JSON.parse(fs.readFileSync(path.join(projectRoot, '.gemini', 'settings.json'), 'utf8'));
+      const receiptHooks = gemini.hooks.BeforeAgent[0].hooks.filter((hook) => (
+        String(hook.command || '').includes('model-prompt-receipt-adapter.js')
+      ));
+
+      expect(first.changed).toBe(true);
+      expect(second.changed).toBe(false);
+      expect(receiptHooks).toHaveLength(1);
+      expect(receiptHooks[0].command).toBe(`node "${adapterPath}" --runtime gemini --event BeforeAgent`);
+    } finally {
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
 });
