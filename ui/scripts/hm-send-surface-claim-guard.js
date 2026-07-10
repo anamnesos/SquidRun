@@ -519,7 +519,8 @@ function sentenceHasSurfaceCompletionClaim(sentence) {
   const lower = text.toLowerCase();
   const startsWithClaim = /^\s*(?:done|complete|completed|finished|all set|verdict\s*:\s*done)\b/i.test(text);
   const doneTerm = /\b(?:done|finished|complete|completed|all set|ready for james|visible|showing|left open|created|fixed|resolved|works now|verdict\s*:\s*done|this counts|count this)\b/i.test(text);
-  const surfaceNoun = /\b(?:dashboard|pane|invoice|screen|window|prompt|screenshot|sidecar)\b/i.test(text);
+  const surfaceNoun = /\b(?:dashboard|pane|invoice|screen|prompt|screenshot|sidecar)\b/i.test(text)
+    || /\b(?:app|browser|desktop|main|profile|scoped|side|squidrun)\s+window\b/i.test(text);
   const testOnly = /\b(?:test|unit|jest|suite)\b/i.test(lower);
   return surfaceNoun && doneTerm && (!startsWithClaim || !testOnly);
 }

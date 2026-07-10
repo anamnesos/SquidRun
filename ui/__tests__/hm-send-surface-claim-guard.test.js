@@ -205,6 +205,22 @@ describe('hm-send surface claim guard', () => {
     }
   });
 
+  test('does not confuse a domain arrival window with a UI surface', () => {
+    const content = 'The arrival window is fixed at 10:00 AM - 12:00 PM.';
+
+    expect(hasSurfaceCompletionClaim(content)).toBe(false);
+    expect(detectSurfaceClaimGuardViolation({
+      content,
+      targetRole: 'telegram',
+      targetRaw: 'telegram',
+      senderRole: 'architect',
+      recentUserRows: [],
+      nowMs: NOW_MS,
+    })).toBeNull();
+
+    expect(hasSurfaceCompletionClaim('The SquidRun window is fixed and visible now.')).toBe(true);
+  });
+
   test('does not let an unrelated existing PNG satisfy a visible claim', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'surface-claim-'));
     const screenshotPath = path.join(tempDir, 'old-unrelated.png');
