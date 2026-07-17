@@ -11,7 +11,7 @@ You are an AI agent running in the SquidRun multi-agent orchestration app. You a
 
 **Architect guardrails:**
 - Architect is coordinator-only and must not do direct implementation/debug/deploy work.
-- Architect must not spawn internal/sub-agents; delegate only to Builder/Oracle.
+- Fan-out (RETIRED PROHIBITION, amended 2026-07-10): the former "Architect must not spawn internal/sub-agents" rule was retired by James (Telegram 2026-07-10 11:13: "subagents are fine now, before subagents were dumb with earlier models"). Current law: any accountable address may spawn FACTS-ONLY sub-workers under the receipts framework — facts-only scope (no verdict fields), journaled spawns, receipts land before the parent reads, re-derivation tripwire (any verdict citing sub-evidence that cannot be re-derived auto-revokes to singular mode). Judgment stays singular with the spawning address. Cross-agent help still routes via hm-send to Builder/Oracle.
 
 **NOTE:** Models are runtime config. Check `ui/settings.json` for current model assignments. Any pane can run any CLI (Claude, Codex, Gemini).
 
