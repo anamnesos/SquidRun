@@ -461,6 +461,9 @@ const {
 const {
   buildNewMiraTelegramTurnCandidate,
 } = require('../modules/mira-telegram-turn-candidate');
+const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
+const { closeArmRegistryStores } = require('../modules/main/arm-registry');
+const { seedTrustQuoteArmRegistry } = require('../modules/main/trustquote-arm-registry-seed');
 const SquidRunApp = require('../modules/main/squidrun-app');
 function createReadyTrustQuoteWindow(overrides = {}) {
   const { webContents: webContentsOverrides = {}, ...windowOverrides } = overrides;
@@ -752,6 +755,69 @@ describe('SquidRunApp', () => {
         restartClaimId: expect.any(String),
       }));
       expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
+    it('L0 reproduces mint-without-spawn when a headless arm has no owner window', () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'build-1a-l0-'));
+      const dbPath = path.join(tempDir, 'evidence-ledger.db');
+      const daemonSpawn = jest.fn();
+      mockAppContext.daemonClient = { spawn: daemonSpawn };
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      let reopenedStore = null;
+
+      try {
+        const seeded = seedTrustQuoteArmRegistry({
+          dbPath,
+          mainSessionId: 'app-session-l0',
+          nowMs: 10_000,
+        });
+        expect(seeded).toEqual(expect.objectContaining({
+          ok: true,
+          registry: expect.objectContaining({
+            appRoomId: 'trustquote',
+            sessionId: 'app-room:trustquote',
+            desiredCount: 4,
+          }),
+        }));
+
+        const owner = app.resolvePaneRestartOwner('trustquote-lead');
+        expect(owner).toEqual(expect.objectContaining({
+          ownerWindowKey: 'squid-room',
+          webContents: null,
+          requiresWebContents: true,
+        }));
+
+        expect(app.requestPaneRestart('trustquote-lead', { source: 'build-1a-l0' })).toEqual({
+          ok: false,
+          granted: false,
+          reason: 'restart_owner_unavailable',
+          paneId: 'trustquote-lead',
+          ownerWindowKey: 'squid-room',
+        });
+        expect(daemonSpawn).not.toHaveBeenCalled();
+
+        closeArmRegistryStores();
+        reopenedStore = new EvidenceLedgerStore({ dbPath });
+        expect(reopenedStore.init().ok).toBe(true);
+        const persisted = reopenedStore.getArmRegistryManifest({
+          appRoomId: 'trustquote',
+          sessionId: 'app-room:trustquote',
+        });
+        expect(persisted).toEqual(expect.objectContaining({
+          sessionId: 'app-room:trustquote',
+          desiredCount: 4,
+        }));
+        expect(persisted.arms).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            armKey: 'lead',
+            paneId: 'trustquote-lead',
+          }),
+        ]));
+      } finally {
+        reopenedStore?.close();
+        closeArmRegistryStores();
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
     });
 
     it('routes restart ownership to the active profile window for colliding core pane ids', () => {

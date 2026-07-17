@@ -265,6 +265,41 @@ describe('DaemonClient', () => {
       }));
     });
 
+    test('L0 characterizes the legacy daemon spawn request as pane-keyed and lease-free', async () => {
+      await client.connect();
+
+      client.spawn(
+        'trustquote-lead',
+        'D:\\projects\\TrustQuote',
+        false,
+        'pty-command',
+        { SQUIDRUN_ROLE: 'trustquote-lead' },
+        { paneCommand: 'codex', spawnCommandOnCreate: true }
+      );
+
+      const sentData = mockSocket.write.mock.calls[0][0];
+      const parsed = JSON.parse(sentData.replace('\n', ''));
+
+      expect(parsed).toEqual(expect.objectContaining({
+        action: 'spawn',
+        paneId: 'trustquote-lead',
+        cwd: 'D:\\projects\\TrustQuote',
+        mode: 'pty-command',
+        env: expect.objectContaining({
+          SQUIDRUN_ROLE: 'trustquote-lead',
+          SQUIDRUN_PANE_ID: 'trustquote-lead',
+        }),
+        options: {
+          paneCommand: 'codex',
+          spawnCommandOnCreate: true,
+        },
+      }));
+      expect(parsed).not.toHaveProperty('address');
+      expect(parsed).not.toHaveProperty('leaseId');
+      expect(parsed.options).not.toHaveProperty('address');
+      expect(parsed.options).not.toHaveProperty('leaseId');
+    });
+
     test('strips Electron-as-Node from pane spawn env', async () => {
       await client.connect();
 
