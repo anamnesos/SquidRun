@@ -6,8 +6,8 @@
  * Terminals survive app restarts because the daemon keeps running.
  *
  * Protocol:
- * - Client → Daemon: { action: "spawn"|"write"|"resize"|"kill"|"list"|"attach", ... }
- * - Daemon → Client: { event: "data"|"exit"|"spawned"|"list"|"error", ... }
+ * - Client → Daemon: { action: "spawn"|"spawn-addressed"|"write"|"resize"|"kill"|"list"|"attach", ... }
+ * - Daemon → Client: { event: "data"|"exit"|"spawned"|"address-spawn-result"|"list"|"error", ... }
  */
 
 const net = require('net');
@@ -60,6 +60,7 @@ const {
   isClaudeSessionInUseError,
 } = require('./modules/cli-resume-invocation');
 const { ensurePaneSessionId, remintPaneSessionId } = require('./modules/pane-session-id-store');
+const { AddressedTerminalSpawnCoordinator } = require('./modules/addressed-terminal-spawn');
 
 // ============================================================
 // D1: DAEMON LOGGING TO FILE
@@ -254,6 +255,12 @@ function normalizeTerminalOwnership(options = {}) {
     roomId: readText(options.roomId),
     role: readText(options.role),
     ownerPaneId: readText(options.ownerPaneId),
+    durableAddress: readText(options.durableAddress),
+    spawnLeaseId: readText(options.spawnLeaseId),
+    leaseOwner: readText(options.leaseOwner),
+    recoveryEvent: readText(options.recoveryEvent),
+    sourceMessageId: readText(options.sourceMessageId),
+    expectedResponseClass: readText(options.expectedResponseClass),
   };
 }
 
@@ -269,6 +276,12 @@ function terminalIdentityPayload(terminal = {}) {
     roomId: terminal.roomId || null,
     role: terminal.role || null,
     ownerPaneId: terminal.ownerPaneId || null,
+    durableAddress: terminal.durableAddress || null,
+    spawnLeaseId: terminal.spawnLeaseId || null,
+    leaseOwner: terminal.leaseOwner || null,
+    recoveryEvent: terminal.recoveryEvent || null,
+    sourceMessageId: terminal.sourceMessageId || null,
+    expectedResponseClass: terminal.expectedResponseClass || null,
   };
 }
 
@@ -1307,12 +1320,34 @@ function generateMockResponse(input) {
 // Connected clients: Set<net.Socket>
 const clients = new Set();
 
+const addressedSpawnCoordinator = new AddressedTerminalSpawnCoordinator({
+  getTerminal: (paneId) => terminals.get(String(paneId)) || null,
+  spawnTerminal,
+  killTerminal,
+  emitLifecycle: (eventClass, receipt) => {
+    broadcastKernelEvent(eventClass, {
+      paneId: receipt.paneId || 'system',
+      payload: receipt,
+    });
+  },
+});
+
 // Initialize heartbeat timer now that clients is declared
 initHeartbeatTimer();
 
 // Get the appropriate shell for the platform
 function getShell() {
   return os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash';
+}
+
+function buildDryRunPid(paneId) {
+  const numeric = Number.parseInt(String(paneId), 10);
+  if (Number.isInteger(numeric) && numeric >= 0) return 90000 + numeric;
+  let hash = 0;
+  for (const character of String(paneId || 'dry-run')) {
+    hash = ((hash * 31) + character.charCodeAt(0)) % 9000;
+  }
+  return 90000 + hash;
 }
 
 function getShellCommandInvocation(command = '', appendFlags = '') {
@@ -1433,7 +1468,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   if (dryRun) {
     logInfo(`[DRY-RUN] Spawning MOCK terminal for pane ${paneId}`);
 
-    const mockPid = 90000 + parseInt(paneId); // Fake PID for identification
+    const mockPid = buildDryRunPid(paneId); // Fake PID for identification
 
     const terminalInfo = {
       paneId: String(paneId),
@@ -1599,6 +1634,10 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   ptyProcess.onExit(({ exitCode }) => {
     logInfo(`Terminal ${paneId} exited with code ${exitCode}`);
     terminalInfo.alive = false;
+    addressedSpawnCoordinator.releaseTerminal(terminalInfo, {
+      reason: 'process_exit',
+      recoveryEvent: 'pty_exit',
+    });
     broadcast({
       event: 'exit',
       paneId,
@@ -1705,7 +1744,7 @@ function resizeTerminal(paneId, cols, rows) {
 }
 
 // Kill a terminal
-function killTerminal(paneId) {
+function killTerminal(paneId, details = {}) {
   const terminal = terminals.get(paneId);
   if (!terminal) return false;
 
@@ -1722,6 +1761,10 @@ function killTerminal(paneId) {
   }
 
   terminal.alive = false;
+  addressedSpawnCoordinator.releaseTerminal(terminal, {
+    reason: details.reason || 'killed',
+    recoveryEvent: details.recoveryEvent || 'explicit_kill',
+  });
   terminals.delete(paneId);
   logInfo(`Terminal ${paneId} killed (dryRun: ${terminal.dryRun || false})`);
   return {
@@ -1754,6 +1797,12 @@ function listTerminals() {
       lastActivity: info.lastActivity || null,
       lastMeaningfulActivity: info.lastMeaningfulActivity || null, // Smart Watchdog
       lastInputTime: info.lastInputTime || null,
+      durableAddress: info.durableAddress || null,
+      spawnLeaseId: info.spawnLeaseId || null,
+      leaseOwner: info.leaseOwner || null,
+      recoveryEvent: info.recoveryEvent || null,
+      sourceMessageId: info.sourceMessageId || null,
+      expectedResponseClass: info.expectedResponseClass || null,
     });
   }
   return list;
@@ -1812,6 +1861,44 @@ function handleMessage(client, message) {
     logInfo(`Received: ${msg.action} for pane ${msg.paneId || 'N/A'}`);
 
     switch (msg.action) {
+      case 'spawn-addressed': {
+        const result = addressedSpawnCoordinator.spawn({
+          durableAddress: msg.durableAddress || msg.address,
+          paneId: msg.paneId,
+          cwd: msg.cwd,
+          dryRun: msg.dryRun === true,
+          mode: msg.mode,
+          env: msg.env,
+          owner: msg.owner,
+          recoveryEvent: msg.recoveryEvent,
+          sourceMessageId: msg.sourceMessageId,
+          expectedResponseClass: msg.expectedResponseClass,
+          options: msg.options,
+        });
+        sendToClient(client, {
+          event: 'address-spawn-result',
+          requestId: msg.requestId || null,
+          paneId: msg.paneId,
+          ...result,
+        });
+        if (result.ok) {
+          broadcastKernelEvent('pty.up', {
+            paneId: msg.paneId,
+            payload: {
+              paneId: String(msg.paneId),
+              pid: result.terminal.pid,
+              mode: result.terminal.mode || 'pty',
+              dryRun: result.terminal.dryRun || false,
+              createdAt: result.terminal.createdAt || null,
+              durableAddress: result.durableAddress,
+              spawnLeaseId: result.spawnLeaseId,
+            },
+            kernelMeta: msg.kernelMeta || null,
+          });
+        }
+        break;
+      }
+
       case 'spawn': {
         const result = spawnTerminal(msg.paneId, msg.cwd, msg.dryRun || false, {
           mode: msg.mode,

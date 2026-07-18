@@ -52,6 +52,8 @@ class DaemonClient extends EventEmitter {
     this.lastActivity = new Map(); // Track last activity time per pane
     this.pendingWriteAcks = new Map(); // requestEventId -> { resolve, timer }
     this.writeAckSeq = 0;
+    this.pendingAddressSpawns = new Map(); // requestId -> { resolve, timer }
+    this.addressSpawnSeq = 0;
   }
 
   /**
@@ -203,6 +205,7 @@ class DaemonClient extends EventEmitter {
       this.connected = false;
       this.client = null;
       this._rejectPendingWriteAcks('daemon_disconnected');
+      this._rejectPendingAddressSpawns('daemon_disconnected');
       this.emit('disconnected');
 
       // Attempt reconnect
@@ -216,6 +219,7 @@ class DaemonClient extends EventEmitter {
       log.error('DaemonClient', 'Connection error', err.message);
       this.connected = false;
       this._rejectPendingWriteAcks('daemon_connection_error');
+      this._rejectPendingAddressSpawns('daemon_connection_error');
     });
   }
 
@@ -274,6 +278,25 @@ class DaemonClient extends EventEmitter {
           });
           this.emit('spawned', msg.paneId, msg.pid, msg.dryRun || false, msg);
           break;
+
+        case 'address-spawn-result': {
+          const requestId = msg.requestId || null;
+          if (msg.ok && msg.terminal) {
+            this.terminals.set(msg.paneId, {
+              ...msg.terminal,
+              paneId: msg.paneId,
+              alive: true,
+            });
+          }
+          const pending = requestId ? this.pendingAddressSpawns.get(requestId) : null;
+          if (pending) {
+            clearTimeout(pending.timer);
+            this.pendingAddressSpawns.delete(requestId);
+            pending.resolve(msg);
+          }
+          this.emit('address-spawn-result', msg);
+          break;
+        }
 
         case 'list':
           this.terminals.clear();
@@ -493,6 +516,98 @@ class DaemonClient extends EventEmitter {
       payload.options = { ...spawnOptions };
     }
     return this._send(payload);
+  }
+
+  _nextAddressSpawnRequestId() {
+    this.addressSpawnSeq += 1;
+    return `address-spawn-${Date.now()}-${this.addressSpawnSeq}`;
+  }
+
+  _rejectPendingAddressSpawns(reason = 'daemon_disconnected') {
+    for (const [requestId, pending] of this.pendingAddressSpawns.entries()) {
+      clearTimeout(pending.timer);
+      pending.resolve({
+        ok: false,
+        status: 'ack_timeout',
+        reason,
+        requestId,
+      });
+    }
+    this.pendingAddressSpawns.clear();
+  }
+
+  /**
+   * Spawn a daemon-owned terminal keyed by a durable address and wait for its
+   * generation-specific result. Legacy pane spawn remains unchanged.
+   * @param {Object} input
+   * @param {Object} [waitOptions]
+   * @returns {Promise<Object>}
+   */
+  async spawnAddressed(input = {}, waitOptions = {}) {
+    const paneId = String(input.paneId || '').trim();
+    const incomingEnv = (input.env && typeof input.env === 'object') ? input.env : {};
+    const explicitRole = typeof incomingEnv.SQUIDRUN_ROLE === 'string'
+      ? incomingEnv.SQUIDRUN_ROLE.trim()
+      : '';
+    const role = explicitRole || String(PANE_ROLES?.[paneId] || '').trim();
+    const spawnEnv = {
+      SQUIDRUN_ROLE: role,
+      SQUIDRUN_PANE_ID: paneId,
+      ...incomingEnv,
+    };
+    stripElectronRunAsNode(spawnEnv);
+    const requestId = String(input.requestId || '').trim() || this._nextAddressSpawnRequestId();
+    const timeoutMs = Math.max(100, Number(waitOptions.timeoutMs) || 5000);
+
+    if (!this.connected || !this.client) {
+      return {
+        ok: false,
+        status: 'not_connected',
+        reason: 'daemon_not_connected',
+        requestId,
+      };
+    }
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingAddressSpawns.delete(requestId);
+        resolve({
+          ok: false,
+          status: 'ack_timeout',
+          reason: `address spawn ack timeout after ${timeoutMs}ms`,
+          requestId,
+        });
+      }, timeoutMs);
+      this.pendingAddressSpawns.set(requestId, { resolve, timer });
+
+      const sent = this._send({
+        action: 'spawn-addressed',
+        requestId,
+        durableAddress: input.durableAddress || input.address || null,
+        paneId,
+        cwd: input.cwd,
+        dryRun: input.dryRun === true,
+        mode: input.mode || null,
+        env: spawnEnv,
+        owner: input.owner || null,
+        recoveryEvent: input.recoveryEvent || null,
+        sourceMessageId: input.sourceMessageId || null,
+        expectedResponseClass: input.expectedResponseClass || null,
+        options: input.options && typeof input.options === 'object'
+          ? { ...input.options }
+          : undefined,
+      });
+      if (!sent) {
+        clearTimeout(timer);
+        this.pendingAddressSpawns.delete(requestId);
+        resolve({
+          ok: false,
+          status: 'send_failed',
+          reason: 'address_spawn_send_failed',
+          requestId,
+        });
+      }
+    });
   }
 
   /**
@@ -736,6 +851,7 @@ class DaemonClient extends EventEmitter {
    */
   disconnect() {
     this._rejectPendingWriteAcks('daemon_disconnected');
+    this._rejectPendingAddressSpawns('daemon_disconnected');
     if (this.client) {
       this._teardownSocket(this.client);
       this.client = null;

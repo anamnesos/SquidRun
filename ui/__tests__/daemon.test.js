@@ -326,6 +326,116 @@ describe('DaemonClient', () => {
     });
   });
 
+  describe('spawnAddressed', () => {
+    test('sends the required durable receipt fields and waits for its request result', async () => {
+      await client.connect();
+
+      const pending = client.spawnAddressed({
+        requestId: 'spawn-request-1',
+        durableAddress: 'arm://qa/portal',
+        paneId: 'qa-portal',
+        cwd: 'D:\\qa\\portal',
+        owner: 'terminal-daemon',
+        recoveryEvent: 'lease_check_on_spawn',
+        sourceMessageId: 'ping-1',
+        expectedResponseClass: 'arm.liveness.pong',
+        env: { SQUIDRUN_ROLE: 'qa-portal' },
+        options: { paneCommand: 'codex', spawnCommandOnCreate: true },
+      });
+
+      const request = JSON.parse(mockSocket.write.mock.calls[0][0].trim());
+      expect(request).toEqual(expect.objectContaining({
+        action: 'spawn-addressed',
+        requestId: 'spawn-request-1',
+        durableAddress: 'arm://qa/portal',
+        paneId: 'qa-portal',
+        owner: 'terminal-daemon',
+        recoveryEvent: 'lease_check_on_spawn',
+        sourceMessageId: 'ping-1',
+        expectedResponseClass: 'arm.liveness.pong',
+        env: expect.objectContaining({
+          SQUIDRUN_ROLE: 'qa-portal',
+          SQUIDRUN_PANE_ID: 'qa-portal',
+        }),
+      }));
+
+      mockSocket.emit('data', JSON.stringify({
+        event: 'address-spawn-result',
+        requestId: 'spawn-request-1',
+        ok: true,
+        status: 'spawned',
+        paneId: 'qa-portal',
+        durableAddress: 'arm://qa/portal',
+        spawnLeaseId: 'lease-1',
+        terminal: {
+          paneId: 'qa-portal',
+          pid: 4321,
+          durableAddress: 'arm://qa/portal',
+          spawnLeaseId: 'lease-1',
+        },
+      }) + '\n');
+
+      await expect(pending).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        spawnLeaseId: 'lease-1',
+      }));
+      expect(client.getTerminal('qa-portal')).toEqual(expect.objectContaining({
+        alive: true,
+        pid: 4321,
+        durableAddress: 'arm://qa/portal',
+        spawnLeaseId: 'lease-1',
+      }));
+    });
+
+    test('returns a refusal without replacing the cached live generation', async () => {
+      await client.connect();
+      client.terminals.set('qa-portal', {
+        paneId: 'qa-portal',
+        pid: 4321,
+        alive: true,
+        spawnLeaseId: 'lease-1',
+      });
+
+      const pending = client.spawnAddressed({
+        requestId: 'spawn-request-2',
+        durableAddress: 'arm://qa/portal',
+        paneId: 'qa-portal',
+        owner: 'terminal-daemon',
+        recoveryEvent: 'lease_check_on_spawn',
+        sourceMessageId: 'ping-2',
+        expectedResponseClass: 'arm.liveness.pong',
+      });
+      mockSocket.emit('data', JSON.stringify({
+        event: 'address-spawn-result',
+        requestId: 'spawn-request-2',
+        ok: false,
+        status: 'refused',
+        reason: 'address_lease_held',
+        paneId: 'qa-portal',
+        spawnLeaseId: 'lease-1',
+      }) + '\n');
+
+      await expect(pending).resolves.toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'address_lease_held',
+      }));
+      expect(client.getTerminal('qa-portal')).toEqual(expect.objectContaining({
+        pid: 4321,
+        spawnLeaseId: 'lease-1',
+      }));
+    });
+
+    test('fails closed before sending when the daemon is disconnected', async () => {
+      await expect(client.spawnAddressed({
+        durableAddress: 'arm://qa/portal',
+        paneId: 'qa-portal',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: false,
+        status: 'not_connected',
+      }));
+    });
+  });
+
   describe('write', () => {
     test('should send write action with data', async () => {
       await client.connect();
