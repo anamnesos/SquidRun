@@ -52,7 +52,7 @@ function usage() {
   console.log([
     'Usage (PowerShell):',
     '  $env:ELECTRON_RUN_AS_NODE=\'1\'',
-    '  .\\SquidRun.exe -e "require(\'./resources/app.asar/scripts/build-1b-native-probe\').runCli(process.argv.slice(1))" -- [options]',
+    '  .\\SquidRun.exe -e "require(\'./resources/app.asar/scripts/build-1b-native-probe\').runCli(process.argv.slice(1)).then((r)=>process.exit(r?.ok===false?1:0))" -- [options]',
     '',
     'Run with ELECTRON_RUN_AS_NODE=1 against an unpacked packaged application.',
     '',
@@ -320,10 +320,12 @@ async function runCli(argv = []) {
     ),
   }, null, 2));
   if (!result.ok) process.exitCode = 1;
+  return result;
 }
 
 async function main() {
-  return runCli(process.argv.slice(2));
+  const result = await runCli(process.argv.slice(2));
+  process.exit(result?.ok === false ? 1 : 0);
 }
 
 if (require.main === module) {
