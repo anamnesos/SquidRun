@@ -139,4 +139,23 @@ describe('TerminalAddressLeaseRegistry', () => {
     }));
     expect(registry.get(second.durableAddress).spawnLeaseId).toBe(second.spawnLeaseId);
   });
+
+  test('cannot activate a lease without a real process id', () => {
+    const registry = new TerminalAddressLeaseRegistry({
+      createLeaseId: () => 'lease-1',
+    });
+    const claimed = registry.claim(request());
+
+    expect(registry.activate(claimed.durableAddress, claimed.spawnLeaseId, { pid: null })).toEqual(
+      expect.objectContaining({
+        ok: false,
+        status: 'invalid',
+        reason: 'pid_required',
+      })
+    );
+    expect(registry.get(claimed.durableAddress)).toEqual(expect.objectContaining({
+      status: 'claimed',
+      pid: null,
+    }));
+  });
 });

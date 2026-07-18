@@ -123,9 +123,21 @@ class TerminalAddressLeaseRegistry {
         activeSpawnLeaseId: lease.spawnLeaseId,
       };
     }
+    const pid = details.pid === null || details.pid === undefined
+      ? null
+      : Number(details.pid);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return {
+        ok: false,
+        status: 'invalid',
+        reason: 'pid_required',
+        durableAddress,
+        spawnLeaseId: lease.spawnLeaseId,
+      };
+    }
     const activatedAtMs = Number(this.now());
     lease.status = 'active';
-    lease.pid = Number.isFinite(Number(details.pid)) ? Number(details.pid) : null;
+    lease.pid = pid;
     lease.activatedAtMs = activatedAtMs;
     return { ok: true, status: 'active', lease: { ...lease } };
   }
