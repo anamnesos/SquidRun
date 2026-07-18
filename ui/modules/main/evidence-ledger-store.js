@@ -510,6 +510,55 @@ CREATE INDEX IF NOT EXISTS idx_arm_apply_requests_approval
   ON arm_apply_requests(approval_required, status, updated_at_ms DESC);
 `;
 
+const SCHEMA_V10_SQL = `
+CREATE TABLE IF NOT EXISTS arm_spawn_sessions (
+  spawn_session_id TEXT PRIMARY KEY,
+  durable_address TEXT NOT NULL,
+  spawn_lease_id TEXT NOT NULL UNIQUE,
+  previous_spawn_lease_id TEXT,
+  registry_id TEXT,
+  arm_id TEXT,
+  app_room_id TEXT NOT NULL,
+  arm_key TEXT NOT NULL,
+  pane_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  profile_name TEXT NOT NULL,
+  workspace_path TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  recovery_event TEXT NOT NULL,
+  source_message_id TEXT NOT NULL,
+  expected_response_class TEXT NOT NULL,
+  pid INTEGER NOT NULL CHECK (pid > 0),
+  status TEXT NOT NULL CHECK (status IN ('active', 'released', 'killed')) DEFAULT 'active',
+  started_at_ms INTEGER NOT NULL,
+  ended_at_ms INTEGER,
+  last_lifecycle_event TEXT NOT NULL,
+  spawn_receipt_json TEXT NOT NULL,
+  last_lifecycle_receipt_json TEXT DEFAULT '{}',
+  liveness_message_id TEXT,
+  liveness_row_id INTEGER,
+  liveness_at_ms INTEGER,
+  liveness_receipt_json TEXT DEFAULT '{}',
+  metadata_json TEXT DEFAULT '{}',
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  UNIQUE(durable_address, spawn_lease_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_arm_spawn_sessions_one_active_address
+  ON arm_spawn_sessions(durable_address)
+  WHERE status = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_arm_spawn_sessions_address_started
+  ON arm_spawn_sessions(durable_address, started_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_arm_spawn_sessions_room_arm_started
+  ON arm_spawn_sessions(app_room_id, arm_key, started_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_arm_spawn_sessions_status_updated
+  ON arm_spawn_sessions(status, updated_at_ms DESC);
+`;
+
 const COMMS_CHANNELS = new Set(['ws', 'telegram', 'sms', 'user', 'voice', 'system']);
 const COMMS_DIRECTIONS = new Set(['inbound', 'outbound']);
 const COMMS_STATUS_RANK = Object.freeze({
@@ -578,6 +627,14 @@ const ARM_APPLY_ALLOWED_CATEGORIES = new Set([
   'draft_only',
   'qa_observation',
   'code_patch_plan',
+]);
+const ARM_SPAWN_SESSION_STATUSES = new Set(['active', 'released', 'killed']);
+const ARM_SPAWN_LIFECYCLE_EVENTS = new Set([
+  'arm.spawn.started',
+  'arm.spawn.refused',
+  'arm.spawn.released',
+  'arm.spawn.killed',
+  'arm.spawn.kill_refused',
 ]);
 const APP_ROOM_MANIFEST_SESSION_PREFIX = 'app-room:';
 const APP_SESSION_SCOPE_PATTERN = /^app-session-\d+(?::|$)/i;
@@ -831,6 +888,26 @@ function normalizeArmApplyCategory(value) {
   return ARM_APPLY_ALLOWED_CATEGORIES.has(canonical) ? canonical : null;
 }
 
+function normalizeArmSpawnSessionStatus(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  return ARM_SPAWN_SESSION_STATUSES.has(normalized) ? normalized : null;
+}
+
+function normalizeArmSpawnLifecycleEvent(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  return ARM_SPAWN_LIFECYCLE_EVENTS.has(normalized) ? normalized : null;
+}
+
+function normalizeDurableArmAddress(value) {
+  const text = toOptionalString(value, null);
+  if (!text || !/^[a-z0-9][a-z0-9._:/-]{2,255}$/i.test(text)) return null;
+  return text.toLowerCase();
+}
+
 function buildNoSideEffectResult(reason = 'executor_disabled', nowMs = null) {
   return {
     dispatchEnabled: false,
@@ -1034,6 +1111,42 @@ function mapArmRegistryRow(row, arms = []) {
     createdAtMs: row.created_at_ms,
     updatedAtMs: row.updated_at_ms,
     arms,
+  };
+}
+
+function mapArmSpawnSessionRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    spawnSessionId: row.spawn_session_id,
+    durableAddress: row.durable_address,
+    spawnLeaseId: row.spawn_lease_id,
+    previousSpawnLeaseId: row.previous_spawn_lease_id,
+    registryId: row.registry_id,
+    armId: row.arm_id,
+    appRoomId: row.app_room_id,
+    armKey: row.arm_key,
+    paneId: row.pane_id,
+    role: row.role,
+    profileName: row.profile_name,
+    workspacePath: row.workspace_path,
+    owner: row.owner,
+    recoveryEvent: row.recovery_event,
+    sourceMessageId: row.source_message_id,
+    expectedResponseClass: row.expected_response_class,
+    pid: row.pid,
+    status: row.status,
+    startedAtMs: row.started_at_ms,
+    endedAtMs: row.ended_at_ms,
+    lastLifecycleEvent: row.last_lifecycle_event,
+    spawnReceipt: parseJson(row.spawn_receipt_json, {}),
+    lastLifecycleReceipt: parseJson(row.last_lifecycle_receipt_json, {}),
+    livenessMessageId: row.liveness_message_id,
+    livenessRowId: row.liveness_row_id,
+    livenessAtMs: row.liveness_at_ms,
+    livenessReceipt: parseJson(row.liveness_receipt_json, {}),
+    metadata: parseJson(row.metadata_json, {}),
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
   };
 }
 
@@ -1299,6 +1412,7 @@ class EvidenceLedgerStore {
     this.db.exec(SCHEMA_V7_SQL);
     this.db.exec(SCHEMA_V8_SQL);
     this.db.exec(SCHEMA_V9_SQL);
+    this.db.exec(SCHEMA_V10_SQL);
   }
 
   _migrateCommsJournalChannels() {
@@ -1952,6 +2066,497 @@ class EvidenceLedgerStore {
       limit: 1,
     };
     return this.queryArmRegistries(canonicalFilters)[0] || null;
+  }
+
+  _appendArmSpawnLedgerEvent(eventClass, input = {}, nowMs = Date.now()) {
+    const receipt = ensureObject(input.receipt || input.spawnReceipt || input.spawn_receipt);
+    const durableAddress = normalizeDurableArmAddress(
+      input.durableAddress || input.durable_address || receipt.durableAddress
+    );
+    const spawnLeaseId = toOptionalString(
+      input.spawnLeaseId || input.spawn_lease_id || receipt.spawnLeaseId,
+      null
+    );
+    const eventAtMs = toMs(receipt.atMs ?? input.atMs ?? input.at_ms, nowMs);
+    return this.appendEvent({
+      eventId: buildStableHashId('evt-arm-spawn', [eventClass, durableAddress, spawnLeaseId, eventAtMs]),
+      traceId: `arm-spawn:${durableAddress || 'unknown'}`,
+      type: eventClass,
+      stage: eventClass === 'arm.spawn.liveness_proved' ? 'liveness' : 'lifecycle',
+      source: 'arm-spawn-session-journal',
+      paneId: toOptionalString(input.paneId || input.pane_id || receipt.paneId, 'system'),
+      role: toOptionalString(input.role || receipt.role, 'system'),
+      ts: eventAtMs,
+      direction: 'internal',
+      payload: {
+        ...receipt,
+        durableAddress,
+        spawnLeaseId,
+      },
+      meta: {
+        schema: 'squidrun.arm_spawn_session.v0',
+        spawnSessionId: toOptionalString(input.spawnSessionId || input.spawn_session_id, null),
+      },
+    }, {
+      nowMs,
+      sessionId: toOptionalString(input.mainSessionId || input.main_session_id || input.sessionId || input.session_id, null),
+    });
+  }
+
+  queryArmSpawnSessions(filters = {}) {
+    if (!this.isAvailable()) return [];
+
+    const clauses = [];
+    const params = [];
+    if (filters.spawnSessionId || filters.spawn_session_id) {
+      clauses.push('spawn_session_id = ?');
+      params.push(String(filters.spawnSessionId || filters.spawn_session_id));
+    }
+    if (filters.durableAddress || filters.durable_address || filters.address) {
+      const durableAddress = normalizeDurableArmAddress(
+        filters.durableAddress || filters.durable_address || filters.address
+      );
+      if (!durableAddress) return [];
+      clauses.push('durable_address = ?');
+      params.push(durableAddress);
+    }
+    if (filters.spawnLeaseId || filters.spawn_lease_id || filters.leaseId || filters.lease_id) {
+      clauses.push('spawn_lease_id = ?');
+      params.push(String(
+        filters.spawnLeaseId || filters.spawn_lease_id || filters.leaseId || filters.lease_id
+      ));
+    }
+    if (filters.appRoomId || filters.app_room_id) {
+      clauses.push('app_room_id = ?');
+      params.push(String(filters.appRoomId || filters.app_room_id));
+    }
+    if (filters.armKey || filters.arm_key) {
+      clauses.push('arm_key = ?');
+      params.push(normalizeArmKey(filters.armKey || filters.arm_key, null));
+    }
+    if (filters.paneId || filters.pane_id) {
+      clauses.push('pane_id = ?');
+      params.push(String(filters.paneId || filters.pane_id));
+    }
+    if (filters.status) {
+      const status = normalizeArmSpawnSessionStatus(filters.status);
+      if (!status) return [];
+      clauses.push('status = ?');
+      params.push(status);
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const order = String(filters.order || 'desc').toLowerCase() === 'asc'
+      ? 'ORDER BY started_at_ms ASC, spawn_session_id ASC'
+      : 'ORDER BY started_at_ms DESC, spawn_session_id DESC';
+    const limit = Math.max(1, Math.min(10_000, Number(filters.limit) || 1000));
+    return this.db.prepare(`
+      SELECT * FROM arm_spawn_sessions
+      ${where}
+      ${order}
+      LIMIT ?
+    `).all(...params, limit).map((row) => mapArmSpawnSessionRow(row));
+  }
+
+  getActiveArmSpawnSession(durableAddress) {
+    return this.queryArmSpawnSessions({
+      durableAddress,
+      status: 'active',
+      limit: 1,
+    })[0] || null;
+  }
+
+  recordArmSpawnStarted(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+
+    const receipt = ensureObject(input.receipt || input.spawnReceipt || input.spawn_receipt);
+    const terminal = ensureObject(input.terminal);
+    const durableAddress = normalizeDurableArmAddress(
+      input.durableAddress || input.durable_address || receipt.durableAddress
+    );
+    const spawnLeaseId = toOptionalString(
+      input.spawnLeaseId || input.spawn_lease_id || receipt.spawnLeaseId,
+      null
+    );
+    const appRoomId = normalizeAppRoomId(input.appRoomId || input.app_room_id);
+    const armKey = normalizeArmKey(input.armKey || input.arm_key, input.role);
+    const paneId = toOptionalString(input.paneId || input.pane_id || receipt.paneId, null);
+    const role = toOptionalString(input.role, null);
+    const profileName = normalizeIdentityToken(input.profileName || input.profile_name || input.profile);
+    const workspacePath = toOptionalString(input.workspacePath || input.workspace_path, null);
+    const owner = toOptionalString(input.owner || receipt.owner, null);
+    const recoveryEvent = toOptionalString(input.recoveryEvent || input.recovery_event || receipt.recoveryEvent, null);
+    const sourceMessageId = toOptionalString(
+      input.sourceMessageId || input.source_message_id || receipt.sourceMessageId,
+      null
+    );
+    const expectedResponseClass = toOptionalString(
+      input.expectedResponseClass || input.expected_response_class || receipt.expectedResponseClass,
+      null
+    );
+    const pid = Number(input.pid ?? terminal.pid ?? receipt.pid);
+    const nowMs = toMs(options.nowMs, Date.now());
+    const startedAtMs = toMs(input.startedAtMs ?? input.started_at_ms ?? receipt.atMs, nowMs);
+    const eventClass = normalizeArmSpawnLifecycleEvent(receipt.eventClass);
+    const validation = [
+      [durableAddress, 'durable_address_required'],
+      [spawnLeaseId, 'spawn_lease_id_required'],
+      [appRoomId, 'app_room_id_required'],
+      [armKey, 'arm_key_required'],
+      [paneId, 'pane_id_required'],
+      [role, 'role_required'],
+      [profileName, 'profile_name_required'],
+      [workspacePath, 'workspace_path_required'],
+      [owner, 'owner_required'],
+      [recoveryEvent, 'recovery_event_required'],
+      [sourceMessageId, 'source_message_id_required'],
+      [expectedResponseClass, 'expected_response_class_required'],
+      [receipt.schema === 'squidrun.arm_spawn_receipt.v0', 'spawn_receipt_schema_required'],
+      [eventClass === 'arm.spawn.started', 'spawn_started_receipt_required'],
+      [receipt.status === 'spawned', 'spawned_receipt_status_required'],
+      [terminal.alive === true, 'live_terminal_required'],
+      [Number.isInteger(pid) && pid > 0, 'positive_pid_required'],
+      [toOptionalString(terminal.paneId, null) === paneId, 'terminal_pane_mismatch'],
+      [normalizeDurableArmAddress(terminal.durableAddress) === durableAddress, 'terminal_address_mismatch'],
+      [toOptionalString(terminal.spawnLeaseId, null) === spawnLeaseId, 'terminal_lease_mismatch'],
+      [toOptionalString(receipt.paneId, null) === paneId, 'receipt_pane_mismatch'],
+      [Number(receipt.pid) === pid, 'receipt_pid_mismatch'],
+      [normalizeDurableArmAddress(receipt.durableAddress) === durableAddress, 'receipt_address_mismatch'],
+      [toOptionalString(receipt.spawnLeaseId, null) === spawnLeaseId, 'receipt_lease_mismatch'],
+      [toOptionalString(receipt.sourceMessageId, null) === sourceMessageId, 'receipt_source_message_mismatch'],
+      [toOptionalString(receipt.expectedResponseClass, null) === expectedResponseClass, 'receipt_response_class_mismatch'],
+      [toOptionalString(receipt.owner, null) === owner, 'receipt_owner_mismatch'],
+      [toOptionalString(receipt.recoveryEvent, null) === recoveryEvent, 'receipt_recovery_event_mismatch'],
+      [!Object.prototype.hasOwnProperty.call(receipt, 'whoFailed')
+        && !Object.prototype.hasOwnProperty.call(receipt, 'who_failed'), 'blame_field_forbidden'],
+    ];
+    const failed = validation.find(([valid]) => !valid);
+    if (failed) {
+      return { ok: false, status: 'invalid', reason: failed[1], durableAddress, spawnLeaseId };
+    }
+
+    const spawnSessionId = toOptionalString(input.spawnSessionId || input.spawn_session_id, null)
+      || buildStableHashId('arm-spawn-session', [durableAddress, spawnLeaseId]);
+    const existingSameLease = this.db.prepare(`
+      SELECT * FROM arm_spawn_sessions WHERE spawn_lease_id = ? LIMIT 1
+    `).get(spawnLeaseId);
+    if (existingSameLease) {
+      const session = mapArmSpawnSessionRow(existingSameLease);
+      const identical = session.durableAddress === durableAddress
+        && session.paneId === paneId
+        && session.pid === pid;
+      return identical
+        ? { ok: true, status: 'duplicate', inserted: false, session }
+        : { ok: false, status: 'conflict', reason: 'spawn_lease_identity_conflict', session };
+    }
+
+    try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      const latestRow = this.db.prepare(`
+        SELECT * FROM arm_spawn_sessions
+        WHERE durable_address = ?
+        ORDER BY started_at_ms DESC, spawn_session_id DESC
+        LIMIT 1
+      `).get(durableAddress);
+      const activeRow = this.db.prepare(`
+        SELECT * FROM arm_spawn_sessions
+        WHERE durable_address = ? AND status = 'active'
+        LIMIT 1
+      `).get(durableAddress);
+      const previousSpawnLeaseId = toOptionalString(
+        input.previousSpawnLeaseId
+          || input.previous_spawn_lease_id
+          || receipt.previousSpawnLeaseId
+          || activeRow?.spawn_lease_id
+          || latestRow?.spawn_lease_id,
+        null
+      );
+
+      if (activeRow && activeRow.spawn_lease_id !== spawnLeaseId) {
+        const supersededReceipt = {
+          eventClass: 'arm.spawn.released',
+          status: 'released',
+          reason: 'new_generation_confirmed',
+          durableAddress,
+          spawnLeaseId: activeRow.spawn_lease_id,
+          previousSpawnLeaseId: activeRow.previous_spawn_lease_id,
+          paneId: activeRow.pane_id,
+          pid: activeRow.pid,
+          owner: activeRow.owner,
+          recoveryEvent: 'lease_check_on_spawn',
+          sourceMessageId: activeRow.source_message_id,
+          expectedResponseClass: activeRow.expected_response_class,
+          atMs: startedAtMs,
+        };
+        this.db.prepare(`
+          UPDATE arm_spawn_sessions
+          SET status = 'released', ended_at_ms = ?, last_lifecycle_event = ?,
+              last_lifecycle_receipt_json = ?, updated_at_ms = ?
+          WHERE spawn_session_id = ?
+        `).run(
+          startedAtMs,
+          supersededReceipt.eventClass,
+          JSON.stringify(supersededReceipt),
+          nowMs,
+          activeRow.spawn_session_id
+        );
+      }
+
+      const metadata = ensureObject(input.metadata ?? input.meta);
+      this.db.prepare(`
+        INSERT INTO arm_spawn_sessions (
+          spawn_session_id, durable_address, spawn_lease_id, previous_spawn_lease_id,
+          registry_id, arm_id, app_room_id, arm_key, pane_id, role, profile_name,
+          workspace_path, owner, recovery_event, source_message_id,
+          expected_response_class, pid, status, started_at_ms, ended_at_ms,
+          last_lifecycle_event, spawn_receipt_json, last_lifecycle_receipt_json,
+          liveness_message_id, liveness_row_id, liveness_at_ms,
+          liveness_receipt_json, metadata_json, created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?, '{}', NULL, NULL, NULL, '{}', ?, ?, ?)
+      `).run(
+        spawnSessionId,
+        durableAddress,
+        spawnLeaseId,
+        previousSpawnLeaseId,
+        toOptionalString(input.registryId || input.registry_id, null),
+        toOptionalString(input.armId || input.arm_id, null),
+        appRoomId,
+        armKey,
+        paneId,
+        role,
+        profileName,
+        workspacePath,
+        owner,
+        recoveryEvent,
+        sourceMessageId,
+        expectedResponseClass,
+        pid,
+        startedAtMs,
+        'arm.spawn.started',
+        JSON.stringify(receipt),
+        JSON.stringify(metadata),
+        nowMs,
+        nowMs
+      );
+      const journalEvent = this._appendArmSpawnLedgerEvent('arm.spawn.started', {
+        ...input,
+        spawnSessionId,
+        durableAddress,
+        spawnLeaseId,
+        paneId,
+        role,
+        receipt,
+      }, nowMs);
+      if (!journalEvent.ok) throw new Error(`lifecycle_journal_failed:${journalEvent.status || 'unknown'}`);
+      this.db.exec('COMMIT;');
+      return {
+        ok: true,
+        status: 'inserted',
+        inserted: true,
+        journalEvent,
+        session: this.queryArmSpawnSessions({ spawnSessionId, limit: 1 })[0] || null,
+      };
+    } catch (err) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: err.message,
+        durableAddress,
+        spawnLeaseId,
+        spawnSessionId,
+      };
+    }
+  }
+
+  recordArmSpawnLifecycle(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+    const receipt = ensureObject(input.receipt || input.lifecycleReceipt || input.lifecycle_receipt || input);
+    const eventClass = normalizeArmSpawnLifecycleEvent(input.eventClass || input.event_class || receipt.eventClass);
+    const durableAddress = normalizeDurableArmAddress(
+      input.durableAddress || input.durable_address || receipt.durableAddress
+    );
+    const spawnLeaseId = toOptionalString(
+      input.spawnLeaseId || input.spawn_lease_id || receipt.spawnLeaseId,
+      null
+    );
+    if (!eventClass) return { ok: false, status: 'invalid', reason: 'lifecycle_event_required' };
+    if (!durableAddress) return { ok: false, status: 'invalid', reason: 'durable_address_required' };
+    if (Object.prototype.hasOwnProperty.call(receipt, 'whoFailed')
+      || Object.prototype.hasOwnProperty.call(receipt, 'who_failed')) {
+      return { ok: false, status: 'invalid', reason: 'blame_field_forbidden' };
+    }
+    const stateChanging = eventClass === 'arm.spawn.released' || eventClass === 'arm.spawn.killed';
+    if (stateChanging && !spawnLeaseId) {
+      return { ok: false, status: 'invalid', reason: 'spawn_lease_id_required' };
+    }
+    const nextStatus = eventClass === 'arm.spawn.killed' ? 'killed' : 'released';
+    const nowMs = toMs(options.nowMs, Date.now());
+    const eventAtMs = toMs(receipt.atMs ?? input.atMs ?? input.at_ms, nowMs);
+
+    try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      const row = spawnLeaseId
+        ? this.db.prepare(`
+            SELECT * FROM arm_spawn_sessions
+            WHERE durable_address = ? AND spawn_lease_id = ?
+            LIMIT 1
+          `).get(durableAddress, spawnLeaseId)
+        : null;
+      if (stateChanging && row) {
+        this.db.prepare(`
+          UPDATE arm_spawn_sessions
+          SET status = ?, ended_at_ms = COALESCE(ended_at_ms, ?),
+              last_lifecycle_event = ?, last_lifecycle_receipt_json = ?, updated_at_ms = ?
+          WHERE spawn_session_id = ?
+        `).run(
+          nextStatus,
+          eventAtMs,
+          eventClass,
+          JSON.stringify(receipt),
+          nowMs,
+          row.spawn_session_id
+        );
+      }
+      const journalEvent = this._appendArmSpawnLedgerEvent(eventClass, {
+        ...input,
+        spawnSessionId: row?.spawn_session_id || null,
+        durableAddress,
+        spawnLeaseId,
+        paneId: row?.pane_id || receipt.paneId,
+        role: row?.role || input.role,
+        receipt,
+      }, nowMs);
+      if (!journalEvent.ok) throw new Error(`lifecycle_journal_failed:${journalEvent.status || 'unknown'}`);
+      this.db.exec('COMMIT;');
+      return {
+        ok: true,
+        status: row ? (stateChanging ? nextStatus : 'journaled') : 'journaled_unbound',
+        journalEvent,
+        session: row
+          ? (this.queryArmSpawnSessions({ spawnSessionId: row.spawn_session_id, limit: 1 })[0] || null)
+          : null,
+      };
+    } catch (err) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      return { ok: false, status: 'db_error', reason: err.message, durableAddress, spawnLeaseId };
+    }
+  }
+
+  recordArmSpawnLivenessProof(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+    const durableAddress = normalizeDurableArmAddress(input.durableAddress || input.durable_address);
+    const spawnLeaseId = toOptionalString(input.spawnLeaseId || input.spawn_lease_id, null);
+    const messageId = toOptionalString(input.messageId || input.message_id, null);
+    const rowId = Number(input.commsRowId ?? input.comms_row_id ?? input.rowId ?? input.row_id);
+    if (!durableAddress) return { ok: false, status: 'invalid', reason: 'durable_address_required' };
+    if (!spawnLeaseId) return { ok: false, status: 'invalid', reason: 'spawn_lease_id_required' };
+    if (!messageId && !Number.isFinite(rowId)) {
+      return { ok: false, status: 'invalid', reason: 'message_or_row_required' };
+    }
+
+    const sessionRow = this.db.prepare(`
+      SELECT * FROM arm_spawn_sessions
+      WHERE durable_address = ? AND spawn_lease_id = ?
+      LIMIT 1
+    `).get(durableAddress, spawnLeaseId);
+    const session = mapArmSpawnSessionRow(sessionRow);
+    if (!session) return { ok: false, status: 'not_found', reason: 'spawn_session_not_found' };
+    if (session.status !== 'active') {
+      return { ok: false, status: 'rejected', reason: 'spawn_session_not_active', session };
+    }
+
+    const messageRow = messageId
+      ? this.db.prepare('SELECT * FROM comms_journal WHERE message_id = ? LIMIT 1').get(messageId)
+      : null;
+    const numericRow = Number.isFinite(rowId)
+      ? this.db.prepare('SELECT * FROM comms_journal WHERE row_id = ? LIMIT 1').get(rowId)
+      : null;
+    if (messageId && !messageRow) return { ok: false, status: 'rejected', reason: 'comms_message_not_found' };
+    if (Number.isFinite(rowId) && !numericRow) return { ok: false, status: 'rejected', reason: 'comms_row_not_found' };
+    if (messageRow && numericRow && messageRow.row_id !== numericRow.row_id) {
+      return { ok: false, status: 'rejected', reason: 'comms_message_row_mismatch' };
+    }
+    const comms = mapCommsRow(messageRow || numericRow);
+    const metadata = ensureObject(comms?.metadata);
+    const liveness = ensureObject(metadata.armLiveness || metadata.arm_liveness);
+    const sender = ensureObject(metadata.sender);
+    const envelope = ensureObject(metadata.envelope);
+    const envelopeSender = ensureObject(envelope.sender);
+    const proofPaneId = toOptionalString(
+      liveness.paneId || liveness.pane_id || sender.paneId || sender.pane_id
+        || envelopeSender.paneId || envelopeSender.pane_id,
+      null
+    );
+    const proofChecks = [
+      [['routed', 'acked'].includes(comms?.status), 'comms_reply_not_routed'],
+      [comms?.direction === 'outbound', 'comms_reply_not_outbound'],
+      [normalizeIdentityToken(comms?.senderRole) === normalizeIdentityToken(session.role), 'comms_sender_role_mismatch'],
+      [normalizeIdentityToken(proofPaneId) === normalizeIdentityToken(session.paneId), 'comms_sender_pane_mismatch'],
+      [toOptionalString(liveness.sourceMessageId || liveness.source_message_id, null)
+        === session.sourceMessageId, 'liveness_source_message_mismatch'],
+      [toOptionalString(liveness.responseClass || liveness.response_class, null)
+        === session.expectedResponseClass, 'liveness_response_class_mismatch'],
+      [normalizeDurableArmAddress(liveness.durableAddress || liveness.durable_address)
+        === durableAddress, 'liveness_address_mismatch'],
+      [toOptionalString(liveness.spawnLeaseId || liveness.spawn_lease_id, null)
+        === spawnLeaseId, 'liveness_lease_mismatch'],
+      [!Object.prototype.hasOwnProperty.call(liveness, 'whoFailed')
+        && !Object.prototype.hasOwnProperty.call(liveness, 'who_failed'), 'blame_field_forbidden'],
+    ];
+    const failed = proofChecks.find(([valid]) => !valid);
+    if (failed) return { ok: false, status: 'rejected', reason: failed[1], session, comms };
+
+    const nowMs = toMs(options.nowMs, Date.now());
+    const provedAtMs = toMs(comms.brokeredAtMs ?? comms.sentAtMs ?? comms.updatedAtMs, nowMs);
+    const livenessReceipt = {
+      sourceMessageId: session.sourceMessageId,
+      expectedResponseClass: session.expectedResponseClass,
+      durableAddress,
+      spawnLeaseId,
+      paneId: session.paneId,
+      messageId: comms.messageId,
+      commsRowId: comms.rowId,
+      atMs: provedAtMs,
+    };
+    try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      this.db.prepare(`
+        UPDATE arm_spawn_sessions
+        SET liveness_message_id = ?, liveness_row_id = ?, liveness_at_ms = ?,
+            liveness_receipt_json = ?, updated_at_ms = ?
+        WHERE spawn_session_id = ? AND status = 'active'
+      `).run(
+        comms.messageId,
+        comms.rowId,
+        provedAtMs,
+        JSON.stringify(livenessReceipt),
+        nowMs,
+        session.spawnSessionId
+      );
+      const journalEvent = this._appendArmSpawnLedgerEvent('arm.spawn.liveness_proved', {
+        ...session,
+        receipt: livenessReceipt,
+      }, nowMs);
+      if (!journalEvent.ok) throw new Error(`liveness_journal_failed:${journalEvent.status || 'unknown'}`);
+      this.db.exec('COMMIT;');
+      return {
+        ok: true,
+        status: 'proved',
+        journalEvent,
+        comms,
+        session: this.queryArmSpawnSessions({ spawnSessionId: session.spawnSessionId, limit: 1 })[0] || null,
+      };
+    } catch (err) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      return { ok: false, status: 'db_error', reason: err.message, session, comms };
+    }
   }
 
   upsertArmRegistryManifest(input = {}, options = {}) {

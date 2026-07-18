@@ -170,6 +170,8 @@ const { executePaneControlAction } = require('./pane-control-service');
 const { executePaneModelSwitch } = require('../ipc/model-switch-handlers');
 const { executeAppControlAction } = require('./app-control-service');
 const { createPaneRestartArbiter } = require('./pane-restart-arbiter');
+const { spawnArmWithAtomicSession } = require('./arm-spawn-transaction');
+const { recordArmSpawnLifecycle } = require('./arm-spawn-journal');
 const miraLabHandlersModule = require('../ipc/mira-lab-handlers');
 const armStateProjectionHandlersModule = require('../ipc/arm-state-projection-handlers');
 const {
@@ -3263,6 +3265,24 @@ class SquidRunApp {
       };
     }
     return { ...result, delivered: true, ownerWindowKey: owner.ownerWindowKey };
+  }
+
+  async spawnAddressedArm(input = {}, options = {}) {
+    const workspacePath = input.workspacePath || input.workspace_path || getProjectRoot() || WORKSPACE_PATH;
+    return spawnArmWithAtomicSession({
+      ...input,
+      workspacePath,
+      profileName: input.profileName || input.profile_name || this.activeProfileName || getActiveProfileName(),
+      mainSessionId: input.mainSessionId || input.main_session_id || this.commsSessionScopeId,
+      owner: input.owner || 'terminal-daemon',
+      recoveryEvent: input.recoveryEvent || input.recovery_event || 'lease_check_on_spawn',
+      dbPath: input.dbPath || input.db_path || options.dbPath || null,
+      nowMs: input.nowMs ?? input.now_ms ?? options.nowMs,
+    }, {
+      daemonClient: this.ctx.daemonClient,
+      dbPath: input.dbPath || input.db_path || options.dbPath || null,
+      nowMs: input.nowMs ?? input.now_ms ?? options.nowMs,
+    });
   }
 
   getVisibleWindowKeysForPane(paneId) {
@@ -7372,6 +7392,32 @@ class SquidRunApp {
     return result;
   }
 
+  handleArmSpawnLifecycleEvent(eventData = {}, options = {}) {
+    const eventClass = toNonEmptyString(eventData.type);
+    if (!eventClass?.startsWith('arm.spawn.') || eventClass === 'arm.spawn.started') {
+      return { ok: true, status: 'ignored', reason: 'not_persisted_arm_lifecycle' };
+    }
+    const receipt = eventData.payload && typeof eventData.payload === 'object'
+      ? eventData.payload
+      : {};
+    const persist = typeof options.recordLifecycle === 'function'
+      ? options.recordLifecycle
+      : recordArmSpawnLifecycle;
+    const result = persist({
+      eventClass,
+      receipt,
+      mainSessionId: this.commsSessionScopeId,
+      paneId: eventData.paneId || receipt.paneId || null,
+    }, {
+      dbPath: options.dbPath || null,
+      nowMs: options.nowMs,
+    });
+    if (result?.ok === false) {
+      log.warn('ArmSpawn', `Failed persisting ${eventClass}: ${result.reason || result.status || 'unknown'}`);
+    }
+    return result;
+  }
+
   clearPtyDataFlushTimer() {
     if (!this.ptyDataFlushTimer) return;
     clearTimeout(this.ptyDataFlushTimer);
@@ -9627,6 +9673,7 @@ class SquidRunApp {
 
     this.attachDaemonClientListener('kernel-event', (eventData) => {
       this.handlePtyDataKernelEvent(eventData);
+      this.handleArmSpawnLifecycleEvent(eventData);
       this.kernelBridge.forwardDaemonEvent(eventData);
     });
 

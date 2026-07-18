@@ -463,6 +463,10 @@ const {
 } = require('../modules/mira-telegram-turn-candidate');
 const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
 const { closeArmRegistryStores } = require('../modules/main/arm-registry');
+const {
+  closeArmSpawnJournalStores,
+  queryArmSpawnSessions,
+} = require('../modules/main/arm-spawn-journal');
 const { seedTrustQuoteArmRegistry } = require('../modules/main/trustquote-arm-registry-seed');
 const SquidRunApp = require('../modules/main/squidrun-app');
 function createReadyTrustQuoteWindow(overrides = {}) {
@@ -757,11 +761,16 @@ describe('SquidRunApp', () => {
       expect(mainWindow.webContents.send).not.toHaveBeenCalled();
     });
 
-    it('L0 reproduces mint-without-spawn when a headless arm has no owner window', () => {
+    it('L0/L6 makes a live arm session impossible without addressed daemon spawn success', async () => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'build-1a-l0-'));
       const dbPath = path.join(tempDir, 'evidence-ledger.db');
-      const daemonSpawn = jest.fn();
-      mockAppContext.daemonClient = { spawn: daemonSpawn };
+      const spawnAddressed = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 'not_connected',
+        reason: 'daemon_not_connected',
+      });
+      const killAddressed = jest.fn();
+      mockAppContext.daemonClient = { spawnAddressed, killAddressed };
       const app = new SquidRunApp(mockAppContext, mockManagers);
       let reopenedStore = null;
 
@@ -779,6 +788,21 @@ describe('SquidRunApp', () => {
             desiredCount: 4,
           }),
         }));
+        const leadArm = seeded.registry.arms.find((arm) => arm.armKey === 'lead');
+        const spawnInput = {
+          dbPath,
+          workspacePath: tempDir,
+          appRoomId: 'trustquote',
+          armKey: 'lead',
+          paneId: 'trustquote-lead',
+          role: 'trustquote-lead',
+          registryId: seeded.registry.registryId,
+          armId: leadArm.armId,
+          sourceMessageId: 'l0-headless-ping',
+          expectedResponseClass: 'arm.liveness.pong',
+          dryRun: true,
+          nowMs: 11_000,
+        };
 
         const owner = app.resolvePaneRestartOwner('trustquote-lead');
         expect(owner).toEqual(expect.objectContaining({
@@ -794,9 +818,62 @@ describe('SquidRunApp', () => {
           paneId: 'trustquote-lead',
           ownerWindowKey: 'squid-room',
         });
-        expect(daemonSpawn).not.toHaveBeenCalled();
+        expect(spawnAddressed).not.toHaveBeenCalled();
+
+        const refused = await app.spawnAddressedArm(spawnInput);
+        expect(refused).toEqual(expect.objectContaining({
+          ok: false,
+          status: 'not_connected',
+          reason: 'daemon_not_connected',
+        }));
+        expect(queryArmSpawnSessions({}, { dbPath })).toEqual([]);
+
+        spawnAddressed.mockImplementationOnce(async (request) => ({
+          ok: true,
+          status: 'spawned',
+          durableAddress: request.durableAddress,
+          spawnLeaseId: 'lease-l0-success',
+          terminal: {
+            paneId: request.paneId,
+            pid: 4321,
+            alive: true,
+            dryRun: true,
+            durableAddress: request.durableAddress,
+            spawnLeaseId: 'lease-l0-success',
+          },
+          receipt: {
+            schema: 'squidrun.arm_spawn_receipt.v0',
+            eventClass: 'arm.spawn.started',
+            status: 'spawned',
+            reason: null,
+            sourceMessageId: request.sourceMessageId,
+            expectedResponseClass: request.expectedResponseClass,
+            durableAddress: request.durableAddress,
+            spawnLeaseId: 'lease-l0-success',
+            previousSpawnLeaseId: null,
+            paneId: request.paneId,
+            pid: 4321,
+            owner: request.owner,
+            recoveryEvent: request.recoveryEvent,
+            atMs: 12_000,
+          },
+        }));
+        const spawned = await app.spawnAddressedArm({ ...spawnInput, nowMs: 12_000 });
+        expect(spawned).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'spawned_and_registered',
+          spawnLeaseId: 'lease-l0-success',
+          session: expect.objectContaining({
+            status: 'active',
+            paneId: 'trustquote-lead',
+            spawnLeaseId: 'lease-l0-success',
+          }),
+        }));
+        expect(spawnAddressed).toHaveBeenCalledTimes(2);
+        expect(killAddressed).not.toHaveBeenCalled();
 
         closeArmRegistryStores();
+        closeArmSpawnJournalStores();
         reopenedStore = new EvidenceLedgerStore({ dbPath });
         expect(reopenedStore.init().ok).toBe(true);
         const persisted = reopenedStore.getArmRegistryManifest({
@@ -813,11 +890,62 @@ describe('SquidRunApp', () => {
             paneId: 'trustquote-lead',
           }),
         ]));
+        expect(reopenedStore.queryArmSpawnSessions({
+          durableAddress: spawned.durableAddress,
+          status: 'active',
+        })).toEqual([
+          expect.objectContaining({
+            registryId: seeded.registry.registryId,
+            armId: leadArm.armId,
+            durableAddress: spawned.durableAddress,
+            spawnLeaseId: 'lease-l0-success',
+            pid: 4321,
+            status: 'active',
+          }),
+        ]);
       } finally {
         reopenedStore?.close();
         closeArmRegistryStores();
+        closeArmSpawnJournalStores();
         fs.rmSync(tempDir, { recursive: true, force: true });
       }
+    });
+
+    it('persists addressed terminal release events independently of renderer ownership', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-build-1a-qa';
+      const recordLifecycle = jest.fn().mockReturnValue({ ok: true, status: 'released' });
+      const receipt = {
+        eventClass: 'arm.spawn.released',
+        status: 'released',
+        durableAddress: 'arm://build-1a-qa/0123456789abcdef/trustquote-qa/dev-qa',
+        spawnLeaseId: 'lease-qa-1',
+        paneId: 'trustquote-dev-qa',
+        owner: 'terminal-daemon',
+        recoveryEvent: 'pty_exit',
+        sourceMessageId: 'qa-ping-1',
+        expectedResponseClass: 'arm.liveness.pong',
+        atMs: 20_000,
+      };
+
+      expect(app.handleArmSpawnLifecycleEvent({
+        type: 'arm.spawn.released',
+        paneId: 'trustquote-dev-qa',
+        payload: receipt,
+      }, {
+        recordLifecycle,
+        dbPath: 'D:\\qa\\evidence-ledger.db',
+        nowMs: 20_001,
+      })).toEqual({ ok: true, status: 'released' });
+      expect(recordLifecycle).toHaveBeenCalledWith({
+        eventClass: 'arm.spawn.released',
+        receipt,
+        mainSessionId: 'app-session-build-1a-qa',
+        paneId: 'trustquote-dev-qa',
+      }, {
+        dbPath: 'D:\\qa\\evidence-ledger.db',
+        nowMs: 20_001,
+      });
     });
 
     it('routes restart ownership to the active profile window for colliding core pane ids', () => {
