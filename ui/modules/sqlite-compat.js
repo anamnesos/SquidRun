@@ -6,6 +6,8 @@
  * which is already an Electron-rebuilt native dependency.
  */
 
+const fs = require('fs');
+
 let _DatabaseSync;
 let _backend;
 
@@ -49,4 +51,34 @@ function openDatabase(filename, opts) {
   return new _DatabaseSync(filename);
 }
 
-module.exports = { getDatabaseSync, getBackend, openDatabase };
+function resolveLoadableExtensionPath(filePath, options = {}) {
+  const requestedPath = String(filePath || '').trim();
+  if (!requestedPath) throw new Error('sqlite_extension_path_required');
+  const existsSync = options.existsSync || fs.existsSync;
+  const unpackedPath = requestedPath.replace(
+    /([\\/])app\.asar([\\/])/i,
+    '$1app.asar.unpacked$2',
+  );
+  if (unpackedPath !== requestedPath && existsSync(unpackedPath)) return unpackedPath;
+  return requestedPath;
+}
+
+function loadSqliteExtension(db, extension, options = {}) {
+  if (!db || typeof db.loadExtension !== 'function') {
+    throw new Error('sqlite_extension_loader_unavailable');
+  }
+  const requestedPath = typeof extension === 'string'
+    ? extension
+    : extension?.getLoadablePath?.();
+  const loadedPath = resolveLoadableExtensionPath(requestedPath, options);
+  db.loadExtension(loadedPath);
+  return { requestedPath, loadedPath };
+}
+
+module.exports = {
+  getDatabaseSync,
+  getBackend,
+  loadSqliteExtension,
+  openDatabase,
+  resolveLoadableExtensionPath,
+};

@@ -191,7 +191,7 @@ function probeSqliteVec(resourcesPath, packageRequire) {
       'vec0.dll',
     );
     try {
-      vec.load(db);
+      const extensionLoad = sqliteCompat.loadSqliteExtension(db, vec);
       const row = db.prepare('select vec_version() as version').get();
       return {
         ok: Boolean(row?.version),
@@ -200,6 +200,7 @@ function probeSqliteVec(resourcesPath, packageRequire) {
         resolvedPathExists: fs.existsSync(resolvedPath),
         physicalPath,
         physicalPathExists: fs.existsSync(physicalPath),
+        loadedPath: extensionLoad.loadedPath,
       };
     } catch (error) {
       return {

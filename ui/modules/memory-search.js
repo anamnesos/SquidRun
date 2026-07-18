@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { getDatabaseSync, openDatabase } = require('./sqlite-compat');
+const { getDatabaseSync, loadSqliteExtension, openDatabase } = require('./sqlite-compat');
 const sqliteVec = require('sqlite-vec');
 const log = require('./logger');
 const { getProjectRoot } = require('../config');
@@ -743,7 +743,7 @@ class MemorySearchIndex {
     ensureDir(this.paths.modelCacheDir);
     const db = openDatabase(this.dbPath, { allowExtension: true });
     try {
-      sqliteVec.load(db);
+      loadSqliteExtension(db, sqliteVec);
       db.exec('PRAGMA journal_mode=WAL;');
       db.exec('PRAGMA synchronous=NORMAL;');
       db.exec('PRAGMA temp_store=MEMORY;');
