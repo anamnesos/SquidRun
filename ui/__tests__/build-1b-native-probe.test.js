@@ -12,10 +12,12 @@ describe('Build 1B packaged native probe contract', () => {
     expect(parseArgs([
       '--expect-commit', '34b29f79',
       '--output', 'D:\\qa\\native-receipt.json',
+      '--resources-path', 'D:\\qa\\win-unpacked\\resources',
       '--timeout-ms', '20000',
     ])).toEqual({
       expectCommit: '34b29f79',
       output: 'D:\\qa\\native-receipt.json',
+      resourcesPath: 'D:\\qa\\win-unpacked\\resources',
       timeoutMs: 20000,
     });
   });

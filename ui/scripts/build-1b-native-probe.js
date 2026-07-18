@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const fs = require('fs');
+const { createRequire } = require('module');
 const os = require('os');
 const path = require('path');
 
@@ -15,6 +16,7 @@ function parseArgs(argv = []) {
   const options = {
     expectCommit: null,
     output: null,
+    resourcesPath: null,
     timeoutMs: 15_000,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -24,6 +26,9 @@ function parseArgs(argv = []) {
       index += 1;
     } else if (token === '--output') {
       options.output = toText(argv[index + 1]);
+      index += 1;
+    } else if (token === '--resources-path') {
+      options.resourcesPath = toText(argv[index + 1]);
       index += 1;
     } else if (token === '--timeout-ms') {
       options.timeoutMs = Number(argv[index + 1]);
@@ -54,6 +59,7 @@ function usage() {
     'Options:',
     '  --expect-commit <sha>  Required checkout/package provenance label',
     '  --output <path>        Required JSON receipt output path',
+    '  --resources-path <dir> Target packaged resources directory (for signed Electron seam)',
     '  --timeout-ms <ms>      PTY timeout (default 15000)',
   ].join('\n'));
 }
@@ -103,9 +109,9 @@ function inventoryNativeArtifacts(rootPath) {
   return found.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
-async function probePty(timeoutMs) {
+async function probePty(timeoutMs, packageRequire) {
   try {
-    const pty = require('node-pty');
+    const pty = packageRequire('node-pty');
     const shell = process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe';
     const marker = `BUILD_1B_PTY_${process.pid}_${Date.now()}`;
     const output = await new Promise((resolve, reject) => {
@@ -145,10 +151,10 @@ async function probePty(timeoutMs) {
   }
 }
 
-function probeBaseSqlite() {
+function probeBaseSqlite(packageRequire) {
   let db = null;
   try {
-    const sqliteCompat = require('../modules/sqlite-compat');
+    const sqliteCompat = packageRequire('./modules/sqlite-compat');
     db = sqliteCompat.openDatabase(':memory:', { allowExtension: true });
     const row = db.prepare('select 40 + 2 as answer').get();
     return {
@@ -163,11 +169,11 @@ function probeBaseSqlite() {
   }
 }
 
-function probeSqliteVec(resourcesPath) {
+function probeSqliteVec(resourcesPath, packageRequire) {
   let db = null;
   try {
-    const sqliteCompat = require('../modules/sqlite-compat');
-    const vec = require('sqlite-vec');
+    const sqliteCompat = packageRequire('./modules/sqlite-compat');
+    const vec = packageRequire('sqlite-vec');
     db = sqliteCompat.openDatabase(':memory:', { allowExtension: true });
     const resolvedPath = vec.getLoadablePath();
     const physicalPath = path.join(
@@ -205,9 +211,9 @@ function probeSqliteVec(resourcesPath) {
   }
 }
 
-async function probeSharp() {
+async function probeSharp(packageRequire) {
   try {
-    const sharp = require('sharp');
+    const sharp = packageRequire('sharp');
     const output = await sharp({
       create: {
         width: 1,
@@ -229,9 +235,9 @@ async function probeSharp() {
   }
 }
 
-function probeOnnx() {
+function probeOnnx(packageRequire) {
   try {
-    const ort = require('onnxruntime-node');
+    const ort = packageRequire('onnxruntime-node');
     const tensor = new ort.Tensor('float32', Float32Array.from([1, 2, 3, 4]), [2, 2]);
     return {
       ok: tensor.type === 'float32'
@@ -249,24 +255,29 @@ function probeOnnx() {
 async function runProbe(options) {
   if (!options.expectCommit) throw new Error('--expect-commit is required');
   if (!options.output) throw new Error('--output is required');
-  const packageRoot = path.dirname(process.execPath);
-  const resourcesPath = process.resourcesPath || path.join(packageRoot, 'resources');
-  const executablePath = process.execPath;
+  const hostExecutablePath = process.execPath;
+  const resourcesPath = options.resourcesPath
+    ? path.resolve(options.resourcesPath)
+    : (process.resourcesPath || path.join(path.dirname(hostExecutablePath), 'resources'));
+  const packageRoot = path.dirname(resourcesPath);
+  const targetExecutablePath = path.join(packageRoot, 'SquidRun.exe');
   const asarPath = path.join(resourcesPath, 'app.asar');
   const unpackedPath = path.join(resourcesPath, 'app.asar.unpacked');
+  const packageModuleBase = path.join(asarPath, 'package.json');
+  const packageRequire = createRequire(packageModuleBase);
   const probes = {
-    pty: await probePty(options.timeoutMs),
-    sqlite: probeBaseSqlite(),
-    sqliteVec: probeSqliteVec(resourcesPath),
-    sharp: await probeSharp(),
-    onnx: probeOnnx(),
+    pty: await probePty(options.timeoutMs, packageRequire),
+    sqlite: probeBaseSqlite(packageRequire),
+    sqliteVec: probeSqliteVec(resourcesPath, packageRequire),
+    sharp: await probeSharp(packageRequire),
+    onnx: probeOnnx(packageRequire),
   };
   const receipt = {
     schema: 'squidrun.build1b.native_probe.v0',
     capturedAt: new Date().toISOString(),
     expectedCommit: options.expectCommit,
     runtime: {
-      execPath: executablePath,
+      hostExecPath: hostExecutablePath,
       resourcesPath,
       cwd: process.cwd(),
       platform: process.platform,
@@ -275,9 +286,12 @@ async function runProbe(options) {
     },
     package: {
       root: packageRoot,
-      executableSha256: await hashFile(executablePath),
+      targetExecutablePath,
+      targetExecutableSha256: await hashFile(targetExecutablePath),
+      hostExecutableSha256: await hashFile(hostExecutablePath),
       asarPath,
       asarSha256: await hashFile(asarPath),
+      moduleBase: packageModuleBase,
       unpackedPath,
       nativeInventory: inventoryNativeArtifacts(unpackedPath),
     },
