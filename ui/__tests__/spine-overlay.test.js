@@ -1,9 +1,12 @@
 const {
+  buildSpineOverlaySnapshotAsync,
   buildSpineOverlaySnapshot,
   fetchHyperliquidReadOnlySnapshot,
   extractAttributionPositions,
+  shouldAllowLiveTrustQuoteRead,
   supportedScorerSignals,
   TRADING_PARKED_REASON,
+  TRUSTQUOTE_ISOLATION_REASON,
 } = require('../modules/main/spine-overlay-snapshot');
 const {
   createSpineOverlayWindow,
@@ -16,6 +19,81 @@ const {
 } = require('../modules/main/app-control-service');
 
 describe('spine overlay v0', () => {
+  test.each([
+    [{ profileName: 'main', dryRun: false }, true],
+    [{ profileName: 'MAIN', dryRun: false }, true],
+    [{ profileName: 'main', dryRun: true }, false],
+    [{ profileName: 'spine-overlay', dryRun: false }, false],
+    [{ profileName: 'scoped', dryRun: true }, false],
+    [{ dryRun: false }, false],
+  ])('allows the live TrustQuote reader only for an explicit production-main context %#', (context, expected) => {
+    expect(shouldAllowLiveTrustQuoteRead(context)).toBe(expected);
+  });
+
+  test('does not invoke the TrustQuote reader from a non-main or dry-run overlay context', async () => {
+    const nowMs = Date.parse('2026-07-18T18:45:00.000Z');
+    const fetchSignals = jest.fn(async () => ({
+      ok: true,
+      source: 'live',
+      checkedAt: new Date(nowMs).toISOString(),
+      root: 'D:\\projects\\TrustQuote',
+      data: { parkedCount: 0, signals: [] },
+    }));
+    const baseOptions = {
+      nowMs,
+      supervisorRead: { ok: true, filePath: 'runtime/supervisor.json', data: {} },
+      attributionRead: { ok: true, filePath: 'runtime/attribution.json', data: { positions: {} } },
+      nativeRead: { ok: true, filePath: 'runtime/native.json', data: {} },
+      fetchTrustQuoteReadOnlySignals: fetchSignals,
+    };
+
+    const [nonMain, dryRunMain] = await Promise.all([
+      buildSpineOverlaySnapshotAsync({ ...baseOptions, profileName: 'spine-overlay', dryRun: false }),
+      buildSpineOverlaySnapshotAsync({ ...baseOptions, profileName: 'main', dryRun: true }),
+    ]);
+
+    expect(fetchSignals).not.toHaveBeenCalled();
+    for (const snapshot of [nonMain, dryRunMain]) {
+      expect(snapshot.live.trustQuoteOk).toBe(false);
+      expect(snapshot.sources).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          label: 'trustquote_live_read',
+          ok: false,
+          reason: TRUSTQUOTE_ISOLATION_REASON,
+        }),
+      ]));
+    }
+  });
+
+  test('retains the TrustQuote reader for an explicit non-dry-run main context', async () => {
+    const nowMs = Date.parse('2026-07-18T18:45:00.000Z');
+    const fetchSignals = jest.fn(async () => ({
+      ok: true,
+      source: 'live',
+      checkedAt: new Date(nowMs).toISOString(),
+      root: 'D:\\projects\\TrustQuote',
+      data: { parkedCount: 0, signals: [] },
+    }));
+
+    const snapshot = await buildSpineOverlaySnapshotAsync({
+      nowMs,
+      profileName: 'main',
+      dryRun: false,
+      supervisorRead: { ok: true, filePath: 'runtime/supervisor.json', data: {} },
+      attributionRead: { ok: true, filePath: 'runtime/attribution.json', data: { positions: {} } },
+      nativeRead: { ok: true, filePath: 'runtime/native.json', data: {} },
+      fetchTrustQuoteReadOnlySignals: fetchSignals,
+    });
+
+    expect(fetchSignals).toHaveBeenCalledTimes(1);
+    expect(fetchSignals).toHaveBeenCalledWith(expect.objectContaining({
+      profileName: 'main',
+      dryRun: false,
+      nowMs,
+    }));
+    expect(snapshot.live.trustQuoteOk).toBe(true);
+  });
+
   test('parks trading even when a live Hyperliquid position is supplied', () => {
     const nowMs = Date.parse('2026-06-22T09:40:00.000Z');
     const snapshot = buildSpineOverlaySnapshot({

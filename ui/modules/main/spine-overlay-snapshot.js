@@ -3,7 +3,11 @@
 const fs = require('fs');
 const path = require('path');
 const { evaluate, normalizeSource, THRESHOLDS } = require('../the-tell/scorer');
-const { fetchTrustQuoteReadOnlySignals } = require('./trustquote-tell-feed');
+const { isMainProfile } = require('../../profile');
+const {
+  DEFAULT_TRUSTQUOTE_ROOT,
+  fetchTrustQuoteReadOnlySignals,
+} = require('./trustquote-tell-feed');
 
 const DEFAULT_THRESHOLD = THRESHOLDS.SPEAK;
 const LIVE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -11,6 +15,7 @@ const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
 const RUNTIME_ROOT = path.join(PROJECT_ROOT, '.squidrun', 'runtime');
 const HYPERLIQUID_INFO_URL = 'https://api.hyperliquid.xyz/info';
 const TRADING_PARKED_REASON = 'parked_by_user';
+const TRUSTQUOTE_ISOLATION_REASON = 'live_trustquote_read_blocked_for_isolated_context';
 const SUPPORTED_SIGNAL_TYPES = new Set([
   'trustquote:job-margin',
   'trustquote:invoice-aging',
@@ -33,6 +38,28 @@ function safeReadJson(filePath) {
   } catch (error) {
     return { ok: false, reason: error.message || 'read_failed', filePath };
   }
+}
+
+function shouldAllowLiveTrustQuoteRead(options = {}) {
+  const profileName = typeof options.profileName === 'string' ? options.profileName.trim() : '';
+  return profileName !== '' && isMainProfile(profileName) && options.dryRun !== true;
+}
+
+function buildBlockedTrustQuoteRead(options = {}) {
+  const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+  return {
+    ok: false,
+    source: 'blocked',
+    checkedAt: new Date(nowMs).toISOString(),
+    root: options.root || DEFAULT_TRUSTQUOTE_ROOT,
+    reason: TRUSTQUOTE_ISOLATION_REASON,
+    data: {
+      counts: { jobs: 0, quotes: 0 },
+      eventCount: 0,
+      parkedCount: 0,
+      signals: [],
+    },
+  };
 }
 
 function toNumber(value, fallback = null) {
@@ -463,9 +490,15 @@ async function buildSpineOverlaySnapshotAsync(options = {}) {
   const supervisorRead = options.supervisorRead || safeReadJson(RUNTIME_PATHS.supervisor);
   const attributionRead = options.attributionRead || safeReadJson(RUNTIME_PATHS.attribution);
   const tradingEnabled = options.enableTradingFeed === true;
+  const trustQuoteReader = options.fetchTrustQuoteReadOnlySignals || fetchTrustQuoteReadOnlySignals;
+  const trustQuoteReadPromise = options.trustQuoteRead || (
+    shouldAllowLiveTrustQuoteRead(options)
+      ? trustQuoteReader({ ...options })
+      : Promise.resolve(buildBlockedTrustQuoteRead(options))
+  );
   const [liveRead, trustQuoteRead] = await Promise.all([
     tradingEnabled ? (options.liveRead || fetchHyperliquidReadOnlySnapshot({ ...options, supervisorRead, attributionRead })) : Promise.resolve(null),
-    options.trustQuoteRead || fetchTrustQuoteReadOnlySignals({ ...options }),
+    trustQuoteReadPromise,
   ]);
   return buildSpineOverlaySnapshot({ ...options, supervisorRead, attributionRead, liveRead, trustQuoteRead });
 }
@@ -476,11 +509,14 @@ module.exports = {
   LIVE_MAX_AGE_MS,
   RUNTIME_PATHS,
   TRADING_PARKED_REASON,
+  TRUSTQUOTE_ISOLATION_REASON,
+  buildBlockedTrustQuoteRead,
   buildSpineOverlaySnapshot,
   buildSpineOverlaySnapshotAsync,
   extractAttributionPositions,
   extractSupervisorPositions,
   extractWalletAddress,
   fetchHyperliquidReadOnlySnapshot,
+  shouldAllowLiveTrustQuoteRead,
   supportedScorerSignals,
 };

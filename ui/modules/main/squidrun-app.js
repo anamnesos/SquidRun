@@ -7292,7 +7292,10 @@ class SquidRunApp {
       sessionId: this.commsSessionScopeId || null,
     }));
     ipcMain.removeHandler('spine-overlay:snapshot');
-    ipcMain.handle('spine-overlay:snapshot', () => buildSpineOverlaySnapshotAsync());
+    ipcMain.handle('spine-overlay:snapshot', () => buildSpineOverlaySnapshotAsync({
+      profileName: this.activeProfileName || getActiveProfileName(),
+      dryRun: this.ctx.currentSettings?.dryRun === true,
+    }));
     armStateProjectionHandlersModule.registerArmStateProjectionHandlers({ ipcMain });
 
     ipcMain.removeHandler('close-app-window');
