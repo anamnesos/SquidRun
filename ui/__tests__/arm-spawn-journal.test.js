@@ -232,17 +232,17 @@ maybeDescribe('arm spawn session journal', () => {
       direction: 'outbound',
       sentAtMs: 2_000,
       brokeredAtMs: 2_001,
-      rawBody: '(TRUSTQUOTE DEV QA #1): pong',
+      rawBody: `(TRUSTQUOTE DEV QA #1): [SQUIDRUN_ARM_LIVENESS_PONG] ${JSON.stringify({
+        schema: 'squidrun.arm_liveness_pong.v0',
+        sourceMessageId: 'ping-1',
+        responseClass: 'arm.liveness.pong',
+        durableAddress: started.session.durableAddress,
+        spawnLeaseId: 'lease-1',
+        paneId: 'trustquote-dev-qa',
+      })}`,
       status: 'routed',
       metadata: {
         sender: { role: 'trustquote-dev-qa', pane_id: 'trustquote-dev-qa' },
-        armLiveness: {
-          sourceMessageId: 'ping-1',
-          responseClass: 'arm.liveness.pong',
-          durableAddress: started.session.durableAddress,
-          spawnLeaseId: 'lease-1',
-          paneId: 'trustquote-dev-qa',
-        },
       },
     }, { nowMs: 2_001 }).ok).toBe(true);
     store.close();
@@ -288,6 +288,7 @@ maybeDescribe('arm spawn session journal', () => {
       metadata: {
         sender: { role: 'trustquote-dev-qa', pane_id: 'trustquote-dev-qa' },
         armLiveness: {
+          schema: 'squidrun.arm_liveness_pong.v0',
           sourceMessageId: 'ping-1',
           responseClass: 'arm.startup.receipt',
           durableAddress: started.session.durableAddress,

@@ -267,6 +267,7 @@ function normalizeTerminalOwnership(options = {}) {
 function terminalIdentityPayload(terminal = {}) {
   return {
     pid: terminal.pid || null,
+    alive: terminal.alive === true,
     dryRun: terminal.dryRun || false,
     mode: terminal.mode || 'pty',
     createdAt: terminal.createdAt || null,

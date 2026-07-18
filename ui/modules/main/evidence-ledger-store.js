@@ -752,6 +752,21 @@ function mapCommsRow(row) {
   };
 }
 
+function extractArmLivenessReceipt(row = {}) {
+  const metadata = ensureObject(row.metadata);
+  const direct = ensureObject(metadata.armLiveness || metadata.arm_liveness);
+  if (Object.keys(direct).length > 0) return direct;
+
+  const marker = '[SQUIDRUN_ARM_LIVENESS_PONG]';
+  const rawBody = String(row.rawBody || '');
+  const markerIndex = rawBody.indexOf(marker);
+  if (markerIndex < 0) return {};
+  const remainder = rawBody.slice(markerIndex + marker.length).trimStart();
+  const jsonLine = remainder.split(/\r?\n/, 1)[0].trim();
+  if (!jsonLine.startsWith('{')) return {};
+  return ensureObject(parseJson(jsonLine, {}));
+}
+
 function normalizeTelegramReplyObligationStatus(value) {
   const text = toOptionalString(value, null);
   if (!text) return null;
@@ -2485,7 +2500,7 @@ class EvidenceLedgerStore {
     }
     const comms = mapCommsRow(messageRow || numericRow);
     const metadata = ensureObject(comms?.metadata);
-    const liveness = ensureObject(metadata.armLiveness || metadata.arm_liveness);
+    const liveness = extractArmLivenessReceipt(comms);
     const sender = ensureObject(metadata.sender);
     const envelope = ensureObject(metadata.envelope);
     const envelopeSender = ensureObject(envelope.sender);
@@ -2497,6 +2512,7 @@ class EvidenceLedgerStore {
     const proofChecks = [
       [['routed', 'acked'].includes(comms?.status), 'comms_reply_not_routed'],
       [comms?.direction === 'outbound', 'comms_reply_not_outbound'],
+      [liveness.schema === 'squidrun.arm_liveness_pong.v0', 'liveness_receipt_schema_required'],
       [normalizeIdentityToken(comms?.senderRole) === normalizeIdentityToken(session.role), 'comms_sender_role_mismatch'],
       [normalizeIdentityToken(proofPaneId) === normalizeIdentityToken(session.paneId), 'comms_sender_pane_mismatch'],
       [toOptionalString(liveness.sourceMessageId || liveness.source_message_id, null)

@@ -170,7 +170,8 @@ const { executePaneControlAction } = require('./pane-control-service');
 const { executePaneModelSwitch } = require('../ipc/model-switch-handlers');
 const { executeAppControlAction } = require('./app-control-service');
 const { createPaneRestartArbiter } = require('./pane-restart-arbiter');
-const { spawnArmWithAtomicSession } = require('./arm-spawn-transaction');
+const { rollbackSpawn, spawnArmWithAtomicSession } = require('./arm-spawn-transaction');
+const { probeArmLiveness } = require('./arm-liveness-probe');
 const { recordArmSpawnLifecycle } = require('./arm-spawn-journal');
 const miraLabHandlersModule = require('../ipc/mira-lab-handlers');
 const armStateProjectionHandlersModule = require('../ipc/arm-state-projection-handlers');
@@ -3283,6 +3284,79 @@ class SquidRunApp {
       dbPath: input.dbPath || input.db_path || options.dbPath || null,
       nowMs: input.nowMs ?? input.now_ms ?? options.nowMs,
     });
+  }
+
+  async spawnAddressedArmAndProveLiveness(input = {}, options = {}) {
+    const spawnArm = typeof options.spawnArm === 'function'
+      ? options.spawnArm
+      : (spawnInput) => this.spawnAddressedArm(spawnInput, options);
+    const spawned = await spawnArm(input);
+    if (!spawned?.ok) return spawned;
+
+    const proveLiveness = typeof options.probeLiveness === 'function'
+      ? options.probeLiveness
+      : probeArmLiveness;
+    const dbPath = input.dbPath || input.db_path || options.dbPath || null;
+    const liveness = await proveLiveness({
+      ...input,
+      dbPath,
+      session: spawned.session,
+      durableAddress: spawned.durableAddress,
+    }, {
+      daemonClient: this.ctx.daemonClient,
+      dbPath,
+    });
+    if (liveness?.ok) {
+      return {
+        ...spawned,
+        status: 'spawned_and_liveness_proved',
+        liveness,
+        session: liveness.session || spawned.session,
+      };
+    }
+
+    const rollback = typeof options.rollbackSpawn === 'function'
+      ? await options.rollbackSpawn(this.ctx.daemonClient, spawned.spawnResult, {
+          durableAddress: spawned.durableAddress,
+          spawnLeaseId: spawned.spawnLeaseId,
+          paneId: spawned.session?.paneId || input.paneId || input.pane_id,
+          sourceMessageId: spawned.session?.sourceMessageId || input.sourceMessageId || input.source_message_id,
+          reason: 'liveness_proof_failed',
+          recoveryEvent: 'liveness_proof_failure',
+        })
+      : await rollbackSpawn(this.ctx.daemonClient, spawned.spawnResult, {
+          durableAddress: spawned.durableAddress,
+          spawnLeaseId: spawned.spawnLeaseId,
+          paneId: spawned.session?.paneId || input.paneId || input.pane_id,
+          sourceMessageId: spawned.session?.sourceMessageId || input.sourceMessageId || input.source_message_id,
+          reason: 'liveness_proof_failed',
+          recoveryEvent: 'liveness_proof_failure',
+        });
+    const persistLifecycle = typeof options.recordLifecycle === 'function'
+      ? options.recordLifecycle
+      : recordArmSpawnLifecycle;
+    const lifecycle = rollback?.receipt
+      ? persistLifecycle({
+          eventClass: rollback.receipt.eventClass,
+          receipt: rollback.receipt,
+          mainSessionId: this.commsSessionScopeId,
+          paneId: rollback.receipt.paneId || spawned.session?.paneId || null,
+        }, {
+          dbPath,
+          nowMs: options.nowMs,
+        })
+      : null;
+    return {
+      ok: false,
+      status: rollback?.ok ? 'liveness_failed_rolled_back' : 'liveness_failed_rollback_failed',
+      reason: liveness?.reason || liveness?.status || 'liveness_proof_failed',
+      durableAddress: spawned.durableAddress,
+      spawnLeaseId: spawned.spawnLeaseId,
+      spawn: spawned,
+      liveness,
+      rollback,
+      lifecycle,
+    };
   }
 
   getVisibleWindowKeysForPane(paneId) {

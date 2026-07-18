@@ -948,6 +948,133 @@ describe('SquidRunApp', () => {
       });
     });
 
+    it('returns Build 1A success only after a journal-correlated liveness proof', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const session = {
+        durableAddress: 'arm://build-1a-qa/0123456789abcdef/trustquote-qa/dev-qa',
+        spawnLeaseId: 'lease-qa-1',
+        paneId: 'trustquote-dev-qa',
+        sourceMessageId: 'qa-ping-1',
+        status: 'active',
+      };
+      const spawnArm = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 'spawned_and_registered',
+        durableAddress: session.durableAddress,
+        spawnLeaseId: session.spawnLeaseId,
+        session,
+        spawnResult: { ok: true, terminal: { paneId: session.paneId } },
+      });
+      const probeLiveness = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 'proved',
+        session: { ...session, livenessMessageId: 'hm-qa-pong-1' },
+      });
+      const rollback = jest.fn();
+
+      const result = await app.spawnAddressedArmAndProveLiveness({
+        paneId: session.paneId,
+      }, {
+        spawnArm,
+        probeLiveness,
+        rollbackSpawn: rollback,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'spawned_and_liveness_proved',
+        liveness: expect.objectContaining({ ok: true, status: 'proved' }),
+        session: expect.objectContaining({ livenessMessageId: 'hm-qa-pong-1' }),
+      }));
+      expect(probeLiveness).toHaveBeenCalledWith(expect.objectContaining({
+        session,
+        durableAddress: session.durableAddress,
+      }), expect.objectContaining({
+        daemonClient: mockAppContext.daemonClient,
+      }));
+      expect(rollback).not.toHaveBeenCalled();
+    });
+
+    it('generation-kills a spawned seat when journal round-trip proof fails', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-build-1a-qa';
+      const session = {
+        durableAddress: 'arm://build-1a-qa/0123456789abcdef/trustquote-qa/dev-qa',
+        spawnLeaseId: 'lease-qa-1',
+        paneId: 'trustquote-dev-qa',
+        sourceMessageId: 'qa-ping-1',
+        status: 'active',
+      };
+      const spawnResult = {
+        ok: true,
+        durableAddress: session.durableAddress,
+        spawnLeaseId: session.spawnLeaseId,
+        terminal: { paneId: session.paneId },
+      };
+      const spawnArm = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 'spawned_and_registered',
+        durableAddress: session.durableAddress,
+        spawnLeaseId: session.spawnLeaseId,
+        session,
+        spawnResult,
+      });
+      const probeLiveness = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 'proof_timeout',
+        reason: 'no_correlated_comms_reply_within_100ms',
+      });
+      const killReceipt = {
+        eventClass: 'arm.spawn.killed',
+        status: 'killed',
+        durableAddress: session.durableAddress,
+        spawnLeaseId: session.spawnLeaseId,
+        paneId: session.paneId,
+        sourceMessageId: session.sourceMessageId,
+        atMs: 30_000,
+      };
+      const rollback = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 'killed',
+        receipt: killReceipt,
+      });
+      const recordLifecycle = jest.fn().mockReturnValue({ ok: true, status: 'killed' });
+
+      const result = await app.spawnAddressedArmAndProveLiveness({
+        paneId: session.paneId,
+        dbPath: 'D:\\qa\\evidence-ledger.db',
+      }, {
+        spawnArm,
+        probeLiveness,
+        rollbackSpawn: rollback,
+        recordLifecycle,
+        nowMs: 30_001,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'liveness_failed_rolled_back',
+        reason: 'no_correlated_comms_reply_within_100ms',
+        rollback: expect.objectContaining({ ok: true, status: 'killed' }),
+        lifecycle: { ok: true, status: 'killed' },
+      }));
+      expect(rollback).toHaveBeenCalledWith(mockAppContext.daemonClient, spawnResult, expect.objectContaining({
+        durableAddress: session.durableAddress,
+        spawnLeaseId: session.spawnLeaseId,
+        reason: 'liveness_proof_failed',
+        recoveryEvent: 'liveness_proof_failure',
+      }));
+      expect(recordLifecycle).toHaveBeenCalledWith({
+        eventClass: 'arm.spawn.killed',
+        receipt: killReceipt,
+        mainSessionId: 'app-session-build-1a-qa',
+        paneId: session.paneId,
+      }, {
+        dbPath: 'D:\\qa\\evidence-ledger.db',
+        nowMs: 30_001,
+      });
+    });
+
     it('routes restart ownership to the active profile window for colliding core pane ids', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.activeProfileName = 'sideprofile';
