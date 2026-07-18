@@ -6,6 +6,13 @@ const { createRequire } = require('module');
 const os = require('os');
 const path = require('path');
 
+let rawFs = fs;
+try {
+  rawFs = require('original-fs');
+} catch {
+  // Plain Node test/runtime: the normal fs implementation is already physical.
+}
+
 function toText(value) {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
@@ -75,7 +82,7 @@ function serializeError(error) {
 async function hashFile(filePath) {
   const hash = crypto.createHash('sha256');
   await new Promise((resolve, reject) => {
-    const stream = fs.createReadStream(filePath);
+    const stream = rawFs.createReadStream(filePath);
     stream.on('data', (chunk) => hash.update(chunk));
     stream.on('error', reject);
     stream.on('end', resolve);
