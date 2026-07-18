@@ -135,7 +135,7 @@
   "devDependencies": {
     "@electron/rebuild": "^3.5.0",
     "@types/node": "^24.10.1",
-    "electron": "29.4.6",
+    "electron": "28.3.3",
     "electron-builder": "^26.8.1",
     "eslint": "^9.39.2",
     "globals": "^17.1.0",
