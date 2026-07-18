@@ -436,6 +436,77 @@ describe('DaemonClient', () => {
     });
   });
 
+  describe('killAddressed', () => {
+    test('waits for a generation-specific kill result and clears only the matching cache', async () => {
+      await client.connect();
+      client.terminals.set('qa-portal', {
+        paneId: 'qa-portal',
+        pid: 4321,
+        alive: true,
+        durableAddress: 'arm://qa/portal',
+        spawnLeaseId: 'lease-2',
+      });
+
+      const pending = client.killAddressed({
+        requestId: 'kill-request-1',
+        durableAddress: 'arm://qa/portal',
+        spawnLeaseId: 'lease-2',
+        paneId: 'qa-portal',
+        reason: 'registry_rollback',
+      });
+      const request = JSON.parse(mockSocket.write.mock.calls[0][0].trim());
+      expect(request).toEqual(expect.objectContaining({
+        action: 'kill-addressed',
+        requestId: 'kill-request-1',
+        durableAddress: 'arm://qa/portal',
+        spawnLeaseId: 'lease-2',
+        reason: 'registry_rollback',
+      }));
+      mockSocket.emit('data', JSON.stringify({
+        event: 'address-kill-result',
+        requestId: 'kill-request-1',
+        ok: true,
+        status: 'killed',
+        paneId: 'qa-portal',
+        spawnLeaseId: 'lease-2',
+      }) + '\n');
+
+      await expect(pending).resolves.toEqual(expect.objectContaining({ ok: true, status: 'killed' }));
+      expect(client.getTerminal('qa-portal')).toBeUndefined();
+    });
+
+    test('stale generation refusal preserves the newer cached terminal', async () => {
+      await client.connect();
+      client.terminals.set('qa-portal', {
+        paneId: 'qa-portal',
+        pid: 4322,
+        alive: true,
+        spawnLeaseId: 'lease-2',
+      });
+      const pending = client.killAddressed({
+        requestId: 'kill-request-2',
+        durableAddress: 'arm://qa/portal',
+        spawnLeaseId: 'lease-1',
+        paneId: 'qa-portal',
+      });
+      mockSocket.emit('data', JSON.stringify({
+        event: 'address-kill-result',
+        requestId: 'kill-request-2',
+        ok: false,
+        status: 'stale_generation',
+        paneId: 'qa-portal',
+        spawnLeaseId: 'lease-1',
+        activeSpawnLeaseId: 'lease-2',
+      }) + '\n');
+
+      await pending;
+      expect(client.getTerminal('qa-portal')).toEqual(expect.objectContaining({
+        pid: 4322,
+        spawnLeaseId: 'lease-2',
+      }));
+    });
+  });
+
   describe('write', () => {
     test('should send write action with data', async () => {
       await client.connect();

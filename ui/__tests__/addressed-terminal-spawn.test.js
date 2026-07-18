@@ -208,4 +208,52 @@ describe('AddressedTerminalSpawnCoordinator', () => {
     expect(test.spawnTerminal).not.toHaveBeenCalled();
     expect(test.terminals.get('qa-portal').pid).toBe(7001);
   });
+
+  test('generation-specific kill cannot terminate a newer lease', () => {
+    const test = harness();
+    const first = test.coordinator.spawn(spawnRequest());
+    test.coordinator.releaseTerminal(first.terminal, { reason: 'process_exit' });
+    test.terminals.delete('qa-portal');
+    const second = test.coordinator.spawn(spawnRequest({ sourceMessageId: 'ping-2' }));
+
+    const staleKill = test.coordinator.kill({
+      durableAddress: second.durableAddress,
+      spawnLeaseId: first.spawnLeaseId,
+      reason: 'registry_rollback',
+    });
+
+    expect(staleKill).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'stale_generation',
+      activeSpawnLeaseId: second.spawnLeaseId,
+    }));
+    expect(test.killTerminal).not.toHaveBeenCalled();
+    expect(test.terminals.get('qa-portal').pid).toBe(second.terminal.pid);
+  });
+
+  test('matching generation kill removes the process and frees the address', () => {
+    const test = harness();
+    const first = test.coordinator.spawn(spawnRequest());
+
+    const killed = test.coordinator.kill({
+      durableAddress: first.durableAddress,
+      spawnLeaseId: first.spawnLeaseId,
+      reason: 'registry_rollback',
+    });
+    const replacement = test.coordinator.spawn(spawnRequest({ sourceMessageId: 'ping-2' }));
+
+    expect(killed).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'killed',
+      spawnLeaseId: first.spawnLeaseId,
+      receipt: expect.objectContaining({
+        eventClass: 'arm.spawn.killed',
+        reason: 'registry_rollback',
+      }),
+    }));
+    expect(test.killTerminal).toHaveBeenCalledWith('qa-portal', expect.objectContaining({
+      reason: 'registry_rollback',
+    }));
+    expect(replacement).toEqual(expect.objectContaining({ ok: true, spawnLeaseId: 'lease-2' }));
+  });
 });

@@ -236,6 +236,94 @@ class AddressedTerminalSpawnCoordinator {
     this._emit(receipt.eventClass, receipt);
     return { ...released, receipt };
   }
+
+  kill(input = {}) {
+    const durableAddress = normalizeDurableAddress(input.durableAddress || input.address);
+    const requestedLeaseId = toText(input.spawnLeaseId || input.leaseId);
+    const activeLease = durableAddress ? this.leases.get(durableAddress) : null;
+    const receiptInput = {
+      ...(activeLease || {}),
+      durableAddress,
+      spawnLeaseId: requestedLeaseId || activeLease?.spawnLeaseId || null,
+      paneId: activeLease?.paneId || toText(input.paneId),
+      sourceMessageId: toText(input.sourceMessageId) || activeLease?.sourceMessageId || null,
+      expectedResponseClass: activeLease?.expectedResponseClass || null,
+      owner: activeLease?.owner || null,
+      recoveryEvent: toText(input.recoveryEvent) || 'explicit_address_kill',
+      atMs: this.now(),
+    };
+    if (!durableAddress || !requestedLeaseId) {
+      const receipt = buildReceipt('arm.spawn.kill_refused', {
+        ...receiptInput,
+        status: 'invalid',
+        reason: !durableAddress ? 'durable_address_required' : 'spawn_lease_id_required',
+      });
+      this._emit(receipt.eventClass, receipt);
+      return { ok: false, status: 'invalid', reason: receipt.reason, receipt };
+    }
+    if (!activeLease) {
+      const receipt = buildReceipt('arm.spawn.kill_refused', {
+        ...receiptInput,
+        status: 'not_found',
+        reason: 'address_lease_not_found',
+      });
+      this._emit(receipt.eventClass, receipt);
+      return { ok: false, status: 'not_found', reason: receipt.reason, receipt };
+    }
+    if (activeLease.spawnLeaseId !== requestedLeaseId) {
+      const receipt = buildReceipt('arm.spawn.kill_refused', {
+        ...receiptInput,
+        status: 'stale_generation',
+        reason: 'spawn_lease_mismatch',
+      });
+      this._emit(receipt.eventClass, receipt);
+      return {
+        ok: false,
+        status: 'stale_generation',
+        reason: receipt.reason,
+        activeSpawnLeaseId: activeLease.spawnLeaseId,
+        receipt,
+      };
+    }
+
+    const terminal = this.getTerminal(activeLease.paneId);
+    const terminalWasAlive = terminalMatchesLease(terminal, activeLease);
+    if (terminalWasAlive) {
+      try {
+        this.killTerminal(activeLease.paneId, {
+          reason: toText(input.reason) || 'addressed_kill',
+          recoveryEvent: receiptInput.recoveryEvent,
+        });
+      } catch {
+        const receipt = buildReceipt('arm.spawn.kill_refused', {
+          ...receiptInput,
+          status: 'kill_failed',
+          reason: 'terminal_kill_failed',
+          pid: terminal.pid,
+        });
+        this._emit(receipt.eventClass, receipt);
+        return { ok: false, status: 'kill_failed', reason: receipt.reason, receipt };
+      }
+    }
+    this.leases.release(durableAddress, requestedLeaseId, {
+      reason: toText(input.reason) || 'addressed_kill',
+      recoveryEvent: receiptInput.recoveryEvent,
+    });
+    const receipt = buildReceipt('arm.spawn.killed', {
+      ...receiptInput,
+      status: terminalWasAlive ? 'killed' : 'released_missing_terminal',
+      reason: toText(input.reason) || 'addressed_kill',
+      pid: terminal?.pid,
+    });
+    this._emit(receipt.eventClass, receipt);
+    return {
+      ok: true,
+      status: receipt.status,
+      durableAddress,
+      spawnLeaseId: requestedLeaseId,
+      receipt,
+    };
+  }
 }
 
 module.exports = {

@@ -6,8 +6,8 @@
  * Terminals survive app restarts because the daemon keeps running.
  *
  * Protocol:
- * - Client → Daemon: { action: "spawn"|"spawn-addressed"|"write"|"resize"|"kill"|"list"|"attach", ... }
- * - Daemon → Client: { event: "data"|"exit"|"spawned"|"address-spawn-result"|"list"|"error", ... }
+ * - Client → Daemon: { action: "spawn"|"spawn-addressed"|"kill-addressed"|"write"|"resize"|"kill"|"list"|"attach", ... }
+ * - Daemon → Client: { event: "data"|"exit"|"spawned"|"address-spawn-result"|"address-kill-result"|"list"|"error", ... }
  */
 
 const net = require('net');
@@ -1896,6 +1896,24 @@ function handleMessage(client, message) {
             kernelMeta: msg.kernelMeta || null,
           });
         }
+        break;
+      }
+
+      case 'kill-addressed': {
+        const result = addressedSpawnCoordinator.kill({
+          durableAddress: msg.durableAddress || msg.address,
+          spawnLeaseId: msg.spawnLeaseId || msg.leaseId,
+          paneId: msg.paneId,
+          reason: msg.reason,
+          recoveryEvent: msg.recoveryEvent,
+          sourceMessageId: msg.sourceMessageId,
+        });
+        sendToClient(client, {
+          event: 'address-kill-result',
+          requestId: msg.requestId || null,
+          paneId: result.receipt?.paneId || msg.paneId || null,
+          ...result,
+        });
         break;
       }
 

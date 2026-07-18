@@ -54,6 +54,8 @@ class DaemonClient extends EventEmitter {
     this.writeAckSeq = 0;
     this.pendingAddressSpawns = new Map(); // requestId -> { resolve, timer }
     this.addressSpawnSeq = 0;
+    this.pendingAddressKills = new Map(); // requestId -> { resolve, timer }
+    this.addressKillSeq = 0;
   }
 
   /**
@@ -206,6 +208,7 @@ class DaemonClient extends EventEmitter {
       this.client = null;
       this._rejectPendingWriteAcks('daemon_disconnected');
       this._rejectPendingAddressSpawns('daemon_disconnected');
+      this._rejectPendingAddressKills('daemon_disconnected');
       this.emit('disconnected');
 
       // Attempt reconnect
@@ -220,6 +223,7 @@ class DaemonClient extends EventEmitter {
       this.connected = false;
       this._rejectPendingWriteAcks('daemon_connection_error');
       this._rejectPendingAddressSpawns('daemon_connection_error');
+      this._rejectPendingAddressKills('daemon_connection_error');
     });
   }
 
@@ -295,6 +299,24 @@ class DaemonClient extends EventEmitter {
             pending.resolve(msg);
           }
           this.emit('address-spawn-result', msg);
+          break;
+        }
+
+        case 'address-kill-result': {
+          const requestId = msg.requestId || null;
+          if (msg.ok && this.terminals.has(msg.paneId)) {
+            const cached = this.terminals.get(msg.paneId);
+            if (!msg.spawnLeaseId || cached?.spawnLeaseId === msg.spawnLeaseId) {
+              this.terminals.delete(msg.paneId);
+            }
+          }
+          const pending = requestId ? this.pendingAddressKills.get(requestId) : null;
+          if (pending) {
+            clearTimeout(pending.timer);
+            this.pendingAddressKills.delete(requestId);
+            pending.resolve(msg);
+          }
+          this.emit('address-kill-result', msg);
           break;
         }
 
@@ -610,6 +632,54 @@ class DaemonClient extends EventEmitter {
     });
   }
 
+  _nextAddressKillRequestId() {
+    this.addressKillSeq += 1;
+    return `address-kill-${Date.now()}-${this.addressKillSeq}`;
+  }
+
+  _rejectPendingAddressKills(reason = 'daemon_disconnected') {
+    for (const [requestId, pending] of this.pendingAddressKills.entries()) {
+      clearTimeout(pending.timer);
+      pending.resolve({ ok: false, status: 'ack_timeout', reason, requestId });
+    }
+    this.pendingAddressKills.clear();
+  }
+
+  async killAddressed(input = {}, waitOptions = {}) {
+    const requestId = String(input.requestId || '').trim() || this._nextAddressKillRequestId();
+    const timeoutMs = Math.max(100, Number(waitOptions.timeoutMs) || 5000);
+    if (!this.connected || !this.client) {
+      return { ok: false, status: 'not_connected', reason: 'daemon_not_connected', requestId };
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingAddressKills.delete(requestId);
+        resolve({
+          ok: false,
+          status: 'ack_timeout',
+          reason: `address kill ack timeout after ${timeoutMs}ms`,
+          requestId,
+        });
+      }, timeoutMs);
+      this.pendingAddressKills.set(requestId, { resolve, timer });
+      const sent = this._send({
+        action: 'kill-addressed',
+        requestId,
+        durableAddress: input.durableAddress || input.address || null,
+        spawnLeaseId: input.spawnLeaseId || input.leaseId || null,
+        paneId: input.paneId || null,
+        reason: input.reason || null,
+        recoveryEvent: input.recoveryEvent || null,
+        sourceMessageId: input.sourceMessageId || null,
+      });
+      if (!sent) {
+        clearTimeout(timer);
+        this.pendingAddressKills.delete(requestId);
+        resolve({ ok: false, status: 'send_failed', reason: 'address_kill_send_failed', requestId });
+      }
+    });
+  }
+
   /**
    * Write data to a terminal
    * @param {string} paneId - The pane identifier
@@ -852,6 +922,7 @@ class DaemonClient extends EventEmitter {
   disconnect() {
     this._rejectPendingWriteAcks('daemon_disconnected');
     this._rejectPendingAddressSpawns('daemon_disconnected');
+    this._rejectPendingAddressKills('daemon_disconnected');
     if (this.client) {
       this._teardownSocket(this.client);
       this.client = null;

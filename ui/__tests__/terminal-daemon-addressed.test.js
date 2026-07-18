@@ -11,16 +11,6 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function waitForEvent(emitter, eventName, timeoutMs = 3000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${eventName} timeout`)), timeoutMs);
-    emitter.once(eventName, (...args) => {
-      clearTimeout(timer);
-      resolve(args);
-    });
-  });
-}
-
 async function waitForExit(child, timeoutMs = 3000) {
   if (child.exitCode !== null || child.signalCode !== null) {
     return { exited: true, code: child.exitCode, signal: child.signalCode };
@@ -102,9 +92,13 @@ describe('addressed terminal daemon protocol', () => {
         spawnLeaseId: first.spawnLeaseId,
       }));
 
-      const killed = waitForEvent(client, 'killed');
-      expect(client.kill('qa-portal')).toBe(true);
-      await killed;
+      const killed = await client.killAddressed({
+        durableAddress: first.durableAddress,
+        spawnLeaseId: first.spawnLeaseId,
+        paneId: 'qa-portal',
+        reason: 'qa_generation_rollover',
+      });
+      expect(killed).toEqual(expect.objectContaining({ ok: true, status: 'killed' }));
       const replacement = await client.spawnAddressed({ ...base, sourceMessageId: 'qa-ping-3' });
 
       expect(replacement).toEqual(expect.objectContaining({
