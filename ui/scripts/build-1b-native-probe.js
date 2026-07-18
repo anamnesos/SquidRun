@@ -45,7 +45,9 @@ function parseArgs(argv = []) {
 
 function usage() {
   console.log([
-    'Usage: SquidRun.exe resources/app.asar/scripts/build-1b-native-probe.js [options]',
+    'Usage (PowerShell):',
+    '  $env:ELECTRON_RUN_AS_NODE=\'1\'',
+    '  .\\SquidRun.exe -e "require(\'./resources/app.asar/scripts/build-1b-native-probe\').runCli(process.argv.slice(1))" -- [options]',
     '',
     'Run with ELECTRON_RUN_AS_NODE=1 against an unpacked packaged application.',
     '',
@@ -288,8 +290,8 @@ async function runProbe(options) {
   return { ...receipt, outputPath };
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2));
+async function runCli(argv = []) {
+  const options = parseArgs(argv);
   if (options.help) {
     usage();
     return;
@@ -306,6 +308,10 @@ async function main() {
   if (!result.ok) process.exitCode = 1;
 }
 
+async function main() {
+  return runCli(process.argv.slice(2));
+}
+
 if (require.main === module) {
   main().catch((error) => {
     console.error(`[build-1b-native-probe] ${error.stack || error.message}`);
@@ -318,6 +324,7 @@ module.exports = {
   inventoryNativeArtifacts,
   isNativeArtifact,
   parseArgs,
+  runCli,
   runProbe,
   serializeError,
 };

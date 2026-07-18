@@ -3,6 +3,7 @@
 const {
   isNativeArtifact,
   parseArgs,
+  runCli,
   serializeError,
 } = require('../scripts/build-1b-native-probe');
 
@@ -36,5 +37,9 @@ describe('Build 1B packaged native probe contract', () => {
       message: 'native ABI mismatch',
       stack: expect.stringContaining('native ABI mismatch'),
     }));
+  });
+
+  test('exports the eval-safe packaged CLI entry point', () => {
+    expect(typeof runCli).toBe('function');
   });
 });
