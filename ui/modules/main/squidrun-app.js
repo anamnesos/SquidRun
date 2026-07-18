@@ -170,9 +170,7 @@ const { executePaneControlAction } = require('./pane-control-service');
 const { executePaneModelSwitch } = require('../ipc/model-switch-handlers');
 const { executeAppControlAction } = require('./app-control-service');
 const { createPaneRestartArbiter } = require('./pane-restart-arbiter');
-const { rollbackSpawn, spawnArmWithAtomicSession } = require('./arm-spawn-transaction');
-const { probeArmLiveness } = require('./arm-liveness-probe');
-const { recordArmSpawnLifecycle } = require('./arm-spawn-journal');
+const armSpawnAppService = require('./arm-spawn-app-service');
 const miraLabHandlersModule = require('../ipc/mira-lab-handlers');
 const armStateProjectionHandlersModule = require('../ipc/arm-state-projection-handlers');
 const {
@@ -190,13 +188,7 @@ const {
 const {
   filterTerminalsForWorkspace,
 } = require('../work-room-terminal-visibility');
-const {
-  SQUID_ROOM_PANE_IDS,
-  SQUID_ROOM_TEAM_PANE_IDS,
-} = require('../workspace-pane-shell');
-const {
-  getTrustQuoteArmPaneIds,
-} = require('../trustquote-arm-specs');
+const { SQUID_ROOM_PANE_IDS } = require('../workspace-pane-shell');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
 const { createBufferedFileWriter } = require('../buffered-file-writer');
 const {
@@ -601,13 +593,6 @@ function toBooleanFlag(value, fallback = false) {
 
 function isSquidRoomWindowKey(value) {
   return String(value || '').trim().toLowerCase() === 'squid-room';
-}
-
-const SQUID_ROOM_ARM_PANE_ID_SET = new Set(getTrustQuoteArmPaneIds().map((paneId) => String(paneId)));
-const SQUID_ROOM_TEAM_PANE_ID_SET = new Set((SQUID_ROOM_TEAM_PANE_IDS || []).map((paneId) => String(paneId)));
-
-function isSquidRoomArmPaneId(value) {
-  return SQUID_ROOM_ARM_PANE_ID_SET.has(String(value || ''));
 }
 
 function isTelegramAgentOpsOrCommandText(value) {
@@ -3177,7 +3162,7 @@ class SquidRunApp {
 
   getPaneRestartOwnerCandidateWindowKeys(paneId) {
     const id = String(paneId || '').trim();
-    if (isSquidRoomArmPaneId(id)) return ['squid-room'];
+    if (armSpawnAppService.isSquidRoomArmPaneId(id)) return ['squid-room'];
     const candidates = [];
     const addCandidate = (value) => {
       const key = toNonEmptyString(value);
@@ -3269,107 +3254,15 @@ class SquidRunApp {
   }
 
   async spawnAddressedArm(input = {}, options = {}) {
-    const workspacePath = input.workspacePath || input.workspace_path || getProjectRoot() || WORKSPACE_PATH;
-    return spawnArmWithAtomicSession({
-      ...input,
-      workspacePath,
-      profileName: input.profileName || input.profile_name || this.activeProfileName || getActiveProfileName(),
-      mainSessionId: input.mainSessionId || input.main_session_id || this.commsSessionScopeId,
-      owner: input.owner || 'terminal-daemon',
-      recoveryEvent: input.recoveryEvent || input.recovery_event || 'lease_check_on_spawn',
-      dbPath: input.dbPath || input.db_path || options.dbPath || null,
-      nowMs: input.nowMs ?? input.now_ms ?? options.nowMs,
-    }, {
-      daemonClient: this.ctx.daemonClient,
-      dbPath: input.dbPath || input.db_path || options.dbPath || null,
-      nowMs: input.nowMs ?? input.now_ms ?? options.nowMs,
-    });
+    return armSpawnAppService.spawnAddressedArm(this, input, options);
   }
 
   async spawnAddressedArmAndProveLiveness(input = {}, options = {}) {
-    const spawnArm = typeof options.spawnArm === 'function'
-      ? options.spawnArm
-      : (spawnInput) => this.spawnAddressedArm(spawnInput, options);
-    const spawned = await spawnArm(input);
-    if (!spawned?.ok) return spawned;
-
-    const proveLiveness = typeof options.probeLiveness === 'function'
-      ? options.probeLiveness
-      : probeArmLiveness;
-    const dbPath = input.dbPath || input.db_path || options.dbPath || null;
-    const liveness = await proveLiveness({
-      ...input,
-      dbPath,
-      session: spawned.session,
-      durableAddress: spawned.durableAddress,
-    }, {
-      daemonClient: this.ctx.daemonClient,
-      dbPath,
-    });
-    if (liveness?.ok) {
-      return {
-        ...spawned,
-        status: 'spawned_and_liveness_proved',
-        liveness,
-        session: liveness.session || spawned.session,
-      };
-    }
-
-    const rollback = typeof options.rollbackSpawn === 'function'
-      ? await options.rollbackSpawn(this.ctx.daemonClient, spawned.spawnResult, {
-          durableAddress: spawned.durableAddress,
-          spawnLeaseId: spawned.spawnLeaseId,
-          paneId: spawned.session?.paneId || input.paneId || input.pane_id,
-          sourceMessageId: spawned.session?.sourceMessageId || input.sourceMessageId || input.source_message_id,
-          reason: 'liveness_proof_failed',
-          recoveryEvent: 'liveness_proof_failure',
-        })
-      : await rollbackSpawn(this.ctx.daemonClient, spawned.spawnResult, {
-          durableAddress: spawned.durableAddress,
-          spawnLeaseId: spawned.spawnLeaseId,
-          paneId: spawned.session?.paneId || input.paneId || input.pane_id,
-          sourceMessageId: spawned.session?.sourceMessageId || input.sourceMessageId || input.source_message_id,
-          reason: 'liveness_proof_failed',
-          recoveryEvent: 'liveness_proof_failure',
-        });
-    const persistLifecycle = typeof options.recordLifecycle === 'function'
-      ? options.recordLifecycle
-      : recordArmSpawnLifecycle;
-    const lifecycle = rollback?.receipt
-      ? persistLifecycle({
-          eventClass: rollback.receipt.eventClass,
-          receipt: rollback.receipt,
-          mainSessionId: this.commsSessionScopeId,
-          paneId: rollback.receipt.paneId || spawned.session?.paneId || null,
-        }, {
-          dbPath,
-          nowMs: options.nowMs,
-        })
-      : null;
-    return {
-      ok: false,
-      status: rollback?.ok ? 'liveness_failed_rolled_back' : 'liveness_failed_rollback_failed',
-      reason: liveness?.reason || liveness?.status || 'liveness_proof_failed',
-      durableAddress: spawned.durableAddress,
-      spawnLeaseId: spawned.spawnLeaseId,
-      spawn: spawned,
-      liveness,
-      rollback,
-      lifecycle,
-    };
+    return armSpawnAppService.spawnAddressedArmAndProveLiveness(this, input, options);
   }
 
   getVisibleWindowKeysForPane(paneId) {
-    const normalizedPaneId = String(paneId || '');
-    if (isSquidRoomArmPaneId(normalizedPaneId)) return ['squid-room'];
-    const windowKeys = ['main'];
-    if (
-      SQUID_ROOM_TEAM_PANE_ID_SET.has(normalizedPaneId)
-      && this.canSendToWindow(this.getAppWindow('squid-room'))
-    ) {
-      windowKeys.push('squid-room');
-    }
-    return windowKeys;
+    return armSpawnAppService.resolveVisibleWindowKeysForPane(this, paneId);
   }
 
   sendToVisibleWindowsForPane(channel, payload, paneId) {
@@ -5096,7 +4989,7 @@ class SquidRunApp {
               if (targetPaneIdForJournal === '1') return 'architect';
               if (targetPaneIdForJournal === '2') return 'builder';
               if (targetPaneIdForJournal === '3') return 'oracle';
-              if (SQUID_ROOM_ARM_PANE_ID_SET.has(String(targetPaneIdForJournal || ''))) {
+              if (armSpawnAppService.isSquidRoomArmPaneId(targetPaneIdForJournal)) {
                 return String(targetPaneIdForJournal);
               }
               const backgroundAlias = resolveBackgroundBuilderAlias(targetPaneIdForJournal || target);
@@ -7470,29 +7363,7 @@ class SquidRunApp {
   }
 
   handleArmSpawnLifecycleEvent(eventData = {}, options = {}) {
-    const eventClass = toNonEmptyString(eventData.type);
-    if (!eventClass?.startsWith('arm.spawn.') || eventClass === 'arm.spawn.started') {
-      return { ok: true, status: 'ignored', reason: 'not_persisted_arm_lifecycle' };
-    }
-    const receipt = eventData.payload && typeof eventData.payload === 'object'
-      ? eventData.payload
-      : {};
-    const persist = typeof options.recordLifecycle === 'function'
-      ? options.recordLifecycle
-      : recordArmSpawnLifecycle;
-    const result = persist({
-      eventClass,
-      receipt,
-      mainSessionId: this.commsSessionScopeId,
-      paneId: eventData.paneId || receipt.paneId || null,
-    }, {
-      dbPath: options.dbPath || null,
-      nowMs: options.nowMs,
-    });
-    if (result?.ok === false) {
-      log.warn('ArmSpawn', `Failed persisting ${eventClass}: ${result.reason || result.status || 'unknown'}`);
-    }
-    return result;
+    return armSpawnAppService.handleArmSpawnLifecycleEvent(this, eventData, options);
   }
 
   clearPtyDataFlushTimer() {
@@ -10869,7 +10740,7 @@ class SquidRunApp {
       return targetRaw;
     }
 
-    if (SQUID_ROOM_ARM_PANE_ID_SET.has(targetLower)) {
+    if (armSpawnAppService.isSquidRoomArmPaneId(targetLower)) {
       return targetLower;
     }
 
