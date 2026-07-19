@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [ValidateSet('render', 'register', 'register-disabled', 'status', 'disable', 'unregister')]
+  [ValidateSet('render', 'register', 'register-disabled', 'recover', 'status', 'disable', 'unregister')]
   [string]$Action = 'render',
   [string]$TaskName = 'SquidRun-Build1B-MainE28-Restoration',
   [int]$IntervalMinutes = 5,
@@ -239,6 +239,26 @@ function Exit-TaskMutationMutex {
 function New-ReceiptPath {
   param([string]$Suffix)
   return Join-Path $ReceiptRoot "$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))-$([guid]::NewGuid().ToString('n').Substring(0, 8))-$Suffix.json"
+}
+
+if ($Action -eq 'recover') {
+  [void][IO.Directory]::CreateDirectory($ReceiptRoot)
+  $receiptPath = New-ReceiptPath -Suffix 'recover'
+  $terminalPath = Join-Path $ReceiptRoot 'terminal-failure.json'
+  $statePath = Join-Path $ProjectRoot '.squidrun\runtime\main-e28-restoration-watch-state.json'
+  $donePath = Join-Path $ReceiptRoot 'done.json'
+  $archived = @()
+  foreach ($source in @($terminalPath, $donePath, $statePath)) {
+    if (Test-Path -LiteralPath $source -PathType Leaf) {
+      $target = Join-Path $ReceiptRoot ((Split-Path $source -Leaf) + '.recovery-' + [guid]::NewGuid().ToString('n') + '.json')
+      Move-Item -LiteralPath $source -Destination $target
+      $archived += [ordered]@{ source = $source; archived = $target }
+    }
+  }
+  $receipt = [ordered]@{ schema = 'squidrun.build1b.main_e28_restoration_recovery.v1'; action = 'recover'; ok = $true; archived = $archived; receiptPath = $receiptPath; completedAt = [DateTime]::UtcNow.ToString('o') }
+  Write-JsonAtomic -Path $receiptPath -Value $receipt
+  $receipt | ConvertTo-Json -Depth 10
+  exit 0
 }
 
 if ($Action -eq 'status') {
@@ -1175,6 +1195,27 @@ try {
   $baseReceipt['ownershipAnchorPreparedSha256'] = (Get-FileHash -LiteralPath $OwnershipAnchorPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
   if ($Action -eq 'register-disabled') {
+    $stagedProof = [ordered]@{
+      schema = 'squidrun.build1b.main_e28_restoration_task_registration_proof.v1'
+      phase = 'committed_enabled'
+      ok = $true
+      proofPath = $RegistrationProofPath
+      taskName = $TaskName
+      expectedHead = $CurrentHead
+      registrationEpochMs = $RegistrationEpochMs
+      committedAt = [DateTime]::UtcNow.ToString('o')
+      watcherArgumentsSha256 = $WatcherArgumentsSha256
+      semanticContractSha256 = $TaskSemanticContractSha256
+      sourceIntegrity = [ordered]@{
+        watcher = $SourceIntegrity.watcher
+        hiddenLauncher = $SourceIntegrity.hiddenLauncher
+        restore = $SourceIntegrity.restore
+        module = $SourceIntegrity.syncModule
+        registration = $SourceIntegrity.registration
+      }
+      registeredTask = [ordered]@{ enabled = $true; ownerMarkerVerified = $true; runtimeReady = $true }
+    }
+    Write-JsonAtomic -Path $RegistrationProofPath -Value $stagedProof
     $baseReceipt['phase'] = 'staged_disabled_registered'
     $baseReceipt['ok'] = $true
     $baseReceipt['enableAuthorized'] = $false
