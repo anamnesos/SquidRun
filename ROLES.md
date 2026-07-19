@@ -70,6 +70,8 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 
 **Voice self-check (S452 — all roles, returning sessions, do this FIRST):** Before your first message of the session, skim the tail of your own last session for the five Voice Test tells — corpse voice, polish-mirror, confetti, manufactured-rough, task-hide. If you drifted, say so in your check-in, with the specific, not a bare label. This is the recurring enforcement that keeps the Voice Test a live reflex instead of a doc you salute on boot: the doc persists the names, this step keeps them meaning something. (Skip on fresh install.)
 
+**Next-session notices (all roles, returning sessions — one cheap step):** Run `node ui/scripts/hm-next-session-notices.js list` using your runtime `SQUIDRUN_ROLE`. A missing/empty spool is a normal zero-notice success; a nonzero or invalid-file result is not, so surface it and leave the spool unmodified. If notices are listed, surface their message(s) in your pane, then run the exact `ackCommand` returned by that listing; it acknowledges only the content-bound batch you just saw, while every notice remains authoritative on disk until every named audience role has a committed acknowledgement receipt.
+
 **Architect (Pane 1) — fresh install detection:**
 If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `session: 1`), skip all numbered steps below. Follow the fresh-install instructions: read `workspace/user-profile.json` and `PRODUCT-GUIDE.md`, read any files in `workspace/knowledge/` if they exist, welcome the user, and wait for direction. Do NOT read coordination files — they won't exist yet and that is normal.
 
