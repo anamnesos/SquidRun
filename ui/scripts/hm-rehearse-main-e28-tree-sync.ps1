@@ -311,14 +311,23 @@ $protectedTypeDestinationRoot = Join-Path $RunRoot 'protected-type-destination'
 try {
   $lfLockFixturePath = Join-Path $RunRoot 'lock-hash-lf.json'
   $crlfLockFixturePath = Join-Path $RunRoot 'lock-hash-crlf.json'
+  $invalidUtf8LockFixturePath = Join-Path $RunRoot 'lock-hash-invalid-utf8.json'
   Write-TextFile -Path $lfLockFixturePath -Text "{`n  `"lockfileVersion`": 3`n}`n"
   Write-TextFile -Path $crlfLockFixturePath -Text "{`r`n  `"lockfileVersion`": 3`r`n}`r`n"
+  [IO.File]::WriteAllBytes($invalidUtf8LockFixturePath, [byte[]]@(0x7b, 0x0a, 0xc3, 0x28, 0x0a, 0x7d))
   $lfLockRawSha256 = Get-SquidRunSha256 -LiteralPath $lfLockFixturePath
   $crlfLockRawSha256 = Get-SquidRunSha256 -LiteralPath $crlfLockFixturePath
   $lfLockNormalizedSha256 = Get-SquidRunNormalizedTextSha256 -LiteralPath $lfLockFixturePath
   $crlfLockNormalizedSha256 = Get-SquidRunNormalizedTextSha256 -LiteralPath $crlfLockFixturePath
+  $invalidUtf8Rejected = $false
+  try {
+    Get-SquidRunNormalizedTextSha256 -LiteralPath $invalidUtf8LockFixturePath | Out-Null
+  } catch [Text.DecoderFallbackException] {
+    $invalidUtf8Rejected = $true
+  }
   Assert-Rehearsal ($lfLockRawSha256 -ne $crlfLockRawSha256) 'Lock hash fixture did not prove raw line-ending drift.'
   Assert-Rehearsal ($lfLockNormalizedSha256 -eq $crlfLockNormalizedSha256) 'LF-normalized lock hashes differ across checkout line endings.'
+  Assert-Rehearsal $invalidUtf8Rejected 'Lock hash normalization did not reject invalid UTF-8 bytes.'
 
   Write-TextFile -Path (Join-Path $referenceRoot $ProtectedRelativePath) -Text 'REFERENCE_PROTECTED_DO_NOT_COPY'
   Write-TextFile -Path (Join-Path $referenceRoot 'equal\same.txt') -Text 'same'
@@ -649,6 +658,7 @@ try {
       mode = 'utf8_lf_normalized'
       rawHashesDiffer = ($lfLockRawSha256 -ne $crlfLockRawSha256)
       normalizedHashesMatch = ($lfLockNormalizedSha256 -eq $crlfLockNormalizedSha256)
+      invalidUtf8Rejected = $invalidUtf8Rejected
       lfNormalizedSha256 = $lfLockNormalizedSha256
       crlfNormalizedSha256 = $crlfLockNormalizedSha256
     }

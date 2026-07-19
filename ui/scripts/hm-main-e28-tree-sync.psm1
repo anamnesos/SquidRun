@@ -27,7 +27,10 @@ function Get-SquidRunTextSha256 {
 function Get-SquidRunNormalizedTextSha256 {
   param([Parameter(Mandatory = $true)][string]$LiteralPath)
 
-  $text = [IO.File]::ReadAllText($LiteralPath)
+  $bytes = [IO.File]::ReadAllBytes($LiteralPath)
+  $offset = if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xef -and $bytes[1] -eq 0xbb -and $bytes[2] -eq 0xbf) { 3 } else { 0 }
+  $strictUtf8 = [Text.UTF8Encoding]::new($false, $true)
+  $text = $strictUtf8.GetString($bytes, $offset, $bytes.Length - $offset)
   $normalized = $text.Replace("`r`n", "`n").Replace("`r", "`n")
   return Get-SquidRunTextSha256 -Text $normalized
 }
