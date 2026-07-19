@@ -68,6 +68,22 @@ describe('hm-main-e28-restoration-watch', () => {
     }
   });
 
+  test('registration task XML uses the UTF-16LE BOM contract required by schtasks.exe', () => {
+    const source = fs.readFileSync(path.join(
+      __dirname,
+      '..',
+      'scripts',
+      'hm-register-main-e28-restoration-watch.ps1'
+    ), 'utf8');
+    const writer = source.match(/function Write-TextAtomic[\s\S]*?function Enter-TaskMutationMutex/);
+
+    expect(writer).not.toBeNull();
+    expect(writer[0]).toContain('[Text.UnicodeEncoding]::new($false, $true, $true)');
+    expect(writer[0]).toContain('$encoding.GetPreamble()');
+    expect(source).toContain('<?xml version="1.0" encoding="UTF-16"?>');
+    expect(source).not.toContain('<?xml version="1.0" encoding="UTF-8"?>');
+  });
+
   let root;
   let paths;
   let defaultSourceIntegrity;

@@ -176,7 +176,14 @@ function Write-TextAtomic {
   [void][IO.Directory]::CreateDirectory((Split-Path -Parent $Path))
   $temporaryPath = "$Path.$PID.$([guid]::NewGuid().ToString('n')).tmp"
   try {
-    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($Value)
+    # schtasks.exe imports task-definition files as Unicode XML. Keep the
+    # declaration and bytes aligned with its own /Query /XML export format.
+    $encoding = [Text.UnicodeEncoding]::new($false, $true, $true)
+    $preamble = $encoding.GetPreamble()
+    $body = $encoding.GetBytes($Value)
+    $bytes = [byte[]]::new($preamble.Length + $body.Length)
+    [Buffer]::BlockCopy($preamble, 0, $bytes, 0, $preamble.Length)
+    [Buffer]::BlockCopy($body, 0, $bytes, $preamble.Length, $body.Length)
     $stream = [IO.File]::Open($temporaryPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try {
       $stream.Write($bytes, 0, $bytes.Length)
@@ -443,7 +450,7 @@ function New-TaskXml {
   $escapedArguments = Escape-XmlText $argumentText
   $escapedWorkingDirectory = Escape-XmlText $ProjectRoot
   return @"
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Date>$([DateTime]::Now.ToString('s'))</Date>
@@ -574,7 +581,7 @@ function Get-TaskXmlValidation {
   return [ordered]@{
     accepted = $true
     parser = 'Schedule.Service.NewTask.XmlText'
-    xmlDeclarationHandling = 'UTF-8 declaration retained in the on-disk file and stripped only from the UTF-16 COM validation string.'
+    xmlDeclarationHandling = 'UTF-16 declaration retained in the UTF-16LE BOM on-disk file and stripped only from the COM validation string.'
     actionPath = $action.Path
     actionWorkingDirectory = $action.WorkingDirectory
     actionArguments = $action.Arguments
