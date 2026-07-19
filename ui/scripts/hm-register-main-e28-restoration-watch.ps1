@@ -706,6 +706,12 @@ function Get-ExistingTaskOwnership {
       $bindingRows.Count -eq 5 -and
       @($bindingRows | Where-Object { -not $_.pathMatches -or -not $_.hashShapeValid }).Count -eq 0
     )
+    $legacyBindingRows = @($bindingRows | Where-Object { $_.name -ne 'hiddenLauncher' })
+    $legacySourceBindingShapeValid = (
+      -not ($anchor.sourceIntegrity.PSObject.Properties['hiddenLauncher']) -and
+      $legacyBindingRows.Count -eq 4 -and
+      @($legacyBindingRows | Where-Object { -not $_.pathMatches -or -not $_.hashShapeValid }).Count -eq 0
+    )
     $semanticContract = if ($anchor) { $anchor.semanticContract } else { $null }
     $semanticContractShapeValid = (
       $semanticContract -and
@@ -736,7 +742,7 @@ function Get-ExistingTaskOwnership {
       $registeredXmlPathMatches -and
       $registeredXmlArtifactValid -and
       $phaseEnabledShapeValid -and
-      $sourceBindingShapeValid -and
+      ($sourceBindingShapeValid -or $legacySourceBindingShapeValid) -and
       $semanticContractShapeValid
     )
     $expectedArguments = if ($anchorShapeValid) { [string]$semanticContract.actionArguments } else { '' }
@@ -762,6 +768,7 @@ function Get-ExistingTaskOwnership {
       ownershipAnchorShapeValid = $anchorShapeValid
       ownershipAnchorPhase = if ($anchor) { [string]$anchor.phase } else { $null }
       sourceBindingShapeValid = $sourceBindingShapeValid
+      legacySourceBindingShapeValid = $legacySourceBindingShapeValid
       sourceBindings = $bindingRows
       registrationProofPresent = ($null -ne $proof)
       registrationProofPhase = if ($proof) { [string]$proof.phase } else { $null }
