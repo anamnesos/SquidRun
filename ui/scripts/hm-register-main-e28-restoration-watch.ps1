@@ -938,6 +938,22 @@ if ($Action -in @('enable', 'disable', 'unregister')) {
       ownershipBefore = $ownershipBefore
     }
     Write-JsonAtomic -Path $controlReceiptPath -Value $controlReceipt
+    if ($Action -eq 'enable' -and $ownershipBefore.owned) {
+      $diskSource = Get-SourceIntegritySnapshot
+      $proofSource = $ownershipBefore.sourceBindings
+      $drifted = @($proofSource | Where-Object {
+        $current = $diskSource[$_.name]
+        $current -and ([string]$current.sha256 -ne [string]$_.sha256)
+      })
+      if ($drifted.Count -gt 0) {
+        $controlReceipt['phase'] = 'refused_before_mutation'
+        $controlReceipt['reason'] = 're_register_required'
+        $controlReceipt['sourceDrift'] = $drifted
+        Write-JsonAtomic -Path $controlReceiptPath -Value $controlReceipt
+        $controlReceipt | ConvertTo-Json -Depth 16
+        exit 1
+      }
+    }
     if ($statusBefore.exitCode -ne 0 -or -not $ownershipBefore.exists -or -not $ownershipBefore.owned) {
       $controlReceipt['phase'] = 'refused_before_mutation'
       $controlReceipt['reason'] = if ($statusBefore.exitCode -ne 0) { 'task_missing_or_status_unavailable' } else { 'task_ownership_mismatch' }

@@ -1325,6 +1325,50 @@ function runWatchCycle(options, injected = {}) {
       return { ok: false, exitCode: 0, kind, receiptPath: event.eventPath };
     };
 
+    // A retained terminal is a hard stop before any source/proof revalidation.
+    // Re-disarm idempotently, but never rewrite the terminal timestamp.
+    const retainedTerminal = readJson(paths.terminalPath, null);
+    if (retainedTerminal?.terminal === true
+      && retainedTerminal.taskName === taskName
+      && retainedTerminal.expectedHead === expectedHead
+      && Number.isInteger(retainedTerminal.registrationEpochMs)
+      && retainedTerminal.registrationEpochMs > 0
+      && typeof retainedTerminal.restartState === 'string'
+      && retainedTerminal.restartState.startsWith('restart_blocked')
+      && (retainedTerminal.restorationReceiptPath === null || retainedTerminal.restorationReceiptPath === undefined)) {
+      const disable = disableTask(taskName);
+      const shortCircuitKind = disable.exitCode === 0
+        ? 'terminal_failure_short_circuit'
+        : 'terminal_failure_disarm_pending';
+      const event = writeEvent(paths, nowMs, 'terminal_failure_short_circuit', {
+        ok: false,
+        safeToRetry: false,
+        taskName,
+        expectedHead,
+        registrationEpochMs,
+        terminalPath: paths.terminalPath,
+        retainedTerminalCapturedAt: retainedTerminal.capturedAt,
+        disarm: disable,
+      });
+      writeJsonAtomic(paths.statePath, buildState({}, {
+        taskName,
+        expectedHead,
+        registrationEpochMs,
+        status: disable.exitCode === 0 ? 'terminal_failure_disarmed' : 'terminal_failure_disarm_pending',
+        terminalPath: paths.terminalPath,
+      }, nowMs));
+      const notice = readJson(paths.nextSessionNoticePath, null);
+      if (!notice || notice.topic !== 'build1b-main-e28-restoration' || notice.status !== 'terminal_failure') {
+        writeJsonAtomic(paths.nextSessionNoticePath, {
+          schema: 'squidrun.next_session_notice.v1', audience: EXPECTED_NOTICE_AUDIENCE,
+          topic: 'build1b-main-e28-restoration', status: 'terminal_failure',
+          createdAt: new Date(nowMs).toISOString(), message: 'Retained terminal failure; watcher remains disarmed.',
+          expectedHead, registrationEpochMs, terminalPath: paths.terminalPath, restorationReceiptPath: null,
+        });
+      }
+      return { ok: false, exitCode: 0, kind: shortCircuitKind, receiptPath: event.eventPath };
+    }
+
     if (!/^[a-f0-9]{40}$/.test(expectedHead)) {
       return terminalizeContractFailure(
         'registration_contract_failure',
