@@ -54,6 +54,20 @@ function command(exitCode = 0) {
 }
 
 describe('hm-main-e28-restoration-watch', () => {
+  test('PowerShell packet scripts contain no ambiguous null-conditional variable syntax', () => {
+    const scripts = [
+      'hm-register-main-e28-restoration-watch.ps1',
+      'hm-restore-main-e28-coherence.ps1',
+      'hm-rehearse-main-e28-tree-sync.ps1',
+      'hm-main-e28-tree-sync.psm1',
+    ];
+
+    for (const script of scripts) {
+      const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', script), 'utf8');
+      expect(source.match(/\$[A-Za-z_][A-Za-z0-9_]*\?\./g) || []).toEqual([]);
+    }
+  });
+
   let root;
   let paths;
   let defaultSourceIntegrity;

@@ -925,7 +925,7 @@ function Watch-SustainedProjectQuiet {
         foreach ($eventRecord in $events) {
           $eventProcess = $eventRecord.SourceEventArgs.NewEvent.TargetInstance
           $eventCreationTicks = $null
-          if ($eventProcess?.CreationDate) {
+          if ($null -ne $eventProcess -and $eventProcess.CreationDate) {
             try { $eventCreationTicks = ([DateTime]$eventProcess.CreationDate).ToUniversalTime().Ticks } catch {}
           }
           $eventIdentityKey = if ($eventProcess -and $null -ne $eventCreationTicks) {

@@ -222,7 +222,7 @@ function Enter-TaskMutationMutex {
 
 function Exit-TaskMutationMutex {
   param([object]$Ownership)
-  if (-not $Ownership?.ok) { return }
+  if ($null -eq $Ownership -or $Ownership.ok -ne $true) { return }
   try { $Ownership.mutex.ReleaseMutex() } catch {}
   $Ownership.mutex.Dispose()
 }
