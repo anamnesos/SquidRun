@@ -517,11 +517,12 @@ function Get-TaskXmlValidation {
     [bool]$RequireFutureStartBoundary = $true
   )
 
-  $xmlForCom = $Xml -replace '^<\?xml[^?]*\?>\s*', ''
   $service = New-Object -ComObject 'Schedule.Service'
   $service.Connect()
   $definition = $service.NewTask(0)
-  $definition.XmlText = $xmlForCom
+  # Validate the declaration too. Stripping it previously hid an invalid
+  # encoding contract that schtasks.exe correctly rejected at registration.
+  $definition.XmlText = $Xml
   $action = $definition.Actions.Item(1)
   $trigger = $definition.Triggers.Item(1)
   $triggerStartBoundary = [DateTimeOffset]::Parse([string]$trigger.StartBoundary)
@@ -581,7 +582,7 @@ function Get-TaskXmlValidation {
   return [ordered]@{
     accepted = $true
     parser = 'Schedule.Service.NewTask.XmlText'
-    xmlDeclarationHandling = 'UTF-16 declaration retained in the UTF-16LE BOM on-disk file and stripped only from the COM validation string.'
+    xmlDeclarationHandling = 'UTF-16 declaration validated in-memory and retained in the UTF-16LE BOM on-disk file.'
     actionPath = $action.Path
     actionWorkingDirectory = $action.WorkingDirectory
     actionArguments = $action.Arguments

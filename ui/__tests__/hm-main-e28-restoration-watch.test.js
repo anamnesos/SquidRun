@@ -82,6 +82,8 @@ describe('hm-main-e28-restoration-watch', () => {
     expect(writer[0]).toContain('$encoding.GetPreamble()');
     expect(source).toContain('<?xml version="1.0" encoding="UTF-16"?>');
     expect(source).not.toContain('<?xml version="1.0" encoding="UTF-8"?>');
+    expect(source).toContain('$definition.XmlText = $Xml');
+    expect(source).not.toContain('$xmlForCom');
   });
 
   let root;
