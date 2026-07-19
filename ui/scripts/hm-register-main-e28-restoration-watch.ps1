@@ -1180,7 +1180,7 @@ try {
     semanticContractSha256 = $TaskSemanticContractSha256
     sourceIntegrity = [ordered]@{
       watcher = $SourceIntegrity.watcher
-      hiddenLauncher = $SourceIntegrity.hiddenLauncher
+      launcher = $SourceIntegrity.hiddenLauncher
       restore = $SourceIntegrity.restore
       module = $SourceIntegrity.syncModule
       registration = $SourceIntegrity.registration
@@ -1208,7 +1208,7 @@ try {
       semanticContractSha256 = $TaskSemanticContractSha256
       sourceIntegrity = [ordered]@{
         watcher = $SourceIntegrity.watcher
-        hiddenLauncher = $SourceIntegrity.hiddenLauncher
+        launcher = $SourceIntegrity.hiddenLauncher
         restore = $SourceIntegrity.restore
         module = $SourceIntegrity.syncModule
         registration = $SourceIntegrity.registration
@@ -1251,7 +1251,7 @@ try {
     semanticContractSha256 = $TaskSemanticContractSha256
     sourceIntegrity = [ordered]@{
       watcher = $SourceIntegrity.watcher
-      hiddenLauncher = $SourceIntegrity.hiddenLauncher
+      launcher = $SourceIntegrity.hiddenLauncher
       restore = $SourceIntegrity.restore
       module = $SourceIntegrity.syncModule
       registration = $SourceIntegrity.registration
@@ -1320,7 +1320,7 @@ try {
     registeredXmlSha256 = $registeredXmlSha256
     sourceIntegrity = [ordered]@{
       watcher = $SourceIntegrity.watcher
-      hiddenLauncher = $SourceIntegrity.hiddenLauncher
+      launcher = $SourceIntegrity.hiddenLauncher
       restore = $SourceIntegrity.restore
       module = $SourceIntegrity.syncModule
       registration = $SourceIntegrity.registration

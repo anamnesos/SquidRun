@@ -103,6 +103,11 @@ describe('hm-main-e28-restoration-watch', () => {
     expect(launcher).not.toContain('Replace(');
   });
 
+  test('W7 proof writer uses the validator canonical launcher key', () => {
+    const registration = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'hm-register-main-e28-restoration-watch.ps1'), 'utf8');
+    expect(registration).toContain('launcher = $SourceIntegrity.hiddenLauncher');
+  });
+
   let root;
   let paths;
   let defaultSourceIntegrity;
