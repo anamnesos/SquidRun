@@ -508,15 +508,18 @@ function Get-ReferenceProvenance {
   Assert-SquidRunCondition ($LASTEXITCODE -eq 0) "Unable to read reference status at $Stage."
   $mainLockPath = Join-Path $UiRoot 'package-lock.json'
   $referenceLockPath = Join-Path $ReferenceUi 'package-lock.json'
+  $mainLockSha256 = Get-SquidRunNormalizedTextSha256 -LiteralPath $mainLockPath
+  $referenceLockSha256 = Get-SquidRunNormalizedTextSha256 -LiteralPath $referenceLockPath
   return [ordered]@{
     stage = $Stage
     capturedAtUtc = [DateTime]::UtcNow.ToString('o')
     head = $referenceHeadNow
     trackedStatus = @($referenceStatus)
     trackedClean = (@($referenceStatus).Count -eq 0)
-    mainLockSha256 = Get-SquidRunSha256 -LiteralPath $mainLockPath
-    referenceLockSha256 = Get-SquidRunSha256 -LiteralPath $referenceLockPath
-    lockMatchesMain = ((Get-SquidRunSha256 -LiteralPath $mainLockPath) -eq (Get-SquidRunSha256 -LiteralPath $referenceLockPath))
+    lockHashMode = 'utf8_lf_normalized'
+    mainLockSha256 = $mainLockSha256
+    referenceLockSha256 = $referenceLockSha256
+    lockMatchesMain = ($mainLockSha256 -eq $referenceLockSha256)
   }
 }
 

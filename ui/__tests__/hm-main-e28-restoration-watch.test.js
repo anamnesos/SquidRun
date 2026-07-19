@@ -145,6 +145,7 @@ describe('hm-main-e28-restoration-watch', () => {
       head,
       trackedStatus: [],
       trackedClean: true,
+      lockHashMode: 'utf8_lf_normalized',
       mainLockSha256: hash,
       referenceLockSha256: hash,
       lockMatchesMain: true,
@@ -1262,6 +1263,23 @@ describe('hm-main-e28-restoration-watch', () => {
       paths.restorationReceiptRoot,
       REGISTRATION_EPOCH_MS,
       { nowMs: 96_950, sha256FileFn: evidenceSha256File }
+    );
+
+    expect(validation.ok).toBe(false);
+    expect(validation.errors).toContain('mr2');
+  });
+
+  test('MR2 reference provenance must declare the LF-normalized lock hash mode', () => {
+    const success = writeSuccessfulRestorationReceipt(96_975);
+    success.payload.MR2.referenceProvenance.postPlan.lockHashMode = 'raw_bytes';
+    fs.writeFileSync(success.receiptPath, JSON.stringify(success.payload), 'utf8');
+
+    const validation = readAndValidateRestorationReceipt(
+      success.receiptPath,
+      EXPECTED_HEAD,
+      paths.restorationReceiptRoot,
+      REGISTRATION_EPOCH_MS,
+      { nowMs: 96_975, sha256FileFn: evidenceSha256File }
     );
 
     expect(validation.ok).toBe(false);

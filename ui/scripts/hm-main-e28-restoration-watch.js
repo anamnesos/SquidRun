@@ -180,6 +180,7 @@ function isReferenceProvenance(value, expectedHead) {
     && Array.isArray(value?.trackedStatus)
     && value.trackedStatus.length === 0
     && value?.lockMatchesMain === true
+    && value?.lockHashMode === 'utf8_lf_normalized'
     && isSha256(value?.mainLockSha256)
     && value.mainLockSha256 === value.referenceLockSha256;
 }

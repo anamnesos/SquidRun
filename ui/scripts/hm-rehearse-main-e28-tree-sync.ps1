@@ -309,6 +309,17 @@ $protectedTypeReferenceRoot = Join-Path $RunRoot 'protected-type-reference'
 $protectedTypeDestinationRoot = Join-Path $RunRoot 'protected-type-destination'
 
 try {
+  $lfLockFixturePath = Join-Path $RunRoot 'lock-hash-lf.json'
+  $crlfLockFixturePath = Join-Path $RunRoot 'lock-hash-crlf.json'
+  Write-TextFile -Path $lfLockFixturePath -Text "{`n  `"lockfileVersion`": 3`n}`n"
+  Write-TextFile -Path $crlfLockFixturePath -Text "{`r`n  `"lockfileVersion`": 3`r`n}`r`n"
+  $lfLockRawSha256 = Get-SquidRunSha256 -LiteralPath $lfLockFixturePath
+  $crlfLockRawSha256 = Get-SquidRunSha256 -LiteralPath $crlfLockFixturePath
+  $lfLockNormalizedSha256 = Get-SquidRunNormalizedTextSha256 -LiteralPath $lfLockFixturePath
+  $crlfLockNormalizedSha256 = Get-SquidRunNormalizedTextSha256 -LiteralPath $crlfLockFixturePath
+  Assert-Rehearsal ($lfLockRawSha256 -ne $crlfLockRawSha256) 'Lock hash fixture did not prove raw line-ending drift.'
+  Assert-Rehearsal ($lfLockNormalizedSha256 -eq $crlfLockNormalizedSha256) 'LF-normalized lock hashes differ across checkout line endings.'
+
   Write-TextFile -Path (Join-Path $referenceRoot $ProtectedRelativePath) -Text 'REFERENCE_PROTECTED_DO_NOT_COPY'
   Write-TextFile -Path (Join-Path $referenceRoot 'equal\same.txt') -Text 'same'
   Write-TextFile -Path (Join-Path $referenceRoot 'replace\replace-me.txt') -Text ('new-value-' * 4096)
@@ -566,8 +577,8 @@ try {
     $mainLockPath = Join-Path $UiRoot 'package-lock.json'
     $referenceLockPath = Join-Path $referenceUi 'package-lock.json'
     Assert-Rehearsal (Test-Path -LiteralPath $referenceLockPath -PathType Leaf) 'Real reference package-lock.json is missing.'
-    $mainLockSha256 = Get-SquidRunSha256 -LiteralPath $mainLockPath
-    $referenceLockSha256 = Get-SquidRunSha256 -LiteralPath $referenceLockPath
+    $mainLockSha256 = Get-SquidRunNormalizedTextSha256 -LiteralPath $mainLockPath
+    $referenceLockSha256 = Get-SquidRunNormalizedTextSha256 -LiteralPath $referenceLockPath
     Assert-Rehearsal ($mainLockSha256 -eq $referenceLockSha256) 'Real reference package lock differs from main.'
     $referencePackage = Get-Content -Raw -LiteralPath (Join-Path $resolvedReference 'electron\package.json') | ConvertFrom-Json -AsHashtable
     Assert-Rehearsal ([string]$referencePackage.version -eq $ExpectedElectronVersion) 'Real reference Electron package is not 28.3.3.'
@@ -593,6 +604,7 @@ try {
       referenceHead = $referenceHead
       mainHead = $provenanceInitial.head
       referenceTrackedClean = $true
+      lockHashMode = 'utf8_lf_normalized'
       mainPackageLockSha256 = $mainLockSha256
       referencePackageLockSha256 = $referenceLockSha256
       protectedRelativePath = $ProtectedRelativePath
@@ -633,6 +645,13 @@ try {
       beforeReceipt = $provenanceFinal
     }
     protectedRelativePath = $ProtectedRelativePath
+    lockHashNormalization = [ordered]@{
+      mode = 'utf8_lf_normalized'
+      rawHashesDiffer = ($lfLockRawSha256 -ne $crlfLockRawSha256)
+      normalizedHashesMatch = ($lfLockNormalizedSha256 -eq $crlfLockNormalizedSha256)
+      lfNormalizedSha256 = $lfLockNormalizedSha256
+      crlfNormalizedSha256 = $crlfLockNormalizedSha256
+    }
     synthetic = [ordered]@{
       plan = Get-PlanSummary -Plan $plan
       sync = $syncResult

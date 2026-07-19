@@ -24,6 +24,14 @@ function Get-SquidRunTextSha256 {
   return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
 }
 
+function Get-SquidRunNormalizedTextSha256 {
+  param([Parameter(Mandatory = $true)][string]$LiteralPath)
+
+  $text = [IO.File]::ReadAllText($LiteralPath)
+  $normalized = $text.Replace("`r`n", "`n").Replace("`r", "`n")
+  return Get-SquidRunTextSha256 -Text $normalized
+}
+
 function Get-SquidRunRelativePath {
   param(
     [Parameter(Mandatory = $true)][string]$BasePath,
@@ -488,6 +496,7 @@ Export-ModuleMember -Function @(
   'Assert-SquidRunCondition',
   'Get-SquidRunSha256',
   'Get-SquidRunTextSha256',
+  'Get-SquidRunNormalizedTextSha256',
   'Get-SquidRunRelativePath',
   'Assert-SquidRunPathWithin',
   'Assert-SquidRunTreeHasNoReparsePoints',
