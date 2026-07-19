@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [ValidateSet('render', 'register', 'register-disabled', 'recover', 'status', 'disable', 'unregister')]
+  [ValidateSet('render', 'register', 'register-disabled', 'recover', 'status', 'enable', 'disable', 'unregister')]
   [string]$Action = 'render',
   [string]$TaskName = 'SquidRun-Build1B-MainE28-Restoration',
   [int]$IntervalMinutes = 5,
@@ -907,7 +907,7 @@ function Get-ScheduleServiceSnapshot {
   }
 }
 
-if ($Action -in @('disable', 'unregister')) {
+if ($Action -in @('enable', 'disable', 'unregister')) {
   if (-not (Test-Path -LiteralPath $SchtasksPath -PathType Leaf)) {
     throw "Task Scheduler CLI is missing: $SchtasksPath"
   }
@@ -951,6 +951,8 @@ if ($Action -in @('disable', 'unregister')) {
       } else {
         $arguments = if ($Action -eq 'disable') {
           @('/Change', '/TN', $TaskName, '/Disable')
+        } elseif ($Action -eq 'enable') {
+          @('/Change', '/TN', $TaskName, '/Enable')
         } else {
           @('/Delete', '/TN', $TaskName, '/F')
         }
@@ -963,6 +965,10 @@ if ($Action -in @('disable', 'unregister')) {
           $operation.exitCode -eq 0 -and
           $presenceAfter.ok -and $presenceAfter.exists -and $presenceAfter.enabled -eq $false -and
           $statusAfter.exitCode -eq 0 -and $ownershipAfter.owned -and $ownershipAfter.enabled -eq $false
+        } elseif ($Action -eq 'enable') {
+          $operation.exitCode -eq 0 -and
+          $presenceAfter.ok -and $presenceAfter.exists -and $presenceAfter.enabled -eq $true -and
+          $statusAfter.exitCode -eq 0 -and $ownershipAfter.owned -and $ownershipAfter.enabled -eq $true
         } else {
           $operation.exitCode -eq 0 -and
           $presenceAfter.ok -and $presenceAfter.exists -eq $false -and
