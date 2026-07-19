@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [ValidateSet('render', 'register', 'status', 'disable', 'unregister')]
+  [ValidateSet('render', 'register', 'register-disabled', 'status', 'disable', 'unregister')]
   [string]$Action = 'render',
   [string]$TaskName = 'SquidRun-Build1B-MainE28-Restoration',
   [int]$IntervalMinutes = 5,
@@ -1174,6 +1174,12 @@ try {
   Write-JsonAtomic -Path $OwnershipAnchorPath -Value $ownershipAnchor
   $baseReceipt['ownershipAnchorPreparedSha256'] = (Get-FileHash -LiteralPath $OwnershipAnchorPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
+  if ($Action -eq 'register-disabled') {
+    $baseReceipt['phase'] = 'staged_disabled_registered'
+    $baseReceipt['ok'] = $true
+    $baseReceipt['enableAuthorized'] = $false
+    $registrationVerified = $true
+  } else {
   $preEnableSnapshot = Get-RegisteredTaskSnapshot -ExpectedTaskEnabled:$false
   $preEnableBinding = Get-HeadSourceBinding -Head $CurrentHead
   $preEnableSource = Get-SourceIntegritySnapshot
@@ -1293,6 +1299,7 @@ try {
   $baseReceipt['completedAt'] = [DateTime]::UtcNow.ToString('o')
   Write-JsonAtomic -Path $registrationReceiptPath -Value $baseReceipt
   $registrationVerified = $true
+  }
 } catch {
   $baseReceipt['phase'] = 'registration_failed'
   $baseReceipt['ok'] = $false

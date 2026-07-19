@@ -1,15 +1,9 @@
 Option Explicit
 
-Dim fso, shell, scriptsDir, uiDir, projectRoot, nodePath, watcherPath, command, index
-Set fso = CreateObject("Scripting.FileSystemObject")
+Dim shell, nodePath, command, index
 Set shell = CreateObject("WScript.Shell")
-
-scriptsDir = fso.GetParentFolderName(WScript.ScriptFullName)
-uiDir = fso.GetParentFolderName(scriptsDir)
-projectRoot = fso.GetParentFolderName(uiDir)
 nodePath = "C:\Program Files\nodejs\node.exe"
-watcherPath = fso.BuildPath(scriptsDir, "hm-main-e28-restoration-watch.js")
-command = Quote(nodePath) & " " & Quote(watcherPath)
+command = Quote(nodePath)
 For index = 0 To WScript.Arguments.Count - 1
   command = command & " " & Quote(WScript.Arguments(index))
 Next
