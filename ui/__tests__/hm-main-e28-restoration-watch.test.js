@@ -99,6 +99,8 @@ describe('hm-main-e28-restoration-watch', () => {
     expect(launcher).not.toContain('>>');
     expect(launcher).not.toContain('2>&1');
     expect(launcher).not.toContain('cmd /d /c');
+    expect(launcher).toContain('Chr(34)');
+    expect(launcher).not.toContain('Replace(');
   });
 
   let root;
