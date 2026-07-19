@@ -86,6 +86,21 @@ describe('hm-main-e28-restoration-watch', () => {
     expect(source).not.toContain('$xmlForCom');
   });
 
+  test('W7 launcher uses the proven hidden wscript Run contract', () => {
+    const launcher = fs.readFileSync(path.join(
+      __dirname,
+      '..',
+      'scripts',
+      'start-main-e28-restoration-hidden.vbs'
+    ), 'utf8');
+
+    expect(launcher).toContain('shell.Run command, 0, False');
+    expect(launcher).toContain('WScript.Arguments');
+    expect(launcher).not.toContain('>>');
+    expect(launcher).not.toContain('2>&1');
+    expect(launcher).not.toContain('cmd /d /c');
+  });
+
   let root;
   let paths;
   let defaultSourceIntegrity;
@@ -95,6 +110,7 @@ describe('hm-main-e28-restoration-watch', () => {
     paths = resolvePaths(root);
     for (const [filePath, value] of [
       [paths.watcherScriptPath, 'watcher'],
+      [paths.launcherScriptPath, 'launcher'],
       [paths.restoreScriptPath, 'restore'],
       [paths.syncModulePath, 'module'],
       [paths.registrationScriptPath, 'registration'],
@@ -104,6 +120,7 @@ describe('hm-main-e28-restoration-watch', () => {
     }
     defaultSourceIntegrity = {
       watcher: sha256File(paths.watcherScriptPath),
+      launcher: sha256File(paths.launcherScriptPath),
       restore: sha256File(paths.restoreScriptPath),
       module: sha256File(paths.syncModulePath),
       registration: sha256File(paths.registrationScriptPath),
@@ -554,6 +571,7 @@ describe('hm-main-e28-restoration-watch', () => {
         watcherArgumentsSha256,
         sourceIntegrity: {
           watcher: { path: paths.watcherScriptPath, sha256: sourceIntegrity.watcher },
+          launcher: { path: paths.launcherScriptPath, sha256: sourceIntegrity.launcher },
           restore: { path: paths.restoreScriptPath, sha256: sourceIntegrity.restore },
           module: { path: paths.syncModulePath, sha256: sourceIntegrity.module },
           registration: { path: paths.registrationScriptPath, sha256: sourceIntegrity.registration },
@@ -850,6 +868,7 @@ describe('hm-main-e28-restoration-watch', () => {
     }
     const expected = {
       watcher: sha256File(paths.watcherScriptPath),
+      launcher: sha256File(paths.launcherScriptPath),
       restore: sha256File(paths.restoreScriptPath),
       module: sha256File(paths.syncModulePath),
       registration: sha256File(paths.registrationScriptPath),

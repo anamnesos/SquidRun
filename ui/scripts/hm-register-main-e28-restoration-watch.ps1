@@ -17,6 +17,7 @@ $ScriptsRoot = Split-Path -Parent $ScriptPath
 $UiRoot = Split-Path -Parent $ScriptsRoot
 $ProjectRoot = Split-Path -Parent $UiRoot
 $WatcherScript = Join-Path $ScriptsRoot 'hm-main-e28-restoration-watch.js'
+$HiddenLauncherScript = Join-Path $ScriptsRoot 'start-main-e28-restoration-hidden.vbs'
 $RestoreScript = Join-Path $ScriptsRoot 'hm-restore-main-e28-coherence.ps1'
 $SyncModule = Join-Path $ScriptsRoot 'hm-main-e28-tree-sync.psm1'
 $RehearsalScript = Join-Path $ScriptsRoot 'hm-rehearse-main-e28-tree-sync.ps1'
@@ -30,6 +31,7 @@ $OwnershipAnchorPath = Join-Path $ReceiptRoot 'task-ownership-anchor.json'
 $TaskOwnerMarker = 'SquidRun.Build1B.MainE28Restoration.v1'
 $TaskMutationMutexName = 'Global\SquidRun.Build1B.MainE28Restoration.TaskMutation.v1'
 $NodePath = (Get-Command node.exe -ErrorAction Stop).Source
+$WscriptPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
 $StablePowerShellAlias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'
 $PowerShellPath = if (Test-Path -LiteralPath $StablePowerShellAlias -PathType Leaf) {
   $StablePowerShellAlias
@@ -269,6 +271,7 @@ function Get-SourceIntegritySnapshot {
   $entries = [ordered]@{}
   $sourcePaths = [ordered]@{
     watcher = $WatcherScript
+    hiddenLauncher = $HiddenLauncherScript
     restore = $RestoreScript
     syncModule = $SyncModule
     rehearsal = $RehearsalScript
@@ -349,6 +352,7 @@ function Get-WatcherArgumentsForBinding {
     [string]$Head,
     [int64]$EpochMs,
     [string]$WatcherSha256,
+    [string]$LauncherSha256,
     [string]$RestoreSha256,
     [string]$ModuleSha256,
     [string]$RegistrationSha256
@@ -374,6 +378,8 @@ function Get-WatcherArgumentsForBinding {
     ('"{0}"' -f $RegistrationProofPath),
     '--watcher-sha256',
     $WatcherSha256,
+    '--launcher-sha256',
+    $LauncherSha256,
     '--restore-sha256',
     $RestoreSha256,
     '--module-sha256',
@@ -390,9 +396,15 @@ function Get-WatcherArguments {
     -Head $CurrentHead `
     -EpochMs $RegistrationEpochMs `
     -WatcherSha256 $SourceIntegrity.watcher.sha256 `
+    -LauncherSha256 $SourceIntegrity.hiddenLauncher.sha256 `
     -RestoreSha256 $SourceIntegrity.restore.sha256 `
     -ModuleSha256 $SourceIntegrity.syncModule.sha256 `
     -RegistrationSha256 $SourceIntegrity.registration.sha256
+}
+
+function Get-TaskActionArguments {
+  param([Parameter(Mandatory = $true)][string]$WatcherArgs)
+  return ('"{0}" {1}' -f $HiddenLauncherScript, $WatcherArgs)
 }
 
 function Get-TaskSemanticContract {
@@ -400,7 +412,7 @@ function Get-TaskSemanticContract {
 
   return [ordered]@{
     schema = 'squidrun.build1b.main_e28_restoration_task_semantic_contract.v1'
-    actionPath = $NodePath
+    actionPath = $WscriptPath
     actionWorkingDirectory = $ProjectRoot
     actionArguments = $Arguments
     triggerType = 1
@@ -446,8 +458,8 @@ function New-TaskXml {
 
   $escapedUser = Escape-XmlText $UserSid
   $escapedTaskName = Escape-XmlText $TaskName
-  $escapedNode = Escape-XmlText $NodePath
-  $escapedArguments = Escape-XmlText $argumentText
+  $escapedWscript = Escape-XmlText $WscriptPath
+  $escapedArguments = Escape-XmlText $TaskActionArguments
   $escapedWorkingDirectory = Escape-XmlText $ProjectRoot
   return @"
 <?xml version="1.0" encoding="UTF-16"?>
@@ -500,7 +512,7 @@ function New-TaskXml {
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>$escapedNode</Command>
+      <Command>$escapedWscript</Command>
       <Arguments>$escapedArguments</Arguments>
       <WorkingDirectory>$escapedWorkingDirectory</WorkingDirectory>
     </Exec>
@@ -670,6 +682,7 @@ function Get-ExistingTaskOwnership {
     $bindingRows = if ($anchor) {
       @(
         [pscustomobject]@{ name = 'watcher'; expectedPath = $WatcherScript; anchorEntry = $anchor.sourceIntegrity.watcher },
+        [pscustomobject]@{ name = 'hiddenLauncher'; expectedPath = $HiddenLauncherScript; anchorEntry = $anchor.sourceIntegrity.hiddenLauncher },
         [pscustomobject]@{ name = 'restore'; expectedPath = $RestoreScript; anchorEntry = $anchor.sourceIntegrity.restore },
         [pscustomobject]@{ name = 'module'; expectedPath = $SyncModule; anchorEntry = $anchor.sourceIntegrity.module },
         [pscustomobject]@{ name = 'registration'; expectedPath = $ScriptPath; anchorEntry = $anchor.sourceIntegrity.registration }
@@ -688,7 +701,7 @@ function Get-ExistingTaskOwnership {
       }
     } else { @() }
     $sourceBindingShapeValid = (
-      $bindingRows.Count -eq 4 -and
+      $bindingRows.Count -eq 5 -and
       @($bindingRows | Where-Object { -not $_.pathMatches -or -not $_.hashShapeValid }).Count -eq 0
     )
     $semanticContract = if ($anchor) { $anchor.semanticContract } else { $null }
@@ -959,7 +972,7 @@ if ($Action -in @('disable', 'unregister')) {
   exit $controlExitCode
 }
 
-foreach ($requiredPath in @($WatcherScript, $RestoreScript, $SyncModule, $RehearsalScript, $NoticeConsumer, $RolesPath, $WatcherTest, $NoticeTest, $NodePath, $PowerShellPath, $SchtasksPath, $ScPath)) {
+foreach ($requiredPath in @($WatcherScript, $HiddenLauncherScript, $RestoreScript, $SyncModule, $RehearsalScript, $NoticeConsumer, $RolesPath, $WatcherTest, $NoticeTest, $NodePath, $WscriptPath, $PowerShellPath, $SchtasksPath, $ScPath)) {
   if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
     throw "Required executable or script is missing: $requiredPath"
   }
@@ -972,8 +985,9 @@ if ($LASTEXITCODE -ne 0 -or $CurrentHead -notmatch '^[a-f0-9]{40}$') {
 $SourceIntegrity = Get-SourceIntegritySnapshot
 $HeadSourceBinding = Get-HeadSourceBinding -Head $CurrentHead
 $WatcherArguments = Get-WatcherArguments
+$TaskActionArguments = Get-TaskActionArguments -WatcherArgs $WatcherArguments
 $WatcherArgumentsSha256 = Get-TextSha256 -Value $WatcherArguments
-$TaskSemanticContract = Get-TaskSemanticContract -Arguments $WatcherArguments
+$TaskSemanticContract = Get-TaskSemanticContract -Arguments $TaskActionArguments
 $TaskSemanticContractSha256 = Get-TaskSemanticContractSha256 -Contract $TaskSemanticContract
 $taskStatusBefore = Invoke-Captured -FilePath $SchtasksPath -Arguments @('/Query', '/TN', $TaskName, '/V', '/FO', 'LIST')
 $taskPresenceBefore = Get-TaskPresence
@@ -1012,6 +1026,8 @@ $baseReceipt = [ordered]@{
   }
   actionContract = [ordered]@{
     nodePath = $NodePath
+    wscriptPath = $WscriptPath
+    hiddenLauncherPath = $HiddenLauncherScript
     watcherScript = $WatcherScript
     powershellPath = $PowerShellPath
     workingDirectory = $ProjectRoot
@@ -1029,6 +1045,7 @@ $baseReceipt = [ordered]@{
     disarmAfterSuccess = $true
     disarmAfterTerminalFailure = $true
     watcherArguments = $WatcherArguments
+    actionArguments = $TaskActionArguments
     watcherArgumentsSha256 = $WatcherArgumentsSha256
   }
   renderedXmlPath = $renderedXmlPath
@@ -1134,6 +1151,7 @@ try {
     semanticContractSha256 = $TaskSemanticContractSha256
     sourceIntegrity = [ordered]@{
       watcher = $SourceIntegrity.watcher
+      hiddenLauncher = $SourceIntegrity.hiddenLauncher
       restore = $SourceIntegrity.restore
       module = $SourceIntegrity.syncModule
       registration = $SourceIntegrity.registration
@@ -1177,6 +1195,7 @@ try {
     semanticContractSha256 = $TaskSemanticContractSha256
     sourceIntegrity = [ordered]@{
       watcher = $SourceIntegrity.watcher
+      hiddenLauncher = $SourceIntegrity.hiddenLauncher
       restore = $SourceIntegrity.restore
       module = $SourceIntegrity.syncModule
       registration = $SourceIntegrity.registration
@@ -1245,6 +1264,7 @@ try {
     registeredXmlSha256 = $registeredXmlSha256
     sourceIntegrity = [ordered]@{
       watcher = $SourceIntegrity.watcher
+      hiddenLauncher = $SourceIntegrity.hiddenLauncher
       restore = $SourceIntegrity.restore
       module = $SourceIntegrity.syncModule
       registration = $SourceIntegrity.registration

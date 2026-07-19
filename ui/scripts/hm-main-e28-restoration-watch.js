@@ -90,6 +90,7 @@ function sha256File(filePath) {
 function verifySourceIntegrity(paths, expected = {}) {
   const definitions = {
     watcher: paths.watcherScriptPath,
+    launcher: paths.launcherScriptPath,
     restore: paths.restoreScriptPath,
     module: paths.syncModulePath,
     registration: paths.registrationScriptPath,
@@ -638,7 +639,7 @@ function verifyRegistrationProof(proofPath, expected = {}) {
   if (!isSha256(proof?.watcherArgumentsSha256)
     || (expected.watcherArgumentsSha256
       && proof.watcherArgumentsSha256 !== expected.watcherArgumentsSha256)) errors.push('watcher_arguments_sha256');
-  for (const name of ['watcher', 'restore', 'module', 'registration']) {
+  for (const name of ['watcher', 'launcher', 'restore', 'module', 'registration']) {
     if (String(proof?.sourceIntegrity?.[name]?.sha256 || '').toLowerCase()
       !== String(expected.sourceIntegrity?.[name] || '').toLowerCase()) errors.push(`source_${name}`);
     if (expected.sourcePaths?.[name]
@@ -796,6 +797,7 @@ function resolvePaths(projectRoot) {
   return {
     projectRoot: root,
     watcherScriptPath: path.join(root, 'ui', 'scripts', 'hm-main-e28-restoration-watch.js'),
+    launcherScriptPath: path.join(root, 'ui', 'scripts', 'start-main-e28-restoration-hidden.vbs'),
     restoreScriptPath: path.join(root, 'ui', 'scripts', 'hm-restore-main-e28-coherence.ps1'),
     syncModulePath: path.join(root, 'ui', 'scripts', 'hm-main-e28-tree-sync.psm1'),
     registrationScriptPath: path.join(root, 'ui', 'scripts', 'hm-register-main-e28-restoration-watch.ps1'),
@@ -1039,6 +1041,8 @@ function buildWatcherArguments(context = {}) {
     `"${context.registrationProofPath}"`,
     '--watcher-sha256',
     String(context.sourceIntegrity?.watcher || ''),
+    '--launcher-sha256',
+    String(context.sourceIntegrity?.launcher || ''),
     '--restore-sha256',
     String(context.sourceIntegrity?.restore || ''),
     '--module-sha256',
@@ -1355,6 +1359,7 @@ function runWatchCycle(options, injected = {}) {
         sourceIntegrity: options.sourceIntegrity || {},
         sourcePaths: {
           watcher: paths.watcherScriptPath,
+          launcher: paths.launcherScriptPath,
           restore: paths.restoreScriptPath,
           module: paths.syncModulePath,
           registration: paths.registrationScriptPath,
@@ -2078,6 +2083,7 @@ function main(argv = process.argv.slice(2)) {
       : paths.registrationProofPath,
     sourceIntegrity: {
       watcher: flags['watcher-sha256'] || '',
+      launcher: flags['launcher-sha256'] || '',
       restore: flags['restore-sha256'] || '',
       module: flags['module-sha256'] || '',
       registration: flags['registration-sha256'] || '',
