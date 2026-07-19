@@ -1202,7 +1202,7 @@ try {
     semanticContractSha256 = $TaskSemanticContractSha256
     sourceIntegrity = [ordered]@{
       watcher = $SourceIntegrity.watcher
-      launcher = $SourceIntegrity.hiddenLauncher
+      hiddenLauncher = $SourceIntegrity.hiddenLauncher
       restore = $SourceIntegrity.restore
       module = $SourceIntegrity.syncModule
       registration = $SourceIntegrity.registration
