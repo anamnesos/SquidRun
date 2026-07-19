@@ -682,21 +682,23 @@ function Get-ExistingTaskOwnership {
     $bindingRows = if ($anchor) {
       @(
         [pscustomobject]@{ name = 'watcher'; expectedPath = $WatcherScript; anchorEntry = $anchor.sourceIntegrity.watcher },
-        [pscustomobject]@{ name = 'hiddenLauncher'; expectedPath = $HiddenLauncherScript; anchorEntry = $anchor.sourceIntegrity.hiddenLauncher },
+        [pscustomobject]@{ name = 'hiddenLauncher'; expectedPath = $HiddenLauncherScript; anchorEntry = if ($anchor.sourceIntegrity.PSObject.Properties['hiddenLauncher']) { $anchor.sourceIntegrity.hiddenLauncher } else { $null } },
         [pscustomobject]@{ name = 'restore'; expectedPath = $RestoreScript; anchorEntry = $anchor.sourceIntegrity.restore },
         [pscustomobject]@{ name = 'module'; expectedPath = $SyncModule; anchorEntry = $anchor.sourceIntegrity.module },
         [pscustomobject]@{ name = 'registration'; expectedPath = $ScriptPath; anchorEntry = $anchor.sourceIntegrity.registration }
       ) | ForEach-Object {
+        $anchorEntryPath = if ($_.anchorEntry -and $_.anchorEntry.PSObject.Properties['path']) { [string]$_.anchorEntry.path } else { '' }
+        $anchorEntrySha256 = if ($_.anchorEntry -and $_.anchorEntry.PSObject.Properties['sha256']) { [string]$_.anchorEntry.sha256 } else { '' }
         [pscustomobject]@{
           name = $_.name
           expectedPath = [IO.Path]::GetFullPath([string]$_.expectedPath)
-          anchorPath = [IO.Path]::GetFullPath([string]$_.anchorEntry.path)
-          sha256 = [string]$_.anchorEntry.sha256
+          anchorPath = if ($anchorEntryPath) { [IO.Path]::GetFullPath($anchorEntryPath) } else { '' }
+          sha256 = $anchorEntrySha256
           pathMatches = (
-            [IO.Path]::GetFullPath([string]$_.anchorEntry.path) -eq
+            $anchorEntryPath -and [IO.Path]::GetFullPath($anchorEntryPath) -eq
               [IO.Path]::GetFullPath([string]$_.expectedPath)
           )
-          hashShapeValid = ([string]$_.anchorEntry.sha256 -match '^[a-f0-9]{64}$')
+          hashShapeValid = ($anchorEntrySha256 -match '^[a-f0-9]{64}$')
         }
       }
     } else { @() }
