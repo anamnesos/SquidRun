@@ -769,14 +769,14 @@ function Get-ExistingTaskOwnership {
     $argumentsDigestMatches = $anchorShapeValid -and (
       [string]$anchor.watcherArgumentsSha256 -eq (Get-TextSha256 -Value $expectedArguments)
     )
-    $validation = if ($argumentsDigestMatches) {
+    $validation = if ($anchorShapeValid) {
       Get-TaskXmlValidation `
         -Xml $query.stdout `
         -ExpectedTaskEnabled:([bool]$presence.enabled) `
         -ExpectedContract $semanticContract `
         -RequireFutureStartBoundary:$false
     } else { $null }
-    $owned = ($argumentsDigestMatches -and $validation.accepted)
+    $owned = (($argumentsDigestMatches -or [string]$anchor.phase -eq 'prepared_disabled_verified') -and $validation.accepted)
     return [ordered]@{
       exists = $true
       owned = $owned
