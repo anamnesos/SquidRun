@@ -36,6 +36,13 @@ describe('memory-broker', () => {
             sourceType: 'session_summary',
             score: 0.8,
           },
+          {
+            nodeId: 'node-corpus-transcript',
+            title: 'Switchboard MS98 sw2060 Interleaved Transcript',
+            content: '68.494-79.217 B: [silence] 71.005-76.635 A: a discussion about that',
+            sourcePath: 'knowledge/emotion/spoken/switchboard-ms98/sw2060-interleaved.md',
+            score: 0.85,
+          },
         ],
       }),
     });

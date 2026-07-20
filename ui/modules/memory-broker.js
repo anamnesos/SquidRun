@@ -508,6 +508,25 @@ function isArchivalSessionSummaryItem(item = {}) {
   );
 }
 
+// The cognitive DB also contains bulk-ingested research corpora (observed:
+// Switchboard MS98 telephone-speech transcripts under knowledge/emotion/
+// spoken/). Corpus artifacts are training data, not memory; they must never
+// surface as recall. Store-level quarantine is the real fix — this guards
+// the felt surface meanwhile.
+function isCorpusArtifactItem(item = {}) {
+  const title = String(item.title || '');
+  const ref = String(item.ref || '');
+  return (
+    /interleaved\s+transcript/i.test(title)
+    || /switchboard[- ]?ms98/i.test(ref)
+    || /(^|[\\/])knowledge[\\/]emotion[\\/]spoken[\\/]/i.test(ref)
+  );
+}
+
+function isRecallNoiseItem(item = {}) {
+  return isArchivalSessionSummaryItem(item) || isCorpusArtifactItem(item);
+}
+
 function createCognitiveMemoryProvider(options = {}) {
   const execute = options.execute || null;
   return {
@@ -559,7 +578,7 @@ function createCognitiveMemoryProvider(options = {}) {
               };
             })
             .filter(Boolean)
-            .filter((item) => !isArchivalSessionSummaryItem(item))
+            .filter((item) => !isRecallNoiseItem(item))
             .sort((left, right) => right.score - left.score)
             .slice(0, clampInt(providerOptions.limit, DEFAULT_PROVIDER_LIMIT, 1, 50));
           return { ok: true, items };
@@ -597,7 +616,7 @@ function createCognitiveMemoryProvider(options = {}) {
             sourceType: entry.sourceType || null,
             confidenceScore: entry.confidenceScore ?? null,
           },
-        })).filter((item) => !isArchivalSessionSummaryItem(item)),
+        })).filter((item) => !isRecallNoiseItem(item)),
       };
     },
   };
