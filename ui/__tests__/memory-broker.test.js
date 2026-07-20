@@ -3,12 +3,48 @@ const {
   RECALL_START,
   MEMORY_RECALL_MIN_MESSAGE_LENGTH,
   createMemoryBroker,
+  createCognitiveMemoryProvider,
   formatRecallForPaneMessage,
   prependRecallToMessage,
   messageReferencesPastWork,
 } = require('../modules/memory-broker');
 
 describe('memory-broker', () => {
+  test('cognitive provider drops archival session-summary rollups from recall', async () => {
+    const provider = createCognitiveMemoryProvider({
+      execute: async () => ({
+        ok: true,
+        results: [
+          {
+            nodeId: 'node-session-412',
+            title: 'Session 412 Summary',
+            content: '# Session 412 Summary - Generated: 2026-06-08 - Total messages: 45 - Participants: architect (21)',
+            sourcePath: 'session:412',
+            score: 0.9,
+          },
+          {
+            nodeId: 'node-real-memory',
+            title: 'Lemonade claim state',
+            content: 'Claim LPP98-462-798 cleared pre-existing review.',
+            sourcePath: 'memory/claims.md',
+            score: 0.5,
+          },
+          {
+            nodeId: 'node-session-typed',
+            title: 'Rollup',
+            content: 'archival rollup by source type',
+            sourceType: 'session_summary',
+            score: 0.8,
+          },
+        ],
+      }),
+    });
+    const result = await provider.recall('claim status', {}, {});
+    expect(result.ok).toBe(true);
+    const ids = result.items.map((item) => item.id);
+    expect(ids).toEqual(['node-real-memory']);
+  });
+
   test('merges fragmented stores with reciprocal rank fusion', async () => {
     const broker = createMemoryBroker({
       providers: [

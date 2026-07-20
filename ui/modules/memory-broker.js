@@ -490,6 +490,24 @@ function createMemoryBroker(options = {}) {
   };
 }
 
+// Archival session summaries ("Session 412 Summary — Total messages: 45 —
+// Participants: ...") are rollup metadata, not memory. Their sheer token
+// breadth makes them dominate coverage scoring, so they surfaced on nearly
+// every inbound message as multi-KB noise stapled to James's one-line
+// Telegram texts. They are never a useful recall answer; drop the class.
+function isArchivalSessionSummaryItem(item = {}) {
+  const title = String(item.title || '');
+  const ref = String(item.ref || '');
+  const sourceType = String(item?.metadata?.sourceType || '');
+  const category = String(item?.metadata?.category || '');
+  return (
+    /^#?\s*session\s+\d+\s+summary\b/i.test(title)
+    || /^session[:/ -]?\d+$/i.test(ref.trim())
+    || /session[_ -]?summary/i.test(sourceType)
+    || /session[_ -]?summary/i.test(category)
+  );
+}
+
 function createCognitiveMemoryProvider(options = {}) {
   const execute = options.execute || null;
   return {
@@ -541,6 +559,7 @@ function createCognitiveMemoryProvider(options = {}) {
               };
             })
             .filter(Boolean)
+            .filter((item) => !isArchivalSessionSummaryItem(item))
             .sort((left, right) => right.score - left.score)
             .slice(0, clampInt(providerOptions.limit, DEFAULT_PROVIDER_LIMIT, 1, 50));
           return { ok: true, items };
@@ -578,7 +597,7 @@ function createCognitiveMemoryProvider(options = {}) {
             sourceType: entry.sourceType || null,
             confidenceScore: entry.confidenceScore ?? null,
           },
-        })),
+        })).filter((item) => !isArchivalSessionSummaryItem(item)),
       };
     },
   };
