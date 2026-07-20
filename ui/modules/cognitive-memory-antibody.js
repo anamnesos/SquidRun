@@ -5,6 +5,10 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { getProjectRoot, resolveCoordPath } = require('../config');
 const { queryCommsJournalEntries } = require('./main/comms-journal');
+const {
+  frozenMutationResult,
+  readMemoryMetabolismFreeze,
+} = require('./memory-metabolism-freeze');
 
 const execFileAsync = promisify(execFile);
 
@@ -744,6 +748,13 @@ class CognitiveMemoryAntibodyWorker {
   async runOnce(options = {}) {
     if (!this.api || !this.cognitiveStore) {
       return { ok: false, reason: 'worker_not_initialized' };
+    }
+    const freeze = readMemoryMetabolismFreeze({ dbPath: this.cognitiveStore.dbPath });
+    if (freeze.active === true) {
+      return frozenMutationResult('memory_antibody_worker', {
+        processed: [],
+        statePath: freeze.statePath,
+      });
     }
     const limit = Math.max(1, Number.parseInt(options.limit || '10', 10) || 10);
     const items = this.cognitiveStore.listAntibodyQueue({

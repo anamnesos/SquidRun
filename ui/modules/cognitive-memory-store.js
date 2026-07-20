@@ -9,6 +9,10 @@ const {
   resolveCoordPath,
 } = require('../config');
 const { isMainProfile, namespaceCoordRelPath, normalizeProfileName } = require('../profile');
+const {
+  frozenMutationResult,
+  readMemoryMetabolismFreeze,
+} = require('./memory-metabolism-freeze');
 
 /** @typedef {import('../types/contracts').MemoryPrCandidate} MemoryPrCandidate */
 /** @typedef {import('../types/contracts').MemoryPrRow} MemoryPrRow */
@@ -393,6 +397,15 @@ class CognitiveMemoryStore {
    * @returns {{ ok: true, staged: string[], merged: string[], pendingCount: number }}
    */
   stageMemoryPRs(candidates = [], options = {}) {
+    const freeze = readMemoryMetabolismFreeze({ dbPath: this.dbPath });
+    if (freeze.active === true) {
+      return frozenMutationResult('stage_memory_prs', {
+        staged: [],
+        merged: [],
+        pendingCount: null,
+        statePath: freeze.statePath,
+      });
+    }
     this.assertProfileScopedWrite('stageMemoryPRs');
     const db = this.init();
     const nowMs = Date.now();
@@ -832,6 +845,14 @@ class CognitiveMemoryStore {
    * @returns {{ ok: boolean, reason?: string, updated: number, rows: MemoryPrRow[] }}
    */
   reviewMemoryPRs(input = {}) {
+    const freeze = readMemoryMetabolismFreeze({ dbPath: this.dbPath });
+    if (freeze.active === true) {
+      return frozenMutationResult('review_memory_prs', {
+        updated: 0,
+        rows: [],
+        statePath: freeze.statePath,
+      });
+    }
     this.assertProfileScopedWrite('reviewMemoryPRs');
     const db = this.init();
     const ids = Array.from(new Set(

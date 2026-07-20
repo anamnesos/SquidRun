@@ -11,6 +11,10 @@ const { runBehavioralSleepPromotion } = require('./cognitive-memory-immunity');
 const { TeamMemoryStore } = require('./team-memory/store');
 const { TeamMemoryClaims } = require('./team-memory/claims');
 const { extractCandidates } = require('../scripts/hm-memory-extract');
+const {
+  frozenMutationResult,
+  readMemoryMetabolismFreeze,
+} = require('./memory-metabolism-freeze');
 
 const DEFAULT_IDLE_THRESHOLD_MS = Math.max(
   60_000,
@@ -900,6 +904,19 @@ class SleepConsolidator {
   async runOnce(options = {}) {
     const startedAtMs = Date.now();
     const runId = `sleep-${startedAtMs}`;
+    const freeze = readMemoryMetabolismFreeze({ dbPath: this.cognitiveStore.dbPath });
+    if (freeze.active === true) {
+      return frozenMutationResult('sleep_cycle', {
+        runId,
+        startedAtMs,
+        finishedAtMs: Date.now(),
+        episodeCount: 0,
+        extractedCount: 0,
+        generatedPrCount: 0,
+        status: 'frozen',
+        statePath: freeze.statePath,
+      });
+    }
     this.init();
     await this.ensureSearchIndexReady();
 

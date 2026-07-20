@@ -20,6 +20,7 @@ const {
   resolveSessionStatePath,
 } = require('./modules/cognitive-memory-sleep');
 const { stageImmediateTaskExtraction } = require('./modules/cognitive-memory-immunity');
+const { readMemoryMetabolismFreeze } = require('./modules/memory-metabolism-freeze');
 const {
   readSystemCapabilitiesSnapshot,
   resolveSleepExtractionCommandFromSnapshot,
@@ -2523,6 +2524,22 @@ class SupervisorDaemon {
   async maybeRunSleepCycle(nowMs = Date.now()) {
     if (!this.sleepEnabled || this.stopping || !this.sleepConsolidator) {
       return { ok: false, skipped: true, reason: 'sleep_disabled' };
+    }
+    const freezeDbPath = this.sleepConsolidator.cognitiveStore?.dbPath;
+    const freeze = freezeDbPath
+      ? readMemoryMetabolismFreeze({ dbPath: freezeDbPath })
+      : { active: false };
+    if (freeze.active === true) {
+      this.lastSleepCycleSummary = {
+        ok: true,
+        accepted: false,
+        skipped: true,
+        frozen: true,
+        status: 'frozen',
+        reason: 'memory_metabolism_frozen',
+        statePath: freeze.statePath,
+      };
+      return this.lastSleepCycleSummary;
     }
     if (this.activeWorkers.size > 0) {
       return { ok: false, skipped: true, reason: 'workers_active' };
@@ -6253,6 +6270,9 @@ class SupervisorDaemon {
       },
       sleepCycle: {
         enabled: this.sleepEnabled,
+        frozen: this.sleepConsolidator?.cognitiveStore?.dbPath
+          ? readMemoryMetabolismFreeze({ dbPath: this.sleepConsolidator.cognitiveStore.dbPath }).active === true
+          : false,
         idleThresholdMs: this.sleepIdleMs,
         minIntervalMs: this.sleepMinIntervalMs,
         running: Boolean(this.sleepCyclePromise),

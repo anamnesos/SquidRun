@@ -1,6 +1,10 @@
 const crypto = require('crypto');
 const { getDatabaseSync } = require('./sqlite-compat');
 const DatabaseSync = getDatabaseSync();
+const {
+  frozenMutationResult,
+  readMemoryMetabolismFreeze,
+} = require('./memory-metabolism-freeze');
 const { CognitiveMemoryStore } = require('./cognitive-memory-store');
 const { MemorySearchIndex } = require('./memory-search');
 const { emit } = require('./event-bus');
@@ -324,6 +328,15 @@ class CognitiveMemoryApi {
     if (typeof this.cognitiveStore?.assertProfileScopedWrite === 'function') {
       this.cognitiveStore.assertProfileScopedWrite(`api.${operation}`);
     }
+  }
+
+  memoryMutationFreeze(operation, extra = {}) {
+    const freeze = readMemoryMetabolismFreeze({ dbPath: this.cognitiveStore?.dbPath });
+    if (freeze.active !== true) return null;
+    return frozenMutationResult(operation, {
+      statePath: freeze.statePath,
+      ...extra,
+    });
   }
 
   async embedText(text) {
@@ -953,6 +966,8 @@ class CognitiveMemoryApi {
    * @returns {{ ok: boolean, reason?: string, node?: CognitiveMemoryNode | null, invalidation?: { ok: true, invalidated: number } }}
    */
   setAntibodyState(nodeId, status, options = {}) {
+    const frozen = this.memoryMutationFreeze('set_antibody_state', { nodeId: String(nodeId || '') });
+    if (frozen) return frozen;
     this.assertProfileScopedWrite('setAntibodyState');
     const normalizedNodeId = normalizeWhitespace(nodeId);
     if (!normalizedNodeId) return { ok: false, reason: 'node_id_required' };
@@ -1020,6 +1035,8 @@ class CognitiveMemoryApi {
    * @returns {{ ok: boolean, reason?: string, node?: CognitiveMemoryNode | null }}
    */
   deprecateNode(nodeId, options = {}) {
+    const frozen = this.memoryMutationFreeze('deprecate_memory_node', { nodeId: String(nodeId || '') });
+    if (frozen) return frozen;
     this.assertProfileScopedWrite('deprecateNode');
     const normalizedNodeId = normalizeWhitespace(nodeId);
     if (!normalizedNodeId) return { ok: false, reason: 'node_id_required' };
@@ -1049,6 +1066,10 @@ class CognitiveMemoryApi {
    * @returns {{ ok: boolean, reason?: string, node?: CognitiveMemoryNode | null }}
    */
   adjudicateAntibodyConflict(input = {}) {
+    const frozen = this.memoryMutationFreeze('adjudicate_memory_conflict', {
+      nodeId: String(input.nodeId || ''),
+    });
+    if (frozen) return frozen;
     this.assertProfileScopedWrite('adjudicateAntibodyConflict');
     const nodeId = normalizeWhitespace(input.nodeId);
     const conflictingNodeId = normalizeWhitespace(input.conflictingNodeId || '');
@@ -1194,6 +1215,8 @@ class CognitiveMemoryApi {
    * @returns {Promise<{ ok: boolean, reason?: string, node?: CognitiveMemoryNode }>}
    */
   async ingest(input = {}) {
+    const frozen = this.memoryMutationFreeze('ingest_cognitive_memory');
+    if (frozen) return frozen;
     const content = normalizeWhitespace(input.content || input.text || '');
     if (!content) {
       return { ok: false, reason: 'content_required' };
@@ -1260,6 +1283,10 @@ class CognitiveMemoryApi {
    * @returns {Promise<Record<string, unknown>>}
    */
   async patch(leaseId, updatedContent, options = {}) {
+    const frozen = this.memoryMutationFreeze('patch_cognitive_memory', {
+      leaseId: String(leaseId || ''),
+    });
+    if (frozen) return frozen;
     this.assertProfileScopedWrite('patch');
     const db = this.init();
     this.pruneExpiredLeases();
@@ -1378,6 +1405,10 @@ class CognitiveMemoryApi {
    * @returns {{ ok: boolean, reason?: string, updates?: Array<Record<string, unknown>> }}
    */
   applySalienceField(input = {}) {
+    const frozen = this.memoryMutationFreeze('apply_memory_salience', {
+      nodeId: String(input.nodeId || input.node_id || ''),
+    });
+    if (frozen) return frozen;
     this.assertProfileScopedWrite('applySalienceField');
     const db = this.init();
     const nodeId = normalizeWhitespace(input.nodeId || input.node_id || '');
@@ -1444,6 +1475,8 @@ class CognitiveMemoryApi {
    * @returns {{ ok: boolean, reason?: string, node?: CognitiveMemoryNode | null }}
    */
   setImmune(nodeId, value = true, options = {}) {
+    const frozen = this.memoryMutationFreeze('set_memory_immune', { nodeId: String(nodeId || '') });
+    if (frozen) return frozen;
     this.assertProfileScopedWrite('setImmune');
     const normalizedNodeId = normalizeWhitespace(nodeId);
     if (!normalizedNodeId) {

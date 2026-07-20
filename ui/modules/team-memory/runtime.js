@@ -95,6 +95,8 @@ function createTeamMemoryRuntime(options = {}) {
   const patterns = new TeamMemoryPatterns(store.db, asObject(options.patternOptions));
   const guards = new TeamMemoryGuards(store.db);
   const memoryIngestOptions = asObject(options.memoryIngestOptions);
+  const memoryMetabolismFreezeStatePath = memoryIngestOptions.freezeStatePath
+    || path.join(path.dirname(store.dbPath), 'memory-metabolism-freeze.json');
   const shutdownMarkerOptions = asObject(memoryIngestOptions.shutdownMarkerOptions);
   const shutdownMarkerFilePath = shutdownMarkerOptions.filePath
     || path.join(path.dirname(store.dbPath), 'memory-ingest-shutdown.json');
@@ -109,9 +111,11 @@ function createTeamMemoryRuntime(options = {}) {
     replayTickMs: memoryIngestOptions.replayTickMs,
     replayMaxTickMs: memoryIngestOptions.replayMaxTickMs,
     replayMaxPasses: memoryIngestOptions.replayMaxPasses,
+    freezeStatePath: memoryMetabolismFreezeStatePath,
   });
   const promotionService = new MemoryPromotionService({
     db: store.db,
+    freezeStatePath: memoryMetabolismFreezeStatePath,
   });
   const lifecycleService = new MemoryLifecycleService({
     db: store.db,

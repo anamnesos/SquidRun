@@ -5,6 +5,10 @@ const { CognitiveMemoryApi } = require('./cognitive-memory-api');
 const { CognitiveMemoryStore } = require('./cognitive-memory-store');
 const { normalizeDomain, deriveTaskScopes } = require('./team-memory/daily-integration');
 const { resolveCoordPath } = require('../config');
+const {
+  frozenMutationResult,
+  readMemoryMetabolismFreeze,
+} = require('./memory-metabolism-freeze');
 
 const DatabaseSync = getDatabaseSync();
 const IMMUNE_PROMOTION_CONFIDENCE = 0.85;
@@ -399,6 +403,18 @@ async function promoteImmuneCandidates(candidates = [], options = {}) {
 }
 
 async function runBehavioralSleepPromotion(options = {}) {
+  const freezeDbPath = options.store?.dbPath || options.api?.cognitiveStore?.dbPath || options.storeOptions?.dbPath;
+  const freeze = readMemoryMetabolismFreeze({ dbPath: freezeDbPath });
+  if (freeze.active === true) {
+    return frozenMutationResult('behavioral_sleep_promotion', {
+      scannedRecords: 0,
+      candidateCount: 0,
+      staged: 0,
+      merged: 0,
+      promoted: 0,
+      statePath: freeze.statePath,
+    });
+  }
   const records = loadSupervisorResolvedTasks({
     supervisorDbPath: options.supervisorDbPath,
     limit: options.limit,

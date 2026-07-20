@@ -2,6 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { getProjectRoot } = require('../../config');
+const {
+  frozenMutationResult,
+  readMemoryMetabolismFreeze,
+} = require('../memory-metabolism-freeze');
 
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -216,6 +220,7 @@ class MemoryPromotionService {
   constructor(options = {}) {
     this.db = options.db || null;
     this.projectRoot = resolveProjectRoot(options);
+    this.freezeStatePath = options.freezeStatePath || null;
   }
 
   requireDb() {
@@ -355,6 +360,19 @@ class MemoryPromotionService {
   }
 
   approveCandidate(candidateId, options = {}) {
+    const freeze = this.freezeStatePath
+      ? readMemoryMetabolismFreeze({ statePath: this.freezeStatePath })
+      : { active: false };
+    if (freeze.active === true) {
+      return {
+        ...frozenMutationResult('approve_memory_promotion', {
+          candidateId: String(candidateId || ''),
+          status: 'frozen',
+          statePath: freeze.statePath,
+        }),
+        ok: false,
+      };
+    }
     const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
     const reviewer = asString(options.reviewer || 'architect', 'architect');
     const candidate = this.getCandidate(candidateId);
@@ -472,6 +490,19 @@ class MemoryPromotionService {
   }
 
   rejectCandidate(candidateId, options = {}) {
+    const freeze = this.freezeStatePath
+      ? readMemoryMetabolismFreeze({ statePath: this.freezeStatePath })
+      : { active: false };
+    if (freeze.active === true) {
+      return {
+        ...frozenMutationResult('reject_memory_promotion', {
+          candidateId: String(candidateId || ''),
+          status: 'frozen',
+          statePath: freeze.statePath,
+        }),
+        ok: false,
+      };
+    }
     const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
     const reviewer = asString(options.reviewer || 'architect', 'architect');
     const candidate = this.getCandidate(candidateId);

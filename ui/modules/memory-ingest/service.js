@@ -3,6 +3,10 @@ const { hasDirectUserCorrection, resolveMemoryRoute } = require('./router');
 const { MemoryIngestJournal, safeParseJson, utcDayBucket } = require('./journal');
 const { MemoryIngestShutdownMarker } = require('./shutdown-marker');
 const { buildPromotionArtifacts, MemoryPromotionService } = require('./promotion');
+const {
+  frozenMutationResult,
+  readMemoryMetabolismFreeze,
+} = require('../memory-metabolism-freeze');
 
 const DEFAULT_REPLAY_BATCH_SIZE = 25;
 const DEFAULT_REPLAY_TICK_MS = 250;
@@ -81,10 +85,12 @@ class MemoryIngestService {
     this.idFactory = typeof options.generateId === 'function' ? options.generateId : generateId;
     this.journal = options.journal || new MemoryIngestJournal(this.db);
     this.shutdownMarker = options.shutdownMarker || new MemoryIngestShutdownMarker(asObject(options.shutdownMarkerOptions));
+    this.freezeStatePath = options.freezeStatePath || null;
     this.promotionService = options.promotionService || new MemoryPromotionService({
       db: this.db,
       projectRoot: options.projectRoot,
       workspaceRoot: options.workspaceRoot,
+      freezeStatePath: this.freezeStatePath,
     });
     this.replayBatchSize = Number.isFinite(Number(options.replayBatchSize))
       ? Math.max(1, Math.floor(Number(options.replayBatchSize)))
@@ -190,6 +196,16 @@ class MemoryIngestService {
   }
 
   ingest(payload = {}, options = {}) {
+    const freeze = this.freezeStatePath
+      ? readMemoryMetabolismFreeze({ statePath: this.freezeStatePath })
+      : { active: false };
+    if (freeze.active === true) {
+      return frozenMutationResult('memory_ingest', {
+        queued: false,
+        deduped: false,
+        statePath: freeze.statePath,
+      });
+    }
     const nowMs = nowMsFrom(options.nowMs);
     const projectRoot = options.projectRoot || payload.project_root || payload.projectRoot || payload.workspace_root || payload.workspaceRoot;
     const buildResult = buildCanonicalMemoryObject(payload, {
@@ -544,6 +560,16 @@ class MemoryIngestService {
   }
 
   routePersistedEntry(ingestId, options = {}) {
+    const freeze = this.freezeStatePath
+      ? readMemoryMetabolismFreeze({ statePath: this.freezeStatePath })
+      : { active: false };
+    if (freeze.active === true) {
+      return frozenMutationResult('memory_ingest_route', {
+        ingest_id: String(ingestId || ''),
+        queued: false,
+        statePath: freeze.statePath,
+      });
+    }
     const nowMs = nowMsFrom(options.nowMs);
     const journalEntry = this.journal.getJournalEntry(ingestId);
     if (!journalEntry) {
@@ -909,6 +935,18 @@ class MemoryIngestService {
 
   runRecoveryPass(options = {}) {
     const nowMs = nowMsFrom(options.nowMs);
+    const freeze = this.freezeStatePath
+      ? readMemoryMetabolismFreeze({ statePath: this.freezeStatePath })
+      : { active: false };
+    if (freeze.active === true) {
+      return frozenMutationResult('memory_ingest_recovery', {
+        processedEntries: 0,
+        outstandingEntries: this.journal.countOutstandingEntries(),
+        readyEntries: this.journal.countReplayableEntries(nowMs),
+        nextReplayDueAt: this.journal.getNextReplayDueAt(),
+        statePath: freeze.statePath,
+      });
+    }
     if (this.recoveryRunning) {
       return this.getStatus({ nowMs });
     }
