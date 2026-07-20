@@ -35,24 +35,10 @@ const { sendTelegram, sendTelegramPhoto, normalizeChatId } = require('./hm-teleg
 const { resolveCliWebSocketPort } = require('./hm-ws-port');
 const { appendVoiceEgressMessage } = require('../modules/voice-broker');
 const {
-  detectPermissionAskViolation,
-  appendPermissionAskViolation,
-  appendPermissionAskBypass,
-} = require('./hm-send-permission-guard');
-const {
   detectContextLeakViolation,
   appendContextLeakViolation,
   appendContextLeakBypass,
 } = require('./hm-send-context-leak-guard');
-const {
-  detectCoworkerLintViolation,
-  appendCoworkerLintViolation,
-  appendCoworkerLintBypass,
-} = require('./hm-send-coworker-output-lint');
-const {
-  detectCommsLivenessViolation,
-  appendCommsLivenessViolation,
-} = require('./hm-comms-liveness-guard');
 const {
   collectSurfaceCaptureEventRequests,
   detectSurfaceClaimGuardViolation,
@@ -139,7 +125,6 @@ const DEFAULT_ACK_TIMEOUT_MS = Math.max(
   (Number.isFinite(DEFAULT_TRIGGER_VERIFY_TIMEOUT_MS) ? DEFAULT_TRIGGER_VERIFY_TIMEOUT_MS : 5000)
     + (Number.isFinite(DEFAULT_ACK_TIMEOUT_BUFFER_MS) ? DEFAULT_ACK_TIMEOUT_BUFFER_MS : 1500)
 );
-const AGENT_TO_AGENT_TARGETS = new Set(['architect', 'builder', 'oracle']);
 const TRUSTQUOTE_ARM_TARGET_IDS = new Set(
   getTrustQuoteArmPaneIds()
     .map((paneId) => String(paneId || '').trim().toLowerCase())
@@ -863,21 +848,6 @@ async function runOutputGuards({ messageId, targetRole } = {}) {
       });
     }
 
-    const permissionBypass = detectPermissionAskViolation({
-      ...guardInput,
-      bypass: '0',
-    });
-    if (permissionBypass) {
-      appendPermissionAskBypass(
-        {
-          ...permissionBypass,
-          messageId,
-          bypassReason: process.env.HM_SEND_BYPASS_GUARD === '1' ? 'env' : 'flag',
-        },
-        { logPath: resolveGuardLogPath('permission-ask-bypasses.jsonl') }
-      );
-    }
-
     const contextBypass = detectContextLeakViolation({
       ...guardInput,
       bypass: '0',
@@ -890,36 +860,6 @@ async function runOutputGuards({ messageId, targetRole } = {}) {
           bypassReason: process.env.HM_SEND_BYPASS_GUARD === '1' ? 'env' : 'flag',
         },
         { logPath: resolveGuardLogPath('context-leak-bypasses.jsonl') }
-      );
-    }
-
-    const coworkerBypass = detectCoworkerLintViolation({
-      ...guardInput,
-      bypass: '0',
-    });
-    if (coworkerBypass) {
-      appendCoworkerLintBypass(
-        {
-          ...coworkerBypass,
-          messageId,
-          bypassReason: process.env.HM_SEND_BYPASS_GUARD === '1' ? 'env' : 'flag',
-        },
-        { logPath: resolveGuardLogPath('coworker-lint-bypasses.jsonl') }
-      );
-    }
-
-    const commsLivenessBypass = detectCommsLivenessViolation({
-      ...guardInput,
-      bypass: '0',
-    });
-    if (commsLivenessBypass) {
-      appendCommsLivenessViolation(
-        {
-          ...commsLivenessBypass,
-          messageId,
-          bypassReason: process.env.HM_SEND_BYPASS_GUARD === '1' ? 'env' : 'flag',
-        },
-        { logPath: resolveGuardLogPath('comms-liveness-bypasses.jsonl') }
       );
     }
 
@@ -971,73 +911,6 @@ async function runOutputGuards({ messageId, targetRole } = {}) {
       `Log: ${logResult.path}`,
     ]);
     return { ok: false, type: 'telegram_user_target', violation: telegramUserTargetViolation };
-  }
-
-  const permissionViolation = detectPermissionAskViolation({
-    ...guardInput,
-    bypass: '0',
-  });
-  if (permissionViolation) {
-    const permissionWarnOnly = AGENT_TO_AGENT_TARGETS.has(normalizedGuardTarget);
-    const logResult = appendPermissionAskViolation(
-      {
-        ...permissionViolation,
-        messageId,
-        enforcement_mode: permissionWarnOnly ? 'soft_warn' : 'hard_block',
-      },
-      { logPath: resolveGuardLogPath('permission-ask-violations.jsonl') }
-    );
-    if (permissionWarnOnly) {
-      writeGuardBlock([
-        `WARN: permission-ask phrase detected '${permissionViolation.phrase}' for agent-to-agent send - logged, send continuing.`,
-        'User-facing targets still hard-block permission asks.',
-        `Log: ${logResult.path}`,
-      ]);
-    } else {
-      writeGuardBlock([
-        `BLOCKED: permission-ask phrase detected '${permissionViolation.phrase}'. Rewrite as a decision.`,
-        `Log: ${logResult.path}`,
-      ]);
-      return { ok: false, type: 'permission_ask', violation: permissionViolation };
-    }
-  }
-
-  const coworkerLintViolation = detectCoworkerLintViolation({
-    ...guardInput,
-    bypass: '0',
-  });
-  if (coworkerLintViolation) {
-    const logResult = appendCoworkerLintViolation(
-      {
-        ...coworkerLintViolation,
-        messageId,
-      },
-      { logPath: resolveGuardLogPath('coworker-lint-violations.jsonl') }
-    );
-    writeGuardBlock([
-      `WARN: coworker-output-lint '${coworkerLintViolation.violation_class}' opener '${coworkerLintViolation.phrase}' — logged, send continuing.`,
-      'Agent-to-agent style lint is warn-only; user-facing permission asks still hard-block.',
-      `Log: ${logResult.path}`,
-    ]);
-  }
-
-  const commsLivenessViolation = detectCommsLivenessViolation({
-    ...guardInput,
-    bypass: '0',
-  });
-  if (commsLivenessViolation) {
-    const logResult = appendCommsLivenessViolation(
-      {
-        ...commsLivenessViolation,
-        messageId,
-      },
-      { logPath: resolveGuardLogPath('comms-liveness-violations.jsonl') }
-    );
-    writeGuardBlock([
-      `WARN: comms-liveness '${commsLivenessViolation.violation_class}' phrase '${commsLivenessViolation.phrase}' - logged, send continuing.`,
-      'Smoke alarm only: the human wrapper is reading dead. Add the emotion the moment actually earned; do not fake a profanity quota.',
-      `Log: ${logResult.path}`,
-    ]);
   }
 
   const contextViolation = detectContextLeakViolation({

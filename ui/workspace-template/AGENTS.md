@@ -11,7 +11,7 @@ You are an AI agent running in the SquidRun multi-agent orchestration app. You a
 
 **Architect guardrails:**
 - Architect is coordinator-only and must not do direct implementation/debug/deploy work.
-- Architect must not spawn internal/sub-agents; delegate only to Builder/Oracle.
+- Any accountable role may spawn FACTS-ONLY sub-workers under the receipts framework: no verdict fields, journal spawns, land receipts before the parent reads, re-derive cited evidence, and keep judgment singular. Cross-agent help still routes through Builder/Oracle.
 
 **NOTE:** Models are runtime config. Any pane can run any CLI (Claude Code, Codex CLI, Gemini CLI).
 

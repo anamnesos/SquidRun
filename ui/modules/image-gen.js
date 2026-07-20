@@ -1,7 +1,7 @@
 /**
  * Image Generation Module
- * Primary: Recraft V3, Fallback: OpenAI gpt-image-1
- * Auto-fallback logic, image download+save, history.
+ * Recraft V3 and OpenAI gpt-image-1 with explicit, fail-closed provider
+ * selection. Provider failures never switch the requested craft path.
  */
 
 const fs = require('fs');
@@ -28,11 +28,34 @@ function resolveOpenAiKey() {
 }
 
 function resolveProvider(preferred) {
-  if (preferred === 'recraft' && resolveRecraftKey()) return 'recraft';
-  if (preferred === 'openai' && resolveOpenAiKey()) return 'openai';
+  const requested = String(preferred || '').trim().toLowerCase();
+  if (requested === 'recraft') return resolveRecraftKey() ? 'recraft' : null;
+  if (requested === 'openai') return resolveOpenAiKey() ? 'openai' : null;
+  if (requested) return null;
   if (resolveRecraftKey()) return 'recraft';
   if (resolveOpenAiKey()) return 'openai';
   return null;
+}
+
+function validateImageRequest({ provider, style, size } = {}) {
+  if (!['recraft', 'openai'].includes(provider)) {
+    throw new Error(`Unsupported image provider '${provider || 'unknown'}'. Use recraft or openai.`);
+  }
+  if (provider === 'recraft') {
+    if (style && !RECRAFT_STYLES.includes(style)) {
+      throw new Error(`Unsupported Recraft style '${style}'. Allowed: ${RECRAFT_STYLES.join(', ')}.`);
+    }
+    if (size && !RECRAFT_SIZES.includes(size)) {
+      throw new Error(`Unsupported Recraft size '${size}'. Allowed: ${RECRAFT_SIZES.join(', ')}.`);
+    }
+    return;
+  }
+  if (style) {
+    throw new Error('The --style option is Recraft-only. Choose provider recraft or express the style in the OpenAI prompt.');
+  }
+  if (size && !OPENAI_SIZES.includes(size)) {
+    throw new Error(`Unsupported OpenAI size '${size}'. Allowed: ${OPENAI_SIZES.join(', ')}.`);
+  }
 }
 
 function ensureDir(dirPath) {
@@ -159,8 +182,8 @@ async function callRecraftApi({ prompt, style, size }) {
   const apiKey = resolveRecraftKey();
   if (!apiKey) throw new Error('RECRAFT_API_KEY is not set');
 
-  const effectiveStyle = RECRAFT_STYLES.includes(style) ? style : 'realistic_image';
-  const effectiveSize = RECRAFT_SIZES.includes(size) ? size : '1024x1024';
+  const effectiveStyle = style || 'realistic_image';
+  const effectiveSize = size || '1024x1024';
 
   const payload = await fetchWithRetry('https://external.api.recraft.ai/v1/images/generations', {
     method: 'POST',
@@ -185,7 +208,7 @@ async function callOpenAiImageApi({ prompt, size }) {
   const apiKey = resolveOpenAiKey();
   if (!apiKey) throw new Error('OPENAI_API_KEY is not set');
 
-  const effectiveSize = OPENAI_SIZES.includes(size) ? size : '1024x1024';
+  const effectiveSize = size || '1024x1024';
 
   const payload = await fetchWithRetry('https://api.openai.com/v1/images/generations', {
     method: 'POST',
@@ -243,11 +266,20 @@ async function generateImage({ prompt, provider: preferredProvider, style, size 
   }
 
   const effectivePrompt = String(prompt).trim();
-  const resolvedProvider = resolveProvider(preferredProvider);
+  const requestedProvider = String(preferredProvider || '').trim().toLowerCase();
+  if (requestedProvider && !['recraft', 'openai'].includes(requestedProvider)) {
+    throw new Error(`Unsupported image provider '${preferredProvider}'. Use recraft or openai.`);
+  }
+  const resolvedProvider = resolveProvider(requestedProvider);
 
   if (!resolvedProvider) {
+    if (requestedProvider) {
+      const keyName = requestedProvider === 'recraft' ? 'RECRAFT_API_KEY' : 'OPENAI_API_KEY';
+      throw new Error(`${keyName} is not set; automatic provider fallback is disabled.`);
+    }
     throw new Error('No image generation API key available. Set RECRAFT_API_KEY or OPENAI_API_KEY.');
   }
+  validateImageRequest({ provider: resolvedProvider, style, size });
 
   ensureDir(GENERATED_IMAGES_DIR);
   const basename = generateBasename();
@@ -261,14 +293,7 @@ async function generateImage({ prompt, provider: preferredProvider, style, size 
       await downloadImage(recraftResult.imageUrl, destPath);
       usedProvider = 'recraft';
     } catch (err) {
-      log.warn('ImageGen', `Recraft failed: ${err.message}. Trying OpenAI fallback...`);
-      if (!resolveOpenAiKey()) {
-        throw new Error(`Recraft failed: ${err.message}. No OpenAI fallback key available.`);
-      }
-      const openaiResult = await callOpenAiImageApi({ prompt: effectivePrompt, size });
-      const buffer = Buffer.from(openaiResult.b64, 'base64');
-      fs.writeFileSync(destPath, buffer);
-      usedProvider = 'openai';
+      throw new Error(`Recraft failed: ${err.message}. Automatic provider fallback is disabled.`);
     }
   } else {
     const openaiResult = await callOpenAiImageApi({ prompt: effectivePrompt, size });
@@ -313,6 +338,7 @@ module.exports = {
   generateImage,
   removeHistoryEntryByPath,
   resolveProvider,
+  validateImageRequest,
   detectImageExt,
   RECRAFT_STYLES,
   RECRAFT_SIZES,

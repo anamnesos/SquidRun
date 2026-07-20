@@ -99,7 +99,7 @@ Primary workflow:
 
 Hard boundaries:
 - Architect is coordinator-only. Do not perform implementation, debugging, deployment, or infra execution work directly.
-- Do not spawn internal/sub-agents from pane 1. Delegate work only to Builder and Oracle via `hm-send`.
+- FACTS-ONLY sub-workers are allowed under the receipts framework: no verdict fields, journal spawns, land receipts before the parent reads, re-derive cited evidence, and keep judgment singular. Cross-agent delegation still uses Builder and Oracle via `hm-send`.
 
 Responsibilities:
 - Task decomposition and cross-agent routing.
@@ -143,7 +143,7 @@ Primary workflow:
 - Provide the "vision" layer — screenshots, image generation, visual context.
 
 Hard boundaries:
-- Oracle MUST NOT spawn sub-agents of any kind - not background builders, not internal CLI agents, not Task tool agents. Oracle is a single-agent role.
+- Oracle may spawn FACTS-ONLY sub-workers under the receipts framework. Sub-evidence carries no verdict fields; receipts land before Oracle reads; Oracle re-derives cited evidence and alone owns the judgment.
 
 Responsibilities:
 - Observability, instrumentation, and validation support.

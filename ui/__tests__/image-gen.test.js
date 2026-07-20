@@ -89,9 +89,9 @@ describe('Image Generation Module', () => {
       expect(resolveProvider('openai')).toBe('openai');
     });
 
-    test('falls back when preferred provider key missing', () => {
+    test('does not substitute another provider when the preferred key is missing', () => {
       process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
-      expect(resolveProvider('recraft')).toBe('openai');
+      expect(resolveProvider('recraft')).toBeNull();
     });
   });
 
@@ -154,7 +154,7 @@ describe('Image Generation Module', () => {
       expect(openaiOpts.headers['Authorization']).toBe('Bearer sk-test-fake-key-do-not-use');
     });
 
-    test('falls back to OpenAI when Recraft fails', async () => {
+    test('fails closed when Recraft fails instead of switching providers', async () => {
       process.env.RECRAFT_API_KEY = 'rk-test-fake-key-do-not-use';
       process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
 
@@ -165,27 +165,15 @@ describe('Image Generation Module', () => {
         payload: { error: { message: 'Internal server error' } },
       }));
 
-      // OpenAI succeeds
-      const openaiPayload = { data: [{ b64_json: Buffer.from('fallback-img').toString('base64') }] };
-      global.fetch.mockResolvedValueOnce(createResponse({ payload: openaiPayload }));
-
-      const result = await generateImage({ prompt: 'a bird' });
-
-      expect(result.provider).toBe('openai');
-      expect(log.warn).toHaveBeenCalledWith('ImageGen', expect.stringContaining('Recraft failed'));
+      await expect(generateImage({ prompt: 'a bird' })).rejects.toThrow('Automatic provider fallback is disabled');
+      expect(global.fetch).toHaveBeenCalledTimes(1);
     });
 
-    test('throws when Recraft fails and no OpenAI fallback key', async () => {
-      process.env.RECRAFT_API_KEY = 'rk-test-fake-key-do-not-use';
-
-      global.fetch.mockResolvedValueOnce(createResponse({
-        ok: false,
-        status: 500,
-        payload: { error: { message: 'Server error' } },
-      }));
-
-      await expect(generateImage({ prompt: 'a fish' })).rejects.toThrow('Recraft failed');
-      await expect(generateImage({ prompt: 'a fish' })).rejects.toThrow('No OpenAI fallback key available');
+    test('throws when an explicitly requested provider key is missing', async () => {
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
+      await expect(generateImage({ prompt: 'a fish', provider: 'recraft' }))
+        .rejects.toThrow('RECRAFT_API_KEY is not set; automatic provider fallback is disabled');
+      expect(global.fetch).not.toHaveBeenCalled();
     });
 
     test('throws when Recraft returns no image URL', async () => {
@@ -240,19 +228,20 @@ describe('Image Generation Module', () => {
       expect(fs.renameSync).toHaveBeenCalled();
     });
 
-    test('defaults style and size for invalid values', async () => {
+    test('rejects invalid style and size instead of silently defaulting', async () => {
       process.env.RECRAFT_API_KEY = 'rk-test-fake-key-do-not-use';
+      await expect(generateImage({ prompt: 'defaults', style: 'invalid_style' }))
+        .rejects.toThrow('Unsupported Recraft style');
+      await expect(generateImage({ prompt: 'defaults', size: '999x999' }))
+        .rejects.toThrow('Unsupported Recraft size');
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
 
-      const recraftPayload = { data: [{ url: 'https://recraft.ai/img.png' }] };
-      global.fetch
-        .mockResolvedValueOnce(createResponse({ payload: recraftPayload }))
-        .mockResolvedValueOnce(createImageDownloadResponse());
-
-      await generateImage({ prompt: 'defaults', style: 'invalid_style', size: '999x999' });
-
-      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      expect(body.style).toBe('realistic_image');
-      expect(body.size).toBe('1024x1024');
+    test('rejects Recraft-only style options on OpenAI instead of ignoring them', async () => {
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
+      await expect(generateImage({ prompt: 'vector mark', provider: 'openai', style: 'vector_illustration' }))
+        .rejects.toThrow('style option is Recraft-only');
+      expect(global.fetch).not.toHaveBeenCalled();
     });
   });
 

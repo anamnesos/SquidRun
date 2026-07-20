@@ -20,7 +20,7 @@ Before ANY agent states "we can't", "we don't have access", "there is no tool", 
 
 - Scoped side-profile routing and recipient details are private operating context.
 - Keep public docs generic. Store real chat IDs, customer/case names, and external private project paths in ignored local overlays or environment configuration.
-- Use `node ui/scripts/hm-send.js builder|oracle --file <filepath>` for agent-to-agent help. Do not use Claude Code subagents inside SquidRun.
+- Use `node ui/scripts/hm-send.js builder|oracle --file <filepath>` for agent-to-agent help. Sub-agent fan-out is allowed under the receipts framework (AGENTS.md:14, James 2026-07-10); judgment stays singular with the spawning address.
 
 ## On Startup (MANDATORY)
 

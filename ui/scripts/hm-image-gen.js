@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * hm-image-gen: CLI tool for agents to trigger image generation via the SquidRun app.
- * Usage: node ui/scripts/hm-image-gen.js "a flaming gear icon" [--style realistic_image] [--size 1024x1024]
+ * Usage: node ui/scripts/hm-image-gen.js "a flaming gear icon" [--provider recraft|openai] [--style realistic_image] [--size 1024x1024]
  *
  * Sends a WebSocket message to the main process, which generates the image
  * using the configured API keys and pushes the result to the Image tab UI.
@@ -15,8 +15,9 @@ const TIMEOUT_MS = 90000; // 90s — image gen can be slow
 const args = process.argv.slice(2);
 
 if (args.length < 1 || args[0] === '--help') {
-  console.log('Usage: node hm-image-gen.js <prompt> [--style <style>] [--size <size>]');
+  console.log('Usage: node hm-image-gen.js <prompt> [--provider recraft|openai] [--style <style>] [--size <size>]');
   console.log('  prompt: Text description of the image to generate');
+  console.log('  --provider: Explicit provider (recraft or openai); provider failures never auto-fallback');
   console.log('  --style: Image style (realistic_image, digital_illustration, vector_illustration)');
   console.log('  --size: Image size (1024x1024, 1365x1024, 1024x1365, 1536x1024, 1024x1536)');
   console.log('\nExamples:');
@@ -37,8 +38,11 @@ const prompt = promptParts.join(' ');
 // Parse --flags
 let style = null;
 let size = null;
+let provider = null;
 for (; i < args.length; i++) {
-  if (args[i] === '--style' && args[i + 1]) {
+  if (args[i] === '--provider' && args[i + 1]) {
+    provider = args[++i];
+  } else if (args[i] === '--style' && args[i + 1]) {
     style = args[++i];
   } else if (args[i] === '--size' && args[i + 1]) {
     size = args[++i];
@@ -59,6 +63,7 @@ ws.on('open', () => {
 
   // Send image generation request
   const payload = { type: 'image-gen', prompt: prompt.trim() };
+  if (provider) payload.provider = provider;
   if (style) payload.style = style;
   if (size) payload.size = size;
 

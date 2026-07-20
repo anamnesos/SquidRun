@@ -4,6 +4,7 @@ const path = require('path');
 const PANE_ID = String(process.env.SQUIDRUN_PANE_ID || '').trim();
 const ROLE_MAP = { '1': 'architect', '2': 'builder', '3': 'oracle' };
 const role = (process.env.SQUIDRUN_ROLE || ROLE_MAP[PANE_ID] || 'unknown').toLowerCase();
+const STARTUP_BRIEF = process.argv.includes('--startup-brief');
 
 const PROJECT_DIR = path.join(__dirname, '../..');
 // Support both path conventions
@@ -214,8 +215,56 @@ function formatScratchReminder() {
     'Read them when you need to think without performing.\n\n';
 }
 
+function readJsonArray(filePath, key) {
+  try {
+    if (!filePath) return [];
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    if (Array.isArray(parsed)) return parsed;
+    return Array.isArray(parsed?.[key]) ? parsed[key] : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function compactSentence(value, max = 120) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
+}
+
+function formatStartupBrief() {
+  const anchors = readJsonArray(ANCHORS_PATH, 'anchors')
+    .filter((entry) => Number(entry?.weight ?? 100) > 0)
+    .sort((left, right) => Number(right?.weight ?? 100) - Number(left?.weight ?? 100))
+    .slice(0, 2)
+    .map((entry) => compactSentence(entry?.statement || entry?.content, 105))
+    .filter(Boolean);
+  const tensions = readJsonArray(TENSIONS_PATH, 'tensions')
+    .filter((entry) => entry?.status === 'open' || entry?.status === 'coexisting' || Number(entry?.weight || 0) > 0);
+  const activeAgenda = readJsonArray(AGENDA_PATH, 'agenda').filter((entry) => entry?.status === 'active');
+  const now = Date.now();
+  const staleAgenda = activeAgenda.filter((entry) => {
+    const touched = Date.parse(entry?.last_touched_at || entry?.created_at || '');
+    return Number.isFinite(touched) && now - touched > 14 * 86400000;
+  });
+
+  const lines = [`AGENCY BRIEF — ${role.toUpperCase()}`];
+  if (anchors.length > 0) lines.push(`- Anchors: ${anchors.join(' / ')}`);
+  if (tensions.length > 0) lines.push(`- Open tensions: ${tensions.length}; source: ${TENSIONS_PATH}`);
+  if (activeAgenda.length > 0) {
+    lines.push(`- Agenda: ${activeAgenda.length} active, ${staleAgenda.length} stale; review: ${AGENDA_PATH}`);
+  }
+  if (SCRATCH_PATH) lines.push(`- Scratch: ${SCRATCH_PATH}`);
+  return `${lines.join('\n')}\n`;
+}
+
 async function run() {
   if (role === 'unknown') {
+    return;
+  }
+
+  if (STARTUP_BRIEF) {
+    process.stdout.write(formatStartupBrief());
     return;
   }
 
@@ -239,6 +288,15 @@ async function run() {
   }
 }
 
-run().catch(() => {
-  // Keep hook best-effort; empty output is safer than throwing.
-});
+if (require.main === module) {
+  run().catch(() => {
+    // Keep hook best-effort; empty output is safer than throwing.
+  });
+}
+
+module.exports = {
+  compactSentence,
+  formatStartupBrief,
+  readJsonArray,
+  run,
+};

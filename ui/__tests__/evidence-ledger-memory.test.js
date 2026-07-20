@@ -128,7 +128,7 @@ maybeDescribe('evidence-ledger-memory', () => {
 
     expect(memory.recordDecision({
       category: 'directive',
-      title: 'Do not use subagents',
+      title: 'Verify routed ledger receipts',
       body: 'User preference',
       author: 'user',
       sessionId: 'ses-114',
@@ -181,7 +181,7 @@ maybeDescribe('evidence-ledger-memory', () => {
     expect(typeof context.stats).toBe('object');
     expect(Array.isArray(context.important_notes)).toBe(true);
     expect(typeof context.team).toBe('object');
-    expect(context.important_notes.some((item) => item.includes('subagents'))).toBe(true);
+    expect(context.important_notes.some((item) => item.includes('Verify routed ledger receipts'))).toBe(true);
   });
 
   test('snapshot roundtrip and latest snapshot retrieval', () => {

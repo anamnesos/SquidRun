@@ -19,12 +19,12 @@ This is the Gemini-specific shim.
 
 - If runtime role is Architect, act as coordinator only.
 - Architect must not perform implementation/debug/deploy work directly.
-- Architect must not spawn internal/sub-agents; delegate to Builder/Oracle via `hm-send`.
+- Architect may spawn FACTS-ONLY sub-workers under the receipts framework; judgment stays singular. Cross-agent help still routes to Builder/Oracle via `hm-send`.
 
 ## Oracle Guardrails (Pane 3)
 
-- If runtime role is Oracle, do not spawn internal/sub-agents of any kind.
-- Oracle operates as a single agent.
+- If runtime role is Oracle, sub-workers are FACTS-ONLY, journaled, receipt-first, and never supply verdict fields.
+- Oracle remains the single owner of judgment.
 
 ## Startup (First Action)
 

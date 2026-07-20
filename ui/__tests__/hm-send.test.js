@@ -319,142 +319,13 @@ describe('hm-send retry behavior', () => {
     }
   });
 
-  test('warns on permission-ask phrases for agent-to-agent sends without blocking delivery', async () => {
+  test('does not regex-police natural coworker language', async () => {
     const tempProject = createLinkedProject();
     const sendAttempts = [];
     const { server, port } = await startAckServer(sendAttempts);
-    const logPath = path.join(tempProject, '.squidrun', 'runtime', 'permission-ask-violations.jsonl');
 
     try {
-      const result = await runHmSend(
-        ['architect', 'test should I send this?', '--role', 'oracle', '--timeout', '80', '--retries', '0', '--no-fallback'],
-        { HM_SEND_PORT: String(port) },
-        { cwd: tempProject }
-      );
-
-      expect(result.code).toBe(0);
-      expect(sendAttempts).toHaveLength(1);
-      expect(result.stdout).toContain('delivered to architect');
-      expect(result.stderr).toContain('WARN: permission-ask phrase detected');
-      expect(result.stderr).toContain('send continuing');
-      expect(fs.existsSync(logPath)).toBe(true);
-      const entries = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
-      expect(entries).toHaveLength(1);
-      expect(entries[0]).toMatchObject({
-        type: 'permission_ask',
-        senderRole: 'oracle',
-        targetRole: 'architect',
-        phrase: 'should I',
-        enforcement_mode: 'soft_warn',
-      });
-    } finally {
-      fs.rmSync(tempProject, { recursive: true, force: true });
-      await new Promise((resolve) => server.close(resolve));
-    }
-  });
-
-  test('warns on coworker lint for agent-to-agent sends even when legacy hard env is set', async () => {
-    const tempProject = createLinkedProject();
-    const sendAttempts = [];
-    const { server, port } = await startAckServer(sendAttempts);
-    const logPath = path.join(tempProject, '.squidrun', 'runtime', 'coworker-lint-violations.jsonl');
-
-    try {
-      const result = await runHmSend(
-        ['architect', 'Good catch on the guard false positive.', '--role', 'builder', '--timeout', '80', '--retries', '0', '--no-fallback'],
-        { HM_SEND_PORT: String(port), HM_SEND_COWORKER_LINT_HARD: '1' },
-        { cwd: tempProject }
-      );
-
-      expect(result.code).toBe(0);
-      expect(sendAttempts).toHaveLength(1);
-      expect(result.stdout).toContain('delivered to architect');
-      expect(result.stderr).toContain('WARN: coworker-output-lint');
-      expect(result.stderr).toContain('send continuing');
-      expect(result.stderr).not.toContain('BLOCKED: coworker-output-lint');
-      expect(fs.existsSync(logPath)).toBe(true);
-      const entries = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
-      expect(entries).toHaveLength(1);
-      expect(entries[0]).toMatchObject({
-        type: 'coworker_lint',
-        senderRole: 'builder',
-        targetRole: 'architect',
-        violation_class: 'sycophancy_opener',
-        enforcement_mode: 'soft_warn',
-      });
-    } finally {
-      fs.rmSync(tempProject, { recursive: true, force: true });
-      await new Promise((resolve) => server.close(resolve));
-    }
-  });
-
-  test('blocks permission-ask phrases for user-facing sends and logs the violation', async () => {
-    const tempProject = createLinkedProject();
-    const logPath = path.join(tempProject, '.squidrun', 'runtime', 'permission-ask-violations.jsonl');
-
-    try {
-      const result = await runHmSend(
-        ['telegram', 'test should I send this?', '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
-        { TELEGRAM_BOT_TOKEN: '123:test' },
-        { cwd: tempProject }
-      );
-
-      expect(result.code).toBe(1);
-      expect(result.stderr).toContain('BLOCKED: permission-ask phrase detected');
-      expect(result.stderr).toContain('Rewrite as a decision');
-      expect(fs.existsSync(logPath)).toBe(true);
-      const entries = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
-      expect(entries).toHaveLength(1);
-      expect(entries[0]).toMatchObject({
-        type: 'permission_ask',
-        senderRole: 'architect',
-        targetRole: 'telegram',
-        phrase: 'should I',
-        enforcement_mode: 'hard_block',
-      });
-    } finally {
-      fs.rmSync(tempProject, { recursive: true, force: true });
-    }
-  });
-
-  test('allows permission-ask phrases with bypass flag and logs the bypass', async () => {
-    const tempProject = createLinkedProject();
-    const sendAttempts = [];
-    const { server, port } = await startAckServer(sendAttempts);
-    const bypassLogPath = path.join(tempProject, '.squidrun', 'runtime', 'permission-ask-bypasses.jsonl');
-
-    try {
-      const result = await runHmSend(
-        ['architect', 'test should I send this?', '--bypass-guard', '--timeout', '80', '--retries', '0', '--no-fallback'],
-        { HM_SEND_PORT: String(port) },
-        { cwd: tempProject }
-      );
-
-      expect(result.code).toBe(0);
-      expect(sendAttempts).toHaveLength(1);
-      expect(result.stdout).toContain('delivered to architect');
-      expect(fs.existsSync(bypassLogPath)).toBe(true);
-      const entries = fs.readFileSync(bypassLogPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
-      expect(entries).toHaveLength(1);
-      expect(entries[0]).toMatchObject({
-        type: 'permission_ask_bypass',
-        targetRole: 'architect',
-        phrase: 'should I',
-      });
-    } finally {
-      fs.rmSync(tempProject, { recursive: true, force: true });
-      await new Promise((resolve) => server.close(resolve));
-    }
-  });
-
-  test('warns and logs dead comms liveness without blocking delivery', async () => {
-    const tempProject = createLinkedProject();
-    const sendAttempts = [];
-    const { server, port } = await startAckServer(sendAttempts);
-    const logPath = path.join(tempProject, '.squidrun', 'runtime', 'comms-liveness-violations.jsonl');
-
-    try {
-      const message = '(ORACLE #9): PASS. 4 suites / 21 tests. Caps unchanged. Standing by.';
+      const message = '(ORACLE #9): PASS. Good catch. Your call was right; should I quote the old failure in the audit?';
       const result = await runHmSend(
         ['architect', message, '--role', 'oracle', '--timeout', '80', '--retries', '0', '--no-fallback'],
         { HM_SEND_PORT: String(port) },
@@ -464,16 +335,10 @@ describe('hm-send retry behavior', () => {
       expect(result.code).toBe(0);
       expect(sendAttempts).toHaveLength(1);
       expect(result.stdout).toContain('delivered to architect');
-      expect(result.stderr).toContain("WARN: comms-liveness 'dead_packet_opener'");
-      expect(result.stderr).toContain('send continuing');
-      expect(fs.existsSync(logPath)).toBe(true);
-      const [entry] = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
-      expect(entry).toEqual(expect.objectContaining({
-        type: 'comms_liveness',
-        enforcement_mode: 'soft_warn',
-        violation_class: 'dead_packet_opener',
-        targetRole: 'architect',
-      }));
+      expect(result.stderr).not.toMatch(/permission-ask|coworker-output-lint|comms-liveness/i);
+      expect(fs.existsSync(path.join(tempProject, '.squidrun', 'runtime', 'permission-ask-violations.jsonl'))).toBe(false);
+      expect(fs.existsSync(path.join(tempProject, '.squidrun', 'runtime', 'coworker-lint-violations.jsonl'))).toBe(false);
+      expect(fs.existsSync(path.join(tempProject, '.squidrun', 'runtime', 'comms-liveness-violations.jsonl'))).toBe(false);
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
       await new Promise((resolve) => server.close(resolve));

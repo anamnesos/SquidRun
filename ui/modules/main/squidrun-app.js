@@ -4832,11 +4832,11 @@ class SquidRunApp {
 
           // Handle image generation requests from agents
           if (data.message.type === 'image-gen') {
-            const { prompt, style, size } = data.message;
+            const { prompt, provider, style, size } = data.message;
             log.info('WebSocket', `Image gen request from ${data.role || 'unknown'}: "${(prompt || '').substring(0, 60)}"`);
             try {
               const { generateImage } = require('../image-gen');
-              const result = await generateImage({ prompt, style, size });
+              const result = await generateImage({ prompt, provider, style, size });
               // Push result to renderer UI
               if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
                 this.ctx.mainWindow.webContents.send('oracle:image-generated', {

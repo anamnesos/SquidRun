@@ -83,7 +83,7 @@ maybeDescribe('evidence-ledger-memory seed utility', () => {
       mode: 'PTY',
       status: 'ACTIVE',
       completed: ['Slice 2 Phase C committed'],
-      important_notes: ['Do not use subagents'],
+      important_notes: ['Verify routed ledger receipts'],
       roadmap: ['Slice 3 Phase B'],
       known_issues: {
         'ERR-009': 'Investigating startup race',
@@ -123,6 +123,6 @@ maybeDescribe('evidence-ledger-memory seed utility', () => {
     expect(Array.isArray(context.important_notes)).toBe(true);
     expect(context.known_issues['ERR-009']).toBe('Investigating startup race');
     expect(context.completed.some((item) => item.includes('Slice 2 Phase C committed'))).toBe(true);
-    expect(context.important_notes.some((item) => item.includes('Do not use subagents'))).toBe(true);
+    expect(context.important_notes.some((item) => item.includes('Verify routed ledger receipts'))).toBe(true);
   });
 });
