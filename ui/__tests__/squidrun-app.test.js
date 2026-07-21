@@ -4772,6 +4772,92 @@ describe('SquidRunApp', () => {
       jest.useRealTimers();
     });
 
+    it('suppresses builder-to-oracle watchdog when the task directs a PASS/HOLD verdict to architect', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      queryCommsJournalEntries.mockReturnValue([
+        {
+          rowId: 75766,
+          messageId: 'm-oracle-production-gate-pass',
+          senderRole: 'oracle',
+          targetRole: 'architect',
+          channel: 'ws',
+          direction: 'outbound',
+          status: 'routed',
+          rawBody: '(ORACLE — PRODUCTION GATE: PASS. The ship is verified live on both domains.)',
+          brokeredAtMs: new Date('2026-03-28T10:15:15').getTime(),
+        },
+      ]);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-480';
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'oracle',
+        content: '(BUILDER #108): Independent production gate requested. Please independently audit production. Reply PASS/HOLD to Architect with evidence.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      })).toBe(true);
+
+      jest.advanceTimersByTime(30 * 1000);
+
+      expect(spawn).not.toHaveBeenCalled();
+      expect(app.pendingAgentResponseWatchdogs.size).toBe(0);
+
+      jest.useRealTimers();
+    });
+
+    it('does not treat unrelated redirected chatter as a PASS/HOLD watchdog response', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-redirect-negative-'));
+      try {
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            rowId: 75766,
+            messageId: 'm-oracle-unrelated-update',
+            senderRole: 'oracle',
+            targetRole: 'architect',
+            channel: 'ws',
+            direction: 'outbound',
+            status: 'routed',
+            rawBody: '(ORACLE #44): I am reviewing a separate kernel note.',
+            brokeredAtMs: new Date('2026-03-28T10:15:15').getTime(),
+          },
+        ]);
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.agentResponseWatchdogWorkItemRoot = path.join(tempRoot, 'runtime', 'work-items');
+        app.agentResponseWatchdogCurrentLanePath = path.join(tempRoot, 'handoffs', 'current-lane.json');
+
+        expect(app.scheduleAgentResponseWatchdog({
+          senderRole: 'builder',
+          targetRole: 'oracle',
+          content: '(BUILDER #108): Independent production gate requested. Please independently audit production. Reply PASS/HOLD to Architect with evidence.',
+          sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+        })).toBe(true);
+
+        jest.advanceTimersByTime(30 * 1000);
+
+        expect(spawn).toHaveBeenCalledWith(
+          'node',
+          expect.arrayContaining([
+            expect.stringContaining(path.join('scripts', 'hm-send.js')),
+            'builder',
+            expect.stringContaining('No response from oracle to builder'),
+            '--role',
+            'system',
+          ]),
+          expect.objectContaining({ windowsHide: true })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
     it('does not watchdog messages that explicitly say no reply is needed', () => {
       jest.useFakeTimers();
       const app = new SquidRunApp(mockAppContext, mockManagers);

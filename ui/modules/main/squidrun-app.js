@@ -800,6 +800,47 @@ function normalizeWatchdogAgentRole(role) {
   return normalized;
 }
 
+function extractWatchdogRedirectedResponseDirective(content) {
+  const text = stripLeadingAgentSequencePrefix(content);
+  if (!text) return null;
+  const match = text.match(/\breply\b([^\r\n.]{0,120}?)\bto\s+(architect|arch|builder|oracle)\b/i);
+  if (!match) return null;
+
+  const recipientRole = normalizeWatchdogAgentRole(
+    String(match[2] || '').toLowerCase() === 'arch' ? 'architect' : match[2]
+  );
+  if (!recipientRole) return null;
+
+  const expectedSignals = Array.from(new Set(
+    (String(match[1] || '').match(/\b(?:pass|hold|accept|accepted|reject|rejected|complete|completed|done|blocked|verified)\b/gi) || [])
+      .map((signal) => signal.toLowerCase())
+  ));
+  if (expectedSignals.length === 0) return null;
+
+  return { recipientRole, expectedSignals };
+}
+
+function isWatchdogRedirectedResponseProof(entry = {}, row = {}) {
+  const directive = extractWatchdogRedirectedResponseDirective(entry.content);
+  if (!directive) return false;
+
+  const expectedSenderRole = normalizeWatchdogAgentRole(entry.targetRole);
+  const candidateSenderRole = normalizeWatchdogAgentRole(row.senderRole || row.sender);
+  const candidateTargetRole = normalizeWatchdogAgentRole(row.targetRole || row.target);
+  if (!expectedSenderRole || candidateSenderRole !== expectedSenderRole) return false;
+  if (candidateTargetRole !== directive.recipientRole) return false;
+
+  const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const statusCandidates = [row.status, row.ackStatus, row.ack_status, metadata.status];
+  const hasDeliveryProof = metadata.deliveryVerified === true || statusCandidates.some((status) => (
+    ['routed', 'brokered', 'acked', 'delivered.verified'].includes(normalizeWatchdogDeliveryStatus(status))
+  ));
+  if (!hasDeliveryProof) return false;
+
+  const bodyTerms = new Set(normalizeWatchdogComparableText(row.rawBody || row.content).split(' ').filter(Boolean));
+  return directive.expectedSignals.some((signal) => bodyTerms.has(signal));
+}
+
 function resolveCanonicalRoleForPaneId(paneId) {
   const normalizedPaneId = toNonEmptyString(paneId);
   if (!normalizedPaneId) return null;
@@ -10405,6 +10446,23 @@ class SquidRunApp {
           rowId: ledgerIntentional.row.rowId || null,
           messageId: ledgerIntentional.row.messageId || null,
           status: ledgerIntentional.state,
+        }],
+        blockers: [],
+      };
+    }
+
+    const redirectedResponse = Array.isArray(rows)
+      ? rows.find((row) => isWatchdogRedirectedResponseProof(entry, row))
+      : null;
+    if (redirectedResponse) {
+      return {
+        resolved: true,
+        reason: 'comms_journal_redirected_response',
+        evidence: [{
+          source: 'comms_journal',
+          rowId: redirectedResponse.rowId || null,
+          messageId: redirectedResponse.messageId || null,
+          status: redirectedResponse.status || null,
         }],
         blockers: [],
       };
