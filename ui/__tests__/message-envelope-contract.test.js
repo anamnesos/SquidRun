@@ -83,4 +83,41 @@ describe('message envelope contract', () => {
     expect(specialRequest.senderRole).toBe(envelope.sender.role);
     expect(specialRequest.sessionId).toBe(envelope.session_id);
   });
+
+  test('carries typed obligation declarations through every canonical metadata path', () => {
+    const envelope = buildOutboundMessageEnvelope({
+      message_id: 'hm-obligation-contract',
+      session_id: 'app-session-480',
+      timestamp_ms: 1784592000000,
+      content: '(BUILDER #1): Verdict gate.',
+      sender: { role: 'builder' },
+      target: { raw: 'oracle', role: 'oracle', pane_id: '3' },
+      expects: {
+        class: 'verdict',
+        staleness_class: 'turn',
+        lease_id: 'lease-oracle-1',
+      },
+      fulfills: {
+        obligation_id: `obl_${'a'.repeat(64)}`,
+      },
+    });
+
+    expect(envelope.expects).toEqual({
+      class: 'verdict',
+      staleness_class: 'turn',
+      lease_id: 'lease-oracle-1',
+    });
+    expect(envelope.fulfills).toEqual({
+      obligation_id: `obl_${'a'.repeat(64)}`,
+    });
+
+    const metadata = buildCanonicalEnvelopeMetadata(envelope);
+    expect(metadata.expects).toEqual(envelope.expects);
+    expect(metadata.fulfills).toEqual(envelope.fulfills);
+    expect(metadata.envelope.expects).toEqual(envelope.expects);
+    expect(metadata.envelope.fulfills).toEqual(envelope.fulfills);
+    expect(buildWebSocketDispatchMessage(envelope).metadata).toEqual(metadata);
+    expect(buildTriggerFallbackDescriptor(envelope).metadata).toEqual(metadata);
+    expect(buildSpecialTargetRequest(envelope).metadata).toEqual(metadata);
+  });
 });

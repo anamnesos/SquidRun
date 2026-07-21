@@ -10,6 +10,8 @@
 /** @typedef {import('../../types/contracts').WebSocketDispatchMessage} WebSocketDispatchMessage */
 
 const ENVELOPE_VERSION = 'hm-envelope-v1';
+const OBLIGATION_EXPECTED_CLASSES = new Set(['verdict', 'ack', 'packet', 'answer', 'receipt']);
+const OBLIGATION_STALENESS_CLASSES = new Set(['turn', 'beat', 'day', 'open']);
 
 /**
  * @param {unknown} value
@@ -89,6 +91,40 @@ function normalizeEnvelopeDisplay(displayInput = null) {
 }
 
 /**
+ * @param {unknown} [expectationInput]
+ * @returns {import('../../types/contracts').ObligationExpectation | null}
+ */
+function normalizeEnvelopeExpectation(expectationInput = null) {
+  const expectation = asObject(expectationInput);
+  const expectedClass = asNonEmptyString(expectation.class || expectation.expected_class || expectation.expectedClass);
+  const stalenessClass = asNonEmptyString(
+    expectation.staleness_class || expectation.stalenessClass || expectation.staleness
+  );
+  const normalizedClass = expectedClass?.toLowerCase() || '';
+  const normalizedStaleness = stalenessClass?.toLowerCase() || '';
+  if (!OBLIGATION_EXPECTED_CLASSES.has(normalizedClass)
+    || !OBLIGATION_STALENESS_CLASSES.has(normalizedStaleness)) return null;
+  const leaseId = asNonEmptyString(expectation.lease_id || expectation.leaseId);
+  return {
+    class: /** @type {import('../../types/contracts').ObligationExpectation['class']} */ (normalizedClass),
+    staleness_class: /** @type {import('../../types/contracts').ObligationExpectation['staleness_class']} */ (normalizedStaleness),
+    ...(leaseId ? { lease_id: leaseId } : {}),
+  };
+}
+
+/**
+ * @param {unknown} [fulfillmentInput]
+ * @returns {import('../../types/contracts').ObligationFulfillmentDeclaration | null}
+ */
+function normalizeEnvelopeFulfillment(fulfillmentInput = null) {
+  const fulfillment = typeof fulfillmentInput === 'string'
+    ? { obligation_id: fulfillmentInput }
+    : asObject(fulfillmentInput);
+  const obligationId = asNonEmptyString(fulfillment.obligation_id || fulfillment.obligationId);
+  return obligationId ? { obligation_id: obligationId } : null;
+}
+
+/**
  * @param {OutboundMessageEnvelopeInput} [input]
  * @returns {OutboundMessageEnvelope}
  */
@@ -137,6 +173,8 @@ function buildOutboundMessageEnvelope(input = {}) {
       pane_id: targetPaneId,
     },
     project: normalizeProjectMetadata(source.project),
+    expects: normalizeEnvelopeExpectation(source.expects),
+    fulfills: normalizeEnvelopeFulfillment(source.fulfills),
   };
 }
 
@@ -154,6 +192,8 @@ function buildCanonicalEnvelopeMetadata(envelopeInput = {}) {
     session_id: envelope.session_id,
     sender: envelope.sender,
     target: envelope.target,
+    expects: envelope.expects,
+    fulfills: envelope.fulfills,
     timestamp_ms: envelope.timestamp_ms,
     sent_at: envelope.sent_at,
   };
@@ -216,5 +256,7 @@ module.exports = {
   buildTriggerFallbackDescriptor,
   buildSpecialTargetRequest,
   normalizeEnvelopeDisplay,
+  normalizeEnvelopeExpectation,
+  normalizeEnvelopeFulfillment,
   normalizeProjectMetadata,
 };

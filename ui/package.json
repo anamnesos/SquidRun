@@ -41,7 +41,8 @@
     "memory:registry": "node scripts/hm-memory-registry.js",
     "memory:promote": "node scripts/hm-memory-promote.js",
     "memory:metabolism": "node scripts/hm-memory-metabolism.js",
-    "memory:api": "node scripts/hm-memory-api.js"
+    "memory:api": "node scripts/hm-memory-api.js",
+    "obligations": "node scripts/hm-obligations.js"
   },
   "keywords": [
     "electron",

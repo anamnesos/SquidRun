@@ -4358,6 +4358,49 @@ describe('SquidRunApp', () => {
       ]);
     });
 
+    it('preserves obligation declarations in canonical broker metadata until the routed upsert', async () => {
+      const { options, triggers, evidenceLedger } = await initWebSocketApp();
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+        deliveryId: 'delivery-obligation-1',
+        mode: 'pty',
+        notified: ['3'],
+      });
+      const expects = { class: 'verdict', staleness_class: 'turn' };
+
+      await options.onMessage({
+        role: 'builder',
+        paneId: '2',
+        traceContext: { traceId: 'hm-obligation-broker-1' },
+        message: {
+          type: 'send',
+          target: 'oracle',
+          content: '(BUILDER #1): verdict gate',
+          messageId: 'hm-obligation-broker-1',
+          metadata: {
+            expects,
+            envelope: {
+              expects,
+            },
+          },
+        },
+      });
+
+      const commsJournalCalls = evidenceLedger.executeEvidenceLedgerOperation.mock.calls
+        .filter((call) => call[0] === 'upsert-comms-journal');
+      expect(commsJournalCalls[0][1].metadata).toEqual(expect.objectContaining({
+        expects,
+        envelope: expect.objectContaining({ expects }),
+      }));
+      expect(commsJournalCalls[1][1]).toEqual(expect.objectContaining({
+        messageId: 'hm-obligation-broker-1',
+        status: 'acked',
+      }));
+    });
+
     it('routes TrustQuote arm hm-send targets into their PTY panes', async () => {
       const { app, options } = await initWebSocketApp();
       const write = jest.fn().mockReturnValue(true);

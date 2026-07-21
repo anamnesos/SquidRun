@@ -239,6 +239,99 @@ function resolvePaths(projectRoot) {
   };
 }
 
+function runObligationNaturalBeat(options = {}) {
+  const projectRoot = path.resolve(options.projectRoot || process.cwd());
+  const config = require('../config');
+  config.setProjectRoot(projectRoot);
+  const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
+  const dbPath = path.resolve(
+    options.dbPath
+      || config.resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true })
+  );
+  const store = new EvidenceLedgerStore({ dbPath, enabled: true });
+  const init = store.init();
+  if (!init.ok) {
+    return {
+      ok: false,
+      reason: init.reason || 'obligation_store_unavailable',
+      dbPath,
+      lapseScan: null,
+      obligations: [],
+      count: 0,
+    };
+  }
+  try {
+    const appStatus = readJson(path.join(projectRoot, '.squidrun', 'app-status.json'), {});
+    const rawSessionId = options.sessionId
+      || appStatus?.session_id
+      || appStatus?.sessionId
+      || appStatus?.session
+      || null;
+    const sessionId = Number.isInteger(Number(rawSessionId)) && Number(rawSessionId) > 0
+      ? `app-session-${Number(rawSessionId)}`
+      : (typeof rawSessionId === 'string' && rawSessionId.trim() ? rawSessionId.trim() : null);
+    const naturalBeat = options.beatRowId
+      ? {
+        ok: true,
+        status: 'provided',
+        naturalBeatRowId: Number(options.beatRowId),
+        role: options.role,
+        kind: 'provided',
+      }
+      : store.recordObligationNaturalBeat({
+        role: options.role,
+        sessionId,
+        kind: 'startup-notices',
+      }, { nowMs: options.nowMs });
+    if (!naturalBeat.ok) {
+      return {
+        ok: false,
+        reason: naturalBeat.reason || 'natural_beat_record_failed',
+        dbPath,
+        naturalBeat,
+        lapseScan: null,
+        obligations: [],
+        count: 0,
+      };
+    }
+    const lapseScan = store.lapseObligations({
+      address: options.role,
+      spoolPath: options.spoolPath,
+      beatRowId: naturalBeat.naturalBeatRowId,
+    }, {
+      validateNotice: validateNoticePayload,
+      nowMs: options.nowMs,
+    });
+    const listing = store.queryObligations({
+      address: options.role,
+      status: 'open,lapsed',
+    });
+    const terminalListing = store.queryObligations({
+      status: 'fulfilled,released',
+      limit: 10_000,
+    });
+    return {
+      ok: lapseScan.ok === true && listing.ok === true && terminalListing.ok === true,
+      reason: lapseScan.ok !== true
+        ? lapseScan.reason
+        : (listing.ok !== true
+          ? listing.reason
+          : (terminalListing.ok !== true ? terminalListing.reason : null)),
+      dbPath,
+      naturalBeat,
+      lapseScan,
+      obligations: listing.obligations || [],
+      count: listing.count || 0,
+      resolvedObligationIds: (terminalListing.obligations || [])
+        .map((obligation) => obligation.obligationId)
+        .filter(Boolean),
+      readIntegrity: listing.readIntegrity || { flagged: false, redactedFields: [] },
+    };
+  } finally {
+    store.close();
+  }
+}
+
 function listNotices(options = {}) {
   const role = normalizeRole(options.role);
   if (!role) {
@@ -264,6 +357,9 @@ function listNotices(options = {}) {
 
   const notices = [];
   const errors = [];
+  const resolvedObligationIds = new Set(
+    Array.isArray(options.resolvedObligationIds) ? options.resolvedObligationIds : []
+  );
   for (const name of names) {
     const noticePath = path.join(spoolPath, name);
     const noticeResult = readJsonResult(noticePath);
@@ -277,6 +373,8 @@ function listNotices(options = {}) {
       errors.push({ noticePath, reason: noticeValidation.reason });
       continue;
     }
+    if (typeof notice.obligationId === 'string'
+      && resolvedObligationIds.has(notice.obligationId)) continue;
     const audience = noticeValidation.audience;
     if (!audience.includes(role)) continue;
     const acknowledgements = notice.acknowledgements && typeof notice.acknowledgements === 'object' && !Array.isArray(notice.acknowledgements)
@@ -651,9 +749,25 @@ function main(argv = process.argv.slice(2)) {
     paneId: process.env.SQUIDRUN_PANE_ID || null,
     sessionId: process.env.SQUIDRUN_SESSION_ID || null,
   };
-  const result = command === 'list'
-    ? createListingBatch(listNotices(options), options)
-    : (command === 'ack-all' ? acknowledgeAll({ ...options, batchToken: flags.batch }) : null);
+  let result = null;
+  if (command === 'list') {
+    const obligationBeat = runObligationNaturalBeat({
+      projectRoot,
+      role,
+      spoolPath: paths.spoolPath,
+    });
+    result = createListingBatch(listNotices({
+      ...options,
+      resolvedObligationIds: obligationBeat.resolvedObligationIds,
+    }), options);
+    result.obligationBeat = obligationBeat;
+    result.ok = result.ok === true && obligationBeat.ok === true;
+    if (!result.ok && !result.reason) {
+      result.reason = obligationBeat.reason || 'obligation_beat_failed';
+    }
+  } else if (command === 'ack-all') {
+    result = acknowledgeAll({ ...options, batchToken: flags.batch });
+  }
   if (!result) {
     printUsage();
     return 2;
@@ -677,6 +791,7 @@ module.exports = {
   validateNoticePayload,
   inspectAcknowledgement,
   resolvePaths,
+  runObligationNaturalBeat,
   listNotices,
   createListingBatch,
   acquireNoticeLock,

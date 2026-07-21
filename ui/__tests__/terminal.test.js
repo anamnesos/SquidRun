@@ -902,7 +902,7 @@ describe('terminal.js module', () => {
           senderRole: 'user',
           targetRole: 'architect',
           channel: 'user',
-          direction: 'outbound',
+          direction: 'inbound',
           rawBody: 'test broadcast',
           status: 'recorded',
           attempt: 1,

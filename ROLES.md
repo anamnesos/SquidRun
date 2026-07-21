@@ -74,6 +74,8 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 
 **Next-session notices (all roles, returning sessions — one cheap step):** Run `node ui/scripts/hm-next-session-notices.js list` using your runtime `SQUIDRUN_ROLE`. A missing/empty spool is a normal zero-notice success; a nonzero or invalid-file result is not, so surface it and leave the spool unmodified. If notices are listed, surface their message(s) in your pane, then run the exact `ackCommand` returned by that listing; it acknowledges only the content-bound batch you just saw, while every notice remains authoritative on disk until every named audience role has a committed acknowledgement receipt.
 
+**Obligation beat (same startup step, no new ritual):** The notice-list command runs the natural-beat lapse scan and returns `obligationBeat.obligations`, the live equivalent of `node ui/scripts/hm-obligations.js list --address <runtime-role>`; read that owed/owing view at startup and before ending a gate-closing turn.
+
 **Architect (Pane 1) — fresh install detection:**
 If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `session: 1`), skip all numbered steps below. Follow the fresh-install instructions: read `workspace/user-profile.json` and `PRODUCT-GUIDE.md`, read any files in `workspace/knowledge/` if they exist, welcome the user, and wait for direction. Do NOT read coordination files — they won't exist yet and that is normal.
 

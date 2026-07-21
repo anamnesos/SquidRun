@@ -32,6 +32,16 @@ export interface EnvelopeDisplay {
   face: string;
 }
 
+export interface ObligationExpectation {
+  class: 'verdict' | 'ack' | 'packet' | 'answer' | 'receipt';
+  staleness_class: 'turn' | 'beat' | 'day' | 'open';
+  lease_id?: string;
+}
+
+export interface ObligationFulfillmentDeclaration {
+  obligation_id: string;
+}
+
 export interface OutboundMessageEnvelope {
   version: string;
   message_id: string | null;
@@ -44,6 +54,8 @@ export interface OutboundMessageEnvelope {
   sender: EnvelopeParty;
   target: EnvelopeTarget;
   project: ProjectMetadata | null;
+  expects: ObligationExpectation | null;
+  fulfills: ObligationFulfillmentDeclaration | null;
 }
 
 export interface OutboundMessageEnvelopeInput {
@@ -70,6 +82,8 @@ export interface OutboundMessageEnvelopeInput {
   target_pane_id?: string | null;
   targetPaneId?: string | null;
   project?: Partial<ProjectMetadata> | null;
+  expects?: Partial<ObligationExpectation> | null;
+  fulfills?: Partial<ObligationFulfillmentDeclaration> | string | null;
 }
 
 export interface CanonicalEnvelopeMetadata {
@@ -80,6 +94,8 @@ export interface CanonicalEnvelopeMetadata {
   session_id: string | null;
   sender: EnvelopeParty;
   target: EnvelopeTarget;
+  expects: ObligationExpectation | null;
+  fulfills: ObligationFulfillmentDeclaration | null;
   timestamp_ms: number;
   sent_at: string;
 }

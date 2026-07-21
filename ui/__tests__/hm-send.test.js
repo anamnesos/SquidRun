@@ -2687,6 +2687,77 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('carries --expects and --fulfills as typed metadata without reading message prose', async () => {
+    const tempProject = createLinkedProject();
+    const sendAttempts = [];
+    const { server, port } = await startAckServer(sendAttempts);
+    const obligationId = `obl_${'b'.repeat(64)}`;
+
+    try {
+      writeAppStatus(tempProject, 'app-session-hm-send-obligations');
+      const result = await runHmSend(
+        [
+          'oracle',
+          '(BUILDER #1): ordinary coworker prose',
+          '--role',
+          'builder',
+          '--expects',
+          'verdict:turn',
+          '--fulfills',
+          obligationId,
+          '--timeout',
+          '80',
+          '--retries',
+          '0',
+          '--no-fallback',
+        ],
+        { HM_SEND_PORT: String(port) },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0].metadata.expects).toEqual({
+        class: 'verdict',
+        staleness_class: 'turn',
+      });
+      expect(sendAttempts[0].metadata.fulfills).toEqual({ obligation_id: obligationId });
+      expect(sendAttempts[0].metadata.envelope.expects).toEqual(sendAttempts[0].metadata.expects);
+      expect(sendAttempts[0].metadata.envelope.fulfills).toEqual(sendAttempts[0].metadata.fulfills);
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('rejects an invalid --expects declaration before dispatch', async () => {
+    const tempProject = createLinkedProject();
+    const result = await runHmSend(
+      [
+        'oracle',
+        '(BUILDER #1): invalid metadata should not route',
+        '--role',
+        'builder',
+        '--expects',
+        'verdict:minutes',
+        '--timeout',
+        '80',
+        '--retries',
+        '0',
+        '--no-fallback',
+      ],
+      { HM_SEND_PORT: '65534' },
+      { cwd: tempProject }
+    );
+    try {
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('Invalid --expects value');
+      expect(fs.existsSync(path.join(tempProject, '.squidrun', 'runtime', 'evidence-ledger.db'))).toBe(false);
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+    }
+  });
+
   test('stores sender-authored face text in websocket envelope metadata', async () => {
     const tempProject = createLinkedProject();
     const sendAttempts = [];

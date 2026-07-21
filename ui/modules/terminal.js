@@ -3876,7 +3876,7 @@ function broadcast(message, options = {}) {
         senderRole: 'user',
         targetRole: 'architect',
         channel: 'user',
-        direction: 'outbound',
+        direction: 'inbound',
         sentAtMs: Date.now(),
         rawBody: messageText,
         status: 'recorded',

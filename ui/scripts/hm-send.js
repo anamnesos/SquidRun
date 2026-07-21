@@ -58,6 +58,11 @@ const {
   getTrustQuoteArmPaneIds,
 } = require('../modules/trustquote-arm-specs');
 const {
+  parseExpectationFlag,
+  normalizeFulfillmentDeclaration,
+  normalizeObligationAddress,
+} = require('../modules/main/obligation-kernel');
+const {
   appendBusTraceEvent,
   createPayloadFingerprint,
   getUtf8ByteLength,
@@ -187,6 +192,8 @@ if (!listDevicesMode && args.length < 2) {
   console.log('  --list-devices: query relay for connected cross-device peers');
   console.log('  --role: your role (for identification)');
   console.log('  --priority: normal or urgent');
+  console.log('  --expects: declare <verdict|ack|packet|answer|receipt>:<turn|beat|day|open>');
+  console.log('  --fulfills: declare the obligation id this routed reply fulfills');
   console.log(`  --timeout: ack timeout in ms (default: ${DEFAULT_ACK_TIMEOUT_MS})`);
   console.log('  --retries: retry count after first send (default: 3)');
   console.log('  --no-fallback: disable trigger file fallback');
@@ -218,12 +225,14 @@ let targetProfileOverride = null;
 let targetWindowKeyOverride = null;
 let targetSessionScopeIdOverride = null;
 let bypassGuard = String(process.env.HM_SEND_BYPASS_GUARD || '').trim() === '1';
+let expectsDeclaration = null;
+let fulfillsDeclaration = null;
 
 // Known flags that signal end of inline message content.
 // Words starting with "--" that are NOT in this set are treated as message text,
 // which prevents accidental truncation when message content contains "--something".
 const KNOWN_FLAGS = new Set([
-  '--role', '--file', '--stdin', '--face', '--face-file', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices', '--chat-id', '--source-profile', '--source-window', '--source-session', '--source-session-scope', '--target-profile', '--route-profile', '--target-window', '--target-session', '--target-session-scope', '--bypass-guard',
+  '--role', '--file', '--stdin', '--face', '--face-file', '--photo', '--priority', '--expects', '--fulfills', '--timeout', '--retries', '--no-fallback', '--list-devices', '--chat-id', '--source-profile', '--source-window', '--source-session', '--source-session-scope', '--target-profile', '--route-profile', '--target-window', '--target-session', '--target-session-scope', '--bypass-guard',
 ]);
 
 function shouldCleanupMessageFile(filePath) {
@@ -323,6 +332,33 @@ for (; i < args.length; i++) {
   }
   if (token === '--priority' && args[i + 1]) {
     priority = args[i + 1];
+    i++;
+    continue;
+  }
+  if (token === '--expects') {
+    if (!args[i + 1]) {
+      console.error('--expects requires <class>:<staleness>.');
+      process.exit(1);
+    }
+    const parsed = parseExpectationFlag(args[i + 1]);
+    if (!parsed.ok) {
+      console.error(`Invalid --expects value. Expected ${parsed.expected}.`);
+      process.exit(1);
+    }
+    expectsDeclaration = parsed.expectation;
+    i++;
+    continue;
+  }
+  if (token === '--fulfills') {
+    if (!args[i + 1]) {
+      console.error('--fulfills requires an obligation id.');
+      process.exit(1);
+    }
+    fulfillsDeclaration = normalizeFulfillmentDeclaration(args[i + 1]);
+    if (!fulfillsDeclaration || !/^obl_[a-f0-9]{64}$/i.test(fulfillsDeclaration.obligation_id)) {
+      console.error('Invalid --fulfills obligation id.');
+      process.exit(1);
+    }
     i++;
     continue;
   }
@@ -2792,6 +2828,20 @@ async function main() {
     || normalizeTrustQuoteArmTarget(target)
     || (isSpecialTarget(target) ? String(target).trim().toLowerCase() : null)
     || (bridgeTarget ? bridgeTarget.targetRole : null);
+  if (expectsDeclaration) {
+    const creditorAddress = normalizeObligationAddress(role, { creditor: true });
+    const obligorAddress = normalizeObligationAddress(targetRole);
+    if (!creditorAddress || !obligorAddress) {
+      console.error('--expects requires a role-address sender and role-address target.');
+      closeCommsJournalStores();
+      process.exit(1);
+    }
+  }
+  if (fulfillsDeclaration && !normalizeObligationAddress(role)) {
+    console.error('--fulfills requires a role-address sender.');
+    closeCommsJournalStores();
+    process.exit(1);
+  }
   const forwardProfileRoute = targetProfileRouteContext;
   const targetProfileIsCrossProfileArchitectRoute = Boolean(
     targetProfileOverride
@@ -2831,6 +2881,8 @@ async function main() {
     priority,
     timestamp_ms: Date.now(),
     project: projectMetadata || null,
+    expects: expectsDeclaration,
+    fulfills: fulfillsDeclaration,
   });
   if (isTelegramPhotoModeActive()) {
     await sendTelegramPhotoDirect(envelope);

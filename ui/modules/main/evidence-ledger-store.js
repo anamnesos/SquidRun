@@ -17,6 +17,24 @@ const {
   evidenceLedgerEnabled: CONFIG_EVIDENCE_LEDGER_ENABLED,
 } = require('../../config');
 const { prepareEventForStorage } = require('./evidence-ledger-ingest');
+const {
+  validateObligationWritePayload,
+  sanitizeObligationRead,
+  normalizeExpectedClass,
+  normalizeStalenessClass,
+  normalizeObligationStatus,
+  extractExpectationFromMetadata,
+  metadataDeclaresExpectation,
+  extractFulfillmentFromMetadata,
+  metadataDeclaresFulfillment,
+  normalizeObligationAddress,
+  buildObligationId,
+  buildObligationEventId,
+  isProofQualifiedCommsStatus,
+  obligationOutlivedAtBeat,
+  mapObligationRow,
+  writeLapseNotice,
+} = require('./obligation-kernel');
 
 function resolveDefaultDbPath() {
   if (typeof resolveCoordPath !== 'function') {
@@ -559,6 +577,53 @@ CREATE INDEX IF NOT EXISTS idx_arm_spawn_sessions_status_updated
   ON arm_spawn_sessions(status, updated_at_ms DESC);
 `;
 
+const SCHEMA_V11_SQL = `
+CREATE TABLE IF NOT EXISTS obligations (
+  obligation_id TEXT PRIMARY KEY,
+  created_from_row_id INTEGER NOT NULL UNIQUE,
+  creditor_address TEXT NOT NULL CHECK (
+    creditor_address IN (
+      'architect', 'builder', 'oracle', 'mira',
+      'builder-bg-1', 'builder-bg-2', 'builder-bg-3',
+      'trustquote-lead', 'trustquote-app', 'trustquote-invoice', 'trustquote-schedule-dispatch',
+      'james', 'room'
+    )
+  ),
+  obligor_address TEXT NOT NULL CHECK (
+    obligor_address IN (
+      'architect', 'builder', 'oracle', 'mira',
+      'builder-bg-1', 'builder-bg-2', 'builder-bg-3',
+      'trustquote-lead', 'trustquote-app', 'trustquote-invoice', 'trustquote-schedule-dispatch'
+    )
+  ),
+  expected_class TEXT NOT NULL CHECK (expected_class IN ('verdict', 'ack', 'packet', 'answer', 'receipt')),
+  staleness_class TEXT NOT NULL CHECK (staleness_class IN ('turn', 'beat', 'day', 'open')),
+  lease_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('open', 'fulfilled', 'released', 'lapsed')) DEFAULT 'open',
+  fulfilled_by_row_id INTEGER,
+  released_reason TEXT,
+  created_event_id TEXT NOT NULL UNIQUE,
+  last_event_id TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  FOREIGN KEY (created_from_row_id) REFERENCES comms_journal(row_id) ON DELETE RESTRICT,
+  FOREIGN KEY (fulfilled_by_row_id) REFERENCES comms_journal(row_id) ON DELETE RESTRICT,
+  CHECK (status <> 'fulfilled' OR fulfilled_by_row_id IS NOT NULL),
+  CHECK (status = 'fulfilled' OR fulfilled_by_row_id IS NULL),
+  CHECK (status <> 'released' OR (released_reason IS NOT NULL AND length(trim(released_reason)) > 0)),
+  CHECK (status = 'released' OR released_reason IS NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_obligations_obligor_status
+  ON obligations(obligor_address, status, updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_obligations_creditor_status
+  ON obligations(creditor_address, status, updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_obligations_status_staleness
+  ON obligations(status, staleness_class, created_from_row_id);
+`;
+
 const COMMS_CHANNELS = new Set(['ws', 'telegram', 'sms', 'user', 'voice', 'system']);
 const COMMS_DIRECTIONS = new Set(['inbound', 'outbound']);
 const COMMS_STATUS_RANK = Object.freeze({
@@ -750,6 +815,22 @@ function mapCommsRow(row) {
     metadata: parseJson(row.metadata_json, {}),
     updatedAtMs: row.updated_at_ms,
   };
+}
+
+function obligationKernelError(reason, details = {}) {
+  const error = new Error(reason);
+  error.code = reason;
+  error.details = details;
+  return error;
+}
+
+function parseStoredJson(value, fallback = {}) {
+  if (typeof value !== 'string' || !value) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
 }
 
 function extractArmLivenessReceipt(row = {}) {
@@ -1428,6 +1509,77 @@ class EvidenceLedgerStore {
     this.db.exec(SCHEMA_V8_SQL);
     this.db.exec(SCHEMA_V9_SQL);
     this.db.exec(SCHEMA_V10_SQL);
+    this._migrateObligationsV11();
+  }
+
+  _migrateObligationsV11() {
+    if (!this.db) return;
+    const existing = this.db.prepare(`
+      SELECT sql FROM sqlite_master
+      WHERE type = 'table' AND name = 'obligations'
+    `).get();
+    const existingSql = String(existing?.sql || '').toLowerCase();
+    if (!existingSql) {
+      this.db.exec(SCHEMA_V11_SQL);
+      return;
+    }
+
+    const hasClosedCreditorEnum = /creditor_address\s+text\s+not\s+null\s+check\s*\(\s*creditor_address\s+in\s*\(/.test(existingSql);
+    const hasClosedObligorEnum = /obligor_address\s+text\s+not\s+null\s+check\s*\(\s*obligor_address\s+in\s*\(/.test(existingSql);
+    if (hasClosedCreditorEnum && hasClosedObligorEnum) {
+      this.db.exec(SCHEMA_V11_SQL);
+      return;
+    }
+
+    const requiredColumns = [
+      'obligation_id',
+      'created_from_row_id',
+      'creditor_address',
+      'obligor_address',
+      'expected_class',
+      'staleness_class',
+      'lease_id',
+      'status',
+      'fulfilled_by_row_id',
+      'released_reason',
+      'created_event_id',
+      'last_event_id',
+      'created_at_ms',
+      'updated_at_ms',
+    ];
+    const existingColumns = new Set(
+      this.db.prepare('PRAGMA table_info(obligations)').all().map((row) => String(row.name || ''))
+    );
+    const missingColumns = requiredColumns.filter((column) => !existingColumns.has(column));
+    if (missingColumns.length > 0) {
+      throw new Error(`obligation_schema_v11_missing_columns:${missingColumns.join(',')}`);
+    }
+
+    const legacyTable = 'obligations_v11_legacy';
+    const strandedLegacy = this.db.prepare(`
+      SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?
+    `).get(legacyTable);
+    if (strandedLegacy) throw new Error('obligation_schema_v11_legacy_table_exists');
+
+    try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      this.db.exec(`ALTER TABLE obligations RENAME TO ${legacyTable};`);
+      this.db.exec('DROP INDEX IF EXISTS idx_obligations_obligor_status;');
+      this.db.exec('DROP INDEX IF EXISTS idx_obligations_creditor_status;');
+      this.db.exec('DROP INDEX IF EXISTS idx_obligations_status_staleness;');
+      this.db.exec(SCHEMA_V11_SQL);
+      const columnList = requiredColumns.join(', ');
+      this.db.exec(`
+        INSERT INTO obligations (${columnList})
+        SELECT ${columnList}
+        FROM ${legacyTable};
+      `);
+      this.db.exec(`DROP TABLE ${legacyTable};`);
+      this.db.exec('COMMIT;');
+    } catch (error) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      throw new Error(`obligation_schema_v11_migration_failed:${error.message}`);
+    }
   }
 
   _migrateCommsJournalChannels() {
@@ -1501,6 +1653,18 @@ class EvidenceLedgerStore {
       return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
     }
 
+    if (String(event?.type || '').startsWith('obligation.')) {
+      const writeValidation = validateObligationWritePayload(event);
+      if (!writeValidation.ok) {
+        return {
+          ok: false,
+          status: 'invalid',
+          reason: writeValidation.reason,
+          forbiddenFields: writeValidation.forbiddenFields,
+        };
+      }
+    }
+
     const prepared = prepareEventForStorage(event, {
       sessionId: options.sessionId || this.sessionId,
       ingestedAtMs: options.ingestedAtMs,
@@ -1554,6 +1718,13 @@ class EvidenceLedgerStore {
           invalid += 1;
           continue;
         }
+        if (String(prepared.normalized.type || '').startsWith('obligation.')) {
+          const writeValidation = validateObligationWritePayload(prepared.normalized);
+          if (!writeValidation.ok) {
+            invalid += 1;
+            continue;
+          }
+        }
         if (this._insertPrepared(prepared)) {
           inserted += 1;
         } else {
@@ -1585,6 +1756,16 @@ class EvidenceLedgerStore {
 
   _insertPrepared(prepared) {
     const row = prepared.row;
+    if (String(row.type || '').startsWith('obligation.')) {
+      const writeValidation = validateObligationWritePayload({
+        payload: parseJson(row.payload_json, {}),
+        meta: parseJson(row.meta_json, {}),
+        evidenceRefs: parseJson(row.evidence_refs_json, []),
+      });
+      if (!writeValidation.ok) {
+        throw obligationKernelError(writeValidation.reason, writeValidation);
+      }
+    }
     const insertEvent = this.db.prepare(`
       INSERT OR IGNORE INTO ledger_events (
         event_id, trace_id, span_id, parent_event_id, correlation_id, causation_id,
@@ -1830,51 +2011,52 @@ class EvidenceLedgerStore {
       metadata: incomingMetadata,
     };
 
-    const existingRow = this.db.prepare('SELECT * FROM comms_journal WHERE message_id = ?').get(messageId);
-    const existing = mapCommsRow(existingRow);
-
-    const mergedRawBody = incoming.rawBody || existing?.rawBody || '';
-    const mergedBodyHash = incoming.bodyHash
-      || (mergedRawBody ? hashBody(mergedRawBody) : (existing?.bodyHash || null));
-    const mergedBodyBytes = Number.isFinite(incoming.bodyBytes)
-      ? incoming.bodyBytes
-      : (mergedRawBody ? Buffer.byteLength(mergedRawBody, 'utf8') : (existing?.bodyBytes ?? 0));
-
-    const merged = {
-      messageId,
-      sessionId: incoming.sessionId || existing?.sessionId || null,
-      senderRole: incoming.senderRole || existing?.senderRole || null,
-      targetRole: incoming.targetRole || existing?.targetRole || null,
-      channel: incoming.channel || existing?.channel || 'ws',
-      direction: incoming.direction || existing?.direction || 'outbound',
-      sentAtMs: (
-        Number.isFinite(incoming.sentAtMs) && Number.isFinite(existing?.sentAtMs)
-          ? Math.min(incoming.sentAtMs, existing.sentAtMs)
-          : (incoming.sentAtMs ?? existing?.sentAtMs ?? null)
-      ),
-      brokeredAtMs: (
-        Number.isFinite(incoming.brokeredAtMs) && Number.isFinite(existing?.brokeredAtMs)
-          ? Math.max(incoming.brokeredAtMs, existing.brokeredAtMs)
-          : (incoming.brokeredAtMs ?? existing?.brokeredAtMs ?? null)
-      ),
-      rawBody: mergedRawBody,
-      bodyHash: mergedBodyHash,
-      bodyBytes: mergedBodyBytes,
-      status: chooseProgressedStatus(existing?.status || null, incoming.status) || 'recorded',
-      ackStatus: incoming.ackStatus || existing?.ackStatus || null,
-      errorCode: incoming.errorCode || existing?.errorCode || null,
-      attempt: (
-        Number.isFinite(incoming.attempt) && Number.isFinite(existing?.attempt)
-          ? Math.max(incoming.attempt, existing.attempt)
-          : (incoming.attempt ?? existing?.attempt ?? null)
-      ),
-      metadata: mergeMetadata(existing?.metadata, incoming.metadata),
-      updatedAtMs: nowMs,
-    };
-
-    const metadataJson = JSON.stringify(merged.metadata || {});
-
     try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      const existingRow = this.db.prepare('SELECT * FROM comms_journal WHERE message_id = ?').get(messageId);
+      const existing = mapCommsRow(existingRow);
+
+      const mergedRawBody = incoming.rawBody || existing?.rawBody || '';
+      const mergedBodyHash = incoming.bodyHash
+        || (mergedRawBody ? hashBody(mergedRawBody) : (existing?.bodyHash || null));
+      const mergedBodyBytes = Number.isFinite(incoming.bodyBytes)
+        ? incoming.bodyBytes
+        : (mergedRawBody ? Buffer.byteLength(mergedRawBody, 'utf8') : (existing?.bodyBytes ?? 0));
+
+      const merged = {
+        messageId,
+        sessionId: incoming.sessionId || existing?.sessionId || null,
+        senderRole: incoming.senderRole || existing?.senderRole || null,
+        targetRole: incoming.targetRole || existing?.targetRole || null,
+        channel: incoming.channel || existing?.channel || 'ws',
+        direction: incoming.direction || existing?.direction || 'outbound',
+        sentAtMs: (
+          Number.isFinite(incoming.sentAtMs) && Number.isFinite(existing?.sentAtMs)
+            ? Math.min(incoming.sentAtMs, existing.sentAtMs)
+            : (incoming.sentAtMs ?? existing?.sentAtMs ?? null)
+        ),
+        brokeredAtMs: (
+          Number.isFinite(incoming.brokeredAtMs) && Number.isFinite(existing?.brokeredAtMs)
+            ? Math.max(incoming.brokeredAtMs, existing.brokeredAtMs)
+            : (incoming.brokeredAtMs ?? existing?.brokeredAtMs ?? null)
+        ),
+        rawBody: mergedRawBody,
+        bodyHash: mergedBodyHash,
+        bodyBytes: mergedBodyBytes,
+        status: chooseProgressedStatus(existing?.status || null, incoming.status) || 'recorded',
+        ackStatus: incoming.ackStatus || existing?.ackStatus || null,
+        errorCode: incoming.errorCode || existing?.errorCode || null,
+        attempt: (
+          Number.isFinite(incoming.attempt) && Number.isFinite(existing?.attempt)
+            ? Math.max(incoming.attempt, existing.attempt)
+            : (incoming.attempt ?? existing?.attempt ?? null)
+        ),
+        metadata: mergeMetadata(existing?.metadata, incoming.metadata),
+        updatedAtMs: nowMs,
+      };
+      const metadataJson = JSON.stringify(merged.metadata || {});
+      const journalStatus = existing ? 'updated' : 'inserted';
+
       if (!existing) {
         const insert = this.db.prepare(`
           INSERT INTO comms_journal (
@@ -1902,56 +2084,920 @@ class EvidenceLedgerStore {
           metadataJson,
           merged.updatedAtMs
         );
-        return { ok: true, status: 'inserted', messageId: merged.messageId };
+      } else {
+        const update = this.db.prepare(`
+          UPDATE comms_journal
+          SET
+            session_id = ?,
+            sender_role = ?,
+            target_role = ?,
+            channel = ?,
+            direction = ?,
+            sent_at_ms = ?,
+            brokered_at_ms = ?,
+            raw_body = ?,
+            body_hash = ?,
+            body_bytes = ?,
+            status = ?,
+            ack_status = ?,
+            error_code = ?,
+            attempt = ?,
+            metadata_json = ?,
+            updated_at_ms = ?
+          WHERE message_id = ?
+        `);
+        update.run(
+          merged.sessionId,
+          merged.senderRole,
+          merged.targetRole,
+          merged.channel,
+          merged.direction,
+          merged.sentAtMs,
+          merged.brokeredAtMs,
+          merged.rawBody,
+          merged.bodyHash,
+          merged.bodyBytes,
+          merged.status,
+          merged.ackStatus,
+          merged.errorCode,
+          merged.attempt,
+          metadataJson,
+          merged.updatedAtMs,
+          merged.messageId
+        );
       }
 
-      const update = this.db.prepare(`
-        UPDATE comms_journal
-        SET
-          session_id = ?,
-          sender_role = ?,
-          target_role = ?,
-          channel = ?,
-          direction = ?,
-          sent_at_ms = ?,
-          brokered_at_ms = ?,
-          raw_body = ?,
-          body_hash = ?,
-          body_bytes = ?,
-          status = ?,
-          ack_status = ?,
-          error_code = ?,
-          attempt = ?,
-          metadata_json = ?,
-          updated_at_ms = ?
-        WHERE message_id = ?
-      `);
-      update.run(
-        merged.sessionId,
-        merged.senderRole,
-        merged.targetRole,
-        merged.channel,
-        merged.direction,
-        merged.sentAtMs,
-        merged.brokeredAtMs,
-        merged.rawBody,
-        merged.bodyHash,
-        merged.bodyBytes,
-        merged.status,
-        merged.ackStatus,
-        merged.errorCode,
-        merged.attempt,
-        metadataJson,
-        merged.updatedAtMs,
-        merged.messageId
+      const persistedRow = mapCommsRow(
+        this.db.prepare('SELECT * FROM comms_journal WHERE message_id = ?').get(messageId)
       );
-      return { ok: true, status: 'updated', messageId: merged.messageId };
+      if (!persistedRow) throw obligationKernelError('comms_journal_row_missing_after_upsert');
+
+      const creation = this._maybeCreateObligationForCommsRowInTransaction(persistedRow, { nowMs });
+      const fulfillment = this._maybeFulfillObligationForCommsRowInTransaction(persistedRow, { nowMs });
+
+      this.db.exec('COMMIT;');
+      return {
+        ok: true,
+        status: journalStatus,
+        messageId: merged.messageId,
+        rowId: persistedRow.rowId,
+        obligation: {
+          creation,
+          fulfillment,
+        },
+      };
     } catch (err) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
       return {
         ok: false,
         status: 'db_error',
-        reason: err.message,
+        reason: err.code || err.message,
+        details: err.details || null,
         messageId,
+      };
+    }
+  }
+
+  _appendObligationEventInTransaction(obligation, transition, options = {}) {
+    const transitionName = String(transition || '').trim().toLowerCase();
+    if (!['created', 'fulfilled', 'released', 'lapsed'].includes(transitionName)) {
+      throw obligationKernelError('obligation_transition_invalid', { transition: transitionName || null });
+    }
+
+    const eventId = options.eventId || buildObligationEventId(
+      obligation.obligationId,
+      transitionName,
+      options.discriminator || ''
+    );
+    const evidenceRefs = Array.isArray(options.evidenceRefs) ? options.evidenceRefs : [];
+    const payload = {
+      obligationId: obligation.obligationId,
+      status: options.status || obligation.status,
+      createdFromRowId: obligation.createdFromRowId,
+      creditorAddress: obligation.creditorAddress,
+      obligorAddress: obligation.obligorAddress,
+      expectedClass: obligation.expectedClass,
+      stalenessClass: obligation.stalenessClass,
+      leaseId: obligation.leaseId || null,
+      creatorAddress: options.creatorAddress || null,
+      fulfilledByRowId: options.fulfilledByRowId || null,
+      releasedReason: options.releasedReason || null,
+      naturalBeatRowId: options.naturalBeatRowId || null,
+    };
+    const meta = {
+      transition: transitionName,
+      declarationMode: options.declarationMode || null,
+      actorAddress: options.actorAddress || options.creatorAddress || null,
+    };
+    const writeValidation = validateObligationWritePayload({ payload, meta, evidenceRefs });
+    if (!writeValidation.ok) {
+      throw obligationKernelError(writeValidation.reason, writeValidation);
+    }
+
+    const prepared = prepareEventForStorage({
+      eventId,
+      traceId: `obligation:${obligation.obligationId}`,
+      parentEventId: options.parentEventId || null,
+      correlationId: `obligation:${obligation.obligationId}`,
+      causationId: options.parentEventId || null,
+      type: `obligation.${transitionName}`,
+      stage: 'obligation',
+      source: 'obligation-kernel',
+      paneId: 'system',
+      role: options.actorAddress || options.creatorAddress || 'system',
+      ts: options.nowMs,
+      direction: 'internal',
+      payload,
+      evidenceRefs,
+      meta,
+    }, {
+      sessionId: options.sessionId || this.sessionId,
+      nowMs: options.nowMs,
+      ingestedAtMs: options.nowMs,
+    });
+    if (!prepared.validation.valid) {
+      throw obligationKernelError('obligation_event_invalid', {
+        errors: prepared.validation.errors,
+        eventId,
+      });
+    }
+    const inserted = this._insertPrepared(prepared);
+    if (!inserted) {
+      const existing = this.db.prepare('SELECT event_id FROM ledger_events WHERE event_id = ?').get(eventId);
+      if (!existing) throw obligationKernelError('obligation_event_insert_failed', { eventId });
+    }
+    return { eventId, inserted, edgeCount: prepared.edges.length };
+  }
+
+  _createObligationFromSourceRowInTransaction(sourceRow, declaration = {}, options = {}) {
+    const writeValidation = validateObligationWritePayload({ declaration, options: options.writeMetadata || {} });
+    if (!writeValidation.ok) throw obligationKernelError(writeValidation.reason, writeValidation);
+
+    const createdFromRowId = Number(sourceRow?.rowId);
+    const creditorAddress = normalizeObligationAddress(declaration.creditorAddress, {
+      creditor: true,
+      db: this.db,
+    });
+    const obligorAddress = normalizeObligationAddress(declaration.obligorAddress, { db: this.db });
+    const expectedClass = normalizeExpectedClass(declaration.expectedClass);
+    const stalenessClass = normalizeStalenessClass(declaration.stalenessClass);
+    const leaseId = toOptionalString(declaration.leaseId, null);
+    const creatorAddress = normalizeObligationAddress(options.creatorAddress, {
+      creditor: true,
+      db: this.db,
+    });
+
+    const invalid = [
+      [Number.isInteger(createdFromRowId) && createdFromRowId > 0, 'created_from_row_id_required'],
+      [Boolean(creditorAddress), 'creditor_address_invalid'],
+      [Boolean(obligorAddress), 'obligor_address_invalid'],
+      [Boolean(expectedClass), 'expected_class_invalid'],
+      [Boolean(stalenessClass), 'staleness_class_invalid'],
+      [Boolean(creatorAddress), 'creator_address_invalid'],
+    ].find(([valid]) => !valid);
+    if (invalid) throw obligationKernelError(invalid[1]);
+    if (obligorAddress === 'james') throw obligationKernelError('james_obligor_forbidden');
+
+    const existingRow = this.db.prepare(`
+      SELECT * FROM obligations WHERE created_from_row_id = ?
+    `).get(createdFromRowId);
+    if (existingRow) {
+      const existing = mapObligationRow(existingRow);
+      const sameDeclaration = existing.creditorAddress === creditorAddress
+        && existing.obligorAddress === obligorAddress
+        && existing.expectedClass === expectedClass
+        && existing.stalenessClass === stalenessClass
+        && (existing.leaseId || null) === leaseId;
+      if (!sameDeclaration) {
+        throw obligationKernelError('obligation_source_declaration_conflict', {
+          obligationId: existing.obligationId,
+          createdFromRowId,
+        });
+      }
+      return { ok: true, status: 'duplicate', obligation: existing };
+    }
+
+    const obligationId = buildObligationId({
+      createdFromRowId,
+      creditorAddress,
+      obligorAddress,
+      expectedClass,
+      stalenessClass,
+      leaseId,
+    });
+    const createdEventId = buildObligationEventId(obligationId, 'created', String(createdFromRowId));
+    const nowMs = toMs(options.nowMs, Date.now());
+    const obligation = {
+      obligationId,
+      createdFromRowId,
+      creditorAddress,
+      obligorAddress,
+      expectedClass,
+      stalenessClass,
+      leaseId,
+      status: 'open',
+      fulfilledByRowId: null,
+      releasedReason: null,
+      createdEventId,
+      lastEventId: createdEventId,
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    };
+
+    const insert = this.db.prepare(`
+      INSERT INTO obligations (
+        obligation_id, created_from_row_id, creditor_address, obligor_address,
+        expected_class, staleness_class, lease_id, status,
+        fulfilled_by_row_id, released_reason, created_event_id, last_event_id,
+        created_at_ms, updated_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', NULL, NULL, ?, ?, ?, ?)
+    `);
+    insert.run(
+      obligation.obligationId,
+      obligation.createdFromRowId,
+      obligation.creditorAddress,
+      obligation.obligorAddress,
+      obligation.expectedClass,
+      obligation.stalenessClass,
+      obligation.leaseId,
+      obligation.createdEventId,
+      obligation.lastEventId,
+      obligation.createdAtMs,
+      obligation.updatedAtMs
+    );
+
+    this._appendObligationEventInTransaction(obligation, 'created', {
+      eventId: createdEventId,
+      discriminator: String(createdFromRowId),
+      creatorAddress,
+      actorAddress: creatorAddress,
+      declarationMode: options.declarationMode || 'explicit',
+      sessionId: sourceRow.sessionId || null,
+      nowMs,
+      evidenceRefs: [{
+        kind: 'comms_journal_row',
+        path: `comms_journal:${createdFromRowId}`,
+        note: 'obligation source row',
+      }],
+    });
+    return { ok: true, status: 'created', obligation };
+  }
+
+  _maybeCreateObligationForCommsRowInTransaction(row, options = {}) {
+    if (!metadataDeclaresExpectation(row?.metadata)) return null;
+    if (row.direction !== 'outbound' || !isProofQualifiedCommsStatus(row.status)) {
+      return { ok: true, status: 'awaiting_route_proof', created: false };
+    }
+    const expectation = extractExpectationFromMetadata(row.metadata);
+    if (!expectation) throw obligationKernelError('expects_metadata_invalid');
+
+    const metadata = ensureObject(row.metadata);
+    const envelope = ensureObject(metadata.envelope);
+    const rawExpectation = ensureObject(metadata.expects || envelope.expects);
+    const expectationWriteValidation = validateObligationWritePayload(rawExpectation);
+    if (!expectationWriteValidation.ok) {
+      throw obligationKernelError(expectationWriteValidation.reason, expectationWriteValidation);
+    }
+    const result = this._createObligationFromSourceRowInTransaction(row, {
+      creditorAddress: row.senderRole,
+      obligorAddress: row.targetRole,
+      expectedClass: expectation.class,
+      stalenessClass: expectation.staleness_class,
+      leaseId: rawExpectation.lease_id || rawExpectation.leaseId || null,
+    }, {
+      creatorAddress: row.senderRole,
+      declarationMode: 'hm-send-expects',
+      nowMs: options.nowMs,
+    });
+    return {
+      ok: true,
+      status: result.status,
+      created: result.status === 'created',
+      obligationId: result.obligation.obligationId,
+    };
+  }
+
+  _fulfillObligationWithCommsRowInTransaction(obligation, proofRow, actorAddress, options = {}) {
+    const actor = normalizeObligationAddress(actorAddress, { db: this.db });
+    if (!actor || actor !== obligation.obligorAddress) {
+      throw obligationKernelError('fulfillment_actor_not_obligor');
+    }
+    if (!proofRow || !Number.isInteger(Number(proofRow.rowId))) {
+      throw obligationKernelError('fulfillment_row_missing');
+    }
+    if (!isProofQualifiedCommsStatus(proofRow.status)) {
+      throw obligationKernelError('fulfillment_row_not_proof_qualified');
+    }
+    if (proofRow.direction !== 'outbound') {
+      throw obligationKernelError('fulfillment_row_direction_invalid');
+    }
+    if (Number(proofRow.rowId) <= Number(obligation.createdFromRowId)) {
+      throw obligationKernelError('fulfillment_row_not_after_source');
+    }
+    const sender = normalizeObligationAddress(proofRow.senderRole, { db: this.db });
+    if (sender !== obligation.obligorAddress) {
+      throw obligationKernelError('fulfillment_row_sender_mismatch');
+    }
+
+    const target = String(proofRow.targetRole || '').trim().toLowerCase();
+    let targetMatches = target === obligation.creditorAddress;
+    if (obligation.creditorAddress === 'james') {
+      targetMatches = ['james', 'user', 'telegram'].includes(target);
+    } else if (obligation.creditorAddress === 'room') {
+      targetMatches = Boolean(normalizeObligationAddress(target, { creditor: true, db: this.db }));
+    }
+    if (!targetMatches) throw obligationKernelError('fulfillment_row_thread_mismatch');
+
+    if (obligation.status === 'fulfilled') {
+      if (Number(obligation.fulfilledByRowId) === Number(proofRow.rowId)) {
+        return { ok: true, status: 'duplicate', obligation };
+      }
+      throw obligationKernelError('obligation_already_fulfilled');
+    }
+    if (obligation.status === 'released') throw obligationKernelError('obligation_released');
+
+    const nowMs = toMs(options.nowMs, Date.now());
+    const eventId = buildObligationEventId(
+      obligation.obligationId,
+      'fulfilled',
+      String(proofRow.rowId)
+    );
+    const eventResult = this._appendObligationEventInTransaction(obligation, 'fulfilled', {
+      eventId,
+      discriminator: String(proofRow.rowId),
+      parentEventId: obligation.lastEventId,
+      actorAddress: actor,
+      status: 'fulfilled',
+      fulfilledByRowId: Number(proofRow.rowId),
+      declarationMode: options.declarationMode || 'explicit-cli',
+      sessionId: proofRow.sessionId || null,
+      nowMs,
+      evidenceRefs: [
+        {
+          kind: 'comms_journal_row',
+          path: `comms_journal:${obligation.createdFromRowId}`,
+          note: 'obligation source row',
+        },
+        {
+          kind: 'comms_journal_row',
+          path: `comms_journal:${proofRow.rowId}`,
+          note: 'proof-qualified fulfillment row',
+        },
+      ],
+    });
+    this.db.prepare(`
+      UPDATE obligations
+      SET status = 'fulfilled', fulfilled_by_row_id = ?, released_reason = NULL,
+          last_event_id = ?, updated_at_ms = ?
+      WHERE obligation_id = ?
+    `).run(Number(proofRow.rowId), eventResult.eventId, nowMs, obligation.obligationId);
+    return {
+      ok: true,
+      status: 'fulfilled',
+      obligation: {
+        ...obligation,
+        status: 'fulfilled',
+        fulfilledByRowId: Number(proofRow.rowId),
+        releasedReason: null,
+        lastEventId: eventResult.eventId,
+        updatedAtMs: nowMs,
+      },
+    };
+  }
+
+  _maybeFulfillObligationForCommsRowInTransaction(row, options = {}) {
+    if (!metadataDeclaresFulfillment(row?.metadata)) return null;
+    if (row.direction !== 'outbound' || !isProofQualifiedCommsStatus(row.status)) {
+      return { ok: true, status: 'awaiting_route_proof', fulfilled: false };
+    }
+    const declaration = extractFulfillmentFromMetadata(row.metadata);
+    if (!declaration) {
+      return { ok: false, status: 'rejected', reason: 'fulfills_metadata_invalid', fulfilled: false };
+    }
+    const metadata = ensureObject(row.metadata);
+    const envelope = ensureObject(metadata.envelope);
+    const rawDeclaration = metadata.fulfills || envelope.fulfills;
+    const fulfillmentWriteValidation = validateObligationWritePayload(rawDeclaration);
+    if (!fulfillmentWriteValidation.ok) {
+      return {
+        ok: false,
+        status: 'rejected',
+        reason: fulfillmentWriteValidation.reason,
+        fulfilled: false,
+      };
+    }
+    const stored = this.db.prepare('SELECT * FROM obligations WHERE obligation_id = ?')
+      .get(declaration.obligation_id);
+    if (!stored) {
+      return { ok: false, status: 'rejected', reason: 'obligation_not_found', fulfilled: false };
+    }
+    const obligation = mapObligationRow(stored);
+    try {
+      const result = this._fulfillObligationWithCommsRowInTransaction(
+        obligation,
+        row,
+        row.senderRole,
+        {
+          declarationMode: 'hm-send-fulfills',
+          nowMs: options.nowMs,
+        }
+      );
+      return {
+        ok: true,
+        status: result.status,
+        fulfilled: result.status === 'fulfilled',
+        obligationId: obligation.obligationId,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        status: 'rejected',
+        reason: error.code || error.message,
+        fulfilled: false,
+        obligationId: obligation.obligationId,
+      };
+    }
+  }
+
+  createObligation(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+    const writeValidation = validateObligationWritePayload(input);
+    if (!writeValidation.ok) return { ...writeValidation, status: 'invalid' };
+
+    const sourceRowId = Number(input.createdFromRowId || input.created_from_row_id || input.fromRowId || input.from_row);
+    if (!Number.isInteger(sourceRowId) || sourceRowId <= 0) {
+      return { ok: false, status: 'invalid', reason: 'created_from_row_id_required' };
+    }
+    const rawSource = this.db.prepare('SELECT * FROM comms_journal WHERE row_id = ?').get(sourceRowId);
+    const sourceRow = mapCommsRow(rawSource);
+    if (!sourceRow) return { ok: false, status: 'invalid', reason: 'source_row_not_found' };
+
+    const creditorAddress = normalizeObligationAddress(
+      input.creditorAddress || input.creditor_address || input.creditor,
+      { creditor: true, db: this.db }
+    );
+    const obligorAddress = normalizeObligationAddress(
+      input.obligorAddress || input.obligor_address || input.obligor,
+      { db: this.db }
+    );
+    const creatorAddress = normalizeObligationAddress(
+      input.creatorAddress || input.creator_address || input.actorAddress || input.actor || obligorAddress,
+      { creditor: true, db: this.db }
+    );
+    if (!creditorAddress) return { ok: false, status: 'invalid', reason: 'creditor_address_invalid' };
+    if (!obligorAddress) return { ok: false, status: 'invalid', reason: 'obligor_address_invalid' };
+    if (!creatorAddress) return { ok: false, status: 'invalid', reason: 'creator_address_invalid' };
+
+    if (creditorAddress === 'james') {
+      const sender = String(sourceRow.senderRole || '').trim().toLowerCase();
+      if (sourceRow.direction !== 'inbound' || !['james', 'user'].includes(sender)) {
+        return { ok: false, status: 'invalid', reason: 'james_source_row_not_inbound' };
+      }
+      if (creatorAddress !== obligorAddress) {
+        return { ok: false, status: 'invalid', reason: 'james_obligation_creator_must_be_obligor' };
+      }
+    } else {
+      const sourceSender = normalizeObligationAddress(sourceRow.senderRole, { creditor: true, db: this.db });
+      const sourceTarget = normalizeObligationAddress(sourceRow.targetRole, { db: this.db });
+      if (sourceRow.direction !== 'outbound' || !isProofQualifiedCommsStatus(sourceRow.status)) {
+        return { ok: false, status: 'invalid', reason: 'source_row_not_proof_qualified' };
+      }
+      if (sourceSender !== creditorAddress || sourceTarget !== obligorAddress || creatorAddress !== creditorAddress) {
+        return { ok: false, status: 'invalid', reason: 'source_row_address_mismatch' };
+      }
+    }
+
+    try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      const result = this._createObligationFromSourceRowInTransaction(sourceRow, {
+        creditorAddress,
+        obligorAddress,
+        expectedClass: input.expectedClass || input.expected_class || input.class,
+        stalenessClass: input.stalenessClass || input.staleness_class || input.staleness,
+        leaseId: input.leaseId || input.lease_id || null,
+      }, {
+        creatorAddress,
+        declarationMode: input.declarationMode || input.declaration_mode || 'explicit-cli',
+        nowMs: options.nowMs,
+      });
+      this.db.exec('COMMIT;');
+      return result;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      return {
+        ok: false,
+        status: 'invalid',
+        reason: error.code || error.message,
+        details: error.details || null,
+      };
+    }
+  }
+
+  queryObligations(filters = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, reason: this.degradedReason || 'store_unavailable', obligations: [] };
+    }
+    const clauses = [];
+    const params = [];
+    const addressInput = filters.address || filters.role || null;
+    const address = addressInput
+      ? normalizeObligationAddress(addressInput, { creditor: true, db: this.db })
+      : null;
+    if (addressInput && !address) {
+      return { ok: false, reason: 'address_invalid', obligations: [] };
+    }
+    if (address) {
+      const perspective = String(filters.perspective || '').trim().toLowerCase();
+      if (perspective === 'owe' || perspective === 'obligor') {
+        clauses.push('obligor_address = ?');
+        params.push(address);
+      } else if (perspective === 'owed' || perspective === 'creditor') {
+        clauses.push('creditor_address = ?');
+        params.push(address);
+      } else {
+        clauses.push('(obligor_address = ? OR creditor_address = ?)');
+        params.push(address, address);
+      }
+    }
+
+    const rawStatuses = Array.isArray(filters.statuses)
+      ? filters.statuses
+      : (filters.status ? String(filters.status).split(',') : []);
+    const statuses = rawStatuses.map((value) => normalizeObligationStatus(value)).filter(Boolean);
+    if (rawStatuses.length > 0 && statuses.length !== rawStatuses.length) {
+      return { ok: false, reason: 'status_invalid', obligations: [] };
+    }
+    if (statuses.length > 0) {
+      clauses.push(`status IN (${statuses.map(() => '?').join(', ')})`);
+      params.push(...statuses);
+    }
+    const limit = Math.max(1, Math.min(10_000, Number(filters.limit) || 500));
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.db.prepare(`
+      SELECT * FROM obligations
+      ${where}
+      ORDER BY created_from_row_id ASC, obligation_id ASC
+      LIMIT ?
+    `).all(...params, limit);
+
+    const obligations = [];
+    const redactedFields = [];
+    for (const row of rows) {
+      const sanitized = sanitizeObligationRead(row);
+      obligations.push(mapObligationRow(sanitized.value));
+      redactedFields.push(...sanitized.redactedFields);
+    }
+    return {
+      ok: true,
+      obligations,
+      count: obligations.length,
+      readIntegrity: {
+        flagged: redactedFields.length > 0,
+        redactedFields,
+      },
+    };
+  }
+
+  getObligation(obligationId) {
+    if (!this.isAvailable()) return null;
+    const id = toOptionalString(obligationId, null);
+    if (!id) return null;
+    const row = this.db.prepare('SELECT * FROM obligations WHERE obligation_id = ?').get(id);
+    if (!row) return null;
+    const sanitized = sanitizeObligationRead(row);
+    const obligation = mapObligationRow(sanitized.value);
+    return sanitized.flagged
+      ? {
+        ...obligation,
+        readIntegrity: {
+          flagged: true,
+          redactedFields: sanitized.redactedFields,
+        },
+      }
+      : obligation;
+  }
+
+  fulfillObligation(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+    const writeValidation = validateObligationWritePayload(input);
+    if (!writeValidation.ok) return { ...writeValidation, status: 'invalid' };
+    const obligationId = toOptionalString(input.obligationId || input.obligation_id, null);
+    const proofRowId = Number(input.fulfilledByRowId || input.fulfilled_by_row_id || input.byRowId || input.by_row);
+    const actorAddress = input.actorAddress || input.actor_address || input.actor;
+    if (!obligationId) return { ok: false, status: 'invalid', reason: 'obligation_id_required' };
+    if (!Number.isInteger(proofRowId) || proofRowId <= 0) {
+      return { ok: false, status: 'invalid', reason: 'fulfillment_row_required' };
+    }
+    const stored = this.db.prepare('SELECT * FROM obligations WHERE obligation_id = ?').get(obligationId);
+    if (!stored) return { ok: false, status: 'invalid', reason: 'obligation_not_found' };
+    const proofStored = this.db.prepare('SELECT * FROM comms_journal WHERE row_id = ?').get(proofRowId);
+    if (!proofStored) return { ok: false, status: 'invalid', reason: 'fulfillment_row_missing' };
+
+    try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      const result = this._fulfillObligationWithCommsRowInTransaction(
+        mapObligationRow(stored),
+        mapCommsRow(proofStored),
+        actorAddress,
+        {
+          declarationMode: input.declarationMode || input.declaration_mode || 'explicit-cli',
+          nowMs: options.nowMs,
+        }
+      );
+      this.db.exec('COMMIT;');
+      return result;
+    } catch (error) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      return {
+        ok: false,
+        status: 'invalid',
+        reason: error.code || error.message,
+        details: error.details || null,
+      };
+    }
+  }
+
+  releaseObligation(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+    const writeValidation = validateObligationWritePayload(input);
+    if (!writeValidation.ok) return { ...writeValidation, status: 'invalid' };
+    const obligationId = toOptionalString(input.obligationId || input.obligation_id, null);
+    const actorAddress = normalizeObligationAddress(
+      input.actorAddress || input.actor_address || input.actor,
+      { creditor: true, db: this.db }
+    );
+    const releasedReason = toOptionalString(input.reason || input.releasedReason || input.released_reason, null);
+    if (!obligationId) return { ok: false, status: 'invalid', reason: 'obligation_id_required' };
+    if (!actorAddress) return { ok: false, status: 'invalid', reason: 'actor_address_invalid' };
+    if (!releasedReason) return { ok: false, status: 'invalid', reason: 'released_reason_required' };
+
+    try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      const stored = this.db.prepare('SELECT * FROM obligations WHERE obligation_id = ?').get(obligationId);
+      if (!stored) throw obligationKernelError('obligation_not_found');
+      const obligation = mapObligationRow(stored);
+      if (obligation.status === 'released' && obligation.releasedReason === releasedReason) {
+        this.db.exec('COMMIT;');
+        return { ok: true, status: 'duplicate', obligation };
+      }
+      if (obligation.status === 'fulfilled') throw obligationKernelError('obligation_already_fulfilled');
+
+      const createdEvent = this.db.prepare('SELECT payload_json FROM ledger_events WHERE event_id = ?')
+        .get(obligation.createdEventId);
+      const creatorAddress = normalizeObligationAddress(
+        parseStoredJson(createdEvent?.payload_json, {}).creatorAddress,
+        { creditor: true, db: this.db }
+      );
+      if (actorAddress !== 'mira' && actorAddress !== creatorAddress) {
+        throw obligationKernelError('release_actor_not_creator_or_mira');
+      }
+
+      const nowMs = toMs(options.nowMs, Date.now());
+      const eventId = buildObligationEventId(
+        obligation.obligationId,
+        'released',
+        hashBody(releasedReason)
+      );
+      const eventResult = this._appendObligationEventInTransaction(obligation, 'released', {
+        eventId,
+        discriminator: hashBody(releasedReason),
+        parentEventId: obligation.lastEventId,
+        actorAddress,
+        creatorAddress,
+        status: 'released',
+        releasedReason,
+        declarationMode: 'explicit-cli',
+        nowMs,
+        evidenceRefs: [{
+          kind: 'comms_journal_row',
+          path: `comms_journal:${obligation.createdFromRowId}`,
+          note: 'obligation source row',
+        }],
+      });
+      this.db.prepare(`
+        UPDATE obligations
+        SET status = 'released', fulfilled_by_row_id = NULL, released_reason = ?,
+            last_event_id = ?, updated_at_ms = ?
+        WHERE obligation_id = ?
+      `).run(releasedReason, eventResult.eventId, nowMs, obligation.obligationId);
+      this.db.exec('COMMIT;');
+      return {
+        ok: true,
+        status: 'released',
+        obligation: {
+          ...obligation,
+          status: 'released',
+          fulfilledByRowId: null,
+          releasedReason,
+          lastEventId: eventResult.eventId,
+          updatedAtMs: nowMs,
+        },
+      };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      return {
+        ok: false,
+        status: 'invalid',
+        reason: error.code || error.message,
+        details: error.details || null,
+      };
+    }
+  }
+
+  recordObligationNaturalBeat(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+    const address = normalizeObligationAddress(input.address || input.role, {
+      creditor: true,
+      db: this.db,
+    });
+    if (!address || ['james', 'room'].includes(address)) {
+      return { ok: false, status: 'invalid', reason: 'natural_beat_role_invalid' };
+    }
+    const nowMs = toMs(options.nowMs, Date.now());
+    const beatKind = toOptionalString(input.kind || input.beatKind || input.beat_kind, 'startup');
+    const messageId = toOptionalString(
+      input.messageId || input.message_id,
+      `obligation-beat-${address}-${nowMs}-${crypto.randomUUID()}`
+    );
+    const result = this.upsertCommsJournal({
+      messageId,
+      sessionId: toOptionalString(input.sessionId || input.session_id || this.sessionId, null),
+      senderRole: 'system',
+      targetRole: address,
+      channel: 'system',
+      direction: 'outbound',
+      sentAtMs: nowMs,
+      brokeredAtMs: nowMs,
+      rawBody: `[OBLIGATION NATURAL BEAT] role=${address} kind=${beatKind}`,
+      status: 'routed',
+      attempt: 1,
+      metadata: {
+        source: 'obligation-kernel-natural-beat',
+        obligationNaturalBeat: {
+          role: address,
+          kind: beatKind,
+        },
+      },
+    }, { nowMs });
+    return {
+      ...result,
+      naturalBeatRowId: result.rowId || null,
+      role: address,
+      kind: beatKind,
+    };
+  }
+
+  lapseObligations(input = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+    const writeValidation = validateObligationWritePayload(input);
+    if (!writeValidation.ok) return { ...writeValidation, status: 'invalid', lapsed: [] };
+    const addressInput = input.address || input.role || null;
+    const address = addressInput
+      ? normalizeObligationAddress(addressInput, { creditor: true, db: this.db })
+      : null;
+    if (addressInput && !address) {
+      return { ok: false, status: 'invalid', reason: 'address_invalid', lapsed: [] };
+    }
+    const spoolPath = toOptionalString(input.spoolPath || input.spool_path || options.spoolPath, null);
+    if (!spoolPath) {
+      return { ok: false, status: 'invalid', reason: 'notice_spool_path_required', lapsed: [] };
+    }
+
+    const explicitBeatRowId = Number(
+      input.beatRowId || input.beat_row_id || input.naturalBeatRowId || input.natural_beat_row_id
+    );
+    let beatStored = null;
+    if (Number.isInteger(explicitBeatRowId) && explicitBeatRowId > 0) {
+      beatStored = this.db.prepare(`
+        SELECT * FROM comms_journal
+        WHERE row_id = ? AND status IN ('brokered', 'routed', 'acked')
+      `).get(explicitBeatRowId);
+      if (!beatStored) {
+        return { ok: false, status: 'invalid', reason: 'natural_beat_row_invalid', lapsed: [] };
+      }
+    } else {
+      beatStored = this.db.prepare(`
+        SELECT * FROM comms_journal
+        WHERE status IN ('brokered', 'routed', 'acked')
+        ORDER BY row_id DESC
+        LIMIT 1
+      `).get();
+    }
+    if (!beatStored) {
+      return { ok: true, status: 'no_natural_beat', naturalBeatRowId: null, lapsed: [], count: 0 };
+    }
+    const beatRow = mapCommsRow(beatStored);
+    const writtenNoticePaths = [];
+    const lapsed = [];
+
+    try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      const clauses = ["status = 'open'", "staleness_class <> 'open'", 'created_from_row_id < ?'];
+      const params = [beatRow.rowId];
+      if (address) {
+        clauses.push('(obligor_address = ? OR creditor_address = ?)');
+        params.push(address, address);
+      }
+      const rows = this.db.prepare(`
+        SELECT * FROM obligations
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY created_from_row_id ASC, obligation_id ASC
+      `).all(...params);
+
+      for (const stored of rows) {
+        const obligation = mapObligationRow(stored);
+        if (obligation.stalenessClass === 'turn'
+          && address
+          && obligation.obligorAddress !== address) continue;
+        const sourceStored = this.db.prepare('SELECT * FROM comms_journal WHERE row_id = ?')
+          .get(obligation.createdFromRowId);
+        const sourceRow = mapCommsRow(sourceStored);
+        if (!sourceRow || !obligationOutlivedAtBeat(obligation, sourceRow, beatRow)) continue;
+
+        const nowMs = toMs(options.nowMs, Date.now());
+        const eventId = buildObligationEventId(
+          obligation.obligationId,
+          'lapsed',
+          String(beatRow.rowId)
+        );
+        const eventResult = this._appendObligationEventInTransaction(obligation, 'lapsed', {
+          eventId,
+          discriminator: String(beatRow.rowId),
+          parentEventId: obligation.lastEventId,
+          actorAddress: 'mira',
+          status: 'lapsed',
+          naturalBeatRowId: beatRow.rowId,
+          declarationMode: 'natural-beat-scan',
+          sessionId: beatRow.sessionId || null,
+          nowMs,
+          evidenceRefs: [
+            {
+              kind: 'comms_journal_row',
+              path: `comms_journal:${obligation.createdFromRowId}`,
+              note: 'obligation source row',
+            },
+            {
+              kind: 'comms_journal_row',
+              path: `comms_journal:${beatRow.rowId}`,
+              note: 'natural beat row',
+            },
+          ],
+        });
+        this.db.prepare(`
+          UPDATE obligations
+          SET status = 'lapsed', last_event_id = ?, updated_at_ms = ?
+          WHERE obligation_id = ? AND status = 'open'
+        `).run(eventResult.eventId, nowMs, obligation.obligationId);
+
+        const noticeResult = writeLapseNotice(
+          { ...obligation, status: 'lapsed', lastEventId: eventResult.eventId, updatedAtMs: nowMs },
+          beatRow,
+          {
+            spoolPath,
+            nowMs,
+            validateNotice: options.validateNotice,
+          }
+        );
+        if (!noticeResult.ok) throw obligationKernelError(noticeResult.reason, noticeResult);
+        if (noticeResult.status === 'written') writtenNoticePaths.push(noticeResult.noticePath);
+        lapsed.push({
+          obligationId: obligation.obligationId,
+          naturalBeatRowId: beatRow.rowId,
+          noticePath: noticeResult.noticePath,
+        });
+      }
+
+      this.db.exec('COMMIT;');
+      return {
+        ok: true,
+        status: lapsed.length > 0 ? 'lapsed' : 'no_change',
+        naturalBeatRowId: beatRow.rowId,
+        lapsed,
+        count: lapsed.length,
+      };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      for (const noticePath of writtenNoticePaths) {
+        try { fs.unlinkSync(noticePath); } catch {}
+      }
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: error.code || error.message,
+        details: error.details || null,
+        naturalBeatRowId: beatRow.rowId,
+        lapsed: [],
+        count: 0,
       };
     }
   }
@@ -2244,8 +3290,7 @@ class EvidenceLedgerStore {
       [toOptionalString(receipt.expectedResponseClass, null) === expectedResponseClass, 'receipt_response_class_mismatch'],
       [toOptionalString(receipt.owner, null) === owner, 'receipt_owner_mismatch'],
       [toOptionalString(receipt.recoveryEvent, null) === recoveryEvent, 'receipt_recovery_event_mismatch'],
-      [!Object.prototype.hasOwnProperty.call(receipt, 'whoFailed')
-        && !Object.prototype.hasOwnProperty.call(receipt, 'who_failed'), 'blame_field_forbidden'],
+      [validateObligationWritePayload(receipt).ok, 'blame_field_forbidden'],
     ];
     const failed = validation.find(([valid]) => !valid);
     if (failed) {
@@ -2401,8 +3446,7 @@ class EvidenceLedgerStore {
     );
     if (!eventClass) return { ok: false, status: 'invalid', reason: 'lifecycle_event_required' };
     if (!durableAddress) return { ok: false, status: 'invalid', reason: 'durable_address_required' };
-    if (Object.prototype.hasOwnProperty.call(receipt, 'whoFailed')
-      || Object.prototype.hasOwnProperty.call(receipt, 'who_failed')) {
+    if (!validateObligationWritePayload(receipt).ok) {
       return { ok: false, status: 'invalid', reason: 'blame_field_forbidden' };
     }
     const stateChanging = eventClass === 'arm.spawn.released' || eventClass === 'arm.spawn.killed';
@@ -2523,8 +3567,7 @@ class EvidenceLedgerStore {
         === durableAddress, 'liveness_address_mismatch'],
       [toOptionalString(liveness.spawnLeaseId || liveness.spawn_lease_id, null)
         === spawnLeaseId, 'liveness_lease_mismatch'],
-      [!Object.prototype.hasOwnProperty.call(liveness, 'whoFailed')
-        && !Object.prototype.hasOwnProperty.call(liveness, 'who_failed'), 'blame_field_forbidden'],
+      [validateObligationWritePayload(liveness).ok, 'blame_field_forbidden'],
     ];
     const failed = proofChecks.find(([valid]) => !valid);
     if (failed) return { ok: false, status: 'rejected', reason: failed[1], session, comms };
@@ -4449,7 +5492,11 @@ class EvidenceLedgerStore {
     try {
       this.db.exec('BEGIN IMMEDIATE;');
 
-      const ageDelete = this.db.prepare('DELETE FROM ledger_events WHERE ts_ms < ?');
+      const ageDelete = this.db.prepare(`
+        DELETE FROM ledger_events
+        WHERE ts_ms < ?
+          AND trace_id NOT LIKE 'obligation:%'
+      `);
       const ageResult = ageDelete.run(cutoff);
       removedByAge = Number(ageResult?.changes || 0);
 
@@ -4461,6 +5508,7 @@ class EvidenceLedgerStore {
           DELETE FROM ledger_events
           WHERE row_id IN (
             SELECT row_id FROM ledger_events
+            WHERE trace_id NOT LIKE 'obligation:%'
             ORDER BY row_id ASC
             LIMIT ?
           )
@@ -4577,6 +5625,16 @@ class EvidenceLedgerStore {
   }
 
   _mapRowToEvent(row) {
+    const rawPayload = parseJson(row.payload_json, {});
+    const rawMeta = parseJson(row.meta_json, {});
+    const rawEvidenceRefs = parseJson(row.evidence_refs_json, []);
+    const obligationRead = String(row.type || '').startsWith('obligation.')
+      ? sanitizeObligationRead({ payload: rawPayload, meta: rawMeta, evidenceRefs: rawEvidenceRefs })
+      : {
+        value: { payload: rawPayload, meta: rawMeta, evidenceRefs: rawEvidenceRefs },
+        flagged: false,
+        redactedFields: [],
+      };
     return {
       eventId: row.event_id,
       traceId: row.trace_id,
@@ -4592,9 +5650,17 @@ class EvidenceLedgerStore {
       ts: row.ts_ms,
       seq: row.seq,
       direction: row.direction,
-      payload: parseJson(row.payload_json, {}),
-      evidenceRefs: parseJson(row.evidence_refs_json, []),
-      meta: parseJson(row.meta_json, {}),
+      payload: obligationRead.value.payload,
+      evidenceRefs: obligationRead.value.evidenceRefs,
+      meta: obligationRead.flagged
+        ? {
+          ...obligationRead.value.meta,
+          readIntegrity: {
+            flagged: true,
+            redactedFields: obligationRead.redactedFields,
+          },
+        }
+        : obligationRead.value.meta,
       payloadHash: row.payload_hash,
       ingestedAtMs: row.ingested_at_ms,
       sessionId: row.session_id,
