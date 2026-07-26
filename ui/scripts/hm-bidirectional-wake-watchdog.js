@@ -3,7 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: true });
 
@@ -84,6 +84,75 @@ function readStatusInfo(statusPath = DEFAULT_STATUS_PATH) {
   } catch {
     return { value: null, mtimeMs: 0 };
   }
+}
+
+/**
+ * S483 ORPHAN-LEAK FIX: find EVERY live process running this script, by
+ * command line, regardless of spawn shape.
+ *
+ * The pidfile model tracks exactly ONE pid, so any daemon that was alive when
+ * the pidfile got overwritten became permanently invisible - no code path ever
+ * looked for it again. Four accumulated (one per app start). Identity by WORK
+ * (the script path in argv) instead of by a single recorded pid also makes the
+ * check immune to electron.exe-vs-node.exe launch differences.
+ *
+ * Best-effort by construction: any enumeration failure returns [] so the
+ * caller falls back to the prior pidfile behavior and is never worse off.
+ */
+function findLiveRunnerPids({ excludePid = process.pid } = {}) {
+  // BLAST-RADIUS SCOPE (S442/443 precedent: a main-instance kill-phase once
+  // took sideprofile's standalone install down). Match on THIS FILE'S ABSOLUTE
+  // PATH, never the basename - her install runs the same script name from
+  // D:\SquidRun\sideprofile\versions\..., and a basename match would reap her
+  // load-bearing daemon. Full-path identity makes cross-install reach
+  // impossible by construction, not by intention.
+  const normalize = (value) => String(value || '').replace(/\\/g, '/').toLowerCase();
+  const selfPath = normalize(__filename);
+  const found = [];
+  try {
+    if (process.platform === 'win32') {
+      const raw = execFileSync('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        "Get-CimInstance Win32_Process -Filter \"Name='node.exe' OR Name='electron.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+      ], { encoding: 'utf8', timeout: 15_000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+      const parsed = JSON.parse(raw || '[]');
+      for (const row of (Array.isArray(parsed) ? parsed : [parsed])) {
+        const cmd = normalize(row?.CommandLine);
+        const pid = Number(row?.ProcessId);
+        if (!cmd.includes(selfPath)) continue; // absolute path only
+        if (!/\brun\b/.test(cmd)) continue; // only the long-lived `run` daemons
+        if (Number.isInteger(pid) && pid > 0 && pid !== excludePid) found.push(pid);
+      }
+    } else {
+      const raw = execFileSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8', timeout: 15_000 });
+      for (const line of raw.split('\n')) {
+        const normalized = normalize(line);
+        if (!normalized.includes(selfPath) || !/\brun\b/.test(normalized)) continue;
+        const pid = Number.parseInt(line.trim().split(/\s+/)[0], 10);
+        if (Number.isInteger(pid) && pid > 0 && pid !== excludePid) found.push(pid);
+      }
+    }
+  } catch (error) {
+    appendLog(DEFAULT_LOG_PATH, `[scan-warning] runner enumeration failed: ${error.message}`);
+    return [];
+  }
+  return found;
+}
+
+/** Reap every live runner except an explicitly kept pid. Returns killed pids. */
+function reapStrayRunners({ keepPid = null } = {}) {
+  const killed = [];
+  for (const pid of findLiveRunnerPids()) {
+    if (keepPid && pid === Number(keepPid)) continue;
+    try {
+      process.kill(pid, 'SIGTERM');
+      killed.push(pid);
+      appendLog(DEFAULT_LOG_PATH, `[cleanup] reaped stray runner pid=${pid} (command-line scan)`);
+    } catch (error) {
+      appendLog(DEFAULT_LOG_PATH, `[cleanup-warning] failed to stop stray runner pid=${pid}: ${error.message}`);
+    }
+  }
+  return killed;
 }
 
 function isPidAlive(pid) {
@@ -735,12 +804,18 @@ function startRunner(options = {}) {
       ? { ok: true, alreadyRunning: true, ...current }
       : { ok: true, alreadyStarting: true, ...current };
   }
-  if ((current.staleHeartbeat || current.staleGeneration) && current.pid) {
+  // S483: unknownLivePid carries the live pid in a DIFFERENT field than the
+  // reaper read (snapshot sets `pid` to null in that state), so a live daemon
+  // whose status did not match got its metadata wiped and was then left
+  // running forever - untracked, unkillable, invisible to every later check.
+  // That path built one orphan per app start. Reap it too, from its own field.
+  const reapTarget = current.pid || current.unknownLivePid;
+  if ((current.staleHeartbeat || current.staleGeneration || current.unknownLivePid) && reapTarget) {
     try {
-      process.kill(current.pid, 'SIGTERM');
-      appendLog(DEFAULT_LOG_PATH, `[cleanup] reaped runner pid=${current.pid} staleGeneration=${Boolean(current.staleGeneration)} staleHeartbeat=${Boolean(current.staleHeartbeat)}`);
+      process.kill(reapTarget, 'SIGTERM');
+      appendLog(DEFAULT_LOG_PATH, `[cleanup] reaped runner pid=${reapTarget} staleGeneration=${Boolean(current.staleGeneration)} staleHeartbeat=${Boolean(current.staleHeartbeat)} unknownLivePid=${Boolean(current.unknownLivePid)}`);
     } catch (error) {
-      appendLog(DEFAULT_LOG_PATH, `[cleanup-warning] failed to stop runner pid=${current.pid}: ${error.message}`);
+      appendLog(DEFAULT_LOG_PATH, `[cleanup-warning] failed to stop runner pid=${reapTarget}: ${error.message}`);
     }
   }
   if (current.stalePid || current.staleHeartbeat || current.unknownLivePid || current.staleGeneration) {
@@ -772,6 +847,15 @@ function startRunner(options = {}) {
         appendLog(DEFAULT_LOG_PATH, `[cleanup-warning] failed to stop stale-generation runner pid=${rechecked.pid}: ${error.message}`);
       }
       cleanupRunnerMetadata();
+    }
+
+    // S483 BACKSTOP: we hold the start lock and have decided to spawn, so no
+    // live runner should exist. Any that does is an orphan the pidfile model
+    // cannot see (it tracks one pid; earlier daemons went invisible when the
+    // file was overwritten). Sweep by command line before adding another.
+    const strays = reapStrayRunners();
+    if (strays.length > 0) {
+      appendLog(DEFAULT_LOG_PATH, `[cleanup] pre-spawn sweep removed ${strays.length} orphan(s): ${strays.join(',')}`);
     }
 
     const statePath = path.resolve(toText(options.statePath, DEFAULT_STATE_PATH));
