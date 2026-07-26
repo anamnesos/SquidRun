@@ -1135,9 +1135,17 @@ function inspectMemoryConsistency(projectRoot, options = {}) {
 
     try {
       const repairPlan = getPlanMemoryConsistencyRepair()(checkOptions);
+      const autoRepair = maybeAutoRepairMissingOnly(check, checkOptions);
+      if (autoRepair?.applied) {
+        // VERIFY THE EFFECT, NOT THE RETURN VALUE: re-run the check rather
+        // than trusting the repair's own report of itself.
+        const recheck = getRunMemoryConsistencyCheck()(checkOptions);
+        return summarizeMemoryConsistency({ ...recheck, autoRepair });
+      }
       return summarizeMemoryConsistency({
         ...check,
         repairPlan,
+        autoRepair: autoRepair || undefined,
       });
     } catch (err) {
       return summarizeMemoryConsistency({
@@ -1158,6 +1166,60 @@ function inspectMemoryConsistency(projectRoot, options = {}) {
       error: err.message,
       summary: {},
     });
+  }
+}
+
+/**
+ * AUTO-REPAIR the self-inflicted drift class only (S483).
+ *
+ * Every time we bank a knowledge doc, the cognitive index goes stale and the
+ * next startup reports WARN with missing>0. It recurs precisely BECAUSE we are
+ * doing the thing we decided to do more of, so it is a nag, not a signal.
+ *
+ * Scope is deliberately the narrowest one: `missing-only` is additive by
+ * construction (inserts + rekeys + same-heading resyncs). The orphan,
+ * duplicate, and guarded-delete classes are judgment calls and STAY MANUAL.
+ *
+ * THE GUARD IS THE FEATURE: we assert the planned delete count is exactly 0
+ * and abort otherwise. An auto-repair that trusts its own scope flag is
+ * today's bug class waiting to happen - a future scope change could silently
+ * turn this into an auto-delete on James's memory. So it verifies the effect
+ * it is ABOUT to have, before having it, and the caller re-measures after.
+ */
+function maybeAutoRepairMissingOnly(check, checkOptions) {
+  const missing = Number(check?.summary?.missingInCognitiveCount || 0);
+  if (missing <= 0) return null;
+  try {
+    const scopedOptions = { ...checkOptions, repairScope: 'missing-only' };
+    const plan = getPlanMemoryConsistencyRepair()({ ...scopedOptions, dryRun: true });
+    const plannedDeletes = Number(plan?.summary?.deleteCount || 0);
+    const plannedOrphanDeletes = Number(plan?.summary?.orphanDeleteCount || 0);
+    if (plannedDeletes !== 0 || plannedOrphanDeletes !== 0) {
+      // Scope promised additive and the plan disagrees. Never apply; surface it.
+      return {
+        applied: false,
+        aborted: true,
+        reason: 'planned_deletes_nonzero_scope_contract_violated',
+        plannedDeletes,
+        plannedOrphanDeletes,
+      };
+    }
+    if (!Array.isArray(plan?.actions) || plan.actions.length === 0) {
+      return { applied: false, reason: 'no_actions_planned' };
+    }
+    const { runMemoryConsistencyRepair } = require('../modules/memory-consistency-check');
+    const result = runMemoryConsistencyRepair(scopedOptions);
+    return {
+      applied: true,
+      scope: 'missing-only',
+      plannedActions: plan.actions.length,
+      appliedActions: Number(result?.execution?.appliedActions || 0),
+      insertedNodes: Number(result?.execution?.insertedNodes || 0),
+      resyncedNodes: Number(result?.execution?.resyncedNodes || 0),
+      deletedNodes: Number(result?.execution?.deletedNodes || 0),
+    };
+  } catch (err) {
+    return { applied: false, aborted: true, reason: `auto_repair_failed:${err.message}` };
   }
 }
 
@@ -2004,6 +2066,7 @@ module.exports = {
   HEALTH_SCORE_PENALTIES,
   HEALTH_SCORE_THRESHOLDS,
   KEY_MODULE_PATHS,
+  maybeAutoRepairMissingOnly,
   collectKeyModules,
   countModuleFiles,
   countTestFiles,
