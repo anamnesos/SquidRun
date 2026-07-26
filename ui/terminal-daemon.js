@@ -86,9 +86,37 @@ function log(level, message) {
     process.stdout.write(entry);
   }
 
+  maybeRotateDaemonLog(entry);
   fs.appendFile(LOG_FILE_PATH, entry, () => {
     // If we can't write to log file, at least console still works
   });
+}
+
+// S483: daemon.log reached 1.26 GB unrotated - the single largest file in the
+// runtime tree, and big enough that nas-vigil.md records it being EXCLUDED
+// from NAS backup rather than fixed. This writer is fs.appendFile (no held
+// handle), so rename-rotation is safe here - verified against a live writer
+// before wiring. The size check is throttled because this log is high volume
+// and a stat() per line would be a syscall per write.
+const DAEMON_LOG_ROTATE_MAX_BYTES = 32 * 1024 * 1024;
+const DAEMON_LOG_ROTATE_MAX_FILES = 3;
+const DAEMON_LOG_ROTATE_CHECK_EVERY = 500;
+let daemonLogWritesSinceCheck = DAEMON_LOG_ROTATE_CHECK_EVERY;
+
+function maybeRotateDaemonLog(incomingText) {
+  daemonLogWritesSinceCheck += 1;
+  if (daemonLogWritesSinceCheck < DAEMON_LOG_ROTATE_CHECK_EVERY) return;
+  daemonLogWritesSinceCheck = 0;
+  try {
+    const { rotateFileIfNeeded } = require('./modules/runtime-log-rotation');
+    rotateFileIfNeeded(LOG_FILE_PATH, incomingText, {
+      maxBytes: DAEMON_LOG_ROTATE_MAX_BYTES,
+      maxFiles: DAEMON_LOG_ROTATE_MAX_FILES,
+      consumer: 'terminal-daemon',
+    });
+  } catch {
+    // Logging must never break the daemon.
+  }
 }
 
 // Convenience log functions

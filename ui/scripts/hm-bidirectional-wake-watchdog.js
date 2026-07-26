@@ -8,6 +8,7 @@ const { spawn, execFileSync } = require('child_process');
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), quiet: true });
 
 const { resolveCoordPath } = require('../config');
+const { appendTextWithRotation } = require('../modules/runtime-log-rotation');
 const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
 const {
   buildAlertDeliverySignals,
@@ -57,9 +58,28 @@ function writeJson(filePath, payload) {
   fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
 }
 
+// S483: this log reached 245 MB unrotated. It needs COPY-TRUNCATE, not
+// rename: the same path is handed to spawn() as child stdio (fs.openSync
+// below), so a held handle exists and renaming it silently sends every
+// further write into the archived file while the live path disappears -
+// proven on Windows before this change. 32 MB cap x 3 files mirrors the
+// bus-reliability-trace budget already in the tree.
+const LOG_ROTATE_MAX_BYTES = 32 * 1024 * 1024;
+const LOG_ROTATE_MAX_FILES = 3;
+
 function appendLog(filePath, message) {
   ensureDir(filePath);
-  fs.appendFileSync(filePath, `${new Date().toISOString()} ${message}\n`, 'utf8');
+  const line = `${new Date().toISOString()} ${message}\n`;
+  try {
+    appendTextWithRotation(filePath, line, {
+      heldHandle: true,
+      maxBytes: LOG_ROTATE_MAX_BYTES,
+      maxFiles: LOG_ROTATE_MAX_FILES,
+      consumer: 'hm-bidirectional-wake-watchdog',
+    });
+  } catch {
+    fs.appendFileSync(filePath, line, 'utf8'); // logging must never break its caller
+  }
 }
 
 function readPidInfo(pidPath = DEFAULT_PID_PATH) {
