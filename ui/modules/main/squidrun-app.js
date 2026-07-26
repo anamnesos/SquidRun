@@ -530,6 +530,45 @@ function fingerprintSecret(value) {
  * or add latency to the send. The truth lands in the bus trace within seconds,
  * which is what makes "did it arrive" answerable instead of assumed.
  */
+// Verification schedule. The original 3.5s + 4s window was WRONG for this
+// workload and produced false negatives on its first live day: an agent pane
+// that is mid-turn cannot submit an inbound prompt until its current turn
+// ends, which routinely takes minutes. A message sitting correctly in a busy
+// pane's queue was being recorded as unverified. A receipt that lies in the
+// durable direction is worse than an honest unknown, so the window now spans
+// a realistic turn.
+const SUBMIT_VERIFY_SCHEDULE_MS = [4_000, 15_000, 45_000, 120_000, 300_000];
+const SUBMIT_VERIFY_NUDGE_AT_ATTEMPT = 3; // ~64s in: composer plausibly stuck
+
+/**
+ * Write the resolved verification outcome back to the comms journal so the
+ * TRACE and the LEDGER cannot disagree about one fact.
+ *
+ * The 77% figure is read from comms_journal.ack_status - that column is the
+ * system of record and what any future audit queries. Verification that lands
+ * only in the bus trace can never move the metric, so we would have fixed
+ * delivery while permanently keeping the evidence that said we had not.
+ */
+function writeSubmitVerdictToJournal({ receiptId, paneId, verified, reason }) {
+  if (!receiptId) return;
+  try {
+    const existing = queryCommsJournalEntries({ messageId: receiptId, limit: 1 }) || [];
+    const row = Array.isArray(existing) ? existing[0] : null;
+    if (!row) return; // never invent a journal row from the verifier
+    appendCommsJournalEntry({
+      ...row,
+      messageId: receiptId,
+      ackStatus: verified ? 'prompt_submitted.receipt_verified' : 'submit_unverified',
+      metadata: {
+        ...((row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)) ? row.metadata : {}),
+        submitVerification: { verified, reason, paneId, resolvedAtMs: Date.now() },
+      },
+    });
+  } catch (error) {
+    log.warn('PaneDelivery', `journal verdict writeback failed for ${receiptId}: ${error.message}`);
+  }
+}
+
 function scheduleReceiptVerifiedSubmit({
   receiptId,
   paneId,
@@ -537,14 +576,14 @@ function scheduleReceiptVerifiedSubmit({
   daemonClient,
   kernelMeta,
   source,
-  firstDelayMs = 3500,
-  retryDelayMs = 4000,
+  schedule = SUBMIT_VERIFY_SCHEDULE_MS,
 }) {
   if (!receiptId || !daemonClient) return;
   const verify = (attempt) => {
     try {
       const receipt = getModelPromptReceipt(receiptId);
       if (receipt) {
+        const reason = `receipt_${receipt.semanticEvent || 'prompt_submit'}_attempt_${attempt}`;
         appendBusTraceEvent({
           eventType: 'pane_submit_receipt_verified',
           messageId: receiptId,
@@ -555,12 +594,13 @@ function scheduleReceiptVerifiedSubmit({
           status: 'submit_receipt_verified',
           mode: 'daemon-pty',
           paneRuntime,
-          reason: `receipt_${receipt.semanticEvent || 'prompt_submit'}_attempt_${attempt}`,
+          reason,
         });
+        writeSubmitVerdictToJournal({ receiptId, paneId, verified: true, reason });
         return;
       }
-      if (attempt === 1) {
-        // One corrective Enter: the composer may hold an unsubmitted prompt.
+      // Composer plausibly stuck rather than merely busy: one corrective Enter.
+      if (attempt === SUBMIT_VERIFY_NUDGE_AT_ATTEMPT) {
         daemonClient.write(paneId, '\r', {
           ...kernelMeta,
           eventId: `${paneId}-${Date.now()}-submit-retry`,
@@ -568,10 +608,13 @@ function scheduleReceiptVerifiedSubmit({
           causationId: kernelMeta?.eventId,
           source: `${source}.submit-retry`,
         });
-        setTimeout(() => verify(2), retryDelayMs);
+      }
+      if (attempt < schedule.length) {
+        const next = setTimeout(() => verify(attempt + 1), schedule[attempt]);
+        if (typeof next.unref === 'function') next.unref();
         return;
       }
-      log.error('PaneDelivery', `SUBMIT UNVERIFIED for pane ${paneId} (${receiptId}) - no prompt_submit receipt after retry; the message may be sitting in the composer`);
+      log.error('PaneDelivery', `SUBMIT UNVERIFIED for pane ${paneId} (${receiptId}) - no prompt_submit receipt within ${schedule[schedule.length - 1] / 1000}s; the message may be sitting in the composer`);
       appendBusTraceEvent({
         eventType: 'pane_submit_unverified',
         messageId: receiptId,
@@ -582,13 +625,14 @@ function scheduleReceiptVerifiedSubmit({
         status: 'submit_unverified',
         mode: 'daemon-pty',
         paneRuntime,
-        reason: 'no_receipt_after_retry',
+        reason: 'no_receipt_within_full_window',
       });
+      writeSubmitVerdictToJournal({ receiptId, paneId, verified: false, reason: 'no_receipt_within_full_window' });
     } catch (error) {
       log.warn('PaneDelivery', `receipt verification failed for ${receiptId}: ${error.message}`);
     }
   };
-  const timer = setTimeout(() => verify(1), firstDelayMs);
+  const timer = setTimeout(() => verify(1), schedule[0]);
   if (typeof timer.unref === 'function') timer.unref();
 }
 
