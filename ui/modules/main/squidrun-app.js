@@ -511,6 +511,87 @@ function fingerprintSecret(value) {
  * PRESERVES a leading [Telegram from ...] marker so pane reply-routing
  * discipline still triggers on materialized user messages.
  */
+/**
+ * S483 NERVOUS-SYSTEM FIX: receipt-verified submit for EVERY pane delivery.
+ *
+ * 77% of agent messages (443/578 over 7 days) returned
+ * 'accepted.daemon_pty_unverified' - routed, arrival unknown. That was never a
+ * missing mechanism: appendReceiptMarkerToPrompt already stamps EVERY message,
+ * the hook already records prompt_submit receipts, and a receipt-verified
+ * submit loop already existed - it was wired into the materialized-pointer
+ * branch ONLY. The normal path wrote bytes, declared them unverified, and
+ * threw away proof it had already asked for.
+ *
+ * So delivery is answerable by construction; we just were not asking. This is
+ * the shared asker: no receipt after the settle -> ONE retry Enter -> still no
+ * receipt -> LOUD. The trace event is the alertable signal either way.
+ *
+ * Deliberately asynchronous: it does not change the caller's return contract
+ * or add latency to the send. The truth lands in the bus trace within seconds,
+ * which is what makes "did it arrive" answerable instead of assumed.
+ */
+function scheduleReceiptVerifiedSubmit({
+  receiptId,
+  paneId,
+  paneRuntime,
+  daemonClient,
+  kernelMeta,
+  source,
+  firstDelayMs = 3500,
+  retryDelayMs = 4000,
+}) {
+  if (!receiptId || !daemonClient) return;
+  const verify = (attempt) => {
+    try {
+      const receipt = getModelPromptReceipt(receiptId);
+      if (receipt) {
+        appendBusTraceEvent({
+          eventType: 'pane_submit_receipt_verified',
+          messageId: receiptId,
+          deliveryId: null,
+          paneId,
+          success: true,
+          verified: true,
+          status: 'submit_receipt_verified',
+          mode: 'daemon-pty',
+          paneRuntime,
+          reason: `receipt_${receipt.semanticEvent || 'prompt_submit'}_attempt_${attempt}`,
+        });
+        return;
+      }
+      if (attempt === 1) {
+        // One corrective Enter: the composer may hold an unsubmitted prompt.
+        daemonClient.write(paneId, '\r', {
+          ...kernelMeta,
+          eventId: `${paneId}-${Date.now()}-submit-retry`,
+          parentEventId: kernelMeta?.eventId,
+          causationId: kernelMeta?.eventId,
+          source: `${source}.submit-retry`,
+        });
+        setTimeout(() => verify(2), retryDelayMs);
+        return;
+      }
+      log.error('PaneDelivery', `SUBMIT UNVERIFIED for pane ${paneId} (${receiptId}) - no prompt_submit receipt after retry; the message may be sitting in the composer`);
+      appendBusTraceEvent({
+        eventType: 'pane_submit_unverified',
+        messageId: receiptId,
+        deliveryId: null,
+        paneId,
+        success: false,
+        verified: false,
+        status: 'submit_unverified',
+        mode: 'daemon-pty',
+        paneRuntime,
+        reason: 'no_receipt_after_retry',
+      });
+    } catch (error) {
+      log.warn('PaneDelivery', `receipt verification failed for ${receiptId}: ${error.message}`);
+    }
+  };
+  const timer = setTimeout(() => verify(1), firstDelayMs);
+  if (typeof timer.unref === 'function') timer.unref();
+}
+
 function materializeOversizedPanePayload(text, context = {}) {
   try {
     const body = String(text || '');
@@ -8588,6 +8669,19 @@ class SquidRunApp {
         mode: 'daemon-pty',
       });
 
+      // S483: ask for the proof we already stamped. Every message carries a
+      // receipt marker (above); the hook records prompt_submit; this closes
+      // the loop for the NORMAL path, not just materialized pointers - which
+      // is why 77% of sends reported arrival as unknown.
+      scheduleReceiptVerifiedSubmit({
+        receiptId: messageId || traceId || null,
+        paneId: normalizedPaneId,
+        paneRuntime: this.isCodexPaneCommand(normalizedPaneId) ? 'codex' : 'non-codex',
+        daemonClient,
+        kernelMeta,
+        source: 'squidrun-app.direct-pane-delivery',
+      });
+
       return {
         ok: true,
         accepted: true,
@@ -8596,6 +8690,7 @@ class SquidRunApp {
         status: 'accepted.daemon_pty_unverified',
         mode: 'daemon-pty',
         paneId: normalizedPaneId,
+        receiptPending: Boolean(messageId || traceId),
       };
     } catch (err) {
       appendBusTraceEvent({
