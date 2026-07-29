@@ -490,6 +490,7 @@ function persistPollerOwnershipClaim(filePath, key, details = {}) {
     chatId: details.chatId ?? priorPoller.chatId ?? null,
     nextOffset: normalizeOffset(details.nextOffset) ?? normalizeOffset(priorPoller.nextOffset),
     ownerClaimedAt: nowIso,
+    lastPollAt: null,
     lastPollStatus: 'starting',
     lastError: null,
   };
@@ -1012,19 +1013,34 @@ function start(options = {}) {
   backlogBackstopDropMs = resolveBacklogBackstopDropMs(options);
   telegramRequestTimeoutMs = resolveTelegramRequestTimeoutMs(options);
   pollInFlight = false;
-  running = true;
 
   // Claim the shared owner record before either the app worker or a temporary
   // standalone lane can reach its first getUpdates tick. A standalone lane
   // watches this PID-qualified claim and yields before polling concurrently.
-  persistPollerOwnershipClaim(statePath, cursorKey, {
-    chatId: config?.chatId ?? null,
-    dataRoot: pollerDataRoot,
-    nextOffset,
-    profile: config?.profile || 'main',
-    status: 'starting',
-    tokenFingerprint: fingerprintTelegramToken(config?.botToken),
-  });
+  const persistOwnershipClaim = typeof options.persistOwnershipClaim === 'function'
+    ? options.persistOwnershipClaim
+    : persistPollerOwnershipClaim;
+  let ownershipClaimed = statePath === null;
+  try {
+    if (statePath !== null) {
+      ownershipClaimed = persistOwnershipClaim(statePath, cursorKey, {
+        chatId: config?.chatId ?? null,
+        dataRoot: pollerDataRoot,
+        nextOffset,
+        profile: config?.profile || 'main',
+        status: 'starting',
+        tokenFingerprint: fingerprintTelegramToken(config?.botToken),
+      }) === true;
+    }
+  } catch (err) {
+    log.warn('Telegram', `Telegram poller ownership claim failed: ${err.message}`);
+  }
+  if (!ownershipClaimed) {
+    log.warn('Telegram', 'Telegram poller did not start because its ownership claim could not be persisted');
+    stop();
+    return false;
+  }
+  running = true;
 
   log.info(
     'Telegram',

@@ -4,12 +4,16 @@ const path = require('path');
 
 const {
   buildStandaloneLaneSpawnOptions,
+  claimLaneForChild,
+  createLaneLaunchClaim,
   dispatchInboundTelegramMessage,
   evaluateLaneStartupProof,
   formatInbound,
   isMainTelegramWorkerAlive,
   isStandaloneLaneProcess,
+  readLaneClaim,
   resolveRuntimeUiScriptPath,
+  status,
 } = require('../scripts/hm-telegram-poller-lane');
 
 describe('hm-telegram-poller-lane', () => {
@@ -103,6 +107,7 @@ describe('hm-telegram-poller-lane', () => {
   test('detects only the root-owned main app Telegram worker so standalone lane does not fight getUpdates', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-lane-owner-'));
     const statePath = path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json');
+    const mainWorkerScriptPath = path.join(tempDir, 'ui', 'modules', 'main', 'telegram-poller-worker.js');
     try {
       writeJson(statePath, {
         version: 1,
@@ -115,9 +120,10 @@ describe('hm-telegram-poller-lane', () => {
 
       expect(isMainTelegramWorkerAlive({
         env: { SQUIDRUN_DATA_ROOT: tempDir },
+        mainWorkerScriptPath,
         statePath,
         processListText: [
-          '1234 D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\modules\\main\\telegram-poller-worker.js',
+          `1234 node.exe "${mainWorkerScriptPath}"`,
         ].join('\n'),
       })).toBe(true);
     } finally {
@@ -128,6 +134,7 @@ describe('hm-telegram-poller-lane', () => {
   test('does not treat a foreign install Telegram worker as this lane owner by process name alone', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-lane-foreign-'));
     const statePath = path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json');
+    const mainWorkerScriptPath = path.join(tempDir, 'ui', 'modules', 'main', 'telegram-poller-worker.js');
     try {
       writeJson(statePath, {
         version: 1,
@@ -140,9 +147,10 @@ describe('hm-telegram-poller-lane', () => {
 
       expect(isMainTelegramWorkerAlive({
         env: { SQUIDRUN_DATA_ROOT: tempDir },
+        mainWorkerScriptPath,
         statePath,
         processListText: [
-          '1234 D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\modules\\main\\telegram-poller-worker.js',
+          '1234 node.exe D:\\SquidRun\\sideprofile\\ui\\modules\\main\\telegram-poller-worker.js',
         ].join('\n'),
       })).toBe(false);
     } finally {
@@ -193,6 +201,8 @@ describe('hm-telegram-poller-lane', () => {
     expect(evaluateLaneStartupProof(32852, {
       alive: true,
       claimedPid: 32852,
+      claimedToken: 'launch-1',
+      expectedToken: 'launch-1',
       mainWorkerRunning: false,
     })).toEqual(expect.objectContaining({
       ok: true,
@@ -202,13 +212,151 @@ describe('hm-telegram-poller-lane', () => {
   });
 
   test('matches only the exact standalone run command for pid-scoped containment', () => {
+    const scriptPath = path.resolve(__dirname, '..', 'scripts', 'hm-telegram-poller-lane.js');
     const processListText = [
-      '32852 D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\scripts\\hm-telegram-poller-lane.js run',
+      `32852 node.exe "${scriptPath}" run`,
       '14584 D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\modules\\main\\telegram-poller-worker.js',
     ].join('\n');
 
-    expect(isStandaloneLaneProcess(32852, { processListText })).toBe(true);
-    expect(isStandaloneLaneProcess(14584, { processListText })).toBe(false);
+    expect(isStandaloneLaneProcess(32852, { processListText, scriptPath })).toBe(true);
+    expect(isStandaloneLaneProcess(14584, { processListText, scriptPath })).toBe(false);
+  });
+
+  test('rejects wrapper mentions and side-profile scripts as standalone stop authority', () => {
+    const scriptPath = path.resolve(__dirname, '..', 'scripts', 'hm-telegram-poller-lane.js');
+    const wrapperList = [
+      `32852 node.exe wrapper.js --probe "${scriptPath}" run --dry-run`,
+    ].join('\n');
+    const foreignList = [
+      '32852 node.exe D:\\SquidRun\\sideprofile\\workspace\\ui\\scripts\\hm-telegram-poller-lane.js run',
+    ].join('\n');
+
+    expect(isStandaloneLaneProcess(32852, { processListText: wrapperList, scriptPath })).toBe(false);
+    expect(isStandaloneLaneProcess(32852, { processListText: foreignList, scriptPath })).toBe(false);
+  });
+
+  test('serializes simultaneous starts and lets only the matching child adopt the claim', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-lane-claim-'));
+    const claimPath = path.join(tempDir, 'telegram-poller-lane.pid');
+    const scriptPath = path.join(tempDir, 'ui', 'scripts', 'hm-telegram-poller-lane.js');
+    try {
+      const first = createLaneLaunchClaim({
+        claimPath,
+        projectRoot: tempDir,
+        scriptPath,
+        launchToken: 'first-launch',
+        launcherPid: 101,
+      });
+      const second = createLaneLaunchClaim({
+        claimPath,
+        projectRoot: tempDir,
+        scriptPath,
+        launchToken: 'second-launch',
+        launcherPid: 202,
+      });
+
+      expect(first.ok).toBe(true);
+      expect(second).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'claim_exists',
+      }));
+
+      expect(claimLaneForChild({
+        claimPath,
+        projectRoot: tempDir,
+        scriptPath,
+        launchToken: 'first-launch',
+        pid: 303,
+      }).ok).toBe(true);
+      expect(claimLaneForChild({
+        claimPath,
+        projectRoot: tempDir,
+        scriptPath,
+        launchToken: 'second-launch',
+        pid: 404,
+      })).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'claim_owned_by_another_lane',
+      }));
+      expect(readLaneClaim(claimPath)).toEqual(expect.objectContaining({
+        state: 'running',
+        pid: 303,
+        launchToken: 'first-launch',
+        projectRoot: path.resolve(tempDir),
+        scriptPath: path.resolve(scriptPath),
+      }));
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('fails closed when a live claimed pid cannot be identity-probed', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-lane-probe-'));
+    const claimPath = path.join(tempDir, 'telegram-poller-lane.pid');
+    const scriptPath = path.join(tempDir, 'ui', 'scripts', 'hm-telegram-poller-lane.js');
+    try {
+      createLaneLaunchClaim({
+        claimPath,
+        projectRoot: tempDir,
+        scriptPath,
+        launchToken: 'probe-launch',
+      });
+      claimLaneForChild({
+        claimPath,
+        projectRoot: tempDir,
+        scriptPath,
+        launchToken: 'probe-launch',
+        pid: 505,
+      });
+
+      expect(status({
+        claimPath,
+        projectRoot: tempDir,
+        scriptPath,
+        processListText: '',
+        isPidAlive: (pid) => pid === 505,
+        env: { SQUIDRUN_DATA_ROOT: tempDir },
+        mainWorkerScriptPath: path.join(tempDir, 'ui', 'modules', 'main', 'telegram-poller-worker.js'),
+      })).toEqual(expect.objectContaining({
+        running: false,
+        identityUnverified: true,
+        stalePid: null,
+        claimMatchesRuntime: true,
+      }));
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('detects exact local main takeover after a stale standalone heartbeat clobbers owner pid', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-lane-handoff-'));
+    const statePath = path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json');
+    const mainWorkerScriptPath = path.join(tempDir, 'ui', 'modules', 'main', 'telegram-poller-worker.js');
+    try {
+      writeJson(statePath, {
+        version: 1,
+        poller: {
+          pid: 111,
+          dataRoot: tempDir,
+          lastPollStatus: 'ok_empty',
+        },
+      });
+
+      expect(isMainTelegramWorkerAlive({
+        env: { SQUIDRUN_DATA_ROOT: tempDir },
+        mainWorkerScriptPath,
+        statePath,
+        processListText: `222 node.exe "${mainWorkerScriptPath}"`,
+      })).toBe(true);
+      expect(isMainTelegramWorkerAlive({
+        env: { SQUIDRUN_DATA_ROOT: tempDir },
+        mainWorkerScriptPath,
+        statePath,
+        processListText: '333 node.exe D:\\SquidRun\\sideprofile\\ui\\modules\\main\\telegram-poller-worker.js',
+      })).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   test('resolves hm-send from runtime bin when source ui scripts are absent', () => {

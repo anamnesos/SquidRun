@@ -115,6 +115,33 @@ describe('telegram-poller', () => {
     expect(telegramPoller.isRunning()).toBe(false);
   });
 
+  test('fails closed before scheduling polls when the ownership claim cannot persist', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-poller-claim-fail-'));
+    const statePath = path.join(tempDir, 'telegram-poller-state.json');
+    const intervalSpy = jest.spyOn(global, 'setInterval');
+    const persistOwnershipClaim = jest.fn(() => false);
+    try {
+      const started = telegramPoller.start({
+        env: {
+          TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+          TELEGRAM_CHAT_ID: '123456',
+        },
+        onMessage: jest.fn(),
+        persistOwnershipClaim,
+        statePath,
+      });
+
+      expect(started).toBe(false);
+      expect(persistOwnershipClaim).toHaveBeenCalledTimes(1);
+      expect(telegramPoller.isRunning()).toBe(false);
+      expect(intervalSpy).not.toHaveBeenCalled();
+      expect(https.request).not.toHaveBeenCalled();
+    } finally {
+      telegramPoller.stop();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test('start and stop manage running state', () => {
     const started = telegramPoller.start({
       env: {

@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 
 const { getProjectRoot, resolveCoordPath } = require('../config');
@@ -14,10 +15,10 @@ const { resolveRuntimeUiScriptPath } = require('./runtime-ui-paths');
 const RUNTIME_DIR = resolveCoordPath('runtime', { forWrite: true });
 const PID_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.log');
+const LANE_CLAIM_VERSION = 2;
 const KEEPALIVE_INTERVAL_MS = 60_000;
 const MAIN_OWNER_RECONCILE_INTERVAL_MS = 1_000;
-const MAIN_TELEGRAM_WORKER_PATTERN = /modules[\\/]+main[\\/]+telegram-poller-worker\.js/i;
-const STANDALONE_LANE_PROCESS_PATTERN = /hm-telegram-poller-lane\.js["']?\s+run(?:\s|$)/i;
+const MAIN_TELEGRAM_WORKER_PATH = path.resolve(__dirname, '..', 'modules', 'main', 'telegram-poller-worker.js');
 const POLLER_STATE_REL_PATH = path.join('.squidrun', 'runtime', 'telegram-poller-state.json');
 
 function usage() {
@@ -64,9 +65,43 @@ function readProcessListText() {
   }
 }
 
+function normalizeIdentityPath(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const resolved = path.resolve(value.trim());
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function tokenizeCommandLine(commandLine) {
+  const tokens = [];
+  const matcher = /"([^"]*)"|'([^']*)'|([^\s]+)/g;
+  let match;
+  while ((match = matcher.exec(String(commandLine || ''))) !== null) {
+    tokens.push(match[1] ?? match[2] ?? match[3]);
+  }
+  return tokens;
+}
+
+function commandInvokesExactScript(commandLine, scriptPath, requiredArg = null) {
+  const expectedScript = normalizeIdentityPath(scriptPath);
+  if (!expectedScript) return false;
+  const tokens = tokenizeCommandLine(commandLine);
+  if (tokens.length < 2 || normalizeIdentityPath(tokens[1]) !== expectedScript) return false;
+  if (requiredArg !== null && String(tokens[2] || '').trim().toLowerCase() !== requiredArg) return false;
+  return true;
+}
+
+function pathIsWithinRoot(rootPath, candidatePath) {
+  const root = normalizeIdentityPath(rootPath);
+  const candidate = normalizeIdentityPath(candidatePath);
+  if (!root || !candidate) return false;
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
 function isStandaloneLaneProcess(pid, options = {}) {
   const numeric = Number(pid);
   if (!Number.isInteger(numeric) || numeric <= 0) return false;
+  const expectedScriptPath = options.scriptPath || __filename;
   const processListText = typeof options.processListText === 'string'
     ? options.processListText
     : readProcessListText();
@@ -75,7 +110,7 @@ function isStandaloneLaneProcess(pid, options = {}) {
     .some((line) => {
       const match = String(line || '').match(/^\s*(\d+)\s+(.+)$/);
       if (!match || Number.parseInt(match[1], 10) !== numeric) return false;
-      return STANDALONE_LANE_PROCESS_PATTERN.test(match[2]);
+      return commandInvokesExactScript(match[2], expectedScriptPath, 'run');
     });
 }
 
@@ -130,15 +165,18 @@ function listMainTelegramWorkerProcesses(options = {}) {
   const processListText = typeof options.processListText === 'string'
     ? options.processListText
     : readProcessListText();
+  const expectedScriptPath = options.mainWorkerScriptPath || MAIN_TELEGRAM_WORKER_PATH;
+  const expectedDataRoot = resolveExpectedDataRoot(options.env || process.env);
+  if (expectedDataRoot && !pathIsWithinRoot(expectedDataRoot, expectedScriptPath)) return [];
   if (!processListText) return [];
   return processListText
     .split(/\r?\n/)
     .map((line) => {
       const text = line.trim();
-      if (!text || !MAIN_TELEGRAM_WORKER_PATTERN.test(text)) return null;
-      const match = text.match(/^\s*(\d+)/);
+      const match = text.match(/^\s*(\d+)\s+(.+)$/);
+      if (!match || !commandInvokesExactScript(match[2], expectedScriptPath)) return null;
       const pid = match ? Number.parseInt(match[1], 10) : null;
-      return { pid, commandLine: text };
+      return { pid, commandLine: match[2], scriptPath: path.resolve(expectedScriptPath) };
     })
     .filter(Boolean)
     .filter((entry) => !Number.isInteger(entry.pid) || entry.pid !== process.pid);
@@ -146,39 +184,149 @@ function listMainTelegramWorkerProcesses(options = {}) {
 
 function isMainTelegramWorkerAlive(options = {}) {
   const owner = options.owner || readMainTelegramWorkerOwner(options);
-  if (!owner) return false;
-  return listMainTelegramWorkerProcesses(options)
-    .some((entry) => {
-      const pid = Number.parseInt(String(entry?.pid ?? ''), 10);
-      return pid === owner.pid;
-    });
+  const localMainWorkers = listMainTelegramWorkerProcesses(options);
+  if (owner && localMainWorkers.some((entry) => Number(entry?.pid) === owner.pid)) {
+    return true;
+  }
+  // The shared heartbeat can be overwritten by a stale standalone poll that
+  // finishes after the main worker's pre-poll claim. The exact script path is
+  // rooted in this runtime, so a local main worker is authoritative while the
+  // mutable heartbeat catches up. Foreign side-profile runtimes cannot match.
+  return localMainWorkers.length > 0;
 }
 
 function hasAnyMainTelegramWorkerProcess(options = {}) {
-  const processListText = typeof options.processListText === 'string'
-    ? options.processListText
-    : readProcessListText();
-  if (!processListText) return false;
-  return processListText
-    .split(/\r?\n/)
-    .some((line) => {
-      if (!MAIN_TELEGRAM_WORKER_PATTERN.test(line)) return false;
-      const match = line.match(/^\s*(\d+)/);
-      const pid = match ? Number.parseInt(match[1], 10) : null;
-      return !Number.isInteger(pid) || pid !== process.pid;
-    });
+  return listMainTelegramWorkerProcesses(options).length > 0;
 }
 
 function allowsStandaloneLaneWithMainWorker(env = process.env) {
   return String(env.SQUIDRUN_ALLOW_STANDALONE_TELEGRAM_LANE || '').trim() === '1';
 }
 
-function readPid() {
+function readLaneClaim(claimPath = PID_PATH) {
   try {
-    return Number.parseInt(fs.readFileSync(PID_PATH, 'utf8').trim(), 10);
+    const raw = fs.readFileSync(claimPath, 'utf8').trim();
+    if (!raw) return null;
+    if (/^\d+$/.test(raw)) {
+      return {
+        version: 1,
+        state: 'legacy',
+        pid: Number.parseInt(raw, 10),
+        raw,
+      };
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? { ...parsed, raw }
+      : null;
   } catch {
     return null;
   }
+}
+
+function readPid(claimPath = PID_PATH) {
+  const claim = readLaneClaim(claimPath);
+  const pid = Number.parseInt(String(claim?.pid ?? ''), 10);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+function laneClaimMatchesRuntime(claim, options = {}) {
+  if (!claim || Number(claim.version) !== LANE_CLAIM_VERSION) return false;
+  const expectedRoot = normalizeIdentityPath(options.projectRoot || getProjectRoot());
+  const expectedScript = normalizeIdentityPath(options.scriptPath || __filename);
+  return normalizeIdentityPath(claim.projectRoot) === expectedRoot
+    && normalizeIdentityPath(claim.scriptPath) === expectedScript
+    && typeof claim.launchToken === 'string'
+    && claim.launchToken.length > 0;
+}
+
+function writeClaimExclusive(claimPath, claim) {
+  fs.mkdirSync(path.dirname(claimPath), { recursive: true });
+  let fd = null;
+  try {
+    fd = fs.openSync(claimPath, 'wx');
+    fs.writeFileSync(fd, `${JSON.stringify(claim, null, 2)}\n`, 'utf8');
+    return { ok: true, claim };
+  } catch (err) {
+    if (err?.code === 'EEXIST') {
+      return { ok: false, reason: 'claim_exists', claim: readLaneClaim(claimPath) };
+    }
+    return { ok: false, reason: 'claim_create_failed', error: err.message, claim: null };
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+  }
+}
+
+function createLaneLaunchClaim(options = {}) {
+  const claimPath = options.claimPath || PID_PATH;
+  const claim = {
+    version: LANE_CLAIM_VERSION,
+    state: 'launching',
+    pid: null,
+    launcherPid: Number(options.launcherPid) || process.pid,
+    launchToken: options.launchToken || crypto.randomUUID(),
+    projectRoot: path.resolve(options.projectRoot || getProjectRoot()),
+    scriptPath: path.resolve(options.scriptPath || __filename),
+    createdAt: new Date().toISOString(),
+  };
+  return writeClaimExclusive(claimPath, claim);
+}
+
+function claimLaneForChild(options = {}) {
+  const claimPath = options.claimPath || PID_PATH;
+  const projectRoot = path.resolve(options.projectRoot || getProjectRoot());
+  const scriptPath = path.resolve(options.scriptPath || __filename);
+  const childPid = Number(options.pid) || process.pid;
+  const launchToken = typeof options.launchToken === 'string' && options.launchToken
+    ? options.launchToken
+    : crypto.randomUUID();
+  const existing = readLaneClaim(claimPath);
+
+  if (!existing) {
+    return writeClaimExclusive(claimPath, {
+      version: LANE_CLAIM_VERSION,
+      state: 'running',
+      pid: childPid,
+      launcherPid: null,
+      launchToken,
+      projectRoot,
+      scriptPath,
+      createdAt: new Date().toISOString(),
+      startedAt: new Date().toISOString(),
+    });
+  }
+
+  if (
+    existing.state !== 'launching'
+    || existing.launchToken !== launchToken
+    || !laneClaimMatchesRuntime(existing, { projectRoot, scriptPath })
+  ) {
+    return { ok: false, reason: 'claim_owned_by_another_lane', claim: existing };
+  }
+
+  const runningClaim = {
+    ...existing,
+    state: 'running',
+    pid: childPid,
+    startedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(claimPath, `${JSON.stringify(runningClaim, null, 2)}\n`, 'utf8');
+  return { ok: true, claim: runningClaim };
+}
+
+function removeLaneClaimIfOwned(expected = {}, claimPath = PID_PATH) {
+  const current = readLaneClaim(claimPath);
+  if (!current) return true;
+  if (expected.raw && current.raw !== expected.raw) return false;
+  if (expected.launchToken && current.launchToken !== expected.launchToken) return false;
+  if (
+    Number.isInteger(Number(expected.pid))
+    && Number(current.pid) !== Number(expected.pid)
+  ) {
+    return false;
+  }
+  fs.rmSync(claimPath, { force: true });
+  return true;
 }
 
 function writeLog(message) {
@@ -187,7 +335,9 @@ function writeLog(message) {
 }
 
 function status(options = {}) {
-  const pid = readPid();
+  const claimPath = options.claimPath || PID_PATH;
+  const claim = readLaneClaim(claimPath);
+  const pid = readPid(claimPath);
   const processListText = typeof options.processListText === 'string'
     ? options.processListText
     : readProcessListText();
@@ -195,15 +345,33 @@ function status(options = {}) {
   const pidAlive = typeof options.isPidAlive === 'function'
     ? options.isPidAlive(pid)
     : isPidAlive(pid);
-  const exactProcess = pidAlive && isStandaloneLaneProcess(pid, probeOptions);
-  const running = pidAlive && exactProcess;
+  const processProbeAvailable = String(processListText || '').trim().length > 0;
+  const claimMatchesRuntime = laneClaimMatchesRuntime(claim, options);
+  const exactProcess = pidAlive
+    && processProbeAvailable
+    && claimMatchesRuntime
+    && isStandaloneLaneProcess(pid, probeOptions);
+  const running = pidAlive && exactProcess && claim?.state === 'running';
+  const launcherPid = Number.parseInt(String(claim?.launcherPid ?? ''), 10);
+  const launcherAlive = typeof options.isPidAlive === 'function'
+    ? options.isPidAlive(launcherPid)
+    : isPidAlive(launcherPid);
+  const starting = claimMatchesRuntime
+    && claim?.state === 'launching'
+    && launcherAlive;
+  const identityUnverified = pidAlive && !processProbeAvailable;
   const owner = readMainTelegramWorkerOwner(probeOptions);
   return {
     ok: true,
     running,
+    starting,
     pid: running ? pid : null,
-    stalePid: pidAlive && !exactProcess ? pid : null,
-    pidPath: PID_PATH,
+    stalePid: pidAlive && processProbeAvailable && !exactProcess ? pid : null,
+    identityUnverified,
+    processProbeAvailable,
+    claimState: claim?.state || null,
+    claimMatchesRuntime,
+    pidPath: claimPath,
     logPath: LOG_PATH,
     mainWorkerRunning: isMainTelegramWorkerAlive({ ...probeOptions, owner }),
     anyMainWorkerRunning: hasAnyMainTelegramWorkerProcess(probeOptions),
@@ -348,12 +516,30 @@ function formatInbound(text, from, metadata = {}) {
 
 function runLane() {
   require('dotenv').config({ path: path.join(getProjectRoot(), '.env'), quiet: true });
-  if (isMainTelegramWorkerAlive() && !allowsStandaloneLaneWithMainWorker()) {
-    writeLog('[blocked] main telegram-poller-worker is already running; standalone lane would cause Telegram 409 conflicts');
-    process.exit(2);
+  const launchToken = String(process.env.SQUIDRUN_TELEGRAM_LANE_LAUNCH_TOKEN || '').trim();
+  const processListText = readProcessListText();
+  if (!String(processListText || '').trim()) {
+    writeLog('[blocked] process identity probe unavailable; standalone ownership cannot be proven');
+    if (launchToken) removeLaneClaimIfOwned({ launchToken });
+    process.exit(4);
+    return;
   }
-  fs.mkdirSync(path.dirname(PID_PATH), { recursive: true });
-  fs.writeFileSync(PID_PATH, String(process.pid), 'utf8');
+  if (
+    isMainTelegramWorkerAlive({ processListText })
+    && !allowsStandaloneLaneWithMainWorker()
+  ) {
+    writeLog('[blocked] main telegram-poller-worker is already running; standalone lane would cause Telegram 409 conflicts');
+    if (launchToken) removeLaneClaimIfOwned({ launchToken });
+    process.exit(2);
+    return;
+  }
+  const ownership = claimLaneForChild({ launchToken });
+  if (!ownership.ok) {
+    writeLog(`[blocked] standalone ownership claim rejected reason=${ownership.reason}`);
+    process.exit(3);
+    return;
+  }
+  const ownedClaim = ownership.claim;
   writeLog(`[start] pid=${process.pid}`);
   let shuttingDown = false;
   let keepAliveTimer = null;
@@ -370,7 +556,10 @@ function runLane() {
       // Best effort.
     }
     try {
-      if (readPid() === process.pid) fs.rmSync(PID_PATH, { force: true });
+      removeLaneClaimIfOwned({
+        launchToken: ownedClaim.launchToken,
+        pid: process.pid,
+      });
     } catch {
       // Best effort.
     }
@@ -383,6 +572,7 @@ function runLane() {
   const ownerEnv = {
     ...buildProfileTelegramEnv(process.env, 'main'),
     SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
+    SQUIDRUN_TELEGRAM_STANDALONE_LANE: '1',
   };
   const started = telegramPoller.start({
     env: ownerEnv,
@@ -449,7 +639,12 @@ function evaluateLaneStartupProof(childPid, proof = {}) {
       reason: 'lane_child_died_immediately',
     };
   }
-  if (!Number.isInteger(numericPid) || Number(proof.claimedPid) !== numericPid) {
+  if (
+    !Number.isInteger(numericPid)
+    || Number(proof.claimedPid) !== numericPid
+    || !proof.expectedToken
+    || proof.claimedToken !== proof.expectedToken
+  ) {
     return {
       ok: false,
       started: false,
@@ -466,8 +661,39 @@ function evaluateLaneStartupProof(childPid, proof = {}) {
 }
 
 function startLane(options = {}) {
+  const initialClaim = readLaneClaim();
   const current = status();
   if (current.running) return { ok: true, alreadyRunning: true, ...current };
+  if (current.starting) {
+    return {
+      ok: true,
+      started: false,
+      alreadyStarting: true,
+      reason: 'lane_start_in_progress',
+      pidPath: PID_PATH,
+      logPath: LOG_PATH,
+    };
+  }
+  if (current.identityUnverified) {
+    return {
+      ok: false,
+      started: false,
+      reason: 'process_identity_probe_unavailable',
+      note: 'A live claimed PID could not be identified; refusing to remove its claim, spawn, or stop.',
+      pidPath: PID_PATH,
+      logPath: LOG_PATH,
+    };
+  }
+  if (!current.processProbeAvailable) {
+    return {
+      ok: false,
+      started: false,
+      reason: 'process_identity_probe_unavailable',
+      note: 'Main/standalone ownership cannot be identified; refusing to spawn another Telegram poller.',
+      pidPath: PID_PATH,
+      logPath: LOG_PATH,
+    };
+  }
   if (current.mainWorkerRunning && !allowsStandaloneLaneWithMainWorker()) {
     return {
       ok: false,
@@ -479,15 +705,54 @@ function startLane(options = {}) {
     };
   }
   fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
-  fs.rmSync(PID_PATH, { force: true });
+  if (initialClaim && !removeLaneClaimIfOwned({
+    raw: initialClaim.raw,
+    launchToken: initialClaim.launchToken,
+    pid: initialClaim.pid,
+  })) {
+    return {
+      ok: false,
+      started: false,
+      reason: 'lane_claim_changed_during_cleanup',
+      pidPath: PID_PATH,
+      logPath: LOG_PATH,
+    };
+  }
+  const launchClaimResult = createLaneLaunchClaim();
+  if (!launchClaimResult.ok) {
+    const claimIsActive = laneClaimMatchesRuntime(launchClaimResult.claim)
+      && ['launching', 'running'].includes(launchClaimResult.claim?.state);
+    return {
+      ok: launchClaimResult.reason === 'claim_exists' && claimIsActive,
+      started: false,
+      alreadyStarting: launchClaimResult.reason === 'claim_exists' && claimIsActive,
+      reason: launchClaimResult.reason,
+      pidPath: PID_PATH,
+      logPath: LOG_PATH,
+    };
+  }
+  const launchClaim = launchClaimResult.claim;
   const out = fs.openSync(LOG_PATH, 'a');
   let child;
   try {
     child = spawn(
       process.execPath,
       [__filename, 'run'],
-      buildStandaloneLaneSpawnOptions(getProjectRoot(), process.env, out)
+      buildStandaloneLaneSpawnOptions(getProjectRoot(), {
+        ...process.env,
+        SQUIDRUN_TELEGRAM_LANE_LAUNCH_TOKEN: launchClaim.launchToken,
+      }, out)
     );
+  } catch (err) {
+    removeLaneClaimIfOwned({ launchToken: launchClaim.launchToken });
+    return {
+      ok: false,
+      started: false,
+      reason: 'lane_spawn_failed',
+      error: err.message,
+      pidPath: PID_PATH,
+      logPath: LOG_PATH,
+    };
   } finally {
     fs.closeSync(out);
   }
@@ -500,9 +765,12 @@ function startLane(options = {}) {
   const mainWorkerRunning = typeof options.isMainWorkerAlive === 'function'
     ? options.isMainWorkerAlive()
     : isMainTelegramWorkerAlive();
+  const claimed = readLaneClaim();
   const startupProof = evaluateLaneStartupProof(child.pid, {
     alive: isAlive,
-    claimedPid: readPid(),
+    claimedPid: claimed?.pid,
+    claimedToken: claimed?.launchToken,
+    expectedToken: launchClaim.launchToken,
     mainWorkerRunning,
   });
   if (startupProof.handedOffToMain && isAlive) {
@@ -511,9 +779,10 @@ function startLane(options = {}) {
     } catch {
       // The just-spawned child may already be yielding to the main owner.
     }
-    if (readPid() === child.pid) {
-      fs.rmSync(PID_PATH, { force: true });
-    }
+    removeLaneClaimIfOwned({
+      launchToken: launchClaim.launchToken,
+      pid: child.pid,
+    });
   }
   if (!startupProof.ok) {
     if (isAlive && startupProof.reason === 'lane_child_alive_without_startup_claim') {
@@ -523,6 +792,7 @@ function startLane(options = {}) {
         // The just-spawned child may have exited between proof and cleanup.
       }
     }
+    removeLaneClaimIfOwned({ launchToken: launchClaim.launchToken });
     return {
       ...startupProof,
       pid: child.pid,
@@ -541,8 +811,24 @@ function startLane(options = {}) {
 
 function stopLane(options = {}) {
   const current = status(options);
+  if (current.identityUnverified) {
+    return {
+      ok: false,
+      stopped: false,
+      reason: 'process_identity_probe_unavailable',
+      pidPath: PID_PATH,
+    };
+  }
+  if (current.starting) {
+    return {
+      ok: false,
+      stopped: false,
+      reason: 'lane_start_in_progress',
+      pidPath: PID_PATH,
+    };
+  }
   if (current.stalePid) {
-    fs.rmSync(PID_PATH, { force: true });
+    fs.rmSync(current.pidPath, { force: true });
     return {
       ok: false,
       stopped: false,
@@ -552,8 +838,8 @@ function stopLane(options = {}) {
     };
   }
   if (!current.running) {
-    fs.rmSync(PID_PATH, { force: true });
-    return { ok: true, stopped: false, reason: 'not_running', pidPath: PID_PATH };
+    fs.rmSync(current.pidPath, { force: true });
+    return { ok: true, stopped: false, reason: 'not_running', pidPath: current.pidPath };
   }
   process.kill(current.pid, 'SIGTERM');
   return { ok: true, stopped: true, pid: current.pid, pidPath: PID_PATH };
@@ -590,6 +876,9 @@ if (require.main === module) {
 module.exports = {
   MAIN_OWNER_RECONCILE_INTERVAL_MS,
   buildStandaloneLaneSpawnOptions,
+  claimLaneForChild,
+  commandInvokesExactScript,
+  createLaneLaunchClaim,
   dispatchInboundTelegramMessage,
   evaluateLaneStartupProof,
   forwardToProfileTrigger,
@@ -598,6 +887,8 @@ module.exports = {
   isMainTelegramWorkerAlive,
   isPidAlive,
   isStandaloneLaneProcess,
+  laneClaimMatchesRuntime,
+  readLaneClaim,
   resolveRuntimeUiScriptPath,
   status,
   startLane,

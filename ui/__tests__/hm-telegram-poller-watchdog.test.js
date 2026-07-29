@@ -3,8 +3,10 @@ const os = require('os');
 const path = require('path');
 
 const {
+  APP_BOOT_GUARD_MS,
   checkAndRecoverTelegramPoller,
   inspectTelegramPollerFreshness,
+  listMainTelegramWorkerProcesses,
   recoverWedgedTelegramPoller,
 } = require('../scripts/hm-telegram-poller-watchdog');
 
@@ -156,6 +158,97 @@ describe('hm-telegram-poller-watchdog', () => {
     expect(getStandaloneLaneStatus).not.toHaveBeenCalled();
   });
 
+  test('keeps init_complete inside the bounded startup guard until the child can claim', async () => {
+    const nowMs = Date.parse('2026-07-29T21:12:40.000Z');
+    writeJson(path.join(tempDir, '.squidrun', 'app-status.json'), {
+      session: 485,
+      started: '2026-07-29T21:12:39.900Z',
+      boot: {
+        stage: 'init_complete',
+        lastHeartbeatAt: '2026-07-29T21:12:39.950Z',
+        pid: 44224,
+      },
+    });
+    writeJson(path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json'), {
+      version: 1,
+      updatedAt: '2026-07-29T20:51:41.416Z',
+      poller: {
+        lastPollAt: '2026-07-29T20:51:41.416Z',
+        lastPollStatus: 'ok_empty',
+      },
+    });
+    const runAppRestart = jest.fn();
+    const startStandaloneLane = jest.fn();
+
+    const guarded = await checkAndRecoverTelegramPoller({
+      projectRoot: tempDir,
+      nowMs,
+      staleThresholdMs: 10 * 60 * 1000,
+      runAppRestart,
+      startStandaloneLane,
+    });
+
+    expect(guarded).toEqual(expect.objectContaining({
+      freshness: expect.objectContaining({
+        wedged: true,
+        appState: expect.objectContaining({
+          bootInProgress: true,
+          bootStage: 'init_complete',
+        }),
+      }),
+      recovery: expect.objectContaining({
+        action: 'deferred_app_boot',
+      }),
+    }));
+    expect(runAppRestart).not.toHaveBeenCalled();
+    expect(startStandaloneLane).not.toHaveBeenCalled();
+
+    const expired = inspectTelegramPollerFreshness({
+      projectRoot: tempDir,
+      nowMs: nowMs + APP_BOOT_GUARD_MS + 1,
+      staleThresholdMs: 10 * 60 * 1000,
+    });
+    expect(expired).toEqual(expect.objectContaining({
+      wedged: true,
+      appState: expect.objectContaining({
+        bootInProgress: false,
+      }),
+    }));
+  });
+
+  test('treats a fresh starting ownership claim as bounded startup despite stale prior polling', async () => {
+    const nowMs = Date.parse('2026-07-29T21:12:40.000Z');
+    writeJson(path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json'), {
+      version: 1,
+      updatedAt: '2026-07-29T21:12:39.950Z',
+      poller: {
+        ownerClaimedAt: '2026-07-29T21:12:39.950Z',
+        lastPollAt: '2026-07-29T20:51:41.416Z',
+        lastPollStatus: 'starting',
+      },
+    });
+    const runAppRestart = jest.fn();
+
+    const guarded = await checkAndRecoverTelegramPoller({
+      appUp: true,
+      projectRoot: tempDir,
+      nowMs,
+      staleThresholdMs: 10 * 60 * 1000,
+      runAppRestart,
+    });
+
+    expect(guarded).toEqual(expect.objectContaining({
+      freshness: expect.objectContaining({
+        wedged: true,
+        pollerStartupInProgress: true,
+      }),
+      recovery: expect.objectContaining({
+        action: 'deferred_app_boot',
+      }),
+    }));
+    expect(runAppRestart).not.toHaveBeenCalled();
+  });
+
   test('freshness uses poller lastPollAt over a recently touched state file', () => {
     writeJson(path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json'), {
       version: 1,
@@ -267,14 +360,16 @@ describe('hm-telegram-poller-watchdog', () => {
       started: true,
       pid: 470996,
     }));
+    const mainWorkerScriptPath = path.join(tempDir, 'ui', 'modules', 'main', 'telegram-poller-worker.js');
 
     const recovery = await recoverWedgedTelegramPoller({
       projectRoot: tempDir,
       freshness,
       dryRun: true,
       isMainWorkerAlive: () => false,
+      mainWorkerScriptPath,
       notifyJames,
-      processListText: '68752 node D:\\projects\\squidrun\\ui\\modules\\main\\telegram-poller-worker.js',
+      processListText: `68752 node "${mainWorkerScriptPath}"`,
       runAppRestart,
       startStandaloneLane,
       standaloneStatus: { running: false },
@@ -356,14 +451,16 @@ describe('hm-telegram-poller-watchdog', () => {
       started: true,
       pid: 470996,
     }));
+    const mainWorkerScriptPath = path.join(tempDir, 'ui', 'modules', 'main', 'telegram-poller-worker.js');
 
     const recovery = await recoverWedgedTelegramPoller({
       projectRoot: tempDir,
       freshness,
       dryRun: true,
       isMainWorkerAlive: () => false,
+      mainWorkerScriptPath,
       notifyJames: jest.fn(() => ({ ok: true, message: 'restored' })),
-      processListText: '68752 node D:\\projects\\squidrun\\ui\\modules\\main\\telegram-poller-worker.js',
+      processListText: `68752 node "${mainWorkerScriptPath}"`,
       runAppRestart,
       startStandaloneLane,
       standaloneStatus: { running: false },
@@ -400,6 +497,7 @@ describe('hm-telegram-poller-watchdog', () => {
       started: true,
       pid: 470996,
     }));
+    const mainWorkerScriptPath = path.join(tempDir, 'ui', 'modules', 'main', 'telegram-poller-worker.js');
 
     const recovery = await recoverWedgedTelegramPoller({
       projectRoot: tempDir,
@@ -410,8 +508,9 @@ describe('hm-telegram-poller-watchdog', () => {
       freshness,
       dryRun: true,
       isMainWorkerAlive: () => false,
+      mainWorkerScriptPath,
       notifyJames: jest.fn(() => ({ ok: true, message: 'restored' })),
-      processListText: '68752 node D:\\projects\\squidrun\\ui\\modules\\main\\telegram-poller-worker.js',
+      processListText: `68752 node "${mainWorkerScriptPath}"`,
       runAppRestart: jest.fn(() => ({
         ok: false,
         result: { success: false, reason: 'app_control_unavailable' },
@@ -423,6 +522,21 @@ describe('hm-telegram-poller-watchdog', () => {
     expect(recovery.killResult.killed).toEqual([]);
     expect(recovery.killResult.skipped).toEqual([]);
     expect(startStandaloneLane).toHaveBeenCalledTimes(1);
+  });
+
+  test('main-worker recovery matching rejects wrapper mentions and foreign-root scripts', () => {
+    const mainWorkerScriptPath = path.join(tempDir, 'ui', 'modules', 'main', 'telegram-poller-worker.js');
+    const processes = listMainTelegramWorkerProcesses({
+      env: { SQUIDRUN_DATA_ROOT: tempDir },
+      mainWorkerScriptPath,
+      projectRoot: tempDir,
+      processListText: [
+        `68752 node wrapper.js --probe "${mainWorkerScriptPath}"`,
+        '77777 node D:\\SquidRun\\sideprofile\\ui\\modules\\main\\telegram-poller-worker.js',
+      ].join('\n'),
+    });
+
+    expect(processes).toEqual([]);
   });
 
   test('existing standalone lane is restarted instead of starting an app worker', async () => {

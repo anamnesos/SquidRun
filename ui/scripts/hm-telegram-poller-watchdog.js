@@ -12,7 +12,7 @@ const DEFAULT_STALE_THRESHOLD_MS = 10 * 60 * 1000;
 const APP_BOOT_GUARD_MS = 2 * 60 * 1000;
 const POLLER_STATE_REL_PATH = path.join('.squidrun', 'runtime', 'telegram-poller-state.json');
 const WATCHDOG_LOG_REL_PATH = path.join('.squidrun', 'runtime', 'telegram-poller-watchdog.log');
-const MAIN_TELEGRAM_WORKER_PATTERN = /modules[\\/]+main[\\/]+telegram-poller-worker\.js/i;
+const MAIN_TELEGRAM_WORKER_PATH = path.resolve(__dirname, '..', 'modules', 'main', 'telegram-poller-worker.js');
 const STANDALONE_RESTART_WAIT_MS = 3000;
 
 function asPositiveMs(value, fallback) {
@@ -70,7 +70,6 @@ function readAppUp(projectRoot = null, options = {}) {
     : null;
   const bootInProgress = Boolean(
     bootStage
-    && bootStage !== 'init_complete'
     && bootHeartbeatAgeMs !== null
     && bootHeartbeatAgeMs <= APP_BOOT_GUARD_MS
   );
@@ -137,6 +136,16 @@ function inspectTelegramPollerFreshness(options = {}) {
   const updatedAt = typeof read.value?.updatedAt === 'string' && read.value.updatedAt.trim()
     ? read.value.updatedAt.trim()
     : null;
+  const ownerClaimedAt = typeof poller?.ownerClaimedAt === 'string' && poller.ownerClaimedAt.trim()
+    ? poller.ownerClaimedAt.trim()
+    : null;
+  const ownerClaimedAtMs = ownerClaimedAt ? Date.parse(ownerClaimedAt) : NaN;
+  const ownerClaimAgeMs = Number.isFinite(ownerClaimedAtMs)
+    ? Math.max(0, nowMs - ownerClaimedAtMs)
+    : null;
+  const pollerStartupInProgress = poller?.lastPollStatus === 'starting'
+    && ownerClaimAgeMs !== null
+    && ownerClaimAgeMs <= APP_BOOT_GUARD_MS;
   const freshnessAt = lastPollAt || updatedAt;
   const freshnessSource = lastPollAt ? 'poller.lastPollAt' : 'state.updatedAt';
   const freshnessAtMs = freshnessAt ? Date.parse(freshnessAt) : NaN;
@@ -153,6 +162,9 @@ function inspectTelegramPollerFreshness(options = {}) {
       updatedAt,
       freshnessAt,
       freshnessSource,
+      ownerClaimedAt,
+      ownerClaimAgeMs,
+      pollerStartupInProgress,
       appUp: true,
       appState,
     };
@@ -172,6 +184,9 @@ function inspectTelegramPollerFreshness(options = {}) {
     updatedAt,
     freshnessAt,
     freshnessSource,
+    ownerClaimedAt,
+    ownerClaimAgeMs,
+    pollerStartupInProgress,
     appUp: true,
     appState,
     poller,
@@ -214,6 +229,40 @@ function normalizeRootPath(value) {
   return path.resolve(value.trim());
 }
 
+function normalizeIdentityPath(value) {
+  const resolved = normalizeRootPath(value);
+  if (!resolved) return null;
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function tokenizeCommandLine(commandLine) {
+  const tokens = [];
+  const matcher = /"([^"]*)"|'([^']*)'|([^\s]+)/g;
+  let match;
+  while ((match = matcher.exec(String(commandLine || ''))) !== null) {
+    tokens.push(match[1] ?? match[2] ?? match[3]);
+  }
+  return tokens;
+}
+
+function commandInvokesExactScript(commandLine, scriptPath) {
+  const expectedScript = normalizeIdentityPath(scriptPath);
+  const tokens = tokenizeCommandLine(commandLine);
+  return Boolean(
+    expectedScript
+    && tokens.length >= 2
+    && normalizeIdentityPath(tokens[1]) === expectedScript
+  );
+}
+
+function pathIsWithinRoot(rootPath, candidatePath) {
+  const root = normalizeIdentityPath(rootPath);
+  const candidate = normalizeIdentityPath(candidatePath);
+  if (!root || !candidate) return false;
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
 function resolveExpectedDataRoot(projectRoot = null, env = process.env) {
   return normalizeRootPath(env.SQUIDRUN_DATA_ROOT)
     || normalizeRootPath(projectRoot)
@@ -231,18 +280,23 @@ function listMainTelegramWorkerProcesses(options = {}) {
   const processListText = typeof options.processListText === 'string'
     ? options.processListText
     : readProcessListText();
+  const projectRoot = resolveProjectRoot(options.projectRoot);
+  const expectedDataRoot = resolveExpectedDataRoot(projectRoot, options.env || process.env);
+  const expectedScriptPath = options.mainWorkerScriptPath || MAIN_TELEGRAM_WORKER_PATH;
+  if (expectedDataRoot && !pathIsWithinRoot(expectedDataRoot, expectedScriptPath)) return [];
   if (!processListText) return [];
   return processListText
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && MAIN_TELEGRAM_WORKER_PATTERN.test(line))
     .map((line) => {
-      const match = line.match(/^(\d+)/);
+      const match = String(line || '').trim().match(/^(\d+)\s+(.+)$/);
+      if (!match || !commandInvokesExactScript(match[2], expectedScriptPath)) return null;
       return {
         pid: match ? Number.parseInt(match[1], 10) : null,
-        commandLine: line,
+        commandLine: match[2],
+        scriptPath: path.resolve(expectedScriptPath),
       };
     })
+    .filter(Boolean)
     .filter((entry) => !Number.isInteger(entry.pid) || entry.pid !== process.pid);
 }
 
@@ -505,6 +559,8 @@ async function recoverWedgedTelegramPoller(options = {}) {
     writeWatchdogLog(projectRoot, `[recover] app-control restart failed reason=${reason} error=${appRestart?.error || appRestart?.result?.reason || appRestart?.reason || 'unknown'}`);
   }
   const workers = listMainTelegramWorkerProcesses({
+    env: options.env || process.env,
+    mainWorkerScriptPath: options.mainWorkerScriptPath,
     projectRoot,
     processListText: typeof options.processListText === 'string' ? options.processListText : undefined,
   });
@@ -567,12 +623,15 @@ async function checkAndRecoverTelegramPoller(options = {}) {
   const freshness = inspectTelegramPollerFreshness(options);
   if (
     freshness.wedged
-    && freshness.appState?.bootInProgress === true
+    && (
+      freshness.appState?.bootInProgress === true
+      || freshness.pollerStartupInProgress === true
+    )
     && options.allowRecoveryDuringAppBoot !== true
   ) {
     writeWatchdogLog(
       resolveProjectRoot(options.projectRoot),
-      `[defer] app boot in progress stage=${freshness.appState.bootStage || 'unknown'} heartbeatAgeMs=${freshness.appState.bootHeartbeatAgeMs ?? 'unknown'}`
+      `[defer] app/poller startup guard stage=${freshness.appState.bootStage || 'unknown'} heartbeatAgeMs=${freshness.appState.bootHeartbeatAgeMs ?? 'unknown'} ownerClaimAgeMs=${freshness.ownerClaimAgeMs ?? 'unknown'}`
     );
     return {
       ok: true,
