@@ -3,6 +3,7 @@ const os = require('os');
 const path = require('path');
 
 const {
+  checkAndRecoverTelegramPoller,
   inspectTelegramPollerFreshness,
   recoverWedgedTelegramPoller,
 } = require('../scripts/hm-telegram-poller-watchdog');
@@ -102,6 +103,57 @@ describe('hm-telegram-poller-watchdog', () => {
     );
     expect(watchdogLog).toContain('[detect] status=stale');
     expect(watchdogLog).toContain('[recover] app-control restart succeeded');
+  });
+
+  test('defers stale recovery during a fresh app boot instead of launching a competing standalone owner', async () => {
+    const nowMs = Date.parse('2026-07-29T21:12:35.616Z');
+    writeJson(path.join(tempDir, '.squidrun', 'app-status.json'), {
+      session: 485,
+      started: '2026-07-29T21:12:35.591Z',
+      boot: {
+        stage: 'startup_health_refresh',
+        lastHeartbeatAt: '2026-07-29T21:12:35.591Z',
+        pid: 44224,
+      },
+    });
+    writeJson(path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json'), {
+      version: 1,
+      updatedAt: '2026-07-29T20:51:41.416Z',
+      poller: {
+        lastPollAt: '2026-07-29T20:51:41.416Z',
+        lastPollStatus: 'ok_empty',
+      },
+    });
+    const runAppRestart = jest.fn();
+    const startStandaloneLane = jest.fn();
+    const getStandaloneLaneStatus = jest.fn();
+
+    const result = await checkAndRecoverTelegramPoller({
+      projectRoot: tempDir,
+      nowMs,
+      staleThresholdMs: 10 * 60 * 1000,
+      runAppRestart,
+      startStandaloneLane,
+      getStandaloneLaneStatus,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      freshness: expect.objectContaining({
+        wedged: true,
+        appState: expect.objectContaining({
+          bootInProgress: true,
+          bootStage: 'startup_health_refresh',
+        }),
+      }),
+      recovery: expect.objectContaining({
+        action: 'deferred_app_boot',
+        recovered: false,
+      }),
+    }));
+    expect(runAppRestart).not.toHaveBeenCalled();
+    expect(startStandaloneLane).not.toHaveBeenCalled();
+    expect(getStandaloneLaneStatus).not.toHaveBeenCalled();
   });
 
   test('freshness uses poller lastPollAt over a recently touched state file', () => {

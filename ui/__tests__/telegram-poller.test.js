@@ -323,6 +323,36 @@ describe('telegram-poller', () => {
     }
   });
 
+  test('start claims PID-qualified ownership before the first getUpdates tick', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-poller-start-claim-'));
+    const statePath = path.join(tempDir, 'telegram-poller-state.json');
+
+    try {
+      telegramPoller.start({
+        env: {
+          TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+          TELEGRAM_CHAT_ID: '123456',
+          SQUIDRUN_DATA_ROOT: tempDir,
+        },
+        onMessage: jest.fn(),
+        statePath,
+      });
+
+      const persisted = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      expect(persisted.poller).toEqual(expect.objectContaining({
+        pid: process.pid,
+        dataRoot: tempDir,
+        profile: 'main',
+        lastPollStatus: 'starting',
+        nextOffset: 0,
+      }));
+      expect(Date.parse(persisted.poller.ownerClaimedAt)).not.toBeNaN();
+    } finally {
+      telegramPoller.stop();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test('pollNow times out a hung getUpdates request and clears in-flight for the next poll', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-poller-timeout-'));
     const statePath = path.join(tempDir, 'telegram-poller-state.json');

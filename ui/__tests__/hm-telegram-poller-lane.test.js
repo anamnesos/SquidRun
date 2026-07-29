@@ -3,9 +3,12 @@ const os = require('os');
 const path = require('path');
 
 const {
+  buildStandaloneLaneSpawnOptions,
   dispatchInboundTelegramMessage,
+  evaluateLaneStartupProof,
   formatInbound,
   isMainTelegramWorkerAlive,
+  isStandaloneLaneProcess,
   resolveRuntimeUiScriptPath,
 } = require('../scripts/hm-telegram-poller-lane');
 
@@ -154,6 +157,58 @@ describe('hm-telegram-poller-lane', () => {
         '2345 node D:\\projects\\squidrun\\ui\\scripts\\hm-telegram-poller-lane.js run',
       ].join('\n'),
     })).toBe(false);
+  });
+
+  test('launches a detached lane through Electron in Node mode', () => {
+    const options = buildStandaloneLaneSpawnOptions(
+      'D:\\projects\\squidrun',
+      { EXISTING_FLAG: 'kept' },
+      42
+    );
+
+    expect(options).toEqual(expect.objectContaining({
+      cwd: 'D:\\projects\\squidrun',
+      detached: true,
+      stdio: ['ignore', 42, 42],
+      windowsHide: true,
+      env: expect.objectContaining({
+        EXISTING_FLAG: 'kept',
+        ELECTRON_RUN_AS_NODE: '1',
+        SQUIDRUN_PROJECT_ROOT: 'D:\\projects\\squidrun',
+      }),
+    }));
+  });
+
+  test('does not accept a live child as started until the child claims the lane pidfile', () => {
+    expect(evaluateLaneStartupProof(32852, {
+      alive: true,
+      claimedPid: null,
+      mainWorkerRunning: false,
+    })).toEqual(expect.objectContaining({
+      ok: false,
+      started: false,
+      reason: 'lane_child_alive_without_startup_claim',
+    }));
+
+    expect(evaluateLaneStartupProof(32852, {
+      alive: true,
+      claimedPid: 32852,
+      mainWorkerRunning: false,
+    })).toEqual(expect.objectContaining({
+      ok: true,
+      started: true,
+      reason: 'lane_child_claimed',
+    }));
+  });
+
+  test('matches only the exact standalone run command for pid-scoped containment', () => {
+    const processListText = [
+      '32852 D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\scripts\\hm-telegram-poller-lane.js run',
+      '14584 D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\projects\\squidrun\\ui\\modules\\main\\telegram-poller-worker.js',
+    ].join('\n');
+
+    expect(isStandaloneLaneProcess(32852, { processListText })).toBe(true);
+    expect(isStandaloneLaneProcess(14584, { processListText })).toBe(false);
   });
 
   test('resolves hm-send from runtime bin when source ui scripts are absent', () => {

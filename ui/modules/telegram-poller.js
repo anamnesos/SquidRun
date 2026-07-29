@@ -466,6 +466,37 @@ function persistPollerHeartbeat(filePath, key, details = {}) {
   return writePollerState(filePath, state);
 }
 
+function persistPollerOwnershipClaim(filePath, key, details = {}) {
+  if (!filePath) return false;
+
+  const existing = readPollerState(filePath);
+  const state = existing && typeof existing === 'object' && !Array.isArray(existing)
+    ? existing
+    : {};
+  const nowIso = new Date().toISOString();
+  const priorPoller = state.poller && typeof state.poller === 'object' && !Array.isArray(state.poller)
+    ? state.poller
+    : {};
+
+  state.version = 1;
+  state.updatedAt = nowIso;
+  state.poller = {
+    ...priorPoller,
+    cursorKey: key || priorPoller.cursorKey || null,
+    pid: process.pid,
+    profile: details.profile || priorPoller.profile || null,
+    dataRoot: details.dataRoot || priorPoller.dataRoot || null,
+    tokenFingerprint: details.tokenFingerprint || priorPoller.tokenFingerprint || null,
+    chatId: details.chatId ?? priorPoller.chatId ?? null,
+    nextOffset: normalizeOffset(details.nextOffset) ?? normalizeOffset(priorPoller.nextOffset),
+    ownerClaimedAt: nowIso,
+    lastPollStatus: 'starting',
+    lastError: null,
+  };
+
+  return writePollerState(filePath, state);
+}
+
 function resolveStartupGraceMs(options = {}) {
   const candidates = [
     options.startupGraceMs,
@@ -982,6 +1013,18 @@ function start(options = {}) {
   telegramRequestTimeoutMs = resolveTelegramRequestTimeoutMs(options);
   pollInFlight = false;
   running = true;
+
+  // Claim the shared owner record before either the app worker or a temporary
+  // standalone lane can reach its first getUpdates tick. A standalone lane
+  // watches this PID-qualified claim and yields before polling concurrently.
+  persistPollerOwnershipClaim(statePath, cursorKey, {
+    chatId: config?.chatId ?? null,
+    dataRoot: pollerDataRoot,
+    nextOffset,
+    profile: config?.profile || 'main',
+    status: 'starting',
+    tokenFingerprint: fingerprintTelegramToken(config?.botToken),
+  });
 
   log.info(
     'Telegram',

@@ -9,6 +9,7 @@ const { resolveRuntimeUiScriptPath } = require('./runtime-ui-paths');
 const { getProjectRoot } = require('../config');
 
 const DEFAULT_STALE_THRESHOLD_MS = 10 * 60 * 1000;
+const APP_BOOT_GUARD_MS = 2 * 60 * 1000;
 const POLLER_STATE_REL_PATH = path.join('.squidrun', 'runtime', 'telegram-poller-state.json');
 const WATCHDOG_LOG_REL_PATH = path.join('.squidrun', 'runtime', 'telegram-poller-watchdog.log');
 const MAIN_TELEGRAM_WORKER_PATTERN = /modules[\\/]+main[\\/]+telegram-poller-worker\.js/i;
@@ -45,7 +46,7 @@ function readJsonFile(filePath) {
   }
 }
 
-function readAppUp(projectRoot = null) {
+function readAppUp(projectRoot = null, options = {}) {
   const appStatusPath = path.join(resolveProjectRoot(projectRoot), '.squidrun', 'app-status.json');
   const result = readJsonFile(appStatusPath);
   if (!result.ok) {
@@ -55,11 +56,34 @@ function readAppUp(projectRoot = null) {
       reason: result.exists ? 'app_status_read_error' : 'app_status_missing',
     };
   }
+  const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+  const boot = result.value?.boot && typeof result.value.boot === 'object'
+    ? result.value.boot
+    : null;
+  const bootStage = typeof boot?.stage === 'string' ? boot.stage.trim() : '';
+  const bootHeartbeatAt = typeof boot?.lastHeartbeatAt === 'string'
+    ? boot.lastHeartbeatAt.trim()
+    : '';
+  const bootHeartbeatMs = bootHeartbeatAt ? Date.parse(bootHeartbeatAt) : NaN;
+  const bootHeartbeatAgeMs = Number.isFinite(bootHeartbeatMs)
+    ? Math.max(0, nowMs - bootHeartbeatMs)
+    : null;
+  const bootInProgress = Boolean(
+    bootStage
+    && bootStage !== 'init_complete'
+    && bootHeartbeatAgeMs !== null
+    && bootHeartbeatAgeMs <= APP_BOOT_GUARD_MS
+  );
   return {
     appUp: true,
     appStatusPath,
     session: result.value?.session ?? result.value?.sessionNumber ?? null,
     started: result.value?.started || null,
+    bootStage: bootStage || null,
+    bootPid: Number.isInteger(Number(boot?.pid)) ? Number(boot.pid) : null,
+    bootHeartbeatAt: bootHeartbeatAt || null,
+    bootHeartbeatAgeMs,
+    bootInProgress,
   };
 }
 
@@ -70,7 +94,7 @@ function inspectTelegramPollerFreshness(options = {}) {
   const staleThresholdMs = asPositiveMs(options.staleThresholdMs, DEFAULT_STALE_THRESHOLD_MS);
   const appState = Object.prototype.hasOwnProperty.call(options, 'appUp')
     ? { appUp: options.appUp === true, appStatusPath: null }
-    : readAppUp(projectRoot);
+    : readAppUp(projectRoot, { nowMs });
 
   const read = readJsonFile(statePath);
   if (!appState.appUp) {
@@ -541,6 +565,26 @@ async function recoverWedgedTelegramPoller(options = {}) {
 
 async function checkAndRecoverTelegramPoller(options = {}) {
   const freshness = inspectTelegramPollerFreshness(options);
+  if (
+    freshness.wedged
+    && freshness.appState?.bootInProgress === true
+    && options.allowRecoveryDuringAppBoot !== true
+  ) {
+    writeWatchdogLog(
+      resolveProjectRoot(options.projectRoot),
+      `[defer] app boot in progress stage=${freshness.appState.bootStage || 'unknown'} heartbeatAgeMs=${freshness.appState.bootHeartbeatAgeMs ?? 'unknown'}`
+    );
+    return {
+      ok: true,
+      freshness,
+      recovery: {
+        ok: true,
+        action: 'deferred_app_boot',
+        recovered: false,
+        reason: 'main_app_boot_owns_upcoming_telegram_worker',
+      },
+    };
+  }
   if (!freshness.wedged) {
     return {
       ok: true,
@@ -599,6 +643,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  APP_BOOT_GUARD_MS,
   DEFAULT_STALE_THRESHOLD_MS,
   inspectTelegramPollerFreshness,
   isMainTelegramWorkerAlive,

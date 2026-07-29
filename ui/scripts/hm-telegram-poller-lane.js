@@ -15,7 +15,9 @@ const RUNTIME_DIR = resolveCoordPath('runtime', { forWrite: true });
 const PID_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.log');
 const KEEPALIVE_INTERVAL_MS = 60_000;
+const MAIN_OWNER_RECONCILE_INTERVAL_MS = 1_000;
 const MAIN_TELEGRAM_WORKER_PATTERN = /modules[\\/]+main[\\/]+telegram-poller-worker\.js/i;
+const STANDALONE_LANE_PROCESS_PATTERN = /hm-telegram-poller-lane\.js["']?\s+run(?:\s|$)/i;
 const POLLER_STATE_REL_PATH = path.join('.squidrun', 'runtime', 'telegram-poller-state.json');
 
 function usage() {
@@ -60,6 +62,21 @@ function readProcessListText() {
   } catch {
     return '';
   }
+}
+
+function isStandaloneLaneProcess(pid, options = {}) {
+  const numeric = Number(pid);
+  if (!Number.isInteger(numeric) || numeric <= 0) return false;
+  const processListText = typeof options.processListText === 'string'
+    ? options.processListText
+    : readProcessListText();
+  return String(processListText || '')
+    .split(/\r?\n/)
+    .some((line) => {
+      const match = String(line || '').match(/^\s*(\d+)\s+(.+)$/);
+      if (!match || Number.parseInt(match[1], 10) !== numeric) return false;
+      return STANDALONE_LANE_PROCESS_PATTERN.test(match[2]);
+    });
 }
 
 function normalizeRootPath(value) {
@@ -169,18 +186,27 @@ function writeLog(message) {
   fs.appendFileSync(LOG_PATH, `${new Date().toISOString()} ${message}\n`, 'utf8');
 }
 
-function status() {
+function status(options = {}) {
   const pid = readPid();
-  const running = isPidAlive(pid);
-  const owner = readMainTelegramWorkerOwner();
+  const processListText = typeof options.processListText === 'string'
+    ? options.processListText
+    : readProcessListText();
+  const probeOptions = { ...options, processListText };
+  const pidAlive = typeof options.isPidAlive === 'function'
+    ? options.isPidAlive(pid)
+    : isPidAlive(pid);
+  const exactProcess = pidAlive && isStandaloneLaneProcess(pid, probeOptions);
+  const running = pidAlive && exactProcess;
+  const owner = readMainTelegramWorkerOwner(probeOptions);
   return {
     ok: true,
     running,
     pid: running ? pid : null,
+    stalePid: pidAlive && !exactProcess ? pid : null,
     pidPath: PID_PATH,
     logPath: LOG_PATH,
-    mainWorkerRunning: isMainTelegramWorkerAlive({ owner }),
-    anyMainWorkerRunning: hasAnyMainTelegramWorkerProcess(),
+    mainWorkerRunning: isMainTelegramWorkerAlive({ ...probeOptions, owner }),
+    anyMainWorkerRunning: hasAnyMainTelegramWorkerProcess(probeOptions),
     mainWorkerOwner: owner,
   };
 }
@@ -329,7 +355,30 @@ function runLane() {
   fs.mkdirSync(path.dirname(PID_PATH), { recursive: true });
   fs.writeFileSync(PID_PATH, String(process.pid), 'utf8');
   writeLog(`[start] pid=${process.pid}`);
-  const keepAliveTimer = setInterval(() => {}, KEEPALIVE_INTERVAL_MS);
+  let shuttingDown = false;
+  let keepAliveTimer = null;
+  let mainOwnerReconcileTimer = null;
+
+  const shutdown = (reason = 'signal', exitCode = 0) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    if (keepAliveTimer) clearInterval(keepAliveTimer);
+    if (mainOwnerReconcileTimer) clearInterval(mainOwnerReconcileTimer);
+    try {
+      telegramPoller.stop();
+    } catch {
+      // Best effort.
+    }
+    try {
+      if (readPid() === process.pid) fs.rmSync(PID_PATH, { force: true });
+    } catch {
+      // Best effort.
+    }
+    writeLog(`[stop] pid=${process.pid} reason=${reason}`);
+    process.exit(exitCode);
+  };
+
+  keepAliveTimer = setInterval(() => {}, KEEPALIVE_INTERVAL_MS);
 
   const ownerEnv = {
     ...buildProfileTelegramEnv(process.env, 'main'),
@@ -350,27 +399,70 @@ function runLane() {
 
   if (!started) {
     writeLog('[error] Telegram poller did not start; missing config');
-    process.exit(1);
+    shutdown('poller_not_started', 1);
+    return;
   }
 
-  const shutdown = () => {
-    clearInterval(keepAliveTimer);
-    try {
-      telegramPoller.stop();
-    } catch {
-      // Best effort.
+  // A standalone lane is only the temporary owner. The main worker claims the
+  // shared heartbeat before its first getUpdates tick; yield within one second
+  // so both owners can never reach their first poll together.
+  mainOwnerReconcileTimer = setInterval(() => {
+    if (isMainTelegramWorkerAlive() && !allowsStandaloneLaneWithMainWorker()) {
+      writeLog('[handoff] main telegram-poller-worker claimed ownership; stopping standalone lane');
+      shutdown('main_worker_takeover', 0);
     }
-    try {
-      if (readPid() === process.pid) fs.rmSync(PID_PATH, { force: true });
-    } catch {
-      // Best effort.
-    }
-    writeLog(`[stop] pid=${process.pid}`);
-    process.exit(0);
-  };
+  }, MAIN_OWNER_RECONCILE_INTERVAL_MS);
 
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', () => shutdown('sigterm', 0));
+  process.on('SIGINT', () => shutdown('sigint', 0));
+}
+
+function buildStandaloneLaneSpawnOptions(projectRoot = getProjectRoot(), env = process.env, outFd = 'ignore') {
+  return {
+    cwd: projectRoot,
+    detached: true,
+    stdio: ['ignore', outFd, outFd],
+    env: {
+      ...env,
+      SQUIDRUN_PROJECT_ROOT: projectRoot,
+      ELECTRON_RUN_AS_NODE: '1',
+    },
+    windowsHide: true,
+  };
+}
+
+function evaluateLaneStartupProof(childPid, proof = {}) {
+  const numericPid = Number(childPid);
+  if (proof.mainWorkerRunning === true) {
+    return {
+      ok: true,
+      started: false,
+      handedOffToMain: true,
+      reason: 'main_telegram_worker_running',
+    };
+  }
+  if (proof.alive !== true) {
+    return {
+      ok: false,
+      started: false,
+      handedOffToMain: false,
+      reason: 'lane_child_died_immediately',
+    };
+  }
+  if (!Number.isInteger(numericPid) || Number(proof.claimedPid) !== numericPid) {
+    return {
+      ok: false,
+      started: false,
+      handedOffToMain: false,
+      reason: 'lane_child_alive_without_startup_claim',
+    };
+  }
+  return {
+    ok: true,
+    started: true,
+    handedOffToMain: false,
+    reason: 'lane_child_claimed',
+  };
 }
 
 function startLane(options = {}) {
@@ -387,43 +479,84 @@ function startLane(options = {}) {
     };
   }
   fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
+  fs.rmSync(PID_PATH, { force: true });
   const out = fs.openSync(LOG_PATH, 'a');
-  const child = spawn(process.execPath, [__filename, 'run'], {
-    cwd: getProjectRoot(),
-    detached: true,
-    stdio: ['ignore', out, out],
-    env: { ...process.env, SQUIDRUN_PROJECT_ROOT: getProjectRoot() },
-    windowsHide: true,
-  });
+  let child;
+  try {
+    child = spawn(
+      process.execPath,
+      [__filename, 'run'],
+      buildStandaloneLaneSpawnOptions(getProjectRoot(), process.env, out)
+    );
+  } finally {
+    fs.closeSync(out);
+  }
   child.unref();
-  fs.writeFileSync(PID_PATH, String(child.pid), 'utf8');
   const startupVerifyMs = Number.isFinite(options.startupVerifyMs) ? Math.max(0, options.startupVerifyMs) : 4000;
   if (startupVerifyMs > 0) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, startupVerifyMs);
   }
   const isAlive = typeof options.isPidAlive === 'function' ? options.isPidAlive(child.pid) : isPidAlive(child.pid);
-  if (!isAlive) {
+  const mainWorkerRunning = typeof options.isMainWorkerAlive === 'function'
+    ? options.isMainWorkerAlive()
+    : isMainTelegramWorkerAlive();
+  const startupProof = evaluateLaneStartupProof(child.pid, {
+    alive: isAlive,
+    claimedPid: readPid(),
+    mainWorkerRunning,
+  });
+  if (startupProof.handedOffToMain && isAlive) {
+    try {
+      process.kill(child.pid, 'SIGTERM');
+    } catch {
+      // The just-spawned child may already be yielding to the main owner.
+    }
+    if (readPid() === child.pid) {
+      fs.rmSync(PID_PATH, { force: true });
+    }
+  }
+  if (!startupProof.ok) {
+    if (isAlive && startupProof.reason === 'lane_child_alive_without_startup_claim') {
+      try {
+        process.kill(child.pid, 'SIGTERM');
+      } catch {
+        // The just-spawned child may have exited between proof and cleanup.
+      }
+    }
     return {
-      ok: false,
-      started: false,
-      reason: 'lane_child_died_immediately',
+      ...startupProof,
       pid: child.pid,
-      note: `Lane child exited within ${startupVerifyMs}ms of spawn; see ${LOG_PATH} for its output.`,
+      note: `Lane child did not produce a verified startup claim within ${startupVerifyMs}ms; see ${LOG_PATH} for its output.`,
       pidPath: PID_PATH,
       logPath: LOG_PATH,
     };
   }
-  return { ok: true, started: true, pid: child.pid, pidPath: PID_PATH, logPath: LOG_PATH };
+  return {
+    ...startupProof,
+    pid: startupProof.started ? child.pid : null,
+    pidPath: PID_PATH,
+    logPath: LOG_PATH,
+  };
 }
 
-function stopLane() {
-  const pid = readPid();
-  if (!isPidAlive(pid)) {
+function stopLane(options = {}) {
+  const current = status(options);
+  if (current.stalePid) {
+    fs.rmSync(PID_PATH, { force: true });
+    return {
+      ok: false,
+      stopped: false,
+      reason: 'pid_identity_mismatch',
+      pid: current.stalePid,
+      pidPath: PID_PATH,
+    };
+  }
+  if (!current.running) {
     fs.rmSync(PID_PATH, { force: true });
     return { ok: true, stopped: false, reason: 'not_running', pidPath: PID_PATH };
   }
-  process.kill(pid, 'SIGTERM');
-  return { ok: true, stopped: true, pid, pidPath: PID_PATH };
+  process.kill(current.pid, 'SIGTERM');
+  return { ok: true, stopped: true, pid: current.pid, pidPath: PID_PATH };
 }
 
 function main(argv = process.argv.slice(2)) {
@@ -455,12 +588,16 @@ if (require.main === module) {
 }
 
 module.exports = {
+  MAIN_OWNER_RECONCILE_INTERVAL_MS,
+  buildStandaloneLaneSpawnOptions,
   dispatchInboundTelegramMessage,
+  evaluateLaneStartupProof,
   forwardToProfileTrigger,
   formatInbound,
   getProfileTelegramTriggerPaths,
   isMainTelegramWorkerAlive,
   isPidAlive,
+  isStandaloneLaneProcess,
   resolveRuntimeUiScriptPath,
   status,
   startLane,
