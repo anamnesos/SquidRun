@@ -179,7 +179,7 @@ describe('Codex cold-spawn blank recovery', () => {
     }));
   });
 
-  test('holds while input is active, then allows exactly one action when the pane becomes safe', async () => {
+  test('holds while a programmatic injection is active, then allows one action when it completes', async () => {
     controller.arm('2', { source: 'fresh-create', startedAtMs: 0 });
     inputBlockReason = 'injection_in_flight';
 
@@ -205,6 +205,34 @@ describe('Codex cold-spawn blank recovery', () => {
     await controller.evaluate('2');
 
     expect(sendRecovery).toHaveBeenCalledTimes(1);
+  });
+
+  test('permanently disarms the current recovery generation after user terminal input', async () => {
+    controller.arm('2', { source: 'fresh-create', startedAtMs: 0 });
+
+    clock = 1_000;
+    controller.observeOutput('2', clearStorm());
+    await controller.evaluate('2');
+
+    expect(controller.disarm('2', 'user_terminal_input', {
+      inputKind: 'terminal_on_data',
+      inputChars: 13,
+    })).toBe(true);
+
+    clock = 9_000;
+    expect(controller.observeOutput('2', clearStorm())).toBe(false);
+    await controller.evaluate('2');
+
+    expect(sendRecovery).not.toHaveBeenCalled();
+    expect(controller.getState('2')).toEqual(expect.objectContaining({
+      finished: true,
+      outcome: 'disarmed_user_input',
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      phase: 'disarmed',
+      reason: 'user_terminal_input',
+      inputKind: 'terminal_on_data',
+    }));
   });
 
   test('caps recovery at one Enter and logs an unverified timeout if the frame stays blank', async () => {

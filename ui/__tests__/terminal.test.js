@@ -2226,6 +2226,68 @@ describe('terminal.js module', () => {
       ).toBeLessThan(mockSquidRun.pty.create.mock.invocationCallOrder[0]);
     });
 
+    test('permanently disarms cold-spawn recovery before forwarding direct terminal input', async () => {
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '3': 'codex' },
+      });
+      terminal.registerCodexPane('3');
+
+      await terminal.initTerminal('3', { spawnCommandOnCreate: true });
+
+      const controller = terminal._internals.coldSpawnBlankRecoveryController;
+      expect(terminal._internals.armColdSpawnBlankRecovery('3', {
+        source: 'test-user-input',
+        startedAtMs: Date.now(),
+      })).toBe(true);
+      const xterm = terminal.terminals.get('3');
+      const inputHandler = xterm.onData.mock.calls.at(-1)?.[0];
+      expect(controller.getState('3')).toEqual(expect.objectContaining({
+        finished: false,
+      }));
+      expect(typeof inputHandler).toBe('function');
+
+      inputHandler('draft command');
+      await Promise.resolve();
+
+      expect(controller.getState('3')).toEqual(expect.objectContaining({
+        finished: true,
+        outcome: 'disarmed_user_input',
+      }));
+      expect(mockSquidRun.pty.write).toHaveBeenCalledWith('3', 'draft command');
+    });
+
+    test('permanently disarms cold-spawn recovery before direct clipboard paste', async () => {
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '3': 'codex' },
+      });
+      terminal.registerCodexPane('3');
+
+      await terminal.initTerminal('3', { spawnCommandOnCreate: true });
+      expect(terminal._internals.armColdSpawnBlankRecovery('3', {
+        source: 'test-clipboard-paste',
+        startedAtMs: Date.now(),
+      })).toBe(true);
+      terminal.inputLocked['3'] = false;
+
+      await terminal._internals.pasteClipboardToPane('3', 'Connected');
+
+      expect(terminal._internals.coldSpawnBlankRecoveryController.getState('3')).toEqual(
+        expect.objectContaining({
+          finished: true,
+          outcome: 'disarmed_user_input',
+        })
+      );
+      expect(mockSquidRun.pty.write).toHaveBeenCalledWith('3', 'clipboard text');
+    });
+
     test('fresh next spawn setting remints command-on-create and clears one-shot flag', async () => {
       const mockContainer = {
         addEventListener: jest.fn(),

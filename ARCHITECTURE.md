@@ -282,7 +282,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/terminal/agent-colors.js: Exports attachAgentColors, AGENT_COLORS.
 - ui/modules/terminal/injection.js: Terminal injection helpers Extracted from terminal.js to isolate fragile send/verify logic.
 - ui/modules/terminal/recovery.js: Terminal recovery helpers (unstick, restart, sweeper) Extracted from terminal.js to isolate recovery logic.
-- ui/modules/terminal/cold-spawn-blank-recovery.js: Codex-only renderer recovery classifier/controller for a live PTY whose visible xterm frame stays blank under clear-screen churn. Fresh terminal wiring subscribes to PTY data before command-on-create so the initial full TUI frame cannot race ahead of the renderer; the fallback permits one logged Enter nudge only after bounded blank-frame confirmation.
+- ui/modules/terminal/cold-spawn-blank-recovery.js: Codex-only renderer recovery classifier/controller for a live PTY whose visible xterm frame stays blank under clear-screen churn. Fresh terminal wiring subscribes to PTY data before command-on-create so the initial full TUI frame cannot race ahead of the renderer; the fallback permits one logged Enter nudge only after bounded blank-frame confirmation, and any direct terminal input or paste permanently disarms that recovery generation before forwarding bytes to the PTY.
 - ui/modules/token-utils.js: Exports estimateTokens, truncateToTokenBudget.
 - ui/modules/transition-ledger.js: Exports init, stop, reset, getTransition, ....
 - ui/modules/triggers.js: Exports init, setSelfHealing, setPluginManager, setWatcher, ....

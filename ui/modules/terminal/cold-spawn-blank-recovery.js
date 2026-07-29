@@ -347,6 +347,19 @@ function createColdSpawnBlankRecoveryController(options = {}) {
     return state;
   }
 
+  function disarm(paneId, reason = 'user_terminal_input', details = {}) {
+    const state = states.get(String(paneId));
+    if (!state || state.finished) return false;
+    clearSampleTimer(state);
+    state.finished = true;
+    state.outcome = 'disarmed_user_input';
+    emit('disarmed', state, {
+      reason: String(reason || 'user_terminal_input'),
+      ...details,
+    });
+    return true;
+  }
+
   function observeOutput(paneId, data) {
     const state = states.get(String(paneId));
     if (!state || state.finished || state.attempted && !state.actionAccepted) return false;
@@ -392,6 +405,7 @@ function createColdSpawnBlankRecoveryController(options = {}) {
 
   return {
     arm,
+    disarm,
     dispose,
     evaluate,
     getState,

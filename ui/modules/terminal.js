@@ -1952,6 +1952,10 @@ function attachTerminalInputBridge(paneId) {
   }
 
   const disposable = terminal.onData((data) => {
+    coldSpawnBlankRecoveryController?.disarm(id, 'user_terminal_input', {
+      inputKind: 'terminal_on_data',
+      inputChars: typeof data === 'string' ? data.length : String(data || '').length,
+    });
     window.squidrun.pty.write(id, data).catch(err => {
       log.error(`Terminal ${id}`, 'PTY write failed:', err);
     });
@@ -3345,6 +3349,10 @@ async function pasteClipboardToPane(paneId, statusMsg) {
   try {
     const text = await navigator.clipboard.readText();
     if (!text) return false;
+    coldSpawnBlankRecoveryController?.disarm(paneId, 'user_terminal_input', {
+      inputKind: 'clipboard_paste',
+      inputChars: text.length,
+    });
     await window.squidrun.pty.write(paneId, text);
     showTerminalStatusTemporary(paneId, statusMsg, 'Pasted!');
     log.info('Clipboard', `Pasted ${text.length} chars to pane ${paneId}`);
@@ -4960,6 +4968,7 @@ module.exports = {
     captureTerminalFrameSignature,
     captureTerminalFitCoherence,
     captureColdSpawnRecoverySurface,
+    pasteClipboardToPane,
     attachPtyBridgeListeners,
     armColdSpawnBlankRecovery,
     get coldSpawnBlankRecoveryController() { return coldSpawnBlankRecoveryController; },
