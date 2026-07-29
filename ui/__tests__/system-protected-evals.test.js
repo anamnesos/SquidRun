@@ -857,9 +857,12 @@ describe('system protected evals', () => {
       'telegram_poller_renderer_reload_branch_remains_separate',
       'telegram_poller_app_control_context_wires_restart_hook',
       'telegram_poller_app_restart_stops_and_starts_poller_only',
+      'telegram_poller_app_readiness_requires_worker_ipc',
       'telegram_poller_lifecycle_registry_is_service_only',
       'telegram_poller_app_control_no_window_reload_fixture',
+      'telegram_poller_app_control_pending_readiness_fixture',
       'telegram_poller_squidrun_app_no_pane_reload_fixture',
+      'telegram_poller_squidrun_app_pending_readiness_fixture',
       'telegram_poller_lifecycle_registry_fixture',
       'telegram_poller_hm_app_alias_fixture',
     ]));
@@ -877,15 +880,18 @@ describe('system protected evals', () => {
       'app_control_restart_branch_delegates_polling_only',
       'squidrun_app_app_control_wires_restart_hook',
       'squidrun_app_restart_poller_note_no_pane_reload',
+      'squidrun_app_restart_poller_readiness_is_ipc_confirmed',
       'service_lifecycle_telegram_poller_restart_action',
       'hm_app_restart_aliases_route_to_poller_restart',
     ]);
     expect(evalCase.testRefs.map((ref) => ref.testName)).toEqual(expect.arrayContaining([
       'restart-telegram-poller delegates to the app poller lifecycle without reloading panes',
+      'restart-telegram-poller preserves accepted versus IPC-ready worker state',
       'restart-telegram-poller does not inspect or reload side-profile windows',
       'restart-telegram-poller reports unavailable when the app lacks a restart hook',
       'reload-renderers reloads every live window without restarting the main process',
       'restarts the Telegram poller without reloading app panes',
+      'reports worker launch acceptance without claiming readiness before worker IPC',
       'defines Telegram poller restart as service-only and pane-safe',
       'keeps Telegram poller restart aliases separate from renderer reload aliases',
     ]));
@@ -893,6 +899,7 @@ describe('system protected evals', () => {
       'telegram_restart_alias_collapsed_to_renderer_reload',
       'telegram_restart_branch_reloads_windows',
       'telegram_restart_app_note_or_boundary_removed',
+      'telegram_restart_false_readiness_claim',
       'telegram_lifecycle_registry_drift',
       'telegram_restart_no_reload_fixture_removed',
     ]);
@@ -949,6 +956,31 @@ describe('system protected evals', () => {
     expect(failedCheckIds(report)).toContain('source_ref_squidrun_app_restart_poller_note_no_pane_reload');
     expect(failedCheckIds(report)).toContain('telegram_poller_app_restart_stops_and_starts_poller_only');
     expect(failedCheckIds(report)).toContain('telegram_poller_squidrun_app_no_pane_reload_fixture');
+  });
+
+  test('Phase 4H fails if fork acceptance is reported as Telegram readiness', () => {
+    const squidrunApp = readRel('ui/modules/main/squidrun-app.js')
+      .replace('started: ready', 'started: accepted === true')
+      .replace(
+        "if (ready) {\n      log.info('Telegram', 'Inbound Telegram bridge enabled');",
+        "if (accepted) {\n      log.info('Telegram', 'Inbound Telegram bridge enabled');"
+      )
+      .replace('started: startStatus.ready === true', 'started: startStatus.accepted === true');
+    const squidrunAppTest = readRel('ui/__tests__/squidrun-app.test.js')
+      .replace(
+        'reports worker launch acceptance without claiming readiness before worker IPC',
+        'reports worker launch acceptance as immediately ready'
+      );
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY],
+      fileTextOverrides: defaultOverrides({ squidrunApp, squidrunAppTest }),
+    });
+
+    expect(report.ok).toBe(false);
+    expect(failedCheckIds(report)).toContain('source_ref_squidrun_app_restart_poller_readiness_is_ipc_confirmed');
+    expect(failedCheckIds(report)).toContain('test_ref_squidrun_app_restart_pending_readiness_fixture');
+    expect(failedCheckIds(report)).toContain('telegram_poller_app_readiness_requires_worker_ipc');
+    expect(failedCheckIds(report)).toContain('telegram_poller_squidrun_app_pending_readiness_fixture');
   });
 
   test('Phase 4H fails if lifecycle registry makes Telegram poller restart main-bound or terminal-impacting', () => {

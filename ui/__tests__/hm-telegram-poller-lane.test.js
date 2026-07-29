@@ -1,3 +1,4 @@
+const childProcess = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -16,6 +17,76 @@ const {
   status,
   stopLane,
 } = require('../scripts/hm-telegram-poller-lane');
+
+function waitForFiles(filePaths, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      if (filePaths.every((filePath) => fs.existsSync(filePath))) {
+        resolve();
+        return;
+      }
+      if (Date.now() >= deadline) {
+        reject(new Error(`Timed out waiting for ${filePaths.join(', ')}`));
+        return;
+      }
+      setTimeout(check, 10);
+    };
+    check();
+  });
+}
+
+function spawnLeaseContender(lockPath, readyPath, goPath, token) {
+  const leaseModulePath = path.resolve(__dirname, '..', 'modules', 'cross-process-lease.js');
+  const script = `
+    const fs = require('fs');
+    const { acquireProcessLease, releaseProcessLease } = require(process.argv[1]);
+    const [lockPath, readyPath, goPath, token] = process.argv.slice(2);
+    fs.writeFileSync(readyPath, String(process.pid));
+    while (!fs.existsSync(goPath)) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+    const lease = acquireProcessLease(lockPath, {
+      timeoutMs: 0,
+      staleMs: 1000,
+      lockToken: token,
+    });
+    if (lease.ok) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    }
+    const released = lease.ok ? releaseProcessLease(lease) : false;
+    process.stdout.write(JSON.stringify({
+      ok: lease.ok,
+      reason: lease.reason || null,
+      token,
+      released,
+    }));
+  `;
+  const child = childProcess.spawn(
+    process.execPath,
+    ['-e', script, leaseModulePath, lockPath, readyPath, goPath, token],
+    {
+      cwd: path.resolve(__dirname, '..', '..'),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    }
+  );
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+  const done = new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Lease contender ${token} exited ${code}: ${stderr || stdout}`));
+        return;
+      }
+      resolve(JSON.parse(stdout));
+    });
+  });
+  return { child, done };
+}
 
 describe('hm-telegram-poller-lane', () => {
   function writeJson(filePath, value) {
@@ -287,6 +358,118 @@ describe('hm-telegram-poller-lane', () => {
         scriptPath: path.resolve(scriptPath),
       }));
     } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('mutation lease recovers only aged dead or ownerless locks and never steals fresh or live owners', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-lane-lease-recovery-'));
+    const scriptPath = path.join(tempDir, 'ui', 'scripts', 'hm-telegram-poller-lane.js');
+    const oldTimestamp = new Date('2000-01-01T00:00:00.000Z');
+    const seedLock = (claimPath, owner = null) => {
+      const lockPath = `${claimPath}.mutation-lock`;
+      fs.mkdirSync(lockPath, { recursive: true });
+      if (owner) writeJson(path.join(lockPath, 'owner.json'), owner);
+      return lockPath;
+    };
+
+    try {
+      const deadOwnerClaim = path.join(tempDir, 'dead-owner', 'telegram-poller-lane.pid');
+      seedLock(deadOwnerClaim, {
+        version: 1,
+        pid: 999999,
+        lockToken: 'dead-owner',
+        createdAt: oldTimestamp.toISOString(),
+      });
+      expect(createLaneLaunchClaim({
+        claimPath: deadOwnerClaim,
+        projectRoot: tempDir,
+        scriptPath,
+        launchToken: 'dead-owner-recovered',
+        claimMutationLockStaleMs: 10,
+        claimMutationLockTimeoutMs: 100,
+        isClaimMutationLockOwnerAlive: () => false,
+      })).toEqual(expect.objectContaining({ ok: true }));
+      expect(fs.existsSync(`${deadOwnerClaim}.mutation-lock`)).toBe(false);
+
+      const ownerlessClaim = path.join(tempDir, 'ownerless-aged', 'telegram-poller-lane.pid');
+      const ownerlessLock = seedLock(ownerlessClaim);
+      fs.utimesSync(ownerlessLock, oldTimestamp, oldTimestamp);
+      expect(createLaneLaunchClaim({
+        claimPath: ownerlessClaim,
+        projectRoot: tempDir,
+        scriptPath,
+        launchToken: 'ownerless-recovered',
+        claimMutationLockStaleMs: 10,
+        claimMutationLockTimeoutMs: 100,
+      })).toEqual(expect.objectContaining({ ok: true }));
+      expect(fs.existsSync(ownerlessLock)).toBe(false);
+
+      const freshClaim = path.join(tempDir, 'ownerless-fresh', 'telegram-poller-lane.pid');
+      const freshLock = seedLock(freshClaim);
+      expect(createLaneLaunchClaim({
+        claimPath: freshClaim,
+        projectRoot: tempDir,
+        scriptPath,
+        launchToken: 'fresh-must-not-win',
+        claimMutationLockStaleMs: 60_000,
+        claimMutationLockTimeoutMs: 0,
+      })).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'claim_mutation_lock_timeout',
+      }));
+      expect(fs.existsSync(freshLock)).toBe(true);
+      expect(fs.existsSync(freshClaim)).toBe(false);
+
+      const liveClaim = path.join(tempDir, 'live-owner', 'telegram-poller-lane.pid');
+      const liveLock = seedLock(liveClaim, {
+        version: 1,
+        pid: 77777,
+        lockToken: 'live-owner',
+        createdAt: oldTimestamp.toISOString(),
+      });
+      expect(createLaneLaunchClaim({
+        claimPath: liveClaim,
+        projectRoot: tempDir,
+        scriptPath,
+        launchToken: 'live-must-not-lose',
+        claimMutationLockStaleMs: 10,
+        claimMutationLockTimeoutMs: 0,
+        isClaimMutationLockOwnerAlive: (pid) => Number(pid) === 77777,
+      })).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'claim_mutation_lock_timeout',
+      }));
+      expect(fs.existsSync(liveLock)).toBe(true);
+      expect(fs.existsSync(liveClaim)).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('real Node processes contend on one lease with one winner and no leaked lock', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-lease-contention-'));
+    const lockPath = path.join(tempDir, 'telegram-poller-state.poll-dispatch-lease');
+    const readyA = path.join(tempDir, 'ready-a');
+    const readyB = path.join(tempDir, 'ready-b');
+    const goPath = path.join(tempDir, 'go');
+    const contenderA = spawnLeaseContender(lockPath, readyA, goPath, 'contender-a');
+    const contenderB = spawnLeaseContender(lockPath, readyB, goPath, 'contender-b');
+
+    try {
+      await waitForFiles([readyA, readyB]);
+      fs.writeFileSync(goPath, 'go\n', 'utf8');
+      const results = await Promise.all([contenderA.done, contenderB.done]);
+      expect(results.filter((entry) => entry.ok)).toHaveLength(1);
+      expect(results.filter((entry) => entry.reason === 'lease_busy')).toHaveLength(1);
+      expect(results.find((entry) => entry.ok)).toEqual(expect.objectContaining({
+        released: true,
+      }));
+      expect(fs.existsSync(lockPath)).toBe(false);
+    } finally {
+      for (const contender of [contenderA, contenderB]) {
+        if (contender.child.exitCode === null) contender.child.kill();
+      }
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });

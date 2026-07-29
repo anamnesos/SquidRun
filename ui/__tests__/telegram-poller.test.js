@@ -1,4 +1,5 @@
 const { EventEmitter } = require('events');
+const childProcess = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -18,6 +19,40 @@ jest.mock('../modules/logger', () => ({
 const https = require('https');
 const log = require('../modules/logger');
 const telegramPoller = require('../modules/telegram-poller');
+const {
+  acquireProcessLease,
+  releaseProcessLease,
+} = require('../modules/cross-process-lease');
+const { waitForStandaloneLaneExit } = require('../modules/telegram-poller-handoff');
+
+function probeLeaseFromChild(lockPath) {
+  const leaseModulePath = path.resolve(__dirname, '..', 'modules', 'cross-process-lease.js');
+  const script = `
+    const { acquireProcessLease, releaseProcessLease } = require(process.argv[1]);
+    const lease = acquireProcessLease(process.argv[2], { timeoutMs: 0, staleMs: 1000 });
+    const callbackCount = lease.ok ? 1 : 0;
+    if (lease.ok) releaseProcessLease(lease);
+    process.stdout.write(JSON.stringify({
+      ok: lease.ok,
+      reason: lease.reason || null,
+      callbackCount,
+    }));
+  `;
+  const result = childProcess.spawnSync(
+    process.execPath,
+    ['-e', script, leaseModulePath, lockPath],
+    {
+      cwd: path.resolve(__dirname, '..', '..'),
+      encoding: 'utf8',
+      timeout: 5_000,
+      windowsHide: true,
+    }
+  );
+  if (result.status !== 0) {
+    throw new Error(`Lease probe child failed: ${result.stderr || result.stdout}`);
+  }
+  return JSON.parse(result.stdout);
+}
 
 function mockTelegramUpdates(updates, statusCode = 200) {
   https.request.mockImplementation((options, onResponse) => {
@@ -140,6 +175,160 @@ describe('telegram-poller', () => {
       telegramPoller.stop();
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  test('startup ownership cannot read or overwrite cursor state while another poll lease is active', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-poller-startup-lease-'));
+    const statePath = path.join(tempDir, 'telegram-poller-state.json');
+    const env = {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '123456',
+    };
+    const config = telegramPoller._internals.getTelegramConfig(env);
+    const cursorKey = telegramPoller._internals.getConfigCursorKey(config);
+    const leasePath = telegramPoller._internals.resolvePollDispatchLeasePath(statePath, cursorKey);
+    const intervalSpy = jest.spyOn(global, 'setInterval');
+    const persistOwnershipClaim = jest.fn(() => true);
+    let lease = null;
+
+    try {
+      fs.writeFileSync(statePath, `${JSON.stringify({
+        version: 1,
+        cursors: {
+          [cursorKey]: {
+            nextOffset: 900,
+            profile: 'main',
+            lastAction: 'delivered',
+          },
+        },
+      }, null, 2)}\n`, 'utf8');
+      lease = acquireProcessLease(leasePath, { timeoutMs: 0 });
+      expect(lease.ok).toBe(true);
+
+      expect(telegramPoller.start({
+        env,
+        onMessage: jest.fn(),
+        persistOwnershipClaim,
+        pollDispatchStartupLeaseTimeoutMs: 0,
+        statePath,
+      })).toBe(false);
+
+      expect(persistOwnershipClaim).not.toHaveBeenCalled();
+      expect(intervalSpy).not.toHaveBeenCalled();
+      expect(telegramPoller._internals.readPersistedOffset(statePath, cursorKey)).toBe(900);
+    } finally {
+      telegramPoller.stop();
+      if (lease?.ok) releaseProcessLease(lease);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('main-worker handoff waits for exact standalone quiescence and fails closed on identity uncertainty', async () => {
+    const statuses = [
+      {
+        running: true,
+        starting: false,
+        identityUnverified: false,
+        processProbeAvailable: true,
+      },
+      {
+        running: false,
+        starting: true,
+        identityUnverified: false,
+        processProbeAvailable: true,
+      },
+      {
+        running: false,
+        starting: false,
+        identityUnverified: false,
+        processProbeAvailable: true,
+      },
+    ];
+    const getLaneStatus = jest.fn(() => statuses.shift());
+
+    await expect(waitForStandaloneLaneExit({
+      getLaneStatus,
+      retryMs: 1,
+      timeoutMs: 100,
+    })).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      reason: 'standalone_lane_quiescent',
+    }));
+    expect(getLaneStatus).toHaveBeenCalledTimes(3);
+
+    await expect(waitForStandaloneLaneExit({
+      getLaneStatus: () => ({
+        running: false,
+        starting: false,
+        identityUnverified: true,
+        processProbeAvailable: false,
+      }),
+      timeoutMs: 0,
+    })).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'standalone_lane_identity_unverified',
+    }));
+
+    await expect(waitForStandaloneLaneExit({
+      getLaneStatus: () => ({
+        running: false,
+        starting: false,
+        identityUnverified: false,
+        processProbeAvailable: false,
+      }),
+      timeoutMs: 0,
+    })).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'standalone_lane_process_probe_unavailable',
+    }));
+
+    await expect(waitForStandaloneLaneExit({
+      getLaneStatus: () => ({
+        running: true,
+        starting: false,
+        identityUnverified: false,
+        processProbeAvailable: true,
+      }),
+      timeoutMs: 0,
+    })).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'standalone_lane_handoff_timeout',
+    }));
+  });
+
+  test('replacement-worker handoff waits for the previous exact main-root worker to exit', async () => {
+    const statuses = [
+      {
+        running: false,
+        starting: false,
+        identityUnverified: false,
+        processProbeAvailable: true,
+        mainWorkerRunning: true,
+        anyMainWorkerRunning: true,
+      },
+      {
+        running: false,
+        starting: false,
+        identityUnverified: false,
+        processProbeAvailable: true,
+        mainWorkerRunning: false,
+        anyMainWorkerRunning: false,
+      },
+    ];
+    const getLaneStatus = jest.fn(() => statuses.shift());
+
+    await expect(waitForStandaloneLaneExit({
+      getLaneStatus,
+      retryMs: 1,
+      timeoutMs: 100,
+    })).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      reason: 'standalone_lane_quiescent',
+      status: expect.objectContaining({
+        anyMainWorkerRunning: false,
+      }),
+    }));
+    expect(getLaneStatus).toHaveBeenCalledTimes(2);
   });
 
   test('start and stop manage running state', () => {
@@ -372,6 +561,172 @@ describe('telegram-poller', () => {
       expect(onMessage).not.toHaveBeenCalled();
       const persisted = JSON.parse(fs.readFileSync(statePath, 'utf8'));
       expect(persisted.cursors[cursorKey].nextOffset).toBe(701);
+    } finally {
+      telegramPoller.stop();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('legacy handoff completion during getUpdates advances the cursor before callback selection', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-poller-inverse-cursor-'));
+    const statePath = path.join(tempDir, 'telegram-poller-state.json');
+    const env = {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '123456',
+      SQUIDRUN_DATA_ROOT: tempDir,
+    };
+    const config = telegramPoller._internals.getTelegramConfig(env);
+    const cursorKey = telegramPoller._internals.getConfigCursorKey(config);
+    const onMessage = jest.fn();
+    let requestedPath = null;
+    let durableOffsetInsideRequest = null;
+
+    try {
+      fs.writeFileSync(statePath, `${JSON.stringify({
+        version: 1,
+        cursors: {
+          [cursorKey]: {
+            nextOffset: 700,
+            profile: 'main',
+            lastAction: 'delivered',
+          },
+        },
+      }, null, 2)}\n`, 'utf8');
+
+      expect(telegramPoller.start({
+        env,
+        onMessage,
+        statePath,
+        pollIntervalMs: 60_000,
+        downloadMedia: false,
+        startupGraceMs: 0,
+      })).toBe(true);
+
+      https.request.mockImplementation((options, onResponse) => {
+        requestedPath = options.path;
+        telegramPoller._internals.persistNextOffset(statePath, cursorKey, 701, {
+          action: 'delivered',
+          chatId: 123456,
+          messageId: 76,
+          profile: 'main',
+          updateId: 700,
+        });
+        durableOffsetInsideRequest = telegramPoller._internals.readPersistedOffset(
+          statePath,
+          cursorKey
+        );
+
+        const response = new EventEmitter();
+        response.statusCode = 200;
+        let decoder = null;
+        response.setEncoding = jest.fn((encoding) => {
+          decoder = new StringDecoder(encoding);
+        });
+        const request = new EventEmitter();
+        request.end = jest.fn(() => {
+          onResponse(response);
+          emitJsonResponse(response, {
+            ok: true,
+            result: [{
+              update_id: 700,
+              message: {
+                message_id: 77,
+                chat: { id: 123456 },
+                from: { username: 'james' },
+                text: 'must not replay after inverse handoff',
+              },
+            }],
+          }, decoder);
+        });
+        return request;
+      });
+
+      await telegramPoller._internals.pollNow();
+
+      expect(requestedPath).toContain('offset=700');
+      expect(durableOffsetInsideRequest).toBe(701);
+      expect(onMessage).not.toHaveBeenCalled();
+      expect(telegramPoller._internals.readPersistedOffset(statePath, cursorKey)).toBe(701);
+    } finally {
+      telegramPoller.stop();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('cross-process lease rejects contenders at path-build and final pre-dispatch boundaries', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-poller-dispatch-lease-'));
+    const statePath = path.join(tempDir, 'telegram-poller-state.json');
+    const env = {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '123456',
+      SQUIDRUN_DATA_ROOT: tempDir,
+    };
+    const config = telegramPoller._internals.getTelegramConfig(env);
+    const cursorKey = telegramPoller._internals.getConfigCursorKey(config);
+    const leasePath = telegramPoller._internals.resolvePollDispatchLeasePath(statePath, cursorKey);
+    const onMessage = jest.fn();
+    let pathBuildProbe = null;
+    let preDispatchProbe = null;
+
+    try {
+      expect(telegramPoller.start({
+        env,
+        onMessage,
+        statePath,
+        pollIntervalMs: 60_000,
+        downloadMedia: false,
+        startupGraceMs: 0,
+        beforeDispatchCommit: ({ leasePath: activeLeasePath }) => {
+          expect(activeLeasePath).toBe(leasePath);
+          preDispatchProbe = probeLeaseFromChild(activeLeasePath);
+        },
+      })).toBe(true);
+
+      https.request.mockImplementation((options, onResponse) => {
+        pathBuildProbe = probeLeaseFromChild(leasePath);
+        const response = new EventEmitter();
+        response.statusCode = 200;
+        let decoder = null;
+        response.setEncoding = jest.fn((encoding) => {
+          decoder = new StringDecoder(encoding);
+        });
+        const request = new EventEmitter();
+        request.end = jest.fn(() => {
+          onResponse(response);
+          emitJsonResponse(response, {
+            ok: true,
+            result: [{
+              update_id: 800,
+              message: {
+                message_id: 88,
+                chat: { id: 123456 },
+                from: { username: 'james' },
+                text: 'single fenced dispatch',
+              },
+            }],
+          }, decoder);
+        });
+        return request;
+      });
+
+      await telegramPoller._internals.pollNow();
+
+      expect(pathBuildProbe).toEqual({
+        ok: false,
+        reason: 'lease_busy',
+        callbackCount: 0,
+      });
+      expect(preDispatchProbe).toEqual({
+        ok: false,
+        reason: 'lease_busy',
+        callbackCount: 0,
+      });
+      expect(onMessage).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(leasePath)).toBe(false);
+
+      const afterRelease = acquireProcessLease(leasePath, { timeoutMs: 0 });
+      expect(afterRelease.ok).toBe(true);
+      expect(releaseProcessLease(afterRelease)).toBe(true);
     } finally {
       telegramPoller.stop();
       fs.rmSync(tempDir, { recursive: true, force: true });

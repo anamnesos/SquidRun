@@ -106,6 +106,42 @@ describe('InboundPollerService', () => {
         keepAlive: true,
       }),
     });
+    expect(service.getTelegramWorkerState()).toEqual({
+      phase: 'spawned',
+      ready: false,
+      reason: null,
+    });
+
+    worker.emit('message', {
+      type: 'starting',
+      phase: 'standalone_lane_handoff',
+    });
+    expect(service.getTelegramWorkerState()).toEqual({
+      phase: 'standalone_lane_handoff',
+      ready: false,
+      reason: null,
+    });
+
+    worker.emit('message', {
+      type: 'starting',
+      phase: 'poll_dispatch_lease',
+    });
+    expect(service.getTelegramWorkerState()).toEqual({
+      phase: 'poll_dispatch_lease',
+      ready: false,
+      reason: null,
+    });
+
+    worker.emit('message', {
+      type: 'started',
+      started: true,
+      reason: null,
+    });
+    expect(service.getTelegramWorkerState()).toEqual({
+      phase: 'ready',
+      ready: true,
+      reason: null,
+    });
 
     worker.emit('message', {
       type: 'message',
@@ -120,6 +156,123 @@ describe('InboundPollerService', () => {
 
     service.stopTelegram();
     expect(worker.send).toHaveBeenCalledWith({ type: 'shutdown' });
+    expect(service.getTelegramWorkerState()).toEqual({
+      phase: 'stopping',
+      ready: false,
+      reason: 'intentional_stop',
+    });
+    worker.emit('exit', 0, 'SIGTERM');
+    expect(service.getTelegramWorkerState()).toEqual({
+      phase: 'idle',
+      ready: false,
+      reason: 'intentional_stop',
+    });
+  });
+
+  test('distinguishes bounded handoff failure from missing config and initial spawn acceptance', () => {
+    const worker = new EventEmitter();
+    worker.connected = true;
+    worker.send = jest.fn();
+    worker.kill = jest.fn();
+    const forkProcess = jest.fn(() => worker);
+    const logger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+    const telegramPoller = {
+      stop: jest.fn(),
+      _internals: {
+        getTelegramConfig: jest.fn(() => ({ botToken: 'token', chatId: 123 })),
+      },
+    };
+    const service = createInboundPollerService({
+      smsPoller: { start: jest.fn(), stop: jest.fn() },
+      telegramPoller,
+      forkProcess,
+      log: logger,
+      telegramWorkerPath: 'telegram-worker.js',
+      useTelegramWorker: true,
+    });
+
+    expect(service.startTelegram({
+      env: {
+        TELEGRAM_BOT_TOKEN: 'token',
+        TELEGRAM_CHAT_ID: '123',
+      },
+    })).toBe(true);
+    expect(service.getTelegramWorkerState()).toEqual({
+      phase: 'spawned',
+      ready: false,
+      reason: null,
+    });
+
+    worker.emit('message', {
+      type: 'starting',
+      phase: 'standalone_lane_handoff',
+    });
+    worker.emit('message', {
+      type: 'started',
+      started: false,
+      reason: 'standalone_lane_handoff_timeout',
+    });
+
+    expect(service.getTelegramWorkerState()).toEqual({
+      phase: 'failed',
+      ready: false,
+      reason: 'standalone_lane_handoff_timeout',
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Telegram',
+      'Telegram poller worker did not start (standalone_lane_handoff_timeout)'
+    );
+    expect(service.getTelegramWorkerState().reason).not.toBe('missing_config');
+  });
+
+  test('retiring worker exit cannot overwrite replacement worker readiness', () => {
+    const workers = [new EventEmitter(), new EventEmitter()];
+    for (const worker of workers) {
+      worker.connected = true;
+      worker.send = jest.fn();
+      worker.kill = jest.fn();
+    }
+    const service = createInboundPollerService({
+      smsPoller: { start: jest.fn(), stop: jest.fn() },
+      telegramPoller: {
+        stop: jest.fn(),
+        _internals: {
+          getTelegramConfig: jest.fn(() => ({ botToken: 'token', chatId: 123 })),
+        },
+      },
+      forkProcess: jest.fn()
+        .mockReturnValueOnce(workers[0])
+        .mockReturnValueOnce(workers[1]),
+      telegramWorkerPath: 'telegram-worker.js',
+      useTelegramWorker: true,
+    });
+    const options = {
+      env: {
+        TELEGRAM_BOT_TOKEN: 'token',
+        TELEGRAM_CHAT_ID: '123',
+      },
+    };
+
+    expect(service.startTelegram(options)).toBe(true);
+    workers[0].emit('message', { type: 'started', started: true });
+    expect(service.getTelegramWorkerState().ready).toBe(true);
+
+    expect(service.startTelegram(options)).toBe(true);
+    expect(service.getTelegramWorkerState()).toEqual({
+      phase: 'spawned',
+      ready: false,
+      reason: null,
+    });
+    workers[0].emit('exit', 0, 'SIGTERM');
+    expect(service.getTelegramWorkerState()).toEqual({
+      phase: 'spawned',
+      ready: false,
+      reason: null,
+    });
   });
 
   test('uses electron-as-node fork options for packaged Telegram worker', () => {

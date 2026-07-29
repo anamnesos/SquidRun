@@ -9,6 +9,11 @@ const https = require('https');
 const crypto = require('crypto');
 const { resolveCoordPath } = require('../config');
 const { isMainProfile, normalizeProfileName } = require('../profile');
+const {
+  acquireProcessLease,
+  isProcessLeaseOwner,
+  releaseProcessLease,
+} = require('./cross-process-lease');
 const log = require('./logger');
 
 const DEFAULT_POLL_INTERVAL_MS = 5000;
@@ -19,6 +24,8 @@ const DEFAULT_POLLER_STATE_PATH = path.join('runtime', 'telegram-poller-state.js
 const DEFAULT_STARTUP_GRACE_MS = 10 * 60 * 1000;
 const DEFAULT_BACKLOG_BACKSTOP_DROP_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_TELEGRAM_REQUEST_TIMEOUT_MS = 30 * 1000;
+const DEFAULT_POLL_DISPATCH_LEASE_TIMEOUT_MS = 0;
+const DEFAULT_POLL_DISPATCH_LEASE_STALE_MS = 2_000;
 
 let running = false;
 let pollTimer = null;
@@ -36,10 +43,19 @@ let delayedMarkerMs = DEFAULT_STARTUP_GRACE_MS;
 let backlogBackstopDropMs = DEFAULT_BACKLOG_BACKSTOP_DROP_MS;
 let pollerDataRoot = null;
 let telegramRequestTimeoutMs = DEFAULT_TELEGRAM_REQUEST_TIMEOUT_MS;
+let pollDispatchLeaseTimeoutMs = DEFAULT_POLL_DISPATCH_LEASE_TIMEOUT_MS;
+let pollDispatchLeaseStaleMs = DEFAULT_POLL_DISPATCH_LEASE_STALE_MS;
+let pollDispatchLeaseIsProcessAlive = null;
+let beforeDispatchCommit = null;
 
 function asPositiveMs(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function asNonNegativeMs(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
 }
 
 function normalizeRootPath(value) {
@@ -362,6 +378,43 @@ function resolveStatePath(options = {}) {
   return resolveDefaultStatePath(options.env || process.env);
 }
 
+function resolvePollDispatchLeasePath(filePath, key) {
+  if (!filePath || !key) return null;
+  const resolvedStatePath = path.resolve(filePath);
+  const stateIdentity = process.platform === 'win32'
+    ? resolvedStatePath.toLowerCase()
+    : resolvedStatePath;
+  const digest = crypto
+    .createHash('sha256')
+    .update(`${stateIdentity}\n${key}`)
+    .digest('hex')
+    .slice(0, 20);
+  return path.join(
+    path.dirname(resolvedStatePath),
+    `${path.basename(resolvedStatePath)}.${digest}.poll-dispatch-lease`
+  );
+}
+
+function acquirePollDispatchLease(filePath, key, options = {}) {
+  const leasePath = resolvePollDispatchLeasePath(filePath, key);
+  if (!leasePath) {
+    return {
+      ok: true,
+      disabled: true,
+      lockPath: null,
+      lockToken: null,
+    };
+  }
+  return acquireProcessLease(leasePath, {
+    timeoutMs: Number.isFinite(Number(options.timeoutMs))
+      ? Math.max(0, Number(options.timeoutMs))
+      : pollDispatchLeaseTimeoutMs,
+    staleMs: pollDispatchLeaseStaleMs,
+    isProcessAlive: pollDispatchLeaseIsProcessAlive,
+    resource: `${path.resolve(filePath)}#${key}`,
+  });
+}
+
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
@@ -413,6 +466,10 @@ function persistNextOffset(filePath, key, offset, details = {}) {
   const prior = cursors[key] && typeof cursors[key] === 'object' && !Array.isArray(cursors[key])
     ? cursors[key]
     : {};
+  const priorOffset = normalizeOffset(prior.nextOffset);
+  if (priorOffset !== null && priorOffset > normalized) {
+    return true;
+  }
   const hasMediaFileId = Object.prototype.hasOwnProperty.call(details, 'mediaFileId');
 
   state.version = 1;
@@ -804,12 +861,20 @@ async function pollNow() {
   pollInFlight = true;
   let heartbeatStatus = 'started';
   let heartbeatError = null;
+  let pollLease = null;
+  let persistHeartbeat = true;
 
   try {
-    // A temporary standalone owner can finish an in-flight response after the
-    // main worker starts and loads its in-memory cursor. Re-read immediately
-    // before getUpdates and advance only; this makes handoff monotonic and
-    // prevents the main worker from replaying an update the old owner persisted.
+    // Serialize the entire durable-read -> getUpdates -> callback -> cursor
+    // persistence transaction across the app worker and temporary standalone
+    // lane. A contender skips this tick; it must never race a callback decision.
+    pollLease = acquirePollDispatchLease(statePath, cursorKey);
+    if (!pollLease.ok) {
+      heartbeatStatus = 'poll_dispatch_lease_busy';
+      persistHeartbeat = false;
+      return;
+    }
+
     const durableOffset = readPersistedOffset(statePath, cursorKey);
     if (durableOffset !== null && durableOffset > nextOffset) {
       nextOffset = durableOffset;
@@ -834,6 +899,20 @@ async function pollNow() {
       return;
     }
 
+    // A pre-lease/legacy owner may have completed while this request was in
+    // flight. Reconcile again before considering any callback. Updated owners
+    // cannot enter this interval because the shared lease is still held.
+    const responseDurableOffset = readPersistedOffset(statePath, cursorKey);
+    if (responseDurableOffset !== null && responseDurableOffset > nextOffset) {
+      nextOffset = responseDurableOffset;
+    }
+    if (!pollLease.disabled && !isProcessLeaseOwner(pollLease)) {
+      heartbeatStatus = 'poll_dispatch_lease_lost';
+      heartbeatError = 'lease ownership changed before update dispatch';
+      persistHeartbeat = false;
+      return;
+    }
+
     const updates = Array.isArray(payload.result) ? payload.result : [];
     heartbeatStatus = updates.length > 0 ? 'updates_received' : 'ok_empty';
     const sortedUpdates = updates
@@ -845,9 +924,19 @@ async function pollNow() {
       });
 
     for (const update of sortedUpdates) {
+      const dispatchDurableOffset = readPersistedOffset(statePath, cursorKey);
+      if (dispatchDurableOffset !== null && dispatchDurableOffset > nextOffset) {
+        nextOffset = dispatchDurableOffset;
+      }
+      if (!pollLease.disabled && !isProcessLeaseOwner(pollLease)) {
+        heartbeatStatus = 'poll_dispatch_lease_lost';
+        heartbeatError = 'lease ownership changed during update dispatch';
+        persistHeartbeat = false;
+        return;
+      }
       const updateId = parseUpdateId(update);
       if (updateId === null || updateId < nextOffset) continue;
-      nextOffset = Math.max(nextOffset, updateId + 1);
+      const candidateNextOffset = Math.max(nextOffset, updateId + 1);
 
       const inbound = extractInboundMessage(update);
       const message = inbound.message;
@@ -857,17 +946,28 @@ async function pollNow() {
       const parsedChatId = message ? getAuthorizedChatId(message) : null;
       const mediaFileId = message ? getMediaFileId(message) : null;
 
-      persistNextOffset(statePath, cursorKey, nextOffset, {
-        action: 'seen',
-        chatId: parsedChatId,
-        mediaFileId,
-        messageId,
-        profile: config.profile || 'main',
-        updateId,
-      });
-
-      if (!message) continue;
+      if (!message) {
+        nextOffset = candidateNextOffset;
+        persistNextOffset(statePath, cursorKey, nextOffset, {
+          action: 'seen',
+          chatId: parsedChatId,
+          mediaFileId,
+          messageId,
+          profile: config.profile || 'main',
+          updateId,
+        });
+        continue;
+      }
       if (!isAuthorizedChat(message, config)) {
+        nextOffset = candidateNextOffset;
+        persistNextOffset(statePath, cursorKey, nextOffset, {
+          action: 'seen',
+          chatId: parsedChatId,
+          mediaFileId,
+          messageId,
+          profile: config.profile || 'main',
+          updateId,
+        });
         log.warn(
           'Telegram',
           `Rejected inbound Telegram message from unauthorized chat (${message?.chat?.id ?? 'unknown'}) — profile=${config.profile || 'main'} config.chatId=${config.chatId} authorizedChatIds=${JSON.stringify(config.authorizedChatIds)} scopedChatIds=${JSON.stringify(config.scopedChatIds)} msgChatId=${message?.chat?.id} typeof=${typeof message?.chat?.id}`
@@ -878,6 +978,7 @@ async function pollNow() {
       const messageTimestampMs = parseMessageTimestampMs(message);
       const messageAgeMs = messageTimestampMs === null ? 0 : Math.max(0, Date.now() - messageTimestampMs);
       if (backlogBackstopDropMs > 0 && messageAgeMs > backlogBackstopDropMs) {
+        nextOffset = candidateNextOffset;
         persistNextOffset(statePath, cursorKey, nextOffset, {
           action: 'dropped_backlog_backstop',
           chatId: parsedChatId,
@@ -925,6 +1026,15 @@ async function pollNow() {
 
       let displayText = buildInboundDisplayText(message, selectedMedia);
       if (!displayText) {
+        nextOffset = candidateNextOffset;
+        persistNextOffset(statePath, cursorKey, nextOffset, {
+          action: 'seen',
+          chatId: parsedChatId,
+          mediaFileId,
+          messageId,
+          profile: config.profile || 'main',
+          updateId,
+        });
         log.warn(
           'Telegram',
           `Skipping inbound Telegram update ${updateId} because no display text could be derived (hasPhoto=${photoArray ? 'yes' : 'no'} hasDocument=${document ? 'yes' : 'no'})`
@@ -934,6 +1044,49 @@ async function pollNow() {
       if (delayedMarkerMs > 0 && messageAgeMs > delayedMarkerMs) {
         displayText = `[delayed: ${Math.max(1, Math.round(messageAgeMs / 60000))}m old] ${displayText}`;
       }
+
+      // This is the last callback boundary. Re-read before persisting our own
+      // "seen" cursor so a legacy owner that completed during media handling
+      // wins and this process skips the duplicate. Updated owners are excluded
+      // by the still-held cross-process lease.
+      const preDispatchDurableOffset = readPersistedOffset(statePath, cursorKey);
+      if (
+        preDispatchDurableOffset !== null
+        && preDispatchDurableOffset >= candidateNextOffset
+      ) {
+        nextOffset = Math.max(nextOffset, preDispatchDurableOffset);
+        continue;
+      }
+      if (!pollLease.disabled && !isProcessLeaseOwner(pollLease)) {
+        heartbeatStatus = 'poll_dispatch_lease_lost';
+        heartbeatError = 'lease ownership changed immediately before callback';
+        persistHeartbeat = false;
+        return;
+      }
+      if (typeof beforeDispatchCommit === 'function') {
+        await Promise.resolve(beforeDispatchCommit({
+          candidateNextOffset,
+          cursorKey,
+          leasePath: pollLease.lockPath,
+          updateId,
+        }));
+        if (!pollLease.disabled && !isProcessLeaseOwner(pollLease)) {
+          heartbeatStatus = 'poll_dispatch_lease_lost';
+          heartbeatError = 'lease ownership changed at callback commit';
+          persistHeartbeat = false;
+          return;
+        }
+      }
+
+      nextOffset = candidateNextOffset;
+      persistNextOffset(statePath, cursorKey, nextOffset, {
+        action: 'seen',
+        chatId: parsedChatId,
+        mediaFileId,
+        messageId,
+        profile: config.profile || 'main',
+        updateId,
+      });
 
       if (typeof onMessage === 'function') {
         try {
@@ -978,15 +1131,20 @@ async function pollNow() {
     heartbeatStatus = err?.code === 'TELEGRAM_REQUEST_TIMEOUT' ? 'request_timeout' : 'request_error';
     heartbeatError = err.message;
   } finally {
-    persistPollerHeartbeat(statePath, cursorKey, {
-      chatId: config?.chatId ?? null,
-      dataRoot: pollerDataRoot,
-      error: heartbeatError,
-      nextOffset,
-      profile: config?.profile || 'main',
-      status: heartbeatStatus,
-      tokenFingerprint: fingerprintTelegramToken(config?.botToken),
-    });
+    if (persistHeartbeat) {
+      persistPollerHeartbeat(statePath, cursorKey, {
+        chatId: config?.chatId ?? null,
+        dataRoot: pollerDataRoot,
+        error: heartbeatError,
+        nextOffset,
+        profile: config?.profile || 'main',
+        status: heartbeatStatus,
+        tokenFingerprint: fingerprintTelegramToken(config?.botToken),
+      });
+    }
+    if (pollLease?.ok && !pollLease.disabled) {
+      releaseProcessLease(pollLease);
+    }
     pollInFlight = false;
   }
 }
@@ -1016,21 +1174,54 @@ function start(options = {}) {
   statePath = resolveStatePath(options);
   pollerDataRoot = resolvePollerDataRoot(options.env || process.env);
   cursorKey = getConfigCursorKey(config);
-  nextOffset = readPersistedOffset(statePath, cursorKey) ?? normalizeOffset(options.initialOffset) ?? 0;
   delayedMarkerMs = resolveStartupGraceMs(options);
   backlogBackstopDropMs = resolveBacklogBackstopDropMs(options);
   telegramRequestTimeoutMs = resolveTelegramRequestTimeoutMs(options);
+  pollDispatchLeaseTimeoutMs = asNonNegativeMs(
+    options.pollDispatchLeaseTimeoutMs,
+    DEFAULT_POLL_DISPATCH_LEASE_TIMEOUT_MS
+  );
+  pollDispatchLeaseStaleMs = asPositiveMs(
+    options.pollDispatchLeaseStaleMs,
+    DEFAULT_POLL_DISPATCH_LEASE_STALE_MS
+  );
+  pollDispatchLeaseIsProcessAlive = typeof options.pollDispatchLeaseIsProcessAlive === 'function'
+    ? options.pollDispatchLeaseIsProcessAlive
+    : null;
+  beforeDispatchCommit = typeof options.beforeDispatchCommit === 'function'
+    ? options.beforeDispatchCommit
+    : null;
+  nextOffset = normalizeOffset(options.initialOffset) ?? 0;
   pollInFlight = false;
 
-  // Claim the shared owner record before either the app worker or a temporary
-  // standalone lane can reach its first getUpdates tick. A standalone lane
-  // watches this PID-qualified claim and yields before polling concurrently.
+  // Claim the shared owner record under the same per-cursor lease used by
+  // pollNow. This prevents an outgoing updated worker from persisting a newer
+  // cursor between our startup read and ownership write.
   const persistOwnershipClaim = typeof options.persistOwnershipClaim === 'function'
     ? options.persistOwnershipClaim
     : persistPollerOwnershipClaim;
   let ownershipClaimed = statePath === null;
+  let startupLease = null;
   try {
     if (statePath !== null) {
+      startupLease = acquirePollDispatchLease(statePath, cursorKey, {
+        timeoutMs: asNonNegativeMs(
+          options.pollDispatchStartupLeaseTimeoutMs,
+          telegramRequestTimeoutMs + DEFAULT_POLL_DISPATCH_LEASE_STALE_MS
+        ),
+      });
+      if (!startupLease.ok) {
+        log.warn(
+          'Telegram',
+          `Telegram poller startup lease unavailable (${startupLease.reason || 'unknown'})`
+        );
+      } else {
+        nextOffset = readPersistedOffset(statePath, cursorKey)
+          ?? normalizeOffset(options.initialOffset)
+          ?? 0;
+      }
+    }
+    if (statePath !== null && startupLease?.ok) {
       ownershipClaimed = persistOwnershipClaim(statePath, cursorKey, {
         chatId: config?.chatId ?? null,
         dataRoot: pollerDataRoot,
@@ -1042,6 +1233,11 @@ function start(options = {}) {
     }
   } catch (err) {
     log.warn('Telegram', `Telegram poller ownership claim failed: ${err.message}`);
+  } finally {
+    if (startupLease?.ok && !startupLease.disabled && !releaseProcessLease(startupLease)) {
+      ownershipClaimed = false;
+      log.warn('Telegram', 'Telegram poller startup lease could not be released safely');
+    }
   }
   if (!ownershipClaimed) {
     log.warn('Telegram', 'Telegram poller did not start because its ownership claim could not be persisted');
@@ -1094,6 +1290,10 @@ function stop() {
   delayedMarkerMs = DEFAULT_STARTUP_GRACE_MS;
   backlogBackstopDropMs = DEFAULT_BACKLOG_BACKSTOP_DROP_MS;
   telegramRequestTimeoutMs = DEFAULT_TELEGRAM_REQUEST_TIMEOUT_MS;
+  pollDispatchLeaseTimeoutMs = DEFAULT_POLL_DISPATCH_LEASE_TIMEOUT_MS;
+  pollDispatchLeaseStaleMs = DEFAULT_POLL_DISPATCH_LEASE_STALE_MS;
+  pollDispatchLeaseIsProcessAlive = null;
+  beforeDispatchCommit = null;
 }
 
 function isRunning() {
@@ -1119,6 +1319,7 @@ const _internals = {
   isVideoDocument,
   resolveDefaultMediaDownloadRoot,
   resolveDefaultStatePath,
+  resolvePollDispatchLeasePath,
   resolveStatePath,
   readPersistedOffset,
   persistNextOffset,

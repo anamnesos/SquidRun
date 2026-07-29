@@ -8400,6 +8400,49 @@ describe('SquidRunApp', () => {
       expect(createWindowSpy).not.toHaveBeenCalled();
     });
 
+    it('reports worker launch acceptance without claiming readiness before worker IPC', () => {
+      const log = require('../modules/logger');
+      app.inboundPollerService.startTelegram = jest.fn(() => true);
+      app.inboundPollerService.stopTelegram = jest.fn();
+      app.inboundPollerService.getTelegramWorkerState = jest.fn(() => ({
+        phase: 'standalone_lane_handoff',
+        ready: false,
+        reason: null,
+      }));
+      log.info.mockClear();
+
+      const startStatus = app.startTelegramPoller();
+
+      expect(startStatus).toEqual({
+        accepted: true,
+        phase: 'standalone_lane_handoff',
+        ready: false,
+        reason: null,
+        started: false,
+      });
+      expect(log.info).not.toHaveBeenCalledWith('Telegram', 'Inbound Telegram bridge enabled');
+      expect(log.info).toHaveBeenCalledWith(
+        'Telegram',
+        'Inbound Telegram worker launch accepted; awaiting readiness (phase=standalone_lane_handoff)'
+      );
+
+      const restartStatus = app.restartTelegramPoller({ reason: 'readiness-test' });
+
+      expect(restartStatus).toEqual({
+        success: true,
+        accepted: true,
+        phase: 'standalone_lane_handoff',
+        ready: false,
+        started: false,
+        startupReason: null,
+        reason: 'readiness-test',
+        note: 'Telegram poller restart accepted without reloading panes; worker readiness is still pending.',
+      });
+      expect(app.inboundPollerService.stopTelegram).toHaveBeenCalledTimes(1);
+      expect(app.inboundPollerService.startTelegram).toHaveBeenCalledTimes(2);
+      expect(log.info).not.toHaveBeenCalledWith('Telegram', 'Inbound Telegram bridge enabled');
+    });
+
     it('does not queue accepted-unverified Telegram inbound for replay', async () => {
       const triggers = require('../modules/triggers');
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-pane-'));

@@ -14432,7 +14432,7 @@ class SquidRunApp {
     const telegramEnv = {
       ...this.buildTelegramPollerEnv(process.env),
     };
-    const started = this.inboundPollerService.startTelegram({
+    const accepted = this.inboundPollerService.startTelegram({
       env: telegramEnv,
       onMessage: (text, from, metadata = {}) => {
         const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
@@ -14663,10 +14663,29 @@ class SquidRunApp {
       },
     });
 
-    if (started) {
+    const workerState = typeof this.inboundPollerService.getTelegramWorkerState === 'function'
+      ? this.inboundPollerService.getTelegramWorkerState()
+      : null;
+    const ready = workerState
+      ? workerState.ready === true
+      : accepted === true;
+    const startStatus = {
+      accepted: accepted === true,
+      phase: workerState?.phase || (ready ? 'ready' : (accepted ? 'accepted' : 'failed')),
+      ready,
+      reason: workerState?.reason || null,
+      started: ready,
+    };
+
+    if (ready) {
       log.info('Telegram', 'Inbound Telegram bridge enabled');
+    } else if (accepted) {
+      log.info(
+        'Telegram',
+        `Inbound Telegram worker launch accepted; awaiting readiness (phase=${startStatus.phase})`
+      );
     }
-    return started;
+    return startStatus;
   }
 
   restartTelegramPoller(payload = {}) {
@@ -14675,12 +14694,27 @@ class SquidRunApp {
       : 'app-control';
     log.info('Telegram', `Restarting Telegram poller (${reason})`);
     this.inboundPollerService.stopTelegram();
-    const started = this.startTelegramPoller();
+    const rawStartStatus = this.startTelegramPoller();
+    const startStatus = rawStartStatus && typeof rawStartStatus === 'object'
+      ? rawStartStatus
+      : {
+        accepted: Boolean(rawStartStatus),
+        phase: rawStartStatus ? 'ready' : 'failed',
+        ready: Boolean(rawStartStatus),
+        reason: null,
+        started: Boolean(rawStartStatus),
+      };
     return {
-      success: Boolean(started),
-      started: Boolean(started),
+      success: startStatus.accepted === true,
+      accepted: startStatus.accepted === true,
+      phase: startStatus.phase || (startStatus.ready ? 'ready' : 'failed'),
+      ready: startStatus.ready === true,
+      started: startStatus.ready === true,
+      startupReason: startStatus.reason || null,
       reason,
-      note: 'Telegram poller restart requested without reloading panes.',
+      note: startStatus.ready
+        ? 'Telegram poller restart requested without reloading panes.'
+        : 'Telegram poller restart accepted without reloading panes; worker readiness is still pending.',
     };
   }
 

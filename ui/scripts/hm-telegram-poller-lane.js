@@ -8,6 +8,10 @@ const { spawn, spawnSync } = require('child_process');
 
 const { getProjectRoot, resolveCoordPath } = require('../config');
 const { buildProfileTelegramEnv, getProfileProjectRootOverride } = require('../profile');
+const {
+  acquireProcessLease,
+  releaseProcessLease,
+} = require('../modules/cross-process-lease');
 const telegramPoller = require('../modules/telegram-poller');
 const { resolveTelegramInboundRoute } = require('./hm-telegram-routing');
 const { resolveRuntimeUiScriptPath } = require('./runtime-ui-paths');
@@ -17,6 +21,7 @@ const PID_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.log');
 const LANE_CLAIM_VERSION = 2;
 const CLAIM_MUTATION_LOCK_TIMEOUT_MS = 2_000;
+const CLAIM_MUTATION_LOCK_STALE_MS = 1_000;
 const CLAIM_MUTATION_LOCK_RETRY_MS = 10;
 const KEEPALIVE_INTERVAL_MS = 60_000;
 const MAIN_OWNER_RECONCILE_INTERVAL_MS = 1_000;
@@ -278,65 +283,32 @@ function createLaneLaunchClaim(options = {}) {
   );
 }
 
-function waitSync(ms) {
-  if (!Number.isFinite(Number(ms)) || Number(ms) <= 0) return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.floor(Number(ms)));
-}
-
 function acquireClaimMutationLock(claimPath, options = {}) {
   const lockPath = `${claimPath}.mutation-lock`;
-  fs.mkdirSync(path.dirname(claimPath), { recursive: true });
   const timeoutMs = Number.isFinite(Number(options.claimMutationLockTimeoutMs))
     ? Math.max(0, Number(options.claimMutationLockTimeoutMs))
     : CLAIM_MUTATION_LOCK_TIMEOUT_MS;
-  const deadline = Date.now() + timeoutMs;
-  const lockToken = crypto.randomUUID();
-  do {
-    try {
-      fs.mkdirSync(lockPath);
-      try {
-        fs.writeFileSync(path.join(lockPath, 'owner.json'), `${JSON.stringify({
-          version: 1,
-          pid: process.pid,
-          lockToken,
-          createdAt: new Date().toISOString(),
-        }, null, 2)}\n`, 'utf8');
-      } catch (err) {
-        fs.rmSync(lockPath, { recursive: true, force: true });
-        return {
-          ok: false,
-          reason: 'claim_mutation_lock_failed',
-          error: err.message,
-          lockPath,
-        };
-      }
-      return { ok: true, lockPath, lockToken };
-    } catch (err) {
-      if (err?.code !== 'EEXIST') {
-        return {
-          ok: false,
-          reason: 'claim_mutation_lock_failed',
-          error: err.message,
-          lockPath,
-        };
-      }
-      if (Date.now() >= deadline) break;
-      waitSync(CLAIM_MUTATION_LOCK_RETRY_MS);
-    }
-  } while (Date.now() <= deadline);
+  const staleMs = Number.isFinite(Number(options.claimMutationLockStaleMs))
+    ? Math.max(0, Number(options.claimMutationLockStaleMs))
+    : CLAIM_MUTATION_LOCK_STALE_MS;
+  const lease = acquireProcessLease(lockPath, {
+    timeoutMs,
+    retryMs: CLAIM_MUTATION_LOCK_RETRY_MS,
+    staleMs,
+    isProcessAlive: options.isClaimMutationLockOwnerAlive,
+    resource: path.resolve(claimPath),
+  });
+  if (lease.ok) return lease;
   return {
-    ok: false,
-    reason: 'claim_mutation_lock_timeout',
-    lockPath,
+    ...lease,
+    reason: lease.reason === 'lease_busy'
+      ? 'claim_mutation_lock_timeout'
+      : 'claim_mutation_lock_failed',
   };
 }
 
 function releaseClaimMutationLock(lock) {
-  if (!lock?.ok || !lock.lockPath || !lock.lockToken) return false;
-  const owner = readJsonFile(path.join(lock.lockPath, 'owner.json'));
-  if (owner?.lockToken !== lock.lockToken) return false;
-  fs.rmSync(lock.lockPath, { recursive: true, force: true });
-  return true;
+  return releaseProcessLease(lock);
 }
 
 function withClaimMutationLock(claimPath, options, operation) {

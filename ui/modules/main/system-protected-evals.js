@@ -920,7 +920,7 @@ const TELEGRAM_POLLER_RESTART_BOUNDARY_CASE = Object.freeze({
   id: CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY,
   phase: 'phase4h',
   title: 'Telegram poller restart stays poller-only',
-  protectedBehavior: 'The restart-telegram-poller action may restart Telegram intake only; it must not reload renderer panes, claim to activate restart-bound main-process formatter changes, or collapse into reload-renderers/main restart semantics.',
+  protectedBehavior: 'The restart-telegram-poller action may restart Telegram intake only; it must not reload renderer panes, claim to activate restart-bound main-process formatter changes, or collapse into reload-renderers/main restart semantics. Worker launch acceptance must remain distinct from IPC-confirmed readiness, so pending workers cannot be reported as enabled or started.',
   protectedZeroFail: true,
   authorityPolicy: 'system_eval_only_no_dispatch',
   sideEffects: Object.freeze({
@@ -960,6 +960,13 @@ const TELEGRAM_POLLER_RESTART_BOUNDARY_CASE = Object.freeze({
       reason: 'The app-level restart method explicitly states that poller restart does not reload panes.',
     }),
     Object.freeze({
+      id: 'squidrun_app_restart_poller_readiness_is_ipc_confirmed',
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'restartTelegramPoller(payload = {})',
+      requiredText: 'started: startStatus.ready === true',
+      reason: 'The app-level restart response cannot report started until the worker state is IPC-confirmed ready.',
+    }),
+    Object.freeze({
       id: 'service_lifecycle_telegram_poller_restart_action',
       path: 'ui/modules/service-lifecycle-registry.js',
       anchor: "id: 'telegram-poller'",
@@ -995,6 +1002,16 @@ const TELEGRAM_POLLER_RESTART_BOUNDARY_CASE = Object.freeze({
       ]),
     }),
     Object.freeze({
+      id: 'app_control_restart_pending_readiness_fixture',
+      path: 'ui/__tests__/app-control-service.test.js',
+      testName: 'restart-telegram-poller preserves accepted versus IPC-ready worker state',
+      requiredText: Object.freeze([
+        "phase: 'standalone_lane_handoff'",
+        'ready: false',
+        'started: false',
+      ]),
+    }),
+    Object.freeze({
       id: 'app_control_restart_unavailable_fixture',
       path: 'ui/__tests__/app-control-service.test.js',
       testName: 'restart-telegram-poller reports unavailable when the app lacks a restart hook',
@@ -1018,6 +1035,15 @@ const TELEGRAM_POLLER_RESTART_BOUNDARY_CASE = Object.freeze({
       requiredText: Object.freeze([
         'expect(reloadsideprofile).not.toHaveBeenCalled()',
         'Telegram poller restart requested without reloading panes.',
+      ]),
+    }),
+    Object.freeze({
+      id: 'squidrun_app_restart_pending_readiness_fixture',
+      path: 'ui/__tests__/squidrun-app.test.js',
+      testName: 'reports worker launch acceptance without claiming readiness before worker IPC',
+      requiredText: Object.freeze([
+        'started: false',
+        "expect(log.info).not.toHaveBeenCalledWith('Telegram', 'Inbound Telegram bridge enabled')",
       ]),
     }),
     Object.freeze({
@@ -1048,8 +1074,8 @@ const TELEGRAM_POLLER_RESTART_BOUNDARY_CASE = Object.freeze({
   focusedCommands: Object.freeze([
     'node ui/scripts/hm-system-protected-evals.js --case phase4h.telegram_poller_restart_is_poller_only --pretty',
     'npm --prefix ui test -- system-protected-evals.test.js --runInBand',
-    'npm --prefix ui test -- app-control-service.test.js --runInBand --testNamePattern "restart-telegram-poller delegates to the app poller lifecycle without reloading panes|restart-telegram-poller does not inspect or reload side-profile windows|restart-telegram-poller reports unavailable when the app lacks a restart hook|reload-renderers reloads every live window without restarting the main process"',
-    'npm --prefix ui test -- squidrun-app.test.js --runInBand --testNamePattern "restarts the Telegram poller without reloading app panes"',
+    'npm --prefix ui test -- app-control-service.test.js --runInBand --testNamePattern "restart-telegram-poller delegates to the app poller lifecycle without reloading panes|restart-telegram-poller preserves accepted versus IPC-ready worker state|restart-telegram-poller does not inspect or reload side-profile windows|restart-telegram-poller reports unavailable when the app lacks a restart hook|reload-renderers reloads every live window without restarting the main process"',
+    'npm --prefix ui test -- squidrun-app.test.js --runInBand --testNamePattern "restarts the Telegram poller without reloading app panes|reports worker launch acceptance without claiming readiness before worker IPC"',
     'npm --prefix ui test -- service-lifecycle-registry.test.js --runInBand --testNamePattern "defines Telegram poller restart as service-only and pane-safe"',
     'npm --prefix ui test -- hm-app.test.js --runInBand --testNamePattern "keeps Telegram poller restart aliases separate from renderer reload aliases"',
   ]),
@@ -1068,6 +1094,11 @@ const TELEGRAM_POLLER_RESTART_BOUNDARY_CASE = Object.freeze({
       id: 'telegram_restart_app_note_or_boundary_removed',
       mutation: 'Remove the no-pane-reload note or make SquidRunApp.restartTelegramPoller touch panes.',
       expectedFailedCheckIds: Object.freeze(['telegram_poller_app_restart_stops_and_starts_poller_only']),
+    }),
+    Object.freeze({
+      id: 'telegram_restart_false_readiness_claim',
+      mutation: 'Report a fork-accepted Telegram worker as enabled or started before worker IPC confirms readiness.',
+      expectedFailedCheckIds: Object.freeze(['telegram_poller_app_readiness_requires_worker_ipc']),
     }),
     Object.freeze({
       id: 'telegram_lifecycle_registry_drift',
@@ -2359,6 +2390,7 @@ function validateTelegramPollerRestartBoundarySemantics(evalCase, options = {}) 
   const reloadBranch = extractFunctionBlock(appControlText, "if (normalizedAction === 'reload-renderers')");
   const restartBranch = extractFunctionBlock(appControlText, "if (normalizedAction === 'restart-telegram-poller')");
   const appControlContextBlock = extractFunctionBlock(squidrunAppText, "if (data.message.type === 'app-control')");
+  const appStartBlock = extractFunctionBlock(squidrunAppText, 'startTelegramPoller() {');
   const appRestartBlock = extractFunctionBlock(squidrunAppText, 'restartTelegramPoller(payload = {})');
   const hmAppNormalizeBlock = extractFunctionBlock(hmAppText, 'function normalizeCommand(command)');
   const lifecycleTelegramStart = lifecycleText.indexOf("id: 'telegram-poller'");
@@ -2436,7 +2468,7 @@ function validateTelegramPollerRestartBoundarySemantics(evalCase, options = {}) 
   checks.push(makeCheck(
     'telegram_poller_app_restart_stops_and_starts_poller_only',
     appRestartBlock.includes('this.inboundPollerService.stopTelegram();')
-      && appRestartBlock.includes('const started = this.startTelegramPoller();')
+      && appRestartBlock.includes('const rawStartStatus = this.startTelegramPoller();')
       && appRestartBlock.includes('Telegram poller restart requested without reloading panes.')
       && !appRestartBlock.includes('reloadIgnoringCache')
       && !appRestartBlock.includes('getAppWindows')
@@ -2446,6 +2478,23 @@ function validateTelegramPollerRestartBoundarySemantics(evalCase, options = {}) 
     {
       path: 'ui/modules/main/squidrun-app.js',
       anchor: 'restartTelegramPoller(payload = {})',
+    }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_poller_app_readiness_requires_worker_ipc',
+    appStartBlock.includes('this.inboundPollerService.getTelegramWorkerState()')
+      && appStartBlock.includes('workerState.ready === true')
+      && appStartBlock.includes('started: ready')
+      && appStartBlock.includes("if (ready) {\n      log.info('Telegram', 'Inbound Telegram bridge enabled');")
+      && appRestartBlock.includes('accepted: startStatus.accepted === true')
+      && appRestartBlock.includes('ready: startStatus.ready === true')
+      && appRestartBlock.includes('started: startStatus.ready === true')
+      && appRestartBlock.includes('worker readiness is still pending.'),
+    'SquidRunApp separates fork acceptance from IPC-confirmed worker readiness at start and restart surfaces',
+    {
+      path: 'ui/modules/main/squidrun-app.js',
+      anchor: 'startTelegramPoller() {',
     }
   ));
 
@@ -2481,11 +2530,30 @@ function validateTelegramPollerRestartBoundarySemantics(evalCase, options = {}) 
   ));
 
   checks.push(makeCheck(
+    'telegram_poller_app_control_pending_readiness_fixture',
+    appControlTestText.includes("test('restart-telegram-poller preserves accepted versus IPC-ready worker state'")
+      && appControlTestText.includes("phase: 'standalone_lane_handoff'")
+      && appControlTestText.includes('ready: false')
+      && appControlTestText.includes('started: false'),
+    'app-control focused fixture preserves accepted, phase, ready, and started as separate result fields',
+    { path: 'ui/__tests__/app-control-service.test.js' }
+  ));
+
+  checks.push(makeCheck(
     'telegram_poller_squidrun_app_no_pane_reload_fixture',
     squidrunAppTestText.includes("it('restarts the Telegram poller without reloading app panes'")
       && squidrunAppTestText.includes('expect(reloadsideprofile).not.toHaveBeenCalled()')
       && squidrunAppTestText.includes('Telegram poller restart requested without reloading panes.'),
     'SquidRunApp focused fixture proves restartTelegramPoller does not reload panes and keeps the boundary note',
+    { path: 'ui/__tests__/squidrun-app.test.js' }
+  ));
+
+  checks.push(makeCheck(
+    'telegram_poller_squidrun_app_pending_readiness_fixture',
+    squidrunAppTestText.includes("it('reports worker launch acceptance without claiming readiness before worker IPC'")
+      && squidrunAppTestText.includes('started: false')
+      && squidrunAppTestText.includes("expect(log.info).not.toHaveBeenCalledWith('Telegram', 'Inbound Telegram bridge enabled')"),
+    'SquidRunApp focused fixture proves accepted worker launch remains pending until worker IPC readiness',
     { path: 'ui/__tests__/squidrun-app.test.js' }
   ));
 

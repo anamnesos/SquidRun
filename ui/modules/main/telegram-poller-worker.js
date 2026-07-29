@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const telegramPoller = require('../telegram-poller');
+const { waitForStandaloneLaneExit } = require('../telegram-poller-handoff');
 const log = require('../logger');
 
 function resolveCrashLogPath() {
@@ -49,7 +50,36 @@ function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
-function start(options = {}) {
+async function start(options = {}) {
+  send({
+    type: 'starting',
+    phase: 'standalone_lane_handoff',
+  });
+  const getLaneStatus = typeof options.getStandaloneLaneStatus === 'function'
+    ? options.getStandaloneLaneStatus
+    : () => {
+      const lane = require('../../scripts/hm-telegram-poller-lane');
+      return lane.status({ env: options.env || process.env });
+    };
+  const handoff = await waitForStandaloneLaneExit({
+    getLaneStatus,
+    timeoutMs: options.standaloneLaneHandoffTimeoutMs,
+    retryMs: options.standaloneLaneHandoffRetryMs,
+  });
+  if (!handoff.ok) {
+    send({
+      type: 'started',
+      started: false,
+      reason: handoff.reason,
+    });
+    setImmediate(() => process.exit(0));
+    return false;
+  }
+
+  send({
+    type: 'starting',
+    phase: 'poll_dispatch_lease',
+  });
   const started = telegramPoller.start({
     ...options,
     onMessage: (text, from, metadata = {}) => {
@@ -73,6 +103,7 @@ function start(options = {}) {
   if (!started) {
     setImmediate(() => process.exit(0));
   }
+  return started;
 }
 
 function shutdown(exitCode = 0) {
@@ -87,7 +118,10 @@ function shutdown(exitCode = 0) {
 process.on('message', (message) => {
   const msg = asObject(message);
   if (msg.type === 'start') {
-    start(asObject(msg.options));
+    start(asObject(msg.options)).catch((err) => {
+      reportFatalWorkerError('startup handoff failed', err);
+      shutdown(1);
+    });
     return;
   }
 

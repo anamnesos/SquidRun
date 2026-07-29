@@ -27,6 +27,13 @@ class InboundPollerService {
       : process.env.NODE_ENV !== 'test';
     this.telegramWorker = null;
     this.telegramOnMessage = null;
+    this.telegramWorkerGeneration = 0;
+    this.telegramWorkerStateGeneration = 0;
+    this.telegramWorkerState = {
+      phase: 'idle',
+      ready: false,
+      reason: null,
+    };
   }
 
   startSms(options = {}) {
@@ -35,7 +42,13 @@ class InboundPollerService {
 
   startTelegram(options = {}) {
     if (!this.useTelegramWorker) {
-      return this.telegramPoller.start(options);
+      const started = this.telegramPoller.start(options);
+      this.telegramWorkerState = {
+        phase: started ? 'ready' : 'failed',
+        ready: started === true,
+        reason: started ? null : 'missing_config',
+      };
+      return started;
     }
 
     const workerEnv = {
@@ -46,6 +59,11 @@ class InboundPollerService {
 
     const getTelegramConfig = this.telegramPoller?._internals?.getTelegramConfig;
     if (typeof getTelegramConfig === 'function' && !getTelegramConfig(workerEnv)) {
+      this.telegramWorkerState = {
+        phase: 'failed',
+        ready: false,
+        reason: 'missing_config',
+      };
       return false;
     }
 
@@ -59,7 +77,14 @@ class InboundPollerService {
       env: workerEnv,
     }));
     worker.__squidrunIntentionalStop = false;
+    worker.__squidrunWorkerGeneration = ++this.telegramWorkerGeneration;
     this.telegramWorker = worker;
+    this.telegramWorkerStateGeneration = worker.__squidrunWorkerGeneration;
+    this.telegramWorkerState = {
+      phase: 'spawned',
+      ready: false,
+      reason: null,
+    };
 
     if (typeof worker.on === 'function') {
       worker.on('message', (message) => this.handleTelegramWorkerMessage(worker, message));
@@ -68,12 +93,33 @@ class InboundPollerService {
       });
       worker.on('exit', (code, signal) => {
         const intentional = worker.__squidrunIntentionalStop === true;
-        if (this.telegramWorker === worker) {
+        const isCurrentWorker = this.telegramWorker === worker;
+        const ownsStoppedSlot = (
+          intentional
+          && this.telegramWorker === null
+          && this.telegramWorkerState.phase === 'stopping'
+          && this.telegramWorkerStateGeneration === worker.__squidrunWorkerGeneration
+        );
+        if (isCurrentWorker) {
           this.telegramWorker = null;
         }
         if (intentional) {
+          if (isCurrentWorker || ownsStoppedSlot) {
+            this.telegramWorkerState = {
+              phase: 'idle',
+              ready: false,
+              reason: 'intentional_stop',
+            };
+          }
           this.log.info('Telegram', `Telegram poller worker stopped (${signal || code || 'exit'})`);
         } else {
+          if (isCurrentWorker) {
+            this.telegramWorkerState = {
+              phase: 'failed',
+              ready: false,
+              reason: this.telegramWorkerState.reason || `worker_exit:${signal || code || 'unknown'}`,
+            };
+          }
           this.log.error('Telegram', `Telegram poller worker exited unexpectedly (code=${code}, signal=${signal || 'none'})`);
         }
       });
@@ -114,6 +160,11 @@ class InboundPollerService {
       this.stopTelegramWorker();
     } else if (this.telegramPoller && typeof this.telegramPoller.stop === 'function') {
       this.telegramPoller.stop();
+      this.telegramWorkerState = {
+        phase: 'idle',
+        ready: false,
+        reason: 'intentional_stop',
+      };
     }
   }
 
@@ -138,11 +189,31 @@ class InboundPollerService {
     }
 
     if (message.type === 'started') {
+      this.telegramWorkerStateGeneration = worker.__squidrunWorkerGeneration || 0;
+      this.telegramWorkerState = {
+        phase: message.started ? 'ready' : 'failed',
+        ready: message.started === true,
+        reason: message.started ? null : (message.reason || 'unknown'),
+      };
       if (message.started) {
         this.log.info('Telegram', 'Telegram poller worker started');
       } else {
         this.log.warn('Telegram', `Telegram poller worker did not start (${message.reason || 'unknown'})`);
       }
+      return;
+    }
+
+    if (message.type === 'starting') {
+      this.telegramWorkerStateGeneration = worker.__squidrunWorkerGeneration || 0;
+      this.telegramWorkerState = {
+        phase: message.phase || 'starting',
+        ready: false,
+        reason: null,
+      };
+      this.log.info(
+        'Telegram',
+        `Telegram poller worker waiting for ${message.phase || 'startup readiness'}`
+      );
       return;
     }
 
@@ -156,9 +227,22 @@ class InboundPollerService {
     const worker = this.telegramWorker;
     this.telegramWorker = null;
     this.telegramOnMessage = null;
-    if (!worker) return;
+    if (!worker) {
+      this.telegramWorkerState = {
+        phase: 'idle',
+        ready: false,
+        reason: 'intentional_stop',
+      };
+      return;
+    }
 
     worker.__squidrunIntentionalStop = true;
+    this.telegramWorkerStateGeneration = worker.__squidrunWorkerGeneration || 0;
+    this.telegramWorkerState = {
+      phase: 'stopping',
+      ready: false,
+      reason: 'intentional_stop',
+    };
     try {
       if (typeof worker.send === 'function' && worker.connected !== false) {
         worker.send({ type: 'shutdown' });
@@ -176,6 +260,10 @@ class InboundPollerService {
         // Best effort only.
       }
     }, TELEGRAM_STOP_KILL_TIMEOUT_MS).unref?.();
+  }
+
+  getTelegramWorkerState() {
+    return { ...this.telegramWorkerState };
   }
 }
 

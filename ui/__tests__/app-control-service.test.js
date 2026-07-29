@@ -90,6 +90,33 @@ describe('app-control-service', () => {
     expect(restartTelegramPoller).toHaveBeenCalledWith({ reason: 'test' });
   });
 
+  test('restart-telegram-poller preserves accepted versus IPC-ready worker state', () => {
+    const restartTelegramPoller = jest.fn(() => ({
+      success: true,
+      accepted: true,
+      phase: 'standalone_lane_handoff',
+      ready: false,
+      started: false,
+      startupReason: null,
+      reason: 'readiness-test',
+    }));
+
+    const result = executeAppControlAction({
+      restartTelegramPoller,
+    }, 'restart-telegram-poller', { reason: 'readiness-test' });
+
+    expect(result).toEqual({
+      success: true,
+      action: 'restart-telegram-poller',
+      accepted: true,
+      phase: 'standalone_lane_handoff',
+      ready: false,
+      started: false,
+      startupReason: null,
+      reason: 'readiness-test',
+    });
+  });
+
   test('restart-telegram-poller does not inspect or reload side-profile windows', () => {
     const restartTelegramPoller = jest.fn(() => ({
       success: true,
