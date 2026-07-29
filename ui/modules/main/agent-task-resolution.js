@@ -268,6 +268,50 @@ function isAgentTaskResolvedByLaterSignal(taskRow = {}, rows = [], startIndex = 
   return false;
 }
 
+/**
+ * The response watchdog's alert asks "check if task was received" -- not "did they
+ * reply to me." Those are different questions, and resolving only on a reply
+ * addressed back to the sender answers the second one. A target that received the
+ * task and acted on it by messaging someone ELSE (relaying to the user, answering a
+ * third agent) looks identical to a wedged pane.
+ *
+ * Liveness alone must NOT clear the alert either: a pane can be alive and chatting
+ * while an inbound was silently dropped in transit, and that is precisely the
+ * failure the watchdog exists to catch. So target activity counts only once the
+ * inbound delivery is independently confirmed accepted.
+ *
+ * Returns {deliveryRow, activityRow} when both hold, else null. Every unprovable
+ * case returns null, so the alert still fires -- the failure direction is noise,
+ * never silence.
+ */
+function findTargetActivityAfterConfirmedDelivery(taskRow = {}, rows = [], options = {}) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const taskTarget = normalizeAgentRole(taskRow?.targetRole);
+  if (!taskTarget) return null;
+
+  const sourceMessageId = toOptionalString(options?.sourceMessageId, '') || '';
+  if (!sourceMessageId) return null;
+
+  // Delivery leg: the inbound task itself must be present AND accepted.
+  const deliveryRow = rows.find(
+    (row) => toOptionalString(row?.messageId, '') === sourceMessageId
+  );
+  if (!deliveryRow) return null;
+  if (!rowHasAcceptedDeliveryStatus(deliveryRow)) return null;
+
+  // Activity leg: any outbound produced by the target at or after the task.
+  const taskTs = toEventTsMs(taskRow);
+  const activityRow = rows.find((row) => {
+    if (!row || row === deliveryRow) return false;
+    if (toOptionalString(row?.messageId, '') === sourceMessageId) return false;
+    if (normalizeAgentRole(row?.senderRole) !== taskTarget) return false;
+    return toEventTsMs(row) >= taskTs;
+  });
+  if (!activityRow) return null;
+
+  return { deliveryRow, activityRow };
+}
+
 function isLaterAcceptedDeliveryResponseRow(taskRow = {}, candidateRow = {}) {
   if (!rowHasAcceptedDeliveryStatus(candidateRow)) return false;
   const taskSender = normalizeAgentRole(taskRow?.senderRole);
@@ -772,6 +816,7 @@ module.exports = {
   hasClosureSignal,
   isLaterAgentClosureRow,
   isAgentTaskResolvedByLaterSignal,
+  findTargetActivityAfterConfirmedDelivery,
   extractCurrentLaneDirective,
   deriveCurrentLaneSnapshot,
 };

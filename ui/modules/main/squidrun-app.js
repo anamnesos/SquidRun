@@ -127,6 +127,7 @@ const {
 } = require('./auto-handoff-materializer');
 const {
   isAgentTaskResolvedByLaterSignal,
+  findTargetActivityAfterConfirmedDelivery,
   parseLeadingAgentRef,
   extractCurrentLaneDirective,
 } = require('./agent-task-resolution');
@@ -10628,6 +10629,29 @@ class SquidRunApp {
         blockers: [],
       };
     }
+    // The target may have acted on the task by messaging someone other than the
+    // sender -- relaying to the user, answering a third agent. That is receipt,
+    // and it only counts because the inbound delivery is separately confirmed.
+    const targetActivity = findTargetActivityAfterConfirmedDelivery(taskRow, rows, {
+      sourceMessageId: entry.sourceMessageId,
+    });
+    if (targetActivity) {
+      return {
+        resolved: true,
+        reason: 'comms_journal_target_active_after_confirmed_delivery',
+        evidence: [{
+          source: 'comms_journal',
+          deliveryRowId: targetActivity.deliveryRow?.rowId || null,
+          deliveryAck: targetActivity.deliveryRow?.ackStatus
+            || targetActivity.deliveryRow?.status
+            || null,
+          activityRowId: targetActivity.activityRow?.rowId || null,
+          activityTargetRole: targetActivity.activityRow?.targetRole || null,
+        }],
+        blockers: [],
+      };
+    }
+
     evidence.push({
       source: 'comms_journal',
       status: 'no_later_resolution',
