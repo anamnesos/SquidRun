@@ -16,6 +16,8 @@ const RUNTIME_DIR = resolveCoordPath('runtime', { forWrite: true });
 const PID_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.pid');
 const LOG_PATH = path.join(RUNTIME_DIR, 'telegram-poller-lane.log');
 const LANE_CLAIM_VERSION = 2;
+const CLAIM_MUTATION_LOCK_TIMEOUT_MS = 2_000;
+const CLAIM_MUTATION_LOCK_RETRY_MS = 10;
 const KEEPALIVE_INTERVAL_MS = 60_000;
 const MAIN_OWNER_RECONCILE_INTERVAL_MS = 1_000;
 const MAIN_TELEGRAM_WORKER_PATH = path.resolve(__dirname, '..', 'modules', 'main', 'telegram-poller-worker.js');
@@ -269,7 +271,99 @@ function createLaneLaunchClaim(options = {}) {
     scriptPath: path.resolve(options.scriptPath || __filename),
     createdAt: new Date().toISOString(),
   };
-  return writeClaimExclusive(claimPath, claim);
+  return withClaimMutationLock(
+    claimPath,
+    options,
+    () => writeClaimExclusive(claimPath, claim)
+  );
+}
+
+function waitSync(ms) {
+  if (!Number.isFinite(Number(ms)) || Number(ms) <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.floor(Number(ms)));
+}
+
+function acquireClaimMutationLock(claimPath, options = {}) {
+  const lockPath = `${claimPath}.mutation-lock`;
+  fs.mkdirSync(path.dirname(claimPath), { recursive: true });
+  const timeoutMs = Number.isFinite(Number(options.claimMutationLockTimeoutMs))
+    ? Math.max(0, Number(options.claimMutationLockTimeoutMs))
+    : CLAIM_MUTATION_LOCK_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+  const lockToken = crypto.randomUUID();
+  do {
+    try {
+      fs.mkdirSync(lockPath);
+      try {
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), `${JSON.stringify({
+          version: 1,
+          pid: process.pid,
+          lockToken,
+          createdAt: new Date().toISOString(),
+        }, null, 2)}\n`, 'utf8');
+      } catch (err) {
+        fs.rmSync(lockPath, { recursive: true, force: true });
+        return {
+          ok: false,
+          reason: 'claim_mutation_lock_failed',
+          error: err.message,
+          lockPath,
+        };
+      }
+      return { ok: true, lockPath, lockToken };
+    } catch (err) {
+      if (err?.code !== 'EEXIST') {
+        return {
+          ok: false,
+          reason: 'claim_mutation_lock_failed',
+          error: err.message,
+          lockPath,
+        };
+      }
+      if (Date.now() >= deadline) break;
+      waitSync(CLAIM_MUTATION_LOCK_RETRY_MS);
+    }
+  } while (Date.now() <= deadline);
+  return {
+    ok: false,
+    reason: 'claim_mutation_lock_timeout',
+    lockPath,
+  };
+}
+
+function releaseClaimMutationLock(lock) {
+  if (!lock?.ok || !lock.lockPath || !lock.lockToken) return false;
+  const owner = readJsonFile(path.join(lock.lockPath, 'owner.json'));
+  if (owner?.lockToken !== lock.lockToken) return false;
+  fs.rmSync(lock.lockPath, { recursive: true, force: true });
+  return true;
+}
+
+function withClaimMutationLock(claimPath, options, operation) {
+  const lock = acquireClaimMutationLock(claimPath, options);
+  if (!lock.ok) return lock;
+  try {
+    return operation();
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'claim_mutation_failed',
+      error: err.message,
+    };
+  } finally {
+    releaseClaimMutationLock(lock);
+  }
+}
+
+function writeLaneClaimAtomically(claimPath, claim) {
+  const tempPath = `${claimPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, `${JSON.stringify(claim, null, 2)}\n`, 'utf8');
+    fs.renameSync(tempPath, claimPath);
+    return true;
+  } finally {
+    fs.rmSync(tempPath, { force: true });
+  }
 }
 
 function claimLaneForChild(options = {}) {
@@ -280,53 +374,108 @@ function claimLaneForChild(options = {}) {
   const launchToken = typeof options.launchToken === 'string' && options.launchToken
     ? options.launchToken
     : crypto.randomUUID();
-  const existing = readLaneClaim(claimPath);
+  const initial = readLaneClaim(claimPath);
 
-  if (!existing) {
-    return writeClaimExclusive(claimPath, {
-      version: LANE_CLAIM_VERSION,
-      state: 'running',
-      pid: childPid,
-      launcherPid: null,
-      launchToken,
-      projectRoot,
-      scriptPath,
-      createdAt: new Date().toISOString(),
-      startedAt: new Date().toISOString(),
+  if (!initial) {
+    return withClaimMutationLock(claimPath, options, () => {
+      if (readLaneClaim(claimPath)) {
+        return {
+          ok: false,
+          reason: 'claim_owned_by_another_lane',
+          claim: readLaneClaim(claimPath),
+        };
+      }
+      return writeClaimExclusive(claimPath, {
+        version: LANE_CLAIM_VERSION,
+        state: 'running',
+        pid: childPid,
+        launcherPid: null,
+        launchToken,
+        projectRoot,
+        scriptPath,
+        createdAt: new Date().toISOString(),
+        startedAt: new Date().toISOString(),
+      });
     });
   }
 
-  if (
-    existing.state !== 'launching'
-    || existing.launchToken !== launchToken
-    || !laneClaimMatchesRuntime(existing, { projectRoot, scriptPath })
-  ) {
-    return { ok: false, reason: 'claim_owned_by_another_lane', claim: existing };
-  }
+  return withClaimMutationLock(claimPath, options, () => {
+    const existing = readLaneClaim(claimPath);
+    if (
+      existing?.state !== 'launching'
+      || existing.launchToken !== launchToken
+      || !laneClaimMatchesRuntime(existing, { projectRoot, scriptPath })
+    ) {
+      return { ok: false, reason: 'claim_owned_by_another_lane', claim: existing };
+    }
+    const validatedRaw = existing.raw;
+    if (typeof options.beforeClaimMutationCommit === 'function') {
+      options.beforeClaimMutationCommit({
+        claimPath,
+        operation: 'child_adoption',
+        validatedClaim: existing,
+      });
+    }
+    const latest = readLaneClaim(claimPath);
+    if (!latest || latest.raw !== validatedRaw) {
+      return { ok: false, reason: 'claim_changed_during_adoption', claim: latest };
+    }
 
-  const runningClaim = {
-    ...existing,
-    state: 'running',
-    pid: childPid,
-    startedAt: new Date().toISOString(),
-  };
-  fs.writeFileSync(claimPath, `${JSON.stringify(runningClaim, null, 2)}\n`, 'utf8');
-  return { ok: true, claim: runningClaim };
+    const runningClaim = {
+      ...existing,
+      state: 'running',
+      pid: childPid,
+      startedAt: new Date().toISOString(),
+    };
+    delete runningClaim.raw;
+    writeLaneClaimAtomically(claimPath, runningClaim);
+    const committed = readLaneClaim(claimPath);
+    if (
+      committed?.launchToken !== launchToken
+      || Number(committed?.pid) !== childPid
+      || committed?.state !== 'running'
+    ) {
+      return { ok: false, reason: 'claim_adoption_not_committed', claim: committed };
+    }
+    return { ok: true, claim: committed };
+  });
 }
 
-function removeLaneClaimIfOwned(expected = {}, claimPath = PID_PATH) {
-  const current = readLaneClaim(claimPath);
-  if (!current) return true;
-  if (expected.raw && current.raw !== expected.raw) return false;
-  if (expected.launchToken && current.launchToken !== expected.launchToken) return false;
-  if (
-    Number.isInteger(Number(expected.pid))
-    && Number(current.pid) !== Number(expected.pid)
-  ) {
-    return false;
-  }
-  fs.rmSync(claimPath, { force: true });
-  return true;
+function removeLaneClaimIfOwned(expected = {}, claimPath = PID_PATH, options = {}) {
+  const result = withClaimMutationLock(claimPath, options, () => {
+    const current = readLaneClaim(claimPath);
+    if (!current) return { ok: true, removed: false, reason: 'claim_missing' };
+    if (expected.raw && current.raw !== expected.raw) {
+      return { ok: false, removed: false, reason: 'claim_changed' };
+    }
+    if (expected.launchToken && current.launchToken !== expected.launchToken) {
+      return { ok: false, removed: false, reason: 'claim_token_mismatch' };
+    }
+    if (
+      Number.isInteger(Number(expected.pid))
+      && Number(current.pid) !== Number(expected.pid)
+    ) {
+      return { ok: false, removed: false, reason: 'claim_pid_mismatch' };
+    }
+    const validatedRaw = current.raw;
+    if (typeof options.beforeClaimMutationCommit === 'function') {
+      options.beforeClaimMutationCommit({
+        claimPath,
+        operation: 'conditional_removal',
+        validatedClaim: current,
+      });
+    }
+    const latest = readLaneClaim(claimPath);
+    if (!latest || latest.raw !== validatedRaw) {
+      return { ok: false, removed: false, reason: 'claim_changed' };
+    }
+
+    const tombstonePath = `${claimPath}.${process.pid}.${crypto.randomUUID()}.removed`;
+    fs.renameSync(claimPath, tombstonePath);
+    fs.rmSync(tombstonePath, { force: true });
+    return { ok: true, removed: true, reason: 'claim_removed' };
+  });
+  return result?.ok === true;
 }
 
 function writeLog(message) {
@@ -347,11 +496,15 @@ function status(options = {}) {
     : isPidAlive(pid);
   const processProbeAvailable = String(processListText || '').trim().length > 0;
   const claimMatchesRuntime = laneClaimMatchesRuntime(claim, options);
-  const exactProcess = pidAlive
+  const exactScriptProcess = pidAlive
     && processProbeAvailable
-    && claimMatchesRuntime
     && isStandaloneLaneProcess(pid, probeOptions);
-  const running = pidAlive && exactProcess && claim?.state === 'running';
+  const exactProcess = exactScriptProcess && claimMatchesRuntime;
+  const legacyClaimActive = exactScriptProcess
+    && Number(claim?.version) === 1
+    && claim?.state === 'legacy';
+  const running = (pidAlive && exactProcess && claim?.state === 'running')
+    || legacyClaimActive;
   const launcherPid = Number.parseInt(String(claim?.launcherPid ?? ''), 10);
   const launcherAlive = typeof options.isPidAlive === 'function'
     ? options.isPidAlive(launcherPid)
@@ -366,9 +519,15 @@ function status(options = {}) {
     running,
     starting,
     pid: running ? pid : null,
-    stalePid: pidAlive && processProbeAvailable && !exactProcess ? pid : null,
+    stalePid: pidAlive
+      && processProbeAvailable
+      && !exactProcess
+      && !legacyClaimActive
+      ? pid
+      : null,
     identityUnverified,
     processProbeAvailable,
+    legacyClaimActive,
     claimState: claim?.state || null,
     claimMatchesRuntime,
     pidPath: claimPath,
@@ -810,6 +969,8 @@ function startLane(options = {}) {
 }
 
 function stopLane(options = {}) {
+  const claimPath = options.claimPath || PID_PATH;
+  const initialClaim = readLaneClaim(claimPath);
   const current = status(options);
   if (current.identityUnverified) {
     return {
@@ -827,8 +988,32 @@ function stopLane(options = {}) {
       pidPath: PID_PATH,
     };
   }
+  if (current.legacyClaimActive) {
+    return {
+      ok: false,
+      stopped: false,
+      reason: 'legacy_lane_claim_active',
+      pid: current.pid,
+      pidPath: claimPath,
+    };
+  }
   if (current.stalePid) {
-    fs.rmSync(current.pidPath, { force: true });
+    const removed = initialClaim
+      ? removeLaneClaimIfOwned({
+        raw: initialClaim.raw,
+        launchToken: initialClaim.launchToken,
+        pid: initialClaim.pid,
+      }, claimPath, options)
+      : true;
+    if (!removed) {
+      return {
+        ok: false,
+        stopped: false,
+        reason: 'lane_claim_changed_during_cleanup',
+        pid: current.stalePid,
+        pidPath: claimPath,
+      };
+    }
     return {
       ok: false,
       stopped: false,
@@ -838,8 +1023,22 @@ function stopLane(options = {}) {
     };
   }
   if (!current.running) {
-    fs.rmSync(current.pidPath, { force: true });
-    return { ok: true, stopped: false, reason: 'not_running', pidPath: current.pidPath };
+    const removed = initialClaim
+      ? removeLaneClaimIfOwned({
+        raw: initialClaim.raw,
+        launchToken: initialClaim.launchToken,
+        pid: initialClaim.pid,
+      }, claimPath, options)
+      : true;
+    if (!removed) {
+      return {
+        ok: false,
+        stopped: false,
+        reason: 'lane_claim_changed_during_cleanup',
+        pidPath: claimPath,
+      };
+    }
+    return { ok: true, stopped: false, reason: 'not_running', pidPath: claimPath };
   }
   process.kill(current.pid, 'SIGTERM');
   return { ok: true, stopped: true, pid: current.pid, pidPath: PID_PATH };

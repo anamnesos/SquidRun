@@ -315,6 +315,69 @@ describe('telegram-poller', () => {
     }
   });
 
+  test('handoff re-reads the durable cursor before getUpdates and cannot replay the old owner offset', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-poller-handoff-cursor-'));
+    const statePath = path.join(tempDir, 'telegram-poller-state.json');
+    const env = {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '123456',
+      SQUIDRUN_DATA_ROOT: tempDir,
+    };
+    const config = telegramPoller._internals.getTelegramConfig(env);
+    const cursorKey = telegramPoller._internals.getConfigCursorKey(config);
+    const onMessage = jest.fn();
+    try {
+      fs.writeFileSync(statePath, `${JSON.stringify({
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        cursors: {
+          [cursorKey]: {
+            nextOffset: 700,
+            profile: 'main',
+            lastAction: 'delivered',
+          },
+        },
+      }, null, 2)}\n`, 'utf8');
+
+      expect(telegramPoller.start({
+        env,
+        onMessage,
+        statePath,
+        pollIntervalMs: 60_000,
+        downloadMedia: false,
+        startupGraceMs: 0,
+      })).toBe(true);
+
+      const handedOff = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      handedOff.cursors[cursorKey].nextOffset = 701;
+      handedOff.cursors[cursorKey].lastUpdateId = 700;
+      handedOff.cursors[cursorKey].lastAction = 'delivered';
+      fs.writeFileSync(statePath, `${JSON.stringify(handedOff, null, 2)}\n`, 'utf8');
+
+      mockTelegramUpdates([
+        {
+          update_id: 700,
+          message: {
+            message_id: 77,
+            chat: { id: 123456 },
+            from: { username: 'james' },
+            text: 'must not replay',
+          },
+        },
+      ]);
+
+      await telegramPoller._internals.pollNow();
+
+      expect(https.request.mock.calls[0][0].path).toContain('offset=701');
+      expect(onMessage).not.toHaveBeenCalled();
+      const persisted = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      expect(persisted.cursors[cursorKey].nextOffset).toBe(701);
+    } finally {
+      telegramPoller.stop();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test('pollNow persists a heartbeat even when Telegram returns no updates', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-poller-heartbeat-'));
     const statePath = path.join(tempDir, 'telegram-poller-state.json');

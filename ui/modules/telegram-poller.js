@@ -806,6 +806,14 @@ async function pollNow() {
   let heartbeatError = null;
 
   try {
+    // A temporary standalone owner can finish an in-flight response after the
+    // main worker starts and loads its in-memory cursor. Re-read immediately
+    // before getUpdates and advance only; this makes handoff monotonic and
+    // prevents the main worker from replaying an update the old owner persisted.
+    const durableOffset = readPersistedOffset(statePath, cursorKey);
+    if (durableOffset !== null && durableOffset > nextOffset) {
+      nextOffset = durableOffset;
+    }
     const path = buildUpdatesPath(config, nextOffset);
     const response = await requestTelegram('GET', path);
 

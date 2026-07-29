@@ -14,6 +14,7 @@ const {
   readLaneClaim,
   resolveRuntimeUiScriptPath,
   status,
+  stopLane,
 } = require('../scripts/hm-telegram-poller-lane');
 
 describe('hm-telegram-poller-lane', () => {
@@ -285,6 +286,147 @@ describe('hm-telegram-poller-lane', () => {
         projectRoot: path.resolve(tempDir),
         scriptPath: path.resolve(scriptPath),
       }));
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('child adoption cannot overwrite a replacement claim installed after validation', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-lane-adoption-cas-'));
+    const claimPath = path.join(tempDir, 'telegram-poller-lane.pid');
+    const scriptPath = path.join(tempDir, 'ui', 'scripts', 'hm-telegram-poller-lane.js');
+    try {
+      createLaneLaunchClaim({
+        claimPath,
+        projectRoot: tempDir,
+        scriptPath,
+        launchToken: 'claim-a',
+        launcherPid: 101,
+      });
+
+      const result = claimLaneForChild({
+        claimPath,
+        projectRoot: tempDir,
+        scriptPath,
+        launchToken: 'claim-a',
+        pid: 303,
+        beforeClaimMutationCommit: () => {
+          writeJson(claimPath, {
+            version: 2,
+            state: 'running',
+            pid: 404,
+            launcherPid: null,
+            launchToken: 'claim-b',
+            projectRoot: path.resolve(tempDir),
+            scriptPath: path.resolve(scriptPath),
+            createdAt: new Date().toISOString(),
+            startedAt: new Date().toISOString(),
+          });
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'claim_changed_during_adoption',
+      }));
+      expect(readLaneClaim(claimPath)).toEqual(expect.objectContaining({
+        state: 'running',
+        pid: 404,
+        launchToken: 'claim-b',
+      }));
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    ['not_running', false, '99999 node.exe harmless.js'],
+    ['pid_identity_mismatch', true, '33333 node.exe wrapper.js'],
+  ])('conditional stop cleanup preserves replacement claim for %s', (expectedStatus, pidAlive, processListText) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-lane-stop-cas-'));
+    const claimPath = path.join(tempDir, 'telegram-poller-lane.pid');
+    const scriptPath = path.join(tempDir, 'ui', 'scripts', 'hm-telegram-poller-lane.js');
+    const claimA = {
+      version: 2,
+      state: 'running',
+      pid: 33333,
+      launcherPid: null,
+      launchToken: 'claim-a',
+      projectRoot: path.resolve(tempDir),
+      scriptPath: path.resolve(scriptPath),
+      createdAt: new Date().toISOString(),
+      startedAt: new Date().toISOString(),
+    };
+    const claimB = {
+      ...claimA,
+      pid: 44444,
+      launchToken: 'claim-b',
+    };
+    try {
+      writeJson(claimPath, claimA);
+      const options = {
+        claimPath,
+        projectRoot: tempDir,
+        scriptPath,
+        processListText,
+        isPidAlive: (pid) => pidAlive && Number(pid) === 33333,
+        env: { SQUIDRUN_DATA_ROOT: tempDir },
+        mainWorkerScriptPath: path.join(tempDir, 'ui', 'modules', 'main', 'telegram-poller-worker.js'),
+        beforeClaimMutationCommit: () => writeJson(claimPath, claimB),
+      };
+      const before = status(options);
+      if (expectedStatus === 'pid_identity_mismatch') {
+        expect(before.stalePid).toBe(33333);
+      } else {
+        expect(before.running).toBe(false);
+        expect(before.stalePid).toBeNull();
+      }
+      const result = stopLane(options);
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        stopped: false,
+        reason: 'lane_claim_changed_during_cleanup',
+      }));
+      expect(readLaneClaim(claimPath)).toEqual(expect.objectContaining({
+        pid: 44444,
+        launchToken: 'claim-b',
+      }));
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test('live exact legacy numeric claim is active and fails closed instead of being deleted', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-lane-legacy-'));
+    const claimPath = path.join(tempDir, 'telegram-poller-lane.pid');
+    const scriptPath = path.join(tempDir, 'ui', 'scripts', 'hm-telegram-poller-lane.js');
+    try {
+      fs.mkdirSync(path.dirname(claimPath), { recursive: true });
+      fs.writeFileSync(claimPath, '11111\n', 'utf8');
+      const options = {
+        claimPath,
+        projectRoot: tempDir,
+        scriptPath,
+        processListText: `11111 node.exe "${scriptPath}" run`,
+        isPidAlive: (pid) => Number(pid) === 11111,
+        env: { SQUIDRUN_DATA_ROOT: tempDir },
+        mainWorkerScriptPath: path.join(tempDir, 'ui', 'modules', 'main', 'telegram-poller-worker.js'),
+      };
+
+      expect(status(options)).toEqual(expect.objectContaining({
+        running: true,
+        pid: 11111,
+        stalePid: null,
+        legacyClaimActive: true,
+      }));
+      expect(stopLane(options)).toEqual(expect.objectContaining({
+        ok: false,
+        stopped: false,
+        reason: 'legacy_lane_claim_active',
+        pid: 11111,
+      }));
+      expect(fs.readFileSync(claimPath, 'utf8').trim()).toBe('11111');
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
