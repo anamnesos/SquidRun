@@ -437,14 +437,31 @@ function createRecoveryController(options = {}) {
   // Nudge a stuck pane - sends PTY Enter to unstick all runtimes.
   // Uses Enter only (ESC sequences were interrupting active agents)
   function nudgePane(paneId) {
-    // Mark as typed so our own Enter isn't blocked
-    lastTypedTime[paneId] = Date.now();
-    // Send Enter to prompt for new input
-    window.squidrun.pty.write(String(paneId), '\r').catch(err => {
-      log.error(`nudgePane ${paneId}`, 'PTY write failed:', err);
-    });
-    setPaneStatus(paneId, 'Nudged');
-    setTimeout(() => setPaneStatus(paneId, 'Running'), 1000);
+    const id = String(paneId);
+    // Mark as typed so our own Enter isn't blocked.
+    lastTypedTime[id] = Date.now();
+    setPaneStatus(id, 'Nudged');
+    setTimeout(() => setPaneStatus(id, 'Running'), 1000);
+
+    // Return an observable result so bounded automatic recovery can log the
+    // action outcome instead of treating an async write rejection as success.
+    try {
+      return Promise.resolve(window.squidrun.pty.write(id, '\r'))
+        .then((result) => {
+          if (result?.success === false || result?.ok === false) {
+            log.error(`nudgePane ${id}`, `PTY write failed: ${result.reason || result.error || 'unknown'}`);
+            return false;
+          }
+          return true;
+        })
+        .catch((err) => {
+          log.error(`nudgePane ${id}`, 'PTY write failed:', err);
+          return false;
+        });
+    } catch (err) {
+      log.error(`nudgePane ${id}`, 'PTY write failed:', err);
+      return Promise.resolve(false);
+    }
   }
 
   // Send ESC keyboard event to unstick a stuck agent

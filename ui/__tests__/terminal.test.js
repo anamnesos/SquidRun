@@ -168,6 +168,9 @@ describe('terminal.js module', () => {
     // Reset module state
     terminal.terminals.clear();
     terminal.fitAddons.clear();
+    for (const paneId of Array.from(terminal._internals.coldSpawnBlankRecoveryController.states.keys())) {
+      terminal._internals.coldSpawnBlankRecoveryController.dispose(paneId);
+    }
     terminal.lastEnterTime['1'] = 0;
     terminal.lastTypedTime['1'] = 0;
     terminal.lastOutputTime['1'] = 0;
@@ -2215,6 +2218,12 @@ describe('terminal.js module', () => {
       );
       const createOptions = mockSquidRun.pty.create.mock.calls[0][2];
       expect(createOptions.preferWorkingDir).toBeUndefined();
+      const dataListenerCallIndex = mockSquidRun.pty.onData.mock.calls
+        .findIndex(([paneId]) => paneId === '3');
+      expect(dataListenerCallIndex).toBeGreaterThanOrEqual(0);
+      expect(
+        mockSquidRun.pty.onData.mock.invocationCallOrder[dataListenerCallIndex]
+      ).toBeLessThan(mockSquidRun.pty.create.mock.invocationCallOrder[0]);
     });
 
     test('fresh next spawn setting remints command-on-create and clears one-shot flag', async () => {
@@ -2586,7 +2595,7 @@ describe('terminal.js module', () => {
 
     test('nudgePane should handle PTY write rejection', async () => {
       mockSquidRun.pty.write.mockRejectedValueOnce(new Error('write error'));
-      expect(() => terminal.nudgePane('1')).not.toThrow();
+      await expect(terminal.nudgePane('1')).resolves.toBe(false);
     });
 
     test('sendUnstick should handle pane without textarea', () => {

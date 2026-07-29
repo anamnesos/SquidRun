@@ -18,6 +18,7 @@ const transitionLedger = require('./transition-ledger');
 const { invokeBridge } = require('./renderer-bridge');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
+const { createColdSpawnBlankRecoveryController } = require('./terminal/cold-spawn-blank-recovery');
 const { getRuntimeInjectionCapabilityDefault } = require('./terminal/injection-capabilities');
 const { readStartupBriefingForInjection } = require('./startup-ai-briefing');
 const { isTrustQuotePaneId } = require('./work-room-terminal-visibility');
@@ -73,6 +74,7 @@ const webglAddons = new Map();
 const agentColorDisposers = new Map();
 const ptyDataListenerDisposers = new Map();
 const ptyExitListenerDisposers = new Map();
+let coldSpawnBlankRecoveryController = null;
 let focusedPane = '1';
 
 // Cross-pane Enter debounce tracking
@@ -2035,6 +2037,43 @@ function detachPtyListeners(paneId) {
   detachPtyExitListener(paneId);
 }
 
+function attachPtyBridgeListeners(paneId, terminal) {
+  const id = String(paneId);
+  detachPtyListeners(id);
+
+  const disposeOnData = window.squidrun.pty.onData(id, (data) => {
+    void maybeRecoverClaudeSessionCollision(id, data);
+    queueTerminalWrite(id, terminal, data);
+    coldSpawnBlankRecoveryController?.observeOutput(id, data);
+    if (isMeaningfulActivity(data)) {
+      lastOutputTime[id] = Date.now();
+    }
+    compactionDetector.processChunk(id, data);
+    clearStuckStatus(id);
+    handleStartupOutput(id, data);
+  });
+  if (typeof disposeOnData === 'function') {
+    ptyDataListenerDisposers.set(id, disposeOnData);
+  }
+
+  const disposeOnExit = window.squidrun.pty.onExit(id, (code) => {
+    coldSpawnBlankRecoveryController?.markPtyExited(id);
+    if (shouldIgnoreExit(id)) {
+      log.info('Terminal', `Ignoring exit for pane ${id} (restart in progress)`);
+      return;
+    }
+    updatePaneStatus(id, `Exited (${code})`);
+    queueTerminalWrite(id, terminal, `\r\n[Process exited with code ${code}]\r\n`);
+    clearStartupInjection(id);
+    updateIntentState(id, 'Offline');
+  });
+  if (typeof disposeOnExit === 'function') {
+    ptyExitListenerDisposers.set(id, disposeOnExit);
+  }
+
+  return true;
+}
+
 function disposeAddon(addon, paneId, name) {
   if (!addon || typeof addon.dispose !== 'function') return;
   try {
@@ -2071,6 +2110,7 @@ function teardownTerminalPane(paneId) {
   terminalSettleRedrawLastAt.delete(id);
   terminalLastWriteAt.delete(id);
   clearStartupInjection(id);
+  coldSpawnBlankRecoveryController?.dispose(id);
   detachTerminalInputBridge(id);
   detachPtyListeners(id);
   resetTerminalWriteQueue(id);
@@ -2904,6 +2944,120 @@ function shouldIgnoreExit(paneId) {
   return true;
 }
 
+function captureColdSpawnRecoverySurface(paneId) {
+  const id = String(paneId);
+  const terminal = terminals.get(id);
+  if (!terminal) {
+    return { ready: false, reason: 'terminal_unavailable' };
+  }
+
+  const container = document.getElementById(`terminal-${id}`);
+  if (!container || container.isConnected === false) {
+    return { ready: false, reason: 'container_detached' };
+  }
+
+  const rect = typeof container.getBoundingClientRect === 'function'
+    ? container.getBoundingClientRect()
+    : null;
+  const width = Math.max(0, Number(container.clientWidth) || Number(rect?.width) || 0);
+  const height = Math.max(0, Number(container.clientHeight) || Number(rect?.height) || 0);
+  if (width <= 0 || height <= 0 || isPaneRenderSuspended(id)) {
+    return {
+      ready: false,
+      reason: 'container_not_renderable',
+      width,
+      height,
+    };
+  }
+
+  const active = terminal?.buffer?.active;
+  if (!active || typeof active.getLine !== 'function') {
+    return { ready: false, reason: 'terminal_buffer_unavailable', width, height };
+  }
+
+  const rows = Math.max(0, Math.trunc(Number(terminal.rows) || 0));
+  const cols = Math.max(0, Math.trunc(Number(terminal.cols) || 0));
+  if (rows <= 0 || cols <= 0) {
+    return {
+      ready: false,
+      reason: 'terminal_dimensions_unavailable',
+      rows,
+      cols,
+      width,
+      height,
+    };
+  }
+
+  const viewportY = Math.max(
+    0,
+    Math.trunc(Number(active.viewportY ?? active.baseY) || 0)
+  );
+  const visibleLines = [];
+  for (let row = 0; row < rows; row += 1) {
+    const line = active.getLine(viewportY + row);
+    visibleLines.push(
+      line && typeof line.translateToString === 'function'
+        ? line.translateToString(true)
+        : ''
+    );
+  }
+  const visibleText = visibleLines.join('\n');
+
+  return {
+    ready: true,
+    reason: 'ready',
+    visibleText,
+    visibleChars: visibleText.replace(/\s/g, '').length,
+    rows,
+    cols,
+    width,
+    height,
+  };
+}
+
+function getColdSpawnRecoveryInputBlockReason(paneId) {
+  const id = String(paneId);
+  if (getInjectionInFlight()) return 'injection_in_flight';
+  if (userIsTyping()) return 'user_typing';
+  if (hasPendingStartupInjection(id)) return 'startup_injection_pending';
+  if (Array.isArray(messageQueue[id]) && messageQueue[id].length > 0) return 'queued_delivery';
+  const lastTypedAt = Number(lastTypedTime[id]) || 0;
+  if (lastTypedAt > 0 && Date.now() - lastTypedAt < 5000) return 'recent_input';
+  return null;
+}
+
+function emitColdSpawnBlankRecoveryEvent(event) {
+  const phase = String(event?.phase || 'unknown');
+  const serialized = JSON.stringify(event);
+  if (phase === 'outcome' && event?.status !== 'recovered') {
+    log.warn('ColdSpawnBlankRecovery', serialized);
+  } else if (phase === 'detected' || phase === 'action' || phase === 'outcome') {
+    log.info('ColdSpawnBlankRecovery', serialized);
+  } else {
+    log.debug('ColdSpawnBlankRecovery', serialized);
+  }
+  bus.emit('cold_spawn_blank.recovery', {
+    paneId: String(event?.paneId || ''),
+    payload: event,
+    source: TERMINAL_EVENT_SOURCE,
+  });
+}
+
+function armColdSpawnBlankRecovery(paneId, metadata = {}) {
+  const id = String(paneId);
+  if (
+    !rendererOwnsPtyGeometry(id)
+    || isHiddenPaneHostPane(id)
+    || isPaneRenderSuspended(id)
+    || !isCodexPane(id)
+  ) {
+    coldSpawnBlankRecoveryController?.dispose(id);
+    return false;
+  }
+  coldSpawnBlankRecoveryController?.arm(id, metadata);
+  return true;
+}
+
 const recoveryController = createRecoveryController({
   PANE_IDS,
   terminals,
@@ -2923,6 +3077,14 @@ const recoveryController = createRecoveryController({
   markIgnoreNextExit,
   getPaneRuntimeOverride,
   buildPtyCreateOptionsForRuntimeOverride,
+});
+
+coldSpawnBlankRecoveryController = createColdSpawnBlankRecoveryController({
+  sampleSurface: captureColdSpawnRecoverySurface,
+  isCodexPane,
+  getInputBlockReason: getColdSpawnRecoveryInputBlockReason,
+  sendRecovery: (paneId) => recoveryController.nudgePane(paneId),
+  onEvent: emitColdSpawnBlankRecoveryEvent,
 });
 
 injectionController = createInjectionController({
@@ -3330,6 +3492,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 
   // Initialize a single terminal
   async function initTerminal(paneId, options = {}) {
+    const coldSpawnStartedAtMs = Date.now();
     if (terminals.has(paneId)) return;
     const container = document.getElementById(`terminal-${paneId}`);
     if (!container) return;
@@ -3474,6 +3637,13 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
     const freshSessionSpawn = buildFreshSessionSpawnOptions(paneId, options);
     let ptyCreateOptions = buildPtyCreateOptionsForRuntimeOverride(paneId, runtimeOverride, workingDir);
     ptyCreateOptions = applyFreshCreateSpawnCommandOptions(paneId, ptyCreateOptions, freshSessionSpawn.options);
+    armColdSpawnBlankRecovery(paneId, {
+      source: 'fresh-create',
+      startedAtMs: coldSpawnStartedAtMs,
+    });
+    // Subscribe before create: command-on-create can emit its only full TUI
+    // frame immediately, and there is no listener-aware replay for core panes.
+    attachPtyBridgeListeners(paneId, terminal);
     if (Object.keys(ptyCreateOptions).length > 0) {
       await window.squidrun.pty.create(paneId, workingDir, ptyCreateOptions);
     } else {
@@ -3531,45 +3701,13 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 
     syncTerminalInputBridge(paneId);
 
-    detachPtyListeners(paneId);
-    const disposeOnData = window.squidrun.pty.onData(paneId, (data) => {
-      void maybeRecoverClaudeSessionCollision(paneId, data);
-      // Use flow control to prevent xterm buffer overflow
-      queueTerminalWrite(paneId, terminal, data);
-      // Track output time for idle detection - only for meaningful activity
-      // This ensures spinners/ANSI don't block programmatic injections
-      if (isMeaningfulActivity(data)) {
-        lastOutputTime[paneId] = Date.now();
-      }
-      // Feed PTY output to compaction detector for multi-signal analysis
-      compactionDetector.processChunk(paneId, data);
-      // Clear stuck status - output means pane is working
-      clearStuckStatus(paneId);
-      handleStartupOutput(paneId, data);
-    });
-    if (typeof disposeOnData === 'function') {
-      ptyDataListenerDisposers.set(String(paneId), disposeOnData);
-    }
-
-  const disposeOnExit = window.squidrun.pty.onExit(paneId, (code) => {
-    if (shouldIgnoreExit(paneId)) {
-      log.info('Terminal', `Ignoring exit for pane ${paneId} (restart in progress)`);
-      return;
-    }
-    updatePaneStatus(paneId, `Exited (${code})`);
-    queueTerminalWrite(paneId, terminal, `\r\n[Process exited with code ${code}]\r\n`);
-    clearStartupInjection(paneId);
-    updateIntentState(paneId, 'Offline');
-  });
-    if (typeof disposeOnExit === 'function') {
-      ptyExitListenerDisposers.set(String(paneId), disposeOnExit);
-    }
-
     if (recreatedForWorkingDir.recreated && options.repaintAfterRecreate !== false) {
       scheduleDaemonScrollbackRepaint(paneId, { timeoutMs: options.snapshotTimeoutMs });
     }
 
   } catch (err) {
+    coldSpawnBlankRecoveryController?.markPtyExited(paneId);
+    detachPtyListeners(paneId);
     log.error(`Terminal ${paneId}`, 'Failed to create PTY', err);
     updatePaneStatus(paneId, 'Error');
     queueTerminalWrite(paneId, terminal, `\r\n[Error: ${err.message}]\r\n`);
@@ -3748,47 +3886,26 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
   setupResizeObserver(paneId);
   scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon);
 
+  armColdSpawnBlankRecovery(paneId, {
+    source: 'reattach',
+    startedAtMs: (
+      parseDaemonCreatedAtMs(options.createdAt ?? daemonTerminal.createdAt)
+      || Date.now()
+    ),
+    ptyAlive: daemonTerminal.alive !== false,
+  });
+  attachPtyBridgeListeners(paneId, terminal);
+
   // U1: Restore scrollback buffer if available
   if (scrollback && scrollback.length > 0) {
     queueTerminalWrite(paneId, terminal, trimScrollbackToMaxLines(scrollback));
+    if (daemonTerminal.alive !== false) {
+      coldSpawnBlankRecoveryController?.observeOutput(paneId, scrollback);
+    }
     scheduleTerminalAttachPaintRefresh(paneId, terminal, fitAddon);
   }
 
   syncTerminalInputBridge(paneId);
-
-  detachPtyListeners(paneId);
-  const disposeOnData = window.squidrun.pty.onData(paneId, (data) => {
-    void maybeRecoverClaudeSessionCollision(paneId, data);
-    // Use flow control to prevent xterm buffer overflow
-    queueTerminalWrite(paneId, terminal, data);
-    // Track output time for idle detection - only for meaningful activity
-    // This ensures spinners/ANSI don't block programmatic injections
-    if (isMeaningfulActivity(data)) {
-      lastOutputTime[paneId] = Date.now();
-    }
-    // Feed PTY output to compaction detector for multi-signal analysis
-    compactionDetector.processChunk(paneId, data);
-    // Clear stuck status - output means pane is working
-    clearStuckStatus(paneId);
-    handleStartupOutput(paneId, data);
-  });
-  if (typeof disposeOnData === 'function') {
-    ptyDataListenerDisposers.set(String(paneId), disposeOnData);
-  }
-
-    const disposeOnExit = window.squidrun.pty.onExit(paneId, (code) => {
-      if (shouldIgnoreExit(paneId)) {
-        log.info('Terminal', `Ignoring exit for pane ${paneId} (restart in progress)`);
-        return;
-      }
-      updatePaneStatus(paneId, `Exited (${code})`);
-      queueTerminalWrite(paneId, terminal, `\r\n[Process exited with code ${code}]\r\n`);
-      clearStartupInjection(paneId);
-      updateIntentState(paneId, 'Offline');
-    });
-  if (typeof disposeOnExit === 'function') {
-    ptyExitListenerDisposers.set(String(paneId), disposeOnExit);
-  }
 
   // Ensure Architect startup identity can still be injected on reattach
   // when no prior startup marker exists (e.g. reconnect edge cases).
@@ -4842,6 +4959,10 @@ module.exports = {
     clearTerminalSettleRedraw,
     captureTerminalFrameSignature,
     captureTerminalFitCoherence,
+    captureColdSpawnRecoverySurface,
+    attachPtyBridgeListeners,
+    armColdSpawnBlankRecovery,
+    get coldSpawnBlankRecoveryController() { return coldSpawnBlankRecoveryController; },
     scheduleDeferredTerminalResize,
     clearDeferredTerminalResize,
     scheduleTerminalPaintRefresh,
