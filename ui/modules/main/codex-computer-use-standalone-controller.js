@@ -41,6 +41,9 @@ const DEFAULT_STARTUP_OUTPUT_TIMEOUT_MS = 15000;
 const DEFAULT_STARTUP_SETTLE_MS = 500;
 const DEFAULT_POLL_INTERVAL_MS = 250;
 const DEFAULT_SNAPSHOT_TIMEOUT_MS = 2500;
+const MAX_VERIFIER_OUTPUT_TAIL_CHARS = 8192;
+const FATAL_VERIFIER_OUTPUT_PATTERN =
+  /Error loading config\.toml:|invalid shell environment policy in session-flags/iu;
 
 function optionalString(value, fallback = null) {
   if (value === null || value === undefined) return fallback;
@@ -271,6 +274,24 @@ function normalizeTerminalIdentity(terminal = {}) {
   };
 }
 
+function terminalMatchesAddressedGeneration(terminal = {}, generation = {}) {
+  const normalized = normalizeTerminalIdentity(terminal);
+  const expected = normalizeTerminalIdentity(generation);
+  if (!normalized.paneId || !expected.paneId
+    || !normalized.pid || !expected.pid
+    || !normalized.durableAddress || !expected.durableAddress
+    || !normalized.spawnLeaseId || !expected.spawnLeaseId) {
+    return false;
+  }
+  const createdAtMatches = expected.createdAt === null
+    || normalized.createdAt === expected.createdAt;
+  return normalized.paneId === expected.paneId
+    && normalized.pid === expected.pid
+    && normalized.durableAddress === expected.durableAddress
+    && normalized.spawnLeaseId === expected.spawnLeaseId
+    && createdAtMatches;
+}
+
 function normalizeTerminalSnapshot(terminals = []) {
   return (Array.isArray(terminals) ? terminals : [])
     .map(normalizeTerminalIdentity)
@@ -352,67 +373,208 @@ function createPaneStartupOutputLatch(daemonClient, paneId, options = {}) {
     5000
   );
   const id = String(paneId);
-  let settled = false;
+  let startupSettled = false;
+  let cleanupStarted = false;
   let outputBytes = 0;
+  let outputTail = '';
+  const outputHash = crypto.createHash('sha256');
+  let expectedGeneration = null;
+  let lifecycleFailure = null;
+  let cleanupExit = null;
+  const queuedExitEvents = [];
   let settleTimer = null;
   let timeoutTimer = null;
   let resolveWait;
+  let resolveFailure;
   const wait = new Promise((resolve) => {
     resolveWait = resolve;
   });
+  const failureWait = new Promise((resolve) => {
+    resolveFailure = resolve;
+  });
+  const outputEvidence = () => {
+    let digest = null;
+    try {
+      digest = outputHash.copy().digest('hex');
+    } catch (_) {
+      digest = null;
+    }
+    return {
+      outputBytes,
+      outputSha256: digest,
+      outputTail,
+    };
+  };
+  const sanitizeOutput = (value) => String(value || '')
+    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/gu, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, '');
   const cleanup = () => {
     clearTimeout(settleTimer);
     clearTimeout(timeoutTimer);
     if (typeof daemonClient.off === 'function') {
       daemonClient.off('data', onData);
+      daemonClient.off('disconnected', onDisconnected);
       daemonClient.off('exit', onExit);
     } else if (typeof daemonClient.removeListener === 'function') {
       daemonClient.removeListener('data', onData);
+      daemonClient.removeListener('disconnected', onDisconnected);
       daemonClient.removeListener('exit', onExit);
     }
   };
-  const finish = (result) => {
-    if (settled) return;
-    settled = true;
-    cleanup();
-    resolveWait(result);
+  const finishStartup = (result) => {
+    if (startupSettled) return;
+    startupSettled = true;
+    clearTimeout(settleTimer);
+    clearTimeout(timeoutTimer);
+    resolveWait({
+      ...result,
+      ...outputEvidence(),
+    });
+  };
+  const recordFailure = (result) => {
+    if (lifecycleFailure) return lifecycleFailure;
+    lifecycleFailure = {
+      ok: false,
+      status: 'blocked',
+      paneId: id,
+      ...result,
+      ...outputEvidence(),
+    };
+    resolveFailure(lifecycleFailure);
+    return lifecycleFailure;
+  };
+  const classifyExit = (event) => {
+    if (!expectedGeneration) {
+      queuedExitEvents.push(event);
+      return;
+    }
+    const eventIdentity = normalizeTerminalIdentity(event.metadata);
+    const requiredIdentityPresent = Boolean(
+      eventIdentity.pid
+      && eventIdentity.durableAddress
+      && eventIdentity.spawnLeaseId
+    );
+    if (!requiredIdentityPresent) {
+      const failure = recordFailure({
+        reason: 'standalone_verifier_exit_identity_unverifiable',
+        exitCode: event.code,
+        exit: eventIdentity,
+      });
+      if (!startupSettled) {
+        finishStartup({
+          ...failure,
+          reason: 'standalone_verifier_exited_before_ready',
+          lifecycleReason: failure.reason,
+        });
+      }
+      return;
+    }
+    if (!terminalMatchesAddressedGeneration(eventIdentity, expectedGeneration)) return;
+    const exit = {
+      ...eventIdentity,
+      exitCode: event.code,
+    };
+    if (cleanupStarted) {
+      cleanupExit = exit;
+      return;
+    }
+    const failure = recordFailure({
+      reason: 'standalone_verifier_generation_exited',
+      exitCode: event.code,
+      exit,
+    });
+    if (!startupSettled) {
+      finishStartup({
+        ...failure,
+        reason: 'standalone_verifier_exited_before_ready',
+        lifecycleReason: failure.reason,
+      });
+    }
   };
   const onData = (eventPaneId, data) => {
     if (String(eventPaneId) !== id) return;
-    const bytes = Buffer.byteLength(String(data || ''), 'utf8');
+    const raw = String(data || '');
+    const bytes = Buffer.byteLength(raw, 'utf8');
     if (bytes <= 0) return;
     outputBytes += bytes;
+    outputHash.update(raw, 'utf8');
+    outputTail = `${outputTail}${sanitizeOutput(raw)}`
+      .slice(-MAX_VERIFIER_OUTPUT_TAIL_CHARS);
+    if (FATAL_VERIFIER_OUTPUT_PATTERN.test(outputTail)) {
+      const failure = recordFailure({
+        reason: 'standalone_verifier_fatal_startup_output',
+      });
+      finishStartup(failure);
+      return;
+    }
+    if (startupSettled) return;
     clearTimeout(settleTimer);
     settleTimer = setTimeout(() => {
-      finish({
+      finishStartup({
         ok: true,
         reason: 'standalone_verifier_startup_output_observed',
         paneId: id,
-        outputBytes,
       });
     }, settleMs);
   };
-  const onExit = (eventPaneId, code) => {
+  const onExit = (eventPaneId, code, metadata = {}) => {
     if (String(eventPaneId) !== id) return;
-    finish({
-      ok: false,
-      reason: 'standalone_verifier_exited_before_ready',
-      paneId: id,
-      exitCode: code,
-      outputBytes,
+    classifyExit({
+      code,
+      metadata: {
+        ...metadata,
+        paneId: eventPaneId,
+      },
     });
   };
+  const onDisconnected = () => {
+    if (cleanupStarted) return;
+    const failure = recordFailure({
+      reason: 'standalone_verifier_daemon_disconnected',
+    });
+    finishStartup(failure);
+  };
   daemonClient.on('data', onData);
+  daemonClient.on('disconnected', onDisconnected);
   daemonClient.on('exit', onExit);
   timeoutTimer = setTimeout(() => {
-    finish({
+    finishStartup({
       ok: false,
       reason: 'standalone_verifier_startup_output_timeout',
       paneId: id,
-      outputBytes,
     });
   }, timeoutMs);
   return {
+    bindGeneration: (generation) => {
+      expectedGeneration = normalizeTerminalIdentity(generation);
+      if (!expectedGeneration.pid
+        || !expectedGeneration.durableAddress
+        || !expectedGeneration.spawnLeaseId
+        || expectedGeneration.paneId !== id) {
+        const failure = recordFailure({
+          reason: 'standalone_verifier_generation_identity_invalid',
+        });
+        finishStartup(failure);
+        return failure;
+      }
+      for (const event of queuedExitEvents.splice(0)) classifyExit(event);
+      return {
+        ok: true,
+        reason: 'standalone_verifier_generation_bound',
+        generation: { ...expectedGeneration },
+      };
+    },
+    beginCleanup: () => {
+      cleanupStarted = true;
+    },
+    evidence: () => ({
+      generation: expectedGeneration ? { ...expectedGeneration } : null,
+      failure: lifecycleFailure ? { ...lifecycleFailure } : null,
+      cleanupExit: cleanupExit ? { ...cleanupExit } : null,
+      ...outputEvidence(),
+    }),
+    getFailure: () => lifecycleFailure,
+    waitForFailure: () => failureWait,
     wait: () => wait,
     dispose: cleanup,
   };
@@ -620,6 +782,13 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
     };
     return primaryResult;
   };
+  const setVerifierLifecycleFailure = (failure, fallbackReason) =>
+    setPrimaryResult({
+      ok: false,
+      status: 'blocked',
+      reason: failure?.reason || fallbackReason || 'standalone_verifier_lifecycle_failed',
+      verifierLifecycle: failure || startupLatch?.evidence?.() || null,
+    });
 
   try {
     const connected = await daemonClient.connectExisting();
@@ -839,23 +1008,38 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
       spawnLeaseId: validatedSpawn.spawnLeaseId,
       paneId: verifier.paneId,
       pid: validatedSpawn.pid,
+      createdAt: validatedSpawn.terminal.createdAt ?? null,
       sourceMessageId,
     };
     claim.daemonSpawnObservedAt = new Date(now()).toISOString();
     claim.daemonSpawnPid = validatedSpawn.pid;
+    const boundGeneration = startupLatch?.bindGeneration?.(spawned);
+    if (boundGeneration?.ok !== true) {
+      return setVerifierLifecycleFailure(
+        boundGeneration,
+        'standalone_verifier_generation_bind_failed'
+      );
+    }
 
     const startup = await startupLatch.wait();
     if (startup?.ok !== true) {
-      return setPrimaryResult({
-        ok: false,
-        status: 'blocked',
-        reason: startup?.reason || 'standalone_verifier_startup_failed',
-      });
+      return setVerifierLifecycleFailure(
+        startup,
+        'standalone_verifier_startup_failed'
+      );
+    }
+    let verifierFailure = startupLatch?.getFailure?.() || null;
+    if (verifierFailure) {
+      return setVerifierLifecycleFailure(verifierFailure);
     }
     const afterSpawnGeneration = await confirmGeneration(
       claim.generation,
       confirmInput
     );
+    verifierFailure = startupLatch?.getFailure?.() || null;
+    if (verifierFailure) {
+      return setVerifierLifecycleFailure(verifierFailure);
+    }
     if (afterSpawnGeneration?.ok !== true) {
       return setPrimaryResult({
         ok: false,
@@ -869,6 +1053,10 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
     const afterSpawn = await snapshotTerminals(daemonClient, {
       timeoutMs: input.snapshotTimeoutMs,
     });
+    verifierFailure = startupLatch?.getFailure?.() || null;
+    if (verifierFailure) {
+      return setVerifierLifecycleFailure(verifierFailure);
+    }
     if (afterSpawn?.ok !== true) {
       return setPrimaryResult({
         ok: false,
@@ -911,6 +1099,10 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
         reason: plan?.reason || 'codex_computer_use_list_windows_plan_failed',
       });
     }
+    verifierFailure = startupLatch?.getFailure?.() || null;
+    if (verifierFailure) {
+      return setVerifierLifecycleFailure(verifierFailure);
+    }
     claim.listWindowsPlanId = createId();
     claim.listWindowsPlanIssuedAt = new Date(now()).toISOString();
     claim.proof.state = 'pending';
@@ -926,6 +1118,10 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
       },
       { timeoutMs: DEFAULT_DAEMON_ACK_TIMEOUT_MS }
     );
+    verifierFailure = startupLatch?.getFailure?.() || null;
+    if (verifierFailure) {
+      return setVerifierLifecycleFailure(verifierFailure);
+    }
     if (!daemonWriteAccepted(promptAck)) {
       return setPrimaryResult({
         ok: false,
@@ -933,7 +1129,18 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
         reason: 'standalone_verifier_prompt_write_failed',
       });
     }
-    await sleep(boundedPositiveInteger(input.enterDelayMs, 50, 0, 2000));
+    const enterDelayMs = boundedPositiveInteger(input.enterDelayMs, 50, 0, 2000);
+    if (enterDelayMs > 0 && typeof startupLatch?.waitForFailure === 'function') {
+      const enterDelayOutcome = await Promise.race([
+        Promise.resolve(sleep(enterDelayMs)).then(() => null),
+        startupLatch.waitForFailure(),
+      ]);
+      if (enterDelayOutcome) {
+        return setVerifierLifecycleFailure(enterDelayOutcome);
+      }
+    } else {
+      await sleep(enterDelayMs);
+    }
     const enterAck = await daemonClient.writeAndWaitAck(
       verifier.paneId,
       '\r',
@@ -944,6 +1151,10 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
       },
       { timeoutMs: DEFAULT_DAEMON_ACK_TIMEOUT_MS }
     );
+    verifierFailure = startupLatch?.getFailure?.() || null;
+    if (verifierFailure) {
+      return setVerifierLifecycleFailure(verifierFailure);
+    }
     if (!daemonWriteAccepted(enterAck)) {
       return setPrimaryResult({
         ok: false,
@@ -956,6 +1167,14 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
       || verifyCodexComputerUseProofJournal;
     let verification = null;
     while (now() <= claim.proof.deadlineAtMs) {
+      verifierFailure = startupLatch?.getFailure?.() || null;
+      if (verifierFailure) {
+        verification = {
+          ...verifierFailure,
+          verifierLifecycle: verifierFailure,
+        };
+        break;
+      }
       const currentGeneration = await confirmGeneration(
         claim.generation,
         confirmInput
@@ -973,8 +1192,30 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
         consumedIds,
         platform,
       });
+      verifierFailure = startupLatch?.getFailure?.() || null;
+      if (verifierFailure) {
+        verification = {
+          ...verifierFailure,
+          verifierLifecycle: verifierFailure,
+        };
+        break;
+      }
       if (verification?.ok === true || verification?.status !== 'pending') break;
-      await sleep(pollIntervalMs);
+      if (typeof startupLatch?.waitForFailure === 'function') {
+        const pollOutcome = await Promise.race([
+          Promise.resolve(sleep(pollIntervalMs)).then(() => null),
+          startupLatch.waitForFailure(),
+        ]);
+        if (pollOutcome) {
+          verification = {
+            ...pollOutcome,
+            verifierLifecycle: pollOutcome,
+          };
+          break;
+        }
+      } else {
+        await sleep(pollIntervalMs);
+      }
     }
     if (!verification || verification?.status === 'pending') {
       verification = await verifyJournal(claim, {
@@ -989,6 +1230,9 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
         status: 'blocked',
         reason: verification?.reason || 'codex_computer_use_proof_failed',
         verification: verification || null,
+        verifierLifecycle: verification?.verifierLifecycle
+          || startupLatch?.evidence?.()
+          || null,
       });
     }
     try {
@@ -1027,7 +1271,7 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
       error: error?.message || String(error),
     });
   } finally {
-    startupLatch?.dispose?.();
+    startupLatch?.beginCleanup?.();
     if (spawned?.spawnLeaseId) {
       try {
         cleanupResult = await daemonClient.killAddressed({
@@ -1086,18 +1330,27 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
       daemonAfterProbe = null;
     }
     const cleanupRequired = Boolean(spawned?.spawnLeaseId);
-    const cleanupSafe = !cleanupRequired
-      || cleanupResult?.ok === true
-      || (
-        cleanupResult?.status === 'not_found'
-        && Array.isArray(finalSnapshot)
-        && !finalSnapshot.some((terminal) => terminal.paneId === verifier.paneId)
-      );
-    const targetAbsent = !cleanupRequired
+    const addressedGenerationTerminal = cleanupRequired && Array.isArray(finalSnapshot)
+      ? finalSnapshot.find((terminal) =>
+        terminal.alive === true
+        && terminalMatchesAddressedGeneration(terminal, spawned)) || null
+      : null;
+    const addressedGenerationAbsent = !cleanupRequired
+      || (Array.isArray(finalSnapshot) && !addressedGenerationTerminal);
+    const samePaneSuccessor = cleanupRequired && Array.isArray(finalSnapshot)
+      ? finalSnapshot.find((terminal) =>
+        terminal.paneId === verifier.paneId
+        && terminal.alive === true
+        && !terminalMatchesAddressedGeneration(terminal, spawned)) || null
+      : null;
+    const paneIdAbsent = !cleanupRequired
       || (
         Array.isArray(finalSnapshot)
-        && !finalSnapshot.some((terminal) => terminal.paneId === verifier.paneId)
+        && !finalSnapshot.some((terminal) =>
+          terminal.paneId === verifier.paneId && terminal.alive === true)
       );
+    const cleanupSafe = !cleanupRequired || addressedGenerationAbsent;
+    const targetAbsent = addressedGenerationAbsent;
     const terminalsPreserved = !Array.isArray(beforeSnapshot)
       || (
         Array.isArray(finalSnapshot)
@@ -1123,17 +1376,25 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
       proofArtifactCleanup = (dependencies.cleanupProofArtifacts
         || cleanupProofArtifacts)(claim);
     }
+    const verifierLifecycleEvidence = startupLatch?.evidence?.() || null;
+    startupLatch?.dispose?.();
     daemonClient?.disconnect?.();
 
     if (primaryResult) {
       primaryResult.cleanup = {
         addressedLease: cleanupResult,
+        addressedGenerationAbsent,
+        paneIdAbsent,
+        samePaneSuccessor,
         targetAbsent,
         protectedTerminalsPreserved: terminalsPreserved,
         daemonPreserved,
         browserPipesPreserved,
         proofArtifacts: proofArtifactCleanup,
       };
+      if (!primaryResult.verifierLifecycle && verifierLifecycleEvidence) {
+        primaryResult.verifierLifecycle = verifierLifecycleEvidence;
+      }
       primaryResult.invariants = {
         daemonBefore: publicDaemonIdentity(daemonBefore),
         daemonAfter: daemonAfterProbe?.identity
@@ -1144,14 +1405,20 @@ async function runStandaloneCodexComputerUseProof(input = {}, dependencies = {})
         protectedTerminalPidsAfter: normalizeTerminalSnapshot(finalSnapshot || [])
           .map(({ paneId, pid, createdAt }) => ({ paneId, pid, createdAt })),
       };
+      const successorRequiresFailClosed = Boolean(
+        samePaneSuccessor && primaryResult.ok === true
+      );
       if (!cleanupSafe || !targetAbsent || !terminalsPreserved
         || !daemonPreserved || !browserPipesPreserved
-        || (proofArtifactsCreated && proofArtifactCleanup?.ok !== true)) {
+        || (proofArtifactsCreated && proofArtifactCleanup?.ok !== true)
+        || successorRequiresFailClosed) {
         primaryResult.ok = false;
         primaryResult.status = 'blocked';
         primaryResult.authoritativeComputerUseReady = false;
         primaryResult.originalReason = primaryResult.reason;
-        primaryResult.reason = 'standalone_controller_cleanup_or_invariant_failed';
+        primaryResult.reason = successorRequiresFailClosed
+          ? 'standalone_verifier_same_pane_successor_present'
+          : 'standalone_controller_cleanup_or_invariant_failed';
       }
     }
   }
@@ -1178,5 +1445,6 @@ module.exports = {
   protectedTerminalSnapshotsEqual,
   requestTerminalSnapshot,
   runStandaloneCodexComputerUseProof,
+  terminalMatchesAddressedGeneration,
   tokenizeCommandLine,
 };

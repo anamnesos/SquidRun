@@ -1245,6 +1245,45 @@ function quotePowerShellLiteral(value) {
   return `'${String(value).replace(/'/gu, "''")}'`;
 }
 
+function parseShellEnvironmentPolicyExcludeOverride(value) {
+  const source = String(value || '').trim();
+  const match = /^shell_environment_policy\.exclude=\[\s*(?:'([^'\r\n]*)'|"((?:[^"\\\r\n]|\\.)*)")\s*\]$/u
+    .exec(source);
+  if (!match) {
+    return {
+      ok: false,
+      reason: 'shell_environment_policy_exclude_toml_sequence_required',
+    };
+  }
+  let exclude;
+  if (match[1] !== undefined) {
+    exclude = match[1];
+  } else {
+    try {
+      exclude = JSON.parse(`"${match[2]}"`);
+    } catch (_) {
+      return {
+        ok: false,
+        reason: 'shell_environment_policy_exclude_toml_string_invalid',
+      };
+    }
+  }
+  return {
+    ok: true,
+    reason: 'shell_environment_policy_exclude_toml_sequence_parsed',
+    type: 'array',
+    exclude: [exclude],
+  };
+}
+
+function quoteTomlLiteralString(value) {
+  const source = String(value);
+  if (/['\0\r\n]/u.test(source)) {
+    throw new Error('TOML literal string contains an unsupported character');
+  }
+  return `'${source}'`;
+}
+
 function parsePowerShellLiteralArgv(command) {
   const source = String(command || '');
   if (!source.trim() || /[\0\r\n\v\f\u0085\u2028\u2029]/u.test(source)) {
@@ -1440,16 +1479,47 @@ function buildCodexComputerUseProofInvocation(command, claim, options = {}) {
   if (!hookEntry?.path) {
     return { ok: false, reason: 'codex_computer_use_hook_script_missing' };
   }
-  const hookCommand = `node ${JSON.stringify(hookEntry.path)}`;
-  const hookOverride = [
-    'hooks.PostToolUse=[',
-    '{matcher="^mcp__node_repl__js$",hooks=[',
-    `{type="command",command=${JSON.stringify(hookCommand)},timeout=15,`,
-    'statusMessage="Verifying Computer Use native bridge"}',
-    ']}',
-    ']',
-  ].join('');
-  const environmentOverride = 'shell_environment_policy.exclude=["SQUIDRUN_CUA_*"]';
+  if (/[\s'"]/u.test(hookEntry.path)) {
+    return {
+      ok: false,
+      reason: 'codex_computer_use_hook_script_native_argv_unsafe',
+    };
+  }
+  const hookCommand = `node ${hookEntry.path}`;
+  let hookOverride;
+  try {
+    hookOverride = [
+      'hooks.PostToolUse=[',
+      `{matcher=${quoteTomlLiteralString('^mcp__node_repl__js$')},hooks=[`,
+      `{type=${quoteTomlLiteralString('command')},`,
+      `command=${quoteTomlLiteralString(hookCommand)},timeout=15,`,
+      `statusMessage=${quoteTomlLiteralString('Verifying Computer Use native bridge')}}`,
+      ']}',
+      ']',
+    ].join('');
+  } catch (_) {
+    return {
+      ok: false,
+      reason: 'codex_computer_use_hook_override_toml_literal_unsafe',
+    };
+  }
+  // TOML literal-string quotes survive PowerShell's Windows-native argv
+  // serialization. Embedded double quotes do not: PowerShell strips them and
+  // Codex then sees a scalar string instead of a TOML sequence.
+  const environmentOverride = "shell_environment_policy.exclude=['SQUIDRUN_CUA_*']";
+  const parsedEnvironmentOverride = parseShellEnvironmentPolicyExcludeOverride(
+    environmentOverride
+  );
+  if (parsedEnvironmentOverride.ok !== true
+    || parsedEnvironmentOverride.type !== 'array'
+    || parsedEnvironmentOverride.exclude.length !== 1
+    || parsedEnvironmentOverride.exclude[0] !== 'SQUIDRUN_CUA_*') {
+    return {
+      ok: false,
+      reason: parsedEnvironmentOverride.reason
+        || 'shell_environment_policy_exclude_toml_sequence_required',
+    };
+  }
   const serializedExecutable = platform === 'win32'
     ? `& ${quotePowerShellLiteral(executableCheck.path)}`
     : quotePowerShellLiteral(executableCheck.path);
@@ -1471,6 +1541,7 @@ function buildCodexComputerUseProofInvocation(command, claim, options = {}) {
     command: invocation,
     hookOverride,
     environmentOverride,
+    environmentOverrideType: parsedEnvironmentOverride.type,
     addedArguments,
     originalCommand: parsed.source,
     argv: [executableCheck.path, ...validated.args],
@@ -1685,6 +1756,7 @@ module.exports = {
   failProofClaim,
   hmacSha256,
   pathsEqual,
+  parseShellEnvironmentPolicyExcludeOverride,
   proofIntegrityMatches,
   recheckTrustedCodexExecutable,
   resolveTrustedCodexExecutable,

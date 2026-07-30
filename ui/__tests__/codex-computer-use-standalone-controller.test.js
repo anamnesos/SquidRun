@@ -210,14 +210,34 @@ function createHarness(overrides = {}) {
       command:
         "codex --yolo --dangerously-bypass-hook-trust -c 'hooks.PostToolUse=[]'",
     })),
-    createStartupLatch: jest.fn(() => ({
-      wait: jest.fn(async () => ({
-        ok: true,
-        reason: 'standalone_verifier_startup_output_observed',
-        outputBytes: 42,
-      })),
-      dispose: jest.fn(),
-    })),
+    createStartupLatch: jest.fn(() => {
+      let generationIdentity = null;
+      return {
+        bindGeneration: jest.fn((identity) => {
+          generationIdentity = { ...identity };
+          return {
+            ok: true,
+            reason: 'standalone_verifier_generation_bound',
+          };
+        }),
+        beginCleanup: jest.fn(),
+        evidence: jest.fn(() => ({
+          generation: generationIdentity,
+          failure: null,
+          outputBytes: 42,
+          outputSha256: 'd'.repeat(64),
+          outputTail: 'Codex ready',
+        })),
+        getFailure: jest.fn(() => null),
+        waitForFailure: jest.fn(() => new Promise(() => {})),
+        wait: jest.fn(async () => ({
+          ok: true,
+          reason: 'standalone_verifier_startup_output_observed',
+          outputBytes: 42,
+        })),
+        dispose: jest.fn(),
+      };
+    }),
     buildVerification: jest.fn(() => ({
       ok: true,
       prompt: 'EXACT CANONICAL LIST_WINDOWS PROMPT',
@@ -266,6 +286,22 @@ function activationInput(overrides = {}) {
     enterDelayMs: 0,
     ...overrides,
   };
+}
+
+function attachRealStartupMonitor(harness, options = {}) {
+  const originalSpawn = harness.daemonClient.spawnAddressed.getMockImplementation();
+  const startupOutput = options.startupOutput || 'Codex ready\r\n';
+  const schedule = options.schedule || setImmediate;
+  harness.dependencies.createStartupLatch = jest.fn((client, paneId, latchOptions) =>
+    controller.createPaneStartupOutputLatch(client, paneId, latchOptions));
+  harness.daemonClient.spawnAddressed.mockImplementation(async (input) => {
+    const result = await originalSpawn(input);
+    schedule(() => {
+      harness.daemonClient.emit('data', input.paneId, startupOutput);
+      options.afterOutput?.(input, result);
+    });
+    return result;
+  });
 }
 
 describe('standalone current-session Computer Use controller', () => {
@@ -350,6 +386,200 @@ describe('standalone current-session Computer Use controller', () => {
       'EXACT CANONICAL LIST_WINDOWS PROMPT'
     );
     expect(harness.daemonClient.writeAndWaitAck.mock.calls[1][1]).toBe('\r');
+  });
+
+  test('fails immediately on config-error output before settle and returns captured output', async () => {
+    const harness = createHarness();
+    attachRealStartupMonitor(harness, {
+      startupOutput: [
+        'Error loading config.toml: invalid shell environment policy in session-flags: ',
+        'invalid type: string "[SQUIDRUN_CUA_*]", expected a sequence ',
+        'in shell_environment_policy\r\n',
+      ].join(''),
+      schedule: queueMicrotask,
+      afterOutput: (input, result) => {
+        const target = result.terminal;
+        harness.daemonClient.emit('exit', input.paneId, 1, {
+          ...target,
+          alive: false,
+        });
+      },
+    });
+
+    const result = await controller.runStandaloneCodexComputerUseProof(
+      activationInput({
+        startupSettleMs: 25,
+        startupOutputTimeoutMs: 500,
+      }),
+      harness.dependencies
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'standalone_verifier_fatal_startup_output',
+      verifierLifecycle: expect.objectContaining({
+        outputBytes: expect.any(Number),
+        outputSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        outputTail: expect.stringContaining('Error loading config.toml:'),
+      }),
+      cleanup: expect.objectContaining({
+        addressedGenerationAbsent: true,
+        targetAbsent: true,
+      }),
+    }));
+    expect(harness.daemonClient.writeAndWaitAck).not.toHaveBeenCalled();
+    expect(harness.dependencies.verifyJournal).not.toHaveBeenCalled();
+  });
+
+  test('keeps fatal-output monitoring after startup settle and stops before the poll delay', async () => {
+    const harness = createHarness();
+    attachRealStartupMonitor(harness);
+    harness.dependencies.verifyJournal = jest.fn(async () => {
+      const target = harness.daemonClient.terminals.find((terminal) =>
+        terminal.paneId.startsWith('cua-verifier-'));
+      harness.daemonClient.emit(
+        'data',
+        target.paneId,
+        'Error loading config.toml: late fatal startup output\r\n'
+      );
+      return {
+        ok: false,
+        status: 'pending',
+        reason: 'codex_computer_use_proof_pending',
+      };
+    });
+
+    const result = await controller.runStandaloneCodexComputerUseProof(
+      activationInput({
+        startupSettleMs: 25,
+        startupOutputTimeoutMs: 500,
+      }),
+      harness.dependencies
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'standalone_verifier_fatal_startup_output',
+      verifierLifecycle: expect.objectContaining({
+        outputTail: expect.stringContaining('late fatal startup output'),
+      }),
+    }));
+    expect(harness.dependencies.verifyJournal).toHaveBeenCalledTimes(1);
+    expect(harness.dependencies.sleep).not.toHaveBeenCalledWith(25);
+  });
+
+  test('stops on exact target exit during proof and reports a same-pane fallback separately', async () => {
+    const harness = createHarness();
+    attachRealStartupMonitor(harness);
+    harness.daemonClient.killAddressed.mockImplementation(async (input) => ({
+      ok: false,
+      status: 'not_found',
+      reason: 'address_lease_not_found',
+      paneId: input.paneId,
+      durableAddress: input.durableAddress,
+      spawnLeaseId: input.spawnLeaseId,
+    }));
+    harness.dependencies.verifyJournal = jest.fn(async () => {
+      const target = harness.daemonClient.terminals.find((terminal) =>
+        terminal.paneId.startsWith('cua-verifier-'));
+      target.alive = false;
+      harness.daemonClient.emit('exit', target.paneId, 1, {
+        ...target,
+        alive: false,
+      });
+      harness.daemonClient.terminals = [
+        ...protectedTerminals(),
+        {
+          paneId: target.paneId,
+          pid: 62001,
+          alive: true,
+          createdAt: 3001,
+          mode: 'pty-command',
+          cwd: path.join(PROJECT_ROOT, 'ui'),
+          durableAddress: null,
+          spawnLeaseId: null,
+        },
+      ];
+      return {
+        ok: false,
+        status: 'pending',
+        reason: 'codex_computer_use_proof_pending',
+      };
+    });
+
+    const result = await controller.runStandaloneCodexComputerUseProof(
+      activationInput({
+        startupSettleMs: 25,
+        startupOutputTimeoutMs: 500,
+      }),
+      harness.dependencies
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'standalone_verifier_generation_exited',
+      verifierLifecycle: expect.objectContaining({
+        exitCode: 1,
+        exit: expect.objectContaining({
+          pid: 51999,
+          spawnLeaseId: 'lease-cua-1',
+        }),
+      }),
+      cleanup: expect.objectContaining({
+        addressedGenerationAbsent: true,
+        targetAbsent: true,
+        paneIdAbsent: false,
+        samePaneSuccessor: expect.objectContaining({
+          pid: 62001,
+          durableAddress: null,
+          spawnLeaseId: null,
+        }),
+      }),
+    }));
+    expect(harness.daemonClient.killAddressed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paneId: expect.stringMatching(/^cua-verifier-/u),
+        spawnLeaseId: 'lease-cua-1',
+      }),
+      expect.any(Object)
+    );
+    expect(harness.daemonClient.terminals).toEqual(expect.arrayContaining([
+      expect.objectContaining({ pid: 62001, alive: true }),
+    ]));
+    expect(harness.dependencies.verifyJournal).toHaveBeenCalledTimes(1);
+    expect(harness.dependencies.sleep).not.toHaveBeenCalledWith(25);
+  });
+
+  test('stops a pending proof when the existing daemon disconnects', async () => {
+    const harness = createHarness();
+    attachRealStartupMonitor(harness);
+    harness.dependencies.verifyJournal = jest.fn(async () => ({
+      ok: false,
+      status: 'pending',
+      reason: 'codex_computer_use_proof_pending',
+    }));
+    harness.dependencies.sleep = jest.fn(async (ms) => {
+      if (ms === 25) harness.daemonClient.emit('disconnected');
+    });
+
+    const result = await controller.runStandaloneCodexComputerUseProof(
+      activationInput({
+        pollIntervalMs: 25,
+        startupSettleMs: 25,
+        startupOutputTimeoutMs: 500,
+      }),
+      harness.dependencies
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'standalone_verifier_daemon_disconnected',
+      verifierLifecycle: expect.objectContaining({
+        outputTail: expect.stringContaining('Codex ready'),
+      }),
+    }));
+    expect(harness.dependencies.verifyJournal).toHaveBeenCalledTimes(1);
+    expect(harness.dependencies.sleep).toHaveBeenCalledWith(25);
   });
 
   test('requires explicit activation, owner-launch authority, main profile, and exact command', async () => {

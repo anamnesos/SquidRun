@@ -6779,6 +6779,121 @@ describe('SquidRunApp', () => {
       expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledTimes(1);
     });
 
+    it('never recovers an exact current-session Computer Use verifier exit or dead reconnect', async () => {
+      const { getDaemonClient } = require('../daemon-client');
+      const paneId = 'cua-verifier-11111111-1111-4111-8111-111111111111';
+      const exactVerifier = {
+        paneId,
+        pid: 51999,
+        alive: false,
+        createdAt: 2001,
+        durableAddress:
+          `arm://main/dcb5c1a396802917/computer-use-proof/${paneId}`,
+        spawnLeaseId: 'lease-cua-1',
+        leaseOwner: 'squidrun-current-session-cua-controller',
+        recoveryEvent: 'current_session_computer_use_proof',
+        expectedResponseClass: 'computer_use.list_windows.attestation',
+      };
+      const sharedDaemonClient = {
+        on: jest.fn(),
+        off: jest.fn(),
+        connect: jest.fn().mockResolvedValue(),
+        disconnect: jest.fn(),
+        getTerminal: jest.fn().mockReturnValue(exactVerifier),
+      };
+      getDaemonClient.mockReturnValue(sharedDaemonClient);
+      const mainWindow = {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          send: jest.fn(),
+          isDestroyed: jest.fn().mockReturnValue(false),
+        },
+      };
+      const recoveryManager = {
+        handleExit: jest.fn().mockReturnValue({
+          status: 'scheduled',
+          reason: 'unexpected_exit',
+        }),
+      };
+      const ctx = {
+        ...mockAppContext,
+        mainWindow,
+        daemonClient: sharedDaemonClient,
+        recoveryManager,
+        agentRunning: new Map([[paneId, 'running']]),
+        getWindow: jest.fn((key = 'main') => (key === 'main' ? mainWindow : null)),
+        getWindows: jest.fn(() => new Map([['main', mainWindow]])),
+      };
+      const app = new SquidRunApp(ctx, mockManagers);
+      const recordSessionLifecyclePattern = jest
+        .spyOn(app, 'recordSessionLifecyclePattern')
+        .mockResolvedValue({ ok: true });
+
+      await app.initDaemonClient();
+      const exitListener = sharedDaemonClient.on.mock.calls
+        .find(([eventName]) => eventName === 'exit')?.[1];
+      const connectedListener = sharedDaemonClient.on.mock.calls
+        .find(([eventName]) => eventName === 'connected')?.[1];
+      expect(typeof exitListener).toBe('function');
+      expect(typeof connectedListener).toBe('function');
+      expect(SquidRunApp.isCurrentSessionComputerUseVerifierTerminal(
+        paneId,
+        exactVerifier
+      )).toBe(true);
+      expect(SquidRunApp.isCurrentSessionComputerUseVerifierTerminal(
+        paneId,
+        {
+          ...exactVerifier,
+          durableAddress:
+            `arm://sideprofile/dcb5c1a396802917/computer-use-proof/${paneId}`,
+        }
+      )).toBe(false);
+
+      mainWindow.webContents.send.mockClear();
+      app.backgroundAgentManager.handleDaemonExit.mockClear();
+      exitListener(paneId, 1, exactVerifier);
+      connectedListener([{ ...exactVerifier, alive: false }]);
+
+      expect(recoveryManager.handleExit).not.toHaveBeenCalled();
+      expect(mockManagers.usage.recordSessionEnd).not.toHaveBeenCalled();
+      expect(recordSessionLifecyclePattern).not.toHaveBeenCalled();
+      expect(mockManagers.paneFailureMonitor.handlePtyExit).not.toHaveBeenCalled();
+      expect(app.backgroundAgentManager.handleDaemonExit).not.toHaveBeenCalled();
+      expect(ctx.agentRunning.get(paneId)).toBe('running');
+      expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
+        `pty-exit-${paneId}`,
+        expect.anything()
+      );
+
+      const nearMiss = {
+        ...exactVerifier,
+        recoveryEvent: 'ordinary_unexpected_exit',
+      };
+      sharedDaemonClient.getTerminal.mockReturnValue(nearMiss);
+      mainWindow.webContents.send.mockClear();
+      exitListener(paneId, 1, nearMiss);
+
+      expect(recoveryManager.handleExit).toHaveBeenCalledWith(paneId, 1);
+      expect(mockManagers.usage.recordSessionEnd).toHaveBeenCalledWith(paneId);
+      expect(recordSessionLifecyclePattern).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paneId,
+          status: 'ended',
+          exitCode: 1,
+        })
+      );
+      expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledWith(
+        paneId,
+        1,
+        nearMiss,
+        nearMiss
+      );
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+        `pty-exit-${paneId}`,
+        1
+      );
+    });
+
     it('cleans up existing daemon client listeners before re-attaching on re-init', async () => {
       const { getDaemonClient } = require('../daemon-client');
       const ipcHandlers = require('../modules/ipc-handlers');

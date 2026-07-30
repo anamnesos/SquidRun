@@ -709,16 +709,80 @@ describe('fresh target-only Codex invocation', () => {
     expect(invocation.ok).toBe(true);
     expect(invocation.command).toContain('--dangerously-bypass-hook-trust');
     expect(invocation.command).toContain('hooks.PostToolUse=[');
-    expect(invocation.command).toContain('matcher="^mcp__node_repl__js$"');
+    expect(invocation.command).toContain("matcher=''^mcp__node_repl__js$''");
     expect(invocation.command).toContain(
-      "shell_environment_policy.exclude=[\"SQUIDRUN_CUA_*\"]"
+      "shell_environment_policy.exclude=[''SQUIDRUN_CUA_*'']"
     );
+    expect(invocation.environmentOverrideType).toBe('array');
+    expect(proof.parseShellEnvironmentPolicyExcludeOverride(
+      invocation.environmentOverride
+    )).toEqual({
+      ok: true,
+      reason: 'shell_environment_policy_exclude_toml_sequence_parsed',
+      type: 'array',
+      exclude: ['SQUIDRUN_CUA_*'],
+    });
     expect(invocation.command).not.toContain(state.claim.proof.secret);
     expect(invocation.command).not.toContain('codex-computer-use.exe');
     expect(invocation.command).toContain(
       `& '${state.codexExecutablePath.replace(/'/gu, "''")}'`
     );
   });
+
+  const windowsNativeArgvTest = process.platform === 'win32' ? test : test.skip;
+  windowsNativeArgvTest(
+    'preserves the TOML exclude sequence through PowerShell Windows-native argv',
+    async () => {
+      const state = await armedClaim();
+      state.claim.proof.state = 'armed';
+      const invocation = proof.buildCodexComputerUseProofInvocation(
+        'codex --yolo',
+        state.claim,
+        { platform: 'win32' }
+      );
+      const root = makeTempDir('squidrun-cua-native-argv-');
+      const capturePath = path.join(root, 'capture-native-argv.js');
+      fs.writeFileSync(
+        capturePath,
+        "process.stdout.write(JSON.stringify(process.argv.slice(2)));\n"
+      );
+      const quotePowerShellLiteral = (value) =>
+        `'${String(value).replace(/'/gu, "''")}'`;
+      const nativeProbeCommand = [
+        `& ${quotePowerShellLiteral(process.execPath)}`,
+        quotePowerShellLiteral(capturePath),
+        invocation.addedArguments,
+      ].join(' ');
+
+      const captured = spawnSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', nativeProbeCommand],
+        {
+          encoding: 'utf8',
+          timeout: 10000,
+          windowsHide: true,
+        }
+      );
+
+      expect(captured.status).toBe(0);
+      expect(captured.stderr).toBe('');
+      const nativeArgv = JSON.parse(captured.stdout);
+      expect(nativeArgv).toEqual([
+        '--dangerously-bypass-hook-trust',
+        '-c',
+        invocation.hookOverride,
+        '-c',
+        "shell_environment_policy.exclude=['SQUIDRUN_CUA_*']",
+      ]);
+      expect(proof.parseShellEnvironmentPolicyExcludeOverride(
+        nativeArgv[nativeArgv.length - 1]
+      )).toEqual(expect.objectContaining({
+        ok: true,
+        type: 'array',
+        exclude: ['SQUIDRUN_CUA_*'],
+      }));
+    }
+  );
 
   test.each([
     ['statement separator', 'codex --yolo; node forge.js'],

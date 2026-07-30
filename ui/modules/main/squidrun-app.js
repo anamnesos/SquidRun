@@ -62,6 +62,30 @@ const {
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const TELEGRAM_PENDING_REPLAY_GRACE_MS = 10 * 60 * 1000;
 const ROOT_COHERENCE_MARKER_RELPATH = path.join('runtime', 'root-coherence-assert.jsonl');
+const CURRENT_SESSION_CUA_VERIFIER_OWNER = 'squidrun-current-session-cua-controller';
+const CURRENT_SESSION_CUA_VERIFIER_RECOVERY_EVENT = 'current_session_computer_use_proof';
+const CURRENT_SESSION_CUA_VERIFIER_RESPONSE_CLASS = 'computer_use.list_windows.attestation';
+const CURRENT_SESSION_CUA_VERIFIER_PANE_PATTERN =
+  /^cua-verifier-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function isCurrentSessionComputerUseVerifierTerminal(paneId, metadata = {}) {
+  const normalizedPaneId = String(paneId || '').trim().toLowerCase();
+  const metadataPaneId = String(metadata?.paneId || '').trim().toLowerCase();
+  const durableAddress = String(metadata?.durableAddress || '').trim().toLowerCase();
+  const spawnLeaseId = String(metadata?.spawnLeaseId || '').trim();
+  if (!CURRENT_SESSION_CUA_VERIFIER_PANE_PATTERN.test(normalizedPaneId)
+    || (metadataPaneId && metadataPaneId !== normalizedPaneId)
+    || String(metadata?.leaseOwner || '').trim() !== CURRENT_SESSION_CUA_VERIFIER_OWNER
+    || String(metadata?.recoveryEvent || '').trim()
+      !== CURRENT_SESSION_CUA_VERIFIER_RECOVERY_EVENT
+    || String(metadata?.expectedResponseClass || '').trim()
+      !== CURRENT_SESSION_CUA_VERIFIER_RESPONSE_CLASS
+    || !spawnLeaseId) {
+    return false;
+  }
+  return durableAddress.startsWith('arm://main/')
+    && durableAddress.endsWith(`/computer-use-proof/${normalizedPaneId}`);
+}
 
 function isBridgeRelayModeOff(env = process.env) {
   const mode = String(env?.SQUIDRUN_BRIDGE_RELAY_MODE || env?.SQUIDRUN_RELAY_MODE || '')
@@ -9600,8 +9624,16 @@ class SquidRunApp {
     // Update IPC handlers with daemon client
     ipcHandlers.setDaemonClient(this.ctx.daemonClient);
 
-    const handlePaneExit = (paneId, code, _metadata = null) => {
+    const handlePaneExit = (paneId, code, metadata = null) => {
       const cachedTerminal = this.ctx.daemonClient?.getTerminal?.(paneId) || null;
+      if (isCurrentSessionComputerUseVerifierTerminal(paneId, metadata)) {
+        return {
+          ignored: true,
+          reason: 'standalone_computer_use_verifier',
+          cachedTerminal,
+          recoveryResult: null,
+        };
+      }
       if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
         return { ignored: true, reason: 'background_pane', cachedTerminal, recoveryResult: null };
       }
@@ -9701,6 +9733,10 @@ class SquidRunApp {
         log.warn('PaneFailure', `Ignored stale exit for pane ${paneId} (event pid=${metadata?.pid}, current pid=${currentTerminal?.pid})`);
         return;
       }
+      if (isCurrentSessionComputerUseVerifierTerminal(paneId, metadata)) {
+        handlePaneExit(paneId, code, metadata);
+        return;
+      }
       this.startupReadyBuffers.delete(String(paneId));
       this.backgroundAgentManager.handleDaemonExit(paneId, code);
       const paneExit = handlePaneExit(paneId, code, metadata);
@@ -9769,6 +9805,10 @@ class SquidRunApp {
         const deadTerminals = terminals.filter(term => term.alive === false);
         for (const term of deadTerminals) {
           const paneId = String(term.paneId);
+          if (isCurrentSessionComputerUseVerifierTerminal(paneId, term)) {
+            handlePaneExit(paneId, -1, term);
+            continue;
+          }
           log.warn('Daemon', `Detected dead terminal for pane ${paneId} on connect - scheduling recovery`);
           handlePaneExit(paneId, -1, term);
         }
@@ -14912,5 +14952,7 @@ class SquidRunApp {
 }
 
 module.exports = SquidRunApp;
+module.exports.isCurrentSessionComputerUseVerifierTerminal =
+  isCurrentSessionComputerUseVerifierTerminal;
 // Testable helper (S464 telegram-loss fix): oversized-payload materializer.
 module.exports.materializeOversizedPanePayload = materializeOversizedPanePayload;
