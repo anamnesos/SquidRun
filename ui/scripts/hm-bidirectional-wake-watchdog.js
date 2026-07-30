@@ -211,11 +211,11 @@ function splitProcessCommandLine(commandLine) {
 function normalizeScriptIdentity(value) {
   const text = toText(value, '');
   if (!text) return '';
-  if (path.win32.isAbsolute(text)) {
+  if (/^(?:[a-z]:[\\/]|\\\\)/i.test(text)) {
     return path.win32.normalize(text).replace(/\\/g, '/').toLowerCase();
   }
   if (path.posix.isAbsolute(text)) {
-    return path.posix.normalize(text).toLowerCase();
+    return path.posix.normalize(text);
   }
   return '';
 }
@@ -363,7 +363,10 @@ function buildRunnerStatusSnapshot({
   // the CLI/no-context path leaves it false and preserves prior behavior.
   const wantGeneration = toText(currentGenerationId, '');
   const runnerGeneration = toText(statusFile?.appGenerationId, '');
-  const staleGeneration = Boolean((running || starting) && wantGeneration && runnerGeneration !== wantGeneration);
+  // A pidfile-only exact child inside CHILD_START_GRACE_MS has not written its
+  // generation-bearing status yet. Defer generation comparison until a fresh
+  // matching status exists; otherwise a repeated start kills its own child.
+  const staleGeneration = Boolean(running && wantGeneration && runnerGeneration !== wantGeneration);
   const reason = running
     ? (staleGeneration ? 'stale_bidirectional_wake_watchdog_generation' : null)
     : (starting ? 'bidirectional_wake_watchdog_starting'
@@ -467,6 +470,7 @@ function buildRunnerOwnershipSnapshot({
   pidProbes = new Map(),
   processScan = {},
   scriptPath = __filename,
+  nowMs = Date.now(),
 } = {}) {
   const pidFilePid = asValidPid(pidInfo.pid);
   const statusPid = asValidPid(statusInfo.value?.pid);
@@ -476,6 +480,25 @@ function buildRunnerOwnershipSnapshot({
     : [];
   const rowsByPid = new Map(rows.map((row) => [row.pid, row]));
   const exactRows = rows.filter((row) => isExactRunnerProcessRow(row, scriptPath));
+  const pidFileProbe = pidProbes.get(pidFilePid);
+  const pidAgeMs = Number(pidInfo.mtimeMs) > 0
+    ? Number(nowMs) - Number(pidInfo.mtimeMs)
+    : Infinity;
+  const verifiedStartingOwner = Boolean(
+    pidInfo.exists === true
+    && pidInfo.readable === true
+    && pidFilePid
+    && statusInfo.exists === false
+    && statusInfo.readable === true
+    && pidFileProbe?.known === true
+    && pidFileProbe?.alive === true
+    && processScan.ok === true
+    // NTFS mtime precision can land fractionally ahead of Date.now().
+    && pidAgeMs >= -1_000
+    && pidAgeMs <= CHILD_START_GRACE_MS
+    && exactRows.length === 1
+    && exactRows[0].pid === pidFilePid
+  );
   const conflicts = [];
   const conflictKeys = new Set();
   const addConflict = (code, details = {}) => {
@@ -531,7 +554,11 @@ function buildRunnerOwnershipSnapshot({
   const liveReferencedPids = referencedPids.filter(
     (pid) => pidProbes.get(pid)?.known === true && pidProbes.get(pid)?.alive === true
   );
-  if (pidFilePid !== statusPid && liveReferencedPids.length > 0) {
+  if (
+    pidFilePid !== statusPid
+    && liveReferencedPids.length > 0
+    && !verifiedStartingOwner
+  ) {
     addConflict('pid_status_mismatch', {
       pidFilePid,
       statusPid,
@@ -540,6 +567,7 @@ function buildRunnerOwnershipSnapshot({
   if (
     liveReferencedPids.length > 0
     && statusInfo.value?.role !== 'bidirectional-wake-watchdog'
+    && !verifiedStartingOwner
   ) {
     addConflict('live_status_role_mismatch', {
       role: statusInfo.value?.role || null,
@@ -551,8 +579,11 @@ function buildRunnerOwnershipSnapshot({
     });
   }
   for (const row of exactRows) {
-    const isNamedByBoth = Boolean(pidFilePid && pidFilePid === statusPid && row.pid === pidFilePid);
-    if (!isNamedByBoth) {
+    const isClaimedOwner = Boolean(
+      (pidFilePid && pidFilePid === statusPid && row.pid === pidFilePid)
+      || (verifiedStartingOwner && row.pid === pidFilePid)
+    );
+    if (!isClaimedOwner) {
       addConflict('unclaimed_exact_runner_owner', { pid: row.pid });
     }
     const probe = pidProbes.get(row.pid);
@@ -583,7 +614,7 @@ function buildRunnerOwnershipSnapshot({
   const status = conflicts.length > 0
     ? 'ownership_conflict'
     : (liveReferencedPids.length > 0
-      ? 'verified_live_owner'
+      ? (verifiedStartingOwner ? 'verified_starting_owner' : 'verified_live_owner')
       : (referencedPids.length > 0 || pidInfo.exists === true || statusInfo.exists === true
         ? 'recoverable_stale_metadata'
         : 'clear'));
@@ -593,6 +624,8 @@ function buildRunnerOwnershipSnapshot({
     status,
     pidFilePid,
     statusPid,
+    pidAgeMs: Number.isFinite(pidAgeMs) ? pidAgeMs : null,
+    verifiedStartingOwner,
     referencedOwners,
     observedExactOwners: exactRows.map((row) => ({
       pid: row.pid,
@@ -611,7 +644,11 @@ function buildRunnerOwnershipSnapshot({
   };
 }
 
-function readRunnerStatus({ currentGenerationId = null, ownershipProbe = {} } = {}) {
+function readRunnerStatus({
+  currentGenerationId = null,
+  ownershipProbe = {},
+  nowMs = Date.now(),
+} = {}) {
   const pidInfo = readPidInfo();
   const statusInfo = readStatusInfo();
   const referencedPids = [...new Set([
@@ -627,6 +664,7 @@ function readRunnerStatus({ currentGenerationId = null, ownershipProbe = {} } = 
     statusInfo,
     pidProbes,
     processScan,
+    nowMs,
   });
   const status = buildRunnerStatusSnapshot({
     pid: pidInfo.pid,
@@ -635,6 +673,7 @@ function readRunnerStatus({ currentGenerationId = null, ownershipProbe = {} } = 
     statusFile: statusInfo.value,
     statusMtimeMs: statusInfo.mtimeMs,
     currentGenerationId,
+    nowMs,
   });
   if (!ownership.ok) {
     return {
@@ -1336,6 +1375,18 @@ function stopRunner(options = {}) {
   });
   if (current.ownership?.ok !== true) {
     return ownershipConflictResult(current, 'stop', 'initial');
+  }
+  if (current.ownership.status === 'verified_starting_owner') {
+    return {
+      ...current,
+      ok: false,
+      status: 'owner_start_in_progress',
+      reason: 'owner_start_in_progress',
+      blocked: true,
+      retryable: false,
+      operation: 'stop',
+      pid: current.ownership.pidFilePid,
+    };
   }
   const pid = current.ownership.status === 'verified_live_owner'
     ? current.ownership.pidFilePid
