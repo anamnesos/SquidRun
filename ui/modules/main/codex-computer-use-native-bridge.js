@@ -227,13 +227,18 @@ function parseProcessRows(value) {
 
 function defaultExecFile(command, args, options = {}) {
   return new Promise((resolve) => {
-    execFile(command, args, options, (error, stdout, stderr) => {
+    let spawned = false;
+    const child = execFile(command, args, options, (error, stdout, stderr) => {
       resolve({
         error: error || null,
         status: error ? (Number.isInteger(error.code) ? error.code : null) : 0,
+        spawned,
         stdout: stdout || '',
         stderr: stderr || '',
       });
+    });
+    child.once('spawn', () => {
+      spawned = true;
     });
   });
 }
@@ -292,16 +297,24 @@ async function defaultLaunchCodexDesktopOwner(options = {}) {
       timeout: 5000,
       windowsHide: true,
     }) || {};
-    const ok = !result.error
-      && (result.ok === true || result.status === 0);
+    // explorer.exe hands shell:AppsFolder activation off asynchronously. Its
+    // own exit status (including 1) is not AppX launch success/failure. Once
+    // the exact allowlisted request was invoked, owner + pipe probes decide.
+    const dispatchInvoked = result.spawned === true
+      || result.ok === true
+      || Number.isInteger(result.status);
     return {
-      ok,
-      status: ok ? 'codex_desktop_owner_launch_requested' : 'blocked',
-      reason: ok ? 'exact_codex_desktop_aumid_launched' : 'codex_desktop_aumid_launch_failed',
+      ok: dispatchInvoked,
+      status: dispatchInvoked ? 'codex_desktop_owner_launch_requested' : 'blocked',
+      reason: dispatchInvoked
+        ? 'exact_codex_desktop_aumid_dispatch_invoked'
+        : 'codex_desktop_aumid_launch_failed',
       command,
       args,
       aumid: CODEX_DESKTOP_AUMID,
+      dispatchInvoked,
       exitStatus: typeof result.status === 'number' ? result.status : null,
+      exitStatusAuthoritative: false,
       error: result.error?.message || result.error || null,
       stdout: toOptionalString(result.stdout, ''),
       stderr: toOptionalString(result.stderr, ''),

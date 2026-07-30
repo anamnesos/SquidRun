@@ -608,13 +608,138 @@ describe('Codex Computer Use supported preparation flow', () => {
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       aumid: 'OpenAI.Codex_2p2nqsd0c76g0!App',
-      reason: 'exact_codex_desktop_aumid_launched',
+      reason: 'exact_codex_desktop_aumid_dispatch_invoked',
+      dispatchInvoked: true,
+      exitStatus: 0,
+      exitStatusAuthoritative: false,
     }));
     expect(calls).toEqual([{
       command: 'explorer.exe',
       args: ['shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App'],
     }]);
     expect(JSON.stringify(calls)).not.toMatch(/ChatGPT/iu);
+  });
+
+  test('treats explorer exit 1 as non-authoritative and continues exact owner-pipe polling', async () => {
+    let now = 0;
+    const states = [
+      { pipeReady: false, reason: 'codex_desktop_owner_not_running' },
+      readyProbeState(),
+      readyProbeState(),
+    ];
+    let latestState = states[0];
+    const runner = jest.fn(async () => ({
+      error: Object.assign(new Error('explorer exited with code 1'), { code: 1 }),
+      status: 1,
+      stdout: '',
+      stderr: '',
+    }));
+
+    const result = await bridge.prepareCodexComputerUseNativeBridge({
+      platform: 'win32',
+      projectRoot: MAIN_ROOT,
+      workspace: MAIN_ROOT,
+      paneId: '2',
+      profile: 'main',
+      launchOwner: true,
+      timeoutMs: 1000,
+      intervalMs: 50,
+    }, {
+      probe: async () => {
+        latestState = states.length > 0 ? states.shift() : latestState;
+        return latestState;
+      },
+      runner,
+      listBrowserPipes: jest.fn()
+        .mockResolvedValueOnce({ ok: true, pipes: [BROWSER_PIPE] })
+        .mockResolvedValueOnce({ ok: true, pipes: [BROWSER_PIPE] }),
+      nowMs: () => now,
+      sleep: async (ms) => { now += ms; },
+    });
+
+    expect(runner).toHaveBeenCalledWith(
+      'explorer.exe',
+      ['shell:AppsFolder\\OpenAI.Codex_2p2nqsd0c76g0!App'],
+      expect.objectContaining({ windowsHide: true })
+    );
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'ready',
+      reason: 'codex_desktop_owner_launched_and_exact_pipe_ready',
+      newCodexPanePreflightReady: true,
+      launchResult: expect.objectContaining({
+        ok: true,
+        dispatchInvoked: true,
+        exitStatus: 1,
+        exitStatusAuthoritative: false,
+        reason: 'exact_codex_desktop_aumid_dispatch_invoked',
+      }),
+    }));
+  });
+
+  test('blocks before readiness polling when explorer cannot be spawned', async () => {
+    const probe = jest.fn(async () => ({
+      pipeReady: false,
+      reason: 'codex_desktop_owner_not_running',
+    }));
+    const runner = jest.fn(async () => ({
+      error: Object.assign(new Error('spawn explorer.exe ENOENT'), { code: 'ENOENT' }),
+      status: null,
+      spawned: false,
+      stdout: '',
+      stderr: '',
+    }));
+    const listBrowserPipes = jest.fn(async () => ({ ok: true, pipes: [BROWSER_PIPE] }));
+
+    const result = await bridge.prepareCodexComputerUseNativeBridge({
+      platform: 'win32',
+      projectRoot: MAIN_ROOT,
+      workspace: MAIN_ROOT,
+      paneId: '2',
+      profile: 'main',
+      launchOwner: true,
+      timeoutMs: 1000,
+      intervalMs: 50,
+    }, {
+      probe,
+      runner,
+      listBrowserPipes,
+      sleep: async () => {
+        throw new Error('readiness polling must not begin after spawn failure');
+      },
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'blocked',
+      reason: 'codex_desktop_owner_launch_failed',
+      ownerLaunched: false,
+      launchResult: expect.objectContaining({
+        ok: false,
+        dispatchInvoked: false,
+        exitStatus: null,
+        exitStatusAuthoritative: false,
+      }),
+    }));
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(listBrowserPipes).toHaveBeenCalledTimes(2);
+  });
+
+  test('keeps an explorer spawn exception blocking', async () => {
+    const result = await bridge.defaultLaunchCodexDesktopOwner({
+      platform: 'win32',
+      runner: async () => {
+        throw Object.assign(new Error('spawn explorer.exe EACCES'), { code: 'EACCES' });
+      },
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'blocked',
+      reason: 'codex_desktop_aumid_launch_failed',
+      aumid: bridge.CODEX_DESKTOP_AUMID,
+      error: 'spawn explorer.exe EACCES',
+    }));
   });
 });
 
