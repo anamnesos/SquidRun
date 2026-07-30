@@ -7,7 +7,10 @@ const MAIN_ROOT = 'D:\\projects\\squidrun';
 const sideprofile_ROOT = 'D:\\SquidRun\\sideprofile\\workspace';
 const PIPE_PATH = '\\\\.\\pipe\\codex-computer-use-f214874c-b61b-4d31-ba3a-e2618aa80e34';
 const ROTATED_PIPE_PATH = '\\\\.\\pipe\\codex-computer-use-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const BROWSER_PIPE = 'codex-browser-use\\7d407dc4-9b7e-4488-824a-7a7475447ca5';
+const BROWSER_PIPE = 'chrome-native-messaging-7d407dc4-9b7e-4488-824a-7a7475447ca5';
+const OFFICIAL_CODEX_BROWSER_PIPE = 'codex-browser-use-42d55c5a-9e4d-45ba-bbe3-a7fa46d8e618';
+const ENUMERATED_CODEX_BROWSER_PIPE = 'codex-browser-use\\42d55c5a-9e4d-45ba-bbe3-a7fa46d8e618';
+const UNRELATED_BROWSER_PIPE = 'other-browser-use-42d55c5a-9e4d-45ba-bbe3-a7fa46d8e618';
 
 function codexConfig(options = {}) {
   const pipePath = options.pipePath === undefined ? PIPE_PATH : options.pipePath;
@@ -29,9 +32,9 @@ function desktopOwnerProcess(overrides = {}) {
   return {
     ProcessId: 52000,
     ParentProcessId: 1000,
-    Name: 'Codex.exe',
-    ExecutablePath: 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.721.11231.0_x64__2p2nqsd0c76g0\\app\\Codex.exe',
-    CommandLine: '"C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.721.11231.0_x64__2p2nqsd0c76g0\\app\\Codex.exe"',
+    Name: 'ChatGPT.exe',
+    ExecutablePath: 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.721.11231.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe',
+    CommandLine: '"C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.721.11231.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe"',
     ...overrides,
   };
 }
@@ -80,8 +83,8 @@ function readyProbeState(pipePath = PIPE_PATH, overrides = {}) {
 }
 
 describe('Codex Computer Use native bridge ownership', () => {
-  test('classifies the current stale Desktop-owned config without inventing a helper launch', () => {
-    const result = bridge.probeCodexComputerUseNativeBridge(probeOptions());
+  test('classifies the current stale Desktop-owned config without inventing a helper launch', async () => {
+    const result = await bridge.probeCodexComputerUseNativeBridge(probeOptions());
 
     expect(result).toEqual(expect.objectContaining({
       ok: false,
@@ -112,8 +115,8 @@ describe('Codex Computer Use native bridge ownership', () => {
     }));
   });
 
-  test('reports ready only when the exact configured pipe and exact Desktop owner coexist', () => {
-    const result = bridge.probeCodexComputerUseNativeBridge(probeOptions({
+  test('reports ready only when the exact configured pipe and exact Desktop owner coexist', async () => {
+    const result = await bridge.probeCodexComputerUseNativeBridge(probeOptions({
       listDesktopProcesses: () => ({
         ok: true,
         processes: [desktopOwnerProcess()],
@@ -136,19 +139,27 @@ describe('Codex Computer Use native bridge ownership', () => {
     ]);
   });
 
-  test('rejects npm CLI, bundled resources CLI, and foreign-root lookalikes as Desktop owners', () => {
+  test('accepts only the manifest-backed Codex package ChatGPT.exe owner', async () => {
     const candidates = [
       {
         Name: 'codex.exe',
         ExecutablePath: 'C:\\Users\\James\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.exe',
       },
       {
-        Name: 'codex.exe',
-        ExecutablePath: 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.721.11231.0_x64__2p2nqsd0c76g0\\app\\resources\\codex.exe',
+        Name: 'Codex.exe',
+        ExecutablePath: 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.721.11231.0_x64__2p2nqsd0c76g0\\app\\Codex.exe',
       },
       {
-        Name: 'Codex.exe',
-        ExecutablePath: `${sideprofile_ROOT}\\OpenAI.Codex_26.721.11231.0\\app\\Codex.exe`,
+        Name: 'ChatGPT.exe',
+        ExecutablePath: 'C:\\Program Files\\WindowsApps\\OpenAI.ChatGPT-Desktop_1.2026.190.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe',
+      },
+      {
+        Name: 'ChatGPT.exe',
+        ExecutablePath: `${sideprofile_ROOT}\\OpenAI.Codex_26.721.11231.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe`,
+      },
+      {
+        Name: 'ChatGPT.exe',
+        ExecutablePath: 'D:\\foreign\\OpenAI.Codex_26.721.11231.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe',
       },
     ];
 
@@ -157,7 +168,7 @@ describe('Codex Computer Use native bridge ownership', () => {
     }
     expect(bridge.isOfficialCodexDesktopOwnerProcess(desktopOwnerProcess())).toBe(true);
 
-    const result = bridge.probeCodexComputerUseNativeBridge(probeOptions({
+    const result = await bridge.probeCodexComputerUseNativeBridge(probeOptions({
       listDesktopProcesses: () => ({ ok: true, processes: candidates }),
       pipeExists: () => true,
     }));
@@ -165,8 +176,8 @@ describe('Codex Computer Use native bridge ownership', () => {
     expect(result.pipeReady).toBe(false);
   });
 
-  test('fails closed when the Desktop owner probe is unavailable', () => {
-    const result = bridge.probeCodexComputerUseNativeBridge(probeOptions({
+  test('fails closed when the Desktop owner probe is unavailable', async () => {
+    const result = await bridge.probeCodexComputerUseNativeBridge(probeOptions({
       listDesktopProcesses: () => ({
         ok: false,
         reason: 'desktop_owner_probe_timeout',
@@ -180,6 +191,30 @@ describe('Codex Computer Use native bridge ownership', () => {
       status: 'blocked',
       reason: 'desktop_owner_probe_timeout',
       pipeReady: false,
+    }));
+  });
+
+  test('yields to the event loop while the Desktop owner probe is pending', async () => {
+    let releaseOwnerProbe;
+    const ownerProbePending = new Promise((resolve) => {
+      releaseOwnerProbe = resolve;
+    });
+    let eventLoopYielded = false;
+    const resultPromise = bridge.probeCodexComputerUseNativeBridge(probeOptions({
+      listDesktopProcesses: async () => ownerProbePending,
+    }));
+
+    await new Promise((resolve) => {
+      setImmediate(() => {
+        eventLoopYielded = true;
+        resolve();
+      });
+    });
+    expect(eventLoopYielded).toBe(true);
+
+    releaseOwnerProbe({ ok: true, processes: [] });
+    await expect(resultPromise).resolves.toEqual(expect.objectContaining({
+      reason: 'codex_desktop_owner_not_running',
     }));
   });
 
@@ -232,7 +267,12 @@ describe('Codex Computer Use supported preparation flow', () => {
 
   test('dry-run describes the supported Desktop owner launch without launching it', async () => {
     const launchOwner = jest.fn();
-    const listBrowserPipes = jest.fn(async () => ({ ok: true, pipes: [BROWSER_PIPE] }));
+    const listBrowserPipes = jest.fn()
+      .mockResolvedValueOnce({ ok: true, pipes: [BROWSER_PIPE] })
+      .mockResolvedValueOnce({
+        ok: true,
+        pipes: [BROWSER_PIPE, ENUMERATED_CODEX_BROWSER_PIPE],
+      });
     const result = await bridge.prepareCodexComputerUseNativeBridge({
       platform: 'win32',
       projectRoot: MAIN_ROOT,
@@ -319,7 +359,12 @@ describe('Codex Computer Use supported preparation flow', () => {
       status: 'codex_desktop_owner_launch_requested',
       aumid: bridge.CODEX_DESKTOP_AUMID,
     }));
-    const listBrowserPipes = jest.fn(async () => ({ ok: true, pipes: [BROWSER_PIPE] }));
+    const listBrowserPipes = jest.fn()
+      .mockResolvedValueOnce({ ok: true, pipes: [BROWSER_PIPE] })
+      .mockResolvedValueOnce({
+        ok: true,
+        pipes: [BROWSER_PIPE, ENUMERATED_CODEX_BROWSER_PIPE],
+      });
 
     const result = await bridge.prepareCodexComputerUseNativeBridge({
       platform: 'win32',
@@ -359,7 +404,12 @@ describe('Codex Computer Use supported preparation flow', () => {
     }));
     expect(result.browserPipeSnapshot).toEqual({
       before: { ok: true, reason: null, error: null, pipes: [BROWSER_PIPE] },
-      after: { ok: true, reason: null, error: null, pipes: [BROWSER_PIPE] },
+      after: {
+        ok: true,
+        reason: null,
+        error: null,
+        pipes: [BROWSER_PIPE, ENUMERATED_CODEX_BROWSER_PIPE],
+      },
       reSnapshotted: true,
     });
     expect(listBrowserPipes).toHaveBeenCalledTimes(2);
@@ -398,7 +448,49 @@ describe('Codex Computer Use supported preparation flow', () => {
     expect(launchOwner).not.toHaveBeenCalled();
   });
 
-  test('blocks pane readiness when browser pipe snapshots change during owner preflight', async () => {
+  test('allows an already-ready unchanged browser snapshot', () => {
+    expect(bridge.browserPipeSnapshotTransitionAllowed(
+      { ok: true, pipes: [BROWSER_PIPE] },
+      { ok: true, pipes: [BROWSER_PIPE] }
+    )).toBe(true);
+  });
+
+  test('allows only an exact official Codex browser pipe addition', () => {
+    expect(bridge.browserPipeSnapshotTransitionAllowed(
+      { ok: true, pipes: [BROWSER_PIPE] },
+      { ok: true, pipes: [BROWSER_PIPE, OFFICIAL_CODEX_BROWSER_PIPE] }
+    )).toBe(true);
+    expect(bridge.browserPipeSnapshotTransitionAllowed(
+      { ok: true, pipes: [BROWSER_PIPE] },
+      { ok: true, pipes: [BROWSER_PIPE, ENUMERATED_CODEX_BROWSER_PIPE] }
+    )).toBe(true);
+    expect(bridge.browserPipeSnapshotTransitionAllowed(
+      { ok: true, pipes: [BROWSER_PIPE] },
+      {
+        ok: true,
+        pipes: [
+          BROWSER_PIPE,
+          'codex-browser-use/42d55c5a-9e4d-45ba-bbe3-a7fa46d8e618',
+        ],
+      }
+    )).toBe(false);
+  });
+
+  test('blocks removal of any pre-existing browser or Chrome pipe', () => {
+    expect(bridge.browserPipeSnapshotTransitionAllowed(
+      { ok: true, pipes: [BROWSER_PIPE] },
+      { ok: true, pipes: [] }
+    )).toBe(false);
+  });
+
+  test('blocks an unrelated browser pipe addition', () => {
+    expect(bridge.browserPipeSnapshotTransitionAllowed(
+      { ok: true, pipes: [BROWSER_PIPE] },
+      { ok: true, pipes: [BROWSER_PIPE, UNRELATED_BROWSER_PIPE] }
+    )).toBe(false);
+  });
+
+  test('blocks pane readiness when an existing browser pipe disappears during owner preflight', async () => {
     let now = 0;
     const states = [
       { pipeReady: false, reason: 'codex_desktop_owner_not_running' },
@@ -500,11 +592,11 @@ describe('Codex Computer Use supported preparation flow', () => {
     }));
   });
 
-  test('official owner launch uses only the exact Codex AUMID, never ChatGPT', () => {
+  test('official owner launch uses only the exact Codex AUMID, never a ChatGPT shortcut', async () => {
     const calls = [];
-    const result = bridge.defaultLaunchCodexDesktopOwner({
+    const result = await bridge.defaultLaunchCodexDesktopOwner({
       platform: 'win32',
-      runner: (command, args) => {
+      runner: async (command, args) => {
         calls.push({ command, args });
         return { status: 0, stdout: '', stderr: '' };
       },
@@ -541,10 +633,21 @@ describe('official list_windows verification seam', () => {
       exactPipeIsUnique: true,
     },
   };
+  const trustedClaim = {
+    claimId: 'generation-claim-2',
+    paneId: '2',
+    workspace: MAIN_ROOT,
+    projectRoot: MAIN_ROOT,
+    profile: 'main',
+    generation: bridge.captureCodexComputerUsePipeGeneration(readyBridge),
+    commandAuthorizedAt: '2026-07-29T23:01:00.000Z',
+    postSpawnConfirmedAt: '2026-07-29T23:01:01.000Z',
+  };
 
-  test('generates only the official plugin-wrapper list_windows call', () => {
+  test('generates guidance then only the official plugin-wrapper list_windows call', () => {
     const result = bridge.buildOfficialListWindowsVerification({
       bridge: readyBridge,
+      trustedClaim,
       projectRoot: MAIN_ROOT,
       paneId: '2',
       clientPath: 'C:\\Users\\James\\.codex\\plugins\\cache\\openai-bundled\\computer-use\\26.721.41059\\scripts\\computer-use-client.mjs',
@@ -553,9 +656,16 @@ describe('official list_windows verification seam', () => {
     expect(result.ok).toBe(true);
     expect(result.transport).toBe('official_computer_use_plugin_wrapper');
     expect(result.snippet).toContain('setupComputerUseRuntime');
+    expect(result.snippet).toContain("globalThis.sky.documentation('guidance')");
     expect(result.snippet).toContain('globalThis.sky.list_windows()');
+    expect(result.snippet.indexOf("globalThis.sky.documentation('guidance')"))
+      .toBeLessThan(result.snippet.indexOf('globalThis.sky.list_windows()'));
     expect(result.snippet).not.toContain('SKY_CUA_NATIVE_PIPE_DIRECTORY =');
-    expect(result.snippet).toContain('officialWrapperListWindowsSucceededInTargetPane: true');
+    expect(result.snippet).not.toContain(PIPE_PATH);
+    expect(result.snippet).not.toContain('expectedPaneId');
+    expect(result.snippet).not.toContain('expectedPipePath');
+    expect(result.snippet).not.toContain('privilegedPipePathNotExposedToModelCode');
+    expect(result.snippet).not.toContain('officialWrapperListWindowsSucceededInTargetPane');
     expect(result.snippet).not.toContain('codex-computer-use.exe');
     expect(result.snippet).not.toContain('createConnection');
     expect(result.snippet).not.toContain('jsonrpc');
@@ -569,19 +679,16 @@ describe('official list_windows verification seam', () => {
     ]));
   });
 
-  test('accepts exact same-root same-pipe list_windows proof', () => {
+  test('accepts minimal list_windows evidence only under the trusted current generation claim', () => {
     const result = bridge.verifyOfficialListWindowsProof({
       schema: bridge.LIST_WINDOWS_PROOF_SCHEMA,
       operation: 'list_windows',
       ok: true,
-      expectedPaneId: '2',
-      expectedPipePath: PIPE_PATH,
       workingDirectory: MAIN_ROOT,
-      officialWrapperListWindowsSucceededInTargetPane: true,
-      privilegedPipePathNotExposedToModelCode: true,
       windowCount: 7,
     }, {
       bridge: readyBridge,
+      trustedClaim,
       projectRoot: MAIN_ROOT,
       paneId: '2',
       platform: 'win32',
@@ -593,19 +700,69 @@ describe('official list_windows verification seam', () => {
       reasons: [],
       operation: 'list_windows',
       windowCount: 7,
+      trustedClaimId: 'generation-claim-2',
     }));
   });
 
-  test('rejects foreign-root, stale-pipe, or unready proof', () => {
+  test('rejects forged pipe, pane, and self-attestation fields', () => {
     const result = bridge.verifyOfficialListWindowsProof({
       schema: bridge.LIST_WINDOWS_PROOF_SCHEMA,
       operation: 'list_windows',
       ok: true,
       expectedPaneId: '2',
-      expectedPipePath: ROTATED_PIPE_PATH,
-      workingDirectory: sideprofile_ROOT,
+      expectedPipePath: PIPE_PATH,
+      workingDirectory: MAIN_ROOT,
       officialWrapperListWindowsSucceededInTargetPane: true,
       privilegedPipePathNotExposedToModelCode: true,
+      windowCount: 1,
+    }, {
+      bridge: readyBridge,
+      trustedClaim,
+      projectRoot: MAIN_ROOT,
+      paneId: '2',
+      platform: 'win32',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reasons).toContain('proof_contains_untrusted_fields');
+    expect(result.untrustedFields).toEqual([
+      'expectedPaneId',
+      'expectedPipePath',
+      'officialWrapperListWindowsSucceededInTargetPane',
+      'privilegedPipePathNotExposedToModelCode',
+    ]);
+  });
+
+  test('rejects rotation after external confirmation but before authoritative readiness proof', () => {
+    const rotatedBridge = {
+      ...readyBridge,
+      config: { ...readyBridge.config, pipePath: ROTATED_PIPE_PATH },
+      pipe: { ...readyBridge.pipe, path: ROTATED_PIPE_PATH },
+    };
+    const result = bridge.verifyOfficialListWindowsProof({
+      schema: bridge.LIST_WINDOWS_PROOF_SCHEMA,
+      operation: 'list_windows',
+      ok: true,
+      workingDirectory: MAIN_ROOT,
+      windowCount: 1,
+    }, {
+      bridge: rotatedBridge,
+      trustedClaim,
+      projectRoot: MAIN_ROOT,
+      paneId: '2',
+      platform: 'win32',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.reasons).toContain('trusted_generation_claim_stale');
+  });
+
+  test('rejects foreign-root, unready bridge, or missing trusted claim', () => {
+    const result = bridge.verifyOfficialListWindowsProof({
+      schema: bridge.LIST_WINDOWS_PROOF_SCHEMA,
+      operation: 'list_windows',
+      ok: true,
+      workingDirectory: sideprofile_ROOT,
       windowCount: 1,
     }, {
       bridge: { ...readyBridge, pipeReady: false },
@@ -616,9 +773,9 @@ describe('official list_windows verification seam', () => {
 
     expect(result.ok).toBe(false);
     expect(result.reasons).toEqual(expect.arrayContaining([
+      'trusted_generation_claim_missing',
       'bridge_pipe_not_ready',
       'proof_workspace_mismatch',
-      'proof_pipe_mismatch',
     ]));
   });
 });

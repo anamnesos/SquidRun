@@ -202,7 +202,7 @@ describe('Terminal Events', () => {
       squidrun: {
         pty: {
           create: jest.fn().mockResolvedValue(undefined),
-          write: jest.fn().mockResolvedValue(undefined),
+          write: jest.fn().mockResolvedValue({ success: true }),
           claimStartupInjection: jest.fn().mockResolvedValue({
             ok: true,
             claimed: true,

@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { spawnSync } = require('child_process');
+const { execFile } = require('child_process');
 
 const BRIDGE_SCHEMA = 'squidrun.codex_computer_use_native_bridge.v1';
 const PIPE_GENERATION_SCHEMA = 'squidrun.codex_computer_use_pipe_generation.v1';
@@ -223,16 +223,30 @@ function parseProcessRows(value) {
   }
 }
 
-function defaultListDesktopProcesses(options = {}) {
+function defaultExecFile(command, args, options = {}) {
+  return new Promise((resolve) => {
+    execFile(command, args, options, (error, stdout, stderr) => {
+      resolve({
+        error: error || null,
+        status: error ? (Number.isInteger(error.code) ? error.code : null) : 0,
+        stdout: stdout || '',
+        stderr: stderr || '',
+      });
+    });
+  });
+}
+
+async function defaultListDesktopProcesses(options = {}) {
   if ((options.platform || process.platform) !== 'win32') {
     return { ok: false, reason: 'unsupported_platform', processes: [] };
   }
   const script = [
-    "$rows = Get-CimInstance Win32_Process -Filter \"Name = 'Codex.exe' OR Name = 'codex.exe'\" |",
+    "$rows = Get-CimInstance Win32_Process -Filter \"Name = 'ChatGPT.exe' OR Name = 'chatgpt.exe'\" |",
     '  Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine',
     '$rows | ConvertTo-Json -Depth 4',
   ].join('\n');
-  const result = spawnSync('powershell.exe', [
+  const runner = options.runner || defaultExecFile;
+  const result = await runner('powershell.exe', [
     '-NoProfile',
     '-ExecutionPolicy',
     'Bypass',
@@ -242,7 +256,7 @@ function defaultListDesktopProcesses(options = {}) {
     encoding: 'utf8',
     timeout: Number(options.processProbeTimeoutMs) || 5000,
     windowsHide: true,
-  });
+  }) || {};
   if (result.error || (typeof result.status === 'number' && result.status !== 0)) {
     return {
       ok: false,
@@ -259,7 +273,7 @@ function defaultListDesktopProcesses(options = {}) {
   };
 }
 
-function defaultLaunchCodexDesktopOwner(options = {}) {
+async function defaultLaunchCodexDesktopOwner(options = {}) {
   if ((options.platform || process.platform) !== 'win32') {
     return { ok: false, reason: 'unsupported_platform' };
   }
@@ -269,17 +283,13 @@ function defaultLaunchCodexDesktopOwner(options = {}) {
   }
   const command = 'explorer.exe';
   const args = [`shell:AppsFolder\\${CODEX_DESKTOP_AUMID}`];
-  const runner = options.runner || ((executable, executableArgs) => spawnSync(
-    executable,
-    executableArgs,
-    {
+  const runner = options.runner || defaultExecFile;
+  try {
+    const result = await runner(command, args, {
       encoding: 'utf8',
       timeout: 5000,
       windowsHide: true,
-    }
-  ));
-  try {
-    const result = runner(command, args) || {};
+    }) || {};
     const ok = !result.error
       && (result.ok === true || result.status === 0);
     return {
@@ -307,7 +317,7 @@ function defaultLaunchCodexDesktopOwner(options = {}) {
   }
 }
 
-function defaultListBrowserPipes(options = {}) {
+async function defaultListBrowserPipes(options = {}) {
   if ((options.platform || process.platform) !== 'win32') {
     return { ok: false, reason: 'unsupported_platform', pipes: [] };
   }
@@ -317,19 +327,19 @@ function defaultListBrowserPipes(options = {}) {
     '  Select-Object -ExpandProperty Name',
     '$rows | ConvertTo-Json',
   ].join('\n');
-  const runner = options.runner || ((command, args) => spawnSync(command, args, {
-    encoding: 'utf8',
-    timeout: 5000,
-    windowsHide: true,
-  }));
+  const runner = options.runner || defaultExecFile;
   try {
-    const result = runner('powershell.exe', [
+    const result = await runner('powershell.exe', [
       '-NoProfile',
       '-ExecutionPolicy',
       'Bypass',
       '-Command',
       script,
-    ]) || {};
+    ], {
+      encoding: 'utf8',
+      timeout: 5000,
+      windowsHide: true,
+    }) || {};
     if (result.error || (typeof result.status === 'number' && result.status !== 0)) {
       return {
         ok: false,
@@ -375,12 +385,32 @@ function defaultListComputerUsePipes(options = {}) {
   }
 }
 
-function browserPipeSnapshotsEqual(before = {}, after = {}) {
+function isOfficialCodexBrowserPipeName(pipeName) {
+  const name = toOptionalString(pipeName, '');
+  const prefixes = ['codex-browser-use-', 'codex-browser-use\\'];
+  const prefix = prefixes.find((candidate) => name.startsWith(candidate));
+  if (!prefix) return false;
+  const suffix = name.slice(prefix.length);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
+    .test(suffix);
+}
+
+function browserPipeSnapshotTransitionAllowed(before = {}, after = {}) {
   if (before.ok !== true || after.ok !== true) return false;
-  const left = Array.isArray(before.pipes) ? [...before.pipes].sort() : [];
-  const right = Array.isArray(after.pipes) ? [...after.pipes].sort() : [];
-  return left.length === right.length
-    && left.every((pipeName, index) => pipeName === right[index]);
+  const existingPipes = Array.isArray(before.pipes) ? [...before.pipes] : [];
+  const currentPipes = Array.isArray(after.pipes) ? [...after.pipes] : [];
+  if (!existingPipes.every((pipeName) => typeof pipeName === 'string' && pipeName.length > 0)
+    || !currentPipes.every((pipeName) => typeof pipeName === 'string' && pipeName.length > 0)) {
+    return false;
+  }
+
+  const unmatchedCurrentPipes = [...currentPipes];
+  for (const existingPipe of existingPipes) {
+    const currentIndex = unmatchedCurrentPipes.indexOf(existingPipe);
+    if (currentIndex < 0) return false;
+    unmatchedCurrentPipes.splice(currentIndex, 1);
+  }
+  return unmatchedCurrentPipes.every(isOfficialCodexBrowserPipeName);
 }
 
 function processExecutableCandidate(processInfo = {}) {
@@ -403,11 +433,12 @@ function processExecutableCandidate(processInfo = {}) {
 
 function isOfficialCodexDesktopOwnerProcess(processInfo = {}) {
   const name = toOptionalString(processInfo.name || processInfo.Name, '').toLowerCase();
-  if (name !== 'codex.exe') return false;
+  if (name !== 'chatgpt.exe') return false;
   const executable = processExecutableCandidate(processInfo)
     .replace(/\//gu, '\\')
     .toLowerCase();
-  return /\\program files\\windowsapps\\openai\.codex_[^\\]+\\app\\codex\.exe$/iu.test(executable);
+  return /\\program files\\windowsapps\\openai\.codex_[^\\]+__2p2nqsd0c76g0\\app\\chatgpt\.exe$/u
+    .test(executable);
 }
 
 function normalizeProcessProbe(value) {
@@ -423,7 +454,7 @@ function normalizeProcessProbe(value) {
   return { ok: false, reason: 'desktop_owner_probe_invalid', processes: [] };
 }
 
-function probeCodexComputerUseNativeBridge(options = {}) {
+async function probeCodexComputerUseNativeBridge(options = {}) {
   const platform = toOptionalString(options.platform, process.platform);
   const env = options.env || process.env;
   const projectRoot = normalizePath(
@@ -455,7 +486,7 @@ function probeCodexComputerUseNativeBridge(options = {}) {
   const listDesktopProcesses = options.listDesktopProcesses || defaultListDesktopProcesses;
   let processProbe;
   try {
-    processProbe = normalizeProcessProbe(listDesktopProcesses({ ...options, platform }));
+    processProbe = normalizeProcessProbe(await listDesktopProcesses({ ...options, platform }));
   } catch (error) {
     processProbe = {
       ok: false,
@@ -478,7 +509,7 @@ function probeCodexComputerUseNativeBridge(options = {}) {
   const listComputerUsePipes = options.listComputerUsePipes || defaultListComputerUsePipes;
   let computerUsePipeProbe;
   try {
-    computerUsePipeProbe = listComputerUsePipes({ ...options, platform }) || {};
+    computerUsePipeProbe = await listComputerUsePipes({ ...options, platform }) || {};
   } catch (error) {
     computerUsePipeProbe = {
       ok: false,
@@ -806,7 +837,7 @@ async function prepareCodexComputerUseNativeBridge(input = {}, dependencies = {}
     }
     const browserPipesBefore = await snapshotBrowserPipes();
     const browserPipesAfter = await snapshotBrowserPipes();
-    if (!browserPipeSnapshotsEqual(browserPipesBefore, browserPipesAfter)) {
+    if (!browserPipeSnapshotTransitionAllowed(browserPipesBefore, browserPipesAfter)) {
       return {
         ok: false,
         schema: BRIDGE_SCHEMA,
@@ -921,7 +952,7 @@ async function prepareCodexComputerUseNativeBridge(input = {}, dependencies = {}
         continue;
       }
       const browserPipesAfter = await snapshotBrowserPipes();
-      if (!browserPipeSnapshotsEqual(browserPipesBefore, browserPipesAfter)) {
+      if (!browserPipeSnapshotTransitionAllowed(browserPipesBefore, browserPipesAfter)) {
         return {
           ok: false,
           schema: BRIDGE_SCHEMA,
@@ -1024,12 +1055,67 @@ function resolveOfficialComputerUseClientPath(options = {}) {
   return null;
 }
 
+function validateTrustedListWindowsClaim(trustedClaim, bridge, options = {}) {
+  const projectRoot = normalizePath(
+    options.projectRoot || bridge?.projectRoot || process.cwd()
+  );
+  const paneId = toOptionalString(options.paneId || bridge?.paneId, null);
+  const platform = options.platform || process.platform;
+  const currentGeneration = captureCodexComputerUsePipeGeneration(bridge);
+  const reasons = [];
+  if (!trustedClaim || typeof trustedClaim !== 'object') {
+    reasons.push('trusted_generation_claim_missing');
+  } else {
+    if (!toOptionalString(trustedClaim.claimId, null)) {
+      reasons.push('trusted_generation_claim_id_missing');
+    }
+    if (!toOptionalString(trustedClaim.commandAuthorizedAt, null)) {
+      reasons.push('trusted_generation_command_not_authorized');
+    }
+    if (!toOptionalString(trustedClaim.postSpawnConfirmedAt, null)) {
+      reasons.push('trusted_generation_post_spawn_not_confirmed');
+    }
+    if (paneId && toOptionalString(trustedClaim.paneId, null) !== paneId) {
+      reasons.push('trusted_generation_pane_mismatch');
+    }
+    if (!pathsEqual(trustedClaim.workspace, projectRoot, platform)
+      || !pathsEqual(trustedClaim.projectRoot, projectRoot, platform)) {
+      reasons.push('trusted_generation_workspace_mismatch');
+    }
+    if (!currentGeneration
+      || !pipeGenerationsEqual(trustedClaim.generation, currentGeneration, platform)) {
+      reasons.push('trusted_generation_claim_stale');
+    }
+  }
+  return {
+    ok: reasons.length === 0,
+    reasons,
+    projectRoot,
+    paneId,
+    currentGeneration,
+  };
+}
+
 function buildOfficialListWindowsVerification(options = {}) {
-  const bridge = options.bridge || probeCodexComputerUseNativeBridge(options);
+  const bridge = options.bridge || {};
   const projectRoot = normalizePath(
     options.projectRoot || bridge.projectRoot || process.cwd()
   );
   const paneId = toOptionalString(options.paneId || bridge.paneId, null);
+  const trustedClaim = options.trustedClaim || null;
+  const claimValidation = validateTrustedListWindowsClaim(
+    trustedClaim,
+    bridge,
+    { ...options, projectRoot, paneId }
+  );
+  if (!claimValidation.ok) {
+    return {
+      ok: false,
+      schema: LIST_WINDOWS_PROOF_SCHEMA,
+      reason: claimValidation.reasons[0],
+      reasons: claimValidation.reasons,
+    };
+  }
   const clientPath = options.clientPath || resolveOfficialComputerUseClientPath({
     ...options,
     codexHome: bridge.config?.codexHome || options.codexHome,
@@ -1050,22 +1136,17 @@ function buildOfficialListWindowsVerification(options = {}) {
     };
   }
 
-  const expectedPipePath = bridge.pipe?.path || bridge.config?.pipePath || null;
   const clientUrl = pathToFileURL(clientPath).href;
   const snippet = [
     `var { setupComputerUseRuntime } = await import(${JSON.stringify(clientUrl)});`,
     'await setupComputerUseRuntime({ globals: globalThis });',
+    "await globalThis.sky.documentation('guidance');",
     'var squidrunComputerUseWindows = await globalThis.sky.list_windows();',
     '({',
     `  schema: ${JSON.stringify(LIST_WINDOWS_PROOF_SCHEMA)},`,
     "  operation: 'list_windows',",
     '  ok: Array.isArray(squidrunComputerUseWindows),',
-    `  expectedProjectRoot: ${JSON.stringify(projectRoot)},`,
-    `  expectedPaneId: ${JSON.stringify(paneId)},`,
-    `  expectedPipePath: ${JSON.stringify(expectedPipePath)},`,
     "  workingDirectory: String(globalThis.nodeRepl?.cwd || ''),",
-    '  officialWrapperListWindowsSucceededInTargetPane: true,',
-    '  privilegedPipePathNotExposedToModelCode: true,',
     '  windowCount: Array.isArray(squidrunComputerUseWindows) ? squidrunComputerUseWindows.length : null,',
     '})',
   ].join('\n');
@@ -1077,7 +1158,8 @@ function buildOfficialListWindowsVerification(options = {}) {
     clientPath,
     expectedProjectRoot: projectRoot,
     expectedPaneId: paneId,
-    expectedPipePath,
+    expectedGeneration: trustedClaim.generation,
+    trustedClaimId: trustedClaim.claimId,
     snippet,
     nonClaims: [
       'does_not_spawn_codex_computer_use_helper',
@@ -1095,33 +1177,32 @@ function verifyOfficialListWindowsProof(proof = {}, options = {}) {
     options.projectRoot || bridge.projectRoot || process.cwd()
   );
   const paneId = toOptionalString(options.paneId || bridge.paneId, null);
-  const expectedPipePath = normalizePipePath(
-    bridge.pipe?.path || bridge.config?.pipePath || options.pipePath
+  const claimValidation = validateTrustedListWindowsClaim(
+    options.trustedClaim || null,
+    bridge,
+    { ...options, projectRoot, paneId }
   );
-  const reasons = [];
+  const allowedProofFields = new Set([
+    'schema',
+    'operation',
+    'ok',
+    'workingDirectory',
+    'windowCount',
+  ]);
+  const untrustedFields = Object.keys(proof || {})
+    .filter((field) => !allowedProofFields.has(field))
+    .sort();
+  const reasons = [...claimValidation.reasons];
   if (bridge.pipeReady !== true) reasons.push('bridge_pipe_not_ready');
   if (proof.schema !== LIST_WINDOWS_PROOF_SCHEMA) reasons.push('proof_schema_mismatch');
   if (proof.operation !== 'list_windows') reasons.push('proof_operation_mismatch');
   if (proof.ok !== true) reasons.push('list_windows_not_successful');
-  if (proof.officialWrapperListWindowsSucceededInTargetPane !== true) {
-    reasons.push('target_pane_official_wrapper_list_windows_not_proven');
-  }
-  if (proof.privilegedPipePathNotExposedToModelCode !== true) {
-    reasons.push('privileged_pipe_override_or_exposure_not_rejected');
-  }
+  if (untrustedFields.length > 0) reasons.push('proof_contains_untrusted_fields');
   if (!Number.isInteger(proof.windowCount) || proof.windowCount < 0) {
     reasons.push('window_count_invalid');
   }
   if (!pathsEqual(proof.workingDirectory, projectRoot, options.platform || process.platform)) {
     reasons.push('proof_workspace_mismatch');
-  }
-  if (paneId && toOptionalString(proof.expectedPaneId, null) !== paneId) {
-    reasons.push('proof_pane_mismatch');
-  }
-  if (!expectedPipePath
-    || normalizePipePath(proof.expectedPipePath) !== expectedPipePath
-    || bridge.pipe?.exactPipeIsUnique !== true) {
-    reasons.push('proof_pipe_mismatch');
   }
   return {
     ok: reasons.length === 0,
@@ -1130,7 +1211,10 @@ function verifyOfficialListWindowsProof(proof = {}, options = {}) {
     reasons,
     projectRoot,
     paneId,
-    pipePath: expectedPipePath || null,
+    pipePath: claimValidation.currentGeneration?.pipePath || null,
+    generation: claimValidation.currentGeneration,
+    trustedClaimId: options.trustedClaim?.claimId || null,
+    untrustedFields,
     operation: 'list_windows',
     windowCount: Number.isInteger(proof.windowCount) ? proof.windowCount : null,
   };
@@ -1138,7 +1222,7 @@ function verifyOfficialListWindowsProof(proof = {}, options = {}) {
 
 module.exports = {
   BRIDGE_SCHEMA,
-  browserPipeSnapshotsEqual,
+  browserPipeSnapshotTransitionAllowed,
   CODEX_DESKTOP_AUMID,
   COMPUTER_USE_PIPE_PREFIX,
   DEFAULT_PREPARE_INTERVAL_MS,
@@ -1152,6 +1236,7 @@ module.exports = {
   defaultListBrowserPipes,
   defaultListComputerUsePipes,
   defaultListDesktopProcesses,
+  isOfficialCodexBrowserPipeName,
   isOfficialCodexDesktopOwnerProcess,
   isSupportedComputerUsePipePath,
   pathsEqual,

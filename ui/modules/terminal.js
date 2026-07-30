@@ -88,6 +88,8 @@ const lastTypedTime = {};
 // Idle detection to prevent stuck animation
 // Track last output time per pane - updated on every pty.onData
 const lastOutputTime = {};
+const ptyOutputSequence = {};
+const ptyOutputWaiters = new Map();
 
 // Codex exec mode: track identity injection per pane
 const codexIdentityInjected = new Set();
@@ -102,6 +104,7 @@ const inputLocked = {};
 PANE_IDS.forEach(id => { inputLocked[id] = true; }); // Default: all panes locked
 let activePaneIds = [...PANE_IDS];
 const FRESH_SPAWN_INIT_TIMEOUT_MS = 10000;
+const COMPUTER_USE_CHILD_START_OBSERVATION_TIMEOUT_MS = 10000;
 const IS_DARWIN = process.platform === 'darwin';
 const FRESH_STARTUP_INJECTION_WINDOW_MS = 60000;
 const HIDDEN_PANE_HOSTS_ENV_FLAG = (
@@ -2041,11 +2044,33 @@ function detachPtyListeners(paneId) {
   detachPtyExitListener(paneId);
 }
 
+function recordPtyOutput(paneId) {
+  const id = String(paneId);
+  ptyOutputSequence[id] = (ptyOutputSequence[id] || 0) + 1;
+  const outputWaiters = ptyOutputWaiters.get(id);
+  if (outputWaiters) {
+    for (const waiter of [...outputWaiters]) {
+      if (ptyOutputSequence[id] > waiter.afterSequence) {
+        outputWaiters.delete(waiter);
+        clearTimeout(waiter.timer);
+        waiter.resolve({
+          ok: true,
+          paneId: id,
+          sequence: ptyOutputSequence[id],
+        });
+      }
+    }
+    if (outputWaiters.size === 0) ptyOutputWaiters.delete(id);
+  }
+  return ptyOutputSequence[id];
+}
+
 function attachPtyBridgeListeners(paneId, terminal) {
   const id = String(paneId);
   detachPtyListeners(id);
 
   const disposeOnData = window.squidrun.pty.onData(id, (data) => {
+    recordPtyOutput(id);
     void maybeRecoverClaudeSessionCollision(id, data);
     queueTerminalWrite(id, terminal, data);
     coldSpawnBlankRecoveryController?.observeOutput(id, data);
@@ -2076,6 +2101,38 @@ function attachPtyBridgeListeners(paneId, terminal) {
   }
 
   return true;
+}
+
+function waitForPtyOutputAfter(
+  paneId,
+  afterSequence,
+  timeoutMs = COMPUTER_USE_CHILD_START_OBSERVATION_TIMEOUT_MS
+) {
+  const id = String(paneId);
+  const baseline = Number(afterSequence) || 0;
+  const current = ptyOutputSequence[id] || 0;
+  if (current > baseline) {
+    return Promise.resolve({ ok: true, paneId: id, sequence: current });
+  }
+  return new Promise((resolve) => {
+    const waiter = {
+      afterSequence: baseline,
+      resolve,
+      timer: null,
+    };
+    const paneWaiters = ptyOutputWaiters.get(id) || new Set();
+    paneWaiters.add(waiter);
+    ptyOutputWaiters.set(id, paneWaiters);
+    waiter.timer = setTimeout(() => {
+      paneWaiters.delete(waiter);
+      if (paneWaiters.size === 0) ptyOutputWaiters.delete(id);
+      resolve({
+        ok: false,
+        paneId: id,
+        reason: 'codex_computer_use_child_output_timeout',
+      });
+    }, Math.max(100, Number(timeoutMs) || COMPUTER_USE_CHILD_START_OBSERVATION_TIMEOUT_MS));
+  });
 }
 
 function disposeAddon(addon, paneId, name) {
@@ -3272,6 +3329,14 @@ async function initTerminals(options = {}) {
         log.error(`Terminal ${result.paneId}`, 'Fresh command-on-create init failed', result.error);
       }
     }
+    const failedPanes = results
+      .filter((result) => result.ok !== true)
+      .map((result) => result.paneId);
+    if (failedPanes.length > 0) {
+      const error = new Error(`Fresh terminal init failed for pane(s): ${failedPanes.join(', ')}`);
+      updateConnectionStatus(error.message);
+      throw error;
+    }
   } else {
     for (const paneId of missingPaneIds) {
       if (terminals.has(paneId)) continue;
@@ -3652,15 +3717,28 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
     // Subscribe before create: command-on-create can emit its only full TUI
     // frame immediately, and there is no listener-aware replay for core panes.
     attachPtyBridgeListeners(paneId, terminal);
+    let ptyCreateResult;
     if (Object.keys(ptyCreateOptions).length > 0) {
-      await window.squidrun.pty.create(paneId, workingDir, ptyCreateOptions);
+      ptyCreateResult = await window.squidrun.pty.create(paneId, workingDir, ptyCreateOptions);
     } else {
-      await window.squidrun.pty.create(paneId, workingDir);
+      ptyCreateResult = await window.squidrun.pty.create(paneId, workingDir);
+    }
+    if (ptyCreateResult?.success === false) {
+      throw new Error(
+        ptyCreateResult.reason
+        || ptyCreateResult.error
+        || 'pty_create_not_accepted'
+      );
     }
     if (freshSessionSpawn.shouldConsumeFreshFlag && ptyCreateOptions.remintClaudeSessionId === true) {
       await consumeFreshPaneSessionOnNextSpawn(paneId);
     }
-    updatePaneStatus(paneId, 'Connected');
+    updatePaneStatus(
+      paneId,
+      ptyCreateResult?.computerUseGenerationClaim
+        ? 'Computer Use proof pending'
+        : 'Connected'
+    );
     if (
       runtimeOverride.spawnCommandOnCreate === true
       && runtimeOverride.command
@@ -3716,9 +3794,12 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
   } catch (err) {
     coldSpawnBlankRecoveryController?.markPtyExited(paneId);
     detachPtyListeners(paneId);
+    terminals.delete(paneId);
+    fitAddons.delete(paneId);
     log.error(`Terminal ${paneId}`, 'Failed to create PTY', err);
     updatePaneStatus(paneId, 'Error');
     queueTerminalWrite(paneId, terminal, `\r\n[Error: ${err.message}]\r\n`);
+    throw err;
   }
 
   container.addEventListener('click', () => {
@@ -4160,6 +4241,7 @@ async function spawnAgent(paneId, model = null, options = {}) {
     }
     if (result.success && result.command) {
       rememberClaudeSessionCollisionRecovery(paneId, result.command);
+      const computerUseClaim = result.computerUseGenerationClaim || null;
       if (runtimeOverride.spawnCommandOnCreate === true) {
         const commandText = String(result.command || '').trim().toLowerCase();
         const modelType = commandText.includes('gemini') ? 'gemini' : commandText.includes('codex') ? 'codex' : 'claude';
@@ -4175,34 +4257,68 @@ async function spawnAgent(paneId, model = null, options = {}) {
       }
       // Use pty.write directly instead of terminal.paste for reliability
       // terminal.paste() can fail if terminal isn't fully ready
+      const outputSequenceBeforeCommand = ptyOutputSequence[String(paneId)] || 0;
       try {
-        await window.squidrun.pty.write(String(paneId), result.command);
+        const commandWrite = await window.squidrun.pty.write(String(paneId), result.command);
+        if (commandWrite?.success !== true) {
+          throw new Error(commandWrite?.error || 'pty_command_write_not_accepted');
+        }
       } catch (err) {
         log.error(`spawnAgent ${paneId}`, 'PTY write command failed:', err);
+        updatePaneStatus(paneId, 'Spawn failed');
+        if (computerUseClaim) {
+          try {
+            await window.squidrun.pty.kill(String(paneId), options);
+          } catch (killErr) {
+            log.error(`spawnAgent ${paneId}`, 'Failed to stop rejected Computer Use command:', killErr);
+          }
+        }
+        return false;
       }
       // Mark as typed so Enter isn't blocked
       lastTypedTime[paneId] = Date.now();
       // Small delay before sending Enter
       await new Promise(resolve => setTimeout(resolve, 100));
       try {
-        await window.squidrun.pty.write(String(paneId), '\r');
+        const enterWrite = await window.squidrun.pty.write(String(paneId), '\r');
+        if (enterWrite?.success !== true) {
+          throw new Error(enterWrite?.error || 'pty_enter_write_not_accepted');
+        }
       } catch (err) {
         log.error(`spawnAgent ${paneId}`, 'PTY write Enter failed:', err);
+        updatePaneStatus(paneId, 'Spawn failed');
+        if (computerUseClaim) {
+          try {
+            await window.squidrun.pty.kill(String(paneId), options);
+          } catch (killErr) {
+            log.error(`spawnAgent ${paneId}`, 'Failed to stop rejected Computer Use Enter:', killErr);
+          }
+        }
+        return false;
       }
 
-      const computerUseClaim = result.computerUseGenerationClaim;
       if (computerUseClaim?.postSpawnConfirmationRequired === true) {
         const confirmGeneration = window?.squidrun?.pty?.confirmCodexComputerUseGeneration;
         let generationConfirmation;
         try {
-          generationConfirmation = typeof confirmGeneration === 'function'
-            ? await confirmGeneration(String(paneId), {
+          const childStartObservation = await waitForPtyOutputAfter(
+            String(paneId),
+            outputSequenceBeforeCommand
+          );
+          if (childStartObservation?.ok !== true) {
+            generationConfirmation = childStartObservation;
+          } else if (typeof confirmGeneration === 'function') {
+            generationConfirmation = await confirmGeneration(String(paneId), {
               claimId: computerUseClaim.claimId,
-            })
-            : {
+              childStartObserved: true,
+              childOutputSequence: childStartObservation.sequence,
+            });
+          } else {
+            generationConfirmation = {
               ok: false,
               reason: 'codex_computer_use_post_spawn_bridge_unavailable',
             };
+          }
         } catch (err) {
           generationConfirmation = {
             ok: false,
@@ -4264,7 +4380,12 @@ async function spawnAgent(paneId, model = null, options = {}) {
       }
 
     }
-    updatePaneStatus(paneId, 'Working');
+    updatePaneStatus(
+      paneId,
+      result.computerUseGenerationClaim
+        ? 'Computer Use proof pending'
+        : 'Working'
+    );
     return true;
   }
   return false;
@@ -5010,6 +5131,8 @@ module.exports = {
     captureColdSpawnRecoverySurface,
     pasteClipboardToPane,
     attachPtyBridgeListeners,
+    recordPtyOutput,
+    waitForPtyOutputAfter,
     armColdSpawnBlankRecovery,
     get coldSpawnBlankRecoveryController() { return coldSpawnBlankRecoveryController; },
     scheduleDeferredTerminalResize,

@@ -52,6 +52,7 @@ class DaemonClient extends EventEmitter {
     this.lastActivity = new Map(); // Track last activity time per pane
     this.pendingWriteAcks = new Map(); // requestEventId -> { resolve, timer }
     this.writeAckSeq = 0;
+    this.spawnSeq = 0;
     this.pendingAddressSpawns = new Map(); // requestId -> { resolve, timer }
     this.addressSpawnSeq = 0;
     this.pendingAddressKills = new Map(); // requestId -> { resolve, timer }
@@ -513,7 +514,15 @@ class DaemonClient extends EventEmitter {
    * @param {string} [cwd] - Working directory
    * @param {boolean} [dryRun=false] - If true, spawn mock terminal instead of real PTY
    */
-  spawn(paneId, cwd, dryRun = false, mode = null, env = null, spawnOptions = null) {
+  spawn(
+    paneId,
+    cwd,
+    dryRun = false,
+    mode = null,
+    env = null,
+    spawnOptions = null,
+    requestMeta = null
+  ) {
     const id = String(paneId);
     const incomingEnv = (env && typeof env === 'object') ? env : {};
     const explicitRole = typeof incomingEnv.SQUIDRUN_ROLE === 'string'
@@ -534,10 +543,134 @@ class DaemonClient extends EventEmitter {
       mode,
       env: spawnEnv,
     };
+    const requestId = String(requestMeta?.requestId || '').trim();
+    if (requestId) payload.requestId = requestId;
     if (spawnOptions && typeof spawnOptions === 'object') {
       payload.options = { ...spawnOptions };
     }
     return this._send(payload);
+  }
+
+  _nextSpawnRequestId() {
+    this.spawnSeq += 1;
+    return `pane-spawn-${Date.now()}-${this.spawnSeq}`;
+  }
+
+  /**
+   * Spawn a pane and wait until this daemon connection observes the matching
+   * spawned event. A request id prevents an older same-pane event from
+   * satisfying a newer lifecycle.
+   */
+  async spawnAndWait(
+    paneId,
+    cwd,
+    dryRun = false,
+    mode = null,
+    env = null,
+    spawnOptions = null,
+    waitOptions = {}
+  ) {
+    const id = String(paneId);
+    const timeoutMs = Math.max(100, Number(waitOptions.timeoutMs) || 5000);
+    const requestId = this._nextSpawnRequestId();
+    if (!this.connected || !this.client) {
+      return {
+        ok: false,
+        status: 'not_connected',
+        reason: 'daemon_not_connected',
+        paneId: id,
+      };
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.off('spawned', onSpawned);
+        this.off('disconnected', onDisconnected);
+        this.off('error', onError);
+        resolve(result);
+      };
+      const onSpawned = (spawnedPaneId, pid, spawnedDryRun, message = {}) => {
+        if (String(spawnedPaneId) !== id || message?.requestId !== requestId) return;
+        finish({
+          ok: Number.isFinite(Number(pid)),
+          status: Number.isFinite(Number(pid)) ? 'spawned' : 'spawn_identity_invalid',
+          reason: Number.isFinite(Number(pid))
+            ? 'daemon_pane_spawn_observed'
+            : 'daemon_pane_spawn_pid_missing',
+          paneId: id,
+          pid: Number.isFinite(Number(pid)) ? Number(pid) : null,
+          dryRun: spawnedDryRun === true,
+          message,
+          requestId,
+        });
+      };
+      const onDisconnected = () => {
+        finish({
+          ok: false,
+          status: 'disconnected',
+          reason: 'daemon_disconnected_before_spawn_observed',
+          paneId: id,
+          requestId,
+        });
+      };
+      const onError = (errorPaneId, message) => {
+        if (String(errorPaneId || '') !== id) return;
+        finish({
+          ok: false,
+          status: 'spawn_failed',
+          reason: 'daemon_pane_spawn_failed',
+          paneId: id,
+          error: message || null,
+          requestId,
+        });
+      };
+      const timer = setTimeout(() => {
+        finish({
+          ok: false,
+          status: 'ack_timeout',
+          reason: `daemon pane spawn observation timeout after ${timeoutMs}ms`,
+          paneId: id,
+          requestId,
+        });
+      }, timeoutMs);
+
+      this.on('spawned', onSpawned);
+      this.on('disconnected', onDisconnected);
+      this.on('error', onError);
+      try {
+        const accepted = this.spawn(
+          id,
+          cwd,
+          dryRun,
+          mode,
+          env,
+          spawnOptions,
+          { requestId }
+        );
+        if (accepted !== true) {
+          finish({
+            ok: false,
+            status: 'send_failed',
+            reason: 'daemon_spawn_send_failed',
+            paneId: id,
+            requestId,
+          });
+        }
+      } catch (error) {
+        finish({
+          ok: false,
+          status: 'spawn_failed',
+          reason: 'daemon_spawn_send_threw',
+          paneId: id,
+          error: error?.message || String(error),
+          requestId,
+        });
+      }
+    });
   }
 
   _nextAddressSpawnRequestId() {

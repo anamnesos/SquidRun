@@ -123,6 +123,10 @@ function createPreloadApi(ipcRenderer) {
       completePaneRestart: (payload = {}) => ipc.invoke('pane-restart-complete', payload),
       confirmCodexComputerUseGeneration: (paneId, payload = {}) =>
         ipc.invoke('codex-computer-use-confirm-generation', paneId, payload),
+      getCodexComputerUseListWindowsPlan: (paneId, payload = {}) =>
+        ipc.invoke('codex-computer-use-list-windows-plan', paneId, payload),
+      verifyCodexComputerUseListWindows: (paneId, payload = {}) =>
+        ipc.invoke('codex-computer-use-verify-list-windows', paneId, payload),
       kill: (paneId, options = {}) => ipc.invoke('pty-kill', paneId, options),
       onData: (paneId, callback) => {
         const channel = toPaneChannel('pty-data-', paneId);

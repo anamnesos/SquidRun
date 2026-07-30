@@ -324,6 +324,36 @@ describe('DaemonClient', () => {
       const result = client.spawn('1', '/tmp');
       expect(result).toBe(false);
     });
+
+    test('waits for the matching daemon spawned event before accepting command-on-create', async () => {
+      await client.connect();
+
+      const pending = client.spawnAndWait(
+        '3',
+        'D:\\projects\\squidrun',
+        false,
+        null,
+        null,
+        { paneCommand: 'codex --yolo', spawnCommandOnCreate: true }
+      );
+      const request = JSON.parse(mockSocket.write.mock.calls.at(-1)[0].trim());
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'spawned',
+        requestId: request.requestId,
+        paneId: '3',
+        pid: 42608,
+        dryRun: false,
+        mode: 'pty-command',
+      })}\n`);
+
+      await expect(pending).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        reason: 'daemon_pane_spawn_observed',
+        paneId: '3',
+        pid: 42608,
+        requestId: request.requestId,
+      }));
+    });
   });
 
   describe('spawnAddressed', () => {

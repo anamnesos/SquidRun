@@ -1954,6 +1954,7 @@ function handleMessage(client, message) {
         });
         sendToClient(client, {
           event: 'spawned',
+          requestId: msg.requestId || null,
           paneId: msg.paneId,
           ...terminalIdentityPayload(result),
         });

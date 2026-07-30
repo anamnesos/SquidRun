@@ -1,15 +1,12 @@
 #!/usr/bin/env node
 'use strict';
 
-const fs = require('fs');
 const path = require('path');
 
 const { getProjectRoot } = require('../config');
 const {
-  buildOfficialListWindowsVerification,
   prepareCodexComputerUseNativeBridge,
   probeCodexComputerUseNativeBridge,
-  verifyOfficialListWindowsProof,
 } = require('../modules/main/codex-computer-use-native-bridge');
 
 function setOption(options, key, value) {
@@ -73,16 +70,14 @@ function usage() {
     usage: [
       'node ui/scripts/hm-codex-computer-use-bridge.js status [--workspace <path>] [--pane-id <id>]',
       'node ui/scripts/hm-codex-computer-use-bridge.js prepare --workspace <path> --launch-owner [--dry-run] [--timeout-ms <ms>]',
-      'node ui/scripts/hm-codex-computer-use-bridge.js plan --workspace <path> --pane-id <id> [--allow-not-ready]',
-      'node ui/scripts/hm-codex-computer-use-bridge.js verify --proof-file <path> --workspace <path> --pane-id <id>',
     ],
     safety: [
-      'status, plan, and verify are read-only',
+      'status is read-only',
       'prepare launches only the exact OpenAI Codex Desktop AUMID and only when --launch-owner is explicit',
       'the script never starts codex-computer-use.exe or implements its pipe protocol',
       'the script never restarts or kills SquidRun, a pane, or a helper',
       'the script never retargets an existing node_repl process or claims an in-place rebind',
-      'list_windows proof is valid only after a supported target-pane binding exists',
+      'list_windows planning and verification require the app-held target-pane generation claim',
     ],
   };
 }
@@ -114,15 +109,6 @@ function buildContext(options = {}, dependencies = {}) {
   };
 }
 
-function readProofFile(filePath, dependencies = {}) {
-  const readFile = dependencies.readFile || ((target) => fs.readFileSync(target, 'utf8'));
-  const resolved = path.resolve(filePath);
-  return {
-    path: resolved,
-    proof: JSON.parse(readFile(resolved)),
-  };
-}
-
 async function main(argv = process.argv.slice(2), dependencies = {}) {
   const { command, options } = parseArgs(argv);
   const logger = dependencies.logger || console.log;
@@ -134,9 +120,6 @@ async function main(argv = process.argv.slice(2), dependencies = {}) {
   const context = buildContext(options, dependencies);
   const probe = dependencies.probe || probeCodexComputerUseNativeBridge;
   const prepare = dependencies.prepare || prepareCodexComputerUseNativeBridge;
-  const buildVerification = dependencies.buildVerification
-    || buildOfficialListWindowsVerification;
-  const verifyProof = dependencies.verifyProof || verifyOfficialListWindowsProof;
   let result;
 
   if (command === 'status') {
@@ -152,42 +135,6 @@ async function main(argv = process.argv.slice(2), dependencies = {}) {
       timeoutMs: getOption(options, 'timeout-ms', 'timeoutMs'),
       intervalMs: getOption(options, 'interval-ms', 'intervalMs'),
     }, dependencies);
-  } else if (command === 'plan') {
-    const bridge = await probe(context);
-    result = buildVerification({
-      ...context,
-      bridge,
-      allowNotReady: optionIsTrue(options, 'allow-not-ready', 'allowNotReady'),
-      clientPath: getOption(options, 'client-path', 'clientPath'),
-    });
-  } else if (command === 'verify') {
-    const proofFile = getOption(options, 'proof-file', 'proofFile');
-    if (!proofFile) {
-      result = {
-        ok: false,
-        reason: 'proof_file_required',
-        ...usage(),
-      };
-    } else {
-      try {
-        const loaded = readProofFile(proofFile, dependencies);
-        const bridge = await probe(context);
-        result = {
-          ...verifyProof(loaded.proof, {
-            ...context,
-            bridge,
-          }),
-          proofFile: loaded.path,
-        };
-      } catch (error) {
-        result = {
-          ok: false,
-          status: 'blocked',
-          reason: 'proof_file_unreadable',
-          error: error?.message || String(error),
-        };
-      }
-    }
   } else {
     result = {
       ok: false,
@@ -218,6 +165,5 @@ module.exports = {
   buildContext,
   main,
   parseArgs,
-  readProofFile,
   usage,
 };

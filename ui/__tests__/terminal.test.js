@@ -77,7 +77,7 @@ const mockSquidRun = {
   removeListener: jest.fn(),
   pty: {
     create: jest.fn().mockResolvedValue(),
-    write: jest.fn().mockResolvedValue(),
+    write: jest.fn().mockResolvedValue({ success: true }),
     claimStartupInjection: jest.fn().mockResolvedValue({
       ok: true,
       claimed: true,
@@ -183,7 +183,7 @@ describe('terminal.js module', () => {
     mockSquidRun.invoke.mockResolvedValue({ ok: true });
     mockSquidRun.daemon.terminalSnapshot.mockResolvedValue({ ok: false, terminals: [] });
     mockSquidRun.pty.create.mockResolvedValue();
-    mockSquidRun.pty.write.mockResolvedValue();
+    mockSquidRun.pty.write.mockResolvedValue({ success: true });
     mockSquidRun.pty.confirmCodexComputerUseGeneration.mockResolvedValue({ ok: true });
     mockSquidRun.pty.kill.mockResolvedValue();
     mockSquidRun.claude.spawn.mockResolvedValue({ success: true, command: 'claude' });
@@ -1854,6 +1854,7 @@ describe('terminal.js module', () => {
           listWindowsProofRequired: true,
         },
       });
+      setTimeout(() => terminal._internals.recordPtyOutput('3'), 10);
 
       const spawned = await terminal.spawnAgent('3');
 
@@ -1862,7 +1863,11 @@ describe('terminal.js module', () => {
       expect(mockSquidRun.pty.write).toHaveBeenCalledWith('3', '\r');
       expect(mockSquidRun.pty.confirmCodexComputerUseGeneration).toHaveBeenCalledWith(
         '3',
-        { claimId: 'generation-claim-3' }
+        expect.objectContaining({
+          claimId: 'generation-claim-3',
+          childStartObserved: true,
+          childOutputSequence: expect.any(Number),
+        })
       );
       expect(mockSquidRun.pty.write.mock.invocationCallOrder[1])
         .toBeLessThan(mockSquidRun.pty.confirmCodexComputerUseGeneration.mock.invocationCallOrder[0]);
@@ -1888,6 +1893,7 @@ describe('terminal.js module', () => {
         ok: false,
         reason: 'computer_use_pipe_generation_changed',
       });
+      setTimeout(() => terminal._internals.recordPtyOutput('3'), 10);
 
       const spawned = await terminal.spawnAgent('3', null, {
         requireRestartClaim: true,
@@ -1901,6 +1907,50 @@ describe('terminal.js module', () => {
       });
       expect(statusCb).toHaveBeenCalledWith('3', 'Computer Use generation stale');
       expect(statusCb).not.toHaveBeenCalledWith('3', 'Working');
+      terminal.unregisterCodexPane('3');
+      jest.useFakeTimers();
+    });
+
+    test.each([
+      ['command write returns false', [
+        { kind: 'resolve', value: { success: false, error: 'command_rejected' } },
+      ]],
+      ['command write throws', [
+        { kind: 'reject', value: new Error('command_write_threw') },
+      ]],
+      ['Enter write returns false', [
+        { kind: 'resolve', value: { success: true } },
+        { kind: 'resolve', value: { success: false, error: 'enter_rejected' } },
+      ]],
+      ['Enter write throws', [
+        { kind: 'resolve', value: { success: true } },
+        { kind: 'reject', value: new Error('enter_write_threw') },
+      ]],
+    ])('fails Computer Use startup immediately when %s', async (_label, writeResults) => {
+      jest.useRealTimers();
+      terminal.registerCodexPane('3');
+      terminal.terminals.set('3', { write: jest.fn() });
+      mockSquidRun.claude.spawn.mockResolvedValueOnce({
+        success: true,
+        command: 'codex --yolo',
+        computerUseGenerationClaim: {
+          claimId: 'generation-claim-3',
+          postSpawnConfirmationRequired: true,
+        },
+      });
+      for (const writeResult of writeResults) {
+        if (writeResult.kind === 'reject') {
+          mockSquidRun.pty.write.mockRejectedValueOnce(writeResult.value);
+        } else {
+          mockSquidRun.pty.write.mockResolvedValueOnce(writeResult.value);
+        }
+      }
+
+      const spawned = await terminal.spawnAgent('3');
+
+      expect(spawned).toBe(false);
+      expect(mockSquidRun.pty.confirmCodexComputerUseGeneration).not.toHaveBeenCalled();
+      expect(mockSquidRun.pty.kill).toHaveBeenCalledWith('3', {});
       terminal.unregisterCodexPane('3');
       jest.useFakeTimers();
     });
@@ -2291,6 +2341,53 @@ describe('terminal.js module', () => {
       expect(
         mockSquidRun.pty.onData.mock.invocationCallOrder[dataListenerCallIndex]
       ).toBeLessThan(mockSquidRun.pty.create.mock.invocationCallOrder[0]);
+    });
+
+    test('rejects an unsuccessful command-on-create response instead of reporting Connected', async () => {
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      const statusCb = jest.fn();
+      terminal.setStatusCallbacks(statusCb, null);
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '3': 'codex --yolo' },
+      });
+      mockSquidRun.pty.create.mockResolvedValueOnce({
+        success: false,
+        reason: 'codex_computer_use_pty_spawn_not_accepted',
+      });
+
+      await expect(terminal.initTerminal('3', { spawnCommandOnCreate: true }))
+        .rejects.toThrow('codex_computer_use_pty_spawn_not_accepted');
+
+      expect(terminal.terminals.has('3')).toBe(false);
+      expect(statusCb).toHaveBeenCalledWith('3', 'Error');
+      expect(statusCb).not.toHaveBeenCalledWith('3', 'Connected');
+    });
+
+    test('keeps direct Computer Use startup proof-pending after observed daemon spawn', async () => {
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      const statusCb = jest.fn();
+      terminal.setStatusCallbacks(statusCb, null);
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '3': 'codex --yolo' },
+      });
+      mockSquidRun.pty.create.mockResolvedValueOnce({
+        success: true,
+        computerUseGenerationClaim: {
+          claimId: 'generation-claim-3',
+          authoritativeComputerUseReady: false,
+        },
+      });
+
+      await terminal.initTerminal('3', { spawnCommandOnCreate: true });
+
+      expect(statusCb).toHaveBeenCalledWith('3', 'Computer Use proof pending');
+      expect(statusCb).not.toHaveBeenCalledWith('3', 'Connected');
     });
 
     test('permanently disarms cold-spawn recovery before forwarding direct terminal input', async () => {
