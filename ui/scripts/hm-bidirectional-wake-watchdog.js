@@ -83,106 +83,240 @@ function appendLog(filePath, message) {
 }
 
 function readPidInfo(pidPath = DEFAULT_PID_PATH) {
+  if (!fs.existsSync(pidPath)) {
+    return {
+      exists: false,
+      readable: true,
+      pid: null,
+      mtimeMs: 0,
+      error: null,
+    };
+  }
   try {
     const stat = fs.statSync(pidPath);
+    const pid = Number.parseInt(fs.readFileSync(pidPath, 'utf8').trim(), 10);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return {
+        exists: true,
+        readable: false,
+        pid: null,
+        mtimeMs: Number(stat.mtimeMs || 0),
+        error: 'invalid_pid_file',
+      };
+    }
     return {
-      pid: Number.parseInt(fs.readFileSync(pidPath, 'utf8').trim(), 10),
+      exists: true,
+      readable: true,
+      pid,
       mtimeMs: Number(stat.mtimeMs || 0),
+      error: null,
     };
-  } catch {
-    return { pid: null, mtimeMs: 0 };
+  } catch (error) {
+    return {
+      exists: true,
+      readable: false,
+      pid: null,
+      mtimeMs: 0,
+      error: error.message,
+    };
   }
 }
 
 function readStatusInfo(statusPath = DEFAULT_STATUS_PATH) {
+  if (!fs.existsSync(statusPath)) {
+    return {
+      exists: false,
+      readable: true,
+      value: null,
+      mtimeMs: 0,
+      error: null,
+    };
+  }
   try {
     const stat = fs.statSync(statusPath);
+    const value = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {
+        exists: true,
+        readable: false,
+        value: null,
+        mtimeMs: Number(stat.mtimeMs || 0),
+        error: 'invalid_status_file',
+      };
+    }
     return {
-      value: JSON.parse(fs.readFileSync(statusPath, 'utf8')),
+      exists: true,
+      readable: true,
+      value,
       mtimeMs: Number(stat.mtimeMs || 0),
+      error: null,
     };
-  } catch {
-    return { value: null, mtimeMs: 0 };
+  } catch (error) {
+    return {
+      exists: true,
+      readable: false,
+      value: null,
+      mtimeMs: 0,
+      error: error.message,
+    };
   }
 }
 
 /**
- * S483 ORPHAN-LEAK FIX: find EVERY live process running this script, by
- * command line, regardless of spawn shape.
- *
- * The pidfile model tracks exactly ONE pid, so any daemon that was alive when
- * the pidfile got overwritten became permanently invisible - no code path ever
- * looked for it again. Four accumulated (one per app start). Identity by WORK
- * (the script path in argv) instead of by a single recorded pid also makes the
- * check immune to electron.exe-vs-node.exe launch differences.
- *
- * Best-effort by construction: any enumeration failure returns [] so the
- * caller falls back to the prior pidfile behavior and is never worse off.
+ * Split a supported Node/Electron launch command without evaluating it.
+ * SquidRun owns only the exact argv shape it creates:
+ *   <node-or-electron> <absolute-this-script> run ...
+ * A wrapper merely mentioning the basename and a same-named side-install
+ * script therefore cannot become an ownership match.
  */
-function findLiveRunnerPids({ excludePid = process.pid } = {}) {
-  // BLAST-RADIUS SCOPE (S442/443 precedent: a main-instance kill-phase once
-  // took sideprofile's standalone install down). Match on THIS FILE'S ABSOLUTE
-  // PATH, never the basename - her install runs the same script name from
-  // D:\SquidRun\sideprofile\versions\..., and a basename match would reap her
-  // load-bearing daemon. Full-path identity makes cross-install reach
-  // impossible by construction, not by intention.
-  const normalize = (value) => String(value || '').replace(/\\/g, '/').toLowerCase();
-  const selfPath = normalize(__filename);
-  const found = [];
+function splitProcessCommandLine(commandLine) {
+  const source = typeof commandLine === 'string' ? commandLine.trim() : '';
+  if (!source) return null;
+  const tokens = [];
+  let token = '';
+  let tokenStarted = false;
+  let quoted = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    // The supported spawn shape never embeds a literal quote in an argument.
+    // Reject Windows escape/doubled-quote forms instead of approximating
+    // CommandLineToArgvW at an ownership boundary.
+    if (
+      (char === '\\' && source[index + 1] === '"')
+      || (char === '"' && source[index + 1] === '"')
+    ) {
+      return null;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      tokenStarted = true;
+      continue;
+    }
+    if (/\s/.test(char) && !quoted) {
+      if (tokenStarted) {
+        tokens.push(token);
+        token = '';
+        tokenStarted = false;
+      }
+      continue;
+    }
+    token += char;
+    tokenStarted = true;
+  }
+  if (quoted) return null;
+  if (tokenStarted) tokens.push(token);
+  return tokens.length > 0 ? tokens : null;
+}
+
+function normalizeScriptIdentity(value) {
+  const text = toText(value, '');
+  if (!text) return '';
+  if (path.win32.isAbsolute(text)) {
+    return path.win32.normalize(text).replace(/\\/g, '/').toLowerCase();
+  }
+  if (path.posix.isAbsolute(text)) {
+    return path.posix.normalize(text).toLowerCase();
+  }
+  return '';
+}
+
+function normalizeRunnerProcessRow(row = {}) {
+  const pid = Number(row.pid ?? row.ProcessId);
+  const commandLineValue = row.commandLine ?? row.CommandLine;
+  const executablePathValue = row.executablePath ?? row.ExecutablePath;
+  const nameValue = row.name ?? row.Name;
+  return {
+    pid: Number.isInteger(pid) && pid > 0 ? pid : null,
+    name: toText(nameValue, '') || null,
+    executablePath: toText(executablePathValue, '') || null,
+    commandLine: typeof commandLineValue === 'string' && commandLineValue.trim()
+      ? commandLineValue.trim()
+      : null,
+    creationDate: toText(row.creationDate ?? row.CreationDate, '') || null,
+  };
+}
+
+function isExactRunnerProcessRow(row = {}, scriptPath = __filename) {
+  const normalized = normalizeRunnerProcessRow(row);
+  const argv = splitProcessCommandLine(normalized.commandLine);
+  if (!normalized.pid || !argv || argv.length < 3) return false;
+  const supportedExecutable = (value) => {
+    const basename = toText(value, '').replace(/\\/g, '/').split('/').pop();
+    return /^(?:node|electron)(?:\.exe)?$/i.test(basename);
+  };
+  if (!supportedExecutable(argv[0])) return false;
+  if (normalized.name && !supportedExecutable(normalized.name)) return false;
+  if (normalized.executablePath && !supportedExecutable(normalized.executablePath)) return false;
+  return (
+    normalizeScriptIdentity(argv[1]) === normalizeScriptIdentity(scriptPath)
+    && String(argv[2] || '').toLowerCase() === 'run'
+  );
+}
+
+/**
+ * Enumerate candidate Node/Electron processes without turning probe failure
+ * into "none found". Ownership-sensitive callers must fail closed on ok:false.
+ */
+function getRunnerProcessScan() {
   try {
     if (process.platform === 'win32') {
       const raw = execFileSync('powershell.exe', [
         '-NoProfile', '-NonInteractive', '-Command',
-        "Get-CimInstance Win32_Process -Filter \"Name='node.exe' OR Name='electron.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+        "Get-CimInstance Win32_Process -Filter \"Name='node.exe' OR Name='electron.exe'\" | Select-Object ProcessId,Name,ExecutablePath,CreationDate,CommandLine | ConvertTo-Json -Compress",
       ], { encoding: 'utf8', timeout: 15_000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
       const parsed = JSON.parse(raw || '[]');
-      for (const row of (Array.isArray(parsed) ? parsed : [parsed])) {
-        const cmd = normalize(row?.CommandLine);
-        const pid = Number(row?.ProcessId);
-        if (!cmd.includes(selfPath)) continue; // absolute path only
-        if (!/\brun\b/.test(cmd)) continue; // only the long-lived `run` daemons
-        if (Number.isInteger(pid) && pid > 0 && pid !== excludePid) found.push(pid);
-      }
+      const rows = (Array.isArray(parsed) ? parsed : [parsed])
+        .map(normalizeRunnerProcessRow)
+        .filter((row) => row.pid);
+      return { ok: true, source: 'win32_cim', rows, error: null };
     } else {
-      const raw = execFileSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8', timeout: 15_000 });
+      const raw = execFileSync('ps', ['-eo', 'pid=,comm=,args='], {
+        encoding: 'utf8',
+        timeout: 15_000,
+      });
+      const rows = [];
       for (const line of raw.split('\n')) {
-        const normalized = normalize(line);
-        if (!normalized.includes(selfPath) || !/\brun\b/.test(normalized)) continue;
-        const pid = Number.parseInt(line.trim().split(/\s+/)[0], 10);
-        if (Number.isInteger(pid) && pid > 0 && pid !== excludePid) found.push(pid);
+        const match = line.match(/^\s*(\d+)\s+(\S+)\s+(.*)$/);
+        if (!match) continue;
+        rows.push(normalizeRunnerProcessRow({
+          pid: Number(match[1]),
+          name: match[2],
+          executablePath: match[2],
+          commandLine: match[3],
+        }));
       }
+      return { ok: true, source: 'posix_ps', rows, error: null };
     }
   } catch (error) {
     appendLog(DEFAULT_LOG_PATH, `[scan-warning] runner enumeration failed: ${error.message}`);
-    return [];
+    return {
+      ok: false,
+      source: process.platform === 'win32' ? 'win32_cim' : 'posix_ps',
+      rows: [],
+      error: error.message,
+    };
   }
-  return found;
 }
 
-/** Reap every live runner except an explicitly kept pid. Returns killed pids. */
-function reapStrayRunners({ keepPid = null } = {}) {
-  const killed = [];
-  for (const pid of findLiveRunnerPids()) {
-    if (keepPid && pid === Number(keepPid)) continue;
-    try {
-      process.kill(pid, 'SIGTERM');
-      killed.push(pid);
-      appendLog(DEFAULT_LOG_PATH, `[cleanup] reaped stray runner pid=${pid} (command-line scan)`);
-    } catch (error) {
-      appendLog(DEFAULT_LOG_PATH, `[cleanup-warning] failed to stop stray runner pid=${pid}: ${error.message}`);
-    }
-  }
-  return killed;
-}
-
-function isPidAlive(pid) {
+function probePidLiveness(pid) {
   const numeric = Number(pid);
-  if (!Number.isInteger(numeric) || numeric <= 0) return false;
+  if (!Number.isInteger(numeric) || numeric <= 0) {
+    return { known: true, alive: false, pid: null, error: null };
+  }
   try {
     process.kill(numeric, 0);
-    return true;
-  } catch {
-    return false;
+    return { known: true, alive: true, pid: numeric, error: null };
+  } catch (error) {
+    if (error?.code === 'ESRCH') {
+      return { known: true, alive: false, pid: numeric, error: null };
+    }
+    return {
+      known: false,
+      alive: null,
+      pid: numeric,
+      error: error.message,
+      code: error.code || null,
+    };
   }
 }
 
@@ -258,17 +392,265 @@ function buildRunnerStatusSnapshot({
   };
 }
 
-function readRunnerStatus({ currentGenerationId = null } = {}) {
+function asValidPid(value) {
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+}
+
+function runPidOwnershipProbe(pid, ownershipProbe = {}) {
+  const probe = typeof ownershipProbe.probePid === 'function'
+    ? ownershipProbe.probePid
+    : probePidLiveness;
+  try {
+    const result = probe(pid);
+    if (typeof result === 'boolean') {
+      return {
+        known: true,
+        alive: result,
+        pid: asValidPid(pid),
+        error: null,
+      };
+    }
+    return {
+      known: result?.known !== false && typeof result?.alive === 'boolean',
+      alive: typeof result?.alive === 'boolean' ? result.alive : null,
+      pid: asValidPid(result?.pid ?? pid),
+      error: result?.error || null,
+      code: result?.code || null,
+    };
+  } catch (error) {
+    return {
+      known: false,
+      alive: null,
+      pid: asValidPid(pid),
+      error: error.message,
+      code: error.code || null,
+    };
+  }
+}
+
+function runProcessOwnershipScan(ownershipProbe = {}) {
+  const scan = typeof ownershipProbe.getProcessScan === 'function'
+    ? ownershipProbe.getProcessScan
+    : getRunnerProcessScan;
+  try {
+    const result = scan();
+    return {
+      ok: result?.ok === true,
+      source: result?.source || 'unknown',
+      rows: Array.isArray(result?.rows)
+        ? result.rows.map(normalizeRunnerProcessRow).filter((row) => row.pid)
+        : [],
+      error: result?.error || null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      source: 'probe_exception',
+      rows: [],
+      error: error.message,
+    };
+  }
+}
+
+/**
+ * Build a fail-closed ownership claim from all three authorities:
+ * pidfile, status file, and an exact process-command observation.
+ *
+ * No caller may signal a process, delete owner metadata, or spawn a successor
+ * unless this snapshot is non-conflicted. A process row is an owner only when
+ * argv[1] equals this resolved script and argv[2] is exactly `run`.
+ */
+function buildRunnerOwnershipSnapshot({
+  pidInfo = {},
+  statusInfo = {},
+  pidProbes = new Map(),
+  processScan = {},
+  scriptPath = __filename,
+} = {}) {
+  const pidFilePid = asValidPid(pidInfo.pid);
+  const statusPid = asValidPid(statusInfo.value?.pid);
+  const referencedPids = [...new Set([pidFilePid, statusPid].filter(Boolean))];
+  const rows = Array.isArray(processScan.rows)
+    ? processScan.rows.map(normalizeRunnerProcessRow).filter((row) => row.pid)
+    : [];
+  const rowsByPid = new Map(rows.map((row) => [row.pid, row]));
+  const exactRows = rows.filter((row) => isExactRunnerProcessRow(row, scriptPath));
+  const conflicts = [];
+  const conflictKeys = new Set();
+  const addConflict = (code, details = {}) => {
+    const key = `${code}:${details.pid || ''}`;
+    if (conflictKeys.has(key)) return;
+    conflictKeys.add(key);
+    conflicts.push({ code, ...details });
+  };
+
+  if (pidInfo.exists === true && pidInfo.readable !== true) {
+    addConflict('pid_metadata_unreadable', { error: pidInfo.error || null });
+  }
+  if (statusInfo.exists === true && statusInfo.readable !== true) {
+    addConflict('status_metadata_unreadable', { error: statusInfo.error || null });
+  } else if (statusInfo.exists === true && !statusPid) {
+    addConflict('status_pid_invalid');
+  }
+  if (processScan.ok !== true) {
+    addConflict('process_enumeration_uncertain', {
+      error: processScan.error || null,
+      source: processScan.source || null,
+    });
+  }
+
+  for (const pid of referencedPids) {
+    const probe = pidProbes.get(pid) || {
+      known: false,
+      alive: null,
+      pid,
+      error: 'pid_probe_missing',
+    };
+    if (probe.known !== true) {
+      addConflict('pid_liveness_uncertain', {
+        pid,
+        error: probe.error || null,
+        source: pid === pidFilePid && pid === statusPid
+          ? 'pidfile_and_status'
+          : (pid === pidFilePid ? 'pidfile' : 'status'),
+      });
+      continue;
+    }
+    if (probe.alive !== true) continue;
+    const row = rowsByPid.get(pid);
+    if (!row) {
+      addConflict('live_process_unobserved', { pid });
+    } else if (!row.commandLine) {
+      addConflict('live_identity_unreadable', { pid });
+    } else if (!isExactRunnerProcessRow(row, scriptPath)) {
+      addConflict('live_identity_mismatch', { pid });
+    }
+  }
+
+  const liveReferencedPids = referencedPids.filter(
+    (pid) => pidProbes.get(pid)?.known === true && pidProbes.get(pid)?.alive === true
+  );
+  if (pidFilePid !== statusPid && liveReferencedPids.length > 0) {
+    addConflict('pid_status_mismatch', {
+      pidFilePid,
+      statusPid,
+    });
+  }
+  if (
+    liveReferencedPids.length > 0
+    && statusInfo.value?.role !== 'bidirectional-wake-watchdog'
+  ) {
+    addConflict('live_status_role_mismatch', {
+      role: statusInfo.value?.role || null,
+    });
+  }
+  if (exactRows.length > 1) {
+    addConflict('multiple_exact_runner_owners', {
+      pids: exactRows.map((row) => row.pid),
+    });
+  }
+  for (const row of exactRows) {
+    const isNamedByBoth = Boolean(pidFilePid && pidFilePid === statusPid && row.pid === pidFilePid);
+    if (!isNamedByBoth) {
+      addConflict('unclaimed_exact_runner_owner', { pid: row.pid });
+    }
+    const probe = pidProbes.get(row.pid);
+    if (probe && (probe.known !== true || probe.alive !== true)) {
+      addConflict('owner_observation_liveness_mismatch', { pid: row.pid });
+    }
+  }
+
+  const referencedOwners = referencedPids.map((pid) => {
+    const row = rowsByPid.get(pid) || null;
+    const probe = pidProbes.get(pid) || null;
+    return {
+      pid,
+      sources: [
+        ...(pid === pidFilePid ? ['pidfile'] : []),
+        ...(pid === statusPid ? ['status'] : []),
+      ],
+      livenessKnown: probe?.known === true,
+      alive: typeof probe?.alive === 'boolean' ? probe.alive : null,
+      observed: Boolean(row),
+      commandLineReadable: Boolean(row?.commandLine),
+      exactRunnerIdentity: Boolean(row && isExactRunnerProcessRow(row, scriptPath)),
+      processName: row?.name || null,
+      executablePath: row?.executablePath || null,
+      creationDate: row?.creationDate || null,
+    };
+  });
+  const status = conflicts.length > 0
+    ? 'ownership_conflict'
+    : (liveReferencedPids.length > 0
+      ? 'verified_live_owner'
+      : (referencedPids.length > 0 || pidInfo.exists === true || statusInfo.exists === true
+        ? 'recoverable_stale_metadata'
+        : 'clear'));
+
+  return {
+    ok: conflicts.length === 0,
+    status,
+    pidFilePid,
+    statusPid,
+    referencedOwners,
+    observedExactOwners: exactRows.map((row) => ({
+      pid: row.pid,
+      processName: row.name || null,
+      executablePath: row.executablePath || null,
+      creationDate: row.creationDate || null,
+    })),
+    processScan: {
+      ok: processScan.ok === true,
+      source: processScan.source || null,
+      rowCount: rows.length,
+      error: processScan.error || null,
+    },
+    conflicts,
+    scriptPath: path.resolve(scriptPath),
+  };
+}
+
+function readRunnerStatus({ currentGenerationId = null, ownershipProbe = {} } = {}) {
   const pidInfo = readPidInfo();
   const statusInfo = readStatusInfo();
-  return buildRunnerStatusSnapshot({
+  const referencedPids = [...new Set([
+    asValidPid(pidInfo.pid),
+    asValidPid(statusInfo.value?.pid),
+  ].filter(Boolean))];
+  const pidProbes = new Map(
+    referencedPids.map((pid) => [pid, runPidOwnershipProbe(pid, ownershipProbe)])
+  );
+  const processScan = runProcessOwnershipScan(ownershipProbe);
+  const ownership = buildRunnerOwnershipSnapshot({
+    pidInfo,
+    statusInfo,
+    pidProbes,
+    processScan,
+  });
+  const status = buildRunnerStatusSnapshot({
     pid: pidInfo.pid,
-    pidAlive: isPidAlive(pidInfo.pid),
+    pidAlive: pidProbes.get(asValidPid(pidInfo.pid))?.alive === true,
     pidMtimeMs: pidInfo.mtimeMs,
     statusFile: statusInfo.value,
     statusMtimeMs: statusInfo.mtimeMs,
     currentGenerationId,
   });
+  if (!ownership.ok) {
+    return {
+      ...status,
+      ok: false,
+      status: 'ownership_conflict',
+      reason: 'ownership_conflict',
+      blocked: true,
+      retryable: false,
+      ownership,
+    };
+  }
+  return {
+    ...status,
+    ownership,
+  };
 }
 
 function cleanupRunnerMetadata() {
@@ -811,35 +1193,37 @@ async function runScheduledLoop(options = {}) {
   }
 }
 
+function ownershipConflictResult(current = {}, operation = 'status', phase = 'initial') {
+  return {
+    ...current,
+    ok: false,
+    status: 'ownership_conflict',
+    reason: 'ownership_conflict',
+    blocked: true,
+    retryable: false,
+    operation,
+    phase,
+  };
+}
+
 function startRunner(options = {}) {
   const generationId = toText(options.appGenerationId, '');
-  const current = readRunnerStatus({ currentGenerationId: generationId });
+  const statusOptions = {
+    currentGenerationId: generationId,
+    ownershipProbe: options.ownershipProbe || {},
+  };
+  const current = readRunnerStatus(statusOptions);
+  if (current.ownership?.ok !== true) {
+    return ownershipConflictResult(current, 'start', 'initial');
+  }
   // A live daemon from the current app lifecycle is healthy — leave it. A live
   // daemon from a PRIOR lifecycle (stale generation) survived a restart and may
-  // run stale code: reap + replace it regardless of pid liveness or the start
-  // lock. This closes the hole where a pre-restart orphan held the pidfile and
-  // auto-start skipped spawning a fresh instance.
+  // run stale code. Owner mutation happens only after the start lock and a
+  // second complete ownership classification below.
   if ((current.running || current.starting) && !current.staleGeneration) {
     return current.running
       ? { ok: true, alreadyRunning: true, ...current }
       : { ok: true, alreadyStarting: true, ...current };
-  }
-  // S483: unknownLivePid carries the live pid in a DIFFERENT field than the
-  // reaper read (snapshot sets `pid` to null in that state), so a live daemon
-  // whose status did not match got its metadata wiped and was then left
-  // running forever - untracked, unkillable, invisible to every later check.
-  // That path built one orphan per app start. Reap it too, from its own field.
-  const reapTarget = current.pid || current.unknownLivePid;
-  if ((current.staleHeartbeat || current.staleGeneration || current.unknownLivePid) && reapTarget) {
-    try {
-      process.kill(reapTarget, 'SIGTERM');
-      appendLog(DEFAULT_LOG_PATH, `[cleanup] reaped runner pid=${reapTarget} staleGeneration=${Boolean(current.staleGeneration)} staleHeartbeat=${Boolean(current.staleHeartbeat)} unknownLivePid=${Boolean(current.unknownLivePid)}`);
-    } catch (error) {
-      appendLog(DEFAULT_LOG_PATH, `[cleanup-warning] failed to stop runner pid=${reapTarget}: ${error.message}`);
-    }
-  }
-  if (current.stalePid || current.staleHeartbeat || current.unknownLivePid || current.staleGeneration) {
-    cleanupRunnerMetadata();
   }
 
   const lock = acquireStartLock(DEFAULT_START_LOCK_PATH, options.startLock);
@@ -853,29 +1237,45 @@ function startRunner(options = {}) {
   }
 
   try {
-    const rechecked = readRunnerStatus({ currentGenerationId: generationId });
+    const rechecked = readRunnerStatus(statusOptions);
+    if (rechecked.ownership?.ok !== true) {
+      return ownershipConflictResult(rechecked, 'start', 'under_start_lock');
+    }
     if ((rechecked.running || rechecked.starting) && !rechecked.staleGeneration) {
       return rechecked.running
         ? { ok: true, alreadyRunning: true, ...rechecked }
         : { ok: true, alreadyStarting: true, ...rechecked };
     }
-    if (rechecked.staleGeneration && rechecked.pid) {
-      try {
-        process.kill(rechecked.pid, 'SIGTERM');
-        appendLog(DEFAULT_LOG_PATH, `[cleanup] reaped stale-generation runner pid=${rechecked.pid} after lock`);
-      } catch (error) {
-        appendLog(DEFAULT_LOG_PATH, `[cleanup-warning] failed to stop stale-generation runner pid=${rechecked.pid}: ${error.message}`);
-      }
-      cleanupRunnerMetadata();
-    }
 
-    // S483 BACKSTOP: we hold the start lock and have decided to spawn, so no
-    // live runner should exist. Any that does is an orphan the pidfile model
-    // cannot see (it tracks one pid; earlier daemons went invisible when the
-    // file was overwritten). Sweep by command line before adding another.
-    const strays = reapStrayRunners();
-    if (strays.length > 0) {
-      appendLog(DEFAULT_LOG_PATH, `[cleanup] pre-spawn sweep removed ${strays.length} orphan(s): ${strays.join(',')}`);
+    const verifiedOwnerPid = rechecked.ownership.status === 'verified_live_owner'
+      ? rechecked.ownership.pidFilePid
+      : null;
+    if (verifiedOwnerPid) {
+      try {
+        process.kill(verifiedOwnerPid, 'SIGTERM');
+        appendLog(
+          DEFAULT_LOG_PATH,
+          `[cleanup] stopped exact runner owner pid=${verifiedOwnerPid} after locked ownership recheck`
+        );
+      } catch (error) {
+        return {
+          ...rechecked,
+          ok: false,
+          status: 'owner_stop_failed',
+          reason: 'owner_stop_failed',
+          blocked: true,
+          retryable: false,
+          operation: 'start',
+          phase: 'under_start_lock',
+          error: error.message,
+        };
+      }
+    }
+    if (
+      verifiedOwnerPid
+      || rechecked.ownership.status === 'recoverable_stale_metadata'
+    ) {
+      cleanupRunnerMetadata();
     }
 
     const statePath = path.resolve(toText(options.statePath, DEFAULT_STATE_PATH));
@@ -930,14 +1330,29 @@ function startRunner(options = {}) {
   }
 }
 
-function stopRunner() {
-  const current = readRunnerStatus();
-  const pid = current.pid || current.stalePid;
-  if (pid && isPidAlive(pid)) {
+function stopRunner(options = {}) {
+  const current = readRunnerStatus({
+    ownershipProbe: options.ownershipProbe || {},
+  });
+  if (current.ownership?.ok !== true) {
+    return ownershipConflictResult(current, 'stop', 'initial');
+  }
+  const pid = current.ownership.status === 'verified_live_owner'
+    ? current.ownership.pidFilePid
+    : null;
+  if (pid) {
     try {
       process.kill(pid, 'SIGTERM');
     } catch (error) {
-      return { ok: false, reason: 'stop_failed', error: error.message, ...current };
+      return {
+        ...current,
+        ok: false,
+        status: 'stop_failed',
+        reason: 'stop_failed',
+        blocked: true,
+        retryable: false,
+        error: error.message,
+      };
     }
   }
   cleanupRunnerMetadata();
@@ -949,7 +1364,13 @@ function stopRunner() {
   };
 }
 
-async function runCli(argv = parseCliArgs()) {
+async function runCli(argv = parseCliArgs(), controls = {}) {
+  const startControl = typeof controls.startRunner === 'function'
+    ? controls.startRunner
+    : startRunner;
+  const stopControl = typeof controls.stopRunner === 'function'
+    ? controls.stopRunner
+    : stopRunner;
   const command = toText(argv.positional[0], 'run').toLowerCase();
   const statePath = path.resolve(toText(getOption(argv.options, 'state', DEFAULT_STATE_PATH)));
   const intervalMs = Math.max(30_000, toNumber(getOption(argv.options, 'interval-ms', DEFAULT_INTERVAL_MS), DEFAULT_INTERVAL_MS));
@@ -970,20 +1391,28 @@ async function runCli(argv = parseCliArgs()) {
   }
 
   if (command === 'start') {
-    const result = startRunner({ statePath, intervalMs, agentPaneAutoRecovery });
+    const result = startControl({ statePath, intervalMs, agentPaneAutoRecovery });
     console.log(JSON.stringify(result, null, 2));
     return result;
   }
 
   if (command === 'stop') {
-    const result = stopRunner();
+    const result = stopControl();
     console.log(JSON.stringify(result, null, 2));
     return result;
   }
 
   if (command === 'restart') {
-    stopRunner();
-    const result = startRunner({ statePath, intervalMs, agentPaneAutoRecovery });
+    const stopResult = stopControl();
+    if (stopResult?.ok === false) {
+      const result = {
+        ...stopResult,
+        restartAborted: true,
+      };
+      console.log(JSON.stringify(result, null, 2));
+      return result;
+    }
+    const result = startControl({ statePath, intervalMs, agentPaneAutoRecovery });
     console.log(JSON.stringify(result, null, 2));
     return result;
   }
@@ -1006,9 +1435,11 @@ module.exports = {
   DEFAULT_PID_PATH,
   DEFAULT_STATUS_PATH,
   DEFAULT_STATE_PATH,
+  buildRunnerOwnershipSnapshot,
   buildRunnerStatusSnapshot,
   defaultState,
   isActiveWindow,
+  isExactRunnerProcessRow,
   hasPendingTeamWork,
   readRunnerStatus,
   loadState,

@@ -170,7 +170,11 @@ function runBidirectionalWakeWatchdogAutoStart(argv = []) {
     projectRoot,
     command: args,
     status: result.status,
-    error: result.error ? result.error.message : null,
+    error: result.error
+      ? result.error.message
+      : (parsed?.ok === false
+        ? (parsed.error || parsed.reason || parsed.status || 'watchdog_start_failed')
+        : null),
     stdout: result.stdout || '',
     stderr: result.stderr || '',
     result: parsed,

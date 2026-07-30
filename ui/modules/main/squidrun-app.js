@@ -1772,8 +1772,19 @@ class SquidRunApp {
       );
     }
 
+    const bidirectionalWakeWatchdogDegraded = bidirectionalWakeWatchdog?.ok === false;
+    const bidirectionalWakeWatchdogConflict = bidirectionalWakeWatchdogDegraded && (
+      bidirectionalWakeWatchdog?.status === 'ownership_conflict'
+      || bidirectionalWakeWatchdog?.reason === 'ownership_conflict'
+    );
     return {
-      ok: true,
+      ok: !bidirectionalWakeWatchdogDegraded,
+      degraded: bidirectionalWakeWatchdogDegraded,
+      reason: bidirectionalWakeWatchdogDegraded
+        ? (bidirectionalWakeWatchdogConflict
+          ? 'bidirectional_wake_watchdog_ownership_conflict'
+          : 'bidirectional_wake_watchdog_auto_start_failed')
+        : null,
       outputPath,
       snapshot,
       telegramPollerRecovery,
@@ -1835,6 +1846,11 @@ class SquidRunApp {
         log.warn(
           'StartupHealth',
           `Started bidirectional wake watchdog runner before startup-health snapshot (pid=${result.pid || 'unknown'})`
+        );
+      } else if (result?.ok === false) {
+        log.warn(
+          'StartupHealth',
+          `Bidirectional wake watchdog auto-start degraded: ${result.status || result.reason || result.error || 'unknown'}`
         );
       }
       return result;

@@ -3346,6 +3346,40 @@ describe('SquidRunApp', () => {
       expect(teamMemory.initializeTeamMemoryRuntime).not.toHaveBeenCalled();
     });
 
+    it('surfaces a watchdog ownership conflict as nonfatal degraded startup health without retry', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const { startRunner: startBidirectionalWakeWatchdogRunner } = require('../scripts/hm-bidirectional-wake-watchdog');
+      startBidirectionalWakeWatchdogRunner.mockReturnValueOnce({
+        ok: false,
+        status: 'ownership_conflict',
+        reason: 'ownership_conflict',
+        blocked: true,
+        retryable: false,
+        ownership: {
+          pidFilePid: 33400,
+          statusPid: 33380,
+        },
+      });
+      jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      const result = await app.refreshStartupHealthArtifacts({
+        sessionNumber: 147,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        degraded: true,
+        reason: 'bidirectional_wake_watchdog_ownership_conflict',
+        bidirectionalWakeWatchdog: expect.objectContaining({
+          ok: false,
+          status: 'ownership_conflict',
+          blocked: true,
+          retryable: false,
+        }),
+      }));
+      expect(startBidirectionalWakeWatchdogRunner).toHaveBeenCalledTimes(1);
+    });
+
     it('skips Telegram poller recovery for pinned installed deployments', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const { checkAndRecoverTelegramPoller } = require('../scripts/hm-telegram-poller-watchdog');

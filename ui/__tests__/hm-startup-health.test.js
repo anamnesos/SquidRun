@@ -113,4 +113,54 @@ describe('hm-startup-health wrapper preflights', () => {
       })
     );
   });
+
+  test('reports a parsed watchdog ownership conflict without fallback start', () => {
+    childProcess.spawnSync
+      .mockImplementationOnce(() => ({
+        status: 0,
+        stdout: '{"ok":true,"recovery":{"ok":true}}',
+        stderr: '',
+      }))
+      .mockImplementationOnce(() => ({
+        status: 0,
+        stdout: JSON.stringify({
+          ok: false,
+          status: 'ownership_conflict',
+          reason: 'ownership_conflict',
+          blocked: true,
+          retryable: false,
+        }),
+        stderr: '',
+      }));
+    const stderr = { write: jest.fn() };
+
+    const exitCode = startupHealth.runStartupHealth([tempRoot, '--json'], { stderr });
+    const watchdogCalls = childProcess.spawnSync.mock.calls.filter(
+      ([, args]) => String(args?.[0] || '').includes('hm-bidirectional-wake-watchdog.js')
+    );
+
+    expect(exitCode).toBe(0);
+    expect(watchdogCalls).toHaveLength(1);
+    expect(watchdogCalls[0][1]).toEqual([
+      expect.stringContaining('hm-bidirectional-wake-watchdog.js'),
+      'start',
+    ]);
+    expect(stderr.write).toHaveBeenCalledWith(
+      expect.stringContaining('ownership_conflict')
+    );
+    const lastPath = path.join(
+      tempRoot,
+      '.squidrun',
+      'runtime',
+      'bidirectional-wake-watchdog-start-last.json'
+    );
+    expect(JSON.parse(fs.readFileSync(lastPath, 'utf8'))).toEqual(expect.objectContaining({
+      ok: false,
+      error: 'ownership_conflict',
+      result: expect.objectContaining({
+        ok: false,
+        status: 'ownership_conflict',
+      }),
+    }));
+  });
 });

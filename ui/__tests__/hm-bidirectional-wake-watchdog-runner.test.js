@@ -13,6 +13,41 @@ jest.mock('child_process', () => ({
 describe('hm-bidirectional-wake-watchdog runner control', () => {
   let tempRoot;
   let moduleUnderTest;
+  const runnerScriptPath = path.resolve(__dirname, '..', 'scripts', 'hm-bidirectional-wake-watchdog.js');
+
+  function processRow(pid, commandLine) {
+    return {
+      pid,
+      name: 'node.exe',
+      executablePath: 'C:\\Program Files\\nodejs\\node.exe',
+      commandLine,
+    };
+  }
+
+  function exactRunnerRow(pid) {
+    return processRow(
+      pid,
+      `"C:\\Program Files\\nodejs\\node.exe" "${runnerScriptPath}" run --interval-ms 60000`
+    );
+  }
+
+  function ownershipProbe({ alivePids = [], rows = [], scan = null } = {}) {
+    const live = new Set(alivePids.map(Number));
+    return {
+      probePid: jest.fn((pid) => ({
+        known: true,
+        alive: live.has(Number(pid)),
+        pid: Number(pid),
+        error: null,
+      })),
+      getProcessScan: jest.fn(() => scan || {
+        ok: true,
+        source: 'test',
+        rows,
+        error: null,
+      }),
+    };
+  }
 
   beforeEach(() => {
     jest.resetModules();
@@ -40,6 +75,344 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
+  test('startRunner fails closed for split live pidfile/status ownership with unreadable identity', () => {
+    const pidPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog.pid');
+    const statusPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog-status.json');
+    fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+    fs.writeFileSync(pidPath, '33400', 'utf8');
+    fs.writeFileSync(statusPath, JSON.stringify({
+      version: 1,
+      role: 'bidirectional-wake-watchdog',
+      pid: 33380,
+      appGenerationId: null,
+      running: true,
+      intervalMs: 60_000,
+      heartbeatAt: new Date().toISOString(),
+    }, null, 2), 'utf8');
+    const pidBytes = fs.readFileSync(pidPath);
+    const statusBytes = fs.readFileSync(statusPath);
+    const killSpy = jest.spyOn(process, 'kill').mockImplementation(() => {
+      throw new Error('ownership conflict must not probe or signal through process.kill');
+    });
+    const probe = ownershipProbe({
+      alivePids: [33400, 33380],
+      rows: [
+        exactRunnerRow(33400),
+        processRow(33380, null),
+      ],
+    });
+
+    const result = moduleUnderTest.startRunner({
+      projectRoot: tempRoot,
+      appGenerationId: 'app-gen-current',
+      ownershipProbe: probe,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'ownership_conflict',
+      reason: 'ownership_conflict',
+      blocked: true,
+      retryable: false,
+    }));
+    expect(result.ownership).toEqual(expect.objectContaining({
+      pidFilePid: 33400,
+      statusPid: 33380,
+      conflicts: expect.arrayContaining([
+        expect.objectContaining({ code: 'pid_status_mismatch' }),
+        expect.objectContaining({ code: 'live_identity_unreadable', pid: 33380 }),
+      ]),
+    }));
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+    expect(fs.readFileSync(pidPath)).toEqual(pidBytes);
+    expect(fs.readFileSync(statusPath)).toEqual(statusBytes);
+  });
+
+  test('stopRunner preserves split-owner metadata and signals no process', () => {
+    const pidPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog.pid');
+    const statusPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog-status.json');
+    fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+    fs.writeFileSync(pidPath, '33400', 'utf8');
+    fs.writeFileSync(statusPath, JSON.stringify({
+      role: 'bidirectional-wake-watchdog',
+      pid: 33380,
+      appGenerationId: null,
+      running: true,
+      heartbeatAt: new Date().toISOString(),
+    }, null, 2), 'utf8');
+    const pidBytes = fs.readFileSync(pidPath);
+    const statusBytes = fs.readFileSync(statusPath);
+    const killSpy = jest.spyOn(process, 'kill').mockImplementation(() => {
+      throw new Error('conflicted stop must not signal');
+    });
+
+    const result = moduleUnderTest.stopRunner({
+      ownershipProbe: ownershipProbe({
+        alivePids: [33400, 33380],
+        rows: [exactRunnerRow(33400), processRow(33380, null)],
+      }),
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'ownership_conflict',
+      operation: 'stop',
+    }));
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+    expect(fs.readFileSync(pidPath)).toEqual(pidBytes);
+    expect(fs.readFileSync(statusPath)).toEqual(statusBytes);
+  });
+
+  test('restart aborts after a conflicted stop without invoking start', async () => {
+    const stopResult = {
+      ok: false,
+      status: 'ownership_conflict',
+      reason: 'ownership_conflict',
+      blocked: true,
+      retryable: false,
+    };
+    const stopControl = jest.fn(() => stopResult);
+    const startControl = jest.fn();
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+    const result = await moduleUnderTest.runCli(
+      { positional: ['restart'], options: new Map() },
+      { stopRunner: stopControl, startRunner: startControl }
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      ...stopResult,
+      restartAborted: true,
+    }));
+    expect(stopControl).toHaveBeenCalledTimes(1);
+    expect(startControl).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('startRunner recovers mismatched metadata only when every referenced pid is proven dead', () => {
+    const pidPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog.pid');
+    const statusPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog-status.json');
+    fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+    fs.writeFileSync(pidPath, '33400', 'utf8');
+    fs.writeFileSync(statusPath, JSON.stringify({
+      role: 'bidirectional-wake-watchdog',
+      pid: 33380,
+      running: true,
+      heartbeatAt: '2026-01-01T00:00:00.000Z',
+    }), 'utf8');
+    const killSpy = jest.spyOn(process, 'kill').mockImplementation(() => {
+      throw new Error('dead stale owners must not be signalled');
+    });
+
+    const result = moduleUnderTest.startRunner({
+      projectRoot: tempRoot,
+      ownershipProbe: ownershipProbe({
+        alivePids: [],
+        rows: [],
+      }),
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      started: true,
+      pid: 9876,
+    }));
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(childProcess.spawn).toHaveBeenCalledTimes(1);
+    expect(fs.readFileSync(pidPath, 'utf8')).toBe('9876');
+    expect(fs.existsSync(statusPath)).toBe(false);
+  });
+
+  test('startRunner recheck turns a clean-to-conflict race into a mutation-free refusal', () => {
+    const lockPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog-start.lock');
+    const racedPid = 45670;
+    const probe = ownershipProbe();
+    probe.getProcessScan
+      .mockReturnValueOnce({ ok: true, source: 'test', rows: [], error: null })
+      .mockReturnValueOnce({
+        ok: true,
+        source: 'test',
+        rows: [exactRunnerRow(racedPid)],
+        error: null,
+      });
+    const killSpy = jest.spyOn(process, 'kill').mockImplementation(() => {
+      throw new Error('raced ownership conflict must not signal');
+    });
+
+    const result = moduleUnderTest.startRunner({
+      projectRoot: tempRoot,
+      ownershipProbe: probe,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'ownership_conflict',
+      phase: 'under_start_lock',
+    }));
+    expect(result.ownership.conflicts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'unclaimed_exact_runner_owner',
+        pid: racedPid,
+      }),
+    ]));
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  test('startRunner fails closed when process enumeration is uncertain', () => {
+    const result = moduleUnderTest.startRunner({
+      projectRoot: tempRoot,
+      ownershipProbe: ownershipProbe({
+        scan: {
+          ok: false,
+          source: 'test',
+          rows: [],
+          error: 'access denied',
+        },
+      }),
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'ownership_conflict',
+      phase: 'initial',
+    }));
+    expect(result.ownership.conflicts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'process_enumeration_uncertain' }),
+    ]));
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+  });
+
+  test('startRunner fails closed when a referenced pid liveness probe is uncertain', () => {
+    const pid = 46000;
+    const pidPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog.pid');
+    const statusPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog-status.json');
+    fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+    fs.writeFileSync(pidPath, String(pid), 'utf8');
+    fs.writeFileSync(statusPath, JSON.stringify({
+      role: 'bidirectional-wake-watchdog',
+      pid,
+      running: true,
+      heartbeatAt: new Date().toISOString(),
+    }), 'utf8');
+    const probe = ownershipProbe({ rows: [exactRunnerRow(pid)] });
+    probe.probePid.mockReturnValue({
+      known: false,
+      alive: null,
+      pid,
+      error: 'access denied',
+      code: 'EPERM',
+    });
+
+    const result = moduleUnderTest.startRunner({
+      projectRoot: tempRoot,
+      ownershipProbe: probe,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'ownership_conflict',
+      phase: 'initial',
+    }));
+    expect(result.ownership.conflicts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'pid_liveness_uncertain',
+        pid,
+      }),
+    ]));
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+  });
+
+  test('exact runner identity rejects wrapper mentions and sideprofile same-name paths', () => {
+    const wrapper = processRow(
+      501,
+      `"C:\\Program Files\\nodejs\\node.exe" "D:\\tools\\wrapper.js" --probe "${runnerScriptPath}" run`
+    );
+    const sideprofile = processRow(
+      502,
+      '"C:\\Program Files\\nodejs\\node.exe" "D:\\SquidRun\\sideprofile\\workspace\\ui\\scripts\\hm-bidirectional-wake-watchdog.js" run'
+    );
+
+    expect(moduleUnderTest.isExactRunnerProcessRow(exactRunnerRow(500))).toBe(true);
+    expect(moduleUnderTest.isExactRunnerProcessRow(wrapper)).toBe(false);
+    expect(moduleUnderTest.isExactRunnerProcessRow(sideprofile)).toBe(false);
+  });
+
+  test('exact runner identity accepts only the supported unambiguous Windows argv shape', () => {
+    const spacedScriptPath = 'D:\\projects\\Squid Run\\ui\\scripts\\hm-bidirectional-wake-watchdog.js';
+    const exactWithSpaces = processRow(
+      600,
+      `"C:\\Program Files\\nodejs\\node.exe" "${spacedScriptPath}" run --interval-ms 60000`
+    );
+    const powershellWrapper = {
+      ...processRow(601, `"powershell.exe" "${runnerScriptPath}" run`),
+      name: 'powershell.exe',
+      executablePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    };
+    const cmdWrapper = {
+      ...processRow(602, `"cmd.exe" /c "node.exe \\"${runnerScriptPath}\\" run"`),
+      name: 'cmd.exe',
+      executablePath: 'C:\\Windows\\System32\\cmd.exe',
+    };
+    const rejected = [
+      powershellWrapper,
+      cmdWrapper,
+      processRow(603, `"node.exe" -e "console.log('${runnerScriptPath} run')"`),
+      processRow(604, `"node.exe" --inspect "${runnerScriptPath}" run`),
+      processRow(605, `"node.exe" "D:\\foreign\\ui\\scripts\\hm-bidirectional-wake-watchdog.js" run`),
+      processRow(606, `"node.exe" ""${runnerScriptPath}"" run`),
+      processRow(607, `"node.exe" \\"${runnerScriptPath}\\" run`),
+      processRow(608, `"node.exe" "${runnerScriptPath} run`),
+    ];
+
+    expect(moduleUnderTest.isExactRunnerProcessRow(exactWithSpaces, spacedScriptPath)).toBe(true);
+    for (const row of rejected) {
+      expect(moduleUnderTest.isExactRunnerProcessRow(row)).toBe(false);
+    }
+  });
+
+  test('malformed quoted identity for a referenced live pid is a mutation-free conflict', () => {
+    const pid = 610;
+    const pidPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog.pid');
+    const statusPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog-status.json');
+    fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+    fs.writeFileSync(pidPath, String(pid), 'utf8');
+    fs.writeFileSync(statusPath, JSON.stringify({
+      role: 'bidirectional-wake-watchdog',
+      pid,
+      running: true,
+      heartbeatAt: new Date().toISOString(),
+    }), 'utf8');
+    const pidBytes = fs.readFileSync(pidPath);
+    const statusBytes = fs.readFileSync(statusPath);
+    const killSpy = jest.spyOn(process, 'kill').mockImplementation(() => {
+      throw new Error('ambiguous identity must not signal');
+    });
+
+    const result = moduleUnderTest.startRunner({
+      projectRoot: tempRoot,
+      ownershipProbe: ownershipProbe({
+        alivePids: [pid],
+        rows: [processRow(pid, `"node.exe" "${runnerScriptPath} run`)],
+      }),
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      status: 'ownership_conflict',
+    }));
+    expect(result.ownership.conflicts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'live_identity_mismatch', pid }),
+    ]));
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+    expect(fs.readFileSync(pidPath)).toEqual(pidBytes);
+    expect(fs.readFileSync(statusPath)).toEqual(statusBytes);
+  });
+
   test('startRunner no-ops when a fresh matching runner is already live', () => {
     const statusPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog-status.json');
     const pidPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog.pid');
@@ -54,7 +427,13 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
       heartbeatAt: new Date().toISOString(),
     }, null, 2), 'utf8');
 
-    const result = moduleUnderTest.startRunner({ projectRoot: tempRoot });
+    const result = moduleUnderTest.startRunner({
+      projectRoot: tempRoot,
+      ownershipProbe: ownershipProbe({
+        alivePids: [process.pid],
+        rows: [exactRunnerRow(process.pid)],
+      }),
+    });
 
     expect(result).toEqual(expect.objectContaining({
       ok: true,
@@ -80,7 +459,14 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
       heartbeatAt: new Date().toISOString(),
     }, null, 2), 'utf8');
 
-    const result = moduleUnderTest.startRunner({ projectRoot: tempRoot, appGenerationId: 'app-gen-current' });
+    const result = moduleUnderTest.startRunner({
+      projectRoot: tempRoot,
+      appGenerationId: 'app-gen-current',
+      ownershipProbe: ownershipProbe({
+        alivePids: [process.pid],
+        rows: [exactRunnerRow(process.pid)],
+      }),
+    });
 
     expect(result).toEqual(expect.objectContaining({ ok: true, alreadyRunning: true }));
     expect(childProcess.spawn).not.toHaveBeenCalled();
@@ -105,7 +491,14 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
       heartbeatAt: new Date().toISOString(),
     }, null, 2), 'utf8');
 
-    const result = moduleUnderTest.startRunner({ projectRoot: tempRoot, appGenerationId: 'app-gen-NEW' });
+    const result = moduleUnderTest.startRunner({
+      projectRoot: tempRoot,
+      appGenerationId: 'app-gen-NEW',
+      ownershipProbe: ownershipProbe({
+        alivePids: [orphanPid],
+        rows: [exactRunnerRow(orphanPid)],
+      }),
+    });
 
     // The prior-generation orphan was SIGTERM'd...
     expect(killSpy).toHaveBeenCalledWith(orphanPid, 'SIGTERM');
@@ -122,7 +515,10 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
   });
 
   test('startRunner spawns a singleton child when no fresh runner exists', () => {
-    const result = moduleUnderTest.startRunner({ projectRoot: tempRoot });
+    const result = moduleUnderTest.startRunner({
+      projectRoot: tempRoot,
+      ownershipProbe: ownershipProbe(),
+    });
 
     expect(result).toEqual(expect.objectContaining({
       ok: true,
@@ -155,14 +551,20 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
   test('startRunner atomic lock prevents a concurrent double spawn before pid file exists', () => {
     let reentrantResult = null;
     childProcess.spawn.mockImplementationOnce(() => {
-      reentrantResult = moduleUnderTest.startRunner({ projectRoot: tempRoot });
+      reentrantResult = moduleUnderTest.startRunner({
+        projectRoot: tempRoot,
+        ownershipProbe: ownershipProbe(),
+      });
       return {
         pid: 9876,
         unref: jest.fn(),
       };
     });
 
-    const result = moduleUnderTest.startRunner({ projectRoot: tempRoot });
+    const result = moduleUnderTest.startRunner({
+      projectRoot: tempRoot,
+      ownershipProbe: ownershipProbe(),
+    });
 
     expect(result).toEqual(expect.objectContaining({
       ok: true,
@@ -199,6 +601,7 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
         competitorResult = moduleUnderTest.startRunner({
           projectRoot: tempRoot,
           startLock: { staleAfterMs: 1_000 },
+          ownershipProbe: ownershipProbe(),
         });
         const error = new Error('stale lock already claimed');
         error.code = 'ENOENT';
@@ -210,6 +613,7 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
     const result = moduleUnderTest.startRunner({
       projectRoot: tempRoot,
       startLock: { staleAfterMs: 1_000 },
+      ownershipProbe: ownershipProbe(),
     });
 
     expect(competitorResult).toEqual(expect.objectContaining({
@@ -255,6 +659,7 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
     const result = moduleUnderTest.startRunner({
       projectRoot: tempRoot,
       startLock: { staleAfterMs: 1_000 },
+      ownershipProbe: ownershipProbe(),
     });
 
     expect(result).toEqual(expect.objectContaining({
