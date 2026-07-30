@@ -13,6 +13,9 @@ const fs = require('fs');
 const os = require('os');
 const { encodeClaudeProjectDir } = require('../modules/cli-resume-invocation');
 const { loadPaneSessionIds } = require('../modules/pane-session-id-store');
+const {
+  buildCodexComputerUseProofInvocation: buildActualCodexComputerUseProofInvocation,
+} = require('../modules/main/codex-computer-use-proof');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -1812,6 +1815,12 @@ describe('PTY Handlers', () => {
       paneId: '3',
       profile: 'main',
     };
+    const commandInjectionCases = [
+      ['statement separator', 'codex --yolo; node forge.js'],
+      ['pipeline', 'codex --yolo | node forge.js'],
+      ['newline', 'codex --yolo\nnode forge.js'],
+      ['background operator', 'codex --yolo & node forge.js'],
+    ];
 
     function enableComputerUsePane() {
       ctx.currentSettings.codexComputerUsePaneIds = ['3'];
@@ -1839,6 +1848,15 @@ describe('PTY Handlers', () => {
             toolInputJson: JSON.stringify({ code: 'canonical-list-windows' }),
             toolInputSha256: 'a'.repeat(64),
           },
+          integrity: [{
+            name: 'hookScript',
+            path: path.join(
+              mainRoot,
+              'ui',
+              'scripts',
+              'codex-computer-use-post-tool-proof.js'
+            ),
+          }],
         };
         claim.proofSpawnEnv = {
           SQUIDRUN_CUA_PROOF_CLAIM_ID: claim.claimId,
@@ -1877,6 +1895,55 @@ describe('PTY Handlers', () => {
       expect(prepare).not.toHaveBeenCalled();
       expect(ctx.daemonClient.spawn).toHaveBeenCalledTimes(1);
     });
+
+    test.each(commandInjectionCases)(
+      'daemon command-on-create refuses %s injection before spawning',
+      async (_label, paneCommand) => {
+        enableComputerUsePane();
+        deps.buildCodexComputerUseProofInvocation =
+          buildActualCodexComputerUseProofInvocation;
+
+        const result = await harness.invoke('pty-create', '3', mainRoot, {
+          paneCommand,
+          spawnCommandOnCreate: true,
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          success: false,
+          error: 'codex_computer_use_proof_invocation_failed',
+          reason: 'codex_computer_use_command_syntax_refused',
+          requiresTargetedPaneRecycle: true,
+        }));
+        expect(ctx.daemonClient.spawnAndWait).not.toHaveBeenCalled();
+        expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+      }
+    );
+
+    test.each(commandInjectionCases)(
+      'interactive spawn-claude refuses %s injection before authorization',
+      async (_label, paneCommand) => {
+        enableComputerUsePane();
+        ctx.currentSettings.paneCommands = { '3': paneCommand };
+        deps.buildCodexComputerUseProofInvocation =
+          buildActualCodexComputerUseProofInvocation;
+
+        const createResult = await harness.invoke('pty-create', '3', mainRoot);
+        const result = await harness.invoke('spawn-claude', '3', mainRoot);
+
+        expect(createResult).toEqual(expect.objectContaining({
+          success: true,
+          computerUsePreflight: expect.objectContaining({ enabled: true }),
+        }));
+        expect(result).toEqual(expect.objectContaining({
+          success: false,
+          error: 'codex_computer_use_proof_invocation_failed',
+          reason: 'codex_computer_use_command_syntax_refused',
+          requiresTargetedPaneRecycle: true,
+        }));
+        expect(ctx.agentRunning.get('3')).not.toBe('starting');
+        expect(ctx.daemonClient.spawn).toHaveBeenCalledTimes(1);
+      }
+    );
 
     test('preflights a stable generation before PTY spawn and confirms it after command spawn', async () => {
       enableComputerUsePane();

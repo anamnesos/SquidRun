@@ -647,6 +647,93 @@ describe('fresh target-only Codex invocation', () => {
     expect(invocation.command).not.toContain('codex-computer-use.exe');
   });
 
+  test.each([
+    ['statement separator', 'codex --yolo; node forge.js'],
+    ['pipeline', 'codex --yolo | node forge.js'],
+    ['newline', 'codex --yolo\nnode forge.js'],
+    ['background operator', 'codex --yolo & node forge.js'],
+  ])('refuses sibling-command injection through %s', async (_label, command) => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+
+    expect(proof.buildCodexComputerUseProofInvocation(
+      command,
+      state.claim
+    )).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_command_syntax_refused',
+    }));
+  });
+
+  test.each([
+    ['output redirection', 'codex --yolo > proof.txt'],
+    ['stream redirection', 'codex --yolo 2> proof.txt'],
+    ['subexpression', 'codex --yolo $(node forge.js)'],
+    ['environment expansion', 'codex --yolo "$env:SQUIDRUN_CUA_PROOF_SECRET"'],
+    ['splatting', 'codex --yolo @args'],
+    ['comment', 'codex --yolo # ignored'],
+    ['escape expression', 'codex --yolo "`nnode forge.js"'],
+  ])('refuses PowerShell %s syntax', async (_label, command) => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+
+    expect(proof.buildCodexComputerUseProofInvocation(
+      command,
+      state.claim
+    )).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_command_syntax_refused',
+    }));
+  });
+
+  test('accepts an absolute quoted Codex executable and ordinary literal argv', async () => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+    const invocation = proof.buildCodexComputerUseProofInvocation(
+      '"C:\\Program Files\\OpenAI\\codex.exe" --model gpt-5.6-sol --search '
+        + '--sandbox workspace-write "literal prompt with spaces"',
+      state.claim,
+      { platform: 'win32' }
+    );
+
+    expect(invocation).toEqual(expect.objectContaining({
+      ok: true,
+      argv: [
+        'C:\\Program Files\\OpenAI\\codex.exe',
+        '--model',
+        'gpt-5.6-sol',
+        '--search',
+        '--sandbox',
+        'workspace-write',
+        'literal prompt with spaces',
+      ],
+    }));
+    expect(invocation.command).toMatch(
+      /^& 'C:\\Program Files\\OpenAI\\codex\.exe' '--model' 'gpt-5\.6-sol' /
+    );
+    expect(invocation.command).toContain("'literal prompt with spaces'");
+    expect(invocation.command).toContain('--dangerously-bypass-hook-trust');
+  });
+
+  test.each([
+    ['runtime config', "codex -c 'hooks.PostToolUse=[]'"],
+    ['named runtime config', "codex '--config=hooks.PostToolUse=[]'"],
+    ['profile overlay', 'codex --profile forged'],
+    ['working-directory config source', 'codex -C D:\\other-project'],
+  ])('refuses an unaudited %s override', async (_label, command) => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+
+    expect(proof.buildCodexComputerUseProofInvocation(
+      command,
+      state.claim,
+      { platform: 'win32' }
+    )).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_command_configuration_refused',
+    }));
+  });
+
   test('refuses resume and a pre-existing generic hook bypass', async () => {
     const state = await armedClaim();
     state.claim.proof.state = 'armed';

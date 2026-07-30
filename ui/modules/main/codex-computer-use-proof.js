@@ -1030,21 +1030,112 @@ function quotePowerShellLiteral(value) {
   return `'${String(value).replace(/'/gu, "''")}'`;
 }
 
+function parsePowerShellLiteralArgv(command) {
+  const source = String(command || '');
+  if (!source.trim() || /[\0\r\n\v\f\u0085\u2028\u2029]/u.test(source)) {
+    return { ok: false, reason: 'codex_computer_use_command_syntax_refused' };
+  }
+
+  const argv = [];
+  let cursor = 0;
+  const isSeparator = (character) => character === ' ' || character === '\t';
+  const refuse = () => ({
+    ok: false,
+    reason: 'codex_computer_use_command_syntax_refused',
+  });
+
+  while (cursor < source.length) {
+    while (cursor < source.length && isSeparator(source[cursor])) cursor += 1;
+    if (cursor >= source.length) break;
+
+    const quote = source[cursor];
+    let value = '';
+    if (quote === "'" || quote === '"') {
+      cursor += 1;
+      let closed = false;
+      while (cursor < source.length) {
+        const character = source[cursor];
+        if (character === quote) {
+          if (quote === "'" && source[cursor + 1] === "'") {
+            value += "'";
+            cursor += 2;
+            continue;
+          }
+          cursor += 1;
+          closed = true;
+          break;
+        }
+        if (quote === '"' && (character === '$' || character === '`')) {
+          return refuse();
+        }
+        value += character;
+        cursor += 1;
+      }
+      if (!closed || (cursor < source.length && !isSeparator(source[cursor]))) {
+        return refuse();
+      }
+    } else {
+      while (cursor < source.length && !isSeparator(source[cursor])) {
+        const character = source[cursor];
+        if (!/[A-Za-z0-9_./:\\=+-]/u.test(character)) {
+          return refuse();
+        }
+        value += character;
+        cursor += 1;
+      }
+    }
+    argv.push(value);
+  }
+
+  return argv.length > 0
+    ? { ok: true, argv, source: source.trim() }
+    : refuse();
+}
+
+function validateCodexLiteralArgv(argv, platform = process.platform) {
+  const executable = String(argv?.[0] || '');
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  const executableName = pathApi.basename(executable).toLowerCase();
+  const isCodexExecutable = ['codex', 'codex.exe', 'codex.cmd'].includes(executableName);
+  const hasPath = /[\\/]/u.test(executable);
+  if (!isCodexExecutable || (hasPath && !pathApi.isAbsolute(executable))) {
+    return { ok: false, reason: 'codex_computer_use_command_not_codex' };
+  }
+
+  const args = argv.slice(1);
+  if (args.some((arg) =>
+    /^(?:resume|fork|--resume(?:=.*)?|--continue(?:=.*)?)$/iu.test(arg))) {
+    return { ok: false, reason: 'codex_computer_use_bypass_requires_fresh_session' };
+  }
+  if (args.some((arg) =>
+    /^--dangerously-bypass-hook-trust(?:=.*)?$/u.test(arg))) {
+    return { ok: false, reason: 'codex_computer_use_bypass_already_present' };
+  }
+  if (args.some((arg) =>
+    /^(?:-c.*|--config(?:=.*)?|-p.*|--profile(?:=.*)?|-C.*|--cd(?:=.*)?)$/u.test(arg))) {
+    return { ok: false, reason: 'codex_computer_use_command_configuration_refused' };
+  }
+
+  return {
+    ok: true,
+    executable,
+    args,
+    hasPath,
+  };
+}
+
 function buildCodexComputerUseProofInvocation(command, claim, options = {}) {
-  const source = String(command || '').trim();
   if (!claim?.proof || claim.proof.state !== 'armed') {
     return { ok: false, reason: 'codex_computer_use_proof_not_armed' };
   }
-  if (!/^(?:[^\s"]*\\)?codex(?:\.exe|\.cmd)?(?:\s|$)/iu.test(source)
-    && !/^codex(?:\s|$)/iu.test(source)) {
-    return { ok: false, reason: 'codex_computer_use_command_not_codex' };
-  }
-  if (/(?:^|\s)(?:resume|fork|--resume|--continue)(?:\s|$)/iu.test(source)) {
-    return { ok: false, reason: 'codex_computer_use_bypass_requires_fresh_session' };
-  }
-  if (/(?:^|\s)--dangerously-bypass-hook-trust(?:\s|$)/u.test(source)) {
-    return { ok: false, reason: 'codex_computer_use_bypass_already_present' };
-  }
+  const parsed = parsePowerShellLiteralArgv(command);
+  if (parsed.ok !== true) return parsed;
+  const validated = validateCodexLiteralArgv(
+    parsed.argv,
+    options.platform || process.platform
+  );
+  if (validated.ok !== true) return validated;
+
   const hookEntry = claim.proof.integrity.find((entry) => entry.name === 'hookScript');
   if (!hookEntry?.path) {
     return { ok: false, reason: 'codex_computer_use_hook_script_missing' };
@@ -1059,22 +1150,27 @@ function buildCodexComputerUseProofInvocation(command, claim, options = {}) {
     ']',
   ].join('');
   const environmentOverride = 'shell_environment_policy.exclude=["SQUIDRUN_CUA_*"]';
-  const invocation = [
-    source,
+  const serializedCommand = [
+    validated.hasPath ? `& ${quotePowerShellLiteral(validated.executable)}` : validated.executable,
+    ...validated.args.map(quotePowerShellLiteral),
+  ].join(' ');
+  const addedArguments = [
     '--dangerously-bypass-hook-trust',
     '-c',
     quotePowerShellLiteral(hookOverride),
     '-c',
     quotePowerShellLiteral(environmentOverride),
   ].join(' ');
+  const invocation = `${serializedCommand} ${addedArguments}`;
   return {
     ok: true,
     reason: 'codex_computer_use_proof_invocation_built',
     command: invocation,
     hookOverride,
     environmentOverride,
-    addedArguments: invocation.slice(source.length).trim(),
-    originalCommand: source,
+    addedArguments,
+    originalCommand: parsed.source,
+    argv: [validated.executable, ...validated.args],
     targetPaneId: String(claim.paneId),
     freshSessionOnly: true,
     bypassHookTrust: true,
