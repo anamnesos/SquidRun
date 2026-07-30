@@ -523,6 +523,23 @@ describe('Terminal Recovery Controller', () => {
       }));
     });
 
+    test('fails the restart claim when the spawned pane rejects its post-spawn generation', async () => {
+      mockOptions.spawnAgent.mockResolvedValueOnce(false);
+
+      const promise = controller.restartPane('1');
+      await jest.advanceTimersByTimeAsync(300);
+      const result = await promise;
+
+      expect(result).toBe(false);
+      expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Spawn failed');
+      expect(mockPty.completePaneRestart).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '1',
+        claimId: 'restart-claim-1',
+        status: 'failed',
+        reason: 'spawn_failed',
+      }));
+    });
+
     test('stops when main-side restart lifecycle refuses a duplicate claim consumer', async () => {
       mockPty.kill.mockResolvedValueOnce({
         success: false,

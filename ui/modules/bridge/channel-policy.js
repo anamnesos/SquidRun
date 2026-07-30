@@ -100,6 +100,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'route-task-input',
   'save-screenshot',
   'clear-project-context',
+  'codex-computer-use-confirm-generation',
   'select-pane-project',
   'select-project',
   'send-trusted-enter',

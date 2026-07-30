@@ -4190,6 +4190,46 @@ async function spawnAgent(paneId, model = null, options = {}) {
         log.error(`spawnAgent ${paneId}`, 'PTY write Enter failed:', err);
       }
 
+      const computerUseClaim = result.computerUseGenerationClaim;
+      if (computerUseClaim?.postSpawnConfirmationRequired === true) {
+        const confirmGeneration = window?.squidrun?.pty?.confirmCodexComputerUseGeneration;
+        let generationConfirmation;
+        try {
+          generationConfirmation = typeof confirmGeneration === 'function'
+            ? await confirmGeneration(String(paneId), {
+              claimId: computerUseClaim.claimId,
+            })
+            : {
+              ok: false,
+              reason: 'codex_computer_use_post_spawn_bridge_unavailable',
+            };
+        } catch (err) {
+          generationConfirmation = {
+            ok: false,
+            reason: 'codex_computer_use_post_spawn_check_failed',
+            error: err?.message || String(err),
+          };
+        }
+        if (generationConfirmation?.ok !== true) {
+          log.error(
+            `spawnAgent ${paneId}`,
+            `Computer Use generation changed after Codex spawn: ${
+              generationConfirmation?.reason || 'unknown'
+            }`
+          );
+          updatePaneStatus(paneId, 'Computer Use generation stale');
+          try {
+            await window.squidrun.pty.kill(String(paneId), options);
+          } catch (err) {
+            log.error(
+              `spawnAgent ${paneId}`,
+              `Failed to stop stale Computer Use pane generation: ${err?.message || err}`
+            );
+          }
+          return false;
+        }
+      }
+
       // Codex CLI needs an extra Enter after startup to dismiss its welcome prompt
       // Claude Code CLI doesn't need this - it's ready immediately
       // NOTE: Codex sandbox_mode should be pre-configured via ~/.codex/config.toml

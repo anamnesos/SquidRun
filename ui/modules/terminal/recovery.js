@@ -284,6 +284,7 @@ function createRecoveryController(options = {}) {
   }
 
   function isLifecycleFailureResult(result) {
+    if (result === false) return true;
     if (!result || typeof result !== 'object') return false;
     if (result.success === false || result.ok === false) return true;
     if (Object.prototype.hasOwnProperty.call(result, 'error') && result.error) return true;

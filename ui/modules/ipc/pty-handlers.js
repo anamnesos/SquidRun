@@ -7,8 +7,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('crypto');
 const log = require('../logger');
-const { resolvePaneCwd, resolveCoordPath } = require('../../config');
+const { getProjectRoot, resolvePaneCwd, resolveCoordPath } = require('../../config');
 const {
   hasCodexDangerouslyBypassFlag,
   hasCodexAskForApprovalFlag,
@@ -28,6 +29,12 @@ const {
   DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
 } = require('../inject-message-ipc');
 const { appendInputShadowLog } = require('../input-shadow-log');
+const {
+  captureCodexComputerUsePipeGeneration,
+  confirmCodexComputerUsePipeGeneration,
+  pathsEqual,
+  prepareCodexComputerUseNativeBridge,
+} = require('../main/codex-computer-use-native-bridge');
 const DEFAULT_CHUNK_SIZE = DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES;
 const MIN_CHUNK_SIZE = 64;
 const MAX_CHUNK_SIZE = 8192;
@@ -38,6 +45,7 @@ const STARTUP_INJECTION_CLAIM_CHANNEL = 'startup-injection-claim';
 const STARTUP_INJECTION_RELEASE_CHANNEL = 'startup-injection-release';
 const PANE_RESTART_BEGIN_CHANNEL = 'pane-restart-begin';
 const PANE_RESTART_COMPLETE_CHANNEL = 'pane-restart-complete';
+const CODEX_COMPUTER_USE_CONFIRM_GENERATION_CHANNEL = 'codex-computer-use-confirm-generation';
 const INPUT_EDIT_ACTIONS = Object.freeze({
   undo: 'undo',
   cut: 'cut',
@@ -114,6 +122,20 @@ function detectCliFromCommand(command) {
   if (normalized.includes('gemini')) return 'gemini';
   if (normalized.includes('codex')) return 'codex';
   return 'claude';
+}
+
+function normalizeCodexComputerUsePaneIds(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value
+    .map((paneId) => String(paneId ?? '').trim())
+    .filter(Boolean)));
+}
+
+function isCodexComputerUsePaneOptedIn(settings = {}, paneId) {
+  const id = String(paneId ?? '').trim();
+  return Boolean(id && normalizeCodexComputerUsePaneIds(
+    settings.codexComputerUsePaneIds
+  ).includes(id));
 }
 
 function applyAutonomyFlagsToAgentCommand(command, settings = {}) {
@@ -549,6 +571,15 @@ function registerPtyHandlers(ctx, deps = {}) {
   const reapClaudeSessionProcessesForSpawn = typeof deps.reapClaudeSessionProcesses === 'function'
     ? deps.reapClaudeSessionProcesses
     : reapClaudeSessionProcesses;
+  const providedComputerUseClaims = Object.prototype.hasOwnProperty.call(
+    deps,
+    'codexComputerUsePreflightClaims'
+  )
+    ? deps.codexComputerUsePreflightClaims
+    : null;
+  const codexComputerUsePreflightClaims = providedComputerUseClaims instanceof Map
+    ? providedComputerUseClaims
+    : new Map();
   const providedStartupInjectionClaims = deps.startupInjectionClaims;
   const startupInjectionClaims = (
     providedStartupInjectionClaims
@@ -557,6 +588,130 @@ function registerPtyHandlers(ctx, deps = {}) {
   )
     ? providedStartupInjectionClaims
     : createStartupInjectionClaimStore();
+
+  function resolveComputerUseDependency(name, fallback) {
+    if (!Object.prototype.hasOwnProperty.call(deps, name)) return fallback;
+    return typeof deps[name] === 'function' ? deps[name] : fallback;
+  }
+
+  function resolveComputerUsePlatform() {
+    if (Object.prototype.hasOwnProperty.call(deps, 'computerUsePlatform')) {
+      return String(deps.computerUsePlatform || '').trim() || process.platform;
+    }
+    return process.platform;
+  }
+
+  function resolveComputerUseProfile() {
+    if (Object.prototype.hasOwnProperty.call(deps, 'computerUseProfile')) {
+      return String(deps.computerUseProfile || '').trim() || 'main';
+    }
+    return String(process.env.SQUIDRUN_PROFILE || '').trim() || 'main';
+  }
+
+  function resolveComputerUseProjectRoot() {
+    if (Object.prototype.hasOwnProperty.call(deps, 'computerUseProjectRoot')) {
+      return path.resolve(deps.computerUseProjectRoot);
+    }
+    return path.resolve(getProjectRoot());
+  }
+
+  function buildComputerUseProbeInput(paneId, workspace) {
+    return {
+      platform: resolveComputerUsePlatform(),
+      projectRoot: resolveComputerUseProjectRoot(),
+      workspace: path.resolve(workspace),
+      paneId: String(paneId),
+      profile: resolveComputerUseProfile(),
+    };
+  }
+
+  async function prepareComputerUsePaneGeneration(paneId, workspace, runtime, options = {}) {
+    if (!isCodexComputerUsePaneOptedIn(ctx.currentSettings, paneId)) {
+      return {
+        ok: true,
+        enabled: false,
+        reason: 'codex_computer_use_preflight_disabled',
+      };
+    }
+    if (runtime !== 'codex') {
+      return {
+        ok: false,
+        enabled: true,
+        reason: 'codex_computer_use_opt_in_requires_codex_runtime',
+      };
+    }
+    if (ctx.currentSettings.dryRun === true) {
+      return {
+        ok: true,
+        enabled: true,
+        skipped: true,
+        reason: 'codex_computer_use_preflight_skipped_in_dry_run',
+      };
+    }
+    if (options.spawnCommandOnCreate === true) {
+      return {
+        ok: false,
+        enabled: true,
+        reason: 'codex_computer_use_direct_spawn_path_refused',
+      };
+    }
+
+    const prepare = resolveComputerUseDependency(
+      'prepareCodexComputerUseNativeBridge',
+      prepareCodexComputerUseNativeBridge
+    );
+    const probeInput = buildComputerUseProbeInput(paneId, workspace);
+    const preflight = await prepare({
+      ...probeInput,
+      launchOwner: true,
+    });
+    const generation = preflight?.generation
+      || captureCodexComputerUsePipeGeneration(preflight?.bridge);
+    if (preflight?.ok !== true || !generation) {
+      return {
+        ok: false,
+        enabled: true,
+        reason: preflight?.reason || 'codex_computer_use_preflight_failed',
+        preflight: preflight || null,
+      };
+    }
+
+    const createClaimId = resolveComputerUseDependency('randomUUID', randomUUID);
+    const claim = {
+      claimId: createClaimId(),
+      paneId: String(paneId),
+      workspace: path.resolve(workspace),
+      projectRoot: probeInput.projectRoot,
+      profile: probeInput.profile,
+      platform: probeInput.platform,
+      generation,
+      createdAt: new Date().toISOString(),
+      commandAuthorizedAt: null,
+      postSpawnConfirmedAt: null,
+    };
+    codexComputerUsePreflightClaims.set(String(paneId), claim);
+    return {
+      ok: true,
+      enabled: true,
+      reason: 'codex_computer_use_pipe_generation_preflight_ready',
+      claim,
+      preflight,
+    };
+  }
+
+  async function confirmComputerUsePaneGeneration(claim, workspace) {
+    const confirmGeneration = resolveComputerUseDependency(
+      'confirmCodexComputerUsePipeGeneration',
+      confirmCodexComputerUsePipeGeneration
+    );
+    return confirmGeneration(
+      claim.generation,
+      buildComputerUseProbeInput(claim.paneId, workspace),
+      Object.prototype.hasOwnProperty.call(deps, 'probeCodexComputerUseNativeBridge')
+        ? { probe: deps.probeCodexComputerUseNativeBridge }
+        : {}
+    );
+  }
 
   function normalizeRestartLifecycleOptions(options) {
     return options && typeof options === 'object' && !Array.isArray(options) ? options : {};
@@ -809,6 +964,22 @@ function registerPtyHandlers(ctx, deps = {}) {
       }
     }
     const runtime = detectCliFromCommand(paneCommand);
+    codexComputerUsePreflightClaims.delete(String(paneId));
+    const computerUsePreflight = await prepareComputerUsePaneGeneration(
+      paneId,
+      cwd,
+      runtime,
+      { spawnCommandOnCreate }
+    );
+    if (computerUsePreflight.ok !== true) {
+      return {
+        success: false,
+        error: 'codex_computer_use_preflight_failed',
+        reason: computerUsePreflight.reason,
+        paneId: String(paneId),
+        computerUsePreflight,
+      };
+    }
 
     let spawnEnv = (ptyOptions.env && typeof ptyOptions.env === 'object')
       ? { ...ptyOptions.env }
@@ -857,10 +1028,19 @@ function registerPtyHandlers(ctx, deps = {}) {
     if (spawnCommandOnCreate) {
       spawnOptions.spawnCommandOnCreate = true;
     }
-    if (spawnEnv) {
-      daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, spawnEnv, spawnOptions);
-    } else {
-      daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, null, spawnOptions);
+    const spawnAccepted = spawnEnv
+      ? daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, spawnEnv, spawnOptions)
+      : daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, null, spawnOptions);
+    if (computerUsePreflight.enabled === true
+      && computerUsePreflight.skipped !== true
+      && spawnAccepted !== true) {
+      codexComputerUsePreflightClaims.delete(String(paneId));
+      return {
+        success: false,
+        error: 'codex_computer_use_pty_spawn_not_accepted',
+        reason: 'codex_computer_use_pty_spawn_not_accepted',
+        paneId: String(paneId),
+      };
     }
     return {
       paneId,
@@ -871,6 +1051,16 @@ function registerPtyHandlers(ctx, deps = {}) {
       remintedClaudeSessionId: resumeDecision?.reminted === true,
       previousClaudeSessionId: resumeDecision?.previousSessionId || null,
       claudeSessionId: resumeDecision?.sessionId || null,
+      computerUsePreflight: computerUsePreflight.enabled === true
+        ? {
+          enabled: true,
+          skipped: computerUsePreflight.skipped === true,
+          reason: computerUsePreflight.reason,
+          claimId: computerUsePreflight.claim?.claimId || null,
+          generation: computerUsePreflight.claim?.generation || null,
+          browserPipeSnapshot: computerUsePreflight.preflight?.browserPipeSnapshot || null,
+        }
+        : { enabled: false },
     };
   });
 
@@ -1122,6 +1312,7 @@ function registerPtyHandlers(ctx, deps = {}) {
       return restartClaimDeniedResult(restartClaim, 'pty-kill');
     }
     startupInjectionClaims.clear(paneId);
+    codexComputerUsePreflightClaims.delete(String(paneId));
     const daemonClient = getDaemonClientForPane(paneId);
     if (daemonClient && daemonClient.connected) {
       const recoveryManager = getRecoveryManager();
@@ -1161,17 +1352,6 @@ function registerPtyHandlers(ctx, deps = {}) {
       return { success: false, error: 'Daemon not connected' };
     }
 
-    ctx.agentRunning.set(paneId, 'starting');
-    broadcastClaudeState();
-    recordSessionStart(paneId);
-    if (typeof recordSessionLifecycle === 'function') {
-      await Promise.resolve(recordSessionLifecycle({
-        paneId,
-        status: 'started',
-        reason: 'spawn_requested',
-      }));
-    }
-
     const paneCommands = ctx.currentSettings.paneCommands || {};
     let agentCmd = (paneCommands[paneId] || 'claude').trim();
     if (!agentCmd) agentCmd = 'claude';
@@ -1201,6 +1381,62 @@ function registerPtyHandlers(ctx, deps = {}) {
       paneProjects: getPaneProjects(),
       projectRoot: getActiveProjectRoot(),
     }) || process.cwd();
+    let computerUseClaim = null;
+    if (isCodexComputerUsePaneOptedIn(ctx.currentSettings, paneId)) {
+      if (runtime !== 'codex') {
+        return {
+          success: false,
+          error: 'codex_computer_use_opt_in_requires_codex_runtime',
+          reason: 'codex_computer_use_opt_in_requires_codex_runtime',
+          paneId: String(paneId),
+        };
+      }
+      computerUseClaim = codexComputerUsePreflightClaims.get(String(paneId)) || null;
+      if (!computerUseClaim
+        || computerUseClaim.commandAuthorizedAt
+        || !pathsEqual(
+          computerUseClaim.workspace,
+          workDir,
+          computerUseClaim.platform || process.platform
+        )) {
+        return {
+          success: false,
+          error: 'codex_computer_use_stale_current_pane_refused',
+          reason: 'codex_computer_use_stale_current_pane_refused',
+          paneId: String(paneId),
+          requiresTargetedPaneRecycle: true,
+        };
+      }
+      const preSpawnConfirmation = await confirmComputerUsePaneGeneration(
+        computerUseClaim,
+        workDir
+      );
+      if (preSpawnConfirmation?.ok !== true) {
+        codexComputerUsePreflightClaims.delete(String(paneId));
+        return {
+          success: false,
+          error: 'codex_computer_use_generation_changed_before_spawn',
+          reason: preSpawnConfirmation?.reason
+            || 'codex_computer_use_generation_changed_before_spawn',
+          paneId: String(paneId),
+          requiresTargetedPaneRecycle: true,
+          computerUseGenerationConfirmation: preSpawnConfirmation || null,
+        };
+      }
+      computerUseClaim.commandAuthorizedAt = new Date().toISOString();
+    }
+
+    ctx.agentRunning.set(paneId, 'starting');
+    broadcastClaudeState();
+    recordSessionStart(paneId);
+    if (typeof recordSessionLifecycle === 'function') {
+      await Promise.resolve(recordSessionLifecycle({
+        paneId,
+        status: 'started',
+        reason: 'spawn_requested',
+      }));
+    }
+
     const resumeCommand = appendResumeFlagsToAgentCommand({
       paneId,
       command: agentCmd,
@@ -1233,15 +1469,76 @@ function registerPtyHandlers(ctx, deps = {}) {
       remintedClaudeSessionId: resumeCommand.decision?.reminted === true,
       previousClaudeSessionId: resumeCommand.decision?.previousSessionId || null,
       claudeSessionId: resumeCommand.decision?.sessionId || null,
+      computerUseGenerationClaim: computerUseClaim
+        ? {
+          claimId: computerUseClaim.claimId,
+          generation: computerUseClaim.generation,
+          postSpawnConfirmationRequired: true,
+          listWindowsProofRequired: true,
+        }
+        : null,
     };
   });
+
+  ipcMain.handle(
+    CODEX_COMPUTER_USE_CONFIRM_GENERATION_CHANNEL,
+    async (_event, paneId, payload = {}) => {
+      const id = String(paneId ?? '').trim();
+      if (!isCodexComputerUsePaneOptedIn(ctx.currentSettings, id)) {
+        return {
+          ok: true,
+          enabled: false,
+          reason: 'codex_computer_use_preflight_disabled',
+        };
+      }
+      const claim = codexComputerUsePreflightClaims.get(id) || null;
+      const claimId = String(payload?.claimId || '').trim();
+      if (!claim
+        || !claimId
+        || claim.claimId !== claimId
+        || !claim.commandAuthorizedAt) {
+        return {
+          ok: false,
+          enabled: true,
+          reason: 'codex_computer_use_generation_claim_invalid',
+          paneId: id,
+          requiresTargetedPaneRecycle: true,
+        };
+      }
+      const confirmation = await confirmComputerUsePaneGeneration(
+        claim,
+        claim.workspace
+      );
+      if (confirmation?.ok !== true) {
+        codexComputerUsePreflightClaims.delete(id);
+        return {
+          ok: false,
+          enabled: true,
+          reason: confirmation?.reason || 'codex_computer_use_post_spawn_check_failed',
+          paneId: id,
+          requiresTargetedPaneRecycle: true,
+          confirmation: confirmation || null,
+        };
+      }
+      claim.postSpawnConfirmedAt = new Date().toISOString();
+      return {
+        ok: true,
+        enabled: true,
+        reason: 'codex_computer_use_post_spawn_generation_confirmed',
+        paneId: id,
+        claimId: claim.claimId,
+        generation: claim.generation,
+        listWindowsProofRequired: true,
+        officialWrapperRequired: true,
+      };
+    }
+  );
 
   ipcMain.handle('get-claude-state', () => {
     return Object.fromEntries(ctx.agentRunning);
   });
 
   ipcMain.handle('get-daemon-terminals', (event, options = {}) => {
-    const windowKey = String(options?.windowKey || '').trim().toLowerCase();
     const paneId = String(options?.paneId || '').trim();
     const daemonClient = paneId ? getDaemonClientForPane(paneId) : ctx.daemonClient;
     if (daemonClient) {
@@ -1272,6 +1569,7 @@ function unregisterPtyHandlers(ctx) {
     ipcMain.removeHandler(STARTUP_INJECTION_RELEASE_CHANNEL);
     ipcMain.removeHandler(PANE_RESTART_BEGIN_CHANNEL);
     ipcMain.removeHandler(PANE_RESTART_COMPLETE_CHANNEL);
+    ipcMain.removeHandler(CODEX_COMPUTER_USE_CONFIRM_GENERATION_CHANNEL);
     ipcMain.removeHandler('spawn-claude');
     ipcMain.removeHandler('get-claude-state');
     ipcMain.removeHandler('get-daemon-terminals');
@@ -1288,6 +1586,8 @@ module.exports = {
     hasClaudeResumeFlag,
     appendResumeFlagsToAgentCommand,
     createStartupInjectionClaimStore,
+    isCodexComputerUsePaneOptedIn,
+    normalizeCodexComputerUsePaneIds,
     appendTerminalFitTelemetry,
     getTerminalFitTelemetryPath,
   },

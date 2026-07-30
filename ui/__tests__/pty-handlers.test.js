@@ -1800,6 +1800,226 @@ describe('PTY Handlers', () => {
     });
   });
 
+  describe('Codex Computer Use pane generation preflight', () => {
+    const mainRoot = 'D:\\projects\\squidrun';
+    const pipePath = '\\\\.\\pipe\\codex-computer-use-f214874c-b61b-4d31-ba3a-e2618aa80e34';
+    const generation = {
+      schema: 'squidrun.codex_computer_use_pipe_generation.v1',
+      pipePath,
+      configPath: 'C:\\Users\\James\\.codex\\config.toml',
+      projectRoot: mainRoot,
+      paneId: '3',
+      profile: 'main',
+    };
+
+    function enableComputerUsePane() {
+      ctx.currentSettings.codexComputerUsePaneIds = ['3'];
+      ctx.currentSettings.paneCommands = { '3': 'codex --yolo' };
+      ctx.currentSettings.paneProjects = { '3': mainRoot };
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.spawn.mockReturnValue(true);
+      deps.computerUsePlatform = 'win32';
+      deps.computerUseProjectRoot = mainRoot;
+      deps.computerUseProfile = 'main';
+      deps.randomUUID = jest.fn(() => 'generation-claim-3');
+      deps.prepareCodexComputerUseNativeBridge = jest.fn(async () => ({
+        ok: true,
+        status: 'ready',
+        reason: 'codex_desktop_owner_launched_and_exact_pipe_ready',
+        generation,
+      }));
+      deps.confirmCodexComputerUsePipeGeneration = jest.fn(async () => ({
+        ok: true,
+        status: 'ready',
+        reason: 'computer_use_pipe_generation_confirmed',
+        actualGeneration: generation,
+      }));
+    }
+
+    test('is disabled by default and does not touch the owner preflight', async () => {
+      ctx.currentSettings.paneCommands = { '3': 'codex --yolo' };
+      ctx.currentSettings.paneProjects = { '3': mainRoot };
+      ctx.daemonClient.connected = true;
+      const prepare = jest.fn();
+      deps.prepareCodexComputerUseNativeBridge = prepare;
+
+      const result = await harness.invoke('pty-create', '3', mainRoot);
+
+      expect(result.computerUsePreflight).toEqual({ enabled: false });
+      expect(prepare).not.toHaveBeenCalled();
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledTimes(1);
+    });
+
+    test('preflights a stable generation before PTY spawn and confirms it after command spawn', async () => {
+      enableComputerUsePane();
+      const order = [];
+      deps.prepareCodexComputerUseNativeBridge.mockImplementation(async (input) => {
+        order.push('exact-owner-preflight');
+        expect(input).toEqual(expect.objectContaining({
+          platform: 'win32',
+          projectRoot: path.resolve(mainRoot),
+          workspace: path.resolve(mainRoot),
+          paneId: '3',
+          profile: 'main',
+          launchOwner: true,
+        }));
+        return { ok: true, status: 'ready', generation };
+      });
+      ctx.daemonClient.spawn.mockImplementation(() => {
+        order.push('fresh-pty-spawn');
+        return true;
+      });
+      deps.confirmCodexComputerUsePipeGeneration.mockImplementation(async () => {
+        order.push(order.includes('codex-command-authorized')
+          ? 'post-spawn-generation-check'
+          : 'pre-spawn-generation-check');
+        return {
+          ok: true,
+          status: 'ready',
+          reason: 'computer_use_pipe_generation_confirmed',
+          actualGeneration: generation,
+        };
+      });
+
+      const createResult = await harness.invoke('pty-create', '3', mainRoot);
+      const spawnResult = await harness.invoke('spawn-claude', '3', mainRoot);
+      order.push('codex-command-authorized');
+      const postResult = await harness.invoke(
+        'codex-computer-use-confirm-generation',
+        '3',
+        { claimId: spawnResult.computerUseGenerationClaim.claimId }
+      );
+
+      expect(createResult.computerUsePreflight).toEqual(expect.objectContaining({
+        enabled: true,
+        claimId: 'generation-claim-3',
+        generation,
+      }));
+      expect(spawnResult).toEqual(expect.objectContaining({
+        success: true,
+        command: 'codex --yolo',
+        computerUseGenerationClaim: expect.objectContaining({
+          claimId: 'generation-claim-3',
+          postSpawnConfirmationRequired: true,
+          listWindowsProofRequired: true,
+        }),
+      }));
+      expect(postResult).toEqual(expect.objectContaining({
+        ok: true,
+        officialWrapperRequired: true,
+        listWindowsProofRequired: true,
+      }));
+      expect(order).toEqual([
+        'exact-owner-preflight',
+        'fresh-pty-spawn',
+        'pre-spawn-generation-check',
+        'codex-command-authorized',
+        'post-spawn-generation-check',
+      ]);
+    });
+
+    test('refuses an opted-in current pane that has no fresh generation claim', async () => {
+      enableComputerUsePane();
+
+      const result = await harness.invoke('spawn-claude', '3', mainRoot);
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'codex_computer_use_stale_current_pane_refused',
+        requiresTargetedPaneRecycle: true,
+      }));
+      expect(deps.prepareCodexComputerUseNativeBridge).not.toHaveBeenCalled();
+      expect(deps.confirmCodexComputerUsePipeGeneration).not.toHaveBeenCalled();
+    });
+
+    test('does not spawn the PTY when exact owner readiness times out', async () => {
+      enableComputerUsePane();
+      deps.prepareCodexComputerUseNativeBridge.mockResolvedValueOnce({
+        ok: false,
+        status: 'blocked',
+        reason: 'codex_desktop_pipe_ready_timeout',
+      });
+
+      const result = await harness.invoke('pty-create', '3', mainRoot);
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        error: 'codex_computer_use_preflight_failed',
+        reason: 'codex_desktop_pipe_ready_timeout',
+      }));
+      expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+    });
+
+    test('fails closed when the generation rotates after command spawn', async () => {
+      enableComputerUsePane();
+      deps.confirmCodexComputerUsePipeGeneration
+        .mockResolvedValueOnce({
+          ok: true,
+          reason: 'computer_use_pipe_generation_confirmed',
+          actualGeneration: generation,
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          reason: 'computer_use_pipe_generation_changed',
+          actualGeneration: { ...generation, pipePath: '\\\\.\\pipe\\codex-computer-use-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+        });
+
+      await harness.invoke('pty-create', '3', mainRoot);
+      const spawnResult = await harness.invoke('spawn-claude', '3', mainRoot);
+      const postResult = await harness.invoke(
+        'codex-computer-use-confirm-generation',
+        '3',
+        { claimId: spawnResult.computerUseGenerationClaim.claimId }
+      );
+
+      expect(postResult).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'computer_use_pipe_generation_changed',
+        requiresTargetedPaneRecycle: true,
+      }));
+    });
+
+    test('refuses the unsupported direct-spawn path before owner launch or PTY mutation', async () => {
+      enableComputerUsePane();
+
+      const result = await harness.invoke('pty-create', '3', mainRoot, {
+        paneCommand: 'codex --yolo',
+        spawnCommandOnCreate: true,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'codex_computer_use_direct_spawn_path_refused',
+      }));
+      expect(deps.prepareCodexComputerUseNativeBridge).not.toHaveBeenCalled();
+      expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+    });
+
+    test('preload exposes only the bounded post-spawn generation check channel', async () => {
+      const { isAllowedInvokeChannel } = require('../modules/bridge/channel-policy');
+      const { createPreloadApi } = require('../modules/bridge/preload-api');
+      const ipcRenderer = {
+        invoke: jest.fn().mockResolvedValue({ ok: true }),
+        send: jest.fn(),
+        on: jest.fn(),
+        removeListener: jest.fn(),
+        removeAllListeners: jest.fn(),
+      };
+      const api = createPreloadApi(ipcRenderer);
+
+      await expect(api.pty.confirmCodexComputerUseGeneration('3', {
+        claimId: 'generation-claim-3',
+      })).resolves.toEqual({ ok: true });
+
+      expect(isAllowedInvokeChannel('codex-computer-use-confirm-generation')).toBe(true);
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+        'codex-computer-use-confirm-generation',
+        '3',
+        { claimId: 'generation-claim-3' }
+      );
+    });
+  });
+
   describe('intent-update', () => {
     test('delegates to updateIntentState dependency when available', async () => {
       deps.updateIntentState.mockResolvedValueOnce({ ok: true, paneId: '2' });

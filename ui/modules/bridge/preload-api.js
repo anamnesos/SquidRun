@@ -121,6 +121,8 @@ function createPreloadApi(ipcRenderer) {
       releaseStartupInjection: (payload = {}) => ipc.invoke('startup-injection-release', payload),
       beginPaneRestart: (payload = {}) => ipc.invoke('pane-restart-begin', payload),
       completePaneRestart: (payload = {}) => ipc.invoke('pane-restart-complete', payload),
+      confirmCodexComputerUseGeneration: (paneId, payload = {}) =>
+        ipc.invoke('codex-computer-use-confirm-generation', paneId, payload),
       kill: (paneId, options = {}) => ipc.invoke('pty-kill', paneId, options),
       onData: (paneId, callback) => {
         const channel = toPaneChannel('pty-data-', paneId);

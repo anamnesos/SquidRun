@@ -210,6 +210,21 @@ describe('Settings Handlers', () => {
       expect(result.freshPaneSessionOnNextSpawn).toEqual({ '1': true, '3': true });
     });
 
+    test('persists an explicit deduplicated Computer Use pane opt-in list', async () => {
+      deps.loadSettings.mockReturnValue({});
+
+      const result = await harness.invoke(
+        'set-setting',
+        'codexComputerUsePaneIds',
+        ['3', ' 3 ', '', null]
+      );
+
+      expect(deps.saveSettings).toHaveBeenCalledWith({
+        codexComputerUsePaneIds: ['3'],
+      });
+      expect(result.codexComputerUsePaneIds).toEqual(['3']);
+    });
+
     test('runs preflight scan when paneProjects paths change', async () => {
       const previousProject = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-prev-pane-'));
       const nextProject = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-next-pane-'));

@@ -20,6 +20,7 @@ const SETTING_KEY_ALLOWLIST = new Set([
   'autonomyConsentGiven',
   'autonomyConsentUpdatedAt',
   'claudeModel',
+  'codexComputerUsePaneIds',
   'costAlertEnabled',
   'costAlertThreshold',
   'devTools',
@@ -69,6 +70,13 @@ function normalizeFreshPaneSessionOnNextSpawn(value) {
     }
     return acc;
   }, {});
+}
+
+function normalizeCodexComputerUsePaneIds(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value
+    .map((paneId) => String(paneId ?? '').trim())
+    .filter(Boolean)));
 }
 
 function getChangedPaneProjectTargets(previousPaneProjects, nextPaneProjects) {
@@ -303,7 +311,9 @@ function registerSettingsHandlers(ctx, deps) {
 
     const valueForStore = normalizedKey === 'freshPaneSessionOnNextSpawn'
       ? normalizeFreshPaneSessionOnNextSpawn(value)
-      : value;
+      : (normalizedKey === 'codexComputerUsePaneIds'
+        ? normalizeCodexComputerUsePaneIds(value)
+        : value);
 
     settings[normalizedKey] = valueForStore;
 

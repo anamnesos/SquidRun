@@ -143,6 +143,8 @@ function createDefaultSettings({ isPackaged = false } = {}) {
     localModelEnabled: false,
     claudeModel: '',
     geminiModel,
+    // Default-off: selected Codex panes preflight the Desktop-owned native pipe per PTY generation.
+    codexComputerUsePaneIds: [],
     paneProjects: { '1': null, '2': null, '3': null },
     paneCommands: {
       '1': 'claude',
