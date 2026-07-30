@@ -15,6 +15,7 @@ const { encodeClaudeProjectDir } = require('../modules/cli-resume-invocation');
 const { loadPaneSessionIds } = require('../modules/pane-session-id-store');
 const {
   buildCodexComputerUseProofInvocation: buildActualCodexComputerUseProofInvocation,
+  sha256File: sha256ActualFile,
 } = require('../modules/main/codex-computer-use-proof');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -1816,13 +1817,71 @@ describe('PTY Handlers', () => {
       profile: 'main',
     };
     const commandInjectionCases = [
-      ['statement separator', 'codex --yolo; node forge.js'],
-      ['pipeline', 'codex --yolo | node forge.js'],
-      ['newline', 'codex --yolo\nnode forge.js'],
-      ['background operator', 'codex --yolo & node forge.js'],
+      [
+        'statement separator',
+        'codex --yolo; node forge.js',
+        'codex_computer_use_command_syntax_refused',
+      ],
+      [
+        'pipeline',
+        'codex --yolo | node forge.js',
+        'codex_computer_use_command_syntax_refused',
+      ],
+      [
+        'newline',
+        'codex --yolo\nnode forge.js',
+        'codex_computer_use_command_syntax_refused',
+      ],
+      [
+        'background operator',
+        'codex --yolo & node forge.js',
+        'codex_computer_use_command_syntax_refused',
+      ],
+      [
+        'Codex argument terminator',
+        'codex --yolo --',
+        'codex_computer_use_command_argument_terminator_refused',
+      ],
+      [
+        'Codex argument terminator with startup input',
+        'codex --yolo -- forge-proof',
+        'codex_computer_use_command_argument_terminator_refused',
+      ],
+      [
+        'Codex hook feature disable',
+        'codex --disable hooks',
+        'codex_computer_use_command_configuration_refused',
+      ],
+      [
+        'Codex hook feature disable with startup input',
+        'codex --disable hooks forge-proof',
+        'codex_computer_use_command_configuration_refused',
+      ],
+      [
+        'Codex hook feature enable',
+        'codex --enable hooks',
+        'codex_computer_use_command_configuration_refused',
+      ],
+      [
+        'startup positional prompt',
+        'codex forge-proof',
+        'codex_computer_use_command_startup_input_refused',
+      ],
+      [
+        'startup subcommand',
+        'codex exec forge-proof',
+        'codex_computer_use_command_startup_input_refused',
+      ],
     ];
 
     function enableComputerUsePane() {
+      const approvedCodexExecutable = path.join(
+        tmpDir,
+        'approved-codex',
+        'codex.exe'
+      );
+      fs.mkdirSync(path.dirname(approvedCodexExecutable), { recursive: true });
+      fs.writeFileSync(approvedCodexExecutable, 'approved Codex executable fixture\n');
       ctx.currentSettings.codexComputerUsePaneIds = ['3'];
       ctx.currentSettings.paneCommands = { '3': 'codex --yolo' };
       ctx.currentSettings.paneProjects = { '3': mainRoot };
@@ -1857,6 +1916,13 @@ describe('PTY Handlers', () => {
               'codex-computer-use-post-tool-proof.js'
             ),
           }],
+          codexExecutable: {
+            path: approvedCodexExecutable,
+            sha256: sha256ActualFile(approvedCodexExecutable),
+            packageVersion: '0.146.0',
+            platformPackageVersion: '0.146.0-win32-x64',
+            targetTriple: 'x86_64-pc-windows-msvc',
+          },
         };
         claim.proofSpawnEnv = {
           SQUIDRUN_CUA_PROOF_CLAIM_ID: claim.claimId,
@@ -1898,7 +1964,7 @@ describe('PTY Handlers', () => {
 
     test.each(commandInjectionCases)(
       'daemon command-on-create refuses %s injection before spawning',
-      async (_label, paneCommand) => {
+      async (_label, paneCommand, expectedReason) => {
         enableComputerUsePane();
         deps.buildCodexComputerUseProofInvocation =
           buildActualCodexComputerUseProofInvocation;
@@ -1911,7 +1977,7 @@ describe('PTY Handlers', () => {
         expect(result).toEqual(expect.objectContaining({
           success: false,
           error: 'codex_computer_use_proof_invocation_failed',
-          reason: 'codex_computer_use_command_syntax_refused',
+          reason: expectedReason,
           requiresTargetedPaneRecycle: true,
         }));
         expect(ctx.daemonClient.spawnAndWait).not.toHaveBeenCalled();
@@ -1921,7 +1987,7 @@ describe('PTY Handlers', () => {
 
     test.each(commandInjectionCases)(
       'interactive spawn-claude refuses %s injection before authorization',
-      async (_label, paneCommand) => {
+      async (_label, paneCommand, expectedReason) => {
         enableComputerUsePane();
         ctx.currentSettings.paneCommands = { '3': paneCommand };
         deps.buildCodexComputerUseProofInvocation =
@@ -1937,13 +2003,57 @@ describe('PTY Handlers', () => {
         expect(result).toEqual(expect.objectContaining({
           success: false,
           error: 'codex_computer_use_proof_invocation_failed',
-          reason: 'codex_computer_use_command_syntax_refused',
+          reason: expectedReason,
           requiresTargetedPaneRecycle: true,
         }));
         expect(ctx.agentRunning.get('3')).not.toBe('starting');
         expect(ctx.daemonClient.spawn).toHaveBeenCalledTimes(1);
       }
     );
+
+    test('daemon command-on-create refuses an arbitrary absolute Codex executable', async () => {
+      enableComputerUsePane();
+      deps.buildCodexComputerUseProofInvocation =
+        buildActualCodexComputerUseProofInvocation;
+      const attackerPath = path.join(tmpDir, 'attacker', 'codex.exe');
+      fs.mkdirSync(path.dirname(attackerPath), { recursive: true });
+      fs.writeFileSync(attackerPath, 'forge the proof\n');
+
+      const result = await harness.invoke('pty-create', '3', mainRoot, {
+        paneCommand: `"${attackerPath}" --yolo`,
+        spawnCommandOnCreate: true,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        error: 'codex_computer_use_proof_invocation_failed',
+        reason: 'codex_computer_use_executable_not_approved',
+      }));
+      expect(ctx.daemonClient.spawnAndWait).not.toHaveBeenCalled();
+      expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+    });
+
+    test('interactive spawn-claude refuses an arbitrary absolute Codex command shim', async () => {
+      enableComputerUsePane();
+      const attackerPath = path.join(tmpDir, 'attacker', 'codex.cmd');
+      fs.mkdirSync(path.dirname(attackerPath), { recursive: true });
+      fs.writeFileSync(attackerPath, '@echo forge the proof\r\n');
+      ctx.currentSettings.paneCommands = { '3': `"${attackerPath}" --yolo` };
+      deps.buildCodexComputerUseProofInvocation =
+        buildActualCodexComputerUseProofInvocation;
+
+      const createResult = await harness.invoke('pty-create', '3', mainRoot);
+      const result = await harness.invoke('spawn-claude', '3', mainRoot);
+
+      expect(createResult).toEqual(expect.objectContaining({ success: true }));
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        error: 'codex_computer_use_proof_invocation_failed',
+        reason: 'codex_computer_use_executable_not_approved',
+      }));
+      expect(ctx.agentRunning.get('3')).not.toBe('starting');
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledTimes(1);
+    });
 
     test('preflights a stable generation before PTY spawn and confirms it after command spawn', async () => {
       enableComputerUsePane();

@@ -39,6 +39,10 @@ async function armedClaim(options = {}) {
   const root = makeTempDir('squidrun-cua-proof-test-');
   const clientPath = path.join(root, 'computer-use-client.mjs');
   fs.writeFileSync(clientPath, 'export const setupComputerUseRuntime = () => {};\n');
+  const codexExecutablePath = path.join(root, 'OpenAI Codex', 'codex.exe');
+  fs.mkdirSync(path.dirname(codexExecutablePath), { recursive: true });
+  fs.writeFileSync(codexExecutablePath, 'approved Codex executable fixture\n');
+  const codexExecutableSha256 = proof.sha256File(codexExecutablePath);
   const integrity = [
     { name: 'verifier', path: path.join(root, 'verifier.js'), sha256: 'a'.repeat(64) },
     { name: 'hookScript', path: HOOK_SCRIPT, sha256: proof.sha256File(HOOK_SCRIPT) },
@@ -64,6 +68,14 @@ async function armedClaim(options = {}) {
     captureIntegrity: async () => integrity,
     makeProofDirectory: () => root,
     randomBytes: () => Buffer.alloc(32, 7),
+    resolveCodexExecutable: options.resolveCodexExecutable || (async () => ({
+      ok: true,
+      path: codexExecutablePath,
+      sha256: codexExecutableSha256,
+      packageVersion: '0.146.0',
+      platformPackageVersion: '0.146.0-win32-x64',
+      targetTriple: 'x86_64-pc-windows-msvc',
+    })),
   });
   expect(result.ok).toBe(true);
   claim.proof.state = 'pending';
@@ -75,6 +87,8 @@ async function armedClaim(options = {}) {
     root,
     claim,
     clientPath,
+    codexExecutablePath,
+    codexExecutableSha256,
     integrity,
     codexHome,
     transcriptPath,
@@ -138,6 +152,12 @@ describe('Codex Computer Use PostToolUse attestation', () => {
     const state = await armedClaim();
     const plan = state.claim.proof.canonicalPlan;
 
+    expect(state.claim.proof.codexExecutable).toEqual(expect.objectContaining({
+      path: state.codexExecutablePath,
+      sha256: state.codexExecutableSha256,
+      packageVersion: '0.146.0',
+      platformPackageVersion: '0.146.0-win32-x64',
+    }));
     expect(plan.toolInput).toEqual({ code: plan.snippet });
     expect(plan.snippet).toContain(`import(${JSON.stringify(
       require('url').pathToFileURL(state.clientPath).href
@@ -263,6 +283,14 @@ describe('Codex Computer Use PostToolUse attestation', () => {
     await expect(verifyJournal(verifierDrift)).resolves.toEqual(expect.objectContaining({
       ok: false,
       reason: 'codex_computer_use_proof_integrity_drift',
+    }));
+
+    const executableDrift = await armedClaim({ claimId: 'claim-executable-drift' });
+    runProofHook(executableDrift, canonicalHookPayload(executableDrift));
+    fs.appendFileSync(executableDrift.codexExecutablePath, 'drift\n');
+    await expect(verifyJournal(executableDrift)).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_executable_drift',
     }));
   });
 
@@ -628,6 +656,48 @@ describe('Codex Computer Use full hook trust audit', () => {
 });
 
 describe('fresh target-only Codex invocation', () => {
+  test('resolves and hashes the official platform binary from the Codex package layout', () => {
+    const root = makeTempDir('squidrun-cua-codex-package-');
+    const packageRoot = path.join(root, 'node_modules', '@openai', 'codex');
+    const platformRoot = path.join(
+      packageRoot,
+      'node_modules',
+      '@openai',
+      'codex-win32-x64'
+    );
+    const executablePath = path.join(
+      platformRoot,
+      'vendor',
+      'x86_64-pc-windows-msvc',
+      'bin',
+      'codex.exe'
+    );
+    writeJson(path.join(packageRoot, 'package.json'), {
+      name: '@openai/codex',
+      version: '0.146.0',
+    });
+    writeJson(path.join(platformRoot, 'package.json'), {
+      name: '@openai/codex',
+      version: '0.146.0-win32-x64',
+    });
+    fs.mkdirSync(path.dirname(executablePath), { recursive: true });
+    fs.writeFileSync(executablePath, 'official vendor binary fixture\n');
+
+    expect(proof.resolveTrustedCodexExecutable({
+      platform: 'win32',
+      arch: 'x64',
+      codexPackageRoot: packageRoot,
+      env: {},
+    })).toEqual(expect.objectContaining({
+      ok: true,
+      path: fs.realpathSync(executablePath),
+      sha256: proof.sha256File(executablePath),
+      packageVersion: '0.146.0',
+      platformPackageVersion: '0.146.0-win32-x64',
+      targetTriple: 'x86_64-pc-windows-msvc',
+    }));
+  });
+
   test('adds the exact hook trust bypass and quoting only to an armed fresh command', async () => {
     const state = await armedClaim();
     state.claim.proof.state = 'armed';
@@ -645,6 +715,9 @@ describe('fresh target-only Codex invocation', () => {
     );
     expect(invocation.command).not.toContain(state.claim.proof.secret);
     expect(invocation.command).not.toContain('codex-computer-use.exe');
+    expect(invocation.command).toContain(
+      `& '${state.codexExecutablePath.replace(/'/gu, "''")}'`
+    );
   });
 
   test.each([
@@ -690,8 +763,8 @@ describe('fresh target-only Codex invocation', () => {
     const state = await armedClaim();
     state.claim.proof.state = 'armed';
     const invocation = proof.buildCodexComputerUseProofInvocation(
-      '"C:\\Program Files\\OpenAI\\codex.exe" --model gpt-5.6-sol --search '
-        + '--sandbox workspace-write "literal prompt with spaces"',
+      `"${state.codexExecutablePath}" --model "gpt-5.6-sol" --search `
+        + '--sandbox workspace-write --ask-for-approval never --no-alt-screen',
       state.claim,
       { platform: 'win32' }
     );
@@ -699,20 +772,73 @@ describe('fresh target-only Codex invocation', () => {
     expect(invocation).toEqual(expect.objectContaining({
       ok: true,
       argv: [
-        'C:\\Program Files\\OpenAI\\codex.exe',
+        state.codexExecutablePath,
         '--model',
         'gpt-5.6-sol',
         '--search',
         '--sandbox',
         'workspace-write',
-        'literal prompt with spaces',
+        '--ask-for-approval',
+        'never',
+        '--no-alt-screen',
       ],
     }));
-    expect(invocation.command).toMatch(
-      /^& 'C:\\Program Files\\OpenAI\\codex\.exe' '--model' 'gpt-5\.6-sol' /
+    expect(invocation.command).toContain(
+      `& '${state.codexExecutablePath.replace(/'/gu, "''")}' `
+        + "'--model' 'gpt-5.6-sol'"
     );
-    expect(invocation.command).toContain("'literal prompt with spaces'");
+    expect(invocation.command).toContain("'--ask-for-approval' 'never'");
     expect(invocation.command).toContain('--dangerously-bypass-hook-trust');
+  });
+
+  test.each([
+    ['codex.exe', 'codex.exe'],
+    ['codex.cmd', 'codex.cmd'],
+  ])('refuses an arbitrary absolute %s even with safe argv', async (_label, fileName) => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+    const attackerPath = path.join(state.root, 'attacker', fileName);
+    fs.mkdirSync(path.dirname(attackerPath), { recursive: true });
+    fs.writeFileSync(attackerPath, 'forge the proof\n');
+
+    expect(proof.buildCodexComputerUseProofInvocation(
+      `"${attackerPath}" --yolo`,
+      state.claim,
+      { platform: 'win32' }
+    )).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_executable_not_approved',
+    }));
+  });
+
+  test('rechecks the approved executable hash before building the command', async () => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+    fs.appendFileSync(state.codexExecutablePath, 'drift\n');
+
+    expect(proof.buildCodexComputerUseProofInvocation(
+      'codex --yolo',
+      state.claim
+    )).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_executable_drift',
+    }));
+  });
+
+  test.each([
+    ['bare terminator', 'codex --'],
+    ['terminator after a safe flag', 'codex --yolo -- forge-proof'],
+  ])('refuses a Codex %s before appended proof controls', async (_label, command) => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+
+    expect(proof.buildCodexComputerUseProofInvocation(
+      command,
+      state.claim
+    )).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_command_argument_terminator_refused',
+    }));
   });
 
   test.each([
@@ -720,6 +846,9 @@ describe('fresh target-only Codex invocation', () => {
     ['named runtime config', "codex '--config=hooks.PostToolUse=[]'"],
     ['profile overlay', 'codex --profile forged'],
     ['working-directory config source', 'codex -C D:\\other-project'],
+    ['feature disable', 'codex --disable hooks'],
+    ['feature disable with prompt', 'codex --disable hooks forge-proof'],
+    ['feature enable', 'codex --enable hooks'],
   ])('refuses an unaudited %s override', async (_label, command) => {
     const state = await armedClaim();
     state.claim.proof.state = 'armed';
@@ -731,6 +860,97 @@ describe('fresh target-only Codex invocation', () => {
     )).toEqual(expect.objectContaining({
       ok: false,
       reason: 'codex_computer_use_command_configuration_refused',
+    }));
+  });
+
+  test.each([
+    ['startup prompt', 'codex forge-proof'],
+    ['startup subcommand', 'codex exec forge-proof'],
+  ])('refuses a %s so the controller owns the first prompt', async (_label, command) => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+
+    expect(proof.buildCodexComputerUseProofInvocation(
+      command,
+      state.claim
+    )).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_command_startup_input_refused',
+    }));
+  });
+
+  test('accepts a bare Codex executable without startup input', async () => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+
+    expect(proof.buildCodexComputerUseProofInvocation(
+      'codex',
+      state.claim
+    )).toEqual(expect.objectContaining({
+      ok: true,
+      argv: [state.codexExecutablePath],
+    }));
+  });
+
+  test('normalizes the audited short safe flags and their exact arity', async () => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+
+    expect(proof.buildCodexComputerUseProofInvocation(
+      'codex -m gpt-5.6-sol -s read-only -a on-request '
+        + '--search --no-alt-screen --dangerously-bypass-approvals-and-sandbox',
+      state.claim
+    )).toEqual(expect.objectContaining({
+      ok: true,
+      argv: [
+        state.codexExecutablePath,
+        '--model',
+        'gpt-5.6-sol',
+        '--sandbox',
+        'read-only',
+        '--ask-for-approval',
+        'on-request',
+        '--search',
+        '--no-alt-screen',
+        '--dangerously-bypass-approvals-and-sandbox',
+      ],
+    }));
+  });
+
+  test.each([
+    ['remote endpoint', 'codex --remote ws://127.0.0.1:4500'],
+    ['initial image', 'codex --image proof.png'],
+    ['provider switch', 'codex --oss'],
+    ['additional writable root', 'codex --add-dir D:\\other-project'],
+    ['unknown option', 'codex --forge-proof'],
+  ])('refuses the non-allowlisted %s option', async (_label, command) => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+
+    expect(proof.buildCodexComputerUseProofInvocation(
+      command,
+      state.claim
+    )).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_command_option_refused',
+    }));
+  });
+
+  test.each([
+    ['model expression', "codex --model 'gpt-5.6-sol;forge-proof'"],
+    ['sandbox mode', 'codex --sandbox unrestricted'],
+    ['approval policy', 'codex --ask-for-approval always'],
+    ['missing model', 'codex --model'],
+  ])('refuses an unsafe or missing %s value', async (_label, command) => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+
+    expect(proof.buildCodexComputerUseProofInvocation(
+      command,
+      state.claim
+    )).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_command_option_value_refused',
     }));
   });
 

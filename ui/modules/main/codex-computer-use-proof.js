@@ -111,6 +111,187 @@ function defaultRunCodex(args, options = {}) {
   return (options.runFile || defaultRunFile)('codex', args, options);
 }
 
+const CODEX_VENDOR_TARGETS = {
+  'linux:x64': {
+    packageName: 'codex-linux-x64',
+    targetTriple: 'x86_64-unknown-linux-musl',
+    binaryName: 'codex',
+  },
+  'linux:arm64': {
+    packageName: 'codex-linux-arm64',
+    targetTriple: 'aarch64-unknown-linux-musl',
+    binaryName: 'codex',
+  },
+  'darwin:x64': {
+    packageName: 'codex-darwin-x64',
+    targetTriple: 'x86_64-apple-darwin',
+    binaryName: 'codex',
+  },
+  'darwin:arm64': {
+    packageName: 'codex-darwin-arm64',
+    targetTriple: 'aarch64-apple-darwin',
+    binaryName: 'codex',
+  },
+  'win32:x64': {
+    packageName: 'codex-win32-x64',
+    targetTriple: 'x86_64-pc-windows-msvc',
+    binaryName: 'codex.exe',
+  },
+  'win32:arm64': {
+    packageName: 'codex-win32-arm64',
+    targetTriple: 'aarch64-pc-windows-msvc',
+    binaryName: 'codex.exe',
+  },
+};
+
+function realpathFile(filePath, options = {}) {
+  const realpath = options.realpath
+    || fs.realpathSync.native
+    || fs.realpathSync;
+  return realpath(filePath);
+}
+
+function pathIsInside(rootPath, candidatePath) {
+  const relative = path.relative(rootPath, candidatePath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function resolveTrustedCodexExecutable(options = {}) {
+  const platform = options.platform || process.platform;
+  const arch = options.arch || process.arch;
+  const target = CODEX_VENDOR_TARGETS[`${platform}:${arch}`];
+  if (!target) {
+    return {
+      ok: false,
+      reason: 'codex_computer_use_executable_not_approved',
+      error: `unsupported Codex target ${platform}:${arch}`,
+    };
+  }
+
+  const exists = options.exists || fs.existsSync;
+  const readFile = options.readFile || fs.readFileSync;
+  const env = options.env || process.env;
+  const packageRoots = [];
+  const addPackageRoot = (candidate) => {
+    const normalized = normalizePath(candidate);
+    if (normalized && !packageRoots.includes(normalized)) packageRoots.push(normalized);
+  };
+  addPackageRoot(options.codexPackageRoot);
+  addPackageRoot(env.CODEX_MANAGED_PACKAGE_ROOT);
+  if (platform === 'win32' && env.APPDATA) {
+    addPackageRoot(path.join(env.APPDATA, 'npm', 'node_modules', '@openai', 'codex'));
+  }
+  if (env.npm_config_prefix) {
+    addPackageRoot(path.join(
+      env.npm_config_prefix,
+      platform === 'win32' ? 'node_modules' : path.join('lib', 'node_modules'),
+      '@openai',
+      'codex'
+    ));
+  }
+
+  try {
+    for (const packageRoot of packageRoots) {
+      const packageManifestPath = path.join(packageRoot, 'package.json');
+      if (!exists(packageManifestPath)) continue;
+      const packageManifest = readJsonFile(packageManifestPath, readFile);
+      if (packageManifest.name !== '@openai/codex'
+        || !/^\d+\.\d+\.\d+(?:[-+].*)?$/u.test(String(packageManifest.version || ''))) {
+        continue;
+      }
+
+      const platformRoots = [
+        path.join(packageRoot, 'node_modules', '@openai', target.packageName),
+        path.join(path.dirname(packageRoot), target.packageName),
+      ];
+      try {
+        platformRoots.unshift(path.dirname(require.resolve(
+          `@openai/${target.packageName}/package.json`,
+          { paths: [packageRoot] }
+        )));
+      } catch (_) {
+        // Fixed-layout candidates below cover npm installs without resolvable aliases.
+      }
+      const uniquePlatformRoots = Array.from(new Set(
+        platformRoots.map((candidate) => normalizePath(candidate))
+      ));
+      for (const platformRoot of uniquePlatformRoots) {
+        const platformManifestPath = path.join(platformRoot, 'package.json');
+        if (!exists(platformManifestPath)) continue;
+        const platformManifest = readJsonFile(platformManifestPath, readFile);
+        if (platformManifest.name !== '@openai/codex'
+          || !String(platformManifest.version || '').startsWith(
+            `${packageManifest.version}-`
+          )) {
+          continue;
+        }
+        const executablePath = path.join(
+          platformRoot,
+          'vendor',
+          target.targetTriple,
+          'bin',
+          target.binaryName
+        );
+        if (!exists(executablePath)) continue;
+        const resolvedRoot = realpathFile(platformRoot, options);
+        const resolvedPath = realpathFile(executablePath, options);
+        if (!pathIsInside(resolvedRoot, resolvedPath)) continue;
+        return {
+          ok: true,
+          reason: 'codex_computer_use_executable_approved',
+          path: resolvedPath,
+          sha256: sha256File(resolvedPath, readFile),
+          packageVersion: packageManifest.version,
+          platformPackageVersion: platformManifest.version,
+          targetTriple: target.targetTriple,
+        };
+      }
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'codex_computer_use_executable_not_approved',
+      error: error?.message || String(error),
+    };
+  }
+
+  return {
+    ok: false,
+    reason: 'codex_computer_use_executable_not_approved',
+    error: 'official Codex vendor executable was not found in an approved package layout',
+  };
+}
+
+function recheckTrustedCodexExecutable(identity, options = {}) {
+  const platform = options.platform || process.platform;
+  const expectedPath = optionalString(identity?.path, '');
+  const expectedSha256 = optionalString(identity?.sha256, '');
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  if (!expectedPath
+    || !pathApi.isAbsolute(expectedPath)
+    || !/^[0-9a-f]{64}$/iu.test(expectedSha256)) {
+    return { ok: false, reason: 'codex_computer_use_executable_identity_invalid' };
+  }
+  try {
+    const resolvedPath = realpathFile(expectedPath, options);
+    const actualSha256 = sha256File(
+      resolvedPath,
+      options.readFile || fs.readFileSync
+    );
+    if (!pathsEqual(resolvedPath, expectedPath, platform)
+      || actualSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
+      return { ok: false, reason: 'codex_computer_use_executable_drift' };
+    }
+    return {
+      ok: true,
+      path: resolvedPath,
+      sha256: actualSha256,
+    };
+  } catch (_) {
+    return { ok: false, reason: 'codex_computer_use_executable_drift' };
+  }
+}
+
 function readJsonFile(filePath, readFile = fs.readFileSync) {
   return JSON.parse(readFile(filePath, 'utf8'));
 }
@@ -962,6 +1143,38 @@ async function armCodexComputerUseProofClaim(options = {}) {
       ...options,
       projectRoot,
     });
+    const resolveCodexExecutable = options.resolveCodexExecutable
+      || resolveTrustedCodexExecutable;
+    const resolvedCodexExecutable = await resolveCodexExecutable({
+      ...options,
+      projectRoot,
+    });
+    if (resolvedCodexExecutable?.ok !== true) {
+      return {
+        ok: false,
+        reason: resolvedCodexExecutable?.reason
+          || 'codex_computer_use_executable_not_approved',
+        executable: resolvedCodexExecutable || null,
+      };
+    }
+    const codexExecutable = {
+      path: normalizePath(resolvedCodexExecutable.path),
+      sha256: optionalString(resolvedCodexExecutable.sha256, ''),
+      packageVersion: optionalString(resolvedCodexExecutable.packageVersion, null),
+      platformPackageVersion: optionalString(
+        resolvedCodexExecutable.platformPackageVersion,
+        null
+      ),
+      targetTriple: optionalString(resolvedCodexExecutable.targetTriple, null),
+    };
+    const executableCheck = recheckTrustedCodexExecutable(codexExecutable, options);
+    if (executableCheck.ok !== true) {
+      return {
+        ok: false,
+        reason: executableCheck.reason,
+        executable: codexExecutable,
+      };
+    }
     const plan = buildCanonicalListWindowsPlan({
       clientPath,
       clientSha256,
@@ -981,6 +1194,7 @@ async function armCodexComputerUseProofClaim(options = {}) {
       integrity,
       officialClientPath: clientPath,
       officialClientSha256: clientSha256,
+      codexExecutable,
       generationDigest,
       canonicalPlan: plan,
       deadlineAtMs: null,
@@ -1009,6 +1223,7 @@ async function armCodexComputerUseProofClaim(options = {}) {
         manifestPath: hookAudit.manifestPath,
       },
       integrity,
+      codexExecutable,
       plan: {
         schema: plan.schema,
         toolInputSha256: plan.toolInputSha256,
@@ -1098,11 +1313,17 @@ function validateCodexLiteralArgv(argv, platform = process.platform) {
   const executableName = pathApi.basename(executable).toLowerCase();
   const isCodexExecutable = ['codex', 'codex.exe', 'codex.cmd'].includes(executableName);
   const hasPath = /[\\/]/u.test(executable);
-  if (!isCodexExecutable || (hasPath && !pathApi.isAbsolute(executable))) {
+  const isBareCodex = !hasPath && executable.toLowerCase() === 'codex';
+  if (!isCodexExecutable
+    || (hasPath && !pathApi.isAbsolute(executable))
+    || (!hasPath && !isBareCodex)) {
     return { ok: false, reason: 'codex_computer_use_command_not_codex' };
   }
 
   const args = argv.slice(1);
+  if (args.includes('--')) {
+    return { ok: false, reason: 'codex_computer_use_command_argument_terminator_refused' };
+  }
   if (args.some((arg) =>
     /^(?:resume|fork|--resume(?:=.*)?|--continue(?:=.*)?)$/iu.test(arg))) {
     return { ok: false, reason: 'codex_computer_use_bypass_requires_fresh_session' };
@@ -1112,14 +1333,76 @@ function validateCodexLiteralArgv(argv, platform = process.platform) {
     return { ok: false, reason: 'codex_computer_use_bypass_already_present' };
   }
   if (args.some((arg) =>
-    /^(?:-c.*|--config(?:=.*)?|-p.*|--profile(?:=.*)?|-C.*|--cd(?:=.*)?)$/u.test(arg))) {
+    /^(?:-c.*|--config(?:=.*)?|-p.*|--profile(?:=.*)?|-C.*|--cd(?:=.*)?|--enable(?:=.*)?|--disable(?:=.*)?)$/u.test(arg))) {
     return { ok: false, reason: 'codex_computer_use_command_configuration_refused' };
+  }
+
+  const noValueOptions = new Set([
+    '--yolo',
+    '--dangerously-bypass-approvals-and-sandbox',
+    '--search',
+    '--no-alt-screen',
+  ]);
+  const valueOptions = new Map([
+    ['-m', {
+      canonical: '--model',
+      valid: (value) => /^[A-Za-z0-9._:/+-]+$/u.test(value),
+    }],
+    ['--model', {
+      canonical: '--model',
+      valid: (value) => /^[A-Za-z0-9._:/+-]+$/u.test(value),
+    }],
+    ['-s', {
+      canonical: '--sandbox',
+      valid: (value) =>
+        ['read-only', 'workspace-write', 'danger-full-access'].includes(value),
+    }],
+    ['--sandbox', {
+      canonical: '--sandbox',
+      valid: (value) =>
+        ['read-only', 'workspace-write', 'danger-full-access'].includes(value),
+    }],
+    ['-a', {
+      canonical: '--ask-for-approval',
+      valid: (value) => ['untrusted', 'on-request', 'never'].includes(value),
+    }],
+    ['--ask-for-approval', {
+      canonical: '--ask-for-approval',
+      valid: (value) => ['untrusted', 'on-request', 'never'].includes(value),
+    }],
+  ]);
+  const safeArgs = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (noValueOptions.has(arg)) {
+      safeArgs.push(arg);
+      continue;
+    }
+
+    const equalsIndex = arg.indexOf('=');
+    const optionName = equalsIndex > 0 ? arg.slice(0, equalsIndex) : arg;
+    const option = valueOptions.get(optionName);
+    if (!option) {
+      return {
+        ok: false,
+        reason: arg.startsWith('-')
+          ? 'codex_computer_use_command_option_refused'
+          : 'codex_computer_use_command_startup_input_refused',
+      };
+    }
+
+    const value = equalsIndex > 0 ? arg.slice(equalsIndex + 1) : args[index + 1];
+    if (!value || value.startsWith('-') || !option.valid(value)) {
+      return { ok: false, reason: 'codex_computer_use_command_option_value_refused' };
+    }
+    safeArgs.push(option.canonical, value);
+    if (equalsIndex < 0) index += 1;
   }
 
   return {
     ok: true,
     executable,
-    args,
+    args: safeArgs,
     hasPath,
   };
 }
@@ -1130,11 +1413,28 @@ function buildCodexComputerUseProofInvocation(command, claim, options = {}) {
   }
   const parsed = parsePowerShellLiteralArgv(command);
   if (parsed.ok !== true) return parsed;
+  const platform = options.platform || claim.platform || process.platform;
   const validated = validateCodexLiteralArgv(
     parsed.argv,
-    options.platform || process.platform
+    platform
   );
   if (validated.ok !== true) return validated;
+  const executableCheck = recheckTrustedCodexExecutable(
+    claim.proof.codexExecutable,
+    { ...options, platform }
+  );
+  if (executableCheck.ok !== true) return executableCheck;
+  if (validated.hasPath) {
+    let requestedExecutable;
+    try {
+      requestedExecutable = realpathFile(validated.executable, options);
+    } catch (_) {
+      return { ok: false, reason: 'codex_computer_use_executable_not_approved' };
+    }
+    if (!pathsEqual(requestedExecutable, executableCheck.path, platform)) {
+      return { ok: false, reason: 'codex_computer_use_executable_not_approved' };
+    }
+  }
 
   const hookEntry = claim.proof.integrity.find((entry) => entry.name === 'hookScript');
   if (!hookEntry?.path) {
@@ -1150,8 +1450,11 @@ function buildCodexComputerUseProofInvocation(command, claim, options = {}) {
     ']',
   ].join('');
   const environmentOverride = 'shell_environment_policy.exclude=["SQUIDRUN_CUA_*"]';
+  const serializedExecutable = platform === 'win32'
+    ? `& ${quotePowerShellLiteral(executableCheck.path)}`
+    : quotePowerShellLiteral(executableCheck.path);
   const serializedCommand = [
-    validated.hasPath ? `& ${quotePowerShellLiteral(validated.executable)}` : validated.executable,
+    serializedExecutable,
     ...validated.args.map(quotePowerShellLiteral),
   ].join(' ');
   const addedArguments = [
@@ -1170,13 +1473,14 @@ function buildCodexComputerUseProofInvocation(command, claim, options = {}) {
     environmentOverride,
     addedArguments,
     originalCommand: parsed.source,
-    argv: [validated.executable, ...validated.args],
+    argv: [executableCheck.path, ...validated.args],
+    codexExecutableSha256: executableCheck.sha256,
     targetPaneId: String(claim.paneId),
     freshSessionOnly: true,
     bypassHookTrust: true,
     noCustomProtocol: true,
     noHelperSpawn: true,
-    platform: options.platform || process.platform,
+    platform,
   };
 }
 
@@ -1293,6 +1597,16 @@ async function verifyCodexComputerUseProofJournal(claim, options = {}) {
   ) !== claim.proof.officialClientSha256) {
     return failProofClaim(claim, 'official_computer_use_client_drift');
   }
+  const executableCheck = recheckTrustedCodexExecutable(
+    claim.proof.codexExecutable,
+    {
+      ...options,
+      platform: claim.platform || options.platform || process.platform,
+    }
+  );
+  if (executableCheck.ok !== true) {
+    return failProofClaim(claim, executableCheck.reason);
+  }
   const hookAudit = await (options.auditHookTrust || auditCodexHookTrust)({
     ...options,
     projectRoot: claim.projectRoot,
@@ -1372,6 +1686,8 @@ module.exports = {
   hmacSha256,
   pathsEqual,
   proofIntegrityMatches,
+  recheckTrustedCodexExecutable,
+  resolveTrustedCodexExecutable,
   resolveLiteralCommandHookTarget,
   sha256,
   sha256File,
