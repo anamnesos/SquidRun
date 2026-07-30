@@ -80,6 +80,32 @@ class DaemonClient extends EventEmitter {
     }
   }
 
+  /**
+   * Connect only when the daemon pipe already exists.
+   *
+   * Unlike connect(), this never starts a daemon. Standalone controllers use
+   * this fail-closed path when replacing the daemon would violate the active
+   * process-generation boundary.
+   * @returns {Promise<boolean>} true only when an existing pipe accepted us
+   */
+  async connectExisting() {
+    if (this.connected && this.client && !this.client.destroyed) {
+      this.spawnedDuringLastConnect = false;
+      return true;
+    }
+    if (this.connectPromise) {
+      return false;
+    }
+
+    this.spawnedDuringLastConnect = false;
+    this.connectPromise = this._tryConnect();
+    try {
+      return await this.connectPromise;
+    } finally {
+      this.connectPromise = null;
+    }
+  }
+
   async _connectInternal() {
     this.spawnedDuringLastConnect = false;
 

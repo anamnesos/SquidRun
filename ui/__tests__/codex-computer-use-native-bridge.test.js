@@ -1,6 +1,9 @@
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const bridge = require('../modules/main/codex-computer-use-native-bridge');
+const proof = require('../modules/main/codex-computer-use-proof');
 const cli = require('../scripts/hm-codex-computer-use-bridge');
 
 const MAIN_ROOT = 'D:\\projects\\squidrun';
@@ -616,6 +619,14 @@ describe('Codex Computer Use supported preparation flow', () => {
 });
 
 describe('official list_windows verification seam', () => {
+  const clientRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-cua-client-test-'));
+  const clientPath = path.join(clientRoot, 'computer-use-client.mjs');
+  fs.writeFileSync(clientPath, 'export async function setupComputerUseRuntime() {}\n');
+  const clientSha256 = proof.sha256File(clientPath);
+  const canonicalPlan = proof.buildCanonicalListWindowsPlan({
+    clientPath,
+    clientSha256,
+  });
   const readyBridge = {
     pipeReady: true,
     projectRoot: MAIN_ROOT,
@@ -642,6 +653,12 @@ describe('official list_windows verification seam', () => {
     generation: bridge.captureCodexComputerUsePipeGeneration(readyBridge),
     commandAuthorizedAt: '2026-07-29T23:01:00.000Z',
     postSpawnConfirmedAt: '2026-07-29T23:01:01.000Z',
+    proof: {
+      state: 'armed',
+      canonicalPlan,
+      officialClientPath: clientPath,
+      officialClientSha256: clientSha256,
+    },
   };
 
   test('generates guidance then only the official plugin-wrapper list_windows call', () => {
@@ -650,7 +667,7 @@ describe('official list_windows verification seam', () => {
       trustedClaim,
       projectRoot: MAIN_ROOT,
       paneId: '2',
-      clientPath: 'C:\\Users\\James\\.codex\\plugins\\cache\\openai-bundled\\computer-use\\26.721.41059\\scripts\\computer-use-client.mjs',
+      clientPath,
     });
 
     expect(result.ok).toBe(true);
@@ -674,12 +691,12 @@ describe('official list_windows verification seam', () => {
       'does_not_spawn_codex_computer_use_helper',
       'does_not_implement_native_pipe_protocol',
       'does_not_override_the_privileged_node_repl_pipe',
-      'does_not_restart_or_kill_squidrun_or_any_pane',
+      'does_not_restart_or_kill_preexisting_squidrun_panes',
       'does_not_touch_browser_or_chrome_backends',
     ]));
   });
 
-  test('accepts minimal list_windows evidence only under the trusted current generation claim', () => {
+  test('refuses even minimal renderer-supplied list_windows evidence', () => {
     const result = bridge.verifyOfficialListWindowsProof({
       schema: bridge.LIST_WINDOWS_PROOF_SCHEMA,
       operation: 'list_windows',
@@ -695,16 +712,17 @@ describe('official list_windows verification seam', () => {
     });
 
     expect(result).toEqual(expect.objectContaining({
-      ok: true,
-      status: 'passed',
-      reasons: [],
+      ok: false,
+      status: 'blocked',
+      reason: 'renderer_supplied_computer_use_proof_refused',
+      reasons: ['renderer_supplied_computer_use_proof_refused'],
       operation: 'list_windows',
-      windowCount: 7,
+      windowCount: null,
       trustedClaimId: 'generation-claim-2',
     }));
   });
 
-  test('rejects forged pipe, pane, and self-attestation fields', () => {
+  test('reports every forged renderer field while refusing the whole proof surface', () => {
     const result = bridge.verifyOfficialListWindowsProof({
       schema: bridge.LIST_WINDOWS_PROOF_SCHEMA,
       operation: 'list_windows',
@@ -724,59 +742,71 @@ describe('official list_windows verification seam', () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.reasons).toContain('proof_contains_untrusted_fields');
+    expect(result.reasons).toEqual(['renderer_supplied_computer_use_proof_refused']);
     expect(result.untrustedFields).toEqual([
       'expectedPaneId',
       'expectedPipePath',
       'officialWrapperListWindowsSucceededInTargetPane',
+      'ok',
+      'operation',
       'privilegedPipePathNotExposedToModelCode',
+      'schema',
+      'windowCount',
+      'workingDirectory',
     ]);
   });
 
-  test('rejects rotation after external confirmation but before authoritative readiness proof', () => {
+  test('rejects rotation before issuing the server-held canonical plan', () => {
     const rotatedBridge = {
       ...readyBridge,
       config: { ...readyBridge.config, pipePath: ROTATED_PIPE_PATH },
       pipe: { ...readyBridge.pipe, path: ROTATED_PIPE_PATH },
     };
-    const result = bridge.verifyOfficialListWindowsProof({
-      schema: bridge.LIST_WINDOWS_PROOF_SCHEMA,
-      operation: 'list_windows',
-      ok: true,
-      workingDirectory: MAIN_ROOT,
-      windowCount: 1,
-    }, {
+    const result = bridge.buildOfficialListWindowsVerification({
       bridge: rotatedBridge,
       trustedClaim,
       projectRoot: MAIN_ROOT,
       paneId: '2',
+      clientPath,
       platform: 'win32',
     });
 
-    expect(result.ok).toBe(false);
-    expect(result.reasons).toContain('trusted_generation_claim_stale');
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'trusted_generation_claim_stale',
+    }));
   });
 
-  test('rejects foreign-root, unready bridge, or missing trusted claim', () => {
-    const result = bridge.verifyOfficialListWindowsProof({
-      schema: bridge.LIST_WINDOWS_PROOF_SCHEMA,
-      operation: 'list_windows',
-      ok: true,
-      workingDirectory: sideprofile_ROOT,
-      windowCount: 1,
-    }, {
+  test('rejects foreign-root, unready bridge, or missing trusted claim before plan issue', () => {
+    const missing = bridge.buildOfficialListWindowsVerification({
       bridge: { ...readyBridge, pipeReady: false },
       projectRoot: MAIN_ROOT,
       paneId: '2',
+      clientPath,
       platform: 'win32',
     });
+    expect(missing).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'trusted_generation_claim_missing',
+    }));
 
-    expect(result.ok).toBe(false);
-    expect(result.reasons).toEqual(expect.arrayContaining([
-      'trusted_generation_claim_missing',
-      'bridge_pipe_not_ready',
-      'proof_workspace_mismatch',
-    ]));
+    const foreign = bridge.buildOfficialListWindowsVerification({
+      bridge: readyBridge,
+      trustedClaim: {
+        ...trustedClaim,
+        workspace: sideprofile_ROOT,
+        projectRoot: sideprofile_ROOT,
+      },
+      projectRoot: MAIN_ROOT,
+      paneId: '2',
+      clientPath,
+      platform: 'win32',
+    });
+    expect(foreign).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'trusted_generation_workspace_mismatch',
+      reasons: ['trusted_generation_workspace_mismatch'],
+    }));
   });
 });
 
@@ -837,6 +867,44 @@ describe('hm-codex-computer-use-bridge CLI', () => {
       profile: 'main',
       launchOwner: true,
       dryRun: true,
+    }), expect.any(Object));
+  });
+
+  test('activate forwards only explicit current-session authority to the standalone controller', async () => {
+    const logger = jest.fn();
+    const activate = jest.fn(async (input) => ({
+      ok: true,
+      status: 'passed',
+      command: input.command,
+      launchOwner: input.launchOwner,
+      executeCurrentSessionProof: input.executeCurrentSessionProof,
+    }));
+    const exitCode = await cli.main([
+      'activate',
+      '--workspace',
+      MAIN_ROOT,
+      '--profile',
+      'main',
+      '--launch-owner',
+      '--execute-current-session-proof',
+      '--proof-timeout-ms',
+      '30000',
+    ], {
+      env: {},
+      projectRoot: MAIN_ROOT,
+      activate,
+      logger,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(activate).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: path.resolve(MAIN_ROOT),
+      workspace: path.resolve(MAIN_ROOT),
+      profile: 'main',
+      command: 'codex --yolo',
+      launchOwner: true,
+      executeCurrentSessionProof: true,
+      proofTimeoutMs: '30000',
     }), expect.any(Object));
   });
 });

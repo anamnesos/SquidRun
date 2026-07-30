@@ -35,8 +35,15 @@ const {
   confirmCodexComputerUsePipeGeneration,
   pathsEqual,
   prepareCodexComputerUseNativeBridge,
-  verifyOfficialListWindowsProof,
+  resolveOfficialComputerUseClientPath,
 } = require('../main/codex-computer-use-native-bridge');
+const {
+  DEFAULT_PROOF_TIMEOUT_MS,
+  armCodexComputerUseProofClaim,
+  buildCodexComputerUseProofInvocation,
+  failProofClaim,
+  verifyCodexComputerUseProofJournal,
+} = require('../main/codex-computer-use-proof');
 const DEFAULT_CHUNK_SIZE = DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES;
 const MIN_CHUNK_SIZE = 64;
 const MAX_CHUNK_SIZE = 8192;
@@ -585,6 +592,9 @@ function registerPtyHandlers(ctx, deps = {}) {
   const codexComputerUsePreflightClaims = providedComputerUseClaims instanceof Map
     ? providedComputerUseClaims
     : new Map();
+  const codexComputerUseConsumedProofIds = deps.codexComputerUseConsumedProofIds instanceof Set
+    ? deps.codexComputerUseConsumedProofIds
+    : new Set();
   const observeComputerUsePaneOutput = (paneId, data) => {
     const claim = codexComputerUsePreflightClaims.get(String(paneId || '')) || null;
     if (!claim || !claim.commandAuthorizedAt || claim.postSpawnConfirmedAt) return;
@@ -700,6 +710,35 @@ function registerPtyHandlers(ctx, deps = {}) {
       commandAuthorizedAt: null,
       postSpawnConfirmedAt: null,
     };
+    const resolveClientPath = resolveComputerUseDependency(
+      'resolveOfficialComputerUseClientPath',
+      resolveOfficialComputerUseClientPath
+    );
+    const clientPath = resolveClientPath({
+      codexHome: preflight?.bridge?.config?.codexHome,
+      projectRoot: probeInput.projectRoot,
+    });
+    const armProofClaim = resolveComputerUseDependency(
+      'armCodexComputerUseProofClaim',
+      armCodexComputerUseProofClaim
+    );
+    const armed = await armProofClaim({
+      claim,
+      bridge: preflight.bridge,
+      clientPath,
+      projectRoot: probeInput.projectRoot,
+      codexHome: preflight?.bridge?.config?.codexHome,
+      platform: probeInput.platform,
+    });
+    if (armed?.ok !== true) {
+      return {
+        ok: false,
+        enabled: true,
+        reason: armed?.reason || 'codex_computer_use_proof_arm_failed',
+        preflight,
+        proofArm: armed || null,
+      };
+    }
     codexComputerUsePreflightClaims.set(String(paneId), claim);
     return {
       ok: true,
@@ -1042,11 +1081,39 @@ function registerPtyHandlers(ctx, deps = {}) {
         };
       }
       computerUseClaim.commandAuthorizedAt = new Date().toISOString();
+      const buildProofInvocation = resolveComputerUseDependency(
+        'buildCodexComputerUseProofInvocation',
+        buildCodexComputerUseProofInvocation
+      );
+      const proofInvocation = buildProofInvocation(paneCommand, computerUseClaim, {
+        platform: computerUseClaim.platform,
+      });
+      if (proofInvocation?.ok !== true) {
+        failProofClaim(
+          computerUseClaim,
+          proofInvocation?.reason || 'codex_computer_use_proof_invocation_failed'
+        );
+        codexComputerUsePreflightClaims.delete(String(paneId));
+        return {
+          success: false,
+          error: 'codex_computer_use_proof_invocation_failed',
+          reason: proofInvocation?.reason || 'codex_computer_use_proof_invocation_failed',
+          paneId: String(paneId),
+          requiresTargetedPaneRecycle: true,
+        };
+      }
+      paneCommand = proofInvocation.command;
     }
 
     let spawnEnv = (ptyOptions.env && typeof ptyOptions.env === 'object')
       ? { ...ptyOptions.env }
       : null;
+    if (computerUseClaim?.proofSpawnEnv) {
+      spawnEnv = {
+        ...(spawnEnv || {}),
+        ...computerUseClaim.proofSpawnEnv,
+      };
+    }
 
     const installedPaneDataRoot = getInstalledPaneDataRoot();
     if (installedPaneDataRoot) {
@@ -1565,17 +1632,6 @@ function registerPtyHandlers(ctx, deps = {}) {
       computerUseClaim.commandAuthorizedAt = new Date().toISOString();
     }
 
-    ctx.agentRunning.set(paneId, 'starting');
-    broadcastClaudeState();
-    recordSessionStart(paneId);
-    if (typeof recordSessionLifecycle === 'function') {
-      await Promise.resolve(recordSessionLifecycle({
-        paneId,
-        status: 'started',
-        reason: 'spawn_requested',
-      }));
-    }
-
     const resumeCommand = appendResumeFlagsToAgentCommand({
       paneId,
       command: agentCmd,
@@ -1600,6 +1656,41 @@ function registerPtyHandlers(ctx, deps = {}) {
         command: agentCmd,
         source: spawnOptions.remintClaudeSessionId === true ? 'spawn-claude-remint' : 'spawn-claude',
       });
+    }
+    if (computerUseClaim) {
+      const buildProofInvocation = resolveComputerUseDependency(
+        'buildCodexComputerUseProofInvocation',
+        buildCodexComputerUseProofInvocation
+      );
+      const proofInvocation = buildProofInvocation(agentCmd, computerUseClaim, {
+        platform: computerUseClaim.platform,
+      });
+      if (proofInvocation?.ok !== true) {
+        failProofClaim(
+          computerUseClaim,
+          proofInvocation?.reason || 'codex_computer_use_proof_invocation_failed'
+        );
+        codexComputerUsePreflightClaims.delete(String(paneId));
+        return {
+          success: false,
+          error: 'codex_computer_use_proof_invocation_failed',
+          reason: proofInvocation?.reason || 'codex_computer_use_proof_invocation_failed',
+          paneId: String(paneId),
+          requiresTargetedPaneRecycle: true,
+        };
+      }
+      agentCmd = proofInvocation.command;
+    }
+
+    ctx.agentRunning.set(paneId, 'starting');
+    broadcastClaudeState();
+    recordSessionStart(paneId);
+    if (typeof recordSessionLifecycle === 'function') {
+      await Promise.resolve(recordSessionLifecycle({
+        paneId,
+        status: 'started',
+        reason: 'spawn_requested',
+      }));
     }
 
     return {
@@ -1686,6 +1777,15 @@ function registerPtyHandlers(ctx, deps = {}) {
           confirmation: trusted.confirmation,
         };
       }
+      if (trusted.claim.listWindowsPlanIssuedAt) {
+        return {
+          ...failProofClaim(
+            trusted.claim,
+            'codex_computer_use_list_windows_plan_replay'
+          ),
+          paneId: trusted.paneId,
+        };
+      }
       const buildVerification = resolveComputerUseDependency(
         'buildOfficialListWindowsVerification',
         buildOfficialListWindowsVerification
@@ -1700,6 +1800,13 @@ function registerPtyHandlers(ctx, deps = {}) {
       if (plan?.ok !== true) return plan;
       trusted.claim.listWindowsPlanId = resolveComputerUseDependency('randomUUID', randomUUID)();
       trusted.claim.listWindowsPlanIssuedAt = new Date().toISOString();
+      const configuredProofTimeoutMs = Number(deps.computerUseProofTimeoutMs);
+      const proofTimeoutMs = Number.isFinite(configuredProofTimeoutMs)
+        && configuredProofTimeoutMs > 0
+        ? configuredProofTimeoutMs
+        : DEFAULT_PROOF_TIMEOUT_MS;
+      trusted.claim.proof.state = 'pending';
+      trusted.claim.proof.deadlineAtMs = Date.now() + proofTimeoutMs;
       return {
         ...plan,
         planId: trusted.claim.listWindowsPlanId,
@@ -1721,6 +1828,21 @@ function registerPtyHandlers(ctx, deps = {}) {
           authoritativeComputerUseReady: false,
         };
       }
+      const payloadFields = Object.keys(
+        payload && typeof payload === 'object' ? payload : {}
+      ).sort();
+      const refusedFields = payloadFields.filter((field) =>
+        field !== 'claimId' && field !== 'planId');
+      if (refusedFields.length > 0) {
+        return {
+          ...failProofClaim(
+            trusted.claim,
+            'renderer_supplied_computer_use_proof_refused'
+          ),
+          paneId: trusted.paneId,
+          refusedFields,
+        };
+      }
       const planId = String(payload?.planId || '').trim();
       if (!trusted.claim.listWindowsPlanIssuedAt
         || !planId
@@ -1732,15 +1854,12 @@ function registerPtyHandlers(ctx, deps = {}) {
           authoritativeComputerUseReady: false,
         };
       }
-      const verifyProof = resolveComputerUseDependency(
-        'verifyOfficialListWindowsProof',
-        verifyOfficialListWindowsProof
+      const verifyProofJournal = resolveComputerUseDependency(
+        'verifyCodexComputerUseProofJournal',
+        verifyCodexComputerUseProofJournal
       );
-      const verification = verifyProof(payload?.proof || {}, {
-        bridge: trusted.confirmation.bridge,
-        trustedClaim: trusted.claim,
-        projectRoot: trusted.claim.projectRoot,
-        paneId: trusted.paneId,
+      const verification = await verifyProofJournal(trusted.claim, {
+        consumedIds: codexComputerUseConsumedProofIds,
         platform: trusted.claim.platform,
       });
       if (verification.ok) {

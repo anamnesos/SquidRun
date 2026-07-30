@@ -85,6 +85,16 @@ const mockSquidRun = {
     }),
     releaseStartupInjection: jest.fn().mockResolvedValue({ ok: true, released: true }),
     confirmCodexComputerUseGeneration: jest.fn().mockResolvedValue({ ok: true }),
+    getCodexComputerUseListWindowsPlan: jest.fn().mockResolvedValue({
+      ok: true,
+      planId: 'plan-default',
+      prompt: 'canonical list_windows prompt',
+    }),
+    verifyCodexComputerUseListWindows: jest.fn().mockResolvedValue({
+      ok: true,
+      status: 'passed',
+      authoritativeComputerUseReady: true,
+    }),
     clipboardWriteText: jest.fn().mockResolvedValue({ success: true }),
     clipboardPasteText: jest.fn().mockResolvedValue({ success: true, method: 'insertText', insertedLength: 0 }),
     kill: jest.fn().mockResolvedValue(),
@@ -185,6 +195,16 @@ describe('terminal.js module', () => {
     mockSquidRun.pty.create.mockResolvedValue();
     mockSquidRun.pty.write.mockResolvedValue({ success: true });
     mockSquidRun.pty.confirmCodexComputerUseGeneration.mockResolvedValue({ ok: true });
+    mockSquidRun.pty.getCodexComputerUseListWindowsPlan.mockResolvedValue({
+      ok: true,
+      planId: 'plan-default',
+      prompt: 'canonical list_windows prompt',
+    });
+    mockSquidRun.pty.verifyCodexComputerUseListWindows.mockResolvedValue({
+      ok: true,
+      status: 'passed',
+      authoritativeComputerUseReady: true,
+    });
     mockSquidRun.pty.kill.mockResolvedValue();
     mockSquidRun.claude.spawn.mockResolvedValue({ success: true, command: 'claude' });
     delete mockSquidRun.paneHost;
@@ -226,6 +246,7 @@ describe('terminal.js module', () => {
     terminal._internals.terminalAppliedPtyGeometries.clear();
     terminal._internals.terminalOwnFitSuppressUntil.clear();
     terminal._internals.terminalOwnFitContainerSizes.clear();
+    terminal._internals.computerUseProofRuns.clear();
     for (const timer of terminal._internals.deferredResizeTimers.values()) {
       clearTimeout(timer);
     }
@@ -1845,6 +1866,8 @@ describe('terminal.js module', () => {
       jest.useRealTimers();
       terminal.registerCodexPane('3');
       terminal.terminals.set('3', { write: jest.fn() });
+      const statusCb = jest.fn();
+      terminal.setStatusCallbacks(statusCb, null);
       mockSquidRun.claude.spawn.mockResolvedValueOnce({
         success: true,
         command: 'codex --yolo',
@@ -1871,6 +1894,23 @@ describe('terminal.js module', () => {
       );
       expect(mockSquidRun.pty.write.mock.invocationCallOrder[1])
         .toBeLessThan(mockSquidRun.pty.confirmCodexComputerUseGeneration.mock.invocationCallOrder[0]);
+      expect(mockSquidRun.pty.getCodexComputerUseListWindowsPlan).toHaveBeenCalledWith(
+        '3',
+        { claimId: 'generation-claim-3' }
+      );
+      expect(mockSquidRun.pty.write).toHaveBeenCalledWith(
+        '3',
+        'canonical list_windows prompt'
+      );
+      expect(mockSquidRun.pty.verifyCodexComputerUseListWindows).toHaveBeenCalledWith(
+        '3',
+        {
+          claimId: 'generation-claim-3',
+          planId: 'plan-default',
+        }
+      );
+      expect(statusCb).toHaveBeenCalledWith('3', 'Computer Use ready');
+      expect(statusCb).not.toHaveBeenCalledWith('3', 'Working');
       terminal.unregisterCodexPane('3');
       jest.useFakeTimers();
     });
@@ -1906,6 +1946,46 @@ describe('terminal.js module', () => {
         restartClaimId: 'restart-claim-3',
       });
       expect(statusCb).toHaveBeenCalledWith('3', 'Computer Use generation stale');
+      expect(statusCb).not.toHaveBeenCalledWith('3', 'Working');
+      terminal.unregisterCodexPane('3');
+      jest.useFakeTimers();
+    });
+
+    test('fails closed and stops only the target when the signed proof journal is refused', async () => {
+      jest.useRealTimers();
+      terminal.registerCodexPane('3');
+      terminal.terminals.set('3', { write: jest.fn() });
+      const statusCb = jest.fn();
+      terminal.setStatusCallbacks(statusCb, null);
+      mockSquidRun.claude.spawn.mockResolvedValueOnce({
+        success: true,
+        command: 'codex --yolo',
+        computerUseGenerationClaim: {
+          claimId: 'generation-claim-3',
+          postSpawnConfirmationRequired: true,
+          listWindowsProofRequired: true,
+        },
+      });
+      mockSquidRun.pty.verifyCodexComputerUseListWindows.mockResolvedValueOnce({
+        ok: false,
+        status: 'blocked',
+        reason: 'codex_computer_use_proof_signature_invalid',
+        authoritativeComputerUseReady: false,
+      });
+      setTimeout(() => terminal._internals.recordPtyOutput('3'), 10);
+
+      const spawned = await terminal.spawnAgent('3', null, {
+        requireRestartClaim: true,
+        restartClaimId: 'restart-claim-3',
+      });
+
+      expect(spawned).toBe(false);
+      expect(mockSquidRun.pty.kill).toHaveBeenCalledWith('3', {
+        requireRestartClaim: true,
+        restartClaimId: 'restart-claim-3',
+      });
+      expect(statusCb).toHaveBeenCalledWith('3', 'Computer Use proof failed');
+      expect(statusCb).not.toHaveBeenCalledWith('3', 'Computer Use ready');
       expect(statusCb).not.toHaveBeenCalledWith('3', 'Working');
       terminal.unregisterCodexPane('3');
       jest.useFakeTimers();
@@ -2366,7 +2446,8 @@ describe('terminal.js module', () => {
       expect(statusCb).not.toHaveBeenCalledWith('3', 'Connected');
     });
 
-    test('keeps direct Computer Use startup proof-pending after observed daemon spawn', async () => {
+    test('completes direct Computer Use proof only after observed daemon output', async () => {
+      jest.useRealTimers();
       const mockContainer = {
         addEventListener: jest.fn(),
       };
@@ -2376,18 +2457,35 @@ describe('terminal.js module', () => {
       mockSettings.getSettings.mockReturnValue({
         paneCommands: { '3': 'codex --yolo' },
       });
-      mockSquidRun.pty.create.mockResolvedValueOnce({
-        success: true,
-        computerUseGenerationClaim: {
-          claimId: 'generation-claim-3',
-          authoritativeComputerUseReady: false,
-        },
+      mockSquidRun.pty.create.mockImplementationOnce(async () => {
+        terminal._internals.recordPtyOutput('3');
+        return {
+          success: true,
+          computerUseGenerationClaim: {
+            claimId: 'generation-claim-3',
+            authoritativeComputerUseReady: false,
+          },
+        };
       });
 
       await terminal.initTerminal('3', { spawnCommandOnCreate: true });
 
       expect(statusCb).toHaveBeenCalledWith('3', 'Computer Use proof pending');
+      expect(statusCb).toHaveBeenCalledWith('3', 'Computer Use verifying');
+      expect(statusCb).toHaveBeenCalledWith('3', 'Computer Use ready');
       expect(statusCb).not.toHaveBeenCalledWith('3', 'Connected');
+      expect(mockSquidRun.pty.getCodexComputerUseListWindowsPlan).toHaveBeenCalledWith(
+        '3',
+        { claimId: 'generation-claim-3' }
+      );
+      expect(mockSquidRun.pty.verifyCodexComputerUseListWindows).toHaveBeenCalledWith(
+        '3',
+        {
+          claimId: 'generation-claim-3',
+          planId: 'plan-default',
+        }
+      );
+      jest.useFakeTimers();
     });
 
     test('permanently disarms cold-spawn recovery before forwarding direct terminal input', async () => {

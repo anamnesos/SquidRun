@@ -1830,6 +1830,26 @@ describe('PTY Handlers', () => {
       deps.computerUseProjectRoot = mainRoot;
       deps.computerUseProfile = 'main';
       deps.randomUUID = jest.fn(() => 'generation-claim-3');
+      deps.resolveOfficialComputerUseClientPath = jest.fn(() =>
+        'C:\\Users\\James\\.codex\\plugins\\cache\\openai-bundled\\computer-use\\26.721.41059\\scripts\\computer-use-client.mjs');
+      deps.armCodexComputerUseProofClaim = jest.fn(async ({ claim }) => {
+        claim.proof = {
+          state: 'armed',
+          canonicalPlan: {
+            toolInputJson: JSON.stringify({ code: 'canonical-list-windows' }),
+            toolInputSha256: 'a'.repeat(64),
+          },
+        };
+        claim.proofSpawnEnv = {
+          SQUIDRUN_CUA_PROOF_CLAIM_ID: claim.claimId,
+          SQUIDRUN_CUA_PROOF_SECRET: 'server-only-test-secret',
+        };
+        return { ok: true, claim };
+      });
+      deps.buildCodexComputerUseProofInvocation = jest.fn((command) => ({
+        ok: true,
+        command: `${command} --proof-hook`,
+      }));
       deps.prepareCodexComputerUseNativeBridge = jest.fn(async () => ({
         ok: true,
         status: 'ready',
@@ -1907,7 +1927,7 @@ describe('PTY Handlers', () => {
       }));
       expect(spawnResult).toEqual(expect.objectContaining({
         success: true,
-        command: 'codex --yolo',
+        command: 'codex --yolo --proof-hook',
         computerUseGenerationClaim: expect.objectContaining({
           claimId: 'generation-claim-3',
           postSpawnConfirmationRequired: true,
@@ -2019,11 +2039,15 @@ describe('PTY Handlers', () => {
         order.push('daemon-command-spawned');
         expect({ paneId, cwd, dryRun, mode, env, options }).toEqual(
           expect.objectContaining({
-            paneId: '3',
-            cwd: path.resolve(mainRoot),
-            dryRun: false,
-            options: expect.objectContaining({
-              paneCommand: 'codex --yolo',
+              paneId: '3',
+              cwd: path.resolve(mainRoot),
+              dryRun: false,
+              env: expect.objectContaining({
+                SQUIDRUN_CUA_PROOF_CLAIM_ID: 'generation-claim-3',
+                SQUIDRUN_CUA_PROOF_SECRET: 'server-only-test-secret',
+              }),
+              options: expect.objectContaining({
+              paneCommand: 'codex --yolo --proof-hook',
               spawnCommandOnCreate: true,
             }),
           })
@@ -2108,12 +2132,14 @@ describe('PTY Handlers', () => {
       deps.buildOfficialListWindowsVerification = jest.fn(() => ({
         ok: true,
         schema: 'squidrun.codex_computer_use_list_windows_proof.v1',
+        prompt: 'canonical list_windows prompt',
         snippet: "await globalThis.sky.documentation('guidance');\nawait globalThis.sky.list_windows();",
       }));
-      deps.verifyOfficialListWindowsProof = jest.fn(() => ({
+      deps.verifyCodexComputerUseProofJournal = jest.fn(() => ({
         ok: true,
         status: 'passed',
-        reasons: [],
+        operation: 'list_windows',
+        windowCount: 2,
       }));
 
       const plan = await harness.invoke(
@@ -2127,13 +2153,6 @@ describe('PTY Handlers', () => {
         {
           claimId: createResult.computerUseGenerationClaim.claimId,
           planId: plan.planId,
-          proof: {
-            schema: 'squidrun.codex_computer_use_list_windows_proof.v1',
-            operation: 'list_windows',
-            ok: true,
-            workingDirectory: mainRoot,
-            windowCount: 2,
-          },
         }
       );
 
@@ -2147,20 +2166,32 @@ describe('PTY Handlers', () => {
         authoritativeComputerUseReady: true,
         planId: 'generation-claim-3',
       }));
-      expect(deps.verifyOfficialListWindowsProof).toHaveBeenCalledWith(
-        expect.not.objectContaining({
-          expectedPaneId: expect.anything(),
-          expectedPipePath: expect.anything(),
+      expect(deps.verifyCodexComputerUseProofJournal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          claimId: 'generation-claim-3',
+          paneId: '3',
+          postSpawnConfirmedAt: expect.any(String),
+          proof: expect.objectContaining({ state: 'pending' }),
         }),
         expect.objectContaining({
-          trustedClaim: expect.objectContaining({
-            claimId: 'generation-claim-3',
-            paneId: '3',
-            postSpawnConfirmedAt: expect.any(String),
-          }),
-          paneId: '3',
+          consumedIds: expect.any(Set),
+          platform: 'win32',
         })
       );
+
+      const refused = await harness.invoke(
+        'codex-computer-use-verify-list-windows',
+        '3',
+        {
+          claimId: createResult.computerUseGenerationClaim.claimId,
+          planId: plan.planId,
+          proof: { operation: 'list_windows' },
+        }
+      );
+      expect(refused).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'renderer_supplied_computer_use_proof_refused',
+      }));
     });
 
     test('preload exposes only bounded generation and trusted list_windows proof channels', async () => {
@@ -2184,7 +2215,6 @@ describe('PTY Handlers', () => {
       await expect(api.pty.verifyCodexComputerUseListWindows('3', {
         claimId: 'generation-claim-3',
         planId: 'plan-3',
-        proof: { operation: 'list_windows' },
       })).resolves.toEqual({ ok: true });
 
       expect(isAllowedInvokeChannel('codex-computer-use-confirm-generation')).toBe(true);
@@ -2206,7 +2236,6 @@ describe('PTY Handlers', () => {
         {
           claimId: 'generation-claim-3',
           planId: 'plan-3',
-          proof: { operation: 'list_windows' },
         }
       );
     });

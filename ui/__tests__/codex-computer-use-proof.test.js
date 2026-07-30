@@ -1,0 +1,668 @@
+'use strict';
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const proof = require('../modules/main/codex-computer-use-proof');
+
+const PROJECT_ROOT = 'D:\\projects\\squidrun';
+const HOOK_SCRIPT = path.join(
+  PROJECT_ROOT,
+  'ui',
+  'scripts',
+  'codex-computer-use-post-tool-proof.js'
+);
+
+function makeTempDir(prefix) {
+  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+function writeJson(filePath, value) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function readyGeneration() {
+  return {
+    schema: 'squidrun.codex_computer_use_pipe_generation.v1',
+    pipePath: '\\\\.\\pipe\\codex-computer-use-f214874c-b61b-4d31-ba3a-e2618aa80e34',
+    configPath: 'C:\\Users\\James\\.codex\\config.toml',
+    projectRoot: PROJECT_ROOT,
+    paneId: '3',
+    profile: 'main',
+  };
+}
+
+async function armedClaim(options = {}) {
+  const root = makeTempDir('squidrun-cua-proof-test-');
+  const clientPath = path.join(root, 'computer-use-client.mjs');
+  fs.writeFileSync(clientPath, 'export const setupComputerUseRuntime = () => {};\n');
+  const integrity = [
+    { name: 'verifier', path: path.join(root, 'verifier.js'), sha256: 'a'.repeat(64) },
+    { name: 'hookScript', path: HOOK_SCRIPT, sha256: proof.sha256File(HOOK_SCRIPT) },
+    { name: 'trustManifest', path: path.join(root, 'manifest.json'), sha256: 'b'.repeat(64) },
+  ];
+  const claim = {
+    claimId: options.claimId || 'claim-1',
+    paneId: options.paneId || '3',
+    projectRoot: PROJECT_ROOT,
+    workspace: PROJECT_ROOT,
+    platform: 'win32',
+    generation: readyGeneration(),
+  };
+  const result = await proof.armCodexComputerUseProofClaim({
+    claim,
+    projectRoot: PROJECT_ROOT,
+    clientPath,
+    auditHookTrust: async () => ({
+      ok: true,
+      digest: 'c'.repeat(64),
+      manifestPath: integrity[2].path,
+    }),
+    captureIntegrity: async () => integrity,
+    makeProofDirectory: () => root,
+    randomBytes: () => Buffer.alloc(32, 7),
+  });
+  expect(result.ok).toBe(true);
+  claim.proof.state = 'pending';
+  claim.proof.deadlineAtMs = Date.now() + 60000;
+  const codexHome = path.join(root, '.codex');
+  const transcriptPath = path.join(codexHome, 'sessions', 'rollout.jsonl');
+  fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+  return {
+    root,
+    claim,
+    clientPath,
+    integrity,
+    codexHome,
+    transcriptPath,
+    auditHookTrust: async () => ({ ok: true, digest: 'c'.repeat(64) }),
+    captureIntegrity: async () => integrity,
+  };
+}
+
+function canonicalHookPayload(state, overrides = {}) {
+  return {
+    session_id: 'session-1',
+    turn_id: 'turn-1',
+    tool_use_id: 'tool-1',
+    transcript_path: state.transcriptPath,
+    cwd: PROJECT_ROOT,
+    tool_name: proof.CANONICAL_NODE_REPL_TOOL_NAME,
+    tool_input: state.claim.proof.canonicalPlan.toolInput,
+    tool_response: {
+      _meta: {
+        'codex/toolSurface': {
+          kind: 'computerUse',
+        },
+      },
+      structuredContent: {
+        schema: proof.LIST_WINDOWS_PROOF_SCHEMA,
+        operation: 'list_windows',
+        ok: true,
+        workingDirectory: PROJECT_ROOT,
+        windowCount: 4,
+      },
+    },
+    ...overrides,
+  };
+}
+
+function runProofHook(state, payload) {
+  return spawnSync(process.execPath, [HOOK_SCRIPT], {
+    cwd: PROJECT_ROOT,
+    env: {
+      ...process.env,
+      ...state.claim.proofSpawnEnv,
+    },
+    input: JSON.stringify(payload),
+    encoding: 'utf8',
+    timeout: 10000,
+  });
+}
+
+async function verifyJournal(state, overrides = {}) {
+  return proof.verifyCodexComputerUseProofJournal(state.claim, {
+    codexHome: state.codexHome,
+    auditHookTrust: state.auditHookTrust,
+    captureIntegrity: state.captureIntegrity,
+    consumedIds: state.consumedIds || (state.consumedIds = new Set()),
+    ...overrides,
+  });
+}
+
+describe('Codex Computer Use PostToolUse attestation', () => {
+  test('binds the exact official wrapper path and exact one-field canonical tool input', async () => {
+    const state = await armedClaim();
+    const plan = state.claim.proof.canonicalPlan;
+
+    expect(plan.toolInput).toEqual({ code: plan.snippet });
+    expect(plan.snippet).toContain(`import(${JSON.stringify(
+      require('url').pathToFileURL(state.clientPath).href
+    )})`);
+    expect(plan.snippet).toContain("await globalThis.sky.documentation('guidance');");
+    expect(plan.snippet).toContain('await globalThis.sky.list_windows()');
+    expect(plan.toolInputSha256).toBe(proof.sha256(JSON.stringify({ code: plan.snippet })));
+  });
+
+  test('accepts one signed exact call and consumes its session, turn, and tool IDs once', async () => {
+    const state = await armedClaim();
+    const hook = runProofHook(state, canonicalHookPayload(state));
+    expect(hook.status).toBe(0);
+
+    await expect(verifyJournal(state)).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      authoritativeComputerUseReady: true,
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      toolUseId: 'tool-1',
+      windowCount: 4,
+    }));
+    await expect(verifyJournal(state)).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_proof_replay',
+    }));
+  });
+
+  test('permanently poisons a generation when an earlier node_repl call precedes the exact call', async () => {
+    const state = await armedClaim();
+    runProofHook(state, canonicalHookPayload(state, {
+      tool_use_id: 'tool-prior',
+      tool_input: { code: '2 + 2' },
+    }));
+    runProofHook(state, canonicalHookPayload(state));
+
+    await expect(verifyJournal(state)).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_proof_duplicate_event',
+    }));
+  });
+
+  test('rejects a direct setResponseMeta spoof even when it fabricates the expected metadata', async () => {
+    const state = await armedClaim();
+    runProofHook(state, canonicalHookPayload(state, {
+      tool_input: {
+        code: "globalThis.nodeRepl.setResponseMeta({'codex/toolSurface':{kind:'computerUse'}});",
+      },
+    }));
+
+    await expect(verifyJournal(state)).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'unexpected_node_repl_tool_input',
+    }));
+  });
+
+  test('rejects refused official calls and missing Computer Use tool-surface metadata', async () => {
+    const refused = await armedClaim({ claimId: 'claim-refused' });
+    runProofHook(refused, canonicalHookPayload(refused, {
+      tool_response: {
+        isError: true,
+        _meta: { 'codex/toolSurface': { kind: 'computerUse' } },
+      },
+    }));
+    await expect(verifyJournal(refused)).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'node_repl_tool_refused',
+    }));
+
+    const spoofed = await armedClaim({ claimId: 'claim-no-meta' });
+    const payload = canonicalHookPayload(spoofed);
+    delete payload.tool_response._meta;
+    runProofHook(spoofed, payload);
+    await expect(verifyJournal(spoofed)).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'computer_use_tool_surface_missing',
+    }));
+  });
+
+  test('rejects cross-pane and hand-authored attestations', async () => {
+    const crossPane = await armedClaim({ claimId: 'claim-cross-pane' });
+    runProofHook(crossPane, canonicalHookPayload(crossPane));
+    crossPane.claim.paneId = '2';
+    await expect(verifyJournal(crossPane)).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'attestation_pane_mismatch',
+    }));
+
+    const handAuthored = await armedClaim({ claimId: 'claim-hand-authored' });
+    fs.writeFileSync(handAuthored.claim.proof.journalPath, `${JSON.stringify({
+      schema: proof.PROOF_ATTESTATION_SCHEMA,
+      claimId: handAuthored.claim.claimId,
+      signature: '0'.repeat(64),
+    })}\n`);
+    await expect(verifyJournal(handAuthored)).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_proof_signature_invalid',
+    }));
+  });
+
+  test('fails closed on timeout, official-wrapper drift, and tracked verifier drift', async () => {
+    const timedOut = await armedClaim({ claimId: 'claim-timeout' });
+    timedOut.claim.proof.deadlineAtMs = Date.now() - 1;
+    await expect(verifyJournal(timedOut)).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_proof_timeout',
+    }));
+
+    const wrapperDrift = await armedClaim({ claimId: 'claim-wrapper-drift' });
+    runProofHook(wrapperDrift, canonicalHookPayload(wrapperDrift));
+    fs.appendFileSync(wrapperDrift.clientPath, '// drift\n');
+    await expect(verifyJournal(wrapperDrift)).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'official_computer_use_client_drift',
+    }));
+
+    const verifierDrift = await armedClaim({ claimId: 'claim-verifier-drift' });
+    runProofHook(verifierDrift, canonicalHookPayload(verifierDrift));
+    verifierDrift.captureIntegrity = async () => [
+      { ...verifierDrift.integrity[0], sha256: 'd'.repeat(64) },
+      ...verifierDrift.integrity.slice(1),
+    ];
+    await expect(verifyJournal(verifierDrift)).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_proof_integrity_drift',
+    }));
+  });
+
+  test('requires the exact hook definition and target digest at arm and consume', async () => {
+    const root = makeTempDir('squidrun-cua-arm-hook-drift-');
+    const clientPath = path.join(root, 'computer-use-client.mjs');
+    fs.writeFileSync(clientPath, 'export const setupComputerUseRuntime = () => {};\n');
+    const claim = {
+      claimId: 'claim-arm-hook-drift',
+      paneId: '3',
+      projectRoot: PROJECT_ROOT,
+      workspace: PROJECT_ROOT,
+      platform: 'win32',
+      generation: readyGeneration(),
+    };
+    await expect(proof.armCodexComputerUseProofClaim({
+      claim,
+      projectRoot: PROJECT_ROOT,
+      clientPath,
+      auditHookTrust: async () => ({
+        ok: false,
+        reason: 'codex_hook_trust_manifest_drift',
+      }),
+      captureIntegrity: jest.fn(),
+    })).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_hook_trust_manifest_drift',
+    }));
+    expect(claim.proof).toBeUndefined();
+
+    const consumeDrift = await armedClaim({ claimId: 'claim-consume-hook-drift' });
+    runProofHook(consumeDrift, canonicalHookPayload(consumeDrift));
+    consumeDrift.auditHookTrust = async () => ({
+      ok: true,
+      digest: 'd'.repeat(64),
+    });
+    await expect(verifyJournal(consumeDrift)).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_hook_trust_manifest_drift',
+    }));
+  });
+});
+
+describe('Codex Computer Use full hook trust audit', () => {
+  test.each([
+    ['dotted', 'hooks.PostToolUse = [{ matcher = "Write" }]\n'],
+    ['inline', 'hooks = { PostToolUse = [] }\n'],
+    ['dotted in a similarly named section', '[hooksLegacy]\nhooks.PostToolUse = []\n'],
+  ])('rejects %s top-level hook assignments outside recognized sections', (_label, content) => {
+    expect(() => proof.extractTomlHookSnapshot(content, 'user:config.toml'))
+      .toThrow('hook-like assignment outside recognized hook section grammar');
+  });
+
+  test('keeps the ordinary hooks feature toggle distinct from hook definitions', () => {
+    expect(proof.extractTomlHookSnapshot(
+      '[features]\nhooks = true\n',
+      'user:config.toml'
+    )).toEqual(expect.objectContaining({
+      definitionsCount: 0,
+      enabledStateCount: 0,
+      commandHooks: [],
+    }));
+  });
+
+  test('extracts literal TOML command targets and refuses inline command tables', () => {
+    const root = makeTempDir('squidrun-cua-toml-hook-target-');
+    const targetPath = path.join(root, 'hook.ps1');
+    fs.writeFileSync(targetPath, 'Write-Output "trusted"\n');
+    const snapshot = proof.extractTomlHookSnapshot([
+      '[[hooks.PostToolUse]]',
+      'type = "command"',
+      `command = 'pwsh -NoProfile -File "${targetPath}"'`,
+      '',
+    ].join('\n'), 'user:config.toml');
+    expect(proof.snapshotCommandHookTargets(snapshot.commandHooks, {
+      platform: 'win32',
+    })).toEqual([{
+      path: targetPath,
+      sha256: proof.sha256File(targetPath),
+    }]);
+    expect(() => proof.extractTomlHookSnapshot(
+      '[hooks]\nPostToolUse = [{ type = "command", command = "node hook.js" }]\n',
+      'user:config.toml'
+    )).toThrow('inline TOML command hook target is unresolved');
+  });
+
+  test('enumerates every enabled plugin manifest and fails on active hook definition drift', async () => {
+    const root = makeTempDir('squidrun-cua-hook-audit-');
+    const projectRoot = path.join(root, 'project');
+    const codexHome = path.join(root, '.codex');
+    const programData = path.join(root, 'ProgramData');
+    fs.mkdirSync(projectRoot, { recursive: true });
+    writeJson(path.join(codexHome, 'hooks.json'), { hooks: {} });
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), '[hooks.state]\n');
+    const pluginRoot = path.join(
+      codexHome,
+      'plugins',
+      'cache',
+      'test-market',
+      'guard',
+      '1.0.0'
+    );
+    const guardScriptPath = path.join(pluginRoot, 'scripts', 'guard.sh');
+    fs.mkdirSync(path.dirname(guardScriptPath), { recursive: true });
+    fs.writeFileSync(guardScriptPath, '#!/usr/bin/env bash\nexit 0\n');
+    writeJson(path.join(pluginRoot, '.codex-plugin', 'plugin.json'), {
+      name: 'guard',
+      version: '1.0.0',
+      hooks: './hooks.json',
+    });
+    writeJson(path.join(pluginRoot, 'hooks.json'), {
+      hooks: {
+        PostToolUse: [{
+          matcher: 'Write',
+          hooks: [{
+            type: 'command',
+            command: './scripts/guard.sh',
+          }],
+        }],
+      },
+    });
+    const pluginList = {
+      installed: [{
+        pluginId: 'guard@test-market',
+        name: 'guard',
+        marketplaceName: 'test-market',
+        version: '1.0.0',
+        enabled: true,
+      }],
+    };
+    const manifest = {
+      schema: proof.HOOK_TRUST_MANIFEST_SCHEMA,
+      projectRoot,
+      codexVersion: '0.146.0',
+      layers: proof.snapshotHookLayers({ projectRoot, codexHome, programData }),
+      plugins: proof.snapshotEnabledPlugins(pluginList, { codexHome }),
+    };
+    expect(manifest.plugins[0].hookSources[0].commandTargets).toEqual([{
+      path: guardScriptPath,
+      sha256: proof.sha256File(guardScriptPath),
+    }]);
+    const pass = await proof.auditCodexHookTrust({
+      projectRoot,
+      codexHome,
+      programData,
+      codexVersion: '0.146.0',
+      pluginList,
+      manifest,
+    });
+    expect(pass.ok).toBe(true);
+
+    writeJson(path.join(pluginRoot, 'hooks.json'), {
+      hooks: {
+        PostToolUse: [{
+          matcher: 'Write|Edit',
+          hooks: [{
+            type: 'command',
+            command: './scripts/guard.sh',
+          }],
+        }],
+      },
+    });
+    const drift = await proof.auditCodexHookTrust({
+      projectRoot,
+      codexHome,
+      programData,
+      codexVersion: '0.146.0',
+      pluginList,
+      manifest,
+    });
+    expect(drift).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_hook_trust_manifest_drift',
+    }));
+  });
+
+  test('pins user command-hook target bytes and detects script-only drift', async () => {
+    const root = makeTempDir('squidrun-cua-user-hook-target-');
+    const projectRoot = path.join(root, 'project');
+    const codexHome = path.join(root, '.codex');
+    const programData = path.join(root, 'ProgramData');
+    const targetPath = path.join(codexHome, 'hooks', 'session-start.ps1');
+    fs.mkdirSync(projectRoot, { recursive: true });
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, 'Write-Output "trusted"\n');
+    writeJson(path.join(codexHome, 'hooks.json'), {
+      hooks: {
+        SessionStart: [{
+          hooks: [{
+            type: 'command',
+            command:
+              `pwsh -NoProfile -ExecutionPolicy Bypass -File "${targetPath}"`,
+          }],
+        }],
+      },
+    });
+    const pluginList = { installed: [] };
+    const manifest = {
+      schema: proof.HOOK_TRUST_MANIFEST_SCHEMA,
+      projectRoot,
+      codexVersion: '0.146.0',
+      layers: proof.snapshotHookLayers({ projectRoot, codexHome, programData }),
+      plugins: [],
+    };
+    expect(manifest.layers.find((layer) => layer.id === 'user:hooks.json'))
+      .toEqual(expect.objectContaining({
+        commandTargets: [{
+          path: targetPath,
+          sha256: proof.sha256File(targetPath),
+        }],
+      }));
+    await expect(proof.auditCodexHookTrust({
+      projectRoot,
+      codexHome,
+      programData,
+      codexVersion: '0.146.0',
+      pluginList,
+      manifest,
+    })).resolves.toEqual(expect.objectContaining({ ok: true }));
+
+    fs.appendFileSync(targetPath, 'Write-Output "drift"\n');
+    await expect(proof.auditCodexHookTrust({
+      projectRoot,
+      codexHome,
+      programData,
+      codexVersion: '0.146.0',
+      pluginList,
+      manifest,
+    })).resolves.toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_hook_trust_manifest_drift',
+    }));
+  });
+
+  test('activates only the documented default plugin hook path and roots relatives there', () => {
+    const root = makeTempDir('squidrun-cua-default-plugin-hook-');
+    const codexHome = path.join(root, '.codex');
+    const pluginRoot = path.join(
+      codexHome,
+      'plugins',
+      'cache',
+      'test-market',
+      'guard',
+      '1.0.0'
+    );
+    const activeTarget = path.join(pluginRoot, 'scripts', 'active.sh');
+    fs.mkdirSync(path.dirname(activeTarget), { recursive: true });
+    fs.writeFileSync(activeTarget, '#!/usr/bin/env bash\nexit 0\n');
+    writeJson(path.join(pluginRoot, '.codex-plugin', 'plugin.json'), {
+      name: 'guard',
+      version: '1.0.0',
+    });
+    writeJson(path.join(pluginRoot, 'hooks', 'hooks.json'), {
+      hooks: {
+        PostToolUse: [{
+          hooks: [{
+            type: 'command',
+            command: './scripts/active.sh',
+          }],
+        }],
+      },
+    });
+    writeJson(path.join(pluginRoot, 'hooks.json'), {
+      hooks: {
+        PostToolUse: [{
+          hooks: [{
+            type: 'command',
+            command: './scripts/inactive.sh',
+          }],
+        }],
+      },
+    });
+    const snapshots = proof.snapshotEnabledPlugins({
+      installed: [{
+        pluginId: 'guard@test-market',
+        name: 'guard',
+        marketplaceName: 'test-market',
+        version: '1.0.0',
+        enabled: true,
+      }],
+    }, { codexHome });
+
+    expect(snapshots[0].hookSources).toEqual([{
+      relativePath: 'hooks/hooks.json',
+      sha256: proof.sha256File(path.join(pluginRoot, 'hooks', 'hooks.json')),
+      commandTargets: [{
+        path: activeTarget,
+        sha256: proof.sha256File(activeTarget),
+      }],
+    }]);
+    expect(snapshots[0].extraHookLikeFiles).toEqual([{
+      relativePath: 'hooks.json',
+      sha256: proof.sha256File(path.join(pluginRoot, 'hooks.json')),
+    }]);
+  });
+
+  test('fails closed on dynamic, relative, and compound command-hook targets', () => {
+    const hooksFile = (command) => ({
+      hooks: {
+        PostToolUse: [{
+          hooks: [{ type: 'command', command }],
+        }],
+      },
+    });
+    for (const command of [
+      'node "${PLUGIN_ROOT}/guard.js"',
+      'node guard.js',
+      './scripts/guard.sh',
+      'node "C:\\trusted\\guard.js" && node "C:\\other\\guard.js"',
+    ]) {
+      const commandHooks = proof.validateHooksFile(
+        hooksFile(command),
+        'guard@test-market:hooks.json'
+      );
+      expect(() => proof.snapshotCommandHookTargets(commandHooks, {
+        platform: 'win32',
+      })).toThrow(/command hook/u);
+    }
+
+    const root = makeTempDir('squidrun-cua-plugin-root-escape-');
+    const pluginRoot = path.join(root, 'plugin');
+    const outsideTarget = path.join(root, 'outside.sh');
+    fs.mkdirSync(pluginRoot, { recursive: true });
+    fs.writeFileSync(outsideTarget, '#!/usr/bin/env bash\n');
+    expect(() => proof.resolveLiteralCommandHookTarget('./../outside.sh', {
+      sourceId: 'guard@test-market:hooks.json',
+      trustedRoot: pluginRoot,
+      platform: 'win32',
+    })).toThrow('escapes its trusted source root');
+  });
+
+  test('fails closed when an unapproved managed or unknown hook layer appears', async () => {
+    const root = makeTempDir('squidrun-cua-managed-hook-');
+    const projectRoot = path.join(root, 'project');
+    const codexHome = path.join(root, '.codex');
+    const programData = path.join(root, 'ProgramData');
+    fs.mkdirSync(projectRoot, { recursive: true });
+    fs.mkdirSync(codexHome, { recursive: true });
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), '[hooks.state]\n');
+    const pluginList = { installed: [] };
+    const manifest = {
+      schema: proof.HOOK_TRUST_MANIFEST_SCHEMA,
+      projectRoot,
+      codexVersion: '0.146.0',
+      layers: proof.snapshotHookLayers({ projectRoot, codexHome, programData }),
+      plugins: [],
+    };
+    fs.writeFileSync(path.join(codexHome, 'managed_config.toml'), '[hooks]\n');
+
+    const result = await proof.auditCodexHookTrust({
+      projectRoot,
+      codexHome,
+      programData,
+      codexVersion: '0.146.0',
+      pluginList,
+      manifest,
+    });
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_hook_trust_audit_failed',
+    }));
+  });
+});
+
+describe('fresh target-only Codex invocation', () => {
+  test('adds the exact hook trust bypass and quoting only to an armed fresh command', async () => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+    const invocation = proof.buildCodexComputerUseProofInvocation(
+      'codex --yolo',
+      state.claim
+    );
+
+    expect(invocation.ok).toBe(true);
+    expect(invocation.command).toContain('--dangerously-bypass-hook-trust');
+    expect(invocation.command).toContain('hooks.PostToolUse=[');
+    expect(invocation.command).toContain('matcher="^mcp__node_repl__js$"');
+    expect(invocation.command).toContain(
+      "shell_environment_policy.exclude=[\"SQUIDRUN_CUA_*\"]"
+    );
+    expect(invocation.command).not.toContain(state.claim.proof.secret);
+    expect(invocation.command).not.toContain('codex-computer-use.exe');
+  });
+
+  test('refuses resume and a pre-existing generic hook bypass', async () => {
+    const state = await armedClaim();
+    state.claim.proof.state = 'armed';
+    expect(proof.buildCodexComputerUseProofInvocation(
+      'codex resume abc',
+      state.claim
+    )).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_bypass_requires_fresh_session',
+    }));
+    expect(proof.buildCodexComputerUseProofInvocation(
+      'codex --dangerously-bypass-hook-trust',
+      state.claim
+    )).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'codex_computer_use_bypass_already_present',
+    }));
+  });
+});

@@ -90,6 +90,7 @@ const lastTypedTime = {};
 const lastOutputTime = {};
 const ptyOutputSequence = {};
 const ptyOutputWaiters = new Map();
+const computerUseProofRuns = new Map();
 
 // Codex exec mode: track identity injection per pane
 const codexIdentityInjected = new Set();
@@ -105,6 +106,9 @@ PANE_IDS.forEach(id => { inputLocked[id] = true; }); // Default: all panes locke
 let activePaneIds = [...PANE_IDS];
 const FRESH_SPAWN_INIT_TIMEOUT_MS = 10000;
 const COMPUTER_USE_CHILD_START_OBSERVATION_TIMEOUT_MS = 10000;
+const COMPUTER_USE_PROOF_TIMEOUT_MS = 95000;
+const COMPUTER_USE_PROOF_POLL_INTERVAL_MS = 250;
+const COMPUTER_USE_PROOF_ENTER_DELAY_MS = 50;
 const IS_DARWIN = process.platform === 'darwin';
 const FRESH_STARTUP_INJECTION_WINDOW_MS = 60000;
 const HIDDEN_PANE_HOSTS_ENV_FLAG = (
@@ -2135,6 +2139,153 @@ function waitForPtyOutputAfter(
   });
 }
 
+async function completeCodexComputerUseProof(paneId, generationClaim = {}, options = {}) {
+  const id = String(paneId);
+  const claimId = String(generationClaim?.claimId || '').trim();
+  if (!claimId) {
+    return {
+      ok: false,
+      status: 'blocked',
+      reason: 'codex_computer_use_proof_claim_missing',
+      authoritativeComputerUseReady: false,
+    };
+  }
+  const existing = computerUseProofRuns.get(id);
+  if (existing?.claimId === claimId) return existing.promise;
+
+  const run = (async () => {
+    const stopTarget = async (reason) => {
+      log.error(`Computer Use ${id}`, `Proof failed: ${reason}`);
+      updatePaneStatus(id, 'Computer Use proof failed');
+      try {
+        await window.squidrun.pty.kill(id, options.stopOptions || {});
+      } catch (error) {
+        log.error(
+          `Computer Use ${id}`,
+          `Failed to stop rejected proof generation: ${error?.message || error}`
+        );
+      }
+    };
+    const fail = async (reason, details = {}) => {
+      await stopTarget(reason);
+      return {
+        ok: false,
+        status: 'blocked',
+        reason,
+        authoritativeComputerUseReady: false,
+        ...details,
+      };
+    };
+
+    if (Number.isFinite(Number(options.afterSequence))) {
+      const childStart = await waitForPtyOutputAfter(
+        id,
+        Number(options.afterSequence),
+        options.childOutputTimeoutMs
+      );
+      if (childStart?.ok !== true) {
+        return fail(
+          childStart?.reason || 'codex_computer_use_child_output_timeout',
+          { childStart }
+        );
+      }
+    }
+
+    const getPlan = window?.squidrun?.pty?.getCodexComputerUseListWindowsPlan;
+    const verify = window?.squidrun?.pty?.verifyCodexComputerUseListWindows;
+    if (typeof getPlan !== 'function' || typeof verify !== 'function') {
+      return fail('codex_computer_use_proof_bridge_unavailable');
+    }
+
+    let plan;
+    try {
+      plan = await getPlan(id, { claimId });
+    } catch (error) {
+      return fail('codex_computer_use_list_windows_plan_failed', {
+        error: error?.message || String(error),
+      });
+    }
+    const planId = String(plan?.planId || '').trim();
+    const prompt = typeof plan?.prompt === 'string' ? plan.prompt : '';
+    if (plan?.ok !== true || !planId || !prompt) {
+      return fail(
+        plan?.reason || 'codex_computer_use_list_windows_plan_invalid',
+        { plan: plan || null }
+      );
+    }
+
+    updatePaneStatus(id, 'Computer Use verifying');
+    try {
+      const promptWrite = await window.squidrun.pty.write(id, prompt);
+      if (promptWrite?.success !== true) {
+        return fail('codex_computer_use_proof_prompt_write_failed', {
+          write: promptWrite || null,
+        });
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, COMPUTER_USE_PROOF_ENTER_DELAY_MS);
+      });
+      const enterWrite = await window.squidrun.pty.write(id, '\r');
+      if (enterWrite?.success !== true) {
+        return fail('codex_computer_use_proof_prompt_submit_failed', {
+          write: enterWrite || null,
+        });
+      }
+    } catch (error) {
+      return fail('codex_computer_use_proof_prompt_delivery_failed', {
+        error: error?.message || String(error),
+      });
+    }
+
+    const timeoutMs = Math.max(
+      1000,
+      Number(options.timeoutMs) || COMPUTER_USE_PROOF_TIMEOUT_MS
+    );
+    const pollIntervalMs = Math.max(
+      25,
+      Number(options.pollIntervalMs) || COMPUTER_USE_PROOF_POLL_INTERVAL_MS
+    );
+    const deadline = Date.now() + timeoutMs;
+    let verification = null;
+    do {
+      try {
+        verification = await verify(id, { claimId, planId });
+      } catch (error) {
+        return fail('codex_computer_use_proof_verification_failed', {
+          error: error?.message || String(error),
+        });
+      }
+      if (verification?.ok === true) {
+        updatePaneStatus(id, 'Computer Use ready');
+        return {
+          ...verification,
+          ok: true,
+          status: 'passed',
+          claimId,
+          planId,
+          authoritativeComputerUseReady: true,
+        };
+      }
+      if (verification?.status !== 'pending') {
+        return fail(
+          verification?.reason || 'codex_computer_use_proof_refused',
+          { verification: verification || null }
+        );
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, pollIntervalMs);
+      });
+    } while (Date.now() < deadline);
+
+    return fail('codex_computer_use_proof_timeout', {
+      verification: verification || null,
+    });
+  })();
+
+  computerUseProofRuns.set(id, { claimId, promise: run });
+  return run;
+}
+
 function disposeAddon(addon, paneId, name) {
   if (!addon || typeof addon.dispose !== 'function') return;
   try {
@@ -2146,6 +2297,7 @@ function disposeAddon(addon, paneId, name) {
 
 function teardownTerminalPane(paneId) {
   const id = String(paneId);
+  computerUseProofRuns.delete(id);
 
   if (injectionController && typeof injectionController.clearPaneQueue === 'function') {
     injectionController.clearPaneQueue(id, 'pane_teardown');
@@ -3717,6 +3869,8 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
     // Subscribe before create: command-on-create can emit its only full TUI
     // frame immediately, and there is no listener-aware replay for core panes.
     attachPtyBridgeListeners(paneId, terminal);
+    const computerUseOutputSequenceBeforeCreate =
+      ptyOutputSequence[String(paneId)] || 0;
     let ptyCreateResult;
     if (Object.keys(ptyCreateOptions).length > 0) {
       ptyCreateResult = await window.squidrun.pty.create(paneId, workingDir, ptyCreateOptions);
@@ -3739,6 +3893,23 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
         ? 'Computer Use proof pending'
         : 'Connected'
     );
+    if (ptyCreateResult?.computerUseGenerationClaim) {
+      const proofResult = await completeCodexComputerUseProof(
+        paneId,
+        ptyCreateResult.computerUseGenerationClaim,
+        {
+          afterSequence: computerUseOutputSequenceBeforeCreate,
+          stopOptions: options,
+        }
+      );
+      if (proofResult?.ok !== true) {
+        const proofError = new Error(
+          proofResult?.reason || 'codex_computer_use_proof_failed'
+        );
+        proofError.code = 'CODEX_COMPUTER_USE_PROOF_FAILED';
+        throw proofError;
+      }
+    }
     if (
       runtimeOverride.spawnCommandOnCreate === true
       && runtimeOverride.command
@@ -3797,7 +3968,12 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
     terminals.delete(paneId);
     fitAddons.delete(paneId);
     log.error(`Terminal ${paneId}`, 'Failed to create PTY', err);
-    updatePaneStatus(paneId, 'Error');
+    updatePaneStatus(
+      paneId,
+      err?.code === 'CODEX_COMPUTER_USE_PROOF_FAILED'
+        ? 'Computer Use proof failed'
+        : 'Error'
+    );
     queueTerminalWrite(paneId, terminal, `\r\n[Error: ${err.message}]\r\n`);
     throw err;
   }
@@ -4346,6 +4522,15 @@ async function spawnAgent(paneId, model = null, options = {}) {
         }
       }
 
+      if (computerUseClaim) {
+        const proofResult = await completeCodexComputerUseProof(
+          paneId,
+          computerUseClaim,
+          { stopOptions: options }
+        );
+        if (proofResult?.ok !== true) return false;
+      }
+
       // Codex CLI needs an extra Enter after startup to dismiss its welcome prompt
       // Claude Code CLI doesn't need this - it's ready immediately
       // NOTE: Codex sandbox_mode should be pre-configured via ~/.codex/config.toml
@@ -4353,7 +4538,7 @@ async function spawnAgent(paneId, model = null, options = {}) {
       // This PTY \r is a fallback to dismiss any residual prompt if config is missing.
       const isCodexCommand = result.command.startsWith('codex');
       const isClaudeCommand = result.command.startsWith('claude');
-      if (isCodexCommand) {
+      if (isCodexCommand && !computerUseClaim) {
         setTimeout(() => {
           window.squidrun.pty.write(String(paneId), '\r').catch(err => {
             log.error(`spawnAgent ${paneId}`, 'Codex startup Enter failed:', err);
@@ -4383,7 +4568,7 @@ async function spawnAgent(paneId, model = null, options = {}) {
     updatePaneStatus(
       paneId,
       result.computerUseGenerationClaim
-        ? 'Computer Use proof pending'
+        ? 'Computer Use ready'
         : 'Working'
     );
     return true;
@@ -5133,6 +5318,8 @@ module.exports = {
     attachPtyBridgeListeners,
     recordPtyOutput,
     waitForPtyOutputAfter,
+    completeCodexComputerUseProof,
+    computerUseProofRuns,
     armColdSpawnBlankRecovery,
     get coldSpawnBlankRecoveryController() { return coldSpawnBlankRecoveryController; },
     scheduleDeferredTerminalResize,

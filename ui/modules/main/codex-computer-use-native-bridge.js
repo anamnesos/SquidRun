@@ -3,12 +3,14 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { pathToFileURL } = require('url');
 const { execFile } = require('child_process');
+const {
+  LIST_WINDOWS_PROOF_SCHEMA,
+  sha256File,
+} = require('./codex-computer-use-proof');
 
 const BRIDGE_SCHEMA = 'squidrun.codex_computer_use_native_bridge.v1';
 const PIPE_GENERATION_SCHEMA = 'squidrun.codex_computer_use_pipe_generation.v1';
-const LIST_WINDOWS_PROOF_SCHEMA = 'squidrun.codex_computer_use_list_windows_proof.v1';
 const COMPUTER_USE_PLUGIN_SECTION = 'plugins."computer-use@openai-bundled"';
 const NODE_REPL_ENV_SECTION = 'mcp_servers.node_repl.env';
 const COMPUTER_USE_PIPE_PREFIX = '\\\\.\\pipe\\codex-computer-use-';
@@ -1098,6 +1100,7 @@ function validateTrustedListWindowsClaim(trustedClaim, bridge, options = {}) {
 
 function buildOfficialListWindowsVerification(options = {}) {
   const bridge = options.bridge || {};
+  const platform = options.platform || process.platform;
   const projectRoot = normalizePath(
     options.projectRoot || bridge.projectRoot || process.cwd()
   );
@@ -1116,15 +1119,37 @@ function buildOfficialListWindowsVerification(options = {}) {
       reasons: claimValidation.reasons,
     };
   }
-  const clientPath = options.clientPath || resolveOfficialComputerUseClientPath({
-    ...options,
-    codexHome: bridge.config?.codexHome || options.codexHome,
-  });
-  if (!clientPath) {
+  const proof = trustedClaim?.proof || null;
+  const boundPlan = proof?.canonicalPlan || null;
+  if (!proof || proof.state !== 'armed' || !boundPlan?.toolInputJson) {
     return {
       ok: false,
       schema: LIST_WINDOWS_PROOF_SCHEMA,
-      reason: 'official_computer_use_client_not_found',
+      reason: 'codex_computer_use_proof_attestation_not_armed',
+    };
+  }
+  const clientPath = options.clientPath || proof.officialClientPath;
+  if (!clientPath || !pathsEqual(clientPath, proof.officialClientPath, platform)) {
+    return {
+      ok: false,
+      schema: LIST_WINDOWS_PROOF_SCHEMA,
+      reason: 'official_computer_use_client_binding_mismatch',
+    };
+  }
+  try {
+    if (sha256File(clientPath) !== proof.officialClientSha256) {
+      return {
+        ok: false,
+        schema: LIST_WINDOWS_PROOF_SCHEMA,
+        reason: 'official_computer_use_client_drift',
+      };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      schema: LIST_WINDOWS_PROOF_SCHEMA,
+      reason: 'official_computer_use_client_unreadable',
+      error: error?.message || String(error),
     };
   }
   if (bridge.pipeReady !== true && options.allowNotReady !== true) {
@@ -1136,87 +1161,43 @@ function buildOfficialListWindowsVerification(options = {}) {
     };
   }
 
-  const clientUrl = pathToFileURL(clientPath).href;
-  const snippet = [
-    `var { setupComputerUseRuntime } = await import(${JSON.stringify(clientUrl)});`,
-    'await setupComputerUseRuntime({ globals: globalThis });',
-    "await globalThis.sky.documentation('guidance');",
-    'var squidrunComputerUseWindows = await globalThis.sky.list_windows();',
-    '({',
-    `  schema: ${JSON.stringify(LIST_WINDOWS_PROOF_SCHEMA)},`,
-    "  operation: 'list_windows',",
-    '  ok: Array.isArray(squidrunComputerUseWindows),',
-    "  workingDirectory: String(globalThis.nodeRepl?.cwd || ''),",
-    '  windowCount: Array.isArray(squidrunComputerUseWindows) ? squidrunComputerUseWindows.length : null,',
-    '})',
-  ].join('\n');
   return {
     ok: true,
-    schema: LIST_WINDOWS_PROOF_SCHEMA,
+    schema: boundPlan.schema,
     operation: 'list_windows',
     transport: 'official_computer_use_plugin_wrapper',
     clientPath,
+    clientSha256: proof.officialClientSha256,
     expectedProjectRoot: projectRoot,
     expectedPaneId: paneId,
     expectedGeneration: trustedClaim.generation,
     trustedClaimId: trustedClaim.claimId,
-    snippet,
+    snippet: boundPlan.snippet,
+    prompt: boundPlan.prompt,
+    toolInputSha256: boundPlan.toolInputSha256,
     nonClaims: [
       'does_not_spawn_codex_computer_use_helper',
       'does_not_implement_native_pipe_protocol',
       'does_not_override_the_privileged_node_repl_pipe',
-      'does_not_restart_or_kill_squidrun_or_any_pane',
+      'does_not_restart_or_kill_preexisting_squidrun_panes',
       'does_not_touch_browser_or_chrome_backends',
     ],
   };
 }
 
 function verifyOfficialListWindowsProof(proof = {}, options = {}) {
-  const bridge = options.bridge || {};
-  const projectRoot = normalizePath(
-    options.projectRoot || bridge.projectRoot || process.cwd()
-  );
-  const paneId = toOptionalString(options.paneId || bridge.paneId, null);
-  const claimValidation = validateTrustedListWindowsClaim(
-    options.trustedClaim || null,
-    bridge,
-    { ...options, projectRoot, paneId }
-  );
-  const allowedProofFields = new Set([
-    'schema',
-    'operation',
-    'ok',
-    'workingDirectory',
-    'windowCount',
-  ]);
-  const untrustedFields = Object.keys(proof || {})
-    .filter((field) => !allowedProofFields.has(field))
-    .sort();
-  const reasons = [...claimValidation.reasons];
-  if (bridge.pipeReady !== true) reasons.push('bridge_pipe_not_ready');
-  if (proof.schema !== LIST_WINDOWS_PROOF_SCHEMA) reasons.push('proof_schema_mismatch');
-  if (proof.operation !== 'list_windows') reasons.push('proof_operation_mismatch');
-  if (proof.ok !== true) reasons.push('list_windows_not_successful');
-  if (untrustedFields.length > 0) reasons.push('proof_contains_untrusted_fields');
-  if (!Number.isInteger(proof.windowCount) || proof.windowCount < 0) {
-    reasons.push('window_count_invalid');
-  }
-  if (!pathsEqual(proof.workingDirectory, projectRoot, options.platform || process.platform)) {
-    reasons.push('proof_workspace_mismatch');
-  }
   return {
-    ok: reasons.length === 0,
+    ok: false,
     schema: LIST_WINDOWS_PROOF_SCHEMA,
-    status: reasons.length === 0 ? 'passed' : 'blocked',
-    reasons,
-    projectRoot,
-    paneId,
-    pipePath: claimValidation.currentGeneration?.pipePath || null,
-    generation: claimValidation.currentGeneration,
+    status: 'blocked',
+    reason: 'renderer_supplied_computer_use_proof_refused',
+    reasons: ['renderer_supplied_computer_use_proof_refused'],
+    projectRoot: normalizePath(options.projectRoot || process.cwd()),
+    paneId: toOptionalString(options.paneId, null),
     trustedClaimId: options.trustedClaim?.claimId || null,
-    untrustedFields,
     operation: 'list_windows',
-    windowCount: Number.isInteger(proof.windowCount) ? proof.windowCount : null,
+    windowCount: null,
+    untrustedFields: Object.keys(proof || {}).sort(),
   };
 }
 

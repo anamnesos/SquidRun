@@ -187,6 +187,33 @@ describe('DaemonClient', () => {
       expect(net.createConnection).toHaveBeenCalledTimes(1);
     });
 
+    test('connectExisting attaches to the existing pipe without spawning a daemon', async () => {
+      await expect(client.connectExisting()).resolves.toBe(true);
+
+      expect(client.connected).toBe(true);
+      expect(net.createConnection).toHaveBeenCalledWith(PIPE_PATH);
+      expect(spawn).not.toHaveBeenCalled();
+      expect(client.didSpawnDuringLastConnect()).toBe(false);
+    });
+
+    test('connectExisting fails closed when the pipe is absent', async () => {
+      net.createConnection.mockImplementation(() => {
+        const socket = new EventEmitter();
+        socket.write = jest.fn();
+        socket.destroy = jest.fn();
+        socket.destroyed = false;
+        setTimeout(() => socket.emit('error', new Error('ENOENT')), 0);
+        return socket;
+      });
+
+      await expect(client.connectExisting()).resolves.toBe(false);
+
+      expect(client.connected).toBe(false);
+      expect(net.createConnection).toHaveBeenCalledTimes(1);
+      expect(spawn).not.toHaveBeenCalled();
+      expect(client.didSpawnDuringLastConnect()).toBe(false);
+    });
+
     test('ignores stale socket data after reconnect swap', async () => {
       const socketA = new EventEmitter();
       socketA.write = jest.fn();

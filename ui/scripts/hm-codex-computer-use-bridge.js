@@ -8,6 +8,10 @@ const {
   prepareCodexComputerUseNativeBridge,
   probeCodexComputerUseNativeBridge,
 } = require('../modules/main/codex-computer-use-native-bridge');
+const {
+  EXACT_ORACLE_COMMAND,
+  runStandaloneCodexComputerUseProof,
+} = require('../modules/main/codex-computer-use-standalone-controller');
 
 function setOption(options, key, value) {
   if (Object.prototype.hasOwnProperty.call(options, key)) {
@@ -70,14 +74,18 @@ function usage() {
     usage: [
       'node ui/scripts/hm-codex-computer-use-bridge.js status [--workspace <path>] [--pane-id <id>]',
       'node ui/scripts/hm-codex-computer-use-bridge.js prepare --workspace <path> --launch-owner [--dry-run] [--timeout-ms <ms>]',
+      'node ui/scripts/hm-codex-computer-use-bridge.js activate --workspace <path> --profile main --launch-owner --execute-current-session-proof [--proof-timeout-ms <ms>]',
     ],
     safety: [
       'status is read-only',
       'prepare launches only the exact OpenAI Codex Desktop AUMID and only when --launch-owner is explicit',
+      'activate connects only to the existing main daemon and creates a fresh lease-addressed verifier pane',
+      'activate requires --execute-current-session-proof and cleans up only its exact verifier lease generation',
+      'activate never recycles Architect, Builder, Oracle, Electron, the daemon, or a side-profile pane',
       'the script never starts codex-computer-use.exe or implements its pipe protocol',
-      'the script never restarts or kills SquidRun, a pane, or a helper',
+      'the script never restarts or kills SquidRun, an existing pane, or a helper',
       'the script never retargets an existing node_repl process or claims an in-place rebind',
-      'list_windows planning and verification require the app-held target-pane generation claim',
+      'list_windows planning and verification require a server-held target-pane generation claim',
     ],
   };
 }
@@ -120,6 +128,7 @@ async function main(argv = process.argv.slice(2), dependencies = {}) {
   const context = buildContext(options, dependencies);
   const probe = dependencies.probe || probeCodexComputerUseNativeBridge;
   const prepare = dependencies.prepare || prepareCodexComputerUseNativeBridge;
+  const activate = dependencies.activate || runStandaloneCodexComputerUseProof;
   let result;
 
   if (command === 'status') {
@@ -134,6 +143,26 @@ async function main(argv = process.argv.slice(2), dependencies = {}) {
       dryRun: optionIsTrue(options, 'dry-run', 'dryRun'),
       timeoutMs: getOption(options, 'timeout-ms', 'timeoutMs'),
       intervalMs: getOption(options, 'interval-ms', 'intervalMs'),
+    }, dependencies);
+  } else if (command === 'activate') {
+    result = await activate({
+      ...context,
+      command: EXACT_ORACLE_COMMAND,
+      launchOwner: optionIsTrue(options, 'launch-owner', 'launchOwner'),
+      executeCurrentSessionProof: optionIsTrue(
+        options,
+        'execute-current-session-proof',
+        'executeCurrentSessionProof'
+      ),
+      prepareTimeoutMs: getOption(options, 'timeout-ms', 'timeoutMs'),
+      prepareIntervalMs: getOption(options, 'interval-ms', 'intervalMs'),
+      proofTimeoutMs: getOption(options, 'proof-timeout-ms', 'proofTimeoutMs'),
+      startupOutputTimeoutMs: getOption(
+        options,
+        'startup-output-timeout-ms',
+        'startupOutputTimeoutMs'
+      ),
+      sourceMessageId: getOption(options, 'source-message-id', 'sourceMessageId'),
     }, dependencies);
   } else {
     result = {
