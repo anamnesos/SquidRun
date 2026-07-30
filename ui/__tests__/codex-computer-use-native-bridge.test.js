@@ -74,6 +74,7 @@ function readyProbeState(pipePath = PIPE_PATH, overrides = {}) {
       pipePath,
     },
     desktopOwner: {
+      probeOk: true,
       running: true,
     },
     pipe: {
@@ -263,6 +264,7 @@ describe('Codex Computer Use supported preparation flow', () => {
       ok: false,
       status: 'blocked',
       reason: 'explicit_codex_desktop_owner_launch_required',
+      ownerLaunchDispatched: false,
       ownerLaunched: false,
     }));
     expect(launchOwner).not.toHaveBeenCalled();
@@ -394,6 +396,7 @@ describe('Codex Computer Use supported preparation flow', () => {
       ok: true,
       status: 'ready',
       reason: 'codex_desktop_owner_launched_and_exact_pipe_ready',
+      ownerLaunchDispatched: true,
       ownerLaunched: true,
       newCodexPanePreflightReady: true,
       existingPaneAttachmentProven: false,
@@ -527,6 +530,7 @@ describe('Codex Computer Use supported preparation flow', () => {
       ok: false,
       status: 'blocked',
       reason: 'browser_pipe_snapshot_changed_during_preflight',
+      ownerLaunchDispatched: true,
       ownerLaunched: true,
       newCodexPanePreflightReady: false,
     }));
@@ -563,6 +567,12 @@ describe('Codex Computer Use supported preparation flow', () => {
 
   test('times out fail-closed without claiming attachment', async () => {
     let now = 0;
+    const launchResult = {
+      ok: true,
+      dispatchInvoked: true,
+      exitStatus: 1,
+      exitStatusAuthoritative: false,
+    };
     const result = await bridge.prepareCodexComputerUseNativeBridge({
       platform: 'win32',
       projectRoot: MAIN_ROOT,
@@ -576,8 +586,12 @@ describe('Codex Computer Use supported preparation flow', () => {
       probe: async () => ({
         pipeReady: false,
         reason: 'codex_desktop_pipe_not_ready',
+        desktopOwner: {
+          probeOk: true,
+          running: false,
+        },
       }),
-      launchOwner: async () => ({ ok: true }),
+      launchOwner: async () => launchResult,
       listBrowserPipes: async () => ({ ok: true, pipes: [BROWSER_PIPE] }),
       nowMs: () => now,
       sleep: async (ms) => { now += ms; },
@@ -587,6 +601,9 @@ describe('Codex Computer Use supported preparation flow', () => {
       ok: false,
       status: 'blocked',
       reason: 'codex_desktop_pipe_ready_timeout',
+      ownerLaunchDispatched: true,
+      ownerLaunched: false,
+      launchResult,
       newCodexPanePreflightReady: false,
       existingPaneAttachmentProven: false,
       existingPaneRebindMethod: 'unresolved',
@@ -666,6 +683,8 @@ describe('Codex Computer Use supported preparation flow', () => {
       ok: true,
       status: 'ready',
       reason: 'codex_desktop_owner_launched_and_exact_pipe_ready',
+      ownerLaunchDispatched: true,
+      ownerLaunched: true,
       newCodexPanePreflightReady: true,
       launchResult: expect.objectContaining({
         ok: true,
@@ -713,6 +732,7 @@ describe('Codex Computer Use supported preparation flow', () => {
       ok: false,
       status: 'blocked',
       reason: 'codex_desktop_owner_launch_failed',
+      ownerLaunchDispatched: false,
       ownerLaunched: false,
       launchResult: expect.objectContaining({
         ok: false,

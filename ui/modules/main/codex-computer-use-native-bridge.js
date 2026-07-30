@@ -469,6 +469,11 @@ function normalizeProcessProbe(value) {
   return { ok: false, reason: 'desktop_owner_probe_invalid', processes: [] };
 }
 
+function observedExactDesktopOwner(bridge) {
+  return bridge?.desktopOwner?.probeOk === true
+    && bridge.desktopOwner.running === true;
+}
+
 async function probeCodexComputerUseNativeBridge(options = {}) {
   const platform = toOptionalString(options.platform, process.platform);
   const env = options.env || process.env;
@@ -839,7 +844,8 @@ async function prepareCodexComputerUseNativeBridge(input = {}, dependencies = {}
         schema: BRIDGE_SCHEMA,
         status: 'blocked',
         reason: stable.reason,
-        ownerLaunched: false,
+        ownerLaunchDispatched: false,
+        ownerLaunched: observedExactDesktopOwner(stable.bridge),
         newCodexPanePreflightReady: false,
         existingPaneAttachmentProven: false,
         existingPaneRebindMethod: 'unresolved',
@@ -858,7 +864,8 @@ async function prepareCodexComputerUseNativeBridge(input = {}, dependencies = {}
         schema: BRIDGE_SCHEMA,
         status: 'blocked',
         reason: 'browser_pipe_snapshot_changed_during_preflight',
-        ownerLaunched: false,
+        ownerLaunchDispatched: false,
+        ownerLaunched: observedExactDesktopOwner(stable.bridge),
         newCodexPanePreflightReady: false,
         generation: stable.generation,
         browserPipeSnapshot: {
@@ -874,7 +881,8 @@ async function prepareCodexComputerUseNativeBridge(input = {}, dependencies = {}
       schema: BRIDGE_SCHEMA,
       status: 'ready',
       reason: 'exact_codex_desktop_pipe_already_ready',
-      ownerLaunched: false,
+      ownerLaunchDispatched: false,
+      ownerLaunched: observedExactDesktopOwner(stable.bridge),
       newCodexPanePreflightReady: true,
       existingPaneAttachmentProven: false,
       existingPaneRebindMethod: 'unresolved',
@@ -896,7 +904,8 @@ async function prepareCodexComputerUseNativeBridge(input = {}, dependencies = {}
       schema: BRIDGE_SCHEMA,
       status: 'blocked',
       reason: 'explicit_codex_desktop_owner_launch_required',
-      ownerLaunched: false,
+      ownerLaunchDispatched: false,
+      ownerLaunched: observedExactDesktopOwner(initial),
       newCodexPanePreflightReady: false,
       existingPaneAttachmentProven: false,
       existingPaneRebindMethod: 'unresolved',
@@ -912,7 +921,8 @@ async function prepareCodexComputerUseNativeBridge(input = {}, dependencies = {}
       schema: BRIDGE_SCHEMA,
       status: 'dry_run',
       reason: 'exact_codex_desktop_aumid_launch_would_run',
-      ownerLaunched: false,
+      ownerLaunchDispatched: false,
+      ownerLaunched: observedExactDesktopOwner(initial),
       wouldLaunchOwner: true,
       aumid: CODEX_DESKTOP_AUMID,
       workspace,
@@ -939,7 +949,8 @@ async function prepareCodexComputerUseNativeBridge(input = {}, dependencies = {}
       schema: BRIDGE_SCHEMA,
       status: 'blocked',
       reason: 'codex_desktop_owner_launch_failed',
-      ownerLaunched: false,
+      ownerLaunchDispatched: launchResult?.dispatchInvoked === true,
+      ownerLaunched: observedExactDesktopOwner(initial),
       launchResult,
       browserPipeSnapshot: {
         before: browserPipesBefore,
@@ -973,7 +984,8 @@ async function prepareCodexComputerUseNativeBridge(input = {}, dependencies = {}
           schema: BRIDGE_SCHEMA,
           status: 'blocked',
           reason: 'browser_pipe_snapshot_changed_during_preflight',
-          ownerLaunched: true,
+          ownerLaunchDispatched: true,
+          ownerLaunched: observedExactDesktopOwner(stable.bridge),
           launchResult,
           newCodexPanePreflightReady: false,
           generation: stable.generation,
@@ -990,7 +1002,8 @@ async function prepareCodexComputerUseNativeBridge(input = {}, dependencies = {}
         schema: BRIDGE_SCHEMA,
         status: 'ready',
         reason: 'codex_desktop_owner_launched_and_exact_pipe_ready',
-        ownerLaunched: true,
+        ownerLaunchDispatched: true,
+        ownerLaunched: observedExactDesktopOwner(stable.bridge),
         launchResult,
         newCodexPanePreflightReady: true,
         existingPaneAttachmentProven: false,
@@ -1014,7 +1027,8 @@ async function prepareCodexComputerUseNativeBridge(input = {}, dependencies = {}
     schema: BRIDGE_SCHEMA,
     status: 'blocked',
     reason: 'codex_desktop_pipe_ready_timeout',
-    ownerLaunched: true,
+    ownerLaunchDispatched: true,
+    ownerLaunched: observedExactDesktopOwner(latest),
     launchResult,
     newCodexPanePreflightReady: false,
     existingPaneAttachmentProven: false,
