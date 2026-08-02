@@ -303,3 +303,42 @@ test('CANONICAL STORAGE: numeric and string chunk values are the SAME identity',
   });
   expect(replayAsStrings).toMatchObject({ acquired: false, outcome: 'already_claimed' });
 });
+
+test.each([
+  ['routeKey', 'routeKey'],
+  ['chatId', 'chatId'],
+  ['windowKey', 'windowKey'],
+])('A LEGACY ROW MISSING %s fails closed, not matches', (_l, field) => {
+  // THE UPGRADE PATH. Rows written before strict identity landed carry
+  // metadata without these fields. I previously dismissed this as equivalent
+  // noise; it is not — it is exactly the state every existing install will be
+  // in on first boot after this change. Treating the absent field as a
+  // wildcard would let an old row authorize a send it never described.
+  const dbPath = tempDbPath();
+  const legacyMetadata = {
+    inboundMessageId: 'telegram-in-1',
+    chatId: 1111111111,
+    windowKey: 'main',
+    profile: 'main',
+    routeKey: 'main',
+  };
+  delete legacyMetadata[field];
+
+  const seeder = openStore(dbPath);
+  seeder.upsertCommsJournal({
+    messageId: ENTRY.messageId,
+    channel: 'telegram',
+    direction: 'outbound',
+    senderRole: 'mira',
+    targetRole: 'james',
+    rawBody: ENTRY.rawBody,
+    status: 'recorded',
+    metadata: legacyMetadata,
+  });
+
+  const claim = openStore(dbPath).claimCommsSend(ENTRY);
+
+  expect(claim).toMatchObject({
+    acquired: false, sendAllowed: false, outcome: 'identity_mismatch', field,
+  });
+});
