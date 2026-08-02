@@ -18,9 +18,88 @@
  * A retired-but-undelivered message is neither.
  */
 
+const fs = require('fs');
 const path = require('path');
 const defaultQueue = require('../telegram-inbound-durable-queue');
 const spool = require('./telegram-ingress-spool');
+
+
+const ATTEMPTS_NAME = 'delivery-attempts.jsonl';
+
+function attemptsPath(dir) {
+  return path.join(dir, ATTEMPTS_NAME);
+}
+
+/**
+ * Durable record of "we are about to put this in front of the user".
+ *
+ * WHY A FILE AND NOT A FLAG: the in-memory awaiting-proof latch dies with the
+ * process, so this exact sequence re-delivered:
+ *   pending N -> pane returns accepted.unverified -> latch set in memory ->
+ *   app dies before the receipt persists -> restart -> empty map -> N injected
+ *   a second time.
+ * The attempt marker lives in the same route dir as the record it describes, so
+ * it survives whatever kills the app between accepting and acking.
+ *
+ * An unresolved attempt is AMBIGUOUS, not proof of either outcome. Ambiguity
+ * holds: a stuck queue is visible and recoverable, a duplicate in James's chat
+ * is neither.
+ */
+function readAttemptState(dir) {
+  const file = attemptsPath(dir);
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return new Map();
+    // Unreadable attempt journal: we cannot know what was already tried.
+    throw new Error(`attempt journal unreadable: ${err.message}`);
+  }
+  const state = new Map();
+  const lines = raw.split('\n');
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      // A torn tail is the LAST line of a crashed append and is tolerable;
+      // a corrupt line anywhere else means we cannot trust the file at all.
+      if (i === lines.length - 1 || lines.slice(i + 1).every((l) => !l.trim())) continue;
+      throw new Error('attempt journal contains a corrupt entry');
+    }
+    const id = normalizeUpdateId(entry && entry.updateId);
+    if (id === null) continue;
+    state.set(id, entry.state);
+  }
+  return state;
+}
+
+function appendAttempt(dir, updateId, entryState) {
+  const file = attemptsPath(dir);
+  fs.mkdirSync(dir, { recursive: true });
+  // Terminate any torn tail first so a crashed partial line cannot swallow this
+  // record by concatenation.
+  try {
+    const size = fs.statSync(file).size;
+    if (size > 0) {
+      const fd = fs.openSync(file, 'r');
+      const last = Buffer.alloc(1);
+      fs.readSync(fd, last, 0, 1, size - 1);
+      fs.closeSync(fd);
+      if (last.toString('utf8') !== '\n') fs.appendFileSync(file, '\n', 'utf8');
+    }
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err;
+  }
+  fs.appendFileSync(file, `${JSON.stringify({ updateId, state: entryState })}\n`, 'utf8');
+}
+
+function normalizeUpdateId(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.floor(n) : null;
+}
 
 const DEFAULT_BACKOFF_MS = 30 * 1000;
 
@@ -225,6 +304,21 @@ function createDrainCoordinator(deps = {}) {
       return { retire: true, replayed: true };
     }
 
+    // DURABLE AMBIGUITY CHECK (Architect #80). An attempt recorded but never
+    // resolved means we may already have shown this to the user. No proof was
+    // found above, so we cannot tell — hold.
+    let attempts;
+    try {
+      attempts = readAttemptState(dir);
+    } catch (err) {
+      // We cannot tell what was already tried. Fail closed: hold this record
+      // rather than deliver something the user may already have seen.
+      return { stop: true, reason: `attempt_journal_unreadable:${err.message}`, failureClass: 'awaiting_proof' };
+    }
+    if (attempts.get(updateId) === 'attempted') {
+      return { stop: true, reason: 'unresolved_delivery_attempt', failureClass: 'awaiting_proof' };
+    }
+
     // THE DUPLICATE TRAP (Architect #63). Once a delivery has been ACCEPTED but
     // not proved, this record may never be injected again on a timer. The submit
     // verifier deliberately waits 4+15+45+120+300s because a busy pane can take
@@ -233,6 +327,15 @@ function createDrainCoordinator(deps = {}) {
     // way out is correlated proof arriving, or an explicit controlled recovery.
     if (st && st.awaitingProof === updateId) {
       return { stop: true, reason: 'awaiting_proof', failureClass: 'awaiting_proof' };
+    }
+
+    // Record the attempt BEFORE delivering. If this cannot be written durably we
+    // must not deliver at all: an undelivered message is recoverable, an
+    // unrecorded delivery is how a duplicate becomes invisible to us.
+    try {
+      appendAttempt(dir, updateId, 'attempted');
+    } catch (err) {
+      return { stop: true, reason: `attempt_marker_failed:${err.message}`, failureClass: 'definite' };
     }
 
     let receipt;
@@ -266,6 +369,13 @@ function createDrainCoordinator(deps = {}) {
       // that actually claims acceptance enters the proof-only hold, or a
       // disconnected daemon would strand the message forever.
       if (!looksAccepted(receipt)) {
+        // Nothing was delivered, so the attempt is resolved as "did not happen"
+        // and may be retried. Leaving it unresolved would wedge the queue.
+        try {
+          appendAttempt(dir, updateId, 'retryable');
+        } catch {
+          // If we cannot clear it, holding is still the safe answer.
+        }
         return {
           stop: true,
           reason: `delivery_rejected:${receipt?.status || 'no_receipt'}`,
@@ -392,16 +502,55 @@ function createDrainCoordinator(deps = {}) {
     return { ok: true, routes };
   }
 
+  /**
+   * SELF-DRIVEN PROOF SWEEP. Without this a lone message that was accepted but
+   * unproved waits forever: nothing else schedules a drain until the NEXT
+   * inbound message arrives, so proof that lands in between is never noticed.
+   * The timer only re-checks proof — it never re-delivers, because the
+   * awaiting-proof latch and the durable attempt marker both still apply.
+   */
+  function startProofSweep(dir, routeKey, intervalMs = 60 * 1000) {
+    stopProofSweep(dir);
+    const timer = setInterval(() => {
+      void schedule(dir, routeKey).catch(() => {});
+    }, intervalMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    stateFor(dir).sweepTimer = timer;
+    return timer;
+  }
+
+  function stopProofSweep(dir) {
+    const st = state.get(dir);
+    if (st && st.sweepTimer) {
+      clearInterval(st.sweepTimer);
+      st.sweepTimer = null;
+    }
+  }
+
+  /** Cancel every sweep. Called on shutdown so no timer outlives the app. */
+  function dispose() {
+    for (const dir of Array.from(state.keys())) stopProofSweep(dir);
+  }
+
   return {
     schedule,
     drainOnce,
     discoverRouteDirs,
-    _internals: { isProvenOwnership, isCorrelatedProof, downstreamMessageId, processRecord, state },
+    startProofSweep,
+    stopProofSweep,
+    dispose,
+    _internals: {
+    isProvenOwnership, isCorrelatedProof, downstreamMessageId, processRecord, state,
+    readAttemptState, appendAttempt, attemptsPath,
+  },
   };
 }
 
 module.exports = {
   createDrainCoordinator,
+  attemptsPath,
+  readAttemptState,
+  appendAttempt,
   isProvenOwnership,
   isCorrelatedProof,
   proofClassOf,

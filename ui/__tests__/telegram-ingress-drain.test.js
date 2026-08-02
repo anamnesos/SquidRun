@@ -409,8 +409,13 @@ test('BACKOFF applies to DEFINITE failures: blocked before expiry, retried after
   const drain = coordinator({
     now: () => clock,
     backoffMs: 5000,
-    // A definite failure: nothing was delivered, so re-delivery is safe.
-    deliver: async (job) => { seen.push(job.messageId); throw new Error('pane down'); },
+    // A RETURNED hard rejection: the pane says it never took the message, so
+    // the attempt resolves as "did not happen" and re-delivery is safe. A THROW
+    // is different — it is ambiguous, and ambiguity holds.
+    deliver: async (job) => {
+      seen.push(job.messageId);
+      return { ok: false, accepted: false, status: 'daemon_not_connected' };
+    },
   });
 
   await drain.schedule(dir, 'main');
@@ -700,4 +705,138 @@ test('THE PROOF CALLBACK RECEIVES THE STORED chatId', async () => {
   expect(seen[0]).toMatchObject({
     messageId: 'telegram-in-240', routeKey: 'main', windowKey: 'main', chatId: CHAT,
   });
+});
+
+// -------------------------------------- Architect #80/#82: durable + self-driven
+
+test('CRASH AFTER ACCEPT, BEFORE RECEIPT: a fresh coordinator does NOT re-inject', async () => {
+  // The in-memory latch dies with the process. Exact sequence: accepted but
+  // unproved -> app dies before the receipt persists -> restart -> empty Map.
+  // Without a durable marker N goes out a second time.
+  const base = tempRoot();
+  const dir = seed(base, 'main', [300]);
+  const first = [];
+  const before = coordinator({ deliver: async (job) => { first.push(job.messageId); return UNPROVEN; } });
+  await before.schedule(dir, 'main');
+  expect(first).toEqual(['telegram-in-300']);
+
+  // "Restart": a brand new coordinator with no memory of anything.
+  const after = [];
+  const restarted = coordinator({ deliver: async (job) => { after.push(job.messageId); return provenFor(job); } });
+  const res = await restarted.schedule(dir, 'main');
+
+  expect(after).toEqual([]);
+  expect(res.stoppedAt).toMatchObject({ updateId: 300, reason: 'unresolved_delivery_attempt' });
+  expect(queue.readPending(dir)).toHaveLength(1);
+});
+
+test('AFTER RESTART, exact proof retires the ambiguous attempt without re-injection', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [310]);
+  await coordinator({ deliver: async () => UNPROVEN }).schedule(dir, 'main');
+
+  const after = [];
+  const restarted = coordinator({
+    deliver: async (job) => { after.push(job.messageId); return provenFor(job); },
+    findExistingReceipt: async (identity) => ({
+      ...identity, status: 'delivered.verified', verified: true,
+    }),
+  });
+  await restarted.schedule(dir, 'main');
+
+  expect(after).toEqual([]);
+  expect(queue.readPending(dir)).toHaveLength(0);
+});
+
+test('A FAILED ATTEMPT MARKER MEANS NO DELIVERY AT ALL', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [320]);
+  const seen = [];
+  const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
+
+  const realAppend = fs.appendFileSync;
+  fs.appendFileSync = (file, ...rest) => {
+    if (String(file).includes('delivery-attempts')) throw new Error('EIO');
+    return realAppend(file, ...rest);
+  };
+  let res;
+  try {
+    res = await drain.schedule(dir, 'main');
+  } finally {
+    fs.appendFileSync = realAppend;
+  }
+
+  expect(seen).toEqual([]);
+  expect(res.stoppedAt.reason).toContain('attempt_marker_failed');
+});
+
+test('A CORRUPT ATTEMPT JOURNAL FAILS CLOSED', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [330]);
+  const drainModule = require('../modules/main/telegram-ingress-drain');
+  fs.writeFileSync(drainModule.attemptsPath(dir), 'not json at all\n{"updateId":330}\n', 'utf8');
+
+  const seen = [];
+  const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
+  const res = await drain.schedule(dir, 'main');
+
+  expect(seen).toEqual([]);
+  expect(res.stoppedAt).toBeTruthy();
+});
+
+test('SELF-DRIVEN SWEEP retires a lone awaiting-proof message with no external poke', async () => {
+  // The previous version of this test called schedule() by hand after setting
+  // proof, which proved retirement after an external nudge — not that anything
+  // in production would ever nudge it. In production nothing does until the
+  // NEXT inbound message arrives, so a lone N stranded forever.
+  jest.useFakeTimers();
+  try {
+    const base = tempRoot();
+    const dir = seed(base, 'main', [340]);
+    let receipt = null;
+    const seen = [];
+    const drain = coordinator({
+      deliver: async (job) => { seen.push(job.messageId); return UNPROVEN; },
+      findExistingReceipt: async (identity) => receipt && { ...identity, ...receipt },
+    });
+
+    await drain.schedule(dir, 'main');
+    expect(queue.readPending(dir)).toHaveLength(1);
+
+    receipt = { status: 'delivered.verified', verified: true };
+    drain.startProofSweep(dir, 'main', 1000);
+
+    // No schedule() call, no discovery, no N+1 appended.
+    jest.advanceTimersByTime(1000);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    jest.useRealTimers();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(seen).toEqual(['telegram-in-340']);
+    expect(queue.readPending(dir)).toHaveLength(0);
+    drain.dispose();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test('DISPOSE cancels the sweep so no timer outlives the app', async () => {
+  jest.useFakeTimers();
+  try {
+    const base = tempRoot();
+    const dir = seed(base, 'main', [350]);
+    const seen = [];
+    const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return UNPROVEN; } });
+
+    drain.startProofSweep(dir, 'main', 1000);
+    drain.dispose();
+    jest.advanceTimersByTime(10000);
+    await Promise.resolve();
+
+    expect(seen).toEqual([]);
+  } finally {
+    jest.useRealTimers();
+  }
 });
