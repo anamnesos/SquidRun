@@ -13055,6 +13055,26 @@ describe('SquidRunApp', () => {
       expect(order).toContain('app-shutdown');
     });
 
+    it('TEARDOWN PROCEEDS once the notice bound expires', async () => {
+      // The whole point of the bound: a dead Telegram must not stop Quit.
+      const order = [];
+      app.telegramDrainCoordinator = { dispose: async () => { order.push('drain-quiesced'); } };
+      const routing = require('../scripts/hm-telegram-routing');
+      routing.sendRoutedTelegramMessage.mockImplementation(() => new Promise(() => {}));
+      app.quitNoticeTimeoutMs = 20;
+      shutdownHarness(order);
+
+      await app.performFullShutdown('test');
+
+      expect(order).toContain('daemon-shutdown');
+      expect(order).toContain('app-shutdown');
+      expect(order[0]).toBe('drain-quiesced');
+
+      delete app.quitNoticeTimeoutMs;
+      routing.sendRoutedTelegramMessage.mockReset();
+      routing.sendRoutedTelegramMessage.mockResolvedValue({ ok: true });
+    });
+
     it('A QUIESCE ABORT sends no notice at all', async () => {
       const notice = jest.spyOn(app, 'sendQuitTelegramNotice').mockResolvedValue({ ok: true });
       app.telegramDrainCoordinator = { dispose: async () => { throw new Error('stuck'); } };
@@ -13146,6 +13166,34 @@ describe('SquidRunApp', () => {
       it('A THROWN router is reported as a notice failure, not propagated', async () => {
         sendFn.mockImplementation(() => { throw new Error('telegram down'); });
         await expect(app.sendQuitTelegramNotice('test')).resolves.toMatchObject({ ok: false });
+      });
+
+      it('A NEVER-SETTLING ROUTER settles as a timeout, not a hang', async () => {
+        // hm-telegram's requestTelegram has no socket timeout, so without this
+        // bound the awaited notice would hang Quit forever — the courtesy
+        // message becomes the thing that traps the app open.
+        sendFn.mockImplementation(() => new Promise(() => {}));
+        app.quitNoticeTimeoutMs = 20;
+
+        await expect(app.sendQuitTelegramNotice('test'))
+          .resolves.toMatchObject({ ok: false, reason: 'timeout' });
+
+        delete app.quitNoticeTimeoutMs;
+      });
+
+      it('A LATE REJECTION after the timeout does not surface unhandled', async () => {
+        let rejectLater;
+        sendFn.mockImplementation(() => new Promise((_res, rej) => { rejectLater = rej; }));
+        app.quitNoticeTimeoutMs = 20;
+
+        const result = await app.sendQuitTelegramNotice('test');
+        expect(result).toMatchObject({ ok: false, reason: 'timeout' });
+
+        // The losing promise has its own catch; this must not blow up the run.
+        rejectLater(new Error('late failure'));
+        await new Promise((r) => setImmediate(r));
+
+        delete app.quitNoticeTimeoutMs;
       });
 
       it('NON-MAIN sends nothing at all: main owns polling', async () => {

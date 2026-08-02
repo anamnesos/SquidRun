@@ -414,6 +414,8 @@ const SUPERVISOR_STATUS_STALE_MIN_MS = Math.max(
   Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_STATUS_STALE_MIN_MS || '15000', 10) || 15000
 );
 const RENDERER_ENTRY_HTML = path.join(__dirname, '..', '..', 'index.html');
+// Short by design: this is a courtesy line, not a delivery guarantee.
+const QUIT_NOTICE_TIMEOUT_MS = 4000;
 const QUIT_TELEGRAM_NOTICE = 'SquidRun is quitting. Telegram is going offline; '
   + 'messages sent while the app is closed will not be seen or answered until you reopen SquidRun.';
 const SHUTDOWN_CONFIRM_MESSAGE = 'This stops panes, daemon, pollers, and background services.\n\n'
@@ -14931,7 +14933,17 @@ class SquidRunApp {
         return { ok: false, skipped: true, reason: 'not_main_profile' };
       }
       const env = this.buildTelegramPollerEnv(process.env);
-      const result = await sendRoutedTelegramMessage(QUIT_TELEGRAM_NOTICE, env, {
+      // BOUND THIS SEND. hm-telegram's requestTelegram has no socket timeout, so
+      // a never-settling request would hang Quit forever — the awaited notice
+      // would become the thing that traps the app open, which is the opposite
+      // of best-effort. Bounded narrowly here rather than by changing global
+      // Telegram transport in this slice.
+      const timeoutMs = Number.isFinite(Number(this.quitNoticeTimeoutMs))
+        ? Number(this.quitNoticeTimeoutMs)
+        : QUIT_NOTICE_TIMEOUT_MS;
+
+      let timer = null;
+      const sending = sendRoutedTelegramMessage(QUIT_TELEGRAM_NOTICE, env, {
         messageId: `squidrun-quit-notice-${Date.now()}`,
         senderRole: 'system',
         sessionId: this.commsSessionScopeId || null,
@@ -14942,6 +14954,24 @@ class SquidRunApp {
           profile: 'main',
         },
       });
+      // The losing promise needs its OWN catch: if the send rejects after the
+      // timeout has already won, nothing else is listening and it would surface
+      // as an unhandled rejection during shutdown.
+      sending.catch(() => {});
+
+      const result = await Promise.race([
+        sending,
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve({ __quitNoticeTimedOut: true }), timeoutMs);
+          if (typeof timer.unref === 'function') timer.unref();
+        }),
+      ]);
+      if (timer) clearTimeout(timer);
+
+      if (result && result.__quitNoticeTimedOut) {
+        log.warn('Telegram', `Quit notice timed out after ${timeoutMs}ms; continuing shutdown`);
+        return { ok: false, reason: 'timeout' };
+      }
       if (!result || result.ok !== true) {
         log.warn('Telegram', `Quit notice not delivered (${result?.error || result?.status || 'unknown'})`);
         return { ok: false, reason: result?.error || result?.status || 'send_failed' };
