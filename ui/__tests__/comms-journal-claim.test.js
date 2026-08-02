@@ -186,3 +186,69 @@ test('AN EMPTY BODY IS STILL HASHED, so it cannot match a different message', ()
   const other = openStore(dbPath).claimCommsSend({ ...ENTRY, rawBody: 'now with content' });
   expect(other).toMatchObject({ acquired: false, outcome: 'identity_mismatch', field: 'bodyHash' });
 });
+
+test.each([
+  ['zero index', { chunkIndex: 0, chunkCount: 3 }],
+  ['fractional index', { chunkIndex: 1.5, chunkCount: 3 }],
+  ['negative index', { chunkIndex: -1, chunkCount: 3 }],
+  ['garbage string', { chunkIndex: 'first', chunkCount: 3 }],
+  ['NaN count', { chunkIndex: 1, chunkCount: Number.NaN }],
+  ['index beyond count', { chunkIndex: 4, chunkCount: 3 }],
+])('AN INCOHERENT CHUNK POSITION claims nothing: %s', (_l, chunk) => {
+  const dbPath = tempDbPath();
+  const result = openStore(dbPath).claimCommsSend({ ...ENTRY, ...chunk });
+  expect(result).toMatchObject({ acquired: false, sendAllowed: false, outcome: 'identity_invalid' });
+});
+
+test('REAL PRODUCER SHAPE: identity nested under metadata only still claims and replays', () => {
+  // hm-telegram's recordEntry does NOT put these top-level; it nests them in
+  // metadata. A claim that only understood friendly top-level aliases would
+  // have failed closed on every real send.
+  const dbPath = tempDbPath();
+  const producerShape = {
+    messageId: 'telegram-in-7-mira-reply',
+    channel: 'telegram',
+    direction: 'outbound',
+    senderRole: 'mira',
+    targetRole: 'james',
+    rawBody: 'chunked reply part 1',
+    metadata: {
+      inboundMessageId: 'telegram-in-7',
+      chatId: 1111111111,
+      windowKey: 'main',
+      profile: 'main',
+      routeKey: 'main',
+      chunkIndex: 1,
+      chunkCount: 3,
+    },
+  };
+
+  const first = openStore(dbPath).claimCommsSend(producerShape);
+  expect(first).toMatchObject({ acquired: true, sendAllowed: true, outcome: 'claimed_new' });
+
+  // Replay through a second handle must recognise its OWN claim.
+  const replay = openStore(dbPath).claimCommsSend(producerShape);
+  expect(replay).toMatchObject({ acquired: false, sendAllowed: false, outcome: 'already_claimed' });
+
+  // A different chunk of the same reply is a DIFFERENT message.
+  const otherChunk = openStore(dbPath).claimCommsSend({
+    ...producerShape,
+    messageId: 'telegram-in-7-mira-reply-part2',
+    metadata: { ...producerShape.metadata, chunkIndex: 2 },
+  });
+  expect(otherChunk).toMatchObject({ acquired: true, sendAllowed: true });
+});
+
+test('A CLAIM RECOGNISES ITS OWN REPLAY despite whitespace and case', () => {
+  // Canonicalisation must match what the ledger persists, or a claim mismatches
+  // itself and a legitimate retry is blocked forever.
+  const dbPath = tempDbPath();
+  openStore(dbPath).claimCommsSend(ENTRY);
+  const replay = openStore(dbPath).claimCommsSend({
+    ...ENTRY,
+    channel: ' Telegram ',
+    direction: ' Outbound ',
+    windowKey: ' main ',
+  });
+  expect(replay).toMatchObject({ acquired: false, sendAllowed: false, outcome: 'already_claimed' });
+});

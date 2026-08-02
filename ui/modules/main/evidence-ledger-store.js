@@ -2002,20 +2002,52 @@ class EvidenceLedgerStore {
     // by a message that merely shared an id — the opposite of what a claim is
     // for. chunkIndex/chunkCount are the only optional pair, and they are
     // optional TOGETHER: an unchunked send has neither.
-    const norm = (v) => (v === undefined || v === null || v === '' ? null : String(v));
+    // Canonicalize EXACTLY as the ledger persists, or a claim can mismatch its
+    // OWN replay on whitespace or case and block a legitimate retry forever.
+    const norm = (v) => {
+      if (v === undefined || v === null) return null;
+      const str = String(v).trim();
+      return str === '' ? null : str;
+    };
+    const normChannel = (v) => normalizeCommsChannel(norm(v)) || null;
+    const normDirection = (v) => normalizeCommsDirection(norm(v)) || null;
+
+    // Chunk position must be a canonical pair: positive integers with
+    // 1 <= index <= count. Zero, fractional, negative, NaN, garbage strings and
+    // index > count are all incoherent positions and must not claim anything.
+    const canonicalChunk = (v) => {
+      if (v === undefined || v === null || v === '') return null;
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 1) return undefined; // undefined = invalid
+      return String(n);
+    };
     const meta = (entry.metadata && typeof entry.metadata === 'object') ? entry.metadata : {};
     const chunkIndex = entry.chunkIndex ?? meta.chunkIndex ?? null;
     const chunkCount = entry.chunkCount ?? meta.chunkCount ?? null;
-    if ((chunkIndex === null) !== (chunkCount === null)) {
+    const canonIndex = canonicalChunk(chunkIndex);
+    const canonCount = canonicalChunk(chunkCount);
+    if (canonIndex === undefined || canonCount === undefined) {
+      return {
+        ok: false, acquired: false, sendAllowed: false,
+        outcome: 'identity_invalid', field: 'chunkIndex/chunkCount', messageId,
+      };
+    }
+    if ((canonIndex === null) !== (canonCount === null)) {
       return {
         ok: false, acquired: false, sendAllowed: false,
         outcome: 'identity_incomplete', field: 'chunkIndex/chunkCount', messageId,
       };
     }
+    if (canonIndex !== null && Number(canonIndex) > Number(canonCount)) {
+      return {
+        ok: false, acquired: false, sendAllowed: false,
+        outcome: 'identity_invalid', field: 'chunkIndex', messageId,
+      };
+    }
 
     const wanted = {
-      channel: norm(entry.channel),
-      direction: norm(entry.direction),
+      channel: normChannel(entry.channel),
+      direction: normDirection(entry.direction),
       senderRole: norm(entry.senderRole),
       targetRole: norm(entry.targetRole),
       bodyHash: norm(bodyHash),
@@ -2024,8 +2056,8 @@ class EvidenceLedgerStore {
       windowKey: norm(entry.windowKey ?? meta.windowKey),
       profile: norm(entry.profile ?? meta.profile),
       routeKey: norm(entry.routeKey ?? meta.routeKey),
-      chunkIndex: norm(chunkIndex),
-      chunkCount: norm(chunkCount),
+      chunkIndex: canonIndex,
+      chunkCount: canonCount,
     };
     const OPTIONAL_TOGETHER = new Set(['chunkIndex', 'chunkCount']);
     for (const key of Object.keys(wanted)) {
@@ -2050,8 +2082,8 @@ class EvidenceLedgerStore {
         rowMeta = {};
       }
       return {
-        channel: norm(row?.channel),
-        direction: norm(row?.direction),
+        channel: normChannel(row?.channel),
+        direction: normDirection(row?.direction),
         senderRole: norm(row?.senderRole ?? row?.sender_role),
         targetRole: norm(row?.targetRole ?? row?.target_role),
         bodyHash: norm(row?.bodyHash ?? row?.body_hash),
