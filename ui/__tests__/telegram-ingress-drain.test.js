@@ -400,9 +400,38 @@ test('EXACT DOWNSTREAM PROOF retires without re-injection', () => {
   expect(isCorrelatedProof({ ...expected, direction: 'inbound', verified: true }, expected)).toBe(false);
 });
 
-test('BACKOFF: a schedule before expiry does NOT re-deliver N', async () => {
+test('BACKOFF applies to DEFINITE failures: blocked before expiry, retried after', async () => {
   const base = tempRoot();
   const dir = seed(base, 'main', [150]);
+  const seen = [];
+  let clock = 1_000_000;
+  const drain = coordinator({
+    now: () => clock,
+    backoffMs: 5000,
+    // A definite failure: nothing was delivered, so re-delivery is safe.
+    deliver: async (job) => { seen.push(job.messageId); throw new Error('pane down'); },
+  });
+
+  await drain.schedule(dir, 'main');
+  expect(seen).toEqual(['telegram-in-150']);
+
+  clock = 1_003_000;
+  const blocked = await drain.schedule(dir, 'main');
+  expect(blocked.blocked).toBe(true);
+  expect(seen).toEqual(['telegram-in-150']);
+
+  clock = 1_007_000;
+  await drain.schedule(dir, 'main');
+  expect(seen).toEqual(['telegram-in-150', 'telegram-in-150']);
+});
+
+test('ACCEPTED-BUT-UNPROVED IS NEVER RE-INJECTED, no matter how long we wait', async () => {
+  // Architect #63: the submit verifier legitimately waits ~484s because a busy
+  // pane can be slow to report prompt_submit. A timer that re-delivers after
+  // 30s would put the same message in front of James twice. Once accepted, the
+  // only exit is correlated proof.
+  const base = tempRoot();
+  const dir = seed(base, 'main', [151, 152]);
   const seen = [];
   let clock = 1_000_000;
   const drain = coordinator({
@@ -412,18 +441,61 @@ test('BACKOFF: a schedule before expiry does NOT re-deliver N', async () => {
   });
 
   await drain.schedule(dir, 'main');
-  expect(seen).toEqual(['telegram-in-150']);
+  expect(seen).toEqual(['telegram-in-151']);
 
-  // Still inside the backoff window.
-  clock = 1_003_000;
-  const blocked = await drain.schedule(dir, 'main');
-  expect(blocked.blocked).toBe(true);
-  expect(seen).toEqual(['telegram-in-150']);
+  // Far beyond any backoff, and repeatedly scheduled.
+  for (const t of [1_010_000, 1_100_000, 2_000_000]) {
+    clock = t;
+    const res = await drain.schedule(dir, 'main');
+    expect(res.stoppedAt).toMatchObject({ updateId: 151, failureClass: 'awaiting_proof' });
+  }
 
-  // After expiry it may try again.
-  clock = 1_007_000;
+  // Delivered exactly once, and N+1 never jumped the queue.
+  expect(seen).toEqual(['telegram-in-151']);
+  expect(queue.readPending(dir).map((r) => r.updateId)).toEqual([151, 152]);
+});
+
+test('A LONE AWAITING-PROOF MESSAGE RETIRES ON PROOF ALONE, without N+1 arriving', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [153]);
+  const seen = [];
+  let clock = 1_000_000;
+  let receipt = null;
+  const drain = coordinator({
+    now: () => clock,
+    backoffMs: 5000,
+    deliver: async (job) => { seen.push(job.messageId); return UNPROVEN; },
+    findExistingReceipt: async () => receipt,
+  });
+
   await drain.schedule(dir, 'main');
-  expect(seen).toEqual(['telegram-in-150', 'telegram-in-150']);
+  expect(queue.readPending(dir)).toHaveLength(1);
+
+  receipt = {
+    messageId: 'telegram-in-153', routeKey: 'main', windowKey: 'main', profile: 'main',
+    status: 'delivered.verified', verified: true,
+  };
+  clock = 1_002_000;
+  await drain.schedule(dir, 'main');
+
+  expect(seen).toEqual(['telegram-in-153']);
+  expect(queue.readPending(dir)).toHaveLength(0);
+});
+
+test('A THROWING RECEIPT LOOKUP HOLDS AT N rather than risking a second copy', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [154, 155]);
+  const seen = [];
+  const drain = coordinator({
+    deliver: async (job) => { seen.push(job.messageId); return provenFor(job); },
+    findExistingReceipt: async () => { throw new Error('ledger unavailable'); },
+  });
+
+  const res = await drain.schedule(dir, 'main');
+
+  expect(seen).toEqual([]);
+  expect(res.stoppedAt).toMatchObject({ updateId: 154, reason: 'receipt_lookup_failed' });
+  expect(queue.readPending(dir)).toHaveLength(2);
 });
 
 test('BACKOFF EXPIRY re-checks proof first and retires without a second injection', async () => {

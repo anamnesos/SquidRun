@@ -118,14 +118,16 @@ function createDrainCoordinator(deps = {}) {
   const state = new Map();
 
   function stateFor(dir) {
-    if (!state.has(dir)) state.set(dir, { running: false, rerun: false, blockedUntilMs: 0 });
+    if (!state.has(dir)) {
+      state.set(dir, { running: false, rerun: false, blockedUntilMs: 0, awaitingProof: null });
+    }
     return state.get(dir);
   }
 
   /**
    * Deliver one record. Returns {retire} / {stop, reason}.
    */
-  async function processRecord(dir, record, routeKey) {
+  async function processRecord(dir, record, routeKey, st) {
     const updateId = Number(record.updateId);
     const messageId = downstreamMessageId(updateId);
 
@@ -134,14 +136,14 @@ function createDrainCoordinator(deps = {}) {
     // must not be silently redirected to the new one either — hold it.
     const route = resolveRoute ? resolveRoute(record.chatId) : null;
     if (!route || route.ok !== true) {
-      return { stop: true, reason: `route_unresolved:${route?.reason || 'unknown'}` };
+      return { stop: true, reason: `route_unresolved:${route?.reason || 'unknown'}`, failureClass: 'definite' };
     }
     const liveKey = route.profile || route.windowKey || 'main';
     const liveWindow = route.windowKey || 'main';
     if (liveKey !== routeKey
       || (record.targetProfile && route.profile && record.targetProfile !== route.profile)
       || (record.targetWindow && record.targetWindow !== liveWindow)) {
-      return { stop: true, reason: 'route_changed' };
+      return { stop: true, reason: 'route_changed', failureClass: 'definite' };
     }
 
     // (4) A terminal record never reaches a pane; it only needs its route
@@ -151,7 +153,7 @@ function createDrainCoordinator(deps = {}) {
     // to skip delivery is not a reason to skip delivery.
     if (record.terminalDisposition) {
       if (!TERMINAL_DISPOSITIONS.has(record.terminalDisposition)) {
-        return { stop: true, reason: 'unknown_terminal_disposition' };
+        return { stop: true, reason: 'unknown_terminal_disposition', failureClass: 'definite' };
       }
       return { retire: true, terminal: true };
     }
@@ -165,10 +167,28 @@ function createDrainCoordinator(deps = {}) {
       windowKey: liveWindow,
       profile: route.profile || routeKey,
     };
-    const existing = await findExistingReceipt(expectedIdentity);
+    let existing = null;
+    try {
+      existing = await findExistingReceipt(expectedIdentity);
+    } catch (err) {
+      // We cannot tell whether this already landed. Delivering would risk a
+      // second visible copy, so HOLD.
+      return { stop: true, reason: 'receipt_lookup_failed', failureClass: 'indefinite' };
+    }
     if (isCorrelatedProof(existing, expectedIdentity)) {
       log.info('Telegram', `Drain found correlated downstream proof for ${messageId}; retiring without re-injection`);
+      if (st && st.awaitingProof === updateId) st.awaitingProof = null;
       return { retire: true, replayed: true };
+    }
+
+    // THE DUPLICATE TRAP (Architect #63). Once a delivery has been ACCEPTED but
+    // not proved, this record may never be injected again on a timer. The submit
+    // verifier deliberately waits 4+15+45+120+300s because a busy pane can take
+    // that long to report prompt_submit; a 30s backoff followed by re-delivery
+    // would put the same message in front of James twice. From here the only
+    // way out is correlated proof arriving, or an explicit controlled recovery.
+    if (st && st.awaitingProof === updateId) {
+      return { stop: true, reason: 'awaiting_proof', failureClass: 'awaiting_proof' };
     }
 
     let receipt;
@@ -191,29 +211,44 @@ function createDrainCoordinator(deps = {}) {
         record,
       });
     } catch (err) {
-      return { stop: true, reason: `deliver_threw:${err.message}` };
+      return { stop: true, reason: `deliver_threw:${err.message}`, failureClass: 'definite' };
     }
 
     // (5) The acceptance-proof gate.
     // The delivery receipt is held to the same standard: it must carry the
     // identity of what it claims to have delivered.
     if (!isCorrelatedProof(receipt, expectedIdentity)) {
-      return { stop: true, reason: `unproven_acceptance:${receipt?.status || 'no_receipt'}` };
+      // Delivered, but ownership unproved. Latch it: from now on this record is
+      // proof-driven only, never timer-driven re-injection.
+      if (st) st.awaitingProof = updateId;
+      return {
+        stop: true,
+        reason: `unproven_acceptance:${receipt?.status || 'no_receipt'}`,
+        failureClass: 'awaiting_proof',
+      };
     }
+    if (st && st.awaitingProof === updateId) st.awaitingProof = null;
     return { retire: true };
   }
 
   async function drainOnce(dir, routeKey) {
+    // drainOnce is callable directly (startup path), so it owns its state
+    // lookup rather than relying on schedule() to hand it down.
+    const st = stateFor(dir);
     const pending = queue.readPending(dir).slice().sort(byUpdateId);
     let delivered = 0;
     let stoppedAt = null;
 
     for (const record of pending) {
-      const outcome = await processRecord(dir, record, routeKey);
+      const outcome = await processRecord(dir, record, routeKey, st);
       if (outcome.stop) {
         // (2) STOP. N+1 must not pass an unretired N, or order and
         // at-most-once both go out the window.
-        stoppedAt = { updateId: Number(record.updateId), reason: outcome.reason };
+        stoppedAt = {
+          updateId: Number(record.updateId),
+          reason: outcome.reason,
+          failureClass: outcome.failureClass || 'definite',
+        };
         log.warn('Telegram', `Drain stopped at update ${record.updateId} (${outcome.reason}); ${pending.length - delivered} pending`);
         break;
       }
@@ -230,7 +265,7 @@ function createDrainCoordinator(deps = {}) {
         // An ack failure after downstream ownership is not loss — the receipt
         // seam will retire it on the next pass — but continuing would let N+1
         // pass an un-retired N.
-        stoppedAt = { updateId: Number(record.updateId), reason: 'ack_failed' };
+        stoppedAt = { updateId: Number(record.updateId), reason: 'ack_failed', failureClass: 'indefinite' };
         log.warn('Telegram', `Drain could not retire update ${record.updateId}; stopping`);
         break;
       }
@@ -264,7 +299,11 @@ function createDrainCoordinator(deps = {}) {
         st.rerun = false;
         last = await drainOnce(dir, routeKey);
         if (last.stoppedAt) {
-          st.blockedUntilMs = now() + backoffMs;
+          // Only a DEFINITE failure earns a retry deadline. An awaiting-proof
+          // hold has no deadline at all: it is released by proof, not by time.
+          if (last.stoppedAt.failureClass === 'definite') {
+            st.blockedUntilMs = now() + backoffMs;
+          }
           break;
         }
       } while (st.rerun);
