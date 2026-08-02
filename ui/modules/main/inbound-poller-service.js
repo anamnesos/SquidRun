@@ -28,6 +28,8 @@ class InboundPollerService {
     this.telegramWorker = null;
     this.telegramOnMessage = null;
     this.telegramWorkerGeneration = 0;
+    // A child asked to stop whose exit has NOT yet been observed.
+    this.telegramRetiringWorker = null;
     this.telegramWorkerStateGeneration = 0;
     this.telegramStopInFlight = null;
     this.telegramWorkerState = {
@@ -48,6 +50,12 @@ class InboundPollerService {
     if (this.telegramStopInFlight) {
       this.log.warn('Telegram', 'Refusing Telegram start: a worker stop is still in flight');
       return { accepted: false, phase: 'blocked', ready: false, reason: 'stop_in_flight' };
+    }
+    if (this.useTelegramWorker && this.telegramRetiringWorker) {
+      this.log.warn('Telegram', 'Refusing Telegram start: a retiring worker has not been observed to exit');
+      return {
+        accepted: false, phase: 'blocked', ready: false, reason: 'retiring_worker_exit_unproven',
+      };
     }
     if (this.useTelegramWorker && this.telegramWorker) {
       this.log.warn('Telegram', 'Refusing Telegram start: a worker is already live');
@@ -344,10 +352,25 @@ class InboundPollerService {
       ? Number(options.killWaitMs)
       : TELEGRAM_STOP_KILL_TIMEOUT_MS;
 
-    const worker = this.telegramWorker;
+    // A previous stop may have TIMED OUT, leaving a possibly-live child with
+    // no this.telegramWorker reference. Reporting "no_worker" here would be
+    // fail-open: the caller would take it as proof and fork.
+    const worker = this.telegramWorker || this.telegramRetiringWorker;
     if (!worker) {
       this.stopTelegramWorker();
       return Promise.resolve({ ok: true, exited: true, reason: 'no_worker' });
+    }
+    this.telegramRetiringWorker = worker;
+    // The fence is lowered by the child's REAL exit, so the listener that
+    // lowers it must outlive any individual stop attempt (a timed-out attempt
+    // removes only its own settle listener). Attach it once per child.
+    if (worker.__squidrunFenceListenerAttached !== true) {
+      worker.__squidrunFenceListenerAttached = true;
+      worker.on('exit', () => {
+        if (this.telegramRetiringWorker === worker) {
+          this.telegramRetiringWorker = null;
+        }
+      });
     }
 
     const pending = new Promise((resolve) => {
@@ -355,18 +378,30 @@ class InboundPollerService {
       let graceTimer = null;
       let killTimer = null;
 
+      const onExit = () => finish({ ok: true, exited: true });
       const finish = (result) => {
         if (settled) return;
         settled = true;
         if (graceTimer) clearTimeout(graceTimer);
         if (killTimer) clearTimeout(killTimer);
+        // Terminal either way — including timeout, where the fence stays up but
+        // THIS attempt's listener must not leak across repeated restarts.
+        if (typeof worker.removeListener === 'function') {
+          worker.removeListener('exit', onExit);
+        }
         resolve(result);
       };
 
       // The ONLY thing that counts as stopped.
-      worker.once('exit', () => finish({ ok: true, exited: true }));
+      worker.once('exit', onExit);
 
       this.stopTelegramWorker({ skipKillSchedule: true });
+
+      // The child can emit exit SYNCHRONOUSLY from that shutdown send. finish()
+      // then ran with both timers still null, so arming here would leave a live
+      // timer past settlement — one that later kills whatever child occupies
+      // the slot, which by then may be the replacement.
+      if (settled) return;
 
       graceTimer = setTimeout(() => {
         try {
@@ -382,7 +417,12 @@ class InboundPollerService {
       }, graceMs);
       if (typeof graceTimer.unref === 'function') graceTimer.unref();
     }).finally(() => {
-      this.telegramStopInFlight = null;
+      // Identity-guarded: only the promise that OWNS the latch may clear it.
+      // An unconditional clear lets a late settler wipe a newer stop's latch,
+      // reopening the start-during-stop race this latch exists to close.
+      if (this.telegramStopInFlight === pending) {
+        this.telegramStopInFlight = null;
+      }
     });
 
     this.telegramStopInFlight = pending;
