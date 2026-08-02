@@ -8661,6 +8661,38 @@ describe('SquidRunApp', () => {
       );
     });
 
+    it('SHUTDOWN DOES NOT ADVANCE PAST THE POLLER STOP UNTIL IT SETTLES', async () => {
+      // Returning to app.exit while the Telegram child may still be alive
+      // orphans the getUpdates owner on Windows, and the next start races it.
+      const order = [];
+      let releaseStop;
+      let sawStopCall;
+      const stopCalled = new Promise((resolve) => { sawStopCall = resolve; });
+      app.inboundPollerService.stopAll = jest.fn(() => {
+        sawStopCall();
+        return new Promise((resolve) => {
+          releaseStop = () => { order.push('poller_stopped'); resolve(); };
+        });
+      });
+
+      const shutdown = app.shutdown().then(() => { order.push('shutdown_returned'); });
+      await stopCalled;
+      // Let anything downstream of the stop run if it is going to.
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+
+      expect(order).toEqual([]);
+      releaseStop();
+      await shutdown;
+
+      expect(order).toEqual(['poller_stopped', 'shutdown_returned']);
+    });
+
+    it('A POLLER STOP REJECTION DOES NOT HANG OR ABORT SHUTDOWN', async () => {
+      app.inboundPollerService.stopAll = jest.fn(() => Promise.reject(new Error('worker gone rogue')));
+      await expect(app.shutdown()).resolves.not.toThrow();
+      expect(app.inboundPollerService.stopAll).toHaveBeenCalledTimes(1);
+    });
+
     it('restarts the Telegram poller without reloading app panes', async () => {
       // Stub the OBSERVED-EXIT primitive: a resolved {ok:true} means the old
       // worker's exit was actually seen, which is the precondition for forking.

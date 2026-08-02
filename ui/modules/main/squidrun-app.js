@@ -15830,7 +15830,16 @@ class SquidRunApp {
     this.backgroundAgentManager.killAll({ reason: 'app_shutdown' }).catch((err) => {
       log.warn('BackgroundAgent', `Failed to kill background agents during shutdown: ${err.message}`);
     });
-    this.inboundPollerService.stopAll();
+    // AWAITED: teardown must not advance to app.exit while the Telegram child
+    // may still be alive, or Windows is left with an orphaned getUpdates owner
+    // that the next start would race. Bounded and non-hanging by construction —
+    // the worker stop resolves on an observed exit or on its own timeout, and a
+    // rejection is logged rather than allowed to abort teardown.
+    try {
+      await this.inboundPollerService.stopAll();
+    } catch (err) {
+      log.warn('Telegram', `Poller stop failed during shutdown: ${err?.message || err}`);
+    }
     closeCommsJournalStores();
     this.consoleLogWriter.flush().catch((err) => {
       log.warn('App', `Failed flushing console.log buffer during shutdown: ${err.message}`);

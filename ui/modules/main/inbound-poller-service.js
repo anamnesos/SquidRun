@@ -112,6 +112,13 @@ class InboundPollerService {
         this.log.warn('Telegram', `Telegram poller worker error: ${err.message}`);
       });
       worker.on('exit', (code, signal) => {
+        // The child's REAL exit is the only thing that may lower the retiring
+        // fence, and only for the exact child it was raised for. A stop that
+        // TIMED OUT leaves it up on purpose: an unreferenced live child is how
+        // a second poller gets forked onto the same cursor.
+        if (this.telegramRetiringWorker === worker) {
+          this.telegramRetiringWorker = null;
+        }
         const intentional = worker.__squidrunIntentionalStop === true;
         const isCurrentWorker = this.telegramWorker === worker;
         const ownsStoppedSlot = (
@@ -201,10 +208,13 @@ class InboundPollerService {
     return Promise.resolve({ ok: true, exited: true, reason: 'no_poller' });
   }
 
+  /**
+   * Awaitable teardown of every intake. Callers in the shutdown path MUST await
+   * this: returning before the Telegram child is observed to exit orphans the
+   * getUpdates owner.
+   */
   stopAll() {
     this.stopSms();
-    // Fire-and-forget is acceptable here (teardown of everything), but the
-    // rejection must not escape as unhandled.
     return Promise.resolve(this.stopTelegram()).catch(() => {});
   }
 
@@ -361,17 +371,6 @@ class InboundPollerService {
       return Promise.resolve({ ok: true, exited: true, reason: 'no_worker' });
     }
     this.telegramRetiringWorker = worker;
-    // The fence is lowered by the child's REAL exit, so the listener that
-    // lowers it must outlive any individual stop attempt (a timed-out attempt
-    // removes only its own settle listener). Attach it once per child.
-    if (worker.__squidrunFenceListenerAttached !== true) {
-      worker.__squidrunFenceListenerAttached = true;
-      worker.on('exit', () => {
-        if (this.telegramRetiringWorker === worker) {
-          this.telegramRetiringWorker = null;
-        }
-      });
-    }
 
     const pending = new Promise((resolve) => {
       let settled = false;

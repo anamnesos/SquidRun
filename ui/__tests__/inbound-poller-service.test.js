@@ -538,13 +538,44 @@ describe('a TIMED-OUT stop must not fail open (Architect #175)', () => {
     };
   };
 
+  const startedService = (worker) => {
+    const forkProcess = jest.fn(() => worker);
+    const svc = new InboundPollerService({
+      log: silentLog,
+      useTelegramWorker: true,
+      forkProcess,
+      telegramWorkerPath: 'telegram-worker.js',
+      telegramPoller: {
+        stop: jest.fn(),
+        _internals: { getTelegramConfig: jest.fn(() => ({ botToken: 't', chatId: 1 })) },
+      },
+    });
+    svc.startTelegram({ env: { TELEGRAM_BOT_TOKEN: 't', TELEGRAM_CHAT_ID: '1' } });
+    return svc;
+  };
+
   test('TIMEOUT THEN A SECOND RESTART FORKS NOTHING until the late exit lands', async () => {
     jest.useFakeTimers();
     try {
-      const forkProcess = jest.fn(() => makeWorker());
-      const svc = new InboundPollerService({ log: silentLog, useTelegramWorker: true, forkProcess });
       const stale = makeWorker();
-      svc.telegramWorker = stale;
+      const forkProcess = jest.fn()
+        .mockReturnValueOnce(stale)
+        .mockImplementation(() => makeWorker());
+      const svc = new InboundPollerService({
+        log: silentLog,
+        useTelegramWorker: true,
+        forkProcess,
+        telegramWorkerPath: 'telegram-worker.js',
+        telegramPoller: {
+          stop: jest.fn(),
+          _internals: { getTelegramConfig: jest.fn(() => ({ botToken: 't', chatId: 1 })) },
+        },
+      });
+      // Started through the REAL wiring, so the production exit handler — the
+      // one that owns the fence clear — is actually attached.
+      expect(svc.startTelegram({ env: { TELEGRAM_BOT_TOKEN: 't', TELEGRAM_CHAT_ID: '1' } })).toBe(true);
+      expect(forkProcess).toHaveBeenCalledTimes(1);
+      expect(svc.telegramWorker).toBe(stale);
 
       // The child ignores shutdown AND the kill — it never emits exit.
       const first = svc.stopTelegram({ graceMs: 50, killWaitMs: 50 });
@@ -556,19 +587,19 @@ describe('a TIMED-OUT stop must not fail open (Architect #175)', () => {
       // and this start forks a SECOND poller onto the same cursor.
       expect(svc.startTelegram({ env: {}, onMessage: () => {} }))
         .toMatchObject({ accepted: false, reason: 'retiring_worker_exit_unproven' });
-      expect(forkProcess).not.toHaveBeenCalled();
+      expect(forkProcess).toHaveBeenCalledTimes(1);
 
       // A second stop must not answer "no_worker" either — that reads as proof.
       const second = svc.stopTelegram({ graceMs: 50, killWaitMs: 50 });
       await jest.advanceTimersByTimeAsync(200);
       expect(await second).toMatchObject({ ok: false, reason: 'exit_not_observed' });
-      expect(forkProcess).not.toHaveBeenCalled();
+      expect(forkProcess).toHaveBeenCalledTimes(1);
 
       // Only the ACTUAL exit lowers the fence.
       stale.emit('exit', 0, 'SIGKILL');
       expect(svc.telegramRetiringWorker).toBe(null);
-      svc.startTelegram({ env: {}, onMessage: () => {} });
-      expect(forkProcess).toHaveBeenCalledTimes(1);
+      svc.startTelegram({ env: { TELEGRAM_BOT_TOKEN: 't', TELEGRAM_CHAT_ID: '1' } });
+      expect(forkProcess).toHaveBeenCalledTimes(2);
     } finally {
       jest.useRealTimers();
     }
@@ -577,9 +608,8 @@ describe('a TIMED-OUT stop must not fail open (Architect #175)', () => {
   test('THE FENCE IS IDENTITY-KEYED: another child exiting does not lower it', async () => {
     jest.useFakeTimers();
     try {
-      const svc = new InboundPollerService({ log: silentLog, useTelegramWorker: true, forkProcess: jest.fn() });
       const stale = makeWorker();
-      svc.telegramWorker = stale;
+      const svc = startedService(stale);
       const stopping = svc.stopTelegram({ graceMs: 50, killWaitMs: 50 });
       await jest.advanceTimersByTimeAsync(200);
       await stopping;
@@ -609,9 +639,9 @@ describe('a TIMED-OUT stop must not fail open (Architect #175)', () => {
   test('A TIMED-OUT ATTEMPT LEAVES NO exit LISTENER BEHIND', async () => {
     jest.useFakeTimers();
     try {
-      const svc = new InboundPollerService({ log: silentLog, useTelegramWorker: true, forkProcess: jest.fn() });
       const stale = makeWorker();
-      svc.telegramWorker = stale;
+      const svc = startedService(stale);
+      const baseline = stale.listenerCount('exit');
 
       for (let i = 0; i < 3; i += 1) {
         const p = svc.stopTelegram({ graceMs: 20, killWaitMs: 20 });
@@ -619,10 +649,9 @@ describe('a TIMED-OUT stop must not fail open (Architect #175)', () => {
         await p;
       }
 
-      // Exactly one listener survives: the fence-lowering one, which MUST
-      // outlive each attempt. Three timed-out attempts must not stack three
-      // settle listeners on top of it.
-      expect(stale.listenerCount('exit')).toBe(1);
+      // Three timed-out attempts against a stuck child must not stack three
+      // settle listeners on top of the production handler.
+      expect(stale.listenerCount('exit')).toBe(baseline);
     } finally {
       jest.useRealTimers();
     }
@@ -631,12 +660,11 @@ describe('a TIMED-OUT stop must not fail open (Architect #175)', () => {
   test('A SYNCHRONOUS EXIT LEAVES NO ARMED TIMER AND NO KILL (#177)', async () => {
     jest.useFakeTimers();
     try {
-      const svc = new InboundPollerService({ log: silentLog, useTelegramWorker: true, forkProcess: jest.fn() });
       const worker = makeWorker();
+      const svc = startedService(worker);
       // Exits the moment it is told to shut down, before the stop function has
       // finished running.
       worker.send = jest.fn(() => { worker.emit('exit', 0, null); });
-      svc.telegramWorker = worker;
 
       const result = await svc.stopTelegram({ graceMs: 50, killWaitMs: 50 });
 
@@ -654,9 +682,8 @@ describe('a TIMED-OUT stop must not fail open (Architect #175)', () => {
   test('THE STOP LATCH IS CLEARED ONLY BY ITS OWNING PROMISE (#176)', async () => {
     jest.useFakeTimers();
     try {
-      const svc = new InboundPollerService({ log: silentLog, useTelegramWorker: true, forkProcess: jest.fn() });
       const worker = makeWorker();
-      svc.telegramWorker = worker;
+      const svc = startedService(worker);
 
       const owning = svc.stopTelegram({ graceMs: 50, killWaitMs: 50 });
       // A newer stop takes the latch before the first one settles.
