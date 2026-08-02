@@ -43,10 +43,26 @@ const HARD_FAILURE_STATUSES = new Set([
  */
 function looksAccepted(receipt) {
   if (!receipt || typeof receipt !== 'object') return false;
+  // POSITIVE ACCEPTANCE WINS, and it is checked FIRST. Real pane results such as
+  // daemon_enter_failed / daemon_paste_end_failed come back {ok:false,
+  // accepted:true} AFTER the text bytes were already written to the pane.
+  // Reading ok:false first and retrying would duplicate or concatenate what is
+  // already on screen. A brittle list of hard-failure statuses can never be
+  // complete; an explicit acceptance signal can be trusted.
+  if (receipt.accepted === true
+    || receipt.queued === true
+    || receipt.pendingQueued === true
+    || receipt.receiptPending === true
+    || receipt.verified === true
+    || receipt.userVisible === true
+    || receipt.durableHandoff === true) {
+    return true;
+  }
+  if (typeof receipt.status === 'string' && receipt.status.startsWith('accepted')) return true;
+  // Only now, with no acceptance signal at all, classify as rejected.
   if (receipt.ok === false) return false;
   if (typeof receipt.status === 'string' && HARD_FAILURE_STATUSES.has(receipt.status)) return false;
-  if (receipt.accepted === true || receipt.queued === true || receipt.receiptPending === true) return true;
-  return typeof receipt.status === 'string' && receipt.status.startsWith('accepted');
+  return false;
 }
 
 // Statuses that mean a downstream consumer has taken responsibility. A
@@ -199,6 +215,10 @@ function createDrainCoordinator(deps = {}) {
     }
     if (isCorrelatedProof(existing, expectedIdentity)) {
       log.info('Telegram', `Drain found correlated downstream proof for ${messageId}; retiring without re-injection`);
+      // Downstream owns it, but it is not retired until the ack lands. On a
+      // fresh process an ack failure plus a transiently empty lookup would
+      // otherwise re-deliver.
+      if (st) st.awaitingProof = updateId;
       return { retire: true, replayed: true };
     }
 

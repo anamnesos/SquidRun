@@ -617,7 +617,7 @@ test.each([
 });
 
 test.each([
-  ['ok:false', { ok: false, accepted: true }],
+  ['ok:false with no acceptance signal', { ok: false }],
   ['daemon not connected', { status: 'daemon_not_connected' }],
   ['pane missing', { status: 'pane_missing' }],
   ['rejected', { status: 'rejected' }],
@@ -625,4 +625,60 @@ test.each([
   ['null', null],
 ])('HARD FAILURE stays retryable: %s', (_l, receipt) => {
   expect(looksAccepted(receipt)).toBe(false);
+});
+
+// -------------------------------------------- Architect #65 conservative edges
+
+test('ACCEPTED WITH ok:false enters proof-only hold: the bytes are already on screen', () => {
+  // daemon_enter_failed / daemon_paste_end_failed report ok:false AFTER writing
+  // the text. Retrying duplicates or concatenates what James can already see.
+  expect(looksAccepted({ ok: false, accepted: true, status: 'daemon_enter_failed' })).toBe(true);
+  expect(looksAccepted({ ok: false, accepted: true, status: 'daemon_paste_end_failed' })).toBe(true);
+  expect(looksAccepted({ ok: false, pendingQueued: true })).toBe(true);
+});
+
+test('PARTIAL-WRITE FAILURE IS NOT RETRIED', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [220]);
+  const seen = [];
+  let clock = 1_000_000;
+  const drain = coordinator({
+    now: () => clock,
+    backoffMs: 5000,
+    deliver: async (job) => {
+      seen.push(job.messageId);
+      return { ok: false, accepted: true, status: 'daemon_enter_failed' };
+    },
+  });
+
+  const first = await drain.schedule(dir, 'main');
+  expect(first.stoppedAt).toMatchObject({ updateId: 220, failureClass: 'awaiting_proof' });
+
+  clock = 2_000_000;
+  await drain.schedule(dir, 'main');
+  expect(seen).toEqual(['telegram-in-220']);
+});
+
+test('FRESH PROCESS: proof found, ack fails, lookup goes empty => zero visible deliveries', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [230, 231]);
+  const seen = [];
+  let receipt = {
+    messageId: 'telegram-in-230', routeKey: 'main', windowKey: 'main', profile: 'main',
+    status: 'delivered.verified', verified: true,
+  };
+  const drain = coordinator({
+    queue: { readPending: queue.readPending, ack: () => ({ ok: false, reason: 'eio' }) },
+    deliver: async (job) => { seen.push(job.messageId); return provenFor(job); },
+    findExistingReceipt: async () => receipt,
+  });
+
+  await drain.schedule(dir, 'main');
+  // The ledger blinks out between passes.
+  receipt = null;
+  const second = await drain.schedule(dir, 'main');
+
+  expect(seen).toEqual([]);
+  expect(second.stoppedAt).toMatchObject({ updateId: 230, failureClass: 'awaiting_proof' });
+  expect(queue.readPending(dir).map((r) => r.updateId)).toEqual([230, 231]);
 });
