@@ -62,6 +62,22 @@ function appendCommsJournalEntry(entry = {}, options = {}) {
   };
 }
 
+/**
+ * Atomic claim for one outbound send. Exposed deliberately as its OWN function:
+ * inferring a claim from appendCommsJournalEntry's ok would authorize a second
+ * HTTP send for a message that is already recorded or already delivered.
+ */
+function claimCommsSend(entry = {}, options = {}) {
+  const storeResult = resolveStore(options.dbPath || null);
+  if (!storeResult?.store) {
+    return { ok: false, acquired: false, sendAllowed: false, outcome: 'unavailable' };
+  }
+  if (typeof storeResult.store.claimCommsSend !== 'function') {
+    return { ok: false, acquired: false, sendAllowed: false, outcome: 'unsupported' };
+  }
+  return storeResult.store.claimCommsSend(entry, options);
+}
+
 function queryCommsJournalEntries(filters = {}, options = {}) {
   const opts = asObject(options);
   const storeResult = resolveStore(opts.dbPath || null);
@@ -86,6 +102,7 @@ function closeCommsJournalStores() {
 }
 
 module.exports = {
+  claimCommsSend,
   appendCommsJournalEntry,
   queryCommsJournalEntries,
   closeCommsJournalStores,

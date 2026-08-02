@@ -1965,6 +1965,147 @@ class EvidenceLedgerStore {
     return rows.map((row) => mapCommsRow(row));
   }
 
+
+  /**
+   * Atomically CLAIM the right to send one outbound message.
+   *
+   * This is NOT upsertCommsJournal with a nicer name. That method returns
+   * ok:true for an existing row (status "updated"), so a caller inferring a
+   * claim from `ok` would send a SECOND copy of a message that is already
+   * recorded or already delivered. It also refuses to demote a `failed` row to
+   * `recorded`, so a legitimate retry sends while the durable state still reads
+   * failed — and a crash there is then misread as a definite no-send and sent
+   * a third time.
+   *
+   * Exactly one claimant may acquire. Everything happens inside BEGIN IMMEDIATE
+   * so two handles racing cannot both win.
+   *
+   * @returns {{ok:boolean, acquired:boolean, sendAllowed:boolean, outcome:string, ...}}
+   */
+  claimCommsSend(entry = {}, options = {}) {
+    if (!this.db) {
+      return { ok: false, acquired: false, sendAllowed: false, outcome: 'unavailable' };
+    }
+    const nowMs = toMs(options.nowMs, Date.now());
+    const messageId = toOptionalString(entry.messageId || entry.message_id, null);
+    if (!messageId) {
+      return { ok: false, acquired: false, sendAllowed: false, outcome: 'message_id_required' };
+    }
+    const rawBody = typeof entry.rawBody === 'string' ? entry.rawBody : '';
+    const bodyHash = rawBody ? hashBody(rawBody) : null;
+
+    // The identity a claim is FOR. A mismatch on any of these means this row
+    // describes a different message, and sending would be unrelated traffic
+    // riding someone else's claim.
+    const identityOf = (row) => ({
+      channel: row?.channel ?? null,
+      direction: row?.direction ?? null,
+      senderRole: row?.senderRole ?? row?.sender_role ?? null,
+      targetRole: row?.targetRole ?? row?.target_role ?? null,
+      bodyHash: row?.bodyHash ?? row?.body_hash ?? null,
+    });
+    const wanted = identityOf({
+      channel: entry.channel,
+      direction: entry.direction,
+      senderRole: entry.senderRole,
+      targetRole: entry.targetRole,
+      bodyHash,
+    });
+
+    try {
+      this.db.exec('BEGIN IMMEDIATE;');
+      const existingRow = this.db.prepare('SELECT * FROM comms_journal WHERE message_id = ?').get(messageId);
+      const existing = mapCommsRow(existingRow);
+
+      if (!existing) {
+        // Insert inline: calling upsertCommsJournal here would open a NESTED
+        // BEGIN IMMEDIATE and abort the claim.
+        this.db.prepare(`
+          INSERT INTO comms_journal (
+            message_id, session_id, sender_role, target_role, channel, direction,
+            sent_at_ms, brokered_at_ms, raw_body, body_hash, body_bytes, status,
+            ack_status, error_code, attempt, metadata_json, updated_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          messageId,
+          toOptionalString(entry.sessionId, null),
+          toOptionalString(entry.senderRole, null),
+          toOptionalString(entry.targetRole, null),
+          normalizeCommsChannel(entry.channel) || 'telegram',
+          normalizeCommsDirection(entry.direction) || 'outbound',
+          toMs(entry.sentAtMs, nowMs),
+          null,
+          rawBody,
+          bodyHash,
+          rawBody ? Buffer.byteLength(rawBody, 'utf8') : 0,
+          'recorded',
+          null,
+          null,
+          1,
+          entry.metadata ? JSON.stringify(entry.metadata) : null,
+          nowMs
+        );
+        this.db.exec('COMMIT;');
+        return {
+          ok: true, acquired: true, sendAllowed: true, outcome: 'claimed_new',
+          attempt: 1, messageId,
+        };
+      }
+
+      // Identity must match before ANY decision about this row.
+      const found = identityOf(existing);
+      for (const key of Object.keys(wanted)) {
+        if (wanted[key] === null || wanted[key] === undefined) continue;
+        if (found[key] !== null && found[key] !== undefined && found[key] !== wanted[key]) {
+          this.db.exec('ROLLBACK;');
+          return {
+            ok: false, acquired: false, sendAllowed: false,
+            outcome: 'identity_mismatch', field: key, messageId,
+          };
+        }
+      }
+
+      const status = existing.status || null;
+      const ackStatus = existing.ackStatus || existing.ack_status || null;
+
+      if (status === 'acked' && ackStatus === 'telegram_delivered') {
+        this.db.exec('ROLLBACK;');
+        return {
+          ok: true, acquired: false, sendAllowed: false,
+          outcome: 'already_delivered', messageId,
+        };
+      }
+
+      if (status === 'failed') {
+        // A retry must be VISIBLE before the HTTP call: reset to recorded,
+        // clear the stale ack/error, bump the attempt.
+        const attempt = Number(existing.attempt || 1) + 1;
+        this.db.prepare(
+          'UPDATE comms_journal SET status = ?, ack_status = NULL, error_code = NULL, attempt = ?, updated_at_ms = ? WHERE message_id = ?'
+        ).run('recorded', attempt, nowMs, messageId);
+        this.db.exec('COMMIT;');
+        return {
+          ok: true, acquired: true, sendAllowed: true,
+          outcome: 'reclaimed_after_failure', attempt, messageId,
+        };
+      }
+
+      // recorded / brokered / routed, or an ack that is not a delivery: the
+      // message is already in flight or its fate is unknown. Do not send.
+      this.db.exec('ROLLBACK;');
+      return {
+        ok: true, acquired: false, sendAllowed: false,
+        outcome: 'already_claimed', status, ackStatus, messageId,
+      };
+    } catch (error) {
+      try { this.db.exec('ROLLBACK;'); } catch { /* already rolled back */ }
+      return {
+        ok: false, acquired: false, sendAllowed: false,
+        outcome: 'claim_failed', reason: error.message, messageId,
+      };
+    }
+  }
+
   upsertCommsJournal(entry = {}, options = {}) {
     if (!this.isAvailable()) {
       return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
