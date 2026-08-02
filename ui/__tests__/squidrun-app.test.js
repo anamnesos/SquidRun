@@ -12679,6 +12679,59 @@ describe('SquidRunApp', () => {
       expect(String(createWebSocket.mock.calls[0][0])).toContain('ws://127.0.0.1:');
     });
 
+    it('SCOPED REPLAY PROOF reads the exact runtime-<profile> store', async () => {
+      // Architect #146: the resolver and the strict getter were tested
+      // SEPARATELY, so a mutant leaving the resolver correct while
+      // findTelegramDeliveryReceipt read main/default state would survive.
+      // This drives the actual call.
+      const receipts = require('../modules/model-prompt-receipt');
+      const calls = [];
+      receipts.getModelPromptReceipt.mockImplementation((id, opts) => {
+        calls.push({ id, opts });
+        // Answer ONLY for the exact scoped path.
+        if (opts?.statePath && opts.statePath.includes(`runtime-scoped${path.sep}`)) {
+          return { messageId: id, semanticEvent: 'prompt_submit', status: 'prompt_submitted.in_band' };
+        }
+        return null;
+      });
+      jest.spyOn(app, 'hasDurableMiraOutboundProof').mockReturnValue(false);
+
+      const found = await app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-700',
+        routeKey: 'scoped',
+        windowKey: 'scoped',
+        profile: 'scoped',
+        chatId: 111,
+      });
+
+      expect(found).toMatchObject({ verified: true, proofSource: 'model_prompt_receipt' });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].opts.strict).toBe(true);
+      expect(calls[0].opts.statePath).toContain(`runtime-scoped${path.sep}`);
+    });
+
+    it('THE SAME ID at main/default does NOT retire a scoped message', async () => {
+      const receipts = require('../modules/model-prompt-receipt');
+      receipts.getModelPromptReceipt.mockImplementation((id, opts) => (
+        // Present ONLY at the default/main store.
+        opts?.statePath && opts.statePath.includes(`runtime-scoped${path.sep}`)
+          ? null
+          : { messageId: id, semanticEvent: 'prompt_submit', status: 'prompt_submitted.in_band' }
+      ));
+      jest.spyOn(app, 'hasDurableMiraOutboundProof').mockReturnValue(false);
+
+      const found = await app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-701',
+        routeKey: 'scoped',
+        windowKey: 'scoped',
+        profile: 'scoped',
+        chatId: 111,
+      });
+
+      // Main's receipt says nothing about whether it reached HER window.
+      expect(found).toBeNull();
+    });
+
     it('creates exactly ONE coordinator and reuses it', () => {
       // Two coordinators would each hold their own single-flight latch and could
       // deliver the same record twice.

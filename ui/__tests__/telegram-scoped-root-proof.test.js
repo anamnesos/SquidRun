@@ -225,3 +225,18 @@ test('A NON-ARRAY result holds in strict mode', () => {
     const store = { queryCommsJournal: () => ({ not: 'an array' }) };
     expect(() => journal._queryWithStore(store, {}, true)).toThrow(/non-array/);
   });
+
+test('THE PUBLIC PATH uses the same implementation, not a parallel copy', () => {
+  // A seam that duplicates the logic proves the copy works while a regression
+  // in queryCommsJournalEntries survives untouched (Architect #148).
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'modules', 'main', 'comms-journal.js'),
+    'utf8'
+  );
+  const start = src.indexOf('function queryCommsJournalEntries(');
+  const body = src.slice(start, src.indexOf('\n}\n', start));
+  expect(body).toContain('_queryWithStore(');
+  // The strict branches must NOT be re-implemented inside the public function.
+  expect(body).not.toContain('cannot query');
+  expect(body).not.toContain('non-array');
+});

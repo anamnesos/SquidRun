@@ -80,37 +80,16 @@ function claimCommsSend(entry = {}, options = {}) {
 
 function queryCommsJournalEntries(filters = {}, options = {}) {
   const opts = asObject(options);
-  // STRICT callers cannot tell "store unavailable" from "genuinely empty" if
-  // both answer []. For proof lookups that difference is everything: an empty
-  // result means "never delivered" and sends the message again. Strict mode
-  // throws so the caller HOLDS.
   const strict = opts.strict === true;
   const storeResult = resolveStore(opts.dbPath || null);
   if (!storeResult.ok || !storeResult.store) {
     if (strict) throw new Error(`comms journal store unavailable: ${storeResult.reason || 'unknown'}`);
     return [];
   }
-  if (typeof storeResult.store.queryCommsJournal !== 'function') {
-    if (strict) throw new Error('comms journal store cannot query');
-    return [];
-  }
-  // NON-STRICT BEHAVIOUR IS UNCHANGED: a real query throw propagates exactly as
-  // it always did. Swallowing it into [] would have silently altered every
-  // legacy caller — a different, unrequested change riding along with this one.
-  let rows;
-  if (strict) {
-    try {
-      rows = storeResult.store.queryCommsJournal(filters || {});
-    } catch (err) {
-      throw new Error(`comms journal query failed: ${err.message}`);
-    }
-  } else {
-    rows = storeResult.store.queryCommsJournal(filters || {});
-  }
-  if (strict && !Array.isArray(rows)) {
-    throw new Error('comms journal query returned a non-array result');
-  }
-  return rows;
+  // ONE implementation. A test seam that duplicates the logic proves the copy
+  // works and lets a regression in the real path survive — which is exactly
+  // what my previous version did.
+  return _queryWithStore(storeResult.store, filters, strict);
 }
 
 
