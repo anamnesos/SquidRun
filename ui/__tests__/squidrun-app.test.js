@@ -12930,9 +12930,17 @@ describe('SquidRunApp', () => {
       // Proceeding would kill the daemon and close journals underneath a
       // delivery we could not settle — neither delivered nor durably held.
       const order = [];
-      app.telegramDrainCoordinator = {
-        dispose: async () => { throw new Error('drain stuck'); },
+      // ONE coordinator throughout, with a flag — production never swaps the
+      // coordinator or clears the sticky latch, so doing either in the test
+      // would bypass the very state we just asserted.
+      const coordinator = {
+        failDispose: true,
+        dispose: async () => {
+          if (coordinator.failDispose) throw new Error('drain stuck');
+          order.push('drain-quiesced');
+        },
       };
+      app.telegramDrainCoordinator = coordinator;
       app.ctx.daemonClient = { shutdown: () => order.push('daemon-shutdown') };
       jest.spyOn(app, 'forceKillDaemonFromPidFile').mockImplementation(() => order.push('daemon-force-kill'));
       jest.spyOn(app, 'shutdown').mockImplementation(async () => order.push('app-shutdown'));
@@ -12956,9 +12964,13 @@ describe('SquidRunApp', () => {
       // Quiesce is sticky: nothing may resurrect the coordinator.
       expect(app.telegramDrainQuiesced).toBe(true);
 
-      // A RETRY must reach the existing success path once dispose succeeds.
-      app.telegramDrainCoordinator = { dispose: async () => { order.push('drain-quiesced'); } };
-      app.telegramDrainQuiesced = false;
+      // The SAME coordinator must still be retained for a retry.
+      expect(app.telegramDrainCoordinator).toBe(coordinator);
+
+      // A RETRY through the production path: only the underlying failure is
+      // repaired. quiesce already retries a retained coordinator even with the
+      // latch set, so nothing in the app state is touched by hand.
+      coordinator.failDispose = false;
       const retry = await app.performFullShutdown('retry');
 
       expect(order[0]).toBe('drain-quiesced');
