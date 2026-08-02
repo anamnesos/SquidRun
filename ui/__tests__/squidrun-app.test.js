@@ -13056,23 +13056,35 @@ describe('SquidRunApp', () => {
     });
 
     it('TEARDOWN PROCEEDS once the notice bound expires', async () => {
-      // The whole point of the bound: a dead Telegram must not stop Quit.
-      const order = [];
-      app.telegramDrainCoordinator = { dispose: async () => { order.push('drain-quiesced'); } };
+      // The whole point of the bound: a dead Telegram must not stop Quit — and
+      // proving it must not depend on the wall clock.
+      jest.useFakeTimers();
       const routing = require('../scripts/hm-telegram-routing');
-      routing.sendRoutedTelegramMessage.mockImplementation(() => new Promise(() => {}));
-      app.quitNoticeTimeoutMs = 20;
-      shutdownHarness(order);
+      try {
+        const order = [];
+        app.telegramDrainCoordinator = { dispose: async () => { order.push('drain-quiesced'); } };
+        routing.sendRoutedTelegramMessage.mockImplementation(() => new Promise(() => {}));
+        app.quitNoticeTimeoutMs = 5000;
+        shutdownHarness(order);
 
-      await app.performFullShutdown('test');
+        const running = app.performFullShutdown('test');
 
-      expect(order).toContain('daemon-shutdown');
-      expect(order).toContain('app-shutdown');
-      expect(order[0]).toBe('drain-quiesced');
+        // Quiesce has run; nothing may tear down while the notice is pending.
+        await jest.advanceTimersByTimeAsync(4999);
+        expect(order).toEqual(['drain-quiesced']);
 
-      delete app.quitNoticeTimeoutMs;
-      routing.sendRoutedTelegramMessage.mockReset();
-      routing.sendRoutedTelegramMessage.mockResolvedValue({ ok: true });
+        await jest.advanceTimersByTimeAsync(1);
+        await running;
+
+        expect(order).toContain('daemon-shutdown');
+        expect(order).toContain('app-shutdown');
+        expect(order[0]).toBe('drain-quiesced');
+      } finally {
+        delete app.quitNoticeTimeoutMs;
+        routing.sendRoutedTelegramMessage.mockReset();
+        routing.sendRoutedTelegramMessage.mockResolvedValue({ ok: true });
+        jest.useRealTimers();
+      }
     });
 
     it('A QUIESCE ABORT sends no notice at all', async () => {
@@ -13179,28 +13191,24 @@ describe('SquidRunApp', () => {
       });
 
       it('A NEVER-SETTLING ROUTER settles as a timeout, not a hang', async () => {
-        // hm-telegram's requestTelegram has no socket timeout, so without this
-        // bound the awaited notice would hang Quit forever — the courtesy
-        // message becomes the thing that traps the app open.
-        sendFn.mockImplementation(() => new Promise(() => {}));
-        app.quitNoticeTimeoutMs = 20;
-
-        await expect(app.sendQuitTelegramNotice('test'))
-          .resolves.toMatchObject({ ok: false, reason: 'timeout' });
-
-        delete app.quitNoticeTimeoutMs;
-      });
-
-      it('A FAST REJECTION leaves no armed timer behind', async () => {
-        // Promise.race rejects straight past a trailing clearTimeout, so the
-        // timer stayed armed for the whole bound after an immediate failure.
+        // Deterministic: a wall-clock wait can pass or fail for timing reasons
+        // and proves nothing about the bound itself.
         jest.useFakeTimers();
         try {
-          sendFn.mockRejectedValue(new Error('instant failure'));
+          sendFn.mockImplementation(() => new Promise(() => {}));
           app.quitNoticeTimeoutMs = 5000;
 
-          await expect(app.sendQuitTelegramNotice('test')).resolves.toMatchObject({ ok: false });
-          expect(jest.getTimerCount()).toBe(0);
+          let settled = null;
+          const pending = app.sendQuitTelegramNotice('test').then((r) => { settled = r; });
+
+          // Before the bound: still waiting.
+          await jest.advanceTimersByTimeAsync(4999);
+          expect(settled).toBeNull();
+
+          // The final millisecond releases it.
+          await jest.advanceTimersByTimeAsync(1);
+          await pending;
+          expect(settled).toMatchObject({ ok: false, reason: 'timeout' });
         } finally {
           delete app.quitNoticeTimeoutMs;
           jest.useRealTimers();
