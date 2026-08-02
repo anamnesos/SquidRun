@@ -1017,7 +1017,7 @@ async function sendTelegram(message, env = process.env, options = {}) {
         source: 'hm-telegram',
         mode: 'message',
       }),
-    });
+    }, { dbPath: opts.dbPath || null });
     return {
       ok: false,
       // Preflight refusal: nothing left the process, so this is proven not-sent
@@ -1039,9 +1039,11 @@ async function sendTelegram(message, env = process.env, options = {}) {
       status: 'failed',
       errorCode: 'missing_config',
       metadata: mergeJournalMetadata(opts.metadata, { missing }),
-    });
+    }, { dbPath: opts.dbPath || null });
     return {
       ok: false,
+      // Preflight: the network was never touched, so a caller may fall back.
+      definiteNoSend: true,
       error: `Missing required env vars: ${missing.join(', ')}`,
     };
   }
@@ -1057,9 +1059,12 @@ async function sendTelegram(message, env = process.env, options = {}) {
         chatId: outboundChatId,
         allowlistSize: config.chatAllowlist.length,
       }),
-    });
+    }, { dbPath: opts.dbPath || null });
     return {
       ok: false,
+      // Preflight refusal: the network was never touched, so a caller may
+      // safely fall back rather than hold an undeliverable message.
+      definiteNoSend: true,
       error: `Chat ID ${outboundChatId} is not allowlisted`,
     };
   }
@@ -1096,10 +1101,13 @@ async function sendTelegram(message, env = process.env, options = {}) {
     // payload.ok === true, a valid result.message_id, and result.chat.id
     // matching the chat we addressed. Anything short of that is evidence we
     // cannot read — never acked, never failed, and never reported verified.
-    const resultMessageId = Number(payload?.result?.message_id);
+    // typeof-checked: Number('55') is 55 and Number(true) is 1, so coercion let
+    // a string or boolean pass as a real Telegram message id.
+    const rawResultMessageId = payload?.result?.message_id;
+    const resultMessageId = typeof rawResultMessageId === 'number' ? rawResultMessageId : NaN;
     const resultChatId = payload?.result?.chat?.id;
     const evidenceComplete = payload?.ok === true
-      && Number.isInteger(resultMessageId)
+      && Number.isSafeInteger(resultMessageId)
       && resultMessageId > 0
       && resultChatId !== undefined
       && resultChatId !== null
@@ -1129,7 +1137,7 @@ async function sendTelegram(message, env = process.env, options = {}) {
       status: 'acked',
       ackStatus: 'telegram_delivered',
       metadata: ackMetadata,
-    });
+    }, { dbPath: opts.dbPath || null });
 
     // If a real success cannot be durably marked delivered, we must NOT report
     // verified success: a later replay would find no delivery evidence and send
@@ -1170,7 +1178,7 @@ async function sendTelegram(message, env = process.env, options = {}) {
       statusCode: response.statusCode || 0,
       error: payload?.description || payload?.message || payload?.detail || null,
     }),
-  });
+  }, { dbPath: opts.dbPath || null });
   return {
     ok: false,
     // Telegram answered and refused. That is PROVEN not-sent, so a caller may

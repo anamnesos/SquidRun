@@ -178,6 +178,9 @@ describe('strict claim wiring', () => {
     ['negative', -5],
     ['fractional', 1.5],
     ['empty string', ''],
+    ['a numeric string', '55'],
+    ['a boolean', true],
+    ['beyond safe integer range', Number.MAX_SAFE_INTEGER + 2],
   ])('A message_id that is %s is NOT valid success evidence', async (_l, id) => {
     // Number.isFinite accepted all of these, so a malformed success was acked
     // as delivered and the message could never be replayed if it had not been.
