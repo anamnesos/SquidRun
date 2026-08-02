@@ -2467,13 +2467,14 @@ function validateTelegramPollerRestartBoundarySemantics(evalCase, options = {}) 
 
   checks.push(makeCheck(
     'telegram_poller_app_restart_stops_and_starts_poller_only',
-    // DELIBERATE BOUNDARY UPDATE (Stage A). This previously pinned
-    // `stopTelegram();` — the fire-and-forget stop that returned before the
-    // worker exited, letting a caller fork a replacement while the old
-    // getUpdates child was still alive. The boundary's INTENT (stop/start
-    // intake, never touch panes) is unchanged; the required call is now the
-    // observed-exit primitive, which is strictly safer.
-    appRestartBlock.includes('this.inboundPollerService.stopTelegramWorkerAndWait(')
+    // BOUNDARY KEPT ON THE PUBLIC LIFECYCLE. It previously pinned the
+    // fire-and-forget `stopTelegram();`, which returned before the worker
+    // exited and let a caller fork while the old getUpdates child was alive.
+    // It now requires the AWAITED public stop — same public method, same
+    // intent (stop/start intake, never touch panes), but the overlap is closed.
+    // Pinning the private worker-only seam here would have blessed a path that
+    // does not exist in in-process mode.
+    appRestartBlock.includes('await this.inboundPollerService.stopTelegram(')
       && appRestartBlock.includes('const rawStartStatus = this.startTelegramPoller();')
       && appRestartBlock.includes('Telegram poller restart requested without reloading panes.')
       && !appRestartBlock.includes('reloadIgnoringCache')

@@ -42,11 +42,16 @@ class InboundPollerService {
   }
 
   startTelegram(options = {}) {
-    // A start during an in-flight stop is exactly how two getUpdates children
-    // end up alive at once.
+    // Either of these is how two getUpdates children end up alive at once: a
+    // start racing an in-flight stop, or a start that fire-and-forget stops a
+    // LIVE worker and forks immediately. Callers must stop and await first.
     if (this.telegramStopInFlight) {
       this.log.warn('Telegram', 'Refusing Telegram start: a worker stop is still in flight');
       return { accepted: false, phase: 'blocked', ready: false, reason: 'stop_in_flight' };
+    }
+    if (this.useTelegramWorker && this.telegramWorker) {
+      this.log.warn('Telegram', 'Refusing Telegram start: a worker is already live');
+      return { accepted: false, phase: 'blocked', ready: false, reason: 'worker_already_live' };
     }
     if (!this.useTelegramWorker) {
       const started = this.telegramPoller.start(options);
@@ -162,22 +167,37 @@ class InboundPollerService {
     }
   }
 
-  stopTelegram() {
+  /**
+   * PUBLIC stop, awaitable, for BOTH owner modes.
+   *
+   * The worker path resolves only on an OBSERVED exit; the in-process path is
+   * synchronous and already stopped once stop() returns. Callers that are about
+   * to start a replacement must await this — routing them at the worker-only
+   * seam regressed useTelegramWorker=false entirely.
+   *
+   * @returns {Promise<{ok: boolean, exited: boolean, reason?: string}>}
+   */
+  stopTelegram(options = {}) {
     if (this.useTelegramWorker) {
-      this.stopTelegramWorker();
-    } else if (this.telegramPoller && typeof this.telegramPoller.stop === 'function') {
+      return this.stopTelegramWorkerAndWait(options);
+    }
+    if (this.telegramPoller && typeof this.telegramPoller.stop === 'function') {
       this.telegramPoller.stop();
       this.telegramWorkerState = {
         phase: 'idle',
         ready: false,
         reason: 'intentional_stop',
       };
+      return Promise.resolve({ ok: true, exited: true, reason: 'in_process_stopped' });
     }
+    return Promise.resolve({ ok: true, exited: true, reason: 'no_poller' });
   }
 
   stopAll() {
     this.stopSms();
-    this.stopTelegram();
+    // Fire-and-forget is acceptable here (teardown of everything), but the
+    // rejection must not escape as unhandled.
+    return Promise.resolve(this.stopTelegram()).catch(() => {});
   }
 
   /**
@@ -346,7 +366,7 @@ class InboundPollerService {
       // The ONLY thing that counts as stopped.
       worker.once('exit', () => finish({ ok: true, exited: true }));
 
-      this.stopTelegramWorker();
+      this.stopTelegramWorker({ skipKillSchedule: true });
 
       graceTimer = setTimeout(() => {
         try {
@@ -369,7 +389,7 @@ class InboundPollerService {
     return pending;
   }
 
-  stopTelegramWorker() {
+  stopTelegramWorker(options = {}) {
     const worker = this.telegramWorker;
     this.telegramWorker = null;
     this.telegramOnMessage = null;
@@ -397,6 +417,10 @@ class InboundPollerService {
       this.log.warn('Telegram', `Failed sending Telegram poller worker shutdown: ${err.message}`);
     }
 
+    // Only schedule a kill when nobody is already managing one. The awaited
+    // path arms its own kill plus a bounded wait; two schedules against the
+    // same child is redundant at best and confusing at worst.
+    if (options.skipKillSchedule === true) return;
     setTimeout(() => {
       try {
         if (typeof worker.kill === 'function' && worker.killed !== true) {

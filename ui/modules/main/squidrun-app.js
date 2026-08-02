@@ -15587,7 +15587,9 @@ class SquidRunApp {
     const pending = (async () => {
       log.info('Telegram', `Restarting Telegram poller (${reason})`);
 
-      const stopped = await this.inboundPollerService.stopTelegramWorkerAndWait(payload.stopOptions || {});
+      // PUBLIC lifecycle, not the worker-only seam: routing through the private
+      // path regressed useTelegramWorker=false, where there is no worker at all.
+      const stopped = await this.inboundPollerService.stopTelegram(payload.stopOptions || {});
       if (!stopped || stopped.ok !== true) {
         // An unobserved exit is indistinguishable from a live child. Forking
         // here is exactly how two pollers end up on one cursor.

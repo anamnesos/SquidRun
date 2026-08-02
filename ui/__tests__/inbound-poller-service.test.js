@@ -229,7 +229,7 @@ describe('InboundPollerService', () => {
     expect(service.getTelegramWorkerState().reason).not.toBe('missing_config');
   });
 
-  test('retiring worker exit cannot overwrite replacement worker readiness', () => {
+  test('retiring worker exit cannot overwrite replacement worker readiness', async () => {
     const workers = [new EventEmitter(), new EventEmitter()];
     for (const worker of workers) {
       worker.connected = true;
@@ -261,12 +261,21 @@ describe('InboundPollerService', () => {
     workers[0].emit('message', { type: 'started', started: true });
     expect(service.getTelegramWorkerState().ready).toBe(true);
 
+    // Replacement now goes through the SAFE path: stop, observe the exit, then
+    // start. The old fire-and-forget stop-then-fork could have both children
+    // alive at once, so it is refused outright.
+    const stopping = service.stopTelegram({ graceMs: 50, killWaitMs: 50 });
+    workers[0].emit('exit', 0, 'SIGTERM');
+    await stopping;
+
     expect(service.startTelegram(options)).toBe(true);
     expect(service.getTelegramWorkerState()).toEqual({
       phase: 'spawned',
       ready: false,
       reason: null,
     });
+    // A LATE stray exit from the retired worker must not clobber the
+    // replacement's state — that is what the generation guard is for.
     workers[0].emit('exit', 0, 'SIGTERM');
     expect(service.getTelegramWorkerState()).toEqual({
       phase: 'spawned',
@@ -452,5 +461,59 @@ describe('observed-exit worker replacement (Stage A)', () => {
   test('WITH NO WORKER the stop resolves immediately as already exited', async () => {
     const svc = new InboundPollerService({ log: silentLog, useTelegramWorker: true });
     await expect(svc.stopTelegramWorkerAndWait()).resolves.toMatchObject({ ok: true, exited: true });
+  });
+});
+
+describe('public lifecycle covers BOTH owner modes (Stage A, #172/#173)', () => {
+  const { InboundPollerService } = require('../modules/main/inbound-poller-service');
+  const silentLog = { info() {}, warn() {}, error() {} };
+
+  test('IN-PROCESS mode stops through the same public method', async () => {
+    // Routing restart at the worker-only seam regressed this mode entirely:
+    // there is no worker to observe, and stopTelegramWorkerAndWait would have
+    // reported "no worker" while the in-process poller kept running.
+    const telegramPoller = { stop: jest.fn(), start: jest.fn() };
+    const svc = new InboundPollerService({
+      log: silentLog, useTelegramWorker: false, telegramPoller,
+    });
+
+    await expect(svc.stopTelegram()).resolves.toMatchObject({ ok: true, exited: true });
+    expect(telegramPoller.stop).toHaveBeenCalledTimes(1);
+  });
+
+  test('A START IS REFUSED while a worker is already live', () => {
+    // The old path fire-and-forget stopped a LIVE worker and forked at once.
+    const svc = new InboundPollerService({ log: silentLog, useTelegramWorker: true });
+    svc.telegramWorker = { send: jest.fn(), kill: jest.fn(), once() {}, on() {} };
+
+    expect(svc.startTelegram({ env: {}, onMessage: () => {} }))
+      .toMatchObject({ accepted: false, reason: 'worker_already_live' });
+  });
+
+  test('ONLY ONE kill is scheduled per stop', async () => {
+    jest.useFakeTimers();
+    try {
+      const handlers = {};
+      const worker = {
+        killed: false, connected: true,
+        send: jest.fn(),
+        kill: jest.fn(function kill() { this.killed = true; }),
+        once(e, fn) { (handlers[e] = handlers[e] || []).push(fn); return this; },
+        on(e, fn) { (handlers[e] = handlers[e] || []).push(fn); return this; },
+        emit(e, ...a) { (handlers[e] || []).forEach((fn) => fn(...a)); },
+      };
+      const svc = new InboundPollerService({ log: silentLog, useTelegramWorker: true });
+      svc.telegramWorker = worker;
+
+      const pending = svc.stopTelegram({ graceMs: 100, killWaitMs: 100 });
+      await jest.advanceTimersByTimeAsync(300);
+      await pending;
+
+      // The awaited path arms its own kill; stopTelegramWorker must not arm a
+      // second one against the same child.
+      expect(worker.kill).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

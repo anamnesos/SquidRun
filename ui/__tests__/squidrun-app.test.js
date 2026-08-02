@@ -8664,8 +8664,7 @@ describe('SquidRunApp', () => {
     it('restarts the Telegram poller without reloading app panes', async () => {
       // Stub the OBSERVED-EXIT primitive: a resolved {ok:true} means the old
       // worker's exit was actually seen, which is the precondition for forking.
-      app.inboundPollerService.stopTelegram = jest.fn();
-      app.inboundPollerService.stopTelegramWorkerAndWait = jest.fn()
+      app.inboundPollerService.stopTelegram = jest.fn()
         .mockResolvedValue({ ok: true, exited: true });
       app.startTelegramPoller = jest.fn(() => true);
       const reloadsideprofile = jest.fn();
@@ -8691,7 +8690,7 @@ describe('SquidRunApp', () => {
       // The restart now uses the OBSERVED-EXIT primitive, not the fire-and-
       // forget stop: forking after an unobserved stop is how two getUpdates
       // children end up alive at once.
-      expect(app.inboundPollerService.stopTelegramWorkerAndWait).toHaveBeenCalledTimes(1);
+      expect(app.inboundPollerService.stopTelegram).toHaveBeenCalledTimes(1);
       expect(app.startTelegramPoller).toHaveBeenCalledTimes(1);
       expect(reloadsideprofile).not.toHaveBeenCalled();
       expect(launchSpy).not.toHaveBeenCalled();
@@ -8703,8 +8702,7 @@ describe('SquidRunApp', () => {
       app.inboundPollerService.startTelegram = jest.fn(() => true);
       // Stub the OBSERVED-EXIT primitive: a resolved {ok:true} means the old
       // worker's exit was actually seen, which is the precondition for forking.
-      app.inboundPollerService.stopTelegram = jest.fn();
-      app.inboundPollerService.stopTelegramWorkerAndWait = jest.fn()
+      app.inboundPollerService.stopTelegram = jest.fn()
         .mockResolvedValue({ ok: true, exited: true });
       app.inboundPollerService.getTelegramWorkerState = jest.fn(() => ({
         phase: 'standalone_lane_handoff',
@@ -8743,7 +8741,7 @@ describe('SquidRunApp', () => {
       // The restart now uses the OBSERVED-EXIT primitive, not the fire-and-
       // forget stop: forking after an unobserved stop is how two getUpdates
       // children end up alive at once.
-      expect(app.inboundPollerService.stopTelegramWorkerAndWait).toHaveBeenCalledTimes(1);
+      expect(app.inboundPollerService.stopTelegram).toHaveBeenCalledTimes(1);
       expect(app.inboundPollerService.startTelegram).toHaveBeenCalledTimes(2);
       expect(log.info).not.toHaveBeenCalledWith('Telegram', 'Inbound Telegram bridge enabled');
     });
@@ -13274,7 +13272,7 @@ describe('SquidRunApp', () => {
     it('AN UNOBSERVED STOP means NO replacement is forked', async () => {
       // The whole point: forking after an exit we never saw is how two
       // getUpdates children end up alive on one cursor.
-      app.inboundPollerService.stopTelegramWorkerAndWait = jest.fn()
+      app.inboundPollerService.stopTelegram = jest.fn()
         .mockResolvedValue({ ok: false, exited: false, reason: 'exit_not_observed' });
       const startSpy = jest.spyOn(app, 'startTelegramPoller').mockReturnValue(true);
 
@@ -13287,7 +13285,7 @@ describe('SquidRunApp', () => {
     it('CONCURRENT RESTARTS share one promise instead of racing to fork', async () => {
       let release;
       const gate = new Promise((r) => { release = r; });
-      app.inboundPollerService.stopTelegramWorkerAndWait = jest.fn(async () => {
+      app.inboundPollerService.stopTelegram = jest.fn(async () => {
         await gate;
         return { ok: true, exited: true };
       });
@@ -13301,7 +13299,7 @@ describe('SquidRunApp', () => {
       await Promise.all([a, b]);
 
       // One stop, one start — not two of either.
-      expect(app.inboundPollerService.stopTelegramWorkerAndWait).toHaveBeenCalledTimes(1);
+      expect(app.inboundPollerService.stopTelegram).toHaveBeenCalledTimes(1);
       expect(startSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -13311,7 +13309,7 @@ describe('SquidRunApp', () => {
     ])('%s winning while we wait means no replacement is forked', async (_l, trip, expected) => {
       let release;
       const gate = new Promise((r) => { release = r; });
-      app.inboundPollerService.stopTelegramWorkerAndWait = jest.fn(async () => {
+      app.inboundPollerService.stopTelegram = jest.fn(async () => {
         await gate;
         return { ok: true, exited: true };
       });
