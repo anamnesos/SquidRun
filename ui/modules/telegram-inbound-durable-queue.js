@@ -106,12 +106,29 @@ function append(dir, entry = {}) {
   const existing = new Set(readJsonl(journalPath(dir)).map((e) => normalizeUpdateId(e.updateId)));
   if (existing.has(updateId)) return { ok: true, deduped: true, updateId };
 
+  // ADDITIVE ONLY. The original four fields keep their names and meaning so
+  // journals written before this change still read back; everything below is
+  // what a later drain needs to actually re-deliver the message rather than
+  // just prove it once existed. A spool that cannot reconstruct the delivery is
+  // a record of the loss, not a recovery from it.
   const record = {
     updateId,
     text: typeof entry.text === 'string' ? entry.text : '',
     chatId: entry.chatId ?? null,
     profile: entry.profile ?? null,
     receivedAtMs: Number.isFinite(Number(entry.receivedAtMs)) ? Number(entry.receivedAtMs) : Date.now(),
+    from: typeof entry.from === 'string' ? entry.from : null,
+    messageId: entry.messageId ?? null,
+    updateKind: entry.updateKind ?? null,
+    timestampMs: Number.isFinite(Number(entry.timestampMs)) ? Number(entry.timestampMs) : null,
+    media: entry.media && typeof entry.media === 'object' ? entry.media : null,
+    photo: entry.photo && typeof entry.photo === 'object' ? entry.photo : null,
+    video: entry.video && typeof entry.video === 'object' ? entry.video : null,
+    document: entry.document && typeof entry.document === 'object' ? entry.document : null,
+    routeKey: typeof entry.routeKey === 'string' ? entry.routeKey : null,
+    targetProfile: entry.targetProfile ?? null,
+    targetWindow: entry.targetWindow ?? null,
+    targetSession: entry.targetSession ?? null,
   };
   // TORN-TAIL REPAIR, and this one bites hard: a crash mid-append leaves a
   // partial line with NO trailing newline. The next append would concatenate

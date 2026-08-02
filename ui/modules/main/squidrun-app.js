@@ -44,6 +44,7 @@ const { createBackupManager } = require('../backup-manager');
 const { createRecoveryManager } = require('../recovery-manager');
 const { stripAnsi } = require('../ansi');
 const { createKernelBridge } = require('./kernel-bridge');
+const telegramIngressSpool = require('./telegram-ingress-spool');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
 const { emitWindowVisibilityState } = require('./window-visibility-state');
@@ -61,6 +62,10 @@ const {
 } = require('./squidrun-root-paths');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const TELEGRAM_PENDING_REPLAY_GRACE_MS = 10 * 60 * 1000;
+// How often to re-check Telegram poller freshness DURING a session. The
+// watchdog's own stale threshold is 10 minutes, so ticking at 5 catches a dead
+// poller inside roughly one threshold rather than at the next app start.
+const TELEGRAM_POLLER_FRESHNESS_WATCH_INTERVAL_MS = 5 * 60 * 1000;
 const ROOT_COHERENCE_MARKER_RELPATH = path.join('runtime', 'root-coherence-assert.jsonl');
 const CURRENT_SESSION_CUA_VERIFIER_OWNER = 'squidrun-current-session-cua-controller';
 const CURRENT_SESSION_CUA_VERIFIER_RECOVERY_EVENT = 'current_session_computer_use_proof';
@@ -2408,6 +2413,68 @@ class SquidRunApp {
     }
   }
 
+  /**
+   * Keep watching the Telegram poller for the whole session, not just at boot.
+   *
+   * SCOPE — READ THIS BEFORE ATTRIBUTING AN OUTAGE TO IT. This covers ONE
+   * narrow interval: the poller worker dying while the APP IS STILL ALIVE.
+   * `checkAndRecoverTelegramPoller` had exactly one caller (the startup-health
+   * pass), so nothing re-checked freshness after boot and a dead worker went
+   * unnoticed until the next app start.
+   *
+   * IT WOULD NOT HAVE PREVENTED THE 2026-08-01 OUTAGE. That was an APP-DOWN
+   * period — the app root pid changed across the window — so no in-app timer
+   * existed to fire. App-down continuity is a separate mechanism and this is
+   * explicitly NOT it. Do not cite this as the fix for a full app-down gap.
+   *
+   * This deliberately adds NO new recovery logic. It re-invokes the same
+   * guarded path the startup pass uses, on a timer, so the proven
+   * detect/recover machinery keeps applying for the life of the session.
+   */
+  startTelegramPollerFreshnessWatch(options = {}) {
+    const intervalMs = Number.isFinite(Number(options.intervalMs))
+      ? Math.max(60 * 1000, Number(options.intervalMs))
+      : TELEGRAM_POLLER_FRESHNESS_WATCH_INTERVAL_MS;
+    // Idempotent: a second call must not stack a second timer.
+    this.stopTelegramPollerFreshnessWatch();
+
+    const tick = async () => {
+      if (this.telegramPollerFreshnessTickInFlight) return;
+      this.telegramPollerFreshnessTickInFlight = true;
+      try {
+        // Same guards as the startup path (deployment owner / profile owner)
+        // are applied inside runStartupHealthTelegramPollerAutoRecover, so a
+        // non-owner profile ticks harmlessly and returns skipped.
+        const result = await this.runStartupHealthTelegramPollerAutoRecover({});
+        if (result?.recovery?.recovered === true) {
+          log.warn(
+            'Telegram',
+            `Periodic freshness watch recovered a wedged/dead Telegram poller (${result.recovery.action || 'unknown'})`
+          );
+        }
+      } catch (err) {
+        // A failing watch must never take the app down or stop future ticks.
+        log.warn('Telegram', `Telegram poller freshness watch tick failed: ${err.message}`);
+      } finally {
+        this.telegramPollerFreshnessTickInFlight = false;
+      }
+    };
+
+    this.telegramPollerFreshnessInterval = setInterval(tick, intervalMs);
+    // Do not hold the event loop open for this alone.
+    if (typeof this.telegramPollerFreshnessInterval.unref === 'function') {
+      this.telegramPollerFreshnessInterval.unref();
+    }
+    return { ok: true, intervalMs };
+  }
+
+  stopTelegramPollerFreshnessWatch() {
+    if (this.telegramPollerFreshnessInterval) {
+      clearInterval(this.telegramPollerFreshnessInterval);
+      this.telegramPollerFreshnessInterval = null;
+    }
+  }
+
   async initializeStartupSessionScope(options = {}) {
     const opts = options && typeof options === 'object' ? options : {};
     const finalizeSessionScope = async (result) => {
@@ -4743,6 +4810,10 @@ class SquidRunApp {
       reason: startupScopeResult?.reason || null,
     });
     this.startScopedTelegramTriggerDrainPoller();
+    // Secondary coverage only: catches a poller worker that dies while the app
+    // is still alive. It cannot cover an app-down gap — no app, no timer — so
+    // it is not the answer to a full outage.
+    this.startTelegramPollerFreshnessWatch();
     const durableTelegramReplyHydration = this.hydratePendingTelegramReplyGuardsFromObligations({
       sessionId: this.commsSessionScopeId || null,
     });
@@ -14488,9 +14559,12 @@ class SquidRunApp {
     const telegramEnv = {
       ...this.buildTelegramPollerEnv(process.env),
     };
+    // The ingress spool is owned by THIS getUpdates owner, so its base is the
+    // canonical data root captured here — never a delivery-target root.
+    const ingressBase = telegramEnv.SQUIDRUN_DATA_ROOT || null;
     const accepted = this.inboundPollerService.startTelegram({
       env: telegramEnv,
-      onMessage: (text, from, metadata = {}) => {
+      onMessage: async (text, from, metadata = {}) => {
         const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
         const media = metadata?.media && typeof metadata.media === 'object' ? metadata.media : null;
         const photo = metadata?.photo && typeof metadata.photo === 'object' ? metadata.photo : null;
@@ -14518,7 +14592,10 @@ class SquidRunApp {
             'Telegram',
             `Dropped inbound Telegram callback with empty body (update=${metadata?.updateId ?? 'unknown'} message=${metadata?.messageId ?? 'unknown'} mediaKind=${media?.kind || (photo ? 'photo' : (document ? 'document' : 'none'))})`
           );
-          return;
+          // Terminal, not a loss: no text and no media means there is no content
+          // to recover. Acking lets the cursor advance instead of retrying an
+          // update that can never become deliverable. FLAGGED for Oracle.
+          return { ok: true, durable: true, dropped: 'empty_body' };
         }
         const archivePath = typeof media?.localPath === 'string' && media.localPath.trim()
           ? media.localPath.trim()
@@ -14529,7 +14606,7 @@ class SquidRunApp {
             'Telegram',
             `Blocked inbound Telegram callback before pane delivery (update=${metadata?.updateId ?? 'unknown'} message=${metadata?.messageId ?? 'unknown'} chat=${inboundRoute?.chatId || 'unknown'} reason=${inboundRoute?.reason || 'telegram_inbound_route_blocked'})`
           );
-          return;
+          return { ok: false, reason: inboundRoute?.reason || 'telegram_inbound_route_blocked' };
         }
         const inboundWindowKey = inboundRoute.windowKey || 'main';
         const inboundSessionScopeId = this.getWindowSessionScopeId(inboundWindowKey);
@@ -14552,6 +14629,27 @@ class SquidRunApp {
         const sentAtMs = Number.isFinite(Number(metadata?.timestampMs))
           ? Math.floor(Number(metadata.timestampMs))
           : Date.now();
+        // DURABLE FIRST. Everything below this point is delivery; if the append
+        // fails we must not report acceptance, because the worker's ack is what
+        // releases the Telegram cursor.
+        const spooled = telegramIngressSpool.acceptInbound({
+          dataRoot: ingressBase,
+          routeKey: inboundRoute.profile || inboundWindowKey || 'main',
+          text: body,
+          from: sender,
+          metadata,
+          targetProfile: inboundRoute.profile || 'main',
+          targetWindow: inboundWindowKey,
+          targetSession: inboundSessionScopeId || null,
+        });
+        if (!spooled.ok) {
+          log.warn(
+            'Telegram',
+            `Telegram ingress spool refused update ${updateId ?? 'unknown'} (${spooled.reason}); holding cursor`
+          );
+          return { ok: false, reason: spooled.reason };
+        }
+
         if (inboundWindowKey === 'main') {
           this.markTelegramInboundContext(sender, {
             chatId: metadata?.chatId,
@@ -14712,10 +14810,11 @@ class SquidRunApp {
             log.warn('Telegram', `Mira live Telegram reply error for ${inboundMessageId}: ${err.message}; falling back to Architect pane`);
             void deliverMainTelegramToArchitect();
           });
-          return;
+          return { ok: true, durable: true, updateId };
         }
 
         void deliverMainTelegramToArchitect();
+        return { ok: true, durable: true, updateId };
       },
     });
 
@@ -14850,6 +14949,7 @@ class SquidRunApp {
   async shutdown() {
     log.info('App', 'Shutting down SquidRun Application');
     this.shuttingDown = true;
+    this.stopTelegramPollerFreshnessWatch();
     this.clearPtyDataFlushTimer();
     this.flushBufferedPtyData();
     this.clearPtyVisibleReleaseTimer();

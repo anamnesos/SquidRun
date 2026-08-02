@@ -173,18 +173,69 @@ class InboundPollerService {
     this.stopTelegram();
   }
 
+  /**
+   * Await the app callback and ack the worker ONLY on explicit durable
+   * acceptance.
+   *
+   * The worker's callback is what the Telegram poller awaits, and since
+   * 345c4311 a rejection holds the cursor. So a positive ack here is a promise
+   * that the message is recoverable without Telegram. Anything less — a throw,
+   * a falsy or malformed result, `durable !== true`, or a failed ack send —
+   * must leave the worker unresolved so it times out and the cursor holds.
+   * Never ack because the callback merely returned.
+   */
+  async deliverTelegramInbound(worker, ackKey, payload) {
+    const nack = (reason) => {
+      if (!ackKey) return;
+      this.sendTelegramAck(worker, { ackKey, ok: false, reason });
+    };
+
+    if (typeof this.telegramOnMessage !== 'function') {
+      this.log.warn('Telegram', 'Telegram inbound arrived with no app consumer; holding cursor');
+      nack('no_consumer');
+      return;
+    }
+
+    let result;
+    try {
+      result = await this.telegramOnMessage(payload.text, payload.from, payload.metadata || {});
+    } catch (err) {
+      this.log.warn('Telegram', `Telegram inbound callback failed: ${err.message}`);
+      nack(`callback_threw:${err.message}`);
+      return;
+    }
+
+    if (!result || typeof result !== 'object' || result.ok !== true || result.durable !== true) {
+      const reason = (result && typeof result === 'object' && result.reason) || 'not_durable';
+      this.log.warn('Telegram', `Telegram inbound not durably accepted (${reason}); holding cursor`);
+      nack(reason);
+      return;
+    }
+
+    this.sendTelegramAck(worker, { ackKey, ok: true, durable: true });
+  }
+
+  /** Ack send failure must NOT be treated as delivery; the worker times out. */
+  sendTelegramAck(worker, message) {
+    if (!message.ackKey) return false;
+    try {
+      if (worker !== this.telegramWorker || !worker || worker.killed || typeof worker.send !== 'function') {
+        return false;
+      }
+      worker.send({ type: 'message-ack', ...message });
+      return true;
+    } catch (err) {
+      this.log.warn('Telegram', `Failed sending Telegram ack ${message.ackKey}: ${err.message}`);
+      return false;
+    }
+  }
+
   handleTelegramWorkerMessage(worker, message) {
     if (worker !== this.telegramWorker || !message || typeof message !== 'object') return;
 
     if (message.type === 'message') {
       const payload = message.payload && typeof message.payload === 'object' ? message.payload : {};
-      if (typeof this.telegramOnMessage === 'function') {
-        try {
-          this.telegramOnMessage(payload.text, payload.from, payload.metadata || {});
-        } catch (err) {
-          this.log.warn('Telegram', `Telegram poller worker callback failed: ${err.message}`);
-        }
-      }
+      this.deliverTelegramInbound(worker, message.ackKey, payload);
       return;
     }
 
