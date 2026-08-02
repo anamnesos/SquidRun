@@ -13215,6 +13215,24 @@ describe('SquidRunApp', () => {
         }
       });
 
+      it('A FAST REJECTION leaves no armed timer behind', async () => {
+        // The ONLY regression covering the try/finally fix: Promise.race rejects
+        // straight past a trailing clearTimeout, so an immediate failure left
+        // the timer armed for the whole bound. The never-settling test cannot
+        // catch this — it never takes the rejection path.
+        jest.useFakeTimers();
+        try {
+          sendFn.mockRejectedValue(new Error('instant failure'));
+          app.quitNoticeTimeoutMs = 5000;
+
+          await expect(app.sendQuitTelegramNotice('test')).resolves.toMatchObject({ ok: false });
+          expect(jest.getTimerCount()).toBe(0);
+        } finally {
+          delete app.quitNoticeTimeoutMs;
+          jest.useRealTimers();
+        }
+      });
+
       it('A LATE REJECTION after the timeout does not surface unhandled', async () => {
         let rejectLater;
         sendFn.mockImplementation(() => new Promise((_res, rej) => { rejectLater = rej; }));
