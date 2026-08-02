@@ -486,27 +486,14 @@ function createDrainCoordinator(deps = {}) {
   }
 
   /**
-   * Public direct pass. It MUST go through the same tracking as schedule():
-   * an untracked drainOnce awaiting deliver() when dispose starts would let
-   * dispose resolve immediately, and shutdown would then close journals out
-   * from under a live delivery. It also has to respect the single-flight latch
-   * so a direct pass cannot double-deliver alongside a scheduled one.
+   * Public direct pass. It is literally schedule(): keeping a separate wrapper
+   * created a two-way coalescing loss — a direct pass starting while a
+   * scheduled one ran did not set `rerun`, and a schedule arriving during a
+   * direct pass set a `rerun` the wrapper never consumed, so queued work was
+   * silently dropped in both directions. One primitive, one latch, one loop.
    */
   async function drainOnce(dir, routeKey) {
-    if (disposed) return { ok: false, reason: 'coordinator_disposed', delivered: 0, pending: 0, stoppedAt: null };
-    const st = stateFor(dir);
-    if (st.running) return { ok: true, coalesced: true, delivered: 0, pending: 0, stoppedAt: null };
-    st.running = true;
-    let settle;
-    const tracked = new Promise((resolve) => { settle = resolve; });
-    inFlight.add(tracked);
-    try {
-      return await runPass(dir, routeKey);
-    } finally {
-      st.running = false;
-      inFlight.delete(tracked);
-      settle();
-    }
+    return schedule(dir, routeKey);
   }
 
   /**

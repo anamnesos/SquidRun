@@ -1054,3 +1054,31 @@ test('A DIRECT pass and a SCHEDULED pass cannot double-deliver', async () => {
 
   expect(seen).toEqual(['telegram-in-440']);
 });
+
+test('A DIRECT pass arriving mid-drain sets rerun, so newly queued work is not dropped', async () => {
+  // The two-way coalescing loss: a separate direct wrapper returned "coalesced"
+  // WITHOUT setting rerun, so anything appended during the in-flight pass was
+  // silently stranded until some unrelated event scheduled another drain.
+  const base = tempRoot();
+  const dir = seed(base, 'main', [500]);
+  const seen = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const drain = coordinator({
+    deliver: async (job) => {
+      seen.push(job.messageId);
+      if (job.updateId === 500) await gate;
+      return provenFor(job);
+    },
+  });
+
+  const running = drain.schedule(dir, 'main');
+  // New inbound lands while the first pass is still delivering.
+  seed(base, 'main', [501]);
+  const direct = drain.drainOnce(dir, 'main');
+  release();
+  await Promise.all([running, direct]);
+
+  expect(seen).toEqual(['telegram-in-500', 'telegram-in-501']);
+  expect(queue.readPending(dir)).toHaveLength(0);
+});

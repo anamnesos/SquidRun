@@ -14789,6 +14789,10 @@ class SquidRunApp {
    * performFullShutdown and shutdown may call it.
    */
   async quiesceTelegramIngressDrain() {
+    // Latch FIRST. Nulling the coordinator while the poller is still alive let
+    // an inbound callback build a brand new one and start delivering again
+    // before the daemon kill — quiesce that un-quiesces itself.
+    this.telegramDrainQuiesced = true;
     if (!this.telegramDrainCoordinator) return { ok: true, skipped: true };
     try {
       await this.telegramDrainCoordinator.dispose();
@@ -14802,6 +14806,8 @@ class SquidRunApp {
   }
 
   getTelegramDrainCoordinator() {
+    // Once quiesced, nothing may resurrect it for the rest of this process.
+    if (this.telegramDrainQuiesced) return null;
     if (!this.telegramDrainCoordinator) {
       this.telegramDrainCoordinator = telegramIngressDrain.createDrainCoordinator({
         log,
@@ -14816,10 +14822,12 @@ class SquidRunApp {
 
   scheduleTelegramIngressDrain(dir, routeKey) {
     if (!dir || !routeKey) return { ok: false, reason: 'missing_drain_target' };
+    const coordinator = this.getTelegramDrainCoordinator();
+    if (!coordinator) return { ok: false, reason: 'drain_quiesced' };
     // Callers treat this as fire-and-forget, so the rejection has to be caught
     // HERE. An unhandled rejection would take the drain down silently and the
     // queue would just stop moving with nobody the wiser.
-    const pending = this.getTelegramDrainCoordinator().schedule(dir, routeKey)
+    const pending = coordinator.schedule(dir, routeKey)
       .then((result) => {
         if (result?.stoppedAt) {
           log.warn(

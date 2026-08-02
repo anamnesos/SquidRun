@@ -12421,15 +12421,21 @@ describe('SquidRunApp', () => {
       jest.spyOn(app, 'forceKillDaemonFromPidFile').mockImplementation(() => order.push('daemon-force-kill'));
       jest.spyOn(app, 'shutdown').mockImplementation(async () => order.push('app-shutdown'));
       jest.spyOn(app, 'stopSupervisorFromPidFile').mockResolvedValue({ ok: true, skipped: true });
+      // Configure the exit seam. Without it the mutated ordering merely CRASHES
+      // the harness, and a crash is not evidence that this assertion bites.
+      const electron = require('electron');
+      electron.app.exit = jest.fn(() => order.push('app-exit'));
 
       const running = app.performFullShutdown('test');
       // Nothing may have happened yet: the drain has not settled.
       expect(order).toEqual([]);
       release();
-      await running.catch(() => {});
+      // Deliberately NOT swallowed: a rejection here is a real failure.
+      await running;
 
       expect(order[0]).toBe('drain-quiesced');
       expect(order.indexOf('drain-quiesced')).toBeLessThan(order.indexOf('daemon-shutdown'));
+      expect(order.indexOf('drain-quiesced')).toBeLessThan(order.indexOf('app-exit'));
     });
 
     it('quiesce is idempotent so shutdown() can safely repeat it', async () => {
