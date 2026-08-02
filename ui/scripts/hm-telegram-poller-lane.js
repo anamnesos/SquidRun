@@ -532,9 +532,15 @@ function getProfileTelegramTriggerPaths(windowKey = '', env = process.env) {
   if (!normalizedWindowKey || normalizedWindowKey === 'main') return [];
 
   const profileRoot = getProfileProjectRootOverride(normalizedWindowKey, env);
-  const roots = profileRoot
-    ? [profileRoot]
-    : [getProjectRoot()].filter(Boolean);
+  // FAIL CLOSED. This previously fell back to the MAIN project root when a
+  // scoped profile had no override — so a scoped chat's inbound message was
+  // written into main's tree at .squidrun/triggers-<windowKey>/architect.txt.
+  // That is a cross-profile leak: another profile's conversation surfacing in
+  // main. If we cannot resolve the profile's own root we must deliver nowhere
+  // and say so, never guess a root. The caller treats an empty list as
+  // missing_profile_trigger_path and does not advance on a successful write.
+  if (!profileRoot) return [];
+  const roots = [profileRoot];
 
   return Array.from(new Set(roots.map((root) => path.resolve(root))))
     .map((root) => path.join(root, '.squidrun', `triggers-${normalizedWindowKey}`, 'architect.txt'));
