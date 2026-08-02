@@ -906,9 +906,10 @@ test('NEWLINE-TERMINATED CORRUPTION IS NOT A TORN TAIL: it fails closed', async 
 });
 
 test('A TORN TAIL IS NOT TOLERATED EITHER: the sidecar biases HOLD', async () => {
-  // Skipping it is not harmless: appendAttempt seals the file and appends after
-  // the fragment, promoting it to corrupt interior that poisons every later
-  // read. This journal is the ambiguity latch, so it fails closed.
+  // The sidecar is the ambiguity latch, so a tail it cannot fully trust stops
+  // everything. Since #129 appendAttempt does NOT seal-and-append behind a torn
+  // fragment either: repairing it would bless whatever that half-written record
+  // was about. Read and append both refuse without modifying the file.
   const base = tempRoot();
   const dir = seed(base, 'main', [370]);
   // The QUEUE owns the sidecar; addressing it through the drain would keep
