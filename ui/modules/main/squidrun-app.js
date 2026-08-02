@@ -14778,9 +14778,11 @@ class SquidRunApp {
       let egress;
       try {
         egress = this.inspectMiraOutboundEgress(inboundMessageId, {
+          inboundMessageId,
           chatId: metadata?.chatId,
           windowKey: inboundWindowKey,
           profile: inboundRoute?.profile || 'main',
+          routeKey: inboundRoute?.profile || inboundWindowKey || 'main',
         });
       } catch (err) {
         log.warn('Telegram', `Mira egress proof lookup failed for ${inboundMessageId}: ${err.message}; holding`);
@@ -15037,9 +15039,11 @@ class SquidRunApp {
     // has to ask about Mira too, using this record's own chat/route identity.
     // An in-memory latch cannot help here: it dies with the process.
     if (this.hasDurableMiraOutboundProof(identity.messageId, {
+      inboundMessageId: identity.messageId,
       chatId: identity.chatId,
       windowKey: identity.windowKey,
       profile: identity.profile,
+      routeKey: identity.routeKey,
     })) {
       return {
         status: 'delivered.user_visible',
@@ -15101,54 +15105,115 @@ class SquidRunApp {
    * @returns {{complete: boolean, anyDelivered: boolean, delivered: number, expectedParts: number|null}}
    */
   inspectMiraOutboundEgress(inboundMessageId, expected = {}) {
-    const empty = { complete: false, anyDelivered: false, delivered: 0, expectedParts: null };
-    if (!inboundMessageId) return empty;
+    if (!inboundMessageId) {
+      throw new Error('Mira egress proof requires an inbound message id');
+    }
 
-    const matches = (row, messageId) => {
+    // REQUIRED expected identity, INCLUDING the inbound id itself (#145/#150).
+    // A missing field used to act as a wildcard and authorize replay against
+    // any row: "did MY message reach THAT window" is unanswerable without both.
+    const required = ['inboundMessageId', 'chatId', 'windowKey', 'profile', 'routeKey'];
+    for (const field of required) {
+      const value = expected[field];
+      if (value === undefined || value === null || String(value).trim() === '') {
+        throw new Error(`Mira egress proof requires expected.${field}`);
+      }
+    }
+    for (const field of ['windowKey', 'profile', 'routeKey']) {
+      if (typeof expected[field] !== 'string' || !expected[field].trim()) {
+        throw new Error(`Mira egress proof requires expected.${field} to be a non-empty string`);
+      }
+    }
+    if (String(expected.inboundMessageId) !== String(inboundMessageId)) {
+      throw new Error('Mira egress proof expected.inboundMessageId must match the inbound id');
+    }
+
+    // ACTUAL positive safe integers. Number('2') is 2 and Number(true) is 1, so
+    // coercion let a string or boolean pose as a chunk position.
+    const asPositiveInt = (value) => (
+      typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null
+    );
+
+    /**
+     * The producer persists identity in METADATA. Allowing a top-level field to
+     * stand in let an exact top-level value hide missing or wrong durable
+     * metadata — the row would look correlated while its persisted record was
+     * not.
+     */
+    const eligible = (row, messageId) => {
       if (!row || row.messageId !== messageId) return false;
       if (row.direction !== 'outbound') return false;
       if (row.channel !== 'telegram') return false;
       if (row.senderRole !== 'mira') return false;
       if (row.ackStatus !== 'telegram_delivered') return false;
       if (row.status !== 'acked') return false;
+
       const meta = (row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata))
         ? row.metadata
-        : {};
-      const rowChatId = row.chatId ?? meta.chatId;
-      if (!expected.chatId || !rowChatId) return false;
-      if (String(rowChatId) !== String(expected.chatId)) return false;
-      const rowInbound = meta.inboundMessageId ?? row.inboundMessageId;
-      if (rowInbound && rowInbound !== inboundMessageId) return false;
-      const rowWindow = meta.windowKey ?? row.windowKey;
-      if (expected.windowKey && rowWindow && rowWindow !== expected.windowKey) return false;
-      const rowProfile = meta.profile ?? row.profile;
-      if (expected.profile && rowProfile && rowProfile !== expected.profile) return false;
+        : null;
+      if (!meta) return false;
+
+      if (String(meta.inboundMessageId ?? '') !== String(inboundMessageId)) return false;
+      if (String(meta.chatId ?? '') !== String(expected.chatId)) return false;
+      if (String(meta.windowKey ?? '') !== String(expected.windowKey)) return false;
+      if (String(meta.profile ?? '') !== String(expected.profile)) return false;
+      if (String(meta.routeKey ?? '') !== String(expected.routeKey)) return false;
       return true;
     };
 
+    /**
+     * EXACTLY ONE eligible row. `.find()` returned the first and made duplicate
+     * delivered rows invisible, so two records for one part could still read as
+     * complete. A duplicate means we cannot say what was sent once.
+     */
     const findRow = (messageId) => {
       const rows = queryCommsJournalEntries({ messageId, limit: 5 }, { strict: true }) || [];
-      return (Array.isArray(rows) ? rows : []).find((row) => matches(row, messageId)) || null;
+      const hits = (Array.isArray(rows) ? rows : []).filter((row) => eligible(row, messageId));
+      if (hits.length !== 1) return { row: null, duplicate: hits.length > 1 };
+      return { row: hits[0], duplicate: false };
     };
 
-    for (const base of [`${inboundMessageId}-mira-reply`, `${inboundMessageId}-mira-direct-status-reply`]) {
-      // Unchunked: the base id carries the whole reply.
-      if (findRow(base)) return { complete: true, anyDelivered: true, delivered: 1, expectedParts: 1 };
+    const metaOf = (row) => ((row.metadata && typeof row.metadata === 'object') ? row.metadata : {});
 
-      // Chunked: part1 tells us how many parts to expect.
+    for (const base of [`${inboundMessageId}-mira-reply`, `${inboundMessageId}-mira-direct-status-reply`]) {
+      const single = findRow(base);
+      if (single.duplicate) {
+        return { complete: false, anyDelivered: true, delivered: 0, expectedParts: null };
+      }
+      if (single.row) {
+        // A BASE id must not carry chunk metadata: the chunked producer uses
+        // exact -partN ids, so this row disagrees with its own shape.
+        const meta = metaOf(single.row);
+        if (meta.chunkIndex !== undefined || meta.chunkCount !== undefined) {
+          return { complete: false, anyDelivered: true, delivered: 1, expectedParts: null };
+        }
+        return { complete: true, anyDelivered: true, delivered: 1, expectedParts: 1 };
+      }
+
       const first = findRow(`${base}-part1`);
-      if (!first) continue;
-      const meta = (first.metadata && typeof first.metadata === 'object') ? first.metadata : {};
-      const expectedParts = Number(meta.chunkCount);
-      if (!Number.isFinite(expectedParts) || expectedParts < 1) {
-        // Something landed, but we cannot say the whole reply did.
+      if (first.duplicate) {
+        return { complete: false, anyDelivered: true, delivered: 0, expectedParts: null };
+      }
+      if (!first.row) continue;
+
+      const firstMeta = metaOf(first.row);
+      const expectedParts = asPositiveInt(firstMeta.chunkCount);
+      if (expectedParts === null || asPositiveInt(firstMeta.chunkIndex) !== 1) {
         return { complete: false, anyDelivered: true, delivered: 1, expectedParts: null };
       }
-      let delivered = 1;
+
+      const seen = new Set([1]);
       for (let part = 2; part <= expectedParts; part += 1) {
-        if (!findRow(`${base}-part${part}`)) break;
-        delivered += 1;
+        const found = findRow(`${base}-part${part}`);
+        if (found.duplicate || !found.row) break;
+        const meta = metaOf(found.row);
+        if (asPositiveInt(meta.chunkCount) !== expectedParts) break;
+        if (asPositiveInt(meta.chunkIndex) !== part) break;
+        if (seen.has(part)) break;
+        seen.add(part);
       }
+
+      const delivered = seen.size;
       return {
         complete: delivered === expectedParts,
         anyDelivered: true,
@@ -15156,8 +15221,11 @@ class SquidRunApp {
         expectedParts,
       };
     }
-    return empty;
+
+    return { complete: false, anyDelivered: false, delivered: 0, expectedParts: null };
   }
+
+
 
   /** Drain every spool directory the canonical owner root already contains. */
   async drainTelegramIngressBacklog(dataRoot, options = {}) {

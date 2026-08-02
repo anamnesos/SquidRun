@@ -12732,6 +12732,144 @@ describe('SquidRunApp', () => {
       expect(found).toBeNull();
     });
 
+    function chunkRow(base, index, count, overrides = {}) {
+      return {
+        messageId: `${base}-part${index}`,
+        direction: 'outbound',
+        channel: 'telegram',
+        senderRole: 'mira',
+        ackStatus: 'telegram_delivered',
+        status: 'acked',
+        chatId: 111,
+        metadata: {
+          chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main',
+          inboundMessageId: 'telegram-in-800',
+          chunkIndex: index,
+          chunkCount: count,
+          ...overrides,
+        },
+      };
+    }
+
+    function serveChunks(rowsByMessageId) {
+      const commsJournal = require('../modules/main/comms-journal');
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries')
+        .mockImplementation(({ messageId }) => (rowsByMessageId[messageId] ? [rowsByMessageId[messageId]] : []));
+    }
+
+    const BASE800 = 'telegram-in-800-mira-reply';
+    const EXPECT800 = {
+      inboundMessageId: 'telegram-in-800',
+      chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main',
+    };
+
+    it('ALL PARTS 1..N exactly once is complete', () => {
+      serveChunks({
+        [`${BASE800}-part1`]: chunkRow(BASE800, 1, 3),
+        [`${BASE800}-part2`]: chunkRow(BASE800, 2, 3),
+        [`${BASE800}-part3`]: chunkRow(BASE800, 3, 3),
+      });
+      expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800))
+        .toMatchObject({ complete: true, delivered: 3, expectedParts: 3 });
+    });
+
+    it.each([
+      ['a GAP in the middle', { skip: 2 }],
+      ['a MISMATCHED count on a later part', { badCount: true }],
+      ['a SUFFIX that disagrees with the recorded index', { badIndex: true }],
+    ])('CHUNK INCOHERENCE (%s) is PARTIAL, never complete', (_l, mode) => {
+      const rows = { [`${BASE800}-part1`]: chunkRow(BASE800, 1, 3) };
+      if (!mode.skip) {
+        rows[`${BASE800}-part2`] = chunkRow(BASE800, 2, 3,
+          mode.badCount ? { chunkCount: 4 } : (mode.badIndex ? { chunkIndex: 99 } : {}));
+      }
+      rows[`${BASE800}-part3`] = chunkRow(BASE800, 3, 3);
+      serveChunks(rows);
+
+      const egress = app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800);
+      // A visible prefix exists, so this must HOLD rather than re-send over it.
+      expect(egress.complete).toBe(false);
+      expect(egress.anyDelivered).toBe(true);
+    });
+
+    it('A NON-INTEGER chunk count is PARTIAL, not complete', () => {
+      serveChunks({ [`${BASE800}-part1`]: chunkRow(BASE800, 1, 3, { chunkCount: 'three' }) });
+      expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800))
+        .toMatchObject({ complete: false, anyDelivered: true, expectedParts: null });
+    });
+
+    it.each([['chatId'], ['windowKey'], ['profile'], ['routeKey']])(
+      'A MISSING expected.%s THROWS rather than authorizing replay',
+      (field) => {
+        const partial = { ...EXPECT800 };
+        delete partial[field];
+        expect(() => app.inspectMiraOutboundEgress('telegram-in-800', partial))
+          .toThrow(new RegExp(`requires expected.${field}`));
+      }
+    );
+
+    it.each([['windowKey'], ['profile'], ['routeKey'], ['inboundMessageId']])(
+      'A ROW MISSING %s is not accepted as proof',
+      (field) => {
+        const row = chunkRow(BASE800, 1, 1);
+        delete row.metadata[field];
+        serveChunks({ [`${BASE800}-part1`]: row });
+        expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800).complete).toBe(false);
+      }
+    );
+
+    it('A DUPLICATE delivered row for one part is PARTIAL, never complete', () => {
+      // .find() returned the first hit and made duplicates invisible, so two
+      // records for one part could still read as complete. If two rows claim
+      // the same part, we cannot say it was sent exactly once.
+      const commsJournal = require('../modules/main/comms-journal');
+      const dup = chunkRow(BASE800, 1, 1);
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries')
+        .mockImplementation(({ messageId }) => (messageId === `${BASE800}-part1` ? [dup, { ...dup }] : []));
+
+      expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800))
+        .toMatchObject({ complete: false, anyDelivered: true });
+    });
+
+    it.each([
+      ['a numeric string', '2'],
+      ['a boolean', true],
+      ['an unsafe integer', Number.MAX_SAFE_INTEGER + 2],
+    ])('A CHUNK COUNT that is %s is not a valid position', (_l, value) => {
+      serveChunks({ [`${BASE800}-part1`]: chunkRow(BASE800, 1, 3, { chunkCount: value }) });
+      expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800))
+        .toMatchObject({ complete: false, expectedParts: null });
+    });
+
+    it('A BASE id carrying chunk metadata is NOT complete', () => {
+      // The chunked producer uses exact -partN ids, so a base row with chunk
+      // metadata disagrees with its own shape.
+      const commsJournal = require('../modules/main/comms-journal');
+      const row = chunkRow(BASE800, 1, 3);
+      row.messageId = BASE800;
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries')
+        .mockImplementation(({ messageId }) => (messageId === BASE800 ? [row] : []));
+
+      expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800).complete).toBe(false);
+    });
+
+    it('A TOP-LEVEL field cannot stand in for missing durable metadata', () => {
+      const commsJournal = require('../modules/main/comms-journal');
+      const row = chunkRow(BASE800, 1, 1);
+      delete row.metadata.routeKey;
+      row.routeKey = 'main'; // exact, but only at the top level
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries')
+        .mockImplementation(({ messageId }) => (messageId === `${BASE800}-part1` ? [row] : []));
+
+      expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800).complete).toBe(false);
+    });
+
+    it('EXPECTED inboundMessageId must equal the id being proved', () => {
+      expect(() => app.inspectMiraOutboundEgress('telegram-in-800', {
+        ...EXPECT800, inboundMessageId: 'telegram-in-999',
+      })).toThrow(/must match the inbound id/);
+    });
+
     it('creates exactly ONE coordinator and reuses it', () => {
       // Two coordinators would each hold their own single-flight latch and could
       // deliver the same record twice.
@@ -12788,7 +12926,7 @@ describe('SquidRunApp', () => {
       receipts.getModelPromptReceipt.mockReturnValue(null);
 
       await expect(app.findTelegramDeliveryReceipt({
-        messageId: 'telegram-in-950', routeKey: 'main', windowKey: 'main', profile: 'main',
+        messageId: 'telegram-in-950', routeKey: 'main', windowKey: 'main', profile: 'main', chatId: 111,
       })).resolves.toBeNull();
     });
 
@@ -12798,9 +12936,19 @@ describe('SquidRunApp', () => {
         throw new Error('receipt store unreadable');
       });
       await expect(app.findTelegramDeliveryReceipt({
-        messageId: 'telegram-in-951', routeKey: 'main', windowKey: 'main', profile: 'main',
+        messageId: 'telegram-in-951', routeKey: 'main', windowKey: 'main', profile: 'main', chatId: 111,
       })).rejects.toThrow(/model prompt receipt lookup failed/);
     });
+
+    // Expected identity is REQUIRED in full now: a missing field used to act as
+    // a wildcard and authorize replay against any row.
+    // Built PER inbound id: the old shared constant hardcoded 990 and quietly
+    // described a different message than the test was about.
+    const expectedFor = (inbound) => ({
+      inboundMessageId: inbound,
+      chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main',
+    });
+    const EXPECTED990 = expectedFor('telegram-in-990');
 
     function miraRow(messageId, extra = {}) {
       return {
@@ -12811,6 +12959,10 @@ describe('SquidRunApp', () => {
         ackStatus: 'telegram_delivered',
         status: 'acked',
         chatId: 111,
+        metadata: {
+          chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main',
+          inboundMessageId: String(messageId).replace(/-mira-(reply|direct-status-reply)(-part\d+)?$/, ''),
+        },
         ...extra,
       };
     }
@@ -12822,23 +12974,23 @@ describe('SquidRunApp', () => {
       const commsJournal = require('../modules/main/comms-journal');
       jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockImplementation(({ messageId }) => (
         messageId === 'telegram-in-990-mira-reply-part1'
-          ? [miraRow(messageId, { metadata: { chunkCount: 3, chatId: 111 } })]
+          ? [miraRow(messageId, { metadata: { chunkCount: 3, chunkIndex: Number(String(messageId).slice(-1)), chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main', inboundMessageId: String(messageId).replace(/-mira-reply-part\d+$/, '') } })]
           : []
       ));
 
-      const egress = app.inspectMiraOutboundEgress('telegram-in-990', { chatId: 111 });
+      const egress = app.inspectMiraOutboundEgress('telegram-in-990', EXPECTED990);
       expect(egress).toMatchObject({ complete: false, anyDelivered: true, delivered: 1, expectedParts: 3 });
-      expect(app.hasDurableMiraOutboundProof('telegram-in-990', { chatId: 111 })).toBe(false);
+      expect(app.hasDurableMiraOutboundProof('telegram-in-990', EXPECTED990)).toBe(false);
     });
 
     it('CHUNKED EGRESS: every part delivered is full proof', () => {
       const commsJournal = require('../modules/main/comms-journal');
       jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockImplementation(({ messageId }) => (
         /telegram-in-991-mira-reply-part[123]$/.test(messageId)
-          ? [miraRow(messageId, { metadata: { chunkCount: 3, chatId: 111 } })]
+          ? [miraRow(messageId, { metadata: { chunkCount: 3, chunkIndex: Number(String(messageId).slice(-1)), chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main', inboundMessageId: String(messageId).replace(/-mira-reply-part\d+$/, '') } })]
           : []
       ));
-      expect(app.hasDurableMiraOutboundProof('telegram-in-991', { chatId: 111 })).toBe(true);
+      expect(app.hasDurableMiraOutboundProof('telegram-in-991', expectedFor('telegram-in-991'))).toBe(true);
     });
 
     it('PARTIAL EGRESS HOLDS even when Mira reports failure, instead of a second reply', async () => {
@@ -12941,7 +13093,7 @@ describe('SquidRunApp', () => {
       const commsJournal = require('../modules/main/comms-journal');
       // Transport said ok, but nothing durable exists.
       jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockReturnValue([]);
-      expect(app.hasDurableMiraOutboundProof('telegram-in-970', { chatId: 111 })).toBe(false);
+      expect(app.hasDurableMiraOutboundProof('telegram-in-970', expectedFor('telegram-in-970'))).toBe(false);
 
       commsJournal.queryCommsJournalEntries.mockImplementation(({ messageId }) => (
         messageId === 'telegram-in-970-mira-reply'
@@ -12953,10 +13105,14 @@ describe('SquidRunApp', () => {
             ackStatus: 'telegram_delivered',
             status: 'acked',
             chatId: 111,
+            metadata: {
+              chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main',
+              inboundMessageId: 'telegram-in-970',
+            },
           }]
           : []
       ));
-      expect(app.hasDurableMiraOutboundProof('telegram-in-970', { chatId: 111 })).toBe(true);
+      expect(app.hasDurableMiraOutboundProof('telegram-in-970', expectedFor('telegram-in-970'))).toBe(true);
     });
 
     it.each([
@@ -12984,7 +13140,7 @@ describe('SquidRunApp', () => {
           }]
           : []
       ));
-      expect(app.hasDurableMiraOutboundProof('telegram-in-971', { chatId: 111 })).toBe(false);
+      expect(app.hasDurableMiraOutboundProof('telegram-in-971', expectedFor('telegram-in-971'))).toBe(false);
     });
 
     it('a crash-surviving model-prompt receipt proves delivery and joins the ingress identity', async () => {
@@ -12998,10 +13154,18 @@ describe('SquidRunApp', () => {
         status: 'prompt_submitted.in_band',
       });
       const identity = {
-        messageId: 'telegram-in-960', routeKey: 'main', windowKey: 'main', profile: 'main',
+        messageId: 'telegram-in-960', routeKey: 'main', windowKey: 'main', profile: 'main', chatId: 111,
+        chatId: 111,
       };
+      // Assert the fields the PROOF carries, not the whole identity we passed
+      // in — chatId is an input to the lookup, not part of the returned proof.
       await expect(app.findTelegramDeliveryReceipt(identity)).resolves.toMatchObject({
-        ...identity, verified: true, proofSource: 'model_prompt_receipt',
+        messageId: identity.messageId,
+        routeKey: identity.routeKey,
+        windowKey: identity.windowKey,
+        profile: identity.profile,
+        verified: true,
+        proofSource: 'model_prompt_receipt',
       });
     });
 
@@ -13016,7 +13180,7 @@ describe('SquidRunApp', () => {
       });
       jest.spyOn(app, 'hasDurableMiraOutboundProof').mockReturnValue(false);
       await expect(app.findTelegramDeliveryReceipt({
-        messageId: 'telegram-in-962', routeKey: 'main', windowKey: 'main', profile: 'main',
+        messageId: 'telegram-in-962', routeKey: 'main', windowKey: 'main', profile: 'main', chatId: 111,
       })).resolves.toBeNull();
     });
 
@@ -13029,7 +13193,7 @@ describe('SquidRunApp', () => {
       const commsJournal = require('../modules/main/comms-journal');
       jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockReturnValue([]);
       await expect(app.findTelegramDeliveryReceipt({
-        messageId: 'telegram-in-961', routeKey: 'main', windowKey: 'main', profile: 'main',
+        messageId: 'telegram-in-961', routeKey: 'main', windowKey: 'main', profile: 'main', chatId: 111,
       })).resolves.toBeNull();
     });
 
