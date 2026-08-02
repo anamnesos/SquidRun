@@ -80,14 +80,64 @@ function claimCommsSend(entry = {}, options = {}) {
 
 function queryCommsJournalEntries(filters = {}, options = {}) {
   const opts = asObject(options);
+  // STRICT callers cannot tell "store unavailable" from "genuinely empty" if
+  // both answer []. For proof lookups that difference is everything: an empty
+  // result means "never delivered" and sends the message again. Strict mode
+  // throws so the caller HOLDS.
+  const strict = opts.strict === true;
   const storeResult = resolveStore(opts.dbPath || null);
   if (!storeResult.ok || !storeResult.store) {
+    if (strict) throw new Error(`comms journal store unavailable: ${storeResult.reason || 'unknown'}`);
     return [];
   }
   if (typeof storeResult.store.queryCommsJournal !== 'function') {
+    if (strict) throw new Error('comms journal store cannot query');
     return [];
   }
-  return storeResult.store.queryCommsJournal(filters || {});
+  // NON-STRICT BEHAVIOUR IS UNCHANGED: a real query throw propagates exactly as
+  // it always did. Swallowing it into [] would have silently altered every
+  // legacy caller — a different, unrequested change riding along with this one.
+  let rows;
+  if (strict) {
+    try {
+      rows = storeResult.store.queryCommsJournal(filters || {});
+    } catch (err) {
+      throw new Error(`comms journal query failed: ${err.message}`);
+    }
+  } else {
+    rows = storeResult.store.queryCommsJournal(filters || {});
+  }
+  if (strict && !Array.isArray(rows)) {
+    throw new Error('comms journal query returned a non-array result');
+  }
+  return rows;
+}
+
+
+/** Test seam: the store-shape branches, without needing a real database. */
+function _queryWithStore(store, filters, strict) {
+  if (!store) {
+    if (strict) throw new Error('comms journal store unavailable');
+    return [];
+  }
+  if (typeof store.queryCommsJournal !== 'function') {
+    if (strict) throw new Error('comms journal store cannot query');
+    return [];
+  }
+  let rows;
+  if (strict) {
+    try {
+      rows = store.queryCommsJournal(filters || {});
+    } catch (err) {
+      throw new Error(`comms journal query failed: ${err.message}`);
+    }
+  } else {
+    rows = store.queryCommsJournal(filters || {});
+  }
+  if (strict && !Array.isArray(rows)) {
+    throw new Error('comms journal query returned a non-array result');
+  }
+  return rows;
 }
 
 function closeCommsJournalStores() {
@@ -103,6 +153,7 @@ function closeCommsJournalStores() {
 
 module.exports = {
   claimCommsSend,
+  _queryWithStore,
   appendCommsJournalEntry,
   queryCommsJournalEntries,
   closeCommsJournalStores,

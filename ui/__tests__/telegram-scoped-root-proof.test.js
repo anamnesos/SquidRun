@@ -16,6 +16,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const receipts = require('../modules/model-prompt-receipt');
+const journal = require('../modules/main/comms-journal');
 
 const roots = [];
 function tempRoot() {
@@ -203,3 +204,24 @@ describe('strict comms-journal query', () => {
     expect(Array.isArray(rows)).toBe(true);
   });
 });
+
+test('A THROWN QUERY propagates for non-strict callers, unchanged', () => {
+    // Swallowing it into [] would silently alter every legacy caller.
+    const store = { queryCommsJournal: () => { throw new Error('boom'); } };
+    expect(() => journal._queryWithStore(store, {}, false)).toThrow(/boom/);
+  });
+
+test('A THROWN QUERY becomes a HOLD for strict callers', () => {
+    const store = { queryCommsJournal: () => { throw new Error('boom'); } };
+    expect(() => journal._queryWithStore(store, {}, true)).toThrow(/query failed/);
+  });
+
+test('A MISSING query method holds in strict mode only', () => {
+    expect(() => journal._queryWithStore({}, {}, true)).toThrow(/cannot query/);
+    expect(journal._queryWithStore({}, {}, false)).toEqual([]);
+  });
+
+test('A NON-ARRAY result holds in strict mode', () => {
+    const store = { queryCommsJournal: () => ({ not: 'an array' }) };
+    expect(() => journal._queryWithStore(store, {}, true)).toThrow(/non-array/);
+  });
