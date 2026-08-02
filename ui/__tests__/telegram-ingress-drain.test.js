@@ -12,7 +12,11 @@ const path = require('node:path');
 
 const queue = require('../modules/telegram-inbound-durable-queue');
 const spool = require('../modules/main/telegram-ingress-spool');
-const { createDrainCoordinator, isProvenOwnership } = require('../modules/main/telegram-ingress-drain');
+const {
+  createDrainCoordinator,
+  isProvenOwnership,
+  isCorrelatedProof,
+} = require('../modules/main/telegram-ingress-drain');
 
 const tempRoots = [];
 function tempRoot() {
@@ -52,6 +56,7 @@ function routerFor(routeKey, windowKey = routeKey) {
 }
 
 const PROVEN = { status: 'delivered.verified', verified: true };
+const IDENT = { messageId: 'telegram-in-60', routeKey: 'main', windowKey: 'main', profile: 'main' };
 const UNPROVEN = { status: 'accepted.daemon_pty_unverified', accepted: true };
 
 function coordinator(overrides = {}) {
@@ -152,18 +157,23 @@ test('ACCEPTED-BUT-UNVERIFIED IS NOT PROOF: record stays pending and blocks the 
 test('A LATER CORRELATED RECEIPT retires the record with no second injection', async () => {
   const base = tempRoot();
   const dir = seed(base, 'main', [60]);
-  let receiptExists = false;
+  let receipt = null;
+  let clock = 1_000_000;
   const seen = [];
   const drain = coordinator({
+    now: () => clock,
+    backoffMs: 5000,
     deliver: async (job) => { seen.push(job.messageId); return UNPROVEN; },
-    hasExistingReceipt: async () => receiptExists,
+    findExistingReceipt: async () => receipt,
   });
 
   await drain.schedule(dir, 'main');
   expect(queue.readPending(dir)).toHaveLength(1);
 
-  // The receipt lands out of band; the next pass must retire WITHOUT delivering.
-  receiptExists = true;
+  // The receipt lands out of band; after the backoff expires the next pass must
+  // retire WITHOUT delivering again.
+  receipt = { ...IDENT, status: 'delivered.verified', verified: true };
+  clock = 1_009_000;
   await drain.schedule(dir, 'main');
 
   expect(seen).toEqual(['telegram-in-60']);
@@ -174,7 +184,7 @@ test.each([
   ['verified', { verified: true }],
   ['userVisible', { userVisible: true }],
   ['durable handoff', { durableHandoff: true }],
-  ['persisted receipt row', { persistedReceiptId: 'ledger-1' }],
+  ['allowlisted status', { status: 'durable.pending_handoff' }],
 ])('PROOF SHAPES accepted: %s', (_l, receipt) => {
   expect(isProvenOwnership(receipt)).toBe(true);
 });
@@ -185,7 +195,9 @@ test.each([
   ['queued', { queued: true }],
   ['empty', {}],
   ['null', null],
-  ['blank receipt id', { persistedReceiptId: '   ' }],
+  ['persisted id alone is not proof', { persistedReceiptId: 'ledger-1' }],
+  ['our own inbound bookkeeping', { direction: 'inbound', verified: true }],
+  ['our own brokered row', { status: 'brokered', verified: true }],
 ])('PROOF SHAPES rejected: %s', (_l, receipt) => {
   expect(isProvenOwnership(receipt)).toBe(false);
 });
@@ -292,4 +304,142 @@ test('FULL ROUND-TRIP: media and rawMetadata reach the delivery job intact', asy
   // Current session for delivery, original session retained for context.
   expect(job.sessionScopeId).toBe('session-now');
   expect(job.originalSessionScopeId).toBe('session-at-append');
+});
+
+// ------------------------------------------- Architect #59 release blockers
+
+test('OUR OWN BROKERED ROW MUST NEVER RETIRE THE QUEUE', async () => {
+  // squidrun-app.js:14626 upserts direction:'inbound' status:'brokered' under
+  // the SAME telegram-in-<updateId> BEFORE delivery. A boolean receipt check
+  // would find it on the first pass and retire the record undelivered.
+  const base = tempRoot();
+  const dir = seed(base, 'main', [130]);
+  const seen = [];
+  const drain = coordinator({
+    deliver: async (job) => { seen.push(job.messageId); return PROVEN; },
+    findExistingReceipt: async () => ({
+      messageId: 'telegram-in-130',
+      routeKey: 'main',
+      windowKey: 'main',
+      profile: 'main',
+      direction: 'inbound',
+      status: 'brokered',
+    }),
+  });
+
+  await drain.schedule(dir, 'main');
+
+  // It must have been DELIVERED, not silently retired on our own bookkeeping.
+  expect(seen).toEqual(['telegram-in-130']);
+});
+
+test.each([
+  ['mismatched messageId', { messageId: 'telegram-in-999', routeKey: 'main', verified: true }],
+  ['mismatched routeKey', { messageId: 'telegram-in-140', routeKey: 'sideprofile', verified: true }],
+  ['mismatched window', { messageId: 'telegram-in-140', routeKey: 'main', windowKey: 'other', verified: true }],
+  ['no proof class', { messageId: 'telegram-in-140', routeKey: 'main' }],
+])('UNCORRELATED EVIDENCE does not retire: %s', async (_l, evidence) => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [140]);
+  const seen = [];
+  const drain = coordinator({
+    deliver: async (job) => { seen.push(job.messageId); return UNPROVEN; },
+    findExistingReceipt: async () => evidence,
+  });
+
+  await drain.schedule(dir, 'main');
+
+  expect(seen).toEqual(['telegram-in-140']);
+  expect(queue.readPending(dir)).toHaveLength(1);
+});
+
+test('EXACT DOWNSTREAM PROOF retires without re-injection', () => {
+  const expected = { messageId: 'telegram-in-141', routeKey: 'main', windowKey: 'main', profile: 'main' };
+  expect(isCorrelatedProof({ ...expected, status: 'durable.pending_handoff' }, expected)).toBe(true);
+  expect(isCorrelatedProof({ ...expected, direction: 'inbound', verified: true }, expected)).toBe(false);
+});
+
+test('BACKOFF: a schedule before expiry does NOT re-deliver N', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [150]);
+  const seen = [];
+  let clock = 1_000_000;
+  const drain = coordinator({
+    now: () => clock,
+    backoffMs: 5000,
+    deliver: async (job) => { seen.push(job.messageId); return UNPROVEN; },
+  });
+
+  await drain.schedule(dir, 'main');
+  expect(seen).toEqual(['telegram-in-150']);
+
+  // Still inside the backoff window.
+  clock = 1_003_000;
+  const blocked = await drain.schedule(dir, 'main');
+  expect(blocked.blocked).toBe(true);
+  expect(seen).toEqual(['telegram-in-150']);
+
+  // After expiry it may try again.
+  clock = 1_007_000;
+  await drain.schedule(dir, 'main');
+  expect(seen).toEqual(['telegram-in-150', 'telegram-in-150']);
+});
+
+test('BACKOFF EXPIRY re-checks proof first and retires without a second injection', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [160]);
+  const seen = [];
+  let clock = 1_000_000;
+  let receipt = null;
+  const drain = coordinator({
+    now: () => clock,
+    backoffMs: 5000,
+    deliver: async (job) => { seen.push(job.messageId); return UNPROVEN; },
+    findExistingReceipt: async () => receipt,
+  });
+
+  await drain.schedule(dir, 'main');
+  expect(seen).toEqual(['telegram-in-160']);
+
+  // The delivery actually landed; proof arrives during the backoff.
+  receipt = {
+    messageId: 'telegram-in-160', routeKey: 'main', windowKey: 'main', profile: 'main',
+    status: 'delivered.verified', verified: true,
+  };
+  clock = 1_007_000;
+  await drain.schedule(dir, 'main');
+
+  expect(seen).toEqual(['telegram-in-160']);
+  expect(queue.readPending(dir)).toHaveLength(0);
+});
+
+test('ACK THROW stops at N exactly like ack false', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [170, 171]);
+  const seen = [];
+  const drain = coordinator({
+    queue: {
+      readPending: queue.readPending,
+      ack: () => { throw new Error('EIO'); },
+    },
+    deliver: async (job) => { seen.push(job.messageId); return PROVEN; },
+  });
+
+  const res = await drain.schedule(dir, 'main');
+
+  expect(seen).toEqual(['telegram-in-170']);
+  expect(res.stoppedAt).toMatchObject({ updateId: 170, reason: 'ack_failed' });
+});
+
+test('UNKNOWN TERMINAL DISPOSITION holds instead of retiring undelivered', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [180], { terminalDisposition: 'corrupted_value' });
+  const seen = [];
+  const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return PROVEN; } });
+
+  const res = await drain.schedule(dir, 'main');
+
+  expect(seen).toEqual([]);
+  expect(res.stoppedAt).toMatchObject({ updateId: 180, reason: 'unknown_terminal_disposition' });
+  expect(queue.readPending(dir)).toHaveLength(1);
 });

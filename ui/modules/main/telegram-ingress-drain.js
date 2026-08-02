@@ -24,16 +24,57 @@ const spool = require('./telegram-ingress-spool');
 
 const DEFAULT_BACKOFF_MS = 30 * 1000;
 
-/** A receipt proves ownership only if something durable now holds the message. */
+// Only these may retire a record without delivering it.
+const TERMINAL_DISPOSITIONS = new Set(['empty_body']);
+
+// Statuses that mean a downstream consumer has taken responsibility. A
+// persistedReceiptId on its own is NOT on this list: a row existing says only
+// that somebody wrote something down, not that the message arrived.
+const DOWNSTREAM_PROOF_STATUSES = new Set([
+  'delivered.verified',
+  'delivered.user_visible',
+  'durable.pending_handoff',
+]);
+
+/**
+ * THE TRAP THIS EXISTS FOR: squidrun-app upserts a comms-journal row with
+ * direction:'inbound' and status:'brokered' under the SAME
+ * `telegram-in-<updateId>` id BEFORE the message is delivered
+ * (squidrun-app.js:14626). A boolean "is there a receipt for this id?" check
+ * would find that row on the very first drain pass and retire the record
+ * without ever delivering it, turning the crash-replay safeguard into a loss
+ * machine. Our own bookkeeping is not evidence of our own delivery.
+ */
+function proofClassOf(evidence) {
+  if (!evidence || typeof evidence !== 'object') return null;
+  if (evidence.direction === 'inbound') return null;
+  if (evidence.status === 'brokered') return null;
+  if (evidence.verified === true) return 'verified';
+  if (evidence.userVisible === true) return 'user_visible';
+  if (evidence.durableHandoff === true) return 'durable_handoff';
+  if (typeof evidence.status === 'string' && DOWNSTREAM_PROOF_STATUSES.has(evidence.status)) {
+    return 'allowlisted_status';
+  }
+  return null;
+}
+
+/**
+ * Proof must be STRUCTURALLY CORRELATED to this exact message and route, not
+ * merely truthy. A verified receipt for a different message, or for the same
+ * message on a different route, proves nothing about this record.
+ */
+function isCorrelatedProof(evidence, expected = {}) {
+  if (!evidence || typeof evidence !== 'object') return false;
+  if (!expected.messageId || evidence.messageId !== expected.messageId) return false;
+  if (!expected.routeKey || evidence.routeKey !== expected.routeKey) return false;
+  if (expected.windowKey && evidence.windowKey && evidence.windowKey !== expected.windowKey) return false;
+  if (expected.profile && evidence.profile && evidence.profile !== expected.profile) return false;
+  return proofClassOf(evidence) !== null;
+}
+
+/** Class check only; correlation is enforced by isCorrelatedProof. */
 function isProvenOwnership(receipt) {
-  if (!receipt || typeof receipt !== 'object') return false;
-  if (receipt.verified === true) return true;
-  if (receipt.userVisible === true) return true;
-  if (receipt.durableHandoff === true) return true;
-  // An explicit persisted row for this message also counts: someone wrote it
-  // down somewhere that survives a crash.
-  if (typeof receipt.persistedReceiptId === 'string' && receipt.persistedReceiptId.trim()) return true;
-  return false;
+  return proofClassOf(receipt) !== null;
 }
 
 function downstreamMessageId(updateId) {
@@ -58,7 +99,8 @@ function createDrainCoordinator(deps = {}) {
   const log = deps.log || { info() {}, warn() {} };
   const resolveRoute = deps.resolveRoute;
   const deliver = deps.deliver;
-  const hasExistingReceipt = deps.hasExistingReceipt || (async () => false);
+  const findExistingReceipt = deps.findExistingReceipt || (async () => null);
+  const now = typeof deps.now === 'function' ? deps.now : () => Date.now();
   const currentSessionFor = deps.currentSessionFor || (() => null);
   const backoffMs = Number.isFinite(Number(deps.backoffMs)) ? Number(deps.backoffMs) : DEFAULT_BACKOFF_MS;
 
@@ -95,15 +137,28 @@ function createDrainCoordinator(deps = {}) {
 
     // (4) A terminal record never reaches a pane; it only needs its route
     // validated before being retired, which just happened.
+    // (4) Only an explicitly allowlisted disposition may retire without
+    // delivery. A corrupted or unrecognised value must HOLD: an unknown reason
+    // to skip delivery is not a reason to skip delivery.
     if (record.terminalDisposition) {
+      if (!TERMINAL_DISPOSITIONS.has(record.terminalDisposition)) {
+        return { stop: true, reason: 'unknown_terminal_disposition' };
+      }
       return { retire: true, terminal: true };
     }
 
     // (6) Crash after downstream accept but before ack: the record is still
     // pending, but a receipt already exists for this exact messageId. Retire it
     // instead of injecting a second visible copy.
-    if (await hasExistingReceipt(messageId, routeKey)) {
-      log.info('Telegram', `Drain found an existing receipt for ${messageId}; retiring without re-injection`);
+    const expectedIdentity = {
+      messageId,
+      routeKey,
+      windowKey: liveWindow,
+      profile: route.profile || routeKey,
+    };
+    const existing = await findExistingReceipt(expectedIdentity);
+    if (isCorrelatedProof(existing, expectedIdentity)) {
+      log.info('Telegram', `Drain found correlated downstream proof for ${messageId}; retiring without re-injection`);
       return { retire: true, replayed: true };
     }
 
@@ -131,7 +186,12 @@ function createDrainCoordinator(deps = {}) {
     }
 
     // (5) The acceptance-proof gate.
-    if (!isProvenOwnership(receipt)) {
+    // The delivery receipt carries the same identity requirement: a proof that
+    // cannot be tied to this message and route is not a proof of this message.
+    const stamped = receipt && typeof receipt === 'object'
+      ? { ...expectedIdentity, ...receipt }
+      : receipt;
+    if (!isCorrelatedProof(stamped, expectedIdentity)) {
       return { stop: true, reason: `unproven_acceptance:${receipt?.status || 'no_receipt'}` };
     }
     return { retire: true };
@@ -152,7 +212,14 @@ function createDrainCoordinator(deps = {}) {
         break;
       }
 
-      const ack = queue.ack(dir, [record.updateId]);
+      let ack;
+      try {
+        ack = queue.ack(dir, [record.updateId]);
+      } catch (err) {
+        // (3) A throwing ack leaves the record exactly as unretired as a false
+        // one does, so it must stop the queue in exactly the same way.
+        ack = { ok: false, reason: 'ack_threw' };
+      }
       if (!ack || ack.ok !== true || ack.acked !== 1) {
         // An ack failure after downstream ownership is not loss — the receipt
         // seam will retire it on the next pass — but continuing would let N+1
@@ -177,6 +244,13 @@ function createDrainCoordinator(deps = {}) {
       st.rerun = true;
       return { ok: true, coalesced: true };
     }
+    // (2) Bounded backoff on a real injected clock. Before expiry we do NOT
+    // re-deliver N; after expiry the next pass re-checks correlated proof
+    // first, so a message that landed during the wait gets retired rather than
+    // injected a second time.
+    if (st.blockedUntilMs > now()) {
+      return { ok: true, blocked: true, blockedUntilMs: st.blockedUntilMs };
+    }
     st.running = true;
     let last = { ok: true, delivered: 0, pending: 0, stoppedAt: null };
     try {
@@ -184,7 +258,7 @@ function createDrainCoordinator(deps = {}) {
         st.rerun = false;
         last = await drainOnce(dir, routeKey);
         if (last.stoppedAt) {
-          st.blockedUntilMs = backoffMs;
+          st.blockedUntilMs = now() + backoffMs;
           break;
         }
       } while (st.rerun);
@@ -216,13 +290,16 @@ function createDrainCoordinator(deps = {}) {
     schedule,
     drainOnce,
     discoverRouteDirs,
-    _internals: { isProvenOwnership, downstreamMessageId, processRecord, state },
+    _internals: { isProvenOwnership, isCorrelatedProof, downstreamMessageId, processRecord, state },
   };
 }
 
 module.exports = {
   createDrainCoordinator,
   isProvenOwnership,
+  isCorrelatedProof,
+  proofClassOf,
+  TERMINAL_DISPOSITIONS,
   downstreamMessageId,
   DEFAULT_BACKOFF_MS,
 };
