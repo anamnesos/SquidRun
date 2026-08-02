@@ -840,3 +840,53 @@ test('DISPOSE cancels the sweep so no timer outlives the app', async () => {
     jest.useRealTimers();
   }
 });
+
+test('NEWLINE-TERMINATED CORRUPTION IS NOT A TORN TAIL: it fails closed', async () => {
+  // A file ending in \n has no partial append. Every line is a complete record,
+  // so a corrupt one means the journal is untrustworthy — skipping it would
+  // authorize a delivery we may already have made.
+  const base = tempRoot();
+  const dir = seed(base, 'main', [360]);
+  const drainModule = require('../modules/main/telegram-ingress-drain');
+  fs.writeFileSync(drainModule.attemptsPath(dir), 'garbage-but-complete\n', 'utf8');
+
+  const seen = [];
+  const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
+  const res = await drain.schedule(dir, 'main');
+
+  expect(seen).toEqual([]);
+  expect(res.stoppedAt.reason).toContain('attempt_journal_unreadable');
+});
+
+test('A GENUINE TORN TAIL (no trailing newline) is tolerated', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [370]);
+  const drainModule = require('../modules/main/telegram-ingress-drain');
+  fs.writeFileSync(drainModule.attemptsPath(dir), '{"updateId":1,"state":"retryable"}\n{"updat', 'utf8');
+
+  const seen = [];
+  const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
+  await drain.schedule(dir, 'main');
+
+  expect(seen).toEqual(['telegram-in-370']);
+});
+
+test('A DELIVER THROW IS AMBIGUOUS, not a definite failure', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [380]);
+  const seen = [];
+  let clock = 1_000_000;
+  const drain = coordinator({
+    now: () => clock,
+    backoffMs: 5000,
+    deliver: async (job) => { seen.push(job.messageId); throw new Error('exploded mid-send'); },
+  });
+
+  const res = await drain.schedule(dir, 'main');
+  expect(res.stoppedAt).toMatchObject({ updateId: 380, failureClass: 'awaiting_proof' });
+
+  // Even long after any backoff, it must not be re-injected.
+  clock = 9_000_000;
+  await drain.schedule(dir, 'main');
+  expect(seen).toEqual(['telegram-in-380']);
+});

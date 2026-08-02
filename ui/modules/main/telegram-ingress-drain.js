@@ -57,6 +57,7 @@ function readAttemptState(dir) {
   }
   const state = new Map();
   const lines = raw.split('\n');
+  const hasTornTail = raw.length > 0 && !raw.endsWith('\n');
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i].trim();
     if (!line) continue;
@@ -64,9 +65,13 @@ function readAttemptState(dir) {
     try {
       entry = JSON.parse(line);
     } catch {
-      // A torn tail is the LAST line of a crashed append and is tolerable;
-      // a corrupt line anywhere else means we cannot trust the file at all.
-      if (i === lines.length - 1 || lines.slice(i + 1).every((l) => !l.trim())) continue;
+      // A torn tail only exists when the file does NOT end in a newline: that
+      // is a crashed partial append. If the file IS newline-terminated, every
+      // line is a COMPLETE record, and a corrupt one means the journal cannot
+      // be trusted — skipping it there would authorize a delivery we may
+      // already have made.
+      const isLastFragment = lines.slice(i + 1).every((l) => !l.trim());
+      if (hasTornTail && isLastFragment) continue;
       throw new Error('attempt journal contains a corrupt entry');
     }
     const id = normalizeUpdateId(entry && entry.updateId);
@@ -358,7 +363,10 @@ function createDrainCoordinator(deps = {}) {
         record,
       });
     } catch (err) {
-      return { stop: true, reason: `deliver_threw:${err.message}`, failureClass: 'definite' };
+      // AMBIGUOUS, not definite: the pane may have received this before the
+      // error surfaced. The durable attempt is deliberately left UNRESOLVED so
+      // no timer may re-inject it; only proof or explicit recovery releases it.
+      return { stop: true, reason: `deliver_threw:${err.message}`, failureClass: 'awaiting_proof' };
     }
 
     // (5) The acceptance-proof gate.
@@ -373,8 +381,15 @@ function createDrainCoordinator(deps = {}) {
         // and may be retried. Leaving it unresolved would wedge the queue.
         try {
           appendAttempt(dir, updateId, 'retryable');
-        } catch {
-          // If we cannot clear it, holding is still the safe answer.
+        } catch (err) {
+          // Swallowing this and reporting a clean definite retry would let a
+          // sweep re-deliver while the durable state still reads "attempted".
+          // The label must agree with what a future timer is allowed to do.
+          return {
+            stop: true,
+            reason: `attempt_state_write_failed:${err.message}`,
+            failureClass: 'awaiting_proof',
+          };
         }
         return {
           stop: true,
