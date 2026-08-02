@@ -123,7 +123,7 @@ test('ACK FAILURE AT N blocks N+1 even though N was delivered', async () => {
   const dir = seed(base, 'main', [30, 31]);
   const seen = [];
   const drain = coordinator({
-    queue: { readPending: queue.readPending, ack: () => ({ ok: false, reason: 'eio' }) },
+    queue: { ...queue, readPending: queue.readPending, ack: () => ({ ok: false, reason: 'eio' }) },
     deliver: async (job) => { seen.push(job.messageId); return provenFor(job); },
   });
 
@@ -538,6 +538,7 @@ test('ACK THROW stops at N exactly like ack false', async () => {
   const seen = [];
   const drain = coordinator({
     queue: {
+      ...queue,
       readPending: queue.readPending,
       ack: () => { throw new Error('EIO'); },
     },
@@ -599,7 +600,7 @@ test('ACK LOSS AFTER A VISIBLE DELIVERY does not re-deliver on the next schedule
   const dir = seed(base, 'main', [210, 211]);
   const seen = [];
   const drain = coordinator({
-    queue: { readPending: queue.readPending, ack: () => ({ ok: false, reason: 'eio' }) },
+    queue: { ...queue, readPending: queue.readPending, ack: () => ({ ok: false, reason: 'eio' }) },
     deliver: async (job) => { seen.push(job.messageId); return provenFor(job); },
     findExistingReceipt: async () => null,
   });
@@ -673,7 +674,7 @@ test('FRESH PROCESS: proof found, ack fails, lookup goes empty => zero visible d
     status: 'delivered.verified', verified: true,
   };
   const drain = coordinator({
-    queue: { readPending: queue.readPending, ack: () => ({ ok: false, reason: 'eio' }) },
+    queue: { ...queue, readPending: queue.readPending, ack: () => ({ ok: false, reason: 'eio' }) },
     deliver: async (job) => { seen.push(job.messageId); return provenFor(job); },
     findExistingReceipt: async () => receipt,
   });
@@ -773,8 +774,9 @@ test('A FAILED ATTEMPT MARKER MEANS NO DELIVERY AT ALL', async () => {
 test('A CORRUPT ATTEMPT JOURNAL FAILS CLOSED', async () => {
   const base = tempRoot();
   const dir = seed(base, 'main', [330]);
-  const drainModule = require('../modules/main/telegram-ingress-drain');
-  fs.writeFileSync(drainModule.attemptsPath(dir), 'not json at all\n{"updateId":330}\n', 'utf8');
+  // The QUEUE owns the sidecar; addressing it through the drain would keep
+  // treating the drain as its owner.
+  fs.writeFileSync(queue.attemptsPath(dir), 'not json at all\n{"updateId":330}\n', 'utf8');
 
   const seen = [];
   const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
@@ -891,8 +893,9 @@ test('NEWLINE-TERMINATED CORRUPTION IS NOT A TORN TAIL: it fails closed', async 
   // authorize a delivery we may already have made.
   const base = tempRoot();
   const dir = seed(base, 'main', [360]);
-  const drainModule = require('../modules/main/telegram-ingress-drain');
-  fs.writeFileSync(drainModule.attemptsPath(dir), 'garbage-but-complete\n', 'utf8');
+  // The QUEUE owns the sidecar; addressing it through the drain would keep
+  // treating the drain as its owner.
+  fs.writeFileSync(queue.attemptsPath(dir), 'garbage-but-complete\n', 'utf8');
 
   const seen = [];
   const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
@@ -908,8 +911,9 @@ test('A TORN TAIL IS NOT TOLERATED EITHER: the sidecar biases HOLD', async () =>
   // read. This journal is the ambiguity latch, so it fails closed.
   const base = tempRoot();
   const dir = seed(base, 'main', [370]);
-  const drainModule = require('../modules/main/telegram-ingress-drain');
-  fs.writeFileSync(drainModule.attemptsPath(dir), '{"updateId":1,"state":"retryable"}\n{"updat', 'utf8');
+  // The QUEUE owns the sidecar; addressing it through the drain would keep
+  // treating the drain as its owner.
+  fs.writeFileSync(queue.attemptsPath(dir), '{"updateId":1,"state":"retryable"}\n{"updat', 'utf8');
 
   const seen = [];
   const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
@@ -929,8 +933,9 @@ test.each([
   // delivery — parseable is not the same as valid.
   const base = tempRoot();
   const dir = seed(base, 'main', [375]);
-  const drainModule = require('../modules/main/telegram-ingress-drain');
-  fs.writeFileSync(drainModule.attemptsPath(dir), `${line}\n`, 'utf8');
+  // The QUEUE owns the sidecar; addressing it through the drain would keep
+  // treating the drain as its owner.
+  fs.writeFileSync(queue.attemptsPath(dir), `${line}\n`, 'utf8');
 
   const seen = [];
   const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });

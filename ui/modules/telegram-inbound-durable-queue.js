@@ -198,8 +198,114 @@ function ack(dir, updateIds = []) {
   return { ok: true, acked: ids.length, ignored };
 }
 
+
+// ---------------------------------------------------------------------------
+// STRICT DELIVERY-ATTEMPT SIDECAR
+//
+// Deliberately NOT sharing the inbound journal's parser. readJsonl above is
+// permissive: it skips malformed lines so one bad record cannot strand a whole
+// queue. That is right for pending messages and WRONG here — this sidecar is
+// the ambiguity latch that decides whether something may be shown to the user
+// again. Under storage or parse failure the safe bias is HOLD, so every read
+// fails closed instead of quietly returning less than the truth.
+// ---------------------------------------------------------------------------
+
+const ATTEMPTS_NAME = 'delivery-attempts.jsonl';
+const ATTEMPT_STATES = new Set(['attempted', 'retryable']);
+
+function attemptsPath(dir) {
+  return path.join(dir, ATTEMPTS_NAME);
+}
+
+// Attempt entries are an INTERNAL schema, so no coercion is owed to anyone.
+// Number('1') is 1 and Number(true) is 1; accepting either would let a foreign
+// or corrupted record claim an updateId it does not actually carry.
+function normalizeAttemptUpdateId(value) {
+  if (typeof value !== 'number') return null;
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/**
+ * appendAttempt writes JSON + newline as ONE record, so a nonempty file that
+ * does not end in a newline is a torn write — even when the final line happens
+ * to parse. Repairing it by inserting a newline and appending behind it would
+ * bless an unknown state and hide that a previous append died mid-write. Read
+ * and append both refuse.
+ */
+function assertNoTornTail(raw) {
+  if (raw.length > 0 && !raw.endsWith('\n')) {
+    throw new Error('attempt journal has a torn (non-newline-terminated) tail');
+  }
+}
+
+/**
+ * @returns {Map<number, string>} updateId -> state
+ * @throws on anything it cannot fully trust
+ */
+function readAttemptState(dir) {
+  const file = attemptsPath(dir);
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return new Map();
+    throw new Error(`attempt journal unreadable: ${err.message}`);
+  }
+
+  assertNoTornTail(raw);
+
+  const state = new Map();
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let entry;
+    try {
+      entry = JSON.parse(trimmed);
+    } catch {
+      throw new Error('attempt journal contains an unreadable entry');
+    }
+    const id = normalizeAttemptUpdateId(entry && entry.updateId);
+    if (id === null) {
+      throw new Error('attempt journal entry has an invalid updateId');
+    }
+    if (!ATTEMPT_STATES.has(entry.state)) {
+      throw new Error(`attempt journal entry has an unknown state: ${entry.state}`);
+    }
+    state.set(id, entry.state);
+  }
+  return state;
+}
+
+/** Validates BEFORE touching disk: a rejected write must leave no trace. */
+function appendAttempt(dir, updateId, entryState) {
+  const id = normalizeAttemptUpdateId(updateId);
+  if (id === null) {
+    throw new Error('attempt updateId must be a positive integer');
+  }
+  if (!ATTEMPT_STATES.has(entryState)) {
+    throw new Error(`attempt state must be one of ${Array.from(ATTEMPT_STATES).join('|')}`);
+  }
+
+  const file = attemptsPath(dir);
+  fs.mkdirSync(dir, { recursive: true });
+  // REFUSE rather than repair. Appending behind a torn tail would bless whatever
+  // that half-written record was about.
+  try {
+    assertNoTornTail(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err;
+  }
+  fs.appendFileSync(file, `${JSON.stringify({ updateId: id, state: entryState })}\n`, 'utf8');
+  return { ok: true, updateId: id, state: entryState };
+}
+
 module.exports = {
   append,
+  attemptsPath,
+  readAttemptState,
+  appendAttempt,
+  ATTEMPTS_NAME,
+  ATTEMPT_STATES,
   ack,
   readPending,
   journalPath,

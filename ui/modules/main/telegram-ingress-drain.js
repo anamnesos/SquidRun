@@ -18,99 +18,10 @@
  * A retired-but-undelivered message is neither.
  */
 
-const fs = require('fs');
 const path = require('path');
 const defaultQueue = require('../telegram-inbound-durable-queue');
 const spool = require('./telegram-ingress-spool');
 
-
-const ATTEMPTS_NAME = 'delivery-attempts.jsonl';
-
-function attemptsPath(dir) {
-  return path.join(dir, ATTEMPTS_NAME);
-}
-
-/**
- * Durable record of "we are about to put this in front of the user".
- *
- * WHY A FILE AND NOT A FLAG: the in-memory awaiting-proof latch dies with the
- * process, so this exact sequence re-delivered:
- *   pending N -> pane returns accepted.unverified -> latch set in memory ->
- *   app dies before the receipt persists -> restart -> empty map -> N injected
- *   a second time.
- * The attempt marker lives in the same route dir as the record it describes, so
- * it survives whatever kills the app between accepting and acking.
- *
- * An unresolved attempt is AMBIGUOUS, not proof of either outcome. Ambiguity
- * holds: a stuck queue is visible and recoverable, a duplicate in James's chat
- * is neither.
- */
-function readAttemptState(dir) {
-  const file = attemptsPath(dir);
-  let raw;
-  try {
-    raw = fs.readFileSync(file, 'utf8');
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return new Map();
-    // Unreadable attempt journal: we cannot know what was already tried.
-    throw new Error(`attempt journal unreadable: ${err.message}`);
-  }
-  const state = new Map();
-  const ALLOWED_STATES = new Set(['attempted', 'retryable']);
-  // NO TORN-TAIL TOLERANCE (Architect #88, correcting my #83 allowance).
-  // Skipping a torn fragment is not harmless here: appendAttempt seals the file
-  // with a newline and appends after it, which promotes that fragment to
-  // corrupt INTERIOR and poisons every later read. And this sidecar IS the
-  // ambiguity latch — under storage or process failure the safe bias is HOLD,
-  // never an inferred retry. Anything unreadable fails closed pending
-  // controlled recovery.
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    let entry;
-    try {
-      entry = JSON.parse(trimmed);
-    } catch {
-      throw new Error('attempt journal contains an unreadable entry');
-    }
-    // Parseable is not the same as valid. A record missing its state used to
-    // read as "not attempted" and authorize delivery.
-    const id = Number(entry && entry.updateId);
-    if (!Number.isInteger(id) || id <= 0) {
-      throw new Error('attempt journal entry has an invalid updateId');
-    }
-    if (!ALLOWED_STATES.has(entry.state)) {
-      throw new Error(`attempt journal entry has an unknown state: ${entry.state}`);
-    }
-    state.set(id, entry.state);
-  }
-  return state;
-}
-
-function appendAttempt(dir, updateId, entryState) {
-  const file = attemptsPath(dir);
-  fs.mkdirSync(dir, { recursive: true });
-  // Terminate any torn tail first so a crashed partial line cannot swallow this
-  // record by concatenation.
-  try {
-    const size = fs.statSync(file).size;
-    if (size > 0) {
-      const fd = fs.openSync(file, 'r');
-      const last = Buffer.alloc(1);
-      fs.readSync(fd, last, 0, 1, size - 1);
-      fs.closeSync(fd);
-      if (last.toString('utf8') !== '\n') fs.appendFileSync(file, '\n', 'utf8');
-    }
-  } catch (err) {
-    if (!err || err.code !== 'ENOENT') throw err;
-  }
-  fs.appendFileSync(file, `${JSON.stringify({ updateId, state: entryState })}\n`, 'utf8');
-}
-
-function normalizeUpdateId(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? Math.floor(n) : null;
-}
 
 const DEFAULT_BACKOFF_MS = 30 * 1000;
 
@@ -224,7 +135,10 @@ function byUpdateId(a, b) {
 
 /**
  * @param {object} deps
- *   queue            durable queue module (readPending/ack)
+ *   queue            durable queue module. MUST provide readPending, ack,
+ *                    readAttemptState and appendAttempt: attempt storage is
+ *                    part of the same ownership boundary, and binding it
+ *                    elsewhere leaves an injected queue half-owned.
  *   resolveRoute     (chatId) => {ok, profile, windowKey, ...}
  *   deliver          async (job) => receipt
  *   hasExistingReceipt async (messageId, routeKey) => bool   // crash-replay seam
@@ -233,6 +147,21 @@ function byUpdateId(a, b) {
  */
 function createDrainCoordinator(deps = {}) {
   const queue = deps.queue || defaultQueue;
+
+  // Attempt storage MUST come from the same queue as readPending/ack. Binding
+  // it at module load left an injected queue half-owned: pending reads went to
+  // the injection while the ambiguity latch quietly hit the real disk, so a
+  // test could believe it had isolated storage while production files moved.
+  // Fail closed rather than silently falling back to the default module.
+  const requireAttemptOp = (name) => {
+    const fn = queue && typeof queue[name] === 'function' ? queue[name] : null;
+    if (!fn) {
+      throw new Error(`drain queue is missing the attempt API: ${name}`);
+    }
+    return fn.bind(queue);
+  };
+  const readAttemptState = requireAttemptOp('readAttemptState');
+  const appendAttempt = requireAttemptOp('appendAttempt');
   const log = deps.log || { info() {}, warn() {} };
   const resolveRoute = deps.resolveRoute;
   const deliver = deps.deliver;
@@ -621,16 +550,12 @@ function createDrainCoordinator(deps = {}) {
     isDisposed: () => disposed,
     _internals: {
     isProvenOwnership, isCorrelatedProof, downstreamMessageId, processRecord, state,
-    readAttemptState, appendAttempt, attemptsPath,
   },
   };
 }
 
 module.exports = {
   createDrainCoordinator,
-  attemptsPath,
-  readAttemptState,
-  appendAttempt,
   isProvenOwnership,
   isCorrelatedProof,
   proofClassOf,
