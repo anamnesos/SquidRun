@@ -372,9 +372,19 @@ describe('telegram-poller', () => {
   });
 
   test('pollNow emits inbound messages once and deduplicates by update_id offset', async () => {
+    // Explicit temp statePath: under NODE_ENV=test resolveDefaultStatePath
+    // returns null, and the fail-closed commit correctly refuses to advance a
+    // cursor it cannot durably record. These tests exercise cursor behaviour,
+    // so they need a real store rather than a weakened gate.
+    const statePathForCursor = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'tg-poll-cursor-')),
+      'telegram-poller-state.json'
+    );
+
     const onMessage = jest.fn();
 
     telegramPoller.start({
+      statePath: statePathForCursor,
       env: {
         TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
         TELEGRAM_CHAT_ID: '123456',
@@ -883,11 +893,21 @@ describe('telegram-poller', () => {
   });
 
   test('startup drain marks delayed Telegram backlog while accepting fresh updates', async () => {
+    // Explicit temp statePath: under NODE_ENV=test resolveDefaultStatePath
+    // returns null, and the fail-closed commit correctly refuses to advance a
+    // cursor it cannot durably record. These tests exercise cursor behaviour,
+    // so they need a real store rather than a weakened gate.
+    const statePathForCursor = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'tg-poll-cursor-')),
+      'telegram-poller-state.json'
+    );
+
     const onMessage = jest.fn();
     const startedAtMs = Date.parse('2026-05-08T04:00:00.000Z');
     jest.spyOn(Date, 'now').mockReturnValue(startedAtMs);
 
     telegramPoller.start({
+      statePath: statePathForCursor,
       env: {
         TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
         TELEGRAM_CHAT_ID: '123456',

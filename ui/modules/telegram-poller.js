@@ -1078,16 +1078,20 @@ async function pollNow() {
         }
       }
 
-      nextOffset = candidateNextOffset;
-      persistNextOffset(statePath, cursorKey, nextOffset, {
-        action: 'seen',
-        chatId: parsedChatId,
-        mediaFileId,
-        messageId,
-        profile: config.profile || 'main',
-        updateId,
-      });
-
+      // FAIL-CLOSED COMMIT ORDER: deliver, then durably record, then advance.
+      //
+      // This previously advanced `nextOffset` and persisted 'seen' BEFORE the
+      // callback ran, and discarded the persist result. `writePollerState`
+      // catches its own errors and returns false rather than throwing, so a
+      // failed durable write was invisible — and a callback that threw still
+      // left the cursor past the message. Either way the update was gone while
+      // the offset claimed delivered.
+      //
+      // The cursor now moves only when BOTH the delivery and the durable write
+      // succeeded. On either failure we leave the offset where it is and stop
+      // the batch: stepping to N+1 while N is unrecorded reorders the stream
+      // and drops N silently. Replay is recoverable and visible; loss is not.
+      let deliveredOk = true;
       if (typeof onMessage === 'function') {
         try {
           log.info(
@@ -1105,15 +1109,8 @@ async function pollNow() {
             document: document || null,
             media: downloadedMedia,
           }));
-          persistNextOffset(statePath, cursorKey, nextOffset, {
-            action: 'delivered',
-            chatId: parsedChatId,
-            mediaFileId,
-            messageId,
-            profile: config.profile || 'main',
-            updateId,
-          });
         } catch (err) {
+          deliveredOk = false;
           persistNextOffset(statePath, cursorKey, nextOffset, {
             action: 'callback_failed',
             chatId: parsedChatId,
@@ -1122,9 +1119,34 @@ async function pollNow() {
             profile: config.profile || 'main',
             updateId,
           });
+          heartbeatStatus = 'callback_failed';
+          heartbeatError = `callback failed at update ${updateId}: ${err.message}`;
           log.warn('Telegram', `Telegram callback failed: ${err.message}`);
         }
       }
+
+      // Delivery failed -> hold the cursor here and stop the batch.
+      if (!deliveredOk) return;
+
+      // Delivery succeeded. Now the durable write decides whether we advance.
+      const committed = persistNextOffset(statePath, cursorKey, candidateNextOffset, {
+        action: 'delivered',
+        chatId: parsedChatId,
+        mediaFileId,
+        messageId,
+        profile: config.profile || 'main',
+        updateId,
+      });
+      if (committed !== true) {
+        // The message WAS delivered but we could not record it. Holding is the
+        // safe direction: this update replays (visible duplicate) instead of
+        // the cursor drifting past an unrecorded delivery (silent loss).
+        heartbeatStatus = 'cursor_persist_failed';
+        heartbeatError = `durable cursor write failed after delivering update ${updateId}; holding offset and blocking the batch`;
+        log.warn('Telegram', heartbeatError);
+        return;
+      }
+      nextOffset = candidateNextOffset;
     }
   } catch (err) {
     log.warn('Telegram', `Telegram polling error: ${err.message}`);
