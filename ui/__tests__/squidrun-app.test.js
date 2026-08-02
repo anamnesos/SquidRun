@@ -12533,6 +12533,38 @@ describe('SquidRunApp', () => {
       expect(ordinary).toMatchObject({ status: 'telegram_send_failed', ok: false });
     });
 
+    // HONEST SCOPE: parameterising this over the direct-status branch produced a
+    // FALSE GREEN — removing the direct-status promotion left it passing, which
+    // means the spy does not actually steer execution into that branch. Reduced
+    // to the branch it genuinely exercises. The direct-status wrapper is fixed
+    // in source but NOT covered; that test needs the real precondition, not a
+    // spy on one helper.
+    it('REAL WRAPPER (normal reply): an ambiguous send reaches the adapter as a HOLD', async () => {
+      const direct = false;
+      // Drives the actual routeMainTelegramInboundToMira return shape rather
+      // than a mocked miraOutcome, because the defect was precisely that the
+      // classification never reached the top level of one of the two returns.
+      jest.spyOn(app, 'routeTelegramReply').mockResolvedValue({
+        handled: true, ok: false,
+        accepted: true, ambiguous: true, definiteNoSend: false,
+        status: 'telegram_send_ambiguous',
+      });
+      jest.spyOn(app, 'buildMiraDirectChannelStatusReply')
+        .mockReturnValue(direct ? { answer_text: 'status' } : null);
+
+      const outcome = await app.routeMainTelegramInboundToMira({
+        body: 'hello',
+        sender: 'james',
+        metadata: { chatId: 111, updateId: 998 },
+        inboundMessageId: 'telegram-in-998',
+        inboundSessionScopeId: 'sess',
+      });
+
+      // Whichever branch answered, the adapter must be able to SEE the
+      // ambiguity at the top level.
+      expect(outcome).toMatchObject({ ambiguous: true, accepted: true });
+    });
+
     it('creates exactly ONE coordinator and reuses it', () => {
       // Two coordinators would each hold their own single-flight latch and could
       // deliver the same record twice.

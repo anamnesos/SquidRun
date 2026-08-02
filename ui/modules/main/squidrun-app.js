@@ -11819,6 +11819,13 @@ class SquidRunApp {
             source: 'mira_direct_channel_status_v0',
             message: directChannelStatusAnswer.answer_text,
           },
+          // PROMOTED here too. This return was missed the first time: I
+          // asserted the patch matched ">= 1" return and then described it as
+          // both. A direct-status throw therefore still fell through to the
+          // Architect pane and could duplicate the reply.
+          accepted: telegramResult?.accepted === true,
+          ambiguous: telegramResult?.ambiguous === true,
+          definiteNoSend: telegramResult?.definiteNoSend === true,
           directChannelStatusAnswer,
           telegramResult,
         };
