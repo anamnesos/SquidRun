@@ -13104,18 +13104,23 @@ describe('SquidRunApp', () => {
       expect(flat).toMatch(/reopen/);
     });
 
-    it('SCOPED close copy exists and is NOT given the polling warning', () => {
-      // Main owns getUpdates and keeps polling when a profile app closes, so
-      // claiming otherwise here would be a lie in the other direction. Required,
-      // not conditional: if the marker disappears this must FAIL, not skip.
+    it.each([
+      ['the standalone profile-app prompt', 'Quit the ${windowContext.windowKey} profile app?'],
+      ['the secondary window prompt', 'Close the ${windowContext.windowKey} window?'],
+    ])('%s keeps its own copy and gains NO polling warning', (_l, marker) => {
+      // These are the ACTUAL non-main confirmations (~3945), not the runtime
+      // tooltip branch that also contains "main SquidRun keeps running".
+      // Main owns getUpdates and keeps polling when either closes, so warning
+      // here would be a lie in the other direction.
       const src = fs.readFileSync(path.join(__dirname, '..', 'renderer.js'), 'utf8');
-      const at = src.indexOf('main SquidRun keeps running');
+      const at = src.indexOf(marker);
       expect(at).toBeGreaterThan(-1);
-      // Only the scoped branch's OWN copy. A wider window reaches back into the
-      // main-app branch above, which legitimately carries the warning.
       const lineStart = src.lastIndexOf('\n', at) + 1;
       const lineEnd = src.indexOf('\n', at);
       const region = src.slice(lineStart, lineEnd).toLowerCase();
+      // Its existing reassurance must remain...
+      expect(region).toMatch(/keeps? running/);
+      // ...and it must not claim polling stops.
       expect(region).not.toContain('polling goes offline');
       expect(region).not.toContain('will not be seen');
     });
@@ -13142,12 +13147,17 @@ describe('SquidRunApp', () => {
       });
 
       it('MAIN sends exactly one notice with the main-built env and honest metadata', async () => {
+        const envSentinel = { __sentinel: 'main-built-env', SQUIDRUN_PROFILE: 'main' };
+        jest.spyOn(app, 'buildTelegramPollerEnv').mockReturnValue(envSentinel);
+
         const result = await app.sendQuitTelegramNotice('window-close');
 
         expect(sendFn).toHaveBeenCalledTimes(1);
         const [message, env, opts] = sendFn.mock.calls[0];
         expect(String(message).toLowerCase()).toContain('telegram is going offline');
-        expect(env).toMatchObject({ SQUIDRUN_PROFILE: 'main' });
+        // Identity, not shape: toMatchObject({SQUIDRUN_PROFILE:'main'}) can pass
+        // against live process.env and proves nothing about forwarding.
+        expect(env).toBe(envSentinel);
         expect(opts.senderRole).toBe('system');
         expect(opts.metadata).toMatchObject({
           source: 'squidrun-quit-notice',
@@ -13179,6 +13189,22 @@ describe('SquidRunApp', () => {
           .resolves.toMatchObject({ ok: false, reason: 'timeout' });
 
         delete app.quitNoticeTimeoutMs;
+      });
+
+      it('A FAST REJECTION leaves no armed timer behind', async () => {
+        // Promise.race rejects straight past a trailing clearTimeout, so the
+        // timer stayed armed for the whole bound after an immediate failure.
+        jest.useFakeTimers();
+        try {
+          sendFn.mockRejectedValue(new Error('instant failure'));
+          app.quitNoticeTimeoutMs = 5000;
+
+          await expect(app.sendQuitTelegramNotice('test')).resolves.toMatchObject({ ok: false });
+          expect(jest.getTimerCount()).toBe(0);
+        } finally {
+          delete app.quitNoticeTimeoutMs;
+          jest.useRealTimers();
+        }
       });
 
       it('A LATE REJECTION after the timeout does not surface unhandled', async () => {

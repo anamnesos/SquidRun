@@ -14959,14 +14959,20 @@ class SquidRunApp {
       // as an unhandled rejection during shutdown.
       sending.catch(() => {});
 
-      const result = await Promise.race([
-        sending,
-        new Promise((resolve) => {
-          timer = setTimeout(() => resolve({ __quitNoticeTimedOut: true }), timeoutMs);
-          if (typeof timer.unref === 'function') timer.unref();
-        }),
-      ]);
-      if (timer) clearTimeout(timer);
+      // try/finally: a FAST REJECTION makes the race reject straight past a
+      // trailing clearTimeout, leaving the timer armed for the full bound.
+      let result;
+      try {
+        result = await Promise.race([
+          sending,
+          new Promise((resolve) => {
+            timer = setTimeout(() => resolve({ __quitNoticeTimedOut: true }), timeoutMs);
+            if (typeof timer.unref === 'function') timer.unref();
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
 
       if (result && result.__quitNoticeTimedOut) {
         log.warn('Telegram', `Quit notice timed out after ${timeoutMs}ms; continuing shutdown`);
