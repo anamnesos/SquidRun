@@ -163,6 +163,14 @@ jest.mock('../modules/main/pane-host-window-manager', () => ({
 // The double redirects the REAL spool at a per-test temp root: writes are real
 // (the drain works end to end) but land in os.tmpdir(), never under the mocked
 // project root or the repo.
+// squidrun-app destructures getModelPromptReceipt at module load, so a later
+// jest.spyOn cannot reach that binding. Mock the module itself, keeping the real
+// implementation as the default so nothing else in the suite changes behaviour.
+jest.mock('../modules/model-prompt-receipt', () => {
+  const actual = jest.requireActual('../modules/model-prompt-receipt');
+  return { ...actual, getModelPromptReceipt: jest.fn(actual.getModelPromptReceipt) };
+});
+
 jest.mock('../modules/main/telegram-ingress-spool', () => {
   const actual = jest.requireActual('../modules/main/telegram-ingress-spool');
   const state = { baseDir: null };
@@ -12438,40 +12446,139 @@ describe('SquidRunApp', () => {
       expect(adapter).not.toContain('handleScopedTelegramInboundFallback(');
     });
 
-    it('a bare inbound/brokered row is NOT proof; the same row after a verified submit IS', async () => {
-      // writeSubmitVerdictToJournal updates the inbound row IN PLACE, keeping
-      // direction:'inbound' and status:'brokered' and only setting ackStatus +
-      // metadata.submitVerification. So filtering on direction would make
-      // main-pane proof unfindable, and accepting the bare row would retire
-      // every record undelivered. The ack is what separates them.
-      const identity = {
-        messageId: 'telegram-in-950', routeKey: 'main', windowKey: 'main', profile: 'main',
-      };
+    it('a decorated inbound journal row is NOT consulted at all, however verified it looks', async () => {
+      // The row-based seam was removed (Architect #73). It proved only that SOME
+      // row with this id reached a verified submit, and then attached whatever
+      // route/window/profile was being asked about — accepting proof from one
+      // surface as proof for another. It also raced the void inbound upsert.
       const commsJournal = require('../modules/main/comms-journal');
-      const bare = {
-        messageId: 'telegram-in-950', direction: 'inbound', status: 'brokered',
-      };
-      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockReturnValue([bare]);
-      await expect(app.findTelegramDeliveryReceipt(identity)).resolves.toBeNull();
-
-      commsJournal.queryCommsJournalEntries.mockReturnValue([{
-        ...bare,
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockReturnValue([{
+        messageId: 'telegram-in-950',
+        direction: 'inbound',
+        status: 'brokered',
         ackStatus: 'prompt_submitted.receipt_verified',
         metadata: { submitVerification: { verified: true } },
       }]);
-      await expect(app.findTelegramDeliveryReceipt(identity)).resolves.toMatchObject({
-        ...identity, verified: true,
-      });
+      const receipts = require('../modules/model-prompt-receipt');
+      receipts.getModelPromptReceipt.mockReturnValue(null);
+
+      await expect(app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-950', routeKey: 'main', windowKey: 'main', profile: 'main',
+      })).resolves.toBeNull();
     });
 
-    it('a journal lookup failure HOLDS rather than risking a second copy', async () => {
-      const commsJournal = require('../modules/main/comms-journal');
-      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockImplementation(() => {
-        throw new Error('db locked');
+    it('a receipt-store failure HOLDS rather than risking a second copy', async () => {
+      const receipts = require('../modules/model-prompt-receipt');
+      receipts.getModelPromptReceipt.mockImplementation(() => {
+        throw new Error('receipt store unreadable');
       });
       await expect(app.findTelegramDeliveryReceipt({
         messageId: 'telegram-in-951', routeKey: 'main', windowKey: 'main', profile: 'main',
-      })).rejects.toThrow(/comms journal lookup failed/);
+      })).rejects.toThrow(/model prompt receipt lookup failed/);
+    });
+
+    it('Mira accepted with NO durable proof HOLDS and never falls back to the Architect pane', async () => {
+      // A fallback here would be a SECOND user-visible reply to James for one
+      // inbound message. Only a definite Mira failure may fall back.
+      jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
+      jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue({
+        ok: true, handled: true, status: 'telegram_delivered',
+        telegramResult: { ok: true, messageId: 55 },
+      });
+      jest.spyOn(app, 'hasDurableMiraOutboundProof').mockReturnValue(false);
+      const architectSpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true, verified: true, userVisible: true,
+      });
+
+      const result = await app.deliverTelegramInboundJob({
+        body: 'hello', sender: 'james', metadata: { chatId: 1111111111, updateId: 980 },
+        media: null, photo: null, document: null, archivePath: null,
+        inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
+        inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
+        inboundMessageId: 'telegram-in-980', updateId: 980, messageId: 1, sentAtMs: Date.now(),
+      });
+
+      expect(result).toMatchObject({
+        status: 'accepted.mira_proof_pending',
+        accepted: true,
+        messageId: 'telegram-in-980',
+      });
+      expect(architectSpy).not.toHaveBeenCalled();
+    });
+
+    it('Mira proof requires a durable outbound row, not transport success', () => {
+      const commsJournal = require('../modules/main/comms-journal');
+      // Transport said ok, but nothing durable exists.
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockReturnValue([]);
+      expect(app.hasDurableMiraOutboundProof('telegram-in-970', { chatId: 111 })).toBe(false);
+
+      commsJournal.queryCommsJournalEntries.mockImplementation(({ messageId }) => (
+        messageId === 'telegram-in-970-mira-reply'
+          ? [{
+            messageId: 'telegram-in-970-mira-reply',
+            direction: 'outbound',
+            channel: 'telegram',
+            senderRole: 'mira',
+            ackStatus: 'telegram_delivered',
+            chatId: 111,
+          }]
+          : []
+      ));
+      expect(app.hasDurableMiraOutboundProof('telegram-in-970', { chatId: 111 })).toBe(true);
+    });
+
+    it.each([
+      ['wrong direction', { direction: 'inbound' }],
+      ['wrong channel', { channel: 'ws' }],
+      ['not from mira', { senderRole: 'architect' }],
+      ['not delivered', { ackStatus: 'telegram_send_failed', status: 'failed' }],
+      ['different chat', { chatId: 999 }],
+    ])('Mira proof rejects a row with the %s', (_l, override) => {
+      const commsJournal = require('../modules/main/comms-journal');
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockImplementation(({ messageId }) => (
+        messageId === 'telegram-in-971-mira-reply'
+          ? [{
+            messageId: 'telegram-in-971-mira-reply',
+            direction: 'outbound',
+            channel: 'telegram',
+            senderRole: 'mira',
+            ackStatus: 'telegram_delivered',
+            chatId: 111,
+            ...override,
+          }]
+          : []
+      ));
+      expect(app.hasDurableMiraOutboundProof('telegram-in-971', { chatId: 111 })).toBe(false);
+    });
+
+    it('a crash-surviving model-prompt receipt proves delivery and joins the ingress identity', async () => {
+      // Oracle #64: this store persists synchronously and survives the crash
+      // the replay path exists for. It carries NO route identity, so identity
+      // comes from the record we already re-validated — joined, never invented.
+      const receipts = require('../modules/model-prompt-receipt');
+      receipts.getModelPromptReceipt.mockReturnValue({
+        semanticEvent: 'prompt_submit',
+        status: 'prompt_submitted.in_band',
+      });
+      const identity = {
+        messageId: 'telegram-in-960', routeKey: 'main', windowKey: 'main', profile: 'main',
+      };
+      await expect(app.findTelegramDeliveryReceipt(identity)).resolves.toMatchObject({
+        ...identity, verified: true, proofSource: 'model_prompt_receipt',
+      });
+    });
+
+    it('a receipt that did not reach in-band submission is NOT proof', async () => {
+      const receipts = require('../modules/model-prompt-receipt');
+      receipts.getModelPromptReceipt.mockReturnValue({
+        semanticEvent: 'prompt_submit',
+        status: 'accepted.unverified',
+      });
+      const commsJournal = require('../modules/main/comms-journal');
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockReturnValue([]);
+      await expect(app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-961', routeKey: 'main', windowKey: 'main', profile: 'main',
+      })).resolves.toBeNull();
     });
 
     it('startup drains a backlog spooled while the app was down', async () => {

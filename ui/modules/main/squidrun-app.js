@@ -14673,11 +14673,16 @@ class SquidRunApp {
         // reply classified as a DEFINITE failure and would be re-sent after
         // backoff — a second outbound message to James for one inbound.
         // Only a verified Telegram egress counts, and it is normalized here.
-        const egress = miraOutcome.telegramResult || {};
-        const egressVerified = egress.ok === true
-          || egress.sent === true
-          || egress.delivered === true
-          || Number.isFinite(Number(egress.message_id ?? egress.messageId));
+        // The old check here read egress.ok/sent/delivered/numeric-id and called
+        // that proof. Architect #73 ruled it RED, correctly: those are transport
+        // shapes, not durable evidence, and none of them survives a crash. Proof
+        // is a persisted outbound row for THIS inbound id.
+        const egressVerified = miraOutcome.telegramResult?.ok === true
+          && this.hasDurableMiraOutboundProof(inboundMessageId, {
+            chatId: metadata?.chatId,
+            windowKey: inboundWindowKey,
+            profile: inboundRoute?.profile || 'main',
+          });
         if (egressVerified) {
           log.info('Telegram', `Telegram inbound ${inboundMessageId} answered through Mira live path`);
           return {
@@ -14687,10 +14692,18 @@ class SquidRunApp {
             ...deliveryIdentity,
           };
         }
+        // ACCEPTED BUT PROOF-PENDING: hold. Falling through to the Architect
+        // pane here would risk a SECOND user-visible reply for one inbound
+        // message. Only a definite Mira failure may fall back.
         log.warn(
           'Telegram',
-          `Mira reported ok for ${inboundMessageId} but no verified Telegram egress; treating as undelivered`
+          `Mira accepted ${inboundMessageId} but durable outbound proof is not present; holding`
         );
+        return {
+          status: 'accepted.mira_proof_pending',
+          accepted: true,
+          ...deliveryIdentity,
+        };
       }
 
       log.warn(
@@ -14795,46 +14808,74 @@ class SquidRunApp {
    */
   async findTelegramDeliveryReceipt(identity = {}) {
     if (!identity?.messageId) return null;
-    let rows = [];
+
+    // ONE proof source for pane delivery: the model-prompt receipt store, which
+    // persists synchronously and survives the crash this path exists for
+    // (Oracle #64).
+    //
+    // The decorated comms-journal row is deliberately NOT used. It proved only
+    // that SOME row with this id reached a verified submit, and my version then
+    // attached whatever route/window/profile was being asked about — which
+    // would have accepted a proof from one surface as proof for another. It
+    // also races the `void` inbound upsert. Architect #73: correlate the exact
+    // receipt to the stored queue identity, or do not depend on the row.
+    let receipt;
     try {
-      rows = queryCommsJournalEntries({ messageId: identity.messageId, limit: 10 }) || [];
+      receipt = getModelPromptReceipt(identity.messageId);
     } catch (err) {
-      // Cannot tell whether it landed. Throwing is correct: the drain turns this
-      // into a HOLD rather than risking a second visible copy.
-      throw new Error(`comms journal lookup failed: ${err.message}`);
+      // Cannot tell whether it landed; the drain turns a throw into a HOLD.
+      throw new Error(`model prompt receipt lookup failed: ${err.message}`);
     }
+    if (!receipt) return null;
+    if (receipt.semanticEvent !== 'prompt_submit') return null;
+    if (receipt.status !== 'prompt_submitted.in_band') return null;
 
-    for (const row of Array.isArray(rows) ? rows : []) {
-      if (!row || row.messageId !== identity.messageId) continue;
+    // Identity comes from the record we already re-validated against the live
+    // route, joined to a receipt for that exact id. The receipt carries no
+    // route identity of its own and none is invented for it.
+    return {
+      status: 'delivered.verified',
+      verified: true,
+      proofSource: 'model_prompt_receipt',
+      messageId: identity.messageId,
+      routeKey: identity.routeKey,
+      windowKey: identity.windowKey,
+      profile: identity.profile,
+    };
+  }
 
-      // DO NOT filter on direction/status here. writeSubmitVerdictToJournal
-      // updates the SAME inbound/brokered row in place, keeping direction and
-      // status and only setting ackStatus + metadata.submitVerification. So the
-      // row that proves main-pane delivery IS the inbound row. Filtering it out
-      // meant main-pane proof could never be found and those records would
-      // never retire. What separates proof from bookkeeping is the ACK, not the
-      // direction: a bare brokered row with no verified ack proves nothing.
-      const ack = row.ackStatus || '';
-      const submitVerified = row.metadata
-        && typeof row.metadata === 'object'
-        && row.metadata.submitVerification
-        && row.metadata.submitVerification.verified === true;
-      const proven = (ack === 'prompt_submitted.receipt_verified' && submitVerified)
-        || row.status === 'delivered.verified'
-        || row.status === 'delivered.user_visible';
-      if (!proven) continue;
-      // Only attach identity we can stand behind: all four fields, taken from
-      // what we were asked about, and only after the row itself proved delivery.
-      return {
-        messageId: identity.messageId,
-        routeKey: identity.routeKey,
-        windowKey: identity.windowKey,
-        profile: identity.profile,
-        status: 'delivered.verified',
-        verified: true,
-      };
+  /**
+   * Durable proof that Mira's reply actually went out for this inbound message.
+   * Transport success is not proof and does not survive a crash; a persisted
+   * outbound row does. Either chunked reply id or the direct-status variant
+   * counts, and the row must be outbound, from mira, on telegram, delivered.
+   */
+  hasDurableMiraOutboundProof(inboundMessageId, expected = {}) {
+    if (!inboundMessageId) return false;
+    const candidates = [
+      `${inboundMessageId}-mira-reply`,
+      `${inboundMessageId}-mira-direct-status-reply`,
+    ];
+    for (const messageId of candidates) {
+      let rows = [];
+      try {
+        rows = queryCommsJournalEntries({ messageId, limit: 5 }) || [];
+      } catch (err) {
+        log.warn('Telegram', `Mira outbound proof lookup failed for ${messageId}: ${err.message}`);
+        return false;
+      }
+      for (const row of Array.isArray(rows) ? rows : []) {
+        if (!row || row.messageId !== messageId) continue;
+        if (row.direction !== 'outbound') continue;
+        if (row.channel !== 'telegram') continue;
+        if (row.senderRole !== 'mira') continue;
+        const ack = row.ackStatus || row.status || '';
+        if (ack !== 'telegram_delivered' && row.status !== 'acked') continue;
+        if (expected.chatId && row.chatId && String(row.chatId) !== String(expected.chatId)) continue;
+        return true;
+      }
     }
-    return null;
+    return false;
   }
 
   /** Drain every spool directory the canonical owner root already contains. */
