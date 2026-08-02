@@ -124,12 +124,24 @@ test('A RECEIPT THAT NAMES A DIFFERENT MESSAGE throws', () => {
 
 // ------------------------------------------------------- legacy callers intact
 
-test('NON-STRICT callers keep their permissive behaviour', () => {
-  // Only the replay-proof path opted into strictness; changing everyone else
-  // silently would be a different, unrequested behaviour change.
+test('NON-STRICT reads keep their permissive behaviour', () => {
+  // Only the replay-proof path opted into strictness. This must target the
+  // TEMP path — calling the bare getter would read the default store and prove
+  // nothing about the file we just corrupted.
   const dir = tempRoot();
-  writeState(dir, 'not json at all');
-  expect(() => receipts.getModelPromptReceipt('telegram-in-1')).not.toThrow();
+  const statePath = writeState(dir, 'not json at all');
+  expect(() => receipts.readState(statePath)).not.toThrow();
+  expect(receipts.readState(statePath)).toMatchObject({ receiptsByDeliveryId: {} });
+});
+
+test('A STRICT RECEIPT THAT NAMES NO MESSAGE throws', () => {
+  const dir = tempRoot();
+  const statePath = writeState(dir, {
+    receiptsByDeliveryId: { 'telegram-in-1': { status: 'prompt_submitted.in_band' } },
+    deliveryIdByMessageId: {},
+  });
+  expect(() => receipts.getModelPromptReceipt('telegram-in-1', { statePath, strict: true }))
+    .toThrow(/does not identify any message/);
 });
 
 test.each([

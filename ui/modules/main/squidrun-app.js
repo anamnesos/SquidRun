@@ -119,6 +119,7 @@ const {
 const {
   appendReceiptMarkerToPrompt,
   getModelPromptReceipt,
+  getReceiptPaths,
 } = require('../model-prompt-receipt');
 const {
   shouldTriggerAutonomousSmoke,
@@ -11158,14 +11159,18 @@ class SquidRunApp {
     const normalizedWindowKey = toNonEmptyString(windowKey);
     if (!normalizedWindowKey || normalizedWindowKey === 'main') return [];
 
+    // EXACT profile root or nothing. The getProjectRoot() fallback meant a
+    // scoped message whose profile root could not be resolved was written into
+    // MAIN's tree instead — a cross-profile leak that looks like delivery.
     const profileRoot = getProfileProjectRootOverride(normalizedWindowKey, process.env);
-    const roots = [
-      profileRoot,
-      getProjectRoot(),
-    ].filter(Boolean);
+    if (!profileRoot) return [];
 
-    return Array.from(new Set(roots.map((root) => path.resolve(root))))
-      .map((root) => path.join(root, '.squidrun', `triggers-${normalizedWindowKey}`, 'architect.txt'));
+    return [path.join(
+      path.resolve(profileRoot),
+      '.squidrun',
+      `triggers-${normalizedWindowKey}`,
+      'architect.txt'
+    )];
   }
 
   // Busy-pane inbound hardening (James-approved 2026-06-02). Defaults ON; set
@@ -11231,7 +11236,26 @@ class SquidRunApp {
       || `telegram-scoped-${normalizedWindowKey}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const sessionScopeId = toNonEmptyString(options.sessionScopeId)
       || this.getWindowSessionScopeId(normalizedWindowKey);
-    const projectRoot = getProfileProjectRootOverride(normalizedWindowKey, process.env) || getProjectRoot();
+    // Resolve the exact profile root BEFORE anything is constructed or opened.
+    // Falling back to getProjectRoot() addressed the scoped delivery at main's
+    // tree, which is a leak, not a fallback.
+    const projectRoot = getProfileProjectRootOverride(normalizedWindowKey, process.env);
+    if (!projectRoot) {
+      log.warn(
+        'Telegram',
+        `Scoped delivery refused for ${normalizedWindowKey}: profile root unresolved`
+      );
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        userVisible: false,
+        definiteNoSend: true,
+        status: 'scoped_profile_root_unresolved',
+        windowKey: normalizedWindowKey,
+      };
+    }
     const targetRole = toNonEmptyString(options.targetRole) || 'architect';
     const targetRaw = toNonEmptyString(options.target) || targetRole;
     const targetPaneId = toNonEmptyString(options.targetPaneId) || ROLE_ID_MAP[targetRole] || null;
@@ -11247,8 +11271,8 @@ class SquidRunApp {
         pane_id: targetPaneId,
       },
       project: {
-        name: path.basename(projectRoot || getProjectRoot() || 'squidrun'),
-        path: projectRoot || getProjectRoot() || null,
+        name: path.basename(projectRoot),
+        path: projectRoot,
         session_id: sessionScopeId,
         source: 'telegram-poller',
       },
@@ -11283,7 +11307,13 @@ class SquidRunApp {
       windowKey: normalizedWindowKey,
     };
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+    // Injection seam: the module-load `require('ws')` capture cannot be spied
+    // on afterwards, so a test asserting "no socket was constructed" against
+    // the module object proves nothing. Construction goes through here.
+    const createWebSocket = typeof options.createWebSocket === 'function'
+      ? options.createWebSocket
+      : (url) => new WebSocket(url);
+    const ws = createWebSocket(`ws://127.0.0.1:${port}`);
     try {
       await waitForSocketMessage(ws, (msg) => msg.type === 'welcome', timeoutMs, 'Scoped runtime connection timeout');
       ws.send(JSON.stringify({
@@ -14933,6 +14963,40 @@ class SquidRunApp {
   }
 
   /**
+   * The receipt store belonging to a specific profile.
+   *
+   * Main uses its canonical default store. A scoped profile keeps receipts
+   * under ITS OWN resolved root, so reading main's store for a scoped message
+   * answers a different question entirely and could retire a message that never
+   * reached her window.
+   *
+   * Fail closed: an unresolvable profile root THROWS rather than falling back
+   * to main, cwd, or getProjectRoot(). The drain turns a throw into a HOLD,
+   * which is correct when we cannot tell where the proof would live.
+   */
+  resolveScopedReceiptStatePath(profile) {
+    const name = typeof profile === 'string' ? profile.trim() : '';
+    if (!name || name === 'main') return null;
+
+    const root = getProfileProjectRootOverride(name, process.env);
+    if (!root) {
+      throw new Error(`cannot resolve receipt store root for profile ${name}`);
+    }
+    // Scoped profiles NAMESPACE the first coord segment: getReceiptPaths uses
+    // resolveCoordPath('runtime/model-prompt-receipts') and
+    // namespaceCoordRelPath rewrites `runtime` to `runtime-<profile>`. Using
+    // plain `runtime` would point at a directory that never exists, read as
+    // ABSENCE, and mean "never delivered" — a duplicate, dressed as a miss.
+    return path.join(
+      path.resolve(root),
+      '.squidrun',
+      `runtime-${normalizeProfileName(name)}`,
+      'model-prompt-receipts',
+      'receipts-state.json'
+    );
+  }
+
+  /**
    * Crash-replay proof, read from the PERSISTENT comms journal.
    *
    * An in-memory map cannot answer this question: the whole point is surviving
@@ -14958,7 +15022,11 @@ class SquidRunApp {
     // receipt to the stored queue identity, or do not depend on the row.
     let receipt;
     try {
-      receipt = getModelPromptReceipt(identity.messageId);
+      // MAIN gets strict semantics too. A corrupt or unreadable main store must
+      // HOLD, not read as "no receipt" — that is the answer that resends.
+      const scopedStatePath = this.resolveScopedReceiptStatePath(identity.profile);
+      const statePath = scopedStatePath || getReceiptPaths().statePath;
+      receipt = getModelPromptReceipt(identity.messageId, { statePath, strict: true });
     } catch (err) {
       // Cannot tell whether it landed; the drain turns a throw into a HOLD.
       throw new Error(`model prompt receipt lookup failed: ${err.message}`);
@@ -15059,7 +15127,7 @@ class SquidRunApp {
     };
 
     const findRow = (messageId) => {
-      const rows = queryCommsJournalEntries({ messageId, limit: 5 }) || [];
+      const rows = queryCommsJournalEntries({ messageId, limit: 5 }, { strict: true }) || [];
       return (Array.isArray(rows) ? rows : []).find((row) => matches(row, messageId)) || null;
     };
 

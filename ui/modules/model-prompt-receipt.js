@@ -100,6 +100,50 @@ function appendJsonl(filePath, record) {
   fs.appendFileSync(filePath, `${JSON.stringify(record)}\n`, 'utf8');
 }
 
+
+/**
+ * STRICT receipt read. Absence and unreadability are NOT the same thing.
+ *
+ * readState below collapses every failure — permission denied, I/O error,
+ * corrupt JSON, a malformed state schema — into DEFAULT_STATE, which then
+ * reads as "no receipt exists". For replay proof that is the worst possible
+ * answer: it means "we never delivered this", and the caller sends the message
+ * again. ENOENT genuinely means absence. Everything else throws so the drain
+ * can HOLD.
+ */
+function readStateStrict(statePath) {
+  if (typeof statePath !== 'string' || !statePath.trim()) {
+    throw new Error('strict receipt read requires an explicit statePath');
+  }
+  let raw;
+  try {
+    raw = fs.readFileSync(statePath, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return null; // genuine absence
+    throw new Error(`receipt state unreadable: ${err.message}`);
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`receipt state is not valid JSON: ${err.message}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('receipt state has an invalid shape');
+  }
+
+  const byDeliveryId = parsed.receiptsByDeliveryId;
+  const byMessageId = parsed.deliveryIdByMessageId;
+  if (!byDeliveryId || typeof byDeliveryId !== 'object' || Array.isArray(byDeliveryId)) {
+    throw new Error('receipt state has an invalid receiptsByDeliveryId');
+  }
+  if (!byMessageId || typeof byMessageId !== 'object' || Array.isArray(byMessageId)) {
+    throw new Error('receipt state has an invalid deliveryIdByMessageId');
+  }
+  return { receiptsByDeliveryId: byDeliveryId, deliveryIdByMessageId: byMessageId };
+}
+
 function readState(statePath = getReceiptPaths().statePath) {
   try {
     const raw = fs.readFileSync(statePath, 'utf8');
@@ -308,9 +352,46 @@ function getProofRank(status) {
   return Number(PROOF_RANKS[status] || 0);
 }
 
-function getModelPromptReceipt(id) {
+function getModelPromptReceipt(id, options = {}) {
   const normalized = toNonEmptyString(id);
   if (!normalized) return null;
+
+  // STRICT mode reads EXACTLY the given path with no implicit or global
+  // fallback, and distinguishes absence from unreadability. Legacy callers are
+  // untouched: without strict:true the permissive reader still applies.
+  if (options.strict === true) {
+    const state = readStateStrict(options.statePath);
+    if (!state) return null;
+    const deliveryId = state.receiptsByDeliveryId[normalized]
+      ? normalized
+      : state.deliveryIdByMessageId[normalized];
+    if (!deliveryId) return null;
+    if (typeof deliveryId !== 'string' || !deliveryId.trim()) {
+      throw new Error('receipt state has an invalid id mapping');
+    }
+    const receipt = state.receiptsByDeliveryId[deliveryId];
+    if (!receipt) {
+      // The index points at a receipt that is not there: the file disagrees
+      // with itself, so we cannot tell whether this was delivered.
+      throw new Error('receipt state maps an id to a missing receipt');
+    }
+    // A DIRECT-KEY hit is not self-validating. When receiptsByDeliveryId holds
+    // the id we asked for, deliveryId === normalized, and the old condition
+    // short-circuited — so a receipt whose messageId names a DIFFERENT message
+    // was accepted as proof for this one.
+    const receiptId = receipt.messageId || receipt.deliveryId;
+    if (!receiptId) {
+      // A receipt that names no message cannot prove anything about this one.
+      // Passing it through to become null later would read as "never
+      // delivered" and resend.
+      throw new Error('receipt does not identify any message');
+    }
+    if (receiptId !== normalized) {
+      throw new Error('receipt does not identify the requested message');
+    }
+    return receipt;
+  }
+
   const state = readState();
   const deliveryId = state.receiptsByDeliveryId[normalized]
     ? normalized
@@ -621,6 +702,7 @@ module.exports = {
   extractReceiptMarker,
   findMapping,
   getModelPromptReceipt,
+  readStateStrict,
   getProofRank,
   getReceiptForAck,
   getReceiptPaths,

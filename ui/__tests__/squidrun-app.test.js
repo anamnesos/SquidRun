@@ -545,8 +545,28 @@ async function flushTelegramDrain(app) {
   }
 }
 
+// Scoped delivery now REFUSES when a profile root cannot be resolved (#138),
+// so the suite must supply one. Previously the code silently fell back to
+// main's tree, which is precisely the cross-profile leak being closed.
+const scopedRootEnvKeys = [
+  'SQUIDRUN_SCOPED_PROJECT_ROOT',
+  'SQUIDRUN_CLIENT_PROFILE_PROJECT_ROOT',
+  'SQUIDRUN_sideprofile_PROJECT_ROOT',
+];
+let scopedProfileRoot = null;
+
 beforeEach(() => {
   freshTelegramSpoolRoot();
+  scopedProfileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sq-scoped-root-'));
+  for (const key of scopedRootEnvKeys) process.env[key] = scopedProfileRoot;
+});
+
+afterEach(() => {
+  for (const key of scopedRootEnvKeys) delete process.env[key];
+  if (scopedProfileRoot) {
+    fs.rmSync(scopedProfileRoot, { recursive: true, force: true });
+    scopedProfileRoot = null;
+  }
 });
 
 afterEach(() => {
@@ -12565,6 +12585,98 @@ describe('SquidRunApp', () => {
 
       // And that the adapter can SEE the ambiguity at the top level.
       expect(outcome).toMatchObject({ ambiguous: true, accepted: true });
+    });
+
+    it('THE SCOPED RECEIPT PATH IS runtime-<profile>, not plain runtime', () => {
+      // Architect #140/#141: getReceiptPaths uses
+      // resolveCoordPath('runtime/model-prompt-receipts') and
+      // namespaceCoordRelPath rewrites the FIRST segment for scoped profiles.
+      // Plain `runtime` would address a directory that never exists, read as
+      // ABSENCE, and mean "never delivered" — a duplicate dressed as a miss.
+      const resolved = app.resolveScopedReceiptStatePath('sideprofile');
+      expect(resolved).toContain(`${path.sep}runtime-sideprofile${path.sep}`);
+      expect(resolved).not.toContain(`${path.sep}runtime${path.sep}`);
+      expect(resolved.endsWith(path.join('model-prompt-receipts', 'receipts-state.json'))).toBe(true);
+    });
+
+    it('AN UNRESOLVED SCOPED ROOT THROWS instead of falling back to main', () => {
+      delete process.env.SQUIDRUN_NOSUCH_PROJECT_ROOT;
+      expect(() => app.resolveScopedReceiptStatePath('nosuch'))
+        .toThrow(/cannot resolve receipt store root/);
+    });
+
+    it('MAIN keeps its canonical default receipt store', () => {
+      expect(app.resolveScopedReceiptStatePath('main')).toBeNull();
+    });
+
+    it('SCOPED TRIGGER PATHS are empty when the profile root is unresolved', () => {
+      // The getProjectRoot() fallback wrote a SCOPED message into MAIN's tree.
+      // That is not a fallback, it is a cross-profile leak that looks like
+      // delivery. No root means no path.
+      delete process.env.SQUIDRUN_NOSUCH_PROJECT_ROOT;
+      expect(app.getScopedTelegramTriggerPaths('nosuch')).toEqual([]);
+    });
+
+    it('SCOPED TRIGGER PATHS point only at the exact profile root', () => {
+      // The suite installs a REAL temp root; getProfileProjectRootOverride
+      // requires existsSync, so a made-up path resolves to null and the
+      // assertion would pass for the wrong reason.
+      const paths = app.getScopedTelegramTriggerPaths('scoped');
+      expect(paths).toHaveLength(1);
+      expect(paths[0]).toContain(path.resolve(scopedProfileRoot));
+      expect(paths[0]).toContain(`triggers-scoped${path.sep}architect.txt`);
+    });
+
+    it('SCOPED DELIVERY refuses BEFORE any WebSocket is constructed', async () => {
+      // My first version spied on the ws MODULE. squidrun-app captured
+      // require('ws') at load, so that spy intercepted nothing and the test was
+      // false-green (Architect #143). This drives the real injection seam.
+      const created = [];
+      const createWebSocket = jest.fn((url) => { created.push(url); throw new Error('should not construct'); });
+
+      delete process.env.SQUIDRUN_NOSUCH_PROJECT_ROOT;
+      const result = await app.deliverScopedTelegramInboundToProfileWindow(
+        'nosuch',
+        'hello',
+        { createWebSocket }
+      );
+
+      expect(createWebSocket).not.toHaveBeenCalled();
+      expect(created).toEqual([]);
+      expect(result).toMatchObject({
+        ok: false,
+        definiteNoSend: true,
+        status: 'scoped_profile_root_unresolved',
+      });
+    });
+
+    it('POSITIVE CONTROL: a resolvable root DOES reach the WebSocket factory', async () => {
+      // Without this, "not called" could simply mean the seam is never used and
+      // the refusal test would pass for the wrong reason.
+      const createWebSocket = jest.fn(() => {
+        const stub = {
+          readyState: 0,
+          on() { return stub; },
+          once() { return stub; },
+          off() { return stub; },
+          removeListener() { return stub; },
+          addEventListener() { return stub; },
+          send() {},
+          close() {},
+          terminate() {},
+          removeAllListeners() {},
+        };
+        return stub;
+      });
+
+      await app.deliverScopedTelegramInboundToProfileWindow(
+        'scoped',
+        'hello',
+        { createWebSocket, timeoutMs: 1 }
+      ).catch(() => {});
+
+      expect(createWebSocket).toHaveBeenCalled();
+      expect(String(createWebSocket.mock.calls[0][0])).toContain('ws://127.0.0.1:');
     });
 
     it('creates exactly ONE coordinator and reuses it', () => {
