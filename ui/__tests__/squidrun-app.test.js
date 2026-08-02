@@ -12533,35 +12533,37 @@ describe('SquidRunApp', () => {
       expect(ordinary).toMatchObject({ status: 'telegram_send_failed', ok: false });
     });
 
-    // HONEST SCOPE: parameterising this over the direct-status branch produced a
-    // FALSE GREEN — removing the direct-status promotion left it passing, which
-    // means the spy does not actually steer execution into that branch. Reduced
-    // to the branch it genuinely exercises. The direct-status wrapper is fixed
-    // in source but NOT covered; that test needs the real precondition, not a
-    // spy on one helper.
-    it('REAL WRAPPER (normal reply): an ambiguous send reaches the adapter as a HOLD', async () => {
-      const direct = false;
-      // Drives the actual routeMainTelegramInboundToMira return shape rather
-      // than a mocked miraOutcome, because the defect was precisely that the
-      // classification never reached the top level of one of the two returns.
-      jest.spyOn(app, 'routeTelegramReply').mockResolvedValue({
+    it.each([
+      ['normal reply', false],
+      ['direct-status reply', true],
+    ])('REAL WRAPPER (%s): an ambiguous send reaches the adapter as a HOLD', async (_l, direct) => {
+      // The direct branch needs BOTH preconditions: the recognizer input
+      // (body 'status') and answer.ok === true. My earlier version mocked only
+      // an answer_text, so both rows fell through to the normal wrapper and the
+      // missing direct promotion survived deletion — a false green.
+      const replySpy = jest.spyOn(app, 'routeTelegramReply').mockResolvedValue({
         handled: true, ok: false,
         accepted: true, ambiguous: true, definiteNoSend: false,
         status: 'telegram_send_ambiguous',
       });
       jest.spyOn(app, 'buildMiraDirectChannelStatusReply')
-        .mockReturnValue(direct ? { answer_text: 'status' } : null);
+        .mockReturnValue(direct ? { ok: true, answer_text: 'status' } : null);
 
       const outcome = await app.routeMainTelegramInboundToMira({
-        body: 'hello',
+        body: direct ? 'status' : 'hello',
         sender: 'james',
         metadata: { chatId: 111, updateId: 998 },
         inboundMessageId: 'telegram-in-998',
         inboundSessionScopeId: 'sess',
       });
 
-      // Whichever branch answered, the adapter must be able to SEE the
-      // ambiguity at the top level.
+      // Prove WHICH branch ran, so a fall-through cannot masquerade as coverage.
+      const sentId = replySpy.mock.calls[0][0].messageId;
+      expect(sentId).toBe(direct
+        ? 'telegram-in-998-mira-direct-status-reply'
+        : 'telegram-in-998-mira-reply');
+
+      // And that the adapter can SEE the ambiguity at the top level.
       expect(outcome).toMatchObject({ ambiguous: true, accepted: true });
     });
 
