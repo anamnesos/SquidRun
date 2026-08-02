@@ -133,6 +133,20 @@ function emitJsonResponse(response, payload, decoder = null) {
   response.emit('end');
 }
 
+// Temp roots for the explicit-statePath cursor tests. Tracked and removed even
+// when the test throws, so a failing run does not leave litter behind.
+const trackedCursorRoots = [];
+function makeTrackedCursorRoot() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-poll-cursor-'));
+  trackedCursorRoots.push(root);
+  return root;
+}
+afterEach(() => {
+  while (trackedCursorRoots.length) {
+    fs.rmSync(trackedCursorRoots.pop(), { recursive: true, force: true });
+  }
+});
+
 describe('telegram-poller', () => {
   afterEach(() => {
     telegramPoller.stop();
@@ -377,7 +391,7 @@ describe('telegram-poller', () => {
     // cursor it cannot durably record. These tests exercise cursor behaviour,
     // so they need a real store rather than a weakened gate.
     const statePathForCursor = path.join(
-      fs.mkdtempSync(path.join(os.tmpdir(), 'tg-poll-cursor-')),
+      makeTrackedCursorRoot(),
       'telegram-poller-state.json'
     );
 
@@ -898,7 +912,7 @@ describe('telegram-poller', () => {
     // cursor it cannot durably record. These tests exercise cursor behaviour,
     // so they need a real store rather than a weakened gate.
     const statePathForCursor = path.join(
-      fs.mkdtempSync(path.join(os.tmpdir(), 'tg-poll-cursor-')),
+      makeTrackedCursorRoot(),
       'telegram-poller-state.json'
     );
 

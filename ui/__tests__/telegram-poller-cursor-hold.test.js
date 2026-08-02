@@ -34,16 +34,32 @@ const ENV = {
   TELEGRAM_CHAT_ID: '123456',
 };
 
+// Every temp root is tracked and removed. An earlier version of this file
+// leaked one per test (11 across a mutation sweep) because mkdtempSync results
+// were never kept.
+const tempRoots = [];
+
 function tempStatePath() {
-  return path.join(
-    fs.mkdtempSync(path.join(os.tmpdir(), 'tg-cursor-hold-')),
-    'telegram-poller-state.json'
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-cursor-hold-'));
+  tempRoots.push(root);
+  return path.join(root, 'telegram-poller-state.json');
+}
+
+/** Write an exact prior cursor so 'held' is proven against a known value. */
+function preseedOffset(statePath, cursorKey, nextOffset) {
+  fs.writeFileSync(
+    statePath,
+    JSON.stringify({ cursors: { [cursorKey]: { nextOffset } } }),
+    'utf8'
   );
 }
 
 /** Mirrors the existing suite's https mock shape. */
+const requestedPaths = [];
+
 function mockUpdates(updates) {
   https.request.mockImplementation((_options, callback) => {
+    requestedPaths.push(String(_options && _options.path ? _options.path : ''));
     const res = {
       statusCode: 200,
       setEncoding() {},
@@ -79,6 +95,10 @@ function durableOffset(statePath) {
 afterEach(() => {
   telegramPoller.stop();
   jest.clearAllMocks();
+  requestedPaths.length = 0;
+  while (tempRoots.length) {
+    fs.rmSync(tempRoots.pop(), { recursive: true, force: true });
+  }
 });
 
 test('CALLBACK REJECT AT N: cursor holds at N, N+1 never delivered, then N replays before N+1', async () => {
@@ -158,4 +178,26 @@ test('SUCCESS PATH: N then N+1 delivered in order and the cursor advances past b
   // And a second poll of the same batch delivers nothing new.
   await telegramPoller._internals.pollNow();
   expect(onMessage).toHaveBeenCalledTimes(2);
+});
+
+test('ZERO CONSUMER: cursor stays at N and the next poll requests N again', async () => {
+  const statePath = tempStatePath();
+  const cursorKey = telegramPoller._internals.getConfigCursorKey(
+    telegramPoller._internals.getTelegramConfig(ENV)
+  );
+  preseedOffset(statePath, cursorKey, 40);
+
+  // start contract is unchanged: it still starts. The hold is at dispatch.
+  telegramPoller.start({ statePath, env: ENV });
+  mockUpdates([msg(40, 'nobody home')]);
+  await telegramPoller._internals.pollNow();
+
+  // Nobody received update 40, so it must not be durably retired...
+  expect(durableOffset(statePath)).toBe(40);
+
+  // ...and the very next request must ask Telegram for 40 again.
+  requestedPaths.length = 0;
+  await telegramPoller._internals.pollNow();
+  expect(requestedPaths.length).toBeGreaterThan(0);
+  expect(requestedPaths[0]).toContain('offset=40');
 });

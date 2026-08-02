@@ -1091,7 +1091,18 @@ async function pollNow() {
       // succeeded. On either failure we leave the offset where it is and stop
       // the batch: stepping to N+1 while N is unrecorded reorders the stream
       // and drops N silently. Replay is recoverable and visible; loss is not.
-      let deliveredOk = true;
+      // `deliveredOk` used to start optimistically true, so with no consumer
+      // every update was treated as delivered and durably retired: Oracle
+      // reproduced 40 -> 41 with nobody receiving the message. A missing
+      // consumer is a delivery failure, not a no-op. start()'s contract is
+      // unchanged; the hold happens here.
+      let deliveredOk = typeof onMessage === 'function';
+      if (!deliveredOk) {
+        heartbeatStatus = 'no_consumer';
+        heartbeatError = `no onMessage consumer; holding offset at update ${updateId}`;
+        log.warn('Telegram', heartbeatError);
+        return;
+      }
       if (typeof onMessage === 'function') {
         try {
           log.info(
