@@ -15166,11 +15166,35 @@ class SquidRunApp {
      * delivered rows invisible, so two records for one part could still read as
      * complete. A duplicate means we cannot say what was sent once.
      */
+    /**
+     * A row that was DELIVERED for this id, regardless of whether its durable
+     * identity checks out. This must be counted separately from correlation:
+     * filtering delivered rows through exact identity made a mismatched or
+     * incomplete record look like "nothing was ever sent", which permits the
+     * Architect fallback and puts a SECOND reply in front of the user on top of
+     * one Mira already delivered.
+     */
+    const basicallyDelivered = (row, messageId) => (
+      row
+      && row.messageId === messageId
+      && row.direction === 'outbound'
+      && row.channel === 'telegram'
+      && row.senderRole === 'mira'
+      && row.ackStatus === 'telegram_delivered'
+      && row.status === 'acked'
+    );
+
     const findRow = (messageId) => {
       const rows = queryCommsJournalEntries({ messageId, limit: 5 }, { strict: true }) || [];
-      const hits = (Array.isArray(rows) ? rows : []).filter((row) => eligible(row, messageId));
-      if (hits.length !== 1) return { row: null, duplicate: hits.length > 1 };
-      return { row: hits[0], duplicate: false };
+      const all = Array.isArray(rows) ? rows : [];
+      const candidates = all.filter((row) => basicallyDelivered(row, messageId));
+      const hits = candidates.filter((row) => eligible(row, messageId));
+      return {
+        row: hits.length === 1 ? hits[0] : null,
+        duplicate: hits.length > 1 || candidates.length > 1,
+        // Something WAS delivered under this id even if we cannot correlate it.
+        anyCandidate: candidates.length > 0,
+      };
     };
 
     const metaOf = (row) => ((row.metadata && typeof row.metadata === 'object') ? row.metadata : {});
@@ -15178,6 +15202,11 @@ class SquidRunApp {
     for (const base of [`${inboundMessageId}-mira-reply`, `${inboundMessageId}-mira-direct-status-reply`]) {
       const single = findRow(base);
       if (single.duplicate) {
+        return { complete: false, anyDelivered: true, delivered: 0, expectedParts: null };
+      }
+      if (!single.row && single.anyCandidate) {
+        // Delivered, but its durable identity does not correlate. HOLD: we
+        // cannot prove it was this message, and we cannot prove it was not.
         return { complete: false, anyDelivered: true, delivered: 0, expectedParts: null };
       }
       if (single.row) {
@@ -15194,6 +15223,9 @@ class SquidRunApp {
       if (first.duplicate) {
         return { complete: false, anyDelivered: true, delivered: 0, expectedParts: null };
       }
+      if (!first.row && first.anyCandidate) {
+        return { complete: false, anyDelivered: true, delivered: 0, expectedParts: null };
+      }
       if (!first.row) continue;
 
       const firstMeta = metaOf(first.row);
@@ -15205,7 +15237,7 @@ class SquidRunApp {
       const seen = new Set([1]);
       for (let part = 2; part <= expectedParts; part += 1) {
         const found = findRow(`${base}-part${part}`);
-        if (found.duplicate || !found.row) break;
+        if (found.duplicate || !found.row) break; // uncorrelated or missing: partial
         const meta = metaOf(found.row);
         if (asPositiveInt(meta.chunkCount) !== expectedParts) break;
         if (asPositiveInt(meta.chunkIndex) !== part) break;

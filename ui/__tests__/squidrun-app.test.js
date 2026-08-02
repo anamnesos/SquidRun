@@ -12870,6 +12870,62 @@ describe('SquidRunApp', () => {
       })).toThrow(/must match the inbound id/);
     });
 
+    // All FIVE identity fields, in BOTH failure modes. Each one, missing or
+    // wrong, must still count as visible egress that HOLDS.
+    it.each([
+      ['MISSING inboundMessageId', (row) => { delete row.metadata.inboundMessageId; }],
+      ['MISSING chatId', (row) => { delete row.metadata.chatId; }],
+      ['MISSING windowKey', (row) => { delete row.metadata.windowKey; }],
+      ['MISSING profile', (row) => { delete row.metadata.profile; }],
+      ['MISSING routeKey', (row) => { delete row.metadata.routeKey; }],
+      ['MISMATCHED inboundMessageId', (row) => { row.metadata.inboundMessageId = 'telegram-in-999'; }],
+      ['MISMATCHED chatId', (row) => { row.metadata.chatId = 222; }],
+      ['MISMATCHED windowKey', (row) => { row.metadata.windowKey = 'someone-else'; }],
+      ['MISMATCHED profile', (row) => { row.metadata.profile = 'someone-else'; }],
+      ['MISMATCHED routeKey', (row) => { row.metadata.routeKey = 'someone-else'; }],
+    ])('A DELIVERED ROW WITH %s is anyDelivered, so it HOLDS', (_l, corrupt) => {
+      // Filtering delivered rows through exact identity made an uncorrelated
+      // record look like "nothing was ever sent" — which permits the Architect
+      // fallback and stacks a SECOND reply on top of one Mira already sent.
+      const commsJournal = require('../modules/main/comms-journal');
+      const row = chunkRow(BASE800, 1, 1);
+      delete row.metadata.chunkIndex;
+      delete row.metadata.chunkCount;
+      row.messageId = BASE800;
+      corrupt(row);
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries')
+        .mockImplementation(({ messageId }) => (messageId === BASE800 ? [row] : []));
+
+      const egress = app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800);
+      expect(egress.complete).toBe(false);
+      expect(egress.anyDelivered).toBe(true);
+    });
+
+    it('AN UNCORRELATED MIRA DELIVERY does NOT fall back to the Architect pane', async () => {
+      // The end-to-end consequence: partial/uncorrelated egress must hold.
+      jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
+      jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue({
+        ok: false, handled: true, status: 'telegram_send_failed',
+      });
+      jest.spyOn(app, 'inspectMiraOutboundEgress').mockReturnValue({
+        complete: false, anyDelivered: true, delivered: 0, expectedParts: null,
+      });
+      const architectSpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true, verified: true, userVisible: true,
+      });
+
+      const result = await app.deliverTelegramInboundJob({
+        body: 'hello', sender: 'james', metadata: { chatId: 111, updateId: 810 },
+        media: null, photo: null, document: null, archivePath: null,
+        inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
+        inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
+        inboundMessageId: 'telegram-in-810', updateId: 810, messageId: 1, sentAtMs: Date.now(),
+      });
+
+      expect(architectSpy).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ accepted: true });
+    });
+
     it('creates exactly ONE coordinator and reuses it', () => {
       // Two coordinators would each hold their own single-flight latch and could
       // deliver the same record twice.
