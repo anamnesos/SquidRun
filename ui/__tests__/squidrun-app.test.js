@@ -12447,6 +12447,92 @@ describe('SquidRunApp', () => {
       expect(app.telegramDrainCoordinator).toBeNull();
     });
 
+    it.each([
+      ['ambiguous send', { ok: false, ambiguous: true, status: 'telegram_send_ambiguous' }],
+      ['accepted but not ok', { ok: false, accepted: true, status: 'telegram_send_ambiguous' }],
+    ])('MIRA %s HOLDS and never falls back to the Architect pane', async (_l, miraOutcome) => {
+      // A send that may already have reached James must not be followed by an
+      // Architect reply: that is two visible answers to one inbound message,
+      // inside a SINGLE delivery attempt, which no queue bookkeeping can undo.
+      jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
+      jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue(miraOutcome);
+      jest.spyOn(app, 'inspectMiraOutboundEgress').mockReturnValue({
+        complete: false, anyDelivered: false, delivered: 0, expectedParts: null,
+      });
+      const architectSpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true, verified: true, userVisible: true,
+      });
+
+      const result = await app.deliverTelegramInboundJob({
+        body: 'hello', sender: 'james', metadata: { chatId: 111, updateId: 995 },
+        media: null, photo: null, document: null, archivePath: null,
+        inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
+        inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
+        inboundMessageId: 'telegram-in-995', updateId: 995, messageId: 1, sentAtMs: Date.now(),
+      });
+
+      expect(result).toMatchObject({ status: 'accepted.mira_send_ambiguous', accepted: true });
+      expect(architectSpy).not.toHaveBeenCalled();
+    });
+
+    it('A PROVEN pre-HTTP no-send MAY fall back to the Architect pane', async () => {
+      // Nothing left the process, so a fallback here is the only delivery.
+      jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
+      jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue({
+        ok: false, definiteNoSend: true, accepted: false, ambiguous: false,
+        status: 'telegram_send_failed',
+      });
+      jest.spyOn(app, 'inspectMiraOutboundEgress').mockReturnValue({
+        complete: false, anyDelivered: false, delivered: 0, expectedParts: null,
+      });
+      const architectSpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true, verified: true, userVisible: true,
+      });
+
+      await app.deliverTelegramInboundJob({
+        body: 'hello', sender: 'james', metadata: { chatId: 111, updateId: 996 },
+        media: null, photo: null, document: null, archivePath: null,
+        inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
+        inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
+        inboundMessageId: 'telegram-in-996', updateId: 996, messageId: 1, sentAtMs: Date.now(),
+      });
+
+      expect(architectSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('routeTelegramReply marks a strict-path network failure AMBIGUOUS, not failed', async () => {
+      // The classification happens here, so it needs its own cover: the adapter
+      // tests mock routeMainTelegramInboundToMira and never exercise it.
+      const routing = require('../scripts/hm-telegram-routing');
+      jest.spyOn(routing, 'sendRoutedTelegramMessage')
+        .mockResolvedValue({ ok: false, error: 'read ECONNRESET' });
+      jest.spyOn(app, 'resolveTelegramInboundRoute').mockReturnValue({
+        ok: true, profile: 'main', windowKey: 'main',
+      });
+
+      const strict = await app.routeTelegramReply({
+        target: 'telegram',
+        content: 'reply',
+        fromRole: 'mira',
+        messageId: 'telegram-in-997-mira-reply',
+        chatId: 1111111111,
+        requireDurableJournal: true,
+        inboundMessageId: 'telegram-in-997',
+      });
+      expect(strict).toMatchObject({ status: 'telegram_send_ambiguous', ambiguous: true });
+
+      // And an ordinary sender is unaffected: its retry logic depends on a
+      // plain failure, so ambiguity must not leak outside the strict path.
+      const ordinary = await app.routeTelegramReply({
+        target: 'telegram',
+        content: 'reply',
+        fromRole: 'architect',
+        messageId: 'tg-ordinary',
+        chatId: 1111111111,
+      });
+      expect(ordinary).toMatchObject({ status: 'telegram_send_failed', ok: false });
+    });
+
     it('creates exactly ONE coordinator and reuses it', () => {
       // Two coordinators would each hold their own single-flight latch and could
       // deliver the same record twice.

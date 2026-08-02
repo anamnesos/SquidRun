@@ -12087,13 +12087,29 @@ class SquidRunApp {
         },
       });
       if (!result?.ok) {
+        // AMBIGUITY MUST SURVIVE THIS BOUNDARY. Collapsing every failure to
+        // telegram_send_failed told the Mira adapter "nothing was sent", and it
+        // then fell back to the Architect pane — a SECOND visible reply for one
+        // inbound message, inside a single delivery attempt. Only a proven
+        // pre-HTTP no-send, or a definite rejection from Telegram itself, is
+        // safe to treat that way.
+        // SCOPED to the strict path. Marking every failure ambiguous changed
+        // unrelated senders whose retry logic depends on a plain
+        // telegram_send_failed — the reply-dedup guard would have started
+        // suppressing legitimate retries after an ECONNRESET. Only the callers
+        // that opted into durable claims get ambiguity semantics.
+        const provenNoSend = requireDurableJournal !== true
+          || result?.definiteNoSend === true
+          || result?.error === 'empty_message';
         return {
           handled: true,
           ok: false,
-          accepted: false,
+          accepted: !provenNoSend,
+          ambiguous: !provenNoSend,
+          definiteNoSend: provenNoSend,
           queued: false,
           verified: false,
-          status: 'telegram_send_failed',
+          status: provenNoSend ? 'telegram_send_failed' : 'telegram_send_ambiguous',
           error: result?.error || 'unknown_error',
         };
       }
@@ -14743,6 +14759,20 @@ class SquidRunApp {
         );
         return {
           status: 'accepted.mira_partial_egress',
+          accepted: true,
+          ...deliveryIdentity,
+        };
+      }
+
+      // An ambiguous send may already have reached James. Falling back now is
+      // how he sees the same answer twice.
+      if (miraOutcome?.ambiguous === true || miraOutcome?.accepted === true) {
+        log.warn(
+          'Telegram',
+          `Mira send for ${inboundMessageId} is ambiguous (${miraOutcome?.status || 'unknown'}); holding instead of falling back`
+        );
+        return {
+          status: 'accepted.mira_send_ambiguous',
           accepted: true,
           ...deliveryIdentity,
         };

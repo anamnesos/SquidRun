@@ -903,6 +903,7 @@ async function sendTelegram(message, env = process.env, options = {}) {
       originalLength: preparedMessage.originalLength,
     }),
   };
+  let durableClaimHeld = false;
   if (opts.requireDurableJournal === true) {
     // FAIL CLOSED BEFORE THE HTTP CALL. Sending without this row would leave a
     // crash mid-send indistinguishable from never having sent, and the replay
@@ -911,11 +912,15 @@ async function sendTelegram(message, env = process.env, options = {}) {
     if (!recorded.ok) {
       return {
         ok: false,
+        // PROVEN no-send: we never reached the network, so a caller may safely
+        // treat this as a definite failure and fall back.
+        definiteNoSend: true,
         error: recorded.error,
         reason: recorded.reason,
         messageId,
       };
     }
+    durableClaimHeld = true;
   } else {
     upsertTelegramJournal(recordEntry);
   }
