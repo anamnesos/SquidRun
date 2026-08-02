@@ -1087,3 +1087,34 @@ test('A DIRECT pass arriving mid-drain sets rerun, so newly queued work is not d
   expect(seen).toEqual(['telegram-in-500', 'telegram-in-501']);
   expect(queue.readPending(dir)).toHaveLength(0);
 });
+
+test('THE INJECTED QUEUE OWNS ATTEMPT STORAGE, not the default module', () => {
+  // Rejecting a queue that LACKS the attempt methods proves only that the
+  // check exists. It does not prove the coordinator actually calls the injected
+  // ones — rebinding to defaultQueue while the injected methods merely exist
+  // would leave every other drain test green. These spies do not touch disk, so
+  // if the default module were used instead, its sidecar file would appear.
+  return (async () => {
+    const base = tempRoot();
+    const dir = seed(base, 'main', [600]);
+    const reads = [];
+    const appends = [];
+
+    const drain = coordinator({
+      queue: {
+        ...queue,
+        readAttemptState: (d) => { reads.push(d); return new Map(); },
+        appendAttempt: (d, updateId, state) => { appends.push({ d, updateId, state }); return { ok: true }; },
+      },
+      deliver: async (job) => provenFor(job),
+    });
+
+    await drain.schedule(dir, 'main');
+
+    // The injected implementations were the ones consulted...
+    expect(reads).toEqual([dir]);
+    expect(appends).toEqual([{ d: dir, updateId: 600, state: 'attempted' }]);
+    // ...and nothing wrote through the default module's path.
+    expect(fs.existsSync(queue.attemptsPath(dir))).toBe(false);
+  })();
+});
