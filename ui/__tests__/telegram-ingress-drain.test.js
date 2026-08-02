@@ -55,7 +55,20 @@ function routerFor(routeKey, windowKey = routeKey) {
   return () => ({ ok: true, profile: routeKey, windowKey });
 }
 
-const PROVEN = { status: 'delivered.verified', verified: true };
+// A real delivery adapter knows what it delivered, so it attaches identity.
+// These helpers model that boundary; the validator never invents it.
+function identityOf(job) {
+  return {
+    messageId: job.messageId,
+    routeKey: job.routeKey,
+    windowKey: job.windowKey,
+    profile: job.profile,
+  };
+}
+function provenFor(job) {
+  return { ...identityOf(job), status: 'delivered.verified', verified: true };
+}
+const PROVEN_NO_IDENTITY = { status: 'delivered.verified', verified: true };
 const IDENT = { messageId: 'telegram-in-60', routeKey: 'main', windowKey: 'main', profile: 'main' };
 const UNPROVEN = { status: 'accepted.daemon_pty_unverified', accepted: true };
 
@@ -64,7 +77,7 @@ function coordinator(overrides = {}) {
     queue,
     log: silentLog,
     resolveRoute: routerFor('main', 'main'),
-    deliver: async () => PROVEN,
+    deliver: async (job) => provenFor(job),
     currentSessionFor: () => 'session-now',
     ...overrides,
   });
@@ -76,7 +89,7 @@ test('STARTUP DRAIN of an app-down backlog delivers N then N+1 and retires both'
   const base = tempRoot();
   const dir = seed(base, 'main', [10, 11]);
   const seen = [];
-  const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return PROVEN; } });
+  const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
 
   const res = await drain.schedule(dir, 'main');
 
@@ -93,7 +106,7 @@ test('DELIVERY FAILURE AT N blocks N+1 and leaves both pending', async () => {
     deliver: async (job) => {
       seen.push(job.messageId);
       if (job.updateId === 20) throw new Error('pane down');
-      return PROVEN;
+      return provenFor(job);
     },
   });
 
@@ -110,7 +123,7 @@ test('ACK FAILURE AT N blocks N+1 even though N was delivered', async () => {
   const seen = [];
   const drain = coordinator({
     queue: { readPending: queue.readPending, ack: () => ({ ok: false, reason: 'eio' }) },
-    deliver: async (job) => { seen.push(job.messageId); return PROVEN; },
+    deliver: async (job) => { seen.push(job.messageId); return provenFor(job); },
   });
 
   const res = await drain.schedule(dir, 'main');
@@ -126,7 +139,7 @@ test('CONCURRENT SCHEDULES single-flight: one drain, no double delivery', async 
   let release;
   const gate = new Promise((r) => { release = r; });
   const drain = coordinator({
-    deliver: async (job) => { seen.push(job.messageId); await gate; return PROVEN; },
+    deliver: async (job) => { seen.push(job.messageId); await gate; return provenFor(job); },
   });
 
   const a = drain.schedule(dir, 'main');
@@ -180,13 +193,41 @@ test('A LATER CORRELATED RECEIPT retires the record with no second injection', a
   expect(queue.readPending(dir)).toHaveLength(0);
 });
 
+const FULL_ID = {
+  messageId: 'telegram-in-1', routeKey: 'main', windowKey: 'main', profile: 'main',
+};
+
 test.each([
   ['verified', { verified: true }],
   ['userVisible', { userVisible: true }],
   ['durable handoff', { durableHandoff: true }],
   ['allowlisted status', { status: 'durable.pending_handoff' }],
-])('PROOF SHAPES accepted: %s', (_l, receipt) => {
+])('PROOF CLASS accepted: %s', (_l, receipt) => {
   expect(isProvenOwnership(receipt)).toBe(true);
+  expect(isCorrelatedProof({ ...FULL_ID, ...receipt }, FULL_ID)).toBe(true);
+});
+
+test.each([
+  ['no identity at all', {}],
+  ['missing messageId', { routeKey: 'main', windowKey: 'main', profile: 'main' }],
+  ['missing routeKey', { messageId: 'telegram-in-1', windowKey: 'main', profile: 'main' }],
+  ['missing windowKey', { messageId: 'telegram-in-1', routeKey: 'main', profile: 'main' }],
+  ['missing profile', { messageId: 'telegram-in-1', routeKey: 'main', windowKey: 'main' }],
+])('IDENTITY-FREE PROOF IS FORGERY: verified:true with %s is rejected', (_l, partial) => {
+  // The exact hole Architect #62 caught: the validator used to merge the
+  // expected identity into the receipt and then "verify" it.
+  expect(isCorrelatedProof({ ...partial, verified: true }, FULL_ID)).toBe(false);
+});
+
+test('A DELIVERY RECEIPT WITHOUT IDENTITY DOES NOT RETIRE THE RECORD', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [190]);
+  const drain = coordinator({ deliver: async () => PROVEN_NO_IDENTITY });
+
+  const res = await drain.schedule(dir, 'main');
+
+  expect(res.stoppedAt).toMatchObject({ updateId: 190 });
+  expect(queue.readPending(dir)).toHaveLength(1);
 });
 
 test.each([
@@ -211,7 +252,7 @@ test('ROUTE CHANGE holds the record and delivers nowhere', async () => {
   const drain = coordinator({
     // The chat now points at a different profile than when it was appended.
     resolveRoute: () => ({ ok: true, profile: 'sideprofile', windowKey: 'sideprofile' }),
-    deliver: async (job) => { seen.push(job.messageId); return PROVEN; },
+    deliver: async (job) => { seen.push(job.messageId); return provenFor(job); },
   });
 
   const res = await drain.schedule(dir, 'main');
@@ -239,11 +280,11 @@ test('ROUTE ISOLATION: main and scoped journals drain independently', async () =
   const seen = [];
   const mainDrain = coordinator({
     resolveRoute: routerFor('main', 'main'),
-    deliver: async (job) => { seen.push(`main:${job.updateId}`); return PROVEN; },
+    deliver: async (job) => { seen.push(`main:${job.updateId}`); return provenFor(job); },
   });
   const scopedDrain = coordinator({
     resolveRoute: routerFor('sideprofile', 'sideprofile'),
-    deliver: async (job) => { seen.push(`scoped:${job.updateId}`); return PROVEN; },
+    deliver: async (job) => { seen.push(`scoped:${job.updateId}`); return provenFor(job); },
   });
 
   await mainDrain.schedule(mainDir, 'main');
@@ -270,7 +311,7 @@ test('TERMINAL TOMBSTONE retires after route validation without any pane deliver
   const base = tempRoot();
   const dir = seed(base, 'main', [110], { terminalDisposition: 'empty_body' });
   const seen = [];
-  const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return PROVEN; } });
+  const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
 
   const res = await drain.schedule(dir, 'main');
 
@@ -294,7 +335,7 @@ test('FULL ROUND-TRIP: media and rawMetadata reach the delivery job intact', asy
   const base = tempRoot();
   const dir = seed(base, 'main', [120]);
   let job = null;
-  const drain = coordinator({ deliver: async (j) => { job = j; return PROVEN; } });
+  const drain = coordinator({ deliver: async (j) => { job = j; return provenFor(job); } });
 
   await drain.schedule(dir, 'main');
 
@@ -316,7 +357,7 @@ test('OUR OWN BROKERED ROW MUST NEVER RETIRE THE QUEUE', async () => {
   const dir = seed(base, 'main', [130]);
   const seen = [];
   const drain = coordinator({
-    deliver: async (job) => { seen.push(job.messageId); return PROVEN; },
+    deliver: async (job) => { seen.push(job.messageId); return provenFor(job); },
     findExistingReceipt: async () => ({
       messageId: 'telegram-in-130',
       routeKey: 'main',
@@ -422,7 +463,7 @@ test('ACK THROW stops at N exactly like ack false', async () => {
       readPending: queue.readPending,
       ack: () => { throw new Error('EIO'); },
     },
-    deliver: async (job) => { seen.push(job.messageId); return PROVEN; },
+    deliver: async (job) => { seen.push(job.messageId); return provenFor(job); },
   });
 
   const res = await drain.schedule(dir, 'main');
@@ -435,7 +476,7 @@ test('UNKNOWN TERMINAL DISPOSITION holds instead of retiring undelivered', async
   const base = tempRoot();
   const dir = seed(base, 'main', [180], { terminalDisposition: 'corrupted_value' });
   const seen = [];
-  const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return PROVEN; } });
+  const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
 
   const res = await drain.schedule(dir, 'main');
 

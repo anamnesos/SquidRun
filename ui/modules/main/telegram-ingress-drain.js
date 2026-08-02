@@ -63,12 +63,21 @@ function proofClassOf(evidence) {
  * merely truthy. A verified receipt for a different message, or for the same
  * message on a different route, proves nothing about this record.
  */
+const IDENTITY_FIELDS = ['messageId', 'routeKey', 'windowKey', 'profile'];
+
 function isCorrelatedProof(evidence, expected = {}) {
   if (!evidence || typeof evidence !== 'object') return false;
-  if (!expected.messageId || evidence.messageId !== expected.messageId) return false;
-  if (!expected.routeKey || evidence.routeKey !== expected.routeKey) return false;
-  if (expected.windowKey && evidence.windowKey && evidence.windowKey !== expected.windowKey) return false;
-  if (expected.profile && evidence.profile && evidence.profile !== expected.profile) return false;
+  // The EVIDENCE must carry every identity field itself and match exactly. An
+  // earlier version merged the expected identity into the receipt before
+  // validating, which meant the check was reading values it had just written:
+  // a bare {verified:true} with no identity at all sailed through. Never
+  // synthesize identity inside the validator. A delivery adapter may attach it
+  // at the boundary, where it actually knows what it delivered.
+  for (const field of IDENTITY_FIELDS) {
+    const want = expected[field];
+    if (typeof want !== 'string' || !want) return false;
+    if (evidence[field] !== want) return false;
+  }
   return proofClassOf(evidence) !== null;
 }
 
@@ -186,12 +195,9 @@ function createDrainCoordinator(deps = {}) {
     }
 
     // (5) The acceptance-proof gate.
-    // The delivery receipt carries the same identity requirement: a proof that
-    // cannot be tied to this message and route is not a proof of this message.
-    const stamped = receipt && typeof receipt === 'object'
-      ? { ...expectedIdentity, ...receipt }
-      : receipt;
-    if (!isCorrelatedProof(stamped, expectedIdentity)) {
+    // The delivery receipt is held to the same standard: it must carry the
+    // identity of what it claims to have delivered.
+    if (!isCorrelatedProof(receipt, expectedIdentity)) {
       return { stop: true, reason: `unproven_acceptance:${receipt?.status || 'no_receipt'}` };
     }
     return { retire: true };
@@ -299,6 +305,7 @@ module.exports = {
   isProvenOwnership,
   isCorrelatedProof,
   proofClassOf,
+  IDENTITY_FIELDS,
   TERMINAL_DISPOSITIONS,
   downstreamMessageId,
   DEFAULT_BACKOFF_MS,
