@@ -234,10 +234,15 @@ function createDrainCoordinator(deps = {}) {
   const now = typeof deps.now === 'function' ? deps.now : () => Date.now();
   const currentSessionFor = deps.currentSessionFor || (() => null);
   const backoffMs = Number.isFinite(Number(deps.backoffMs)) ? Number(deps.backoffMs) : DEFAULT_BACKOFF_MS;
+  const sweepIntervalMs = Number.isFinite(Number(deps.sweepIntervalMs))
+    ? Number(deps.sweepIntervalMs)
+    : 60 * 1000;
 
   // Per-directory state. `running` is the exclusivity latch; `rerun` coalesces
   // every schedule that arrives while a drain is in flight into ONE extra pass.
   const state = new Map();
+  let disposed = false;
+  const inFlight = new Set();
 
   function stateFor(dir) {
     if (!state.has(dir)) {
@@ -466,6 +471,9 @@ function createDrainCoordinator(deps = {}) {
    * at most one follow-up pass so work appended during a drain is not stranded.
    */
   async function schedule(dir, routeKey) {
+    // After dispose nothing may deliver. Refusing loudly beats a timer firing
+    // into a half-torn-down app.
+    if (disposed) return { ok: false, reason: 'coordinator_disposed' };
     const st = stateFor(dir);
     if (st.running) {
       st.rerun = true;
@@ -479,12 +487,21 @@ function createDrainCoordinator(deps = {}) {
       return { ok: true, blocked: true, blockedUntilMs: st.blockedUntilMs };
     }
     st.running = true;
+    let settle;
+    const tracked = new Promise((resolve) => { settle = resolve; });
+    inFlight.add(tracked);
     let last = { ok: true, delivered: 0, pending: 0, stoppedAt: null };
     try {
       do {
         st.rerun = false;
         last = await drainOnce(dir, routeKey);
         if (last.stoppedAt) {
+          // AUTO-ARM. Production has no caller standing by at the moment proof
+          // lands, so a hold that waits for an external poke waits forever. The
+          // first unresolved hold arms the sweep itself, exactly once per dir.
+          if (last.stoppedAt.failureClass === 'awaiting_proof') {
+            armProofSweep(dir, routeKey);
+          }
           // Only a DEFINITE failure earns a retry deadline. An awaiting-proof
           // hold has no deadline at all: it is released by proof, not by time.
           if (last.stoppedAt.failureClass === 'definite') {
@@ -495,6 +512,8 @@ function createDrainCoordinator(deps = {}) {
       } while (st.rerun);
     } finally {
       st.running = false;
+      inFlight.delete(tracked);
+      settle();
     }
     return last;
   }
@@ -524,14 +543,24 @@ function createDrainCoordinator(deps = {}) {
    * The timer only re-checks proof — it never re-delivers, because the
    * awaiting-proof latch and the durable attempt marker both still apply.
    */
-  function startProofSweep(dir, routeKey, intervalMs = 60 * 1000) {
-    stopProofSweep(dir);
+  function armProofSweep(dir, routeKey) {
+    if (disposed) return null;
+    const st = stateFor(dir);
+    // Exactly one per dir: re-arming on every hold would multiply timers for a
+    // queue that is already stuck.
+    if (st.sweepTimer) return st.sweepTimer;
     const timer = setInterval(() => {
-      void schedule(dir, routeKey).catch(() => {});
-    }, intervalMs);
+      schedule(dir, routeKey).catch((err) => {
+        log.warn('Telegram', `Proof sweep failed for ${routeKey}: ${err.message}`);
+      });
+    }, sweepIntervalMs);
     if (typeof timer.unref === 'function') timer.unref();
-    stateFor(dir).sweepTimer = timer;
+    st.sweepTimer = timer;
     return timer;
+  }
+
+  function startProofSweep(dir, routeKey) {
+    return armProofSweep(dir, routeKey);
   }
 
   function stopProofSweep(dir) {
@@ -543,8 +572,12 @@ function createDrainCoordinator(deps = {}) {
   }
 
   /** Cancel every sweep. Called on shutdown so no timer outlives the app. */
-  function dispose() {
+  async function dispose() {
+    disposed = true;
     for (const dir of Array.from(state.keys())) stopProofSweep(dir);
+    // Let anything already delivering finish before the app tears down the
+    // journals and poller underneath it.
+    await Promise.all(Array.from(inFlight));
   }
 
   return {
@@ -552,8 +585,10 @@ function createDrainCoordinator(deps = {}) {
     drainOnce,
     discoverRouteDirs,
     startProofSweep,
+    armProofSweep,
     stopProofSweep,
     dispose,
+    isDisposed: () => disposed,
     _internals: {
     isProvenOwnership, isCorrelatedProof, downstreamMessageId, processRecord, state,
     readAttemptState, appendAttempt, attemptsPath,

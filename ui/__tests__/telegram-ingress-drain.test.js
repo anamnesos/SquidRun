@@ -784,11 +784,11 @@ test('A CORRUPT ATTEMPT JOURNAL FAILS CLOSED', async () => {
   expect(res.stoppedAt).toBeTruthy();
 });
 
-test('SELF-DRIVEN SWEEP retires a lone awaiting-proof message with no external poke', async () => {
-  // The previous version of this test called schedule() by hand after setting
-  // proof, which proved retirement after an external nudge — not that anything
-  // in production would ever nudge it. In production nothing does until the
-  // NEXT inbound message arrives, so a lone N stranded forever.
+test('SWEEP ARMS ITSELF on the first hold and retires with NO external call', async () => {
+  // Two versions of this test were wrong before. The first called schedule() by
+  // hand after installing proof; the second called startProofSweep() by hand.
+  // Both were external pokes that production does not perform. The coordinator
+  // has to arm the sweep itself the moment it first holds.
   jest.useFakeTimers();
   try {
     const base = tempRoot();
@@ -796,6 +796,7 @@ test('SELF-DRIVEN SWEEP retires a lone awaiting-proof message with no external p
     let receipt = null;
     const seen = [];
     const drain = coordinator({
+      sweepIntervalMs: 1000,
       deliver: async (job) => { seen.push(job.messageId); return UNPROVEN; },
       findExistingReceipt: async (identity) => receipt && { ...identity, ...receipt },
     });
@@ -803,23 +804,66 @@ test('SELF-DRIVEN SWEEP retires a lone awaiting-proof message with no external p
     await drain.schedule(dir, 'main');
     expect(queue.readPending(dir)).toHaveLength(1);
 
+    // Proof lands out of band. Nothing calls schedule or startProofSweep.
     receipt = { status: 'delivered.verified', verified: true };
-    drain.startProofSweep(dir, 'main', 1000);
-
-    // No schedule() call, no discovery, no N+1 appended.
     jest.advanceTimersByTime(1000);
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
     jest.useRealTimers();
-    await new Promise((resolve) => setImmediate(resolve));
+    for (let i = 0; i < 6; i += 1) await new Promise((r) => setImmediate(r));
 
     expect(seen).toEqual(['telegram-in-340']);
     expect(queue.readPending(dir)).toHaveLength(0);
-    drain.dispose();
+    await drain.dispose();
   } finally {
     jest.useRealTimers();
   }
+});
+
+test('ONE sweep per dir, however many holds occur', async () => {
+  jest.useFakeTimers();
+  try {
+    const base = tempRoot();
+    const dir = seed(base, 'main', [341]);
+    const drain = coordinator({
+      sweepIntervalMs: 1000,
+      deliver: async () => UNPROVEN,
+    });
+    await drain.schedule(dir, 'main');
+    const first = drain._internals.state.get(dir).sweepTimer;
+    await drain.schedule(dir, 'main');
+    expect(drain._internals.state.get(dir).sweepTimer).toBe(first);
+    await drain.dispose();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test('DISPOSE awaits an in-flight drain and refuses everything after', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [342]);
+  const seen = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const drain = coordinator({
+    deliver: async (job) => { seen.push(job.messageId); await gate; return provenFor(job); },
+  });
+
+  const order = [];
+  const running = drain.schedule(dir, 'main').then(() => order.push('drain-settled'));
+  const disposing = drain.dispose().then(() => order.push('dispose-returned'));
+  release();
+  await Promise.all([running, disposing]);
+
+  // dispose() must not return until the in-flight delivery has settled — the
+  // app tears down journals and the poller right after it resolves.
+  expect(order).toEqual(['drain-settled', 'dispose-returned']);
+  expect(seen).toEqual(['telegram-in-342']);
+  expect(drain.isDisposed()).toBe(true);
+
+  // And nothing may start afterwards.
+  const after = await drain.schedule(dir, 'main');
+  expect(after).toMatchObject({ ok: false, reason: 'coordinator_disposed' });
+  expect(drain.armProofSweep(dir, 'main')).toBeNull();
+  expect(seen).toEqual(['telegram-in-342']);
 });
 
 test('DISPOSE cancels the sweep so no timer outlives the app', async () => {

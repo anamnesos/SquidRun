@@ -15266,6 +15266,18 @@ class SquidRunApp {
   async shutdown() {
     log.info('App', 'Shutting down SquidRun Application');
     this.shuttingDown = true;
+    // Before journals and the poller are torn down: a drain mid-delivery would
+    // otherwise write into closed stores, and a live sweep would fire into a
+    // half-dismantled app.
+    if (this.telegramDrainCoordinator) {
+      try {
+        await this.telegramDrainCoordinator.dispose();
+      } catch (err) {
+        log.warn('Telegram', `Ingress drain dispose failed: ${err.message}`);
+      }
+      this.telegramDrainCoordinator = null;
+      this.telegramDrainInFlight = null;
+    }
     this.clearPtyDataFlushTimer();
     this.flushBufferedPtyData();
     this.clearPtyVisibleReleaseTimer();
