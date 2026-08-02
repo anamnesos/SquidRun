@@ -157,6 +157,20 @@ jest.mock('../modules/main/pane-host-window-manager', () => ({
   }),
 }));
 
+// CONTAINMENT: the Telegram wiring tests below invoke the real onMessage, which
+// now durably appends before delivering. Without this the suite would write real
+// ingress journals under whatever base the mocked project root resolves to. The
+// double derives the updateId the production helper would and writes NOTHING.
+jest.mock('../modules/main/telegram-ingress-spool', () => ({
+  __esModule: false,
+  acceptInbound: jest.fn((input = {}) => {
+    const updateId = Number(input?.metadata?.updateId);
+    if (!Number.isFinite(updateId)) return { ok: false, reason: 'missing_update_id' };
+    return { ok: true, durable: true, updateId, deduped: false, dir: '<mock>' };
+  }),
+  resolveSpoolDir: jest.fn(() => ({ ok: true, dir: '<mock>' })),
+}));
+
 jest.mock('../modules/main/comms-journal', () => ({
   appendCommsJournalEntry: jest.fn(() => ({ ok: true, rowId: 1 })),
   closeCommsJournalStores: jest.fn(),
@@ -8038,6 +8052,71 @@ describe('SquidRunApp', () => {
       );
       expect(forwardSpy).not.toHaveBeenCalled();
       expect(deliverySpy).not.toHaveBeenCalled();
+    });
+
+    it('scoped Telegram inbound appends durably BEFORE delivery and returns exact durable acceptance', async () => {
+      // The behavioural seam Architect #54 required. A SOURCE check on return
+      // shape cannot prove this: the parent releases the Telegram cursor on the
+      // value this callback resolves to, so the value has to be exercised.
+      const spool = require('../modules/main/telegram-ingress-spool');
+      spool.acceptInbound.mockClear();
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+
+      const order = [];
+      spool.acceptInbound.mockImplementationOnce((input) => {
+        order.push('append');
+        return { ok: true, durable: true, updateId: Number(input.metadata.updateId), deduped: false, dir: '<mock>' };
+      });
+      const scopedRuntimeSpy = jest
+        .spyOn(app, 'deliverScopedTelegramInboundToProfileWindow')
+        .mockImplementation(async () => {
+          order.push('deliver');
+          return { status: 'delivered.verified' };
+        });
+
+      app.startTelegramPoller();
+      const options = telegramPoller.start.mock.calls[0][0];
+      const result = await options.onMessage('scoped body', 'scoped', {
+        chatId: 2222222222,
+        updateId: 4103,
+      });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Exact acceptance: the parent's correlation guard compares updateId.
+      expect(result).toEqual({ ok: true, durable: true, updateId: 4103 });
+      expect(spool.acceptInbound).toHaveBeenCalledTimes(1);
+      expect(scopedRuntimeSpy).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(['append', 'deliver']);
+    });
+
+    it('scoped Telegram inbound reports non-durable and schedules NO delivery when the append is refused', async () => {
+      const spool = require('../modules/main/telegram-ingress-spool');
+      spool.acceptInbound.mockClear();
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+
+      spool.acceptInbound.mockImplementationOnce(() => ({ ok: false, reason: 'disk_full' }));
+      const scopedRuntimeSpy = jest
+        .spyOn(app, 'deliverScopedTelegramInboundToProfileWindow')
+        .mockResolvedValue({ status: 'delivered.verified' });
+
+      app.startTelegramPoller();
+      const options = telegramPoller.start.mock.calls[0][0];
+      const result = await options.onMessage('scoped body', 'scoped', {
+        chatId: 2222222222,
+        updateId: 4104,
+      });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Not durable => parent NACKs => cursor holds => Telegram replays it.
+      // Delivering anyway would double-deliver on every replay.
+      expect(result).toEqual({ ok: false, reason: 'disk_full' });
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
     });
 
     it('routes configured non-owner Telegram inbound to the scoped profile pane runtime instead of main Architect', async () => {

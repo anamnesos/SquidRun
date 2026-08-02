@@ -312,29 +312,3 @@ test('MATCHING CORRELATION still acks exactly once', async () => {
   await svc.deliverTelegramInbound(worker, 'telegram-in-900', { text: 'hi', metadata: META });
   expect(worker.sent).toEqual([{ type: 'message-ack', ackKey: 'telegram-in-900', ok: true, durable: true }]);
 });
-
-test('NO BARE RETURN AFTER APPEND: every callback exit reports an explicit result', () => {
-  // HONEST SCOPE: this is a SOURCE check, not a behavioural one. SquidRunApp is
-  // not cheaply instantiable here, so this cannot prove the scoped branch acks
-  // at runtime — it proves the defect class behind blocker (1): an exit path
-  // that returns nothing after the append succeeded, which the parent reads as
-  // not-durable and NACKs, making every replay re-deliver to the scoped window.
-  const src = fs.readFileSync(
-    path.join(__dirname, '..', 'modules', 'main', 'squidrun-app.js'),
-    'utf8'
-  );
-  const start = src.indexOf('const spooled = telegramIngressSpool.acceptInbound({');
-  expect(start).toBeGreaterThan(-1);
-  const end = src.indexOf('\n      },\n    });', start);
-  expect(end).toBeGreaterThan(start);
-
-  const body = src
-    .slice(start, end)
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
-
-  // Bare `return;` at the callback's own depth (8-10 spaces). Deeper returns
-  // belong to nested .then() bodies, which are not this callback's exits.
-  const bare = body.split('\n').filter((line) => /^ {8,10}return;\s*$/.test(line));
-  expect(bare).toEqual([]);
-});
