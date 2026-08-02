@@ -525,13 +525,19 @@ function sendToArchitect(message) {
   }
 }
 
-function getProfileTelegramTriggerPaths(windowKey = '', env = process.env) {
+function getProfileTelegramTriggerPaths(windowKey = '', env = process.env, options = {}) {
   const normalizedWindowKey = typeof windowKey === 'string' && windowKey.trim()
     ? windowKey.trim()
     : '';
   if (!normalizedWindowKey || normalizedWindowKey === 'main') return [];
 
-  const profileRoot = getProfileProjectRootOverride(normalizedWindowKey, env);
+  // Resolver is injectable so tests can drive BOTH branches deterministically.
+  // Without it the outcome depends on this machine's profile config, which made
+  // the first version of these tests pass for reasons unrelated to the fix.
+  const resolveRoot = typeof options.resolveProfileRoot === 'function'
+    ? options.resolveProfileRoot
+    : getProfileProjectRootOverride;
+  const profileRoot = resolveRoot(normalizedWindowKey, env);
   // FAIL CLOSED. This previously fell back to the MAIN project root when a
   // scoped profile had no override — so a scoped chat's inbound message was
   // written into main's tree at .squidrun/triggers-<windowKey>/architect.txt.

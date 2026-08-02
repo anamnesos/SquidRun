@@ -1,68 +1,92 @@
 /**
  * Scoped-profile trigger roots must FAIL CLOSED.
  *
- * THE LEAK: getProfileTelegramTriggerPaths resolved a scoped profile's root via
- * an env override and, when that override was absent, fell back to
- * `getProjectRoot()` — MAIN's tree. A scoped chat's inbound message was then
- * written to main's .squidrun/triggers-<windowKey>/architect.txt, surfacing one
- * profile's conversation inside another.
+ * THE LEAK: getProfileTelegramTriggerPaths fell back to `getProjectRoot()` —
+ * MAIN's tree — when no profile root could be resolved, so an unresolvable
+ * scoped profile's inbound message was written into main's trigger path.
+ * Delivering nowhere is recoverable and visible; delivering into the wrong
+ * profile is a privacy failure that looks like success.
  *
- * Guessing a delivery root is worse than delivering nowhere: nowhere is
- * recoverable and visible, wrong-profile is a privacy failure that looks like
- * success. So an unresolvable scoped root must yield NO paths.
+ * WHY THIS FILE WAS REWRITTEN. The first version was false-green and would have
+ * passed with the bug present:
+ *   - the outcome was driven by THIS machine's profile config, not by the
+ *     branch under test, so neither branch was actually exercised on purpose;
+ *   - the "positive" case set SQUIDRUN_PROFILE_ROOT_sideprofile, which the
+ *     resolver does not support, so it asserted nothing about overrides;
+ *   - its override literal 'D:\SquidRun\sideprofile' contained invalid escapes
+ *     (\S, \E collapse silently) so the string was not even the path it looked
+ *     like;
+ *   - it asserted only that the filename contained 'triggers-sideprofile', which
+ *     is true of a leaked main-root path too — the exact thing being prevented.
+ * The resolver is now injectable so both branches are driven deterministically
+ * and the positive case asserts the FULL exact path.
  */
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const lane = require('../scripts/hm-telegram-poller-lane');
-
-const getPaths = lane.getProfileTelegramTriggerPaths
-  || lane.__testables?.getProfileTelegramTriggerPaths;
+const { getProfileTelegramTriggerPaths, forwardToProfileTrigger } = lane;
 
 describe('scoped-root resolution fails closed', () => {
-  test('the function is reachable for testing', () => {
-    expect(typeof getPaths).toBe('function');
-  });
-
-  test('a KNOWN profile resolves to its own scoped workspace, never main-shared', () => {
-    // Correction to my first assumption: getProfileProjectRootOverride does NOT
-    // return falsy for a known profile — it resolves a per-profile workspace
-    // (.squidrun/profiles/<key>/workspace). That is already isolated, so the
-    // right assertion is that the path is profile-scoped, not that it is empty.
-    const paths = getPaths('sideprofile', {});
-    expect(paths).toHaveLength(1);
-    const p = paths[0].toLowerCase();
-    expect(p).toContain(`${path.sep}profiles${path.sep}sideprofile${path.sep}`.toLowerCase());
-    expect(p).toContain('triggers-sideprofile');
-  });
-
-  test('THE LEAK CASE: an UNRESOLVABLE profile root yields NOTHING, not main root', () => {
-    // This is the branch the fix closes. When no profile root can be resolved
-    // the old code fell back to getProjectRoot() — main's tree. Delivering
-    // nowhere is recoverable and visible; delivering into the wrong profile is
-    // a privacy failure that looks like success.
-    const paths = getPaths('definitely-not-a-registered-profile-xyz', {});
+  test('THE LEAK CASE: an unresolvable root yields NOTHING, never main root', () => {
+    // Injected null => the exact branch that used to fall back to main.
+    const paths = getProfileTelegramTriggerPaths('sideprofile', {}, {
+      resolveProfileRoot: () => null,
+    });
     expect(paths).toEqual([]);
   });
 
-  test('no returned path ever points into the main project tree', () => {
-    const paths = getPaths('someprofile', {});
-    for (const p of paths) {
-      expect(path.resolve(p).toLowerCase()).not.toContain(`${path.sep}projects${path.sep}squidrun${path.sep}`.toLowerCase());
+  test.each([null, undefined, '', false])('resolver returning %p also fails closed', (value) => {
+    expect(
+      getProfileTelegramTriggerPaths('sideprofile', {}, { resolveProfileRoot: () => value })
+    ).toEqual([]);
+  });
+
+  test('a resolvable root yields the FULL EXACT path under that root', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scoped-root-'));
+    try {
+      const paths = getProfileTelegramTriggerPaths('sideprofile', {}, {
+        resolveProfileRoot: () => root,
+      });
+      // Exact path, not a substring — a filename match would also pass for a
+      // leaked main-root path, which is precisely the failure being guarded.
+      expect(paths).toEqual([
+        path.join(path.resolve(root), '.squidrun', 'triggers-sideprofile', 'architect.txt'),
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
-    expect(paths).toHaveLength(0);
   });
 
-  test('main itself still resolves to nothing here (main is not trigger-routed)', () => {
-    expect(getPaths('main', {})).toEqual([]);
-    expect(getPaths('', {})).toEqual([]);
+  test('main and empty keys are not trigger-routed at all', () => {
+    expect(getProfileTelegramTriggerPaths('main', {}, { resolveProfileRoot: () => '/anything' })).toEqual([]);
+    expect(getProfileTelegramTriggerPaths('', {}, { resolveProfileRoot: () => '/anything' })).toEqual([]);
+  });
+});
+
+describe('forwardToProfileTrigger refuses to write when the root is unresolvable', () => {
+  test('returns missing_profile_trigger_path and performs ZERO writes', () => {
+    const writeSpy = jest.spyOn(fs, 'writeFileSync');
+    const mkdirSpy = jest.spyOn(fs, 'mkdirSync');
+    try {
+      // Unknown key so no machine profile config can resolve it.
+      const res = forwardToProfileTrigger('definitely-not-a-registered-profile-xyz', 'inbound body', {});
+      expect(res.ok).toBe(false);
+      expect(res.reason).toBe('missing_profile_trigger_path');
+      // The load-bearing assertion: nothing was written ANYWHERE. A fail-closed
+      // path that still touched the filesystem would be the leak in disguise.
+      expect(writeSpy).not.toHaveBeenCalled();
+      expect(mkdirSpy).not.toHaveBeenCalled();
+    } finally {
+      writeSpy.mockRestore();
+      mkdirSpy.mockRestore();
+    }
   });
 
-  test('an explicit override is honoured and stays inside that override', () => {
-    const override = process.platform === 'win32' ? 'D:\SquidRun\sideprofile' : '/opt/sideprofile';
-    const paths = getPaths('sideprofile', { SQUIDRUN_PROFILE_ROOT_sideprofile: override });
-    // Whatever root wins, it must be profile-scoped and must not be main's own
-    // trigger directory.
-    expect(paths).toHaveLength(1);
-    expect(paths[0]).toContain('triggers-sideprofile');
+  test('an empty message is refused before any path work', () => {
+    const res = forwardToProfileTrigger('sideprofile', '   ', {});
+    expect(res.ok).toBe(false);
+    expect(res.reason).toBe('empty_message');
   });
 });
