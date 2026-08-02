@@ -223,8 +223,18 @@ const {
   createHealthSnapshot,
   renderStartupHealthMarkdown,
 } = require('../../scripts/hm-health-snapshot');
+// Freshness watch cadence. Default 5 minutes; the caller seam is clamped to
+// 1..10 so no config can turn this into a hot loop or a useless hourly check.
+const TELEGRAM_FRESHNESS_WATCH_DEFAULT_MS = 5 * 60 * 1000;
+const TELEGRAM_FRESHNESS_WATCH_MIN_MS = 60 * 1000;
+const TELEGRAM_FRESHNESS_WATCH_MAX_MS = 10 * 60 * 1000;
 const {
   checkAndRecoverTelegramPoller,
+  // READ-ONLY inspector. The freshness watch may import this and NOTHING else
+  // from the watchdog: every other export shells out, lists or kills processes,
+  // or drives the standalone recovery lane, none of which an in-app periodic
+  // timer is allowed to do.
+  inspectTelegramPollerFreshness,
 } = require('../../scripts/hm-telegram-poller-watchdog');
 const {
   startRunner: startBidirectionalWakeWatchdogRunner,
@@ -1398,6 +1408,11 @@ class SquidRunApp {
     this.bootSequenceId = `boot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     this.packagedOnboardingState = null;
     this.shuttingDown = false;
+    // App-alive Telegram freshness watch (Stage B).
+    this.telegramFreshnessWatchTimer = null;
+    this.telegramFreshnessWatchTick = null;
+    this.telegramFreshnessWatchGeneration = 0;
+    this.telegramFreshnessWatchIntervalMs = null;
     this.fullShutdownPromise = null;
     this.sessionEndCapturePromise = null;
     this.runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
@@ -5781,6 +5796,10 @@ class SquidRunApp {
     // that reason. Keep this lifecycle path as the single runtime owner until
     // the poller is extracted to a single-owner child process or supervisor lane.
     this.startTelegramPoller();
+    // AFTER the real start, never before: the watch's first act is to judge a
+    // worker, and judging one that has not been started yet would recover a
+    // poller into existence on a path that deliberately did not want one.
+    this.startTelegramFreshnessWatch();
     this.startBridgeClient();
     this.startAutoHandoffMaterializer();
     this.evidenceLedgerPruneHousekeeping.start();
@@ -9352,6 +9371,12 @@ class SquidRunApp {
           reason: quiesced.reason || 'quiesce_failed',
         };
       }
+
+      // STOP THE WATCH BEFORE THE NOTICE. A tick that fires during teardown
+      // would restart the very poller we are about to tear down, and the
+      // replacement would outlive us. Quiesce failure returns above, so this
+      // only runs when teardown is genuinely proceeding.
+      await this.stopTelegramFreshnessWatch();
 
       // BEST EFFORT, but AWAITED and ordered: the poller is still alive here,
       // and it will not be after daemon shutdown. Telling James his messages
@@ -15732,9 +15757,187 @@ class SquidRunApp {
     };
   }
 
+  /**
+   * App-alive Telegram freshness watch.
+   *
+   * INCIDENT BOUNDARY, and it is narrow: this repairs an app-alive worker that
+   * is DEAD or WEDGED. It cannot cover S488 — that loss happened across an
+   * app-down Quit window, where no in-app timer exists to run. A getUpdates
+   * owner that survives our exit is a separate product decision, not this.
+   *
+   * In-app only. It reads freshness and calls the safe awaited restart; it does
+   * not shell out, list or kill processes, or enter the standalone lane.
+   */
+  startTelegramFreshnessWatch(options = {}) {
+    // Advance FIRST, always. Any tick still in flight belongs to the previous
+    // watch, and its isCancelled predicate must report cancelled so it cannot
+    // fork a replacement underneath the new schedule (or underneath no
+    // schedule at all, on a side profile).
+    this.telegramFreshnessWatchGeneration += 1;
+
+    // Side profiles arm nothing: one watch, on the profile that owns the
+    // single getUpdates owner. Clean up before returning — a main->side re-arm
+    // must not leave the previous profile's timer running.
+    if (!isMainProfile(this.activeProfileName || getActiveProfileName())) {
+      this.stopTelegramFreshnessWatchTimer();
+      this.telegramFreshnessWatchIntervalMs = null;
+      return { started: false, reason: 'not_main_profile' };
+    }
+
+    const requested = Number(options.intervalMs);
+    const intervalMs = Math.min(
+      TELEGRAM_FRESHNESS_WATCH_MAX_MS,
+      Math.max(
+        TELEGRAM_FRESHNESS_WATCH_MIN_MS,
+        Number.isFinite(requested) && requested > 0
+          ? Math.floor(requested)
+          : TELEGRAM_FRESHNESS_WATCH_DEFAULT_MS
+      )
+    );
+
+    // Idempotent: replace, never stack. Two timers would mean two concurrent
+    // restart decisions against one worker.
+    this.stopTelegramFreshnessWatchTimer();
+
+    const generation = this.telegramFreshnessWatchGeneration;
+    const timer = setInterval(() => {
+      this.runTelegramFreshnessWatchTick({ generation }).catch(() => {
+        // Tick-local failures are logged inside the tick; a rejection here must
+        // never take down the interval.
+      });
+    }, intervalMs);
+    if (typeof timer.unref === 'function') timer.unref();
+
+    this.telegramFreshnessWatchTimer = timer;
+    this.telegramFreshnessWatchIntervalMs = intervalMs;
+    return { started: true, intervalMs };
+  }
+
+  /** Clears the interval only. Cancellation/join lives in the async stop. */
+  stopTelegramFreshnessWatchTimer() {
+    if (this.telegramFreshnessWatchTimer) {
+      clearInterval(this.telegramFreshnessWatchTimer);
+      this.telegramFreshnessWatchTimer = null;
+    }
+  }
+
+  /**
+   * Cancellation AND join. Incrementing the generation first means a tick that
+   * is mid-await cannot fork a replacement after we return.
+   */
+  async stopTelegramFreshnessWatch() {
+    this.telegramFreshnessWatchGeneration += 1;
+    this.stopTelegramFreshnessWatchTimer();
+    this.telegramFreshnessWatchIntervalMs = null;
+
+    const inFlight = this.telegramFreshnessWatchTick;
+    if (!inFlight) return { stopped: true, joined: false };
+    try {
+      await inFlight;
+    } catch (err) {
+      log.warn('Telegram', `Freshness watch tick failed during stop: ${err?.message || err}`);
+    }
+    return { stopped: true, joined: true };
+  }
+
+  /** One tick at a time; an overlapping interval firing is skipped, not queued. */
+  runTelegramFreshnessWatchTick(options = {}) {
+    if (this.telegramFreshnessWatchTick) return this.telegramFreshnessWatchTick;
+
+    const generation = Number.isFinite(Number(options.generation))
+      ? Number(options.generation)
+      : this.telegramFreshnessWatchGeneration;
+
+    const pending = (async () => {
+      if (generation !== this.telegramFreshnessWatchGeneration) {
+        return { skipped: true, reason: 'stopped' };
+      }
+      if (this.shuttingDown) return { skipped: true, reason: 'shutting_down' };
+
+      // EXACT root derivation, every tick. An installed deployment's data root
+      // is not the source tree's, and inspecting the wrong one reports a
+      // healthy poller that is not the one running.
+      const env = this.buildTelegramPollerEnv(process.env);
+      const inspect = this.telegramFreshnessInspector || inspectTelegramPollerFreshness;
+      const freshness = inspect({
+        statePath: env.TELEGRAM_POLLER_STATE_PATH,
+        projectRoot: env.SQUIDRUN_PROJECT_ROOT || env.SQUIDRUN_DATA_ROOT,
+        appUp: true,
+      });
+
+      const workerState = this.inboundPollerService.getTelegramWorkerState();
+
+      // MISSING CONFIG IS NOT A WEDGE. InboundPollerService reports
+      // phase:'failed' reason:'missing_config' when there is no bot token or
+      // chat id — restarting cannot conjure credentials, so recovering on it
+      // is an infinite hammer against a user who simply has not configured
+      // Telegram. This is the ONLY failure reason excluded, and it is excluded
+      // whatever the freshness state says.
+      const missingConfig = workerState
+        && workerState.phase === 'failed'
+        && workerState.reason === 'missing_config';
+      if (missingConfig) {
+        return { restarted: false, reason: 'missing_config', status: freshness?.status || null };
+      }
+
+      const workerDead = workerState
+        && (workerState.phase === 'failed' || workerState.phase === 'dead');
+      const wedged = freshness && freshness.wedged === true;
+
+      // An UNREADABLE state file says we cannot tell, so stay conservative.
+      // A MISSING one is different: the inspector reports it wedged on purpose,
+      // and a worker claiming ready whose state file never appeared is exactly
+      // the silent-death case this watch exists for.
+      const unreadable = freshness && freshness.status === 'state_read_error';
+
+      if (!workerDead && (!wedged || unreadable)) {
+        return { restarted: false, reason: 'healthy', status: freshness?.status || null };
+      }
+
+      log.warn(
+        'Telegram',
+        `Freshness watch recovering poller (worker=${workerState?.phase || 'unknown'}, freshness=${freshness?.status || 'unknown'})`
+      );
+
+      const startGeneration = this.telegramFreshnessWatchGeneration;
+      const result = await this.restartTelegramPoller({
+        reason: 'freshness-watch',
+        isCancelled: () => (
+          this.shuttingDown || this.telegramFreshnessWatchGeneration !== startGeneration
+        ),
+      });
+      // ATTEMPTED is not RECOVERED. An aborted or failed restart reported as
+      // restarted:true would read downstream as "the poller is back".
+      return {
+        attempted: true,
+        restarted: result?.success === true,
+        reason: result?.success === true ? 'recovered' : (result?.startupReason || result?.reason || 'restart_failed'),
+        result,
+      };
+    })()
+      .catch((err) => {
+        log.warn('Telegram', `Freshness watch tick failed: ${err?.message || err}`);
+        return { restarted: false, reason: 'tick_failed' };
+      })
+      .finally(() => {
+        // Identity-clear: a slow tick must not wipe a newer tick's slot, or
+        // every later tick would be skipped forever.
+        if (this.telegramFreshnessWatchTick === pending) {
+          this.telegramFreshnessWatchTick = null;
+        }
+      });
+
+    this.telegramFreshnessWatchTick = pending;
+    return pending;
+  }
+
   async shutdown() {
     log.info('App', 'Shutting down SquidRun Application');
     this.shuttingDown = true;
+    // Before any later teardown or stopAll: a watch tick mid-flight here would
+    // race the poller stop below and could fork a replacement behind it.
+    // Idempotent, so performFullShutdown having already stopped it is fine.
+    await this.stopTelegramFreshnessWatch();
     // Idempotent: performFullShutdown already quiesced before touching the
     // daemon, but a plain shutdown() must still be safe on its own.
     await this.quiesceTelegramIngressDrain();

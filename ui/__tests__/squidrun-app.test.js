@@ -7191,6 +7191,390 @@ describe('SquidRunApp', () => {
       forceTriggerDeliveryPath(app);
     });
 
+    describe('Telegram freshness watch (Stage B)', () => {
+      const armWatch = (targetApp, freshness, workerPhase = 'ready', workerReason = null) => {
+        targetApp.activeProfileName = 'main';
+        targetApp.telegramFreshnessInspector = jest.fn(() => freshness);
+        targetApp.inboundPollerService.getTelegramWorkerState = jest.fn(() => ({
+          phase: workerPhase, ready: workerPhase === 'ready', reason: workerReason,
+        }));
+        targetApp.restartTelegramPoller = jest.fn().mockResolvedValue({ success: true, accepted: true });
+        return targetApp;
+      };
+
+      // A REAL installed deployment, so buildTelegramPollerEnv derives the
+      // installed data root for itself. Faking the env would keep this green
+      // even if the watch skipped installed deployments outright.
+      const INSTALLED_ROOT = 'C:\\ProgramData\\SquidRun';
+      const makeInstalled = (targetApp) => {
+        targetApp.installedDeployment = { active: true, dataRoot: INSTALLED_ROOT };
+        return targetApp;
+      };
+
+      it('INSTALLED healthy worker => NO restart, and the inspector gets the exact installed root', async () => {
+        makeInstalled(armWatch(app, { ok: true, status: 'fresh', wedged: false }));
+
+        const result = await app.runTelegramFreshnessWatchTick();
+
+        expect(result).toMatchObject({ restarted: false });
+        expect(app.restartTelegramPoller).not.toHaveBeenCalled();
+        // Inspecting the SOURCE tree while the INSTALLED build runs would
+        // report a healthy poller that is not the one actually polling.
+        const [args] = app.telegramFreshnessInspector.mock.calls[0];
+        expect(args.appUp).toBe(true);
+        expect(args.projectRoot).toBe(INSTALLED_ROOT);
+        expect(args.statePath.startsWith(INSTALLED_ROOT)).toBe(true);
+        expect(args.statePath).toBe(
+          app.buildTelegramPollerEnv(process.env).TELEGRAM_POLLER_STATE_PATH
+        );
+      });
+
+      it('INSTALLED failed worker => safe restart', async () => {
+        makeInstalled(armWatch(app, { ok: true, status: 'fresh', wedged: false }, 'failed'));
+
+        const result = await app.runTelegramFreshnessWatchTick();
+
+        expect(app.restartTelegramPoller).toHaveBeenCalledWith(
+          expect.objectContaining({ reason: 'freshness-watch' })
+        );
+        expect(result).toMatchObject({ restarted: true });
+        // The installed root is what was inspected, not the source tree.
+        expect(app.telegramFreshnessInspector.mock.calls[0][0].projectRoot).toBe(INSTALLED_ROOT);
+      });
+
+      it('SOURCE stale => exactly one safe restart; healthy => none', async () => {
+        armWatch(app, { ok: true, status: 'stale', wedged: true });
+        await app.runTelegramFreshnessWatchTick();
+        expect(app.restartTelegramPoller).toHaveBeenCalledTimes(1);
+
+        const other = new SquidRunApp(mockAppContext, mockManagers);
+        armWatch(other, { ok: true, status: 'fresh', wedged: false });
+        await other.runTelegramFreshnessWatchTick();
+        expect(other.restartTelegramPoller).not.toHaveBeenCalled();
+      });
+
+      it('MISSING CONFIG IS NEVER A RESTART HAMMER, TICK AFTER TICK', async () => {
+        // No bot token means restarting cannot possibly help. Recovering on it
+        // fights a user who simply has not configured Telegram, forever.
+        armWatch(app, { ok: false, status: 'state_missing', wedged: true }, 'failed', 'missing_config');
+
+        for (let i = 0; i < 5; i += 1) {
+          const result = await app.runTelegramFreshnessWatchTick();
+          expect(result).toMatchObject({ restarted: false, reason: 'missing_config' });
+        }
+        expect(app.restartTelegramPoller).toHaveBeenCalledTimes(0);
+      });
+
+      it('A READY WORKER WHOSE STATE FILE NEVER APPEARED IS RECOVERED', async () => {
+        // The inspector reports state_missing as wedged on purpose. A worker
+        // claiming ready with no state file is the silent death this watches
+        // for — suppressing it wholesale would blind the watch.
+        armWatch(app, { ok: false, status: 'state_missing', wedged: true }, 'ready');
+        const result = await app.runTelegramFreshnessWatchTick();
+        expect(app.restartTelegramPoller).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({ restarted: true });
+      });
+
+      it('AN UNREADABLE STATE FILE STAYS CONSERVATIVE', async () => {
+        armWatch(app, { ok: false, status: 'state_read_error', wedged: true }, 'ready');
+        await app.runTelegramFreshnessWatchTick();
+        expect(app.restartTelegramPoller).not.toHaveBeenCalled();
+      });
+
+      it('AN ABORTED RESTART IS NOT REPORTED AS RECOVERED', async () => {
+        armWatch(app, { ok: true, status: 'stale', wedged: true });
+        app.restartTelegramPoller = jest.fn().mockResolvedValue({
+          success: false, aborted: true, startupReason: 'stop_not_observed',
+        });
+
+        const result = await app.runTelegramFreshnessWatchTick();
+
+        // "attempted" and "recovered" are different facts; conflating them
+        // tells the next reader the poller is back when it is not.
+        expect(result).toMatchObject({
+          attempted: true, restarted: false, reason: 'stop_not_observed',
+        });
+      });
+
+      it('A MAIN->SIDE RE-ARM LEAVES NO TIMER AND CANCELS THE OLD GENERATION', () => {
+        jest.useFakeTimers();
+        try {
+          app.activeProfileName = 'main';
+          app.startTelegramFreshnessWatch();
+          expect(jest.getTimerCount()).toBe(1);
+          const oldGeneration = app.telegramFreshnessWatchGeneration;
+
+          app.activeProfileName = 'sideprofile';
+          expect(app.startTelegramFreshnessWatch()).toMatchObject({ started: false });
+
+          expect(app.telegramFreshnessWatchTimer).toBe(null);
+          expect(jest.getTimerCount()).toBe(0);
+          // The old generation must read as cancelled, or a tick still in
+          // flight could fork under a schedule that no longer exists.
+          expect(app.telegramFreshnessWatchGeneration).not.toBe(oldGeneration);
+        } finally {
+          jest.useRealTimers();
+        }
+      });
+
+      it('A SIDE PROFILE ARMS NOTHING AND INSPECTS NOTHING', async () => {
+        armWatch(app, { ok: true, status: 'stale', wedged: true });
+        app.activeProfileName = 'sideprofile';
+
+        expect(app.startTelegramFreshnessWatch()).toMatchObject({
+          started: false, reason: 'not_main_profile',
+        });
+        expect(app.telegramFreshnessWatchTimer).toBe(null);
+        expect(app.telegramFreshnessInspector).not.toHaveBeenCalled();
+        expect(app.restartTelegramPoller).not.toHaveBeenCalled();
+      });
+
+      it('STARTING TWICE LEAVES ONE TIMER, AND THE INTERVAL IS CLAMPED', () => {
+        jest.useFakeTimers();
+        try {
+          app.activeProfileName = 'main';
+          app.startTelegramFreshnessWatch();
+          const first = app.telegramFreshnessWatchTimer;
+          app.startTelegramFreshnessWatch();
+
+          expect(app.telegramFreshnessWatchTimer).not.toBe(first);
+          expect(jest.getTimerCount()).toBe(1);
+          expect(app.telegramFreshnessWatchIntervalMs).toBe(5 * 60 * 1000);
+
+          expect(app.startTelegramFreshnessWatch({ intervalMs: 1 }).intervalMs).toBe(60 * 1000);
+          expect(app.startTelegramFreshnessWatch({ intervalMs: 99 * 60 * 1000 }).intervalMs)
+            .toBe(10 * 60 * 1000);
+          expect(jest.getTimerCount()).toBe(1);
+        } finally {
+          jest.useRealTimers();
+        }
+      });
+
+      it('THE WATCH TIMER IS UNREF-ED so it cannot hold the process open', () => {
+        app.activeProfileName = 'main';
+        const unref = jest.fn();
+        const spy = jest.spyOn(global, 'setInterval').mockReturnValue({ unref });
+        try {
+          app.startTelegramFreshnessWatch();
+          expect(unref).toHaveBeenCalledTimes(1);
+        } finally {
+          spy.mockRestore();
+          app.telegramFreshnessWatchTimer = null;
+        }
+      });
+
+      it('AN OVERLAPPING TICK IS SKIPPED, and a throw does not kill later ticks', async () => {
+        armWatch(app, { ok: true, status: 'stale', wedged: true });
+        let release;
+        app.restartTelegramPoller = jest.fn(() => new Promise((r) => { release = r; }));
+
+        const a = app.runTelegramFreshnessWatchTick();
+        const b = app.runTelegramFreshnessWatchTick();
+        expect(b).toBe(a);
+
+        release({ accepted: true });
+        await a;
+        expect(app.telegramFreshnessInspector).toHaveBeenCalledTimes(1);
+        expect(app.restartTelegramPoller).toHaveBeenCalledTimes(1);
+
+        // A throwing tick must settle and free the slot, not wedge the watch.
+        app.telegramFreshnessInspector = jest.fn(() => { throw new Error('inspect blew up'); });
+        await expect(app.runTelegramFreshnessWatchTick()).resolves.toMatchObject({
+          restarted: false, reason: 'tick_failed',
+        });
+        expect(app.telegramFreshnessWatchTick).toBe(null);
+
+        app.telegramFreshnessInspector = jest.fn(() => ({ ok: true, status: 'fresh', wedged: false }));
+        await expect(app.runTelegramFreshnessWatchTick()).resolves.toMatchObject({ restarted: false });
+      });
+
+      it('STOP WAITS FOR AN IN-FLIGHT TICK AND CANCELS ITS REPLACEMENT', async () => {
+        armWatch(app, { ok: true, status: 'stale', wedged: true });
+        let release;
+        let capturedIsCancelled;
+        app.restartTelegramPoller = jest.fn((payload) => {
+          capturedIsCancelled = payload.isCancelled;
+          return new Promise((r) => { release = r; });
+        });
+
+        const tick = app.runTelegramFreshnessWatchTick();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        let stopped = false;
+        const stopping = app.stopTelegramFreshnessWatch().then(() => { stopped = true; });
+        await Promise.resolve();
+
+        // Stop is a JOIN: it must not return while the tick is still running.
+        expect(stopped).toBe(false);
+        // And the restart already in flight must not fork after we stopped.
+        expect(capturedIsCancelled()).toBe(true);
+
+        release({ accepted: true });
+        await stopping;
+        await tick;
+        expect(stopped).toBe(true);
+        expect(app.telegramFreshnessWatchTimer).toBe(null);
+
+        // No tick survives the stop.
+        const after = await app.runTelegramFreshnessWatchTick({ generation: 0 });
+        expect(after).toMatchObject({ skipped: true, reason: 'stopped' });
+      });
+
+      it('PLAIN SHUTDOWN AWAITS THE WATCH STOP BEFORE QUIESCE AND stopAll', async () => {
+        const order = [];
+        let releaseWatchStop;
+        app.stopTelegramFreshnessWatch = jest.fn(() => new Promise((resolve) => {
+          releaseWatchStop = () => { order.push('stop_watch'); resolve(); };
+        }));
+        app.quiesceTelegramIngressDrain = jest.fn(async () => { order.push('quiesce'); return { ok: true }; });
+        app.inboundPollerService.stopAll = jest.fn(async () => { order.push('stop_all'); });
+
+        const shutting = app.shutdown();
+        for (let i = 0; i < 10; i += 1) await Promise.resolve();
+
+        // A watch tick mid-flight here would race the poller stop below and
+        // could fork a replacement behind it.
+        expect(order).toEqual([]);
+        expect(app.quiesceTelegramIngressDrain).not.toHaveBeenCalled();
+        expect(app.inboundPollerService.stopAll).not.toHaveBeenCalled();
+
+        releaseWatchStop();
+        await shutting;
+
+        expect(order[0]).toBe('stop_watch');
+        expect(order.indexOf('stop_watch')).toBeLessThan(order.indexOf('quiesce'));
+        expect(order.indexOf('stop_watch')).toBeLessThan(order.indexOf('stop_all'));
+      });
+
+      it('FULL SHUTDOWN HOLDS AT THE WATCH JOIN BEFORE THE NOTICE AND TEARDOWN', async () => {
+        const order = [];
+        let releaseWatchStop;
+        app.quiesceTelegramIngressDrain = jest.fn(async () => { order.push('quiesce'); return { ok: true }; });
+        // HELD, not resolved: a mock that settles immediately would let a
+        // fire-and-forget stop still push stop_watch before the notice, so the
+        // missing await would go unnoticed.
+        app.stopTelegramFreshnessWatch = jest.fn(() => new Promise((resolve) => {
+          releaseWatchStop = () => { order.push('stop_watch'); resolve(); };
+        }));
+        app.sendQuitTelegramNotice = jest.fn(async () => { order.push('notice'); return { ok: true }; });
+        app.shutdown = jest.fn(async () => { order.push('shutdown'); });
+        jest.spyOn(app, 'stopSupervisorFromPidFile').mockResolvedValue({ ok: true, skipped: true });
+        // Without a configured exit seam a mutated ordering merely CRASHES the
+        // harness, and a crash is not evidence that this assertion bites.
+        require('electron').app.exit = jest.fn(() => order.push('app-exit'));
+
+        const running = app.performFullShutdown('test');
+        for (let i = 0; i < 10; i += 1) await Promise.resolve();
+
+        // Quiesce is done; everything downstream must be waiting on the join.
+        expect(order).toEqual(['quiesce']);
+        expect(app.sendQuitTelegramNotice).not.toHaveBeenCalled();
+        expect(app.shutdown).not.toHaveBeenCalled();
+        expect(require('electron').app.exit).not.toHaveBeenCalled();
+
+        releaseWatchStop();
+        await running;
+
+        expect(order.indexOf('quiesce')).toBeLessThan(order.indexOf('stop_watch'));
+        expect(order.indexOf('stop_watch')).toBeLessThan(order.indexOf('notice'));
+        expect(order.indexOf('notice')).toBeLessThan(order.indexOf('shutdown'));
+      });
+
+      it('A FAILED QUIESCE STOPS BEFORE THE WATCH, THE NOTICE AND TEARDOWN', async () => {
+        app.quiesceTelegramIngressDrain = jest.fn().mockResolvedValue({ ok: false, reason: 'busy' });
+        app.stopTelegramFreshnessWatch = jest.fn();
+        app.sendQuitTelegramNotice = jest.fn();
+
+        const result = await app.performFullShutdown('test');
+
+        expect(result).toMatchObject({ ok: false, aborted: true, stage: 'telegram_drain_quiesce' });
+        expect(app.stopTelegramFreshnessWatch).not.toHaveBeenCalled();
+        expect(app.sendQuitTelegramNotice).not.toHaveBeenCalled();
+      });
+
+      it('END TO END: THE REAL TIMER CALLBACK RECOVERS AN INSTALLED DEAD WORKER', async () => {
+        // Every other installed test calls the tick DIRECTLY, so a watch that
+        // skipped installed deployments outright — or whose interval callback
+        // was a no-op — would keep them all green. This drives the actual
+        // setInterval callback end to end.
+        jest.useFakeTimers();
+        try {
+          makeInstalled(armWatch(app, { ok: true, status: 'stale', wedged: true }, 'dead'));
+
+          const armed = app.startTelegramFreshnessWatch({ intervalMs: 60 * 1000 });
+          expect(armed).toMatchObject({ started: true, intervalMs: 60 * 1000 });
+          expect(jest.getTimerCount()).toBe(1);
+
+          // Nothing may have happened before the first interval elapses.
+          expect(app.telegramFreshnessInspector).not.toHaveBeenCalled();
+
+          await jest.advanceTimersByTimeAsync(60 * 1000);
+
+          expect(app.telegramFreshnessInspector).toHaveBeenCalledTimes(1);
+          expect(app.telegramFreshnessInspector.mock.calls[0][0]).toMatchObject({
+            projectRoot: INSTALLED_ROOT,
+            appUp: true,
+          });
+          expect(app.restartTelegramPoller).toHaveBeenCalledTimes(1);
+          expect(app.restartTelegramPoller).toHaveBeenCalledWith(
+            expect.objectContaining({ reason: 'freshness-watch' })
+          );
+        } finally {
+          await app.stopTelegramFreshnessWatch();
+          jest.useRealTimers();
+        }
+      });
+
+      it('THE SHIPPED INIT STARTS THE POLLER BEFORE THE WATCH', () => {
+        // Reads the SOURCE that actually ships. Replaying the sequence by hand
+        // in the test would pass no matter what init really does.
+        const src = fs.readFileSync(
+          path.join(__dirname, '..', 'modules', 'main', 'squidrun-app.js'),
+          'utf8'
+        );
+        const step13 = src.indexOf('init:step-13:pollers-and-bridge');
+        expect(step13).toBeGreaterThan(-1);
+
+        const region = src.slice(step13, step13 + 2000);
+        const pollerAt = region.indexOf('this.startTelegramPoller();');
+        const watchAt = region.indexOf('this.startTelegramFreshnessWatch();');
+
+        // Present at all...
+        expect(pollerAt).toBeGreaterThan(-1);
+        expect(watchAt).toBeGreaterThan(-1);
+        // ...and in the only safe order: judging a worker that was never
+        // started would recover a poller into existence on a path that
+        // deliberately did not want one.
+        expect(pollerAt).toBeLessThan(watchAt);
+      });
+
+      it('THE WATCH CONTAINS NO PROCESS-LEVEL OR STANDALONE SEAMS', () => {
+        const src = [
+          app.startTelegramFreshnessWatch,
+          app.stopTelegramFreshnessWatch,
+          app.stopTelegramFreshnessWatchTimer,
+          app.runTelegramFreshnessWatchTick,
+        ].map((fn) => fn.toString()).join('\n');
+
+        for (const forbidden of [
+          'runStartupHealthTelegramPollerAutoRecover',
+          'checkAndRecoverTelegramPoller',
+          'recoverWedgedTelegramPoller',
+          'isMainTelegramWorkerAlive',
+          'listMainTelegramWorkerProcesses',
+          'spawn',
+          'execFile',
+          'execSync',
+          'child_process',
+          'taskkill',
+          'process.kill',
+        ]) {
+          expect(src).not.toContain(forbidden);
+        }
+      });
+    });
+
     it('wires Telegram command callbacks to pane 1 trigger injection', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
