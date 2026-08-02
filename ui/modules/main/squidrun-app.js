@@ -11795,6 +11795,8 @@ class SquidRunApp {
           fromRole: 'mira',
           messageId: inboundMessageId ? `${inboundMessageId}-mira-direct-status-reply` : null,
           chatId: metadata?.chatId,
+          requireDurableJournal: true,
+          inboundMessageId,
         });
         if (telegramResult?.ok && userFacingReply.oriented) {
           this.markMiraTelegramChannelOriented(metadata?.chatId, {
@@ -11845,17 +11847,10 @@ class SquidRunApp {
       fromRole: 'mira',
       messageId: inboundMessageId ? `${inboundMessageId}-mira-reply` : null,
       chatId: metadata?.chatId,
-      // The consumer cannot REQUIRE fields the producer never wrote. Threading
-      // these is what lets the replay proof correlate a row to this exact
-      // inbound message and route instead of trusting a bare id match.
+      // routeTelegramReply derives window/profile/chat from the route it
+      // resolves; we only supply what it cannot know.
       requireDurableJournal: true,
-      metadata: {
-        inboundMessageId,
-        chatId: metadata?.chatId,
-        windowKey: 'main',
-        profile: 'main',
-        routeKey: 'main',
-      },
+      inboundMessageId,
     });
     if (telegramResult?.ok && userFacingReply.oriented) {
       this.markMiraTelegramChannelOriented(metadata?.chatId, {
@@ -11884,6 +11879,8 @@ class SquidRunApp {
     fromRole = 'system',
     messageId = null,
     chatId = null,
+    requireDurableJournal = false,
+    inboundMessageId = null,
   } = {}) {
     const normalizedTarget = this.normalizeOutboundTarget(target);
     if (!this.isTelegramReplyTarget(normalizedTarget)) {
@@ -12046,14 +12043,36 @@ class SquidRunApp {
           sessionScopeId: routeSessionScopeId,
         };
       }
+      // Strict mode needs something to correlate against. Refusing BEFORE the
+      // HTTP call is the point: a send with no correlatable id can never be
+      // proven later, so replay would treat it as never-delivered and re-send.
+      if (requireDurableJournal === true && !toNonEmptyString(inboundMessageId)) {
+        return {
+          handled: true,
+          ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'telegram_missing_inbound_correlation',
+          error: 'require_durable_journal_without_inbound_message_id',
+        };
+      }
+
       const result = await sendRoutedTelegramMessage(message, process.env, {
         messageId,
         senderRole: fromRole,
         sessionId: this.commsSessionScopeId || null,
         chatId: replyChatId || null,
+        requireDurableJournal: requireDurableJournal === true,
         metadata: {
           routeKind: 'telegram',
           targetRaw: normalizedTarget,
+          // Identity comes from the route THIS function resolved, not from
+          // caller-supplied metadata: a caller could otherwise stamp a row with
+          // a window/profile the message never went to, and the replay check
+          // would accept it as proof.
+          inboundMessageId: toNonEmptyString(inboundMessageId),
+          routeKey: routeProfile,
           windowKey: routeWindowKey,
           profile: routeProfile,
           chatId: replyChatId || null,
