@@ -11845,6 +11845,17 @@ class SquidRunApp {
       fromRole: 'mira',
       messageId: inboundMessageId ? `${inboundMessageId}-mira-reply` : null,
       chatId: metadata?.chatId,
+      // The consumer cannot REQUIRE fields the producer never wrote. Threading
+      // these is what lets the replay proof correlate a row to this exact
+      // inbound message and route instead of trusting a bare id match.
+      requireDurableJournal: true,
+      metadata: {
+        inboundMessageId,
+        chatId: metadata?.chatId,
+        windowKey: 'main',
+        profile: 'main',
+        routeKey: 'main',
+      },
     });
     if (telegramResult?.ok && userFacingReply.oriented) {
       this.markMiraTelegramChannelOriented(metadata?.chatId, {

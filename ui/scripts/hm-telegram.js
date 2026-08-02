@@ -214,6 +214,31 @@ function upsertTelegramJournal(entry = {}) {
   return result;
 }
 
+/**
+ * The pre-send `recorded` row for a path whose replay logic DEPENDS on it.
+ *
+ * Warning and proceeding is fine for an ordinary send, but not for the Mira
+ * ingress-reply path: if this row is missing and the process dies during the
+ * HTTP call, the drain's replay lookup sees no evidence at all, concludes
+ * nothing was delivered, and sends James the reply a second time. The row is
+ * what makes that crash window ambiguous-and-therefore-held instead of
+ * invisible.
+ *
+ * Only opt-in callers get this stricter behaviour, so unrelated sends are
+ * unaffected.
+ */
+function requireTelegramJournalRecord(entry = {}) {
+  const result = upsertTelegramJournal(entry);
+  if (result?.ok !== true) {
+    return {
+      ok: false,
+      error: 'durable_journal_unavailable',
+      reason: result?.reason || 'unknown',
+    };
+  }
+  return { ok: true };
+}
+
 function getReplyObligationInboundMessageId(metadata = {}) {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
   const value = metadata.replyToMessageId
@@ -862,7 +887,7 @@ async function sendTelegram(message, env = process.env, options = {}) {
     replyContext: opts.replyContext,
   });
 
-  upsertTelegramJournal({
+  const recordEntry = {
     messageId,
     sessionId,
     senderRole,
@@ -877,7 +902,23 @@ async function sendTelegram(message, env = process.env, options = {}) {
       messageTruncated: preparedMessage.truncated,
       originalLength: preparedMessage.originalLength,
     }),
-  });
+  };
+  if (opts.requireDurableJournal === true) {
+    // FAIL CLOSED BEFORE THE HTTP CALL. Sending without this row would leave a
+    // crash mid-send indistinguishable from never having sent, and the replay
+    // path would re-send to the user.
+    const recorded = requireTelegramJournalRecord(recordEntry);
+    if (!recorded.ok) {
+      return {
+        ok: false,
+        error: recorded.error,
+        reason: recorded.reason,
+        messageId,
+      };
+    }
+  } else {
+    upsertTelegramJournal(recordEntry);
+  }
 
   if (!preparedMessage.text) {
     upsertTelegramJournal({
