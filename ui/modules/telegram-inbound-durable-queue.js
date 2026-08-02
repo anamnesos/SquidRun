@@ -80,8 +80,17 @@ function sealTornTail(file) {
     if (last.toString('utf8') !== '\n') {
       fs.appendFileSync(file, '\n', 'utf8');
     }
-  } catch {
+  } catch (err) {
     if (fd !== null) { try { fs.closeSync(fd); } catch { /* already closed */ } }
+    // ENOENT is the only benign case: no journal yet, nothing to seal.
+    //
+    // EVERY OTHER ERROR MUST PROPAGATE. Swallowing EACCES/EIO here would let
+    // append() return ok while the tail was never sealed — and the caller would
+    // advance the Telegram cursor on a write that may have concatenated onto a
+    // fragment. A repair that silently fails is indistinguishable from one that
+    // worked, which is precisely how the original loss went unnoticed.
+    if (err && err.code === 'ENOENT') return;
+    throw err;
   }
 }
 

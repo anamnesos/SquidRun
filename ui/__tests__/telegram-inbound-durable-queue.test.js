@@ -152,6 +152,42 @@ describe('durable append queue keyed by updateId', () => {
     }
   });
 
+  test('a FAILED tail repair must fail the enqueue, never return a success cursor', () => {
+    // ORACLE #18: sealTornTail originally caught every error and continued, so
+    // an EACCES/EIO during repair still produced append() -> ok and the caller
+    // would advance the Telegram cursor over a write that may have
+    // concatenated onto a fragment. A repair that silently fails looks
+    // identical to one that worked — exactly how the original loss hid.
+    queue.append(dir, { updateId: 1, text: 'a' });
+    const realStat = fs.statSync;
+    const journal = queue.journalPath(dir);
+    fs.statSync = (target, ...rest) => {
+      if (String(target) === journal) {
+        const err = new Error('EIO: simulated I/O failure');
+        err.code = 'EIO';
+        throw err;
+      }
+      return realStat(target, ...rest);
+    };
+    try {
+      expect(() => queue.append(dir, { updateId: 2, text: 'b' })).toThrow(/EIO/);
+    } finally {
+      fs.statSync = realStat;
+    }
+    // The earlier entry is untouched and update 2 was NOT recorded as stored.
+    expect(queue.readPending(dir).map((e) => e.updateId)).toEqual([1]);
+  });
+
+  test('ENOENT stays benign — a first append to a fresh dir still works', () => {
+    const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-inbound-fresh-'));
+    try {
+      expect(queue.append(fresh, { updateId: 5, text: 'first ever' }).ok).toBe(true);
+      expect(queue.readPending(fresh).map((e) => e.updateId)).toEqual([5]);
+    } finally {
+      fs.rmSync(fresh, { recursive: true, force: true });
+    }
+  });
+
   test('reading an absent journal yields empty, not a throw', () => {
     const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-inbound-empty-'));
     try {
