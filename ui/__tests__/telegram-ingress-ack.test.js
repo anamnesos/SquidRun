@@ -145,7 +145,7 @@ test('ACK-LOSS REPLAY: the same updateId dedupes instead of double-spooling', ()
 
 test('PARENT ACKS ONLY ON EXPLICIT DURABLE ACCEPTANCE', async () => {
   const worker = fakeWorker();
-  const svc = serviceWith(async () => ({ ok: true, durable: true }), worker);
+  const svc = serviceWith(async () => ({ ok: true, durable: true, updateId: 900 }), worker);
   await svc.deliverTelegramInbound(worker, 'telegram-in-900', { text: 'hi', metadata: META });
   expect(worker.sent).toEqual([{ type: 'message-ack', ackKey: 'telegram-in-900', ok: true, durable: true }]);
 });
@@ -171,7 +171,7 @@ test.each([
 test('PARENT IGNORES A STALE WORKER: no ack is sent to a replaced worker', async () => {
   const current = fakeWorker();
   const stale = fakeWorker();
-  const svc = serviceWith(async () => ({ ok: true, durable: true }), current);
+  const svc = serviceWith(async () => ({ ok: true, durable: true, updateId: 900 }), current);
   await svc.deliverTelegramInbound(stale, 'telegram-in-900', { text: 'hi', metadata: META });
   expect(stale.sent).toEqual([]);
 });
@@ -179,7 +179,7 @@ test('PARENT IGNORES A STALE WORKER: no ack is sent to a replaced worker', async
 test('ACK SEND FAILURE IS NOT DELIVERY: reported false so the worker times out', async () => {
   const worker = fakeWorker();
   worker.send = () => { throw new Error('channel closed'); };
-  const svc = serviceWith(async () => ({ ok: true, durable: true }), worker);
+  const svc = serviceWith(async () => ({ ok: true, durable: true, updateId: 900 }), worker);
   await expect(
     svc.deliverTelegramInbound(worker, 'telegram-in-900', { text: 'hi', metadata: META })
   ).resolves.toBeUndefined();
@@ -237,7 +237,7 @@ test('TWO UPDATES SERIALIZE: N is spooled and acked before N+1', async () => {
   const svc = serviceWith(async (text, from, meta) => {
     order.push(`append:${meta.updateId}`);
     const r = spool.acceptInbound({ dataRoot: base, routeKey: 'main', text, from, metadata: meta });
-    return r.ok ? { ok: true, durable: true } : { ok: false, reason: r.reason };
+    return r.ok ? { ok: true, durable: true, updateId: r.updateId } : { ok: false, reason: r.reason };
   }, worker);
 
   // The poller awaits each callback, so the parent sees them one at a time.
@@ -258,4 +258,83 @@ test('NO IPC CHANNEL: an ack that cannot be sent is never counted as delivery', 
   const svc = serviceWith(async () => ({ ok: true, durable: true }), worker);
   await svc.deliverTelegramInbound(worker, 'telegram-in-900', { text: 'hi', metadata: META });
   expect(svc.sendTelegramAck(worker, { ackKey: 'telegram-in-900', ok: true, durable: true })).toBe(false);
+});
+
+// ---------------------------------------------- Architect #51 bounded blockers
+
+test('RELATIVE BASE WRITES NOWHERE: cwd must never stand in for the owner root', () => {
+  expect(spool.resolveSpoolDir('relative/base', 'main'))
+    .toEqual({ ok: false, reason: 'relative_ingress_base' });
+  expect(spool.resolveSpoolDir('./x', 'main').ok).toBe(false);
+
+  const res = spool.acceptInbound(
+    { dataRoot: 'relative/base', routeKey: 'main', text: 'x', metadata: META },
+    { append: () => { throw new Error('append must never be reached'); } }
+  );
+  expect(res).toEqual({ ok: false, reason: 'relative_ingress_base' });
+});
+
+test('RAW METADATA ROUND-TRIP: the complete object is persisted, not just picked fields', () => {
+  const base = tempRoot();
+  const meta = { ...META, someFutureField: { nested: true } };
+  const res = spool.acceptInbound({ dataRoot: base, routeKey: 'main', text: 'x', from: 'j', metadata: meta });
+  const [rec] = queue.readPending(res.dir);
+  expect(rec.rawMetadata).toEqual(meta);
+  expect(rec.rawMetadata.someFutureField).toEqual({ nested: true });
+});
+
+test('TERMINAL DISPOSITION persists so a drain can tell a poison update from a pending one', () => {
+  const base = tempRoot();
+  const res = spool.acceptInbound({
+    dataRoot: base, routeKey: 'main', text: '', from: 'j', metadata: META,
+    terminalDisposition: 'empty_body',
+  });
+  expect(res.ok).toBe(true);
+  expect(queue.readPending(res.dir)[0].terminalDisposition).toBe('empty_body');
+});
+
+test.each([
+  ['result id does not match payload id', { ok: true, durable: true, updateId: 901 }, 'telegram-in-900'],
+  ['ackKey does not match result id', { ok: true, durable: true, updateId: 900 }, 'telegram-in-999'],
+  ['result carries no updateId', { ok: true, durable: true }, 'telegram-in-900'],
+])('ACK CORRELATION MISMATCH holds the cursor: %s', async (_label, result, ackKey) => {
+  const worker = fakeWorker();
+  const svc = serviceWith(async () => result, worker);
+  await svc.deliverTelegramInbound(worker, ackKey, { text: 'hi', metadata: META });
+  expect(worker.sent.filter((m) => m.ok === true)).toEqual([]);
+  expect(worker.sent).toHaveLength(1);
+  expect(worker.sent[0].reason).toBe('ack_correlation_mismatch');
+});
+
+test('MATCHING CORRELATION still acks exactly once', async () => {
+  const worker = fakeWorker();
+  const svc = serviceWith(async () => ({ ok: true, durable: true, updateId: 900 }), worker);
+  await svc.deliverTelegramInbound(worker, 'telegram-in-900', { text: 'hi', metadata: META });
+  expect(worker.sent).toEqual([{ type: 'message-ack', ackKey: 'telegram-in-900', ok: true, durable: true }]);
+});
+
+test('NO BARE RETURN AFTER APPEND: every callback exit reports an explicit result', () => {
+  // HONEST SCOPE: this is a SOURCE check, not a behavioural one. SquidRunApp is
+  // not cheaply instantiable here, so this cannot prove the scoped branch acks
+  // at runtime — it proves the defect class behind blocker (1): an exit path
+  // that returns nothing after the append succeeded, which the parent reads as
+  // not-durable and NACKs, making every replay re-deliver to the scoped window.
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'modules', 'main', 'squidrun-app.js'),
+    'utf8'
+  );
+  const start = src.indexOf('const spooled = telegramIngressSpool.acceptInbound({');
+  expect(start).toBeGreaterThan(-1);
+  const end = src.indexOf('\n      },\n    });', start);
+  expect(end).toBeGreaterThan(start);
+
+  const body = src
+    .slice(start, end)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
+  // Bare `return;` at the callback's own depth (8-10 spaces). Deeper returns
+  // belong to nested .then() bodies, which are not this callback's exits.
+  const bare = body.split('\n').filter((line) => /^ {8,10}return;\s*$/.test(line));
+  expect(bare).toEqual([]);
 });

@@ -46,6 +46,17 @@ function send(message) {
   }
 }
 
+/** Returns false instead of throwing, so a failed send cannot orphan a waiter. */
+function trySend(message) {
+  try {
+    send(message);
+    return true;
+  } catch (err) {
+    log.warn('Telegram', `Worker IPC send failed: ${err.message}`);
+    return false;
+  }
+}
+
 const DEFAULT_ACK_TIMEOUT_MS = 15000;
 const pendingAcks = new Map();
 
@@ -166,16 +177,24 @@ async function start(options = {}) {
         return Promise.reject(new Error('no IPC channel to parent; cannot confirm durable acceptance'));
       }
 
+      const key = ackKeyFor(updateId);
       const waiter = awaitParentAck(updateId, ackTimeoutMs);
-      send({
+      // The waiter exists BEFORE the send, so a throwing send would leave a
+      // promise nobody can ever settle — an unhandled rejection at timeout and a
+      // pending entry that blocks the next attempt on this id. Retire it here.
+      const sent = trySend({
         type: 'message',
-        ackKey: ackKeyFor(updateId),
+        ackKey: key,
         payload: {
           text,
           from,
           metadata,
         },
       });
+      if (!sent) {
+        const entry = pendingAcks.get(key);
+        if (entry) entry.reject(new Error(`failed to send ${key} to parent`));
+      }
       return waiter;
     },
   });

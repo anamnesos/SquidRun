@@ -62,10 +62,6 @@ const {
 } = require('./squidrun-root-paths');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const TELEGRAM_PENDING_REPLAY_GRACE_MS = 10 * 60 * 1000;
-// How often to re-check Telegram poller freshness DURING a session. The
-// watchdog's own stale threshold is 10 minutes, so ticking at 5 catches a dead
-// poller inside roughly one threshold rather than at the next app start.
-const TELEGRAM_POLLER_FRESHNESS_WATCH_INTERVAL_MS = 5 * 60 * 1000;
 const ROOT_COHERENCE_MARKER_RELPATH = path.join('runtime', 'root-coherence-assert.jsonl');
 const CURRENT_SESSION_CUA_VERIFIER_OWNER = 'squidrun-current-session-cua-controller';
 const CURRENT_SESSION_CUA_VERIFIER_RECOVERY_EVENT = 'current_session_computer_use_proof';
@@ -2413,67 +2409,6 @@ class SquidRunApp {
     }
   }
 
-  /**
-   * Keep watching the Telegram poller for the whole session, not just at boot.
-   *
-   * SCOPE — READ THIS BEFORE ATTRIBUTING AN OUTAGE TO IT. This covers ONE
-   * narrow interval: the poller worker dying while the APP IS STILL ALIVE.
-   * `checkAndRecoverTelegramPoller` had exactly one caller (the startup-health
-   * pass), so nothing re-checked freshness after boot and a dead worker went
-   * unnoticed until the next app start.
-   *
-   * IT WOULD NOT HAVE PREVENTED THE 2026-08-01 OUTAGE. That was an APP-DOWN
-   * period — the app root pid changed across the window — so no in-app timer
-   * existed to fire. App-down continuity is a separate mechanism and this is
-   * explicitly NOT it. Do not cite this as the fix for a full app-down gap.
-   *
-   * This deliberately adds NO new recovery logic. It re-invokes the same
-   * guarded path the startup pass uses, on a timer, so the proven
-   * detect/recover machinery keeps applying for the life of the session.
-   */
-  startTelegramPollerFreshnessWatch(options = {}) {
-    const intervalMs = Number.isFinite(Number(options.intervalMs))
-      ? Math.max(60 * 1000, Number(options.intervalMs))
-      : TELEGRAM_POLLER_FRESHNESS_WATCH_INTERVAL_MS;
-    // Idempotent: a second call must not stack a second timer.
-    this.stopTelegramPollerFreshnessWatch();
-
-    const tick = async () => {
-      if (this.telegramPollerFreshnessTickInFlight) return;
-      this.telegramPollerFreshnessTickInFlight = true;
-      try {
-        // Same guards as the startup path (deployment owner / profile owner)
-        // are applied inside runStartupHealthTelegramPollerAutoRecover, so a
-        // non-owner profile ticks harmlessly and returns skipped.
-        const result = await this.runStartupHealthTelegramPollerAutoRecover({});
-        if (result?.recovery?.recovered === true) {
-          log.warn(
-            'Telegram',
-            `Periodic freshness watch recovered a wedged/dead Telegram poller (${result.recovery.action || 'unknown'})`
-          );
-        }
-      } catch (err) {
-        // A failing watch must never take the app down or stop future ticks.
-        log.warn('Telegram', `Telegram poller freshness watch tick failed: ${err.message}`);
-      } finally {
-        this.telegramPollerFreshnessTickInFlight = false;
-      }
-    };
-
-    this.telegramPollerFreshnessInterval = setInterval(tick, intervalMs);
-    // Do not hold the event loop open for this alone.
-    if (typeof this.telegramPollerFreshnessInterval.unref === 'function') {
-      this.telegramPollerFreshnessInterval.unref();
-    }
-    return { ok: true, intervalMs };
-  }
-
-  stopTelegramPollerFreshnessWatch() {
-    if (this.telegramPollerFreshnessInterval) {
-      clearInterval(this.telegramPollerFreshnessInterval);
-      this.telegramPollerFreshnessInterval = null;
-    }
-  }
 
   async initializeStartupSessionScope(options = {}) {
     const opts = options && typeof options === 'object' ? options : {};
@@ -4810,10 +4745,6 @@ class SquidRunApp {
       reason: startupScopeResult?.reason || null,
     });
     this.startScopedTelegramTriggerDrainPoller();
-    // Secondary coverage only: catches a poller worker that dies while the app
-    // is still alive. It cannot cover an app-down gap — no app, no timer — so
-    // it is not the answer to a full outage.
-    this.startTelegramPollerFreshnessWatch();
     const durableTelegramReplyHydration = this.hydratePendingTelegramReplyGuardsFromObligations({
       sessionId: this.commsSessionScopeId || null,
     });
@@ -14587,16 +14518,6 @@ class SquidRunApp {
             : 'unknown';
           body = `[File: ${fileName}]`;
         }
-        if (!body) {
-          log.warn(
-            'Telegram',
-            `Dropped inbound Telegram callback with empty body (update=${metadata?.updateId ?? 'unknown'} message=${metadata?.messageId ?? 'unknown'} mediaKind=${media?.kind || (photo ? 'photo' : (document ? 'document' : 'none'))})`
-          );
-          // Terminal, not a loss: no text and no media means there is no content
-          // to recover. Acking lets the cursor advance instead of retrying an
-          // update that can never become deliverable. FLAGGED for Oracle.
-          return { ok: true, durable: true, dropped: 'empty_body' };
-        }
         const archivePath = typeof media?.localPath === 'string' && media.localPath.trim()
           ? media.localPath.trim()
           : null;
@@ -14610,6 +14531,37 @@ class SquidRunApp {
         }
         const inboundWindowKey = inboundRoute.windowKey || 'main';
         const inboundSessionScopeId = this.getWindowSessionScopeId(inboundWindowKey);
+
+        // A poison update — no text, no media — can never become deliverable, so
+        // holding the cursor on it would livelock the whole inbound lane. But it
+        // still has to be RECORDED before we let the cursor past it: route first,
+        // then an explicit terminal record, then the ack. Progress without a
+        // durable trace is the loss shape this lane exists to close.
+        if (!body) {
+          const terminalUpdateId = Number.isFinite(Number(metadata?.updateId))
+            ? Math.floor(Number(metadata.updateId))
+            : null;
+          log.warn(
+            'Telegram',
+            `Inbound Telegram update has empty body (update=${terminalUpdateId ?? 'unknown'} message=${metadata?.messageId ?? 'unknown'} mediaKind=${media?.kind || (photo ? 'photo' : (document ? 'document' : 'none'))}); recording terminal disposition`
+          );
+          const terminal = telegramIngressSpool.acceptInbound({
+            dataRoot: ingressBase,
+            routeKey: inboundRoute.profile || inboundWindowKey || 'main',
+            text: '',
+            from: sender,
+            metadata,
+            terminalDisposition: 'empty_body',
+            targetProfile: inboundRoute.profile || 'main',
+            targetWindow: inboundWindowKey,
+            targetSession: inboundSessionScopeId || null,
+          });
+          if (!terminal.ok) {
+            log.warn('Telegram', `Could not record empty-body update (${terminal.reason}); holding cursor`);
+            return { ok: false, reason: terminal.reason };
+          }
+          return { ok: true, durable: true, updateId: terminal.updateId };
+        }
 
         log.info(
           'Telegram',
@@ -14755,7 +14707,10 @@ class SquidRunApp {
               error: err.message,
             });
           });
-          return;
+          // The append above already succeeded and scoped delivery is scheduled;
+          // a bare return here read as malformed to the parent, so it NACKed and
+          // every replay re-delivered to the scoped window.
+          return { ok: true, durable: true, updateId };
         }
         const mainPaneRecallContext = {
           paneId: '1',
@@ -14949,7 +14904,6 @@ class SquidRunApp {
   async shutdown() {
     log.info('App', 'Shutting down SquidRun Application');
     this.shuttingDown = true;
-    this.stopTelegramPollerFreshnessWatch();
     this.clearPtyDataFlushTimer();
     this.flushBufferedPtyData();
     this.clearPtyVisibleReleaseTimer();

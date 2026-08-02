@@ -126,6 +126,8 @@ function append(dir, entry = {}) {
     video: entry.video && typeof entry.video === 'object' ? entry.video : null,
     document: entry.document && typeof entry.document === 'object' ? entry.document : null,
     routeKey: typeof entry.routeKey === 'string' ? entry.routeKey : null,
+    rawMetadata: entry.rawMetadata && typeof entry.rawMetadata === 'object' ? entry.rawMetadata : null,
+    terminalDisposition: typeof entry.terminalDisposition === 'string' ? entry.terminalDisposition : null,
     targetProfile: entry.targetProfile ?? null,
     targetWindow: entry.targetWindow ?? null,
     targetSession: entry.targetSession ?? null,

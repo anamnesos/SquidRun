@@ -212,6 +212,24 @@ class InboundPollerService {
       return;
     }
 
+    // EXACT CORRELATION. An ack is a claim about one specific update, so the key
+    // we release must match the update the callback says it made durable AND the
+    // update the worker actually sent. Without this, a result carrying the wrong
+    // id would release the wrong message's cursor — a loss that looks like a
+    // success on both sides.
+    const payloadUpdateId = Number(payload?.metadata?.updateId);
+    const resultUpdateId = Number(result.updateId);
+    if (!Number.isFinite(resultUpdateId) || !Number.isFinite(payloadUpdateId)
+      || resultUpdateId !== payloadUpdateId
+      || ackKey !== `telegram-in-${resultUpdateId}`) {
+      this.log.warn(
+        'Telegram',
+        `Telegram ack correlation mismatch (ackKey=${ackKey} result=${result.updateId} payload=${payload?.metadata?.updateId}); holding cursor`
+      );
+      nack('ack_correlation_mismatch');
+      return;
+    }
+
     this.sendTelegramAck(worker, { ackKey, ok: true, durable: true });
   }
 

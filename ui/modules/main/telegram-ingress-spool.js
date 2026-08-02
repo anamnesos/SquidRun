@@ -37,6 +37,12 @@ function resolveSpoolDir(dataRoot, routeKey) {
   if (typeof dataRoot !== 'string' || !dataRoot.trim()) {
     return { ok: false, reason: 'missing_ingress_base' };
   }
+  // A relative base would be resolved against cwd, which silently invents an
+  // owner root that nobody captured. The canonical SQUIDRUN_DATA_ROOT is always
+  // absolute; anything else is a configuration bug and must write nowhere.
+  if (!path.isAbsolute(dataRoot.trim())) {
+    return { ok: false, reason: 'relative_ingress_base' };
+  }
   if (!isSafeRouteKey(routeKey)) {
     return { ok: false, reason: 'unsafe_route_key' };
   }
@@ -87,6 +93,11 @@ function acceptInbound(input = {}, deps = {}) {
       video: meta.video ?? null,
       document: meta.document ?? null,
       routeKey,
+      // The full untouched metadata as well as the selected fields: a drain
+      // that can only see what today's code thought to copy cannot replay a
+      // message shape added tomorrow.
+      rawMetadata: meta,
+      terminalDisposition: typeof input.terminalDisposition === 'string' ? input.terminalDisposition : null,
       profile: input.targetProfile ?? null,
       targetProfile: input.targetProfile ?? null,
       targetWindow: input.targetWindow ?? null,
