@@ -16,6 +16,7 @@ const {
   createDrainCoordinator,
   isProvenOwnership,
   isCorrelatedProof,
+  looksAccepted,
 } = require('../modules/main/telegram-ingress-drain');
 
 const tempRoots = [];
@@ -555,4 +556,73 @@ test('UNKNOWN TERMINAL DISPOSITION holds instead of retiring undelivered', async
   expect(seen).toEqual([]);
   expect(res.stoppedAt).toMatchObject({ updateId: 180, reason: 'unknown_terminal_disposition' });
   expect(queue.readPending(dir)).toHaveLength(1);
+});
+
+// ------------------------------------------- Architect #64 state-machine holes
+
+test('HARD REJECTION is retryable, not latched into a permanent proof wait', async () => {
+  // A disconnected daemon delivered nothing. Latching it as awaiting-proof
+  // would strand the message forever, waiting for proof of something that
+  // never happened.
+  const base = tempRoot();
+  const dir = seed(base, 'main', [200]);
+  const seen = [];
+  let clock = 1_000_000;
+  const drain = coordinator({
+    now: () => clock,
+    backoffMs: 5000,
+    deliver: async (job) => {
+      seen.push(job.messageId);
+      return { ok: false, accepted: false, queued: false, status: 'daemon_not_connected' };
+    },
+  });
+
+  const first = await drain.schedule(dir, 'main');
+  expect(first.stoppedAt).toMatchObject({ updateId: 200, failureClass: 'definite' });
+
+  // After the backoff it must try again — this one is safe to retry.
+  clock = 1_007_000;
+  await drain.schedule(dir, 'main');
+  expect(seen).toEqual(['telegram-in-200', 'telegram-in-200']);
+});
+
+test('ACK LOSS AFTER A VISIBLE DELIVERY does not re-deliver on the next schedule', async () => {
+  // The delivery landed and was proven, but the ack failed and the persistent
+  // receipt lookup is momentarily empty. Re-delivering here is exactly how
+  // James sees the same message twice.
+  const base = tempRoot();
+  const dir = seed(base, 'main', [210, 211]);
+  const seen = [];
+  const drain = coordinator({
+    queue: { readPending: queue.readPending, ack: () => ({ ok: false, reason: 'eio' }) },
+    deliver: async (job) => { seen.push(job.messageId); return provenFor(job); },
+    findExistingReceipt: async () => null,
+  });
+
+  await drain.schedule(dir, 'main');
+  const second = await drain.schedule(dir, 'main');
+
+  expect(seen).toEqual(['telegram-in-210']);
+  expect(second.stoppedAt).toMatchObject({ updateId: 210, failureClass: 'awaiting_proof' });
+  expect(queue.readPending(dir).map((r) => r.updateId)).toEqual([210, 211]);
+});
+
+test.each([
+  ['accepted', { accepted: true }],
+  ['queued', { queued: true }],
+  ['receiptPending', { receiptPending: true }],
+  ['accepted.* status', { status: 'accepted.daemon_pty_unverified' }],
+])('LOOKS-ACCEPTED enters proof-only hold: %s', (_l, receipt) => {
+  expect(looksAccepted(receipt)).toBe(true);
+});
+
+test.each([
+  ['ok:false', { ok: false, accepted: true }],
+  ['daemon not connected', { status: 'daemon_not_connected' }],
+  ['pane missing', { status: 'pane_missing' }],
+  ['rejected', { status: 'rejected' }],
+  ['nothing at all', {}],
+  ['null', null],
+])('HARD FAILURE stays retryable: %s', (_l, receipt) => {
+  expect(looksAccepted(receipt)).toBe(false);
 });

@@ -27,6 +27,28 @@ const DEFAULT_BACKOFF_MS = 30 * 1000;
 // Only these may retire a record without delivering it.
 const TERMINAL_DISPOSITIONS = new Set(['empty_body']);
 
+// Results that mean the delivery never happened. These are safe to retry, and
+// must NOT enter the proof-only hold: latching a hard rejection would strand
+// the message forever waiting for proof of something that never occurred.
+const HARD_FAILURE_STATUSES = new Set([
+  'daemon_not_connected',
+  'pane_missing',
+  'transport_failed',
+  'rejected',
+]);
+
+/**
+ * Did this result actually claim the message was taken? Only then may it enter
+ * the proof-only hold. Anything that says otherwise is a definite failure.
+ */
+function looksAccepted(receipt) {
+  if (!receipt || typeof receipt !== 'object') return false;
+  if (receipt.ok === false) return false;
+  if (typeof receipt.status === 'string' && HARD_FAILURE_STATUSES.has(receipt.status)) return false;
+  if (receipt.accepted === true || receipt.queued === true || receipt.receiptPending === true) return true;
+  return typeof receipt.status === 'string' && receipt.status.startsWith('accepted');
+}
+
 // Statuses that mean a downstream consumer has taken responsibility. A
 // persistedReceiptId on its own is NOT on this list: a row existing says only
 // that somebody wrote something down, not that the message arrived.
@@ -155,7 +177,7 @@ function createDrainCoordinator(deps = {}) {
       if (!TERMINAL_DISPOSITIONS.has(record.terminalDisposition)) {
         return { stop: true, reason: 'unknown_terminal_disposition', failureClass: 'definite' };
       }
-      return { retire: true, terminal: true };
+      return { retire: true, terminal: true, visible: false };
     }
 
     // (6) Crash after downstream accept but before ack: the record is still
@@ -177,7 +199,6 @@ function createDrainCoordinator(deps = {}) {
     }
     if (isCorrelatedProof(existing, expectedIdentity)) {
       log.info('Telegram', `Drain found correlated downstream proof for ${messageId}; retiring without re-injection`);
-      if (st && st.awaitingProof === updateId) st.awaitingProof = null;
       return { retire: true, replayed: true };
     }
 
@@ -218,8 +239,16 @@ function createDrainCoordinator(deps = {}) {
     // The delivery receipt is held to the same standard: it must carry the
     // identity of what it claims to have delivered.
     if (!isCorrelatedProof(receipt, expectedIdentity)) {
-      // Delivered, but ownership unproved. Latch it: from now on this record is
-      // proof-driven only, never timer-driven re-injection.
+      // A hard rejection means nothing was delivered: retry it. Only a result
+      // that actually claims acceptance enters the proof-only hold, or a
+      // disconnected daemon would strand the message forever.
+      if (!looksAccepted(receipt)) {
+        return {
+          stop: true,
+          reason: `delivery_rejected:${receipt?.status || 'no_receipt'}`,
+          failureClass: 'definite',
+        };
+      }
       if (st) st.awaitingProof = updateId;
       return {
         stop: true,
@@ -227,8 +256,14 @@ function createDrainCoordinator(deps = {}) {
         failureClass: 'awaiting_proof',
       };
     }
-    if (st && st.awaitingProof === updateId) st.awaitingProof = null;
-    return { retire: true };
+
+    // (2) Delivery succeeded and is proven — but it is not RETIRED until the ack
+    // lands. Latch proof-only state here and let drainOnce clear it after a
+    // successful ack. Clearing before the ack meant an ack failure plus a
+    // momentarily empty receipt lookup would re-deliver visibly on the next
+    // schedule.
+    if (st) st.awaitingProof = updateId;
+    return { retire: true, visible: true };
   }
 
   async function drainOnce(dir, routeKey) {
@@ -269,6 +304,9 @@ function createDrainCoordinator(deps = {}) {
         log.warn('Telegram', `Drain could not retire update ${record.updateId}; stopping`);
         break;
       }
+      // Retired for real: only now is it safe to stop treating this record as
+      // proof-only.
+      if (st.awaitingProof === Number(record.updateId)) st.awaitingProof = null;
       delivered += 1;
     }
 
@@ -344,6 +382,7 @@ module.exports = {
   isProvenOwnership,
   isCorrelatedProof,
   proofClassOf,
+  looksAccepted,
   IDENTITY_FIELDS,
   TERMINAL_DISPOSITIONS,
   downstreamMessageId,
