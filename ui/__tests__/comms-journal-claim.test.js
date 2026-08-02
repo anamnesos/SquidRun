@@ -49,6 +49,7 @@ afterEach(() => {
   while (roots.length) fs.rmSync(roots.pop(), { recursive: true, force: true });
 });
 
+// A claim must NAME the message completely. Every field here is required.
 const ENTRY = {
   messageId: 'telegram-in-1-mira-reply',
   channel: 'telegram',
@@ -56,6 +57,11 @@ const ENTRY = {
   senderRole: 'mira',
   targetRole: 'james',
   rawBody: 'the reply body',
+  inboundMessageId: 'telegram-in-1',
+  chatId: 1111111111,
+  windowKey: 'main',
+  profile: 'main',
+  routeKey: 'main',
 };
 
 test('EXACTLY ONE of two handles acquires the claim', () => {
@@ -128,4 +134,55 @@ test.each([
 
   const mismatched = openStore(dbPath).claimCommsSend({ ...ENTRY, ...override });
   expect(mismatched).toMatchObject({ acquired: false, sendAllowed: false, outcome: 'identity_mismatch' });
+});
+
+test.each([
+  ['inboundMessageId', 'inboundMessageId'],
+  ['chatId', 'chatId'],
+  ['windowKey', 'windowKey'],
+  ['profile', 'profile'],
+  ['routeKey', 'routeKey'],
+])('A CLAIM MISSING REQUIRED IDENTITY (%s) FAILS CLOSED', (_l, field) => {
+  // Missing identity used to be a WILDCARD, so a claim could be reused by any
+  // message sharing the id — the opposite of what a claim is for.
+  const dbPath = tempDbPath();
+  const partial = { ...ENTRY };
+  delete partial[field];
+
+  const result = openStore(dbPath).claimCommsSend(partial);
+  expect(result).toMatchObject({ acquired: false, sendAllowed: false, outcome: 'identity_incomplete', field });
+});
+
+test.each([
+  ['different inbound message', { inboundMessageId: 'telegram-in-999' }],
+  ['different chat', { chatId: 2222222222 }],
+  ['different window', { windowKey: 'sideprofile' }],
+  ['different profile', { profile: 'sideprofile' }],
+  ['different route', { routeKey: 'sideprofile' }],
+])('ROUTE IDENTITY MISMATCH fails closed: %s', (_l, override) => {
+  const dbPath = tempDbPath();
+  openStore(dbPath).claimCommsSend(ENTRY);
+
+  const mismatched = openStore(dbPath).claimCommsSend({ ...ENTRY, ...override });
+  expect(mismatched).toMatchObject({ acquired: false, sendAllowed: false, outcome: 'identity_mismatch' });
+});
+
+test('CHUNK FIELDS ARE OPTIONAL ONLY TOGETHER', () => {
+  const dbPath = tempDbPath();
+  const store = openStore(dbPath);
+  // One without the other cannot name a chunk position.
+  expect(store.claimCommsSend({ ...ENTRY, chunkIndex: 1 }))
+    .toMatchObject({ acquired: false, outcome: 'identity_incomplete' });
+  expect(store.claimCommsSend({ ...ENTRY, chunkCount: 3 }))
+    .toMatchObject({ acquired: false, outcome: 'identity_incomplete' });
+  // Both present is a valid, distinct identity.
+  expect(store.claimCommsSend({ ...ENTRY, chunkIndex: 1, chunkCount: 3 }))
+    .toMatchObject({ acquired: true, sendAllowed: true });
+});
+
+test('AN EMPTY BODY IS STILL HASHED, so it cannot match a different message', () => {
+  const dbPath = tempDbPath();
+  openStore(dbPath).claimCommsSend({ ...ENTRY, rawBody: '' });
+  const other = openStore(dbPath).claimCommsSend({ ...ENTRY, rawBody: 'now with content' });
+  expect(other).toMatchObject({ acquired: false, outcome: 'identity_mismatch', field: 'bodyHash' });
 });

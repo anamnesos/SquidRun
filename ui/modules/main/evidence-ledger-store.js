@@ -1991,26 +1991,79 @@ class EvidenceLedgerStore {
     if (!messageId) {
       return { ok: false, acquired: false, sendAllowed: false, outcome: 'message_id_required' };
     }
+    // Canonical body hash ALWAYS, including the empty body: treating '' as
+    // "no hash" would let an empty message match anything.
     const rawBody = typeof entry.rawBody === 'string' ? entry.rawBody : '';
-    const bodyHash = rawBody ? hashBody(rawBody) : null;
+    const bodyHash = hashBody(rawBody);
 
-    // The identity a claim is FOR. A mismatch on any of these means this row
-    // describes a different message, and sending would be unrelated traffic
-    // riding someone else's claim.
-    const identityOf = (row) => ({
-      channel: row?.channel ?? null,
-      direction: row?.direction ?? null,
-      senderRole: row?.senderRole ?? row?.sender_role ?? null,
-      targetRole: row?.targetRole ?? row?.target_role ?? null,
-      bodyHash: row?.bodyHash ?? row?.body_hash ?? null,
-    });
-    const wanted = identityOf({
-      channel: entry.channel,
-      direction: entry.direction,
-      senderRole: entry.senderRole,
-      targetRole: entry.targetRole,
-      bodyHash,
-    });
+    // FULL REQUIRED IDENTITY (Architect #113/#114). Every field must be present
+    // on BOTH sides and compare exactly. An earlier version treated a missing
+    // value on either side as a wildcard, which meant a claim could be reused
+    // by a message that merely shared an id — the opposite of what a claim is
+    // for. chunkIndex/chunkCount are the only optional pair, and they are
+    // optional TOGETHER: an unchunked send has neither.
+    const norm = (v) => (v === undefined || v === null || v === '' ? null : String(v));
+    const meta = (entry.metadata && typeof entry.metadata === 'object') ? entry.metadata : {};
+    const chunkIndex = entry.chunkIndex ?? meta.chunkIndex ?? null;
+    const chunkCount = entry.chunkCount ?? meta.chunkCount ?? null;
+    if ((chunkIndex === null) !== (chunkCount === null)) {
+      return {
+        ok: false, acquired: false, sendAllowed: false,
+        outcome: 'identity_incomplete', field: 'chunkIndex/chunkCount', messageId,
+      };
+    }
+
+    const wanted = {
+      channel: norm(entry.channel),
+      direction: norm(entry.direction),
+      senderRole: norm(entry.senderRole),
+      targetRole: norm(entry.targetRole),
+      bodyHash: norm(bodyHash),
+      inboundMessageId: norm(entry.inboundMessageId ?? meta.inboundMessageId),
+      chatId: norm(entry.chatId ?? meta.chatId),
+      windowKey: norm(entry.windowKey ?? meta.windowKey),
+      profile: norm(entry.profile ?? meta.profile),
+      routeKey: norm(entry.routeKey ?? meta.routeKey),
+      chunkIndex: norm(chunkIndex),
+      chunkCount: norm(chunkCount),
+    };
+    const OPTIONAL_TOGETHER = new Set(['chunkIndex', 'chunkCount']);
+    for (const key of Object.keys(wanted)) {
+      if (OPTIONAL_TOGETHER.has(key)) continue;
+      if (wanted[key] === null) {
+        // Missing required identity fails CLOSED. We cannot claim on behalf of
+        // a message we cannot fully name.
+        return {
+          ok: false, acquired: false, sendAllowed: false,
+          outcome: 'identity_incomplete', field: key, messageId,
+        };
+      }
+    }
+
+    const identityFromRow = (row) => {
+      let rowMeta = {};
+      try {
+        rowMeta = row?.metadata && typeof row.metadata === 'object'
+          ? row.metadata
+          : JSON.parse(row?.metadataJson || row?.metadata_json || '{}');
+      } catch {
+        rowMeta = {};
+      }
+      return {
+        channel: norm(row?.channel),
+        direction: norm(row?.direction),
+        senderRole: norm(row?.senderRole ?? row?.sender_role),
+        targetRole: norm(row?.targetRole ?? row?.target_role),
+        bodyHash: norm(row?.bodyHash ?? row?.body_hash),
+        inboundMessageId: norm(rowMeta.inboundMessageId),
+        chatId: norm(rowMeta.chatId),
+        windowKey: norm(rowMeta.windowKey),
+        profile: norm(rowMeta.profile),
+        routeKey: norm(rowMeta.routeKey),
+        chunkIndex: norm(rowMeta.chunkIndex),
+        chunkCount: norm(rowMeta.chunkCount),
+      };
+    };
 
     try {
       this.db.exec('BEGIN IMMEDIATE;');
@@ -2042,7 +2095,16 @@ class EvidenceLedgerStore {
           null,
           null,
           1,
-          entry.metadata ? JSON.stringify(entry.metadata) : null,
+          JSON.stringify({
+            ...meta,
+            inboundMessageId: wanted.inboundMessageId,
+            chatId: wanted.chatId,
+            windowKey: wanted.windowKey,
+            profile: wanted.profile,
+            routeKey: wanted.routeKey,
+            ...(wanted.chunkIndex === null ? {} : { chunkIndex: wanted.chunkIndex }),
+            ...(wanted.chunkCount === null ? {} : { chunkCount: wanted.chunkCount }),
+          }),
           nowMs
         );
         this.db.exec('COMMIT;');
@@ -2052,11 +2114,11 @@ class EvidenceLedgerStore {
         };
       }
 
-      // Identity must match before ANY decision about this row.
-      const found = identityOf(existing);
+      // Identity must match before ANY decision about this row. No wildcards:
+      // a null on EITHER side is a mismatch, not a pass.
+      const found = identityFromRow(existingRow || existing);
       for (const key of Object.keys(wanted)) {
-        if (wanted[key] === null || wanted[key] === undefined) continue;
-        if (found[key] !== null && found[key] !== undefined && found[key] !== wanted[key]) {
+        if (found[key] !== wanted[key]) {
           this.db.exec('ROLLBACK;');
           return {
             ok: false, acquired: false, sendAllowed: false,
