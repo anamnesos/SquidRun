@@ -205,4 +205,11 @@ test.each([
   expect(requests).toBe(0);
   expect(result).toMatchObject({ ok: false, definiteNoSend: true });
   expect(String(result.error)).toContain(expected);
+
+  // The RETURN VALUE is not the contract. A caller that falls back needs the
+  // refusal durably recorded, or a later replay finds no trace and re-sends.
+  // Read it through the independent handle, from the same dbPath.
+  const row = rowFor(dbPath, 'telegram-in-1-mira-reply');
+  expect(row).not.toBeNull();
+  expect(row.status).toBe('failed');
 });
