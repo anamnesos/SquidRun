@@ -308,14 +308,10 @@ function getProofRank(status) {
   return Number(PROOF_RANKS[status] || 0);
 }
 
-function getModelPromptReceipt(id, options = {}) {
+function getModelPromptReceipt(id) {
   const normalized = toNonEmptyString(id);
   if (!normalized) return null;
-  // A scoped profile keeps its receipts under its OWN resolved root
-  // (runtime-<profile>), so the caller may name the state file explicitly.
-  // Defaulting is unchanged for every existing caller.
-  const explicitStatePath = toNonEmptyString(options.statePath);
-  const state = explicitStatePath ? readState(explicitStatePath) : readState();
+  const state = readState();
   const deliveryId = state.receiptsByDeliveryId[normalized]
     ? normalized
     : state.deliveryIdByMessageId[normalized];

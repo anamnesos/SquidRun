@@ -426,14 +426,22 @@ function createDrainCoordinator(deps = {}) {
   }
 
   async function drainOnce(dir, routeKey) {
-    // drainOnce is callable directly (startup path), so it owns its state
-    // lookup rather than relying on schedule() to hand it down.
+    // drainOnce is callable DIRECTLY (startup path), so it needs its own
+    // disposed check: guarding only schedule() left a delivery path wide open
+    // during teardown.
+    if (disposed) return { ok: false, reason: 'coordinator_disposed', delivered: 0, pending: 0, stoppedAt: null };
     const st = stateFor(dir);
     const pending = queue.readPending(dir).slice().sort(byUpdateId);
     let delivered = 0;
     let stoppedAt = null;
 
     for (const record of pending) {
+      // Dispose can land mid-batch. Continuing would deliver N+1 while the app
+      // is tearing down journals underneath us.
+      if (disposed) {
+        stoppedAt = { updateId: Number(record.updateId), reason: 'coordinator_disposed', failureClass: 'awaiting_proof' };
+        break;
+      }
       const outcome = await processRecord(dir, record, routeKey, st);
       if (outcome.stop) {
         // (2) STOP. N+1 must not pass an unretired N, or order and
@@ -469,6 +477,11 @@ function createDrainCoordinator(deps = {}) {
       delivered += 1;
     }
 
+    // Nothing pending and nothing held: this route no longer needs a sweep.
+    // Leaving it running would tick forever over an empty queue.
+    if (!stoppedAt && delivered === pending.length) {
+      stopProofSweep(dir);
+    }
     return { ok: true, delivered, pending: pending.length, stoppedAt };
   }
 
@@ -515,7 +528,7 @@ function createDrainCoordinator(deps = {}) {
           }
           break;
         }
-      } while (st.rerun);
+      } while (st.rerun && !disposed);
     } finally {
       st.running = false;
       inFlight.delete(tracked);

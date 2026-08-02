@@ -959,3 +959,59 @@ test('A DELIVER THROW IS AMBIGUOUS, not a definite failure', async () => {
   await drain.schedule(dir, 'main');
   expect(seen).toEqual(['telegram-in-380']);
 });
+
+test('DIRECT drainOnce respects dispose too', async () => {
+  // Guarding only schedule() left the startup path wide open during teardown.
+  const base = tempRoot();
+  const dir = seed(base, 'main', [400]);
+  const seen = [];
+  const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
+
+  await drain.dispose();
+  const res = await drain.drainOnce(dir, 'main');
+
+  expect(seen).toEqual([]);
+  expect(res).toMatchObject({ ok: false, reason: 'coordinator_disposed' });
+});
+
+test('DISPOSE MID-BATCH stops before N+1', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [410, 411]);
+  const seen = [];
+  let drain;
+  drain = coordinator({
+    deliver: async (job) => {
+      seen.push(job.messageId);
+      // Teardown begins while N is still being delivered.
+      if (job.updateId === 410) void drain.dispose();
+      return provenFor(job);
+    },
+  });
+
+  await drain.schedule(dir, 'main');
+
+  expect(seen).toEqual(['telegram-in-410']);
+});
+
+test('A FULLY DRAINED ROUTE stops its sweep instead of ticking forever', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [420]);
+  let proof = null;
+  const drain = coordinator({
+    sweepIntervalMs: 1000,
+    deliver: async () => UNPROVEN,
+    findExistingReceipt: async (identity) => proof && { ...identity, ...proof },
+  });
+
+  await drain.schedule(dir, 'main');
+  expect(drain._internals.state.get(dir).sweepTimer).toBeTruthy();
+
+  // Once accepted-but-unproved, only PROOF can retire it — a retry cannot, and
+  // must not. Proof arrives and the queue empties.
+  proof = { status: 'delivered.verified', verified: true };
+  await drain.schedule(dir, 'main');
+
+  expect(queue.readPending(dir)).toHaveLength(0);
+  expect(drain._internals.state.get(dir).sweepTimer).toBeFalsy();
+  await drain.dispose();
+});
