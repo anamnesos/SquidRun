@@ -12407,6 +12407,40 @@ describe('SquidRunApp', () => {
       freshTelegramSpoolRoot();
     });
 
+    it('performFullShutdown quiesces the drain BEFORE killing the daemon', async () => {
+      // The daemon shutdown and force-kill used to run before drain disposal,
+      // so an in-flight pane delivery could lose its daemon mid-flight.
+      const order = [];
+      let release;
+      const gate = new Promise((r) => { release = r; });
+
+      app.telegramDrainCoordinator = {
+        dispose: async () => { await gate; order.push('drain-quiesced'); },
+      };
+      app.ctx.daemonClient = { shutdown: () => order.push('daemon-shutdown') };
+      jest.spyOn(app, 'forceKillDaemonFromPidFile').mockImplementation(() => order.push('daemon-force-kill'));
+      jest.spyOn(app, 'shutdown').mockImplementation(async () => order.push('app-shutdown'));
+      jest.spyOn(app, 'stopSupervisorFromPidFile').mockResolvedValue({ ok: true, skipped: true });
+
+      const running = app.performFullShutdown('test');
+      // Nothing may have happened yet: the drain has not settled.
+      expect(order).toEqual([]);
+      release();
+      await running.catch(() => {});
+
+      expect(order[0]).toBe('drain-quiesced');
+      expect(order.indexOf('drain-quiesced')).toBeLessThan(order.indexOf('daemon-shutdown'));
+    });
+
+    it('quiesce is idempotent so shutdown() can safely repeat it', async () => {
+      let calls = 0;
+      app.telegramDrainCoordinator = { dispose: async () => { calls += 1; } };
+      await app.quiesceTelegramIngressDrain();
+      await app.quiesceTelegramIngressDrain();
+      expect(calls).toBe(1);
+      expect(app.telegramDrainCoordinator).toBeNull();
+    });
+
     it('creates exactly ONE coordinator and reuses it', () => {
       // Two coordinators would each hold their own single-flight latch and could
       // deliver the same record twice.

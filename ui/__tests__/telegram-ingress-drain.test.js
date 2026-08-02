@@ -1015,3 +1015,42 @@ test('A FULLY DRAINED ROUTE stops its sweep instead of ticking forever', async (
   expect(drain._internals.state.get(dir).sweepTimer).toBeFalsy();
   await drain.dispose();
 });
+
+test('DISPOSE waits for an in-flight DIRECT drain, not just a scheduled one', async () => {
+  // An untracked drainOnce awaiting deliver() when dispose starts would let
+  // dispose resolve immediately, and shutdown would close journals out from
+  // under a live delivery.
+  const base = tempRoot();
+  const dir = seed(base, 'main', [430]);
+  const order = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const drain = coordinator({
+    deliver: async (job) => { await gate; order.push('delivered'); return provenFor(job); },
+  });
+
+  const direct = drain.drainOnce(dir, 'main').then(() => order.push('pass-settled'));
+  const disposing = drain.dispose().then(() => order.push('dispose-returned'));
+  release();
+  await Promise.all([direct, disposing]);
+
+  expect(order).toEqual(['delivered', 'pass-settled', 'dispose-returned']);
+});
+
+test('A DIRECT pass and a SCHEDULED pass cannot double-deliver', async () => {
+  const base = tempRoot();
+  const dir = seed(base, 'main', [440]);
+  const seen = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const drain = coordinator({
+    deliver: async (job) => { seen.push(job.messageId); await gate; return provenFor(job); },
+  });
+
+  const a = drain.drainOnce(dir, 'main');
+  const b = drain.schedule(dir, 'main');
+  release();
+  await Promise.all([a, b]);
+
+  expect(seen).toEqual(['telegram-in-440']);
+});

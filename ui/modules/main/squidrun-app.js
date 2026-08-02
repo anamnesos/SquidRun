@@ -9315,6 +9315,12 @@ class SquidRunApp {
       log.info('Shutdown', `Initiating full shutdown (${reason})`);
       this.clearAllAgentResponseWatchdogs();
 
+      // QUIESCE INBOUND DELIVERY FIRST. The daemon shutdown and force-kill below
+      // used to run before `await this.shutdown()`, where drain disposal lived —
+      // so an in-flight pane delivery could have its daemon killed mid-flight.
+      // Dispose is idempotent, so shutdown() re-calling it is harmless.
+      await this.quiesceTelegramIngressDrain();
+
       if (this.ctx.daemonClient) {
         try {
           this.ctx.daemonClient.shutdown();
@@ -14774,6 +14780,27 @@ class SquidRunApp {
    * each hold their own single-flight latch and deliver the same record twice,
    * which is precisely the failure the latch exists to prevent.
    */
+  /**
+   * Stop accepting inbound deliveries and wait for any in flight to settle.
+   *
+   * Ordering matters more than it looks: killing the daemon or closing journals
+   * while a delivery is mid-flight can lose or duplicate a message that the
+   * queue sidecar cannot then reason about. Idempotent, so both
+   * performFullShutdown and shutdown may call it.
+   */
+  async quiesceTelegramIngressDrain() {
+    if (!this.telegramDrainCoordinator) return { ok: true, skipped: true };
+    try {
+      await this.telegramDrainCoordinator.dispose();
+    } catch (err) {
+      log.warn('Telegram', `Ingress drain dispose failed: ${err.message}`);
+      return { ok: false, reason: err.message };
+    }
+    this.telegramDrainCoordinator = null;
+    this.telegramDrainInFlight = null;
+    return { ok: true };
+  }
+
   getTelegramDrainCoordinator() {
     if (!this.telegramDrainCoordinator) {
       this.telegramDrainCoordinator = telegramIngressDrain.createDrainCoordinator({
@@ -15296,18 +15323,9 @@ class SquidRunApp {
   async shutdown() {
     log.info('App', 'Shutting down SquidRun Application');
     this.shuttingDown = true;
-    // Before journals and the poller are torn down: a drain mid-delivery would
-    // otherwise write into closed stores, and a live sweep would fire into a
-    // half-dismantled app.
-    if (this.telegramDrainCoordinator) {
-      try {
-        await this.telegramDrainCoordinator.dispose();
-      } catch (err) {
-        log.warn('Telegram', `Ingress drain dispose failed: ${err.message}`);
-      }
-      this.telegramDrainCoordinator = null;
-      this.telegramDrainInFlight = null;
-    }
+    // Idempotent: performFullShutdown already quiesced before touching the
+    // daemon, but a plain shutdown() must still be safe on its own.
+    await this.quiesceTelegramIngressDrain();
     this.clearPtyDataFlushTimer();
     this.flushBufferedPtyData();
     this.clearPtyVisibleReleaseTimer();

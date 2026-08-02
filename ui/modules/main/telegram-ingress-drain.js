@@ -425,7 +425,7 @@ function createDrainCoordinator(deps = {}) {
     return { retire: true, visible: true };
   }
 
-  async function drainOnce(dir, routeKey) {
+  async function runPass(dir, routeKey) {
     // drainOnce is callable DIRECTLY (startup path), so it needs its own
     // disposed check: guarding only schedule() left a delivery path wide open
     // during teardown.
@@ -486,6 +486,30 @@ function createDrainCoordinator(deps = {}) {
   }
 
   /**
+   * Public direct pass. It MUST go through the same tracking as schedule():
+   * an untracked drainOnce awaiting deliver() when dispose starts would let
+   * dispose resolve immediately, and shutdown would then close journals out
+   * from under a live delivery. It also has to respect the single-flight latch
+   * so a direct pass cannot double-deliver alongside a scheduled one.
+   */
+  async function drainOnce(dir, routeKey) {
+    if (disposed) return { ok: false, reason: 'coordinator_disposed', delivered: 0, pending: 0, stoppedAt: null };
+    const st = stateFor(dir);
+    if (st.running) return { ok: true, coalesced: true, delivered: 0, pending: 0, stoppedAt: null };
+    st.running = true;
+    let settle;
+    const tracked = new Promise((resolve) => { settle = resolve; });
+    inFlight.add(tracked);
+    try {
+      return await runPass(dir, routeKey);
+    } finally {
+      st.running = false;
+      inFlight.delete(tracked);
+      settle();
+    }
+  }
+
+  /**
    * Coalescing, single-flight schedule. Concurrent callers get ONE drain, plus
    * at most one follow-up pass so work appended during a drain is not stranded.
    */
@@ -513,7 +537,7 @@ function createDrainCoordinator(deps = {}) {
     try {
       do {
         st.rerun = false;
-        last = await drainOnce(dir, routeKey);
+        last = await runPass(dir, routeKey);
         if (last.stoppedAt) {
           // AUTO-ARM. Production has no caller standing by at the moment proof
           // lands, so a hold that waits for an external poke waits forever. The
