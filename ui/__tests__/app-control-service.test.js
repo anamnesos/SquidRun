@@ -468,3 +468,33 @@ describe('app-control-service', () => {
     }));
   });
 });
+
+describe('restart-telegram-poller with an async restart hook (Stage A)', () => {
+  const { executeAppControlAction } = require('../modules/main/app-control-service');
+
+  test('A PROMISE result is awaited and mapped', async () => {
+    const ctx = {
+      restartTelegramPoller: jest.fn().mockResolvedValue({ success: true, phase: 'ready' }),
+    };
+    const result = await executeAppControlAction(ctx, 'restart-telegram-poller', {});
+    expect(result).toMatchObject({ success: true, action: 'restart-telegram-poller', phase: 'ready' });
+  });
+
+  test('A REJECTION maps to restart_failed instead of escaping', async () => {
+    const ctx = {
+      restartTelegramPoller: jest.fn().mockRejectedValue(new Error('worker stuck')),
+    };
+    const result = await executeAppControlAction(ctx, 'restart-telegram-poller', {});
+    expect(result).toMatchObject({
+      success: false, reason: 'restart_failed', error: 'worker stuck',
+    });
+  });
+
+  test('A SYNC result still works unchanged', () => {
+    // Other actions and older hooks must not be forced async.
+    const ctx = { restartTelegramPoller: jest.fn().mockReturnValue({ success: true }) };
+    const result = executeAppControlAction(ctx, 'restart-telegram-poller', {});
+    expect(result).toMatchObject({ success: true, action: 'restart-telegram-poller' });
+    expect(typeof result.then).toBe('undefined');
+  });
+});

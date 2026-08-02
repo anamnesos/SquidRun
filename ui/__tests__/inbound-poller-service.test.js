@@ -345,3 +345,112 @@ describe('InboundPollerService', () => {
     }
   });
 });
+
+describe('observed-exit worker replacement (Stage A)', () => {
+  const { InboundPollerService } = require('../modules/main/inbound-poller-service');
+  const silentLog = { info() {}, warn() {}, error() {} };
+
+  function fakeWorker() {
+    const handlers = {};
+    return {
+      killed: false,
+      connected: true,
+      send: jest.fn(),
+      kill: jest.fn(function kill() { this.killed = true; }),
+      once(event, fn) { (handlers[event] = handlers[event] || []).push(fn); return this; },
+      on(event, fn) { (handlers[event] = handlers[event] || []).push(fn); return this; },
+      emit(event, ...args) { (handlers[event] || []).forEach((fn) => fn(...args)); },
+    };
+  }
+
+  function serviceWithWorker(worker) {
+    const svc = new InboundPollerService({ log: silentLog, useTelegramWorker: true });
+    svc.telegramWorker = worker;
+    return svc;
+  }
+
+  test('A GRACEFUL EXIT resolves as observed', async () => {
+    const worker = fakeWorker();
+    const svc = serviceWithWorker(worker);
+
+    const pending = svc.stopTelegramWorkerAndWait({ graceMs: 50, killWaitMs: 50 });
+    worker.emit('exit', 0, null);
+
+    await expect(pending).resolves.toMatchObject({ ok: true, exited: true });
+    expect(worker.send).toHaveBeenCalledWith({ type: 'shutdown' });
+  });
+
+  test('NO OBSERVED EXIT fails so the caller cannot fork a replacement', async () => {
+    // An unobserved exit is indistinguishable from a live child. Two getUpdates
+    // children on one cursor is the duplicate-delivery bug this prevents.
+    jest.useFakeTimers();
+    try {
+      const worker = fakeWorker();
+      const svc = serviceWithWorker(worker);
+
+      let settled = null;
+      const pending = svc.stopTelegramWorkerAndWait({ graceMs: 100, killWaitMs: 100 })
+        .then((r) => { settled = r; });
+
+      await jest.advanceTimersByTimeAsync(100);
+      expect(worker.kill).toHaveBeenCalled();
+      expect(settled).toBeNull();
+
+      await jest.advanceTimersByTimeAsync(100);
+      await pending;
+      expect(settled).toMatchObject({ ok: false, exited: false, reason: 'exit_not_observed' });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('A KILLED WORKER that then exits still resolves as observed', async () => {
+    jest.useFakeTimers();
+    try {
+      const worker = fakeWorker();
+      const svc = serviceWithWorker(worker);
+
+      let settled = null;
+      const pending = svc.stopTelegramWorkerAndWait({ graceMs: 50, killWaitMs: 500 })
+        .then((r) => { settled = r; });
+
+      await jest.advanceTimersByTimeAsync(50);
+      worker.emit('exit', null, 'SIGTERM');
+      await pending;
+
+      expect(settled).toMatchObject({ ok: true, exited: true });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('CONCURRENT STOPS coalesce into one in-flight operation', async () => {
+    const worker = fakeWorker();
+    const svc = serviceWithWorker(worker);
+
+    const a = svc.stopTelegramWorkerAndWait({ graceMs: 50, killWaitMs: 50 });
+    const b = svc.stopTelegramWorkerAndWait({ graceMs: 50, killWaitMs: 50 });
+    expect(a).toBe(b);
+
+    worker.emit('exit', 0, null);
+    await a;
+  });
+
+  test('A DIRECT START IS REFUSED while a stop is in flight', async () => {
+    const worker = fakeWorker();
+    const svc = serviceWithWorker(worker);
+
+    const pending = svc.stopTelegramWorkerAndWait({ graceMs: 50, killWaitMs: 50 });
+    const started = svc.startTelegram({ env: {}, onMessage: () => {} });
+
+    expect(started).toMatchObject({ accepted: false, reason: 'stop_in_flight' });
+
+    worker.emit('exit', 0, null);
+    await pending;
+  });
+
+  test('WITH NO WORKER the stop resolves immediately as already exited', async () => {
+    const svc = new InboundPollerService({ log: silentLog, useTelegramWorker: true });
+    await expect(svc.stopTelegramWorkerAndWait()).resolves.toMatchObject({ ok: true, exited: true });
+  });
+});

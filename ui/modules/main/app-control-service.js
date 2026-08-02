@@ -611,6 +611,25 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
 
     try {
       const result = ctx.restartTelegramPoller(payload);
+      // The restart is now awaited end to end (STOP -> OBSERVED EXIT -> START),
+      // so it may hand back a Promise. Branch on the value rather than making
+      // this whole dispatcher async — every other action stays synchronous, and
+      // the line above is pinned by system-protected-evals.
+      if (result && typeof result.then === 'function') {
+        return result.then((resolved) => ({
+          success: Boolean(resolved?.success),
+          action: normalizedAction,
+          ...resolved,
+        })).catch((error) => {
+          log.warn('AppControl', `Telegram poller restart failed: ${error.message}`);
+          return {
+            success: false,
+            reason: 'restart_failed',
+            action: normalizedAction,
+            error: error.message,
+          };
+        });
+      }
       return {
         success: Boolean(result?.success),
         action: normalizedAction,

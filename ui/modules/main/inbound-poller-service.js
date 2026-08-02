@@ -29,6 +29,7 @@ class InboundPollerService {
     this.telegramOnMessage = null;
     this.telegramWorkerGeneration = 0;
     this.telegramWorkerStateGeneration = 0;
+    this.telegramStopInFlight = null;
     this.telegramWorkerState = {
       phase: 'idle',
       ready: false,
@@ -41,6 +42,12 @@ class InboundPollerService {
   }
 
   startTelegram(options = {}) {
+    // A start during an in-flight stop is exactly how two getUpdates children
+    // end up alive at once.
+    if (this.telegramStopInFlight) {
+      this.log.warn('Telegram', 'Refusing Telegram start: a worker stop is still in flight');
+      return { accepted: false, phase: 'blocked', ready: false, reason: 'stop_in_flight' };
+    }
     if (!this.useTelegramWorker) {
       const started = this.telegramPoller.start(options);
       this.telegramWorkerState = {
@@ -290,6 +297,76 @@ class InboundPollerService {
       const level = typeof this.log[message.level] === 'function' ? message.level : 'info';
       this.log[level]('Telegram', message.message);
     }
+  }
+
+
+  /**
+   * Stop the Telegram worker and WAIT until its exit is actually observed.
+   *
+   * The old stopTelegramWorker fired `shutdown`, scheduled a kill 2s later, and
+   * returned immediately — so a caller that forked a replacement right after
+   * could transiently have TWO getUpdates children alive. Two pollers on one
+   * cursor is the duplicate-delivery bug this whole lane exists to prevent.
+   *
+   * Graceful first, then kill, then a bounded wait. If exit is still not
+   * observed, this FAILS and the caller must not fork: an unobserved child is
+   * indistinguishable from a live one.
+   *
+   * @returns {Promise<{ok: boolean, exited: boolean, reason?: string}>}
+   */
+  stopTelegramWorkerAndWait(options = {}) {
+    if (this.telegramStopInFlight) return this.telegramStopInFlight;
+
+    const graceMs = Number.isFinite(Number(options.graceMs))
+      ? Number(options.graceMs)
+      : TELEGRAM_STOP_KILL_TIMEOUT_MS;
+    const killWaitMs = Number.isFinite(Number(options.killWaitMs))
+      ? Number(options.killWaitMs)
+      : TELEGRAM_STOP_KILL_TIMEOUT_MS;
+
+    const worker = this.telegramWorker;
+    if (!worker) {
+      this.stopTelegramWorker();
+      return Promise.resolve({ ok: true, exited: true, reason: 'no_worker' });
+    }
+
+    const pending = new Promise((resolve) => {
+      let settled = false;
+      let graceTimer = null;
+      let killTimer = null;
+
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        if (graceTimer) clearTimeout(graceTimer);
+        if (killTimer) clearTimeout(killTimer);
+        resolve(result);
+      };
+
+      // The ONLY thing that counts as stopped.
+      worker.once('exit', () => finish({ ok: true, exited: true }));
+
+      this.stopTelegramWorker();
+
+      graceTimer = setTimeout(() => {
+        try {
+          if (typeof worker.kill === 'function' && worker.killed !== true) worker.kill();
+        } catch {
+          // Best effort; the bounded wait below is what decides the outcome.
+        }
+        killTimer = setTimeout(
+          () => finish({ ok: false, exited: false, reason: 'exit_not_observed' }),
+          killWaitMs
+        );
+        if (typeof killTimer.unref === 'function') killTimer.unref();
+      }, graceMs);
+      if (typeof graceTimer.unref === 'function') graceTimer.unref();
+    }).finally(() => {
+      this.telegramStopInFlight = null;
+    });
+
+    this.telegramStopInFlight = pending;
+    return pending;
   }
 
   stopTelegramWorker() {

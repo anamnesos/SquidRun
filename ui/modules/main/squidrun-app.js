@@ -15563,34 +15563,98 @@ class SquidRunApp {
     return startStatus;
   }
 
+  /**
+   * Replace the Telegram poller worker safely.
+   *
+   * STOP -> OBSERVED EXIT -> START, never overlapping. This previously called
+   * stopTelegram() and then immediately forked, so two getUpdates children
+   * could be alive at once — two pollers sharing one cursor is the duplicate
+   * delivery this whole lane exists to prevent.
+   *
+   * Single-flight: concurrent callers share one restart promise instead of
+   * racing to fork.
+   *
+   * @returns {Promise<object>} same result shape as before, now awaited.
+   */
   restartTelegramPoller(payload = {}) {
+    if (this.telegramRestartPromise) return this.telegramRestartPromise;
+
     const reason = typeof payload?.reason === 'string' && payload.reason.trim()
       ? payload.reason.trim()
       : 'app-control';
-    log.info('Telegram', `Restarting Telegram poller (${reason})`);
-    this.inboundPollerService.stopTelegram();
-    const rawStartStatus = this.startTelegramPoller();
-    const startStatus = rawStartStatus && typeof rawStartStatus === 'object'
-      ? rawStartStatus
-      : {
-        accepted: Boolean(rawStartStatus),
-        phase: rawStartStatus ? 'ready' : 'failed',
-        ready: Boolean(rawStartStatus),
-        reason: null,
-        started: Boolean(rawStartStatus),
+    const isCancelled = typeof payload?.isCancelled === 'function' ? payload.isCancelled : null;
+
+    const pending = (async () => {
+      log.info('Telegram', `Restarting Telegram poller (${reason})`);
+
+      const stopped = await this.inboundPollerService.stopTelegramWorkerAndWait(payload.stopOptions || {});
+      if (!stopped || stopped.ok !== true) {
+        // An unobserved exit is indistinguishable from a live child. Forking
+        // here is exactly how two pollers end up on one cursor.
+        log.warn(
+          'Telegram',
+          `Poller restart aborted: previous worker exit not observed (${stopped?.reason || 'unknown'})`
+        );
+        return {
+          success: false,
+          accepted: false,
+          aborted: true,
+          phase: 'failed',
+          ready: false,
+          started: false,
+          startupReason: stopped?.reason || 'stop_not_observed',
+          reason,
+          note: 'Telegram poller restart aborted: the previous worker did not exit, so no replacement was started.',
+        };
+      }
+
+      // Re-checked IMMEDIATELY before forking: shutdown or an explicit cancel
+      // may have won while we were waiting for the exit.
+      const abortNow = this.shuttingDown
+        ? 'shutting_down'
+        : (isCancelled && isCancelled() ? 'cancelled' : null);
+      if (abortNow) {
+        return {
+          success: false,
+          accepted: false,
+          skipped: true,
+          phase: 'idle',
+          ready: false,
+          started: false,
+          startupReason: abortNow,
+          reason,
+          note: `Telegram poller restart skipped (${abortNow}); no replacement was started.`,
+        };
+      }
+
+      const rawStartStatus = this.startTelegramPoller();
+      const startStatus = rawStartStatus && typeof rawStartStatus === 'object'
+        ? rawStartStatus
+        : {
+          accepted: Boolean(rawStartStatus),
+          phase: rawStartStatus ? 'ready' : 'failed',
+          ready: Boolean(rawStartStatus),
+          reason: null,
+          started: Boolean(rawStartStatus),
+        };
+      return {
+        success: startStatus.accepted === true,
+        accepted: startStatus.accepted === true,
+        phase: startStatus.phase || (startStatus.ready ? 'ready' : 'failed'),
+        ready: startStatus.ready === true,
+        started: startStatus.ready === true,
+        startupReason: startStatus.reason || null,
+        reason,
+        note: startStatus.ready
+          ? 'Telegram poller restart requested without reloading panes.'
+          : 'Telegram poller restart accepted without reloading panes; worker readiness is still pending.',
       };
-    return {
-      success: startStatus.accepted === true,
-      accepted: startStatus.accepted === true,
-      phase: startStatus.phase || (startStatus.ready ? 'ready' : 'failed'),
-      ready: startStatus.ready === true,
-      started: startStatus.ready === true,
-      startupReason: startStatus.reason || null,
-      reason,
-      note: startStatus.ready
-        ? 'Telegram poller restart requested without reloading panes.'
-        : 'Telegram poller restart accepted without reloading panes; worker readiness is still pending.',
-    };
+    })().finally(() => {
+      this.telegramRestartPromise = null;
+    });
+
+    this.telegramRestartPromise = pending;
+    return pending;
   }
 
   async handleTeamMemoryGuardExperiment(entry = {}) {

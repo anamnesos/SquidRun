@@ -2467,7 +2467,13 @@ function validateTelegramPollerRestartBoundarySemantics(evalCase, options = {}) 
 
   checks.push(makeCheck(
     'telegram_poller_app_restart_stops_and_starts_poller_only',
-    appRestartBlock.includes('this.inboundPollerService.stopTelegram();')
+    // DELIBERATE BOUNDARY UPDATE (Stage A). This previously pinned
+    // `stopTelegram();` — the fire-and-forget stop that returned before the
+    // worker exited, letting a caller fork a replacement while the old
+    // getUpdates child was still alive. The boundary's INTENT (stop/start
+    // intake, never touch panes) is unchanged; the required call is now the
+    // observed-exit primitive, which is strictly safer.
+    appRestartBlock.includes('this.inboundPollerService.stopTelegramWorkerAndWait(')
       && appRestartBlock.includes('const rawStartStatus = this.startTelegramPoller();')
       && appRestartBlock.includes('Telegram poller restart requested without reloading panes.')
       && !appRestartBlock.includes('reloadIgnoringCache')

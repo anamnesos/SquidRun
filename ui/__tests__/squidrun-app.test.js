@@ -8661,8 +8661,12 @@ describe('SquidRunApp', () => {
       );
     });
 
-    it('restarts the Telegram poller without reloading app panes', () => {
+    it('restarts the Telegram poller without reloading app panes', async () => {
+      // Stub the OBSERVED-EXIT primitive: a resolved {ok:true} means the old
+      // worker's exit was actually seen, which is the precondition for forking.
       app.inboundPollerService.stopTelegram = jest.fn();
+      app.inboundPollerService.stopTelegramWorkerAndWait = jest.fn()
+        .mockResolvedValue({ ok: true, exited: true });
       app.startTelegramPoller = jest.fn(() => true);
       const reloadsideprofile = jest.fn();
       const launchSpy = jest.spyOn(app, 'launchWindowsForProfile').mockResolvedValue();
@@ -8676,7 +8680,7 @@ describe('SquidRunApp', () => {
         },
       });
 
-      const result = app.restartTelegramPoller({ reason: 'test-reload' });
+      const result = await app.restartTelegramPoller({ reason: 'test-reload' });
 
       expect(result).toEqual(expect.objectContaining({
         success: true,
@@ -8684,17 +8688,24 @@ describe('SquidRunApp', () => {
         reason: 'test-reload',
         note: 'Telegram poller restart requested without reloading panes.',
       }));
-      expect(app.inboundPollerService.stopTelegram).toHaveBeenCalledTimes(1);
+      // The restart now uses the OBSERVED-EXIT primitive, not the fire-and-
+      // forget stop: forking after an unobserved stop is how two getUpdates
+      // children end up alive at once.
+      expect(app.inboundPollerService.stopTelegramWorkerAndWait).toHaveBeenCalledTimes(1);
       expect(app.startTelegramPoller).toHaveBeenCalledTimes(1);
       expect(reloadsideprofile).not.toHaveBeenCalled();
       expect(launchSpy).not.toHaveBeenCalled();
       expect(createWindowSpy).not.toHaveBeenCalled();
     });
 
-    it('reports worker launch acceptance without claiming readiness before worker IPC', () => {
+    it('reports worker launch acceptance without claiming readiness before worker IPC', async () => {
       const log = require('../modules/logger');
       app.inboundPollerService.startTelegram = jest.fn(() => true);
+      // Stub the OBSERVED-EXIT primitive: a resolved {ok:true} means the old
+      // worker's exit was actually seen, which is the precondition for forking.
       app.inboundPollerService.stopTelegram = jest.fn();
+      app.inboundPollerService.stopTelegramWorkerAndWait = jest.fn()
+        .mockResolvedValue({ ok: true, exited: true });
       app.inboundPollerService.getTelegramWorkerState = jest.fn(() => ({
         phase: 'standalone_lane_handoff',
         ready: false,
@@ -8717,7 +8728,7 @@ describe('SquidRunApp', () => {
         'Inbound Telegram worker launch accepted; awaiting readiness (phase=standalone_lane_handoff)'
       );
 
-      const restartStatus = app.restartTelegramPoller({ reason: 'readiness-test' });
+      const restartStatus = await app.restartTelegramPoller({ reason: 'readiness-test' });
 
       expect(restartStatus).toEqual({
         success: true,
@@ -8729,7 +8740,10 @@ describe('SquidRunApp', () => {
         reason: 'readiness-test',
         note: 'Telegram poller restart accepted without reloading panes; worker readiness is still pending.',
       });
-      expect(app.inboundPollerService.stopTelegram).toHaveBeenCalledTimes(1);
+      // The restart now uses the OBSERVED-EXIT primitive, not the fire-and-
+      // forget stop: forking after an unobserved stop is how two getUpdates
+      // children end up alive at once.
+      expect(app.inboundPollerService.stopTelegramWorkerAndWait).toHaveBeenCalledTimes(1);
       expect(app.inboundPollerService.startTelegram).toHaveBeenCalledTimes(2);
       expect(log.info).not.toHaveBeenCalledWith('Telegram', 'Inbound Telegram bridge enabled');
     });
@@ -13255,6 +13269,68 @@ describe('SquidRunApp', () => {
         expect(result).toMatchObject({ skipped: true });
         app.activeProfileName = 'main';
       });
+    });
+
+    it('AN UNOBSERVED STOP means NO replacement is forked', async () => {
+      // The whole point: forking after an exit we never saw is how two
+      // getUpdates children end up alive on one cursor.
+      app.inboundPollerService.stopTelegramWorkerAndWait = jest.fn()
+        .mockResolvedValue({ ok: false, exited: false, reason: 'exit_not_observed' });
+      const startSpy = jest.spyOn(app, 'startTelegramPoller').mockReturnValue(true);
+
+      const result = await app.restartTelegramPoller({ reason: 'test' });
+
+      expect(startSpy).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ success: false, aborted: true, startupReason: 'exit_not_observed' });
+    });
+
+    it('CONCURRENT RESTARTS share one promise instead of racing to fork', async () => {
+      let release;
+      const gate = new Promise((r) => { release = r; });
+      app.inboundPollerService.stopTelegramWorkerAndWait = jest.fn(async () => {
+        await gate;
+        return { ok: true, exited: true };
+      });
+      const startSpy = jest.spyOn(app, 'startTelegramPoller').mockReturnValue(true);
+
+      const a = app.restartTelegramPoller({ reason: 'one' });
+      const b = app.restartTelegramPoller({ reason: 'two' });
+      expect(a).toBe(b);
+
+      release();
+      await Promise.all([a, b]);
+
+      // One stop, one start — not two of either.
+      expect(app.inboundPollerService.stopTelegramWorkerAndWait).toHaveBeenCalledTimes(1);
+      expect(startSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['SHUTDOWN', () => { app.shuttingDown = true; }, 'shutting_down'],
+      ['an explicit CANCEL', null, 'cancelled'],
+    ])('%s winning while we wait means no replacement is forked', async (_l, trip, expected) => {
+      let release;
+      const gate = new Promise((r) => { release = r; });
+      app.inboundPollerService.stopTelegramWorkerAndWait = jest.fn(async () => {
+        await gate;
+        return { ok: true, exited: true };
+      });
+      const startSpy = jest.spyOn(app, 'startTelegramPoller').mockReturnValue(true);
+
+      let cancelled = false;
+      const pending = app.restartTelegramPoller({
+        reason: 'test',
+        isCancelled: () => cancelled,
+      });
+
+      // The decision is made AFTER the exit is observed, not before the wait.
+      if (trip) trip(); else cancelled = true;
+      release();
+      const result = await pending;
+
+      expect(startSpy).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ success: false, skipped: true, startupReason: expected });
+      app.shuttingDown = false;
     });
 
     it('creates exactly ONE coordinator and reuses it', () => {
