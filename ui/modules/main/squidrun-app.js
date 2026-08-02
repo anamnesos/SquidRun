@@ -414,7 +414,11 @@ const SUPERVISOR_STATUS_STALE_MIN_MS = Math.max(
   Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_STATUS_STALE_MIN_MS || '15000', 10) || 15000
 );
 const RENDERER_ENTRY_HTML = path.join(__dirname, '..', '..', 'index.html');
-const SHUTDOWN_CONFIRM_MESSAGE = 'This stops panes, daemon, pollers, and background services.\n\nContinue?';
+const QUIT_TELEGRAM_NOTICE = 'SquidRun is quitting. Telegram is going offline; '
+  + 'messages sent while the app is closed will not be seen or answered until you reopen SquidRun.';
+const SHUTDOWN_CONFIRM_MESSAGE = 'This stops panes, daemon, pollers, and background services.\n\n'
+  + 'Telegram polling goes offline too: messages sent while SquidRun is closed will not be seen or answered until you reopen it. Telegram may hold them for pickup within its retention window.'
+  + '\n\nContinue?';
 const EXTERNAL_WORKSPACE_DIRNAME = DEFAULT_EXTERNAL_WORKSPACE_DIRNAME;
 const ONBOARDING_STATE_FILENAME = 'onboarding-state.json';
 const FRESH_INSTALL_MARKER_FILENAME = 'fresh-install.json';
@@ -9347,6 +9351,25 @@ class SquidRunApp {
         };
       }
 
+      // BEST EFFORT, but AWAITED and ordered: the poller is still alive here,
+      // and it will not be after daemon shutdown. Telling James his messages
+      // will wait is only honest while we can still send it.
+      //
+      // A failure or a throw is logged and carried on with — a notice that
+      // cannot be sent must never trap the app open. Quiesce failure aborts
+      // above, so nothing is sent when teardown is not actually happening.
+      try {
+        const notice = await this.sendQuitTelegramNotice(reason);
+        if (notice && notice.ok !== true && !notice.skipped) {
+          log.warn('Shutdown', `Quit Telegram notice not delivered (${notice.reason || 'unknown'})`);
+        }
+      } catch (err) {
+        // Guarded at the CALL SITE too. The method's own catch cannot help if
+        // the method itself fails, and a courtesy message must never trap the
+        // app open.
+        log.warn('Shutdown', `Quit Telegram notice failed: ${err.message}`);
+      }
+
       if (this.ctx.daemonClient) {
         try {
           this.ctx.daemonClient.shutdown();
@@ -14896,6 +14919,41 @@ class SquidRunApp {
    * queue sidecar cannot then reason about. Idempotent, so both
    * performFullShutdown and shutdown may call it.
    */
+  /**
+   * One honest line to James before the poller dies.
+   *
+   * Main owns getUpdates, so only the main active profile sends this — a scoped
+   * window closing does not take polling down and must not claim it does.
+   */
+  async sendQuitTelegramNotice(reason = 'quit') {
+    try {
+      if (!isMainProfile(this.activeProfileName)) {
+        return { ok: false, skipped: true, reason: 'not_main_profile' };
+      }
+      const env = this.buildTelegramPollerEnv(process.env);
+      const result = await sendRoutedTelegramMessage(QUIT_TELEGRAM_NOTICE, env, {
+        messageId: `squidrun-quit-notice-${Date.now()}`,
+        senderRole: 'system',
+        sessionId: this.commsSessionScopeId || null,
+        metadata: {
+          source: 'squidrun-quit-notice',
+          shutdownReason: reason,
+          windowKey: 'main',
+          profile: 'main',
+        },
+      });
+      if (!result || result.ok !== true) {
+        log.warn('Telegram', `Quit notice not delivered (${result?.error || result?.status || 'unknown'})`);
+        return { ok: false, reason: result?.error || result?.status || 'send_failed' };
+      }
+      return { ok: true };
+    } catch (err) {
+      // Never block teardown on a courtesy message.
+      log.warn('Telegram', `Quit notice threw: ${err.message}`);
+      return { ok: false, reason: `threw:${err.message}` };
+    }
+  }
+
   async quiesceTelegramIngressDrain() {
     // Latch FIRST. Nulling the coordinator while the poller is still alive let
     // an inbound callback build a brand new one and start delivering again

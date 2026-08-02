@@ -1695,7 +1695,12 @@ function applyWindowChrome(windowContext = getCurrentWindowContext()) {
     }
     if (lifecycleMode === 'main-app') {
       fullRestartBtn.innerHTML = fullRestartBtn.dataset.defaultHtml;
-      fullRestartBtn.title = 'Quit SquidRun: stop panes, daemon, pollers, and background services.';
+      // This RUNTIME assignment is the live tooltip; updating index.html alone
+      // never reaches the user. The scoped branches below stay unchanged —
+      // main keeps polling when a profile app closes.
+      fullRestartBtn.title = 'Quit SquidRun: stop panes, daemon, pollers, and background services. '
+        + 'Telegram polling goes offline too - messages sent while SquidRun is closed will not be '
+        + 'seen or answered until you reopen it.';
       fullRestartBtn.dataset.windowAction = 'shutdown-app';
     } else if (lifecycleMode === 'standalone-profile-app') {
       fullRestartBtn.innerHTML = 'Quit Profile App';
@@ -3954,7 +3959,9 @@ function setupEventListeners() {
         return;
       }
 
-      if (confirm('Quit SquidRun?\n\nThis stops panes, daemon, pollers, and background services.\n\nContinue?')) {
+      if (confirm('Quit SquidRun?\n\nThis stops panes, daemon, pollers, and background services.\n\n'
+        + 'Telegram polling goes offline too: messages sent while SquidRun is closed will not be seen or answered until you reopen it. Telegram may hold them for pickup within its retention window.'
+        + '\n\nContinue?')) {
         updateConnectionStatus('Quitting SquidRun...');
         try {
           await ipcRenderer.invoke('full-restart');

@@ -12994,6 +12994,169 @@ describe('SquidRunApp', () => {
       expect(order.indexOf('drain-quiesced')).toBeLessThan(order.indexOf('daemon-shutdown'));
     });
 
+    function shutdownHarness(order) {
+      app.ctx.daemonClient = { shutdown: () => order.push('daemon-shutdown') };
+      jest.spyOn(app, 'forceKillDaemonFromPidFile').mockImplementation(() => order.push('daemon-force-kill'));
+      jest.spyOn(app, 'shutdown').mockImplementation(async () => order.push('app-shutdown'));
+      jest.spyOn(app, 'stopSupervisorFromPidFile').mockResolvedValue({ ok: true, skipped: true });
+      const electron = require('electron');
+      electron.app.exit = jest.fn(() => order.push('app-exit'));
+    }
+
+    it('THE QUIT NOTICE is sent AFTER quiesce and BEFORE the daemon dies', async () => {
+      // The poller is alive here and will not be after daemon shutdown. Telling
+      // James his messages will wait is only honest while we can still send it.
+      const order = [];
+      app.telegramDrainCoordinator = { dispose: async () => { order.push('drain-quiesced'); } };
+      jest.spyOn(app, 'sendQuitTelegramNotice').mockImplementation(async () => {
+        order.push('quit-notice');
+        return { ok: true };
+      });
+      shutdownHarness(order);
+
+      await app.performFullShutdown('test');
+
+      expect(order.indexOf('drain-quiesced')).toBeLessThan(order.indexOf('quit-notice'));
+      expect(order.indexOf('quit-notice')).toBeLessThan(order.indexOf('daemon-shutdown'));
+    });
+
+    it('A SLOW NOTICE delays the daemon: it is awaited, not fired and forgotten', async () => {
+      const order = [];
+      let release;
+      const gate = new Promise((r) => { release = r; });
+      app.telegramDrainCoordinator = { dispose: async () => {} };
+      jest.spyOn(app, 'sendQuitTelegramNotice').mockImplementation(async () => {
+        await gate;
+        order.push('quit-notice');
+        return { ok: true };
+      });
+      shutdownHarness(order);
+
+      const running = app.performFullShutdown('test');
+      await new Promise((r) => setImmediate(r));
+      expect(order).toEqual([]);
+      release();
+      await running;
+      expect(order[0]).toBe('quit-notice');
+    });
+
+    it.each([
+      ['a FALSE result', async () => ({ ok: false, reason: 'send_failed' })],
+      ['a THROW', async () => { throw new Error('telegram down'); }],
+    ])('%s from the notice does NOT block teardown', async (_l, impl) => {
+      const order = [];
+      app.telegramDrainCoordinator = { dispose: async () => {} };
+      jest.spyOn(app, 'sendQuitTelegramNotice').mockImplementation(impl);
+      shutdownHarness(order);
+
+      await app.performFullShutdown('test');
+
+      expect(order).toContain('daemon-shutdown');
+      expect(order).toContain('app-shutdown');
+    });
+
+    it('A QUIESCE ABORT sends no notice at all', async () => {
+      const notice = jest.spyOn(app, 'sendQuitTelegramNotice').mockResolvedValue({ ok: true });
+      app.telegramDrainCoordinator = { dispose: async () => { throw new Error('stuck'); } };
+      shutdownHarness([]);
+
+      const result = await app.performFullShutdown('test');
+
+      expect(result).toMatchObject({ aborted: true });
+      expect(notice).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['the native confirm', 'modules/main/squidrun-app.js', 'SHUTDOWN_CONFIRM_MESSAGE'],
+      ['the renderer confirm', 'renderer.js', 'Quit SquidRun?'],
+      ['the static Quit tooltip', 'index.html', 'fullRestartBtn'],
+      ['the RUNTIME Quit tooltip', 'renderer.js', 'This RUNTIME assignment is the live tooltip'],
+    ])('%s tells the truth about Telegram going offline', (_l, relPath, marker) => {
+      const src = fs.readFileSync(path.join(__dirname, '..', relPath), 'utf8');
+      const at = src.indexOf(marker);
+      expect(at).toBeGreaterThan(-1);
+      // Flatten source-level string concatenation: the copy is split across `+`
+      // joins, so a phrase can straddle a break and fail for formatting rather
+      // than for being untrue.
+      const flat = src.slice(at, at + 1400).toLowerCase().replace(/['"`]\s*\+?\s*['"`]?/g, '');
+      expect(flat).toContain('telegram');
+      expect(flat).toMatch(/offline/);
+      expect(flat).toMatch(/reopen/);
+    });
+
+    it('SCOPED close copy exists and is NOT given the polling warning', () => {
+      // Main owns getUpdates and keeps polling when a profile app closes, so
+      // claiming otherwise here would be a lie in the other direction. Required,
+      // not conditional: if the marker disappears this must FAIL, not skip.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'renderer.js'), 'utf8');
+      const at = src.indexOf('main SquidRun keeps running');
+      expect(at).toBeGreaterThan(-1);
+      // Only the scoped branch's OWN copy. A wider window reaches back into the
+      // main-app branch above, which legitimately carries the warning.
+      const lineStart = src.lastIndexOf('\n', at) + 1;
+      const lineEnd = src.indexOf('\n', at);
+      const region = src.slice(lineStart, lineEnd).toLowerCase();
+      expect(region).not.toContain('polling goes offline');
+      expect(region).not.toContain('will not be seen');
+    });
+
+    describe('the quit notice helper itself', () => {
+      // Every ordering test above spies this method out, so a helper that did
+      // nothing would pass all of them. These drive the real implementation.
+      //
+      // squidrun-app destructures sendRoutedTelegramMessage at module load, so
+      // jest.spyOn would replace a property the captured const never reads —
+      // the same captured-module-spy trap rejected in the WebSocket work. Drive
+      // the MOCKED FUNCTION OBJECT itself so source and test share identity.
+      const routing = require('../scripts/hm-telegram-routing');
+      const sendFn = routing.sendRoutedTelegramMessage;
+
+      beforeEach(() => {
+        sendFn.mockReset();
+        sendFn.mockResolvedValue({ ok: true });
+      });
+
+      afterEach(() => {
+        sendFn.mockReset();
+        sendFn.mockResolvedValue({ ok: true });
+      });
+
+      it('MAIN sends exactly one notice with the main-built env and honest metadata', async () => {
+        const result = await app.sendQuitTelegramNotice('window-close');
+
+        expect(sendFn).toHaveBeenCalledTimes(1);
+        const [message, env, opts] = sendFn.mock.calls[0];
+        expect(String(message).toLowerCase()).toContain('telegram is going offline');
+        expect(env).toMatchObject({ SQUIDRUN_PROFILE: 'main' });
+        expect(opts.senderRole).toBe('system');
+        expect(opts.metadata).toMatchObject({
+          source: 'squidrun-quit-notice',
+          shutdownReason: 'window-close',
+          windowKey: 'main',
+          profile: 'main',
+        });
+        expect(result).toMatchObject({ ok: true });
+      });
+
+      it('A FALSE result is reported as a notice failure', async () => {
+        sendFn.mockResolvedValue({ ok: false, error: 'chat not found' });
+        await expect(app.sendQuitTelegramNotice('test')).resolves.toMatchObject({ ok: false });
+      });
+
+      it('A THROWN router is reported as a notice failure, not propagated', async () => {
+        sendFn.mockImplementation(() => { throw new Error('telegram down'); });
+        await expect(app.sendQuitTelegramNotice('test')).resolves.toMatchObject({ ok: false });
+      });
+
+      it('NON-MAIN sends nothing at all: main owns polling', async () => {
+        app.activeProfileName = 'sideprofile';
+        const result = await app.sendQuitTelegramNotice('test');
+        expect(sendFn).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ skipped: true });
+        app.activeProfileName = 'main';
+      });
+    });
+
     it('creates exactly ONE coordinator and reuses it', () => {
       // Two coordinators would each hold their own single-flight latch and could
       // deliver the same record twice.
