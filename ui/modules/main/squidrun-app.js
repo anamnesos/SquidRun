@@ -45,6 +45,7 @@ const { createRecoveryManager } = require('../recovery-manager');
 const { stripAnsi } = require('../ansi');
 const { createKernelBridge } = require('./kernel-bridge');
 const telegramIngressSpool = require('./telegram-ingress-spool');
+const telegramIngressDrain = require('./telegram-ingress-drain');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
 const { emitWindowVisibilityState } = require('./window-visibility-state');
@@ -14479,6 +14480,376 @@ class SquidRunApp {
     }
   }
 
+  /**
+   * Deliver one inbound Telegram job to its pane. Called ONLY by the drain
+   * coordinator, never straight from the poller callback: the callback now
+   * makes the message durable and schedules a drain, so exactly one code path
+   * puts a message on screen. Two paths would double-deliver every replay.
+   *
+   * Returns a receipt carrying its own identity, because the drain validator
+   * refuses to synthesize identity for a proof (Architect #62).
+   */
+  async deliverTelegramInboundJob(job = {}) {
+    const {
+      body, sender, metadata, media, photo, document, archivePath,
+      inboundRoute, inboundWindowKey, inboundSessionScopeId,
+      inboundMessageId, updateId, messageId, sentAtMs,
+    } = job;
+    const deliveryIdentity = {
+      messageId: inboundMessageId,
+      routeKey: inboundRoute?.profile || inboundWindowKey || 'main',
+      windowKey: inboundWindowKey,
+      profile: inboundRoute?.profile || inboundWindowKey || 'main',
+    };
+    if (inboundWindowKey === 'main') {
+      this.markTelegramInboundContext(sender, {
+        chatId: metadata?.chatId,
+        windowKey: inboundWindowKey,
+        profile: inboundRoute.profile || 'main',
+        sessionScopeId: inboundSessionScopeId,
+        messageId: inboundMessageId,
+        inboundMessageId,
+        updateId,
+        telegramMessageId: messageId,
+        body,
+      });
+    }
+    void Promise.resolve(executeEvidenceLedgerOperation(
+      'upsert-comms-journal',
+      {
+        messageId: inboundMessageId,
+        sessionId: inboundSessionScopeId || null,
+        senderRole: 'user',
+        targetRole: 'architect',
+        channel: 'telegram',
+        direction: 'inbound',
+        sentAtMs,
+        brokeredAtMs: Date.now(),
+        rawBody: body,
+        status: 'brokered',
+        attempt: 1,
+        metadata: {
+          source: 'telegram-poller',
+          from: sender,
+          updateId,
+          telegramMessageId: messageId,
+          chatId: Number.isFinite(Number(metadata?.chatId))
+            ? Number(metadata.chatId)
+            : null,
+          windowKey: inboundWindowKey,
+          profile: inboundRoute.profile || inboundWindowKey,
+          sessionScopeId: inboundSessionScopeId,
+          mediaKind: typeof media?.kind === 'string' ? media.kind : null,
+          telegramMediaKind: typeof media?.telegramKind === 'string' ? media.telegramKind : null,
+          telegramFileId: typeof media?.fileId === 'string' ? media.fileId : null,
+          telegramFilePath: typeof media?.telegramFilePath === 'string' ? media.telegramFilePath : null,
+          mediaMimeType: typeof media?.mimeType === 'string' ? media.mimeType : null,
+          mediaFileName: typeof media?.fileName === 'string' ? media.fileName : null,
+          mediaDuration: Number.isFinite(Number(media?.duration)) ? Number(media.duration) : null,
+          mediaWidth: Number.isFinite(Number(media?.width)) ? Number(media.width) : null,
+          mediaHeight: Number.isFinite(Number(media?.height)) ? Number(media.height) : null,
+          downloadedFilePath: archivePath,
+          latestScreenshotPath: typeof media?.latestScreenshotPath === 'string'
+            ? media.latestScreenshotPath
+            : null,
+        },
+      },
+      {
+        source: {
+          via: 'telegram-poller',
+          role: 'system',
+          paneId: 'system',
+        },
+      }
+    )).then((result) => {
+      if (result?.ok === false) {
+        log.warn('EvidenceLedger', `Telegram inbound journal upsert failed: ${result.reason || 'unknown'}`);
+      } else {
+        log.info('Telegram', `Telegram inbound journaled as ${inboundMessageId}`);
+      }
+    }).catch((err) => {
+      log.warn('EvidenceLedger', `Telegram inbound journal upsert error: ${err.message}`);
+    });
+    const formattedBody = archivePath ? `${body} | saved: ${archivePath}` : body;
+    const fullTelegramMessage = `[Telegram from ${sender}]: ${formattedBody}`;
+    const telegramMsgBytes = Buffer.byteLength(fullTelegramMessage, 'utf8');
+    const TELEGRAM_MSG_SIZE_LIMIT = 256 * 1024; // 256 KB
+    if (telegramMsgBytes > TELEGRAM_MSG_SIZE_LIMIT) {
+      log.warn('Telegram', `Oversized message from ${sender} (${telegramMsgBytes} bytes > ${TELEGRAM_MSG_SIZE_LIMIT}). Truncating.`);
+    }
+    const safeMessage = telegramMsgBytes > TELEGRAM_MSG_SIZE_LIMIT
+      ? fullTelegramMessage.slice(0, TELEGRAM_MSG_SIZE_LIMIT) + '\n[...truncated — full text in evidence ledger]'
+      : fullTelegramMessage;
+    if (inboundWindowKey !== 'main') {
+      // ONE delivery promise, ONE result. The old shape fired this off with
+      // `void ... .then()` and returned immediately, which meant the caller was
+      // told "delivered" before anything had happened. A coordinator cannot
+      // sequence or prove an outcome it never waited for.
+      let result;
+      try {
+        result = await this.deliverScopedTelegramInboundWithRetry(inboundWindowKey, safeMessage, {
+          messageId: inboundMessageId,
+          sessionScopeId: inboundSessionScopeId,
+          chatId: metadata?.chatId,
+          updateId,
+          telegramMessageId: messageId,
+          sender,
+        });
+      } catch (err) {
+        return { ok: false, status: 'scoped_runtime_error', error: err.message, ...deliveryIdentity };
+      }
+
+      if (
+        (result?.verified === true && result?.userVisible === true)
+        || isTerminalAcceptedDeliveryResult(result)
+      ) {
+        log.info(
+          'Telegram',
+          `Scoped Telegram inbound injected into ${inboundWindowKey} Architect pane (${inboundMessageId})`
+        );
+        // Identity LAST: a raw result carrying its own messageId must never
+        // override the stable inbound id the queue is keyed on.
+        return { ...result, ...deliveryIdentity };
+      }
+
+      // NO TRIGGER FALLBACK FROM THE DRAIN. handleScopedTelegramInboundFallback
+      // writes the fixed trigger path — loss site #1, the original bug in this
+      // lane. Routing recovery back through the thing it replaced is how two
+      // messages in one batch overwrite each other. Hand the real status to the
+      // durable queue instead and let it stay pending.
+      return { ...(result || {}), ok: false, ...deliveryIdentity };
+    }
+    const mainPaneRecallContext = {
+      paneId: '1',
+      role: 'architect',
+      windowKey: inboundWindowKey,
+      profileName: inboundRoute.profile || inboundWindowKey,
+      sessionScopeId: inboundSessionScopeId,
+      channel: 'telegram',
+      sender,
+      messageId: inboundMessageId,
+      chatId: metadata?.chatId,
+      telegramChatId: metadata?.chatId,
+      metadata: {
+        ...(metadata && typeof metadata === 'object' ? metadata : {}),
+        windowKey: inboundWindowKey,
+        profileName: inboundRoute.profile || inboundWindowKey,
+        sessionScopeId: inboundSessionScopeId,
+      },
+      header: 'MESSAGE RECALL',
+    };
+    const deliverMainTelegramToArchitect = async () => {
+      try {
+        return await this.deliverHumanMessageWithRecall(
+          safeMessage,
+          mainPaneRecallContext,
+          'Telegram'
+        );
+      } catch (err) {
+        return { ok: false, status: 'main_pane_runtime_error', error: err.message };
+      }
+    };
+
+    if (this.shouldRouteMainTelegramInboundToMira({
+      body,
+      inboundWindowKey,
+      archivePath,
+      media,
+      photo,
+      document,
+    })) {
+      const miraOutcome = await this.routeMainTelegramInboundToMira({
+        body,
+        sender,
+        metadata,
+        inboundMessageId,
+        inboundSessionScopeId,
+      }).catch((err) => ({ ok: false, status: 'mira_runtime_error', error: err.message }));
+
+      if (miraOutcome?.ok) {
+        // routeMainTelegramInboundToMira returns {ok, handled, status,
+        // telegramResult} with the actual proof NESTED. Spreading it gave the
+        // coordinator no top-level acceptance signal, so a successful Mira
+        // reply classified as a DEFINITE failure and would be re-sent after
+        // backoff — a second outbound message to James for one inbound.
+        // Only a verified Telegram egress counts, and it is normalized here.
+        const egress = miraOutcome.telegramResult || {};
+        const egressVerified = egress.ok === true
+          || egress.sent === true
+          || egress.delivered === true
+          || Number.isFinite(Number(egress.message_id ?? egress.messageId));
+        if (egressVerified) {
+          log.info('Telegram', `Telegram inbound ${inboundMessageId} answered through Mira live path`);
+          return {
+            status: 'delivered.user_visible',
+            userVisible: true,
+            miraStatus: miraOutcome.status || null,
+            ...deliveryIdentity,
+          };
+        }
+        log.warn(
+          'Telegram',
+          `Mira reported ok for ${inboundMessageId} but no verified Telegram egress; treating as undelivered`
+        );
+      }
+
+      log.warn(
+        'Telegram',
+        `Mira live Telegram reply failed for ${inboundMessageId} (${miraOutcome?.status || miraOutcome?.error || 'unknown'}); falling back to Architect pane`
+      );
+      // Fall through to the main pane and report THAT outcome — the fallback is
+      // the delivery now, so its result is what the queue is entitled to see.
+      return { ...(await deliverMainTelegramToArchitect()), ...deliveryIdentity };
+    }
+
+    return { ...(await deliverMainTelegramToArchitect()), ...deliveryIdentity };
+  }
+
+  /**
+   * ONE coordinator per app. Two instances draining the same directory would
+   * each hold their own single-flight latch and deliver the same record twice,
+   * which is precisely the failure the latch exists to prevent.
+   */
+  getTelegramDrainCoordinator() {
+    if (!this.telegramDrainCoordinator) {
+      this.telegramDrainCoordinator = telegramIngressDrain.createDrainCoordinator({
+        log,
+        resolveRoute: (chatId) => this.resolveTelegramInboundRoute(chatId),
+        currentSessionFor: (windowKey) => this.getWindowSessionScopeId(windowKey || 'main'),
+        deliver: (job) => this.deliverTelegramInboundJob(this.buildTelegramInboundJob(job)),
+        findExistingReceipt: (identity) => this.findTelegramDeliveryReceipt(identity),
+      });
+    }
+    return this.telegramDrainCoordinator;
+  }
+
+  scheduleTelegramIngressDrain(dir, routeKey) {
+    if (!dir || !routeKey) return { ok: false, reason: 'missing_drain_target' };
+    // Callers treat this as fire-and-forget, so the rejection has to be caught
+    // HERE. An unhandled rejection would take the drain down silently and the
+    // queue would just stop moving with nobody the wiser.
+    const pending = this.getTelegramDrainCoordinator().schedule(dir, routeKey)
+      .then((result) => {
+        if (result?.stoppedAt) {
+          log.warn(
+            'Telegram',
+            `Ingress drain held at update ${result.stoppedAt.updateId} (${result.stoppedAt.reason}, ${result.stoppedAt.failureClass})`
+          );
+        }
+        return result;
+      })
+      .catch((err) => {
+        log.warn('Telegram', `Ingress drain failed for ${routeKey}: ${err.message}`);
+        return { ok: false, reason: `drain_threw:${err.message}` };
+      });
+    this.telegramDrainInFlight = pending;
+    return pending;
+  }
+
+  /**
+   * Rebuild the delivery context from a spooled record. The drain hands us the
+   * stored payload plus the freshly re-resolved route; everything the old inline
+   * path derived from the live callback is derived here instead, so a message
+   * replayed after a restart is delivered the same way it would have been live.
+   */
+  buildTelegramInboundJob(job = {}) {
+    const record = job.record || {};
+    const metadata = record.rawMetadata && typeof record.rawMetadata === 'object'
+      ? record.rawMetadata
+      : {};
+    const media = record.media || metadata.media || null;
+    return {
+      body: record.text || '',
+      sender: record.from || 'unknown',
+      metadata,
+      media,
+      photo: record.photo || metadata.photo || null,
+      document: record.document || metadata.document || null,
+      archivePath: typeof media?.localPath === 'string' && media.localPath.trim()
+        ? media.localPath.trim()
+        : null,
+      inboundRoute: { ok: true, profile: job.profile, windowKey: job.windowKey },
+      inboundWindowKey: job.windowKey || 'main',
+      // Current session for delivery; the session the message originally
+      // belonged to stays in metadata for context.
+      inboundSessionScopeId: job.sessionScopeId || null,
+      inboundMessageId: job.messageId,
+      updateId: job.updateId,
+      messageId: record.messageId ?? null,
+      sentAtMs: Number.isFinite(Number(record.timestampMs))
+        ? Math.floor(Number(record.timestampMs))
+        : Date.now(),
+    };
+  }
+
+  /**
+   * Crash-replay proof, read from the PERSISTENT comms journal.
+   *
+   * An in-memory map cannot answer this question: the whole point is surviving
+   * a process that died between delivering and acking, and a Map dies with it.
+   *
+   * THE ROW THIS MUST NEVER ACCEPT: squidrun-app writes an inbound/brokered
+   * journal row under the SAME telegram-in-<updateId> BEFORE delivery. That row
+   * proves the message reached US, not that it reached a pane. Matching it would
+   * retire every record on its first drain pass, undelivered.
+   */
+  async findTelegramDeliveryReceipt(identity = {}) {
+    if (!identity?.messageId) return null;
+    let rows = [];
+    try {
+      rows = queryCommsJournalEntries({ messageId: identity.messageId, limit: 10 }) || [];
+    } catch (err) {
+      // Cannot tell whether it landed. Throwing is correct: the drain turns this
+      // into a HOLD rather than risking a second visible copy.
+      throw new Error(`comms journal lookup failed: ${err.message}`);
+    }
+
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (!row || row.messageId !== identity.messageId) continue;
+
+      // DO NOT filter on direction/status here. writeSubmitVerdictToJournal
+      // updates the SAME inbound/brokered row in place, keeping direction and
+      // status and only setting ackStatus + metadata.submitVerification. So the
+      // row that proves main-pane delivery IS the inbound row. Filtering it out
+      // meant main-pane proof could never be found and those records would
+      // never retire. What separates proof from bookkeeping is the ACK, not the
+      // direction: a bare brokered row with no verified ack proves nothing.
+      const ack = row.ackStatus || '';
+      const submitVerified = row.metadata
+        && typeof row.metadata === 'object'
+        && row.metadata.submitVerification
+        && row.metadata.submitVerification.verified === true;
+      const proven = (ack === 'prompt_submitted.receipt_verified' && submitVerified)
+        || row.status === 'delivered.verified'
+        || row.status === 'delivered.user_visible';
+      if (!proven) continue;
+      // Only attach identity we can stand behind: all four fields, taken from
+      // what we were asked about, and only after the row itself proved delivery.
+      return {
+        messageId: identity.messageId,
+        routeKey: identity.routeKey,
+        windowKey: identity.windowKey,
+        profile: identity.profile,
+        status: 'delivered.verified',
+        verified: true,
+      };
+    }
+    return null;
+  }
+
+  /** Drain every spool directory the canonical owner root already contains. */
+  async drainTelegramIngressBacklog(dataRoot, options = {}) {
+    const readdir = options.readdir || ((dir) => fs.readdirSync(dir));
+    const coordinator = this.getTelegramDrainCoordinator();
+    const found = coordinator.discoverRouteDirs(dataRoot, readdir);
+    if (!found.ok) return { ok: false, reason: found.reason };
+    const results = [];
+    for (const route of found.routes) {
+      results.push({ routeKey: route.routeKey, ...(await coordinator.schedule(route.dir, route.routeKey)) });
+    }
+    return { ok: true, routes: results };
+  }
+
   startTelegramPoller() {
     if (!isMainProfile(this.activeProfileName)) {
       log.info(
@@ -14493,6 +14864,12 @@ class SquidRunApp {
     // The ingress spool is owned by THIS getUpdates owner, so its base is the
     // canonical data root captured here — never a delivery-target root.
     const ingressBase = telegramEnv.SQUIDRUN_DATA_ROOT || null;
+    // STARTUP DISCOVERY. Anything spooled while the app was down is still
+    // pending; nothing else will schedule it, so the backlog would sit there
+    // until the next inbound message happened to arrive.
+    void this.drainTelegramIngressBacklog(ingressBase).catch((err) => {
+      log.warn('Telegram', `Startup ingress drain failed: ${err.message}`);
+    });
     const accepted = this.inboundPollerService.startTelegram({
       env: telegramEnv,
       onMessage: async (text, from, metadata = {}) => {
@@ -14560,6 +14937,13 @@ class SquidRunApp {
             log.warn('Telegram', `Could not record empty-body update (${terminal.reason}); holding cursor`);
             return { ok: false, reason: terminal.reason };
           }
+          // Terminal records still go through the drain: it validates the route
+          // and acks them without any pane delivery. Returning early here left
+          // tombstones pending forever.
+          this.scheduleTelegramIngressDrain(
+            terminal.dir,
+            inboundRoute.profile || inboundWindowKey || 'main'
+          );
           return { ok: true, durable: true, updateId: terminal.updateId };
         }
 
@@ -14602,173 +14986,13 @@ class SquidRunApp {
           return { ok: false, reason: spooled.reason };
         }
 
-        if (inboundWindowKey === 'main') {
-          this.markTelegramInboundContext(sender, {
-            chatId: metadata?.chatId,
-            windowKey: inboundWindowKey,
-            profile: inboundRoute.profile || 'main',
-            sessionScopeId: inboundSessionScopeId,
-            messageId: inboundMessageId,
-            inboundMessageId,
-            updateId,
-            telegramMessageId: messageId,
-            body,
-          });
-        }
-        void Promise.resolve(executeEvidenceLedgerOperation(
-          'upsert-comms-journal',
-          {
-            messageId: inboundMessageId,
-            sessionId: inboundSessionScopeId || null,
-            senderRole: 'user',
-            targetRole: 'architect',
-            channel: 'telegram',
-            direction: 'inbound',
-            sentAtMs,
-            brokeredAtMs: Date.now(),
-            rawBody: body,
-            status: 'brokered',
-            attempt: 1,
-            metadata: {
-              source: 'telegram-poller',
-              from: sender,
-              updateId,
-              telegramMessageId: messageId,
-              chatId: Number.isFinite(Number(metadata?.chatId))
-                ? Number(metadata.chatId)
-                : null,
-              windowKey: inboundWindowKey,
-              profile: inboundRoute.profile || inboundWindowKey,
-              sessionScopeId: inboundSessionScopeId,
-              mediaKind: typeof media?.kind === 'string' ? media.kind : null,
-              telegramMediaKind: typeof media?.telegramKind === 'string' ? media.telegramKind : null,
-              telegramFileId: typeof media?.fileId === 'string' ? media.fileId : null,
-              telegramFilePath: typeof media?.telegramFilePath === 'string' ? media.telegramFilePath : null,
-              mediaMimeType: typeof media?.mimeType === 'string' ? media.mimeType : null,
-              mediaFileName: typeof media?.fileName === 'string' ? media.fileName : null,
-              mediaDuration: Number.isFinite(Number(media?.duration)) ? Number(media.duration) : null,
-              mediaWidth: Number.isFinite(Number(media?.width)) ? Number(media.width) : null,
-              mediaHeight: Number.isFinite(Number(media?.height)) ? Number(media.height) : null,
-              downloadedFilePath: archivePath,
-              latestScreenshotPath: typeof media?.latestScreenshotPath === 'string'
-                ? media.latestScreenshotPath
-                : null,
-            },
-          },
-          {
-            source: {
-              via: 'telegram-poller',
-              role: 'system',
-              paneId: 'system',
-            },
-          }
-        )).then((result) => {
-          if (result?.ok === false) {
-            log.warn('EvidenceLedger', `Telegram inbound journal upsert failed: ${result.reason || 'unknown'}`);
-          } else {
-            log.info('Telegram', `Telegram inbound journaled as ${inboundMessageId}`);
-          }
-        }).catch((err) => {
-          log.warn('EvidenceLedger', `Telegram inbound journal upsert error: ${err.message}`);
-        });
-        const formattedBody = archivePath ? `${body} | saved: ${archivePath}` : body;
-        const fullTelegramMessage = `[Telegram from ${sender}]: ${formattedBody}`;
-        const telegramMsgBytes = Buffer.byteLength(fullTelegramMessage, 'utf8');
-        const TELEGRAM_MSG_SIZE_LIMIT = 256 * 1024; // 256 KB
-        if (telegramMsgBytes > TELEGRAM_MSG_SIZE_LIMIT) {
-          log.warn('Telegram', `Oversized message from ${sender} (${telegramMsgBytes} bytes > ${TELEGRAM_MSG_SIZE_LIMIT}). Truncating.`);
-        }
-        const safeMessage = telegramMsgBytes > TELEGRAM_MSG_SIZE_LIMIT
-          ? fullTelegramMessage.slice(0, TELEGRAM_MSG_SIZE_LIMIT) + '\n[...truncated — full text in evidence ledger]'
-          : fullTelegramMessage;
-        if (inboundWindowKey !== 'main') {
-          void this.deliverScopedTelegramInboundWithRetry(inboundWindowKey, safeMessage, {
-            messageId: inboundMessageId,
-            sessionScopeId: inboundSessionScopeId,
-            chatId: metadata?.chatId,
-            updateId,
-            telegramMessageId: messageId,
-            sender,
-          }).then((result) => {
-            if (
-              (result?.verified === true && result?.userVisible === true)
-              || isTerminalAcceptedDeliveryResult(result)
-            ) {
-              log.info(
-                'Telegram',
-                `Scoped Telegram inbound injected into ${inboundWindowKey} Architect pane (${inboundMessageId})`
-              );
-              return;
-            }
-            this.handleScopedTelegramInboundFallback(inboundWindowKey, safeMessage, result);
-          }).catch((err) => {
-            this.handleScopedTelegramInboundFallback(inboundWindowKey, safeMessage, {
-              status: 'scoped_runtime_error',
-              error: err.message,
-            });
-          });
-          // The append above already succeeded and scoped delivery is scheduled;
-          // a bare return here read as malformed to the parent, so it NACKed and
-          // every replay re-delivered to the scoped window.
-          return { ok: true, durable: true, updateId };
-        }
-        const mainPaneRecallContext = {
-          paneId: '1',
-          role: 'architect',
-          windowKey: inboundWindowKey,
-          profileName: inboundRoute.profile || inboundWindowKey,
-          sessionScopeId: inboundSessionScopeId,
-          channel: 'telegram',
-          sender,
-          messageId: inboundMessageId,
-          chatId: metadata?.chatId,
-          telegramChatId: metadata?.chatId,
-          metadata: {
-            ...(metadata && typeof metadata === 'object' ? metadata : {}),
-            windowKey: inboundWindowKey,
-            profileName: inboundRoute.profile || inboundWindowKey,
-            sessionScopeId: inboundSessionScopeId,
-          },
-          header: 'MESSAGE RECALL',
-        };
-        const deliverMainTelegramToArchitect = () => this.deliverHumanMessageWithRecall(
-          safeMessage,
-          mainPaneRecallContext,
-          'Telegram'
+        // DELIVERY IS NOT DONE HERE ANY MORE. The record is durable; the drain
+        // owns putting it on screen, in updateId order, exactly once. Doing it
+        // both here and in the drain is how a replay becomes a duplicate.
+        this.scheduleTelegramIngressDrain(
+          spooled.dir,
+          inboundRoute.profile || inboundWindowKey || 'main'
         );
-
-        if (this.shouldRouteMainTelegramInboundToMira({
-          body,
-          inboundWindowKey,
-          archivePath,
-          media,
-          photo,
-          document,
-        })) {
-          void this.routeMainTelegramInboundToMira({
-            body,
-            sender,
-            metadata,
-            inboundMessageId,
-            inboundSessionScopeId,
-          }).then((result) => {
-            if (result?.ok) {
-              log.info('Telegram', `Telegram inbound ${inboundMessageId} answered through Mira live path`);
-              return;
-            }
-            log.warn(
-              'Telegram',
-              `Mira live Telegram reply failed for ${inboundMessageId} (${result?.status || result?.error || 'unknown'}); falling back to Architect pane`
-            );
-            void deliverMainTelegramToArchitect();
-          }).catch((err) => {
-            log.warn('Telegram', `Mira live Telegram reply error for ${inboundMessageId}: ${err.message}; falling back to Architect pane`);
-            void deliverMainTelegramToArchitect();
-          });
-          return { ok: true, durable: true, updateId };
-        }
-
-        void deliverMainTelegramToArchitect();
         return { ok: true, durable: true, updateId };
       },
     });

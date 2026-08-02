@@ -157,19 +157,24 @@ jest.mock('../modules/main/pane-host-window-manager', () => ({
   }),
 }));
 
-// CONTAINMENT: the Telegram wiring tests below invoke the real onMessage, which
-// now durably appends before delivering. Without this the suite would write real
-// ingress journals under whatever base the mocked project root resolves to. The
-// double derives the updateId the production helper would and writes NOTHING.
-jest.mock('../modules/main/telegram-ingress-spool', () => ({
-  __esModule: false,
-  acceptInbound: jest.fn((input = {}) => {
-    const updateId = Number(input?.metadata?.updateId);
-    if (!Number.isFinite(updateId)) return { ok: false, reason: 'missing_update_id' };
-    return { ok: true, durable: true, updateId, deduped: false, dir: '<mock>' };
-  }),
-  resolveSpoolDir: jest.fn(() => ({ ok: true, dir: '<mock>' })),
-}));
+// CONTAINMENT + REALISM. These tests drive the real onMessage, which appends
+// durably and then leaves delivery to the drain — so the spool has to actually
+// store something or the drain reads an empty queue and nothing is delivered.
+// The double redirects the REAL spool at a per-test temp root: writes are real
+// (the drain works end to end) but land in os.tmpdir(), never under the mocked
+// project root or the repo.
+jest.mock('../modules/main/telegram-ingress-spool', () => {
+  const actual = jest.requireActual('../modules/main/telegram-ingress-spool');
+  const state = { baseDir: null };
+  return {
+    __esModule: false,
+    __setBaseDir: (dir) => { state.baseDir = dir; },
+    isSafeRouteKey: actual.isSafeRouteKey,
+    SPOOL_SEGMENTS: actual.SPOOL_SEGMENTS,
+    resolveSpoolDir: jest.fn((_root, routeKey) => actual.resolveSpoolDir(state.baseDir, routeKey)),
+    acceptInbound: jest.fn((input = {}) => actual.acceptInbound({ ...input, dataRoot: state.baseDir })),
+  };
+});
 
 jest.mock('../modules/main/comms-journal', () => ({
   appendCommsJournalEntry: jest.fn(() => ({ ok: true, rowId: 1 })),
@@ -509,6 +514,38 @@ function createReadyTrustQuoteWindow(overrides = {}) {
     ...windowOverrides,
   };
 }
+
+const telegramSpoolMock = require('../modules/main/telegram-ingress-spool');
+const telegramSpoolRoots = [];
+
+function freshTelegramSpoolRoot() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sq-app-spool-'));
+  telegramSpoolRoots.push(root);
+  telegramSpoolMock.__setBaseDir(root);
+  return root;
+}
+
+/**
+ * Delivery is no longer synchronous with the callback: the callback appends and
+ * schedules, and the drain delivers. Awaiting the scheduled drain is how these
+ * tests observe delivery now — setImmediate ticks cannot promise that.
+ */
+async function flushTelegramDrain(app) {
+  for (let i = 0; i < 4; i += 1) {
+    if (app.telegramDrainInFlight) await app.telegramDrainInFlight;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+beforeEach(() => {
+  freshTelegramSpoolRoot();
+});
+
+afterEach(() => {
+  while (telegramSpoolRoots.length) {
+    fs.rmSync(telegramSpoolRoots.pop(), { recursive: true, force: true });
+  }
+});
 
 describe('SquidRunApp', () => {
   let mockAppContext;
@@ -3708,8 +3745,7 @@ describe('SquidRunApp', () => {
         senderRole: 'builder',
       });
 
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
+      await flushTelegramDrain(app);
 
       expect(app.reportAutonomousSmokeSummary).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -3747,8 +3783,7 @@ describe('SquidRunApp', () => {
         senderRole: 'builder',
       });
 
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
+      await flushTelegramDrain(app);
 
       expect(app.reportAutonomousSmokeSummary).not.toHaveBeenCalled();
     });
@@ -7998,8 +8033,7 @@ describe('SquidRunApp', () => {
       const options = telegramPoller.start.mock.calls[0][0];
       options.onMessage('side hello', 'scoped', { chatId: 2222222222, updateId: 102 });
 
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
+      await flushTelegramDrain(app);
       expect(scopedRuntimeSpy).toHaveBeenCalledWith(
         'scoped',
         '[Telegram from scoped]: side hello',
@@ -8037,8 +8071,7 @@ describe('SquidRunApp', () => {
       const options = telegramPoller.start.mock.calls[0][0];
       options.onMessage('standalone hello', 'scoped', { chatId: 2222222222, updateId: 103 });
 
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
+      await flushTelegramDrain(app);
       expect(scopedRuntimeSpy).toHaveBeenCalledWith(
         'scoped',
         '[Telegram from scoped]: standalone hello',
@@ -8064,15 +8097,16 @@ describe('SquidRunApp', () => {
       telegramPoller.start.mockReturnValue(true);
 
       const order = [];
+      const realAccept = spool.acceptInbound.getMockImplementation();
       spool.acceptInbound.mockImplementationOnce((input) => {
         order.push('append');
-        return { ok: true, durable: true, updateId: Number(input.metadata.updateId), deduped: false, dir: '<mock>' };
+        return realAccept(input);
       });
       const scopedRuntimeSpy = jest
-        .spyOn(app, 'deliverScopedTelegramInboundToProfileWindow')
+        .spyOn(app, 'deliverScopedTelegramInboundWithRetry')
         .mockImplementation(async () => {
           order.push('deliver');
-          return { status: 'delivered.verified' };
+          return { verified: true, userVisible: true, status: 'delivered.verified' };
         });
 
       app.startTelegramPoller();
@@ -8082,11 +8116,17 @@ describe('SquidRunApp', () => {
         updateId: 4103,
       });
 
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
-
-      // Exact acceptance: the parent's correlation guard compares updateId.
+      // The callback returns durable acceptance — that is what releases the
+      // Telegram cursor — and the append is what earns it. The scheduled drain
+      // may already have run in microtasks by the time this await resolves, so
+      // asserting "nothing delivered yet" would be asserting scheduler timing,
+      // not the contract. The contract is: append FIRST, then delivery, and
+      // delivery only via the drain.
       expect(result).toEqual({ ok: true, durable: true, updateId: 4103 });
+      expect(order[0]).toBe('append');
+
+      await flushTelegramDrain(app);
+
       expect(spool.acceptInbound).toHaveBeenCalledTimes(1);
       expect(scopedRuntimeSpy).toHaveBeenCalledTimes(1);
       expect(order).toEqual(['append', 'deliver']);
@@ -8100,8 +8140,8 @@ describe('SquidRunApp', () => {
 
       spool.acceptInbound.mockImplementationOnce(() => ({ ok: false, reason: 'disk_full' }));
       const scopedRuntimeSpy = jest
-        .spyOn(app, 'deliverScopedTelegramInboundToProfileWindow')
-        .mockResolvedValue({ status: 'delivered.verified' });
+        .spyOn(app, 'deliverScopedTelegramInboundWithRetry')
+        .mockResolvedValue({ verified: true, userVisible: true });
 
       app.startTelegramPoller();
       const options = telegramPoller.start.mock.calls[0][0];
@@ -8110,11 +8150,10 @@ describe('SquidRunApp', () => {
         updateId: 4104,
       });
 
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
+      await flushTelegramDrain(app);
 
       // Not durable => parent NACKs => cursor holds => Telegram replays it.
-      // Delivering anyway would double-deliver on every replay.
+      // Nothing was spooled, so the drain has nothing to deliver either.
       expect(result).toEqual({ ok: false, reason: 'disk_full' });
       expect(scopedRuntimeSpy).not.toHaveBeenCalled();
     });
@@ -8142,8 +8181,7 @@ describe('SquidRunApp', () => {
       const options = telegramPoller.start.mock.calls[0][0];
       options.onMessage('hello client lane', '@ClientProfile', { chatId: 3333333333, updateId: 104 });
 
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
+      await flushTelegramDrain(app);
       expect(scopedRuntimeSpy).toHaveBeenCalledWith(
         'client-profile',
         '[Telegram from @ClientProfile]: hello client lane',
@@ -8163,7 +8201,7 @@ describe('SquidRunApp', () => {
       }));
     });
 
-    it('writes scoped Telegram triggers only as a fallback when pane runtime delivery is not verified', async () => {
+    it('does NOT write a scoped trigger when pane runtime delivery is unverified; the record stays queued', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
@@ -8186,12 +8224,12 @@ describe('SquidRunApp', () => {
       const options = telegramPoller.start.mock.calls[0][0];
       options.onMessage('fallback hello', 'scoped', { chatId: 2222222222, updateId: 107 });
 
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(forwardSpy).toHaveBeenCalledWith(
-        'scoped',
-        '[Telegram from scoped]: fallback hello'
-      );
+      await flushTelegramDrain(app);
+      // The fixed-trigger write is loss site #1: two updates in one batch
+      // overwrite each other. The drain must never reach for it. An unverified
+      // scoped delivery leaves the record PENDING so it can be retried or
+      // retired on proof, instead of being papered over with a trigger file.
+      expect(forwardSpy).not.toHaveBeenCalled();
       expect(deliverySpy).not.toHaveBeenCalled();
     });
 
@@ -8218,8 +8256,7 @@ describe('SquidRunApp', () => {
       const options = telegramPoller.start.mock.calls[0][0];
       options.onMessage('accepted no fallback', 'scoped', { chatId: 2222222222, updateId: 108 });
 
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
+      await flushTelegramDrain(app);
       expect(forwardSpy).not.toHaveBeenCalled();
       expect(deliverySpy).not.toHaveBeenCalled();
     });
@@ -8486,8 +8523,7 @@ describe('SquidRunApp', () => {
         },
       });
 
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
+      await flushTelegramDrain(app);
       expect(scopedRuntimeSpy).toHaveBeenCalledWith(
         'scoped',
         '[Telegram from @ScopedContact]: [Photo received] | saved: D:\\projects\\Example Case\\telegram-photos\\photo-11.jpg',
@@ -8536,8 +8572,7 @@ describe('SquidRunApp', () => {
         },
       });
 
-      await new Promise((resolve) => setImmediate(resolve));
-      await new Promise((resolve) => setImmediate(resolve));
+      await flushTelegramDrain(app);
       expect(scopedRuntimeSpy).toHaveBeenCalledWith(
         'scoped',
         '[Telegram from @ScopedContact]: [Photo received]',
@@ -12354,6 +12389,127 @@ describe('SquidRunApp', () => {
       deliverSpy.mockRestore();
       jest.useRealTimers();
       fs.rmSync(triggerDir, { recursive: true, force: true });
+    });
+  });
+
+  describe('SquidRunApp Telegram ingress drain wiring', () => {
+    let app;
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      freshTelegramSpoolRoot();
+    });
+
+    it('creates exactly ONE coordinator and reuses it', () => {
+      // Two coordinators would each hold their own single-flight latch and could
+      // deliver the same record twice.
+      const a = app.getTelegramDrainCoordinator();
+      const b = app.getTelegramDrainCoordinator();
+      expect(a).toBe(b);
+    });
+
+    it('the callback contains NO direct delivery path any more', () => {
+      // Source-level backstop for the contract the behaviour tests assert: if a
+      // direct delivery call is ever reintroduced into the callback, replays
+      // would deliver twice — once inline, once through the drain.
+      const src = fs.readFileSync(
+        path.join(__dirname, '..', 'modules', 'main', 'squidrun-app.js'),
+        'utf8'
+      );
+      const start = src.indexOf('const spooled = telegramIngressSpool.acceptInbound({');
+      const end = src.indexOf('\n      },\n    });', start);
+      const callback = src.slice(start, end);
+      expect(callback).not.toContain('deliverHumanMessageWithRecall');
+      expect(callback).not.toContain('deliverScopedTelegramInboundWithRetry');
+      expect(callback).not.toContain('routeMainTelegramInboundToMira');
+      expect(callback).not.toContain('handleScopedTelegramInboundFallback');
+      expect(callback).toContain('scheduleTelegramIngressDrain');
+    });
+
+    it('the drain adapter never reaches the forbidden trigger fallback', () => {
+      const src = fs.readFileSync(
+        path.join(__dirname, '..', 'modules', 'main', 'squidrun-app.js'),
+        'utf8'
+      );
+      const start = src.indexOf('async deliverTelegramInboundJob(job = {}) {');
+      expect(start).toBeGreaterThan(-1);
+      const end = src.indexOf('\n  }\n', start);
+      const adapter = src.slice(start, end).replace(/^\s*\/\/.*$/gm, '');
+      // loss site #1 — the fixed-path trigger overwrite.
+      expect(adapter).not.toContain('handleScopedTelegramInboundFallback(');
+    });
+
+    it('a bare inbound/brokered row is NOT proof; the same row after a verified submit IS', async () => {
+      // writeSubmitVerdictToJournal updates the inbound row IN PLACE, keeping
+      // direction:'inbound' and status:'brokered' and only setting ackStatus +
+      // metadata.submitVerification. So filtering on direction would make
+      // main-pane proof unfindable, and accepting the bare row would retire
+      // every record undelivered. The ack is what separates them.
+      const identity = {
+        messageId: 'telegram-in-950', routeKey: 'main', windowKey: 'main', profile: 'main',
+      };
+      const commsJournal = require('../modules/main/comms-journal');
+      const bare = {
+        messageId: 'telegram-in-950', direction: 'inbound', status: 'brokered',
+      };
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockReturnValue([bare]);
+      await expect(app.findTelegramDeliveryReceipt(identity)).resolves.toBeNull();
+
+      commsJournal.queryCommsJournalEntries.mockReturnValue([{
+        ...bare,
+        ackStatus: 'prompt_submitted.receipt_verified',
+        metadata: { submitVerification: { verified: true } },
+      }]);
+      await expect(app.findTelegramDeliveryReceipt(identity)).resolves.toMatchObject({
+        ...identity, verified: true,
+      });
+    });
+
+    it('a journal lookup failure HOLDS rather than risking a second copy', async () => {
+      const commsJournal = require('../modules/main/comms-journal');
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockImplementation(() => {
+        throw new Error('db locked');
+      });
+      await expect(app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-951', routeKey: 'main', windowKey: 'main', profile: 'main',
+      })).rejects.toThrow(/comms journal lookup failed/);
+    });
+
+    it('startup drains a backlog spooled while the app was down', async () => {
+      const spool = jest.requireActual('../modules/main/telegram-ingress-spool');
+      const base = telegramSpoolRoots[telegramSpoolRoots.length - 1];
+      for (const updateId of [900, 901]) {
+        spool.acceptInbound({
+          dataRoot: base,
+          routeKey: 'main',
+          text: `backlog ${updateId}`,
+          from: 'james',
+          metadata: { updateId, chatId: 1111111111 },
+          targetProfile: 'main',
+          targetWindow: 'main',
+        });
+      }
+
+      const seen = [];
+      jest.spyOn(app, 'deliverTelegramInboundJob').mockImplementation(async (job) => {
+        seen.push(job.inboundMessageId);
+        return {
+          messageId: job.inboundMessageId,
+          routeKey: 'main',
+          windowKey: 'main',
+          profile: 'main',
+          verified: true,
+          userVisible: true,
+        };
+      });
+      jest.spyOn(app, 'resolveTelegramInboundRoute').mockReturnValue({
+        ok: true, profile: 'main', windowKey: 'main',
+      });
+
+      const result = await app.drainTelegramIngressBacklog(base);
+
+      expect(result.ok).toBe(true);
+      // In order, and both retired.
+      expect(seen).toEqual(['telegram-in-900', 'telegram-in-901']);
     });
   });
 });
