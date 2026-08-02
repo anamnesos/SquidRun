@@ -56,26 +56,32 @@ function readAttemptState(dir) {
     throw new Error(`attempt journal unreadable: ${err.message}`);
   }
   const state = new Map();
-  const lines = raw.split('\n');
-  const hasTornTail = raw.length > 0 && !raw.endsWith('\n');
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i].trim();
-    if (!line) continue;
+  const ALLOWED_STATES = new Set(['attempted', 'retryable']);
+  // NO TORN-TAIL TOLERANCE (Architect #88, correcting my #83 allowance).
+  // Skipping a torn fragment is not harmless here: appendAttempt seals the file
+  // with a newline and appends after it, which promotes that fragment to
+  // corrupt INTERIOR and poisons every later read. And this sidecar IS the
+  // ambiguity latch — under storage or process failure the safe bias is HOLD,
+  // never an inferred retry. Anything unreadable fails closed pending
+  // controlled recovery.
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
     let entry;
     try {
-      entry = JSON.parse(line);
+      entry = JSON.parse(trimmed);
     } catch {
-      // A torn tail only exists when the file does NOT end in a newline: that
-      // is a crashed partial append. If the file IS newline-terminated, every
-      // line is a COMPLETE record, and a corrupt one means the journal cannot
-      // be trusted — skipping it there would authorize a delivery we may
-      // already have made.
-      const isLastFragment = lines.slice(i + 1).every((l) => !l.trim());
-      if (hasTornTail && isLastFragment) continue;
-      throw new Error('attempt journal contains a corrupt entry');
+      throw new Error('attempt journal contains an unreadable entry');
     }
-    const id = normalizeUpdateId(entry && entry.updateId);
-    if (id === null) continue;
+    // Parseable is not the same as valid. A record missing its state used to
+    // read as "not attempted" and authorize delivery.
+    const id = Number(entry && entry.updateId);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new Error('attempt journal entry has an invalid updateId');
+    }
+    if (!ALLOWED_STATES.has(entry.state)) {
+      throw new Error(`attempt journal entry has an unknown state: ${entry.state}`);
+    }
     state.set(id, entry.state);
   }
   return state;

@@ -902,7 +902,10 @@ test('NEWLINE-TERMINATED CORRUPTION IS NOT A TORN TAIL: it fails closed', async 
   expect(res.stoppedAt.reason).toContain('attempt_journal_unreadable');
 });
 
-test('A GENUINE TORN TAIL (no trailing newline) is tolerated', async () => {
+test('A TORN TAIL IS NOT TOLERATED EITHER: the sidecar biases HOLD', async () => {
+  // Skipping it is not harmless: appendAttempt seals the file and appends after
+  // the fragment, promoting it to corrupt interior that poisons every later
+  // read. This journal is the ambiguity latch, so it fails closed.
   const base = tempRoot();
   const dir = seed(base, 'main', [370]);
   const drainModule = require('../modules/main/telegram-ingress-drain');
@@ -910,9 +913,31 @@ test('A GENUINE TORN TAIL (no trailing newline) is tolerated', async () => {
 
   const seen = [];
   const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
-  await drain.schedule(dir, 'main');
+  const res = await drain.schedule(dir, 'main');
 
-  expect(seen).toEqual(['telegram-in-370']);
+  expect(seen).toEqual([]);
+  expect(res.stoppedAt.reason).toContain('attempt_journal_unreadable');
+});
+
+test.each([
+  ['no state field', '{"updateId":5}'],
+  ['unknown state', '{"updateId":5,"state":"probably-fine"}'],
+  ['zero updateId', '{"updateId":0,"state":"attempted"}'],
+  ['non-integer updateId', '{"updateId":"five","state":"attempted"}'],
+])('PARSEABLE BUT INVALID entry fails closed: %s', async (_l, line) => {
+  // A record missing its state used to read as "not attempted" and authorize
+  // delivery — parseable is not the same as valid.
+  const base = tempRoot();
+  const dir = seed(base, 'main', [375]);
+  const drainModule = require('../modules/main/telegram-ingress-drain');
+  fs.writeFileSync(drainModule.attemptsPath(dir), `${line}\n`, 'utf8');
+
+  const seen = [];
+  const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
+  const res = await drain.schedule(dir, 'main');
+
+  expect(seen).toEqual([]);
+  expect(res.stoppedAt.reason).toContain('attempt_journal_unreadable');
 });
 
 test('A DELIVER THROW IS AMBIGUOUS, not a definite failure', async () => {
