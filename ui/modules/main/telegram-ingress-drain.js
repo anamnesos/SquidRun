@@ -204,6 +204,9 @@ function createDrainCoordinator(deps = {}) {
       routeKey,
       windowKey: liveWindow,
       profile: route.profile || routeKey,
+      // The STORED chat id, threaded through so a proof lookup can correlate
+      // against the row it needs. Without it the replay check matches nothing.
+      chatId: record.chatId ?? null,
     };
     let existing = null;
     try {

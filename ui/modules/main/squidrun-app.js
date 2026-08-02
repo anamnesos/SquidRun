@@ -14666,38 +14666,59 @@ class SquidRunApp {
         inboundSessionScopeId,
       }).catch((err) => ({ ok: false, status: 'mira_runtime_error', error: err.message }));
 
-      if (miraOutcome?.ok) {
-        // routeMainTelegramInboundToMira returns {ok, handled, status,
-        // telegramResult} with the actual proof NESTED. Spreading it gave the
-        // coordinator no top-level acceptance signal, so a successful Mira
-        // reply classified as a DEFINITE failure and would be re-sent after
-        // backoff — a second outbound message to James for one inbound.
-        // Only a verified Telegram egress counts, and it is normalized here.
-        // The old check here read egress.ok/sent/delivered/numeric-id and called
-        // that proof. Architect #73 ruled it RED, correctly: those are transport
-        // shapes, not durable evidence, and none of them survives a crash. Proof
-        // is a persisted outbound row for THIS inbound id.
-        const egressVerified = miraOutcome.telegramResult?.ok === true
-          && this.hasDurableMiraOutboundProof(inboundMessageId, {
-            chatId: metadata?.chatId,
-            windowKey: inboundWindowKey,
-            profile: inboundRoute?.profile || 'main',
-          });
-        if (egressVerified) {
-          log.info('Telegram', `Telegram inbound ${inboundMessageId} answered through Mira live path`);
-          return {
-            status: 'delivered.user_visible',
-            userVisible: true,
-            miraStatus: miraOutcome.status || null,
-            ...deliveryIdentity,
-          };
-        }
-        // ACCEPTED BUT PROOF-PENDING: hold. Falling through to the Architect
-        // pane here would risk a SECOND user-visible reply for one inbound
-        // message. Only a definite Mira failure may fall back.
+      // Evidence FIRST, verdict second — and this must happen even when the
+      // aggregate says ok:false, because a later chunk can fail after earlier
+      // chunks were already delivered to James.
+      // Caught SEPARATELY from delivery. If this throws inside the caller's
+      // try, processRecord reads it as deliver_threw -> DEFINITE -> retry, and
+      // retrying after Mira may already have sent is a second reply to James.
+      let egress;
+      try {
+        egress = this.inspectMiraOutboundEgress(inboundMessageId, {
+          chatId: metadata?.chatId,
+          windowKey: inboundWindowKey,
+          profile: inboundRoute?.profile || 'main',
+        });
+      } catch (err) {
+        log.warn('Telegram', `Mira egress proof lookup failed for ${inboundMessageId}: ${err.message}; holding`);
+        return {
+          status: 'accepted.proof_lookup_pending',
+          accepted: true,
+          ...deliveryIdentity,
+        };
+      }
+
+      if (egress.complete) {
+        log.info('Telegram', `Telegram inbound ${inboundMessageId} answered through Mira live path`);
+        return {
+          status: 'delivered.user_visible',
+          userVisible: true,
+          miraStatus: miraOutcome?.status || null,
+          ...deliveryIdentity,
+        };
+      }
+
+      if (egress.anyDelivered) {
+        // PARTIAL. James has already seen part of the reply; an Architect
+        // fallback now would be a second visible message on top of it.
         log.warn(
           'Telegram',
-          `Mira accepted ${inboundMessageId} but durable outbound proof is not present; holding`
+          `Mira egress for ${inboundMessageId} is partial (${egress.delivered}/${egress.expectedParts ?? '?'}); holding instead of falling back`
+        );
+        return {
+          status: 'accepted.mira_partial_egress',
+          accepted: true,
+          ...deliveryIdentity,
+        };
+      }
+
+      if (miraOutcome?.ok) {
+        // Mira claims success but the journal shows ZERO delivered parts. Hold:
+        // the proof may still land, and a resend is the one thing we cannot take
+        // back. Only a definite failure with no delivered part may fall back.
+        log.warn(
+          'Telegram',
+          `Mira accepted ${inboundMessageId} but no durable outbound proof is present; holding`
         );
         return {
           status: 'accepted.mira_proof_pending',
@@ -14826,9 +14847,35 @@ class SquidRunApp {
       // Cannot tell whether it landed; the drain turns a throw into a HOLD.
       throw new Error(`model prompt receipt lookup failed: ${err.message}`);
     }
+    // MIRA REPLAY. A message answered by Mira never produces a pane
+    // model-prompt receipt, so checking only that store would find nothing after
+    // a crash and send James a SECOND Mira reply. The pre-delivery replay lookup
+    // has to ask about Mira too, using this record's own chat/route identity.
+    // An in-memory latch cannot help here: it dies with the process.
+    if (this.hasDurableMiraOutboundProof(identity.messageId, {
+      chatId: identity.chatId,
+      windowKey: identity.windowKey,
+      profile: identity.profile,
+    })) {
+      return {
+        status: 'delivered.user_visible',
+        userVisible: true,
+        proofSource: 'mira_outbound_row',
+        messageId: identity.messageId,
+        routeKey: identity.routeKey,
+        windowKey: identity.windowKey,
+        profile: identity.profile,
+      };
+    }
+
     if (!receipt) return null;
     if (receipt.semanticEvent !== 'prompt_submit') return null;
     if (receipt.status !== 'prompt_submitted.in_band') return null;
+    // Asking the store for an id is not the same as the store answering for it.
+    // A malformed mapping or state file could return someone else's receipt, so
+    // the receipt has to identify itself as this message.
+    const receiptId = receipt.messageId || receipt.deliveryId;
+    if (receiptId !== identity.messageId) return null;
 
     // Identity comes from the record we already re-validated against the live
     // route, joined to a receipt for that exact id. The receipt carries no
@@ -14851,31 +14898,81 @@ class SquidRunApp {
    * counts, and the row must be outbound, from mira, on telegram, delivered.
    */
   hasDurableMiraOutboundProof(inboundMessageId, expected = {}) {
-    if (!inboundMessageId) return false;
-    const candidates = [
-      `${inboundMessageId}-mira-reply`,
-      `${inboundMessageId}-mira-direct-status-reply`,
-    ];
-    for (const messageId of candidates) {
-      let rows = [];
-      try {
-        rows = queryCommsJournalEntries({ messageId, limit: 5 }) || [];
-      } catch (err) {
-        log.warn('Telegram', `Mira outbound proof lookup failed for ${messageId}: ${err.message}`);
-        return false;
+    return this.inspectMiraOutboundEgress(inboundMessageId, expected).complete;
+  }
+
+  /**
+   * What the journal actually proves about Mira's reply to this inbound id.
+   *
+   * sendLongTelegramMessage splits long replies and ids each piece
+   * `<base>-part<N>` (scripts/hm-telegram-routing.js:255), so querying only
+   * `<base>` proves nothing about a chunked reply. Worse, a later chunk can fail
+   * AFTER part 1 was already delivered: the aggregate says ok:false while James
+   * has already seen text. Falling back to the Architect pane there would be a
+   * second visible reply.
+   *
+   * Throws on lookup failure BY DESIGN — the drain turns a throw into a hold,
+   * and holding is correct when we cannot tell what was sent.
+   *
+   * @returns {{complete: boolean, anyDelivered: boolean, delivered: number, expectedParts: number|null}}
+   */
+  inspectMiraOutboundEgress(inboundMessageId, expected = {}) {
+    const empty = { complete: false, anyDelivered: false, delivered: 0, expectedParts: null };
+    if (!inboundMessageId) return empty;
+
+    const matches = (row, messageId) => {
+      if (!row || row.messageId !== messageId) return false;
+      if (row.direction !== 'outbound') return false;
+      if (row.channel !== 'telegram') return false;
+      if (row.senderRole !== 'mira') return false;
+      if (row.ackStatus !== 'telegram_delivered') return false;
+      if (row.status !== 'acked') return false;
+      const meta = (row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata))
+        ? row.metadata
+        : {};
+      const rowChatId = row.chatId ?? meta.chatId;
+      if (!expected.chatId || !rowChatId) return false;
+      if (String(rowChatId) !== String(expected.chatId)) return false;
+      const rowInbound = meta.inboundMessageId ?? row.inboundMessageId;
+      if (rowInbound && rowInbound !== inboundMessageId) return false;
+      const rowWindow = meta.windowKey ?? row.windowKey;
+      if (expected.windowKey && rowWindow && rowWindow !== expected.windowKey) return false;
+      const rowProfile = meta.profile ?? row.profile;
+      if (expected.profile && rowProfile && rowProfile !== expected.profile) return false;
+      return true;
+    };
+
+    const findRow = (messageId) => {
+      const rows = queryCommsJournalEntries({ messageId, limit: 5 }) || [];
+      return (Array.isArray(rows) ? rows : []).find((row) => matches(row, messageId)) || null;
+    };
+
+    for (const base of [`${inboundMessageId}-mira-reply`, `${inboundMessageId}-mira-direct-status-reply`]) {
+      // Unchunked: the base id carries the whole reply.
+      if (findRow(base)) return { complete: true, anyDelivered: true, delivered: 1, expectedParts: 1 };
+
+      // Chunked: part1 tells us how many parts to expect.
+      const first = findRow(`${base}-part1`);
+      if (!first) continue;
+      const meta = (first.metadata && typeof first.metadata === 'object') ? first.metadata : {};
+      const expectedParts = Number(meta.chunkCount);
+      if (!Number.isFinite(expectedParts) || expectedParts < 1) {
+        // Something landed, but we cannot say the whole reply did.
+        return { complete: false, anyDelivered: true, delivered: 1, expectedParts: null };
       }
-      for (const row of Array.isArray(rows) ? rows : []) {
-        if (!row || row.messageId !== messageId) continue;
-        if (row.direction !== 'outbound') continue;
-        if (row.channel !== 'telegram') continue;
-        if (row.senderRole !== 'mira') continue;
-        const ack = row.ackStatus || row.status || '';
-        if (ack !== 'telegram_delivered' && row.status !== 'acked') continue;
-        if (expected.chatId && row.chatId && String(row.chatId) !== String(expected.chatId)) continue;
-        return true;
+      let delivered = 1;
+      for (let part = 2; part <= expectedParts; part += 1) {
+        if (!findRow(`${base}-part${part}`)) break;
+        delivered += 1;
       }
+      return {
+        complete: delivered === expectedParts,
+        anyDelivered: true,
+        delivered,
+        expectedParts,
+      };
     }
-    return false;
+    return empty;
   }
 
   /** Drain every spool directory the canonical owner root already contains. */

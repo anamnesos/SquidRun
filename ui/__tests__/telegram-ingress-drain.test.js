@@ -682,3 +682,22 @@ test('FRESH PROCESS: proof found, ack fails, lookup goes empty => zero visible d
   expect(second.stoppedAt).toMatchObject({ updateId: 230, failureClass: 'awaiting_proof' });
   expect(queue.readPending(dir).map((r) => r.updateId)).toEqual([230, 231]);
 });
+
+test('THE PROOF CALLBACK RECEIVES THE STORED chatId', async () => {
+  // Threading this was silently a no-op once: a plain string replace ran against
+  // the wrong module, matched nothing, and reported success. Without chatId the
+  // replay lookup correlates against nothing and re-delivers.
+  const base = tempRoot();
+  const dir = seed(base, 'main', [240]);
+  const seen = [];
+  const drain = coordinator({
+    findExistingReceipt: async (identity) => { seen.push(identity); return null; },
+  });
+
+  await drain.schedule(dir, 'main');
+
+  expect(seen).toHaveLength(1);
+  expect(seen[0]).toMatchObject({
+    messageId: 'telegram-in-240', routeKey: 'main', windowKey: 'main', chatId: CHAT,
+  });
+});

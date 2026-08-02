@@ -12477,6 +12477,112 @@ describe('SquidRunApp', () => {
       })).rejects.toThrow(/model prompt receipt lookup failed/);
     });
 
+    function miraRow(messageId, extra = {}) {
+      return {
+        messageId,
+        direction: 'outbound',
+        channel: 'telegram',
+        senderRole: 'mira',
+        ackStatus: 'telegram_delivered',
+        status: 'acked',
+        chatId: 111,
+        ...extra,
+      };
+    }
+
+    it('CHUNKED EGRESS: one delivered part out of three is PARTIAL, not proof', () => {
+      // sendLongTelegramMessage ids pieces <base>-part<N>
+      // (scripts/hm-telegram-routing.js:255). Querying only <base> proves
+      // nothing about a chunked reply.
+      const commsJournal = require('../modules/main/comms-journal');
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockImplementation(({ messageId }) => (
+        messageId === 'telegram-in-990-mira-reply-part1'
+          ? [miraRow(messageId, { metadata: { chunkCount: 3, chatId: 111 } })]
+          : []
+      ));
+
+      const egress = app.inspectMiraOutboundEgress('telegram-in-990', { chatId: 111 });
+      expect(egress).toMatchObject({ complete: false, anyDelivered: true, delivered: 1, expectedParts: 3 });
+      expect(app.hasDurableMiraOutboundProof('telegram-in-990', { chatId: 111 })).toBe(false);
+    });
+
+    it('CHUNKED EGRESS: every part delivered is full proof', () => {
+      const commsJournal = require('../modules/main/comms-journal');
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockImplementation(({ messageId }) => (
+        /telegram-in-991-mira-reply-part[123]$/.test(messageId)
+          ? [miraRow(messageId, { metadata: { chunkCount: 3, chatId: 111 } })]
+          : []
+      ));
+      expect(app.hasDurableMiraOutboundProof('telegram-in-991', { chatId: 111 })).toBe(true);
+    });
+
+    it('PARTIAL EGRESS HOLDS even when Mira reports failure, instead of a second reply', async () => {
+      // A later chunk failed after part 1 already reached James. The aggregate
+      // says ok:false, but falling back would put a second visible reply on top
+      // of text he has already seen.
+      jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
+      jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue({
+        ok: false, handled: true, status: 'telegram_send_failed',
+      });
+      jest.spyOn(app, 'inspectMiraOutboundEgress').mockReturnValue({
+        complete: false, anyDelivered: true, delivered: 1, expectedParts: 3,
+      });
+      const architectSpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true, verified: true, userVisible: true,
+      });
+
+      const result = await app.deliverTelegramInboundJob({
+        body: 'hello', sender: 'james', metadata: { chatId: 111, updateId: 992 },
+        media: null, photo: null, document: null, archivePath: null,
+        inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
+        inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
+        inboundMessageId: 'telegram-in-992', updateId: 992, messageId: 1, sentAtMs: Date.now(),
+      });
+
+      expect(result).toMatchObject({ status: 'accepted.mira_partial_egress', accepted: true });
+      expect(architectSpy).not.toHaveBeenCalled();
+    });
+
+    it('A PROOF-LOOKUP FAILURE ON THE LIVE PATH HOLDS instead of being read as a delivery failure', async () => {
+      // If this throw escaped into the caller's try, processRecord would read it
+      // as deliver_threw -> DEFINITE -> retry, and retrying after Mira may
+      // already have sent is a second reply to James.
+      jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
+      jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue({ ok: true, handled: true });
+      jest.spyOn(app, 'inspectMiraOutboundEgress').mockImplementation(() => {
+        throw new Error('journal unreadable');
+      });
+      const architectSpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true, verified: true, userVisible: true,
+      });
+
+      const result = await app.deliverTelegramInboundJob({
+        body: 'hello', sender: 'james', metadata: { chatId: 111, updateId: 994 },
+        media: null, photo: null, document: null, archivePath: null,
+        inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
+        inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
+        inboundMessageId: 'telegram-in-994', updateId: 994, messageId: 1, sentAtMs: Date.now(),
+      });
+
+      expect(result).toMatchObject({ status: 'accepted.proof_lookup_pending', accepted: true });
+      expect(architectSpy).not.toHaveBeenCalled();
+    });
+
+    it('CRASH REPLAY: an existing Mira outbound row retires without re-sending', async () => {
+      const receipts = require('../modules/model-prompt-receipt');
+      receipts.getModelPromptReceipt.mockReturnValue(null);
+      jest.spyOn(app, 'hasDurableMiraOutboundProof').mockReturnValue(true);
+
+      // A Mira-answered message never produces a pane receipt, so without this
+      // the replay lookup would find nothing and send a SECOND Mira reply.
+      await expect(app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-993', routeKey: 'main', windowKey: 'main',
+        profile: 'main', chatId: 111,
+      })).resolves.toMatchObject({
+        userVisible: true, proofSource: 'mira_outbound_row', messageId: 'telegram-in-993',
+      });
+    });
+
     it('Mira accepted with NO durable proof HOLDS and never falls back to the Architect pane', async () => {
       // A fallback here would be a SECOND user-visible reply to James for one
       // inbound message. Only a definite Mira failure may fall back.
@@ -12520,6 +12626,7 @@ describe('SquidRunApp', () => {
             channel: 'telegram',
             senderRole: 'mira',
             ackStatus: 'telegram_delivered',
+            status: 'acked',
             chatId: 111,
           }]
           : []
@@ -12532,6 +12639,9 @@ describe('SquidRunApp', () => {
       ['wrong channel', { channel: 'ws' }],
       ['not from mira', { senderRole: 'architect' }],
       ['not delivered', { ackStatus: 'telegram_send_failed', status: 'failed' }],
+      ['acked but ack status missing', { ackStatus: undefined }],
+      ['ack status set but not acked', { status: 'queued' }],
+      ['no chat identity at all', { chatId: undefined }],
       ['different chat', { chatId: 999 }],
     ])('Mira proof rejects a row with the %s', (_l, override) => {
       const commsJournal = require('../modules/main/comms-journal');
@@ -12543,6 +12653,7 @@ describe('SquidRunApp', () => {
             channel: 'telegram',
             senderRole: 'mira',
             ackStatus: 'telegram_delivered',
+            status: 'acked',
             chatId: 111,
             ...override,
           }]
@@ -12557,6 +12668,7 @@ describe('SquidRunApp', () => {
       // comes from the record we already re-validated — joined, never invented.
       const receipts = require('../modules/model-prompt-receipt');
       receipts.getModelPromptReceipt.mockReturnValue({
+        messageId: 'telegram-in-960',
         semanticEvent: 'prompt_submit',
         status: 'prompt_submitted.in_band',
       });
@@ -12566,6 +12678,21 @@ describe('SquidRunApp', () => {
       await expect(app.findTelegramDeliveryReceipt(identity)).resolves.toMatchObject({
         ...identity, verified: true, proofSource: 'model_prompt_receipt',
       });
+    });
+
+    it('a receipt answering for a DIFFERENT message is not proof of this one', async () => {
+      // Asking the store for an id is not the store answering for it. A
+      // malformed mapping could hand back someone else's receipt.
+      const receipts = require('../modules/model-prompt-receipt');
+      receipts.getModelPromptReceipt.mockReturnValue({
+        messageId: 'telegram-in-999',
+        semanticEvent: 'prompt_submit',
+        status: 'prompt_submitted.in_band',
+      });
+      jest.spyOn(app, 'hasDurableMiraOutboundProof').mockReturnValue(false);
+      await expect(app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-962', routeKey: 'main', windowKey: 'main', profile: 'main',
+      })).resolves.toBeNull();
     });
 
     it('a receipt that did not reach in-band submission is NOT proof', async () => {
