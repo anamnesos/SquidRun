@@ -679,6 +679,85 @@ describe('a TIMED-OUT stop must not fail open (Architect #175)', () => {
     }
   });
 
+  test('stopAll DOES NOT MASK A FAILING TELEGRAM STOP (#179)', async () => {
+    const svc = new InboundPollerService({ log: silentLog, useTelegramWorker: true, forkProcess: jest.fn() });
+    svc.stopSms = jest.fn();
+
+    // A swallowed rejection tells the shutdown path the child is gone.
+    svc.stopTelegram = jest.fn(() => Promise.reject(new Error('stop exploded')));
+    await expect(svc.stopAll()).rejects.toThrow('stop exploded');
+
+    // And a resolved failure must reach the caller intact, not be flattened.
+    svc.stopTelegram = jest.fn(() => Promise.resolve({ ok: false, exited: false, reason: 'exit_not_observed' }));
+    await expect(svc.stopAll()).resolves.toMatchObject({ ok: false, reason: 'exit_not_observed' });
+  });
+
+  test('A KILL THAT EXITS SYNCHRONOUSLY ARMS NO TIMEOUT (#179)', async () => {
+    jest.useFakeTimers();
+    try {
+      const worker = makeWorker();
+      const svc = startedService(worker);
+      // Ignores the graceful shutdown entirely...
+      worker.send = jest.fn();
+      // ...but dies the instant it is killed, inside the grace callback.
+      worker.kill = jest.fn(function kill() {
+        this.killed = true;
+        this.emit('exit', 0, 'SIGTERM');
+      });
+
+      const stopping = svc.stopTelegram({ graceMs: 50, killWaitMs: 50 });
+      await jest.advanceTimersByTimeAsync(60);
+      expect(await stopping).toMatchObject({ ok: true, exited: true });
+
+      // A killTimer armed after settlement would later report a bogus timeout.
+      expect(jest.getTimerCount()).toBe(0);
+      expect(svc.telegramRetiringWorker).toBe(null);
+
+      await jest.advanceTimersByTimeAsync(5000);
+      expect(svc.telegramRetiringWorker).toBe(null);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('A FAILED START-SEND FENCES THE CHILD IT ALREADY FORKED (#179)', async () => {
+    jest.useFakeTimers();
+    try {
+      const stale = makeWorker();
+      stale.send = jest.fn(() => { throw new Error('channel closed'); });
+      const forkProcess = jest.fn()
+        .mockReturnValueOnce(stale)
+        .mockImplementation(() => makeWorker());
+      const svc = new InboundPollerService({
+        log: silentLog,
+        useTelegramWorker: true,
+        forkProcess,
+        telegramWorkerPath: 'telegram-worker.js',
+        telegramPoller: {
+          stop: jest.fn(),
+          _internals: { getTelegramConfig: jest.fn(() => ({ botToken: 't', chatId: 1 })) },
+        },
+      });
+      const env = { TELEGRAM_BOT_TOKEN: 't', TELEGRAM_CHAT_ID: '1' };
+
+      expect(svc.startTelegram({ env })).toBe(false);
+      expect(forkProcess).toHaveBeenCalledTimes(1);
+
+      // The child IS forked and may be running. Retrying must not fork a second
+      // getUpdates owner onto the same cursor.
+      expect(svc.startTelegram({ env }))
+        .toMatchObject({ accepted: false, reason: 'retiring_worker_exit_unproven' });
+      expect(forkProcess).toHaveBeenCalledTimes(1);
+
+      stale.emit('exit', 1, null);
+      expect(svc.telegramRetiringWorker).toBe(null);
+      svc.startTelegram({ env });
+      expect(forkProcess).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('THE STOP LATCH IS CLEARED ONLY BY ITS OWNING PROMISE (#176)', async () => {
     jest.useFakeTimers();
     try {

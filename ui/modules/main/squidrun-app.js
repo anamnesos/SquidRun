@@ -15836,7 +15836,15 @@ class SquidRunApp {
     // the worker stop resolves on an observed exit or on its own timeout, and a
     // rejection is logged rather than allowed to abort teardown.
     try {
-      await this.inboundPollerService.stopAll();
+      const stopped = await this.inboundPollerService.stopAll();
+      if (stopped && stopped.ok === false) {
+        // Proceed, but never silently: the child's exit was not observed, so
+        // the next start must treat it as possibly alive.
+        log.warn(
+          'Telegram',
+          `Poller stop did not confirm exit during shutdown (${stopped.reason || 'unknown'}); proceeding with teardown`
+        );
+      }
     } catch (err) {
       log.warn('Telegram', `Poller stop failed during shutdown: ${err?.message || err}`);
     }

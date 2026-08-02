@@ -8687,6 +8687,23 @@ describe('SquidRunApp', () => {
       expect(order).toEqual(['poller_stopped', 'shutdown_returned']);
     });
 
+    it('A RESOLVED ok:false STOP IS LOGGED, NOT SWALLOWED', async () => {
+      // The child's exit was NOT observed. Teardown proceeds, but silence here
+      // would read as confirmation that nothing is left running.
+      app.inboundPollerService.stopAll = jest.fn()
+        .mockResolvedValue({ ok: false, exited: false, reason: 'exit_not_observed' });
+      const log = require('../modules/logger');
+      const warn = jest.spyOn(log, 'warn');
+
+      await app.shutdown();
+
+      expect(warn).toHaveBeenCalledWith(
+        'Telegram',
+        expect.stringContaining('did not confirm exit')
+      );
+      warn.mockRestore();
+    });
+
     it('A POLLER STOP REJECTION DOES NOT HANG OR ABORT SHUTDOWN', async () => {
       app.inboundPollerService.stopAll = jest.fn(() => Promise.reject(new Error('worker gone rogue')));
       await expect(app.shutdown()).resolves.not.toThrow();

@@ -169,6 +169,11 @@ class InboundPollerService {
       });
     } catch (err) {
       this.log.warn('Telegram', `Failed starting Telegram poller worker: ${err.message}`);
+      // The child is ALREADY FORKED. A failed start-send says nothing about
+      // whether it is alive, and stopTelegramWorker clears the only reference
+      // to it, so an immediate retry would fork a second getUpdates child onto
+      // the same cursor. Fence it first; only its observed exit lowers that.
+      this.telegramRetiringWorker = worker;
       this.stopTelegramWorker();
       return false;
     }
@@ -215,7 +220,9 @@ class InboundPollerService {
    */
   stopAll() {
     this.stopSms();
-    return Promise.resolve(this.stopTelegram()).catch(() => {});
+    // The REAL promise, unmasked: a swallowed rejection or a discarded
+    // {ok:false} would tell the shutdown path the child is gone when it is not.
+    return this.stopTelegram();
   }
 
   /**
@@ -408,6 +415,11 @@ class InboundPollerService {
         } catch {
           // Best effort; the bounded wait below is what decides the outcome.
         }
+        // kill() can emit exit SYNCHRONOUSLY. finish() then ran with killTimer
+        // still null, so arming here leaves a timer past settlement — exactly
+        // the race guarded above, one stage later.
+        if (settled) return;
+
         killTimer = setTimeout(
           () => finish({ ok: false, exited: false, reason: 'exit_not_observed' }),
           killWaitMs
