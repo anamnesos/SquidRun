@@ -14,6 +14,7 @@ const {
 } = require('../config');
 const {
   appendCommsJournalEntry,
+  claimCommsSend,
   closeCommsJournalStores,
 } = require('../modules/main/comms-journal');
 const {
@@ -202,12 +203,32 @@ function buildJournalMessageId(prefix = 'tg') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function upsertTelegramJournal(entry = {}) {
+/**
+ * Classify a thrown send that happened AFTER the durable claim was held.
+ *
+ * The request may have reached Telegram before the error surfaced, so this is
+ * NOT a failure the caller may retry or fall back from — either can put a
+ * second copy in front of the user. It is explicitly ambiguous, and no `failed`
+ * row is written, because that row would later read as proof of no-send.
+ */
+function ambiguousSendResult(messageId, err) {
+  return {
+    ok: false,
+    accepted: true,
+    ambiguous: true,
+    definiteNoSend: false,
+    status: 'telegram_send_ambiguous',
+    error: err && err.message ? err.message : String(err),
+    messageId,
+  };
+}
+
+function upsertTelegramJournal(entry = {}, options = {}) {
   const result = appendCommsJournalEntry({
     channel: 'telegram',
     direction: 'outbound',
     ...entry,
-  });
+  }, options.dbPath ? { dbPath: options.dbPath } : undefined);
   if (result?.ok !== true) {
     console.warn(`[hm-telegram] journal write unavailable: ${result?.reason || 'unknown'}`);
   }
@@ -227,37 +248,6 @@ function upsertTelegramJournal(entry = {}) {
  * Only opt-in callers get this stricter behaviour, so unrelated sends are
  * unaffected.
  */
-/**
- * Classify a thrown send that happened AFTER the durable claim was held.
- *
- * The request may have reached Telegram before the error surfaced, so this is
- * NOT a failure the caller may retry or fall back from — doing either can put a
- * second copy in front of the user. It is explicitly ambiguous, and no `failed`
- * row is written, because writing one would later read as proof of no-send.
- */
-function ambiguousSendResult(messageId, err) {
-  return {
-    ok: false,
-    accepted: true,
-    ambiguous: true,
-    definiteNoSend: false,
-    status: 'telegram_send_ambiguous',
-    error: err && err.message ? err.message : String(err),
-    messageId,
-  };
-}
-
-function requireTelegramJournalRecord(entry = {}) {
-  const result = upsertTelegramJournal(entry);
-  if (result?.ok !== true) {
-    return {
-      ok: false,
-      error: 'durable_journal_unavailable',
-      reason: result?.reason || 'unknown',
-    };
-  }
-  return { ok: true };
-}
 
 function getReplyObligationInboundMessageId(metadata = {}) {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
@@ -916,31 +906,101 @@ async function sendTelegram(message, env = process.env, options = {}) {
     rawBody: preparedMessage.text,
     status: 'recorded',
     attempt: 1,
+    channel: 'telegram',
+    direction: 'outbound',
     metadata: mergeJournalMetadata(replyContextMetadata, opts.metadata, {
       source: 'hm-telegram',
       mode: 'message',
       messageTruncated: preparedMessage.truncated,
       originalLength: preparedMessage.originalLength,
+      // The claim compares route identity from metadata; the producer has to
+      // put it there or every strict send fails closed on incomplete identity.
+      chatId: outboundChatId,
     }),
   };
   let durableClaimHeld = false;
   if (opts.requireDurableJournal === true) {
-    // FAIL CLOSED BEFORE THE HTTP CALL. Sending without this row would leave a
-    // crash mid-send indistinguishable from never having sent, and the replay
-    // path would re-send to the user.
-    const recorded = requireTelegramJournalRecord(recordEntry);
-    if (!recorded.ok) {
+    // ATOMIC CLAIM, not a best-effort record. Inferring permission-to-send from
+    // a generic upsert's ok would authorize a SECOND copy of a message that is
+    // already recorded or already delivered.
+    let claim;
+    try {
+      claim = claimCommsSend({
+        ...recordEntry,
+        channel: 'telegram',
+        direction: 'outbound',
+      }, opts.dbPath ? { dbPath: opts.dbPath } : undefined);
+    } catch (err) {
+      // The claim itself blew up, so nothing was sent. Proven no-send.
       return {
         ok: false,
-        // PROVEN no-send: we never reached the network, so a caller may safely
-        // treat this as a definite failure and fall back.
         definiteNoSend: true,
-        error: recorded.error,
-        reason: recorded.reason,
+        status: 'telegram_claim_threw',
+        error: err.message,
         messageId,
       };
     }
-    durableClaimHeld = true;
+    if (!claim || typeof claim !== 'object') {
+      return {
+        ok: false, definiteNoSend: true, status: 'telegram_claim_unavailable', messageId,
+      };
+    }
+
+    switch (claim.outcome) {
+      case 'claimed_new':
+      case 'reclaimed_after_failure':
+        durableClaimHeld = true;
+        break;
+
+      case 'already_delivered':
+        // Not a failure. This exact message is already in the user's chat, so
+        // the send is SUPPRESSED and reported ok — a multipart send must be
+        // able to continue past an already-delivered part.
+        return {
+          ok: true,
+          suppressed: true,
+          alreadyDelivered: true,
+          status: 'telegram_already_delivered',
+          messageId,
+        };
+
+      case 'already_claimed':
+        // Someone else holds this claim and its fate is unknown. Holding is the
+        // only safe answer: it may already be on its way to the user.
+        return {
+          ok: false,
+          accepted: true,
+          ambiguous: true,
+          status: 'telegram_claim_in_flight',
+          messageId,
+        };
+
+      case 'identity_mismatch':
+      case 'identity_incomplete':
+      case 'identity_invalid':
+        // We cannot prove this claim describes THIS message. Sending anyway
+        // would be unrelated traffic riding someone else's claim.
+        return {
+          ok: false,
+          accepted: true,
+          ambiguous: true,
+          status: 'telegram_claim_integrity',
+          claimOutcome: claim.outcome,
+          field: claim.field || null,
+          messageId,
+        };
+
+      default:
+        // unavailable / claim_failed: the network was never touched, so this is
+        // a PROVEN no-send and a caller may safely fall back.
+        return {
+          ok: false,
+          definiteNoSend: true,
+          status: 'telegram_claim_unavailable',
+          claimOutcome: claim.outcome || 'unknown',
+          messageId,
+        };
+    }
   } else {
     upsertTelegramJournal(recordEntry);
   }
@@ -960,6 +1020,10 @@ async function sendTelegram(message, env = process.env, options = {}) {
     });
     return {
       ok: false,
+      // Preflight refusal: nothing left the process, so this is proven not-sent
+      // and a caller may fall back. Without saying so, routeTelegramReply reads
+      // it as ambiguous and holds a message that can never be delivered.
+      definiteNoSend: true,
       error: 'Telegram message empty after user-facing cleanup',
       code: 'telegram_empty_after_sanitization',
     };
@@ -1028,11 +1092,36 @@ async function sendTelegram(message, env = process.env, options = {}) {
   }
 
   if (response.statusCode >= 200 && response.statusCode < 300 && payload?.ok !== false) {
+    // A 2xx IS NOT PROOF ON ITS OWN. Under a durable claim, success requires
+    // payload.ok === true, a valid result.message_id, and result.chat.id
+    // matching the chat we addressed. Anything short of that is evidence we
+    // cannot read — never acked, never failed, and never reported verified.
+    const resultMessageId = Number(payload?.result?.message_id);
+    const resultChatId = payload?.result?.chat?.id;
+    const evidenceComplete = payload?.ok === true
+      && Number.isInteger(resultMessageId)
+      && resultMessageId > 0
+      && resultChatId !== undefined
+      && resultChatId !== null
+      && String(resultChatId) === String(outboundChatId);
+
+    if (durableClaimHeld && !evidenceComplete) {
+      console.warn(`[hm-telegram] 2xx for ${messageId} lacks usable success evidence; reporting ambiguous`);
+      return {
+        ok: false,
+        accepted: true,
+        ambiguous: true,
+        status: 'telegram_success_evidence_incomplete',
+        statusCode: response.statusCode,
+        journalMessageId: messageId,
+      };
+    }
+
     const ackMetadata = mergeJournalMetadata(replyContextMetadata, opts.metadata, {
       telegramMessageId: payload?.result?.message_id || null,
       chatId: payload?.result?.chat?.id || outboundChatId,
     });
-    upsertTelegramJournal({
+    const ackWrite = upsertTelegramJournal({
       messageId,
       sessionId,
       senderRole,
@@ -1041,6 +1130,22 @@ async function sendTelegram(message, env = process.env, options = {}) {
       ackStatus: 'telegram_delivered',
       metadata: ackMetadata,
     });
+
+    // If a real success cannot be durably marked delivered, we must NOT report
+    // verified success: a later replay would find no delivery evidence and send
+    // the message again.
+    if (durableClaimHeld && ackWrite?.ok !== true) {
+      console.warn(`[hm-telegram] delivered ${messageId} but could not durably mark it; reporting ambiguous`);
+      return {
+        ok: false,
+        accepted: true,
+        ambiguous: true,
+        status: 'telegram_ack_not_durable',
+        statusCode: response.statusCode,
+        journalMessageId: messageId,
+      };
+    }
+
     const durableSatisfaction = reconcileTelegramReplyObligationAfterAck(ackMetadata, {
       dbPath: opts.dbPath || null,
     });
@@ -1068,6 +1173,11 @@ async function sendTelegram(message, env = process.env, options = {}) {
   });
   return {
     ok: false,
+    // Telegram answered and refused. That is PROVEN not-sent, so a caller may
+    // safely fall back — unlike a transport throw, where the message may have
+    // landed. Saying nothing here left routeTelegramReply reading an explicit
+    // rejection as ambiguous and holding forever.
+    definiteNoSend: true,
     statusCode: response.statusCode,
     error: payload?.description || payload?.message || payload?.detail || `Telegram request failed (${response.statusCode})`,
   };
