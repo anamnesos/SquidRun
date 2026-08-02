@@ -980,23 +980,73 @@ test('DIRECT drainOnce respects dispose too', async () => {
   expect(res).toMatchObject({ ok: false, reason: 'coordinator_disposed' });
 });
 
-test('DISPOSE MID-BATCH stops before N+1', async () => {
+test('DISPOSE MID-BATCH: dispose waits for N, and N+1 is never delivered', async () => {
   const base = tempRoot();
   const dir = seed(base, 'main', [410, 411]);
   const seen = [];
+  const settled = [];
+  let disposing = null;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+
   let drain;
   drain = coordinator({
     deliver: async (job) => {
       seen.push(job.messageId);
-      // Teardown begins while N is still being delivered.
-      if (job.updateId === 410) void drain.dispose();
+      if (job.updateId === 410) {
+        // Teardown begins WHILE N is still in flight. Retain the promise —
+        // voiding it made "dispose finished" unobservable, so the old test
+        // could not tell waiting from not waiting.
+        disposing = drain.dispose().then(() => settled.push('dispose'));
+        await gate;
+      }
       return provenFor(job);
     },
   });
 
-  await drain.schedule(dir, 'main');
+  const running = drain.schedule(dir, 'main').then(() => settled.push('schedule'));
 
+  // Let the deliver callback start and register the dispose.
+  await new Promise((r) => setImmediate(r));
+  expect(disposing).not.toBeNull();
+  expect(settled).toEqual([]); // dispose is still unresolved: N is in flight
+
+  release();
+  await Promise.all([running, disposing]);
+
+  expect(settled).toEqual(['schedule', 'dispose']);
   expect(seen).toEqual(['telegram-in-410']);
+});
+
+test('COALESCED RERUN AFTER DISPOSE: no follow-up pass, no N+1', async () => {
+  // st.rerun was set by a second schedule while the first was in flight. If
+  // dispose does not stop the loop, that pending rerun delivers N+1 into a
+  // half-dismantled app.
+  const base = tempRoot();
+  const dir = seed(base, 'main', [420]);
+  const seen = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+
+  const drain = coordinator({
+    deliver: async (job) => { seen.push(job.messageId); await gate; return provenFor(job); },
+  });
+
+  const first = drain.schedule(dir, 'main');
+  await new Promise((r) => setImmediate(r));
+
+  // New work arrives, and a second schedule marks the rerun.
+  seed(base, 'main', [421]);
+  const coalesced = await drain.schedule(dir, 'main');
+  expect(coalesced.coalesced).toBe(true);
+
+  const disposing = drain.dispose();
+  release();
+  await Promise.all([first, disposing]);
+
+  // The first pass settled, dispose settled, and the coalesced rerun never ran.
+  expect(seen).toEqual(['telegram-in-420']);
+  expect(queue.readPending(dir).map((r) => r.updateId)).toEqual([421]);
 });
 
 test('A FULLY DRAINED ROUTE stops its sweep instead of ticking forever', async () => {

@@ -12926,6 +12926,62 @@ describe('SquidRunApp', () => {
       expect(result).toMatchObject({ accepted: true });
     });
 
+    it('A FAILED QUIESCE ABORTS shutdown before anything is torn down', async () => {
+      // Proceeding would kill the daemon and close journals underneath a
+      // delivery we could not settle — neither delivered nor durably held.
+      const order = [];
+      app.telegramDrainCoordinator = {
+        dispose: async () => { throw new Error('drain stuck'); },
+      };
+      app.ctx.daemonClient = { shutdown: () => order.push('daemon-shutdown') };
+      jest.spyOn(app, 'forceKillDaemonFromPidFile').mockImplementation(() => order.push('daemon-force-kill'));
+      jest.spyOn(app, 'shutdown').mockImplementation(async () => order.push('app-shutdown'));
+      jest.spyOn(app, 'stopSupervisorFromPidFile').mockImplementation(async () => {
+        order.push('supervisor-stop');
+        return { ok: true, skipped: true };
+      });
+      const electron = require('electron');
+      electron.app.exit = jest.fn(() => order.push('app-exit'));
+
+      const result = await app.performFullShutdown('test');
+
+      // NOTHING may have been torn down.
+      expect(order).toEqual([]);
+      expect(result).toMatchObject({
+        ok: false, success: false, aborted: true, stage: 'telegram_drain_quiesce',
+      });
+      // The OUTER finally owns the latch; clearing it inside the abort would
+      // let a second retry start and then have call #1 erase its latch.
+      expect(app.fullShutdownPromise).toBeNull();
+      // Quiesce is sticky: nothing may resurrect the coordinator.
+      expect(app.telegramDrainQuiesced).toBe(true);
+
+      // A RETRY must reach the existing success path once dispose succeeds.
+      app.telegramDrainCoordinator = { dispose: async () => { order.push('drain-quiesced'); } };
+      app.telegramDrainQuiesced = false;
+      const retry = await app.performFullShutdown('retry');
+
+      expect(order[0]).toBe('drain-quiesced');
+      expect(retry?.aborted).toBeFalsy();
+    });
+
+    it('THE SUCCESS PATH still tears down in order after a clean quiesce', async () => {
+      // The abort must not have broken the ordinary case.
+      const order = [];
+      app.telegramDrainCoordinator = { dispose: async () => { order.push('drain-quiesced'); } };
+      app.ctx.daemonClient = { shutdown: () => order.push('daemon-shutdown') };
+      jest.spyOn(app, 'forceKillDaemonFromPidFile').mockImplementation(() => order.push('daemon-force-kill'));
+      jest.spyOn(app, 'shutdown').mockImplementation(async () => order.push('app-shutdown'));
+      jest.spyOn(app, 'stopSupervisorFromPidFile').mockResolvedValue({ ok: true, skipped: true });
+      const electron = require('electron');
+      electron.app.exit = jest.fn(() => order.push('app-exit'));
+
+      await app.performFullShutdown('test');
+
+      expect(order[0]).toBe('drain-quiesced');
+      expect(order.indexOf('drain-quiesced')).toBeLessThan(order.indexOf('daemon-shutdown'));
+    });
+
     it('creates exactly ONE coordinator and reuses it', () => {
       // Two coordinators would each hold their own single-flight latch and could
       // deliver the same record twice.

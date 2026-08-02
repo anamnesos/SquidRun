@@ -9320,7 +9320,32 @@ class SquidRunApp {
       // used to run before `await this.shutdown()`, where drain disposal lived —
       // so an in-flight pane delivery could have its daemon killed mid-flight.
       // Dispose is idempotent, so shutdown() re-calling it is harmless.
-      await this.quiesceTelegramIngressDrain();
+      //
+      // FAIL CLOSED on a quiesce failure. Proceeding would kill the daemon and
+      // close journals underneath a delivery we could not settle — the message
+      // ends up neither delivered nor durably held, which is the one state
+      // nothing downstream can reason about. A live process someone can inspect
+      // beats a silent loss during shutdown.
+      const quiesced = await this.quiesceTelegramIngressDrain();
+      if (quiesced && quiesced.ok === false) {
+        log.error(
+          'Shutdown',
+          `Aborting full shutdown: inbound drain did not quiesce (${quiesced.reason || 'unknown'})`
+        );
+        // Do NOT clear fullShutdownPromise here: the outer finally owns that
+        // latch. Clearing it inside would let retry #2 start, then call #1's
+        // finally would erase retry #2's latch and a third shutdown could run
+        // concurrently. Do NOT touch shuttingDown either — this method did not
+        // set it before quiesce, and overwriting pre-existing lifecycle state
+        // is not ours to do.
+        return {
+          ok: false,
+          success: false,
+          aborted: true,
+          stage: 'telegram_drain_quiesce',
+          reason: quiesced.reason || 'quiesce_failed',
+        };
+      }
 
       if (this.ctx.daemonClient) {
         try {
