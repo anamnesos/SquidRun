@@ -245,6 +245,10 @@ async function sendLongTelegramMessage(message, env = process.env, options = {})
   }
 
   let lastResult = null;
+  // If ANY earlier chunk landed, a later failure cannot be treated as "nothing
+  // was sent": the visible prefix is already in the user's chat, and a fallback
+  // would duplicate it.
+  let anyChunkLanded = false;
   for (let index = 0; index < chunks.length; index += 1) {
     const baseMessageId = typeof options.messageId === 'string' && options.messageId.trim()
       ? options.messageId.trim()
@@ -262,14 +266,23 @@ async function sendLongTelegramMessage(message, env = process.env, options = {})
       },
     });
     if (!lastResult?.ok) {
+      // A definite rejection on chunk 3 of 5 is NOT a definite no-send: chunks
+      // 1 and 2 are already visible. Report the aggregate as ambiguous so the
+      // caller holds rather than re-sending on top of the prefix.
+      const partial = anyChunkLanded || lastResult?.ambiguous === true;
       return {
         ...lastResult,
         ok: false,
+        accepted: partial ? true : lastResult?.accepted === true,
+        ambiguous: partial,
+        definiteNoSend: partial ? false : lastResult?.definiteNoSend === true,
+        status: partial ? 'telegram_send_partial' : lastResult?.status,
         method: 'send-long-telegram',
         chunkCount: chunks.length,
         failedChunkIndex: index + 1,
       };
     }
+    anyChunkLanded = true;
   }
 
   return {

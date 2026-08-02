@@ -97,4 +97,33 @@ describe('hm-telegram fail-closed pre-send record (behavioural)', () => {
 
     expect(fetchCalls.length).toBeGreaterThan(0);
   });
+
+  test('A REQUEST THROW AFTER THE DURABLE CLAIM IS AMBIGUOUS, not a failure', async () => {
+    // The request may already have reached Telegram. Reporting a plain failure
+    // let the Mira adapter fall back to the Architect pane — a second visible
+    // reply on top of one James may already have received.
+    // eslint-disable-next-line global-require
+    const freshHttps = require('https');
+    freshHttps.request.mockImplementation(() => ({
+      on(event, handler) {
+        if (event === 'error') setImmediate(() => handler(new Error('read ECONNRESET')));
+        return this;
+      },
+      write() {}, end() {}, destroy() {}, setTimeout() { return this; },
+    }));
+
+    const result = await sendTelegram('mira reply', env, {
+      messageId: 'telegram-in-3-mira-reply',
+      requireDurableJournal: true,
+      metadata: { inboundMessageId: 'telegram-in-3' },
+    });
+
+    expect(result).toMatchObject({
+      ok: false, accepted: true, ambiguous: true, definiteNoSend: false,
+      status: 'telegram_send_ambiguous',
+    });
+    // No `failed` row: it would later read as proof that nothing was sent.
+    const statuses = journal.appendCommsJournalEntry.mock.calls.map((c) => c[0].status);
+    expect(statuses).not.toContain('failed');
+  });
 });

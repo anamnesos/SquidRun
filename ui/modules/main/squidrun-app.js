@@ -11868,6 +11868,12 @@ class SquidRunApp {
       ok: Boolean(telegramResult?.ok),
       handled: true,
       status: telegramResult?.status || (telegramResult?.ok ? 'telegram_delivered' : 'telegram_send_failed'),
+      // PROMOTED. The adapter inspects these at the top level, so leaving them
+      // nested meant a correctly-classified ambiguous send still fell through
+      // to the Architect pane and duplicated the reply.
+      accepted: telegramResult?.accepted === true,
+      ambiguous: telegramResult?.ambiguous === true,
+      definiteNoSend: telegramResult?.definiteNoSend === true,
       reply,
       telegramResult,
     };
@@ -14716,7 +14722,15 @@ class SquidRunApp {
         metadata,
         inboundMessageId,
         inboundSessionScopeId,
-      }).catch((err) => ({ ok: false, status: 'mira_runtime_error', error: err.message }));
+      }).catch((err) => ({
+        ok: false,
+        // A throw out of the Mira route may still have sent. Treat it as
+        // ambiguous so the adapter holds instead of replying twice.
+        accepted: true,
+        ambiguous: true,
+        status: 'mira_runtime_error',
+        error: err.message,
+      }));
 
       // Evidence FIRST, verdict second — and this must happen even when the
       // aggregate says ok:false, because a later chunk can fail after earlier

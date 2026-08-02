@@ -227,6 +227,26 @@ function upsertTelegramJournal(entry = {}) {
  * Only opt-in callers get this stricter behaviour, so unrelated sends are
  * unaffected.
  */
+/**
+ * Classify a thrown send that happened AFTER the durable claim was held.
+ *
+ * The request may have reached Telegram before the error surfaced, so this is
+ * NOT a failure the caller may retry or fall back from — doing either can put a
+ * second copy in front of the user. It is explicitly ambiguous, and no `failed`
+ * row is written, because writing one would later read as proof of no-send.
+ */
+function ambiguousSendResult(messageId, err) {
+  return {
+    ok: false,
+    accepted: true,
+    ambiguous: true,
+    definiteNoSend: false,
+    status: 'telegram_send_ambiguous',
+    error: err && err.message ? err.message : String(err),
+    messageId,
+  };
+}
+
 function requireTelegramJournalRecord(entry = {}) {
   const result = upsertTelegramJournal(entry);
   if (result?.ok !== true) {
@@ -986,7 +1006,20 @@ async function sendTelegram(message, env = process.env, options = {}) {
   });
   const apiPath = `/bot${config.botToken}/sendMessage`;
 
-  const response = await enqueueRateLimitedSend(() => requestTelegram(apiPath, body));
+  // THE THROW PATH. requestTelegram rejects on transport errors, and the request
+  // may already have reached Telegram when it does. If we are holding a durable
+  // claim, that is AMBIGUOUS: no `failed` row is written (it would later read as
+  // proof of no-send) and the caller must hold rather than retry or fall back.
+  let response;
+  try {
+    response = await enqueueRateLimitedSend(() => requestTelegram(apiPath, body));
+  } catch (err) {
+    if (durableClaimHeld) {
+      console.warn(`[hm-telegram] send threw after durable claim for ${messageId}: ${err.message}; reporting ambiguous`);
+      return ambiguousSendResult(messageId, err);
+    }
+    throw err;
+  }
   let payload = null;
   try {
     payload = JSON.parse(response.body || '{}');
