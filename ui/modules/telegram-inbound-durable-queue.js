@@ -64,6 +64,28 @@ function readJsonl(file) {
 }
 
 /**
+ * If the journal does not end in a newline, a previous append was cut short.
+ * Terminate it so the fragment cannot swallow the next record.
+ */
+function sealTornTail(file) {
+  let fd = null;
+  try {
+    const size = fs.statSync(file).size;
+    if (size === 0) return;
+    fd = fs.openSync(file, 'r');
+    const last = Buffer.alloc(1);
+    fs.readSync(fd, last, 0, 1, size - 1);
+    fs.closeSync(fd);
+    fd = null;
+    if (last.toString('utf8') !== '\n') {
+      fs.appendFileSync(file, '\n', 'utf8');
+    }
+  } catch {
+    if (fd !== null) { try { fs.closeSync(fd); } catch { /* already closed */ } }
+  }
+}
+
+/**
  * Append one inbound update. Idempotent on updateId: re-appending the same id
  * is a no-op, so a replayed poll cannot duplicate a message to the user.
  */
@@ -82,7 +104,14 @@ function append(dir, entry = {}) {
     profile: entry.profile ?? null,
     receivedAtMs: Number.isFinite(Number(entry.receivedAtMs)) ? Number(entry.receivedAtMs) : Date.now(),
   };
-  // Single append with a trailing newline: the unit of durability is one line.
+  // TORN-TAIL REPAIR, and this one bites hard: a crash mid-append leaves a
+  // partial line with NO trailing newline. The next append would concatenate
+  // its own complete JSON onto that fragment, producing one unparseable line —
+  // so the NEW message is skipped too, while append() still returns ok and the
+  // caller advances the Telegram cursor. That is silent loss of a message that
+  // never had anything wrong with it. Terminate the fragment first so the torn
+  // record is quarantined to its own line and the new record stands alone.
+  sealTornTail(journalPath(dir));
   fs.appendFileSync(journalPath(dir), `${JSON.stringify(record)}\n`, 'utf8');
   return { ok: true, deduped: false, updateId };
 }
@@ -118,15 +147,27 @@ function readPending(dir, options = {}) {
  * journal (a rewrite is exactly how the original bug lost data).
  */
 function ack(dir, updateIds = []) {
-  const ids = (Array.isArray(updateIds) ? updateIds : [updateIds])
+  const requested = (Array.isArray(updateIds) ? updateIds : [updateIds])
     .map(normalizeUpdateId)
     .filter((id) => id !== null);
-  if (ids.length === 0) return { ok: true, acked: 0 };
+  if (requested.length === 0) return { ok: true, acked: 0, ignored: 0 };
+
+  // AN ACK MAY ONLY RETIRE SOMETHING THAT EXISTS. Writing a tombstone for an
+  // unknown id looked harmless — "acking an unknown id is a no-op" — but the
+  // ack log is consulted at read time, so that tombstone would silently
+  // suppress the SAME id when it genuinely arrives later. A pre-emptive ack
+  // would delete a future message before it was ever seen. Ignore unknown ids
+  // instead of recording them.
+  const known = new Set(readJsonl(journalPath(dir)).map((e) => normalizeUpdateId(e.updateId)));
+  const ids = requested.filter((id) => known.has(id));
+  const ignored = requested.length - ids.length;
+  if (ids.length === 0) return { ok: true, acked: 0, ignored };
   fs.mkdirSync(dir, { recursive: true });
   const now = Date.now();
   const payload = ids.map((updateId) => `${JSON.stringify({ updateId, ackedAtMs: now })}\n`).join('');
+  sealTornTail(ackPath(dir));
   fs.appendFileSync(ackPath(dir), payload, 'utf8');
-  return { ok: true, acked: ids.length };
+  return { ok: true, acked: ids.length, ignored };
 }
 
 module.exports = {

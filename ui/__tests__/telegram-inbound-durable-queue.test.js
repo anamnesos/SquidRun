@@ -88,21 +88,51 @@ describe('durable append queue keyed by updateId', () => {
     expect(queue.readPending(dir)).toHaveLength(0);
   });
 
-  test('acking an unknown id is a no-op, not a crash or a purge', () => {
-    queue.append(dir, { updateId: 1, text: 'a' });
+  test('acking an unknown id must NOT tombstone that id when it later arrives', () => {
+    // My original test only checked that an unrelated entry survived, so it
+    // passed while the real defect stood: the ack log is consulted at READ
+    // time, so a pre-emptive ack for an id that had not arrived yet silently
+    // deleted that message when it did arrive.
     queue.ack(dir, [999]);
-    expect(queue.readPending(dir).map((e) => e.updateId)).toEqual([1]);
+    queue.append(dir, { updateId: 999, text: 'future message' });
+    const pending = queue.readPending(dir);
+    expect(pending.map((e) => e.updateId)).toEqual([999]);
+    expect(pending[0].text).toBe('future message');
+  });
+
+  test('an unknown ack is reported as ignored, not silently swallowed', () => {
+    const res = queue.ack(dir, [4242]);
+    expect(res.acked).toBe(0);
+    expect(res.ignored).toBe(1);
   });
 
   test('a truncated/corrupt trailing line does not destroy earlier entries', () => {
     queue.append(dir, { updateId: 1, text: 'a' });
     queue.append(dir, { updateId: 2, text: 'b' });
-    // Simulate a crash mid-append.
     fs.appendFileSync(queue.journalPath(dir), '{"updateId":3,"text":"trunc', 'utf8');
+    expect(queue.readPending(dir).map((e) => e.updateId)).toEqual([1, 2]);
+  });
+
+  test('THE TORN-TAIL TRAP: appending AFTER a torn line must not lose the new message', () => {
+    // The dangerous case my first test missed. A crash leaves a fragment with
+    // no trailing newline; the next append concatenates onto it, the combined
+    // line will not parse, and the NEW message vanishes — while append()
+    // returns ok and the caller advances the Telegram cursor. Silent loss of a
+    // message that was never itself damaged.
+    queue.append(dir, { updateId: 1, text: 'a' });
+    fs.appendFileSync(queue.journalPath(dir), '{"updateId":3,"text":"trunc', 'utf8');
+    queue.append(dir, { updateId: 4, text: 'IMPORTANT' });
     const pending = queue.readPending(dir);
-    // Partial line skipped; complete entries preserved. Losing everything on a
-    // half-written byte would recreate the bug this queue exists to prevent.
-    expect(pending.map((e) => e.updateId)).toEqual([1, 2]);
+    expect(pending.map((e) => e.updateId)).toEqual([1, 4]);
+    expect(pending.find((e) => e.updateId === 4).text).toBe('IMPORTANT');
+  });
+
+  test('a re-appended id survives after a torn tail (recovery, not just tolerance)', () => {
+    fs.appendFileSync(queue.journalPath(dir), '{"updateId":9,"text":"half', 'utf8');
+    queue.append(dir, { updateId: 9, text: 'complete retry' });
+    const pending = queue.readPending(dir);
+    expect(pending.map((e) => e.updateId)).toEqual([9]);
+    expect(pending[0].text).toBe('complete retry');
   });
 
   test('CHAT ISOLATION: entries carry their chatId and can be filtered', () => {
