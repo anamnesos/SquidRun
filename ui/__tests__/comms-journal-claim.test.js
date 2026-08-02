@@ -252,3 +252,54 @@ test('A CLAIM RECOGNISES ITS OWN REPLAY despite whitespace and case', () => {
   });
   expect(replay).toMatchObject({ acquired: false, sendAllowed: false, outcome: 'already_claimed' });
 });
+
+const CHUNKED = {
+  ...ENTRY,
+  messageId: 'telegram-in-8-mira-reply-part1',
+  rawBody: 'part one of three',
+  metadata: {
+    inboundMessageId: 'telegram-in-8',
+    chatId: 1111111111,
+    windowKey: 'main',
+    profile: 'main',
+    routeKey: 'main',
+    chunkIndex: 1,
+    chunkCount: 3,
+  },
+};
+
+test.each([
+  ['chunkIndex', { chunkIndex: 2 }, 'chunkIndex'],
+  ['chunkCount', { chunkCount: 4 }, 'chunkCount'],
+])('SAME MESSAGE, DIFFERENT %s replays as a mismatch, not a claim', (_l, override, field) => {
+  // A row claimed as part 1 of 3 does not authorize sending part 2, nor part 1
+  // of a differently-sized reply. Same id, different position, different
+  // message.
+  const dbPath = tempDbPath();
+  openStore(dbPath).claimCommsSend(CHUNKED);
+
+  const replay = openStore(dbPath).claimCommsSend({
+    ...CHUNKED,
+    metadata: { ...CHUNKED.metadata, ...override },
+  });
+
+  expect(replay).toMatchObject({
+    acquired: false, sendAllowed: false, outcome: 'identity_mismatch', field,
+  });
+});
+
+test('CANONICAL STORAGE: numeric and string chunk values are the SAME identity', () => {
+  // Proves the stored form is canonical rather than whatever type the caller
+  // happened to pass. If it were not, a producer sending '1' after a restart
+  // that previously sent 1 would be told it is a different message and would
+  // send a duplicate.
+  const dbPath = tempDbPath();
+  const first = openStore(dbPath).claimCommsSend(CHUNKED);
+  expect(first).toMatchObject({ acquired: true, sendAllowed: true });
+
+  const replayAsStrings = openStore(dbPath).claimCommsSend({
+    ...CHUNKED,
+    metadata: { ...CHUNKED.metadata, chunkIndex: '1', chunkCount: '3' },
+  });
+  expect(replayAsStrings).toMatchObject({ acquired: false, outcome: 'already_claimed' });
+});
