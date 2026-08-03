@@ -14,6 +14,7 @@ const path = require('node:path');
 const {
   CLAIM_STATES,
   SOURCE_STATES,
+  QUEUE_ACK_STATES,
   sha256,
   applyTelegramAdmissionSchema,
   recordImmutableSource,
@@ -35,15 +36,39 @@ function createDatabase(filePath) {
 
 const tempRoots = [];
 const openDbs = [];
+const openStores = [];
+/**
+ * THE REAL EVIDENCE-LEDGER SCHEMA, in a temp database.
+ *
+ * A1's fixture created only the private Telegram tables, so its 56 green tests
+ * proved nothing about comms_journal, obligations or ledger_events — the very
+ * authorities the state machine is supposed to move. Instantiating the real
+ * store class runs its real migrations, so these tests can query all four.
+ */
+function openRealLedger(dbPath) {
+  const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
+  const store = new EvidenceLedgerStore({ dbPath, enabled: true });
+  const init = store.init();
+  if (!init || init.ok !== true) throw new Error(`real ledger init failed: ${JSON.stringify(init)}`);
+  const db = store.db;
+  // The gate requires the PRODUCTION WRITER HANDLE to assert durable commit;
+  // the ledger opens with synchronous=NORMAL, so the fixture raises it to FULL
+  // exactly as production wiring will have to. See the durability tests below.
+  db.exec('PRAGMA journal_mode=WAL;');
+  db.exec('PRAGMA synchronous=FULL;');
+  openStores.push(store);
+  return db;
+}
+
 function freshDb() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-admission-store-'));
   tempRoots.push(root);
-  const db = createDatabase(path.join(root, 'ledger.db'));
-  openDbs.push(db);
+  const db = openRealLedger(path.join(root, 'ledger.db'));
   applyTelegramAdmissionSchema(db);
   return db;
 }
 afterEach(() => {
+  while (openStores.length) { try { openStores.pop().close(); } catch { /* already closed */ } }
   while (openDbs.length) { try { openDbs.pop().close(); } catch { /* already closed */ } }
   while (tempRoots.length) fs.rmSync(tempRoots.pop(), { recursive: true, force: true });
 });
@@ -96,6 +121,8 @@ function ownedInput(claimId, overrides = {}) {
     runtimeSubmissionKind: 'codex_turn_id',
     obligorAddress: 'architect',
     queueAckIntent: 'ack-intent-1',
+    hookProcessId: 'pid-4242',
+    hookParentProcessId: 'ppid-1111',
     atMs: NOW + 1000,
     ...overrides,
   };
@@ -130,12 +157,20 @@ describe('immutable source row', () => {
     expect(second.sourceRowId).toBe(first.sourceRowId);
   });
 
-  test('NO ROW IS EVER OBSERVABLE WITHOUT ITS OBLIGATION ID', () => {
+  test('THE SOURCE IS A REAL comms_journal ROW, not a private table', () => {
     const db = freshDb();
-    recordImmutableSource(db, sourceInput());
-    const row = db.prepare('SELECT obligation_id, status FROM telegram_source_rows').get();
-    expect(row.obligation_id).toMatch(/^obl_/);
+    const result = recordImmutableSource(db, sourceInput());
+
+    const row = db.prepare('SELECT * FROM comms_journal WHERE row_id = ?').get(result.sourceRowId);
+    expect(row.channel).toBe('telegram');
+    expect(row.direction).toBe('inbound');
     expect(row.status).toBe(SOURCE_STATES.RECORDED);
+    expect(row.message_id).toBe('telegram-in-900000001');
+    // And the private table A1 invented no longer exists at all.
+    const shadow = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_source_rows'"
+    ).get();
+    expect(shadow).toBeUndefined();
   });
 
   test('IT CREATES NO DEBT — recording a source is not an obligation', () => {
@@ -164,9 +199,9 @@ describe('immutable source row', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('source_identity_conflict');
     // And the stored row is untouched — a rejected write leaves no trace.
-    const row = db.prepare('SELECT * FROM telegram_source_rows').get();
+    const row = db.prepare('SELECT * FROM comms_journal').get();
     expect(row.raw_body).toBe('synthetic checkpoint A fixture');
-    expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_source_rows').get().n)).toBe(1);
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM comms_journal').get().n)).toBe(1);
   });
 
   test.each([
@@ -191,16 +226,17 @@ describe('exclusive transport claim', () => {
     expect(claim.state).toBe(CLAIM_STATES.CLAIMED);
   });
 
-  test('TWO COORDINATORS ON TWO DATABASE HANDLES: exactly one may write to a pane', () => {
-    // The whole reason exclusivity is a UNIQUE constraint and not a JSONL
-    // latch — a file cannot arbitrate between two handles.
+  test('TWO SEQUENTIAL CLAIMANTS ON TWO DATABASE HANDLES: the second is refused', () => {
+    // NOT A RACE, and deliberately no longer named as one. These calls are
+    // sequential and BEGIN IMMEDIATE would serialize them even if they were
+    // not, so this proves the refusal path across handles and nothing more.
+    // The true two-coordinator one-pane-write race belongs in checkpoint B.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-admission-race-'));
     tempRoots.push(root);
     const dbPath = path.join(root, 'ledger.db');
-    const dbA = createDatabase(dbPath);
-    const dbB = createDatabase(dbPath);
-    openDbs.push(dbA, dbB);
+    const dbA = openRealLedger(dbPath);
     applyTelegramAdmissionSchema(dbA);
+    const dbB = openRealLedger(dbPath);
 
     const src = recordImmutableSource(dbA, sourceInput());
     const a = claimTransportAttempt(dbA, claimInput(src.sourceRowId, { attemptNonce: 'nonce-A' }));
@@ -321,11 +357,11 @@ describe('admitted_owned promotion', () => {
     expect(owned.workGeneration).toBe(1);
     expect(owned.workLeaseToken).toMatch(/^tgl_/);
 
-    expect(db.prepare('SELECT status FROM telegram_source_rows').get().status)
+    expect(db.prepare('SELECT status FROM comms_journal').get().status)
       .toBe(SOURCE_STATES.BROKERED);
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_obligation_bindings').get().n)).toBe(1);
     expect(Number(db.prepare("SELECT COUNT(*) n FROM telegram_binding_events WHERE transition='created'").get().n)).toBe(1);
-    expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_outbound_intents').get().n)).toBe(1);
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_queue_ack_outbox').get().n)).toBe(1);
     expect(db.prepare('SELECT state FROM telegram_transport_claims').get().state)
       .toBe(CLAIM_STATES.ADMITTED);
   });
@@ -340,10 +376,10 @@ describe('admitted_owned promotion', () => {
 
     expect(failed.ok).toBe(false);
     expect(failed.reason).toBe('source_payload_digest_mismatch');
-    expect(db.prepare('SELECT status FROM telegram_source_rows').get().status)
+    expect(db.prepare('SELECT status FROM comms_journal').get().status)
       .toBe(SOURCE_STATES.RECORDED);
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_obligation_bindings').get().n)).toBe(0);
-    expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_outbound_intents').get().n)).toBe(0);
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_queue_ack_outbox').get().n)).toBe(0);
   });
 
   test('A CLAIM THAT NEVER STARTED DELIVERY cannot be promoted', () => {
@@ -437,25 +473,42 @@ describe('admitted_owned promotion', () => {
     expect(promoteToAdmittedOwned(db, ownedInput('tgc_nonexistent')).ok).toBe(false);
   });
 
-  test('A CLAIM BOUND TO A DIFFERENT SOURCE ROW is refused', () => {
+  test('A CLAIM WHOSE cutover/route/update DISAGREES WITH ITS SOURCE is refused AT ACQUISITION', () => {
+    // A1 accepted this and only caught it later, because a foreign key proves
+    // the row EXISTS and says nothing about whether it CORRELATES. The claim
+    // now joins the source's own recorded identity, so the mismatch never gets
+    // a claim at all.
     const db = freshDb();
     const srcA = recordImmutableSource(db, sourceInput());
     const srcB = recordImmutableSource(db, sourceInput({
       messageId: 'telegram-in-900000002', updateId: 900000002,
     }));
-    // Claim keyed to update B but pointed at source row A.
+    expect(srcB.ok).toBe(true);
+
     const claim = claimTransportAttempt(db, claimInput(srcA.sourceRowId, {
       updateId: 900000002, attemptNonce: 'nonce-b',
     }));
-    recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW + 10 });
 
-    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId, {
-      messageId: 'telegram-in-900000002',
-    }));
+    expect(claim.ok).toBe(false);
+    expect(claim.reason).toBe('claim_source_correlation_mismatch');
+    expect(claim.detail.sourceUpdateId).toBe(900000001);
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_transport_claims').get().n)).toBe(0);
+  });
 
-    expect(owned.ok).toBe(false);
-    expect(owned.reason).toBe('claim_source_mismatch');
-    expect(srcB.ok).toBe(true);
+  test('A CLAIM ON A DIFFERENT ROUTE THAN ITS SOURCE is refused', () => {
+    const db = freshDb();
+    const src = recordImmutableSource(db, sourceInput());
+    const claim = claimTransportAttempt(db, claimInput(src.sourceRowId, { routeKey: 'sideprofile' }));
+    expect(claim.ok).toBe(false);
+    expect(claim.reason).toBe('claim_source_correlation_mismatch');
+  });
+
+  test('A CLAIM UNDER A DIFFERENT CUTOVER THAN ITS SOURCE is refused', () => {
+    const db = freshDb();
+    const src = recordImmutableSource(db, sourceInput());
+    const claim = claimTransportAttempt(db, claimInput(src.sourceRowId, { cutoverId: 'cutover-other' }));
+    expect(claim.ok).toBe(false);
+    expect(claim.reason).toBe('claim_source_correlation_mismatch');
   });
 });
 
@@ -594,5 +647,252 @@ describe('the ownership transaction is ONE transaction', () => {
     expect(failed.ok).toBe(false);
     expect(statements.filter((s) => s.startsWith('COMMIT'))).toHaveLength(0);
     expect(statements.filter((s) => s.startsWith('ROLLBACK'))).toHaveLength(1);
+  });
+});
+
+describe('THE GENERAL KERNEL ACTUALLY HOLDS THE DEBT (blocker 1)', () => {
+  // A1's whole failure: after admitted_owned, the real kernel had zero debt.
+  // These query all four authorities, not the private bindings.
+  test('AFTER PROMOTION all four authorities agree', () => {
+    const db = freshDb();
+    const { src, claim } = seedToDeliveryStarted(db);
+    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+    expect(owned.ok).toBe(true);
+
+    // 1. REAL obligations row, keyed to the REAL comms row id.
+    const obligation = db.prepare('SELECT * FROM obligations WHERE obligation_id = ?')
+      .get(owned.obligationId);
+    expect(obligation).toBeDefined();
+    expect(obligation.created_from_row_id).toBe(src.sourceRowId);
+    expect(obligation.creditor_address).toBe('james');
+    expect(obligation.obligor_address).toBe('architect');
+    expect(obligation.expected_class).toBe('answer');
+    expect(obligation.staleness_class).toBe('turn');
+    expect(obligation.status).toBe('open');
+    expect(obligation.lease_id).toBeNull();
+
+    // 2. REAL ledger created event, referenced by the obligation.
+    const event = db.prepare('SELECT * FROM ledger_events WHERE event_id = ?')
+      .get(obligation.created_event_id);
+    expect(event).toBeDefined();
+    expect(event.type).toBe('obligation.created');
+
+    // 3. REAL comms row promoted.
+    expect(db.prepare('SELECT status FROM comms_journal WHERE row_id = ?')
+      .get(src.sourceRowId).status).toBe(SOURCE_STATES.BROKERED);
+
+    // 4. Telegram binding + queue-ack outbox reference, never replace.
+    const binding = db.prepare('SELECT * FROM telegram_obligation_bindings WHERE obligation_id = ?')
+      .get(owned.obligationId);
+    expect(binding.source_row_id).toBe(src.sourceRowId);
+    expect(db.prepare('SELECT state FROM telegram_queue_ack_outbox WHERE obligation_id = ?')
+      .get(owned.obligationId).state).toBe(QUEUE_ACK_STATES.PENDING);
+  });
+
+  test('THE OBLIGATION ID RESOLVES THE KERNEL FOREIGN KEY - it hashes comms_journal.row_id', () => {
+    const { buildObligationId } = require('../modules/main/obligation-kernel');
+    const db = freshDb();
+    const src = recordImmutableSource(db, sourceInput());
+
+    expect(src.obligationId).toBe(buildObligationId({
+      createdFromRowId: src.sourceRowId,
+      creditorAddress: 'james',
+      obligorAddress: 'architect',
+      expectedClass: 'answer',
+      stalenessClass: 'turn',
+    }));
+  });
+
+  test('A FAILED PROMOTION ROLLS BACK ALL FOUR AUTHORITIES', () => {
+    const db = freshDb();
+    const { src, claim } = seedToDeliveryStarted(db);
+
+    const failed = promoteToAdmittedOwned(db, ownedInput(claim.claimId, {
+      canonicalPayloadSha256: sha256('a digest that does not match'),
+    }));
+    expect(failed.ok).toBe(false);
+
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM obligations').get().n)).toBe(0);
+    expect(Number(db.prepare("SELECT COUNT(*) n FROM ledger_events WHERE type='obligation.created'").get().n)).toBe(0);
+    expect(db.prepare('SELECT status FROM comms_journal WHERE row_id = ?')
+      .get(src.sourceRowId).status).toBe(SOURCE_STATES.RECORDED);
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_obligation_bindings').get().n)).toBe(0);
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_queue_ack_outbox').get().n)).toBe(0);
+  });
+
+  test('RECORDING A SOURCE CREATES NO KERNEL DEBT', () => {
+    const db = freshDb();
+    recordImmutableSource(db, sourceInput());
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM obligations').get().n)).toBe(0);
+    // And no `expects` metadata that a kernel sweep could read as debt.
+    const meta = db.prepare('SELECT metadata_json FROM comms_journal').get().metadata_json;
+    expect(meta).not.toMatch(/"expects"/);
+  });
+
+  test('A CLAIM CREATES NO KERNEL DEBT', () => {
+    const db = freshDb();
+    seedToDeliveryStarted(db);
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM obligations').get().n)).toBe(0);
+  });
+});
+
+describe('obligor identity is stored, not merely hashed (blocker 3)', () => {
+  test('THE SAME MESSAGE WITH A CHANGED OBLIGOR is a hard conflict', () => {
+    const db = freshDb();
+    recordImmutableSource(db, sourceInput());
+    const result = recordImmutableSource(db, sourceInput({ obligorAddress: 'builder' }));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('source_identity_conflict');
+    expect(result.detail.column).toBe('obligorAddress');
+  });
+
+  test('PROMOTION CANNOT OFFER A DIFFERENT OBLIGOR than the one that hashed the id', () => {
+    const db = freshDb();
+    const { claim } = seedToDeliveryStarted(db);
+    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId, { obligorAddress: 'builder' }));
+    expect(owned.ok).toBe(false);
+    expect(owned.reason).toBe('obligor_mismatch');
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM obligations').get().n)).toBe(0);
+  });
+});
+
+describe('delivery_started state table (blocker 5)', () => {
+  test('AN ALREADY-ADMITTED CLAIM IS REFUSED, never told delivery started', () => {
+    // A1 fell through to a fabricated success here, which would authorise a
+    // SECOND pane write for a message already delivered.
+    const db = freshDb();
+    const { claim } = seedToDeliveryStarted(db);
+    promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+
+    const again = recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW + 5000 });
+
+    expect(again.ok).toBe(false);
+    expect(again.reason).toBe('claim_already_admitted');
+    expect(Number(db.prepare(
+      "SELECT COUNT(*) n FROM telegram_transport_events WHERE kind='delivery_started'"
+    ).get().n)).toBe(1);
+  });
+
+  test('A CLOSED CLAIM IS REFUSED', () => {
+    const db = freshDb();
+    const src = recordImmutableSource(db, sourceInput());
+    const claim = claimTransportAttempt(db, claimInput(src.sourceRowId));
+    closeUnsentClaim(db, { claimId: claim.claimId, reason: 'pane_missing', atMs: NOW + 5 });
+
+    const started = recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW + 10 });
+    expect(started.ok).toBe(false);
+    expect(started.reason).toBe('claim_closed');
+  });
+
+  test('AN UNKNOWN STATE REJECTS rather than falling through to success', () => {
+    const db = freshDb();
+    const src = recordImmutableSource(db, sourceInput());
+    const claim = claimTransportAttempt(db, claimInput(src.sourceRowId));
+    db.prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
+      .run('some_future_state', claim.claimId);
+
+    const started = recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW + 10 });
+    expect(started.ok).toBe(false);
+    expect(started.reason).toBe('claim_state_unknown');
+  });
+});
+
+describe('durability is asserted on the handle we were given', () => {
+  test('A HANDLE WITHOUT synchronous=FULL IS REFUSED, not silently accepted', () => {
+    const db = freshDb();
+    db.exec('PRAGMA synchronous=NORMAL;');
+
+    const result = recordImmutableSource(db, sourceInput());
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('durability_not_full');
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM comms_journal').get().n)).toBe(0);
+  });
+
+  test('EVERY MUTATING ENTRY POINT asserts durability', () => {
+    const db = freshDb();
+    const src = recordImmutableSource(db, sourceInput());
+    const claim = claimTransportAttempt(db, claimInput(src.sourceRowId));
+    db.exec('PRAGMA synchronous=NORMAL;');
+
+    expect(claimTransportAttempt(db, claimInput(src.sourceRowId)).reason).toBe('durability_not_full');
+    expect(recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW }).reason).toBe('durability_not_full');
+    expect(closeUnsentClaim(db, { claimId: claim.claimId, reason: 'x', atMs: NOW }).reason).toBe('durability_not_full');
+    expect(promoteToAdmittedOwned(db, ownedInput(claim.claimId)).reason).toBe('durability_not_full');
+  });
+});
+
+describe('canonical encoding is scannable and unambiguous (blocker 6)', () => {
+  test('THE PRODUCTION SOURCE CONTAINS NO NUL BYTES', () => {
+    // A1 joined hash inputs with a literal NUL, which made this file BINARY to
+    // ripgrep - the source scans that find problems could not see it.
+    const source = fs.readFileSync(
+      path.join(__dirname, '..', 'modules', 'main', 'telegram-admission-store.js')
+    );
+    expect(source.includes(0)).toBe(false);
+  });
+
+  test('LENGTH PREFIXING MAKES DELIMITERS UNFORGEABLE', () => {
+    const { canonicalJoin } = require('../modules/main/telegram-admission-store');
+    // Without length prefixes these two field lists would collide.
+    expect(canonicalJoin(['a|b', 'c'])).not.toBe(canonicalJoin(['a', 'b|c']));
+    expect(canonicalJoin(['', 'x'])).not.toBe(canonicalJoin(['x', '']));
+  });
+});
+
+describe('digests are validated at the storage boundary (blocker 8)', () => {
+  test.each([
+    ['too short', 'abc'],
+    ['non-hex', 'z'.repeat(64)],
+    ['uppercase', 'A'.repeat(64)],
+    ['empty', ''],
+  ])('A MALFORMED canonical digest (%s) is refused', (_label, value) => {
+    const db = freshDb();
+    const result = recordImmutableSource(db, sourceInput({ canonicalPayloadSha256: value }));
+    expect(result.ok).toBe(false);
+  });
+
+  test('A MALFORMED media digest is refused', () => {
+    const db = freshDb();
+    expect(recordImmutableSource(db, sourceInput({ mediaIdentitySha256: 'nope' })).ok).toBe(false);
+  });
+
+  test('A MALFORMED predecessor manifest digest is refused at promotion', () => {
+    const db = freshDb();
+    const { claim } = seedToDeliveryStarted(db);
+    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId, {
+      predecessorManifestSha256: 'not-a-digest',
+    }));
+    expect(owned.ok).toBe(false);
+    expect(owned.reason).toBe('owned_digest_malformed:predecessorManifestSha256');
+  });
+});
+
+describe('promotion re-verifies correlation even for a forged claim row', () => {
+  test('A CLAIM ROW POINTING AT A DIFFERENT SOURCE is refused at promotion', () => {
+    // Unreachable through the public API now that acquisition correlates, so
+    // this forges the row directly — the same technique used for the UNIQUE
+    // index. Defence in depth is only depth if something proves it fires.
+    const db = freshDb();
+    const srcA = recordImmutableSource(db, sourceInput());
+    const srcB = recordImmutableSource(db, sourceInput({
+      messageId: 'telegram-in-900000002', updateId: 900000002,
+    }));
+    const claim = claimTransportAttempt(db, claimInput(srcB.sourceRowId, {
+      updateId: 900000002, attemptNonce: 'nonce-b',
+    }));
+    recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW + 10 });
+
+    // Repoint the committed claim at the WRONG source row.
+    db.prepare('UPDATE telegram_transport_claims SET source_row_id = ? WHERE claim_id = ?')
+      .run(srcA.sourceRowId, claim.claimId);
+
+    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId, {
+      messageId: 'telegram-in-900000002',
+    }));
+
+    expect(owned.ok).toBe(false);
+    expect(owned.reason).toBe('claim_source_mismatch');
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM obligations').get().n)).toBe(0);
   });
 });
