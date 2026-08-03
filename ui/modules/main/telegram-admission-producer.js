@@ -41,7 +41,21 @@ const {
   bindConsumerSession,
   completePaneLaunch,
 } = require('./telegram-launch-registry');
-const { CLAIM_STATES } = require('./telegram-admission-store');
+const { CLAIM_STATES, applyTelegramAdmissionSchema } = require('./telegram-admission-store');
+
+/**
+ * THE SCHEMA IS ENSURED ON EVERY ENTRY, not assumed from another component.
+ *
+ * The binder and the producer run in short-lived hook processes that may be the
+ * FIRST Telegram-lane writer this database has ever seen. Assuming the daemon
+ * already applied the schema made both silently no-op against a fresh ledger:
+ * the missing-table error is thrown inside the writer transaction, caught by
+ * the adapter's fail-open wrapper, and the prompt sails through with no receipt
+ * and no complaint. A verified effect, not an assumed one.
+ */
+function ensureSchema(db) {
+  return applyTelegramAdmissionSchema(db);
+}
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
@@ -165,6 +179,8 @@ function produceAdmissionReceipt(input = {}) {
 
   try {
     return writer.transaction((db) => {
+      const schema = ensureSchema(db);
+      if (!schema.ok) return { ...schema, handled: true, written: false };
       const source = db.prepare('SELECT * FROM comms_journal WHERE message_id = ?')
         .get(marker.messageId);
       if (!source) return skip('source_row_missing', { messageId: marker.messageId });
@@ -239,6 +255,8 @@ function bindSessionAtStart(input = {}) {
 
   try {
     return writer.transaction((db) => {
+      const schema = ensureSchema(db);
+      if (!schema.ok) return { ...schema, handled: true, written: false };
       const bound = bindConsumerSession(db, {
         consumerSessionId,
         launchId,

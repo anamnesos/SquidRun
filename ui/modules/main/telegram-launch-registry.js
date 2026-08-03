@@ -135,6 +135,53 @@ function applyLaunchRegistrySchema(db) {
 
       CREATE INDEX IF NOT EXISTS idx_tg_receipts_claim ON telegram_admission_receipts(claim_id);
       CREATE INDEX IF NOT EXISTS idx_tg_sessions_launch ON telegram_consumer_sessions(launch_id);
+
+      -- ===================================================================
+      -- IDENTITY IMMUTABILITY AT THE DATABASE BOUNDARY.
+      --
+      -- Every check in this file constrains one writer: the functions below.
+      -- A receipt whose record_json can be rewritten after the fact is not
+      -- evidence of what the consumer saw, it is evidence of what the last
+      -- writer preferred — and validateAdmissionRecord would then be
+      -- validating a forgery with complete rigour.
+      --
+      -- A LAUNCH MAY COMPLETE. Nothing else about it may move.
+      -- ===================================================================
+      CREATE TRIGGER IF NOT EXISTS trg_tg_launch_identity_immutable
+      BEFORE UPDATE ON telegram_pane_launches
+      FOR EACH ROW WHEN (
+           OLD.launch_id         IS NOT NEW.launch_id
+        OR OLD.app_generation    IS NOT NEW.app_generation
+        OR OLD.pane_id           IS NOT NEW.pane_id
+        OR OLD.role              IS NOT NEW.role
+        OR OLD.consumer_runtime  IS NOT NEW.consumer_runtime
+        OR OLD.daemon_process_id IS NOT NEW.daemon_process_id
+        OR OLD.launched_at_ms    IS NOT NEW.launched_at_ms
+      )
+      BEGIN SELECT RAISE(ABORT, 'telegram_launch_identity_immutable'); END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_tg_launch_no_delete
+      BEFORE DELETE ON telegram_pane_launches
+      BEGIN SELECT RAISE(ABORT, 'telegram_launch_delete_forbidden'); END;
+
+      -- A SESSION BINDING IS WHOLLY IMMUTABLE. Re-pointing one to another
+      -- launch is how a stale pane would adopt a live session.
+      CREATE TRIGGER IF NOT EXISTS trg_tg_session_immutable
+      BEFORE UPDATE ON telegram_consumer_sessions
+      BEGIN SELECT RAISE(ABORT, 'telegram_consumer_session_immutable'); END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_tg_session_no_delete
+      BEFORE DELETE ON telegram_consumer_sessions
+      BEGIN SELECT RAISE(ABORT, 'telegram_consumer_session_delete_forbidden'); END;
+
+      -- THE RECEIPT IS THE EVIDENCE. It never changes and it is never removed.
+      CREATE TRIGGER IF NOT EXISTS trg_tg_receipt_immutable
+      BEFORE UPDATE ON telegram_admission_receipts
+      BEGIN SELECT RAISE(ABORT, 'telegram_admission_receipt_immutable'); END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_tg_receipt_no_delete
+      BEFORE DELETE ON telegram_admission_receipts
+      BEGIN SELECT RAISE(ABORT, 'telegram_admission_receipt_delete_forbidden'); END;
     `);
   } catch (err) {
     return fail('launch_registry_schema_failed', { message: err.message });

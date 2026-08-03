@@ -62,6 +62,7 @@ const {
   rootContainsPath,
   normalizeToPosixPath,
 } = require('./squidrun-root-paths');
+const { publishAppGeneration } = require('./app-generation'); // every scope assignment publishes
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const TELEGRAM_PENDING_REPLAY_GRACE_MS = 10 * 60 * 1000;
 const ROOT_COHERENCE_MARKER_RELPATH = path.join('runtime', 'root-coherence-assert.jsonl');
@@ -1310,8 +1311,7 @@ class SquidRunApp {
     this.experimentInitFailed = false;
     this.intentStateByPane = new Map();
     this.ledgerAppSession = null;
-    this.commsSessionScopeId = `app-${process.pid}-${Date.now()}`;
-    process.env.SQUIDRUN_APP_GENERATION = this.commsSessionScopeId; // pane-launch records need the REAL generation
+    this.commsSessionScopeId = publishAppGeneration(`app-${process.pid}-${Date.now()}`);
     this.telegramInboundContext = {
       lastInboundAtMs: 0,
       sender: null,
@@ -2452,7 +2452,7 @@ class SquidRunApp {
       paneId: null,
     };
     const fallbackScope = `app-${process.pid}-${Date.now()}`;
-    this.commsSessionScopeId = fallbackScope;
+    this.commsSessionScopeId = publishAppGeneration(fallbackScope);
 
     const preferredSessionNumber = asPositiveInt(opts.sessionNumber ?? opts.session, null);
     const hasPreferredSessionNumber = Number.isInteger(preferredSessionNumber);
@@ -2461,7 +2461,7 @@ class SquidRunApp {
       : null;
 
     if (preferredScopeId) {
-      this.commsSessionScopeId = preferredScopeId;
+      this.commsSessionScopeId = publishAppGeneration(preferredScopeId);
     }
 
     let nextSessionNumber = preferredSessionNumber || 1;
@@ -2509,9 +2509,9 @@ class SquidRunApp {
           sessionId,
           sessionNumber,
         };
-        this.commsSessionScopeId = preferredScopeId || (sessionId
+        this.commsSessionScopeId = publishAppGeneration(preferredScopeId || (sessionId
           ? `app-session-${sessionNumber}-${sessionId}`
-          : `app-session-${sessionNumber}`);
+          : `app-session-${sessionNumber}`));
 
         log.info('EvidenceLedger', `Recorded app startup session ${sessionNumber}${sessionId ? ` (${sessionId})` : ''}`);
 
@@ -2538,7 +2538,7 @@ class SquidRunApp {
           sessionId: null,
           sessionNumber: preferredSessionNumber,
         };
-        this.commsSessionScopeId = preferredScopeId;
+        this.commsSessionScopeId = publishAppGeneration(preferredScopeId);
         log.warn('EvidenceLedger', `Startup session ${preferredSessionNumber} already exists; reusing app-status scope.`);
         return finalizeSessionScope(this.ledgerAppSession);
       }

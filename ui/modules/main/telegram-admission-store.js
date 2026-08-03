@@ -58,6 +58,59 @@ const QUEUE_ACK_STATES = Object.freeze({
   APPENDED: 'queue_ack_appended',
 });
 
+const BINDING_STATES = Object.freeze({
+  OPEN: 'open',
+  LAPSED: 'lapsed',
+  ANSWERED: 'answered',
+  RELEASED: 'released',
+});
+
+const WORK_CLAIM_STATES = Object.freeze({
+  ACTIVE: 'work_active',
+  CLOSED_ABORTED: 'work_closed_aborted',
+  CLOSED_FULFILLED: 'work_closed_fulfilled',
+});
+
+/**
+ * NAMED TRANSITIONS. The set IS the state machine.
+ *
+ * A2b put legal STATES in a CHECK constraint, which stops a nonsense value but
+ * says nothing about legal MOVEMENT: `answered -> open` satisfies every CHECK
+ * ever written. And the transitions themselves were plain `UPDATE`s, so two
+ * coordinators could both read `open`, both decide to advance, and both
+ * succeed — last writer wins, no conflict, no event, no trace that a decision
+ * was overwritten.
+ *
+ * Every mover below is a compare-and-set on the state it believes it saw, plus
+ * one append-only event. A losing coordinator gets a named conflict carrying
+ * the state it actually found, which is a fact it can act on rather than a
+ * silent no-op.
+ */
+const BINDING_TRANSITIONS = Object.freeze({
+  binding_lapsed: { from: [BINDING_STATES.OPEN], to: BINDING_STATES.LAPSED },
+  binding_answered: {
+    from: [BINDING_STATES.OPEN, BINDING_STATES.LAPSED], to: BINDING_STATES.ANSWERED,
+  },
+  binding_released: {
+    from: [BINDING_STATES.OPEN, BINDING_STATES.LAPSED], to: BINDING_STATES.RELEASED,
+  },
+});
+
+const QUEUE_ACK_TRANSITIONS = Object.freeze({
+  queue_ack_appended: {
+    from: [QUEUE_ACK_STATES.PENDING], to: QUEUE_ACK_STATES.APPENDED,
+  },
+});
+
+const WORK_CLAIM_TRANSITIONS = Object.freeze({
+  work_aborted: {
+    from: [WORK_CLAIM_STATES.ACTIVE], to: WORK_CLAIM_STATES.CLOSED_ABORTED,
+  },
+  work_fulfilled: {
+    from: [WORK_CLAIM_STATES.ACTIVE], to: WORK_CLAIM_STATES.CLOSED_FULFILLED,
+  },
+});
+
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
 /**
@@ -160,12 +213,39 @@ const REQUIRED_SCHEMA_SHAPE = Object.freeze([
   ['telegram_obligation_bindings', 'hook_parent_process_id'],
   ['telegram_obligation_bindings', 'claim_id'],
   ['telegram_queue_ack_outbox', 'appended_at_ms'],
+  ['telegram_queue_ack_outbox', 'ack_intent_key'],
+  ['telegram_obligation_bindings', "state IN ('open', 'lapsed'"],
+  // A2b proved schema shape but not schema ENFORCEMENT. A database carrying the
+  // right columns and none of the triggers accepts every adversarial raw-SQL
+  // rewrite below, so absence of a trigger is a stale schema, not a nicety.
+  ['trg_tg_binding_identity_immutable', 'telegram_binding_identity_immutable'],
+  ['trg_tg_binding_no_delete', 'telegram_binding_delete_forbidden'],
+  ['trg_tg_binding_events_no_update', 'telegram_binding_events_append_only'],
+  ['trg_tg_binding_events_no_delete', 'telegram_binding_events_append_only'],
+  ['trg_tg_transport_events_no_update', 'telegram_transport_events_append_only'],
+  ['trg_tg_transport_events_no_delete', 'telegram_transport_events_append_only'],
+  ['trg_tg_work_events_no_update', 'telegram_work_claim_events_append_only'],
+  ['trg_tg_work_events_no_delete', 'telegram_work_claim_events_append_only'],
+  ['trg_tg_claim_identity_immutable', 'telegram_claim_identity_immutable'],
+  ['trg_tg_work_identity_immutable', 'telegram_work_claim_identity_immutable'],
+  ['trg_tg_work_no_delete', 'telegram_work_claim_delete_forbidden'],
+  ['trg_tg_ack_identity_immutable', 'telegram_queue_ack_identity_immutable'],
+  ['trg_tg_ack_no_delete', 'telegram_queue_ack_delete_forbidden'],
+  ['telegram_work_claims', "state IN ('work_active'"],
+  ['idx_tg_work_active', "WHERE state = 'work_active'"],
+  ['telegram_work_claim_events', 'work_claim_id'],
   // The identity tables promotion now joins. A build that predates them must
   // read as STALE rather than silently admitting with the tuple unchecked.
   ['telegram_pane_launches', "state IN ('launching', 'complete')"],
   ['telegram_consumer_sessions', 'launch_id'],
   ['telegram_admission_receipts', "schema_name = 'telegram_admission.v1'"],
   ['telegram_admission_receipts', 'record_json'],
+  ['trg_tg_launch_identity_immutable', 'telegram_launch_identity_immutable'],
+  ['trg_tg_launch_no_delete', 'telegram_launch_delete_forbidden'],
+  ['trg_tg_session_immutable', 'telegram_consumer_session_immutable'],
+  ['trg_tg_session_no_delete', 'telegram_consumer_session_delete_forbidden'],
+  ['trg_tg_receipt_immutable', 'telegram_admission_receipt_immutable'],
+  ['trg_tg_receipt_no_delete', 'telegram_admission_receipt_delete_forbidden'],
 ]);
 
 /**
@@ -303,7 +383,9 @@ function applyTelegramAdmissionSchemaDdl(db) {
       queue_ack_intent              TEXT    NOT NULL,
       work_generation               INTEGER NOT NULL,
       work_lease_token              TEXT    NOT NULL,
-      state                         TEXT    NOT NULL,
+      state                         TEXT    NOT NULL CHECK (
+        state IN ('open', 'lapsed', 'answered', 'released')
+      ),
       created_at_ms                 INTEGER NOT NULL
     );
 
@@ -324,13 +406,199 @@ function applyTelegramAdmissionSchemaDdl(db) {
       source_row_id   INTEGER NOT NULL UNIQUE REFERENCES comms_journal(row_id),
       update_id       INTEGER NOT NULL,
       route_key       TEXT    NOT NULL,
-      state           TEXT    NOT NULL,
+      -- THE KEYED, TYPED INTENT. queue_ack_intent on the binding used to be
+      -- whatever string the caller passed — 'ack-intent-a3' in the fixtures,
+      -- and equally 'hello' in production. It named nothing, so the binding's
+      -- claim to have an ack intent was unfalsifiable. This column carries the
+      -- SAME derived key, so the binding and the actual outbox row are joined by
+      -- a value neither side is free to choose.
+      ack_intent_key  TEXT    NOT NULL UNIQUE,
+      state           TEXT    NOT NULL CHECK (
+        state IN ('queue_ack_pending', 'queue_ack_appended')
+      ),
       created_at_ms   INTEGER NOT NULL,
       appended_at_ms  INTEGER
     );
 
+    -- ===================================================================
+    -- THE REAL INITIAL WORK CLAIM.
+    --
+    -- work_generation and work_lease_token were COLUMNS on the binding. A
+    -- scalar cannot be heartbeat, cannot be closed, cannot carry its own event
+    -- history, and cannot be raced: two coordinators both "holding" generation
+    -- 1 is not a state the binding row can even express. So the claim is a ROW,
+    -- with its own events and its own exclusivity constraint.
+    -- ===================================================================
+    CREATE TABLE IF NOT EXISTS telegram_work_claims (
+      work_claim_id         TEXT    PRIMARY KEY,
+      obligation_id         TEXT    NOT NULL REFERENCES telegram_obligation_bindings(obligation_id),
+      work_generation       INTEGER NOT NULL,
+      lease_token           TEXT    NOT NULL,
+      claim_id              TEXT    NOT NULL REFERENCES telegram_transport_claims(claim_id),
+      pane_launch_id        TEXT    NOT NULL,
+      app_generation        TEXT    NOT NULL,
+      consumer_session_id   TEXT    NOT NULL,
+      runtime_submission_id TEXT    NOT NULL,
+      state                 TEXT    NOT NULL CHECK (
+        state IN ('work_active', 'work_closed_aborted', 'work_closed_fulfilled')
+      ),
+      claimed_at_ms         INTEGER NOT NULL,
+      heartbeat_at_ms       INTEGER NOT NULL,
+      closed_at_ms          INTEGER
+    );
+
+    -- EXACTLY ONE ACTIVE GENERATION PER DEBT. Partial, so a closed generation
+    -- keeps its audit row while releasing the slot to a reconciled successor.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tg_work_active
+      ON telegram_work_claims (obligation_id)
+      WHERE state = 'work_active';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tg_work_generation
+      ON telegram_work_claims (obligation_id, work_generation);
+
+    CREATE TABLE IF NOT EXISTS telegram_work_claim_events (
+      event_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      work_claim_id TEXT    NOT NULL REFERENCES telegram_work_claims(work_claim_id),
+      transition    TEXT    NOT NULL,
+      at_ms         INTEGER NOT NULL,
+      detail        TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_tg_claims_state ON telegram_transport_claims(state);
     CREATE INDEX IF NOT EXISTS idx_tg_bind_state   ON telegram_obligation_bindings(state);
+
+    -- ===================================================================
+    -- IMMUTABILITY AT THE DATABASE BOUNDARY, NOT BY CONVENTION.
+    --
+    -- Every identity guard in this file so far lived in JavaScript, which means
+    -- it constrained exactly one writer: this one. A repair script, a future
+    -- module, or a hand-run UPDATE could rewrite an obligor or delete a
+    -- created event and every application-level check would still pass, because
+    -- none of them were ever consulted. An invariant only one caller honours is
+    -- a coding convention wearing an invariant's name.
+    --
+    -- These triggers are what make the raw-SQL adversarial tests below able to
+    -- FAIL. Without them those tests would document the hole rather than close
+    -- it.
+    -- ===================================================================
+    CREATE TRIGGER IF NOT EXISTS trg_tg_binding_identity_immutable
+    BEFORE UPDATE ON telegram_obligation_bindings
+    FOR EACH ROW WHEN (
+         OLD.obligation_id               IS NOT NEW.obligation_id
+      OR OLD.source_row_id               IS NOT NEW.source_row_id
+      OR OLD.claim_id                    IS NOT NEW.claim_id
+      OR OLD.cutover_id                  IS NOT NEW.cutover_id
+      OR OLD.update_id                   IS NOT NEW.update_id
+      OR OLD.message_id                  IS NOT NEW.message_id
+      OR OLD.chat_id                     IS NOT NEW.chat_id
+      OR OLD.route_key                   IS NOT NEW.route_key
+      OR OLD.profile                     IS NOT NEW.profile
+      OR OLD.window_key                  IS NOT NEW.window_key
+      OR OLD.raw_body_sha256             IS NOT NEW.raw_body_sha256
+      OR OLD.canonical_payload_sha256    IS NOT NEW.canonical_payload_sha256
+      OR OLD.predecessor_manifest_sha256 IS NOT NEW.predecessor_manifest_sha256
+      OR OLD.admission_id                IS NOT NEW.admission_id
+      OR OLD.attempt_nonce               IS NOT NEW.attempt_nonce
+      OR OLD.app_generation              IS NOT NEW.app_generation
+      OR OLD.pane_launch_id              IS NOT NEW.pane_launch_id
+      OR OLD.pane_id                     IS NOT NEW.pane_id
+      OR OLD.role                        IS NOT NEW.role
+      OR OLD.consumer_runtime            IS NOT NEW.consumer_runtime
+      OR OLD.hook_process_id             IS NOT NEW.hook_process_id
+      OR OLD.hook_parent_process_id      IS NOT NEW.hook_parent_process_id
+      OR OLD.consumer_session_id         IS NOT NEW.consumer_session_id
+      OR OLD.runtime_submission_id       IS NOT NEW.runtime_submission_id
+      OR OLD.runtime_submission_kind     IS NOT NEW.runtime_submission_kind
+      OR OLD.obligor_address             IS NOT NEW.obligor_address
+      OR OLD.queue_ack_intent            IS NOT NEW.queue_ack_intent
+      OR OLD.created_at_ms               IS NOT NEW.created_at_ms
+    )
+    BEGIN SELECT RAISE(ABORT, 'telegram_binding_identity_immutable'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_binding_no_delete
+    BEFORE DELETE ON telegram_obligation_bindings
+    BEGIN SELECT RAISE(ABORT, 'telegram_binding_delete_forbidden'); END;
+
+    -- APPEND-ONLY EVENTS. A history that can be edited is not a history.
+    CREATE TRIGGER IF NOT EXISTS trg_tg_binding_events_no_update
+    BEFORE UPDATE ON telegram_binding_events
+    BEGIN SELECT RAISE(ABORT, 'telegram_binding_events_append_only'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_binding_events_no_delete
+    BEFORE DELETE ON telegram_binding_events
+    BEGIN SELECT RAISE(ABORT, 'telegram_binding_events_append_only'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_transport_events_no_update
+    BEFORE UPDATE ON telegram_transport_events
+    BEGIN SELECT RAISE(ABORT, 'telegram_transport_events_append_only'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_transport_events_no_delete
+    BEFORE DELETE ON telegram_transport_events
+    BEGIN SELECT RAISE(ABORT, 'telegram_transport_events_append_only'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_work_events_no_update
+    BEFORE UPDATE ON telegram_work_claim_events
+    BEGIN SELECT RAISE(ABORT, 'telegram_work_claim_events_append_only'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_work_events_no_delete
+    BEFORE DELETE ON telegram_work_claim_events
+    BEGIN SELECT RAISE(ABORT, 'telegram_work_claim_events_append_only'); END;
+
+    -- A CLAIM MAY ADVANCE ITS STATE. IT MAY NOT BECOME A DIFFERENT ATTEMPT.
+    CREATE TRIGGER IF NOT EXISTS trg_tg_claim_identity_immutable
+    BEFORE UPDATE ON telegram_transport_claims
+    FOR EACH ROW WHEN (
+         OLD.claim_id         IS NOT NEW.claim_id
+      OR OLD.cutover_id       IS NOT NEW.cutover_id
+      OR OLD.route_key        IS NOT NEW.route_key
+      OR OLD.update_id        IS NOT NEW.update_id
+      OR OLD.source_row_id    IS NOT NEW.source_row_id
+      OR OLD.app_generation   IS NOT NEW.app_generation
+      OR OLD.pane_launch_id   IS NOT NEW.pane_launch_id
+      OR OLD.pane_id          IS NOT NEW.pane_id
+      OR OLD.role             IS NOT NEW.role
+      OR OLD.consumer_runtime IS NOT NEW.consumer_runtime
+      OR OLD.attempt_nonce    IS NOT NEW.attempt_nonce
+      OR OLD.attempt_at_ms    IS NOT NEW.attempt_at_ms
+    )
+    BEGIN SELECT RAISE(ABORT, 'telegram_claim_identity_immutable'); END;
+
+    -- A WORK CLAIM'S IDENTITY IS ITS GENERATION AND LEASE. Only liveness moves.
+    CREATE TRIGGER IF NOT EXISTS trg_tg_work_identity_immutable
+    BEFORE UPDATE ON telegram_work_claims
+    FOR EACH ROW WHEN (
+         OLD.work_claim_id         IS NOT NEW.work_claim_id
+      OR OLD.obligation_id         IS NOT NEW.obligation_id
+      OR OLD.work_generation       IS NOT NEW.work_generation
+      OR OLD.lease_token           IS NOT NEW.lease_token
+      OR OLD.claim_id              IS NOT NEW.claim_id
+      OR OLD.pane_launch_id        IS NOT NEW.pane_launch_id
+      OR OLD.app_generation        IS NOT NEW.app_generation
+      OR OLD.consumer_session_id   IS NOT NEW.consumer_session_id
+      OR OLD.runtime_submission_id IS NOT NEW.runtime_submission_id
+      OR OLD.claimed_at_ms         IS NOT NEW.claimed_at_ms
+    )
+    BEGIN SELECT RAISE(ABORT, 'telegram_work_claim_identity_immutable'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_work_no_delete
+    BEFORE DELETE ON telegram_work_claims
+    BEGIN SELECT RAISE(ABORT, 'telegram_work_claim_delete_forbidden'); END;
+
+    -- THE OUTBOX ROW IS KEYED TO ITS BINDING AND CANNOT BE REPOINTED.
+    CREATE TRIGGER IF NOT EXISTS trg_tg_ack_identity_immutable
+    BEFORE UPDATE ON telegram_queue_ack_outbox
+    FOR EACH ROW WHEN (
+         OLD.obligation_id  IS NOT NEW.obligation_id
+      OR OLD.source_row_id  IS NOT NEW.source_row_id
+      OR OLD.update_id      IS NOT NEW.update_id
+      OR OLD.route_key      IS NOT NEW.route_key
+      OR OLD.ack_intent_key IS NOT NEW.ack_intent_key
+      OR OLD.created_at_ms  IS NOT NEW.created_at_ms
+    )
+    BEGIN SELECT RAISE(ABORT, 'telegram_queue_ack_identity_immutable'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_ack_no_delete
+    BEFORE DELETE ON telegram_queue_ack_outbox
+    BEGIN SELECT RAISE(ABORT, 'telegram_queue_ack_delete_forbidden'); END;
   `);
   return { ok: true };
 }
@@ -741,6 +1009,366 @@ function closeUnsentClaim(db, input = {}) {
 }
 
 /**
+ * THE KEYED QUEUE-ACK INTENT.
+ *
+ * Derived, never supplied. The binding stored whatever `queueAckIntent` string
+ * a caller handed it, so "this obligation has an ack intent" was a sentence the
+ * caller wrote about itself; it correlated to no row and nothing could
+ * contradict it. This key is computed from the obligation and the exact source
+ * tuple, written to BOTH the binding and the outbox row, and UNIQUE on the
+ * outbox — so the two are joined by a value neither side chose and a mismatch
+ * is a detectable fact rather than a difference of opinion.
+ */
+function deriveQueueAckIntentKey(input = {}) {
+  return `tgack_${sha256(canonicalJoin([
+    'telegram_queue_ack.v1',
+    input.obligationId,
+    input.sourceRowId,
+    input.updateId,
+    input.routeKey,
+  ]))}`;
+}
+
+/**
+ * NAMED COMPARE-AND-SET over the Telegram binding, plus its append-only event.
+ *
+ * `expectedState` is REQUIRED. A mover that does not have to say what it
+ * believed it saw is not a compare-and-set, it is an UPDATE with extra
+ * ceremony, and it cannot tell "I advanced this" from "someone else already
+ * did and I overwrote them".
+ */
+function casBindingState(db, input = {}) {
+  const durable = assertDurableHandle(db);
+  if (!durable.ok) return durable;
+
+  const transition = String(input.transition || '');
+  const spec = Object.prototype.hasOwnProperty.call(BINDING_TRANSITIONS, transition)
+    ? BINDING_TRANSITIONS[transition] : null;
+  if (!spec) return fail('binding_transition_unknown', { transition });
+  if (!isNonEmptyString(input.obligationId)) return fail('binding_cas_field_missing:obligationId');
+  if (!isNonEmptyString(input.expectedState)) return fail('binding_cas_field_missing:expectedState');
+  const atMs = Number(input.atMs);
+  if (!Number.isSafeInteger(atMs) || atMs <= 0) return fail('binding_cas_field_missing:atMs');
+  if (!spec.from.includes(String(input.expectedState))) {
+    return fail('binding_transition_illegal', {
+      transition, from: input.expectedState, legalFrom: spec.from,
+    });
+  }
+
+  const row = db.prepare('SELECT * FROM telegram_obligation_bindings WHERE obligation_id = ?')
+    .get(input.obligationId);
+  if (!row) return fail('binding_not_found', { obligationId: input.obligationId });
+
+  const changed = db.prepare(
+    'UPDATE telegram_obligation_bindings SET state = ? WHERE obligation_id = ? AND state = ?'
+  ).run(spec.to, input.obligationId, String(input.expectedState)).changes;
+  if (changed !== 1) {
+    return fail('binding_cas_conflict', {
+      transition, expected: input.expectedState, actual: row.state,
+    });
+  }
+  db.prepare(
+    'INSERT INTO telegram_binding_events (obligation_id, transition, at_ms, detail) VALUES (?, ?, ?, ?)'
+  ).run(input.obligationId, transition, atMs, input.detail ? String(input.detail) : null);
+
+  return { ok: true, obligationId: input.obligationId, transition, state: spec.to };
+}
+
+/** Named CAS over the queue-ack outbox row, with the same event discipline. */
+function casQueueAckState(db, input = {}) {
+  const durable = assertDurableHandle(db);
+  if (!durable.ok) return durable;
+
+  const transition = String(input.transition || '');
+  const spec = Object.prototype.hasOwnProperty.call(QUEUE_ACK_TRANSITIONS, transition)
+    ? QUEUE_ACK_TRANSITIONS[transition] : null;
+  if (!spec) return fail('queue_ack_transition_unknown', { transition });
+  if (!isNonEmptyString(input.obligationId)) return fail('queue_ack_cas_field_missing:obligationId');
+  if (!isNonEmptyString(input.expectedState)) return fail('queue_ack_cas_field_missing:expectedState');
+  const atMs = Number(input.atMs);
+  if (!Number.isSafeInteger(atMs) || atMs <= 0) return fail('queue_ack_cas_field_missing:atMs');
+  if (!spec.from.includes(String(input.expectedState))) {
+    return fail('queue_ack_transition_illegal', {
+      transition, from: input.expectedState, legalFrom: spec.from,
+    });
+  }
+
+  const row = db.prepare('SELECT * FROM telegram_queue_ack_outbox WHERE obligation_id = ?')
+    .get(input.obligationId);
+  if (!row) return fail('queue_ack_row_not_found', { obligationId: input.obligationId });
+  // THE INTENT KEY IS THE JOIN. An ack advancing against a row whose key does
+  // not re-derive is acking something other than the debt it names.
+  const expectedKey = deriveQueueAckIntentKey({
+    obligationId: input.obligationId,
+    sourceRowId: row.source_row_id,
+    updateId: row.update_id,
+    routeKey: row.route_key,
+  });
+  if (String(row.ack_intent_key) !== expectedKey) {
+    return fail('queue_ack_intent_key_not_derivable', {
+      stored: row.ack_intent_key, recomputed: expectedKey,
+    });
+  }
+
+  const changed = db.prepare(
+    'UPDATE telegram_queue_ack_outbox SET state = ?, appended_at_ms = ? WHERE obligation_id = ? AND state = ?'
+  ).run(spec.to, atMs, input.obligationId, String(input.expectedState)).changes;
+  if (changed !== 1) {
+    return fail('queue_ack_cas_conflict', {
+      transition, expected: input.expectedState, actual: row.state,
+    });
+  }
+  db.prepare(
+    'INSERT INTO telegram_binding_events (obligation_id, transition, at_ms, detail) VALUES (?, ?, ?, ?)'
+  ).run(input.obligationId, transition, atMs, row.ack_intent_key);
+
+  return { ok: true, obligationId: input.obligationId, transition, state: spec.to };
+}
+
+/**
+ * A LIVE HEARTBEAT ON THE WORK CLAIM, fenced by its lease token.
+ *
+ * Health has to tell an aborted model turn from a long-running one, and a
+ * process heartbeat cannot do it: a perfectly healthy consumer process says
+ * nothing about whether the turn it launched is still alive. So the WORK claim
+ * beats separately, and only the holder of the exact lease token may beat it.
+ * A stale generation's beat is rejected rather than silently keeping a dead
+ * claim looking live.
+ */
+function heartbeatWorkClaim(db, input = {}) {
+  const durable = assertDurableHandle(db);
+  if (!durable.ok) return durable;
+
+  if (!isNonEmptyString(input.workClaimId)) return fail('work_heartbeat_field_missing:workClaimId');
+  if (!isNonEmptyString(input.leaseToken)) return fail('work_heartbeat_field_missing:leaseToken');
+  const atMs = Number(input.atMs);
+  if (!Number.isSafeInteger(atMs) || atMs <= 0) return fail('work_heartbeat_field_missing:atMs');
+
+  const row = db.prepare('SELECT * FROM telegram_work_claims WHERE work_claim_id = ?')
+    .get(input.workClaimId);
+  if (!row) return fail('work_claim_not_found', { workClaimId: input.workClaimId });
+  if (String(row.lease_token) !== String(input.leaseToken)) {
+    return fail('work_lease_token_stale', { workClaimId: input.workClaimId });
+  }
+  if (String(row.state) !== WORK_CLAIM_STATES.ACTIVE) {
+    return fail('work_claim_not_active', { state: row.state });
+  }
+  // TIME ONLY MOVES FORWARD. A backdated beat would let a replayed message
+  // reset the age that health degrades on.
+  if (atMs < Number(row.heartbeat_at_ms)) {
+    return fail('work_heartbeat_regressed', {
+      stored: row.heartbeat_at_ms, offered: atMs,
+    });
+  }
+
+  const changed = db.prepare(`
+    UPDATE telegram_work_claims SET heartbeat_at_ms = ?
+    WHERE work_claim_id = ? AND lease_token = ? AND state = ?
+  `).run(atMs, input.workClaimId, input.leaseToken, WORK_CLAIM_STATES.ACTIVE).changes;
+  if (changed !== 1) return fail('work_heartbeat_cas_conflict', { state: row.state });
+
+  db.prepare(
+    'INSERT INTO telegram_work_claim_events (work_claim_id, transition, at_ms, detail) VALUES (?, ?, ?, ?)'
+  ).run(input.workClaimId, 'work_heartbeat', atMs, null);
+
+  return { ok: true, workClaimId: input.workClaimId, heartbeatAtMs: atMs };
+}
+
+/** Named CAS closing a work generation, fenced by the same lease token. */
+function casWorkClaimState(db, input = {}) {
+  const durable = assertDurableHandle(db);
+  if (!durable.ok) return durable;
+
+  const transition = String(input.transition || '');
+  const spec = Object.prototype.hasOwnProperty.call(WORK_CLAIM_TRANSITIONS, transition)
+    ? WORK_CLAIM_TRANSITIONS[transition] : null;
+  if (!spec) return fail('work_transition_unknown', { transition });
+  if (!isNonEmptyString(input.workClaimId)) return fail('work_cas_field_missing:workClaimId');
+  if (!isNonEmptyString(input.leaseToken)) return fail('work_cas_field_missing:leaseToken');
+  const atMs = Number(input.atMs);
+  if (!Number.isSafeInteger(atMs) || atMs <= 0) return fail('work_cas_field_missing:atMs');
+
+  const row = db.prepare('SELECT * FROM telegram_work_claims WHERE work_claim_id = ?')
+    .get(input.workClaimId);
+  if (!row) return fail('work_claim_not_found', { workClaimId: input.workClaimId });
+  if (String(row.lease_token) !== String(input.leaseToken)) {
+    return fail('work_lease_token_stale', { workClaimId: input.workClaimId });
+  }
+  if (!spec.from.includes(String(row.state))) {
+    return fail('work_transition_illegal', {
+      transition, from: row.state, legalFrom: spec.from,
+    });
+  }
+
+  const changed = db.prepare(`
+    UPDATE telegram_work_claims SET state = ?, closed_at_ms = ?
+    WHERE work_claim_id = ? AND lease_token = ? AND state = ?
+  `).run(spec.to, atMs, input.workClaimId, input.leaseToken, String(row.state)).changes;
+  if (changed !== 1) return fail('work_cas_conflict', { transition, actual: row.state });
+
+  db.prepare(
+    'INSERT INTO telegram_work_claim_events (work_claim_id, transition, at_ms, detail) VALUES (?, ?, ?, ?)'
+  ).run(input.workClaimId, transition, atMs, input.detail ? String(input.detail) : null);
+
+  return { ok: true, workClaimId: input.workClaimId, transition, state: spec.to };
+}
+
+/**
+ * RE-PROVE EVERY DEPENDENT FACT OF AN EXISTING ADMISSION.
+ *
+ * Idempotent replay must be able to FAIL. The previous implementation compared
+ * the binding's identity columns and then returned the stored generation and
+ * lease — so deleting the kernel obligation, its created event, the outbox row
+ * or the work claim left replay answering `ok:true` with the same confident id.
+ * It re-returned; it never re-proved. That is the exact shape that let the A12
+ * mutant survive, and it is the shape of every defect in this lane: a value
+ * read back and presented as a verification.
+ *
+ * So each fact is looked up in its CANONICAL home — `obligations`,
+ * `ledger_events`, the work-claim row, the outbox row — and a partial dependent
+ * set is a hard conflict naming exactly what is missing.
+ */
+function reproveDependentFacts(db, input = {}) {
+  const { obligationId, source, claim, binding, obligorAddress } = input;
+  const reproved = [];
+
+  // 1. THE SOURCE WAS BROKERED.
+  if (String(source.status) !== SOURCE_STATES.BROKERED) {
+    return fail('replay_dependent_fact_missing:source_not_brokered', { status: source.status });
+  }
+  reproved.push('source_brokered');
+
+  // 2. THE TRANSPORT CLAIM WAS ADMITTED.
+  if (String(claim.state) !== CLAIM_STATES.ADMITTED) {
+    return fail('replay_dependent_fact_missing:claim_not_admitted', { state: claim.state });
+  }
+  reproved.push('claim_admitted');
+
+  // 3. THE CANONICAL KERNEL OBLIGATION, in the general kernel's own table.
+  const obligation = db.prepare('SELECT * FROM obligations WHERE obligation_id = ?').get(obligationId);
+  if (!obligation) return fail('replay_dependent_fact_missing:obligation');
+  if (Number(obligation.created_from_row_id) !== Number(source.row_id)) {
+    return fail('replay_dependent_fact_conflict:obligation_source', {
+      stored: obligation.created_from_row_id, expected: source.row_id,
+    });
+  }
+  if (String(obligation.creditor_address) !== 'james'
+    || String(obligation.obligor_address) !== String(obligorAddress)
+    || String(obligation.expected_class) !== 'answer'
+    || String(obligation.staleness_class) !== 'turn') {
+    return fail('replay_dependent_fact_conflict:obligation_shape', {
+      creditor: obligation.creditor_address,
+      obligor: obligation.obligor_address,
+      expectedClass: obligation.expected_class,
+      stalenessClass: obligation.staleness_class,
+    });
+  }
+  if (obligation.lease_id !== null) {
+    return fail('replay_dependent_fact_conflict:obligation_lease_not_null', {
+      leaseId: obligation.lease_id,
+    });
+  }
+  reproved.push('obligation_canonical');
+
+  // 4. THE CANONICAL CREATED EVENT — the KERNEL'S shape, not merely a row in
+  //    the right table. A2 wrote `ledger_events` by hand and produced rows that
+  //    were table-real and kernel-wrong: no `obligation:<id>` trace, no
+  //    correlation, no edges. So the shape is what is checked.
+  if (!isNonEmptyString(String(obligation.created_event_id ?? ''))) {
+    return fail('replay_dependent_fact_missing:created_event_id');
+  }
+  const createdEvent = db.prepare('SELECT * FROM ledger_events WHERE event_id = ?')
+    .get(obligation.created_event_id);
+  if (!createdEvent) return fail('replay_dependent_fact_missing:created_event');
+  const canonicalTrace = `obligation:${obligationId}`;
+  if (String(createdEvent.type) !== 'obligation.created'
+    || String(createdEvent.stage) !== 'obligation'
+    || String(createdEvent.source) !== 'obligation-kernel'
+    || String(createdEvent.trace_id) !== canonicalTrace
+    || String(createdEvent.correlation_id) !== canonicalTrace) {
+    return fail('replay_dependent_fact_conflict:created_event_not_canonical', {
+      type: createdEvent.type,
+      stage: createdEvent.stage,
+      source: createdEvent.source,
+      traceId: createdEvent.trace_id,
+      correlationId: createdEvent.correlation_id,
+    });
+  }
+  let createdPayload = null;
+  try { createdPayload = JSON.parse(createdEvent.payload_json); } catch { createdPayload = null; }
+  if (!createdPayload || String(createdPayload.obligationId) !== String(obligationId)
+    || String(createdPayload.obligorAddress) !== String(obligorAddress)
+    || String(createdPayload.creditorAddress) !== 'james') {
+    return fail('replay_dependent_fact_conflict:created_event_payload');
+  }
+  reproved.push('created_event_canonical');
+
+  // 5. THE BINDING'S OWN CREATED EVENT.
+  const bindingCreated = db.prepare(`
+    SELECT COUNT(*) AS n FROM telegram_binding_events
+    WHERE obligation_id = ? AND transition = 'created'
+  `).get(obligationId);
+  if (!bindingCreated || Number(bindingCreated.n) < 1) {
+    return fail('replay_dependent_fact_missing:binding_created_event');
+  }
+  reproved.push('binding_created_event');
+
+  // 6. THE REAL WORK CLAIM ROW, its generation, its lease and its event.
+  const workClaim = db.prepare(`
+    SELECT * FROM telegram_work_claims
+    WHERE obligation_id = ? ORDER BY work_generation DESC LIMIT 1
+  `).get(obligationId);
+  if (!workClaim) return fail('replay_dependent_fact_missing:work_claim');
+  if (Number(workClaim.work_generation) !== Number(binding.work_generation)
+    || String(workClaim.lease_token) !== String(binding.work_lease_token)) {
+    return fail('replay_dependent_fact_conflict:work_claim_generation', {
+      rowGeneration: workClaim.work_generation,
+      bindingGeneration: binding.work_generation,
+    });
+  }
+  if (String(workClaim.claim_id) !== String(claim.claim_id)) {
+    return fail('replay_dependent_fact_conflict:work_claim_attempt', {
+      stored: workClaim.claim_id, expected: claim.claim_id,
+    });
+  }
+  const workClaimed = db.prepare(`
+    SELECT COUNT(*) AS n FROM telegram_work_claim_events
+    WHERE work_claim_id = ? AND transition = 'work_claimed'
+  `).get(workClaim.work_claim_id);
+  if (!workClaimed || Number(workClaimed.n) < 1) {
+    return fail('replay_dependent_fact_missing:work_claim_event');
+  }
+  reproved.push('work_claim');
+
+  // 7. THE QUEUE-ACK OUTBOX ROW, joined by the DERIVED key rather than by
+  //    existence. A row that exists but whose key does not re-derive is an
+  //    intent for something else.
+  const outbox = db.prepare('SELECT * FROM telegram_queue_ack_outbox WHERE obligation_id = ?')
+    .get(obligationId);
+  if (!outbox) return fail('replay_dependent_fact_missing:queue_ack_outbox');
+  const expectedKey = deriveQueueAckIntentKey({
+    obligationId,
+    sourceRowId: outbox.source_row_id,
+    updateId: outbox.update_id,
+    routeKey: outbox.route_key,
+  });
+  if (String(outbox.ack_intent_key) !== expectedKey
+    || String(binding.queue_ack_intent) !== expectedKey) {
+    return fail('replay_dependent_fact_conflict:queue_ack_intent_key', {
+      outboxKey: outbox.ack_intent_key,
+      bindingIntent: binding.queue_ack_intent,
+      recomputed: expectedKey,
+    });
+  }
+  if (Number(outbox.source_row_id) !== Number(source.row_id)) {
+    return fail('replay_dependent_fact_conflict:queue_ack_source');
+  }
+  reproved.push('queue_ack_outbox');
+
+  return { ok: true, reproved, workClaim, createdEventId: obligation.created_event_id };
+}
+
+/**
  * STEP 5: `admitted_owned`. ONE transaction across FOUR authorities.
  *
  * Promotes the real comms row to `brokered`, creates the REAL kernel
@@ -771,7 +1399,11 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
   // value passed. They are now READ FROM THE DURABLE ADMISSION RECEIPT below.
   // A caller cannot assert who consumed the message; only the consumer's own
   // record can, which is the entire substance of this checkpoint.
-  const required = ['messageId', 'claimId', 'admissionId', 'obligorAddress', 'queueAckIntent'];
+  // `queueAckIntent` IS NO LONGER AN INPUT. It is derived below from the
+  // obligation and source tuple, because a caller-chosen string named nothing
+  // and could never disagree with reality. A caller may still OFFER one, and it
+  // is then checked against the derivation rather than stored on trust.
+  const required = ['messageId', 'claimId', 'admissionId', 'obligorAddress'];
   for (const field of required) {
     if (!isNonEmptyString(input[field])) return fail(`owned_field_missing:${field}`);
   }
@@ -1036,6 +1668,22 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
     }
 
     const obligationId = identity.obligationId;
+
+    // DERIVED, then compared against anything the caller offered.
+    const queueAckIntentKey = deriveQueueAckIntentKey({
+      obligationId,
+      sourceRowId: source.row_id,
+      updateId: identity.updateId,
+      routeKey: identity.routeKey,
+    });
+    if (isNonEmptyString(input.queueAckIntent)
+      && String(input.queueAckIntent) !== queueAckIntentKey) {
+      rollback(db);
+      return fail('queue_ack_intent_not_derivable', {
+        offered: input.queueAckIntent, recomputed: queueAckIntentKey,
+      });
+    }
+
     const existingBinding = db.prepare(
       'SELECT * FROM telegram_obligation_bindings WHERE obligation_id = ?'
     ).get(obligationId);
@@ -1066,9 +1714,23 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
       runtime_submission_id: receipt.runtime_submission_id,
       runtime_submission_kind: receipt.runtime_submission_kind,
       obligor_address: input.obligorAddress,
-      queue_ack_intent: input.queueAckIntent,
+      queue_ack_intent: queueAckIntentKey,
     };
 
+    // ===================================================================
+    // REPLAY. RE-PROVE, DO NOT RE-RETURN.
+    //
+    // The previous version compared the identity columns and then handed back
+    // the stored `work_generation` and `work_lease_token`. That is precisely
+    // how the A12 mutant survived: a function that returns a value it read is
+    // indistinguishable from one that verified anything. Delete the obligation,
+    // the created event, the outbox row or the work claim and the old replay
+    // still answered `ok:true` with a confident id — a receipt for a debt that
+    // no longer existed.
+    //
+    // Every dependent fact is re-derived below against the CANONICAL
+    // authorities. A partial dependent set is a hard conflict, never a success.
+    // ===================================================================
     if (existingBinding) {
       for (const column of BINDING_IDENTITY_COLUMNS) {
         if (String(existingBinding[column]) !== String(offered[column])) {
@@ -1078,13 +1740,24 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
           });
         }
       }
+      const reproof = reproveDependentFacts(db, {
+        obligationId,
+        source,
+        claim,
+        binding: existingBinding,
+        obligorAddress: input.obligorAddress,
+      });
+      if (!reproof.ok) { rollback(db); return reproof; }
       commit(db);
       return {
         ok: true,
         obligationId,
         sourceRowId: source.row_id,
-        workGeneration: existingBinding.work_generation,
-        workLeaseToken: existingBinding.work_lease_token,
+        workGeneration: reproof.workClaim.work_generation,
+        workLeaseToken: reproof.workClaim.lease_token,
+        workClaimId: reproof.workClaim.work_claim_id,
+        createdEventId: reproof.createdEventId,
+        reproved: reproof.reproved,
         created: false,
       };
     }
@@ -1163,17 +1836,48 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
     db.prepare('INSERT INTO telegram_binding_events (obligation_id, transition, at_ms, detail) VALUES (?, ?, ?, ?)')
       .run(obligationId, 'created', atMs, null);
 
-    // 4. THE QUEUE-ACK OUTBOX INTENT (transport, not reply).
+    // 4. THE QUEUE-ACK OUTBOX INTENT (transport, not reply), carrying the SAME
+    //    derived key the binding stores.
     db.prepare(`
       INSERT INTO telegram_queue_ack_outbox (
-        obligation_id, source_row_id, update_id, route_key, state, created_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        obligation_id, source_row_id, update_id, route_key, ack_intent_key,
+        state, created_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       obligationId, source.row_id, offered.update_id, offered.route_key,
-      QUEUE_ACK_STATES.PENDING, atMs
+      queueAckIntentKey, QUEUE_ACK_STATES.PENDING, atMs
     );
 
-    // 5. PROMOTE THE REAL SOURCE ROW.
+    // ===================================================================
+    // 5. THE REAL INITIAL WORK CLAIM — a ROW, an EVENT, and a HEARTBEAT.
+    //
+    // This used to be two columns on the binding. The gate requires that
+    // admission create the initial work generation bound exactly to the
+    // admission's session, submission id, attempt and launch, and that the work
+    // heartbeat be trackable separately from the consumer process. Neither is
+    // expressible as a scalar: a column cannot be beaten, cannot be closed by a
+    // fencing CAS, and cannot carry the event that proves when either happened.
+    //
+    // The binding keeps its scalars as a denormalised pointer to generation 1,
+    // and every later authority reads the ROW.
+    // ===================================================================
+    const workClaimId = `twc_${sha256(canonicalJoin([obligationId, '1', workLeaseToken]))}`;
+    db.prepare(`
+      INSERT INTO telegram_work_claims (
+        work_claim_id, obligation_id, work_generation, lease_token, claim_id,
+        pane_launch_id, app_generation, consumer_session_id, runtime_submission_id,
+        state, claimed_at_ms, heartbeat_at_ms, closed_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    `).run(
+      workClaimId, obligationId, 1, workLeaseToken, input.claimId,
+      claim.pane_launch_id, claim.app_generation, receipt.consumer_session_id,
+      receipt.runtime_submission_id, WORK_CLAIM_STATES.ACTIVE, atMs, atMs
+    );
+    db.prepare(
+      'INSERT INTO telegram_work_claim_events (work_claim_id, transition, at_ms, detail) VALUES (?, ?, ?, ?)'
+    ).run(workClaimId, 'work_claimed', atMs, null);
+
+    // 6. PROMOTE THE REAL SOURCE ROW.
     db.prepare('UPDATE comms_journal SET status = ?, brokered_at_ms = ?, updated_at_ms = ? WHERE row_id = ?')
       .run(SOURCE_STATES.BROKERED, atMs, atMs, source.row_id);
 
@@ -1183,7 +1887,8 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
     commit(db);
     return {
       ok: true, obligationId, sourceRowId: source.row_id,
-      workGeneration: 1, workLeaseToken, createdEventId, created: true,
+      workGeneration: 1, workLeaseToken, workClaimId,
+      queueAckIntentKey, createdEventId, created: true,
     };
   } catch (err) {
     rollback(db);
@@ -1197,6 +1902,11 @@ module.exports = {
   CLAIM_STATES,
   SOURCE_STATES,
   QUEUE_ACK_STATES,
+  BINDING_STATES,
+  WORK_CLAIM_STATES,
+  BINDING_TRANSITIONS,
+  QUEUE_ACK_TRANSITIONS,
+  WORK_CLAIM_TRANSITIONS,
   SOURCE_IDENTITY_FIELDS,
   BINDING_IDENTITY_COLUMNS,
   sha256,
@@ -1210,4 +1920,10 @@ module.exports = {
   recordDeliveryStarted,
   closeUnsentClaim,
   promoteToAdmittedOwned,
+  deriveQueueAckIntentKey,
+  casBindingState,
+  casQueueAckState,
+  heartbeatWorkClaim,
+  casWorkClaimState,
+  reproveDependentFacts,
 };

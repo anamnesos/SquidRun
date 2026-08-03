@@ -23,6 +23,7 @@ const {
   recordDeliveryStarted,
   closeUnsentClaim,
   promoteToAdmittedOwned,
+  deriveQueueAckIntentKey,
 } = require('../modules/main/telegram-admission-store');
 
 function createDatabase(filePath) {
@@ -226,7 +227,7 @@ function ownedInput(claimId, overrides = {}) {
     claimId,
     admissionId: currentAdmissionId,
     obligorAddress: 'architect',
-    queueAckIntent: 'ack-intent-1',
+    // NO `queueAckIntent`: A3b derives the keyed intent inside the transaction.
     atMs: NOW + 1000,
     ...overrides,
   };
@@ -516,17 +517,22 @@ describe('admitted_owned promotion', () => {
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_binding_events').get().n)).toBe(1);
   });
 
-  test('A SECOND PROMOTION WITH a different queue ack intent FAILS CLOSED', () => {
+  test('AN OFFERED QUEUE ACK INTENT THAT DOES NOT DERIVE FAILS CLOSED', () => {
+    // A3b moved this failure EARLIER and made it stronger. Under A2 the intent
+    // was whatever the caller said, so a fabricated value was only caught when a
+    // SECOND promotion disagreed with the first — two lies that matched were
+    // indistinguishable from the truth. Now the key is derived from the
+    // obligation and source tuple, so the FIRST fabricated value is refused.
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
-    promote(db, ownedInput(claim.claimId));
 
-    const conflicting = promote(db, ownedInput(claim.claimId, {
+    const fabricated = promote(db, ownedInput(claim.claimId, {
       queueAckIntent: 'ack-intent-2',
     }));
 
-    expect(conflicting.ok).toBe(false);
-    expect(conflicting.reason).toBe('binding_identity_conflict');
+    expect(fabricated.ok).toBe(false);
+    expect(fabricated.reason).toBe('queue_ack_intent_not_derivable');
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_obligation_bindings').get().n)).toBe(0);
   });
 
   test('A SECOND PROMOTION WITH a fabricated admission id is REFUSED AT THE RECEIPT', () => {
@@ -612,12 +618,25 @@ describe('admitted_owned promotion', () => {
       consumer_session_id: 'sess-1',
       runtime_submission_id: 'turn-1',
       runtime_submission_kind: SUBMISSION_KINDS.CODEX_TURN,
-      queue_ack_intent: 'ack-intent-1',
       obligor_address: 'architect',
       work_generation: 1,
     });
     expect(binding.predecessor_manifest_sha256).toBe(sha256('predecessor-manifest'));
     expect(binding.raw_body_sha256).toBe(sha256('synthetic checkpoint A fixture'));
+
+    // THE KEYED INTENT JOINS THE BINDING TO A REAL OUTBOX ROW. Asserting the
+    // literal the caller passed would only prove the store echoes its input,
+    // which is what it did before A3b.
+    const outbox = db.prepare('SELECT * FROM telegram_queue_ack_outbox WHERE obligation_id = ?')
+      .get(binding.obligation_id);
+    expect(outbox).toBeTruthy();
+    expect(binding.queue_ack_intent).toBe(outbox.ack_intent_key);
+    expect(binding.queue_ack_intent).toBe(deriveQueueAckIntentKey({
+      obligationId: binding.obligation_id,
+      sourceRowId: outbox.source_row_id,
+      updateId: outbox.update_id,
+      routeKey: outbox.route_key,
+    }));
   });
 
   test('THE WORK GENERATION IS CREATED AT ADMISSION, not lazily by the next message', () => {
@@ -1052,11 +1071,36 @@ describe('promotion re-verifies correlation even for a forged claim row', () => 
     startDelivery(db, { claimId: claim.claimId, atMs: NOW + 10 });
     seedAdmissionReceipt(db, { src: srcB, claim });
 
-    // Repoint the committed claim at the WRONG source row.
-    db.prepare('UPDATE telegram_transport_claims SET source_row_id = ? WHERE claim_id = ?')
-      .run(srcA.sourceRowId, claim.claimId);
+    // A3b: REPOINTING A COMMITTED CLAIM IS NOW REFUSED BY THE DATABASE. The
+    // application check below is still worth having — a forged row can be
+    // INSERTED even though it cannot be edited — but the edit itself is gone as
+    // an attack, and that is a stronger statement than "we notice afterwards".
+    expect(() => db
+      .prepare('UPDATE telegram_transport_claims SET source_row_id = ? WHERE claim_id = ?')
+      .run(srcA.sourceRowId, claim.claimId)).toThrow(/telegram_claim_identity_immutable/);
 
-    const owned = promote(db, ownedInput(claim.claimId, {
+    // Now forge by INSERT instead: a claim row whose correlation columns name
+    // srcB while its source row id points at srcA. Nothing in the schema stops
+    // this, so the promotion path must.
+    const stored = db.prepare('SELECT * FROM telegram_transport_claims WHERE claim_id = ?')
+      .get(claim.claimId);
+    db.prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
+      .run(CLAIM_STATES.CLOSED_UNSENT, claim.claimId);
+    db.prepare(`
+      INSERT INTO telegram_transport_claims (
+        claim_id, cutover_id, route_key, update_id, source_row_id, app_generation,
+        pane_launch_id, pane_id, role, consumer_runtime, attempt_nonce, attempt_at_ms,
+        delivered_prompt_sha256, delivered_prompt_bytes, state, closed_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    `).run(
+      'forged-claim', stored.cutover_id, stored.route_key, stored.update_id,
+      srcA.sourceRowId, stored.app_generation, stored.pane_launch_id, stored.pane_id,
+      stored.role, stored.consumer_runtime, 'nonce-forged', stored.attempt_at_ms,
+      stored.delivered_prompt_sha256, stored.delivered_prompt_bytes,
+      CLAIM_STATES.DELIVERY_STARTED
+    );
+
+    const owned = promote(db, ownedInput('forged-claim', {
       messageId: 'telegram-in-900000002',
     }));
 

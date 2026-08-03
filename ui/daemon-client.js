@@ -34,16 +34,36 @@ const DAEMON_PID_FILE = resolveCoordPath('runtime/daemon.pid', { forWrite: true 
  * the environment, no launch row is written at all: a fabricated generation
  * would produce receipts that pass every check while naming a run that never
  * happened.
+ *
+ * THE RUNTIME COMES FROM THE COMMAND THAT IS ABOUT TO RUN.
+ *
+ * This is the repair for the defect that made the whole registry unreachable.
+ * The previous version read `mode || spawnEnv.SQUIDRUN_RUNTIME`, and on the
+ * standard pane path `mode` is literally `null` while NOTHING IN THE REPOSITORY
+ * EVER SET `SQUIDRUN_RUNTIME` — so this function returned null for every real
+ * pane, no launch row was ever written, no `SQUIDRUN_PANE_LAUNCH_ID` was ever
+ * exported, and the admission producer failed `no_launch_binding` on every
+ * prompt. The wiring existed and could not fire.
+ *
+ * `spawnOptions.paneCommand` is the literal command the daemon is being asked
+ * to run, present on every branch of the standard path, and it is resolved
+ * through the SAME `resolveConsumerRuntimeForLaunch` the rest of the app uses.
+ * An unrecognised command still writes nothing: a guessed runtime is exactly
+ * the fabricated identity this checkpoint exists to refuse.
  */
-function recordPaneLaunchForSpawn({ spawnEnv, paneId, role, mode }) {
+function recordPaneLaunchForSpawn({ spawnEnv, paneId, role, mode, spawnOptions }) {
   try {
     const {
       ENV_LAUNCH_ID,
       ENV_APP_GENERATION,
       generateLaunchId,
-      applyLaunchRegistrySchema,
       recordPaneLaunch,
     } = require('./modules/main/telegram-launch-registry');
+    // THE WHOLE TELEGRAM SCHEMA, not just the registry half. The receipts table
+    // carries a foreign key into `telegram_transport_claims`, so a database
+    // holding one half of this schema unit accepts the launch row and then
+    // fails the receipt insert with a missing-table error the hook swallows.
+    const { applyTelegramAdmissionSchema } = require('./modules/main/telegram-admission-store');
     const { TelegramAdmissionWriter } = require('./modules/main/telegram-admission-writer');
 
     const appGeneration = String(
@@ -51,7 +71,16 @@ function recordPaneLaunchForSpawn({ spawnEnv, paneId, role, mode }) {
     ).trim();
     if (!appGeneration) return null;
 
-    const consumerRuntime = String(mode || spawnEnv.SQUIDRUN_RUNTIME || '').trim().toLowerCase();
+    const { resolveConsumerRuntimeForLaunch } = require('./modules/runtime-detect');
+    const paneCommand = spawnOptions && typeof spawnOptions === 'object'
+      ? spawnOptions.paneCommand
+      : null;
+    const consumerRuntime = String(
+      mode
+      || spawnEnv.SQUIDRUN_RUNTIME
+      || resolveConsumerRuntimeForLaunch(paneCommand)
+      || ''
+    ).trim().toLowerCase();
     if (!consumerRuntime) return null;
 
     const launchId = generateLaunchId();
@@ -60,13 +89,18 @@ function recordPaneLaunchForSpawn({ spawnEnv, paneId, role, mode }) {
     if (!opened.ok) return null;
     try {
       const result = writer.transaction((db) => {
-        const schema = applyLaunchRegistrySchema(db);
+        const schema = applyTelegramAdmissionSchema(db);
         if (!schema.ok) return schema;
         return recordPaneLaunch(db, {
           launchId,
           appGeneration,
           paneId: String(paneId),
-          role: String(role || ''),
+          // LOWERCASED INTO THE KERNEL'S ADDRESS VOCABULARY. `PANE_ROLES` says
+          // `Architect`; `comms_journal.target_role` and the obligations CHECK
+          // constraint both say `architect`. Storing the display form here
+          // would make every admission fail its launch-identity join on a
+          // capital letter — a mismatch that reads as tampering.
+          role: String(role || '').trim().toLowerCase(),
           consumerRuntime,
           daemonProcessId: String(process.pid),
           launchedAtMs: Date.now(),
@@ -633,7 +667,7 @@ class DaemonClient extends EventEmitter {
     // SQUIDRUN_PANE_LAUNCH_ID; that hand-off is the only way a later hook can
     // name its own launch, and without it `pane_launch_id` stays what it was
     // for two checkpoints — a column the store read and nothing ever wrote.
-    recordPaneLaunchForSpawn({ spawnEnv, paneId: id, role, mode });
+    recordPaneLaunchForSpawn({ spawnEnv, paneId: id, role, mode, spawnOptions });
     stripElectronRunAsNode(spawnEnv);
     const payload = {
       action: 'spawn',

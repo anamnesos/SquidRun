@@ -125,16 +125,10 @@ function isInsideSquidRunPrivateRoot(candidatePath) {
   return pathSegments(path.resolve(candidatePath)).some((segment) => segment.toLowerCase() === '.squidrun');
 }
 
-function detectCliFromCommand(command) {
-  const normalized = String(command || '').trim().toLowerCase();
-  if (!normalized) return 'claude';
-  if (normalized.startsWith('gemini')) return 'gemini';
-  if (normalized.startsWith('codex')) return 'codex';
-  if (normalized.startsWith('claude')) return 'claude';
-  if (normalized.includes('gemini')) return 'gemini';
-  if (normalized.includes('codex')) return 'codex';
-  return 'claude';
-}
+// ONE DEFINITION, TWO CONSUMERS. `daemon-client` needs this same answer to name
+// the pane launch it records, and a second copy there would drift into a launch
+// row asserting a runtime the pane is not running.
+const { detectCliFromCommand } = require('../runtime-detect');
 
 function normalizeCodexComputerUsePaneIds(value) {
   if (!Array.isArray(value)) return [];
