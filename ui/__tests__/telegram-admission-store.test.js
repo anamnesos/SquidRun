@@ -35,9 +35,25 @@ function createDatabase(filePath) {
   }
 }
 
+const { TelegramAdmissionWriter } = require('../modules/main/telegram-admission-writer');
+const {
+  SUBMISSION_KINDS,
+  generateLaunchId,
+  recordPaneLaunch,
+  completePaneLaunch,
+  bindConsumerSession,
+  recordAdmissionReceipt,
+} = require('../modules/main/telegram-launch-registry');
+const { buildAdmissionRecord } = require('../modules/main/telegram-consumed-proof');
+
 const tempRoots = [];
 const openDbs = [];
 const openStores = [];
+/** The dedicated writer's store for the CURRENT fixture db. */
+let currentStore = null;
+/** The admission receipt seeded for the current chain. */
+let currentAdmissionId = null;
+let currentLaunchId = null;
 /**
  * THE REAL EVIDENCE-LEDGER SCHEMA, in a temp database.
  *
@@ -46,19 +62,21 @@ const openStores = [];
  * authorities the state machine is supposed to move. Instantiating the real
  * store class runs its real migrations, so these tests can query all four.
  */
+/**
+ * A3: the fixture is now the PRODUCTION TOPOLOGY, not an imitation of it.
+ *
+ * A2's fixture opened the ordinary store and raised `synchronous` to FULL by
+ * hand, which proved the pragma works and nothing about how production would
+ * obtain a durable handle. The dedicated writer is what production uses, so it
+ * is what the tests use — including its identity and foreign-key assertions.
+ */
 function openRealLedger(dbPath) {
-  const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
-  const store = new EvidenceLedgerStore({ dbPath, enabled: true });
-  const init = store.init();
-  if (!init || init.ok !== true) throw new Error(`real ledger init failed: ${JSON.stringify(init)}`);
-  const db = store.db;
-  // The gate requires the PRODUCTION WRITER HANDLE to assert durable commit;
-  // the ledger opens with synchronous=NORMAL, so the fixture raises it to FULL
-  // exactly as production wiring will have to. See the durability tests below.
-  db.exec('PRAGMA journal_mode=WAL;');
-  db.exec('PRAGMA synchronous=FULL;');
-  openStores.push(store);
-  return db;
+  const writer = new TelegramAdmissionWriter({ dbPath });
+  const opened = writer.open();
+  if (!opened.ok) throw new Error(`admission writer open failed: ${JSON.stringify(opened)}`);
+  openStores.push(writer);
+  currentStore = writer.store;
+  return writer.db;
 }
 
 function freshDb() {
@@ -66,7 +84,87 @@ function freshDb() {
   tempRoots.push(root);
   const db = openRealLedger(path.join(root, 'ledger.db'));
   applyTelegramAdmissionSchema(db);
+  seedLaunchAndSession(db);
   return db;
+}
+
+/**
+ * A3: a REAL pane launch and session, from the real producers.
+ *
+ * A2's fixtures passed `launch-1` and `pid-4242` — values no component could
+ * emit, which made the store's strictest joins unfalsifiable in both
+ * directions. Nothing below invents an identity any more.
+ */
+function seedLaunchAndSession(db) {
+  currentLaunchId = generateLaunchId();
+  recordPaneLaunch(db, {
+    launchId: currentLaunchId,
+    appGeneration: 'tg-gen-1',
+    paneId: '1',
+    role: 'architect',
+    consumerRuntime: 'codex',
+    daemonProcessId: '4242',
+    launchedAtMs: NOW - 5000,
+  });
+  bindConsumerSession(db, {
+    consumerSessionId: 'sess-1',
+    launchId: currentLaunchId,
+    consumerRuntime: 'codex',
+    boundAtMs: NOW - 4000,
+  });
+  completePaneLaunch(db, { launchId: currentLaunchId, atMs: NOW - 3500 });
+  currentAdmissionId = null;
+  return currentLaunchId;
+}
+
+/** Record the admission receipt the consumer would have written. */
+function seedAdmissionReceipt(db, { src, claim, deliveredPrompt = DELIVERED_PROMPT, overrides = {} } = {}) {
+  const record = buildAdmissionRecord({
+    runtime: 'codex',
+    updateId: 900000001,
+    messageId: 'telegram-in-900000001',
+    routeKey: 'main',
+    windowKey: 'main',
+    profile: 'main',
+    chatId: 6543210,
+    appGeneration: 'tg-gen-1',
+    queuedPayloadSha256: sha256('canonical-a'),
+    consumerSessionId: 'sess-1',
+    consumerTurnId: 'turn-1',
+    paneId: '1',
+    deliveredPrompt,
+    consumedAtMs: NOW + 30,
+    ...(overrides.record || {}),
+  });
+  const stored = recordAdmissionReceipt(db, {
+    record,
+    sourceRowId: src.sourceRowId,
+    claimId: claim.claimId,
+    launchId: currentLaunchId,
+    consumerSessionId: 'sess-1',
+    hookProcessId: '9001',
+    hookParentProcessId: '9000',
+    runtimeSubmissionId: 'turn-1',
+    runtimeSubmissionKind: SUBMISSION_KINDS.CODEX_TURN,
+    ...(overrides.receipt || {}),
+  });
+  if (stored.ok) currentAdmissionId = stored.admissionId;
+  return stored;
+}
+
+/** Promotion now requires the dedicated writer's store on the same handle. */
+function promote(db, input) {
+  return promoteToAdmittedOwned(db, input, currentStore);
+}
+
+/** Delivery now records the exact bytes written to the pane. */
+function startDelivery(db, input = {}) {
+  const deliveredPrompt = input.deliveredPrompt ?? DELIVERED_PROMPT;
+  return recordDeliveryStarted(db, {
+    deliveredPromptSha256: sha256(deliveredPrompt),
+    deliveredPromptBytes: Buffer.byteLength(deliveredPrompt, 'utf8'),
+    ...input,
+  });
 }
 afterEach(() => {
   while (openStores.length) { try { openStores.pop().close(); } catch { /* already closed */ } }
@@ -76,6 +174,8 @@ afterEach(() => {
 
 const NOW = 1_785_780_000_000;
 const CUTOVER = 'cutover-s491';
+/** The exact bytes the drain writes to the pane in these fixtures. */
+const DELIVERED_PROMPT = 'synthetic checkpoint A fixture';
 
 function sourceInput(overrides = {}) {
   return {
@@ -102,7 +202,7 @@ function claimInput(sourceRowId, overrides = {}) {
     updateId: 900000001,
     sourceRowId,
     appGeneration: 'tg-gen-1',
-    paneLaunchId: 'launch-1',
+    paneLaunchId: currentLaunchId,
     paneId: '1',
     role: 'architect',
     consumerRuntime: 'codex',
@@ -112,28 +212,32 @@ function claimInput(sourceRowId, overrides = {}) {
   };
 }
 
+/**
+ * A3: the consumer-identity fields are GONE from the caller's input.
+ *
+ * `consumerSessionId`, `runtimeSubmissionId`, `runtimeSubmissionKind`,
+ * `hookProcessId` and `hookParentProcessId` used to be passed in here and any
+ * non-empty string was accepted. They now come from the durable admission
+ * receipt, so the only thing a caller may name is WHICH receipt.
+ */
 function ownedInput(claimId, overrides = {}) {
   return {
     messageId: 'telegram-in-900000001',
     claimId,
-    admissionId: 'adm-1',
-    consumerSessionId: 'sess-1',
-    runtimeSubmissionId: 'turn-1',
-    runtimeSubmissionKind: 'codex_turn_id',
+    admissionId: currentAdmissionId,
     obligorAddress: 'architect',
     queueAckIntent: 'ack-intent-1',
-    hookProcessId: 'pid-4242',
-    hookParentProcessId: 'ppid-1111',
     atMs: NOW + 1000,
     ...overrides,
   };
 }
 
-/** Drive a record all the way to a delivery-started claim. */
+/** Drive a record all the way to a delivery-started claim with a real receipt. */
 function seedToDeliveryStarted(db) {
   const src = recordImmutableSource(db, sourceInput());
   const claim = claimTransportAttempt(db, claimInput(src.sourceRowId));
-  recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW + 10 });
+  startDelivery(db, { claimId: claim.claimId, atMs: NOW + 10 });
+  seedAdmissionReceipt(db, { src, claim });
   return { src, claim };
 }
 
@@ -286,7 +390,7 @@ describe('exclusive transport claim', () => {
     const db = freshDb();
     const src = recordImmutableSource(db, sourceInput());
     const first = claimTransportAttempt(db, claimInput(src.sourceRowId));
-    recordDeliveryStarted(db, { claimId: first.claimId, atMs: NOW + 10 });
+    startDelivery(db, { claimId: first.claimId, atMs: NOW + 10 });
 
     const muchLater = claimTransportAttempt(db, claimInput(src.sourceRowId, {
       attemptNonce: 'nonce-much-later',
@@ -330,8 +434,8 @@ describe('exclusive transport claim', () => {
     const src = recordImmutableSource(db, sourceInput());
     const claim = claimTransportAttempt(db, claimInput(src.sourceRowId));
 
-    recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW + 10 });
-    recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW + 20 });
+    startDelivery(db, { claimId: claim.claimId, atMs: NOW + 10 });
+    startDelivery(db, { claimId: claim.claimId, atMs: NOW + 20 });
 
     const events = db.prepare(
       "SELECT * FROM telegram_transport_events WHERE kind = 'delivery_started'"
@@ -351,7 +455,7 @@ describe('admitted_owned promotion', () => {
     const db = freshDb();
     const { src, claim } = seedToDeliveryStarted(db);
 
-    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+    const owned = promote(db, ownedInput(claim.claimId));
 
     expect(owned.ok).toBe(true);
     expect(owned.obligationId).toBe(src.obligationId);
@@ -371,7 +475,7 @@ describe('admitted_owned promotion', () => {
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
 
-    const failed = promoteToAdmittedOwned(db, ownedInput(claim.claimId, {
+    const failed = promote(db, ownedInput(claim.claimId, {
       canonicalPayloadSha256: sha256('a digest that does not match'),
     }));
 
@@ -388,8 +492,11 @@ describe('admitted_owned promotion', () => {
     const db = freshDb();
     const src = recordImmutableSource(db, sourceInput());
     const claim = claimTransportAttempt(db, claimInput(src.sourceRowId));
+    // A real receipt exists, so the refusal below is about the CLAIM STATE and
+    // not merely about a missing admission id.
+    seedAdmissionReceipt(db, { src, claim });
 
-    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+    const owned = promote(db, ownedInput(claim.claimId));
 
     expect(owned.ok).toBe(false);
     expect(owned.reason).toBe('claim_not_delivery_started');
@@ -399,8 +506,8 @@ describe('admitted_owned promotion', () => {
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
 
-    const first = promoteToAdmittedOwned(db, ownedInput(claim.claimId));
-    const replay = promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+    const first = promote(db, ownedInput(claim.claimId));
+    const replay = promote(db, ownedInput(claim.claimId));
 
     expect(replay.ok).toBe(true);
     expect(replay.created).toBe(false);
@@ -409,18 +516,75 @@ describe('admitted_owned promotion', () => {
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_binding_events').get().n)).toBe(1);
   });
 
-  test.each([
-    ['a different admission id', { admissionId: 'adm-2' }],
-    ['a different consumer session', { consumerSessionId: 'sess-2' }],
-    ['a different submission id', { runtimeSubmissionId: 'turn-2' }],
-    ['a different submission kind', { runtimeSubmissionKind: 'claude_prompt_id' }],
-    ['a different queue ack intent', { queueAckIntent: 'ack-intent-2' }],
-  ])('A SECOND PROMOTION WITH %s FAILS CLOSED — identity never rewrites', (_label, patch) => {
+  test('A SECOND PROMOTION WITH a different queue ack intent FAILS CLOSED', () => {
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
-    promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+    promote(db, ownedInput(claim.claimId));
 
-    const conflicting = promoteToAdmittedOwned(db, ownedInput(claim.claimId, patch));
+    const conflicting = promote(db, ownedInput(claim.claimId, {
+      queueAckIntent: 'ack-intent-2',
+    }));
+
+    expect(conflicting.ok).toBe(false);
+    expect(conflicting.reason).toBe('binding_identity_conflict');
+  });
+
+  test('A SECOND PROMOTION WITH a fabricated admission id is REFUSED AT THE RECEIPT', () => {
+    // A3 changed where this fails, and the new place is stricter. Under A2 an
+    // unknown admission id reached the binding comparison and was caught as an
+    // identity conflict; now it never gets that far, because no such receipt
+    // exists. Both refuse — only one of them checked that a consumer was real.
+    const db = freshDb();
+    const { claim } = seedToDeliveryStarted(db);
+    promote(db, ownedInput(claim.claimId));
+
+    const conflicting = promote(db, ownedInput(claim.claimId, { admissionId: 'adm-2' }));
+
+    expect(conflicting.ok).toBe(false);
+    expect(conflicting.reason).toBe('admission_receipt_not_found');
+  });
+
+  test.each([
+    ['a different consumer session', { consumerSessionId: 'sess-2' }],
+    ['a different submission id', { runtimeSubmissionId: 'turn-2' }],
+    ['a different submission kind', { runtimeSubmissionKind: SUBMISSION_KINDS.CLAUDE_PROMPT }],
+  ])('A SECOND RECEIPT CARRYING %s CANNOT REWRITE THE BINDING', (_label, patch) => {
+    // These identities are no longer caller inputs, so the only way to offer a
+    // different one is a genuinely different RECEIPT. That is a stronger test
+    // than the A2 version: it proves the binding is immutable against a real
+    // second consumer record, not against a string the caller retyped.
+    const db = freshDb();
+    const { src, claim } = seedToDeliveryStarted(db);
+    const first = promote(db, ownedInput(claim.claimId));
+    expect(first.ok).toBe(true);
+
+    if (patch.consumerSessionId) {
+      bindConsumerSession(db, {
+        consumerSessionId: patch.consumerSessionId,
+        launchId: currentLaunchId,
+        consumerRuntime: 'codex',
+        boundAtMs: NOW - 4000,
+      });
+    }
+    const second = seedAdmissionReceipt(db, {
+      src,
+      claim,
+      overrides: {
+        receipt: {
+          consumerSessionId: patch.consumerSessionId || 'sess-1',
+          runtimeSubmissionId: patch.runtimeSubmissionId || 'turn-1',
+          runtimeSubmissionKind: patch.runtimeSubmissionKind || SUBMISSION_KINDS.CODEX_TURN,
+        },
+        record: patch.consumerSessionId
+          ? { consumerSessionId: patch.consumerSessionId }
+          : {},
+      },
+    });
+    expect(second.ok).toBe(true);
+
+    const conflicting = promote(db, ownedInput(claim.claimId, {
+      admissionId: second.admissionId,
+    }));
 
     expect(conflicting.ok).toBe(false);
     expect(conflicting.reason).toBe('binding_identity_conflict');
@@ -429,7 +593,7 @@ describe('admitted_owned promotion', () => {
   test('THE BINDING CARRIES THE FULL IMMUTABLE IDENTITY the gate names', () => {
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
-    promoteToAdmittedOwned(db, ownedInput(claim.claimId, {
+    promote(db, ownedInput(claim.claimId, {
       predecessorManifestSha256: sha256('predecessor-manifest'),
     }));
 
@@ -441,13 +605,13 @@ describe('admitted_owned promotion', () => {
       route_key: 'main',
       profile: 'main',
       window_key: 'main',
-      admission_id: 'adm-1',
+      admission_id: currentAdmissionId,
       attempt_nonce: 'nonce-1',
       app_generation: 'tg-gen-1',
-      pane_launch_id: 'launch-1',
+      pane_launch_id: currentLaunchId,
       consumer_session_id: 'sess-1',
       runtime_submission_id: 'turn-1',
-      runtime_submission_kind: 'codex_turn_id',
+      runtime_submission_kind: SUBMISSION_KINDS.CODEX_TURN,
       queue_ack_intent: 'ack-intent-1',
       obligor_address: 'architect',
       work_generation: 1,
@@ -461,7 +625,7 @@ describe('admitted_owned promotion', () => {
     // abandoned has an owner from the moment it is admitted.
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
-    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+    const owned = promote(db, ownedInput(claim.claimId));
 
     const binding = db.prepare('SELECT work_generation, work_lease_token, state FROM telegram_obligation_bindings').get();
     expect(binding.work_generation).toBe(1);
@@ -471,7 +635,7 @@ describe('admitted_owned promotion', () => {
 
   test('A MISSING SOURCE OR CLAIM fails closed', () => {
     const db = freshDb();
-    expect(promoteToAdmittedOwned(db, ownedInput('tgc_nonexistent')).ok).toBe(false);
+    expect(promote(db, ownedInput('tgc_nonexistent')).ok).toBe(false);
   });
 
   test('A CLAIM WHOSE cutover/route/update DISAGREES WITH ITS SOURCE is refused AT ACQUISITION', () => {
@@ -623,7 +787,7 @@ describe('the ownership transaction is ONE transaction', () => {
     const statements = [];
     db.exec = (sql) => { statements.push(String(sql).trim().toUpperCase()); return realExec(sql); };
 
-    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+    const owned = promote(db, ownedInput(claim.claimId));
     db.exec = realExec;
 
     expect(owned.ok).toBe(true);
@@ -640,7 +804,7 @@ describe('the ownership transaction is ONE transaction', () => {
     const statements = [];
     db.exec = (sql) => { statements.push(String(sql).trim().toUpperCase()); return realExec(sql); };
 
-    const failed = promoteToAdmittedOwned(db, ownedInput(claim.claimId, {
+    const failed = promote(db, ownedInput(claim.claimId, {
       canonicalPayloadSha256: sha256('mismatch'),
     }));
     db.exec = realExec;
@@ -657,7 +821,7 @@ describe('THE GENERAL KERNEL ACTUALLY HOLDS THE DEBT (blocker 1)', () => {
   test('AFTER PROMOTION all four authorities agree', () => {
     const db = freshDb();
     const { src, claim } = seedToDeliveryStarted(db);
-    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+    const owned = promote(db, ownedInput(claim.claimId));
     expect(owned.ok).toBe(true);
 
     // 1. REAL obligations row, keyed to the REAL comms row id.
@@ -708,7 +872,7 @@ describe('THE GENERAL KERNEL ACTUALLY HOLDS THE DEBT (blocker 1)', () => {
     const db = freshDb();
     const { src, claim } = seedToDeliveryStarted(db);
 
-    const failed = promoteToAdmittedOwned(db, ownedInput(claim.claimId, {
+    const failed = promote(db, ownedInput(claim.claimId, {
       canonicalPayloadSha256: sha256('a digest that does not match'),
     }));
     expect(failed.ok).toBe(false);
@@ -750,7 +914,7 @@ describe('obligor identity is stored, not merely hashed (blocker 3)', () => {
   test('PROMOTION CANNOT OFFER A DIFFERENT OBLIGOR than the one that hashed the id', () => {
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
-    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId, { obligorAddress: 'builder' }));
+    const owned = promote(db, ownedInput(claim.claimId, { obligorAddress: 'builder' }));
     expect(owned.ok).toBe(false);
     expect(owned.reason).toBe('obligor_mismatch');
     expect(Number(db.prepare('SELECT COUNT(*) n FROM obligations').get().n)).toBe(0);
@@ -763,9 +927,9 @@ describe('delivery_started state table (blocker 5)', () => {
     // SECOND pane write for a message already delivered.
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
-    promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+    promote(db, ownedInput(claim.claimId));
 
-    const again = recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW + 5000 });
+    const again = startDelivery(db, { claimId: claim.claimId, atMs: NOW + 5000 });
 
     expect(again.ok).toBe(false);
     expect(again.reason).toBe('claim_already_admitted');
@@ -780,7 +944,7 @@ describe('delivery_started state table (blocker 5)', () => {
     const claim = claimTransportAttempt(db, claimInput(src.sourceRowId));
     closeUnsentClaim(db, { claimId: claim.claimId, reason: 'pane_missing', atMs: NOW + 5 });
 
-    const started = recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW + 10 });
+    const started = startDelivery(db, { claimId: claim.claimId, atMs: NOW + 10 });
     expect(started.ok).toBe(false);
     expect(started.reason).toBe('claim_closed');
   });
@@ -820,9 +984,9 @@ describe('durability is asserted on the handle we were given', () => {
     db.exec('PRAGMA synchronous=NORMAL;');
 
     expect(claimTransportAttempt(db, claimInput(src.sourceRowId)).reason).toBe('durability_not_full');
-    expect(recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW }).reason).toBe('durability_not_full');
+    expect(startDelivery(db, { claimId: claim.claimId, atMs: NOW }).reason).toBe('durability_not_full');
     expect(closeUnsentClaim(db, { claimId: claim.claimId, reason: 'x', atMs: NOW }).reason).toBe('durability_not_full');
-    expect(promoteToAdmittedOwned(db, ownedInput(claim.claimId)).reason).toBe('durability_not_full');
+    expect(promote(db, ownedInput(claim.claimId)).reason).toBe('durability_not_full');
   });
 });
 
@@ -864,7 +1028,7 @@ describe('digests are validated at the storage boundary (blocker 8)', () => {
   test('A MALFORMED predecessor manifest digest is refused at promotion', () => {
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
-    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId, {
+    const owned = promote(db, ownedInput(claim.claimId, {
       predecessorManifestSha256: 'not-a-digest',
     }));
     expect(owned.ok).toBe(false);
@@ -885,13 +1049,14 @@ describe('promotion re-verifies correlation even for a forged claim row', () => 
     const claim = claimTransportAttempt(db, claimInput(srcB.sourceRowId, {
       updateId: 900000002, attemptNonce: 'nonce-b',
     }));
-    recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW + 10 });
+    startDelivery(db, { claimId: claim.claimId, atMs: NOW + 10 });
+    seedAdmissionReceipt(db, { src: srcB, claim });
 
     // Repoint the committed claim at the WRONG source row.
     db.prepare('UPDATE telegram_transport_claims SET source_row_id = ? WHERE claim_id = ?')
       .run(srcA.sourceRowId, claim.claimId);
 
-    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId, {
+    const owned = promote(db, ownedInput(claim.claimId, {
       messageId: 'telegram-in-900000002',
     }));
 
@@ -1021,9 +1186,10 @@ describe('causal ordering (Oracle #29)', () => {
     const claim = claimTransportAttempt(db, claimInput(src.sourceRowId, {
       attemptAtMs: NOW - 60_000, // before the message existed
     }));
-    recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW - 50_000 });
+    startDelivery(db, { claimId: claim.claimId, atMs: NOW - 50_000 });
+    seedAdmissionReceipt(db, { src, claim });
 
-    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+    const owned = promote(db, ownedInput(claim.claimId));
 
     expect(owned.ok).toBe(false);
     expect(owned.reason).toBe('causal_order_violation:attempt_before_source');
@@ -1033,7 +1199,7 @@ describe('causal ordering (Oracle #29)', () => {
   test('AN ADMISSION THAT PREDATES ITS DELIVERY is refused', () => {
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
-    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId, { atMs: NOW + 1 }));
+    const owned = promote(db, ownedInput(claim.claimId, { atMs: NOW + 1 }));
 
     expect(owned.ok).toBe(false);
     expect(owned.reason).toBe('causal_order_violation:admission_before_delivery');
@@ -1042,7 +1208,7 @@ describe('causal ordering (Oracle #29)', () => {
   test('A CAUSALLY ORDERED PROMOTION still succeeds — the check is not always-fail', () => {
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
-    expect(promoteToAdmittedOwned(db, ownedInput(claim.claimId)).ok).toBe(true);
+    expect(promote(db, ownedInput(claim.claimId)).ok).toBe(true);
   });
 });
 
@@ -1050,7 +1216,7 @@ describe('binding carries claim and admission provenance (Oracle #29)', () => {
   test('THE BINDING NAMES THE CLAIM IT CAME FROM', () => {
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
-    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+    const owned = promote(db, ownedInput(claim.claimId));
 
     const binding = db.prepare('SELECT claim_id FROM telegram_obligation_bindings WHERE obligation_id = ?')
       .get(owned.obligationId);
@@ -1060,7 +1226,7 @@ describe('binding carries claim and admission provenance (Oracle #29)', () => {
   test('ONE ADMISSION ID CANNOT OWN TWO BINDINGS', () => {
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
-    promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+    promote(db, ownedInput(claim.claimId));
 
     // A second source, promoted with the SAME admission id, must be refused by
     // the UNIQUE constraint rather than quietly creating a second debt.
@@ -1070,9 +1236,9 @@ describe('binding carries claim and admission provenance (Oracle #29)', () => {
     const claimB = claimTransportAttempt(db, claimInput(b.sourceRowId, {
       updateId: 900000002, attemptNonce: 'nonce-b',
     }));
-    recordDeliveryStarted(db, { claimId: claimB.claimId, atMs: NOW + 10 });
+    startDelivery(db, { claimId: claimB.claimId, atMs: NOW + 10 });
 
-    const owned = promoteToAdmittedOwned(db, ownedInput(claimB.claimId, {
+    const owned = promote(db, ownedInput(claimB.claimId, {
       messageId: 'telegram-in-900000002',
       admissionId: 'adm-1', // reused
     }));

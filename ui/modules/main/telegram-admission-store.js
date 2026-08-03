@@ -30,8 +30,14 @@ const crypto = require('node:crypto');
 
 const {
   buildObligationId,
-  buildObligationEventId,
 } = require('./obligation-kernel');
+const {
+  applyLaunchRegistrySchema,
+  loadAdmissionReceipt,
+  LAUNCH_STATES,
+  SUBMISSION_KINDS,
+} = require('./telegram-launch-registry');
+const { validateAdmissionRecord } = require('./telegram-consumed-proof');
 
 const SCHEMA_VERSION = 'telegram_admission_store.v2';
 /** Versioned key under `comms_journal.metadata_json`. Identity, not decoration. */
@@ -149,10 +155,17 @@ function assertDurableHandle(db) {
 const REQUIRED_SCHEMA_SHAPE = Object.freeze([
   ['telegram_transport_claims', 'attempt_nonce'],
   ['telegram_transport_claims', "state IN ('claimed', 'delivery_started'"],
+  ['telegram_transport_claims', 'delivered_prompt_sha256'],
   ['idx_tg_claims_exclusive', "WHERE state != 'closed_unsent'"],
   ['telegram_obligation_bindings', 'hook_parent_process_id'],
   ['telegram_obligation_bindings', 'claim_id'],
   ['telegram_queue_ack_outbox', 'appended_at_ms'],
+  // The identity tables promotion now joins. A build that predates them must
+  // read as STALE rather than silently admitting with the tuple unchecked.
+  ['telegram_pane_launches', "state IN ('launching', 'complete')"],
+  ['telegram_consumer_sessions', 'launch_id'],
+  ['telegram_admission_receipts', "schema_name = 'telegram_admission.v1'"],
+  ['telegram_admission_receipts', 'record_json'],
 ]);
 
 /**
@@ -200,6 +213,10 @@ function applyTelegramAdmissionSchema(db) {
   } catch (err) {
     return fail('schema_apply_failed', { message: err.message });
   }
+  // The launch/session/receipt identity tables are part of the SAME schema unit:
+  // promotion joins them, so a database carrying one half is not usable.
+  const registry = applyLaunchRegistrySchema(db);
+  if (!registry.ok) return registry;
   const verified = verifyInstalledSchema(db);
   if (!verified.ok) return verified;
   return { ok: true, schemaVersion: SCHEMA_VERSION };
@@ -222,6 +239,15 @@ function applyTelegramAdmissionSchemaDdl(db) {
       consumer_runtime       TEXT    NOT NULL,
       attempt_nonce          TEXT    NOT NULL,
       attempt_at_ms          INTEGER NOT NULL,
+      -- WHAT THE DRAIN ACTUALLY WROTE TO THE PANE, recorded at the moment the
+      -- pane write is authorised. This is the SENDER half of the
+      -- truncated-but-acked defence: the hook records what it RECEIVED, this
+      -- records what we SENT, and promotion refuses unless they are the same
+      -- bytes. Without it the consumer's digest has nothing to be compared to
+      -- and deliveredPromptSha256 is a number we carry but never check.
+      -- NULL until delivery starts; a claim is not yet a delivery.
+      delivered_prompt_sha256 TEXT,
+      delivered_prompt_bytes  INTEGER,
       -- LEGAL STATES ENFORCED BY THE DATABASE, not only by the code that
       -- writes them. An application-only state machine is a convention.
       state                  TEXT    NOT NULL CHECK (
@@ -591,6 +617,20 @@ function recordDeliveryStarted(db, input = {}) {
   const atMs = Number(input.atMs);
   if (!Number.isSafeInteger(atMs) || atMs <= 0) return fail('delivery_started_field_missing:atMs');
 
+  // THE EXACT BYTES BEING WRITTEN TO THE PANE. Required, because promotion
+  // compares them against what the consumer says it received, and a delivery
+  // that cannot say what it sent can never be contradicted by the consumer.
+  if (!isNonEmptyString(input.deliveredPromptSha256)) {
+    return fail('delivery_started_field_missing:deliveredPromptSha256');
+  }
+  if (!SHA256_RE.test(String(input.deliveredPromptSha256))) {
+    return fail('delivery_started_digest_malformed:deliveredPromptSha256');
+  }
+  const deliveredPromptBytes = Number(input.deliveredPromptBytes);
+  if (!Number.isSafeInteger(deliveredPromptBytes) || deliveredPromptBytes < 0) {
+    return fail('delivery_started_field_missing:deliveredPromptBytes');
+  }
+
   begin(db);
   try {
     const claim = db.prepare('SELECT * FROM telegram_transport_claims WHERE claim_id = ?')
@@ -599,17 +639,55 @@ function recordDeliveryStarted(db, input = {}) {
 
     switch (claim.state) {
       case CLAIM_STATES.CLAIMED:
-        db.prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
-          .run(CLAIM_STATES.DELIVERY_STARTED, input.claimId);
+        db.prepare(`
+          UPDATE telegram_transport_claims
+          SET state = ?, delivered_prompt_sha256 = ?, delivered_prompt_bytes = ?
+          WHERE claim_id = ?
+        `).run(
+          CLAIM_STATES.DELIVERY_STARTED, input.deliveredPromptSha256,
+          deliveredPromptBytes, input.claimId
+        );
         db.prepare('INSERT INTO telegram_transport_events (claim_id, kind, at_ms, detail) VALUES (?, ?, ?, ?)')
           .run(input.claimId, 'delivery_started', atMs, input.detail ?? null);
         commit(db);
         return { ok: true, claimId: input.claimId, state: CLAIM_STATES.DELIVERY_STARTED, created: true };
 
-      case CLAIM_STATES.DELIVERY_STARTED:
-        // Exact idempotency: already started, no second event, no rewind.
+      case CLAIM_STATES.DELIVERY_STARTED: {
+        // IDEMPOTENCY IS EXACT, NOT APPROXIMATE. A second delivery_started for
+        // the same claim carrying DIFFERENT bytes is not a replay, it is a
+        // second delivery — and silently keeping the first digest would let the
+        // pane be written twice while promotion still validates against the
+        // original. Conflicting time or detail is rejected for the same reason.
+        if (String(claim.delivered_prompt_sha256) !== String(input.deliveredPromptSha256)
+          || Number(claim.delivered_prompt_bytes) !== deliveredPromptBytes) {
+          rollback(db);
+          return fail('delivery_payload_conflict', {
+            stored: claim.delivered_prompt_sha256,
+            offered: input.deliveredPromptSha256,
+          });
+        }
+        const priorRow = db.prepare(`
+          SELECT at_ms, detail FROM telegram_transport_events
+          WHERE claim_id = ? AND kind = 'delivery_started'
+          ORDER BY event_id ASC LIMIT 1
+        `).get(input.claimId);
+        if (priorRow) {
+          if (Number(priorRow.at_ms) !== atMs) {
+            rollback(db);
+            return fail('delivery_replay_time_conflict', {
+              stored: priorRow.at_ms, offered: atMs,
+            });
+          }
+          if (String(priorRow.detail ?? '') !== String(input.detail ?? '')) {
+            rollback(db);
+            return fail('delivery_replay_detail_conflict', {
+              stored: priorRow.detail, offered: input.detail ?? null,
+            });
+          }
+        }
         commit(db);
         return { ok: true, claimId: input.claimId, state: CLAIM_STATES.DELIVERY_STARTED, created: false };
+      }
 
       case CLAIM_STATES.ADMITTED:
         // ALREADY ADMITTED MEANS NO PANE WRITE, reported explicitly rather than
@@ -671,17 +749,37 @@ function closeUnsentClaim(db, input = {}) {
  * none does — and "all" now means the general kernel actually holds the debt,
  * which is the whole correction from A1.
  */
-function promoteToAdmittedOwned(db, input = {}) {
+function promoteToAdmittedOwned(db, input = {}, store = null) {
   const durable = assertDurableHandle(db);
   if (!durable.ok) return durable;
 
-  const required = [
-    'messageId', 'claimId', 'admissionId', 'consumerSessionId',
-    'runtimeSubmissionId', 'runtimeSubmissionKind', 'obligorAddress', 'queueAckIntent',
-    'hookProcessId', 'hookParentProcessId',
-  ];
+  // THE CANONICAL KERNEL PRIMITIVE MUST RUN ON THIS EXACT HANDLE.
+  //
+  // A store pointed at the same FILE is not the same CONNECTION: its writes
+  // would land in a different transaction, so a rollback here would leave the
+  // obligation committed and the binding gone. Identity of the handle is the
+  // only thing that makes "one atomic transition across four authorities" true,
+  // so it is checked rather than assumed.
+  if (!store || typeof store.createObligationInCallerTransaction !== 'function') {
+    return fail('owned_store_required');
+  }
+  if (store.db !== db) return fail('owned_store_handle_mismatch');
+
+  // NOTE WHAT IS NO LONGER ACCEPTED HERE. `consumerSessionId`,
+  // `runtimeSubmissionId`, `runtimeSubmissionKind`, `hookProcessId` and
+  // `hookParentProcessId` used to be caller-supplied strings, and any non-empty
+  // value passed. They are now READ FROM THE DURABLE ADMISSION RECEIPT below.
+  // A caller cannot assert who consumed the message; only the consumer's own
+  // record can, which is the entire substance of this checkpoint.
+  const required = ['messageId', 'claimId', 'admissionId', 'obligorAddress', 'queueAckIntent'];
   for (const field of required) {
     if (!isNonEmptyString(input[field])) return fail(`owned_field_missing:${field}`);
+  }
+  // JAMES IS THE CREDITOR, NEVER THE OBLIGOR, and it is refused HERE rather
+  // than being left to the kernel's own CHECK further down: by then a source row
+  // has already been exposed carrying a doomed obligation id.
+  if (String(input.obligorAddress).trim().toLowerCase() === 'james') {
+    return fail('james_obligor_forbidden');
   }
   const atMs = Number(input.atMs);
   if (!Number.isSafeInteger(atMs) || atMs <= 0) return fail('owned_field_missing:atMs');
@@ -730,6 +828,175 @@ function promoteToAdmittedOwned(db, input = {}) {
       rollback(db); return fail('source_payload_digest_mismatch');
     }
 
+    // ===================================================================
+    // CANONICAL SOURCE RE-VERIFICATION.
+    //
+    // The metadata block is DIAGNOSTIC. It lives under a generic
+    // `metadata_json` key that the ordinary comms upsert can rewrite, so
+    // trusting it as the sole authority means a mutated blob can mint an
+    // obligation id the kernel would never derive. The canonical columns are
+    // the authority, and they are checked against it here.
+    // ===================================================================
+    if (String(source.channel) !== 'telegram' || String(source.direction) !== 'inbound') {
+      rollback(db);
+      return fail('source_not_inbound_telegram', {
+        channel: source.channel, direction: source.direction,
+      });
+    }
+    if (String(source.sender_role) !== 'user') {
+      rollback(db); return fail('source_sender_not_user', { senderRole: source.sender_role });
+    }
+    // CANONICAL TARGET IS THE OBLIGOR. Not a metadata field that agrees with one.
+    if (String(source.target_role) !== String(input.obligorAddress)) {
+      rollback(db);
+      return fail('source_target_not_obligor', {
+        targetRole: source.target_role, obligor: input.obligorAddress,
+      });
+    }
+    if (String(source.status) !== SOURCE_STATES.RECORDED
+      && String(source.status) !== SOURCE_STATES.BROKERED) {
+      rollback(db); return fail('source_status_unexpected', { status: source.status });
+    }
+    if (String(source.body_hash) !== sha256(source.raw_body)) {
+      rollback(db); return fail('source_body_hash_mismatch');
+    }
+    if (Number(source.body_bytes) !== Buffer.byteLength(String(source.raw_body ?? ''), 'utf8')) {
+      rollback(db); return fail('source_body_bytes_mismatch');
+    }
+    // NO PHANTOM DEBT. Recording a source must never have declared an
+    // expectation; the one obligation is created below, exactly once.
+    let sourceMetadata = {};
+    try { sourceMetadata = JSON.parse(source.metadata_json || '{}'); } catch { sourceMetadata = {}; }
+    if (sourceMetadata && typeof sourceMetadata === 'object'
+      && (sourceMetadata.expects || (sourceMetadata.envelope && sourceMetadata.envelope.expects))) {
+      rollback(db); return fail('source_carries_expects');
+    }
+    // RECOMPUTE THE OBLIGATION ID from canonical inputs. A stored id that does
+    // not re-derive is a mutated blob, not an identity.
+    const recomputedObligationId = buildObligationId({
+      createdFromRowId: source.row_id,
+      creditorAddress: 'james',
+      obligorAddress: String(source.target_role),
+      expectedClass: 'answer',
+      stalenessClass: 'turn',
+    });
+    if (String(identity.obligationId) !== recomputedObligationId) {
+      rollback(db);
+      return fail('source_obligation_id_not_derivable', {
+        stored: identity.obligationId, recomputed: recomputedObligationId,
+      });
+    }
+    // THE CLAIM'S ROLE IS THE CANONICAL TARGET. A claim held by some other role
+    // cannot admit this message on that role's behalf.
+    if (String(claim.role) !== String(source.target_role)) {
+      rollback(db);
+      return fail('claim_role_not_target', {
+        claimRole: claim.role, targetRole: source.target_role,
+      });
+    }
+
+    // ===================================================================
+    // THE ADMISSION RECEIPT. THIS IS THE SUBSTANCE OF THE CHECKPOINT.
+    //
+    // `admissionId` used to be any non-empty string, and so did the session,
+    // submission and process ids beside it. Promotion therefore asserted that a
+    // consumer had admitted the message on the strength of the CALLER saying
+    // so — the same shape as an ack that fires because a write returned, or a
+    // runner that reports running because a status file says so.
+    //
+    // Now a REAL `telegram_admission.v1` row is loaded and the whole tuple is
+    // joined: queue source, transport claim, pane-launch registry, session
+    // binding, pane/role/runtime, hook process and parent, submission kind and
+    // admission time. Then `validateAdmissionRecord` — which existed through
+    // two checkpoints with no caller at all — actually runs on it.
+    // ===================================================================
+    const receiptLoad = loadAdmissionReceipt(db, input.admissionId);
+    if (!receiptLoad.ok) { rollback(db); return receiptLoad; }
+    const { row: receipt, record: admissionRecord, launch, session } = receiptLoad;
+
+    if (Number(receipt.source_row_id) !== Number(source.row_id)) {
+      rollback(db);
+      return fail('admission_source_mismatch', {
+        receiptSourceRowId: receipt.source_row_id, sourceRowId: source.row_id,
+      });
+    }
+    if (String(receipt.claim_id) !== String(input.claimId)) {
+      rollback(db);
+      return fail('admission_claim_mismatch', {
+        receiptClaimId: receipt.claim_id, claimId: input.claimId,
+      });
+    }
+    // A HALF-BUILT LAUNCH CANNOT VOUCH FOR A CONSUMER.
+    if (String(launch.state) !== LAUNCH_STATES.COMPLETE) {
+      rollback(db); return fail('admission_launch_incomplete', { state: launch.state });
+    }
+    if (String(session.launch_id) !== String(launch.launch_id)) {
+      rollback(db);
+      return fail('admission_session_launch_mismatch', {
+        sessionLaunch: session.launch_id, launch: launch.launch_id,
+      });
+    }
+    // THE LAUNCH MUST BE THE ONE THE CLAIM WAS MADE UNDER. This is the join that
+    // `launch-1` could never have failed, because nothing produced launch ids at
+    // all and every value was equally fictional.
+    if (String(claim.pane_launch_id) !== String(launch.launch_id)) {
+      rollback(db);
+      return fail('admission_launch_not_claimed', {
+        claimLaunch: claim.pane_launch_id, receiptLaunch: launch.launch_id,
+      });
+    }
+    for (const [column, claimValue, launchValue] of [
+      ['pane_id', claim.pane_id, launch.pane_id],
+      ['role', claim.role, launch.role],
+      ['consumer_runtime', claim.consumer_runtime, launch.consumer_runtime],
+      ['app_generation', claim.app_generation, launch.app_generation],
+    ]) {
+      if (String(claimValue) !== String(launchValue)) {
+        rollback(db);
+        return fail('admission_launch_identity_mismatch', {
+          column, claim: claimValue, launch: launchValue,
+        });
+      }
+    }
+    if (!Object.values(SUBMISSION_KINDS).includes(String(receipt.runtime_submission_kind))) {
+      rollback(db);
+      return fail('admission_submission_kind_invalid', {
+        kind: receipt.runtime_submission_kind,
+      });
+    }
+    if (!isNonEmptyString(String(receipt.hook_process_id ?? ''))
+      || !isNonEmptyString(String(receipt.hook_parent_process_id ?? ''))) {
+      rollback(db); return fail('admission_hook_process_identity_missing');
+    }
+
+    // THE VALIDATOR, ON THE VERBATIM RECORD, AGAINST THE JOINED TUPLE.
+    // `expected` is assembled from the CANONICAL authorities — never from the
+    // record being judged, which would make the comparison self-satisfying.
+    const proofCheck = validateAdmissionRecord({
+      proof: admissionRecord,
+      expected: {
+        updateId: identity.updateId,
+        messageId: source.message_id,
+        routeKey: identity.routeKey,
+        windowKey: identity.windowKey,
+        profile: identity.profile,
+        chatId: identity.chatId,
+        appGeneration: claim.app_generation,
+        runtime: claim.consumer_runtime,
+        consumerSessionId: receipt.consumer_session_id,
+        paneId: claim.pane_id,
+        queuedPayloadSha256: identity.canonicalPayloadSha256,
+        // WHAT THE DRAIN RECORDED SENDING, not what the receipt claims arrived.
+        deliveredPromptSha256: claim.delivered_prompt_sha256,
+        deliveredPromptBytes: claim.delivered_prompt_bytes,
+      },
+      attempt: { atMs: claim.attempt_at_ms, generation: claim.app_generation },
+    });
+    if (!proofCheck.proven) {
+      rollback(db);
+      return fail('admission_receipt_invalid', { reason: proofCheck.reason });
+    }
+
     // CAUSAL ORDERING. A promotion cannot predate the attempt it promotes, and
     // an attempt cannot predate the message it delivers. Without this a receipt
     // dated before its own source passes every identity check and still
@@ -748,6 +1015,24 @@ function promoteToAdmittedOwned(db, input = {}) {
     }
     if (Number.isFinite(startedAtMs) && atMs < startedAtMs) {
       rollback(db); return fail('causal_order_violation:admission_before_delivery');
+    }
+    // THE RECEIPT'S OWN TIME sits in the same causal chain. A consumer cannot
+    // have admitted bytes before the drain began writing them, and the
+    // promotion cannot predate the receipt it is promoting on.
+    const admittedAtMs = Number(receipt.admitted_at_ms);
+    if (Number.isFinite(startedAtMs) && admittedAtMs < startedAtMs) {
+      rollback(db); return fail('causal_order_violation:admission_receipt_before_delivery');
+    }
+    if (atMs < admittedAtMs) {
+      rollback(db); return fail('causal_order_violation:promotion_before_admission');
+    }
+    // The launch must predate the session it carries, and the session the
+    // receipt written under it.
+    if (Number(session.bound_at_ms) < Number(launch.launched_at_ms)) {
+      rollback(db); return fail('causal_order_violation:session_before_launch');
+    }
+    if (admittedAtMs < Number(session.bound_at_ms)) {
+      rollback(db); return fail('causal_order_violation:admission_before_session');
     }
 
     const obligationId = identity.obligationId;
@@ -773,11 +1058,13 @@ function promoteToAdmittedOwned(db, input = {}) {
       pane_id: claim.pane_id,
       role: claim.role,
       consumer_runtime: claim.consumer_runtime,
-      hook_process_id: input.hookProcessId,
-      hook_parent_process_id: input.hookParentProcessId,
-      consumer_session_id: input.consumerSessionId,
-      runtime_submission_id: input.runtimeSubmissionId,
-      runtime_submission_kind: input.runtimeSubmissionKind,
+      // FROM THE RECEIPT, NOT FROM THE CALLER. These five columns are the
+      // consumer's own account of itself; a caller offering them was the hole.
+      hook_process_id: receipt.hook_process_id,
+      hook_parent_process_id: receipt.hook_parent_process_id,
+      consumer_session_id: receipt.consumer_session_id,
+      runtime_submission_id: receipt.runtime_submission_id,
+      runtime_submission_kind: receipt.runtime_submission_kind,
       obligor_address: input.obligorAddress,
       queue_ack_intent: input.queueAckIntent,
     };
@@ -802,39 +1089,52 @@ function promoteToAdmittedOwned(db, input = {}) {
       };
     }
 
-    const createdEventId = buildObligationEventId(obligationId, 'created', String(source.row_id));
     const workLeaseToken = `tgl_${sha256(canonicalJoin([obligationId, '1', input.admissionId]))}`;
 
-    // 1. THE REAL LEDGER EVENT.
-    db.prepare(`
-      INSERT INTO ledger_events (
-        event_id, trace_id, type, stage, source, pane_id, role, ts_ms,
-        payload_json, ingested_at_ms, session_id
-      ) VALUES (?, ?, 'obligation.created', 'obligation', 'telegram-admission-store', ?, ?, ?, ?, ?, ?)
-    `).run(
-      createdEventId, obligationId, claim.pane_id, input.obligorAddress, atMs,
-      JSON.stringify({
-        obligationId,
-        createdFromRowId: source.row_id,
+    // ===================================================================
+    // 1+2. THE OBLIGATION AND ITS CREATED EVENT, THROUGH THE KERNEL'S OWN
+    // PRIMITIVE.
+    //
+    // These were two hand-written INSERTs. The rows they produced were in the
+    // right tables with the right columns, and they were still wrong: writing
+    // `ledger_events` directly skips `validateObligationWritePayload`,
+    // `prepareEventForStorage` and `_insertPrepared`, so the canonical
+    // `obligation:<id>` trace and correlation, the evidence reference back to
+    // the comms row, and the edge structure the kernel walks were all missing.
+    // TABLE-REAL IS NOT KERNEL-CANONICAL, and a second copy of the SQL would
+    // only re-create the divergence it was meant to fix.
+    //
+    // This runs on the caller's transaction — ours — so the four authorities
+    // still commit or roll back together.
+    // ===================================================================
+    const creation = store.createObligationInCallerTransaction(
+      { rowId: source.row_id, sessionId: source.session_id || null },
+      {
+        creditorAddress: 'james',
+        obligorAddress: input.obligorAddress,
         expectedClass: 'answer',
         stalenessClass: 'turn',
-        cutoverId: identity.cutoverId,
-      }),
-      atMs,
-      isNonEmptyString(source.session_id) ? source.session_id : null
+        leaseId: null,
+      },
+      {
+        creatorAddress: 'james',
+        declarationMode: 'telegram-admission',
+        nowMs: atMs,
+      }
     );
-
-    // 2. THE REAL KERNEL OBLIGATION. James is creditor, never obligor.
-    db.prepare(`
-      INSERT INTO obligations (
-        obligation_id, created_from_row_id, creditor_address, obligor_address,
-        expected_class, staleness_class, lease_id, status,
-        created_event_id, last_event_id, created_at_ms, updated_at_ms
-      ) VALUES (?, ?, 'james', ?, 'answer', 'turn', NULL, 'open', ?, ?, ?, ?)
-    `).run(
-      obligationId, source.row_id, input.obligorAddress,
-      createdEventId, createdEventId, atMs, atMs
-    );
+    if (!creation || creation.ok !== true || !creation.obligation) {
+      rollback(db);
+      return fail('obligation_creation_failed', { status: creation && creation.status });
+    }
+    // THE KERNEL'S ID MUST BE THE ID WE BOUND TO. If these ever diverge, the
+    // binding points at a debt that is not the one just created.
+    if (String(creation.obligation.obligationId) !== String(obligationId)) {
+      rollback(db);
+      return fail('obligation_id_divergence', {
+        kernel: creation.obligation.obligationId, source: obligationId,
+      });
+    }
+    const createdEventId = creation.obligation.createdEventId;
 
     // 3. THE IMMUTABLE TELEGRAM BINDING.
     db.prepare(`

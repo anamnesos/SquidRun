@@ -1311,6 +1311,7 @@ class SquidRunApp {
     this.intentStateByPane = new Map();
     this.ledgerAppSession = null;
     this.commsSessionScopeId = `app-${process.pid}-${Date.now()}`;
+    process.env.SQUIDRUN_APP_GENERATION = this.commsSessionScopeId; // pane-launch records need the REAL generation
     this.telegramInboundContext = {
       lastInboundAtMs: 0,
       sender: null,

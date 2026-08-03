@@ -6,6 +6,21 @@ const {
   installModelPromptReceiptHooks,
 } = require('../modules/model-prompt-receipt');
 
+/**
+ * TELEGRAM ADMISSION LIVES HERE BECAUSE THIS FILE IS THE ONE THAT RUNS.
+ *
+ * `.codex/hooks.json` and `.claude/settings.json` both invoke this adapter and
+ * only this adapter. A separate `telegram-consumer-receipt-adapter.js` was
+ * hardened over two checkpoints while no configured hook could reach it, so its
+ * guards defended nothing. Folding the production in here — rather than adding
+ * a second hook definition — keeps the set of things that run and the set of
+ * things that are tested identical.
+ */
+const {
+  produceAdmissionReceipt,
+  bindSessionAtStart,
+} = require('../modules/main/telegram-admission-producer');
+
 function parseArgs(argv) {
   const parsed = {
     command: null,
@@ -57,6 +72,30 @@ function parsePayload(raw) {
   }
 }
 
+function normalizeRuntime(value) {
+  return typeof value === 'string' && value.trim() ? value.trim().toLowerCase() : null;
+}
+
+/**
+ * NEVER LET THE TELEGRAM LANE WEDGE A PROMPT.
+ *
+ * This adapter sits in front of every prompt James types. A throw here — a
+ * locked database, a missing table on an older build — would block the pane,
+ * and a hook that fails a prompt is a worse bug than a missing receipt. The
+ * admission path fails CLOSED on its own record (no receipt is written on
+ * partial information) while failing OPEN for the user.
+ */
+function runTelegramStep(step) {
+  try {
+    return step();
+  } catch (err) {
+    try {
+      process.stderr.write(`[model-prompt-receipt-adapter] telegram_admission_error: ${err.message}\n`);
+    } catch { /* stderr is best-effort inside a hook */ }
+    return null;
+  }
+}
+
 function emitHookResponse(result = {}) {
   const response = {
     hookSpecificOutput: {
@@ -98,6 +137,13 @@ async function main() {
 
   if (args.trustCheckOnly) {
     const record = appendTrustCheckBreadcrumb({ payload });
+    // SESSIONSTART ALSO BINDS THE RUNTIME SESSION TO ITS PANE LAUNCH. Without
+    // this the launch registry has no session rows and every admission receipt
+    // written later has nothing to attach itself to.
+    runTelegramStep(() => bindSessionAtStart({
+      runtime: normalizeRuntime(args.runtime),
+      payload,
+    }));
     emitHookResponse({ hookEventName: args.event, record });
     return;
   }
@@ -107,6 +153,14 @@ async function main() {
     hookEventName: args.event,
     payload,
   });
+
+  // TELEGRAM ADMISSION. Returns `handled:false` for the overwhelming majority of
+  // prompts, which are not Telegram deliveries.
+  runTelegramStep(() => produceAdmissionReceipt({
+    runtime: normalizeRuntime(args.runtime),
+    payload,
+  }));
+
   emitHookResponse({
     hookEventName: args.event,
     status: result.status,

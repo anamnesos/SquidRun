@@ -824,6 +824,51 @@ function obligationKernelError(reason, details = {}) {
   return error;
 }
 
+/**
+ * PROVE we are inside a caller-opened transaction. Do not take it on trust.
+ *
+ * A primitive documented as "call me inside a transaction" that never checks is
+ * a declaration, and this lane has lost a full day to declarations: the four
+ * authorities are only atomic together if one transaction really is open, and a
+ * caller who forgot would get four independent auto-commits with a green test.
+ *
+ * Both drivers can answer directly — `node:sqlite` exposes `isTransaction` and
+ * better-sqlite3 exposes `inTransaction` — and that is preferred because it
+ * observes the state without touching it.
+ *
+ * The fallback, for a driver that exposes neither, makes the check BE the
+ * effect: `BEGIN` throws when a transaction is already active, so a THROW is
+ * the success path. If it instead SUCCEEDS we were not in a transaction at all,
+ * and that new empty transaction is rolled straight back — nothing can be lost,
+ * since its existence proves none was pending.
+ */
+function assertInsideTransaction(db, caller) {
+  const refuse = () => {
+    throw obligationKernelError('obligation_primitive_requires_transaction', { caller });
+  };
+
+  if (typeof db.isTransaction === 'boolean') {
+    if (!db.isTransaction) refuse();
+    return;
+  }
+  if (typeof db.inTransaction === 'boolean') {
+    if (!db.inTransaction) refuse();
+    return;
+  }
+
+  let began = false;
+  try {
+    db.exec('BEGIN');
+    began = true;
+  } catch {
+    return; // Already inside a transaction: the required state.
+  }
+  if (began) {
+    try { db.exec('ROLLBACK'); } catch { /* nothing pending by construction */ }
+    refuse();
+  }
+}
+
 function parseStoredJson(value, fallback = {}) {
   if (typeof value !== 'string' || !value) return fallback;
   try {
@@ -2576,6 +2621,31 @@ class EvidenceLedgerStore {
       }],
     });
     return { ok: true, status: 'created', obligation };
+  }
+
+  /**
+   * THE CANONICAL OBLIGATION-CREATION PRIMITIVE, exposed for a caller that owns
+   * its own transaction.
+   *
+   * WHY THIS EXISTS RATHER THAN A SECOND COPY OF THE SQL. The Telegram
+   * admission lane wrote `INSERT INTO ledger_events` and `INSERT INTO
+   * obligations` by hand. The rows existed and the tables were the right ones,
+   * so the tests were green — but they bypassed `validateObligationWritePayload`,
+   * `prepareEventForStorage` and `_insertPrepared`, and so the canonical
+   * `obligation:<id>` trace/correlation, the evidence references and the edge
+   * structure the kernel depends on were all absent. Table-real is not
+   * kernel-canonical. A copy of the SQL re-creates exactly that divergence, so
+   * this delegates to the one implementation instead.
+   *
+   * DELIBERATELY NOT `_maybeCreateObligationForCommsRowInTransaction`: that one
+   * is an `expects`-metadata entry point for outbound rows. This is the
+   * `_...InTransaction` layer, which by its own naming is designed to run inside
+   * a transaction the caller has already opened — which is what keeps the
+   * multi-authority admission rollback atomic.
+   */
+  createObligationInCallerTransaction(sourceRow, declaration = {}, options = {}) {
+    assertInsideTransaction(this.db, 'createObligationInCallerTransaction');
+    return this._createObligationFromSourceRowInTransaction(sourceRow, declaration, options);
   }
 
   _maybeCreateObligationForCommsRowInTransaction(row, options = {}) {

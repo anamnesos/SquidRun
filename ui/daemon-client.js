@@ -21,6 +21,73 @@ const ASAR_UNPACKED_DIR = __dirname.replace('app.asar', 'app.asar.unpacked');
 const DAEMON_SCRIPT = path.join(ASAR_UNPACKED_DIR, 'terminal-daemon.js');
 const DAEMON_PID_FILE = resolveCoordPath('runtime/daemon.pid', { forWrite: true });
 
+/**
+ * Write the daemon-owned pane-launch record and hand its id to the pane.
+ *
+ * FAIL OPEN, ALWAYS. A pane that will not start because the Telegram lane could
+ * not reach its database is a catastrophically worse outcome than an admission
+ * that later refuses for want of a launch record — and refusing is exactly what
+ * the admission path does when this is absent, so the failure stays closed
+ * where it matters and open where it would hurt.
+ *
+ * NO GENERATION IS INVENTED HERE. If the app has not put its real generation in
+ * the environment, no launch row is written at all: a fabricated generation
+ * would produce receipts that pass every check while naming a run that never
+ * happened.
+ */
+function recordPaneLaunchForSpawn({ spawnEnv, paneId, role, mode }) {
+  try {
+    const {
+      ENV_LAUNCH_ID,
+      ENV_APP_GENERATION,
+      generateLaunchId,
+      applyLaunchRegistrySchema,
+      recordPaneLaunch,
+    } = require('./modules/main/telegram-launch-registry');
+    const { TelegramAdmissionWriter } = require('./modules/main/telegram-admission-writer');
+
+    const appGeneration = String(
+      spawnEnv[ENV_APP_GENERATION] || process.env[ENV_APP_GENERATION] || ''
+    ).trim();
+    if (!appGeneration) return null;
+
+    const consumerRuntime = String(mode || spawnEnv.SQUIDRUN_RUNTIME || '').trim().toLowerCase();
+    if (!consumerRuntime) return null;
+
+    const launchId = generateLaunchId();
+    const writer = new TelegramAdmissionWriter({});
+    const opened = writer.open();
+    if (!opened.ok) return null;
+    try {
+      const result = writer.transaction((db) => {
+        const schema = applyLaunchRegistrySchema(db);
+        if (!schema.ok) return schema;
+        return recordPaneLaunch(db, {
+          launchId,
+          appGeneration,
+          paneId: String(paneId),
+          role: String(role || ''),
+          consumerRuntime,
+          daemonProcessId: String(process.pid),
+          launchedAtMs: Date.now(),
+        });
+      });
+      if (!result || result.ok !== true) return null;
+    } finally {
+      writer.close();
+    }
+
+    // ONLY AFTER THE ROW IS COMMITTED. Exporting an id whose row does not exist
+    // would give the hook a launch it cannot join to anything.
+    spawnEnv[ENV_LAUNCH_ID] = launchId;
+    spawnEnv[ENV_APP_GENERATION] = appGeneration;
+    return launchId;
+  } catch (err) {
+    try { log.warn('DaemonClient', `pane launch record skipped: ${err.message}`); } catch { /* best effort */ }
+    return null;
+  }
+}
+
 function stripElectronRunAsNode(env) {
   if (!env || typeof env !== 'object') return env;
   for (const key of Object.keys(env)) {
@@ -560,6 +627,13 @@ class DaemonClient extends EventEmitter {
       SQUIDRUN_PANE_ID: id,
       ...incomingEnv,
     };
+    // THE DAEMON'S LAUNCH RECORD, written here because this is the one place
+    // that knows a pane launch is happening and still controls the environment
+    // the runtime will inherit. The id is handed to the pane through
+    // SQUIDRUN_PANE_LAUNCH_ID; that hand-off is the only way a later hook can
+    // name its own launch, and without it `pane_launch_id` stays what it was
+    // for two checkpoints — a column the store read and nothing ever wrote.
+    recordPaneLaunchForSpawn({ spawnEnv, paneId: id, role, mode });
     stripElectronRunAsNode(spawnEnv);
     const payload = {
       action: 'spawn',
