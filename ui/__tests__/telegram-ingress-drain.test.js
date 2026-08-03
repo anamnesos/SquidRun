@@ -731,59 +731,6 @@ test('CRASH AFTER ACCEPT, BEFORE RECEIPT: a fresh coordinator does NOT re-inject
   expect(queue.readPending(dir)).toHaveLength(1);
 });
 
-test('S491 HEAD-OF-LINE: past the grace, an unprovable N stops muting N+1', async () => {
-  // THE LIVE INCIDENT. Production pane delivery only ever returns
-  // accepted.daemon_pty_unverified, which is correctly not proof, so N latched
-  // "attempted" forever and the ordered drain stopped the whole route. Six of
-  // James's messages sat undelivered for hours while poller health read green.
-  const base = tempRoot();
-  const dir = seed(base, 'main', [400, 401, 402]);
-
-  // Wedge 400 exactly the way the incident did: attempted, never proven.
-  const first = [];
-  const before = coordinator({ deliver: async (job) => { first.push(job.messageId); return UNPROVEN; } });
-  await before.schedule(dir, 'main');
-  expect(first).toEqual(['telegram-in-400']);
-
-  // Restart with the grace already elapsed (graceMs 0) — the injectable seam.
-  const after = [];
-  const restarted = coordinator({
-    headOfLineGraceMs: 0,
-    deliver: async (job) => { after.push(job.messageId); return provenFor(job); },
-  });
-  const res = await restarted.schedule(dir, 'main');
-
-  // The messages BEHIND the wedge finally move...
-  expect(after).toEqual(['telegram-in-401', 'telegram-in-402']);
-  // ...the ambiguous record is NEVER re-injected (Oracle #5: 316 was already
-  // consumed and answered; re-delivering would duplicate visible work)...
-  expect(after).not.toContain('telegram-in-400');
-  // ...it is reported, never silent...
-  expect(res.bypassed).toEqual([
-    expect.objectContaining({ updateId: 400, reason: 'unresolved_delivery_attempt' }),
-  ]);
-  // ...and it stays durably queued for proper reconciliation, not lost.
-  expect(queue.readPending(dir).map((r) => r.updateId)).toEqual([400]);
-});
-
-test('INSIDE the grace, the wedge still holds the line', async () => {
-  const base = tempRoot();
-  const dir = seed(base, 'main', [410, 411]);
-  const before = coordinator({ deliver: async () => UNPROVEN });
-  await before.schedule(dir, 'main');
-
-  const after = [];
-  const restarted = coordinator({
-    headOfLineGraceMs: 10 * 60 * 1000,
-    deliver: async (job) => { after.push(job.messageId); return provenFor(job); },
-  });
-  const res = await restarted.schedule(dir, 'main');
-
-  expect(after).toEqual([]);
-  expect(res.stoppedAt).toMatchObject({ updateId: 410, reason: 'unresolved_delivery_attempt' });
-  expect(res.bypassed).toEqual([]);
-});
-
 test('AFTER RESTART, exact proof retires the ambiguous attempt without re-injection', async () => {
   const base = tempRoot();
   const dir = seed(base, 'main', [310]);

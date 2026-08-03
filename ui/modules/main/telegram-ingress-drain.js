@@ -42,43 +42,6 @@ const HARD_FAILURE_STATUSES = new Set([
  * Did this result actually claim the message was taken? Only then may it enter
  * the proof-only hold. Anything that says otherwise is a definite failure.
  */
-/**
- * HEAD-OF-LINE GRACE. How long a single record may hold the whole route hostage
- * while its delivery attempt stays unresolved.
- *
- * Generous on purpose: a genuinely in-flight delivery must get its full moment
- * before anything is allowed past it. This is not a retry timeout; it is the
- * point at which "we cannot tell about THIS message" stops being allowed to mean
- * "the user hears nothing at all".
- */
-const HEAD_OF_LINE_GRACE_MS = 10 * 60 * 1000;
-
-/**
- * May an awaiting-proof record stop blocking everything behind it?
- *
- * THE INCIDENT THIS EXISTS FOR (S491): update 808499316 recorded a delivery
- * attempt that never resolved, because the only receipt class pane delivery
- * returns in production is `accepted.daemon_pty_unverified`, which is correctly
- * NOT proof. The record therefore held `awaiting_proof` forever, and because the
- * drain is strictly ordered it stopped the route — six of James's messages,
- * including live plumbing job instructions, sat undelivered for hours while
- * poller health read green.
- *
- * The asymmetry this whole lane is built on decides it: a replay is visible and
- * recoverable; silence is neither. Past the grace window the ambiguous record is
- * BYPASSED, not retired and not delivered — it stays durably queued for later
- * reconciliation, while the messages behind it are allowed through.
- */
-function mayBypassHeadOfLine(record, outcome, nowMs, graceMs = HEAD_OF_LINE_GRACE_MS) {
-  if (!outcome || outcome.stop !== true) return false;
-  // ONLY the ambiguity class. A route mismatch or a failed ack is an integrity
-  // failure where proceeding really is unsafe, and those still stop the queue.
-  if (outcome.failureClass !== 'awaiting_proof') return false;
-  const receivedAtMs = Number(record?.receivedAtMs);
-  if (!Number.isFinite(receivedAtMs) || receivedAtMs <= 0) return false;
-  return (nowMs - receivedAtMs) > graceMs;
-}
-
 function looksAccepted(receipt) {
   if (!receipt || typeof receipt !== 'object') return false;
   // POSITIVE ACCEPTANCE WINS, and it is checked FIRST. Real pane results such as
@@ -400,11 +363,6 @@ function createDrainCoordinator(deps = {}) {
     const pending = queue.readPending(dir).slice().sort(byUpdateId);
     let delivered = 0;
     let stoppedAt = null;
-    // Never silent: every bypass is reported out with the drain result.
-    const bypassed = [];
-    const graceMs = Number.isFinite(Number(deps.headOfLineGraceMs))
-      ? Number(deps.headOfLineGraceMs)
-      : HEAD_OF_LINE_GRACE_MS;
 
     for (const record of pending) {
       // Dispose can land mid-batch. Continuing would deliver N+1 while the app
@@ -414,17 +372,6 @@ function createDrainCoordinator(deps = {}) {
         break;
       }
       const outcome = await processRecord(dir, record, routeKey, st);
-      if (outcome.stop && mayBypassHeadOfLine(record, outcome, Date.now(), graceMs)) {
-        // Left UNRETIRED and UNDELIVERED on purpose: still durably queued, still
-        // awaiting proof. We are only declining to let it mute the channel.
-        bypassed.push({ updateId: Number(record.updateId), reason: outcome.reason });
-        log.warn(
-          'Telegram',
-          `Drain bypassing update ${record.updateId} (${outcome.reason}) after grace; `
-          + 'record stays queued awaiting proof, later messages may proceed'
-        );
-        continue;
-      }
       if (outcome.stop) {
         // (2) STOP. N+1 must not pass an unretired N, or order and
         // at-most-once both go out the window.
@@ -464,7 +411,7 @@ function createDrainCoordinator(deps = {}) {
     if (!stoppedAt && delivered === pending.length) {
       stopProofSweep(dir);
     }
-    return { ok: true, delivered, pending: pending.length, stoppedAt, bypassed };
+    return { ok: true, delivered, pending: pending.length, stoppedAt };
   }
 
   /**
@@ -611,8 +558,6 @@ module.exports = {
   createDrainCoordinator,
   isProvenOwnership,
   isCorrelatedProof,
-  mayBypassHeadOfLine,
-  HEAD_OF_LINE_GRACE_MS,
   proofClassOf,
   looksAccepted,
   IDENTITY_FIELDS,
