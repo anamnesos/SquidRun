@@ -221,10 +221,21 @@ function validateConsumedProof(input = {}) {
     }
   }
 
-  // GENERATION and CONSUMER SESSION. A receipt echoing a generation from a
-  // previous app run is proof of an older delivery of the same id.
+  // GENERATION, RUNTIME and CONSUMER SESSION.
+  //
+  // REQUIRING A FIELD TO BE PRESENT IS NOT REQUIRING IT TO BE CORRECT. The
+  // first cut of this validator demanded `runtime` and `consumerSessionId`
+  // exist and then never compared either, so a receipt from the wrong runtime
+  // or a stale consumer session passed as long as everything else lined up.
+  // That is the same shape as the earlier `{verified:true}` bug, one layer up.
   if (!sameScalar(proof.appGeneration, expected.appGeneration)) {
     return { proven: false, reason: 'generation_mismatch' };
+  }
+  if (!sameScalar(proof.runtime, expected.runtime)) {
+    return { proven: false, reason: 'runtime_mismatch' };
+  }
+  if (!sameScalar(proof.consumerSessionId, expected.consumerSessionId)) {
+    return { proven: false, reason: 'consumer_session_mismatch' };
   }
   // PANE BINDING. Codex sessions with the same CWD run in panes 1 and 3, so a
   // receipt that cannot name its pane cannot be attributed to this route.

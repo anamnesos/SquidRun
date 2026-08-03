@@ -37,6 +37,8 @@ function expectedFor(overrides = {}) {
     chatId: 6543210,
     appGeneration: GENERATION,
     paneId: '1',
+    runtime: 'codex',
+    consumerSessionId: 'codex-session-abc',
     queuedPayloadSha256: canonicalQueuedPayloadDigest(RECORD),
     deliveredPromptSha256: sha256(DELIVERED),
     deliveredPromptBytes: byteLength(DELIVERED),
@@ -99,9 +101,18 @@ describe('the happy path exists at all', () => {
     const { runtime: _c, ...codexRest } = codex;
     const { runtime: _l, ...claudeRest } = claude;
     expect(codexRest).toEqual(claudeRest);
-    // And both validate against the same expectation.
-    expect(validateConsumedProof({ proof: codex, expected: expectedFor(), attempt: ATTEMPT }).proven).toBe(true);
-    expect(validateConsumedProof({ proof: claude, expected: expectedFor(), attempt: ATTEMPT }).proven).toBe(true);
+    // And each validates against an expectation naming its own runtime — the
+    // runtime is compared now, so it is the one field that must agree per side.
+    expect(validateConsumedProof({
+      proof: codex,
+      expected: expectedFor({ runtime: 'codex', consumerSessionId: 's' }),
+      attempt: ATTEMPT,
+    }).proven).toBe(true);
+    expect(validateConsumedProof({
+      proof: claude,
+      expected: expectedFor({ runtime: 'claude', consumerSessionId: 's' }),
+      attempt: ATTEMPT,
+    }).proven).toBe(true);
   });
 });
 
@@ -311,5 +322,36 @@ describe('ordering against the attempt', () => {
       expected: expectedFor(),
       attempt: { atMs: NOW },
     }).proven).toBe(true);
+  });
+});
+
+describe('required means CORRECT, not merely present', () => {
+  // Architect #54 finding 1: both fields were required and neither compared.
+  test('A PROOF FROM THE WRONG RUNTIME is rejected', () => {
+    const result = validateConsumedProof({
+      proof: proofFor({ runtime: 'claude' }),
+      expected: expectedFor({ runtime: 'codex' }),
+      attempt: ATTEMPT,
+    });
+    expect(result.proven).toBe(false);
+    expect(result.reason).toBe('runtime_mismatch');
+  });
+
+  test('A PROOF FROM A STALE CONSUMER SESSION is rejected', () => {
+    const result = validateConsumedProof({
+      proof: proofFor({ consumerSessionId: 'codex-session-OLD' }),
+      expected: expectedFor({ consumerSessionId: 'codex-session-abc' }),
+      attempt: ATTEMPT,
+    });
+    expect(result.proven).toBe(false);
+    expect(result.reason).toBe('consumer_session_mismatch');
+  });
+
+  test('EVERY COMPARED FIELD is compared — an expectation that omits one cannot pass by default', () => {
+    for (const field of ['runtime', 'consumerSessionId', 'appGeneration', 'paneId']) {
+      const expected = expectedFor();
+      delete expected[field];
+      expect(validateConsumedProof({ proof: proofFor(), expected, attempt: ATTEMPT }).proven).toBe(false);
+    }
   });
 });

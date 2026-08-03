@@ -20,7 +20,16 @@
  */
 
 const MARKER_PREFIX = '[SQUIDRUN_TG_CONSUME';
-const MARKER_RE = /\[SQUIDRUN_TG_CONSUME\s+([^\]]+)\]/;
+/**
+ * ANCHORED TO A WHOLE LINE. An unanchored search was a real vulnerability:
+ * the marker describes a message whose BODY IS WRITTEN BY WHOEVER SENT THE
+ * TELEGRAM. A first-match scan let that body carry its own `[SQUIDRUN_TG_CONSUME
+ * ...]` line and be parsed as the authoritative one, and a `contains-prefix`
+ * early return in the appender let the same body SUPPRESS the real marker
+ * entirely. Either way the thing being proven got to write, or delete, the
+ * proof about itself — and it failed silently.
+ */
+const MARKER_LINE_RE = /^\[SQUIDRUN_TG_CONSUME\s+([^\]\r\n]+)\]$/;
 
 const FIELD_KEYS = Object.freeze({
   u: 'updateId',
@@ -56,12 +65,31 @@ function buildConsumeMarker(input = {}) {
   return `${MARKER_PREFIX} v=1 ${parts.join(' ')}]`;
 }
 
+/**
+ * Defang any marker-lookalike inside attacker-controlled text.
+ *
+ * Turning the opening `[` into `(` cannot itself produce a new occurrence of
+ * the prefix, so a single pass is total and there is no escaping-the-escape
+ * game to lose. The substitution is deliberately VISIBLE in the pane: a
+ * message that tried to forge delivery evidence should look odd to a human,
+ * not be silently rewritten into something innocuous.
+ */
+function neutralizeMarkerLookalikes(text) {
+  return String(text ?? '').split(MARKER_PREFIX).join(`(${MARKER_PREFIX.slice(1)}`);
+}
+
+/**
+ * ALWAYS appends, and always as the FINAL line.
+ *
+ * The old early return on "text already contains the prefix" handed a sender
+ * the power to suppress their own proof. Now the body is defanged first and
+ * the authoritative marker always goes last, so exactly one real marker exists
+ * and its position is not negotiable.
+ */
 function appendConsumeMarker(promptText, input = {}) {
-  const text = typeof promptText === 'string' ? promptText : String(promptText ?? '');
-  if (text.includes(MARKER_PREFIX)) return text;
   const marker = buildConsumeMarker(input);
-  if (!marker) return text;
-  return `${text}\n${marker}`;
+  if (!marker) return typeof promptText === 'string' ? promptText : String(promptText ?? '');
+  return `${neutralizeMarkerLookalikes(promptText)}\n${marker}`;
 }
 
 /**
@@ -70,7 +98,19 @@ function appendConsumeMarker(promptText, input = {}) {
  */
 function parseConsumeMarker(promptText) {
   const text = typeof promptText === 'string' ? promptText : String(promptText ?? '');
-  const match = text.match(MARKER_RE);
+
+  // EXACTLY ONE occurrence in the entire prompt. Two means somebody else wrote
+  // one, and there is no safe rule for picking a winner — neither first nor
+  // last, because the attacker chooses their position. Ambiguity is refusal.
+  const occurrences = text.split(MARKER_PREFIX).length - 1;
+  if (occurrences !== 1) return null;
+
+  // It must be the LAST non-empty line, matched as a WHOLE line. A marker
+  // embedded mid-line, or with anything appended after it, is not ours.
+  const lines = text.split(/\r?\n/);
+  while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+  if (!lines.length) return null;
+  const match = lines[lines.length - 1].match(MARKER_LINE_RE);
   if (!match) return null;
 
   const parsed = {};
@@ -102,4 +142,5 @@ module.exports = {
   buildConsumeMarker,
   appendConsumeMarker,
   parseConsumeMarker,
+  neutralizeMarkerLookalikes,
 };

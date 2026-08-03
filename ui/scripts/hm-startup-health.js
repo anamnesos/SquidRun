@@ -183,6 +183,86 @@ function runBidirectionalWakeWatchdogAutoStart(argv = []) {
   return payload;
 }
 
+/**
+ * TELEGRAM BACKLOG, read into the surface that actually reports health.
+ *
+ * THE GAP THIS CLOSES. On 2026-08-03 six of James's messages sat undelivered
+ * for up to 8.6 hours behind a wedged head while this script reported 100/100.
+ * It was not wrong about what it measured — the poller genuinely was fresh, so
+ * "are we still receiving" was answered correctly. Nothing asked "is anything
+ * being delivered", and a channel can be perfectly fresh and perfectly mute at
+ * the same time. The drain knew the whole time; it runs in another process and
+ * this one had no way to ask, so the knowledge never reached a score.
+ *
+ * FAIL-SAFE, NOT FAIL-QUIET. A missing, unreadable, malformed or stale
+ * snapshot degrades. It must never read as healthy — "no news is good news" is
+ * exactly the reasoning that produced the 100/100, and an absent file is the
+ * single most likely way this check silently stops working.
+ */
+function readTelegramBacklogHealth(projectRoot, nowMs = Date.now(), options = {}) {
+  const statePath = options.statePath
+    || path.join(projectRoot, '.squidrun', 'runtime', 'telegram-backlog-health.json');
+
+  let raw;
+  try {
+    raw = fs.readFileSync(statePath, 'utf8');
+  } catch (err) {
+    return {
+      ok: false,
+      severity: 'degraded',
+      reasons: [err && err.code === 'ENOENT' ? 'backlog_snapshot_missing' : `backlog_snapshot_unreadable:${err.message}`],
+      statePath,
+      routes: {},
+    };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return {
+      ok: false, severity: 'degraded', reasons: [`backlog_snapshot_malformed:${err.message}`], statePath, routes: {},
+    };
+  }
+  if (!parsed || typeof parsed !== 'object' || !parsed.routes || typeof parsed.routes !== 'object') {
+    return { ok: false, severity: 'degraded', reasons: ['backlog_snapshot_shape_invalid'], statePath, routes: {} };
+  }
+
+  const {
+    scoreBacklogHealth,
+  } = require('../modules/main/telegram-backlog-health');
+
+  const staleAfterMs = Number.isFinite(Number(options.staleAfterMs))
+    ? Number(options.staleAfterMs)
+    : 30 * 60 * 1000;
+
+  const reasons = [];
+  let severity = 'ok';
+  const rank = { ok: 0, degraded: 1, critical: 2 };
+  const routes = {};
+
+  const entries = Object.entries(parsed.routes);
+  if (entries.length === 0) {
+    return { ok: false, severity: 'degraded', reasons: ['backlog_snapshot_has_no_routes'], statePath, routes: {} };
+  }
+
+  for (const [routeKey, snapshot] of entries) {
+    const scored = scoreBacklogHealth(snapshot, options);
+    // A SNAPSHOT THAT STOPPED UPDATING is not a healthy route; it is a route
+    // whose reporter died. Treated exactly like an unreadable file.
+    const observedAtMs = Number(snapshot && snapshot.observedAtMs);
+    const stale = !Number.isFinite(observedAtMs) || (nowMs - observedAtMs) > staleAfterMs;
+    const routeSeverity = stale && rank[scored.severity] < rank.degraded ? 'degraded' : scored.severity;
+    const routeReasons = stale ? [...scored.reasons, `backlog_snapshot_stale:${routeKey}`] : scored.reasons;
+
+    routes[routeKey] = { severity: routeSeverity, reasons: routeReasons, headAgeMs: scored.headAgeMs };
+    if (rank[routeSeverity] > rank[severity]) severity = routeSeverity;
+    for (const reason of routeReasons) reasons.push(`${routeKey}:${reason}`);
+  }
+
+  return { ok: severity === 'ok', severity, reasons, statePath, routes };
+}
+
 function runStartupHealth(argv = process.argv.slice(2), io = {}) {
   const effectiveArgv = [...argv];
   const stderr = io.stderr || process.stderr;
@@ -200,7 +280,21 @@ function runStartupHealth(argv = process.argv.slice(2), io = {}) {
     stderr.write(`Bidirectional wake watchdog auto-start failed: ${bidirectionalWakeWatchdog.error || bidirectionalWakeWatchdog.stderr || 'unknown'}\n`);
   }
 
-  return main(stripWrapperFlags(effectiveArgv));
+  // TELEGRAM DELIVERY, not merely Telegram reception. Reported before the
+  // snapshot runs so a wedged queue is visible even if something later throws.
+  const backlog = readTelegramBacklogHealth(resolveProjectRootFromArgs(effectiveArgv));
+  if (!backlog.ok) {
+    stderr.write(
+      `Telegram ingress backlog ${backlog.severity.toUpperCase()}: ${backlog.reasons.join('; ')}\n`
+    );
+  }
+
+  const exitCode = main(stripWrapperFlags(effectiveArgv));
+  // A CRITICAL backlog fails the run. Messages that cannot be delivered are
+  // not a warning: that state is indistinguishable, from where James sits,
+  // from the app being off.
+  if (backlog.severity === 'critical' && exitCode === 0) return 1;
+  return exitCode;
 }
 
 if (require.main === module) {
@@ -210,6 +304,7 @@ if (require.main === module) {
 module.exports = {
   hasFormatFlag,
   hasHelpFlag,
+  readTelegramBacklogHealth,
   resolveProfileFromArgs,
   resolveProjectRootFromArgs,
   runBidirectionalWakeWatchdogAutoStart,
