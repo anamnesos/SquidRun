@@ -123,6 +123,23 @@ const REQUIRED_FIELDS = Object.freeze([
   'deliveredPromptSha256',
   'deliveredPromptBytes',
   'consumedAtMs',
+  // ===================================================================
+  // THE FIELDS THE RECORD MUST ASSERT ABOUT ITSELF.
+  //
+  // These existed only in side columns on `telegram_admission_receipts` and in
+  // caller input, so the sole validator never compared them. A field carried
+  // ALONGSIDE the record is not a field the record asserts: the verbatim bytes
+  // could be replayed against a different claim, launch, role or submission and
+  // every comparison the validator actually performed would still pass.
+  // ===================================================================
+  'claimId',
+  'attemptNonce',
+  'paneLaunchId',
+  'role',
+  'hookProcessId',
+  'hookParentProcessId',
+  'runtimeSubmissionId',
+  'runtimeSubmissionKind',
 ]);
 
 const SHA256_RE = /^[0-9a-f]{64}$/;
@@ -242,6 +259,16 @@ function buildAdmissionRecord(input = {}) {
     deliveredPromptSha256: sha256(deliveredPrompt),
     deliveredPromptBytes: byteLength(deliveredPrompt),
     consumedAtMs: Number.isFinite(Number(input.consumedAtMs)) ? Number(input.consumedAtMs) : null,
+    // THE ATTEMPT, THE LAUNCH, THE ROLE, THE HOOK PROCESS AND THE TYPED
+    // SUBMISSION — asserted BY the record, not merely stored beside it.
+    claimId: input.claimId ?? null,
+    attemptNonce: input.attemptNonce ?? null,
+    paneLaunchId: input.paneLaunchId ?? null,
+    role: input.role ?? null,
+    hookProcessId: input.hookProcessId ?? null,
+    hookParentProcessId: input.hookParentProcessId ?? null,
+    runtimeSubmissionId: input.runtimeSubmissionId ?? null,
+    runtimeSubmissionKind: input.runtimeSubmissionKind ?? null,
   };
 }
 
@@ -311,6 +338,31 @@ function validateAdmissionRecord(input = {}) {
   // receipt that cannot name its pane cannot be attributed to this route.
   if (!sameScalar(proof.paneId, expected.paneId)) {
     return { proven: false, reason: 'pane_mismatch' };
+  }
+
+  // ===================================================================
+  // THE REST OF THE TUPLE, COMPARED RATHER THAN MERELY REQUIRED.
+  //
+  // `claimId` and `attemptNonce` are what make this THE attempt rather than an
+  // attempt: the producer used to bind a receipt to the newest live claim for
+  // the source row, so after a retry the receipt attached to the wrong one and
+  // passed every check. `paneLaunchId` and `role` come from the daemon-owned
+  // launch, so a receipt written under a stale pane cannot borrow a live one.
+  // The hook process identity and typed submission identity are the consumer's
+  // own account of itself, and were previously unfalsifiable.
+  // ===================================================================
+  for (const field of [
+    'claimId', 'attemptNonce', 'paneLaunchId', 'role',
+    'hookProcessId', 'hookParentProcessId',
+    'runtimeSubmissionId', 'runtimeSubmissionKind',
+  ]) {
+    const want = expected[field];
+    if (want === null || want === undefined || String(want).trim() === '') {
+      return { proven: false, reason: `expected_identity_missing:${field}` };
+    }
+    if (!sameScalar(proof[field], want)) {
+      return { proven: false, reason: `identity_mismatch:${field}` };
+    }
   }
 
   // PAYLOAD IDENTITY. Same id with a changed body must not match.

@@ -156,6 +156,11 @@ function produceAdmissionReceipt(input = {}) {
   // THE EXACT BYTES THIS CONSUMER RECEIVED — the whole prompt, marker included,
   // because that is literally what was written to the pane. Anything trimmed
   // here re-opens the truncated-but-acked hole from the other side.
+  // THE ROLE THE DAEMON GAVE THIS PANE, lower-cased into the kernel's address
+  // vocabulary exactly as the launch row stores it.
+  const role = String(env.SQUIDRUN_ROLE || '').trim().toLowerCase();
+  if (!role) return skip('no_role_binding', { updateId: marker.updateId, paneId });
+
   const record = buildAdmissionRecord({
     runtime,
     updateId: marker.updateId,
@@ -171,6 +176,16 @@ function produceAdmissionReceipt(input = {}) {
     paneId,
     deliveredPrompt: prompt,
     consumedAtMs: nowMs,
+    // FROM THE MARKER: the exact attempt this delivery belongs to.
+    claimId: marker.claimId,
+    attemptNonce: marker.attemptNonce,
+    // FROM THE ENVIRONMENT THE DAEMON WROTE, and from this process itself.
+    paneLaunchId: launchId,
+    role,
+    hookProcessId,
+    hookParentProcessId,
+    runtimeSubmissionId: submission.submissionId,
+    runtimeSubmissionKind: submission.submissionKind,
   });
 
   const writer = writerFactory ? writerFactory() : new TelegramAdmissionWriter({});
@@ -185,17 +200,36 @@ function produceAdmissionReceipt(input = {}) {
         .get(marker.messageId);
       if (!source) return skip('source_row_missing', { messageId: marker.messageId });
 
-      // The claim this delivery belongs to: the live one for this source row.
-      const claim = db.prepare(`
-        SELECT * FROM telegram_transport_claims
-        WHERE source_row_id = ? AND state != ?
-        ORDER BY attempt_at_ms DESC LIMIT 1
-      `).get(source.row_id, CLAIM_STATES.CLOSED_UNSENT);
-      if (!claim) return skip('no_open_claim', { sourceRowId: source.row_id });
+      // THE EXACT CLAIM NAMED BY THE MARKER — not the newest live one.
+      //
+      // This used to be `ORDER BY attempt_at_ms DESC LIMIT 1`, which answers
+      // "which attempt is current" rather than "which attempt wrote these
+      // bytes". After a retry, or in a race, the receipt attached to the wrong
+      // attempt and then passed every downstream check, because nothing else in
+      // the chain knew which one it was supposed to be.
+      const claim = db.prepare('SELECT * FROM telegram_transport_claims WHERE claim_id = ?')
+        .get(marker.claimId);
+      if (!claim) return skip('claim_not_found', { claimId: marker.claimId });
+      if (Number(claim.source_row_id) !== Number(source.row_id)) {
+        return skip('claim_source_mismatch', {
+          claimSourceRowId: claim.source_row_id, sourceRowId: source.row_id,
+        });
+      }
+      if (String(claim.attempt_nonce) !== String(marker.attemptNonce)) {
+        return skip('claim_attempt_nonce_mismatch', {
+          claimNonce: claim.attempt_nonce, markerNonce: marker.attemptNonce,
+        });
+      }
+      if (String(claim.state) === CLAIM_STATES.CLOSED_UNSENT) {
+        return skip('claim_closed_unsent', { claimId: marker.claimId });
+      }
       if (String(claim.pane_launch_id) !== launchId) {
         return skip('claim_launch_mismatch', {
           claimLaunch: claim.pane_launch_id, hookLaunch: launchId,
         });
+      }
+      if (String(claim.role) !== role) {
+        return skip('claim_role_mismatch', { claimRole: claim.role, hookRole: role });
       }
 
       const stored = recordAdmissionReceipt(db, {

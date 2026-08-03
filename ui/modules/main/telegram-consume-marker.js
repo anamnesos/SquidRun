@@ -40,6 +40,13 @@ const FIELD_KEYS = Object.freeze({
   c: 'chatId',
   g: 'appGeneration',
   q: 'queuedPayloadSha256',
+  // THE EXACT ATTEMPT. Without these the consumer can only say "a delivery of
+  // this message reached me"; the producer then attached its receipt to
+  // whichever claim happened to be newest, so after a retry the receipt bound
+  // to the wrong attempt and still looked valid. An attempt that cannot be
+  // named cannot be the one being proven.
+  k: 'claimId',
+  a: 'attemptNonce',
 });
 
 function isSafeValue(value) {

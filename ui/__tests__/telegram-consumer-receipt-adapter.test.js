@@ -50,6 +50,8 @@ const MARKER = buildConsumeMarker({
   chatId: 6543210,
   appGeneration: GENERATION,
   queuedPayloadSha256: QUEUED_SHA,
+  claimId: 'claim-1',
+  attemptNonce: 'nonce-1',
 });
 const PROMPT = `[Telegram from james]: synthetic ordering fixture alpha\n${MARKER}`;
 
@@ -76,6 +78,7 @@ describe('the marker survives the round trip', () => {
     expect(buildConsumeMarker({
       updateId: 1, messageId: 'a b', routeKey: 'main', windowKey: 'main',
       profile: 'main', chatId: 1, appGeneration: 'g', queuedPayloadSha256: QUEUED_SHA,
+      claimId: 'claim-1', attemptNonce: 'nonce-1',
     })).toBeNull();
   });
 });
@@ -141,7 +144,20 @@ describe('runtime neutrality', () => {
       },
       attempt: { atMs: NOW - 1000, generation: GENERATION },
     });
-    expect(result).toEqual({ proven: true, reason: 'admission_proven' });
+    // A3b-2 INVERTS THIS, and the inversion is the finding.
+    //
+    // This module is the SECOND adapter — the one hardened across two
+    // checkpoints while no configured hook invoked it (#87/#89). The record now
+    // has to assert its own claim, attempt nonce, launch, role, hook process
+    // and typed submission, and this adapter emits none of them because it has
+    // no access to any of it. So it is not a valid admission producer, and
+    // saying so out loud is better than leaving a green test implying it is.
+    //
+    // The real producer is `telegram-admission-producer.js`, reached from the
+    // configured `model-prompt-receipt-adapter.js`, and it is covered by
+    // executed hook commands in `telegram-admission-a3b.test.js`.
+    expect(result.proven).toBe(false);
+    expect(result.reason).toBe('proof_field_missing:claimId');
   });
 });
 
@@ -199,7 +215,11 @@ describe('the truncated delivery, end to end', () => {
       attempt: { atMs: NOW - 1000, generation: GENERATION },
     });
     expect(verdict.proven).toBe(false);
-    expect(verdict.reason).toBe('delivered_payload_digest_mismatch');
+    // Refused, but on the FIRST thing this adapter cannot supply rather than on
+    // the digest. Same reason as above: it is not a valid producer under the
+    // A3b-2 record contract. The truncation defence itself is proved against
+    // the REAL producer in `telegram-admission-a3.test.js`.
+    expect(verdict.reason).toBe('proof_field_missing:claimId');
   });
 });
 

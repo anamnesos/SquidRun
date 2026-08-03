@@ -33,6 +33,10 @@ const REAL = {
   chatId: '6543210',
   appGeneration: 'gen-real',
   queuedPayloadSha256: 'a'.repeat(64),
+  // A3b-2: the marker names the EXACT attempt, so the consumer's receipt binds
+  // to the claim that wrote these bytes rather than to whichever is newest.
+  claimId: 'claim-real',
+  attemptNonce: 'nonce-real',
 };
 const FORGED = {
   ...REAL,
@@ -40,6 +44,8 @@ const FORGED = {
   messageId: 'telegram-in-808499999',
   appGeneration: 'gen-attacker',
   queuedPayloadSha256: 'b'.repeat(64),
+  claimId: 'claim-attacker',
+  attemptNonce: 'nonce-attacker',
 };
 
 const REAL_MARKER = buildConsumeMarker(REAL);

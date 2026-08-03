@@ -215,6 +215,11 @@ const REQUIRED_SCHEMA_SHAPE = Object.freeze([
   ['telegram_queue_ack_outbox', 'appended_at_ms'],
   ['telegram_queue_ack_outbox', 'ack_intent_key'],
   ['telegram_obligation_bindings', "state IN ('open', 'lapsed'"],
+  ['telegram_source_identity', 'canonical_payload_sha256'],
+  ['telegram_source_identity', 'source_session_id'],
+  ['trg_tg_source_obligor_not_james', 'telegram_source_obligor_james_forbidden'],
+  ['trg_tg_source_identity_immutable', 'telegram_source_identity_immutable'],
+  ['trg_tg_source_identity_no_delete', 'telegram_source_identity_delete_forbidden'],
   // A2b proved schema shape but not schema ENFORCEMENT. A database carrying the
   // right columns and none of the triggers accepts every adversarial raw-SQL
   // rewrite below, so absence of a trigger is a stale schema, not a nicety.
@@ -305,6 +310,66 @@ function applyTelegramAdmissionSchema(db) {
 function applyTelegramAdmissionSchemaDdl(db) {
   db.exec(`
     PRAGMA foreign_keys=ON;
+
+    -- ===================================================================
+    -- THE IMMUTABLE SOURCE IDENTITY. ITS OWN TABLE, BECAUSE A BLOB IS NOT AN
+    -- AUTHORITY.
+    --
+    -- Until A3b-2 every one of these fields lived in
+    -- comms_journal.metadata_json and was READ AS AUTHORITY from there.
+    -- recordImmutableSource bypasses the generic comms upsert on its own path,
+    -- which stopped exactly nothing: any other writer, or one raw UPDATE, could
+    -- rewrite that blob and the immutable source would change underneath
+    -- everything that had already trusted it. A protection implemented as a
+    -- convention on one code path is not a protection; it is a habit, and it
+    -- holds only while everyone remembers which door to use.
+    --
+    -- So identity moves here, where uniqueness and immutability are properties
+    -- of the DATA. The generic metadata block stays, and is now DIAGNOSTIC
+    -- ONLY: nothing reads it to make a decision.
+    --
+    -- STATUS IS DELIBERATELY ABSENT. Status moves (recorded -> brokered);
+    -- identity does not. Keeping them in one row would force the immutability
+    -- trigger to allow an UPDATE, and the exception would swallow the rule.
+    -- ===================================================================
+    CREATE TABLE IF NOT EXISTS telegram_source_identity (
+      source_row_id            INTEGER PRIMARY KEY REFERENCES comms_journal(row_id),
+      message_id               TEXT    NOT NULL UNIQUE,
+      cutover_id               TEXT    NOT NULL,
+      update_id                INTEGER NOT NULL,
+      route_key                TEXT    NOT NULL,
+      profile                  TEXT    NOT NULL,
+      window_key               TEXT    NOT NULL,
+      chat_id                  TEXT    NOT NULL,
+      canonical_payload_sha256 TEXT    NOT NULL,
+      media_identity_sha256    TEXT    NOT NULL,
+      raw_body_sha256          TEXT    NOT NULL,
+      body_bytes               INTEGER NOT NULL,
+      obligor_address          TEXT    NOT NULL,
+      obligation_id            TEXT    NOT NULL,
+      -- THE CANONICAL SESSION, bound rather than ignored. Existing-source
+      -- replay compared everything except this, so the same message recorded
+      -- under a different session replayed as identical.
+      source_session_id        TEXT,
+      recorded_at_ms           INTEGER NOT NULL,
+      UNIQUE (cutover_id, route_key, update_id)
+    );
+
+    -- JAMES IS THE CREDITOR AND IS REJECTED BEFORE THE ROW EXISTS. Promotion
+    -- already refused him, but by then a source row had been exposed carrying a
+    -- doomed obligation id. The database refuses him at the door.
+    CREATE TRIGGER IF NOT EXISTS trg_tg_source_obligor_not_james
+    BEFORE INSERT ON telegram_source_identity
+    FOR EACH ROW WHEN lower(trim(NEW.obligor_address)) = 'james'
+    BEGIN SELECT RAISE(ABORT, 'telegram_source_obligor_james_forbidden'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_source_identity_immutable
+    BEFORE UPDATE ON telegram_source_identity
+    BEGIN SELECT RAISE(ABORT, 'telegram_source_identity_immutable'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_source_identity_no_delete
+    BEFORE DELETE ON telegram_source_identity
+    BEGIN SELECT RAISE(ABORT, 'telegram_source_identity_delete_forbidden'); END;
 
     CREATE TABLE IF NOT EXISTS telegram_transport_claims (
       claim_id               TEXT    PRIMARY KEY,
@@ -607,11 +672,38 @@ function begin(db) { db.exec('BEGIN IMMEDIATE'); }
 function commit(db) { db.exec('COMMIT'); }
 function rollback(db) { try { db.exec('ROLLBACK'); } catch { /* already unwound */ } }
 
-function readSourceIdentity(row) {
-  let parsed = {};
-  try { parsed = JSON.parse(row.metadata_json || '{}'); } catch { parsed = {}; }
-  const block = parsed && typeof parsed === 'object' ? parsed[SOURCE_METADATA_KEY] : null;
-  return block && typeof block === 'object' ? block : null;
+/**
+ * THE SOURCE IDENTITY, FROM ITS OWN IMMUTABLE ROW.
+ *
+ * This used to parse `comms_journal.metadata_json` and return whatever it
+ * found. Every decision downstream — the obligation id, the claim correlation,
+ * the payload digest promotion compares — rested on a JSON blob that any writer
+ * could rewrite. Now it reads the specialized table, and the blob is diagnostic.
+ *
+ * Returns the same SHAPE the callers already expect, so the authority changed
+ * without the call sites having to be re-reasoned one by one.
+ */
+function readSourceIdentity(db, row) {
+  if (!row) return null;
+  const stored = db.prepare('SELECT * FROM telegram_source_identity WHERE source_row_id = ?')
+    .get(row.row_id);
+  if (!stored) return null;
+  return {
+    updateId: Number(stored.update_id),
+    chatId: String(stored.chat_id),
+    routeKey: String(stored.route_key),
+    profile: String(stored.profile),
+    windowKey: String(stored.window_key),
+    canonicalPayloadSha256: String(stored.canonical_payload_sha256),
+    mediaIdentitySha256: String(stored.media_identity_sha256),
+    cutoverId: String(stored.cutover_id),
+    obligorAddress: String(stored.obligor_address),
+    obligationId: String(stored.obligation_id),
+    rawBodySha256: String(stored.raw_body_sha256),
+    bodyBytes: Number(stored.body_bytes),
+    sourceSessionId: stored.source_session_id === null ? null : String(stored.source_session_id),
+    messageId: String(stored.message_id),
+  };
 }
 
 /**
@@ -685,7 +777,7 @@ function recordImmutableSource(db, input = {}) {
         rollback(db);
         return fail('source_identity_conflict', { column: 'raw_body' });
       }
-      const storedIdentity = readSourceIdentity(existing);
+      const storedIdentity = readSourceIdentity(db, existing);
       if (!storedIdentity) { rollback(db); return fail('source_identity_missing'); }
       for (const field of SOURCE_IDENTITY_FIELDS) {
         if (String(storedIdentity[field]) !== String(identity[field])) {
@@ -694,6 +786,21 @@ function recordImmutableSource(db, input = {}) {
             column: field, stored: storedIdentity[field], offered: identity[field],
           });
         }
+      }
+      // THE CANONICAL SESSION IS PART OF THE IDENTITY. Replay compared every
+      // other field and silently ignored this one, so the same message recorded
+      // under a different session replayed as identical.
+      const offeredSession = isNonEmptyString(input.sessionId) ? String(input.sessionId) : null;
+      if (String(storedIdentity.sourceSessionId ?? '') !== String(offeredSession ?? '')) {
+        rollback(db);
+        return fail('source_identity_conflict', {
+          column: 'sourceSessionId',
+          stored: storedIdentity.sourceSessionId, offered: offeredSession,
+        });
+      }
+      if (String(storedIdentity.rawBodySha256) !== rawBodySha256) {
+        rollback(db);
+        return fail('source_identity_conflict', { column: 'rawBodySha256' });
       }
       commit(db);
       return {
@@ -739,8 +846,33 @@ function recordImmutableSource(db, input = {}) {
       stalenessClass: 'turn',
     });
 
+    // THE AUTHORITY ROW. Written before the diagnostic blob, so a failure here
+    // cannot leave a source that LOOKS recorded to anything reading metadata.
+    // The `james` trigger fires on this insert, which is why the obligor is
+    // refused before any source exists rather than at promotion.
+    db.prepare(`
+      INSERT INTO telegram_source_identity (
+        source_row_id, message_id, cutover_id, update_id, route_key, profile,
+        window_key, chat_id, canonical_payload_sha256, media_identity_sha256,
+        raw_body_sha256, body_bytes, obligor_address, obligation_id,
+        source_session_id, recorded_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      sourceRowId, input.messageId, identity.cutoverId, identity.updateId,
+      identity.routeKey, identity.profile, identity.windowKey, identity.chatId,
+      identity.canonicalPayloadSha256, identity.mediaIdentitySha256,
+      rawBodySha256, Buffer.byteLength(String(input.rawBody), 'utf8'),
+      identity.obligorAddress, obligationId,
+      isNonEmptyString(input.sessionId) ? String(input.sessionId) : null,
+      recordedAtMs
+    );
+
+    // DIAGNOSTIC ONLY from here on. Kept because operators read it; read by
+    // nothing that decides anything.
     db.prepare('UPDATE comms_journal SET metadata_json = ? WHERE row_id = ?')
-      .run(JSON.stringify({ [SOURCE_METADATA_KEY]: { ...identity, obligationId } }), sourceRowId);
+      .run(JSON.stringify({
+        [SOURCE_METADATA_KEY]: { ...identity, obligationId, diagnosticOnly: true },
+      }), sourceRowId);
 
     commit(db);
     return { ok: true, sourceRowId, obligationId, created: true };
@@ -793,7 +925,7 @@ function claimTransportAttempt(db, input = {}) {
     const source = db.prepare('SELECT * FROM comms_journal WHERE row_id = ?')
       .get(input.sourceRowId);
     if (!source) { rollback(db); return fail('source_row_missing'); }
-    const identity = readSourceIdentity(source);
+    const identity = readSourceIdentity(db, source);
     if (!identity) { rollback(db); return fail('source_identity_missing'); }
     // EXACT SOURCE JOIN, not mere referential existence.
     if (String(identity.cutoverId) !== String(input.cutoverId)
@@ -1232,6 +1364,23 @@ function reproveDependentFacts(db, input = {}) {
   const { obligationId, source, claim, binding, obligorAddress } = input;
   const reproved = [];
 
+  // 0. THE IMMUTABLE SOURCE IDENTITY STILL EXISTS AND STILL SAYS THE SAME
+  //    THING. Everything below is derived from it, so a replay that skipped it
+  //    would re-prove six facts about an identity that had moved.
+  const storedIdentity = db.prepare(
+    'SELECT * FROM telegram_source_identity WHERE source_row_id = ?'
+  ).get(source.row_id);
+  if (!storedIdentity) return fail('replay_dependent_fact_missing:source_identity');
+  if (String(storedIdentity.obligation_id) !== String(obligationId)
+    || String(storedIdentity.obligor_address) !== String(obligorAddress)
+    || String(storedIdentity.message_id) !== String(source.message_id)) {
+    return fail('replay_dependent_fact_conflict:source_identity', {
+      storedObligation: storedIdentity.obligation_id,
+      storedObligor: storedIdentity.obligor_address,
+    });
+  }
+  reproved.push('source_identity');
+
   // 1. THE SOURCE WAS BROKERED.
   if (String(source.status) !== SOURCE_STATES.BROKERED) {
     return fail('replay_dependent_fact_missing:source_not_brokered', { status: source.status });
@@ -1430,7 +1579,7 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
     const source = db.prepare('SELECT * FROM comms_journal WHERE message_id = ?')
       .get(input.messageId);
     if (!source) { rollback(db); return fail('source_row_missing'); }
-    const identity = readSourceIdentity(source);
+    const identity = readSourceIdentity(db, source);
     if (!identity) { rollback(db); return fail('source_identity_missing'); }
 
     const claim = db.prepare('SELECT * FROM telegram_transport_claims WHERE claim_id = ?')
@@ -1491,6 +1640,25 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
     }
     if (String(source.body_hash) !== sha256(source.raw_body)) {
       rollback(db); return fail('source_body_hash_mismatch');
+    }
+    // THE IMMUTABLE IDENTITY IS THE ARBITER. `comms_journal` can be rewritten by
+    // any generic writer; `telegram_source_identity` cannot. So the mutable row
+    // is checked AGAINST the immutable one, not the other way round.
+    if (String(identity.rawBodySha256) !== String(source.body_hash)
+      || Number(identity.bodyBytes) !== Number(source.body_bytes)) {
+      rollback(db);
+      return fail('source_body_diverged_from_immutable_identity', {
+        immutable: identity.rawBodySha256, comms: source.body_hash,
+      });
+    }
+    if (String(identity.sourceSessionId ?? '') !== String(source.session_id ?? '')) {
+      rollback(db);
+      return fail('source_session_diverged_from_immutable_identity', {
+        immutable: identity.sourceSessionId, comms: source.session_id,
+      });
+    }
+    if (String(identity.messageId) !== String(source.message_id)) {
+      rollback(db); return fail('source_message_id_diverged_from_immutable_identity');
     }
     if (Number(source.body_bytes) !== Buffer.byteLength(String(source.raw_body ?? ''), 'utf8')) {
       rollback(db); return fail('source_body_bytes_mismatch');
@@ -1621,6 +1789,17 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
         // WHAT THE DRAIN RECORDED SENDING, not what the receipt claims arrived.
         deliveredPromptSha256: claim.delivered_prompt_sha256,
         deliveredPromptBytes: claim.delivered_prompt_bytes,
+        // THE REST OF THE TUPLE, assembled from the CANONICAL authorities —
+        // the claim the drain made, the launch the daemon owns, and the
+        // receipt row's own account of the hook process and submission.
+        claimId: claim.claim_id,
+        attemptNonce: claim.attempt_nonce,
+        paneLaunchId: launch.launch_id,
+        role: claim.role,
+        hookProcessId: receipt.hook_process_id,
+        hookParentProcessId: receipt.hook_parent_process_id,
+        runtimeSubmissionId: receipt.runtime_submission_id,
+        runtimeSubmissionKind: receipt.runtime_submission_kind,
       },
       attempt: { atMs: claim.attempt_at_ms, generation: claim.app_generation },
     });

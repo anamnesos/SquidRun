@@ -71,6 +71,28 @@ function generateAdmissionId() {
 }
 
 /**
+ * THE RECEIPT'S IDENTITY IS THE ATTEMPT IT DESCRIBES.
+ *
+ * Length-prefixed so no field's contents can forge a delimiter — the same
+ * encoding the admission store uses, and for the same reason.
+ */
+function deriveAdmissionId(parts = {}) {
+  const joined = [
+    'telegram_admission_receipt.v1',
+    parts.claimId,
+    parts.attemptNonce,
+    parts.deliveredPromptSha256,
+    parts.runtimeSubmissionId,
+  ]
+    .map((part) => {
+      const value = String(part ?? '');
+      return `${Buffer.byteLength(value, 'utf8')}:${value}`;
+    })
+    .join('|');
+  return `adm_${crypto.createHash('sha256').update(joined, 'utf8').digest('hex')}`;
+}
+
+/**
  * Schema for the three identity tables.
  *
  * `telegram_admission_receipts.record_json` holds the record VERBATIM. The
@@ -369,8 +391,53 @@ function recordAdmissionReceipt(db, input = {}) {
     });
   }
 
-  const admissionId = isNonEmptyString(input.admissionId)
-    ? input.admissionId : generateAdmissionId();
+  // ===================================================================
+  // ONE ATTEMPT, ONE RECEIPT IDENTITY.
+  //
+  // This used to mint a fresh random id on every call, so a hook that fired
+  // twice for one attempt produced two equally-valid receipts and nothing could
+  // tell a byte-exact replay from a conflicting second account of the same
+  // delivery. The id is now DERIVED from the attempt it describes, which makes
+  // the primary key itself the idempotency check: an exact replay collides and
+  // is compared; a conflicting one is refused and quarantines the route.
+  //
+  // `input.admissionId` is still accepted, and still checked against the
+  // derivation, so a caller cannot name a receipt something the attempt would
+  // not produce.
+  // ===================================================================
+  const derivedAdmissionId = deriveAdmissionId({
+    claimId: input.claimId,
+    attemptNonce: record.attemptNonce,
+    deliveredPromptSha256: record.deliveredPromptSha256,
+    runtimeSubmissionId: input.runtimeSubmissionId,
+  });
+  if (isNonEmptyString(input.admissionId) && String(input.admissionId) !== derivedAdmissionId) {
+    return fail('receipt_admission_id_not_derivable', {
+      offered: input.admissionId, recomputed: derivedAdmissionId,
+    });
+  }
+  const admissionId = derivedAdmissionId;
+
+  const priorReceipt = db.prepare('SELECT * FROM telegram_admission_receipts WHERE admission_id = ?')
+    .get(admissionId);
+  if (priorReceipt) {
+    // BYTE-FOR-BYTE, on the verbatim record. Anything less would let a second
+    // account of the same attempt pass as a replay of the first.
+    if (String(priorReceipt.record_json) === JSON.stringify(record)
+      && String(priorReceipt.claim_id) === String(input.claimId)
+      && String(priorReceipt.consumer_session_id) === String(input.consumerSessionId)
+      && String(priorReceipt.runtime_submission_id) === String(input.runtimeSubmissionId)
+      && String(priorReceipt.hook_process_id) === String(input.hookProcessId)
+      && String(priorReceipt.hook_parent_process_id) === String(input.hookParentProcessId)
+      && Number(priorReceipt.source_row_id) === Number(input.sourceRowId)) {
+      return { ok: true, admissionId, admittedAtMs, replayed: true };
+    }
+    return fail('receipt_conflicting_duplicate_quarantine', {
+      admissionId,
+      storedClaimId: priorReceipt.claim_id,
+      storedSessionId: priorReceipt.consumer_session_id,
+    });
+  }
 
   try {
     db.prepare(`
@@ -435,6 +502,7 @@ module.exports = {
   ENV_APP_GENERATION,
   generateLaunchId,
   generateAdmissionId,
+  deriveAdmissionId,
   applyLaunchRegistrySchema,
   recordPaneLaunch,
   completePaneLaunch,

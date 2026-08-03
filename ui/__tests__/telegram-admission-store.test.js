@@ -135,6 +135,16 @@ function seedAdmissionReceipt(db, { src, claim, deliveredPrompt = DELIVERED_PROM
     paneId: '1',
     deliveredPrompt,
     consumedAtMs: NOW + 30,
+    // A3b-2: the record ASSERTS the attempt, launch, role, hook process and
+    // typed submission rather than having them carried alongside it.
+    claimId: claim.claimId,
+    attemptNonce: claim.attemptNonce ?? 'nonce-1',
+    paneLaunchId: currentLaunchId,
+    role: 'architect',
+    hookProcessId: '9001',
+    hookParentProcessId: '9000',
+    runtimeSubmissionId: 'turn-1',
+    runtimeSubmissionKind: SUBMISSION_KINDS.CODEX_TURN,
     ...(overrides.record || {}),
   });
   const stored = recordAdmissionReceipt(db, {
@@ -551,14 +561,20 @@ describe('admitted_owned promotion', () => {
   });
 
   test.each([
-    ['a different consumer session', { consumerSessionId: 'sess-2' }],
-    ['a different submission id', { runtimeSubmissionId: 'turn-2' }],
-    ['a different submission kind', { runtimeSubmissionKind: SUBMISSION_KINDS.CLAUDE_PROMPT }],
-  ])('A SECOND RECEIPT CARRYING %s CANNOT REWRITE THE BINDING', (_label, patch) => {
-    // These identities are no longer caller inputs, so the only way to offer a
-    // different one is a genuinely different RECEIPT. That is a stronger test
-    // than the A2 version: it proves the binding is immutable against a real
-    // second consumer record, not against a string the caller retyped.
+    // A3b-2 derives the receipt id from (claim, attempt nonce, delivered digest,
+    // submission id). So WHERE a conflicting second account is caught now
+    // depends on whether it changes one of those four.
+    //
+    // A different SESSION or KIND does not, so the second receipt lands on the
+    // SAME primary key, is compared byte-for-byte, and is refused at write time
+    // as a conflicting duplicate — the quarantine the gate asks for, and a
+    // strictly earlier catch than the binding comparison.
+    ['a different consumer session', { consumerSessionId: 'sess-2' }, 'quarantine'],
+    ['a different submission kind', { runtimeSubmissionKind: SUBMISSION_KINDS.CLAUDE_PROMPT }, 'quarantine'],
+    // A different SUBMISSION ID is a genuinely different attempt identity, so
+    // it gets its own receipt — and the binding must then refuse it.
+    ['a different submission id', { runtimeSubmissionId: 'turn-2' }, 'binding'],
+  ])('A SECOND RECEIPT CARRYING %s CANNOT REWRITE THE BINDING', (_label, patch, caughtAt) => {
     const db = freshDb();
     const { src, claim } = seedToDeliveryStarted(db);
     const first = promote(db, ownedInput(claim.claimId));
@@ -581,19 +597,42 @@ describe('admitted_owned promotion', () => {
           runtimeSubmissionId: patch.runtimeSubmissionId || 'turn-1',
           runtimeSubmissionKind: patch.runtimeSubmissionKind || SUBMISSION_KINDS.CODEX_TURN,
         },
-        record: patch.consumerSessionId
-          ? { consumerSessionId: patch.consumerSessionId }
-          : {},
+        record: {
+          ...(patch.consumerSessionId ? { consumerSessionId: patch.consumerSessionId } : {}),
+          ...(patch.runtimeSubmissionId ? { runtimeSubmissionId: patch.runtimeSubmissionId } : {}),
+          ...(patch.runtimeSubmissionKind ? { runtimeSubmissionKind: patch.runtimeSubmissionKind } : {}),
+        },
       },
     });
-    expect(second.ok).toBe(true);
 
+    if (caughtAt === 'quarantine') {
+      expect(second.ok).toBe(false);
+      expect(second.reason).toBe('receipt_conflicting_duplicate_quarantine');
+      // And the FIRST binding is untouched.
+      expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_obligation_bindings').get().n)).toBe(1);
+      return;
+    }
+
+    expect(second.ok).toBe(true);
+    expect(second.admissionId).not.toBe(first.admissionId);
     const conflicting = promote(db, ownedInput(claim.claimId, {
       admissionId: second.admissionId,
     }));
-
     expect(conflicting.ok).toBe(false);
     expect(conflicting.reason).toBe('binding_identity_conflict');
+  });
+
+  test('A BYTE-EXACT REPLAY OF THE SAME RECEIPT IS IDEMPOTENT, not a second receipt', () => {
+    // One attempt, one receipt identity. The id used to be random, so a hook
+    // that fired twice for one attempt produced two equally-valid receipts and
+    // nothing could tell a replay from a second account of the same delivery.
+    const db = freshDb();
+    const { src, claim } = seedToDeliveryStarted(db);
+    const again = seedAdmissionReceipt(db, { src, claim });
+
+    expect(again.ok).toBe(true);
+    expect(again.replayed).toBe(true);
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_admission_receipts').get().n)).toBe(1);
   });
 
   test('THE BINDING CARRIES THE FULL IMMUTABLE IDENTITY the gate names', () => {
@@ -1347,22 +1386,26 @@ describe('the surviving-mutant closures', () => {
     expect(a.claimId).not.toBe(b.claimId);
   });
 
-  test('A CLAIMANT WITH THE SAME KEY BUT A DIFFERENT SOURCE ROW is not idempotent', () => {
-    // A27: sameClaimant must compare the source row. Two comms rows can share
-    // an updateId under different message ids, which is exactly the shape that
-    // would otherwise be waved through as "the same attempt".
+  test('TWO SOURCES CANNOT SHARE A CLAIM KEY AT ALL — the database refuses it', () => {
+    // A27 asked whether `sameClaimant` compares the source row, because two
+    // comms rows sharing an updateId was the shape that would be waved through
+    // as "the same attempt". A3b-2 removes the shape instead of detecting it:
+    // `telegram_source_identity` is UNIQUE on (cutover, route, update), so a
+    // second source that would collide on a claim key cannot be recorded.
+    //
+    // Strictly stronger, and it makes the scenario this test used to build
+    // unconstructable through the public API. The `sameClaimant` source-row
+    // comparison is still exercised, by the forged-claim raw-SQL test that
+    // inserts a claim the API would never produce.
     const db = freshDb();
     const a = recordImmutableSource(db, sourceInput());
-    const b = recordImmutableSource(db, sourceInput({
+    expect(a.ok).toBe(true);
+
+    const collision = recordImmutableSource(db, sourceInput({
       messageId: 'telegram-in-900000001-dup',
     }));
-    expect(b.ok).toBe(true);
-    expect(b.sourceRowId).not.toBe(a.sourceRowId);
-
-    claimTransportAttempt(db, claimInput(a.sourceRowId));
-    const other = claimTransportAttempt(db, claimInput(b.sourceRowId));
-
-    expect(other.ok).toBe(false);
-    expect(other.reason).toBe('claim_held_by_other');
+    expect(collision.ok).toBe(false);
+    expect(collision.reason).toMatch(/^source_insert_failed:/);
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_source_identity').get().n)).toBe(1);
   });
 });

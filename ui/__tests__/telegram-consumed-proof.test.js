@@ -42,9 +42,32 @@ function expectedFor(overrides = {}) {
     queuedPayloadSha256: canonicalQueuedPayloadDigest(RECORD),
     deliveredPromptSha256: sha256(DELIVERED),
     deliveredPromptBytes: byteLength(DELIVERED),
+    // A3b-2: the record ASSERTS the attempt, launch, role, hook process and
+    // typed submission, and the validator now COMPARES them rather than only
+    // requiring them present.
+    claimId: 'claim-1',
+    attemptNonce: 'nonce-1',
+    paneLaunchId: 'pl_00000000000000000000000000000001',
+    role: 'architect',
+    hookProcessId: '9001',
+    hookParentProcessId: '9000',
+    runtimeSubmissionId: 'turn-1',
+    runtimeSubmissionKind: 'codex_turn',
     ...overrides,
   };
 }
+
+/** The tuple every valid fixture record carries. */
+const RECORD_TUPLE = Object.freeze({
+  claimId: 'claim-1',
+  attemptNonce: 'nonce-1',
+  paneLaunchId: 'pl_00000000000000000000000000000001',
+  role: 'architect',
+  hookProcessId: '9001',
+  hookParentProcessId: '9000',
+  runtimeSubmissionId: 'turn-1',
+  runtimeSubmissionKind: 'codex_turn',
+});
 
 function proofFor(overrides = {}, deliveredPrompt = DELIVERED) {
   return {
@@ -63,6 +86,7 @@ function proofFor(overrides = {}, deliveredPrompt = DELIVERED) {
       queuedPayloadSha256: canonicalQueuedPayloadDigest(RECORD),
       deliveredPrompt,
       consumedAtMs: NOW,
+      ...RECORD_TUPLE,
     }),
     ...overrides,
   };
@@ -92,6 +116,7 @@ describe('the happy path exists at all', () => {
       queuedPayloadSha256: canonicalQueuedPayloadDigest(RECORD),
       deliveredPrompt: DELIVERED,
       consumedAtMs: NOW,
+      ...RECORD_TUPLE,
     };
     const codex = buildAdmissionRecord({ ...common, runtime: 'codex' });
     const claude = buildAdmissionRecord({ ...common, runtime: 'claude' });
