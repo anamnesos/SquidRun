@@ -143,10 +143,69 @@ function assertDurableHandle(db) {
 }
 
 /**
+ * Objects whose INSTALLED DEFINITION must be verified, not merely assumed to
+ * exist. The fingerprint is a substring that must appear in the stored SQL.
+ */
+const REQUIRED_SCHEMA_SHAPE = Object.freeze([
+  ['telegram_transport_claims', 'attempt_nonce'],
+  ['telegram_transport_claims', "state IN ('claimed', 'delivery_started'"],
+  ['idx_tg_claims_exclusive', "WHERE state != 'closed_unsent'"],
+  ['telegram_obligation_bindings', 'hook_parent_process_id'],
+  ['telegram_obligation_bindings', 'claim_id'],
+  ['telegram_queue_ack_outbox', 'appended_at_ms'],
+]);
+
+/**
+ * `CREATE TABLE IF NOT EXISTS` DOES NOTHING WHEN A TABLE ALREADY EXISTS WITH A
+ * DIFFERENT SHAPE — it does not compare, it just returns.
+ *
+ * So a stale table from an older build passes silently and every test above it
+ * runs green against the wrong structure. That is the same defect as
+ * `!== undefined` letting an absent schema through, as `Number(null)` reading
+ * as a fresh zero, and as A1's private tables passing 56/56 while the kernel
+ * held no debt: A DECLARATION ACCEPTED IN PLACE OF A VERIFIED EFFECT.
+ *
+ * This reads `sqlite_master` and compares what is actually installed.
+ */
+function verifyInstalledSchema(db) {
+  const missing = [];
+  for (const [name, fingerprint] of REQUIRED_SCHEMA_SHAPE) {
+    let row;
+    try {
+      row = db.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(name);
+    } catch (err) {
+      return fail(`schema_probe_failed:${err.message}`);
+    }
+    if (!row || !row.sql) { missing.push(`${name}:absent`); continue; }
+    if (!String(row.sql).includes(fingerprint)) missing.push(`${name}:stale`);
+  }
+  if (missing.length > 0) return fail('schema_shape_mismatch', { missing });
+  return { ok: true };
+}
+
+/**
  * Telegram-specific tables only. The REAL evidence-ledger schema is the
  * caller's responsibility; these REFERENCE it rather than shadowing it.
+ *
+ * Returns a FAILURE if the installed shape does not match after creation, so a
+ * pre-existing stale table cannot be mistaken for a fresh one.
  */
 function applyTelegramAdmissionSchema(db) {
+  // A STALE TABLE MAKES CREATION THROW, not merely no-op: the index and
+  // dependent DDL reference columns the old shape does not have. Caught and
+  // returned structurally so callers get a diagnosis instead of a stack trace,
+  // and so "stale schema" is a reportable state rather than a crash.
+  try {
+    applyTelegramAdmissionSchemaDdl(db);
+  } catch (err) {
+    return fail('schema_apply_failed', { message: err.message });
+  }
+  const verified = verifyInstalledSchema(db);
+  if (!verified.ok) return verified;
+  return { ok: true, schemaVersion: SCHEMA_VERSION };
+}
+
+function applyTelegramAdmissionSchemaDdl(db) {
   db.exec(`
     PRAGMA foreign_keys=ON;
 
@@ -163,7 +222,11 @@ function applyTelegramAdmissionSchema(db) {
       consumer_runtime       TEXT    NOT NULL,
       attempt_nonce          TEXT    NOT NULL,
       attempt_at_ms          INTEGER NOT NULL,
-      state                  TEXT    NOT NULL,
+      -- LEGAL STATES ENFORCED BY THE DATABASE, not only by the code that
+      -- writes them. An application-only state machine is a convention.
+      state                  TEXT    NOT NULL CHECK (
+        state IN ('claimed', 'delivery_started', 'closed_unsent', 'admitted')
+      ),
       closed_at_ms           INTEGER
     );
 
@@ -184,6 +247,9 @@ function applyTelegramAdmissionSchema(db) {
     CREATE TABLE IF NOT EXISTS telegram_obligation_bindings (
       obligation_id                 TEXT    PRIMARY KEY REFERENCES obligations(obligation_id),
       source_row_id                 INTEGER NOT NULL UNIQUE REFERENCES comms_journal(row_id),
+      -- CLAIM PROVENANCE. The binding must name the attempt it came from, or
+      -- there is no path from the debt back to the delivery that created it.
+      claim_id                      TEXT    NOT NULL REFERENCES telegram_transport_claims(claim_id),
       cutover_id                    TEXT    NOT NULL,
       update_id                     INTEGER NOT NULL,
       message_id                    TEXT    NOT NULL,
@@ -194,7 +260,8 @@ function applyTelegramAdmissionSchema(db) {
       raw_body_sha256               TEXT    NOT NULL,
       canonical_payload_sha256      TEXT    NOT NULL,
       predecessor_manifest_sha256   TEXT    NOT NULL,
-      admission_id                  TEXT    NOT NULL,
+      -- UNIQUE: one admission receipt cannot own two bindings.
+      admission_id                  TEXT    NOT NULL UNIQUE,
       attempt_nonce                 TEXT    NOT NULL,
       app_generation                TEXT    NOT NULL,
       pane_launch_id                TEXT    NOT NULL,
@@ -239,7 +306,7 @@ function applyTelegramAdmissionSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_tg_claims_state ON telegram_transport_claims(state);
     CREATE INDEX IF NOT EXISTS idx_tg_bind_state   ON telegram_obligation_bindings(state);
   `);
-  return { ok: true, schemaVersion: SCHEMA_VERSION };
+  return { ok: true };
 }
 
 function begin(db) { db.exec('BEGIN IMMEDIATE'); }
@@ -419,8 +486,12 @@ function claimTransportAttempt(db, input = {}) {
     return fail('claim_field_missing:attemptAtMs');
   }
 
+  // THE CLAIM ID BINDS SOURCE ROW AND ATTEMPT TIME. Without them a reused key
+  // or nonce pointing at a different source, or replayed at a different time,
+  // hashed to the same id and was called idempotent.
   const claimId = `tgc_${sha256(canonicalJoin([
     input.cutoverId, input.routeKey, String(input.updateId), input.attemptNonce,
+    String(input.sourceRowId), String(attemptAtMs),
   ]))}`;
 
   begin(db);
@@ -455,7 +526,9 @@ function claimTransportAttempt(db, input = {}) {
         && existing.pane_id === String(input.paneId)
         && existing.role === input.role
         && existing.consumer_runtime === input.consumerRuntime
-        && existing.attempt_nonce === input.attemptNonce;
+        && existing.attempt_nonce === input.attemptNonce
+        && Number(existing.source_row_id) === Number(input.sourceRowId)
+        && Number(existing.attempt_at_ms) === Number(attemptAtMs);
 
       if (sameClaimant) {
         commit(db);
@@ -484,7 +557,17 @@ function claimTransportAttempt(db, input = {}) {
     return { ok: true, claimId, state: CLAIM_STATES.CLAIMED, created: true };
   } catch (err) {
     rollback(db);
-    if (/UNIQUE|constraint/i.test(err.message)) {
+    // CLASSIFY SPECIFICALLY. A1 mapped EVERY constraint failure — foreign key
+    // violations included — onto `claim_held_by_other`, which would report a
+    // broken reference as a lost race and send the caller to wait for a claim
+    // that does not exist.
+    if (/FOREIGN KEY/i.test(err.message)) {
+      return fail('claim_foreign_key_violation', { message: err.message });
+    }
+    if (/CHECK constraint/i.test(err.message)) {
+      return fail('claim_check_constraint_violation', { message: err.message });
+    }
+    if (/UNIQUE constraint/i.test(err.message)) {
       return fail('claim_held_by_other', { raceLost: true });
     }
     return fail(`claim_failed:${err.message}`);
@@ -647,6 +730,26 @@ function promoteToAdmittedOwned(db, input = {}) {
       rollback(db); return fail('source_payload_digest_mismatch');
     }
 
+    // CAUSAL ORDERING. A promotion cannot predate the attempt it promotes, and
+    // an attempt cannot predate the message it delivers. Without this a receipt
+    // dated before its own source passes every identity check and still
+    // describes something that could not have happened.
+    const sourceAtMs = Number(source.sent_at_ms);
+    const startedRow = db.prepare(`
+      SELECT MIN(at_ms) AS at_ms FROM telegram_transport_events
+      WHERE claim_id = ? AND kind = 'delivery_started'
+    `).get(input.claimId);
+    const startedAtMs = Number(startedRow && startedRow.at_ms);
+    if (Number.isFinite(sourceAtMs) && Number(claim.attempt_at_ms) < sourceAtMs) {
+      rollback(db); return fail('causal_order_violation:attempt_before_source');
+    }
+    if (Number.isFinite(startedAtMs) && startedAtMs < Number(claim.attempt_at_ms)) {
+      rollback(db); return fail('causal_order_violation:delivery_before_attempt');
+    }
+    if (Number.isFinite(startedAtMs) && atMs < startedAtMs) {
+      rollback(db); return fail('causal_order_violation:admission_before_delivery');
+    }
+
     const obligationId = identity.obligationId;
     const existingBinding = db.prepare(
       'SELECT * FROM telegram_obligation_bindings WHERE obligation_id = ?'
@@ -736,16 +839,17 @@ function promoteToAdmittedOwned(db, input = {}) {
     // 3. THE IMMUTABLE TELEGRAM BINDING.
     db.prepare(`
       INSERT INTO telegram_obligation_bindings (
-        obligation_id, source_row_id, cutover_id, update_id, message_id, chat_id,
+        obligation_id, source_row_id, claim_id, cutover_id, update_id, message_id, chat_id,
         route_key, profile, window_key, raw_body_sha256, canonical_payload_sha256,
         predecessor_manifest_sha256, admission_id, attempt_nonce, app_generation,
         pane_launch_id, pane_id, role, consumer_runtime, hook_process_id,
         hook_parent_process_id, consumer_session_id, runtime_submission_id,
         runtime_submission_kind, obligor_address, queue_ack_intent,
         work_generation, work_lease_token, state, created_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      obligationId, source.row_id, offered.cutover_id, offered.update_id, offered.message_id,
+      obligationId, source.row_id, input.claimId,
+      offered.cutover_id, offered.update_id, offered.message_id,
       offered.chat_id, offered.route_key, offered.profile, offered.window_key,
       offered.raw_body_sha256, offered.canonical_payload_sha256,
       offered.predecessor_manifest_sha256, offered.admission_id, offered.attempt_nonce,
@@ -798,6 +902,8 @@ module.exports = {
   sha256,
   canonicalJoin,
   assertDurableHandle,
+  verifyInstalledSchema,
+  REQUIRED_SCHEMA_SHAPE,
   applyTelegramAdmissionSchema,
   recordImmutableSource,
   claimTransportAttempt,

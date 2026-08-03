@@ -17,6 +17,7 @@ const {
   QUEUE_ACK_STATES,
   sha256,
   applyTelegramAdmissionSchema,
+  verifyInstalledSchema,
   recordImmutableSource,
   claimTransportAttempt,
   recordDeliveryStarted,
@@ -784,16 +785,19 @@ describe('delivery_started state table (blocker 5)', () => {
     expect(started.reason).toBe('claim_closed');
   });
 
-  test('AN UNKNOWN STATE REJECTS rather than falling through to success', () => {
+  test('THE DATABASE ITSELF REFUSES AN ILLEGAL STATE', () => {
+    // Legal states are now a CHECK constraint, not only an application
+    // convention, so an illegal state cannot be written at all.
     const db = freshDb();
     const src = recordImmutableSource(db, sourceInput());
     const claim = claimTransportAttempt(db, claimInput(src.sourceRowId));
-    db.prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
-      .run('some_future_state', claim.claimId);
 
-    const started = recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW + 10 });
-    expect(started.ok).toBe(false);
-    expect(started.reason).toBe('claim_state_unknown');
+    expect(() => db.prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
+      .run('some_future_state', claim.claimId)).toThrow(/CHECK constraint/i);
+
+    // And the claim is untouched, so the state machine never saw a bad value.
+    expect(db.prepare('SELECT state FROM telegram_transport_claims').get().state)
+      .toBe(CLAIM_STATES.CLAIMED);
   });
 });
 
@@ -894,5 +898,261 @@ describe('promotion re-verifies correlation even for a forged claim row', () => 
     expect(owned.ok).toBe(false);
     expect(owned.reason).toBe('claim_source_mismatch');
     expect(Number(db.prepare('SELECT COUNT(*) n FROM obligations').get().n)).toBe(0);
+  });
+});
+
+describe('installed schema is VERIFIED, not assumed (Oracle #29)', () => {
+  test('A STALE TABLE IS DETECTED — CREATE IF NOT EXISTS silently does nothing', () => {
+    // This is the day's pattern in schema form: the statement does not compare,
+    // it just returns, so an older table passes as a fresh one and every test
+    // above it runs green against the wrong structure.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-stale-schema-'));
+    tempRoots.push(root);
+    const db = openRealLedger(path.join(root, 'ledger.db'));
+
+    // A pre-existing table of the RIGHT NAME and the WRONG SHAPE.
+    db.exec(`CREATE TABLE telegram_transport_claims (
+      claim_id TEXT PRIMARY KEY,
+      state TEXT
+    );`);
+
+    const applied = applyTelegramAdmissionSchema(db);
+
+    expect(applied.ok).toBe(false);
+    // Either diagnosis is correct and both are structural rather than a throw:
+    // a stale table may fail at DDL time (dependent columns absent) or survive
+    // creation and be caught by the installed-shape check.
+    expect(['schema_apply_failed', 'schema_shape_mismatch']).toContain(applied.reason);
+  });
+
+  test('A MISSING OBJECT IS DETECTED', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-missing-schema-'));
+    tempRoots.push(root);
+    const db = openRealLedger(path.join(root, 'ledger.db'));
+    applyTelegramAdmissionSchema(db);
+    db.exec('DROP TABLE telegram_queue_ack_outbox;');
+
+    const verified = verifyInstalledSchema(db);
+    expect(verified.ok).toBe(false);
+    expect(verified.detail.missing.join()).toMatch(/telegram_queue_ack_outbox:absent/);
+  });
+
+  test('A CORRECTLY INSTALLED SCHEMA VERIFIES — the check is not always-fail', () => {
+    const db = freshDb();
+    expect(verifyInstalledSchema(db).ok).toBe(true);
+  });
+});
+
+describe('claim identity binds source and time (Oracle #29 item 4)', () => {
+  test('THE SAME NONCE WITH A DIFFERENT SOURCE ROW IS NOT THE SAME CLAIM', () => {
+    // claim_id previously omitted source_row_id, so a reused key pointing at a
+    // different source hashed identically and was called idempotent.
+    const db = freshDb();
+    const a = recordImmutableSource(db, sourceInput());
+    const b = recordImmutableSource(db, sourceInput({
+      messageId: 'telegram-in-900000002', updateId: 900000002,
+    }));
+
+    const claimA = claimTransportAttempt(db, claimInput(a.sourceRowId));
+    const claimB = claimTransportAttempt(db, claimInput(b.sourceRowId, {
+      updateId: 900000002,
+    }));
+
+    expect(claimA.ok).toBe(true);
+    expect(claimB.ok).toBe(true);
+    expect(claimB.claimId).not.toBe(claimA.claimId);
+  });
+
+  test('THE SAME NONCE AT A DIFFERENT ATTEMPT TIME IS NOT THE SAME CLAIM', () => {
+    const db = freshDb();
+    const src = recordImmutableSource(db, sourceInput());
+    const first = claimTransportAttempt(db, claimInput(src.sourceRowId));
+
+    const later = claimTransportAttempt(db, claimInput(src.sourceRowId, {
+      attemptAtMs: NOW + 60_000,
+    }));
+
+    expect(later.ok).toBe(false);
+    expect(later.reason).toBe('claim_held_by_other');
+    expect(later.detail.heldClaimId).toBe(first.claimId);
+  });
+
+  test('THE EXACT SAME CLAIMANT, source and time IS still idempotent', () => {
+    const db = freshDb();
+    const src = recordImmutableSource(db, sourceInput());
+    const first = claimTransportAttempt(db, claimInput(src.sourceRowId));
+    const retry = claimTransportAttempt(db, claimInput(src.sourceRowId));
+    expect(retry.ok).toBe(true);
+    expect(retry.created).toBe(false);
+    expect(retry.claimId).toBe(first.claimId);
+  });
+});
+
+describe('constraint failures are classified specifically (Oracle #29)', () => {
+  test('A FOREIGN KEY VIOLATION is not reported as a lost race', () => {
+    // A1 mapped every constraint error onto claim_held_by_other, so a broken
+    // reference told the caller to wait for a claim that does not exist.
+    const db = freshDb();
+    const result = claimTransportAttempt(db, {
+      ...claimInput(999999), // no such comms row
+    });
+    // Correlation rejects before the FK can fire, which is the stronger answer.
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('source_row_missing');
+  });
+
+  test('THE CLAIM CATCH DISTINGUISHES foreign key from unique', () => {
+    const { canonicalJoin: cj } = require('../modules/main/telegram-admission-store');
+    // Exercised structurally: the classifier must have distinct branches.
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'modules', 'main', 'telegram-admission-store.js'), 'utf8'
+    );
+    expect(src).toMatch(/claim_foreign_key_violation/);
+    expect(src).toMatch(/claim_check_constraint_violation/);
+    expect(src).toMatch(/UNIQUE constraint/);
+    expect(typeof cj).toBe('function');
+  });
+});
+
+describe('causal ordering (Oracle #29)', () => {
+  test('AN ATTEMPT THAT PREDATES ITS SOURCE is refused at promotion', () => {
+    const db = freshDb();
+    const src = recordImmutableSource(db, sourceInput());
+    const claim = claimTransportAttempt(db, claimInput(src.sourceRowId, {
+      attemptAtMs: NOW - 60_000, // before the message existed
+    }));
+    recordDeliveryStarted(db, { claimId: claim.claimId, atMs: NOW - 50_000 });
+
+    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+
+    expect(owned.ok).toBe(false);
+    expect(owned.reason).toBe('causal_order_violation:attempt_before_source');
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM obligations').get().n)).toBe(0);
+  });
+
+  test('AN ADMISSION THAT PREDATES ITS DELIVERY is refused', () => {
+    const db = freshDb();
+    const { claim } = seedToDeliveryStarted(db);
+    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId, { atMs: NOW + 1 }));
+
+    expect(owned.ok).toBe(false);
+    expect(owned.reason).toBe('causal_order_violation:admission_before_delivery');
+  });
+
+  test('A CAUSALLY ORDERED PROMOTION still succeeds — the check is not always-fail', () => {
+    const db = freshDb();
+    const { claim } = seedToDeliveryStarted(db);
+    expect(promoteToAdmittedOwned(db, ownedInput(claim.claimId)).ok).toBe(true);
+  });
+});
+
+describe('binding carries claim and admission provenance (Oracle #29)', () => {
+  test('THE BINDING NAMES THE CLAIM IT CAME FROM', () => {
+    const db = freshDb();
+    const { claim } = seedToDeliveryStarted(db);
+    const owned = promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+
+    const binding = db.prepare('SELECT claim_id FROM telegram_obligation_bindings WHERE obligation_id = ?')
+      .get(owned.obligationId);
+    expect(binding.claim_id).toBe(claim.claimId);
+  });
+
+  test('ONE ADMISSION ID CANNOT OWN TWO BINDINGS', () => {
+    const db = freshDb();
+    const { claim } = seedToDeliveryStarted(db);
+    promoteToAdmittedOwned(db, ownedInput(claim.claimId));
+
+    // A second source, promoted with the SAME admission id, must be refused by
+    // the UNIQUE constraint rather than quietly creating a second debt.
+    const b = recordImmutableSource(db, sourceInput({
+      messageId: 'telegram-in-900000002', updateId: 900000002,
+    }));
+    const claimB = claimTransportAttempt(db, claimInput(b.sourceRowId, {
+      updateId: 900000002, attemptNonce: 'nonce-b',
+    }));
+    recordDeliveryStarted(db, { claimId: claimB.claimId, atMs: NOW + 10 });
+
+    const owned = promoteToAdmittedOwned(db, ownedInput(claimB.claimId, {
+      messageId: 'telegram-in-900000002',
+      admissionId: 'adm-1', // reused
+    }));
+
+    expect(owned.ok).toBe(false);
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM obligations').get().n)).toBe(1);
+  });
+});
+
+describe('the surviving-mutant closures', () => {
+  test('A DDL-COMPATIBLE BUT STALE INDEX is caught by apply, not only by DDL failure', () => {
+    // A25: the stale test passed via schema_apply_failed, so nothing exercised
+    // verifyInstalledSchema THROUGH apply. This stale shape survives DDL.
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-stale-idx-'));
+    tempRoots.push(root);
+    const db = openRealLedger(path.join(root, 'ledger.db'));
+    expect(applyTelegramAdmissionSchema(db).ok).toBe(true);
+
+    // Replace the partial UNIQUE index with a plain one of the same name.
+    db.exec('DROP INDEX idx_tg_claims_exclusive;');
+    db.exec('CREATE INDEX idx_tg_claims_exclusive ON telegram_transport_claims (cutover_id);');
+
+    // CREATE UNIQUE INDEX IF NOT EXISTS now silently does nothing.
+    const reapplied = applyTelegramAdmissionSchema(db);
+
+    expect(reapplied.ok).toBe(false);
+    expect(reapplied.reason).toBe('schema_shape_mismatch');
+    expect(reapplied.detail.missing.join()).toMatch(/idx_tg_claims_exclusive:stale/);
+  });
+
+  test('THE CLAIM ID ITSELF CHANGES with the source row', () => {
+    // A26: behavioural tests could not see this because the refusal came from
+    // a different check. Assert the derivation directly, as with the
+    // obligation id.
+    const dbA = freshDb();
+    const dbB = freshDb();
+    const srcA = recordImmutableSource(dbA, sourceInput());
+    // A second source in the other DB, forced to a different row id.
+    dbB.prepare(`INSERT INTO comms_journal (message_id, channel, direction, status, updated_at_ms)
+                 VALUES ('filler', 'telegram', 'inbound', 'recorded', 1)`).run();
+    const srcB = recordImmutableSource(dbB, sourceInput());
+    expect(srcB.sourceRowId).not.toBe(srcA.sourceRowId);
+
+    const a = claimTransportAttempt(dbA, claimInput(srcA.sourceRowId));
+    const b = claimTransportAttempt(dbB, claimInput(srcB.sourceRowId));
+
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
+    expect(b.claimId).not.toBe(a.claimId);
+  });
+
+  test('THE CLAIM ID ITSELF CHANGES with the attempt time', () => {
+    const dbA = freshDb();
+    const dbB = freshDb();
+    const srcA = recordImmutableSource(dbA, sourceInput());
+    const srcB = recordImmutableSource(dbB, sourceInput());
+    expect(srcA.sourceRowId).toBe(srcB.sourceRowId); // same row id, so time is the only variable
+
+    const a = claimTransportAttempt(dbA, claimInput(srcA.sourceRowId, { attemptAtMs: NOW }));
+    const b = claimTransportAttempt(dbB, claimInput(srcB.sourceRowId, { attemptAtMs: NOW + 1 }));
+
+    expect(a.claimId).not.toBe(b.claimId);
+  });
+
+  test('A CLAIMANT WITH THE SAME KEY BUT A DIFFERENT SOURCE ROW is not idempotent', () => {
+    // A27: sameClaimant must compare the source row. Two comms rows can share
+    // an updateId under different message ids, which is exactly the shape that
+    // would otherwise be waved through as "the same attempt".
+    const db = freshDb();
+    const a = recordImmutableSource(db, sourceInput());
+    const b = recordImmutableSource(db, sourceInput({
+      messageId: 'telegram-in-900000001-dup',
+    }));
+    expect(b.ok).toBe(true);
+    expect(b.sourceRowId).not.toBe(a.sourceRowId);
+
+    claimTransportAttempt(db, claimInput(a.sourceRowId));
+    const other = claimTransportAttempt(db, claimInput(b.sourceRowId));
+
+    expect(other.ok).toBe(false);
+    expect(other.reason).toBe('claim_held_by_other');
   });
 });
