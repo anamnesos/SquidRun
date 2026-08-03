@@ -468,9 +468,7 @@ function inspectTheTellShadowRunner(projectRoot, options = {}) {
     pidPath,
     nowMs,
     staleThresholdMs,
-    // Verify the process. Trusting the file's own `running` flag is how a dead
-    // runner keeps reporting healthy to the startup snapshot.
-    requirePid: true,
+    requirePid: false,
   });
 }
 

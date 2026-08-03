@@ -61,7 +61,6 @@ function stripWrapperFlags(argv = []) {
   return argv.filter((arg) => {
     const token = String(arg || '');
     return token !== '--no-telegram-poller-auto-recover'
-      && token !== '--no-the-tell-shadow-auto-recover'
       && token !== '--no-bidirectional-wake-watchdog-auto-start';
   });
 }
@@ -129,81 +128,6 @@ function runTelegramPollerAutoRecover(argv = []) {
 
 function writeBidirectionalWakeWatchdogStartLast(projectRoot, payload) {
   return writeRuntimeJson(projectRoot, 'bidirectional-wake-watchdog-start-last.json', payload);
-}
-
-/**
- * Recover the The Tell shadow runner when it is genuinely dead.
- *
- * Startup health could already SEE this runner die and had no way to fix it, so
- * it reported the same failure every boot forever — observed dead for 33.8
- * hours with nobody notified. This closes that loop.
- *
- * SAFETY: the shadow runner is hardcoded readOnly/dryRun. It sends nothing,
- * trades nothing, and moves no capital; it only reads and writes its own ledger
- * and status. Recovery here starts that one process and nothing else.
- */
-function runTheTellShadowAutoRecover(argv = []) {
-  if (hasHelpFlag(argv) || argv.includes('--no-the-tell-shadow-auto-recover')) {
-    return { ok: true, skipped: true, reason: 'disabled_or_help' };
-  }
-  if (resolveProfileFromArgs(argv) !== DEFAULT_PROFILE) {
-    return { ok: true, skipped: true, reason: 'profile_not_owner' };
-  }
-
-  const projectRoot = resolveProjectRootFromArgs(argv);
-  const shadowPath = path.join(__dirname, 'hm-the-tell-shadow.js');
-
-  // Look before starting. A healthy runner must be left completely alone —
-  // starting a second one against the same ledger is its own defect.
-  let before = null;
-  const statusProbe = spawnSync(process.execPath, [shadowPath, 'status', '--json'], {
-    cwd: projectRoot,
-    encoding: 'utf8',
-    timeout: 30_000,
-    windowsHide: true,
-  });
-  try {
-    before = statusProbe.stdout ? JSON.parse(statusProbe.stdout) : null;
-  } catch {
-    before = null;
-  }
-
-  // FAIL CLOSED on an unreadable probe: if we cannot prove it is dead, do not
-  // spawn. A duplicate runner is worse than a late one.
-  if (!before) {
-    return { ok: true, skipped: true, reason: 'status_unreadable', startedAt: new Date().toISOString() };
-  }
-  if (before.running === true) {
-    return { ok: true, skipped: true, reason: 'already_running', pid: before.pid || before.ownerPid || null };
-  }
-
-  const startedAt = new Date().toISOString();
-  const result = spawnSync(process.execPath, [shadowPath, 'start'], {
-    cwd: projectRoot,
-    encoding: 'utf8',
-    timeout: 30_000,
-    windowsHide: true,
-  });
-  let parsed = null;
-  try {
-    parsed = result.stdout ? JSON.parse(result.stdout) : null;
-  } catch {
-    parsed = null;
-  }
-
-  const payload = {
-    ok: result.status === 0,
-    startedAt,
-    finishedAt: new Date().toISOString(),
-    recovered: parsed?.started === true,
-    pid: parsed?.pid ?? null,
-    beforeStatus: before.status ?? null,
-    beforeLastTickAgeMs: before.lastTickAgeMs ?? null,
-    error: result.error ? String(result.error.message || result.error) : null,
-    stderr: result.stderr ? String(result.stderr).trim() : null,
-  };
-  writeRuntimeJson(projectRoot, 'the-tell-shadow-auto-recover-last.json', payload);
-  return payload;
 }
 
 function runBidirectionalWakeWatchdogAutoStart(argv = []) {
@@ -276,13 +200,6 @@ function runStartupHealth(argv = process.argv.slice(2), io = {}) {
     stderr.write(`Bidirectional wake watchdog auto-start failed: ${bidirectionalWakeWatchdog.error || bidirectionalWakeWatchdog.stderr || 'unknown'}\n`);
   }
 
-  // LAST on purpose: this branch has no ordering dependency on the other
-  // preflights, and running it earlier reorders their spawn sequence.
-  const theTellShadowRecovery = runTheTellShadowAutoRecover(effectiveArgv);
-  if (theTellShadowRecovery?.ok === false) {
-    stderr.write(`The Tell shadow runner auto-recover failed: ${theTellShadowRecovery.error || theTellShadowRecovery.stderr || 'unknown'}\n`);
-  }
-
   return main(stripWrapperFlags(effectiveArgv));
 }
 
@@ -298,6 +215,5 @@ module.exports = {
   runBidirectionalWakeWatchdogAutoStart,
   runStartupHealth,
   runTelegramPollerAutoRecover,
-  runTheTellShadowAutoRecover,
   stripWrapperFlags,
 };
