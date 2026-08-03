@@ -54,7 +54,30 @@
  */
 const crypto = require('node:crypto');
 
-const SCHEMA = 'telegram_consumed.v1';
+/**
+ * PHASE 1 OF TWO. This schema records ADMISSION, not consumption, and the name
+ * is load-bearing.
+ *
+ * Codex 0.146 `UserPromptSubmit` runs BEFORE `record_pending_input` and before
+ * first sampling, and it ALSO fires on TurnAborted branches. So a turn that
+ * admits the prompt and then aborts still produces one of these records. It
+ * proves the exact bytes reached the consumer boundary, bound to pane, session,
+ * turn, generation and both digests - and it proves nothing about whether
+ * anything was ever DONE with them.
+ *
+ * On this queue that distinction is the difference between correct and
+ * catastrophic: admission alone could retire "Kristine muller approved job...
+ * change job to invoice" on the strength of a turn that never ran.
+ *
+ * So it is called admission. If it were named `prompt_consumed`, somebody
+ * downstream - plausibly a future me - would retire on it and the NAME would
+ * make that look correct. Today has already shown what a reassuring name over
+ * an unverified fact costs. A terminal hook for the SAME bound turn promotes
+ * this to retirement authority; nothing else may.
+ */
+const SCHEMA = 'telegram_admission.v1';
+/** Phase 2. Only a record of THIS schema may authorise retirement. */
+const TERMINAL_SCHEMA = 'telegram_consumed.v1';
 
 /**
  * The ONLY positive classes. A record must carry one of these; carrying the
@@ -65,7 +88,7 @@ const SCHEMA = 'telegram_consumed.v1';
  * asked "do these fields match" and never "is this actually a proof". A
  * fabricated object answers the first question perfectly.
  */
-const POSITIVE_PROOF_CLASSES = Object.freeze(new Set(['prompt_consumed']));
+const POSITIVE_PROOF_CLASSES = Object.freeze(new Set(['prompt_admitted']));
 
 /**
  * Why no proof exists yet — kept strictly apart from "cannot exist".
@@ -121,13 +144,60 @@ function byteLength(value) {
  * This digest answers "is this the same MESSAGE", so that the same updateId
  * carrying a different body cannot match (gate item 1).
  */
+function mediaIdentity(media) {
+  if (!media || typeof media !== 'object') return null;
+  // Identity, not the bytes: the parts that decide WHICH artifact this is and
+  // how it will be presented. A local path is deliberately excluded — it is
+  // mutable and machine-specific, and hashing it would make the same message
+  // digest differently on two machines.
+  return {
+    kind: media.kind ?? null,
+    telegramKind: media.telegramKind ?? null,
+    fileId: media.fileId ?? null,
+    fileUniqueId: media.fileUniqueId ?? null,
+    mimeType: media.mimeType ?? null,
+    fileName: media.fileName ?? null,
+    fileSize: Number.isFinite(Number(media.fileSize)) ? Number(media.fileSize) : null,
+    caption: typeof media.caption === 'string' ? media.caption : null,
+    duration: Number.isFinite(Number(media.duration)) ? Number(media.duration) : null,
+    width: Number.isFinite(Number(media.width)) ? Number(media.width) : null,
+    height: Number.isFinite(Number(media.height)) ? Number(media.height) : null,
+  };
+}
+
+/**
+ * The canonical digest of what the QUEUE holds for this update.
+ *
+ * MUST COVER EVERYTHING THE CONSUMER CAN SEE (gate probe 3). The first version
+ * hashed five text-only fields, which meant a record whose TEXT was unchanged
+ * but whose photo, document or caption had been swapped produced an identical
+ * digest and matched. For a plumbing business that is not a theoretical gap: a
+ * message reading "here is the one I meant" is entirely defined by its
+ * attachment.
+ *
+ * Deliberately computed from the durable record's own fields rather than from
+ * the formatted prompt: the prompt gets a `[Telegram from x]:` prefix, recall
+ * context, a consume marker and possibly a truncation notice, none of which
+ * are the message.
+ */
 function canonicalQueuedPayloadDigest(record = {}) {
   const canonical = JSON.stringify({
+    v: 2,
     updateId: Number(record.updateId),
+    updateKind: record.updateKind ?? null,
     text: typeof record.text === 'string' ? record.text : '',
     chatId: record.chatId ?? null,
     from: record.from ?? null,
     messageId: record.messageId ?? null,
+    // Stable route identity: the same bytes delivered to a different window or
+    // profile are not the same delivery.
+    routeKey: record.routeKey ?? null,
+    targetProfile: record.targetProfile ?? null,
+    targetWindow: record.targetWindow ?? null,
+    media: mediaIdentity(record.media),
+    photo: mediaIdentity(record.photo),
+    video: mediaIdentity(record.video),
+    document: mediaIdentity(record.document),
   });
   return sha256(canonical);
 }
@@ -152,11 +222,11 @@ function sameScalar(a, b) {
  * the sender believes it wrote. That distinction is the entire defence against
  * the truncated-but-acked delivery.
  */
-function buildConsumedProof(input = {}) {
+function buildAdmissionRecord(input = {}) {
   const deliveredPrompt = String(input.deliveredPrompt ?? '');
   return {
     schema: SCHEMA,
-    proofClass: 'prompt_consumed',
+    proofClass: 'prompt_admitted',
     runtime: isNonEmptyString(input.runtime) ? input.runtime.trim().toLowerCase() : null,
     updateId: Number(input.updateId),
     messageId: input.messageId ?? null,
@@ -184,7 +254,7 @@ function buildConsumedProof(input = {}) {
  *   attempt   {atMs, generation} from the durable latch, or null
  * @returns {{proven: boolean, reason: string}}
  */
-function validateConsumedProof(input = {}) {
+function validateAdmissionRecord(input = {}) {
   const { proof, expected, attempt } = input;
 
   if (!proof || typeof proof !== 'object' || Array.isArray(proof)) {
@@ -279,19 +349,34 @@ function validateConsumedProof(input = {}) {
     if (consumedAtMs < attemptedAtMs) {
       return { proven: false, reason: 'proof_predates_attempt' };
     }
+    // ATTEMPT-GENERATION EQUALITY (gate probe 2). Matching the CURRENT app
+    // generation is not enough: the attempt this record claims to resolve was
+    // made by some generation too, and if that is not the same one then the
+    // record answers a delivery nobody is waiting on. An attempt with no
+    // recorded generation cannot be reconciled at all, so it fails closed
+    // exactly like an undated one.
+    if (!isNonEmptyString(attempt.generation)) {
+      return { proven: false, reason: 'attempt_generation_unknown' };
+    }
+    if (!sameScalar(proof.appGeneration, attempt.generation)) {
+      return { proven: false, reason: 'attempt_generation_mismatch' };
+    }
   }
 
-  return { proven: true, reason: 'consumption_proven' };
+  // ADMITTED, not consumed. This record may not retire anything on its own.
+  return { proven: true, reason: 'admission_proven' };
 }
 
 module.exports = {
   SCHEMA,
+  ADMISSION_SCHEMA: SCHEMA,
+  TERMINAL_SCHEMA,
   POSITIVE_PROOF_CLASSES,
   PRODUCER_STATES,
   REQUIRED_FIELDS,
   sha256,
   byteLength,
   canonicalQueuedPayloadDigest,
-  buildConsumedProof,
-  validateConsumedProof,
+  buildAdmissionRecord,
+  validateAdmissionRecord,
 };

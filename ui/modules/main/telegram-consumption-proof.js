@@ -261,6 +261,10 @@ function summarizeBacklog(input = {}) {
   return {
     pendingCount: pending.length,
     oldestPendingUpdateId: oldest ? oldest.updateId : null,
+    // The DURABLE input, carried alongside the derived age so a consumer can
+    // recompute against its own clock instead of trusting an age this process
+    // asserted at some earlier moment.
+    oldestPendingReceivedAtMs: oldest ? oldest.receivedAtMs : null,
     oldestPendingAgeMs,
     oldestPendingAgeUnknown: Boolean(oldest) && oldestPendingAgeMs === null,
     blockedUpdateId: blocked ? (Number(blocked.updateId) || null) : null,

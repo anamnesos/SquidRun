@@ -50,17 +50,32 @@ function healthyRoute(overrides = {}) {
 }
 
 describe('fail-safe reads', () => {
-  test('A MISSING SNAPSHOT DEGRADES — absence is never health', () => {
-    const result = readTelegramBacklogHealth(projectRoot(), NOW);
+  test('A MISSING SNAPSHOT WITH A LIVE SPOOL DEGRADES — absence is never health', () => {
+    // THE PRODUCTION CASE. A spool exists, so messages can be queued behind a
+    // wedge, and a missing report is exactly the silence that cost 8.6 hours.
+    const root = projectRoot();
+    fs.mkdirSync(path.join(root, '.squidrun', 'runtime', 'telegram-inbound', 'main'), { recursive: true });
+
+    const result = readTelegramBacklogHealth(root, NOW);
     expect(result.ok).toBe(false);
     expect(result.severity).toBe('degraded');
     expect(result.reasons).toContain('backlog_snapshot_missing');
+  });
+
+  test('A ROOT WITH NO TELEGRAM INGRESS AT ALL is genuinely ok, and only that case', () => {
+    // The exemption is absence of the FEATURE, not absence of a report. It is
+    // pinned alongside the case above so it can never be widened to cover a
+    // configured-but-silent channel.
+    const result = readTelegramBacklogHealth(projectRoot(), NOW);
+    expect(result.ok).toBe(true);
+    expect(result.reasons).toContain('no_telegram_ingress_configured');
   });
 
   test('AN UNPARSEABLE SNAPSHOT DEGRADES', () => {
     const root = projectRoot();
     const statePath = path.join(root, '.squidrun', 'runtime', 'telegram-backlog-health.json');
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.mkdirSync(path.join(root, '.squidrun', 'runtime', 'telegram-inbound'), { recursive: true });
     fs.writeFileSync(statePath, 'not json at all', 'utf8');
 
     const result = readTelegramBacklogHealth(root, NOW);
@@ -77,6 +92,7 @@ describe('fail-safe reads', () => {
     const root = projectRoot();
     const statePath = path.join(root, '.squidrun', 'runtime', 'telegram-backlog-health.json');
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.mkdirSync(path.join(root, '.squidrun', 'runtime', 'telegram-inbound'), { recursive: true });
     fs.writeFileSync(statePath, body, 'utf8');
 
     expect(readTelegramBacklogHealth(root, NOW).ok).toBe(false);
@@ -147,7 +163,9 @@ describe('scoring reaches the surface', () => {
       main: healthyRoute({
         pendingCount: 3,
         oldestPendingUpdateId: 808499317,
-        oldestPendingAgeMs: 45 * 60 * 1000,
+        // The DURABLE input, since the reader recomputes age rather than
+        // trusting whatever the producer asserted.
+        oldestPendingReceivedAtMs: NOW - 45 * 60 * 1000,
       }),
     });
 
@@ -176,5 +194,71 @@ describe('scoring reaches the surface', () => {
     fs.writeFileSync(statePath, JSON.stringify({ routes: { main: healthyRoute() } }), 'utf8');
 
     expect(readTelegramBacklogHealth(root, NOW, { statePath }).ok).toBe(true);
+  });
+});
+
+describe('strict reader (Architect #60)', () => {
+  test('AN ARRAY does not pass the routes shape check', () => {
+    const root = projectRoot();
+    const statePath = path.join(root, '.squidrun', 'runtime', 'telegram-backlog-health.json');
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.mkdirSync(path.join(root, '.squidrun', 'runtime', 'telegram-inbound'), { recursive: true });
+    // typeof [] === 'object', so this used to pass and iterate as zero routes.
+    fs.writeFileSync(statePath, JSON.stringify({ routes: [] }), 'utf8');
+    expect(readTelegramBacklogHealth(root, NOW).ok).toBe(false);
+  });
+
+  test('AN UNKNOWN SCHEMA VERSION is refused rather than scored', () => {
+    const root = projectRoot();
+    const statePath = path.join(root, '.squidrun', 'runtime', 'telegram-backlog-health.json');
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.mkdirSync(path.join(root, '.squidrun', 'runtime', 'telegram-inbound'), { recursive: true });
+    fs.writeFileSync(statePath, JSON.stringify({
+      schema: 'telegramBacklogHealth.v99', routes: { main: healthyRoute() },
+    }), 'utf8');
+    const result = readTelegramBacklogHealth(root, NOW);
+    expect(result.ok).toBe(false);
+    expect(result.reasons.join()).toMatch(/schema_unknown/);
+  });
+
+  test('A MALFORMED ROUTE ENTRY degrades instead of throwing or passing', () => {
+    const root = projectRoot();
+    writeSnapshot(root, { main: 'not an object' });
+    const result = readTelegramBacklogHealth(root, NOW);
+    expect(result.ok).toBe(false);
+    expect(result.reasons.join()).toMatch(/route_entry_malformed/);
+  });
+
+  test('HEAD AGE IS RECOMPUTED against our clock, not taken from the producer', () => {
+    // The producer asserted a comfortable 1s age an hour ago. Recomputing from
+    // the durable received-at exposes the real 3-hour backlog.
+    const root = projectRoot();
+    writeSnapshot(root, {
+      main: healthyRoute({
+        pendingCount: 1,
+        oldestPendingUpdateId: 808499317,
+        oldestPendingAgeMs: 1000,
+        oldestPendingReceivedAtMs: NOW - 3 * 60 * 60 * 1000,
+      }),
+    });
+    const result = readTelegramBacklogHealth(root, NOW);
+    expect(result.severity).toBe('critical');
+    expect(result.routes.main.headAgeMs).toBe(3 * 60 * 60 * 1000);
+  });
+
+  test('WITHOUT A DURABLE received-at the age is UNKNOWN, never inherited from the assertion', () => {
+    const root = projectRoot();
+    writeSnapshot(root, {
+      main: healthyRoute({ pendingCount: 1, oldestPendingUpdateId: 1, oldestPendingAgeMs: 1000 }),
+    });
+    const result = readTelegramBacklogHealth(root, NOW);
+    expect(result.ok).toBe(false);
+    expect(result.routes.main.reasons.join()).toMatch(/oldest_pending_age_unknown/);
+  });
+
+  test('A FUTURE observedAtMs is treated as stale — an unreconcilable clock is not freshness', () => {
+    const root = projectRoot();
+    writeSnapshot(root, { main: healthyRoute({ observedAtMs: NOW + 10 * 60 * 1000 }) });
+    expect(readTelegramBacklogHealth(root, NOW).ok).toBe(false);
   });
 });

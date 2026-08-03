@@ -17,7 +17,7 @@ const {
   sha256,
   byteLength,
   canonicalQueuedPayloadDigest,
-  validateConsumedProof,
+  validateAdmissionRecord,
 } = require('../modules/main/telegram-consumed-proof');
 
 const tempRoots = [];
@@ -122,7 +122,7 @@ describe('runtime neutrality', () => {
     const [record] = readSink(sink);
     expect(record.schema).toBe(SCHEMA);
 
-    const result = validateConsumedProof({
+    const result = validateAdmissionRecord({
       proof: record,
       expected: {
         updateId: 808499317,
@@ -139,9 +139,9 @@ describe('runtime neutrality', () => {
         deliveredPromptSha256: sha256(PROMPT),
         deliveredPromptBytes: byteLength(PROMPT),
       },
-      attempt: { atMs: NOW - 1000 },
+      attempt: { atMs: NOW - 1000, generation: GENERATION },
     });
-    expect(result).toEqual({ proven: true, reason: 'consumption_proven' });
+    expect(result).toEqual({ proven: true, reason: 'admission_proven' });
   });
 });
 
@@ -179,7 +179,7 @@ describe('the truncated delivery, end to end', () => {
     });
 
     expect(res.written).toBe(true);
-    const verdict = validateConsumedProof({
+    const verdict = validateAdmissionRecord({
       proof: res.record,
       expected: {
         updateId: 808499317,
@@ -196,7 +196,7 @@ describe('the truncated delivery, end to end', () => {
         deliveredPromptSha256: sha256(PROMPT),
         deliveredPromptBytes: byteLength(PROMPT),
       },
-      attempt: { atMs: NOW - 1000 },
+      attempt: { atMs: NOW - 1000, generation: GENERATION },
     });
     expect(verdict.proven).toBe(false);
     expect(verdict.reason).toBe('delivered_payload_digest_mismatch');

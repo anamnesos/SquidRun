@@ -10,8 +10,8 @@ const {
   sha256,
   byteLength,
   canonicalQueuedPayloadDigest,
-  buildConsumedProof,
-  validateConsumedProof,
+  buildAdmissionRecord,
+  validateAdmissionRecord,
 } = require('../modules/main/telegram-consumed-proof');
 
 const NOW = 1_785_780_000_000;
@@ -48,7 +48,7 @@ function expectedFor(overrides = {}) {
 
 function proofFor(overrides = {}, deliveredPrompt = DELIVERED) {
   return {
-    ...buildConsumedProof({
+    ...buildAdmissionRecord({
       runtime: 'codex',
       updateId: 808499317,
       messageId: 'telegram-in-808499317',
@@ -72,8 +72,8 @@ const ATTEMPT = { atMs: NOW - 1000, generation: GENERATION };
 
 describe('the happy path exists at all', () => {
   test('A COMPLETE, CORRELATED, POST-ATTEMPT PROOF is accepted', () => {
-    expect(validateConsumedProof({ proof: proofFor(), expected: expectedFor(), attempt: ATTEMPT }))
-      .toEqual({ proven: true, reason: 'consumption_proven' });
+    expect(validateAdmissionRecord({ proof: proofFor(), expected: expectedFor(), attempt: ATTEMPT }))
+      .toEqual({ proven: true, reason: 'admission_proven' });
   });
 
   test('CLAUDE AND CODEX PRODUCE AN IDENTICAL PROOF SHAPE', () => {
@@ -93,8 +93,8 @@ describe('the happy path exists at all', () => {
       deliveredPrompt: DELIVERED,
       consumedAtMs: NOW,
     };
-    const codex = buildConsumedProof({ ...common, runtime: 'codex' });
-    const claude = buildConsumedProof({ ...common, runtime: 'claude' });
+    const codex = buildAdmissionRecord({ ...common, runtime: 'codex' });
+    const claude = buildAdmissionRecord({ ...common, runtime: 'claude' });
 
     expect(Object.keys(codex).sort()).toEqual(Object.keys(claude).sort());
     // Identical in every field except the one that names the runtime.
@@ -103,12 +103,12 @@ describe('the happy path exists at all', () => {
     expect(codexRest).toEqual(claudeRest);
     // And each validates against an expectation naming its own runtime — the
     // runtime is compared now, so it is the one field that must agree per side.
-    expect(validateConsumedProof({
+    expect(validateAdmissionRecord({
       proof: codex,
       expected: expectedFor({ runtime: 'codex', consumerSessionId: 's' }),
       attempt: ATTEMPT,
     }).proven).toBe(true);
-    expect(validateConsumedProof({
+    expect(validateAdmissionRecord({
       proof: claude,
       expected: expectedFor({ runtime: 'claude', consumerSessionId: 's' }),
       attempt: ATTEMPT,
@@ -123,7 +123,7 @@ describe('THE TRUNCATED-BUT-ACKED DELIVERY (live observation)', () => {
     const truncated = DELIVERED.slice(0, 40);
     const proof = proofFor({}, truncated);
 
-    const result = validateConsumedProof({ proof, expected: expectedFor(), attempt: ATTEMPT });
+    const result = validateAdmissionRecord({ proof, expected: expectedFor(), attempt: ATTEMPT });
 
     expect(result.proven).toBe(false);
     expect(result.reason).toBe('delivered_payload_digest_mismatch');
@@ -137,14 +137,14 @@ describe('THE TRUNCATED-BUT-ACKED DELIVERY (live observation)', () => {
       deliveredPromptBytes: byteLength(sent),
     });
 
-    const result = validateConsumedProof({ proof: proofFor({}, consumed), expected, attempt: ATTEMPT });
+    const result = validateAdmissionRecord({ proof: proofFor({}, consumed), expected, attempt: ATTEMPT });
 
     expect(result.proven).toBe(false);
     expect(byteLength(consumed)).toBe(125);
   });
 
   test('A ONE-BYTE LOSS is still a rejection — there is no "close enough"', () => {
-    const result = validateConsumedProof({
+    const result = validateAdmissionRecord({
       proof: proofFor({}, DELIVERED.slice(0, -1)),
       expected: expectedFor(),
       attempt: ATTEMPT,
@@ -155,7 +155,7 @@ describe('THE TRUNCATED-BUT-ACKED DELIVERY (live observation)', () => {
   test('A MATCHING DIGEST WITH A CONTRADICTORY BYTE COUNT is rejected', () => {
     // Defends the length check independently, so loosening the digest
     // comparison later cannot silently take the length guarantee with it.
-    const result = validateConsumedProof({
+    const result = validateAdmissionRecord({
       proof: proofFor({ deliveredPromptBytes: 9999 }),
       expected: expectedFor(),
       attempt: ATTEMPT,
@@ -187,14 +187,14 @@ describe('fabricated and weak evidence', () => {
       userVisible: true,
     };
 
-    const result = validateConsumedProof({ proof: fabricated, expected: expectedFor(), attempt: ATTEMPT });
+    const result = validateAdmissionRecord({ proof: fabricated, expected: expectedFor(), attempt: ATTEMPT });
 
     expect(result.proven).toBe(false);
     expect(result.reason).toMatch(/^wrong_schema:/);
   });
 
   test('THE RIGHT SCHEMA WITH A MADE-UP CLASS is rejected', () => {
-    const result = validateConsumedProof({
+    const result = validateAdmissionRecord({
       proof: proofFor({ proofClass: 'looks_delivered_to_me' }),
       expected: expectedFor(),
       attempt: ATTEMPT,
@@ -210,13 +210,13 @@ describe('fabricated and weak evidence', () => {
     ['a telegram egress row', { direction: 'outbound', channel: 'telegram', status: 'delivered' }],
     ['our own brokered row', { direction: 'inbound', status: 'brokered' }],
   ])('%s IS NOT CONSUMPTION PROOF', (_label, evidence) => {
-    const result = validateConsumedProof({ proof: evidence, expected: expectedFor(), attempt: ATTEMPT });
+    const result = validateAdmissionRecord({ proof: evidence, expected: expectedFor(), attempt: ATTEMPT });
     expect(result.proven).toBe(false);
   });
 
   test('NULL, ARRAYS AND PRIMITIVES fail closed', () => {
     for (const proof of [null, undefined, [], 'proof', 42, true]) {
-      expect(validateConsumedProof({ proof, expected: expectedFor(), attempt: ATTEMPT }).proven).toBe(false);
+      expect(validateAdmissionRecord({ proof, expected: expectedFor(), attempt: ATTEMPT }).proven).toBe(false);
     }
   });
 
@@ -225,7 +225,7 @@ describe('fabricated and weak evidence', () => {
     for (const field of REQUIRED_FIELDS) {
       const proof = proofFor();
       delete proof[field];
-      const result = validateConsumedProof({ proof, expected: expectedFor(), attempt: ATTEMPT });
+      const result = validateAdmissionRecord({ proof, expected: expectedFor(), attempt: ATTEMPT });
       expect(result.proven).toBe(false);
     }
   });
@@ -236,7 +236,7 @@ describe('payload identity — same id, different message', () => {
     const tampered = { ...RECORD, text: 'transfer the deposit to a different account' };
     const proof = proofFor({ queuedPayloadSha256: canonicalQueuedPayloadDigest(tampered) });
 
-    const result = validateConsumedProof({ proof, expected: expectedFor(), attempt: ATTEMPT });
+    const result = validateAdmissionRecord({ proof, expected: expectedFor(), attempt: ATTEMPT });
 
     expect(result.proven).toBe(false);
     expect(result.reason).toBe('queued_payload_digest_mismatch');
@@ -251,12 +251,12 @@ describe('payload identity — same id, different message', () => {
   });
 
   test('A NON-HEX OR SHORT DIGEST is malformed, not merely unequal', () => {
-    expect(validateConsumedProof({
+    expect(validateAdmissionRecord({
       proof: proofFor({ queuedPayloadSha256: 'abc' }),
       expected: expectedFor(),
       attempt: ATTEMPT,
     }).reason).toBe('queued_digest_malformed');
-    expect(validateConsumedProof({
+    expect(validateAdmissionRecord({
       proof: proofFor({ deliveredPromptSha256: 'NOTHEX'.repeat(11) }),
       expected: expectedFor(),
       attempt: ATTEMPT,
@@ -266,7 +266,7 @@ describe('payload identity — same id, different message', () => {
 
 describe('generation, pane and session binding', () => {
   test('A RECEIPT FROM A PREVIOUS APP GENERATION is rejected', () => {
-    const result = validateConsumedProof({
+    const result = validateAdmissionRecord({
       proof: proofFor({ appGeneration: 'tg-gen-29180-1785000000000' }),
       expected: expectedFor(),
       attempt: ATTEMPT,
@@ -278,7 +278,7 @@ describe('generation, pane and session binding', () => {
   test('A RECEIPT FROM PANE 3 CANNOT RETIRE A PANE 1 DELIVERY', () => {
     // Same-CWD Codex sessions run in panes 1 and 3. Without this the newest
     // session in the shared history would look like proof for either.
-    const result = validateConsumedProof({
+    const result = validateAdmissionRecord({
       proof: proofFor({ paneId: '3' }),
       expected: expectedFor(),
       attempt: ATTEMPT,
@@ -288,10 +288,10 @@ describe('generation, pane and session binding', () => {
   });
 
   test('A RECEIPT WITH NO PANE OR SESSION AT ALL is rejected, never assumed to be pane 1', () => {
-    expect(validateConsumedProof({
+    expect(validateAdmissionRecord({
       proof: proofFor({ paneId: null }), expected: expectedFor(), attempt: ATTEMPT,
     }).reason).toBe('proof_field_missing:paneId');
-    expect(validateConsumedProof({
+    expect(validateAdmissionRecord({
       proof: proofFor({ consumerSessionId: null }), expected: expectedFor(), attempt: ATTEMPT,
     }).reason).toBe('proof_field_missing:consumerSessionId');
   });
@@ -299,7 +299,7 @@ describe('generation, pane and session binding', () => {
 
 describe('ordering against the attempt', () => {
   test('PROOF THAT PREDATES ITS ATTEMPT is an older delivery', () => {
-    const result = validateConsumedProof({
+    const result = validateAdmissionRecord({
       proof: proofFor({ consumedAtMs: NOW - 5000 }),
       expected: expectedFor(),
       attempt: ATTEMPT,
@@ -308,7 +308,7 @@ describe('ordering against the attempt', () => {
   });
 
   test('AN UNDATED ATTEMPT (the 808499316 shape) can never be auto-retired', () => {
-    const result = validateConsumedProof({
+    const result = validateAdmissionRecord({
       proof: proofFor(),
       expected: expectedFor(),
       attempt: { atMs: null, generation: null },
@@ -317,18 +317,41 @@ describe('ordering against the attempt', () => {
   });
 
   test('PROOF AT THE EXACT ATTEMPT INSTANT is accepted', () => {
-    expect(validateConsumedProof({
+    expect(validateAdmissionRecord({
       proof: proofFor({ consumedAtMs: NOW }),
       expected: expectedFor(),
-      attempt: { atMs: NOW },
+      attempt: { atMs: NOW, generation: GENERATION },
     }).proven).toBe(true);
+  });
+
+  test('AN ATTEMPT FROM A DIFFERENT GENERATION is rejected', () => {
+    // Matching the CURRENT generation is not enough - the attempt being
+    // resolved was made by some generation too, and if it is not this one the
+    // record answers a delivery nobody is waiting on.
+    const result = validateAdmissionRecord({
+      proof: proofFor(),
+      expected: expectedFor(),
+      attempt: { atMs: NOW - 1000, generation: 'tg-gen-99999-1780000000000' },
+    });
+    expect(result.proven).toBe(false);
+    expect(result.reason).toBe('attempt_generation_mismatch');
+  });
+
+  test('AN ATTEMPT WITH NO RECORDED GENERATION fails closed', () => {
+    const result = validateAdmissionRecord({
+      proof: proofFor(),
+      expected: expectedFor(),
+      attempt: { atMs: NOW - 1000 },
+    });
+    expect(result.proven).toBe(false);
+    expect(result.reason).toBe('attempt_generation_unknown');
   });
 });
 
 describe('required means CORRECT, not merely present', () => {
   // Architect #54 finding 1: both fields were required and neither compared.
   test('A PROOF FROM THE WRONG RUNTIME is rejected', () => {
-    const result = validateConsumedProof({
+    const result = validateAdmissionRecord({
       proof: proofFor({ runtime: 'claude' }),
       expected: expectedFor({ runtime: 'codex' }),
       attempt: ATTEMPT,
@@ -338,7 +361,7 @@ describe('required means CORRECT, not merely present', () => {
   });
 
   test('A PROOF FROM A STALE CONSUMER SESSION is rejected', () => {
-    const result = validateConsumedProof({
+    const result = validateAdmissionRecord({
       proof: proofFor({ consumerSessionId: 'codex-session-OLD' }),
       expected: expectedFor({ consumerSessionId: 'codex-session-abc' }),
       attempt: ATTEMPT,
@@ -351,7 +374,60 @@ describe('required means CORRECT, not merely present', () => {
     for (const field of ['runtime', 'consumerSessionId', 'appGeneration', 'paneId']) {
       const expected = expectedFor();
       delete expected[field];
-      expect(validateConsumedProof({ proof: proofFor(), expected, attempt: ATTEMPT }).proven).toBe(false);
+      expect(validateAdmissionRecord({ proof: proofFor(), expected, attempt: ATTEMPT }).proven).toBe(false);
     }
+  });
+});
+
+describe('canonical digest covers ALL consumer-visible payload identity', () => {
+  // Gate probe 3. The five-field text-only digest meant a record whose TEXT was
+  // unchanged but whose attachment had been swapped hashed identically. For a
+  // plumbing business "here is the one I meant" is defined by its photo.
+  const BASE = {
+    updateId: 808499317,
+    text: 'here is the one I meant',
+    chatId: 6543210,
+    from: 'james',
+    messageId: 22315,
+    updateKind: 'message',
+    routeKey: 'main',
+    targetProfile: 'main',
+    targetWindow: 'main',
+    media: { kind: 'photo', fileId: 'AgACgg', fileUniqueId: 'u1', mimeType: 'image/jpeg', caption: 'the tankless one' },
+  };
+
+  test.each([
+    ['a swapped photo fileId', { media: { ...BASE.media, fileId: 'DIFFERENT' } }],
+    ['a swapped fileUniqueId', { media: { ...BASE.media, fileUniqueId: 'u2' } }],
+    ['a changed caption', { media: { ...BASE.media, caption: 'the OTHER one' } }],
+    ['a different mime type', { media: { ...BASE.media, mimeType: 'image/png' } }],
+    ['a different file name', { media: { ...BASE.media, fileName: 'other.jpg' } }],
+    ['a different file size', { media: { ...BASE.media, fileSize: 999 } }],
+    ['media removed entirely', { media: null }],
+    ['a document added', { document: { kind: 'document', fileId: 'DOC1' } }],
+    ['a video added', { video: { kind: 'video', fileId: 'VID1' } }],
+    ['a different update kind', { updateKind: 'edited_message' }],
+    ['a different route', { routeKey: 'sideprofile' }],
+    ['a different target window', { targetWindow: 'sideprofile' }],
+    ['a different target profile', { targetProfile: 'sideprofile' }],
+  ])('%s changes the canonical digest', (_label, patch) => {
+    expect(canonicalQueuedPayloadDigest({ ...BASE, ...patch }))
+      .not.toBe(canonicalQueuedPayloadDigest(BASE));
+  });
+
+  test('A MUTABLE LOCAL PATH does NOT change the digest — the same message on two machines is one message', () => {
+    expect(canonicalQueuedPayloadDigest({ ...BASE, media: { ...BASE.media, localPath: 'D:/a.jpg' } }))
+      .toBe(canonicalQueuedPayloadDigest({ ...BASE, media: { ...BASE.media, localPath: 'C:/b.jpg' } }));
+  });
+
+  test('SAME TEXT, SWAPPED ATTACHMENT is rejected by the validator, not just by the hasher', () => {
+    const swapped = { ...BASE, media: { ...BASE.media, fileId: 'SWAPPED' } };
+    const result = validateAdmissionRecord({
+      proof: proofFor({ queuedPayloadSha256: canonicalQueuedPayloadDigest(swapped) }),
+      expected: expectedFor({ queuedPayloadSha256: canonicalQueuedPayloadDigest(BASE) }),
+      attempt: ATTEMPT,
+    });
+    expect(result.proven).toBe(false);
+    expect(result.reason).toBe('queued_payload_digest_mismatch');
   });
 });

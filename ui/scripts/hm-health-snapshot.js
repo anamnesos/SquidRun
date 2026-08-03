@@ -100,6 +100,21 @@ const HEALTH_SCORE_PENALTIES = Object.freeze({
     category: 'transport',
     rationale: 'Inbound Telegram can silently stop even while the worker process remains alive.',
   }),
+  telegram_ingress_backlog_critical: Object.freeze({
+    points: 35,
+    category: 'transport',
+    // Heavier than a wedged poller on purpose. A wedged poller means we may
+    // stop RECEIVING; a wedged backlog means messages we already hold are not
+    // being DELIVERED, which from where James sits is indistinguishable from
+    // the app being off. Six of his messages sat 8.6 hours in this state while
+    // this score read 100.
+    rationale: 'Inbound Telegram messages are held undelivered; a fresh poller does not mean the channel is working.',
+  }),
+  telegram_ingress_backlog_degraded: Object.freeze({
+    points: 15,
+    category: 'transport',
+    rationale: 'Telegram ingress backlog is aging, unreported, or reported by a stale producer.',
+  }),
   websocket_bind_failed: Object.freeze({
     points: 12,
     category: 'transport',
@@ -1276,6 +1291,40 @@ function inspectTelegramPoller(projectRoot, options = {}) {
   }
 }
 
+/**
+ * TELEGRAM INGRESS BACKLOG — inside the SNAPSHOT, not beside it.
+ *
+ * A first pass at this read the backlog in the startup-health WRAPPER, printed
+ * to stderr and moved the exit code. That preserved the exact false green it
+ * was written to kill: the emitted and written snapshot still said status OK,
+ * score 100, no warning. James does not read stderr or exit codes — he reads
+ * the score. An alarm nobody is standing next to is not an alarm.
+ *
+ * So the verdict lands in `snapshot.telegramIngressBacklog` and is penalised in
+ * buildHealthStatus like every other signal, which is what makes it show up in
+ * the JSON, the markdown, and the number.
+ */
+function inspectTelegramIngressBacklog(projectRoot, options = {}) {
+  if (options.telegramIngressBacklog && typeof options.telegramIngressBacklog === 'object') {
+    return options.telegramIngressBacklog;
+  }
+  try {
+    const { readTelegramBacklogHealth } = require('./hm-startup-health');
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+    return readTelegramBacklogHealth(projectRoot, nowMs, {
+      statePath: options.telegramIngressBacklogStatePath,
+    });
+  } catch (err) {
+    // An inspector that THROWS must not read as a clean channel.
+    return {
+      ok: false,
+      severity: 'degraded',
+      reasons: [`backlog_inspect_error:${err.message}`],
+      routes: {},
+    };
+  }
+}
+
 function hasMemoryConsistencyCheckFailure(memoryConsistency = {}) {
   const status = String(memoryConsistency.status || '').trim();
   if (memoryConsistency.error) return true;
@@ -1466,6 +1515,33 @@ function buildHealthStatus(snapshot) {
   ) {
     warnings.push(`telegram_poller_${telegramPoller.status}`);
   }
+
+  // TELEGRAM INGRESS BACKLOG. Deliberately independent of poller freshness:
+  // the two answer different questions and a fresh poller must never soften
+  // this. On 2026-08-03 the poller was genuinely fresh the entire time.
+  const ingressBacklog = snapshot.telegramIngressBacklog && typeof snapshot.telegramIngressBacklog === 'object'
+    ? snapshot.telegramIngressBacklog
+    : null;
+  if (!ingressBacklog) {
+    // NOT REPORTING IS NOT HEALTHY. A snapshot with no backlog section at all
+    // is a health run that never asked the question.
+    warnings.push('telegram_ingress_backlog_unreported');
+    addPenalty('telegram_ingress_backlog_degraded');
+  } else {
+    const reasons = Array.isArray(ingressBacklog.reasons) && ingressBacklog.reasons.length > 0
+      ? ingressBacklog.reasons.join(',')
+      : 'unspecified';
+    if (ingressBacklog.severity === 'critical') {
+      warnings.push(`telegram_ingress_backlog_critical:${reasons}`);
+      addPenalty('telegram_ingress_backlog_critical');
+    } else if (ingressBacklog.severity !== 'ok') {
+      // Anything not explicitly ok is degraded, including an unrecognised
+      // severity string. An unknown verdict is not a pass.
+      warnings.push(`telegram_ingress_backlog_degraded:${reasons}`);
+      addPenalty('telegram_ingress_backlog_degraded');
+    }
+  }
+
   const supervisor = snapshot.supervisor && typeof snapshot.supervisor === 'object'
     ? snapshot.supervisor
     : {};
@@ -1561,6 +1637,10 @@ function createHealthSnapshot(options = {}) {
     profileName,
     appUp: appStatus.exists === true,
   });
+  const telegramIngressBacklog = inspectTelegramIngressBacklog(projectRoot, {
+    ...options,
+    profileName,
+  });
   const supervisor = inspectSupervisorHeartbeat(projectRoot, {
     ...options,
     profileName,
@@ -1591,6 +1671,7 @@ function createHealthSnapshot(options = {}) {
     systemCapabilities,
     theTellShadowRunner,
     telegramPoller,
+    telegramIngressBacklog,
     supervisor,
   };
 
@@ -2075,6 +2156,11 @@ module.exports = {
   buildBridgeSnapshotFromEnv,
   getAcceptedSourceHeadingResidue,
   getPenaltyPoints,
+  // Exported so a test can assert on the STATUS THAT GETS SERIALIZED, rather
+  // than on an inspector returning a tidy object while the published score
+  // stays green.
+  buildHealthStatus,
+  inspectTelegramIngressBacklog,
   getTheTellShadowRunnerStaleMs,
   getSupervisorStatusFreshnessWindowMs,
   getStartupHealthFileName,

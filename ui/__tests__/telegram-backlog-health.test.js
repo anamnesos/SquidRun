@@ -165,3 +165,43 @@ describe('channel scoring — freshness may never buy a passing grade', () => {
     expect(result.ok).toBe(false);
   });
 });
+
+describe('no default may resolve toward "fine" (Architect #60)', () => {
+  test.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['a string', 'seven'],
+    ['NaN', NaN],
+    ['negative', -1],
+    ['an object', {}],
+  ])('A MALFORMED pendingCount (%s) is CRITICAL, never coerced to a healthy zero', (_label, value) => {
+    // `Number(x) || 0` turned every one of these into an early return with
+    // severity ok - corrupt data producing a clean bill of health, inside the
+    // module written to end exactly that.
+    const result = scoreBacklogHealth(snapshot({ pendingCount: value }));
+    expect(result.severity).toBe('critical');
+    expect(result.ok).toBe(false);
+  });
+
+  test('A GENUINE ZERO is still ok — the fix must not break the healthy case', () => {
+    expect(scoreBacklogHealth(snapshot({ pendingCount: 0 })).ok).toBe(true);
+  });
+
+  test.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['a string', 'yes'],
+    ['1', 1],
+  ])('MISSING OR NON-BOOLEAN pollerFresh (%s) is UNKNOWN, never true', (_label, value) => {
+    const result = scoreTelegramChannel({ pollerFresh: value, backlog: snapshot() });
+    expect(result.ok).toBe(false);
+    expect(result.reasons).toContain('poller_freshness_unknown');
+    expect(result.pollerFresh).toBeNull();
+  });
+
+  test('AN EXPLICIT TRUE still passes a clean queue', () => {
+    const result = scoreTelegramChannel({ pollerFresh: true, backlog: snapshot() });
+    expect(result.ok).toBe(true);
+    expect(result.pollerFresh).toBe(true);
+  });
+});

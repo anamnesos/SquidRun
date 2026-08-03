@@ -207,6 +207,28 @@ function readTelegramBacklogHealth(projectRoot, nowMs = Date.now(), options = {}
   try {
     raw = fs.readFileSync(statePath, 'utf8');
   } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      // NARROW, EVIDENCE-BASED EXEMPTION, and it is deliberately narrow.
+      //
+      // A root with no Telegram ingress spool at all has never held an inbound
+      // message, so there is no backlog to be behind on and nothing to report.
+      // That is a genuine absence of the feature, not an optimistic guess.
+      //
+      // The moment a spool EXISTS, a missing snapshot degrades — which is the
+      // production case, since the live spool holds queued messages. This
+      // exemption cannot cover the failing state it would be tempting to
+      // silence, and both branches are pinned by test.
+      const spoolRoot = path.join(projectRoot, '.squidrun', 'runtime', 'telegram-inbound');
+      if (!fs.existsSync(spoolRoot)) {
+        return {
+          ok: true,
+          severity: 'ok',
+          reasons: ['no_telegram_ingress_configured'],
+          statePath,
+          routes: {},
+        };
+      }
+    }
     return {
       ok: false,
       severity: 'degraded',
@@ -224,8 +246,22 @@ function readTelegramBacklogHealth(projectRoot, nowMs = Date.now(), options = {}
       ok: false, severity: 'degraded', reasons: [`backlog_snapshot_malformed:${err.message}`], statePath, routes: {},
     };
   }
-  if (!parsed || typeof parsed !== 'object' || !parsed.routes || typeof parsed.routes !== 'object') {
+  // `typeof [] === 'object'`, so an array passed the old shape check and then
+  // iterated as zero routes. Arrays are rejected explicitly at both levels.
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+    || !parsed.routes || typeof parsed.routes !== 'object' || Array.isArray(parsed.routes)) {
     return { ok: false, severity: 'degraded', reasons: ['backlog_snapshot_shape_invalid'], statePath, routes: {} };
+  }
+  // A snapshot written by a future or unknown producer is not one we can score.
+  const EXPECTED_SCHEMA = 'telegramBacklogHealth.v0';
+  if (parsed.schema !== undefined && parsed.schema !== EXPECTED_SCHEMA) {
+    return {
+      ok: false,
+      severity: 'degraded',
+      reasons: [`backlog_snapshot_schema_unknown:${String(parsed.schema)}`],
+      statePath,
+      routes: {},
+    };
   }
 
   const {
@@ -247,11 +283,33 @@ function readTelegramBacklogHealth(projectRoot, nowMs = Date.now(), options = {}
   }
 
   for (const [routeKey, snapshot] of entries) {
-    const scored = scoreBacklogHealth(snapshot, options);
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+      routes[routeKey] = { severity: 'degraded', reasons: ['route_entry_malformed'], headAgeMs: null };
+      if (rank.degraded > rank[severity]) severity = 'degraded';
+      reasons.push(`${routeKey}:route_entry_malformed`);
+      continue;
+    }
+
+    // RECOMPUTE THE HEAD AGE against OUR clock from the DURABLE received-at.
+    // A stored `oldestPendingAgeMs` is a value the producer asserted, possibly
+    // hours ago; scoring it would be comparing the world to itself and always
+    // agreeing. Where the durable input is absent the age is UNKNOWN, never
+    // inherited from the assertion.
+    const receivedAtMs = Number(snapshot.oldestPendingReceivedAtMs);
+    const hasDurableAge = Number.isFinite(receivedAtMs) && receivedAtMs > 0;
+    const recomputed = hasDurableAge
+      ? { ...snapshot, oldestPendingAgeMs: Math.max(0, nowMs - receivedAtMs), oldestPendingAgeUnknown: false }
+      : { ...snapshot, oldestPendingAgeMs: null, oldestPendingAgeUnknown: true };
+
+    const scored = scoreBacklogHealth(recomputed, options);
     // A SNAPSHOT THAT STOPPED UPDATING is not a healthy route; it is a route
-    // whose reporter died. Treated exactly like an unreadable file.
-    const observedAtMs = Number(snapshot && snapshot.observedAtMs);
-    const stale = !Number.isFinite(observedAtMs) || (nowMs - observedAtMs) > staleAfterMs;
+    // whose reporter died. Treated exactly like an unreadable file. A FUTURE
+    // timestamp is equally untrustworthy — a clock we cannot reconcile is not
+    // evidence of freshness.
+    const observedAtMs = Number(snapshot.observedAtMs);
+    const stale = !Number.isFinite(observedAtMs)
+      || (nowMs - observedAtMs) > staleAfterMs
+      || observedAtMs > (nowMs + 60_000);
     const routeSeverity = stale && rank[scored.severity] < rank.degraded ? 'degraded' : scored.severity;
     const routeReasons = stale ? [...scored.reasons, `backlog_snapshot_stale:${routeKey}`] : scored.reasons;
 
@@ -280,21 +338,16 @@ function runStartupHealth(argv = process.argv.slice(2), io = {}) {
     stderr.write(`Bidirectional wake watchdog auto-start failed: ${bidirectionalWakeWatchdog.error || bidirectionalWakeWatchdog.stderr || 'unknown'}\n`);
   }
 
-  // TELEGRAM DELIVERY, not merely Telegram reception. Reported before the
-  // snapshot runs so a wedged queue is visible even if something later throws.
-  const backlog = readTelegramBacklogHealth(resolveProjectRootFromArgs(effectiveArgv));
-  if (!backlog.ok) {
-    stderr.write(
-      `Telegram ingress backlog ${backlog.severity.toUpperCase()}: ${backlog.reasons.join('; ')}\n`
-    );
-  }
-
-  const exitCode = main(stripWrapperFlags(effectiveArgv));
-  // A CRITICAL backlog fails the run. Messages that cannot be delivered are
-  // not a warning: that state is indistinguishable, from where James sits,
-  // from the app being off.
-  if (backlog.severity === 'critical' && exitCode === 0) return 1;
-  return exitCode;
+  // TELEGRAM DELIVERY is NOT read here. It is collected by the snapshot owner
+  // (hm-health-snapshot `inspectTelegramIngressBacklog`) and penalised in
+  // `buildHealthStatus`, so it lands in the published score, JSON and markdown.
+  //
+  // An earlier version read it HERE, printed to stderr and moved the exit
+  // code — which left the emitted snapshot saying OK / 100 with no warning.
+  // That is the incident's own shape inside the fix for it: knowledge that
+  // never reaches the surface anyone actually looks at. One reader, one place,
+  // and that place is the thing that gets serialized.
+  return main(stripWrapperFlags(effectiveArgv));
 }
 
 if (require.main === module) {

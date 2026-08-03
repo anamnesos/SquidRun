@@ -34,7 +34,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { buildConsumedProof } = require('../modules/main/telegram-consumed-proof');
+const { buildAdmissionRecord } = require('../modules/main/telegram-consumed-proof');
 const { parseConsumeMarker } = require('../modules/main/telegram-consume-marker');
 
 function parseArgs(argv) {
@@ -128,7 +128,7 @@ function processHookPayload(input = {}) {
   const { sessionId, turnId } = extractSession(runtime, payload);
   if (!sessionId) return skip('no_consumer_session', { updateId: marker.updateId, paneId });
 
-  const record = buildConsumedProof({
+  const record = buildAdmissionRecord({
     runtime,
     updateId: marker.updateId,
     messageId: marker.messageId,

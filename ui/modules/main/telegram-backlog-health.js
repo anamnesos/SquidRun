@@ -57,7 +57,24 @@ function scoreBacklogHealth(snapshot, options = {}) {
     ? Number(options.criticalAfterMs)
     : CRITICAL_HEAD_AGE_MS;
 
-  const pendingCount = Number(snapshot.pendingCount) || 0;
+  // A MALFORMED COUNT IS NOT ZERO. `Number(x) || 0` turned undefined, null,
+  // NaN and "seven" into a clean bill of health — corrupt data producing the
+  // one answer that ends the function early with severity ok. That is the
+  // exact class this module exists to eliminate, sitting inside it.
+  // `typeof` FIRST: Number(null) is 0 and Number([]) is 0, so a finite-check
+  // alone still lets absent and nonsense values read as a healthy empty queue.
+  const rawPendingCount = typeof snapshot.pendingCount === 'number'
+    ? snapshot.pendingCount
+    : NaN;
+  if (!Number.isFinite(rawPendingCount) || rawPendingCount < 0) {
+    return {
+      severity: 'critical',
+      ok: false,
+      reasons: [`pending_count_unreadable:${String(snapshot.pendingCount)}`],
+      headAgeMs: null,
+    };
+  }
+  const pendingCount = rawPendingCount;
   if (pendingCount === 0) {
     return { severity: 'ok', ok: true, reasons: [], headAgeMs: null };
   }
@@ -108,9 +125,17 @@ function scoreTelegramChannel(input = {}) {
   const reasons = [...backlog.reasons];
   let severity = backlog.severity;
 
-  if (input.pollerFresh === false) {
+  // MISSING FRESHNESS IS NOT FRESH. `!== false` reported an absent or
+  // unreadable poller reading as pollerFresh:true — an unasked question
+  // answered optimistically, which is how this incident started.
+  const pollerFresh = input.pollerFresh === true ? true
+    : (input.pollerFresh === false ? false : null);
+  if (pollerFresh === false) {
     severity = worst(severity, 'degraded');
     reasons.push('poller_stale');
+  } else if (pollerFresh === null) {
+    severity = worst(severity, 'degraded');
+    reasons.push('poller_freshness_unknown');
   }
 
   return {
@@ -118,9 +143,9 @@ function scoreTelegramChannel(input = {}) {
     ok: severity === 'ok',
     reasons,
     headAgeMs: backlog.headAgeMs,
-    // Reported for operators, and deliberately NOT part of the grade when the
-    // backlog is unhealthy.
-    pollerFresh: input.pollerFresh !== false,
+    // Reported for operators, and deliberately NOT able to raise the grade.
+    // null means "we do not know", which is never the same as fresh.
+    pollerFresh,
   };
 }
 
