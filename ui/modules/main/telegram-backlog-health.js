@@ -63,10 +63,13 @@ function scoreBacklogHealth(snapshot, options = {}) {
   // exact class this module exists to eliminate, sitting inside it.
   // `typeof` FIRST: Number(null) is 0 and Number([]) is 0, so a finite-check
   // alone still lets absent and nonsense values read as a healthy empty queue.
+  // A NON-NEGATIVE SAFE INTEGER, nothing looser. `Number.isFinite` alone let
+  // 1.5 and 2.7 through as plausible counts — a fractional number of queued
+  // messages is not a small inaccuracy, it is evidence the producer is broken.
   const rawPendingCount = typeof snapshot.pendingCount === 'number'
     ? snapshot.pendingCount
     : NaN;
-  if (!Number.isFinite(rawPendingCount) || rawPendingCount < 0) {
+  if (!Number.isSafeInteger(rawPendingCount) || rawPendingCount < 0) {
     return {
       severity: 'critical',
       ok: false,
@@ -85,8 +88,13 @@ function scoreBacklogHealth(snapshot, options = {}) {
     reasons.push('oldest_pending_age_unknown');
   }
 
-  const headAgeMs = Number.isFinite(Number(snapshot.oldestPendingAgeMs))
-    ? Number(snapshot.oldestPendingAgeMs)
+  // `Number(null)` is 0 and `Number.isFinite(0)` is true, so the obvious
+  // coercion turned an explicitly UNKNOWN age into the freshest possible
+  // reading. Third instance of this exact bug class in this lane; the typeof
+  // guard is the only thing that actually distinguishes absent from zero.
+  const headAgeMs = typeof snapshot.oldestPendingAgeMs === 'number'
+    && Number.isFinite(snapshot.oldestPendingAgeMs)
+    ? snapshot.oldestPendingAgeMs
     : null;
 
   if (headAgeMs !== null) {

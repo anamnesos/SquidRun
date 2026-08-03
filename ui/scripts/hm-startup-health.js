@@ -252,9 +252,15 @@ function readTelegramBacklogHealth(projectRoot, nowMs = Date.now(), options = {}
     || !parsed.routes || typeof parsed.routes !== 'object' || Array.isArray(parsed.routes)) {
     return { ok: false, severity: 'degraded', reasons: ['backlog_snapshot_shape_invalid'], statePath, routes: {} };
   }
-  // A snapshot written by a future or unknown producer is not one we can score.
+  // EXACT SCHEMA REQUIRED, PRESENT OR NOT.
+  //
+  // The first cut read `parsed.schema !== undefined && parsed.schema !== EXPECTED`,
+  // so a WRONG schema degraded but an ABSENT one sailed through as valid. That
+  // is optional-when-absent — the same fail-open shape as every other defect in
+  // this lane, sitting inside the strictness check written to end it. A
+  // document that will not say what it is cannot be scored.
   const EXPECTED_SCHEMA = 'telegramBacklogHealth.v0';
-  if (parsed.schema !== undefined && parsed.schema !== EXPECTED_SCHEMA) {
+  if (parsed.schema !== EXPECTED_SCHEMA) {
     return {
       ok: false,
       severity: 'degraded',
@@ -295,8 +301,22 @@ function readTelegramBacklogHealth(projectRoot, nowMs = Date.now(), options = {}
     // hours ago; scoring it would be comparing the world to itself and always
     // agreeing. Where the durable input is absent the age is UNKNOWN, never
     // inherited from the assertion.
+    // A FUTURE received-at IS NOT AGE ZERO.
+    //
+    // The first cut accepted any finite positive value and then clamped with
+    // Math.max(0, nowMs - receivedAtMs). A timestamp in the future is finite
+    // and positive, so it passed — and the clamp turned a negative age into 0,
+    // the FRESHEST possible reading. A corrupt or forward-skewed clock scored
+    // as perfectly healthy, with the clamp hiding the anomaly instead of
+    // surfacing it. A message cannot have been received after now; if it claims
+    // to have been, the record is untrustworthy and the age is UNKNOWN.
     const receivedAtMs = Number(snapshot.oldestPendingReceivedAtMs);
-    const hasDurableAge = Number.isFinite(receivedAtMs) && receivedAtMs > 0;
+    const CLOCK_SKEW_TOLERANCE_MS = 60_000;
+    const hasDurableAge = Number.isFinite(receivedAtMs)
+      && receivedAtMs > 0
+      && receivedAtMs <= (nowMs + CLOCK_SKEW_TOLERANCE_MS);
+    const futureReceivedAt = Number.isFinite(receivedAtMs)
+      && receivedAtMs > (nowMs + CLOCK_SKEW_TOLERANCE_MS);
     const recomputed = hasDurableAge
       ? { ...snapshot, oldestPendingAgeMs: Math.max(0, nowMs - receivedAtMs), oldestPendingAgeUnknown: false }
       : { ...snapshot, oldestPendingAgeMs: null, oldestPendingAgeUnknown: true };
@@ -310,8 +330,13 @@ function readTelegramBacklogHealth(projectRoot, nowMs = Date.now(), options = {}
     const stale = !Number.isFinite(observedAtMs)
       || (nowMs - observedAtMs) > staleAfterMs
       || observedAtMs > (nowMs + 60_000);
-    const routeSeverity = stale && rank[scored.severity] < rank.degraded ? 'degraded' : scored.severity;
-    const routeReasons = stale ? [...scored.reasons, `backlog_snapshot_stale:${routeKey}`] : scored.reasons;
+    const anomalous = stale || futureReceivedAt;
+    const routeSeverity = anomalous && rank[scored.severity] < rank.degraded ? 'degraded' : scored.severity;
+    const routeReasons = [...scored.reasons];
+    if (stale) routeReasons.push(`backlog_snapshot_stale:${routeKey}`);
+    // Named separately from staleness so an operator can tell a dead reporter
+    // from a clock that is lying.
+    if (futureReceivedAt) routeReasons.push(`oldest_pending_received_at_in_future:${routeKey}`);
 
     routes[routeKey] = { severity: routeSeverity, reasons: routeReasons, headAgeMs: scored.headAgeMs };
     if (rank[routeSeverity] > rank[severity]) severity = routeSeverity;

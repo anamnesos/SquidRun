@@ -191,7 +191,9 @@ describe('scoring reaches the surface', () => {
   test('A CUSTOM statePath is honoured, so the check is testable without a project tree', () => {
     const root = projectRoot();
     const statePath = path.join(root, 'elsewhere.json');
-    fs.writeFileSync(statePath, JSON.stringify({ routes: { main: healthyRoute() } }), 'utf8');
+    fs.writeFileSync(statePath, JSON.stringify({
+      schema: 'telegramBacklogHealth.v0', routes: { main: healthyRoute() },
+    }), 'utf8');
 
     expect(readTelegramBacklogHealth(root, NOW, { statePath }).ok).toBe(true);
   });
@@ -260,5 +262,82 @@ describe('strict reader (Architect #60)', () => {
     const root = projectRoot();
     writeSnapshot(root, { main: healthyRoute({ observedAtMs: NOW + 10 * 60 * 1000 }) });
     expect(readTelegramBacklogHealth(root, NOW).ok).toBe(false);
+  });
+});
+
+describe('#65 bars 1 and 2', () => {
+  test('BAR 1: AN ABSENT schema degrades, not just a wrong one', () => {
+    // `!== undefined && !== EXPECTED` let a schema-less document through as
+    // valid. A document that will not say what it is cannot be scored.
+    const root = projectRoot();
+    const statePath = path.join(root, '.squidrun', 'runtime', 'telegram-backlog-health.json');
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.mkdirSync(path.join(root, '.squidrun', 'runtime', 'telegram-inbound'), { recursive: true });
+    fs.writeFileSync(statePath, JSON.stringify({ routes: { main: healthyRoute() } }), 'utf8');
+
+    const result = readTelegramBacklogHealth(root, NOW);
+    expect(result.ok).toBe(false);
+    expect(result.reasons.join()).toMatch(/schema_unknown/);
+  });
+
+  test('BAR 1: THE EXACT schema still passes', () => {
+    const root = projectRoot();
+    writeSnapshot(root, { main: healthyRoute() });
+    expect(readTelegramBacklogHealth(root, NOW).ok).toBe(true);
+  });
+
+  test('BAR 2: A FUTURE oldestPendingReceivedAtMs is NOT age zero', () => {
+    // Finite and positive, so it passed the old guard; then
+    // Math.max(0, now - future) clamped to 0 — the freshest possible reading.
+    // A forward-skewed clock scored as perfectly healthy.
+    const root = projectRoot();
+    writeSnapshot(root, {
+      main: healthyRoute({
+        pendingCount: 3,
+        oldestPendingUpdateId: 808499317,
+        oldestPendingReceivedAtMs: NOW + 6 * 60 * 60 * 1000,
+      }),
+    });
+
+    const result = readTelegramBacklogHealth(root, NOW);
+    expect(result.ok).toBe(false);
+    expect(result.routes.main.headAgeMs).not.toBe(0);
+    expect(result.routes.main.headAgeMs).toBeNull();
+    expect(result.reasons.join()).toMatch(/oldest_pending_received_at_in_future:main/);
+  });
+
+  test('BAR 2: A SMALL FORWARD SKEW inside tolerance is still usable', () => {
+    // Real clocks drift; a few seconds must not blind the check entirely.
+    const root = projectRoot();
+    writeSnapshot(root, {
+      main: healthyRoute({
+        pendingCount: 1, oldestPendingUpdateId: 1, oldestPendingReceivedAtMs: NOW + 5_000,
+      }),
+    });
+    const result = readTelegramBacklogHealth(root, NOW);
+    expect(result.routes.main.reasons.join()).not.toMatch(/in_future/);
+  });
+});
+
+describe('the future-timestamp anomaly escalates on its own', () => {
+  test('A FUTURE received-at DEGRADES even when the queue is otherwise clean', () => {
+    // With a non-empty queue the future timestamp already degrades via the
+    // unknown-age path, so that path alone does not prove the anomaly is
+    // surfaced. Here pendingCount is 0, which scores ok by itself — the only
+    // thing that can degrade it is the anomaly being escalated deliberately.
+    // A cleared queue still carrying a head timestamp from the future is a
+    // producer or clock that cannot be trusted.
+    const root = projectRoot();
+    writeSnapshot(root, {
+      main: healthyRoute({
+        pendingCount: 0,
+        oldestPendingReceivedAtMs: NOW + 6 * 60 * 60 * 1000,
+      }),
+    });
+
+    const result = readTelegramBacklogHealth(root, NOW);
+    expect(result.ok).toBe(false);
+    expect(result.routes.main.severity).toBe('degraded');
+    expect(result.reasons.join()).toMatch(/oldest_pending_received_at_in_future:main/);
   });
 });

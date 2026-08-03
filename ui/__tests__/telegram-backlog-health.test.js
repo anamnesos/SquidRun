@@ -205,3 +205,24 @@ describe('no default may resolve toward "fine" (Architect #60)', () => {
     expect(result.pollerFresh).toBe(true);
   });
 });
+
+describe('bar 3 — pendingCount must be a non-negative SAFE INTEGER', () => {
+  test.each([
+    ['fractional 1.5', 1.5],
+    ['fractional 0.5', 0.5],
+    ['Infinity', Infinity],
+    ['-Infinity', -Infinity],
+    ['beyond safe integer range', Number.MAX_SAFE_INTEGER + 2],
+  ])('%s is CRITICAL — a fractional queue depth is a broken producer, not a rounding error', (_label, value) => {
+    const result = scoreBacklogHealth(snapshot({ pendingCount: value }));
+    expect(result.severity).toBe('critical');
+    expect(result.ok).toBe(false);
+  });
+
+  test('LEGITIMATE INTEGER COUNTS still score normally', () => {
+    expect(scoreBacklogHealth(snapshot({ pendingCount: 0 })).ok).toBe(true);
+    expect(scoreBacklogHealth(snapshot({
+      pendingCount: 6, oldestPendingUpdateId: 1, oldestPendingAgeMs: 1000,
+    })).severity).toBe('ok');
+  });
+});
