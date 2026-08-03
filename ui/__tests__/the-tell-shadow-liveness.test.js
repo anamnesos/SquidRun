@@ -128,11 +128,7 @@ describe('startup-health recovers the shadow runner (Architect #5b)', () => {
     // calls it. That is precisely the failure this lane fixes: the check could
     // see the runner die and had no path to act on it.
     jest.resetModules();
-    // Spread the real module. Mocking ONLY spawnSync left execFileSync
-    // undefined, so startup health threw internally while this test still
-    // passed — a green test sitting on top of a broken run.
     jest.doMock('child_process', () => ({
-      ...jest.requireActual('child_process'),
       spawnSync: jest.fn(() => ({ status: 0, stdout: '', stderr: '' })),
     }));
     const childProcess = require('child_process');
