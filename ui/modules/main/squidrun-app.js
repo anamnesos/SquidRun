@@ -46,6 +46,7 @@ const { stripAnsi } = require('../ansi');
 const { createKernelBridge } = require('./kernel-bridge');
 const telegramIngressSpool = require('./telegram-ingress-spool');
 const telegramIngressDrain = require('./telegram-ingress-drain');
+const telegramDrainWiring = require('./telegram-drain-wiring');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
 const { emitWindowVisibilityState } = require('./window-visibility-state');
@@ -120,6 +121,7 @@ const {
   appendReceiptMarkerToPrompt,
   getModelPromptReceipt,
   getReceiptPaths,
+  getReceiptRuntimeActivity,
 } = require('../model-prompt-receipt');
 const {
   shouldTriggerAutonomousSmoke,
@@ -15042,9 +15044,66 @@ class SquidRunApp {
         currentSessionFor: (windowKey) => this.getWindowSessionScopeId(windowKey || 'main'),
         deliver: (job) => this.deliverTelegramInboundJob(this.buildTelegramInboundJob(job)),
         findExistingReceipt: (identity) => this.findTelegramDeliveryReceipt(identity),
+        // S491. Three questions the drain could not previously ask, each
+        // answered here where the app actually knows.
+        sessionGeneration: () => this.getTelegramDrainGeneration(),
+        paneRuntimeFor: (windowKey) => this.resolveTelegramPaneRuntime(windowKey),
+        receiptActivity: () => this.getTelegramReceiptRuntimeActivity(),
       });
     }
     return this.telegramDrainCoordinator;
+  }
+
+  /** Stable per-process id; see telegram-drain-wiring.makeDrainGeneration. */
+  getTelegramDrainGeneration() {
+    if (!this.telegramDrainGeneration) {
+      this.telegramDrainGeneration = telegramDrainWiring.makeDrainGeneration(process.pid, Date.now());
+    }
+    return this.telegramDrainGeneration;
+  }
+
+  /** The pane command decides the runtime name; unknown stays unknown. */
+  resolveTelegramPaneRuntime() {
+    // Telegram inbound is delivered to the Architect pane (pane 1).
+    try {
+      const live = this.ctx.currentSettings?.paneCommands;
+      const liveCommand = live && typeof live === 'object' ? String(live['1'] || '') : '';
+      if (liveCommand.trim()) return telegramDrainWiring.resolvePaneRuntimeFromCommand(liveCommand);
+      const persisted = this.settings?.loadSettings?.()?.paneCommands;
+      return telegramDrainWiring.resolvePaneRuntimeFromCommand(
+        persisted && typeof persisted === 'object' ? persisted['1'] : ''
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Observed proof flow per runtime. A throw must NOT become an empty set:
+   * empty reads as "no runtime has ever proved anything" and would mark every
+   * route unprovable at once. null lets the probe say "unknown" instead.
+   */
+  getTelegramReceiptRuntimeActivity() {
+    try {
+      return getReceiptRuntimeActivity();
+    } catch (err) {
+      log.warn('Telegram', `Receipt runtime activity unreadable: ${err.message}`);
+      return null;
+    }
+  }
+
+  /** Publish the backlog snapshot for the out-of-process health check. */
+  recordTelegramBacklogHealth(routeKey, backlog) {
+    const result = telegramDrainWiring.writeBacklogHealth({
+      statePath: resolveCoordPath('runtime/telegram-backlog-health.json', { forWrite: true }),
+      routeKey,
+      backlog,
+      nowMs: Date.now(),
+    });
+    if (!result.ok && result.reason !== 'missing_backlog') {
+      log.warn('Telegram', `Backlog health write failed: ${result.reason}`);
+    }
+    return result;
   }
 
   scheduleTelegramIngressDrain(dir, routeKey) {
@@ -15061,6 +15120,12 @@ class SquidRunApp {
             'Telegram',
             `Ingress drain held at update ${result.stoppedAt.updateId} (${result.stoppedAt.reason}, ${result.stoppedAt.failureClass})`
           );
+        }
+        // S491. The backlog snapshot has to reach a surface that can SCORE it.
+        // Logging alone is what let an 8-hour wedge sit behind a 100/100 health
+        // reading: the drain knew, and nothing that reported health ever asked.
+        if (result?.backlog) {
+          this.recordTelegramBacklogHealth(routeKey, result.backlog);
         }
         return result;
       })

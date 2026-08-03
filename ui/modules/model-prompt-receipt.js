@@ -352,6 +352,67 @@ function getProofRank(status) {
   return Number(PROOF_RANKS[status] || 0);
 }
 
+/**
+ * WHEN DID EACH RUNTIME LAST ACTUALLY PROVE ANYTHING? (S491)
+ *
+ * Not "is a hook configured for it" — that question has a dangerously wrong
+ * answer in this repo. `.codex/hooks.json` carries a UserPromptSubmit receipt
+ * hook and codex has produced zero receipts out of 2194. A caller that trusts
+ * configuration concludes the codex pane is provable and then waits forever for
+ * proof nothing is able to write.
+ *
+ * So this reports observed FLOW, read from the receipt store's own records. A
+ * runtime that appears here has demonstrably written a receipt; one that does
+ * not, has not, whatever its config claims.
+ *
+ * Cached against the state file's mtime+size. The drain asks this on every
+ * held pass and the answer changes on the order of minutes, so re-parsing a
+ * half-megabyte state file each time would be pure waste.
+ *
+ * @returns {Object<string, number>} runtime -> most recent receipt time in ms
+ */
+let runtimeActivityCache = null;
+function getReceiptRuntimeActivity(options = {}) {
+  const statePath = toNonEmptyString(options.statePath) || getReceiptPaths().statePath;
+
+  let stat;
+  try {
+    stat = fs.statSync(statePath);
+  } catch (err) {
+    // ENOENT is a genuine "nothing has ever proved anything here", which is a
+    // real and useful answer. Any other error is an unknown, and an unknown
+    // must not be reported as an empty set — that would read as "no runtime can
+    // prove anything" and wedge every route at once.
+    if (err && err.code === 'ENOENT') return {};
+    throw new Error(`receipt runtime activity unreadable: ${err.message}`);
+  }
+
+  const fingerprint = `${statePath}|${stat.mtimeMs}|${stat.size}`;
+  if (runtimeActivityCache && runtimeActivityCache.fingerprint === fingerprint) {
+    return runtimeActivityCache.activity;
+  }
+
+  let state;
+  try {
+    state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  } catch (err) {
+    throw new Error(`receipt runtime activity unreadable: ${err.message}`);
+  }
+
+  const activity = {};
+  const receipts = (state && typeof state === 'object' && state.receiptsByDeliveryId) || {};
+  for (const receipt of Object.values(receipts)) {
+    const runtime = normalizeRuntime(receipt && receipt.runtime);
+    if (!runtime) continue;
+    const atMs = Date.parse(receipt.timestamp);
+    if (!Number.isFinite(atMs)) continue;
+    if (!activity[runtime] || atMs > activity[runtime]) activity[runtime] = atMs;
+  }
+
+  runtimeActivityCache = { fingerprint, activity };
+  return activity;
+}
+
 function getModelPromptReceipt(id, options = {}) {
   const normalized = toNonEmptyString(id);
   if (!normalized) return null;
@@ -702,6 +763,7 @@ module.exports = {
   extractReceiptMarker,
   findMapping,
   getModelPromptReceipt,
+  getReceiptRuntimeActivity,
   readStateStrict,
   getProofRank,
   getReceiptForAck,

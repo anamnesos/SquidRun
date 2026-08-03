@@ -142,3 +142,83 @@ test('THE INBOUND JOURNAL STAYS PERMISSIVE while the sidecar does not', () => {
   fs.writeFileSync(queue.attemptsPath(dir), 'not json at all\n', 'utf8');
   expect(() => queue.readAttemptState(dir)).toThrow();
 });
+
+// ------------------------------------------------- S491: attempt provenance
+
+test('PROVENANCE ROUND-TRIPS: atMs and generation survive a write and read', () => {
+  const dir = tempDir();
+  queue.appendAttempt(dir, 42, 'attempted', { atMs: 1_785_780_000_000, generation: 'gen-a' });
+
+  expect(queue.readAttemptRecords(dir).get(42)).toEqual({
+    state: 'attempted',
+    atMs: 1_785_780_000_000,
+    generation: 'gen-a',
+  });
+});
+
+test('A v0 ENTRY still reads, with provenance reported as UNKNOWN rather than guessed', () => {
+  // The live latch on disk predates these fields and must stay readable.
+  const dir = tempDir();
+  fs.writeFileSync(
+    queue.attemptsPath(dir),
+    `${JSON.stringify({ updateId: 808499316, state: 'attempted' })}\n`,
+    'utf8'
+  );
+
+  expect(queue.readAttemptRecords(dir).get(808499316)).toEqual({
+    state: 'attempted',
+    atMs: null,
+    generation: null,
+  });
+});
+
+test('PROVENANCE KEYS ARE OMITTED when unknown, so a v0 reader keeps working', () => {
+  const dir = tempDir();
+  queue.appendAttempt(dir, 7, 'attempted');
+
+  const line = fs.readFileSync(queue.attemptsPath(dir), 'utf8').trim();
+  expect(JSON.parse(line)).toEqual({ updateId: 7, state: 'attempted' });
+});
+
+test.each([
+  ['a string', 'yesterday'],
+  ['a boolean', true],
+  ['an object', {}],
+  ['zero', 0],
+  ['negative', -1],
+  ['fractional', 1.5],
+])('A MALFORMED atMs (%s) THROWS — it is never downgraded to "absent"', (_label, value) => {
+  // Downgrading corruption to absence would make a corrupt entry look exactly
+  // like a legitimate v0 one, and the recovery tool treats v0 as the shape a
+  // human may retire by hand. Corruption must be loud, not quietly plausible.
+  const dir = tempDir();
+  fs.writeFileSync(
+    queue.attemptsPath(dir),
+    `${JSON.stringify({ updateId: 9, state: 'attempted', atMs: value })}\n`,
+    'utf8'
+  );
+
+  expect(() => queue.readAttemptRecords(dir)).toThrow(/atMs/);
+  expect(() => queue.readAttemptState(dir)).toThrow(/atMs/);
+});
+
+test.each([
+  ['an empty string', ''],
+  ['whitespace', '   '],
+  ['a number', 5],
+])('A MALFORMED generation (%s) THROWS rather than reading as absent', (_label, value) => {
+  const dir = tempDir();
+  fs.writeFileSync(
+    queue.attemptsPath(dir),
+    `${JSON.stringify({ updateId: 9, state: 'attempted', generation: value })}\n`,
+    'utf8'
+  );
+
+  expect(() => queue.readAttemptRecords(dir)).toThrow(/generation/);
+});
+
+test('A REJECTED PROVENANCE WRITE LEAVES NO TRACE', () => {
+  const dir = tempDir();
+  expect(() => queue.appendAttempt(dir, 11, 'attempted', { atMs: 'nope' })).toThrow(/atMs/);
+  expect(fs.existsSync(queue.attemptsPath(dir))).toBe(false);
+});

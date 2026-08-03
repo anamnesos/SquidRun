@@ -217,6 +217,41 @@ function attemptsPath(dir) {
   return path.join(dir, ATTEMPTS_NAME);
 }
 
+/**
+ * ATTEMPT PROVENANCE (S491). The v0 entry was `{updateId, state}` and nothing
+ * else, which made one question unanswerable: *when* was this attempted, and by
+ * which process?
+ *
+ * That gap is why update 808499316 could not be resolved. Proof for it existed
+ * — James was answered — but "is this receipt NEWER than the attempt it claims
+ * to prove?" had no attempt timestamp to compare against, so the only honest
+ * answer was the one that wedged the channel for eight hours.
+ *
+ * Both fields are OPTIONAL, because the live latch on disk predates them and
+ * MUST stay readable. Absent means UNKNOWN, never zero and never "now": an
+ * entry with no `atMs` can never satisfy a freshness comparison, so it holds.
+ * Fail-closed on absence is the whole point — an attempt we cannot place in
+ * time is exactly the one we must not reason about.
+ */
+function normalizeAttemptAtMs(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'number') {
+    throw new Error('attempt entry atMs must be a number when present');
+  }
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error('attempt entry atMs must be a positive safe integer');
+  }
+  return value;
+}
+
+function normalizeAttemptGeneration(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('attempt entry generation must be a non-empty string when present');
+  }
+  return value.trim();
+}
+
 // Attempt entries are an INTERNAL schema, so no coercion is owed to anyone.
 // Number('1') is 1 and Number(true) is 1; accepting either would let a foreign
 // or corrupted record claim an updateId it does not actually carry.
@@ -239,10 +274,10 @@ function assertNoTornTail(raw) {
 }
 
 /**
- * @returns {Map<number, string>} updateId -> state
+ * @returns {Map<number, {state: string, atMs: number|null, generation: string|null}>}
  * @throws on anything it cannot fully trust
  */
-function readAttemptState(dir) {
+function readAttemptRecords(dir) {
   const file = attemptsPath(dir);
   let raw;
   try {
@@ -254,7 +289,7 @@ function readAttemptState(dir) {
 
   assertNoTornTail(raw);
 
-  const state = new Map();
+  const records = new Map();
   for (const line of raw.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -271,13 +306,32 @@ function readAttemptState(dir) {
     if (!ATTEMPT_STATES.has(entry.state)) {
       throw new Error(`attempt journal entry has an unknown state: ${entry.state}`);
     }
-    state.set(id, entry.state);
+    // A malformed provenance field is NOT downgraded to "absent". Absent means
+    // an older writer; malformed means the record is not what it claims to be,
+    // and guessing which is a decision about showing James a message twice.
+    records.set(id, {
+      state: entry.state,
+      atMs: normalizeAttemptAtMs(entry.atMs),
+      generation: normalizeAttemptGeneration(entry.generation),
+    });
+  }
+  return records;
+}
+
+/**
+ * @returns {Map<number, string>} updateId -> state
+ * @throws on anything it cannot fully trust
+ */
+function readAttemptState(dir) {
+  const state = new Map();
+  for (const [id, record] of readAttemptRecords(dir)) {
+    state.set(id, record.state);
   }
   return state;
 }
 
 /** Validates BEFORE touching disk: a rejected write must leave no trace. */
-function appendAttempt(dir, updateId, entryState) {
+function appendAttempt(dir, updateId, entryState, provenance = {}) {
   const id = normalizeAttemptUpdateId(updateId);
   if (id === null) {
     throw new Error('attempt updateId must be a positive integer');
@@ -285,6 +339,10 @@ function appendAttempt(dir, updateId, entryState) {
   if (!ATTEMPT_STATES.has(entryState)) {
     throw new Error(`attempt state must be one of ${Array.from(ATTEMPT_STATES).join('|')}`);
   }
+  // Validated up here with everything else, so a bad provenance field is
+  // rejected before any byte is written rather than landing half-formed.
+  const atMs = normalizeAttemptAtMs(provenance ? provenance.atMs : null);
+  const generation = normalizeAttemptGeneration(provenance ? provenance.generation : null);
 
   const file = attemptsPath(dir);
   fs.mkdirSync(dir, { recursive: true });
@@ -295,14 +353,124 @@ function appendAttempt(dir, updateId, entryState) {
   } catch (err) {
     if (!err || err.code !== 'ENOENT') throw err;
   }
-  fs.appendFileSync(file, `${JSON.stringify({ updateId: id, state: entryState })}\n`, 'utf8');
-  return { ok: true, updateId: id, state: entryState };
+  // Provenance keys are OMITTED when unknown rather than written as null, so a
+  // v0 reader keeps parsing these and the file does not grow fields that carry
+  // no information.
+  const entry = { updateId: id, state: entryState };
+  if (atMs !== null) entry.atMs = atMs;
+  if (generation !== null) entry.generation = generation;
+  fs.appendFileSync(file, `${JSON.stringify(entry)}\n`, 'utf8');
+  return { ok: true, updateId: id, state: entryState, atMs, generation };
+}
+
+// ---------------------------------------------------------------------------
+// TERMINAL DISPOSITION SIDECAR (S491)
+//
+// `append` dedupes by updateId and `readPending` keeps the FIRST record for an
+// id, both deliberately — that is what makes replay idempotent. The consequence
+// is that a queued record can never be superseded by appending a corrected copy.
+//
+// Update 808499316 needs exactly that: it WAS consumed and answered (Telegram
+// 22314 / ledger 78453), so re-delivering it would duplicate real business work,
+// but nothing in the automatic path can prove it after the fact because its
+// attempt predates attempt timestamps. It must be retired without delivery.
+//
+// Editing the journal by hand would be the worst possible answer: an
+// unexplained disappearance in the one file whose entire job is to make loss
+// impossible. So dispositions live in their own append-only sidecar, carry the
+// evidence that justified them, and are overlaid at read time. The journal
+// stays exactly as written, and why a record was retired is auditable forever.
+// ---------------------------------------------------------------------------
+
+const DISPOSITIONS_NAME = 'terminal-dispositions.jsonl';
+
+function dispositionsPath(dir) {
+  return path.join(dir, DISPOSITIONS_NAME);
+}
+
+/**
+ * @returns {Map<number, {disposition: string, evidence: string, atMs: number|null}>}
+ * @throws on anything it cannot fully trust — same bias as the attempt latch.
+ */
+function readDispositions(dir) {
+  const file = dispositionsPath(dir);
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return new Map();
+    throw new Error(`disposition journal unreadable: ${err.message}`);
+  }
+
+  assertNoTornTail(raw);
+
+  const records = new Map();
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let entry;
+    try {
+      entry = JSON.parse(trimmed);
+    } catch {
+      throw new Error('disposition journal contains an unreadable entry');
+    }
+    const id = normalizeAttemptUpdateId(entry && entry.updateId);
+    if (id === null) {
+      throw new Error('disposition journal entry has an invalid updateId');
+    }
+    if (typeof entry.disposition !== 'string' || !entry.disposition.trim()) {
+      throw new Error('disposition journal entry has no disposition');
+    }
+    // EVIDENCE IS MANDATORY. A disposition without a stated reason is exactly
+    // the hand-edited disappearance this sidecar exists to make impossible.
+    if (typeof entry.evidence !== 'string' || !entry.evidence.trim()) {
+      throw new Error(`disposition for ${id} carries no evidence`);
+    }
+    records.set(id, {
+      disposition: entry.disposition.trim(),
+      evidence: entry.evidence.trim(),
+      atMs: normalizeAttemptAtMs(entry.atMs),
+    });
+  }
+  return records;
+}
+
+/** Validates BEFORE touching disk: a rejected write must leave no trace. */
+function appendDisposition(dir, updateId, disposition, evidence, atMs = null) {
+  const id = normalizeAttemptUpdateId(updateId);
+  if (id === null) {
+    throw new Error('disposition updateId must be a positive integer');
+  }
+  if (typeof disposition !== 'string' || !disposition.trim()) {
+    throw new Error('disposition must be a non-empty string');
+  }
+  if (typeof evidence !== 'string' || !evidence.trim()) {
+    throw new Error('a disposition must carry the evidence that justifies it');
+  }
+  const at = normalizeAttemptAtMs(atMs);
+
+  const file = dispositionsPath(dir);
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    assertNoTornTail(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err;
+  }
+  const entry = { updateId: id, disposition: disposition.trim(), evidence: evidence.trim() };
+  if (at !== null) entry.atMs = at;
+  fs.appendFileSync(file, `${JSON.stringify(entry)}\n`, 'utf8');
+  return { ok: true, updateId: id, disposition: entry.disposition };
 }
 
 module.exports = {
   append,
   attemptsPath,
+  dispositionsPath,
+  readDispositions,
+  appendDisposition,
+  DISPOSITIONS_NAME,
   readAttemptState,
+  readAttemptRecords,
   appendAttempt,
   ATTEMPTS_NAME,
   ATTEMPT_STATES,

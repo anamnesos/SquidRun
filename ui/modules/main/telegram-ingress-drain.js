@@ -21,12 +21,24 @@
 const path = require('path');
 const defaultQueue = require('../telegram-inbound-durable-queue');
 const spool = require('./telegram-ingress-spool');
+const {
+  probeRuntimeProofCapability,
+  isUnattainableReason,
+  evaluateConsumptionProof,
+  summarizeBacklog,
+} = require('./telegram-consumption-proof');
 
 
 const DEFAULT_BACKOFF_MS = 30 * 1000;
 
 // Only these may retire a record without delivering it.
-const TERMINAL_DISPOSITIONS = new Set(['empty_body']);
+//
+// `consumed_verified_out_of_band` (S491) covers the one shape the automatic
+// path provably cannot resolve: a record that WAS consumed and answered, whose
+// attempt predates attempt timestamps, so no receipt can be ordered against it.
+// It is only ever written by explicit operator recovery, never by a timer, and
+// the sidecar refuses to store one without the evidence that justified it.
+const TERMINAL_DISPOSITIONS = new Set(['empty_body', 'consumed_verified_out_of_band']);
 
 // Results that mean the delivery never happened. These are safe to retry, and
 // must NOT enter the proof-only hold: latching a hard rejection would strand
@@ -160,9 +172,36 @@ function createDrainCoordinator(deps = {}) {
     }
     return fn.bind(queue);
   };
-  const readAttemptState = requireAttemptOp('readAttemptState');
+  const readAttemptRecords = requireAttemptOp('readAttemptRecords');
   const appendAttempt = requireAttemptOp('appendAttempt');
-  const log = deps.log || { info() {}, warn() {} };
+  const readDispositions = requireAttemptOp('readDispositions');
+  // S491. The drain must be able to ask THREE questions it previously could
+  // not: when was this attempted, which process attempted it, and is proof for
+  // this pane obtainable at all. Each has a fail-closed default, because a
+  // caller that cannot answer must produce a HOLD and not an assumption.
+  const sessionGeneration = typeof deps.sessionGeneration === 'function'
+    ? deps.sessionGeneration
+    : () => (typeof deps.sessionGeneration === 'string' ? deps.sessionGeneration : null);
+  const paneRuntimeFor = typeof deps.paneRuntimeFor === 'function'
+    ? deps.paneRuntimeFor
+    : () => null;
+  const receiptActivity = typeof deps.receiptActivity === 'function'
+    ? deps.receiptActivity
+    : () => null;
+  const proofCapabilityWindowMs = Number.isFinite(Number(deps.proofCapabilityWindowMs))
+    ? Number(deps.proofCapabilityWindowMs)
+    : undefined;
+  // `error` belongs in the floor, not just the default. The wedge path is the
+  // one that fires when everything else has already gone wrong, and a logger
+  // without .error would turn the alarm itself into the crash.
+  const injectedLog = deps.log || {};
+  const log = {
+    info: typeof injectedLog.info === 'function' ? injectedLog.info.bind(injectedLog) : () => {},
+    warn: typeof injectedLog.warn === 'function' ? injectedLog.warn.bind(injectedLog) : () => {},
+    error: typeof injectedLog.error === 'function'
+      ? injectedLog.error.bind(injectedLog)
+      : (typeof injectedLog.warn === 'function' ? injectedLog.warn.bind(injectedLog) : () => {}),
+  };
   const resolveRoute = deps.resolveRoute;
   const deliver = deps.deliver;
   const findExistingReceipt = deps.findExistingReceipt || (async () => null);
@@ -189,7 +228,7 @@ function createDrainCoordinator(deps = {}) {
   /**
    * Deliver one record. Returns {retire} / {stop, reason}.
    */
-  async function processRecord(dir, record, routeKey, st) {
+  async function processRecord(dir, record, routeKey, st, attemptsRead) {
     const updateId = Number(record.updateId);
     const messageId = downstreamMessageId(updateId);
 
@@ -213,9 +252,30 @@ function createDrainCoordinator(deps = {}) {
     // (4) Only an explicitly allowlisted disposition may retire without
     // delivery. A corrupted or unrecognised value must HOLD: an unknown reason
     // to skip delivery is not a reason to skip delivery.
-    if (record.terminalDisposition) {
-      if (!TERMINAL_DISPOSITIONS.has(record.terminalDisposition)) {
+    // FAIL CLOSED BEFORE READING EITHER SIDECAR. An unreadable attempt or
+    // disposition journal must hold, and it has to be checked HERE rather than
+    // further down: treating an unreadable disposition file as "no disposition"
+    // would be a fail-open read in the one place that retires without delivery.
+    if (!attemptsRead || attemptsRead.error) {
+      const message = attemptsRead?.error?.message || 'attempt journal not read';
+      return { stop: true, reason: `attempt_journal_unreadable:${message}`, failureClass: 'awaiting_proof' };
+    }
+
+    // A disposition may come from the record itself or from the append-only
+    // sidecar. The sidecar cannot INVENT one for a record that already carries
+    // a different disposition — that would let a recovery quietly reclassify
+    // history — so the record's own value wins where both exist.
+    const overlaid = attemptsRead.dispositions.get(updateId) || null;
+    const effectiveDisposition = record.terminalDisposition || (overlaid ? overlaid.disposition : null);
+    if (effectiveDisposition) {
+      if (!TERMINAL_DISPOSITIONS.has(effectiveDisposition)) {
         return { stop: true, reason: 'unknown_terminal_disposition', failureClass: 'definite' };
+      }
+      if (overlaid && !record.terminalDisposition) {
+        log.info(
+          'Telegram',
+          `Retiring ${messageId} on recorded disposition ${effectiveDisposition} (${overlaid.evidence}); no delivery, no re-injection`
+        );
       }
       return { retire: true, terminal: true, visible: false };
     }
@@ -231,7 +291,26 @@ function createDrainCoordinator(deps = {}) {
       // The STORED chat id, threaded through so a proof lookup can correlate
       // against the row it needs. Without it the replay check matches nothing.
       chatId: record.chatId ?? null,
+      // Which process generation is asking. A receipt written for an earlier
+      // generation's delivery of this same id must not retire a delivery this
+      // generation is still waiting on.
+      generation: sessionGeneration(),
     };
+    // DURABLE AMBIGUITY CHECK (Architect #80). An attempt recorded but never
+    // resolved means we may already have shown this to the user.
+    //
+    // READ ONCE PER PASS, by the loop, and handed down. We cannot tell what was
+    // already tried when it is unreadable — fail closed and hold rather than
+    // deliver something the user may already have seen.
+    //
+    // THIS IS READ BEFORE THE REPLAY LOOKUP, and that order is load-bearing.
+    // The attempt is what dates the delivery that any proof must postdate, so a
+    // replay check performed without it can only ask the weaker question "does
+    // some correlated receipt exist" — which a stale receipt, or one from a
+    // previous process generation, answers YES to. Readability was already
+    // enforced above, before the disposition overlay.
+    const attempt = attemptsRead.attempts.get(updateId) || null;
+
     let existing = null;
     try {
       existing = await findExistingReceipt(expectedIdentity);
@@ -240,8 +319,20 @@ function createDrainCoordinator(deps = {}) {
       // second visible copy, so HOLD.
       return { stop: true, reason: 'receipt_lookup_failed', failureClass: 'indefinite' };
     }
-    if (isCorrelatedProof(existing, expectedIdentity)) {
-      log.info('Telegram', `Drain found correlated downstream proof for ${messageId}; retiring without re-injection`);
+
+    // ONE proof gate for both the crash-replay path and the outstanding-attempt
+    // path. They used to be judged by different standards — replay by a
+    // four-field correlation, attempts by nothing at all — which meant a receipt
+    // that was too old, or from another process generation, could retire a
+    // record through the replay door that the attempt door would have held.
+    const proofOutcome = evaluateConsumptionProof({
+      evidence: existing,
+      expected: expectedIdentity,
+      attempt,
+      nowMs: now(),
+    });
+    if (proofOutcome.proven) {
+      log.info('Telegram', `Drain found exact consumption proof for ${messageId}; retiring without re-injection`);
       // Downstream owns it, but it is not retired until the ack lands. On a
       // fresh process an ack failure plus a transiently empty lookup would
       // otherwise re-deliver.
@@ -249,19 +340,34 @@ function createDrainCoordinator(deps = {}) {
       return { retire: true, replayed: true };
     }
 
-    // DURABLE AMBIGUITY CHECK (Architect #80). An attempt recorded but never
-    // resolved means we may already have shown this to the user. No proof was
-    // found above, so we cannot tell — hold.
-    let attempts;
-    try {
-      attempts = readAttemptState(dir);
-    } catch (err) {
-      // We cannot tell what was already tried. Fail closed: hold this record
-      // rather than deliver something the user may already have seen.
-      return { stop: true, reason: `attempt_journal_unreadable:${err.message}`, failureClass: 'awaiting_proof' };
-    }
-    if (attempts.get(updateId) === 'attempted') {
-      return { stop: true, reason: 'unresolved_delivery_attempt', failureClass: 'awaiting_proof' };
+    if (attempt && attempt.state === 'attempted') {
+      // S491. An outstanding attempt used to end the story right here: hold,
+      // forever, with no way to distinguish "proof is still coming" from "proof
+      // can never come". That single unanswerable question muted the channel
+      // for 8.6 hours.
+      //
+      // Proof has already been evaluated above and did not land. So the only
+      // question left is the one nothing used to ask: is proof for
+      // this pane obtainable AT ALL? A runtime that has never once produced a
+      // receipt is not slow, it is unwired — a configuration defect wearing the
+      // costume of patience. Either way we HOLD, because 318 ("Not the tankless
+      // job the other one") must never reach James without 317. But the hold
+      // now carries its own diagnosis to the health surface.
+      const capability = probeRuntimeProofCapability({
+        runtime: paneRuntimeFor(liveWindow, routeKey),
+        receiptActivity: receiptActivity(),
+        nowMs: now(),
+        windowMs: proofCapabilityWindowMs,
+      });
+      return {
+        stop: true,
+        reason: capability.attainable
+          ? `unresolved_delivery_attempt:${proofOutcome.reason}`
+          : `unprovable_pane:${capability.reason}`,
+        failureClass: 'awaiting_proof',
+        unattainable: !capability.attainable,
+        proofRuntime: capability.runtime,
+      };
     }
 
     // THE DUPLICATE TRAP (Architect #63). Once a delivery has been ACCEPTED but
@@ -278,7 +384,14 @@ function createDrainCoordinator(deps = {}) {
     // must not deliver at all: an undelivered message is recoverable, an
     // unrecorded delivery is how a duplicate becomes invisible to us.
     try {
-      appendAttempt(dir, updateId, 'attempted');
+      // WITH PROVENANCE (S491). An attempt that does not record when and by
+      // whom it happened cannot later be compared against the proof that is
+      // supposed to resolve it, which is precisely how 808499316 became
+      // permanently unresolvable.
+      appendAttempt(dir, updateId, 'attempted', {
+        atMs: now(),
+        generation: sessionGeneration(),
+      });
     } catch (err) {
       return { stop: true, reason: `attempt_marker_failed:${err.message}`, failureClass: 'definite' };
     }
@@ -320,7 +433,10 @@ function createDrainCoordinator(deps = {}) {
         // Nothing was delivered, so the attempt is resolved as "did not happen"
         // and may be retried. Leaving it unresolved would wedge the queue.
         try {
-          appendAttempt(dir, updateId, 'retryable');
+          appendAttempt(dir, updateId, 'retryable', {
+            atMs: now(),
+            generation: sessionGeneration(),
+          });
         } catch (err) {
           // Swallowing this and reporting a clean definite retry would let a
           // sweep re-deliver while the durable state still reads "attempted".
@@ -364,6 +480,20 @@ function createDrainCoordinator(deps = {}) {
     let delivered = 0;
     let stoppedAt = null;
 
+    // ONE read of the ambiguity latch per pass, shared by the per-record checks
+    // and the health summary below. Reading it twice invited the two halves of
+    // the same pass to disagree about what had been attempted.
+    let attemptsRead;
+    try {
+      attemptsRead = {
+        attempts: readAttemptRecords(dir),
+        dispositions: readDispositions(dir),
+        error: null,
+      };
+    } catch (err) {
+      attemptsRead = { attempts: new Map(), dispositions: new Map(), error: err };
+    }
+
     for (const record of pending) {
       // Dispose can land mid-batch. Continuing would deliver N+1 while the app
       // is tearing down journals underneath us.
@@ -371,16 +501,32 @@ function createDrainCoordinator(deps = {}) {
         stoppedAt = { updateId: Number(record.updateId), reason: 'coordinator_disposed', failureClass: 'awaiting_proof' };
         break;
       }
-      const outcome = await processRecord(dir, record, routeKey, st);
+      const outcome = await processRecord(dir, record, routeKey, st, attemptsRead);
       if (outcome.stop) {
         // (2) STOP. N+1 must not pass an unretired N, or order and
-        // at-most-once both go out the window.
+        // at-most-once both go out the window. This is NOT negotiable and was
+        // the exact invariant a bypass broke: 808499318 is a correction that
+        // means the opposite of itself without 808499317 in front of it.
         stoppedAt = {
           updateId: Number(record.updateId),
           reason: outcome.reason,
           failureClass: outcome.failureClass || 'definite',
+          // Carried out so health can tell a channel that is WAITING from a
+          // channel that is BROKEN. Both hold; only one of them is news.
+          unattainable: Boolean(outcome.unattainable),
+          proofRuntime: outcome.proofRuntime || null,
         };
-        log.warn('Telegram', `Drain stopped at update ${record.updateId} (${outcome.reason}); ${pending.length - delivered} pending`);
+        if (outcome.unattainable) {
+          log.error(
+            'Telegram',
+            `TELEGRAM INGRESS WEDGED at update ${record.updateId}: ${outcome.reason}. `
+            + `Pane runtime ${outcome.proofRuntime || 'unknown'} cannot produce delivery proof, so this queue `
+            + `cannot advance and ${pending.length - delivered} message(s) are undelivered. This is a configuration `
+            + 'defect, not a transient wait.'
+          );
+        } else {
+          log.warn('Telegram', `Drain stopped at update ${record.updateId} (${outcome.reason}); ${pending.length - delivered} pending`);
+        }
         break;
       }
 
@@ -403,6 +549,7 @@ function createDrainCoordinator(deps = {}) {
       // Retired for real: only now is it safe to stop treating this record as
       // proof-only.
       if (st.awaitingProof === Number(record.updateId)) st.awaitingProof = null;
+      st.lastRetirementAtMs = now();
       delivered += 1;
     }
 
@@ -411,7 +558,17 @@ function createDrainCoordinator(deps = {}) {
     if (!stoppedAt && delivered === pending.length) {
       stopProofSweep(dir);
     }
-    return { ok: true, delivered, pending: pending.length, stoppedAt };
+    // THE BACKLOG SNAPSHOT is produced on EVERY pass, held or clean, because a
+    // health surface that only hears about failures cannot tell "healthy" from
+    // "not reporting".
+    const backlog = summarizeBacklog({
+      pending: pending.slice(delivered),
+      attempts: attemptsRead.attempts,
+      blocked: stoppedAt,
+      lastRetirementAtMs: st.lastRetirementAtMs || null,
+      nowMs: now(),
+    });
+    return { ok: true, delivered, pending: pending.length, stoppedAt, backlog };
   }
 
   /**

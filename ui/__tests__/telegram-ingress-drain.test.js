@@ -29,8 +29,12 @@ afterEach(() => {
   while (tempRoots.length) fs.rmSync(tempRoots.pop(), { recursive: true, force: true });
 });
 
-const silentLog = { info() {}, warn() {} };
+const silentLog = { info() {}, warn() {}, error() {} };
 const CHAT = 4242;
+// S491: proof is now correlated to the chat and the process generation, and
+// must postdate the attempt it claims to resolve. Fixtures model a real
+// delivery boundary, which knows all three.
+const GENERATION = 'gen-test';
 
 function seed(base, routeKey, updateIds, extra = {}) {
   let dir = null;
@@ -67,9 +71,24 @@ function identityOf(job) {
   };
 }
 function provenFor(job) {
-  return { ...identityOf(job), status: 'delivered.verified', verified: true };
+  return {
+    ...identityOf(job),
+    chatId: job.chatId,
+    generation: GENERATION,
+    provedAtMs: Date.now(),
+    status: 'delivered.verified',
+    verified: true,
+  };
 }
 const PROVEN_NO_IDENTITY = { status: 'delivered.verified', verified: true };
+/** The correlation fields a real delivery boundary attaches to its proof. */
+function proofFields(atMs) {
+  return {
+    chatId: CHAT,
+    generation: GENERATION,
+    provedAtMs: Number.isFinite(atMs) ? atMs : Date.now(),
+  };
+}
 const IDENT = { messageId: 'telegram-in-60', routeKey: 'main', windowKey: 'main', profile: 'main' };
 const UNPROVEN = { status: 'accepted.daemon_pty_unverified', accepted: true };
 
@@ -80,6 +99,7 @@ function coordinator(overrides = {}) {
     resolveRoute: routerFor('main', 'main'),
     deliver: async (job) => provenFor(job),
     currentSessionFor: () => 'session-now',
+    sessionGeneration: () => GENERATION,
     ...overrides,
   });
 }
@@ -186,7 +206,7 @@ test('A LATER CORRELATED RECEIPT retires the record with no second injection', a
 
   // The receipt lands out of band; after the backoff expires the next pass must
   // retire WITHOUT delivering again.
-  receipt = { ...IDENT, status: 'delivered.verified', verified: true };
+  receipt = { ...IDENT, ...proofFields(clock), status: 'delivered.verified', verified: true };
   clock = 1_009_000;
   await drain.schedule(dir, 'main');
 
@@ -479,7 +499,7 @@ test('A LONE AWAITING-PROOF MESSAGE RETIRES ON PROOF ALONE, without N+1 arriving
 
   receipt = {
     messageId: 'telegram-in-153', routeKey: 'main', windowKey: 'main', profile: 'main',
-    status: 'delivered.verified', verified: true,
+    ...proofFields(clock), status: 'delivered.verified', verified: true,
   };
   clock = 1_002_000;
   await drain.schedule(dir, 'main');
@@ -523,7 +543,7 @@ test('BACKOFF EXPIRY re-checks proof first and retires without a second injectio
   // The delivery actually landed; proof arrives during the backoff.
   receipt = {
     messageId: 'telegram-in-160', routeKey: 'main', windowKey: 'main', profile: 'main',
-    status: 'delivered.verified', verified: true,
+    ...proofFields(clock), status: 'delivered.verified', verified: true,
   };
   clock = 1_007_000;
   await drain.schedule(dir, 'main');
@@ -671,7 +691,7 @@ test('FRESH PROCESS: proof found, ack fails, lookup goes empty => zero visible d
   const seen = [];
   let receipt = {
     messageId: 'telegram-in-230', routeKey: 'main', windowKey: 'main', profile: 'main',
-    status: 'delivered.verified', verified: true,
+    ...proofFields(), status: 'delivered.verified', verified: true,
   };
   const drain = coordinator({
     queue: { ...queue, readPending: queue.readPending, ack: () => ({ ok: false, reason: 'eio' }) },
@@ -727,7 +747,15 @@ test('CRASH AFTER ACCEPT, BEFORE RECEIPT: a fresh coordinator does NOT re-inject
   const res = await restarted.schedule(dir, 'main');
 
   expect(after).toEqual([]);
-  expect(res.stoppedAt).toMatchObject({ updateId: 300, reason: 'unresolved_delivery_attempt' });
+  // The hold itself is the invariant; S491 only sharpened the reason it gives.
+  // This fixture names no pane runtime, so proof is correctly reported as
+  // unattainable rather than merely pending.
+  expect(res.stoppedAt).toMatchObject({
+    updateId: 300,
+    failureClass: 'awaiting_proof',
+    unattainable: true,
+  });
+  expect(String(res.stoppedAt.reason)).toMatch(/^unprovable_pane:|^unresolved_delivery_attempt/);
   expect(queue.readPending(dir)).toHaveLength(1);
 });
 
@@ -740,7 +768,7 @@ test('AFTER RESTART, exact proof retires the ambiguous attempt without re-inject
   const restarted = coordinator({
     deliver: async (job) => { after.push(job.messageId); return provenFor(job); },
     findExistingReceipt: async (identity) => ({
-      ...identity, status: 'delivered.verified', verified: true,
+      ...identity, ...proofFields(), status: 'delivered.verified', verified: true,
     }),
   });
   await restarted.schedule(dir, 'main');
@@ -807,7 +835,7 @@ test('SWEEP ARMS ITSELF on the first hold and retires with NO external call', as
     expect(queue.readPending(dir)).toHaveLength(1);
 
     // Proof lands out of band. Nothing calls schedule or startProofSweep.
-    receipt = { status: 'delivered.verified', verified: true };
+    receipt = { ...proofFields(), status: 'delivered.verified', verified: true };
     jest.advanceTimersByTime(1000);
     jest.useRealTimers();
     for (let i = 0; i < 6; i += 1) await new Promise((r) => setImmediate(r));
@@ -1064,7 +1092,7 @@ test('A FULLY DRAINED ROUTE stops its sweep instead of ticking forever', async (
 
   // Once accepted-but-unproved, only PROOF can retire it — a retry cannot, and
   // must not. Proof arrives and the queue empties.
-  proof = { status: 'delivered.verified', verified: true };
+  proof = { ...proofFields(), status: 'delivered.verified', verified: true };
   await drain.schedule(dir, 'main');
 
   expect(queue.readPending(dir)).toHaveLength(0);
@@ -1154,7 +1182,7 @@ test('THE INJECTED QUEUE OWNS ATTEMPT STORAGE, not the default module', () => {
     const drain = coordinator({
       queue: {
         ...queue,
-        readAttemptState: (d) => { reads.push(d); return new Map(); },
+        readAttemptRecords: (d) => { reads.push(d); return new Map(); },
         appendAttempt: (d, updateId, state) => { appends.push({ d, updateId, state }); return { ok: true }; },
       },
       deliver: async (job) => provenFor(job),
