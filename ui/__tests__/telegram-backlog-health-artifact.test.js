@@ -169,6 +169,70 @@ describe('the emitted and written artifact carries the backlog', () => {
     expect(emitted.status.warnings.join()).toMatch(/backlog_snapshot_stale/);
   });
 
+  test('A MALFORMED SNAPSHOT degrades BOTH the emitted JSON and the written Markdown', () => {
+    const { main } = require('../scripts/hm-health-snapshot');
+    fs.mkdirSync(path.join(tempDir, '.squidrun', 'runtime', 'telegram-inbound', 'main'), { recursive: true });
+    const statePath = path.join(tempDir, '.squidrun', 'runtime', 'telegram-backlog-health.json');
+    fs.writeFileSync(statePath, 'not json at all', 'utf8');
+
+    const jsonOut = sink();
+    main(['--json', tempDir], { stdout: jsonOut, stderr: sink() });
+    const emitted = JSON.parse(jsonOut.text());
+    expect(emitted.status.score).toBeLessThan(100);
+    expect(emitted.status.warnings.join()).toMatch(/backlog_snapshot_malformed/);
+
+    const outputPath = path.join(tempDir, 'startup-health.md');
+    main(['--markdown', '--write', '--output', outputPath, tempDir], { stdout: sink(), stderr: sink() });
+    const written = fs.readFileSync(outputPath, 'utf8');
+    expect(written).toMatch(/backlog_snapshot_malformed/);
+    expect(Number(written.match(/score=(\d+)\/100/)[1])).toBeLessThan(100);
+  });
+
+  test('A STALE SNAPSHOT degrades the WRITTEN Markdown too, not only the emitted JSON', () => {
+    const { main } = require('../scripts/hm-health-snapshot');
+    const statePath = path.join(tempDir, '.squidrun', 'runtime', 'telegram-backlog-health.json');
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(statePath, JSON.stringify({
+      schema: 'telegramBacklogHealth.v0',
+      routes: {
+        main: {
+          pendingCount: 0, oldestPendingUpdateId: null, oldestPendingReceivedAtMs: null,
+          blockedReason: null, proofUnattainable: false, attemptedCount: 0,
+          observedAtMs: NOW - 2 * 60 * 60 * 1000,
+        },
+      },
+    }), 'utf8');
+    const outputPath = path.join(tempDir, 'startup-health.md');
+
+    main(['--markdown', '--write', '--output', outputPath, tempDir], { stdout: sink(), stderr: sink() });
+
+    const written = fs.readFileSync(outputPath, 'utf8');
+    expect(written).toMatch(/backlog_snapshot_stale/);
+    expect(Number(written.match(/score=(\d+)\/100/)[1])).toBeLessThan(100);
+  });
+
+  test('THE ROOT-WITHOUT-FEATURE EXEMPTION, pinned on BOTH sides at artifact level', () => {
+    const { main } = require('../scripts/hm-health-snapshot');
+
+    // (a) No ingress spool at all: genuinely nothing to be behind on.
+    const cleanOut = sink();
+    main(['--json', tempDir], { stdout: cleanOut, stderr: sink() });
+    const cleanEmitted = JSON.parse(cleanOut.text());
+    expect(cleanEmitted.telegramIngressBacklog.severity).toBe('ok');
+    expect(cleanEmitted.status.warnings.join()).not.toMatch(/telegram_ingress_backlog/);
+
+    // (b) Spool present, report absent: the exemption must NOT reach here.
+    fs.mkdirSync(path.join(tempDir, '.squidrun', 'runtime', 'telegram-inbound', 'main'), { recursive: true });
+    jest.resetModules();
+    const wedgedOut = sink();
+    const { main: main2 } = require('../scripts/hm-health-snapshot');
+    main2(['--json', tempDir], { stdout: wedgedOut, stderr: sink() });
+    const wedgedEmitted = JSON.parse(wedgedOut.text());
+    expect(wedgedEmitted.telegramIngressBacklog.severity).toBe('degraded');
+    expect(wedgedEmitted.status.warnings.join()).toMatch(/backlog_snapshot_missing/);
+    expect(wedgedEmitted.status.score).toBeLessThan(100);
+  });
+
   test('A HEALTHY BACKLOG leaves the artifact clean — the alarm must not always fire', () => {
     const { main } = require('../scripts/hm-health-snapshot');
     const statePath = path.join(tempDir, '.squidrun', 'runtime', 'telegram-backlog-health.json');
