@@ -134,7 +134,12 @@ function inspectShadowRunnerStatus(options = {}) {
     60 * 1000,
     asFiniteNumber(options.staleThresholdMs, DEFAULT_LIVENESS_STALE_THRESHOLD_MS)
   );
-  const requirePid = options.requirePid === true;
+  // FAIL CLOSED. A dead process cannot retract its own status file, so
+  // `running: true` in the raw JSON is a claim, never proof. Verification is
+  // now the DEFAULT and callers must opt OUT explicitly; the old opt-IN default
+  // let an unclean exit keep asserting it was running for as long as the file
+  // survived. Seen live: 33.8 hours.
+  const requirePid = options.requirePid !== false;
   const pid = Object.prototype.hasOwnProperty.call(options, 'pid')
     ? asPositiveInt(options.pid, null)
     : readPid(pidPath);
@@ -210,7 +215,14 @@ function inspectShadowRunnerStatus(options = {}) {
   });
   const tickFresh = classification.status === 'fresh' || classification.status === 'aging';
   const reportedRunning = statusObject.running === true;
-  const effectiveRunning = Boolean(reportedRunning && tickFresh && (!requirePid || pidAlive === true));
+  // The status now carries its own owner pid, so liveness is checkable from the
+  // status alone even if the sidecar pid file is missing or was recycled.
+  const statusOwnerPid = asPositiveInt(statusObject.ownerPid, null);
+  const ownerPidAlive = statusOwnerPid !== null ? isPidAlive(statusOwnerPid) : null;
+  const liveProcessConfirmed = ownerPidAlive === true || pidAlive === true;
+  const effectiveRunning = Boolean(
+    reportedRunning && tickFresh && (!requirePid || liveProcessConfirmed)
+  );
 
   return {
     ok: statusObject.ok === true && classification.stale !== true,
@@ -219,6 +231,8 @@ function inspectShadowRunnerStatus(options = {}) {
     statusFilePresent: true,
     running: effectiveRunning,
     reportedRunning,
+    ownerPid: statusOwnerPid,
+    ownerPidAlive,
     tickFresh,
     runId: asNonEmptyString(statusObject.runId) || null,
     tickId: successfulTick?.tickId || asNonEmptyString(statusObject.tickId || lastTick.tickId) || null,
@@ -652,6 +666,8 @@ async function runShadowLoop(options = {}) {
   writeJson(statusPath, {
     ok: true,
     running: true,
+    // Stamped so any reader can verify the claim against a live process.
+    ownerPid: process.pid,
     runId,
     startedAt: nowIso(Date.now()),
     ledgerPath,
