@@ -37,7 +37,9 @@ const { canonicalQueuedPayloadDigest } = require('../modules/main/telegram-consu
 const {
   MODES,
   runTelegramAdmissionSequence,
+  evaluatePaneReadinessAnswer,
 } = require('../modules/main/telegram-admission-sequence');
+const { PROOF_CAPABILITY_WINDOW_MS } = require('../modules/main/telegram-consumption-proof');
 
 const NOW = 1785860000000;
 const UPDATE_ID = 900000501;
@@ -570,6 +572,73 @@ describe('B4b — scoped routes record a source and stop', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM telegram_transport_claims').get().n).toBe(0);
     expect(db.prepare('SELECT status FROM comms_journal WHERE message_id = ?').get(MESSAGE_ID).status)
       .toBe('recorded');
+  });
+});
+
+// =====================================================================
+// THE READINESS ANSWER IS ONE CONTRACT, AND EVERY CLAUSE IS NAMED.
+//
+// The claims-table regressions live in telegram-drain-claim-authority; these
+// pin the VOCABULARY, so a future edit that keeps refusing but stops saying
+// which clause failed is visible. A refusal nobody can diagnose is how a gate
+// gets loosened by the next person to hit it.
+// =====================================================================
+describe('B_readiness — one coherent positive contract (Oracle #37)', () => {
+  const GOOD = Object.freeze({
+    attainable: true, reason: 'runtime_proof_observed', runtime: 'codex', lastProofAtMs: NOW - 1000,
+  });
+  const evaluate = (answer, overrides = {}) => evaluatePaneReadinessAnswer({
+    answer, launchRuntime: 'codex', nowMs: NOW, ...overrides,
+  });
+
+  test('the exact production shape is accepted, and nothing else is', () => {
+    expect(evaluate(GOOD)).toMatchObject({ ok: true, runtime: 'codex', lastProofAtMs: NOW - 1000 });
+  });
+
+  test('each clause refuses under its own name', () => {
+    expect(evaluate(null).reason).toBe('pane_readiness_unreadable');
+    expect(evaluate('ready').reason).toBe('pane_readiness_unreadable');
+    expect(evaluate([]).reason).toBe('pane_readiness_unreadable');
+    expect(evaluate({ ...GOOD, ready: false }).reason).toBe('pane_readiness_contradictory');
+    expect(evaluate({ ...GOOD, attainable: false }).reason).toBe('pane_readiness_unproven');
+    expect(evaluate({ ...GOOD, attainable: 'true' }).reason).toBe('pane_readiness_unproven');
+    expect(evaluate({ ...GOOD, reason: 'runtime_proof_stale' }).reason).toBe('pane_readiness_reason_incoherent');
+    expect(evaluate({ ...GOOD, reason: undefined }).reason).toBe('pane_readiness_reason_incoherent');
+    expect(evaluate({ ...GOOD, runtime: 'claude' }).reason).toBe('pane_readiness_runtime_mismatch');
+    expect(evaluate({ ...GOOD, runtime: null }).reason).toBe('pane_readiness_runtime_missing');
+    expect(evaluate(GOOD, { launchRuntime: null }).reason).toBe('pane_readiness_launch_runtime_unknown');
+    expect(evaluate({ ...GOOD, lastProofAtMs: 0 }).reason).toBe('pane_readiness_proof_time_invalid');
+    expect(evaluate({ ...GOOD, lastProofAtMs: NOW + 1 }).reason).toBe('pane_readiness_proof_time_in_future');
+    expect(evaluate(GOOD, { nowMs: Number.NaN }).reason).toBe('pane_readiness_clock_unknown');
+  });
+
+  test('THE FRESHNESS RULE IS THE PROBE\'S, NOT THIS FILE\'S', () => {
+    // One millisecond either side of the production window, decided by
+    // re-running probeRuntimeProofCapability rather than by a constant copied
+    // into the gate. If the probe ever moves its window, this moves with it.
+    const insideWindow = { ...GOOD, lastProofAtMs: NOW - (PROOF_CAPABILITY_WINDOW_MS - 1) };
+    const outsideWindow = { ...GOOD, lastProofAtMs: NOW - (PROOF_CAPABILITY_WINDOW_MS + 1) };
+    expect(evaluate(insideWindow).ok).toBe(true);
+    const refused = evaluate(outsideWindow);
+    expect(refused.ok).toBe(false);
+    expect(refused.reason).toBe('pane_readiness_not_reproducible');
+    // The refusal carries BOTH accounts, so the disagreement is diagnosable
+    // instead of being a bare no.
+    expect(refused.detail.offered.reason).toBe('runtime_proof_observed');
+    expect(refused.detail.rederived.reason).toBe('runtime_proof_stale');
+  });
+
+  test('the sequence refuses at B_readiness with the clause name, and takes no claim', async () => {
+    const db = freshDb();
+    const result = await runSequence(db, {
+      paneReadiness: () => ({ ...GOOD, runtime: 'claude' }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.stage).toBe('B_readiness');
+    expect(result.reason).toBe('pane_readiness_runtime_mismatch');
+    expect(result.detail).toMatchObject({ launchRuntime: 'codex', answeredRuntime: 'claude' });
+    expect(result.ownedClaimId).toBeNull();
+    expect(db.prepare('SELECT COUNT(*) AS n FROM telegram_transport_claims').get().n).toBe(0);
   });
 });
 

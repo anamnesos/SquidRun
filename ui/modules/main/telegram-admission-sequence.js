@@ -56,6 +56,7 @@ const {
 const { findActivePaneLaunch } = require('./telegram-launch-registry');
 const { appendConsumeMarker, parseConsumeMarker } = require('./telegram-consume-marker');
 const { canonicalQueuedPayloadDigest } = require('./telegram-consumed-proof');
+const { probeRuntimeProofCapability } = require('./telegram-consumption-proof');
 
 /**
  * PHASES, not just reasons.
@@ -99,6 +100,175 @@ function isNonEmptyString(value) {
  * row, and stops. It does not pretend to be proven, and it does not wedge.
  */
 const MODES = Object.freeze({ FULL: 'full', SOURCE_ONLY: 'source_only' });
+
+/** The ONE positive answer this gate accepts. Anything else is not a yes. */
+const READINESS_POSITIVE_REASON = 'runtime_proof_observed';
+
+function normalizeRuntime(value) {
+  return isNonEmptyString(value) ? value.trim().toLowerCase() : null;
+}
+
+/**
+ * =====================================================================
+ * ONE COHERENT POSITIVE CONTRACT, BOUND BACK TO THE LAUNCH (Oracle #37).
+ * =====================================================================
+ * The first version of this gate was `ready === true || attainable === true`,
+ * and Oracle drove three answers straight through it into D on a real ledger,
+ * each creating a claim:
+ *
+ *   {ready: true, attainable: false, reason: runtime_proof_stale, runtime: codex}
+ *   {attainable: true, reason: runtime_proof_observed, runtime: claude}   <- other pane
+ *   {attainable: true, reason: runtime_proof_stale,    runtime: codex}
+ *
+ * An OR over two independent booleans validates ONE TRUE BIT. It cannot see a
+ * self-contradiction, it never reads the reason that explains the bit, and it
+ * never asks whether the answer is even ABOUT the pane we are going to write.
+ * The prior tests captured which runtime the probe was ASKED about — not which
+ * runtime the answer came back describing, which is the half that matters.
+ *
+ * So there is now exactly one shape that means yes, and every clause of it is
+ * load-bearing:
+ *
+ *   attainable === true          the probe's own word, and the ONLY acceptance
+ *                                path. `ready` is not an alternate; present and
+ *                                not-true, it is a contradiction and refuses.
+ *   reason === observed          the bit must be explained by the one reason
+ *                                that means proof has actually flowed. Every
+ *                                unattainable reason is now visibly incoherent
+ *                                with attainable:true instead of ignored.
+ *   runtime === launch runtime   normalized on both sides and compared to what
+ *                                the LAUNCH REGISTRY recorded, so an answer
+ *                                about another pane cannot authorise this one.
+ *   proof timestamp is real      a finite positive integer that is not in the
+ *                                future.
+ *
+ * AND THEN THE ANSWER MUST BE REPRODUCIBLE BY THE REAL PROBE. The four clauses
+ * above are this file's opinion of the probe's contract, and a hand-written
+ * mirror of someone else's rule drifts the moment theirs changes. So the last
+ * step re-runs `probeRuntimeProofCapability` — the actual production function,
+ * on the actual production window — over the evidence the answer itself states,
+ * and requires it to land on the same verdict. A prober cannot claim `observed`
+ * over a timestamp the real probe would call stale, because the real probe is
+ * the one being asked.
+ *
+ * Fail closed everywhere: this returns ok only for the exact shape above.
+ */
+function evaluatePaneReadinessAnswer(input = {}) {
+  const { answer, launchRuntime, nowMs } = input;
+
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) {
+    return {
+      ok: false,
+      reason: 'pane_readiness_unreadable',
+      detail: { received: answer === undefined ? 'undefined' : typeof answer },
+    };
+  }
+
+  // `ready` IS NOT AN ALTERNATE PATH ANY MORE. It is only ever consulted to
+  // catch an answer arguing with itself, because "not ready" must never be
+  // readable as ready by any route.
+  if (Object.prototype.hasOwnProperty.call(answer, 'ready') && answer.ready !== true) {
+    return {
+      ok: false,
+      reason: 'pane_readiness_contradictory',
+      detail: { ready: answer.ready, attainable: answer.attainable ?? null },
+    };
+  }
+
+  if (answer.attainable !== true) {
+    return {
+      ok: false,
+      reason: 'pane_readiness_unproven',
+      detail: {
+        readinessReason: answer.reason ?? null,
+        attainable: answer.attainable ?? null,
+        runtime: answer.runtime ?? null,
+        lastProofAtMs: answer.lastProofAtMs ?? null,
+      },
+    };
+  }
+
+  if (answer.reason !== READINESS_POSITIVE_REASON) {
+    // attainable:true carrying an unattainable reason is not a yes with a
+    // stale note attached; it is two contradictory claims in one object.
+    return {
+      ok: false,
+      reason: 'pane_readiness_reason_incoherent',
+      detail: { readinessReason: answer.reason ?? null, expected: READINESS_POSITIVE_REASON },
+    };
+  }
+
+  const launch = normalizeRuntime(launchRuntime);
+  if (!launch) {
+    return { ok: false, reason: 'pane_readiness_launch_runtime_unknown', detail: { launchRuntime: launchRuntime ?? null } };
+  }
+  const answered = normalizeRuntime(answer.runtime);
+  if (!answered) {
+    return { ok: false, reason: 'pane_readiness_runtime_missing', detail: { runtime: answer.runtime ?? null } };
+  }
+  if (answered !== launch) {
+    // THE ALTERNATE-PANE ANSWER. A probe that reports on `claude` cannot
+    // authorise a write to a pane the registry bound to `codex`.
+    return {
+      ok: false,
+      reason: 'pane_readiness_runtime_mismatch',
+      detail: { launchRuntime: launch, answeredRuntime: answered },
+    };
+  }
+
+  const lastProofAtMs = Number(answer.lastProofAtMs);
+  if (!Number.isSafeInteger(lastProofAtMs) || lastProofAtMs <= 0) {
+    return {
+      ok: false,
+      reason: 'pane_readiness_proof_time_invalid',
+      detail: { lastProofAtMs: answer.lastProofAtMs ?? null },
+    };
+  }
+  const now = Number(nowMs);
+  if (!Number.isFinite(now)) {
+    return { ok: false, reason: 'pane_readiness_clock_unknown', detail: { nowMs: nowMs ?? null } };
+  }
+  if (lastProofAtMs > now) {
+    // Proof from the future is a broken or lying clock, and the direction it
+    // breaks in is the one that delivers.
+    return {
+      ok: false,
+      reason: 'pane_readiness_proof_time_in_future',
+      detail: { lastProofAtMs, nowMs: now },
+    };
+  }
+
+  // THE RULE IS NOT COPIED HERE, IT IS CALLED. Freshness belongs to the probe;
+  // re-deriving its window in this file would be a second copy of someone
+  // else's truth, and the two would drift apart silently.
+  const rederived = probeRuntimeProofCapability({
+    runtime: answered,
+    receiptActivity: { [answered]: lastProofAtMs },
+    nowMs: now,
+  });
+  if (rederived.attainable !== true
+    || rederived.reason !== READINESS_POSITIVE_REASON
+    || normalizeRuntime(rederived.runtime) !== answered
+    || Number(rederived.lastProofAtMs) !== lastProofAtMs) {
+    return {
+      ok: false,
+      reason: 'pane_readiness_not_reproducible',
+      detail: {
+        offered: {
+          attainable: answer.attainable, reason: answer.reason, runtime: answered, lastProofAtMs,
+        },
+        rederived: {
+          attainable: rederived.attainable,
+          reason: rederived.reason,
+          runtime: rederived.runtime,
+          lastProofAtMs: rederived.lastProofAtMs,
+        },
+      },
+    };
+  }
+
+  return { ok: true, runtime: answered, lastProofAtMs };
+}
 
 async function runTelegramAdmissionSequence(input = {}) {
   const {
@@ -263,21 +433,19 @@ async function runTelegramAdmissionSequence(input = {}) {
   } catch (err) {
     return refuseHere('B_readiness', `pane_readiness_threw:${err.message}`);
   }
-  if (!readiness || typeof readiness !== 'object') {
-    return refuseHere('B_readiness', 'pane_readiness_unreadable', {
-      received: readiness === undefined ? 'undefined' : typeof readiness,
-    });
-  }
-  // `ready` is the sequence's own word. `attainable` is the vocabulary the
-  // proof-capability probe and the health surface already speak, and accepting
-  // both means the drain's existing reason strings survive to the report
-  // instead of being renamed at the boundary.
-  const readyDefinitely = readiness.ready === true || readiness.attainable === true;
-  if (!readyDefinitely) {
-    return refuseHere('B_readiness', 'pane_readiness_unproven', {
-      readinessReason: readiness.reason ?? null,
-      runtime: readiness.runtime ?? launch.consumerRuntime ?? null,
-      lastProofAtMs: readiness.lastProofAtMs ?? null,
+  // ONE COHERENT CONTRACT, BOUND TO THE LAUNCH-RECORDED RUNTIME. See
+  // `evaluatePaneReadinessAnswer` for why an OR over two booleans was not a
+  // gate. The refusal reasons stay in the probe's own vocabulary so the drain
+  // and the health surface keep reading the same words.
+  const readinessVerdict = evaluatePaneReadinessAnswer({
+    answer: readiness,
+    launchRuntime: launch.consumerRuntime,
+    nowMs: now(),
+  });
+  if (!readinessVerdict.ok) {
+    return refuseHere('B_readiness', readinessVerdict.reason, {
+      ...(readinessVerdict.detail || {}),
+      launchRuntime: launch.consumerRuntime ?? null,
       launchId: launch.launchId,
     });
   }
@@ -396,5 +564,7 @@ module.exports = {
   PHASES,
   MODES,
   MARKER_FIELDS,
+  READINESS_POSITIVE_REASON,
+  evaluatePaneReadinessAnswer,
   runTelegramAdmissionSequence,
 };

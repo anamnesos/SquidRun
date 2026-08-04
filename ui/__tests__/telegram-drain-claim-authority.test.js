@@ -1191,6 +1191,122 @@ describe('readiness is proven before anything is latched', () => {
     expect(claimRows(harness, 900000842)).toBe(0);
   });
 
+  // ===================================================================
+  // ORACLE #37: THE OR GATE VALIDATED ONE TRUE BIT AND NOTHING ELSE.
+  //
+  // `ready === true || attainable === true` let all three of these reach
+  // D_delivery_started and create a claim on a real ledger. Each is a different
+  // way of being wrong, and none of them is malformed - that is the point. They
+  // are well-formed answers that the old gate had no way to disbelieve:
+  //
+  //   1. the answer argues with itself (ready yes, attainable no, stale)
+  //   2. the answer is about a DIFFERENT PANE than the one being written
+  //   3. the true bit is explained by a reason that means the opposite
+  //
+  // The assertion in every one is the claims table, not the refusal string.
+  // ===================================================================
+  test('ORACLE #37 shape 1: an answer that contradicts itself never gets a claim', async () => {
+    await refusedBy(900000850, () => ({
+      ready: true,
+      attainable: false,
+      reason: 'runtime_proof_stale',
+      runtime: 'codex',
+      lastProofAtMs: BASE_MS - 99999999,
+    }));
+  });
+
+  test('ORACLE #37 shape 2: a perfect answer about ANOTHER pane never gets a claim', async () => {
+    // Every field is well-formed and positive. It is simply not about the pane
+    // the launch registry bound, which is `codex`.
+    await refusedBy(900000851, () => ({
+      attainable: true,
+      reason: 'runtime_proof_observed',
+      runtime: 'claude',
+      lastProofAtMs: BASE_MS - 1000,
+    }));
+  });
+
+  test('ORACLE #37 shape 3: attainable carrying an unattainable reason never gets a claim', async () => {
+    await refusedBy(900000852, () => ({
+      attainable: true,
+      reason: 'runtime_proof_stale',
+      runtime: 'codex',
+      lastProofAtMs: BASE_MS - 1000,
+    }));
+  });
+
+  test('`ready` is not an alternate path, in either direction', async () => {
+    // ready:false alongside an otherwise-perfect answer is a contradiction.
+    await refusedBy(900000853, () => ({
+      ready: false,
+      attainable: true,
+      reason: 'runtime_proof_observed',
+      runtime: 'codex',
+      lastProofAtMs: BASE_MS - 1000,
+    }));
+    // ready:true alone - the old gate's other acceptance path - is now nothing.
+    await refusedBy(900000854, () => ({ ready: true }));
+    await refusedBy(900000855, () => ({ ready: true, runtime: 'codex', reason: 'runtime_proof_observed' }));
+  });
+
+  test('the proof timestamp has to be a real past instant', async () => {
+    const base = {
+      attainable: true, reason: 'runtime_proof_observed', runtime: 'codex',
+    };
+    await refusedBy(900000856, () => ({ ...base }));                              // absent
+    await refusedBy(900000857, () => ({ ...base, lastProofAtMs: null }));
+    await refusedBy(900000858, () => ({ ...base, lastProofAtMs: 0 }));
+    await refusedBy(900000859, () => ({ ...base, lastProofAtMs: -1 }));
+    await refusedBy(900000860, () => ({ ...base, lastProofAtMs: 'yesterday' }));
+    await refusedBy(900000861, () => ({ ...base, lastProofAtMs: 1.5 }));
+    await refusedBy(900000862, () => ({ ...base, lastProofAtMs: Number.NaN }));
+    // FROM THE FUTURE. A clock that runs ahead would otherwise read as the
+    // freshest possible proof.
+    await refusedBy(900000863, () => ({ ...base, lastProofAtMs: BASE_MS + 60000 }));
+  });
+
+  test('a coherent-looking answer the REAL probe would call stale never gets a claim', async () => {
+    // THIS IS THE ONE THAT IS NOT A SHAPE CHECK. Every clause the gate states
+    // for itself passes: attainable true, reason observed, right runtime, a
+    // real past timestamp. It is refused because the gate re-runs
+    // probeRuntimeProofCapability over the evidence the answer itself states
+    // and the production window disagrees with the verdict.
+    await refusedBy(900000864, () => ({
+      attainable: true,
+      reason: 'runtime_proof_observed',
+      runtime: 'codex',
+      lastProofAtMs: BASE_MS - (30 * 24 * 60 * 60 * 1000),
+    }));
+  });
+
+  test('THE POSITIVE CONTROL: the one coherent answer still delivers, exactly once', async () => {
+    // Without this, refusing everything would pass every test above it.
+    const harness = makeHarness({ records: [queueRecord(900000865)] });
+    const result = await harness.build().drainOnce(harness.dir, 'main');
+    expect(harness.paneWrites).toHaveLength(1);
+    expect(result.delivered).toBe(1);
+    expect(claimRows(harness, 900000865)).toBe(1);
+  });
+
+  test('the runtime match normalizes case and spacing rather than failing on it', async () => {
+    // The probe lowercases and trims its own answer; a launch row carrying
+    // `codex` and an answer carrying ` CODEX ` are the same pane, and refusing
+    // that would be a gate that breaks on formatting instead of on identity.
+    const harness = makeHarness({
+      records: [queueRecord(900000866)],
+      paneReadiness: () => ({
+        attainable: true,
+        reason: 'runtime_proof_observed',
+        runtime: '  CODEX  ',
+        lastProofAtMs: BASE_MS - 1000,
+      }),
+    });
+    const result = await harness.build().drainOnce(harness.dir, 'main');
+    expect(harness.paneWrites).toHaveLength(1);
+    expect(result.delivered).toBe(1);
+    expect(claimRows(harness, 900000866)).toBe(1);
+  });
+
   test('a SOURCE_ONLY route never reaches the gate, because it never claims', async () => {
     // Scoped windows return at A. Gating them on a readiness probe they can
     // never satisfy would refuse to record identity for a message that is
