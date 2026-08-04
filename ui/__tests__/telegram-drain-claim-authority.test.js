@@ -156,6 +156,14 @@ function makeHarness(options = {}) {
     lookupThrows: options.lookupThrows || false,
     failAck: options.failAck || false,
     deliveries: 0,
+    // COMPOSE IS COUNTED, not inferred from the claim count. A refusal above B
+    // must mean the final bytes were never even built; asserting the effect is
+    // the whole discipline here (Oracle #54).
+    composes: 0,
+    // The typed refusal the sequence returned, so a test can prove a shape was
+    // REFUSED BY NAME rather than having escaped as an exception that merely
+    // happened to leave the tables empty.
+    lastRefusal: null,
   };
 
   async function deliver(job) {
@@ -191,6 +199,7 @@ function makeHarness(options = {}) {
       paneReadiness: state.paneReadiness || (() => READY),
       mode: state.failAt === 'source_only' ? MODES.SOURCE_ONLY : MODES.FULL,
       composeFinalBody: async () => {
+        state.composes += 1;
         if (state.failAt === 'after_claim') throw new Error('compose exploded');
         return `[Telegram from ${job.from}]: ${job.text}`;
       },
@@ -212,6 +221,7 @@ function makeHarness(options = {}) {
           : {},
     });
     if (!result.ok) {
+      state.lastRefusal = { stage: result.stage, reason: result.reason, phase: result.phase };
       return {
         ok: false,
         status: `admission_refused:${result.reason}`,
@@ -1095,12 +1105,30 @@ describe('readiness is proven before anything is latched', () => {
     .prepare('SELECT COUNT(*) AS n FROM telegram_transport_claims WHERE update_id = ?')
     .get(updateId).n;
 
+  // EVERY EFFECT, NOT JUST THE CLAIM COUNT (Oracle #54).
+  //
+  // A refusal above B must mean: no claim row, no delivery_started event, the
+  // final bytes were never composed, no pane write - AND the refusal was TYPED.
+  // That last one is the difference between "the gate said no" and "something
+  // threw and happened to leave the tables empty"; Oracle found exactly that
+  // second shape on the reflection-throwing Proxy.
+  const startedEvents = (harness, updateId) => harness.writer.db
+    .prepare(`SELECT COUNT(*) AS n FROM telegram_transport_events e
+              JOIN telegram_transport_claims c ON c.claim_id = e.claim_id
+              WHERE c.update_id = ? AND e.kind = 'delivery_started'`)
+    .get(updateId).n;
+
   async function refusedBy(updateId, paneReadiness) {
     const harness = makeHarness({ records: [queueRecord(updateId)], paneReadiness });
     const result = await harness.build().drainOnce(harness.dir, 'main');
     expect(harness.paneWrites).toHaveLength(0);
     expect(result.delivered).toBe(0);
     expect(claimRows(harness, updateId)).toBe(0);
+    expect(startedEvents(harness, updateId)).toBe(0);
+    expect(harness.state.composes).toBe(0);
+    // TYPED, and refused at the readiness gate specifically.
+    expect(harness.state.lastRefusal).toMatchObject({ stage: 'B_readiness' });
+    expect(harness.state.lastRefusal.reason).toEqual(expect.stringMatching(/^pane_readiness_/));
     return { harness, result };
   }
 
@@ -1340,6 +1368,25 @@ describe('readiness is proven before anything is latched', () => {
       ownKeys() { throw new Error('ownKeys trap exploded'); },
     }));
     await refusedBy(900000882, () => new Proxy({ ...GOOD_ANSWER }, { get: (t, k) => t[k] }));
+  });
+
+  test('ARCH #84: a hostile diagnostic value never gets a claim, and never escapes', async () => {
+    // The refusal path itself used to read `err.message` and
+    // `proto.constructor.name`. Both are property reads on values we have just
+    // decided not to trust, and both escaped as exceptions instead of refusing.
+    const hostileError = {};
+    Object.defineProperty(hostileError, 'message', {
+      get() { throw new Error('message getter exploded'); },
+    });
+    await refusedBy(900000883, () => new Proxy({ ...GOOD_ANSWER }, {
+      ownKeys() { throw hostileError; },
+    }));
+
+    const hostileProto = {};
+    Object.defineProperty(hostileProto, 'constructor', {
+      get() { throw new Error('constructor getter exploded'); },
+    });
+    await refusedBy(900000884, () => Object.assign(Object.create(hostileProto), GOOD_ANSWER));
   });
 
   test('a null-prototype record is still the probe\'s record, and delivers', async () => {

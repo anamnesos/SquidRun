@@ -728,6 +728,44 @@ describe('B_readiness — one coherent positive contract (Oracle #37)', () => {
     expect(refusedQuiet.detail.proxy).toBe(true);
   });
 
+  test('ARCH #84: the refusal never interrogates the thing it is refusing', () => {
+    // A HANDLER THAT BECOMES THE HOLE. Reading err.message let a trap throw an
+    // object whose message is itself a throwing getter, and the refusal escaped
+    // as an exception from inside the code written to stop exactly that.
+    const hostileError = {};
+    Object.defineProperty(hostileError, 'message', {
+      get() { throw new Error('message getter exploded'); },
+    });
+    const throwingHostile = new Proxy({ ...GOOD }, {
+      ownKeys() { throw hostileError; },
+    });
+    let refused;
+    expect(() => { refused = evaluate(throwingHostile); }).not.toThrow();
+    expect(refused.reason).toBe('pane_readiness_unreadable');
+    expect(refused.detail).toEqual({ received: 'reflection_threw' });
+
+    // AND THE OTHER DOOR: the foreign-prototype refusal used to walk that very
+    // prototype to name it.
+    const hostileProto = {};
+    Object.defineProperty(hostileProto, 'constructor', {
+      get() { throw new Error('constructor getter exploded'); },
+    });
+    const foreign = Object.assign(Object.create(hostileProto), GOOD);
+    let refusedProto;
+    expect(() => { refusedProto = evaluate(foreign); }).not.toThrow();
+    expect(refusedProto.reason).toBe('pane_readiness_not_a_plain_record');
+    expect(refusedProto.detail).toEqual({ prototype: 'foreign' });
+
+    // A detail may not carry anything that can run code later, either: this
+    // object is refused for its reason, and its toJSON must never be reachable
+    // from a log or a health surface downstream.
+    const hostileValue = { toJSON() { throw new Error('toJSON exploded'); } };
+    const refusedValue = evaluate({ ...GOOD, reason: hostileValue });
+    expect(refusedValue.reason).toBe('pane_readiness_reason_incoherent');
+    expect(refusedValue.detail.readinessReason).toBe('[object]');
+    expect(() => JSON.stringify(refusedValue)).not.toThrow();
+  });
+
   test('THE FRESHNESS RULE IS THE PROBE\'S, NOT THIS FILE\'S', () => {
     // One millisecond either side of the production window, decided by
     // re-running probeRuntimeProofCapability rather than by a constant copied

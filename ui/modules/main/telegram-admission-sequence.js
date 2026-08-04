@@ -124,6 +124,26 @@ function normalizeRuntime(value) {
 }
 
 /**
+ * A refusal detail may carry only values that cannot run code (Architect #84).
+ *
+ * Everything in a rejected answer is suspect by definition, and a detail object
+ * travels: it gets logged, serialized, and folded into a health surface. A
+ * `toJSON` or `toString` on a value we are in the middle of refusing would run
+ * somewhere far away from here, in a context that has no idea it is holding
+ * something hostile. Primitives pass through; anything else is reported as its
+ * type and nothing more.
+ */
+function safeDetailValue(value) {
+  if (value === null || value === undefined) return null;
+  const kind = typeof value;
+  if (kind === 'string' || kind === 'number' || kind === 'boolean') return value;
+  if (kind === 'bigint') return `[bigint]`;
+  if (kind === 'symbol') return '[symbol]';
+  if (kind === 'function') return '[function]';
+  return '[object]';
+}
+
+/**
  * =====================================================================
  * ONE COHERENT POSITIVE CONTRACT, BOUND BACK TO THE LAUNCH (Oracle #37).
  * =====================================================================
@@ -203,11 +223,19 @@ function evaluatePaneReadinessAnswer(input = {}) {
     // straight past the "no foreign fields" rule it was supposed to fail.
     ownKeys = Reflect.ownKeys(answer);
     descriptors = Object.getOwnPropertyDescriptors(answer);
-  } catch (err) {
+  } catch {
+    // THE DIAGNOSTIC MAY NOT INTERROGATE THE HOSTILE VALUE (Architect #84).
+    //
+    // Reading `err.message` here was the same defect one layer further out: a
+    // trap can throw an object whose `message` is itself a throwing getter, and
+    // the refusal would escape as an exception all over again - from inside the
+    // handler written to stop exactly that. The caught value is not touched at
+    // all. A constant is worth less as a diagnostic and cannot be turned into a
+    // weapon, and this branch already names precisely where it happened.
     return {
       ok: false,
       reason: 'pane_readiness_unreadable',
-      detail: { received: 'reflection_threw', message: err.message },
+      detail: { received: 'reflection_threw' },
     };
   }
 
@@ -221,10 +249,15 @@ function evaluatePaneReadinessAnswer(input = {}) {
   }
 
   if (proto !== Object.prototype && proto !== null) {
+    // `proto?.constructor?.name` walked a FOREIGN prototype to build this
+    // string, and a foreign prototype is exactly the thing we have just decided
+    // we do not trust. A throwing `constructor` getter escaped through the
+    // refusal (Architect #84). The identity of the prototype is not worth a
+    // second door into this function.
     return {
       ok: false,
       reason: 'pane_readiness_not_a_plain_record',
-      detail: { prototype: proto?.constructor?.name ?? 'unknown' },
+      detail: { prototype: 'foreign' },
     };
   }
 
@@ -289,10 +322,10 @@ function evaluatePaneReadinessAnswer(input = {}) {
       ok: false,
       reason: 'pane_readiness_unproven',
       detail: {
-        readinessReason: stated.reason ?? null,
-        attainable: stated.attainable ?? null,
-        runtime: stated.runtime ?? null,
-        lastProofAtMs: typeof stated.lastProofAtMs === 'object' ? '[object]' : (stated.lastProofAtMs ?? null),
+        readinessReason: safeDetailValue(stated.reason),
+        attainable: safeDetailValue(stated.attainable),
+        runtime: safeDetailValue(stated.runtime),
+        lastProofAtMs: safeDetailValue(stated.lastProofAtMs),
       },
     };
   }
@@ -303,7 +336,7 @@ function evaluatePaneReadinessAnswer(input = {}) {
     return {
       ok: false,
       reason: 'pane_readiness_reason_incoherent',
-      detail: { readinessReason: stated.reason ?? null, expected: READINESS_POSITIVE_REASON },
+      detail: { readinessReason: safeDetailValue(stated.reason), expected: READINESS_POSITIVE_REASON },
     };
   }
 
@@ -313,7 +346,7 @@ function evaluatePaneReadinessAnswer(input = {}) {
   }
   const answered = normalizeRuntime(stated.runtime);
   if (!answered) {
-    return { ok: false, reason: 'pane_readiness_runtime_missing', detail: { runtime: stated.runtime ?? null } };
+    return { ok: false, reason: 'pane_readiness_runtime_missing', detail: { runtime: safeDetailValue(stated.runtime) } };
   }
   if (answered !== launch) {
     // THE ALTERNATE-PANE ANSWER. A probe that reports on `claude` cannot
@@ -376,7 +409,10 @@ function evaluatePaneReadinessAnswer(input = {}) {
       reason: 'pane_readiness_not_reproducible',
       detail: {
         offered: {
-          attainable: stated.attainable, reason: stated.reason, runtime: answered, lastProofAtMs,
+          attainable: safeDetailValue(stated.attainable),
+          reason: safeDetailValue(stated.reason),
+          runtime: answered,
+          lastProofAtMs,
         },
         rederived: {
           attainable: rederived.attainable,
