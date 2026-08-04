@@ -620,6 +620,73 @@ function seedPaneLaunchForCurrentGeneration() {
   }
 }
 
+/**
+ * WHAT THE ADMISSION LEDGER ACTUALLY HOLDS, read back from the temp database
+ * this suite already gives every app.
+ *
+ * The scoped assertions used to be spy-shaped: "was the scoped delivery method
+ * called with this text". That question stopped meaning anything the moment the
+ * scoped route became record-then-refuse, because the honest evidence is no
+ * longer a call — it is a row. A source row proves the kernel owns the identity;
+ * the ABSENCE of a claim row proves no transport attempt was invented locally
+ * for a route whose proof can never come back.
+ *
+ * Reads the stored columns and nothing else. It cannot report a row that is not
+ * there, and it does not decorate the ones that are.
+ */
+function readAdmissionLedgerFacts() {
+  const { TelegramAdmissionWriter } = require('../modules/main/telegram-admission-writer');
+  const dbPath = process.env.SQUIDRUN_ADMISSION_DB_PATH;
+  if (!dbPath || !fs.existsSync(dbPath)) return { ledgerPresent: false, sources: [], claims: [] };
+  const writer = new TelegramAdmissionWriter({ dbPath });
+  const opened = writer.open();
+  if (!opened.ok) throw new Error(`admission ledger unreadable: ${JSON.stringify(opened)}`);
+  try {
+    const hasTable = (name) => !!writer.db
+      .prepare('SELECT name FROM sqlite_master WHERE type = ? AND name = ?')
+      .get('table', name);
+    const sources = hasTable('telegram_source_identity')
+      ? writer.db.prepare(`
+        SELECT source_row_id, message_id, update_id, route_key, profile, window_key,
+               chat_id, source_session_id, media_identity_sha256
+        FROM telegram_source_identity ORDER BY update_id
+      `).all()
+      : [];
+    const claims = hasTable('telegram_transport_claims')
+      ? writer.db.prepare(`
+        SELECT claim_id, update_id, route_key, state FROM telegram_transport_claims
+        ORDER BY update_id
+      `).all()
+      : [];
+    return { ledgerPresent: true, sources, claims };
+  } finally {
+    writer.close();
+  }
+}
+
+/**
+ * The scoped cutover contract, asserted in one place so eight tests cannot
+ * drift into eight slightly different definitions of "refused".
+ */
+function expectScopedSourceOnlyRefusal({ updateId, routeKey, chatId, profile = routeKey, windowKey = routeKey }) {
+  const facts = readAdmissionLedgerFacts();
+  const scoped = facts.sources.filter((row) => Number(row.update_id) === Number(updateId));
+  // RECORDED ONCE. Not zero — the kernel still owns the identity — and not
+  // twice, which is what a second writer on this row would look like.
+  expect(scoped).toHaveLength(1);
+  expect(scoped[0]).toEqual(expect.objectContaining({
+    message_id: `telegram-in-${updateId}`,
+    route_key: routeKey,
+    profile,
+    window_key: windowKey,
+    chat_id: String(chatId),
+  }));
+  // NO CLAIM. A claim is an assertion that exactly one sender may proceed; this
+  // route cannot prove it sent anything, so it may not make that assertion.
+  expect(facts.claims.filter((row) => Number(row.update_id) === Number(updateId))).toEqual([]);
+  return scoped[0];
+}
+
 beforeEach(() => {
   freshTelegramSpoolRoot();
   seedAdmissionLedgerForApp();
@@ -8068,11 +8135,18 @@ describe('SquidRunApp', () => {
         app.startTelegramPoller();
         const options = telegramPoller.start.mock.calls[0][0];
         options.onMessage('status', 'scoped', { chatId: 2222222222, updateId: 202 });
-        await new Promise((resolve) => setImmediate(resolve));
+        await flushTelegramDrain(app);
 
-        expect(scopedDelivery).toHaveBeenCalled();
+        // THE POINT OF THIS HALF IS THE ROUTE, NOT THE DELIVERY: a scoped
+        // `status` must not be answered by main's Mira egress even with the
+        // live flag on. It is now refused rather than handed to the far
+        // process, and neither of those is a Telegram reply.
+        expect(scopedDelivery).not.toHaveBeenCalled();
         expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
         expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+        expectScopedSourceOnlyRefusal({
+          updateId: 202, routeKey: 'scoped', chatId: 2222222222,
+        });
       } finally {
         if (previousFlag === undefined) {
           delete process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
@@ -8498,7 +8572,13 @@ describe('SquidRunApp', () => {
       );
     });
 
-    it('routes scoped Telegram chat inbound through the scoped runtime even when a side window is registered', async () => {
+    it('records the scoped source and refuses before the far-process WebSocket, even when a side window is registered', async () => {
+      // A REGISTERED SIDE WINDOW IS NOT FAR-SIDE AUTHORITY (Oracle #10). It is
+      // the case that looks most like "we can obviously deliver this" and is
+      // exactly the one that cannot be proved: that window belongs to another
+      // process, renders its own pane, and returns an ACK carrying no chatId,
+      // no generation and no proof timestamp. The presence of the window must
+      // not move the refusal.
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
@@ -8528,21 +8608,15 @@ describe('SquidRunApp', () => {
       options.onMessage('side hello', 'scoped', { chatId: 2222222222, updateId: 102 });
 
       await flushTelegramDrain(app);
-      expect(scopedRuntimeSpy).toHaveBeenCalledWith(
-        'scoped',
-        '[Telegram from scoped]: side hello',
-        expect.objectContaining({
-          chatId: 2222222222,
-          messageId: 'telegram-in-102',
-          sender: 'scoped',
-          sessionScopeId: expect.stringContaining(':scoped'),
-          updateId: 102,
-        })
-      );
+      // The scoped delivery method is where the far WebSocket is constructed.
+      // Not called at all is the whole point: the refusal is BEFORE it, not a
+      // failure inside it.
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
       expect(deliverySpy).not.toHaveBeenCalled();
+      expectScopedSourceOnlyRefusal({ updateId: 102, routeKey: 'scoped', chatId: 2222222222 });
     });
 
-    it('injects scoped Telegram chat inbound through the standalone profile runtime first', async () => {
+    it('refuses standalone scoped Telegram inbound without inventing a trigger-file fallback', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
@@ -8566,19 +8640,13 @@ describe('SquidRunApp', () => {
       options.onMessage('standalone hello', 'scoped', { chatId: 2222222222, updateId: 103 });
 
       await flushTelegramDrain(app);
-      expect(scopedRuntimeSpy).toHaveBeenCalledWith(
-        'scoped',
-        '[Telegram from scoped]: standalone hello',
-        expect.objectContaining({
-          chatId: 2222222222,
-          messageId: 'telegram-in-103',
-          sender: 'scoped',
-          sessionScopeId: expect.stringContaining(':scoped'),
-          updateId: 103,
-        })
-      );
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
+      // AND NOT THE OTHER DOOR EITHER. A refusal that quietly reached for the
+      // fixed trigger file would be the same undeliverable message dressed as a
+      // delivery, in a file two updates in one batch overwrite.
       expect(forwardSpy).not.toHaveBeenCalled();
       expect(deliverySpy).not.toHaveBeenCalled();
+      expectScopedSourceOnlyRefusal({ updateId: 103, routeKey: 'scoped', chatId: 2222222222 });
     });
 
     it('scoped Telegram inbound appends durably BEFORE delivery and returns exact durable acceptance', async () => {
@@ -8611,19 +8679,24 @@ describe('SquidRunApp', () => {
       });
 
       // The callback returns durable acceptance — that is what releases the
-      // Telegram cursor — and the append is what earns it. The scheduled drain
-      // may already have run in microtasks by the time this await resolves, so
-      // asserting "nothing delivered yet" would be asserting scheduler timing,
-      // not the contract. The contract is: append FIRST, then delivery, and
-      // delivery only via the drain.
+      // Telegram cursor — and the append is what earns it. That contract did
+      // NOT change with the scoped cutover, and this is the test that proves it
+      // did not: the record is still made durable first, so a scoped message
+      // that cannot be delivered is still ordered, still visible, and still
+      // recoverable. What changed is what happens after the append.
       expect(result).toEqual({ ok: true, durable: true, updateId: 4103 });
       expect(order[0]).toBe('append');
 
       await flushTelegramDrain(app);
 
       expect(spool.acceptInbound).toHaveBeenCalledTimes(1);
-      expect(scopedRuntimeSpy).toHaveBeenCalledTimes(1);
-      expect(order).toEqual(['append', 'deliver']);
+      // NEVER DELIVERED, AND NOT SILENTLY DROPPED EITHER. The source row can
+      // only have been written by the drain, i.e. strictly after the append —
+      // so the ordering the old 'deliver' marker used to prove is still proved,
+      // by the durable artifact instead of by a mocked call.
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
+      expect(order).toEqual(['append']);
+      expectScopedSourceOnlyRefusal({ updateId: 4103, routeKey: 'scoped', chatId: 2222222222 });
     });
 
     it('scoped Telegram inbound reports non-durable and schedules NO delivery when the append is refused', async () => {
@@ -8652,7 +8725,7 @@ describe('SquidRunApp', () => {
       expect(scopedRuntimeSpy).not.toHaveBeenCalled();
     });
 
-    it('routes configured non-owner Telegram inbound to the scoped profile pane runtime instead of main Architect', async () => {
+    it('keeps configured non-owner Telegram inbound off the main Architect pane and refuses its scoped delivery', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
@@ -8676,17 +8749,14 @@ describe('SquidRunApp', () => {
       options.onMessage('hello client lane', '@ClientProfile', { chatId: 3333333333, updateId: 104 });
 
       await flushTelegramDrain(app);
-      expect(scopedRuntimeSpy).toHaveBeenCalledWith(
-        'client-profile',
-        '[Telegram from @ClientProfile]: hello client lane',
-        expect.objectContaining({
-          chatId: 3333333333,
-          messageId: 'telegram-in-104',
-          sender: '@ClientProfile',
-          sessionScopeId: expect.stringContaining(':client-profile'),
-          updateId: 104,
-        })
-      );
+      // THE ROUTING DECISION IS STILL THE POINT, and the source row is where it
+      // is now visible: this message resolved to `client-profile`, so it never
+      // had any business on the main Architect pane — and it is refused there
+      // rather than being answered by the wrong lane.
+      expectScopedSourceOnlyRefusal({
+        updateId: 104, routeKey: 'client-profile', chatId: 3333333333,
+      });
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
       expect(forwardSpy).not.toHaveBeenCalled();
       expect(deliverySpy).not.toHaveBeenCalled();
       expect(app.telegramInboundContext).toEqual(expect.objectContaining({
@@ -8755,7 +8825,7 @@ describe('SquidRunApp', () => {
       expect(deliverySpy).not.toHaveBeenCalled();
     });
 
-    it('routes sideprofile Telegram inbound through the sideprofile scoped runtime even when the window is registered', async () => {
+    it('refuses sideprofile Telegram inbound at the scoped cutover without disturbing main reply context', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-telegram-context-'));
@@ -8810,19 +8880,11 @@ describe('SquidRunApp', () => {
         const options = telegramPoller.start.mock.calls[0][0];
         options.onMessage('hello sideprofile lane', '@sideprofile', { chatId: 4444444444, updateId: 106 });
 
-        await new Promise((resolve) => setImmediate(resolve));
-        await new Promise((resolve) => setImmediate(resolve));
-        expect(scopedRuntimeSpy).toHaveBeenCalledWith(
-          'sideprofile',
-          '[Telegram from @sideprofile]: hello sideprofile lane',
-          expect.objectContaining({
-            chatId: 4444444444,
-            messageId: 'telegram-in-106',
-            sender: '@sideprofile',
-            sessionScopeId: expect.stringContaining(':sideprofile'),
-            updateId: 106,
-          })
-        );
+        await flushTelegramDrain(app);
+        expect(scopedRuntimeSpy).not.toHaveBeenCalled();
+        expectScopedSourceOnlyRefusal({
+          updateId: 106, routeKey: 'sideprofile', chatId: 4444444444,
+        });
         expect(forwardSpy).not.toHaveBeenCalled();
         expect(deliverySpy).not.toHaveBeenCalled();
         expect(launchSpy).not.toHaveBeenCalled();
@@ -8980,7 +9042,14 @@ describe('SquidRunApp', () => {
       expect(scopedRuntimeSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('includes saved file path in pane injection for inbound Telegram photos', async () => {
+    // The display-text properties these two used to assert — the synthesized
+    // `[Photo received]` body and the ` | saved: <path>` suffix — are proven on
+    // the route where that text actually reaches a pane, by the video test
+    // below. On a scoped route no text is rendered at all now, so asserting it
+    // here would be asserting a string nobody receives. What is still true and
+    // still worth defending is that the media identity is bound into the
+    // immutable source row before the refusal.
+    it('binds media identity into the scoped source row for inbound Telegram photos and refuses delivery', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
@@ -9018,19 +9087,18 @@ describe('SquidRunApp', () => {
       });
 
       await flushTelegramDrain(app);
-      expect(scopedRuntimeSpy).toHaveBeenCalledWith(
-        'scoped',
-        '[Telegram from @ScopedContact]: [Photo received] | saved: D:\\projects\\Example Case\\telegram-photos\\photo-11.jpg',
-        expect.objectContaining({
-          chatId: 2222222222,
-          messageId: 'telegram-in-808489705',
-          sender: '@ScopedContact',
-        }),
-      );
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
       expect(deliverySpy).not.toHaveBeenCalled();
+      const source = expectScopedSourceOnlyRefusal({
+        updateId: 808489705, routeKey: 'scoped', chatId: 2222222222,
+      });
+      // A PHOTO'S IDENTITY IS NOT ITS CAPTION. The media digest is what makes
+      // two different photos with the same body text different messages.
+      expect(typeof source.media_identity_sha256).toBe('string');
+      expect(source.media_identity_sha256).not.toHaveLength(0);
     });
 
-    it('synthesizes photo display text for scoped runtime delivery when poller passes empty body with photo metadata', async () => {
+    it('records an empty-body photo as a scoped source with its own identity and refuses delivery', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
@@ -9067,16 +9135,13 @@ describe('SquidRunApp', () => {
       });
 
       await flushTelegramDrain(app);
-      expect(scopedRuntimeSpy).toHaveBeenCalledWith(
-        'scoped',
-        '[Telegram from @ScopedContact]: [Photo received]',
-        expect.objectContaining({
-          chatId: 2222222222,
-          messageId: 'telegram-in-808489706',
-          sender: '@ScopedContact',
-        }),
-      );
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
       expect(deliverySpy).not.toHaveBeenCalled();
+      // AN EMPTY BODY IS NOT AN EMPTY MESSAGE. A photo with no caption still
+      // gets one immutable row, and it is the row a recovery has to find.
+      expectScopedSourceOnlyRefusal({
+        updateId: 808489706, routeKey: 'scoped', chatId: 2222222222,
+      });
     });
 
     it('synthesizes video display text and includes saved file path for inbound Telegram videos', async () => {
