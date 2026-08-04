@@ -599,7 +599,8 @@ describe('B_readiness — one coherent positive contract (Oracle #37)', () => {
     expect(evaluate(null).reason).toBe('pane_readiness_unreadable');
     expect(evaluate('ready').reason).toBe('pane_readiness_unreadable');
     expect(evaluate([]).reason).toBe('pane_readiness_unreadable');
-    expect(evaluate({ ...GOOD, ready: false }).reason).toBe('pane_readiness_contradictory');
+    expect(evaluate({ ...GOOD, ready: false }).reason).toBe('pane_readiness_shape_unexpected');
+    expect(evaluate({ ...GOOD, ready: true }).reason).toBe('pane_readiness_shape_unexpected');
     expect(evaluate({ ...GOOD, attainable: false }).reason).toBe('pane_readiness_unproven');
     expect(evaluate({ ...GOOD, attainable: 'true' }).reason).toBe('pane_readiness_unproven');
     expect(evaluate({ ...GOOD, reason: 'runtime_proof_stale' }).reason).toBe('pane_readiness_reason_incoherent');
@@ -610,6 +611,46 @@ describe('B_readiness — one coherent positive contract (Oracle #37)', () => {
     expect(evaluate({ ...GOOD, lastProofAtMs: 0 }).reason).toBe('pane_readiness_proof_time_invalid');
     expect(evaluate({ ...GOOD, lastProofAtMs: NOW + 1 }).reason).toBe('pane_readiness_proof_time_in_future');
     expect(evaluate(GOOD, { nowMs: Number.NaN }).reason).toBe('pane_readiness_clock_unknown');
+  });
+
+  test('ORACLE #47: the answer must be the probe\'s own literal record', () => {
+    // INHERITED, NOT OWNED. Reads identically to GOOD through every property
+    // access and owns nothing. It crossed D and created a claim.
+    const inherited = Object.create(GOOD);
+    expect(evaluate(inherited).reason).toBe('pane_readiness_not_a_plain_record');
+    // Own keys copied onto a foreign prototype: the prototype check catches it
+    // first, so neither half of the defence is doing all the work alone.
+    expect(evaluate(Object.assign(Object.create({ x: 1 }), GOOD)).reason)
+      .toBe('pane_readiness_not_a_plain_record');
+    // A null-prototype record IS acceptable - it is still a plain record.
+    expect(evaluate(Object.assign(Object.create(null), GOOD)).ok).toBe(true);
+    // A missing own field is not compensated for by anything.
+    const { runtime, ...withoutRuntime } = GOOD;
+    expect(runtime).toBe('codex');
+    expect(evaluate(withoutRuntime).reason).toBe('pane_readiness_shape_unexpected');
+    expect(evaluate(withoutRuntime).detail.missing).toEqual(['runtime']);
+    // A foreign field means this is not the record we think we are reading.
+    expect(evaluate({ ...GOOD, debug: 'x' }).detail.unexpected).toEqual(['debug']);
+  });
+
+  test('ORACLE #47: a timestamp that only COERCES to fresh is not a timestamp', () => {
+    // String(now - 1000) is a perfectly fresh safe integer once Number() has
+    // had it. This crossed D and created a claim.
+    const numericString = evaluate({ ...GOOD, lastProofAtMs: String(NOW - 1000) });
+    expect(numericString.reason).toBe('pane_readiness_proof_time_invalid');
+    expect(numericString.detail.type).toBe('string');
+    // Anything with a valueOf does the same job (ARCH #74).
+    const valueOfObject = evaluate({
+      ...GOOD, lastProofAtMs: { valueOf: () => NOW - 1000 },
+    });
+    expect(valueOfObject.reason).toBe('pane_readiness_proof_time_invalid');
+    expect(valueOfObject.detail.type).toBe('object');
+    expect(evaluate({ ...GOOD, lastProofAtMs: new Date(NOW - 1000) }).reason)
+      .toBe('pane_readiness_proof_time_invalid');
+    expect(evaluate({ ...GOOD, lastProofAtMs: [NOW - 1000] }).reason)
+      .toBe('pane_readiness_proof_time_invalid');
+    expect(evaluate({ ...GOOD, lastProofAtMs: true }).reason)
+      .toBe('pane_readiness_proof_time_invalid');
   });
 
   test('THE FRESHNESS RULE IS THE PROBE\'S, NOT THIS FILE\'S', () => {

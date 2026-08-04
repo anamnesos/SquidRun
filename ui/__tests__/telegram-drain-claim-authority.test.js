@@ -1279,6 +1279,49 @@ describe('readiness is proven before anything is latched', () => {
     }));
   });
 
+  // ===================================================================
+  // ORACLE #47: TWO MORE SHAPES CROSSED D ON THE REPAIRED GATE.
+  //
+  // Neither is malformed in any way the previous version could see. The first
+  // is a good answer whose timestamp merely COERCES to fresh; the second reads
+  // identically to a good answer through every property access and owns
+  // nothing. Both created a real claim on a real writer.
+  // ===================================================================
+  const GOOD_ANSWER = Object.freeze({
+    attainable: true, reason: 'runtime_proof_observed', runtime: 'codex', lastProofAtMs: BASE_MS - 1000,
+  });
+
+  test('ORACLE #47 shape 4: a numeric-string timestamp never gets a claim', async () => {
+    await refusedBy(900000870, () => ({ ...GOOD_ANSWER, lastProofAtMs: String(BASE_MS - 1000) }));
+  });
+
+  test('ORACLE #47 shape 5: an inherited-shape answer never gets a claim', async () => {
+    await refusedBy(900000871, () => Object.create(GOOD_ANSWER));
+  });
+
+  test('a valueOf/Date timestamp never gets a claim', async () => {
+    await refusedBy(900000872, () => ({ ...GOOD_ANSWER, lastProofAtMs: { valueOf: () => BASE_MS - 1000 } }));
+    await refusedBy(900000873, () => ({ ...GOOD_ANSWER, lastProofAtMs: new Date(BASE_MS - 1000) }));
+  });
+
+  test('an answer carrying a foreign field never gets a claim', async () => {
+    await refusedBy(900000874, () => ({ ...GOOD_ANSWER, ready: true }));
+    await refusedBy(900000875, () => ({ ...GOOD_ANSWER, note: 'looks fine to me' }));
+  });
+
+  test('a null-prototype record is still the probe\'s record, and delivers', async () => {
+    // The strictness is about OWNERSHIP and shape, not about ceremony. If this
+    // refused, the rule would be superstition rather than a contract.
+    const harness = makeHarness({
+      records: [queueRecord(900000876)],
+      paneReadiness: () => Object.assign(Object.create(null), GOOD_ANSWER),
+    });
+    const result = await harness.build().drainOnce(harness.dir, 'main');
+    expect(harness.paneWrites).toHaveLength(1);
+    expect(result.delivered).toBe(1);
+    expect(claimRows(harness, 900000876)).toBe(1);
+  });
+
   test('THE POSITIVE CONTROL: the one coherent answer still delivers, exactly once', async () => {
     // Without this, refusing everything would pass every test above it.
     const harness = makeHarness({ records: [queueRecord(900000865)] });

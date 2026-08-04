@@ -104,6 +104,20 @@ const MODES = Object.freeze({ FULL: 'full', SOURCE_ONLY: 'source_only' });
 /** The ONE positive answer this gate accepts. Anything else is not a yes. */
 const READINESS_POSITIVE_REASON = 'runtime_proof_observed';
 
+/**
+ * THE EXACT RECORD `probeRuntimeProofCapability` RETURNS — every branch of it,
+ * four own keys, no more and no fewer.
+ *
+ * Pinned as a set rather than checked field by field because Oracle #47 got two
+ * more shapes through a gate that only asked whether the fields it wanted were
+ * READABLE: `Object.create(goodAnswer)` inherits all four and owns none, and an
+ * answer carrying an extra `ready` left a branch in this file reading a field
+ * production never emits. Both are the same defect — latitude. An answer that
+ * is not literally the probe's own record is not the probe's answer, and this
+ * lane has now spent three rounds discovering that one shape at a time.
+ */
+const READINESS_ANSWER_KEYS = Object.freeze(['attainable', 'reason', 'runtime', 'lastProofAtMs']);
+
 function normalizeRuntime(value) {
   return isNonEmptyString(value) ? value.trim().toLowerCase() : null;
 }
@@ -164,14 +178,39 @@ function evaluatePaneReadinessAnswer(input = {}) {
     };
   }
 
-  // `ready` IS NOT AN ALTERNATE PATH ANY MORE. It is only ever consulted to
-  // catch an answer arguing with itself, because "not ready" must never be
-  // readable as ready by any route.
-  if (Object.prototype.hasOwnProperty.call(answer, 'ready') && answer.ready !== true) {
+  // A PLAIN RECORD, NOT SOMETHING THAT MERELY ANSWERS QUESTIONS (Oracle #47).
+  //
+  // `Object.create(goodAnswer)` reads identically to a good answer through
+  // every property access below while owning nothing, and it crossed D. A
+  // getter, a class instance or a Proxy would do the same. The probe returns
+  // object literals; anything with a different prototype is not its record.
+  const proto = Object.getPrototypeOf(answer);
+  if (proto !== Object.prototype && proto !== null) {
     return {
       ok: false,
-      reason: 'pane_readiness_contradictory',
-      detail: { ready: answer.ready, attainable: answer.attainable ?? null },
+      reason: 'pane_readiness_not_a_plain_record',
+      detail: { prototype: proto?.constructor?.name ?? 'unknown' },
+    };
+  }
+
+  // EXACTLY THE PROBE'S OWN KEYS. Inherited fields are not own fields, and a
+  // foreign field means this is not the record we think we are reading.
+  //
+  // This also RETIRES `ready` outright rather than leaving a branch in here
+  // that reads a field production never emits. The old gate treated it as an
+  // alternate yes; the version before this one still consulted it to catch a
+  // self-contradiction. Both were latitude, and latitude is what has been
+  // getting through. The contract is now literal.
+  const ownKeys = Object.keys(answer);
+  const missing = READINESS_ANSWER_KEYS.filter(
+    (key) => !Object.prototype.hasOwnProperty.call(answer, key)
+  );
+  const unexpected = ownKeys.filter((key) => !READINESS_ANSWER_KEYS.includes(key));
+  if (missing.length > 0 || unexpected.length > 0) {
+    return {
+      ok: false,
+      reason: 'pane_readiness_shape_unexpected',
+      detail: { missing, unexpected, expected: [...READINESS_ANSWER_KEYS] },
     };
   }
 
@@ -216,12 +255,24 @@ function evaluatePaneReadinessAnswer(input = {}) {
     };
   }
 
-  const lastProofAtMs = Number(answer.lastProofAtMs);
-  if (!Number.isSafeInteger(lastProofAtMs) || lastProofAtMs <= 0) {
+  // AN ACTUAL NUMBER, CHECKED BEFORE ANY ARITHMETIC TOUCHES IT (Oracle #47).
+  //
+  // `Number(answer.lastProofAtMs)` was the coercion hole: String(now - 1000) is
+  // a perfectly fresh safe integer once coerced, and so is any object with a
+  // valueOf. The production probe reads its timestamp out of the receipt store
+  // and returns a number; a string means whatever produced this answer is not
+  // that probe, and guessing on its behalf is the direction that delivers.
+  const lastProofAtMs = answer.lastProofAtMs;
+  if (typeof lastProofAtMs !== 'number'
+    || !Number.isSafeInteger(lastProofAtMs)
+    || lastProofAtMs <= 0) {
     return {
       ok: false,
       reason: 'pane_readiness_proof_time_invalid',
-      detail: { lastProofAtMs: answer.lastProofAtMs ?? null },
+      detail: {
+        lastProofAtMs: typeof lastProofAtMs === 'object' ? '[object]' : (lastProofAtMs ?? null),
+        type: typeof lastProofAtMs,
+      },
     };
   }
   const now = Number(nowMs);
