@@ -124,6 +124,25 @@ function normalizeRuntime(value) {
 }
 
 /**
+ * IS THIS AN ORDINARY, SYNCHRONOUS CALLBACK WE CAN SAFELY INVOKE ONCE?
+ *
+ * Asked BEFORE invocation, and answered without touching a single property of
+ * the function: `util.types` reads internal slots, so an async or generator
+ * function cannot present itself as an ordinary one, and a Proxy cannot
+ * intercept the question. The `toString` tag is a backstop that also catches
+ * AsyncGeneratorFunction; it CAN be spoofed by an own Symbol.toStringTag, and
+ * that is fine - a spoofer gets invoked and is then refused for returning a
+ * promise, so every path lands closed.
+ */
+function isPlainSyncCallback(value) {
+  if (typeof value !== 'function') return false;
+  if (nodeTypes.isProxy(value)) return false;
+  if (nodeTypes.isAsyncFunction(value)) return false;
+  if (nodeTypes.isGeneratorFunction(value)) return false;
+  return Object.prototype.toString.call(value) === '[object Function]';
+}
+
+/**
  * A refusal detail may carry only values that cannot run code (Architect #84).
  *
  * Everything in a rejected answer is suspect by definition, and a detail object
@@ -601,23 +620,39 @@ async function runTelegramAdmissionSequence(input = {}) {
     return refuseHere('B_readiness', 'sequence_no_pane_readiness_probe');
   }
   // ===================================================================
-  // `await` IS ITSELF A PROPERTY READ (found proving Architect #89's counter).
+  // READINESS IS SYNCHRONOUS, BY CONTRACT (Architect #93).
   //
-  // `await value` performs a `then` lookup on the value, so awaiting the probe's
-  // return fired exactly one `get` trap on a Proxy answer BEFORE the gate could
-  // refuse it. The zero-trap requirement is not satisfiable while the very act
-  // of receiving the answer touches it, so the raw return is inspected first
-  // and only then awaited.
+  // The previous version awaited the probe's return, and proving Architect
+  // #89's zero-trap requirement showed why that is not survivable: `await value`
+  // performs a `then` PROPERTY LOOKUP on the value, so the act of RECEIVING the
+  // answer touched it. Inspecting the raw return first got the direct case to
+  // zero, but a Proxy handed over inside a promise still took one `get('then')`
+  // from the language's own resolution procedure, and no code here could stop
+  // it.
   //
-  // THE HONEST LIMIT, stated rather than papered over: this makes it zero for a
-  // Proxy RETURNED DIRECTLY. A Proxy delivered as the resolution value of a
-  // promise still receives one `get('then')` from the language's own promise
-  // resolution procedure, which no code here can prevent. It is still refused;
-  // it is the trap count, not the verdict, that cannot reach zero in that case.
+  // The fix is to stop being asynchronous at all. The production probe is a
+  // synchronous arrow over the synchronous `probeRuntimeProofCapability`
+  // (telegram-admission-delivery.js), and no production caller injects anything
+  // else — verified, not assumed. So `.then` is never read, by anyone, ever:
+  //
+  //   * the CALLBACK is checked before it is invoked. A Proxy, an async
+  //     function or a generator function is refused without being called, which
+  //     is the only way to guarantee it never ran.
+  //   * it is invoked exactly ONCE.
+  //   * the raw return goes straight to the evaluator. A promise or a Proxy is
+  //     refused structurally, without awaiting and without touching `.then`. A
+  //     plain thenable is refused too — a `then` key is a foreign field on a
+  //     four-key record, and a `then` accessor is not a data descriptor.
   // ===================================================================
-  let readinessReturn;
+  if (!isPlainSyncCallback(paneReadiness)) {
+    // NOT INVOKED. Naming the shape without running it is the entire point.
+    return refuseHere('B_readiness', 'pane_readiness_probe_not_synchronous', {
+      proxy: nodeTypes.isProxy(paneReadiness),
+    });
+  }
+  let readiness;
   try {
-    readinessReturn = paneReadiness({
+    readiness = paneReadiness({
       runtime: launch.consumerRuntime ?? null,
       appGeneration,
       paneId: String(paneId),
@@ -625,17 +660,18 @@ async function runTelegramAdmissionSequence(input = {}) {
       routeKey,
       updateId,
     });
-  } catch (err) {
-    return refuseHere('B_readiness', `pane_readiness_threw:${err.message}`);
+  } catch {
+    // A CONSTANT, NOT THE THROWN VALUE (Architect #84's rule, applied here too).
+    // `pane_readiness_threw:${err.message}` read a property off whatever the
+    // probe chose to throw, which is the same escape hatch closed elsewhere in
+    // this file.
+    return refuseHere('B_readiness', 'pane_readiness_threw');
   }
-  if (nodeTypes.isProxy(readinessReturn)) {
-    return refuseHere('B_readiness', 'pane_readiness_not_a_plain_record', { proxy: true });
-  }
-  let readiness;
-  try {
-    readiness = await readinessReturn;
-  } catch (err) {
-    return refuseHere('B_readiness', `pane_readiness_threw:${err.message}`);
+  if (nodeTypes.isPromise(readiness)) {
+    // An internal-slot check: it cannot be spoofed and it does not touch
+    // `.then`. A promise here means the probe is async in a contract that is
+    // not, and awaiting it is exactly what we just removed.
+    return refuseHere('B_readiness', 'pane_readiness_probe_not_synchronous', { promise: true });
   }
   // ONE COHERENT CONTRACT, BOUND TO THE LAUNCH-RECORDED RUNTIME. See
   // `evaluatePaneReadinessAnswer` for why an OR over two booleans was not a

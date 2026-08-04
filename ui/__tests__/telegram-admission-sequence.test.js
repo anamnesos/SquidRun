@@ -39,7 +39,10 @@ const {
   runTelegramAdmissionSequence,
   evaluatePaneReadinessAnswer,
 } = require('../modules/main/telegram-admission-sequence');
-const { PROOF_CAPABILITY_WINDOW_MS } = require('../modules/main/telegram-consumption-proof');
+const {
+  PROOF_CAPABILITY_WINDOW_MS,
+  probeRuntimeProofCapability,
+} = require('../modules/main/telegram-consumption-proof');
 
 const NOW = 1785860000000;
 const UPDATE_ID = 900000501;
@@ -819,6 +822,117 @@ describe('B_readiness — one coherent positive contract (Oracle #37)', () => {
     expect(result.detail).toMatchObject({ launchRuntime: 'codex', answeredRuntime: 'claude' });
     expect(result.ownedClaimId).toBeNull();
     expect(db.prepare('SELECT COUNT(*) AS n FROM telegram_transport_claims').get().n).toBe(0);
+  });
+});
+
+describe('B_readiness — the probe contract is synchronous (Architect #93)', () => {
+  test('THE PRODUCTION SHAPE STILL DELIVERS', () => {
+    // This is the real wiring from telegram-admission-delivery.js: a plain
+    // synchronous arrow over the synchronous probe. If the contract tightening
+    // broke this, it would have broken every real delivery.
+    const productionShapedProbe = ({ runtime }) => probeRuntimeProofCapability({
+      runtime,
+      receiptActivity: { codex: NOW - 1000 },
+      nowMs: NOW,
+    });
+    const answer = productionShapedProbe({ runtime: 'codex' });
+    expect(evaluatePaneReadinessAnswer({
+      answer, launchRuntime: 'codex', nowMs: NOW,
+    })).toMatchObject({ ok: true, runtime: 'codex' });
+  });
+
+  test('the production-shaped probe reaches D through the whole sequence', async () => {
+    const db = freshDb();
+    const result = await runSequence(db, {
+      paneReadiness: ({ runtime }) => probeRuntimeProofCapability({
+        runtime,
+        receiptActivity: { codex: NOW - 1000 },
+        nowMs: NOW,
+      }),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.stage).toBe('D_delivery_started');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM telegram_transport_claims').get().n).toBe(1);
+  });
+
+  test('an async or generator probe is refused WITHOUT being invoked', async () => {
+    const calls = { async: 0, generator: 0, asyncGenerator: 0, proxy: 0 };
+
+    const asyncResult = await runSequence(freshDb(), {
+      paneReadiness: async () => { calls.async += 1; return READY; },
+    });
+    expect(asyncResult.reason).toBe('pane_readiness_probe_not_synchronous');
+    expect(asyncResult.stage).toBe('B_readiness');
+
+    // eslint-disable-next-line require-yield
+    const genResult = await runSequence(freshDb(), {
+      paneReadiness: function* () { calls.generator += 1; return READY; },
+    });
+    expect(genResult.reason).toBe('pane_readiness_probe_not_synchronous');
+
+    // eslint-disable-next-line require-yield
+    const asyncGenResult = await runSequence(freshDb(), {
+      paneReadiness: async function* () { calls.asyncGenerator += 1; return READY; },
+    });
+    expect(asyncGenResult.reason).toBe('pane_readiness_probe_not_synchronous');
+
+    const proxiedResult = await runSequence(freshDb(), {
+      paneReadiness: new Proxy(() => READY, {
+        apply(t, thisArg, args) { calls.proxy += 1; return Reflect.apply(t, thisArg, args); },
+      }),
+    });
+    expect(proxiedResult.reason).toBe('pane_readiness_probe_not_synchronous');
+    expect(proxiedResult.detail).toMatchObject({ proxy: true });
+
+    // THE ASSERTION THAT MATTERS: none of them ran.
+    expect(calls).toEqual({ async: 0, generator: 0, asyncGenerator: 0, proxy: 0 });
+  });
+
+  test('an ordinary probe returning a promise is invoked once and never awaited', async () => {
+    // We cannot know what an ordinary function returns without calling it, so
+    // this one IS invoked - but the promise is refused on an internal-slot
+    // check that never touches `.then`.
+    let calls = 0;
+    let thenReads = 0;
+    const promise = Promise.resolve(READY);
+    Object.defineProperty(promise, 'then', {
+      get() { thenReads += 1; return Promise.prototype.then; },
+      configurable: true,
+    });
+    const result = await runSequence(freshDb(), {
+      paneReadiness: () => { calls += 1; return promise; },
+    });
+    expect(result.reason).toBe('pane_readiness_probe_not_synchronous');
+    expect(result.detail).toMatchObject({ promise: true });
+    expect(calls).toBe(1);
+    expect(thenReads).toBe(0);
+  });
+
+  test('a thrown value is refused by a constant, never by reading it', async () => {
+    const hostileThrow = {};
+    Object.defineProperty(hostileThrow, 'message', {
+      get() { throw new Error('message getter exploded'); },
+    });
+    const result = await runSequence(freshDb(), {
+      paneReadiness: () => { throw hostileThrow; },
+    });
+    expect(result.reason).toBe('pane_readiness_threw');
+    expect(result.stage).toBe('B_readiness');
+    expect(result.ownedClaimId).toBeNull();
+  });
+
+  test('a plain thenable answer is refused structurally, without calling then', async () => {
+    let thenCalls = 0;
+    const result = await runSequence(freshDb(), {
+      paneReadiness: () => ({
+        ...READY,
+        then(resolve) { thenCalls += 1; resolve(READY); },
+      }),
+    });
+    // A `then` key is simply a foreign field on a four-key record.
+    expect(result.reason).toBe('pane_readiness_shape_unexpected');
+    expect(result.detail.unexpected).toEqual(['then']);
+    expect(thenCalls).toBe(0);
   });
 });
 

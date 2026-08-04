@@ -1393,11 +1393,11 @@ describe('readiness is proven before anything is latched', () => {
       get: 0, ownKeys: 0, getOwnPropertyDescriptor: 0, getPrototypeOf: 0,
     });
 
-    // THE ONE CASE WHERE ZERO IS NOT REACHABLE, asserted rather than hidden.
-    // `await` reads `then` off a resolution value; that is the language's
-    // promise resolution procedure, not this code, and nothing here can stop
-    // it. A Proxy handed over inside a promise therefore sees exactly one
-    // `get('then')` - and is still refused, which is the part that matters.
+    // ZERO IS NOW REACHABLE ON EVERY PATH, because nothing is awaited at all
+    // (ARCH #93). A Proxy handed over inside a promise used to take one
+    // `get('then')` from the language's own resolution procedure; the async
+    // callback is refused before it is ever invoked, so its Proxy is never even
+    // constructed into the path.
     const promiseTraps = { get: 0, ownKeys: 0, getOwnPropertyDescriptor: 0, getPrototypeOf: 0 };
     const viaPromise = new Proxy({ ...GOOD_ANSWER }, {
       get(t, k) { promiseTraps.get += 1; return t[k]; },
@@ -1408,10 +1408,82 @@ describe('readiness is proven before anything is latched', () => {
       getPrototypeOf(t) { promiseTraps.getPrototypeOf += 1; return Reflect.getPrototypeOf(t); },
     });
     const { harness: promiseHarness } = await refusedBy(900000887, async () => viaPromise);
-    expect(promiseHarness.state.lastRefusal.reason).toBe('pane_readiness_not_a_plain_record');
+    expect(promiseHarness.state.lastRefusal.reason).toBe('pane_readiness_probe_not_synchronous');
     expect(promiseTraps).toEqual({
-      get: 1, ownKeys: 0, getOwnPropertyDescriptor: 0, getPrototypeOf: 0,
+      get: 0, ownKeys: 0, getOwnPropertyDescriptor: 0, getPrototypeOf: 0,
     });
+  });
+
+  test('ARCH #93: readiness is synchronous, and an async probe is never invoked', async () => {
+    // NOT INVOKED. The counter is the assertion: refusing after running an
+    // async callback would still have run it, and its promise would still have
+    // been awaited somewhere.
+    let asyncCalls = 0;
+    await refusedBy(900000888, async () => { asyncCalls += 1; return { ...GOOD_ANSWER }; });
+    expect(asyncCalls).toBe(0);
+
+    let generatorCalls = 0;
+    // eslint-disable-next-line require-yield
+    await refusedBy(900000889, function* () { generatorCalls += 1; return { ...GOOD_ANSWER }; });
+    expect(generatorCalls).toBe(0);
+
+    let asyncGenCalls = 0;
+    // eslint-disable-next-line require-yield
+    await refusedBy(900000890, async function* () { asyncGenCalls += 1; return { ...GOOD_ANSWER }; });
+    expect(asyncGenCalls).toBe(0);
+
+    // A PROXY CALLBACK is refused without its apply trap firing.
+    let applyCalls = 0;
+    const proxiedProbe = new Proxy(() => ({ ...GOOD_ANSWER }), {
+      apply(t, thisArg, args) { applyCalls += 1; return Reflect.apply(t, thisArg, args); },
+    });
+    await refusedBy(900000891, proxiedProbe);
+    expect(applyCalls).toBe(0);
+
+    // An ORDINARY callback that returns a promise IS invoked - we cannot know
+    // what it returns without calling it - but the promise is refused on an
+    // internal-slot check, never awaited.
+    let ordinaryCalls = 0;
+    const { harness } = await refusedBy(900000892, () => {
+      ordinaryCalls += 1;
+      return Promise.resolve({ ...GOOD_ANSWER });
+    });
+    expect(ordinaryCalls).toBe(1);
+    expect(harness.state.lastRefusal.reason).toBe('pane_readiness_probe_not_synchronous');
+  });
+
+  test('ARCH #93: a plain thenable is refused structurally, without calling then', async () => {
+    // `then` is a foreign field on a four-key record, so it never gets called.
+    // A thenable that resolved to a good answer would otherwise be able to
+    // substitute an entirely different value for the one the probe returned.
+    let thenCalls = 0;
+    await refusedBy(900000893, () => ({
+      ...GOOD_ANSWER,
+      then(resolve) { thenCalls += 1; resolve({ ...GOOD_ANSWER }); },
+    }));
+    expect(thenCalls).toBe(0);
+
+    // And as an ACCESSOR, which is the shape that would run on a mere read.
+    let thenGetterCalls = 0;
+    const withThenGetter = { ...GOOD_ANSWER };
+    Object.defineProperty(withThenGetter, 'then', {
+      get() { thenGetterCalls += 1; return undefined; },
+      enumerable: true,
+      configurable: true,
+    });
+    await refusedBy(900000894, () => withThenGetter);
+    expect(thenGetterCalls).toBe(0);
+  });
+
+  test('ARCH #93: a hostile thrown value gets a constant typed refusal', async () => {
+    // The refusal used to interpolate err.message, which is a property read on
+    // whatever the probe chose to throw.
+    const hostileThrow = {};
+    Object.defineProperty(hostileThrow, 'message', {
+      get() { throw new Error('message getter exploded'); },
+    });
+    const { harness } = await refusedBy(900000895, () => { throw hostileThrow; });
+    expect(harness.state.lastRefusal.reason).toBe('pane_readiness_threw');
   });
 
   test('ARCH #84: a hostile diagnostic value never gets a claim, and never escapes', async () => {
