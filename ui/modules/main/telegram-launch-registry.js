@@ -39,6 +39,11 @@
  * launch. That is the difference between an identity and a checksum.
  */
 const crypto = require('node:crypto');
+const {
+  TERMINAL_SCHEMA,
+  TERMINAL_EVENTS,
+  REQUIRED_FIELDS: ADMISSION_REQUIRED_FIELDS,
+} = require('./telegram-consumed-proof');
 
 const RECEIPT_SCHEMA = 'telegram_admission.v1';
 
@@ -155,8 +160,66 @@ function applyLaunchRegistrySchema(db) {
         record_json             TEXT    NOT NULL
       );
 
+      -- ===================================================================
+      -- THE TERMINAL RECEIPT. The only row in this database that may retire a
+      -- Telegram ingress record on the automatic path.
+      --
+      -- admission_id is UNIQUE and is the whole duplicate-suppression story:
+      -- one set of admitted bytes can be terminated exactly once, enforced by
+      -- the database rather than by whichever caller remembers to check. A hook
+      -- that fires twice for one turn collides here; a byte-identical replay is
+      -- recognised as a replay, and a conflicting second account quarantines
+      -- the route instead of overwriting the first.
+      --
+      -- THE TERMINAL HOOK'S OWN PROCESS IDENTITY IS SEPARATE, and deliberately
+      -- so. record_json carries the ADMISSION hook's process identity because
+      -- that is what the admitted evidence asserted; these two columns carry
+      -- the identity of the process that witnessed the turn end. Collapsing
+      -- them would let a terminal write describe itself using the admission's
+      -- credentials, which is the same borrowed-identity shape the record
+      -- fields exist to close.
+      -- ===================================================================
+      CREATE TABLE IF NOT EXISTS telegram_consumed_receipts (
+        consumed_id                    TEXT    PRIMARY KEY,
+        schema_name                    TEXT    NOT NULL CHECK (schema_name = 'telegram_consumed.v1'),
+        admission_id                   TEXT    NOT NULL UNIQUE
+                                         REFERENCES telegram_admission_receipts(admission_id),
+        source_row_id                  INTEGER NOT NULL REFERENCES comms_journal(row_id),
+        claim_id                       TEXT    NOT NULL REFERENCES telegram_transport_claims(claim_id),
+        launch_id                      TEXT    NOT NULL REFERENCES telegram_pane_launches(launch_id),
+        consumer_session_id            TEXT    NOT NULL
+                                         REFERENCES telegram_consumer_sessions(consumer_session_id),
+        pane_id                        TEXT    NOT NULL,
+        role                           TEXT    NOT NULL,
+        consumer_runtime               TEXT    NOT NULL,
+        app_generation                 TEXT    NOT NULL,
+        terminal_hook_process_id       TEXT    NOT NULL,
+        terminal_hook_parent_process_id TEXT   NOT NULL,
+        runtime_submission_id          TEXT    NOT NULL,
+        runtime_submission_kind        TEXT    NOT NULL CHECK (
+          runtime_submission_kind IN ('codex_turn', 'claude_prompt')
+        ),
+        terminal_event                 TEXT    NOT NULL CHECK (terminal_event IN ('turn_completed')),
+        update_id                      INTEGER NOT NULL,
+        message_id                     TEXT    NOT NULL,
+        route_key                      TEXT    NOT NULL,
+        window_key                     TEXT    NOT NULL,
+        profile                        TEXT    NOT NULL,
+        chat_id                        TEXT    NOT NULL,
+        queued_payload_sha256          TEXT    NOT NULL,
+        delivered_prompt_sha256        TEXT    NOT NULL,
+        delivered_prompt_bytes         INTEGER NOT NULL,
+        admitted_at_ms                 INTEGER NOT NULL,
+        terminal_at_ms                 INTEGER NOT NULL,
+        record_json                    TEXT    NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_tg_receipts_claim ON telegram_admission_receipts(claim_id);
       CREATE INDEX IF NOT EXISTS idx_tg_sessions_launch ON telegram_consumer_sessions(launch_id);
+      -- THE DRAIN'S LOOKUP KEY. It asks "is there terminal proof for THIS
+      -- message on THIS route", which is exactly this pair and nothing wider.
+      CREATE INDEX IF NOT EXISTS idx_tg_consumed_lookup
+        ON telegram_consumed_receipts(route_key, message_id);
 
       -- ===================================================================
       -- IDENTITY IMMUTABILITY AT THE DATABASE BOUNDARY.
@@ -204,6 +267,17 @@ function applyLaunchRegistrySchema(db) {
       CREATE TRIGGER IF NOT EXISTS trg_tg_receipt_no_delete
       BEFORE DELETE ON telegram_admission_receipts
       BEGIN SELECT RAISE(ABORT, 'telegram_admission_receipt_delete_forbidden'); END;
+
+      -- THE TERMINAL RECEIPT IS THE RETIREMENT AUTHORITY. If it can be edited,
+      -- then anything that can write to this database can retire any of James's
+      -- messages after the fact, and the validator would certify the edit.
+      CREATE TRIGGER IF NOT EXISTS trg_tg_consumed_immutable
+      BEFORE UPDATE ON telegram_consumed_receipts
+      BEGIN SELECT RAISE(ABORT, 'telegram_consumed_receipt_immutable'); END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_tg_consumed_no_delete
+      BEFORE DELETE ON telegram_consumed_receipts
+      BEGIN SELECT RAISE(ABORT, 'telegram_consumed_receipt_delete_forbidden'); END;
     `);
   } catch (err) {
     return fail('launch_registry_schema_failed', { message: err.message });
@@ -494,6 +568,213 @@ function loadAdmissionReceipt(db, admissionId) {
   return { ok: true, row, record, launch, session };
 }
 
+/**
+ * THE TERMINAL RECEIPT'S IDENTITY IS THE ADMISSION IT TERMINATES.
+ *
+ * Deliberately NOT keyed on the terminal timestamp. A hook that fires twice for
+ * one turn — a retry, a supervisor re-run, a duplicated Stop event — would
+ * otherwise mint two different ids for the same fact, and both would be equally
+ * valid rows describing one delivery. Keying on the admission plus the typed
+ * submission and the event kind makes the second write a COLLISION, which is
+ * the only place idempotency can be decided honestly.
+ */
+function deriveConsumedId(parts = {}) {
+  const joined = [
+    'telegram_consumed_receipt.v1',
+    parts.admissionId,
+    parts.runtimeSubmissionId,
+    parts.terminalEvent,
+  ]
+    .map((part) => {
+      const value = String(part ?? '');
+      return `${Buffer.byteLength(value, 'utf8')}:${value}`;
+    })
+    .join('|');
+  return `con_${crypto.createHash('sha256').update(joined, 'utf8').digest('hex')}`;
+}
+
+/**
+ * Store the terminal record for an admission whose turn has ended.
+ *
+ * WHAT THIS REFUSES, AND WHY EACH REFUSAL IS THE POINT:
+ *  - no admission row: a terminal record with nothing under it is an assertion
+ *    that some bytes were consumed, with no evidence that any bytes arrived;
+ *  - any shared field differing from the admission record: the terminal record
+ *    is a COPY, so a difference means one of the two is describing a different
+ *    delivery and there is no safe rule for choosing;
+ *  - a terminal hook whose parent process is not the runtime process that
+ *    admitted: a different process cannot witness this turn ending.
+ */
+function recordConsumedReceipt(db, input = {}) {
+  const record = input.record;
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return fail('consumed_record_missing');
+  }
+  if (record.schema !== TERMINAL_SCHEMA) {
+    return fail('consumed_wrong_schema', { schema: record.schema || null });
+  }
+  if (!TERMINAL_EVENTS.has(String(record.terminalEvent))) {
+    return fail('consumed_terminal_event_unrecognised', { event: record.terminalEvent || null });
+  }
+  for (const field of ['terminalHookProcessId', 'terminalHookParentProcessId']) {
+    if (!isNonEmptyString(String(input[field] ?? ''))) {
+      return fail(`consumed_field_missing:${field}`);
+    }
+  }
+  const terminalAtMs = Number(record.terminalAtMs);
+  if (!Number.isSafeInteger(terminalAtMs) || terminalAtMs <= 0) {
+    return fail('consumed_field_missing:terminalAtMs');
+  }
+
+  const loaded = loadAdmissionReceipt(db, record.admissionId);
+  if (!loaded.ok) return loaded;
+  const admission = loaded.record;
+
+  // FIELD-BY-FIELD AGAINST THE STORED ADMISSION RECORD. Driven by the schema's
+  // own field list so a field added to admission tomorrow is compared here
+  // automatically rather than silently exempted.
+  for (const field of ADMISSION_REQUIRED_FIELDS) {
+    if (field === 'schema' || field === 'proofClass') continue;
+    if (String(record[field] ?? '') !== String(admission[field] ?? '')) {
+      return fail('consumed_admission_field_mismatch', {
+        field,
+        admitted: admission[field] ?? null,
+        terminal: record[field] ?? null,
+      });
+    }
+  }
+  if (terminalAtMs < Number(loaded.row.admitted_at_ms)) {
+    return fail('consumed_predates_admission', {
+      admittedAtMs: loaded.row.admitted_at_ms, terminalAtMs,
+    });
+  }
+  // THE SAME RUNTIME PROCESS. The admission hook and the terminal hook are two
+  // short-lived processes, but both are spawned BY the runtime, so they share a
+  // parent. A terminal write from anywhere else is another process claiming to
+  // have watched this turn end.
+  if (String(input.terminalHookParentProcessId) !== String(loaded.row.hook_parent_process_id)) {
+    return fail('consumed_hook_parent_mismatch', {
+      admissionParent: loaded.row.hook_parent_process_id,
+      terminalParent: input.terminalHookParentProcessId,
+    });
+  }
+
+  const consumedId = deriveConsumedId({
+    admissionId: record.admissionId,
+    runtimeSubmissionId: loaded.row.runtime_submission_id,
+    terminalEvent: record.terminalEvent,
+  });
+
+  // THE ADMISSION-LEVEL CHECK RUNS FIRST, AND EXPLICITLY.
+  //
+  // The UNIQUE index on admission_id is the real backstop, but relying on it
+  // alone means the refusal arrives as a driver error MESSAGE — and this
+  // repository runs two SQLite drivers (node:sqlite for CLI, better-sqlite3
+  // inside Electron's Node 18). Deciding a safety invariant by substring-
+  // matching an exception text is a check that can quietly stop matching after
+  // a dependency bump, in the direction that retires a message twice. So the
+  // condition is asked as a query, and the index stays as the thing that is
+  // true even if this code is bypassed.
+  const priorForAdmission = db.prepare(
+    'SELECT consumed_id FROM telegram_consumed_receipts WHERE admission_id = ?'
+  ).get(record.admissionId);
+  if (priorForAdmission && String(priorForAdmission.consumed_id) !== consumedId) {
+    return fail('consumed_admission_already_terminated', {
+      admissionId: record.admissionId,
+      storedConsumedId: priorForAdmission.consumed_id,
+    });
+  }
+
+  const prior = db.prepare('SELECT * FROM telegram_consumed_receipts WHERE consumed_id = ?')
+    .get(consumedId);
+  if (prior) {
+    if (String(prior.record_json) === JSON.stringify(record)
+      && String(prior.admission_id) === String(record.admissionId)
+      && String(prior.terminal_hook_process_id) === String(input.terminalHookProcessId)
+      && String(prior.terminal_hook_parent_process_id) === String(input.terminalHookParentProcessId)) {
+      return { ok: true, consumedId, terminalAtMs: Number(prior.terminal_at_ms), replayed: true };
+    }
+    return fail('consumed_conflicting_duplicate_quarantine', {
+      consumedId, storedAdmissionId: prior.admission_id,
+    });
+  }
+
+  try {
+    db.prepare(`
+      INSERT INTO telegram_consumed_receipts (
+        consumed_id, schema_name, admission_id, source_row_id, claim_id, launch_id,
+        consumer_session_id, pane_id, role, consumer_runtime, app_generation,
+        terminal_hook_process_id, terminal_hook_parent_process_id,
+        runtime_submission_id, runtime_submission_kind, terminal_event,
+        update_id, message_id, route_key, window_key, profile, chat_id,
+        queued_payload_sha256, delivered_prompt_sha256, delivered_prompt_bytes,
+        admitted_at_ms, terminal_at_ms, record_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      consumedId, TERMINAL_SCHEMA, String(record.admissionId),
+      Number(loaded.row.source_row_id), String(loaded.row.claim_id),
+      String(loaded.row.launch_id), String(loaded.row.consumer_session_id),
+      String(loaded.row.pane_id), String(loaded.row.role),
+      String(loaded.row.consumer_runtime), String(loaded.row.app_generation),
+      String(input.terminalHookProcessId), String(input.terminalHookParentProcessId),
+      String(loaded.row.runtime_submission_id), String(loaded.row.runtime_submission_kind),
+      String(record.terminalEvent), Number(loaded.row.update_id),
+      String(loaded.row.message_id), String(loaded.row.route_key),
+      String(loaded.row.window_key), String(loaded.row.profile),
+      String(loaded.row.chat_id), String(loaded.row.queued_payload_sha256),
+      String(loaded.row.delivered_prompt_sha256), Number(loaded.row.delivered_prompt_bytes),
+      Number(loaded.row.admitted_at_ms), terminalAtMs, JSON.stringify(record)
+    );
+  } catch (err) {
+    // Reached only if the explicit check above was bypassed or raced. The
+    // message is REPORTED, never parsed for a verdict.
+    return fail('consumed_insert_failed', { message: err.message });
+  }
+  return { ok: true, consumedId, terminalAtMs };
+}
+
+/**
+ * THE DRAIN'S READ. Returns the stored terminal record VERBATIM, or a structural
+ * reason why there is none.
+ *
+ * It filters and it parses. It does not build, complete, or decorate: every
+ * identity field the caller will go on to compare must already be inside
+ * `record`, written by a consumer boundary that actually saw the bytes. That
+ * restriction is the whole difference between this and the lookup it replaces.
+ */
+function findConsumedReceipt(db, query = {}) {
+  const messageId = String(query.messageId ?? '').trim();
+  const routeKey = String(query.routeKey ?? '').trim();
+  if (!messageId) return fail('consumed_query_missing:messageId');
+  if (!routeKey) return fail('consumed_query_missing:routeKey');
+
+  let rows;
+  try {
+    rows = db.prepare(
+      'SELECT * FROM telegram_consumed_receipts WHERE message_id = ? AND route_key = ?'
+    ).all(messageId, routeKey);
+  } catch (err) {
+    return fail('consumed_query_failed', { message: err.message });
+  }
+  if (!rows || rows.length === 0) return fail('consumed_receipt_absent', { messageId, routeKey });
+  // MORE THAN ONE is ambiguity, and ambiguity is refusal. Two terminal records
+  // for one message on one route means two turns each claim to have consumed
+  // it, and picking either would be picking which account of James's message to
+  // believe.
+  if (rows.length > 1) {
+    return fail('consumed_receipt_ambiguous', { messageId, routeKey, count: rows.length });
+  }
+
+  let record = null;
+  try {
+    record = JSON.parse(rows[0].record_json);
+  } catch (err) {
+    return fail('consumed_receipt_unparsable', { message: err.message });
+  }
+  if (!record || typeof record !== 'object') return fail('consumed_receipt_unparsable');
+  return { ok: true, row: rows[0], record };
+}
+
 module.exports = {
   RECEIPT_SCHEMA,
   SUBMISSION_KINDS,
@@ -503,10 +784,13 @@ module.exports = {
   generateLaunchId,
   generateAdmissionId,
   deriveAdmissionId,
+  deriveConsumedId,
   applyLaunchRegistrySchema,
   recordPaneLaunch,
   completePaneLaunch,
   bindConsumerSession,
   recordAdmissionReceipt,
   loadAdmissionReceipt,
+  recordConsumedReceipt,
+  findConsumedReceipt,
 };

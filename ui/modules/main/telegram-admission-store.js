@@ -251,6 +251,19 @@ const REQUIRED_SCHEMA_SHAPE = Object.freeze([
   ['trg_tg_session_no_delete', 'telegram_consumer_session_delete_forbidden'],
   ['trg_tg_receipt_immutable', 'telegram_admission_receipt_immutable'],
   ['trg_tg_receipt_no_delete', 'telegram_admission_receipt_delete_forbidden'],
+  // THE TERMINAL TABLE. A build that predates it has an admission path and no
+  // retirement authority at all, which is exactly the state that wedged the
+  // live queue — so it must read as STALE here rather than as a database that
+  // simply has not been written to yet.
+  ['telegram_consumed_receipts', "schema_name = 'telegram_consumed.v1'"],
+  // The duplicate-suppression constraint itself, not merely the column. This
+  // table declares exactly one UNIQUE column, so its presence in the installed
+  // SQL is a true fingerprint for "one admission may be terminated once".
+  ['telegram_consumed_receipts', 'NOT NULL UNIQUE'],
+  ['telegram_consumed_receipts', 'terminal_hook_parent_process_id'],
+  ['telegram_consumed_receipts', "terminal_event IN ('turn_completed')"],
+  ['trg_tg_consumed_immutable', 'telegram_consumed_receipt_immutable'],
+  ['trg_tg_consumed_no_delete', 'telegram_consumed_receipt_delete_forbidden'],
 ]);
 
 /**
