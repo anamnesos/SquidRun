@@ -152,9 +152,11 @@ function classifyAttemptResolvability(attempt, currentGeneration) {
   //
   // The first version of this also called a missing generation, and an attempt
   // from a PRIOR generation, permanently unresolvable. Asserting it against the
-  // real evaluator proved both wrong: those shapes retire fine, so declaring
-  // them orphans would have stranded records that would otherwise drain - the
-  // mirror image of the bug this exists to fix.
+  // real evaluator proved that over-broad, so it was narrowed here - but note
+  // what changed underneath: an attempt with a time and NO generation is now
+  // refused by the proof gate as `attempt_generation_unknown`, so it does not
+  // "retire fine" any more. It is still not an ORPHAN, because a generation can
+  // be recorded; a missing timestamp can never be recovered.
   //
   // Only the missing timestamp is structural. `evaluateConsumptionProof`
   // returns `attempt_time_unknown` before it weighs any evidence, so no
@@ -342,6 +344,11 @@ function createDrainCoordinator(deps = {}) {
     // (6) Crash after downstream accept but before ack: the record is still
     // pending, but a receipt already exists for this exact messageId. Retire it
     // instead of injecting a second visible copy.
+    // READ THE DURABLE ATTEMPT FIRST. Everything below - the expected identity,
+    // the receipt lookup, the proof gate - has to be able to ask what the record
+    // was actually waiting for, and it cannot do that after the fact.
+    const attempt = attemptsRead.attempts.get(updateId) || null;
+
     const expectedIdentity = {
       messageId,
       routeKey,
@@ -350,10 +357,20 @@ function createDrainCoordinator(deps = {}) {
       // The STORED chat id, threaded through so a proof lookup can correlate
       // against the row it needs. Without it the replay check matches nothing.
       chatId: record.chatId ?? null,
-      // Which process generation is asking. A receipt written for an earlier
-      // generation's delivery of this same id must not retire a delivery this
-      // generation is still waiting on.
-      generation: sessionGeneration(),
+      // WHICH GENERATION THE DURABLE ATTEMPT IS WAITING ON - not which process
+      // happens to be asking.
+      //
+      // This used to be `sessionGeneration()`, built BEFORE the attempt was even
+      // read, so after a restart the exact-field comparison rejected generation
+      // G's own receipt against the current G+1 before any attempt-aware check
+      // could run. The one case that must survive a restart could not.
+      //
+      // Deriving it from the attempt keeps both halves honest: a G receipt
+      // answers a G attempt, and a G+1 receipt still cannot, because the
+      // comparison below is against the attempt's generation either way.
+      generation: (attempt && typeof attempt.generation === 'string' && attempt.generation.trim())
+        ? attempt.generation
+        : sessionGeneration(),
     };
     // DURABLE AMBIGUITY CHECK (Architect #80). An attempt recorded but never
     // resolved means we may already have shown this to the user.
@@ -368,7 +385,6 @@ function createDrainCoordinator(deps = {}) {
     // some correlated receipt exist" — which a stale receipt, or one from a
     // previous process generation, answers YES to. Readability was already
     // enforced above, before the disposition overlay.
-    const attempt = attemptsRead.attempts.get(updateId) || null;
 
     let existing = null;
     try {

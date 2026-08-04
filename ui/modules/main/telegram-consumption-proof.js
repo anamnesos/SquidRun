@@ -236,7 +236,14 @@ function evaluateConsumptionProof(input = {}) {
     // Both fall out of asking the process who it is instead of asking the
     // durable record what it was waiting for. The attempt names the delivery;
     // proof must answer THAT delivery.
-    if (isNonEmptyString(attempt.generation)) {
+    // FAIL CLOSED WHEN THE ATTEMPT CANNOT NAME ITS OWN GENERATION. Making this
+    // check conditional on the attempt HAVING one meant an attempt with a
+    // timestamp and no generation auto-proved: the guard skipped itself exactly
+    // where there was nothing to compare against.
+    if (!isNonEmptyString(attempt.generation)) {
+      return { proven: false, reason: 'attempt_generation_unknown' };
+    }
+    {
       if (!isNonEmptyString(evidence.generation)) {
         return { proven: false, reason: 'proof_generation_unknown' };
       }

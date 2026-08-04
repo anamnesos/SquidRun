@@ -204,7 +204,10 @@ describe('exact consumption proof', () => {
     const result = evaluateConsumptionProof({
       evidence: proof({ provedAtMs: NOW }),
       expected: identity(),
-      attempt: { atMs: NOW },
+      // The attempt now has to name its generation - the gate fails closed
+      // without one. This test is about the millisecond boundary, so it gets
+      // the same generation the identity helper uses and keeps its subject.
+      attempt: { atMs: NOW, generation: 'gen-a' },
     });
     expect(result.proven).toBe(true);
   });
@@ -251,7 +254,8 @@ describe('exact consumption proof', () => {
     const result = evaluateConsumptionProof({
       evidence: proof({ chatId: '6543210' }),
       expected: identity({ chatId: 6543210 }),
-      attempt: { atMs: NOW - 1000 },
+      // Same reason as above: this test is about chatId typing, not generation.
+      attempt: { atMs: NOW - 1000, generation: 'gen-a' },
     });
     expect(result.proven).toBe(true);
   });
