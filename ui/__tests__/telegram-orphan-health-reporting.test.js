@@ -53,6 +53,8 @@ function seed(base, updateIds) {
       targetProfile: 'main',
       targetWindow: 'main',
       targetSession: 'session-at-append',
+      producerAppGeneration: 'app-session-test',
+      producerSessionId: 'sess-test',
     });
     expect(res.ok).toBe(true);
     dir = res.dir;

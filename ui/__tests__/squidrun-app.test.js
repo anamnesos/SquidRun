@@ -14465,6 +14465,9 @@ describe('SquidRunApp', () => {
           metadata: { updateId, chatId: 1111111111 },
           targetProfile: 'main',
           targetWindow: 'main',
+          // v7 §1: the spool fails closed without a producer identity.
+          producerAppGeneration: 'app-session-test',
+          producerSessionId: 'sess-test',
         });
       }
 

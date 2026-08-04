@@ -15600,6 +15600,11 @@ class SquidRunApp {
             targetProfile: inboundRoute.profile || 'main',
             targetWindow: inboundWindowKey,
             targetSession: inboundSessionScopeId || null,
+            // v7 §1: the producer declares its protocol. The spool fails closed
+            // without these, so a build that cannot name its own generation
+            // never appends an anonymous legacy record (Architect #104).
+            producerAppGeneration: currentAppGeneration(),
+            producerSessionId: this.commsSessionScopeId || null,
           });
           if (!terminal.ok) {
             log.warn('Telegram', `Could not record empty-body update (${terminal.reason}); holding cursor`);
@@ -15645,6 +15650,11 @@ class SquidRunApp {
           targetProfile: inboundRoute.profile || 'main',
           targetWindow: inboundWindowKey,
           targetSession: inboundSessionScopeId || null,
+          // v7 §1: the producer declares its protocol. See the empty-body site
+          // above; both production appends stamp, and the spool refuses any
+          // append that cannot (Architect #104).
+          producerAppGeneration: currentAppGeneration(),
+          producerSessionId: this.commsSessionScopeId || null,
         });
         if (!spooled.ok) {
           log.warn(

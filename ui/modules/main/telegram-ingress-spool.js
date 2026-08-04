@@ -17,6 +17,7 @@
 
 const path = require('path');
 const queue = require('../telegram-inbound-durable-queue');
+const { buildSourceProtocolStamp } = require('./telegram-source-protocol');
 
 const SPOOL_SEGMENTS = ['.squidrun', 'runtime', 'telegram-inbound'];
 
@@ -78,6 +79,36 @@ function acceptInbound(input = {}, deps = {}) {
   const resolved = resolveSpoolDir(dataRoot, routeKey);
   if (!resolved.ok) return resolved;
 
+  // ===================================================================
+  // NO ANONYMOUS LEGACY APPEND, EVER AGAIN (Architect #104).
+  //
+  // My first draft wrote the record unstamped when the producer could not name
+  // itself, reasoning that losing James's message is worse than routing it down
+  // the legacy path. That reasoning is wrong under v7 and the correction is
+  // worth writing down, because it is not obvious:
+  //
+  // v7 §4 derives the stable legacy fence from the FINAL attempt/disposition
+  // journal fingerprints, taken once after legacy settlement. Those fingerprints
+  // then become a protocol invariant that G+1 must re-derive exactly. A NEW
+  // legacy record appended after that point changes the very files the fence is
+  // hashed from - so a single anonymous append invalidates the fence, disables
+  // both claim paths, and needs a human. "Preserve existing queued bytes by
+  // non-rewrite, not by allowing future anonymous legacy appends."
+  //
+  // So this fails CLOSED, before the append. The existing twelve records keep
+  // their bytes because nothing rewrites them, not because this door stayed
+  // open. A producer that cannot name its generation and session has a
+  // configuration defect, and the honest response is to refuse loudly at the
+  // door rather than to quietly manufacture a record no fence can survive.
+  // ===================================================================
+  const protocolStamp = buildSourceProtocolStamp({
+    appGeneration: input.producerAppGeneration,
+    sessionId: input.producerSessionId,
+  });
+  if (!protocolStamp) {
+    return { ok: false, reason: 'missing_producer_protocol_identity' };
+  }
+
   let result;
   try {
     result = append(resolved.dir, {
@@ -102,6 +133,20 @@ function acceptInbound(input = {}, deps = {}) {
       targetProfile: input.targetProfile ?? null,
       targetWindow: input.targetWindow ?? null,
       targetSession: input.targetSession ?? null,
+      // ===================================================================
+      // THE PRODUCER DECLARES THE PROTOCOL, HERE, ONCE (v7 §1).
+      //
+      // This is the only place an inbound record is created, which is why the
+      // stamp belongs here and nowhere else: a second stamping site is a second
+      // opinion about which protocol a message belongs to, and the whole point
+      // of §1 is that the answer is written down by the producer rather than
+      // inferred later by whoever happens to be reading.
+      //
+      // The stamp is guaranteed complete by the fail-closed gate above, so this
+      // record is always explicitly post-cutover. Nothing this build appends is
+      // ever legacy; legacy is only what was already on disk.
+      // ===================================================================
+      ...protocolStamp,
     });
   } catch (err) {
     return { ok: false, reason: `append_threw:${err.message}` };

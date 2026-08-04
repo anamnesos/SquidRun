@@ -54,6 +54,8 @@
  */
 const crypto = require('node:crypto');
 
+const { readStampedProtocol } = require('./telegram-source-protocol');
+
 /**
  * PHASE 1 OF TWO. This schema records ADMISSION, not consumption, and the name
  * is load-bearing.
@@ -198,7 +200,7 @@ function mediaIdentity(media) {
  * are the message.
  */
 function canonicalQueuedPayloadDigest(record = {}) {
-  const canonical = JSON.stringify({
+  const payload = {
     v: 2,
     updateId: Number(record.updateId),
     updateKind: record.updateKind ?? null,
@@ -215,8 +217,39 @@ function canonicalQueuedPayloadDigest(record = {}) {
     photo: mediaIdentity(record.photo),
     video: mediaIdentity(record.video),
     document: mediaIdentity(record.document),
-  });
-  return sha256(canonical);
+  };
+
+  // ===================================================================
+  // THE POST-CUTOVER TUPLE IS COVERED, AND LEGACY RECORDS DO NOT MOVE (v7 §1).
+  //
+  // v7 requires the canonical source digest to cover the new protocol fields,
+  // because an unstamped digest would let a record's transport identity change
+  // without its digest changing - and that digest is what the decision, plan and
+  // proof tables all join on.
+  //
+  // But it ALSO requires that "existing records 808499316..808499327 stay legacy
+  // byte-for-byte". Those two together mean the new fields cannot simply be
+  // added to the v2 object: doing that would emit four extra nulls for every
+  // record in the live queue and change all twelve digests, which is the live
+  // fence this repair is under orders not to touch.
+  //
+  // So the shape is versioned by CONTENT, not by build. A record with no
+  // complete stamp hashes exactly the v2 bytes it hashes today - same key order,
+  // same values, same digest - and a stamped record gets the v3 shape that
+  // covers its tuple. There is a test pinning a live-shaped legacy record to its
+  // literal digest so this can never drift silently.
+  // ===================================================================
+  const stamped = readStampedProtocol(record);
+  if (!stamped) return sha256(JSON.stringify(payload));
+
+  return sha256(JSON.stringify({
+    ...payload,
+    v: 3,
+    transportProtocol: stamped.transportProtocol,
+    decisionCutoverId: stamped.decisionCutoverId,
+    producerAppGeneration: stamped.producerAppGeneration,
+    producerSessionId: stamped.producerSessionId,
+  }));
 }
 
 function isNonEmptyString(value) {

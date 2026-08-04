@@ -49,6 +49,8 @@ function seed(base, routeKey, updateIds, extra = {}) {
       targetProfile: routeKey,
       targetWindow: routeKey === 'main' ? 'main' : routeKey,
       targetSession: 'session-at-append',
+      producerAppGeneration: 'app-session-test',
+      producerSessionId: 'sess-test',
       ...extra,
     });
     expect(res.ok).toBe(true);

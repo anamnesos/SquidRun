@@ -39,6 +39,17 @@ function serviceWith(onMessage, worker) {
   return svc;
 }
 
+/**
+ * v7 §1: the spool fails closed without a producer identity, so every append in
+ * this file has to say who wrote the record. Spread explicitly at each call site
+ * rather than injected by a wrapper - a shim that silently stamped everything
+ * would also hide the one test that proves the refusal.
+ */
+const PRODUCER = Object.freeze({
+  producerAppGeneration: 'app-session-test',
+  producerSessionId: 'sess-test',
+});
+
 const META = {
   updateId: 900,
   chatId: 123456,
@@ -84,6 +95,7 @@ test('MISSING BASE OR UNSAFE ROUTE: writes nowhere and reports a reason', () => 
 test('FULL PAYLOAD ROUND-TRIP: everything a later drain needs survives the journal', () => {
   const base = tempRoot();
   const res = spool.acceptInbound({
+    ...PRODUCER,
     dataRoot: base,
     routeKey: 'main',
     text: 'hello there',
@@ -118,13 +130,13 @@ test('FULL PAYLOAD ROUND-TRIP: everything a later drain needs survives the journ
 test('APPEND FAILURE IS NOT ACCEPTANCE: reported by return value, not a throw', () => {
   const base = tempRoot();
   const res = spool.acceptInbound(
-    { dataRoot: base, routeKey: 'main', text: 'x', metadata: META },
+    { dataRoot: base, routeKey: 'main', text: 'x', metadata: META, ...PRODUCER },
     { append: () => ({ ok: false, reason: 'disk_full' }) }
   );
   expect(res).toEqual({ ok: false, reason: 'disk_full' });
 
   const thrown = spool.acceptInbound(
-    { dataRoot: base, routeKey: 'main', text: 'x', metadata: META },
+    { dataRoot: base, routeKey: 'main', text: 'x', metadata: META, ...PRODUCER },
     { append: () => { throw new Error('EIO'); } }
   );
   expect(thrown.ok).toBe(false);
@@ -133,9 +145,9 @@ test('APPEND FAILURE IS NOT ACCEPTANCE: reported by return value, not a throw', 
 
 test('ACK-LOSS REPLAY: the same updateId dedupes instead of double-spooling', () => {
   const base = tempRoot();
-  const first = spool.acceptInbound({ dataRoot: base, routeKey: 'main', text: 'once', metadata: META });
+  const first = spool.acceptInbound({ dataRoot: base, routeKey: 'main', text: 'once', metadata: META, ...PRODUCER });
   // Parent appended, then the ack never arrived; Telegram replays the update.
-  const replay = spool.acceptInbound({ dataRoot: base, routeKey: 'main', text: 'once', metadata: META });
+  const replay = spool.acceptInbound({ dataRoot: base, routeKey: 'main', text: 'once', metadata: META, ...PRODUCER });
   expect(first).toMatchObject({ ok: true, durable: true, deduped: false });
   expect(replay).toMatchObject({ ok: true, durable: true, deduped: true });
   expect(queue.readPending(first.dir)).toHaveLength(1);
@@ -236,7 +248,7 @@ test('TWO UPDATES SERIALIZE: N is spooled and acked before N+1', async () => {
   const order = [];
   const svc = serviceWith(async (text, from, meta) => {
     order.push(`append:${meta.updateId}`);
-    const r = spool.acceptInbound({ dataRoot: base, routeKey: 'main', text, from, metadata: meta });
+    const r = spool.acceptInbound({ dataRoot: base, routeKey: 'main', text, from, metadata: meta, ...PRODUCER });
     return r.ok ? { ok: true, durable: true, updateId: r.updateId } : { ok: false, reason: r.reason };
   }, worker);
 
@@ -277,7 +289,7 @@ test('RELATIVE BASE WRITES NOWHERE: cwd must never stand in for the owner root',
 test('RAW METADATA ROUND-TRIP: the complete object is persisted, not just picked fields', () => {
   const base = tempRoot();
   const meta = { ...META, someFutureField: { nested: true } };
-  const res = spool.acceptInbound({ dataRoot: base, routeKey: 'main', text: 'x', from: 'j', metadata: meta });
+  const res = spool.acceptInbound({ dataRoot: base, routeKey: 'main', text: 'x', from: 'j', metadata: meta, ...PRODUCER });
   const [rec] = queue.readPending(res.dir);
   expect(rec.rawMetadata).toEqual(meta);
   expect(rec.rawMetadata.someFutureField).toEqual({ nested: true });
@@ -286,7 +298,7 @@ test('RAW METADATA ROUND-TRIP: the complete object is persisted, not just picked
 test('TERMINAL DISPOSITION persists so a drain can tell a poison update from a pending one', () => {
   const base = tempRoot();
   const res = spool.acceptInbound({
-    dataRoot: base, routeKey: 'main', text: '', from: 'j', metadata: META,
+    dataRoot: base, routeKey: 'main', text: '', from: 'j', metadata: META, ...PRODUCER,
     terminalDisposition: 'empty_body',
   });
   expect(res.ok).toBe(true);

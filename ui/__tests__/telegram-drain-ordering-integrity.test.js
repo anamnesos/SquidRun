@@ -60,6 +60,10 @@ function seedIncident(base, updates = INCIDENT) {
       targetProfile: 'main',
       targetWindow: 'main',
       targetSession: 'session-at-append',
+      // v7 §1: the spool fails closed without a producer identity, so every
+      // append site has to say who wrote the record.
+      producerAppGeneration: 'app-session-test',
+      producerSessionId: 'sess-test',
     });
     expect(res.ok).toBe(true);
     dir = res.dir;
