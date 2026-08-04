@@ -555,13 +555,84 @@ const scopedRootEnvKeys = [
 ];
 let scopedProfileRoot = null;
 
+/**
+ * THE ADMISSION KERNEL IS NOW ON THE MAIN TELEGRAM PATH, so every test that
+ * delivers an inbound Telegram message needs the two things production needs:
+ * an isolated durable ledger, and a REAL pane launch bound to the live app
+ * generation. Without the launch, `claimTransportAttempt` has nothing to name
+ * and the delivery correctly refuses — which is the new production behaviour,
+ * not a test artefact.
+ *
+ * The temp path is exported through `SQUIDRUN_ADMISSION_DB_PATH` because the
+ * app is constructed in 142 places in this file; an env-scoped ledger is one
+ * line here instead of 142 injections, and it is what guarantees no test can
+ * reach the live evidence ledger.
+ */
+let admissionLedgerRoot = null;
+
+function seedAdmissionLedgerForApp() {
+  admissionLedgerRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sq-admission-'));
+  process.env.SQUIDRUN_ADMISSION_DB_PATH = path.join(admissionLedgerRoot, 'ledger.db');
+}
+
+/**
+ * Bind a pane launch to the generation that is live RIGHT NOW.
+ *
+ * Called AFTER the app is constructed, because the constructor publishes a
+ * fresh `app-<pid>-<ms>` generation and the claim joins on exactly that value.
+ * Seeding earlier binds a launch to a generation no delivery will ever name —
+ * which is the same producer/consumer seam defect this whole lane exists to
+ * close, reproduced in a fixture.
+ */
+function seedPaneLaunchForCurrentGeneration() {
+  const { applyTelegramAdmissionSchema } = require('../modules/main/telegram-admission-store');
+  const {
+    generateLaunchId, recordPaneLaunch, bindConsumerSession, completePaneLaunch,
+  } = require('../modules/main/telegram-launch-registry');
+  const { TelegramAdmissionWriter } = require('../modules/main/telegram-admission-writer');
+  const { currentAppGeneration } = require('../modules/main/app-generation');
+
+  const writer = new TelegramAdmissionWriter({ dbPath: process.env.SQUIDRUN_ADMISSION_DB_PATH });
+  const opened = writer.open();
+  if (!opened.ok) throw new Error(`admission writer open failed: ${JSON.stringify(opened)}`);
+  try {
+    applyTelegramAdmissionSchema(writer.db);
+    const launchId = generateLaunchId();
+    recordPaneLaunch(writer.db, {
+      launchId,
+      appGeneration: currentAppGeneration(),
+      paneId: '1',
+      role: 'architect',
+      consumerRuntime: 'codex',
+      daemonProcessId: String(process.pid),
+      launchedAtMs: Date.now() - 5000,
+    });
+    bindConsumerSession(writer.db, {
+      consumerSessionId: `sess-${launchId}`,
+      launchId,
+      consumerRuntime: 'codex',
+      boundAtMs: Date.now() - 4000,
+    });
+    completePaneLaunch(writer.db, { launchId, atMs: Date.now() - 3500 });
+    return launchId;
+  } finally {
+    writer.close();
+  }
+}
+
 beforeEach(() => {
   freshTelegramSpoolRoot();
+  seedAdmissionLedgerForApp();
   scopedProfileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sq-scoped-root-'));
   for (const key of scopedRootEnvKeys) process.env[key] = scopedProfileRoot;
 });
 
 afterEach(() => {
+  delete process.env.SQUIDRUN_ADMISSION_DB_PATH;
+  if (admissionLedgerRoot) {
+    fs.rmSync(admissionLedgerRoot, { recursive: true, force: true });
+    admissionLedgerRoot = null;
+  }
   for (const key of scopedRootEnvKeys) delete process.env[key];
   if (scopedProfileRoot) {
     fs.rmSync(scopedProfileRoot, { recursive: true, force: true });
@@ -7188,6 +7259,9 @@ describe('SquidRunApp', () => {
       triggers.sendDirectMessage.mockReset();
       triggers.sendDirectMessage.mockReturnValue({ success: true });
       app = new SquidRunApp(mockAppContext, mockManagers);
+      // AFTER construction: the constructor publishes this process's app
+      // generation, and the transport claim joins on exactly that value.
+      seedPaneLaunchForCurrentGeneration();
       forceTriggerDeliveryPath(app);
     });
 
@@ -7599,7 +7673,9 @@ describe('SquidRunApp', () => {
       await new Promise((resolve) => setImmediate(resolve));
       expect(sendMiraLivePrompt).not.toHaveBeenCalled();
       expect(deliverySpy).toHaveBeenCalledWith(
-        '[Telegram from james]: /task build passed',
+        // The pane receives the DECORATED, MARKED bytes; the message is a substring
+        // of them, and the marker being absent would itself be the defect.
+        expect.stringContaining('[Telegram from james]: /task build passed'),
         expect.objectContaining({
           paneId: '1',
           role: 'architect',
@@ -7701,7 +7777,9 @@ describe('SquidRunApp', () => {
         expect(sendMiraLivePrompt).not.toHaveBeenCalled();
         expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
         expect(deliverySpy).toHaveBeenCalledWith(
-          '[Telegram from james]: main hello',
+          // The pane receives the DECORATED, MARKED bytes; the message is a substring
+          // of them, and the marker being absent would itself be the defect.
+          expect.stringContaining('[Telegram from james]: main hello'),
           expect.objectContaining({
             paneId: '1',
             role: 'architect',
@@ -8372,7 +8450,9 @@ describe('SquidRunApp', () => {
       expect(sendMiraLivePrompt).not.toHaveBeenCalled();
       expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
       expect(deliverySpy).toHaveBeenCalledWith(
-        '[Telegram from james]: /task fix the route',
+        // The pane receives the DECORATED, MARKED bytes; the message is a substring
+        // of them, and the marker being absent would itself be the defect.
+        expect.stringContaining('[Telegram from james]: /task fix the route'),
         expect.objectContaining({
           paneId: '1',
           role: 'architect',
@@ -8404,7 +8484,9 @@ describe('SquidRunApp', () => {
       expect(sendMiraLivePrompt).not.toHaveBeenCalled();
       expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
       expect(deliverySpy).toHaveBeenCalledWith(
-        '[Telegram from james]: (ARCHITECT #1): route Builder this check',
+        // The pane receives the DECORATED, MARKED bytes; the message is a substring
+        // of them, and the marker being absent would itself be the defect.
+        expect.stringContaining('[Telegram from james]: (ARCHITECT #1): route Builder this check'),
         expect.objectContaining({
           paneId: '1',
           role: 'architect',
@@ -9027,7 +9109,9 @@ describe('SquidRunApp', () => {
 
       await new Promise((resolve) => setImmediate(resolve));
       expect(deliverySpy).toHaveBeenCalledWith(
-        '[Telegram from @VideoSender]: [Video received] | saved: D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\video-556.mp4',
+        // The pane receives the DECORATED, MARKED bytes; the message is a substring
+        // of them, and the marker being absent would itself be the defect.
+        expect.stringContaining('[Telegram from @VideoSender]: [Video received] | saved: D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\video-556.mp4'),
         expect.objectContaining({
           paneId: '1',
           role: 'architect',
@@ -12869,7 +12953,77 @@ describe('SquidRunApp', () => {
     let app;
     beforeEach(() => {
       app = new SquidRunApp(mockAppContext, mockManagers);
+      seedPaneLaunchForCurrentGeneration();
       freshTelegramSpoolRoot();
+    });
+
+    it('PRODUCTION SEAM: the canonical digest is the QUEUE RECORD, not an empty object', async () => {
+      // The near-miss this exists for: `buildTelegramInboundJob` did not carry
+      // `record` through, so `canonicalQueuedPayloadDigest` hashed `{}`. That
+      // fails SILENTLY and identically for every message ever sent — the marker
+      // still parses, the claim still commits, and the identity proves nothing.
+      // Unit fixtures cannot catch it because they pass the record directly.
+      const {
+        canonicalQueuedPayloadDigest,
+      } = require('../modules/main/telegram-consumed-proof');
+      const { TelegramAdmissionWriter } = require('../modules/main/telegram-admission-writer');
+      const { parseConsumeMarker } = require('../modules/main/telegram-consume-marker');
+
+      const record = {
+        updateId: 808499999,
+        text: 'the tankless job, not the other one',
+        chatId: REDACTED,
+        from: 'james',
+        messageId: 24001,
+        routeKey: 'main',
+        targetProfile: 'main',
+        targetWindow: 'main',
+        timestampMs: Date.now(),
+        rawMetadata: { chatId: REDACTED, updateId: 808499999 },
+      };
+
+      let deliveredText = null;
+      jest.spyOn(app, 'deliverHumanMessageWithRecall').mockImplementation(async (message) => {
+        deliveredText = message;
+        return { accepted: true, verified: true, userVisible: true };
+      });
+
+      const built = app.buildTelegramInboundJob({
+        record,
+        messageId: 'telegram-in-808499999',
+        updateId: 808499999,
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-session-492',
+      });
+      // The builder must carry the record; everything below depends on it.
+      expect(built.record).toBe(record);
+
+      await app.deliverTelegramInboundJob(built);
+
+      const expectedDigest = canonicalQueuedPayloadDigest(record);
+      const emptyDigest = canonicalQueuedPayloadDigest({});
+      expect(expectedDigest).not.toBe(emptyDigest);
+
+      const writer = new TelegramAdmissionWriter({
+        dbPath: process.env.SQUIDRUN_ADMISSION_DB_PATH,
+      });
+      expect(writer.open().ok).toBe(true);
+      try {
+        const identity = writer.db
+          .prepare('SELECT * FROM telegram_source_identity WHERE message_id = ?')
+          .get('telegram-in-808499999');
+        expect(identity).toBeTruthy();
+        expect(identity.canonical_payload_sha256).toBe(expectedDigest);
+        expect(identity.canonical_payload_sha256).not.toBe(emptyDigest);
+      } finally {
+        writer.close();
+      }
+
+      // And the SAME digest is what the consumer is asked to echo.
+      const marker = parseConsumeMarker(deliveredText);
+      expect(marker).not.toBeNull();
+      expect(marker.queuedPayloadSha256).toBe(expectedDigest);
     });
 
     it('performFullShutdown quiesces the drain BEFORE killing the daemon', async () => {

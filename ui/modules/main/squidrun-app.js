@@ -47,6 +47,7 @@ const { createKernelBridge } = require('./kernel-bridge');
 const telegramIngressSpool = require('./telegram-ingress-spool');
 const telegramIngressDrain = require('./telegram-ingress-drain');
 const telegramDrainWiring = require('./telegram-drain-wiring');
+const telegramAdmissionDelivery = require('./telegram-admission-delivery');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
 const { emitWindowVisibilityState } = require('./window-visibility-state');
@@ -62,7 +63,7 @@ const {
   rootContainsPath,
   normalizeToPosixPath,
 } = require('./squidrun-root-paths');
-const { publishAppGeneration } = require('./app-generation'); // every scope assignment publishes
+const { publishAppGeneration, currentAppGeneration } = require('./app-generation'); // every scope assignment publishes
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const TELEGRAM_PENDING_REPLAY_GRACE_MS = 10 * 60 * 1000;
 const ROOT_COHERENCE_MARKER_RELPATH = path.join('runtime', 'root-coherence-assert.jsonl');
@@ -14521,7 +14522,13 @@ class SquidRunApp {
     };
   }
 
-  async deliverHumanMessageWithRecall(message, recallContext = {}, logLabel = 'HumanMessage') {
+  /**
+   * COMPOSE THE EXACT BYTES A PANE WILL RECEIVE — and stop there. Split out
+   * because the admission kernel must hash what is really delivered: recall and
+   * the reply-target guard run AFTER the caller's message, so a digest taken
+   * before this point describes a string no consumer ever sees.
+   */
+  async composeHumanPaneMessage(message, recallContext = {}, logLabel = 'HumanMessage') {
     const messageWithRecall = await this.buildHumanMessageWithUnifiedRecall(message, recallContext, logLabel);
     const meta = {
       ...((recallContext.meta && typeof recallContext.meta === 'object') ? recallContext.meta : {}),
@@ -14544,6 +14551,16 @@ class SquidRunApp {
     if (isTelegramInbound) {
       this.applyTelegramReplyTargetMetadata(meta, recallContext);
     }
+    return { outboundMessage, meta, channel, isTelegramInbound };
+  }
+
+  /**
+   * Write ONE composed message to its pane. `composed.outboundMessage` is
+   * authoritative and is never re-decorated: on the Telegram path those bytes
+   * are already hashed into a durable `delivery_started`.
+   */
+  async deliverComposedHumanMessage(composed = {}, recallContext = {}, logLabel = 'HumanMessage') {
+    const { outboundMessage, meta = {}, channel = 'user', isTelegramInbound = false } = composed;
     const result = await this.deliverPaneMessageReliably({
       paneId: String(recallContext.paneId || '1'),
       message: outboundMessage,
@@ -14585,6 +14602,19 @@ class SquidRunApp {
       log.warn(logLabel, `Failed to inject inbound message into pane ${recallContext.paneId || '1'} (${result?.error || 'unknown'})`);
     }
     return result;
+  }
+
+  /**
+   * Compose then deliver. Unchanged for every non-Telegram caller.
+   * `recallContext.preComposed` is the admitted path: composition already
+   * happened inside the admission sequence and `message` is the exact string
+   * hashed into `delivery_started`, so recomposing would decorate it twice.
+   */
+  async deliverHumanMessageWithRecall(message, recallContext = {}, logLabel = 'HumanMessage') {
+    const composed = recallContext.preComposed
+      ? { ...recallContext.preComposed, outboundMessage: String(message) }
+      : await this.composeHumanPaneMessage(message, recallContext, logLabel);
+    return this.deliverComposedHumanMessage(composed, recallContext, logLabel);
   }
 
   startSmsPoller() {
@@ -14657,6 +14687,11 @@ class SquidRunApp {
     }
   }
 
+  /** Run the admission kernel for one inbound job on a durable handle. */
+  async runTelegramAdmissionForJob(options = {}) {
+    return telegramAdmissionDelivery.runAdmissionForJob(this, options);
+  }
+
   /**
    * Deliver one inbound Telegram job to its pane. Called ONLY by the drain
    * coordinator, never straight from the poller callback: the callback now
@@ -14691,62 +14726,11 @@ class SquidRunApp {
         body,
       });
     }
-    void Promise.resolve(executeEvidenceLedgerOperation(
-      'upsert-comms-journal',
-      {
-        messageId: inboundMessageId,
-        sessionId: inboundSessionScopeId || null,
-        senderRole: 'user',
-        targetRole: 'architect',
-        channel: 'telegram',
-        direction: 'inbound',
-        sentAtMs,
-        brokeredAtMs: Date.now(),
-        rawBody: body,
-        status: 'brokered',
-        attempt: 1,
-        metadata: {
-          source: 'telegram-poller',
-          from: sender,
-          updateId,
-          telegramMessageId: messageId,
-          chatId: Number.isFinite(Number(metadata?.chatId))
-            ? Number(metadata.chatId)
-            : null,
-          windowKey: inboundWindowKey,
-          profile: inboundRoute.profile || inboundWindowKey,
-          sessionScopeId: inboundSessionScopeId,
-          mediaKind: typeof media?.kind === 'string' ? media.kind : null,
-          telegramMediaKind: typeof media?.telegramKind === 'string' ? media.telegramKind : null,
-          telegramFileId: typeof media?.fileId === 'string' ? media.fileId : null,
-          telegramFilePath: typeof media?.telegramFilePath === 'string' ? media.telegramFilePath : null,
-          mediaMimeType: typeof media?.mimeType === 'string' ? media.mimeType : null,
-          mediaFileName: typeof media?.fileName === 'string' ? media.fileName : null,
-          mediaDuration: Number.isFinite(Number(media?.duration)) ? Number(media.duration) : null,
-          mediaWidth: Number.isFinite(Number(media?.width)) ? Number(media.width) : null,
-          mediaHeight: Number.isFinite(Number(media?.height)) ? Number(media.height) : null,
-          downloadedFilePath: archivePath,
-          latestScreenshotPath: typeof media?.latestScreenshotPath === 'string'
-            ? media.latestScreenshotPath
-            : null,
-        },
-      },
-      {
-        source: {
-          via: 'telegram-poller',
-          role: 'system',
-          paneId: 'system',
-        },
-      }
-    )).then((result) => {
-      if (result?.ok === false) {
-        log.warn('EvidenceLedger', `Telegram inbound journal upsert failed: ${result.reason || 'unknown'}`);
-      } else {
-        log.info('Telegram', `Telegram inbound journaled as ${inboundMessageId}`);
-      }
-    }).catch((err) => {
-      log.warn('EvidenceLedger', `Telegram inbound journal upsert error: ${err.message}`);
-    });
+    // THE GENERIC COMMS UPSERT THAT USED TO LIVE HERE IS GONE, ON PURPOSE: a
+    // second, unawaited writer of `telegram-in-<updateId>` that could rewrite
+    // body, session, identity and metadata. Generic-first stranded every source
+    // as `source_identity_missing`; generic-second overwrote the identity the
+    // claim was joined to. The kernel is sole owner now.
     const formattedBody = archivePath ? `${body} | saved: ${archivePath}` : body;
     const fullTelegramMessage = `[Telegram from ${sender}]: ${formattedBody}`;
     const telegramMsgBytes = Buffer.byteLength(fullTelegramMessage, 'utf8');
@@ -14757,7 +14741,19 @@ class SquidRunApp {
     const safeMessage = telegramMsgBytes > TELEGRAM_MSG_SIZE_LIMIT
       ? fullTelegramMessage.slice(0, TELEGRAM_MSG_SIZE_LIMIT) + '\n[...truncated — full text in evidence ledger]'
       : fullTelegramMessage;
+    const admissionJob = telegramAdmissionDelivery.buildAdmissionJob(job, deliveryIdentity);
+    const admissionRecord = job.record || {};
+
     if (inboundWindowKey !== 'main') {
+      // Source-only admission: see telegram-admission-delivery.js for why a
+      // scoped route may not claim a transport attempt.
+      const scopedAdmission = await telegramAdmissionDelivery.admitScopedTelegramSource(this, {
+        job: admissionJob, record: admissionRecord, inboundMessageId, log,
+      });
+      if (!scopedAdmission.ok) {
+        return { ...scopedAdmission.refusal, ...deliveryIdentity };
+      }
+
       // ONE delivery promise, ONE result. The old shape fired this off with
       // `void ... .then()` and returned immediately, which meant the caller was
       // told "delivered" before anything had happened. A coordinator cannot
@@ -14815,17 +14811,17 @@ class SquidRunApp {
       },
       header: 'MESSAGE RECALL',
     };
-    const deliverMainTelegramToArchitect = async () => {
-      try {
-        return await this.deliverHumanMessageWithRecall(
-          safeMessage,
-          mainPaneRecallContext,
-          'Telegram'
-        );
-      } catch (err) {
-        return { ok: false, status: 'main_pane_runtime_error', error: err.message };
-      }
-    };
+    // Admission-then-one-write. The whole sequence, including composition of
+    // the exact bytes, lives in telegram-admission-delivery.js.
+    const deliverMainTelegramToArchitect = async () => telegramAdmissionDelivery
+      .deliverAdmittedMainTelegram(this, {
+        safeMessage,
+        recallContext: mainPaneRecallContext,
+        job: admissionJob,
+        record: admissionRecord,
+        inboundMessageId,
+        log,
+      });
 
     if (this.shouldRouteMainTelegramInboundToMira({
       body,
@@ -15171,6 +15167,11 @@ class SquidRunApp {
       inboundSessionScopeId: job.sessionScopeId || null,
       inboundMessageId: job.messageId,
       updateId: job.updateId,
+      // THE DURABLE QUEUE RECORD ITSELF. The canonical payload digest is
+      // computed from it and echoed back by the consumer. Dropping it does not
+      // fail loudly: `canonicalQueuedPayloadDigest({})` is a valid hash, the
+      // same one for every message ever sent, agreeing with itself forever.
+      record,
       messageId: record.messageId ?? null,
       sentAtMs: Number.isFinite(Number(record.timestampMs))
         ? Math.floor(Number(record.timestampMs))

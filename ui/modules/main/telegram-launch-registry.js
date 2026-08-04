@@ -350,6 +350,73 @@ function completePaneLaunch(db, input = {}) {
 }
 
 /**
+ * THE LAUNCH A DELIVERY IS ABOUT TO BE AIMED AT.
+ *
+ * `recordPaneLaunch` writes the row at spawn and hands the id to the PANE
+ * through its environment. The main process never kept a copy, so the side that
+ * decides to deliver could not name the launch it was delivering to — and a
+ * claim that cannot name a launch can never be joined to the receipt that comes
+ * back from it. This closes that half.
+ *
+ * SCOPED TO THIS GENERATION ON PURPOSE. A launch from a previous app generation
+ * belongs to a process that no longer exists; delivering against it would
+ * produce a claim whose receipt can never arrive.
+ *
+ * AMBIGUITY REFUSES. If two launches for the same pane are live in one
+ * generation, there is no defensible way to pick one — the wrong pick sends a
+ * message toward a dead pane and holds the queue behind it. Say so instead.
+ */
+function findActivePaneLaunch(db, query = {}) {
+  const appGeneration = String(query.appGeneration ?? '').trim();
+  const paneId = String(query.paneId ?? '').trim();
+  if (!appGeneration) return fail('launch_query_missing:appGeneration');
+  if (!paneId) return fail('launch_query_missing:paneId');
+
+  let rows;
+  try {
+    rows = db.prepare(`
+      SELECT * FROM telegram_pane_launches
+      WHERE app_generation = ? AND pane_id = ?
+      ORDER BY launched_at_ms DESC, launch_id DESC
+    `).all(appGeneration, paneId);
+  } catch (err) {
+    return fail('launch_query_failed', { message: err.message });
+  }
+  if (!rows || rows.length === 0) {
+    return fail('launch_not_recorded', { appGeneration, paneId });
+  }
+
+  // A `launching` row is a pane that was spawned and never reported ready. It
+  // is not a fallback for a missing complete row: its runtime may never have
+  // come up, and a receipt from it is exactly the thing that never arrives.
+  const complete = rows.filter((row) => String(row.state) === LAUNCH_STATES.COMPLETE);
+  if (complete.length === 0) {
+    return fail('launch_incomplete', {
+      appGeneration, paneId, states: rows.map((row) => String(row.state)),
+    });
+  }
+  if (complete.length > 1) {
+    return fail('launch_ambiguous', {
+      appGeneration, paneId, launchIds: complete.map((row) => String(row.launch_id)),
+    });
+  }
+
+  const row = complete[0];
+  return {
+    ok: true,
+    launchId: String(row.launch_id),
+    appGeneration: String(row.app_generation),
+    paneId: String(row.pane_id),
+    role: String(row.role),
+    consumerRuntime: String(row.consumer_runtime),
+    daemonProcessId: String(row.daemon_process_id),
+    launchedAtMs: Number(row.launched_at_ms),
+    completeAtMs: row.complete_at_ms === null ? null : Number(row.complete_at_ms),
+    state: String(row.state),
+  };
+}
+
+/**
  * DURABLE SESSION BINDING, written by the runtime's SessionStart hook.
  *
  * The runtime's session id is the only handle a UserPromptSubmit hook has on
@@ -813,6 +880,7 @@ module.exports = {
   applyLaunchRegistrySchema,
   recordPaneLaunch,
   completePaneLaunch,
+  findActivePaneLaunch,
   bindConsumerSession,
   recordAdmissionReceipt,
   loadAdmissionReceipt,

@@ -114,6 +114,22 @@ const WORK_CLAIM_TRANSITIONS = Object.freeze({
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
 /**
+ * THE CUTOVER. One constant, deliberately not a timestamp and not a session.
+ *
+ * It names the regime in which the DB claim is the authoritative attempt latch.
+ * Records that predate it — 808499316 above all — were attempted under the
+ * legacy `delivery-attempts.jsonl` latch and can never grow a claim
+ * retroactively; they are resolved by explicit pinned recovery, not by this
+ * kernel deciding they look close enough.
+ *
+ * IT IS NOT DERIVED FROM ANYTHING MUTABLE ON PURPOSE. A cutover computed from
+ * the clock, the generation or the schema version would silently change
+ * identity across a restart, and the claim's uniqueness key (cutover, route,
+ * update) would stop meaning "one attempt per message" the moment it moved.
+ */
+const TELEGRAM_CUTOVER_ID = 'tg-cutover-v1';
+
+/**
  * Telegram identity carried in the source row's metadata. Every one of these
  * is verified on re-record: a differing value is a hard conflict, never a
  * merge, because the row is what James said and it does not get edited
@@ -720,6 +736,59 @@ function readSourceIdentity(db, row) {
 }
 
 /**
+ * THE ONLY MUTATION THE KERNEL EVER MAKES TO AN INBOUND COMMS ROW.
+ *
+ * `brokered` is a PROJECTION of a durable transport fact, not a second source
+ * of truth. The append-only claim plus its `delivery_started` event is the
+ * authority; this column exists so an operator reading the journal sees the
+ * same story. So it moves exactly one edge — `recorded -> brokered` — and
+ * writes exactly three columns.
+ *
+ * WHAT IT REFUSES TO TOUCH IS THE POINT. The generic comms upsert this replaces
+ * rewrote body, session, sender, target and the whole metadata blob on every
+ * call, which is how a delivery-time writer could quietly redefine the identity
+ * of the message it was delivering. Body, session, identity and metadata are
+ * written once, by `recordImmutableSource`, and never again by anyone.
+ */
+function projectSourceBrokered(db, source, atMs) {
+  const status = String(source.status ?? '');
+
+  if (status === 'brokered') {
+    // Idempotent only if it is THE SAME brokering. A different time means a
+    // different delivery authorised this row, and silently accepting it would
+    // erase the evidence that two of them existed.
+    if (Number(source.brokered_at_ms) !== Number(atMs)) {
+      return fail('comms_projection_time_conflict', {
+        stored: source.brokered_at_ms, offered: atMs,
+      });
+    }
+    return { ok: true, projection: { changed: false, status, brokeredAtMs: Number(atMs) } };
+  }
+
+  if (status !== 'recorded') {
+    // No fall-through, no "best effort update anyway". An unexpected status is
+    // an unexpected writer, and this row is supposed to have exactly one.
+    return fail('comms_projection_state_unexpected', { status });
+  }
+
+  const updated = db.prepare(`
+    UPDATE comms_journal
+    SET status = 'brokered', brokered_at_ms = ?, updated_at_ms = ?
+    WHERE row_id = ? AND status = 'recorded'
+  `).run(atMs, atMs, source.row_id);
+
+  // GUARDED BY THE WHERE CLAUSE, VERIFIED BY THE ROW COUNT. Under BEGIN
+  // IMMEDIATE a concurrent writer cannot have moved it, so zero rows means the
+  // premise this read was built on is already false — report that, never
+  // assume it.
+  const changes = Number(updated?.changes ?? 0);
+  if (changes !== 1) {
+    return fail('comms_projection_lost_race', { changes, status });
+  }
+  return { ok: true, projection: { changed: true, status: 'brokered', brokeredAtMs: Number(atMs) } };
+}
+
+/**
  * STEP 2: insert or verify the IMMUTABLE INBOUND COMMS ROW.
  *
  * Bypasses the generic comms upsert deliberately — that path would happily
@@ -1050,8 +1119,39 @@ function recordDeliveryStarted(db, input = {}) {
       .get(input.claimId);
     if (!claim) { rollback(db); return fail('claim_not_found'); }
 
+    // REJOIN THE CLAIM TO ITS IMMUTABLE SOURCE, HERE, INSIDE THE SAME
+    // TRANSACTION THAT AUTHORISES THE PANE WRITE.
+    //
+    // Acquisition already joined them, but acquisition happened earlier and in
+    // its own transaction. Between the two, the only thing standing behind
+    // "this claim describes that message" is a foreign key — and a foreign key
+    // proves a row exists, never that it still says the same thing. The
+    // authorisation boundary is the one place where being wrong means James
+    // sees the wrong message, so it re-derives rather than inherits.
+    const source = db.prepare('SELECT * FROM comms_journal WHERE row_id = ?')
+      .get(claim.source_row_id);
+    if (!source) { rollback(db); return fail('source_row_missing'); }
+    const identity = readSourceIdentity(db, source);
+    if (!identity) { rollback(db); return fail('source_identity_missing'); }
+    if (String(identity.cutoverId) !== String(claim.cutover_id)
+      || String(identity.routeKey) !== String(claim.route_key)
+      || Number(identity.updateId) !== Number(claim.update_id)) {
+      rollback(db);
+      return fail('delivery_source_correlation_mismatch', {
+        sourceCutover: identity.cutoverId,
+        sourceRoute: identity.routeKey,
+        sourceUpdateId: identity.updateId,
+      });
+    }
+
     switch (claim.state) {
-      case CLAIM_STATES.CLAIMED:
+      case CLAIM_STATES.CLAIMED: {
+        // THE ONE ALLOWED COMMS PROJECTION, and it happens BEFORE the claim
+        // moves — so a refused projection cannot leave a delivery authorised
+        // against a row that never advanced.
+        const projected = projectSourceBrokered(db, source, atMs);
+        if (!projected.ok) { rollback(db); return projected; }
+
         db.prepare(`
           UPDATE telegram_transport_claims
           SET state = ?, delivered_prompt_sha256 = ?, delivered_prompt_bytes = ?
@@ -1063,7 +1163,15 @@ function recordDeliveryStarted(db, input = {}) {
         db.prepare('INSERT INTO telegram_transport_events (claim_id, kind, at_ms, detail) VALUES (?, ?, ?, ?)')
           .run(input.claimId, 'delivery_started', atMs, input.detail ?? null);
         commit(db);
-        return { ok: true, claimId: input.claimId, state: CLAIM_STATES.DELIVERY_STARTED, created: true };
+        return {
+          ok: true,
+          claimId: input.claimId,
+          state: CLAIM_STATES.DELIVERY_STARTED,
+          created: true,
+          sourceRowId: Number(source.row_id),
+          commsProjection: projected.projection,
+        };
+      }
 
       case CLAIM_STATES.DELIVERY_STARTED: {
         // IDEMPOTENCY IS EXACT, NOT APPROXIMATE. A second delivery_started for
@@ -1098,8 +1206,21 @@ function recordDeliveryStarted(db, input = {}) {
             });
           }
         }
+        // EXACT REPLAY MUST STILL SEE THE PROJECTION IT CLAIMS TO REPLAY. A
+        // replay accepted over a comms row that is NOT brokered at this exact
+        // time is not a replay of this delivery — it is a second one wearing
+        // the first one's digest.
+        const projected = projectSourceBrokered(db, source, atMs);
+        if (!projected.ok) { rollback(db); return projected; }
         commit(db);
-        return { ok: true, claimId: input.claimId, state: CLAIM_STATES.DELIVERY_STARTED, created: false };
+        return {
+          ok: true,
+          claimId: input.claimId,
+          state: CLAIM_STATES.DELIVERY_STARTED,
+          created: false,
+          sourceRowId: Number(source.row_id),
+          commsProjection: projected.projection,
+        };
       }
 
       case CLAIM_STATES.ADMITTED:
@@ -2090,6 +2211,7 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
 
 module.exports = {
   SCHEMA_VERSION,
+  TELEGRAM_CUTOVER_ID,
   SOURCE_METADATA_KEY,
   CLAIM_STATES,
   SOURCE_STATES,
