@@ -197,8 +197,38 @@ async function admitScopedTelegramSource(app, options = {}) {
       ok: false,
       status: `admission_refused:${admission.reason}`,
       admissionStage: admission.stage,
+      // SOURCE-ONLY NEVER CLAIMS, so a scoped refusal can never own a claim to
+      // release. Stated rather than left absent, so the drain's contract is
+      // satisfied by a value this path chose.
+      claimRelease: claimReleaseFor(admission),
     },
   };
+}
+
+/**
+ * WHAT A REFUSED DELIVERY AUTHORISES THE DRAIN TO CLEAN UP.
+ *
+ * Three answers, and the difference between them is the difference between a
+ * released message and someone else's delivery being torn out from under them
+ * (Oracle #13, blocker 2):
+ *
+ *   owned_unsent  this attempt made claim X and returned before D. First-hand
+ *                 evidence that nothing was written. Close X — exactly X.
+ *   none          this attempt latched nothing (refused before B, or lost the
+ *                 race at B). There is nothing of ours to close, and whatever
+ *                 else holds the tuple is not ours to touch.
+ *   unknown       we cannot say which side of the boundary we ended on. HOLD.
+ *
+ * A receipt that names no claim can never authorise closing one. That is the
+ * whole invariant, and it is why the drain reads this instead of re-reading the
+ * database and closing whatever it finds.
+ */
+function claimReleaseFor(admission = {}) {
+  const claimId = typeof admission.ownedClaimId === 'string' ? admission.ownedClaimId.trim() : '';
+  if (admission.ownedClaimUnsent === true && claimId) {
+    return { kind: 'owned_unsent', claimId };
+  }
+  return { kind: 'none' };
 }
 
 /**
@@ -227,9 +257,16 @@ async function deliverAdmittedMainTelegram(app, options = {}) {
       },
     });
   } catch (err) {
-    // A throw out of the kernel is BEFORE any pane write by construction — E is
-    // below and has not run. Definite, and retryable.
-    return { ok: false, status: 'admission_runtime_error', error: err.message };
+    // A throw out of the kernel means E has not run — the pane write is below
+    // this call — but it does NOT tell us which step threw, so it cannot say
+    // whether a claim was taken or how far the sequence got. Unknown boundary:
+    // the drain holds rather than closing or retrying (Oracle #13's rule).
+    return {
+      ok: false,
+      status: 'admission_runtime_error',
+      error: err.message,
+      claimRelease: { kind: 'unknown' },
+    };
   }
 
   if (!admission.ok) {
@@ -242,6 +279,7 @@ async function deliverAdmittedMainTelegram(app, options = {}) {
       status: `admission_refused:${admission.reason}`,
       admissionStage: admission.stage,
       admissionPhase: admission.phase || 'before_delivery',
+      claimRelease: claimReleaseFor(admission),
     };
   }
 
@@ -253,7 +291,14 @@ async function deliverAdmittedMainTelegram(app, options = {}) {
       'Telegram',
       `Main admission for ${inboundMessageId} replayed an existing delivery_started; holding instead of writing again`
     );
-    return { ok: false, accepted: true, status: 'accepted.delivery_started_replay' };
+    // PAST D BY DEFINITION — a delivery_started already exists for these bytes,
+    // so nothing here may close anything.
+    return {
+      ok: false,
+      accepted: true,
+      status: 'accepted.delivery_started_replay',
+      claimRelease: { kind: 'none' },
+    };
   }
 
   try {
@@ -272,12 +317,14 @@ async function deliverAdmittedMainTelegram(app, options = {}) {
       ambiguous: true,
       status: 'main_pane_runtime_error',
       error: err.message,
+      claimRelease: { kind: 'none' },
     };
   }
 }
 
 module.exports = {
   MODES,
+  claimReleaseFor,
   resolveAdmissionWriter,
   buildAdmissionJob,
   runAdmissionForJob,

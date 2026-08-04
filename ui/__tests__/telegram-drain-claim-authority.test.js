@@ -46,6 +46,7 @@ const {
   decideClaimDisposition,
 } = require('../modules/main/telegram-attempt-authority');
 const { runTelegramAdmissionSequence, MODES } = require('../modules/main/telegram-admission-sequence');
+const { claimReleaseFor } = require('../modules/main/telegram-admission-delivery');
 const { createDrainCoordinator } = require('../modules/main/telegram-ingress-drain');
 
 const BASE_MS = 1785870000000;
@@ -198,6 +199,10 @@ function makeHarness(options = {}) {
         status: `admission_refused:${result.reason}`,
         admissionStage: result.stage,
         admissionPhase: result.phase,
+        // THE PRODUCTION MAPPING, not a test-local guess. If this harness
+        // invented its own ownership answer it would prove the drain works
+        // against a receipt production never sends.
+        claimRelease: claimReleaseFor(result),
         ...identity,
       };
     }
@@ -742,5 +747,316 @@ describe('claim lookup', () => {
       cutoverId: TELEGRAM_CUTOVER_ID, routeKey: 'main', updateId: 12345,
     });
     expect(read).toMatchObject({ ok: true, claim: null });
+  });
+});
+
+// =====================================================================
+// 5. THE APPEND-ONLY EVENT OUTRANKS THE STATUS COLUMN (Oracle #13, blocker 1)
+//
+// Oracle drove this on a real ledger: take a claim to delivery_started, move
+// the permitted mutable `state` column back to `claimed`, and the whole stack
+// agreed the message had never been sent — disposition said close_then_attempt,
+// the close succeeded, and the record became eligible for a second delivery
+// while a durable delivery_started event sat in the events table saying
+// otherwise. Three independent guards now, because any one of them is code a
+// future writer can forget to call.
+// =====================================================================
+describe('a stored delivery_started event dominates the state column', () => {
+  test('DISPOSITION: a reverted state with a D event holds and names the contradiction', () => {
+    const decision = decideClaimDisposition({
+      claim: {
+        claimId: 'tgc_reverted',
+        state: CLAIM_STATES.CLAIMED,
+        appGeneration: GEN_A,
+        attemptAtMs: BASE_MS,
+        deliveryStartedAtMs: BASE_MS + 1,
+        eventKinds: ['delivery_started'],
+      },
+      currentGeneration: GEN_B,
+    });
+    // The dead generation would otherwise make this close_then_attempt, which
+    // is exactly how the second delivery got authorised.
+    expect(decision.action).toBe('hold');
+    expect(decision.reason).toBe('claim_state_contradicts_delivery_started');
+    expect(decision.resolutionRequired).toBe(true);
+    expect(decision.detail).toMatchObject({
+      storedState: CLAIM_STATES.CLAIMED,
+      deliveryStartedAtMs: BASE_MS + 1,
+    });
+  });
+
+  test('DISPOSITION: an event-only D with no timestamp still holds', () => {
+    const decision = decideClaimDisposition({
+      claim: {
+        claimId: 'tgc_event_only',
+        state: CLAIM_STATES.CLOSED_UNSENT,
+        appGeneration: GEN_B,
+        attemptAtMs: BASE_MS,
+        deliveryStartedAtMs: null,
+        eventKinds: ['delivery_started', 'claim_closed_unsent'],
+      },
+      currentGeneration: GEN_B,
+    });
+    // A closed_unsent claim normally means "retry is safe". Carrying a D event
+    // it should never have been closed past, it does not.
+    expect(decision.action).toBe('hold');
+    expect(decision.reason).toBe('claim_state_contradicts_delivery_started');
+  });
+
+  test('THE DATABASE REFUSES THE REVERT ITSELF', async () => {
+    const harness = makeHarness({ records: [queueRecord(900000801)] });
+    await harness.build().drainOnce(harness.dir, 'main');
+    const claim = readClaim(harness.writer, 900000801).claim;
+    expect(claim.state).toBe(CLAIM_STATES.DELIVERY_STARTED);
+
+    expect(() => harness.writer.db
+      .prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
+      .run(CLAIM_STATES.CLAIMED, claim.claimId)).toThrow(/telegram_claim_state_not_monotonic/);
+
+    // Forward-but-illegal is refused too: closed_unsent is reachable only from
+    // claimed, and this claim is past it.
+    expect(() => harness.writer.db
+      .prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
+      .run(CLAIM_STATES.CLOSED_UNSENT, claim.claimId)).toThrow();
+  });
+
+  test('CLOSE REFUSES ON THE EVENT, not merely on the column', async () => {
+    const harness = makeHarness({ records: [queueRecord(900000802)] });
+    await harness.build().drainOnce(harness.dir, 'main');
+    const claim = readClaim(harness.writer, 900000802).claim;
+
+    const closed = closeUnsentClaim(harness.writer.db, {
+      claimId: claim.claimId,
+      reason: 'test_attempt_to_close_a_started_delivery',
+      atMs: BASE_MS + 5,
+    });
+    expect(closed.ok).toBe(false);
+    expect(closed.reason).toBe('claim_delivery_started_recorded');
+    expect(readClaim(harness.writer, 900000802).claim.state)
+      .toBe(CLAIM_STATES.DELIVERY_STARTED);
+  });
+
+  test('ORACLE EXPLOIT, END TO END: an incoherent row cannot be closed or re-delivered', async () => {
+    const harness = makeHarness({ records: [queueRecord(900000803)], failAck: true });
+    await harness.build().drainOnce(harness.dir, 'main');
+    expect(harness.paneWrites).toHaveLength(1);
+    const claim = readClaim(harness.writer, 900000803).claim;
+
+    // SIMULATE THE LEDGER OF A BUILD THAT NEVER HAD THE MONOTONIC GUARD, which
+    // is the only honest way to produce the incoherent pair now: drop the
+    // trigger, revert the column. The append-only event is untouched
+    // throughout — that is the whole point.
+    harness.writer.db.exec('DROP TRIGGER trg_tg_claim_state_monotonic');
+    harness.writer.db
+      .prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
+      .run(CLAIM_STATES.CLAIMED, claim.claimId);
+    const incoherent = readClaim(harness.writer, 900000803).claim;
+    expect(incoherent.state).toBe(CLAIM_STATES.CLAIMED);
+    expect(incoherent.deliveryStartedAtMs).toBe(BASE_MS);
+
+    // A RAW close is still refused, by the second trigger, which asks the
+    // events table rather than the column.
+    expect(() => harness.writer.db
+      .prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
+      .run(CLAIM_STATES.CLOSED_UNSENT, claim.claimId))
+      .toThrow(/telegram_claim_close_after_delivery_started/);
+
+    // And the drain, on a fresh boot, holds instead of delivering a second copy.
+    harness.state.failAck = false;
+    harness.state.generation = 'app-session-493';
+    harness.state.nowMs = BASE_MS + 120000;
+    const second = await harness.build().drainOnce(harness.dir, 'main');
+
+    expect(harness.paneWrites).toHaveLength(1);
+    expect(second.delivered).toBe(0);
+    expect(second.stoppedAt.failureClass).toBe('awaiting_proof');
+    expect(readClaim(harness.writer, 900000803).claim.state).toBe(CLAIM_STATES.CLAIMED);
+  });
+});
+
+// =====================================================================
+// 6. CLEANUP CLOSES THE CLAIM IT OWNS, AND NOTHING ELSE (Oracle #13, blocker 2)
+// =====================================================================
+describe('rejection cleanup is bound to the claim the delivery made', () => {
+  test('a typed after-B refusal closes ITS OWN claim, named by the receipt', async () => {
+    const closeCalls = [];
+    const harness = makeHarness({ records: [queueRecord(900000811)], failAt: 'after_claim' });
+    const result = await harness.build({
+      closeUnsentTransportClaim: async (input) => {
+        closeCalls.push(input);
+        return closeUnsentClaim(harness.writer.db, input);
+      },
+    }).drainOnce(harness.dir, 'main');
+
+    expect(harness.paneWrites).toHaveLength(0);
+    expect(result.stoppedAt.reason).toMatch(/^delivery_rejected:/);
+    expect(closeCalls).toHaveLength(1);
+
+    const read = readClaim(harness.writer, 900000811);
+    expect(read.claim).toBeNull();
+    expect(read.closedClaims).toHaveLength(1);
+    // The id the drain closed is the id the sequence created — not one it went
+    // looking for.
+    expect(closeCalls[0].claimId).toBe(read.closedClaims[0].claimId);
+  });
+
+  test('A LOST RACE AT B CLOSES NOTHING: the other claimant is left alone', async () => {
+    const harness = makeHarness({ records: [queueRecord(900000812)] });
+
+    // ANOTHER ATTEMPT ALREADY HOLDS THE TUPLE. Built by the real sequence from
+    // the SAME queued record — anything else refuses at A on
+    // source_identity_conflict and never reaches B, which is the immutable
+    // source doing its job and not the race we are trying to reproduce.
+    const competingRecord = queueRecord(900000812);
+    const competing = await runTelegramAdmissionSequence({
+      db: harness.writer.db,
+      job: {
+        messageId: 'telegram-in-900000812',
+        updateId: 900000812,
+        chatId: CHAT_ID,
+        routeKey: 'main',
+        profile: 'main',
+        windowKey: 'main',
+        rawBody: competingRecord.text,
+        sessionId: competingRecord.targetSession,
+        sentAtMs: competingRecord.timestampMs,
+      },
+      record: competingRecord,
+      appGeneration: GEN_B,
+      mode: MODES.FULL,
+      composeFinalBody: async () => 'competing body',
+      now: () => BASE_MS - 10,
+      nonce: () => 'n_competing_owner',
+      steps: { recordDeliveryStarted: () => ({ ok: false, reason: 'held_at_claimed_for_test' }) },
+    });
+    expect(competing.ok).toBe(false);
+    expect(competing.ownedClaimId).toEqual(expect.any(String));
+    const competingClaimId = competing.ownedClaimId;
+    expect(readClaim(harness.writer, 900000812).claim.claimId).toBe(competingClaimId);
+
+    // THE RACE: our pre-delivery lookup saw nothing, and the claim appeared
+    // before we reached B. Without the override the drain would hold at the
+    // disposition and never exercise the cleanup path at all — this is Oracle's
+    // exact probe.
+    const closeCalls = [];
+    const result = await harness.build({
+      lookupTransportClaim: async () => null,
+      closeUnsentTransportClaim: async (input) => {
+        closeCalls.push(input);
+        return closeUnsentClaim(harness.writer.db, input);
+      },
+    }).drainOnce(harness.dir, 'main');
+
+    expect(result.delivered).toBe(0);
+    expect(harness.paneWrites).toHaveLength(0);
+    expect(result.stoppedAt.reason).toContain('claim_held_by_other');
+    // THE INVARIANT: not one close was attempted, and the live claim is
+    // untouched. Closing it would have released a delivery this process does
+    // not own.
+    expect(closeCalls).toEqual([]);
+    const after = readClaim(harness.writer, 900000812);
+    expect(after.claim.claimId).toBe(competingClaimId);
+    expect(after.claim.state).toBe(CLAIM_STATES.CLAIMED);
+    expect(after.closedClaims).toEqual([]);
+  });
+
+  test('AN UNKNOWN BOUNDARY HOLDS: no close, and never a definite retry', async () => {
+    const closeCalls = [];
+    const harness = makeHarness({ records: [queueRecord(900000813)] });
+    const result = await harness.build({
+      deps: {
+        deliver: async () => ({
+          ok: false,
+          status: 'admission_runtime_error',
+          claimRelease: { kind: 'unknown' },
+          messageId: 'telegram-in-900000813',
+          routeKey: 'main',
+          windowKey: 'main',
+          profile: 'main',
+        }),
+      },
+      closeUnsentTransportClaim: async (input) => {
+        closeCalls.push(input);
+        return closeUnsentClaim(harness.writer.db, input);
+      },
+    }).drainOnce(harness.dir, 'main');
+
+    expect(closeCalls).toEqual([]);
+    expect(result.delivered).toBe(0);
+    expect(result.stoppedAt.failureClass).toBe('awaiting_proof');
+    expect(result.stoppedAt.reason).toMatch(/^claim_release_boundary_unknown:/);
+  });
+
+  test('a receipt claiming ownership without an id holds rather than hunting for one', async () => {
+    const closeCalls = [];
+    const harness = makeHarness({ records: [queueRecord(900000814)] });
+    const result = await harness.build({
+      deps: {
+        deliver: async () => ({
+          ok: false,
+          status: 'admission_refused:broken_producer',
+          claimRelease: { kind: 'owned_unsent', claimId: '   ' },
+          messageId: 'telegram-in-900000814',
+          routeKey: 'main',
+          windowKey: 'main',
+          profile: 'main',
+        }),
+      },
+      closeUnsentTransportClaim: async (input) => {
+        closeCalls.push(input);
+        return closeUnsentClaim(harness.writer.db, input);
+      },
+    }).drainOnce(harness.dir, 'main');
+
+    expect(closeCalls).toEqual([]);
+    expect(result.stoppedAt.reason).toBe('claim_release_owned_without_id');
+    expect(result.stoppedAt.failureClass).toBe('awaiting_proof');
+  });
+
+  test('THE SEQUENCE NAMES OWNERSHIP HONESTLY: null before B, its own id after', async () => {
+    const writer = freshLedger();
+    const job = {
+      messageId: 'telegram-in-900000815',
+      updateId: 900000815,
+      chatId: CHAT_ID,
+      routeKey: 'main',
+      profile: 'main',
+      windowKey: 'main',
+      rawBody: 'body',
+      sessionId: 'app-session-490',
+      sentAtMs: BASE_MS - 1000,
+    };
+    const base = {
+      db: writer.db,
+      job,
+      record: { updateId: 900000815, chatId: CHAT_ID, targetSession: 'app-session-490' },
+      appGeneration: GEN_B,
+      mode: MODES.FULL,
+      now: () => BASE_MS,
+    };
+
+    const beforeB = await runTelegramAdmissionSequence({
+      ...base,
+      composeFinalBody: async () => 'body',
+      nonce: () => 'n_before_b',
+      steps: { claimTransportAttempt: () => ({ ok: false, reason: 'claim_held_by_other' }) },
+    });
+    expect(beforeB.ok).toBe(false);
+    expect(beforeB.ownedClaimId).toBeNull();
+    expect(beforeB.ownedClaimUnsent).toBe(false);
+    expect(claimReleaseFor(beforeB)).toEqual({ kind: 'none' });
+
+    const afterB = await runTelegramAdmissionSequence({
+      ...base,
+      nonce: () => 'n_after_b',
+      composeFinalBody: async () => { throw new Error('compose exploded'); },
+    });
+    expect(afterB.ok).toBe(false);
+    expect(afterB.stage).toBe('C_compose');
+    expect(afterB.ownedClaimUnsent).toBe(true);
+    expect(afterB.ownedClaimId).toBe(readClaim(writer, 900000815).claim.claimId);
+    expect(claimReleaseFor(afterB)).toEqual({
+      kind: 'owned_unsent', claimId: afterB.ownedClaimId,
+    });
   });
 });

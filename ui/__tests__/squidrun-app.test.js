@@ -648,7 +648,7 @@ function readAdmissionLedgerFacts() {
     const sources = hasTable('telegram_source_identity')
       ? writer.db.prepare(`
         SELECT source_row_id, message_id, update_id, route_key, profile, window_key,
-               chat_id, source_session_id, media_identity_sha256
+               chat_id, source_session_id, media_identity_sha256, canonical_payload_sha256
         FROM telegram_source_identity ORDER BY update_id
       `).all()
       : [];
@@ -662,6 +662,26 @@ function readAdmissionLedgerFacts() {
   } finally {
     writer.close();
   }
+}
+
+/**
+ * The QUEUED RECORD a scoped refusal left pending, read back off the spool.
+ *
+ * A refused scoped delivery must leave its record ordered and visible, so the
+ * record is still there to be read — and it is the only place the canonical
+ * payload digest can be checked against its true input rather than against a
+ * reconstruction this test wrote for itself.
+ */
+function readScopedPendingRecord(updateId, routeKey = 'scoped') {
+  const durableQueue = jest.requireActual('../modules/telegram-inbound-durable-queue');
+  const spool = jest.requireActual('../modules/main/telegram-ingress-spool');
+  const base = telegramSpoolRoots[telegramSpoolRoots.length - 1];
+  // THE SPOOL'S OWN PATH RULE, called rather than copied. A hand-written path
+  // here would go stale silently and read as "no record".
+  const dir = path.join(base, ...spool.SPOOL_SEGMENTS, routeKey);
+  if (!fs.existsSync(dir)) return null;
+  return durableQueue.readPending(dir)
+    .find((entry) => Number(entry.updateId) === Number(updateId)) || null;
 }
 
 /**
@@ -9092,10 +9112,31 @@ describe('SquidRunApp', () => {
       const source = expectScopedSourceOnlyRefusal({
         updateId: 808489705, routeKey: 'scoped', chatId: 2222222222,
       });
-      // A PHOTO'S IDENTITY IS NOT ITS CAPTION. The media digest is what makes
-      // two different photos with the same body text different messages.
-      expect(typeof source.media_identity_sha256).toBe('string');
-      expect(source.media_identity_sha256).not.toHaveLength(0);
+      // A PHOTO'S IDENTITY IS NOT ITS CAPTION, and the row proves that through
+      // its CANONICAL PAYLOAD digest, which is computed over the whole queued
+      // record — media included — by canonicalQueuedPayloadDigest.
+      //
+      // NAMED HONESTLY (Oracle #16): `media_identity_sha256` is NOT bound here.
+      // buildAdmissionJob does not carry a media digest, so the store hashes
+      // the empty string. An earlier version of this test asserted only that
+      // the column was a non-empty string, which the digest of "" satisfies —
+      // a check shaped to pass rather than to catch. Asserting the exact
+      // empty-input digest makes the gap visible instead of papering it.
+      const { sha256, canonicalQueuedPayloadDigest } = require('../modules/main/telegram-consumed-proof');
+      expect(source.media_identity_sha256).toBe(sha256(''));
+
+      const pending = readScopedPendingRecord(808489705);
+      expect(pending).toBeTruthy();
+      expect(pending.media).toEqual(expect.objectContaining({
+        kind: 'photo',
+        localPath: 'D:\\projects\\Example Case\\telegram-photos\\photo-11.jpg',
+      }));
+      expect(source.canonical_payload_sha256).toBe(canonicalQueuedPayloadDigest(pending));
+      // AND IT IS ACTUALLY MEDIA-BOUND: the same record without its media
+      // hashes differently, so the assertion above is not satisfied by any
+      // record that merely shares an update id.
+      expect(canonicalQueuedPayloadDigest({ ...pending, media: null }))
+        .not.toBe(source.canonical_payload_sha256);
     });
 
     it('records an empty-body photo as a scoped source with its own identity and refuses delivery', async () => {
@@ -9142,6 +9183,52 @@ describe('SquidRunApp', () => {
       expectScopedSourceOnlyRefusal({
         updateId: 808489706, routeKey: 'scoped', chatId: 2222222222,
       });
+    });
+
+    /**
+     * THE PHOTO BRANCH, ON A ROUTE THAT ACTUALLY RENDERS IT (Oracle #16).
+     *
+     * When the two scoped photo tests above moved to the refusal, they stopped
+     * asserting the synthesized `[Photo received]` body and the
+     * ` | saved: <path>` suffix. The video test below covers the VIDEO branch,
+     * which is a different branch — claiming it preserved photo coverage was
+     * wrong. This puts an empty-body photo down the main Architect route, where
+     * the text is composed and written, and asserts the exact bytes.
+     */
+    it('synthesizes photo display text and the saved path on the main pane route', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+
+      app.startTelegramPoller();
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('', '@PhotoSender', {
+        updateId: 808489709,
+        messageId: 557,
+        chatId: REDACTED,
+        photo: { file_id: 'photo-abc' },
+        media: {
+          kind: 'photo',
+          telegramKind: 'photo',
+          fileId: 'photo-abc',
+          localPath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\photo-557.jpg',
+        },
+      });
+
+      await flushTelegramDrain(app);
+      // The pane receives the DECORATED, MARKED bytes; the synthesized body is
+      // a substring of them.
+      expect(deliverySpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          '[Telegram from @PhotoSender]: [Photo received] | saved: D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\photo-557.jpg'
+        ),
+        expect.objectContaining({ paneId: '1', role: 'architect', channel: 'telegram' }),
+        'Telegram'
+      );
     });
 
     it('synthesizes video display text and includes saved file path for inbound Telegram videos', async () => {

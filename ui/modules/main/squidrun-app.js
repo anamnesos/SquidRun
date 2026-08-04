@@ -14787,6 +14787,9 @@ class SquidRunApp {
         admissionStage: 'A_source',
         admissionPhase: 'before_delivery',
         scopedSourceRecorded: true,
+        // Source-only never claims a transport attempt, so this refusal owns
+        // nothing the drain may close on its behalf.
+        claimRelease: { kind: 'none' },
         ...deliveryIdentity,
       };
     }
@@ -14857,6 +14860,7 @@ class SquidRunApp {
           status: `admission_refused:${miraSource.reason}`,
           admissionStage: miraSource.stage,
           admissionPhase: miraSource.phase || 'before_delivery',
+          claimRelease: telegramAdmissionDelivery.claimReleaseFor(miraSource),
           ...deliveryIdentity,
         };
       }

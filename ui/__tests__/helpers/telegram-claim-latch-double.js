@@ -58,8 +58,17 @@ function createClaimLatchDouble(options = {}) {
   async function closeUnsentTransportClaim(input = {}) {
     for (const [key, claim] of claims) {
       if (claim.claimId !== input.claimId) continue;
-      // THE REAL STORE'S ONE HARD RULE. Past the authorisation boundary a
-      // refusal cannot prove the bytes were never written.
+      // THE REAL STORE'S HARD RULES, in the real store's order. The stored
+      // delivery_started EVENT is asked first and outranks the state column,
+      // because the column is mutable and the event is not (Oracle #13).
+      if (claim.deliveryStartedAtMs !== null && claim.deliveryStartedAtMs !== undefined) {
+        return {
+          ok: false,
+          reason: 'claim_delivery_started_recorded',
+          state: claim.state,
+          deliveryStartedAtMs: claim.deliveryStartedAtMs,
+        };
+      }
       if (claim.state !== 'claimed') {
         return { ok: false, reason: 'claim_not_provably_unsent', state: claim.state };
       }
@@ -120,6 +129,20 @@ function createClaimLatchDouble(options = {}) {
       if (accepted(receipt)) {
         claim.state = 'delivery_started';
         claim.deliveryStartedAtMs = clock();
+        return receipt;
+      }
+      // ===================================================================
+      // A RETURNED REFUSAL NAMES THE CLAIM IT OWNS (Oracle #13, blocker 2).
+      //
+      // Production's cleanup no longer re-reads the tuple and closes whatever
+      // it finds — it closes the exact claim the delivery reports owning, and
+      // nothing at all when the receipt names none. A double that omitted this
+      // would leave its own claim latched under a LIVE generation, and every
+      // "definite failures retry" test would go red for a reason production
+      // does not have. A receipt that already carries its own answer keeps it.
+      // ===================================================================
+      if (receipt && typeof receipt === 'object' && receipt.claimRelease === undefined) {
+        return { ...receipt, claimRelease: { kind: 'owned_unsent', claimId: claim.claimId } };
       }
       return receipt;
     };

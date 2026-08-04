@@ -248,6 +248,11 @@ const REQUIRED_SCHEMA_SHAPE = Object.freeze([
   ['trg_tg_work_events_no_update', 'telegram_work_claim_events_append_only'],
   ['trg_tg_work_events_no_delete', 'telegram_work_claim_events_append_only'],
   ['trg_tg_claim_identity_immutable', 'telegram_claim_identity_immutable'],
+  // STATE MAY NOT MOVE BACKWARDS, AND NOTHING MAY CLOSE PAST A STORED D EVENT.
+  // A build carrying the claim tables without these two is a build in which the
+  // append-only event is advisory, which is the state Oracle #13 exploited.
+  ['trg_tg_claim_state_monotonic', 'telegram_claim_state_not_monotonic'],
+  ['trg_tg_claim_close_requires_no_delivery', 'telegram_claim_close_after_delivery_started'],
   ['trg_tg_work_identity_immutable', 'telegram_work_claim_identity_immutable'],
   ['trg_tg_work_no_delete', 'telegram_work_claim_delete_forbidden'],
   ['trg_tg_ack_identity_immutable', 'telegram_queue_ack_identity_immutable'],
@@ -693,6 +698,47 @@ function applyTelegramAdmissionSchemaDdl(db) {
       OR OLD.attempt_at_ms    IS NOT NEW.attempt_at_ms
     )
     BEGIN SELECT RAISE(ABORT, 'telegram_claim_identity_immutable'); END;
+
+    -- ===================================================================
+    -- THE STATE COLUMN MAY ONLY GO FORWARD (Oracle #13, blocker 1).
+    --
+    -- The identity trigger above deliberately permits state updates, and it was
+    -- the ONLY thing guarding this column — so state could be moved BACKWARDS
+    -- from delivery_started to claimed while the append-only delivery_started
+    -- event sat in the events table, untouched and
+    -- unconsulted. Oracle drove it on a real temp ledger: the reader still
+    -- reported deliveryStartedAtMs, the disposition still said
+    -- close_then_attempt, and the close still succeeded. A later pass could
+    -- then redeliver a message whose bytes had already been authorised.
+    --
+    -- The lawful moves are the sequence's own: a claim advances to
+    -- delivery_started, is released as provably unsent from claimed, or is
+    -- promoted to admitted on terminal proof. Nothing else, and nothing back.
+    -- ===================================================================
+    CREATE TRIGGER IF NOT EXISTS trg_tg_claim_state_monotonic
+    BEFORE UPDATE ON telegram_transport_claims
+    FOR EACH ROW WHEN OLD.state IS NOT NEW.state AND NOT (
+         (OLD.state = 'claimed' AND NEW.state IN ('delivery_started', 'closed_unsent'))
+      OR (OLD.state = 'delivery_started' AND NEW.state = 'admitted')
+    )
+    BEGIN SELECT RAISE(ABORT, 'telegram_claim_state_not_monotonic'); END;
+
+    -- THE APPEND-ONLY EVENT OUTRANKS THE STATUS COLUMN, ABSOLUTELY.
+    --
+    -- Monotonicity alone is not enough: a ledger written by an older build may
+    -- ALREADY hold the incoherent pair (state = claimed, delivery_started event
+    -- present), and that row must not become closable just because its cheaper
+    -- record says claimed. A closed_unsent state means "provably nothing was sent",
+    -- and a stored D event is proof that the opposite may be true. This asks
+    -- the events table directly, so no writer can close past it — including one
+    -- that never read this file.
+    CREATE TRIGGER IF NOT EXISTS trg_tg_claim_close_requires_no_delivery
+    BEFORE UPDATE ON telegram_transport_claims
+    FOR EACH ROW WHEN NEW.state = 'closed_unsent' AND EXISTS (
+      SELECT 1 FROM telegram_transport_events
+      WHERE claim_id = OLD.claim_id AND kind = 'delivery_started'
+    )
+    BEGIN SELECT RAISE(ABORT, 'telegram_claim_close_after_delivery_started'); END;
 
     -- A WORK CLAIM'S IDENTITY IS ITS GENERATION AND LEASE. Only liveness moves.
     CREATE TRIGGER IF NOT EXISTS trg_tg_work_identity_immutable
@@ -1296,6 +1342,31 @@ function closeUnsentClaim(db, input = {}) {
     const claim = db.prepare('SELECT * FROM telegram_transport_claims WHERE claim_id = ?')
       .get(input.claimId);
     if (!claim) { rollback(db); return fail('claim_not_found'); }
+
+    // ===================================================================
+    // THE EVENT IS ASKED FIRST, AND IT WINS (Oracle #13, blocker 1).
+    //
+    // `state` is mutable and `delivery_started` is append-only, so when the two
+    // disagree the append-only one is the record of what happened. Checking
+    // only `state = claimed` meant a row whose status had been moved back —
+    // whether by a bug, an older build, or a hand-edit — read as provably
+    // unsent while carrying durable evidence that bytes had been authorised.
+    // Inside the same transaction as the close, so nothing can slip a D event
+    // in between the question and the answer.
+    // ===================================================================
+    const deliveryStarted = db.prepare(`
+      SELECT at_ms FROM telegram_transport_events
+      WHERE claim_id = ? AND kind = 'delivery_started'
+      ORDER BY event_id ASC LIMIT 1
+    `).get(input.claimId);
+    if (deliveryStarted) {
+      rollback(db);
+      return fail('claim_delivery_started_recorded', {
+        state: claim.state,
+        deliveryStartedAtMs: Number(deliveryStarted.at_ms),
+      });
+    }
+
     if (claim.state !== CLAIM_STATES.CLAIMED) {
       rollback(db);
       return fail('claim_not_provably_unsent', { state: claim.state });

@@ -119,20 +119,42 @@ async function runTelegramAdmissionSequence(input = {}) {
     steps = {},
   } = input;
 
+  // ===================================================================
+  // THE SEQUENCE OWNS THE CLEANUP IDENTITY (Oracle #13, blocker 2).
+  //
+  // The drain used to answer "which claim did that refusal create?" by
+  // re-reading the tuple and closing whatever it found. On a lost race at B
+  // that read returns ANOTHER PROCESS'S LIVE CLAIM, and the old code closed it
+  // — releasing someone else's in-flight delivery and inviting a duplicate.
+  // The only place that knows which claim this attempt owns is the code that
+  // made it, so every refusal from here down carries that answer explicitly:
+  // `ownedClaimId` is null until B succeeds, and null means "this attempt
+  // latched nothing; you may not close anything on its behalf".
+  // ===================================================================
+  let ownedClaimId = null;
+  const refuseHere = (stage, reason, detail = null, phase = PHASES.BEFORE_DELIVERY) => ({
+    ...refuse(stage, reason, detail, phase),
+    ownedClaimId,
+    // PROVABLY UNSENT ONLY BEFORE D. A refusal we returned from between B and D
+    // is first-hand evidence that no bytes were authorised; anything at or past
+    // the ambiguous boundary is not, and must never authorise a close.
+    ownedClaimUnsent: ownedClaimId !== null && phase === PHASES.BEFORE_DELIVERY,
+  });
+
   const stepRecordSource = steps.recordImmutableSource || recordImmutableSource;
   const stepClaim = steps.claimTransportAttempt || claimTransportAttempt;
   const stepDeliveryStarted = steps.recordDeliveryStarted || recordDeliveryStarted;
   const stepFindLaunch = steps.findActivePaneLaunch || findActivePaneLaunch;
 
-  if (!db) return refuse('precondition', 'sequence_no_durable_handle');
+  if (!db) return refuseHere('precondition', 'sequence_no_durable_handle');
   if (typeof composeFinalBody !== 'function' && mode === MODES.FULL) {
-    return refuse('precondition', 'sequence_no_compose_final_body');
+    return refuseHere('precondition', 'sequence_no_compose_final_body');
   }
-  if (!isNonEmptyString(job.messageId)) return refuse('precondition', 'sequence_missing:messageId');
+  if (!isNonEmptyString(job.messageId)) return refuseHere('precondition', 'sequence_missing:messageId');
   if (!Number.isSafeInteger(Number(job.updateId)) || Number(job.updateId) <= 0) {
-    return refuse('precondition', 'sequence_missing:updateId');
+    return refuseHere('precondition', 'sequence_missing:updateId');
   }
-  if (!isNonEmptyString(appGeneration)) return refuse('precondition', 'sequence_missing:appGeneration');
+  if (!isNonEmptyString(appGeneration)) return refuseHere('precondition', 'sequence_missing:appGeneration');
 
   // STALE SCHEMA STOPS EVERYTHING, BEFORE ANY WRITE.
   //
@@ -142,9 +164,9 @@ async function runTelegramAdmissionSequence(input = {}) {
   // what is actually installed. This is the A2b lesson: check the installed
   // shape, never trust the create.
   const applied = applyTelegramAdmissionSchema(db);
-  if (!applied.ok) return refuse('schema', 'sequence_schema_apply_failed', applied);
+  if (!applied.ok) return refuseHere('schema', 'sequence_schema_apply_failed', applied);
   const schema = verifyInstalledSchema(db);
-  if (!schema.ok) return refuse('schema', 'sequence_schema_unverified', schema);
+  if (!schema.ok) return refuseHere('schema', 'sequence_schema_unverified', schema);
 
   const updateId = Number(job.updateId);
   const routeKey = String(job.routeKey || job.profile || job.windowKey || 'main');
@@ -166,12 +188,12 @@ async function runTelegramAdmissionSequence(input = {}) {
     sessionId: job.sessionId ?? null,
     recordedAtMs: Number(job.sentAtMs) > 0 ? Number(job.sentAtMs) : now(),
   });
-  if (!source.ok) return refuse('A_source', source.reason, source.detail ?? null);
+  if (!source.ok) return refuseHere('A_source', source.reason, source.detail ?? null);
   if (!Number.isSafeInteger(Number(source.sourceRowId)) || Number(source.sourceRowId) <= 0) {
     // The committed identity is REQUIRED, not merely `ok`. A step that reports
     // success without returning the row id it created has not given the next
     // step anything to join to.
-    return refuse('A_source', 'source_row_id_missing', source);
+    return refuseHere('A_source', 'source_row_id_missing', source);
   }
 
   if (mode === MODES.SOURCE_ONLY) {
@@ -191,9 +213,9 @@ async function runTelegramAdmissionSequence(input = {}) {
 
   // ---------------------------------------------------------------- B
   const launch = stepFindLaunch(db, { appGeneration, paneId: String(paneId) });
-  if (!launch.ok) return refuse('B_launch', launch.reason, launch.detail ?? null);
+  if (!launch.ok) return refuseHere('B_launch', launch.reason, launch.detail ?? null);
   if (String(launch.role) !== String(role)) {
-    return refuse('B_launch', 'launch_role_mismatch', {
+    return refuseHere('B_launch', 'launch_role_mismatch', {
       launchRole: launch.role, offered: role,
     });
   }
@@ -201,7 +223,7 @@ async function runTelegramAdmissionSequence(input = {}) {
   const attemptNonce = isNonEmptyString(job.attemptNonce)
     ? job.attemptNonce
     : (typeof nonce === 'function' ? String(nonce()) : '');
-  if (!isNonEmptyString(attemptNonce)) return refuse('B_claim', 'sequence_missing:attemptNonce');
+  if (!isNonEmptyString(attemptNonce)) return refuseHere('B_claim', 'sequence_missing:attemptNonce');
 
   const claim = stepClaim(db, {
     cutoverId,
@@ -216,10 +238,15 @@ async function runTelegramAdmissionSequence(input = {}) {
     attemptNonce,
     attemptAtMs: now(),
   });
-  if (!claim.ok) return refuse('B_claim', claim.reason, claim.detail ?? null);
+  // A LOST RACE IS NOT OWNERSHIP. `claim_held_by_other` returns here with
+  // `ownedClaimId` still null, deliberately: the live claim it names belongs to
+  // someone else and closing it is the exact defect this guard exists to stop.
+  if (!claim.ok) return refuseHere('B_claim', claim.reason, claim.detail ?? null);
   if (!isNonEmptyString(claim.claimId)) {
-    return refuse('B_claim', 'claim_id_missing', claim);
+    return refuseHere('B_claim', 'claim_id_missing', claim);
   }
+  // FROM HERE DOWN THIS SEQUENCE OWNS A CLAIM, and every refusal below says so.
+  ownedClaimId = String(claim.claimId);
 
   // ---------------------------------------------------------------- C
   let finalBody;
@@ -229,10 +256,10 @@ async function runTelegramAdmissionSequence(input = {}) {
     // The claim is held and NOTHING was delivered. Provably unsent by the
     // invariant, so it is safe to leave for `closeUnsentClaim` — never for a
     // silent re-claim by the next pass.
-    return refuse('C_compose', `compose_threw:${err.message}`);
+    return refuseHere('C_compose', `compose_threw:${err.message}`);
   }
   if (typeof finalBody !== 'string' || finalBody.length === 0) {
-    return refuse('C_compose', 'compose_empty_body');
+    return refuseHere('C_compose', 'compose_empty_body');
   }
 
   const markerFields = {
@@ -257,10 +284,10 @@ async function runTelegramAdmissionSequence(input = {}) {
   // changes what the parser sees. The only way to know the consumer will read
   // the identity we meant is to read it back the same way it will.
   const roundTrip = parseConsumeMarker(authorizedText);
-  if (!roundTrip) return refuse('C_marker', 'marker_round_trip_failed');
+  if (!roundTrip) return refuseHere('C_marker', 'marker_round_trip_failed');
   for (const field of MARKER_FIELDS) {
     if (String(roundTrip[field]) !== String(markerFields[field])) {
-      return refuse('C_marker', 'marker_round_trip_mismatch', {
+      return refuseHere('C_marker', 'marker_round_trip_mismatch', {
         field, expected: markerFields[field], parsed: roundTrip[field] ?? null,
       });
     }
@@ -278,7 +305,7 @@ async function runTelegramAdmissionSequence(input = {}) {
     deliveredPromptBytes,
     detail: `route=${routeKey} pane=${paneId} runtime=${launch.consumerRuntime}`,
   });
-  if (!started.ok) return refuse('D_delivery_started', started.reason, started.detail ?? null);
+  if (!started.ok) return refuseHere('D_delivery_started', started.reason, started.detail ?? null);
 
   // ---------------------------------------------------------------- E
   // The caller writes the pane ONCE, with `authorized.text` and nothing else.

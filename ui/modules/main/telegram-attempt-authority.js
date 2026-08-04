@@ -115,6 +115,40 @@ function decideClaimDisposition(input = {}) {
   const state = String(claim.state);
   const liveness = classifyClaimantLiveness(claim.appGeneration, currentGeneration);
 
+  // ===================================================================
+  // THE APPEND-ONLY EVENT DECIDES, NOT THE STATUS COLUMN (Oracle #13).
+  //
+  // Every branch below used to read `state` alone. `state` is mutable — the
+  // claim identity trigger permits it to move — while `delivery_started` is an
+  // append-only event, so when the two disagree the event is the record of what
+  // actually happened and the column is an opinion about it. Oracle drove the
+  // exploit on a real ledger: revert a delivery_started claim to `claimed` and
+  // the old code answered close_then_attempt, closed it, and freed a message
+  // whose bytes had already been authorised to be delivered a second time.
+  //
+  // This runs ABOVE the state machine on purpose. A contradiction is not a
+  // state to route around; it is a fact about this database that a human has to
+  // resolve, so it holds and says which two records disagree.
+  // ===================================================================
+  const deliveryStartedRecorded = Number(claim.deliveryStartedAtMs) > 0
+    || (Array.isArray(claim.eventKinds) && claim.eventKinds.includes(DELIVERY_STARTED));
+  if (deliveryStartedRecorded && state !== DELIVERY_STARTED && state !== ADMITTED) {
+    return {
+      action: 'hold',
+      reason: 'claim_state_contradicts_delivery_started',
+      failureClass: 'awaiting_proof',
+      unattainable: false,
+      resolutionRequired: true,
+      detail: {
+        claimId: claim.claimId,
+        claimGeneration: claim.appGeneration,
+        storedState: state,
+        deliveryStartedAtMs: claim.deliveryStartedAtMs ?? null,
+        claimantLive: liveness.live,
+      },
+    };
+  }
+
   if (state === CLOSED_UNSENT) {
     // The slot was released by an explicit, recorded decision that nothing was
     // sent. That is the one way an attempt becomes retryable without proof.

@@ -437,7 +437,12 @@ describe('exclusive transport claim', () => {
     });
 
     expect(closed.ok).toBe(false);
-    expect(closed.reason).toBe('claim_not_provably_unsent');
+    // THE EVENT, NOT THE COLUMN. The close is refused on the stored
+    // delivery_started event now, which is the reason that survives someone
+    // moving `state` back to claimed (Oracle #13, blocker 1). The
+    // state-only refusal is still reachable — for `admitted`, below.
+    expect(closed.reason).toBe('claim_delivery_started_recorded');
+    expect(closed.detail).toMatchObject({ state: CLAIM_STATES.DELIVERY_STARTED });
   });
 
   test('delivery_started IS DURABLE AND MONOTONIC', () => {
@@ -1045,8 +1050,19 @@ describe('delivery_started state table (blocker 5)', () => {
     const src = recordImmutableSource(db, sourceInput());
     const claim = claimTransportAttempt(db, claimInput(src.sourceRowId));
 
+    // A value outside the vocabulary is refused by the monotonic trigger, which
+    // fires before the CHECK constraint and rejects it as an illegal
+    // TRANSITION. Either refusal is the database saying no; asserting the
+    // specific one keeps this honest about which guard is doing the work.
     expect(() => db.prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
-      .run('some_future_state', claim.claimId)).toThrow(/CHECK constraint/i);
+      .run('some_future_state', claim.claimId))
+      .toThrow(/telegram_claim_state_not_monotonic|CHECK constraint/i);
+
+    // A LEGAL VALUE IN AN ILLEGAL DIRECTION is refused too, which the CHECK
+    // constraint alone could never catch.
+    expect(() => db.prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
+      .run(CLAIM_STATES.ADMITTED, claim.claimId))
+      .toThrow(/telegram_claim_state_not_monotonic/);
 
     // And the claim is untouched, so the state machine never saw a bad value.
     expect(db.prepare('SELECT state FROM telegram_transport_claims').get().state)
@@ -1152,10 +1168,15 @@ describe('promotion re-verifies correlation even for a forged claim row', () => 
     // Now forge by INSERT instead: a claim row whose correlation columns name
     // srcB while its source row id points at srcA. Nothing in the schema stops
     // this, so the promotion path must.
+    //
+    // THE REAL CLAIM IS LEFT EXACTLY WHERE IT IS. This used to close it first,
+    // purely to free the exclusivity slot — which the database now refuses,
+    // correctly, because it carries a delivery_started event (Oracle #13). The
+    // forged row therefore takes its own update id; the attack under test is
+    // the source_row_id mismatch, and it never needed the tuple.
     const stored = db.prepare('SELECT * FROM telegram_transport_claims WHERE claim_id = ?')
       .get(claim.claimId);
-    db.prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
-      .run(CLAIM_STATES.CLOSED_UNSENT, claim.claimId);
+    const forgedUpdateId = 900000003;
     db.prepare(`
       INSERT INTO telegram_transport_claims (
         claim_id, cutover_id, route_key, update_id, source_row_id, app_generation,
@@ -1163,7 +1184,7 @@ describe('promotion re-verifies correlation even for a forged claim row', () => 
         delivered_prompt_sha256, delivered_prompt_bytes, state, closed_at_ms
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
     `).run(
-      'forged-claim', stored.cutover_id, stored.route_key, stored.update_id,
+      'forged-claim', stored.cutover_id, stored.route_key, forgedUpdateId,
       srcA.sourceRowId, stored.app_generation, stored.pane_launch_id, stored.pane_id,
       stored.role, stored.consumer_runtime, 'nonce-forged', stored.attempt_at_ms,
       stored.delivered_prompt_sha256, stored.delivered_prompt_bytes,

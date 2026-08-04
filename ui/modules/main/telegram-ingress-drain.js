@@ -317,34 +317,74 @@ function createDrainCoordinator(deps = {}) {
   }
 
   /**
-   * Release the claim a just-refused delivery created, on the transport's own
-   * first-hand refusal. Returns {held:false} when the record may be retried and
-   * {held:true, outcome} when the release could not be made and the queue must
-   * stop instead.
+   * Release the claim THIS refused delivery created — and only that one.
    *
-   * THE CLAIM IS RE-READ, not remembered. The one we read before delivering was
-   * null by definition on a first attempt — the claim is created INSIDE the
-   * delivery sequence — so closing "the claim we saw earlier" would close
-   * nothing at all and report success.
+   * =====================================================================
+   * WHY THIS NO LONGER RE-READS THE TUPLE (Oracle #13, blocker 2)
+   * =====================================================================
+   * It used to look the claim up by (updateId, routeKey) and close whatever
+   * came back, reasoning that the claim is created inside the delivery sequence
+   * so it cannot be "the one we saw earlier". That reasoning is right about
+   * WHEN the claim appears and wrong about WHOSE it is. When the sequence loses
+   * the race at B, the refusal is `claim_held_by_other` and the very next
+   * lookup returns THE OTHER PROCESS'S LIVE CLAIM — which this function then
+   * closed, releasing an in-flight delivery and inviting the duplicate the
+   * latch exists to prevent. Oracle reproduced exactly that against the real
+   * coordinator.
+   *
+   * So ownership is now stated by the only code that knows it: the sequence
+   * returns its own claim id, the delivery glue puts it on the receipt as
+   * `claimRelease`, and this function closes that id or nothing at all.
+   *
+   * A receipt with no `claimRelease` is treated as `none` — no close. That is
+   * not a fail-open: closing is the dangerous act and it now requires explicit
+   * ownership, while the decision to retry is separately gated by the claim
+   * state machine, which holds on a live or unknown claimant and (since blocker
+   * 1) on any stored delivery_started event.
+   *
+   * Returns {held:false} when the record may be retried and {held:true, outcome}
+   * when the queue must stop instead.
    */
-  async function releaseClaimAfterRejection({ updateId, routeKey, messageId, receipt }) {
-    let current = null;
-    try {
-      const read = await lookupTransportClaim({ updateId, routeKey, messageId });
-      current = read && read.claim ? read.claim : null;
-    } catch (err) {
+  async function releaseClaimAfterRejection({ receipt }) {
+    const release = receipt && typeof receipt.claimRelease === 'object' && receipt.claimRelease
+      ? receipt.claimRelease
+      : { kind: 'none' };
+    const kind = String(release.kind || 'none');
+
+    if (kind === 'unknown') {
+      // The delivery cannot say which side of the authorisation boundary it
+      // ended on. Neither closing nor retrying is safe.
       return {
         held: true,
-        outcome: { stop: true, reason: `claim_lookup_failed:${err.message}`, failureClass: 'awaiting_proof' },
+        outcome: {
+          stop: true,
+          reason: `claim_release_boundary_unknown:${receipt?.status || 'no_receipt'}`,
+          failureClass: 'awaiting_proof',
+        },
       };
     }
-    // Refused before a claim existed: nothing is latched, so nothing to release.
-    if (!current) return { held: false };
+    // Nothing of ours is latched: refused before B, or lost the race at B. The
+    // tuple may well hold someone else's claim; it is not ours to close.
+    if (kind !== 'owned_unsent') return { held: false };
+
+    const claimId = String(release.claimId || '').trim();
+    if (!claimId) {
+      // Claims ownership and cannot name it. That is a defect in the producer
+      // of this receipt, not a licence to go looking for a claim to close.
+      return {
+        held: true,
+        outcome: {
+          stop: true,
+          reason: 'claim_release_owned_without_id',
+          failureClass: 'awaiting_proof',
+        },
+      };
+    }
 
     let closed;
     try {
       closed = await closeUnsentTransportClaim({
-        claimId: current.claimId,
+        claimId,
         reason: `delivery_rejected:${receipt?.status || 'no_receipt'}`,
         atMs: now(),
       });
@@ -355,9 +395,10 @@ function createDrainCoordinator(deps = {}) {
       };
     }
     if (!closed || closed.ok !== true) {
-      // Most often `claim_not_provably_unsent`: the claim is at
-      // delivery_started, so the bytes were authorised and this refusal cannot
-      // prove they were never written. Hold.
+      // `claim_delivery_started_recorded` or `claim_not_provably_unsent`: the
+      // store found durable evidence that bytes were authorised, so this
+      // refusal cannot prove they were never written. The database has the
+      // final word here, not the caller's belief about its own boundary.
       return {
         held: true,
         outcome: {
@@ -749,14 +790,17 @@ function createDrainCoordinator(deps = {}) {
         // owns the failure - not silently re-claimed by a later pass, which is
         // the thing Oracle forbade.
         //
-        // AND THE DATABASE HAS THE FINAL WORD. `closeUnsentClaim` permits the
-        // move only from `claimed`; a claim already at `delivery_started` is
-        // past the authorisation boundary and its close is REFUSED, which turns
-        // this into a hold. That is the state machine ruling, not this branch
-        // deciding it is safe. Without the close, every transient refusal would
-        // wedge the queue until the next boot.
+        // AND THE DATABASE HAS THE FINAL WORD. `closeUnsentClaim` refuses any
+        // claim carrying a durable `delivery_started` event and any claim past
+        // `claimed`, so a refusal from the far side of the authorisation
+        // boundary turns into a hold. That is the state machine ruling, not
+        // this branch deciding it is safe. Without the close, every transient
+        // refusal would wedge the queue until the next boot.
+        //
+        // ONLY THE CLAIM THIS DELIVERY OWNS. The receipt names it; nothing here
+        // goes looking (Oracle #13, blocker 2).
         if (!legacyOutstanding) {
-          const released = await releaseClaimAfterRejection({ updateId, routeKey, messageId, receipt });
+          const released = await releaseClaimAfterRejection({ receipt });
           if (released.held) return released.outcome;
         }
         return {
