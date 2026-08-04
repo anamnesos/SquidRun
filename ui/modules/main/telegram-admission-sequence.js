@@ -57,6 +57,7 @@ const { findActivePaneLaunch } = require('./telegram-launch-registry');
 const { appendConsumeMarker, parseConsumeMarker } = require('./telegram-consume-marker');
 const { canonicalQueuedPayloadDigest } = require('./telegram-consumed-proof');
 const { probeRuntimeProofCapability } = require('./telegram-consumption-proof');
+const nodeTypes = require('node:util').types;
 
 /**
  * PHASES, not just reasons.
@@ -181,10 +182,44 @@ function evaluatePaneReadinessAnswer(input = {}) {
   // A PLAIN RECORD, NOT SOMETHING THAT MERELY ANSWERS QUESTIONS (Oracle #47).
   //
   // `Object.create(goodAnswer)` reads identically to a good answer through
-  // every property access below while owning nothing, and it crossed D. A
-  // getter, a class instance or a Proxy would do the same. The probe returns
-  // object literals; anything with a different prototype is not its record.
-  const proto = Object.getPrototypeOf(answer);
+  // every property access below while owning nothing, and it crossed D.
+  //
+  // A CORRECTION TO WHAT THIS LINE USED TO CLAIM (Architect #77): it does NOT
+  // exclude a getter or a Proxy. An object literal with an accessor has
+  // Object.prototype, and a Proxy reports its target's prototype. Those are
+  // caught by the descriptor rules below, not here. What this catches is a
+  // class instance or a foreign prototype chain, and that is all it catches.
+  //
+  // Reflection itself is guarded: every step below can run user code on a
+  // Proxy, and a trap that throws must refuse rather than escape as an
+  // exception the caller never asked to handle.
+  let proto;
+  let descriptors;
+  let ownKeys;
+  try {
+    proto = Object.getPrototypeOf(answer);
+    // Reflect.ownKeys, NOT Object.keys: the latter returns only own ENUMERABLE
+    // STRING keys, so a non-enumerable extra or a symbol-keyed field walked
+    // straight past the "no foreign fields" rule it was supposed to fail.
+    ownKeys = Reflect.ownKeys(answer);
+    descriptors = Object.getOwnPropertyDescriptors(answer);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'pane_readiness_unreadable',
+      detail: { received: 'reflection_threw', message: err.message },
+    };
+  }
+
+  // A PROXY IS NOT A RECORD, even a quiet one. It reports its target's
+  // prototype and can hand back perfectly good descriptors, so nothing above
+  // or below distinguishes it - and `isProxy` runs no traps, so asking is
+  // free and cannot itself be lied to. The probe returns object literals; the
+  // class is closed here rather than argued about case by case.
+  if (nodeTypes.isProxy(answer)) {
+    return { ok: false, reason: 'pane_readiness_not_a_plain_record', detail: { proxy: true } };
+  }
+
   if (proto !== Object.prototype && proto !== null) {
     return {
       ok: false,
@@ -201,39 +236,74 @@ function evaluatePaneReadinessAnswer(input = {}) {
   // alternate yes; the version before this one still consulted it to catch a
   // self-contradiction. Both were latitude, and latitude is what has been
   // getting through. The contract is now literal.
-  const ownKeys = Object.keys(answer);
-  const missing = READINESS_ANSWER_KEYS.filter(
-    (key) => !Object.prototype.hasOwnProperty.call(answer, key)
-  );
-  const unexpected = ownKeys.filter((key) => !READINESS_ANSWER_KEYS.includes(key));
-  if (missing.length > 0 || unexpected.length > 0) {
+  const symbolKeys = ownKeys.filter((key) => typeof key === 'symbol');
+  const stringKeys = ownKeys.filter((key) => typeof key === 'string');
+  const missing = READINESS_ANSWER_KEYS.filter((key) => !stringKeys.includes(key));
+  const unexpected = stringKeys.filter((key) => !READINESS_ANSWER_KEYS.includes(key));
+  if (missing.length > 0 || unexpected.length > 0 || symbolKeys.length > 0) {
     return {
       ok: false,
       reason: 'pane_readiness_shape_unexpected',
-      detail: { missing, unexpected, expected: [...READINESS_ANSWER_KEYS] },
-    };
-  }
-
-  if (answer.attainable !== true) {
-    return {
-      ok: false,
-      reason: 'pane_readiness_unproven',
       detail: {
-        readinessReason: answer.reason ?? null,
-        attainable: answer.attainable ?? null,
-        runtime: answer.runtime ?? null,
-        lastProofAtMs: answer.lastProofAtMs ?? null,
+        missing,
+        unexpected,
+        symbolKeys: symbolKeys.map((key) => String(key)),
+        expected: [...READINESS_ANSWER_KEYS],
       },
     };
   }
 
-  if (answer.reason !== READINESS_POSITIVE_REASON) {
+  // ===================================================================
+  // DATA, NOT BEHAVIOUR - AND READ EXACTLY ONCE (Architect #77).
+  //
+  // An accessor is not a stated fact, it is code that runs every time the
+  // property is touched, so it can answer `true` to the check and something
+  // else to the use. Every field below was read straight off `answer`, more
+  // than once in places, which is a time-of-check/time-of-use gap wide enough
+  // to drive a delivery through.
+  //
+  // So: every required field must be an own DATA descriptor, and from here
+  // down nothing reads `answer` again. The snapshot taken from the descriptors
+  // IS the answer; a getter cannot change its mind about a value already
+  // captured.
+  // ===================================================================
+  const accessors = READINESS_ANSWER_KEYS.filter(
+    (key) => !Object.prototype.hasOwnProperty.call(descriptors[key] || {}, 'value')
+  );
+  if (accessors.length > 0) {
+    return {
+      ok: false,
+      reason: 'pane_readiness_not_a_data_record',
+      detail: { accessors },
+    };
+  }
+  const stated = {
+    attainable: descriptors.attainable.value,
+    reason: descriptors.reason.value,
+    runtime: descriptors.runtime.value,
+    lastProofAtMs: descriptors.lastProofAtMs.value,
+  };
+
+  if (stated.attainable !== true) {
+    return {
+      ok: false,
+      reason: 'pane_readiness_unproven',
+      detail: {
+        readinessReason: stated.reason ?? null,
+        attainable: stated.attainable ?? null,
+        runtime: stated.runtime ?? null,
+        lastProofAtMs: typeof stated.lastProofAtMs === 'object' ? '[object]' : (stated.lastProofAtMs ?? null),
+      },
+    };
+  }
+
+  if (stated.reason !== READINESS_POSITIVE_REASON) {
     // attainable:true carrying an unattainable reason is not a yes with a
     // stale note attached; it is two contradictory claims in one object.
     return {
       ok: false,
       reason: 'pane_readiness_reason_incoherent',
-      detail: { readinessReason: answer.reason ?? null, expected: READINESS_POSITIVE_REASON },
+      detail: { readinessReason: stated.reason ?? null, expected: READINESS_POSITIVE_REASON },
     };
   }
 
@@ -241,9 +311,9 @@ function evaluatePaneReadinessAnswer(input = {}) {
   if (!launch) {
     return { ok: false, reason: 'pane_readiness_launch_runtime_unknown', detail: { launchRuntime: launchRuntime ?? null } };
   }
-  const answered = normalizeRuntime(answer.runtime);
+  const answered = normalizeRuntime(stated.runtime);
   if (!answered) {
-    return { ok: false, reason: 'pane_readiness_runtime_missing', detail: { runtime: answer.runtime ?? null } };
+    return { ok: false, reason: 'pane_readiness_runtime_missing', detail: { runtime: stated.runtime ?? null } };
   }
   if (answered !== launch) {
     // THE ALTERNATE-PANE ANSWER. A probe that reports on `claude` cannot
@@ -262,7 +332,7 @@ function evaluatePaneReadinessAnswer(input = {}) {
   // valueOf. The production probe reads its timestamp out of the receipt store
   // and returns a number; a string means whatever produced this answer is not
   // that probe, and guessing on its behalf is the direction that delivers.
-  const lastProofAtMs = answer.lastProofAtMs;
+  const lastProofAtMs = stated.lastProofAtMs;
   if (typeof lastProofAtMs !== 'number'
     || !Number.isSafeInteger(lastProofAtMs)
     || lastProofAtMs <= 0) {
@@ -306,7 +376,7 @@ function evaluatePaneReadinessAnswer(input = {}) {
       reason: 'pane_readiness_not_reproducible',
       detail: {
         offered: {
-          attainable: answer.attainable, reason: answer.reason, runtime: answered, lastProofAtMs,
+          attainable: stated.attainable, reason: stated.reason, runtime: answered, lastProofAtMs,
         },
         rederived: {
           attainable: rederived.attainable,

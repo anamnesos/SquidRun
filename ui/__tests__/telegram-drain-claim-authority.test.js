@@ -1309,6 +1309,39 @@ describe('readiness is proven before anything is latched', () => {
     await refusedBy(900000875, () => ({ ...GOOD_ANSWER, note: 'looks fine to me' }));
   });
 
+  test('ARCH #77: an accessor answer never gets a claim', async () => {
+    const getterAnswer = { ...GOOD_ANSWER };
+    Object.defineProperty(getterAnswer, 'lastProofAtMs', {
+      get: () => BASE_MS - 1000, enumerable: true, configurable: true,
+    });
+    await refusedBy(900000877, () => getterAnswer);
+
+    // The read-once shape: correct runtime on the first touch, another pane on
+    // every touch after it.
+    let reads = 0;
+    const flipping = { ...GOOD_ANSWER };
+    Object.defineProperty(flipping, 'runtime', {
+      get: () => { reads += 1; return reads === 1 ? 'codex' : 'claude'; },
+      enumerable: true,
+      configurable: true,
+    });
+    await refusedBy(900000878, () => flipping);
+  });
+
+  test('ARCH #77: symbol and non-enumerable extras never get a claim', async () => {
+    await refusedBy(900000879, () => ({ ...GOOD_ANSWER, [Symbol('smuggled')]: 'x' }));
+    const hidden = { ...GOOD_ANSWER };
+    Object.defineProperty(hidden, 'ready', { value: true, enumerable: false, configurable: true });
+    await refusedBy(900000880, () => hidden);
+  });
+
+  test('ARCH #77: a Proxy never gets a claim, throwing or quiet', async () => {
+    await refusedBy(900000881, () => new Proxy({ ...GOOD_ANSWER }, {
+      ownKeys() { throw new Error('ownKeys trap exploded'); },
+    }));
+    await refusedBy(900000882, () => new Proxy({ ...GOOD_ANSWER }, { get: (t, k) => t[k] }));
+  });
+
   test('a null-prototype record is still the probe\'s record, and delivers', async () => {
     // The strictness is about OWNERSHIP and shape, not about ceremony. If this
     // refused, the rule would be superstition rather than a contract.

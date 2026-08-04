@@ -653,6 +653,81 @@ describe('B_readiness — one coherent positive contract (Oracle #37)', () => {
       .toBe('pane_readiness_proof_time_invalid');
   });
 
+  test('ARCH #77: an accessor is behaviour, not a stated fact', () => {
+    // A getter runs on EVERY read, so it can answer the check and then answer
+    // the use differently. The prototype rule does NOT catch this - an object
+    // literal with an accessor has Object.prototype like any other.
+    const getterAnswer = { ...GOOD };
+    Object.defineProperty(getterAnswer, 'lastProofAtMs', { get: () => NOW - 1000, enumerable: true, configurable: true });
+    expect(Object.getPrototypeOf(getterAnswer)).toBe(Object.prototype);
+    expect(evaluate(getterAnswer).reason).toBe('pane_readiness_not_a_data_record');
+    expect(evaluate(getterAnswer).detail.accessors).toEqual(['lastProofAtMs']);
+
+    // THE TIME-OF-CHECK/TIME-OF-USE SHAPE, spelled out: first read is a good
+    // runtime, every read after it is another pane.
+    let reads = 0;
+    const flipping = { ...GOOD };
+    Object.defineProperty(flipping, 'runtime', {
+      get: () => { reads += 1; return reads === 1 ? 'codex' : 'claude'; },
+      enumerable: true,
+      configurable: true,
+    });
+    expect(evaluate(flipping).reason).toBe('pane_readiness_not_a_data_record');
+
+    const setterOnly = { ...GOOD };
+    Object.defineProperty(setterOnly, 'attainable', { set: () => {}, enumerable: true, configurable: true });
+    expect(evaluate(setterOnly).reason).toBe('pane_readiness_not_a_data_record');
+  });
+
+  test('ARCH #77: symbol and non-enumerable keys are foreign fields too', () => {
+    // Object.keys sees neither. Reflect.ownKeys sees both.
+    const symbolExtra = { ...GOOD, [Symbol('smuggled')]: 'x' };
+    expect(Object.keys(symbolExtra)).toHaveLength(4);
+    expect(evaluate(symbolExtra).reason).toBe('pane_readiness_shape_unexpected');
+    expect(evaluate(symbolExtra).detail.symbolKeys).toEqual(['Symbol(smuggled)']);
+
+    const hiddenExtra = { ...GOOD };
+    Object.defineProperty(hiddenExtra, 'ready', { value: true, enumerable: false, configurable: true });
+    expect(Object.keys(hiddenExtra)).toHaveLength(4);
+    expect(evaluate(hiddenExtra).reason).toBe('pane_readiness_shape_unexpected');
+    expect(evaluate(hiddenExtra).detail.unexpected).toEqual(['ready']);
+  });
+
+  test('ARCH #77: reflection that throws refuses instead of escaping', () => {
+    // Every reflection step below runs user code on a Proxy. A trap that throws
+    // must become a refusal, not an exception the sequence never agreed to
+    // handle - an escaping throw out of B_readiness lands in the caller's catch
+    // and reads as an unknown boundary.
+    const throwingOwnKeys = new Proxy({ ...GOOD }, {
+      ownKeys() { throw new Error('ownKeys trap exploded'); },
+    });
+    const refusedKeys = evaluate(throwingOwnKeys);
+    expect(refusedKeys.ok).toBe(false);
+    expect(refusedKeys.reason).toBe('pane_readiness_unreadable');
+    expect(refusedKeys.detail.received).toBe('reflection_threw');
+
+    const throwingProto = new Proxy({ ...GOOD }, {
+      getPrototypeOf() { throw new Error('getPrototypeOf trap exploded'); },
+    });
+    expect(evaluate(throwingProto).reason).toBe('pane_readiness_unreadable');
+
+    const throwingDescriptor = new Proxy({ ...GOOD }, {
+      getOwnPropertyDescriptor() { throw new Error('descriptor trap exploded'); },
+    });
+    expect(evaluate(throwingDescriptor).reason).toBe('pane_readiness_unreadable');
+
+    // A Proxy that does NOT throw is still not a record. It reports its
+    // target's prototype and hands back perfectly good descriptors, so nothing
+    // structural distinguishes it - which is exactly why it is refused by name
+    // instead of by argument about whether this particular one is exploitable.
+    const quietProxy = new Proxy({ ...GOOD }, { get: (t, k) => t[k] });
+    expect(Object.getPrototypeOf(quietProxy)).toBe(Object.prototype);
+    const refusedQuiet = evaluate(quietProxy);
+    expect(refusedQuiet.ok).toBe(false);
+    expect(refusedQuiet.reason).toBe('pane_readiness_not_a_plain_record');
+    expect(refusedQuiet.detail.proxy).toBe(true);
+  });
+
   test('THE FRESHNESS RULE IS THE PROBE\'S, NOT THIS FILE\'S', () => {
     // One millisecond either side of the production window, decided by
     // re-running probeRuntimeProofCapability rather than by a constant copied
