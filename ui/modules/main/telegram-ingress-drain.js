@@ -23,7 +23,6 @@ const defaultQueue = require('../telegram-inbound-durable-queue');
 const spool = require('./telegram-ingress-spool');
 const {
   probeRuntimeProofCapability,
-  isUnattainableReason,
   evaluateConsumptionProof,
   summarizeBacklog,
 } = require('./telegram-consumption-proof');
@@ -31,18 +30,31 @@ const {
   claimAttemptView,
   decideClaimDisposition,
 } = require('./telegram-attempt-authority');
+const {
+  readLegacyJournalSnapshot,
+  evaluateLegacySourceGate,
+  GATE_ACTIONS,
+  // Only these may retire a record without delivering it.
+  //
+  // `consumed_verified_out_of_band` (S491) covers the one shape the automatic
+  // path provably cannot resolve: a record that WAS consumed and answered,
+  // whose attempt predates attempt timestamps, so no receipt can be ordered
+  // against it. It is only ever written by explicit operator recovery, never by
+  // a timer, and the sidecar refuses to store one without the evidence that
+  // justified it.
+  //
+  // A PREDICATE, NOT A SET, AND NOT A LOCAL COPY. This file used to keep its
+  // own identical Set, so the gate's idea of a recognised disposition and the
+  // drain's could drift apart by one edit — and the drain is the half that
+  // retires a message without delivering it. Importing the Set would have been
+  // worse than the copy: a frozen Set is still `.add()`-able, so the fix would
+  // have handed every consumer in the process a way to authorise a retirement
+  // (Architect #121). One authority, and it is not reachable from here.
+  isRecognizedTerminalDisposition,
+} = require('./telegram-legacy-journal');
 
 
 const DEFAULT_BACKOFF_MS = 30 * 1000;
-
-// Only these may retire a record without delivering it.
-//
-// `consumed_verified_out_of_band` (S491) covers the one shape the automatic
-// path provably cannot resolve: a record that WAS consumed and answered, whose
-// attempt predates attempt timestamps, so no receipt can be ordered against it.
-// It is only ever written by explicit operator recovery, never by a timer, and
-// the sidecar refuses to store one without the evidence that justified it.
-const TERMINAL_DISPOSITIONS = new Set(['empty_body', 'consumed_verified_out_of_band']);
 
 // Results that mean the delivery never happened. These are safe to retry, and
 // must NOT enter the proof-only hold: latching a hard rejection would strand
@@ -219,9 +231,11 @@ function byUpdateId(a, b) {
 /**
  * @param {object} deps
  *   queue            durable queue module. MUST provide readPending, ack,
- *                    readAttemptRecords and readDispositions: legacy attempt
- *                    storage is part of the same ownership boundary, and
- *                    binding it elsewhere leaves an injected queue half-owned.
+ *                    attemptsPath and dispositionsPath: legacy attempt storage
+ *                    is part of the same ownership boundary, and binding it
+ *                    elsewhere leaves an injected queue half-owned.
+ *   readJournalFile  (file) => string. The sidecar read seam, so a pass can be
+ *                    counted and made to throw without touching a real disk.
  *   resolveRoute     (chatId) => {ok, profile, windowKey, ...}
  *   deliver          async (job) => receipt
  *   hasExistingReceipt async (messageId, routeKey) => bool   // crash-replay seam
@@ -239,6 +253,12 @@ function createDrainCoordinator(deps = {}) {
   // the injection while the ambiguity latch quietly hit the real disk, so a
   // test could believe it had isolated storage while production files moved.
   // Fail closed rather than silently falling back to the default module.
+  //
+  // WHAT MOVED HERE, AND WHAT DID NOT (v7 §2). The drain no longer uses the
+  // queue's own PARSERS - `readLegacyJournalSnapshot` is the protocol gate and
+  // it is strict where those are lenient - but the queue is still the authority
+  // on WHERE the sidecars are. Keeping the path here and taking the parse
+  // elsewhere is the whole change: same files, stricter reading.
   const requireAttemptOp = (name) => {
     const fn = queue && typeof queue[name] === 'function' ? queue[name] : null;
     if (!fn) {
@@ -246,8 +266,8 @@ function createDrainCoordinator(deps = {}) {
     }
     return fn.bind(queue);
   };
-  const readAttemptRecords = requireAttemptOp('readAttemptRecords');
-  const readDispositions = requireAttemptOp('readDispositions');
+  const attemptsPathFor = requireAttemptOp('attemptsPath');
+  const dispositionsPathFor = requireAttemptOp('dispositionsPath');
 
   // ===================================================================
   // THE POST-CUTOVER LATCH SEAMS. REQUIRED, AND THE DEFAULT IS A HOLD.
@@ -279,6 +299,10 @@ function createDrainCoordinator(deps = {}) {
   const receiptActivity = typeof deps.receiptActivity === 'function'
     ? deps.receiptActivity
     : () => null;
+  // The sidecar read seam. Left undefined the journal module uses fs directly,
+  // which is what production wants; a test hands one in so "exactly one read
+  // per pass" is a counted fact rather than a claim about code shape.
+  const readJournalFile = typeof deps.readJournalFile === 'function' ? deps.readJournalFile : null;
   const proofCapabilityWindowMs = Number.isFinite(Number(deps.proofCapabilityWindowMs))
     ? Number(deps.proofCapabilityWindowMs)
     : undefined;
@@ -414,9 +438,53 @@ function createDrainCoordinator(deps = {}) {
   /**
    * Deliver one record. Returns {retire} / {stop, reason}.
    */
-  async function processRecord(dir, record, routeKey, st, attemptsRead) {
+  async function processRecord(dir, record, routeKey, st, journal) {
     const updateId = Number(record.updateId);
     const messageId = downstreamMessageId(updateId);
+
+    // ===================================================================
+    // THE MANDATORY LEGACY-FILE GATE (v7 §2). FIRST, BEFORE EVERYTHING.
+    // ===================================================================
+    // "Unreadable / malformed / conflicting journal stops the head and every
+    // later source." Checked before the route, before the claim lookup, before
+    // any decision and any delivery, because a pass that cannot read what was
+    // already attempted has nothing to reason with. The snapshot was taken ONCE
+    // for the whole pass, so failing here at the head stops N and N+1 alike
+    // with no claim lookup, no decision, no deliver, no ack, and no write.
+    const snapshot = journal ? journal.snapshot : null;
+    if (!snapshot || snapshot.ok !== true) {
+      const reason = (snapshot && snapshot.reason) || 'journal_snapshot_missing';
+      return {
+        stop: true,
+        reason: `legacy_journal_gate:${reason}`,
+        failureClass: 'awaiting_proof',
+        // A MALFORMED JOURNAL IS NOT A WAIT. Nothing this process does on any
+        // later pass will make those bytes parse, so health has to say "a
+        // person must look at this file" rather than report patience at a queue
+        // that will never move on its own.
+        unattainable: true,
+        resolutionRequired: true,
+        legacyGate: {
+          action: 'snapshot_failed',
+          reason,
+          detail: (snapshot && snapshot.detail) || null,
+        },
+      };
+    }
+
+    // The per-source verdict: pure, total, and derived only from this record
+    // and that one snapshot. Nothing below re-reads a file to second-guess it.
+    const gate = evaluateLegacySourceGate({ record, snapshot });
+    if (gate.ok !== true) {
+      return {
+        stop: true,
+        reason: `legacy_journal_gate:${gate.reason}`,
+        failureClass: 'awaiting_proof',
+        unattainable: true,
+        resolutionRequired: true,
+        legacyGate: { action: 'gate_refused', reason: gate.reason, detail: null },
+      };
+    }
 
     // (3) Re-resolve from the STORED chatId every time. A chat that has been
     // re-pointed since the append must not deliver to its old destination, and
@@ -435,93 +503,234 @@ function createDrainCoordinator(deps = {}) {
 
     // (4) A terminal record never reaches a pane; it only needs its route
     // validated before being retired, which just happened.
-    // (4) Only an explicitly allowlisted disposition may retire without
-    // delivery. A corrupted or unrecognised value must HOLD: an unknown reason
-    // to skip delivery is not a reason to skip delivery.
-    // FAIL CLOSED BEFORE READING EITHER SIDECAR. An unreadable attempt or
-    // disposition journal must hold, and it has to be checked HERE rather than
-    // further down: treating an unreadable disposition file as "no disposition"
-    // would be a fail-open read in the one place that retires without delivery.
-    if (!attemptsRead || attemptsRead.error) {
-      const message = attemptsRead?.error?.message || 'attempt journal not read';
-      return { stop: true, reason: `attempt_journal_unreadable:${message}`, failureClass: 'awaiting_proof' };
+    //
+    // ===================================================================
+    // TWO AUTHORITIES FOR ONE RETIREMENT, RECONCILED OUT LOUD
+    // ===================================================================
+    // A disposition may come from the record itself or from the append-only
+    // sidecar, and this used to read:
+    //
+    //     record.terminalDisposition || overlaid.disposition
+    //
+    // under a comment claiming the record's value "wins" so a recovery could not
+    // quietly reclassify history. `||` reconciles nothing. It takes the first
+    // truthy value and never looks at the second, so a sidecar disposition that
+    // DISAGREED with the record was not refused — it was never compared, and
+    // the comment described a check that was not there. Two authorities saying
+    // different things about whether James's message is finished is exactly the
+    // case that must stop, and it was the one case being read straight past.
+    //
+    // So: compare both, and act only where they agree or only one exists.
+    // ABSENT IS `null`/`undefined`, AND NOTHING ELSE (Architect #122).
+    //
+    // The obvious spelling of this is
+    //
+    //     typeof x === 'string' && x.trim() ? x.trim() : null
+    //
+    // and it is a fail-open read wearing a type guard: `''`, `'   '`, `0`, `{}`
+    // and every other malformed present value NORMALISE INTO ABSENCE, so a
+    // record whose disposition field is corrupt gets delivered as though it had
+    // never carried one. Queue records spell absence as `null`; anything else
+    // present is a record we cannot read, and an unreadable field on the one
+    // path that retires without delivering is a HOLD, not a shrug.
+    //
+    // OWN PROPERTY ONLY, for the same reason `telegram-source-protocol` reads
+    // own properties: a classification satisfiable through a prototype is a
+    // classification that can be borrowed.
+    const rawDisposition = record && typeof record === 'object'
+      && Object.prototype.hasOwnProperty.call(record, 'terminalDisposition')
+      ? record.terminalDisposition
+      : undefined;
+    let recordDisposition = null;
+    if (rawDisposition !== null && rawDisposition !== undefined) {
+      if (typeof rawDisposition !== 'string' || rawDisposition.trim() === '') {
+        // PRESENT AND UNREADABLE. Named apart from the unrecognised-value case
+        // below so the person reading health knows whether to go looking for a
+        // disposition nobody defined or for a writer that produced garbage.
+        return {
+          stop: true,
+          reason: 'unknown_record_terminal_disposition',
+          failureClass: 'definite',
+          legacyGate: {
+            action: 'unknown_record_terminal_disposition',
+            reason: 'unknown_record_terminal_disposition',
+            detail: { type: typeof rawDisposition },
+          },
+        };
+      }
+      recordDisposition = rawDisposition.trim();
+      // AN UNRECOGNISED VALUE IS NOT A DISPOSITION AT ALL. Checked before the
+      // comparison below, because "unknown vs known" is not a disagreement to
+      // arbitrate — one of the two sides cannot be read. (The sidecar side needs
+      // no such check: the gate refuses to parse an unrecognised disposition, so
+      // an unknown value there already failed the whole pass above.)
+      if (!isRecognizedTerminalDisposition(recordDisposition)) {
+        return {
+          stop: true,
+          reason: 'unknown_terminal_disposition',
+          failureClass: 'definite',
+          legacyGate: {
+            action: 'unknown_terminal_disposition',
+            reason: 'unknown_terminal_disposition',
+            detail: { record: recordDisposition },
+          },
+        };
+      }
+    }
+    const sidecarEntry = snapshot.dispositions.get(updateId) || null;
+    const sidecarDisposition = sidecarEntry ? sidecarEntry.disposition : null;
+
+    // A SOURCE THIS BUILD MAY NOT PROCESS IS NOT RETIRED BY IT EITHER (v7 §2).
+    // The protocol holds outrank a record-carried disposition: a `decision_v1`
+    // record whose journal shows a legacy attempt is two regimes disagreeing
+    // about what the update even IS, and acking it on the strength of a field
+    // we are not yet authorised to act on would settle that disagreement by
+    // discarding it. A clean `decision_v1` source holds for the stable fence,
+    // which is Step 3 and does not exist in this build.
+    if (gate.action === GATE_ACTIONS.PROTOCOL_CONFLICT || gate.action === GATE_ACTIONS.REQUIRES_FENCE) {
+      return {
+        stop: true,
+        reason: `legacy_journal_gate:${gate.action}`,
+        failureClass: 'awaiting_proof',
+        unattainable: true,
+        resolutionRequired: true,
+        legacyGate: { action: gate.action, reason: gate.action, detail: gate.detail || null },
+      };
     }
 
-    // A disposition may come from the record itself or from the append-only
-    // sidecar. The sidecar cannot INVENT one for a record that already carries
-    // a different disposition — that would let a recovery quietly reclassify
-    // history — so the record's own value wins where both exist.
-    const overlaid = attemptsRead.dispositions.get(updateId) || null;
-    const effectiveDisposition = record.terminalDisposition || (overlaid ? overlaid.disposition : null);
+    if (recordDisposition && sidecarDisposition && recordDisposition !== sidecarDisposition) {
+      // NEITHER SIDE MAY OVERWRITE THE OTHER. No ack, no delivery, no write —
+      // a person decides which of the two is the truth about this message.
+      return {
+        stop: true,
+        reason: 'terminal_disposition_conflict',
+        failureClass: 'awaiting_proof',
+        unattainable: true,
+        resolutionRequired: true,
+        legacyGate: {
+          action: 'terminal_disposition_conflict',
+          reason: 'terminal_disposition_conflict',
+          detail: { record: recordDisposition, sidecar: sidecarDisposition },
+        },
+      };
+    }
+
+    const effectiveDisposition = recordDisposition || sidecarDisposition;
     if (effectiveDisposition) {
-      if (!TERMINAL_DISPOSITIONS.has(effectiveDisposition)) {
-        return { stop: true, reason: 'unknown_terminal_disposition', failureClass: 'definite' };
-      }
-      if (overlaid && !record.terminalDisposition) {
+      // ONE RETIREMENT, whether one authority said it or both said the same
+      // thing. Reaching here with a sidecar value means the gate returned
+      // RETIRE_TERMINAL, so the `attempted` latch 808499316 also carries is the
+      // RESOLVED shape rather than a contradiction — attempted long ago, since
+      // proven answered, retired now with nothing injected at a pane.
+      if (sidecarEntry && !recordDisposition) {
         log.info(
           'Telegram',
-          `Retiring ${messageId} on recorded disposition ${effectiveDisposition} (${overlaid.evidence}); no delivery, no re-injection`
+          `Retiring ${messageId} on recorded disposition ${effectiveDisposition} (${sidecarEntry.evidence}); no delivery, no re-injection`
         );
       }
       return { retire: true, terminal: true, visible: false };
     }
 
+    // ===================================================================
+    // OUTSTANDING LEGACY ATTEMPT: STOP HERE (v7 §2, Architect #119)
+    // ===================================================================
+    // "exact matching state='attempted': legacy authority remains; HOLD unless
+    // an exact validated terminal disposition already retires it." A validated
+    // disposition would have retired it directly above, so reaching this line
+    // means there is none, and the only correct next step is to stop.
+    //
+    // THIS USED TO CONTINUE. The old code looked up a receipt and ran
+    // `evaluateConsumptionProof` against the JSONL attempt, and could retire the
+    // record automatically when the proof matched. Architect #119 ruled that
+    // out and the reasoning holds: the v0 latch is unversioned, carries no
+    // producing generation for the shape that matters, and a proof path built on
+    // it decides "James already saw this" from a record that cannot say who
+    // delivered it. The G->G+1 proof story belongs to the post-cutover DB claim,
+    // which is created by the same transaction that authorises the delivery.
+    // Exact proof for a legacy record is still usable — through explicit
+    // recovery, which WRITES the reviewed disposition, and the disposition then
+    // authorises the zero-injection retirement above.
+    //
+    // So: no claim lookup, no receipt lookup, no proof evaluation, no deliver,
+    // no ack, no write. The runtime capability probe below reads only injected
+    // in-memory getters and is diagnosis, not a step toward delivery.
+    const legacyAttempt = snapshot.attempts.get(updateId) || null;
+    if (gate.action === GATE_ACTIONS.HOLD_ATTEMPTED) {
+      const capability = probeRuntimeProofCapability({
+        runtime: paneRuntimeFor(liveWindow, routeKey),
+        receiptActivity: receiptActivity(),
+        nowMs: now(),
+        windowMs: proofCapabilityWindowMs,
+      });
+      // WHICH KIND OF UNRESOLVABLE, still named separately. Both hold and both
+      // need a written disposition, but only one of them is ALSO the record
+      // whose attempt no receipt could ever have ordered — 808499316 — and
+      // collapsing them is what once sent an operator to repair hooks for a
+      // record no hook repair can reach.
+      const resolvability = classifyAttemptResolvability(legacyAttempt, sessionGeneration());
+      return {
+        stop: true,
+        reason: resolvability.resolvable
+          ? 'hold_legacy_attempted:awaiting_reviewed_disposition'
+          : `orphaned_attempt:${resolvability.reason}`,
+        failureClass: 'awaiting_proof',
+        // Permanent until somebody writes the disposition. Never a wait.
+        unattainable: true,
+        resolutionRequired: true,
+        orphanedAttempt: resolvability.resolvable
+          ? null
+          : { ...resolvability.detail, reason: resolvability.reason },
+        proofRuntime: capability.runtime,
+        runtimeProofAttainable: capability.attainable,
+        runtimeProofReason: capability.reason,
+        legacyGate: { action: gate.action, reason: 'legacy_attempt_outstanding', detail: null },
+      };
+    }
+
+    // Everything from here is `legacy_pane_only`: `retryable`, or no journal
+    // match at all. The ordinary repaired pane path, judged by the DB claim,
+    // which the delivery sequence creates before any bytes reach a pane.
+
     // (6) Crash after downstream accept but before ack: the record is still
     // pending, but a receipt already exists for this exact messageId. Retire it
     // instead of injecting a second visible copy.
-    // READ THE DURABLE ATTEMPT FIRST. Everything below - the expected identity,
-    // the receipt lookup, the proof gate - has to be able to ask what the record
-    // was actually waiting for, and it cannot do that after the fact.
-    //
-    // WHICH LATCH IS AUTHORITATIVE IS DECIDED BY THE EVIDENCE PRESENT (B5).
-    // A record already carrying an OUTSTANDING legacy attempt is judged by that
-    // attempt forever - update 808499316 above all - because a claim written for
-    // it now would invent the identity of a delivery that may already have
-    // reached James. Everything else is judged by the DB claim, which the
-    // delivery sequence creates before any bytes reach a pane.
-    const legacyAttempt = attemptsRead.attempts.get(updateId) || null;
-    const legacyOutstanding = !!(legacyAttempt && legacyAttempt.state === 'attempted');
-
     let claim = null;
     // THE CLOSED SLOTS TRAVEL WITH THE CLAIM. Dropping them here is how a
     // legacy closed_unsent row carrying an append-only delivery_started reached
     // the disposition as a plain "no claim" and authorised a second delivery
     // (Oracle #21). The read already knows; this is the wire that carries it.
     let closedClaims = [];
-    if (!legacyOutstanding) {
-      try {
-        const claimRead = await lookupTransportClaim({
-          updateId,
-          routeKey,
-          messageId,
-        });
-        claim = claimRead && claimRead.claim ? claimRead.claim : null;
-        closedClaims = claimRead && Array.isArray(claimRead.closedClaims)
-          ? claimRead.closedClaims
-          : [];
-      } catch (err) {
-        // WE CANNOT TELL WHETHER THIS WAS ALREADY CLAIMED. Post-cutover the
-        // claim is the only latch, so an unreadable claim store is exactly the
-        // "I do not know if he has seen this" case, and delivering into it is
-        // how the fix would have shipped the duplicate it exists to prevent.
-        return {
-          stop: true,
-          reason: `claim_lookup_failed:${err.message}`,
-          failureClass: 'awaiting_proof',
-        };
-      }
+    try {
+      const claimRead = await lookupTransportClaim({
+        updateId,
+        routeKey,
+        messageId,
+      });
+      claim = claimRead && claimRead.claim ? claimRead.claim : null;
+      closedClaims = claimRead && Array.isArray(claimRead.closedClaims)
+        ? claimRead.closedClaims
+        : [];
+    } catch (err) {
+      // WE CANNOT TELL WHETHER THIS WAS ALREADY CLAIMED. Post-cutover the
+      // claim is the only latch, so an unreadable claim store is exactly the
+      // "I do not know if he has seen this" case, and delivering into it is
+      // how the fix would have shipped the duplicate it exists to prevent.
+      return {
+        stop: true,
+        reason: `claim_lookup_failed:${err.message}`,
+        failureClass: 'awaiting_proof',
+      };
     }
 
-    // ONE `attempt` for everything below. Legacy record or claim projection,
-    // the proof gate asks the same question of both: what delivery is this
-    // record waiting on, and does the evidence answer THAT delivery.
-    const attempt = legacyOutstanding ? legacyAttempt : claimAttemptView(claim);
+    // ONE `attempt` for everything below: what delivery is this record waiting
+    // on, and does the evidence answer THAT delivery.
+    const attempt = claimAttemptView(claim);
     // THE BACKLOG SNAPSHOT COUNTS ATTEMPTS, and post-cutover the attempts live
     // in the claim. Without this the health surface reports zero attempted for
     // a queue whose head has been delivered and is waiting on proof — a channel
     // that looks idle while it is actually blocked.
-    if (!legacyOutstanding && attempt && attemptsRead.claimAttempts) {
-      attemptsRead.claimAttempts.set(updateId, attempt);
+    if (attempt && journal.claimAttempts) {
+      journal.claimAttempts.set(updateId, attempt);
     }
 
     const expectedIdentity = {
@@ -590,65 +799,9 @@ function createDrainCoordinator(deps = {}) {
       return { retire: true, replayed: true };
     }
 
-    if (legacyOutstanding) {
-      // S491. An outstanding attempt used to end the story right here: hold,
-      // forever, with no way to distinguish "proof is still coming" from "proof
-      // can never come". That single unanswerable question muted the channel
-      // for 8.6 hours.
-      //
-      // Proof has already been evaluated above and did not land. So the only
-      // question left is the one nothing used to ask: is proof for
-      // this pane obtainable AT ALL? A runtime that has never once produced a
-      // receipt is not slow, it is unwired — a configuration defect wearing the
-      // costume of patience. Either way we HOLD, because 318 ("Not the tankless
-      // job the other one") must never reach James without 317. But the hold
-      // now carries its own diagnosis to the health surface.
-      const capability = probeRuntimeProofCapability({
-        runtime: paneRuntimeFor(liveWindow, routeKey),
-        receiptActivity: receiptActivity(),
-        nowMs: now(),
-        windowMs: proofCapabilityWindowMs,
-      });
-
-      // THE RECORD'S OWN RESOLVABILITY IS REPORTED FIRST, because it is the
-      // cause that decides which repair is the right one. Runtime capability is
-      // still reported alongside - both facts are true and both matter - but
-      // they are no longer collapsed into one reason string that names only the
-      // runtime.
-      const resolvability = classifyAttemptResolvability(attempt, sessionGeneration());
-      if (!resolvability.resolvable) {
-        return {
-          stop: true,
-          reason: `orphaned_attempt:${resolvability.reason}`,
-          failureClass: 'awaiting_proof',
-          // Permanent, and not because of the runtime. No receipt can retire
-          // this record; only an explicit recorded resolution can.
-          unattainable: true,
-          resolutionRequired: true,
-          orphanedAttempt: { ...resolvability.detail, reason: resolvability.reason },
-          proofRuntime: capability.runtime,
-          runtimeProofAttainable: capability.attainable,
-          runtimeProofReason: capability.reason,
-        };
-      }
-
-      return {
-        stop: true,
-        reason: capability.attainable
-          ? `unresolved_delivery_attempt:${proofOutcome.reason}`
-          : `unprovable_pane:${capability.reason}`,
-        failureClass: 'awaiting_proof',
-        unattainable: !capability.attainable,
-        resolutionRequired: false,
-        proofRuntime: capability.runtime,
-        runtimeProofAttainable: capability.attainable,
-        runtimeProofReason: capability.reason,
-      };
-    }
-
     // THE CLAIM'S DECISION IS MADE HERE, ABOVE THE IN-PROCESS LATCH, for the
-    // same reason the legacy branch above it is: an outstanding attempt has to
-    // be DIAGNOSED before anything reports the generic "awaiting_proof". Below
+    // same reason the legacy hold above it stops early: an outstanding attempt
+    // has to be DIAGNOSED before anything reports the generic "awaiting_proof". Below
     // the latch, the second pass of a wedged queue answers with a process-local
     // flag and health loses the runtime capability finding entirely - which is
     // the reporting failure that made an 8.6-hour outage read like patience.
@@ -808,10 +961,8 @@ function createDrainCoordinator(deps = {}) {
         //
         // ONLY THE CLAIM THIS DELIVERY OWNS. The receipt names it; nothing here
         // goes looking (Oracle #13, blocker 2).
-        if (!legacyOutstanding) {
-          const released = await releaseClaimAfterRejection({ receipt });
-          if (released.held) return released.outcome;
-        }
+        const released = await releaseClaimAfterRejection({ receipt });
+        if (released.held) return released.outcome;
         return {
           stop: true,
           reason: `delivery_rejected:${receipt?.status || 'no_receipt'}`,
@@ -845,24 +996,53 @@ function createDrainCoordinator(deps = {}) {
     let delivered = 0;
     let stoppedAt = null;
 
-    // ONE read of the ambiguity latch per pass, shared by the per-record checks
-    // and the health summary below. Reading it twice invited the two halves of
-    // the same pass to disagree about what had been attempted.
-    let attemptsRead;
+    // ===================================================================
+    // ONE SNAPSHOT PER ORDERED PASS (v7 §2)
+    // ===================================================================
+    // Both sidecars are read here, exactly once, and every record in this pass
+    // is judged from that one snapshot. Not once per record: a pass that
+    // re-read between updates could watch the journal change underneath it and
+    // decide two records from two different worlds. Reading it twice within one
+    // pass invited the same disagreement between the per-record checks and the
+    // health summary below.
+    //
+    // The reader is strict where the queue's own parsers are lenient — see
+    // telegram-legacy-journal.js for the four gaps that matter — and a snapshot
+    // failure is carried to every record rather than thrown, so the head stops
+    // with a named reason instead of the pass dying somewhere less legible.
+    //
+    // THE QUEUE'S ANSWER IS CHECKED BEFORE IT IS USED (Architect #125).
+    // `requireAttemptOp` proves the methods EXIST; it says nothing about what
+    // they return. A queue whose path methods hand back `''`, `null` or the
+    // same string twice would otherwise reopen the half-owned storage split
+    // from the other end — one collapsed file validating as two clean
+    // journals, or a fallback derivation quietly reading files this queue does
+    // not own. No usable pair of paths, no read at all.
+    let snapshot;
     try {
-      attemptsRead = {
-        attempts: readAttemptRecords(dir),
-        dispositions: readDispositions(dir),
-        // Filled by processRecord from the DB claims it reads this pass, so the
-        // backlog summary below sees post-cutover attempts too.
-        claimAttempts: new Map(),
-        error: null,
-      };
+      const attemptsFile = attemptsPathFor(dir);
+      const dispositionsFile = dispositionsPathFor(dir);
+      const usable = (value) => typeof value === 'string' && value.trim() !== '';
+      if (!usable(attemptsFile) || !usable(dispositionsFile)) {
+        snapshot = { ok: false, reason: 'journal_path_unresolved', detail: null };
+      } else if (attemptsFile === dispositionsFile) {
+        snapshot = { ok: false, reason: 'journal_path_collision', detail: null };
+      } else {
+        snapshot = readLegacyJournalSnapshot(dir, {
+          ...(readJournalFile ? { readFile: readJournalFile } : {}),
+          attemptsFile,
+          dispositionsFile,
+        });
+      }
     } catch (err) {
-      attemptsRead = {
-        attempts: new Map(), dispositions: new Map(), claimAttempts: new Map(), error: err,
-      };
+      snapshot = { ok: false, reason: `journal_snapshot_threw:${err.message}`, detail: null };
     }
+    const journal = {
+      snapshot,
+      // Filled by processRecord from the DB claims it reads this pass, so the
+      // backlog summary below sees post-cutover attempts too.
+      claimAttempts: new Map(),
+    };
 
     for (const record of pending) {
       // Dispose can land mid-batch. Continuing would deliver N+1 while the app
@@ -871,7 +1051,7 @@ function createDrainCoordinator(deps = {}) {
         stoppedAt = { updateId: Number(record.updateId), reason: 'coordinator_disposed', failureClass: 'awaiting_proof' };
         break;
       }
-      const outcome = await processRecord(dir, record, routeKey, st, attemptsRead);
+      const outcome = await processRecord(dir, record, routeKey, st, journal);
       if (outcome.stop) {
         // (2) STOP. N+1 must not pass an unretired N, or order and
         // at-most-once both go out the window. This is NOT negotiable and was
@@ -897,8 +1077,26 @@ function createDrainCoordinator(deps = {}) {
           claimDisposition: outcome.claimDisposition || null,
           runtimeProofAttainable: outcome.runtimeProofAttainable ?? null,
           runtimeProofReason: outcome.runtimeProofReason || null,
+          // WHICH GATE VERDICT HELD THIS, carried for the same reason as the
+          // orphan detail: a hold whose cause is dropped here reaches health as
+          // an unexplained wait, and a journal that will not parse is the least
+          // guessable cause on the list.
+          legacyGate: outcome.legacyGate || null,
         };
-        if (outcome.resolutionRequired) {
+        if (outcome.legacyGate && outcome.legacyGate.action !== GATE_ACTIONS.HOLD_ATTEMPTED) {
+          // THE FILES, THE PROTOCOL, OR TWO AUTHORITIES DISAGREEING. None of
+          // these is about a pane, a receipt or an attempt, so the orphan
+          // wording below would send the reader to entirely the wrong place.
+          log.error(
+            'Telegram',
+            `TELEGRAM INGRESS WEDGED at update ${record.updateId}: ${outcome.reason}. `
+            + `The source gate refused this record (${outcome.legacyGate.action}`
+            + `${outcome.legacyGate.detail ? `: ${JSON.stringify(outcome.legacyGate.detail)}` : ''}), so nothing `
+            + 'was looked up, delivered or acked on this pass and no later pass will decide differently on its own. '
+            + `${pending.length - delivered} message(s) are undelivered, this one included. `
+            + 'It needs a person: repair or explain the journal, or resolve the protocol/disposition disagreement.'
+          );
+        } else if (outcome.resolutionRequired) {
           // THE RECORD ITSELF IS UNRESOLVABLE, whatever the runtime does.
           // Separate from the runtime branch on purpose: sending someone to fix
           // hooks for THIS record wastes the outage, and that is not a
@@ -907,8 +1105,9 @@ function createDrainCoordinator(deps = {}) {
           log.error(
             'Telegram',
             `TELEGRAM INGRESS WEDGED at update ${record.updateId}: ${outcome.reason}. `
-            + `Its durable attempt cannot be resolved by ANY receipt (${orphan.reason || 'unknown'}), so this is `
-            + 'not something the pane runtime can fix and waiting will never clear it. '
+            + `Its durable legacy attempt is outstanding with no reviewed terminal disposition `
+            + `(${orphan.reason || 'no validated disposition recorded'}), so no receipt may retire it and waiting `
+            + 'will never clear it. '
             + `${pending.length - delivered} message(s) are undelivered, this one included. `
             + 'It needs an EXPLICIT recorded recovery for this one record, pinned to its own evidence. '
             + `Separately, pane runtime ${outcome.proofRuntime || 'unknown'} proof-capable=`
@@ -964,8 +1163,13 @@ function createDrainCoordinator(deps = {}) {
     const backlog = summarizeBacklog({
       pending: pending.slice(delivered),
       // BOTH LATCHES. Legacy rows and the claims read this pass; a summary over
-      // only one of them is blind to exactly half the queue.
-      attempts: new Map([...attemptsRead.attempts, ...(attemptsRead.claimAttempts || new Map())]),
+      // only one of them is blind to exactly half the queue. A failed snapshot
+      // contributes no legacy rows - it could not read any - and the count is
+      // honest about that rather than reporting zero attempts as health.
+      attempts: new Map([
+        ...(snapshot.ok === true ? snapshot.attempts : new Map()),
+        ...journal.claimAttempts,
+      ]),
       blocked: stoppedAt,
       lastRetirementAtMs: st.lastRetirementAtMs || null,
       nowMs: now(),
@@ -1121,7 +1325,10 @@ module.exports = {
   proofClassOf,
   looksAccepted,
   IDENTITY_FIELDS,
-  TERMINAL_DISPOSITIONS,
   downstreamMessageId,
   DEFAULT_BACKOFF_MS,
 };
+// TERMINAL_DISPOSITIONS is deliberately NOT re-exported. It was exported here
+// and imported by nobody, and re-exporting the authority now would hand every
+// consumer of this module the same mutable-membership hole Architect #121
+// caught. `telegram-legacy-journal` owns the question; ask it there.

@@ -18,6 +18,7 @@ const {
   isCorrelatedProof,
   looksAccepted,
 } = require('../modules/main/telegram-ingress-drain');
+const { classifySourceRecord, SOURCE_PROTOCOLS } = require('../modules/main/telegram-source-protocol');
 const { createClaimLatchDouble } = require('./helpers/telegram-claim-latch-double');
 
 const tempRoots = [];
@@ -37,7 +38,58 @@ const CHAT = 4242;
 // delivery boundary, which knows all three.
 const GENERATION = 'gen-test';
 
+/**
+ * =====================================================================
+ * THE FIXTURES SEED LEGACY, BECAUSE THE LIVE QUEUE IS LEGACY
+ * =====================================================================
+ * This used to seed through `spool.acceptInbound`, which fails closed without a
+ * producer identity and therefore STAMPS every record it appends as
+ * `decision_v1` (v7 §1). So every assertion in this file — order, at-most-once,
+ * the proof gate, all of it — was being made about a post-cutover source, while
+ * the twelve records actually sitting in the live queue (808499316..327) are
+ * unstamped legacy and are the ones this repair has to drain.
+ *
+ * That gap was invisible until the v7 §2 gate landed and correctly HELD every
+ * fixture: `decision_v1` with no journal match has no stable cutover fence in
+ * this build, so it may not reach claim or deliver. A green suite that proved
+ * delivery on a protocol the drain is required to refuse was proving the wrong
+ * thing in the most reassuring possible way.
+ *
+ * So the default seed appends an unstamped record directly, exactly as the
+ * existing twelve were written — same fields the spool builds, minus the stamp
+ * it did not have — and asserts the classifier agrees. `seedDecisionV1` is the
+ * separate, explicit door for the post-cutover HOLD cases.
+ */
 function seed(base, routeKey, updateIds, extra = {}) {
+  const resolved = spool.resolveSpoolDir(base, routeKey);
+  expect(resolved.ok).toBe(true);
+  for (const updateId of updateIds) {
+    const meta = { updateId, chatId: CHAT, messageId: updateId * 10, media: { kind: 'photo' }, extra: 'kept' };
+    const res = queue.append(resolved.dir, {
+      updateId,
+      text: `body ${updateId}`,
+      from: 'james',
+      chatId: meta.chatId,
+      messageId: meta.messageId,
+      media: meta.media,
+      routeKey,
+      rawMetadata: meta,
+      profile: routeKey,
+      targetProfile: routeKey,
+      targetWindow: routeKey === 'main' ? 'main' : routeKey,
+      targetSession: 'session-at-append',
+      ...extra,
+    });
+    expect(res.ok).toBe(true);
+  }
+  for (const record of queue.readPending(resolved.dir)) {
+    expect(classifySourceRecord(record).protocol).toBe(SOURCE_PROTOCOLS.LEGACY);
+  }
+  return resolved.dir;
+}
+
+/** The production door, which always stamps. Used only where that is the point. */
+function seedDecisionV1(base, routeKey, updateIds, extra = {}) {
   let dir = null;
   for (const updateId of updateIds) {
     const res = spool.acceptInbound({
@@ -55,6 +107,9 @@ function seed(base, routeKey, updateIds, extra = {}) {
     });
     expect(res.ok).toBe(true);
     dir = res.dir;
+  }
+  for (const record of queue.readPending(dir)) {
+    expect(classifySourceRecord(record).protocol).toBe(SOURCE_PROTOCOLS.DECISION_V1);
   }
   return dir;
 }
@@ -950,7 +1005,7 @@ test('NEWLINE-TERMINATED CORRUPTION IS NOT A TORN TAIL: it fails closed', async 
   const res = await drain.schedule(dir, 'main');
 
   expect(seen).toEqual([]);
-  expect(res.stoppedAt.reason).toContain('attempt_journal_unreadable');
+  expect(res.stoppedAt.reason).toContain('legacy_journal_gate:');
 });
 
 test('A TORN TAIL IS NOT TOLERATED EITHER: the sidecar biases HOLD', async () => {
@@ -969,7 +1024,7 @@ test('A TORN TAIL IS NOT TOLERATED EITHER: the sidecar biases HOLD', async () =>
   const res = await drain.schedule(dir, 'main');
 
   expect(seen).toEqual([]);
-  expect(res.stoppedAt.reason).toContain('attempt_journal_unreadable');
+  expect(res.stoppedAt.reason).toContain('legacy_journal_gate:');
 });
 
 test.each([
@@ -991,7 +1046,7 @@ test.each([
   const res = await drain.schedule(dir, 'main');
 
   expect(seen).toEqual([]);
-  expect(res.stoppedAt.reason).toContain('attempt_journal_unreadable');
+  expect(res.stoppedAt.reason).toContain('legacy_journal_gate:');
 });
 
 test('A DELIVER THROW IS AMBIGUOUS, not a definite failure', async () => {
@@ -1191,8 +1246,14 @@ test('THE INJECTED QUEUE OWNS ATTEMPT STORAGE, not the default module', () => {
   // Rejecting a queue that LACKS the attempt methods proves only that the
   // check exists. It does not prove the coordinator actually calls the injected
   // ones — rebinding to defaultQueue while the injected methods merely exist
-  // would leave every other drain test green. These spies do not touch disk, so
-  // if the default module were used instead, its sidecar file would appear.
+  // would leave every other drain test green.
+  //
+  // WHAT THE INJECTION OWNS IS THE PATH, NOT THE PARSE (v7 §2). The strict gate
+  // reader replaced the queue's own lenient readers, so if it derived the
+  // sidecar location itself an injected queue could store its journals
+  // elsewhere and the gate would silently read a different pair of files than
+  // the queue writes. These spies assert the drain still asks the injection
+  // WHERE, once per file per pass.
   return (async () => {
     const base = tempRoot();
     const dir = seed(base, 'main', [600]);
@@ -1202,8 +1263,8 @@ test('THE INJECTED QUEUE OWNS ATTEMPT STORAGE, not the default module', () => {
     const drain = coordinator({
       queue: {
         ...queue,
-        readAttemptRecords: (d) => { reads.push(d); return new Map(); },
-        readDispositions: (d) => { reads.push(d); return new Map(); },
+        attemptsPath: (d) => { reads.push(d); return queue.attemptsPath(d); },
+        dispositionsPath: (d) => { reads.push(d); return queue.dispositionsPath(d); },
         appendAttempt: (d, updateId, state) => { appends.push({ d, updateId, state }); return { ok: true }; },
       },
       deliver: async (job) => provenFor(job),

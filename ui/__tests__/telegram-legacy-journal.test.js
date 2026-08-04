@@ -8,12 +8,17 @@
  * update must retire without injection - that pair is the resolved shape, not a
  * conflict.
  */
+const legacyJournal = require('../modules/main/telegram-legacy-journal');
+
 const {
   GATE_ACTIONS,
-  TERMINAL_DISPOSITIONS,
+  ATTEMPT_STATE_VALUES,
+  TERMINAL_DISPOSITION_VALUES,
+  isRecognizedAttemptState,
+  isRecognizedTerminalDisposition,
   readLegacyJournalSnapshot,
   evaluateLegacySourceGate,
-} = require('../modules/main/telegram-legacy-journal');
+} = legacyJournal;
 const {
   TRANSPORT_PROTOCOL_V1,
   DECISION_CUTOVER_ID,
@@ -187,7 +192,7 @@ describe('v7 section 2 - anything the parser cannot fully trust is snapshot fail
     refuses({ attempts: '{"updateId":1,"state":""}\n' }, 'attempt_unknown_state');
     refuses({ dispositions: '{"updateId":1,"disposition":"consumed_verified_out_of_bandd","evidence":"e"}\n' }, 'disposition_unrecognized');
     // Every recognized one is accepted, so the set is a gate and not a wall.
-    for (const disposition of TERMINAL_DISPOSITIONS) {
+    for (const disposition of TERMINAL_DISPOSITION_VALUES) {
       const { result } = snapshotOf({
         dispositions: `{"updateId":1,"disposition":"${disposition}","evidence":"e"}\n`,
       });

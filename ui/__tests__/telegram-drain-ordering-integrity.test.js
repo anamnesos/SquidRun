@@ -26,6 +26,7 @@ const path = require('node:path');
 const queue = require('../modules/telegram-inbound-durable-queue');
 const spool = require('../modules/main/telegram-ingress-spool');
 const { createDrainCoordinator } = require('../modules/main/telegram-ingress-drain');
+const { classifySourceRecord, SOURCE_PROTOCOLS } = require('../modules/main/telegram-source-protocol');
 const { createClaimLatchDouble } = require('./helpers/telegram-claim-latch-double');
 
 const tempRoots = [];
@@ -48,27 +49,40 @@ const INCIDENT = [
   { updateId: 808499319, text: 'Hello?' },
 ];
 
+/**
+ * THE INCIDENT RECORDS ARE LEGACY, AND THAT IS THE WHOLE POINT OF THIS FILE.
+ *
+ * 808499317..319 are three of the twelve unstamped records that were actually
+ * on disk during the outage. Seeding them through `spool.acceptInbound` stamped
+ * them `decision_v1` (v7 §1 — the spool fails closed without a producer
+ * identity and therefore always stamps), which made this suite reproduce the
+ * incident on a protocol that did not exist when the incident happened, and
+ * which the v7 §2 gate must refuse outright. Append them the way they were
+ * written: unstamped, and asserted so.
+ */
 function seedIncident(base, updates = INCIDENT) {
-  let dir = null;
+  const resolved = spool.resolveSpoolDir(base, 'main');
+  expect(resolved.ok).toBe(true);
   for (const { updateId, text } of updates) {
-    const res = spool.acceptInbound({
-      dataRoot: base,
-      routeKey: 'main',
+    const res = queue.append(resolved.dir, {
+      updateId,
       text,
       from: 'james',
-      metadata: { updateId, chatId: CHAT, messageId: updateId },
+      chatId: CHAT,
+      messageId: updateId,
+      routeKey: 'main',
+      rawMetadata: { updateId, chatId: CHAT, messageId: updateId },
+      profile: 'main',
       targetProfile: 'main',
       targetWindow: 'main',
       targetSession: 'session-at-append',
-      // v7 §1: the spool fails closed without a producer identity, so every
-      // append site has to say who wrote the record.
-      producerAppGeneration: 'app-session-test',
-      producerSessionId: 'sess-test',
     });
     expect(res.ok).toBe(true);
-    dir = res.dir;
   }
-  return dir;
+  for (const record of queue.readPending(resolved.dir)) {
+    expect(classifySourceRecord(record).protocol).toBe(SOURCE_PROTOCOLS.LEGACY);
+  }
+  return resolved.dir;
 }
 
 /** A delivery adapter that knows what it delivered, as the real boundary does. */
@@ -477,7 +491,18 @@ describe('gate 2 — retiring 808499316 without re-injecting it', () => {
     }).schedule(dir, 'main');
 
     expect(shown).toEqual([]);
-    expect(res.stoppedAt).toMatchObject({ updateId: 808499316, reason: 'unknown_terminal_disposition' });
+    // STRICTER THAN IT USED TO BE, and correctly so. This once reported
+    // `unknown_terminal_disposition` for the one record: the drain read the
+    // sidecar leniently, found a string nobody defined, and held that update.
+    // Under the v7 §2 gate an unrecognised disposition is not a fact about one
+    // record, it is a file this build cannot fully read — so the whole pass
+    // refuses and the head reports why. Same outcome for James (nothing was
+    // retired, nothing was delivered), a truer statement about the cause.
+    expect(res.stoppedAt).toMatchObject({
+      updateId: 808499316,
+      reason: 'legacy_journal_gate:disposition_unrecognized',
+      resolutionRequired: true,
+    });
   });
 
   test('A DISPOSITION WITHOUT EVIDENCE CANNOT BE WRITTEN AT ALL', () => {
@@ -500,7 +525,7 @@ describe('gate 2 — retiring 808499316 without re-injecting it', () => {
     }).schedule(dir, 'main');
 
     expect(shown).toEqual([]);
-    expect(res.stoppedAt.reason).toMatch(/unreadable/);
+    expect(res.stoppedAt.reason).toBe('legacy_journal_gate:disposition_unparseable_record');
   });
 
   test('THE RECOVERY LEAVES THE INBOUND JOURNAL BYTE-FOR-BYTE UNCHANGED', () => {

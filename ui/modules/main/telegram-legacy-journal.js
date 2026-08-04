@@ -42,16 +42,50 @@ const { classifySourceRecord, SOURCE_PROTOCOLS } = require('./telegram-source-pr
 const ATTEMPTS_NAME = 'delivery-attempts.jsonl';
 const DISPOSITIONS_NAME = 'terminal-dispositions.jsonl';
 
-/** The only attempt states this build recognises. */
-const ATTEMPT_STATES = Object.freeze(new Set(['attempted', 'retryable']));
+/**
+ * =====================================================================
+ * THE AUTHORITY IS A PREDICATE, NOT A SET (Architect #121)
+ * =====================================================================
+ * `Object.freeze(new Set([...]))` freezes the OBJECT, not the collection: the
+ * internal [[SetData]] is not a property, so `.add()`, `.delete()` and
+ * `.clear()` all still work on a "frozen" Set, silently and without throwing
+ * even in strict mode. Exporting one and calling it constant is a membership
+ * list any consumer can edit.
+ *
+ * That is not a style point here. This module's whole job is refusing values
+ * nobody defined, and the drain retires James's message WITHOUT DELIVERING IT
+ * on a recognised disposition. One `require(...).TERMINAL_DISPOSITIONS.add(x)`
+ * anywhere in the process — a test helper, a future module, a careless
+ * normaliser — and an arbitrary string parses, retires, and the message is gone
+ * with no trace it existed.
+ *
+ * So the Sets are PRIVATE and never leave this file. Consumers get a frozen
+ * array to enumerate and a predicate to ask. An array is genuinely immutable
+ * under `Object.freeze`, and a predicate closes over a binding nobody else
+ * holds.
+ */
+const ATTEMPT_STATE_VALUES = Object.freeze(['attempted', 'retryable']);
 
 /**
- * The only terminal dispositions this build recognises, matching the drain's
- * existing set. An unrecognised value is not a future disposition to be
- * tolerated — it is a record we cannot act on, and acting on it would mean
- * retiring a message on the strength of a string nobody defined.
+ * The only terminal dispositions this build recognises. An unrecognised value
+ * is not a future disposition to be tolerated — it is a record we cannot act
+ * on, and acting on it would mean retiring a message on the strength of a
+ * string nobody defined.
  */
-const TERMINAL_DISPOSITIONS = Object.freeze(new Set(['empty_body', 'consumed_verified_out_of_band']));
+const TERMINAL_DISPOSITION_VALUES = Object.freeze(['empty_body', 'consumed_verified_out_of_band']);
+
+const attemptStates = new Set(ATTEMPT_STATE_VALUES);
+const terminalDispositions = new Set(TERMINAL_DISPOSITION_VALUES);
+
+/** @returns {boolean} exact membership; non-strings are never members. */
+function isRecognizedAttemptState(value) {
+  return typeof value === 'string' && attemptStates.has(value);
+}
+
+/** @returns {boolean} exact membership; non-strings are never members. */
+function isRecognizedTerminalDisposition(value) {
+  return typeof value === 'string' && terminalDispositions.has(value);
+}
 
 /**
  * Exact allowed keys. `atMs` and `generation` are optional on an attempt
@@ -147,7 +181,7 @@ function parseJournalText(raw, spec) {
 }
 
 function validateAttempt(entry, line) {
-  if (!ATTEMPT_STATES.has(entry.state)) {
+  if (!isRecognizedAttemptState(entry.state)) {
     return fail('attempt_unknown_state', { line, state: typeof entry.state === 'string' ? entry.state : typeof entry.state });
   }
   // A PRESENT-BUT-MALFORMED provenance field is not "absent". Absent means an
@@ -169,7 +203,7 @@ function validateAttempt(entry, line) {
 }
 
 function validateDisposition(entry, line) {
-  if (!isNonEmptyString(entry.disposition) || !TERMINAL_DISPOSITIONS.has(entry.disposition.trim())) {
+  if (!isNonEmptyString(entry.disposition) || !isRecognizedTerminalDisposition(entry.disposition.trim())) {
     return fail('disposition_unrecognized', {
       line,
       disposition: typeof entry.disposition === 'string' ? entry.disposition : typeof entry.disposition,
@@ -205,8 +239,61 @@ function readLegacyJournalSnapshot(dir, deps = {}) {
   const readFile = typeof deps.readFile === 'function' ? deps.readFile : ((file) => fs.readFileSync(file, 'utf8'));
   const reads = { attempts: 0, dispositions: 0 };
 
+  // WHERE THE SIDECARS LIVE IS THE QUEUE'S ANSWER, NOT OURS.
+  //
+  // Joining `dir` ourselves is right for a caller that has nothing better, and
+  // wrong for the drain: its queue is injectable, and the drain already refuses
+  // to run against a queue that will not tell it where attempt storage is. If
+  // this reader derived the path independently, an injected queue could store
+  // its sidecars somewhere else and the gate would read a different pair of
+  // files than the queue writes — the same half-owned split that once let a
+  // test believe it had isolated storage while production files moved. So the
+  // caller may hand the exact paths down; the default stays the plain join.
+  //
+  // AND AN OVERRIDE THAT IS PRESENT BUT USELESS IS A FAILURE, NOT AN ABSENCE
+  // (Architect #125). `typeof x === 'string' && x ? x : join(dir, name)` reads
+  // `''` as "not supplied" and silently falls back to our own derivation —
+  // which is precisely the half-owned split this parameter exists to close,
+  // reopened by the guard meant to close it. A caller that names the key is
+  // asserting it knows where the file is; if it does not, nothing may be read.
+  const resolveFile = (key, name) => {
+    if (!Object.prototype.hasOwnProperty.call(deps, key)) return path.join(dir, name);
+    const value = deps[key];
+    return typeof value === 'string' && value.trim() !== '' ? value : null;
+  };
+  const attemptsFile = resolveFile('attemptsFile', ATTEMPTS_NAME);
+  const dispositionsFile = resolveFile('dispositionsFile', DISPOSITIONS_NAME);
+  //
+  // THE `reader_` PREFIX IS NOT DECORATION. The drain checks the same two
+  // things before it calls, which makes this layer a duplicate — and a
+  // duplicate that reported the SAME string would be unfalsifiable: delete the
+  // drain's check and every test stays green because this one silently covers
+  // for it. Naming the layer that refused makes each one independently
+  // provable, which is the whole complaint this lane keeps re-learning.
+  if (attemptsFile === null || dispositionsFile === null) {
+    return {
+      ...fail('reader_journal_path_unresolved', {
+        attempts: attemptsFile !== null,
+        dispositions: dispositionsFile !== null,
+      }),
+      reads,
+    };
+  }
+  // TWO JOURNALS, TWO FILES. Collapsed to one path, two empty reads of the same
+  // file would validate as a clean attempts journal AND a clean dispositions
+  // journal — one authority wearing both hats, and every gate below it deciding
+  // from a comparison it never actually made.
+  if (attemptsFile === dispositionsFile) {
+    return { ...fail('reader_journal_path_collision', { file: attemptsFile }), reads };
+  }
+
+  const resolved = {
+    [ATTEMPTS_NAME]: attemptsFile,
+    [DISPOSITIONS_NAME]: dispositionsFile,
+  };
+
   const load = (name) => {
-    const file = path.join(dir, name);
+    const file = resolved[name];
     reads[name === ATTEMPTS_NAME ? 'attempts' : 'dispositions'] += 1;
     try {
       return { ok: true, raw: String(readFile(file)) };
@@ -331,12 +418,26 @@ function evaluateLegacySourceGate(input = {}) {
   };
 }
 
-module.exports = {
+/**
+ * FROZEN, SO REQUIRE ORDER IS NOT A SECURITY ASSUMPTION (Architect #127).
+ *
+ * Private Sets plus predicates closed the "widen the membership list" hole, and
+ * left a second one open: `require('./telegram-legacy-journal')
+ * .isRecognizedTerminalDisposition = () => true` mutates the CACHED exports
+ * object, and every module that destructures AFTER that gets the replacement.
+ * The drain happens to load early today, which makes the hole invisible and
+ * makes "is this safe?" a question about import order in a file nobody has
+ * read. Freezing the object answers it once, for every consumer, whenever they
+ * load: the assignment silently no-ops in sloppy mode and throws in strict.
+ */
+module.exports = Object.freeze({
   ATTEMPTS_NAME,
   DISPOSITIONS_NAME,
-  ATTEMPT_STATES,
-  TERMINAL_DISPOSITIONS,
+  ATTEMPT_STATE_VALUES,
+  TERMINAL_DISPOSITION_VALUES,
+  isRecognizedAttemptState,
+  isRecognizedTerminalDisposition,
   GATE_ACTIONS,
   readLegacyJournalSnapshot,
   evaluateLegacySourceGate,
-};
+});

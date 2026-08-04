@@ -26,6 +26,7 @@ const path = require('node:path');
 const queue = require('../modules/telegram-inbound-durable-queue');
 const spool = require('../modules/main/telegram-ingress-spool');
 const { createDrainCoordinator } = require('../modules/main/telegram-ingress-drain');
+const { classifySourceRecord, SOURCE_PROTOCOLS } = require('../modules/main/telegram-source-protocol');
 const { createClaimLatchDouble } = require('./helpers/telegram-claim-latch-double');
 
 const tempRoots = [];
@@ -41,25 +42,40 @@ afterEach(() => {
 const CHAT = 4242;
 const GENERATION = 'app-session-492';
 
+/**
+ * SEEDED UNSTAMPED, BECAUSE THE ORPHAN IS A LEGACY RECORD.
+ *
+ * Seeding through `spool.acceptInbound` stamps `decision_v1` (v7 §1 — the spool
+ * fails closed without a producer identity and therefore always stamps), and
+ * `writeLegacyLatch` then puts a legacy attempt against a post-cutover source.
+ * Under the v7 §2 gate that pair is a PROTOCOL CONFLICT, not the orphaned-attempt
+ * shape this suite exists to describe: the assertions would have kept passing on
+ * a hold that means something completely different, which is the same fixture
+ * lie one door over. 808499316 is unstamped; seed it unstamped.
+ */
 function seed(base, updateIds) {
-  let dir = null;
+  const resolved = spool.resolveSpoolDir(base, 'main');
+  expect(resolved.ok).toBe(true);
   for (const updateId of updateIds) {
-    const res = spool.acceptInbound({
-      dataRoot: base,
-      routeKey: 'main',
+    const res = queue.append(resolved.dir, {
+      updateId,
       text: `body ${updateId}`,
       from: 'james',
-      metadata: { updateId, chatId: CHAT, messageId: updateId * 10 },
+      chatId: CHAT,
+      messageId: updateId * 10,
+      routeKey: 'main',
+      rawMetadata: { updateId, chatId: CHAT, messageId: updateId * 10 },
+      profile: 'main',
       targetProfile: 'main',
       targetWindow: 'main',
       targetSession: 'session-at-append',
-      producerAppGeneration: 'app-session-test',
-      producerSessionId: 'sess-test',
     });
     expect(res.ok).toBe(true);
-    dir = res.dir;
   }
-  return dir;
+  for (const record of queue.readPending(resolved.dir)) {
+    expect(classifySourceRecord(record).protocol).toBe(SOURCE_PROTOCOLS.LEGACY);
+  }
+  return resolved.dir;
 }
 
 /** The live 808499316 latch shape: attempted, no timestamp, no generation. */
@@ -179,9 +195,22 @@ describe('an orphaned attempt reports itself as needing recovery, not a runtime 
     expect(message).not.toContain('This is a configuration defect');
   });
 
-  test('a record that is merely WAITING still takes the ordinary branch', async () => {
-    // The mirror image: if every hold reported "needs explicit recovery", the
-    // new message would be as useless as the old one.
+  test('a WELL-FORMED legacy attempt also needs a written disposition, and does not call itself an orphan', async () => {
+    // WHAT CHANGED, AND WHY THIS TEST DID (Architect #119).
+    //
+    // This used to assert that a legacy attempt carrying a timestamp and a
+    // generation was "merely WAITING": resolutionRequired false, no recovery
+    // demanded, because a matching receipt could still retire it. v7 §2 line 45
+    // rules that out - an outstanding legacy attempt HOLDS unless a validated
+    // terminal disposition already retires it, and no receipt may substitute
+    // for one. The unversioned v0 latch cannot say which generation delivered
+    // it, so a proof path built on it decides "James already saw this" from a
+    // record that cannot name who showed him.
+    //
+    // So this record needs recovery too. What must NOT collapse is the
+    // diagnosis: 816's attempt could never have been ordered against ANY
+    // receipt, and this one is simply undisposed. Same instruction, different
+    // cause, and the fields still tell them apart.
     const base = tempRoot();
     const dir = seed(base, [820]);
     fs.writeFileSync(
@@ -195,8 +224,35 @@ describe('an orphaned attempt reports itself as needing recovery, not a runtime 
       .schedule(dir, 'main');
 
     expect(res.stoppedAt.updateId).toBe(820);
+    expect(res.stoppedAt.reason).toBe('hold_legacy_attempted:awaiting_reviewed_disposition');
+    expect(res.stoppedAt.resolutionRequired).toBe(true);
+    // NOT an orphan. Nothing here is structurally unresolvable, so the orphan
+    // fields stay empty and only the reason string carries the difference.
+    expect(res.stoppedAt.orphanedAttempt).toBe(null);
+    expect(res.backlog.orphanedAttemptReason).toBe(null);
+    expect(res.backlog.recoveryRequired).toBe(true);
+  });
+
+  test('THE ORDINARY WAIT STILL EXISTS: a claim-path hold does not demand recovery', async () => {
+    // The mirror image, moved to where it now lives. If every hold reported
+    // "needs explicit recovery" the message would be as useless as the old one
+    // - so there has to be a hold that is genuinely just a wait. A legacy
+    // record with no attempt latch takes the repaired pane path, and an
+    // accepted-but-unproven delivery is exactly that: proof may still land.
+    const base = tempRoot();
+    const dir = seed(base, [830]);
+
+    const log = collectingLog();
+    const res = await coordinator(log, {
+      receiptActivity: () => ({ receiptsEverProduced: 5, lastReceiptAtMs: Date.now() }),
+      deliver: async () => ({ status: 'accepted.daemon_pty_unverified', accepted: true }),
+    }).schedule(dir, 'main');
+
+    expect(res.stoppedAt.updateId).toBe(830);
+    expect(res.stoppedAt.failureClass).toBe('awaiting_proof');
     expect(res.stoppedAt.resolutionRequired).toBe(false);
     expect(res.stoppedAt.orphanedAttempt).toBe(null);
+    expect(res.stoppedAt.legacyGate).toBe(null);
     expect(res.backlog.recoveryRequired).toBe(false);
     expect(res.backlog.orphanedAttemptReason).toBe(null);
     expect(log.lines.error.filter((l) => l.includes('EXPLICIT recorded recovery'))).toHaveLength(0);
