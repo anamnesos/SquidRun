@@ -695,6 +695,25 @@ function installModelPromptReceiptHooks(options = {}) {
           eventName: 'UserPromptSubmit',
           command: `node '${adapterPath}' --runtime codex --event UserPromptSubmit`,
         },
+        // ===================================================================
+        // STOP — PHASE 2, AND WITHOUT IT PHASE 2 IS DEAD CODE.
+        //
+        // The terminal producer reached production in e726af06 and could not be
+        // invoked by anything: the adapter runs it only on Stop, and this
+        // installer could not install a Stop hook at all. Live Stop runs the
+        // outbound routing guard, which never touches the adapter. So every
+        // admission would sit with no terminal record, and activating the
+        // delivery sequence in that state converts each new delivery into a
+        // permanent hold — the S491 wedge, re-manufactured deliberately.
+        //
+        // This ADDS to the event rather than owning it: ensureHookCommand
+        // matches on command identity and appends when absent, so the existing
+        // routing guard stays exactly where it is.
+        // ===================================================================
+        {
+          eventName: 'Stop',
+          command: `node '${adapterPath}' --runtime codex --event Stop`,
+        },
       ],
     },
     {
@@ -702,9 +721,30 @@ function installModelPromptReceiptHooks(options = {}) {
       filePath: path.join(projectRoot, '.claude', 'settings.json'),
       fallback: { hooks: {} },
       commands: [
+        // SESSIONSTART, which this installer has never written for Claude.
+        // Codex has had it since A3b; Claude has not, so no Claude session was
+        // ever bound to its pane launch and every Claude admission receipt had
+        // nothing to attach itself to. The asymmetry was invisible because the
+        // reachability assertion Codex satisfied was written as a set
+        // membership that Claude's absence could not fail.
+        {
+          eventName: 'SessionStart',
+          matcher: 'startup|resume|clear|compact',
+          command: 'node "$CLAUDE_PROJECT_DIR/ui/scripts/model-prompt-receipt-adapter.js" --runtime claude --event SessionStart --trust-check-only',
+        },
         {
           eventName: 'UserPromptSubmit',
           command: 'node "$CLAUDE_PROJECT_DIR/ui/scripts/model-prompt-receipt-adapter.js" --runtime claude --event UserPromptSubmit',
+        },
+        // Installed for PARITY, not because Claude is proven capable here.
+        // The producer refuses any terminal payload that cannot name its own
+        // submission, and it records that refusal by reason. Installing the
+        // hook is what makes the refusal OBSERVABLE instead of indistinguishable
+        // from an uninstalled runtime — the exact conflation that cost 8.6
+        // hours. Nothing here synthesizes an id Claude did not emit.
+        {
+          eventName: 'Stop',
+          command: 'node "$CLAUDE_PROJECT_DIR/ui/scripts/model-prompt-receipt-adapter.js" --runtime claude --event Stop',
         },
       ],
     },

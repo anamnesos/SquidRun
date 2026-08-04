@@ -123,16 +123,10 @@ const {
   getModelPromptReceipt,
   getReceiptRuntimeActivity,
 } = require('../model-prompt-receipt');
-// TERMINAL CONSUMPTION PROOF. Deliberately its own module rather than another
-// method on this class: the one rule it exists to enforce is that no identity
-// may be synthesized at lookup time, and that is far easier to audit in a file
-// whose entire surface is one function returning a record's own fields.
-// Imported as a MODULE OBJECT, matching telegramIngressDrain/telegramDrainWiring
-// above. Destructuring binds the function at require time, which leaves the
-// composite "does findTelegramDeliveryReceipt actually consult the scoped
-// store" untestable without standing up a second real ledger — and Architect
-// #146 already caught one mutant that survived because the resolver and the
-// reader were only ever tested apart.
+// Its own module so "no identity is synthesized at lookup time" is auditable by
+// reading one small file. Imported as a MODULE OBJECT like the two above:
+// destructuring binds at require time and would leave the composite untestable
+// (Architect #146 caught a mutant that survived exactly that gap).
 const telegramTerminalLookup = require('./telegram-terminal-lookup');
 const {
   shouldTriggerAutonomousSmoke,
@@ -15227,25 +15221,11 @@ class SquidRunApp {
    * proves the message reached US, not that it reached a pane. Matching it would
    * retire every record on its first drain pass, undelivered.
    *
-   * =====================================================================
-   * WHAT CHANGED IN S492, AND WHY IT IS THE LIVE REPAIR
-   * =====================================================================
-   * This method used to read the generic model-prompt receipt store: the one
-   * that records `prompt_submit` for every prompt in every pane, knows nothing
-   * about Telegram, and cannot name an update, a chat, or a process generation.
-   * It converted `prompt_submitted.in_band` into `delivered.verified` and then
-   * attached the route, window and profile IT HAD BEEN ASKED ABOUT to the
-   * object it returned.
-   *
-   * That second part is why restart never cleared the wedge. The returned
-   * object carried four fields; `evaluateConsumptionProof` requires `chatId`,
-   * `generation` and a real `provedAtMs` on top of them. No input to this path
-   * could produce `proven:true` in production — the queue was not waiting for a
-   * slow receipt, it was waiting for a receipt whose shape could not exist.
-   *
-   * Terminal consumption proof now comes from `telegram_consumed_receipts`,
-   * written at a consumer boundary that saw the exact bytes, and every field
-   * returned is that record's own.
+   * S492: proof comes from `telegram_consumed_receipts`, written at a consumer
+   * boundary that saw the exact bytes. The generic model-prompt receipt store
+   * it replaced could not name an update, a chat or a generation, so the object
+   * it returned could never satisfy the proof gate — see the full account in
+   * telegram-terminal-lookup.js, which owns that argument and the code for it.
    */
   async findTelegramDeliveryReceipt(identity = {}) {
     if (!identity?.messageId) return null;
