@@ -26,6 +26,7 @@ const path = require('node:path');
 const queue = require('../modules/telegram-inbound-durable-queue');
 const spool = require('../modules/main/telegram-ingress-spool');
 const { createDrainCoordinator } = require('../modules/main/telegram-ingress-drain');
+const { createClaimLatchDouble } = require('./helpers/telegram-claim-latch-double');
 
 const tempRoots = [];
 function tempRoot() {
@@ -78,17 +79,32 @@ function collectingLog() {
   };
 }
 
+/** The post-cutover attempt latch; see helpers/telegram-claim-latch-double. */
+let latch;
+beforeEach(() => {
+  latch = createClaimLatchDouble({ generation: () => GENERATION });
+});
+
 function coordinator(log, overrides = {}) {
+  const { deliver, sessionGeneration, now, ...rest } = overrides;
+  const generation = sessionGeneration || (() => GENERATION);
+  const clock = now || (() => Date.now());
   return createDrainCoordinator({
     queue,
     log,
     resolveRoute: () => ({ ok: true, profile: 'main', windowKey: 'main' }),
-    deliver: async () => { throw new Error('deliver must not be reached for a held record'); },
     currentSessionFor: () => 'session-now',
-    sessionGeneration: () => GENERATION,
+    sessionGeneration: generation,
+    now: clock,
     paneRuntimeFor: () => 'codex',
     receiptActivity: () => ({ receiptsEverProduced: 0 }),
-    ...overrides,
+    lookupTransportClaim: latch.lookupTransportClaim,
+    closeUnsentTransportClaim: latch.closeUnsentTransportClaim,
+    ...rest,
+    deliver: latch.wrapDeliver(
+      deliver || (async () => { throw new Error('deliver must not be reached for a held record'); }),
+      { generation, now: clock }
+    ),
   });
 }
 

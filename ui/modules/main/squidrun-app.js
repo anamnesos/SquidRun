@@ -14754,43 +14754,41 @@ class SquidRunApp {
         return { ...scopedAdmission.refusal, ...deliveryIdentity };
       }
 
-      // ONE delivery promise, ONE result. The old shape fired this off with
-      // `void ... .then()` and returned immediately, which meant the caller was
-      // told "delivered" before anything had happened. A coordinator cannot
-      // sequence or prove an outcome it never waited for.
-      let result;
-      try {
-        result = await this.deliverScopedTelegramInboundWithRetry(inboundWindowKey, safeMessage, {
-          messageId: inboundMessageId,
-          sessionScopeId: inboundSessionScopeId,
-          chatId: metadata?.chatId,
-          updateId,
-          telegramMessageId: messageId,
-          sender,
-        });
-      } catch (err) {
-        return { ok: false, status: 'scoped_runtime_error', error: err.message, ...deliveryIdentity };
-      }
-
-      if (
-        (result?.verified === true && result?.userVisible === true)
-        || isTerminalAcceptedDeliveryResult(result)
-      ) {
-        log.info(
-          'Telegram',
-          `Scoped Telegram inbound injected into ${inboundWindowKey} Architect pane (${inboundMessageId})`
-        );
-        // Identity LAST: a raw result carrying its own messageId must never
-        // override the stable inbound id the queue is keyed on.
-        return { ...result, ...deliveryIdentity };
-      }
-
-      // NO TRIGGER FALLBACK FROM THE DRAIN. handleScopedTelegramInboundFallback
-      // writes the fixed trigger path — loss site #1, the original bug in this
-      // lane. Routing recovery back through the thing it replaced is how two
-      // messages in one batch overwrite each other. Hand the real status to the
-      // durable queue instead and let it stay pending.
-      return { ...(result || {}), ok: false, ...deliveryIdentity };
+      // ===================================================================
+      // THE SCOPED CUTOVER IS BINARY, AND THIS IS THE STOP (Oracle #10).
+      // ===================================================================
+      // The source row is recorded — the kernel owns the identity — and then
+      // this route REFUSES, before a far-process WebSocket is constructed or
+      // opened. It is not a capability we removed; it is one we never actually
+      // had and were reporting as delivery:
+      //
+      //   * the far side renders its own pane, so no marker we append can come
+      //     back and no terminal producer exists on that side at all;
+      //   * the ACK that came back carries no chatId, generation or provedAtMs,
+      //     so it fails the strict proof gate by construction;
+      //   * its duplicate suppression was RAM-only, so a far restart could put
+      //     the same message on screen twice with nothing able to notice;
+      //   * the source row lives in THIS profile's ledger while the lookup that
+      //     would retire it reads the SCOPED one — two databases, no binding.
+      //
+      // A send whose success can never be proved and whose duplicate can never
+      // be detected is not a delivery, and continuing to make it while calling
+      // the result `verified` is how a scoped message becomes invisible in both
+      // directions. The record stays pending and visible until a durable
+      // far-side claim, marker and terminal producer exist with a cross-ledger
+      // binding. That work is named, not hidden behind a hopeful send.
+      log.warn(
+        'Telegram',
+        `Scoped route ${inboundWindowKey} admitted source for ${inboundMessageId} and refused delivery: no far-side proof authority`
+      );
+      return {
+        ok: false,
+        status: 'scoped_delivery_unprovable',
+        admissionStage: 'A_source',
+        admissionPhase: 'before_delivery',
+        scopedSourceRecorded: true,
+        ...deliveryIdentity,
+      };
     }
     const mainPaneRecallContext = {
       paneId: '1',
@@ -14831,6 +14829,41 @@ class SquidRunApp {
       photo,
       document,
     })) {
+      // ===================================================================
+      // A DOMINATES THE ROUTE SPLIT (Oracle #10). THIS BRANCH WAS A BYPASS.
+      // ===================================================================
+      // Every Mira outcome below returns BEFORE deliverMainTelegramToArchitect,
+      // therefore before step A ever ran. With the generic upsert deleted, a
+      // message answered through Mira created NO inbound source row at all — it
+      // was answered and left with no immutable identity anywhere, which is
+      // indistinguishable from never having arrived.
+      //
+      // So the source is recorded first, for the route rather than for the pane
+      // write. There is deliberately no claim and no marker: Mira's transport is
+      // its own outbound journal, not a pane whose bytes we hash, and pretending
+      // otherwise would claim A-E for a delivery that never touches E.
+      const miraSource = await this.runTelegramAdmissionForJob({
+        job: admissionJob,
+        record: admissionRecord,
+        mode: telegramAdmissionDelivery.MODES.SOURCE_ONLY,
+      });
+      if (!miraSource.ok) {
+        log.warn(
+          'Telegram',
+          `Mira route admission refused for ${inboundMessageId} at ${miraSource.stage} (${miraSource.reason}); not answering`
+        );
+        return {
+          ok: false,
+          status: `admission_refused:${miraSource.reason}`,
+          admissionStage: miraSource.stage,
+          admissionPhase: miraSource.phase || 'before_delivery',
+          ...deliveryIdentity,
+        };
+      }
+      // ONE ROW, NAMED ON EVERY OUTCOME BELOW, so complete / partial /
+      // ambiguous / proof-pending all point at the same immutable identity.
+      const miraIdentity = { ...deliveryIdentity, admissionSourceRowId: miraSource.sourceRowId };
+
       const miraOutcome = await this.routeMainTelegramInboundToMira({
         body,
         sender,
@@ -14867,7 +14900,7 @@ class SquidRunApp {
         return {
           status: 'accepted.proof_lookup_pending',
           accepted: true,
-          ...deliveryIdentity,
+          ...miraIdentity,
         };
       }
 
@@ -14877,7 +14910,7 @@ class SquidRunApp {
           status: 'delivered.user_visible',
           userVisible: true,
           miraStatus: miraOutcome?.status || null,
-          ...deliveryIdentity,
+          ...miraIdentity,
         };
       }
 
@@ -14891,7 +14924,7 @@ class SquidRunApp {
         return {
           status: 'accepted.mira_partial_egress',
           accepted: true,
-          ...deliveryIdentity,
+          ...miraIdentity,
         };
       }
 
@@ -14905,7 +14938,7 @@ class SquidRunApp {
         return {
           status: 'accepted.mira_send_ambiguous',
           accepted: true,
-          ...deliveryIdentity,
+          ...miraIdentity,
         };
       }
 
@@ -14920,7 +14953,7 @@ class SquidRunApp {
         return {
           status: 'accepted.mira_proof_pending',
           accepted: true,
-          ...deliveryIdentity,
+          ...miraIdentity,
         };
       }
 
@@ -15045,6 +15078,12 @@ class SquidRunApp {
         currentSessionFor: (windowKey) => this.getWindowSessionScopeId(windowKey || 'main'),
         deliver: (job) => this.deliverTelegramInboundJob(this.buildTelegramInboundJob(job)),
         findExistingReceipt: (identity) => this.findTelegramDeliveryReceipt(identity),
+        // B5. The post-cutover attempt latch lives in the admission database,
+        // so the drain's decision layer has to be able to read it. Without
+        // these two the drain holds rather than guessing, which is why they are
+        // wired here and not defaulted inside the coordinator.
+        lookupTransportClaim: (query) => telegramAdmissionDelivery.lookupTransportClaimForApp(this, query),
+        closeUnsentTransportClaim: (input) => telegramAdmissionDelivery.closeUnsentClaimForApp(this, input),
         // S491. Three questions the drain could not previously ask, each
         // answered here where the app actually knows.
         sessionGeneration: () => this.getTelegramDrainGeneration(),

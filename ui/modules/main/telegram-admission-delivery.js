@@ -14,6 +14,8 @@ const { randomBytes } = require('node:crypto');
 const { TelegramAdmissionWriter } = require('./telegram-admission-writer');
 const { runTelegramAdmissionSequence, MODES } = require('./telegram-admission-sequence');
 const { currentAppGeneration } = require('./app-generation');
+const { findTransportClaim } = require('./telegram-claim-lookup');
+const { closeUnsentClaim } = require('./telegram-admission-store');
 
 /**
  * Resolve the durable handle this admission will be written on.
@@ -110,9 +112,61 @@ function buildAdmissionJob(job = {}, deliveryIdentity = {}) {
     profile: deliveryIdentity.profile,
     windowKey: job.inboundWindowKey,
     rawBody: job.body,
-    sessionId: job.inboundSessionScopeId || null,
+    // ===================================================================
+    // THE SESSION THE MESSAGE BELONGS TO, NOT THE ONE DELIVERING IT.
+    // ===================================================================
+    // `inboundSessionScopeId` is the CURRENT delivery session, and it was being
+    // written into an IMMUTABLE identity column. So the same message replayed
+    // after a restart - crash after A, retry in G+1 - recorded a different
+    // source session than the row that already existed and failed
+    // `source_identity_conflict` on a field that describes when we happened to
+    // be delivering, not what James sent (Oracle #10, reproduced).
+    //
+    // The spool record's own session is stable across every retry, which is the
+    // only property an immutable column may be built on. The claim still
+    // carries the CURRENT launch and generation; that is where "which process
+    // is delivering this" belongs.
+    // A RECORD WITH NO ORIGINAL SESSION RECORDS NULL, not today's session. The
+    // column is nullable on purpose; filling it with the delivering session
+    // would restore the exact instability this line removes.
+    sessionId: job.record?.targetSession || null,
     sentAtMs: job.sentAtMs,
   };
+}
+
+/**
+ * THE DRAIN'S READ OF THE ATTEMPT LATCH, on the app's own durable handle.
+ *
+ * Throws rather than returning null when the store cannot be reached. The drain
+ * maps a throw to a hold; a null means "nothing has claimed this", and those
+ * two must never be confused, because the second one delivers.
+ */
+async function lookupTransportClaimForApp(app, query = {}) {
+  const resolved = resolveAdmissionWriter(app);
+  if (!resolved.ok) throw new Error(`transport claim writer unavailable: ${resolved.reason}`);
+  return findTransportClaim({
+    updateId: query.updateId,
+    routeKey: query.routeKey,
+    writerFactory: () => resolved.writer,
+  });
+}
+
+/** Release a provably-unsent claim held by a boot that has ended. */
+async function closeUnsentClaimForApp(app, input = {}) {
+  const resolved = resolveAdmissionWriter(app);
+  if (!resolved.ok) return { ok: false, reason: resolved.reason };
+  const writer = resolved.writer;
+  const opened = writer.open();
+  if (!opened.ok) return { ok: false, reason: opened.reason || 'writer_unavailable' };
+  try {
+    return closeUnsentClaim(writer.db, {
+      claimId: input.claimId,
+      reason: input.reason,
+      atMs: input.atMs,
+    });
+  } finally {
+    writer.close();
+  }
 }
 
 /**
@@ -227,6 +281,8 @@ module.exports = {
   resolveAdmissionWriter,
   buildAdmissionJob,
   runAdmissionForJob,
+  lookupTransportClaimForApp,
+  closeUnsentClaimForApp,
   admitScopedTelegramSource,
   deliverAdmittedMainTelegram,
 };

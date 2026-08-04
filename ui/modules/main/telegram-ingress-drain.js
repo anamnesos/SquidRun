@@ -27,6 +27,10 @@ const {
   evaluateConsumptionProof,
   summarizeBacklog,
 } = require('./telegram-consumption-proof');
+const {
+  claimAttemptView,
+  decideClaimDisposition,
+} = require('./telegram-attempt-authority');
 
 
 const DEFAULT_BACKOFF_MS = 30 * 1000;
@@ -215,12 +219,15 @@ function byUpdateId(a, b) {
 /**
  * @param {object} deps
  *   queue            durable queue module. MUST provide readPending, ack,
- *                    readAttemptState and appendAttempt: attempt storage is
- *                    part of the same ownership boundary, and binding it
- *                    elsewhere leaves an injected queue half-owned.
+ *                    readAttemptRecords and readDispositions: legacy attempt
+ *                    storage is part of the same ownership boundary, and
+ *                    binding it elsewhere leaves an injected queue half-owned.
  *   resolveRoute     (chatId) => {ok, profile, windowKey, ...}
  *   deliver          async (job) => receipt
  *   hasExistingReceipt async (messageId, routeKey) => bool   // crash-replay seam
+ *   lookupTransportClaim async ({updateId, routeKey}) => {claim}|null
+ *                    THE POST-CUTOVER ATTEMPT LATCH. Required; see below.
+ *   closeUnsentTransportClaim async ({claimId, reason, atMs}) => {ok}
  *   currentSessionFor (windowKey) => string|null
  *   log
  */
@@ -240,8 +247,25 @@ function createDrainCoordinator(deps = {}) {
     return fn.bind(queue);
   };
   const readAttemptRecords = requireAttemptOp('readAttemptRecords');
-  const appendAttempt = requireAttemptOp('appendAttempt');
   const readDispositions = requireAttemptOp('readDispositions');
+
+  // ===================================================================
+  // THE POST-CUTOVER LATCH SEAMS. REQUIRED, AND THE DEFAULT IS A HOLD.
+  // ===================================================================
+  // The drain no longer writes its own attempt row, so without a claim lookup
+  // it has no way to learn that a previous process already delivered this
+  // message. A default of "no claim" would read as "never attempted" and
+  // deliver a second copy after every restart - the exact defect this repair
+  // exists to remove, reintroduced as a convenience default. So an absent
+  // lookup THROWS from the lookup itself, which `processRecord` turns into a
+  // hold, and a caller that forgets to wire it gets a stuck queue rather than a
+  // duplicate in front of James.
+  const lookupTransportClaim = typeof deps.lookupTransportClaim === 'function'
+    ? deps.lookupTransportClaim
+    : async () => { throw new Error('drain has no transport claim lookup'); };
+  const closeUnsentTransportClaim = typeof deps.closeUnsentTransportClaim === 'function'
+    ? deps.closeUnsentTransportClaim
+    : async () => ({ ok: false, reason: 'no_claim_close_seam' });
   // S491. The drain must be able to ask THREE questions it previously could
   // not: when was this attempted, which process attempted it, and is proof for
   // this pane obtainable at all. Each has a fail-closed default, because a
@@ -290,6 +314,60 @@ function createDrainCoordinator(deps = {}) {
       state.set(dir, { running: false, rerun: false, blockedUntilMs: 0, awaitingProof: null });
     }
     return state.get(dir);
+  }
+
+  /**
+   * Release the claim a just-refused delivery created, on the transport's own
+   * first-hand refusal. Returns {held:false} when the record may be retried and
+   * {held:true, outcome} when the release could not be made and the queue must
+   * stop instead.
+   *
+   * THE CLAIM IS RE-READ, not remembered. The one we read before delivering was
+   * null by definition on a first attempt — the claim is created INSIDE the
+   * delivery sequence — so closing "the claim we saw earlier" would close
+   * nothing at all and report success.
+   */
+  async function releaseClaimAfterRejection({ updateId, routeKey, messageId, receipt }) {
+    let current = null;
+    try {
+      const read = await lookupTransportClaim({ updateId, routeKey, messageId });
+      current = read && read.claim ? read.claim : null;
+    } catch (err) {
+      return {
+        held: true,
+        outcome: { stop: true, reason: `claim_lookup_failed:${err.message}`, failureClass: 'awaiting_proof' },
+      };
+    }
+    // Refused before a claim existed: nothing is latched, so nothing to release.
+    if (!current) return { held: false };
+
+    let closed;
+    try {
+      closed = await closeUnsentTransportClaim({
+        claimId: current.claimId,
+        reason: `delivery_rejected:${receipt?.status || 'no_receipt'}`,
+        atMs: now(),
+      });
+    } catch (err) {
+      return {
+        held: true,
+        outcome: { stop: true, reason: `claim_close_threw:${err.message}`, failureClass: 'awaiting_proof' },
+      };
+    }
+    if (!closed || closed.ok !== true) {
+      // Most often `claim_not_provably_unsent`: the claim is at
+      // delivery_started, so the bytes were authorised and this refusal cannot
+      // prove they were never written. Hold.
+      return {
+        held: true,
+        outcome: {
+          stop: true,
+          reason: `claim_close_after_rejection_refused:${closed?.reason || 'unknown'}`,
+          failureClass: 'awaiting_proof',
+        },
+      };
+    }
+    return { held: false };
   }
 
   /**
@@ -353,7 +431,49 @@ function createDrainCoordinator(deps = {}) {
     // READ THE DURABLE ATTEMPT FIRST. Everything below - the expected identity,
     // the receipt lookup, the proof gate - has to be able to ask what the record
     // was actually waiting for, and it cannot do that after the fact.
-    const attempt = attemptsRead.attempts.get(updateId) || null;
+    //
+    // WHICH LATCH IS AUTHORITATIVE IS DECIDED BY THE EVIDENCE PRESENT (B5).
+    // A record already carrying an OUTSTANDING legacy attempt is judged by that
+    // attempt forever - update 808499316 above all - because a claim written for
+    // it now would invent the identity of a delivery that may already have
+    // reached James. Everything else is judged by the DB claim, which the
+    // delivery sequence creates before any bytes reach a pane.
+    const legacyAttempt = attemptsRead.attempts.get(updateId) || null;
+    const legacyOutstanding = !!(legacyAttempt && legacyAttempt.state === 'attempted');
+
+    let claim = null;
+    if (!legacyOutstanding) {
+      try {
+        const claimRead = await lookupTransportClaim({
+          updateId,
+          routeKey,
+          messageId,
+        });
+        claim = claimRead && claimRead.claim ? claimRead.claim : null;
+      } catch (err) {
+        // WE CANNOT TELL WHETHER THIS WAS ALREADY CLAIMED. Post-cutover the
+        // claim is the only latch, so an unreadable claim store is exactly the
+        // "I do not know if he has seen this" case, and delivering into it is
+        // how the fix would have shipped the duplicate it exists to prevent.
+        return {
+          stop: true,
+          reason: `claim_lookup_failed:${err.message}`,
+          failureClass: 'awaiting_proof',
+        };
+      }
+    }
+
+    // ONE `attempt` for everything below. Legacy record or claim projection,
+    // the proof gate asks the same question of both: what delivery is this
+    // record waiting on, and does the evidence answer THAT delivery.
+    const attempt = legacyOutstanding ? legacyAttempt : claimAttemptView(claim);
+    // THE BACKLOG SNAPSHOT COUNTS ATTEMPTS, and post-cutover the attempts live
+    // in the claim. Without this the health surface reports zero attempted for
+    // a queue whose head has been delivered and is waiting on proof — a channel
+    // that looks idle while it is actually blocked.
+    if (!legacyOutstanding && attempt && attemptsRead.claimAttempts) {
+      attemptsRead.claimAttempts.set(updateId, attempt);
+    }
 
     const expectedIdentity = {
       messageId,
@@ -421,7 +541,7 @@ function createDrainCoordinator(deps = {}) {
       return { retire: true, replayed: true };
     }
 
-    if (attempt && attempt.state === 'attempted') {
+    if (legacyOutstanding) {
       // S491. An outstanding attempt used to end the story right here: hold,
       // forever, with no way to distinguish "proof is still coming" from "proof
       // can never come". That single unanswerable question muted the channel
@@ -477,6 +597,58 @@ function createDrainCoordinator(deps = {}) {
       };
     }
 
+    // THE CLAIM'S DECISION IS MADE HERE, ABOVE THE IN-PROCESS LATCH, for the
+    // same reason the legacy branch above it is: an outstanding attempt has to
+    // be DIAGNOSED before anything reports the generic "awaiting_proof". Below
+    // the latch, the second pass of a wedged queue answers with a process-local
+    // flag and health loses the runtime capability finding entirely - which is
+    // the reporting failure that made an 8.6-hour outage read like patience.
+    const disposition = decideClaimDisposition({
+      claim,
+      currentGeneration: sessionGeneration(),
+      proofOutcome,
+    });
+    if (disposition.action === 'hold') {
+      // THE DIAGNOSIS DOES NOT GET LOST AT THE CUTOVER.
+      //
+      // The legacy branch answers "is proof obtainable from this runtime at
+      // all", and that question is exactly as live for a claim: an authorised
+      // delivery whose pane can never produce a receipt holds FOREVER, and
+      // health has to be able to say so instead of reporting patience. So an
+      // ambiguous claim reuses the SAME reason vocabulary the rest of the
+      // system already reads, and the claim-specific fact travels alongside it
+      // rather than replacing it.
+      if (disposition.reason === 'claim_delivery_started_unproven') {
+        const capability = probeRuntimeProofCapability({
+          runtime: paneRuntimeFor(liveWindow, routeKey),
+          receiptActivity: receiptActivity(),
+          nowMs: now(),
+          windowMs: proofCapabilityWindowMs,
+        });
+        return {
+          stop: true,
+          reason: capability.attainable
+            ? `unresolved_delivery_attempt:${proofOutcome.reason}`
+            : `unprovable_pane:${capability.reason}`,
+          failureClass: 'awaiting_proof',
+          unattainable: !capability.attainable,
+          resolutionRequired: false,
+          proofRuntime: capability.runtime,
+          runtimeProofAttainable: capability.attainable,
+          runtimeProofReason: capability.reason,
+          claimDisposition: { ...(disposition.detail || {}), state: 'delivery_started' },
+        };
+      }
+      return {
+        stop: true,
+        reason: disposition.reason,
+        failureClass: disposition.failureClass,
+        unattainable: disposition.unattainable === true,
+        resolutionRequired: disposition.resolutionRequired === true,
+        claimDisposition: disposition.detail || null,
+      };
+    }
+
     // THE DUPLICATE TRAP (Architect #63). Once a delivery has been ACCEPTED but
     // not proved, this record may never be injected again on a timer. The submit
     // verifier deliberately waits 4+15+45+120+300s because a busy pane can take
@@ -487,20 +659,51 @@ function createDrainCoordinator(deps = {}) {
       return { stop: true, reason: 'awaiting_proof', failureClass: 'awaiting_proof' };
     }
 
-    // Record the attempt BEFORE delivering. If this cannot be written durably we
-    // must not deliver at all: an undelivered message is recoverable, an
-    // unrecorded delivery is how a duplicate becomes invisible to us.
-    try {
-      // WITH PROVENANCE (S491). An attempt that does not record when and by
-      // whom it happened cannot later be compared against the proof that is
-      // supposed to resolve it, which is precisely how 808499316 became
-      // permanently unresolvable.
-      appendAttempt(dir, updateId, 'attempted', {
-        atMs: now(),
-        generation: sessionGeneration(),
-      });
-    } catch (err) {
-      return { stop: true, reason: `attempt_marker_failed:${err.message}`, failureClass: 'definite' };
+    // ===================================================================
+    // THE ATTEMPT LATCH IS THE CLAIM NOW, AND THE CLAIM IS NOT WRITTEN HERE.
+    // ===================================================================
+    // This used to append `attempted` to delivery-attempts.jsonl immediately
+    // before `deliver()`. Post-cutover that is a SECOND independent authority
+    // for one attempt, written before the first one exists: crash in between
+    // and JSONL says "attempted" while the database says nothing was ever
+    // claimed, forever irreconcilable. The delivery sequence creates the claim
+    // at step B, before any bytes reach a pane, so the latch is created by the
+    // same transaction that authorises the delivery it describes.
+    //
+    // A failure BEFORE the claim therefore leaves nothing latched and nothing
+    // delivered - an honest retry - which is the property the JSONL write was
+    // trying and failing to buy.
+    if (disposition.action === 'close_then_attempt') {
+      // A PROVABLY UNSENT CLAIM HELD BY A BOOT THAT HAS ENDED. Releasing the
+      // slot is a recorded, append-only decision - never a timeout, never an
+      // age heuristic - and it must SUCCEED before anything is delivered. A
+      // failed close means the slot is still held, and delivering anyway would
+      // be the theft the claim exists to forbid.
+      let closed;
+      try {
+        closed = await closeUnsentTransportClaim({
+          claimId: disposition.close.claimId,
+          reason: disposition.close.reason,
+          atMs: now(),
+        });
+      } catch (err) {
+        return {
+          stop: true,
+          reason: `claim_close_threw:${err.message}`,
+          failureClass: 'awaiting_proof',
+        };
+      }
+      if (!closed || closed.ok !== true) {
+        return {
+          stop: true,
+          reason: `claim_close_refused:${closed?.reason || 'unknown'}`,
+          failureClass: 'awaiting_proof',
+        };
+      }
+      log.info(
+        'Telegram',
+        `Closed provably-unsent claim ${disposition.close.claimId} for ${messageId} (${disposition.close.reason}); re-attempting`
+      );
     }
 
     let receipt;
@@ -537,22 +740,24 @@ function createDrainCoordinator(deps = {}) {
       // that actually claims acceptance enters the proof-only hold, or a
       // disconnected daemon would strand the message forever.
       if (!looksAccepted(receipt)) {
-        // Nothing was delivered, so the attempt is resolved as "did not happen"
-        // and may be retried. Leaving it unresolved would wedge the queue.
-        try {
-          appendAttempt(dir, updateId, 'retryable', {
-            atMs: now(),
-            generation: sessionGeneration(),
-          });
-        } catch (err) {
-          // Swallowing this and reporting a clean definite retry would let a
-          // sweep re-deliver while the durable state still reads "attempted".
-          // The label must agree with what a future timer is allowed to do.
-          return {
-            stop: true,
-            reason: `attempt_state_write_failed:${err.message}`,
-            failureClass: 'awaiting_proof',
-          };
+        // THE JSONL `retryable` ROW IS GONE; the claim is what gets resolved.
+        //
+        // A HARD REJECTION IS FIRST-HAND EVIDENCE THAT NOTHING WAS WRITTEN, and
+        // it is the one release that does not need a dead process or an
+        // operator: the transport we just called told us it refused. So the
+        // claim is CLOSED as provably unsent, right here, by the call site that
+        // owns the failure - not silently re-claimed by a later pass, which is
+        // the thing Oracle forbade.
+        //
+        // AND THE DATABASE HAS THE FINAL WORD. `closeUnsentClaim` permits the
+        // move only from `claimed`; a claim already at `delivery_started` is
+        // past the authorisation boundary and its close is REFUSED, which turns
+        // this into a hold. That is the state machine ruling, not this branch
+        // deciding it is safe. Without the close, every transient refusal would
+        // wedge the queue until the next boot.
+        if (!legacyOutstanding) {
+          const released = await releaseClaimAfterRejection({ updateId, routeKey, messageId, receipt });
+          if (released.held) return released.outcome;
         }
         return {
           stop: true,
@@ -595,10 +800,15 @@ function createDrainCoordinator(deps = {}) {
       attemptsRead = {
         attempts: readAttemptRecords(dir),
         dispositions: readDispositions(dir),
+        // Filled by processRecord from the DB claims it reads this pass, so the
+        // backlog summary below sees post-cutover attempts too.
+        claimAttempts: new Map(),
         error: null,
       };
     } catch (err) {
-      attemptsRead = { attempts: new Map(), dispositions: new Map(), error: err };
+      attemptsRead = {
+        attempts: new Map(), dispositions: new Map(), claimAttempts: new Map(), error: err,
+      };
     }
 
     for (const record of pending) {
@@ -628,6 +838,10 @@ function createDrainCoordinator(deps = {}) {
           // and went to repair hooks for a record no hook repair can reach.
           resolutionRequired: Boolean(outcome.resolutionRequired),
           orphanedAttempt: outcome.orphanedAttempt || null,
+          // WHICH DURABLE CLAIM IS HOLDING THIS, for the same reason the orphan
+          // detail is carried: a hold whose cause is dropped here reaches health
+          // as an unexplained wait.
+          claimDisposition: outcome.claimDisposition || null,
           runtimeProofAttainable: outcome.runtimeProofAttainable ?? null,
           runtimeProofReason: outcome.runtimeProofReason || null,
         };
@@ -696,7 +910,9 @@ function createDrainCoordinator(deps = {}) {
     // "not reporting".
     const backlog = summarizeBacklog({
       pending: pending.slice(delivered),
-      attempts: attemptsRead.attempts,
+      // BOTH LATCHES. Legacy rows and the claims read this pass; a summary over
+      // only one of them is blind to exactly half the queue.
+      attempts: new Map([...attemptsRead.attempts, ...(attemptsRead.claimAttempts || new Map())]),
       blocked: stoppedAt,
       lastRetirementAtMs: st.lastRetirementAtMs || null,
       nowMs: now(),

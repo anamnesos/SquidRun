@@ -26,6 +26,7 @@ const path = require('node:path');
 const queue = require('../modules/telegram-inbound-durable-queue');
 const spool = require('../modules/main/telegram-ingress-spool');
 const { createDrainCoordinator } = require('../modules/main/telegram-ingress-drain');
+const { createClaimLatchDouble } = require('./helpers/telegram-claim-latch-double');
 
 const tempRoots = [];
 function tempRoot() {
@@ -83,19 +84,31 @@ function provenFor(job, atMs) {
 
 const UNPROVEN = { status: 'accepted.daemon_pty_unverified', accepted: true };
 
+/** The post-cutover attempt latch; see helpers/telegram-claim-latch-double. */
+let latch;
+beforeEach(() => {
+  latch = createClaimLatchDouble({ generation: () => GENERATION });
+});
+
 function coordinator(overrides = {}) {
+  const { deliver, sessionGeneration, now, ...rest } = overrides;
+  const generation = sessionGeneration || (() => GENERATION);
+  const clock = now || (() => Date.now());
   return createDrainCoordinator({
     queue,
     log: silentLog,
     resolveRoute: () => ({ ok: true, profile: 'main', windowKey: 'main' }),
     currentSessionFor: () => 'session-now',
-    sessionGeneration: () => GENERATION,
+    sessionGeneration: generation,
+    now: clock,
     // A pane runtime that demonstrably produces proof, unless a test says
     // otherwise. `nowMs` is supplied by the coordinator's clock.
     paneRuntimeFor: () => 'claude',
     receiptActivity: () => ({ claude: Date.now() }),
-    deliver: async (job) => provenFor(job, Date.now()),
-    ...overrides,
+    lookupTransportClaim: latch.lookupTransportClaim,
+    closeUnsentTransportClaim: latch.closeUnsentTransportClaim,
+    ...rest,
+    deliver: latch.wrapDeliver(deliver || (async (job) => provenFor(job, Date.now())), { generation, now: clock }),
   });
 }
 
@@ -506,12 +519,17 @@ describe('the attempt latch carries provenance', () => {
 
     await drain.schedule(dir, 'main');
 
-    const records = queue.readAttemptRecords(dir);
-    expect(records.get(808499317)).toEqual({
-      state: 'attempted',
-      atMs: clock,
-      generation: GENERATION,
+    // B5: the attempt is the CLAIM, and it carries the same two facts the JSONL
+    // row used to. Without both, no receipt can ever be ordered against it —
+    // which is exactly why 808499316 can never retire.
+    const claim = latch.claims.get('main:808499317');
+    expect(claim).toMatchObject({
+      state: 'delivery_started',
+      attemptAtMs: clock,
+      appGeneration: GENERATION,
     });
+    // And no legacy row was created for a post-cutover record.
+    expect(queue.readAttemptRecords(dir).has(808499317)).toBe(false);
   });
 
   test('A v0 ENTRY WITH NO TIMESTAMP still parses, and still holds', async () => {

@@ -18,6 +18,7 @@ const {
   isCorrelatedProof,
   looksAccepted,
 } = require('../modules/main/telegram-ingress-drain');
+const { createClaimLatchDouble } = require('./helpers/telegram-claim-latch-double');
 
 const tempRoots = [];
 function tempRoot() {
@@ -92,15 +93,35 @@ function proofFields(atMs) {
 const IDENT = { messageId: 'telegram-in-60', routeKey: 'main', windowKey: 'main', profile: 'main' };
 const UNPROVEN = { status: 'accepted.daemon_pty_unverified', accepted: true };
 
+/**
+ * THE POST-CUTOVER ATTEMPT LATCH, shared by every coordinator built inside one
+ * test and reset between tests. It stands in for the DB claim the delivery
+ * sequence now creates; see the helper's own header for why a double is the
+ * right instrument HERE and where the real store is proved instead.
+ */
+let latch;
+beforeEach(() => {
+  latch = createClaimLatchDouble({ generation: () => GENERATION });
+});
+
 function coordinator(overrides = {}) {
+  const { deliver, sessionGeneration, now, ...rest } = overrides;
+  const generation = sessionGeneration || (() => GENERATION);
+  const clock = now || (() => Date.now());
   return createDrainCoordinator({
     queue,
     log: silentLog,
     resolveRoute: routerFor('main', 'main'),
-    deliver: async (job) => provenFor(job),
     currentSessionFor: () => 'session-now',
-    sessionGeneration: () => GENERATION,
-    ...overrides,
+    sessionGeneration: generation,
+    now: clock,
+    lookupTransportClaim: latch.lookupTransportClaim,
+    closeUnsentTransportClaim: latch.closeUnsentTransportClaim,
+    ...rest,
+    // WRAPPED LAST, so a test that overrides `deliver` still latches. An
+    // unlatched delivery would let every at-most-once assertion below pass for
+    // a reason production does not have.
+    deliver: latch.wrapDeliver(deliver || (async (job) => provenFor(job)), { generation, now: clock }),
   });
 }
 
@@ -777,26 +798,23 @@ test('AFTER RESTART, exact proof retires the ambiguous attempt without re-inject
   expect(queue.readPending(dir)).toHaveLength(0);
 });
 
-test('A FAILED ATTEMPT MARKER MEANS NO DELIVERY AT ALL', async () => {
+test('AN UNREADABLE ATTEMPT LATCH MEANS NO DELIVERY AT ALL', async () => {
+  // B5 moved the latch. This used to break the JSONL append the drain made
+  // before delivering; there is no such write any more, because a second
+  // independent authority for one attempt was the defect. The guard it was
+  // defending is unchanged and still load-bearing: if we cannot READ what has
+  // already been attempted, we do not deliver.
   const base = tempRoot();
   const dir = seed(base, 'main', [320]);
   const seen = [];
+  latch.setLookupFailure('claim store unavailable: EIO');
   const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
 
-  const realAppend = fs.appendFileSync;
-  fs.appendFileSync = (file, ...rest) => {
-    if (String(file).includes('delivery-attempts')) throw new Error('EIO');
-    return realAppend(file, ...rest);
-  };
-  let res;
-  try {
-    res = await drain.schedule(dir, 'main');
-  } finally {
-    fs.appendFileSync = realAppend;
-  }
+  const res = await drain.schedule(dir, 'main');
 
   expect(seen).toEqual([]);
-  expect(res.stoppedAt.reason).toContain('attempt_marker_failed');
+  expect(res.stoppedAt.reason).toContain('claim_lookup_failed');
+  expect(res.stoppedAt.failureClass).toBe('awaiting_proof');
 });
 
 test('A CORRUPT ATTEMPT JOURNAL FAILS CLOSED', async () => {
@@ -1183,6 +1201,7 @@ test('THE INJECTED QUEUE OWNS ATTEMPT STORAGE, not the default module', () => {
       queue: {
         ...queue,
         readAttemptRecords: (d) => { reads.push(d); return new Map(); },
+        readDispositions: (d) => { reads.push(d); return new Map(); },
         appendAttempt: (d, updateId, state) => { appends.push({ d, updateId, state }); return { ok: true }; },
       },
       deliver: async (job) => provenFor(job),
@@ -1191,9 +1210,11 @@ test('THE INJECTED QUEUE OWNS ATTEMPT STORAGE, not the default module', () => {
     await drain.schedule(dir, 'main');
 
     // The injected implementations were the ones consulted...
-    expect(reads).toEqual([dir]);
-    expect(appends).toEqual([{ d: dir, updateId: 600, state: 'attempted' }]);
-    // ...and nothing wrote through the default module's path.
+    expect(reads).toEqual([dir, dir]);
+    // ...and B5 stopped writing the legacy latch entirely, so NOTHING appended
+    // through either module. A pre-delivery JSONL attempt is a second authority
+    // for one attempt; the claim is the only one now.
+    expect(appends).toEqual([]);
     expect(fs.existsSync(queue.attemptsPath(dir))).toBe(false);
   })();
 });

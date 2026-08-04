@@ -294,9 +294,23 @@ const REQUIRED_SCHEMA_SHAPE = Object.freeze([
  *
  * This reads `sqlite_master` and compares what is actually installed.
  */
-function verifyInstalledSchema(db) {
+function verifyInstalledSchema(db, names = null) {
+  // A NAMED SUBSET, FILTERED FROM THE SAME TABLE. A reader that only needs the
+  // claim tables must not be held to the whole kernel's shape — but it must not
+  // hand-write its own fingerprints either, or the two copies drift and the
+  // narrower one silently stops checking anything real.
+  const required = Array.isArray(names)
+    ? REQUIRED_SCHEMA_SHAPE.filter(([name]) => names.includes(name))
+    : REQUIRED_SCHEMA_SHAPE;
+  if (Array.isArray(names)) {
+    const covered = new Set(required.map(([name]) => name));
+    const unknown = names.filter((name) => !covered.has(name));
+    // Asking about an object this table does not describe would verify nothing
+    // while returning ok. Refuse the question instead of answering it emptily.
+    if (unknown.length > 0) return fail('schema_probe_unknown_objects', { unknown });
+  }
   const missing = [];
-  for (const [name, fingerprint] of REQUIRED_SCHEMA_SHAPE) {
+  for (const [name, fingerprint] of required) {
     let row;
     try {
       row = db.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(name);
@@ -306,9 +320,33 @@ function verifyInstalledSchema(db) {
     if (!row || !row.sql) { missing.push(`${name}:absent`); continue; }
     if (!String(row.sql).includes(fingerprint)) missing.push(`${name}:stale`);
   }
-  if (missing.length > 0) return fail('schema_shape_mismatch', { missing });
+  if (missing.length > 0) {
+    return fail('schema_shape_mismatch', {
+      missing,
+      // ABSENT AND STALE ARE DIFFERENT FACTS. Absent everywhere means this
+      // kernel has never written here — a reader may honestly conclude the
+      // record it is looking for does not exist. Anything stale means a table
+      // is present in a shape we cannot trust, and a read over it would return
+      // confident nonsense.
+      allAbsent: missing.every((entry) => entry.endsWith(':absent')),
+    });
+  }
   return { ok: true };
 }
+
+/**
+ * The objects a claim READ depends on. Exported so the drain's lookup verifies
+ * the shape it actually uses without maintaining a second fingerprint list.
+ */
+const CLAIM_READ_SCHEMA_OBJECTS = Object.freeze([
+  'telegram_transport_claims',
+  'idx_tg_claims_exclusive',
+  'trg_tg_claim_identity_immutable',
+  'trg_tg_transport_events_no_update',
+  'trg_tg_transport_events_no_delete',
+  'telegram_source_identity',
+  'trg_tg_source_identity_immutable',
+]);
 
 /**
  * Telegram-specific tables only. The REAL evidence-ledger schema is the
@@ -1272,6 +1310,124 @@ function closeUnsentClaim(db, input = {}) {
     rollback(db);
     return fail(`close_failed:${err.message}`);
   }
+}
+
+/**
+ * THE DRAIN'S READ OF THE ATTEMPT LATCH. READ-ONLY, NO SYNTHESIS.
+ *
+ * =====================================================================
+ * WHY THE DRAIN NEEDS THIS AT ALL
+ * =====================================================================
+ * Post-cutover the claim IS the attempt latch. Until now the only thing that
+ * could see a claim was the process that had just made one; a restarted drain
+ * asked `delivery-attempts.jsonl` — a file the delivery path no longer writes —
+ * and got back "never attempted" for a message whose bytes may already be on
+ * James's screen. That is the duplicate this whole lane exists to prevent, and
+ * it would have been INTRODUCED by the fix.
+ *
+ * Every field returned comes out of a stored column. `delivery_started` is read
+ * from the append-only event table rather than inferred from `state`, because
+ * "which authority says the pane write was authorised" is exactly the question,
+ * and answering it from a mutable status column would be answering it from the
+ * cheaper of the two records.
+ *
+ * THE CLOSED SLOT IS STILL RETURNED. A `closed_unsent` claim is evidence that
+ * an attempt was made and provably did not deliver; the caller needs to see it
+ * to distinguish that from "nothing ever happened here", even though both are
+ * safe to attempt.
+ */
+function readTransportClaim(db, input = {}) {
+  const durable = assertDurableHandle(db);
+  if (!durable.ok) return durable;
+
+  for (const field of ['cutoverId', 'routeKey']) {
+    if (!isNonEmptyString(input[field])) return fail(`claim_read_field_missing:${field}`);
+  }
+  const updateId = Number(input.updateId);
+  if (!Number.isSafeInteger(updateId) || updateId <= 0) {
+    return fail('claim_read_field_missing:updateId');
+  }
+
+  let rows;
+  try {
+    rows = db.prepare(`
+      SELECT * FROM telegram_transport_claims
+      WHERE cutover_id = ? AND route_key = ? AND update_id = ?
+      ORDER BY attempt_at_ms ASC, claim_id ASC
+    `).all(input.cutoverId, input.routeKey, updateId);
+  } catch (err) {
+    return fail(`claim_read_failed:${err.message}`);
+  }
+  if (!rows.length) return { ok: true, claim: null, closedClaims: [] };
+
+  const live = rows.filter((row) => String(row.state) !== CLAIM_STATES.CLOSED_UNSENT);
+  const closedClaims = rows
+    .filter((row) => String(row.state) === CLAIM_STATES.CLOSED_UNSENT)
+    .map((row) => ({ claimId: String(row.claim_id), closedAtMs: Number(row.closed_at_ms) || null }));
+
+  // TWO LIVE CLAIMS IS NOT A STATE ANYONE MAY GUESS PAST. The partial unique
+  // index forbids it, so seeing it means the index is gone or the file is
+  // damaged, and picking either row would be picking which delivery to believe.
+  if (live.length > 1) {
+    return fail('claim_read_ambiguous', { liveClaimIds: live.map((row) => String(row.claim_id)) });
+  }
+  if (!live.length) return { ok: true, claim: null, closedClaims };
+
+  const row = live[0];
+  let events;
+  try {
+    events = db.prepare(`
+      SELECT kind, at_ms, detail FROM telegram_transport_events
+      WHERE claim_id = ? ORDER BY event_id ASC
+    `).all(String(row.claim_id));
+  } catch (err) {
+    return fail(`claim_events_unreadable:${err.message}`);
+  }
+  const deliveryStarted = events.find((event) => String(event.kind) === 'delivery_started') || null;
+
+  const sourceRow = db.prepare('SELECT * FROM comms_journal WHERE row_id = ?').get(row.source_row_id);
+  const identity = readSourceIdentity(db, sourceRow);
+  // A claim whose immutable source cannot be read is not a claim we can reason
+  // about: the identity the proof gate compares against lives in that row.
+  if (!identity) return fail('claim_source_identity_unreadable', { claimId: String(row.claim_id) });
+
+  return {
+    ok: true,
+    closedClaims,
+    claim: {
+      claimId: String(row.claim_id),
+      cutoverId: String(row.cutover_id),
+      routeKey: String(row.route_key),
+      updateId: Number(row.update_id),
+      sourceRowId: Number(row.source_row_id),
+      state: String(row.state),
+      appGeneration: String(row.app_generation),
+      paneLaunchId: String(row.pane_launch_id),
+      paneId: String(row.pane_id),
+      role: String(row.role),
+      consumerRuntime: String(row.consumer_runtime),
+      attemptNonce: String(row.attempt_nonce),
+      attemptAtMs: Number(row.attempt_at_ms),
+      closedAtMs: row.closed_at_ms === null ? null : Number(row.closed_at_ms),
+      deliveredPromptSha256: row.delivered_prompt_sha256 === null ? null : String(row.delivered_prompt_sha256),
+      deliveredPromptBytes: row.delivered_prompt_bytes === null ? null : Number(row.delivered_prompt_bytes),
+      // FROM THE APPEND-ONLY EVENT, not from `state`.
+      deliveryStartedAtMs: deliveryStarted ? Number(deliveryStarted.at_ms) : null,
+      eventKinds: events.map((event) => String(event.kind)),
+      source: {
+        messageId: identity.messageId,
+        chatId: identity.chatId,
+        profile: identity.profile,
+        windowKey: identity.windowKey,
+        routeKey: identity.routeKey,
+        updateId: identity.updateId,
+        cutoverId: identity.cutoverId,
+        canonicalPayloadSha256: identity.canonicalPayloadSha256,
+        obligationId: identity.obligationId,
+        status: sourceRow ? String(sourceRow.status ?? '') : null,
+      },
+    },
+  };
 }
 
 /**
@@ -2240,11 +2396,13 @@ module.exports = {
   assertDurableHandle,
   verifyInstalledSchema,
   REQUIRED_SCHEMA_SHAPE,
+  CLAIM_READ_SCHEMA_OBJECTS,
   applyTelegramAdmissionSchema,
   recordImmutableSource,
   claimTransportAttempt,
   recordDeliveryStarted,
   closeUnsentClaim,
+  readTransportClaim,
   promoteToAdmittedOwned,
   deriveQueueAckIntentKey,
   casBindingState,
