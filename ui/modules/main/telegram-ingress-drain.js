@@ -116,6 +116,65 @@ function proofClassOf(evidence) {
  */
 const IDENTITY_FIELDS = ['messageId', 'routeKey', 'windowKey', 'profile'];
 
+/**
+ * IS THIS ATTEMPT RESOLVABLE BY PROOF AT ALL?
+ *
+ * =====================================================================
+ * THE QUESTION NOBODY WAS ASKING
+ * =====================================================================
+ * The drain already asks "is proof obtainable from this RUNTIME" and reports
+ * `unprovable_pane:runtime_never_produced_proof` when a pane has never produced
+ * a receipt. That is a true statement about the runtime and it is the WRONG
+ * DIAGNOSIS for update 808499316, which sends whoever reads it to repair hooks
+ * and leaves the channel exactly as muted afterwards.
+ *
+ * The real reason 316 can never retire is in the RECORD, not the runtime. Its
+ * durable latch is `{"updateId":808499316,"state":"attempted"}` - no `atMs`, no
+ * `generation`. `evaluateConsumptionProof` requires both: a missing timestamp
+ * returns `attempt_time_unknown` and a missing generation returns
+ * `attempt_generation_unknown`, before any evidence is even considered. So NO
+ * RECEIPT, however perfect, can resolve that record. Fixing the Codex receipt
+ * path - which genuinely must happen for 317 onward - would not move 316 by one
+ * inch, and a repair that reported only the runtime cause would have been
+ * measured, shipped, and still wedged.
+ *
+ * Two different unprovable-nesses, two different repairs. Naming them
+ * separately is the whole point.
+ */
+function classifyAttemptResolvability(attempt, currentGeneration) {
+  if (!attempt || attempt.state !== 'attempted') {
+    return { resolvable: true, reason: null };
+  }
+  const atMs = Number(attempt.atMs);
+  const hasTime = Number.isFinite(atMs) && atMs > 0;
+
+  // MISSING ATTEMPT TIME, AND NOTHING ELSE.
+  //
+  // The first version of this also called a missing generation, and an attempt
+  // from a PRIOR generation, permanently unresolvable. Asserting it against the
+  // real evaluator proved both wrong: those shapes retire fine, so declaring
+  // them orphans would have stranded records that would otherwise drain - the
+  // mirror image of the bug this exists to fix.
+  //
+  // Only the missing timestamp is structural. `evaluateConsumptionProof`
+  // returns `attempt_time_unknown` before it weighs any evidence, so no
+  // receipt can ever order itself against such an attempt. That is exactly
+  // update 808499316, and it is resolved by explicit one-shot recovery, never
+  // by a timer.
+  //
+  // An attempt from a prior generation is a DIFFERENT question, answered where
+  // it belongs - in the proof gate, which now requires the receipt's generation
+  // to match the attempt's rather than the current process's.
+  if (!hasTime) {
+    return {
+      resolvable: false,
+      reason: 'attempt_time_unknown',
+      detail: { hasAttemptTime: false, attemptGeneration: attempt.generation ?? null },
+    };
+  }
+  return { resolvable: true, reason: null };
+}
+
 function isCorrelatedProof(evidence, expected = {}) {
   if (!evidence || typeof evidence !== 'object') return false;
   // The EVIDENCE must carry every identity field itself and match exactly. An
@@ -359,6 +418,29 @@ function createDrainCoordinator(deps = {}) {
         nowMs: now(),
         windowMs: proofCapabilityWindowMs,
       });
+
+      // THE RECORD'S OWN RESOLVABILITY IS REPORTED FIRST, because it is the
+      // cause that decides which repair is the right one. Runtime capability is
+      // still reported alongside - both facts are true and both matter - but
+      // they are no longer collapsed into one reason string that names only the
+      // runtime.
+      const resolvability = classifyAttemptResolvability(attempt, sessionGeneration());
+      if (!resolvability.resolvable) {
+        return {
+          stop: true,
+          reason: `orphaned_attempt:${resolvability.reason}`,
+          failureClass: 'awaiting_proof',
+          // Permanent, and not because of the runtime. No receipt can retire
+          // this record; only an explicit recorded resolution can.
+          unattainable: true,
+          resolutionRequired: true,
+          orphanedAttempt: { ...resolvability.detail, reason: resolvability.reason },
+          proofRuntime: capability.runtime,
+          runtimeProofAttainable: capability.attainable,
+          runtimeProofReason: capability.reason,
+        };
+      }
+
       return {
         stop: true,
         reason: capability.attainable
@@ -366,7 +448,10 @@ function createDrainCoordinator(deps = {}) {
           : `unprovable_pane:${capability.reason}`,
         failureClass: 'awaiting_proof',
         unattainable: !capability.attainable,
+        resolutionRequired: false,
         proofRuntime: capability.runtime,
+        runtimeProofAttainable: capability.attainable,
+        runtimeProofReason: capability.reason,
       };
     }
 
@@ -706,7 +791,7 @@ function createDrainCoordinator(deps = {}) {
     dispose,
     isDisposed: () => disposed,
     _internals: {
-    isProvenOwnership, isCorrelatedProof, downstreamMessageId, processRecord, state,
+    isProvenOwnership, isCorrelatedProof, classifyAttemptResolvability, downstreamMessageId, processRecord, state,
   },
   };
 }
@@ -715,6 +800,7 @@ module.exports = {
   createDrainCoordinator,
   isProvenOwnership,
   isCorrelatedProof,
+  classifyAttemptResolvability,
   proofClassOf,
   looksAccepted,
   IDENTITY_FIELDS,

@@ -212,6 +212,42 @@ function evaluateConsumptionProof(input = {}) {
     if (provedAtMs < attemptedAtMs) {
       return { proven: false, reason: 'proof_predates_attempt' };
     }
+
+    // THE GENERATION MUST MATCH THE ATTEMPT, NOT THE PROCESS ASKING.
+    //
+    // =====================================================================
+    // WHAT THIS FIXES, AND WHAT IT DELIBERATELY ALLOWS
+    // =====================================================================
+    // `EXACT_PROOF_FIELDS` compares `evidence.generation` against
+    // `expected.generation`, which the drain fills from the CURRENT process.
+    // That is wrong in both directions at once:
+    //
+    //   TOO LOOSE - the attempt's own generation was never compared to
+    //   anything, so a receipt minted by a live generation could retire a
+    //   delivery attempted by a generation that is long dead. Measured, not
+    //   inferred: an attempt carrying `app-session-491` was proven by a
+    //   `app-session-492` receipt.
+    //
+    //   TOO STRICT - after a restart, a durable terminal receipt written by
+    //   generation G can no longer retire G's own attempt, because `expected`
+    //   now says G+1. The one case that SHOULD survive a restart is the one
+    //   that stopped working.
+    //
+    // Both fall out of asking the process who it is instead of asking the
+    // durable record what it was waiting for. The attempt names the delivery;
+    // proof must answer THAT delivery.
+    if (isNonEmptyString(attempt.generation)) {
+      if (!isNonEmptyString(evidence.generation)) {
+        return { proven: false, reason: 'proof_generation_unknown' };
+      }
+      if (!identityEquals(evidence.generation, attempt.generation)) {
+        return {
+          proven: false,
+          reason: 'proof_generation_does_not_match_attempt',
+          detail: { attemptGeneration: attempt.generation, proofGeneration: evidence.generation },
+        };
+      }
+    }
   }
 
   return { proven: true, reason: 'exact_consumption_proof' };
