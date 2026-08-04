@@ -109,10 +109,23 @@ function isDecisionProtocolSource(record) {
 /**
  * The fields a NEW record is stamped with at spool time.
  *
- * Returns null unless both identities are real. A producer that cannot name its
- * own generation and session does not get to stamp a record post-cutover; the
- * record is written unstamped and is therefore legacy, which is the honest
- * answer and the safe one.
+ * Returns null unless both identities are real. NULL MEANS NOTHING IS WRITTEN
+ * AT ALL: `acceptInbound` treats it as a fail-closed refusal
+ * (`missing_producer_protocol_identity`) and appends no record.
+ *
+ * This paragraph used to say the record was "written unstamped and is therefore
+ * legacy, which is the honest answer and the safe one". That was my original
+ * design, it was wrong, and Architect #104/#105 corrected the CODE while this
+ * comment kept describing the behaviour the code no longer has. A stale comment
+ * next to a fail-closed gate is worse than no comment: the next reader trusts
+ * it and reasons about a door that is shut.
+ *
+ * The correct reasoning, for the record: refusing does not lose James's message.
+ * The spool's caller returns ok:false and holds the Telegram cursor, so the
+ * update is retried. Appending an unstamped record WOULD be the damage, because
+ * v7 §4 derives the stable legacy fence from the final journal fingerprints, and
+ * one new legacy record after settlement invalidates a fence required to be
+ * stable.
  */
 function buildSourceProtocolStamp(input = {}) {
   const appGeneration = typeof input.appGeneration === 'string' ? input.appGeneration.trim() : '';
