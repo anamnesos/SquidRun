@@ -19,9 +19,24 @@ afterEach(() => {
 });
 
 describe('drain generation', () => {
-  test('IT VARIES BY PROCESS AND TIME, so two runs never collide', () => {
-    expect(makeDrainGeneration(111, 1000)).not.toBe(makeDrainGeneration(112, 1000));
-    expect(makeDrainGeneration(111, 1000)).not.toBe(makeDrainGeneration(111, 1001));
+  test('IT ADOPTS THE PUBLISHED APP GENERATION, so one process has ONE identity', () => {
+    // This used to assert the generation varies by pid and time. That was the
+    // defect, not the contract: the drain minted `tg-gen-<pid>-<time>` while
+    // pane launches, admission rows and receipts all carried the published
+    // `app-session-<n>`. Every generation comparison the proof gate made was
+    // therefore between two values that could never be equal - an unanswerable
+    // check, which is how the channel stayed silent while every layer reported
+    // it was correctly waiting.
+    expect(makeDrainGeneration(111, 1000, 'app-session-492')).toBe('app-session-492');
+    expect(makeDrainGeneration(999, 9999, 'app-session-492')).toBe('app-session-492');
+  });
+
+  test('WITHOUT a published generation it falls back, and says so in the value', () => {
+    // Still unique per process and time, and named so a reader can tell the
+    // fallback from the real thing rather than seeing a plausible id.
+    expect(makeDrainGeneration(111, 1000, '')).toBe('tg-gen-unpublished-111-1000');
+    expect(makeDrainGeneration(111, 1000, '')).not.toBe(makeDrainGeneration(112, 1000, ''));
+    expect(makeDrainGeneration(111, 1000, '')).not.toBe(makeDrainGeneration(111, 1001, ''));
   });
 });
 

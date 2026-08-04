@@ -6,6 +6,7 @@
  * reported as an outage, a health snapshot that never leaves the process — and
  * each is worth testing without constructing an Electron app.
  */
+const { currentAppGeneration } = require('./app-generation');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -15,8 +16,33 @@ const path = require('node:path');
  * updateId cannot retire a delivery this generation is still waiting on. It
  * must NOT survive the process; one that did would defeat the point.
  */
-function makeDrainGeneration(pid, nowMs) {
-  return `tg-gen-${pid}-${nowMs}`;
+/**
+ * ONE GENERATION, PUBLISHED ONCE, USED BY EVERYONE.
+ *
+ * =====================================================================
+ * TWO NAMESPACES CANNOT AGREE ABOUT ANYTHING
+ * =====================================================================
+ * This minted `tg-gen-<pid>-<time>` while pane launches, admission rows and the
+ * receipt adapter all carry the published `SQUIDRUN_APP_GENERATION` - live, that
+ * is `app-session-492`. Nothing reconciled them, so every generation comparison
+ * the proof gate makes was between two values that could never be equal: the
+ * drain asks about `tg-gen-...`, the receipt says `app-session-...`, and the
+ * answer is always no.
+ *
+ * That is not a stricter check, it is an unanswerable one, and an unanswerable
+ * check is exactly how this channel went silent for hours while every layer
+ * reported that it was correctly waiting.
+ *
+ * The published value is the canonical one - three live pane launches already
+ * carry it - so the drain adopts it rather than inventing a second identity for
+ * the same process. The pid/time form remains ONLY as a last resort for a
+ * process where nothing was published, and it is named so a reader can tell the
+ * fallback from the real thing.
+ */
+function makeDrainGeneration(pid, nowMs, published = currentAppGeneration()) {
+  const canonical = typeof published === 'string' ? published.trim() : '';
+  if (canonical) return canonical;
+  return `tg-gen-unpublished-${pid}-${nowMs}`;
 }
 
 /**
