@@ -28,6 +28,7 @@ const spool = require('../modules/main/telegram-ingress-spool');
 const { createDrainCoordinator } = require('../modules/main/telegram-ingress-drain');
 const legacyJournal = require('../modules/main/telegram-legacy-journal');
 const { classifySourceRecord, SOURCE_PROTOCOLS } = require('../modules/main/telegram-source-protocol');
+const { LEGACY_SETTLEMENT } = require('../modules/main/telegram-activation-mode');
 const { createClaimLatchDouble } = require('./helpers/telegram-claim-latch-double');
 
 const tempRoots = [];
@@ -209,6 +210,10 @@ function harness(dir, overrides = {}) {
       return latch.closeUnsentTransportClaim(input);
     },
     findExistingReceipt: async () => { counts.receiptLookup += 1; return null; },
+    // v7 §3 Phase L. Every test in THIS file is about the legacy gate, so the
+    // operating state is healthy unless a test overrides it; the mode's own
+    // attacks live in telegram-drain-activation-mode.test.js.
+    activationMode: () => LEGACY_SETTLEMENT,
     ...rest,
     deliver: latch.wrapDeliver(async (job) => {
       counts.deliver += 1;
@@ -676,6 +681,9 @@ describe('zero deliver is zero decision, because there is no second door', () =>
       if (match) keys.push(match[1]);
     }
     expect(keys.sort()).toEqual([
+      // v7 §3 Phase L, added by Step 2B. It reads the operating state and
+      // routes nothing, so it does not widen the outbound surface.
+      'activationMode',
       'closeUnsentTransportClaim',
       'currentSessionFor',
       'deliver',
@@ -698,6 +706,7 @@ describe('zero deliver is zero decision, because there is no second door', () =>
     );
     const required = [...source.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]).sort();
     expect(required).toEqual([
+      './telegram-activation-mode',
       './telegram-attempt-authority',
       './telegram-consumption-proof',
       './telegram-ingress-spool',
@@ -810,6 +819,7 @@ describe('the injected queue owns WHERE the sidecars are, and a useless answer r
       resolveRoute: () => ({ ok: true, profile: 'main', windowKey: 'main' }),
       currentSessionFor: () => 'session-now',
       sessionGeneration: () => GENERATION,
+      activationMode: () => LEGACY_SETTLEMENT,
       readJournalFile: (file) => { reads.push(file); return fs.readFileSync(file, 'utf8'); },
       lookupTransportClaim: async () => { throw new Error('claim lookup must not be reached'); },
       deliver: async () => { throw new Error('deliver must not be reached'); },

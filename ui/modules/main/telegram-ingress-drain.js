@@ -52,6 +52,7 @@ const {
   // (Architect #121). One authority, and it is not reachable from here.
   isRecognizedTerminalDisposition,
 } = require('./telegram-legacy-journal');
+const { resolveActivationMode } = require('./telegram-activation-mode');
 
 
 const DEFAULT_BACKOFF_MS = 30 * 1000;
@@ -303,6 +304,19 @@ function createDrainCoordinator(deps = {}) {
   // which is what production wants; a test hands one in so "exactly one read
   // per pass" is a counted fact rather than a claim about code shape.
   const readJournalFile = typeof deps.readJournalFile === 'function' ? deps.readJournalFile : null;
+  // ===================================================================
+  // THE ACTIVATION MODE SEAM. REQUIRED, AND THE DEFAULT IS A HOLD.
+  // ===================================================================
+  // Same shape and same reason as the claim lookup above: a coordinator built
+  // without being told which operating state it is in must WEDGE, not guess. A
+  // default of `legacy_settlement` would let any caller that forgot to wire the
+  // seam quietly claim Phase L, and a default of "no mode, carry on" would hand
+  // `decision_v1` sources back to the pane path before a fence exists. So an
+  // absent seam throws, `runPass` turns that into a named hold, and the queue
+  // stops somewhere a person can read.
+  const activationModeSource = typeof deps.activationMode === 'function'
+    ? deps.activationMode
+    : () => { throw new Error('drain has no activation mode seam'); };
   const proofCapabilityWindowMs = Number.isFinite(Number(deps.proofCapabilityWindowMs))
     ? Number(deps.proofCapabilityWindowMs)
     : undefined;
@@ -451,6 +465,31 @@ function createDrainCoordinator(deps = {}) {
     // already attempted has nothing to reason with. The snapshot was taken ONCE
     // for the whole pass, so failing here at the head stops N and N+1 alike
     // with no claim lookup, no decision, no deliver, no ack, and no write.
+    // ===================================================================
+    // THE ACTIVATION MODE IS ASKED FIRST, BEFORE THE FILES (v7 §3 Phase L).
+    // ===================================================================
+    // Ahead of the journal gate on purpose: "which operating state is this
+    // process in" is more fundamental than "what do the sidecars say", and a
+    // process that cannot answer it has no business reading a journal in order
+    // to decide something it is not authorised to decide. An unhealthy mode
+    // therefore costs zero sidecar reads as well as zero claims, deliveries,
+    // acks and writes.
+    const activation = journal ? journal.activation : null;
+    if (!activation || activation.ok !== true) {
+      const reason = (activation && activation.reason) || 'activation_mode_unresolved';
+      return {
+        stop: true,
+        reason: `activation_mode_unhealthy:${reason}`,
+        failureClass: 'awaiting_proof',
+        // Not a wait. No pass will resolve this without someone configuring the
+        // mode, so health must say "a person has to set this" rather than
+        // reporting patience at a channel that is refusing to operate.
+        unattainable: true,
+        resolutionRequired: true,
+        activationMode: { mode: null, reason, detail: (activation && activation.detail) || null },
+      };
+    }
+
     const snapshot = journal ? journal.snapshot : null;
     if (!snapshot || snapshot.ok !== true) {
       const reason = (snapshot && snapshot.reason) || 'journal_snapshot_missing';
@@ -986,6 +1025,38 @@ function createDrainCoordinator(deps = {}) {
     return { retire: true, visible: true };
   }
 
+  /**
+   * Read both sidecars once, or say exactly why not.
+   *
+   * THE QUEUE'S ANSWER IS CHECKED BEFORE IT IS USED (Architect #125).
+   * `requireAttemptOp` proves the path methods EXIST; it says nothing about
+   * what they return. A queue whose path methods hand back `''`, `null` or the
+   * same string twice would reopen the half-owned storage split from the other
+   * end — one collapsed file validating as two clean journals, or a fallback
+   * derivation quietly reading files this queue does not own. No usable pair of
+   * paths, no read at all.
+   */
+  function takeJournalSnapshot(dir) {
+    try {
+      const attemptsFile = attemptsPathFor(dir);
+      const dispositionsFile = dispositionsPathFor(dir);
+      const usable = (value) => typeof value === 'string' && value.trim() !== '';
+      if (!usable(attemptsFile) || !usable(dispositionsFile)) {
+        return { ok: false, reason: 'journal_path_unresolved', detail: null };
+      }
+      if (attemptsFile === dispositionsFile) {
+        return { ok: false, reason: 'journal_path_collision', detail: null };
+      }
+      return readLegacyJournalSnapshot(dir, {
+        ...(readJournalFile ? { readFile: readJournalFile } : {}),
+        attemptsFile,
+        dispositionsFile,
+      });
+    } catch (err) {
+      return { ok: false, reason: `journal_snapshot_threw:${err.message}`, detail: null };
+    }
+  }
+
   async function runPass(dir, routeKey) {
     // drainOnce is callable DIRECTLY (startup path), so it needs its own
     // disposed check: guarding only schedule() left a delivery path wide open
@@ -1018,26 +1089,29 @@ function createDrainCoordinator(deps = {}) {
     // from the other end — one collapsed file validating as two clean
     // journals, or a fallback derivation quietly reading files this queue does
     // not own. No usable pair of paths, no read at all.
-    let snapshot;
+    // ===================================================================
+    // ONE ACTIVATION-MODE RESOLUTION PER PASS, BEFORE ANY FILE IS OPENED.
+    // ===================================================================
+    // Asked once and handed down for the same reason the snapshot is: two
+    // records in one pass must not be decided under two different operating
+    // states. A throwing seam is a refusal with a name, not a crash — the whole
+    // pass then holds and says which seam could not answer.
+    let activation;
     try {
-      const attemptsFile = attemptsPathFor(dir);
-      const dispositionsFile = dispositionsPathFor(dir);
-      const usable = (value) => typeof value === 'string' && value.trim() !== '';
-      if (!usable(attemptsFile) || !usable(dispositionsFile)) {
-        snapshot = { ok: false, reason: 'journal_path_unresolved', detail: null };
-      } else if (attemptsFile === dispositionsFile) {
-        snapshot = { ok: false, reason: 'journal_path_collision', detail: null };
-      } else {
-        snapshot = readLegacyJournalSnapshot(dir, {
-          ...(readJournalFile ? { readFile: readJournalFile } : {}),
-          attemptsFile,
-          dispositionsFile,
-        });
-      }
+      activation = resolveActivationMode(activationModeSource());
     } catch (err) {
-      snapshot = { ok: false, reason: `journal_snapshot_threw:${err.message}`, detail: null };
+      activation = { ok: false, mode: null, reason: `activation_mode_threw:${err.message}`, detail: null };
     }
+
+    // NO SIDECAR READ AT ALL UNDER AN UNHEALTHY MODE. Reading would be harmless
+    // in itself, and skipping it lets the counters say something stronger: the
+    // pass touched nothing whatsoever, which is exactly the claim Phase L needs
+    // to be able to make about its own refusals.
+    const snapshot = activation.ok === true
+      ? takeJournalSnapshot(dir)
+      : { ok: false, reason: 'activation_mode_unhealthy', detail: null };
     const journal = {
+      activation,
       snapshot,
       // Filled by processRecord from the DB claims it reads this pass, so the
       // backlog summary below sees post-cutover attempts too.
@@ -1082,8 +1156,24 @@ function createDrainCoordinator(deps = {}) {
           // an unexplained wait, and a journal that will not parse is the least
           // guessable cause on the list.
           legacyGate: outcome.legacyGate || null,
+          // WHICH OPERATING STATE REFUSED, when that is the cause. Carried for
+          // the same reason as the gate detail: a hold whose cause is dropped
+          // here reaches health as an unexplained wait, and "nobody configured
+          // the activation mode" is the least guessable cause on the list.
+          activationMode: outcome.activationMode || null,
         };
-        if (outcome.legacyGate && outcome.legacyGate.action !== GATE_ACTIONS.HOLD_ATTEMPTED) {
+        if (outcome.activationMode) {
+          log.error(
+            'Telegram',
+            `TELEGRAM INGRESS WEDGED at update ${record.updateId}: ${outcome.reason}. `
+            + 'The transport activation mode is not a state this build can operate in '
+            + `(${outcome.activationMode.reason}`
+            + `${outcome.activationMode.detail ? `: ${JSON.stringify(outcome.activationMode.detail)}` : ''}), `
+            + 'so this pass read no journal, looked up no claim, delivered nothing and acked nothing. '
+            + `${pending.length - delivered} message(s) are undelivered, this one included. `
+            + 'It needs a person to set the mode; no later pass will resolve it on its own.'
+          );
+        } else if (outcome.legacyGate && outcome.legacyGate.action !== GATE_ACTIONS.HOLD_ATTEMPTED) {
           // THE FILES, THE PROTOCOL, OR TWO AUTHORITIES DISAGREEING. None of
           // these is about a pane, a receipt or an attempt, so the orphan
           // wording below would send the reader to entirely the wrong place.
@@ -1173,6 +1263,11 @@ function createDrainCoordinator(deps = {}) {
       blocked: stoppedAt,
       lastRetirementAtMs: st.lastRetirementAtMs || null,
       nowMs: now(),
+      // PUBLISHED ON EVERY PASS, held or clean, and especially when the queue
+      // is EMPTY. An install that has not been told which operating state it is
+      // in will refuse every future message, and an empty queue is exactly the
+      // moment that would otherwise read as a channel in perfect health.
+      activation,
     });
     return { ok: true, delivered, pending: pending.length, stoppedAt, backlog };
   }

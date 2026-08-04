@@ -18,6 +18,8 @@
  * grade to a queue that is not moving.
  */
 
+const { isRecognizedActivationMode } = require('./telegram-activation-mode');
+
 /** Past this, a held head has stopped being "the pane is busy". */
 const DEGRADED_HEAD_AGE_MS = 10 * 60 * 1000;
 
@@ -48,6 +50,56 @@ function scoreBacklogHealth(snapshot, options = {}) {
     // NOT reporting is not the same as healthy. A route whose drain never
     // produced a snapshot is a route nobody is watching.
     return { severity: 'critical', ok: false, reasons: ['no_backlog_snapshot'], headAgeMs: null };
+  }
+
+  // ===================================================================
+  // AN UNHEALTHY OPERATING STATE IS CRITICAL BEFORE ANYTHING IS COUNTED
+  // ===================================================================
+  // Checked ahead of the empty-queue early return, and that order is the whole
+  // value of the check. An install that has not been told which transport
+  // activation state it is in will refuse every message that arrives from now
+  // on — and until the first one arrives its queue is EMPTY, which is the one
+  // shape this function used to answer `ok: true` to immediately. That is S491
+  // again in a new place: a true statement about the backlog standing in for a
+  // question nobody asked about the channel.
+  //
+  // MISSING IS NOT HEALTHY, same as `pollerFresh`. A snapshot with no
+  // activation fields was produced by something that cannot say what state it
+  // was in, and the honest grade for that is not ok.
+  // AND THE BOOLEAN IS NOT THE AUTHORITY (Architect #153). This scores a
+  // snapshot read back from DISK, so `activationModeHealthy: true` is a claim
+  // by whatever last wrote that file — a corrupted, stale or forged document
+  // could otherwise assert health next to a mode this build cannot operate in,
+  // on an empty queue, and be believed. Membership is re-derived from the one
+  // predicate that owns it, and the three fields must agree with each other.
+  if (snapshot.activationModeHealthy !== true) {
+    return {
+      severity: 'critical',
+      ok: false,
+      reasons: [`activation_mode_unhealthy:${snapshot.activationModeReason || 'activation_mode_unreported'}`],
+      headAgeMs: null,
+    };
+  }
+  if (!isRecognizedActivationMode(snapshot.activationMode)) {
+    return {
+      severity: 'critical',
+      ok: false,
+      reasons: [`activation_mode_incoherent:healthy_without_recognized_mode:${String(snapshot.activationMode)}`],
+      headAgeMs: null,
+    };
+  }
+  // EXACTLY null, not merely absent. A persisted document that omits the field
+  // was written by something that did not know it owed one, and omission is
+  // not a statement of success (Architect #156).
+  if (snapshot.activationModeReason !== null) {
+    // Healthy AND carrying a failure reason is a document that disagrees with
+    // itself. Refusing beats picking whichever half looks more convenient.
+    return {
+      severity: 'critical',
+      ok: false,
+      reasons: [`activation_mode_incoherent:healthy_with_failure_reason:${String(snapshot.activationModeReason)}`],
+      headAgeMs: null,
+    };
   }
 
   const degradedAfterMs = Number.isFinite(Number(options.degradedAfterMs))

@@ -4625,6 +4625,12 @@ class SquidRunApp {
     this.assertRootCoherenceAtBoot();
     this.appendBootSequenceBreadcrumb('init:step-1:load-settings');
     this.settings.loadSettings();
+    // v7 §3 Phase L. Settings become authoritative on the line above, and the
+    // startup backlog drain and poller start well below, so this is the one
+    // point where the operating state can be frozen with nothing able to get in
+    // front of it. Never re-read on settings reload (see the reload seam) or in
+    // buildTelegramPollerEnv; one generation, one answer.
+    this.captureTelegramActivationMode();
 
     // 1.1 Packaged app bootstrap: ensure a writable external workspace exists.
     this.appendBootSequenceBreadcrumb('init:step-1.1:packaged-workspace-bootstrap');
@@ -15093,9 +15099,86 @@ class SquidRunApp {
         sessionGeneration: () => this.getTelegramDrainGeneration(),
         paneRuntimeFor: (windowKey) => this.resolveTelegramPaneRuntime(windowKey),
         receiptActivity: () => this.getTelegramReceiptRuntimeActivity(),
+        // v7 §3 Phase L. The drain asks once per pass and this answers from a
+        // value frozen at STARTUP, in init immediately after loadSettings, so
+        // no settings save can move a running generation between operating
+        // states mid-backlog (Architect #146/#147/#148). Freezing at first ask
+        // was the rejected design: the first ask comes from runPass, which is
+        // late enough for a mutation to get in front of it.
+        activationMode: () => this.getTelegramActivationModeSetting(),
       });
     }
     return this.telegramDrainCoordinator;
+  }
+
+  /**
+   * FREEZE THE TELEGRAM TRANSPORT ACTIVATION MODE FOR THIS APP GENERATION.
+   *
+   * Called exactly once from `init()`, immediately after `loadSettings()` and
+   * well before the startup backlog drain and the poller.
+   *
+   * =====================================================================
+   * WHY HERE, AND NOT EARLIER OR LATER (Architect #146/#147/#148, Oracle #92)
+   * =====================================================================
+   * The constructor is too early: `ctx.currentSettings` is not authoritative
+   * until `loadSettings()` has run, so capturing there would freeze whatever
+   * happened to be in the context object.
+   *
+   * Lazily capturing at first ask is too late: the first ask comes from
+   * `runPass`, so anything that mutated settings between construction and the
+   * first drain would still decide this generation's operating state. "Frozen"
+   * has to mean frozen from a point nothing downstream can get in front of.
+   *
+   * And it must never be re-read. A settings reload mid-session would otherwise
+   * move a RUNNING drain between Phase L and not-Phase-L between two records of
+   * the same backlog, and the stable fence Step 3 derives has to be able to say
+   * "this generation settled legacy" as one fact rather than a majority vote.
+   *
+   * ONE AUTHORITY. This reads `ctx.currentSettings` and nothing else. An
+   * earlier draft fell back to `settings.loadSettings()` when the field was
+   * absent, which is two mutable snapshots answering one question — and the
+   * fallback would fire in exactly the case that matters, an install where
+   * nobody has configured the mode.
+   *
+   * The RAW value is stored, deliberately unresolved. `telegram-activation-mode`
+   * owns what counts as valid; resolving here as well would let the app and the
+   * drain hold different opinions about which state this process is in.
+   */
+  captureTelegramActivationMode() {
+    if (this.telegramActivationModeCaptured === true) return this.telegramActivationModeRaw;
+    let raw;
+    try {
+      const loaded = this.ctx.currentSettings;
+      raw = loaded && typeof loaded === 'object'
+        ? loaded.telegramTransportActivationMode
+        : undefined;
+    } catch (err) {
+      // UNREADABLE IS NOT UNSET, and both fail closed. The distinction belongs
+      // in the log rather than in a stored value that would afterwards look
+      // like something an operator deliberately configured.
+      log.warn('Telegram', `Activation mode unreadable at startup (${err.message}); treating as unset`);
+      raw = undefined;
+    }
+    this.telegramActivationModeRaw = raw === undefined ? null : raw;
+    this.telegramActivationModeCaptured = true;
+    log.info('Telegram', `Transport activation mode frozen for this generation: ${JSON.stringify(this.telegramActivationModeRaw)}`);
+    return this.telegramActivationModeRaw;
+  }
+
+  /**
+   * The frozen value, or a refusal.
+   *
+   * DOES NOT CAPTURE. If the freeze never happened, something is calling the
+   * drain outside the startup sequence that owns this decision, and the honest
+   * answer is not "unset" — that would be indistinguishable from a real install
+   * whose operator has not configured the mode. Throwing makes the drain hold
+   * with a reason that names the actual defect.
+   */
+  getTelegramActivationModeSetting() {
+    if (this.telegramActivationModeCaptured !== true) {
+      throw new Error('telegram activation mode was never frozen at startup');
+    }
+    return this.telegramActivationModeRaw;
   }
 
   /** Stable per-process id; see telegram-drain-wiring.makeDrainGeneration. */

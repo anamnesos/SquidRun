@@ -45,6 +45,13 @@ function healthyRoute(overrides = {}) {
     attemptedCount: 0,
     lastRetirementAtMs: NOW - 1000,
     observedAtMs: NOW,
+    // v7 section 3 Phase L. A route document written by the current producer
+    // always carries the operating state, and a snapshot that cannot say which
+    // state produced it scores critical - so a fixture without these would be
+    // testing a shape nothing writes.
+    activationMode: 'legacy_settlement',
+    activationModeHealthy: true,
+    activationModeReason: null,
     ...overrides,
   };
 }

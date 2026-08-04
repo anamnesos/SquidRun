@@ -54,6 +54,8 @@
  * window has to comfortably exceed a quiet stretch without going so wide that a
  * channel broken days ago still reads as healthy.
  */
+const { isRecognizedActivationMode } = require('./telegram-activation-mode');
+
 const PROOF_CAPABILITY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
@@ -276,10 +278,62 @@ function evaluateConsumptionProof(input = {}) {
  *   lastRetirementAtMs
  *   nowMs
  */
+/**
+ * THE OPERATING STATE, RE-DERIVED RATHER THAN COPIED (Architect #153).
+ *
+ * The first cut trusted `activation.ok === true` plus a nonempty string, which
+ * makes the caller's boolean a SECOND AUTHORITY on membership: `{ok: true,
+ * mode: 'decision_scheduling'}` would have been published as a healthy mode
+ * this build cannot operate in. Membership is re-asked here from the one
+ * predicate that owns it, so an incoherent input is reported as incoherent
+ * instead of believed.
+ */
+function activationFields(activation) {
+  const claimedOk = Boolean(activation && activation.ok === true);
+  const mode = activation && typeof activation.mode === 'string' ? activation.mode : null;
+  const recognized = isRecognizedActivationMode(mode);
+  // THE RESOLVER'S CANONICAL SUCCESS SHAPE IS `{ok: true, mode, reason: null}`.
+  // A success carrying a failure reason is an input that disagrees with itself,
+  // and the first cut published it as healthy with the reason ERASED to null —
+  // which is the contradiction being resolved by discarding the inconvenient
+  // half, exactly the move this whole lane keeps finding (Architect #155).
+  // EXACTLY null. The resolver's canonical success shape is
+  // `{ok: true, mode, reason: null}`, and accepting an OMITTED reason as
+  // success would let a hand-built or partially-deserialised object pass by
+  // saying nothing - which is the same 'unasked question answered
+  // optimistically' this file already refuses for pollerFresh (Architect #156).
+  const silentReason = !(activation && activation.reason === null);
+
+  if (claimedOk && recognized && !silentReason) {
+    return { activationMode: mode, activationModeHealthy: true, activationModeReason: null };
+  }
+  if (claimedOk) {
+    // Says yes, and either names something else or contradicts itself. Not a
+    // mode, and not a plain refusal either — the producer and the authority
+    // disagree, and that is its own finding rather than a value to round
+    // toward whichever side reads better.
+    return {
+      activationMode: null,
+      activationModeHealthy: false,
+      activationModeReason: 'activation_mode_incoherent',
+    };
+  }
+  return {
+    activationMode: null,
+    activationModeHealthy: false,
+    // An absent input reports UNREPORTED, not healthy. A snapshot that cannot
+    // say which state produced it is not evidence the state was fine.
+    activationModeReason: (activation && isNonEmptyString(activation.reason))
+      ? activation.reason
+      : 'activation_mode_unreported',
+  };
+}
+
 function summarizeBacklog(input = {}) {
   const pending = Array.isArray(input.pending) ? input.pending : [];
   const nowMs = Number.isFinite(Number(input.nowMs)) ? Number(input.nowMs) : null;
   const attempts = input.attempts instanceof Map ? input.attempts : new Map();
+  const activation = input.activation && typeof input.activation === 'object' ? input.activation : null;
 
   let oldest = null;
   for (const record of pending) {
@@ -334,6 +388,15 @@ function summarizeBacklog(input = {}) {
       ? blocked.runtimeProofReason
       : null,
     attemptedCount: Array.from(attempts.values()).filter((a) => a && a.state === 'attempted').length,
+    // THE OPERATING STATE, ON EVERY SNAPSHOT (v7 §3 Phase L).
+    //
+    // Reported as three fields rather than one string because a scorer needs to
+    // answer a different question from an operator: `activationModeHealthy` is
+    // the gate, `activationMode` is what we are actually in when it is healthy,
+    // and `activationModeReason` is what to go fix when it is not. Absent input
+    // reports UNHEALTHY with a named reason - a snapshot that cannot say which
+    // state produced it is not evidence that the state was fine.
+    ...activationFields(activation),
     lastRetirementAtMs: Number.isFinite(Number(input.lastRetirementAtMs))
       ? Number(input.lastRetirementAtMs)
       : null,

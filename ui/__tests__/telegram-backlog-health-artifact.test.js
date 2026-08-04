@@ -86,6 +86,12 @@ describe('the emitted and written artifact carries the backlog', () => {
           attemptedCount: 1,
           lastRetirementAtMs: null,
           observedAtMs: NOW,
+          // v7 section 3 Phase L. A document written by the current producer always
+          // carries the operating state; a fixture without it would be testing a
+          // shape nothing writes.
+          activationMode: 'legacy_settlement',
+          activationModeHealthy: true,
+          activationModeReason: null,
         },
       },
     }), 'utf8');
@@ -244,6 +250,9 @@ describe('the emitted and written artifact carries the backlog', () => {
           pendingCount: 0, oldestPendingUpdateId: null, oldestPendingReceivedAtMs: null,
           blockedReason: null, proofUnattainable: false, attemptedCount: 0,
           lastRetirementAtMs: NOW - 1000, observedAtMs: NOW,
+          // v7 section 3 Phase L: an empty queue is only healthy if the channel
+          // is also in a state it can operate in.
+          activationMode: 'legacy_settlement', activationModeHealthy: true, activationModeReason: null,
         },
       },
     }), 'utf8');
@@ -254,5 +263,33 @@ describe('the emitted and written artifact carries the backlog', () => {
     const emitted = JSON.parse(stdout.text());
     expect(emitted.status.warnings.join()).not.toMatch(/telegram_ingress_backlog/);
     expect(emitted.telegramIngressBacklog.severity).toBe('ok');
+  });
+
+  test('AN EMPTY QUEUE IN AN UNCONFIGURED CHANNEL still raises the alarm', () => {
+    // The mirror of the test above, and the reason the mode check runs before
+    // the pending count: an install nobody configured refuses every message
+    // that will ever arrive, and until the first one does its queue is empty.
+    const { main } = require('../scripts/hm-health-snapshot');
+    const statePath = path.join(tempDir, '.squidrun', 'runtime', 'telegram-backlog-health.json');
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(statePath, JSON.stringify({
+      schema: 'telegramBacklogHealth.v0',
+      routes: {
+        main: {
+          pendingCount: 0, oldestPendingUpdateId: null, oldestPendingReceivedAtMs: null,
+          blockedReason: null, proofUnattainable: false, attemptedCount: 0,
+          lastRetirementAtMs: NOW - 1000, observedAtMs: NOW,
+          activationMode: null, activationModeHealthy: false,
+          activationModeReason: 'activation_mode_missing',
+        },
+      },
+    }), 'utf8');
+    const stdout = sink();
+
+    main(['--json', tempDir], { stdout, stderr: sink() });
+
+    const emitted = JSON.parse(stdout.text());
+    expect(emitted.telegramIngressBacklog.severity).toBe('critical');
+    expect(emitted.status.warnings.join()).toMatch(/activation_mode_unhealthy:activation_mode_missing/);
   });
 });

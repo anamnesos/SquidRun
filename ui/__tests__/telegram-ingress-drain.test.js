@@ -19,6 +19,7 @@ const {
   looksAccepted,
 } = require('../modules/main/telegram-ingress-drain');
 const { classifySourceRecord, SOURCE_PROTOCOLS } = require('../modules/main/telegram-source-protocol');
+const { LEGACY_SETTLEMENT } = require('../modules/main/telegram-activation-mode');
 const { createClaimLatchDouble } = require('./helpers/telegram-claim-latch-double');
 
 const tempRoots = [];
@@ -174,6 +175,10 @@ function coordinator(overrides = {}) {
     now: clock,
     lookupTransportClaim: latch.lookupTransportClaim,
     closeUnsentTransportClaim: latch.closeUnsentTransportClaim,
+    // v7 section 3 Phase L: the drain refuses to run without being told which
+    // operating state it is in. Overridable via `rest` for the tests that
+    // attack the mode itself.
+    activationMode: () => LEGACY_SETTLEMENT,
     ...rest,
     // WRAPPED LAST, so a test that overrides `deliver` still latches. An
     // unlatched delivery would let every at-most-once assertion below pass for

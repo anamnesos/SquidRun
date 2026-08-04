@@ -25,6 +25,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const queue = require('../modules/telegram-inbound-durable-queue');
+const { LEGACY_SETTLEMENT } = require('../modules/main/telegram-activation-mode');
 const {
   CLAIM_STATES,
   TELEGRAM_CUTOVER_ID,
@@ -259,6 +260,8 @@ function makeHarness(options = {}) {
       },
       resolveRoute: () => ({ ok: true, profile: 'main', windowKey: 'main' }),
       currentSessionFor: () => 'app-session-492',
+      // v7 section 3 Phase L: no operating state, no pass.
+      activationMode: () => LEGACY_SETTLEMENT,
       deliver,
       findExistingReceipt: overrides.findExistingReceipt || (async () => state.receipt),
       lookupTransportClaim: overrides.lookupTransportClaim || (async (query) => {

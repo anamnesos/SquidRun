@@ -27,6 +27,7 @@ const queue = require('../modules/telegram-inbound-durable-queue');
 const spool = require('../modules/main/telegram-ingress-spool');
 const { createDrainCoordinator } = require('../modules/main/telegram-ingress-drain');
 const { classifySourceRecord, SOURCE_PROTOCOLS } = require('../modules/main/telegram-source-protocol');
+const { LEGACY_SETTLEMENT } = require('../modules/main/telegram-activation-mode');
 const { createClaimLatchDouble } = require('./helpers/telegram-claim-latch-double');
 
 const tempRoots = [];
@@ -118,6 +119,9 @@ function coordinator(log, overrides = {}) {
     receiptActivity: () => ({ receiptsEverProduced: 0 }),
     lookupTransportClaim: latch.lookupTransportClaim,
     closeUnsentTransportClaim: latch.closeUnsentTransportClaim,
+    // v7 section 3 Phase L: no operating state, no pass. Overridable via
+    // `rest` for the tests that attack the mode itself.
+    activationMode: () => LEGACY_SETTLEMENT,
     ...rest,
     deliver: latch.wrapDeliver(
       deliver || (async () => { throw new Error('deliver must not be reached for a held record'); }),
