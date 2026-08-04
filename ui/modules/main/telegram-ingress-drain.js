@@ -622,8 +622,34 @@ function createDrainCoordinator(deps = {}) {
           // channel that is BROKEN. Both hold; only one of them is news.
           unattainable: Boolean(outcome.unattainable),
           proofRuntime: outcome.proofRuntime || null,
+          // AND WHICH KIND OF BROKEN. These were computed by processRecord and
+          // then dropped here, so everything downstream - health, the log, the
+          // person reading either - saw only "the runtime cannot produce proof"
+          // and went to repair hooks for a record no hook repair can reach.
+          resolutionRequired: Boolean(outcome.resolutionRequired),
+          orphanedAttempt: outcome.orphanedAttempt || null,
+          runtimeProofAttainable: outcome.runtimeProofAttainable ?? null,
+          runtimeProofReason: outcome.runtimeProofReason || null,
         };
-        if (outcome.unattainable) {
+        if (outcome.resolutionRequired) {
+          // THE RECORD ITSELF IS UNRESOLVABLE, whatever the runtime does.
+          // Separate from the runtime branch on purpose: sending someone to fix
+          // hooks for THIS record wastes the outage, and that is not a
+          // hypothetical - it is what the single collapsed message did.
+          const orphan = outcome.orphanedAttempt || {};
+          log.error(
+            'Telegram',
+            `TELEGRAM INGRESS WEDGED at update ${record.updateId}: ${outcome.reason}. `
+            + `Its durable attempt cannot be resolved by ANY receipt (${orphan.reason || 'unknown'}), so this is `
+            + 'not something the pane runtime can fix and waiting will never clear it. '
+            + `${pending.length - delivered} message(s) are undelivered, this one included. `
+            + 'It needs an EXPLICIT recorded recovery for this one record, pinned to its own evidence. '
+            + `Separately, pane runtime ${outcome.proofRuntime || 'unknown'} proof-capable=`
+            + `${outcome.runtimeProofAttainable === null ? 'unknown' : outcome.runtimeProofAttainable}`
+            + `${outcome.runtimeProofReason ? ` (${outcome.runtimeProofReason})` : ''} - which decides whether the `
+            + 'records BEHIND it can drain once this one is resolved.'
+          );
+        } else if (outcome.unattainable) {
           log.error(
             'Telegram',
             `TELEGRAM INGRESS WEDGED at update ${record.updateId}: ${outcome.reason}. `

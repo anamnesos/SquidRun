@@ -314,6 +314,25 @@ function summarizeBacklog(input = {}) {
     blockedReason: blocked && isNonEmptyString(blocked.reason) ? blocked.reason : null,
     blockedFailureClass: blocked && isNonEmptyString(blocked.failureClass) ? blocked.failureClass : null,
     proofUnattainable: Boolean(blocked && blocked.unattainable),
+    // WHICH KIND OF UNATTAINABLE, carried out to the external health document.
+    //
+    // `proofUnattainable` alone cannot distinguish "the pane runtime is unwired"
+    // from "this record's own attempt can never be resolved by any receipt".
+    // Both stop the queue; only one of them is fixed by repairing hooks. The
+    // live wedge was the second wearing the first's description, and everything
+    // downstream - health JSON, the startup summary, the person reading either -
+    // inherited that single misleading word.
+    recoveryRequired: Boolean(blocked && blocked.resolutionRequired),
+    orphanedAttemptReason: blocked && blocked.orphanedAttempt && isNonEmptyString(blocked.orphanedAttempt.reason)
+      ? blocked.orphanedAttempt.reason
+      : null,
+    blockedProofRuntime: blocked && isNonEmptyString(blocked.proofRuntime) ? blocked.proofRuntime : null,
+    runtimeProofAttainable: blocked && typeof blocked.runtimeProofAttainable === 'boolean'
+      ? blocked.runtimeProofAttainable
+      : null,
+    runtimeProofReason: blocked && isNonEmptyString(blocked.runtimeProofReason)
+      ? blocked.runtimeProofReason
+      : null,
     attemptedCount: Array.from(attempts.values()).filter((a) => a && a.state === 'attempted').length,
     lastRetirementAtMs: Number.isFinite(Number(input.lastRetirementAtMs))
       ? Number(input.lastRetirementAtMs)
