@@ -30,6 +30,16 @@
  */
 const {
   buildAdmissionRecord,
+  // THE TERMINAL RECORD BUILDER WAS NEVER IMPORTED. `produceTerminalReceipt`
+  // called it by name at the one point in this file that writes a consumed
+  // receipt, so the only path that can retire a Telegram record threw
+  // ReferenceError the moment a turn actually matched an admission — which is
+  // indistinguishable, from the queue's side, from a turn that simply never
+  // proved anything. Every existing test stopped before that line: they end at
+  // `no_telegram_admission_for_turn` or at the Claude refusal, so the happy
+  // path had never once been executed. ESLint `no-undef` was reporting it the
+  // whole time; the gate could not run in a worktree with no node_modules.
+  buildConsumedRecord,
   canonicalQueuedPayloadDigest,
 } = require('./telegram-consumed-proof');
 const { parseConsumeMarker } = require('./telegram-consume-marker');
