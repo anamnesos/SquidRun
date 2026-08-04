@@ -147,33 +147,39 @@ function classifyAttemptResolvability(attempt, currentGeneration) {
   }
   const atMs = Number(attempt.atMs);
   const hasTime = Number.isFinite(atMs) && atMs > 0;
+  const hasGeneration = typeof attempt.generation === 'string' && attempt.generation.trim() !== '';
 
-  // MISSING ATTEMPT TIME, AND NOTHING ELSE.
-  //
-  // The first version of this also called a missing generation, and an attempt
-  // from a PRIOR generation, permanently unresolvable. Asserting it against the
-  // real evaluator proved that over-broad, so it was narrowed here - but note
-  // what changed underneath: an attempt with a time and NO generation is now
-  // refused by the proof gate as `attempt_generation_unknown`, so it does not
-  // "retire fine" any more. It is still not an ORPHAN, because a generation can
-  // be recorded; a missing timestamp can never be recovered.
-  //
-  // Only the missing timestamp is structural. `evaluateConsumptionProof`
-  // returns `attempt_time_unknown` before it weighs any evidence, so no
-  // receipt can ever order itself against such an attempt. That is exactly
-  // update 808499316, and it is resolved by explicit one-shot recovery, never
-  // by a timer.
-  //
-  // An attempt from a prior generation is a DIFFERENT question, answered where
-  // it belongs - in the proof gate, which now requires the receipt's generation
-  // to match the attempt's rather than the current process's.
+  // A MISSING TIMESTAMP is structural: proof can never be ordered against it.
+  // That is update 808499316.
   if (!hasTime) {
     return {
       resolvable: false,
       reason: 'attempt_time_unknown',
-      detail: { hasAttemptTime: false, attemptGeneration: attempt.generation ?? null },
+      detail: { hasAttemptTime: false, hasGeneration },
     };
   }
+
+  // A MISSING GENERATION IS STRUCTURAL TOO, and my first reasoning about it was
+  // wrong in an instructive way. I argued it was recoverable "because a
+  // generation can be recorded". It cannot: this record is ALREADY in the
+  // attempted state, so writing a generation onto it now would invent the
+  // identity of a delivery that may have already reached the user. The only
+  // honest generation for an attempt is the one the attempting process wrote at
+  // the time, and a process that did not write one cannot be asked afterwards.
+  //
+  // The evaluator already fails closed here. The classifier has to agree, or
+  // health reports "waiting" for something nothing will ever resolve.
+  if (!hasGeneration) {
+    return {
+      resolvable: false,
+      reason: 'attempt_generation_unknown',
+      detail: { hasAttemptTime: true, hasGeneration: false },
+    };
+  }
+
+  // A PRIOR-GENERATION ATTEMPT IS NOT AN ORPHAN. It is resolvable by exactly one
+  // thing - its own durable receipt from that same generation - and a receipt
+  // from the current generation never substitutes for it.
   return { resolvable: true, reason: null };
 }
 

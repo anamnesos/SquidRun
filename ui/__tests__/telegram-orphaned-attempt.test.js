@@ -38,12 +38,15 @@ describe('classifying whether an attempt can be resolved at all', () => {
     expect(verdict.detail.hasAttemptTime).toBe(false);
   });
 
-  test('a MISSING GENERATION alone is NOT an orphan - only the timestamp is structural', () => {
-    // The first version called this orphaned. The evaluator retires it, so
-    // declaring it permanently unresolvable would strand a drainable record.
-    expect(classifyAttemptResolvability({ state: 'attempted', atMs: 1 }, GEN).resolvable).toBe(true);
-    // ...and a missing timestamp still is, with or without a generation.
-    expect(classifyAttemptResolvability({ state: 'attempted', generation: GEN }, GEN).resolvable).toBe(false);
+  test('a MISSING GENERATION is ALSO structural - it cannot be recorded afterwards', () => {
+    // Writing a generation onto an already-attempted record would invent the
+    // identity of a delivery that may already have reached the user.
+    const verdict = classifyAttemptResolvability({ state: 'attempted', atMs: 1 }, GEN);
+    expect(verdict.resolvable).toBe(false);
+    expect(verdict.reason).toBe('attempt_generation_unknown');
+    // A missing timestamp outranks it: that is 316, and it is reported as such.
+    expect(classifyAttemptResolvability({ state: 'attempted', generation: GEN }, GEN).reason)
+      .toBe('attempt_time_unknown');
   });
 
   test('an attempt from a PRIOR generation is NOT an orphan - the proof gate judges it', () => {
@@ -128,6 +131,7 @@ describe('the classification matches what the proof gate actually does', () => {
     const shapes = [
       { state: 'attempted' },
       { state: 'attempted', generation: GEN },
+      { state: 'attempted', atMs: 1_700_000_000_000 },
     ];
     for (const attempt of shapes) {
       const classified = classifyAttemptResolvability(attempt, GEN);
