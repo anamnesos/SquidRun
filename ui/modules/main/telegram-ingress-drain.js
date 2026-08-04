@@ -483,6 +483,11 @@ function createDrainCoordinator(deps = {}) {
     const legacyOutstanding = !!(legacyAttempt && legacyAttempt.state === 'attempted');
 
     let claim = null;
+    // THE CLOSED SLOTS TRAVEL WITH THE CLAIM. Dropping them here is how a
+    // legacy closed_unsent row carrying an append-only delivery_started reached
+    // the disposition as a plain "no claim" and authorised a second delivery
+    // (Oracle #21). The read already knows; this is the wire that carries it.
+    let closedClaims = [];
     if (!legacyOutstanding) {
       try {
         const claimRead = await lookupTransportClaim({
@@ -491,6 +496,9 @@ function createDrainCoordinator(deps = {}) {
           messageId,
         });
         claim = claimRead && claimRead.claim ? claimRead.claim : null;
+        closedClaims = claimRead && Array.isArray(claimRead.closedClaims)
+          ? claimRead.closedClaims
+          : [];
       } catch (err) {
         // WE CANNOT TELL WHETHER THIS WAS ALREADY CLAIMED. Post-cutover the
         // claim is the only latch, so an unreadable claim store is exactly the
@@ -646,6 +654,7 @@ function createDrainCoordinator(deps = {}) {
     // the reporting failure that made an 8.6-hour outage read like patience.
     const disposition = decideClaimDisposition({
       claim,
+      closedClaims,
       currentGeneration: sessionGeneration(),
       proofOutcome,
     });

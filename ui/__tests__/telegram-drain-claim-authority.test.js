@@ -29,6 +29,7 @@ const {
   CLAIM_STATES,
   TELEGRAM_CUTOVER_ID,
   applyTelegramAdmissionSchema,
+  claimTransportAttempt,
   closeUnsentClaim,
   readTransportClaim,
 } = require('../modules/main/telegram-admission-store');
@@ -871,6 +872,192 @@ describe('a stored delivery_started event dominates the state column', () => {
     expect(second.delivered).toBe(0);
     expect(second.stoppedAt.failureClass).toBe('awaiting_proof');
     expect(readClaim(harness.writer, 900000803).claim.state).toBe(CLAIM_STATES.CLAIMED);
+  });
+});
+
+// =====================================================================
+// 5b. THE SLOT REMEMBERS THE DELIVERY, NOT JUST THE ROW (Oracle #21).
+//
+// Blocker 1 defended the row being moved and left the TUPLE open. On a ledger
+// that already held the incoherent pair — closed_unsent state, append-only
+// delivery_started event — the reader filtered the closed row out before
+// looking at any events, returned claim: null, the disposition read that as
+// "never attempted", and acquisition minted a second claim because the
+// exclusive index ignores closed rows on purpose. Oracle drove all four steps
+// on a real temp ledger at 95b12a44 and got created: true.
+//
+// The tests below refuse to hand-inject the closed claim. Every one of them
+// starts from a real delivery, produces the bad pair the only honest way (a
+// build without the guards), puts the CURRENT schema back on top of it, and
+// then asks the production surfaces.
+// =====================================================================
+describe('a closed slot that already delivered may never be re-claimed', () => {
+  /**
+   * The ledger an older build leaves behind: both close guards absent, the
+   * state column moved to closed_unsent, the D event untouched underneath it.
+   * Then the current schema is applied in place, exactly as the next boot does,
+   * so the row survives into a build that would never have created it.
+   */
+  function legacyClosePastDelivery(writer, claimId, atMs) {
+    writer.db.exec('DROP TRIGGER trg_tg_claim_state_monotonic');
+    writer.db.exec('DROP TRIGGER trg_tg_claim_close_requires_no_delivery');
+    writer.db.exec('DROP TRIGGER trg_tg_claim_insert_requires_no_prior_delivery');
+    writer.db
+      .prepare('UPDATE telegram_transport_claims SET state = ?, closed_at_ms = ? WHERE claim_id = ?')
+      .run(CLAIM_STATES.CLOSED_UNSENT, atMs, claimId);
+    writer.db
+      .prepare('INSERT INTO telegram_transport_events (claim_id, kind, at_ms, detail) VALUES (?, ?, ?, ?)')
+      .run(claimId, 'claim_closed_unsent', atMs, 'legacy_build_close');
+    // REAPPLY, AND VERIFY. applyTelegramAdmissionSchema returns the installed
+    // shape check, so this also proves the new trigger is actually named in
+    // REQUIRED_SCHEMA_SHAPE rather than merely created.
+    const reapplied = applyTelegramAdmissionSchema(writer.db);
+    expect(reapplied.ok).toBe(true);
+    return claimId;
+  }
+
+  async function deliveredThenLegacyClosed(updateId) {
+    const harness = makeHarness({ records: [queueRecord(updateId)], failAck: true });
+    await harness.build().drainOnce(harness.dir, 'main');
+    expect(harness.paneWrites).toHaveLength(1);
+    const claim = readClaim(harness.writer, updateId).claim;
+    expect(claim.state).toBe(CLAIM_STATES.DELIVERY_STARTED);
+    legacyClosePastDelivery(harness.writer, claim.claimId, BASE_MS + 30);
+    return { harness, claimId: claim.claimId, updateId };
+  }
+
+  test('THE READER: a closed row is asked for its events, so the D still surfaces', async () => {
+    const { harness, claimId, updateId } = await deliveredThenLegacyClosed(900000821);
+
+    const read = readTransportClaim(harness.writer.db, {
+      cutoverId: TELEGRAM_CUTOVER_ID, routeKey: 'main', updateId,
+    });
+    expect(read.ok).toBe(true);
+    // Still null — the row IS closed, and inventing a live claim would be a
+    // different lie. The evidence rides on the closed slot instead.
+    expect(read.claim).toBeNull();
+    expect(read.closedClaims).toHaveLength(1);
+    expect(read.closedClaims[0]).toMatchObject({
+      claimId,
+      deliveryStartedAtMs: BASE_MS,
+      closedAtMs: BASE_MS + 30,
+    });
+    expect(read.closedClaims[0].eventKinds)
+      .toEqual(['delivery_started', 'claim_closed_unsent']);
+  });
+
+  test('THE DISPOSITION: the real read holds, and names the contradiction', async () => {
+    const { harness, claimId, updateId } = await deliveredThenLegacyClosed(900000822);
+
+    // FED FROM THE PRODUCTION READ, not a literal. The old test hand-built a
+    // closed claim object and passed the reader's filter without touching it,
+    // which is exactly why this hole survived a green suite.
+    const read = readTransportClaim(harness.writer.db, {
+      cutoverId: TELEGRAM_CUTOVER_ID, routeKey: 'main', updateId,
+    });
+    const decision = decideClaimDisposition({
+      claim: read.claim,
+      closedClaims: read.closedClaims,
+      currentGeneration: 'app-session-493',
+    });
+    expect(decision.action).toBe('hold');
+    expect(decision.reason).toBe('claim_closed_after_delivery_started');
+    expect(decision.resolutionRequired).toBe(true);
+    expect(decision.detail).toMatchObject({
+      claimId,
+      deliveryStartedAtMs: BASE_MS,
+      liveClaimId: null,
+    });
+  });
+
+  test('ACQUISITION: the tuple refuses a second claim, and the DB refuses it too', async () => {
+    const { harness, claimId, updateId } = await deliveredThenLegacyClosed(900000823);
+    const row = harness.writer.db
+      .prepare('SELECT * FROM telegram_transport_claims WHERE claim_id = ?').get(claimId);
+
+    const second = claimTransportAttempt(harness.writer.db, {
+      cutoverId: row.cutover_id,
+      routeKey: row.route_key,
+      updateId: Number(row.update_id),
+      sourceRowId: Number(row.source_row_id),
+      appGeneration: 'app-session-493',
+      paneLaunchId: row.pane_launch_id,
+      paneId: row.pane_id,
+      role: row.role,
+      consumerRuntime: row.consumer_runtime,
+      attemptNonce: 'nonce-after-a-legacy-close',
+      attemptAtMs: BASE_MS + 120000,
+    });
+    expect(second.ok).toBe(false);
+    expect(second.created).toBeUndefined();
+    expect(second.reason).toBe('claim_tuple_delivery_started');
+    expect(second.detail).toMatchObject({
+      deliveredClaimId: claimId,
+      deliveredClaimState: CLAIM_STATES.CLOSED_UNSENT,
+      deliveryStartedAtMs: BASE_MS,
+    });
+
+    // AND WITHOUT THE FUNCTION. A writer that never calls the store still
+    // cannot insert, because the guard is in the schema.
+    expect(() => harness.writer.db.prepare(`
+      INSERT INTO telegram_transport_claims (
+        claim_id, cutover_id, route_key, update_id, source_row_id,
+        app_generation, pane_launch_id, pane_id, role, consumer_runtime,
+        attempt_nonce, attempt_at_ms, state
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'tgc_raw_second', row.cutover_id, row.route_key, Number(row.update_id),
+      Number(row.source_row_id), 'app-session-493', row.pane_launch_id, row.pane_id,
+      row.role, row.consumer_runtime, 'raw-nonce', BASE_MS + 120001, CLAIM_STATES.CLAIMED
+    )).toThrow(/telegram_claim_insert_after_delivery_started/);
+
+    expect(harness.writer.db
+      .prepare('SELECT COUNT(*) AS n FROM telegram_transport_claims WHERE update_id = ?')
+      .get(updateId).n).toBe(1);
+  });
+
+  test('END TO END: a fresh boot over the legacy pair writes the pane ZERO more times', async () => {
+    const { harness, updateId } = await deliveredThenLegacyClosed(900000824);
+
+    // The boot that used to duplicate: new generation, ack working, clock moved
+    // well past any backoff.
+    harness.state.failAck = false;
+    harness.state.generation = 'app-session-493';
+    harness.state.nowMs = BASE_MS + 120000;
+    const second = await harness.build().drainOnce(harness.dir, 'main');
+
+    expect(harness.paneWrites).toHaveLength(1);
+    expect(second.delivered).toBe(0);
+    expect(second.stoppedAt.failureClass).toBe('awaiting_proof');
+    expect(second.stoppedAt.reason).toBe('claim_closed_after_delivery_started');
+    expect(harness.writer.db
+      .prepare('SELECT COUNT(*) AS n FROM telegram_transport_claims WHERE update_id = ?')
+      .get(updateId).n).toBe(1);
+  });
+
+  test('AND IT DOES NOT OVER-FIRE: a close with no D still releases the slot', async () => {
+    // The guard must poison a delivered tuple WITHOUT freezing every closed
+    // slot — a refusal before D is the one lawful way an attempt becomes
+    // retryable, and killing it would wedge the queue in the other direction.
+    const harness = makeHarness({ records: [queueRecord(900000825)], failAt: 'after_claim' });
+    await harness.build().drainOnce(harness.dir, 'main');
+    expect(harness.paneWrites).toHaveLength(0);
+
+    const read = readTransportClaim(harness.writer.db, {
+      cutoverId: TELEGRAM_CUTOVER_ID, routeKey: 'main', updateId: 900000825,
+    });
+    expect(read.claim).toBeNull();
+    expect(read.closedClaims).toHaveLength(1);
+    expect(read.closedClaims[0].deliveryStartedAtMs).toBeNull();
+    expect(decideClaimDisposition({
+      claim: null, closedClaims: read.closedClaims, currentGeneration: GEN_B,
+    })).toMatchObject({ action: 'attempt', reason: 'no_claim' });
+
+    harness.state.failAt = null;
+    harness.state.nowMs = BASE_MS + 120000;
+    const retry = await harness.build().drainOnce(harness.dir, 'main');
+    expect(retry.delivered).toBe(1);
+    expect(harness.paneWrites).toHaveLength(1);
   });
 });
 

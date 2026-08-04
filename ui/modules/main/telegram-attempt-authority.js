@@ -108,7 +108,48 @@ function claimAttemptView(claim) {
  *                                          which repair is the right one.
  */
 function decideClaimDisposition(input = {}) {
-  const { claim, currentGeneration, proofOutcome } = input;
+  const {
+    claim, closedClaims, currentGeneration, proofOutcome,
+  } = input;
+
+  // ===================================================================
+  // A CLOSED ROW STILL CARRIES ITS DELIVERY, AND IT DECIDES FIRST (Oracle #21).
+  //
+  // This check sits ABOVE `!claim` because the hole it closes is precisely the
+  // absent-claim path. The reader filters `closed_unsent` rows out of `claim`,
+  // so a legacy slot holding the incoherent pair (closed_unsent + append-only
+  // delivery_started) arrived here as claim: null — and the line below answered
+  // `attempt`/`no_claim`, after which acquisition minted a second claim because
+  // the exclusive index ignores closed rows. Oracle proved the whole chain on a
+  // real ledger.
+  //
+  // The tuple is the unit: whether or not a live claim also exists, a stored D
+  // event on a closed row of this update means bytes may already be on James's
+  // screen, and that is a contradiction a human resolves, not one the drain
+  // routes around.
+  // ===================================================================
+  const closedAfterDelivery = (Array.isArray(closedClaims) ? closedClaims : [])
+    .filter((entry) => entry && (
+      Number(entry.deliveryStartedAtMs) > 0
+      || (Array.isArray(entry.eventKinds) && entry.eventKinds.includes(DELIVERY_STARTED))
+    ));
+  if (closedAfterDelivery.length > 0) {
+    return {
+      action: 'hold',
+      reason: 'claim_closed_after_delivery_started',
+      failureClass: 'awaiting_proof',
+      unattainable: false,
+      resolutionRequired: true,
+      detail: {
+        claimId: closedAfterDelivery[0].claimId ?? null,
+        closedClaimIds: closedAfterDelivery.map((entry) => entry.claimId ?? null),
+        deliveryStartedAtMs: closedAfterDelivery[0].deliveryStartedAtMs ?? null,
+        closedAtMs: closedAfterDelivery[0].closedAtMs ?? null,
+        liveClaimId: claim ? claim.claimId : null,
+        storedState: claim ? String(claim.state) : null,
+      },
+    };
+  }
 
   if (!claim) return { action: 'attempt', reason: 'no_claim' };
 

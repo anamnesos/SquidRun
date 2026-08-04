@@ -253,6 +253,11 @@ const REQUIRED_SCHEMA_SHAPE = Object.freeze([
   // append-only event is advisory, which is the state Oracle #13 exploited.
   ['trg_tg_claim_state_monotonic', 'telegram_claim_state_not_monotonic'],
   ['trg_tg_claim_close_requires_no_delivery', 'telegram_claim_close_after_delivery_started'],
+  // AND THE TUPLE MAY NOT BE RE-CLAIMED PAST A STORED D EVENT. Without this a
+  // build reads a legacy closed_unsent+D slot as never-attempted and delivers a
+  // second copy; the exclusive index cannot see it, because it ignores closed
+  // rows on purpose.
+  ['trg_tg_claim_insert_requires_no_prior_delivery', 'telegram_claim_insert_after_delivery_started'],
   ['trg_tg_work_identity_immutable', 'telegram_work_claim_identity_immutable'],
   ['trg_tg_work_no_delete', 'telegram_work_claim_delete_forbidden'],
   ['trg_tg_ack_identity_immutable', 'telegram_queue_ack_identity_immutable'],
@@ -740,6 +745,34 @@ function applyTelegramAdmissionSchemaDdl(db) {
     )
     BEGIN SELECT RAISE(ABORT, 'telegram_claim_close_after_delivery_started'); END;
 
+    -- THE SLOT REMEMBERS THE DELIVERY, NOT JUST THE ROW (Oracle #21).
+    --
+    -- The two triggers above defend the row being moved. Neither defends the
+    -- TUPLE, and the tuple is what gets delivered twice. A ledger written by a
+    -- build without them may ALREADY hold the incoherent pair
+    -- (state = closed_unsent, delivery_started event present); the exclusive
+    -- index deliberately ignores closed rows so that a genuinely released slot
+    -- can be retried; so a fresh boot reads "no live claim", calls that
+    -- "never attempted", and mints a SECOND claim for bytes that were already
+    -- authorised. Oracle drove exactly that on a real temp ledger at 95b12a44:
+    -- read claim null, disposition attempt, second claim created true.
+    --
+    -- Closing a claim says "provably nothing was sent". A stored D event on the
+    -- same cutover/route/update says the opposite may be true, and it is the
+    -- append-only one. So a D event anywhere on this tuple poisons the tuple for
+    -- every future claim, including claims whose writer never read this file.
+    CREATE TRIGGER IF NOT EXISTS trg_tg_claim_insert_requires_no_prior_delivery
+    BEFORE INSERT ON telegram_transport_claims
+    FOR EACH ROW WHEN EXISTS (
+      SELECT 1 FROM telegram_transport_events e
+      JOIN telegram_transport_claims c ON c.claim_id = e.claim_id
+      WHERE e.kind = 'delivery_started'
+        AND c.cutover_id = NEW.cutover_id
+        AND c.route_key  = NEW.route_key
+        AND c.update_id  = NEW.update_id
+    )
+    BEGIN SELECT RAISE(ABORT, 'telegram_claim_insert_after_delivery_started'); END;
+
     -- A WORK CLAIM'S IDENTITY IS ITS GENERATION AND LEASE. Only liveness moves.
     CREATE TRIGGER IF NOT EXISTS trg_tg_work_identity_immutable
     BEFORE UPDATE ON telegram_work_claims
@@ -1133,6 +1166,38 @@ function claimTransportAttempt(db, input = {}) {
       });
     }
 
+    // ===================================================================
+    // NO LIVE CLAIM IS NOT THE SAME FACT AS NO DELIVERY (Oracle #21).
+    //
+    // The query above deliberately ignores `closed_unsent`, because a released
+    // slot must be retryable. But a slot released by an older build may carry an
+    // append-only `delivery_started` it should never have been closed past, and
+    // then "no live claim" means "the bytes went out and the row lies about it".
+    // Acquisition is the last moment before a second delivery is authorised, so
+    // it asks the events table across the whole tuple rather than trusting the
+    // state column of the rows it just skipped.
+    //
+    // The schema trigger enforces the same rule for writers that never call
+    // this function; this branch exists so the caller gets a named refusal
+    // instead of a constraint stack trace.
+    // ===================================================================
+    const tupleDelivered = db.prepare(`
+      SELECT c.claim_id AS claim_id, c.state AS state, e.at_ms AS at_ms
+      FROM telegram_transport_events e
+      JOIN telegram_transport_claims c ON c.claim_id = e.claim_id
+      WHERE e.kind = 'delivery_started'
+        AND c.cutover_id = ? AND c.route_key = ? AND c.update_id = ?
+      ORDER BY e.event_id ASC LIMIT 1
+    `).get(input.cutoverId, input.routeKey, input.updateId);
+    if (tupleDelivered) {
+      rollback(db);
+      return fail('claim_tuple_delivery_started', {
+        deliveredClaimId: String(tupleDelivered.claim_id),
+        deliveredClaimState: String(tupleDelivered.state),
+        deliveryStartedAtMs: Number(tupleDelivered.at_ms),
+      });
+    }
+
     db.prepare(`
       INSERT INTO telegram_transport_claims (
         claim_id, cutover_id, route_key, update_id, source_row_id,
@@ -1153,6 +1218,13 @@ function claimTransportAttempt(db, input = {}) {
     // violations included — onto `claim_held_by_other`, which would report a
     // broken reference as a lost race and send the caller to wait for a claim
     // that does not exist.
+    // THE TUPLE GUARD, when the trigger is what refused. A writer that reached
+    // the INSERT without the branch above — an older caller, a raw statement —
+    // must get the same named reason, not a generic failure a retry loop could
+    // read as transient.
+    if (/telegram_claim_insert_after_delivery_started/i.test(err.message)) {
+      return fail('claim_tuple_delivery_started', { refusedBy: 'schema_trigger' });
+    }
     if (/FOREIGN KEY/i.test(err.message)) {
       return fail('claim_foreign_key_violation', { message: err.message });
     }
@@ -1402,10 +1474,12 @@ function closeUnsentClaim(db, input = {}) {
  * and answering it from a mutable status column would be answering it from the
  * cheaper of the two records.
  *
- * THE CLOSED SLOT IS STILL RETURNED. A `closed_unsent` claim is evidence that
- * an attempt was made and provably did not deliver; the caller needs to see it
- * to distinguish that from "nothing ever happened here", even though both are
- * safe to attempt.
+ * THE CLOSED SLOT IS STILL RETURNED, WITH ITS EVENTS. A `closed_unsent` claim
+ * is evidence that an attempt was made, and the caller needs to see it to
+ * distinguish that from "nothing ever happened here". Those two are NOT both
+ * safe to attempt, which is what this comment used to say: a closed row that
+ * carries a `delivery_started` event is an older build's incoherent pair, and
+ * attempting it is a second copy in front of James.
  */
 function readTransportClaim(db, input = {}) {
   const durable = assertDurableHandle(db);
@@ -1432,9 +1506,40 @@ function readTransportClaim(db, input = {}) {
   if (!rows.length) return { ok: true, claim: null, closedClaims: [] };
 
   const live = rows.filter((row) => String(row.state) !== CLAIM_STATES.CLOSED_UNSENT);
-  const closedClaims = rows
-    .filter((row) => String(row.state) === CLAIM_STATES.CLOSED_UNSENT)
-    .map((row) => ({ claimId: String(row.claim_id), closedAtMs: Number(row.closed_at_ms) || null }));
+
+  // ===================================================================
+  // THE CLOSED ROWS ARE ASKED FOR THEIR EVENTS TOO (Oracle #21).
+  //
+  // This used to project a closed row from its columns alone and never open the
+  // events table for it, so a legacy `closed_unsent` row carrying an append-only
+  // `delivery_started` — the pair an older build could write — came back as a
+  // bare closed slot. The caller then read {claim: null} as "nothing outstanding
+  // here", and the tuple was delivered a second time. A closed row is exactly
+  // where the contradiction hides, because closing is the act that CLAIMS
+  // nothing was sent.
+  // ===================================================================
+  let closedClaims;
+  try {
+    const readEvents = db.prepare(`
+      SELECT kind, at_ms FROM telegram_transport_events
+      WHERE claim_id = ? ORDER BY event_id ASC
+    `);
+    closedClaims = rows
+      .filter((row) => String(row.state) === CLAIM_STATES.CLOSED_UNSENT)
+      .map((row) => {
+        const closedEvents = readEvents.all(String(row.claim_id));
+        const started = closedEvents.find((event) => String(event.kind) === 'delivery_started') || null;
+        return {
+          claimId: String(row.claim_id),
+          closedAtMs: Number(row.closed_at_ms) || null,
+          // FROM THE APPEND-ONLY EVENT, same authority as the live claim's.
+          deliveryStartedAtMs: started ? Number(started.at_ms) : null,
+          eventKinds: closedEvents.map((event) => String(event.kind)),
+        };
+      });
+  } catch (err) {
+    return fail(`claim_events_unreadable:${err.message}`);
+  }
 
   // TWO LIVE CLAIMS IS NOT A STATE ANYONE MAY GUESS PAST. The partial unique
   // index forbids it, so seeing it means the index is gone or the file is
