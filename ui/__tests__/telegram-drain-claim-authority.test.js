@@ -1363,11 +1363,55 @@ describe('readiness is proven before anything is latched', () => {
     await refusedBy(900000880, () => hidden);
   });
 
-  test('ARCH #77: a Proxy never gets a claim, throwing or quiet', async () => {
+  test('ARCH #77/#89: a Proxy never gets a claim, and never runs a trap', async () => {
     await refusedBy(900000881, () => new Proxy({ ...GOOD_ANSWER }, {
       ownKeys() { throw new Error('ownKeys trap exploded'); },
     }));
     await refusedBy(900000882, () => new Proxy({ ...GOOD_ANSWER }, { get: (t, k) => t[k] }));
+
+    // A REVOKED Proxy, through the real drain: reflection and Array.isArray
+    // both throw on it, so this is the shape that proves the Proxy gate really
+    // is above every one of them.
+    const revocable = Proxy.revocable({ ...GOOD_ANSWER }, {});
+    revocable.revoke();
+    await refusedBy(900000885, () => revocable.proxy);
+
+    // ZERO TRAP EXECUTIONS, asserted through the production path rather than
+    // only at the unit boundary.
+    const traps = { get: 0, ownKeys: 0, getOwnPropertyDescriptor: 0, getPrototypeOf: 0 };
+    const counted = new Proxy({ ...GOOD_ANSWER }, {
+      get(t, k) { traps.get += 1; return t[k]; },
+      ownKeys(t) { traps.ownKeys += 1; return Reflect.ownKeys(t); },
+      getOwnPropertyDescriptor(t, k) {
+        traps.getOwnPropertyDescriptor += 1; return Reflect.getOwnPropertyDescriptor(t, k);
+      },
+      getPrototypeOf(t) { traps.getPrototypeOf += 1; return Reflect.getPrototypeOf(t); },
+    });
+    const { harness } = await refusedBy(900000886, () => counted);
+    expect(harness.state.lastRefusal.reason).toBe('pane_readiness_not_a_plain_record');
+    expect(traps).toEqual({
+      get: 0, ownKeys: 0, getOwnPropertyDescriptor: 0, getPrototypeOf: 0,
+    });
+
+    // THE ONE CASE WHERE ZERO IS NOT REACHABLE, asserted rather than hidden.
+    // `await` reads `then` off a resolution value; that is the language's
+    // promise resolution procedure, not this code, and nothing here can stop
+    // it. A Proxy handed over inside a promise therefore sees exactly one
+    // `get('then')` - and is still refused, which is the part that matters.
+    const promiseTraps = { get: 0, ownKeys: 0, getOwnPropertyDescriptor: 0, getPrototypeOf: 0 };
+    const viaPromise = new Proxy({ ...GOOD_ANSWER }, {
+      get(t, k) { promiseTraps.get += 1; return t[k]; },
+      ownKeys(t) { promiseTraps.ownKeys += 1; return Reflect.ownKeys(t); },
+      getOwnPropertyDescriptor(t, k) {
+        promiseTraps.getOwnPropertyDescriptor += 1; return Reflect.getOwnPropertyDescriptor(t, k);
+      },
+      getPrototypeOf(t) { promiseTraps.getPrototypeOf += 1; return Reflect.getPrototypeOf(t); },
+    });
+    const { harness: promiseHarness } = await refusedBy(900000887, async () => viaPromise);
+    expect(promiseHarness.state.lastRefusal.reason).toBe('pane_readiness_not_a_plain_record');
+    expect(promiseTraps).toEqual({
+      get: 1, ownKeys: 0, getOwnPropertyDescriptor: 0, getPrototypeOf: 0,
+    });
   });
 
   test('ARCH #84: a hostile diagnostic value never gets a claim, and never escapes', async () => {

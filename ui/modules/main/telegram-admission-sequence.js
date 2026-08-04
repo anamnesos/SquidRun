@@ -191,7 +191,10 @@ function safeDetailValue(value) {
 function evaluatePaneReadinessAnswer(input = {}) {
   const { answer, launchRuntime, nowMs } = input;
 
-  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) {
+  // `typeof` runs no user code and works on a revoked Proxy. Everything after
+  // this point is ordered so that nothing executes behaviour on the answer
+  // before we have decided it is a record at all.
+  if (!answer || typeof answer !== 'object') {
     return {
       ok: false,
       reason: 'pane_readiness_unreadable',
@@ -199,20 +202,49 @@ function evaluatePaneReadinessAnswer(input = {}) {
     };
   }
 
+  // ===================================================================
+  // THE PROXY QUESTION IS ASKED FIRST, BEFORE ANY REFLECTION (Architect #89).
+  //
+  // I had this after the reflection block and argued for it: putting it first
+  // makes the catch below unreachable by any hostile answer, and I did not want
+  // to ship a branch no test could exercise. Architect overruled it and was
+  // right - TEST REACHABILITY IS NOT AUTHORITY TO EXECUTE BEHAVIOUR while
+  // validating a record that is supposed to be data. My reasoning was that the
+  // probe function had already run, so a trap firing was not a new capability.
+  // That defends against a hostile producer and says nothing about a BUGGY one,
+  // whose traps can have side effects nobody intended, on a path whose entire
+  // job is to look without touching.
+  //
+  // `isProxy` runs no traps, cannot be intercepted, and answers for a revoked
+  // Proxy too - where every reflection call and even `Array.isArray` would
+  // throw. So it goes here, above all of it.
+  // ===================================================================
+  if (nodeTypes.isProxy(answer)) {
+    return { ok: false, reason: 'pane_readiness_not_a_plain_record', detail: { proxy: true } };
+  }
+
+  // AFTER the Proxy gate: `Array.isArray` throws on a revoked Proxy, so it
+  // cannot be part of the first shape check above.
+  if (Array.isArray(answer)) {
+    return { ok: false, reason: 'pane_readiness_unreadable', detail: { received: 'array' } };
+  }
+
   // A PLAIN RECORD, NOT SOMETHING THAT MERELY ANSWERS QUESTIONS (Oracle #47).
   //
   // `Object.create(goodAnswer)` reads identically to a good answer through
   // every property access below while owning nothing, and it crossed D.
   //
-  // A CORRECTION TO WHAT THIS LINE USED TO CLAIM (Architect #77): it does NOT
-  // exclude a getter or a Proxy. An object literal with an accessor has
-  // Object.prototype, and a Proxy reports its target's prototype. Those are
-  // caught by the descriptor rules below, not here. What this catches is a
-  // class instance or a foreign prototype chain, and that is all it catches.
+  // A CORRECTION TO WHAT THIS COMMENT ONCE CLAIMED (Architect #77): the
+  // prototype check does NOT exclude a getter. An object literal with an
+  // accessor has Object.prototype like any other literal. Accessors are caught
+  // by the descriptor rules below. What this catches is a class instance or a
+  // foreign prototype chain, and that is all it catches.
   //
-  // Reflection itself is guarded: every step below can run user code on a
-  // Proxy, and a trap that throws must refuse rather than escape as an
-  // exception the caller never asked to handle.
+  // The reflection below is still guarded, and it is now DEFENSIVE ONLY:
+  // with the Proxy gate above it, no hostile answer can reach the catch, and
+  // Architect #89 explicitly ruled that it does not need to be made reachable.
+  // It stays because a fail-closed handler that costs nothing is worth keeping
+  // even when the only thing left that could trip it is a future edit.
   let proto;
   let descriptors;
   let ownKeys;
@@ -237,15 +269,6 @@ function evaluatePaneReadinessAnswer(input = {}) {
       reason: 'pane_readiness_unreadable',
       detail: { received: 'reflection_threw' },
     };
-  }
-
-  // A PROXY IS NOT A RECORD, even a quiet one. It reports its target's
-  // prototype and can hand back perfectly good descriptors, so nothing above
-  // or below distinguishes it - and `isProxy` runs no traps, so asking is
-  // free and cannot itself be lied to. The probe returns object literals; the
-  // class is closed here rather than argued about case by case.
-  if (nodeTypes.isProxy(answer)) {
-    return { ok: false, reason: 'pane_readiness_not_a_plain_record', detail: { proxy: true } };
   }
 
   if (proto !== Object.prototype && proto !== null) {
@@ -577,9 +600,24 @@ async function runTelegramAdmissionSequence(input = {}) {
   if (typeof paneReadiness !== 'function') {
     return refuseHere('B_readiness', 'sequence_no_pane_readiness_probe');
   }
-  let readiness;
+  // ===================================================================
+  // `await` IS ITSELF A PROPERTY READ (found proving Architect #89's counter).
+  //
+  // `await value` performs a `then` lookup on the value, so awaiting the probe's
+  // return fired exactly one `get` trap on a Proxy answer BEFORE the gate could
+  // refuse it. The zero-trap requirement is not satisfiable while the very act
+  // of receiving the answer touches it, so the raw return is inspected first
+  // and only then awaited.
+  //
+  // THE HONEST LIMIT, stated rather than papered over: this makes it zero for a
+  // Proxy RETURNED DIRECTLY. A Proxy delivered as the resolution value of a
+  // promise still receives one `get('then')` from the language's own promise
+  // resolution procedure, which no code here can prevent. It is still refused;
+  // it is the trap count, not the verdict, that cannot reach zero in that case.
+  // ===================================================================
+  let readinessReturn;
   try {
-    readiness = await paneReadiness({
+    readinessReturn = paneReadiness({
       runtime: launch.consumerRuntime ?? null,
       appGeneration,
       paneId: String(paneId),
@@ -587,6 +625,15 @@ async function runTelegramAdmissionSequence(input = {}) {
       routeKey,
       updateId,
     });
+  } catch (err) {
+    return refuseHere('B_readiness', `pane_readiness_threw:${err.message}`);
+  }
+  if (nodeTypes.isProxy(readinessReturn)) {
+    return refuseHere('B_readiness', 'pane_readiness_not_a_plain_record', { proxy: true });
+  }
+  let readiness;
+  try {
+    readiness = await readinessReturn;
   } catch (err) {
     return refuseHere('B_readiness', `pane_readiness_threw:${err.message}`);
   }

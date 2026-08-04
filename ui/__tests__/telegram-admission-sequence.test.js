@@ -693,39 +693,61 @@ describe('B_readiness — one coherent positive contract (Oracle #37)', () => {
     expect(evaluate(hiddenExtra).detail.unexpected).toEqual(['ready']);
   });
 
-  test('ARCH #77: reflection that throws refuses instead of escaping', () => {
-    // Every reflection step below runs user code on a Proxy. A trap that throws
-    // must become a refusal, not an exception the sequence never agreed to
-    // handle - an escaping throw out of B_readiness lands in the caller's catch
-    // and reads as an unknown boundary.
+  test('ARCH #89: a Proxy is refused with ZERO of its traps executed', () => {
+    // THE LOAD-BEARING ASSERTION IS THE COUNTER, not the refusal. Refusing
+    // after running someone's traps is still running someone's traps, on a
+    // path whose whole job is to look without touching.
+    const traps = {
+      get: 0, ownKeys: 0, getOwnPropertyDescriptor: 0, getPrototypeOf: 0, has: 0,
+    };
+    const counted = new Proxy({ ...GOOD }, {
+      get(t, k) { traps.get += 1; return t[k]; },
+      ownKeys(t) { traps.ownKeys += 1; return Reflect.ownKeys(t); },
+      getOwnPropertyDescriptor(t, k) {
+        traps.getOwnPropertyDescriptor += 1; return Reflect.getOwnPropertyDescriptor(t, k);
+      },
+      getPrototypeOf(t) { traps.getPrototypeOf += 1; return Reflect.getPrototypeOf(t); },
+      has(t, k) { traps.has += 1; return k in t; },
+    });
+    const refused = evaluate(counted);
+    expect(refused.reason).toBe('pane_readiness_not_a_plain_record');
+    expect(refused.detail).toEqual({ proxy: true });
+    expect(traps).toEqual({
+      get: 0, ownKeys: 0, getOwnPropertyDescriptor: 0, getPrototypeOf: 0, has: 0,
+    });
+  });
+
+  test('ARCH #89: every flavour of Proxy is the same typed refusal', () => {
+    // All four used to take different routes through this function - throwing
+    // traps into the catch, quiet ones through the descriptor rules. They now
+    // share one answer, reached before any of them can act.
     const throwingOwnKeys = new Proxy({ ...GOOD }, {
       ownKeys() { throw new Error('ownKeys trap exploded'); },
     });
-    const refusedKeys = evaluate(throwingOwnKeys);
-    expect(refusedKeys.ok).toBe(false);
-    expect(refusedKeys.reason).toBe('pane_readiness_unreadable');
-    expect(refusedKeys.detail.received).toBe('reflection_threw');
-
     const throwingProto = new Proxy({ ...GOOD }, {
       getPrototypeOf() { throw new Error('getPrototypeOf trap exploded'); },
     });
-    expect(evaluate(throwingProto).reason).toBe('pane_readiness_unreadable');
-
     const throwingDescriptor = new Proxy({ ...GOOD }, {
       getOwnPropertyDescriptor() { throw new Error('descriptor trap exploded'); },
     });
-    expect(evaluate(throwingDescriptor).reason).toBe('pane_readiness_unreadable');
+    const quiet = new Proxy({ ...GOOD }, { get: (t, k) => t[k] });
+    // A REVOKED Proxy, where reflection AND Array.isArray both throw. This is
+    // why the array check had to move below the Proxy gate.
+    const revocable = Proxy.revocable({ ...GOOD }, {});
+    revocable.revoke();
 
-    // A Proxy that does NOT throw is still not a record. It reports its
-    // target's prototype and hands back perfectly good descriptors, so nothing
-    // structural distinguishes it - which is exactly why it is refused by name
-    // instead of by argument about whether this particular one is exploitable.
-    const quietProxy = new Proxy({ ...GOOD }, { get: (t, k) => t[k] });
-    expect(Object.getPrototypeOf(quietProxy)).toBe(Object.prototype);
-    const refusedQuiet = evaluate(quietProxy);
-    expect(refusedQuiet.ok).toBe(false);
-    expect(refusedQuiet.reason).toBe('pane_readiness_not_a_plain_record');
-    expect(refusedQuiet.detail.proxy).toBe(true);
+    for (const hostile of [throwingOwnKeys, throwingProto, throwingDescriptor, quiet, revocable.proxy]) {
+      let refused;
+      expect(() => { refused = evaluate(hostile); }).not.toThrow();
+      expect(refused.ok).toBe(false);
+      expect(refused.reason).toBe('pane_readiness_not_a_plain_record');
+      expect(refused.detail).toEqual({ proxy: true });
+    }
+
+    // The revoked proxy really is as hostile as claimed: these are the calls
+    // the gate would have made had the Proxy check not come first.
+    expect(() => Array.isArray(revocable.proxy)).toThrow();
+    expect(() => Object.getPrototypeOf(revocable.proxy)).toThrow();
   });
 
   test('ARCH #84: the refusal never interrogates the thing it is refusing', () => {
@@ -741,8 +763,12 @@ describe('B_readiness — one coherent positive contract (Oracle #37)', () => {
     });
     let refused;
     expect(() => { refused = evaluate(throwingHostile); }).not.toThrow();
-    expect(refused.reason).toBe('pane_readiness_unreadable');
-    expect(refused.detail).toEqual({ received: 'reflection_threw' });
+    // Since ARCH #89 this is refused as a Proxy BEFORE the trap can throw at
+    // all, so the hostile error is never even constructed into the path. The
+    // case stays because it is the shape that proved the diagnostic hole, and a
+    // future reordering that lets it reach the catch must still not read it.
+    expect(refused.reason).toBe('pane_readiness_not_a_plain_record');
+    expect(refused.detail).toEqual({ proxy: true });
 
     // AND THE OTHER DOOR: the foreign-prototype refusal used to walk that very
     // prototype to name it.
