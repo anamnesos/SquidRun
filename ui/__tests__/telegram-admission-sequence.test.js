@@ -43,6 +43,7 @@ const {
   PROOF_CAPABILITY_WINDOW_MS,
   probeRuntimeProofCapability,
 } = require('../modules/main/telegram-consumption-proof');
+const nodeTypes = require('node:util').types;
 
 const NOW = 1785860000000;
 const UPDATE_ID = 900000501;
@@ -886,6 +887,84 @@ describe('B_readiness — the probe contract is synchronous (Architect #93)', ()
 
     // THE ASSERTION THAT MATTERS: none of them ran.
     expect(calls).toEqual({ async: 0, generator: 0, asyncGenerator: 0, proxy: 0 });
+  });
+
+  test('ARCH #99: classification executes NOTHING, including a toStringTag getter', async () => {
+    // `Object.prototype.toString.call(fn)` performs Get(fn, Symbol.toStringTag),
+    // so an accessor tag RAN during classification - the classifier executing
+    // code on the very callback it had not decided to invoke yet.
+    let ownGetterReads = 0;
+    let ownCalls = 0;
+    const ownTagged = () => { ownCalls += 1; return READY; };
+    Object.defineProperty(ownTagged, Symbol.toStringTag, {
+      get() { ownGetterReads += 1; return 'Function'; },
+      configurable: true,
+    });
+    const ownResult = await runSequence(freshDb(), { paneReadiness: ownTagged });
+    expect(ownResult.reason).toBe('pane_readiness_probe_not_synchronous');
+    expect(ownGetterReads).toBe(0);
+    expect(ownCalls).toBe(0);
+
+    // INHERITED, which the own-property check alone would miss.
+    let inheritedGetterReads = 0;
+    let inheritedCalls = 0;
+    const carrier = {};
+    Object.defineProperty(carrier, Symbol.toStringTag, {
+      get() { inheritedGetterReads += 1; return 'Function'; },
+      configurable: true,
+    });
+    const inheritedTagged = () => { inheritedCalls += 1; return READY; };
+    Object.setPrototypeOf(inheritedTagged, carrier);
+    const inheritedResult = await runSequence(freshDb(), { paneReadiness: inheritedTagged });
+    expect(inheritedResult.reason).toBe('pane_readiness_probe_not_synchronous');
+    expect(inheritedGetterReads).toBe(0);
+    expect(inheritedCalls).toBe(0);
+
+    // A PROXY ON THE PROTOTYPE CHAIN, whose traps the walk must not run.
+    let protoTraps = 0;
+    let proxyProtoCalls = 0;
+    const proxiedProto = new Proxy({}, {
+      getOwnPropertyDescriptor(t, k) { protoTraps += 1; return Reflect.getOwnPropertyDescriptor(t, k); },
+      getPrototypeOf(t) { protoTraps += 1; return Reflect.getPrototypeOf(t); },
+    });
+    const withProxyProto = () => { proxyProtoCalls += 1; return READY; };
+    Object.setPrototypeOf(withProxyProto, proxiedProto);
+    const proxyProtoResult = await runSequence(freshDb(), { paneReadiness: withProxyProto });
+    expect(proxyProtoResult.reason).toBe('pane_readiness_probe_not_synchronous');
+    expect(protoTraps).toBe(0);
+    expect(proxyProtoCalls).toBe(0);
+  });
+
+  test('ARCH #99: a BOUND async or generator probe is refused without invocation', async () => {
+    // util.types.isAsyncFunction returns FALSE for a bound async function - the
+    // internal-slot checks alone do not see these. Their prototype is still
+    // AsyncFunction.prototype, which is what the descriptor walk catches, and
+    // it works cross-realm where instanceof would not.
+    expect(nodeTypes.isAsyncFunction((async function () {}).bind(null))).toBe(false);
+    expect(nodeTypes.isGeneratorFunction((function* () {}).bind(null))).toBe(false);
+
+    let boundAsyncCalls = 0;
+    const boundAsync = (async function () { boundAsyncCalls += 1; return READY; }).bind(null);
+    const asyncResult = await runSequence(freshDb(), { paneReadiness: boundAsync });
+    expect(asyncResult.reason).toBe('pane_readiness_probe_not_synchronous');
+    expect(boundAsyncCalls).toBe(0);
+
+    let boundGenCalls = 0;
+    // eslint-disable-next-line require-yield
+    const boundGen = (function* () { boundGenCalls += 1; return READY; }).bind(null);
+    const genResult = await runSequence(freshDb(), { paneReadiness: boundGen });
+    expect(genResult.reason).toBe('pane_readiness_probe_not_synchronous');
+    expect(boundGenCalls).toBe(0);
+
+    // A BOUND ORDINARY function is still ordinary, and still delivers. The rule
+    // is about what the function IS, not about how it was constructed.
+    const db = freshDb();
+    const boundOrdinary = (function () {
+      return { ...READY };
+    }).bind(null);
+    const ok = await runSequence(db, { paneReadiness: boundOrdinary });
+    expect(ok.ok).toBe(true);
+    expect(ok.stage).toBe('D_delivery_started');
   });
 
   test('an ordinary probe returning a promise is invoked once and never awaited', async () => {

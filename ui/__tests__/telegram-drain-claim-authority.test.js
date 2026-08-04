@@ -1452,6 +1452,76 @@ describe('readiness is proven before anything is latched', () => {
     expect(harness.state.lastRefusal.reason).toBe('pane_readiness_probe_not_synchronous');
   });
 
+  test('ARCH #99: classifying the probe executes nothing, tag getters included', async () => {
+    // Object.prototype.toString performs Get(fn, Symbol.toStringTag). An
+    // accessor tag therefore RAN while the classifier was still deciding
+    // whether it was allowed to run anything at all.
+    let ownGetterReads = 0;
+    let ownCalls = 0;
+    const ownTagged = () => { ownCalls += 1; return { ...GOOD_ANSWER }; };
+    Object.defineProperty(ownTagged, Symbol.toStringTag, {
+      get() { ownGetterReads += 1; return 'Function'; },
+      configurable: true,
+    });
+    const { harness } = await refusedBy(900000896, ownTagged);
+    expect(harness.state.lastRefusal.reason).toBe('pane_readiness_probe_not_synchronous');
+    expect(ownGetterReads).toBe(0);
+    expect(ownCalls).toBe(0);
+
+    // INHERITED tag getter.
+    let inheritedGetterReads = 0;
+    const carrier = {};
+    Object.defineProperty(carrier, Symbol.toStringTag, {
+      get() { inheritedGetterReads += 1; return 'Function'; },
+      configurable: true,
+    });
+    const inheritedTagged = () => ({ ...GOOD_ANSWER });
+    Object.setPrototypeOf(inheritedTagged, carrier);
+    await refusedBy(900000897, inheritedTagged);
+    expect(inheritedGetterReads).toBe(0);
+
+    // A PROXY ON THE PROTOTYPE CHAIN: the walk must not run its traps either.
+    let protoTraps = 0;
+    const proxiedProto = new Proxy({}, {
+      getOwnPropertyDescriptor(t, k) { protoTraps += 1; return Reflect.getOwnPropertyDescriptor(t, k); },
+      getPrototypeOf(t) { protoTraps += 1; return Reflect.getPrototypeOf(t); },
+      get(t, k) { protoTraps += 1; return t[k]; },
+    });
+    const withProxyProto = () => ({ ...GOOD_ANSWER });
+    Object.setPrototypeOf(withProxyProto, proxiedProto);
+    await refusedBy(900000898, withProxyProto);
+    expect(protoTraps).toBe(0);
+  });
+
+  test('ARCH #99: bound async/generator probes are refused without invocation', async () => {
+    let boundAsyncCalls = 0;
+    await refusedBy(900000899, (async function () {
+      boundAsyncCalls += 1; return { ...GOOD_ANSWER };
+    }).bind(null));
+    expect(boundAsyncCalls).toBe(0);
+
+    let boundGenCalls = 0;
+    // eslint-disable-next-line require-yield
+    await refusedBy(900000900, (function* () {
+      boundGenCalls += 1; return { ...GOOD_ANSWER };
+    }).bind(null));
+    expect(boundGenCalls).toBe(0);
+  });
+
+  test('ARCH #99: a bound ORDINARY probe is still ordinary, and still delivers', async () => {
+    // The counter-control. The rule is about what the function IS, not how it
+    // was constructed, and a walk that refused every bound function would be
+    // breaking real callers to look strict.
+    const harness = makeHarness({
+      records: [queueRecord(900000901)],
+      paneReadiness: (function () { return { ...GOOD_ANSWER }; }).bind(null),
+    });
+    const result = await harness.build().drainOnce(harness.dir, 'main');
+    expect(harness.paneWrites).toHaveLength(1);
+    expect(result.delivered).toBe(1);
+    expect(claimRows(harness, 900000901)).toBe(1);
+  });
+
   test('ARCH #93: a plain thenable is refused structurally, without calling then', async () => {
     // `then` is a foreign field on a four-key record, so it never gets called.
     // A thenable that resolved to a good answer would otherwise be able to

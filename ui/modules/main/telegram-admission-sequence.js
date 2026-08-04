@@ -126,20 +126,47 @@ function normalizeRuntime(value) {
 /**
  * IS THIS AN ORDINARY, SYNCHRONOUS CALLBACK WE CAN SAFELY INVOKE ONCE?
  *
- * Asked BEFORE invocation, and answered without touching a single property of
- * the function: `util.types` reads internal slots, so an async or generator
- * function cannot present itself as an ordinary one, and a Proxy cannot
- * intercept the question. The `toString` tag is a backstop that also catches
- * AsyncGeneratorFunction; it CAN be spoofed by an own Symbol.toStringTag, and
- * that is fine - a spoofer gets invoked and is then refused for returning a
- * promise, so every path lands closed.
+ * Asked BEFORE invocation, and answered WITHOUT EXECUTING ANY CODE ON IT. That
+ * second half is the whole promise, and the previous version broke it while
+ * claiming it (Architect #99): `Object.prototype.toString.call(value)` performs
+ * Get(value, Symbol.toStringTag), so a function carrying an ACCESSOR tag had
+ * that getter run during classification. Measured: getterReads 1, callbackCalls
+ * 0 — the classifier executed code the callback contract said it would not. My
+ * comment reasoned about a spoofed DATA tag, which is harmless because a
+ * spoofer just gets invoked and refused later. An accessor tag is not that; it
+ * runs.
+ *
+ * So no value-level tag read at all. Instead:
+ *
+ *   internal slots      `util.types` cannot be intercepted or spoofed, and a
+ *                       Proxy cannot answer for the function it wraps.
+ *   descriptor walk     the prototype chain is inspected with
+ *                       getOwnPropertyDescriptor, which returns the descriptor
+ *                       WITHOUT invoking a getter. Any own Symbol.toStringTag
+ *                       anywhere on the chain — data or accessor — refuses.
+ *
+ * The walk is not merely a backstop, it is load-bearing. Verified by execution:
+ * AsyncFunction.prototype, GeneratorFunction.prototype and
+ * AsyncGeneratorFunction.prototype each carry Symbol.toStringTag, while
+ * Function.prototype and Object.prototype carry none — so it separates exotic
+ * from ordinary exactly. And `isAsyncFunction` returns FALSE for a BOUND async
+ * function, whose prototype is still AsyncFunction.prototype; the walk is the
+ * only thing that catches those, cross-realm included, where instanceof cannot.
+ *
+ * Each cursor is checked for Proxy before its prototype is read, so the walk
+ * cannot run a trap either. A prototype cycle is impossible — setPrototypeOf
+ * refuses to create one — so the loop always terminates at null.
  */
 function isPlainSyncCallback(value) {
   if (typeof value !== 'function') return false;
   if (nodeTypes.isProxy(value)) return false;
   if (nodeTypes.isAsyncFunction(value)) return false;
   if (nodeTypes.isGeneratorFunction(value)) return false;
-  return Object.prototype.toString.call(value) === '[object Function]';
+  for (let cursor = value; cursor !== null; cursor = Object.getPrototypeOf(cursor)) {
+    if (nodeTypes.isProxy(cursor)) return false;
+    if (Object.getOwnPropertyDescriptor(cursor, Symbol.toStringTag) !== undefined) return false;
+  }
+  return true;
 }
 
 /**
