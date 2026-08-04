@@ -121,9 +121,19 @@ const {
 const {
   appendReceiptMarkerToPrompt,
   getModelPromptReceipt,
-  getReceiptPaths,
   getReceiptRuntimeActivity,
 } = require('../model-prompt-receipt');
+// TERMINAL CONSUMPTION PROOF. Deliberately its own module rather than another
+// method on this class: the one rule it exists to enforce is that no identity
+// may be synthesized at lookup time, and that is far easier to audit in a file
+// whose entire surface is one function returning a record's own fields.
+// Imported as a MODULE OBJECT, matching telegramIngressDrain/telegramDrainWiring
+// above. Destructuring binds the function at require time, which leaves the
+// composite "does findTelegramDeliveryReceipt actually consult the scoped
+// store" untestable without standing up a second real ledger — and Architect
+// #146 already caught one mutant that survived because the resolver and the
+// reader were only ever tested apart.
+const telegramTerminalLookup = require('./telegram-terminal-lookup');
 const {
   shouldTriggerAutonomousSmoke,
   buildSmokeRunnerArgs,
@@ -15175,41 +15185,39 @@ class SquidRunApp {
   }
 
   /**
-   * The receipt store belonging to a specific profile.
+   * The evidence ledger belonging to a specific profile.
    *
-   * Main uses its canonical default store. A scoped profile keeps receipts
-   * under ITS OWN resolved root, so reading main's store for a scoped message
-   * answers a different question entirely and could retire a message that never
-   * reached her window.
+   * Main uses its canonical default database. A scoped profile keeps its
+   * ledger under ITS OWN resolved root, so reading main's ledger for a scoped
+   * message answers a different question entirely and could retire a message
+   * that never reached her window.
    *
    * Fail closed: an unresolvable profile root THROWS rather than falling back
    * to main, cwd, or getProjectRoot(). The drain turns a throw into a HOLD,
    * which is correct when we cannot tell where the proof would live.
    */
-  resolveScopedReceiptStatePath(profile) {
+  resolveScopedLedgerDbPath(profile) {
     const name = typeof profile === 'string' ? profile.trim() : '';
     if (!name || name === 'main') return null;
 
     const root = getProfileProjectRootOverride(name, process.env);
     if (!root) {
-      throw new Error(`cannot resolve receipt store root for profile ${name}`);
+      throw new Error(`cannot resolve evidence ledger root for profile ${name}`);
     }
-    // Scoped profiles NAMESPACE the first coord segment: getReceiptPaths uses
-    // resolveCoordPath('runtime/model-prompt-receipts') and
-    // namespaceCoordRelPath rewrites `runtime` to `runtime-<profile>`. Using
-    // plain `runtime` would point at a directory that never exists, read as
-    // ABSENCE, and mean "never delivered" — a duplicate, dressed as a miss.
+    // Scoped profiles NAMESPACE the first coord segment: resolveCoordPath
+    // rewrites `runtime` to `runtime-<profile>`. Using plain `runtime` would
+    // point at a database that never exists, read as ABSENCE, and mean "never
+    // delivered" — a duplicate, dressed as a miss.
     return path.join(
       path.resolve(root),
       '.squidrun',
       `runtime-${normalizeProfileName(name)}`,
-      'model-prompt-receipts',
-      'receipts-state.json'
+      'evidence-ledger.db'
     );
   }
 
   /**
-   * Crash-replay proof, read from the PERSISTENT comms journal.
+   * Crash-replay proof, read from DURABLE STORES ONLY.
    *
    * An in-memory map cannot answer this question: the whole point is surviving
    * a process that died between delivering and acking, and a Map dies with it.
@@ -15218,36 +15226,43 @@ class SquidRunApp {
    * journal row under the SAME telegram-in-<updateId> BEFORE delivery. That row
    * proves the message reached US, not that it reached a pane. Matching it would
    * retire every record on its first drain pass, undelivered.
+   *
+   * =====================================================================
+   * WHAT CHANGED IN S492, AND WHY IT IS THE LIVE REPAIR
+   * =====================================================================
+   * This method used to read the generic model-prompt receipt store: the one
+   * that records `prompt_submit` for every prompt in every pane, knows nothing
+   * about Telegram, and cannot name an update, a chat, or a process generation.
+   * It converted `prompt_submitted.in_band` into `delivered.verified` and then
+   * attached the route, window and profile IT HAD BEEN ASKED ABOUT to the
+   * object it returned.
+   *
+   * That second part is why restart never cleared the wedge. The returned
+   * object carried four fields; `evaluateConsumptionProof` requires `chatId`,
+   * `generation` and a real `provedAtMs` on top of them. No input to this path
+   * could produce `proven:true` in production — the queue was not waiting for a
+   * slow receipt, it was waiting for a receipt whose shape could not exist.
+   *
+   * Terminal consumption proof now comes from `telegram_consumed_receipts`,
+   * written at a consumer boundary that saw the exact bytes, and every field
+   * returned is that record's own.
    */
   async findTelegramDeliveryReceipt(identity = {}) {
     if (!identity?.messageId) return null;
 
-    // ONE proof source for pane delivery: the model-prompt receipt store, which
-    // persists synchronously and survives the crash this path exists for
-    // (Oracle #64).
+    // MIRA REPLAY, FIRST. A message answered by Mira never reaches a pane at
+    // all, so it can never produce a pane consumption receipt; checking only
+    // that store would find nothing after a crash and send James a SECOND Mira
+    // reply. An in-memory latch cannot help: it dies with the process.
     //
-    // The decorated comms-journal row is deliberately NOT used. It proved only
-    // that SOME row with this id reached a verified submit, and my version then
-    // attached whatever route/window/profile was being asked about — which
-    // would have accepted a proof from one surface as proof for another. It
-    // also races the `void` inbound upsert. Architect #73: correlate the exact
-    // receipt to the stored queue identity, or do not depend on the row.
-    let receipt;
-    try {
-      // MAIN gets strict semantics too. A corrupt or unreadable main store must
-      // HOLD, not read as "no receipt" — that is the answer that resends.
-      const scopedStatePath = this.resolveScopedReceiptStatePath(identity.profile);
-      const statePath = scopedStatePath || getReceiptPaths().statePath;
-      receipt = getModelPromptReceipt(identity.messageId, { statePath, strict: true });
-    } catch (err) {
-      // Cannot tell whether it landed; the drain turns a throw into a HOLD.
-      throw new Error(`model prompt receipt lookup failed: ${err.message}`);
-    }
-    // MIRA REPLAY. A message answered by Mira never produces a pane
-    // model-prompt receipt, so checking only that store would find nothing after
-    // a crash and send James a SECOND Mira reply. The pre-delivery replay lookup
-    // has to ask about Mira too, using this record's own chat/route identity.
-    // An in-memory latch cannot help here: it dies with the process.
+    // STRUCTURALLY INCOMPLETE, AND SAID SO OUT LOUD: the outbound row proves
+    // Mira answered, but it owns no app generation and no proof timestamp, so
+    // this object cannot satisfy the proof gate and the record HOLDS rather
+    // than retiring. That is exactly what happens today — this comment does not
+    // change behaviour, it stops the incompleteness from being invisible. A
+    // Mira-answered message is therefore still a queue-holding message, and
+    // closing that is its own repair with its own evidence, not a field
+    // invented here.
     if (this.hasDurableMiraOutboundProof(identity.messageId, {
       inboundMessageId: identity.messageId,
       chatId: identity.chatId,
@@ -15266,27 +15281,24 @@ class SquidRunApp {
       };
     }
 
-    if (!receipt) return null;
-    if (receipt.semanticEvent !== 'prompt_submit') return null;
-    if (receipt.status !== 'prompt_submitted.in_band') return null;
-    // Asking the store for an id is not the same as the store answering for it.
-    // A malformed mapping or state file could return someone else's receipt, so
-    // the receipt has to identify itself as this message.
-    const receiptId = receipt.messageId || receipt.deliveryId;
-    if (receiptId !== identity.messageId) return null;
-
-    // Identity comes from the record we already re-validated against the live
-    // route, joined to a receipt for that exact id. The receipt carries no
-    // route identity of its own and none is invented for it.
-    return {
-      status: 'delivered.verified',
-      verified: true,
-      proofSource: 'model_prompt_receipt',
-      messageId: identity.messageId,
-      routeKey: identity.routeKey,
-      windowKey: identity.windowKey,
-      profile: identity.profile,
-    };
+    // TERMINAL CONSUMPTION. The lookup returns the stored record's own fields
+    // or nothing; it cannot complete a partial record, and a store it cannot
+    // read or that holds two conflicting accounts THROWS, which the drain turns
+    // into a hold.
+    try {
+      // MAIN gets strict semantics too. A scoped profile's proof lives in a
+      // scoped ledger; reading main's for a scoped message answers a different
+      // question and could retire a message that never reached her window.
+      const scopedDbPath = this.resolveScopedLedgerDbPath(identity.profile);
+      return telegramTerminalLookup.findTerminalConsumptionEvidence({
+        messageId: identity.messageId,
+        routeKey: identity.routeKey,
+        dbPath: scopedDbPath || undefined,
+      });
+    } catch (err) {
+      // Cannot tell whether it landed; the drain turns a throw into a HOLD.
+      throw new Error(`terminal consumption lookup failed: ${err.message}`);
+    }
   }
 
   /**

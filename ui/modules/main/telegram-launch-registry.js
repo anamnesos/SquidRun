@@ -748,6 +748,31 @@ function findConsumedReceipt(db, query = {}) {
   if (!messageId) return fail('consumed_query_missing:messageId');
   if (!routeKey) return fail('consumed_query_missing:routeKey');
 
+  // ABSENT TABLE IS NOT AN UNREADABLE TABLE, and the difference decides whether
+  // a message is delivered or held forever.
+  //
+  // A ledger with no terminal table has never had a terminal receipt written to
+  // it — on a fresh install that is every ledger, before the first admission.
+  // Letting that surface as a query FAILURE would make the lookup throw, the
+  // drain hold, and the very first Telegram message wedge the queue: the S491
+  // outage, faithfully reproduced one layer over.
+  //
+  // Reading absence as "no proof yet" is safe here for a reason that is NOT
+  // "probably fine": re-delivery is not gated by this store at all. The durable
+  // attempt latch is what refuses to inject a record that was already attempted,
+  // and it lives in its own sidecar. So a missing proof store can cost us a hold
+  // for a genuinely-delivered message, which is recoverable and visible; it
+  // cannot cost James a duplicate.
+  let tableExists;
+  try {
+    tableExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'telegram_consumed_receipts'"
+    ).get();
+  } catch (err) {
+    return fail('consumed_query_failed', { message: err.message });
+  }
+  if (!tableExists) return fail('consumed_receipt_absent', { messageId, routeKey, tableAbsent: true });
+
   let rows;
   try {
     rows = db.prepare(

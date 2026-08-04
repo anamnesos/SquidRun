@@ -533,6 +533,52 @@ function buildConsumedRecord(input = {}) {
 }
 
 /**
+ * IS THIS A WELL-FORMED TERMINAL RECORD AT ALL — asked WITHOUT an expectation.
+ *
+ * The lookup layer needs this and must not have the other one. Handing a
+ * partial `expected` to `validateConsumedRecord` would make it report
+ * `expected_identity_missing:claimId` for a perfectly good record, and the
+ * obvious "fix" is for the lookup to fill the gaps from what it was asked
+ * about — which is identity synthesis, arriving by the back door, in the exact
+ * function whose whole purpose is to stop it.
+ *
+ * So the split is: this answers "is this a terminal record", and the caller's
+ * own proof gate answers "is it about the message I asked for". Neither ever
+ * writes a field it then reads back as evidence.
+ */
+function validateConsumedRecordShape(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return { ok: false, reason: 'no_proof' };
+  }
+  if (record.schema === SCHEMA) return { ok: false, reason: 'admission_is_not_terminal_proof' };
+  if (record.schema !== TERMINAL_SCHEMA) {
+    return { ok: false, reason: `wrong_schema:${record.schema || 'none'}` };
+  }
+  if (!isNonEmptyString(record.proofClass) || !TERMINAL_PROOF_CLASSES.has(record.proofClass)) {
+    return { ok: false, reason: `not_a_terminal_proof_class:${record.proofClass || 'none'}` };
+  }
+  for (const field of TERMINAL_REQUIRED_FIELDS) {
+    const value = record[field];
+    if (value === null || value === undefined || String(value).trim() === '') {
+      return { ok: false, reason: `proof_field_missing:${field}` };
+    }
+  }
+  if (!TERMINAL_EVENTS.has(String(record.terminalEvent))) {
+    return { ok: false, reason: `terminal_event_unrecognised:${record.terminalEvent}` };
+  }
+  const terminalAtMs = Number(record.terminalAtMs);
+  const consumedAtMs = Number(record.consumedAtMs);
+  if (!Number.isFinite(terminalAtMs) || terminalAtMs <= 0) {
+    return { ok: false, reason: 'terminal_time_unknown' };
+  }
+  if (!Number.isFinite(consumedAtMs) || consumedAtMs <= 0) {
+    return { ok: false, reason: 'proof_time_unknown' };
+  }
+  if (terminalAtMs < consumedAtMs) return { ok: false, reason: 'terminal_predates_admission' };
+  return { ok: true };
+}
+
+/**
  * THE ONE TERMINAL VALIDATOR. Only a record this function proves may retire a
  * Telegram ingress record on the automatic path.
  *
@@ -622,4 +668,5 @@ module.exports = {
   validateAdmissionRecord,
   buildConsumedRecord,
   validateConsumedRecord,
+  validateConsumedRecordShape,
 };

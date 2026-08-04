@@ -18,7 +18,9 @@ const {
  */
 const {
   produceAdmissionReceipt,
+  produceTerminalReceipt,
   bindSessionAtStart,
+  isTerminalHookEvent,
 } = require('../modules/main/telegram-admission-producer');
 
 function parseArgs(argv) {
@@ -154,12 +156,32 @@ async function main() {
     payload,
   });
 
-  // TELEGRAM ADMISSION. Returns `handled:false` for the overwhelming majority of
-  // prompts, which are not Telegram deliveries.
-  runTelegramStep(() => produceAdmissionReceipt({
-    runtime: normalizeRuntime(args.runtime),
-    payload,
-  }));
+  // TELEGRAM, PHASE 2: THE TURN ENDED.
+  //
+  // In this file for the same reason phase 1 is — it is the adapter the
+  // configured hooks actually invoke. A separate terminal adapter would be the
+  // fourth instance of the shape this lane keeps producing: a component
+  // hardened over checkpoints that no configured hook could reach, with a green
+  // suite proving only that the unreachable side works.
+  //
+  // Terminal runs INSTEAD of admission, not alongside it. A Stop payload
+  // carries no prompt, so the admission path would parse no marker and return
+  // `not_a_telegram_delivery` — harmless, but it would make the two phases look
+  // like one path that sometimes does nothing, which is precisely the ambiguity
+  // the split exists to remove.
+  if (isTerminalHookEvent(args.event)) {
+    runTelegramStep(() => produceTerminalReceipt({
+      runtime: normalizeRuntime(args.runtime),
+      payload,
+    }));
+  } else {
+    // TELEGRAM ADMISSION. Returns `handled:false` for the overwhelming majority
+    // of prompts, which are not Telegram deliveries.
+    runTelegramStep(() => produceAdmissionReceipt({
+      runtime: normalizeRuntime(args.runtime),
+      payload,
+    }));
+  }
 
   emitHookResponse({
     hookEventName: args.event,
