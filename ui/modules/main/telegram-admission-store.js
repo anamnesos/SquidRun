@@ -2190,9 +2190,21 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
       'INSERT INTO telegram_work_claim_events (work_claim_id, transition, at_ms, detail) VALUES (?, ?, ?, ?)'
     ).run(workClaimId, 'work_claimed', atMs, null);
 
-    // 6. PROMOTE THE REAL SOURCE ROW.
-    db.prepare('UPDATE comms_journal SET status = ?, brokered_at_ms = ?, updated_at_ms = ? WHERE row_id = ?')
-      .run(SOURCE_STATES.BROKERED, atMs, atMs, source.row_id);
+    // 6. THE SOURCE IS ALREADY BROKERED, AND PROMOTION DOES NOT RE-BROKER IT.
+    //
+    // B4b moved that projection to the `delivery_started` authorisation
+    // boundary, where the fact it projects actually becomes true. Writing it
+    // again here would make promotion the second writer of the one column the
+    // kernel is supposed to own — the same defect as the generic upsert, one
+    // layer down — and it would move `brokered_at_ms` forward to promotion
+    // time, quietly relabelling when James's message reached the pane.
+    //
+    // Verified rather than assumed: promotion of a source that was never
+    // brokered means a receipt exists for a delivery nothing ever authorised.
+    if (String(source.status) !== SOURCE_STATES.BROKERED) {
+      rollback(db);
+      return fail('source_not_brokered', { status: source.status });
+    }
 
     db.prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
       .run(CLAIM_STATES.ADMITTED, input.claimId);

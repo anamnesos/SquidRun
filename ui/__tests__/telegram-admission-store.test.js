@@ -482,9 +482,17 @@ describe('admitted_owned promotion', () => {
       .toBe(CLAIM_STATES.ADMITTED);
   });
 
-  test('OR NONE DOES: a failed promotion leaves the source unbrokered and no binding', () => {
+  test('OR NONE DOES: a failed promotion changes NOTHING and leaves no binding', () => {
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
+
+    // B4b: `brokered` is now projected at the delivery_started authorisation
+    // boundary, not at promotion, so the row is legitimately brokered before
+    // this promotion is attempted. The invariant under test is unchanged and is
+    // asserted more strictly than before: a failed promotion must leave the
+    // source row BYTE-IDENTICAL and create none of the four authorities.
+    const before = db.prepare('SELECT * FROM comms_journal').get();
+    expect(before.status).toBe(SOURCE_STATES.BROKERED);
 
     const failed = promote(db, ownedInput(claim.claimId, {
       canonicalPayloadSha256: sha256('a digest that does not match'),
@@ -492,10 +500,29 @@ describe('admitted_owned promotion', () => {
 
     expect(failed.ok).toBe(false);
     expect(failed.reason).toBe('source_payload_digest_mismatch');
-    expect(db.prepare('SELECT status FROM comms_journal').get().status)
-      .toBe(SOURCE_STATES.RECORDED);
+
+    const after = db.prepare('SELECT * FROM comms_journal').get();
+    expect(after).toEqual(before);
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_obligation_bindings').get().n)).toBe(0);
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_queue_ack_outbox').get().n)).toBe(0);
+  });
+
+  test('PROMOTION REFUSES A SOURCE THAT WAS NEVER BROKERED', () => {
+    // The other half of moving the projection: promotion may not manufacture
+    // the delivery it is supposed to be evidence of. A source still `recorded`
+    // means no delivery_started ever authorised anything to reach a pane, so a
+    // receipt naming it describes a message nobody sent.
+    const db = freshDb();
+    const { claim } = seedToDeliveryStarted(db);
+
+    // Wind the projection back by hand: the exact state a promotion would face
+    // if it were ever reached without an authorised delivery.
+    db.prepare("UPDATE comms_journal SET status = 'recorded', brokered_at_ms = NULL").run();
+
+    const owned = promote(db, ownedInput(claim.claimId));
+    expect(owned.ok).toBe(false);
+    expect(owned.reason).toBe('source_not_brokered');
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_obligation_bindings').get().n)).toBe(0);
   });
 
   test('A CLAIM THAT NEVER STARTED DELIVERY cannot be promoted', () => {
@@ -937,8 +964,12 @@ describe('THE GENERAL KERNEL ACTUALLY HOLDS THE DEBT (blocker 1)', () => {
 
     expect(Number(db.prepare('SELECT COUNT(*) n FROM obligations').get().n)).toBe(0);
     expect(Number(db.prepare("SELECT COUNT(*) n FROM ledger_events WHERE type='obligation.created'").get().n)).toBe(0);
-    expect(db.prepare('SELECT status FROM comms_journal WHERE row_id = ?')
-      .get(src.sourceRowId).status).toBe(SOURCE_STATES.RECORDED);
+    // B4b: the source is brokered by delivery_started, not by promotion, so the
+    // fact this proves is that promotion did not TOUCH it — including not
+    // moving `brokered_at_ms` forward to promotion time.
+    const source = db.prepare('SELECT * FROM comms_journal WHERE row_id = ?').get(src.sourceRowId);
+    expect(source.status).toBe(SOURCE_STATES.BROKERED);
+    expect(Number(source.brokered_at_ms)).toBe(NOW + 10); // seedToDeliveryStarted's atMs
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_obligation_bindings').get().n)).toBe(0);
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_queue_ack_outbox').get().n)).toBe(0);
   });
