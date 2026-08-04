@@ -16,6 +16,7 @@ const { runTelegramAdmissionSequence, MODES } = require('./telegram-admission-se
 const { currentAppGeneration } = require('./app-generation');
 const { findTransportClaim } = require('./telegram-claim-lookup');
 const { closeUnsentClaim } = require('./telegram-admission-store');
+const { probeRuntimeProofCapability } = require('./telegram-consumption-proof');
 
 /**
  * Resolve the durable handle this admission will be written on.
@@ -91,6 +92,25 @@ async function runAdmissionForJob(app, options = {}) {
       obligorAddress: 'architect',
       mode: options.mode || MODES.FULL,
       composeFinalBody: options.composeFinalBody,
+      // THE READINESS ANSWER COMES FROM OBSERVED PROOF FLOW, not from config.
+      //
+      // The sequence hands us the runtime the launch registry bound, so this
+      // cannot answer for a different pane than the one about to be written.
+      // `probeRuntimeProofCapability` is the same probe the drain and the health
+      // surface already use, deliberately: one definition of "this pane can
+      // answer", not a second opinion that can drift from the first.
+      //
+      // An app that cannot report receipt activity yields null, which the probe
+      // reads as never-proved and the gate reads as not ready. That is the
+      // intended direction — it holds the queue rather than latching a claim
+      // nothing can retire.
+      paneReadiness: options.paneReadiness || (({ runtime }) => probeRuntimeProofCapability({
+        runtime,
+        receiptActivity: typeof app.getTelegramReceiptRuntimeActivity === 'function'
+          ? app.getTelegramReceiptRuntimeActivity()
+          : null,
+        nowMs: Date.now(),
+      })),
       nonce: () => `n_${randomBytes(12).toString('hex')}`,
     });
   } finally {

@@ -126,6 +126,11 @@ async function runSequence() {
         sessionId: 'app-session-490',
         sentAtMs: NOW - 1000,
       },
+      // This chain exists to prove a terminal receipt CAN come back, so the
+      // pane it delivers to is by definition one with observed proof flow.
+      paneReadiness: () => ({
+        attainable: true, reason: 'runtime_proof_observed', runtime: 'codex', lastProofAtMs: NOW - 5000,
+      }),
       record: {
         updateId: UPDATE_ID,
         chatId: CHAT_ID,

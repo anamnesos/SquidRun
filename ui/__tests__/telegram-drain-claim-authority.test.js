@@ -55,6 +55,16 @@ const GEN_A = 'app-session-491';
 const GEN_B = 'app-session-492';
 const CHAT_ID = REDACTED;
 
+/**
+ * A pane that has demonstrably answered before. The readiness gate above B
+ * refuses on anything short of this, so every delivering test has to say it -
+ * which is the point: a test that delivers into a pane which could never
+ * produce a receipt was testing a permanent hold and calling it a delivery.
+ */
+const READY = Object.freeze({
+  attainable: true, reason: 'runtime_proof_observed', runtime: 'codex', lastProofAtMs: BASE_MS - 1000,
+});
+
 const tempRoots = [];
 const openWriters = [];
 const coordinators = [];
@@ -139,6 +149,9 @@ function makeHarness(options = {}) {
     // Where the delivery is told to stop, so a crash window can be placed
     // exactly: 'before_source' | 'before_claim' | 'after_claim' | null.
     failAt: options.failAt || null,
+    // Overridden only by the readiness tests, which need a pane that cannot
+    // answer, throws, or lies about its shape.
+    paneReadiness: options.paneReadiness || null,
     receipt: options.receipt || null,
     lookupThrows: options.lookupThrows || false,
     failAck: options.failAck || false,
@@ -172,6 +185,10 @@ function makeHarness(options = {}) {
       },
       record: job.record || {},
       appGeneration: state.generation,
+      // The pane can answer, unless a test says otherwise. Production derives
+      // this from observed receipt flow; the harness states it outright so a
+      // readiness refusal in these tests is always the one the test asked for.
+      paneReadiness: state.paneReadiness || (() => READY),
       mode: state.failAt === 'source_only' ? MODES.SOURCE_ONLY : MODES.FULL,
       composeFinalBody: async () => {
         if (state.failAt === 'after_claim') throw new Error('compose exploded');
@@ -1062,6 +1079,136 @@ describe('a closed slot that already delivered may never be re-claimed', () => {
 });
 
 // =====================================================================
+// 5c. A PANE THAT CANNOT ANSWER IS NOT DELIVERED TO (Oracle #7).
+//
+// Every claim latched for a runtime that has never produced a terminal receipt
+// becomes a permanent hold: B latches, D authorises, bytes go out, and no proof
+// can ever retire it. That is the live diagnosis on this queue right now. The
+// gate asks before B, where "nothing happened" is still true and the record can
+// simply stay queued.
+//
+// The assertion that matters in all of these is not the refusal - it is that
+// the claims table is EMPTY afterwards.
+// =====================================================================
+describe('readiness is proven before anything is latched', () => {
+  const claimRows = (harness, updateId) => harness.writer.db
+    .prepare('SELECT COUNT(*) AS n FROM telegram_transport_claims WHERE update_id = ?')
+    .get(updateId).n;
+
+  async function refusedBy(updateId, paneReadiness) {
+    const harness = makeHarness({ records: [queueRecord(updateId)], paneReadiness });
+    const result = await harness.build().drainOnce(harness.dir, 'main');
+    expect(harness.paneWrites).toHaveLength(0);
+    expect(result.delivered).toBe(0);
+    expect(claimRows(harness, updateId)).toBe(0);
+    return { harness, result };
+  }
+
+  test('a runtime that has never proved anything never gets a claim', async () => {
+    await refusedBy(900000831, () => ({
+      attainable: false, reason: 'runtime_never_produced_proof', runtime: 'codex', lastProofAtMs: null,
+    }));
+  });
+
+  test('an unknown runtime is not a ready one', async () => {
+    await refusedBy(900000832, () => ({ attainable: false, reason: 'runtime_unknown', runtime: null }));
+  });
+
+  test('stale proof is not proof', async () => {
+    await refusedBy(900000833, () => ({
+      attainable: false, reason: 'runtime_proof_stale', runtime: 'codex', lastProofAtMs: BASE_MS - 99999999,
+    }));
+  });
+
+  test('a probe that throws fails closed', async () => {
+    await refusedBy(900000834, () => { throw new Error('probe exploded'); });
+  });
+
+  test('a malformed answer is not a yes', async () => {
+    // Every one of these is falsy-or-shapeless in a different way, and a gate
+    // that reads any of them as ready is a gate that delivers on a shrug.
+    await refusedBy(900000835, () => null);
+    await refusedBy(900000836, () => undefined);
+    await refusedBy(900000837, () => 'ready');
+    await refusedBy(900000838, () => ({}));
+    await refusedBy(900000839, () => ({ attainable: 'true' }));
+    await refusedBy(900000840, () => ({ ready: 1 }));
+  });
+
+  test('THE SEQUENCE ITSELF: no probe at all refuses, and names why', async () => {
+    const harness = makeHarness({ records: [queueRecord(900000841)] });
+    const writer = harness.writer;
+    const record = queueRecord(900000841);
+    const result = await runTelegramAdmissionSequence({
+      db: writer.db,
+      job: {
+        messageId: 'telegram-in-900000841',
+        updateId: 900000841,
+        chatId: CHAT_ID,
+        routeKey: 'main',
+        profile: 'main',
+        windowKey: 'main',
+        rawBody: record.text,
+        sessionId: record.targetSession,
+        sentAtMs: record.timestampMs,
+      },
+      record,
+      appGeneration: GEN_B,
+      mode: MODES.FULL,
+      composeFinalBody: async () => 'body',
+      now: () => BASE_MS,
+      nonce: () => 'n_no_probe',
+      // paneReadiness deliberately absent.
+    });
+    expect(result.ok).toBe(false);
+    expect(result.stage).toBe('B_readiness');
+    expect(result.reason).toBe('sequence_no_pane_readiness_probe');
+    // NOTHING TO CLEAN UP. A refusal above B owns no claim, so the drain may
+    // not close anything on its behalf.
+    expect(result.ownedClaimId).toBeNull();
+    expect(result.ownedClaimUnsent).toBe(false);
+    expect(claimRows(harness, 900000841)).toBe(0);
+  });
+
+  test('the refusal carries the probe reason, and the pane is asked about its OWN runtime', async () => {
+    const asked = [];
+    const harness = makeHarness({
+      records: [queueRecord(900000842)],
+      paneReadiness: (input) => {
+        asked.push(input);
+        return { attainable: false, reason: 'runtime_never_produced_proof', runtime: input.runtime };
+      },
+    });
+    await harness.build().drainOnce(harness.dir, 'main');
+    // The runtime comes from the LAUNCH REGISTRY row, not from the caller: a
+    // probe that could be handed any runtime string could answer for a pane
+    // other than the one about to be written.
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({
+      runtime: 'codex', appGeneration: GEN_B, paneId: '1', routeKey: 'main', updateId: 900000842,
+    });
+    expect(asked[0].launchId).toEqual(expect.any(String));
+    expect(claimRows(harness, 900000842)).toBe(0);
+  });
+
+  test('a SOURCE_ONLY route never reaches the gate, because it never claims', async () => {
+    // Scoped windows return at A. Gating them on a readiness probe they can
+    // never satisfy would refuse to record identity for a message that is
+    // legitimately handed to another process.
+    const harness = makeHarness({
+      records: [queueRecord(900000843)],
+      failAt: 'source_only',
+      paneReadiness: () => { throw new Error('must not be asked'); },
+    });
+    await harness.build().drainOnce(harness.dir, 'main');
+    expect(claimRows(harness, 900000843)).toBe(0);
+    expect(harness.writer.db
+      .prepare('SELECT COUNT(*) AS n FROM telegram_source_identity WHERE update_id = ?')
+      .get(900000843).n).toBe(1);
+  });
+});
+
+// =====================================================================
 // 6. CLEANUP CLOSES THE CLAIM IT OWNS, AND NOTHING ELSE (Oracle #13, blocker 2)
 // =====================================================================
 describe('rejection cleanup is bound to the claim the delivery made', () => {
@@ -1111,6 +1258,7 @@ describe('rejection cleanup is bound to the claim the delivery made', () => {
       record: competingRecord,
       appGeneration: GEN_B,
       mode: MODES.FULL,
+      paneReadiness: () => READY,
       composeFinalBody: async () => 'competing body',
       now: () => BASE_MS - 10,
       nonce: () => 'n_competing_owner',
@@ -1219,6 +1367,7 @@ describe('rejection cleanup is bound to the claim the delivery made', () => {
       record: { updateId: 900000815, chatId: CHAT_ID, targetSession: 'app-session-490' },
       appGeneration: GEN_B,
       mode: MODES.FULL,
+      paneReadiness: () => READY,
       now: () => BASE_MS,
     };
 

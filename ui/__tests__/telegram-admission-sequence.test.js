@@ -44,6 +44,15 @@ const UPDATE_ID = 900000501;
 const MESSAGE_ID = `telegram-in-${UPDATE_ID}`;
 const APP_GENERATION = 'app-session-492-seq';
 
+/**
+ * A pane with observed proof flow. The B_readiness gate refuses anything less,
+ * so FULL-mode tests must say it explicitly; SOURCE_ONLY never reaches the gate
+ * because it returns at A.
+ */
+const READY = Object.freeze({
+  attainable: true, reason: 'runtime_proof_observed', runtime: 'codex', lastProofAtMs: NOW - 1000,
+});
+
 const tempRoots = [];
 const openWriters = [];
 
@@ -130,6 +139,7 @@ function runSequence(db, overrides = {}) {
     role: 'architect',
     mode: MODES.FULL,
     composeFinalBody: overrides.composeFinalBody || decoratingComposer(calls),
+    paneReadiness: overrides.paneReadiness || (() => READY),
     now: () => NOW,
     nonce: () => 'nonce-fixed-1',
     ...overrides.extra,
@@ -259,6 +269,7 @@ describe('B4b — one owner', () => {
     const conflicting = await runTelegramAdmissionSequence({
       db,
       job: { ...JOB, rawBody: 'a different message entirely' },
+      paneReadiness: () => READY,
       record: QUEUE_RECORD,
       appGeneration: APP_GENERATION,
       composeFinalBody: async () => 'body',
@@ -387,6 +398,7 @@ describe('B4b — fail each stage, prove nothing after it ran', () => {
       job: JOB,
       record: QUEUE_RECORD,
       appGeneration: 'gen-never-bound',
+      paneReadiness: () => READY,
       composeFinalBody: async () => 'body',
       now: () => NOW,
       nonce: () => 'n1',
@@ -436,6 +448,7 @@ describe('B4b — fail each stage, prove nothing after it ran', () => {
     const result = await runTelegramAdmissionSequence({
       db,
       job: { ...JOB, routeKey: 'main window', profile: 'main window' },
+      paneReadiness: () => READY,
       record: QUEUE_RECORD,
       appGeneration: APP_GENERATION,
       composeFinalBody: async () => 'body',
@@ -507,6 +520,7 @@ describe('B4b — concurrency and replay', () => {
       record: QUEUE_RECORD,
       appGeneration: APP_GENERATION,
       composeFinalBody: async () => { composeCalls.push('compose'); return 'body'; },
+      paneReadiness: () => READY,
       now: () => NOW,
       nonce: () => 'nonce-fixed-2',
     });

@@ -111,6 +111,8 @@ async function runTelegramAdmissionSequence(input = {}) {
     obligorAddress = 'architect',
     mode = MODES.FULL,
     composeFinalBody,
+    // REQUIRED IN FULL MODE. Deliberately undefaulted: see the B_readiness gate.
+    paneReadiness,
     now = () => Date.now(),
     nonce,
     cutoverId = TELEGRAM_CUTOVER_ID,
@@ -217,6 +219,66 @@ async function runTelegramAdmissionSequence(input = {}) {
   if (String(launch.role) !== String(role)) {
     return refuseHere('B_launch', 'launch_role_mismatch', {
       launchRole: launch.role, offered: role,
+    });
+  }
+
+  // ===================================================================
+  // PANE READINESS, AND IT REFUSES BEFORE ANYTHING IS LATCHED (Oracle #7).
+  //
+  // The launch rows above prove a pane was launched and bound for this
+  // generation. They do NOT prove that pane can ever answer. A runtime that has
+  // never produced a terminal receipt turns every claim into a permanent hold:
+  // B latches, D authorises, the bytes go out, and no proof can ever retire it.
+  // That is not a hypothetical — it is the live diagnosis on this very queue
+  // (`unprovable_pane:runtime_never_produced_proof`), and activating the kernel
+  // without this gate would manufacture one durable hold per message.
+  //
+  // So the question is asked HERE, above B, where the honest answer is still
+  // "nothing happened": no claim, no D, nothing to close, the record stays
+  // queued and visible. A stuck queue is recoverable; a latched-and-unprovable
+  // one needs a human.
+  //
+  // FAIL CLOSED IN EVERY DIRECTION. Absent probe, a throw, a malformed answer,
+  // or anything short of a definite yes all refuse. A readiness gate that
+  // defaults to ready is not a gate, and "I could not tell" is precisely the
+  // state that must not deliver.
+  //
+  // The probe is handed the runtime the LAUNCH REGISTRY recorded, not one the
+  // caller names, so a caller cannot answer for a different pane than the one
+  // about to be written.
+  // ===================================================================
+  if (typeof paneReadiness !== 'function') {
+    return refuseHere('B_readiness', 'sequence_no_pane_readiness_probe');
+  }
+  let readiness;
+  try {
+    readiness = await paneReadiness({
+      runtime: launch.consumerRuntime ?? null,
+      appGeneration,
+      paneId: String(paneId),
+      launchId: launch.launchId,
+      routeKey,
+      updateId,
+    });
+  } catch (err) {
+    return refuseHere('B_readiness', `pane_readiness_threw:${err.message}`);
+  }
+  if (!readiness || typeof readiness !== 'object') {
+    return refuseHere('B_readiness', 'pane_readiness_unreadable', {
+      received: readiness === undefined ? 'undefined' : typeof readiness,
+    });
+  }
+  // `ready` is the sequence's own word. `attainable` is the vocabulary the
+  // proof-capability probe and the health surface already speak, and accepting
+  // both means the drain's existing reason strings survive to the report
+  // instead of being renamed at the boundary.
+  const readyDefinitely = readiness.ready === true || readiness.attainable === true;
+  if (!readyDefinitely) {
+    return refuseHere('B_readiness', 'pane_readiness_unproven', {
+      readinessReason: readiness.reason ?? null,
+      runtime: readiness.runtime ?? launch.consumerRuntime ?? null,
+      lastProofAtMs: readiness.lastProofAtMs ?? null,
+      launchId: launch.launchId,
     });
   }
 

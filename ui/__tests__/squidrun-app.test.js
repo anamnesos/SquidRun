@@ -584,6 +584,24 @@ function seedAdmissionLedgerForApp() {
  * which is the same producer/consumer seam defect this whole lane exists to
  * close, reproduced in a fixture.
  */
+/**
+ * MAKE THE PANE ANSWERABLE, EXPLICITLY.
+ *
+ * The B_readiness gate refuses to latch a claim for a runtime that has never
+ * produced a terminal receipt, because such a claim can only ever become a
+ * permanent hold. In this process the receipt store is empty, so every delivery
+ * here would refuse — correctly, and uselessly for tests about what happens
+ * AFTER a delivery is authorised.
+ *
+ * So the fixture states the fact it depends on rather than inheriting it: this
+ * pane's runtime has proved recently. The real reader (`getReceiptRuntimeActivity`)
+ * has its own suite; what is being fixed here is the app method that feeds the
+ * probe, not the probe or the store.
+ */
+function seedPaneReadinessForApp(app) {
+  app.getTelegramReceiptRuntimeActivity = () => ({ codex: Date.now() - 1000 });
+}
+
 function seedPaneLaunchForCurrentGeneration() {
   const { applyTelegramAdmissionSchema } = require('../modules/main/telegram-admission-store');
   const {
@@ -7349,6 +7367,7 @@ describe('SquidRunApp', () => {
       // AFTER construction: the constructor publishes this process's app
       // generation, and the transport claim joins on exactly that value.
       seedPaneLaunchForCurrentGeneration();
+      seedPaneReadinessForApp(app);
       forceTriggerDeliveryPath(app);
     });
 
@@ -13106,6 +13125,7 @@ describe('SquidRunApp', () => {
     beforeEach(() => {
       app = new SquidRunApp(mockAppContext, mockManagers);
       seedPaneLaunchForCurrentGeneration();
+      seedPaneReadinessForApp(app);
       freshTelegramSpoolRoot();
     });
 
