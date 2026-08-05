@@ -732,12 +732,38 @@ function materializeOversizedPanePayload(text, context = {}) {
     // brief proved it in the trace. The pointer is now BUDGETED: marker +
     // path + one directive, hard-trimmed to fit, previews live in the file.
     const telegramMarker = body.match(/^\s*(\[Telegram[^\]]*\])/i);
+    // WHO IT IS FROM AND WHAT IT SAYS, INSIDE THE SAME BUDGET (James 2026-08-05).
+    // The budgeted pointer fit in ~120 of the 256 bytes and spent none of the
+    // remainder on anything a reader wants. An agent message arrived as a bare
+    // path: no sender, no subject, and the only way to learn either was to open
+    // a file. James, on a phone, reasonably refuses to. A pointer nobody can act
+    // on without a second step is a notification that failed.
+    const agentMarker = body.match(/\((BUILDER|ORACLE|ARCHITECT|SYSTEM WATCHDOG)[^)]*\)/i);
     const prefix = telegramMarker
       ? `${telegramMarker[1].slice(0, 40)} `
-      : '';
-    let pointerText = `${prefix}FULL MSG AT ${displayPath} (${bytes}B oversized inbound; read the file, then act)`;
-    if (getUtf8ByteLength(pointerText) >= DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES) {
-      pointerText = `${prefix}FULL MSG AT ${displayPath}`;
+      : (agentMarker ? `[${agentMarker[1].toUpperCase()}] ` : '');
+    // First real line of the payload, headers and markers stripped, so the
+    // preview is the message rather than its envelope.
+    const firstLine = String(body)
+      .replace(/^\s*\[(Telegram|AGENT MSG)[^\]]*\]\s*:?\s*/i, '')
+      .replace(/^\s*\((BUILDER|ORACLE|ARCHITECT|SYSTEM WATCHDOG)[^)]*\)\s*:?\s*/i, '')
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) || '';
+    const build = (preview) => (
+      preview
+        ? `${prefix}"${preview}" -- FULL MSG AT ${displayPath}`
+        : `${prefix}FULL MSG AT ${displayPath}`
+    );
+    // Widest preview that still fits, shortened until it does. Never grows the
+    // pointer past the threshold that made the fallback dead on arrival before.
+    let pointerText = build('');
+    for (const width of [110, 80, 55, 35]) {
+      const candidate = build(firstLine.slice(0, width));
+      if (getUtf8ByteLength(candidate) < DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES) {
+        pointerText = candidate;
+        break;
+      }
     }
     return { pointerText, filePath, displayPath, bytes, sha256 };
   } catch (err) {
