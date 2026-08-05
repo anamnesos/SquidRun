@@ -319,6 +319,12 @@ function verifyInstalledSchema(db, names = null) {
     // while returning ok. Refuse the question instead of answering it emptily.
     if (unknown.length > 0) return fail('schema_probe_unknown_objects', { unknown });
   }
+  // THE REQUESTED SET, BY UNIQUE NAME. `REQUIRED_SCHEMA_SHAPE` carries several
+  // fingerprints for some objects, so the raw list is longer than the set of
+  // things actually being asked about, and the aggregate below is a statement
+  // about OBJECTS.
+  const requestedObjects = new Set(required.map(([name]) => name));
+  const absentObjects = new Set();
   const missing = [];
   for (const [name, fingerprint] of required) {
     let row;
@@ -327,18 +333,35 @@ function verifyInstalledSchema(db, names = null) {
     } catch (err) {
       return fail(`schema_probe_failed:${err.message}`);
     }
-    if (!row || !row.sql) { missing.push(`${name}:absent`); continue; }
+    if (!row || !row.sql) { missing.push(`${name}:absent`); absentObjects.add(name); continue; }
     if (!String(row.sql).includes(fingerprint)) missing.push(`${name}:stale`);
   }
   if (missing.length > 0) {
     return fail('schema_shape_mismatch', {
       missing,
-      // ABSENT AND STALE ARE DIFFERENT FACTS. Absent everywhere means this
-      // kernel has never written here — a reader may honestly conclude the
-      // record it is looking for does not exist. Anything stale means a table
-      // is present in a shape we cannot trust, and a read over it would return
-      // confident nonsense.
-      allAbsent: missing.every((entry) => entry.endsWith(':absent')),
+      // ABSENT, STALE AND PRESENT-BUT-PARTIAL ARE THREE DIFFERENT FACTS.
+      //
+      // EVERY requested object absent means this kernel has never written here —
+      // a reader may honestly conclude the record it is looking for does not
+      // exist. Anything else means at least one object IS installed, so this is
+      // a database that COULD have written the record and cannot currently be
+      // read, and a reader must hold rather than report an empty result.
+      //
+      // THIS IS COMPUTED FROM THE REQUESTED OBJECT SET, NOT FROM THE DEFECT
+      // LIST, and the difference is the whole bug it replaces. The previous
+      // predicate was `missing.every(entry => entry.endsWith(':absent'))`, which
+      // asks "is every DEFECT an absence" — a question that answers `true` when
+      // six of seven objects are installed and the seventh is missing, because
+      // the six healthy ones contribute no defect entries to quantify over. The
+      // consumer in `telegram-claim-lookup.js` reads this value as "this kernel
+      // has never run against this ledger" and returns no claim, so a partial
+      // schema became a fail-open on the drain's attempt-latch read — the one
+      // read whose null means "nothing has claimed this, go ahead and deliver".
+      //
+      // The rule was already written above that consumer before this predicate
+      // existed: present-but-partial is "I cannot tell", and the path must HOLD.
+      // This is that sentence, implemented.
+      allAbsent: requestedObjects.size > 0 && absentObjects.size === requestedObjects.size,
     });
   }
   return { ok: true };

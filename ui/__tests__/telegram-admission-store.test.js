@@ -24,7 +24,9 @@ const {
   closeUnsentClaim,
   promoteToAdmittedOwned,
   deriveQueueAckIntentKey,
+  CLAIM_READ_SCHEMA_OBJECTS,
 } = require('../modules/main/telegram-admission-store');
+const { findTransportClaim } = require('../modules/main/telegram-claim-lookup');
 
 function createDatabase(filePath) {
   try {
@@ -1459,5 +1461,158 @@ describe('the surviving-mutant closures', () => {
     expect(collision.ok).toBe(false);
     expect(collision.reason).toMatch(/^source_insert_failed:/);
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_source_identity').get().n)).toBe(1);
+  });
+});
+
+// =====================================================================
+// PARTIAL SCHEMA IS NOT AN ABSENT SCHEMA
+// =====================================================================
+//
+// `allAbsent` is the one bit that tells a reader "this kernel has never written
+// here, so concluding the record does not exist is honest". Its consumer is the
+// drain's attempt-latch read, where a null means NOTHING HAS CLAIMED THIS and
+// the caller therefore delivers.
+//
+// The predicate used to be `missing.every(entry => entry.endsWith(':absent'))`,
+// which quantifies over DEFECTS rather than over requested OBJECTS. Six healthy
+// objects contribute no entries, so one missing index out of seven answered
+// `true` and a could-have-claimed ledger read as never-written. These tests are
+// the three-way distinction the consumer's own comment already required:
+// all-absent, present-but-partial, and stale.
+
+describe('verifyInstalledSchema allAbsent means every requested object is absent', () => {
+  /** Drop every claim-read object, leaving the rest of the kernel intact. */
+  function dropAllClaimReadObjects(db) {
+    db.exec('DROP INDEX IF EXISTS idx_tg_claims_exclusive');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_claim_identity_immutable');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_transport_events_no_update');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_transport_events_no_delete');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_source_identity_immutable');
+    db.exec('DROP TABLE IF EXISTS telegram_transport_claims');
+    db.exec('DROP TABLE IF EXISTS telegram_source_identity');
+  }
+
+  const installedCount = (db) => CLAIM_READ_SCHEMA_OBJECTS
+    .filter((name) => db.prepare('SELECT name FROM sqlite_master WHERE name = ?').get(name))
+    .length;
+
+  test('a healthy claim schema verifies and emits no aggregate at all', () => {
+    const db = freshDb();
+    expect(installedCount(db)).toBe(CLAIM_READ_SCHEMA_OBJECTS.length);
+    expect(verifyInstalledSchema(db, [...CLAIM_READ_SCHEMA_OBJECTS])).toEqual({ ok: true });
+  });
+
+  test('EVERY requested object absent is allAbsent true', () => {
+    const db = freshDb();
+    dropAllClaimReadObjects(db);
+    expect(installedCount(db)).toBe(0);
+
+    const verified = verifyInstalledSchema(db, [...CLAIM_READ_SCHEMA_OBJECTS]);
+    expect(verified.ok).toBe(false);
+    expect(verified.reason).toBe('schema_shape_mismatch');
+    expect(verified.detail.allAbsent).toBe(true);
+  });
+
+  test('ONE absent with the rest installed is allAbsent FALSE — the partial-schema case', () => {
+    const db = freshDb();
+    // Exactly the state Oracle reproduced: a single dropped index against six
+    // healthy objects. The old predicate called this "never written".
+    db.exec('DROP INDEX idx_tg_claims_exclusive');
+    expect(installedCount(db)).toBe(CLAIM_READ_SCHEMA_OBJECTS.length - 1);
+
+    const verified = verifyInstalledSchema(db, [...CLAIM_READ_SCHEMA_OBJECTS]);
+    expect(verified.ok).toBe(false);
+    expect(verified.detail.missing).toEqual(['idx_tg_claims_exclusive:absent']);
+    expect(verified.detail.allAbsent).toBe(false);
+  });
+
+  test('one STALE with everything else absent is allAbsent FALSE', () => {
+    const db = freshDb();
+    dropAllClaimReadObjects(db);
+    // A table under the right name in the wrong shape is a build that COULD
+    // have claimed. Every OTHER requested object is genuinely absent, so a
+    // defect-list predicate sees one `:stale` among absences; an object-set
+    // predicate sees one object present.
+    db.exec('CREATE TABLE telegram_transport_claims (claim_id TEXT PRIMARY KEY)');
+    expect(installedCount(db)).toBe(1);
+
+    const verified = verifyInstalledSchema(db, [...CLAIM_READ_SCHEMA_OBJECTS]);
+    expect(verified.ok).toBe(false);
+    expect(verified.detail.missing).toContain('telegram_transport_claims:stale');
+    expect(verified.detail.allAbsent).toBe(false);
+  });
+
+  test('the aggregate is over unique OBJECTS, not over fingerprint entries', () => {
+    // Several objects carry more than one fingerprint in REQUIRED_SCHEMA_SHAPE,
+    // so a count of defect entries is not a count of objects. Asserted directly
+    // so a future refactor to entry-counting fails here rather than in the drain.
+    const db = freshDb();
+    dropAllClaimReadObjects(db);
+    const verified = verifyInstalledSchema(db, [...CLAIM_READ_SCHEMA_OBJECTS]);
+    const distinctNames = new Set(verified.detail.missing.map((entry) => entry.split(':')[0]));
+    expect(distinctNames.size).toBe(CLAIM_READ_SCHEMA_OBJECTS.length);
+    expect(verified.detail.missing.length).toBeGreaterThanOrEqual(distinctNames.size);
+    expect(verified.detail.allAbsent).toBe(true);
+  });
+});
+
+// =====================================================================
+// AND THE CONSUMER HOLDS, WHICH IS THE POINT OF THE BIT
+// =====================================================================
+
+describe('the drain claim lookup holds on a partial claim schema', () => {
+  /** A temp ledger on disk, so the real lookup can open it by path. */
+  function ledgerOnDisk() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-claim-lookup-'));
+    tempRoots.push(root);
+    const dbPath = path.join(root, 'ledger.db');
+    const db = openRealLedger(dbPath);
+    applyTelegramAdmissionSchema(db);
+    seedLaunchAndSession(db);
+    return { db, dbPath };
+  }
+
+  const lookup = (dbPath) => findTransportClaim({
+    dbPath,
+    updateId: 900_000_001,
+    routeKey: 'main',
+    cutoverId: CUTOVER,
+  });
+
+  test('a complete claim schema with no claim row answers "nothing has claimed this"', () => {
+    const { dbPath } = ledgerOnDisk();
+    expect(lookup(dbPath)).toBeNull();
+  });
+
+  test('EVERY claim object absent still answers null, because that is an honest never-written', () => {
+    // The fresh-install path this bit exists to protect. If the repair broke
+    // this, a first Telegram message would hold forever.
+    const { db, dbPath } = ledgerOnDisk();
+    db.exec('DROP INDEX IF EXISTS idx_tg_claims_exclusive');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_claim_identity_immutable');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_transport_events_no_update');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_transport_events_no_delete');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_source_identity_immutable');
+    db.exec('DROP TABLE IF EXISTS telegram_transport_claims');
+    db.exec('DROP TABLE IF EXISTS telegram_source_identity');
+
+    expect(lookup(dbPath)).toBeNull();
+  });
+
+  test('ONE absent object makes the lookup THROW instead of reporting no claim', () => {
+    const { db, dbPath } = ledgerOnDisk();
+    db.exec('DROP INDEX idx_tg_claims_exclusive');
+
+    // The drain maps a throw to a hold and a null to "go ahead and deliver".
+    // Before the predicate was corrected this returned null.
+    expect(() => lookup(dbPath)).toThrow(/transport claim schema unverified/);
+  });
+
+  test('a stale-shaped claim table makes the lookup THROW', () => {
+    const { db, dbPath } = ledgerOnDisk();
+    db.exec('DROP TABLE telegram_transport_claims');
+    db.exec('CREATE TABLE telegram_transport_claims (claim_id TEXT PRIMARY KEY)');
+
+    expect(() => lookup(dbPath)).toThrow(/transport claim schema unverified/);
   });
 });
