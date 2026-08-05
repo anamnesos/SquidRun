@@ -54,6 +54,8 @@
  */
 const crypto = require('node:crypto');
 
+const { readStampedProtocol } = require('./telegram-source-protocol');
+
 /**
  * PHASE 1 OF TWO. This schema records ADMISSION, not consumption, and the name
  * is load-bearing.
@@ -198,7 +200,7 @@ function mediaIdentity(media) {
  * are the message.
  */
 function canonicalQueuedPayloadDigest(record = {}) {
-  const canonical = JSON.stringify({
+  const payload = {
     v: 2,
     updateId: Number(record.updateId),
     updateKind: record.updateKind ?? null,
@@ -215,8 +217,39 @@ function canonicalQueuedPayloadDigest(record = {}) {
     photo: mediaIdentity(record.photo),
     video: mediaIdentity(record.video),
     document: mediaIdentity(record.document),
-  });
-  return sha256(canonical);
+  };
+
+  // ===================================================================
+  // THE POST-CUTOVER TUPLE IS COVERED, AND LEGACY RECORDS DO NOT MOVE (v7 §1).
+  //
+  // v7 requires the canonical source digest to cover the new protocol fields,
+  // because an unstamped digest would let a record's transport identity change
+  // without its digest changing - and that digest is what the decision, plan and
+  // proof tables all join on.
+  //
+  // But it ALSO requires that "existing records 808499316..808499327 stay legacy
+  // byte-for-byte". Those two together mean the new fields cannot simply be
+  // added to the v2 object: doing that would emit four extra nulls for every
+  // record in the live queue and change all twelve digests, which is the live
+  // fence this repair is under orders not to touch.
+  //
+  // So the shape is versioned by CONTENT, not by build. A record with no
+  // complete stamp hashes exactly the v2 bytes it hashes today - same key order,
+  // same values, same digest - and a stamped record gets the v3 shape that
+  // covers its tuple. There is a test pinning a live-shaped legacy record to its
+  // literal digest so this can never drift silently.
+  // ===================================================================
+  const stamped = readStampedProtocol(record);
+  if (!stamped) return sha256(JSON.stringify(payload));
+
+  return sha256(JSON.stringify({
+    ...payload,
+    v: 3,
+    transportProtocol: stamped.transportProtocol,
+    decisionCutoverId: stamped.decisionCutoverId,
+    producerAppGeneration: stamped.producerAppGeneration,
+    producerSessionId: stamped.producerSessionId,
+  }));
 }
 
 function isNonEmptyString(value) {
@@ -419,16 +452,254 @@ function validateAdmissionRecord(input = {}) {
   return { proven: true, reason: 'admission_proven' };
 }
 
+/* =====================================================================
+ * PHASE 2. THE TERMINAL RECORD — the only thing that may retire a record.
+ *
+ * `TERMINAL_SCHEMA` has existed as a NAME since the admission checkpoint, with
+ * nothing behind it: no builder, no validator, no table, no lookup. A constant
+ * declaring that some other record will one day authorise retirement is not a
+ * two-phase design, it is a one-phase design with a promise attached — and the
+ * promise reads, to anything downstream, exactly like the thing itself.
+ *
+ * WHAT MAKES A RECORD TERMINAL. Admission fires at `UserPromptSubmit`, which
+ * Codex runs BEFORE `record_pending_input` and which also fires on TurnAborted.
+ * So admission answers "the exact bytes reached the consumer boundary" and
+ * nothing more. Terminal fires when that same bound submission REACHES ITS END:
+ * the turn that received those bytes ran and stopped. The two are separated by
+ * the case that matters — a turn that admits "Kristine muller approved job,
+ * change job to invoice" and then aborts produces an admission and must produce
+ * no terminal record at all.
+ *
+ * WHY IT IS BUILT FROM THE ADMISSION RECORD RATHER THAN FROM CALLER INPUT.
+ * Every identity field here already exists, verbatim, in a stored, immutable,
+ * trigger-protected admission row. Re-accepting those fields from a caller
+ * would create a second account of the same delivery that could disagree with
+ * the first, and the validator would then be checking the newer, weaker one
+ * with complete rigour. The terminal record COPIES; it does not re-assert.
+ * ===================================================================== */
+
+/** The only positive terminal class. Admission's class is deliberately absent. */
+const TERMINAL_PROOF_CLASSES = Object.freeze(new Set(['prompt_consumed']));
+
+/**
+ * How the consumer's turn ended. Only a real, observed end-of-turn event may
+ * appear here, and the set is closed: an unrecognised event name is refused
+ * rather than treated as a generic "something happened".
+ *
+ * `turn_completed` is the runtime's own end-of-turn hook (Codex `Stop`,
+ * Claude `Stop`). There is deliberately NO entry for "the model produced
+ * output", "the pane looked idle", or any inference — each of those is the
+ * shape that certified 2417 bytes for a 125-character tail.
+ */
+const TERMINAL_EVENTS = Object.freeze(new Set(['turn_completed']));
+
+/**
+ * Everything a terminal record must carry. It is the admission tuple PLUS the
+ * three fields that make it terminal, because a validator that had to join to
+ * another table to learn the identity of the thing in front of it is a
+ * validator that can be fed a row whose join has since been rewritten.
+ */
+const TERMINAL_REQUIRED_FIELDS = Object.freeze([
+  ...REQUIRED_FIELDS,
+  // WHICH ADMISSION THIS TERMINATES. Without it a terminal record floats free
+  // of the exact bytes that were admitted, and "the turn ended" stops being a
+  // statement about this delivery.
+  'admissionId',
+  'terminalEvent',
+  'terminalAtMs',
+]);
+
+/**
+ * Build the terminal record for an admission that has now reached end-of-turn.
+ *
+ * @param {object} input
+ *   admissionRecord  the VERBATIM stored admission record (parsed record_json)
+ *   admissionId      its derived primary key
+ *   terminalEvent    a member of TERMINAL_EVENTS
+ *   terminalAtMs     when the turn ended
+ * @returns {{ok: true, record: object} | {ok: false, reason: string}}
+ */
+function buildConsumedRecord(input = {}) {
+  const admission = input.admissionRecord;
+  if (!admission || typeof admission !== 'object' || Array.isArray(admission)) {
+    return { ok: false, reason: 'no_admission_record' };
+  }
+  if (admission.schema !== SCHEMA) {
+    return { ok: false, reason: `admission_wrong_schema:${admission.schema || 'none'}` };
+  }
+  if (!POSITIVE_PROOF_CLASSES.has(admission.proofClass)) {
+    return { ok: false, reason: `admission_not_positive_class:${admission.proofClass || 'none'}` };
+  }
+  if (!isNonEmptyString(input.admissionId)) {
+    return { ok: false, reason: 'no_admission_id' };
+  }
+  const terminalEvent = isNonEmptyString(input.terminalEvent) ? input.terminalEvent.trim() : null;
+  if (!terminalEvent || !TERMINAL_EVENTS.has(terminalEvent)) {
+    return { ok: false, reason: `terminal_event_unrecognised:${terminalEvent || 'none'}` };
+  }
+  const terminalAtMs = Number(input.terminalAtMs);
+  if (!Number.isSafeInteger(terminalAtMs) || terminalAtMs <= 0) {
+    return { ok: false, reason: 'terminal_time_unknown' };
+  }
+  // A TURN CANNOT END BEFORE IT WAS ADMITTED. A clock that says otherwise is
+  // describing two different deliveries, so refuse rather than record it.
+  const admittedAtMs = Number(admission.consumedAtMs);
+  if (!Number.isSafeInteger(admittedAtMs) || admittedAtMs <= 0) {
+    return { ok: false, reason: 'admission_time_unknown' };
+  }
+  if (terminalAtMs < admittedAtMs) {
+    return { ok: false, reason: 'terminal_predates_admission' };
+  }
+
+  // Field-by-field COPY from the admission record. A spread would silently
+  // carry any future admission field into a schema that never declared it.
+  const record = { schema: TERMINAL_SCHEMA, proofClass: 'prompt_consumed' };
+  for (const field of REQUIRED_FIELDS) {
+    if (field === 'schema' || field === 'proofClass') continue;
+    record[field] = admission[field];
+  }
+  record.consumerTurnId = admission.consumerTurnId ?? null;
+  record.admissionId = String(input.admissionId);
+  record.terminalEvent = terminalEvent;
+  record.terminalAtMs = terminalAtMs;
+  return { ok: true, record };
+}
+
+/**
+ * IS THIS A WELL-FORMED TERMINAL RECORD AT ALL — asked WITHOUT an expectation.
+ *
+ * The lookup layer needs this and must not have the other one. Handing a
+ * partial `expected` to `validateConsumedRecord` would make it report
+ * `expected_identity_missing:claimId` for a perfectly good record, and the
+ * obvious "fix" is for the lookup to fill the gaps from what it was asked
+ * about — which is identity synthesis, arriving by the back door, in the exact
+ * function whose whole purpose is to stop it.
+ *
+ * So the split is: this answers "is this a terminal record", and the caller's
+ * own proof gate answers "is it about the message I asked for". Neither ever
+ * writes a field it then reads back as evidence.
+ */
+function validateConsumedRecordShape(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return { ok: false, reason: 'no_proof' };
+  }
+  if (record.schema === SCHEMA) return { ok: false, reason: 'admission_is_not_terminal_proof' };
+  if (record.schema !== TERMINAL_SCHEMA) {
+    return { ok: false, reason: `wrong_schema:${record.schema || 'none'}` };
+  }
+  if (!isNonEmptyString(record.proofClass) || !TERMINAL_PROOF_CLASSES.has(record.proofClass)) {
+    return { ok: false, reason: `not_a_terminal_proof_class:${record.proofClass || 'none'}` };
+  }
+  for (const field of TERMINAL_REQUIRED_FIELDS) {
+    const value = record[field];
+    if (value === null || value === undefined || String(value).trim() === '') {
+      return { ok: false, reason: `proof_field_missing:${field}` };
+    }
+  }
+  if (!TERMINAL_EVENTS.has(String(record.terminalEvent))) {
+    return { ok: false, reason: `terminal_event_unrecognised:${record.terminalEvent}` };
+  }
+  const terminalAtMs = Number(record.terminalAtMs);
+  const consumedAtMs = Number(record.consumedAtMs);
+  if (!Number.isFinite(terminalAtMs) || terminalAtMs <= 0) {
+    return { ok: false, reason: 'terminal_time_unknown' };
+  }
+  if (!Number.isFinite(consumedAtMs) || consumedAtMs <= 0) {
+    return { ok: false, reason: 'proof_time_unknown' };
+  }
+  if (terminalAtMs < consumedAtMs) return { ok: false, reason: 'terminal_predates_admission' };
+  return { ok: true };
+}
+
+/**
+ * THE ONE TERMINAL VALIDATOR. Only a record this function proves may retire a
+ * Telegram ingress record on the automatic path.
+ *
+ * Reuses the admission validator for the whole shared tuple rather than
+ * restating it: two copies of an identity comparison drift, and the half that
+ * drifts looser is the one that ends up in front of James.
+ *
+ * @param {object} input
+ *   proof     candidate `telegram_consumed.v1` record
+ *   expected  identity the drain recorded when it delivered
+ *   attempt   {atMs, generation} from the durable latch, or null
+ */
+function validateConsumedRecord(input = {}) {
+  const { proof, expected, attempt } = input;
+
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) {
+    return { proven: false, reason: 'no_proof' };
+  }
+  if (!expected || typeof expected !== 'object') {
+    return { proven: false, reason: 'no_expected_identity' };
+  }
+  // CLASS FIRST, and it must be the TERMINAL class. An admission record
+  // reaching this function is the exact confusion the two-phase split exists to
+  // prevent, so it is named as such rather than failing on a missing field.
+  if (proof.schema === SCHEMA) {
+    return { proven: false, reason: 'admission_is_not_terminal_proof' };
+  }
+  if (proof.schema !== TERMINAL_SCHEMA) {
+    return { proven: false, reason: `wrong_schema:${proof.schema || 'none'}` };
+  }
+  if (!isNonEmptyString(proof.proofClass) || !TERMINAL_PROOF_CLASSES.has(proof.proofClass)) {
+    return { proven: false, reason: `not_a_terminal_proof_class:${proof.proofClass || 'none'}` };
+  }
+  for (const field of TERMINAL_REQUIRED_FIELDS) {
+    const value = proof[field];
+    if (value === null || value === undefined || String(value).trim() === '') {
+      return { proven: false, reason: `proof_field_missing:${field}` };
+    }
+  }
+  if (!TERMINAL_EVENTS.has(String(proof.terminalEvent))) {
+    return { proven: false, reason: `terminal_event_unrecognised:${proof.terminalEvent}` };
+  }
+
+  // THE SHARED TUPLE, judged by the shared validator. It is handed a copy
+  // wearing the admission schema/class precisely so that the identity, digest
+  // and attempt-generation comparisons run byte-identically for both phases.
+  const asAdmission = { ...proof, schema: SCHEMA, proofClass: 'prompt_admitted' };
+  const shared = validateAdmissionRecord({ proof: asAdmission, expected, attempt });
+  if (!shared.proven) return shared;
+
+  // TERMINAL ORDERING. Admission time was already ordered against the attempt
+  // by the shared pass; the turn's end must in turn postdate its own admission.
+  const terminalAtMs = Number(proof.terminalAtMs);
+  if (!Number.isFinite(terminalAtMs) || terminalAtMs <= 0) {
+    return { proven: false, reason: 'terminal_time_unknown' };
+  }
+  if (terminalAtMs < Number(proof.consumedAtMs)) {
+    return { proven: false, reason: 'terminal_predates_admission' };
+  }
+
+  // THE ADMISSION IT TERMINATES, when the caller knows which one to expect.
+  // Absence of an expectation is not licence to skip the field — it is required
+  // above — it only means nobody has an independent value to compare against.
+  if (expected.admissionId !== undefined && expected.admissionId !== null
+    && String(expected.admissionId).trim() !== ''
+    && !sameScalar(proof.admissionId, expected.admissionId)) {
+    return { proven: false, reason: 'admission_id_mismatch' };
+  }
+
+  return { proven: true, reason: 'terminal_consumption_proven' };
+}
+
 module.exports = {
   SCHEMA,
   ADMISSION_SCHEMA: SCHEMA,
   TERMINAL_SCHEMA,
   POSITIVE_PROOF_CLASSES,
+  TERMINAL_PROOF_CLASSES,
+  TERMINAL_EVENTS,
   PRODUCER_STATES,
   REQUIRED_FIELDS,
+  TERMINAL_REQUIRED_FIELDS,
   sha256,
   byteLength,
   canonicalQueuedPayloadDigest,
   buildAdmissionRecord,
   validateAdmissionRecord,
+  buildConsumedRecord,
+  validateConsumedRecord,
+  validateConsumedRecordShape,
 };

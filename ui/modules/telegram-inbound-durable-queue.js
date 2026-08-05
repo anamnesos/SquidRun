@@ -95,8 +95,25 @@ function sealTornTail(file) {
 }
 
 /**
+ * The v7 §1 source-protocol stamp. Named here rather than imported so this
+ * low-level queue keeps no dependency on the admission modules that read it;
+ * the list is asserted equal to the canonical one in the protocol tests.
+ */
+const SOURCE_PROTOCOL_FIELDS = Object.freeze([
+  'transportProtocol',
+  'decisionCutoverId',
+  'producerAppGeneration',
+  'producerSessionId',
+]);
+
+/**
  * Append one inbound update. Idempotent on updateId: re-appending the same id
  * is a no-op, so a replayed poll cannot duplicate a message to the user.
+ *
+ * THE DEDUPE IS ALSO THE STAMP'S IMMUTABILITY GUARANTEE. A replay after a
+ * restart returns early on the existing id and never rewrites the stored line,
+ * so the record keeps the generation that first wrote it (v7 §1, Architect
+ * #106).
  */
 function append(dir, entry = {}) {
   const updateId = normalizeUpdateId(entry.updateId);
@@ -132,6 +149,26 @@ function append(dir, entry = {}) {
     targetWindow: entry.targetWindow ?? null,
     targetSession: entry.targetSession ?? null,
   };
+
+  // ===================================================================
+  // THE PROTOCOL STAMP IS PERSISTED, OR THE RECORD ON DISK IS LEGACY (v7 §1).
+  //
+  // This record is built by PICKING named fields, so a stamp the spool computed
+  // and handed over was simply dropped on the way to disk. The caller saw
+  // ok:true, the in-memory object had the fields, and the durable record - the
+  // only thing that survives a restart, and the only thing the classifier ever
+  // reads - was unstamped and therefore legacy. Silent success: the exact
+  // failure class this lane keeps finding, arriving in the first new commit.
+  //
+  // Added CONDITIONALLY, so a record written without a stamp keeps its exact
+  // historical key set and its exact digest. Absent is not null here: writing
+  // four explicit nulls would change the JSON of every legacy journal line.
+  // ===================================================================
+  for (const field of SOURCE_PROTOCOL_FIELDS) {
+    if (typeof entry[field] === 'string' && entry[field].trim()) {
+      record[field] = entry[field];
+    }
+  }
   // TORN-TAIL REPAIR, and this one bites hard: a crash mid-append leaves a
   // partial line with NO trailing newline. The next append would concatenate
   // its own complete JSON onto that fragment, producing one unparseable line —
@@ -464,6 +501,7 @@ function appendDisposition(dir, updateId, disposition, evidence, atMs = null) {
 
 module.exports = {
   append,
+  SOURCE_PROTOCOL_FIELDS,
   attemptsPath,
   dispositionsPath,
   readDispositions,

@@ -41,4 +41,58 @@ function currentAppGeneration() {
   return String(process.env[ENV_APP_GENERATION] ?? '');
 }
 
-module.exports = { ENV_APP_GENERATION, publishAppGeneration, currentAppGeneration };
+/**
+ * THE SCHEDULING SESSION, PUBLISHED THE SAME WAY AND FOR THE SAME REASON.
+ *
+ * =====================================================================
+ * WHY A SECOND VALUE WHEN PRODUCTION CURRENTLY HAS ONE
+ * =====================================================================
+ * `commsSessionScopeId` is BOTH the app generation and the producer session id
+ * today — `publishAppGeneration(...)` is assigned straight into it, so
+ * `currentAppGeneration()` and the spool's `producerSessionId` are the same
+ * string. That is a live fact, not a design: the ledger app session
+ * (`app-session-N`) is a different identifier that becomes known later in
+ * startup and is never published anywhere a fence could read it.
+ *
+ * The fence has to bind BOTH (Architect #178 §5), and a "session" that is
+ * literally the generation restated proves nothing a second time. So the ledger
+ * session gets its own publication, from the app, at the point it is known —
+ * and until it is published, `currentAppSchedulingSession()` is empty and every
+ * consumer HOLDs. An empty authority is the correct answer to "who owns
+ * scheduling" before anyone does; the defect this module exists to stop was a
+ * consumer inventing a value rather than reading a published one.
+ */
+const ENV_APP_SCHEDULING_SESSION = 'SQUIDRUN_APP_SCHEDULING_SESSION';
+
+/**
+ * Publish `sessionId` as this generation's scheduling session and return it.
+ *
+ * ONE PUBLICATION PER GENERATION. A second call with a DIFFERENT value is
+ * refused rather than allowed to win: the fence and the writer capture bind this
+ * string, and a value that moved mid-generation would mean two artifacts issued
+ * by "the same session" that disagree about which session that was. Re-
+ * publishing the identical value is a harmless no-op, because startup legitimately
+ * passes the same id through more than one assignment site.
+ */
+function publishAppSchedulingSession(sessionId) {
+  const value = String(sessionId ?? '').trim();
+  if (!value) return null;
+  const existing = String(process.env[ENV_APP_SCHEDULING_SESSION] ?? '').trim();
+  if (existing && existing !== value) return null;
+  process.env[ENV_APP_SCHEDULING_SESSION] = value;
+  return value;
+}
+
+/** The published scheduling session. Empty string when nothing is published. */
+function currentAppSchedulingSession() {
+  return String(process.env[ENV_APP_SCHEDULING_SESSION] ?? '');
+}
+
+module.exports = {
+  ENV_APP_GENERATION,
+  ENV_APP_SCHEDULING_SESSION,
+  publishAppGeneration,
+  currentAppGeneration,
+  publishAppSchedulingSession,
+  currentAppSchedulingSession,
+};

@@ -26,6 +26,9 @@ const path = require('node:path');
 const queue = require('../modules/telegram-inbound-durable-queue');
 const spool = require('../modules/main/telegram-ingress-spool');
 const { createDrainCoordinator } = require('../modules/main/telegram-ingress-drain');
+const { classifySourceRecord, SOURCE_PROTOCOLS } = require('../modules/main/telegram-source-protocol');
+const { LEGACY_SETTLEMENT } = require('../modules/main/telegram-activation-mode');
+const { createClaimLatchDouble } = require('./helpers/telegram-claim-latch-double');
 
 const tempRoots = [];
 function tempRoot() {
@@ -47,23 +50,40 @@ const INCIDENT = [
   { updateId: 808499319, text: 'Hello?' },
 ];
 
+/**
+ * THE INCIDENT RECORDS ARE LEGACY, AND THAT IS THE WHOLE POINT OF THIS FILE.
+ *
+ * 808499317..319 are three of the twelve unstamped records that were actually
+ * on disk during the outage. Seeding them through `spool.acceptInbound` stamped
+ * them `decision_v1` (v7 §1 — the spool fails closed without a producer
+ * identity and therefore always stamps), which made this suite reproduce the
+ * incident on a protocol that did not exist when the incident happened, and
+ * which the v7 §2 gate must refuse outright. Append them the way they were
+ * written: unstamped, and asserted so.
+ */
 function seedIncident(base, updates = INCIDENT) {
-  let dir = null;
+  const resolved = spool.resolveSpoolDir(base, 'main');
+  expect(resolved.ok).toBe(true);
   for (const { updateId, text } of updates) {
-    const res = spool.acceptInbound({
-      dataRoot: base,
-      routeKey: 'main',
+    const res = queue.append(resolved.dir, {
+      updateId,
       text,
       from: 'james',
-      metadata: { updateId, chatId: CHAT, messageId: updateId },
+      chatId: CHAT,
+      messageId: updateId,
+      routeKey: 'main',
+      rawMetadata: { updateId, chatId: CHAT, messageId: updateId },
+      profile: 'main',
       targetProfile: 'main',
       targetWindow: 'main',
       targetSession: 'session-at-append',
     });
     expect(res.ok).toBe(true);
-    dir = res.dir;
   }
-  return dir;
+  for (const record of queue.readPending(resolved.dir)) {
+    expect(classifySourceRecord(record).protocol).toBe(SOURCE_PROTOCOLS.LEGACY);
+  }
+  return resolved.dir;
 }
 
 /** A delivery adapter that knows what it delivered, as the real boundary does. */
@@ -83,19 +103,34 @@ function provenFor(job, atMs) {
 
 const UNPROVEN = { status: 'accepted.daemon_pty_unverified', accepted: true };
 
+/** The post-cutover attempt latch; see helpers/telegram-claim-latch-double. */
+let latch;
+beforeEach(() => {
+  latch = createClaimLatchDouble({ generation: () => GENERATION });
+});
+
 function coordinator(overrides = {}) {
+  const { deliver, sessionGeneration, now, ...rest } = overrides;
+  const generation = sessionGeneration || (() => GENERATION);
+  const clock = now || (() => Date.now());
   return createDrainCoordinator({
     queue,
     log: silentLog,
     resolveRoute: () => ({ ok: true, profile: 'main', windowKey: 'main' }),
     currentSessionFor: () => 'session-now',
-    sessionGeneration: () => GENERATION,
+    sessionGeneration: generation,
+    now: clock,
     // A pane runtime that demonstrably produces proof, unless a test says
     // otherwise. `nowMs` is supplied by the coordinator's clock.
     paneRuntimeFor: () => 'claude',
     receiptActivity: () => ({ claude: Date.now() }),
-    deliver: async (job) => provenFor(job, Date.now()),
-    ...overrides,
+    lookupTransportClaim: latch.lookupTransportClaim,
+    closeUnsentTransportClaim: latch.closeUnsentTransportClaim,
+    // v7 section 3 Phase L: no operating state, no pass. Overridable via
+    // `rest` for the tests that attack the mode itself.
+    activationMode: () => LEGACY_SETTLEMENT,
+    ...rest,
+    deliver: latch.wrapDeliver(deliver || (async (job) => provenFor(job, Date.now())), { generation, now: clock }),
   });
 }
 
@@ -460,7 +495,18 @@ describe('gate 2 — retiring 808499316 without re-injecting it', () => {
     }).schedule(dir, 'main');
 
     expect(shown).toEqual([]);
-    expect(res.stoppedAt).toMatchObject({ updateId: 808499316, reason: 'unknown_terminal_disposition' });
+    // STRICTER THAN IT USED TO BE, and correctly so. This once reported
+    // `unknown_terminal_disposition` for the one record: the drain read the
+    // sidecar leniently, found a string nobody defined, and held that update.
+    // Under the v7 §2 gate an unrecognised disposition is not a fact about one
+    // record, it is a file this build cannot fully read — so the whole pass
+    // refuses and the head reports why. Same outcome for James (nothing was
+    // retired, nothing was delivered), a truer statement about the cause.
+    expect(res.stoppedAt).toMatchObject({
+      updateId: 808499316,
+      reason: 'legacy_journal_gate:disposition_unrecognized',
+      resolutionRequired: true,
+    });
   });
 
   test('A DISPOSITION WITHOUT EVIDENCE CANNOT BE WRITTEN AT ALL', () => {
@@ -483,7 +529,7 @@ describe('gate 2 — retiring 808499316 without re-injecting it', () => {
     }).schedule(dir, 'main');
 
     expect(shown).toEqual([]);
-    expect(res.stoppedAt.reason).toMatch(/unreadable/);
+    expect(res.stoppedAt.reason).toBe('legacy_journal_gate:disposition_unparseable_record');
   });
 
   test('THE RECOVERY LEAVES THE INBOUND JOURNAL BYTE-FOR-BYTE UNCHANGED', () => {
@@ -506,12 +552,17 @@ describe('the attempt latch carries provenance', () => {
 
     await drain.schedule(dir, 'main');
 
-    const records = queue.readAttemptRecords(dir);
-    expect(records.get(808499317)).toEqual({
-      state: 'attempted',
-      atMs: clock,
-      generation: GENERATION,
+    // B5: the attempt is the CLAIM, and it carries the same two facts the JSONL
+    // row used to. Without both, no receipt can ever be ordered against it —
+    // which is exactly why 808499316 can never retire.
+    const claim = latch.claims.get('main:808499317');
+    expect(claim).toMatchObject({
+      state: 'delivery_started',
+      attemptAtMs: clock,
+      appGeneration: GENERATION,
     });
+    // And no legacy row was created for a post-cutover record.
+    expect(queue.readAttemptRecords(dir).has(808499317)).toBe(false);
   });
 
   test('A v0 ENTRY WITH NO TIMESTAMP still parses, and still holds', async () => {

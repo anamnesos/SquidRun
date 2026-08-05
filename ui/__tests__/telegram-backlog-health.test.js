@@ -21,6 +21,12 @@ function snapshot(overrides = {}) {
     proofUnattainable: false,
     attemptedCount: 0,
     lastRetirementAtMs: null,
+    // v7 §3 Phase L. The default fixture is a channel in a state it can
+    // operate in, so the existing scoring tests keep testing what they were
+    // written to test; the mode's own cases set these explicitly below.
+    activationMode: 'legacy_settlement',
+    activationModeHealthy: true,
+    activationModeReason: null,
     ...overrides,
   };
 }

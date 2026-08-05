@@ -18,6 +18,9 @@ const {
   isCorrelatedProof,
   looksAccepted,
 } = require('../modules/main/telegram-ingress-drain');
+const { classifySourceRecord, SOURCE_PROTOCOLS } = require('../modules/main/telegram-source-protocol');
+const { LEGACY_SETTLEMENT } = require('../modules/main/telegram-activation-mode');
+const { createClaimLatchDouble } = require('./helpers/telegram-claim-latch-double');
 
 const tempRoots = [];
 function tempRoot() {
@@ -36,7 +39,58 @@ const CHAT = 4242;
 // delivery boundary, which knows all three.
 const GENERATION = 'gen-test';
 
+/**
+ * =====================================================================
+ * THE FIXTURES SEED LEGACY, BECAUSE THE LIVE QUEUE IS LEGACY
+ * =====================================================================
+ * This used to seed through `spool.acceptInbound`, which fails closed without a
+ * producer identity and therefore STAMPS every record it appends as
+ * `decision_v1` (v7 §1). So every assertion in this file — order, at-most-once,
+ * the proof gate, all of it — was being made about a post-cutover source, while
+ * the twelve records actually sitting in the live queue (808499316..327) are
+ * unstamped legacy and are the ones this repair has to drain.
+ *
+ * That gap was invisible until the v7 §2 gate landed and correctly HELD every
+ * fixture: `decision_v1` with no journal match has no stable cutover fence in
+ * this build, so it may not reach claim or deliver. A green suite that proved
+ * delivery on a protocol the drain is required to refuse was proving the wrong
+ * thing in the most reassuring possible way.
+ *
+ * So the default seed appends an unstamped record directly, exactly as the
+ * existing twelve were written — same fields the spool builds, minus the stamp
+ * it did not have — and asserts the classifier agrees. `seedDecisionV1` is the
+ * separate, explicit door for the post-cutover HOLD cases.
+ */
 function seed(base, routeKey, updateIds, extra = {}) {
+  const resolved = spool.resolveSpoolDir(base, routeKey);
+  expect(resolved.ok).toBe(true);
+  for (const updateId of updateIds) {
+    const meta = { updateId, chatId: CHAT, messageId: updateId * 10, media: { kind: 'photo' }, extra: 'kept' };
+    const res = queue.append(resolved.dir, {
+      updateId,
+      text: `body ${updateId}`,
+      from: 'james',
+      chatId: meta.chatId,
+      messageId: meta.messageId,
+      media: meta.media,
+      routeKey,
+      rawMetadata: meta,
+      profile: routeKey,
+      targetProfile: routeKey,
+      targetWindow: routeKey === 'main' ? 'main' : routeKey,
+      targetSession: 'session-at-append',
+      ...extra,
+    });
+    expect(res.ok).toBe(true);
+  }
+  for (const record of queue.readPending(resolved.dir)) {
+    expect(classifySourceRecord(record).protocol).toBe(SOURCE_PROTOCOLS.LEGACY);
+  }
+  return resolved.dir;
+}
+
+/** The production door, which always stamps. Used only where that is the point. */
+function seedDecisionV1(base, routeKey, updateIds, extra = {}) {
   let dir = null;
   for (const updateId of updateIds) {
     const res = spool.acceptInbound({
@@ -48,10 +102,15 @@ function seed(base, routeKey, updateIds, extra = {}) {
       targetProfile: routeKey,
       targetWindow: routeKey === 'main' ? 'main' : routeKey,
       targetSession: 'session-at-append',
+      producerAppGeneration: 'app-session-test',
+      producerSessionId: 'sess-test',
       ...extra,
     });
     expect(res.ok).toBe(true);
     dir = res.dir;
+  }
+  for (const record of queue.readPending(dir)) {
+    expect(classifySourceRecord(record).protocol).toBe(SOURCE_PROTOCOLS.DECISION_V1);
   }
   return dir;
 }
@@ -92,15 +151,39 @@ function proofFields(atMs) {
 const IDENT = { messageId: 'telegram-in-60', routeKey: 'main', windowKey: 'main', profile: 'main' };
 const UNPROVEN = { status: 'accepted.daemon_pty_unverified', accepted: true };
 
+/**
+ * THE POST-CUTOVER ATTEMPT LATCH, shared by every coordinator built inside one
+ * test and reset between tests. It stands in for the DB claim the delivery
+ * sequence now creates; see the helper's own header for why a double is the
+ * right instrument HERE and where the real store is proved instead.
+ */
+let latch;
+beforeEach(() => {
+  latch = createClaimLatchDouble({ generation: () => GENERATION });
+});
+
 function coordinator(overrides = {}) {
+  const { deliver, sessionGeneration, now, ...rest } = overrides;
+  const generation = sessionGeneration || (() => GENERATION);
+  const clock = now || (() => Date.now());
   return createDrainCoordinator({
     queue,
     log: silentLog,
     resolveRoute: routerFor('main', 'main'),
-    deliver: async (job) => provenFor(job),
     currentSessionFor: () => 'session-now',
-    sessionGeneration: () => GENERATION,
-    ...overrides,
+    sessionGeneration: generation,
+    now: clock,
+    lookupTransportClaim: latch.lookupTransportClaim,
+    closeUnsentTransportClaim: latch.closeUnsentTransportClaim,
+    // v7 section 3 Phase L: the drain refuses to run without being told which
+    // operating state it is in. Overridable via `rest` for the tests that
+    // attack the mode itself.
+    activationMode: () => LEGACY_SETTLEMENT,
+    ...rest,
+    // WRAPPED LAST, so a test that overrides `deliver` still latches. An
+    // unlatched delivery would let every at-most-once assertion below pass for
+    // a reason production does not have.
+    deliver: latch.wrapDeliver(deliver || (async (job) => provenFor(job)), { generation, now: clock }),
   });
 }
 
@@ -777,26 +860,23 @@ test('AFTER RESTART, exact proof retires the ambiguous attempt without re-inject
   expect(queue.readPending(dir)).toHaveLength(0);
 });
 
-test('A FAILED ATTEMPT MARKER MEANS NO DELIVERY AT ALL', async () => {
+test('AN UNREADABLE ATTEMPT LATCH MEANS NO DELIVERY AT ALL', async () => {
+  // B5 moved the latch. This used to break the JSONL append the drain made
+  // before delivering; there is no such write any more, because a second
+  // independent authority for one attempt was the defect. The guard it was
+  // defending is unchanged and still load-bearing: if we cannot READ what has
+  // already been attempted, we do not deliver.
   const base = tempRoot();
   const dir = seed(base, 'main', [320]);
   const seen = [];
+  latch.setLookupFailure('claim store unavailable: EIO');
   const drain = coordinator({ deliver: async (job) => { seen.push(job.messageId); return provenFor(job); } });
 
-  const realAppend = fs.appendFileSync;
-  fs.appendFileSync = (file, ...rest) => {
-    if (String(file).includes('delivery-attempts')) throw new Error('EIO');
-    return realAppend(file, ...rest);
-  };
-  let res;
-  try {
-    res = await drain.schedule(dir, 'main');
-  } finally {
-    fs.appendFileSync = realAppend;
-  }
+  const res = await drain.schedule(dir, 'main');
 
   expect(seen).toEqual([]);
-  expect(res.stoppedAt.reason).toContain('attempt_marker_failed');
+  expect(res.stoppedAt.reason).toContain('claim_lookup_failed');
+  expect(res.stoppedAt.failureClass).toBe('awaiting_proof');
 });
 
 test('A CORRUPT ATTEMPT JOURNAL FAILS CLOSED', async () => {
@@ -930,7 +1010,7 @@ test('NEWLINE-TERMINATED CORRUPTION IS NOT A TORN TAIL: it fails closed', async 
   const res = await drain.schedule(dir, 'main');
 
   expect(seen).toEqual([]);
-  expect(res.stoppedAt.reason).toContain('attempt_journal_unreadable');
+  expect(res.stoppedAt.reason).toContain('legacy_journal_gate:');
 });
 
 test('A TORN TAIL IS NOT TOLERATED EITHER: the sidecar biases HOLD', async () => {
@@ -949,7 +1029,7 @@ test('A TORN TAIL IS NOT TOLERATED EITHER: the sidecar biases HOLD', async () =>
   const res = await drain.schedule(dir, 'main');
 
   expect(seen).toEqual([]);
-  expect(res.stoppedAt.reason).toContain('attempt_journal_unreadable');
+  expect(res.stoppedAt.reason).toContain('legacy_journal_gate:');
 });
 
 test.each([
@@ -971,7 +1051,7 @@ test.each([
   const res = await drain.schedule(dir, 'main');
 
   expect(seen).toEqual([]);
-  expect(res.stoppedAt.reason).toContain('attempt_journal_unreadable');
+  expect(res.stoppedAt.reason).toContain('legacy_journal_gate:');
 });
 
 test('A DELIVER THROW IS AMBIGUOUS, not a definite failure', async () => {
@@ -1171,8 +1251,14 @@ test('THE INJECTED QUEUE OWNS ATTEMPT STORAGE, not the default module', () => {
   // Rejecting a queue that LACKS the attempt methods proves only that the
   // check exists. It does not prove the coordinator actually calls the injected
   // ones — rebinding to defaultQueue while the injected methods merely exist
-  // would leave every other drain test green. These spies do not touch disk, so
-  // if the default module were used instead, its sidecar file would appear.
+  // would leave every other drain test green.
+  //
+  // WHAT THE INJECTION OWNS IS THE PATH, NOT THE PARSE (v7 §2). The strict gate
+  // reader replaced the queue's own lenient readers, so if it derived the
+  // sidecar location itself an injected queue could store its journals
+  // elsewhere and the gate would silently read a different pair of files than
+  // the queue writes. These spies assert the drain still asks the injection
+  // WHERE, once per file per pass.
   return (async () => {
     const base = tempRoot();
     const dir = seed(base, 'main', [600]);
@@ -1182,7 +1268,8 @@ test('THE INJECTED QUEUE OWNS ATTEMPT STORAGE, not the default module', () => {
     const drain = coordinator({
       queue: {
         ...queue,
-        readAttemptRecords: (d) => { reads.push(d); return new Map(); },
+        attemptsPath: (d) => { reads.push(d); return queue.attemptsPath(d); },
+        dispositionsPath: (d) => { reads.push(d); return queue.dispositionsPath(d); },
         appendAttempt: (d, updateId, state) => { appends.push({ d, updateId, state }); return { ok: true }; },
       },
       deliver: async (job) => provenFor(job),
@@ -1191,9 +1278,11 @@ test('THE INJECTED QUEUE OWNS ATTEMPT STORAGE, not the default module', () => {
     await drain.schedule(dir, 'main');
 
     // The injected implementations were the ones consulted...
-    expect(reads).toEqual([dir]);
-    expect(appends).toEqual([{ d: dir, updateId: 600, state: 'attempted' }]);
-    // ...and nothing wrote through the default module's path.
+    expect(reads).toEqual([dir, dir]);
+    // ...and B5 stopped writing the legacy latch entirely, so NOTHING appended
+    // through either module. A pre-delivery JSONL attempt is a second authority
+    // for one attempt; the claim is the only one now.
+    expect(appends).toEqual([]);
     expect(fs.existsSync(queue.attemptsPath(dir))).toBe(false);
   })();
 });

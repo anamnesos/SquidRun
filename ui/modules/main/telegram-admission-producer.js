@@ -30,6 +30,16 @@
  */
 const {
   buildAdmissionRecord,
+  // THE TERMINAL RECORD BUILDER WAS NEVER IMPORTED. `produceTerminalReceipt`
+  // called it by name at the one point in this file that writes a consumed
+  // receipt, so the only path that can retire a Telegram record threw
+  // ReferenceError the moment a turn actually matched an admission — which is
+  // indistinguishable, from the queue's side, from a turn that simply never
+  // proved anything. Every existing test stopped before that line: they end at
+  // `no_telegram_admission_for_turn` or at the Claude refusal, so the happy
+  // path had never once been executed. ESLint `no-undef` was reporting it the
+  // whole time; the gate could not run in a worktree with no node_modules.
+  buildConsumedRecord,
   canonicalQueuedPayloadDigest,
 } = require('./telegram-consumed-proof');
 const { parseConsumeMarker } = require('./telegram-consume-marker');
@@ -38,6 +48,8 @@ const {
   SUBMISSION_KINDS,
   ENV_LAUNCH_ID,
   recordAdmissionReceipt,
+  loadAdmissionReceipt,
+  recordConsumedReceipt,
   bindConsumerSession,
   completePaneLaunch,
 } = require('./telegram-launch-registry');
@@ -318,10 +330,123 @@ function bindSessionAtStart(input = {}) {
   }
 }
 
+/**
+ * The hook events that mean A TURN ENDED.
+ *
+ * Deliberately a closed set of REAL runtime events, not a heuristic. There is
+ * no entry for "the model emitted its last token", "the pane went quiet", or a
+ * timer — each of those is an inference about consumption, and inferring
+ * consumption is the family of bug that certified 2417 bytes for a 125-char
+ * tail and scored poller health 100/100 over six rotting messages.
+ */
+const TERMINAL_HOOK_EVENTS = Object.freeze(new Set(['Stop']));
+
+function isTerminalHookEvent(event) {
+  return TERMINAL_HOOK_EVENTS.has(String(event || ''));
+}
+
+/**
+ * PHASE 2 AT THE CONSUMER BOUNDARY: the turn that admitted these bytes has now
+ * ended, so the admission may be promoted to terminal proof.
+ *
+ * =====================================================================
+ * WHY THIS CANNOT BE "THE NEWEST ADMISSION FOR THIS SESSION"
+ * =====================================================================
+ * That is the tempting implementation and it is the same defect the admission
+ * producer already had to fix once: binding a receipt to whichever claim
+ * happened to be newest meant that after a retry the receipt attached to the
+ * wrong attempt and passed every downstream check. A Stop event that cannot
+ * name its own turn cannot say WHICH admission it terminates, and a turn is
+ * exactly the unit at stake — Codex fires `UserPromptSubmit` on branches that
+ * later abort, so "some turn in this session ended" is not evidence that THIS
+ * turn ran.
+ *
+ * So a runtime whose terminal payload carries no submission identity is
+ * declared unsupported here, loudly and on the record, rather than served by a
+ * guess. Silence and refusal must stay distinguishable.
+ */
+function produceTerminalReceipt(input = {}) {
+  const {
+    runtime,
+    payload = {},
+    env = process.env,
+    nowMs = Date.now(),
+    writerFactory = null,
+    hookProcessId = String(process.pid),
+    hookParentProcessId = String(process.ppid ?? ''),
+  } = input;
+
+  const launchId = String(env[ENV_LAUNCH_ID] || '').trim();
+  if (!launchId) return skip('no_launch_binding');
+  const consumerSessionId = extractSessionId(runtime, payload);
+  if (!consumerSessionId) return skip('no_consumer_session');
+
+  const submission = extractSubmissionIdentity(runtime, payload);
+  if (!submission.ok) return skip(`terminal_${submission.reason}`);
+
+  if (!isNonEmptyString(hookProcessId) || !isNonEmptyString(hookParentProcessId)) {
+    return skip('no_hook_process_identity');
+  }
+
+  const writer = writerFactory ? writerFactory() : new TelegramAdmissionWriter({});
+  const opened = writer.open();
+  if (!opened.ok) return skip('writer_unavailable', opened);
+
+  try {
+    return writer.transaction((db) => {
+      const schema = ensureSchema(db);
+      if (!schema.ok) return { ...schema, handled: true, written: false };
+
+      // THE EXACT TURN. Session plus launch plus the runtime's own submission
+      // id — three bindings, none of them "the latest one".
+      const row = db.prepare(`
+        SELECT admission_id FROM telegram_admission_receipts
+        WHERE consumer_session_id = ? AND runtime_submission_id = ? AND launch_id = ?
+      `).get(consumerSessionId, submission.submissionId, launchId);
+      // NOT `handled`. The overwhelming majority of turns are not Telegram
+      // deliveries at all, and logging every one of them as a refusal would
+      // bury the refusals that matter.
+      if (!row) return { handled: false, reason: 'no_telegram_admission_for_turn' };
+
+      const loaded = loadAdmissionReceipt(db, row.admission_id);
+      if (!loaded.ok) return { ...loaded, handled: true, written: false };
+
+      const built = buildConsumedRecord({
+        admissionRecord: loaded.record,
+        admissionId: row.admission_id,
+        terminalEvent: 'turn_completed',
+        terminalAtMs: nowMs,
+      });
+      if (!built.ok) return { ok: false, handled: true, written: false, reason: built.reason };
+
+      const stored = recordConsumedReceipt(db, {
+        record: built.record,
+        terminalHookProcessId: hookProcessId,
+        terminalHookParentProcessId: hookParentProcessId,
+      });
+      if (!stored.ok) return { ...stored, handled: true, written: false };
+
+      return {
+        ok: true,
+        handled: true,
+        written: true,
+        reason: stored.replayed ? 'terminal_replayed' : 'terminal_recorded',
+        consumedId: stored.consumedId,
+        admissionId: row.admission_id,
+      };
+    });
+  } finally {
+    writer.close();
+  }
+}
+
 module.exports = {
   produceAdmissionReceipt,
+  produceTerminalReceipt,
   bindSessionAtStart,
   extractSubmissionIdentity,
   extractSessionId,
   canonicalQueuedPayloadDigest,
+  TERMINAL_HOOK_EVENTS,
+  isTerminalHookEvent,
 };

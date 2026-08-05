@@ -338,7 +338,26 @@ function readTelegramBacklogHealth(projectRoot, nowMs = Date.now(), options = {}
     // from a clock that is lying.
     if (futureReceivedAt) routeReasons.push(`oldest_pending_received_at_in_future:${routeKey}`);
 
-    routes[routeKey] = { severity: routeSeverity, reasons: routeReasons, headAgeMs: scored.headAgeMs };
+    routes[routeKey] = {
+      severity: routeSeverity,
+      reasons: routeReasons,
+      headAgeMs: scored.headAgeMs,
+      // v7 §3 Phase L. Projected, not just scored. The severity and the reason
+      // string already carry the verdict, and this lane's whole history is
+      // verdicts that were correct and unreadable: an operator looking at the
+      // startup health document should be able to see WHICH state the channel
+      // believes it is in without reverse-engineering it from a reason code.
+      activationMode: snapshot.activationMode ?? null,
+      activationModeHealthy: snapshot.activationModeHealthy === true,
+      // OMITTED IS NOT CANONICAL SUCCESS. `?? null` here would have presented a
+      // document that never wrote a reason as the resolver's success shape -
+      // erasing, in the projection, the exact incoherence the scorer above was
+      // just taught to reject. Explicit null is preserved; absent is named
+      // (Architect #159).
+      activationModeReason: snapshot.activationModeReason === undefined
+        ? 'activation_mode_unreported'
+        : snapshot.activationModeReason,
+    };
     if (rank[routeSeverity] > rank[severity]) severity = routeSeverity;
     for (const reason of routeReasons) reasons.push(`${routeKey}:${reason}`);
   }

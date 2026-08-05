@@ -24,7 +24,9 @@ const {
   closeUnsentClaim,
   promoteToAdmittedOwned,
   deriveQueueAckIntentKey,
+  CLAIM_READ_SCHEMA_OBJECTS,
 } = require('../modules/main/telegram-admission-store');
+const { findTransportClaim } = require('../modules/main/telegram-claim-lookup');
 
 function createDatabase(filePath) {
   try {
@@ -437,7 +439,12 @@ describe('exclusive transport claim', () => {
     });
 
     expect(closed.ok).toBe(false);
-    expect(closed.reason).toBe('claim_not_provably_unsent');
+    // THE EVENT, NOT THE COLUMN. The close is refused on the stored
+    // delivery_started event now, which is the reason that survives someone
+    // moving `state` back to claimed (Oracle #13, blocker 1). The
+    // state-only refusal is still reachable — for `admitted`, below.
+    expect(closed.reason).toBe('claim_delivery_started_recorded');
+    expect(closed.detail).toMatchObject({ state: CLAIM_STATES.DELIVERY_STARTED });
   });
 
   test('delivery_started IS DURABLE AND MONOTONIC', () => {
@@ -482,9 +489,17 @@ describe('admitted_owned promotion', () => {
       .toBe(CLAIM_STATES.ADMITTED);
   });
 
-  test('OR NONE DOES: a failed promotion leaves the source unbrokered and no binding', () => {
+  test('OR NONE DOES: a failed promotion changes NOTHING and leaves no binding', () => {
     const db = freshDb();
     const { claim } = seedToDeliveryStarted(db);
+
+    // B4b: `brokered` is now projected at the delivery_started authorisation
+    // boundary, not at promotion, so the row is legitimately brokered before
+    // this promotion is attempted. The invariant under test is unchanged and is
+    // asserted more strictly than before: a failed promotion must leave the
+    // source row BYTE-IDENTICAL and create none of the four authorities.
+    const before = db.prepare('SELECT * FROM comms_journal').get();
+    expect(before.status).toBe(SOURCE_STATES.BROKERED);
 
     const failed = promote(db, ownedInput(claim.claimId, {
       canonicalPayloadSha256: sha256('a digest that does not match'),
@@ -492,10 +507,29 @@ describe('admitted_owned promotion', () => {
 
     expect(failed.ok).toBe(false);
     expect(failed.reason).toBe('source_payload_digest_mismatch');
-    expect(db.prepare('SELECT status FROM comms_journal').get().status)
-      .toBe(SOURCE_STATES.RECORDED);
+
+    const after = db.prepare('SELECT * FROM comms_journal').get();
+    expect(after).toEqual(before);
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_obligation_bindings').get().n)).toBe(0);
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_queue_ack_outbox').get().n)).toBe(0);
+  });
+
+  test('PROMOTION REFUSES A SOURCE THAT WAS NEVER BROKERED', () => {
+    // The other half of moving the projection: promotion may not manufacture
+    // the delivery it is supposed to be evidence of. A source still `recorded`
+    // means no delivery_started ever authorised anything to reach a pane, so a
+    // receipt naming it describes a message nobody sent.
+    const db = freshDb();
+    const { claim } = seedToDeliveryStarted(db);
+
+    // Wind the projection back by hand: the exact state a promotion would face
+    // if it were ever reached without an authorised delivery.
+    db.prepare("UPDATE comms_journal SET status = 'recorded', brokered_at_ms = NULL").run();
+
+    const owned = promote(db, ownedInput(claim.claimId));
+    expect(owned.ok).toBe(false);
+    expect(owned.reason).toBe('source_not_brokered');
+    expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_obligation_bindings').get().n)).toBe(0);
   });
 
   test('A CLAIM THAT NEVER STARTED DELIVERY cannot be promoted', () => {
@@ -937,8 +971,12 @@ describe('THE GENERAL KERNEL ACTUALLY HOLDS THE DEBT (blocker 1)', () => {
 
     expect(Number(db.prepare('SELECT COUNT(*) n FROM obligations').get().n)).toBe(0);
     expect(Number(db.prepare("SELECT COUNT(*) n FROM ledger_events WHERE type='obligation.created'").get().n)).toBe(0);
-    expect(db.prepare('SELECT status FROM comms_journal WHERE row_id = ?')
-      .get(src.sourceRowId).status).toBe(SOURCE_STATES.RECORDED);
+    // B4b: the source is brokered by delivery_started, not by promotion, so the
+    // fact this proves is that promotion did not TOUCH it — including not
+    // moving `brokered_at_ms` forward to promotion time.
+    const source = db.prepare('SELECT * FROM comms_journal WHERE row_id = ?').get(src.sourceRowId);
+    expect(source.status).toBe(SOURCE_STATES.BROKERED);
+    expect(Number(source.brokered_at_ms)).toBe(NOW + 10); // seedToDeliveryStarted's atMs
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_obligation_bindings').get().n)).toBe(0);
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_queue_ack_outbox').get().n)).toBe(0);
   });
@@ -1014,8 +1052,19 @@ describe('delivery_started state table (blocker 5)', () => {
     const src = recordImmutableSource(db, sourceInput());
     const claim = claimTransportAttempt(db, claimInput(src.sourceRowId));
 
+    // A value outside the vocabulary is refused by the monotonic trigger, which
+    // fires before the CHECK constraint and rejects it as an illegal
+    // TRANSITION. Either refusal is the database saying no; asserting the
+    // specific one keeps this honest about which guard is doing the work.
     expect(() => db.prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
-      .run('some_future_state', claim.claimId)).toThrow(/CHECK constraint/i);
+      .run('some_future_state', claim.claimId))
+      .toThrow(/telegram_claim_state_not_monotonic|CHECK constraint/i);
+
+    // A LEGAL VALUE IN AN ILLEGAL DIRECTION is refused too, which the CHECK
+    // constraint alone could never catch.
+    expect(() => db.prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
+      .run(CLAIM_STATES.ADMITTED, claim.claimId))
+      .toThrow(/telegram_claim_state_not_monotonic/);
 
     // And the claim is untouched, so the state machine never saw a bad value.
     expect(db.prepare('SELECT state FROM telegram_transport_claims').get().state)
@@ -1121,10 +1170,15 @@ describe('promotion re-verifies correlation even for a forged claim row', () => 
     // Now forge by INSERT instead: a claim row whose correlation columns name
     // srcB while its source row id points at srcA. Nothing in the schema stops
     // this, so the promotion path must.
+    //
+    // THE REAL CLAIM IS LEFT EXACTLY WHERE IT IS. This used to close it first,
+    // purely to free the exclusivity slot — which the database now refuses,
+    // correctly, because it carries a delivery_started event (Oracle #13). The
+    // forged row therefore takes its own update id; the attack under test is
+    // the source_row_id mismatch, and it never needed the tuple.
     const stored = db.prepare('SELECT * FROM telegram_transport_claims WHERE claim_id = ?')
       .get(claim.claimId);
-    db.prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
-      .run(CLAIM_STATES.CLOSED_UNSENT, claim.claimId);
+    const forgedUpdateId = 900000003;
     db.prepare(`
       INSERT INTO telegram_transport_claims (
         claim_id, cutover_id, route_key, update_id, source_row_id, app_generation,
@@ -1132,7 +1186,7 @@ describe('promotion re-verifies correlation even for a forged claim row', () => 
         delivered_prompt_sha256, delivered_prompt_bytes, state, closed_at_ms
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
     `).run(
-      'forged-claim', stored.cutover_id, stored.route_key, stored.update_id,
+      'forged-claim', stored.cutover_id, stored.route_key, forgedUpdateId,
       srcA.sourceRowId, stored.app_generation, stored.pane_launch_id, stored.pane_id,
       stored.role, stored.consumer_runtime, 'nonce-forged', stored.attempt_at_ms,
       stored.delivered_prompt_sha256, stored.delivered_prompt_bytes,
@@ -1407,5 +1461,158 @@ describe('the surviving-mutant closures', () => {
     expect(collision.ok).toBe(false);
     expect(collision.reason).toMatch(/^source_insert_failed:/);
     expect(Number(db.prepare('SELECT COUNT(*) n FROM telegram_source_identity').get().n)).toBe(1);
+  });
+});
+
+// =====================================================================
+// PARTIAL SCHEMA IS NOT AN ABSENT SCHEMA
+// =====================================================================
+//
+// `allAbsent` is the one bit that tells a reader "this kernel has never written
+// here, so concluding the record does not exist is honest". Its consumer is the
+// drain's attempt-latch read, where a null means NOTHING HAS CLAIMED THIS and
+// the caller therefore delivers.
+//
+// The predicate used to be `missing.every(entry => entry.endsWith(':absent'))`,
+// which quantifies over DEFECTS rather than over requested OBJECTS. Six healthy
+// objects contribute no entries, so one missing index out of seven answered
+// `true` and a could-have-claimed ledger read as never-written. These tests are
+// the three-way distinction the consumer's own comment already required:
+// all-absent, present-but-partial, and stale.
+
+describe('verifyInstalledSchema allAbsent means every requested object is absent', () => {
+  /** Drop every claim-read object, leaving the rest of the kernel intact. */
+  function dropAllClaimReadObjects(db) {
+    db.exec('DROP INDEX IF EXISTS idx_tg_claims_exclusive');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_claim_identity_immutable');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_transport_events_no_update');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_transport_events_no_delete');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_source_identity_immutable');
+    db.exec('DROP TABLE IF EXISTS telegram_transport_claims');
+    db.exec('DROP TABLE IF EXISTS telegram_source_identity');
+  }
+
+  const installedCount = (db) => CLAIM_READ_SCHEMA_OBJECTS
+    .filter((name) => db.prepare('SELECT name FROM sqlite_master WHERE name = ?').get(name))
+    .length;
+
+  test('a healthy claim schema verifies and emits no aggregate at all', () => {
+    const db = freshDb();
+    expect(installedCount(db)).toBe(CLAIM_READ_SCHEMA_OBJECTS.length);
+    expect(verifyInstalledSchema(db, [...CLAIM_READ_SCHEMA_OBJECTS])).toEqual({ ok: true });
+  });
+
+  test('EVERY requested object absent is allAbsent true', () => {
+    const db = freshDb();
+    dropAllClaimReadObjects(db);
+    expect(installedCount(db)).toBe(0);
+
+    const verified = verifyInstalledSchema(db, [...CLAIM_READ_SCHEMA_OBJECTS]);
+    expect(verified.ok).toBe(false);
+    expect(verified.reason).toBe('schema_shape_mismatch');
+    expect(verified.detail.allAbsent).toBe(true);
+  });
+
+  test('ONE absent with the rest installed is allAbsent FALSE — the partial-schema case', () => {
+    const db = freshDb();
+    // Exactly the state Oracle reproduced: a single dropped index against six
+    // healthy objects. The old predicate called this "never written".
+    db.exec('DROP INDEX idx_tg_claims_exclusive');
+    expect(installedCount(db)).toBe(CLAIM_READ_SCHEMA_OBJECTS.length - 1);
+
+    const verified = verifyInstalledSchema(db, [...CLAIM_READ_SCHEMA_OBJECTS]);
+    expect(verified.ok).toBe(false);
+    expect(verified.detail.missing).toEqual(['idx_tg_claims_exclusive:absent']);
+    expect(verified.detail.allAbsent).toBe(false);
+  });
+
+  test('one STALE with everything else absent is allAbsent FALSE', () => {
+    const db = freshDb();
+    dropAllClaimReadObjects(db);
+    // A table under the right name in the wrong shape is a build that COULD
+    // have claimed. Every OTHER requested object is genuinely absent, so a
+    // defect-list predicate sees one `:stale` among absences; an object-set
+    // predicate sees one object present.
+    db.exec('CREATE TABLE telegram_transport_claims (claim_id TEXT PRIMARY KEY)');
+    expect(installedCount(db)).toBe(1);
+
+    const verified = verifyInstalledSchema(db, [...CLAIM_READ_SCHEMA_OBJECTS]);
+    expect(verified.ok).toBe(false);
+    expect(verified.detail.missing).toContain('telegram_transport_claims:stale');
+    expect(verified.detail.allAbsent).toBe(false);
+  });
+
+  test('the aggregate is over unique OBJECTS, not over fingerprint entries', () => {
+    // Several objects carry more than one fingerprint in REQUIRED_SCHEMA_SHAPE,
+    // so a count of defect entries is not a count of objects. Asserted directly
+    // so a future refactor to entry-counting fails here rather than in the drain.
+    const db = freshDb();
+    dropAllClaimReadObjects(db);
+    const verified = verifyInstalledSchema(db, [...CLAIM_READ_SCHEMA_OBJECTS]);
+    const distinctNames = new Set(verified.detail.missing.map((entry) => entry.split(':')[0]));
+    expect(distinctNames.size).toBe(CLAIM_READ_SCHEMA_OBJECTS.length);
+    expect(verified.detail.missing.length).toBeGreaterThanOrEqual(distinctNames.size);
+    expect(verified.detail.allAbsent).toBe(true);
+  });
+});
+
+// =====================================================================
+// AND THE CONSUMER HOLDS, WHICH IS THE POINT OF THE BIT
+// =====================================================================
+
+describe('the drain claim lookup holds on a partial claim schema', () => {
+  /** A temp ledger on disk, so the real lookup can open it by path. */
+  function ledgerOnDisk() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-claim-lookup-'));
+    tempRoots.push(root);
+    const dbPath = path.join(root, 'ledger.db');
+    const db = openRealLedger(dbPath);
+    applyTelegramAdmissionSchema(db);
+    seedLaunchAndSession(db);
+    return { db, dbPath };
+  }
+
+  const lookup = (dbPath) => findTransportClaim({
+    dbPath,
+    updateId: 900_000_001,
+    routeKey: 'main',
+    cutoverId: CUTOVER,
+  });
+
+  test('a complete claim schema with no claim row answers "nothing has claimed this"', () => {
+    const { dbPath } = ledgerOnDisk();
+    expect(lookup(dbPath)).toBeNull();
+  });
+
+  test('EVERY claim object absent still answers null, because that is an honest never-written', () => {
+    // The fresh-install path this bit exists to protect. If the repair broke
+    // this, a first Telegram message would hold forever.
+    const { db, dbPath } = ledgerOnDisk();
+    db.exec('DROP INDEX IF EXISTS idx_tg_claims_exclusive');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_claim_identity_immutable');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_transport_events_no_update');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_transport_events_no_delete');
+    db.exec('DROP TRIGGER IF EXISTS trg_tg_source_identity_immutable');
+    db.exec('DROP TABLE IF EXISTS telegram_transport_claims');
+    db.exec('DROP TABLE IF EXISTS telegram_source_identity');
+
+    expect(lookup(dbPath)).toBeNull();
+  });
+
+  test('ONE absent object makes the lookup THROW instead of reporting no claim', () => {
+    const { db, dbPath } = ledgerOnDisk();
+    db.exec('DROP INDEX idx_tg_claims_exclusive');
+
+    // The drain maps a throw to a hold and a null to "go ahead and deliver".
+    // Before the predicate was corrected this returned null.
+    expect(() => lookup(dbPath)).toThrow(/transport claim schema unverified/);
+  });
+
+  test('a stale-shaped claim table makes the lookup THROW', () => {
+    const { db, dbPath } = ledgerOnDisk();
+    db.exec('DROP TABLE telegram_transport_claims');
+    db.exec('CREATE TABLE telegram_transport_claims (claim_id TEXT PRIMARY KEY)');
+
+    expect(() => lookup(dbPath)).toThrow(/transport claim schema unverified/);
   });
 });

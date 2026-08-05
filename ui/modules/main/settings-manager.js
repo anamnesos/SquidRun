@@ -121,6 +121,17 @@ function createDefaultSettings({ isPackaged = false } = {}) {
     devTools: false,
     devMode: false,
     shellV2Enabled: false,
+    // THE TELEGRAM TRANSPORT ACTIVATION MODE (v7 §3 Phase L).
+    //
+    // `null` ON PURPOSE, and it must stay null. `loadSettings` prunes any key
+    // absent from these defaults, so the key has to exist here for an operator
+    // to be able to set it at all — but the DEFAULT is "nobody has said which
+    // state this install is in", which `telegram-activation-mode` refuses and
+    // the drain turns into a hold. Giving it `'legacy_settlement'` here would
+    // make every install claim to be settling legacy without anyone deciding
+    // that, and Step 3 derives a stable fence whose validity rests on the
+    // settlement having actually happened under a known writer.
+    telegramTransportActivationMode: null,
     paneFailureAlertsEnabled: true,
     agentNotify: true,
     watcherEnabled: true,

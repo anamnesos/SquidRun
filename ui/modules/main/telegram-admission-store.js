@@ -38,6 +38,16 @@ const {
   SUBMISSION_KINDS,
 } = require('./telegram-launch-registry');
 const { validateAdmissionRecord } = require('./telegram-consumed-proof');
+// THE RESERVED MODE AND TERMINAL LITERALS COME FROM THE CONTRACT, so the DDL
+// installs exactly what the generic-API gates refuse and what the successor
+// validates. The FINGERPRINTS below are hand-written on purpose: a fingerprint
+// interpolated from the same constant would only prove the file agrees with
+// itself.
+const {
+  CAPTURE_ONLY_SESSION_MODE,
+  TERMINAL_META_SCHEMA,
+  TERMINAL_STATUS,
+} = require('./capture-only-session-contract');
 
 const SCHEMA_VERSION = 'telegram_admission_store.v2';
 /** Versioned key under `comms_journal.metadata_json`. Identity, not decoration. */
@@ -112,6 +122,22 @@ const WORK_CLAIM_TRANSITIONS = Object.freeze({
 });
 
 const SHA256_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * THE CUTOVER. One constant, deliberately not a timestamp and not a session.
+ *
+ * It names the regime in which the DB claim is the authoritative attempt latch.
+ * Records that predate it — 808499316 above all — were attempted under the
+ * legacy `delivery-attempts.jsonl` latch and can never grow a claim
+ * retroactively; they are resolved by explicit pinned recovery, not by this
+ * kernel deciding they look close enough.
+ *
+ * IT IS NOT DERIVED FROM ANYTHING MUTABLE ON PURPOSE. A cutover computed from
+ * the clock, the generation or the schema version would silently change
+ * identity across a restart, and the claim's uniqueness key (cutover, route,
+ * update) would stop meaning "one attempt per message" the moment it moved.
+ */
+const TELEGRAM_CUTOVER_ID = 'tg-cutover-v1';
 
 /**
  * Telegram identity carried in the source row's metadata. Every one of these
@@ -232,6 +258,16 @@ const REQUIRED_SCHEMA_SHAPE = Object.freeze([
   ['trg_tg_work_events_no_update', 'telegram_work_claim_events_append_only'],
   ['trg_tg_work_events_no_delete', 'telegram_work_claim_events_append_only'],
   ['trg_tg_claim_identity_immutable', 'telegram_claim_identity_immutable'],
+  // STATE MAY NOT MOVE BACKWARDS, AND NOTHING MAY CLOSE PAST A STORED D EVENT.
+  // A build carrying the claim tables without these two is a build in which the
+  // append-only event is advisory, which is the state Oracle #13 exploited.
+  ['trg_tg_claim_state_monotonic', 'telegram_claim_state_not_monotonic'],
+  ['trg_tg_claim_close_requires_no_delivery', 'telegram_claim_close_after_delivery_started'],
+  // AND THE TUPLE MAY NOT BE RE-CLAIMED PAST A STORED D EVENT. Without this a
+  // build reads a legacy closed_unsent+D slot as never-attempted and delivers a
+  // second copy; the exclusive index cannot see it, because it ignores closed
+  // rows on purpose.
+  ['trg_tg_claim_insert_requires_no_prior_delivery', 'telegram_claim_insert_after_delivery_started'],
   ['trg_tg_work_identity_immutable', 'telegram_work_claim_identity_immutable'],
   ['trg_tg_work_no_delete', 'telegram_work_claim_delete_forbidden'],
   ['trg_tg_ack_identity_immutable', 'telegram_queue_ack_identity_immutable'],
@@ -251,7 +287,341 @@ const REQUIRED_SCHEMA_SHAPE = Object.freeze([
   ['trg_tg_session_no_delete', 'telegram_consumer_session_delete_forbidden'],
   ['trg_tg_receipt_immutable', 'telegram_admission_receipt_immutable'],
   ['trg_tg_receipt_no_delete', 'telegram_admission_receipt_delete_forbidden'],
+  // THE TERMINAL TABLE. A build that predates it has an admission path and no
+  // retirement authority at all, which is exactly the state that wedged the
+  // live queue — so it must read as STALE here rather than as a database that
+  // simply has not been written to yet.
+  ['telegram_consumed_receipts', "schema_name = 'telegram_consumed.v1'"],
+  // The duplicate-suppression constraint itself, not merely the column. This
+  // table declares exactly one UNIQUE column, so its presence in the installed
+  // SQL is a true fingerprint for "one admission may be terminated once".
+  ['telegram_consumed_receipts', 'NOT NULL UNIQUE'],
+  ['telegram_consumed_receipts', 'terminal_hook_parent_process_id'],
+  ['telegram_consumed_receipts', "terminal_event IN ('turn_completed')"],
+  ['trg_tg_consumed_immutable', 'telegram_consumed_receipt_immutable'],
+  ['trg_tg_consumed_no_delete', 'telegram_consumed_receipt_delete_forbidden'],
+  // THE STABLE LEGACY FENCE. A2b's lesson applies with full force here: the
+  // DDL declares this table, and only `sqlite_master` proves what is installed.
+  // A build carrying the table without its triggers has a mutable fence, which
+  // is not a fence — so both triggers are fingerprinted, not just the columns.
+  ['telegram_legacy_cutover_fences', 'release_fingerprint'],
+  ['telegram_legacy_cutover_fences', 'retirement_evidence_sha256'],
+  ['telegram_legacy_cutover_fences', 'retired_identity_schema'],
+  ['telegram_legacy_cutover_fences', 'canonical_material_json'],
+  // THE SINGLETON AND THE COHERENCE CONSTRAINTS BY NAME. A build carrying the
+  // columns without these accepts a second fence and an incoherent immutable
+  // descriptor row, which is a table with the right shape and no rules.
+  ['telegram_legacy_cutover_fences', 'fence_slot                    INTEGER NOT NULL UNIQUE CHECK (fence_slot = 1)'],
+  ['telegram_legacy_cutover_fences', 'CONSTRAINT telegram_fence_attempt_descriptor_coherent'],
+  ['telegram_legacy_cutover_fences', 'CONSTRAINT telegram_fence_disposition_descriptor_coherent'],
+  ['trg_tg_fence_immutable', 'telegram_legacy_fence_immutable'],
+  ['trg_tg_fence_no_delete', 'telegram_legacy_fence_delete_forbidden'],
+  // THE ORIGINAL-WRITER CAPTURE. Same reasoning as the fence, one step earlier
+  // in the chain: this row is the only thing standing between "the legacy writer
+  // is retired" and a successor asserting it about itself, so a build carrying
+  // the table without its singleton slot or its immutability triggers has a
+  // rewritable history, which is worse than none.
+  ['telegram_legacy_writer_captures', 'capability_fingerprint'],
+  ['telegram_legacy_writer_captures', 'capability_evidence_json'],
+  ['telegram_legacy_writer_captures', 'writer_command_line_sha256'],
+  ['telegram_legacy_writer_captures', 'canonical_material_json'],
+  ['telegram_legacy_writer_captures', 'capture_slot                  INTEGER NOT NULL UNIQUE CHECK (capture_slot = 1)'],
+  ['telegram_legacy_writer_captures', 'CONSTRAINT telegram_writer_capture_evidence_present'],
+  // AND THE DIGEST RULE BY NAME (Architect #186). `verifyInstalledSchema` is a
+  // substring probe, so fingerprinting the singleton and the evidence rule while
+  // omitting this one would let a stale table with no digest coherence pass the
+  // named-object check — a table with the right columns and one missing rule,
+  // which is the shape this whole verifier exists to catch.
+  ['telegram_legacy_writer_captures', 'CONSTRAINT telegram_writer_capture_digests_coherent'],
+  ['trg_tg_writer_capture_immutable', 'telegram_legacy_writer_capture_immutable'],
+  ['trg_tg_writer_capture_no_delete', 'telegram_legacy_writer_capture_delete_forbidden'],
 ]);
+
+/**
+ * OBJECTS ON A TABLE THIS SCHEMA UNIT DOES NOT OWN, kept structurally separate
+ * rather than subtracted from the list above.
+ *
+ * The five guards below are installed ON `ledger_sessions`, which belongs to the
+ * evidence-ledger store. `applyTelegramAdmissionSchema` therefore must NOT
+ * require them — a caller who applies only the Telegram schema to a database
+ * without those guards has a correct, complete Telegram schema, and failing that
+ * caller would be a false alarm on every existing consumer.
+ *
+ * The temptation was an exclusion list inside the verifier: check everything
+ * EXCEPT these five. That is the shape of check that rots, because the exception
+ * outlives the reason for it and nobody can tell later whether a name is
+ * excepted because it belongs elsewhere or because it was failing. Two lists
+ * with two owners says the same thing structurally and cannot drift into an
+ * excuse. There is still exactly ONE definition for each object, in one place,
+ * because a named probe searches both.
+ *
+ * =====================================================================
+ * SPARSE FRAGMENTS ARE RETIRED FOR THESE OBJECTS (terminal ruling v2, F2)
+ * =====================================================================
+ * The previous version of this list recorded a handful of substrings per guard
+ * and the verifier asked whether the installed SQL CONTAINED them. Oracle broke
+ * it by execution: a same-named close guard that kept every fragment while
+ * dropping the immutability, ordering and terminal clauses verified as healthy,
+ * and then accepted state the real guard refuses. A selected fragment is not an
+ * installed shape — it is a shape the fragment list happens to be able to see.
+ *
+ * So there is now ONE authoritative complete definition per object. The
+ * installer executes it; the verifier independently re-reads `sqlite_master`
+ * and requires full equality against it. Neither side keeps a second copy of
+ * the body, because two hand-copied bodies are how an installer and a verifier
+ * drift into agreeing with each other about the wrong thing.
+ *
+ * The text below is in SQLITE'S STORED FORM, not the typed form: SQLite drops
+ * `IF NOT EXISTS` and the statement terminator when it records the CREATE in
+ * `sqlite_master`, so writing them here would guarantee a mismatch against
+ * every correctly installed database. There are deliberately no SQL comments
+ * inside these bodies — a comment is stored verbatim and would become part of
+ * the compared shape, so the reasoning lives in JS where it costs nothing.
+ */
+const CAPTURE_ONLY_SESSION_TRIGGER_DEFINITIONS = [
+  // PRISTINE OR NOTHING. A reserved-mode row that could be born already-ended,
+  // already-summarized or already carrying metadata would let a later writer
+  // present a fabricated terminal as an original insert, and the immutable close
+  // guard would have nothing left to protect. `no existing row of ANY mode holds
+  // this number` belongs here too: that is what makes the successor's lookup by
+  // number a single-row question rather than a coin flip.
+  ['trg_ledger_writer_capture_session_insert_guard', `
+CREATE TRIGGER trg_ledger_writer_capture_session_insert_guard
+BEFORE INSERT ON ledger_sessions
+WHEN NEW.mode = '${CAPTURE_ONLY_SESSION_MODE}'
+BEGIN
+  SELECT RAISE(ABORT, 'capture_only_session_insert_not_pristine')
+  WHERE NEW.ended_at_ms IS NOT NULL
+     OR NEW.summary IS NOT NULL
+     OR NEW.stats_json IS NOT '{}'
+     OR NEW.team_json IS NOT '{}'
+     OR NEW.meta_json IS NOT '{}'
+     OR typeof(NEW.session_id) <> 'text'
+     OR NEW.session_id NOT GLOB 'ses_*'
+     OR length(NEW.session_id) <> 40
+     OR typeof(NEW.session_number) <> 'integer'
+     OR NEW.session_number <= 0
+     OR typeof(NEW.started_at_ms) <> 'integer'
+     OR NEW.started_at_ms <= 0
+     OR EXISTS (SELECT 1 FROM ledger_sessions WHERE session_number = NEW.session_number);
+END`],
+
+  // A NUMBER HELD BY A CAPTURE-ONLY SESSION IS HELD FOREVER, against every later
+  // INSERT of every mode. Not a global unique index: the live table already holds
+  // duplicate ordinary session numbers (444-446), so an index would either refuse
+  // to install or demand rewriting history nobody authorized.
+  ['trg_ledger_writer_capture_session_number_reserved', `
+CREATE TRIGGER trg_ledger_writer_capture_session_number_reserved
+BEFORE INSERT ON ledger_sessions
+BEGIN
+  SELECT RAISE(ABORT, 'capture_only_session_number_reserved')
+  WHERE EXISTS (
+    SELECT 1 FROM ledger_sessions
+    WHERE mode = '${CAPTURE_ONLY_SESSION_MODE}' AND session_number = NEW.session_number
+  );
+END`],
+
+  // EXACTLY ONE OPEN -> ENDED TRANSITION, EVER. `OLD.ended_at_ms IS NOT NULL` is
+  // the one-shot rule and `OLD.meta_json IS NOT '{}'` is its compare-and-set
+  // twin. Every later update of a reserved row — second close, reopen, rewrite,
+  // renumber, demotion — fails one of these clauses and aborts.
+  //
+  // The JSON clauses are structural, not a substitute for the canonical byte
+  // comparison the successor performs. A trigger cannot canonicalize; it can
+  // refuse a document that does not even claim to be the right schema, status or
+  // session, which is what stops a hand-written close from ever landing.
+  ['trg_ledger_writer_capture_session_close_guard', `
+CREATE TRIGGER trg_ledger_writer_capture_session_close_guard
+BEFORE UPDATE ON ledger_sessions
+WHEN OLD.mode = '${CAPTURE_ONLY_SESSION_MODE}'
+BEGIN
+  SELECT RAISE(ABORT, 'capture_only_session_close_invalid')
+  WHERE OLD.ended_at_ms IS NOT NULL
+     OR OLD.meta_json IS NOT '{}'
+     OR NEW.session_id IS NOT OLD.session_id
+     OR NEW.session_number IS NOT OLD.session_number
+     OR NEW.mode IS NOT OLD.mode
+     OR NEW.started_at_ms IS NOT OLD.started_at_ms
+     OR NEW.summary IS NOT NULL
+     OR NEW.stats_json IS NOT OLD.stats_json
+     OR NEW.team_json IS NOT OLD.team_json
+     OR NEW.stats_json IS NOT '{}'
+     OR NEW.team_json IS NOT '{}'
+     OR typeof(NEW.ended_at_ms) <> 'integer'
+     OR NEW.ended_at_ms <= 0
+     OR NEW.ended_at_ms < OLD.started_at_ms
+     OR typeof(NEW.meta_json) <> 'text'
+     OR json_valid(NEW.meta_json) <> 1
+     OR json_extract(NEW.meta_json, '$.schema') IS NOT '${TERMINAL_META_SCHEMA}'
+     OR json_extract(NEW.meta_json, '$.terminal.status') IS NOT '${TERMINAL_STATUS}'
+     OR json_extract(NEW.meta_json, '$.terminal.conflict') IS NOT 0
+     OR json_extract(NEW.meta_json, '$.terminal.degraded') IS NOT 0
+     OR json_extract(NEW.meta_json, '$.terminal.fallback') IS NOT 0
+     OR json_extract(NEW.meta_json, '$.terminal.replacement') IS NOT 0
+     OR json_extract(NEW.meta_json, '$.terminal.retry') IS NOT 0
+     OR json_extract(NEW.meta_json, '$.terminal.contextSnapshotCount') IS NOT 0
+     OR json_extract(NEW.meta_json, '$.session.id') IS NOT OLD.session_id
+     OR json_extract(NEW.meta_json, '$.session.number') IS NOT OLD.session_number;
+END`],
+
+  // THE FIFTH GUARD, AND THE ONE THIS RULING EXISTS FOR (terminal ruling v2, F1).
+  //
+  // Everything above keys on the row ALREADY being reserved, or on the row being
+  // born. Neither covers the door in between: `UPDATE ledger_sessions SET mode =
+  // 'writer_capture_only'` on an ordinary row, and `UPDATE ... SET session_number
+  // = <a reserved number>` on an ordinary row. Both were accepted by the v6
+  // schema, and composed they are permanent: once a second row sits on a reserved
+  // number, the close and no-delete guards make the contamination irreversible
+  // while the successor's independent count correctly holds forever. A guard that
+  // turns fence creation into a permanent denial is not a guard.
+  //
+  // This one is ALL-ROW on purpose — no `WHEN` clause — because the row it has to
+  // catch is by definition not reserved yet.
+  //
+  // The `session_id IS NOT OLD.session_id` term is what lets the legitimate close
+  // through: a reserved row keeping its own number finds only itself, and itself
+  // is not a collision. Ordinary-to-ordinary updates, including the historical
+  // 444-446 duplicates, never reach a reserved number and are untouched.
+  //
+  // This PREVENTS the first contaminating statement. The successor's duplicate
+  // count is a SECOND, INDEPENDENT line that DETECTS contamination if prevention
+  // is ever absent. They are not the same claim and neither substitutes for the
+  // other.
+  ['trg_ledger_writer_capture_session_update_guard', `
+CREATE TRIGGER trg_ledger_writer_capture_session_update_guard
+BEFORE UPDATE ON ledger_sessions
+BEGIN
+  SELECT RAISE(ABORT, 'capture_only_session_update_forbidden')
+  WHERE (NEW.mode IS '${CAPTURE_ONLY_SESSION_MODE}' AND OLD.mode IS NOT '${CAPTURE_ONLY_SESSION_MODE}')
+     OR EXISTS (
+       SELECT 1 FROM ledger_sessions
+       WHERE mode IS '${CAPTURE_ONLY_SESSION_MODE}'
+         AND session_number IS NEW.session_number
+         AND session_id IS NOT OLD.session_id
+     );
+END`],
+
+  // AN OPEN ONE TOO. A crashed P leaves an open reserved row, and deleting it is
+  // precisely the cleanup that would convert a permanent HOLD into a fresh
+  // attempt.
+  ['trg_ledger_writer_capture_session_no_delete', `
+CREATE TRIGGER trg_ledger_writer_capture_session_no_delete
+BEFORE DELETE ON ledger_sessions
+WHEN OLD.mode = '${CAPTURE_ONLY_SESSION_MODE}'
+BEGIN SELECT RAISE(ABORT, 'capture_only_session_delete_forbidden'); END`],
+];
+
+/**
+ * DUPLICATE KEYS ARE A NAMED REFUSAL, NOT A SILENT LAST-ONE-WINS.
+ *
+ * Built from an array rather than an object literal precisely so this is
+ * detectable: a duplicated name in an object literal is invisible, and the
+ * survivor would quietly become the definition both the installer and the
+ * verifier agree on. Computed once at load; reported as a refusal by both
+ * consumers rather than thrown, because a throw here would take down every
+ * unrelated caller of this module.
+ */
+const CAPTURE_ONLY_SESSION_DDL_DUPLICATES = Object.freeze(
+  CAPTURE_ONLY_SESSION_TRIGGER_DEFINITIONS
+    .map(([name]) => name)
+    .filter((name, index, all) => all.indexOf(name) !== index),
+);
+
+/**
+ * THE AUTHORITY IS PRIVATE, AND THE PUBLIC VIEW IS A FROZEN COPY.
+ *
+ * The first version of this exported the Map itself, and Oracle broke it by
+ * execution: `const` protects the binding, not the object, so `.set()` on the
+ * exported reference replaced a guard's expected body — after which the
+ * installer installed the weakened trigger and the verifier called it healthy.
+ * That is the retired sparse-fragment defect one layer up. The installer and
+ * verifier stopped being able to drift apart, and instead a caller gained the
+ * power to move them together.
+ *
+ * `Object.freeze(map)` is NOT the repair. Freezing a Map does not disable
+ * `set`, `delete` or `clear` — they mutate internal slots, not properties.
+ *
+ * So: the Map below is module-private and is the ONLY thing the installer and
+ * verifier read. What leaves this module is a frozen plain object whose values
+ * are strings — primitives, so the freeze is genuinely deep. A caller may read
+ * it, and may even replace the property on the exports object; neither reaches
+ * the authority, because no code in here resolves the definitions through the
+ * export.
+ */
+const captureOnlySessionTriggerDdl = new Map(CAPTURE_ONLY_SESSION_TRIGGER_DEFINITIONS);
+
+/** The published read-only view. Deeply immutable: frozen object, string values. */
+const CAPTURE_ONLY_SESSION_TRIGGER_SQL = Object.freeze(Object.fromEntries(
+  CAPTURE_ONLY_SESSION_TRIGGER_DEFINITIONS.map(([name, sql]) => [name, String(sql)]),
+));
+
+/** The five guards by name, DERIVED from the private definitions, frozen for publication. */
+const CAPTURE_ONLY_SESSION_SCHEMA_OBJECTS = Object.freeze(
+  CAPTURE_ONLY_SESSION_TRIGGER_DEFINITIONS.map(([name]) => name),
+);
+
+/** Every capture-only guard sits on this table, and the verifier checks that too. */
+const CAPTURE_ONLY_SESSION_HOST_TABLE = 'ledger_sessions';
+
+/** Everything a NAMED probe may ask about. Unnamed probes see only the Telegram shape. */
+const PROBEABLE_FRAGMENT_SHAPE = Object.freeze([...REQUIRED_SCHEMA_SHAPE]);
+
+/**
+ * COMPARE NORMALIZED SQL, NOT RAW SQL (Architect #210), AND BE QUOTE-AWARE
+ * ABOUT IT (terminal ruling v2).
+ *
+ * `sqlite_master` stores the CREATE statement as it was typed, whitespace and
+ * all. A raw comparison therefore does not test what the object means, it tests
+ * how it was indented: reflow the DDL and it stops matching while the installed
+ * rule is identical in effect.
+ *
+ * Collapsing runs of whitespace OUTSIDE quotes removes the layout and leaves the
+ * tokens. Inside a quoted literal or a quoted identifier, whitespace is DATA —
+ * `'a  b'` and `'a b'` are two different strings, and a normalizer that collapsed
+ * them would make a changed literal look like a reformat. That is the one way
+ * this function could launder a semantic change into equality, so it does not.
+ *
+ * It is deliberately not a SQL parser, not a case fold, and not a token
+ * rewriter: identifiers, literals, operators, keywords and spelling still have
+ * to match exactly. This loosens layout and nothing else.
+ */
+function normalizeInstalledSql(sql) {
+  const text = String(sql);
+  const openers = { "'": "'", '"': '"', '`': '`', '[': ']' };
+  let out = '';
+  let pendingSpace = false;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    const closer = openers[ch];
+    if (closer) {
+      if (pendingSpace) { if (out.length > 0) out += ' '; pendingSpace = false; }
+      out += ch;
+      i += 1;
+      while (i < text.length) {
+        const cur = text[i];
+        out += cur;
+        i += 1;
+        if (cur !== closer) continue;
+        // '' "" `` are the doubled-quote escape INSIDE the same literal; SQLite
+        // bracket identifiers have no escape, so ]] genuinely ends one.
+        if (closer !== ']' && text[i] === closer) { out += text[i]; i += 1; continue; }
+        break;
+      }
+      continue;
+    }
+    if (/\s/.test(ch)) { pendingSpace = true; i += 1; continue; }
+    if (pendingSpace) { if (out.length > 0) out += ' '; pendingSpace = false; }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
+/** Evidence, not authority: the digest accompanies a verified shape, it never replaces the compare. */
+function installedSqlDigest(sql) {
+  return crypto.createHash('sha256').update(normalizeInstalledSql(sql), 'utf8').digest('hex');
+}
 
 /**
  * `CREATE TABLE IF NOT EXISTS` DOES NOTHING WHEN A TABLE ALREADY EXISTS WITH A
@@ -265,21 +635,138 @@ const REQUIRED_SCHEMA_SHAPE = Object.freeze([
  *
  * This reads `sqlite_master` and compares what is actually installed.
  */
-function verifyInstalledSchema(db) {
+function verifyInstalledSchema(db, names = null) {
+  // A DUPLICATED DEFINITION MEANS THE AUTHORITY IS AMBIGUOUS, so there is
+  // nothing honest to verify against. Refuse before reading anything.
+  if (CAPTURE_ONLY_SESSION_DDL_DUPLICATES.length > 0) {
+    return fail('capture_only_session_ddl_duplicate_definition', {
+      duplicates: [...CAPTURE_ONLY_SESSION_DDL_DUPLICATES],
+    });
+  }
+  // A NAMED SUBSET, FILTERED FROM THE SAME SOURCES. A reader that only needs the
+  // claim tables must not be held to the whole kernel's shape — but it must not
+  // hand-write its own expectations either, or the two copies drift and the
+  // narrower one silently stops checking anything real.
+  const requestedFragments = Array.isArray(names)
+    ? PROBEABLE_FRAGMENT_SHAPE.filter(([name]) => names.includes(name))
+    : REQUIRED_SCHEMA_SHAPE;
+  const requestedExact = Array.isArray(names)
+    ? [...captureOnlySessionTriggerDdl.keys()].filter((name) => names.includes(name))
+    : [];
+  if (Array.isArray(names)) {
+    const covered = new Set([
+      ...requestedFragments.map(([name]) => name),
+      ...requestedExact,
+    ]);
+    const unknown = names.filter((name) => !covered.has(name));
+    // Asking about an object no authority here describes would verify nothing
+    // while returning ok. Refuse the question instead of answering it emptily.
+    if (unknown.length > 0) return fail('schema_probe_unknown_objects', { unknown });
+  }
+
+  // THE REQUESTED SET AND THE ABSENT SET, BY UNIQUE OBJECT NAME.
+  //
+  // `allAbsent` below is a statement about OBJECTS, so it is computed from these
+  // rather than from the defect list. `REQUIRED_SCHEMA_SHAPE` carries several
+  // fingerprints for some objects, so counting entries is not counting objects,
+  // and a healthy object contributes no entry at all to quantify over.
+  const requestedObjects = new Set([
+    ...requestedFragments.map(([name]) => name),
+    ...requestedExact,
+  ]);
+  const absentObjects = new Set();
   const missing = [];
-  for (const [name, fingerprint] of REQUIRED_SCHEMA_SHAPE) {
+  const digests = {};
+  const readObject = (name) => db
+    .prepare('SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name = ?')
+    .get(name);
+
+  // THE TELEGRAM-OWNED OBJECTS, still by fingerprint. Their shapes are tables
+  // and constraints reviewed elsewhere; widening them to full equality is a
+  // different change against a different owner and is not this ruling's scope.
+  for (const [name, fingerprint] of requestedFragments) {
     let row;
     try {
-      row = db.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(name);
+      row = readObject(name);
     } catch (err) {
       return fail(`schema_probe_failed:${err.message}`);
     }
-    if (!row || !row.sql) { missing.push(`${name}:absent`); continue; }
-    if (!String(row.sql).includes(fingerprint)) missing.push(`${name}:stale`);
+    if (!row || !row.sql) { missing.push(`${name}:absent`); absentObjects.add(name); continue; }
+    if (!normalizeInstalledSql(row.sql).includes(normalizeInstalledSql(fingerprint))) {
+      missing.push(`${name}:stale`);
+    }
   }
-  if (missing.length > 0) return fail('schema_shape_mismatch', { missing });
-  return { ok: true };
+
+  // THE FIVE CAPTURE-ONLY GUARDS, BY FULL INSTALLED SHAPE. Type, host table,
+  // exact name and complete normalized SQL, every one of them against the row
+  // `sqlite_master` actually holds — not against what the installer believes it
+  // executed. A same-named object of the wrong type, on the wrong table, or with
+  // any clause, operator or literal altered is a distinct named defect.
+  for (const name of requestedExact) {
+    const expected = captureOnlySessionTriggerDdl.get(name);
+    let row;
+    try {
+      row = readObject(name);
+    } catch (err) {
+      return fail(`schema_probe_failed:${err.message}`);
+    }
+    if (!row) { missing.push(`${name}:absent`); absentObjects.add(name); continue; }
+    if (row.type !== 'trigger') { missing.push(`${name}:wrong_type:${row.type}`); continue; }
+    if (row.tbl_name !== CAPTURE_ONLY_SESSION_HOST_TABLE) {
+      missing.push(`${name}:wrong_table:${row.tbl_name}`);
+      continue;
+    }
+    if (row.name !== name) { missing.push(`${name}:wrong_name:${row.name}`); continue; }
+    if (!row.sql) { missing.push(`${name}:sql_unavailable`); continue; }
+    const installed = normalizeInstalledSql(row.sql);
+    if (installed !== normalizeInstalledSql(expected)) { missing.push(`${name}:mismatch`); continue; }
+    digests[name] = installedSqlDigest(row.sql);
+  }
+
+  if (missing.length > 0) {
+    return fail('schema_shape_mismatch', {
+      missing,
+      // ABSENT, STALE AND PRESENT-BUT-PARTIAL ARE THREE DIFFERENT FACTS.
+      //
+      // EVERY requested object absent means this kernel has never written here —
+      // a reader may honestly conclude the record it is looking for does not
+      // exist. Anything else means at least one object IS installed, so this is
+      // a database that COULD have written the record and cannot currently be
+      // read, and a reader must hold rather than report an empty result.
+      //
+      // COMPUTED FROM THE REQUESTED OBJECT SET, NOT FROM THE DEFECT LIST. The
+      // retired predicate was `missing.every(entry => entry.endsWith(':absent'))`,
+      // which asks "is every DEFECT an absence" and answers `true` when six of
+      // seven objects are installed, because the six healthy ones contribute no
+      // entries to quantify over. Its consumer reads that as "never written" and
+      // returns no claim, which is a fail-open on the drain's attempt latch.
+      //
+      // WRONG-TYPE, WRONG-TABLE, WRONG-NAME, SQL-UNAVAILABLE AND MISMATCH ARE
+      // ALL PRESENT. Each of those found a real `sqlite_master` row; the object
+      // exists and is untrustworthy, which is the opposite of never-written.
+      // Only a missing row adds to `absentObjects`.
+      allAbsent: requestedObjects.size > 0 && absentObjects.size === requestedObjects.size,
+    });
+  }
+  // Evidence for the caller's record. The compare already happened; a consumer
+  // that trusted this digest INSTEAD of calling here would be trusting a number
+  // it did not derive, so it is returned and never required.
+  return Object.keys(digests).length > 0 ? { ok: true, digests } : { ok: true };
 }
+
+/**
+ * The objects a claim READ depends on. Exported so the drain's lookup verifies
+ * the shape it actually uses without maintaining a second fingerprint list.
+ */
+const CLAIM_READ_SCHEMA_OBJECTS = Object.freeze([
+  'telegram_transport_claims',
+  'idx_tg_claims_exclusive',
+  'trg_tg_claim_identity_immutable',
+  'trg_tg_transport_events_no_update',
+  'trg_tg_transport_events_no_delete',
+  'telegram_source_identity',
+  'trg_tg_source_identity_immutable',
+]);
 
 /**
  * Telegram-specific tables only. The REAL evidence-ledger schema is the
@@ -627,6 +1114,75 @@ function applyTelegramAdmissionSchemaDdl(db) {
     )
     BEGIN SELECT RAISE(ABORT, 'telegram_claim_identity_immutable'); END;
 
+    -- ===================================================================
+    -- THE STATE COLUMN MAY ONLY GO FORWARD (Oracle #13, blocker 1).
+    --
+    -- The identity trigger above deliberately permits state updates, and it was
+    -- the ONLY thing guarding this column — so state could be moved BACKWARDS
+    -- from delivery_started to claimed while the append-only delivery_started
+    -- event sat in the events table, untouched and
+    -- unconsulted. Oracle drove it on a real temp ledger: the reader still
+    -- reported deliveryStartedAtMs, the disposition still said
+    -- close_then_attempt, and the close still succeeded. A later pass could
+    -- then redeliver a message whose bytes had already been authorised.
+    --
+    -- The lawful moves are the sequence's own: a claim advances to
+    -- delivery_started, is released as provably unsent from claimed, or is
+    -- promoted to admitted on terminal proof. Nothing else, and nothing back.
+    -- ===================================================================
+    CREATE TRIGGER IF NOT EXISTS trg_tg_claim_state_monotonic
+    BEFORE UPDATE ON telegram_transport_claims
+    FOR EACH ROW WHEN OLD.state IS NOT NEW.state AND NOT (
+         (OLD.state = 'claimed' AND NEW.state IN ('delivery_started', 'closed_unsent'))
+      OR (OLD.state = 'delivery_started' AND NEW.state = 'admitted')
+    )
+    BEGIN SELECT RAISE(ABORT, 'telegram_claim_state_not_monotonic'); END;
+
+    -- THE APPEND-ONLY EVENT OUTRANKS THE STATUS COLUMN, ABSOLUTELY.
+    --
+    -- Monotonicity alone is not enough: a ledger written by an older build may
+    -- ALREADY hold the incoherent pair (state = claimed, delivery_started event
+    -- present), and that row must not become closable just because its cheaper
+    -- record says claimed. A closed_unsent state means "provably nothing was sent",
+    -- and a stored D event is proof that the opposite may be true. This asks
+    -- the events table directly, so no writer can close past it — including one
+    -- that never read this file.
+    CREATE TRIGGER IF NOT EXISTS trg_tg_claim_close_requires_no_delivery
+    BEFORE UPDATE ON telegram_transport_claims
+    FOR EACH ROW WHEN NEW.state = 'closed_unsent' AND EXISTS (
+      SELECT 1 FROM telegram_transport_events
+      WHERE claim_id = OLD.claim_id AND kind = 'delivery_started'
+    )
+    BEGIN SELECT RAISE(ABORT, 'telegram_claim_close_after_delivery_started'); END;
+
+    -- THE SLOT REMEMBERS THE DELIVERY, NOT JUST THE ROW (Oracle #21).
+    --
+    -- The two triggers above defend the row being moved. Neither defends the
+    -- TUPLE, and the tuple is what gets delivered twice. A ledger written by a
+    -- build without them may ALREADY hold the incoherent pair
+    -- (state = closed_unsent, delivery_started event present); the exclusive
+    -- index deliberately ignores closed rows so that a genuinely released slot
+    -- can be retried; so a fresh boot reads "no live claim", calls that
+    -- "never attempted", and mints a SECOND claim for bytes that were already
+    -- authorised. Oracle drove exactly that on a real temp ledger at 95b12a44:
+    -- read claim null, disposition attempt, second claim created true.
+    --
+    -- Closing a claim says "provably nothing was sent". A stored D event on the
+    -- same cutover/route/update says the opposite may be true, and it is the
+    -- append-only one. So a D event anywhere on this tuple poisons the tuple for
+    -- every future claim, including claims whose writer never read this file.
+    CREATE TRIGGER IF NOT EXISTS trg_tg_claim_insert_requires_no_prior_delivery
+    BEFORE INSERT ON telegram_transport_claims
+    FOR EACH ROW WHEN EXISTS (
+      SELECT 1 FROM telegram_transport_events e
+      JOIN telegram_transport_claims c ON c.claim_id = e.claim_id
+      WHERE e.kind = 'delivery_started'
+        AND c.cutover_id = NEW.cutover_id
+        AND c.route_key  = NEW.route_key
+        AND c.update_id  = NEW.update_id
+    )
+    BEGIN SELECT RAISE(ABORT, 'telegram_claim_insert_after_delivery_started'); END;
+
     -- A WORK CLAIM'S IDENTITY IS ITS GENERATION AND LEASE. Only liveness moves.
     CREATE TRIGGER IF NOT EXISTS trg_tg_work_identity_immutable
     BEFORE UPDATE ON telegram_work_claims
@@ -664,8 +1220,268 @@ function applyTelegramAdmissionSchemaDdl(db) {
     CREATE TRIGGER IF NOT EXISTS trg_tg_ack_no_delete
     BEFORE DELETE ON telegram_queue_ack_outbox
     BEGIN SELECT RAISE(ABORT, 'telegram_queue_ack_delete_forbidden'); END;
+
+    -- ===================================================================
+    -- THE STABLE LEGACY CUTOVER FENCE (v7 section 4).
+    --
+    -- ONE ROW, EVER, AND THE SCHEMA IS WHAT SAYS SO. fence_id being a primary
+    -- key only makes ids unique; it happily accepts a SECOND, DIFFERENT fence
+    -- through one raw INSERT, which is exactly the "mint a successor after a
+    -- mutation" move v7 forbids (Architect #176). fence_slot pins the table to
+    -- a single occupiable slot, so a competing fence collides at the constraint
+    -- rather than at whichever reader notices first.
+    --
+    -- The id is lf1_ + the SHA-256 of the canonical material, so the key is
+    -- not a name for the row — it is the row, restated.
+    --
+    -- canonical_material_json is stored ALONGSIDE the columns it was derived
+    -- from, on purpose. A reader that trusted only the blob could be handed a
+    -- blob; a reader that trusted only the columns would have to re-serialise
+    -- them and hope it reproduced the original spelling. Storing both makes the
+    -- reread a three-way agreement — columns, blob, and the id derived from the
+    -- blob — and a single edited field breaks it.
+    --
+    -- THE DESCRIPTOR CHECKS ARE NOT BELT-AND-BRACES. Every row here is immutable
+    -- the instant it lands, so an incoherent one — present=0 carrying a hash,
+    -- present=1 carrying no length — would be immutable NONSENSE, unfixable and
+    -- permanently unhealthy. The constraint is the only place that can still
+    -- refuse it.
+    --
+    -- created_at_ms is DIAGNOSTIC AND DELIBERATELY NOT CANONICAL: it is not in
+    -- the material and does not enter the id. A clock in the fingerprint would
+    -- mint a different fence for identical facts.
+    -- ===================================================================
+    CREATE TABLE IF NOT EXISTS telegram_legacy_cutover_fences (
+      fence_id                      TEXT PRIMARY KEY,
+      fence_slot                    INTEGER NOT NULL UNIQUE CHECK (fence_slot = 1),
+      fence_version                 TEXT NOT NULL,
+      decision_cutover_id           TEXT NOT NULL,
+      attempt_present               INTEGER NOT NULL CHECK (attempt_present IN (0, 1)),
+      attempt_length                INTEGER,
+      attempt_sha256                TEXT,
+      disposition_present           INTEGER NOT NULL CHECK (disposition_present IN (0, 1)),
+      disposition_length            INTEGER,
+      disposition_sha256            TEXT,
+      retired_identity_schema       TEXT NOT NULL,
+      retired_app_generation        TEXT NOT NULL,
+      retired_session_id            TEXT NOT NULL,
+      retired_pid                   INTEGER NOT NULL CHECK (retired_pid > 0),
+      retired_process_created_at    TEXT NOT NULL,
+      retired_executable_path       TEXT NOT NULL,
+      retired_command_line_sha256   TEXT NOT NULL,
+      retirement_evidence_sha256    TEXT NOT NULL,
+      release_fingerprint           TEXT NOT NULL,
+      release_manifest_sha256       TEXT NOT NULL,
+      release_file_count            INTEGER NOT NULL CHECK (release_file_count > 0),
+      release_total_bytes           INTEGER NOT NULL CHECK (release_total_bytes > 0),
+      canonical_material_json       TEXT NOT NULL,
+      created_at_ms                 INTEGER NOT NULL,
+      -- typeof(...) = 'text' BEFORE length(...), and it is not decoration
+      -- (Architect #177). A CHECK that evaluates to NULL is SATISFIED in SQLite,
+      -- and length(NULL) is NULL — so attempt_present = 1 with a NULL hash
+      -- would sail through a length/GLOB test and land as an immutable row
+      -- claiming a present file with no digest.
+      CONSTRAINT telegram_fence_attempt_descriptor_coherent CHECK (
+        (attempt_present = 0 AND attempt_length IS NULL AND attempt_sha256 IS NULL)
+        OR (attempt_present = 1
+            AND typeof(attempt_length) = 'integer' AND attempt_length >= 0
+            AND typeof(attempt_sha256) = 'text'
+            AND length(attempt_sha256) = 64 AND attempt_sha256 NOT GLOB '*[^0-9a-f]*')
+      ),
+      CONSTRAINT telegram_fence_disposition_descriptor_coherent CHECK (
+        (disposition_present = 0 AND disposition_length IS NULL AND disposition_sha256 IS NULL)
+        OR (disposition_present = 1
+            AND typeof(disposition_length) = 'integer' AND disposition_length >= 0
+            AND typeof(disposition_sha256) = 'text'
+            AND length(disposition_sha256) = 64 AND disposition_sha256 NOT GLOB '*[^0-9a-f]*')
+      )
+    );
+
+    -- NO UPDATE AT ALL, not merely no identity change. Every column except the
+    -- diagnostic created_at_ms is canonical material, so a "harmless" edit to
+    -- a byte length is a different fence wearing a valid id — and even the
+    -- diagnostic one has nothing to gain from being rewritable.
+    CREATE TRIGGER IF NOT EXISTS trg_tg_fence_immutable
+    BEFORE UPDATE ON telegram_legacy_cutover_fences
+    BEGIN SELECT RAISE(ABORT, 'telegram_legacy_fence_immutable'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_fence_no_delete
+    BEFORE DELETE ON telegram_legacy_cutover_fences
+    BEGIN SELECT RAISE(ABORT, 'telegram_legacy_fence_delete_forbidden'); END;
+
+    -- ===================================================================
+    -- THE ORIGINAL-WRITER CAPTURE (v7 section 4, Architect #178 section 1).
+    --
+    -- WRITTEN BY THE LEGACY WRITER, ABOUT ITSELF, WHILE IT IS ALIVE. A dead
+    -- process cannot be interrogated, so a successor asking "was the original
+    -- writer retired?" has nothing to read unless that writer wrote it down
+    -- first. Everything else -- a caller-supplied pid, an app-status entry, a
+    -- log line, a dead number that probes absent -- is an assertion with a
+    -- digest computed over it, which is the exact defect this table exists to
+    -- end.
+    --
+    -- ONE ROW, EVER, and capture_slot is what says so rather than the primary
+    -- key: a key on capture_id makes ids unique and happily accepts a SECOND
+    -- capture naming a different predecessor. Two captures is a history nobody
+    -- reviewed, and choosing between them is choosing which past to believe.
+    --
+    -- capability_evidence_json is the COMPLETE capability material, not a
+    -- readable summary, and that is load-bearing: the canonical material stores
+    -- only the capability FINGERPRINT, so the reread hashes this blob and
+    -- compares it against that independently stored digest. A summary would
+    -- hash to a value nobody stored, and the check could only agree with
+    -- itself.
+    --
+    -- created_at_ms is DIAGNOSTIC AND DELIBERATELY NOT CANONICAL. A clock in
+    -- the material would move the derived capture id between generations, and
+    -- the fence id derives from this one -- so a stable fence would remint on
+    -- every boot, which is the single thing it may not do.
+    -- ===================================================================
+    CREATE TABLE IF NOT EXISTS telegram_legacy_writer_captures (
+      capture_id                    TEXT PRIMARY KEY,
+      capture_slot                  INTEGER NOT NULL UNIQUE CHECK (capture_slot = 1),
+      capture_version               TEXT NOT NULL,
+      decision_cutover_id           TEXT NOT NULL,
+      identity_schema               TEXT NOT NULL,
+      writer_app_generation         TEXT NOT NULL,
+      writer_session_id             TEXT NOT NULL,
+      writer_pid                    INTEGER NOT NULL CHECK (writer_pid > 0),
+      writer_process_created_at     TEXT NOT NULL,
+      writer_executable_path        TEXT NOT NULL,
+      writer_command_line_sha256    TEXT NOT NULL,
+      capability_schema             TEXT NOT NULL,
+      capability_scanner            TEXT NOT NULL,
+      capability_manifest_sha256    TEXT NOT NULL,
+      capability_fingerprint        TEXT NOT NULL,
+      capability_reference_count    INTEGER NOT NULL,
+      capability_evidence_json      TEXT NOT NULL,
+      canonical_material_json       TEXT NOT NULL,
+      created_at_ms                 INTEGER NOT NULL,
+      -- AT LEAST ONE OUTSIDE-OWNER REFERENCE, IN THE SCHEMA. A capture with
+      -- zero is not a witness to the legacy world at all -- it is the repaired
+      -- release describing itself -- and because these rows are immutable the
+      -- instant they land, this constraint is the only place that can still
+      -- refuse one.
+      CONSTRAINT telegram_writer_capture_evidence_present CHECK (
+        typeof(capability_reference_count) = 'integer' AND capability_reference_count > 0
+      ),
+      -- typeof(...) BEFORE length(...), for the reason Architect #177 gave: a
+      -- CHECK evaluating to NULL is SATISFIED, and length(NULL) is NULL.
+      CONSTRAINT telegram_writer_capture_digests_coherent CHECK (
+        typeof(writer_command_line_sha256) = 'text'
+        AND length(writer_command_line_sha256) = 64
+        AND writer_command_line_sha256 NOT GLOB '*[^0-9a-f]*'
+        AND typeof(capability_fingerprint) = 'text'
+        AND length(capability_fingerprint) = 64
+        AND capability_fingerprint NOT GLOB '*[^0-9a-f]*'
+        AND typeof(capability_manifest_sha256) = 'text'
+        AND length(capability_manifest_sha256) = 64
+        AND capability_manifest_sha256 NOT GLOB '*[^0-9a-f]*'
+      )
+    );
+
+    -- NO UPDATE AT ALL. Every column except the diagnostic created_at_ms is
+    -- canonical material or the evidence its fingerprint covers, so a
+    -- "harmless" edit is a different predecessor wearing a valid id.
+    CREATE TRIGGER IF NOT EXISTS trg_tg_writer_capture_immutable
+    BEFORE UPDATE ON telegram_legacy_writer_captures
+    BEGIN SELECT RAISE(ABORT, 'telegram_legacy_writer_capture_immutable'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_writer_capture_no_delete
+    BEFORE DELETE ON telegram_legacy_writer_captures
+    BEGIN SELECT RAISE(ABORT, 'telegram_legacy_writer_capture_delete_forbidden'); END;
   `);
   return { ok: true };
+}
+
+/**
+ * THE CAPTURE-ONLY LEDGER SESSION GUARDS (capture-only terminal ruling v1).
+ *
+ * =====================================================================
+ * WHY CODE VALIDATION WAS NOT ENOUGH, AND WHY THIS IS FOUR TRIGGERS
+ * =====================================================================
+ * The successor's terminal proof reads a `ledger_sessions` row and, if it is
+ * exactly right, believes a capture. Without these guards the generic evidence
+ * ledger IPC — or any ordinary caller on the same handle — can create, close,
+ * REOPEN, rewrite or delete that row. Code-level validation alone would turn a
+ * crash-before-close permanent HOLD into a backfill path: the successor refuses
+ * once, someone writes the missing terminal by hand, and the second read passes.
+ *
+ * So the rule lives where a raw `UPDATE` still has to obey it.
+ *
+ * =====================================================================
+ * WHAT IS DELIBERATELY NOT HERE
+ * =====================================================================
+ * No table rebuild, no new column, and NO GLOBAL UNIQUE INDEX on
+ * `session_number`. The live ledger already contains duplicate ordinary session
+ * numbers — 444, 445 and 446 each appear twice — so a unique index would either
+ * refuse to install or demand rewriting historical rows that nobody authorized
+ * anyone to touch. The number reservation is therefore a trigger that constrains
+ * only the future, and only around numbers a capture-only session holds.
+ *
+ * These objects are installed SEPARATELY from the Telegram admission schema
+ * because they sit on a table this module does not own. A caller who wants the
+ * Telegram schema is not asking for guards on the evidence ledger's sessions.
+ */
+function applyCaptureOnlySessionSchema(db) {
+  // THE HOST TABLE HAS TO EXIST FIRST, and saying so is better than letting
+  // `CREATE TRIGGER` throw a parse-adjacent error that reads like broken DDL.
+  let host;
+  try {
+    host = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ledger_sessions'").get();
+  } catch (err) {
+    return fail('capture_only_session_host_probe_failed', { message: err.message });
+  }
+  if (!host || !host.sql) return fail('capture_only_session_host_absent');
+
+  // A DUPLICATED DEFINITION MEANS THE AUTHORITY IS AMBIGUOUS. Nothing may be
+  // installed from a map that cannot say which body is the definition.
+  if (CAPTURE_ONLY_SESSION_DDL_DUPLICATES.length > 0) {
+    return fail('capture_only_session_ddl_duplicate_definition', {
+      duplicates: [...CAPTURE_ONLY_SESSION_DDL_DUPLICATES],
+    });
+  }
+
+  // PREFLIGHT, THEN CREATE ONLY WHAT IS ABSENT (Oracle #136 / Architect #222).
+  //
+  // `CREATE TRIGGER IF NOT EXISTS` was the previous shape and it is silent when
+  // an object of that name already exists in a DIFFERENT shape — the exact
+  // defect A2b found in the table DDL. Bare `CREATE TRIGGER` would instead throw
+  // on a healthy re-apply, so this reads first and creates only the missing.
+  //
+  // A PRESENT-BUT-DIFFERENT OBJECT IS A REFUSAL, NOT A REPAIR. Dropping and
+  // recreating a same-named guard is precisely the "clean it up and try again"
+  // move that this whole lane exists to refuse: whatever installed that other
+  // body had a reason, and silently replacing it would erase the evidence that
+  // this database is not the one we think it is. The verification below names
+  // it and stops.
+  for (const [name, definition] of captureOnlySessionTriggerDdl) {
+    let existing;
+    try {
+      existing = db.prepare('SELECT name FROM sqlite_master WHERE name = ?').get(name);
+    } catch (err) {
+      return fail('capture_only_session_preflight_failed', { object: name, message: err.message });
+    }
+    if (existing) continue;
+    try {
+      db.exec(definition);
+    } catch (err) {
+      // A concurrent creator is not an error yet: whether what now exists is the
+      // right shape is the verifier's question, and it is asked below either way.
+      if (!/already exists/i.test(String(err.message))) {
+        return fail('capture_only_session_schema_apply_failed', { object: name, message: err.message });
+      }
+    }
+  }
+
+  // AND VERIFY WHAT IS INSTALLED, not what was just executed. The verifier
+  // re-reads `sqlite_master` and compares the COMPLETE normalized SQL of every
+  // one of the five against the same authoritative definition the loop above
+  // executed — so a pre-existing same-named object with a weakened body fails
+  // here rather than passing as "already installed".
+  const verified = verifyInstalledSchema(db, [...CAPTURE_ONLY_SESSION_SCHEMA_OBJECTS]);
+  if (!verified.ok) return verified;
+  return verified;
 }
 
 function begin(db) { db.exec('BEGIN IMMEDIATE'); }
@@ -704,6 +1520,59 @@ function readSourceIdentity(db, row) {
     sourceSessionId: stored.source_session_id === null ? null : String(stored.source_session_id),
     messageId: String(stored.message_id),
   };
+}
+
+/**
+ * THE ONLY MUTATION THE KERNEL EVER MAKES TO AN INBOUND COMMS ROW.
+ *
+ * `brokered` is a PROJECTION of a durable transport fact, not a second source
+ * of truth. The append-only claim plus its `delivery_started` event is the
+ * authority; this column exists so an operator reading the journal sees the
+ * same story. So it moves exactly one edge — `recorded -> brokered` — and
+ * writes exactly three columns.
+ *
+ * WHAT IT REFUSES TO TOUCH IS THE POINT. The generic comms upsert this replaces
+ * rewrote body, session, sender, target and the whole metadata blob on every
+ * call, which is how a delivery-time writer could quietly redefine the identity
+ * of the message it was delivering. Body, session, identity and metadata are
+ * written once, by `recordImmutableSource`, and never again by anyone.
+ */
+function projectSourceBrokered(db, source, atMs) {
+  const status = String(source.status ?? '');
+
+  if (status === 'brokered') {
+    // Idempotent only if it is THE SAME brokering. A different time means a
+    // different delivery authorised this row, and silently accepting it would
+    // erase the evidence that two of them existed.
+    if (Number(source.brokered_at_ms) !== Number(atMs)) {
+      return fail('comms_projection_time_conflict', {
+        stored: source.brokered_at_ms, offered: atMs,
+      });
+    }
+    return { ok: true, projection: { changed: false, status, brokeredAtMs: Number(atMs) } };
+  }
+
+  if (status !== 'recorded') {
+    // No fall-through, no "best effort update anyway". An unexpected status is
+    // an unexpected writer, and this row is supposed to have exactly one.
+    return fail('comms_projection_state_unexpected', { status });
+  }
+
+  const updated = db.prepare(`
+    UPDATE comms_journal
+    SET status = 'brokered', brokered_at_ms = ?, updated_at_ms = ?
+    WHERE row_id = ? AND status = 'recorded'
+  `).run(atMs, atMs, source.row_id);
+
+  // GUARDED BY THE WHERE CLAUSE, VERIFIED BY THE ROW COUNT. Under BEGIN
+  // IMMEDIATE a concurrent writer cannot have moved it, so zero rows means the
+  // premise this read was built on is already false — report that, never
+  // assume it.
+  const changes = Number(updated?.changes ?? 0);
+  if (changes !== 1) {
+    return fail('comms_projection_lost_race', { changes, status });
+  }
+  return { ok: true, projection: { changed: true, status: 'brokered', brokeredAtMs: Number(atMs) } };
 }
 
 /**
@@ -967,6 +1836,38 @@ function claimTransportAttempt(db, input = {}) {
       });
     }
 
+    // ===================================================================
+    // NO LIVE CLAIM IS NOT THE SAME FACT AS NO DELIVERY (Oracle #21).
+    //
+    // The query above deliberately ignores `closed_unsent`, because a released
+    // slot must be retryable. But a slot released by an older build may carry an
+    // append-only `delivery_started` it should never have been closed past, and
+    // then "no live claim" means "the bytes went out and the row lies about it".
+    // Acquisition is the last moment before a second delivery is authorised, so
+    // it asks the events table across the whole tuple rather than trusting the
+    // state column of the rows it just skipped.
+    //
+    // The schema trigger enforces the same rule for writers that never call
+    // this function; this branch exists so the caller gets a named refusal
+    // instead of a constraint stack trace.
+    // ===================================================================
+    const tupleDelivered = db.prepare(`
+      SELECT c.claim_id AS claim_id, c.state AS state, e.at_ms AS at_ms
+      FROM telegram_transport_events e
+      JOIN telegram_transport_claims c ON c.claim_id = e.claim_id
+      WHERE e.kind = 'delivery_started'
+        AND c.cutover_id = ? AND c.route_key = ? AND c.update_id = ?
+      ORDER BY e.event_id ASC LIMIT 1
+    `).get(input.cutoverId, input.routeKey, input.updateId);
+    if (tupleDelivered) {
+      rollback(db);
+      return fail('claim_tuple_delivery_started', {
+        deliveredClaimId: String(tupleDelivered.claim_id),
+        deliveredClaimState: String(tupleDelivered.state),
+        deliveryStartedAtMs: Number(tupleDelivered.at_ms),
+      });
+    }
+
     db.prepare(`
       INSERT INTO telegram_transport_claims (
         claim_id, cutover_id, route_key, update_id, source_row_id,
@@ -987,6 +1888,13 @@ function claimTransportAttempt(db, input = {}) {
     // violations included — onto `claim_held_by_other`, which would report a
     // broken reference as a lost race and send the caller to wait for a claim
     // that does not exist.
+    // THE TUPLE GUARD, when the trigger is what refused. A writer that reached
+    // the INSERT without the branch above — an older caller, a raw statement —
+    // must get the same named reason, not a generic failure a retry loop could
+    // read as transient.
+    if (/telegram_claim_insert_after_delivery_started/i.test(err.message)) {
+      return fail('claim_tuple_delivery_started', { refusedBy: 'schema_trigger' });
+    }
     if (/FOREIGN KEY/i.test(err.message)) {
       return fail('claim_foreign_key_violation', { message: err.message });
     }
@@ -1037,8 +1945,39 @@ function recordDeliveryStarted(db, input = {}) {
       .get(input.claimId);
     if (!claim) { rollback(db); return fail('claim_not_found'); }
 
+    // REJOIN THE CLAIM TO ITS IMMUTABLE SOURCE, HERE, INSIDE THE SAME
+    // TRANSACTION THAT AUTHORISES THE PANE WRITE.
+    //
+    // Acquisition already joined them, but acquisition happened earlier and in
+    // its own transaction. Between the two, the only thing standing behind
+    // "this claim describes that message" is a foreign key — and a foreign key
+    // proves a row exists, never that it still says the same thing. The
+    // authorisation boundary is the one place where being wrong means James
+    // sees the wrong message, so it re-derives rather than inherits.
+    const source = db.prepare('SELECT * FROM comms_journal WHERE row_id = ?')
+      .get(claim.source_row_id);
+    if (!source) { rollback(db); return fail('source_row_missing'); }
+    const identity = readSourceIdentity(db, source);
+    if (!identity) { rollback(db); return fail('source_identity_missing'); }
+    if (String(identity.cutoverId) !== String(claim.cutover_id)
+      || String(identity.routeKey) !== String(claim.route_key)
+      || Number(identity.updateId) !== Number(claim.update_id)) {
+      rollback(db);
+      return fail('delivery_source_correlation_mismatch', {
+        sourceCutover: identity.cutoverId,
+        sourceRoute: identity.routeKey,
+        sourceUpdateId: identity.updateId,
+      });
+    }
+
     switch (claim.state) {
-      case CLAIM_STATES.CLAIMED:
+      case CLAIM_STATES.CLAIMED: {
+        // THE ONE ALLOWED COMMS PROJECTION, and it happens BEFORE the claim
+        // moves — so a refused projection cannot leave a delivery authorised
+        // against a row that never advanced.
+        const projected = projectSourceBrokered(db, source, atMs);
+        if (!projected.ok) { rollback(db); return projected; }
+
         db.prepare(`
           UPDATE telegram_transport_claims
           SET state = ?, delivered_prompt_sha256 = ?, delivered_prompt_bytes = ?
@@ -1050,7 +1989,15 @@ function recordDeliveryStarted(db, input = {}) {
         db.prepare('INSERT INTO telegram_transport_events (claim_id, kind, at_ms, detail) VALUES (?, ?, ?, ?)')
           .run(input.claimId, 'delivery_started', atMs, input.detail ?? null);
         commit(db);
-        return { ok: true, claimId: input.claimId, state: CLAIM_STATES.DELIVERY_STARTED, created: true };
+        return {
+          ok: true,
+          claimId: input.claimId,
+          state: CLAIM_STATES.DELIVERY_STARTED,
+          created: true,
+          sourceRowId: Number(source.row_id),
+          commsProjection: projected.projection,
+        };
+      }
 
       case CLAIM_STATES.DELIVERY_STARTED: {
         // IDEMPOTENCY IS EXACT, NOT APPROXIMATE. A second delivery_started for
@@ -1085,8 +2032,21 @@ function recordDeliveryStarted(db, input = {}) {
             });
           }
         }
+        // EXACT REPLAY MUST STILL SEE THE PROJECTION IT CLAIMS TO REPLAY. A
+        // replay accepted over a comms row that is NOT brokered at this exact
+        // time is not a replay of this delivery — it is a second one wearing
+        // the first one's digest.
+        const projected = projectSourceBrokered(db, source, atMs);
+        if (!projected.ok) { rollback(db); return projected; }
         commit(db);
-        return { ok: true, claimId: input.claimId, state: CLAIM_STATES.DELIVERY_STARTED, created: false };
+        return {
+          ok: true,
+          claimId: input.claimId,
+          state: CLAIM_STATES.DELIVERY_STARTED,
+          created: false,
+          sourceRowId: Number(source.row_id),
+          commsProjection: projected.projection,
+        };
       }
 
       case CLAIM_STATES.ADMITTED:
@@ -1124,6 +2084,31 @@ function closeUnsentClaim(db, input = {}) {
     const claim = db.prepare('SELECT * FROM telegram_transport_claims WHERE claim_id = ?')
       .get(input.claimId);
     if (!claim) { rollback(db); return fail('claim_not_found'); }
+
+    // ===================================================================
+    // THE EVENT IS ASKED FIRST, AND IT WINS (Oracle #13, blocker 1).
+    //
+    // `state` is mutable and `delivery_started` is append-only, so when the two
+    // disagree the append-only one is the record of what happened. Checking
+    // only `state = claimed` meant a row whose status had been moved back —
+    // whether by a bug, an older build, or a hand-edit — read as provably
+    // unsent while carrying durable evidence that bytes had been authorised.
+    // Inside the same transaction as the close, so nothing can slip a D event
+    // in between the question and the answer.
+    // ===================================================================
+    const deliveryStarted = db.prepare(`
+      SELECT at_ms FROM telegram_transport_events
+      WHERE claim_id = ? AND kind = 'delivery_started'
+      ORDER BY event_id ASC LIMIT 1
+    `).get(input.claimId);
+    if (deliveryStarted) {
+      rollback(db);
+      return fail('claim_delivery_started_recorded', {
+        state: claim.state,
+        deliveryStartedAtMs: Number(deliveryStarted.at_ms),
+      });
+    }
+
     if (claim.state !== CLAIM_STATES.CLAIMED) {
       rollback(db);
       return fail('claim_not_provably_unsent', { state: claim.state });
@@ -1138,6 +2123,157 @@ function closeUnsentClaim(db, input = {}) {
     rollback(db);
     return fail(`close_failed:${err.message}`);
   }
+}
+
+/**
+ * THE DRAIN'S READ OF THE ATTEMPT LATCH. READ-ONLY, NO SYNTHESIS.
+ *
+ * =====================================================================
+ * WHY THE DRAIN NEEDS THIS AT ALL
+ * =====================================================================
+ * Post-cutover the claim IS the attempt latch. Until now the only thing that
+ * could see a claim was the process that had just made one; a restarted drain
+ * asked `delivery-attempts.jsonl` — a file the delivery path no longer writes —
+ * and got back "never attempted" for a message whose bytes may already be on
+ * James's screen. That is the duplicate this whole lane exists to prevent, and
+ * it would have been INTRODUCED by the fix.
+ *
+ * Every field returned comes out of a stored column. `delivery_started` is read
+ * from the append-only event table rather than inferred from `state`, because
+ * "which authority says the pane write was authorised" is exactly the question,
+ * and answering it from a mutable status column would be answering it from the
+ * cheaper of the two records.
+ *
+ * THE CLOSED SLOT IS STILL RETURNED, WITH ITS EVENTS. A `closed_unsent` claim
+ * is evidence that an attempt was made, and the caller needs to see it to
+ * distinguish that from "nothing ever happened here". Those two are NOT both
+ * safe to attempt, which is what this comment used to say: a closed row that
+ * carries a `delivery_started` event is an older build's incoherent pair, and
+ * attempting it is a second copy in front of James.
+ */
+function readTransportClaim(db, input = {}) {
+  const durable = assertDurableHandle(db);
+  if (!durable.ok) return durable;
+
+  for (const field of ['cutoverId', 'routeKey']) {
+    if (!isNonEmptyString(input[field])) return fail(`claim_read_field_missing:${field}`);
+  }
+  const updateId = Number(input.updateId);
+  if (!Number.isSafeInteger(updateId) || updateId <= 0) {
+    return fail('claim_read_field_missing:updateId');
+  }
+
+  let rows;
+  try {
+    rows = db.prepare(`
+      SELECT * FROM telegram_transport_claims
+      WHERE cutover_id = ? AND route_key = ? AND update_id = ?
+      ORDER BY attempt_at_ms ASC, claim_id ASC
+    `).all(input.cutoverId, input.routeKey, updateId);
+  } catch (err) {
+    return fail(`claim_read_failed:${err.message}`);
+  }
+  if (!rows.length) return { ok: true, claim: null, closedClaims: [] };
+
+  const live = rows.filter((row) => String(row.state) !== CLAIM_STATES.CLOSED_UNSENT);
+
+  // ===================================================================
+  // THE CLOSED ROWS ARE ASKED FOR THEIR EVENTS TOO (Oracle #21).
+  //
+  // This used to project a closed row from its columns alone and never open the
+  // events table for it, so a legacy `closed_unsent` row carrying an append-only
+  // `delivery_started` — the pair an older build could write — came back as a
+  // bare closed slot. The caller then read {claim: null} as "nothing outstanding
+  // here", and the tuple was delivered a second time. A closed row is exactly
+  // where the contradiction hides, because closing is the act that CLAIMS
+  // nothing was sent.
+  // ===================================================================
+  let closedClaims;
+  try {
+    const readEvents = db.prepare(`
+      SELECT kind, at_ms FROM telegram_transport_events
+      WHERE claim_id = ? ORDER BY event_id ASC
+    `);
+    closedClaims = rows
+      .filter((row) => String(row.state) === CLAIM_STATES.CLOSED_UNSENT)
+      .map((row) => {
+        const closedEvents = readEvents.all(String(row.claim_id));
+        const started = closedEvents.find((event) => String(event.kind) === 'delivery_started') || null;
+        return {
+          claimId: String(row.claim_id),
+          closedAtMs: Number(row.closed_at_ms) || null,
+          // FROM THE APPEND-ONLY EVENT, same authority as the live claim's.
+          deliveryStartedAtMs: started ? Number(started.at_ms) : null,
+          eventKinds: closedEvents.map((event) => String(event.kind)),
+        };
+      });
+  } catch (err) {
+    return fail(`claim_events_unreadable:${err.message}`);
+  }
+
+  // TWO LIVE CLAIMS IS NOT A STATE ANYONE MAY GUESS PAST. The partial unique
+  // index forbids it, so seeing it means the index is gone or the file is
+  // damaged, and picking either row would be picking which delivery to believe.
+  if (live.length > 1) {
+    return fail('claim_read_ambiguous', { liveClaimIds: live.map((row) => String(row.claim_id)) });
+  }
+  if (!live.length) return { ok: true, claim: null, closedClaims };
+
+  const row = live[0];
+  let events;
+  try {
+    events = db.prepare(`
+      SELECT kind, at_ms, detail FROM telegram_transport_events
+      WHERE claim_id = ? ORDER BY event_id ASC
+    `).all(String(row.claim_id));
+  } catch (err) {
+    return fail(`claim_events_unreadable:${err.message}`);
+  }
+  const deliveryStarted = events.find((event) => String(event.kind) === 'delivery_started') || null;
+
+  const sourceRow = db.prepare('SELECT * FROM comms_journal WHERE row_id = ?').get(row.source_row_id);
+  const identity = readSourceIdentity(db, sourceRow);
+  // A claim whose immutable source cannot be read is not a claim we can reason
+  // about: the identity the proof gate compares against lives in that row.
+  if (!identity) return fail('claim_source_identity_unreadable', { claimId: String(row.claim_id) });
+
+  return {
+    ok: true,
+    closedClaims,
+    claim: {
+      claimId: String(row.claim_id),
+      cutoverId: String(row.cutover_id),
+      routeKey: String(row.route_key),
+      updateId: Number(row.update_id),
+      sourceRowId: Number(row.source_row_id),
+      state: String(row.state),
+      appGeneration: String(row.app_generation),
+      paneLaunchId: String(row.pane_launch_id),
+      paneId: String(row.pane_id),
+      role: String(row.role),
+      consumerRuntime: String(row.consumer_runtime),
+      attemptNonce: String(row.attempt_nonce),
+      attemptAtMs: Number(row.attempt_at_ms),
+      closedAtMs: row.closed_at_ms === null ? null : Number(row.closed_at_ms),
+      deliveredPromptSha256: row.delivered_prompt_sha256 === null ? null : String(row.delivered_prompt_sha256),
+      deliveredPromptBytes: row.delivered_prompt_bytes === null ? null : Number(row.delivered_prompt_bytes),
+      // FROM THE APPEND-ONLY EVENT, not from `state`.
+      deliveryStartedAtMs: deliveryStarted ? Number(deliveryStarted.at_ms) : null,
+      eventKinds: events.map((event) => String(event.kind)),
+      source: {
+        messageId: identity.messageId,
+        chatId: identity.chatId,
+        profile: identity.profile,
+        windowKey: identity.windowKey,
+        routeKey: identity.routeKey,
+        updateId: identity.updateId,
+        cutoverId: identity.cutoverId,
+        canonicalPayloadSha256: identity.canonicalPayloadSha256,
+        obligationId: identity.obligationId,
+        status: sourceRow ? String(sourceRow.status ?? '') : null,
+      },
+    },
+  };
 }
 
 /**
@@ -2056,9 +3192,21 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
       'INSERT INTO telegram_work_claim_events (work_claim_id, transition, at_ms, detail) VALUES (?, ?, ?, ?)'
     ).run(workClaimId, 'work_claimed', atMs, null);
 
-    // 6. PROMOTE THE REAL SOURCE ROW.
-    db.prepare('UPDATE comms_journal SET status = ?, brokered_at_ms = ?, updated_at_ms = ? WHERE row_id = ?')
-      .run(SOURCE_STATES.BROKERED, atMs, atMs, source.row_id);
+    // 6. THE SOURCE IS ALREADY BROKERED, AND PROMOTION DOES NOT RE-BROKER IT.
+    //
+    // B4b moved that projection to the `delivery_started` authorisation
+    // boundary, where the fact it projects actually becomes true. Writing it
+    // again here would make promotion the second writer of the one column the
+    // kernel is supposed to own — the same defect as the generic upsert, one
+    // layer down — and it would move `brokered_at_ms` forward to promotion
+    // time, quietly relabelling when James's message reached the pane.
+    //
+    // Verified rather than assumed: promotion of a source that was never
+    // brokered means a receipt exists for a delivery nothing ever authorised.
+    if (String(source.status) !== SOURCE_STATES.BROKERED) {
+      rollback(db);
+      return fail('source_not_brokered', { status: source.status });
+    }
 
     db.prepare('UPDATE telegram_transport_claims SET state = ? WHERE claim_id = ?')
       .run(CLAIM_STATES.ADMITTED, input.claimId);
@@ -2077,6 +3225,7 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
 
 module.exports = {
   SCHEMA_VERSION,
+  TELEGRAM_CUTOVER_ID,
   SOURCE_METADATA_KEY,
   CLAIM_STATES,
   SOURCE_STATES,
@@ -2093,11 +3242,19 @@ module.exports = {
   assertDurableHandle,
   verifyInstalledSchema,
   REQUIRED_SCHEMA_SHAPE,
+  CLAIM_READ_SCHEMA_OBJECTS,
+  CAPTURE_ONLY_SESSION_TRIGGER_SQL,
+  CAPTURE_ONLY_SESSION_SCHEMA_OBJECTS,
+  CAPTURE_ONLY_SESSION_HOST_TABLE,
+  normalizeInstalledSql,
+  installedSqlDigest,
+  applyCaptureOnlySessionSchema,
   applyTelegramAdmissionSchema,
   recordImmutableSource,
   claimTransportAttempt,
   recordDeliveryStarted,
   closeUnsentClaim,
+  readTransportClaim,
   promoteToAdmittedOwned,
   deriveQueueAckIntentKey,
   casBindingState,

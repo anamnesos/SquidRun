@@ -4,7 +4,6 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
 
 const { DaemonClient } = require('../../daemon-client');
 const { PIPE_PATH } = require('../../config');
@@ -29,6 +28,7 @@ const {
   sha256File,
   verifyCodexComputerUseProofJournal,
 } = require('./codex-computer-use-proof');
+const { queryWindowsProcess } = require('./windows-process-identity');
 
 const STANDALONE_CONTROLLER_SCHEMA =
   'squidrun.codex_computer_use_standalone_controller.v1';
@@ -90,55 +90,28 @@ function commandInvokesExactScript(commandLine, scriptPath, platform = process.p
   return tokens.length >= 2 && pathsEqual(tokens[1], scriptPath, platform);
 }
 
+/**
+ * THE DAEMON'S VOCABULARY OVER THE SHARED PROBE.
+ *
+ * The `Win32_Process` query itself is no longer daemon-specific: the Telegram
+ * legacy cutover fence needs the same PID + CreationDate + ExecutablePath +
+ * command-line identity to prove its original writer retired, and two copies of
+ * a process-identity rule is the failure this repair keeps finding elsewhere.
+ *
+ * What IS daemon-specific is these four reason strings, which callers and
+ * evidence records already read. They are mapped rather than renamed, so this
+ * extraction changes nothing about what this module returns.
+ */
+const DAEMON_PROBE_REASONS = Object.freeze({
+  PID_INVALID: 'daemon_pid_invalid',
+  PROBE_FAILED: 'daemon_process_probe_failed',
+  PROBE_INVALID: 'daemon_process_probe_invalid',
+  FOUND: 'daemon_process_found',
+  MISSING: 'daemon_process_missing',
+});
+
 function defaultQueryWindowsProcess(pid, options = {}) {
-  const numericPid = Number(pid);
-  if (!Number.isInteger(numericPid) || numericPid <= 0) {
-    return Promise.resolve({ ok: false, reason: 'daemon_pid_invalid', process: null });
-  }
-  const runner = options.execFile || execFile;
-  const script = [
-    `$item = Get-CimInstance Win32_Process -Filter "ProcessId = ${numericPid}"`,
-    'if ($null -eq $item) { Write-Output "null"; exit 0 }',
-    '$item | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine,CreationDate | ConvertTo-Json -Compress',
-  ].join('; ');
-  return new Promise((resolve) => {
-    runner(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', script],
-      {
-        encoding: 'utf8',
-        timeout: 10000,
-        windowsHide: true,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          resolve({
-            ok: false,
-            reason: 'daemon_process_probe_failed',
-            error: error.message,
-            stderr: String(stderr || ''),
-            process: null,
-          });
-          return;
-        }
-        try {
-          const parsed = JSON.parse(String(stdout || 'null').trim() || 'null');
-          resolve({
-            ok: Boolean(parsed),
-            reason: parsed ? 'daemon_process_found' : 'daemon_process_missing',
-            process: parsed || null,
-          });
-        } catch (parseError) {
-          resolve({
-            ok: false,
-            reason: 'daemon_process_probe_invalid',
-            error: parseError.message,
-            process: null,
-          });
-        }
-      }
-    );
-  });
+  return queryWindowsProcess(pid, { ...options, reasons: DAEMON_PROBE_REASONS });
 }
 
 function daemonIdentityComparable(identity = {}) {

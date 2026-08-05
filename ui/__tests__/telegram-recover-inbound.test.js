@@ -37,6 +37,8 @@ function seed(updateIds = [808499316]) {
       metadata: { updateId, chatId: 6543210, messageId: updateId },
       targetProfile: 'main',
       targetWindow: 'main',
+      producerAppGeneration: 'app-session-test',
+      producerSessionId: 'sess-test',
     });
     dir = res.dir;
   }

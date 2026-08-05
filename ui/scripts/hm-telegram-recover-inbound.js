@@ -49,9 +49,26 @@ function parseArgs(argv) {
   return args;
 }
 
+/**
+ * A REFUSAL IS A RETURN VALUE, NOT A MUTATION OF THE HOST PROCESS.
+ *
+ * This used to set `process.exitCode = 1` here. `run` is imported directly by
+ * ui/__tests__/telegram-recover-inbound.test.js, so every refusal case - and
+ * refusing correctly is most of what this script is FOR - poisoned the exit
+ * code of whatever process was running the tests. Jest then printed a fully
+ * green summary, 11/11 passing, and exited 1.
+ *
+ * That is how it broke the pre-commit gate: the gate's per-file loop saw a
+ * non-zero status from a suite that had just reported PASS, stopped there, and
+ * never ran the remaining staged file - which looked exactly like the LAST file
+ * failing silently. A library that edits global process state reaches places it
+ * was never meant to, and the damage shows up somewhere unrelated.
+ *
+ * The exit code now belongs to the CLI entrypoint, which is the only context
+ * that has any business setting one.
+ */
 function fail(message) {
   process.stderr.write(`REFUSED: ${message}\n`);
-  process.exitCode = 1;
   return { ok: false, reason: message };
 }
 
@@ -148,6 +165,10 @@ function run(argv = process.argv.slice(2), out = process.stdout) {
   return { ok: true, applied: true, result, preview };
 }
 
-if (require.main === module) run();
+// THE ENTRYPOINT OWNS THE EXIT CODE, derived from the returned result.
+if (require.main === module) {
+  const result = run();
+  if (!result || result.ok !== true) process.exitCode = 1;
+}
 
 module.exports = { run, parseArgs, DISPOSITION };

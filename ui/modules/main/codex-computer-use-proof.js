@@ -46,24 +46,14 @@ function pathsEqual(left, right, platform = process.platform) {
   return platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
-function canonicalize(value) {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (!value || typeof value !== 'object') return value;
-  return Object.keys(value)
-    .sort()
-    .reduce((result, key) => {
-      result[key] = canonicalize(value[key]);
-      return result;
-    }, {});
-}
-
-function canonicalJson(value) {
-  return JSON.stringify(canonicalize(value));
-}
-
-function sha256(value) {
-  return crypto.createHash('sha256').update(value).digest('hex');
-}
+// EXTRACTED, NOT COPIED. This rule is now shared with the v7 section 4 Telegram
+// legacy cutover fence, which derives a content-addressed id from it. Two
+// canonical encoders agree until one is edited, and the day they disagree two
+// subsystems hash the same object to two digests and each looks internally
+// consistent - so there is one implementation, in `canonical-json`, and this
+// module consumes it. Behaviour here is unchanged; the CUA suites prove that
+// rather than this comment.
+const { canonicalJson, sha256 } = require('./canonical-json');
 
 function sha256File(filePath, readFile = fs.readFileSync) {
   return sha256(readFile(filePath));

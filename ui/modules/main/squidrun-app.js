@@ -47,6 +47,14 @@ const { createKernelBridge } = require('./kernel-bridge');
 const telegramIngressSpool = require('./telegram-ingress-spool');
 const telegramIngressDrain = require('./telegram-ingress-drain');
 const telegramDrainWiring = require('./telegram-drain-wiring');
+// LOADED BEFORE THE STARTUP CAPTURE, ON PURPOSE. The release capture requires
+// every one of its seven anchors to be present in `require.cache`, and this file
+// is one of them — so a lazy require of the fence would make the capture fail
+// with `release_anchor_not_loaded` on every boot, permanently, and the fence
+// would be impossible to create for a reason that reads like a missing file.
+const telegramActivationMode = require('./telegram-activation-mode');
+const telegramLegacyCutoverFence = require('./telegram-legacy-cutover-fence');
+const telegramAdmissionDelivery = require('./telegram-admission-delivery');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
 const { emitWindowVisibilityState } = require('./window-visibility-state');
@@ -62,7 +70,7 @@ const {
   rootContainsPath,
   normalizeToPosixPath,
 } = require('./squidrun-root-paths');
-const { publishAppGeneration } = require('./app-generation'); // every scope assignment publishes
+const { publishAppGeneration, currentAppGeneration } = require('./app-generation'); // every scope assignment publishes
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const TELEGRAM_PENDING_REPLAY_GRACE_MS = 10 * 60 * 1000;
 const ROOT_COHERENCE_MARKER_RELPATH = path.join('runtime', 'root-coherence-assert.jsonl');
@@ -121,9 +129,13 @@ const {
 const {
   appendReceiptMarkerToPrompt,
   getModelPromptReceipt,
-  getReceiptPaths,
   getReceiptRuntimeActivity,
 } = require('../model-prompt-receipt');
+// Its own module so "no identity is synthesized at lookup time" is auditable by
+// reading one small file. Imported as a MODULE OBJECT like the two above:
+// destructuring binds at require time and would leave the composite untestable
+// (Architect #146 caught a mutant that survived exactly that gap).
+const telegramTerminalLookup = require('./telegram-terminal-lookup');
 const {
   shouldTriggerAutonomousSmoke,
   buildSmokeRunnerArgs,
@@ -4620,6 +4632,18 @@ class SquidRunApp {
     this.assertRootCoherenceAtBoot();
     this.appendBootSequenceBreadcrumb('init:step-1:load-settings');
     this.settings.loadSettings();
+    // v7 §3 Phase L. Settings become authoritative on the line above, and the
+    // startup backlog drain and poller start well below, so this is the one
+    // point where the operating state can be frozen with nothing able to get in
+    // front of it. Never re-read on settings reload (see the reload seam) or in
+    // buildTelegramPollerEnv; one generation, one answer.
+    this.captureTelegramActivationMode();
+    // v7 §4, loaded-release ruling v1. Same reasoning, same point in the
+    // sequence: the release this generation LOADED is frozen here, before any
+    // drain or scheduling authority exists, so a later disk change is a
+    // divergence this process can detect rather than a fingerprint it silently
+    // adopts.
+    this.captureTelegramLoadedRelease();
 
     // 1.1 Packaged app bootstrap: ensure a writable external workspace exists.
     this.appendBootSequenceBreadcrumb('init:step-1.1:packaged-workspace-bootstrap');
@@ -14517,7 +14541,13 @@ class SquidRunApp {
     };
   }
 
-  async deliverHumanMessageWithRecall(message, recallContext = {}, logLabel = 'HumanMessage') {
+  /**
+   * COMPOSE THE EXACT BYTES A PANE WILL RECEIVE — and stop there. Split out
+   * because the admission kernel must hash what is really delivered: recall and
+   * the reply-target guard run AFTER the caller's message, so a digest taken
+   * before this point describes a string no consumer ever sees.
+   */
+  async composeHumanPaneMessage(message, recallContext = {}, logLabel = 'HumanMessage') {
     const messageWithRecall = await this.buildHumanMessageWithUnifiedRecall(message, recallContext, logLabel);
     const meta = {
       ...((recallContext.meta && typeof recallContext.meta === 'object') ? recallContext.meta : {}),
@@ -14540,6 +14570,16 @@ class SquidRunApp {
     if (isTelegramInbound) {
       this.applyTelegramReplyTargetMetadata(meta, recallContext);
     }
+    return { outboundMessage, meta, channel, isTelegramInbound };
+  }
+
+  /**
+   * Write ONE composed message to its pane. `composed.outboundMessage` is
+   * authoritative and is never re-decorated: on the Telegram path those bytes
+   * are already hashed into a durable `delivery_started`.
+   */
+  async deliverComposedHumanMessage(composed = {}, recallContext = {}, logLabel = 'HumanMessage') {
+    const { outboundMessage, meta = {}, channel = 'user', isTelegramInbound = false } = composed;
     const result = await this.deliverPaneMessageReliably({
       paneId: String(recallContext.paneId || '1'),
       message: outboundMessage,
@@ -14581,6 +14621,19 @@ class SquidRunApp {
       log.warn(logLabel, `Failed to inject inbound message into pane ${recallContext.paneId || '1'} (${result?.error || 'unknown'})`);
     }
     return result;
+  }
+
+  /**
+   * Compose then deliver. Unchanged for every non-Telegram caller.
+   * `recallContext.preComposed` is the admitted path: composition already
+   * happened inside the admission sequence and `message` is the exact string
+   * hashed into `delivery_started`, so recomposing would decorate it twice.
+   */
+  async deliverHumanMessageWithRecall(message, recallContext = {}, logLabel = 'HumanMessage') {
+    const composed = recallContext.preComposed
+      ? { ...recallContext.preComposed, outboundMessage: String(message) }
+      : await this.composeHumanPaneMessage(message, recallContext, logLabel);
+    return this.deliverComposedHumanMessage(composed, recallContext, logLabel);
   }
 
   startSmsPoller() {
@@ -14653,6 +14706,11 @@ class SquidRunApp {
     }
   }
 
+  /** Run the admission kernel for one inbound job on a durable handle. */
+  async runTelegramAdmissionForJob(options = {}) {
+    return telegramAdmissionDelivery.runAdmissionForJob(this, options);
+  }
+
   /**
    * Deliver one inbound Telegram job to its pane. Called ONLY by the drain
    * coordinator, never straight from the poller callback: the callback now
@@ -14687,62 +14745,11 @@ class SquidRunApp {
         body,
       });
     }
-    void Promise.resolve(executeEvidenceLedgerOperation(
-      'upsert-comms-journal',
-      {
-        messageId: inboundMessageId,
-        sessionId: inboundSessionScopeId || null,
-        senderRole: 'user',
-        targetRole: 'architect',
-        channel: 'telegram',
-        direction: 'inbound',
-        sentAtMs,
-        brokeredAtMs: Date.now(),
-        rawBody: body,
-        status: 'brokered',
-        attempt: 1,
-        metadata: {
-          source: 'telegram-poller',
-          from: sender,
-          updateId,
-          telegramMessageId: messageId,
-          chatId: Number.isFinite(Number(metadata?.chatId))
-            ? Number(metadata.chatId)
-            : null,
-          windowKey: inboundWindowKey,
-          profile: inboundRoute.profile || inboundWindowKey,
-          sessionScopeId: inboundSessionScopeId,
-          mediaKind: typeof media?.kind === 'string' ? media.kind : null,
-          telegramMediaKind: typeof media?.telegramKind === 'string' ? media.telegramKind : null,
-          telegramFileId: typeof media?.fileId === 'string' ? media.fileId : null,
-          telegramFilePath: typeof media?.telegramFilePath === 'string' ? media.telegramFilePath : null,
-          mediaMimeType: typeof media?.mimeType === 'string' ? media.mimeType : null,
-          mediaFileName: typeof media?.fileName === 'string' ? media.fileName : null,
-          mediaDuration: Number.isFinite(Number(media?.duration)) ? Number(media.duration) : null,
-          mediaWidth: Number.isFinite(Number(media?.width)) ? Number(media.width) : null,
-          mediaHeight: Number.isFinite(Number(media?.height)) ? Number(media.height) : null,
-          downloadedFilePath: archivePath,
-          latestScreenshotPath: typeof media?.latestScreenshotPath === 'string'
-            ? media.latestScreenshotPath
-            : null,
-        },
-      },
-      {
-        source: {
-          via: 'telegram-poller',
-          role: 'system',
-          paneId: 'system',
-        },
-      }
-    )).then((result) => {
-      if (result?.ok === false) {
-        log.warn('EvidenceLedger', `Telegram inbound journal upsert failed: ${result.reason || 'unknown'}`);
-      } else {
-        log.info('Telegram', `Telegram inbound journaled as ${inboundMessageId}`);
-      }
-    }).catch((err) => {
-      log.warn('EvidenceLedger', `Telegram inbound journal upsert error: ${err.message}`);
-    });
+    // THE GENERIC COMMS UPSERT THAT USED TO LIVE HERE IS GONE, ON PURPOSE: a
+    // second, unawaited writer of `telegram-in-<updateId>` that could rewrite
+    // body, session, identity and metadata. Generic-first stranded every source
+    // as `source_identity_missing`; generic-second overwrote the identity the
+    // claim was joined to. The kernel is sole owner now.
     const formattedBody = archivePath ? `${body} | saved: ${archivePath}` : body;
     const fullTelegramMessage = `[Telegram from ${sender}]: ${formattedBody}`;
     const telegramMsgBytes = Buffer.byteLength(fullTelegramMessage, 'utf8');
@@ -14753,44 +14760,57 @@ class SquidRunApp {
     const safeMessage = telegramMsgBytes > TELEGRAM_MSG_SIZE_LIMIT
       ? fullTelegramMessage.slice(0, TELEGRAM_MSG_SIZE_LIMIT) + '\n[...truncated — full text in evidence ledger]'
       : fullTelegramMessage;
+    const admissionJob = telegramAdmissionDelivery.buildAdmissionJob(job, deliveryIdentity);
+    const admissionRecord = job.record || {};
+
     if (inboundWindowKey !== 'main') {
-      // ONE delivery promise, ONE result. The old shape fired this off with
-      // `void ... .then()` and returned immediately, which meant the caller was
-      // told "delivered" before anything had happened. A coordinator cannot
-      // sequence or prove an outcome it never waited for.
-      let result;
-      try {
-        result = await this.deliverScopedTelegramInboundWithRetry(inboundWindowKey, safeMessage, {
-          messageId: inboundMessageId,
-          sessionScopeId: inboundSessionScopeId,
-          chatId: metadata?.chatId,
-          updateId,
-          telegramMessageId: messageId,
-          sender,
-        });
-      } catch (err) {
-        return { ok: false, status: 'scoped_runtime_error', error: err.message, ...deliveryIdentity };
+      // Source-only admission: see telegram-admission-delivery.js for why a
+      // scoped route may not claim a transport attempt.
+      const scopedAdmission = await telegramAdmissionDelivery.admitScopedTelegramSource(this, {
+        job: admissionJob, record: admissionRecord, inboundMessageId, log,
+      });
+      if (!scopedAdmission.ok) {
+        return { ...scopedAdmission.refusal, ...deliveryIdentity };
       }
 
-      if (
-        (result?.verified === true && result?.userVisible === true)
-        || isTerminalAcceptedDeliveryResult(result)
-      ) {
-        log.info(
-          'Telegram',
-          `Scoped Telegram inbound injected into ${inboundWindowKey} Architect pane (${inboundMessageId})`
-        );
-        // Identity LAST: a raw result carrying its own messageId must never
-        // override the stable inbound id the queue is keyed on.
-        return { ...result, ...deliveryIdentity };
-      }
-
-      // NO TRIGGER FALLBACK FROM THE DRAIN. handleScopedTelegramInboundFallback
-      // writes the fixed trigger path — loss site #1, the original bug in this
-      // lane. Routing recovery back through the thing it replaced is how two
-      // messages in one batch overwrite each other. Hand the real status to the
-      // durable queue instead and let it stay pending.
-      return { ...(result || {}), ok: false, ...deliveryIdentity };
+      // ===================================================================
+      // THE SCOPED CUTOVER IS BINARY, AND THIS IS THE STOP (Oracle #10).
+      // ===================================================================
+      // The source row is recorded — the kernel owns the identity — and then
+      // this route REFUSES, before a far-process WebSocket is constructed or
+      // opened. It is not a capability we removed; it is one we never actually
+      // had and were reporting as delivery:
+      //
+      //   * the far side renders its own pane, so no marker we append can come
+      //     back and no terminal producer exists on that side at all;
+      //   * the ACK that came back carries no chatId, generation or provedAtMs,
+      //     so it fails the strict proof gate by construction;
+      //   * its duplicate suppression was RAM-only, so a far restart could put
+      //     the same message on screen twice with nothing able to notice;
+      //   * the source row lives in THIS profile's ledger while the lookup that
+      //     would retire it reads the SCOPED one — two databases, no binding.
+      //
+      // A send whose success can never be proved and whose duplicate can never
+      // be detected is not a delivery, and continuing to make it while calling
+      // the result `verified` is how a scoped message becomes invisible in both
+      // directions. The record stays pending and visible until a durable
+      // far-side claim, marker and terminal producer exist with a cross-ledger
+      // binding. That work is named, not hidden behind a hopeful send.
+      log.warn(
+        'Telegram',
+        `Scoped route ${inboundWindowKey} admitted source for ${inboundMessageId} and refused delivery: no far-side proof authority`
+      );
+      return {
+        ok: false,
+        status: 'scoped_delivery_unprovable',
+        admissionStage: 'A_source',
+        admissionPhase: 'before_delivery',
+        scopedSourceRecorded: true,
+        // Source-only never claims a transport attempt, so this refusal owns
+        // nothing the drain may close on its behalf.
+        claimRelease: { kind: 'none' },
+        ...deliveryIdentity,
+      };
     }
     const mainPaneRecallContext = {
       paneId: '1',
@@ -14811,17 +14831,17 @@ class SquidRunApp {
       },
       header: 'MESSAGE RECALL',
     };
-    const deliverMainTelegramToArchitect = async () => {
-      try {
-        return await this.deliverHumanMessageWithRecall(
-          safeMessage,
-          mainPaneRecallContext,
-          'Telegram'
-        );
-      } catch (err) {
-        return { ok: false, status: 'main_pane_runtime_error', error: err.message };
-      }
-    };
+    // Admission-then-one-write. The whole sequence, including composition of
+    // the exact bytes, lives in telegram-admission-delivery.js.
+    const deliverMainTelegramToArchitect = async () => telegramAdmissionDelivery
+      .deliverAdmittedMainTelegram(this, {
+        safeMessage,
+        recallContext: mainPaneRecallContext,
+        job: admissionJob,
+        record: admissionRecord,
+        inboundMessageId,
+        log,
+      });
 
     if (this.shouldRouteMainTelegramInboundToMira({
       body,
@@ -14831,6 +14851,42 @@ class SquidRunApp {
       photo,
       document,
     })) {
+      // ===================================================================
+      // A DOMINATES THE ROUTE SPLIT (Oracle #10). THIS BRANCH WAS A BYPASS.
+      // ===================================================================
+      // Every Mira outcome below returns BEFORE deliverMainTelegramToArchitect,
+      // therefore before step A ever ran. With the generic upsert deleted, a
+      // message answered through Mira created NO inbound source row at all — it
+      // was answered and left with no immutable identity anywhere, which is
+      // indistinguishable from never having arrived.
+      //
+      // So the source is recorded first, for the route rather than for the pane
+      // write. There is deliberately no claim and no marker: Mira's transport is
+      // its own outbound journal, not a pane whose bytes we hash, and pretending
+      // otherwise would claim A-E for a delivery that never touches E.
+      const miraSource = await this.runTelegramAdmissionForJob({
+        job: admissionJob,
+        record: admissionRecord,
+        mode: telegramAdmissionDelivery.MODES.SOURCE_ONLY,
+      });
+      if (!miraSource.ok) {
+        log.warn(
+          'Telegram',
+          `Mira route admission refused for ${inboundMessageId} at ${miraSource.stage} (${miraSource.reason}); not answering`
+        );
+        return {
+          ok: false,
+          status: `admission_refused:${miraSource.reason}`,
+          admissionStage: miraSource.stage,
+          admissionPhase: miraSource.phase || 'before_delivery',
+          claimRelease: telegramAdmissionDelivery.claimReleaseFor(miraSource),
+          ...deliveryIdentity,
+        };
+      }
+      // ONE ROW, NAMED ON EVERY OUTCOME BELOW, so complete / partial /
+      // ambiguous / proof-pending all point at the same immutable identity.
+      const miraIdentity = { ...deliveryIdentity, admissionSourceRowId: miraSource.sourceRowId };
+
       const miraOutcome = await this.routeMainTelegramInboundToMira({
         body,
         sender,
@@ -14867,7 +14923,7 @@ class SquidRunApp {
         return {
           status: 'accepted.proof_lookup_pending',
           accepted: true,
-          ...deliveryIdentity,
+          ...miraIdentity,
         };
       }
 
@@ -14877,7 +14933,7 @@ class SquidRunApp {
           status: 'delivered.user_visible',
           userVisible: true,
           miraStatus: miraOutcome?.status || null,
-          ...deliveryIdentity,
+          ...miraIdentity,
         };
       }
 
@@ -14891,7 +14947,7 @@ class SquidRunApp {
         return {
           status: 'accepted.mira_partial_egress',
           accepted: true,
-          ...deliveryIdentity,
+          ...miraIdentity,
         };
       }
 
@@ -14905,7 +14961,7 @@ class SquidRunApp {
         return {
           status: 'accepted.mira_send_ambiguous',
           accepted: true,
-          ...deliveryIdentity,
+          ...miraIdentity,
         };
       }
 
@@ -14920,7 +14976,7 @@ class SquidRunApp {
         return {
           status: 'accepted.mira_proof_pending',
           accepted: true,
-          ...deliveryIdentity,
+          ...miraIdentity,
         };
       }
 
@@ -15045,14 +15101,159 @@ class SquidRunApp {
         currentSessionFor: (windowKey) => this.getWindowSessionScopeId(windowKey || 'main'),
         deliver: (job) => this.deliverTelegramInboundJob(this.buildTelegramInboundJob(job)),
         findExistingReceipt: (identity) => this.findTelegramDeliveryReceipt(identity),
+        // B5. The post-cutover attempt latch lives in the admission database,
+        // so the drain's decision layer has to be able to read it. Without
+        // these two the drain holds rather than guessing, which is why they are
+        // wired here and not defaulted inside the coordinator.
+        lookupTransportClaim: (query) => telegramAdmissionDelivery.lookupTransportClaimForApp(this, query),
+        closeUnsentTransportClaim: (input) => telegramAdmissionDelivery.closeUnsentClaimForApp(this, input),
         // S491. Three questions the drain could not previously ask, each
         // answered here where the app actually knows.
         sessionGeneration: () => this.getTelegramDrainGeneration(),
         paneRuntimeFor: (windowKey) => this.resolveTelegramPaneRuntime(windowKey),
         receiptActivity: () => this.getTelegramReceiptRuntimeActivity(),
+        // v7 §3 Phase L. The drain asks once per pass and this answers from a
+        // value frozen at STARTUP, in init immediately after loadSettings, so
+        // no settings save can move a running generation between operating
+        // states mid-backlog (Architect #146/#147/#148). Freezing at first ask
+        // was the rejected design: the first ask comes from runPass, which is
+        // late enough for a mutation to get in front of it.
+        activationMode: () => this.getTelegramActivationModeSetting(),
       });
     }
     return this.telegramDrainCoordinator;
+  }
+
+  /**
+   * FREEZE THE TELEGRAM TRANSPORT ACTIVATION MODE FOR THIS APP GENERATION.
+   *
+   * Called exactly once from `init()`, immediately after `loadSettings()` and
+   * well before the startup backlog drain and the poller.
+   *
+   * =====================================================================
+   * WHY HERE, AND NOT EARLIER OR LATER (Architect #146/#147/#148, Oracle #92)
+   * =====================================================================
+   * The constructor is too early: `ctx.currentSettings` is not authoritative
+   * until `loadSettings()` has run, so capturing there would freeze whatever
+   * happened to be in the context object.
+   *
+   * Lazily capturing at first ask is too late: the first ask comes from
+   * `runPass`, so anything that mutated settings between construction and the
+   * first drain would still decide this generation's operating state. "Frozen"
+   * has to mean frozen from a point nothing downstream can get in front of.
+   *
+   * And it must never be re-read. A settings reload mid-session would otherwise
+   * move a RUNNING drain between Phase L and not-Phase-L between two records of
+   * the same backlog, and the stable fence Step 3 derives has to be able to say
+   * "this generation settled legacy" as one fact rather than a majority vote.
+   *
+   * ONE AUTHORITY. This reads `ctx.currentSettings` and nothing else. An
+   * earlier draft fell back to `settings.loadSettings()` when the field was
+   * absent, which is two mutable snapshots answering one question — and the
+   * fallback would fire in exactly the case that matters, an install where
+   * nobody has configured the mode.
+   *
+   * The RAW value is stored, deliberately unresolved. `telegram-activation-mode`
+   * owns what counts as valid; resolving here as well would let the app and the
+   * drain hold different opinions about which state this process is in.
+   */
+  captureTelegramActivationMode() {
+    if (this.telegramActivationModeCaptured === true) return this.telegramActivationModeRaw;
+    let raw;
+    try {
+      const loaded = this.ctx.currentSettings;
+      raw = loaded && typeof loaded === 'object'
+        ? loaded.telegramTransportActivationMode
+        : undefined;
+    } catch (err) {
+      // UNREADABLE IS NOT UNSET, and both fail closed. The distinction belongs
+      // in the log rather than in a stored value that would afterwards look
+      // like something an operator deliberately configured.
+      log.warn('Telegram', `Activation mode unreadable at startup (${err.message}); treating as unset`);
+      raw = undefined;
+    }
+    this.telegramActivationModeRaw = raw === undefined ? null : raw;
+    this.telegramActivationModeCaptured = true;
+    // PUBLISHED FROM THE SAME FREEZE THE COORDINATOR READS (Architect #202).
+    // Not a second capture and not a second settings read: the value assigned
+    // one line above is the value published, so a consumer that is not this app
+    // instance — the Step 3 fence's Phase-L readiness proof — reads exactly what
+    // the drain coordinator resolves instead of asserting its own constants.
+    const published = telegramActivationMode.publishFrozenActivationMode(this.telegramActivationModeRaw);
+    if (!published.ok) {
+      log.warn('Telegram', `Activation mode already frozen for this process: ${JSON.stringify(published.detail)}`);
+    }
+    log.info('Telegram', `Transport activation mode frozen for this generation: ${JSON.stringify(this.telegramActivationModeRaw)}`);
+    return this.telegramActivationModeRaw;
+  }
+
+  /**
+   * FREEZE THE LOADED RELEASE FOR THIS GENERATION (v7 §4).
+   *
+   * The fence's release/call-graph fingerprint has to describe the code this
+   * process loaded, not the code on disk whenever the fence first happened to
+   * be needed. Capturing lazily would fingerprint a later world; capturing here
+   * — one line after the activation mode, still before any drain or poller —
+   * means a file that changes afterwards shows up as a DIVERGENCE at fence
+   * creation and at every health check, which is the whole point.
+   *
+   * A FAILED CAPTURE IS STORED AS THE FAILURE. It is not retried later and not
+   * softened into "unknown": an ambiguous root or a reachable legacy writer is
+   * a reason to hold the fence, and re-asking after startup would just be asking
+   * a different question.
+   *
+   * THE APP NO LONGER HOLDS THE CAPTURE (Architect #192). It used to keep the
+   * branded object on `this` and hand it to the fence, which made "the release
+   * that is running" whatever the app passed in. The freeze now lives inside the
+   * fence authority; this method triggers it at the right moment and keeps only
+   * a status of strings and numbers, which is all the log and the diagnostics
+   * ever needed.
+   */
+  captureTelegramLoadedRelease() {
+    if (this.telegramLoadedReleaseCaptured === true) return this.telegramLoadedRelease;
+    let status;
+    try {
+      status = telegramLegacyCutoverFence.captureStartupRelease();
+    } catch (err) {
+      status = { ok: false, reason: 'release_capture_threw', detail: { message: err.message } };
+    }
+    this.telegramLoadedRelease = status;
+    this.telegramLoadedReleaseCaptured = true;
+    if (status && status.ok === true) {
+      log.info('Telegram', `Loaded release frozen for this generation: ${status.fingerprint} (${status.fileCount} files)`);
+    } else {
+      log.warn('Telegram', `Loaded release could not be frozen: ${status && status.reason}`);
+    }
+    return status;
+  }
+
+  /**
+   * The frozen capture's STATUS, or a refusal. Does not capture.
+   *
+   * Deliberately not the capture itself: the branded object stays inside the
+   * fence closure, and nothing outside it needs more than the fingerprint.
+   */
+  getTelegramLoadedReleaseCapture() {
+    if (this.telegramLoadedReleaseCaptured !== true) {
+      throw new Error('telegram loaded release was never frozen at startup');
+    }
+    return this.telegramLoadedRelease;
+  }
+
+  /**
+   * The frozen value, or a refusal.
+   *
+   * DOES NOT CAPTURE. If the freeze never happened, something is calling the
+   * drain outside the startup sequence that owns this decision, and the honest
+   * answer is not "unset" — that would be indistinguishable from a real install
+   * whose operator has not configured the mode. Throwing makes the drain hold
+   * with a reason that names the actual defect.
+   */
+  getTelegramActivationModeSetting() {
+    if (this.telegramActivationModeCaptured !== true) {
+      throw new Error('telegram activation mode was never frozen at startup');
+    }
+    return this.telegramActivationModeRaw;
   }
 
   /** Stable per-process id; see telegram-drain-wiring.makeDrainGeneration. */
@@ -15167,6 +15368,11 @@ class SquidRunApp {
       inboundSessionScopeId: job.sessionScopeId || null,
       inboundMessageId: job.messageId,
       updateId: job.updateId,
+      // THE DURABLE QUEUE RECORD ITSELF. The canonical payload digest is
+      // computed from it and echoed back by the consumer. Dropping it does not
+      // fail loudly: `canonicalQueuedPayloadDigest({})` is a valid hash, the
+      // same one for every message ever sent, agreeing with itself forever.
+      record,
       messageId: record.messageId ?? null,
       sentAtMs: Number.isFinite(Number(record.timestampMs))
         ? Math.floor(Number(record.timestampMs))
@@ -15175,41 +15381,39 @@ class SquidRunApp {
   }
 
   /**
-   * The receipt store belonging to a specific profile.
+   * The evidence ledger belonging to a specific profile.
    *
-   * Main uses its canonical default store. A scoped profile keeps receipts
-   * under ITS OWN resolved root, so reading main's store for a scoped message
-   * answers a different question entirely and could retire a message that never
-   * reached her window.
+   * Main uses its canonical default database. A scoped profile keeps its
+   * ledger under ITS OWN resolved root, so reading main's ledger for a scoped
+   * message answers a different question entirely and could retire a message
+   * that never reached her window.
    *
    * Fail closed: an unresolvable profile root THROWS rather than falling back
    * to main, cwd, or getProjectRoot(). The drain turns a throw into a HOLD,
    * which is correct when we cannot tell where the proof would live.
    */
-  resolveScopedReceiptStatePath(profile) {
+  resolveScopedLedgerDbPath(profile) {
     const name = typeof profile === 'string' ? profile.trim() : '';
     if (!name || name === 'main') return null;
 
     const root = getProfileProjectRootOverride(name, process.env);
     if (!root) {
-      throw new Error(`cannot resolve receipt store root for profile ${name}`);
+      throw new Error(`cannot resolve evidence ledger root for profile ${name}`);
     }
-    // Scoped profiles NAMESPACE the first coord segment: getReceiptPaths uses
-    // resolveCoordPath('runtime/model-prompt-receipts') and
-    // namespaceCoordRelPath rewrites `runtime` to `runtime-<profile>`. Using
-    // plain `runtime` would point at a directory that never exists, read as
-    // ABSENCE, and mean "never delivered" — a duplicate, dressed as a miss.
+    // Scoped profiles NAMESPACE the first coord segment: resolveCoordPath
+    // rewrites `runtime` to `runtime-<profile>`. Using plain `runtime` would
+    // point at a database that never exists, read as ABSENCE, and mean "never
+    // delivered" — a duplicate, dressed as a miss.
     return path.join(
       path.resolve(root),
       '.squidrun',
       `runtime-${normalizeProfileName(name)}`,
-      'model-prompt-receipts',
-      'receipts-state.json'
+      'evidence-ledger.db'
     );
   }
 
   /**
-   * Crash-replay proof, read from the PERSISTENT comms journal.
+   * Crash-replay proof, read from DURABLE STORES ONLY.
    *
    * An in-memory map cannot answer this question: the whole point is surviving
    * a process that died between delivering and acking, and a Map dies with it.
@@ -15218,36 +15422,29 @@ class SquidRunApp {
    * journal row under the SAME telegram-in-<updateId> BEFORE delivery. That row
    * proves the message reached US, not that it reached a pane. Matching it would
    * retire every record on its first drain pass, undelivered.
+   *
+   * S492: proof comes from `telegram_consumed_receipts`, written at a consumer
+   * boundary that saw the exact bytes. The generic model-prompt receipt store
+   * it replaced could not name an update, a chat or a generation, so the object
+   * it returned could never satisfy the proof gate — see the full account in
+   * telegram-terminal-lookup.js, which owns that argument and the code for it.
    */
   async findTelegramDeliveryReceipt(identity = {}) {
     if (!identity?.messageId) return null;
 
-    // ONE proof source for pane delivery: the model-prompt receipt store, which
-    // persists synchronously and survives the crash this path exists for
-    // (Oracle #64).
+    // MIRA REPLAY, FIRST. A message answered by Mira never reaches a pane at
+    // all, so it can never produce a pane consumption receipt; checking only
+    // that store would find nothing after a crash and send James a SECOND Mira
+    // reply. An in-memory latch cannot help: it dies with the process.
     //
-    // The decorated comms-journal row is deliberately NOT used. It proved only
-    // that SOME row with this id reached a verified submit, and my version then
-    // attached whatever route/window/profile was being asked about — which
-    // would have accepted a proof from one surface as proof for another. It
-    // also races the `void` inbound upsert. Architect #73: correlate the exact
-    // receipt to the stored queue identity, or do not depend on the row.
-    let receipt;
-    try {
-      // MAIN gets strict semantics too. A corrupt or unreadable main store must
-      // HOLD, not read as "no receipt" — that is the answer that resends.
-      const scopedStatePath = this.resolveScopedReceiptStatePath(identity.profile);
-      const statePath = scopedStatePath || getReceiptPaths().statePath;
-      receipt = getModelPromptReceipt(identity.messageId, { statePath, strict: true });
-    } catch (err) {
-      // Cannot tell whether it landed; the drain turns a throw into a HOLD.
-      throw new Error(`model prompt receipt lookup failed: ${err.message}`);
-    }
-    // MIRA REPLAY. A message answered by Mira never produces a pane
-    // model-prompt receipt, so checking only that store would find nothing after
-    // a crash and send James a SECOND Mira reply. The pre-delivery replay lookup
-    // has to ask about Mira too, using this record's own chat/route identity.
-    // An in-memory latch cannot help here: it dies with the process.
+    // STRUCTURALLY INCOMPLETE, AND SAID SO OUT LOUD: the outbound row proves
+    // Mira answered, but it owns no app generation and no proof timestamp, so
+    // this object cannot satisfy the proof gate and the record HOLDS rather
+    // than retiring. That is exactly what happens today — this comment does not
+    // change behaviour, it stops the incompleteness from being invisible. A
+    // Mira-answered message is therefore still a queue-holding message, and
+    // closing that is its own repair with its own evidence, not a field
+    // invented here.
     if (this.hasDurableMiraOutboundProof(identity.messageId, {
       inboundMessageId: identity.messageId,
       chatId: identity.chatId,
@@ -15266,27 +15463,24 @@ class SquidRunApp {
       };
     }
 
-    if (!receipt) return null;
-    if (receipt.semanticEvent !== 'prompt_submit') return null;
-    if (receipt.status !== 'prompt_submitted.in_band') return null;
-    // Asking the store for an id is not the same as the store answering for it.
-    // A malformed mapping or state file could return someone else's receipt, so
-    // the receipt has to identify itself as this message.
-    const receiptId = receipt.messageId || receipt.deliveryId;
-    if (receiptId !== identity.messageId) return null;
-
-    // Identity comes from the record we already re-validated against the live
-    // route, joined to a receipt for that exact id. The receipt carries no
-    // route identity of its own and none is invented for it.
-    return {
-      status: 'delivered.verified',
-      verified: true,
-      proofSource: 'model_prompt_receipt',
-      messageId: identity.messageId,
-      routeKey: identity.routeKey,
-      windowKey: identity.windowKey,
-      profile: identity.profile,
-    };
+    // TERMINAL CONSUMPTION. The lookup returns the stored record's own fields
+    // or nothing; it cannot complete a partial record, and a store it cannot
+    // read or that holds two conflicting accounts THROWS, which the drain turns
+    // into a hold.
+    try {
+      // MAIN gets strict semantics too. A scoped profile's proof lives in a
+      // scoped ledger; reading main's for a scoped message answers a different
+      // question and could retire a message that never reached her window.
+      const scopedDbPath = this.resolveScopedLedgerDbPath(identity.profile);
+      return telegramTerminalLookup.findTerminalConsumptionEvidence({
+        messageId: identity.messageId,
+        routeKey: identity.routeKey,
+        dbPath: scopedDbPath || undefined,
+      });
+    } catch (err) {
+      // Cannot tell whether it landed; the drain turns a throw into a HOLD.
+      throw new Error(`terminal consumption lookup failed: ${err.message}`);
+    }
   }
 
   /**
@@ -15564,6 +15758,11 @@ class SquidRunApp {
             targetProfile: inboundRoute.profile || 'main',
             targetWindow: inboundWindowKey,
             targetSession: inboundSessionScopeId || null,
+            // v7 §1: the producer declares its protocol. The spool fails closed
+            // without these, so a build that cannot name its own generation
+            // never appends an anonymous legacy record (Architect #104).
+            producerAppGeneration: currentAppGeneration(),
+            producerSessionId: this.commsSessionScopeId || null,
           });
           if (!terminal.ok) {
             log.warn('Telegram', `Could not record empty-body update (${terminal.reason}); holding cursor`);
@@ -15609,6 +15808,11 @@ class SquidRunApp {
           targetProfile: inboundRoute.profile || 'main',
           targetWindow: inboundWindowKey,
           targetSession: inboundSessionScopeId || null,
+          // v7 §1: the producer declares its protocol. See the empty-body site
+          // above; both production appends stamp, and the spool refuses any
+          // append that cannot (Architect #104).
+          producerAppGeneration: currentAppGeneration(),
+          producerSessionId: this.commsSessionScopeId || null,
         });
         if (!spooled.ok) {
           log.warn(

@@ -18,7 +18,9 @@ const {
  */
 const {
   produceAdmissionReceipt,
+  produceTerminalReceipt,
   bindSessionAtStart,
+  isTerminalHookEvent,
 } = require('../modules/main/telegram-admission-producer');
 
 function parseArgs(argv) {
@@ -96,6 +98,46 @@ function runTelegramStep(step) {
   }
 }
 
+/**
+ * THE OUTCOME OF THE TELEGRAM STEP, WRITTEN DOWN.
+ *
+ * It used to be returned and dropped on the floor. That mattered most for the
+ * one case we already know about: `produceTerminalReceipt` refuses Claude with
+ * `terminal_claude_submission_id_unsupported` — a correct, deliberate refusal —
+ * and the adapter discarded it and emitted the generic receipt status. So a
+ * runtime that CANNOT produce terminal proof looked exactly like one that
+ * simply had not yet, and the only evidence a hook had run at all was a
+ * debugging breadcrumb that proves invocation, not outcome.
+ *
+ * Append-only, one line, best-effort, and never in the prompt's way: a hook
+ * that fails a prompt is a worse bug than a missing diagnostic. Nothing here
+ * decides anything — it exists so health can say "this runtime refuses" out
+ * loud instead of everyone inferring silence.
+ */
+function recordTelegramStepOutcome(phase, runtime, outcome) {
+  try {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const { resolveCoordPath } = require('../config');
+    const target = resolveCoordPath(
+      path.join('runtime', 'telegram-step-outcomes.jsonl'),
+      { forWrite: true }
+    );
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.appendFileSync(target, `${JSON.stringify({
+      atMs: Date.now(),
+      phase,
+      runtime: runtime || null,
+      // `handled` distinguishes "this was not a Telegram delivery" — the
+      // overwhelming majority — from "it was, and here is what happened".
+      handled: outcome?.handled === true,
+      ok: outcome?.ok === true,
+      written: outcome?.written === true,
+      reason: typeof outcome?.reason === 'string' ? outcome.reason : null,
+    })}\n`, 'utf8');
+  } catch { /* diagnostics never block a prompt */ }
+}
+
 function emitHookResponse(result = {}) {
   const response = {
     hookSpecificOutput: {
@@ -140,10 +182,11 @@ async function main() {
     // SESSIONSTART ALSO BINDS THE RUNTIME SESSION TO ITS PANE LAUNCH. Without
     // this the launch registry has no session rows and every admission receipt
     // written later has nothing to attach itself to.
-    runTelegramStep(() => bindSessionAtStart({
+    const bound = runTelegramStep(() => bindSessionAtStart({
       runtime: normalizeRuntime(args.runtime),
       payload,
     }));
+    recordTelegramStepOutcome('session_bind', normalizeRuntime(args.runtime), bound);
     emitHookResponse({ hookEventName: args.event, record });
     return;
   }
@@ -154,12 +197,38 @@ async function main() {
     payload,
   });
 
-  // TELEGRAM ADMISSION. Returns `handled:false` for the overwhelming majority of
-  // prompts, which are not Telegram deliveries.
-  runTelegramStep(() => produceAdmissionReceipt({
-    runtime: normalizeRuntime(args.runtime),
-    payload,
-  }));
+  // TELEGRAM, PHASE 2: THE TURN ENDED.
+  //
+  // In this file for the same reason phase 1 is — it is the adapter the
+  // configured hooks actually invoke. A separate terminal adapter would be the
+  // fourth instance of the shape this lane keeps producing: a component
+  // hardened over checkpoints that no configured hook could reach, with a green
+  // suite proving only that the unreachable side works.
+  //
+  // Terminal runs INSTEAD of admission, not alongside it. A Stop payload
+  // carries no prompt, so the admission path would parse no marker and return
+  // `not_a_telegram_delivery` — harmless, but it would make the two phases look
+  // like one path that sometimes does nothing, which is precisely the ambiguity
+  // the split exists to remove.
+  if (isTerminalHookEvent(args.event)) {
+    // CAPTURED, NOT DISCARDED. `produceTerminalReceipt` refuses Claude with
+    // `terminal_claude_submission_id_unsupported`; that refusal is the answer
+    // to "can this runtime prove consumption at all", and it used to be thrown
+    // away one line after being computed.
+    const outcome = runTelegramStep(() => produceTerminalReceipt({
+      runtime: normalizeRuntime(args.runtime),
+      payload,
+    }));
+    recordTelegramStepOutcome('terminal', normalizeRuntime(args.runtime), outcome);
+  } else {
+    // TELEGRAM ADMISSION. Returns `handled:false` for the overwhelming majority
+    // of prompts, which are not Telegram deliveries.
+    const outcome = runTelegramStep(() => produceAdmissionReceipt({
+      runtime: normalizeRuntime(args.runtime),
+      payload,
+    }));
+    recordTelegramStepOutcome('admission', normalizeRuntime(args.runtime), outcome);
+  }
 
   emitHookResponse({
     hookEventName: args.event,
