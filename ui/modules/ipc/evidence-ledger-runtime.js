@@ -9,6 +9,7 @@ const { EvidenceLedgerStore } = require('../main/evidence-ledger-store');
 const { EvidenceLedgerInvestigator } = require('../main/evidence-ledger-investigator');
 const { EvidenceLedgerMemory } = require('../main/evidence-ledger-memory');
 const { seedDecisionMemory } = require('../main/evidence-ledger-memory-seed');
+const { CAPTURE_ONLY_SESSION_MODE } = require('../main/capture-only-session-contract');
 const log = require('../logger');
 const { resolveCoordPath } = require('../../config');
 
@@ -563,14 +564,41 @@ function executeEvidenceLedgerOperation(action, payload = {}, options = {}) {
         const opts = normalizeGetContextPayload(enrichedPayload);
         return memory.getLatestContext(opts);
       }
+      // THE RESERVED CAPTURE-ONLY MODE IS REFUSED AT THIS BOUNDARY TOO.
+      //
+      // The memory API already refuses it and the installed triggers refuse it
+      // again, and this gate is neither of those (capture-only terminal ruling
+      // v1: the code gates "are not substitutes for the DDL"). It exists because
+      // this dispatcher is the reachable-from-anywhere door: renderer, hook and
+      // agent traffic all arrive here, and a door that forwards a reserved
+      // request and relies on the room behind it to say no is one refactor away
+      // from forwarding it somewhere that does not.
       case 'record-session-start': {
         if (!memory) return { ok: false, reason: 'unavailable' };
         const opts = normalizeRecordSessionStartPayload(enrichedPayload);
+        if (typeof opts?.mode === 'string' && opts.mode.trim() === CAPTURE_ONLY_SESSION_MODE) {
+          return { ok: false, reason: 'session_mode_reserved', mode: opts.mode.trim() };
+        }
         return memory.recordSessionStart(opts);
       }
       case 'record-session-end': {
         if (!memory) return { ok: false, reason: 'unavailable' };
         const { sessionId, opts } = normalizeRecordSessionEndPayload(enrichedPayload);
+        // THE STORED ROW DECIDES. There is no mode in an end payload to check,
+        // so the only real question is what is on disk; asking `getSession`
+        // here is this boundary's own independent read rather than a repetition
+        // of the caller's claim.
+        if (sessionId) {
+          let stored = null;
+          try {
+            stored = memory.getSession(sessionId);
+          } catch (err) {
+            return { ok: false, reason: 'session_mode_probe_failed', error: err?.message || String(err) };
+          }
+          if (stored && String(stored.mode) === CAPTURE_ONLY_SESSION_MODE) {
+            return { ok: false, reason: 'session_mode_reserved', mode: String(stored.mode) };
+          }
+        }
         return memory.recordSessionEnd(sessionId, opts);
       }
       case 'snapshot-context': {

@@ -47,6 +47,13 @@ const { createKernelBridge } = require('./kernel-bridge');
 const telegramIngressSpool = require('./telegram-ingress-spool');
 const telegramIngressDrain = require('./telegram-ingress-drain');
 const telegramDrainWiring = require('./telegram-drain-wiring');
+// LOADED BEFORE THE STARTUP CAPTURE, ON PURPOSE. The release capture requires
+// every one of its seven anchors to be present in `require.cache`, and this file
+// is one of them — so a lazy require of the fence would make the capture fail
+// with `release_anchor_not_loaded` on every boot, permanently, and the fence
+// would be impossible to create for a reason that reads like a missing file.
+const telegramActivationMode = require('./telegram-activation-mode');
+const telegramLegacyCutoverFence = require('./telegram-legacy-cutover-fence');
 const telegramAdmissionDelivery = require('./telegram-admission-delivery');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
@@ -4631,6 +4638,12 @@ class SquidRunApp {
     // front of it. Never re-read on settings reload (see the reload seam) or in
     // buildTelegramPollerEnv; one generation, one answer.
     this.captureTelegramActivationMode();
+    // v7 §4, loaded-release ruling v1. Same reasoning, same point in the
+    // sequence: the release this generation LOADED is frozen here, before any
+    // drain or scheduling authority exists, so a later disk change is a
+    // divergence this process can detect rather than a fingerprint it silently
+    // adopts.
+    this.captureTelegramLoadedRelease();
 
     // 1.1 Packaged app bootstrap: ensure a writable external workspace exists.
     this.appendBootSequenceBreadcrumb('init:step-1.1:packaged-workspace-bootstrap');
@@ -15161,8 +15174,70 @@ class SquidRunApp {
     }
     this.telegramActivationModeRaw = raw === undefined ? null : raw;
     this.telegramActivationModeCaptured = true;
+    // PUBLISHED FROM THE SAME FREEZE THE COORDINATOR READS (Architect #202).
+    // Not a second capture and not a second settings read: the value assigned
+    // one line above is the value published, so a consumer that is not this app
+    // instance — the Step 3 fence's Phase-L readiness proof — reads exactly what
+    // the drain coordinator resolves instead of asserting its own constants.
+    const published = telegramActivationMode.publishFrozenActivationMode(this.telegramActivationModeRaw);
+    if (!published.ok) {
+      log.warn('Telegram', `Activation mode already frozen for this process: ${JSON.stringify(published.detail)}`);
+    }
     log.info('Telegram', `Transport activation mode frozen for this generation: ${JSON.stringify(this.telegramActivationModeRaw)}`);
     return this.telegramActivationModeRaw;
+  }
+
+  /**
+   * FREEZE THE LOADED RELEASE FOR THIS GENERATION (v7 §4).
+   *
+   * The fence's release/call-graph fingerprint has to describe the code this
+   * process loaded, not the code on disk whenever the fence first happened to
+   * be needed. Capturing lazily would fingerprint a later world; capturing here
+   * — one line after the activation mode, still before any drain or poller —
+   * means a file that changes afterwards shows up as a DIVERGENCE at fence
+   * creation and at every health check, which is the whole point.
+   *
+   * A FAILED CAPTURE IS STORED AS THE FAILURE. It is not retried later and not
+   * softened into "unknown": an ambiguous root or a reachable legacy writer is
+   * a reason to hold the fence, and re-asking after startup would just be asking
+   * a different question.
+   *
+   * THE APP NO LONGER HOLDS THE CAPTURE (Architect #192). It used to keep the
+   * branded object on `this` and hand it to the fence, which made "the release
+   * that is running" whatever the app passed in. The freeze now lives inside the
+   * fence authority; this method triggers it at the right moment and keeps only
+   * a status of strings and numbers, which is all the log and the diagnostics
+   * ever needed.
+   */
+  captureTelegramLoadedRelease() {
+    if (this.telegramLoadedReleaseCaptured === true) return this.telegramLoadedRelease;
+    let status;
+    try {
+      status = telegramLegacyCutoverFence.captureStartupRelease();
+    } catch (err) {
+      status = { ok: false, reason: 'release_capture_threw', detail: { message: err.message } };
+    }
+    this.telegramLoadedRelease = status;
+    this.telegramLoadedReleaseCaptured = true;
+    if (status && status.ok === true) {
+      log.info('Telegram', `Loaded release frozen for this generation: ${status.fingerprint} (${status.fileCount} files)`);
+    } else {
+      log.warn('Telegram', `Loaded release could not be frozen: ${status && status.reason}`);
+    }
+    return status;
+  }
+
+  /**
+   * The frozen capture's STATUS, or a refusal. Does not capture.
+   *
+   * Deliberately not the capture itself: the branded object stays inside the
+   * fence closure, and nothing outside it needs more than the fingerprint.
+   */
+  getTelegramLoadedReleaseCapture() {
+    if (this.telegramLoadedReleaseCaptured !== true) {
+      throw new Error('telegram loaded release was never frozen at startup');
+    }
+    return this.telegramLoadedRelease;
   }
 
   /**

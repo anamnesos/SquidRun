@@ -38,6 +38,16 @@ const {
   SUBMISSION_KINDS,
 } = require('./telegram-launch-registry');
 const { validateAdmissionRecord } = require('./telegram-consumed-proof');
+// THE RESERVED MODE AND TERMINAL LITERALS COME FROM THE CONTRACT, so the DDL
+// installs exactly what the generic-API gates refuse and what the successor
+// validates. The FINGERPRINTS below are hand-written on purpose: a fingerprint
+// interpolated from the same constant would only prove the file agrees with
+// itself.
+const {
+  CAPTURE_ONLY_SESSION_MODE,
+  TERMINAL_META_SCHEMA,
+  TERMINAL_STATUS,
+} = require('./capture-only-session-contract');
 
 const SCHEMA_VERSION = 'telegram_admission_store.v2';
 /** Versioned key under `comms_journal.metadata_json`. Identity, not decoration. */
@@ -290,7 +300,328 @@ const REQUIRED_SCHEMA_SHAPE = Object.freeze([
   ['telegram_consumed_receipts', "terminal_event IN ('turn_completed')"],
   ['trg_tg_consumed_immutable', 'telegram_consumed_receipt_immutable'],
   ['trg_tg_consumed_no_delete', 'telegram_consumed_receipt_delete_forbidden'],
+  // THE STABLE LEGACY FENCE. A2b's lesson applies with full force here: the
+  // DDL declares this table, and only `sqlite_master` proves what is installed.
+  // A build carrying the table without its triggers has a mutable fence, which
+  // is not a fence — so both triggers are fingerprinted, not just the columns.
+  ['telegram_legacy_cutover_fences', 'release_fingerprint'],
+  ['telegram_legacy_cutover_fences', 'retirement_evidence_sha256'],
+  ['telegram_legacy_cutover_fences', 'retired_identity_schema'],
+  ['telegram_legacy_cutover_fences', 'canonical_material_json'],
+  // THE SINGLETON AND THE COHERENCE CONSTRAINTS BY NAME. A build carrying the
+  // columns without these accepts a second fence and an incoherent immutable
+  // descriptor row, which is a table with the right shape and no rules.
+  ['telegram_legacy_cutover_fences', 'fence_slot                    INTEGER NOT NULL UNIQUE CHECK (fence_slot = 1)'],
+  ['telegram_legacy_cutover_fences', 'CONSTRAINT telegram_fence_attempt_descriptor_coherent'],
+  ['telegram_legacy_cutover_fences', 'CONSTRAINT telegram_fence_disposition_descriptor_coherent'],
+  ['trg_tg_fence_immutable', 'telegram_legacy_fence_immutable'],
+  ['trg_tg_fence_no_delete', 'telegram_legacy_fence_delete_forbidden'],
+  // THE ORIGINAL-WRITER CAPTURE. Same reasoning as the fence, one step earlier
+  // in the chain: this row is the only thing standing between "the legacy writer
+  // is retired" and a successor asserting it about itself, so a build carrying
+  // the table without its singleton slot or its immutability triggers has a
+  // rewritable history, which is worse than none.
+  ['telegram_legacy_writer_captures', 'capability_fingerprint'],
+  ['telegram_legacy_writer_captures', 'capability_evidence_json'],
+  ['telegram_legacy_writer_captures', 'writer_command_line_sha256'],
+  ['telegram_legacy_writer_captures', 'canonical_material_json'],
+  ['telegram_legacy_writer_captures', 'capture_slot                  INTEGER NOT NULL UNIQUE CHECK (capture_slot = 1)'],
+  ['telegram_legacy_writer_captures', 'CONSTRAINT telegram_writer_capture_evidence_present'],
+  // AND THE DIGEST RULE BY NAME (Architect #186). `verifyInstalledSchema` is a
+  // substring probe, so fingerprinting the singleton and the evidence rule while
+  // omitting this one would let a stale table with no digest coherence pass the
+  // named-object check — a table with the right columns and one missing rule,
+  // which is the shape this whole verifier exists to catch.
+  ['telegram_legacy_writer_captures', 'CONSTRAINT telegram_writer_capture_digests_coherent'],
+  ['trg_tg_writer_capture_immutable', 'telegram_legacy_writer_capture_immutable'],
+  ['trg_tg_writer_capture_no_delete', 'telegram_legacy_writer_capture_delete_forbidden'],
 ]);
+
+/**
+ * OBJECTS ON A TABLE THIS SCHEMA UNIT DOES NOT OWN, kept structurally separate
+ * rather than subtracted from the list above.
+ *
+ * The five guards below are installed ON `ledger_sessions`, which belongs to the
+ * evidence-ledger store. `applyTelegramAdmissionSchema` therefore must NOT
+ * require them — a caller who applies only the Telegram schema to a database
+ * without those guards has a correct, complete Telegram schema, and failing that
+ * caller would be a false alarm on every existing consumer.
+ *
+ * The temptation was an exclusion list inside the verifier: check everything
+ * EXCEPT these five. That is the shape of check that rots, because the exception
+ * outlives the reason for it and nobody can tell later whether a name is
+ * excepted because it belongs elsewhere or because it was failing. Two lists
+ * with two owners says the same thing structurally and cannot drift into an
+ * excuse. There is still exactly ONE definition for each object, in one place,
+ * because a named probe searches both.
+ *
+ * =====================================================================
+ * SPARSE FRAGMENTS ARE RETIRED FOR THESE OBJECTS (terminal ruling v2, F2)
+ * =====================================================================
+ * The previous version of this list recorded a handful of substrings per guard
+ * and the verifier asked whether the installed SQL CONTAINED them. Oracle broke
+ * it by execution: a same-named close guard that kept every fragment while
+ * dropping the immutability, ordering and terminal clauses verified as healthy,
+ * and then accepted state the real guard refuses. A selected fragment is not an
+ * installed shape — it is a shape the fragment list happens to be able to see.
+ *
+ * So there is now ONE authoritative complete definition per object. The
+ * installer executes it; the verifier independently re-reads `sqlite_master`
+ * and requires full equality against it. Neither side keeps a second copy of
+ * the body, because two hand-copied bodies are how an installer and a verifier
+ * drift into agreeing with each other about the wrong thing.
+ *
+ * The text below is in SQLITE'S STORED FORM, not the typed form: SQLite drops
+ * `IF NOT EXISTS` and the statement terminator when it records the CREATE in
+ * `sqlite_master`, so writing them here would guarantee a mismatch against
+ * every correctly installed database. There are deliberately no SQL comments
+ * inside these bodies — a comment is stored verbatim and would become part of
+ * the compared shape, so the reasoning lives in JS where it costs nothing.
+ */
+const CAPTURE_ONLY_SESSION_TRIGGER_DEFINITIONS = [
+  // PRISTINE OR NOTHING. A reserved-mode row that could be born already-ended,
+  // already-summarized or already carrying metadata would let a later writer
+  // present a fabricated terminal as an original insert, and the immutable close
+  // guard would have nothing left to protect. `no existing row of ANY mode holds
+  // this number` belongs here too: that is what makes the successor's lookup by
+  // number a single-row question rather than a coin flip.
+  ['trg_ledger_writer_capture_session_insert_guard', `
+CREATE TRIGGER trg_ledger_writer_capture_session_insert_guard
+BEFORE INSERT ON ledger_sessions
+WHEN NEW.mode = '${CAPTURE_ONLY_SESSION_MODE}'
+BEGIN
+  SELECT RAISE(ABORT, 'capture_only_session_insert_not_pristine')
+  WHERE NEW.ended_at_ms IS NOT NULL
+     OR NEW.summary IS NOT NULL
+     OR NEW.stats_json IS NOT '{}'
+     OR NEW.team_json IS NOT '{}'
+     OR NEW.meta_json IS NOT '{}'
+     OR typeof(NEW.session_id) <> 'text'
+     OR NEW.session_id NOT GLOB 'ses_*'
+     OR length(NEW.session_id) <> 40
+     OR typeof(NEW.session_number) <> 'integer'
+     OR NEW.session_number <= 0
+     OR typeof(NEW.started_at_ms) <> 'integer'
+     OR NEW.started_at_ms <= 0
+     OR EXISTS (SELECT 1 FROM ledger_sessions WHERE session_number = NEW.session_number);
+END`],
+
+  // A NUMBER HELD BY A CAPTURE-ONLY SESSION IS HELD FOREVER, against every later
+  // INSERT of every mode. Not a global unique index: the live table already holds
+  // duplicate ordinary session numbers (444-446), so an index would either refuse
+  // to install or demand rewriting history nobody authorized.
+  ['trg_ledger_writer_capture_session_number_reserved', `
+CREATE TRIGGER trg_ledger_writer_capture_session_number_reserved
+BEFORE INSERT ON ledger_sessions
+BEGIN
+  SELECT RAISE(ABORT, 'capture_only_session_number_reserved')
+  WHERE EXISTS (
+    SELECT 1 FROM ledger_sessions
+    WHERE mode = '${CAPTURE_ONLY_SESSION_MODE}' AND session_number = NEW.session_number
+  );
+END`],
+
+  // EXACTLY ONE OPEN -> ENDED TRANSITION, EVER. `OLD.ended_at_ms IS NOT NULL` is
+  // the one-shot rule and `OLD.meta_json IS NOT '{}'` is its compare-and-set
+  // twin. Every later update of a reserved row — second close, reopen, rewrite,
+  // renumber, demotion — fails one of these clauses and aborts.
+  //
+  // The JSON clauses are structural, not a substitute for the canonical byte
+  // comparison the successor performs. A trigger cannot canonicalize; it can
+  // refuse a document that does not even claim to be the right schema, status or
+  // session, which is what stops a hand-written close from ever landing.
+  ['trg_ledger_writer_capture_session_close_guard', `
+CREATE TRIGGER trg_ledger_writer_capture_session_close_guard
+BEFORE UPDATE ON ledger_sessions
+WHEN OLD.mode = '${CAPTURE_ONLY_SESSION_MODE}'
+BEGIN
+  SELECT RAISE(ABORT, 'capture_only_session_close_invalid')
+  WHERE OLD.ended_at_ms IS NOT NULL
+     OR OLD.meta_json IS NOT '{}'
+     OR NEW.session_id IS NOT OLD.session_id
+     OR NEW.session_number IS NOT OLD.session_number
+     OR NEW.mode IS NOT OLD.mode
+     OR NEW.started_at_ms IS NOT OLD.started_at_ms
+     OR NEW.summary IS NOT NULL
+     OR NEW.stats_json IS NOT OLD.stats_json
+     OR NEW.team_json IS NOT OLD.team_json
+     OR NEW.stats_json IS NOT '{}'
+     OR NEW.team_json IS NOT '{}'
+     OR typeof(NEW.ended_at_ms) <> 'integer'
+     OR NEW.ended_at_ms <= 0
+     OR NEW.ended_at_ms < OLD.started_at_ms
+     OR typeof(NEW.meta_json) <> 'text'
+     OR json_valid(NEW.meta_json) <> 1
+     OR json_extract(NEW.meta_json, '$.schema') IS NOT '${TERMINAL_META_SCHEMA}'
+     OR json_extract(NEW.meta_json, '$.terminal.status') IS NOT '${TERMINAL_STATUS}'
+     OR json_extract(NEW.meta_json, '$.terminal.conflict') IS NOT 0
+     OR json_extract(NEW.meta_json, '$.terminal.degraded') IS NOT 0
+     OR json_extract(NEW.meta_json, '$.terminal.fallback') IS NOT 0
+     OR json_extract(NEW.meta_json, '$.terminal.replacement') IS NOT 0
+     OR json_extract(NEW.meta_json, '$.terminal.retry') IS NOT 0
+     OR json_extract(NEW.meta_json, '$.terminal.contextSnapshotCount') IS NOT 0
+     OR json_extract(NEW.meta_json, '$.session.id') IS NOT OLD.session_id
+     OR json_extract(NEW.meta_json, '$.session.number') IS NOT OLD.session_number;
+END`],
+
+  // THE FIFTH GUARD, AND THE ONE THIS RULING EXISTS FOR (terminal ruling v2, F1).
+  //
+  // Everything above keys on the row ALREADY being reserved, or on the row being
+  // born. Neither covers the door in between: `UPDATE ledger_sessions SET mode =
+  // 'writer_capture_only'` on an ordinary row, and `UPDATE ... SET session_number
+  // = <a reserved number>` on an ordinary row. Both were accepted by the v6
+  // schema, and composed they are permanent: once a second row sits on a reserved
+  // number, the close and no-delete guards make the contamination irreversible
+  // while the successor's independent count correctly holds forever. A guard that
+  // turns fence creation into a permanent denial is not a guard.
+  //
+  // This one is ALL-ROW on purpose — no `WHEN` clause — because the row it has to
+  // catch is by definition not reserved yet.
+  //
+  // The `session_id IS NOT OLD.session_id` term is what lets the legitimate close
+  // through: a reserved row keeping its own number finds only itself, and itself
+  // is not a collision. Ordinary-to-ordinary updates, including the historical
+  // 444-446 duplicates, never reach a reserved number and are untouched.
+  //
+  // This PREVENTS the first contaminating statement. The successor's duplicate
+  // count is a SECOND, INDEPENDENT line that DETECTS contamination if prevention
+  // is ever absent. They are not the same claim and neither substitutes for the
+  // other.
+  ['trg_ledger_writer_capture_session_update_guard', `
+CREATE TRIGGER trg_ledger_writer_capture_session_update_guard
+BEFORE UPDATE ON ledger_sessions
+BEGIN
+  SELECT RAISE(ABORT, 'capture_only_session_update_forbidden')
+  WHERE (NEW.mode IS '${CAPTURE_ONLY_SESSION_MODE}' AND OLD.mode IS NOT '${CAPTURE_ONLY_SESSION_MODE}')
+     OR EXISTS (
+       SELECT 1 FROM ledger_sessions
+       WHERE mode IS '${CAPTURE_ONLY_SESSION_MODE}'
+         AND session_number IS NEW.session_number
+         AND session_id IS NOT OLD.session_id
+     );
+END`],
+
+  // AN OPEN ONE TOO. A crashed P leaves an open reserved row, and deleting it is
+  // precisely the cleanup that would convert a permanent HOLD into a fresh
+  // attempt.
+  ['trg_ledger_writer_capture_session_no_delete', `
+CREATE TRIGGER trg_ledger_writer_capture_session_no_delete
+BEFORE DELETE ON ledger_sessions
+WHEN OLD.mode = '${CAPTURE_ONLY_SESSION_MODE}'
+BEGIN SELECT RAISE(ABORT, 'capture_only_session_delete_forbidden'); END`],
+];
+
+/**
+ * DUPLICATE KEYS ARE A NAMED REFUSAL, NOT A SILENT LAST-ONE-WINS.
+ *
+ * Built from an array rather than an object literal precisely so this is
+ * detectable: a duplicated name in an object literal is invisible, and the
+ * survivor would quietly become the definition both the installer and the
+ * verifier agree on. Computed once at load; reported as a refusal by both
+ * consumers rather than thrown, because a throw here would take down every
+ * unrelated caller of this module.
+ */
+const CAPTURE_ONLY_SESSION_DDL_DUPLICATES = Object.freeze(
+  CAPTURE_ONLY_SESSION_TRIGGER_DEFINITIONS
+    .map(([name]) => name)
+    .filter((name, index, all) => all.indexOf(name) !== index),
+);
+
+/**
+ * THE AUTHORITY IS PRIVATE, AND THE PUBLIC VIEW IS A FROZEN COPY.
+ *
+ * The first version of this exported the Map itself, and Oracle broke it by
+ * execution: `const` protects the binding, not the object, so `.set()` on the
+ * exported reference replaced a guard's expected body — after which the
+ * installer installed the weakened trigger and the verifier called it healthy.
+ * That is the retired sparse-fragment defect one layer up. The installer and
+ * verifier stopped being able to drift apart, and instead a caller gained the
+ * power to move them together.
+ *
+ * `Object.freeze(map)` is NOT the repair. Freezing a Map does not disable
+ * `set`, `delete` or `clear` — they mutate internal slots, not properties.
+ *
+ * So: the Map below is module-private and is the ONLY thing the installer and
+ * verifier read. What leaves this module is a frozen plain object whose values
+ * are strings — primitives, so the freeze is genuinely deep. A caller may read
+ * it, and may even replace the property on the exports object; neither reaches
+ * the authority, because no code in here resolves the definitions through the
+ * export.
+ */
+const captureOnlySessionTriggerDdl = new Map(CAPTURE_ONLY_SESSION_TRIGGER_DEFINITIONS);
+
+/** The published read-only view. Deeply immutable: frozen object, string values. */
+const CAPTURE_ONLY_SESSION_TRIGGER_SQL = Object.freeze(Object.fromEntries(
+  CAPTURE_ONLY_SESSION_TRIGGER_DEFINITIONS.map(([name, sql]) => [name, String(sql)]),
+));
+
+/** The five guards by name, DERIVED from the private definitions, frozen for publication. */
+const CAPTURE_ONLY_SESSION_SCHEMA_OBJECTS = Object.freeze(
+  CAPTURE_ONLY_SESSION_TRIGGER_DEFINITIONS.map(([name]) => name),
+);
+
+/** Every capture-only guard sits on this table, and the verifier checks that too. */
+const CAPTURE_ONLY_SESSION_HOST_TABLE = 'ledger_sessions';
+
+/** Everything a NAMED probe may ask about. Unnamed probes see only the Telegram shape. */
+const PROBEABLE_FRAGMENT_SHAPE = Object.freeze([...REQUIRED_SCHEMA_SHAPE]);
+
+/**
+ * COMPARE NORMALIZED SQL, NOT RAW SQL (Architect #210), AND BE QUOTE-AWARE
+ * ABOUT IT (terminal ruling v2).
+ *
+ * `sqlite_master` stores the CREATE statement as it was typed, whitespace and
+ * all. A raw comparison therefore does not test what the object means, it tests
+ * how it was indented: reflow the DDL and it stops matching while the installed
+ * rule is identical in effect.
+ *
+ * Collapsing runs of whitespace OUTSIDE quotes removes the layout and leaves the
+ * tokens. Inside a quoted literal or a quoted identifier, whitespace is DATA —
+ * `'a  b'` and `'a b'` are two different strings, and a normalizer that collapsed
+ * them would make a changed literal look like a reformat. That is the one way
+ * this function could launder a semantic change into equality, so it does not.
+ *
+ * It is deliberately not a SQL parser, not a case fold, and not a token
+ * rewriter: identifiers, literals, operators, keywords and spelling still have
+ * to match exactly. This loosens layout and nothing else.
+ */
+function normalizeInstalledSql(sql) {
+  const text = String(sql);
+  const openers = { "'": "'", '"': '"', '`': '`', '[': ']' };
+  let out = '';
+  let pendingSpace = false;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    const closer = openers[ch];
+    if (closer) {
+      if (pendingSpace) { if (out.length > 0) out += ' '; pendingSpace = false; }
+      out += ch;
+      i += 1;
+      while (i < text.length) {
+        const cur = text[i];
+        out += cur;
+        i += 1;
+        if (cur !== closer) continue;
+        // '' "" `` are the doubled-quote escape INSIDE the same literal; SQLite
+        // bracket identifiers have no escape, so ]] genuinely ends one.
+        if (closer !== ']' && text[i] === closer) { out += text[i]; i += 1; continue; }
+        break;
+      }
+      continue;
+    }
+    if (/\s/.test(ch)) { pendingSpace = true; i += 1; continue; }
+    if (pendingSpace) { if (out.length > 0) out += ' '; pendingSpace = false; }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
+/** Evidence, not authority: the digest accompanies a verified shape, it never replaces the compare. */
+function installedSqlDigest(sql) {
+  return crypto.createHash('sha256').update(normalizeInstalledSql(sql), 'utf8').digest('hex');
+}
 
 /**
  * `CREATE TABLE IF NOT EXISTS` DOES NOTHING WHEN A TABLE ALREADY EXISTS WITH A
@@ -305,37 +636,93 @@ const REQUIRED_SCHEMA_SHAPE = Object.freeze([
  * This reads `sqlite_master` and compares what is actually installed.
  */
 function verifyInstalledSchema(db, names = null) {
-  // A NAMED SUBSET, FILTERED FROM THE SAME TABLE. A reader that only needs the
+  // A DUPLICATED DEFINITION MEANS THE AUTHORITY IS AMBIGUOUS, so there is
+  // nothing honest to verify against. Refuse before reading anything.
+  if (CAPTURE_ONLY_SESSION_DDL_DUPLICATES.length > 0) {
+    return fail('capture_only_session_ddl_duplicate_definition', {
+      duplicates: [...CAPTURE_ONLY_SESSION_DDL_DUPLICATES],
+    });
+  }
+  // A NAMED SUBSET, FILTERED FROM THE SAME SOURCES. A reader that only needs the
   // claim tables must not be held to the whole kernel's shape — but it must not
-  // hand-write its own fingerprints either, or the two copies drift and the
+  // hand-write its own expectations either, or the two copies drift and the
   // narrower one silently stops checking anything real.
-  const required = Array.isArray(names)
-    ? REQUIRED_SCHEMA_SHAPE.filter(([name]) => names.includes(name))
+  const requestedFragments = Array.isArray(names)
+    ? PROBEABLE_FRAGMENT_SHAPE.filter(([name]) => names.includes(name))
     : REQUIRED_SCHEMA_SHAPE;
+  const requestedExact = Array.isArray(names)
+    ? [...captureOnlySessionTriggerDdl.keys()].filter((name) => names.includes(name))
+    : [];
   if (Array.isArray(names)) {
-    const covered = new Set(required.map(([name]) => name));
+    const covered = new Set([
+      ...requestedFragments.map(([name]) => name),
+      ...requestedExact,
+    ]);
     const unknown = names.filter((name) => !covered.has(name));
-    // Asking about an object this table does not describe would verify nothing
+    // Asking about an object no authority here describes would verify nothing
     // while returning ok. Refuse the question instead of answering it emptily.
     if (unknown.length > 0) return fail('schema_probe_unknown_objects', { unknown });
   }
-  // THE REQUESTED SET, BY UNIQUE NAME. `REQUIRED_SCHEMA_SHAPE` carries several
-  // fingerprints for some objects, so the raw list is longer than the set of
-  // things actually being asked about, and the aggregate below is a statement
-  // about OBJECTS.
-  const requestedObjects = new Set(required.map(([name]) => name));
+
+  // THE REQUESTED SET AND THE ABSENT SET, BY UNIQUE OBJECT NAME.
+  //
+  // `allAbsent` below is a statement about OBJECTS, so it is computed from these
+  // rather than from the defect list. `REQUIRED_SCHEMA_SHAPE` carries several
+  // fingerprints for some objects, so counting entries is not counting objects,
+  // and a healthy object contributes no entry at all to quantify over.
+  const requestedObjects = new Set([
+    ...requestedFragments.map(([name]) => name),
+    ...requestedExact,
+  ]);
   const absentObjects = new Set();
   const missing = [];
-  for (const [name, fingerprint] of required) {
+  const digests = {};
+  const readObject = (name) => db
+    .prepare('SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name = ?')
+    .get(name);
+
+  // THE TELEGRAM-OWNED OBJECTS, still by fingerprint. Their shapes are tables
+  // and constraints reviewed elsewhere; widening them to full equality is a
+  // different change against a different owner and is not this ruling's scope.
+  for (const [name, fingerprint] of requestedFragments) {
     let row;
     try {
-      row = db.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(name);
+      row = readObject(name);
     } catch (err) {
       return fail(`schema_probe_failed:${err.message}`);
     }
     if (!row || !row.sql) { missing.push(`${name}:absent`); absentObjects.add(name); continue; }
-    if (!String(row.sql).includes(fingerprint)) missing.push(`${name}:stale`);
+    if (!normalizeInstalledSql(row.sql).includes(normalizeInstalledSql(fingerprint))) {
+      missing.push(`${name}:stale`);
+    }
   }
+
+  // THE FIVE CAPTURE-ONLY GUARDS, BY FULL INSTALLED SHAPE. Type, host table,
+  // exact name and complete normalized SQL, every one of them against the row
+  // `sqlite_master` actually holds — not against what the installer believes it
+  // executed. A same-named object of the wrong type, on the wrong table, or with
+  // any clause, operator or literal altered is a distinct named defect.
+  for (const name of requestedExact) {
+    const expected = captureOnlySessionTriggerDdl.get(name);
+    let row;
+    try {
+      row = readObject(name);
+    } catch (err) {
+      return fail(`schema_probe_failed:${err.message}`);
+    }
+    if (!row) { missing.push(`${name}:absent`); absentObjects.add(name); continue; }
+    if (row.type !== 'trigger') { missing.push(`${name}:wrong_type:${row.type}`); continue; }
+    if (row.tbl_name !== CAPTURE_ONLY_SESSION_HOST_TABLE) {
+      missing.push(`${name}:wrong_table:${row.tbl_name}`);
+      continue;
+    }
+    if (row.name !== name) { missing.push(`${name}:wrong_name:${row.name}`); continue; }
+    if (!row.sql) { missing.push(`${name}:sql_unavailable`); continue; }
+    const installed = normalizeInstalledSql(row.sql);
+    if (installed !== normalizeInstalledSql(expected)) { missing.push(`${name}:mismatch`); continue; }
+    digests[name] = installedSqlDigest(row.sql);
+  }
+
   if (missing.length > 0) {
     return fail('schema_shape_mismatch', {
       missing,
@@ -347,24 +734,24 @@ function verifyInstalledSchema(db, names = null) {
       // a database that COULD have written the record and cannot currently be
       // read, and a reader must hold rather than report an empty result.
       //
-      // THIS IS COMPUTED FROM THE REQUESTED OBJECT SET, NOT FROM THE DEFECT
-      // LIST, and the difference is the whole bug it replaces. The previous
-      // predicate was `missing.every(entry => entry.endsWith(':absent'))`, which
-      // asks "is every DEFECT an absence" — a question that answers `true` when
-      // six of seven objects are installed and the seventh is missing, because
-      // the six healthy ones contribute no defect entries to quantify over. The
-      // consumer in `telegram-claim-lookup.js` reads this value as "this kernel
-      // has never run against this ledger" and returns no claim, so a partial
-      // schema became a fail-open on the drain's attempt-latch read — the one
-      // read whose null means "nothing has claimed this, go ahead and deliver".
+      // COMPUTED FROM THE REQUESTED OBJECT SET, NOT FROM THE DEFECT LIST. The
+      // retired predicate was `missing.every(entry => entry.endsWith(':absent'))`,
+      // which asks "is every DEFECT an absence" and answers `true` when six of
+      // seven objects are installed, because the six healthy ones contribute no
+      // entries to quantify over. Its consumer reads that as "never written" and
+      // returns no claim, which is a fail-open on the drain's attempt latch.
       //
-      // The rule was already written above that consumer before this predicate
-      // existed: present-but-partial is "I cannot tell", and the path must HOLD.
-      // This is that sentence, implemented.
+      // WRONG-TYPE, WRONG-TABLE, WRONG-NAME, SQL-UNAVAILABLE AND MISMATCH ARE
+      // ALL PRESENT. Each of those found a real `sqlite_master` row; the object
+      // exists and is untrustworthy, which is the opposite of never-written.
+      // Only a missing row adds to `absentObjects`.
       allAbsent: requestedObjects.size > 0 && absentObjects.size === requestedObjects.size,
     });
   }
-  return { ok: true };
+  // Evidence for the caller's record. The compare already happened; a consumer
+  // that trusted this digest INSTEAD of calling here would be trusting a number
+  // it did not derive, so it is returned and never required.
+  return Object.keys(digests).length > 0 ? { ok: true, digests } : { ok: true };
 }
 
 /**
@@ -833,8 +1220,268 @@ function applyTelegramAdmissionSchemaDdl(db) {
     CREATE TRIGGER IF NOT EXISTS trg_tg_ack_no_delete
     BEFORE DELETE ON telegram_queue_ack_outbox
     BEGIN SELECT RAISE(ABORT, 'telegram_queue_ack_delete_forbidden'); END;
+
+    -- ===================================================================
+    -- THE STABLE LEGACY CUTOVER FENCE (v7 section 4).
+    --
+    -- ONE ROW, EVER, AND THE SCHEMA IS WHAT SAYS SO. fence_id being a primary
+    -- key only makes ids unique; it happily accepts a SECOND, DIFFERENT fence
+    -- through one raw INSERT, which is exactly the "mint a successor after a
+    -- mutation" move v7 forbids (Architect #176). fence_slot pins the table to
+    -- a single occupiable slot, so a competing fence collides at the constraint
+    -- rather than at whichever reader notices first.
+    --
+    -- The id is lf1_ + the SHA-256 of the canonical material, so the key is
+    -- not a name for the row — it is the row, restated.
+    --
+    -- canonical_material_json is stored ALONGSIDE the columns it was derived
+    -- from, on purpose. A reader that trusted only the blob could be handed a
+    -- blob; a reader that trusted only the columns would have to re-serialise
+    -- them and hope it reproduced the original spelling. Storing both makes the
+    -- reread a three-way agreement — columns, blob, and the id derived from the
+    -- blob — and a single edited field breaks it.
+    --
+    -- THE DESCRIPTOR CHECKS ARE NOT BELT-AND-BRACES. Every row here is immutable
+    -- the instant it lands, so an incoherent one — present=0 carrying a hash,
+    -- present=1 carrying no length — would be immutable NONSENSE, unfixable and
+    -- permanently unhealthy. The constraint is the only place that can still
+    -- refuse it.
+    --
+    -- created_at_ms is DIAGNOSTIC AND DELIBERATELY NOT CANONICAL: it is not in
+    -- the material and does not enter the id. A clock in the fingerprint would
+    -- mint a different fence for identical facts.
+    -- ===================================================================
+    CREATE TABLE IF NOT EXISTS telegram_legacy_cutover_fences (
+      fence_id                      TEXT PRIMARY KEY,
+      fence_slot                    INTEGER NOT NULL UNIQUE CHECK (fence_slot = 1),
+      fence_version                 TEXT NOT NULL,
+      decision_cutover_id           TEXT NOT NULL,
+      attempt_present               INTEGER NOT NULL CHECK (attempt_present IN (0, 1)),
+      attempt_length                INTEGER,
+      attempt_sha256                TEXT,
+      disposition_present           INTEGER NOT NULL CHECK (disposition_present IN (0, 1)),
+      disposition_length            INTEGER,
+      disposition_sha256            TEXT,
+      retired_identity_schema       TEXT NOT NULL,
+      retired_app_generation        TEXT NOT NULL,
+      retired_session_id            TEXT NOT NULL,
+      retired_pid                   INTEGER NOT NULL CHECK (retired_pid > 0),
+      retired_process_created_at    TEXT NOT NULL,
+      retired_executable_path       TEXT NOT NULL,
+      retired_command_line_sha256   TEXT NOT NULL,
+      retirement_evidence_sha256    TEXT NOT NULL,
+      release_fingerprint           TEXT NOT NULL,
+      release_manifest_sha256       TEXT NOT NULL,
+      release_file_count            INTEGER NOT NULL CHECK (release_file_count > 0),
+      release_total_bytes           INTEGER NOT NULL CHECK (release_total_bytes > 0),
+      canonical_material_json       TEXT NOT NULL,
+      created_at_ms                 INTEGER NOT NULL,
+      -- typeof(...) = 'text' BEFORE length(...), and it is not decoration
+      -- (Architect #177). A CHECK that evaluates to NULL is SATISFIED in SQLite,
+      -- and length(NULL) is NULL — so attempt_present = 1 with a NULL hash
+      -- would sail through a length/GLOB test and land as an immutable row
+      -- claiming a present file with no digest.
+      CONSTRAINT telegram_fence_attempt_descriptor_coherent CHECK (
+        (attempt_present = 0 AND attempt_length IS NULL AND attempt_sha256 IS NULL)
+        OR (attempt_present = 1
+            AND typeof(attempt_length) = 'integer' AND attempt_length >= 0
+            AND typeof(attempt_sha256) = 'text'
+            AND length(attempt_sha256) = 64 AND attempt_sha256 NOT GLOB '*[^0-9a-f]*')
+      ),
+      CONSTRAINT telegram_fence_disposition_descriptor_coherent CHECK (
+        (disposition_present = 0 AND disposition_length IS NULL AND disposition_sha256 IS NULL)
+        OR (disposition_present = 1
+            AND typeof(disposition_length) = 'integer' AND disposition_length >= 0
+            AND typeof(disposition_sha256) = 'text'
+            AND length(disposition_sha256) = 64 AND disposition_sha256 NOT GLOB '*[^0-9a-f]*')
+      )
+    );
+
+    -- NO UPDATE AT ALL, not merely no identity change. Every column except the
+    -- diagnostic created_at_ms is canonical material, so a "harmless" edit to
+    -- a byte length is a different fence wearing a valid id — and even the
+    -- diagnostic one has nothing to gain from being rewritable.
+    CREATE TRIGGER IF NOT EXISTS trg_tg_fence_immutable
+    BEFORE UPDATE ON telegram_legacy_cutover_fences
+    BEGIN SELECT RAISE(ABORT, 'telegram_legacy_fence_immutable'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_fence_no_delete
+    BEFORE DELETE ON telegram_legacy_cutover_fences
+    BEGIN SELECT RAISE(ABORT, 'telegram_legacy_fence_delete_forbidden'); END;
+
+    -- ===================================================================
+    -- THE ORIGINAL-WRITER CAPTURE (v7 section 4, Architect #178 section 1).
+    --
+    -- WRITTEN BY THE LEGACY WRITER, ABOUT ITSELF, WHILE IT IS ALIVE. A dead
+    -- process cannot be interrogated, so a successor asking "was the original
+    -- writer retired?" has nothing to read unless that writer wrote it down
+    -- first. Everything else -- a caller-supplied pid, an app-status entry, a
+    -- log line, a dead number that probes absent -- is an assertion with a
+    -- digest computed over it, which is the exact defect this table exists to
+    -- end.
+    --
+    -- ONE ROW, EVER, and capture_slot is what says so rather than the primary
+    -- key: a key on capture_id makes ids unique and happily accepts a SECOND
+    -- capture naming a different predecessor. Two captures is a history nobody
+    -- reviewed, and choosing between them is choosing which past to believe.
+    --
+    -- capability_evidence_json is the COMPLETE capability material, not a
+    -- readable summary, and that is load-bearing: the canonical material stores
+    -- only the capability FINGERPRINT, so the reread hashes this blob and
+    -- compares it against that independently stored digest. A summary would
+    -- hash to a value nobody stored, and the check could only agree with
+    -- itself.
+    --
+    -- created_at_ms is DIAGNOSTIC AND DELIBERATELY NOT CANONICAL. A clock in
+    -- the material would move the derived capture id between generations, and
+    -- the fence id derives from this one -- so a stable fence would remint on
+    -- every boot, which is the single thing it may not do.
+    -- ===================================================================
+    CREATE TABLE IF NOT EXISTS telegram_legacy_writer_captures (
+      capture_id                    TEXT PRIMARY KEY,
+      capture_slot                  INTEGER NOT NULL UNIQUE CHECK (capture_slot = 1),
+      capture_version               TEXT NOT NULL,
+      decision_cutover_id           TEXT NOT NULL,
+      identity_schema               TEXT NOT NULL,
+      writer_app_generation         TEXT NOT NULL,
+      writer_session_id             TEXT NOT NULL,
+      writer_pid                    INTEGER NOT NULL CHECK (writer_pid > 0),
+      writer_process_created_at     TEXT NOT NULL,
+      writer_executable_path        TEXT NOT NULL,
+      writer_command_line_sha256    TEXT NOT NULL,
+      capability_schema             TEXT NOT NULL,
+      capability_scanner            TEXT NOT NULL,
+      capability_manifest_sha256    TEXT NOT NULL,
+      capability_fingerprint        TEXT NOT NULL,
+      capability_reference_count    INTEGER NOT NULL,
+      capability_evidence_json      TEXT NOT NULL,
+      canonical_material_json       TEXT NOT NULL,
+      created_at_ms                 INTEGER NOT NULL,
+      -- AT LEAST ONE OUTSIDE-OWNER REFERENCE, IN THE SCHEMA. A capture with
+      -- zero is not a witness to the legacy world at all -- it is the repaired
+      -- release describing itself -- and because these rows are immutable the
+      -- instant they land, this constraint is the only place that can still
+      -- refuse one.
+      CONSTRAINT telegram_writer_capture_evidence_present CHECK (
+        typeof(capability_reference_count) = 'integer' AND capability_reference_count > 0
+      ),
+      -- typeof(...) BEFORE length(...), for the reason Architect #177 gave: a
+      -- CHECK evaluating to NULL is SATISFIED, and length(NULL) is NULL.
+      CONSTRAINT telegram_writer_capture_digests_coherent CHECK (
+        typeof(writer_command_line_sha256) = 'text'
+        AND length(writer_command_line_sha256) = 64
+        AND writer_command_line_sha256 NOT GLOB '*[^0-9a-f]*'
+        AND typeof(capability_fingerprint) = 'text'
+        AND length(capability_fingerprint) = 64
+        AND capability_fingerprint NOT GLOB '*[^0-9a-f]*'
+        AND typeof(capability_manifest_sha256) = 'text'
+        AND length(capability_manifest_sha256) = 64
+        AND capability_manifest_sha256 NOT GLOB '*[^0-9a-f]*'
+      )
+    );
+
+    -- NO UPDATE AT ALL. Every column except the diagnostic created_at_ms is
+    -- canonical material or the evidence its fingerprint covers, so a
+    -- "harmless" edit is a different predecessor wearing a valid id.
+    CREATE TRIGGER IF NOT EXISTS trg_tg_writer_capture_immutable
+    BEFORE UPDATE ON telegram_legacy_writer_captures
+    BEGIN SELECT RAISE(ABORT, 'telegram_legacy_writer_capture_immutable'); END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tg_writer_capture_no_delete
+    BEFORE DELETE ON telegram_legacy_writer_captures
+    BEGIN SELECT RAISE(ABORT, 'telegram_legacy_writer_capture_delete_forbidden'); END;
   `);
   return { ok: true };
+}
+
+/**
+ * THE CAPTURE-ONLY LEDGER SESSION GUARDS (capture-only terminal ruling v1).
+ *
+ * =====================================================================
+ * WHY CODE VALIDATION WAS NOT ENOUGH, AND WHY THIS IS FOUR TRIGGERS
+ * =====================================================================
+ * The successor's terminal proof reads a `ledger_sessions` row and, if it is
+ * exactly right, believes a capture. Without these guards the generic evidence
+ * ledger IPC — or any ordinary caller on the same handle — can create, close,
+ * REOPEN, rewrite or delete that row. Code-level validation alone would turn a
+ * crash-before-close permanent HOLD into a backfill path: the successor refuses
+ * once, someone writes the missing terminal by hand, and the second read passes.
+ *
+ * So the rule lives where a raw `UPDATE` still has to obey it.
+ *
+ * =====================================================================
+ * WHAT IS DELIBERATELY NOT HERE
+ * =====================================================================
+ * No table rebuild, no new column, and NO GLOBAL UNIQUE INDEX on
+ * `session_number`. The live ledger already contains duplicate ordinary session
+ * numbers — 444, 445 and 446 each appear twice — so a unique index would either
+ * refuse to install or demand rewriting historical rows that nobody authorized
+ * anyone to touch. The number reservation is therefore a trigger that constrains
+ * only the future, and only around numbers a capture-only session holds.
+ *
+ * These objects are installed SEPARATELY from the Telegram admission schema
+ * because they sit on a table this module does not own. A caller who wants the
+ * Telegram schema is not asking for guards on the evidence ledger's sessions.
+ */
+function applyCaptureOnlySessionSchema(db) {
+  // THE HOST TABLE HAS TO EXIST FIRST, and saying so is better than letting
+  // `CREATE TRIGGER` throw a parse-adjacent error that reads like broken DDL.
+  let host;
+  try {
+    host = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ledger_sessions'").get();
+  } catch (err) {
+    return fail('capture_only_session_host_probe_failed', { message: err.message });
+  }
+  if (!host || !host.sql) return fail('capture_only_session_host_absent');
+
+  // A DUPLICATED DEFINITION MEANS THE AUTHORITY IS AMBIGUOUS. Nothing may be
+  // installed from a map that cannot say which body is the definition.
+  if (CAPTURE_ONLY_SESSION_DDL_DUPLICATES.length > 0) {
+    return fail('capture_only_session_ddl_duplicate_definition', {
+      duplicates: [...CAPTURE_ONLY_SESSION_DDL_DUPLICATES],
+    });
+  }
+
+  // PREFLIGHT, THEN CREATE ONLY WHAT IS ABSENT (Oracle #136 / Architect #222).
+  //
+  // `CREATE TRIGGER IF NOT EXISTS` was the previous shape and it is silent when
+  // an object of that name already exists in a DIFFERENT shape — the exact
+  // defect A2b found in the table DDL. Bare `CREATE TRIGGER` would instead throw
+  // on a healthy re-apply, so this reads first and creates only the missing.
+  //
+  // A PRESENT-BUT-DIFFERENT OBJECT IS A REFUSAL, NOT A REPAIR. Dropping and
+  // recreating a same-named guard is precisely the "clean it up and try again"
+  // move that this whole lane exists to refuse: whatever installed that other
+  // body had a reason, and silently replacing it would erase the evidence that
+  // this database is not the one we think it is. The verification below names
+  // it and stops.
+  for (const [name, definition] of captureOnlySessionTriggerDdl) {
+    let existing;
+    try {
+      existing = db.prepare('SELECT name FROM sqlite_master WHERE name = ?').get(name);
+    } catch (err) {
+      return fail('capture_only_session_preflight_failed', { object: name, message: err.message });
+    }
+    if (existing) continue;
+    try {
+      db.exec(definition);
+    } catch (err) {
+      // A concurrent creator is not an error yet: whether what now exists is the
+      // right shape is the verifier's question, and it is asked below either way.
+      if (!/already exists/i.test(String(err.message))) {
+        return fail('capture_only_session_schema_apply_failed', { object: name, message: err.message });
+      }
+    }
+  }
+
+  // AND VERIFY WHAT IS INSTALLED, not what was just executed. The verifier
+  // re-reads `sqlite_master` and compares the COMPLETE normalized SQL of every
+  // one of the five against the same authoritative definition the loop above
+  // executed — so a pre-existing same-named object with a weakened body fails
+  // here rather than passing as "already installed".
+  const verified = verifyInstalledSchema(db, [...CAPTURE_ONLY_SESSION_SCHEMA_OBJECTS]);
+  if (!verified.ok) return verified;
+  return verified;
 }
 
 function begin(db) { db.exec('BEGIN IMMEDIATE'); }
@@ -2596,6 +3243,12 @@ module.exports = {
   verifyInstalledSchema,
   REQUIRED_SCHEMA_SHAPE,
   CLAIM_READ_SCHEMA_OBJECTS,
+  CAPTURE_ONLY_SESSION_TRIGGER_SQL,
+  CAPTURE_ONLY_SESSION_SCHEMA_OBJECTS,
+  CAPTURE_ONLY_SESSION_HOST_TABLE,
+  normalizeInstalledSql,
+  installedSqlDigest,
+  applyCaptureOnlySessionSchema,
   applyTelegramAdmissionSchema,
   recordImmutableSource,
   claimTransportAttempt,

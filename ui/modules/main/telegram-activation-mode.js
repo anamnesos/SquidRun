@@ -91,6 +91,81 @@ function resolveActivationMode(value) {
   return { ok: true, mode: value, reason: null };
 }
 
+// =====================================================================
+// THE ONE-TIME FROZEN AUTHORITY, PUBLISHED WHERE OTHER PRODUCTION CONSUMERS
+// CAN READ THE SAME VALUE THE COORDINATOR GOT (Architect #202)
+// =====================================================================
+
+/**
+ * The app freezes the configured mode once, immediately after authoritative
+ * settings load, and the drain coordinator resolves THAT frozen value. Anything
+ * else that needs to know whether this process is in Phase L had no way to ask —
+ * so the Step 3 fence's readiness proof checked its OWN output constants
+ * instead, which is a module asserting that a module said so.
+ *
+ * That is the self-attestation Architect #202 caught: a local `schedulingEnabled
+ * = false` can stay false while the live app schedules from a mode this file
+ * never saw. Publishing the frozen value HERE, from the same capture that feeds
+ * the coordinator, gives every consumer one answer instead of one answer and
+ * several opinions.
+ *
+ * NOT AN ENV VAR, deliberately, unlike the app generation. The generation has to
+ * cross a process boundary into panes; this value does not, and `process.env` is
+ * writable by anything in the process — which would make the authority forgeable
+ * by exactly the callers it exists to stop. Module state, published once.
+ *
+ * NULL IS A REAL FROZEN VALUE. "Frozen as unset" and "never frozen" are
+ * different facts with different fixes, and a consumer that cannot tell them
+ * apart will report a missing configuration as a startup-order bug or vice
+ * versa.
+ */
+let frozenActivationMode = null;
+let activationModeFrozen = false;
+
+/**
+ * Publish the frozen mode. Idempotent for an identical value, REFUSED for a
+ * different one.
+ *
+ * One publication per generation, same rule as the scheduling session: the fence
+ * and its readiness proof bind this value, and a mode that moved mid-generation
+ * would mean two artifacts issued by "the same process" that disagree about
+ * which state that process was in.
+ *
+ * @returns {{ok: true, mode: string|null, republished: boolean}
+ *          | {ok: false, reason: string, detail?: object}}
+ */
+function publishFrozenActivationMode(raw) {
+  const value = raw === undefined ? null : raw;
+  if (activationModeFrozen) {
+    if (frozenActivationMode === value) {
+      return { ok: true, mode: frozenActivationMode, republished: true };
+    }
+    return {
+      ok: false,
+      reason: 'activation_mode_already_frozen',
+      detail: { frozen: frozenActivationMode, offered: value },
+    };
+  }
+  frozenActivationMode = value;
+  activationModeFrozen = true;
+  return { ok: true, mode: frozenActivationMode, republished: false };
+}
+
+/**
+ * The frozen mode as the coordinator sees it.
+ *
+ * DOES NOT FREEZE, and does not fall back to reading settings. A consumer that
+ * asked before the freeze is a consumer running outside the startup sequence
+ * that owns this decision, and the honest answer is "never frozen" rather than a
+ * value fetched from somewhere else — which would be the duplicate settings read
+ * #202 forbids.
+ *
+ * @returns {{frozen: boolean, mode: string|null}}
+ */
+function currentFrozenActivationMode() {
+  return { frozen: activationModeFrozen, mode: frozenActivationMode };
+}
+
 /**
  * FROZEN EXPORTS, so require order is not a security assumption.
  *
@@ -103,4 +178,6 @@ module.exports = Object.freeze({
   ACTIVATION_MODE_VALUES,
   isRecognizedActivationMode,
   resolveActivationMode,
+  publishFrozenActivationMode,
+  currentFrozenActivationMode,
 });

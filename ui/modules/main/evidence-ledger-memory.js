@@ -4,6 +4,7 @@
  */
 
 const { generateId } = require('./evidence-ledger-ingest');
+const { CAPTURE_ONLY_SESSION_MODE } = require('./capture-only-session-contract');
 const { LEGACY_ROLE_ALIASES, ROLE_ID_MAP, ROLE_NAMES } = require('../../config');
 
 const DECISION_CATEGORIES = new Set([
@@ -529,6 +530,18 @@ class EvidenceLedgerMemory {
     const sessionId = asNonEmptyString(opts.sessionId, generateId('ses'));
     const mode = asNonEmptyString(opts.mode, 'PTY');
 
+    // THE RESERVED MODE IS NOT AVAILABLE THROUGH THE GENERIC API (capture-only
+    // terminal ruling v1). This method accepts any nonempty mode string,
+    // serializes arbitrary meta with ordinary `JSON.stringify`, and has no
+    // canonical byte rule -- so without this gate the generic path could mint a
+    // row that LOOKS like a capture-only session and let the successor's proof
+    // read a document nobody reviewed. The installed insert guard would refuse
+    // most of those, and that is the point: this refusal is a second,
+    // independent lock, not a substitute for the trigger.
+    if (mode === CAPTURE_ONLY_SESSION_MODE) {
+      return { ok: false, reason: 'session_mode_reserved', mode };
+    }
+
     try {
       db.prepare(`
         INSERT INTO ledger_sessions (
@@ -560,6 +573,24 @@ class EvidenceLedgerMemory {
     if (!db) return this._unavailable();
     const id = asNonEmptyString(sessionId);
     if (!id) return { ok: false, reason: 'session_id_required' };
+
+    // REFUSE ON THE STORED MODE, NOT ON ANYTHING THE CALLER SAID (Architect
+    // #210). This method takes no mode argument at all, which is exactly why the
+    // check has to be a read: the only honest question is what the row on disk
+    // is, and a caller cannot lie about a column it never supplies. A generic
+    // close here would overwrite `ended_at_ms` and `meta_json` by session id
+    // alone, with no compare-and-set and no reread -- which is the backfill path
+    // the ruling exists to close.
+    try {
+      const stored = db.prepare('SELECT mode FROM ledger_sessions WHERE session_id = ?').get(id);
+      if (stored && String(stored.mode) === CAPTURE_ONLY_SESSION_MODE) {
+        return { ok: false, reason: 'session_mode_reserved', mode: String(stored.mode) };
+      }
+    } catch (err) {
+      // A FAILED PROBE IS A REFUSAL, never a pass. If we cannot tell what the
+      // row is, we are not entitled to close it.
+      return { ok: false, reason: 'session_mode_probe_failed', error: err.message };
+    }
 
     const setClauses = [];
     const params = [];
