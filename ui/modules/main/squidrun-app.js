@@ -4919,6 +4919,56 @@ class SquidRunApp {
             return `${AGENT_MESSAGE_PREFIX}${content}`;
           };
 
+          /**
+           * MISROUTE DETECTOR. NOT AUTHENTICATION. READ THIS BEFORE TRUSTING IT.
+           * =================================================================
+           * This compares the `[CURRENT PROJECT] path=…` footer in an inbound
+           * agent message against this install's own project root, and refuses
+           * to inject the message when they disagree.
+           *
+           * WHAT IT CATCHES: a message that is wrong BY ACCIDENT — another
+           * install's agent honestly declaring its own project while its message
+           * lands in our coord directory. That is a real, observed event
+           * (2026-08-06: a Korean `(ARCHITECT #1)` work assignment arrived from
+           * the sideprofile install, footer reading `name=sideprofile`, and this
+           * pane's Builder acted on it as though it came from its own
+           * Architect).
+           *
+           * WHAT IT DOES NOT CATCH: a message that is wrong ON PURPOSE. The
+           * footer is SENDER-WRITTEN PAYLOAD — `ui/scripts/hm-send.js:1838-1850`
+           * appends it from the sending process's own context, and skips
+           * appending entirely if the text already contains the marker. Any
+           * sender can therefore type our project name into its own body and
+           * pass this check. Self-declared origin is not origin.
+           *
+           * SO DO NOT BUILD ON THIS AS A SECURITY BOUNDARY, and do not describe
+           * it as one. The real fix is to record TRUE origin at the receive
+           * boundary — the socket/port/process that handed us the bytes, which a
+           * sender cannot type — and that is a separate change. The footer is
+           * the claim; the receive path is the effect.
+           *
+           * A QUARANTINED MESSAGE IS EVIDENCE. It is not injected, not replied
+           * to in-band, and NOT deleted.
+           */
+          const foreignProjectRefusal = (content) => {
+            if (typeof content !== 'string' || !content) return null;
+            const match = content.match(/\[CURRENT PROJECT\][^\n]*/);
+            if (!match) return null;
+            const declaredPath = (match[0].match(/path=([^|\n]+)/) || [])[1];
+            if (!declaredPath) return null;
+            const ownRoot = getProjectRoot();
+            if (!ownRoot) return null;
+            // SEPARATOR STYLE IS NOT IDENTITY. `D:/projects/squidrun` and
+            // `D:\projects\squidrun` are the same directory, and a detector that
+            // called them different would quarantine legitimate messages — a
+            // false positive here silently drops OUR OWN traffic, which is worse
+            // than the misroute it exists to catch. Caught by test before ship.
+            const normalize = (p) => String(p).trim().replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
+            const declared = normalize(declaredPath);
+            if (!declared || declared === normalize(ownRoot)) return null;
+            return { declaredPath: String(declaredPath).trim(), ownRoot };
+          };
+
           const withProjectContext = (content, metadata = null) => {
             const text = typeof content === 'string' ? content : String(content ?? '');
             if (!text) return text;
@@ -5300,6 +5350,41 @@ class SquidRunApp {
             const senderRoleForJournal = String(canonicalEnvelope.sender?.role || data.role || 'unknown').trim().toLowerCase();
             const canonicalMetadata = buildCanonicalEnvelopeMetadata(canonicalEnvelope);
             const contentWithProjectContext = withProjectContext(canonicalEnvelope.content, canonicalMetadata);
+
+            // MISROUTE QUARANTINE (see `foreignProjectRefusal` above for what
+            // this does and, more importantly, what it does NOT do). A message
+            // whose declared project is not ours never reaches a pane, because a
+            // message that reaches a pane is read as an instruction by whoever
+            // is sitting there. The record is kept and journalled; nothing is
+            // purged and nothing is answered in-band.
+            const foreign = foreignProjectRefusal(contentWithProjectContext);
+            if (foreign) {
+              log.error(
+                'AgentBus',
+                `QUARANTINED cross-install agent message ${canonicalEnvelope.message_id}: it declares `
+                + `project path "${foreign.declaredPath}" but this install is "${foreign.ownRoot}". `
+                + 'It was NOT delivered to a pane. This is a misroute detector, not authentication: '
+                + 'the footer is sender-written, so this catches wrong-by-accident and not '
+                + 'wrong-on-purpose. The message is retained as evidence — do not delete it, do not '
+                + 'reply to it in-band, and route any real request through James.'
+              );
+              appendBusTraceEvent({
+                eventType: 'ws_broker_quarantined_foreign_project',
+                messageId: canonicalEnvelope.message_id,
+                senderRole: canonicalEnvelope.sender?.role || data.role || 'unknown',
+                recipient: canonicalEnvelope.target?.raw || target || null,
+                declaredProjectPath: foreign.declaredPath,
+                ownProjectRoot: foreign.ownRoot,
+                payloadBytes: getUtf8ByteLength(contentWithProjectContext),
+              });
+              return {
+                ok: false,
+                status: 'quarantined_foreign_project',
+                messageId: canonicalEnvelope.message_id,
+                declaredProjectPath: foreign.declaredPath,
+              };
+            }
+
             appendBusTraceEvent({
               eventType: 'ws_broker_received',
               messageId: canonicalEnvelope.message_id,
