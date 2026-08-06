@@ -395,10 +395,10 @@ describe('B4b — fail each stage, prove nothing after it ran', () => {
       .toBe('recorded');
   });
 
-  test('no completed launch: refuses at B before any claim', async () => {
+  test('a still-launching pane warns and hands the message onward', async () => {
     const db = freshDb();
-    // A generation whose pane never bound a session.
-    seedLaunch(db, { complete: false, appGeneration: 'gen-never-bound' });
+    const launchId = seedLaunch(db, { complete: false, appGeneration: 'gen-never-bound' });
+    const warn = jest.fn(() => { throw new Error('diagnostic sink offline'); });
     const result = await runTelegramAdmissionSequence({
       db,
       job: JOB,
@@ -408,10 +408,22 @@ describe('B4b — fail each stage, prove nothing after it ran', () => {
       composeFinalBody: async () => 'body',
       now: () => NOW,
       nonce: () => 'n1',
+      warn,
     });
-    expect(result.ok).toBe(false);
-    expect(result.stage).toBe('B_launch');
-    expect(result.reason).toBe('launch_incomplete');
+    expect(result.ok).toBe(true);
+    expect(result.paneLaunchId).toBe(launchId);
+    expect(result.stage).toBe('D_delivery_started');
+    expect(result.warnings).toEqual([
+      expect.objectContaining({ stage: 'B_launch', reason: 'launch_incomplete' }),
+    ]);
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+      stage: 'B_launch',
+      reason: 'launch_incomplete',
+      message: expect.stringContaining('delivering anyway'),
+    }));
+    expect(db.prepare('SELECT COUNT(*) AS n FROM telegram_transport_claims').get().n).toBe(1);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM telegram_transport_events WHERE kind = 'delivery_started'").get().n)
+      .toBe(1);
   });
 
   test('C throws: claim is held, delivery_started never written, PROVABLY unsent', async () => {

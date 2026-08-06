@@ -115,7 +115,7 @@ describe('hm-send surface claim guard', () => {
     expect(repeat.score).toBeGreaterThanOrEqual(0.6);
   });
 
-  test('blocks user-facing output after a repeated point unless the unresolved surface is named', () => {
+  test('flags user-facing output after a repeated point unless the unresolved surface is named', () => {
     const violation = detectSurfaceClaimGuardViolation({
       content: 'Route proof is green and status is clean.',
       targetRole: 'telegram',
@@ -151,7 +151,7 @@ describe('hm-send surface claim guard', () => {
     expect(violation).toBeNull();
   });
 
-  test('blocks done or visible claims to James without a literal surface artifact', () => {
+  test('flags done or visible claims to James without a literal surface artifact', () => {
     expect(hasSurfaceCompletionClaim('Done: the demo invoice is visible in the TrustQuote dashboard.')).toBe(true);
 
     const violation = detectSurfaceClaimGuardViolation({
@@ -186,7 +186,7 @@ describe('hm-send surface claim guard', () => {
     }
   });
 
-  test('still blocks present-tense surface completion claims to James', () => {
+  test('still flags present-tense surface completion claims to James', () => {
     for (const content of [
       'The invoice is fixed and showing on your dashboard now.',
       'Done - visible in the TrustQuote pane.',

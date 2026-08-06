@@ -7324,7 +7324,6 @@ describe('SquidRunApp', () => {
         queued: true,
         verified: true,
       });
-
       app.startSmsPoller();
 
       expect(smsPoller.start).toHaveBeenCalledTimes(1);
@@ -9096,6 +9095,7 @@ describe('SquidRunApp', () => {
         queued: true,
         verified: true,
       });
+      const admissionSpy = jest.spyOn(app, 'deliverTelegramInboundJob');
       const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
         ok: true,
         accepted: true,
@@ -9144,18 +9144,21 @@ describe('SquidRunApp', () => {
       const { sha256, canonicalQueuedPayloadDigest } = require('../modules/main/telegram-consumed-proof');
       expect(source.media_identity_sha256).toBe(sha256(''));
 
-      const pending = readScopedPendingRecord(808489705);
-      expect(pending).toBeTruthy();
-      expect(pending.media).toEqual(expect.objectContaining({
+      expect(admissionSpy).toHaveBeenCalledTimes(1);
+      const admittedRecord = admissionSpy.mock.calls[0][0].record;
+      expect(admittedRecord.media).toEqual(expect.objectContaining({
         kind: 'photo',
         localPath: 'D:\\projects\\Example Case\\telegram-photos\\photo-11.jpg',
       }));
-      expect(source.canonical_payload_sha256).toBe(canonicalQueuedPayloadDigest(pending));
+      expect(source.canonical_payload_sha256).toBe(canonicalQueuedPayloadDigest(admittedRecord));
       // AND IT IS ACTUALLY MEDIA-BOUND: the same record without its media
       // hashes differently, so the assertion above is not satisfied by any
       // record that merely shares an update id.
-      expect(canonicalQueuedPayloadDigest({ ...pending, media: null }))
+      expect(canonicalQueuedPayloadDigest({ ...admittedRecord, media: null }))
         .not.toBe(source.canonical_payload_sha256);
+      // `source_only` is a loud delivery refusal, not a queue lock. The drain
+      // retires it and continues under the current no-hold contract.
+      expect(readScopedPendingRecord(808489705)).toBeNull();
     });
 
     it('records an empty-body photo as a scoped source with its own identity and refuses delivery', async () => {

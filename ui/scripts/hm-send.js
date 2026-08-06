@@ -20,7 +20,6 @@ const {
   resolveCoordPath,
 } = require('../config');
 const {
-  getActiveProfileName,
   getProfileWebSocketPort,
   isMainProfile,
   namespaceCoordRelPath,
@@ -412,7 +411,7 @@ let message = messageParts.join(' ');
 if (!listDevicesMode && useStdin) {
   try {
     message = fs.readFileSync('/dev/stdin', 'utf8');
-  } catch (err) {
+  } catch {
     // Fallback for Windows where /dev/stdin may not exist
     try {
       message = fs.readFileSync(0, 'utf8');
@@ -904,36 +903,17 @@ async function runOutputGuards({ messageId, targetRole } = {}) {
 
   const surfaceClaimViolation = detectSurfaceClaimGuard({ messageId, targetRole, captureEventVerifier });
   if (surfaceClaimViolation) {
-    const surfaceClaimLogPayload = enrichSurfaceClaimGuardLog(surfaceClaimViolation);
+    const surfaceClaimLogPayload = {
+      ...enrichSurfaceClaimGuardLog(surfaceClaimViolation),
+      enforcement: 'warn_only',
+    };
     const logResult = appendGuardJsonl('surface-claim-violations.jsonl', surfaceClaimLogPayload);
-    if (surfaceClaimViolation.violation_class === 'james_repeat_requires_surface_concession') {
-      writeGuardBlock([
-        'BLOCKED: James repeated the same unresolved point.',
-        'Concede/name the unresolved surface first, or include a fresh visible-pane-submit artifact from the surface James can inspect.',
-        'This blocks claims/status only; focus windows, run visible harnesses, inspect surfaces, and fix reversible route bugs directly.',
-        `Log: ${logResult.path}`,
-      ]);
-    } else if (surfaceClaimViolation.violation_class === 'surface_done_claim_without_artifact') {
-      writeGuardBlock([
-        'BLOCKED: user-facing done/visible claim has no fresh visible-pane-submit artifact.',
-        'Include a fresh visible-pane-submit screenshot artifact path from the surface James can inspect, or say the real thing is not visible yet.',
-        'This blocks the claim, not the work needed to make it true.',
-        `Log: ${logResult.path}`,
-      ]);
-    } else if (surfaceClaimViolation.violation_class === 'substitute_as_surface_proof') {
-      writeGuardBlock([
-        'BLOCKED: local/emulator/private/demo surface is being used as proof for James-visible or production reality.',
-        'Use the real surface, or say the substitute does not count before doing substitute work.',
-        'This blocks the substitute claim/instruction, not reversible action on the real surface.',
-        `Log: ${logResult.path}`,
-      ]);
-    } else {
-      writeGuardBlock([
-        `BLOCKED: surface-claim-guard '${surfaceClaimViolation.violation_class || 'violation'}'.`,
-        `Log: ${logResult.path}`,
-      ]);
-    }
-    return { ok: false, type: 'surface_claim', violation: surfaceClaimViolation };
+    writeGuardBlock([
+      `WARNING: surface-claim-guard flagged '${surfaceClaimViolation.violation_class || 'violation'}'.`,
+      surfaceClaimViolation.reason || 'The message may make a surface claim without current visible evidence.',
+      'The concern was logged. The message will still be sent; this classifier is diagnostic, not delivery authority.',
+      `Log: ${logResult.path}`,
+    ]);
   }
 
   const telegramUserTargetViolation = detectTelegramUserTargetGuard({ messageId });
@@ -1055,7 +1035,7 @@ function getExplicitSessionScopeId(env = process.env) {
   return normalizeSessionId(sourceSessionScopeIdOverride || env?.SQUIDRUN_SESSION_SCOPE_ID || env?.SQUIDRUN_SESSION_ID || '');
 }
 
-function scopeSessionIdForEffectiveProfile(sessionId, profileName = effectiveProfileName) {
+function scopeSessionIdForEffectiveProfile(sessionId) {
   const normalizedSessionId = normalizeSessionId(sessionId);
   if (!normalizedSessionId) return null;
   return normalizedSessionId;

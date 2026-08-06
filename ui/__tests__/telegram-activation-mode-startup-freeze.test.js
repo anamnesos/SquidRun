@@ -1,5 +1,5 @@
 /**
- * v7 §3 PHASE L — THE MODE IS FROZEN AT STARTUP, PROVED DYNAMICALLY.
+ * v7 §3 PHASE L — frozen startup metadata, proved dynamically.
  *
  * =====================================================================
  * WHY THIS IS ITS OWN SUITE
@@ -13,12 +13,9 @@
  * the capture, mutate settings underneath, and show the generation does not
  * move.
  *
- * And it cannot live in `squidrun-app.test.js`. That file carries the fifteen
- * deliberate Telegram compatibility reds from Step 2A, so staging it fails the
- * pre-commit Jest gate — which runs every staged test file in full and is
- * right to. Adding an exception to the gate for a file we know fails would be
- * exactly the shaped check this lane keeps refusing. A separate suite keeps the
- * gate honest and the reds untouched.
+ * The drain no longer uses this mode as delivery authority. These checks prove
+ * the frozen value remains stable and reaches health reporting without
+ * resurrecting the removed hold.
  *
  * `squidrun-app.js` needs only an Electron mock to load, so the harness is
  * small. No live state: temp spool directories, stubbed instance methods, and
@@ -143,18 +140,15 @@ describe('the freeze is a property of the generation, not of the last save', () 
     app.captureTelegramActivationMode();
     ctx.currentSettings.telegramTransportActivationMode = LEGACY_SETTLEMENT;
 
-    // Fails closed for the whole generation. The operator's save takes effect
-    // on the next boot, which is the only point at which "this generation
-    // settled legacy" can still be one coherent fact.
+    // Health reports the frozen absence for this generation; a later save takes
+    // effect on the next boot.
     expect(app.getTelegramActivationModeSetting()).toBe(null);
   });
 
   test('WITHOUT the capture the getter throws rather than guessing', () => {
     const { app } = makeApp(LEGACY_SETTLEMENT);
 
-    // A getter that lazily read here would be indistinguishable from a real
-    // install whose operator has not configured the mode, and the drain would
-    // then report the wrong defect entirely.
+    // A getter that lazily read here would invent startup state after the fact.
     expect(() => app.getTelegramActivationModeSetting()).toThrow(/never frozen at startup/);
   });
 
@@ -169,11 +163,12 @@ describe('the freeze is a property of the generation, not of the last save', () 
   });
 });
 
-describe('the REAL drain coordinator operates from the frozen value', () => {
-  test('a good freeze survives a later save: the drain does not hold on the mode', async () => {
+describe('the real drain publishes the frozen value without making it a gate', () => {
+  test('a good freeze survives a later save and delivery still runs', async () => {
     const { app, ctx } = makeApp(LEGACY_SETTLEMENT);
     app.captureTelegramActivationMode();
-    stubAppSeams(app);
+    const deliver = jest.fn(async () => ({ ok: true }));
+    stubAppSeams(app, { deliver });
     const base = tempRoot();
     const dir = seedLegacy(base, 980);
 
@@ -183,23 +178,18 @@ describe('the REAL drain coordinator operates from the frozen value', () => {
     const coordinator = app.getTelegramDrainCoordinator();
     const res = await coordinator.drainOnce(dir, 'main');
 
-    // It may well hold further down — this record has no claim store behind it
-    // — but it must NOT hold on the activation mode, because this generation
-    // froze a good one before that save happened.
-    expect(res.stoppedAt?.reason || '').not.toMatch(/^activation_mode_unhealthy/);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(res.stoppedAt).toBeNull();
+    expect(queue.readPending(dir)).toEqual([]);
     expect(res.backlog.activationMode).toBe(LEGACY_SETTLEMENT);
     expect(res.backlog.activationModeHealthy).toBe(true);
   });
 
-  test('a BAD freeze is not rescued by a later save: the drain holds on the mode', async () => {
-    // The load-bearing direction. If `getTelegramDrainCoordinator` dropped the
-    // activation callback, or wired it to live settings instead of the frozen
-    // getter, this drain would see a perfectly good `legacy_settlement` and
-    // proceed — so this is the assertion that actually observes the wiring
-    // rather than the app's own getter (Architect #161).
+  test('a bad freeze is not rescued by a later save, but it is health metadata rather than delivery authority', async () => {
     const { app, ctx } = makeApp(undefined);
     app.captureTelegramActivationMode();
-    stubAppSeams(app);
+    const deliver = jest.fn(async () => ({ ok: true }));
+    stubAppSeams(app, { deliver });
     const base = tempRoot();
     const dir = seedLegacy(base, 981);
 
@@ -208,13 +198,9 @@ describe('the REAL drain coordinator operates from the frozen value', () => {
     const coordinator = app.getTelegramDrainCoordinator();
     const res = await coordinator.drainOnce(dir, 'main');
 
-    expect(res.stoppedAt).toMatchObject({
-      updateId: 981,
-      reason: 'activation_mode_unhealthy:activation_mode_missing',
-      resolutionRequired: true,
-    });
-    // Nothing moved, and the published snapshot says why.
-    expect(queue.readPending(dir).map((r) => r.updateId)).toEqual([981]);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(res.stoppedAt).toBeNull();
+    expect(queue.readPending(dir)).toEqual([]);
     expect(res.backlog).toMatchObject({
       activationMode: null,
       activationModeHealthy: false,
@@ -222,20 +208,23 @@ describe('the REAL drain coordinator operates from the frozen value', () => {
     });
   });
 
-  test('a coordinator built WITHOUT the startup capture wedges instead of guessing', async () => {
-    // No `captureTelegramActivationMode()` at all: the getter throws, the drain
-    // turns that into a named hold, and nothing is delivered on an assumption.
+  test('a coordinator built without startup capture reports that defect and still delivers', async () => {
     const { app } = makeApp(LEGACY_SETTLEMENT);
-    stubAppSeams(app);
+    const deliver = jest.fn(async () => ({ ok: true }));
+    stubAppSeams(app, { deliver });
     const base = tempRoot();
     const dir = seedLegacy(base, 982);
 
     const coordinator = app.getTelegramDrainCoordinator();
     const res = await coordinator.drainOnce(dir, 'main');
 
-    expect(res.stoppedAt.reason).toBe(
-      'activation_mode_unhealthy:activation_mode_threw:telegram activation mode was never frozen at startup'
-    );
-    expect(queue.readPending(dir).map((r) => r.updateId)).toEqual([982]);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(res.stoppedAt).toBeNull();
+    expect(queue.readPending(dir)).toEqual([]);
+    expect(res.backlog).toMatchObject({
+      activationMode: null,
+      activationModeHealthy: false,
+      activationModeReason: 'activation_mode_threw:telegram activation mode was never frozen at startup',
+    });
   });
 });

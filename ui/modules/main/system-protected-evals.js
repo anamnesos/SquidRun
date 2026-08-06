@@ -1409,13 +1409,17 @@ function getOverrideText(overrides, relPath) {
   return null;
 }
 
+function normalizeSourceText(value) {
+  return String(value).replace(/\r\n?/g, '\n');
+}
+
 function readProjectFile(relPath, options = {}) {
   const normalized = normalizeRelPath(relPath);
   const override = getOverrideText(options.fileTextOverrides, normalized);
-  if (override !== null) return override;
-  if (typeof options.readFile === 'function') return String(options.readFile(normalized));
+  if (override !== null) return normalizeSourceText(override);
+  if (typeof options.readFile === 'function') return normalizeSourceText(options.readFile(normalized));
   const repoRoot = options.repoRoot || DEFAULT_REPO_ROOT;
-  return fs.readFileSync(path.join(repoRoot, normalized), 'utf8');
+  return normalizeSourceText(fs.readFileSync(path.join(repoRoot, normalized), 'utf8'));
 }
 
 function makeCheck(id, ok, message, details = {}) {
@@ -2119,6 +2123,8 @@ function validateTelegramRecallBodyFirstSemantics(evalCase, options = {}) {
   const prependBlock = extractFunctionBlock(memoryBrokerText, 'function prependRecallToMessage(message, recall, options = {})');
   const formatBlock = extractFunctionBlock(memoryBrokerText, 'function formatRecallForPaneMessage(recall, options = {})');
   const replyTargetBlock = extractFunctionBlock(appText, 'buildTelegramReplyTargetPaneMessage(message, recallContext = {})');
+  const composeBlock = extractFunctionBlock(appText, 'async composeHumanPaneMessage(message, recallContext = {}, logLabel = \'HumanMessage\')');
+  const deliverComposedBlock = extractFunctionBlock(appText, 'async deliverComposedHumanMessage(composed = {}, recallContext = {}, logLabel = \'HumanMessage\')');
   const deliverBlock = extractFunctionBlock(appText, 'async deliverHumanMessageWithRecall(message, recallContext = {}, logLabel = \'HumanMessage\')');
   const checks = [];
 
@@ -2149,20 +2155,26 @@ function validateTelegramRecallBodyFirstSemantics(evalCase, options = {}) {
     { path: 'ui/modules/memory-broker.js', anchor: 'function formatRecallForPaneMessage(recall, options = {})' }
   ));
 
-  const messageWithRecallIndex = deliverBlock.indexOf('const messageWithRecall = await this.buildHumanMessageWithUnifiedRecall(message, recallContext, logLabel);');
-  const replyTargetWrapIndex = deliverBlock.indexOf('? this.buildTelegramReplyTargetPaneMessage(messageWithRecall, recallContext)');
-  const deliverCallIndex = deliverBlock.indexOf('const result = await this.deliverPaneMessageReliably({');
+  const messageWithRecallIndex = composeBlock.indexOf('const messageWithRecall = await this.buildHumanMessageWithUnifiedRecall(message, recallContext, logLabel);');
+  const replyTargetWrapIndex = composeBlock.indexOf('? this.buildTelegramReplyTargetPaneMessage(messageWithRecall, recallContext)');
+  const composeCallIndex = deliverBlock.indexOf('await this.composeHumanPaneMessage(message, recallContext, logLabel)');
+  const delegatedDeliveryIndex = deliverBlock.indexOf('return this.deliverComposedHumanMessage(composed, recallContext, logLabel);');
+  const deliverCallIndex = deliverComposedBlock.indexOf('const result = await this.deliverPaneMessageReliably({');
   checks.push(makeCheck(
     'telegram_delivery_wraps_body_first_recall_before_reliable_delivery',
     messageWithRecallIndex >= 0
       && replyTargetWrapIndex > messageWithRecallIndex
-      && deliverCallIndex > replyTargetWrapIndex,
+      && composeCallIndex >= 0
+      && delegatedDeliveryIndex > composeCallIndex
+      && deliverCallIndex >= 0,
     'Telegram delivery builds body-first recall text before adding reply-target guard and reliable pane delivery',
     {
       path: 'ui/modules/main/squidrun-app.js',
       anchor: 'async deliverHumanMessageWithRecall(message, recallContext = {}, logLabel = \'HumanMessage\')',
       messageWithRecallIndex,
       replyTargetWrapIndex,
+      composeCallIndex,
+      delegatedDeliveryIndex,
       deliverCallIndex,
     }
   ));

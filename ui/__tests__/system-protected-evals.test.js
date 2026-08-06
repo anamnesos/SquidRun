@@ -868,6 +868,16 @@ describe('system protected evals', () => {
     ]));
   });
 
+  test('Phase 4H source checks are stable in a Windows CRLF working tree', () => {
+    const squidrunApp = readRel('ui/modules/main/squidrun-app.js').replace(/\r?\n/g, '\r\n');
+    const report = runSystemProtectedEvals({
+      caseIds: [CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY],
+      fileTextOverrides: defaultOverrides({ squidrunApp }),
+    });
+
+    expect(report.ok).toBe(true);
+  });
+
   test('Phase 4H exposes source refs, focused fixtures, and mutation boundaries', () => {
     const plan = buildSystemProtectedEvalRunPlan({
       caseIds: [CASE_ID_TELEGRAM_POLLER_RESTART_BOUNDARY],

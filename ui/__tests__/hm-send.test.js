@@ -345,29 +345,35 @@ describe('hm-send retry behavior', () => {
     }
   });
 
-  test('blocks user-facing done or visible claims without a surface artifact before send', async () => {
+  test('warns on a user-facing surface claim but still sends it to James', async () => {
     const tempProject = createLinkedProject({ squidrunRoot: null });
     writeAppStatus(tempProject, 'app-session-781');
     const logPath = path.join(tempProject, '.squidrun', 'runtime', 'surface-claim-violations.jsonl');
+    const sendAttempts = [];
+    const { server, port } = await startAckServer(sendAttempts);
 
     try {
+      const message = 'Done: the demo invoice is visible in the TrustQuote dashboard.';
       const result = await runHmSend(
-        ['telegram', 'Done: the demo invoice is visible in the TrustQuote dashboard.', '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
+        ['user', message, '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
         {
-          HM_SEND_PORT: '65534',
+          HM_SEND_PORT: String(port),
           SQUIDRUN_PROJECT_ROOT: tempProject,
         },
         { cwd: tempProject }
       );
 
-      expect(result.code).toBe(1);
-      expect(result.stderr).toContain('BLOCKED: user-facing done/visible claim has no fresh visible-pane-submit artifact');
-      expect(result.stderr).toContain('This blocks the claim, not the work needed to make it true');
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0].content).toContain(message);
+      expect(result.stderr).toContain("WARNING: surface-claim-guard flagged 'surface_done_claim_without_artifact'");
+      expect(result.stderr).toContain('The concern was logged. The message will still be sent');
       expect(fs.existsSync(logPath)).toBe(true);
       const [entry] = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line));
       expect(entry).toMatchObject({
         violation_class: 'surface_done_claim_without_artifact',
-        targetRole: 'telegram',
+        targetRole: 'user',
+        enforcement: 'warn_only',
       });
       expect(entry.bodySnippet).toBe('Done: the demo invoice is visible in the TrustQuote dashboard.');
       expect(entry.bodySha256).toMatch(/^[a-f0-9]{64}$/);
@@ -375,6 +381,7 @@ describe('hm-send retry behavior', () => {
       expect(entry.bodyTruncated).toBe(false);
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
     }
   });
 

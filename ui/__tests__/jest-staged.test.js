@@ -16,10 +16,10 @@ describe('jest-staged: one deterministic run, and failures that say why', () => 
     // process now, and every staged path is in it.
     const staged = [
       'ui/__tests__/squidrun-app.test.js',
-      'ui/__tests__/telegram-drain-ordering-integrity.test.js',
+      'ui/__tests__/telegram-admission-sequence.test.js',
       'ui/__tests__/telegram-ingress-ack.test.js',
       'ui/__tests__/telegram-ingress-drain.test.js',
-      'ui/__tests__/telegram-orphan-health-reporting.test.js',
+      'ui/__tests__/telegram-drain-wiring.test.js',
       'ui/__tests__/telegram-recover-inbound.test.js',
       'ui/__tests__/telegram-source-protocol.test.js',
       'ui/modules/main/telegram-source-protocol.js',
@@ -33,10 +33,10 @@ describe('jest-staged: one deterministic run, and failures that say why', () => 
 
     expect(plan.testPaths).toEqual([
       '__tests__/squidrun-app.test.js',
-      '__tests__/telegram-drain-ordering-integrity.test.js',
+      '__tests__/telegram-admission-sequence.test.js',
       '__tests__/telegram-ingress-ack.test.js',
       '__tests__/telegram-ingress-drain.test.js',
-      '__tests__/telegram-orphan-health-reporting.test.js',
+      '__tests__/telegram-drain-wiring.test.js',
       '__tests__/telegram-recover-inbound.test.js',
       '__tests__/telegram-source-protocol.test.js',
     ]);

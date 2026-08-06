@@ -386,11 +386,35 @@ function findActivePaneLaunch(db, query = {}) {
     return fail('launch_not_recorded', { appGeneration, paneId });
   }
 
-  // A `launching` row is a pane that was spawned and never reported ready. It
-  // is not a fallback for a missing complete row: its runtime may never have
-  // come up, and a receipt from it is exactly the thing that never arrives.
+  // A `launching` row says the readiness binder has not completed. Delivery may
+  // opt into the newest row as a best-effort target, but the concern must stay
+  // explicit so it can be logged and repaired without muting the channel.
   const complete = rows.filter((row) => String(row.state) === LAUNCH_STATES.COMPLETE);
   if (complete.length === 0) {
+    if (query.allowIncomplete === true) {
+      const row = rows[0];
+      return {
+        ok: true,
+        launchId: String(row.launch_id),
+        appGeneration: String(row.app_generation),
+        paneId: String(row.pane_id),
+        role: String(row.role),
+        consumerRuntime: String(row.consumer_runtime),
+        daemonProcessId: String(row.daemon_process_id),
+        launchedAtMs: Number(row.launched_at_ms),
+        completeAtMs: null,
+        state: String(row.state),
+        readinessWarning: {
+          reason: 'launch_incomplete',
+          detail: {
+            appGeneration,
+            paneId,
+            states: rows.map((candidate) => String(candidate.state)),
+            selectedLaunchId: String(row.launch_id),
+          },
+        },
+      };
+    }
     return fail('launch_incomplete', {
       appGeneration, paneId, states: rows.map((row) => String(row.state)),
     });
@@ -413,6 +437,7 @@ function findActivePaneLaunch(db, query = {}) {
     launchedAtMs: Number(row.launched_at_ms),
     completeAtMs: row.complete_at_ms === null ? null : Number(row.complete_at_ms),
     state: String(row.state),
+    readinessWarning: null,
   };
 }
 

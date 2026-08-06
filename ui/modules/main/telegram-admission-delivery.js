@@ -111,6 +111,7 @@ async function runAdmissionForJob(app, options = {}) {
           : null,
         nowMs: Date.now(),
       })),
+      warn: options.warn,
       nonce: () => `n_${randomBytes(12).toString('hex')}`,
     });
   } finally {
@@ -271,6 +272,12 @@ async function deliverAdmittedMainTelegram(app, options = {}) {
       job,
       record,
       mode: MODES.FULL,
+      warn: (warning) => {
+        log.warn(
+          'Telegram',
+          `Admission concern for ${inboundMessageId} at ${warning.stage} (${warning.reason}); delivering anyway`
+        );
+      },
       composeFinalBody: async () => {
         composed = await app.composeHumanPaneMessage(safeMessage, recallContext, 'Telegram');
         return composed.outboundMessage;

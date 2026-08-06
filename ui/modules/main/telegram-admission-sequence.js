@@ -1,5 +1,5 @@
 /**
- * THE PRODUCTION ADMISSION SEQUENCE — one owner, five awaited steps, fail-closed.
+ * THE PRODUCTION ADMISSION SEQUENCE — one owner, five awaited steps.
  *
  * =====================================================================
  * WHY THIS FILE EXISTS AT ALL
@@ -509,6 +509,9 @@ async function runTelegramAdmissionSequence(input = {}) {
     composeFinalBody,
     // REQUIRED IN FULL MODE. Deliberately undefaulted: see the B_readiness gate.
     paneReadiness,
+    // Diagnostics must never become delivery authority. A throwing logger is
+    // ignored after the warning is retained on the result.
+    warn,
     now = () => Date.now(),
     nonce,
     cutoverId = TELEGRAM_CUTOVER_ID,
@@ -530,8 +533,15 @@ async function runTelegramAdmissionSequence(input = {}) {
   // latched nothing; you may not close anything on its behalf".
   // ===================================================================
   let ownedClaimId = null;
+  const warnings = [];
+  const reportWarning = (warning) => {
+    warnings.push(warning);
+    if (typeof warn !== 'function') return;
+    try { warn(warning); } catch { /* logging never gates delivery */ }
+  };
   const refuseHere = (stage, reason, detail = null, phase = PHASES.BEFORE_DELIVERY) => ({
     ...refuse(stage, reason, detail, phase),
+    warnings: warnings.slice(),
     ownedClaimId,
     // PROVABLY UNSENT ONLY BEFORE D. A refusal we returned from between B and D
     // is first-hand evidence that no bytes were authorised; anything at or past
@@ -610,8 +620,22 @@ async function runTelegramAdmissionSequence(input = {}) {
   }
 
   // ---------------------------------------------------------------- B
-  const launch = stepFindLaunch(db, { appGeneration, paneId: String(paneId) });
+  const launch = stepFindLaunch(db, {
+    appGeneration,
+    paneId: String(paneId),
+    // A recorded-but-still-launching pane is diagnostic, not a veto. The
+    // registry returns its newest row with an explicit readiness warning.
+    allowIncomplete: true,
+  });
   if (!launch.ok) return refuseHere('B_launch', launch.reason, launch.detail ?? null);
+  if (launch.readinessWarning) {
+    reportWarning({
+      stage: 'B_launch',
+      reason: launch.readinessWarning.reason || 'launch_incomplete',
+      detail: launch.readinessWarning.detail || null,
+      message: `Pane ${paneId} launch ${launch.launchId} has not reported complete; delivering anyway`,
+    });
+  }
   if (String(launch.role) !== String(role)) {
     return refuseHere('B_launch', 'launch_role_mismatch', {
       launchRole: launch.role, offered: role,
@@ -824,6 +848,7 @@ async function runTelegramAdmissionSequence(input = {}) {
       sha256: deliveredPromptSha256,
       bytes: deliveredPromptBytes,
     },
+    warnings: warnings.slice(),
   };
 }
 

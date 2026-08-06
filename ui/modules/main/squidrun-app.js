@@ -15211,18 +15211,10 @@ class SquidRunApp {
         resolveRoute: (chatId) => this.resolveTelegramInboundRoute(chatId),
         currentSessionFor: (windowKey) => this.getWindowSessionScopeId(windowKey || 'main'),
         deliver: (job) => this.deliverTelegramInboundJob(this.buildTelegramInboundJob(job)),
-        findExistingReceipt: (identity) => this.findTelegramDeliveryReceipt(identity),
-        // B5. The post-cutover attempt latch lives in the admission database,
-        // so the drain's decision layer has to be able to read it. Without
-        // these two the drain holds rather than guessing, which is why they are
-        // wired here and not defaulted inside the coordinator.
+        // The admission database claim is the sole at-most-once key. An
+        // unreadable lookup is deliberately fail-open in the drain: possible
+        // duplication is cheaper than muting the channel.
         lookupTransportClaim: (query) => telegramAdmissionDelivery.lookupTransportClaimForApp(this, query),
-        closeUnsentTransportClaim: (input) => telegramAdmissionDelivery.closeUnsentClaimForApp(this, input),
-        // S491. Three questions the drain could not previously ask, each
-        // answered here where the app actually knows.
-        sessionGeneration: () => this.getTelegramDrainGeneration(),
-        paneRuntimeFor: (windowKey) => this.resolveTelegramPaneRuntime(windowKey),
-        receiptActivity: () => this.getTelegramReceiptRuntimeActivity(),
         // v7 §3 Phase L. The drain asks once per pass and this answers from a
         // value frozen at STARTUP, in init immediately after loadSettings, so
         // no settings save can move a running generation between operating
@@ -15499,9 +15491,8 @@ class SquidRunApp {
    * message answers a different question entirely and could retire a message
    * that never reached her window.
    *
-   * Fail closed: an unresolvable profile root THROWS rather than falling back
-   * to main, cwd, or getProjectRoot(). The drain turns a throw into a HOLD,
-   * which is correct when we cannot tell where the proof would live.
+   * An unresolvable profile root THROWS rather than falling back to main, cwd,
+   * or getProjectRoot(). The live drain no longer calls this legacy proof seam.
    */
   resolveScopedLedgerDbPath(profile) {
     const name = typeof profile === 'string' ? profile.trim() : '';
@@ -15524,7 +15515,8 @@ class SquidRunApp {
   }
 
   /**
-   * Crash-replay proof, read from DURABLE STORES ONLY.
+   * Legacy crash-replay proof lookup, retained for explicit diagnostics.
+   * The live ingress drain no longer gates retirement on this result.
    *
    * An in-memory map cannot answer this question: the whole point is surviving
    * a process that died between delivering and acking, and a Map dies with it.
@@ -15550,12 +15542,8 @@ class SquidRunApp {
     //
     // STRUCTURALLY INCOMPLETE, AND SAID SO OUT LOUD: the outbound row proves
     // Mira answered, but it owns no app generation and no proof timestamp, so
-    // this object cannot satisfy the proof gate and the record HOLDS rather
-    // than retiring. That is exactly what happens today — this comment does not
-    // change behaviour, it stops the incompleteness from being invisible. A
-    // Mira-answered message is therefore still a queue-holding message, and
-    // closing that is its own repair with its own evidence, not a field
-    // invented here.
+    // this object could not satisfy the retired proof gate. It remains
+    // structurally incomplete and must not be promoted into stronger evidence.
     if (this.hasDurableMiraOutboundProof(identity.messageId, {
       inboundMessageId: identity.messageId,
       chatId: identity.chatId,
@@ -15576,8 +15564,7 @@ class SquidRunApp {
 
     // TERMINAL CONSUMPTION. The lookup returns the stored record's own fields
     // or nothing; it cannot complete a partial record, and a store it cannot
-    // read or that holds two conflicting accounts THROWS, which the drain turns
-    // into a hold.
+    // read or that holds two conflicting accounts throws.
     try {
       // MAIN gets strict semantics too. A scoped profile's proof lives in a
       // scoped ledger; reading main's for a scoped message answers a different
@@ -15589,7 +15576,7 @@ class SquidRunApp {
         dbPath: scopedDbPath || undefined,
       });
     } catch (err) {
-      // Cannot tell whether it landed; the drain turns a throw into a HOLD.
+      // Cannot tell whether it landed; preserve that uncertainty for callers.
       throw new Error(`terminal consumption lookup failed: ${err.message}`);
     }
   }
@@ -15614,8 +15601,8 @@ class SquidRunApp {
    * has already seen text. Falling back to the Architect pane there would be a
    * second visible reply.
    *
-   * Throws on lookup failure BY DESIGN — the drain turns a throw into a hold,
-   * and holding is correct when we cannot tell what was sent.
+   * Throws on lookup failure by design so a diagnostic caller cannot confuse
+   * unreadable state with a clean miss.
    *
    * @returns {{complete: boolean, anyDelivered: boolean, delivered: number, expectedParts: number|null}}
    */
