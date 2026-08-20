@@ -11,6 +11,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 5. PTY runtime is managed by daemon client (`ui/daemon-client.js`) connecting to `ui/terminal-daemon.js`; panes attach through renderer/hidden-host bridges.
 6. Watchers (`ui/modules/watcher.js` + `ui/modules/watcher-worker.js`) monitor workspace/trigger/message paths and route payloads through `ui/modules/triggers.js`.
 7. IPC handlers are registered via `ui/modules/ipc-handlers.js` + `ui/modules/ipc/handler-registry.js`; websocket dispatch uses `ui/modules/websocket-server.js` / `ui/modules/websocket-runtime.js`.
+8. The private Team Room is a separate local HTTP/WebSocket service and SQLite store opened through its own Electron window; phone clients pair over the private LAN while the agent-control WebSocket remains loopback-only.
 9. Startup and coordination state is continuously materialized into `.squidrun/` (status, handoffs, snapshots, runtime ledgers).
 
 ## 3) KEY FILE MAP
@@ -21,6 +22,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/human-timeline-sidecar-renderer.js: Side-window adapter that invokes the read-only `human-timeline:snapshot` IPC channel and refreshes the portable Today feed component.
 - ui/human-timeline-sidecar.html: Standalone Today side-window document for the human timeline surface.
 - ui/index.html: Main renderer shell (3-pane layout, broadcast input, settings panel, right tabs, and startup overlays).
+- ui/team-room.html + ui/team-room.js + ui/team-room.css: Shared desktop/phone Team Room surface with authenticated history, WebSocket updates, attachments, reconnect recovery, and the PWA install shell; `team-room-sw.js`, the manifest, and icon assets provide installability without intercepting API traffic.
 - ui/jsconfig.json: Scoped JavaScript type-check configuration for the first-stage JSDoc + `checkJs` gate (`tsc --noEmit`) over selected contract-heavy modules.
 - ui/pane-host.html: Hidden pane-host window document that mounts xterm and loads `pane-host-renderer.js`.
 - ui/pane-host-renderer.js: Hidden pane PTY bridge that injects messages, dispatches Enter, and reports delivery ack/outcome to main.
@@ -156,6 +158,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/main/launch-intent.js: Normalizes `--window` / standalone launch flags so secondary windows can cold-open with their own top-level lifecycle while still sharing the runtime when needed.
 - ui/modules/main/human-timeline.js: Builds the read-only Today snapshot from existing comms, git, Telegram reply obligations, and Task Audit items; collapses agent chatter into human outcomes, caps Needs You, and counts excluded foreign-world rows without writing source data.
 - ui/modules/main/human-timeline-sidecar-window.js: Creates the standalone Electron delivery vehicle for the portable Today feed; window chrome stays separate from the reusable feed renderer so later main-window promotion is a remount, not a rewrite.
+- ui/modules/main/team-room-*.js: Private Team Room subsystem covering Electron-window lifecycle, LAN-safe auth/pairing and offline QR generation, SQLite message/activation storage, attachment validation/upload, CLI binding, pane delivery, and the HTTP/WebSocket runtime. Agent posts are activation-bound; same-root coverage arbitration runs inside the store's `BEGIN IMMEDIATE` post transaction so covered echoes lose atomically while corrections, questions, direct mentions, and distinct evidence remain admissible.
 - ui/modules/main/live-task-audit-sidecar.js: Builds the Task Audit sidecar snapshot from typed work items, current-lane reconciliation, and the canonical `.squidrun/runtime/live-task-audit-sidecar/task-audit-items.json` state file; the legacy `future-items.json` file is not read and should not be recreated.
 - ui/modules/main/missing-arm-watchdog.js: Stage-based missing-arm watchdog wrapper around the durable registry state; advances expected -> nudge -> escalate -> satisfied with injectable sender and canonical Architect escalation sink while tests can exercise stages without real timers.
 - ui/modules/main/pane-control-service.js: Exports executePaneControlAction, detectPaneModel, normalizeAction.
@@ -342,6 +345,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/scripts/hm-memory-registry.js: CLI for transactive memory registry updates and expertise tracking by domain/agent.
 - ui/scripts/hm-memory-search.js: Queries the cognitive/vector memory index and returns ranked semantic matches.
 - ui/scripts/hm-memory.js: CLI utility that sends/queries runtime actions via WebSocket.
+- ui/scripts/hm-room.js: Runtime-identity-bound Team Room CLI for activation replies, read-only room listing/status, and clear same-root coverage refusals; it exposes no author override.
 - ui/scripts/hm-mira-emit.js: Emits Mira-originated route intents through the normal SquidRun messaging path for proof and runtime integration.
 - ui/scripts/hm-mira-progress.js: Prints contract-driven Mira progress and consumes fresh default progress proof artifacts unless explicitly disabled.
 - ui/scripts/hm-mira-reply.js: Sends Architect-authored replies back to Mira-originated intents while preserving sender/target role constraints.

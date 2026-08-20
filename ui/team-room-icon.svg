@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="96" y1="40" x2="430" y2="476" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#17232c"/>
+      <stop offset="1" stop-color="#090d11"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(256 208) rotate(90) scale(238)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#24404f" stop-opacity=".54"/>
+      <stop offset="1" stop-color="#0c1014" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="60" y="62" width="392" height="398" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#000" flood-opacity=".38"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="#0c1014"/>
+  <rect width="512" height="512" rx="116" fill="url(#glow)"/>
+  <g filter="url(#shadow)">
+    <path d="M112 126c0-22.1 17.9-40 40-40h208c22.1 0 40 17.9 40 40v214c0 22.1-17.9 40-40 40H242l-62 50 12-50h-40c-22.1 0-40-17.9-40-40V126Z" fill="url(#bg)" stroke="#31414d" stroke-width="4"/>
+    <rect x="161" y="229" width="30" height="79" rx="15" fill="#f4a862"/>
+    <rect x="213" y="174" width="30" height="134" rx="15" fill="#38d6f0"/>
+    <rect x="265" y="201" width="30" height="107" rx="15" fill="#7ee787"/>
+    <rect x="317" y="247" width="30" height="61" rx="15" fill="#c792ea"/>
+    <path d="M163 344h186" stroke="#8fa1b3" stroke-opacity=".3" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -62,6 +62,8 @@ const miraLabWindowModule = require('./mira-lab-window');
 const liveTaskAuditSidecarWindowModule = require('./live-task-audit-sidecar-window');
 const humanTimelineSidecarWindowModule = require('./human-timeline-sidecar-window');
 const spineOverlayWindowModule = require('./spine-overlay-window');
+const { verifyAppWindowVisible } = require('./app-window-visibility');
+const { createTeamRoomAppController } = require('./team-room-app-controller');
 const { resolveRuntimeInt } = require('../runtime-config');
 const {
   toNonEmptyString,
@@ -1466,6 +1468,11 @@ class SquidRunApp {
       standaloneWindow: false,
     };
     this.appWindowInstanceScopes = new Map();
+    this.teamRoomController = createTeamRoomAppController({
+      appHost: this,
+      BrowserWindow,
+      sendDirectMessage: triggers.sendDirectMessage,
+    });
   }
 
   isBundledRuntimePath(targetPath = '') {
@@ -6383,43 +6390,12 @@ class SquidRunApp {
   }
 
   verifyAppWindowVisible(rawWindowKey = 'main', expectedTitle = '') {
-    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
-    const window = this.getAppWindow(windowKey);
-    if (!this.canSendToWindow(window)) {
-      return {
-        ok: false,
-        windowKey,
-        reason: `${windowKey}_window_not_registered`,
-      };
-    }
-    const visible = typeof window.isVisible === 'function' ? window.isVisible() : null;
-    if (visible === false) {
-      return {
-        ok: false,
-        windowKey,
-        reason: `${windowKey}_window_not_visible`,
-        visible,
-      };
-    }
-    const title = typeof window.getTitle === 'function'
-      ? toNonEmptyString(window.getTitle())
-      : null;
-    if (expectedTitle && title && title.toLowerCase() !== expectedTitle.toLowerCase()) {
-      return {
-        ok: false,
-        windowKey,
-        reason: `${windowKey}_window_title_mismatch`,
-        expectedTitle,
-        title,
-        visible,
-      };
-    }
-    return {
-      ok: true,
-      windowKey,
-      visible,
-      title: title || expectedTitle || null,
-    };
+    return verifyAppWindowVisible({
+      rawWindowKey,
+      expectedTitle,
+      getAppWindow: (windowKey) => this.getAppWindow(windowKey),
+      canSendToWindow: (windowRef) => this.canSendToWindow(windowRef),
+    });
   }
 
   async openAppWindow(rawWindowKey = 'main', options = {}) {
@@ -6427,6 +6403,9 @@ class SquidRunApp {
     this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:start`, {
       lifecycleRoot: options.lifecycleRoot === true,
     });
+    if (windowKey === 'team-room') {
+      return this.teamRoomController.openWindow();
+    }
     if (windowKey === 'mira-lab') {
       const existing = this.getAppWindow(windowKey);
       if (this.canSendToWindow(existing)) {
@@ -9613,6 +9592,7 @@ class SquidRunApp {
             messageWatcherStart?.error || messageWatcherStart?.reason || 'message_watcher_start_failed'
           );
         }
+        await this.teamRoomController.start();
         this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.RUNNING, reason);
         return { ok: true, state: this.runtimeLifecycleState };
       } catch (err) {
@@ -9631,6 +9611,7 @@ class SquidRunApp {
         } catch (stopErr) {
           log.warn('RuntimeLifecycle', `Failed stopping workspace watcher after start error: ${stopErr.message}`);
         }
+        await this.teamRoomController.stopQuietly('start error');
         this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPED, `${reason}:start-error`);
         return { ok: false, state: this.runtimeLifecycleState, error: err.message };
       }
@@ -9648,6 +9629,7 @@ class SquidRunApp {
         watcher.stopMessageWatcher();
         watcher.stopTriggerWatcher();
         watcher.stopWatcher();
+        await this.teamRoomController.stop();
         return { ok: true, state: this.runtimeLifecycleState, alreadyStopped: true, forced: true };
       }
       if (!this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPING, reason)) {
@@ -9658,6 +9640,7 @@ class SquidRunApp {
         watcher.stopMessageWatcher();
         watcher.stopTriggerWatcher();
         watcher.stopWatcher();
+        await this.teamRoomController.stop();
         this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPED, reason);
         return { ok: true, state: this.runtimeLifecycleState };
       } catch (err) {
