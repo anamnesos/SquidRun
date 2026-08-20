@@ -243,6 +243,9 @@ function classifySameRootCoverage(input = {}) {
     || hasRoomMemberMention(input.activatedBody, input.memberId)) {
     return { covered: false, reason: 'direct_mention' };
   }
+  if (Array.isArray(input.attachments) && input.attachments.length > 0) {
+    return { covered: false, reason: 'attachments_are_additive' };
+  }
 
   const mostRecent = priorPosts[0];
   if (participationReason === PARTICIPATION_REASONS.HUMAN_TEXTURE) {
@@ -255,18 +258,23 @@ function classifySameRootCoverage(input = {}) {
     };
   }
 
-  const candidateTokens = extractSubstanceTokens(input.body);
-  const contextTokens = new Set(extractSubstanceTokens(input.rootBody));
+  const candidateBody = String(input.body || '');
+  if (participationReason !== PARTICIPATION_REASONS.DIRECT_ANSWER) {
+    return { covered: false, reason: 'reason_class_is_additive' };
+  }
+  if (candidateBody.length > 200 || candidateBody.includes('?')) {
+    return { covered: false, reason: 'not_a_trivial_answer' };
+  }
+
+  const candidateTokens = extractSubstanceTokens(candidateBody);
+  const contextTokens = new Set();
   for (const prior of priorPosts) {
     for (const token of extractSubstanceTokens(prior.body)) contextTokens.add(token);
   }
   const matchedTokens = candidateTokens.filter((token) => contextTokens.has(token));
   const coverageRatio = candidateTokens.length === 0 ? 1 : matchedTokens.length / candidateTokens.length;
-  const minimumMatches = Math.min(candidateTokens.length <= 4 ? 1 : 2, candidateTokens.length);
-  const sameReason = priorPosts.some((post) => post.participationReason === participationReason);
-  const threshold = candidateTokens.length <= 4 ? 0.25 : (sameReason ? 0.34 : 0.45);
   const covered = candidateTokens.length === 0
-    || (matchedTokens.length >= minimumMatches && coverageRatio >= threshold);
+    || matchedTokens.length === candidateTokens.length;
   if (!covered) {
     return { covered: false, reason: 'new_substance', coverageRatio };
   }

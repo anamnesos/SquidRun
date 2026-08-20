@@ -11,6 +11,7 @@ const { createTeamRoomWindow } = require('../../modules/main/team-room-window');
 const outputPath = path.resolve(String(process.env.TEAM_ROOM_PHASE_D_OUTPUT || ''));
 const desktopScreenshotPath = String(process.env.TEAM_ROOM_PHASE_D_DESKTOP_SCREENSHOT || '').trim();
 const phoneScreenshotPath = String(process.env.TEAM_ROOM_PHASE_D_PHONE_SCREENSHOT || '').trim();
+const keyboardScreenshotPath = String(process.env.TEAM_ROOM_PHASE_D_KEYBOARD_SCREENSHOT || '').trim();
 const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-phase-d-browser-'));
 app.setPath('userData', path.join(smokeRoot, 'user-data'));
 app.commandLine.appendSwitch('disable-gpu');
@@ -462,33 +463,80 @@ async function run() {
       memberStackDisplay: getComputedStyle(document.querySelector('.member-stack')).display,
       composerVisible: document.querySelector('#composerShell').getBoundingClientRect().bottom <= window.innerHeight + 1,
     }))()`);
-    await windowRef.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
-      width: 390,
-      height: 520,
-      deviceScaleFactor: 1,
-      mobile: true,
-      screenWidth: 390,
-      screenHeight: 844,
-    });
-    await windowRef.webContents.executeJavaScript(`window.dispatchEvent(new Event('resize'))`);
+    const beforeKeyboardAnchor = await windowRef.webContents.executeJavaScript(`(() => {
+      const scroll = document.querySelector('#messageScroll');
+      scroll.scrollTop = Math.max(0, Math.min(scroll.scrollHeight - scroll.clientHeight, Math.round(scroll.scrollHeight * .3)));
+      const input = document.querySelector('#messageInput');
+      input.value = 'Keyboard viewport draft stays put.';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.focus();
+      const scrollRect = scroll.getBoundingClientRect();
+      const anchor = [...document.querySelectorAll('.message-item[data-message-id]')]
+        .find((candidate) => candidate.getBoundingClientRect().bottom >= scrollRect.top + 1);
+      return {
+        messageId: anchor?.dataset.messageId || null,
+        offset: anchor ? anchor.getBoundingClientRect().top - scrollRect.top : 0,
+      };
+    })()`);
+    await windowRef.webContents.executeJavaScript(`(() => {
+      const viewport = window.visualViewport;
+      Object.defineProperty(viewport, 'height', { configurable: true, get: () => 520 });
+      Object.defineProperty(viewport, 'offsetTop', { configurable: true, get: () => 96 });
+      viewport.dispatchEvent(new Event('resize'));
+      viewport.dispatchEvent(new Event('scroll'));
+    })()`);
     await new Promise((resolve) => setTimeout(resolve, 180));
-    await windowRef.webContents.executeJavaScript(`document.querySelector('#messageInput').focus()`);
+    const afterKeyboardAnchor = await windowRef.webContents.executeJavaScript(`(() => {
+      const scroll = document.querySelector('#messageScroll');
+      const scrollRect = scroll.getBoundingClientRect();
+      const anchor = [...document.querySelectorAll('.message-item[data-message-id]')]
+        .find((candidate) => candidate.getBoundingClientRect().bottom >= scrollRect.top + 1);
+      return {
+        messageId: anchor?.dataset.messageId || null,
+        offset: anchor ? anchor.getBoundingClientRect().top - scrollRect.top : 0,
+      };
+    })()`);
+    await windowRef.webContents.executeJavaScript(`(() => {
+      const scroll = document.querySelector('#messageScroll');
+      scroll.scrollTop = scroll.scrollHeight;
+      window.visualViewport.dispatchEvent(new Event('scroll'));
+    })()`);
     const keyboardViewport = await windowRef.webContents.executeJavaScript(`(() => ({
       width: window.innerWidth,
-      height: window.innerHeight,
+      layoutHeight: window.innerHeight,
+      visualHeight: window.visualViewport.height,
+      visualOffsetTop: window.visualViewport.offsetTop,
+      viewportTopVariable: getComputedStyle(document.documentElement).getPropertyValue('--room-viewport-top').trim(),
       viewportHeightVariable: getComputedStyle(document.documentElement).getPropertyValue('--room-viewport-height').trim(),
+      appTop: Math.round(document.querySelector('#roomApp').getBoundingClientRect().top),
       appHeight: Math.round(document.querySelector('#roomApp').getBoundingClientRect().height),
       composerBottom: Math.round(document.querySelector('#composerShell').getBoundingClientRect().bottom),
+      composerFormBottom: Math.round(document.querySelector('#composerForm').getBoundingClientRect().bottom),
+      inputBottom: Math.round(document.querySelector('#messageInput').getBoundingClientRect().bottom),
+      visibleBottom: Math.round(window.visualViewport.offsetTop + window.visualViewport.height),
+      keyboardOpen: document.documentElement.dataset.roomKeyboardOpen,
+      safeBottomVariable: getComputedStyle(document.documentElement).getPropertyValue('--room-safe-bottom').trim(),
+      bottomGap: Math.round(document.querySelector('#messageScroll').scrollHeight
+        - document.querySelector('#messageScroll').clientHeight
+        - document.querySelector('#messageScroll').scrollTop),
+      draft: document.querySelector('#messageInput').value,
     }))()`);
-    await windowRef.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
-      width: 390,
-      height: 844,
-      deviceScaleFactor: 1,
-      mobile: true,
-      screenWidth: 390,
-      screenHeight: 844,
-    });
-    await windowRef.webContents.executeJavaScript(`window.dispatchEvent(new Event('resize'))`);
+    if (keyboardScreenshotPath) {
+      fs.mkdirSync(path.dirname(keyboardScreenshotPath), { recursive: true });
+      fs.writeFileSync(keyboardScreenshotPath, (await windowRef.webContents.capturePage({
+        x: 0,
+        y: keyboardViewport.visualOffsetTop,
+        width: keyboardViewport.width,
+        height: keyboardViewport.visualHeight,
+      })).toPNG());
+    }
+    await windowRef.webContents.executeJavaScript(`(() => {
+      const viewport = window.visualViewport;
+      delete viewport.height;
+      delete viewport.offsetTop;
+      viewport.dispatchEvent(new Event('resize'));
+      viewport.dispatchEvent(new Event('scroll'));
+    })()`);
     await new Promise((resolve) => setTimeout(resolve, 180));
     await windowRef.webContents.executeJavaScript(`(() => {
       const scroll = document.querySelector('#messageScroll');
@@ -552,8 +600,20 @@ async function run() {
         && phoneLayout.appHeight >= 700
         && phoneLayout.composerVisible
         && keyboardViewport.width === 390
-        && keyboardViewport.appHeight === keyboardViewport.height
-        && keyboardViewport.composerBottom <= keyboardViewport.height + 1
+        && keyboardViewport.layoutHeight === 844
+        && keyboardViewport.visualHeight === 520
+        && keyboardViewport.visualOffsetTop === 96
+        && keyboardViewport.appTop === keyboardViewport.visualOffsetTop
+        && keyboardViewport.appHeight === keyboardViewport.visualHeight
+        && keyboardViewport.composerBottom === keyboardViewport.visibleBottom
+        && keyboardViewport.visibleBottom - keyboardViewport.composerFormBottom <= 10
+        && keyboardViewport.visibleBottom - keyboardViewport.inputBottom <= 16
+        && keyboardViewport.keyboardOpen === 'true'
+        && keyboardViewport.safeBottomVariable === '0px'
+        && keyboardViewport.bottomGap <= 1
+        && keyboardViewport.draft === 'Keyboard viewport draft stays put.'
+        && afterKeyboardAnchor.messageId === beforeKeyboardAnchor.messageId
+        && Math.abs(afterKeyboardAnchor.offset - beforeKeyboardAnchor.offset) <= 2
         && runtime.uploadManager.ownedTemporaryPaths.size === 0
         && consoleErrors.length === 0,
       electron: process.versions.electron,
@@ -576,6 +636,7 @@ async function run() {
       },
       phoneLayout,
       keyboardViewport,
+      keyboardScrollAnchor: { before: beforeKeyboardAnchor, after: afterKeyboardAnchor },
       temporaryPathCount: runtime.uploadManager.ownedTemporaryPaths.size,
       consoleErrors,
       screenshots: {

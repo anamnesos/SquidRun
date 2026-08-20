@@ -61,6 +61,7 @@
     dragDepth: 0,
     unreadCount: 0,
     restoredDrafts: false,
+    viewportBaselineHeight: 0,
     lightbox: { scale: 1, x: 0, y: 0, pointers: new Map(), gesture: null, settleTimer: null },
   };
 
@@ -865,10 +866,28 @@
   }
 
   function syncVisualViewport() {
-    const layoutHeight = Math.max(320, Number(window.innerHeight) || 320);
-    const visualHeight = Math.max(320, Number(globalThis.visualViewport?.height) || layoutHeight);
-    const viewportHeight = Math.round(Math.min(layoutHeight, visualHeight));
+    const preserveScroll = state.authenticated && !elements.scroll.hidden;
+    const stayAtBottom = preserveScroll && closeEnoughToBottom();
+    const anchor = preserveScroll && !stayAtBottom ? captureScrollAnchor() : null;
+    const layoutHeight = Math.max(1, Number(window.innerHeight) || 1);
+    const reportedHeight = Number(globalThis.visualViewport?.height);
+    const visualHeight = Number.isFinite(reportedHeight) && reportedHeight > 0
+      ? reportedHeight
+      : layoutHeight;
+    const reportedTop = Number(globalThis.visualViewport?.offsetTop);
+    const viewportTop = Math.max(0, Math.round(Number.isFinite(reportedTop) ? reportedTop : 0));
+    const viewportHeight = Math.max(1, Math.round(Math.min(layoutHeight, visualHeight)));
+    const inputFocused = document.activeElement === elements.input;
+    if (!inputFocused) state.viewportBaselineHeight = viewportHeight;
+    const keyboardOpen = inputFocused
+      && viewportHeight < Math.max(layoutHeight, state.viewportBaselineHeight) - 40;
+    document.documentElement.dataset.roomKeyboardOpen = String(keyboardOpen);
+    document.documentElement.style.setProperty('--room-viewport-top', `${viewportTop}px`);
     document.documentElement.style.setProperty('--room-viewport-height', `${viewportHeight}px`);
+    if (preserveScroll) {
+      if (stayAtBottom) elements.scroll.scrollTop = elements.scroll.scrollHeight;
+      else restoreScrollAnchor(anchor);
+    }
   }
 
   async function registerInstallShell() {
@@ -1098,6 +1117,7 @@
   window.addEventListener('online', () => { if (!state.socket) connectSocket(); resumeDraftUploads(); });
   window.addEventListener('resize', syncVisualViewport, { passive: true });
   globalThis.visualViewport?.addEventListener('resize', syncVisualViewport, { passive: true });
+  globalThis.visualViewport?.addEventListener('scroll', syncVisualViewport, { passive: true });
   window.addEventListener('beforeunload', () => {
     clearTimeout(state.reconnectTimer);
     state.socket?.close();

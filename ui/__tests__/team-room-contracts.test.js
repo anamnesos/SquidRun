@@ -130,8 +130,8 @@ describe('team-room contracts', () => {
       body: 'I can read it: Ryuo screen says CPU 62C, the AORUS debug LED shows 62, Astral 5090 lit, and the Lian Li strimer is glowing cyan.',
     };
     const photoEcho = classifySameRootCoverage({
-      body: 'The photo path works. I see the teal-lit ROG rig, AIO screen at CPU 62°C, white cables, and GeForce RTX.',
-      participationReason: PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
+      body: 'The photo came through: teal ROG rig, CPU 62C, white Strimers.',
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
       rootBody: '',
       priorPosts: [architectPhoto, builderPhoto],
     });
@@ -157,12 +157,35 @@ describe('team-room contracts', () => {
         participationReason: PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
         body: 'The isolated build completed at commit abc123.',
       }],
+    })).toEqual(expect.objectContaining({ covered: false, reason: 'reason_class_is_additive' }));
+
+    expect(classifySameRootCoverage({
+      body: 'The phone photo retained 4032 by 3024 resolution.',
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+      rootBody: 'Is the listener up and did the phone photo retain full resolution?',
+      priorPosts: [{
+        messageId: 'trm-builder-listener', authorId: 'builder',
+        participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+        body: 'The TCP listener returned HTTP 200.',
+      }],
+    })).toEqual(expect.objectContaining({ covered: false, reason: 'new_substance' }));
+
+    expect(classifySameRootCoverage({
+      body: 'The HTTP listener returned 200; the phone photo retained 4032 by 3024 resolution.',
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+      rootBody: 'Is the listener up and did the phone photo retain full resolution?',
+      priorPosts: [{
+        messageId: 'trm-builder-listener', authorId: 'builder',
+        participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+        body: 'The TCP listener returned HTTP 200.',
+      }],
     })).toEqual(expect.objectContaining({ covered: false, reason: 'new_substance' }));
   });
 
   test.each([
     [PARTICIPATION_REASONS.MATERIAL_DISSENT_OR_CORRECTION, 'That claim is wrong: session 514 loaded the new handler.'],
     [PARTICIPATION_REASONS.REAL_QUESTION, 'Which phone route did you open?'],
+    [PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION, 'The same checksum is independently confirmed.'],
     [PARTICIPATION_REASONS.DIRECT_ANSWER, '@architect this directly answers your question.'],
   ])('never suppresses protected additive participation %s', (participationReason, body) => {
     expect(classifySameRootCoverage({
@@ -173,6 +196,19 @@ describe('team-room contracts', () => {
         messageId: 'trm-prior', authorId: 'builder', participationReason, body,
       }],
     }).covered).toBe(false);
+  });
+
+  test('never suppresses an attachment-bearing answer', () => {
+    expect(classifySameRootCoverage({
+      attachments: [{ attachmentId: 'att-new-proof' }],
+      body: 'The photo came through.',
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+      priorPosts: [{
+        messageId: 'trm-prior', authorId: 'builder',
+        participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+        body: 'The photo came through.',
+      }],
+    })).toEqual({ covered: false, reason: 'attachments_are_additive' });
   });
 
   test('preserves a terse answer when the activated source directly mentions that agent', () => {

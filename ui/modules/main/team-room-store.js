@@ -893,6 +893,7 @@ class TeamRoomStore {
           const rootMessage = this.getMessage(rootMessageId);
           const coverage = classifySameRootCoverage({
             activatedBody: reply?.body || '',
+            attachments,
             body: post.body,
             memberId: identity.memberId,
             participationReason: post.participationReason,

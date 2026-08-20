@@ -388,7 +388,7 @@ describe('team-room production service path', () => {
 
     const architectDelivery = deliverActivation('architect');
     const covered = postAs('architect', {
-      body: 'Yes — the photo arrived. I can see the teal ROG PC, 62C display, and glowing white Strimers.',
+      body: 'The photo came through: teal ROG rig, CPU 62C, white Strimers.',
       clientNonce: 'coverage-architect-echo',
       replyToMessageId: architectDelivery.message.messageId,
       causalActivationId: architectDelivery.activation.activationId,
@@ -415,6 +415,90 @@ describe('team-room production service path', () => {
       participationReason: PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
     });
     expect(distinctRetry.ok).toBe(true);
+  });
+
+  test('does not count a multipart root question as proof that another agent covered the second answer', () => {
+    postAs('james', {
+      body: 'Is the listener up and did the phone photo retain full resolution?',
+      clientNonce: 'multipart-coverage-root',
+    });
+    const builderDelivery = deliverActivation('builder');
+    expect(postAs('builder', {
+      body: 'The TCP listener returned HTTP 200.',
+      clientNonce: 'multipart-coverage-listener',
+      replyToMessageId: builderDelivery.message.messageId,
+      causalActivationId: builderDelivery.activation.activationId,
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+    }).ok).toBe(true);
+
+    const oracleDelivery = deliverActivation('oracle');
+    const photoAnswer = postAs('oracle', {
+      body: 'The phone photo retained 4032 by 3024 resolution.',
+      clientNonce: 'multipart-coverage-photo',
+      replyToMessageId: oracleDelivery.message.messageId,
+      causalActivationId: oracleDelivery.activation.activationId,
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+    });
+    expect(photoAnswer.ok).toBe(true);
+    expect(store.listMessages().map((message) => message.clientNonce))
+      .toContain('multipart-coverage-photo');
+  });
+
+  test('lands a combined answer when any substantive token is absent from prior agent posts', () => {
+    postAs('james', {
+      body: 'Is the listener up and did the phone photo retain full resolution?',
+      clientNonce: 'combined-coverage-root',
+    });
+    const builderDelivery = deliverActivation('builder');
+    expect(postAs('builder', {
+      body: 'The TCP listener returned HTTP 200.',
+      clientNonce: 'combined-coverage-listener',
+      replyToMessageId: builderDelivery.message.messageId,
+      causalActivationId: builderDelivery.activation.activationId,
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+    }).ok).toBe(true);
+
+    const oracleDelivery = deliverActivation('oracle');
+    const combinedAnswer = postAs('oracle', {
+      body: 'The HTTP listener returned 200; the phone photo retained 4032 by 3024 resolution.',
+      clientNonce: 'multipart-coverage-combined',
+      replyToMessageId: oracleDelivery.message.messageId,
+      causalActivationId: oracleDelivery.activation.activationId,
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+    });
+    expect(combinedAnswer.ok).toBe(true);
+  });
+
+  test('lands an attachment-bearing answer even when its text is already covered', () => {
+    postAs('james', { body: 'Did the phone photo arrive?', clientNonce: 'attachment-coverage-root' });
+    const builderDelivery = deliverActivation('builder');
+    expect(postAs('builder', {
+      body: 'The photo came through.',
+      clientNonce: 'attachment-coverage-builder',
+      replyToMessageId: builderDelivery.message.messageId,
+      causalActivationId: builderDelivery.activation.activationId,
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+    }).ok).toBe(true);
+
+    const attachmentPath = path.join(tempDir, 'media', 'attachment-coverage.png');
+    fs.writeFileSync(attachmentPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9]));
+    const registered = store.registerReadyAttachment({ filePath: attachmentPath, claimedMime: 'image/png' });
+    expect(registered.ok).toBe(true);
+    const claim = store.createAttachmentClaim(registered.attachment.attachmentId, {
+      roomId: 'main', profileName: 'main',
+    });
+    expect(claim.ok).toBe(true);
+    const oracleDelivery = deliverActivation('oracle');
+    const attachedAnswer = postAs('oracle', {
+      body: 'The photo came through.',
+      attachmentIds: [claim.attachment.attachmentId],
+      clientNonce: 'attachment-coverage-oracle',
+      replyToMessageId: oracleDelivery.message.messageId,
+      causalActivationId: oracleDelivery.activation.activationId,
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+    });
+    expect(attachedAnswer.ok).toBe(true);
+    expect(store.getMessageAttachments(attachedAnswer.message.messageId)).toHaveLength(1);
   });
 
   test('allows two independently additive posts seconds apart and direct mentions unconditionally', () => {
