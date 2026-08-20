@@ -27,6 +27,11 @@ const PARTICIPATION_REASONS = Object.freeze({
 });
 
 const PARTICIPATION_REASON_SET = new Set(Object.values(PARTICIPATION_REASONS));
+const ATTENTION_WORTHY_REASON_SET = new Set([
+  PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
+  PARTICIPATION_REASONS.MATERIAL_DISSENT_OR_CORRECTION,
+  PARTICIPATION_REASONS.REAL_QUESTION,
+]);
 const ROOT_REENTRY_REASON_SET = new Set([
   PARTICIPATION_REASONS.DIRECT_ANSWER,
   PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
@@ -203,6 +208,46 @@ function normalizeMessageKind(value) {
 function normalizeParticipationReason(value) {
   const reason = toTrimmedString(value).toLowerCase();
   return PARTICIPATION_REASON_SET.has(reason) ? reason : '';
+}
+
+/**
+ * Origin-independent notification policy for James's room client.
+ *
+ * This deliberately fails quiet: only a trusted agent message carrying one
+ * of the room's explicitly attention-worthy participation reasons may badge
+ * or ping another member. Direct answers and human texture remain in-room
+ * conversation, not notification noise. Push transport, permissions, and
+ * subscription lifecycle belong to the final secure origin and are not part
+ * of this classifier.
+ */
+function classifyRoomMessageAttention(message = {}, viewer = {}) {
+  const viewerMemberId = toTrimmedString(viewer.memberId).toLowerCase();
+  const authorMemberId = toTrimmedString(message.authorId || message.author?.memberId).toLowerCase();
+  const authorMemberKind = toTrimmedString(message.author?.memberKind || message.authorMemberKind).toLowerCase();
+  const participationReason = normalizeParticipationReason(message.participationReason);
+
+  const quiet = (reason) => ({
+    level: 'quiet',
+    shouldBadge: false,
+    shouldNotify: false,
+    reason,
+  });
+
+  if (!viewerMemberId) return quiet('viewer_member_required');
+  if (!authorMemberId) return quiet('author_member_required');
+  if (authorMemberId === viewerMemberId) return quiet('own_message');
+  if (authorMemberKind !== MEMBER_KINDS.AGENT) return quiet('non_agent_message');
+  if (!participationReason) return quiet('participation_reason_invalid');
+  if (!ATTENTION_WORTHY_REASON_SET.has(participationReason)) {
+    return quiet(`reason_${participationReason}`);
+  }
+
+  return {
+    level: 'ping',
+    shouldBadge: true,
+    shouldNotify: true,
+    reason: `reason_${participationReason}`,
+  };
 }
 
 function normalizeSubstanceToken(value) {
@@ -623,6 +668,7 @@ module.exports = {
   TEAM_ROOM_SCHEMA,
   buildActivationPrompt,
   canonicalJson,
+  classifyRoomMessageAttention,
   classifySameRootCoverage,
   deriveActivationTargets,
   extractSubstanceTokens,

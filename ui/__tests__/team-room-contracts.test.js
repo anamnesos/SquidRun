@@ -6,6 +6,7 @@ const {
   PARTICIPATION_REASONS,
   TEAM_ROOM_PROMPT_INSTRUCTION,
   buildActivationPrompt,
+  classifyRoomMessageAttention,
   classifySameRootCoverage,
   deriveActivationTargets,
   normalizeClientPost,
@@ -83,6 +84,74 @@ describe('team-room contracts', () => {
         { memberId: 'builder', displayName: 'Rook', role: 'builder' },
         { memberId: 'oracle', displayName: 'Vera', role: 'oracle' },
       ]);
+  });
+
+  test.each([
+    PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
+    PARTICIPATION_REASONS.MATERIAL_DISSENT_OR_CORRECTION,
+    PARTICIPATION_REASONS.REAL_QUESTION,
+  ])('marks only explicit attention-worthy agent reason %s for badge and ping', (participationReason) => {
+    expect(classifyRoomMessageAttention({
+      authorId: 'builder',
+      author: { memberId: 'builder', memberKind: 'agent' },
+      participationReason,
+    }, { memberId: 'james' })).toEqual({
+      level: 'ping',
+      shouldBadge: true,
+      shouldNotify: true,
+      reason: `reason_${participationReason}`,
+    });
+  });
+
+  test.each([
+    [PARTICIPATION_REASONS.DIRECT_ANSWER, 'reason_direct_answer'],
+    [PARTICIPATION_REASONS.HUMAN_TEXTURE, 'reason_human_texture'],
+    ['not_a_reason', 'participation_reason_invalid'],
+    [null, 'participation_reason_invalid'],
+  ])('keeps ordinary or invalid agent reason %s quiet', (participationReason, reason) => {
+    expect(classifyRoomMessageAttention({
+      authorId: 'oracle',
+      author: { memberId: 'oracle', memberKind: 'agent' },
+      participationReason,
+    }, { memberId: 'james' })).toEqual({
+      level: 'quiet',
+      shouldBadge: false,
+      shouldNotify: false,
+      reason,
+    });
+  });
+
+  test('fails quiet for own, human-authored, and incomplete messages', () => {
+    expect(classifyRoomMessageAttention({
+      authorId: 'james',
+      author: { memberId: 'james', memberKind: 'human' },
+      participationReason: PARTICIPATION_REASONS.REAL_QUESTION,
+    }, { memberId: 'james' })).toEqual(expect.objectContaining({
+      shouldNotify: false,
+      reason: 'own_message',
+    }));
+
+    expect(classifyRoomMessageAttention({
+      authorId: 'james',
+      author: { memberId: 'james', memberKind: 'human' },
+      participationReason: PARTICIPATION_REASONS.REAL_QUESTION,
+    }, { memberId: 'builder' })).toEqual(expect.objectContaining({
+      shouldNotify: false,
+      reason: 'non_agent_message',
+    }));
+
+    expect(classifyRoomMessageAttention({
+      authorId: 'builder',
+      participationReason: PARTICIPATION_REASONS.REAL_QUESTION,
+    }, { memberId: 'james' })).toEqual(expect.objectContaining({
+      shouldNotify: false,
+      reason: 'non_agent_message',
+    }));
+
+    expect(classifyRoomMessageAttention({}, {})).toEqual(expect.objectContaining({
+      shouldNotify: false,
+      reason: 'viewer_member_required',
+    }));
   });
 
   test.each(['hm_send', 'terminal', 'heartbeat', 'telegram'])('rejects non-room ingress source %s', (source) => {
