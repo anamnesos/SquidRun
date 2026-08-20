@@ -416,7 +416,7 @@ async function run() {
     }
     await waitForRenderer(windowRef, `() => document.querySelector('#messageColumn')?.innerText.includes('Immutable packet is next.')`, 12_000, 'visual-conversation');
 
-    const captureEnabled = Boolean(desktopScreenshotPath || phoneScreenshotPath);
+    const captureEnabled = Boolean(desktopScreenshotPath || phoneScreenshotPath || keyboardScreenshotPath);
     if (captureEnabled) {
       windowRef.setSkipTaskbar(true);
       windowRef.setOpacity(0);
@@ -500,6 +500,9 @@ async function run() {
       const scroll = document.querySelector('#messageScroll');
       scroll.scrollTop = scroll.scrollHeight;
       window.visualViewport.dispatchEvent(new Event('scroll'));
+      for (const animation of document.getAnimations()) {
+        try { animation.finish(); } catch {}
+      }
     })()`);
     const keyboardViewport = await windowRef.webContents.executeJavaScript(`(() => ({
       width: window.innerWidth,
@@ -520,6 +523,25 @@ async function run() {
         - document.querySelector('#messageScroll').clientHeight
         - document.querySelector('#messageScroll').scrollTop),
       draft: document.querySelector('#messageInput').value,
+      messageRuns: [...document.querySelectorAll('.message-run')].map((run) => {
+        const heading = run.querySelector('.run-heading');
+        const headingRect = heading.getBoundingClientRect();
+        const bodies = [...run.querySelectorAll('.message-body')];
+        return {
+          author: run.dataset.author,
+          headingVisible: headingRect.bottom > window.visualViewport.offsetTop
+            && headingRect.top < window.visualViewport.offsetTop + window.visualViewport.height,
+          bodyText: bodies.map((body) => body.innerText).join(' ').trim(),
+          bodyVisible: bodies.some((body) => {
+            const rect = body.getBoundingClientRect();
+            return rect.bottom > window.visualViewport.offsetTop
+              && rect.top < window.visualViewport.offsetTop + window.visualViewport.height;
+          }),
+          bodyColor: bodies[0] ? getComputedStyle(bodies[0]).color : null,
+          bodyOpacity: bodies[0] ? getComputedStyle(bodies[0]).opacity : null,
+          itemOpacity: bodies[0] ? getComputedStyle(bodies[0].closest('.message-item')).opacity : null,
+        };
+      }),
     }))()`);
     if (keyboardScreenshotPath) {
       fs.mkdirSync(path.dirname(keyboardScreenshotPath), { recursive: true });
@@ -610,6 +632,13 @@ async function run() {
         && keyboardViewport.visibleBottom - keyboardViewport.inputBottom <= 16
         && keyboardViewport.keyboardOpen === 'true'
         && keyboardViewport.safeBottomVariable === '0px'
+        && keyboardViewport.messageRuns
+          .filter((run) => run.headingVisible)
+          .every((run) => run.bodyText.length > 0
+            && run.bodyVisible
+            && run.bodyColor === 'rgb(232, 237, 242)'
+            && run.bodyOpacity === '1'
+            && run.itemOpacity === '1')
         && keyboardViewport.bottomGap <= 1
         && keyboardViewport.draft === 'Keyboard viewport draft stays put.'
         && afterKeyboardAnchor.messageId === beforeKeyboardAnchor.messageId
