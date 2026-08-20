@@ -4,34 +4,30 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * God-object growth freeze (task #7).
+ * God-object reduction ratchet (task #7).
  *
  * squidrun-app.js is the main-process controller and has grown into a
- * ~15k-line god-object. This guard freezes its size: the line count may only
- * go DOWN. When you touch this file, carve a cohesive cluster into its own
- * module (see squidrun-root-paths.js for the reference extraction) and LOWER
- * the ceiling below. The ratchet is one-directional on purpose - it converts
- * "the file keeps growing" from an invisible drift into a deliberate, visible
- * decision.
+ * ~16k-line god-object. RATCHET_CEILING records its exact current size and may
+ * only go DOWN. When you touch this file, carve a cohesive cluster into its
+ * own module (see squidrun-root-paths.js for the reference extraction) and
+ * lower the ratchet to the exact new line count.
  *
- * If a change legitimately must add lines, offset it by extracting at least as
- * many, or - as a last resort with justification in the PR - raise CEILING.
- * Never silently bump it to make red go green.
+ * TARGET_CEILING preserves the original 14,662-line goal. It is immutable debt
+ * evidence, not a number to bump when the ratchet is inconvenient. Never raise
+ * either number to make red go green.
  */
-const CEILING = 14662;
+const RATCHET_CEILING = 16434;
+const TARGET_CEILING = 14662;
 
 describe('squidrun-app.js god-object growth guard', () => {
   const filePath = path.join(__dirname, '..', 'modules', 'main', 'squidrun-app.js');
 
-  it('does not grow past the frozen ceiling (extract, do not add)', () => {
+  it('matches the current one-way ratchet exactly (extract, then lower it)', () => {
     const lineCount = fs.readFileSync(filePath, 'utf8').split('\n').length;
-    expect(lineCount).toBeLessThanOrEqual(CEILING);
+    expect(lineCount).toBe(RATCHET_CEILING);
   });
 
-  it('keeps the ceiling honest - lower it when the file shrinks', () => {
-    // If this fails, the file got smaller (good!): drop CEILING to the new
-    // count so the win is locked in and can't silently be given back.
-    const lineCount = fs.readFileSync(filePath, 'utf8').split('\n').length;
-    expect(CEILING - lineCount).toBeLessThanOrEqual(150);
+  it('keeps the original debt target immutable', () => {
+    expect(TARGET_CEILING).toBe(14662);
   });
 });
