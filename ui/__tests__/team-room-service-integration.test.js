@@ -298,6 +298,34 @@ describe('team-room production service path', () => {
     expect(store.getActivation(result.delivered[0]).status).toBe('delivered');
   });
 
+  test('preserves canonical punctuation while making the derived pane prompt transport-safe', async () => {
+    const canonicalBody = 'Wait 2–3 minutes—then say “check it.”';
+    const jamesPost = postAs('james', {
+      body: canonicalBody,
+      clientNonce: 'james-smart-punctuation',
+    });
+    expect(jamesPost.ok).toBe(true);
+
+    const stored = store.db.prepare('SELECT body FROM room_messages WHERE message_id = ?')
+      .get(jamesPost.message.messageId);
+    expect(stored.body).toBe(canonicalBody);
+    expect(stored.body.codePointAt(stored.body.indexOf('–'))).toBe(0x2013);
+
+    const deliveries = [];
+    const adapter = new TeamRoomDeliveryAdapter({
+      store,
+      deliverToPane: async (delivery) => {
+        deliveries.push(delivery);
+        return { ok: true };
+      },
+    });
+    const result = await adapter.dispatchSafeBoundary('builder');
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].prompt).toContain('Wait 2-3 minutes -- then say "check it."');
+    expect(deliveries[0].prompt).not.toContain('23 minutes');
+  });
+
   test('is idempotent by author nonce and rejects a changed replay', () => {
     const payload = { body: 'Exactly once.', clientNonce: 'nonce-1' };
     const first = postAs('james', payload);

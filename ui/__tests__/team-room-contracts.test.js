@@ -86,6 +86,19 @@ describe('team-room contracts', () => {
       ]);
   });
 
+  test('keeps numeric ranges unambiguous in pane activation prompts', () => {
+    const result = buildActivationPrompt({
+      messageId: 'trm-smart-punctuation',
+      authorId: 'builder',
+      rootMessageId: 'trm-smart-punctuation',
+      body: 'Wait 2–3 minutes—then say “check it.” It’s ready…',
+    });
+
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
+    expect(result.prompt).toContain('Wait 2-3 minutes -- then say "check it." It\'s ready...');
+    expect(result.prompt).not.toContain('23 minutes');
+  });
+
   test.each([
     PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
     PARTICIPATION_REASONS.MATERIAL_DISSENT_OR_CORRECTION,

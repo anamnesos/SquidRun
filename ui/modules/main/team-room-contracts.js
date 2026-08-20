@@ -614,7 +614,19 @@ function buildActivationPrompt(input = {}) {
   const messageId = toTrimmedString(input.messageId);
   const authorId = toTrimmedString(input.authorId);
   const rootMessageId = toTrimmedString(input.rootMessageId || messageId);
-  const body = typeof input.body === 'string' ? input.body : '';
+  // Pane injection on some Windows CLI paths can silently drop typographic
+  // punctuation. A lost en dash turns a range such as "2–3" into "23", which
+  // changes the meaning of the message. Keep the canonical Room body exact in
+  // storage, but make the derived agent prompt transport-safe and unambiguous.
+  const body = typeof input.body === 'string'
+    ? input.body
+      .replace(/[\u2010\u2011\u2012\u2013\u2015\u2212]/gu, '-')
+      .replace(/\u2014/gu, ' -- ')
+      .replace(/[\u2018\u2019]/gu, "'")
+      .replace(/[\u201c\u201d]/gu, '"')
+      .replace(/\u2026/gu, '...')
+      .replace(/[\u00a0\u202f]/gu, ' ')
+    : '';
   if (!isSafeIdentifier(messageId) || !isSafeIdentifier(authorId) || !isSafeIdentifier(rootMessageId)) {
     return resultError('room_activation_prompt_identity_invalid');
   }
