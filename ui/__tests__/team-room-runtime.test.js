@@ -298,6 +298,87 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     expect(wsMessage).toEqual(expect.objectContaining({ type: 'snapshot' }));
   });
 
+  test('lets the bound CLI initiate a peer-only root post with no Telegram relay', async () => {
+    const paneDeliveries = [];
+    runtime = new TeamRoomRuntime(runtimeOptions(tempRoot, async (delivery) => {
+      paneDeliveries.push(delivery);
+      return { ok: true };
+    }));
+    const started = await runtime.start();
+    expect(started.ok).toBe(true);
+
+    let stdout = '';
+    let stderr = '';
+    expect(await runRoomCli([
+      'post', '--reason', 'new_evidence_or_action', 'The immutable room gate is green.',
+    ], {
+      projectRoot: tempRoot,
+      env: cliEnv('builder', '2', `pl_${'2'.repeat(32)}`),
+      stdout: { write: (value) => { stdout += value; } },
+      stderr: { write: (value) => { stderr += value; } },
+    })).toBe(0);
+    expect(stderr).toBe('');
+    expect(stdout).toMatch(/^Posted to Team Room/u);
+
+    const message = runtime.snapshot().messages.find((candidate) => (
+      candidate.body === 'The immutable room gate is green.'
+    ));
+    expect(message).toEqual(expect.objectContaining({
+      authorId: 'builder',
+      rootMessageId: expect.stringMatching(/^trm_/u),
+      replyToMessageId: null,
+      causalActivationId: null,
+      author: expect.objectContaining({ displayName: 'Rook', role: 'builder' }),
+    }));
+    expect(message.rootMessageId).toBe(message.messageId);
+    expect(runtime.store.listActivations(message.messageId).map((item) => item.targetMemberId))
+      .toEqual(['architect', 'oracle']);
+    await waitFor(() => paneDeliveries.length === 2);
+    expect(paneDeliveries.map((item) => item.member.memberId).sort()).toEqual(['architect', 'oracle']);
+    expect(paneDeliveries.some((item) => item.member.memberId === 'builder')).toBe(false);
+
+    const invalidCases = [
+      ['post', 'Missing reason.'],
+      ['post', '--reason', 'direct_answer', '--activation', 'tra_forbidden', 'No causal root.'],
+      ['post', '--reason', 'new_evidence_or_action', '--reentry', 'No root reentry.'],
+    ];
+    for (const args of invalidCases) {
+      let invalidStderr = '';
+      expect(await runRoomCli(args, {
+        projectRoot: tempRoot,
+        env: cliEnv('builder', '2', `pl_${'2'.repeat(32)}`),
+        stdout: { write: () => {} },
+        stderr: { write: (value) => { invalidStderr += value; } },
+      })).toBe(1);
+      expect(invalidStderr).toMatch(/^room_cli_/u);
+    }
+    expect(runtime.snapshot().messages.filter((candidate) => candidate.authorId === 'builder')).toHaveLength(1);
+
+    const builderCredential = JSON.parse(fs.readFileSync(
+      path.join(tempRoot, '.squidrun', 'runtime', 'team-room', 'credentials', 'builder.json'),
+      'utf8'
+    ));
+    const spoofedName = await request(started.origin, '/api/cli/messages', {
+      method: 'POST',
+      token: builderCredential.token,
+      body: {
+        agentInitiatedRoot: true,
+        body: 'Client-selected display name must not persist.',
+        clientNonce: 'agent-root-display-spoof',
+        displayName: 'Mira',
+        participationReason: 'new_evidence_or_action',
+      },
+    });
+    expect(spoofedName).toEqual(expect.objectContaining({
+      statusCode: 403,
+      payload: expect.objectContaining({
+        ok: false,
+        reason: 'client_identity_field_forbidden',
+        details: { field: 'displayName' },
+      }),
+    }));
+  });
+
   test('renders an offline fragment QR over the existing one-use pairing claim', async () => {
     runtime = new TeamRoomRuntime({
       ...runtimeOptions(tempRoot, async () => ({ ok: true })),

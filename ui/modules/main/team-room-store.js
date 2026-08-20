@@ -616,6 +616,10 @@ class TeamRoomStore {
         room_id, profile_name, member_id, display_name, member_kind, role, pane_id, avatar_key, active, created_at_ms
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+    const updateDisplayName = this.db.prepare(`
+      UPDATE room_members SET display_name = ?
+      WHERE room_id = ? AND profile_name = ? AND member_id = ?
+    `);
     for (const member of DEFAULT_ROOM_MEMBERS) {
       insert.run(
         member.roomId, member.profileName, member.memberId, member.displayName, member.memberKind,
@@ -627,6 +631,9 @@ class TeamRoomStore {
         || stored.role !== member.role
         || stored.paneId !== (member.paneId || null)) {
         throw new Error(`seeded_room_member_conflict:${member.memberId}`);
+      }
+      if (stored.displayName !== member.displayName) {
+        updateDisplayName.run(member.displayName, member.roomId, member.profileName, member.memberId);
       }
     }
     this.db.prepare(`
@@ -838,7 +845,38 @@ class TeamRoomStore {
         }
         const nowMs = Number(this.now());
 
-        if (identity.memberKind === MEMBER_KINDS.AGENT) {
+        if (identity.memberKind === MEMBER_KINDS.AGENT && post.agentInitiatedRoot) {
+          const duplicate = this.db.prepare(`
+            SELECT message_id, created_at_ms FROM room_messages
+            WHERE room_id = ?
+              AND profile_name = ?
+              AND author_id = ?
+              AND reply_to_message_id IS NULL
+              AND causal_activation_id IS NULL
+              AND body = ?
+              AND participation_reason = ?
+              AND created_at_ms >= ?
+            ORDER BY seq DESC
+            LIMIT 1
+          `).get(
+            identity.roomId,
+            identity.profileName,
+            identity.memberId,
+            post.body,
+            post.participationReason,
+            nowMs - SAME_ROOT_COVERAGE_WINDOW_MS
+          );
+          if (duplicate) {
+            return {
+              ok: false,
+              reason: 'room_agent_root_duplicate',
+              details: {
+                duplicateOfMessageId: duplicate.message_id,
+                duplicateCreatedAtMs: Number(duplicate.created_at_ms),
+              },
+            };
+          }
+        } else if (identity.memberKind === MEMBER_KINDS.AGENT) {
           if (!post.causalActivationId) throw new Error('agent_causal_activation_required');
           const activation = this.getActivation(post.causalActivationId);
           if (!activation

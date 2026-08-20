@@ -99,7 +99,13 @@ const SUBSTANCE_ALIASES = Object.freeze({
   works: 'work',
 });
 
-const DIRECT_ROOM_MENTION_PATTERN = /(^|[^\p{L}\p{N}_])@(?:architect|builder|james|oracle)\b/iu;
+const ROOM_MEMBER_MENTION_ALIASES = Object.freeze({
+  architect: Object.freeze(['architect', 'mira']),
+  builder: Object.freeze(['builder', 'rook']),
+  james: Object.freeze(['james']),
+  oracle: Object.freeze(['oracle', 'vera']),
+});
+const DIRECT_ROOM_MENTION_PATTERN = /(^|[^\p{L}\p{N}_])@(?:architect|builder|james|mira|oracle|rook|vera)\b/iu;
 
 const EXPLICIT_ROOM_SOURCES = new Set([
   'room_cli',
@@ -112,6 +118,8 @@ const FORBIDDEN_CLIENT_IDENTITY_FIELDS = Object.freeze([
   'authorId',
   'authorType',
   'authorityClass',
+  'avatarKey',
+  'displayName',
   'memberId',
   'memberKind',
   'paneId',
@@ -140,7 +148,7 @@ const DEFAULT_ROOM_MEMBERS = Object.freeze([
     memberId: 'architect',
     roomId: DEFAULT_ROOM_ID,
     profileName: DEFAULT_PROFILE_NAME,
-    displayName: 'Architect',
+    displayName: 'Mira',
     memberKind: MEMBER_KINDS.AGENT,
     role: 'architect',
     paneId: '1',
@@ -151,7 +159,7 @@ const DEFAULT_ROOM_MEMBERS = Object.freeze([
     memberId: 'builder',
     roomId: DEFAULT_ROOM_ID,
     profileName: DEFAULT_PROFILE_NAME,
-    displayName: 'Builder',
+    displayName: 'Rook',
     memberKind: MEMBER_KINDS.AGENT,
     role: 'builder',
     paneId: '2',
@@ -162,7 +170,7 @@ const DEFAULT_ROOM_MEMBERS = Object.freeze([
     memberId: 'oracle',
     roomId: DEFAULT_ROOM_ID,
     profileName: DEFAULT_PROFILE_NAME,
-    displayName: 'Oracle',
+    displayName: 'Vera',
     memberKind: MEMBER_KINDS.AGENT,
     role: 'oracle',
     paneId: '3',
@@ -227,8 +235,11 @@ function hasDirectRoomMention(value) {
 function hasRoomMemberMention(value, memberId) {
   const member = toTrimmedString(memberId).toLowerCase();
   if (!isSafeIdentifier(member, 64)) return false;
-  const escaped = member.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-  return new RegExp(`(^|[^\\p{L}\\p{N}_])@${escaped}\\b`, 'iu').test(String(value || ''));
+  const aliases = ROOM_MEMBER_MENTION_ALIASES[member] || [member];
+  return aliases.some((alias) => {
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+    return new RegExp(`(^|[^\\p{L}\\p{N}_])@${escaped}\\b`, 'iu').test(String(value || ''));
+  });
 }
 
 function classifySameRootCoverage(input = {}) {
@@ -496,6 +507,10 @@ function normalizeClientPost(payload = {}, identity = {}) {
   if (causalActivationId !== null && !isSafeIdentifier(causalActivationId)) {
     return resultError('room_causal_activation_invalid');
   }
+  if (payload.agentInitiatedRoot !== undefined && typeof payload.agentInitiatedRoot !== 'boolean') {
+    return resultError('room_agent_initiated_root_invalid');
+  }
+  const agentInitiatedRoot = payload.agentInitiatedRoot === true;
 
   const participationReason = normalizeParticipationReason(payload.participationReason);
   if (trusted.identity.memberKind === MEMBER_KINDS.AGENT && !participationReason) {
@@ -506,9 +521,15 @@ function normalizeClientPost(payload = {}, identity = {}) {
   if (trusted.identity.memberKind === MEMBER_KINDS.HUMAN && payload.participationReason !== undefined) {
     return resultError('human_participation_reason_forbidden');
   }
+  if (trusted.identity.memberKind === MEMBER_KINDS.HUMAN && payload.agentInitiatedRoot !== undefined) {
+    return resultError('human_agent_initiated_root_forbidden');
+  }
   const rootReentry = payload.rootReentry === true;
   if (rootReentry && !ROOT_REENTRY_REASON_SET.has(participationReason)) {
     return resultError('room_root_reentry_reason_invalid');
+  }
+  if (agentInitiatedRoot && (replyToMessageId || causalActivationId || rootReentry)) {
+    return resultError('room_agent_initiated_root_causality_invalid');
   }
 
   const normalizedMetadata = normalizeMessageMetadata(payload.metadata);
@@ -522,6 +543,7 @@ function normalizeClientPost(payload = {}, identity = {}) {
     attachmentIds,
     replyToMessageId,
     causalActivationId,
+    agentInitiatedRoot,
     participationReason: participationReason || null,
     rootReentry,
     metadata: normalizedMetadata.metadata,

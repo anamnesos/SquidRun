@@ -46,6 +46,45 @@ describe('team-room contracts', () => {
     }, builderIdentity)).toEqual(expect.objectContaining({ ok: false, reason: 'agent_participation_reason_required' }));
   });
 
+  test('accepts an explicit agent root post without weakening causal replies', () => {
+    const root = normalizeClientPost({
+      agentInitiatedRoot: true,
+      body: 'The immutable gate is green at commit abc123.',
+      clientNonce: 'agent-root-1',
+      participationReason: PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
+    }, builderIdentity);
+    expect(root).toEqual(expect.objectContaining({
+      ok: true,
+      post: expect.objectContaining({
+        agentInitiatedRoot: true,
+        causalActivationId: null,
+        replyToMessageId: null,
+      }),
+    }));
+
+    expect(normalizeClientPost({
+      agentInitiatedRoot: true,
+      body: 'Invalid mixed causality.',
+      causalActivationId: 'tra_existing',
+      clientNonce: 'agent-root-mixed',
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+      replyToMessageId: 'trm_existing',
+    }, builderIdentity)).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'room_agent_initiated_root_causality_invalid',
+    }));
+  });
+
+  test('keeps room names presentational while role identities stay immutable', () => {
+    expect(DEFAULT_ROOM_MEMBERS.map(({ memberId, displayName, role }) => ({ memberId, displayName, role })))
+      .toEqual([
+        { memberId: 'james', displayName: 'James', role: 'james' },
+        { memberId: 'architect', displayName: 'Mira', role: 'architect' },
+        { memberId: 'builder', displayName: 'Rook', role: 'builder' },
+        { memberId: 'oracle', displayName: 'Vera', role: 'oracle' },
+      ]);
+  });
+
   test.each(['hm_send', 'terminal', 'heartbeat', 'telegram'])('rejects non-room ingress source %s', (source) => {
     const result = normalizeClientPost({
       body: 'automatic mirror',
@@ -223,6 +262,25 @@ describe('team-room contracts', () => {
         authorId: 'builder',
         participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
         body: 'The listener accepted the probe.',
+      }],
+    })).toEqual({ covered: false, reason: 'direct_mention' });
+  });
+
+  test.each([
+    ['architect', '@Mira can you verify this?'],
+    ['builder', '@Rook can you verify this?'],
+    ['oracle', '@Vera can you verify this?'],
+  ])('treats the display name as a mention alias for %s', (memberId, activatedBody) => {
+    expect(classifySameRootCoverage({
+      activatedBody,
+      body: 'Yes.',
+      memberId,
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+      priorPosts: [{
+        messageId: 'trm-prior',
+        authorId: 'james',
+        participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+        body: 'Someone else already said yes.',
       }],
     })).toEqual({ covered: false, reason: 'direct_mention' });
   });

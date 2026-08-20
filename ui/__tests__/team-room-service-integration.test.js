@@ -311,6 +311,112 @@ describe('team-room production service path', () => {
     expect(store.listActivations(first.message.messageId)).toHaveLength(3);
   });
 
+  test('lets an agent initiate one bounded root, activates only peers, and rejects an echo loop', () => {
+    const root = postAs('builder', {
+      agentInitiatedRoot: true,
+      body: 'The isolated room gate is green at commit abc123.',
+      clientNonce: 'agent-root-builder-1',
+      participationReason: PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
+    });
+    expect(root.ok).toBe(true);
+    expect(root.message).toEqual(expect.objectContaining({
+      authorId: 'builder',
+      causalActivationId: null,
+      replyToMessageId: null,
+      rootMessageId: root.message.messageId,
+    }));
+    expect(root.activations.map((item) => item.targetMemberId)).toEqual(['architect', 'oracle']);
+
+    const duplicate = postAs('builder', {
+      agentInitiatedRoot: true,
+      body: 'The isolated room gate is green at commit abc123.',
+      clientNonce: 'agent-root-builder-duplicate',
+      participationReason: PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
+    });
+    expect(duplicate).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'room_agent_root_duplicate',
+      details: { duplicateOfMessageId: root.message.messageId, duplicateCreatedAtMs: expect.any(Number) },
+    }));
+
+    const architectDelivery = deliverActivation('architect');
+    const architectReply = postAs('architect', {
+      body: 'Independent boot and shutdown proof is also green.',
+      clientNonce: 'agent-root-architect-reply',
+      replyToMessageId: architectDelivery.message.messageId,
+      causalActivationId: architectDelivery.activation.activationId,
+      participationReason: PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
+    });
+    expect(architectReply.ok).toBe(true);
+
+    const authorEchoActivation = deliverActivation('builder');
+    expect(postAs('builder', {
+      body: 'This echo must not extend the chain.',
+      clientNonce: 'agent-root-builder-echo',
+      replyToMessageId: authorEchoActivation.message.messageId,
+      causalActivationId: authorEchoActivation.activation.activationId,
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+    })).toEqual(expect.objectContaining({ ok: false, reason: 'agent_root_post_limit_reached' }));
+    expect(store.listMessages()).toHaveLength(2);
+    expect(store.getRoomState()).toEqual(expect.objectContaining({
+      consecutiveAgentPosts: 2,
+      activationFused: false,
+    }));
+  });
+
+  test('applies the six-post fuse across agent-initiated roots and requires James to reset it', () => {
+    const order = ['builder', 'architect', 'oracle', 'builder', 'architect', 'oracle'];
+    let sixth;
+    for (let index = 0; index < order.length; index += 1) {
+      sixth = postAs(order[index], {
+        agentInitiatedRoot: true,
+        body: `Independent initiated root ${index + 1}.`,
+        clientNonce: `initiated-fuse-${index + 1}`,
+        participationReason: PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
+      });
+      expect(sixth.ok).toBe(true);
+    }
+    expect(store.getRoomState()).toEqual(expect.objectContaining({
+      consecutiveAgentPosts: 6,
+      activationFused: true,
+    }));
+    expect(sixth.message.activationSuppressed).toBe(true);
+    expect(sixth.activations.every((activation) => activation.status === 'suppressed_fuse')).toBe(true);
+    expect(postAs('builder', {
+      agentInitiatedRoot: true,
+      body: 'The seventh initiated root must not land.',
+      clientNonce: 'initiated-fuse-7',
+      participationReason: PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
+    })).toEqual(expect.objectContaining({ ok: false, reason: 'room_activation_fused' }));
+
+    expect(postAs('james', { body: 'Fresh human turn.', clientNonce: 'initiated-fuse-reset' }).ok).toBe(true);
+    expect(store.getRoomState()).toEqual(expect.objectContaining({
+      consecutiveAgentPosts: 0,
+      activationFused: false,
+    }));
+  });
+
+  test('converges persisted display names without changing room identity keys', () => {
+    store.db.prepare("UPDATE room_members SET display_name = member_id WHERE member_kind = 'agent'").run();
+    const dbPath = store.dbPath;
+    const attachmentRoot = store.attachmentRoot;
+    store.close();
+    store = new TeamRoomStore({
+      dbPath,
+      attachmentRoot,
+      now: () => ++nowMs,
+      randomUUID: () => `id-${++idCounter}`,
+    });
+    expect(store.init().ok).toBe(true);
+    expect(store.listMembers().map(({ memberId, displayName, role }) => ({ memberId, displayName, role })))
+      .toEqual([
+        { memberId: 'architect', displayName: 'Mira', role: 'architect' },
+        { memberId: 'builder', displayName: 'Rook', role: 'builder' },
+        { memberId: 'james', displayName: 'James', role: 'james' },
+        { memberId: 'oracle', displayName: 'Vera', role: 'oracle' },
+      ]);
+  });
+
   test('missing-target repair adds only the new member activation and preserves existing activation IDs', () => {
     const posted = postAs('james', { body: 'Expansion-safe.', clientNonce: 'missing-target-1' });
     const before = new Map(posted.activations.map((item) => [item.targetMemberId, item.activationId]));

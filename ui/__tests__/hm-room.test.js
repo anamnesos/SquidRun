@@ -52,7 +52,6 @@ describe('hm-room CLI identity and grammar', () => {
     expect(resolveRuntimeRole({ ...bound, SQUIDRUN_PANE_LAUNCH_ID: `pl_${'f'.repeat(31)}` }))
       .toEqual({ ok: false, reason: 'room_cli_runtime_identity_unknown' });
     expect(resolveRuntimeRole({})).toEqual({ ok: false, reason: 'room_cli_runtime_identity_incomplete' });
-    expect(parseArgs(['post', 'unbound human post'])).toEqual({ ok: false, reason: 'room_cli_command_invalid' });
   });
 
   test('binds credential selection to the same runtime generation and rejects DNS-prefix origins', () => {
@@ -107,12 +106,27 @@ describe('hm-room CLI identity and grammar', () => {
     }));
   });
 
+  test('parses an explicit initiated post without activation or identity fields', () => {
+    expect(parseArgs([
+      'post', '--reason', 'new_evidence_or_action', '--stdin',
+    ])).toEqual(expect.objectContaining({
+      ok: true,
+      command: 'post',
+      activationId: null,
+      reason: 'new_evidence_or_action',
+      reentry: false,
+      stdin: true,
+    }));
+  });
+
   test('renders same-root coverage rejection with the covering agent', () => {
     expect(renderPostError({
       ok: false,
       reason: 'room_root_already_covered',
       details: { coveredByAgent: 'builder' },
     })).toBe('already covered on this root by builder');
+    expect(renderPostError({ ok: false, reason: 'room_agent_root_duplicate' }))
+      .toBe('that agent root was already posted moments ago');
     expect(renderPostError({ ok: false, reason: 'room_activation_not_found' }))
       .toBe('room_activation_not_found');
   });

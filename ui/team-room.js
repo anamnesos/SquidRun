@@ -423,11 +423,17 @@
         const name = document.createElement('span');
         name.className = 'run-name';
         name.textContent = message.author?.displayName || message.authorId;
+        const role = document.createElement('span');
+        role.className = 'run-role';
+        role.textContent = message.author?.memberKind === 'agent'
+          ? String(message.author?.role || '').trim()
+          : '';
+        role.hidden = !role.textContent;
         const time = document.createElement('time');
         time.className = 'run-time';
         time.dateTime = new Date(message.createdAtMs).toISOString();
         time.textContent = formatClock(message.createdAtMs);
-        heading.append(name, time);
+        heading.append(name, role, time);
         currentRun.append(heading);
         elements.column.append(currentRun);
         currentAuthor = message.authorId;

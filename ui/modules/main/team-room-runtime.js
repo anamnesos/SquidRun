@@ -149,7 +149,7 @@ function resultStatus(result) {
   if (reason.includes('bearer') || reason.includes('credential')) return 401;
   if (reason.includes('forbidden') || reason.includes('capability') || reason.includes('mismatch')) return 403;
   if (reason.includes('not_found')) return 404;
-  if (reason.includes('fused') || reason.includes('conflict') || reason.includes('already')) return 409;
+  if (reason.includes('fused') || reason.includes('conflict') || reason.includes('already') || reason.includes('duplicate')) return 409;
   return 400;
 }
 
@@ -701,13 +701,22 @@ class TeamRoomRuntime {
     }
     const payload = { ...input };
     delete payload.activationId;
+    delete payload.agentInitiatedRoot;
     if (authenticated.identity.memberKind === MEMBER_KINDS.AGENT) {
-      const activationId = String(input.activationId || '').trim();
-      const activation = this.store.getActivation(activationId);
-      if (!activation) return jsonResponse(response, 404, { ok: false, reason: 'room_activation_not_found' });
-      payload.replyToMessageId = activation.messageId;
-      payload.causalActivationId = activation.activationId;
-    } else if (Object.prototype.hasOwnProperty.call(input, 'activationId')) {
+      if (input.agentInitiatedRoot === true) {
+        if (Object.prototype.hasOwnProperty.call(input, 'activationId')) {
+          return jsonResponse(response, 400, { ok: false, reason: 'room_agent_root_activation_forbidden' });
+        }
+        payload.agentInitiatedRoot = true;
+      } else {
+        const activationId = String(input.activationId || '').trim();
+        const activation = this.store.getActivation(activationId);
+        if (!activation) return jsonResponse(response, 404, { ok: false, reason: 'room_activation_not_found' });
+        payload.replyToMessageId = activation.messageId;
+        payload.causalActivationId = activation.activationId;
+      }
+    } else if (Object.prototype.hasOwnProperty.call(input, 'activationId')
+      || Object.prototype.hasOwnProperty.call(input, 'agentInitiatedRoot')) {
       return jsonResponse(response, 403, { ok: false, reason: 'human_causal_activation_forbidden' });
     }
     const result = this.service.post({

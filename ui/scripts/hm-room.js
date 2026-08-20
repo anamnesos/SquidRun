@@ -21,6 +21,8 @@ function usage() {
   return [
     'Team Room',
     '',
+    '  hm-room post --reason <reason> "message"',
+    '  hm-room post --reason <reason> --stdin',
     '  hm-room reply --activation <id> --reason <reason> "message"',
     '  hm-room reply --activation <id> --reason <reason> --reentry --stdin',
     '  hm-room list [--json]',
@@ -60,7 +62,7 @@ function parseArgs(argv = []) {
   }
   const command = String(args.shift() || 'help').trim().toLowerCase();
   if (['help', '--help', '-h'].includes(command)) return { ok: true, command: 'help' };
-  if (!['reply', 'list', 'status'].includes(command)) {
+  if (!['post', 'reply', 'list', 'status'].includes(command)) {
     return { ok: false, reason: 'room_cli_command_invalid' };
   }
   const options = { command, json: false, stdin: false, reentry: false, activationId: null, reason: null, bodyParts: [] };
@@ -156,6 +158,9 @@ function renderPostError(payload = {}) {
     const coveredBy = String(payload?.details?.coveredByAgent || 'another agent').trim() || 'another agent';
     return `already covered on this root by ${coveredBy}`;
   }
+  if (reason === 'room_agent_root_duplicate') {
+    return 'that agent root was already posted moments ago';
+  }
   return reason;
 }
 
@@ -196,8 +201,19 @@ async function main(argv = process.argv.slice(2), deps = {}) {
       ? fs.readFileSync(0, 'utf8').replace(/\r\n/gu, '\n').trim()
       : parsed.bodyParts.join(' ').trim();
     if (!body) { stderr.write('room_cli_message_empty\n'); return 1; }
-    if (parsed.command === 'reply') {
-      if (!parsed.activationId) { stderr.write('room_cli_activation_required\n'); return 1; }
+    if (parsed.command === 'reply' || parsed.command === 'post') {
+      if (parsed.command === 'reply' && !parsed.activationId) {
+        stderr.write('room_cli_activation_required\n');
+        return 1;
+      }
+      if (parsed.command === 'post' && parsed.activationId) {
+        stderr.write('room_cli_root_activation_forbidden\n');
+        return 1;
+      }
+      if (parsed.command === 'post' && parsed.reentry) {
+        stderr.write('room_cli_root_reentry_forbidden\n');
+        return 1;
+      }
       if (!Object.values(PARTICIPATION_REASONS).includes(parsed.reason)) {
         stderr.write('room_cli_participation_reason_invalid\n');
         return 1;
@@ -210,6 +226,9 @@ async function main(argv = process.argv.slice(2), deps = {}) {
         activationId: parsed.activationId,
         participationReason: parsed.reason,
         rootReentry: parsed.reentry,
+      } : parsed.command === 'post' ? {
+        agentInitiatedRoot: true,
+        participationReason: parsed.reason,
       } : {}),
     };
     const response = await requestJson(runtime.runtime.origin, '/api/cli/messages', {

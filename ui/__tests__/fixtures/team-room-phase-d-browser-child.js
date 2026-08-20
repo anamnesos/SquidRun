@@ -529,6 +529,8 @@ async function run() {
         const bodies = [...run.querySelectorAll('.message-body')];
         return {
           author: run.dataset.author,
+          name: run.querySelector('.run-name')?.textContent?.trim() || '',
+          role: run.querySelector('.run-role')?.textContent?.trim() || '',
           headingVisible: headingRect.bottom > window.visualViewport.offsetTop
             && headingRect.top < window.visualViewport.offsetTop + window.visualViewport.height,
           bodyText: bodies.map((body) => body.innerText).join(' ').trim(),
@@ -639,6 +641,10 @@ async function run() {
             && run.bodyColor === 'rgb(232, 237, 242)'
             && run.bodyOpacity === '1'
             && run.itemOpacity === '1')
+        && keyboardViewport.messageRuns
+          .filter((run) => ['architect', 'builder', 'oracle'].includes(run.author))
+          .every((run) => run.name === ({ architect: 'Mira', builder: 'Rook', oracle: 'Vera' })[run.author]
+            && run.role === run.author)
         && keyboardViewport.bottomGap <= 1
         && keyboardViewport.draft === 'Keyboard viewport draft stays put.'
         && afterKeyboardAnchor.messageId === beforeKeyboardAnchor.messageId
