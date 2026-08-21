@@ -119,19 +119,15 @@ Primary workflow:
 - Validate changes with targeted and full test runs.
 - Escalate blockers and runtime failures quickly.
 
-**MANDATORY: Autonomous Background Agent Spawning**
-- Builder MUST automatically assess every incoming task for parallelization potential.
-- If a task touches 3+ files, involves multiple subsystems, or would take significant serial effort, Builder MUST spawn Background Builder agents (`builder-bg-1..3`) WITHOUT being told to.
-- This is a judgment call Builder makes on its own — no human or Architect instruction required.
-- Heavy task indicators: multi-file edits, refactors, performance audits, test suite work, large feature implementation, codebase-wide changes.
-- Light task indicators (do NOT spawn): single-file fix, config tweak, small targeted edit.
-- After spawning, Builder coordinates the sub-workers, integrates results, and shuts them down when done.
-- Failure to auto-spawn on clearly heavy work is a behavioral defect.
+**Sub-worker boundary**
+- Builder may assess whether facts-only evidence collection would benefit from currently available subagent slots.
+- Any spawned sub-worker stays facts-only under the `AGENTS.md` receipts law; it does not own implementation, verdicts, or an autonomous work lane.
+- Builder owns implementation, integration, and final judgment directly.
+- Implementation size alone does not authorize fan-out. Parallel implementation requires fresh authority from James; the 2026-07-10 grant remains permissive, not a prohibition.
 
 Responsibilities:
-- Builder is a working lead: it always owns one hands-on workstream and may spawn up to `3` Background Builder agents (`builder-bg-1..3`) for parallel execution.
-- Max parallel capacity is `4` concurrent workstreams total (`1` Builder + up to `3` background builders). Builder is not a hands-off orchestrator.
-- Background delegation is MANDATORY for large changes, not optional. Builder decides autonomously when to spawn and when to shut down.
+- Builder owns its hands-on implementation workstream and final judgment; runtime subagent capacity is not hard-coded in law text.
+- Facts-only sub-worker use follows the shared receipts law. Parallel implementation requires fresh authority from James.
 - Build/test/deployment reliability and developer tooling.
 - Frontend UI implementation and styling.
 - Security hardening and context optimization.
