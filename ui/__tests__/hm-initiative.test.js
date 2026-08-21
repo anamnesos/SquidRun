@@ -219,4 +219,9 @@ describe('hm-initiative', () => {
     expect(parked.history.at(-1)).toEqual(expect.objectContaining({ type: 'parked' }));
     expect(rejected.history.at(-1)).toEqual(expect.objectContaining({ type: 'rejected' }));
   });
+
+  test('preserves shipped and unknown terminal statuses instead of relabeling them proposed', () => {
+    expect(initiative.normalizeStatus('shipped')).toBe('shipped');
+    expect(initiative.normalizeStatus('completed_elsewhere')).toBe('completed_elsewhere');
+  });
 });

@@ -38,7 +38,6 @@ const PRIORITY_WEIGHT = Object.freeze({
 
 const VALID_PRIORITIES = new Set(Object.keys(PRIORITY_WEIGHT));
 const VALID_SCOPES = new Set(['global', 'cross-agent', 'role', 'local']);
-const VALID_STATUSES = new Set(['proposed', 'active', 'accepted', 'rejected', 'parked']);
 const REGISTER_PATH = resolveCoordPath(path.join('runtime', 'initiative-register.json'), { forWrite: true });
 
 function parseArgs(argv) {
@@ -181,7 +180,10 @@ function normalizeScope(value) {
 
 function normalizeStatus(value) {
   const status = asString(String(value || ''), 'proposed').toLowerCase();
-  return VALID_STATUSES.has(status) ? status : 'proposed';
+  // Never rewrite a historical or future terminal status into "proposed" merely
+  // because this older CLI does not know the word yet. Writes remain allowlisted by
+  // updateInitiativeStatus(); reads preserve what the durable register actually says.
+  return status;
 }
 
 function parseTags(options) {
@@ -598,6 +600,7 @@ module.exports = {
   normalizePriority,
   normalizeRole,
   normalizeScope,
+  normalizeStatus,
   parseArgs,
   parseTags,
   registerProposal,
