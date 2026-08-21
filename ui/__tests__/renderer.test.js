@@ -457,6 +457,18 @@ describe('renderer.js smoke tests', () => {
     });
   });
 
+  describe('Team Room startup feedback', () => {
+    it('turns a stale LAN host failure into a direct, actionable message', () => {
+      expect(renderer.formatTeamRoomOpenFailure({
+        reason: 'room_lan_bind_host_not_local',
+        configuredHost: '192.168.0.200',
+        localAddresses: ['127.0.0.1', '192.168.1.200'],
+      })).toBe(
+        "Team Room cannot start: configured host 192.168.0.200 is not one of this PC's IPs (127.0.0.1, 192.168.1.200). Update .env and restart SquidRun."
+      );
+    });
+  });
+
   describe('buildSquidRoomPetSpeechText', () => {
     it('derives short speech from the honest state plus de-jargoned face line', () => {
       const speech = renderer.buildSquidRoomPetSpeechText(

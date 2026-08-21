@@ -128,7 +128,7 @@ const terminal = rendererModules.terminal;
 const tabs = rendererModules.tabs;
 const settings = rendererModules.settings;
 const daemonHandlers = rendererModules.daemonHandlers;
-const { showStatusNotice } = rendererModules.notifications;
+const { showStatusNotice, showToast } = rendererModules.notifications;
 const { debounceButton, applyShortcutTooltips } = rendererModules.utils;
 const {
   initCommandPalette,
@@ -138,6 +138,38 @@ const {
 const { initStatusStrip } = rendererModules.statusStrip;
 const { initPaneVisibilityControls } = rendererModules.paneVisibility;
 const { createWindowTeamBootstrap, readInitialWindowContextFromLocation } = rendererModules.windowTeamBootstrap;
+
+function formatTeamRoomOpenFailure(result = {}) {
+  const reason = String(result.reason || 'unknown error');
+  if (reason === 'room_lan_bind_host_not_local') {
+    const configuredHost = String(result.configuredHost || 'unset');
+    const localAddresses = Array.isArray(result.localAddresses) && result.localAddresses.length > 0
+      ? result.localAddresses.join(', ')
+      : 'none detected';
+    return `Team Room cannot start: configured host ${configuredHost} is not one of this PC's IPs (${localAddresses}). Update .env and restart SquidRun.`;
+  }
+  return `Team Room could not open: ${reason}`;
+}
+
+function bindTeamRoomOpenButton() {
+  const button = document.getElementById('openTeamRoomBtn');
+  if (!button || button.dataset.teamRoomOpenBound === 'true') return;
+  button.removeAttribute?.('onclick');
+  const onClick = async () => {
+    try {
+      const result = await invokeBridge('open-app-window', { windowKey: 'team-room' });
+      if (!result?.ok) showToast(formatTeamRoomOpenFailure(result), 'warning');
+    } catch (error) {
+      showToast(formatTeamRoomOpenFailure({ reason: error?.message || 'IPC bridge failed' }), 'warning');
+    }
+  };
+  button.addEventListener('click', onClick);
+  button.dataset.teamRoomOpenBound = 'true';
+  registerRendererLifecycleCleanup(() => {
+    button.removeEventListener('click', onClick);
+    delete button.dataset.teamRoomOpenBound;
+  });
+}
 const { configureWorkspacePaneShell } = rendererModules.workspacePaneShell || {};
 const squidRoomSurfaceModule = rendererModules.squidRoomSurface || {};
 const shellV2 = rendererModules.shellV2 || {};
@@ -4132,6 +4164,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   ensureLifecycleUnloadHook();
   clearRendererLifecycleBindings();
   clearRendererIpcListeners();
+  bindTeamRoomOpenButton();
   if (typeof daemonHandlers.teardownDaemonListeners === 'function') {
     daemonHandlers.teardownDaemonListeners();
   }
@@ -4709,6 +4742,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    formatTeamRoomOpenFailure,
     createCommandBarMessageRouter,
     createRafTextareaAutoGrow,
     emitPaneVisibilityChangedForExpandClick,

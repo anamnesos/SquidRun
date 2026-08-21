@@ -30,7 +30,13 @@ function createTeamRoomAppController(options = {}) {
   }
   const network = resolveTeamRoomNetworkOptions(dependencies.env || process.env);
   if (!network.ok) {
-    log.warn('TeamRoom', `LAN configuration rejected; keeping Team Room loopback-only (${network.reason})`);
+    const addressDetail = network.host
+      ? `; configured host=${network.host}; local addresses=${(network.localAddresses || []).join(',') || 'none'}`
+      : '';
+    log.warn(
+      'TeamRoom',
+      `LAN configuration rejected (${network.reason}${addressDetail}); update .env and restart SquidRun`
+    );
   }
   const resolveRouteScope = createTeamRoomRouteScopeResolver({
     getAppWindow: dependencies.getAppWindow,
@@ -70,6 +76,15 @@ function createTeamRoomAppController(options = {}) {
 
   async function openWindow() {
     const windowKey = 'team-room';
+    if (!network.ok) {
+      return {
+        ok: false,
+        windowKey,
+        reason: network.reason || 'team_room_network_configuration_invalid',
+        configuredHost: network.host || null,
+        localAddresses: network.localAddresses || [],
+      };
+    }
     const existing = dependencies.getAppWindow(windowKey);
     if (dependencies.canSendToWindow(existing)) {
       dependencies.focusAppWindow(windowKey);

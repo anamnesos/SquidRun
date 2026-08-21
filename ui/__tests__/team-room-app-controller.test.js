@@ -6,6 +6,7 @@ const mockRuntime = {
   stop: jest.fn(),
 };
 const mockCreateTeamRoomWindow = jest.fn();
+let mockNetworkOptions;
 
 jest.mock('../modules/logger', () => ({ warn: jest.fn() }));
 jest.mock('../config', () => ({
@@ -18,13 +19,7 @@ jest.mock('../modules/main/team-room-pane-delivery', () => ({
 }));
 jest.mock('../modules/main/team-room-runtime', () => ({
   TeamRoomRuntime: jest.fn(() => mockRuntime),
-  resolveTeamRoomNetworkOptions: () => ({
-    ok: true,
-    host: '127.0.0.1',
-    port: 0,
-    lanEnabled: false,
-    allowedOrigins: [],
-  }),
+  resolveTeamRoomNetworkOptions: () => mockNetworkOptions,
 }));
 jest.mock('../modules/main/team-room-window', () => ({ createTeamRoomWindow: mockCreateTeamRoomWindow }));
 
@@ -50,6 +45,13 @@ function createHarness(overrides = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockNetworkOptions = {
+    ok: true,
+    host: '127.0.0.1',
+    port: 0,
+    lanEnabled: false,
+    allowedOrigins: [],
+  };
   mockRuntime.start.mockResolvedValue({ ok: true, origin: 'http://127.0.0.1:45123' });
   mockRuntime.stop.mockResolvedValue({ ok: true });
   mockRuntime.issueElectronCredential.mockReturnValue({ ok: true, token: 'electron-secret' });
@@ -57,6 +59,27 @@ beforeEach(() => {
 });
 
 describe('team-room app controller', () => {
+  test('surfaces a stale configured LAN host before attempting to open the room', async () => {
+    mockNetworkOptions = {
+      ok: false,
+      reason: 'room_lan_bind_host_not_local',
+      host: '192.168.0.200',
+      localAddresses: ['127.0.0.1', '192.168.1.200'],
+    };
+    const { controller, options } = createHarness();
+
+    await expect(controller.openWindow()).resolves.toEqual({
+      ok: false,
+      windowKey: 'team-room',
+      reason: 'room_lan_bind_host_not_local',
+      configuredHost: '192.168.0.200',
+      localAddresses: ['127.0.0.1', '192.168.1.200'],
+    });
+    expect(mockRuntime.start).not.toHaveBeenCalled();
+    expect(mockCreateTeamRoomWindow).not.toHaveBeenCalled();
+    expect(options.registerAppWindow).not.toHaveBeenCalled();
+  });
+
   test('binds the SquidRun app host without losing method context', async () => {
     const appHost = {
       canSendToWindow: jest.fn(() => false),

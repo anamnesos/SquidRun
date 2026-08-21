@@ -7,7 +7,11 @@ const os = require('node:os');
 const path = require('node:path');
 const WebSocket = require('ws');
 const sharp = require('sharp');
-const { TeamRoomPairingRegistry, TeamRoomRuntime } = require('../modules/main/team-room-runtime');
+const {
+  resolveTeamRoomNetworkOptions,
+  TeamRoomPairingRegistry,
+  TeamRoomRuntime,
+} = require('../modules/main/team-room-runtime');
 const { TeamRoomStore } = require('../modules/main/team-room-store');
 const { main: runRoomCli } = require('../scripts/hm-room');
 
@@ -148,6 +152,42 @@ function atomicTemporaryFiles(filePath) {
   const prefix = `${path.basename(filePath)}.${process.pid}.`;
   return fs.readdirSync(directory).filter((name) => name.startsWith(prefix) && name.endsWith('.tmp'));
 }
+
+describe('Team Room network configuration', () => {
+  const lanEnv = {
+    SQUIDRUN_TEAM_ROOM_LAN: '1',
+    SQUIDRUN_TEAM_ROOM_HOST: '192.168.1.200',
+    SQUIDRUN_TEAM_ROOM_PORT: '9910',
+    SQUIDRUN_TEAM_ROOM_ORIGINS: 'http://192.168.1.200:9910',
+  };
+
+  test('accepts an exact LAN bind host present on a local interface', () => {
+    expect(resolveTeamRoomNetworkOptions(lanEnv, {
+      localAddresses: ['127.0.0.1', '192.168.1.200'],
+    })).toEqual({
+      ok: true,
+      host: '192.168.1.200',
+      port: 9910,
+      lanEnabled: true,
+      allowedOrigins: ['http://192.168.1.200:9910'],
+    });
+  });
+
+  test('rejects a stale LAN bind host with the current interface addresses', () => {
+    expect(resolveTeamRoomNetworkOptions({
+      ...lanEnv,
+      SQUIDRUN_TEAM_ROOM_HOST: '192.168.0.200',
+      SQUIDRUN_TEAM_ROOM_ORIGINS: 'http://192.168.0.200:9910',
+    }, {
+      localAddresses: ['127.0.0.1', '192.168.1.200'],
+    })).toEqual({
+      ok: false,
+      reason: 'room_lan_bind_host_not_local',
+      host: '192.168.0.200',
+      localAddresses: ['127.0.0.1', '192.168.1.200'],
+    });
+  });
+});
 
 describe('Team Room HTTP/WebSocket runtime', () => {
   let tempRoot;

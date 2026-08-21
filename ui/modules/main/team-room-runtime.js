@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
+const os = require('node:os');
 const path = require('node:path');
 const { WebSocketServer } = require('ws');
 const { getProjectRoot } = require('../../config');
@@ -114,7 +115,25 @@ function cliBindingsEqual(left, right) {
   return CLI_BINDING_FIELDS.every((field) => String(left?.[field] || '') === String(right?.[field] || ''));
 }
 
-function resolveTeamRoomNetworkOptions(env = process.env) {
+function normalizeInterfaceAddress(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  const unwrapped = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
+  return unwrapped.split('%', 1)[0];
+}
+
+function resolveLocalInterfaceAddresses(networkInterfaces = os.networkInterfaces()) {
+  const addresses = [];
+  for (const entries of Object.values(networkInterfaces || {})) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      const address = normalizeInterfaceAddress(entry?.address);
+      if (address && !addresses.includes(address)) addresses.push(address);
+    }
+  }
+  return addresses.sort();
+}
+
+function resolveTeamRoomNetworkOptions(env = process.env, options = {}) {
   const lanEnabled = /^(?:1|true|yes|on)$/iu.test(String(env.SQUIDRUN_TEAM_ROOM_LAN || '').trim());
   const host = String(env.SQUIDRUN_TEAM_ROOM_HOST || (lanEnabled ? '' : '127.0.0.1')).trim();
   const rawPort = Number.parseInt(String(env.SQUIDRUN_TEAM_ROOM_PORT || '0'), 10);
@@ -129,7 +148,21 @@ function resolveTeamRoomNetworkOptions(env = process.env) {
     ? [`http://${normalizeHostForUrl(host)}:${port}`]
     : allowedOrigins;
   const policy = safeNetworkPolicy({ bindHost: host, lanEnabled, allowedOrigins: origins });
-  return policy.ok ? { ok: true, host, port, lanEnabled, allowedOrigins: origins } : policy;
+  if (!policy.ok) return policy;
+  if (lanEnabled) {
+    const localAddresses = Array.isArray(options.localAddresses)
+      ? [...new Set(options.localAddresses.map(normalizeInterfaceAddress).filter(Boolean))].sort()
+      : resolveLocalInterfaceAddresses(options.networkInterfaces);
+    if (!localAddresses.includes(normalizeInterfaceAddress(host))) {
+      return {
+        ok: false,
+        reason: 'room_lan_bind_host_not_local',
+        host,
+        localAddresses,
+      };
+    }
+  }
+  return { ok: true, host, port, lanEnabled, allowedOrigins: origins };
 }
 
 function jsonResponse(response, statusCode, payload, extraHeaders = {}) {
