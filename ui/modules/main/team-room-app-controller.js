@@ -8,6 +8,10 @@ const { createTeamRoomCliBindingResolver } = require('./team-room-cli-binding');
 const { TeamRoomRuntime, resolveTeamRoomNetworkOptions } = require('./team-room-runtime');
 const { createTeamRoomWindow } = require('./team-room-window');
 
+const CLI_LAUNCH_BINDING_UNAVAILABLE = 'team_room_cli_launch_binding_unavailable';
+const START_RETRY_DELAY_MS = 500;
+const MAX_START_RETRY_ATTEMPTS = 120;
+
 function createTeamRoomAppController(options = {}) {
   const appHost = options.appHost || null;
   const dependencies = appHost ? {
@@ -55,13 +59,85 @@ function createTeamRoomAppController(options = {}) {
     resolveCliBindings,
   });
 
+  const setTimeoutFn = typeof dependencies.setTimeoutFn === 'function'
+    ? dependencies.setTimeoutFn
+    : setTimeout;
+  const clearTimeoutFn = typeof dependencies.clearTimeoutFn === 'function'
+    ? dependencies.clearTimeoutFn
+    : clearTimeout;
+  let startRetryTimer = null;
+  let startRetryAttempts = 0;
+  let startRetryEnabled = false;
+
+  function clearStartRetry({ resetAttempts = true } = {}) {
+    if (startRetryTimer) clearTimeoutFn(startRetryTimer);
+    startRetryTimer = null;
+    if (resetAttempts) startRetryAttempts = 0;
+  }
+
+  function scheduleStartRetry() {
+    if (!startRetryEnabled || startRetryTimer) return false;
+    if (startRetryAttempts >= MAX_START_RETRY_ATTEMPTS) {
+      startRetryEnabled = false;
+      log.warn(
+        'TeamRoom',
+        `Runtime startup retry exhausted after ${startRetryAttempts} attempts (${CLI_LAUNCH_BINDING_UNAVAILABLE})`
+      );
+      return false;
+    }
+
+    startRetryTimer = setTimeoutFn(async () => {
+      startRetryTimer = null;
+      if (!startRetryEnabled) return;
+      startRetryAttempts += 1;
+      const result = await runtime.start();
+      if (!startRetryEnabled) {
+        if (result.ok) await runtime.stop();
+        return;
+      }
+      if (result.ok) {
+        log.info(
+          'TeamRoom',
+          `Runtime recovered after CLI launch bindings became available (attempt ${startRetryAttempts})`
+        );
+        clearStartRetry();
+        return;
+      }
+      if (result.reason !== CLI_LAUNCH_BINDING_UNAVAILABLE) {
+        startRetryEnabled = false;
+        log.warn('TeamRoom', `Runtime startup retry stopped (${result.reason || 'unknown'})`);
+        return;
+      }
+      scheduleStartRetry();
+    }, START_RETRY_DELAY_MS);
+    startRetryTimer?.unref?.();
+    return true;
+  }
+
   async function start() {
+    startRetryEnabled = true;
     const result = await runtime.start();
-    if (!result.ok) log.warn('TeamRoom', `Runtime unavailable (${result.reason || 'unknown'})`);
+    if (result.ok) {
+      clearStartRetry();
+      return result;
+    }
+    log.warn('TeamRoom', `Runtime unavailable (${result.reason || 'unknown'})`);
+    if (result.reason === CLI_LAUNCH_BINDING_UNAVAILABLE) {
+      const retryScheduled = scheduleStartRetry();
+      return {
+        ...result,
+        retryScheduled,
+        ...(retryScheduled ? { retryDelayMs: START_RETRY_DELAY_MS } : {}),
+      };
+    }
+    startRetryEnabled = false;
+    clearStartRetry();
     return result;
   }
 
   async function stop() {
+    startRetryEnabled = false;
+    clearStartRetry();
     return runtime.stop();
   }
 

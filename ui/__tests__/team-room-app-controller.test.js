@@ -8,7 +8,7 @@ const mockRuntime = {
 const mockCreateTeamRoomWindow = jest.fn();
 let mockNetworkOptions;
 
-jest.mock('../modules/logger', () => ({ warn: jest.fn() }));
+jest.mock('../modules/logger', () => ({ info: jest.fn(), warn: jest.fn() }));
 jest.mock('../config', () => ({
   getProjectRoot: () => 'D:/projects/squidrun',
   resolveCoordPath: (relativePath) => `D:/projects/squidrun/.squidrun/${relativePath}`,
@@ -24,6 +24,7 @@ jest.mock('../modules/main/team-room-runtime', () => ({
 jest.mock('../modules/main/team-room-window', () => ({ createTeamRoomWindow: mockCreateTeamRoomWindow }));
 
 const { createTeamRoomAppController } = require('../modules/main/team-room-app-controller');
+const log = require('../modules/logger');
 
 function createHarness(overrides = {}) {
   const windowRef = { id: 'team-room-window' };
@@ -124,6 +125,65 @@ describe('team-room app controller', () => {
     expect(options.focusAppWindow).toHaveBeenCalledWith('team-room');
     expect(mockRuntime.start).not.toHaveBeenCalled();
     expect(mockRuntime.issueElectronCredential).not.toHaveBeenCalled();
+  });
+
+  test('retries the transient boot-time CLI binding gap until pane launches exist', async () => {
+    let runRetry;
+    const retryTimer = { unref: jest.fn() };
+    const setTimeoutFn = jest.fn((callback) => {
+      runRetry = callback;
+      return retryTimer;
+    });
+    mockRuntime.start
+      .mockResolvedValueOnce({ ok: false, reason: 'team_room_cli_launch_binding_unavailable' })
+      .mockResolvedValueOnce({ ok: true, origin: 'http://127.0.0.1:45123' });
+    const { controller } = createHarness({ setTimeoutFn });
+
+    await expect(controller.start()).resolves.toEqual({
+      ok: false,
+      reason: 'team_room_cli_launch_binding_unavailable',
+      retryScheduled: true,
+      retryDelayMs: 500,
+    });
+    expect(setTimeoutFn).toHaveBeenCalledWith(expect.any(Function), 500);
+    expect(retryTimer.unref).toHaveBeenCalledTimes(1);
+
+    await runRetry();
+
+    expect(mockRuntime.start).toHaveBeenCalledTimes(2);
+    expect(log.info).toHaveBeenCalledWith(
+      'TeamRoom',
+      'Runtime recovered after CLI launch bindings became available (attempt 1)'
+    );
+  });
+
+  test('does not retry a non-transient Team Room startup failure', async () => {
+    const setTimeoutFn = jest.fn();
+    mockRuntime.start.mockResolvedValueOnce({ ok: false, reason: 'room_lan_bind_host_not_local' });
+    const { controller } = createHarness({ setTimeoutFn });
+
+    await expect(controller.start()).resolves.toEqual({
+      ok: false,
+      reason: 'room_lan_bind_host_not_local',
+    });
+    expect(setTimeoutFn).not.toHaveBeenCalled();
+  });
+
+  test('cancels a pending CLI binding retry when runtime services stop', async () => {
+    const retryTimer = { unref: jest.fn() };
+    const setTimeoutFn = jest.fn(() => retryTimer);
+    const clearTimeoutFn = jest.fn();
+    mockRuntime.start.mockResolvedValueOnce({
+      ok: false,
+      reason: 'team_room_cli_launch_binding_unavailable',
+    });
+    const { controller } = createHarness({ setTimeoutFn, clearTimeoutFn });
+
+    await controller.start();
+    await controller.stop();
+
+    expect(clearTimeoutFn).toHaveBeenCalledWith(retryTimer);
+    expect(mockRuntime.stop).toHaveBeenCalledTimes(1);
   });
 
   test('registers a new Team Room with explicit main-profile session scope', async () => {
