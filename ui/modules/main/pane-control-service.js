@@ -134,6 +134,29 @@ function isDaemonAvailable(daemonClient) {
   return Boolean(daemonClient && daemonClient.connected && typeof daemonClient.write === 'function');
 }
 
+function resolveMainPaneNudgeLiveness(agentRunning, daemonClient, paneId) {
+  if (!agentRunning || typeof agentRunning.get !== 'function') {
+    return { running: true, source: 'state_unavailable', reconciled: false };
+  }
+  if (agentRunning.get(paneId) === 'running') {
+    return { running: true, source: 'agent_state', reconciled: false };
+  }
+
+  const terminal = daemonClient?.connected === true
+    ? (typeof daemonClient.getTerminal === 'function'
+      ? daemonClient.getTerminal(paneId)
+      : daemonClient.terminals?.get?.(paneId))
+    : null;
+  const commandOwnedTerminal = terminal?.alive === true
+    && (terminal.mode === 'pty-command' || terminal.mode === 'dry-run');
+  if (!commandOwnedTerminal) {
+    return { running: false, source: 'agent_state', reconciled: false };
+  }
+
+  if (typeof agentRunning.set === 'function') agentRunning.set(paneId, 'running');
+  return { running: true, source: 'daemon_command_terminal', reconciled: true };
+}
+
 function executePaneControlAction(ctx = {}, action, payload = {}) {
   const normalizedAction = normalizeAction(action);
   const normalizedPayload = asObject(payload);
@@ -281,10 +304,8 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
     }
 
     if (message) {
-      const isRunning = agentRunning && typeof agentRunning.get === 'function'
-        ? agentRunning.get(paneId) === 'running'
-        : true;
-      if (!isRunning) {
+      const liveness = resolveMainPaneNudgeLiveness(agentRunning, daemonClient, paneId);
+      if (!liveness.running) {
         return { success: false, reason: 'agent_not_running', paneId, action: normalizedAction };
       }
 
@@ -297,6 +318,8 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
         paneId,
         action: normalizedAction,
         method: 'nudge-agent',
+        liveness: liveness.source,
+        reconciledRunningState: liveness.reconciled,
       };
     }
 
@@ -354,5 +377,6 @@ module.exports = {
   extractInstanceAssertion,
   normalizeInstanceScope,
   normalizeAction,
+  resolveMainPaneNudgeLiveness,
   validateInstanceAssertion,
 };

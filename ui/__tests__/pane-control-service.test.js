@@ -9,6 +9,7 @@ describe('pane-control-service', () => {
       daemonClient: {
         connected: true,
         write: jest.fn(),
+        getTerminal: jest.fn(() => null),
       },
       mainWindow: {
         isDestroyed: jest.fn(() => false),
@@ -147,6 +148,72 @@ describe('pane-control-service', () => {
     ctx.agentRunning.set('2', 'stopped');
     const result = executePaneControlAction(ctx, 'nudge', { paneId: '2', message: 'Check status' });
     expect(result).toEqual(expect.objectContaining({ success: false, reason: 'agent_not_running', paneId: '2' }));
+  });
+
+  test('nudge trusts an alive command-owned main pane over a stale running map and reconciles it', () => {
+    ctx.agentRunning.set('3', 'idle');
+    ctx.daemonClient.getTerminal.mockReturnValue({
+      paneId: '3',
+      pid: 54156,
+      alive: true,
+      mode: 'pty-command',
+    });
+
+    const result = executePaneControlAction(ctx, 'nudge', { paneId: '3', message: 'Review the gate' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      method: 'nudge-agent',
+      paneId: '3',
+      liveness: 'daemon_command_terminal',
+      reconciledRunningState: true,
+    }));
+    expect(ctx.agentRunning.get('3')).toBe('running');
+    expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('inject-message', {
+      panes: ['3'],
+      message: 'Review the gate\r',
+    });
+  });
+
+  test('nudge does not treat a generic live shell as proof that an agent is running', () => {
+    ctx.agentRunning.set('3', 'idle');
+    ctx.daemonClient.getTerminal.mockReturnValue({
+      paneId: '3',
+      pid: 54156,
+      alive: true,
+      mode: 'pty',
+    });
+
+    const result = executePaneControlAction(ctx, 'nudge', { paneId: '3', message: 'Review the gate' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'agent_not_running',
+      paneId: '3',
+    }));
+    expect(ctx.agentRunning.get('3')).toBe('idle');
+    expect(ctx.mainWindow.webContents.send).not.toHaveBeenCalled();
+  });
+
+  test('nudge does not trust a cached command terminal after the daemon disconnects', () => {
+    ctx.agentRunning.set('3', 'idle');
+    ctx.daemonClient.connected = false;
+    ctx.daemonClient.getTerminal.mockReturnValue({
+      paneId: '3',
+      pid: 54156,
+      alive: true,
+      mode: 'pty-command',
+    });
+
+    const result = executePaneControlAction(ctx, 'nudge', { paneId: '3', message: 'Review the gate' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'agent_not_running',
+      paneId: '3',
+    }));
+    expect(ctx.agentRunning.get('3')).toBe('idle');
+    expect(ctx.mainWindow.webContents.send).not.toHaveBeenCalled();
   });
 
   test('nudge routes addressed workroom panes without consulting the main-pane running map', async () => {
