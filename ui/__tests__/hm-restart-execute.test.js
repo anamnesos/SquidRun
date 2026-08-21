@@ -454,6 +454,55 @@ describe('hm-restart-execute', () => {
     expect(processes.map((proc) => proc.pid)).not.toEqual(expect.arrayContaining([800, 801, 802]));
   });
 
+  test('main restart rejects a foreign app.asar loaded by the main Electron host', () => {
+    const processes = restartExecute.selectSquidRunElectronProcesses(
+      'D:\\projects\\squidrun',
+      [
+        {
+          ProcessId: 500,
+          ParentProcessId: 10,
+          Name: 'electron.exe',
+          ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+          CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" .',
+        },
+        {
+          ProcessId: 28480,
+          ParentProcessId: 20,
+          Name: 'electron.exe',
+          ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+          CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" D:\\SquidRun\\sideprofile\\versions\\0.1.34-4c186a10\\resources\\app.asar',
+        },
+        {
+          ProcessId: 37240,
+          ParentProcessId: 28480,
+          Name: 'electron.exe',
+          ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+          CommandLine: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\SquidRun\\sideprofile\\versions\\0.1.34-4c186a10\\resources\\app.asar\\scripts\\hm-bidirectional-wake-watchdog.js run --state D:\\SquidRun\\sideprofile\\.squidrun\\runtime\\bidirectional-wake-state.json --interval-ms 60000',
+        },
+      ],
+      {
+        instanceConfig: {
+          id: 'james-main',
+          profile: 'main',
+          appStatusPath: path.join(tempRoot, '.squidrun', 'app-status.json'),
+          appStatus: {
+            settingsPersistence: {
+              userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui',
+            },
+          },
+        },
+      }
+    );
+
+    expect(processes).toEqual([
+      expect.objectContaining({
+        pid: 500,
+        matchReason: 'instance_main_default',
+      }),
+    ]);
+    expect(processes.map((proc) => proc.pid)).not.toEqual(expect.arrayContaining([28480, 37240]));
+  });
+
   test('does not select Electron-hosted script helpers as restart targets', () => {
     const processes = restartExecute.selectSquidRunElectronProcesses('D:\\projects\\squidrun', [
       {

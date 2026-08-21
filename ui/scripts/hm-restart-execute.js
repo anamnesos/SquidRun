@@ -690,6 +690,26 @@ function processTreeText(row = {}, descendants = []) {
     .join(' ');
 }
 
+function getElectronApplicationArgument(row = {}) {
+  const parsed = parseCommandLine(row.commandLine);
+  if (!parsed || parsed.args.length === 0) return null;
+  for (const rawArg of parsed.args) {
+    const arg = String(rawArg || '').trim();
+    if (!arg || arg.startsWith('-')) continue;
+    if (arg === '.' || arg === '..') return arg;
+    if (/^[a-z]:[\\/]/i.test(arg) || /^\\\\/.test(arg) || arg.startsWith('/')) {
+      return arg;
+    }
+  }
+  return null;
+}
+
+function hasForeignApplicationArgument(row = {}, projectRoot = '') {
+  const applicationArg = getElectronApplicationArgument(row);
+  if (!applicationArg || applicationArg === '.' || applicationArg === '..') return false;
+  return !includesPathUnderRoot(applicationArg, projectRoot);
+}
+
 function classifyInstanceProcess(row, descendants, projectRoot, instanceConfig) {
   const profile = getInstanceProfile(instanceConfig);
   const treeText = processTreeText(row, descendants);
@@ -698,6 +718,14 @@ function classifyInstanceProcess(row, descendants, projectRoot, instanceConfig) 
   const statusPid = statusPidValue(status);
   if (statusPid && statusPid === row.pid) {
     return { matched: true, reason: 'instance_app_status_pid' };
+  }
+
+  // A policy-accepted Electron host can live under the main repo while loading
+  // a completely separate installed app bundle. The executable path is not
+  // ownership proof: reject that foreign application target before permissive
+  // main-profile markers inspect the rest of the process tree.
+  if (hasForeignApplicationArgument(row, projectRoot)) {
+    return { matched: false, ambiguous: false, reason: 'foreign_application_root' };
   }
 
   const markers = collectInstanceMarkerSources(instanceConfig);
