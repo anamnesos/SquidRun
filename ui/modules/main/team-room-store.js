@@ -9,6 +9,7 @@ const {
   DEFAULT_ROOM_ID,
   DEFAULT_ROOM_MEMBERS,
   EXPLICIT_ROOM_SOURCES,
+  HUMAN_ROOT_AUTOMATIC_REENTRY_REASON_SET,
   MAX_CONSECUTIVE_AGENT_POSTS,
   MEMBER_KINDS,
   TEAM_ROOM_DB_USER_VERSION,
@@ -899,7 +900,38 @@ class TeamRoomStore {
             WHERE room_id = ? AND profile_name = ? AND root_message_id = ? AND author_id = ?
             LIMIT 1
           `).get(identity.roomId, identity.profileName, rootMessageId, identity.memberId);
-          if (priorRootPost && !post.rootReentry) throw new Error('agent_root_post_limit_reached');
+          const rootMessage = this.getMessage(rootMessageId);
+          const rootAuthor = rootMessage
+            ? this.getMember(rootMessage.authorId, identity.roomId, identity.profileName)
+            : null;
+          const priorReplyToActivatedMessage = priorRootPost
+            ? this.db.prepare(`
+              SELECT message_id FROM room_messages
+              WHERE room_id = ?
+                AND profile_name = ?
+                AND root_message_id = ?
+                AND author_id = ?
+                AND reply_to_message_id = ?
+              LIMIT 1
+            `).get(
+              identity.roomId,
+              identity.profileName,
+              rootMessageId,
+              identity.memberId,
+              post.replyToMessageId
+            )
+            : null;
+          const automaticHumanRootReentry = Boolean(
+            priorRootPost
+            && !post.rootReentry
+            && activation.status === 'delivered'
+            && rootAuthor?.memberKind === MEMBER_KINDS.HUMAN
+            && HUMAN_ROOT_AUTOMATIC_REENTRY_REASON_SET.has(post.participationReason)
+            && !priorReplyToActivatedMessage
+          );
+          if (priorRootPost && !post.rootReentry && !automaticHumanRootReentry) {
+            throw new Error('agent_root_post_limit_reached');
+          }
 
           const priorAgentPosts = this.db.prepare(`
             SELECT m.message_id, m.author_id, m.body, m.participation_reason, m.created_at_ms
@@ -928,7 +960,6 @@ class TeamRoomStore {
             participationReason: row.participation_reason,
             createdAtMs: Number(row.created_at_ms),
           }));
-          const rootMessage = this.getMessage(rootMessageId);
           const coverage = classifySameRootCoverage({
             activatedBody: reply?.body || '',
             attachments,

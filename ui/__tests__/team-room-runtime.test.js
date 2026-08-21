@@ -1477,8 +1477,9 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     const conflict = http.createServer((_request, response) => response.end('occupied'));
     await new Promise((resolve, reject) => {
       conflict.once('error', reject);
-      conflict.listen(9911, '127.0.0.1', resolve);
+      conflict.listen(0, '127.0.0.1', resolve);
     });
+    const conflictPort = conflict.address().port;
     try {
       runtime = new TeamRoomRuntime({
         ...runtimeOptions(tempRoot, async () => ({ ok: true })),
@@ -1486,7 +1487,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
         port: 0,
         lanEnabled: true,
         allowedOrigins: ['http://127.0.0.1:41321'],
-        remotePort: 9911,
+        remotePort: conflictPort,
       });
       const started = await runtime.start();
       expect(started).toEqual(expect.objectContaining({

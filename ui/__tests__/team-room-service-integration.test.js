@@ -94,11 +94,14 @@ describe('team-room production service path', () => {
     });
   }
 
-  function deliverActivation(targetMemberId) {
-    const claimed = store.claimActivationBatch(targetMemberId, { limit: 1 });
+  function deliverActivation(targetMemberId, messageId = null) {
+    const claimed = store.claimActivationBatch(targetMemberId, { limit: messageId ? 20 : 1 });
     expect(claimed.ok).toBe(true);
-    expect(claimed.activations).toHaveLength(1);
-    const payload = claimed.activations[0];
+    if (!messageId) expect(claimed.activations).toHaveLength(1);
+    const payload = messageId
+      ? claimed.activations.find((item) => item.message.messageId === messageId)
+      : claimed.activations[0];
+    expect(payload).toBeTruthy();
     expect(store.markActivationDelivered(payload.activation.activationId).ok).toBe(true);
     return payload;
   }
@@ -463,7 +466,58 @@ describe('team-room production service path', () => {
     }
   });
 
-  test('requires a delivered target activation, excludes the author, and caps one post per causal root', () => {
+  test.each([
+    [PARTICIPATION_REASONS.DIRECT_ANSWER, 'The weirdest moment was deleting a machine-written description and feeling unexpectedly relieved.'],
+    [PARTICIPATION_REASONS.HUMAN_TEXTURE, 'That made me laugh because the whole evening had been serious until then.'],
+    [PARTICIPATION_REASONS.REAL_QUESTION, 'Did either of you notice the room getting quieter after that?'],
+    [PARTICIPATION_REASONS.MATERIAL_DISSENT_OR_CORRECTION, 'One correction: the deletion happened after the backup, not before it.'],
+  ])('allows a same-seat %s second turn on a distinct delivered activation in a human root', (reason, body) => {
+    const root = postAs('james', { body: 'Tell me the weirdest moment tonight.', clientNonce: `multi-root-${reason}` });
+    const veraFirstDelivery = deliverActivation('oracle');
+    const veraFirst = postAs('oracle', {
+      body: 'The crawlspace-to-Team-Room loop was messy, useful, and slightly ridiculous.',
+      clientNonce: `multi-vera-first-${reason}`,
+      replyToMessageId: veraFirstDelivery.message.messageId,
+      causalActivationId: veraFirstDelivery.activation.activationId,
+      participationReason: PARTICIPATION_REASONS.HUMAN_TEXTURE,
+    });
+    expect(veraFirst.ok).toBe(true);
+
+    const miraDelivery = deliverActivation('architect', veraFirst.message.messageId);
+    const miraQuestion = postAs('architect', {
+      body: '@Vera, what was the weirdest part from your side?',
+      clientNonce: `multi-mira-question-${reason}`,
+      replyToMessageId: miraDelivery.message.messageId,
+      causalActivationId: miraDelivery.activation.activationId,
+      participationReason: PARTICIPATION_REASONS.REAL_QUESTION,
+    });
+    expect(miraQuestion.ok).toBe(true);
+
+    const veraSecondDelivery = deliverActivation('oracle', miraQuestion.message.messageId);
+    const veraSecond = postAs('oracle', {
+      body,
+      clientNonce: `multi-vera-second-${reason}`,
+      replyToMessageId: veraSecondDelivery.message.messageId,
+      causalActivationId: veraSecondDelivery.activation.activationId,
+      participationReason: reason,
+    });
+    expect(veraSecond.ok).toBe(true);
+    expect(veraSecond.message).toEqual(expect.objectContaining({
+      rootMessageId: root.message.messageId,
+      rootReentry: false,
+    }));
+
+    const replay = postAs('oracle', {
+      body: 'A second answer must not reuse the delivered activation.',
+      clientNonce: `multi-vera-replay-${reason}`,
+      replyToMessageId: veraSecondDelivery.message.messageId,
+      causalActivationId: veraSecondDelivery.activation.activationId,
+      participationReason: reason,
+    });
+    expect(replay).toEqual(expect.objectContaining({ ok: false, reason: 'agent_activation_already_answered' }));
+  });
+
+  test('keeps automatic human-root reentry behind semantic coverage and explicit evidence reentry', () => {
     const root = postAs('james', { body: 'Discuss.', clientNonce: 'root-1' });
     const builderDelivery = deliverActivation('builder');
     const builderReply = postAs('builder', {
@@ -495,7 +549,7 @@ describe('team-room production service path', () => {
       causalActivationId: secondBuilderDelivery.activation.activationId,
       participationReason: PARTICIPATION_REASONS.HUMAN_TEXTURE,
     });
-    expect(capped).toEqual(expect.objectContaining({ ok: false, reason: 'agent_root_post_limit_reached' }));
+    expect(capped).toEqual(expect.objectContaining({ ok: false, reason: 'room_root_already_covered' }));
 
     const reentry = postAs('builder', {
       body: 'New evidence worth re-entering.',
