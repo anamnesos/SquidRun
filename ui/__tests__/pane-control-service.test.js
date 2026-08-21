@@ -149,6 +149,55 @@ describe('pane-control-service', () => {
     expect(result).toEqual(expect.objectContaining({ success: false, reason: 'agent_not_running', paneId: '2' }));
   });
 
+  test('nudge routes addressed workroom panes without consulting the main-pane running map', async () => {
+    ctx.isAddressedPane = jest.fn((paneId) => paneId === 'trustquote-app');
+    ctx.nudgeAddressedPane = jest.fn().mockResolvedValue({
+      ok: true,
+      accepted: true,
+      queued: false,
+      verified: false,
+      status: 'accepted.daemon_pty_unverified',
+    });
+
+    const result = await executePaneControlAction(ctx, 'nudge', {
+      paneId: 'trustquote-app',
+      message: 'Status check',
+    });
+
+    expect(ctx.nudgeAddressedPane).toHaveBeenCalledWith('trustquote-app', 'Status check');
+    expect(ctx.mainWindow.webContents.send).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      method: 'addressed-pane-delivery',
+      status: 'accepted.daemon_pty_unverified',
+      verified: false,
+      liveness: 'unknown',
+    }));
+  });
+
+  test('addressed workroom nudge reports delivery failure without a false agent_not_running verdict', async () => {
+    ctx.isAddressedPane = jest.fn((paneId) => paneId === 'trustquote-invoice');
+    ctx.nudgeAddressedPane = jest.fn().mockResolvedValue({
+      accepted: false,
+      queued: false,
+      verified: false,
+      status: 'daemon_not_connected',
+    });
+
+    const result = await executePaneControlAction(ctx, 'nudge', {
+      paneId: 'trustquote-invoice',
+      message: 'Status check',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      method: 'addressed-pane-delivery',
+      reason: 'daemon_not_connected',
+      liveness: 'not_delivered',
+    }));
+    expect(result.reason).not.toBe('agent_not_running');
+  });
+
   test('normalizeAction resolves switch-model aliases', () => {
     expect(normalizeAction('switch-model')).toBe('switch-model');
     expect(normalizeAction('switch-pane-model')).toBe('switch-model');

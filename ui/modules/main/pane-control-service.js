@@ -254,11 +254,32 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
   }
 
   if (normalizedAction === 'nudge') {
+    const message = asNonEmptyString(normalizedPayload.message || '');
+    const isAddressedPane = typeof ctx.isAddressedPane === 'function'
+      && ctx.isAddressedPane(paneId) === true;
+    if (message && isAddressedPane && typeof ctx.nudgeAddressedPane === 'function') {
+      return Promise.resolve(ctx.nudgeAddressedPane(paneId, message)).then((result = {}) => {
+        const accepted = result?.accepted === true || result?.queued === true || result?.ok === true;
+        const verified = result?.verified === true;
+        return {
+          success: accepted,
+          paneId,
+          action: normalizedAction,
+          method: 'addressed-pane-delivery',
+          accepted,
+          queued: result?.queued === true,
+          verified,
+          status: result?.status || (verified ? 'delivered.verified' : (accepted ? 'accepted.unverified' : 'delivery_failed')),
+          liveness: verified ? 'verified' : (accepted ? 'unknown' : 'not_delivered'),
+          reason: accepted ? null : (result?.reason || result?.error || result?.status || 'delivery_failed'),
+        };
+      });
+    }
+
     if (!isWindowAvailable(mainWindow)) {
       return { success: false, reason: 'window_not_available', paneId, action: normalizedAction };
     }
 
-    const message = asNonEmptyString(normalizedPayload.message || '');
     if (message) {
       const isRunning = agentRunning && typeof agentRunning.get === 'function'
         ? agentRunning.get(paneId) === 'running'
