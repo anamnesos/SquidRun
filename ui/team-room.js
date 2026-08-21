@@ -26,6 +26,9 @@
     pairCode: document.getElementById('pairCode'),
     pairError: document.getElementById('pairError'),
     pairButton: document.getElementById('pairPhoneButton'),
+    remotePairButton: document.getElementById('remotePairButton'),
+    remoteAccessButton: document.getElementById('remoteAccessButton'),
+    remoteAccessLabel: document.getElementById('remoteAccessLabel'),
     pairDialog: document.getElementById('pairDialog'),
     pairInstruction: document.getElementById('pairInstruction'),
     pairQrShell: document.getElementById('pairQrShell'),
@@ -57,6 +60,7 @@
     reconnectAttempt: 0,
     pairingExpiryTimer: null,
     pendingPairingCode: null,
+    remoteAccess: { manageable: false, enabled: false, pending: false, reason: null },
     sending: false,
     dragDepth: 0,
     unreadCount: 0,
@@ -527,6 +531,8 @@
     elements.scroll.hidden = true;
     elements.composer.hidden = true;
     elements.pairButton.hidden = true;
+    elements.remotePairButton.hidden = true;
+    elements.remoteAccessButton.hidden = true;
     setConnection('disconnected');
   }
 
@@ -535,7 +541,9 @@
     elements.pairScreen.hidden = true;
     elements.scroll.hidden = false;
     elements.composer.hidden = false;
-    elements.pairButton.hidden = state.config?.lanEnabled !== true;
+    elements.pairButton.hidden = true;
+    elements.remotePairButton.hidden = true;
+    elements.remoteAccessButton.hidden = true;
   }
 
   function updateSendState() {
@@ -901,11 +909,14 @@
     try { await navigator.serviceWorker.register('/team-room-sw.js', { scope: '/' }); } catch {}
   }
 
-  async function startPairing() {
+  async function startPairing(mode = 'lan') {
     elements.pairDialogError.textContent = '';
     elements.pairQrShell.hidden = true;
     elements.pairQrImage.removeAttribute('src');
-    const { payload } = await fetchJson('/api/pairing/start', { method: 'POST', body: '{}' });
+    const { payload } = await fetchJson('/api/pairing/start', {
+      method: 'POST',
+      body: JSON.stringify({ mode }),
+    });
     if (!payload.ok) {
       elements.pairDialogError.textContent = payload.reason === 'room_lan_disabled'
         ? 'Phone access is not enabled on this network.'
@@ -916,7 +927,9 @@
     const qrReady = /^data:image\/png;base64,/u.test(payload.pairing.qrDataUrl || '');
     elements.pairQrShell.hidden = !qrReady;
     elements.pairInstruction.textContent = qrReady
-      ? 'On your phone, open Camera and scan. Tap the banner and you’re in.'
+      ? mode === 'remote'
+        ? 'On your phone, open Camera and scan. This pairs the private Tailscale address.'
+        : 'On your phone, open Camera and scan. Tap the banner and you’re in.'
       : 'QR pairing is waiting for the Team Room runtime update. The address and code still work now.';
     if (qrReady) {
       elements.pairQrImage.src = payload.pairing.qrDataUrl;
@@ -938,6 +951,56 @@
     updateExpiry();
     state.pairingExpiryTimer = setInterval(updateExpiry, 15_000);
     elements.pairDialog.showModal();
+  }
+
+  function renderRemoteAccess() {
+    const remote = state.remoteAccess;
+    elements.pairButton.hidden = !remote.manageable || state.config?.lanEnabled !== true;
+    elements.remoteAccessButton.hidden = !remote.manageable;
+    elements.remotePairButton.hidden = !remote.manageable || !remote.enabled;
+    elements.remoteAccessButton.disabled = remote.pending;
+    elements.remoteAccessButton.setAttribute('aria-pressed', String(remote.enabled));
+    const stateLabel = remote.pending ? 'Working' : remote.enabled ? 'On' : remote.reason ? 'Error' : 'Off';
+    elements.remoteAccessLabel.textContent = `Remote access: ${stateLabel}`;
+    elements.remoteAccessButton.setAttribute('aria-label', `Remote access ${stateLabel.toLowerCase()}`);
+    elements.remoteAccessButton.title = remote.reason || (remote.enabled
+      ? 'Turn off remote access. LAN Team Room stays running.'
+      : 'Turn on private Tailscale access.');
+  }
+
+  async function refreshRemoteAccess() {
+    const { response, payload } = await fetchJson('/api/remote-access');
+    if (response.status === 401 || response.status === 403) {
+      state.remoteAccess = { manageable: false, enabled: false, pending: false, reason: null };
+      renderRemoteAccess();
+      return;
+    }
+    state.remoteAccess = {
+      manageable: true,
+      enabled: payload.enabled === true,
+      pending: payload.transitionPending === true,
+      reason: payload.enabled === true || payload.reason === 'tailscale_serve_disabled' ? null : payload.reason || null,
+    };
+    renderRemoteAccess();
+  }
+
+  async function toggleRemoteAccess() {
+    if (!state.remoteAccess.manageable || state.remoteAccess.pending) return;
+    const enabled = !state.remoteAccess.enabled;
+    state.remoteAccess.pending = true;
+    state.remoteAccess.reason = null;
+    renderRemoteAccess();
+    const { payload } = await fetchJson('/api/remote-access', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    });
+    state.remoteAccess = {
+      manageable: true,
+      enabled: payload.ok === true && payload.enabled === true,
+      pending: false,
+      reason: payload.ok === true ? null : payload.reason || 'Remote access change failed.',
+    };
+    renderRemoteAccess();
   }
 
   function consumePairingCodeFromLocation() {
@@ -990,6 +1053,7 @@
       applySnapshot(payload.snapshot, { initial: true });
       connectSocket();
       resumeDraftUploads();
+      void refreshRemoteAccess();
       elements.input.focus();
     } catch {
       setConnection('disconnected');
@@ -1038,7 +1102,9 @@
     elements.dropShield.hidden = true;
     void stageFiles(event.dataTransfer.files);
   });
-  elements.pairButton.addEventListener('click', () => { void startPairing(); });
+  elements.pairButton.addEventListener('click', () => { void startPairing('lan'); });
+  elements.remotePairButton.addEventListener('click', () => { void startPairing('remote'); });
+  elements.remoteAccessButton.addEventListener('click', () => { void toggleRemoteAccess(); });
   elements.pairForm.addEventListener('submit', (event) => { void claimPairing(event); });
   elements.pairUrl.addEventListener('click', async () => {
     const value = elements.pairUrl.dataset.copyValue || '';

@@ -9,6 +9,7 @@ const WebSocket = require('ws');
 const sharp = require('sharp');
 const {
   resolveTeamRoomNetworkOptions,
+  normalizeRemoteTeamRoomOrigin,
   TeamRoomPairingRegistry,
   TeamRoomRuntime,
 } = require('../modules/main/team-room-runtime');
@@ -112,6 +113,7 @@ function runtimeOptions(tempRoot, deliverToPane) {
     },
     deliverToPane,
     resolveCliBindings,
+    remotePort: 0,
   };
 }
 
@@ -462,6 +464,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     expect(firstClaim.statusCode).toBe(200);
     expect(firstClaim.headers['set-cookie']?.[0]).toContain('HttpOnly');
     expect(firstClaim.headers['set-cookie']?.[0]).toContain('SameSite=Strict');
+    expect(firstClaim.headers['set-cookie']?.[0]).not.toContain('Secure');
 
     const replay = await request(started.origin, '/api/pairing/claim', {
       method: 'POST',
@@ -1295,6 +1298,237 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     expect(await request(secondStart.origin, '/api/cli/snapshot', { token: secondCredential.token }))
       .toEqual(expect.objectContaining({ statusCode: 200, payload: expect.objectContaining({ ok: true }) }));
     expect(firstStart.origin).toMatch(/^http:\/\/127\.0\.0\.1:/u);
+  });
+
+  test('keeps LAN pairing unchanged, pins remote pairing to the exact ts.net origin, and fails remote reads and sockets closed when disabled', async () => {
+    const remoteOrigin = 'https://blue-lantern.random-name.ts.net';
+    const setRemoteAccessEnabled = jest.fn(async (enabled) => ({ ok: true, enabled, origin: remoteOrigin }));
+    runtime = new TeamRoomRuntime({
+      ...runtimeOptions(tempRoot, async () => ({ ok: true })),
+      host: '127.0.0.1',
+      port: 0,
+      lanEnabled: true,
+      allowedOrigins: ['http://127.0.0.1:41321'],
+      remoteOrigin,
+      getRemoteAccessStatus: async () => ({ ok: true, enabled: true, origin: remoteOrigin }),
+      setRemoteAccessEnabled,
+    });
+    const started = await runtime.start();
+    expect(started).toEqual(expect.objectContaining({
+      ok: true,
+      remote: expect.objectContaining({ listening: true, host: '127.0.0.1' }),
+    }));
+    const electron = runtime.issueElectronCredential();
+    const cookie = `squidrun_team_room=${electron.token}`;
+
+    const lanPair = await request(started.origin, '/api/pairing/start', {
+      method: 'POST', cookie, origin: started.origin, body: { mode: 'lan' },
+    });
+    expect(lanPair.payload.pairing).toEqual(expect.objectContaining({
+      mode: 'lan', claimUrl: `${started.origin}/`,
+    }));
+    expect(new URL(lanPair.payload.pairing.pairingUrl).origin).toBe(started.origin);
+
+    const remotePair = await rawRequest(started.origin, '/api/pairing/start', {
+      method: 'POST',
+      headers: {
+        Cookie: cookie,
+        Origin: started.origin,
+        Host: 'attacker.invalid',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ mode: 'remote' }),
+    });
+    expect(remotePair.statusCode).toBe(201);
+    expect(remotePair.payload.pairing).toEqual(expect.objectContaining({
+      mode: 'remote', claimUrl: `${remoteOrigin}/`,
+    }));
+    expect(new URL(remotePair.payload.pairing.pairingUrl).origin).toBe(remoteOrigin);
+
+    const forgedIngress = await rawRequest(started.origin, '/api/pairing/claim', {
+      method: 'POST',
+      headers: {
+        Origin: remoteOrigin,
+        'Tailscale-User-Login': 'james@example.test',
+        'Tailscale-User-Profile-Pic': 'https://attacker.invalid/pic',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ code: remotePair.payload.pairing.code }),
+    });
+    expect(forgedIngress).toEqual(expect.objectContaining({
+      statusCode: 403,
+      payload: expect.objectContaining({ reason: 'room_origin_forbidden' }),
+    }));
+
+    const remoteClaim = await request(runtime.remoteTargetOrigin, '/api/pairing/claim', {
+      method: 'POST', origin: remoteOrigin, body: { code: remotePair.payload.pairing.code },
+    });
+    expect(remoteClaim.statusCode).toBe(200);
+    const remoteCookie = remoteClaim.headers['set-cookie']?.[0] || '';
+    expect(remoteCookie).toContain('Secure');
+    expect(remoteCookie).toContain('HttpOnly');
+    expect(remoteCookie).toContain('SameSite=Strict');
+    expect(remoteCookie).toContain('Path=/');
+
+    const remoteSnapshot = await request(runtime.remoteTargetOrigin, '/api/snapshot', {
+      cookie: remoteCookie.split(';', 1)[0],
+    });
+    expect(remoteSnapshot).toEqual(expect.objectContaining({
+      statusCode: 200,
+      payload: expect.objectContaining({ ok: true }),
+    }));
+    const remoteMessages = [];
+    const remoteSocket = new WebSocket(`${runtime.remoteTargetOrigin.replace(/^http/u, 'ws')}/ws`, {
+      headers: { Cookie: remoteCookie.split(';', 1)[0], Origin: remoteOrigin },
+    });
+    const remoteFirstMessage = await new Promise((resolve, reject) => {
+      remoteSocket.on('message', (data) => {
+        const message = JSON.parse(data.toString('utf8'));
+        remoteMessages.push(message);
+        if (remoteMessages.length === 1) resolve(message);
+      });
+      remoteSocket.once('error', reject);
+    });
+    expect(remoteFirstMessage.type).toBe('snapshot');
+    const lanSocket = new WebSocket(`${started.origin.replace(/^http/u, 'ws')}/ws`, {
+      headers: { Cookie: cookie, Origin: started.origin },
+    });
+    const lanFirstMessage = await new Promise((resolve, reject) => {
+      lanSocket.once('message', (data) => resolve(JSON.parse(data.toString('utf8'))));
+      lanSocket.once('error', reject);
+    });
+    expect(lanFirstMessage.type).toBe('snapshot');
+
+    const unauthenticatedControl = await request(started.origin, '/api/remote-access');
+    expect(unauthenticatedControl.statusCode).toBe(401);
+    const ownerStatus = await request(started.origin, '/api/remote-access', { cookie });
+    expect(ownerStatus).toEqual(expect.objectContaining({
+      statusCode: 200,
+      payload: expect.objectContaining({ ok: true, enabled: true }),
+    }));
+    const ownerMutationWithoutOrigin = await request(started.origin, '/api/remote-access', {
+      method: 'POST', cookie, body: { enabled: false },
+    });
+    expect(ownerMutationWithoutOrigin).toEqual(expect.objectContaining({
+      statusCode: 403,
+      payload: expect.objectContaining({ reason: 'room_origin_forbidden' }),
+    }));
+    const pairedControl = await request(runtime.remoteTargetOrigin, '/api/remote-access', {
+      cookie: remoteCookie.split(';', 1)[0], origin: remoteOrigin,
+    });
+    expect(pairedControl).toEqual(expect.objectContaining({
+      statusCode: 403,
+      payload: expect.objectContaining({ reason: 'room_remote_access_electron_owner_required' }),
+    }));
+    const ownerControl = await request(started.origin, '/api/remote-access', {
+      method: 'POST', cookie, origin: started.origin, body: { enabled: false },
+    });
+    expect(ownerControl).toEqual(expect.objectContaining({
+      statusCode: 200,
+      payload: expect.objectContaining({ ok: true, enabled: false }),
+    }));
+    expect(setRemoteAccessEnabled).toHaveBeenCalledWith(false);
+
+    const remoteSocketClosed = new Promise((resolve) => remoteSocket.once('close', resolve));
+    expect(runtime.setRemoteOrigin(null)).toEqual({ ok: true, origin: null });
+    await remoteSocketClosed;
+    const disabledRemoteSnapshot = await request(runtime.remoteTargetOrigin, '/api/snapshot', {
+      cookie: remoteCookie.split(';', 1)[0],
+    });
+    expect(disabledRemoteSnapshot).toEqual(expect.objectContaining({
+      statusCode: 503,
+      payload: { ok: false, reason: 'team_room_remote_access_disabled' },
+    }));
+    await expect(request(runtime.remoteTargetOrigin, '/api/health')).resolves.toEqual(expect.objectContaining({
+      statusCode: 503,
+      payload: { ok: false, reason: 'team_room_remote_access_disabled' },
+    }));
+    await expect(request(started.origin, '/api/snapshot', { cookie })).resolves.toEqual(expect.objectContaining({
+      statusCode: 200,
+      payload: expect.objectContaining({ ok: true }),
+    }));
+    const lanBroadcast = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('lan_broadcast_timeout')), 2_000);
+      const onMessage = (data) => {
+        const message = JSON.parse(data.toString('utf8'));
+        if (message.type !== 'message' || message.message?.clientNonce !== 'hard-off-lan-broadcast') return;
+        clearTimeout(timeout);
+        lanSocket.off('message', onMessage);
+        resolve(message);
+      };
+      lanSocket.on('message', onMessage);
+    });
+    const lanPosted = await request(started.origin, '/api/messages', {
+      method: 'POST', cookie, origin: started.origin,
+      body: { body: 'LAN survives remote hard Off.', clientNonce: 'hard-off-lan-broadcast' },
+    });
+    expect(lanPosted.statusCode).toBe(201);
+    await expect(lanBroadcast).resolves.toEqual(expect.objectContaining({ type: 'message' }));
+    expect(lanSocket.readyState).toBe(WebSocket.OPEN);
+    expect(remoteMessages).toHaveLength(1);
+    lanSocket.close();
+
+    const config = await request(started.origin, '/api/config');
+    expect(config.payload.config).not.toHaveProperty('remoteOrigin');
+    expect(config.payload.config).not.toHaveProperty('remoteAccess');
+  });
+
+  test('a remote listener conflict fails remote-only while primary HTTP and LAN WebSocket stay live', async () => {
+    const conflict = http.createServer((_request, response) => response.end('occupied'));
+    await new Promise((resolve, reject) => {
+      conflict.once('error', reject);
+      conflict.listen(9911, '127.0.0.1', resolve);
+    });
+    try {
+      runtime = new TeamRoomRuntime({
+        ...runtimeOptions(tempRoot, async () => ({ ok: true })),
+        host: '127.0.0.1',
+        port: 0,
+        lanEnabled: true,
+        allowedOrigins: ['http://127.0.0.1:41321'],
+        remotePort: 9911,
+      });
+      const started = await runtime.start();
+      expect(started).toEqual(expect.objectContaining({
+        ok: true,
+        remote: expect.objectContaining({
+          listening: false,
+          reason: 'team_room_remote_ingress_start_failed:EADDRINUSE',
+        }),
+      }));
+      await expect(request(started.origin, '/api/health')).resolves.toEqual(expect.objectContaining({
+        statusCode: 200,
+        payload: expect.objectContaining({ ok: true }),
+      }));
+
+      const electron = runtime.issueElectronCredential();
+      const socket = new WebSocket(`${started.origin.replace(/^http/u, 'ws')}/ws`, {
+        headers: { Cookie: `squidrun_team_room=${electron.token}`, Origin: started.origin },
+      });
+      const firstMessage = await new Promise((resolve, reject) => {
+        socket.once('message', (data) => resolve(JSON.parse(data.toString('utf8'))));
+        socket.once('error', reject);
+      });
+      expect(firstMessage.type).toBe('snapshot');
+      socket.close();
+    } finally {
+      await new Promise((resolve) => conflict.close(resolve));
+    }
+  });
+
+  test('validates the remote origin structurally with no paths, credentials, ports, or wildcards', () => {
+    expect(normalizeRemoteTeamRoomOrigin('https://blue-lantern.random-name.ts.net')).toBe(
+      'https://blue-lantern.random-name.ts.net'
+    );
+    for (const candidate of [
+      'http://blue-lantern.random-name.ts.net',
+      'https://blue-lantern.random-name.ts.net/path',
+      'https://blue-lantern.random-name.ts.net?query=1',
+      'https://user:pass@blue-lantern.random-name.ts.net',
+      'https://blue-lantern.random-name.ts.net:8443',
+      'https://*.random-name.ts.net',
+      'https://blue-lantern.example.com',
+    ]) expect(normalizeRemoteTeamRoomOrigin(candidate)).toBeNull();
   });
 });
 

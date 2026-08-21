@@ -86,8 +86,20 @@ async function run() {
     desktopWindow.webContents.on('console-message', (_event, level, message) => {
       if (Number(level) >= 2) consoleErrors.push(`desktop:${message}`);
     });
-    await waitForRenderer(desktopWindow, `() => document.querySelector('#connectionDot')?.dataset.state === 'connected'
-      && !document.querySelector('#pairPhoneButton')?.hidden`, 12_000, 'desktop-ready');
+    try {
+      await waitForRenderer(desktopWindow, `() => document.querySelector('#connectionDot')?.dataset.state === 'connected'
+        && !document.querySelector('#pairPhoneButton')?.hidden`, 12_000, 'desktop-ready');
+    } catch (error) {
+      error.result = await desktopWindow.webContents.executeJavaScript(`(() => ({
+        stage: 'desktop-ready',
+        connected: document.querySelector('#connectionDot')?.dataset.state || null,
+        pairButtonHidden: document.querySelector('#pairPhoneButton')?.hidden ?? null,
+        remoteButtonHidden: document.querySelector('#remoteAccessButton')?.hidden ?? null,
+        remoteLabel: document.querySelector('#remoteAccessLabel')?.textContent || null,
+        pairScreenHidden: document.querySelector('#pairScreen')?.hidden ?? null,
+      }))()`);
+      throw error;
+    }
     checkpoint('desktop-ready');
     await desktopWindow.webContents.executeJavaScript(`document.querySelector('#pairPhoneButton').click()`);
     await waitForRenderer(desktopWindow, `() => document.querySelector('#pairDialog')?.open

@@ -6,6 +6,12 @@ const mockRuntime = {
   stop: jest.fn(),
 };
 const mockCreateTeamRoomWindow = jest.fn();
+const mockRemoteAccess = {
+  getStatus: jest.fn(),
+  reconcile: jest.fn(),
+  setEnabled: jest.fn(),
+  status: { available: false, enabled: false, origin: null, reason: 'tailscale_status_not_checked' },
+};
 let mockNetworkOptions;
 
 jest.mock('../modules/logger', () => ({ info: jest.fn(), warn: jest.fn() }));
@@ -22,6 +28,9 @@ jest.mock('../modules/main/team-room-runtime', () => ({
   resolveTeamRoomNetworkOptions: () => mockNetworkOptions,
 }));
 jest.mock('../modules/main/team-room-window', () => ({ createTeamRoomWindow: mockCreateTeamRoomWindow }));
+jest.mock('../modules/main/team-room-tailscale-access', () => ({
+  TeamRoomTailscaleAccess: jest.fn(() => mockRemoteAccess),
+}));
 
 const { createTeamRoomAppController } = require('../modules/main/team-room-app-controller');
 const log = require('../modules/logger');
@@ -56,6 +65,9 @@ beforeEach(() => {
   mockRuntime.start.mockResolvedValue({ ok: true, origin: 'http://127.0.0.1:45123' });
   mockRuntime.stop.mockResolvedValue({ ok: true });
   mockRuntime.issueElectronCredential.mockReturnValue({ ok: true, token: 'electron-secret' });
+  mockRemoteAccess.reconcile.mockResolvedValue({ ok: false, reason: 'tailscale_executable_not_found' });
+  mockRemoteAccess.getStatus.mockResolvedValue({ ok: true, enabled: false, reason: 'tailscale_serve_disabled' });
+  mockRemoteAccess.setEnabled.mockResolvedValue({ ok: true, enabled: false });
   mockCreateTeamRoomWindow.mockResolvedValue({ window: { id: 'team-room-window' } });
 });
 
@@ -167,6 +179,15 @@ describe('team-room app controller', () => {
       reason: 'room_lan_bind_host_not_local',
     });
     expect(setTimeoutFn).not.toHaveBeenCalled();
+  });
+
+  test('does not make primary Team Room readiness wait for Tailscale reconciliation', async () => {
+    mockRemoteAccess.reconcile.mockReturnValue(new Promise(() => {}));
+    const { controller } = createHarness();
+
+    await expect(controller.start()).resolves.toEqual({ ok: true, origin: 'http://127.0.0.1:45123' });
+    expect(mockRemoteAccess.reconcile).toHaveBeenCalledTimes(1);
+    expect(mockRuntime.stop).not.toHaveBeenCalled();
   });
 
   test('cancels a pending CLI binding retry when runtime services stop', async () => {

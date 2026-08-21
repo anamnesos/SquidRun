@@ -29,6 +29,8 @@ const PAIRING_ATTEMPT_WINDOW_MS = 5 * 60 * 1000;
 const MAX_PAIRING_ATTEMPTS_PER_WINDOW = 8;
 const DEFAULT_STALE_CLAIM_MS = 30_000;
 const DEFAULT_CLAIM_RECOVERY_INTERVAL_MS = 5_000;
+const DEFAULT_REMOTE_HOST = '127.0.0.1';
+const DEFAULT_REMOTE_PORT = 9911;
 const APP_GENERATION_PATTERN = /^app-(?:session-\d+|\d+-\d+)(?:[-:][A-Za-z0-9._-]+)?$/u;
 const CLI_BINDING_FIELDS = Object.freeze(['role', 'paneId', 'profileName', 'paneLaunchId', 'appGeneration']);
 
@@ -60,6 +62,24 @@ function normalizeHostForUrl(host) {
 function normalizeRemoteAddress(value) {
   const address = String(value || '').trim().toLowerCase();
   return address.startsWith('::ffff:') ? address.slice(7) : address.replace(/^\[|\]$/gu, '');
+}
+
+function normalizeRemoteTeamRoomOrigin(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw.includes('*')) return null;
+  let parsed;
+  try { parsed = new URL(raw); } catch { return null; }
+  if (parsed.protocol !== 'https:'
+    || parsed.username
+    || parsed.password
+    || parsed.port
+    || parsed.pathname !== '/'
+    || parsed.search
+    || parsed.hash
+    || !parsed.hostname.toLowerCase().endsWith('.ts.net')) {
+    return null;
+  }
+  return parsed.origin.toLowerCase();
 }
 
 function parseCookies(header) {
@@ -180,7 +200,8 @@ function resultStatus(result) {
   if (result?.ok === true) return 200;
   const reason = String(result?.reason || '');
   if (reason.includes('bearer') || reason.includes('credential')) return 401;
-  if (reason.includes('forbidden') || reason.includes('capability') || reason.includes('mismatch')) return 403;
+  if (reason.includes('forbidden') || reason.includes('capability') || reason.includes('mismatch')
+    || reason.includes('owner_required')) return 403;
   if (reason.includes('not_found')) return 404;
   if (reason.includes('fused') || reason.includes('conflict') || reason.includes('already') || reason.includes('duplicate')) return 409;
   return 400;
@@ -257,7 +278,7 @@ class TeamRoomPairingRegistry {
     }
   }
 
-  create() {
+  create(mode = 'lan') {
     const nowMs = Number(this.now());
     this.prune(nowMs);
     const code = String(this.randomInt(0, 1_000_000)).padStart(6, '0');
@@ -269,11 +290,12 @@ class TeamRoomPairingRegistry {
       expiresAtMs: nowMs + this.ttlMs,
       consumedAtMs: null,
       failedAttempts: 0,
+      mode: mode === 'remote' ? 'remote' : 'lan',
     });
     return { pairingId, code, expiresAtMs: nowMs + this.ttlMs };
   }
 
-  claim(code, remoteAddress) {
+  claim(code, remoteAddress, mode = 'lan') {
     const nowMs = Number(this.now());
     this.prune(nowMs);
     const address = normalizeRemoteAddress(remoteAddress);
@@ -292,6 +314,7 @@ class TeamRoomPairingRegistry {
       if (!timingSafeCodeEqual(record.codeHash, hashToken(normalizedCode))) continue;
       if (record.expiresAtMs <= nowMs) return { ok: false, reason: 'room_pairing_expired' };
       if (record.consumedAtMs !== null) return { ok: false, reason: 'room_pairing_consumed' };
+      if (record.mode !== mode) return { ok: false, reason: 'room_pairing_ingress_mismatch' };
       record.consumedAtMs = nowMs;
       this.records.delete(pairingId);
       return { ok: true, pairingId };
@@ -338,9 +361,21 @@ class TeamRoomRuntime {
     this.auth = null;
     this.service = null;
     this.server = null;
+    this.remoteServer = null;
     this.webSocketServer = null;
     this.origin = null;
     this.allowedOrigins = new Set();
+    this.remoteHost = String(options.remoteHost || DEFAULT_REMOTE_HOST).trim();
+    this.remotePort = Number.isInteger(Number(options.remotePort)) ? Number(options.remotePort) : DEFAULT_REMOTE_PORT;
+    this.remoteOrigin = normalizeRemoteTeamRoomOrigin(options.remoteOrigin);
+    this.requestIngress = new WeakMap();
+    this.getRemoteAccessStatus = typeof options.getRemoteAccessStatus === 'function'
+      ? options.getRemoteAccessStatus
+      : async () => ({ ok: false, enabled: false, reason: 'team_room_remote_access_unavailable' });
+    this.setRemoteAccessEnabled = typeof options.setRemoteAccessEnabled === 'function'
+      ? options.setRemoteAccessEnabled
+      : async () => ({ ok: false, enabled: false, reason: 'team_room_remote_access_unavailable' });
+    this.remoteIngressResult = { ok: false, reason: 'team_room_remote_ingress_not_started' };
     this.clients = new Set();
     this.electronCredentialIds = new Set();
     this.startPromise = null;
@@ -360,7 +395,32 @@ class TeamRoomRuntime {
       port: this.server?.address()?.port || null,
       lanEnabled: this.lanEnabled,
       manifestPath: this.manifestPath,
+      remote: {
+        listening: Boolean(this.remoteServer?.listening),
+        host: this.remoteHost,
+        port: this.remoteServer?.address()?.port || null,
+        origin: this.remoteOrigin,
+        reason: this.remoteIngressResult?.ok ? null : this.remoteIngressResult?.reason,
+      },
     };
+  }
+
+  setRemoteOrigin(value) {
+    if (value === null || value === undefined || value === '') {
+      this.remoteOrigin = null;
+      this._disconnectRemoteClients();
+      return { ok: true, origin: null };
+    }
+    const origin = normalizeRemoteTeamRoomOrigin(value);
+    if (!origin) return { ok: false, reason: 'team_room_remote_origin_invalid' };
+    this.remoteOrigin = origin;
+    return { ok: true, origin };
+  }
+
+  get remoteTargetOrigin() {
+    if (!this.remoteServer?.listening) return null;
+    const port = this.remoteServer?.address()?.port || this.remotePort;
+    return `http://${DEFAULT_REMOTE_HOST}:${port}`;
   }
 
   _resolveTrustedRegistration = (registration = {}) => {
@@ -594,7 +654,26 @@ class TeamRoomRuntime {
 
   _originAllowed(request) {
     const origin = String(request.headers.origin || '').trim();
+    const ingress = this.requestIngress.get(request) || 'lan';
+    if (ingress === 'remote') return Boolean(origin && this.remoteOrigin && origin === this.remoteOrigin);
     return Boolean(origin && this.allowedOrigins.has(origin));
+  }
+
+  _markIngress(request, ingress) {
+    this.requestIngress.set(request, ingress === 'remote' ? 'remote' : 'lan');
+    return request;
+  }
+
+  _requestIngress(request) {
+    return this.requestIngress.get(request) || 'lan';
+  }
+
+  _disconnectRemoteClients() {
+    for (const client of [...this.clients]) {
+      if (client.roomIngress !== 'remote') continue;
+      this.clients.delete(client);
+      try { client.terminate(); } catch {}
+    }
   }
 
   _authenticate(request, capability, endpointSource) {
@@ -863,16 +942,34 @@ class TeamRoomRuntime {
     if (!this._originAllowed(request)) {
       return jsonResponse(response, 403, { ok: false, reason: 'room_origin_forbidden' });
     }
-    if (!this.lanEnabled) return jsonResponse(response, 409, { ok: false, reason: 'room_lan_disabled' });
-    const pairing = this.pairing.create();
-    const pairingUrl = buildPairingUrl(this.origin, pairing.code);
+    let input;
+    try { input = await readJsonBody(request, 4 * 1024); } catch (error) {
+      return jsonResponse(response, 400, { ok: false, reason: error.message });
+    }
+    const mode = input.mode === 'remote' ? 'remote' : 'lan';
+    if (mode === 'lan' && !this.lanEnabled) {
+      return jsonResponse(response, 409, { ok: false, reason: 'room_lan_disabled' });
+    }
+    if (mode === 'remote') {
+      const remoteStatus = await this.getRemoteAccessStatus();
+      if (!this.remoteOrigin || remoteStatus?.enabled !== true) {
+        return jsonResponse(response, 409, {
+          ok: false,
+          reason: remoteStatus?.reason || 'team_room_remote_access_disabled',
+        });
+      }
+    }
+    const claimOrigin = mode === 'remote' ? this.remoteOrigin : this.origin;
+    const pairing = this.pairing.create(mode);
+    const pairingUrl = buildPairingUrl(claimOrigin, pairing.code);
     const qrDataUrl = await renderPairingQrDataUrl(pairingUrl);
     return jsonResponse(response, 201, {
       ok: true,
       pairing: {
         code: pairing.code,
         expiresAtMs: pairing.expiresAtMs,
-        claimUrl: `${this.origin}/`,
+        claimUrl: `${claimOrigin}/`,
+        mode,
         pairingUrl,
         qrDataUrl,
       },
@@ -880,7 +977,13 @@ class TeamRoomRuntime {
   }
 
   async _handlePairingClaim(request, response) {
-    if (!this.lanEnabled) return jsonResponse(response, 409, { ok: false, reason: 'room_lan_disabled' });
+    const ingress = this._requestIngress(request);
+    if (ingress === 'lan' && !this.lanEnabled) {
+      return jsonResponse(response, 409, { ok: false, reason: 'room_lan_disabled' });
+    }
+    if (ingress === 'remote' && !this.remoteOrigin) {
+      return jsonResponse(response, 409, { ok: false, reason: 'team_room_remote_access_disabled' });
+    }
     if (!this._originAllowed(request)) {
       return jsonResponse(response, 403, { ok: false, reason: 'room_origin_forbidden' });
     }
@@ -892,16 +995,51 @@ class TeamRoomRuntime {
     try { input = await readJsonBody(request, 4 * 1024); } catch (error) {
       return jsonResponse(response, 400, { ok: false, reason: error.message });
     }
-    const claimed = this.pairing.claim(input.code, remoteAddress);
+    const claimed = this.pairing.claim(input.code, remoteAddress, ingress);
     if (!claimed.ok) return jsonResponse(response, resultStatus(claimed), claimed);
     const issued = this._issueCredential('james', 'room_web', 'paired_device', { ttlMs: 30 * 24 * 60 * 60 * 1000 });
     if (!issued.ok) return jsonResponse(response, 500, issued);
     return jsonResponse(response, 200, { ok: true }, {
-      'Set-Cookie': `${this.cookieName}=${encodeURIComponent(issued.token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${30 * 24 * 60 * 60}`,
+      'Set-Cookie': `${this.cookieName}=${encodeURIComponent(issued.token)};${ingress === 'remote' ? ' Secure;' : ''} HttpOnly; SameSite=Strict; Path=/; Max-Age=${30 * 24 * 60 * 60}`,
     });
   }
 
+  _authenticateElectronOwner(request, options = {}) {
+    const authenticated = this._authenticate(request, 'read', 'room_web');
+    if (!authenticated.ok) return authenticated;
+    if (authenticated.transport !== 'cookie'
+      || !this.electronCredentialIds.has(authenticated.credentialId)
+      || authenticated.identity.memberId !== 'james') {
+      return { ok: false, reason: 'room_remote_access_electron_owner_required' };
+    }
+    if (options.requireOrigin !== false && !this._originAllowed(request)) {
+      return { ok: false, reason: 'room_origin_forbidden' };
+    }
+    return authenticated;
+  }
+
+  async _handleRemoteAccess(request, response) {
+    const authenticated = this._authenticateElectronOwner(request, { requireOrigin: request.method !== 'GET' });
+    if (!authenticated.ok) return jsonResponse(response, resultStatus(authenticated), authenticated);
+    if (request.method === 'GET') {
+      const result = await this.getRemoteAccessStatus();
+      return jsonResponse(response, result?.ok === false ? 503 : 200, result);
+    }
+    let input;
+    try { input = await readJsonBody(request, 4 * 1024); } catch (error) {
+      return jsonResponse(response, 400, { ok: false, reason: error.message });
+    }
+    if (typeof input.enabled !== 'boolean') {
+      return jsonResponse(response, 400, { ok: false, reason: 'team_room_remote_enabled_boolean_required' });
+    }
+    const result = await this.setRemoteAccessEnabled(input.enabled);
+    return jsonResponse(response, result?.ok ? 200 : 503, result);
+  }
+
   async _handleHttp(request, response) {
+    if (this._requestIngress(request) === 'remote' && !this.remoteOrigin) {
+      return jsonResponse(response, 503, { ok: false, reason: 'team_room_remote_access_disabled' });
+    }
     const hostHeader = String(request.headers.host || '');
     let url;
     try { url = new URL(request.url || '/', `http://${hostHeader}`); } catch {
@@ -930,6 +1068,9 @@ class TeamRoomRuntime {
     if (url.pathname === '/api/cli/messages' && request.method === 'POST') return this._handlePost(request, response, 'room_cli');
     if (url.pathname === '/api/pairing/start' && request.method === 'POST') return this._handlePairingStart(request, response);
     if (url.pathname === '/api/pairing/claim' && request.method === 'POST') return this._handlePairingClaim(request, response);
+    if (url.pathname === '/api/remote-access' && ['GET', 'POST'].includes(request.method)) {
+      return this._handleRemoteAccess(request, response);
+    }
     const mediaMatch = /^\/api\/media\/([A-Za-z0-9_-]{1,128})\/(original|preview|download)$/u.exec(url.pathname);
     if (mediaMatch && request.method === 'GET') return this._handleMedia(request, response, mediaMatch[1], mediaMatch[2]);
     const asset = STATIC_FILES[url.pathname];
@@ -952,8 +1093,56 @@ class TeamRoomRuntime {
     if (!authenticated.ok || authenticated.transport !== 'cookie') { socket.destroy(); return; }
     this.webSocketServer.handleUpgrade(request, socket, head, (client) => {
       client.roomIdentity = authenticated.identity;
+      client.roomIngress = this._requestIngress(request);
       this.webSocketServer.emit('connection', client, request);
     });
+  }
+
+  _createIngressServer(ingress) {
+    const server = http.createServer((request, response) => {
+      this._markIngress(request, ingress);
+      Promise.resolve(this._handleHttp(request, response)).catch((error) => {
+        if (!response.headersSent) jsonResponse(response, 500, { ok: false, reason: 'team_room_internal_error' });
+        else response.destroy(error);
+      });
+    });
+    server.on('upgrade', (request, socket, head) => {
+      this._markIngress(request, ingress);
+      this._handleUpgrade(request, socket, head);
+    });
+    return server;
+  }
+
+  async _startRemoteIngress() {
+    if (this.remoteServer?.listening) {
+      this.remoteIngressResult = { ok: true, alreadyRunning: true };
+      return { ok: true, ...this.status.remote, alreadyRunning: true };
+    }
+    if (this.remoteHost !== DEFAULT_REMOTE_HOST) {
+      this.remoteIngressResult = { ok: false, reason: 'team_room_remote_host_not_exact_loopback' };
+      return this.remoteIngressResult;
+    }
+    this.remoteServer = this._createIngressServer('remote');
+    try {
+      await new Promise((resolve, reject) => {
+        const onError = (error) => { this.remoteServer.off('listening', onListening); reject(error); };
+        const onListening = () => { this.remoteServer.off('error', onError); resolve(); };
+        this.remoteServer.once('error', onError);
+        this.remoteServer.once('listening', onListening);
+        this.remoteServer.listen(this.remotePort, DEFAULT_REMOTE_HOST);
+      });
+      this.remoteIngressResult = { ok: true };
+      return { ok: true, ...this.status.remote };
+    } catch (error) {
+      const failedServer = this.remoteServer;
+      this.remoteServer = null;
+      try { failedServer.close(); } catch {}
+      this.remoteIngressResult = {
+        ok: false,
+        reason: `team_room_remote_ingress_start_failed:${error.code || error.message}`,
+      };
+      return this.remoteIngressResult;
+    }
   }
 
   async start() {
@@ -1003,12 +1192,6 @@ class TeamRoomRuntime {
       this.cliCredentialIds = new Map([...issuedCliCredentials.entries()].map(([role, issued]) => (
         [role, issued.credential.credentialId]
       )));
-      this.server = http.createServer((request, response) => {
-        Promise.resolve(this._handleHttp(request, response)).catch((error) => {
-          if (!response.headersSent) jsonResponse(response, 500, { ok: false, reason: 'team_room_internal_error' });
-          else response.destroy(error);
-        });
-      });
       this.webSocketServer = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
       this.webSocketServer.on('connection', (client) => {
         this.clients.add(client);
@@ -1016,7 +1199,7 @@ class TeamRoomRuntime {
         client.on('close', () => this.clients.delete(client));
         client.on('error', () => this.clients.delete(client));
       });
-      this.server.on('upgrade', (request, socket, head) => this._handleUpgrade(request, socket, head));
+      this.server = this._createIngressServer('lan');
       await new Promise((resolve, reject) => {
         const onError = (error) => { this.server.off('listening', onListening); reject(error); };
         const onListening = () => { this.server.off('error', onError); resolve(); };
@@ -1028,6 +1211,7 @@ class TeamRoomRuntime {
       const port = Number(address.port);
       this.origin = `http://${normalizeHostForUrl(this.host)}:${port}`;
       this.allowedOrigins = new Set([this.origin, ...this.configuredOrigins]);
+      await this._startRemoteIngress();
       this.startedAtMs = Number(this.now());
       writeJsonAtomic(this.manifestPath, this._runtimeManifest(), 0o600, this.ownedAtomicTemporaryPaths);
       this.runtimePublished = true;
@@ -1078,6 +1262,10 @@ class TeamRoomRuntime {
         await new Promise((resolve) => this.webSocketServer.close(() => resolve()));
         this.webSocketServer = null;
       }
+      if (this.remoteServer) {
+        await new Promise((resolve) => this.remoteServer.close(() => resolve()));
+        this.remoteServer = null;
+      }
       if (this.server) {
         await new Promise((resolve) => this.server.close(() => resolve()));
         this.server = null;
@@ -1093,6 +1281,8 @@ class TeamRoomRuntime {
       this.startedAtMs = null;
       this.runtimePublished = false;
       this.origin = null;
+      this.remoteOrigin = null;
+      this.remoteIngressResult = { ok: false, reason: 'team_room_remote_ingress_not_started' };
       this.allowedOrigins.clear();
       removeFileIfPresent(this.manifestPath);
       removeFileIfPresent(path.join(this.credentialsRoot, 'james.json'));
@@ -1109,6 +1299,7 @@ class TeamRoomRuntime {
 
 module.exports = {
   DEFAULT_COOKIE_NAME,
+  normalizeRemoteTeamRoomOrigin,
   DEFAULT_CLAIM_RECOVERY_INTERVAL_MS,
   DEFAULT_PAIRING_TTL_MS,
   DEFAULT_STALE_CLAIM_MS,

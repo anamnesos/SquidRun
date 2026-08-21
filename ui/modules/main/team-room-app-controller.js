@@ -6,6 +6,7 @@ const { getProjectRoot, resolveCoordPath } = require('../../config');
 const { createTeamRoomPaneDelivery, createTeamRoomRouteScopeResolver } = require('./team-room-pane-delivery');
 const { createTeamRoomCliBindingResolver } = require('./team-room-cli-binding');
 const { TeamRoomRuntime, resolveTeamRoomNetworkOptions } = require('./team-room-runtime');
+const { TeamRoomTailscaleAccess } = require('./team-room-tailscale-access');
 const { createTeamRoomWindow } = require('./team-room-window');
 
 const CLI_LAUNCH_BINDING_UNAVAILABLE = 'team_room_cli_launch_binding_unavailable';
@@ -49,7 +50,13 @@ function createTeamRoomAppController(options = {}) {
   const resolveCliBindings = dependencies.resolveTeamRoomCliBindings || createTeamRoomCliBindingResolver({
     getProfileName: () => dependencies.getWindowScope('main')?.profileName || '',
   });
-  const runtime = new TeamRoomRuntime({
+  let runtime;
+  const remoteAccess = dependencies.remoteAccess || new TeamRoomTailscaleAccess({
+    getTargetOrigin: () => runtime ? runtime.remoteTargetOrigin : 'http://127.0.0.1:9911',
+    applyRemoteOrigin: (origin) => runtime?.setRemoteOrigin(origin)
+      || { ok: false, reason: 'team_room_runtime_not_ready' },
+  });
+  runtime = new TeamRoomRuntime({
     projectRoot: getProjectRoot(),
     ...(network.ok ? network : { host: '127.0.0.1', port: 0, lanEnabled: false, allowedOrigins: [] }),
     deliverToPane: createTeamRoomPaneDelivery({
@@ -57,6 +64,8 @@ function createTeamRoomAppController(options = {}) {
       resolveRouteScope,
     }),
     resolveCliBindings,
+    getRemoteAccessStatus: () => remoteAccess.getStatus(),
+    setRemoteAccessEnabled: (enabled) => remoteAccess.setEnabled(enabled),
   });
 
   const setTimeoutFn = typeof dependencies.setTimeoutFn === 'function'
@@ -68,6 +77,24 @@ function createTeamRoomAppController(options = {}) {
   let startRetryTimer = null;
   let startRetryAttempts = 0;
   let startRetryEnabled = false;
+  let remoteReconcilePromise = null;
+
+  function reconcileRemoteAccess() {
+    if (remoteReconcilePromise) return remoteReconcilePromise;
+    remoteReconcilePromise = Promise.resolve(remoteAccess.reconcile())
+      .then((result) => {
+        if (!result?.ok && !['tailscale_executable_not_found', 'tailscale_not_connected'].includes(result?.reason)) {
+          log.warn('TeamRoom', `Remote access reconciliation unavailable (${result?.reason || 'unknown'})`);
+        }
+        return result;
+      })
+      .catch((error) => {
+        log.warn('TeamRoom', `Remote access reconciliation failed (${error.message})`);
+        return { ok: false, reason: error.message };
+      })
+      .finally(() => { remoteReconcilePromise = null; });
+    return remoteReconcilePromise;
+  }
 
   function clearStartRetry({ resetAttempts = true } = {}) {
     if (startRetryTimer) clearTimeoutFn(startRetryTimer);
@@ -96,6 +123,7 @@ function createTeamRoomAppController(options = {}) {
         return;
       }
       if (result.ok) {
+        void reconcileRemoteAccess();
         log.info(
           'TeamRoom',
           `Runtime recovered after CLI launch bindings became available (attempt ${startRetryAttempts})`
@@ -118,6 +146,7 @@ function createTeamRoomAppController(options = {}) {
     startRetryEnabled = true;
     const result = await runtime.start();
     if (result.ok) {
+      void reconcileRemoteAccess();
       clearStartRetry();
       return result;
     }
@@ -193,7 +222,7 @@ function createTeamRoomAppController(options = {}) {
     }
   }
 
-  return { openWindow, runtime, start, stop, stopQuietly };
+  return { openWindow, reconcileRemoteAccess, remoteAccess, runtime, start, stop, stopQuietly };
 }
 
 module.exports = { createTeamRoomAppController };
