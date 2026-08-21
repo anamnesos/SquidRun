@@ -66,6 +66,8 @@
     unreadCount: 0,
     restoredDrafts: false,
     viewportBaselineHeight: 0,
+    pendingTypewriterMessageIds: new Set(),
+    activeTypewriters: new Map(),
     lightbox: { scale: 1, x: 0, y: 0, pointers: new Map(), gesture: null, settleTimer: null },
   };
 
@@ -74,6 +76,10 @@
   const draftStoreName = 'attachments';
   const defaultMaxAttachmentBytes = 50 * 1024 * 1024;
   const maxAttachmentsPerMessage = 12;
+  const typewriterMinDurationMs = 280;
+  const typewriterMaxDurationMs = 1_800;
+  const typewriterMsPerCharacter = 20;
+  const reducedMotionQuery = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)') || null;
   let draftDatabasePromise = null;
 
   function setConnection(status) {
@@ -273,6 +279,91 @@
     return root;
   }
 
+  function prefersReducedMotion() {
+    return reducedMotionQuery?.matches === true;
+  }
+
+  function finishActiveTypewriters() {
+    for (const controller of [...state.activeTypewriters.values()]) controller.finish();
+  }
+
+  function shouldTypewriterMessage(message) {
+    return Boolean(
+      message?.messageId
+      && message?.body
+      && message.author?.memberKind === 'agent'
+      && !prefersReducedMotion()
+    );
+  }
+
+  function startTypewriter(message, item, body, { followBottom = false } = {}) {
+    const textNodes = [];
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const characters = Array.from(walker.currentNode.textContent || '');
+      if (characters.length > 0) textNodes.push({ node: walker.currentNode, characters });
+    }
+    const totalCharacters = textNodes.reduce((sum, entry) => sum + entry.characters.length, 0);
+    if (totalCharacters < 2 || prefersReducedMotion()) return;
+
+    let finished = false;
+    let frameId = null;
+    let finishTimerId = null;
+    let keepFollowingBottom = followBottom;
+    const durationMs = Math.min(
+      typewriterMaxDurationMs,
+      Math.max(typewriterMinDurationMs, totalCharacters * typewriterMsPerCharacter)
+    );
+    const startedAt = performance.now();
+
+    const reveal = (visibleCharacters) => {
+      let remaining = visibleCharacters;
+      for (const entry of textNodes) {
+        const visibleInNode = Math.max(0, Math.min(entry.characters.length, remaining));
+        entry.node.textContent = entry.characters.slice(0, visibleInNode).join('');
+        remaining -= visibleInNode;
+      }
+      if (keepFollowingBottom) {
+        if (closeEnoughToBottom()) elements.scroll.scrollTop = elements.scroll.scrollHeight;
+        else keepFollowingBottom = false;
+      }
+    };
+
+    const skip = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      finish();
+    };
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      if (finishTimerId !== null) clearTimeout(finishTimerId);
+      for (const entry of textNodes) entry.node.textContent = entry.characters.join('');
+      delete item.dataset.typewriterActive;
+      delete body.dataset.typewriterActive;
+      body.removeEventListener('click', skip);
+      state.activeTypewriters.delete(message.messageId);
+      if (keepFollowingBottom) elements.scroll.scrollTop = elements.scroll.scrollHeight;
+    };
+
+    const tick = (now) => {
+      if (finished) return;
+      const progress = Math.min(1, Math.max(0, (now - startedAt) / durationMs));
+      reveal(Math.max(1, Math.ceil(totalCharacters * progress)));
+      if (progress >= 1) finish();
+      else frameId = requestAnimationFrame(tick);
+    };
+
+    item.dataset.typewriterActive = 'true';
+    body.dataset.typewriterActive = 'true';
+    body.addEventListener('click', skip);
+    state.activeTypewriters.set(message.messageId, { finish });
+    reveal(1);
+    finishTimerId = setTimeout(finish, durationMs);
+    frameId = requestAnimationFrame(tick);
+  }
+
   function closeEnoughToBottom() {
     return elements.scroll.scrollHeight - elements.scroll.scrollTop - elements.scroll.clientHeight < 140;
   }
@@ -396,8 +487,10 @@
   }
 
   function renderMessages({ forceBottom = false } = {}) {
+    finishActiveTypewriters();
     const stayAtBottom = forceBottom || closeEnoughToBottom();
     const anchor = stayAtBottom ? null : captureScrollAnchor();
+    const typewriterCandidates = [];
     elements.column.replaceChildren();
     if (state.messages.length === 0) {
       elements.column.append(createEmptyRoom());
@@ -452,6 +545,9 @@
         body.className = 'message-body';
         body.append(renderMarkdown(message.body));
         item.append(body);
+        if (state.pendingTypewriterMessageIds.delete(message.messageId)) {
+          typewriterCandidates.push({ message, item, body });
+        }
       }
       renderMessageAttachments(item, message.attachments);
       if (message.pending || message.optimistic || message.error) {
@@ -463,6 +559,9 @@
         item.append(meta);
       }
       currentRun.append(item);
+    }
+    for (const candidate of typewriterCandidates) {
+      startTypewriter(candidate.message, candidate.item, candidate.body, { followBottom: stayAtBottom });
     }
     requestAnimationFrame(() => {
       if (stayAtBottom) {
@@ -478,7 +577,10 @@
     const exactIndex = state.messages.findIndex((entry) => entry.messageId === message.messageId);
     const index = exactIndex >= 0 ? exactIndex : optimisticIndex;
     if (index >= 0) state.messages[index] = { ...message, optimistic: optimisticIndex >= 0 };
-    else state.messages.push(message);
+    else {
+      state.messages.push(message);
+      if (shouldTypewriterMessage(message)) state.pendingTypewriterMessageIds.add(message.messageId);
+    }
     state.messages.sort((a, b) => Number(a.seq || Number.MAX_SAFE_INTEGER) - Number(b.seq || Number.MAX_SAFE_INTEGER)
       || Number(a.createdAtMs) - Number(b.createdAtMs));
     renderMessages();
@@ -1219,8 +1321,14 @@
   globalThis.visualViewport?.addEventListener('scroll', syncVisualViewport, { passive: true });
   window.addEventListener('beforeunload', () => {
     clearTimeout(state.reconnectTimer);
+    finishActiveTypewriters();
     state.socket?.close();
     for (const item of state.attachments) if (item.objectUrl) URL.revokeObjectURL(item.objectUrl);
+  });
+  reducedMotionQuery?.addEventListener?.('change', (event) => {
+    if (!event.matches) return;
+    state.pendingTypewriterMessageIds.clear();
+    finishActiveTypewriters();
   });
 
   async function boot() {

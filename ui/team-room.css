@@ -259,6 +259,18 @@ button { color: inherit; }
 .message-item[data-pending="true"] { opacity: .58; }
 .message-item[data-error="true"] { color: #f1b1b1; opacity: 1; }
 .message-body { overflow-wrap: anywhere; }
+.message-body[data-typewriter-active="true"] { cursor: pointer; touch-action: manipulation; }
+.message-body[data-typewriter-active="true"]::after {
+  content: '';
+  display: inline-block;
+  width: 1.5px;
+  height: .92em;
+  margin-left: 3px;
+  border-radius: 1px;
+  background: currentColor;
+  vertical-align: -.08em;
+  animation: typewriter-caret 620ms steps(1, end) infinite;
+}
 .message-body p { margin: 0 0 .7em; }
 .message-body p:last-child { margin-bottom: 0; }
 .message-body ul, .message-body ol { margin: .35em 0 .8em; padding-left: 1.35em; }
@@ -560,8 +572,9 @@ button { color: inherit; }
 
 @keyframes message-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes unread-enter { from { opacity: 0; transform: translate(50%, 5px); } to { opacity: 1; transform: translate(50%, 0); } }
+@keyframes typewriter-caret { 50% { opacity: 0; } }
 
-@media (prefers-reduced-motion: reduce) { .message-item, .unread-marker { animation: none; } * { scroll-behavior: auto !important; transition-duration: 0s !important; } }
+@media (prefers-reduced-motion: reduce) { .message-item, .unread-marker, .message-body::after { animation: none; } * { scroll-behavior: auto !important; transition-duration: 0s !important; } }
 
 @media (max-width: 640px) {
   .room-header { min-height: 64px; padding: calc(10px + env(safe-area-inset-top, 0px)) max(15px, env(safe-area-inset-right, 0px)) 10px max(15px, env(safe-area-inset-left, 0px)); }
