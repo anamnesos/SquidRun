@@ -29,7 +29,7 @@ The Architect keeps the whole-system map current, facilitates architecture decis
 
 Sub-roles: Frontend, Backend, DevOps, SRE/Observability, Tester, Validator, Security, Context Optimizer
 
-The Builder implements everything as a working lead: it takes one active workstream directly and, when needed, spawns up to `3` Background Builder agents for parallel work (`4` concurrent workstreams max including Builder). Coordinates laterally with Architect and Oracle.
+The Builder owns implementation directly. Any accountable address may use currently available subagent slots only for facts-only evidence collection under the `AGENTS.md` receipts law; implementation and verdict judgment stay with the accountable seat. Cross-seat help routes laterally.
 
 ### Oracle (Pane 3)
 
