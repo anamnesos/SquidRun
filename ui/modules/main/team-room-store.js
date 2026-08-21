@@ -1343,6 +1343,26 @@ class TeamRoomStore {
     };
   }
 
+  getAuthCredentialById(credentialId) {
+    this._requireDb();
+    const row = this.db.prepare('SELECT * FROM room_auth_credentials WHERE credential_id = ?')
+      .get(String(credentialId));
+    if (!row) return null;
+    return {
+      credentialId: row.credential_id,
+      tokenHash: row.token_hash,
+      roomId: row.room_id,
+      profileName: row.profile_name,
+      memberId: row.member_id,
+      sessionKind: row.session_kind,
+      source: row.source,
+      capabilities: parseJson(row.capabilities_json, []),
+      createdAtMs: Number(row.created_at_ms),
+      expiresAtMs: Number(row.expires_at_ms),
+      revokedAtMs: row.revoked_at_ms === null ? null : Number(row.revoked_at_ms),
+    };
+  }
+
   revokeAuthCredential(credentialId) {
     this._requireDb();
     const result = this.db.prepare(`

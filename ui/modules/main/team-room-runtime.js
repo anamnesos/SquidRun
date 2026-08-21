@@ -20,6 +20,7 @@ const { TeamRoomDeliveryAdapter } = require('./team-room-delivery-adapter');
 const { buildPairingUrl, renderPairingQrDataUrl } = require('./team-room-qr');
 const { TeamRoomService } = require('./team-room-service');
 const { TeamRoomStore } = require('./team-room-store');
+const { TeamRoomPushManager } = require('./team-room-push');
 const { TeamRoomUploadManager } = require('./team-room-upload');
 
 const DEFAULT_COOKIE_NAME = 'squidrun_team_room';
@@ -31,6 +32,7 @@ const DEFAULT_STALE_CLAIM_MS = 30_000;
 const DEFAULT_CLAIM_RECOVERY_INTERVAL_MS = 5_000;
 const DEFAULT_REMOTE_HOST = '127.0.0.1';
 const DEFAULT_REMOTE_PORT = 9911;
+const DEFAULT_PRESENCE_WINDOW_MS = 90_000;
 const APP_GENERATION_PATTERN = /^app-(?:session-\d+|\d+-\d+)(?:[-:][A-Za-z0-9._-]+)?$/u;
 const CLI_BINDING_FIELDS = Object.freeze(['role', 'paneId', 'profileName', 'paneLaunchId', 'appGeneration']);
 
@@ -201,7 +203,7 @@ function resultStatus(result) {
   const reason = String(result?.reason || '');
   if (reason.includes('bearer') || reason.includes('credential')) return 401;
   if (reason.includes('forbidden') || reason.includes('capability') || reason.includes('mismatch')
-    || reason.includes('owner_required')) return 403;
+    || reason.includes('owner_required') || reason.includes('paired_device_required')) return 403;
   if (reason.includes('not_found')) return 404;
   if (reason.includes('fused') || reason.includes('conflict') || reason.includes('already') || reason.includes('duplicate')) return 409;
   return 400;
@@ -330,6 +332,7 @@ class TeamRoomRuntime {
     this.runtimeRoot = path.resolve(options.runtimeRoot || path.join(this.projectRoot, '.squidrun', 'runtime', 'team-room'));
     this.manifestPath = path.resolve(options.manifestPath || path.join(this.runtimeRoot, 'runtime.json'));
     this.credentialsRoot = path.resolve(options.credentialsRoot || path.join(this.runtimeRoot, 'credentials'));
+    this.pushReceiptPath = path.resolve(options.pushReceiptPath || path.join(this.runtimeRoot, 'push-last-result.json'));
     this.store = options.store || new TeamRoomStore(options.storeOptions || {});
     this.uploadManager = options.uploadManager || new TeamRoomUploadManager({
       store: this.store,
@@ -337,6 +340,15 @@ class TeamRoomRuntime {
       trustedRoot: this.projectRoot,
       ...(options.uploadOptions || {}),
     });
+    this.pushManager = options.pushManager || new TeamRoomPushManager({
+      projectRoot: this.projectRoot,
+      ...(options.pushOptions || {}),
+      isCredentialActive: (credentialId) => this._isPushCredentialActive(credentialId),
+      isViewerPresent: (memberId) => this._isMemberPresent(memberId),
+    });
+    this.pushAvailable = false;
+    this.pushUnavailableReason = null;
+    this.lastPushResult = null;
     this.deliverToPane = typeof options.deliverToPane === 'function' ? options.deliverToPane : null;
     this.now = typeof options.now === 'function' ? options.now : Date.now;
     this.randomBytes = typeof options.randomBytes === 'function' ? options.randomBytes : crypto.randomBytes;
@@ -384,7 +396,9 @@ class TeamRoomRuntime {
     this.ownedAtomicTemporaryPaths = new Set();
     this.pairing = options.pairing || new TeamRoomPairingRegistry({ now: this.now });
     this.dispatchPromises = new Set();
+    this.pushPromises = new Set();
     this.retryTimers = new Set();
+    this.presenceWindowMs = Math.max(10_000, Number(options.presenceWindowMs) || DEFAULT_PRESENCE_WINDOW_MS);
   }
 
   get status() {
@@ -395,6 +409,11 @@ class TeamRoomRuntime {
       port: this.server?.address()?.port || null,
       lanEnabled: this.lanEnabled,
       manifestPath: this.manifestPath,
+      push: {
+        available: this.pushAvailable,
+        reason: this.pushUnavailableReason,
+        lastResult: this.lastPushResult,
+      },
       remote: {
         listening: Boolean(this.remoteServer?.listening),
         host: this.remoteHost,
@@ -688,6 +707,76 @@ class TeamRoomRuntime {
     return result.ok ? { ...result, ...presented, endpointSource } : result;
   }
 
+  _isPushCredentialActive(credentialId) {
+    const credential = this.store.getAuthCredentialById?.(credentialId);
+    return Boolean(credential
+      && credential.memberId === 'james'
+      && credential.source === 'room_web'
+      && credential.sessionKind === 'paired_device'
+      && credential.revokedAtMs === null
+      && credential.expiresAtMs > Number(this.now()));
+  }
+
+  _isMemberPresent(memberId) {
+    const cutoff = Number(this.now()) - this.presenceWindowMs;
+    return [...this.clients].some((client) => (
+      client.readyState === 1
+      && client.roomIdentity?.memberId === String(memberId)
+      && Number(client.roomFocusedAtMs || 0) >= cutoff
+    ));
+  }
+
+  _schedulePush(message) {
+    const notificationClass = String(message?.metadata?.notificationClass || '').trim();
+    if (!notificationClass) return null;
+    if (!this.pushAvailable || !this.pushManager) {
+      this._recordPushResult(message, {
+        ok: false,
+        failed: 1,
+        reason: this.pushUnavailableReason || 'team_room_push_unavailable',
+      });
+      return null;
+    }
+    const task = Promise.resolve()
+      .then(() => this.pushManager.notifyForMessage(message))
+      .then((result) => this._recordPushResult(message, result))
+      .catch(() => this._recordPushResult(message, {
+        ok: false,
+        failed: 1,
+        reason: 'team_room_push_delivery_exception',
+      }))
+      .finally(() => this.pushPromises.delete(task));
+    this.pushPromises.add(task);
+    return task;
+  }
+
+  _recordPushResult(message, result = {}) {
+    const receipt = {
+      schema: 'squidrun.team_room_push_result.v1',
+      messageId: String(message?.messageId || ''),
+      class: String(message?.metadata?.notificationClass || ''),
+      ok: result.ok === true,
+      sent: Math.max(0, Number(result.sent) || 0),
+      failed: Math.max(0, Number(result.failed) || 0),
+      suppressed: Math.max(0, Number(result.suppressedQuiet) || 0),
+      reason: String(result.reason || (result.ok === true
+        ? 'team_room_push_delivery_complete'
+        : 'team_room_push_delivery_failed')),
+      recordedAtMs: Number(this.now()),
+    };
+    this.lastPushResult = receipt;
+    try {
+      writeJsonAtomic(this.pushReceiptPath, receipt, 0o600, this.ownedAtomicTemporaryPaths);
+    } catch {
+      this.lastPushResult = {
+        ...receipt,
+        ok: false,
+        reason: 'team_room_push_receipt_write_failed',
+      };
+    }
+    return this.lastPushResult;
+  }
+
   _enrichMessage(message) {
     return {
       ...message,
@@ -841,6 +930,7 @@ class TeamRoomRuntime {
     if (!result.ok) return jsonResponse(response, resultStatus(result), result);
     const enriched = this._enrichMessage(result.message);
     this._broadcast({ type: 'message', message: enriched, roomState: result.state });
+    this._schedulePush(enriched);
     this._scheduleDispatch(result.activations);
     return jsonResponse(response, result.status === 'inserted' ? 201 : 200, { ...result, message: enriched });
   }
@@ -1004,6 +1094,46 @@ class TeamRoomRuntime {
     });
   }
 
+  _authenticatePushDevice(request, capability = 'read') {
+    const authenticated = this._authenticate(request, capability, 'room_web');
+    if (!authenticated.ok) return authenticated;
+    if (authenticated.transport !== 'cookie'
+      || authenticated.identity.memberId !== 'james'
+      || authenticated.credential?.sessionKind !== 'paired_device') {
+      return { ok: false, reason: 'team_room_push_paired_device_required' };
+    }
+    if (request.method !== 'GET' && !this._originAllowed(request)) {
+      return { ok: false, reason: 'room_origin_forbidden' };
+    }
+    if (!this.pushAvailable) return { ok: false, reason: 'team_room_push_unavailable' };
+    return authenticated;
+  }
+
+  async _handlePushSettings(request, response) {
+    const authenticated = this._authenticatePushDevice(
+      request,
+      request.method === 'GET' ? 'read' : 'post'
+    );
+    if (!authenticated.ok) return jsonResponse(response, resultStatus(authenticated), authenticated);
+    if (request.method === 'GET') {
+      return jsonResponse(response, 200, {
+        ok: true,
+        settings: this.pushManager.settingsForCredential(authenticated.credentialId),
+      });
+    }
+    if (request.method === 'DELETE') {
+      return jsonResponse(response, 200, this.pushManager.removeCredential(authenticated.credentialId));
+    }
+    let input;
+    try { input = await readJsonBody(request, 32 * 1024); } catch (error) {
+      return jsonResponse(response, 400, { ok: false, reason: error.message });
+    }
+    const result = request.method === 'POST'
+      ? this.pushManager.subscribe(authenticated.credentialId, input.subscription, input.preferences)
+      : this.pushManager.updatePreferences(authenticated.credentialId, input.preferences);
+    return jsonResponse(response, result.ok ? 200 : resultStatus(result), result);
+  }
+
   _authenticateElectronOwner(request, options = {}) {
     const authenticated = this._authenticate(request, 'read', 'room_web');
     if (!authenticated.ok) return authenticated;
@@ -1058,6 +1188,12 @@ class TeamRoomRuntime {
           maxAttachmentBytes: this.uploadManager.maxBytes,
           maxAttachmentsPerMessage: MAX_ATTACHMENTS_PER_MESSAGE,
           heicPreview: 'capability-tested-per-upload',
+          notifications: {
+            available: this.pushAvailable,
+            publicKey: this.pushAvailable ? this.pushManager.publicKey() : null,
+            requiresUserGesture: true,
+            replacementHardwareRequiresReenable: true,
+          },
         },
       });
     }
@@ -1070,6 +1206,10 @@ class TeamRoomRuntime {
     if (url.pathname === '/api/pairing/claim' && request.method === 'POST') return this._handlePairingClaim(request, response);
     if (url.pathname === '/api/remote-access' && ['GET', 'POST'].includes(request.method)) {
       return this._handleRemoteAccess(request, response);
+    }
+    if (url.pathname === '/api/push/settings'
+      && ['GET', 'POST', 'PATCH', 'DELETE'].includes(request.method)) {
+      return this._handlePushSettings(request, response);
     }
     const mediaMatch = /^\/api\/media\/([A-Za-z0-9_-]{1,128})\/(original|preview|download)$/u.exec(url.pathname);
     if (mediaMatch && request.method === 'GET') return this._handleMedia(request, response, mediaMatch[1], mediaMatch[2]);
@@ -1093,6 +1233,7 @@ class TeamRoomRuntime {
     if (!authenticated.ok || authenticated.transport !== 'cookie') { socket.destroy(); return; }
     this.webSocketServer.handleUpgrade(request, socket, head, (client) => {
       client.roomIdentity = authenticated.identity;
+      client.roomCredentialId = authenticated.credentialId;
       client.roomIngress = this._requestIngress(request);
       this.webSocketServer.emit('connection', client, request);
     });
@@ -1186,6 +1327,14 @@ class TeamRoomRuntime {
         randomBytes: this.randomBytes,
       });
       this.service = new TeamRoomService({ store: this.store, auth: this.auth });
+      try {
+        this.pushManager.init();
+        this.pushAvailable = true;
+        this.pushUnavailableReason = null;
+      } catch {
+        this.pushAvailable = false;
+        this.pushUnavailableReason = 'team_room_push_unavailable';
+      }
       this.store.revokeAuthCredentials({ source: 'room_cli', sessionKind: 'runtime_registry' });
       this.store.revokeAuthCredentials({ source: 'room_web', sessionKind: 'electron_window' });
       const issuedCliCredentials = this._writeCliCredentials();
@@ -1195,7 +1344,15 @@ class TeamRoomRuntime {
       this.webSocketServer = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
       this.webSocketServer.on('connection', (client) => {
         this.clients.add(client);
+        client.roomFocusedAtMs = 0;
         client.send(JSON.stringify({ type: 'snapshot', snapshot: this.snapshot() }));
+        client.on('message', (raw) => {
+          if (Buffer.byteLength(raw) > 512 || client.roomIdentity?.memberId !== 'james') return;
+          let message;
+          try { message = JSON.parse(String(raw)); } catch { return; }
+          if (message?.type !== 'presence' || typeof message.focused !== 'boolean') return;
+          client.roomFocusedAtMs = message.focused ? Number(this.now()) : 0;
+        });
         client.on('close', () => this.clients.delete(client));
         client.on('error', () => this.clients.delete(client));
       });
@@ -1271,6 +1428,7 @@ class TeamRoomRuntime {
         this.server = null;
       }
       await Promise.allSettled([...this.dispatchPromises]);
+      await Promise.allSettled([...this.pushPromises]);
       const uploadCleanup = await this.uploadManager.cleanupOwnedTemporaryPaths();
       this.store.close();
       this.auth = null;
@@ -1284,6 +1442,8 @@ class TeamRoomRuntime {
       this.remoteOrigin = null;
       this.remoteIngressResult = { ok: false, reason: 'team_room_remote_ingress_not_started' };
       this.allowedOrigins.clear();
+      this.pushAvailable = false;
+      this.pushUnavailableReason = null;
       removeFileIfPresent(this.manifestPath);
       removeFileIfPresent(path.join(this.credentialsRoot, 'james.json'));
       for (const member of DEFAULT_ROOM_MEMBERS.filter((candidate) => candidate.memberKind === MEMBER_KINDS.AGENT)) {
@@ -1302,6 +1462,7 @@ module.exports = {
   normalizeRemoteTeamRoomOrigin,
   DEFAULT_CLAIM_RECOVERY_INTERVAL_MS,
   DEFAULT_PAIRING_TTL_MS,
+  DEFAULT_PRESENCE_WINDOW_MS,
   DEFAULT_STALE_CLAIM_MS,
   MAX_PAIRING_ATTEMPTS_PER_WINDOW,
   MAX_REQUEST_BYTES,

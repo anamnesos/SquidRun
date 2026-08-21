@@ -45,6 +45,10 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10"></path><path d="M6.4 5.6a8 8 0 1 0 11.2 0"></path></svg>
           <span id="remoteAccessLabel">Remote access: Off</span>
         </button>
+        <button class="quiet-button" id="notificationButton" type="button" aria-label="Notification settings" aria-pressed="false" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg>
+          <span>Notifications</span>
+        </button>
       </div>
     </header>
 
@@ -138,6 +142,28 @@
       <p class="pair-expiry" id="pairExpiry">This one-use code expires in 5 minutes.</p>
       <p class="form-error" id="pairDialogError" role="alert"></p>
     </form>
+  </dialog>
+
+  <dialog class="notification-dialog" id="notificationDialog">
+    <div class="notification-dialog-card">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Your attention</p>
+          <h2>Phone notifications</h2>
+        </div>
+        <button class="dialog-close" id="notificationDialogClose" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="notification-status" id="notificationStatus">Checking this device…</p>
+      <button class="notification-toggle" id="notificationToggle" type="button">Enable notifications</button>
+      <fieldset class="quiet-hours" id="notificationQuietHours" disabled>
+        <legend>Quiet hours</legend>
+        <label>From <input id="notificationQuietStart" type="time" value="23:30"></label>
+        <label>Until <input id="notificationQuietEnd" type="time" value="07:30"></label>
+        <small>Only failure alerts can buzz during this window.</small>
+      </fieldset>
+      <p class="notification-privacy">Lock-screen text stays generic. If SquidRun moves to replacement hardware, enable notifications once again on this phone.</p>
+      <p class="form-error" id="notificationError" role="alert"></p>
+    </div>
   </dialog>
 
   <dialog class="media-lightbox" id="mediaLightbox" aria-label="Attachment viewer">

@@ -12,6 +12,7 @@ const MAX_ATTACHMENTS_PER_MESSAGE = 12;
 const MAX_CONSECUTIVE_AGENT_POSTS = 6;
 const SAME_ROOT_COVERAGE_WINDOW_MS = 45_000;
 const TEAM_ROOM_PROMPT_INSTRUCTION = 'reply via hm-room or stay silent.';
+const TEAM_ROOM_NOTIFICATION_INSTRUCTION = 'Only when James must be buzzed, add --notify: question requires --reason real_question; needs_james or failure requires --reason new_evidence_or_action or material_dissent_or_correction. Ordinary replies omit --notify.';
 
 const MEMBER_KINDS = Object.freeze({
   HUMAN: 'human',
@@ -27,6 +28,12 @@ const PARTICIPATION_REASONS = Object.freeze({
 });
 
 const PARTICIPATION_REASON_SET = new Set(Object.values(PARTICIPATION_REASONS));
+const NOTIFICATION_CLASSES = Object.freeze({
+  FAILURE: 'failure',
+  NEEDS_JAMES: 'needs_james',
+  QUESTION: 'question',
+});
+const NOTIFICATION_CLASS_SET = new Set(Object.values(NOTIFICATION_CLASSES));
 const ATTENTION_WORTHY_REASON_SET = new Set([
   PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
   PARTICIPATION_REASONS.MATERIAL_DISSENT_OR_CORRECTION,
@@ -217,21 +224,42 @@ function normalizeParticipationReason(value) {
   return PARTICIPATION_REASON_SET.has(reason) ? reason : '';
 }
 
+function normalizeRoomNotificationClass(value) {
+  const notificationClass = toTrimmedString(value).toLowerCase();
+  return NOTIFICATION_CLASS_SET.has(notificationClass) ? notificationClass : '';
+}
+
+function isRoomNotificationClassAllowed(notificationClass, participationReason) {
+  if (notificationClass === NOTIFICATION_CLASSES.QUESTION) {
+    return participationReason === PARTICIPATION_REASONS.REAL_QUESTION;
+  }
+  if ([NOTIFICATION_CLASSES.NEEDS_JAMES, NOTIFICATION_CLASSES.FAILURE].includes(notificationClass)) {
+    return [
+      PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
+      PARTICIPATION_REASONS.MATERIAL_DISSENT_OR_CORRECTION,
+    ].includes(participationReason);
+  }
+  return false;
+}
+
 /**
  * Origin-independent notification policy for James's room client.
  *
- * This deliberately fails quiet: only a trusted agent message carrying one
- * of the room's explicitly attention-worthy participation reasons may badge
- * or ping another member. Direct answers and human texture remain in-room
- * conversation, not notification noise. Push transport, permissions, and
- * subscription lifecycle belong to the final secure origin and are not part
- * of this classifier.
+ * This deliberately fails quiet: only a trusted agent message carrying both
+ * an attention-worthy participation reason and an explicit compatible
+ * notification class may badge or ping another member. Direct answers and
+ * human texture remain in-room conversation, not notification noise. Push
+ * transport, permissions, and subscription lifecycle belong to the secure
+ * origin and are not part of this classifier.
  */
 function classifyRoomMessageAttention(message = {}, viewer = {}) {
   const viewerMemberId = toTrimmedString(viewer.memberId).toLowerCase();
   const authorMemberId = toTrimmedString(message.authorId || message.author?.memberId).toLowerCase();
   const authorMemberKind = toTrimmedString(message.author?.memberKind || message.authorMemberKind).toLowerCase();
   const participationReason = normalizeParticipationReason(message.participationReason);
+  const notificationClass = normalizeRoomNotificationClass(
+    message.notificationClass || message.metadata?.notificationClass
+  );
 
   const quiet = (reason) => ({
     level: 'quiet',
@@ -245,6 +273,10 @@ function classifyRoomMessageAttention(message = {}, viewer = {}) {
   if (authorMemberId === viewerMemberId) return quiet('own_message');
   if (authorMemberKind !== MEMBER_KINDS.AGENT) return quiet('non_agent_message');
   if (!participationReason) return quiet('participation_reason_invalid');
+  if (!notificationClass) return quiet('notification_not_requested');
+  if (!isRoomNotificationClassAllowed(notificationClass, participationReason)) {
+    return quiet('notification_class_reason_mismatch');
+  }
   if (!ATTENTION_WORTHY_REASON_SET.has(participationReason)) {
     return quiet(`reason_${participationReason}`);
   }
@@ -253,6 +285,7 @@ function classifyRoomMessageAttention(message = {}, viewer = {}) {
     level: 'ping',
     shouldBadge: true,
     shouldNotify: true,
+    notificationClass,
     reason: `reason_${participationReason}`,
   };
 }
@@ -576,6 +609,16 @@ function normalizeClientPost(payload = {}, identity = {}) {
   if (trusted.identity.memberKind === MEMBER_KINDS.HUMAN && payload.agentInitiatedRoot !== undefined) {
     return resultError('human_agent_initiated_root_forbidden');
   }
+  const notificationClass = normalizeRoomNotificationClass(payload.notificationClass);
+  if (payload.notificationClass !== undefined && !notificationClass) {
+    return resultError('room_notification_class_invalid', { allowed: [...NOTIFICATION_CLASS_SET] });
+  }
+  if (trusted.identity.memberKind === MEMBER_KINDS.HUMAN && notificationClass) {
+    return resultError('human_notification_class_forbidden');
+  }
+  if (notificationClass && !isRoomNotificationClassAllowed(notificationClass, participationReason)) {
+    return resultError('room_notification_class_reason_mismatch');
+  }
   const rootReentry = payload.rootReentry === true;
   if (rootReentry && !ROOT_REENTRY_REASON_SET.has(participationReason)) {
     return resultError('room_root_reentry_reason_invalid');
@@ -598,7 +641,9 @@ function normalizeClientPost(payload = {}, identity = {}) {
     agentInitiatedRoot,
     participationReason: participationReason || null,
     rootReentry,
-    metadata: normalizedMetadata.metadata,
+    metadata: notificationClass
+      ? { ...normalizedMetadata.metadata, notificationClass }
+      : normalizedMetadata.metadata,
   };
   post.contentHash = sha256(canonicalJson(post));
   return { ok: true, identity: trusted.identity, post };
@@ -652,6 +697,7 @@ function buildActivationPrompt(input = {}) {
     body,
   ];
   if (attachmentLines.length > 0) lines.push('Attachments:', ...attachmentLines);
+  lines.push(TEAM_ROOM_NOTIFICATION_INSTRUCTION);
   lines.push(TEAM_ROOM_PROMPT_INSTRUCTION);
   return {
     ok: true,
@@ -680,10 +726,12 @@ module.exports = {
   MAX_MESSAGE_BODY_BYTES,
   MAX_MESSAGE_METADATA_BYTES,
   MEMBER_KINDS,
+  NOTIFICATION_CLASSES,
   PARTICIPATION_REASONS,
   ROOT_REENTRY_REASON_SET,
   SAME_ROOT_COVERAGE_WINDOW_MS,
   TEAM_ROOM_DB_USER_VERSION,
+  TEAM_ROOM_NOTIFICATION_INSTRUCTION,
   TEAM_ROOM_PROMPT_INSTRUCTION,
   TEAM_ROOM_SCHEMA,
   buildActivationPrompt,
@@ -695,10 +743,12 @@ module.exports = {
   findForbiddenClientIdentityField,
   findHighRiskSecret,
   isSafeIdentifier,
+  isRoomNotificationClassAllowed,
   normalizeClientPost,
   normalizeMessageKind,
   normalizeMessageMetadata,
   normalizeParticipationReason,
+  normalizeRoomNotificationClass,
   sha256,
   validateTrustedIdentity,
 };

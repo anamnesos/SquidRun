@@ -29,6 +29,15 @@
     remotePairButton: document.getElementById('remotePairButton'),
     remoteAccessButton: document.getElementById('remoteAccessButton'),
     remoteAccessLabel: document.getElementById('remoteAccessLabel'),
+    notificationButton: document.getElementById('notificationButton'),
+    notificationDialog: document.getElementById('notificationDialog'),
+    notificationDialogClose: document.getElementById('notificationDialogClose'),
+    notificationStatus: document.getElementById('notificationStatus'),
+    notificationToggle: document.getElementById('notificationToggle'),
+    notificationQuietHours: document.getElementById('notificationQuietHours'),
+    notificationQuietStart: document.getElementById('notificationQuietStart'),
+    notificationQuietEnd: document.getElementById('notificationQuietEnd'),
+    notificationError: document.getElementById('notificationError'),
     pairDialog: document.getElementById('pairDialog'),
     pairInstruction: document.getElementById('pairInstruction'),
     pairQrShell: document.getElementById('pairQrShell'),
@@ -61,6 +70,16 @@
     pairingExpiryTimer: null,
     pendingPairingCode: null,
     remoteAccess: { manageable: false, enabled: false, pending: false, reason: null, detail: null },
+    notifications: {
+      manageable: false,
+      enabled: false,
+      pending: false,
+      quietStart: '23:30',
+      quietEnd: '07:30',
+      guidance: '',
+    },
+    serviceWorkerRegistration: null,
+    presenceTimer: null,
     sending: false,
     dragDepth: 0,
     unreadCount: 0,
@@ -608,6 +627,9 @@
       if (state.socket !== socket) return;
       state.reconnectAttempt = 0;
       setConnection('connected');
+      sendPresence();
+      clearInterval(state.presenceTimer);
+      state.presenceTimer = setInterval(sendPresence, 45_000);
     });
     socket.addEventListener('message', (event) => {
       let payload;
@@ -618,6 +640,8 @@
     socket.addEventListener('close', () => {
       if (state.socket !== socket) return;
       state.socket = null;
+      clearInterval(state.presenceTimer);
+      state.presenceTimer = null;
       setConnection('disconnected');
       const waitMs = Math.min(15_000, 700 * (2 ** state.reconnectAttempt));
       state.reconnectAttempt += 1;
@@ -625,6 +649,11 @@
       state.reconnectTimer = setTimeout(connectSocket, waitMs);
     });
     socket.addEventListener('error', () => socket.close());
+  }
+
+  function sendPresence(focused = document.visibilityState === 'visible' && document.hasFocus()) {
+    if (state.socket?.readyState !== WebSocket.OPEN) return;
+    state.socket.send(JSON.stringify({ type: 'presence', focused: Boolean(focused) }));
   }
 
   function showPairScreen() {
@@ -635,6 +664,9 @@
     elements.pairButton.hidden = true;
     elements.remotePairButton.hidden = true;
     elements.remoteAccessButton.hidden = true;
+    state.notifications.manageable = false;
+    renderNotificationSettings();
+    if (elements.notificationDialog.open) elements.notificationDialog.close();
     setConnection('disconnected');
   }
 
@@ -646,6 +678,7 @@
     elements.pairButton.hidden = true;
     elements.remotePairButton.hidden = true;
     elements.remoteAccessButton.hidden = true;
+    void refreshNotificationSettings();
   }
 
   function updateSendState() {
@@ -1008,7 +1041,185 @@
 
   async function registerInstallShell() {
     if (!globalThis.isSecureContext || !('serviceWorker' in navigator)) return;
-    try { await navigator.serviceWorker.register('/team-room-sw.js', { scope: '/' }); } catch {}
+    try {
+      state.serviceWorkerRegistration = await navigator.serviceWorker.register('/team-room-sw.js', { scope: '/' });
+      return state.serviceWorkerRegistration;
+    } catch {
+      return null;
+    }
+  }
+
+  function base64UrlBytes(value) {
+    const normalized = String(value || '').replace(/-/gu, '+').replace(/_/gu, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const binary = atob(padded);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  }
+
+  function bytesEqual(left, right) {
+    const a = left ? new Uint8Array(left) : new Uint8Array();
+    const b = right ? new Uint8Array(right) : new Uint8Array();
+    return a.length === b.length && a.every((value, index) => value === b[index]);
+  }
+
+  function notificationEnvironment() {
+    if (!state.config?.notifications?.available) {
+      return { supported: false, guidance: 'Notifications are not available in this Team Room process yet.' };
+    }
+    if (!globalThis.isSecureContext || !('serviceWorker' in navigator)
+      || !('PushManager' in globalThis) || !('Notification' in globalThis)) {
+      return { supported: false, guidance: 'This browser does not support Team Room notifications.' };
+    }
+    const isIos = /iPad|iPhone|iPod/iu.test(navigator.userAgent || '');
+    const standalone = globalThis.matchMedia?.('(display-mode: standalone)')?.matches
+      || navigator.standalone === true;
+    if (isIos && !standalone) {
+      return { supported: false, guidance: 'On iPhone, add Team Room to your Home Screen first, then open that icon.' };
+    }
+    if (globalThis.Notification.permission === 'denied') {
+      return { supported: false, guidance: 'Notifications are blocked in this phone’s settings.' };
+    }
+    return { supported: true, guidance: '' };
+  }
+
+  function renderNotificationSettings() {
+    const current = state.notifications;
+    elements.notificationButton.hidden = !current.manageable;
+    elements.notificationButton.setAttribute('aria-pressed', String(current.enabled));
+    elements.notificationButton.title = current.enabled ? 'Team Room notifications are on.' : 'Team Room notifications are off.';
+    elements.notificationToggle.dataset.enabled = String(current.enabled);
+    elements.notificationToggle.textContent = current.enabled ? 'Turn off notifications' : 'Enable notifications';
+    elements.notificationToggle.disabled = current.pending || !current.supported;
+    elements.notificationQuietHours.disabled = !current.enabled || current.pending;
+    elements.notificationQuietStart.value = current.quietStart;
+    elements.notificationQuietEnd.value = current.quietEnd;
+    elements.notificationStatus.textContent = current.pending
+      ? 'Working on this device…'
+      : current.guidance
+        ? current.guidance
+        : current.enabled
+          ? 'On. We only buzz for a real question, a decision that needs you, or a failure alert.'
+          : 'Off. Nothing will ask for permission until you tap Enable.';
+  }
+
+  async function refreshNotificationSettings() {
+    const environment = notificationEnvironment();
+    state.notifications.supported = environment.supported;
+    state.notifications.guidance = environment.guidance;
+    if (!state.config?.notifications?.available || !state.authenticated) {
+      state.notifications.manageable = false;
+      renderNotificationSettings();
+      return;
+    }
+    let response;
+    let payload;
+    try {
+      ({ response, payload } = await fetchJson('/api/push/settings'));
+    } catch {
+      state.notifications.manageable = true;
+      state.notifications.supported = false;
+      state.notifications.guidance = 'Notification settings are temporarily unavailable.';
+      renderNotificationSettings();
+      return;
+    }
+    if (!payload.ok) {
+      state.notifications.manageable = false;
+      if (![401, 403].includes(response.status)) {
+        state.notifications.manageable = true;
+        state.notifications.supported = false;
+        state.notifications.guidance = 'Notification settings are temporarily unavailable.';
+      }
+      renderNotificationSettings();
+      return;
+    }
+    state.notifications.manageable = true;
+    state.notifications.enabled = payload.settings?.enabled === true;
+    state.notifications.quietStart = payload.settings?.quietStart || '23:30';
+    state.notifications.quietEnd = payload.settings?.quietEnd || '07:30';
+    renderNotificationSettings();
+  }
+
+  async function toggleNotifications() {
+    if (!state.notifications.manageable || !state.notifications.supported || state.notifications.pending) return;
+    state.notifications.pending = true;
+    elements.notificationError.textContent = '';
+    renderNotificationSettings();
+    try {
+      if (state.notifications.enabled) {
+        const registration = state.serviceWorkerRegistration || await navigator.serviceWorker.ready;
+        const removed = await fetchJson('/api/push/settings', { method: 'DELETE' });
+        if (!removed.payload.ok) throw new Error(removed.payload.reason || 'Could not turn notifications off.');
+        const subscription = await registration.pushManager.getSubscription();
+        if (subscription) await subscription.unsubscribe();
+        state.notifications.enabled = false;
+      } else {
+        // Safari requires this prompt to remain directly inside the user's click.
+        const permission = await globalThis.Notification.requestPermission();
+        if (permission !== 'granted') throw new Error('Notification permission was not granted.');
+        const registration = state.serviceWorkerRegistration || await navigator.serviceWorker.ready;
+        const applicationServerKey = base64UrlBytes(state.config.notifications.publicKey);
+        let existing = await registration.pushManager.getSubscription();
+        if (existing && !bytesEqual(existing.options?.applicationServerKey, applicationServerKey)) {
+          await existing.unsubscribe();
+          existing = null;
+        }
+        const subscription = existing || await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey,
+        });
+        const saved = await fetchJson('/api/push/settings', {
+          method: 'POST',
+          body: JSON.stringify({
+            subscription: subscription.toJSON(),
+            preferences: {
+              quietStart: state.notifications.quietStart,
+              quietEnd: state.notifications.quietEnd,
+            },
+          }),
+        });
+        if (!saved.payload.ok) {
+          if (!existing) await subscription.unsubscribe();
+          throw new Error(saved.payload.reason || 'Could not save this phone.');
+        }
+        state.notifications.enabled = true;
+      }
+    } catch (error) {
+      elements.notificationError.textContent = error.message || 'Notification change failed.';
+    } finally {
+      const environment = notificationEnvironment();
+      state.notifications.supported = environment.supported;
+      state.notifications.guidance = environment.guidance;
+      await refreshNotificationSettings();
+      state.notifications.pending = false;
+      renderNotificationSettings();
+    }
+  }
+
+  async function saveQuietHours() {
+    if (!state.notifications.enabled || state.notifications.pending) return;
+    state.notifications.pending = true;
+    elements.notificationError.textContent = '';
+    state.notifications.quietStart = elements.notificationQuietStart.value;
+    state.notifications.quietEnd = elements.notificationQuietEnd.value;
+    renderNotificationSettings();
+    try {
+      const saved = await fetchJson('/api/push/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          preferences: {
+            quietStart: state.notifications.quietStart,
+            quietEnd: state.notifications.quietEnd,
+          },
+        }),
+      });
+      if (!saved.payload.ok) throw new Error(saved.payload.reason || 'Could not save quiet hours.');
+    } catch (error) {
+      elements.notificationError.textContent = error.message || 'Quiet hours were not saved.';
+      await refreshNotificationSettings();
+    } finally {
+      state.notifications.pending = false;
+      renderNotificationSettings();
+    }
   }
 
   async function startPairing(mode = 'lan') {
@@ -1234,6 +1445,18 @@
   elements.pairButton.addEventListener('click', () => { void startPairing('lan'); });
   elements.remotePairButton.addEventListener('click', () => { void startPairing('remote'); });
   elements.remoteAccessButton.addEventListener('click', () => { void toggleRemoteAccess(); });
+  elements.notificationButton.addEventListener('click', () => {
+    elements.notificationError.textContent = '';
+    void refreshNotificationSettings();
+    elements.notificationDialog.showModal();
+  });
+  elements.notificationDialogClose.addEventListener('click', () => elements.notificationDialog.close());
+  elements.notificationDialog.addEventListener('click', (event) => {
+    if (event.target === elements.notificationDialog) elements.notificationDialog.close();
+  });
+  elements.notificationToggle.addEventListener('click', () => { void toggleNotifications(); });
+  elements.notificationQuietStart.addEventListener('change', () => { void saveQuietHours(); });
+  elements.notificationQuietEnd.addEventListener('change', () => { void saveQuietHours(); });
   elements.pairForm.addEventListener('submit', (event) => { void claimPairing(event); });
   elements.pairUrl.addEventListener('click', async () => {
     const value = elements.pairUrl.dataset.copyValue || '';
@@ -1316,11 +1539,16 @@
   });
   elements.scroll.addEventListener('scroll', () => { if (closeEnoughToBottom()) clearUnread(); }, { passive: true });
   window.addEventListener('online', () => { if (!state.socket) connectSocket(); resumeDraftUploads(); });
+  window.addEventListener('focus', () => sendPresence(true));
+  window.addEventListener('blur', () => sendPresence(false));
+  document.addEventListener('visibilitychange', () => sendPresence());
   window.addEventListener('resize', syncVisualViewport, { passive: true });
   globalThis.visualViewport?.addEventListener('resize', syncVisualViewport, { passive: true });
   globalThis.visualViewport?.addEventListener('scroll', syncVisualViewport, { passive: true });
   window.addEventListener('beforeunload', () => {
     clearTimeout(state.reconnectTimer);
+    clearInterval(state.presenceTimer);
+    sendPresence(false);
     finishActiveTypewriters();
     state.socket?.close();
     for (const item of state.attachments) if (item.objectUrl) URL.revokeObjectURL(item.objectUrl);
@@ -1334,7 +1562,7 @@
   async function boot() {
     syncVisualViewport();
     state.pendingPairingCode = consumePairingCodeFromLocation();
-    void registerInstallShell();
+    await registerInstallShell();
     elements.input.value = localStorage.getItem(draftKey) || '';
     resizeComposer();
     await restoreDraftAttachments();

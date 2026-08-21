@@ -169,6 +169,7 @@
     "sharp": "^0.34.5",
     "sqlite-vec": "^0.1.9",
     "strip-ansi": "^6.0.1",
+    "web-push": "3.6.7",
     "ws": "^8.21.0"
   },
   "overrides": {

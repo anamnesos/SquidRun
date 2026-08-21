@@ -340,6 +340,135 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     expect(wsMessage).toEqual(expect.objectContaining({ type: 'snapshot' }));
   });
 
+  test('binds push settings to one paired device, suppresses while present, and records secret-free delivery evidence', async () => {
+    const webPush = {
+      generateVAPIDKeys: jest.fn(() => ({ publicKey: `B${'a'.repeat(86)}`, privateKey: 'b'.repeat(43) })),
+      setVapidDetails: jest.fn(),
+      sendNotification: jest.fn(async () => ({ statusCode: 201 })),
+    };
+    runtime = new TeamRoomRuntime({
+      ...runtimeOptions(tempRoot, async () => ({ ok: true })),
+      pushOptions: { webPush },
+    });
+    const started = await runtime.start();
+    expect(started.ok).toBe(true);
+    const paired = runtime._issueCredential('james', 'room_web', 'paired_device', {
+      ttlMs: 30 * 24 * 60 * 60 * 1000,
+    });
+    expect(paired.ok).toBe(true);
+    const cookie = `squidrun_team_room=${paired.token}`;
+    const subscription = {
+      endpoint: 'https://push.example.test/paired-phone',
+      expirationTime: null,
+      keys: { p256dh: 'c'.repeat(65), auth: 'd'.repeat(22) },
+    };
+
+    const config = await request(started.origin, '/api/config');
+    expect(config.payload.config.notifications).toEqual(expect.objectContaining({
+      available: true,
+      publicKey: `B${'a'.repeat(86)}`,
+      requiresUserGesture: true,
+      replacementHardwareRequiresReenable: true,
+    }));
+    expect(JSON.stringify(config.payload)).not.toContain('privateKey');
+    await expect(request(started.origin, '/api/push/settings', { cookie }))
+      .resolves.toEqual(expect.objectContaining({ statusCode: 200 }));
+    await expect(request(started.origin, '/api/push/settings', {
+      method: 'POST', cookie, body: { subscription },
+    })).resolves.toEqual(expect.objectContaining({
+      statusCode: 403,
+      payload: expect.objectContaining({ reason: 'room_origin_forbidden' }),
+    }));
+    await expect(request(started.origin, '/api/push/settings', {
+      method: 'POST', cookie, origin: started.origin, body: { subscription },
+    })).resolves.toEqual(expect.objectContaining({
+      statusCode: 200,
+      payload: expect.objectContaining({ ok: true }),
+    }));
+
+    const electron = runtime.issueElectronCredential();
+    await expect(request(started.origin, '/api/push/settings', {
+      cookie: `squidrun_team_room=${electron.token}`,
+    })).resolves.toEqual(expect.objectContaining({
+      statusCode: 403,
+      payload: expect.objectContaining({ reason: 'team_room_push_paired_device_required' }),
+    }));
+
+    const socket = new WebSocket(started.origin.replace(/^http/u, 'ws') + '/ws', {
+      headers: { Cookie: cookie, Origin: started.origin },
+    });
+    await new Promise((resolve, reject) => {
+      socket.once('message', resolve);
+      socket.once('error', reject);
+    });
+    socket.send(JSON.stringify({ type: 'presence', focused: true }));
+    await waitFor(() => runtime._isMemberPresent('james'));
+
+    const cliOptions = {
+      projectRoot: tempRoot,
+      env: cliEnv('builder', '2', `pl_${'2'.repeat(32)}`),
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+    };
+    expect(await runRoomCli([
+      'post', '--reason', 'real_question', '--notify', 'question', 'Need James once.',
+    ], cliOptions)).toBe(0);
+    await waitFor(() => fs.existsSync(runtime.pushReceiptPath));
+    expect(JSON.parse(fs.readFileSync(runtime.pushReceiptPath, 'utf8'))).toEqual(expect.objectContaining({
+      class: 'question', ok: true, sent: 0, failed: 0, reason: 'viewer_present',
+    }));
+    expect(webPush.sendNotification).not.toHaveBeenCalled();
+
+    socket.send(JSON.stringify({ type: 'presence', focused: false }));
+    await waitFor(() => !runtime._isMemberPresent('james'));
+    expect(await runRoomCli([
+      'post', '--reason', 'new_evidence_or_action', '--notify', 'needs_james', 'Need James now.',
+    ], cliOptions)).toBe(0);
+    await waitFor(() => webPush.sendNotification.mock.calls.length === 1);
+    const receipt = JSON.parse(fs.readFileSync(runtime.pushReceiptPath, 'utf8'));
+    expect(receipt).toEqual(expect.objectContaining({
+      class: 'needs_james', ok: true, sent: 1, failed: 0,
+      reason: 'team_room_push_delivered',
+    }));
+    const receiptText = JSON.stringify(receipt);
+    expect(receiptText).not.toContain(subscription.endpoint);
+    expect(receiptText).not.toContain(subscription.keys.auth);
+    expect(receiptText).not.toContain('Need James now.');
+    socket.close();
+  });
+
+  test('keeps message posting live but records unavailable push transport as a failure', async () => {
+    const pushManager = { init: jest.fn(() => { throw new Error('offline'); }) };
+    runtime = new TeamRoomRuntime({
+      ...runtimeOptions(tempRoot, async () => ({ ok: true })),
+      pushManager,
+    });
+    const started = await runtime.start();
+    expect(started).toEqual(expect.objectContaining({
+      ok: true,
+      push: expect.objectContaining({ available: false, reason: 'team_room_push_unavailable' }),
+    }));
+    expect(await runRoomCli([
+      'post', '--reason', 'real_question', '--notify', 'question', 'The room post still persists.',
+    ], {
+      projectRoot: tempRoot,
+      env: cliEnv('builder', '2', `pl_${'2'.repeat(32)}`),
+      stdout: { write: () => {} },
+      stderr: { write: () => {} },
+    })).toBe(0);
+    const message = runtime.snapshot().messages.find((candidate) => candidate.body === 'The room post still persists.');
+    expect(message).toBeTruthy();
+    const receipt = JSON.parse(fs.readFileSync(runtime.pushReceiptPath, 'utf8'));
+    expect(receipt).toEqual(expect.objectContaining({
+      messageId: message.messageId,
+      class: 'question',
+      ok: false,
+      sent: 0,
+      failed: 1,
+      reason: 'team_room_push_unavailable',
+    }));
+  });
+
   test('lets the bound CLI initiate a peer-only root post with no Telegram relay', async () => {
     const paneDeliveries = [];
     runtime = new TeamRoomRuntime(runtimeOptions(tempRoot, async (delivery) => {
@@ -506,6 +635,8 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     const worker = await rawRequest(started.origin, '/team-room-sw.js');
     expect(worker.statusCode).toBe(200);
     expect(worker.body.toString('utf8')).toContain("'/team-room.webmanifest'");
+    expect(worker.body.toString('utf8')).toContain("self.addEventListener('push'");
+    expect(worker.body.toString('utf8')).toContain("self.addEventListener('notificationclick'");
     expect(worker.body.toString('utf8')).not.toContain("'/api/");
   });
 

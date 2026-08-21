@@ -7,7 +7,12 @@ const http = require('node:http');
 const path = require('node:path');
 const { getProjectRoot } = require('../config');
 const { parsePrivateNetworkOrigin } = require('../modules/main/team-room-auth');
-const { PARTICIPATION_REASONS } = require('../modules/main/team-room-contracts');
+const {
+  NOTIFICATION_CLASSES,
+  PARTICIPATION_REASONS,
+  TEAM_ROOM_NOTIFICATION_INSTRUCTION,
+  isRoomNotificationClassAllowed,
+} = require('../modules/main/team-room-contracts');
 
 const IDENTITY_FLAGS = new Set(['--as', '--author', '--member', '--member-id', '--profile', '--role', '--source']);
 const ROLE_BY_PANE = Object.freeze({ '1': 'architect', '2': 'builder', '3': 'oracle' });
@@ -21,7 +26,7 @@ function usage() {
   return [
     'Team Room',
     '',
-    '  hm-room post --reason <reason> "message"',
+    '  hm-room post --reason <reason> [--notify <class>] "message"',
     '  hm-room post --reason <reason> --stdin',
     '  hm-room reply --activation <id> --reason <reason> "message"',
     '  hm-room reply --activation <id> --reason <reason> --reentry --stdin',
@@ -29,6 +34,8 @@ function usage() {
     '  hm-room status [--json]',
     '',
     `Reasons: ${Object.values(PARTICIPATION_REASONS).join(', ')}`,
+    `Notification classes: ${Object.values(NOTIFICATION_CLASSES).join(', ')}`,
+    TEAM_ROOM_NOTIFICATION_INSTRUCTION,
     'Identity comes from the SquidRun runtime. Identity override flags are forbidden.',
   ].join('\n');
 }
@@ -65,7 +72,16 @@ function parseArgs(argv = []) {
   if (!['post', 'reply', 'list', 'status'].includes(command)) {
     return { ok: false, reason: 'room_cli_command_invalid' };
   }
-  const options = { command, json: false, stdin: false, reentry: false, activationId: null, reason: null, bodyParts: [] };
+  const options = {
+    command,
+    json: false,
+    stdin: false,
+    reentry: false,
+    activationId: null,
+    reason: null,
+    notificationClass: null,
+    bodyParts: [],
+  };
   while (args.length > 0) {
     const value = String(args.shift());
     if (value === '--json') options.json = true;
@@ -73,6 +89,13 @@ function parseArgs(argv = []) {
     else if (value === '--reentry') options.reentry = true;
     else if (value === '--activation') options.activationId = String(args.shift() || '').trim();
     else if (value === '--reason') options.reason = String(args.shift() || '').trim().toLowerCase();
+    else if (value === '--notify') {
+      const notificationClass = String(args.shift() || '').trim().toLowerCase();
+      if (!notificationClass || notificationClass.startsWith('--')) {
+        return { ok: false, reason: 'room_cli_notification_class_required' };
+      }
+      options.notificationClass = notificationClass;
+    }
     else if (value.startsWith('--')) return { ok: false, reason: `room_cli_flag_invalid:${value}` };
     else options.bodyParts.push(value);
   }
@@ -218,10 +241,19 @@ async function main(argv = process.argv.slice(2), deps = {}) {
         stderr.write('room_cli_participation_reason_invalid\n');
         return 1;
       }
+      if (parsed.notificationClass && !Object.values(NOTIFICATION_CLASSES).includes(parsed.notificationClass)) {
+        stderr.write('room_cli_notification_class_invalid\n');
+        return 1;
+      }
+      if (parsed.notificationClass && !isRoomNotificationClassAllowed(parsed.notificationClass, parsed.reason)) {
+        stderr.write('room_cli_notification_class_reason_mismatch\n');
+        return 1;
+      }
     }
     const payload = {
       body,
       clientNonce: `cli-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`,
+      ...(parsed.notificationClass ? { notificationClass: parsed.notificationClass } : {}),
       ...(parsed.command === 'reply' ? {
         activationId: parsed.activationId,
         participationReason: parsed.reason,

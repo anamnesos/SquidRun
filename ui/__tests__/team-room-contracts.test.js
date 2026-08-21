@@ -3,7 +3,9 @@
 const {
   DEFAULT_ROOM_MEMBERS,
   FORBIDDEN_CLIENT_IDENTITY_FIELDS,
+  NOTIFICATION_CLASSES,
   PARTICIPATION_REASONS,
+  TEAM_ROOM_NOTIFICATION_INSTRUCTION,
   TEAM_ROOM_PROMPT_INSTRUCTION,
   buildActivationPrompt,
   classifyRoomMessageAttention,
@@ -100,25 +102,27 @@ describe('team-room contracts', () => {
   });
 
   test.each([
-    PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
-    PARTICIPATION_REASONS.MATERIAL_DISSENT_OR_CORRECTION,
-    PARTICIPATION_REASONS.REAL_QUESTION,
-  ])('marks only explicit attention-worthy agent reason %s for badge and ping', (participationReason) => {
+    [PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION, NOTIFICATION_CLASSES.NEEDS_JAMES],
+    [PARTICIPATION_REASONS.MATERIAL_DISSENT_OR_CORRECTION, NOTIFICATION_CLASSES.FAILURE],
+    [PARTICIPATION_REASONS.REAL_QUESTION, NOTIFICATION_CLASSES.QUESTION],
+  ])('requires explicit attention class %s/%s for badge and push', (participationReason, notificationClass) => {
     expect(classifyRoomMessageAttention({
       authorId: 'builder',
       author: { memberId: 'builder', memberKind: 'agent' },
       participationReason,
+      metadata: { notificationClass },
     }, { memberId: 'james' })).toEqual({
       level: 'ping',
       shouldBadge: true,
       shouldNotify: true,
+      notificationClass,
       reason: `reason_${participationReason}`,
     });
   });
 
   test.each([
-    [PARTICIPATION_REASONS.DIRECT_ANSWER, 'reason_direct_answer'],
-    [PARTICIPATION_REASONS.HUMAN_TEXTURE, 'reason_human_texture'],
+    [PARTICIPATION_REASONS.DIRECT_ANSWER, 'notification_not_requested'],
+    [PARTICIPATION_REASONS.HUMAN_TEXTURE, 'notification_not_requested'],
     ['not_a_reason', 'participation_reason_invalid'],
     [null, 'participation_reason_invalid'],
   ])('keeps ordinary or invalid agent reason %s quiet', (participationReason, reason) => {
@@ -132,6 +136,48 @@ describe('team-room contracts', () => {
       shouldNotify: false,
       reason,
     });
+  });
+
+  test('fails quiet unless an agent deliberately marks the message for notification', () => {
+    expect(classifyRoomMessageAttention({
+      authorId: 'builder',
+      author: { memberId: 'builder', memberKind: 'agent' },
+      participationReason: PARTICIPATION_REASONS.REAL_QUESTION,
+    }, { memberId: 'james' })).toEqual({
+      level: 'quiet',
+      shouldBadge: false,
+      shouldNotify: false,
+      reason: 'notification_not_requested',
+    });
+  });
+
+  test('validates notification class against reason and forbids human-triggered buzzes', () => {
+    expect(normalizeClientPost({
+      body: 'James needs to choose.',
+      clientNonce: 'notify-ok',
+      participationReason: PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
+      notificationClass: NOTIFICATION_CLASSES.NEEDS_JAMES,
+    }, builderIdentity)).toEqual(expect.objectContaining({
+      ok: true,
+      post: expect.objectContaining({ metadata: { notificationClass: NOTIFICATION_CLASSES.NEEDS_JAMES } }),
+    }));
+    expect(normalizeClientPost({
+      body: 'Mismatched class.',
+      clientNonce: 'notify-bad-reason',
+      participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
+      notificationClass: NOTIFICATION_CLASSES.QUESTION,
+    }, builderIdentity)).toEqual(expect.objectContaining({
+      ok: false,
+      reason: 'room_notification_class_reason_mismatch',
+    }));
+    expect(normalizeClientPost({
+      body: 'Human messages never self-page.',
+      clientNonce: 'notify-human',
+      notificationClass: NOTIFICATION_CLASSES.NEEDS_JAMES,
+    }, {
+      memberId: 'james', roomId: 'main', profileName: 'main', memberKind: 'human',
+      role: 'james', source: 'room_web',
+    })).toEqual(expect.objectContaining({ ok: false, reason: 'human_notification_class_forbidden' }));
   });
 
   test('fails quiet for own, human-authored, and incomplete messages', () => {
@@ -391,6 +437,7 @@ describe('team-room contracts', () => {
     expect(result.ok).toBe(true);
     expect(result.prompt).toContain('messageId=trm-1');
     expect(result.prompt).toContain(`id=att-1 mime=image/heic bytes=42 sha256=${'ab'.repeat(32)} path=D:\\room\\objects\\photo.heic`);
+    expect(result.prompt).toContain(TEAM_ROOM_NOTIFICATION_INSTRUCTION);
     expect(result.prompt.endsWith(TEAM_ROOM_PROMPT_INSTRUCTION)).toBe(true);
     expect(result.envelope).toEqual(expect.objectContaining({
       roomMessageId: 'trm-1',

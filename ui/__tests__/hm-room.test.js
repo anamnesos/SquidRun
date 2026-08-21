@@ -8,6 +8,7 @@ const {
   readRuntimeFiles,
   renderPostError,
   resolveRuntimeRole,
+  usage,
 } = require('../scripts/hm-room');
 
 const BUILDER_LAUNCH_ID = `pl_${'2'.repeat(32)}`;
@@ -116,6 +117,33 @@ describe('hm-room CLI identity and grammar', () => {
       reason: 'new_evidence_or_action',
       reentry: false,
       stdin: true,
+    }));
+  });
+
+  test('parses explicit notification classes and rejects missing values', () => {
+    expect(parseArgs([
+      'post', '--reason', 'new_evidence_or_action', '--notify', 'needs_james', '--stdin',
+    ])).toEqual(expect.objectContaining({
+      ok: true,
+      notificationClass: 'needs_james',
+    }));
+    expect(parseArgs(['post', '--reason', 'new_evidence_or_action', '--notify']))
+      .toEqual({ ok: false, reason: 'room_cli_notification_class_required' });
+    expect(parseArgs(['post', '--reason', 'new_evidence_or_action', '--notify', '--stdin']))
+      .toEqual({ ok: false, reason: 'room_cli_notification_class_required' });
+  });
+
+  test('makes the notification class and reason mapping visible where agents use the CLI', () => {
+    expect(usage()).toContain(
+      'question requires --reason real_question; needs_james or failure requires --reason new_evidence_or_action or material_dissent_or_correction'
+    );
+    expect(usage()).toContain('Ordinary replies omit --notify.');
+    expect(parseArgs([
+      'reply', '--activation', 'tra-1', '--reason', 'real_question', '--notify', 'question', '--stdin',
+    ])).toEqual(expect.objectContaining({
+      ok: true,
+      notificationClass: 'question',
+      reason: 'real_question',
     }));
   });
 

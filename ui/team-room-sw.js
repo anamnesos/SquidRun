@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'squidrun-team-room-shell-v1';
+const CACHE_NAME = 'squidrun-team-room-shell-v2';
 const SHELL_PATHS = Object.freeze([
   '/',
   '/team-room.css',
@@ -39,4 +39,60 @@ self.addEventListener('fetch', (event) => {
       return response;
     })
     .catch(async () => (await caches.match(url.pathname)) || caches.match('/')));
+});
+
+function safePushPayload(event) {
+  try {
+    const value = event.data?.json();
+    if (value?.schema !== 'squidrun.team_room_push.v1') return null;
+    const sender = ['Mira', 'Rook', 'Vera'].includes(value.sender) ? value.sender : 'Team Room';
+    const notificationClass = ['failure', 'needs_james', 'question'].includes(value.notificationClass)
+      ? value.notificationClass
+      : '';
+    if (!notificationClass) return null;
+    const body = ({
+      failure: 'A failure needs your attention.',
+      needs_james: 'A decision needs you.',
+      question: 'There is a real question for you.',
+    })[notificationClass];
+    return {
+      title: `${sender} · Team Room`,
+      body,
+      messageId: String(value.messageId || ''),
+      notificationClass,
+      url: '/',
+    };
+  } catch {
+    return null;
+  }
+}
+
+self.addEventListener('push', (event) => {
+  const payload = safePushPayload(event);
+  if (!payload) return;
+  event.waitUntil(self.registration.showNotification(payload.title, {
+    body: payload.body,
+    icon: '/team-room-icon-192.png',
+    badge: '/team-room-icon-192.png',
+    tag: payload.messageId ? `team-room-${payload.messageId}` : 'team-room',
+    renotify: false,
+    data: {
+      messageId: payload.messageId,
+      notificationClass: payload.notificationClass,
+      url: payload.url,
+    },
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    .then(async (clients) => {
+      const existing = clients.find((client) => new URL(client.url).origin === self.location.origin);
+      if (existing) {
+        await existing.focus();
+        return existing.navigate?.('/');
+      }
+      return self.clients.openWindow('/');
+    }));
 });
