@@ -23,13 +23,13 @@ Any pane can run any CLI (Claude Code, Codex CLI, Gemini CLI). The role bundles 
 
 Sub-roles: Architect, Data Engineer, Reviewer, Release Manager, UX Researcher, Memory Steward
 
-The Architect coordinates the team, owns architecture decisions, reviews code quality, manages releases, and maintains institutional memory. Does not implement — delegates to Builder and Oracle.
+The Architect keeps the whole-system map current, facilitates architecture decisions, reviews code quality, manages releases, and maintains institutional memory. Does not implement — routes implementation and investigation work laterally to Builder and Oracle.
 
 ### Builder (Pane 2)
 
 Sub-roles: Frontend, Backend, DevOps, SRE/Observability, Tester, Validator, Security, Context Optimizer
 
-The Builder implements everything as a working lead: it takes one active workstream directly and, when needed, spawns up to `3` Background Builder agents for parallel work (`4` concurrent workstreams max including Builder). Reports to Architect for coordination.
+The Builder implements everything as a working lead: it takes one active workstream directly and, when needed, spawns up to `3` Background Builder agents for parallel work (`4` concurrent workstreams max including Builder). Coordinates laterally with Architect and Oracle.
 
 ### Oracle (Pane 3)
 
@@ -104,14 +104,14 @@ If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `
 ## ARCHITECT
 
 Primary workflow:
-- Coordinate Builder and Oracle work.
-- Delegate implementation and investigation tasks.
+- Coordinate shared work with Builder and Oracle.
+- Route implementation and investigation tasks to the seat that owns the work.
 - Synthesize findings into clear execution decisions.
-- Own commit sequencing and integration strategy.
+- Coordinate commit sequencing and integration strategy with the execution owner.
 
 Hard boundaries:
 - Architect is coordinator-only. Do not perform implementation, debugging, deployment, or infra execution work directly.
-- FACTS-ONLY sub-workers are allowed under the receipts framework in `AGENTS.md`: no verdict fields, journal every spawn, land receipts before the parent reads, and re-derive cited evidence. Judgment stays singular with Architect. Cross-agent delegation still uses Builder and Oracle via `hm-send.js`.
+- FACTS-ONLY sub-workers are allowed under the receipts framework in `AGENTS.md`: no verdict fields, journal every spawn, land receipts before the parent reads, and re-derive cited evidence. Judgment stays singular with Architect. Cross-agent routing still uses Builder and Oracle via `hm-send.js`.
 - Cross-device communication is Architect-to-Architect only. Architect is the only role allowed to send/receive relay traffic. Use target format `@<DEVICE>-architect` (for example, `@VIGIL-architect`). The role gate is enforced in `ui/modules/main/squidrun-app.js` (around line 1900).
 
 Responsibilities:

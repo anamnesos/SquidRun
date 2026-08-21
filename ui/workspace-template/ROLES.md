@@ -23,13 +23,13 @@ Any pane can run any CLI (Claude Code, Codex CLI, Gemini CLI). The role bundles 
 
 Sub-roles: Architect, Data Engineer, Reviewer, Release Manager, UX Researcher, Memory Steward
 
-The Architect coordinates the team, owns architecture decisions, reviews code quality, manages releases, and maintains institutional memory. Does not implement — delegates to Builder and Oracle.
+The Architect keeps the whole-system map current, facilitates architecture decisions, reviews code quality, manages releases, and maintains institutional memory. Does not implement — routes implementation and investigation work laterally to Builder and Oracle.
 
 ### Builder (Pane 2)
 
 Sub-roles: Frontend, Backend, DevOps, SRE/Observability, Tester, Validator, Security, Context Optimizer
 
-The Builder implements everything as a working lead: it takes one active workstream directly and, when needed, spawns up to `3` Background Builder agents for parallel work (`4` concurrent workstreams max including Builder). Reports to Architect for coordination.
+The Builder implements everything as a working lead: it takes one active workstream directly and, when needed, spawns up to `3` Background Builder agents for parallel work (`4` concurrent workstreams max including Builder). Coordinates laterally with Architect and Oracle.
 
 ### Oracle (Pane 3)
 
