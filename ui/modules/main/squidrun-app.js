@@ -64,6 +64,7 @@ const humanTimelineSidecarWindowModule = require('./human-timeline-sidecar-windo
 const spineOverlayWindowModule = require('./spine-overlay-window');
 const { verifyAppWindowVisible } = require('./app-window-visibility');
 const { createTeamRoomAppController } = require('./team-room-app-controller');
+const { createWebSocketStartupLifecycle } = require('./websocket-startup-lifecycle');
 const { resolveRuntimeInt } = require('../runtime-config');
 const {
   toNonEmptyString,
@@ -393,14 +394,6 @@ const TEAM_MEMORY_TAGGED_CLAIM_SWEEP_INTERVAL_MS = Number.parseInt(
 );
 const BRIDGE_READY_WAIT_TIMEOUT_MS = Number.parseInt(
   process.env.SQUIDRUN_BRIDGE_READY_WAIT_TIMEOUT_MS || '5000',
-  10
-);
-const WEBSOCKET_START_RETRY_BASE_MS = Number.parseInt(
-  process.env.SQUIDRUN_WEBSOCKET_START_RETRY_BASE_MS || '500',
-  10
-);
-const WEBSOCKET_START_RETRY_MAX_MS = Number.parseInt(
-  process.env.SQUIDRUN_WEBSOCKET_START_RETRY_MAX_MS || '10000',
   10
 );
 const DAEMON_CONNECT_TIMEOUT_MS = Math.max(
@@ -1438,9 +1431,6 @@ class SquidRunApp {
     this.lastInjectRouteBlock = null;
     this.mainWindowSendRaw = null;
     this.mainWindowSendInterceptInstalled = false;
-    this.websocketStartRetryTimer = null;
-    this.websocketStartRetryAttempt = 0;
-    this.websocketStartupStatus = null;
     this.supervisorBootstrapPromise = null;
     this.startupBriefingPromise = null;
     this.lastSystemCapabilities = null;
@@ -1461,6 +1451,17 @@ class SquidRunApp {
     this.runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
     this.runtimeLifecycleQueue = Promise.resolve();
     this.activeProfileName = getActiveProfileName();
+    this.websocketStartupLifecycle = createWebSocketStartupLifecycle({
+      websocketServer,
+      log,
+      resolvePortInfo: () => resolveWebSocketPortInfo({
+        profileName: this.activeProfileName || getActiveProfileName(),
+      }),
+      getSettings: () => this.settings,
+      refreshStartupHealth: (options) => this.refreshStartupHealthArtifacts(options),
+      getCurrentSessionNumber: () => this.getCurrentAppStatusSessionNumber(),
+      isShuttingDown: () => this.shuttingDown,
+    });
     this.installedDeployment = this.resolveInstalledDeployment();
     this.launchWindowProfile = {
       profileName: this.activeProfileName,
@@ -4519,142 +4520,43 @@ class SquidRunApp {
   }
 
   clearWebSocketStartRetry() {
-    if (this.websocketStartRetryTimer) {
-      clearTimeout(this.websocketStartRetryTimer);
-      this.websocketStartRetryTimer = null;
-    }
-    this.websocketStartRetryAttempt = 0;
+    return this.websocketStartupLifecycle.clearStartRetry();
   }
 
   resolveWebSocketRuntimePortInfo() {
-    return resolveWebSocketPortInfo({
-      profileName: this.activeProfileName || getActiveProfileName(),
-    });
+    return this.websocketStartupLifecycle.resolveRuntimePortInfo();
   }
 
-  buildWebSocketStatusPatch(status = this.websocketStartupStatus) {
-    const resolved = this.resolveWebSocketRuntimePortInfo();
-    const websocketClients = typeof websocketServer.getClients === 'function'
-      ? websocketServer.getClients()
-      : [];
-    const running = typeof websocketServer.isRunning === 'function'
-      ? websocketServer.isRunning()
-      : false;
-    const boundPort = typeof websocketServer.getPort === 'function'
-      ? websocketServer.getPort()
-      : null;
-    const desiredPort = Number(status?.desiredPort || status?.port || resolved.port || websocketServer.DEFAULT_PORT || 0) || null;
-    const statusPatch = {
-      running,
-      port: boundPort || desiredPort,
-      desiredPort,
-      source: status?.source || resolved.source || null,
-      clientCount: Array.isArray(websocketClients) ? websocketClients.length : 0,
-      status: running ? 'running' : (status?.status || 'starting'),
-      lastUpdatedAt: new Date().toISOString(),
-    };
-    if (status?.warning) statusPatch.warning = status.warning;
-    if (status?.error) statusPatch.error = status.error;
-    if (status?.code) statusPatch.code = status.code;
-    return statusPatch;
+  buildWebSocketStatusPatch(status) {
+    return this.websocketStartupLifecycle.buildStatusPatch(status);
   }
 
-  writeWebSocketStatus(status = this.websocketStartupStatus) {
-    if (!this.settings || typeof this.settings.writeAppStatus !== 'function') return;
-    this.settings.writeAppStatus({
-      statusPatch: {
-        websocket: this.buildWebSocketStatusPatch(status),
-      },
-    });
+  writeWebSocketStatus(status) {
+    return this.websocketStartupLifecycle.writeStatus(status);
   }
 
-  recordWebSocketStartSuccess(portInfo = this.resolveWebSocketRuntimePortInfo()) {
-    this.websocketStartupStatus = {
-      ok: true,
-      status: 'running',
-      port: portInfo.port,
-      desiredPort: portInfo.port,
-      source: portInfo.source || null,
-      warning: null,
-      error: null,
-      code: null,
-    };
-    this.writeWebSocketStatus(this.websocketStartupStatus);
+  recordWebSocketStartSuccess(portInfo) {
+    return this.websocketStartupLifecycle.recordStartSuccess(portInfo);
   }
 
-  recordWebSocketStartFailure(err, portInfo = this.resolveWebSocketRuntimePortInfo()) {
-    this.websocketStartupStatus = {
-      ok: false,
-      status: 'bind_failed',
-      port: Number(err?.port || portInfo.port || websocketServer.DEFAULT_PORT || 0) || null,
-      desiredPort: Number(portInfo.port || err?.port || websocketServer.DEFAULT_PORT || 0) || null,
-      source: portInfo.source || null,
-      warning: 'websocket_bind_failed',
-      error: err?.message || 'unknown_error',
-      code: err?.code || null,
-    };
-    this.writeWebSocketStatus(this.websocketStartupStatus);
+  recordWebSocketStartFailure(err, portInfo) {
+    return this.websocketStartupLifecycle.recordStartFailure(err, portInfo);
   }
 
   refreshStartupHealthAfterWebSocketFailure() {
-    void this.refreshStartupHealthArtifacts({
-      sessionNumber: this.getCurrentAppStatusSessionNumber(),
-    }).catch((healthErr) => {
-      log.warn('StartupHealth', `WebSocket bind failure health refresh failed: ${healthErr.message}`);
-    });
+    return this.websocketStartupLifecycle.refreshStartupHealthAfterFailure();
   }
 
   isRetryableWebSocketStartError(err) {
-    const message = String(err?.message || '');
-    return (
-      message.includes('EADDRINUSE')
-      || message.includes('address already in use')
-      || message.includes('EACCES')
-      || message.includes('comms worker exited')
-      || message.includes('comms worker timeout')
-    );
+    return this.websocketStartupLifecycle.isRetryableStartError(err);
   }
 
   getWebSocketStartRetryDelayMs(attempt) {
-    const baseMs = Number.isFinite(WEBSOCKET_START_RETRY_BASE_MS) && WEBSOCKET_START_RETRY_BASE_MS > 0
-      ? WEBSOCKET_START_RETRY_BASE_MS
-      : 500;
-    const maxMs = Number.isFinite(WEBSOCKET_START_RETRY_MAX_MS) && WEBSOCKET_START_RETRY_MAX_MS > 0
-      ? WEBSOCKET_START_RETRY_MAX_MS
-      : 10000;
-    const exponent = Math.max(0, Number(attempt || 1) - 1);
-    return Math.min(maxMs, baseMs * Math.pow(2, exponent));
+    return this.websocketStartupLifecycle.getStartRetryDelayMs(attempt);
   }
 
   scheduleWebSocketStartRetry(startOptions, err) {
-    if (this.shuttingDown) return;
-    if (!startOptions || !this.isRetryableWebSocketStartError(err)) return;
-    if (this.websocketStartRetryTimer) return;
-
-    this.websocketStartRetryAttempt += 1;
-    const attempt = this.websocketStartRetryAttempt;
-    const delayMs = this.getWebSocketStartRetryDelayMs(attempt);
-    log.warn('WebSocket', `Retrying server start in ${delayMs}ms (attempt ${attempt + 1})`);
-    this.websocketStartRetryTimer = setTimeout(async () => {
-      this.websocketStartRetryTimer = null;
-      if (this.shuttingDown) return;
-      try {
-        await websocketServer.start(startOptions);
-        this.clearWebSocketStartRetry();
-        this.recordWebSocketStartSuccess({
-          port: startOptions.port,
-          source: startOptions.portSource || this.websocketStartupStatus?.source || null,
-        });
-        log.info('WebSocket', 'Server start recovery succeeded');
-      } catch (retryErr) {
-        log.error('WebSocket', `Failed to start server: ${retryErr.message}`);
-        this.recordWebSocketStartFailure(retryErr, {
-          port: startOptions.port,
-          source: startOptions.portSource || this.websocketStartupStatus?.source || null,
-        });
-        this.scheduleWebSocketStartRetry(startOptions, retryErr);
-      }
-    }, delayMs);
+    return this.websocketStartupLifecycle.scheduleStartRetry(startOptions, err);
   }
 
   async init() {
