@@ -69,6 +69,11 @@ const mockStartupAiBriefing = {
 };
 jest.mock('../modules/startup-ai-briefing', () => mockStartupAiBriefing);
 
+const mockSeatIdentityLoader = {
+  loadSeatIdentityContext: jest.fn(() => ({ promptContext: '' })),
+};
+jest.mock('../modules/seat-identity-loader', () => mockSeatIdentityLoader);
+
 // Mock window.squidrun
 const mockSquidRun = {
   invoke: jest.fn().mockResolvedValue({ ok: true }),
@@ -214,6 +219,7 @@ describe('terminal.js module', () => {
     mockDocument.querySelectorAll.mockReturnValue([]);
     mockDocument.activeElement = null;
     mockContractPromotion.checkPromotions.mockReturnValue([]);
+    mockSeatIdentityLoader.loadSeatIdentityContext.mockReturnValue({ promptContext: '' });
     terminal.stopPromotionCheckTimer();
     terminal.setActivePaneIds(terminal.PANE_IDS);
     terminal.setInputLocked('1', true);
@@ -789,12 +795,33 @@ describe('terminal.js module', () => {
 
       const message = await terminal._internals.buildStartupIdentityMessage('2');
 
-      expect(message).toContain('# SQUIDRUN SESSION: Builder');
+      expect(message).toContain('# SQUIDRUN SESSION: Rook (Builder)');
       expect(message).toContain('AI Startup Briefing');
       expect(message).not.toContain('STARTUP RECALL');
       expect(message).not.toContain('[SQUIDRUN RECALL START]');
 
       existsSpy.mockRestore();
+    });
+
+    test('composes bounded active-seat identity before the separate shared briefing', async () => {
+      mockSeatIdentityLoader.loadSeatIdentityContext.mockReturnValueOnce({
+        promptContext: '## PERSONAL CONTINUITY — Rook (builder)\nStatus: COMPLETE',
+      });
+      mockStartupAiBriefing.readStartupBriefingForInjection.mockReturnValueOnce('## SHARED STARTUP BRIEFING\nCurrent lane: none.');
+
+      const message = await terminal._internals.buildStartupIdentityMessage('2', {
+        projectRoot: 'D:\\projects\\squidrun',
+        writeIdentityReceipt: false,
+      });
+
+      expect(mockSeatIdentityLoader.loadSeatIdentityContext).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '2',
+        runtimeRole: 'Builder',
+        projectRoot: 'D:\\projects\\squidrun',
+        writeReceipt: false,
+      }));
+      expect(message).toContain('# SQUIDRUN SESSION: Rook (Builder)');
+      expect(message.indexOf('## PERSONAL CONTINUITY')).toBeLessThan(message.indexOf('## SHARED STARTUP BRIEFING'));
     });
 
     test('uses pane runtime startup override for Squid Room app arms', async () => {
@@ -858,12 +885,13 @@ describe('terminal.js module', () => {
 
         const message = await terminal._internals.buildStartupIdentityMessage('2');
 
-        expect(message).toContain('# SQUIDRUN SESSION: Builder');
+        expect(message).toContain('# SQUIDRUN SESSION: Rook (Builder)');
         expect(message).toContain('# sideprofile Startup Bundle');
         expect(message).toContain('sideprofile case/runtime context only.');
         expect(message).not.toContain('Mira Presence Runtime');
         expect(message).not.toContain('New Mira implementation seam');
         expect(mockStartupAiBriefing.readStartupBriefingForInjection).not.toHaveBeenCalled();
+        expect(mockSeatIdentityLoader.loadSeatIdentityContext).not.toHaveBeenCalled();
 
         existsSpy.mockRestore();
         readSpy.mockRestore();
@@ -2113,7 +2141,10 @@ describe('terminal.js module', () => {
       jest.useFakeTimers();
     });
 
-    test('does not arm daemon-started pane when restored scrollback already has its session header', async () => {
+    test.each([
+      '# SQUIDRUN SESSION: Builder - Started 2026-06-22',
+      '# SQUIDRUN SESSION: Rook (Builder) - Started 2026-08-20',
+    ])('does not arm daemon-started pane when restored scrollback has recognized header %s', async (scrollback) => {
       jest.useRealTimers();
       mockSquidRun.claude.spawn.mockClear();
       terminal.setActivePaneIds(['2']);
@@ -2125,7 +2156,7 @@ describe('terminal.js module', () => {
             alive: true,
             mode: 'pty-command',
             createdAt: Date.now(),
-            scrollback: '# SQUIDRUN SESSION: Builder - Started 2026-06-22',
+            scrollback,
           },
         ],
       });

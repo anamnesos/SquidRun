@@ -483,10 +483,14 @@ describe('config.js', () => {
   });
 
   describe('PANE_DISPLAY_NAMES', () => {
-    test('keeps Mira as the pane 1 display name without changing the role contract', () => {
+    test('keeps seat-owned display names separate from stable role contracts', () => {
       expect(PANE_DISPLAY_NAMES['1']).toBe('Mira');
+      expect(PANE_DISPLAY_NAMES['2']).toBe('Rook');
+      expect(PANE_DISPLAY_NAMES['3']).toBe('Vera');
       expect(getPaneDisplayName('1')).toBe('Mira');
       expect(getPaneDisplayName('1', { includeRole: true })).toBe('Mira (Architect)');
+      expect(getPaneDisplayName('2', { includeRole: true })).toBe('Rook (Builder)');
+      expect(getPaneDisplayName('3', { includeRole: true })).toBe('Vera (Oracle)');
       expect(ROLE_ID_MAP.architect).toBe('1');
       expect(TRIGGER_TARGETS['architect.txt']).toEqual(['1']);
     });

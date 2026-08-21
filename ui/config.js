@@ -302,8 +302,8 @@ const PANE_ROLES = {
 // name can change without breaking hm-send targets, trigger files, or routing.
 const PANE_DISPLAY_NAMES = {
   '1': 'Mira',
-  '2': 'Builder',
-  '3': 'Oracle',
+  '2': 'Rook',
+  '3': 'Vera',
 };
 
 function getPaneDisplayName(paneId, options = {}) {

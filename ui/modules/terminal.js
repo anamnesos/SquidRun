@@ -21,6 +21,7 @@ const { createRecoveryController } = require('./terminal/recovery');
 const { createColdSpawnBlankRecoveryController } = require('./terminal/cold-spawn-blank-recovery');
 const { getRuntimeInjectionCapabilityDefault } = require('./terminal/injection-capabilities');
 const { readStartupBriefingForInjection } = require('./startup-ai-briefing');
+const { loadSeatIdentityContext } = require('./seat-identity-loader');
 const { isTrustQuotePaneId } = require('./work-room-terminal-visibility');
 const {
   extractClaudeSessionIdFromCommand,
@@ -40,6 +41,7 @@ const {
   WORKSPACE_PATH,
   resolveCoordPath,
   getPaneDisplayName,
+  getProjectRoot,
 } = require('../config');
 const {
   TYPING_GUARD_MS,
@@ -2743,11 +2745,32 @@ async function buildStartupIdentityMessage(paneId, options = {}) {
     return [header, runtimeOverride.startupMessage.trim()].join('\n');
   }
   const context = normalizeStartupWindowContext(options.windowContext || startupWindowContext);
+  let personalIdentityContext = '';
+  if (!isSideStartupContext(context)) {
+    try {
+      const seatIdentity = loadSeatIdentityContext({
+        paneId,
+        runtimeRole: PANE_ROLES[String(paneId)],
+        projectRoot: options.projectRoot || getProjectRoot(),
+        loadedAt: options.loadedAt,
+        nowMs: options.nowMs,
+        writeReceipt: options.writeIdentityReceipt !== false,
+      });
+      personalIdentityContext = seatIdentity.promptContext || '';
+    } catch (err) {
+      personalIdentityContext = [
+        `## PERSONAL CONTINUITY — ${role}`,
+        'Status: PARTIAL',
+        `Identity reader failed: ${err.message}`,
+        'Do not substitute another seat or invent missing continuity.',
+      ].join('\n');
+    }
+  }
   const [briefingSummary, healthSummary] = await Promise.all([
     Promise.resolve(fetchStartupAiBriefing({ windowContext: context })),
     Promise.resolve(fetchStartupHealthSummary({ windowContext: context })),
   ]);
-  return [header, briefingSummary, healthSummary].filter(Boolean).join('\n');
+  return [header, personalIdentityContext, briefingSummary, healthSummary].filter(Boolean).join('\n');
 }
 
 async function runStartupIdentityAttempt(paneId, state, reason) {

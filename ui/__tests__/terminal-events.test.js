@@ -80,10 +80,10 @@ jest.mock('../modules/terminal/agent-colors', () => ({
 jest.mock('../config', () => ({
   PANE_IDS: ['1', '2', '3'],
   PANE_ROLES: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
-  PANE_DISPLAY_NAMES: { '1': 'Mira', '2': 'Builder', '3': 'Oracle' },
+  PANE_DISPLAY_NAMES: { '1': 'Mira', '2': 'Rook', '3': 'Vera' },
   getPaneDisplayName: (paneId, options = {}) => {
     const roles = { '1': 'Architect', '2': 'Builder', '3': 'Oracle' };
-    const displayNames = { '1': 'Mira', '2': 'Builder', '3': 'Oracle' };
+    const displayNames = { '1': 'Mira', '2': 'Rook', '3': 'Vera' };
     const role = roles[String(paneId)] || `Pane ${paneId}`;
     const display = displayNames[String(paneId)] || role;
     return options.includeRole === true && display !== role ? `${display} (${role})` : display;
@@ -425,7 +425,7 @@ describe('Terminal Events', () => {
       const startupCall = mockInjectionController.sendToPane.mock.calls.find((args) => (
         args[0] === '3'
         && typeof args[1] === 'string'
-        && args[1].includes('# SQUIDRUN SESSION: Oracle - Started')
+        && args[1].includes('# SQUIDRUN SESSION: Vera (Oracle) - Started')
       ));
       expect(startupCall).toBeDefined();
       expect(startupCall[2]).toEqual(expect.objectContaining({
