@@ -79,6 +79,7 @@ function createDefaultContext(overrides = {}) {
     daemonClient: {
       connected: false,
       spawn: jest.fn(),
+      spawnAndWait: jest.fn(),
       write: jest.fn(),
       resize: jest.fn(),
       kill: jest.fn(),

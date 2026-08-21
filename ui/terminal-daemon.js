@@ -57,9 +57,17 @@ const {
   claudeSessionExists,
   resolveResumeAppendFlags,
   stripClaudeResumeFlags,
+  stripCodexResumeSubcommand,
   isClaudeSessionInUseError,
+  advanceCodexResumeFailureBuffer,
+  decideCodexMissingResumeRecovery,
+  decideCodexResumeFailureAuthority,
 } = require('./modules/cli-resume-invocation');
 const { ensurePaneSessionId, remintPaneSessionId } = require('./modules/pane-session-id-store');
+const {
+  loadValidatedBinding: loadValidatedCodexBinding,
+  clearPaneBinding: clearCodexPaneBinding,
+} = require('./modules/codex-pane-session-store');
 const { AddressedTerminalSpawnCoordinator } = require('./modules/addressed-terminal-spawn');
 
 // ============================================================
@@ -478,6 +486,7 @@ function checkGhostText(paneId, data) {
 const SESSION_FILE_PATH = resolveCoordPath('runtime/session-state.json', { forWrite: true });
 const RESTART_SCROLLBACK_FILE_PATH = resolveCoordPath('runtime/terminal-restart-scrollback.json', { forWrite: true });
 const PANE_SESSION_IDS_FILE_PATH = resolveCoordPath('runtime/pane-session-ids.json', { forWrite: true });
+const CODEX_PANE_SESSIONS_FILE_PATH = resolveCoordPath('runtime/codex-pane-sessions.json', { forWrite: true });
 let restartScrollbackSnapshot = loadRestartScrollbackSnapshot(RESTART_SCROLLBACK_FILE_PATH);
 let restartScrollbackSaveTimer = null;
 
@@ -1457,7 +1466,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   if (normalizedWorkDir.includes('.app/contents/') || normalizedWorkDir.includes('app.asar')) {
     workDir = getPackagedWorkspaceFallbackDir();
   }
-  const paneCommand = typeof options.paneCommand === 'string'
+  let paneCommand = typeof options.paneCommand === 'string'
     ? options.paneCommand
     : '';
   const paneRuntime = detectCliRuntimeFromCommand(paneCommand);
@@ -1540,24 +1549,60 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   // NORMAL MODE: Spawn real PTY
   const spawnCommandOnCreate = options.spawnCommandOnCreate === true && Boolean(paneCommand);
   // Restart continuity: id-addressed CLI session resume (shared-cwd-safe).
-  // claude panes get a stable per-pane UUID; create-vs-resume gates on whether
-  // that CLI session ALREADY EXISTS in claude's store (NOT on the scrollback
-  // snapshot). codex arms stay cold by design (no pin-at-creation + shared cwd).
+  // Claude panes get a stable per-pane UUID. Codex panes use only a separately
+  // stored exact id captured from their own SessionStart hook. Shared cwd,
+  // newest file, content matching and `--last` never select a Codex session.
   let resumeAppendFlags = '';
   let resumeDecision = null;
   if (spawnCommandOnCreate) {
-    if (resumeStrategyForCommand(paneCommand) === 'session-id') {
+    const resumeStrategy = resumeStrategyForCommand(paneCommand);
+    if (resumeStrategy === 'session-id') {
       const { sessionId } = ensurePaneSessionId(PANE_SESSION_IDS_FILE_PATH, paneId);
       const sessionExists = claudeSessionExists(workDir, sessionId);
       const decision = resolveResumeAppendFlags({ command: paneCommand, sessionId, sessionExists });
       resumeDecision = decision;
       resumeAppendFlags = decision.flags;
       logInfo(`[resume] pane ${paneId}: ${decision.mode} (${decision.cli}) sessionId=${decision.sessionId || sessionId}${decision.flags ? ` -> ${decision.flags}` : ''}${decision.reason ? ` - ${decision.reason}` : ''}`);
+    } else if (resumeStrategy === 'captured-session-id') {
+      const explicit = resolveResumeAppendFlags({ command: paneCommand });
+      let decision = explicit;
+      if (explicit.mode === 'unsafe-explicit-resume-refused') {
+        paneCommand = stripCodexResumeSubcommand(paneCommand);
+        decision = {
+          ...explicit,
+          mode: 'cold',
+          unsafeExplicitResumeRefused: true,
+        };
+      } else if (explicit.mode !== 'already-pinned') {
+        const loaded = loadValidatedCodexBinding(CODEX_PANE_SESSIONS_FILE_PATH, paneId, {
+          expectedCwd: workDir,
+        });
+        decision = loaded.ok
+          ? {
+            ...resolveResumeAppendFlags({
+              command: paneCommand,
+              sessionId: loaded.binding.sessionId,
+              sessionExists: true,
+            }),
+            bindingSnapshot: {
+              sessionId: loaded.binding.sessionId,
+              paneLaunchId: loaded.binding.paneLaunchId,
+              boundAt: loaded.binding.boundAt,
+            },
+          }
+          : {
+            ...explicit,
+            reason: `codex binding refused: ${loaded.reason}`,
+            bindingReason: loaded.reason,
+          };
+      }
+      resumeDecision = decision;
+      resumeAppendFlags = decision.flags || '';
+      logInfo(`[resume] pane ${paneId}: ${decision.mode} (${decision.cli})${decision.sessionId ? ` sessionId=${decision.sessionId}` : ''}${decision.flags ? ` -> ${decision.flags}` : ''}${decision.reason ? ` - ${decision.reason}` : ''}`);
     } else {
-      // Explicit, logged cold-start so it reads as a deliberate v1 limit.
       const decision = resolveResumeAppendFlags({ command: paneCommand });
       resumeDecision = decision;
-      logInfo(`[resume] pane ${paneId}: cold-start — ${decision.reason}`);
+      logInfo(`[resume] pane ${paneId}: cold-start - ${decision.reason}`);
     }
   }
   const invocation = spawnCommandOnCreate
@@ -1588,6 +1633,11 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     resumeAppendFlags,
     claudeSessionDecision: resumeDecision,
     claudeCollisionRecoveryAttempted: options.claudeCollisionRecoveryAttempted === true,
+    codexResumeRecoveryAttempted: options.codexResumeRecoveryAttempted === true,
+    codexResumeFailureHandled: false,
+    codexResumeFailureCandidate: null,
+    codexResumeStartupBuffer: '',
+    codexResumeStartupDeadline: Date.now() + 30_000,
     createdAt: Date.now(), // Track terminal creation time (for reattach guard)
     lastActivity: Date.now(), // Track last PTY output
     lastMeaningfulActivity: Date.now(), // Smart Watchdog: last non-spinner output
@@ -1650,6 +1700,24 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       }, 50);
     }
 
+    if (
+      spawnCommandOnCreate
+      && resumeDecision?.cli === 'codex'
+      && resumeDecision?.mode === 'resume'
+      && resumeDecision?.sessionId
+      && !terminalInfo.codexResumeFailureHandled
+    ) {
+      const advanced = advanceCodexResumeFailureBuffer(
+        terminalInfo.codexResumeStartupBuffer,
+        data
+      );
+      terminalInfo.codexResumeStartupBuffer = advanced.buffer;
+      const failure = Date.now() <= terminalInfo.codexResumeStartupDeadline
+        ? advanced.failure
+        : null;
+      if (failure) terminalInfo.codexResumeFailureCandidate = failure;
+    }
+
     broadcast({
       event: 'data',
       paneId,
@@ -1663,6 +1731,47 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   ptyProcess.onExit(({ exitCode }) => {
     logInfo(`Terminal ${paneId} exited with code ${exitCode}`);
     terminalInfo.alive = false;
+    const codexFailureAuthority = decideCodexResumeFailureAuthority({
+      candidate: terminalInfo.codexResumeFailureCandidate,
+      processExited: true,
+      exitCode,
+      recoveryAttempted: terminalInfo.codexResumeRecoveryAttempted,
+    });
+    if (codexFailureAuthority.action === 'hold_active_writer') {
+      terminalInfo.codexResumeFailureHandled = true;
+      logError(
+        `[resume] Codex pane ${paneId} exact session ${resumeDecision?.sessionId || 'unknown'} exited after reporting an active writer; refusing kill or fallback`
+      );
+    } else if (codexFailureAuthority.action === 'inspect_binding') {
+      terminalInfo.codexResumeFailureHandled = true;
+      terminalInfo.codexResumeRecoveryAttempted = true;
+      const cleared = clearCodexPaneBinding(CODEX_PANE_SESSIONS_FILE_PATH, paneId, {
+        expectedSessionId: resumeDecision?.sessionId,
+        expectedBinding: resumeDecision?.bindingSnapshot,
+      });
+      const recovery = decideCodexMissingResumeRecovery(cleared);
+      if (recovery.action === 'hold_rotated') {
+        logWarn(
+          `[resume] Codex pane ${paneId} exact session ${resumeDecision?.sessionId || 'unknown'} failed to resume; preserved refreshed binding ${recovery.currentSessionId} and stopped without another spawn (${recovery.reason})`
+        );
+      } else if (recovery.action === 'retry_cold') {
+        logWarn(
+          `[resume] Codex pane ${paneId} exact session ${resumeDecision?.sessionId || 'unknown'} failed to resume; ${recovery.reason} and retrying cold once`
+        );
+        setTimeout(() => {
+          spawnTerminal(paneId, workDir, dryRun, {
+            ...options,
+            paneCommand,
+            spawnCommandOnCreate: true,
+            codexResumeRecoveryAttempted: true,
+          });
+        }, 100);
+      } else {
+        logError(
+          `[resume] Codex pane ${paneId} failed resume could not clear its binding (${recovery.reason}); refusing automatic retry`
+        );
+      }
+    }
     addressedSpawnCoordinator.releaseTerminal(terminalInfo, {
       reason: 'process_exit',
       recoveryEvent: 'pty_exit',

@@ -18,18 +18,14 @@ const path = require('path');
 //    ("Invalid session ID. Must be a valid UUID."). `--session-id` only succeeds
 //    the first time it creates the id ("...is already in use." on reuse), so
 //    create-vs-resume gates on whether the session already exists.
-//  - codex: `codex resume <id>` can resume by id, BUT codex has NO pin-at-creation
-//    flag (no --session-id analog) and `codex resume --last` is cwd-scoped. With 4
-//    arms sharing one cwd, --last collides all four onto one session. The only
-//    per-arm-correct path is discover-then-persist by session CONTENT, which is
-//    too fragile for v1 (re-introduces the collision at discovery time). So codex
-//    arms stay COLD by design.
-//
-// REVISIT codex-arm resume IF codex adds pin/name-at-creation OR we add
-// content-based session disambiguation.
+//  - codex: `codex resume <id>` resumes an exact id. Codex still has no
+//    pin-at-creation flag and `--last` is cwd-scoped, so --last is forbidden.
+//    SquidRun instead captures the runtime's own exact session id from Codex's
+//    SessionStart hook, bound to pane/role/profile/cwd/transcript provenance.
+//    That discovered id is safe to resume because shared cwd never selects it.
 const CLI_RESUME_STRATEGY = {
   claude: 'session-id', // create-or-resume by per-pane UUID
-  codex: 'none',        // cold-start by design (no pin-at-creation + shared cwd)
+  codex: 'captured-session-id', // exact hook-captured id only; NEVER --last
 };
 
 // LANDMINE: claude `--fork-session` mints a NEW session id when resuming, which
@@ -38,6 +34,10 @@ const FORBIDDEN_CLAUDE_FLAGS = ['--fork-session', '-c', '--continue'];
 const CLAUDE_RESUME_FLAG_PATTERN = /(?:^|\s)(?:--session-id|--resume)(?:=|\s+)([^\s"']+)/i;
 const CLAUDE_MODEL_FLAG_PATTERN = /(?:^|\s)--model(?:=|\s+)(?:"([^"]+)"|'([^']+)'|([^\s"']+))/i;
 const CLAUDE_SESSION_IN_USE_PATTERN = /session(?:\s+id)?[^.\n\r]*already\s+in\s+use|already\s+in\s+use[^.\n\r]*session(?:\s+id)?/i;
+const CODEX_RESUME_SUBCOMMAND_PATTERN = /(?:^|\s)resume(?:\s+([^\s"']+))?(?=\s|$)/i;
+const EXACT_SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CODEX_ACTIVE_WRITER_PATTERN = /already\s+has\s+an\s+active\s+writer|active\s+(?:thread\s+)?writer[^\n\r]*(?:in\s+use|locked)|thread[-\s]writer[^\n\r]*(?:in\s+use|locked)/i;
+const CODEX_RESUME_MISSING_PATTERN = /no\s+saved\s+session\s+found\s+with\s+id|no\s+rollout\s+found|failed\s+to\s+resume\s+session[^\n\r]*(?:not\s+found|missing|corrupt|malformed|invalid)/i;
 
 // Identify the resume-relevant CLI from the leading executable token only.
 // Does NOT default to any CLI: an unrecognized command returns null.
@@ -59,6 +59,48 @@ function resumeStrategyForCommand(command = '') {
   return CLI_RESUME_STRATEGY[cli] || 'none';
 }
 
+function decideCodexMissingResumeRecovery(clearResult) {
+  if (!clearResult || clearResult.ok !== true) {
+    return {
+      action: 'refuse',
+      reason: clearResult?.reason || 'binding_clear_failed',
+    };
+  }
+  if (clearResult.rotated === true) {
+    return {
+      action: 'hold_rotated',
+      reason: 'binding_rotated_during_recovery',
+      currentSessionId: clearResult.currentSessionId || null,
+    };
+  }
+  return {
+    action: 'retry_cold',
+    reason: clearResult.cleared === true
+      ? 'rejected_binding_cleared'
+      : 'rejected_binding_already_absent',
+  };
+}
+
+function decideCodexResumeFailureAuthority(input = {}) {
+  const candidate = input.candidate === 'active_writer' || input.candidate === 'missing_or_corrupt'
+    ? input.candidate
+    : null;
+  if (!candidate) return { action: 'none', reason: 'no_resume_failure_candidate' };
+  if (input.processExited !== true) {
+    return { action: 'observe_only', reason: 'process_still_live', candidate };
+  }
+  if (!Number.isFinite(Number(input.exitCode)) || Number(input.exitCode) === 0) {
+    return { action: 'none', reason: 'resume_process_did_not_fail', candidate };
+  }
+  if (candidate === 'active_writer') {
+    return { action: 'hold_active_writer', reason: 'active_writer', candidate };
+  }
+  if (input.recoveryAttempted === true) {
+    return { action: 'none', reason: 'recovery_already_attempted', candidate };
+  }
+  return { action: 'inspect_binding', reason: 'failed_resume_process_confirmed', candidate };
+}
+
 function extractClaudeSessionIdFromCommand(command = '') {
   const match = String(command || '').match(CLAUDE_RESUME_FLAG_PATTERN);
   return match ? match[1] : null;
@@ -73,6 +115,24 @@ function stripClaudeResumeFlags(command = '') {
     .replace(/(?:^|\s)(?:--session-id|--resume)(?:=|\s+)(?:"[^"]+"|'[^']+'|\S+)/ig, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function extractCodexResumeSessionIdFromCommand(command = '') {
+  if (detectCli(command) !== 'codex') return null;
+  const match = String(command || '').match(CODEX_RESUME_SUBCOMMAND_PATTERN);
+  return match ? (match[1] || null) : null;
+}
+
+function hasCodexResumeSubcommand(command = '') {
+  return detectCli(command) === 'codex' && CODEX_RESUME_SUBCOMMAND_PATTERN.test(String(command || ''));
+}
+
+function stripCodexResumeSubcommand(command = '') {
+  const text = String(command || '').trim();
+  if (detectCli(text) !== 'codex') return text;
+  const match = CODEX_RESUME_SUBCOMMAND_PATTERN.exec(text);
+  if (!match) return text;
+  return text.slice(0, match.index).trim() || 'codex';
 }
 
 function normalizeClaudeModelId(value = '') {
@@ -129,6 +189,22 @@ function isClaudeSessionInUseError(output = '') {
   return CLAUDE_SESSION_IN_USE_PATTERN.test(String(output || ''));
 }
 
+function classifyCodexResumeFailure(output = '') {
+  const text = String(output || '');
+  if (CODEX_ACTIVE_WRITER_PATTERN.test(text)) return 'active_writer';
+  if (CODEX_RESUME_MISSING_PATTERN.test(text)) return 'missing_or_corrupt';
+  return null;
+}
+
+function advanceCodexResumeFailureBuffer(previous = '', chunk = '', maxBytes = 8192) {
+  const cleanChunk = String(chunk || '')
+    .replace(/\x1B\][^\x07]*(?:\x07|\x1B\\)/g, '')
+    .replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+  const limit = Number.isInteger(maxBytes) && maxBytes > 0 ? maxBytes : 8192;
+  const buffer = `${String(previous || '')}${cleanChunk}`.slice(-limit);
+  return { buffer, failure: classifyCodexResumeFailure(buffer) };
+}
+
 // claude session store layout (verified by probe):
 //   ~/.claude/projects/<encodedCwd>/<sessionId>.jsonl
 // where encodedCwd replaces drive-colon and path separators with '-'
@@ -157,7 +233,8 @@ function claudeSessionExists(cwd, sessionId, options = {}) {
 //
 // Returns one of (claude): `--resume <uuid>` (exists) | `--session-id <uuid>`
 // (create) | '' (no id). Never `--continue`, never `--fork-session`.
-// Returns '' for codex (cold by design) and unknown CLIs.
+// Returns `resume <exact-id>` for a validated Codex binding. Never --last.
+// Returns '' for a missing/invalid Codex binding and unknown CLIs.
 function resolveResumeAppendFlags({ command, sessionId, sessionExists } = {}) {
   const cli = detectCli(command);
   const strategy = cli ? (CLI_RESUME_STRATEGY[cli] || 'none') : 'none';
@@ -183,15 +260,55 @@ function resolveResumeAppendFlags({ command, sessionId, sessionExists } = {}) {
     return { flags: `--session-id ${sessionId}`, cli, strategy, mode: 'create', sessionId };
   }
 
-  // 'none' — codex arms (shared-cwd cross-wire risk) or unknown CLI.
+  if (strategy === 'captured-session-id') {
+    if (hasCodexResumeSubcommand(command)) {
+      const explicitSessionId = extractCodexResumeSessionIdFromCommand(command);
+      if (!EXACT_SESSION_ID_PATTERN.test(String(explicitSessionId || ''))) {
+        return {
+          flags: '',
+          cli,
+          strategy,
+          mode: 'unsafe-explicit-resume-refused',
+          sessionId: null,
+          reason: 'codex explicit resume target is not an exact UUID',
+        };
+      }
+      return {
+        flags: '',
+        cli,
+        strategy,
+        mode: 'already-pinned',
+        sessionId: explicitSessionId,
+        reason: 'codex resume subcommand already present',
+      };
+    }
+    if (!sessionId) {
+      return {
+        flags: '', cli, strategy, mode: 'cold', reason: 'codex exact pane binding absent',
+      };
+    }
+    if (sessionExists !== true) {
+      return {
+        flags: '', cli, strategy, mode: 'cold', sessionId,
+        reason: 'codex exact pane binding is not locally revalidated',
+      };
+    }
+    return {
+      flags: `resume ${sessionId}`,
+      cli,
+      strategy,
+      mode: 'resume',
+      sessionId,
+    };
+  }
+
+  // 'none' — unknown CLI.
   return {
     flags: '',
     cli,
     strategy: 'none',
     mode: 'cold',
-    reason: cli === 'codex'
-      ? 'codex: no pin-at-creation + shared cwd -> cold-start by design, see ARCHITECTURE'
-      : 'unknown CLI: bare command (no resume)',
+    reason: 'unknown CLI: bare command (no resume)',
   };
 }
 
@@ -200,16 +317,27 @@ module.exports = {
   FORBIDDEN_CLAUDE_FLAGS,
   CLAUDE_RESUME_FLAG_PATTERN,
   CLAUDE_MODEL_FLAG_PATTERN,
+  CODEX_RESUME_SUBCOMMAND_PATTERN,
+  CODEX_ACTIVE_WRITER_PATTERN,
+  CODEX_RESUME_MISSING_PATTERN,
+  EXACT_SESSION_ID_PATTERN,
   detectCli,
+  decideCodexMissingResumeRecovery,
+  decideCodexResumeFailureAuthority,
   resumeStrategyForCommand,
   extractClaudeSessionIdFromCommand,
   hasClaudeResumeFlag,
   stripClaudeResumeFlags,
+  extractCodexResumeSessionIdFromCommand,
+  hasCodexResumeSubcommand,
+  stripCodexResumeSubcommand,
   normalizeClaudeModelId,
   parseClaudeModelFromCommand,
   readClaudeDefaultModel,
   ensureClaudeModelFlag,
   isClaudeSessionInUseError,
+  classifyCodexResumeFailure,
+  advanceCodexResumeFailureBuffer,
   encodeClaudeProjectDir,
   claudeSessionStorePath,
   claudeSessionExists,

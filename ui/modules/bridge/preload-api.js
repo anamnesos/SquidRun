@@ -121,6 +121,8 @@ function createPreloadApi(ipcRenderer) {
       releaseStartupInjection: (payload = {}) => ipc.invoke('startup-injection-release', payload),
       beginPaneRestart: (payload = {}) => ipc.invoke('pane-restart-begin', payload),
       completePaneRestart: (payload = {}) => ipc.invoke('pane-restart-complete', payload),
+      commitCodexFreshSession: (paneId, payload = {}) =>
+        ipc.invoke('codex-fresh-session-commit', paneId, payload),
       confirmCodexComputerUseGeneration: (paneId, payload = {}) =>
         ipc.invoke('codex-computer-use-confirm-generation', paneId, payload),
       getCodexComputerUseListWindowsPlan: (paneId, payload = {}) =>

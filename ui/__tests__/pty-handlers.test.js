@@ -14,11 +14,47 @@ const os = require('os');
 const { encodeClaudeProjectDir } = require('../modules/cli-resume-invocation');
 const { loadPaneSessionIds } = require('../modules/pane-session-id-store');
 const {
+  captureBinding: captureCodexPaneBinding,
+  loadStore: loadCodexPaneSessionStore,
+} = require('../modules/codex-pane-session-store');
+const {
   buildCodexComputerUseProofInvocation: buildActualCodexComputerUseProofInvocation,
   sha256File: sha256ActualFile,
 } = require('../modules/main/codex-computer-use-proof');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CODEX_TEST_IDS = {
+  builder: '11111111-1111-4111-8111-111111111111',
+  oracle: '22222222-2222-4222-8222-222222222222',
+  rotatedBuilder: '33333333-3333-4333-8333-333333333333',
+};
+
+function seedCodexPaneBinding({ deps, cwd, paneId, role, sessionId }) {
+  const sessionRoot = path.join(deps.resumeHomeDir, '.codex', 'sessions', '2026', '08', '20');
+  fs.mkdirSync(sessionRoot, { recursive: true });
+  const transcriptPath = path.join(sessionRoot, `rollout-test-${sessionId}.jsonl`);
+  fs.writeFileSync(transcriptPath, `${JSON.stringify({
+    type: 'session_meta',
+    payload: { session_id: sessionId, id: sessionId, cwd },
+  })}\n`, 'utf8');
+  const result = captureCodexPaneBinding(deps.codexPaneSessionsFilePath, {
+    paneId,
+    role,
+    profile: 'main',
+    sessionId,
+    threadId: sessionId,
+    envSessionId: sessionId,
+    envThreadId: sessionId,
+    cwd,
+    projectRoot: cwd,
+    expectedCwd: cwd,
+    transcriptPath,
+    paneLaunchId: `pl_${String(paneId).repeat(32)}`,
+    appGeneration: 'app-session-518',
+  }, { homeDir: deps.resumeHomeDir });
+  expect(result).toMatchObject({ ok: true });
+  return transcriptPath;
+}
 
 // Mock electron clipboard
 jest.mock('electron', () => ({
@@ -62,10 +98,18 @@ describe('PTY Handlers', () => {
     ctx = createDefaultContext({ ipcMain: harness.ipcMain });
     deps = createDepsMock();
     deps.paneSessionIdsFilePath = path.join(tmpDir, 'pane-session-ids.json');
+    deps.codexPaneSessionsFilePath = path.join(tmpDir, 'codex-pane-sessions.json');
     deps.resumeHomeDir = path.join(tmpDir, 'home');
     deps.claudeModelHomeDir = path.join(tmpDir, 'claude-model-home');
     deps.codexComputerUsePreflightClaims = new Map();
     registerPtyHandlers(ctx, deps);
+    ctx.daemonClient.spawnAndWait.mockResolvedValue({
+      ok: true,
+      status: 'spawned',
+      reason: 'daemon_pane_spawn_observed',
+      paneId: '2',
+      pid: 4518,
+    });
   });
 
   afterEach(() => {
@@ -415,6 +459,181 @@ describe('PTY Handlers', () => {
           spawnCommandOnCreate: true,
         }
       );
+    });
+
+    test('initial auto-spawn resumes panes 2 and 3 by their separate exact Codex ids', async () => {
+      const cwd = path.join(tmpDir, 'shared-codex-cwd');
+      fs.mkdirSync(cwd, { recursive: true });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.spawn.mockReturnValue(true);
+      ctx.currentSettings.autonomyConsentGiven = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const builder = await harness.invoke('pty-create', '2', cwd, { spawnCommandOnCreate: true });
+      const oracle = await harness.invoke('pty-create', '3', cwd, { spawnCommandOnCreate: true });
+
+      expect(builder.paneCommand).toBe(`codex resume ${CODEX_TEST_IDS.builder}`);
+      expect(oracle.paneCommand).toBe(`codex resume ${CODEX_TEST_IDS.oracle}`);
+      expect(builder.paneCommand).not.toContain('--last');
+      expect(oracle.paneCommand).not.toContain('--last');
+    });
+
+    test('fresh initial auto-spawn clears only the selected Codex binding after acceptance', async () => {
+      const cwd = path.join(tmpDir, 'fresh-codex-cwd');
+      fs.mkdirSync(cwd, { recursive: true });
+      const builderTranscript = seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.spawn.mockReturnValue(true);
+      ctx.currentSettings.autonomyConsentGiven = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const result = await harness.invoke('pty-create', '2', cwd, {
+        spawnCommandOnCreate: true,
+        freshSession: true,
+      });
+      const store = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(result.paneCommand).toBe('codex');
+      expect(ctx.daemonClient.spawnAndWait).toHaveBeenCalledWith(
+        '2',
+        cwd,
+        false,
+        null,
+        process.platform === 'win32'
+          ? expect.objectContaining({ TEMP: expect.any(String), TMP: expect.any(String) })
+          : null,
+        { paneCommand: 'codex', spawnCommandOnCreate: true }
+      );
+      expect(result.clearedCodexBinding).toMatchObject({ ok: true, cleared: true, paneId: '2' });
+      expect(store.store.panes['2']).toBeUndefined();
+      expect(store.store.panes['3'].sessionId).toBe(CODEX_TEST_IDS.oracle);
+      expect(fs.existsSync(builderTranscript)).toBe(true);
+    });
+
+    test('fresh initial auto-spawn preserves a new binding captured by the hook before clear', async () => {
+      const cwd = path.join(tmpDir, 'fresh-hook-race-cwd');
+      fs.mkdirSync(cwd, { recursive: true });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.spawnAndWait.mockImplementation(async () => {
+        seedCodexPaneBinding({
+          deps,
+          cwd,
+          paneId: '2',
+          role: 'builder',
+          sessionId: CODEX_TEST_IDS.rotatedBuilder,
+        });
+        return { ok: true, status: 'spawned', paneId: '2', pid: 4519 };
+      });
+      ctx.currentSettings.autonomyConsentGiven = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const result = await harness.invoke('pty-create', '2', cwd, {
+        spawnCommandOnCreate: true,
+        freshSession: true,
+      });
+      const store = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(result.success).toBe(true);
+      expect(result.clearedCodexBinding).toMatchObject({
+        ok: true,
+        cleared: false,
+        rotated: true,
+        currentSessionId: CODEX_TEST_IDS.rotatedBuilder,
+      });
+      expect(store.store.panes['2'].sessionId).toBe(CODEX_TEST_IDS.rotatedBuilder);
+      expect(store.store.panes['3'].sessionId).toBe(CODEX_TEST_IDS.oracle);
+    });
+
+    test('fresh initial auto-spawn rolls back and stays unconsumed when post-accept clear fails', async () => {
+      const cwd = path.join(tmpDir, 'fresh-clear-failure-cwd');
+      fs.mkdirSync(cwd, { recursive: true });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.kill.mockReturnValue(true);
+      ctx.daemonClient.spawnAndWait.mockImplementation(async () => {
+        fs.writeFileSync(deps.codexPaneSessionsFilePath, '{ malformed after spawn', 'utf8');
+        return { ok: true, status: 'spawned', paneId: '2', pid: 4520 };
+      });
+      ctx.currentSettings.autonomyConsentGiven = false;
+      ctx.currentSettings.paneProjects = { '2': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex' };
+
+      const result = await harness.invoke('pty-create', '2', cwd, {
+        spawnCommandOnCreate: true,
+        freshSession: true,
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        error: 'codex_fresh_binding_clear_failed',
+        reason: 'binding_store_malformed',
+        freshSessionConsumed: false,
+        targetedPaneStopAccepted: true,
+      });
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('2');
+    });
+
+    test.each([
+      ['daemon error', { ok: false, status: 'spawn_failed', reason: 'daemon_pane_spawn_failed' }],
+      ['daemon disconnect', { ok: false, status: 'disconnected', reason: 'daemon_disconnected_before_spawn_observed' }],
+      ['daemon timeout', { ok: false, status: 'ack_timeout', reason: 'daemon pane spawn observation timeout after 5000ms' }],
+    ])('fresh initial auto-spawn preserves the binding after %s', async (_label, observation) => {
+      const cwd = path.join(tmpDir, `fresh-observation-failure-${observation.status}`);
+      fs.mkdirSync(cwd, { recursive: true });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.spawnAndWait.mockResolvedValueOnce({
+        ...observation,
+        paneId: '2',
+      });
+      ctx.daemonClient.kill.mockReturnValue(true);
+      ctx.currentSettings.autonomyConsentGiven = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const result = await harness.invoke('pty-create', '2', cwd, {
+        spawnCommandOnCreate: true,
+        freshSession: true,
+      });
+      const store = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(result).toMatchObject({
+        success: false,
+        error: 'codex_fresh_spawn_not_accepted',
+        reason: observation.reason,
+        freshSessionConsumed: false,
+        targetedPaneStopAccepted: true,
+      });
+      expect(store.store.panes['2'].sessionId).toBe(CODEX_TEST_IDS.builder);
+      expect(store.store.panes['3'].sessionId).toBe(CODEX_TEST_IDS.oracle);
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('2');
     });
 
     test('fresh spawn-on-create Claude panes remint only the requested pane session id', async () => {
@@ -1611,12 +1830,12 @@ describe('PTY Handlers', () => {
       ctx.currentSettings.firmwareInjectionEnabled = true;
       ctx.currentSettings.paneCommands = { '2': 'codex' };
       deps.firmwareManager = {
-        applyCodexOverrideForPane: jest.fn(() => ({ ok: true, overridePath: '/tmp/.codex/rules/AGENTS.override.md' })),
+        prepareCodexProjectFirmwareForPane: jest.fn(() => ({ ok: true, projectConfigPath: '/tmp/project/.codex/config.toml' })),
       };
 
       const result = await harness.invoke('spawn-claude', '2', '/dir');
 
-      expect(deps.firmwareManager.applyCodexOverrideForPane).toHaveBeenCalledWith('2');
+      expect(deps.firmwareManager.prepareCodexProjectFirmwareForPane).toHaveBeenCalledWith('2');
       expect(result.command).toContain('codex');
       expect(result.command).toContain('--yolo');
     });
@@ -1802,6 +2021,151 @@ describe('PTY Handlers', () => {
       expect(result.command).not.toContain('--session-id');
       expect(result.command).not.toContain('--resume');
       expect(fs.existsSync(deps.paneSessionIdsFilePath)).toBe(false);
+    });
+
+    test('unsafe explicit Codex resume is stripped to a visible cold start', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '2': 'codex --yolo resume --last' };
+
+      const result = await harness.invoke('spawn-claude', '2', '/ignored');
+
+      expect(result.command).toBe('codex --yolo');
+      expect(result.command).not.toContain('resume');
+      expect(result.command).not.toContain('--last');
+    });
+
+    test('later spawn path resumes panes 2 and 3 by separate exact Codex ids', async () => {
+      const cwd = makeFixtureCwd('shared-codex-resume');
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const builder = await harness.invoke('spawn-claude', '2', '/ignored');
+      const oracle = await harness.invoke('spawn-claude', '3', '/ignored');
+
+      expect(builder.command).toBe(`codex resume ${CODEX_TEST_IDS.builder}`);
+      expect(oracle.command).toBe(`codex resume ${CODEX_TEST_IDS.oracle}`);
+      expect(builder.command).not.toContain('--last');
+      expect(oracle.command).not.toContain('--last');
+    });
+
+    test('fresh later spawn clears one Codex binding only after renderer acceptance', async () => {
+      const cwd = makeFixtureCwd('shared-codex-fresh');
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      const oracleTranscript = seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const result = await harness.invoke('spawn-claude', '3', '/ignored', { freshSession: true });
+      const beforeCommit = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(result.command).toBe('codex');
+      expect(result.codexFreshSessionCommit).toEqual({
+        token: expect.any(String),
+        paneId: '3',
+      });
+      expect(beforeCommit.store.panes['2'].sessionId).toBe(CODEX_TEST_IDS.builder);
+      expect(beforeCommit.store.panes['3'].sessionId).toBe(CODEX_TEST_IDS.oracle);
+
+      const committed = await harness.invoke(
+        'codex-fresh-session-commit',
+        '3',
+        result.codexFreshSessionCommit
+      );
+      const afterCommit = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(committed).toMatchObject({
+        success: true,
+        freshSessionConsumed: true,
+        clearedCodexBinding: { ok: true, cleared: true, paneId: '3' },
+      });
+      expect(afterCommit.store.panes['2'].sessionId).toBe(CODEX_TEST_IDS.builder);
+      expect(afterCommit.store.panes['3']).toBeUndefined();
+      expect(fs.existsSync(oracleTranscript)).toBe(true);
+
+      const replay = await harness.invoke(
+        'codex-fresh-session-commit',
+        '3',
+        result.codexFreshSessionCommit
+      );
+      expect(replay).toMatchObject({
+        success: false,
+        error: 'codex_fresh_commit_invalid',
+        freshSessionConsumed: false,
+      });
+    });
+
+    test('fresh later spawn commit preserves a hook-rotated binding and sibling', async () => {
+      const cwd = makeFixtureCwd('shared-codex-fresh-rotated');
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const result = await harness.invoke('spawn-claude', '3', '/ignored', { freshSession: true });
+      seedCodexPaneBinding({
+        deps,
+        cwd,
+        paneId: '3',
+        role: 'oracle',
+        sessionId: CODEX_TEST_IDS.rotatedBuilder,
+      });
+      const committed = await harness.invoke(
+        'codex-fresh-session-commit',
+        '3',
+        result.codexFreshSessionCommit
+      );
+      const store = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(committed).toMatchObject({
+        success: true,
+        freshSessionConsumed: true,
+        clearedCodexBinding: {
+          ok: true,
+          cleared: false,
+          rotated: true,
+          currentSessionId: CODEX_TEST_IDS.rotatedBuilder,
+        },
+      });
+      expect(store.store.panes['2'].sessionId).toBe(CODEX_TEST_IDS.builder);
+      expect(store.store.panes['3'].sessionId).toBe(CODEX_TEST_IDS.rotatedBuilder);
+    });
+
+    test('switching a pane to Claude does not consume its Codex binding', async () => {
+      const cwd = makeFixtureCwd('codex-switch-cwd');
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneProjects = { '2': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'claude' };
+
+      const result = await harness.invoke('spawn-claude', '2', '/ignored');
+      const store = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(result.command).toMatch(/^claude --session-id [0-9a-f-]{36}$/);
+      expect(store.store.panes['2'].sessionId).toBe(CODEX_TEST_IDS.builder);
     });
   });
 
@@ -2393,10 +2757,15 @@ describe('PTY Handlers', () => {
         claimId: 'generation-claim-3',
         planId: 'plan-3',
       })).resolves.toEqual({ ok: true });
+      await expect(api.pty.commitCodexFreshSession('2', {
+        token: 'fresh-token',
+        paneId: '2',
+      })).resolves.toEqual({ ok: true });
 
       expect(isAllowedInvokeChannel('codex-computer-use-confirm-generation')).toBe(true);
       expect(isAllowedInvokeChannel('codex-computer-use-list-windows-plan')).toBe(true);
       expect(isAllowedInvokeChannel('codex-computer-use-verify-list-windows')).toBe(true);
+      expect(isAllowedInvokeChannel('codex-fresh-session-commit')).toBe(true);
       expect(ipcRenderer.invoke).toHaveBeenCalledWith(
         'codex-computer-use-confirm-generation',
         '3',
@@ -2414,6 +2783,11 @@ describe('PTY Handlers', () => {
           claimId: 'generation-claim-3',
           planId: 'plan-3',
         }
+      );
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+        'codex-fresh-session-commit',
+        '2',
+        { token: 'fresh-token', paneId: '2' }
       );
     });
   });

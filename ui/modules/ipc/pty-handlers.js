@@ -20,9 +20,15 @@ const {
   resolveResumeAppendFlags,
   hasClaudeResumeFlag,
   stripClaudeResumeFlags,
+  stripCodexResumeSubcommand,
   ensureClaudeModelFlag,
 } = require('../cli-resume-invocation');
 const { ensurePaneSessionId, remintPaneSessionId } = require('../pane-session-id-store');
+const {
+  loadValidatedBinding: loadValidatedCodexBinding,
+  snapshotPaneBinding: snapshotCodexPaneBinding,
+  clearPaneBinding: clearCodexPaneBinding,
+} = require('../codex-pane-session-store');
 const { reapClaudeSessionProcesses } = require('../claude-session-process-reaper');
 const {
   DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
@@ -50,10 +56,12 @@ const MAX_CHUNK_SIZE = 8192;
 const DEFAULT_AUTO_CHUNK_THRESHOLD_BYTES = DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES;
 const WRITE_ACK_TIMEOUT_MS = 2500;
 const PANE_SESSION_IDS_FILE_PATH = resolveCoordPath(path.join('runtime', 'pane-session-ids.json'), { forWrite: true });
+const CODEX_PANE_SESSIONS_FILE_PATH = resolveCoordPath(path.join('runtime', 'codex-pane-sessions.json'), { forWrite: true });
 const STARTUP_INJECTION_CLAIM_CHANNEL = 'startup-injection-claim';
 const STARTUP_INJECTION_RELEASE_CHANNEL = 'startup-injection-release';
 const PANE_RESTART_BEGIN_CHANNEL = 'pane-restart-begin';
 const PANE_RESTART_COMPLETE_CHANNEL = 'pane-restart-complete';
+const CODEX_FRESH_SESSION_COMMIT_CHANNEL = 'codex-fresh-session-commit';
 const CODEX_COMPUTER_USE_CONFIRM_GENERATION_CHANNEL = 'codex-computer-use-confirm-generation';
 const CODEX_COMPUTER_USE_LIST_WINDOWS_PLAN_CHANNEL = 'codex-computer-use-list-windows-plan';
 const CODEX_COMPUTER_USE_VERIFY_LIST_WINDOWS_CHANNEL = 'codex-computer-use-verify-list-windows';
@@ -222,9 +230,11 @@ function appendResumeFlagsToAgentCommand({
   command,
   cwd,
   idStorePath = PANE_SESSION_IDS_FILE_PATH,
+  codexStorePath = CODEX_PANE_SESSIONS_FILE_PATH,
   homeDir = null,
   ensurePaneSessionIdOptions = {},
   remintSessionId = false,
+  freshSessionRequested = false,
   claudeModel = '',
   claudeModelHomeDir = null,
   claudeModelSettingsPath = null,
@@ -247,7 +257,80 @@ function appendResumeFlagsToAgentCommand({
     };
   }
 
-  if (resumeStrategyForCommand(baseCommand) !== 'session-id') {
+  const resumeStrategy = resumeStrategyForCommand(baseCommand);
+  if (resumeStrategy === 'captured-session-id') {
+    const alreadyPinned = resolveResumeAppendFlags({ command: baseCommand });
+    if (alreadyPinned.mode === 'already-pinned') {
+      return { command: baseCommand, decision: alreadyPinned };
+    }
+    if (alreadyPinned.mode === 'unsafe-explicit-resume-refused') {
+      return {
+        command: stripCodexResumeSubcommand(baseCommand),
+        decision: {
+          ...alreadyPinned,
+          mode: 'cold',
+          unsafeExplicitResumeRefused: true,
+        },
+      };
+    }
+    if (freshSessionRequested || remintSessionId) {
+      const snapshot = snapshotCodexPaneBinding(codexStorePath, paneId);
+      if (!snapshot.ok) {
+        return {
+          command: baseCommand,
+          decision: {
+            flags: '',
+            cli: 'codex',
+            strategy: resumeStrategy,
+            mode: 'fresh-precondition-failed',
+            reason: `cannot snapshot prior Codex binding: ${snapshot.reason}`,
+            freshPreconditionFailed: true,
+          },
+        };
+      }
+      return {
+        command: baseCommand,
+        decision: {
+          flags: '',
+          cli: 'codex',
+          strategy: resumeStrategy,
+          mode: 'fresh',
+          reason: 'explicit fresh session requested',
+          clearBindingOnAccepted: true,
+          previousSessionId: snapshot.sessionId,
+          previousBindingExisted: snapshot.exists,
+          previousBinding: snapshot.bindingSnapshot || null,
+        },
+      };
+    }
+    const loaded = loadValidatedCodexBinding(codexStorePath, paneId, {
+      expectedCwd: cwd,
+      ...(homeDir ? { homeDir } : {}),
+    });
+    if (!loaded.ok) {
+      return {
+        command: baseCommand,
+        decision: {
+          ...resolveResumeAppendFlags({ command: baseCommand }),
+          reason: `codex binding refused: ${loaded.reason}`,
+          bindingReason: loaded.reason,
+          cwd,
+          codexStorePath,
+        },
+      };
+    }
+    const decision = resolveResumeAppendFlags({
+      command: baseCommand,
+      sessionId: loaded.binding.sessionId,
+      sessionExists: true,
+    });
+    return {
+      command: decision.flags ? `${baseCommand} ${decision.flags}` : baseCommand,
+      decision: { ...decision, cwd, codexStorePath },
+    };
+  }
+
+  if (resumeStrategy !== 'session-id') {
     return {
       command: baseCommand,
       decision: resolveResumeAppendFlags({ command: baseCommand }),
@@ -568,6 +651,7 @@ function registerPtyHandlers(ctx, deps = {}) {
     return deployment?.active === true && dataRoot ? path.resolve(dataRoot) : null;
   };
   const paneSessionIdsFilePath = deps.paneSessionIdsFilePath || PANE_SESSION_IDS_FILE_PATH;
+  const codexPaneSessionsFilePath = deps.codexPaneSessionsFilePath || CODEX_PANE_SESSIONS_FILE_PATH;
   const resumeHomeDir = deps.resumeHomeDir || null;
   const claudeModelHomeDir = Object.prototype.hasOwnProperty.call(deps, 'claudeModelHomeDir')
     ? deps.claudeModelHomeDir
@@ -589,6 +673,7 @@ function registerPtyHandlers(ctx, deps = {}) {
   const codexComputerUseConsumedProofIds = deps.codexComputerUseConsumedProofIds instanceof Set
     ? deps.codexComputerUseConsumedProofIds
     : new Set();
+  const pendingCodexFreshSessionCommits = new Map();
   const observeComputerUsePaneOutput = (paneId, data) => {
     const claim = codexComputerUsePreflightClaims.get(String(paneId || '')) || null;
     if (!claim || !claim.commandAuthorizedAt || claim.postSpawnConfirmedAt) return;
@@ -1022,12 +1107,14 @@ function registerPtyHandlers(ctx, deps = {}) {
         command: paneCommand,
         cwd,
         idStorePath: paneSessionIdsFilePath,
+        codexStorePath: codexPaneSessionsFilePath,
         homeDir: resumeHomeDir,
         claudeModel: ctx?.currentSettings?.claudeModel,
         claudeModelHomeDir,
         claudeModelSettingsPath,
         claudeModelEnv,
         remintSessionId: ptyOptions.remintClaudeSessionId === true,
+        freshSessionRequested: ptyOptions.freshSession === true,
       });
       paneCommand = resumeCommand.command;
       resumeDecision = resumeCommand.decision || null;
@@ -1043,6 +1130,15 @@ function registerPtyHandlers(ctx, deps = {}) {
           source: ptyOptions.remintClaudeSessionId === true ? 'pty-create-remint' : 'pty-create',
         });
       }
+    }
+    if (resumeDecision?.freshPreconditionFailed === true) {
+      return {
+        success: false,
+        error: 'codex_fresh_binding_snapshot_failed',
+        reason: resumeDecision.reason,
+        paneId: String(paneId),
+        freshSessionConsumed: false,
+      };
     }
     const runtime = detectCliFromCommand(paneCommand);
     codexComputerUsePreflightClaims.delete(String(paneId));
@@ -1154,14 +1250,23 @@ function registerPtyHandlers(ctx, deps = {}) {
     }
     let daemonSpawnObservation = null;
     let spawnAccepted;
-    if (computerUseClaim && spawnCommandOnCreate) {
+    const requiresObservedDaemonSpawn = spawnCommandOnCreate && (
+      Boolean(computerUseClaim)
+      || resumeDecision?.clearBindingOnAccepted === true
+    );
+    if (requiresObservedDaemonSpawn) {
       if (typeof daemonClient.spawnAndWait !== 'function') {
         codexComputerUsePreflightClaims.delete(String(paneId));
         return {
           success: false,
-          error: 'codex_computer_use_daemon_spawn_observer_unavailable',
-          reason: 'codex_computer_use_daemon_spawn_observer_unavailable',
+          error: resumeDecision?.clearBindingOnAccepted === true
+            ? 'codex_fresh_daemon_spawn_observer_unavailable'
+            : 'codex_computer_use_daemon_spawn_observer_unavailable',
+          reason: resumeDecision?.clearBindingOnAccepted === true
+            ? 'codex_fresh_daemon_spawn_observer_unavailable'
+            : 'codex_computer_use_daemon_spawn_observer_unavailable',
           paneId: String(paneId),
+          freshSessionConsumed: false,
         };
       }
       daemonSpawnObservation = await daemonClient.spawnAndWait(
@@ -1173,7 +1278,7 @@ function registerPtyHandlers(ctx, deps = {}) {
         spawnOptions
       );
       spawnAccepted = daemonSpawnObservation?.ok === true;
-      if (spawnAccepted) {
+      if (spawnAccepted && computerUseClaim) {
         computerUseClaim.daemonSpawnObservedAt = new Date().toISOString();
         computerUseClaim.daemonSpawnPid = daemonSpawnObservation.pid || null;
       }
@@ -1181,6 +1286,24 @@ function registerPtyHandlers(ctx, deps = {}) {
       spawnAccepted = spawnEnv
         ? daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, spawnEnv, spawnOptions)
         : daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, null, spawnOptions);
+    }
+    if (resumeDecision?.clearBindingOnAccepted === true && spawnAccepted !== true) {
+      codexComputerUsePreflightClaims.delete(String(paneId));
+      let targetedPaneStopAccepted = false;
+      try {
+        targetedPaneStopAccepted = daemonClient.kill(paneId) === true;
+      } catch (_) {
+        targetedPaneStopAccepted = false;
+      }
+      return {
+        success: false,
+        error: 'codex_fresh_spawn_not_accepted',
+        reason: daemonSpawnObservation?.reason || 'codex_fresh_spawn_not_accepted',
+        paneId: String(paneId),
+        freshSessionConsumed: false,
+        targetedPaneStopAccepted,
+        daemonSpawnObservation,
+      };
     }
     if (computerUsePreflight.enabled === true
       && computerUsePreflight.skipped !== true
@@ -1231,6 +1354,40 @@ function registerPtyHandlers(ctx, deps = {}) {
       }
       computerUseClaim.postSpawnConfirmedAt = new Date().toISOString();
     }
+    let clearedCodexBinding = null;
+    if (resumeDecision?.clearBindingOnAccepted === true) {
+      if (spawnAccepted !== true) {
+        return {
+          success: false,
+          error: 'codex_fresh_spawn_not_accepted',
+          paneId: String(paneId),
+          freshSessionConsumed: false,
+        };
+      }
+      clearedCodexBinding = clearCodexPaneBinding(codexPaneSessionsFilePath, paneId, {
+        expectedBinding: resumeDecision.previousBinding,
+        expectedSessionId: resumeDecision.previousSessionId,
+      });
+      if (!clearedCodexBinding.ok) {
+        let targetedPaneStopAccepted = false;
+        try {
+          targetedPaneStopAccepted = daemonClient.kill(paneId) === true;
+        } catch (_) {
+          targetedPaneStopAccepted = false;
+        }
+        log.error('PTY', `[resume] fresh Codex pane ${paneId}: binding clear failed - ${clearedCodexBinding.reason}; rolled back fresh spawn=${targetedPaneStopAccepted}`);
+        return {
+          success: false,
+          error: 'codex_fresh_binding_clear_failed',
+          reason: clearedCodexBinding.reason,
+          paneId: String(paneId),
+          freshSessionConsumed: false,
+          targetedPaneStopAccepted,
+          clearedCodexBinding,
+        };
+      }
+      log.info('PTY', `[resume] fresh Codex pane ${paneId}: ${clearedCodexBinding.rotated ? 'new hook binding preserved' : 'prior binding cleared'}`);
+    }
     return {
       success: true,
       paneId,
@@ -1241,6 +1398,8 @@ function registerPtyHandlers(ctx, deps = {}) {
       remintedClaudeSessionId: resumeDecision?.reminted === true,
       previousClaudeSessionId: resumeDecision?.previousSessionId || null,
       claudeSessionId: resumeDecision?.sessionId || null,
+      codexSessionId: resumeDecision?.cli === 'codex' ? (resumeDecision.sessionId || null) : null,
+      clearedCodexBinding,
       daemonSpawnObservation,
       computerUseGenerationClaim: computerUseClaim
         ? {
@@ -1566,8 +1725,11 @@ function registerPtyHandlers(ctx, deps = {}) {
             if (firmwarePath && !hasClaudeSystemPromptFlag(agentCmd)) {
               agentCmd = `${agentCmd} --system-prompt-file "${firmwarePath}"`;
             }
-          } else if (runtime === 'codex' && typeof firmwareManager.applyCodexOverrideForPane === 'function') {
-            firmwareManager.applyCodexOverrideForPane(paneId);
+          } else if (runtime === 'codex' && typeof firmwareManager.prepareCodexProjectFirmwareForPane === 'function') {
+            const firmwareResult = firmwareManager.prepareCodexProjectFirmwareForPane(paneId);
+            if (!firmwareResult?.ok) {
+              log.warn('Firmware', `Codex project firmware unavailable for pane ${paneId}: ${firmwareResult?.reason || 'unknown'}`);
+            }
           }
         } catch (err) {
           log.warn('Firmware', `Failed firmware preparation for pane ${paneId}: ${err.message}`);
@@ -1631,12 +1793,14 @@ function registerPtyHandlers(ctx, deps = {}) {
       command: agentCmd,
       cwd: workDir,
       idStorePath: paneSessionIdsFilePath,
+      codexStorePath: codexPaneSessionsFilePath,
       homeDir: resumeHomeDir,
       claudeModel: ctx?.currentSettings?.claudeModel,
       claudeModelHomeDir,
       claudeModelSettingsPath,
       claudeModelEnv,
       remintSessionId: spawnOptions.remintClaudeSessionId === true,
+      freshSessionRequested: spawnOptions.freshSession === true,
     });
     agentCmd = resumeCommand.command;
     if (resumeCommand.decision) {
@@ -1650,6 +1814,15 @@ function registerPtyHandlers(ctx, deps = {}) {
         command: agentCmd,
         source: spawnOptions.remintClaudeSessionId === true ? 'spawn-claude-remint' : 'spawn-claude',
       });
+    }
+    if (resumeCommand.decision?.freshPreconditionFailed === true) {
+      return {
+        success: false,
+        error: 'codex_fresh_binding_snapshot_failed',
+        reason: resumeCommand.decision.reason,
+        paneId: String(paneId),
+        freshSessionConsumed: false,
+      };
     }
     if (computerUseClaim) {
       const buildProofInvocation = resolveComputerUseDependency(
@@ -1676,6 +1849,21 @@ function registerPtyHandlers(ctx, deps = {}) {
       agentCmd = proofInvocation.command;
     }
 
+    let codexFreshSessionCommit = null;
+    if (resumeCommand.decision?.clearBindingOnAccepted === true) {
+      for (const [existingToken, pending] of pendingCodexFreshSessionCommits.entries()) {
+        if (pending.paneId === String(paneId)) pendingCodexFreshSessionCommits.delete(existingToken);
+      }
+      const token = randomUUID();
+      pendingCodexFreshSessionCommits.set(token, {
+        paneId: String(paneId),
+        expectedSessionId: resumeCommand.decision.previousSessionId,
+        expectedBinding: resumeCommand.decision.previousBinding,
+        createdAt: Date.now(),
+      });
+      codexFreshSessionCommit = { token, paneId: String(paneId) };
+    }
+
     ctx.agentRunning.set(paneId, 'starting');
     broadcastClaudeState();
     recordSessionStart(paneId);
@@ -1693,6 +1881,10 @@ function registerPtyHandlers(ctx, deps = {}) {
       remintedClaudeSessionId: resumeCommand.decision?.reminted === true,
       previousClaudeSessionId: resumeCommand.decision?.previousSessionId || null,
       claudeSessionId: resumeCommand.decision?.sessionId || null,
+      codexSessionId: resumeCommand.decision?.cli === 'codex'
+        ? (resumeCommand.decision.sessionId || null)
+        : null,
+      codexFreshSessionCommit,
       computerUseGenerationClaim: computerUseClaim
         ? {
           claimId: computerUseClaim.claimId,
@@ -1701,6 +1893,44 @@ function registerPtyHandlers(ctx, deps = {}) {
           listWindowsProofRequired: true,
         }
         : null,
+    };
+  });
+
+  ipcMain.handle(CODEX_FRESH_SESSION_COMMIT_CHANNEL, async (_event, paneId, request = {}) => {
+    const token = String(request?.token || '').trim();
+    const pending = pendingCodexFreshSessionCommits.get(token);
+    if (!token || !pending || pending.paneId !== String(paneId)) {
+      return {
+        success: false,
+        error: 'codex_fresh_commit_invalid',
+        freshSessionConsumed: false,
+      };
+    }
+    pendingCodexFreshSessionCommits.delete(token);
+    if (Date.now() - pending.createdAt > 120_000) {
+      return {
+        success: false,
+        error: 'codex_fresh_commit_expired',
+        freshSessionConsumed: false,
+      };
+    }
+    const clearedCodexBinding = clearCodexPaneBinding(codexPaneSessionsFilePath, paneId, {
+      expectedSessionId: pending.expectedSessionId,
+      expectedBinding: pending.expectedBinding,
+    });
+    if (!clearedCodexBinding.ok) {
+      return {
+        success: false,
+        error: 'codex_fresh_binding_clear_failed',
+        reason: clearedCodexBinding.reason,
+        freshSessionConsumed: false,
+        clearedCodexBinding,
+      };
+    }
+    return {
+      success: true,
+      freshSessionConsumed: true,
+      clearedCodexBinding,
     };
   });
 
@@ -1902,6 +2132,7 @@ function unregisterPtyHandlers(ctx) {
     ipcMain.removeHandler(STARTUP_INJECTION_RELEASE_CHANNEL);
     ipcMain.removeHandler(PANE_RESTART_BEGIN_CHANNEL);
     ipcMain.removeHandler(PANE_RESTART_COMPLETE_CHANNEL);
+    ipcMain.removeHandler(CODEX_FRESH_SESSION_COMMIT_CHANNEL);
     ipcMain.removeHandler(CODEX_COMPUTER_USE_CONFIRM_GENERATION_CHANNEL);
     ipcMain.removeHandler(CODEX_COMPUTER_USE_LIST_WINDOWS_PLAN_CHANNEL);
     ipcMain.removeHandler(CODEX_COMPUTER_USE_VERIFY_LIST_WINDOWS_CHANNEL);

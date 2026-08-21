@@ -243,7 +243,7 @@ function createRecoveryController(options = {}) {
 
   function buildFreshSessionOptions(options = {}) {
     return options?.freshSession === true
-      ? { remintClaudeSessionId: true }
+      ? { freshSession: true, remintClaudeSessionId: true }
       : {};
   }
 

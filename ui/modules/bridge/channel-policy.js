@@ -103,6 +103,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'codex-computer-use-confirm-generation',
   'codex-computer-use-list-windows-plan',
   'codex-computer-use-verify-list-windows',
+  'codex-fresh-session-commit',
   'select-pane-project',
   'select-project',
   'send-trusted-enter',

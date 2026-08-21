@@ -106,9 +106,18 @@ const paneRuntimeOverrides = new Map();
 const inputLocked = {};
 PANE_IDS.forEach(id => { inputLocked[id] = true; }); // Default: all panes locked
 let activePaneIds = [...PANE_IDS];
-const FRESH_SPAWN_INIT_TIMEOUT_MS = 10000;
 const COMPUTER_USE_CHILD_START_OBSERVATION_TIMEOUT_MS = 10000;
 const COMPUTER_USE_PROOF_TIMEOUT_MS = 95000;
+// Fresh command-on-create can include native-bridge preparation followed by
+// the bounded child-start observation and Computer Use proof. Keep the outer
+// guard above those inner deadlines, with room for startup/process load, so a
+// slow accepted spawn is not reported as failed while the daemon completes it.
+const FRESH_SPAWN_INIT_LOAD_GRACE_MS = 30000;
+const FRESH_SPAWN_INIT_TIMEOUT_MS = (
+  COMPUTER_USE_CHILD_START_OBSERVATION_TIMEOUT_MS
+  + COMPUTER_USE_PROOF_TIMEOUT_MS
+  + FRESH_SPAWN_INIT_LOAD_GRACE_MS
+);
 const COMPUTER_USE_PROOF_POLL_INTERVAL_MS = 250;
 const COMPUTER_USE_PROOF_ENTER_DELAY_MS = 50;
 const IS_DARWIN = process.platform === 'darwin';
@@ -1692,6 +1701,8 @@ function buildFreshSessionSpawnOptions(paneId, options = {}) {
   const nextOptions = options && typeof options === 'object' ? { ...options } : {};
   const shouldConsumeFreshFlag = isFreshPaneSessionOnNextSpawnArmed(paneId);
   if (shouldConsumeFreshFlag) {
+    nextOptions.freshSession = true;
+    // Compatibility for Claude's existing per-pane UUID remint path.
     nextOptions.remintClaudeSessionId = true;
   }
   return { options: nextOptions, shouldConsumeFreshFlag };
@@ -1767,6 +1778,7 @@ function applyFreshCreateSpawnCommandOptions(paneId, ptyCreateOptions = {}, opti
   if (ptyCreateOptions.spawnCommandOnCreate === true) {
     return {
       ...ptyCreateOptions,
+      ...(options.freshSession === true ? { freshSession: true } : {}),
       ...(options.remintClaudeSessionId === true ? { remintClaudeSessionId: true } : {}),
     };
   }
@@ -1778,6 +1790,7 @@ function applyFreshCreateSpawnCommandOptions(paneId, ptyCreateOptions = {}, opti
     ...ptyCreateOptions,
     paneCommand,
     spawnCommandOnCreate: true,
+    ...(options.freshSession === true ? { freshSession: true } : {}),
     ...(options.remintClaudeSessionId === true ? { remintClaudeSessionId: true } : {}),
   };
 }
@@ -3907,7 +3920,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
         || 'pty_create_not_accepted'
       );
     }
-    if (freshSessionSpawn.shouldConsumeFreshFlag && ptyCreateOptions.remintClaudeSessionId === true) {
+    if (freshSessionSpawn.shouldConsumeFreshFlag && ptyCreateOptions.freshSession === true) {
       await consumeFreshPaneSessionOnNextSpawn(paneId);
     }
     updatePaneStatus(
@@ -4414,6 +4427,7 @@ async function spawnAgent(paneId, model = null, options = {}) {
     syncTerminalInputBridge(paneId, { modelHint: model });
     const runtimeOverride = getPaneRuntimeOverride(paneId);
     let result;
+    let shouldConsumeFreshFlagAfterCommit = false;
     if (runtimeOverride.command) {
       result = { success: true, command: runtimeOverride.command, runtimeOverride: true };
     } else {
@@ -4424,8 +4438,12 @@ async function spawnAgent(paneId, model = null, options = {}) {
         result = hasSpawnOptions
           ? await window.squidrun.claude.spawn(paneId, undefined, spawnOptions)
           : await window.squidrun.claude.spawn(paneId);
-        if (result?.success && freshSessionSpawn.shouldConsumeFreshFlag && spawnOptions.remintClaudeSessionId === true) {
-          await consumeFreshPaneSessionOnNextSpawn(paneId);
+        if (result?.success && freshSessionSpawn.shouldConsumeFreshFlag && spawnOptions.freshSession === true) {
+          if (result.codexFreshSessionCommit) {
+            shouldConsumeFreshFlagAfterCommit = true;
+          } else {
+            await consumeFreshPaneSessionOnNextSpawn(paneId);
+          }
         }
       } catch (err) {
         log.error(`spawnAgent ${paneId}`, 'Spawn failed:', err);
@@ -4494,6 +4512,41 @@ async function spawnAgent(paneId, model = null, options = {}) {
           }
         }
         return false;
+      }
+
+      if (result.codexFreshSessionCommit) {
+        const commitFreshSession = window?.squidrun?.pty?.commitCodexFreshSession;
+        let freshCommitResult;
+        try {
+          freshCommitResult = typeof commitFreshSession === 'function'
+            ? await commitFreshSession(String(paneId), result.codexFreshSessionCommit)
+            : {
+              success: false,
+              error: 'codex_fresh_commit_bridge_unavailable',
+            };
+        } catch (err) {
+          freshCommitResult = {
+            success: false,
+            error: err?.message || 'codex_fresh_commit_failed',
+          };
+        }
+        if (freshCommitResult?.success !== true) {
+          log.error(
+            `spawnAgent ${paneId}`,
+            'Fresh Codex session commit failed:',
+            freshCommitResult?.reason || freshCommitResult?.error || '(no detail)'
+          );
+          updatePaneStatus(paneId, 'Spawn failed');
+          try {
+            await window.squidrun.pty.kill(String(paneId), options);
+          } catch (killErr) {
+            log.error(`spawnAgent ${paneId}`, 'Failed to stop uncommitted fresh Codex session:', killErr);
+          }
+          return false;
+        }
+        if (shouldConsumeFreshFlagAfterCommit) {
+          await consumeFreshPaneSessionOnNextSpawn(paneId);
+        }
       }
 
       if (computerUseClaim?.postSpawnConfirmationRequired === true) {
@@ -5308,6 +5361,8 @@ module.exports = {
   setPaneRenderSuspended,
   isPaneRenderSuspended,
   _internals: {
+    FRESH_SPAWN_INIT_TIMEOUT_MS,
+    withFreshSpawnInitTimeout,
     get promotionCheckTimer() { return promotionCheckTimer; },
     set promotionCheckTimer(v) { promotionCheckTimer = v; },
     PROMOTION_CHECK_INTERVAL_MS,

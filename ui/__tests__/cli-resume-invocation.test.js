@@ -6,15 +6,22 @@ const {
   CLI_RESUME_STRATEGY,
   FORBIDDEN_CLAUDE_FLAGS,
   detectCli,
+  decideCodexMissingResumeRecovery,
+  decideCodexResumeFailureAuthority,
   resumeStrategyForCommand,
   extractClaudeSessionIdFromCommand,
   hasClaudeResumeFlag,
   stripClaudeResumeFlags,
+  extractCodexResumeSessionIdFromCommand,
+  hasCodexResumeSubcommand,
+  stripCodexResumeSubcommand,
   normalizeClaudeModelId,
   parseClaudeModelFromCommand,
   readClaudeDefaultModel,
   ensureClaudeModelFlag,
   isClaudeSessionInUseError,
+  classifyCodexResumeFailure,
+  advanceCodexResumeFailureBuffer,
   encodeClaudeProjectDir,
   claudeSessionStorePath,
   claudeSessionExists,
@@ -39,11 +46,11 @@ describe('cli-resume-invocation', () => {
       expect(detectCli('')).toBeNull();
     });
 
-    test('strategy map: claude=session-id resume, codex=none (cold by design)', () => {
+    test('strategy map: Claude pins ids and Codex resumes only captured exact ids', () => {
       expect(CLI_RESUME_STRATEGY.claude).toBe('session-id');
-      expect(CLI_RESUME_STRATEGY.codex).toBe('none');
+      expect(CLI_RESUME_STRATEGY.codex).toBe('captured-session-id');
       expect(resumeStrategyForCommand('claude')).toBe('session-id');
-      expect(resumeStrategyForCommand('codex --yolo')).toBe('none');
+      expect(resumeStrategyForCommand('codex --yolo')).toBe('captured-session-id');
       expect(resumeStrategyForCommand('weird-cli')).toBe('none');
     });
   });
@@ -94,15 +101,52 @@ describe('cli-resume-invocation', () => {
       expect(create).toMatch(/^--session-id /);
     });
 
-    test('codex arm -> explicit cold-start, no resume, with logged reason', () => {
-      const d = resolveResumeAppendFlags({ command: 'codex --yolo', sessionId: 'abc', sessionExists: true });
-      expect(d.flags).toBe('');
-      expect(d.mode).toBe('cold');
-      expect(d.strategy).toBe('none');
-      expect(d.reason).toMatch(/codex/i);
-      expect(d.reason).toMatch(/cold-start by design/i);
-      expect(d.flags).not.toMatch(/--last/);
-      expect(d.flags).not.toMatch(/resume/);
+    test('codex exact binding -> exact resume; absent/unvalidated binding -> visible cold start', () => {
+      const exact = '11111111-1111-4111-8111-111111111111';
+      const resume = resolveResumeAppendFlags({ command: 'codex --yolo', sessionId: exact, sessionExists: true });
+      expect(resume).toMatchObject({
+        flags: `resume ${exact}`,
+        mode: 'resume',
+        strategy: 'captured-session-id',
+        sessionId: exact,
+      });
+      expect(resume.flags).not.toContain('--last');
+
+      const absent = resolveResumeAppendFlags({ command: 'codex --yolo' });
+      expect(absent).toMatchObject({ flags: '', mode: 'cold' });
+      expect(absent.reason).toMatch(/binding absent/i);
+
+      const unvalidated = resolveResumeAppendFlags({
+        command: 'codex --yolo', sessionId: exact, sessionExists: false,
+      });
+      expect(unvalidated).toMatchObject({ flags: '', mode: 'cold', sessionId: exact });
+      expect(unvalidated.reason).toMatch(/not locally revalidated/i);
+    });
+
+    test('existing explicit Codex resume is never double-appended', () => {
+      const exact = '11111111-1111-4111-8111-111111111111';
+      const command = `codex --yolo resume ${exact}`;
+      expect(hasCodexResumeSubcommand(command)).toBe(true);
+      expect(extractCodexResumeSessionIdFromCommand(command)).toBe(exact);
+      const d = resolveResumeAppendFlags({
+        command,
+        sessionId: '22222222-2222-4222-8222-222222222222',
+        sessionExists: true,
+      });
+      expect(d).toMatchObject({ flags: '', mode: 'already-pinned', sessionId: exact });
+    });
+
+    test.each([
+      ['codex --yolo resume --last', 'codex --yolo'],
+      ['codex resume friendly-name', 'codex'],
+      ['codex resume', 'codex'],
+    ])('refuses unsafe explicit Codex resume target: %s', (command, safeColdCommand) => {
+      const result = resolveResumeAppendFlags({ command });
+      expect(result).toMatchObject({
+        mode: 'unsafe-explicit-resume-refused',
+        sessionId: null,
+      });
+      expect(stripCodexResumeSubcommand(command)).toBe(safeColdCommand);
     });
 
     test('unknown CLI -> bare command (no flags)', () => {
@@ -146,6 +190,90 @@ describe('cli-resume-invocation', () => {
     test('detects claude already-in-use collision output', () => {
       expect(isClaudeSessionInUseError('Error: session id 11111111-1111-4111-8111-111111111111 is already in use.')).toBe(true);
       expect(isClaudeSessionInUseError('regular startup output')).toBe(false);
+    });
+
+    test('distinguishes Codex active-writer collision from missing/corrupt resume state', () => {
+      expect(classifyCodexResumeFailure(
+        'thread/resume failed: thread 11111111-1111-4111-8111-111111111111 already has an active writer'
+      )).toBe('active_writer');
+      expect(classifyCodexResumeFailure(
+        'ERROR: No saved session found with ID 11111111-1111-4111-8111-111111111111.'
+      )).toBe('missing_or_corrupt');
+      expect(classifyCodexResumeFailure(
+        'Failed to resume session from rollout.jsonl: transcript is corrupt'
+      )).toBe('missing_or_corrupt');
+      expect(classifyCodexResumeFailure('regular startup output')).toBeNull();
+      expect(classifyCodexResumeFailure(
+        'I checked the customer record and it was not found.'
+      )).toBeNull();
+    });
+
+    test('bounded startup buffer catches resume errors split across PTY chunks', () => {
+      const first = advanceCodexResumeFailureBuffer('', 'ERROR: No saved sess');
+      expect(first.failure).toBeNull();
+      const second = advanceCodexResumeFailureBuffer(first.buffer, 'ion found with ID 1111');
+      expect(second.failure).toBe('missing_or_corrupt');
+
+      const writerFirst = advanceCodexResumeFailureBuffer('', 'thread already has an act');
+      expect(writerFirst.failure).toBeNull();
+      const writerSecond = advanceCodexResumeFailureBuffer(writerFirst.buffer, 'ive writer');
+      expect(writerSecond.failure).toBe('active_writer');
+      expect(advanceCodexResumeFailureBuffer('x'.repeat(9000), '', 8192).buffer).toHaveLength(8192);
+    });
+
+    test('does not cold-retry when a newer Codex binding appeared during recovery', () => {
+      expect(decideCodexMissingResumeRecovery({
+        ok: true,
+        cleared: false,
+        rotated: true,
+        currentSessionId: '33333333-3333-4333-8333-333333333333',
+      })).toEqual({
+        action: 'hold_rotated',
+        reason: 'binding_rotated_during_recovery',
+        currentSessionId: '33333333-3333-4333-8333-333333333333',
+      });
+      expect(decideCodexMissingResumeRecovery({ ok: true, cleared: true })).toEqual({
+        action: 'retry_cold',
+        reason: 'rejected_binding_cleared',
+      });
+      expect(decideCodexMissingResumeRecovery({ ok: true, cleared: false })).toEqual({
+        action: 'retry_cold',
+        reason: 'rejected_binding_already_absent',
+      });
+    });
+
+    test('rendered sentinel prose is observation-only until the resume process actually fails', () => {
+      const candidate = classifyCodexResumeFailure(
+        'Last assistant summary: ERROR: No saved session found with ID 11111111-1111-4111-8111-111111111111.'
+      );
+      expect(candidate).toBe('missing_or_corrupt');
+      expect(decideCodexResumeFailureAuthority({
+        candidate,
+        processExited: false,
+      })).toEqual({
+        action: 'observe_only',
+        reason: 'process_still_live',
+        candidate: 'missing_or_corrupt',
+      });
+      expect(decideCodexResumeFailureAuthority({
+        candidate,
+        processExited: true,
+        exitCode: 0,
+      })).toEqual({
+        action: 'none',
+        reason: 'resume_process_did_not_fail',
+        candidate: 'missing_or_corrupt',
+      });
+      expect(decideCodexResumeFailureAuthority({
+        candidate,
+        processExited: true,
+        exitCode: 1,
+        recoveryAttempted: false,
+      })).toEqual({
+        action: 'inspect_binding',
+        reason: 'failed_resume_process_confirmed',
+        candidate: 'missing_or_corrupt',
+      });
     });
   });
 

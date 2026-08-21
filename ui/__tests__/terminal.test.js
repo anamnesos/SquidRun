@@ -83,6 +83,7 @@ const mockSquidRun = {
   pty: {
     create: jest.fn().mockResolvedValue(),
     write: jest.fn().mockResolvedValue({ success: true }),
+    commitCodexFreshSession: jest.fn().mockResolvedValue({ success: true }),
     claimStartupInjection: jest.fn().mockResolvedValue({
       ok: true,
       claimed: true,
@@ -199,6 +200,7 @@ describe('terminal.js module', () => {
     mockSquidRun.daemon.terminalSnapshot.mockResolvedValue({ ok: false, terminals: [] });
     mockSquidRun.pty.create.mockResolvedValue();
     mockSquidRun.pty.write.mockResolvedValue({ success: true });
+    mockSquidRun.pty.commitCodexFreshSession.mockResolvedValue({ success: true });
     mockSquidRun.pty.confirmCodexComputerUseGeneration.mockResolvedValue({ ok: true });
     mockSquidRun.pty.getCodexComputerUseListWindowsPlan.mockResolvedValue({
       ok: true,
@@ -1871,6 +1873,105 @@ describe('terminal.js module', () => {
       jest.useFakeTimers();
     });
 
+    test('commits a fresh Codex spawn only after command and Enter are accepted', async () => {
+      jest.useRealTimers();
+      terminal.terminals.set('2', { write: jest.fn() });
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '2': 'codex' },
+        freshPaneSessionOnNextSpawn: { '2': true, '3': true },
+      });
+      mockSquidRun.claude.spawn.mockResolvedValueOnce({
+        success: true,
+        command: 'codex',
+        codexFreshSessionCommit: { token: 'fresh-token', paneId: '2' },
+      });
+
+      const spawned = await terminal.spawnAgent('2');
+
+      expect(spawned).toBe(true);
+      expect(mockSquidRun.pty.write).toHaveBeenNthCalledWith(1, '2', 'codex');
+      expect(mockSquidRun.pty.write).toHaveBeenNthCalledWith(2, '2', '\r');
+      expect(mockSquidRun.pty.commitCodexFreshSession).toHaveBeenCalledWith(
+        '2',
+        { token: 'fresh-token', paneId: '2' }
+      );
+      expect(mockSquidRun.pty.write.mock.invocationCallOrder[1])
+        .toBeLessThan(mockSquidRun.pty.commitCodexFreshSession.mock.invocationCallOrder[0]);
+      expect(mockSquidRun.invoke).toHaveBeenCalledWith(
+        'set-setting',
+        'freshPaneSessionOnNextSpawn',
+        { '3': true }
+      );
+      expect(mockSquidRun.pty.commitCodexFreshSession.mock.invocationCallOrder[0])
+        .toBeLessThan(mockSquidRun.invoke.mock.invocationCallOrder[0]);
+      jest.useFakeTimers();
+    });
+
+    test.each([
+      ['command write failure', [
+        { success: false, error: 'command_rejected' },
+      ]],
+      ['Enter write failure', [
+        { success: true },
+        { success: false, error: 'enter_rejected' },
+      ]],
+    ])('preserves fresh Codex request when %s', async (_label, writeResults) => {
+      jest.useRealTimers();
+      terminal.terminals.set('2', { write: jest.fn() });
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '2': 'codex' },
+        freshPaneSessionOnNextSpawn: { '2': true },
+      });
+      mockSquidRun.claude.spawn.mockResolvedValueOnce({
+        success: true,
+        command: 'codex',
+        codexFreshSessionCommit: { token: 'fresh-token', paneId: '2' },
+      });
+      for (const writeResult of writeResults) {
+        mockSquidRun.pty.write.mockResolvedValueOnce(writeResult);
+      }
+
+      const spawned = await terminal.spawnAgent('2');
+
+      expect(spawned).toBe(false);
+      expect(mockSquidRun.pty.commitCodexFreshSession).not.toHaveBeenCalled();
+      expect(mockSquidRun.invoke).not.toHaveBeenCalledWith(
+        'set-setting',
+        'freshPaneSessionOnNextSpawn',
+        expect.anything()
+      );
+      jest.useFakeTimers();
+    });
+
+    test('stops an entered fresh Codex command when binding commit fails', async () => {
+      jest.useRealTimers();
+      terminal.terminals.set('2', { write: jest.fn() });
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '2': 'codex' },
+        freshPaneSessionOnNextSpawn: { '2': true },
+      });
+      mockSquidRun.claude.spawn.mockResolvedValueOnce({
+        success: true,
+        command: 'codex',
+        codexFreshSessionCommit: { token: 'fresh-token', paneId: '2' },
+      });
+      mockSquidRun.pty.commitCodexFreshSession.mockResolvedValueOnce({
+        success: false,
+        error: 'binding_store_malformed',
+      });
+
+      const spawned = await terminal.spawnAgent('2');
+
+      expect(spawned).toBe(false);
+      expect(mockSquidRun.pty.kill).toHaveBeenCalledWith('2', {});
+      expect(mockSquidRun.invoke).not.toHaveBeenCalledWith(
+        'set-setting',
+        'freshPaneSessionOnNextSpawn',
+        expect.anything()
+      );
+      jest.useFakeTimers();
+    });
+
     test('should spawn Codex pane via PTY (same as Claude)', async () => {
       jest.useRealTimers();
       terminal.registerCodexPane('1');
@@ -2635,6 +2736,48 @@ describe('terminal.js module', () => {
       resolvePaneOne();
       await initPromise;
       jest.useFakeTimers();
+    });
+
+    test('fresh command-on-create accepts startup completion after the former 10 second cutoff', async () => {
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+      terminal.setActivePaneIds(['2']);
+      mockSquidRun.pty.create.mockImplementationOnce(() => (
+        new Promise((resolve) => {
+          setTimeout(() => resolve({ success: true }), 12600);
+        })
+      ));
+
+      const initPromise = terminal.initTerminals({ spawnCommandOnCreate: true });
+
+      await jest.advanceTimersByTimeAsync(12600);
+
+      await expect(initPromise).resolves.toBeUndefined();
+      expect(terminal.terminals.has('2')).toBe(true);
+    });
+
+    test('fresh command-on-create remains bounded when initialization never settles', async () => {
+      const guarded = terminal._internals.withFreshSpawnInitTimeout(
+        '2',
+        new Promise(() => {})
+      );
+
+      await jest.advanceTimersByTimeAsync(
+        terminal._internals.FRESH_SPAWN_INIT_TIMEOUT_MS
+      );
+
+      await expect(guarded).resolves.toEqual({ paneId: '2', ok: false, timedOut: true });
+    });
+
+    test('fresh command-on-create preserves immediate initialization rejection details', async () => {
+      const failure = new Error('daemon rejected create');
+
+      await expect(terminal._internals.withFreshSpawnInitTimeout(
+        '2',
+        Promise.reject(failure)
+      )).resolves.toEqual({ paneId: '2', ok: false, error: failure });
     });
 
     test('should enforce xterm scrollback cap and legibility options in constructor options', async () => {
