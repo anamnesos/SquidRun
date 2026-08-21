@@ -105,6 +105,18 @@ describe('seat-identity-loader', () => {
     expect(result.promptContext).toContain(SEAT_DEFINITIONS[seatId].canonicalPath);
   });
 
+  test('Rook growth stays in Rook’s seat-owned allowlist', () => {
+    const growthSource = SEAT_DEFINITIONS.builder.sources.find((source) => source.kind === 'growth');
+
+    expect(growthSource).toEqual({
+      path: 'workspace/knowledge/rook-growth-log.md',
+      kind: 'growth',
+      required: false,
+    });
+    expect(SEAT_DEFINITIONS.architect.sources).not.toContainEqual(growthSource);
+    expect(SEAT_DEFINITIONS.oracle.sources).not.toContainEqual(growthSource);
+  });
+
   test('missing Vera charter is partial and never falls back to another seat', () => {
     const root = makeTempRoot();
     materializeSeat(root, SEAT_DEFINITIONS.architect, 'MIRA');

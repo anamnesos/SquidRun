@@ -32,6 +32,7 @@ const SEAT_DEFINITIONS = Object.freeze({
     sources: Object.freeze([
       Object.freeze({ path: 'workspace/knowledge/rook-self-charter.md', kind: 'charter', required: true }),
       Object.freeze({ path: 'workspace/knowledge/rook-self-profile.json', kind: 'profile', required: true }),
+      Object.freeze({ path: 'workspace/knowledge/rook-growth-log.md', kind: 'growth', required: false }),
       Object.freeze({ path: 'workspace/knowledge/rook-capability-map.md', kind: 'capability', required: false }),
     ]),
   }),
