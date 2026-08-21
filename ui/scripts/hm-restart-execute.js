@@ -553,14 +553,18 @@ function includesPathUnderRoot(text = '', rootPath = '') {
   return false;
 }
 
+function processExecutableBasename(value = '') {
+  return path.win32.basename(String(value || ''));
+}
+
 function isElectronProcess(row = {}) {
   const name = normalizeForProcessMatch(row.name);
-  const executablePath = normalizeForProcessMatch(row.executablePath);
+  const executableName = normalizeForProcessMatch(processExecutableBasename(row.executablePath));
   return (
     name.includes('electron')
     || name.includes('squidrun')
-    || executablePath.includes('electron')
-    || executablePath.includes('squidrun')
+    || executableName.includes('electron')
+    || executableName.includes('squidrun')
   );
 }
 
@@ -1462,6 +1466,7 @@ module.exports = {
   findLatestGreenPreflight,
   defaultLaunchCommand,
   parseTasklistCsv,
+  processExecutableBasename,
   selectSquidRunElectronProcesses,
   collectProcessDescendants,
   buildShutdownKillOrder,

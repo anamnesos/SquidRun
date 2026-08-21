@@ -517,6 +517,51 @@ describe('hm-restart-execute', () => {
     expect(processes).toEqual([]);
   });
 
+  test('does not classify a foreign installer stored under the SquidRun project root as Electron', () => {
+    expect(restartExecute.processExecutableBasename(
+      'D:\\projects\\squidrun\\.squidrun\\runtime\\installers\\tailscale-setup-1.102.3.exe'
+    )).toBe('tailscale-setup-1.102.3.exe');
+    expect(restartExecute.processExecutableBasename(
+      'D:/projects/squidrun/.squidrun/runtime/installers/tailscale-setup-1.102.3.exe'
+    )).toBe('tailscale-setup-1.102.3.exe');
+    const rows = [
+      {
+        ProcessId: 30920,
+        ParentProcessId: 14208,
+        Name: 'electron.exe',
+        ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+        CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" .',
+      },
+      {
+        ProcessId: 41068,
+        ParentProcessId: 31928,
+        Name: 'tailscale-setup-1.102.3.exe',
+        ExecutablePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\installers\\tailscale-setup-1.102.3.exe',
+        CommandLine: 'D:\\projects\\squidrun\\.squidrun\\runtime\\installers\\tailscale-setup-1.102.3.exe',
+      },
+    ];
+    const instanceConfig = {
+      id: 'james-main',
+      profile: 'main',
+      appStatusPath: path.join(tempRoot, '.squidrun', 'app-status.json'),
+      appStatus: {
+        settingsPersistence: {
+          userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui',
+        },
+      },
+    };
+
+    const processes = restartExecute.selectSquidRunElectronProcesses(
+      'D:\\projects\\squidrun', rows, { instanceConfig }
+    );
+    const killOrder = restartExecute.buildShutdownKillOrder(processes, rows, { protectExecutorTree: false });
+
+    expect(processes.map((proc) => proc.pid)).toEqual([30920]);
+    expect(killOrder.map((proc) => proc.pid)).toEqual([30920]);
+    expect(processes.map((proc) => proc.pid)).not.toContain(41068);
+    expect(killOrder.map((proc) => proc.pid)).not.toContain(41068);
+  });
+
   test('selects only the requested client instance in a live-duplex process set', () => {
     const instanceConfig = {
       id: 'client-sideprofile',
