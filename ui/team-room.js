@@ -60,7 +60,7 @@
     reconnectAttempt: 0,
     pairingExpiryTimer: null,
     pendingPairingCode: null,
-    remoteAccess: { manageable: false, enabled: false, pending: false, reason: null },
+    remoteAccess: { manageable: false, enabled: false, pending: false, reason: null, detail: null },
     sending: false,
     dragDepth: 0,
     unreadCount: 0,
@@ -953,6 +953,28 @@
     elements.pairDialog.showModal();
   }
 
+  function compactRemoteAccessDetail(value) {
+    const compact = String(value || '').replace(/\s+/gu, ' ').trim();
+    return compact.length > 180 ? `${compact.slice(0, 177)}...` : compact;
+  }
+
+  function remoteAccessFailureMessage(remote = {}) {
+    const reason = compactRemoteAccessDetail(remote.reason);
+    const detail = compactRemoteAccessDetail(remote.detail);
+    const evidence = `${reason} ${detail}`;
+    if (/does not support getting tls certs|https certificates?/iu.test(evidence)) {
+      return 'Enable HTTPS Certificates in the Tailscale DNS settings, then try again.';
+    }
+    const known = {
+      tailscale_executable_not_found: 'Tailscale is not installed.',
+      tailscale_not_connected: 'Sign in to Tailscale, then try again.',
+      tailscale_node_offline: 'This computer is offline in Tailscale.',
+      tailscale_serve_unrecognized_config: 'SquidRun could not verify the current Tailscale Serve route.',
+      team_room_remote_target_not_loopback: 'The private Team Room listener is unavailable.',
+    };
+    return known[reason] || detail || reason || 'Remote access change failed.';
+  }
+
   function renderRemoteAccess() {
     const remote = state.remoteAccess;
     elements.pairButton.hidden = !remote.manageable || state.config?.lanEnabled !== true;
@@ -961,9 +983,11 @@
     elements.remoteAccessButton.disabled = remote.pending;
     elements.remoteAccessButton.setAttribute('aria-pressed', String(remote.enabled));
     const stateLabel = remote.pending ? 'Working' : remote.enabled ? 'On' : remote.reason ? 'Error' : 'Off';
-    elements.remoteAccessLabel.textContent = `Remote access: ${stateLabel}`;
-    elements.remoteAccessButton.setAttribute('aria-label', `Remote access ${stateLabel.toLowerCase()}`);
-    elements.remoteAccessButton.title = remote.reason || (remote.enabled
+    const failureMessage = remote.reason ? remoteAccessFailureMessage(remote) : null;
+    const visibleLabel = `Remote access: ${stateLabel}${failureMessage ? ` — ${failureMessage}` : ''}`;
+    elements.remoteAccessLabel.textContent = visibleLabel;
+    elements.remoteAccessButton.setAttribute('aria-label', visibleLabel);
+    elements.remoteAccessButton.title = failureMessage || (remote.enabled
       ? 'Turn off remote access. LAN Team Room stays running.'
       : 'Turn on private Tailscale access.');
   }
@@ -971,15 +995,17 @@
   async function refreshRemoteAccess() {
     const { response, payload } = await fetchJson('/api/remote-access');
     if (response.status === 401 || response.status === 403) {
-      state.remoteAccess = { manageable: false, enabled: false, pending: false, reason: null };
+      state.remoteAccess = { manageable: false, enabled: false, pending: false, reason: null, detail: null };
       renderRemoteAccess();
       return;
     }
+    const disabled = payload.reason === 'tailscale_serve_disabled';
     state.remoteAccess = {
       manageable: true,
       enabled: payload.enabled === true,
       pending: payload.transitionPending === true,
-      reason: payload.enabled === true || payload.reason === 'tailscale_serve_disabled' ? null : payload.reason || null,
+      reason: payload.enabled === true || disabled ? null : payload.reason || null,
+      detail: payload.enabled === true || disabled ? null : payload.detail || null,
     };
     renderRemoteAccess();
   }
@@ -999,6 +1025,7 @@
       enabled: payload.ok === true && payload.enabled === true,
       pending: false,
       reason: payload.ok === true ? null : payload.reason || 'Remote access change failed.',
+      detail: payload.ok === true ? null : payload.detail || null,
     };
     renderRemoteAccess();
   }

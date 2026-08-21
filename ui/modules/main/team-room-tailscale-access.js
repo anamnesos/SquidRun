@@ -85,8 +85,15 @@ function plainStatusIsEmpty(value) {
 
 function plainStatusHasExactRoute(value, expectedOrigin, expectedTarget) {
   const lines = String(value || '').split(/\r?\n/gu).map((line) => line.trim()).filter(Boolean);
-  return lines.includes(`${expectedOrigin}/`)
-    && lines.includes(`|-- proxy ${expectedTarget}`)
+  const originLines = new Set([
+    expectedOrigin,
+    `${expectedOrigin}/`,
+    `${expectedOrigin} (tailnet only)`,
+    `${expectedOrigin}/ (tailnet only)`,
+  ]);
+  return lines.some((line) => originLines.has(line))
+    && (lines.includes(`|-- proxy ${expectedTarget}`)
+      || lines.includes(`|-- / proxy ${expectedTarget}`))
     && !lines.some((line) => /funnel/iu.test(line));
 }
 

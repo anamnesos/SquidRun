@@ -63,6 +63,18 @@ async function run() {
     },
     deliverToPane: async () => ({ ok: true }),
     resolveCliBindings: ({ appGeneration }) => bindings(appGeneration),
+    getRemoteAccessStatus: async () => ({
+      ok: false,
+      enabled: false,
+      reason: 'tailscale_serve_enable_failed',
+      detail: '500 Internal Server Error: your Tailscale account does not support getting TLS certs',
+    }),
+    setRemoteAccessEnabled: async () => ({
+      ok: false,
+      enabled: false,
+      reason: 'tailscale_serve_enable_failed',
+      detail: '500 Internal Server Error: your Tailscale account does not support getting TLS certs',
+    }),
   });
   let desktopWindow = null;
   let phoneWindow = null;
@@ -88,7 +100,8 @@ async function run() {
     });
     try {
       await waitForRenderer(desktopWindow, `() => document.querySelector('#connectionDot')?.dataset.state === 'connected'
-        && !document.querySelector('#pairPhoneButton')?.hidden`, 12_000, 'desktop-ready');
+        && !document.querySelector('#pairPhoneButton')?.hidden
+        && document.querySelector('#remoteAccessLabel')?.textContent.includes('Enable HTTPS Certificates')`, 12_000, 'desktop-ready');
     } catch (error) {
       error.result = await desktopWindow.webContents.executeJavaScript(`(() => ({
         stage: 'desktop-ready',
@@ -101,6 +114,11 @@ async function run() {
       throw error;
     }
     checkpoint('desktop-ready');
+    const remoteAccessDiagnostic = await desktopWindow.webContents.executeJavaScript(`(() => ({
+      label: document.querySelector('#remoteAccessLabel').textContent,
+      title: document.querySelector('#remoteAccessButton').title,
+      pressed: document.querySelector('#remoteAccessButton').getAttribute('aria-pressed'),
+    }))()`);
     await desktopWindow.webContents.executeJavaScript(`document.querySelector('#pairPhoneButton').click()`);
     await waitForRenderer(desktopWindow, `() => document.querySelector('#pairDialog')?.open
       && document.querySelector('#pairQrImage')?.complete
@@ -160,6 +178,9 @@ async function run() {
     result = {
       complete: true,
       ok: dialog.pairButtonVisible
+        && remoteAccessDiagnostic.label === 'Remote access: Error — Enable HTTPS Certificates in the Tailscale DNS settings, then try again.'
+        && remoteAccessDiagnostic.title === 'Enable HTTPS Certificates in the Tailscale DNS settings, then try again.'
+        && remoteAccessDiagnostic.pressed === 'false'
         && dialog.open
         && dialog.title === 'Pair your phone'
         && /scan/iu.test(dialog.instruction)
@@ -177,6 +198,7 @@ async function run() {
       electron: process.versions.electron,
       node: process.versions.node,
       origin: started.origin,
+      remoteAccessDiagnostic,
       dialog: {
         ...dialog,
         qrSrc: dialog.qrSrc.slice(0, 30),

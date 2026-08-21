@@ -99,6 +99,16 @@ describe('Team Room Tailscale access manager', () => {
   test('recognizes only the exact live 1.102 node-level schema with no Funnel or extras', () => {
     const exact = enabledStatus();
     expect(plainStatusHasExactRoute(`${origin}/\n|-- proxy ${target}`, origin, target)).toBe(true);
+    expect(plainStatusHasExactRoute(
+      `${origin} (tailnet only)\n|-- / proxy ${target}`,
+      origin,
+      target
+    )).toBe(true);
+    expect(plainStatusHasExactRoute(
+      `${origin} (public)\n|-- / proxy ${target}`,
+      origin,
+      target
+    )).toBe(false);
     expect(plainStatusHasExactRoute(`${origin}/\n|-- proxy ${target}0`, origin, target)).toBe(false);
     expect(serveStatusHasExactRoute(exact, origin, target, 443)).toBe(true);
     expect(serveStatusHasExactRoute({
@@ -123,6 +133,27 @@ describe('Team Room Tailscale access manager', () => {
         '/extra': { Proxy: target },
       } } },
     }, origin, target, 443)).toBe(false);
+  });
+
+  test('accepts the installed 1.102 plain status through the full inspect path', async () => {
+    const runCommand = jest.fn(async (_file, args) => {
+      const key = args.join(' ');
+      if (key === 'status --json') return identityResult();
+      if (key === 'serve status') return result(`${origin} (tailnet only)\n|-- / proxy ${target}`);
+      if (key === 'serve status --json') return result(JSON.stringify(enabledStatus()));
+      if (key === 'serve get-config --all') return result(JSON.stringify({ version: '0.0.1' }));
+      return result('', { ok: false, error: `unexpected:${key}` });
+    });
+    const { manager, applyRemoteOrigin } = createManager(runCommand);
+
+    await expect(manager.inspect()).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      enabled: true,
+      origin,
+      target,
+      reason: null,
+    }));
+    expect(applyRemoteOrigin).toHaveBeenLastCalledWith(origin);
   });
 
   test('rejects malicious extra routes and clears a previously applied origin', async () => {
