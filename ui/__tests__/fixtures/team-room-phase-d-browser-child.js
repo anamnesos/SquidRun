@@ -455,14 +455,60 @@ async function run() {
     });
     await windowRef.webContents.executeJavaScript(`window.dispatchEvent(new Event('resize'))`);
     await new Promise((resolve) => setTimeout(resolve, 180));
-    const phoneLayout = await windowRef.webContents.executeJavaScript(`(() => ({
-      width: window.innerWidth,
-      height: window.innerHeight,
-      viewportHeightVariable: getComputedStyle(document.documentElement).getPropertyValue('--room-viewport-height').trim(),
-      appHeight: Math.round(document.querySelector('#roomApp').getBoundingClientRect().height),
-      memberStackDisplay: getComputedStyle(document.querySelector('.member-stack')).display,
-      composerVisible: document.querySelector('#composerShell').getBoundingClientRect().bottom <= window.innerHeight + 1,
-    }))()`);
+    const phoneLayout = await windowRef.webContents.executeJavaScript(`(() => {
+      const tray = document.querySelector('#uploadTray');
+      tray.hidden = false;
+      const renderCards = (count) => {
+        tray.innerHTML = Array.from({ length: count }, (_, index) => \`
+        <div class="upload-card" data-status="ready">
+          <span class="upload-preview">IMG</span>
+          <span class="upload-copy"><strong>mobile-overflow-proof-\${index + 1}.jpeg</strong><span>5.8 MB · Ready</span><span class="upload-progress"><span></span></span></span>
+          <button class="upload-action" type="button">×</button>
+        </div>\`).join('');
+      };
+      const layoutCases = Array.from({ length: 10 }, (_, index) => {
+        const count = index + 1;
+        renderCards(count);
+        const caseComposerRect = document.querySelector('#composerForm').getBoundingClientRect();
+        const caseSendRect = document.querySelector('#sendButton').getBoundingClientRect();
+        return {
+          count,
+          documentWidth: document.documentElement.scrollWidth,
+          bodyWidth: document.body.scrollWidth,
+          composerLeft: Math.round(caseComposerRect.left),
+          composerRight: Math.round(caseComposerRect.right),
+          sendRight: Math.round(caseSendRect.right),
+          trayClientWidth: tray.clientWidth,
+          trayScrollWidth: tray.scrollWidth,
+        };
+      });
+      const appRect = document.querySelector('#roomApp').getBoundingClientRect();
+      const shellRect = document.querySelector('#composerShell').getBoundingClientRect();
+      const composerRect = document.querySelector('#composerForm').getBoundingClientRect();
+      const sendRect = document.querySelector('#sendButton').getBoundingClientRect();
+      const result = {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        documentWidth: document.documentElement.scrollWidth,
+        bodyWidth: document.body.scrollWidth,
+        viewportHeightVariable: getComputedStyle(document.documentElement).getPropertyValue('--room-viewport-height').trim(),
+        appHeight: Math.round(appRect.height),
+        appLeft: Math.round(appRect.left),
+        appRight: Math.round(appRect.right),
+        memberStackDisplay: getComputedStyle(document.querySelector('.member-stack')).display,
+        composerVisible: shellRect.bottom <= window.innerHeight + 1,
+        composerLeft: Math.round(composerRect.left),
+        composerRight: Math.round(composerRect.right),
+        sendRight: Math.round(sendRect.right),
+        trayClientWidth: tray.clientWidth,
+        trayScrollWidth: tray.scrollWidth,
+        uploadCards: tray.querySelectorAll('.upload-card').length,
+        layoutCases,
+      };
+      tray.innerHTML = '';
+      tray.hidden = true;
+      return result;
+    })()`);
     const beforeKeyboardAnchor = await windowRef.webContents.executeJavaScript(`(() => {
       const scroll = document.querySelector('#messageScroll');
       scroll.scrollTop = Math.max(0, Math.min(scroll.scrollHeight - scroll.clientHeight, Math.round(scroll.scrollHeight * .3)));
@@ -618,11 +664,30 @@ async function run() {
         && paneRespawn.builderTokenRotated
         && paneRespawn.webSocketStillConnected
         && phoneLayout.width === 390
+        && phoneLayout.documentWidth === phoneLayout.width
+        && phoneLayout.bodyWidth === phoneLayout.width
+        && phoneLayout.appLeft === 0
+        && phoneLayout.appRight === phoneLayout.width
         && phoneLayout.memberStackDisplay === 'none'
         && phoneLayout.appHeight === Number.parseInt(phoneLayout.viewportHeightVariable, 10)
         && phoneLayout.appHeight <= phoneLayout.height
         && phoneLayout.appHeight >= 700
         && phoneLayout.composerVisible
+        && phoneLayout.composerLeft >= 0
+        && phoneLayout.composerRight <= phoneLayout.width
+        && phoneLayout.sendRight <= phoneLayout.width
+        && phoneLayout.uploadCards === 10
+        && phoneLayout.trayClientWidth <= phoneLayout.width
+        && phoneLayout.trayScrollWidth > phoneLayout.trayClientWidth
+        && phoneLayout.layoutCases.length === 10
+        && phoneLayout.layoutCases.every((layoutCase) => layoutCase.documentWidth === phoneLayout.width
+          && layoutCase.bodyWidth === phoneLayout.width
+          && layoutCase.composerLeft >= 0
+          && layoutCase.composerRight <= phoneLayout.width
+          && layoutCase.sendRight <= phoneLayout.width
+          && layoutCase.trayClientWidth <= phoneLayout.width)
+        && phoneLayout.layoutCases.filter((layoutCase) => layoutCase.count > 1)
+          .every((layoutCase) => layoutCase.trayScrollWidth > layoutCase.trayClientWidth)
         && keyboardViewport.width === 390
         && keyboardViewport.layoutHeight === 844
         && keyboardViewport.visualHeight === 520
