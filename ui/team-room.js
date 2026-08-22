@@ -12,11 +12,7 @@
     dot: document.getElementById('connectionDot'),
     banner: document.getElementById('disconnectBanner'),
     attachmentButton: document.getElementById('attachmentButton'),
-    attachmentMenu: document.getElementById('attachmentMenu'),
-    cameraInput: document.getElementById('cameraInput'),
     fileInput: document.getElementById('fileInput'),
-    takePhotoButton: document.getElementById('takePhotoButton'),
-    chooseFilesButton: document.getElementById('chooseFilesButton'),
     uploadCount: document.getElementById('uploadCount'),
     uploadTray: document.getElementById('uploadTray'),
     uploadAnnouncements: document.getElementById('uploadAnnouncements'),
@@ -82,6 +78,11 @@
     serviceWorkerRegistration: null,
     presenceTimer: null,
     sending: false,
+    outbox: [],
+    restoredOutbox: false,
+    drainingOutbox: false,
+    outboxRetryTimer: null,
+    outboxRetryAttempt: 0,
     dragDepth: 0,
     unreadCount: 0,
     restoredDrafts: false,
@@ -94,6 +95,8 @@
   const draftKey = 'squidrun.team-room.draft.v1';
   const draftDatabaseName = 'squidrun-team-room-drafts-v1';
   const draftStoreName = 'attachments';
+  const outboxStoreName = 'outbox';
+  const pairedDeviceKey = 'squidrun.team-room.paired-device.v1';
   const defaultMaxAttachmentBytes = 50 * 1024 * 1024;
   const maxAttachmentsPerMessage = 12;
   const typewriterMinDurationMs = 280;
@@ -109,6 +112,10 @@
     elements.dot.setAttribute('aria-label', status === 'connected' ? 'Connected' : status === 'connecting' ? 'Connecting' : 'Disconnected');
     elements.banner.hidden = status !== 'disconnected' || !state.authenticated;
     updateSendState();
+    if (state.connected) {
+      resumeDraftUploads();
+      void drainOutbox();
+    }
   }
 
   async function fetchJson(route, options = {}) {
@@ -129,29 +136,61 @@
     if (!globalThis.indexedDB) return Promise.resolve(null);
     if (draftDatabasePromise) return draftDatabasePromise;
     draftDatabasePromise = new Promise((resolve) => {
-      const request = indexedDB.open(draftDatabaseName, 1);
+      const request = indexedDB.open(draftDatabaseName, 2);
       request.onupgradeneeded = () => {
         if (!request.result.objectStoreNames.contains(draftStoreName)) {
           request.result.createObjectStore(draftStoreName, { keyPath: 'localId' });
         }
+        if (!request.result.objectStoreNames.contains(outboxStoreName)) {
+          request.result.createObjectStore(outboxStoreName, { keyPath: 'clientNonce' });
+        }
       };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => resolve(null);
-      request.onblocked = () => resolve(null);
+      request.onsuccess = () => {
+        request.result.onversionchange = () => request.result.close();
+        resolve(request.result);
+      };
+      request.onerror = () => { draftDatabasePromise = null; resolve(null); };
+      request.onblocked = () => { draftDatabasePromise = null; resolve(null); };
     });
     return draftDatabasePromise;
   }
 
-  async function withDraftStore(mode, operation) {
+  async function withDatabaseStore(storeName, mode, operation) {
     const database = await openDraftDatabase();
     if (!database) return null;
     return new Promise((resolve) => {
+      let transaction;
       let request;
-      try { request = operation(database.transaction(draftStoreName, mode).objectStore(draftStoreName)); } catch { resolve(null); return; }
-      if (!request) { resolve(true); return; }
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => resolve(null);
+      let result = true;
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      try {
+        transaction = database.transaction(storeName, mode);
+        request = operation(transaction.objectStore(storeName));
+      } catch {
+        finish(null);
+        return;
+      }
+      if (request) {
+        request.onsuccess = () => { result = request.result === undefined ? true : request.result; };
+        request.onerror = () => finish(null);
+      }
+      transaction.oncomplete = () => finish(result);
+      transaction.onerror = () => finish(null);
+      transaction.onabort = () => finish(null);
     });
+  }
+
+  function withDraftStore(mode, operation) {
+    return withDatabaseStore(draftStoreName, mode, operation);
+  }
+
+  function withOutboxStore(mode, operation) {
+    return withDatabaseStore(outboxStoreName, mode, operation);
   }
 
   function serializableAttachment(item) {
@@ -181,6 +220,35 @@
 
   function clearPersistedAttachments() {
     return withDraftStore('readwrite', (store) => store.clear());
+  }
+
+  function serializableOutboxAttachment(item) {
+    return {
+      localId: item.localId,
+      name: item.name,
+      type: item.type,
+      size: item.size,
+      lastModified: item.lastModified,
+      file: item.file || null,
+      attachment: item.attachment || null,
+    };
+  }
+
+  function serializableOutboxRecord(record) {
+    return {
+      clientNonce: record.clientNonce,
+      body: record.body,
+      createdAtMs: record.createdAtMs,
+      attachments: record.attachments.map(serializableOutboxAttachment),
+    };
+  }
+
+  function persistOutboxRecord(record) {
+    return withOutboxStore('readwrite', (store) => store.put(serializableOutboxRecord(record)));
+  }
+
+  function deleteOutboxRecord(clientNonce) {
+    return withOutboxStore('readwrite', (store) => store.delete(clientNonce));
   }
 
   function formatClock(timestamp) {
@@ -470,11 +538,13 @@
         button.addEventListener('click', () => openLightbox(attachment));
         grid.append(button);
       } else {
-        const card = document.createElement('a');
+        const card = document.createElement(attachment.localOnly ? 'div' : 'a');
         card.className = 'file-tile';
-        card.href = attachment.originalUrl;
-        card.target = '_blank';
-        card.rel = 'noreferrer';
+        if (!attachment.localOnly) {
+          card.href = attachment.originalUrl;
+          card.target = '_blank';
+          card.rel = 'noreferrer';
+        }
         const mark = document.createElement('span');
         mark.className = 'file-mark';
         mark.textContent = attachment.mimeType === 'application/pdf' ? 'PDF' : 'FILE';
@@ -559,6 +629,7 @@
       item.className = 'message-item';
       item.dataset.messageId = message.messageId;
       if (message.pending) item.dataset.pending = 'true';
+      if (message.queued) item.dataset.queued = 'true';
       if (message.error) item.dataset.error = 'true';
       if (message.body) {
         const body = document.createElement('div');
@@ -570,12 +641,18 @@
         }
       }
       renderMessageAttachments(item, message.attachments);
-      if (message.pending || message.optimistic || message.error) {
+      if (message.pending || message.queued || message.optimistic || message.error) {
         const meta = document.createElement('span');
         meta.className = 'message-meta';
         const mark = document.createElement('span');
-        mark.className = message.pending ? 'pending-mark' : 'resolved-mark';
-        meta.append(mark, document.createTextNode(message.error ? 'Not sent · draft restored' : message.pending ? 'Sending' : 'Sent'));
+        mark.className = message.queued ? 'queued-mark' : message.pending ? 'pending-mark' : 'resolved-mark';
+        meta.append(mark, document.createTextNode(message.error
+          ? 'Not sent · draft restored'
+          : message.queued
+            ? 'Queued · will send when back'
+            : message.pending
+              ? 'Sending'
+              : 'Sent'));
         item.append(meta);
       }
       currentRun.append(item);
@@ -607,12 +684,73 @@
     if (index < 0 && wasAwayFromBottom) markUnread(1);
   }
 
+  function reviveStoredFile(attachment) {
+    let file = attachment.file;
+    if (file instanceof Blob && !(file instanceof File)) {
+      try {
+        file = new File([file], attachment.name, {
+          type: attachment.type,
+          lastModified: attachment.lastModified,
+        });
+      } catch {}
+    }
+    return file;
+  }
+
+  function outboxDisplayAttachments(record) {
+    return record.attachments.map((item) => {
+      if (item.attachment) return item.attachment;
+      if (!item.previewObjectUrl && item.file instanceof Blob && String(item.type || '').startsWith('image/')) {
+        item.previewObjectUrl = URL.createObjectURL(item.file);
+      }
+      return {
+        attachmentId: item.localId,
+        mimeType: item.type,
+        originalName: item.name,
+        bytes: item.size,
+        previewUrl: item.previewObjectUrl || '',
+        originalUrl: item.previewObjectUrl || '',
+        downloadUrl: item.previewObjectUrl || '',
+        localOnly: true,
+      };
+    });
+  }
+
+  function outboxMessage(record, { sending = false } = {}) {
+    return {
+      messageId: `pending-${record.clientNonce}`,
+      seq: Number.MAX_SAFE_INTEGER,
+      authorId: 'james',
+      author: { memberId: 'james', displayName: 'James' },
+      body: record.body,
+      attachments: outboxDisplayAttachments(record),
+      clientNonce: record.clientNonce,
+      createdAtMs: record.createdAtMs,
+      pending: sending,
+      queued: !sending,
+      optimistic: true,
+    };
+  }
+
+  function mergeOutboxMessages() {
+    for (const record of state.outbox) {
+      const matchingIndex = state.messages.findIndex((message) => message.clientNonce === record.clientNonce);
+      if (matchingIndex < 0) state.messages.push(outboxMessage(record));
+      else if (String(state.messages[matchingIndex].messageId || '').startsWith('pending-')) {
+        state.messages[matchingIndex] = outboxMessage(record, { sending: state.drainingOutbox });
+      }
+    }
+    state.messages.sort((a, b) => Number(a.seq || Number.MAX_SAFE_INTEGER) - Number(b.seq || Number.MAX_SAFE_INTEGER)
+      || Number(a.createdAtMs) - Number(b.createdAtMs));
+  }
+
   function applySnapshot(snapshot, { initial = false } = {}) {
     const nextMessages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
     const previousIds = new Set(state.messages.map((message) => message.messageId));
     const newCount = nextMessages.filter((message) => !previousIds.has(message.messageId)).length;
     const wasAwayFromBottom = !initial && !closeEnoughToBottom();
     state.messages = nextMessages;
+    mergeOutboxMessages();
     renderMessages({ forceBottom: initial });
     if (wasAwayFromBottom && newCount > 0) markUnread(newCount);
   }
@@ -683,11 +821,12 @@
   }
 
   function updateSendState() {
-    const ready = state.attachments.filter((item) => item.status === 'ready');
-    const unresolved = state.attachments.some((item) => !['ready'].includes(item.status));
-    const hasContent = Boolean(elements.input.value.trim()) || ready.length > 0;
-    elements.send.disabled = !state.authenticated || !state.connected || state.sending || unresolved || !hasContent;
-    elements.attachmentButton.disabled = !state.authenticated || state.sending || state.attachments.length >= maxAttachmentsPerMessage;
+    const hasContent = Boolean(elements.input.value.trim()) || state.attachments.length > 0;
+    const queueable = state.attachments.every((item) => item.attachment || item.file instanceof Blob);
+    elements.send.disabled = !state.authenticated || state.sending || !queueable || !hasContent;
+    const attachmentPickerDisabled = !state.authenticated || state.sending || state.attachments.length >= maxAttachmentsPerMessage;
+    elements.attachmentButton.disabled = attachmentPickerDisabled;
+    elements.fileInput.disabled = attachmentPickerDisabled;
   }
 
   function resizeComposer() {
@@ -789,6 +928,14 @@
 
   function uploadAttachment(item) {
     if (item.removed || !state.authenticated || !item.file || ['uploading', 'ready'].includes(item.status)) return;
+    if (!state.connected) {
+      item.status = 'queued';
+      item.progress = 0;
+      item.error = null;
+      void persistAttachment(item);
+      renderUploadTray();
+      return;
+    }
     item.status = 'uploading';
     item.progress = Math.max(0.02, item.progress || 0);
     item.error = null;
@@ -825,8 +972,8 @@
         announceUpload(`${item.name} could not be uploaded.`);
       }
     });
-    xhr.addEventListener('error', () => finish('error', 'Network interrupted · tap retry'));
-    xhr.addEventListener('timeout', () => finish('error', 'Upload timed out · tap retry'));
+    xhr.addEventListener('error', () => finish('queued'));
+    xhr.addEventListener('timeout', () => finish('queued'));
     xhr.addEventListener('abort', () => finish('canceled', 'Canceled'));
     const form = new FormData();
     form.append('file', item.file, item.name);
@@ -860,7 +1007,6 @@
   }
 
   async function stageFiles(fileList) {
-    closeAttachmentMenu();
     const files = [...(fileList || [])];
     if (files.length === 0) return;
     const available = maxAttachmentsPerMessage - state.attachments.length;
@@ -896,10 +1042,7 @@
     const records = await withDraftStore('readonly', (store) => store.getAll());
     if (!Array.isArray(records)) return;
     state.attachments = records.slice(0, maxAttachmentsPerMessage).map((record) => {
-      let file = record.file;
-      if (file instanceof Blob && !(file instanceof File)) {
-        try { file = new File([file], record.name, { type: record.type, lastModified: record.lastModified }); } catch {}
-      }
+      const file = reviveStoredFile(record);
       const interrupted = record.status === 'uploading' || record.status === 'queued';
       return {
         ...record,
@@ -917,68 +1060,155 @@
     for (const item of state.attachments) if (item.status === 'queued') uploadAttachment(item);
   }
 
+  async function restoreOutbox() {
+    if (state.restoredOutbox) return;
+    state.restoredOutbox = true;
+    const records = await withOutboxStore('readonly', (store) => store.getAll());
+    if (!Array.isArray(records)) return;
+    state.outbox = records.map((record) => ({
+      ...record,
+      body: String(record.body || ''),
+      createdAtMs: Number(record.createdAtMs) || Date.now(),
+      attachments: Array.isArray(record.attachments)
+        ? record.attachments.map((attachment) => ({ ...attachment, file: reviveStoredFile(attachment) }))
+        : [],
+    })).sort((a, b) => a.createdAtMs - b.createdAtMs || a.clientNonce.localeCompare(b.clientNonce));
+  }
+
+  function setOutboxMessageState(record, sending) {
+    const index = state.messages.findIndex((message) => message.clientNonce === record.clientNonce
+      && String(message.messageId || '').startsWith('pending-'));
+    if (index >= 0) state.messages[index] = outboxMessage(record, { sending });
+    else if (!state.messages.some((message) => message.clientNonce === record.clientNonce)) {
+      state.messages.push(outboxMessage(record, { sending }));
+    }
+    renderMessages();
+  }
+
+  async function uploadOutboxAttachment(item) {
+    if (item.attachment) return item.attachment;
+    if (!(item.file instanceof Blob)) throw new Error('room_outbox_attachment_blob_missing');
+    const form = new FormData();
+    form.append('file', item.file, item.name);
+    const response = await fetch('/api/attachments', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: form,
+    });
+    let payload = {};
+    try { payload = await response.json(); } catch {}
+    if (response.status === 401 || response.status === 403) {
+      localStorage.removeItem(pairedDeviceKey);
+      showPairScreen();
+    }
+    if (!response.ok || !payload.ok || !payload.attachment) {
+      throw new Error(payload.reason || `room_outbox_attachment_http_${response.status}`);
+    }
+    item.attachment = payload.attachment;
+    return item.attachment;
+  }
+
+  function scheduleOutboxDrain() {
+    clearTimeout(state.outboxRetryTimer);
+    if (!state.connected || !state.authenticated || state.outbox.length === 0) return;
+    const waitMs = Math.min(15_000, 700 * (2 ** state.outboxRetryAttempt));
+    state.outboxRetryAttempt += 1;
+    state.outboxRetryTimer = setTimeout(() => { void drainOutbox(); }, waitMs);
+  }
+
+  async function drainOutbox() {
+    if (state.drainingOutbox || !state.connected || !state.authenticated || state.outbox.length === 0) return;
+    state.drainingOutbox = true;
+    clearTimeout(state.outboxRetryTimer);
+    state.outboxRetryTimer = null;
+    try {
+      while (state.connected && state.authenticated && state.outbox.length > 0) {
+        const record = state.outbox[0];
+        setOutboxMessageState(record, true);
+        try {
+          let changed = false;
+          for (const attachment of record.attachments) {
+            if (attachment.attachment) continue;
+            await uploadOutboxAttachment(attachment);
+            changed = true;
+            if (await persistOutboxRecord(record) === null) throw new Error('room_outbox_attachment_checkpoint_failed');
+          }
+          if (changed && await persistOutboxRecord(record) === null) throw new Error('room_outbox_checkpoint_failed');
+          const { response, payload } = await fetchJson('/api/messages', {
+            method: 'POST',
+            body: JSON.stringify({
+              body: record.body,
+              clientNonce: record.clientNonce,
+              attachmentIds: record.attachments.map((item) => item.attachment?.attachmentId).filter(Boolean),
+            }),
+          });
+          if (response.status === 401 || response.status === 403) {
+            localStorage.removeItem(pairedDeviceKey);
+            showPairScreen();
+          }
+          if (!response.ok || !payload.ok || !payload.message) {
+            throw new Error(payload.reason || `room_outbox_message_http_${response.status}`);
+          }
+          mergeMessage(payload.message);
+          if (await deleteOutboxRecord(record.clientNonce) === null) throw new Error('room_outbox_delete_failed');
+          for (const attachment of record.attachments) {
+            if (attachment.previewObjectUrl) URL.revokeObjectURL(attachment.previewObjectUrl);
+          }
+          state.outbox.shift();
+          state.outboxRetryAttempt = 0;
+        } catch {
+          setOutboxMessageState(record, false);
+          scheduleOutboxDrain();
+          break;
+        }
+      }
+    } finally {
+      state.drainingOutbox = false;
+    }
+  }
+
   async function sendMessage() {
     const body = elements.input.value.trim();
-    const readyItems = state.attachments.filter((item) => item.status === 'ready' && item.attachment);
-    if ((!body && readyItems.length === 0) || !state.connected || state.sending) return;
-    if (state.attachments.some((item) => item.status !== 'ready')) return;
+    const selectedItems = [...state.attachments];
+    if ((!body && selectedItems.length === 0) || state.sending) return;
+    if (selectedItems.some((item) => !item.attachment && !(item.file instanceof Blob))) return;
     const clientNonce = `web-${Date.now()}-${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`;
-    const optimistic = {
-      messageId: `pending-${clientNonce}`,
-      seq: Number.MAX_SAFE_INTEGER,
-      authorId: 'james',
-      author: { memberId: 'james', displayName: 'James' },
+    const record = {
       body,
-      attachments: readyItems.map((item) => item.attachment),
       clientNonce,
       createdAtMs: Date.now(),
-      pending: true,
-      optimistic: true,
+      attachments: selectedItems.map(serializableOutboxAttachment),
     };
     state.sending = true;
     elements.input.readOnly = true;
-    state.messages.push(optimistic);
     updateSendState();
-    renderMessages({ forceBottom: true });
     try {
-      const { payload } = await fetchJson('/api/messages', {
-        method: 'POST',
-        body: JSON.stringify({
-          body,
-          clientNonce,
-          attachmentIds: readyItems.map((item) => item.attachment.attachmentId),
-        }),
-      });
-      if (!payload.ok) throw new Error(payload.reason || 'Message not sent');
-      mergeMessage(payload.message);
+      if (await persistOutboxRecord(record) === null) {
+        announceUpload('Could not save this message on the phone. Nothing was cleared.');
+        return;
+      }
+      state.outbox.push(record);
+      state.outbox.sort((a, b) => a.createdAtMs - b.createdAtMs || a.clientNonce.localeCompare(b.clientNonce));
+      for (const item of selectedItems) {
+        item.removed = true;
+        item.xhr?.abort();
+        if (item.objectUrl) URL.revokeObjectURL(item.objectUrl);
+      }
       elements.input.value = '';
       localStorage.removeItem(draftKey);
-      for (const item of state.attachments) if (item.objectUrl) URL.revokeObjectURL(item.objectUrl);
       state.attachments = [];
       await clearPersistedAttachments();
       renderUploadTray();
       resizeComposer();
-    } catch {
-      const item = state.messages.find((message) => message.clientNonce === clientNonce);
-      if (item) { item.pending = false; item.error = true; }
-      renderMessages();
+      mergeOutboxMessages();
+      renderMessages({ forceBottom: true });
     } finally {
       state.sending = false;
       elements.input.readOnly = false;
       updateSendState();
       elements.input.focus();
     }
-  }
-
-  function openAttachmentMenu() {
-    if (elements.attachmentButton.disabled) return;
-    elements.attachmentMenu.hidden = false;
-    elements.attachmentButton.setAttribute('aria-expanded', 'true');
-  }
-
-  function closeAttachmentMenu() {
-    elements.attachmentMenu.hidden = true;
-    elements.attachmentButton.setAttribute('aria-expanded', 'false');
+    void drainOutbox();
   }
 
   function resetLightboxTransform() {
@@ -1390,6 +1620,7 @@
       elements.attachmentHint.textContent = `Photos and PDFs · ${formatBytes(maxBytes)} each`;
       const { response, payload } = await fetchJson('/api/snapshot');
       if (response.status === 401 || response.status === 403) {
+        localStorage.removeItem(pairedDeviceKey);
         showPairScreen();
         if (state.pendingPairingCode) {
           const code = state.pendingPairingCode;
@@ -1402,12 +1633,19 @@
       }
       if (!payload.ok) throw new Error(payload.reason || 'room_snapshot_failed');
       showRoom();
+      localStorage.setItem(pairedDeviceKey, '1');
       applySnapshot(payload.snapshot, { initial: true });
       connectSocket();
       resumeDraftUploads();
       void refreshRemoteAccess();
       elements.input.focus();
     } catch {
+      if (localStorage.getItem(pairedDeviceKey) === '1') {
+        showRoom();
+        state.messages = [];
+        mergeOutboxMessages();
+        renderMessages({ forceBottom: true });
+      }
       setConnection('disconnected');
       elements.banner.hidden = false;
     }
@@ -1422,16 +1660,7 @@
     resizeComposer();
     updateSendState();
   });
-  elements.attachmentButton.addEventListener('click', () => {
-    if (elements.attachmentMenu.hidden) openAttachmentMenu(); else closeAttachmentMenu();
-  });
-  elements.takePhotoButton.addEventListener('click', () => { closeAttachmentMenu(); elements.cameraInput.click(); });
-  elements.chooseFilesButton.addEventListener('click', () => { closeAttachmentMenu(); elements.fileInput.click(); });
-  elements.cameraInput.addEventListener('change', () => { void stageFiles(elements.cameraInput.files); elements.cameraInput.value = ''; });
   elements.fileInput.addEventListener('change', () => { void stageFiles(elements.fileInput.files); elements.fileInput.value = ''; });
-  document.addEventListener('pointerdown', (event) => {
-    if (!elements.attachmentMenu.hidden && !elements.attachmentMenu.contains(event.target) && !elements.attachmentButton.contains(event.target)) closeAttachmentMenu();
-  });
   document.addEventListener('dragenter', (event) => {
     if (![...(event.dataTransfer?.types || [])].includes('Files') || !state.authenticated) return;
     event.preventDefault();
@@ -1550,7 +1779,11 @@
     elements.scroll.scrollTo({ top: elements.scroll.scrollHeight, behavior: 'auto' });
   });
   elements.scroll.addEventListener('scroll', () => { if (closeEnoughToBottom()) clearUnread(); }, { passive: true });
-  window.addEventListener('online', () => { if (!state.socket) connectSocket(); resumeDraftUploads(); });
+  window.addEventListener('online', () => {
+    if (!state.socket) connectSocket();
+    resumeDraftUploads();
+    void drainOutbox();
+  });
   window.addEventListener('focus', () => sendPresence(true));
   window.addEventListener('blur', () => sendPresence(false));
   document.addEventListener('visibilitychange', () => sendPresence());
@@ -1559,11 +1792,17 @@
   globalThis.visualViewport?.addEventListener('scroll', syncVisualViewport, { passive: true });
   window.addEventListener('beforeunload', () => {
     clearTimeout(state.reconnectTimer);
+    clearTimeout(state.outboxRetryTimer);
     clearInterval(state.presenceTimer);
     sendPresence(false);
     finishActiveTypewriters();
     state.socket?.close();
     for (const item of state.attachments) if (item.objectUrl) URL.revokeObjectURL(item.objectUrl);
+    for (const record of state.outbox) {
+      for (const attachment of record.attachments) {
+        if (attachment.previewObjectUrl) URL.revokeObjectURL(attachment.previewObjectUrl);
+      }
+    }
   });
   reducedMotionQuery?.addEventListener?.('change', (event) => {
     if (!event.matches) return;
@@ -1577,6 +1816,7 @@
     await registerInstallShell();
     elements.input.value = localStorage.getItem(draftKey) || '';
     resizeComposer();
+    await restoreOutbox();
     await restoreDraftAttachments();
     updateSendState();
     await initialize();

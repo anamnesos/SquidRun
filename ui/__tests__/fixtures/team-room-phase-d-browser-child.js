@@ -15,6 +15,7 @@ const keyboardScreenshotPath = String(process.env.TEAM_ROOM_PHASE_D_KEYBOARD_SCR
 const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-phase-d-browser-'));
 app.setPath('userData', path.join(smokeRoot, 'user-data'));
 app.commandLine.appendSwitch('disable-gpu');
+app.on('window-all-closed', () => {});
 
 function checkpoint(stage, details = {}) {
   if (!process.env.TEAM_ROOM_PHASE_D_OUTPUT) return;
@@ -277,8 +278,11 @@ async function run() {
         { localId: 'phase-d-draft-pdf', name: pdfFile.name, type: pdfFile.type, size: pdfFile.size, lastModified: pdfFile.lastModified, file: pdfFile },
       ];
       const database = await new Promise((resolve, reject) => {
-        const request = indexedDB.open('squidrun-team-room-drafts-v1', 1);
-        request.onupgradeneeded = () => request.result.createObjectStore('attachments', { keyPath: 'localId' });
+        const request = indexedDB.open('squidrun-team-room-drafts-v1', 2);
+        request.onupgradeneeded = () => {
+          if (!request.result.objectStoreNames.contains('attachments')) request.result.createObjectStore('attachments', { keyPath: 'localId' });
+          if (!request.result.objectStoreNames.contains('outbox')) request.result.createObjectStore('outbox', { keyPath: 'clientNonce' });
+        };
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
@@ -404,6 +408,237 @@ async function run() {
       };
     })()`);
     checkpoint('photo-counter-verified', photoCounterFlow);
+
+    const singleChooser = await windowRef.webContents.executeJavaScript(`(() => {
+      const trigger = document.querySelector('#attachmentButton');
+      const picker = document.querySelector('#fileInput');
+      const triggerRect = trigger.getBoundingClientRect();
+      const pickerRect = picker.getBoundingClientRect();
+      const hitTarget = document.elementFromPoint(
+        triggerRect.left + (triggerRect.width / 2),
+        triggerRect.top + (triggerRect.height / 2),
+      );
+      const beforeCancelCards = document.querySelectorAll('.upload-card').length;
+      const emptyTransfer = new DataTransfer();
+      picker.files = emptyTransfer.files;
+      picker.dispatchEvent(new Event('change', { bubbles: true }));
+      return {
+        directHitTarget: hitTarget === picker,
+        visibleSourceRect: pickerRect.width > 0 && pickerRect.height > 0,
+        alignedToButton: Math.abs(pickerRect.left - triggerRect.left) <= 1
+          && Math.abs(pickerRect.top - triggerRect.top) <= 1
+          && Math.abs(pickerRect.width - triggerRect.width) <= 1
+          && Math.abs(pickerRect.height - triggerRect.height) <= 1,
+        hiddenAttribute: picker.hasAttribute('hidden'),
+        customMenuCount: document.querySelectorAll('.attachment-menu').length,
+        captureInputCount: document.querySelectorAll('input[capture]').length,
+        multiple: picker.multiple,
+        cancelNoop: document.querySelectorAll('.upload-card').length === beforeCancelCards,
+      };
+    })()`);
+    checkpoint('single-chooser-verified', singleChooser);
+
+    await runtime.stop();
+    await waitForRenderer(windowRef, `() => document.querySelector('#connectionDot')?.dataset.state === 'disconnected'`, 12_000, 'outbox-server-off');
+    const queuedOffline = await windowRef.webContents.executeJavaScript(`(async () => {
+      const pause = () => new Promise((resolve) => setTimeout(resolve, 30));
+      const waitUntil = async (predicate, label, timeoutMs = 12_000) => {
+        const deadline = Date.now() + timeoutMs;
+        while (!predicate() && Date.now() < deadline) await pause();
+        if (!predicate()) throw new Error('outbox_queue_timeout:' + label);
+      };
+      const sendText = async (text) => {
+        const input = document.querySelector('#messageInput');
+        input.value = text;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await waitUntil(() => !document.querySelector('#sendButton').disabled, 'send-enabled-' + text);
+        document.querySelector('#sendButton').click();
+        await waitUntil(() => [...document.querySelectorAll('.message-item[data-queued="true"]')]
+          .some((item) => item.innerText.includes(text)), 'queued-' + text);
+      };
+      await sendText('Offline FIFO first.');
+      await sendText('Offline FIFO second.');
+
+      const canvas = document.createElement('canvas');
+      canvas.width = 24;
+      canvas.height = 18;
+      canvas.getContext('2d').fillRect(0, 0, 24, 18);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const file = new File([blob], 'offline-outbox-photo.png', { type: 'image/png', lastModified: Date.now() });
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      const picker = document.querySelector('#fileInput');
+      picker.files = transfer.files;
+      picker.dispatchEvent(new Event('change', { bubbles: true }));
+      await waitUntil(() => document.querySelector('.upload-card[data-status="queued"]'), 'offline-photo-staged');
+      await sendText('Offline attachment third.');
+
+      const database = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('squidrun-team-room-drafts-v1', 2);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const outbox = await new Promise((resolve, reject) => {
+        const request = database.transaction('outbox', 'readonly').objectStore('outbox').getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      return {
+        connected: document.querySelector('#connectionDot').dataset.state,
+        queuedLabels: [...document.querySelectorAll('.message-item[data-queued="true"] .message-meta')].map((item) => item.innerText.trim()),
+        records: outbox.sort((a, b) => a.createdAtMs - b.createdAtMs).map((record) => ({
+          clientNonce: record.clientNonce,
+          body: record.body,
+          attachmentCount: record.attachments.length,
+          attachmentBytes: record.attachments[0]?.file?.size || 0,
+        })),
+        draftCleared: document.querySelector('#messageInput').value === '' && document.querySelector('#uploadTray').hidden,
+      };
+    })()`);
+    checkpoint('outbox-queued-server-off', queuedOffline);
+
+    windowRef.destroy();
+    windowRef = null;
+    checkpoint('outbox-window-closed');
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    runtime = new TeamRoomRuntime(runtimeOptions(fixedPort, resolveBindings));
+    const outboxRestart = await runtime.start();
+    checkpoint('outbox-runtime-restarted', { ok: outboxRestart.ok, origin: outboxRestart.origin });
+    if (!outboxRestart.ok || outboxRestart.origin !== firstStart.origin) throw new Error('phase_d_outbox_restart_failed');
+    const outboxHealth = await requestJson(outboxRestart.origin, '/api/config', { cookie, origin: outboxRestart.origin });
+    checkpoint('outbox-runtime-healthy', { statusCode: outboxHealth.statusCode, ok: outboxHealth.payload.ok });
+    if (outboxHealth.statusCode !== 200 || !outboxHealth.payload.ok) throw new Error('phase_d_outbox_restart_health_failed');
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    const reopened = await createTeamRoomWindow({
+      BrowserWindow,
+      origin: outboxRestart.origin,
+      credentialToken: paired.token,
+      statePath: path.join(smokeRoot, 'window-state.json'),
+      showOnReady: false,
+      windowOptions: { width: 1180, height: 820, minWidth: 320, minHeight: 480 },
+    });
+    checkpoint('outbox-window-reopened');
+    windowRef = reopened.window;
+    windowRef.webContents.on('console-message', (_event, level, message) => {
+      if (Number(level) >= 2) consoleErrors.push(String(message));
+    });
+    await waitForRenderer(windowRef, `() => {
+      const expected = ['Offline FIFO first.', 'Offline FIFO second.', 'Offline attachment third.'];
+      const messages = [...document.querySelectorAll('.message-item')];
+      return document.querySelector('#connectionDot')?.dataset.state === 'connected'
+        && expected.every((body) => {
+          const matching = messages.filter((item) => item.querySelector('.message-body')?.innerText === body);
+          return matching.length === 1
+            && matching[0].dataset.queued !== 'true'
+            && matching[0].dataset.pending !== 'true'
+            && matching[0].querySelector('.message-meta')?.innerText.includes('Sent');
+        });
+    }`, 25_000, 'outbox-reopen-drain');
+    const outboxAfterReopen = await windowRef.webContents.executeJavaScript(`(async () => {
+      const database = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('squidrun-team-room-drafts-v1', 2);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const count = await new Promise((resolve, reject) => {
+        const request = database.transaction('outbox', 'readonly').objectStore('outbox').count();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      return { count, connected: document.querySelector('#connectionDot').dataset.state };
+    })()`);
+    const queuedBodies = queuedOffline.records.map((record) => record.body);
+    const canonicalQueued = runtime.store.listMessages().filter((message) => queuedBodies.includes(message.body));
+    const outboxFlow = {
+      ...outboxAfterReopen,
+      canonicalCounts: Object.fromEntries(queuedBodies.map((body) => [body, canonicalQueued.filter((message) => message.body === body).length])),
+      seqs: canonicalQueued.map((message) => message.seq),
+      activationCounts: canonicalQueued.map((message) => runtime.store.listActivations(message.messageId).length),
+      attachmentCounts: canonicalQueued.map((message) => runtime.store.getMessageAttachments(message.messageId).length),
+    };
+    checkpoint('outbox-reopen-drained', outboxFlow);
+
+    const responseLoss = await windowRef.webContents.executeJavaScript(`(async () => {
+      const originalFetch = window.fetch;
+      let responseDropped = false;
+      window.fetch = async (input, init) => {
+        const route = typeof input === 'string' ? input : input?.url || '';
+        const body = String(init?.body || '');
+        if (!responseDropped && route === '/api/messages' && body.includes('Response loss replay.')) {
+          const response = await originalFetch(input, init);
+          responseDropped = true;
+          throw new TypeError('simulated_response_loss');
+        }
+        return originalFetch(input, init);
+      };
+      const input = document.querySelector('#messageInput');
+      input.value = 'Response loss replay.';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('#sendButton').click();
+      const deadline = Date.now() + 15_000;
+      let outboxCount = -1;
+      while (Date.now() < deadline) {
+        const database = await new Promise((resolve, reject) => {
+          const request = indexedDB.open('squidrun-team-room-drafts-v1', 2);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        outboxCount = await new Promise((resolve, reject) => {
+          const request = database.transaction('outbox', 'readonly').objectStore('outbox').count();
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        const items = [...document.querySelectorAll('.message-item')].filter((item) => item.innerText.includes('Response loss replay.'));
+        if (responseDropped && outboxCount === 0 && items.length === 1 && items[0].innerText.includes('Sent')) {
+          window.fetch = originalFetch;
+          return { responseDropped, outboxCount, visibleCount: items.length };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      window.fetch = originalFetch;
+      return { responseDropped, outboxCount, visibleCount: -1 };
+    })()`);
+    const responseLossMessages = runtime.store.listMessages().filter((message) => message.body === 'Response loss replay.');
+    responseLoss.canonicalCount = responseLossMessages.length;
+    responseLoss.activationCount = responseLossMessages.length === 1
+      ? runtime.store.listActivations(responseLossMessages[0].messageId).length
+      : -1;
+    checkpoint('outbox-response-loss-idempotent', responseLoss);
+
+    const failedDrain = await windowRef.webContents.executeJavaScript(`(async () => {
+      const originalFetch = window.fetch;
+      let firstDrainFailed = false;
+      window.fetch = async (input, init) => {
+        const route = typeof input === 'string' ? input : input?.url || '';
+        const body = String(init?.body || '');
+        if (!firstDrainFailed && route === '/api/messages' && body.includes('Failed drain survives.')) {
+          firstDrainFailed = true;
+          throw new TypeError('simulated_request_failure');
+        }
+        return originalFetch(input, init);
+      };
+      const input = document.querySelector('#messageInput');
+      input.value = 'Failed drain survives.';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('#sendButton').click();
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        const items = [...document.querySelectorAll('.message-item')].filter((item) => item.innerText.includes('Failed drain survives.'));
+        if (firstDrainFailed && items.length === 1 && items[0].innerText.includes('Sent')) {
+          window.fetch = originalFetch;
+          return { firstDrainFailed, visibleCount: items.length };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      window.fetch = originalFetch;
+      return { firstDrainFailed, visibleCount: -1 };
+    })()`);
+    const failedDrainMessages = runtime.store.listMessages().filter((message) => message.body === 'Failed drain survives.');
+    failedDrain.canonicalCount = failedDrainMessages.length;
+    failedDrain.activationCount = failedDrainMessages.length === 1
+      ? runtime.store.listActivations(failedDrainMessages[0].messageId).length
+      : -1;
+    checkpoint('outbox-failed-drain-retried', failedDrain);
 
     const credentialsRoot = path.join(smokeRoot, '.squidrun', 'runtime', 'team-room', 'credentials');
     const beforeRespawn = JSON.parse(fs.readFileSync(path.join(credentialsRoot, 'builder.json'), 'utf8'));
@@ -541,6 +776,8 @@ async function run() {
       const shellRect = document.querySelector('#composerShell').getBoundingClientRect();
       const composerRect = document.querySelector('#composerForm').getBoundingClientRect();
       const sendRect = document.querySelector('#sendButton').getBoundingClientRect();
+      const pickerRect = document.querySelector('#fileInput').getBoundingClientRect();
+      const pickerButtonRect = document.querySelector('#attachmentButton').getBoundingClientRect();
       const result = {
         width: window.innerWidth,
         height: window.innerHeight,
@@ -560,6 +797,18 @@ async function run() {
         uploadCards: tray.querySelectorAll('.upload-card').length,
         counterText: counter.textContent,
         counterVisible: !counter.hidden,
+        pickerAnchor: {
+          aligned: Math.abs(pickerRect.left - pickerButtonRect.left) <= 1
+            && Math.abs(pickerRect.top - pickerButtonRect.top) <= 1
+            && Math.abs(pickerRect.width - pickerButtonRect.width) <= 1
+            && Math.abs(pickerRect.height - pickerButtonRect.height) <= 1,
+          hitTargetId: document.elementFromPoint(
+            pickerButtonRect.left + (pickerButtonRect.width / 2),
+            pickerButtonRect.top + (pickerButtonRect.height / 2),
+          )?.id || null,
+          width: Math.round(pickerRect.width),
+          height: Math.round(pickerRect.height),
+        },
         layoutCases,
       };
       tray.innerHTML = '';
@@ -687,6 +936,32 @@ async function run() {
         x: 0, y: 0, width: phoneLayout.width, height: phoneLayout.appHeight,
       })).toPNG());
     }
+    await windowRef.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
+      width: 844,
+      height: 390,
+      deviceScaleFactor: 1,
+      mobile: true,
+      screenWidth: 844,
+      screenHeight: 390,
+    });
+    await windowRef.webContents.executeJavaScript(`window.dispatchEvent(new Event('resize'))`);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const pickerLandscape = await windowRef.webContents.executeJavaScript(`(() => {
+      const pickerRect = document.querySelector('#fileInput').getBoundingClientRect();
+      const buttonRect = document.querySelector('#attachmentButton').getBoundingClientRect();
+      return {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        aligned: Math.abs(pickerRect.left - buttonRect.left) <= 1
+          && Math.abs(pickerRect.top - buttonRect.top) <= 1
+          && Math.abs(pickerRect.width - buttonRect.width) <= 1
+          && Math.abs(pickerRect.height - buttonRect.height) <= 1,
+        hitTargetId: document.elementFromPoint(
+          buttonRect.left + (buttonRect.width / 2),
+          buttonRect.top + (buttonRect.height / 2),
+        )?.id || null,
+      };
+    })()`);
     if (captureEnabled) windowRef.hide();
     checkpoint('visuals-captured');
 
@@ -714,6 +989,38 @@ async function run() {
         && photoCounterFlow.onePhoto === '1 photo'
         && photoCounterFlow.fivePhotos === '5 photos'
         && photoCounterFlow.hiddenAfterRemoval && photoCounterFlow.trayHiddenAfterRemoval
+        && singleChooser.directHitTarget === true
+        && singleChooser.visibleSourceRect === true
+        && singleChooser.alignedToButton === true
+        && singleChooser.hiddenAttribute === false
+        && singleChooser.customMenuCount === 0
+        && singleChooser.captureInputCount === 0
+        && singleChooser.multiple === true
+        && singleChooser.cancelNoop === true
+        && queuedOffline.connected === 'disconnected'
+        && queuedOffline.records.length === 3
+        && queuedOffline.records.map((record) => record.body).join('|') === 'Offline FIFO first.|Offline FIFO second.|Offline attachment third.'
+        && queuedOffline.records[2].attachmentCount === 1
+        && queuedOffline.records[2].attachmentBytes > 0
+        && queuedOffline.queuedLabels.length === 3
+        && queuedOffline.queuedLabels.every((label) => /Queued.*will send when back/u.test(label))
+        && queuedOffline.draftCleared
+        && outboxFlow.count === 0
+        && outboxFlow.connected === 'connected'
+        && Object.values(outboxFlow.canonicalCounts).every((count) => count === 1)
+        && outboxFlow.seqs.length === 3
+        && outboxFlow.seqs.every((seq, index) => index === 0 || seq > outboxFlow.seqs[index - 1])
+        && outboxFlow.activationCounts.every((count) => count === 3)
+        && outboxFlow.attachmentCounts.join(',') === '0,0,1'
+        && responseLoss.responseDropped
+        && responseLoss.outboxCount === 0
+        && responseLoss.visibleCount === 1
+        && responseLoss.canonicalCount === 1
+        && responseLoss.activationCount === 3
+        && failedDrain.firstDrainFailed
+        && failedDrain.visibleCount === 1
+        && failedDrain.canonicalCount === 1
+        && failedDrain.activationCount === 3
         && attachmentPresentation.imageCaptionOpacity <= .1
         && attachmentPresentation.fileName === 'phase-d-recovery.pdf'
         && attachmentPresentation.fileNameOpacity === 1
@@ -742,6 +1049,14 @@ async function run() {
         && phoneLayout.uploadCards === 10
         && phoneLayout.counterText === '10 photos'
         && phoneLayout.counterVisible
+        && phoneLayout.pickerAnchor.aligned === true
+        && phoneLayout.pickerAnchor.hitTargetId === 'fileInput'
+        && phoneLayout.pickerAnchor.width === 44
+        && phoneLayout.pickerAnchor.height === 44
+        && pickerLandscape.width === 844
+        && pickerLandscape.height === 390
+        && pickerLandscape.aligned === true
+        && pickerLandscape.hitTargetId === 'fileInput'
         && phoneLayout.trayClientWidth <= phoneLayout.width
         && phoneLayout.trayScrollWidth > phoneLayout.trayClientWidth
         && phoneLayout.layoutCases.length === 10
@@ -794,6 +1109,11 @@ async function run() {
       afterServerRestart,
       interruptedDraftSeeded,
       recoveredDraft,
+      singleChooser,
+      queuedOffline,
+      outboxFlow,
+      responseLoss,
+      failedDrain,
       attachmentPresentation,
       pinchZoom: { ...pinchZoom, scale: pinchScale },
       paneRespawn,
@@ -803,6 +1123,7 @@ async function run() {
         phoneCaptureState,
       },
       phoneLayout,
+      pickerLandscape,
       keyboardViewport,
       keyboardScrollAnchor: { before: beforeKeyboardAnchor, after: afterKeyboardAnchor },
       temporaryPathCount: runtime.uploadManager.ownedTemporaryPaths.size,

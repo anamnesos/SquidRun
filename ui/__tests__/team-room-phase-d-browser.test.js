@@ -69,6 +69,29 @@ describe('Team Room Phase D browser recovery flow', () => {
         fileName: 'phase-d-recovery.pdf',
         fileNameVisible: true,
       }));
+      expect(result.singleChooser).toEqual(expect.objectContaining({
+        directHitTarget: true,
+        visibleSourceRect: true,
+        alignedToButton: true,
+        hiddenAttribute: false,
+        customMenuCount: 0,
+        captureInputCount: 0,
+        multiple: true,
+        cancelNoop: true,
+      }));
+      expect(result.outboxFlow).toEqual(expect.objectContaining({
+        count: 0,
+        connected: 'connected',
+      }));
+      expect(result.responseLoss).toEqual(expect.objectContaining({
+        responseDropped: true,
+        outboxCount: 0,
+        canonicalCount: 1,
+      }));
+      expect(result.failedDrain).toEqual(expect.objectContaining({
+        firstDrainFailed: true,
+        canonicalCount: 1,
+      }));
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

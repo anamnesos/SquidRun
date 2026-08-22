@@ -261,6 +261,7 @@ button { color: inherit; }
 .message-item { position: relative; max-width: 68ch; animation: message-enter 150ms ease-out both; }
 .message-item + .message-item { margin-top: 4px; }
 .message-item[data-pending="true"] { opacity: .58; }
+.message-item[data-queued="true"] { opacity: .76; }
 .message-item[data-error="true"] { color: #f1b1b1; opacity: 1; }
 .message-body { overflow-wrap: anywhere; }
 .message-body[data-typewriter-active="true"] { cursor: pointer; touch-action: manipulation; }
@@ -297,6 +298,7 @@ button { color: inherit; }
 .message-heading { margin: .7em 0 .35em !important; font-size: 1em; font-weight: 720; }
 .message-meta { display: inline-flex; align-items: center; gap: 5px; margin-left: 7px; color: var(--room-dim); font-size: 11px; vertical-align: .08em; }
 .pending-mark::before { content: "·"; }
+.queued-mark::before { content: "·"; }
 .resolved-mark::before { content: "✓"; }
 
 .message-attachments {
@@ -427,26 +429,6 @@ button { color: inherit; }
 .upload-action:hover { background: #202b34; color: var(--room-text); }
 .upload-card[data-status="error"] .upload-action, .upload-card[data-status="canceled"] .upload-action { width: auto; padding: 0 5px; color: #c8d3dc; font-size: 9px; font-weight: 700; }
 
-.attachment-menu {
-  position: absolute;
-  z-index: 9;
-  bottom: calc(100% - 3px);
-  left: max(18px, calc((100vw - 76ch) / 2 + 20px));
-  width: min(310px, calc(100vw - 32px));
-  padding: 7px;
-  border: 1px solid #2b3944;
-  border-radius: 15px;
-  background: rgba(17, 23, 29, .98);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, .48);
-  backdrop-filter: blur(20px);
-}
-.attachment-menu button { display: flex; align-items: center; gap: 11px; width: 100%; padding: 10px; border: 0; border-radius: 10px; background: transparent; color: var(--room-text); text-align: left; cursor: pointer; }
-.attachment-menu button:hover, .attachment-menu button:focus-visible { outline: 0; background: #1a242d; }
-.attachment-menu svg { width: 22px; flex: 0 0 auto; fill: none; stroke: #93a8b7; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
-.attachment-menu span { display: grid; }
-.attachment-menu strong { font-size: 12px; font-weight: 650; }
-.attachment-menu small { color: var(--room-dim); font-size: 10px; }
-
 .drop-shield {
   position: fixed;
   z-index: 30;
@@ -507,6 +489,18 @@ button { color: inherit; }
 .attachment-button { color: #91a6b5; cursor: pointer; }
 .attachment-button:hover:not(:disabled), .attachment-button[aria-expanded="true"] { background: #1b2630; color: #c9d5dd; }
 .attachment-button:disabled { color: #4d5b66; cursor: default; opacity: .5; }
+.attachment-control { position: relative; width: 42px; height: 42px; align-self: end; }
+.attachment-input {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.attachment-input:disabled { cursor: default; }
+.attachment-control:focus-within .attachment-button { outline: 2px solid #8fc6ff; outline-offset: 2px; background: #1b2630; color: #c9d5dd; }
 .attachment-button svg, .send-button svg { width: 20px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
 .send-button { background: #dbe5ec; color: #172029; cursor: pointer; transition: transform 120ms ease, opacity 120ms ease; }
 .send-button:hover:not(:disabled) { transform: translateY(-1px); }
@@ -626,10 +620,9 @@ button { color: inherit; }
   .composer-shell { padding: 9px max(10px, env(safe-area-inset-right, 0px)) calc(8px + var(--room-safe-bottom)) max(10px, env(safe-area-inset-left, 0px)); }
   .upload-tray { display: flex; max-height: 142px; margin-bottom: 7px; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x proximity; }
   .upload-card { width: min(82vw, 290px); flex: 0 0 auto; scroll-snap-align: start; }
-  .attachment-menu { right: 10px; bottom: calc(100% - 2px); left: 10px; width: auto; }
   .composer { grid-template-columns: 44px minmax(0, 1fr) 44px; min-height: 58px; border-radius: 17px; }
   .composer textarea { min-height: 46px; padding-top: 11px; }
-  .attachment-button, .send-button { width: 44px; height: 44px; }
+  .attachment-control, .attachment-button, .send-button { width: 44px; height: 44px; }
   .composer-note { display: none; }
   .room-brand p { max-width: 210px; }
   .message-attachments { gap: 5px; }

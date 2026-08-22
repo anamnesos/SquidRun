@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'squidrun-team-room-shell-v2';
+const CACHE_NAME = 'squidrun-team-room-shell-v3';
 const SHELL_PATHS = Object.freeze([
   '/',
   '/team-room.css',
