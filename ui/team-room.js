@@ -17,6 +17,7 @@
     fileInput: document.getElementById('fileInput'),
     takePhotoButton: document.getElementById('takePhotoButton'),
     chooseFilesButton: document.getElementById('chooseFilesButton'),
+    uploadCount: document.getElementById('uploadCount'),
     uploadTray: document.getElementById('uploadTray'),
     uploadAnnouncements: document.getElementById('uploadAnnouncements'),
     attachmentHint: document.getElementById('attachmentHint'),
@@ -708,8 +709,19 @@
     return item.objectUrl;
   }
 
+  function attachmentCountLabel(items) {
+    const count = items.length;
+    if (count === 0) return '';
+    const photosOnly = items.every((item) => String(item.type || item.attachment?.mimeType || '').toLowerCase().startsWith('image/'));
+    const noun = photosOnly ? (count === 1 ? 'photo' : 'photos') : (count === 1 ? 'file' : 'files');
+    return `${count} ${noun}`;
+  }
+
   function renderUploadTray() {
     const keepBottom = closeEnoughToBottom();
+    const countLabel = attachmentCountLabel(state.attachments);
+    if (elements.uploadCount.textContent !== countLabel) elements.uploadCount.textContent = countLabel;
+    elements.uploadCount.hidden = countLabel.length === 0;
     elements.uploadTray.replaceChildren();
     elements.uploadTray.hidden = state.attachments.length === 0;
     for (const item of state.attachments) {

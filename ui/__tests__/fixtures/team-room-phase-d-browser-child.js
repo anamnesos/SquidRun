@@ -305,6 +305,8 @@ async function run() {
       && document.querySelector('#messageInput')?.value === 'Recovered after an interrupted upload.'`, 20_000, 'interrupted-upload-restore');
     const recoveredDraft = await windowRef.webContents.executeJavaScript(`(() => ({
       readyCards: document.querySelectorAll('.upload-card[data-status="ready"]').length,
+      attachmentCount: document.querySelector('#uploadCount')?.textContent,
+      attachmentCountVisible: !document.querySelector('#uploadCount')?.hidden,
       draft: document.querySelector('#messageInput').value,
       sendEnabled: !document.querySelector('#sendButton').disabled,
     }))()`);
@@ -312,7 +314,8 @@ async function run() {
     await windowRef.webContents.executeJavaScript(`document.querySelector('#sendButton').click()`);
     await waitForRenderer(windowRef, `() => document.querySelectorAll('.message-attachments .media-tile').length >= 1
       && document.querySelectorAll('.message-attachments .file-tile').length >= 1
-      && document.querySelector('#uploadTray')?.hidden`, 15_000, 'attachment-send');
+      && document.querySelector('#uploadTray')?.hidden
+      && document.querySelector('#uploadCount')?.hidden`, 15_000, 'attachment-send');
     const attachmentPresentation = await windowRef.webContents.executeJavaScript(`(() => {
       const media = [...document.querySelectorAll('.media-tile')].at(-1);
       const file = [...document.querySelectorAll('.file-tile')].at(-1);
@@ -356,6 +359,51 @@ async function run() {
     })()`);
     checkpoint('lightbox-verified', pinchZoom);
     await windowRef.webContents.executeJavaScript(`document.querySelector('#mediaLightbox').close()`);
+
+    const photoCounterFlow = await windowRef.webContents.executeJavaScript(`(async () => {
+      const pause = () => new Promise((resolve) => setTimeout(resolve, 20));
+      const waitUntil = async (predicate, label) => {
+        const deadline = Date.now() + 12_000;
+        while (!predicate() && Date.now() < deadline) await pause();
+        if (!predicate()) throw new Error('photo_counter_timeout:' + label);
+      };
+      const canvas = document.createElement('canvas');
+      canvas.width = 12;
+      canvas.height = 12;
+      canvas.getContext('2d').fillRect(0, 0, 12, 12);
+      const imageBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const photos = Array.from({ length: 5 }, (_, index) => new File(
+        [imageBlob],
+        'counter-photo-' + (index + 1) + '.png',
+        { type: 'image/png', lastModified: Date.now() + index },
+      ));
+      const select = (files) => {
+        const transfer = new DataTransfer();
+        for (const file of files) transfer.items.add(file);
+        const input = document.querySelector('#fileInput');
+        input.files = transfer.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      select(photos.slice(0, 1));
+      await waitUntil(() => document.querySelector('#uploadCount')?.textContent === '1 photo', 'one-photo');
+      const onePhoto = document.querySelector('#uploadCount').textContent;
+      select(photos.slice(1));
+      await waitUntil(() => document.querySelector('#uploadCount')?.textContent === '5 photos', 'five-photos');
+      const fivePhotos = document.querySelector('#uploadCount').textContent;
+      await waitUntil(() => document.querySelectorAll('.upload-card[data-status="ready"]').length === 5, 'five-ready');
+      while (document.querySelector('.upload-action')) {
+        document.querySelector('.upload-action').click();
+        await pause();
+      }
+      await waitUntil(() => document.querySelector('#uploadCount')?.hidden === true, 'counter-hidden');
+      return {
+        onePhoto,
+        fivePhotos,
+        hiddenAfterRemoval: document.querySelector('#uploadCount').hidden,
+        trayHiddenAfterRemoval: document.querySelector('#uploadTray').hidden,
+      };
+    })()`);
+    checkpoint('photo-counter-verified', photoCounterFlow);
 
     const credentialsRoot = path.join(smokeRoot, '.squidrun', 'runtime', 'team-room', 'credentials');
     const beforeRespawn = JSON.parse(fs.readFileSync(path.join(credentialsRoot, 'builder.json'), 'utf8'));
@@ -457,8 +505,11 @@ async function run() {
     await new Promise((resolve) => setTimeout(resolve, 180));
     const phoneLayout = await windowRef.webContents.executeJavaScript(`(() => {
       const tray = document.querySelector('#uploadTray');
+      const counter = document.querySelector('#uploadCount');
       tray.hidden = false;
+      counter.hidden = false;
       const renderCards = (count) => {
+        counter.textContent = count === 1 ? '1 photo' : \`\${count} photos\`;
         tray.innerHTML = Array.from({ length: count }, (_, index) => \`
         <div class="upload-card" data-status="ready">
           <span class="upload-preview">IMG</span>
@@ -471,8 +522,12 @@ async function run() {
         renderCards(count);
         const caseComposerRect = document.querySelector('#composerForm').getBoundingClientRect();
         const caseSendRect = document.querySelector('#sendButton').getBoundingClientRect();
+        const caseCounterRect = counter.getBoundingClientRect();
         return {
           count,
+          counterText: counter.textContent,
+          counterLeft: Math.round(caseCounterRect.left),
+          counterRight: Math.round(caseCounterRect.right),
           documentWidth: document.documentElement.scrollWidth,
           bodyWidth: document.body.scrollWidth,
           composerLeft: Math.round(caseComposerRect.left),
@@ -503,10 +558,14 @@ async function run() {
         trayClientWidth: tray.clientWidth,
         trayScrollWidth: tray.scrollWidth,
         uploadCards: tray.querySelectorAll('.upload-card').length,
+        counterText: counter.textContent,
+        counterVisible: !counter.hidden,
         layoutCases,
       };
       tray.innerHTML = '';
       tray.hidden = true;
+      counter.textContent = '';
+      counter.hidden = true;
       return result;
     })()`);
     const beforeKeyboardAnchor = await windowRef.webContents.executeJavaScript(`(() => {
@@ -651,6 +710,10 @@ async function run() {
         && afterServerRestart.catchupPresent
         && interruptedDraftSeeded.length === 2
         && recoveredDraft.readyCards === 2 && recoveredDraft.sendEnabled
+        && recoveredDraft.attachmentCount === '2 files' && recoveredDraft.attachmentCountVisible
+        && photoCounterFlow.onePhoto === '1 photo'
+        && photoCounterFlow.fivePhotos === '5 photos'
+        && photoCounterFlow.hiddenAfterRemoval && photoCounterFlow.trayHiddenAfterRemoval
         && attachmentPresentation.imageCaptionOpacity <= .1
         && attachmentPresentation.fileName === 'phase-d-recovery.pdf'
         && attachmentPresentation.fileNameOpacity === 1
@@ -677,6 +740,8 @@ async function run() {
         && phoneLayout.composerRight <= phoneLayout.width
         && phoneLayout.sendRight <= phoneLayout.width
         && phoneLayout.uploadCards === 10
+        && phoneLayout.counterText === '10 photos'
+        && phoneLayout.counterVisible
         && phoneLayout.trayClientWidth <= phoneLayout.width
         && phoneLayout.trayScrollWidth > phoneLayout.trayClientWidth
         && phoneLayout.layoutCases.length === 10
@@ -685,6 +750,9 @@ async function run() {
           && layoutCase.composerLeft >= 0
           && layoutCase.composerRight <= phoneLayout.width
           && layoutCase.sendRight <= phoneLayout.width
+          && layoutCase.counterText === (layoutCase.count === 1 ? '1 photo' : `${layoutCase.count} photos`)
+          && layoutCase.counterLeft >= 0
+          && layoutCase.counterRight <= phoneLayout.width
           && layoutCase.trayClientWidth <= phoneLayout.width)
         && phoneLayout.layoutCases.filter((layoutCase) => layoutCase.count > 1)
           .every((layoutCase) => layoutCase.trayScrollWidth > layoutCase.trayClientWidth)
