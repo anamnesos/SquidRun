@@ -23,6 +23,14 @@ function parseArgs(argv = process.argv.slice(2)) {
   for (let index = 0; index < argv.length; index += 1) {
     const token = String(argv[index] || '').trim();
     if (!token) continue;
+    if (token === '--help' || token === '-h') {
+      process.stdout.write(
+        'Usage: node hm-heartbeat.js [--json] [--skip-live-account] [--top-priority <text>] [--path <file>]\n' +
+        'Writes a heartbeat status snapshot to .squidrun/coord/heartbeat.json.\n' +
+        '--help never writes anything.\n'
+      );
+      process.exit(0);
+    }
     if (token === '--json') {
       args.json = true;
       continue;
