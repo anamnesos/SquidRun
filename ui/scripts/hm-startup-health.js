@@ -394,10 +394,6 @@ function runStartupHealth(argv = process.argv.slice(2), io = {}) {
   return main(stripWrapperFlags(effectiveArgv));
 }
 
-if (require.main === module) {
-  process.exitCode = runStartupHealth(process.argv.slice(2));
-}
-
 module.exports = {
   hasFormatFlag,
   hasHelpFlag,
@@ -409,3 +405,12 @@ module.exports = {
   runTelegramPollerAutoRecover,
   stripWrapperFlags,
 };
+
+// Publish the backlog reader before invoking the CLI. `hm-health-snapshot`
+// lazily requires this module while `runStartupHealth()` is executing, so the
+// exports must already be complete when this file is the process entrypoint.
+// Otherwise Node returns the still-empty circular-require export object and
+// the snapshot reports `readTelegramBacklogHealth is not a function`.
+if (require.main === module) {
+  process.exitCode = runStartupHealth(process.argv.slice(2));
+}

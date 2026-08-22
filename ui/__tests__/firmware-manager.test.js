@@ -81,15 +81,27 @@ describe('FirmwareManager', () => {
     expect(result.firmwarePath).toBe(path.join(firmwareDir, 'builder.md'));
   });
 
-  test('applyCodexOverrideForPane writes global Codex override from pane firmware', () => {
-    const result = manager.applyCodexOverrideForPane('3');
-    expect(result.ok).toBe(true);
-    expect(result.overridePath).toBe(path.join(codexRulesDir, 'AGENTS.override.md'));
-    expect(fs.existsSync(result.overridePath)).toBe(true);
+  test('prepareCodexProjectFirmwareForPane uses project scope without writing a global override', () => {
+    const projectConfigPath = path.join(tempDir, '.codex', 'config.toml');
+    fs.mkdirSync(path.dirname(projectConfigPath), { recursive: true });
+    fs.writeFileSync(projectConfigPath, 'personality = "pragmatic"\n', 'utf-8');
 
-    const override = fs.readFileSync(result.overridePath, 'utf-8');
-    expect(override).toContain('SquidRun Firmware: Oracle');
-    expect(override).toContain('Investigation, documentation, and evaluation');
+    const result = manager.prepareCodexProjectFirmwareForPane('3');
+    expect(result.ok).toBe(true);
+    expect(result.scopedByProject).toBe(true);
+    expect(result.projectConfigPath).toBe(projectConfigPath);
+    expect(result.sourceFirmwarePath).toBe(path.join(firmwareDir, 'oracle.md'));
+    expect(fs.existsSync(path.join(codexRulesDir, 'AGENTS.override.md'))).toBe(false);
+  });
+
+  test('prepareCodexProjectFirmwareForPane fails closed when project scope has no instructions', () => {
+    const result = manager.prepareCodexProjectFirmwareForPane('2');
+    expect(result).toMatchObject({
+      ok: false,
+      reason: 'project_scoped_firmware_missing',
+      targetDir: path.resolve(tempDir),
+    });
+    expect(fs.existsSync(path.join(codexRulesDir, 'AGENTS.override.md'))).toBe(false);
   });
 
   test('ensureStartupFirmwareIfEnabled skips when feature flag is off', () => {

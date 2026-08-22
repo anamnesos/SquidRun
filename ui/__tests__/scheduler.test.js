@@ -173,10 +173,10 @@ describe('Scheduler Module', () => {
       expect(next).toEqual(new Date(futureDate));
     });
 
-    test('returns null for once type in the past', () => {
+    test('keeps an active once type in the past due for catch-up', () => {
       const pastDate = new Date(Date.now() - 3600000).toISOString();
       const schedule = { active: true, type: 'once', runAt: pastDate };
-      expect(computeNextRun(schedule)).toBeNull();
+      expect(computeNextRun(schedule)).toEqual(new Date(pastDate));
     });
 
     test('returns null for once type with invalid date', () => {
@@ -874,5 +874,94 @@ describe('Scheduler Module', () => {
         // Should not throw
       });
     });
+  });
+});
+
+describe('Scheduler restart catch-up process seam', () => {
+  test('fires an overdue one-shot exactly once after a real process restart', () => {
+    const realFs = jest.requireActual('fs');
+    const os = jest.requireActual('os');
+    const path = jest.requireActual('path');
+    const { spawnSync } = jest.requireActual('child_process');
+    const tempRoot = realFs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-scheduler-restart-'));
+    const stateFilePath = path.join(tempRoot, 'schedules.json');
+    const fireLogPath = path.join(tempRoot, 'fired.jsonl');
+    const schedulerPath = path.resolve(__dirname, '..', 'modules', 'scheduler.js');
+    const childEnv = {
+      ...process.env,
+      SQUIDRUN_SCHEDULER_TEST_STATE: stateFilePath,
+      SQUIDRUN_SCHEDULER_TEST_FIRE_LOG: fireLogPath,
+      SQUIDRUN_SCHEDULER_TEST_MODULE: schedulerPath,
+    };
+
+    const install = spawnSync(process.execPath, ['-e', `
+      const { createScheduler } = require(process.env.SQUIDRUN_SCHEDULER_TEST_MODULE);
+      const scheduler = createScheduler({ stateFilePath: process.env.SQUIDRUN_SCHEDULER_TEST_STATE });
+      scheduler.addSchedule({
+        id: 'ignored-by-constructor',
+        name: 'Restart catch-up proof',
+        type: 'once',
+        input: 'Surface overdue restart deadline',
+        runAt: new Date(Date.now() - 60_000).toISOString(),
+      });
+      scheduler.stop();
+    `], { cwd: path.resolve(__dirname, '..'), env: childEnv, encoding: 'utf8' });
+
+    expect(install.status).toBe(0);
+    expect(install.stderr).toBe('');
+    expect(realFs.existsSync(fireLogPath)).toBe(false);
+
+    const restart = spawnSync(process.execPath, ['-e', `
+      const fs = require('fs');
+      const { createScheduler } = require(process.env.SQUIDRUN_SCHEDULER_TEST_MODULE);
+      const scheduler = createScheduler({
+        stateFilePath: process.env.SQUIDRUN_SCHEDULER_TEST_STATE,
+        triggers: {
+          routeTask(taskType, text) {
+            fs.appendFileSync(
+              process.env.SQUIDRUN_SCHEDULER_TEST_FIRE_LOG,
+              JSON.stringify({ taskType, text }) + '\\n',
+              'utf8'
+            );
+            return { success: true, paneId: '1' };
+          },
+        },
+      });
+      scheduler.init();
+      scheduler.stop();
+    `], { cwd: path.resolve(__dirname, '..'), env: childEnv, encoding: 'utf8' });
+
+    expect(restart.status).toBe(0);
+    expect(restart.stderr).toBe('');
+    const fired = realFs.readFileSync(fireLogPath, 'utf8').trim().split(/\r?\n/).map(JSON.parse);
+    expect(fired).toHaveLength(1);
+    expect(fired[0]).toEqual(expect.objectContaining({
+      text: 'Surface overdue restart deadline',
+    }));
+
+    const state = JSON.parse(realFs.readFileSync(stateFilePath, 'utf8'));
+    const schedule = state.schedules[0];
+    expect(schedule.active).toBe(false);
+    expect(schedule.lastStatus).toBe('success');
+    expect(schedule.nextRun).toBeNull();
+    expect(schedule.history).toHaveLength(1);
+    expect(schedule.history[0]).toEqual(expect.objectContaining({
+      reason: 'startup_catchup',
+      status: 'success',
+    }));
+
+    const secondRestart = spawnSync(process.execPath, ['-e', `
+      const { createScheduler } = require(process.env.SQUIDRUN_SCHEDULER_TEST_MODULE);
+      const scheduler = createScheduler({
+        stateFilePath: process.env.SQUIDRUN_SCHEDULER_TEST_STATE,
+        triggers: { routeTask() { throw new Error('completed one-shot fired twice'); } },
+      });
+      scheduler.init();
+      scheduler.stop();
+    `], { cwd: path.resolve(__dirname, '..'), env: childEnv, encoding: 'utf8' });
+
+    expect(secondRestart.status).toBe(0);
+    expect(realFs.readFileSync(fireLogPath, 'utf8').trim().split(/\r?\n/)).toHaveLength(1);
+    realFs.rmSync(tempRoot, { recursive: true, force: true });
   });
 });

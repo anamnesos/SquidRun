@@ -369,21 +369,32 @@ function completePaneLaunch(db, input = {}) {
 function findActivePaneLaunch(db, query = {}) {
   const appGeneration = String(query.appGeneration ?? '').trim();
   const paneId = String(query.paneId ?? '').trim();
+  const daemonProcessId = String(query.daemonProcessId ?? '').trim();
   if (!appGeneration) return fail('launch_query_missing:appGeneration');
   if (!paneId) return fail('launch_query_missing:paneId');
 
   let rows;
   try {
-    rows = db.prepare(`
-      SELECT * FROM telegram_pane_launches
-      WHERE app_generation = ? AND pane_id = ?
-      ORDER BY launched_at_ms DESC, launch_id DESC
-    `).all(appGeneration, paneId);
+    rows = daemonProcessId
+      ? db.prepare(`
+          SELECT * FROM telegram_pane_launches
+          WHERE app_generation = ? AND pane_id = ? AND daemon_process_id = ?
+          ORDER BY launched_at_ms DESC, launch_id DESC
+        `).all(appGeneration, paneId, daemonProcessId)
+      : db.prepare(`
+          SELECT * FROM telegram_pane_launches
+          WHERE app_generation = ? AND pane_id = ?
+          ORDER BY launched_at_ms DESC, launch_id DESC
+        `).all(appGeneration, paneId);
   } catch (err) {
     return fail('launch_query_failed', { message: err.message });
   }
   if (!rows || rows.length === 0) {
-    return fail('launch_not_recorded', { appGeneration, paneId });
+    return fail('launch_not_recorded', {
+      appGeneration,
+      paneId,
+      ...(daemonProcessId ? { daemonProcessId } : {}),
+    });
   }
 
   // A `launching` row says the readiness binder has not completed. Delivery may

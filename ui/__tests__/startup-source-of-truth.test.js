@@ -53,6 +53,18 @@ describe('Startup Source Of Truth', () => {
       .toBeLessThan(terminalDaemon.indexOf('pty.spawn(invocation.command'));
   });
 
+  test('terminal daemon normalizes interactive terminal colors at the final PTY spawn boundary', () => {
+    const terminalDaemon = fs.readFileSync(path.join(UI_ROOT, 'terminal-daemon.js'), 'utf-8');
+
+    expect(terminalDaemon).toContain("upperKey === 'TERM'");
+    expect(terminalDaemon).toContain("upperKey === 'COLORTERM'");
+    expect(terminalDaemon).toContain("upperKey === 'NO_COLOR'");
+    expect(terminalDaemon).toContain("runtimeEnv.TERM = 'xterm-256color'");
+    expect(terminalDaemon).toContain("runtimeEnv.COLORTERM = 'truecolor'");
+    expect(terminalDaemon.indexOf("runtimeEnv.TERM = 'xterm-256color'"))
+      .toBeLessThan(terminalDaemon.indexOf('pty.spawn(invocation.command'));
+  });
+
   test('legacy docs in docs/roles are explicit archive stubs', () => {
     const roleDocs = [
       path.join('docs', 'roles', 'ARCH.md'),

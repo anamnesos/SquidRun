@@ -6,14 +6,12 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const log = require('../logger');
 const { PROJECT_ROOT, COORD_ROOT, getSquidrunRoot, getProjectRoot, resolveGlobalPath } = require('../../config');
 const { execFileSync } = require('child_process');
 
 const SPEC_RELATIVE_PATH = path.join('workspace', 'specs', 'firmware-injection-spec.md');
 const FIRMWARE_SUBDIR = 'firmware';
-const CODEX_OVERRIDE_FILENAME = 'AGENTS.override.md';
 const PREFLIGHT_SCRIPT_PATH = path.join(__dirname, '..', '..', 'scripts', 'hm-preflight.js');
 
 const PANE_ROLE_FILE = {
@@ -97,12 +95,6 @@ class FirmwareManager {
           ? resolveGlobalPath(FIRMWARE_SUBDIR, { forWrite: true })
           : path.join(this.coordRoot, FIRMWARE_SUBDIR)
       )
-    );
-    this.codexRulesDir = path.resolve(
-      options.codexRulesDir || path.join(os.homedir(), '.codex', 'rules')
-    );
-    this.codexOverridePath = path.resolve(
-      options.codexOverridePath || path.join(this.codexRulesDir, CODEX_OVERRIDE_FILENAME)
     );
   }
 
@@ -382,20 +374,34 @@ class FirmwareManager {
     return { ok: true, firmwarePath, targetDir };
   }
 
-  applyCodexOverrideForPane(paneId, options = {}) {
+  prepareCodexProjectFirmwareForPane(paneId, options = {}) {
     const firmwareResult = this.ensureFirmwareForPane(paneId, options);
     if (!firmwareResult.ok || !firmwareResult.firmwarePath) {
       return { ok: false, reason: firmwareResult.reason || 'firmware_unavailable' };
     }
 
-    const firmwareContent = fs.readFileSync(firmwareResult.firmwarePath, 'utf-8');
-    fs.mkdirSync(this.codexRulesDir, { recursive: true });
-    fs.writeFileSync(this.codexOverridePath, firmwareContent, 'utf-8');
+    const projectConfigPath = path.join(firmwareResult.targetDir, '.codex', 'config.toml');
+    const projectOverridePath = path.join(firmwareResult.targetDir, 'AGENTS.override.md');
+    const projectAgentsPath = path.join(firmwareResult.targetDir, 'AGENTS.md');
+    const projectInstructionsPath = fs.existsSync(projectOverridePath)
+      ? projectOverridePath
+      : (fs.existsSync(projectAgentsPath) ? projectAgentsPath : null);
+
+    if (!fs.existsSync(projectConfigPath) && !projectInstructionsPath) {
+      return {
+        ok: false,
+        reason: 'project_scoped_firmware_missing',
+        targetDir: firmwareResult.targetDir,
+      };
+    }
 
     return {
       ok: true,
-      overridePath: this.codexOverridePath,
+      projectConfigPath: fs.existsSync(projectConfigPath) ? projectConfigPath : null,
+      projectInstructionsPath,
       sourceFirmwarePath: firmwareResult.firmwarePath,
+      targetDir: firmwareResult.targetDir,
+      scopedByProject: true,
     };
   }
 

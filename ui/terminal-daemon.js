@@ -1492,6 +1492,18 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     PATH: augmentedPath,
     ...(options.env && typeof options.env === 'object' ? options.env : {}),
   };
+  // node-pty's `name` option describes the PTY but does not normalize the
+  // child environment on Windows. An inherited TERM=dumb makes interactive
+  // CLIs such as Codex refuse their normal TUI even though the PTY is capable.
+  // Canonicalize these values at the final spawn boundary.
+  for (const key of Object.keys(runtimeEnv)) {
+    const upperKey = key.toUpperCase();
+    if (upperKey === 'TERM' || upperKey === 'COLORTERM' || upperKey === 'NO_COLOR') {
+      delete runtimeEnv[key];
+    }
+  }
+  runtimeEnv.TERM = 'xterm-256color';
+  runtimeEnv.COLORTERM = 'truecolor';
   // The daemon may run as Electron-as-Node; pane CLIs must not inherit that mode.
   for (const key of Object.keys(runtimeEnv)) {
     if (key.toUpperCase() === 'ELECTRON_RUN_AS_NODE') {

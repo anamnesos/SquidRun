@@ -12,6 +12,7 @@ describe('Team Room CLI server-registry binding', () => {
     const writer = writerHarness();
     const resolver = createTeamRoomCliBindingResolver({
       getProfileName: () => 'main',
+      getDaemonProcessId: () => 4242,
       writerFactory: () => writer,
       lookupPaneLaunch: (db, query) => ({
         ok: true,
@@ -19,6 +20,7 @@ describe('Team Room CLI server-registry binding', () => {
         appGeneration: query.appGeneration,
         paneId: query.paneId,
         role: ({ 1: 'architect', 2: 'builder', 3: 'oracle' })[query.paneId],
+        daemonProcessId: query.daemonProcessId,
       }),
     });
     const result = resolver({ appGeneration: 'app-session-512' });
@@ -39,6 +41,7 @@ describe('Team Room CLI server-registry binding', () => {
     const writer = writerHarness();
     const resolver = createTeamRoomCliBindingResolver({
       getProfileName: () => 'main',
+      getDaemonProcessId: () => 4242,
       writerFactory: () => writer,
       lookupPaneLaunch: (_db, query) => ({
         ok: true,
@@ -46,6 +49,7 @@ describe('Team Room CLI server-registry binding', () => {
         appGeneration: query.appGeneration,
         paneId: query.paneId,
         role: ({ 1: 'architect', 2: 'builder', 3: 'oracle' })[query.paneId],
+        daemonProcessId: query.daemonProcessId,
         ...override,
       }),
     });
@@ -63,5 +67,33 @@ describe('Team Room CLI server-registry binding', () => {
     expect(resolver({ appGeneration: 'app-session-512' }))
       .toEqual({ ok: false, reason: 'team_room_cli_profile_binding_mismatch' });
     expect(writer.open).not.toHaveBeenCalled();
+  });
+
+  test('binds lookups to the Team Room owner process and rejects a foreign launcher row', () => {
+    const writer = writerHarness();
+    const lookupPaneLaunch = jest.fn((_db, query) => ({
+      ok: true,
+      launchId: `pl_${String(query.paneId).repeat(32)}`,
+      appGeneration: query.appGeneration,
+      paneId: query.paneId,
+      role: ({ 1: 'architect', 2: 'builder', 3: 'oracle' })[query.paneId],
+      daemonProcessId: '9999',
+    }));
+    const resolver = createTeamRoomCliBindingResolver({
+      getProfileName: () => 'main',
+      getDaemonProcessId: () => 4242,
+      writerFactory: () => writer,
+      lookupPaneLaunch,
+    });
+
+    expect(resolver({ appGeneration: 'app-session-512' }))
+      .toEqual(expect.objectContaining({ ok: false, reason: 'team_room_cli_launch_binding_mismatch' }));
+    expect(lookupPaneLaunch).toHaveBeenCalledWith(writer.db, expect.objectContaining({
+      appGeneration: 'app-session-512',
+      paneId: '1',
+      daemonProcessId: '4242',
+      allowIncomplete: true,
+    }));
+    expect(writer.close).toHaveBeenCalledTimes(1);
   });
 });

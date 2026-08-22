@@ -6,6 +6,7 @@ const { DEFAULT_PROFILE_NAME, DEFAULT_ROOM_MEMBERS, MEMBER_KINDS } = require('./
 
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
 const PANE_LAUNCH_PATTERN = /^pl_[a-f0-9]{32}$/u;
+const PROCESS_ID_PATTERN = /^[1-9][0-9]*$/u;
 
 function createTeamRoomCliBindingResolver(options = {}) {
   const getProfileName = typeof options.getProfileName === 'function'
@@ -17,6 +18,9 @@ function createTeamRoomCliBindingResolver(options = {}) {
   const lookupPaneLaunch = typeof options.lookupPaneLaunch === 'function'
     ? options.lookupPaneLaunch
     : findActivePaneLaunch;
+  const getDaemonProcessId = typeof options.getDaemonProcessId === 'function'
+    ? options.getDaemonProcessId
+    : () => process.pid;
 
   return ({ appGeneration } = {}) => {
     const profileName = String(getProfileName() || '').trim().toLowerCase();
@@ -25,6 +29,14 @@ function createTeamRoomCliBindingResolver(options = {}) {
     }
     if (profileName !== DEFAULT_PROFILE_NAME) {
       return { ok: false, reason: 'team_room_cli_profile_binding_mismatch' };
+    }
+    // A generation label is shared state, not process ownership. Recovery and
+    // side-launch helpers can inherit it and leave newer incomplete rows behind.
+    // The Team Room runtime may mint a CLI credential only for a pane launched
+    // by the same app process that owns this runtime.
+    const daemonProcessId = String(getDaemonProcessId() ?? '').trim();
+    if (!PROCESS_ID_PATTERN.test(daemonProcessId)) {
+      return { ok: false, reason: 'team_room_cli_daemon_binding_invalid' };
     }
     const writer = writerFactory();
     const opened = writer?.open?.();
@@ -38,6 +50,7 @@ function createTeamRoomCliBindingResolver(options = {}) {
         const found = lookupPaneLaunch(writer.db, {
           appGeneration,
           paneId: String(member.paneId),
+          daemonProcessId,
           allowIncomplete: true,
         });
         if (!found?.ok) {
@@ -51,6 +64,7 @@ function createTeamRoomCliBindingResolver(options = {}) {
         if (String(found.appGeneration) !== String(appGeneration)
           || String(found.paneId) !== String(member.paneId)
           || String(found.role).trim().toLowerCase() !== member.role
+          || String(found.daemonProcessId) !== daemonProcessId
           || !PANE_LAUNCH_PATTERN.test(paneLaunchId)) {
           return {
             ok: false,
@@ -75,6 +89,7 @@ function createTeamRoomCliBindingResolver(options = {}) {
 
 module.exports = {
   PANE_LAUNCH_PATTERN,
+  PROCESS_ID_PATTERN,
   PROFILE_PATTERN,
   createTeamRoomCliBindingResolver,
 };

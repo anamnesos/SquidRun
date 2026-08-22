@@ -150,7 +150,10 @@ function computeNextRun(schedule, referenceDate = new Date()) {
   if (schedule.type === 'once') {
     const runAt = schedule.runAt ? new Date(schedule.runAt) : null;
     if (!runAt || Number.isNaN(runAt.getTime())) return null;
-    return runAt.getTime() > referenceDate.getTime() ? runAt : null;
+    // An active one-shot remains due even when its fire time has passed.
+    // Returning null here used to erase overdue work during init(), which
+    // made a restart silently discard the exact job the scheduler owed.
+    return runAt;
   }
 
   if (schedule.type === 'interval') {
@@ -246,8 +249,11 @@ function createScheduler({
   workspacePath,
   projectRoot,
   quietCuriosityCommandRunner,
+  stateFilePath,
 } = {}) {
-  const filePath = typeof resolveGlobalPath === 'function'
+  const filePath = stateFilePath
+    ? path.resolve(stateFilePath)
+    : typeof resolveGlobalPath === 'function'
     ? resolveGlobalPath('schedules.json', { forWrite: true })
     : path.join(workspacePath || GLOBAL_STATE_ROOT || WORKSPACE_PATH, 'schedules.json');
   const schedulerProjectRoot = projectRoot || (typeof getProjectRoot === 'function' ? getProjectRoot() : process.cwd());
@@ -451,7 +457,7 @@ function createScheduler({
     return { success, results };
   }
 
-  function checkDueSchedules() {
+  function checkDueSchedules(reason = 'time') {
     load();
     const now = new Date();
     let fired = 0;
@@ -468,7 +474,7 @@ function createScheduler({
       if (!schedule.nextRun) continue;
       const nextRun = new Date(schedule.nextRun);
       if (nextRun <= now) {
-        const result = runTask(schedule, 'time');
+        const result = runTask(schedule, reason);
         fired += result.success ? 1 : 0;
       }
     }
@@ -518,6 +524,9 @@ function createScheduler({
     load();
     scheduleState.schedules.forEach(ensureNextRun);
     save();
+    // Catch up overdue work synchronously before the normal 30-second loop.
+    // This is the restart boundary: late is valid, vanished is not.
+    checkDueSchedules('startup_catchup');
     start();
   }
 

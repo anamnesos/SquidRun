@@ -76,7 +76,11 @@ function freshDb() {
 }
 
 /** A REAL launch, bound and completed, exactly as SessionStart would leave it. */
-function seedLaunch(db, { complete = true, appGeneration = APP_GENERATION } = {}) {
+function seedLaunch(db, {
+  complete = true,
+  appGeneration = APP_GENERATION,
+  daemonProcessId = '4242',
+} = {}) {
   const launchId = generateLaunchId();
   recordPaneLaunch(db, {
     launchId,
@@ -84,7 +88,7 @@ function seedLaunch(db, { complete = true, appGeneration = APP_GENERATION } = {}
     paneId: '1',
     role: 'architect',
     consumerRuntime: 'codex',
-    daemonProcessId: '4242',
+    daemonProcessId,
     launchedAtMs: NOW - 5000,
   });
   if (complete) {
@@ -1042,5 +1046,30 @@ describe('findActivePaneLaunch', () => {
     const found = findActivePaneLaunch(db, { appGeneration: 'gen-that-never-ran', paneId: '1' });
     expect(found.ok).toBe(false);
     expect(found.reason).toBe('launch_not_recorded');
+  });
+
+  test('an owner-process filter excludes newer rows written by a foreign launcher', () => {
+    const db = freshDb();
+    const ownedLaunchId = seedLaunch(db, {
+      complete: false,
+      appGeneration: 'gen-owner-filter',
+      daemonProcessId: '4242',
+    });
+    seedLaunch(db, {
+      complete: false,
+      appGeneration: 'gen-owner-filter',
+      daemonProcessId: '9999',
+    });
+
+    expect(findActivePaneLaunch(db, {
+      appGeneration: 'gen-owner-filter',
+      paneId: '1',
+      daemonProcessId: '4242',
+      allowIncomplete: true,
+    })).toEqual(expect.objectContaining({
+      ok: true,
+      launchId: ownedLaunchId,
+      daemonProcessId: '4242',
+    }));
   });
 });
