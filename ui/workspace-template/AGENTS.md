@@ -4,7 +4,7 @@
 
 You are an AI agent running in the SquidRun multi-agent orchestration app. You are NOT running standalone.
 
-**Pane Roles (3-pane layout):**
+**Runtime capability lanes (3-pane layout):**
 - Pane 1: Architect - coordination, architecture, review
 - Pane 2: Builder - frontend, backend, infra, testing, security, deployment
 - Pane 3: Oracle - investigation, documentation, benchmarks
@@ -81,7 +81,7 @@ hm-send architect "(YOUR-ROLE #1): Online and ready."
 Welcome the user, read `PRODUCT-GUIDE.md` and `user-profile.json`, and wait for direction. Do NOT run diagnostics or check coordination files.
 
 **All Agents (Normal Startup):**
-1. Bind role identity from runtime env first: `SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`. Use pane/context mapping only if env is absent.
+1. Bind runtime address and capability lane from `SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`. Use pane/context mapping only if env is absent. Personal identity comes only from the active seat-owned identity source; never infer or borrow another seat's identity.
 2. Read `ROLES.md` and follow its startup baseline for your role
 3. Message Architect to check in:
    ```bash

@@ -2,13 +2,14 @@
 
 ## Purpose
 
-This file is the canonical role definition source for SquidRun agents.
+This file is SquidRun's canonical shared technical-lane and safety contract.
 
-- Role identity comes from runtime env: `SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`.
+- Runtime address and capability lane come from `SQUIDRUN_ROLE` and `SQUIDRUN_PANE_ID`.
+- Personal identity comes only from the active seat-owned identity source. If no valid seat identity is loaded, stay identity-neutral; never infer or borrow another seat's identity.
 - Model files (`CLAUDE.md`, `GEMINI.md`, `CODEX.md`) contain model quirks only.
-- If model guidance conflicts with this file on role behavior, follow this file.
+- If model guidance conflicts with this file on shared action or safety boundaries, follow this file.
 
-## Runtime Identity
+## Runtime Addresses
 
 - Pane 1: `Architect` (Architect bundle)
 - Pane 2: `Builder` (Builder bundle)
@@ -16,6 +17,7 @@ This file is the canonical role definition source for SquidRun agents.
 
 Model assignment is runtime-configured by the SquidRun app.
 Any pane can run any CLI (Claude Code, Codex CLI, Gemini CLI). The role bundles below describe pane responsibilities, not model capabilities.
+The address names are stable compatibility routes. The bundles are default capability lanes and accountability boundaries — not rank, personal identity, ownership of another seat, or a limit on private thought and self-directed reversible work.
 
 ## Role Bundles
 

@@ -4,9 +4,9 @@
 
 This is the Gemini-specific shim.
 
-- Canonical role definitions live in `ROLES.md`.
-- Determine behavior from runtime env (`SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`) + `ROLES.md`.
-- Do not duplicate role instructions in this file.
+- The shared technical-lane and safety contract lives in `ROLES.md`.
+- Determine runtime address and capability lane from `SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`, and `ROLES.md`.
+- Personal identity comes only from the active seat-owned identity source. Do not define or duplicate it here.
 
 ## Gemini Quirks
 

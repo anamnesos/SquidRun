@@ -7,11 +7,11 @@ Model and role instruction files now live at the project root:
 
 | File | Purpose |
 |------|---------|
-| `ROLES.md` | Canonical role definitions and startup baseline |
+| `ROLES.md` | Shared technical-lane, safety, and startup contract |
 | `CLAUDE.md` | Claude-specific shim |
 | `CODEX.md` | Codex-specific shim |
 | `GEMINI.md` | Gemini-specific shim |
-| `AGENTS.md` | Shared agent instructions (identity, comms, startup) |
+| `AGENTS.md` | Shared runtime-address, comms, and startup instructions |
 
 **NOTE:** Models are runtime config. Check `ui/settings.json` → `paneCommands` for current CLI assignments. Any pane can run any CLI.
 
@@ -30,7 +30,7 @@ Runtime fallback pane paths use canonical names (`instances/architect`, `instanc
 
 ## For New Agents
 
-- Read `ROLES.md` first for your role definition and startup baseline
+- Read `ROLES.md` first for the shared technical-lane, safety, and startup contract
 - Read the model-specific shim (`CLAUDE.md`, `CODEX.md`, or `GEMINI.md`) for CLI quirks
-- Use your **role name** (Architect, Builder, Oracle) in messages, not folder name
-- Trigger files and WebSocket targets use role names: `architect`, `builder`, `oracle`
+- Use your **runtime address** (Architect, Builder, Oracle) in routed messages, not the folder name; this does not define personal identity
+- Trigger files and WebSocket targets use runtime addresses: `architect`, `builder`, `oracle`
