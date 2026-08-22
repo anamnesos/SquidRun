@@ -19,7 +19,7 @@ const {
   selfDirectionOutcomePath,
   selfDirectionReviewAuditPath,
   selfDirectionQueuePath,
-} = require('../modules/mira-lab-surface');
+} = require('../modules/mira-conversation-engine');
 const {
   defaultEmailCuriositySnapshotPath,
 } = require('../modules/mira-email-curiosity');
@@ -468,7 +468,7 @@ describe('hm-mira-self-direction CLI harness', () => {
     ], {
       sendAgentMessage,
       options: {
-        repoStatusText: ' M ui/modules/mira-lab-surface.js\n',
+        repoStatusText: ' M ui/modules/mira-conversation-engine.js\n',
         recentCommsText: '(ARCHITECT #90): source/action substrate, not MCP as mind.',
         browserHistoryCuriosityReader: () => ({
           ok: false,
@@ -712,7 +712,7 @@ describe('hm-mira-self-direction CLI harness', () => {
     ], {
       options: {
         generatedAt: '2026-05-12T13:10:00.000Z',
-        buildMiraLabPromptReply: jest.fn(async () => ({
+        buildMiraConversationReply: jest.fn(async () => ({
           decision: 'blocked',
           reply: null,
           visible_render_hint: { kind: 'blocked_banner', banner: 'held' },

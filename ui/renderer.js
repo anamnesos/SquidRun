@@ -172,7 +172,6 @@ function bindTeamRoomOpenButton() {
 }
 const { configureWorkspacePaneShell } = rendererModules.workspacePaneShell || {};
 const squidRoomSurfaceModule = rendererModules.squidRoomSurface || {};
-const shellV2 = rendererModules.shellV2 || {};
 const {
   initSquidRoomSurface,
   refreshSquidRoomSurface,
@@ -532,7 +531,6 @@ const windowTeamBootstrap = createWindowTeamBootstrap({
   initialContext: initialWindowContext,
 });
 let squidRoomSurfaceController = null;
-let shellV2Controller = null;
 let rightPanelSetupDone = false;
 if (typeof terminal.setStartupWindowContext === 'function') {
   terminal.setStartupWindowContext(initialWindowContext);
@@ -630,28 +628,10 @@ function getCurrentWindowContext() {
   return windowTeamBootstrap.getState();
 }
 
-function maybeInitShellV2(reason = 'runtime') {
-  if (shellV2Controller?.enabled === true) return shellV2Controller;
-  if (typeof shellV2.initShellV2 !== 'function') return null;
-  const controller = shellV2.initShellV2({
-    settings: typeof settings.getSettings === 'function' ? settings.getSettings() : {},
-    windowContext: getCurrentWindowContext(),
-    terminal,
-  });
-  if (controller?.enabled === true) {
-    shellV2Controller = controller;
-    log.info('ShellV2', `Enabled (${reason})`);
-    return shellV2Controller;
-  }
-  return null;
-}
-
 function setupPanelsAfterSettingsLoaded() {
   if (rightPanelSetupDone) return;
   rightPanelSetupDone = true;
-  tabs.setupRightPanel(terminal.handleResize, bus, {
-    shellV2Enabled: shellV2Controller?.enabled === true,
-  });
+  tabs.setupRightPanel(terminal.handleResize, bus);
 }
 
 function isSquidRoomWindowContext(windowContext = {}) {
@@ -1634,9 +1614,6 @@ function handleRendererWindowContext(payload = {}) {
     refreshSquidRoomPetAnimations();
   }
   applyWindowChrome(windowContext);
-  if (initState.settingsLoaded) {
-    maybeInitShellV2('window-context');
-  }
   refreshSquidRoomSurfaceForContext(windowContext);
   if (!initState.autoSpawnChecked) {
     checkInitComplete();
@@ -1983,7 +1960,6 @@ function checkInitComplete() {
 function markSettingsLoaded() {
   initState.settingsLoaded = true;
   log.info('Init', 'Settings loaded');
-  maybeInitShellV2('settings-loaded');
   setupPanelsAfterSettingsLoaded();
   void evaluateProfileOnboardingRequirement();
   checkInitComplete();
@@ -2638,32 +2614,6 @@ async function openProfileModal(options = {}) {
 
   const alreadyOpen = overlay.classList.contains('open');
   setProfileOnboardingMode(enforceName);
-  const shellV2SettingsOverlay = document.getElementById('shellV2SettingsOverlay');
-  if (document.body?.classList?.contains('shell-v2-enabled') && shellV2SettingsOverlay) {
-    document.dispatchEvent(new CustomEvent('shell-v2-open-settings', {
-      bubbles: true,
-      detail: { section: 'profile' },
-    }));
-    if (alreadyOpen && !reload) {
-      return;
-    }
-    if (profileModalBusy) return;
-    setProfileModalBusyState(true);
-    try {
-      const result = await ipcRenderer.invoke('get-user-profile');
-      applyProfileToModal(result?.success ? (result.profile || {}) : {});
-      if (!result?.success) {
-        showStatusNotice(result?.error || 'Failed to load user profile. You can still save a new one.', 'warning', 3200);
-      }
-    } catch (err) {
-      log.error('ProfileModal', `Failed to load profile: ${err?.message || err}`);
-      applyProfileToModal({});
-      showStatusNotice('Failed to load user profile. You can still save a new one.', 'warning', 3200);
-    } finally {
-      setProfileModalBusyState(false);
-    }
-    return;
-  }
   overlay.classList.add('open');
   overlay.setAttribute('aria-hidden', 'false');
 
@@ -3305,11 +3255,8 @@ function setupEventListeners() {
       e.preventDefault();
       return;
     }
-    // Ctrl+number to focus panes. Shell V2 owns Ctrl+1/2/3 for primary tabs.
+    // Ctrl+number focuses the three permanent agent panes.
     if (e.ctrlKey && terminal.PANE_IDS.includes(e.key)) {
-      if (document.body?.classList?.contains('shell-v2-enabled')) {
-        return;
-      }
       e.preventDefault();
       terminal.focusPane(e.key);
       return;
@@ -3749,7 +3696,7 @@ function setupEventListeners() {
       const result = {
         ok: false,
         state: 'unavailable',
-        message: 'Mira is unavailable. Open Mira Lab for diagnostics.',
+        message: 'Mira is unavailable. Check Team Room for status.',
       };
       renderMiraLiveReplySurface(result);
       showDeliveryStatus('failed');

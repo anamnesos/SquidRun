@@ -14,14 +14,6 @@ function normalizeAction(action) {
     return 'restart-telegram-poller';
   }
   if (
-    normalized === 'open-mira-lab'
-    || normalized === 'mira-lab'
-    || normalized === 'mira-lab-open'
-    || normalized === 'open-mira'
-  ) {
-    return 'open-mira-lab';
-  }
-  if (
     normalized === 'open-live-task-audit-sidecar'
     || normalized === 'live-task-audit-sidecar'
     || normalized === 'task-audit-sidecar'
@@ -29,16 +21,6 @@ function normalizeAction(action) {
     || normalized === 'open-task-audit'
   ) {
     return 'open-live-task-audit-sidecar';
-  }
-  if (
-    normalized === 'open-human-timeline-sidecar'
-    || normalized === 'human-timeline-sidecar'
-    || normalized === 'human-timeline'
-    || normalized === 'timeline'
-    || normalized === 'today-feed'
-    || normalized === 'open-today-feed'
-  ) {
-    return 'open-human-timeline-sidecar';
   }
   if (
     normalized === 'open-spine-overlay'
@@ -69,13 +51,6 @@ function normalizeAction(action) {
     || normalized === 'window-close'
   ) {
     return 'close-app-window';
-  }
-  if (
-    normalized === 'mira-lab-renderer-prompt'
-    || normalized === 'mira-lab-drive'
-    || normalized === 'drive-mira-lab'
-  ) {
-    return 'mira-lab-renderer-prompt';
   }
   if (
     normalized === 'terminal-scroll-probe'
@@ -321,38 +296,6 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
       });
   }
 
-  if (normalizedAction === 'open-mira-lab') {
-    if (typeof ctx.openAppWindow !== 'function') {
-      return {
-        success: false,
-        reason: 'open_window_unavailable',
-        action: normalizedAction,
-      };
-    }
-    return Promise.resolve()
-      .then(() => ctx.openAppWindow('mira-lab', payload))
-      .then((result) => {
-        const settled = result && typeof result === 'object' ? result : {};
-        return {
-          success: Boolean(settled.ok),
-          action: normalizedAction,
-          windowKey: settled.windowKey || 'mira-lab',
-          status: settled.status || (settled.ok ? 'opened' : 'open_failed'),
-          reason: settled.ok ? undefined : (settled.reason || 'open_window_failed'),
-          note: 'Mira Lab window opened/focused without restarting the Electron main process.',
-        };
-      })
-      .catch((error) => {
-        log.warn('AppControl', `Mira Lab open failed: ${error.message}`);
-        return {
-          success: false,
-          reason: 'open_window_failed',
-          action: normalizedAction,
-          error: error.message,
-        };
-      });
-  }
-
   if (normalizedAction === 'open-live-task-audit-sidecar') {
     if (typeof ctx.openAppWindow !== 'function') {
       return {
@@ -376,38 +319,6 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
       })
       .catch((error) => {
         log.warn('AppControl', `Live task/audit sidecar open failed: ${error.message}`);
-        return {
-          success: false,
-          reason: 'open_window_failed',
-          action: normalizedAction,
-          error: error.message,
-        };
-      });
-  }
-
-  if (normalizedAction === 'open-human-timeline-sidecar') {
-    if (typeof ctx.openAppWindow !== 'function') {
-      return {
-        success: false,
-        reason: 'open_window_unavailable',
-        action: normalizedAction,
-      };
-    }
-    return Promise.resolve()
-      .then(() => ctx.openAppWindow('human-timeline-sidecar', payload))
-      .then((result) => {
-        const settled = result && typeof result === 'object' ? result : {};
-        return {
-          success: Boolean(settled.ok),
-          action: normalizedAction,
-          windowKey: settled.windowKey || 'human-timeline-sidecar',
-          status: settled.status || (settled.ok ? 'opened' : 'open_failed'),
-          reason: settled.ok ? undefined : (settled.reason || 'open_window_failed'),
-          note: 'Human timeline sidecar opened/focused without restarting the Electron main process.',
-        };
-      })
-      .catch((error) => {
-        log.warn('AppControl', `Human timeline sidecar open failed: ${error.message}`);
         return {
           success: false,
           reason: 'open_window_failed',
@@ -566,35 +477,6 @@ function executeAppControlAction(ctx = {}, action, payload = {}) {
           reason: 'close_window_failed',
           action: normalizedAction,
           windowKey,
-          error: error.message,
-        };
-      });
-  }
-
-  if (normalizedAction === 'mira-lab-renderer-prompt') {
-    if (typeof ctx.driveMiraLabRenderer !== 'function') {
-      return {
-        success: false,
-        reason: 'drive_unavailable',
-        action: normalizedAction,
-      };
-    }
-    return Promise.resolve()
-      .then(() => ctx.driveMiraLabRenderer(payload || {}))
-      .then((result) => {
-        const settled = result && typeof result === 'object' ? result : {};
-        return {
-          success: Boolean(settled.ok),
-          action: normalizedAction,
-          ...settled,
-        };
-      })
-      .catch((error) => {
-        log.warn('AppControl', `Mira Lab renderer drive failed: ${error.message}`);
-        return {
-          success: false,
-          reason: 'drive_failed',
-          action: normalizedAction,
           error: error.message,
         };
       });

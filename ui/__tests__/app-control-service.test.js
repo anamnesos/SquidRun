@@ -9,8 +9,6 @@ describe('app-control-service', () => {
     expect(normalizeAction('close-app-window')).toBe('close-app-window');
     expect(normalizeAction('scroll-probe')).toBe('terminal-scroll-probe');
     expect(normalizeAction('probe-terminal-scroll')).toBe('terminal-scroll-probe');
-    expect(normalizeAction('timeline')).toBe('open-human-timeline-sidecar');
-    expect(normalizeAction('today-feed')).toBe('open-human-timeline-sidecar');
     expect(normalizeAction('visual-capture')).toBe('open-visual-capture-window');
     expect(normalizeAction('open-capture-window')).toBe('open-visual-capture-window');
   });
@@ -286,63 +284,6 @@ describe('app-control-service', () => {
     }));
   });
 
-  test('open-mira-lab opens or focuses the Mira Lab window via openAppWindow without restart', async () => {
-    const openAppWindow = jest.fn().mockResolvedValue({
-      ok: true,
-      windowKey: 'mira-lab',
-      title: 'Mira Lab',
-      status: 'reused_existing',
-    });
-
-    const result = await executeAppControlAction({ openAppWindow }, 'open-mira-lab');
-
-    expect(openAppWindow).toHaveBeenCalledWith('mira-lab', {});
-    expect(result).toEqual(expect.objectContaining({
-      success: true,
-      action: 'open-mira-lab',
-      windowKey: 'mira-lab',
-      status: 'reused_existing',
-    }));
-    expect(result.note).toMatch(/without restarting the Electron main process/i);
-  });
-
-  test('open-mira-lab accepts the legacy aliases and surfaces window-factory failure reasons', async () => {
-    const openAppWindow = jest.fn().mockResolvedValue({
-      ok: false,
-      windowKey: 'mira-lab',
-      reason: 'mira_lab_window_factory_returned_no_window',
-    });
-
-    const result = await executeAppControlAction({ openAppWindow }, 'mira-lab');
-
-    expect(openAppWindow).toHaveBeenCalledWith('mira-lab', {});
-    expect(result).toEqual(expect.objectContaining({
-      success: false,
-      action: 'open-mira-lab',
-      reason: 'mira_lab_window_factory_returned_no_window',
-    }));
-  });
-
-  test('open-mira-lab reports unavailable when the app does not expose openAppWindow', () => {
-    const result = executeAppControlAction({}, 'open-mira-lab');
-    expect(result).toEqual(expect.objectContaining({
-      success: false,
-      action: 'open-mira-lab',
-      reason: 'open_window_unavailable',
-    }));
-  });
-
-  test('open-mira-lab catches openAppWindow failures and reports them without throwing', async () => {
-    const openAppWindow = jest.fn(() => { throw new Error('window registry unavailable'); });
-    const result = await executeAppControlAction({ openAppWindow }, 'open-mira-lab');
-    expect(result).toEqual(expect.objectContaining({
-      success: false,
-      action: 'open-mira-lab',
-      reason: 'open_window_failed',
-      error: 'window registry unavailable',
-    }));
-  });
-
   test('open-live-task-audit-sidecar opens the task audit sidecar without restart', async () => {
     const openAppWindow = jest.fn().mockResolvedValue({
       ok: true,
@@ -360,25 +301,6 @@ describe('app-control-service', () => {
       status: 'opened',
     }));
     expect(result.note).toMatch(/sidecar opened\/focused without restarting/i);
-  });
-
-  test('open-human-timeline-sidecar opens the Today feed without restart', async () => {
-    const openAppWindow = jest.fn().mockResolvedValue({
-      ok: true,
-      windowKey: 'human-timeline-sidecar',
-      status: 'opened',
-    });
-
-    const result = await executeAppControlAction({ openAppWindow }, 'timeline');
-
-    expect(openAppWindow).toHaveBeenCalledWith('human-timeline-sidecar', {});
-    expect(result).toEqual(expect.objectContaining({
-      success: true,
-      action: 'open-human-timeline-sidecar',
-      windowKey: 'human-timeline-sidecar',
-      status: 'opened',
-    }));
-    expect(result.note).toMatch(/without restarting the Electron main process/i);
   });
 
   test('open-squid-room opens a main-profile surface window with auto-boot disabled', async () => {

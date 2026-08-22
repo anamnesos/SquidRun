@@ -16,17 +16,11 @@ const DEFAULT_RESPONSE_TIMEOUT_MS = 5000;
 
 function usage() {
   console.log('Usage: node hm-app.js <command> [options]');
-  console.log('Commands: reload-renderers, restart-telegram-poller, open-mira-lab, open-live-task-audit-sidecar, open-human-timeline-sidecar, open-spine-overlay, open-squid-room, open-visual-capture-window, close-app-window, drive-mira-lab, terminal-scroll-probe');
+  console.log('Commands: reload-renderers, restart-telegram-poller, open-live-task-audit-sidecar, open-spine-overlay, open-squid-room, open-visual-capture-window, close-app-window, terminal-scroll-probe');
   console.log('Options:');
   console.log('  --role <role>               Sender role (default: builder)');
   console.log(`  --port <port>               WebSocket port (default: ${DEFAULT_PORT})`);
   console.log(`  --timeout <ms>              Response timeout (default: ${DEFAULT_RESPONSE_TIMEOUT_MS})`);
-  console.log('drive-mira-lab options:');
-  console.log('  --prompt <text>             Prompt text to drive into the live Mira Lab renderer');
-  console.log('  --pane <architect|builder|oracle>   Pane to receive Mira\'s visible reply envelope');
-  console.log('  --speaker-role <role>       Speaker role attached to the prompt (default: james)');
-  console.log('  --session-id <id>           Optional Mira Lab session id');
-  console.log('  --timeout-ms <ms>           Renderer round-trip timeout (default: 10000)');
   console.log('terminal-scroll-probe options:');
   console.log('  --window-key <key>          Explicit target renderer window key');
   console.log('  --container-id <id>         Terminal container id, e.g. terminal-trustquote-app');
@@ -39,14 +33,11 @@ function usage() {
   console.log('  --wait-ms <ms>              Optional post-event wait (default: 120)');
   console.log('Examples:');
   console.log('  node hm-app.js reload-renderers');
-  console.log('  node hm-app.js open-mira-lab');
   console.log('  node hm-app.js open-live-task-audit-sidecar');
-  console.log('  node hm-app.js open-human-timeline-sidecar');
   console.log('  node hm-app.js open-spine-overlay');
   console.log('  node hm-app.js open-squid-room');
   console.log('  node hm-app.js open-visual-capture-window');
   console.log('  node hm-app.js close-app-window --window-key squid-room');
-  console.log('  node hm-app.js drive-mira-lab --prompt "are we still talking?" --pane builder');
   console.log('  node hm-app.js terminal-scroll-probe --window-key squid-room --container-id terminal-trustquote-app --op dispatchKey --key PageUp');
 }
 
@@ -93,20 +84,12 @@ function normalizeCommand(command) {
   if (!normalized) return null;
   if (normalized === 'reload' || normalized === 'reload-renderer') return 'reload-renderers';
   if (normalized === 'restart-telegram' || normalized === 'reload-telegram-poller') return 'restart-telegram-poller';
-  if (normalized === 'mira-lab' || normalized === 'open-mira' || normalized === 'mira-lab-open') return 'open-mira-lab';
   if (
     normalized === 'live-task-audit-sidecar'
     || normalized === 'task-audit-sidecar'
     || normalized === 'task-audit'
     || normalized === 'open-task-audit'
   ) return 'open-live-task-audit-sidecar';
-  if (
-    normalized === 'human-timeline-sidecar'
-    || normalized === 'human-timeline'
-    || normalized === 'timeline'
-    || normalized === 'today-feed'
-    || normalized === 'open-today-feed'
-  ) return 'open-human-timeline-sidecar';
   if (
     normalized === 'spine-overlay'
     || normalized === 'open-spine-overlay'
@@ -121,7 +104,6 @@ function normalizeCommand(command) {
     || normalized === 'open-capture-window'
   ) return 'open-visual-capture-window';
   if (normalized === 'close-window' || normalized === 'window-close' || normalized === 'close-app-window') return 'close-app-window';
-  if (normalized === 'drive-mira-lab' || normalized === 'mira-lab-drive' || normalized === 'mira-lab-renderer-prompt') return 'mira-lab-renderer-prompt';
   if (normalized === 'scroll-probe' || normalized === 'probe-terminal-scroll') return 'terminal-scroll-probe';
   return normalized;
 }
@@ -241,14 +223,11 @@ async function main() {
   const allowedCommands = new Set([
     'reload-renderers',
     'restart-telegram-poller',
-    'open-mira-lab',
     'open-live-task-audit-sidecar',
-    'open-human-timeline-sidecar',
     'open-spine-overlay',
     'open-squid-room',
     'open-visual-capture-window',
     'close-app-window',
-    'mira-lab-renderer-prompt',
     'terminal-scroll-probe',
   ]);
   if (!allowedCommands.has(command)) {
@@ -258,20 +237,6 @@ async function main() {
   }
 
   let payload = {};
-  if (command === 'mira-lab-renderer-prompt') {
-    const prompt = asString(getOption(options, 'prompt', ''), '');
-    if (!prompt) {
-      console.error('drive-mira-lab requires --prompt <text>');
-      process.exit(1);
-    }
-    payload = {
-      prompt,
-      requesterPane: asString(getOption(options, 'pane', ''), '') || null,
-      speakerRole: asString(getOption(options, 'speaker-role', 'james'), 'james'),
-      sessionId: asString(getOption(options, 'session-id', ''), '') || null,
-      timeoutMs: asNumber(getOption(options, 'timeout-ms', null), null),
-    };
-  }
   if (command === 'close-app-window') {
     const windowKey = asString(
       getOption(options, 'window-key', getOption(options, 'window', getOption(options, 'key', ''))),

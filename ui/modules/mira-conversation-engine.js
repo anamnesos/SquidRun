@@ -57,9 +57,7 @@ const {
 } = require('./mira-calendar-message-curiosity');
 const { appendJsonlWithRotation } = require('./runtime-log-rotation');
 
-const MIRA_LAB_TURN_CHANNEL = 'mira:lab-turn';
-const MIRA_LAB_EXPORT_CHANNEL = 'mira:lab-export';
-const MIRA_LAB_PROMPT_REPLY_CHANNEL = 'mira:lab-prompt-reply';
+const MIRA_CONVERSATION_REPLY_CHANNEL = 'mira:conversation-reply';
 const MIRA_SELF_DIRECTION_CHANNEL = 'mira:self-direction-proposal';
 const MIRA_SELF_DIRECTION_LIST_CHANNEL = 'mira:self-direction-list';
 const MIRA_SELF_DIRECTION_REVIEW_CHANNEL = 'mira:self-direction-review';
@@ -848,8 +846,8 @@ async function generateMiraSelfDirectionProposal(payload = {}, options = {}) {
   let candidate = null;
   let promptResult = null;
 
-  if (typeof options.buildMiraLabPromptReply === 'function' || payload.usePromptReply === true) {
-    const builder = options.buildMiraLabPromptReply || buildMiraLabPromptReply;
+  if (typeof options.buildMiraConversationReply === 'function' || payload.usePromptReply === true) {
+    const builder = options.buildMiraConversationReply || buildMiraConversationReply;
     promptResult = await builder({
       sessionId,
       prompt: payload.prompt || SELF_DIRECTION_GENERATE_PROMPT,
@@ -6201,7 +6199,7 @@ function buildTypedReplyReflexionLessonContext(payload = {}, options = {}) {
   }
 }
 
-async function buildMiraLabPromptReply(payload = {}, options = {}) {
+async function buildMiraConversationReply(payload = {}, options = {}) {
   const generatedAt = generatedAtFromOptions(options, payload);
   const projectRoot = projectRootFromOptions(options, payload);
   const labSessionId = buildLabSessionId(generatedAt, payload.sessionId || payload.session_id);
@@ -7083,13 +7081,11 @@ function extractMiraCurriculumSkills(payload = {}, options = {}) {
 module.exports = {
   AGENT_ROLES,
   MIRA_LAB_EVAL_SCHEMA,
-  MIRA_LAB_EXPORT_CHANNEL,
-  MIRA_LAB_PROMPT_REPLY_CHANNEL,
+  MIRA_CONVERSATION_REPLY_CHANNEL,
   MIRA_LAB_PROMPT_REPLY_DECISIONS,
   MIRA_LAB_PROMPT_REPLY_SCHEMA,
   MIRA_LAB_REPLY_AUDIT_SCHEMA,
   MIRA_LAB_SCHEMA,
-  MIRA_LAB_TURN_CHANNEL,
   MIRA_AUTHORITY_SCOREBOARD_SCHEMA,
   MIRA_CONFIDENCE_SOURCE_CHECK_SCHEMA,
   MIRA_CURIOSITY_BURST_SCHEMA,
@@ -7117,7 +7113,7 @@ module.exports = {
   MIRA_SELF_DIRECTION_SCHEMA,
   SAFE_FALLBACK_TEXT,
   buildMiraAuthorityScoreboard,
-  buildMiraLabPromptReply,
+  buildMiraConversationReply,
   buildMiraSelfDirectionProposal,
   classifyMiraReplyConfidenceSource,
   extractMiraCurriculumSkills,

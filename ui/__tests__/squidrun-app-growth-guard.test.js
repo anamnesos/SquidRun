@@ -16,7 +16,7 @@ const path = require('path');
  * evidence, not a number to bump when the ratchet is inconvenient. Never raise
  * either number to make red go green.
  */
-const RATCHET_CEILING = 16434;
+const RATCHET_CEILING = 16252;
 const TARGET_CEILING = 14662;
 
 describe('squidrun-app.js god-object growth guard', () => {

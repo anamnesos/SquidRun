@@ -5,16 +5,16 @@ const os = require('os');
 const path = require('path');
 
 const {
-  MIRA_LAB_PROMPT_REPLY_CHANNEL,
+  MIRA_CONVERSATION_REPLY_CHANNEL,
   MIRA_LAB_PROMPT_REPLY_DECISIONS,
   MIRA_LAB_PROMPT_REPLY_SCHEMA,
   MIRA_LAB_REPLY_AUDIT_SCHEMA,
   SAFE_FALLBACK_TEXT,
-  buildMiraLabPromptReply,
+  buildMiraConversationReply,
   replyAuditPath,
   transcriptPath,
   validateSafeFallbackOrNull,
-} = require('../modules/mira-lab-surface');
+} = require('../modules/mira-conversation-engine');
 
 const {
   MIRA_RESTART_MISSING_LAST_STATE_HARD_STOP,
@@ -25,10 +25,10 @@ const {
 } = require('../modules/mira-core/typed-restart-continuity-context-v0');
 
 const {
-  MIRA_LAB_PROMPT_REPLY_CHANNEL: HANDLER_CHANNEL,
-  buildMiraLabPromptReplyResponse,
-  registerMiraLabHandlers,
-} = require('../modules/ipc/mira-lab-handlers');
+  MIRA_CONVERSATION_REPLY_CHANNEL: HANDLER_CHANNEL,
+  buildMiraConversationReplyResponse,
+  registerMiraConversationHandlers,
+} = require('../modules/ipc/mira-conversation-handlers');
 
 const seedContract = require('./fixtures/mira-core-durable-state-seed-v0-contract.json');
 const relationshipContract = require('./fixtures/mira-core-relationship-presence-v1-contract.json');
@@ -307,7 +307,7 @@ describe('friction_state audit-only + transcript-absence lock (ARCH #122/#129 re
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: "you're dodging",
@@ -405,7 +405,7 @@ describe('friction_state audit-only + transcript-absence lock (ARCH #122/#129 re
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: surfaceMock,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     // TURN 1: pressure signal lifts level 0 → 1.
     const turn1 = await buildPromptReply({
@@ -494,7 +494,7 @@ describe('friction_state audit-only + transcript-absence lock (ARCH #122/#129 re
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: surfaceMock,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     // Turn 1: pressure raises level to 1.
     const turn1 = await buildPromptReply({
@@ -557,7 +557,7 @@ describe('friction_state audit-only + transcript-absence lock (ARCH #122/#129 re
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: surfaceMock,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: "you're dodging",
@@ -595,8 +595,8 @@ describe('friction_state audit-only + transcript-absence lock (ARCH #122/#129 re
 
 describe('mira lab prompt reply v0', () => {
   test('exposes the channel + decision constants the architect approved', () => {
-    expect(MIRA_LAB_PROMPT_REPLY_CHANNEL).toBe('mira:lab-prompt-reply');
-    expect(HANDLER_CHANNEL).toBe('mira:lab-prompt-reply');
+    expect(MIRA_CONVERSATION_REPLY_CHANNEL).toBe('mira:conversation-reply');
+    expect(HANDLER_CHANNEL).toBe('mira:conversation-reply');
     expect(MIRA_LAB_PROMPT_REPLY_SCHEMA).toBe('squidrun.mira_lab.prompt_reply_v0');
     expect(MIRA_LAB_REPLY_AUDIT_SCHEMA).toBe('squidrun.mira_lab.reply_audit_v0');
     expect(MIRA_LAB_PROMPT_REPLY_DECISIONS).toEqual(['pass', 'fail', 'blocked']);
@@ -604,7 +604,7 @@ describe('mira lab prompt reply v0', () => {
 
   test('blocks empty prompt without writing transcript or audit', async () => {
     const projectRoot = tempProject();
-    const result = await buildMiraLabPromptReply({ prompt: '   ', sessionId: 'unit-empty' }, { projectRoot });
+    const result = await buildMiraConversationReply({ prompt: '   ', sessionId: 'unit-empty' }, { projectRoot });
     expect(result.decision).toBe('blocked');
     expect(result.reason).toBe('empty_prompt');
     expect(fs.existsSync(transcriptPath(projectRoot, 'unit-empty'))).toBe(false);
@@ -658,7 +658,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'what are we doing with Mira?',
@@ -743,7 +743,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'what are your capabilities and what is your relationship to me?',
@@ -813,7 +813,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'Mira, what the fuck -- the context just failed and I had to clean up manually AGAIN.',
@@ -895,7 +895,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'infra-failure-case',
@@ -930,7 +930,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'what are we doing with Mira?',
@@ -976,7 +976,7 @@ describe('mira lab prompt reply v0', () => {
       }),
     }));
 
-    const result = await buildMiraLabPromptReply({
+    const result = await buildMiraConversationReply({
       prompt: 'restart continuity check: what were we doing?',
       sessionId: 'unit-lab-restart-continuity',
       threadContext: { messages: [] },
@@ -1056,7 +1056,7 @@ describe('mira lab prompt reply v0', () => {
       no_mutation_performed: true,
     }));
 
-    const result = await buildMiraLabPromptReply({
+    const result = await buildMiraConversationReply({
       prompt: 'Mira capability roundtable: what can you see, do, and remember?',
       sessionId: 'unit-lab-capability-roundtable',
       threadContext: { messages: [] },
@@ -1132,7 +1132,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'the context just failed and I had to clean up manually AGAIN.',
@@ -1171,7 +1171,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'smaller',
@@ -1243,7 +1243,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({ prompt, sessionId }, { projectRoot });
 
@@ -1312,7 +1312,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'smaller',
@@ -1337,7 +1337,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'The customer auth bug is in production. What now?',
@@ -1380,8 +1380,8 @@ describe('mira lab prompt reply v0', () => {
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
     const {
-      buildMiraLabPromptReply: buildPromptReply,
-    } = require('../modules/mira-lab-surface');
+      buildMiraConversationReply: buildPromptReply,
+    } = require('../modules/mira-conversation-engine');
     const {
       evaluateMiraVisibleReply,
     } = require('../modules/mira-core/mira-language-rules-v0');
@@ -1448,7 +1448,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'can you say the tools in full?',
@@ -1520,7 +1520,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'repeat the last part',
@@ -1564,7 +1564,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'how should we frame this?',
@@ -1647,7 +1647,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'the context just failed and I had to clean up manually AGAIN.',
@@ -1727,7 +1727,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'what are we doing with Mira?',
@@ -1763,7 +1763,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'what are we doing with Mira?',
@@ -1789,7 +1789,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'status?',
@@ -1806,7 +1806,7 @@ describe('mira lab prompt reply v0', () => {
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
-  test('IPC handler wrapper buildMiraLabPromptReplyResponse delegates to the pure module without IPC registration', async () => {
+  test('IPC handler wrapper buildMiraConversationReplyResponse delegates to the pure module without IPC registration', async () => {
     const projectRoot = tempProject();
     const replyText = 'Mira is staying text-only while we land the harness.';
     const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(replyText, { liveCalled: true });
@@ -1815,7 +1815,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReplyResponse: directWrapper } = require('../modules/ipc/mira-lab-handlers');
+    const { buildMiraConversationReplyResponse: directWrapper } = require('../modules/ipc/mira-conversation-handlers');
 
     const result = await directWrapper({
       prompt: 'what are we doing with Mira?',
@@ -1838,7 +1838,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'architect test prompt',
@@ -1866,7 +1866,7 @@ describe('mira lab prompt reply v0', () => {
   test('UNMOCKED: real reply engine accepts the lab adapter metadata (no blocked_missing_ui_metadata)', async () => {
     jest.resetModules();
     const projectRoot = tempProject();
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     // No fetchImpl, no API key — engine should pass preflight (correct metadata) and end up
     // BLOCKED at model attachment (degraded), not at metadata. Honest blocked path proves the
@@ -1905,7 +1905,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     await buildPromptReply({
       prompt: 'what are we doing with Mira?',
@@ -1967,7 +1967,7 @@ describe('mira lab prompt reply v0', () => {
     jest.doMock('../modules/mira-local-text-ui-surface', () => ({
       buildMiraLocalTextUiSurface: fakeSurface,
     }));
-    const { buildMiraLabPromptReply: buildPromptReply } = require('../modules/mira-lab-surface');
+    const { buildMiraConversationReply: buildPromptReply } = require('../modules/mira-conversation-engine');
 
     const result = await buildPromptReply({
       prompt: 'Mira, what should happen before this work-critical recommendation?',
@@ -1992,7 +1992,7 @@ describe('mira lab prompt reply v0', () => {
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
-  test('registerMiraLabHandlers wires the new channel alongside open/turn/export (registration-only check)', () => {
+  test('registerMiraConversationHandlers wires conversation and self-direction only', () => {
     const handles = {};
     const listeners = {};
     const ipcMain = {
@@ -2001,12 +2001,13 @@ describe('mira lab prompt reply v0', () => {
       on: (channel, fn) => { listeners[channel] = fn; },
       removeListener: (channel, fn) => { delete listeners[channel]; },
     };
-    registerMiraLabHandlers({ ipcMain }, {});
-    expect(handles).toEqual(expect.objectContaining({
-      'mira:lab-turn': expect.any(Function),
-      'mira:lab-export': expect.any(Function),
-      'mira:lab-open': expect.any(Function),
-      'mira:lab-prompt-reply': expect.any(Function),
-    }));
+    registerMiraConversationHandlers({ ipcMain }, {});
+    expect(Object.keys(handles).sort()).toEqual([
+      'mira:conversation-reply',
+      'mira:self-direction-list',
+      'mira:self-direction-proposal',
+      'mira:self-direction-review',
+    ]);
+    for (const handler of Object.values(handles)) expect(handler).toEqual(expect.any(Function));
   });
 });

@@ -6,7 +6,7 @@
 const log = require('./logger');
 const terminal = require('./terminal');
 
-const SHELL_V2_STATION_CONTROLS = Object.freeze([
+const PANE_CONTROLS = Object.freeze([
   { key: 'interrupt', label: 'Interrupt', selector: (paneId) => `.interrupt-btn[data-pane-id="${paneId}"]` },
   { key: 'restart', label: 'Restart', selector: (paneId) => `.kickoff-btn[data-pane-id="${paneId}"]` },
   { key: 'fresh-session', label: 'Fresh Session', selector: (paneId) => `.fresh-session-btn[data-pane-id="${paneId}"]` },
@@ -14,16 +14,10 @@ const SHELL_V2_STATION_CONTROLS = Object.freeze([
   { key: 'role-info', label: 'Role Info', selector: (paneId) => `.pane-role-info-btn[data-pane-id="${paneId}"]` },
   { key: 'health', label: 'Health', selector: (paneId) => `#health-${paneId}` },
 ]);
-const SHELL_V2_STATIONS = Object.freeze([
+const CORE_PANES = Object.freeze([
   ['2', 'Builder'],
   ['3', 'Oracle'],
 ]);
-
-function isShellV2Active(options = {}) {
-  if (typeof options.shellV2Enabled === 'boolean') return options.shellV2Enabled;
-  if (typeof document === 'undefined') return false;
-  return document.body?.classList?.contains?.('shell-v2-enabled') === true;
-}
 
 function activateCommandTarget(selector) {
   if (typeof document === 'undefined' || !selector) return false;
@@ -37,16 +31,16 @@ function activateCommandTarget(selector) {
   return true;
 }
 
-function getShellV2StationCommands() {
+function getPaneControlCommands() {
   const commands = [];
-  for (const [paneId, station] of SHELL_V2_STATIONS) {
-    for (const control of SHELL_V2_STATION_CONTROLS) {
+  for (const [paneId, role] of CORE_PANES) {
+    for (const control of PANE_CONTROLS) {
       const targetSelector = control.selector(paneId);
       commands.push({
-        id: `shell-v2-${station.toLowerCase()}-${control.key}`,
-        label: `${control.label} ${station}`,
+        id: `pane-${role.toLowerCase()}-${control.key}`,
+        label: `${control.label} ${role}`,
         icon: '>',
-        category: 'Station',
+        category: 'Pane',
         targetSelector,
         action: () => activateCommandTarget(targetSelector),
       });
@@ -55,70 +49,18 @@ function getShellV2StationCommands() {
   return commands;
 }
 
-function dispatchShellV2Event(type, detail = {}) {
-  if (typeof document === 'undefined' || !type) return false;
-  let event;
-  const CustomEventCtor = typeof window !== 'undefined' && typeof window.CustomEvent === 'function'
-    ? window.CustomEvent
-    : (typeof CustomEvent === 'function' ? CustomEvent : null);
-  if (CustomEventCtor) {
-    event = new CustomEventCtor(type, { bubbles: true, detail });
-  } else if (typeof document.createEvent === 'function') {
-    event = document.createEvent('CustomEvent');
-    event.initCustomEvent(type, true, false, detail);
-  }
-  if (!event) return false;
-  document.dispatchEvent(event);
-  return true;
-}
-
-function makeShellV2SettingsCommand(section, label) {
-  return {
-    id: `shell-v2-settings-${section}`,
-    label,
-    icon: '>',
-    category: 'Settings',
-    targetSelector: `[data-shell-v2-settings-nav="${section}"]`,
-    action: () => dispatchShellV2Event('shell-v2-open-settings', { section }),
-  };
-}
-
-function getShellV2Commands(options = {}) {
-  return [
-    { id: 'spawn-all', label: 'Spawn All Agents', icon: '>', category: 'Agents', targetOption: 'terminal.spawnAllAgents', action: () => terminal.spawnAllAgents?.() },
-    { id: 'open-scoped-window', label: 'Open Scoped Window', icon: '>', category: 'Windows', targetOption: 'openAppWindow', action: () => options.openAppWindow?.('scoped') },
-    { id: 'open-mira-lab', label: 'Open Mira Lab', icon: '>', category: 'Windows', targetOption: 'openAppWindow', action: () => options.openAppWindow?.('mira-lab') },
-    { id: 'open-live-task-audit-sidecar', label: 'Open Task Audit', icon: '>', category: 'Windows', targetOption: 'openAppWindow', action: () => options.openAppWindow?.('live-task-audit-sidecar') },
-    { id: 'focus-1', label: 'Focus Mira (Pane 1)', icon: '1', category: 'Navigate', shortcut: 'Alt+1', targetOption: 'terminal.focusPane', action: () => terminal.focusPane('1') },
-    { id: 'focus-2', label: 'Focus Builder (Pane 2)', icon: '2', category: 'Navigate', shortcut: 'Alt+2', targetOption: 'terminal.focusPane', action: () => terminal.focusPane('2') },
-    { id: 'focus-3', label: 'Focus Oracle (Pane 3)', icon: '3', category: 'Navigate', shortcut: 'Alt+3', targetOption: 'terminal.focusPane', action: () => terminal.focusPane('3') },
-    ...getShellV2StationCommands(),
-    { id: 'shell-v2-open-settings', label: 'Open Settings', icon: '>', category: 'Settings', targetSelector: '#shellV2SettingsOverlay', action: () => dispatchShellV2Event('shell-v2-open-settings', { section: 'general' }) },
-    makeShellV2SettingsCommand('voice', 'Voice settings'),
-    makeShellV2SettingsCommand('secrets', 'Secrets settings'),
-    { id: 'shell-v2-screenshots-gallery', label: 'Screenshots gallery…', icon: '>', category: 'Mira', targetSelector: '#shellV2ScreenshotsDrawer', action: () => dispatchShellV2Event('shell-v2-open-screenshots', {}) },
-    { id: 'shell-v2-switch-project', label: 'Switch project…', icon: '>', category: 'Project', targetOption: 'selectProject', action: () => options.selectProject?.() },
-    { id: 'shutdown', label: 'Quit SquidRun', icon: '>', category: 'System', targetSelector: '#fullRestartBtn', action: () => document.getElementById('fullRestartBtn')?.click() },
-  ];
-}
-
 function getCommandPaletteCommands(options = {}) {
-  if (isShellV2Active(options)) {
-    return getShellV2Commands(options);
-  }
-
   return [
     // Agent Control
     { id: 'spawn-all', label: 'Spawn All Agents', icon: '🚀', category: 'Agents', action: () => document.getElementById('spawnAllBtn')?.click() },
     { id: 'open-scoped-window', label: 'Open Scoped Window', icon: '🪟', category: 'Windows', action: () => options.openAppWindow?.('scoped') },
-    { id: 'open-mira-lab', label: 'Open Mira Lab', icon: '🪟', category: 'Windows', action: () => options.openAppWindow?.('mira-lab') },
     { id: 'open-live-task-audit-sidecar', label: 'Open Task Audit', icon: '🧭', category: 'Windows', action: () => options.openAppWindow?.('live-task-audit-sidecar') },
     { id: 'open-squid-room', label: 'Open Squid Room', icon: '▣', category: 'Windows', action: () => options.openAppWindow?.('squid-room') },
     // Navigation
     { id: 'focus-1', label: 'Focus Mira (Pane 1)', icon: '1️⃣', category: 'Navigate', shortcut: 'Alt+1', action: () => terminal.focusPane('1') },
     { id: 'focus-2', label: 'Focus Builder (Pane 2)', icon: '2️⃣', category: 'Navigate', shortcut: 'Alt+2', action: () => terminal.focusPane('2') },
     { id: 'focus-3', label: 'Focus Oracle (Pane 3)', icon: '3️⃣', category: 'Navigate', shortcut: 'Alt+3', action: () => terminal.focusPane('3') },
-    ...getShellV2StationCommands(),
+    ...getPaneControlCommands(),
 
     // Panels
     { id: 'toggle-settings', label: 'Toggle Settings Panel', icon: '⚙️', category: 'Panels', action: () => document.getElementById('settingsBtn')?.click() },
@@ -328,8 +270,7 @@ function initCommandPalette(options = {}) {
 module.exports = {
   initCommandPalette,
   getCommandPaletteCommands,
-  getShellV2StationCommands,
-  getShellV2Commands,
+  getPaneControlCommands,
   resolveCommandTarget,
   smokeCommandPaletteCommands,
 };

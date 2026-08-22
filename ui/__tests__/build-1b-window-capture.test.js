@@ -13,9 +13,7 @@ describe('Build 1B six-window capture contract', () => {
     expect(SURFACES.map((surface) => surface.id)).toEqual([
       'main',
       'pane-host',
-      'mira-lab',
       'live-task-audit',
-      'human-timeline',
       'spine-overlay',
     ]);
   });

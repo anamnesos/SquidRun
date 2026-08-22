@@ -44,14 +44,13 @@ const { registerTaskPoolHandlers } = require('./task-pool-handlers');
 const { registerOwnedWorkHandlers } = require('./owned-work-handlers');
 const { registerVoiceBrokerHandlers } = require('./voice-broker-handlers');
 const { registerMiraCoordinatorSnapshotHandlers } = require('./mira-coordinator-snapshot-handlers');
-const { registerMiraLabHandlers } = require('./mira-lab-handlers');
+const { registerMiraConversationHandlers } = require('./mira-conversation-handlers');
 const { registerMiraLocalTextUiSurfaceHandlers } = require('./mira-local-text-ui-surface-handlers');
 const { registerOracleHandlers } = require('./oracle-handlers');
 const { registerModelSwitchHandlers } = require('./model-switch-handlers');
 const { registerOrganicUIHandlers } = require('./organic-ui-handlers');
 const { registerWhisperHandlers } = require('./whisper-handlers');
 const { registerEvidenceLedgerHandlers } = require('./evidence-ledger-handlers');
-const { registerShellV2TodayHandlers } = require('./shell-v2-today-handlers');
 const { registerCognitiveMemoryHandlers } = require('./cognitive-memory-handlers');
 const { registerContractPromotionHandlers } = require('./contract-promotion-handlers');
 const { registerTeamMemoryHandlers } = require('./team-memory-handlers');
@@ -107,14 +106,13 @@ const DEFAULT_HANDLERS = [
   registerOwnedWorkHandlers,
   registerVoiceBrokerHandlers,
   registerMiraCoordinatorSnapshotHandlers,
-  registerMiraLabHandlers,
+  registerMiraConversationHandlers,
   registerMiraLocalTextUiSurfaceHandlers,
   registerOracleHandlers,
   registerModelSwitchHandlers,
   registerOrganicUIHandlers,
   registerWhisperHandlers,
   registerEvidenceLedgerHandlers,
-  registerShellV2TodayHandlers,
   registerCognitiveMemoryHandlers,
   registerContractPromotionHandlers,
   registerTeamMemoryHandlers,

@@ -8,10 +8,6 @@ const {
   isStalePtyGeneration,
   resolvePaneFailureCliHint,
 } = require('../modules/main/pane-failure-monitor');
-const {
-  queryShellV2TodayJournal,
-} = require('../modules/main/shell-v2-today-journal');
-
 const CLAUDE_LIMIT_FIXTURE = [
   '\x1b[31m',
   "You\u2019ve hit your Fable 5 limit \u00b7 resets 8pm (America/Los_Angeles)",
@@ -166,30 +162,6 @@ describe('pane failure notify path', () => {
         todayVisible: true,
       }),
     }));
-    const telegramOptions = sendTelegram.mock.calls[0][2];
-    const telegramJournalRow = {
-      messageId: telegramOptions.messageId,
-      sessionId: telegramOptions.sessionId,
-      channel: 'telegram',
-      direction: 'outbound',
-      senderRole: telegramOptions.senderRole,
-      targetRole: telegramOptions.targetRole,
-      sentAtMs: appendJournal.mock.calls[0][0].sentAtMs,
-      rawBody: result.message,
-      status: 'recorded',
-      metadata: telegramOptions.metadata,
-    };
-    const today = queryShellV2TodayJournal({ nowMs: 1783630358531 }, {
-      queryEntries: () => [telegramJournalRow, appendJournal.mock.calls[0][0]],
-    });
-    expect(today.rows).toEqual([
-      expect.objectContaining({
-        messageId: result.systemMessageId,
-        scope: 'main',
-        senderRole: 'system',
-        targetRole: 'system',
-      }),
-    ]);
     expect(sendTelegram).toHaveBeenCalledTimes(1);
     expect(sendTelegram).toHaveBeenCalledWith(
       result.message,

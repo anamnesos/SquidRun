@@ -10,9 +10,7 @@
  * this module's jurisdiction.
  *
  * Matrix status: ALL FOUR rows APPROVED (ARCH #8, S426, Oracle audit as the
- * per-control spec). Ruling of record: the Mira Lab button renders in MAIN
- * ONLY until New-Mira parity (docs/mira-system-map.md:584-585 - live
- * diagnostic surface; lab code is not deletable through this lane).
+ * per-control spec).
  */
 
 const WINDOW_CHROME_CLASSES = Object.freeze({
@@ -30,9 +28,6 @@ const CHROME_CONTROL_IDS = Object.freeze([
   'fullRestartBtn',
   'profileBtn',
   'settingsBtn',
-  'openHumanTimelineBtn',
-  'openSquidRoomBtn',
-  'openMiraLabBtn',
   'panelBtn',
   'dryRunIndicator',
 ]);
@@ -49,13 +44,8 @@ const FULL_CHROME = Object.freeze({
   regions: Object.freeze(Object.keys(CHROME_REGION_SELECTORS)),
 });
 
-const INSTALLED_OPERATOR_DROPPED_CONTROLS = Object.freeze([
-  'openSquidRoomBtn',
-  'openMiraLabBtn',
-]);
-
 const INSTALLED_OPERATOR_CHROME = Object.freeze({
-  controls: Object.freeze(CHROME_CONTROL_IDS.filter((id) => !INSTALLED_OPERATOR_DROPPED_CONTROLS.includes(id))),
+  controls: CHROME_CONTROL_IDS,
   regions: FULL_CHROME.regions,
 });
 

@@ -2679,8 +2679,7 @@ function rendererOwnsStartupInjection(paneId) {
 function shouldSkipStartupInjection(paneId, runtimeOverride = null) {
   if (runtimeOverride?.skipStartupInjection === true) return true;
   if (String(process?.env?.SQUIDRUN_SKIP_STARTUP_INJECTION || '').trim() === '1') return true;
-  const context = normalizeStartupWindowContext(startupWindowContext);
-  return context.profileName === 'shellv2qa';
+  return false;
 }
 
 function emitPtyGeometrySkipped(paneId, reason, payload = {}) {

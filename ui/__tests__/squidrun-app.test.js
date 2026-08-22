@@ -314,7 +314,7 @@ jest.mock('../scripts/hm-telegram-routing', () => ({
 }));
 
 jest.mock('../modules/mira-live-entrypoint', () => ({
-  MIRA_LIVE_PROMPT_REPLY_CHANNEL: 'mira:lab-prompt-reply',
+  MIRA_LIVE_PROMPT_REPLY_CHANNEL: 'mira:conversation-reply',
   sendMiraLivePrompt: jest.fn(async () => ({
     ok: true,
     state: 'ready',
@@ -2592,79 +2592,6 @@ describe('SquidRunApp', () => {
       expect(app.ctx.mainWindow).toBe(primaryWindow);
     });
 
-    it('openAppWindow("mira-lab") creates the standalone Mira Lab window, registers it, suppresses menu chrome, and focuses it', async () => {
-      const enforceMenuSpy = jest.spyOn(app, 'enforceMenuSuppression');
-      const result = await app.openAppWindow('mira-lab');
-
-      expect(result).toEqual(expect.objectContaining({
-        ok: true,
-        windowKey: 'mira-lab',
-        title: 'Mira Lab',
-      }));
-      expect(result.htmlPath).toMatch(/mira-lab\.html$/);
-      expect(result.preloadPath).toMatch(/preload\.js$/);
-
-      expect(app.ctx.setWindow).toHaveBeenCalledWith('mira-lab', expect.any(Object));
-      const miraLabWindow = app.ctx.getWindow('mira-lab');
-      expect(miraLabWindow).toBeTruthy();
-      expect(miraLabWindow).not.toBe(app.ctx.mainWindow);
-      expect(miraLabWindow.loadFile).toHaveBeenCalledWith(expect.stringMatching(/mira-lab\.html$/));
-      expect(miraLabWindow.focus).toHaveBeenCalled();
-      expect(enforceMenuSpy).toHaveBeenCalledWith(miraLabWindow);
-      expect(app.setupWindowListeners).toHaveBeenCalledWith(
-        miraLabWindow,
-        expect.objectContaining({ windowKey: 'mira-lab', lifecycleRoot: false }),
-      );
-    });
-
-    it('openAppWindow("mira-lab") cleans the registry through the shared closed-window pipeline', async () => {
-      app.setupWindowListeners.mockRestore();
-
-      await app.openAppWindow('mira-lab');
-      const miraLabWindow = app.ctx.getWindow('mira-lab');
-      const closedHandler = miraLabWindow.on.mock.calls.find(([eventName]) => eventName === 'closed')?.[1];
-
-      expect(typeof closedHandler).toBe('function');
-      closedHandler();
-
-      expect(app.ctx.deleteWindow).toHaveBeenCalledWith('mira-lab');
-      expect(app.ctx.getWindow('mira-lab')).toBeNull();
-    });
-
-    it('openAppWindow("mira-lab") reuses an already-open Mira Lab window instead of duplicating it', async () => {
-      const first = await app.openAppWindow('mira-lab');
-      const miraLabWindow = app.ctx.getWindow('mira-lab');
-      miraLabWindow.focus.mockClear();
-
-      const second = await app.openAppWindow('mira-lab');
-
-      expect(second).toEqual(expect.objectContaining({
-        ok: true,
-        windowKey: 'mira-lab',
-        status: 'reused_existing',
-      }));
-      expect(miraLabWindow.focus).toHaveBeenCalled();
-      expect(app.ctx.getWindow('mira-lab')).toBe(miraLabWindow);
-      expect(first.htmlPath).toMatch(/mira-lab\.html$/);
-    });
-
-    it('openAppWindow("mira-lab") returns a structured failure when the factory yields no window', async () => {
-      const factoryModule = require('../modules/main/mira-lab-window');
-      const originalFactory = factoryModule.createMiraLabWindow;
-      factoryModule.createMiraLabWindow = jest.fn(() => ({}));
-      try {
-        const result = await app.openAppWindow('mira-lab');
-        expect(result).toEqual(expect.objectContaining({
-          ok: false,
-          windowKey: 'mira-lab',
-          reason: expect.stringContaining('mira_lab_window_factory_returned_no_window'),
-        }));
-        expect(app.ctx.setWindow).not.toHaveBeenCalledWith('mira-lab', expect.anything());
-      } finally {
-        factoryModule.createMiraLabWindow = originalFactory;
-      }
-    });
-
     it('openAppWindow("live-task-audit-sidecar") creates the standalone task audit sidecar', async () => {
       const enforceMenuSpy = jest.spyOn(app, 'enforceMenuSuppression');
       const result = await app.openAppWindow('live-task-audit-sidecar');
@@ -2706,49 +2633,6 @@ describe('SquidRunApp', () => {
       expect(sidecarWindow.webContents.reloadIgnoringCache).toHaveBeenCalledTimes(1);
       expect(sidecarWindow.focus).toHaveBeenCalled();
       expect(app.ctx.getWindow('live-task-audit-sidecar')).toBe(sidecarWindow);
-    });
-
-    it('openAppWindow("human-timeline-sidecar") creates the standalone Today feed sidecar', async () => {
-      const enforceMenuSpy = jest.spyOn(app, 'enforceMenuSuppression');
-      const result = await app.openAppWindow('human-timeline-sidecar');
-
-      expect(result).toEqual(expect.objectContaining({
-        ok: true,
-        windowKey: 'human-timeline-sidecar',
-        title: 'SquidRun Today',
-      }));
-      expect(result.htmlPath).toMatch(/human-timeline-sidecar\.html$/);
-      expect(result.preloadPath).toMatch(/preload\.js$/);
-
-      expect(app.ctx.setWindow).toHaveBeenCalledWith('human-timeline-sidecar', expect.any(Object));
-      const sidecarWindow = app.ctx.getWindow('human-timeline-sidecar');
-      expect(sidecarWindow).toBeTruthy();
-      expect(sidecarWindow).not.toBe(app.ctx.mainWindow);
-      expect(sidecarWindow.loadFile).toHaveBeenCalledWith(expect.stringMatching(/human-timeline-sidecar\.html$/));
-      expect(sidecarWindow.focus).toHaveBeenCalled();
-      expect(enforceMenuSpy).toHaveBeenCalledWith(sidecarWindow);
-      expect(app.setupWindowListeners).toHaveBeenCalledWith(
-        sidecarWindow,
-        expect.objectContaining({ windowKey: 'human-timeline-sidecar', lifecycleRoot: false }),
-      );
-    });
-
-    it('openAppWindow("human-timeline-sidecar") reloads a reused sidecar before focusing it', async () => {
-      await app.openAppWindow('human-timeline-sidecar');
-      const sidecarWindow = app.ctx.getWindow('human-timeline-sidecar');
-      sidecarWindow.focus.mockClear();
-      sidecarWindow.webContents.reloadIgnoringCache.mockClear();
-
-      const result = await app.openAppWindow('human-timeline-sidecar');
-
-      expect(result).toEqual(expect.objectContaining({
-        ok: true,
-        windowKey: 'human-timeline-sidecar',
-        status: 'reused_existing_reloaded',
-      }));
-      expect(sidecarWindow.webContents.reloadIgnoringCache).toHaveBeenCalledTimes(1);
-      expect(sidecarWindow.focus).toHaveBeenCalled();
-      expect(app.ctx.getWindow('human-timeline-sidecar')).toBe(sidecarWindow);
     });
 
     it('closing a standalone Scoped profile window quits that profile process cleanly', async () => {

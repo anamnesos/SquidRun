@@ -1129,7 +1129,7 @@ async function buildMiraLocalTextUiSurface(payload = {}, options = {}) {
     }
   }
   // ARCH #97/#98/#100/#104: stash the classification on the attachment so
-  // mira-lab-surface can lift it onto the audit row. Audit-only — renderer
+  // mira-conversation-engine can lift it onto the audit row. Audit-only — renderer
   // never reads model_attachment.social_move.
   attachment = { ...attachment, social_move: socialMoveClassification };
   // ARCH #122/#129: also stash friction_state on the attachment (renderer-

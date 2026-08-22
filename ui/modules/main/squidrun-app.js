@@ -58,9 +58,7 @@ const telegramAdmissionDelivery = require('./telegram-admission-delivery');
 const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
 const { emitWindowVisibilityState } = require('./window-visibility-state');
-const miraLabWindowModule = require('./mira-lab-window');
 const liveTaskAuditSidecarWindowModule = require('./live-task-audit-sidecar-window');
-const humanTimelineSidecarWindowModule = require('./human-timeline-sidecar-window');
 const spineOverlayWindowModule = require('./spine-overlay-window');
 const { verifyAppWindowVisible } = require('./app-window-visibility');
 const { createTeamRoomAppController } = require('./team-room-app-controller');
@@ -191,7 +189,6 @@ const {
   TERMINAL_STATES: WORK_ITEM_TERMINAL_STATES,
 } = require('./work-item-ledger');
 const { buildLiveTaskAuditSnapshot } = require('./live-task-audit-sidecar');
-const { buildHumanTimelineSnapshot } = require('./human-timeline');
 const { createEvidenceLedgerPruneHousekeeping } = require('./evidence-ledger-prune-housekeeping');
 const {
   buildSpineOverlaySnapshotAsync,
@@ -217,7 +214,7 @@ const { executePaneModelSwitch } = require('../ipc/model-switch-handlers');
 const { executeAppControlAction } = require('./app-control-service');
 const { createPaneRestartArbiter } = require('./pane-restart-arbiter');
 const armSpawnAppService = require('./arm-spawn-app-service');
-const miraLabHandlersModule = require('../ipc/mira-lab-handlers');
+const miraConversationHandlersModule = require('../ipc/mira-conversation-handlers');
 const armStateProjectionHandlersModule = require('../ipc/arm-state-projection-handlers');
 const {
   MIRA_LIVE_PROMPT_REPLY_CHANNEL,
@@ -5023,10 +5020,6 @@ class SquidRunApp {
                 restartTelegramPoller: (payload = {}) => this.restartTelegramPoller(payload),
                 openAppWindow: (windowKey, openOptions = {}) => this.openAppWindow(windowKey, openOptions),
                 closeAppWindow: (windowKey) => this.closeAppWindow(windowKey),
-                driveMiraLabRenderer: (drivePayload = {}) => miraLabHandlersModule.driveMiraLabRenderer(drivePayload, {
-                  ipcMain,
-                  getMiraLabWindow: () => this.getAppWindow('mira-lab'),
-                }),
               },
               data.message.action,
               data.message.payload || {}
@@ -6321,46 +6314,6 @@ class SquidRunApp {
     if (windowKey === 'team-room') {
       return this.teamRoomController.openWindow();
     }
-    if (windowKey === 'mira-lab') {
-      const existing = this.getAppWindow(windowKey);
-      if (this.canSendToWindow(existing)) {
-        this.focusAppWindow(windowKey);
-        return {
-          ok: true,
-          windowKey,
-          title: 'Mira Lab',
-          status: 'reused_existing',
-        };
-      }
-      try {
-        const result = miraLabWindowModule.createMiraLabWindow({ BrowserWindow }) || {};
-        const win = result.window || null;
-        if (!win) {
-          return {
-            ok: false,
-            windowKey,
-            reason: 'mira_lab_window_factory_returned_no_window',
-          };
-        }
-        this.registerAppWindow(windowKey, win);
-        this.enforceMenuSuppression(win);
-        this.setupWindowListeners(win, { windowKey, lifecycleRoot: false });
-        this.focusAppWindow(windowKey);
-        return {
-          ok: true,
-          windowKey,
-          title: 'Mira Lab',
-          htmlPath: result.htmlPath || null,
-          preloadPath: result.preloadPath || null,
-        };
-      } catch (err) {
-        return {
-          ok: false,
-          windowKey,
-          reason: err?.message || 'mira_lab_window_open_failed',
-        };
-      }
-    }
     if (windowKey === 'live-task-audit-sidecar') {
       const existing = this.getAppWindow(windowKey);
       if (this.canSendToWindow(existing)) {
@@ -6403,51 +6356,6 @@ class SquidRunApp {
           ok: false,
           windowKey,
           reason: err?.message || 'live_task_audit_sidecar_window_open_failed',
-        };
-      }
-    }
-    if (windowKey === 'human-timeline-sidecar') {
-      const existing = this.getAppWindow(windowKey);
-      if (this.canSendToWindow(existing)) {
-        if (existing.webContents && typeof existing.webContents.reloadIgnoringCache === 'function') {
-          existing.webContents.reloadIgnoringCache();
-        } else if (typeof existing.reload === 'function') {
-          existing.reload();
-        }
-        this.focusAppWindow(windowKey);
-        return {
-          ok: true,
-          windowKey,
-          title: 'SquidRun Today',
-          status: 'reused_existing_reloaded',
-        };
-      }
-      try {
-        const result = humanTimelineSidecarWindowModule.createHumanTimelineSidecarWindow({ BrowserWindow }) || {};
-        const win = result.window || null;
-        if (!win) {
-          return {
-            ok: false,
-            windowKey,
-            reason: 'human_timeline_sidecar_window_factory_returned_no_window',
-          };
-        }
-        this.registerAppWindow(windowKey, win);
-        this.enforceMenuSuppression(win);
-        this.setupWindowListeners(win, { windowKey, lifecycleRoot: false });
-        this.focusAppWindow(windowKey);
-        return {
-          ok: true,
-          windowKey,
-          title: 'SquidRun Today',
-          htmlPath: result.htmlPath || null,
-          preloadPath: result.preloadPath || null,
-        };
-      } catch (err) {
-        return {
-          ok: false,
-          windowKey,
-          reason: err?.message || 'human_timeline_sidecar_window_open_failed',
         };
       }
     }
@@ -7377,18 +7285,17 @@ class SquidRunApp {
       getDaemonClientForPane: (paneId) => this.getDaemonClientForPane(paneId),
       paneRestartArbiter: this.paneRestartArbiter,
       requestPaneRestart: (paneId, info = {}) => this.requestPaneRestart(paneId, info),
-      createMiraLabWindow: (opts = {}) => miraLabWindowModule.createMiraLabWindow({ BrowserWindow, ...opts }),
       sendAgentMessage: (target, body, metadata = {}) => {
         const PANE_BY_ROLE = { architect: '1', builder: '2', oracle: '3' };
         const paneId = PANE_BY_ROLE[String(target || '').toLowerCase()];
         if (!paneId) return Promise.resolve({ ok: false, reason: `unknown_target:${target}` });
         const senderRole = typeof metadata?.senderRole === 'string' && metadata.senderRole.trim()
           ? metadata.senderRole.trim()
-          : 'mira-lab';
+          : 'mira-conversation';
         return Promise.resolve(triggers.sendDirectMessage([paneId], body, senderRole, {
           meta: {
             ...(metadata && typeof metadata === 'object' ? metadata : {}),
-            deliverySource: metadata?.source || 'mira-lab',
+            deliverySource: metadata?.source || 'mira-conversation',
             targetRole: String(target || '').toLowerCase(),
           },
         }));
@@ -7446,10 +7353,6 @@ class SquidRunApp {
 
     ipcMain.removeHandler('live-task-audit-sidecar:snapshot');
     ipcMain.handle('live-task-audit-sidecar:snapshot', () => buildLiveTaskAuditSnapshot({
-      sessionId: this.commsSessionScopeId || null,
-    }));
-    ipcMain.removeHandler('human-timeline:snapshot');
-    ipcMain.handle('human-timeline:snapshot', () => buildHumanTimelineSnapshot({
       sessionId: this.commsSessionScopeId || null,
     }));
     ipcMain.removeHandler('spine-overlay:snapshot');
@@ -11894,7 +11797,7 @@ class SquidRunApp {
           if (channel !== MIRA_LIVE_PROMPT_REPLY_CHANNEL) {
             throw new Error(`unsupported_mira_live_channel:${channel}`);
           }
-          return miraLabHandlersModule.buildMiraLabPromptReplyResponse(payload, {
+          return miraConversationHandlersModule.buildMiraConversationReplyResponse(payload, {
             projectRoot: getProjectRoot(),
           });
         },

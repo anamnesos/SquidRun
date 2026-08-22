@@ -21,10 +21,6 @@ const {
   PROGRESS_REPORT_SCHEMA: MIRA_PROGRESS_REPORT_SCHEMA,
 } = require('./mira-core/mira-progress-v0');
 const {
-  readBootstrapState: readMiraLabVerifyBootstrapState,
-  formatStartupStaleMarker: formatMiraLabVerifyBootstrapStaleMarker,
-} = require('./mira-lab-verify-bootstrap-state');
-const {
   writeAndFormatRestartContinuityResumeBlock,
 } = require('./main/restart-continuity-resume-manifest');
 
@@ -640,17 +636,6 @@ function resolveNowMs(options = {}) {
   return Number.isFinite(explicitNow) ? explicitNow : Date.now();
 }
 
-function readMiraLabVerifyBootstrapStaleBlock(options = {}) {
-  try {
-    const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
-    const statePath = options.miraLabVerifyBootstrapStatePath || null;
-    const state = readMiraLabVerifyBootstrapState({ projectRoot, statePath });
-    return formatMiraLabVerifyBootstrapStaleMarker(state);
-  } catch (_) {
-    return '';
-  }
-}
-
 function readStartupBriefingForInjection(options = {}) {
   let body = readStartupBriefing(options).trim();
   const status = safeReadJson(resolveStatusPath(options));
@@ -672,13 +657,9 @@ function readStartupBriefingForInjection(options = {}) {
     : '';
   const currentLaneBlock = formatCurrentLaneBlock(currentLaneSnapshot, options);
   const recentCommsBlock = formatRecentCommsWindow(readRecentCurrentScopeComms(options), options);
-  const miraLabBootstrapBlock = isMainProfile(startupScopeKey)
-    ? readMiraLabVerifyBootstrapStaleBlock(options)
-    : '';
   const continuityBlock = [
     startupDurableBlock,
     miraPresenceRestartAccountingBlock,
-    miraLabBootstrapBlock,
     restartContinuityResumeBlock,
     currentLaneBlock,
     recentCommsBlock,
@@ -1486,7 +1467,6 @@ module.exports = {
     formatStartupBriefingFailureReason,
     detectIntentionallyDisabledAnthropic,
     formatSkippedBriefingNote,
-    readMiraLabVerifyBootstrapStaleBlock,
     requestStartupBriefing,
     resolveLiveAccountSnapshot,
     formatLiveSnapshotBlock,

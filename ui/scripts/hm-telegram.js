@@ -56,7 +56,7 @@ const RESERVED_SINGLE_MESSAGE_TOKENS = new Set([
 const INTERNAL_EGRESS_LINE_PATTERNS = [
   /^\s*\[CURRENT PROJECT\].*$/i,
   /^\s*\[PROJECT CONTEXT SWITCHED\].*$/i,
-  /^\s*Mira held that reply\. Open Mira Lab for diagnostics\.?\s*$/i,
+  /^\s*Mira (?:held that reply|is unavailable)\. (?:Open Mira Lab for diagnostics|Check Team Room for status)\.?\s*$/i,
 ];
 const INTERNAL_EGRESS_PREFIX_PATTERN = /^\s*(?:\[AGENT MSG - reply via hm-send\.js\]\s*)?(?:(?:\((?:(?:MIRA\s*\/\s*)?(?:ARCHITECT|ARCH|BUILDER|BUILD|ORACLE)|MIRA)(?:\s*#\d+)?\)\s*:?)|(?:(?:ARCHITECT|ARCH|BUILDER|BUILD|ORACLE|MIRA)(?:\s*#\d+)?\s*:))\s*/i;
 

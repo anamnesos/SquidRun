@@ -10,7 +10,7 @@ const {
 } = require('../modules/mira-live-entrypoint');
 
 describe('Mira live entrypoint', () => {
-  test('builds the command-bar payload for the gated Mira Lab reply channel', () => {
+  test('builds the command-bar payload for the conversation reply channel', () => {
     expect(normalizeMiraLiveSessionId('Session 369')).toBe('app-session-369');
     expect(normalizeMiraLiveSessionId('  app-session-369:mira-lab  ')).toBe('app-session-369:mira-lab');
     expect(normalizeMiraLiveSessionId('not a session')).toBe(DEFAULT_MIRA_LIVE_SESSION_ID);
@@ -28,7 +28,7 @@ describe('Mira live entrypoint', () => {
     });
   });
 
-  test('sends command-bar text through mira:lab-prompt-reply and returns the visible reply', async () => {
+  test('sends command-bar text through the conversation channel and returns the visible reply', async () => {
     const invoke = jest.fn().mockResolvedValue({
       decision: 'pass',
       visible_render_hint: {
@@ -66,7 +66,7 @@ describe('Mira live entrypoint', () => {
 
     expect(result.ok).toBe(false);
     expect(result.state).toBe('held');
-    expect(result.message).toBe('Mira held that reply. Open Mira Lab for diagnostics.');
+    expect(result.message).toBe('Mira held that reply. Check Team Room for status.');
     expect(result.message).not.toMatch(/preamble|reason_class|gate_annotation/i);
   });
 
@@ -80,6 +80,6 @@ describe('Mira live entrypoint', () => {
 
     expect(result.ok).toBe(false);
     expect(result.state).toBe('unavailable');
-    expect(result.message).toBe('Mira is unavailable. Open Mira Lab for diagnostics.');
+    expect(result.message).toBe('Mira is unavailable. Check Team Room for status.');
   });
 });

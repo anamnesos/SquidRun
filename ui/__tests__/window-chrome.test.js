@@ -126,7 +126,7 @@ describe('window chrome matrix', () => {
       expect(visible(doc, 'fullRestartBtn')).toBe(true);
       expect(visible(doc, 'profileBtn')).toBe(true);
       // Product-boundary controls a client must never see:
-      for (const id of ['selectProjectBtn', 'settingsBtn', 'openSquidRoomBtn', 'openMiraLabBtn', 'panelBtn', 'dryRunIndicator']) {
+      for (const id of ['selectProjectBtn', 'settingsBtn', 'panelBtn', 'dryRunIndicator']) {
         expect(visible(doc, id)).toBe(false);
       }
       expect(visible(doc, '#rightPanel')).toBe(false);
@@ -137,10 +137,7 @@ describe('window chrome matrix', () => {
       const doc = buildHeaderDoc();
       applyWindowChrome(doc, WINDOW_CHROME_CLASSES.INSTALLED_OPERATOR);
 
-      for (const id of ['openSquidRoomBtn', 'openMiraLabBtn']) {
-        expect(visible(doc, id)).toBe(false);
-      }
-      for (const id of CHROME_CONTROL_IDS.filter((x) => !['openSquidRoomBtn', 'openMiraLabBtn'].includes(x))) {
+      for (const id of CHROME_CONTROL_IDS) {
         expect(visible(doc, id)).toBe(true);
       }
       for (const selector of Object.values(CHROME_REGION_SELECTORS)) {
@@ -156,20 +153,6 @@ describe('window chrome matrix', () => {
         expect(visible(doc, id)).toBe(false);
       }
       expect(visible(doc, '#rightPanel')).toBe(false);
-    });
-
-    test('Mira Lab renders in MAIN only (ruling of record, S426)', () => {
-      for (const [cls, expected] of [
-        [WINDOW_CHROME_CLASSES.MAIN, true],
-        [WINDOW_CHROME_CLASSES.SQUID_ROOM, false],
-        [WINDOW_CHROME_CLASSES.CLIENT_PROFILE, false],
-        [WINDOW_CHROME_CLASSES.INSTALLED_OPERATOR, false],
-        [WINDOW_CHROME_CLASSES.WORK_ROOM, false],
-      ]) {
-        const doc = buildHeaderDoc();
-        applyWindowChrome(doc, cls);
-        expect(visible(doc, 'openMiraLabBtn')).toBe(expected);
-      }
     });
 
     test('unknown class falls back to main chrome rather than blanking a window', () => {

@@ -18,7 +18,6 @@ const {
   MIRA_QUIET_CURIOSITY_SCHEDULE_SCHEMA,
   MIRA_REFLEXION_LESSONS_SCHEMA,
   MIRA_SELF_DIRECTION_OUTCOME_SCHEMA,
-  MIRA_LAB_TURN_CHANNEL,
   MIRA_SELF_DIRECTION_CHANNEL,
   MIRA_SELF_DIRECTION_LIST_CHANNEL,
   MIRA_SELF_DIRECTION_REVIEW_CHANNEL,
@@ -55,23 +54,15 @@ const {
   selfDirectionQueuePath,
   transcriptPath,
   _internals,
-} = require('../modules/mira-lab-surface');
+} = require('../modules/mira-conversation-engine');
 const {
-  MIRA_LAB_OPEN_CHANNEL,
   buildMiraSelfDirectionProposalResponse,
-  buildMiraLabTurnResponse,
-  exportMiraLabTranscriptResponse,
-  openMiraLabWindowResponse,
-  registerMiraLabHandlers,
-} = require('../modules/ipc/mira-lab-handlers');
+  registerMiraConversationHandlers,
+} = require('../modules/ipc/mira-conversation-handlers');
 const { DEFAULT_HANDLERS } = require('../modules/ipc/handler-registry');
 const {
   isAllowedInvokeChannel,
 } = require('../modules/bridge/channel-policy');
-const {
-  FORCED_WEB_PREFERENCES,
-  createMiraLabWindow,
-} = require('../modules/main/mira-lab-window');
 
 function tempProject() {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-mira-lab-'));
@@ -151,7 +142,7 @@ describe('Mira Lab sidecar surface', () => {
     }, {
       projectRoot,
       generatedAt: '2026-06-12T16:33:00.000Z',
-      repoStatusText: ' M ui/modules/mira-lab-surface.js\n',
+      repoStatusText: ' M ui/modules/mira-conversation-engine.js\n',
     });
 
     expect(result.ok).toBe(true);
@@ -401,7 +392,7 @@ describe('Mira Lab sidecar surface', () => {
       why_now: 'Mira leadership fails if her concrete proposal is discarded because the visible surface held it.',
       evidence: ['blocked_prompt_reply_with_structured_json'],
     };
-    const buildMiraLabPromptReply = jest.fn(async () => ({
+    const buildMiraConversationReply = jest.fn(async () => ({
       decision: 'blocked',
       reply: null,
       visible_render_hint: { kind: 'blocked_banner', banner: 'held' },
@@ -419,7 +410,7 @@ describe('Mira Lab sidecar surface', () => {
       notifyArchitect: false,
     }, {
       projectRoot,
-      buildMiraLabPromptReply,
+      buildMiraConversationReply,
       generatedAt: '2026-05-12T13:00:00.000Z',
     });
 
@@ -645,7 +636,7 @@ describe('Mira Lab sidecar surface', () => {
     const implemented = recordMiraSelfDirectionOutcome({
       proposalId: 'mira-self-direction:tests-outcome',
       status: 'implemented',
-      evidence: ['commit=abc123', 'jest=mira-lab-surface.test.js'],
+      evidence: ['commit=abc123', 'jest=mira-conversation-engine.test.js'],
       note: 'landed',
     }, { projectRoot, generatedAt: '2026-05-12T08:30:00.000Z' });
     const notImplemented = recordMiraSelfDirectionOutcome({
@@ -860,7 +851,7 @@ describe('Mira Lab sidecar surface', () => {
     const result = runMiraCuriosityScout({}, {
       projectRoot,
       generatedAt: '2026-05-12T11:05:00.000Z',
-      repoStatusText: ' M ui/modules/mira-lab-surface.js\n?? tmp-note.txt\n',
+      repoStatusText: ' M ui/modules/mira-conversation-engine.js\n?? tmp-note.txt\n',
       recentCommsText: [
         '2026-05-12 11:04:00.000 user -> architect (USER): local scout should notice repo/runtime/comms.',
         '2026-05-12 11:03:00.000 architect -> builder (ARCHITECT #74): Mira curiosity lane routed.',
@@ -1333,7 +1324,7 @@ describe('Mira Lab sidecar surface', () => {
     }, {
       projectRoot,
       generatedAt: '2026-05-12T13:05:00.000Z',
-      repoStatusText: ' M ui/modules/mira-lab-surface.js\n',
+      repoStatusText: ' M ui/modules/mira-conversation-engine.js\n',
       recentCommsText: '(ARCHITECT #126): take cheap_parallel_scouts next.',
       memoryCuriosityReader: () => ({
         ok: true,
@@ -3945,30 +3936,6 @@ describe('Mira Lab sidecar surface', () => {
     ]));
   });
 
-  test('IPC handlers expose turn and export channels without making Lab reload-ready', async () => {
-    projectRoot = tempProject();
-    const registered = new Map();
-    const ipcMain = {
-      handle: jest.fn((channel, handler) => registered.set(channel, handler)),
-      removeHandler: jest.fn(),
-      on: jest.fn(),
-      removeListener: jest.fn(),
-    };
-
-    registerMiraLabHandlers({ ipcMain }, { projectRoot });
-    expect(ipcMain.handle).toHaveBeenCalledWith(MIRA_LAB_TURN_CHANNEL, expect.any(Function));
-
-    const turn = await buildMiraLabTurnResponse({
-      sessionId: 'mira-lab-test',
-      speakerRole: 'oracle',
-      text: 'Mira, what would make this less theatrical?',
-    }, { projectRoot });
-    const exported = exportMiraLabTranscriptResponse({ sessionId: 'mira-lab-test' }, { projectRoot });
-
-    expect(turn.ok).toBe(true);
-    expect(exported.transcript).toHaveLength(1);
-  });
-
   test('IPC handler wrapper stages Mira self-direction proposal through the pure module', async () => {
     projectRoot = tempProject();
     const sendAgentMessage = jest.fn(async () => ({ accepted: true }));
@@ -3991,118 +3958,17 @@ describe('Mira Lab sidecar surface', () => {
     expect(readJsonl(selfDirectionQueuePath(projectRoot))).toHaveLength(1);
   });
 
-  test('handler-registry default set wires Mira Lab IPC into app startup', () => {
-    expect(DEFAULT_HANDLERS).toContain(registerMiraLabHandlers);
+  test('handler-registry default set wires the conversation engine into app startup', () => {
+    expect(DEFAULT_HANDLERS).toContain(registerMiraConversationHandlers);
   });
 
-  test('preload channel allowlist includes Mira Lab and self-direction invoke channels', () => {
-    expect(isAllowedInvokeChannel(MIRA_LAB_TURN_CHANNEL)).toBe(true);
-    expect(isAllowedInvokeChannel('mira:lab-export')).toBe(true);
-    expect(isAllowedInvokeChannel(MIRA_LAB_OPEN_CHANNEL)).toBe(true);
+  test('preload channel allowlist keeps only conversation and self-direction invoke channels', () => {
+    expect(isAllowedInvokeChannel('mira:conversation-reply')).toBe(true);
     expect(isAllowedInvokeChannel(MIRA_SELF_DIRECTION_LIST_CHANNEL)).toBe(true);
     expect(isAllowedInvokeChannel(MIRA_SELF_DIRECTION_CHANNEL)).toBe(true);
     expect(isAllowedInvokeChannel(MIRA_SELF_DIRECTION_REVIEW_CHANNEL)).toBe(true);
-    expect(isAllowedInvokeChannel('mira:lab-undefined')).toBe(false);
-  });
-
-  test('createMiraLabWindow loads mira-lab.html with shared preload and isolation defaults', () => {
-    const calls = [];
-    const browserWindowCtor = jest.fn(function FakeBrowserWindow(options) {
-      calls.push(options);
-      this.options = options;
-      this.loadFile = jest.fn();
-      this.loadURL = jest.fn();
-      return this;
-    });
-
-    const { window: win, htmlPath, preloadPath, options } = createMiraLabWindow({
-      BrowserWindow: browserWindowCtor,
-    });
-
-    expect(browserWindowCtor).toHaveBeenCalledTimes(1);
-    expect(htmlPath).toMatch(/mira-lab\.html$/);
-    expect(preloadPath).toMatch(/preload\.js$/);
-    expect(options.webPreferences).toEqual(expect.objectContaining({
-      ...FORCED_WEB_PREFERENCES,
-      preload: preloadPath,
-    }));
-    expect(options.title).toBe('Mira Lab');
-    expect(win.loadFile).toHaveBeenCalledWith(htmlPath);
-  });
-
-  test('createMiraLabWindow refuses to weaken contextIsolation/nodeIntegration via overrides', () => {
-    const browserWindowCtor = jest.fn(function FakeBrowserWindow(options) {
-      this.options = options;
-      this.loadFile = jest.fn();
-      return this;
-    });
-
-    const { options } = createMiraLabWindow({
-      BrowserWindow: browserWindowCtor,
-      windowOptions: {
-        webPreferences: { contextIsolation: false, nodeIntegration: true },
-      },
-    });
-
-    expect(options.webPreferences.contextIsolation).toBe(true);
-    expect(options.webPreferences.nodeIntegration).toBe(false);
-  });
-
-  test('mira:lab-open IPC delegates to injected createMiraLabWindow factory', async () => {
-    projectRoot = tempProject();
-    const registered = new Map();
-    const ipcMain = {
-      handle: jest.fn((channel, handler) => registered.set(channel, handler)),
-      removeHandler: jest.fn(),
-      on: jest.fn(),
-      removeListener: jest.fn(),
-    };
-    const factory = jest.fn(() => ({ htmlPath: '/abs/mira-lab.html', preloadPath: '/abs/preload.js' }));
-
-    registerMiraLabHandlers({ ipcMain }, { projectRoot, createMiraLabWindow: factory });
-    expect(ipcMain.handle).toHaveBeenCalledWith(MIRA_LAB_OPEN_CHANNEL, expect.any(Function));
-
-    const handler = registered.get(MIRA_LAB_OPEN_CHANNEL);
-    const result = await handler({}, { reason: 'open' });
-    expect(factory).toHaveBeenCalledTimes(1);
-    expect(result).toEqual({
-      ok: true,
-      channel: MIRA_LAB_OPEN_CHANNEL,
-      htmlPath: '/abs/mira-lab.html',
-      preloadPath: '/abs/preload.js',
-    });
-  });
-
-  test('mira:lab-open IPC reports a structured failure when the factory is missing', () => {
-    const result = openMiraLabWindowResponse({}, {});
-    expect(result).toEqual({
-      ok: false,
-      reason: 'mira_lab_window_factory_missing',
-      channel: MIRA_LAB_OPEN_CHANNEL,
-    });
-  });
-
-  test('live app wires createMiraLabWindow into setupIPCHandlers deps in squidrun-app.js', () => {
-    const appSource = fs.readFileSync(
-      path.join(__dirname, '..', 'modules', 'main', 'squidrun-app.js'),
-      'utf8',
-    );
-    expect(appSource).toMatch(/require\(['"]\.\/mira-lab-window['"]\)/);
-    expect(appSource).toMatch(/createMiraLabWindow:\s*\(opts[^)]*\)\s*=>\s*miraLabWindowModule\.createMiraLabWindow\(\{[^}]*BrowserWindow/);
-    expect(appSource).toMatch(/ipcHandlers\.setupIPCHandlers\(\{[\s\S]*createMiraLabWindow:[\s\S]*\}\);/);
-  });
-
-  test('sidecar prototype skeleton is conversation-first with hidden diagnostics, not dashboard chrome', () => {
-    const html = fs.readFileSync(path.join(__dirname, '..', 'mira-lab.html'), 'utf8');
-    const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'mira-lab.css'), 'utf8');
-    const combined = `${html}\n${css}`;
-
-    expect(html).toContain('miraLabField');
-    expect(html).toContain('miraLabTranscript');
-    expect(html).toContain('miraLabComposer');
-    expect(html).toMatch(/id="miraLabDiagnostics" hidden/);
-    expect(css).toContain('.mira-lab-field');
-    expect(html).toContain('data-rendering="gpu-field"');
-    expect(combined).not.toMatch(/\b(shadcn|dashboard|card-grid|status-card|btn-primary|panel-tab)\b/i);
+    expect(isAllowedInvokeChannel('mira:lab-open')).toBe(false);
+    expect(isAllowedInvokeChannel('mira:lab-turn')).toBe(false);
+    expect(isAllowedInvokeChannel('mira:lab-export')).toBe(false);
   });
 });

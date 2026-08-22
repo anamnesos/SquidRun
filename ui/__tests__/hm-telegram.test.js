@@ -385,14 +385,16 @@ describe('hm-telegram', () => {
     expect(postedBody.text).not.toMatch(/ARCH|AGENT MSG|CURRENT PROJECT|hm-send/i);
   });
 
-  test('sendTelegram fails closed when diagnostic fallback text is fully sanitized', async () => {
-    const result = await hmTelegram.sendTelegram(
-      'Mira held that reply. Open Mira Lab for diagnostics.',
-      {
-        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
-        TELEGRAM_CHAT_ID: '123456',
-      }
-    );
+  test.each([
+    'Mira held that reply. Open Mira Lab for diagnostics.',
+    'Mira is unavailable. Open Mira Lab for diagnostics.',
+    'Mira held that reply. Check Team Room for status.',
+    'Mira is unavailable. Check Team Room for status.',
+  ])('sendTelegram fails closed when internal fallback text is fully sanitized: %s', async (message) => {
+    const result = await hmTelegram.sendTelegram(message, {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '123456',
+    });
 
     expect(result).toEqual(expect.objectContaining({
       ok: false,

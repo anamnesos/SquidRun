@@ -77,17 +77,14 @@ function classifyMiraOwnedPath(filePath = '', diffProvider = () => '') {
 
   if (normalized.startsWith('mira/')) return 'New Mira product root';
   if (normalized.startsWith('ui/modules/mira-core/')) return 'SquidRun Mira core';
-  if (normalized === 'ui/modules/mira-lab-surface.js') return 'Mira Lab reply surface';
+  if (normalized === 'ui/modules/mira-conversation-engine.js') return 'Mira conversation engine';
   if (normalized === 'ui/modules/mira-live-entrypoint.js') return 'Mira Live entrypoint';
   if (/^ui\/modules\/mira-[^/]+\.js$/i.test(normalized)) return 'Mira module surface';
-  if (normalized === 'ui/modules/ipc/mira-lab-handlers.js') return 'Mira Lab IPC route';
+  if (normalized === 'ui/modules/ipc/mira-conversation-handlers.js') return 'Mira conversation IPC route';
   if (/^ui\/modules\/ipc\/mira-[^/]+\.js$/i.test(normalized)) return 'Mira IPC surface';
   if (normalized === 'ui/modules/ipc/voice-broker-handlers.js') return 'Mira voice IPC route';
-  if (normalized === 'ui/modules/main/mira-lab-window.js') return 'Mira Lab window route';
   if (normalized === 'ui/modules/tabs/mira-local-text.js') return 'Removed Mira local text tab shell';
   if (normalized === 'ui/styles/tabs/mira-local-text.css') return 'Removed Mira local text style shell';
-  if (/^ui\/mira-lab[^/]*$/i.test(normalized)) return 'Mira Lab renderer surface';
-  if (normalized === 'ui/styles/mira-lab.css') return 'Mira Lab style surface';
   if (/^ui\/scripts\/hm-mira[^/]*\.js$/i.test(normalized)) return 'Mira script surface';
   if (/^ui\/scripts\/hm-(?:voice|phone-voice)[^/]*\.js$/i.test(normalized)) return 'Mira voice script surface';
   if (normalized === 'ui/modules/voice-broker.js') return 'Mira voice transport';

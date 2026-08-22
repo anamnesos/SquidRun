@@ -25,7 +25,7 @@ const {
   selectMiraActiveInitiative,
   selectMiraDirectRoute,
   writeMiraEmailCuriositySnapshot,
-} = require('../modules/mira-lab-surface');
+} = require('../modules/mira-conversation-engine');
 
 const DEFAULT_FIXTURE = Object.freeze({
   voice_text: "I want a small reality mirror, not another speech about becoming better.",

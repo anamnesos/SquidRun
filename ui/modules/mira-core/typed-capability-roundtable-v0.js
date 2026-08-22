@@ -57,10 +57,10 @@ const CODE_INSPECTION_TARGETS = Object.freeze([
     probes: ['buildMiraLocalTextUiSurface', 'callMiraTextModelAttachment'],
   },
   {
-    id: 'lab_surface',
-    relativePath: path.join('ui', 'modules', 'mira-lab-surface.js'),
-    absolutePath: path.resolve(__dirname, '..', 'mira-lab-surface.js'),
-    probes: ['buildMiraLabPromptReply', 'sendAgentMessage'],
+    id: 'conversation_engine',
+    relativePath: path.join('ui', 'modules', 'mira-conversation-engine.js'),
+    absolutePath: path.resolve(__dirname, '..', 'mira-conversation-engine.js'),
+    probes: ['buildMiraConversationReply', 'sendAgentMessage'],
   },
   {
     id: 'test_execution_adapter',

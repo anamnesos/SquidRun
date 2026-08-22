@@ -293,7 +293,7 @@ maybeDescribe('evidence-ledger-store', () => {
       brokeredAtMs: 1300,
       rawBody: '[DOORBELL] permission_prompt pane=2',
       status: 'recorded',
-      metadata: { source: 'shell-v2-doorbell', doorbellEvent: 'permission_prompt' },
+      metadata: { source: 'pane-attention', doorbellEvent: 'permission_prompt' },
     });
 
     expect(result.ok).toBe(true);
@@ -307,7 +307,7 @@ maybeDescribe('evidence-ledger-store', () => {
       channel: 'system',
       rawBody: '[DOORBELL] permission_prompt pane=2',
       metadata: expect.objectContaining({
-        source: 'shell-v2-doorbell',
+        source: 'pane-attention',
         doorbellEvent: 'permission_prompt',
       }),
     }));

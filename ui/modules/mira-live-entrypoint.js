@@ -1,6 +1,6 @@
 'use strict';
 
-const MIRA_LIVE_PROMPT_REPLY_CHANNEL = 'mira:lab-prompt-reply';
+const MIRA_LIVE_PROMPT_REPLY_CHANNEL = 'mira:conversation-reply';
 const DEFAULT_MIRA_LIVE_SESSION_ID = 'app-session-mira-live';
 const USER_SPEAKER_ROLE = 'james';
 
@@ -48,7 +48,7 @@ function classifyMiraLiveResult(result = {}) {
       ok: false,
       state: 'unavailable',
       replyText: null,
-      message: 'Mira is unavailable. Open Mira Lab for diagnostics.',
+      message: 'Mira is unavailable. Check Team Room for status.',
     };
   }
 
@@ -67,7 +67,7 @@ function classifyMiraLiveResult(result = {}) {
       ok: false,
       state: 'held',
       replyText: null,
-      message: 'Mira held that reply. Open Mira Lab for diagnostics.',
+      message: 'Mira held that reply. Check Team Room for status.',
     };
   }
 
@@ -75,7 +75,7 @@ function classifyMiraLiveResult(result = {}) {
     ok: false,
     state: 'unavailable',
     replyText: null,
-    message: 'Mira is unavailable. Open Mira Lab for diagnostics.',
+    message: 'Mira is unavailable. Check Team Room for status.',
   };
 }
 
@@ -86,7 +86,7 @@ async function sendMiraLivePrompt(input = {}, deps = {}) {
       ok: false,
       state: 'unavailable',
       reason: 'invoke_unavailable',
-      message: 'Mira is unavailable. Open Mira Lab for diagnostics.',
+      message: 'Mira is unavailable. Check Team Room for status.',
     };
   }
 
@@ -113,7 +113,7 @@ async function sendMiraLivePrompt(input = {}, deps = {}) {
       state: 'unavailable',
       reason: 'invoke_failed',
       error: err?.message || String(err),
-      message: 'Mira is unavailable. Open Mira Lab for diagnostics.',
+      message: 'Mira is unavailable. Check Team Room for status.',
       payload,
     };
   }

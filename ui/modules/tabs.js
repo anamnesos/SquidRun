@@ -116,14 +116,6 @@ function setupRightPanel(handleResizeFn, busInstance, options = {}) {
   destroyAllTabs();
 
   storedResizeFn = handleResizeFn;
-  const shellV2Enabled = options?.shellV2Enabled === true;
-
-  if (shellV2Enabled) {
-    voiceBroker.setupVoiceBrokerTab();
-    apiKeys.setupApiKeysTab();
-    return;
-  }
-
   const panelBtn = document.getElementById('panelBtn');
   if (panelBtn) {
     const handler = () => togglePanel(handleResizeFn);

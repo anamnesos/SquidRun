@@ -8,16 +8,10 @@ const { PNG } = require('pngjs');
 const SURFACES = Object.freeze([
   Object.freeze({ id: 'main', html: 'index.html', openKey: null }),
   Object.freeze({ id: 'pane-host', html: 'pane-host.html', openKey: null }),
-  Object.freeze({ id: 'mira-lab', html: 'mira-lab.html', openKey: 'mira-lab' }),
   Object.freeze({
     id: 'live-task-audit',
     html: 'live-task-audit-sidecar.html',
     openKey: 'live-task-audit-sidecar',
-  }),
-  Object.freeze({
-    id: 'human-timeline',
-    html: 'human-timeline-sidecar.html',
-    openKey: 'human-timeline-sidecar',
   }),
   Object.freeze({ id: 'spine-overlay', html: 'spine-overlay.html', openKey: 'spine-overlay' }),
 ]);
