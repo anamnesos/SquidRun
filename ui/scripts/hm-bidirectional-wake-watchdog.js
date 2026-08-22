@@ -941,6 +941,10 @@ function parseCliArgs(argv = process.argv.slice(2)) {
   const options = new Map();
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
+    if (token === '-h') {
+      options.set('help', true);
+      continue;
+    }
     if (!token.startsWith('--')) {
       positional.push(token);
       continue;
@@ -952,6 +956,26 @@ function parseCliArgs(argv = process.argv.slice(2)) {
     options.set(key, value);
   }
   return { positional, options };
+}
+
+function getCliUsage() {
+  return [
+    'Usage: node hm-bidirectional-wake-watchdog.js <command> [options]',
+    '',
+    'Commands:',
+    '  run       Run the watchdog loop in the foreground (default)',
+    '  once      Run one watchdog cycle and exit',
+    '  status    Print runner ownership and heartbeat status',
+    '  start     Start the detached watchdog runner',
+    '  stop      Stop the verified watchdog runner',
+    '  restart   Stop then start the verified watchdog runner',
+    '',
+    'Options:',
+    '  --state <path>        Override the state file path',
+    '  --interval-ms <ms>    Override the cycle interval (minimum 30000)',
+    '  --no-agent-pane-auto-recovery',
+    '  -h, --help            Show this help without starting a runner',
+  ].join('\n');
 }
 
 function getOption(options, key, fallback = null) {
@@ -1429,6 +1453,12 @@ async function runCli(argv = parseCliArgs(), controls = {}) {
     ? false
     : undefined;
 
+  if (getOption(argv.options, 'help', false) === true) {
+    const usage = getCliUsage();
+    console.log(usage);
+    return { ok: true, help: true, usage };
+  }
+
   if (command === 'once') {
     const result = await runHeartbeatCycle({ statePath, intervalMs, agentPaneAutoRecovery });
     console.log(JSON.stringify(result, null, 2));
@@ -1492,6 +1522,8 @@ module.exports = {
   isActiveWindow,
   isExactRunnerProcessRow,
   hasPendingTeamWork,
+  getCliUsage,
+  parseCliArgs,
   readRunnerStatus,
   loadState,
   persistState,

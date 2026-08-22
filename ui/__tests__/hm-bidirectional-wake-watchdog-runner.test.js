@@ -191,6 +191,30 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
     expect(consoleSpy).toHaveBeenCalledTimes(1);
   });
 
+  test.each(['--help', '-h'])('%s prints help without starting, stopping, or writing runner metadata', async (flag) => {
+    const startControl = jest.fn();
+    const stopControl = jest.fn();
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const argv = moduleUnderTest.parseCliArgs([flag]);
+
+    const result = await moduleUnderTest.runCli(argv, {
+      startRunner: startControl,
+      stopRunner: stopControl,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      help: true,
+      usage: expect.stringContaining('Show this help without starting a runner'),
+    }));
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    expect(startControl).not.toHaveBeenCalled();
+    expect(stopControl).not.toHaveBeenCalled();
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog.pid'))).toBe(false);
+    expect(fs.existsSync(path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog-status.json'))).toBe(false);
+  });
+
   test('startRunner recovers mismatched metadata only when every referenced pid is proven dead', () => {
     const pidPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog.pid');
     const statusPath = path.join(tempRoot, '.squidrun', 'runtime', 'bidirectional-wake-watchdog-status.json');
