@@ -1856,11 +1856,12 @@ function getPaneInjectionCapabilities(paneId) {
     Object.assign(base, overrides);
   }
 
-  // In hidden pane host mode, trusted-enter runtimes (Claude) must submit
-  // through raw PTY Enter to avoid browser key-event delivery issues.
-  if (isHiddenPaneHostPane(paneId) && base.enterMethod === 'trusted') {
-    const hiddenHostNeedsSubmitProof = String(base.displayName || '').toLowerCase() === 'codex'
-      || String(base.modeLabel || '').toLowerCase().includes('codex');
+  // In hidden pane host mode, Claude trusted Enter and Codex both submit
+  // through raw PTY Enter. Codex keeps submit verification because a rendered
+  // paste placeholder is not proof that the prompt was accepted.
+  const hiddenHostNeedsSubmitProof = String(base.displayName || '').toLowerCase() === 'codex'
+    || String(base.modeLabel || '').toLowerCase().includes('codex');
+  if (isHiddenPaneHostPane(paneId) && (base.enterMethod === 'trusted' || hiddenHostNeedsSubmitProof)) {
     Object.assign(base, {
       submitMethod: 'hidden-pane-host-pty-enter',
       bypassGlobalLock: true,

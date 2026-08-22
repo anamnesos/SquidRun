@@ -887,6 +887,435 @@ describe('Terminal Injection', () => {
       // or at least the queue started processing
       expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(false);
     });
+
+    test.each([
+      ['collapsed pasted-content placeholder', 'codex> [Pasted Content 1676 chars]'],
+      ['short visible composer text', 'codex> FIRST-CODEX-MESSAGE'],
+    ])('holds the next Codex payload until raw Enter clears %s', async (_caseName, firstPendingLine) => {
+      let promptText = 'codex> ';
+      let enterCount = 0;
+      let releaseRecoveryEnter;
+      const recoveryEnterGate = new Promise((resolve) => {
+        releaseRecoveryEnter = resolve;
+      });
+      const payloadWrites = [];
+      const firstComplete = jest.fn();
+      const secondComplete = jest.fn();
+
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
+
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId !== '1') return Promise.resolve(undefined);
+        if (data === '\u001b[201~') return Promise.resolve(undefined);
+        if (data === '\r') {
+          enterCount += 1;
+          if (enterCount === 2) {
+            return recoveryEnterGate.then(() => {
+              promptText = 'Working on first message';
+              lastOutputTime['1'] = Date.now() + 10;
+            });
+          }
+          if (enterCount === 3) {
+            promptText = 'Working on second message';
+            lastOutputTime['1'] = Date.now() + 20;
+          }
+          return Promise.resolve(undefined);
+        }
+        if (typeof data === 'string' && data.includes('FIRST-CODEX-MESSAGE')) {
+          payloadWrites.push('first');
+          promptText = firstPendingLine;
+        } else if (typeof data === 'string' && data.includes('SECOND-CODEX-MESSAGE')) {
+          payloadWrites.push('second');
+          promptText = 'codex> [Pasted Content 1170 chars]';
+        }
+        return Promise.resolve(undefined);
+      });
+
+      const codexController = createInjectionController({
+        ...mockOptions,
+        getPaneCapabilities: jest.fn().mockReturnValue({
+          displayName: 'Codex',
+          modeLabel: 'codex-pty',
+          appliedMethod: 'codex-pty',
+          submitMethod: 'codex-pty-enter',
+          enterMethod: 'pty',
+          enterDelayMs: 0,
+          requiresFocusForEnter: false,
+          bypassGlobalLock: false,
+          applyCompactionGate: false,
+          clearLineBeforeWrite: true,
+          useChunkedWrite: false,
+          verifySubmitAccepted: true,
+        }),
+        isCodexPane: jest.fn().mockReturnValue(true),
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          QUEUE_RETRY_MS: 10,
+          SUBMIT_ACCEPT_VERIFY_WINDOW_MS: 80,
+          SUBMIT_ACCEPT_POLL_MS: 10,
+          CODEX_PENDING_RECOVERY_MAX_ATTEMPTS: 2,
+          CODEX_PENDING_RECOVERY_VERIFY_MS: 80,
+          CODEX_PENDING_RECOVERY_POLL_MS: 10,
+          SUBMIT_ACCEPT_MAX_ATTEMPTS: 1,
+          INJECTION_LOCK_TIMEOUT_MS: 3000,
+        },
+      });
+
+      messageQueue['1'] = [
+        { message: 'FIRST-CODEX-MESSAGE\r', timestamp: Date.now(), onComplete: firstComplete },
+        { message: 'SECOND-CODEX-MESSAGE\r', timestamp: Date.now(), onComplete: secondComplete },
+      ];
+
+      codexController.processIdleQueue('1');
+      await jest.advanceTimersByTimeAsync(300);
+
+      expect(enterCount).toBe(2);
+      expect(payloadWrites).toEqual(['first']);
+      expect(messageQueue['1']).toHaveLength(2);
+      expect(firstComplete).not.toHaveBeenCalled();
+      expect(secondComplete).not.toHaveBeenCalled();
+
+      releaseRecoveryEnter();
+      await jest.advanceTimersByTimeAsync(1000);
+
+      expect(payloadWrites).toEqual(['first', 'second']);
+      expect(enterCount).toBe(3);
+      expect(messageQueue['1']).toHaveLength(0);
+      expect(firstComplete).toHaveBeenCalledTimes(1);
+      expect(firstComplete).toHaveBeenCalledWith({
+        success: true,
+        verified: true,
+        signal: 'codex_pending_composer_recovered',
+      });
+      expect(secondComplete).toHaveBeenCalledTimes(1);
+      expect(secondComplete).toHaveBeenCalledWith(expect.objectContaining({
+        success: true,
+        verified: true,
+      }));
+      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
+    });
+
+    test('late completion from cleared Codex A cannot release or duplicate active Codex B', async () => {
+      let releasePayloadA;
+      let releasePayloadB;
+      const payloadGateA = new Promise((resolve) => { releasePayloadA = resolve; });
+      const payloadGateB = new Promise((resolve) => { releasePayloadB = resolve; });
+      const completeA = jest.fn();
+      const completeB = jest.fn();
+      let injectionLocked = false;
+      let payloadBWrites = 0;
+
+      terminals.set('1', { _squidrunBypass: false });
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId === '1' && typeof data === 'string' && data.includes('CODEX-A')) {
+          return payloadGateA;
+        }
+        if (paneId === '1' && typeof data === 'string' && data.includes('CODEX-B')) {
+          payloadBWrites += 1;
+          return payloadGateB;
+        }
+        return Promise.resolve(undefined);
+      });
+
+      const codexController = createInjectionController({
+        ...mockOptions,
+        getPaneCapabilities: jest.fn().mockReturnValue({
+          displayName: 'Codex',
+          modeLabel: 'codex-pty',
+          appliedMethod: 'codex-pty',
+          submitMethod: 'codex-pty-enter',
+          enterMethod: 'pty',
+          enterDelayMs: 0,
+          requiresFocusForEnter: false,
+          bypassGlobalLock: false,
+          applyCompactionGate: false,
+          clearLineBeforeWrite: true,
+          useChunkedWrite: false,
+          verifySubmitAccepted: false,
+        }),
+        isCodexPane: jest.fn().mockReturnValue(true),
+        getInjectionInFlight: jest.fn(() => injectionLocked),
+        setInjectionInFlight: jest.fn((value) => { injectionLocked = value; }),
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          QUEUE_RETRY_MS: 10,
+          INJECTION_LOCK_TIMEOUT_MS: 3000,
+        },
+      });
+
+      messageQueue['1'] = [{
+        message: 'CODEX-A\r',
+        timestamp: Date.now(),
+        onComplete: completeA,
+      }];
+
+      codexController.processIdleQueue('1');
+      await Promise.resolve();
+
+      expect(codexController.clearPaneQueue('1', 'test_clear')).toBe(1);
+      expect(completeA).toHaveBeenCalledTimes(1);
+      expect(completeA).toHaveBeenCalledWith({
+        success: false,
+        verified: false,
+        reason: 'test_clear',
+      });
+      expect(injectionLocked).toBe(false);
+
+      messageQueue['1'] = [{ message: 'CODEX-B\r', timestamp: Date.now(), onComplete: completeB }];
+      codexController.processIdleQueue('1');
+      await Promise.resolve();
+
+      expect(injectionLocked).toBe(true);
+      expect(payloadBWrites).toBe(1);
+
+      releasePayloadA();
+      await jest.advanceTimersByTimeAsync(100);
+
+      expect(completeA).toHaveBeenCalledTimes(1);
+      expect(completeB).not.toHaveBeenCalled();
+      expect(injectionLocked).toBe(true);
+      expect(payloadBWrites).toBe(1);
+      expect(mockLog.info).toHaveBeenCalledWith(
+        'processQueue 1',
+        'Ignoring stale Codex completion after queue clear or replacement'
+      );
+
+      releasePayloadB();
+      await jest.advanceTimersByTimeAsync(500);
+
+      expect(completeB).toHaveBeenCalledTimes(1);
+      expect(completeB).toHaveBeenCalledWith({ success: true });
+      expect(injectionLocked).toBe(false);
+      expect(messageQueue['1']).toHaveLength(0);
+    });
+
+    test('cleared Codex A cannot send Enter after its delayed paste-end resumes over Codex B', async () => {
+      let releasePasteEndA;
+      let releasePayloadB;
+      const pasteEndGateA = new Promise((resolve) => { releasePasteEndA = resolve; });
+      const payloadGateB = new Promise((resolve) => { releasePayloadB = resolve; });
+      const completeA = jest.fn();
+      const completeB = jest.fn();
+      let pasteEndCount = 0;
+      let rawEnterCount = 0;
+      let payloadBWrites = 0;
+      let injectionLocked = false;
+
+      terminals.set('1', { _squidrunBypass: false });
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId !== '1') return Promise.resolve(undefined);
+        if (data === '\u001b[201~') {
+          pasteEndCount += 1;
+          if (pasteEndCount === 1) return pasteEndGateA;
+          return Promise.resolve(undefined);
+        }
+        if (data === '\r') {
+          rawEnterCount += 1;
+          return Promise.resolve(undefined);
+        }
+        if (typeof data === 'string' && data.includes('PASTE-END-CODEX-B')) {
+          payloadBWrites += 1;
+          return payloadGateB;
+        }
+        return Promise.resolve(undefined);
+      });
+
+      const codexController = createInjectionController({
+        ...mockOptions,
+        getPaneCapabilities: jest.fn().mockReturnValue({
+          displayName: 'Codex',
+          modeLabel: 'codex-pty',
+          appliedMethod: 'codex-pty',
+          submitMethod: 'codex-pty-enter',
+          enterMethod: 'pty',
+          enterDelayMs: 0,
+          requiresFocusForEnter: false,
+          bypassGlobalLock: false,
+          applyCompactionGate: false,
+          clearLineBeforeWrite: true,
+          useChunkedWrite: false,
+          verifySubmitAccepted: false,
+        }),
+        isCodexPane: jest.fn().mockReturnValue(true),
+        getInjectionInFlight: jest.fn(() => injectionLocked),
+        setInjectionInFlight: jest.fn((value) => { injectionLocked = value; }),
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          QUEUE_RETRY_MS: 10,
+          INJECTION_LOCK_TIMEOUT_MS: 3000,
+        },
+      });
+
+      messageQueue['1'] = [{
+        message: 'PASTE-END-CODEX-A\r',
+        timestamp: Date.now(),
+        onComplete: completeA,
+      }];
+      codexController.processIdleQueue('1');
+      await jest.advanceTimersByTimeAsync(50);
+      expect(pasteEndCount).toBe(1);
+
+      expect(codexController.clearPaneQueue('1', 'test_clear_paste_end')).toBe(1);
+      messageQueue['1'] = [{
+        message: 'PASTE-END-CODEX-B\r',
+        timestamp: Date.now(),
+        onComplete: completeB,
+      }];
+      codexController.processIdleQueue('1');
+      await Promise.resolve();
+      expect(payloadBWrites).toBe(1);
+      expect(injectionLocked).toBe(true);
+
+      releasePasteEndA();
+      await jest.advanceTimersByTimeAsync(100);
+
+      expect(rawEnterCount).toBe(0);
+      expect(completeA).toHaveBeenCalledTimes(1);
+      expect(completeB).not.toHaveBeenCalled();
+      expect(payloadBWrites).toBe(1);
+      expect(injectionLocked).toBe(true);
+
+      releasePayloadB();
+      await jest.advanceTimersByTimeAsync(500);
+
+      expect(rawEnterCount).toBe(1);
+      expect(completeB).toHaveBeenCalledTimes(1);
+      expect(messageQueue['1']).toHaveLength(0);
+      expect(injectionLocked).toBe(false);
+    });
+
+    test('late recovery from cleared Codex A cannot unlock, reschedule, or rewrite active Codex B', async () => {
+      let promptText = 'codex> ';
+      let enterCount = 0;
+      let pasteEndCount = 0;
+      let payloadBWrites = 0;
+      let releaseRecoveryPasteEndA;
+      let releasePayloadB;
+      const recoveryPasteEndGateA = new Promise((resolve) => { releaseRecoveryPasteEndA = resolve; });
+      const payloadGateB = new Promise((resolve) => { releasePayloadB = resolve; });
+      const completeA = jest.fn();
+      const completeB = jest.fn();
+
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({ translateToString: () => promptText })),
+          },
+        },
+      });
+
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId !== '1') return Promise.resolve(undefined);
+        if (data === '\u001b[201~') {
+          pasteEndCount += 1;
+          if (pasteEndCount === 2) return recoveryPasteEndGateA;
+          return Promise.resolve(undefined);
+        }
+        if (data === '\r') {
+          enterCount += 1;
+          if (enterCount === 2) {
+            promptText = 'Working on Codex B';
+            lastOutputTime['1'] = Date.now() + 20;
+          }
+          return Promise.resolve(undefined);
+        }
+        if (typeof data === 'string' && data.includes('RECOVERY-CODEX-A')) {
+          promptText = 'codex> RECOVERY-CODEX-A';
+        } else if (typeof data === 'string' && data.includes('RECOVERY-CODEX-B')) {
+          payloadBWrites += 1;
+          promptText = 'codex> RECOVERY-CODEX-B';
+          return payloadGateB;
+        }
+        return Promise.resolve(undefined);
+      });
+
+      const codexController = createInjectionController({
+        ...mockOptions,
+        getPaneCapabilities: jest.fn().mockReturnValue({
+          displayName: 'Codex',
+          modeLabel: 'codex-pty',
+          appliedMethod: 'codex-pty',
+          submitMethod: 'codex-pty-enter',
+          enterMethod: 'pty',
+          enterDelayMs: 0,
+          requiresFocusForEnter: false,
+          bypassGlobalLock: true,
+          applyCompactionGate: false,
+          clearLineBeforeWrite: true,
+          useChunkedWrite: false,
+          verifySubmitAccepted: true,
+        }),
+        isCodexPane: jest.fn().mockReturnValue(true),
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          QUEUE_RETRY_MS: 10,
+          SUBMIT_ACCEPT_VERIFY_WINDOW_MS: 80,
+          SUBMIT_ACCEPT_POLL_MS: 10,
+          SUBMIT_ACCEPT_MAX_ATTEMPTS: 1,
+          CODEX_PENDING_RECOVERY_MAX_ATTEMPTS: 2,
+          CODEX_PENDING_RECOVERY_VERIFY_MS: 80,
+          CODEX_PENDING_RECOVERY_POLL_MS: 10,
+          INJECTION_LOCK_TIMEOUT_MS: 3000,
+        },
+      });
+
+      messageQueue['1'] = [{
+        message: 'RECOVERY-CODEX-A\r',
+        timestamp: Date.now(),
+        onComplete: completeA,
+      }];
+      codexController.processIdleQueue('1');
+      await jest.advanceTimersByTimeAsync(300);
+
+      expect(enterCount).toBe(1);
+      expect(pasteEndCount).toBe(2);
+      expect(codexController.clearPaneQueue('1', 'test_clear_recovery')).toBe(1);
+      expect(completeA).toHaveBeenCalledTimes(1);
+
+      messageQueue['1'] = [{
+        message: 'RECOVERY-CODEX-B\r',
+        timestamp: Date.now(),
+        onComplete: completeB,
+      }];
+      codexController.processIdleQueue('1');
+      await Promise.resolve();
+      expect(payloadBWrites).toBe(1);
+
+      releaseRecoveryPasteEndA();
+      await jest.advanceTimersByTimeAsync(200);
+      codexController.processIdleQueue('1');
+      await jest.advanceTimersByTimeAsync(200);
+
+      expect(enterCount).toBe(1);
+      expect(payloadBWrites).toBe(1);
+      expect(completeA).toHaveBeenCalledTimes(1);
+      expect(completeB).not.toHaveBeenCalled();
+      expect(mockLog.info).toHaveBeenCalledWith(
+        'processQueue 1',
+        'Ignoring stale Codex recovery completion'
+      );
+
+      releasePayloadB();
+      await jest.advanceTimersByTimeAsync(500);
+
+      expect(payloadBWrites).toBe(1);
+      expect(completeB).toHaveBeenCalledTimes(1);
+      expect(messageQueue['1']).toHaveLength(0);
+    });
   });
 
   describe('focus-steal guarantee (S463)', () => {

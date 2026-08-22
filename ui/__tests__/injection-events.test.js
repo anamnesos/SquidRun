@@ -223,7 +223,7 @@ describe('Injection Events', () => {
 
       const modeSelected = mockBus.emit.mock.calls.find(c => c[0] === 'inject.mode.selected');
       expect(modeSelected).toBeDefined();
-      expect(modeSelected[1].payload.mode).toBe(IS_DARWIN ? 'codex-pty' : 'codex-trusted');
+      expect(modeSelected[1].payload.mode).toBe('codex-pty');
     });
 
     test('emits inject.mode.selected for Gemini panes', () => {
@@ -278,13 +278,9 @@ describe('Injection Events', () => {
 
       const applied = mockBus.emit.mock.calls.find(c => c[0] === 'inject.applied');
       expect(applied).toBeDefined();
-      expect(applied[1].payload.method).toBe(IS_DARWIN ? 'codex-pty' : 'codex-trusted');
-
-      if (IS_DARWIN) {
-        expect(mockPty.write).toHaveBeenCalledWith('codex', '\r', expect.any(Object));
-      } else {
-        expect(mockPty.write).toHaveBeenCalledWith('codex', '\u001b[201~', expect.any(Object));
-      }
+      expect(applied[1].payload.method).toBe('codex-pty');
+      expect(mockPty.write).toHaveBeenCalledWith('codex', '\u001b[201~', expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith('codex', '\r', expect.any(Object));
       expect(mockPty.codexExec).not.toHaveBeenCalled();
     });
 

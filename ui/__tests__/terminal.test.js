@@ -527,11 +527,10 @@ describe('terminal.js module', () => {
       });
 
       const caps = terminal.getPaneInjectionCapabilities('2');
-      const isDarwin = process.platform === 'darwin';
       expect(caps.mode).toBe('pty');
-      expect(caps.modeLabel).toBe(isDarwin ? 'codex-pty' : 'codex-trusted');
+      expect(caps.modeLabel).toBe('codex-pty');
       expect(caps.verifySubmitAccepted).toBe(true);
-      expect(caps.enterMethod).toBe(isDarwin ? 'pty' : 'trusted');
+      expect(caps.enterMethod).toBe('pty');
     });
 
     test('keeps Codex submit verification on when hidden pane host uses PTY Enter', () => {

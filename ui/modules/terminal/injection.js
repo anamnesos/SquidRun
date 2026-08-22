@@ -77,6 +77,9 @@ function createInjectionController(options = {}) {
     SAFE_DEFAULT_ENTER_DELAY_MS = 50,
     INJECTION_QUEUE_MAX_ITEMS = 200,
     INJECTION_QUEUE_MAX_BYTES = 512 * 1024,
+    CODEX_PENDING_RECOVERY_MAX_ATTEMPTS = 2,
+    CODEX_PENDING_RECOVERY_VERIFY_MS = 1200,
+    CODEX_PENDING_RECOVERY_POLL_MS = 50,
   } = constants;
 
   // Track when compaction deferral started per pane (false positive safety valve)
@@ -88,6 +91,37 @@ function createInjectionController(options = {}) {
   // injection lock so different panes can proceed in parallel, but overlapping
   // writes into one PTY can interleave and truncate user input.
   const paneInjectionInFlight = new Set();
+  // A Codex composer may retain a collapsed `[Pasted Content N chars]` item
+  // after an Enter that looked successful. Keep the payload's queue item in
+  // place while bounded Enter-only recovery clears that composer.
+  const codexPendingRecoveryAttempts = new Map();
+  const codexActiveQueueTokens = new Map();
+  const codexAwaitingSubmitPanes = new Set();
+  const codexPaneGenerations = new Map();
+
+  function nextCodexPaneGeneration(paneId) {
+    const id = String(paneId);
+    const nextGeneration = (codexPaneGenerations.get(id) || 0) + 1;
+    codexPaneGenerations.set(id, nextGeneration);
+    return nextGeneration;
+  }
+
+  function getCodexRecoveryAttempts(paneId, generation) {
+    const state = codexPendingRecoveryAttempts.get(String(paneId));
+    return state?.generation === generation ? state.attempts : 0;
+  }
+
+  function setCodexRecoveryAttempts(paneId, generation, attempts) {
+    codexPendingRecoveryAttempts.set(String(paneId), { generation, attempts });
+  }
+
+  function clearCodexRecoveryAttempts(paneId, generation) {
+    const id = String(paneId);
+    const state = codexPendingRecoveryAttempts.get(id);
+    if (state?.generation === generation) {
+      codexPendingRecoveryAttempts.delete(id);
+    }
+  }
 
   /**
    * Attempt to focus textarea with retries
@@ -296,12 +330,27 @@ function createInjectionController(options = {}) {
     return [...new Set(fragments)].slice(0, 6);
   }
 
+  function isCodexInjectionCapability(capabilities = {}) {
+    return String(capabilities.displayName || '').trim().toLowerCase() === 'codex'
+      || String(capabilities.modeLabel || '').trim().toLowerCase().includes('codex');
+  }
+
   function probePendingInputBuffer(paneId, pendingInputText = '') {
     const lineText = getCurrentPromptLineText(paneId);
     if (!lineText) {
       return { pending: false, lineText: '', available: false };
     }
     const normalizedLine = normalizePendingProbeText(lineText);
+    const pastedContentPlaceholder = /\[\s*pasted content\s+\d[\d,]*\s+chars?\s*\]/iu.exec(lineText);
+    if (pastedContentPlaceholder) {
+      return {
+        pending: true,
+        lineText,
+        fragment: pastedContentPlaceholder[0],
+        marker: 'codex_pasted_content_placeholder',
+        available: true,
+      };
+    }
     const hasPromptPrefix = (
       /(?:^|[\s>])(?:codex|claude|gemini|cursor)>\s+\S/i.test(lineText)
       || /(?:^|[\s>])PS\s+[^>\n]*>\s+\S/i.test(lineText)
@@ -320,6 +369,54 @@ function createInjectionController(options = {}) {
       fragment: fragment || null,
       available: true,
     };
+  }
+
+  function ptyWriteAccepted(result) {
+    return !(result && (result.success === false || result.ok === false));
+  }
+
+  async function recoverPendingCodexComposer(paneId, pendingInputText = '', generation = 0) {
+    const id = String(paneId);
+    const usedAttempts = getCodexRecoveryAttempts(id, generation);
+    const maxAttempts = Math.max(1, Number(CODEX_PENDING_RECOVERY_MAX_ATTEMPTS) || 2);
+    if (usedAttempts >= maxAttempts) {
+      return { cleared: false, exhausted: true, attempts: usedAttempts };
+    }
+
+    const attempt = usedAttempts + 1;
+    setCodexRecoveryAttempts(id, generation, attempt);
+    try {
+      const pasteEndResult = await window.squidrun.pty.write(id, '\u001b[201~');
+      if (!ptyWriteAccepted(pasteEndResult)) {
+        throw new Error(pasteEndResult?.reason || pasteEndResult?.error || 'codex_paste_end_failed');
+      }
+      if (codexPaneGenerations.get(id) !== generation) {
+        return { cleared: false, stale: true, exhausted: false, attempts: attempt };
+      }
+      const enterResult = await window.squidrun.pty.write(id, '\r');
+      if (!ptyWriteAccepted(enterResult)) {
+        throw new Error(enterResult?.reason || enterResult?.error || 'codex_raw_enter_failed');
+      }
+    } catch (err) {
+      log.error(`processQueue ${id}`, `Codex pending-composer recovery write failed: ${err?.message || err}`);
+      return { cleared: false, exhausted: attempt >= maxAttempts, attempts: attempt, reason: 'pty_write_failed' };
+    }
+
+    const verifyMs = Math.max(50, Number(CODEX_PENDING_RECOVERY_VERIFY_MS) || 1200);
+    const pollMs = Math.max(10, Number(CODEX_PENDING_RECOVERY_POLL_MS) || 50);
+    const deadline = Date.now() + verifyMs;
+    while (Date.now() < deadline) {
+      await sleep(pollMs);
+      const pendingProbe = probePendingInputBuffer(id, pendingInputText);
+      if (pendingProbe.available === true && pendingProbe.pending === false) {
+        clearCodexRecoveryAttempts(id, generation);
+        log.info(`processQueue ${id}`, `Codex pending composer cleared by raw PTY Enter (attempt ${attempt}/${maxAttempts})`);
+        return { cleared: true, exhausted: false, attempts: attempt };
+      }
+    }
+
+    log.warn(`processQueue ${id}`, `Codex composer still pending after raw PTY Enter (attempt ${attempt}/${maxAttempts})`);
+    return { cleared: false, exhausted: attempt >= maxAttempts, attempts: attempt };
   }
 
   function computeScaledEnterDelayMs(baseDelayMs, payloadBytes, capabilities = {}) {
@@ -616,31 +713,53 @@ function createInjectionController(options = {}) {
     return queue.reduce((total, item) => total + getQueueItemBytes(item), 0);
   }
 
-  function failQueueItem(item, reason = 'queue_cleared') {
+  function notifyQueueItemComplete(item, result) {
     if (!item || typeof item !== 'object' || typeof item.onComplete !== 'function') return;
     try {
-      item.onComplete({ success: false, verified: false, reason });
+      item.onComplete(result);
     } catch (err) {
-      log.warn('Terminal', `Failed to notify dropped queue item: ${err.message}`);
+      log.error('Terminal', 'queue onComplete failed', err);
     }
+  }
+
+  function failQueueItem(item, reason = 'queue_cleared') {
+    notifyQueueItemComplete(item, { success: false, verified: false, reason });
   }
 
   function clearPaneQueue(paneId, reason = 'queue_cleared') {
     const id = String(paneId);
     const queue = messageQueue[id];
+    const activeCodexToken = codexActiveQueueTokens.get(id);
     if (!Array.isArray(queue) || queue.length === 0) {
+      if (activeCodexToken || codexPendingRecoveryAttempts.has(id)) {
+        nextCodexPaneGeneration(id);
+      }
       clearDeferredState(id);
       compactionDeferStart.delete(id);
       paneInjectionInFlight.delete(id);
+      codexPendingRecoveryAttempts.delete(id);
+      codexActiveQueueTokens.delete(id);
+      codexAwaitingSubmitPanes.delete(id);
+      if (activeCodexToken && !activeCodexToken.bypassesLock) {
+        setInjectionInFlight(false);
+      }
       return 0;
     }
 
     const droppedItems = queue.splice(0, queue.length);
     droppedItems.forEach(item => failQueueItem(item, reason));
     delete messageQueue[id];
+    nextCodexPaneGeneration(id);
     clearDeferredState(id);
     compactionDeferStart.delete(id);
     paneInjectionInFlight.delete(id);
+    codexPendingRecoveryAttempts.delete(id);
+    codexActiveQueueTokens.delete(id);
+    codexAwaitingSubmitPanes.delete(id);
+    if (activeCodexToken && !activeCodexToken.bypassesLock) {
+      setInjectionInFlight(false);
+    }
+    bus.updateState(id, { activity: 'idle' });
     bus.emit('queue.depth.changed', {
       paneId: id,
       payload: { depth: 0, cleared: droppedItems.length, reason },
@@ -808,9 +927,13 @@ function createInjectionController(options = {}) {
       clearDeferredState(id);
       compactionDeferStart.delete(id);
       paneInjectionInFlight.delete(id);
+      codexPendingRecoveryAttempts.delete(id);
+      codexActiveQueueTokens.delete(id);
+      codexAwaitingSubmitPanes.delete(id);
       return;
     }
     const capabilities = getPaneInjectionCapabilities(id);
+    const isCodexRuntime = isCodexInjectionCapability(capabilities);
     const peekItem = queue[0];
     const peekTraceContext = normalizeTraceContext(peekItem && typeof peekItem === 'object' ? peekItem.traceContext : null);
     const hmSendFastEnter = Boolean(
@@ -874,12 +997,131 @@ function createInjectionController(options = {}) {
       }
     }
 
+    if (isCodexRuntime) {
+      const activeToken = codexActiveQueueTokens.get(id);
+      const activeItem = activeToken?.item;
+      if (activeItem && activeItem !== peekItem) {
+        scheduleDeferredRetry(paneId, 'Codex active queue item is not at queue head');
+        return;
+      }
+
+      const retainedInputText = activeItem && activeItem === peekItem
+        ? (typeof activeItem === 'string' ? activeItem : activeItem?.message || '')
+        : '';
+      const pendingProbe = probePendingInputBuffer(id, retainedInputText);
+      const awaitingSubmit = codexAwaitingSubmitPanes.has(id) && activeItem === peekItem;
+      const recoveryGeneration = activeToken?.generation || (codexPaneGenerations.get(id) || 0);
+
+      // An applied payload stays at the head until its collapsed paste marker
+      // has genuinely disappeared. Merely observing renderer output is not a
+      // submit signal for Codex.
+      if (awaitingSubmit && pendingProbe.available === true && pendingProbe.pending === false) {
+        queue.shift();
+        clearCodexRecoveryAttempts(id, recoveryGeneration);
+        codexActiveQueueTokens.delete(id);
+        codexAwaitingSubmitPanes.delete(id);
+        clearDeferredState(id);
+        notifyQueueItemComplete(peekItem, {
+          success: true,
+          verified: true,
+          signal: 'codex_pending_composer_cleared',
+        });
+        bus.emit('queue.depth.changed', {
+          paneId: id,
+          payload: { depth: queue.length },
+          source: EVENT_SOURCE,
+        });
+        if (queue.length > 0) {
+          setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+        }
+        return;
+      }
+
+      if (pendingProbe.pending) {
+        const usedAttempts = getCodexRecoveryAttempts(id, recoveryGeneration);
+        const maxAttempts = Math.max(1, Number(CODEX_PENDING_RECOVERY_MAX_ATTEMPTS) || 2);
+        if (usedAttempts >= maxAttempts) {
+          scheduleDeferredRetry(paneId, 'Codex composer still pending after bounded Enter recovery');
+          return;
+        }
+
+        paneInjectionInFlight.add(id);
+        bus.updateState(id, { activity: 'recovering-submit' });
+        void recoverPendingCodexComposer(id, retainedInputText, recoveryGeneration).then((recoveryResult) => {
+          const recoveryIsCurrent = codexPaneGenerations.get(id) === recoveryGeneration
+            && (!activeToken || codexActiveQueueTokens.get(id) === activeToken);
+          if (!recoveryIsCurrent) {
+            log.info(`processQueue ${id}`, 'Ignoring stale Codex recovery completion');
+            return;
+          }
+          paneInjectionInFlight.delete(id);
+          bus.updateState(id, { activity: 'idle' });
+
+          if (
+            recoveryResult.cleared
+            && codexAwaitingSubmitPanes.has(id)
+            && codexActiveQueueTokens.get(id) === activeToken
+            && queue[0] === peekItem
+          ) {
+            queue.shift();
+            codexActiveQueueTokens.delete(id);
+            codexAwaitingSubmitPanes.delete(id);
+            notifyQueueItemComplete(peekItem, {
+              success: true,
+              verified: true,
+              signal: 'codex_pending_composer_recovered',
+            });
+            bus.emit('queue.depth.changed', {
+              paneId: id,
+              payload: { depth: queue.length },
+              source: EVENT_SOURCE,
+            });
+          }
+
+          if (queue.length > 0) {
+            setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+          }
+        }).catch((err) => {
+          const recoveryIsCurrent = codexPaneGenerations.get(id) === recoveryGeneration
+            && (!activeToken || codexActiveQueueTokens.get(id) === activeToken);
+          if (!recoveryIsCurrent) {
+            log.info(`processQueue ${id}`, 'Ignoring stale Codex recovery failure');
+            return;
+          }
+          paneInjectionInFlight.delete(id);
+          bus.updateState(id, { activity: 'idle' });
+          log.error(`processQueue ${id}`, `Codex pending-composer recovery failed: ${err?.message || err}`);
+          scheduleDeferredRetry(paneId, 'Codex pending-composer recovery failed');
+        });
+        return;
+      }
+
+      if (awaitingSubmit) {
+        // If the renderer cannot expose the composer, do not guess that the
+        // payload cleared and do not paste the next item over it.
+        scheduleDeferredRetry(paneId, 'Codex submit pending; composer state unavailable');
+        return;
+      }
+
+      clearCodexRecoveryAttempts(id, recoveryGeneration);
+    }
+
     clearDeferredState(id);
 
-    // Dequeue and send immediately
-    const item = queue.shift();
+    // Codex keeps the active item at queue head until submit is observed. This
+    // makes the queue itself the no-stack boundary. Other runtimes retain the
+    // existing dequeue-before-send behavior.
+    const item = isCodexRuntime ? queue[0] : queue.shift();
+    let codexItemToken = null;
+    if (isCodexRuntime) {
+      codexItemToken = {
+        item,
+        generation: nextCodexPaneGeneration(id),
+        bypassesLock,
+      };
+      codexActiveQueueTokens.set(id, codexItemToken);
+    }
     const queuedMessage = typeof item === 'string' ? item : item.message;
-    const onComplete = item && typeof item === 'object' ? item.onComplete : null;
     const verifySubmitAcceptedOverride = item && typeof item === 'object'
       ? item.verifySubmitAccepted
       : undefined;
@@ -929,7 +1171,7 @@ function createInjectionController(options = {}) {
 
     bus.emit('queue.depth.changed', {
       paneId: id,
-      payload: { depth: queue.length },
+      payload: { depth: isCodexRuntime ? Math.max(0, queue.length - 1) : queue.length },
       correlationId: itemCorrId,
       causationId: itemCausationId,
       source: EVENT_SOURCE,
@@ -946,17 +1188,40 @@ function createInjectionController(options = {}) {
     paneInjectionInFlight.add(id);
 
     doSendToPane(paneId, queuedMessage, (result) => {
+      if (isCodexRuntime && codexActiveQueueTokens.get(id) !== codexItemToken) {
+        log.info(`processQueue ${id}`, 'Ignoring stale Codex completion after queue clear or replacement');
+        return;
+      }
       paneInjectionInFlight.delete(id);
       if (!bypassesLock) {
         setInjectionInFlight(false);
       }
       bus.updateState(id, { activity: 'idle' });
-      if (typeof onComplete === 'function') {
-        try {
-          onComplete(result);
-        } catch (err) {
-          log.error('Terminal', 'queue onComplete failed', err);
+      const codexComposerStillPending = isCodexRuntime
+        && result?.success !== true
+        && result?.applied === true
+        && result?.pendingInputObserved === true;
+
+      if (codexComposerStillPending) {
+        codexAwaitingSubmitPanes.add(id);
+        log.warn(`processQueue ${id}`, 'Codex payload remains in composer; retaining queue head for Enter-only recovery');
+      } else {
+        if (isCodexRuntime) {
+          if (queue[0] === item) {
+            queue.shift();
+          }
+          clearCodexRecoveryAttempts(id, codexItemToken.generation);
+          codexActiveQueueTokens.delete(id);
+          codexAwaitingSubmitPanes.delete(id);
+          bus.emit('queue.depth.changed', {
+            paneId: id,
+            payload: { depth: queue.length },
+            correlationId: itemCorrId,
+            causationId: itemCausationId,
+            source: EVENT_SOURCE,
+          });
         }
+        notifyQueueItemComplete(item, result);
       }
       if (queue.length > 0) {
         setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
@@ -975,6 +1240,9 @@ function createInjectionController(options = {}) {
       preferClipboardPasteForLongMessage: preferClipboardPasteForLongMessageOverride,
       clipboardPasteThresholdBytes: clipboardPasteThresholdBytesOverride,
       meta: injectMeta,
+      isStillCurrent: isCodexRuntime
+        ? () => codexActiveQueueTokens.get(id) === codexItemToken
+        : undefined,
     });
   }
 
@@ -1023,8 +1291,11 @@ function createInjectionController(options = {}) {
     const rawText = prependVisibleTimestamp(message.replace(/\r$/, ''));
     const id = String(paneId);
     const capabilities = getPaneInjectionCapabilities(id);
-    const isCodexCapability = String(capabilities?.displayName || '').toLowerCase() === 'codex'
-      || String(capabilities?.modeLabel || '').toLowerCase().includes('codex');
+    const isCodexCapability = isCodexInjectionCapability(capabilities);
+    const injectionStillCurrent = () => (
+      typeof behaviorOverrides.isStillCurrent !== 'function'
+      || behaviorOverrides.isStillCurrent() === true
+    );
     const shouldVerifySubmitAccepted = (typeof behaviorOverrides.verifySubmitAccepted === 'boolean')
       ? behaviorOverrides.verifySubmitAccepted
       : capabilities.verifySubmitAccepted;
@@ -1095,7 +1366,7 @@ function createInjectionController(options = {}) {
     // The hm-send fast path submits via PTY writes end to end - it needs no
     // DOM focus and no textarea. Only the legacy trusted-Enter path (DOM
     // keyboard dispatch) works through the textarea.
-    const willUseTrustedEnter = capabilities.requiresFocusForEnter && !hmSendFastEnter;
+    const willUseTrustedEnter = capabilities.requiresFocusForEnter && !hmSendFastEnter && !isCodexCapability;
 
     if (willUseTrustedEnter && !textarea) {
       log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: textarea not found, skipping injection`);
@@ -1352,6 +1623,11 @@ function createInjectionController(options = {}) {
       return;
     }
 
+    if (!injectionStillCurrent()) {
+      finishWithClear({ success: false, reason: 'stale_injection', applied: payloadApplied });
+      return;
+    }
+
     if (hmSendFastEnter) {
       // Wait for the CLI to finish processing the pasted text before sending Enter.
       // Without this delay, \r arrives while the CLI is still ingesting the paste
@@ -1391,6 +1667,10 @@ function createInjectionController(options = {}) {
       });
       try {
         await writeCodexPasteTerminatorBeforeEnter('hm-send-pty-enter');
+        if (!injectionStillCurrent()) {
+          finishWithClear({ success: false, reason: 'stale_injection', applied: payloadApplied });
+          return;
+        }
         assertPtyWriteResult(await window.squidrun.pty.write(id, '\r'), 'pty.write enter');
       } catch (err) {
         log.error(`doSendToPane ${id}`, 'hm-send PTY Enter failed:', err);
@@ -1424,6 +1704,10 @@ function createInjectionController(options = {}) {
         if (!hasOutputTransition) {
           try {
             await writeCodexPasteTerminatorBeforeEnter('hm-send-pty-enter-retry');
+            if (!injectionStillCurrent()) {
+              finishWithClear({ success: false, reason: 'stale_injection', applied: payloadApplied });
+              return;
+            }
             assertPtyWriteResult(await window.squidrun.pty.write(id, '\r'), 'pty.write enter retry');
             bus.emit('inject.submit.sent', {
               paneId: id,
@@ -1465,6 +1749,10 @@ function createInjectionController(options = {}) {
         };
         try {
           await writeCodexPasteTerminatorBeforeEnter('hm-send-pty-enter-retry');
+          if (!injectionStillCurrent()) {
+            finishWithClear({ success: false, reason: 'stale_injection', applied: payloadApplied });
+            return;
+          }
           assertPtyWriteResult(await window.squidrun.pty.write(id, '\r'), 'pty.write enter retry');
           bus.emit('inject.submit.sent', {
             paneId: id,
@@ -1548,6 +1836,29 @@ function createInjectionController(options = {}) {
       // as a real keystroke rather than a literal newline inside the paste body.
       // No-op on non-Codex panes. Errors are non-fatal, the Enter attempt still runs.
       await writeCodexPasteTerminatorBeforeEnter(capabilities.submitMethod || 'submit-enter');
+      if (!injectionStillCurrent()) {
+        return {
+          success: false,
+          method: capabilities.submitMethod || 'codex-pty-enter',
+          reason: 'stale_injection',
+        };
+      }
+      if (isCodexCapability) {
+        try {
+          assertPtyWriteResult(
+            await window.squidrun.pty.write(id, '\r', createKernelMeta()),
+            'pty.write Codex submit enter'
+          );
+          return { success: true, method: capabilities.submitMethod || 'codex-pty-enter' };
+        } catch (err) {
+          log.error(`doSendToPane ${id}`, 'Codex PTY Enter failed:', err);
+          return {
+            success: false,
+            method: capabilities.submitMethod || 'codex-pty-enter',
+            reason: 'pty_enter_failed',
+          };
+        }
+      }
       if (capabilities.enterMethod === 'trusted') {
         return sendEnterToPane(id);
       }
@@ -1571,6 +1882,10 @@ function createInjectionController(options = {}) {
     };
 
     const submitTimerId = setTimeout(async () => {
+      if (!injectionStillCurrent()) {
+        finishWithClear({ success: false, reason: 'stale_injection', applied: payloadApplied });
+        return;
+      }
       if (capabilities.requiresFocusForEnter) {
         const currentPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
         textarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
@@ -1642,14 +1957,17 @@ function createInjectionController(options = {}) {
         scheduleFocusRestore();
 
         if (!enterResult.success) {
+          const enterFailureReason = enterResult.reason || 'enter_failed';
           bus.emit('inject.failed', {
             paneId: id,
-            payload: { reason: enterResult.reason || 'enter_failed', method: enterResult.method },
+            payload: { reason: enterFailureReason, method: enterResult.method },
             correlationId: corrId,
             source: EVENT_SOURCE,
           });
-          markPotentiallyStuck(id);
-          finishWithClear({ success: false, reason: 'enter_failed', applied: payloadApplied });
+          if (enterFailureReason !== 'stale_injection') {
+            markPotentiallyStuck(id);
+          }
+          finishWithClear({ success: false, reason: enterFailureReason, applied: payloadApplied });
           return;
         }
 
@@ -1861,7 +2179,15 @@ function createInjectionController(options = {}) {
       queue.length >= maxItems
       || ((queueBytes + incomingBytes) > maxBytes && queue.length > 0)
     ) {
-      const dropped = queue.shift();
+      const activeCodexItem = codexActiveQueueTokens.get(id)?.item;
+      const protectsActiveHead = Boolean(activeCodexItem && queue[0] === activeCodexItem);
+      if (protectsActiveHead && queue.length === 1) {
+        log.warn(`Terminal ${id}`, 'Dropping incoming queued message rather than evicting active Codex composer payload');
+        failQueueItem(queueItem, 'queue_overflow');
+        return;
+      }
+      const dropIndex = protectsActiveHead ? 1 : 0;
+      const [dropped] = queue.splice(dropIndex, 1);
       queueBytes -= getQueueItemBytes(dropped);
       droppedCount += 1;
       failQueueItem(dropped, 'queue_overflow');
@@ -1877,7 +2203,8 @@ function createInjectionController(options = {}) {
     // Priority lane: keep priority items ahead of normal items, while preserving
     // FIFO order among priority messages to avoid rapid-send reordering.
     if (options.priority) {
-      let insertIndex = 0;
+      const activeCodexItem = codexActiveQueueTokens.get(id)?.item;
+      let insertIndex = activeCodexItem && queue[0] === activeCodexItem ? 1 : 0;
       while (insertIndex < queue.length && queue[insertIndex]?.priority === true) {
         insertIndex += 1;
       }

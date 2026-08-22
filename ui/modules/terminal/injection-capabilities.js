@@ -18,13 +18,13 @@ function getRuntimeInjectionCapabilityDefaults(options = {}) {
   return {
     codex: {
       mode: 'pty',
-      modeLabel: isDarwin ? 'codex-pty' : 'codex-trusted',
-      appliedMethod: isDarwin ? 'codex-pty' : 'codex-trusted',
-      submitMethod: isDarwin ? 'codex-pty-enter' : 'sendTrustedEnter',
+      modeLabel: 'codex-pty',
+      appliedMethod: 'codex-pty',
+      submitMethod: 'codex-pty-enter',
       bypassGlobalLock: false,
       applyCompactionGate: true,
-      requiresFocusForEnter: !isDarwin,
-      enterMethod: isDarwin ? 'pty' : 'trusted',
+      requiresFocusForEnter: false,
+      enterMethod: 'pty',
       enterDelayMs: codexEnterDelayMs,
       sanitizeMultiline: true,
       clearLineBeforeWrite: true,
@@ -34,7 +34,7 @@ function getRuntimeInjectionCapabilityDefaults(options = {}) {
       scaleEnterDelayByPayload: true,
       typingGuardWhenBypassing: false,
       sanitizeTransform: 'none',
-      enterFailureReason: isDarwin ? 'pty_enter_failed' : 'enter_failed',
+      enterFailureReason: 'pty_enter_failed',
       displayName: 'Codex',
     },
     gemini: {
