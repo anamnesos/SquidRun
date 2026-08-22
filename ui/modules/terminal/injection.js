@@ -1021,10 +1021,15 @@ function createInjectionController(options = {}) {
         codexActiveQueueTokens.delete(id);
         codexAwaitingSubmitPanes.delete(id);
         clearDeferredState(id);
+        log.info(
+          `processQueue ${id}`,
+          'Codex pending composer resolved on its own (self_cleared; no recovery Enter)'
+        );
         notifyQueueItemComplete(peekItem, {
           success: true,
           verified: true,
           signal: 'codex_pending_composer_cleared',
+          resolution: 'self_cleared',
         });
         bus.emit('queue.depth.changed', {
           paneId: id,

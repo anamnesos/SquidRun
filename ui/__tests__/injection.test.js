@@ -1006,6 +1006,102 @@ describe('Terminal Injection', () => {
       expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
     });
 
+    test('records three consecutive late Codex accepts as self-cleared without recovery Enter', async () => {
+      let promptText = 'codex> ';
+      let enterCount = 0;
+      const payloadWrites = [];
+      const completions = [jest.fn(), jest.fn(), jest.fn()];
+
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
+
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId !== '1') return Promise.resolve(undefined);
+        if (data === '\u001b[201~') return Promise.resolve(undefined);
+        if (data === '\r') {
+          enterCount += 1;
+          const acceptedItem = enterCount;
+          setTimeout(() => {
+            promptText = `Working on self-clear item ${acceptedItem}`;
+            lastOutputTime['1'] = Date.now() + acceptedItem;
+          }, 5);
+          return Promise.resolve(undefined);
+        }
+        if (typeof data === 'string' && data.includes('SELF-CLEAR-CODEX-')) {
+          const match = /SELF-CLEAR-CODEX-(\d)/.exec(data);
+          payloadWrites.push(Number(match?.[1] || 0));
+          promptText = `codex> [Pasted Content ${data.length} chars]`;
+        }
+        return Promise.resolve(undefined);
+      });
+
+      const codexController = createInjectionController({
+        ...mockOptions,
+        getPaneCapabilities: jest.fn().mockReturnValue({
+          displayName: 'Codex',
+          modeLabel: 'codex-pty',
+          appliedMethod: 'codex-pty',
+          submitMethod: 'codex-pty-enter',
+          enterMethod: 'pty',
+          enterDelayMs: 0,
+          requiresFocusForEnter: false,
+          bypassGlobalLock: false,
+          applyCompactionGate: false,
+          clearLineBeforeWrite: true,
+          useChunkedWrite: false,
+          verifySubmitAccepted: true,
+        }),
+        isCodexPane: jest.fn().mockReturnValue(true),
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          QUEUE_RETRY_MS: 10,
+          SUBMIT_ACCEPT_VERIFY_WINDOW_MS: 80,
+          SUBMIT_ACCEPT_POLL_MS: 10,
+          SUBMIT_ACCEPT_MAX_ATTEMPTS: 1,
+          CODEX_PENDING_RECOVERY_MAX_ATTEMPTS: 2,
+          CODEX_PENDING_RECOVERY_VERIFY_MS: 80,
+          CODEX_PENDING_RECOVERY_POLL_MS: 10,
+          INJECTION_LOCK_TIMEOUT_MS: 3000,
+        },
+      });
+
+      messageQueue['1'] = completions.map((onComplete, index) => ({
+        message: `SELF-CLEAR-CODEX-${index + 1}\r`,
+        timestamp: Date.now(),
+        onComplete,
+      }));
+
+      codexController.processIdleQueue('1');
+      await jest.advanceTimersByTimeAsync(1000);
+
+      expect(payloadWrites).toEqual([1, 2, 3]);
+      expect(enterCount).toBe(3);
+      expect(messageQueue['1']).toHaveLength(0);
+      completions.forEach((onComplete) => {
+        expect(onComplete).toHaveBeenCalledTimes(1);
+        expect(onComplete).toHaveBeenCalledWith({
+          success: true,
+          verified: true,
+          signal: 'codex_pending_composer_cleared',
+          resolution: 'self_cleared',
+        });
+      });
+      expect(mockLog.info.mock.calls.filter(([, message]) => (
+        message === 'Codex pending composer resolved on its own (self_cleared; no recovery Enter)'
+      ))).toHaveLength(3);
+      expect(mockPty.write.mock.calls.filter(([, data]) => data === '\r')).toHaveLength(3);
+    });
+
     test('late completion from cleared Codex A cannot release or duplicate active Codex B', async () => {
       let releasePayloadA;
       let releasePayloadB;
