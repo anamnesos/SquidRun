@@ -120,6 +120,26 @@ describe('hm-room CLI identity and grammar', () => {
     }));
   });
 
+  test('parses repeatable local attachments and caps them at the room limit', () => {
+    expect(parseArgs([
+      'post', '--reason', 'new_evidence_or_action',
+      '--attach', '.squidrun/coord/main.png',
+      '--attach', '.squidrun/coord/settings.png',
+      '--stdin',
+    ])).toEqual(expect.objectContaining({
+      ok: true,
+      attachmentPaths: ['.squidrun/coord/main.png', '.squidrun/coord/settings.png'],
+    }));
+    expect(parseArgs(['post', '--reason', 'new_evidence_or_action', '--attach']))
+      .toEqual({ ok: false, reason: 'room_cli_attachment_path_required' });
+    expect(parseArgs([
+      'post', '--reason', 'new_evidence_or_action',
+      ...Array.from({ length: 13 }, (_, index) => ['--attach', `photo-${index}.png`]).flat(),
+      'too many',
+    ])).toEqual({ ok: false, reason: 'room_cli_attachment_count_exceeded' });
+    expect(usage()).toContain('[--attach <path> ...]');
+  });
+
   test('parses explicit notification classes and rejects missing values', () => {
     expect(parseArgs([
       'post', '--reason', 'new_evidence_or_action', '--notify', 'needs_james', '--stdin',

@@ -550,6 +550,96 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     }));
   });
 
+  test('lets the bound CLI attach repeatable local project images without widening browser upload auth', async () => {
+    const paneDeliveries = [];
+    runtime = new TeamRoomRuntime(runtimeOptions(tempRoot, async (delivery) => {
+      paneDeliveries.push(delivery);
+      return { ok: true };
+    }));
+    const started = await runtime.start();
+    expect(started.ok).toBe(true);
+
+    const mockupRoot = path.join(tempRoot, '.squidrun', 'coord');
+    fs.mkdirSync(mockupRoot, { recursive: true });
+    const mainPath = path.join(mockupRoot, 'main.png');
+    const settingsPath = path.join(mockupRoot, 'settings.png');
+    const mainBytes = await sharp({
+      create: { width: 64, height: 40, channels: 3, background: '#0f172a' },
+    }).png().toBuffer();
+    const settingsBytes = await sharp({
+      create: { width: 40, height: 64, channels: 3, background: '#7c3aed' },
+    }).png().toBuffer();
+    fs.writeFileSync(mainPath, mainBytes);
+    fs.writeFileSync(settingsPath, settingsBytes);
+
+    let stdout = '';
+    let stderr = '';
+    expect(await runRoomCli([
+      'post', '--reason', 'new_evidence_or_action',
+      '--attach', mainPath,
+      '--attach', path.relative(tempRoot, settingsPath),
+      'Here are the two redesign mockups.',
+    ], {
+      projectRoot: tempRoot,
+      env: cliEnv('builder', '2', `pl_${'2'.repeat(32)}`),
+      stdout: { write: (value) => { stdout += value; } },
+      stderr: { write: (value) => { stderr += value; } },
+    })).toBe(0);
+    expect(stderr).toBe('');
+    expect(stdout).toMatch(/^Posted to Team Room/u);
+
+    const message = runtime.snapshot().messages.find((candidate) => (
+      candidate.body === 'Here are the two redesign mockups.'
+    ));
+    expect(message.attachments).toHaveLength(2);
+    expect(message.attachments.map((attachment) => attachment.originalName))
+      .toEqual(['main.png', 'settings.png']);
+    expect(message.attachments.every((attachment) => /^trc_/u.test(attachment.attachmentId))).toBe(true);
+    expect(message.attachments.map((attachment) => attachment.sha256)).toEqual([
+      crypto.createHash('sha256').update(mainBytes).digest('hex'),
+      crypto.createHash('sha256').update(settingsBytes).digest('hex'),
+    ]);
+    await waitFor(() => paneDeliveries.length === 2);
+    expect(paneDeliveries.every((delivery) => (
+      delivery.prompt.includes('Attachments:') && delivery.prompt.includes('path=')
+    ))).toBe(true);
+
+    const builderCredential = JSON.parse(fs.readFileSync(
+      path.join(tempRoot, '.squidrun', 'runtime', 'team-room', 'credentials', 'builder.json'),
+      'utf8'
+    ));
+    const browserMultipart = multipartPayload(mainBytes);
+    const bearerCannotUseBrowserUpload = await rawRequest(started.origin, '/api/attachments', {
+      method: 'POST',
+      token: builderCredential.token,
+      body: browserMultipart.body,
+      headers: { 'Content-Type': `multipart/form-data; boundary=${browserMultipart.boundary}` },
+    });
+    expect(bearerCannotUseBrowserUpload).toEqual(expect.objectContaining({
+      statusCode: 403,
+      payload: expect.objectContaining({ ok: false, reason: 'room_source_mismatch' }),
+    }));
+
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'team-room-cli-outside-'));
+    const outsidePath = path.join(outsideRoot, 'outside.png');
+    fs.writeFileSync(outsidePath, mainBytes);
+    try {
+      let rejected = '';
+      expect(await runRoomCli([
+        'post', '--reason', 'new_evidence_or_action', '--attach', outsidePath, 'Do not post this.',
+      ], {
+        projectRoot: tempRoot,
+        env: cliEnv('builder', '2', `pl_${'2'.repeat(32)}`),
+        stdout: { write: () => {} },
+        stderr: { write: (value) => { rejected += value; } },
+      })).toBe(1);
+      expect(rejected).toBe('attachment_path_outside_root\n');
+      expect(runtime.snapshot().messages.some((candidate) => candidate.body === 'Do not post this.')).toBe(false);
+    } finally {
+      fs.rmSync(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
   test('renders an offline fragment QR over the existing one-use pairing claim', async () => {
     runtime = new TeamRoomRuntime({
       ...runtimeOptions(tempRoot, async () => ({ ok: true })),

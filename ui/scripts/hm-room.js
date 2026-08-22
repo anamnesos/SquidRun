@@ -8,6 +8,7 @@ const path = require('node:path');
 const { getProjectRoot } = require('../config');
 const { parsePrivateNetworkOrigin } = require('../modules/main/team-room-auth');
 const {
+  MAX_ATTACHMENTS_PER_MESSAGE,
   NOTIFICATION_CLASSES,
   PARTICIPATION_REASONS,
   TEAM_ROOM_NOTIFICATION_INSTRUCTION,
@@ -26,9 +27,9 @@ function usage() {
   return [
     'Team Room',
     '',
-    '  hm-room post --reason <reason> [--notify <class>] "message"',
-    '  hm-room post --reason <reason> --stdin',
-    '  hm-room reply --activation <id> --reason <reason> "message"',
+    '  hm-room post --reason <reason> [--notify <class>] [--attach <path> ...] "message"',
+    '  hm-room post --reason <reason> [--attach <path> ...] --stdin',
+    '  hm-room reply --activation <id> --reason <reason> [--attach <path> ...] "message"',
     '  hm-room reply --activation <id> --reason <reason> --reentry --stdin',
     '  hm-room list [--json]',
     '  hm-room status [--json]',
@@ -80,6 +81,7 @@ function parseArgs(argv = []) {
     activationId: null,
     reason: null,
     notificationClass: null,
+    attachmentPaths: [],
     bodyParts: [],
   };
   while (args.length > 0) {
@@ -89,6 +91,16 @@ function parseArgs(argv = []) {
     else if (value === '--reentry') options.reentry = true;
     else if (value === '--activation') options.activationId = String(args.shift() || '').trim();
     else if (value === '--reason') options.reason = String(args.shift() || '').trim().toLowerCase();
+    else if (value === '--attach') {
+      const attachmentPath = String(args.shift() || '').trim();
+      if (!attachmentPath || attachmentPath.startsWith('--')) {
+        return { ok: false, reason: 'room_cli_attachment_path_required' };
+      }
+      options.attachmentPaths.push(attachmentPath);
+      if (options.attachmentPaths.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+        return { ok: false, reason: 'room_cli_attachment_count_exceeded' };
+      }
+    }
     else if (value === '--notify') {
       const notificationClass = String(args.shift() || '').trim().toLowerCase();
       if (!notificationClass || notificationClass.startsWith('--')) {
@@ -100,6 +112,9 @@ function parseArgs(argv = []) {
     else options.bodyParts.push(value);
   }
   if (options.stdin && options.bodyParts.length > 0) return { ok: false, reason: 'room_cli_body_source_conflict' };
+  if (options.attachmentPaths.length > 0 && !['post', 'reply'].includes(command)) {
+    return { ok: false, reason: 'room_cli_attachment_command_invalid' };
+  }
   return { ok: true, ...options };
 }
 
@@ -201,7 +216,8 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   }
   const identity = resolveRuntimeRole(deps.env || process.env);
   if (!identity.ok) { stderr.write(`${identity.reason}\n`); return 1; }
-  const runtime = readRuntimeFiles(path.resolve(deps.projectRoot || getProjectRoot()), identity);
+  const projectRoot = path.resolve(deps.projectRoot || getProjectRoot());
+  const runtime = readRuntimeFiles(projectRoot, identity);
   if (!runtime.ok) { stderr.write(`${runtime.reason}\n`); return 1; }
   try {
     if (parsed.command === 'status') {
@@ -223,7 +239,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     const body = parsed.stdin
       ? fs.readFileSync(0, 'utf8').replace(/\r\n/gu, '\n').trim()
       : parsed.bodyParts.join(' ').trim();
-    if (!body) { stderr.write('room_cli_message_empty\n'); return 1; }
+    if (!body && parsed.attachmentPaths.length === 0) { stderr.write('room_cli_message_empty\n'); return 1; }
     if (parsed.command === 'reply' || parsed.command === 'post') {
       if (parsed.command === 'reply' && !parsed.activationId) {
         stderr.write('room_cli_activation_required\n');
@@ -250,9 +266,23 @@ async function main(argv = process.argv.slice(2), deps = {}) {
         return 1;
       }
     }
+    const attachmentIds = [];
+    for (const attachmentPath of parsed.attachmentPaths) {
+      const uploadResponse = await requestJson(runtime.runtime.origin, '/api/cli/attachments', {
+        method: 'POST',
+        token: runtime.credential.token,
+        body: { filePath: path.resolve(projectRoot, attachmentPath) },
+      });
+      if (!uploadResponse.payload?.ok) {
+        stderr.write(`${uploadResponse.payload?.reason || 'room_cli_attachment_upload_failed'}\n`);
+        return 1;
+      }
+      attachmentIds.push(uploadResponse.payload.attachment.attachmentId);
+    }
     const payload = {
       body,
       clientNonce: `cli-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`,
+      ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
       ...(parsed.notificationClass ? { notificationClass: parsed.notificationClass } : {}),
       ...(parsed.command === 'reply' ? {
         activationId: parsed.activationId,

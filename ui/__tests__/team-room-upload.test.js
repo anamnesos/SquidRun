@@ -89,6 +89,64 @@ describe('Team Room streamed upload publication', () => {
     expect(manager.ownedTemporaryPaths.size).toBe(0);
   });
 
+  test('ingests a canonical local project file through the same verified store', async () => {
+    const sourceRoot = path.join(tempRoot, 'mockups');
+    fs.mkdirSync(sourceRoot, { recursive: true });
+    const sourcePath = path.join(sourceRoot, 'main window.png');
+    const bytes = await sharp({
+      create: { width: 48, height: 32, channels: 3, background: '#7c3aed' },
+    }).png().toBuffer();
+    fs.writeFileSync(sourcePath, bytes);
+    const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+    const manager = new TeamRoomUploadManager({ store, attachmentRoot, trustedRoot: tempRoot });
+
+    const result = await manager.ingestLocalFile(sourcePath, {
+      roomId: 'main', profileName: 'main', memberId: 'builder',
+    });
+
+    expect(result).toEqual(expect.objectContaining({ ok: true, status: 'inserted' }));
+    expect(result.attachment).toEqual(expect.objectContaining({
+      sha256: digest,
+      originalName: 'main window.png',
+      mimeType: 'image/png',
+      width: 48,
+      height: 32,
+    }));
+    expect(fs.readFileSync(path.join(attachmentRoot, digest))).toEqual(bytes);
+    expect(manager.ownedTemporaryPaths.size).toBe(0);
+    expect(manager.activeUploadTokens.size).toBe(0);
+  });
+
+  test('rejects missing, non-file, unsupported, oversized, and out-of-scope local paths', async () => {
+    const manager = new TeamRoomUploadManager({ store, attachmentRoot, trustedRoot: tempRoot, maxBytes: 32 });
+    const directoryPath = path.join(tempRoot, 'directory-only');
+    const unsupportedPath = path.join(tempRoot, 'fake.png');
+    const oversizedPath = path.join(tempRoot, 'oversized.png');
+    fs.mkdirSync(directoryPath);
+    fs.writeFileSync(unsupportedPath, 'this is not an image');
+    fs.writeFileSync(oversizedPath, Buffer.alloc(33, 1));
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'team-room-local-outside-'));
+    const outsidePath = path.join(outsideRoot, 'outside.png');
+    fs.writeFileSync(outsidePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    try {
+      await expect(manager.ingestLocalFile(path.join(tempRoot, 'missing.png')))
+        .resolves.toEqual(expect.objectContaining({ ok: false, reason: 'attachment_path_unreadable' }));
+      await expect(manager.ingestLocalFile(directoryPath))
+        .resolves.toEqual(expect.objectContaining({ ok: false, reason: 'attachment_not_regular_file' }));
+      await expect(manager.ingestLocalFile(unsupportedPath))
+        .resolves.toEqual(expect.objectContaining({ ok: false, reason: 'attachment_magic_unsupported' }));
+      await expect(manager.ingestLocalFile(oversizedPath))
+        .resolves.toEqual(expect.objectContaining({ ok: false, reason: 'attachment_too_large' }));
+      await expect(manager.ingestLocalFile(outsidePath))
+        .resolves.toEqual(expect.objectContaining({ ok: false, reason: 'attachment_path_outside_root' }));
+      expect(store.db.prepare('SELECT COUNT(*) AS count FROM room_attachments').get().count).toBe(0);
+      expect(manager.ownedTemporaryPaths.size).toBe(0);
+      expect(manager.activeUploadTokens.size).toBe(0);
+    } finally {
+      fs.rmSync(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
   test('races identical uploads safely while an already-verified loser aborts', async () => {
     const bytes = await sharp({
       create: { width: 24, height: 24, channels: 3, background: '#f59e0b' },

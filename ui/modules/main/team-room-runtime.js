@@ -970,6 +970,47 @@ class TeamRoomRuntime {
     });
   }
 
+  async _handleCliUpload(request, response) {
+    const authenticated = this._authenticate(request, 'media', 'room_cli');
+    if (!authenticated.ok) return jsonResponse(response, resultStatus(authenticated), authenticated);
+    if (authenticated.transport !== 'bearer' || authenticated.identity.memberKind !== MEMBER_KINDS.AGENT) {
+      return jsonResponse(response, 403, { ok: false, reason: 'room_cli_media_forbidden' });
+    }
+    let input;
+    try { input = await readJsonBody(request); } catch (error) {
+      return jsonResponse(response, 400, { ok: false, reason: error.message });
+    }
+    const filePath = String(input?.filePath || '').trim();
+    if (!filePath) return jsonResponse(response, 400, { ok: false, reason: 'room_cli_attachment_path_required' });
+    const result = await this.uploadManager.ingestLocalFile(filePath, {
+      roomId: authenticated.identity.roomId,
+      profileName: authenticated.identity.profileName,
+      memberId: authenticated.identity.memberId,
+    });
+    if (!result.ok) return jsonResponse(response, resultStatus(result), result);
+    const attachment = result.attachment;
+    return jsonResponse(response, result.status === 'inserted' ? 201 : 200, {
+      ok: true,
+      status: result.status,
+      attachment: {
+        attachmentId: attachment.attachmentId,
+        sha256: attachment.sha256,
+        mimeType: attachment.mimeType,
+        originalName: attachment.originalName,
+        bytes: attachment.bytes,
+        width: attachment.width,
+        height: attachment.height,
+        previewStatus: attachment.metadata?.preview?.status || result.previewStatus,
+        previewReason: attachment.metadata?.preview?.reason || result.previewReason || null,
+        originalUrl: `/api/media/${encodeURIComponent(attachment.attachmentId)}/original`,
+        previewUrl: attachment.previewRelativePath
+          ? `/api/media/${encodeURIComponent(attachment.attachmentId)}/preview`
+          : null,
+        downloadUrl: `/api/media/${encodeURIComponent(attachment.attachmentId)}/download`,
+      },
+    });
+  }
+
   async _handleMedia(request, response, attachmentId, variant) {
     const authenticated = this._authenticate(request, 'media', 'room_web');
     if (!authenticated.ok) return jsonResponse(response, resultStatus(authenticated), authenticated);
@@ -1201,6 +1242,7 @@ class TeamRoomRuntime {
     if (url.pathname === '/api/messages' && request.method === 'POST') return this._handlePost(request, response, 'room_web');
     if (url.pathname === '/api/attachments' && request.method === 'POST') return this._handleUpload(request, response);
     if (url.pathname === '/api/cli/snapshot' && request.method === 'GET') return this._handleSnapshot(request, response, 'room_cli');
+    if (url.pathname === '/api/cli/attachments' && request.method === 'POST') return this._handleCliUpload(request, response);
     if (url.pathname === '/api/cli/messages' && request.method === 'POST') return this._handlePost(request, response, 'room_cli');
     if (url.pathname === '/api/pairing/start' && request.method === 'POST') return this._handlePairingStart(request, response);
     if (url.pathname === '/api/pairing/claim' && request.method === 'POST') return this._handlePairingClaim(request, response);

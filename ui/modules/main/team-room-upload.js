@@ -15,6 +15,7 @@ const {
   buildContentAddressedOriginalRelativePath,
   buildPreviewRelativePath,
   inspectAttachmentFile,
+  resolveSafeExistingFile,
   sanitizeAttachmentName,
   validatePreviewMetadata,
 } = require('./team-room-attachments');
@@ -43,6 +44,16 @@ function isHeicMime(mimeType) {
 
 function delay(ms) {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
+function sameFileSnapshot(left, right) {
+  if (!left || !right) return false;
+  return Number(left.dev) === Number(right.dev)
+    && Number(left.ino) === Number(right.ino)
+    && Number(left.size) === Number(right.size)
+    && Number(left.mtimeMs) === Number(right.mtimeMs)
+    && left.isFile()
+    && right.isFile();
 }
 
 async function settleWithin(promise, timeoutMs) {
@@ -609,6 +620,79 @@ class TeamRoomUploadManager {
       previewStatus,
       previewReason,
     };
+  }
+
+  async ingestLocalFile(filePath, context = {}) {
+    const pendingCleanup = await this._cleanupInactiveTemporaryPaths();
+    if (!pendingCleanup.ok) return pendingCleanup;
+
+    const safe = resolveSafeExistingFile(this.trustedRoot, filePath);
+    if (!safe.ok) return safe;
+    if (safe.stat.size <= 0) return { ok: false, reason: 'attachment_empty' };
+    if (safe.stat.size > this.maxBytes) {
+      return { ok: false, reason: 'attachment_too_large', bytes: safe.stat.size, maxBytes: this.maxBytes };
+    }
+
+    const uploadToken = Symbol('team-room-local-upload');
+    this.activeUploadTokens.add(uploadToken);
+    let sourceFd = null;
+    let result = null;
+    try {
+      sourceFd = fs.openSync(safe.filePath, 'r');
+      const openedStat = fs.fstatSync(sourceFd);
+      if (!sameFileSnapshot(safe.stat, openedStat)) {
+        result = { ok: false, reason: 'attachment_changed_before_read' };
+      } else {
+        const stagedPath = this._stagingPath('.upload', uploadToken);
+        const hash = crypto.createHash('sha256');
+        let bytes = 0;
+        const meter = new Transform({
+          transform: (chunk, encoding, callback) => {
+            bytes += chunk.length;
+            if (bytes > this.maxBytes) {
+              callback(new Error('attachment_too_large'));
+              return;
+            }
+            hash.update(chunk);
+            callback(null, chunk);
+          },
+        });
+        const readStream = fs.createReadStream(safe.filePath, { fd: sourceFd, autoClose: false });
+        const writeStream = fs.createWriteStream(stagedPath, { flags: 'wx', mode: 0o600 });
+        await pipeline(readStream, meter, writeStream);
+        const closedStat = fs.fstatSync(sourceFd);
+        if (!sameFileSnapshot(openedStat, closedStat) || bytes !== Number(openedStat.size)) {
+          result = { ok: false, reason: 'attachment_changed_during_read' };
+        } else {
+          result = await this._finalizeStagedUpload({
+            filePath: stagedPath,
+            originalName: sanitizeAttachmentName(path.basename(safe.filePath)),
+            claimedMime: '',
+            bytes,
+            sha256: hash.digest('hex'),
+          }, { ...context, request: null, uploadToken }, { aborted: false, reason: null });
+        }
+      }
+    } catch (error) {
+      result = {
+        ok: false,
+        reason: errorReason(error) === 'attachment_too_large'
+          ? 'attachment_too_large'
+          : `room_upload_local_file_failed:${errorReason(error)}`,
+      };
+    } finally {
+      if (sourceFd !== null) {
+        try { fs.closeSync(sourceFd); } catch {}
+      }
+      const cleaned = await this._cleanupTemporaryPathsForToken(uploadToken);
+      this.activeUploadTokens.delete(uploadToken);
+      if (!cleaned.ok) {
+        result = result?.ok
+          ? { ok: false, reason: 'room_upload_temp_cleanup_pending', cleanupDetail: cleaned.reason }
+          : { ...(result || { ok: false, reason: 'room_upload_local_file_failed' }), cleanupPending: true, cleanupDetail: cleaned.reason };
+      }
+    }
+    return result || { ok: false, reason: 'room_upload_local_file_failed' };
   }
 
   async ingestMultipartRequest(request, context = {}) {
