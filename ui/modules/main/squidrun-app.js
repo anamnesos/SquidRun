@@ -573,9 +573,10 @@ function fingerprintSecret(value) {
  * branch ONLY. The normal path wrote bytes, declared them unverified, and
  * threw away proof it had already asked for.
  *
- * So delivery is answerable by construction; we just were not asking. This is
- * the shared asker: no receipt after the settle -> ONE retry Enter -> still no
- * receipt -> LOUD. The trace event is the alertable signal either way.
+ * A prompt receipt is the strongest proof when that runtime actually produces
+ * one. It is NOT a safe actuator by itself: Codex has historically produced no
+ * model-prompt receipts even while accepting and answering messages. Missing
+ * proof therefore stays an observation, never permission to press Enter.
  *
  * Deliberately asynchronous: it does not change the caller's return contract
  * or add latency to the send. The truth lands in the bus trace within seconds,
@@ -589,18 +590,76 @@ function fingerprintSecret(value) {
 // durable direction is worse than an honest unknown, so the window now spans
 // a realistic turn.
 const SUBMIT_VERIFY_SCHEDULE_MS = [4_000, 15_000, 45_000, 120_000, 300_000];
-const SUBMIT_VERIFY_NUDGE_AT_ATTEMPT = 3; // ~64s in: composer plausibly stuck
+const SUBMIT_OUTPUT_SETTLE_MS = 1_000;
+
+function readDaemonPaneActivityAt(daemonClient, paneId) {
+  const activity = daemonClient?.lastActivity;
+  if (!activity || typeof activity.get !== 'function') return 0;
+  const value = activity.get(String(paneId)) ?? activity.get(paneId);
+  const normalized = Number(value);
+  return Number.isFinite(normalized) && normalized > 0 ? normalized : 0;
+}
 
 /**
- * Write the resolved verification outcome back to the comms journal so the
- * TRACE and the LEDGER cannot disagree about one fact.
+ * Corroborate that a pane is alive after one accepted write without claiming
+ * exact-message consumption. A later agent response is the strongest signal;
+ * later PTY output is enough to rule out "the pane is stuck" after the input
+ * echo settle window. Neither signal is promoted to a prompt receipt.
+ */
+function findPaneSubmitCorroboration({
+  paneId,
+  daemonClient,
+  startedAtMs,
+  baselineOutputAtMs,
+}) {
+  const targetRole = resolveCanonicalRoleForPaneId(paneId);
+  if (targetRole) {
+    try {
+      const rows = queryCommsJournalEntries({
+        senderRole: targetRole,
+        sinceMs: startedAtMs,
+        order: 'asc',
+        limit: 1,
+      }) || [];
+      const response = Array.isArray(rows) ? rows[0] : null;
+      if (response) {
+        return {
+          kind: 'target_activity',
+          reason: 'target_agent_output_after_delivery',
+          rowId: response.rowId || null,
+          messageId: response.messageId || null,
+        };
+      }
+    } catch (error) {
+      log.warn('PaneDelivery', `submit activity journal check failed for pane ${paneId}: ${error.message}`);
+    }
+  }
+
+  const outputAtMs = readDaemonPaneActivityAt(daemonClient, paneId);
+  const outputFloorMs = Math.max(
+    Number(baselineOutputAtMs) || 0,
+    (Number(startedAtMs) || 0) + SUBMIT_OUTPUT_SETTLE_MS
+  );
+  if (outputAtMs > outputFloorMs) {
+    return {
+      kind: 'pane_output',
+      reason: 'pane_output_after_delivery',
+      outputAtMs,
+    };
+  }
+  return null;
+}
+
+/**
+ * Write an exact prompt receipt back to the comms journal so the trace and
+ * ledger cannot disagree about that proven fact.
  *
  * The 77% figure is read from comms_journal.ack_status - that column is the
- * system of record and what any future audit queries. Verification that lands
- * only in the bus trace can never move the metric, so we would have fixed
- * delivery while permanently keeping the evidence that said we had not.
+ * system of record and what any future audit queries. Corroborating activity
+ * deliberately never reaches this function because "pane alive" is not the
+ * same claim as "this exact prompt was submitted."
  */
-function writeSubmitVerdictToJournal({ receiptId, paneId, verified, reason }) {
+function writeVerifiedSubmitReceiptToJournal({ receiptId, paneId, reason }) {
   if (!receiptId) return;
   try {
     const existing = queryCommsJournalEntries({ messageId: receiptId, limit: 1 }) || [];
@@ -609,10 +668,10 @@ function writeSubmitVerdictToJournal({ receiptId, paneId, verified, reason }) {
     appendCommsJournalEntry({
       ...row,
       messageId: receiptId,
-      ackStatus: verified ? 'prompt_submitted.receipt_verified' : 'submit_unverified',
+      ackStatus: 'prompt_submitted.receipt_verified',
       metadata: {
         ...((row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)) ? row.metadata : {}),
-        submitVerification: { verified, reason, paneId, resolvedAtMs: Date.now() },
+        submitVerification: { verified: true, reason, paneId, resolvedAtMs: Date.now() },
       },
     });
   } catch (error) {
@@ -625,11 +684,12 @@ function scheduleReceiptVerifiedSubmit({
   paneId,
   paneRuntime,
   daemonClient,
-  kernelMeta,
-  source,
   schedule = SUBMIT_VERIFY_SCHEDULE_MS,
 }) {
   if (!receiptId || !daemonClient) return;
+  const startedAtMs = Date.now();
+  const baselineOutputAtMs = readDaemonPaneActivityAt(daemonClient, paneId);
+  let corroboration = null;
   const verify = (attempt) => {
     try {
       const receipt = getModelPromptReceipt(receiptId);
@@ -647,38 +707,56 @@ function scheduleReceiptVerifiedSubmit({
           paneRuntime,
           reason,
         });
-        writeSubmitVerdictToJournal({ receiptId, paneId, verified: true, reason });
+        writeVerifiedSubmitReceiptToJournal({ receiptId, paneId, reason });
         return;
       }
-      // Composer plausibly stuck rather than merely busy: one corrective Enter.
-      if (attempt === SUBMIT_VERIFY_NUDGE_AT_ATTEMPT) {
-        daemonClient.write(paneId, '\r', {
-          ...kernelMeta,
-          eventId: `${paneId}-${Date.now()}-submit-retry`,
-          parentEventId: kernelMeta?.eventId,
-          causationId: kernelMeta?.eventId,
-          source: `${source}.submit-retry`,
-        });
-      }
+      corroboration = corroboration || findPaneSubmitCorroboration({
+        paneId,
+        daemonClient,
+        startedAtMs,
+        baselineOutputAtMs,
+      });
       if (attempt < schedule.length) {
         const next = setTimeout(() => verify(attempt + 1), schedule[attempt]);
         if (typeof next.unref === 'function') next.unref();
         return;
       }
-      log.error('PaneDelivery', `SUBMIT UNVERIFIED for pane ${paneId} (${receiptId}) - no prompt_submit receipt within ${schedule[schedule.length - 1] / 1000}s; the message may be sitting in the composer`);
+      if (corroboration) {
+        log.info(
+          'PaneDelivery',
+          `submit receipt absent for pane ${paneId} (${receiptId}), but ${corroboration.reason} disproves a stuck-pane verdict`
+        );
+        appendBusTraceEvent({
+          eventType: 'pane_submit_not_stuck_corroborated',
+          messageId: receiptId,
+          deliveryId: null,
+          paneId,
+          success: true,
+          verified: false,
+          status: 'submit_not_stuck.corroborated',
+          mode: 'daemon-pty',
+          paneRuntime,
+          reason: corroboration.reason,
+          corroboration,
+        });
+        return;
+      }
+      log.warn(
+        'PaneDelivery',
+        `SUBMIT OBSERVATION PENDING for pane ${paneId} (${receiptId}) - no prompt_submit receipt or later pane activity; no corrective Enter sent`
+      );
       appendBusTraceEvent({
-        eventType: 'pane_submit_unverified',
+        eventType: 'pane_submit_observation_pending',
         messageId: receiptId,
         deliveryId: null,
         paneId,
-        success: false,
+        success: true,
         verified: false,
-        status: 'submit_unverified',
+        status: 'submit_observation_pending',
         mode: 'daemon-pty',
         paneRuntime,
-        reason: 'no_receipt_within_full_window',
+        reason: 'no_receipt_or_corroborating_activity_within_full_window',
       });
-      writeSubmitVerdictToJournal({ receiptId, paneId, verified: false, reason: 'no_receipt_within_full_window' });
     } catch (error) {
       log.warn('PaneDelivery', `receipt verification failed for ${receiptId}: ${error.message}`);
     }
@@ -8566,60 +8644,10 @@ class SquidRunApp {
             deliveryId: traceId || messageId,
             messageId: messageId || traceId,
           });
-          // v1.2 RECEIPT-VERIFIED SUBMIT replacing the blind retap: read the
-          // receipt store (hook-recorded prompt_submit events), never PTY
-          // screens. No receipt after the settle -> ONE retry Enter -> still
-          // no receipt -> LOUD (the trace event is the alertable signal).
-          const receiptId = messageId || traceId || null;
-          if (receiptId) {
-            const verifyPointerSubmit = (attempt) => {
-              try {
-                const receipt = getModelPromptReceipt(receiptId);
-                if (receipt) {
-                  appendBusTraceEvent({
-                    eventType: 'pane_direct_pty_pointer_submit_verified',
-                    messageId: receiptId,
-                    deliveryId: null,
-                    paneId: normalizedPaneId,
-                    success: true,
-                    verified: true,
-                    status: 'pointer_submit_receipt_verified',
-                    mode: 'daemon-pty',
-                    paneRuntime,
-                    reason: `receipt_${receipt.semanticEvent || 'prompt_submit'}_attempt_${attempt}`,
-                  });
-                  return;
-                }
-                if (attempt === 1) {
-                  daemonClient.write(normalizedPaneId, '\r', {
-                    ...kernelMeta,
-                    eventId: `${normalizedPaneId}-${Date.now()}-ptr-retry`,
-                    parentEventId: kernelMeta.eventId,
-                    causationId: kernelMeta.eventId,
-                    source: 'squidrun-app.direct-pane-delivery.pointer-enter-retry',
-                  });
-                  setTimeout(() => verifyPointerSubmit(2), 4000);
-                  return;
-                }
-                log.error('PaneDelivery', `POINTER SUBMIT UNVERIFIED for pane ${normalizedPaneId} (${receiptId}) - no prompt_submit receipt after retry; the message may be sitting in the composer`);
-                appendBusTraceEvent({
-                  eventType: 'pane_direct_pty_pointer_submit_unverified',
-                  messageId: receiptId,
-                  deliveryId: null,
-                  paneId: normalizedPaneId,
-                  success: false,
-                  verified: false,
-                  status: 'pointer_submit_unverified',
-                  mode: 'daemon-pty',
-                  paneRuntime,
-                  reason: 'no_receipt_after_retry',
-                });
-              } catch (err) {
-                log.warn('PaneDelivery', `Pointer submit verify error (${receiptId}): ${err.message}`);
-              }
-            };
-            setTimeout(() => verifyPointerSubmit(1), 4000);
-          }
+          // Pointer and normal payloads share the one verifier scheduled
+          // after the actual Enter below. The retired pointer-only verifier
+          // raced that path, pressed Enter from missing proof alone, and
+          // emitted false stuck-pane alarms for healthy Codex panes.
         } else {
         // Materialization itself failed - the old skip, but LOUD: this is a
         // user-payload loss and must never again pass silently.
@@ -8718,17 +8746,15 @@ class SquidRunApp {
         mode: 'daemon-pty',
       });
 
-      // S483: ask for the proof we already stamped. Every message carries a
-      // receipt marker (above); the hook records prompt_submit; this closes
-      // the loop for the NORMAL path, not just materialized pointers - which
-      // is why 77% of sends reported arrival as unknown.
+      // Ask for exact prompt proof when the runtime can produce it. If it
+      // cannot, later pane activity may disprove "stuck" but is never
+      // promoted into an exact-message receipt. Missing proof never presses
+      // Enter or emits a false failure verdict.
       scheduleReceiptVerifiedSubmit({
         receiptId: messageId || traceId || null,
         paneId: normalizedPaneId,
         paneRuntime: this.isCodexPaneCommand(normalizedPaneId) ? 'codex' : 'non-codex',
         daemonClient,
-        kernelMeta,
-        source: 'squidrun-app.direct-pane-delivery',
       });
 
       return {
@@ -16249,3 +16275,5 @@ module.exports.isCurrentSessionComputerUseVerifierTerminal =
   isCurrentSessionComputerUseVerifierTerminal;
 // Testable helper (S464 telegram-loss fix): oversized-payload materializer.
 module.exports.materializeOversizedPanePayload = materializeOversizedPanePayload;
+module.exports.findPaneSubmitCorroboration = findPaneSubmitCorroboration;
+module.exports.scheduleReceiptVerifiedSubmit = scheduleReceiptVerifiedSubmit;

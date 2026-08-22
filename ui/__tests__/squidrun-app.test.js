@@ -474,7 +474,10 @@ jest.mock('../modules/local-model-capabilities', () => ({
 
 // Now require the module under test
 const { spawn } = require('child_process');
-const { queryCommsJournalEntries } = require('../modules/main/comms-journal');
+const {
+  appendCommsJournalEntry,
+  queryCommsJournalEntries,
+} = require('../modules/main/comms-journal');
 const {
   openTelegramReplyObligation,
   queryTelegramReplyObligations,
@@ -5846,6 +5849,152 @@ describe('SquidRunApp', () => {
   describe('deliverPaneMessageViaDaemonPty', () => {
     const withPromptReceipt = (message, id) => `${message}\n[SQUIDRUN_RECEIPT event=prompt_submit deliveryId=${id} messageId=${id}]`;
 
+    it('never presses Enter or writes a false failure from a missing receipt alone', async () => {
+      jest.useFakeTimers();
+      try {
+        const receipts = require('../modules/model-prompt-receipt');
+        const log = require('../modules/logger');
+        receipts.getModelPromptReceipt.mockReturnValue(null);
+        queryCommsJournalEntries.mockReturnValue([]);
+        const daemonClient = {
+          write: jest.fn(() => true),
+          lastActivity: new Map([['2', 0]]),
+        };
+
+        SquidRunApp.scheduleReceiptVerifiedSubmit({
+          receiptId: 'missing-receipt-1',
+          paneId: '2',
+          paneRuntime: 'codex',
+          daemonClient,
+          schedule: [10, 20],
+        });
+        await jest.advanceTimersByTimeAsync(30);
+
+        expect(daemonClient.write).not.toHaveBeenCalled();
+        expect(log.error).not.toHaveBeenCalledWith(
+          'PaneDelivery',
+          expect.stringContaining('SUBMIT UNVERIFIED')
+        );
+        expect(log.warn).toHaveBeenCalledWith(
+          'PaneDelivery',
+          expect.stringContaining('SUBMIT OBSERVATION PENDING')
+        );
+        expect(appendCommsJournalEntry).not.toHaveBeenCalledWith(
+          expect.objectContaining({ ackStatus: 'submit_unverified' })
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('uses a later target response to disprove stuck without inventing an exact receipt', async () => {
+      jest.useFakeTimers();
+      try {
+        const receipts = require('../modules/model-prompt-receipt');
+        const log = require('../modules/logger');
+        receipts.getModelPromptReceipt.mockReturnValue(null);
+        queryCommsJournalEntries.mockImplementation((filters = {}) => (
+          filters.senderRole === 'oracle'
+            ? [{ rowId: 44, messageId: 'oracle-replied' }]
+            : []
+        ));
+        const daemonClient = {
+          write: jest.fn(() => true),
+          lastActivity: new Map([['3', 0]]),
+        };
+
+        SquidRunApp.scheduleReceiptVerifiedSubmit({
+          receiptId: 'response-corroboration-1',
+          paneId: '3',
+          paneRuntime: 'codex',
+          daemonClient,
+          schedule: [10, 20],
+        });
+        await jest.advanceTimersByTimeAsync(30);
+
+        expect(daemonClient.write).not.toHaveBeenCalled();
+        expect(log.info).toHaveBeenCalledWith(
+          'PaneDelivery',
+          expect.stringContaining('target_agent_output_after_delivery')
+        );
+        expect(appendCommsJournalEntry).not.toHaveBeenCalledWith(
+          expect.objectContaining({ ackStatus: 'prompt_submitted.receipt_verified' })
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('uses later PTY output to disprove stuck without inventing an exact receipt', async () => {
+      jest.useFakeTimers();
+      try {
+        jest.setSystemTime(1_000_000);
+        const receipts = require('../modules/model-prompt-receipt');
+        const log = require('../modules/logger');
+        receipts.getModelPromptReceipt.mockReturnValue(null);
+        queryCommsJournalEntries.mockReturnValue([]);
+        const daemonClient = {
+          write: jest.fn(() => true),
+          lastActivity: new Map([['2', 999_000]]),
+        };
+
+        SquidRunApp.scheduleReceiptVerifiedSubmit({
+          receiptId: 'output-corroboration-1',
+          paneId: '2',
+          paneRuntime: 'codex',
+          daemonClient,
+          schedule: [10, 20],
+        });
+        daemonClient.lastActivity.set('2', 1_002_000);
+        await jest.advanceTimersByTimeAsync(30);
+
+        expect(daemonClient.write).not.toHaveBeenCalled();
+        expect(log.info).toHaveBeenCalledWith(
+          'PaneDelivery',
+          expect.stringContaining('pane_output_after_delivery')
+        );
+        expect(appendCommsJournalEntry).not.toHaveBeenCalledWith(
+          expect.objectContaining({ ackStatus: 'prompt_submitted.receipt_verified' })
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps an actual prompt receipt as exact verified proof', async () => {
+      jest.useFakeTimers();
+      try {
+        const receipts = require('../modules/model-prompt-receipt');
+        receipts.getModelPromptReceipt.mockReturnValue({ semanticEvent: 'prompt_submit' });
+        queryCommsJournalEntries.mockImplementation((filters = {}) => (
+          filters.messageId === 'exact-receipt-1'
+            ? [{ messageId: 'exact-receipt-1', metadata: {} }]
+            : []
+        ));
+        const daemonClient = {
+          write: jest.fn(() => true),
+          lastActivity: new Map([['2', 0]]),
+        };
+
+        SquidRunApp.scheduleReceiptVerifiedSubmit({
+          receiptId: 'exact-receipt-1',
+          paneId: '2',
+          paneRuntime: 'codex',
+          daemonClient,
+          schedule: [10, 20],
+        });
+        await jest.advanceTimersByTimeAsync(10);
+
+        expect(daemonClient.write).not.toHaveBeenCalled();
+        expect(appendCommsJournalEntry).toHaveBeenCalledWith(expect.objectContaining({
+          messageId: 'exact-receipt-1',
+          ackStatus: 'prompt_submitted.receipt_verified',
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('writes Codex paste terminator before Enter on the direct daemon route', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.ctx.currentSettings = {
@@ -6000,6 +6149,41 @@ describe('SquidRunApp', () => {
         mode: 'daemon-pty',
         paneId: '1',
       }));
+    });
+
+    it('uses exactly one Enter for an oversized Codex pointer even when no receipt appears', async () => {
+      jest.useFakeTimers();
+      try {
+        const receipts = require('../modules/model-prompt-receipt');
+        receipts.getModelPromptReceipt.mockReturnValue(null);
+        queryCommsJournalEntries.mockReturnValue([]);
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.ctx.currentSettings = {
+          paneCommands: {
+            1: 'codex --yolo',
+          },
+        };
+        app.ctx.daemonClient = {
+          connected: true,
+          write: jest.fn(() => true),
+          lastActivity: new Map([['1', 0]]),
+        };
+
+        const pending = app.deliverPaneMessageViaDaemonPty({
+          paneId: '1',
+          message: 'x'.repeat(256),
+          messageId: 'direct-codex-long-one-enter',
+        });
+        await jest.advanceTimersByTimeAsync(250);
+        await pending;
+        await jest.advanceTimersByTimeAsync(10_000);
+
+        const enterWrites = app.ctx.daemonClient.write.mock.calls
+          .filter((call) => call[1] === '\r');
+        expect(enterWrites).toHaveLength(1);
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('materializes oversized Claude payloads to a marked pointer and SUBMITS (v1.1/v1.2)', async () => {
