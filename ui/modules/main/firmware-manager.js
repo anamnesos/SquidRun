@@ -187,7 +187,7 @@ class FirmwareManager {
   }
 
   isEnabled() {
-    return this.ctx?.currentSettings?.firmwareInjectionEnabled === true;
+    return this.ctx?.currentSettings?.operatingMode === 'project';
   }
 
   getFirmwareRoleKey(paneId) {

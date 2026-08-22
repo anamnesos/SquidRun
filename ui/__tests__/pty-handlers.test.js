@@ -839,9 +839,9 @@ describe('PTY Handlers', () => {
       );
     });
 
-    test('sets GEMINI_SYSTEM_MD env for gemini panes when firmware injection is enabled', async () => {
+    test('sets GEMINI_SYSTEM_MD env for gemini panes in project mode', async () => {
       ctx.daemonClient.connected = true;
-      ctx.currentSettings.firmwareInjectionEnabled = true;
+      ctx.currentSettings.operatingMode = 'project';
       ctx.currentSettings.paneCommands = { '3': 'gemini --yolo' };
       deps.firmwareManager = {
         ensureFirmwareForPane: jest.fn(() => ({ ok: true, firmwarePath: '/tmp/fw/oracle.md' })),
@@ -1810,9 +1810,9 @@ describe('PTY Handlers', () => {
       expect(result.command).toMatch(/^claude --dangerously-skip-permissions --session-id [0-9a-f-]{36}$/);
     });
 
-    test('adds --system-prompt-file for claude when firmware injection is enabled', async () => {
+    test('adds --system-prompt-file for claude in project mode', async () => {
       ctx.daemonClient.connected = true;
-      ctx.currentSettings.firmwareInjectionEnabled = true;
+      ctx.currentSettings.operatingMode = 'project';
       ctx.currentSettings.paneCommands = { '1': 'claude' };
       deps.firmwareManager = {
         ensureFirmwareForPane: jest.fn(() => ({ ok: true, firmwarePath: '/tmp/fw/architect.md' })),
@@ -1825,9 +1825,9 @@ describe('PTY Handlers', () => {
       expect(result.command).toContain('--dangerously-skip-permissions');
     });
 
-    test('writes Codex override when firmware injection is enabled', async () => {
+    test('writes Codex override in project mode', async () => {
       ctx.daemonClient.connected = true;
-      ctx.currentSettings.firmwareInjectionEnabled = true;
+      ctx.currentSettings.operatingMode = 'project';
       ctx.currentSettings.paneCommands = { '2': 'codex' };
       deps.firmwareManager = {
         prepareCodexProjectFirmwareForPane: jest.fn(() => ({ ok: true, projectConfigPath: '/tmp/project/.codex/config.toml' })),

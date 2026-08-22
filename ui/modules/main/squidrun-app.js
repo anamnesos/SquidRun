@@ -2237,8 +2237,7 @@ class SquidRunApp {
     if (settings.autoSpawn !== false) features.push('auto-spawn');
     if (settings.autonomyConsentGiven === true) features.push('autonomy-consent');
     if (settings.allowAllPermissions === true) features.push('autonomy-enabled');
-    if (settings.mcpAutoConfig === true) features.push('mcp-autoconfig');
-    if (settings.firmwareInjectionEnabled === true) features.push('firmware-injection');
+    if (settings.operatingMode === 'project') features.push('firmware-injection');
     return features;
   }
 
@@ -2248,7 +2247,6 @@ class SquidRunApp {
     const userName = String(
       payload.user_name
       || payload.userName
-      || this.ctx?.currentSettings?.userName
       || ''
     ).trim();
     const state = {
@@ -6198,8 +6196,16 @@ class SquidRunApp {
       width: 1400,
       height: 800,
       icon: path.join(__dirname, '..', '..', 'assets', process.platform === 'win32' ? 'squidrun-favicon.ico' : 'squidrun-favicon-256.png'),
-      backgroundColor: '#101523',
+      backgroundColor: '#0c1014',
       autoHideMenuBar: true,
+      ...((process.platform === 'win32' || process.platform === 'linux') ? {
+        titleBarStyle: 'hidden',
+        titleBarOverlay: {
+          color: '#0c1014',
+          symbolColor: '#8fa1b3',
+          height: 32,
+        },
+      } : {}),
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,

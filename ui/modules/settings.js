@@ -349,17 +349,34 @@ function setupSettings() {
   // Settings button toggle
   const settingsBtn = document.getElementById('settingsBtn');
   const settingsPanel = document.getElementById('settingsPanel');
+  const settingsCloseBtn = document.getElementById('settingsCloseBtn');
+
+  const setSettingsOpen = (open) => {
+    if (!settingsPanel) return;
+    settingsPanel.classList.toggle('open', Boolean(open));
+    settingsBtn?.classList.toggle('active', Boolean(open));
+  };
 
   if (settingsBtn && settingsPanel) {
     settingsBtn.addEventListener('click', () => {
-      settingsPanel.classList.toggle('open');
-      settingsBtn.classList.toggle('active');
+      setSettingsOpen(!settingsPanel.classList.contains('open'));
       if (settingsPanel.classList.contains('open')) {
-        refreshPairingState();
-        refreshBridgeDevices({ refresh: true });
+        if (document.getElementById('pairingStatus')) refreshPairingState();
+        if (document.getElementById('pairedDevicesTableBody')) refreshBridgeDevices({ refresh: true });
       }
     });
+    settingsPanel.addEventListener('click', (event) => {
+      if (event.target === settingsPanel) setSettingsOpen(false);
+    });
   }
+  settingsCloseBtn?.addEventListener('click', () => setSettingsOpen(false));
+
+  const devicePairingDetails = document.getElementById('devicePairingDetails');
+  devicePairingDetails?.addEventListener('toggle', () => {
+    if (!devicePairingDetails.open) return;
+    refreshPairingState();
+    refreshBridgeDevices({ refresh: true });
+  });
 
   // Toggle switches
   document.querySelectorAll('.toggle').forEach(toggle => {
@@ -564,8 +581,8 @@ function setupSettings() {
 
   // Load settings
   loadSettings();
-  refreshPairingState();
-  refreshBridgeDevices({ refresh: false });
+  if (document.getElementById('pairingStatus')) refreshPairingState();
+  if (document.getElementById('pairedDevicesTableBody')) refreshBridgeDevices({ refresh: false });
 }
 
 // Check if should auto-spawn agents

@@ -437,10 +437,10 @@ describe('SettingsManager packaged persistence defaults', () => {
     expect(settingsWrite).toBeDefined();
     expect(settingsWrite[0]).toBe(`${manager.settingsPath}.tmp`);
     const persisted = JSON.parse(settingsWrite[1]);
-    expect(persisted.userName).toBe('sideprofile');
+    expect(persisted.userName).toBeUndefined();
     expect(persisted.autonomyConsentGiven).toBe(true);
     expect(persisted.paneCommands['3']).toBe('codex');
-    expect(loaded.userName).toBe('sideprofile');
+    expect(loaded.userName).toBeUndefined();
     expect(loaded.paneProjects['1']).toBe('D:\\SquidRun\\sideprofile\\workspace');
   });
 
@@ -486,7 +486,7 @@ describe('SettingsManager packaged persistence defaults', () => {
     const settingsWrite = fs.writeFileSync.mock.calls.find((call) => String(call[0]).endsWith('settings.json.tmp'));
     expect(settingsWrite).toBeDefined();
     const persisted = JSON.parse(settingsWrite[1]);
-    expect(persisted.userName).toBe('sideprofile');
+    expect(persisted.userName).toBeUndefined();
     expect(persisted.paneCommands['3']).toBe('codex');
     expect(loaded.autonomyConsentGiven).toBe(true);
   });
@@ -525,7 +525,7 @@ describe('SettingsManager packaged persistence defaults', () => {
       'utf-8'
     );
     expect(loaded.paneCommands['2']).toBe('claude');
-    expect(loaded.userName).toBe('');
+    expect(loaded.userName).toBeUndefined();
   });
 
   test('saveSettings logs detailed diagnostics when packaged write fails', () => {

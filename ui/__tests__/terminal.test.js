@@ -2619,26 +2619,26 @@ describe('terminal.js module', () => {
       jest.useFakeTimers();
     });
 
-    test('permanently disarms cold-spawn recovery before forwarding direct terminal input', async () => {
+    test.each(['2', '3'])('pane %s forwards direct terminal input into its own PTY', async (paneId) => {
       const mockContainer = {
         addEventListener: jest.fn(),
       };
       mockDocument.getElementById.mockReturnValue(mockContainer);
       mockSettings.getSettings.mockReturnValue({
-        paneCommands: { '3': 'codex' },
+        paneCommands: { [paneId]: 'codex' },
       });
-      terminal.registerCodexPane('3');
+      terminal.registerCodexPane(paneId);
 
-      await terminal.initTerminal('3', { spawnCommandOnCreate: true });
+      await terminal.initTerminal(paneId, { spawnCommandOnCreate: true });
 
       const controller = terminal._internals.coldSpawnBlankRecoveryController;
-      expect(terminal._internals.armColdSpawnBlankRecovery('3', {
+      expect(terminal._internals.armColdSpawnBlankRecovery(paneId, {
         source: 'test-user-input',
         startedAtMs: Date.now(),
       })).toBe(true);
-      const xterm = terminal.terminals.get('3');
+      const xterm = terminal.terminals.get(paneId);
       const inputHandler = xterm.onData.mock.calls.at(-1)?.[0];
-      expect(controller.getState('3')).toEqual(expect.objectContaining({
+      expect(controller.getState(paneId)).toEqual(expect.objectContaining({
         finished: false,
       }));
       expect(typeof inputHandler).toBe('function');
@@ -2646,11 +2646,11 @@ describe('terminal.js module', () => {
       inputHandler('draft command');
       await Promise.resolve();
 
-      expect(controller.getState('3')).toEqual(expect.objectContaining({
+      expect(controller.getState(paneId)).toEqual(expect.objectContaining({
         finished: true,
         outcome: 'disarmed_user_input',
       }));
-      expect(mockSquidRun.pty.write).toHaveBeenCalledWith('3', 'draft command');
+      expect(mockSquidRun.pty.write).toHaveBeenCalledWith(paneId, 'draft command');
     });
 
     test('permanently disarms cold-spawn recovery before direct clipboard paste', async () => {

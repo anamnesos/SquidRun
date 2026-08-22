@@ -644,7 +644,7 @@ function registerPtyHandlers(ctx, deps = {}) {
       return null;
     }
   };
-  const isFirmwareEnabled = () => ctx?.currentSettings?.firmwareInjectionEnabled === true;
+  const isFirmwareEnabled = () => ctx?.currentSettings?.operatingMode === 'project';
   const getInstalledPaneDataRoot = () => {
     const deployment = getInstalledDeployment();
     const dataRoot = toNonEmptyString(deployment?.dataRoot);

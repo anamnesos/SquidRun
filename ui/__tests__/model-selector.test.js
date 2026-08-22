@@ -26,7 +26,8 @@ jest.mock('../modules/renderer-ipc-registry', () => ({
   registerScopedIpcListener: jest.fn(),
 }));
 
-const { _internals } = require('../modules/model-selector');
+const { invokeBridge } = require('../modules/renderer-bridge');
+const { _internals, setupModelSelectorListeners } = require('../modules/model-selector');
 
 describe('model-selector owner assertions', () => {
   afterEach(() => {
@@ -149,5 +150,37 @@ describe('model-selector owner assertions', () => {
       selectorValue: 'claude',
       claudeModel: '',
     });
+  });
+
+  test('delegated menu selectors switch both Rook and Vera through the real bridge path', async () => {
+    jest.useFakeTimers();
+    const listeners = {};
+    global.document = {
+      body: { dataset: { windowKey: 'main', profileName: 'main', sessionScopeId: 'app-session-526' } },
+      addEventListener: jest.fn((type, listener) => { listeners[type] = listener; }),
+    };
+    invokeBridge.mockResolvedValue({ success: true });
+    setupModelSelectorListeners();
+    expect(typeof listeners.change).toBe('function');
+
+    for (const paneId of ['2', '3']) {
+      const select = {
+        value: 'codex',
+        dataset: { paneId, previousValue: 'claude' },
+        classList: { contains: (name) => name === 'model-selector' },
+        selectedOptions: [{ textContent: 'Codex', dataset: {} }],
+        disabled: false,
+        isConnected: false,
+      };
+      await listeners.change({ target: select });
+      expect(invokeBridge).toHaveBeenCalledWith('switch-pane-model', {
+        paneId,
+        model: 'codex',
+      });
+      expect(select.dataset.previousValue).toBe('codex');
+    }
+
+    jest.clearAllTimers();
+    jest.useRealTimers();
   });
 });

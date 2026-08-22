@@ -123,17 +123,17 @@ describe('Settings Handlers', () => {
 
   describe('set-setting', () => {
     test('updates setting and saves', async () => {
-      deps.loadSettings.mockReturnValue({ notifications: false });
+      deps.loadSettings.mockReturnValue({ voiceInputEnabled: false });
 
-      const result = await harness.invoke('set-setting', 'notifications', true);
+      const result = await harness.invoke('set-setting', 'voiceInputEnabled', true);
 
       expect(deps.loadSettings).toHaveBeenCalled();
-      expect(deps.saveSettings).toHaveBeenCalledWith({ notifications: true });
-      expect(result).toEqual({ notifications: true });
+      expect(deps.saveSettings).toHaveBeenCalledWith({ voiceInputEnabled: true });
+      expect(result).toEqual({ voiceInputEnabled: true });
     });
 
     test('rejects unknown setting key', async () => {
-      deps.loadSettings.mockReturnValue({ notifications: false });
+      deps.loadSettings.mockReturnValue({ voiceInputEnabled: false });
 
       const result = await harness.invoke('set-setting', 'newKey', 'newValue');
 
@@ -168,12 +168,12 @@ describe('Settings Handlers', () => {
     });
 
     test('overwrites existing setting', async () => {
-      deps.loadSettings.mockReturnValue({ notifications: false });
+      deps.loadSettings.mockReturnValue({ voiceInputEnabled: false });
 
-      const result = await harness.invoke('set-setting', 'notifications', true);
+      const result = await harness.invoke('set-setting', 'voiceInputEnabled', true);
 
-      expect(deps.saveSettings).toHaveBeenCalledWith({ notifications: true });
-      expect(result.notifications).toBe(true);
+      expect(deps.saveSettings).toHaveBeenCalledWith({ voiceInputEnabled: true });
+      expect(result.voiceInputEnabled).toBe(true);
     });
 
     test('allows pane failure alert setting updates', async () => {
@@ -228,7 +228,6 @@ describe('Settings Handlers', () => {
       deps.firmwareManager = firmwareManager;
       deps.loadSettings.mockReturnValue({
         operatingMode: 'developer',
-        firmwareInjectionEnabled: false,
         paneProjects: { '1': previousProject, '2': null, '3': null },
       });
 
@@ -259,7 +258,6 @@ describe('Settings Handlers', () => {
       deps.firmwareManager = firmwareManager;
       deps.loadSettings.mockReturnValue({
         operatingMode: 'project',
-        firmwareInjectionEnabled: true,
         paneProjects: { '1': previousProject, '2': null, '3': null },
       });
 
@@ -288,7 +286,6 @@ describe('Settings Handlers', () => {
 
       expect(result).toEqual({
         operatingMode: 'developer',
-        firmwareInjectionEnabled: false,
       });
       expect(ctx.watcher.readState).toHaveBeenCalled();
       expect(ctx.watcher.writeState).toHaveBeenCalledWith({
@@ -300,7 +297,6 @@ describe('Settings Handlers', () => {
     test('emits project-changed null when switching operating mode away from project', async () => {
       deps.loadSettings.mockReturnValue({
         operatingMode: 'project',
-        firmwareInjectionEnabled: true,
       });
 
       await harness.invoke('set-setting', 'operatingMode', 'developer');
@@ -345,7 +341,6 @@ describe('Settings Handlers', () => {
       deps.firmwareManager = firmwareManager;
       deps.loadSettings.mockReturnValue({
         operatingMode: 'project',
-        firmwareInjectionEnabled: true,
       });
 
       const result = await harness.invoke('preflight-scan', targetDir);
@@ -363,7 +358,7 @@ describe('Settings Handlers', () => {
         runPreflight: jest.fn(),
       };
       deps.firmwareManager = firmwareManager;
-      deps.loadSettings.mockReturnValue({ operatingMode: 'project', firmwareInjectionEnabled: true });
+      deps.loadSettings.mockReturnValue({ operatingMode: 'project' });
 
       const missingDir = path.join(os.tmpdir(), 'squidrun-does-not-exist', String(Date.now()));
       const result = await harness.invoke('preflight-scan', missingDir);

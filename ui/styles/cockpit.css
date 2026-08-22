@@ -1,0 +1,554 @@
+/* cockpit.css — the calm three-pane shell James approved in session 526. */
+
+:root {
+  color-scheme: dark;
+  --cockpit-ink: #0c1014;
+  --cockpit-panel: #12181f;
+  --cockpit-panel-2: #151d25;
+  --cockpit-line: #1f2933;
+  --cockpit-line-soft: #19222b;
+  --cockpit-text: #e8edf2;
+  --cockpit-dim: #8fa1b3;
+  --cockpit-dimmer: #62717f;
+  --cockpit-mira: #38d6f0;
+  --cockpit-rook: #7ee787;
+  --cockpit-vera: #c792ea;
+  --cockpit-green: #54d58c;
+  --cockpit-amber: #eab66f;
+  --cockpit-danger: #ef8d8d;
+}
+
+body {
+  background:
+    radial-gradient(circle at 50% -14%, rgba(35, 71, 88, 0.16), transparent 44rem),
+    var(--cockpit-ink);
+  color: var(--cockpit-text);
+  letter-spacing: 0;
+}
+
+/* The header is also the native-window drag surface. Electron paints the
+   real Windows controls over its right edge; interactive children opt out. */
+.header {
+  min-height: 54px;
+  flex: 0 0 54px;
+  padding: 0 156px 0 16px;
+  border-bottom: 1px solid var(--cockpit-line-soft);
+  background: linear-gradient(to bottom, #141c24, #11181f);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  -webkit-app-region: drag;
+}
+
+.header button,
+.header a,
+.header input,
+.header select,
+.header summary,
+.header [role="button"] {
+  -webkit-app-region: no-drag;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.header-brand-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+  background: var(--cockpit-green);
+  box-shadow: 0 0 12px rgba(84, 213, 140, 0.5);
+}
+
+.header-brand-name { color: var(--cockpit-text); }
+.header-session-badge { display: none !important; }
+
+.dry-run-indicator {
+  margin-left: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(234, 182, 111, 0.14);
+  color: var(--cockpit-amber);
+  font-size: 10px;
+  animation: none;
+}
+
+.header-actions {
+  margin-left: auto;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workspace-context,
+.header-chip,
+.header-power {
+  min-height: 31px;
+  border: 1px solid var(--cockpit-line);
+  border-radius: 8px;
+  background: #131b23;
+  color: var(--cockpit-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.workspace-context:hover,
+.header-chip:hover,
+.header-power:hover {
+  color: var(--cockpit-text);
+  border-color: #344554;
+  background: #17222c;
+}
+
+.workspace-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 250px;
+  padding: 5px 9px 5px 10px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.workspace-context:hover { border-color: var(--cockpit-line); }
+.workspace-context .project-path {
+  max-width: 170px;
+  overflow: hidden;
+  color: var(--cockpit-dimmer);
+  font-family: var(--font-system);
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-change {
+  color: var(--cockpit-dim);
+  border-bottom: 1px dotted #3a4a58;
+}
+
+.header-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+}
+
+.header-chip-primary {
+  color: var(--cockpit-text);
+  border-color: #2b3a48;
+  background: #17222c;
+}
+
+.header-chip .btn-icon { width: 14px; height: 14px; }
+
+.header-power {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  padding: 0;
+  color: var(--cockpit-dimmer);
+}
+
+.header-power:hover { color: var(--cockpit-danger); border-color: rgba(239, 141, 141, 0.38); }
+.header-power .btn-icon { width: 15px; height: 15px; }
+
+/* Project/timer/cost values remain live for code and diagnostics, but the old
+   duplicate status strip no longer takes space in the daily cockpit. */
+.state-bar { display: none !important; }
+
+.main-content { background: var(--cockpit-ink); }
+.pane-layout {
+  gap: 1px;
+  padding: 1px;
+  background: var(--cockpit-line-soft);
+}
+.side-panes-container { gap: 1px; }
+
+.pane {
+  border: 0;
+  border-radius: 0;
+  background: #0e141a;
+  box-shadow: none;
+  filter: none !important;
+}
+
+.pane[data-cli],
+.pane[data-cli].focused { border-color: transparent; }
+
+.pane-header,
+.pane[data-cli] .pane-header {
+  min-height: 38px;
+  padding: 8px 13px;
+  border: 0;
+  border-bottom: 1px solid var(--cockpit-line-soft);
+  background: #10171e;
+  box-shadow: none;
+  font-size: 12.5px;
+}
+
+.pane-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--cockpit-text) !important;
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.pane-rail {
+  width: 3px;
+  height: 15px;
+  flex: 0 0 3px;
+  border-radius: 2px;
+  background: var(--cockpit-mira);
+}
+.pane[data-pane-id="2"] .pane-rail { background: var(--cockpit-rook); }
+.pane[data-pane-id="3"] .pane-rail { background: var(--cockpit-vera); }
+
+.pane-role-label {
+  color: var(--cockpit-dimmer);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agent-badge {
+  width: 6px;
+  height: 6px;
+  margin: 0;
+}
+
+.pane-title .cli-badge,
+.pane-title .agent-task {
+  overflow: hidden;
+  max-width: 42%;
+  color: var(--cockpit-dimmer);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-title .cli-badge {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 9.5px;
+  box-shadow: none;
+}
+
+.pane-header-right { gap: 5px; }
+.agent-health {
+  min-width: 0;
+  color: var(--cockpit-dimmer);
+  font-size: 10px;
+}
+
+.pane-menu { position: relative; }
+.pane-menu > summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--cockpit-dimmer);
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 1px;
+  list-style: none;
+  user-select: none;
+}
+.pane-menu > summary::-webkit-details-marker { display: none; }
+.pane-menu > summary:hover,
+.pane-menu[open] > summary {
+  border-color: var(--cockpit-line);
+  background: var(--cockpit-panel-2);
+  color: var(--cockpit-text);
+}
+
+.pane-menu-panel {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 224px;
+  padding: 8px;
+  border: 1px solid #2a3742;
+  border-radius: 10px;
+  background: #131b23;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+}
+
+.pane-menu-action,
+.pane-menu-field {
+  width: 100%;
+  min-height: 31px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--cockpit-dim);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+.pane-menu-action {
+  display: flex;
+  align-items: center;
+  padding: 6px 9px;
+  cursor: pointer;
+}
+.pane-menu-action:hover { background: #18232d; color: var(--cockpit-text); }
+.pane-menu-field {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px;
+}
+.pane-menu .model-selector {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 7px;
+  border-color: var(--cockpit-line);
+  background: var(--cockpit-ink);
+  color: var(--cockpit-text);
+  font-size: 11px;
+}
+.pane-menu .pane-project { color: var(--cockpit-dim); }
+.pane-menu .pane-project.has-project::before { content: "Workspace · "; color: var(--cockpit-dimmer); }
+.pane-menu .lock-icon {
+  width: 100%;
+  height: 31px;
+  justify-content: flex-start;
+  padding: 6px 9px;
+  color: var(--cockpit-dim);
+}
+.pane-menu .lock-icon .pane-btn-icon { margin-right: 7px; }
+.pane-menu .pane-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pane-menu .pane-actions:empty { display: none; }
+.pane-menu .pane-actions .pane-action-btn,
+.pane-menu .pane-actions .pane-hide-btn,
+.pane-menu .pane-actions .expand-btn {
+  width: 100%;
+  min-height: 31px;
+  height: auto;
+  justify-content: flex-start;
+  padding: 6px 9px;
+  border: 0;
+  color: var(--cockpit-dim);
+}
+
+.pane-terminal { padding: 5px 7px; }
+.pane-terminal .xterm-selection div { background: rgba(56, 214, 240, 0.2) !important; }
+
+.command-bar {
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--cockpit-line-soft);
+  background: #10171e;
+  box-shadow: none;
+}
+.command-input {
+  min-height: 40px;
+  padding: 9px 12px;
+  border-color: #283541;
+  border-radius: 9px;
+  background: var(--cockpit-ink);
+  box-shadow: none;
+  color: var(--cockpit-text);
+  font-family: var(--font-system);
+  font-size: 13px;
+}
+.command-input:focus {
+  border-color: rgba(56, 214, 240, 0.48);
+  background: #0e151b;
+  box-shadow: 0 0 0 2px rgba(56, 214, 240, 0.08);
+}
+.command-bar .btn {
+  min-width: 40px;
+  height: 40px;
+  padding: 0;
+  border-color: #283541;
+  border-radius: 9px;
+  background: #151e26;
+  box-shadow: none;
+}
+.command-bar .btn:hover { transform: none; border-color: #3a4b5a; color: var(--cockpit-text); box-shadow: none; }
+
+.status-bar {
+  min-height: 24px;
+  padding: 3px 12px;
+  border-top: 1px solid var(--cockpit-line-soft);
+  background: #0f151b;
+  box-shadow: none;
+  color: var(--cockpit-dimmer);
+}
+.status-shortcuts { display: none; }
+
+/* A single preference sheet, not a control-room dashboard. */
+.settings-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: none;
+  max-height: none;
+  padding: 70px 24px 24px;
+  overflow: auto;
+  border: 0;
+  background: rgba(7, 10, 13, 0.78);
+  box-shadow: none;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: none;
+}
+.settings-panel.open { display: block; max-height: none; padding: 70px 24px 24px; }
+.settings-shell {
+  width: min(680px, 100%);
+  margin: 0 auto;
+  padding: 24px 26px;
+  gap: 18px;
+  border: 1px solid var(--cockpit-line);
+  border-radius: 14px;
+  background: var(--cockpit-panel);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.52);
+}
+.settings-header { flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.settings-eyebrow { margin-bottom: 5px; color: var(--cockpit-dimmer); }
+.settings-heading { color: var(--cockpit-text); font-size: 20px; }
+.settings-subtitle { margin-top: 5px; color: var(--cockpit-dim); font-size: 13px; line-height: 1.45; }
+.settings-close {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border: 1px solid var(--cockpit-line);
+  border-radius: 8px;
+  background: var(--cockpit-panel-2);
+  color: var(--cockpit-dim);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+.settings-close:hover { color: var(--cockpit-text); border-color: #344554; }
+.preferences-list { display: flex; flex-direction: column; }
+.preference-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 70px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--cockpit-line-soft);
+}
+.preference-row:last-child { border-bottom: 0; }
+.preference-row .setting-label { color: var(--cockpit-text); font-size: 14px; font-weight: 550; }
+.preference-row .setting-description { color: var(--cockpit-dim); font-size: 12.5px; }
+.toggle {
+  width: 40px;
+  height: 23px;
+  flex: 0 0 40px;
+  border: 1px solid #2a3742;
+  border-radius: 20px;
+  background: #202b36;
+}
+.toggle::after {
+  top: 2px;
+  left: 3px;
+  width: 17px;
+  height: 17px;
+  background: #6b7c8c;
+}
+.toggle.active { border-color: rgba(84, 213, 140, 0.45); background: rgba(84, 213, 140, 0.22); }
+.toggle.active::after { left: 18px; background: var(--cockpit-green); }
+
+.developer-settings {
+  margin-top: 4px;
+  border: 1px dashed var(--cockpit-line);
+  border-radius: 10px;
+  color: var(--cockpit-dimmer);
+}
+.developer-settings > summary { padding: 12px 14px; cursor: pointer; font-size: 12.5px; }
+.developer-settings[open] > summary { border-bottom: 1px solid var(--cockpit-line-soft); color: var(--cockpit-dim); }
+.developer-settings-copy { padding: 12px 14px 0; color: var(--cockpit-dimmer); font-size: 12px; }
+.developer-settings-actions { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px 14px; }
+.developer-subsection {
+  border: 1px solid var(--cockpit-line-soft);
+  border-radius: 8px;
+  background: rgba(9, 13, 17, 0.22);
+}
+.developer-subsection > summary {
+  padding: 9px 10px;
+  color: var(--cockpit-dim);
+  cursor: pointer;
+  font-size: 12px;
+}
+.developer-subsection[open] > summary { border-bottom: 1px solid var(--cockpit-line-soft); color: var(--cockpit-text); }
+.developer-subsection .developer-settings-copy { padding: 10px 10px 0; }
+.device-pairing-grid { display: flex; flex-direction: column; gap: 10px; padding: 10px; }
+.device-pairing-grid .device-card,
+.device-pairing-grid .device-list-wrap {
+  border-color: var(--cockpit-line);
+  background: var(--cockpit-ink);
+  box-shadow: none;
+}
+.device-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.device-list-heading > div { display: flex; flex-direction: column; gap: 3px; }
+.developer-action {
+  width: fit-content;
+  padding: 7px 10px;
+  border: 1px solid var(--cockpit-line);
+  border-radius: 7px;
+  background: var(--cockpit-panel-2);
+  color: var(--cockpit-dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+.developer-action:hover { color: var(--cockpit-text); border-color: #344554; }
+.developer-select-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--cockpit-dim); font-size: 12px; }
+.developer-select-row .settings-select { width: min(240px, 60%); border-color: var(--cockpit-line); background: var(--cockpit-ink); }
+.developer-row { min-height: 50px; padding: 8px 0; }
+.developer-row .setting-label { font-size: 12.5px; }
+
+.right-panel {
+  border-left-color: transparent;
+  background: var(--cockpit-panel);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.right-panel.open { border-left-color: var(--cockpit-line); box-shadow: -14px 0 38px rgba(0, 0, 0, 0.46); }
+
+@media (max-width: 920px) {
+  .header { padding-right: 146px; }
+  .workspace-context { max-width: 170px; }
+  .workspace-context .project-path { max-width: 90px; }
+  .header-chip .btn-icon { display: none; }
+}
+
+@media (max-width: 720px) {
+  .header { padding-left: 10px; }
+  .header-brand-name { display: none; }
+  .workspace-context { display: none; }
+  .header-chip { padding-inline: 8px; }
+  .pane-role-label { display: none; }
+  .pane-title .agent-task { display: none; }
+}

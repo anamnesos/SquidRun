@@ -2115,6 +2115,27 @@ describe('SquidRunApp', () => {
       expect(app.setupWindowListeners.mock.invocationCallOrder[0]).toBeLessThan(loadFile.mock.invocationCallOrder[0]);
     });
 
+    it('uses integrated dark Windows chrome without replacing native window controls', async () => {
+      const { BrowserWindow } = require('electron');
+
+      await app.createWindow();
+
+      const expected = {
+        backgroundColor: '#0c1014',
+      };
+      if (process.platform === 'win32' || process.platform === 'linux') {
+        Object.assign(expected, {
+          titleBarStyle: 'hidden',
+          titleBarOverlay: {
+            color: '#0c1014',
+            symbolColor: '#8fa1b3',
+            height: 32,
+          },
+        });
+      }
+      expect(BrowserWindow).toHaveBeenCalledWith(expect.objectContaining(expected));
+    });
+
     it('keeps default dev main window on normal main chrome context', async () => {
       await app.createWindow();
 

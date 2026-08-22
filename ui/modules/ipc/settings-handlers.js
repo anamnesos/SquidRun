@@ -11,9 +11,7 @@ const { getFeatureCapabilities } = require('../feature-capabilities');
 // Path to .env file (project root)
 const ENV_PATH = path.join(__dirname, '..', '..', '..', '.env');
 const SETTING_KEY_ALLOWLIST = new Set([
-  'agentNotify',
   'allowAllPermissions',
-  'autoNudge',
   'autoSpawn',
   'autoSync',
   'autonomyConsentChoice',
@@ -24,13 +22,9 @@ const SETTING_KEY_ALLOWLIST = new Set([
   'costAlertEnabled',
   'costAlertThreshold',
   'devTools',
-  'devMode',
   'dryRun',
-  'firmwareInjectionEnabled',
   'freshPaneSessionOnNextSpawn',
   'hiddenPaneHostsEnabled',
-  'mcpAutoConfig',
-  'notifications',
   'operatingMode',
   'paneCommands',
   'paneFailureAlertsEnabled',
@@ -39,13 +33,8 @@ const SETTING_KEY_ALLOWLIST = new Set([
   'ptyStuckThreshold',
   'recentProjects',
   'stuckThreshold',
-  'templates',
-  'userExperienceLevel',
-  'userName',
-  'userPreferredStyle',
   'voiceAutoSend',
   'voiceInputEnabled',
-  'voiceLanguage',
   'watcherEnabled',
 ]);
 
@@ -114,7 +103,7 @@ function hasPreflightConflicts(preflightResults) {
 }
 
 function isProjectMode(settings) {
-  return settings?.operatingMode === 'project' || settings?.firmwareInjectionEnabled === true;
+  return settings?.operatingMode === 'project';
 }
 
 function getFirmwareManager(ctx, deps) {
@@ -326,9 +315,12 @@ function registerSettingsHandlers(ctx, deps) {
       settings.autonomyConsentUpdatedAt = null;
     }
 
-    // Operating mode drives firmware injection
+    // Operating mode is the single source of truth for firmware behavior.
     if (normalizedKey === 'operatingMode') {
-      settings.firmwareInjectionEnabled = valueForStore === 'project';
+      // Remove the retired mirror if an older settings file or caller still
+      // supplies it. Keeping two persisted switches is what made the old
+      // Settings surface disagree with the behavior it controlled.
+      delete settings.firmwareInjectionEnabled;
       if (valueForStore !== 'project' && ctx.watcher?.writeState && ctx.watcher?.readState) {
         const currentState = ctx.watcher.readState() || {};
         if (currentState.project) {

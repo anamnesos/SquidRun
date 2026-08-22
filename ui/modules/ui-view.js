@@ -445,7 +445,8 @@ function updatePaneProject(paneId, projectPath) {
       el.title = `Project: ${projectPath}\nClick to change`;
       el.classList.add('has-project');
     } else {
-      el.textContent = '';
+      el.textContent = 'Change pane workspace';
+      el.title = 'Change workspace for this pane';
       el.classList.remove('has-project');
     }
   }
@@ -516,10 +517,14 @@ function updateProjectDisplay(projectPath) {
   const projectPathEl = document.getElementById('projectPath');
   if (projectPathEl) {
     if (projectPath) {
-      projectPathEl.textContent = projectPath;
+      const normalized = String(projectPath).replace(/\\/g, '/').replace(/\/$/u, '');
+      const parts = normalized.split('/');
+      projectPathEl.textContent = parts[parts.length - 1] || projectPath;
+      projectPathEl.title = `Workspace: ${projectPath}`;
       projectPathEl.classList.remove('no-project');
     } else {
       projectPathEl.textContent = 'SquidRun home';
+      projectPathEl.title = 'Workspace: SquidRun home';
       projectPathEl.classList.add('no-project');
     }
   }

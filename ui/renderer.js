@@ -4006,7 +4006,6 @@ function setupEventListeners() {
   }
 
   // User profile modal controls
-  const profileBtn = document.getElementById('profileBtn');
   const profileModalOverlay = document.getElementById('profileModalOverlay');
   const profileModalClose = document.getElementById('profileModalClose');
   const profileModalCancel = document.getElementById('profileModalCancel');
@@ -4017,11 +4016,6 @@ function setupEventListeners() {
   const profileExperienceHelper = document.getElementById('profileExperienceHelper');
   const profileCommunicationHelper = document.getElementById('profileCommunicationHelper');
 
-  if (profileBtn) {
-    profileBtn.addEventListener('click', () => {
-      void openProfileModal();
-    });
-  }
   if (profileModalClose) {
     profileModalClose.addEventListener('click', () => {
       closeProfileModal();
@@ -4070,6 +4064,27 @@ function setupEventListeners() {
         terminal.toggleInputLock(paneId);
       }
     });
+  });
+
+  const closePaneMenus = (except = null) => {
+    document.querySelectorAll('.pane-menu[open]').forEach((menu) => {
+      if (menu !== except) menu.removeAttribute('open');
+    });
+  };
+  document.querySelectorAll('.pane-menu').forEach((menu) => {
+    menu.addEventListener('toggle', () => {
+      if (menu.open) closePaneMenus(menu);
+    });
+  });
+  document.addEventListener('click', (event) => {
+    const menu = event.target?.closest?.('.pane-menu');
+    if (!menu) {
+      closePaneMenus();
+      return;
+    }
+    if (event.target?.closest?.('.pane-menu-action')) {
+      queueMicrotask(() => menu.removeAttribute('open'));
+    }
   });
 
   // Command palette (Ctrl+K)

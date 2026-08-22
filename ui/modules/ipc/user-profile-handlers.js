@@ -95,8 +95,7 @@ function deriveConfiguredFeatures(ctx) {
   if (settings.autoSpawn !== false) features.push('auto-spawn');
   if (settings.autonomyConsentGiven === true) features.push('autonomy-consent');
   if (settings.allowAllPermissions === true) features.push('autonomy-enabled');
-  if (settings.mcpAutoConfig === true) features.push('mcp-autoconfig');
-  if (settings.firmwareInjectionEnabled === true) features.push('firmware-injection');
+  if (settings.operatingMode === 'project') features.push('firmware-injection');
   return features;
 }
 

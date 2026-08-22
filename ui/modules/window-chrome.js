@@ -26,7 +26,6 @@ const WINDOW_CHROME_CLASSES = Object.freeze({
 const CHROME_CONTROL_IDS = Object.freeze([
   'selectProjectBtn',
   'fullRestartBtn',
-  'profileBtn',
   'settingsBtn',
   'panelBtn',
   'dryRunIndicator',
@@ -61,10 +60,11 @@ const CHROME_ALLOWLIST = Object.freeze({
   }),
   // Client window (sideprofile is the live instance): mark + badge always
   // render; Quit (window-conditional behavior lives in renderer.js) and
-  // Profile are the only operator controls a client sees. Settings is
-  // operator-grade leakage and is deliberately absent.
+  // Quit is the only operator control a client sees. Profile data still
+  // loads at startup, but the retired profile form is no longer chrome.
+  // Settings is operator-grade leakage and is deliberately absent.
   [WINDOW_CHROME_CLASSES.CLIENT_PROFILE]: Object.freeze({
-    controls: Object.freeze(['fullRestartBtn', 'profileBtn']),
+    controls: Object.freeze(['fullRestartBtn']),
     regions: Object.freeze([]),
   }),
   // Installed operator consoles (sideprofile is the live split install): keep

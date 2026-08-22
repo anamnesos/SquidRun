@@ -90,7 +90,6 @@ const DEFAULT_SKELETON_SIGNATURE_KEYS = Object.freeze([
   'operatingMode',
   'paneCommands',
   'paneProjects',
-  'userName',
 ]);
 
 function buildCommandForCli(cli, options = {}) {
@@ -113,9 +112,7 @@ function createDefaultSettings({ isPackaged = false } = {}) {
   return {
     autoSpawn: true,
     autoSync: false,
-    notifications: false,
     devTools: false,
-    devMode: false,
     // THE TELEGRAM TRANSPORT ACTIVATION MODE (v7 §3 Phase L).
     //
     // `null` ON PURPOSE, and it must stay null. `loadSettings` prunes any key
@@ -128,7 +125,6 @@ function createDefaultSettings({ isPackaged = false } = {}) {
     // settlement having actually happened under a known writer.
     telegramTransportActivationMode: null,
     paneFailureAlertsEnabled: true,
-    agentNotify: true,
     watcherEnabled: true,
     allowAllPermissions: false,
     autonomyConsentGiven: false,
@@ -137,15 +133,12 @@ function createDefaultSettings({ isPackaged = false } = {}) {
     costAlertEnabled: true,
     costAlertThreshold: 5.00,
     dryRun: false,
-    mcpAutoConfig: false,
     recentProjects: [],
     stuckThreshold: 120000,
-    autoNudge: true,
     ptyStuckDetection: false,
     ptyStuckThreshold: 15000,
     hiddenPaneHostsEnabled: process.platform === 'win32',
     operatingMode: isPackaged ? 'project' : 'developer',
-    firmwareInjectionEnabled: false,
     localModelEnabled: false,
     claudeModel: '',
     geminiModel,
@@ -157,13 +150,8 @@ function createDefaultSettings({ isPackaged = false } = {}) {
       '2': 'codex',
       '3': buildGeminiCommand({ preferredModel: geminiModel }),
     },
-    templates: [],
     voiceInputEnabled: false,
     voiceAutoSend: false,
-    voiceLanguage: 'en-US',
-    userName: '',
-    userExperienceLevel: 'intermediate',
-    userPreferredStyle: 'balanced',
   };
 }
 

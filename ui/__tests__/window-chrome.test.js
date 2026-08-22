@@ -120,11 +120,10 @@ describe('window chrome matrix', () => {
       expect(visible(doc, 'headerSessionBadge')).toBe(true);
     });
 
-    test('client window shows Quit + Profile only - no operator surface leaks to sideprofile', () => {
+    test('client window shows Quit only - no retired profile form or operator surface leaks to sideprofile', () => {
       const doc = buildHeaderDoc();
       applyWindowChrome(doc, WINDOW_CHROME_CLASSES.CLIENT_PROFILE);
       expect(visible(doc, 'fullRestartBtn')).toBe(true);
-      expect(visible(doc, 'profileBtn')).toBe(true);
       // Product-boundary controls a client must never see:
       for (const id of ['selectProjectBtn', 'settingsBtn', 'panelBtn', 'dryRunIndicator']) {
         expect(visible(doc, id)).toBe(false);
