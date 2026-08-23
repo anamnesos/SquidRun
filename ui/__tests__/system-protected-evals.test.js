@@ -1074,11 +1074,12 @@ describe('system protected evals', () => {
 
   test('Phase 4I fails if parked work becomes wake-dispatch eligible', () => {
     const hmTaskQueue = readRel('ui/scripts/hm-task-queue.js')
+      .replace(/\r?\n/g, '\r\n')
       .replace(
         "const WAKE_DISPATCH_STATES = new Set(['queued', 'blocked', 'waiting']);",
         "const WAKE_DISPATCH_STATES = new Set(['queued', 'blocked', 'waiting', 'parked']);"
       )
-      .replace("  if (normalizeState(task.state, 'queued') === 'parked') return false;\n", '');
+      .replace(/  if \(normalizeState\(task\.state, 'queued'\) === 'parked'\) return false;\r?\n/, '');
     const hmTaskQueueTest = readRel('ui/__tests__/hm-task-queue.test.js')
       .replace('expect(dispatcher).not.toHaveBeenCalled();', 'expect(dispatcher).toHaveBeenCalled();');
     const report = runSystemProtectedEvals({
@@ -1095,8 +1096,9 @@ describe('system protected evals', () => {
 
   test('Phase 4I fails if parked work can activate or continue without unpark', () => {
     const hmTaskQueue = readRel('ui/scripts/hm-task-queue.js')
-      .replace(/  if \(isParkedTask\(bucket\.pending\[index\]\)\) \{\n    return \{ ok: false, queuePath, reason: 'task_parked', task: bucket\.pending\[index\] \};\n  \}\n/, '')
-      .replace(/  if \(isParkedTask\(found\.task\)\) \{\n    return \{ ok: false, queuePath, reason: 'task_parked', task: found\.task \};\n  \}\n/, '');
+      .replace(/\r?\n/g, '\r\n')
+      .replace(/  if \(isParkedTask\(bucket\.pending\[index\]\)\) \{\r?\n    return \{ ok: false, queuePath, reason: 'task_parked', task: bucket\.pending\[index\] \};\r?\n  \}\r?\n/, '')
+      .replace(/  if \(isParkedTask\(found\.task\)\) \{\r?\n    return \{ ok: false, queuePath, reason: 'task_parked', task: found\.task \};\r?\n  \}\r?\n/, '');
     const report = runSystemProtectedEvals({
       caseIds: [CASE_ID_TASK_QUEUE_PARKED_NEVER_AUTO_DISPATCHES],
       fileTextOverrides: defaultOverrides({ hmTaskQueue }),

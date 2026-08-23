@@ -5227,6 +5227,68 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('does not watchdog a completed-task cleanup that explicitly needs no response', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        sourceMessageId: 'm-builder-architect-watchdog-close',
+        content: '(BUILDER #18): Watchdog check: the earlier correction was received and its outcome is complete. No reply or rework needed; please close the watchdog without waking James.',
+        sentAtMs: new Date('2026-08-23T04:29:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('still watchdogs a separate response demand after a no-response clause', () => {
+      jest.useFakeTimers();
+      const contradictoryRequests = [
+        'No reply needed. Send PASS/HOLD to Builder.',
+        'No response necessary. Please provide a verdict.',
+        'No reply needed; report if RED.',
+      ];
+
+      for (const [index, content] of contradictoryRequests.entries()) {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        expect(app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: `m-architect-oracle-contradictory-${index + 1}`,
+          content,
+          sentAtMs: new Date('2026-08-23T04:53:00').getTime() + index,
+        })).toBe(true);
+        app.clearAllAgentResponseWatchdogs();
+      }
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('never watchdogs a watchdog alert even when it contains a contradictory response demand', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        sourceMessageId: 'm-system-watchdog-contradictory',
+        content: '[WATCHDOG] No reply needed. Report status.',
+        sentAtMs: new Date('2026-08-23T04:54:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
     it('does not watchdog FYI-class messages even when they contain task-like words', () => {
       jest.useFakeTimers();
       const app = new SquidRunApp(mockAppContext, mockManagers);

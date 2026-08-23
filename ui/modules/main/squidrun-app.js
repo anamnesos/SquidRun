@@ -1020,6 +1020,32 @@ function isExplicitAgentTaskRequest(content) {
   return /^(analy[sz]e|review|investigat(?:e|ion)?|check|verify|confirm|resend|reply|read|write|implement|fix|summari[sz]e|ask|send)\b/i.test(text);
 }
 
+function stripExplicitNoResponseDirective(content) {
+  return stripLeadingAgentSequencePrefix(content)
+    .replace(
+      /\bno\s+(?:further\s+)?(?:reply|response|acknowledg(?:e|e?ment))(?:\s+or\s+[a-z-]+){0,3}\s+(?:is\s+)?(?:needed|required|necessary)\b[.!;:]?/gi,
+      ' '
+    )
+    .replace(
+      /\b(?:do\s+not|don't)\s+(?:reply|respond|acknowledge)\b[^\r\n.;]*[.;]?/gi,
+      ' '
+    )
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function hasExplicitNoResponseDirective(content) {
+  const text = stripLeadingAgentSequencePrefix(content);
+  if (!text) return false;
+  return stripExplicitNoResponseDirective(text) !== text.replace(/\s+/g, ' ').trim();
+}
+
+function hasExplicitAgentResponseRequestOutsideNoResponseDirective(content) {
+  const text = stripExplicitNoResponseDirective(content);
+  if (!text) return false;
+  return /\b(?:reply|respond|report(?:\s+back)?|acknowledg(?:e|e?ment)|confirm\s+(?:receipt|delivery)|(?:return|send|provide|post)\s+(?:(?:a|the|your)\s+)?(?:pass\s*\/\s*hold|pass|hold|verdict|results?|findings?)|tell\s+(?:me|us)|let\s+(?:me|us)\s+know)\b/i.test(text);
+}
+
 const WATCHDOG_ACCEPTED_DELIVERY_STATUSES = new Set([
   'accepted.unverified',
   'accepted.daemon_pty_unverified',
@@ -1068,6 +1094,9 @@ function shouldWatchdogAgentTask(content) {
   if (isAcknowledgementOnlyAgentUpdate(text)) return false;
   if (/\bstanding by\b/i.test(text)) return false;
   if (/\[WATCHDOG\]/i.test(text)) return false;
+  if (hasExplicitNoResponseDirective(text)) {
+    return hasExplicitAgentResponseRequestOutsideNoResponseDirective(text);
+  }
   return isExplicitAgentTaskRequest(text);
 }
 
