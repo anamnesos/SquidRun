@@ -6,6 +6,7 @@ const path = require('path');
 const { spawn, spawnSync, execFileSync } = require('child_process');
 
 const { getProjectRoot } = require('../config');
+const { checkDependencyIntegrity } = require('./hm-dependency-integrity');
 
 const DEFAULT_INSTANCE_ID = 'james-main';
 const PREFLIGHT_MAX_AGE_MS = 5 * 60 * 1000;
@@ -1368,6 +1369,34 @@ async function executeRestart(options = {}) {
     return failure;
   }
 
+  let dependencyIntegrity;
+  try {
+    const check = options.checkDependencyIntegrity || checkDependencyIntegrity;
+    dependencyIntegrity = await Promise.resolve(check(runtimeProjectRoot, options.dependencyIntegrityOptions || {}));
+  } catch (error) {
+    dependencyIntegrity = {
+      ok: false,
+      reason: 'dependency_integrity_check_failed',
+      error: error?.message || String(error),
+    };
+  }
+  logStep(instanceConfig, 'dependency_integrity_check', dependencyIntegrity);
+  if (!dependencyIntegrity?.ok) {
+    const failure = {
+      ok: false,
+      stage: 'dependency_integrity',
+      reason: dependencyIntegrity?.reason || 'dependency_integrity_failed',
+      dependencyIntegrity,
+    };
+    recordFailureAnomaly(
+      runtimeProjectRoot,
+      failure,
+      options,
+      'restart_execute_dependency_integrity_failed'
+    );
+    return failure;
+  }
+
   logStep(instanceConfig, 'shutdown_start', { reason, instance: instanceId });
   const shutdown = await shutdownElectronProcesses(runtimeProjectRoot, {
     ...options,
@@ -1421,6 +1450,7 @@ async function executeRestart(options = {}) {
       instance: instanceId,
       reason,
       preflight,
+      dependencyIntegrity,
       shutdown,
       relaunch,
       verification,

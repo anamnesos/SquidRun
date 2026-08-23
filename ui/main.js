@@ -6,7 +6,16 @@
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { app, Menu } = require('electron');
+const { app, Menu, dialog } = require('electron');
+const { createBootFailurePolicy } = require('./modules/main/boot-failure-policy');
+
+const bootFailurePolicy = createBootFailurePolicy({
+  app,
+  dialog,
+  processRef: process,
+});
+process.on('uncaughtException', (error) => bootFailurePolicy.handleUncaughtException(error));
+process.on('unhandledRejection', (reason) => bootFailurePolicy.handleUnhandledRejection(reason));
 
 require('./modules/noise-bootstrap').installNoiseGuards();
 
@@ -153,7 +162,9 @@ try {
 process.stdout.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 process.stderr.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 
-// Global error handlers — prevent main process crash on unhandled errors
+// During boot, uncaught failures must be visible and release Electron's
+// single-instance lock. After init, the same handlers preserve the historical
+// log-and-continue behavior for runtime errors.
 const log = require('./modules/logger');
 
 function appendMainBootSequenceBreadcrumb(step, details = {}) {
@@ -178,6 +189,11 @@ function appendMainBootSequenceBreadcrumb(step, details = {}) {
   }
 }
 
+bootFailurePolicy.setReporter({
+  log,
+  breadcrumb: appendMainBootSequenceBreadcrumb,
+});
+
 function enforceMenuSuppression(windowRef = null) {
   try {
     Menu.setApplicationMenu(null);
@@ -201,14 +217,6 @@ function enforceMenuSuppression(windowRef = null) {
     windowRef.setMenuBarVisibility(false);
   }
 }
-
-process.on('uncaughtException', (err) => {
-  log.error('[Main] Uncaught exception:', err?.message || err);
-  log.error('[Main] Stack:', err?.stack);
-});
-process.on('unhandledRejection', (reason) => {
-  log.error('[Main] Unhandled rejection:', reason?.message || reason);
-});
 
 const appContext = require('./modules/main/app-context');
 const SettingsManager = require('./modules/main/settings-manager');
@@ -257,18 +265,21 @@ app.on('browser-window-created', (_event, windowRef) => {
 });
 
 // 3. Electron Lifecycle Hooks
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   enforceMenuSuppression();
   appendMainBootSequenceBreadcrumb('main:when-ready:init-start');
-  squidrunApp.init().catch((err) => {
+  try {
+    await squidrunApp.init();
+    bootFailurePolicy.markBootComplete();
+    appendMainBootSequenceBreadcrumb('main:init-complete');
+  } catch (err) {
     appendMainBootSequenceBreadcrumb('main:init-catch', {
       error: err?.message || String(err),
       stack: err?.stack || null,
     });
-    log.error('[Main] App init failed:', err?.message || err);
-    log.error('[Main] Stack:', err?.stack);
-  });
-});
+    bootFailurePolicy.handleInitFailure(err);
+  }
+}, (err) => bootFailurePolicy.handleInitFailure(err));
 
 app.on('window-all-closed', async () => {
   try {

@@ -4,7 +4,7 @@
 SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (Architect, Builder, Oracle) in parallel. The main process orchestrates pane lifecycle, messaging, persistence, and runtime services; renderers and hidden pane hosts provide the terminal UX and agent I/O path. Agent-to-agent coordination is driven by WebSocket messaging (`hm-send.js`) with trigger-file fallback for resilience.
 
 ## 2) PROCESS MODEL
-1. `ui/main.js` starts Electron, enforces single-instance lock, installs global error handlers, builds managers, and calls `SquidRunApp.init()`.
+1. `ui/main.js` starts Electron, enforces single-instance lock, installs the phase-aware `boot-failure-policy` (fatal and visible before init; log-only afterward), builds managers, and calls `SquidRunApp.init()`.
 2. `ui/modules/main/squidrun-app.js` loads settings, resolves launch intent, creates the requested top-level BrowserWindow set (main and/or scoped side windows), runs firmware/CLI identity startup work, sets session scope, and starts WebSocket + runtime services.
 3. Main window preload (`ui/preload.js`) exposes safe bridge APIs to renderer (`window.squidrun` / `window.squidrunAPI`) under context isolation.
 4. Hidden pane hosts are created by `ui/modules/main/pane-host-window-manager.js` as offscreen BrowserWindows (`pane-host.html`) for robust PTY injection and delivery acknowledgements.
@@ -17,6 +17,9 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 ## 3) KEY FILE MAP
 This is a curated orientation map for agents, not a complete generated inventory. Use `git ls-files`, `rg --files`, and the runtime health/index scripts for full-codebase discovery.
 - ui/config.js: Shared runtime constants and path resolution (project root, coord root, pane cwd, trigger targets, role maps).
+- ui/modules/main/boot-failure-policy.js: Pre-window fatal-error boundary. It shows a native startup error and exits once so a failed boot cannot invisibly retain Electron's single-instance lock; after successful init it preserves log-only runtime handling.
+- ui/scripts/hm-dependency-integrity.js: Restart preflight for the live installed dependency tree. It validates package manifests, runs the npm dependency graph without a shell shim, and directly probes Sharp plus required runtime/build tools before shutdown is allowed.
+- ui/scripts/hm-safe-worktree-remove.js: Destructive worktree-removal wrapper that verifies a registered non-current target and refuses any symlink/junction/reparse descendant before invoking Git.
 - ui/daemon-client.js: Electron-side daemon client for PTY lifecycle, reconnect logic, write-ack tracking, and kernel event forwarding.
 - ui/index.html: Main renderer shell (3-pane layout, broadcast input, settings panel, right tabs, and startup overlays).
 - ui/team-room.html + ui/team-room.js + ui/team-room.css: Shared desktop/phone Team Room surface with authenticated history, WebSocket updates, attachments, reconnect recovery, and the PWA install shell; `team-room-sw.js`, the manifest, and icon assets provide installability without intercepting API traffic.

@@ -6,7 +6,6 @@ const path = require('node:path');
 const { Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const Busboy = require('busboy');
-const sharp = require('sharp');
 const {
   DEFAULT_MAX_ATTACHMENT_BYTES,
   MAX_PREVIEW_DIMENSION,
@@ -24,6 +23,13 @@ const DEFAULT_PREVIEW_EDGE = 1_600;
 const UPLOAD_OVERHEAD_BYTES = 256 * 1024;
 const CLEANUP_RETRY_DELAYS_MS = Object.freeze([0, 20, 80, 200]);
 const RECOVERABLE_TEMP_NAME_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.(?:upload|preview\.webp)$/iu;
+
+function defaultSharpFactory(...args) {
+  // Sharp is optional to application boot. If its native tree is damaged,
+  // original uploads still work and image preview generation reports an
+  // explicit unavailable state instead of taking down all of SquidRun.
+  return require('sharp')(...args);
+}
 
 function comparablePath(value) {
   const resolved = path.resolve(String(value || '')).replace(/^\\\\\?\\/u, '');
@@ -84,7 +90,9 @@ class TeamRoomUploadManager {
     this.previewEdge = Math.max(256, Number(options.previewEdge) || DEFAULT_PREVIEW_EDGE);
     this.randomUUID = typeof options.randomUUID === 'function' ? options.randomUUID : crypto.randomUUID;
     this.busboyFactory = typeof options.busboyFactory === 'function' ? options.busboyFactory : (config) => Busboy(config);
-    this.sharpFactory = typeof options.sharpFactory === 'function' ? options.sharpFactory : sharp;
+    this.sharpFactory = typeof options.sharpFactory === 'function'
+      ? options.sharpFactory
+      : defaultSharpFactory;
     this.hooks = options.hooks && typeof options.hooks === 'object' ? options.hooks : {};
     this.ownedTemporaryPaths = options.ownedTemporaryPaths instanceof Set
       ? options.ownedTemporaryPaths

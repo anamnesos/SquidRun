@@ -122,6 +122,7 @@ File triggers still work as fallback: write to `.squidrun/triggers/{role}.txt`
 - Do not let narrow task execution replace product ownership. When repeated friction exposes a missing boundary/default, stop treating it as a one-off prompt and fix or specify the underlying system behavior, especially for restart loops, routing, Telegram, profile isolation, and permission/common-sense defaults.
 - The user must not be the manual verification harness for Telegram routing, pane routing, side-window isolation, or profile context separation. Prefer static/unit/integration seams that exercise routing functions and process boundaries without full app restarts; any restart-dependent path needs an explicit reason and a smaller test seam proposal.
 - Wrong-context messages are handled autonomously: agents reject, hold, or reroute obvious profile/window/context mismatches using metadata first and content guardrails when metadata is missing. Do not wait for James to identify the bug or approve a reversible containment.
+- Never junction or symlink a disposable worktree into the live dependency tree. Never run `git worktree remove` directly; use `node ui/scripts/hm-safe-worktree-remove.js --target <exact-path> --force`, which refuses any reparse point before Git receives removal authority.
 
 ---
 

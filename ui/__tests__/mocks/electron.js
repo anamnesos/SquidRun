@@ -47,6 +47,7 @@ module.exports = {
     writeText: jest.fn(),
   },
   dialog: {
+    showErrorBox: jest.fn(),
     showOpenDialog: jest.fn(async () => ({ canceled: true, filePaths: [] })),
     showSaveDialog: jest.fn(async () => ({ canceled: true, filePath: null })),
     showMessageBox: jest.fn(async () => ({ response: 0 })),
