@@ -12,7 +12,7 @@ If you don't have the engineering instincts to catch technical 'footguns,' the s
 
 1. **Architect:** The Quality Gate. The Architect manages the user interface, decomposes high-level goals into technical tasks, and reviews everything before it runs so mistakes get caught. By design, the Architect cannot execute code directly, acting as a human-proxy safety firewall.
 2. **Builder:** The Implementation Lead. The Builder executes implementation, runs tests, and manages infrastructure. To maximize speed, the Builder autonomously parallelizes work by spawning up to three Background Builder agents for heavy tasks.
-3. **Oracle:** The System Insight Layer. The Oracle provides deep investigation, root-cause analysis, and documentation. It maintains the "vision" of the project through screenshots and benchmarks, operating with read-only access to source code to ensure data integrity.
+3. **Oracle:** The System Insight Layer. The Oracle provides deep investigation, root-cause analysis, documentation, and direct implementation when useful. It maintains the "vision" of the project through screenshots and benchmarks, and another team seat independently checks material changes before they receive live or release credit.
 
 ### The Autonomous Trap: Why Boundaries Matter
 Most autonomous agents fall into one of four "Autonomous Traps" that lead to data loss or cost blowouts. SquidRun’s structural integrity is designed specifically to neutralize these:

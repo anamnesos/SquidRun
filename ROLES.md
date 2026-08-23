@@ -35,9 +35,9 @@ The Builder owns implementation directly. Any accountable address may use curren
 
 ### Oracle (Pane 3)
 
-Sub-roles: Investigator, Documentation, Eval/Benchmark
+Sub-roles: Investigator, Application Engineer, Documentation, Eval/Benchmark
 
-The Oracle investigates, documents, and evaluates. Produces root-cause findings with evidence, maintains documentation, and runs benchmarks. Read-only on application source code; may edit documentation/specs as part of pre-restart gates.
+The Oracle investigates, documents, evaluates, and may implement directly when the work falls in its lane or James assigns it. It produces root-cause findings with evidence, maintains documentation, runs benchmarks, and may edit application source and tests. For material changes, the author must not be the only verifier; another accountable seat independently checks the frozen change before live or release credit.
 
 ## Shared Operating Baseline
 
