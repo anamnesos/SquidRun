@@ -226,12 +226,6 @@ body {
   text-transform: uppercase;
 }
 
-.agent-badge {
-  width: 6px;
-  height: 6px;
-  margin: 0;
-}
-
 .pane-title .cli-badge,
 .pane-title .agent-task {
   overflow: hidden;

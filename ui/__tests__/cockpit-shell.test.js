@@ -7,6 +7,8 @@ const readUi = (relativePath) => fs.readFileSync(path.join(UI_ROOT, relativePath
 describe('main cockpit shell', () => {
   const html = readUi('index.html');
   const css = readUi(path.join('styles', 'cockpit.css'));
+  const stateBarCss = readUi(path.join('styles', 'state-bar.css'));
+  const uiView = readUi(path.join('modules', 'ui-view.js'));
 
   test('keeps the established three-pane geometry and gives every pane a quiet control menu', () => {
     expect(html).toContain('class="main-pane-container"');
@@ -71,5 +73,12 @@ describe('main cockpit shell', () => {
     expect(css).toContain('--cockpit-vera: #c792ea');
     expect(css).toMatch(/\.header\s*\{[\s\S]*?-webkit-app-region:\s*drag/);
     expect(css).toMatch(/\.header\s+(?:button|select|input)[\s\S]*?-webkit-app-region:\s*no-drag/);
+  });
+
+  test('does not pretend coarse process state is live agent activity', () => {
+    expect(html).not.toContain('agent-badge');
+    expect(css).not.toContain('.agent-badge');
+    expect(stateBarCss).not.toContain('.agent-badge');
+    expect(uiView).not.toContain('updateAgentStatus');
   });
 });

@@ -140,13 +140,9 @@ function ensureRestoreShelf(documentRef) {
 }
 
 function readPaneSignal(documentRef, paneId) {
-  const badge = documentRef.getElementById?.(`badge-${paneId}`);
   const task = documentRef.getElementById?.(`task-${paneId}`);
   const health = documentRef.getElementById?.(`health-${paneId}`);
-  const badgeClass = String(badge?.className || '');
   return {
-    active: /\bactive\b/.test(badgeClass),
-    idle: /\bidle\b/.test(badgeClass),
     taskText: String(task?.textContent || '').trim(),
     healthText: String(health?.textContent || '').trim(),
   };
@@ -283,7 +279,6 @@ function observePaneSignals(state, paneId) {
   const MutationObserverCtor = state.windowRef?.MutationObserver || globalThis.MutationObserver;
   if (typeof MutationObserverCtor !== 'function') return;
   const targets = [
-    state.document.getElementById?.(`badge-${paneId}`),
     state.document.getElementById?.(`task-${paneId}`),
     state.document.getElementById?.(`health-${paneId}`),
   ].filter(Boolean);

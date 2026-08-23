@@ -160,7 +160,6 @@ function makePane(id, label) {
     dataset: { paneId: id },
   }, [
     new FakeElement('span', { className: 'pane-title' }, [
-      new FakeElement('span', { className: 'agent-badge idle', id: `badge-${id}` }),
       new FakeElement('button', { className: 'pane-role-info-btn', dataset: { paneId: id }, textContent: label }),
       new FakeElement('span', { className: 'cli-badge', id: `cli-badge-${id}` }),
       new FakeElement('span', { className: 'pane-project', id: `project-${id}` }),

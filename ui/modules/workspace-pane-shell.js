@@ -270,10 +270,6 @@ function createSquidRoomLivePane(doc, spec) {
     className: 'agent-avatar',
     innerHTML: PANE_ICON_SVGS.avatar,
   }));
-  title.appendChild(createElement(doc, 'span', {
-    className: 'agent-badge idle',
-    id: `badge-${spec.paneId}`,
-  }));
   appendTextNode(title, spec.label);
   title.appendChild(createRoleInfoButton(doc, spec.paneId));
   title.appendChild(createElement(doc, 'span', {
@@ -461,10 +457,6 @@ function renderSquidRoomCoreTerminalPane(doc, pane, spec) {
   title.appendChild(createElement(doc, 'span', {
     className: 'agent-avatar',
     innerHTML: PANE_ICON_SVGS.avatar,
-  }));
-  title.appendChild(createElement(doc, 'span', {
-    className: 'agent-badge idle',
-    id: `badge-${spec.paneId}`,
   }));
   appendTextNode(title, spec.title);
   title.appendChild(createRoleInfoButton(doc, spec.paneId));

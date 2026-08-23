@@ -14,9 +14,6 @@ const SYNC_FILES = {
   'errors.md': { label: 'ERR' },
 };
 
-// Working animation state
-let workingAnimationInjected = false;
-
 /**
  * Flash pane header when trigger is received or message delivered
  * @param {string} paneId - Pane ID
@@ -176,51 +173,6 @@ function updateSyncChip(file, state = {}) {
   chip.title = tooltip;
   chip.dataset.tooltip = tooltip;
   chip.setAttribute('aria-label', tooltip);
-}
-
-/**
- * Inject working indicator CSS
- */
-function injectWorkingAnimation() {
-  if (workingAnimationInjected) return;
-  const style = document.createElement('style');
-  style.textContent = `
-    @keyframes pulse-working {
-      0%, 100% { opacity: 1; box-shadow: 0 0 5px #00f0ff; }
-      50% { opacity: 0.6; box-shadow: 0 0 15px #00f0ff, 0 0 25px #00f0ff; }
-    }
-    .agent-badge.working {
-      background: #00f0ff !important;
-      animation: pulse-working 1s ease-in-out infinite;
-    }
-    .agent-badge.starting {
-      background: #f0a000 !important;
-      animation: pulse-working 0.5s ease-in-out infinite;
-    }
-  `;
-  document.head.appendChild(style);
-  workingAnimationInjected = true;
-}
-
-/**
- * Update agent status display in pane header
- * @param {string} paneId - Pane ID
- * @param {string} state - 'idle' | 'starting' | 'running'
- */
-function updateAgentStatus(paneId, state) {
-  injectWorkingAnimation();
-
-  const badge = document.getElementById(`badge-${paneId}`);
-  if (badge) {
-    badge.classList.remove('idle', 'active', 'working', 'starting');
-    if (state === 'running') {
-      badge.classList.add('working');
-    } else if (state === 'starting') {
-      badge.classList.add('starting');
-    } else {
-      badge.classList.add('idle');
-    }
-  }
 }
 
 /**
@@ -576,7 +528,6 @@ module.exports = {
   showDeliveryIndicator,
   showDeliveryFailed,
   updateSyncChip,
-  updateAgentStatus,
   showRollbackUI,
   hideRollbackUI,
   showHandoffNotification,

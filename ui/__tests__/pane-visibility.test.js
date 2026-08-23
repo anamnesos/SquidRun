@@ -190,11 +190,6 @@ function createFakeDocument() {
     pane.appendChild(header);
     sideContainer.appendChild(pane);
 
-    const badge = new FakeElement('span');
-    badge.id = `badge-${paneId}`;
-    badge.className = 'agent-badge idle';
-    elementsById.set(badge.id, badge);
-
     const task = new FakeElement('span');
     task.id = `task-${paneId}`;
     elementsById.set(task.id, task);
@@ -293,7 +288,6 @@ describe('pane-visibility', () => {
       'squidrun:pane-visibility:main': JSON.stringify({ version: 1, hiddenPaneIds: ['3'] }),
     });
     const documentRef = createFakeDocument();
-    documentRef.getElementById('badge-3').className = 'agent-badge active';
     documentRef.getElementById('task-3').textContent = 'Reading evidence';
 
     initPaneVisibilityControls({ documentRef, storage, profileName: 'main' });

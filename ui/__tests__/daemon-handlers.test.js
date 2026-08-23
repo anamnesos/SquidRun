@@ -53,7 +53,6 @@ const mockUiView = {
   showAutoTriggerFeedback: jest.fn(),
   showRollbackUI: jest.fn(),
   hideRollbackUI: jest.fn(),
-  updateAgentStatus: jest.fn(),
   flashPaneHeader: jest.fn(),
   showConflictNotification: jest.fn(),
   showCostAlert: jest.fn(),
@@ -839,10 +838,11 @@ describe('daemon-handlers.js module', () => {
     });
 
     describe('claude-state-changed handler', () => {
-      test('should update agent status via uiView', () => {
-        daemonHandlers.setupClaudeStateListener();
+      test('should keep timer state updates without rendering a fake activity light', () => {
+        const handleTimerFn = jest.fn();
+        daemonHandlers.setupClaudeStateListener(handleTimerFn);
         ipcHandlers['claude-state-changed']({}, { '1': 'running' });
-        expect(uiView.updateAgentStatus).toHaveBeenCalledWith('1', 'running');
+        expect(handleTimerFn).toHaveBeenCalledWith('1', 'running');
       });
     });
 

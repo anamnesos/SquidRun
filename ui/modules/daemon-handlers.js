@@ -1180,7 +1180,6 @@ function setupClaudeStateListener(handleTimerStateFn) {
   registerScopedIpcListener('claude-state', 'claude-state-changed', (event, states) => {
     log.info('Agent State', 'Received:', states);
     for (const [paneId, state] of Object.entries(states)) {
-      uiView.updateAgentStatus(paneId, state);
       if (handleTimerStateFn) {
         handleTimerStateFn(paneId, state);
       }
@@ -1655,7 +1654,6 @@ module.exports = {
   showAutoTriggerFeedback: uiView.showAutoTriggerFeedback,
   showRollbackUI: uiView.showRollbackUI,
   hideRollbackUI: uiView.hideRollbackUI,
-  updateAgentStatus: uiView.updateAgentStatus,
   flashPaneHeader: uiView.flashPaneHeader,
   PANE_IDS,
   PANE_ROLES: uiView.PANE_ROLES,

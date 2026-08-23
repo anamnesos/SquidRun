@@ -28,7 +28,6 @@ jest.mock('../modules/ui-view', () => ({
   updateSyncChip: jest.fn(),
   showDeliveryIndicator: jest.fn(),
   showDeliveryFailed: jest.fn(),
-  updateAgentStatus: jest.fn(),
   flashPaneHeader: jest.fn(),
   updateProjectDisplay: jest.fn(),
   showCostAlert: jest.fn(),
