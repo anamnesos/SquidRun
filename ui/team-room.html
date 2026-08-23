@@ -17,7 +17,9 @@
   <div class="room-app" id="roomApp">
     <header class="room-header">
       <div class="room-brand">
-        <div class="room-mark" aria-hidden="true">SR</div>
+        <div class="room-mark" aria-hidden="true">
+          <img src="/squidrun-favicon.ico" alt="">
+        </div>
         <div>
           <div class="room-title-row">
             <h1>Team Room</h1>
@@ -27,28 +29,31 @@
         </div>
       </div>
       <div class="room-actions">
-        <div class="member-stack" aria-label="Room members">
-          <span data-member="james">J</span>
-          <span data-member="architect">A</span>
-          <span data-member="builder">B</span>
-          <span data-member="oracle">O</span>
-        </div>
-        <button class="quiet-button" id="pairPhoneButton" type="button" aria-label="Pair phone" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"></rect><path d="M11 18h2"></path></svg>
-          <span>Pair phone</span>
-        </button>
-        <button class="quiet-button" id="remotePairButton" type="button" aria-label="Pair phone for remote access" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M5 8.5A9 9 0 0 1 19 8.5M8 12a5 5 0 0 1 8 0"></path><circle cx="12" cy="17" r="1"></circle></svg>
-          <span>Remote pair</span>
-        </button>
-        <button class="quiet-button" id="remoteAccessButton" type="button" aria-label="Remote access off" aria-pressed="false" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10"></path><path d="M6.4 5.6a8 8 0 1 0 11.2 0"></path></svg>
-          <span id="remoteAccessLabel">Remote access: Off</span>
-        </button>
-        <button class="quiet-button" id="notificationButton" type="button" aria-label="Notification settings" aria-pressed="false" hidden>
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg>
-          <span>Notifications</span>
-        </button>
+        <details class="room-overflow" id="roomOverflow" hidden>
+          <summary class="room-overflow-trigger" id="roomOverflowTrigger" aria-label="Room options">
+            <span class="room-overflow-state" id="roomOverflowState" aria-hidden="true" hidden></span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.25"></circle><circle cx="12" cy="12" r="1.25"></circle><circle cx="19" cy="12" r="1.25"></circle></svg>
+          </summary>
+          <div class="room-overflow-panel" role="menu" aria-label="Team Room options">
+            <button class="room-menu-item" id="pairPhoneButton" type="button" role="menuitem" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"></rect><path d="M11 18h2"></path></svg>
+              <span>Pair phone</span>
+            </button>
+            <button class="room-menu-item" id="remotePairButton" type="button" role="menuitem" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M5 8.5A9 9 0 0 1 19 8.5M8 12a5 5 0 0 1 8 0"></path><circle cx="12" cy="17" r="1"></circle></svg>
+              <span>Remote pair</span>
+            </button>
+            <button class="room-menu-item" id="remoteAccessButton" type="button" role="menuitem" aria-label="Remote access off" aria-pressed="false" data-state="off" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10"></path><path d="M6.4 5.6a8 8 0 1 0 11.2 0"></path></svg>
+              <span id="remoteAccessLabel">Remote access: Off</span>
+              <span class="room-menu-state" aria-hidden="true"></span>
+            </button>
+            <button class="room-menu-item" id="notificationButton" type="button" role="menuitem" aria-label="Notification settings" aria-pressed="false" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg>
+              <span>Notifications</span>
+            </button>
+          </div>
+        </details>
       </div>
     </header>
 

@@ -9,6 +9,7 @@ const { createTeamRoomWindow } = require('../../modules/main/team-room-window');
 
 const outputPath = path.resolve(String(process.env.TEAM_ROOM_QR_OUTPUT || ''));
 const screenshotPath = String(process.env.TEAM_ROOM_QR_SCREENSHOT || '').trim();
+const headerScreenshotPath = String(process.env.TEAM_ROOM_QR_HEADER_SCREENSHOT || '').trim();
 const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-qr-browser-'));
 app.setPath('userData', path.join(smokeRoot, 'user-data'));
 app.commandLine.appendSwitch('disable-gpu');
@@ -63,12 +64,7 @@ async function run() {
     },
     deliverToPane: async () => ({ ok: true }),
     resolveCliBindings: ({ appGeneration }) => bindings(appGeneration),
-    getRemoteAccessStatus: async () => ({
-      ok: false,
-      enabled: false,
-      reason: 'tailscale_serve_enable_failed',
-      detail: '500 Internal Server Error: your Tailscale account does not support getting TLS certs',
-    }),
+    getRemoteAccessStatus: async () => ({ ok: true, enabled: true, origin: 'https://squidrun.test.ts.net' }),
     setRemoteAccessEnabled: async () => ({
       ok: false,
       enabled: false,
@@ -101,7 +97,7 @@ async function run() {
     try {
       await waitForRenderer(desktopWindow, `() => document.querySelector('#connectionDot')?.dataset.state === 'connected'
         && !document.querySelector('#pairPhoneButton')?.hidden
-        && document.querySelector('#remoteAccessLabel')?.textContent.includes('Enable HTTPS Certificates')`, 12_000, 'desktop-ready');
+        && document.querySelector('#remoteAccessLabel')?.textContent === 'Remote access: On'`, 12_000, 'desktop-ready');
     } catch (error) {
       error.result = await desktopWindow.webContents.executeJavaScript(`(() => ({
         stage: 'desktop-ready',
@@ -114,11 +110,54 @@ async function run() {
       throw error;
     }
     checkpoint('desktop-ready');
+    const headerDiagnostic = await desktopWindow.webContents.executeJavaScript(`(async () => {
+      const overflow = document.querySelector('#roomOverflow');
+      document.querySelector('#roomOverflowTrigger').click();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const icon = document.querySelector('.room-mark img');
+      const triggerRect = document.querySelector('#roomOverflowTrigger').getBoundingClientRect();
+      const panelRect = document.querySelector('.room-overflow-panel').getBoundingClientRect();
+      const opened = {
+        desktopShell: document.documentElement.dataset.roomShell,
+        headerPaddingRight: Number.parseFloat(getComputedStyle(document.querySelector('.room-header')).paddingRight),
+        iconLoaded: icon.complete && icon.naturalWidth > 0,
+        iconPath: new URL(icon.src).pathname,
+        memberStackAbsent: !document.querySelector('.member-stack'),
+        overflowVisible: !overflow.hidden,
+        overflowOpen: overflow.open,
+        menuVisible: getComputedStyle(document.querySelector('.room-overflow-panel')).display !== 'none',
+        triggerLabel: document.querySelector('#roomOverflowTrigger').getAttribute('aria-label'),
+        triggerStateHidden: document.querySelector('#roomOverflowState').hidden,
+        remoteState: document.querySelector('#remoteAccessButton').dataset.state,
+        viewportWidth: window.innerWidth,
+        triggerRect: { left: triggerRect.left, right: triggerRect.right, top: triggerRect.top, bottom: triggerRect.bottom },
+        panelRect: { left: panelRect.left, right: panelRect.right, top: panelRect.top, bottom: panelRect.bottom },
+        visibleActions: [...document.querySelectorAll('.room-menu-item')]
+          .filter((button) => !button.hidden)
+          .map((button) => button.id),
+      };
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      opened.escapeClosed = !overflow.open;
+      document.querySelector('#roomOverflowTrigger').click();
+      document.body.click();
+      opened.outsideClosed = !overflow.open;
+      document.querySelector('#roomOverflowTrigger').click();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return opened;
+    })()`);
+    if (headerScreenshotPath) {
+      fs.mkdirSync(path.dirname(path.resolve(headerScreenshotPath)), { recursive: true });
+      fs.writeFileSync(path.resolve(headerScreenshotPath), (await desktopWindow.webContents.capturePage()).toPNG());
+    }
+    await desktopWindow.webContents.executeJavaScript(`document.querySelector('#remoteAccessButton').click()`);
+    await waitForRenderer(desktopWindow, `() => document.querySelector('#remoteAccessLabel')?.textContent.includes('Enable HTTPS Certificates')`, 12_000, 'remote-error');
     const remoteAccessDiagnostic = await desktopWindow.webContents.executeJavaScript(`(() => ({
       label: document.querySelector('#remoteAccessLabel').textContent,
       title: document.querySelector('#remoteAccessButton').title,
       pressed: document.querySelector('#remoteAccessButton').getAttribute('aria-pressed'),
+      actionClosed: !document.querySelector('#roomOverflow').open,
     }))()`);
+    await desktopWindow.webContents.executeJavaScript(`document.querySelector('#roomOverflowTrigger').click()`);
     await desktopWindow.webContents.executeJavaScript(`document.querySelector('#pairPhoneButton').click()`);
     await waitForRenderer(desktopWindow, `() => document.querySelector('#pairDialog')?.open
       && document.querySelector('#pairQrImage')?.complete
@@ -133,6 +172,7 @@ async function run() {
       claimUrl: document.querySelector('#pairUrl').textContent,
       pairingCode: document.querySelector('#pairCodeDisplay').textContent.replace(/\\s/gu, ''),
       expiry: document.querySelector('#pairExpiry').textContent,
+      actionClosed: !document.querySelector('#roomOverflow').open,
     }))()`);
     await desktopWindow.webContents.executeJavaScript(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
     checkpoint('dialog-ready', { dialog: { ...dialog, qrSrc: dialog.qrSrc.slice(0, 30) } });
@@ -178,10 +218,30 @@ async function run() {
     result = {
       complete: true,
       ok: dialog.pairButtonVisible
+        && headerDiagnostic.desktopShell === 'desktop'
+        && headerDiagnostic.headerPaddingRight >= 156
+        && headerDiagnostic.iconLoaded
+        && headerDiagnostic.iconPath === '/squidrun-favicon.ico'
+        && headerDiagnostic.memberStackAbsent
+        && headerDiagnostic.overflowVisible
+        && headerDiagnostic.overflowOpen
+        && headerDiagnostic.menuVisible
+        && headerDiagnostic.triggerLabel === 'Room options. Remote access on.'
+        && !headerDiagnostic.triggerStateHidden
+        && headerDiagnostic.remoteState === 'on'
+        && headerDiagnostic.triggerRect.left >= 0
+        && headerDiagnostic.triggerRect.right <= headerDiagnostic.viewportWidth
+        && headerDiagnostic.panelRect.left >= 0
+        && headerDiagnostic.panelRect.right <= headerDiagnostic.viewportWidth
+        && headerDiagnostic.visibleActions.join(',') === 'pairPhoneButton,remotePairButton,remoteAccessButton'
+        && headerDiagnostic.escapeClosed
+        && headerDiagnostic.outsideClosed
         && remoteAccessDiagnostic.label === 'Remote access: Error — Enable HTTPS Certificates in the Tailscale DNS settings, then try again.'
         && remoteAccessDiagnostic.title === 'Enable HTTPS Certificates in the Tailscale DNS settings, then try again.'
         && remoteAccessDiagnostic.pressed === 'false'
+        && remoteAccessDiagnostic.actionClosed
         && dialog.open
+        && dialog.actionClosed
         && dialog.title === 'Pair your phone'
         && /scan/iu.test(dialog.instruction)
         && dialog.qrSrc.startsWith('data:image/png;base64,')
@@ -199,6 +259,7 @@ async function run() {
       node: process.versions.node,
       origin: started.origin,
       remoteAccessDiagnostic,
+      headerDiagnostic,
       dialog: {
         ...dialog,
         qrSrc: dialog.qrSrc.slice(0, 30),

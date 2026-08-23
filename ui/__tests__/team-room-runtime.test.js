@@ -702,6 +702,12 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     expect(root.statusCode).toBe(200);
     expect(root.body.toString('utf8')).toContain('<link rel="manifest" href="/team-room.webmanifest">');
     expect(root.body.toString('utf8')).toContain('rel="apple-touch-icon"');
+    expect(root.body.toString('utf8')).toContain('<img src="/squidrun-favicon.ico" alt="">');
+
+    const brandIcon = await rawRequest(started.origin, '/squidrun-favicon.ico');
+    expect(brandIcon.statusCode).toBe(200);
+    expect(brandIcon.headers['content-type']).toBe('image/x-icon');
+    expect(brandIcon.body).toEqual(fs.readFileSync(path.resolve(__dirname, '..', 'assets', 'squidrun-favicon.ico')));
 
     const manifestResponse = await rawRequest(started.origin, '/team-room.webmanifest');
     expect(manifestResponse.statusCode).toBe(200);
@@ -725,6 +731,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     const worker = await rawRequest(started.origin, '/team-room-sw.js');
     expect(worker.statusCode).toBe(200);
     expect(worker.body.toString('utf8')).toContain("'/team-room.webmanifest'");
+    expect(worker.body.toString('utf8')).toContain("'/squidrun-favicon.ico'");
     expect(worker.body.toString('utf8')).toContain("self.addEventListener('push'");
     expect(worker.body.toString('utf8')).toContain("self.addEventListener('notificationclick'");
     expect(worker.body.toString('utf8')).not.toContain("'/api/");

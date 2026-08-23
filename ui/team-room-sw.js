@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'squidrun-team-room-shell-v3';
+const CACHE_NAME = 'squidrun-team-room-shell-v4';
 const SHELL_PATHS = Object.freeze([
   '/',
   '/team-room.css',
@@ -9,6 +9,7 @@ const SHELL_PATHS = Object.freeze([
   '/team-room-icon-192.png',
   '/team-room-icon-512.png',
   '/team-room-icon-180.png',
+  '/squidrun-favicon.ico',
 ]);
 const SHELL_SET = new Set(SHELL_PATHS);
 

@@ -14,6 +14,14 @@ const DEFAULT_WINDOW_OPTIONS = Object.freeze({
   backgroundColor: '#0c1014',
   show: false,
   autoHideMenuBar: true,
+  ...((process.platform === 'win32' || process.platform === 'linux') ? {
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#0c1014',
+      symbolColor: '#8fa1b3',
+      height: 32,
+    },
+  } : {}),
 });
 
 const FORCED_WEB_PREFERENCES = Object.freeze({

@@ -787,7 +787,7 @@ async function run() {
         appHeight: Math.round(appRect.height),
         appLeft: Math.round(appRect.left),
         appRight: Math.round(appRect.right),
-        memberStackDisplay: getComputedStyle(document.querySelector('.member-stack')).display,
+        memberStackAbsent: !document.querySelector('.member-stack'),
         composerVisible: shellRect.bottom <= window.innerHeight + 1,
         composerLeft: Math.round(composerRect.left),
         composerRight: Math.round(composerRect.right),
@@ -1038,7 +1038,7 @@ async function run() {
         && phoneLayout.bodyWidth === phoneLayout.width
         && phoneLayout.appLeft === 0
         && phoneLayout.appRight === phoneLayout.width
-        && phoneLayout.memberStackDisplay === 'none'
+        && phoneLayout.memberStackAbsent
         && phoneLayout.appHeight === Number.parseInt(phoneLayout.viewportHeightVariable, 10)
         && phoneLayout.appHeight <= phoneLayout.height
         && phoneLayout.appHeight >= 700

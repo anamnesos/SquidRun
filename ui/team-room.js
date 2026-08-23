@@ -1,6 +1,8 @@
 (() => {
   'use strict';
 
+  document.documentElement.dataset.roomShell = /\bElectron\//u.test(navigator.userAgent || '') ? 'desktop' : 'web';
+
   const elements = {
     app: document.getElementById('roomApp'),
     column: document.getElementById('messageColumn'),
@@ -26,6 +28,9 @@
     remotePairButton: document.getElementById('remotePairButton'),
     remoteAccessButton: document.getElementById('remoteAccessButton'),
     remoteAccessLabel: document.getElementById('remoteAccessLabel'),
+    roomOverflow: document.getElementById('roomOverflow'),
+    roomOverflowTrigger: document.getElementById('roomOverflowTrigger'),
+    roomOverflowState: document.getElementById('roomOverflowState'),
     notificationButton: document.getElementById('notificationButton'),
     notificationDialog: document.getElementById('notificationDialog'),
     notificationDialogClose: document.getElementById('notificationDialogClose'),
@@ -795,6 +800,22 @@
     state.socket.send(JSON.stringify({ type: 'presence', focused: Boolean(focused) }));
   }
 
+  function closeRoomOverflow() {
+    elements.roomOverflow.open = false;
+  }
+
+  function updateRoomOverflow() {
+    const actions = [
+      elements.pairButton,
+      elements.remotePairButton,
+      elements.remoteAccessButton,
+      elements.notificationButton,
+    ];
+    const hasVisibleAction = actions.some((button) => !button.hidden);
+    elements.roomOverflow.hidden = !hasVisibleAction;
+    if (!hasVisibleAction) closeRoomOverflow();
+  }
+
   function showPairScreen() {
     state.authenticated = false;
     elements.pairScreen.hidden = false;
@@ -805,6 +826,7 @@
     elements.remoteAccessButton.hidden = true;
     state.notifications.manageable = false;
     renderNotificationSettings();
+    updateRoomOverflow();
     if (elements.notificationDialog.open) elements.notificationDialog.close();
     setConnection('disconnected');
   }
@@ -818,6 +840,7 @@
     elements.remotePairButton.hidden = true;
     elements.remoteAccessButton.hidden = true;
     void refreshNotificationSettings();
+    updateRoomOverflow();
   }
 
   function updateSendState() {
@@ -1342,6 +1365,7 @@
         : current.enabled
           ? 'On. We only buzz for a real question, a decision that needs you, or a failure alert.'
           : 'Off. Nothing will ask for permission until you tap Enable.';
+    updateRoomOverflow();
   }
 
   async function refreshNotificationSettings() {
@@ -1538,13 +1562,20 @@
     elements.remoteAccessButton.disabled = remote.pending;
     elements.remoteAccessButton.setAttribute('aria-pressed', String(remote.enabled));
     const stateLabel = remote.pending ? 'Working' : remote.enabled ? 'On' : remote.reason ? 'Error' : 'Off';
+    const stateKey = remote.pending ? 'pending' : remote.enabled ? 'on' : remote.reason ? 'error' : 'off';
     const failureMessage = remote.reason ? remoteAccessFailureMessage(remote) : null;
     const visibleLabel = `Remote access: ${stateLabel}${failureMessage ? ` — ${failureMessage}` : ''}`;
     elements.remoteAccessLabel.textContent = visibleLabel;
+    elements.remoteAccessButton.dataset.state = stateKey;
     elements.remoteAccessButton.setAttribute('aria-label', visibleLabel);
     elements.remoteAccessButton.title = failureMessage || (remote.enabled
       ? 'Turn off remote access. LAN Team Room stays running.'
       : 'Turn on private Tailscale access.');
+    elements.roomOverflowState.hidden = !remote.manageable || !remote.enabled || remote.pending;
+    elements.roomOverflowTrigger.setAttribute('aria-label', remote.manageable
+      ? `Room options. Remote access ${stateLabel.toLowerCase()}.`
+      : 'Room options');
+    updateRoomOverflow();
   }
 
   async function refreshRemoteAccess() {
@@ -1683,13 +1714,20 @@
     elements.dropShield.hidden = true;
     void stageFiles(event.dataTransfer.files);
   });
-  elements.pairButton.addEventListener('click', () => { void startPairing('lan'); });
-  elements.remotePairButton.addEventListener('click', () => { void startPairing('remote'); });
-  elements.remoteAccessButton.addEventListener('click', () => { void toggleRemoteAccess(); });
+  elements.pairButton.addEventListener('click', () => { closeRoomOverflow(); void startPairing('lan'); });
+  elements.remotePairButton.addEventListener('click', () => { closeRoomOverflow(); void startPairing('remote'); });
+  elements.remoteAccessButton.addEventListener('click', () => { closeRoomOverflow(); void toggleRemoteAccess(); });
   elements.notificationButton.addEventListener('click', () => {
+    closeRoomOverflow();
     elements.notificationError.textContent = '';
     void refreshNotificationSettings();
     elements.notificationDialog.showModal();
+  });
+  document.addEventListener('click', (event) => {
+    if (elements.roomOverflow.open && !elements.roomOverflow.contains(event.target)) closeRoomOverflow();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && elements.roomOverflow.open) closeRoomOverflow();
   });
   elements.notificationDialogClose.addEventListener('click', () => elements.notificationDialog.close());
   elements.notificationDialog.addEventListener('click', (event) => {

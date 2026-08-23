@@ -10,6 +10,7 @@ describe('Team Room QR pairing browser flow', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-qr-jest-'));
     const outputPath = path.join(tempRoot, 'result.json');
     const screenshotPath = path.join(tempRoot, 'pair-dialog.png');
+    const headerScreenshotPath = path.join(tempRoot, 'room-menu.png');
     const electronPackageRoot = path.dirname(require.resolve('electron/package.json'));
     const electronPath = process.platform === 'win32'
       ? path.join(electronPackageRoot, 'dist', 'electron.exe')
@@ -23,6 +24,7 @@ describe('Team Room QR pairing browser flow', () => {
           ...baseEnv,
           TEAM_ROOM_QR_OUTPUT: outputPath,
           TEAM_ROOM_QR_SCREENSHOT: screenshotPath,
+          TEAM_ROOM_QR_HEADER_SCREENSHOT: headerScreenshotPath,
         },
         encoding: 'utf8',
         timeout: 45_000,
@@ -66,6 +68,23 @@ describe('Team Room QR pairing browser flow', () => {
         qrNaturalWidth: 256,
         pairingCode: expect.stringMatching(/^\d{6}$/u),
       }));
+      expect(result.headerDiagnostic).toEqual(expect.objectContaining({
+        desktopShell: 'desktop',
+        iconLoaded: true,
+        iconPath: '/squidrun-favicon.ico',
+        memberStackAbsent: true,
+        overflowVisible: true,
+        overflowOpen: true,
+        menuVisible: true,
+        triggerLabel: 'Room options. Remote access on.',
+        triggerStateHidden: false,
+        remoteState: 'on',
+        visibleActions: ['pairPhoneButton', 'remotePairButton', 'remoteAccessButton'],
+        escapeClosed: true,
+        outsideClosed: true,
+      }));
+      expect(result.remoteAccessDiagnostic).toEqual(expect.objectContaining({ actionClosed: true }));
+      expect(result.dialog).toEqual(expect.objectContaining({ actionClosed: true }));
       expect(result.phone).toEqual(expect.objectContaining({
         authenticated: true,
         connected: 'connected',
@@ -76,6 +95,7 @@ describe('Team Room QR pairing browser flow', () => {
         sameSite: 'strict',
       }));
       expect(fs.statSync(screenshotPath).size).toBeGreaterThan(10_000);
+      expect(fs.statSync(headerScreenshotPath).size).toBeGreaterThan(10_000);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

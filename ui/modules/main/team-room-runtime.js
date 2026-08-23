@@ -45,6 +45,7 @@ const STATIC_FILES = Object.freeze({
   '/team-room-icon-192.png': { file: 'team-room-icon-192.png', type: 'image/png' },
   '/team-room-icon-512.png': { file: 'team-room-icon-512.png', type: 'image/png' },
   '/team-room-icon-180.png': { file: 'team-room-icon-180.png', type: 'image/png' },
+  '/squidrun-favicon.ico': { file: 'squidrun-favicon.ico', root: 'assets', type: 'image/x-icon' },
 });
 
 const SECURITY_HEADERS = Object.freeze({
@@ -1257,8 +1258,9 @@ class TeamRoomRuntime {
     if (mediaMatch && request.method === 'GET') return this._handleMedia(request, response, mediaMatch[1], mediaMatch[2]);
     const asset = STATIC_FILES[url.pathname];
     if (request.method !== 'GET' || !asset) return jsonResponse(response, 404, { ok: false, reason: 'room_route_not_found' });
-    const filePath = path.resolve(this.publicRoot, asset.file);
-    if (path.dirname(filePath) !== this.publicRoot) return jsonResponse(response, 403, { ok: false, reason: 'room_static_path_forbidden' });
+    const assetRoot = asset.root === 'assets' ? path.resolve(this.publicRoot, 'assets') : this.publicRoot;
+    const filePath = path.resolve(assetRoot, asset.file);
+    if (path.dirname(filePath) !== assetRoot) return jsonResponse(response, 403, { ok: false, reason: 'room_static_path_forbidden' });
     let body;
     try { body = fs.readFileSync(filePath); } catch {
       return jsonResponse(response, 404, { ok: false, reason: 'room_asset_not_found' });

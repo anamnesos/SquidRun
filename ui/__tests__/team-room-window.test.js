@@ -51,6 +51,16 @@ describe('Team Room window', () => {
       statePath,
     });
     expect(created.options.webPreferences).toEqual(expect.objectContaining(FORCED_WEB_PREFERENCES));
+    if (process.platform === 'win32' || process.platform === 'linux') {
+      expect(created.options).toEqual(expect.objectContaining({
+        titleBarStyle: 'hidden',
+        titleBarOverlay: {
+          color: '#0c1014',
+          symbolColor: '#8fa1b3',
+          height: 32,
+        },
+      }));
+    }
     expect(created.window.webContents.session.cookies.set).toHaveBeenCalledWith(expect.objectContaining({
       url: 'http://127.0.0.1:41234/',
       name: 'squidrun_team_room',
