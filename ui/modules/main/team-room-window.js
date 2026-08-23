@@ -131,7 +131,7 @@ async function createTeamRoomWindow(options = {}) {
   if (options.showOnReady !== false) {
     windowRef.once?.('ready-to-show', () => windowRef.show?.());
   }
-  await windowRef.loadURL(`${roomOrigin}/`);
+  await windowRef.loadURL(`${roomOrigin}/?chrome=overlay`);
   return { window: windowRef, origin: roomOrigin, statePath, options: windowOptions };
 }
 

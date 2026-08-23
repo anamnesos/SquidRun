@@ -10,6 +10,7 @@ const { createTeamRoomWindow } = require('../../modules/main/team-room-window');
 const outputPath = path.resolve(String(process.env.TEAM_ROOM_QR_OUTPUT || ''));
 const screenshotPath = String(process.env.TEAM_ROOM_QR_SCREENSHOT || '').trim();
 const headerScreenshotPath = String(process.env.TEAM_ROOM_QR_HEADER_SCREENSHOT || '').trim();
+const nativeHeaderScreenshotPath = String(process.env.TEAM_ROOM_QR_NATIVE_HEADER_SCREENSHOT || '').trim();
 const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-qr-browser-'));
 app.setPath('userData', path.join(smokeRoot, 'user-data'));
 app.commandLine.appendSwitch('disable-gpu');
@@ -73,6 +74,7 @@ async function run() {
     }),
   });
   let desktopWindow = null;
+  let nativeWindow = null;
   let phoneWindow = null;
   let result = null;
   const consoleErrors = [];
@@ -88,7 +90,7 @@ async function run() {
       credentialToken: electronCredential.token,
       statePath: path.join(smokeRoot, 'window-state.json'),
       showOnReady: false,
-      windowOptions: { width: 980, height: 820, minWidth: 320, minHeight: 480 },
+      windowOptions: { width: 716, height: 1000, minWidth: 320, minHeight: 480 },
     });
     desktopWindow = created.window;
     desktopWindow.webContents.on('console-message', (_event, level, message) => {
@@ -114,14 +116,14 @@ async function run() {
       const overflow = document.querySelector('#roomOverflow');
       document.querySelector('#roomOverflowTrigger').click();
       await new Promise((resolve) => requestAnimationFrame(resolve));
-      const icon = document.querySelector('.room-mark img');
+      const logo = document.querySelector('.room-mark-logo');
       const triggerRect = document.querySelector('#roomOverflowTrigger').getBoundingClientRect();
       const panelRect = document.querySelector('.room-overflow-panel').getBoundingClientRect();
       const opened = {
         desktopShell: document.documentElement.dataset.roomShell,
+        chromeMode: document.documentElement.dataset.roomChrome,
         headerPaddingRight: Number.parseFloat(getComputedStyle(document.querySelector('.room-header')).paddingRight),
-        iconLoaded: icon.complete && icon.naturalWidth > 0,
-        iconPath: new URL(icon.src).pathname,
+        logoInline: logo instanceof SVGElement && logo.querySelectorAll('path').length === 3,
         memberStackAbsent: !document.querySelector('.member-stack'),
         overflowVisible: !overflow.hidden,
         overflowOpen: overflow.open,
@@ -130,6 +132,7 @@ async function run() {
         triggerStateHidden: document.querySelector('#roomOverflowState').hidden,
         remoteState: document.querySelector('#remoteAccessButton').dataset.state,
         viewportWidth: window.innerWidth,
+        triggerRightGap: window.innerWidth - triggerRect.right,
         triggerRect: { left: triggerRect.left, right: triggerRect.right, top: triggerRect.top, bottom: triggerRect.bottom },
         panelRect: { left: panelRect.left, right: panelRect.right, top: panelRect.top, bottom: panelRect.bottom },
         visibleActions: [...document.querySelectorAll('.room-menu-item')]
@@ -215,13 +218,63 @@ async function run() {
     const pairedCookie = cookies.find((cookie) => cookie.name === 'squidrun_team_room');
     checkpoint('phone-paired', { phone, pairedCookiePresent: Boolean(pairedCookie) });
 
+    // James's currently running main process predates overlay chrome. It loads the
+    // new static page at bare `/` inside a normal framed BrowserWindow, so prove
+    // that exact mixed-version close/reopen path separately from the next-restart
+    // `?chrome=overlay` path above.
+    nativeWindow = new BrowserWindow({
+      show: false,
+      width: 716,
+      height: 1000,
+      title: 'SquidRun Team Room',
+      backgroundColor: '#0c1014',
+      autoHideMenuBar: true,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        spellcheck: true,
+        partition: 'persist:squidrun-team-room',
+      },
+    });
+    nativeWindow.webContents.on('console-message', (_event, level, message) => {
+      if (Number(level) >= 2) consoleErrors.push(`native:${message}`);
+    });
+    await nativeWindow.loadURL(`${started.origin}/`);
+    await waitForRenderer(nativeWindow, `() => document.querySelector('#connectionDot')?.dataset.state === 'connected'
+      && !document.querySelector('#roomOverflow')?.hidden`, 12_000, 'native-header-ready');
+    const nativeHeaderDiagnostic = await nativeWindow.webContents.executeJavaScript(`(async () => {
+      const overflow = document.querySelector('#roomOverflow');
+      document.querySelector('#roomOverflowTrigger').click();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const logo = document.querySelector('.room-mark-logo');
+      const header = document.querySelector('.room-header');
+      const triggerRect = document.querySelector('#roomOverflowTrigger').getBoundingClientRect();
+      const panelRect = document.querySelector('.room-overflow-panel').getBoundingClientRect();
+      return {
+        desktopShell: document.documentElement.dataset.roomShell,
+        chromeMode: document.documentElement.dataset.roomChrome,
+        headerPaddingRight: Number.parseFloat(getComputedStyle(header).paddingRight),
+        logoInline: logo instanceof SVGElement && logo.querySelectorAll('path').length === 3,
+        viewportWidth: window.innerWidth,
+        triggerRightGap: window.innerWidth - triggerRect.right,
+        triggerRect: { left: triggerRect.left, right: triggerRect.right, top: triggerRect.top, bottom: triggerRect.bottom },
+        panelRect: { left: panelRect.left, right: panelRect.right, top: panelRect.top, bottom: panelRect.bottom },
+      };
+    })()`);
+    if (nativeHeaderScreenshotPath) {
+      fs.mkdirSync(path.dirname(path.resolve(nativeHeaderScreenshotPath)), { recursive: true });
+      fs.writeFileSync(path.resolve(nativeHeaderScreenshotPath), (await nativeWindow.webContents.capturePage()).toPNG());
+    }
+
     result = {
       complete: true,
       ok: dialog.pairButtonVisible
         && headerDiagnostic.desktopShell === 'desktop'
+        && headerDiagnostic.chromeMode === 'overlay'
         && headerDiagnostic.headerPaddingRight >= 156
-        && headerDiagnostic.iconLoaded
-        && headerDiagnostic.iconPath === '/squidrun-favicon.ico'
+        && headerDiagnostic.triggerRightGap >= 150
+        && headerDiagnostic.logoInline
         && headerDiagnostic.memberStackAbsent
         && headerDiagnostic.overflowVisible
         && headerDiagnostic.overflowOpen
@@ -254,12 +307,23 @@ async function run() {
         && phone.hash === ''
         && pairedCookie?.httpOnly === true
         && pairedCookie?.sameSite === 'strict'
+        && nativeHeaderDiagnostic.desktopShell === 'desktop'
+        && nativeHeaderDiagnostic.chromeMode === 'native'
+        && nativeHeaderDiagnostic.headerPaddingRight < 80
+        && nativeHeaderDiagnostic.logoInline
+        && nativeHeaderDiagnostic.triggerRightGap >= 0
+        && nativeHeaderDiagnostic.triggerRightGap <= 50
+        && nativeHeaderDiagnostic.triggerRect.left >= 0
+        && nativeHeaderDiagnostic.triggerRect.right <= nativeHeaderDiagnostic.viewportWidth
+        && nativeHeaderDiagnostic.panelRect.left >= 0
+        && nativeHeaderDiagnostic.panelRect.right <= nativeHeaderDiagnostic.viewportWidth
         && consoleErrors.length === 0,
       electron: process.versions.electron,
       node: process.versions.node,
       origin: started.origin,
       remoteAccessDiagnostic,
       headerDiagnostic,
+      nativeHeaderDiagnostic,
       dialog: {
         ...dialog,
         qrSrc: dialog.qrSrc.slice(0, 30),
@@ -277,6 +341,7 @@ async function run() {
   } finally {
     checkpoint('cleanup-started', { resultReady: Boolean(result) });
     try { phoneWindow?.destroy(); } catch {}
+    try { nativeWindow?.destroy(); } catch {}
     try { desktopWindow?.destroy(); } catch {}
     for (const client of runtime.clients) {
       try { client.terminate(); } catch {}

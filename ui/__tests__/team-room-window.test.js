@@ -68,7 +68,7 @@ describe('Team Room window', () => {
       httpOnly: true,
       sameSite: 'strict',
     }));
-    expect(created.window.loadedUrl).toBe('http://127.0.0.1:41234/');
+    expect(created.window.loadedUrl).toBe('http://127.0.0.1:41234/?chrome=overlay');
     created.window.emit('ready-to-show');
     expect(created.window.shown).toBe(true);
     created.window.emit('close');

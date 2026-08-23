@@ -85,7 +85,18 @@ button { color: inherit; }
   background: linear-gradient(145deg, #18232c, #10161c);
   box-shadow: inset 0 1px rgba(255, 255, 255, .04), 0 8px 24px rgba(0, 0, 0, .18);
 }
-.room-mark img { display: block; width: 27px; height: 27px; object-fit: contain; }
+.room-mark-logo {
+  display: block;
+  width: 29px;
+  height: 29px;
+  fill: none;
+  stroke: var(--room-architect);
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 8px rgba(56, 214, 240, .22));
+}
+.room-mark-eyes { stroke-width: 3; }
 
 .room-title-row { display: flex; align-items: center; gap: 9px; }
 .room-title-row h1 { margin: 0; font-size: 16px; line-height: 1.2; font-weight: 680; letter-spacing: -.01em; }
@@ -170,7 +181,7 @@ button { color: inherit; }
 .room-menu-item[data-state="pending"] .room-menu-state { background: var(--room-amber); }
 .room-menu-item[data-state="error"] .room-menu-state { background: var(--room-danger); }
 
-:root[data-room-shell="desktop"] .room-header {
+:root[data-room-shell="desktop"][data-room-chrome="overlay"] .room-header {
   padding-right: max(156px, env(safe-area-inset-right, 0px));
 }
 
@@ -647,7 +658,7 @@ button { color: inherit; }
 @media (max-width: 640px) {
   .room-header { min-height: 64px; padding: calc(10px + env(safe-area-inset-top, 0px)) max(15px, env(safe-area-inset-right, 0px)) 10px max(15px, env(safe-area-inset-left, 0px)); }
   .room-mark { width: 34px; height: 34px; border-radius: 10px; }
-  .room-mark img { width: 24px; height: 24px; }
+  .room-mark-logo { width: 26px; height: 26px; }
   .room-overflow-trigger { width: 38px; height: 38px; }
   .message-column { padding: 30px 17px 40px; }
   .message-run { padding-left: 15px; }

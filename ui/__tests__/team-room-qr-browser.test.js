@@ -11,6 +11,7 @@ describe('Team Room QR pairing browser flow', () => {
     const outputPath = path.join(tempRoot, 'result.json');
     const screenshotPath = path.join(tempRoot, 'pair-dialog.png');
     const headerScreenshotPath = path.join(tempRoot, 'room-menu.png');
+    const nativeHeaderScreenshotPath = path.join(tempRoot, 'native-room-menu.png');
     const electronPackageRoot = path.dirname(require.resolve('electron/package.json'));
     const electronPath = process.platform === 'win32'
       ? path.join(electronPackageRoot, 'dist', 'electron.exe')
@@ -25,6 +26,7 @@ describe('Team Room QR pairing browser flow', () => {
           TEAM_ROOM_QR_OUTPUT: outputPath,
           TEAM_ROOM_QR_SCREENSHOT: screenshotPath,
           TEAM_ROOM_QR_HEADER_SCREENSHOT: headerScreenshotPath,
+          TEAM_ROOM_QR_NATIVE_HEADER_SCREENSHOT: nativeHeaderScreenshotPath,
         },
         encoding: 'utf8',
         timeout: 45_000,
@@ -70,8 +72,8 @@ describe('Team Room QR pairing browser flow', () => {
       }));
       expect(result.headerDiagnostic).toEqual(expect.objectContaining({
         desktopShell: 'desktop',
-        iconLoaded: true,
-        iconPath: '/squidrun-favicon.ico',
+        chromeMode: 'overlay',
+        logoInline: true,
         memberStackAbsent: true,
         overflowVisible: true,
         overflowOpen: true,
@@ -84,6 +86,16 @@ describe('Team Room QR pairing browser flow', () => {
         outsideClosed: true,
       }));
       expect(result.remoteAccessDiagnostic).toEqual(expect.objectContaining({ actionClosed: true }));
+      expect(result.nativeHeaderDiagnostic).toEqual(expect.objectContaining({
+        desktopShell: 'desktop',
+        chromeMode: 'native',
+        logoInline: true,
+      }));
+      expect(result.nativeHeaderDiagnostic.headerPaddingRight).toBeLessThan(80);
+      expect(result.nativeHeaderDiagnostic.triggerRightGap).toBeGreaterThanOrEqual(0);
+      expect(result.nativeHeaderDiagnostic.triggerRightGap).toBeLessThanOrEqual(50);
+      expect(result.nativeHeaderDiagnostic.panelRect.left).toBeGreaterThanOrEqual(0);
+      expect(result.nativeHeaderDiagnostic.panelRect.right).toBeLessThanOrEqual(result.nativeHeaderDiagnostic.viewportWidth);
       expect(result.dialog).toEqual(expect.objectContaining({ actionClosed: true }));
       expect(result.phone).toEqual(expect.objectContaining({
         authenticated: true,
@@ -96,6 +108,7 @@ describe('Team Room QR pairing browser flow', () => {
       }));
       expect(fs.statSync(screenshotPath).size).toBeGreaterThan(10_000);
       expect(fs.statSync(headerScreenshotPath).size).toBeGreaterThan(10_000);
+      expect(fs.statSync(nativeHeaderScreenshotPath).size).toBeGreaterThan(10_000);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

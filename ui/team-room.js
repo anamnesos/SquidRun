@@ -1,7 +1,10 @@
 (() => {
   'use strict';
 
-  document.documentElement.dataset.roomShell = /\bElectron\//u.test(navigator.userAgent || '') ? 'desktop' : 'web';
+  const isDesktopShell = /\bElectron\//u.test(navigator.userAgent || '');
+  const requestedChrome = new URLSearchParams(window.location.search).get('chrome');
+  document.documentElement.dataset.roomShell = isDesktopShell ? 'desktop' : 'web';
+  document.documentElement.dataset.roomChrome = isDesktopShell && requestedChrome === 'overlay' ? 'overlay' : 'native';
 
   const elements = {
     app: document.getElementById('roomApp'),
