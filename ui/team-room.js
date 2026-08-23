@@ -3,8 +3,26 @@
 
   const isDesktopShell = /\bElectron\//u.test(navigator.userAgent || '');
   const requestedChrome = new URLSearchParams(window.location.search).get('chrome');
+  const usesOverlayChrome = isDesktopShell && requestedChrome === 'overlay';
+  const windowControlsOverlay = usesOverlayChrome ? navigator.windowControlsOverlay : null;
   document.documentElement.dataset.roomShell = isDesktopShell ? 'desktop' : 'web';
-  document.documentElement.dataset.roomChrome = isDesktopShell && requestedChrome === 'overlay' ? 'overlay' : 'native';
+  document.documentElement.dataset.roomChrome = usesOverlayChrome ? 'overlay' : 'native';
+
+  function syncWindowControlsOverlayGeometry() {
+    let height = 32;
+    try {
+      const rect = windowControlsOverlay?.getTitlebarAreaRect?.();
+      if (windowControlsOverlay?.visible !== false && Number.isFinite(rect?.height) && rect.height > 0) {
+        height = rect.height;
+      }
+    } catch {}
+    document.documentElement.style.setProperty('--room-caption-height', `${Math.round(height * 100) / 100}px`);
+  }
+
+  if (usesOverlayChrome) {
+    syncWindowControlsOverlayGeometry();
+    windowControlsOverlay?.addEventListener?.('geometrychange', syncWindowControlsOverlayGeometry);
+  }
 
   const elements = {
     app: document.getElementById('roomApp'),

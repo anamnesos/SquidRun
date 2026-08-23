@@ -10,6 +10,7 @@ const { createTeamRoomWindow } = require('../../modules/main/team-room-window');
 const outputPath = path.resolve(String(process.env.TEAM_ROOM_QR_OUTPUT || ''));
 const screenshotPath = String(process.env.TEAM_ROOM_QR_SCREENSHOT || '').trim();
 const headerScreenshotPath = String(process.env.TEAM_ROOM_QR_HEADER_SCREENSHOT || '').trim();
+const maximizedHeaderScreenshotPath = String(process.env.TEAM_ROOM_QR_MAXIMIZED_HEADER_SCREENSHOT || '').trim();
 const nativeHeaderScreenshotPath = String(process.env.TEAM_ROOM_QR_NATIVE_HEADER_SCREENSHOT || '').trim();
 const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-qr-browser-'));
 app.setPath('userData', path.join(smokeRoot, 'user-data'));
@@ -44,6 +45,45 @@ async function waitForRenderer(windowRef, predicate, timeoutMs = 12_000, label =
       await new Promise((resolve) => setTimeout(resolve, 35));
     }
     throw new Error('team_room_qr_wait_timeout:${String(label)}');
+  })()`);
+}
+
+async function readHeaderGeometry(windowRef) {
+  return windowRef.webContents.executeJavaScript(`(async () => {
+    const overflow = document.querySelector('#roomOverflow');
+    overflow.open = true;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const logo = document.querySelector('.room-mark-logo');
+    const header = document.querySelector('.room-header');
+    const brandRect = document.querySelector('.room-brand').getBoundingClientRect();
+    const triggerRect = document.querySelector('#roomOverflowTrigger').getBoundingClientRect();
+    const panelRect = document.querySelector('.room-overflow-panel').getBoundingClientRect();
+    const overlayRect = navigator.windowControlsOverlay?.getTitlebarAreaRect?.() || null;
+    return {
+      desktopShell: document.documentElement.dataset.roomShell,
+      chromeMode: document.documentElement.dataset.roomChrome,
+      headerPaddingRight: Number.parseFloat(getComputedStyle(header).paddingRight),
+      captionHeight: Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--room-caption-height')),
+      overlayVisible: navigator.windowControlsOverlay?.visible ?? null,
+      overlayRect: overlayRect ? {
+        left: overlayRect.left,
+        right: overlayRect.right,
+        top: overlayRect.top,
+        bottom: overlayRect.bottom,
+        width: overlayRect.width,
+        height: overlayRect.height,
+      } : null,
+      logoCanonical: logo instanceof HTMLImageElement
+        && logo.complete
+        && logo.naturalWidth > 0
+        && new URL(logo.src).pathname === '/squidrun-favicon.ico',
+      logoNaturalWidth: logo instanceof HTMLImageElement ? logo.naturalWidth : 0,
+      viewportWidth: window.innerWidth,
+      brandRect: { left: brandRect.left, right: brandRect.right, top: brandRect.top, bottom: brandRect.bottom },
+      triggerRightGap: window.innerWidth - triggerRect.right,
+      triggerRect: { left: triggerRect.left, right: triggerRect.right, top: triggerRect.top, bottom: triggerRect.bottom },
+      panelRect: { left: panelRect.left, right: panelRect.right, top: panelRect.top, bottom: panelRect.bottom },
+    };
   })()`);
 }
 
@@ -112,18 +152,11 @@ async function run() {
       throw error;
     }
     checkpoint('desktop-ready');
-    const headerDiagnostic = await desktopWindow.webContents.executeJavaScript(`(async () => {
+    const headerDiagnostic = await readHeaderGeometry(desktopWindow);
+    checkpoint('header-geometry-read', { headerDiagnostic });
+    Object.assign(headerDiagnostic, await desktopWindow.webContents.executeJavaScript(`(async () => {
       const overflow = document.querySelector('#roomOverflow');
-      document.querySelector('#roomOverflowTrigger').click();
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-      const logo = document.querySelector('.room-mark-logo');
-      const triggerRect = document.querySelector('#roomOverflowTrigger').getBoundingClientRect();
-      const panelRect = document.querySelector('.room-overflow-panel').getBoundingClientRect();
       const opened = {
-        desktopShell: document.documentElement.dataset.roomShell,
-        chromeMode: document.documentElement.dataset.roomChrome,
-        headerPaddingRight: Number.parseFloat(getComputedStyle(document.querySelector('.room-header')).paddingRight),
-        logoInline: logo instanceof SVGElement && logo.querySelectorAll('path').length === 3,
         memberStackAbsent: !document.querySelector('.member-stack'),
         overflowVisible: !overflow.hidden,
         overflowOpen: overflow.open,
@@ -131,10 +164,6 @@ async function run() {
         triggerLabel: document.querySelector('#roomOverflowTrigger').getAttribute('aria-label'),
         triggerStateHidden: document.querySelector('#roomOverflowState').hidden,
         remoteState: document.querySelector('#remoteAccessButton').dataset.state,
-        viewportWidth: window.innerWidth,
-        triggerRightGap: window.innerWidth - triggerRect.right,
-        triggerRect: { left: triggerRect.left, right: triggerRect.right, top: triggerRect.top, bottom: triggerRect.bottom },
-        panelRect: { left: panelRect.left, right: panelRect.right, top: panelRect.top, bottom: panelRect.bottom },
         visibleActions: [...document.querySelectorAll('.room-menu-item')]
           .filter((button) => !button.hidden)
           .map((button) => button.id),
@@ -147,11 +176,30 @@ async function run() {
       document.querySelector('#roomOverflowTrigger').click();
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       return opened;
-    })()`);
+    })()`));
     if (headerScreenshotPath) {
       fs.mkdirSync(path.dirname(path.resolve(headerScreenshotPath)), { recursive: true });
       fs.writeFileSync(path.resolve(headerScreenshotPath), (await desktopWindow.webContents.capturePage()).toPNG());
     }
+    checkpoint('header-captured');
+    checkpoint('before-maximize');
+    desktopWindow.maximize();
+    checkpoint('after-maximize');
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const maximizedHeaderDiagnostic = {
+      ...(await readHeaderGeometry(desktopWindow)),
+      windowMaximized: desktopWindow.isMaximized(),
+      windowBounds: desktopWindow.getBounds(),
+    };
+    checkpoint('maximized-header-read', { maximizedHeaderDiagnostic });
+    if (maximizedHeaderScreenshotPath) {
+      fs.mkdirSync(path.dirname(path.resolve(maximizedHeaderScreenshotPath)), { recursive: true });
+      fs.writeFileSync(path.resolve(maximizedHeaderScreenshotPath), (await desktopWindow.webContents.capturePage()).toPNG());
+    }
+    checkpoint('maximized-header-captured');
+    desktopWindow.restore();
+    checkpoint('restore-called');
+    await new Promise((resolve) => setTimeout(resolve, 250));
     await desktopWindow.webContents.executeJavaScript(`document.querySelector('#remoteAccessButton').click()`);
     await waitForRenderer(desktopWindow, `() => document.querySelector('#remoteAccessLabel')?.textContent.includes('Enable HTTPS Certificates')`, 12_000, 'remote-error');
     const remoteAccessDiagnostic = await desktopWindow.webContents.executeJavaScript(`(() => ({
@@ -243,25 +291,7 @@ async function run() {
     await nativeWindow.loadURL(`${started.origin}/`);
     await waitForRenderer(nativeWindow, `() => document.querySelector('#connectionDot')?.dataset.state === 'connected'
       && !document.querySelector('#roomOverflow')?.hidden`, 12_000, 'native-header-ready');
-    const nativeHeaderDiagnostic = await nativeWindow.webContents.executeJavaScript(`(async () => {
-      const overflow = document.querySelector('#roomOverflow');
-      document.querySelector('#roomOverflowTrigger').click();
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      const logo = document.querySelector('.room-mark-logo');
-      const header = document.querySelector('.room-header');
-      const triggerRect = document.querySelector('#roomOverflowTrigger').getBoundingClientRect();
-      const panelRect = document.querySelector('.room-overflow-panel').getBoundingClientRect();
-      return {
-        desktopShell: document.documentElement.dataset.roomShell,
-        chromeMode: document.documentElement.dataset.roomChrome,
-        headerPaddingRight: Number.parseFloat(getComputedStyle(header).paddingRight),
-        logoInline: logo instanceof SVGElement && logo.querySelectorAll('path').length === 3,
-        viewportWidth: window.innerWidth,
-        triggerRightGap: window.innerWidth - triggerRect.right,
-        triggerRect: { left: triggerRect.left, right: triggerRect.right, top: triggerRect.top, bottom: triggerRect.bottom },
-        panelRect: { left: panelRect.left, right: panelRect.right, top: panelRect.top, bottom: panelRect.bottom },
-      };
-    })()`);
+    const nativeHeaderDiagnostic = await readHeaderGeometry(nativeWindow);
     if (nativeHeaderScreenshotPath) {
       fs.mkdirSync(path.dirname(path.resolve(nativeHeaderScreenshotPath)), { recursive: true });
       fs.writeFileSync(path.resolve(nativeHeaderScreenshotPath), (await nativeWindow.webContents.capturePage()).toPNG());
@@ -272,9 +302,16 @@ async function run() {
       ok: dialog.pairButtonVisible
         && headerDiagnostic.desktopShell === 'desktop'
         && headerDiagnostic.chromeMode === 'overlay'
-        && headerDiagnostic.headerPaddingRight >= 156
-        && headerDiagnostic.triggerRightGap >= 150
-        && headerDiagnostic.logoInline
+        && headerDiagnostic.headerPaddingRight < 80
+        && headerDiagnostic.triggerRightGap >= 8
+        && headerDiagnostic.triggerRightGap <= 24
+        && headerDiagnostic.logoCanonical
+        && headerDiagnostic.logoNaturalWidth >= 128
+        && headerDiagnostic.overlayVisible
+        && headerDiagnostic.overlayRect?.height > 0
+        && Math.abs(headerDiagnostic.captionHeight - headerDiagnostic.overlayRect.height) < 0.5
+        && headerDiagnostic.triggerRect.top >= headerDiagnostic.overlayRect.bottom
+        && headerDiagnostic.brandRect.right < headerDiagnostic.triggerRect.left
         && headerDiagnostic.memberStackAbsent
         && headerDiagnostic.overflowVisible
         && headerDiagnostic.overflowOpen
@@ -286,6 +323,14 @@ async function run() {
         && headerDiagnostic.triggerRect.right <= headerDiagnostic.viewportWidth
         && headerDiagnostic.panelRect.left >= 0
         && headerDiagnostic.panelRect.right <= headerDiagnostic.viewportWidth
+        && maximizedHeaderDiagnostic.windowMaximized
+        && maximizedHeaderDiagnostic.logoCanonical
+        && maximizedHeaderDiagnostic.triggerRightGap >= 8
+        && maximizedHeaderDiagnostic.triggerRightGap <= 24
+        && maximizedHeaderDiagnostic.triggerRect.top >= maximizedHeaderDiagnostic.overlayRect.bottom
+        && maximizedHeaderDiagnostic.brandRect.right < maximizedHeaderDiagnostic.triggerRect.left
+        && maximizedHeaderDiagnostic.panelRect.left >= 0
+        && maximizedHeaderDiagnostic.panelRect.right <= maximizedHeaderDiagnostic.viewportWidth
         && headerDiagnostic.visibleActions.join(',') === 'pairPhoneButton,remotePairButton,remoteAccessButton'
         && headerDiagnostic.escapeClosed
         && headerDiagnostic.outsideClosed
@@ -310,7 +355,7 @@ async function run() {
         && nativeHeaderDiagnostic.desktopShell === 'desktop'
         && nativeHeaderDiagnostic.chromeMode === 'native'
         && nativeHeaderDiagnostic.headerPaddingRight < 80
-        && nativeHeaderDiagnostic.logoInline
+        && nativeHeaderDiagnostic.logoCanonical
         && nativeHeaderDiagnostic.triggerRightGap >= 0
         && nativeHeaderDiagnostic.triggerRightGap <= 50
         && nativeHeaderDiagnostic.triggerRect.left >= 0
@@ -323,6 +368,7 @@ async function run() {
       origin: started.origin,
       remoteAccessDiagnostic,
       headerDiagnostic,
+      maximizedHeaderDiagnostic,
       nativeHeaderDiagnostic,
       dialog: {
         ...dialog,

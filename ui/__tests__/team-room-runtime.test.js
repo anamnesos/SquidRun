@@ -702,8 +702,8 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     expect(root.statusCode).toBe(200);
     expect(root.body.toString('utf8')).toContain('<link rel="manifest" href="/team-room.webmanifest">');
     expect(root.body.toString('utf8')).toContain('rel="apple-touch-icon"');
-    expect(root.body.toString('utf8')).toContain('<svg class="room-mark-logo"');
-    expect(root.body.toString('utf8')).not.toContain('<img src="/squidrun-favicon.ico"');
+    expect(root.body.toString('utf8')).toContain('<img class="room-mark-logo" src="/squidrun-favicon.ico" alt="">');
+    expect(root.body.toString('utf8')).not.toContain('<svg class="room-mark-logo"');
 
     const brandIcon = await rawRequest(started.origin, '/squidrun-favicon.ico');
     expect(brandIcon.statusCode).toBe(200);

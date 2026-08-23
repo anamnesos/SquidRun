@@ -11,6 +11,7 @@ describe('Team Room QR pairing browser flow', () => {
     const outputPath = path.join(tempRoot, 'result.json');
     const screenshotPath = path.join(tempRoot, 'pair-dialog.png');
     const headerScreenshotPath = path.join(tempRoot, 'room-menu.png');
+    const maximizedHeaderScreenshotPath = path.join(tempRoot, 'maximized-room-menu.png');
     const nativeHeaderScreenshotPath = path.join(tempRoot, 'native-room-menu.png');
     const electronPackageRoot = path.dirname(require.resolve('electron/package.json'));
     const electronPath = process.platform === 'win32'
@@ -26,6 +27,7 @@ describe('Team Room QR pairing browser flow', () => {
           TEAM_ROOM_QR_OUTPUT: outputPath,
           TEAM_ROOM_QR_SCREENSHOT: screenshotPath,
           TEAM_ROOM_QR_HEADER_SCREENSHOT: headerScreenshotPath,
+          TEAM_ROOM_QR_MAXIMIZED_HEADER_SCREENSHOT: maximizedHeaderScreenshotPath,
           TEAM_ROOM_QR_NATIVE_HEADER_SCREENSHOT: nativeHeaderScreenshotPath,
         },
         encoding: 'utf8',
@@ -73,7 +75,7 @@ describe('Team Room QR pairing browser flow', () => {
       expect(result.headerDiagnostic).toEqual(expect.objectContaining({
         desktopShell: 'desktop',
         chromeMode: 'overlay',
-        logoInline: true,
+        logoCanonical: true,
         memberStackAbsent: true,
         overflowVisible: true,
         overflowOpen: true,
@@ -85,11 +87,24 @@ describe('Team Room QR pairing browser flow', () => {
         escapeClosed: true,
         outsideClosed: true,
       }));
+      expect(result.headerDiagnostic.logoNaturalWidth).toBeGreaterThanOrEqual(128);
+      expect(result.headerDiagnostic.triggerRightGap).toBeGreaterThanOrEqual(8);
+      expect(result.headerDiagnostic.triggerRightGap).toBeLessThanOrEqual(24);
+      expect(result.headerDiagnostic.triggerRect.top).toBeGreaterThanOrEqual(result.headerDiagnostic.overlayRect.bottom);
+      expect(result.headerDiagnostic.brandRect.right).toBeLessThan(result.headerDiagnostic.triggerRect.left);
+      expect(result.maximizedHeaderDiagnostic).toEqual(expect.objectContaining({
+        windowMaximized: true,
+        logoCanonical: true,
+      }));
+      expect(result.maximizedHeaderDiagnostic.triggerRightGap).toBeGreaterThanOrEqual(8);
+      expect(result.maximizedHeaderDiagnostic.triggerRightGap).toBeLessThanOrEqual(24);
+      expect(result.maximizedHeaderDiagnostic.triggerRect.top).toBeGreaterThanOrEqual(result.maximizedHeaderDiagnostic.overlayRect.bottom);
+      expect(result.maximizedHeaderDiagnostic.brandRect.right).toBeLessThan(result.maximizedHeaderDiagnostic.triggerRect.left);
       expect(result.remoteAccessDiagnostic).toEqual(expect.objectContaining({ actionClosed: true }));
       expect(result.nativeHeaderDiagnostic).toEqual(expect.objectContaining({
         desktopShell: 'desktop',
         chromeMode: 'native',
-        logoInline: true,
+        logoCanonical: true,
       }));
       expect(result.nativeHeaderDiagnostic.headerPaddingRight).toBeLessThan(80);
       expect(result.nativeHeaderDiagnostic.triggerRightGap).toBeGreaterThanOrEqual(0);
@@ -108,6 +123,7 @@ describe('Team Room QR pairing browser flow', () => {
       }));
       expect(fs.statSync(screenshotPath).size).toBeGreaterThan(10_000);
       expect(fs.statSync(headerScreenshotPath).size).toBeGreaterThan(10_000);
+      expect(fs.statSync(maximizedHeaderScreenshotPath).size).toBeGreaterThan(10_000);
       expect(fs.statSync(nativeHeaderScreenshotPath).size).toBeGreaterThan(10_000);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
