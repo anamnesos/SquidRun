@@ -333,6 +333,12 @@ function processRowsWithExecutorAncestry() {
 describe('hm-restart-execute', () => {
   let tempRoot;
 
+  const greenRestartLaunchProbe = () => ({
+    ok: true,
+    reason: null,
+    renderer: { visible: false, focused: false },
+  });
+
   beforeEach(() => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-restart-execute-'));
     fs.mkdirSync(path.join(tempRoot, '.squidrun', 'coord'), { recursive: true });
@@ -421,6 +427,50 @@ describe('hm-restart-execute', () => {
     const steps = readJsonLines(path.join(tempRoot, '.squidrun', 'coord', 'restart-execute-log.jsonl'))
       .map((entry) => entry.step);
     expect(steps).toEqual(['preflight_check', 'dependency_integrity_check']);
+  });
+
+  test('refuses to touch processes when the isolated real launch probe is red', async () => {
+    writeRegistry(tempRoot);
+    appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
+      type: 'restart_preflight',
+      instance: 'james-main',
+      status: 'green',
+      timestampUtc: '2026-04-27T00:04:30.000Z',
+    });
+    const listElectronProcesses = jest.fn(() => [{ pid: 111 }]);
+    const runNodeScript = jest.fn(() => ({ status: 0 }));
+
+    const result = await restartExecute.executeRestart({
+      projectRoot: tempRoot,
+      instance: 'james-main',
+      reason: 'launch probe red test',
+      nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
+      checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
+      runRestartLaunchProbe: jest.fn(() => ({
+        ok: false,
+        reason: 'restart_launch_probe_process_failed',
+      })),
+      listElectronProcesses,
+      runNodeScript,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      stage: 'restart_launch_probe',
+      reason: 'restart_launch_probe_process_failed',
+    }));
+    expect(listElectronProcesses).not.toHaveBeenCalled();
+    expect(runNodeScript.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      'type=restart_execute_launch_probe_failed',
+      'src=hm-restart-execute',
+    ]));
+    const steps = readJsonLines(path.join(tempRoot, '.squidrun', 'coord', 'restart-execute-log.jsonl'))
+      .map((entry) => entry.step);
+    expect(steps).toEqual([
+      'preflight_check',
+      'dependency_integrity_check',
+      'restart_launch_probe_check',
+    ]);
   });
 
   test('selects only the top-level main SquidRun Electron parent from process rows', () => {
@@ -883,6 +933,7 @@ describe('hm-restart-execute', () => {
       instance: 'james-main',
       reason: 'green preflight test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
+      runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),
       nowMs: launchStartedMs,
       launchStartedMs,
       now: jest.fn(() => launchStartedMs),
@@ -912,6 +963,7 @@ describe('hm-restart-execute', () => {
     expect(steps).toEqual([
       'preflight_check',
       'dependency_integrity_check',
+      'restart_launch_probe_check',
       'shutdown_start',
       'shutdown_kill_attempt',
       'shutdown_complete',
@@ -935,6 +987,7 @@ describe('hm-restart-execute', () => {
       instance: 'james-main',
       reason: 'shutdown failure test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
+      runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),
       nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
       listElectronProcesses: jest.fn(() => [{ pid: 111, name: 'electron.exe' }]),
       killProcess: jest.fn(() => {
@@ -976,6 +1029,7 @@ describe('hm-restart-execute', () => {
       instance: 'james-main',
       reason: 'spawn failure test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
+      runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),
       nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
       launchStartedMs: Date.parse('2026-04-27T00:05:00.000Z'),
       captureAppStatus: jest.fn(() => ({
@@ -1025,6 +1079,7 @@ describe('hm-restart-execute', () => {
       instance: 'james-main',
       reason: 'no target test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
+      runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),
       nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
       captureAppStatus: jest.fn(() => ({
         exists: true,
@@ -1069,6 +1124,7 @@ describe('hm-restart-execute', () => {
       instance: 'james-main',
       reason: 'orphan descendant test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
+      runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),
       nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
       captureAppStatus: jest.fn(() => ({
         exists: true,
@@ -1155,6 +1211,7 @@ describe('hm-restart-execute', () => {
       instance: 'james-main',
       reason: 'sweep test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
+      runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),
       nowMs: launchStartedMs,
       launchStartedMs,
       now: jest.fn(() => launchStartedMs),
@@ -1203,6 +1260,7 @@ describe('hm-restart-execute', () => {
       instance: 'james-main',
       reason: 'unverified relaunch test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
+      runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),
       nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
       launchStartedMs: Date.parse('2026-04-27T00:05:00.000Z'),
       captureAppStatus: jest.fn(() => staleSnapshot),

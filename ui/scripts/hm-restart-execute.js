@@ -7,6 +7,7 @@ const { spawn, spawnSync, execFileSync } = require('child_process');
 
 const { getProjectRoot } = require('../config');
 const { checkDependencyIntegrity } = require('./hm-dependency-integrity');
+const { runRestartLaunchProbe } = require('./hm-restart-launch-probe');
 
 const DEFAULT_INSTANCE_ID = 'james-main';
 const PREFLIGHT_MAX_AGE_MS = 5 * 60 * 1000;
@@ -1397,6 +1398,37 @@ async function executeRestart(options = {}) {
     return failure;
   }
 
+  let restartLaunchProbe;
+  try {
+    const check = options.runRestartLaunchProbe || runRestartLaunchProbe;
+    restartLaunchProbe = await Promise.resolve(check(
+      runtimeProjectRoot,
+      options.restartLaunchProbeOptions || {}
+    ));
+  } catch (error) {
+    restartLaunchProbe = {
+      ok: false,
+      reason: 'restart_launch_probe_check_failed',
+      error: error?.message || String(error),
+    };
+  }
+  logStep(instanceConfig, 'restart_launch_probe_check', restartLaunchProbe);
+  if (!restartLaunchProbe?.ok) {
+    const failure = {
+      ok: false,
+      stage: 'restart_launch_probe',
+      reason: restartLaunchProbe?.reason || 'restart_launch_probe_failed',
+      restartLaunchProbe,
+    };
+    recordFailureAnomaly(
+      runtimeProjectRoot,
+      failure,
+      options,
+      'restart_execute_launch_probe_failed'
+    );
+    return failure;
+  }
+
   logStep(instanceConfig, 'shutdown_start', { reason, instance: instanceId });
   const shutdown = await shutdownElectronProcesses(runtimeProjectRoot, {
     ...options,
@@ -1451,6 +1483,7 @@ async function executeRestart(options = {}) {
       reason,
       preflight,
       dependencyIntegrity,
+      restartLaunchProbe,
       shutdown,
       relaunch,
       verification,

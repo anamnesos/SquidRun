@@ -63,6 +63,10 @@ const spineOverlayWindowModule = require('./spine-overlay-window');
 const { verifyAppWindowVisible } = require('./app-window-visibility');
 const { createTeamRoomAppController } = require('./team-room-app-controller');
 const { createWebSocketStartupLifecycle } = require('./websocket-startup-lifecycle');
+const {
+  isRestartLaunchProbe,
+  inspectRestartLaunchProbeWindow,
+} = require('./restart-launch-probe');
 const { resolveRuntimeInt } = require('../runtime-config');
 const {
   toNonEmptyString,
@@ -1526,6 +1530,8 @@ class SquidRunApp {
     this.runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
     this.runtimeLifecycleQueue = Promise.resolve();
     this.activeProfileName = getActiveProfileName();
+    this.restartLaunchProbe = isRestartLaunchProbe();
+    this.restartLaunchProbeResult = null;
     this.websocketStartupLifecycle = createWebSocketStartupLifecycle({
       websocketServer,
       log,
@@ -4660,7 +4666,9 @@ class SquidRunApp {
       log.info('ProjectLifecycle', `Using packaged external workspace: ${packagedWorkspacePath}`);
     }
 
-    this.kickoffStartupBriefingGeneration('app-init');
+    if (!this.restartLaunchProbe) {
+      this.kickoffStartupBriefingGeneration('app-init');
+    }
 
     // 2. Create the requested startup window(s) as early as possible so users see immediate startup feedback.
     this.appendBootSequenceBreadcrumb('init:step-2:launch-windows:start');
@@ -4689,6 +4697,20 @@ class SquidRunApp {
       degraded: launchWindowsResult?.ok === false,
       reason: launchWindowsResult?.reason || null,
     });
+
+    if (this.restartLaunchProbe) {
+      if (!this.restartLaunchProbeResult?.ok) {
+        throw new Error('restart launch probe did not produce a valid renderer result');
+      }
+      this.appendBootSequenceBreadcrumb('init:restart-launch-probe-complete', {
+        stage: this.restartLaunchProbeResult.stage,
+      });
+      return {
+        ok: true,
+        stage: 'renderer_ready',
+        renderer: this.restartLaunchProbeResult,
+      };
+    }
 
     // Profile-specific desktop shortcuts are owned outside the default app
     // bootstrap so they can carry explicit project-root/env overrides.
@@ -6120,7 +6142,8 @@ class SquidRunApp {
     this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:start`, {
       lifecycleRoot: rawOptions.lifecycleRoot === true,
     });
-    const displayOnlyWindow = toBooleanFlag(rawOptions.displayOnly, false);
+    const displayOnlyWindow = this.restartLaunchProbe
+      || toBooleanFlag(rawOptions.displayOnly, false);
     const skipStartupBundle = displayOnlyWindow || toBooleanFlag(rawOptions.skipStartupBundle, false);
     const windowTeam = String(rawOptions.windowTeam || windowKey).trim() || windowKey;
     const windowProfileName = toNonEmptyString(rawOptions.profileName) || this.activeProfileName;
@@ -6129,7 +6152,7 @@ class SquidRunApp {
     const existingWindow = this.getAppWindow(windowKey);
     if (this.canSendToWindow(existingWindow)) {
       this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:reuse-existing`);
-      if (typeof existingWindow.show === 'function') existingWindow.show();
+      if (!this.restartLaunchProbe && typeof existingWindow.show === 'function') existingWindow.show();
       return;
     }
 
@@ -6195,6 +6218,9 @@ class SquidRunApp {
     const windowRef = new BrowserWindow({
       width: 1400,
       height: 800,
+      show: !this.restartLaunchProbe,
+      skipTaskbar: this.restartLaunchProbe,
+      focusable: !this.restartLaunchProbe,
       icon: path.join(__dirname, '..', '..', 'assets', process.platform === 'win32' ? 'squidrun-favicon.ico' : 'squidrun-favicon-256.png'),
       backgroundColor: '#0c1014',
       autoHideMenuBar: true,
@@ -6269,23 +6295,37 @@ class SquidRunApp {
     this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:load-file:dispatch`, {
       rendererEntry: RENDERER_ENTRY_HTML,
     });
-    windowRef.loadFile(RENDERER_ENTRY_HTML, { query }).catch((err) => {
-      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:load-file:failed`, {
-        error: err?.message || String(err),
+    const rendererLoad = windowRef.loadFile(RENDERER_ENTRY_HTML, { query });
+    if (this.restartLaunchProbe) {
+      try {
+        this.restartLaunchProbeResult = await inspectRestartLaunchProbeWindow(windowRef, rendererLoad);
+      } catch (err) {
+        this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:restart-launch-probe:failed`, {
+          error: err?.message || String(err),
+          code: err?.code || null,
+          details: err?.details || null,
+        });
+        throw err;
+      }
+    } else {
+      rendererLoad.catch((err) => {
+        this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:load-file:failed`, {
+          error: err?.message || String(err),
+        });
+        log.error('Window', `Failed to load renderer entry ${RENDERER_ENTRY_HTML}: ${err.message}`);
+        this.activity.logActivity('error', 'system', 'Renderer failed to load', {
+          reason: 'load_file_failed',
+          filePath: RENDERER_ENTRY_HTML,
+          error: err.message,
+        });
       });
-      log.error('Window', `Failed to load renderer entry ${RENDERER_ENTRY_HTML}: ${err.message}`);
-      this.activity.logActivity('error', 'system', 'Renderer failed to load', {
-        reason: 'load_file_failed',
-        filePath: RENDERER_ENTRY_HTML,
-        error: err.message,
-      });
-    });
+    }
 
     if (lifecycleRoot) {
       // Hidden pane host windows are non-critical; defer to a separate task so
       // main-window listeners/post-load init always install first.
       this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:pane-host-bootstrap:schedule`);
-      this.schedulePaneHostBootstrap();
+      if (!this.restartLaunchProbe) this.schedulePaneHostBootstrap();
 
       // Honesty audit #3 (S464): the persisted setting IS the authority.
       // The old env gate (SQUIDRUN_DEBUG/NODE_ENV, never set in James's
@@ -6354,7 +6394,9 @@ class SquidRunApp {
     this.appendBootSequenceBreadcrumb('launchWindowsForProfile:focus:start', {
       focusWindowKey: nextProfile.focusWindowKey || windowKey,
     });
-    this.focusAppWindow(nextProfile.focusWindowKey || windowKey);
+    if (!this.restartLaunchProbe) {
+      this.focusAppWindow(nextProfile.focusWindowKey || windowKey);
+    }
     this.appendBootSequenceBreadcrumb('launchWindowsForProfile:focus:done');
     this.appendBootSequenceBreadcrumb('launchWindowsForProfile:return');
     return nextProfile;
@@ -7891,7 +7933,7 @@ class SquidRunApp {
 
     window.webContents.on('did-finish-load', async () => {
       log.info('Window', `did-finish-load${isPrimaryWindow ? '' : ` (${windowKey})`}`);
-      if (lifecycleRoot) {
+      if (lifecycleRoot && !this.restartLaunchProbe) {
         await this.initPostLoad();
         this.restorePersistedSquidRoomWindow();
       }

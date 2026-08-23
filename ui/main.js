@@ -8,10 +8,16 @@ const os = require('os');
 const fs = require('fs');
 const { app, Menu, dialog } = require('electron');
 const { createBootFailurePolicy } = require('./modules/main/boot-failure-policy');
+const {
+  isRestartLaunchProbe,
+  writeRestartLaunchProbeResult,
+} = require('./modules/main/restart-launch-probe');
+
+const restartLaunchProbeEnabled = isRestartLaunchProbe();
 
 const bootFailurePolicy = createBootFailurePolicy({
   app,
-  dialog,
+  dialog: restartLaunchProbeEnabled ? null : dialog,
   processRef: process,
 });
 process.on('uncaughtException', (error) => bootFailurePolicy.handleUncaughtException(error));
@@ -32,9 +38,12 @@ require('./modules/noise-bootstrap').installNoiseGuards();
 // per-process and the TRUTH lives in a runtime file tools must read -
 // checking netstat for a fixed port is exactly the stale-evidence class
 // the verdict ledger exists to kill.
-const cdpPort = process.env.SQUIDRUN_CDP_PORT
-  || String(9223 + (process.pid % 89)); // 9223-9311, collision-unlikely
-app.commandLine.appendSwitch('remote-debugging-port', cdpPort);
+const cdpPort = restartLaunchProbeEnabled
+  ? null
+  : (process.env.SQUIDRUN_CDP_PORT || String(9223 + (process.pid % 89))); // 9223-9311, collision-unlikely
+if (!restartLaunchProbeEnabled) {
+  app.commandLine.appendSwitch('remote-debugging-port', cdpPort);
+}
 // NOTE: cdp-port.json is written AFTER the single-instance lock is won (see
 // below) - at the 16:54 S467 boundary, dying twin instances wrote the file
 // then lost the lock, poisoning it with stillborn ports (last-writer-wins).
@@ -147,15 +156,17 @@ if (singleInstanceLock === false) {
 
 // LOCK WON (or non-main profile): only now may this instance claim the CDP
 // truth file - a loser twin can no longer poison it (ceremony purge item 5).
-try {
-  const cdpPortFile = resolveCoordPath(path.join('runtime', 'cdp-port.json'), { forWrite: true });
-  fs.mkdirSync(path.dirname(cdpPortFile), { recursive: true });
-  fs.writeFileSync(cdpPortFile, JSON.stringify({
-    port: Number(cdpPort),
-    pid: process.pid,
-    startedAt: new Date().toISOString(),
-  }));
-} catch (_) { /* CDP discovery degrades to probing; never block launch */ }
+if (!restartLaunchProbeEnabled) {
+  try {
+    const cdpPortFile = resolveCoordPath(path.join('runtime', 'cdp-port.json'), { forWrite: true });
+    fs.mkdirSync(path.dirname(cdpPortFile), { recursive: true });
+    fs.writeFileSync(cdpPortFile, JSON.stringify({
+      port: Number(cdpPort),
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+    }));
+  } catch (_) { /* CDP discovery degrades to probing; never block launch */ }
+}
 
 // Suppress EPIPE errors on stdout/stderr — broken pipes from console.log
 // must not crash the app (common when renderer disconnects or pipes close)
@@ -269,10 +280,37 @@ app.whenReady().then(async () => {
   enforceMenuSuppression();
   appendMainBootSequenceBreadcrumb('main:when-ready:init-start');
   try {
-    await squidrunApp.init();
+    const initResult = await squidrunApp.init();
+    if (restartLaunchProbeEnabled) {
+      const result = writeRestartLaunchProbeResult({
+        ok: true,
+        stage: initResult?.stage || 'renderer_ready',
+        appEntry: __filename,
+        renderer: initResult?.renderer || null,
+      });
+      bootFailurePolicy.markBootComplete();
+      appendMainBootSequenceBreadcrumb('main:restart-launch-probe-complete', {
+        stage: result.stage,
+      });
+      app.exit(0);
+      return;
+    }
     bootFailurePolicy.markBootComplete();
     appendMainBootSequenceBreadcrumb('main:init-complete');
   } catch (err) {
+    if (restartLaunchProbeEnabled) {
+      try {
+        writeRestartLaunchProbeResult({
+          ok: false,
+          stage: 'app_init',
+          reason: err?.code || 'restart_launch_probe_init_failed',
+          error: err?.message || String(err),
+          details: err?.details || null,
+        });
+      } catch (_) {
+        // The parent process still fails closed on the non-zero exit and missing result.
+      }
+    }
     appendMainBootSequenceBreadcrumb('main:init-catch', {
       error: err?.message || String(err),
       stack: err?.stack || null,

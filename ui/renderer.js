@@ -4694,6 +4694,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 });
 
+// Exact startup probe seam: this line runs only after the full renderer script
+// parsed and registered its lifecycle. The restart gate reads it from a hidden,
+// isolated real Electron window before the working app is ever shut down.
+document.documentElement.dataset.squidrunRendererScriptReady = 'true';
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     formatTeamRoomOpenFailure,

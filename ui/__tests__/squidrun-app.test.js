@@ -2136,6 +2136,80 @@ describe('SquidRunApp', () => {
       expect(BrowserWindow).toHaveBeenCalledWith(expect.objectContaining(expected));
     });
 
+    it('keeps the restart launch probe hidden and stops before pane-host startup', async () => {
+      const electron = require('electron');
+      const previousProbe = process.env.SQUIDRUN_RESTART_LAUNCH_PROBE;
+      const probeWindow = {
+        loadFile: jest.fn().mockResolvedValue(),
+        on: jest.fn(),
+        once: jest.fn(),
+        removeListener: jest.fn(),
+        webContents: {
+          send: jest.fn(),
+          on: jest.fn(),
+          once: jest.fn(),
+          removeListener: jest.fn(),
+          executeJavaScript: jest.fn().mockResolvedValue({
+            readyState: 'complete',
+            title: 'SquidRun',
+            hasBody: true,
+            terminalCount: 3,
+            preloadBridgeReady: true,
+            rendererModulesReady: true,
+            rendererModulesLoadError: null,
+            rendererScriptReady: true,
+          }),
+          openDevTools: jest.fn(),
+        },
+        isDestroyed: jest.fn().mockReturnValue(false),
+        isVisible: jest.fn().mockReturnValue(false),
+        isFocused: jest.fn().mockReturnValue(false),
+        show: jest.fn(),
+      };
+      try {
+        process.env.SQUIDRUN_RESTART_LAUNCH_PROBE = '1';
+        electron.BrowserWindow.mockImplementationOnce(() => probeWindow);
+        const probeApp = new SquidRunApp(mockAppContext, mockManagers);
+        jest.spyOn(probeApp, 'installMainWindowSendInterceptor').mockImplementation(() => {});
+        jest.spyOn(probeApp, 'ensurePaneHostReadyForwarder').mockImplementation(() => {});
+        jest.spyOn(probeApp, 'setupPermissions').mockImplementation(() => {});
+        jest.spyOn(probeApp, 'initModules').mockImplementation(() => {});
+        jest.spyOn(probeApp, 'setupWindowListeners').mockImplementation(() => {});
+        jest.spyOn(probeApp, 'schedulePaneHostBootstrap').mockImplementation(() => {});
+
+        await probeApp.createWindow();
+
+        expect(electron.BrowserWindow).toHaveBeenCalledWith(expect.objectContaining({
+          show: false,
+          skipTaskbar: true,
+          focusable: false,
+        }));
+        expect(probeWindow.loadFile).toHaveBeenCalledWith(
+          expect.stringContaining('index.html'),
+          expect.objectContaining({
+            query: expect.objectContaining({
+              autoBootAgents: 'false',
+              displayOnly: 'true',
+              skipStartupBundle: 'true',
+            }),
+          })
+        );
+        expect(probeWindow.show).not.toHaveBeenCalled();
+        expect(probeApp.schedulePaneHostBootstrap).not.toHaveBeenCalled();
+        expect(probeApp.restartLaunchProbeResult).toEqual(expect.objectContaining({
+          ok: true,
+          visible: false,
+          focused: false,
+        }));
+      } finally {
+        if (previousProbe === undefined) {
+          delete process.env.SQUIDRUN_RESTART_LAUNCH_PROBE;
+        } else {
+          process.env.SQUIDRUN_RESTART_LAUNCH_PROBE = previousProbe;
+        }
+      }
+    });
+
     it('keeps default dev main window on normal main chrome context', async () => {
       await app.createWindow();
 
@@ -3318,6 +3392,50 @@ describe('SquidRunApp', () => {
   });
 
   describe('lazy worker initialization', () => {
+    it('ends restart launch probe init immediately after the real renderer is ready', async () => {
+      const previousProbe = process.env.SQUIDRUN_RESTART_LAUNCH_PROBE;
+      try {
+        process.env.SQUIDRUN_RESTART_LAUNCH_PROBE = '1';
+        mockManagers.settings.autoDetectPaneCommandsOnStartup = jest.fn();
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        const briefingSpy = jest.spyOn(app, 'kickoffStartupBriefingGeneration');
+        app.initDaemonClient = jest.fn();
+        app.launchWindowsForProfile = jest.fn(async () => {
+          app.restartLaunchProbeResult = {
+            ok: true,
+            stage: 'renderer_ready',
+            visible: false,
+            focused: false,
+          };
+          return { ok: true };
+        });
+
+        const result = await app.init();
+        expect(result).toEqual({
+          ok: true,
+          stage: 'renderer_ready',
+          renderer: app.restartLaunchProbeResult,
+        });
+
+        expect(briefingSpy).not.toHaveBeenCalled();
+        expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).not.toHaveBeenCalled();
+        expect(mockManagers.settings.autoDetectPaneCommandsOnStartup).not.toHaveBeenCalled();
+        expect(mockManagers.activity.loadActivityLog).not.toHaveBeenCalled();
+        expect(mockManagers.usage.loadUsageStats).not.toHaveBeenCalled();
+        expect(app.initDaemonClient).not.toHaveBeenCalled();
+        expect(app.backgroundAgentManager.start).not.toHaveBeenCalled();
+        expect(mockManagers.settings.writeAppStatus).not.toHaveBeenCalledWith(
+          expect.objectContaining({ incrementSession: true })
+        );
+      } finally {
+        if (previousProbe === undefined) {
+          delete process.env.SQUIDRUN_RESTART_LAUNCH_PROBE;
+        } else {
+          process.env.SQUIDRUN_RESTART_LAUNCH_PROBE = previousProbe;
+        }
+      }
+    });
+
     it('does not prewarm non-critical runtimes during init', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
