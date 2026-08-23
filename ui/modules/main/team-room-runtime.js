@@ -33,6 +33,9 @@ const DEFAULT_CLAIM_RECOVERY_INTERVAL_MS = 5_000;
 const DEFAULT_REMOTE_HOST = '127.0.0.1';
 const DEFAULT_REMOTE_PORT = 9911;
 const DEFAULT_PRESENCE_WINDOW_MS = 90_000;
+const DEFAULT_WEBSOCKET_SHUTDOWN_GRACE_MS = 250;
+const DEFAULT_STOP_STAGE_TIMEOUT_MS = 5_000;
+const DEFAULT_HTTP_SHUTDOWN_GRACE_MS = 250;
 const APP_GENERATION_PATTERN = /^app-(?:session-\d+|\d+-\d+)(?:[-:][A-Za-z0-9._-]+)?$/u;
 const CLI_BINDING_FIELDS = Object.freeze(['role', 'paneId', 'profileName', 'paneLaunchId', 'appGeneration']);
 
@@ -56,6 +59,97 @@ const SECURITY_HEADERS = Object.freeze({
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
 });
+
+async function closeWebSocketClients(clients, graceMs = DEFAULT_WEBSOCKET_SHUTDOWN_GRACE_MS) {
+  const sockets = [...new Set(clients || [])];
+  const pending = new Set(sockets.filter((client) => Number(client?.readyState) !== 3));
+  if (pending.size === 0) return;
+
+  let resolveClosed;
+  const allClosed = new Promise((resolve) => { resolveClosed = resolve; });
+  const listeners = new Map();
+  for (const client of pending) {
+    if (typeof client.once !== 'function') continue;
+    const onClose = () => {
+      pending.delete(client);
+      if (pending.size === 0) resolveClosed();
+    };
+    listeners.set(client, onClose);
+    client.once('close', onClose);
+  }
+
+  for (const client of pending) {
+    try { client.close(1001, 'server shutdown'); } catch {}
+  }
+  const waitForCloseOrTimeout = async () => {
+    let timer = null;
+    try {
+      await Promise.race([
+        allClosed,
+        new Promise((resolve) => { timer = setTimeout(resolve, Math.max(1, Number(graceMs) || 1)); }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+  if (pending.size > 0) await waitForCloseOrTimeout();
+  for (const client of pending) {
+    try { client.terminate?.(); } catch {}
+  }
+  if (pending.size > 0) await waitForCloseOrTimeout();
+  for (const [client, listener] of listeners) client.removeListener?.('close', listener);
+}
+
+async function settleStopStage(stage, operation, options = {}) {
+  const timeoutMs = Math.max(25, Number(options.timeoutMs) || DEFAULT_STOP_STAGE_TIMEOUT_MS);
+  const observer = typeof options.observer === 'function' ? options.observer : null;
+  const details = options.details && typeof options.details === 'object' ? options.details : {};
+  const report = (phase, extra = {}) => {
+    try { observer?.({ stage, phase, timeoutMs, ...details, ...extra }); } catch {}
+  };
+  report('started');
+  let timer = null;
+  try {
+    const result = await Promise.race([
+      Promise.resolve()
+        .then(operation)
+        .then(
+          (value) => ({ ok: true, value }),
+          (error) => ({ ok: false, error })
+        ),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve({
+          ok: false,
+          timedOut: true,
+          error: new Error(`team_room_stop_${stage}_timeout`),
+        }), timeoutMs);
+      }),
+    ]);
+    report(result.timedOut ? 'timed_out' : 'settled', {
+      ok: result.ok,
+      reason: result.ok ? null : String(result.error?.message || 'team_room_stop_stage_failed'),
+    });
+    return result;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function beginHttpServerClose(server) {
+  if (!server) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    try {
+      server.close((error) => {
+        if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') reject(error);
+        else resolve();
+      });
+      try { server.closeIdleConnections?.(); } catch {}
+    } catch (error) {
+      if (error?.code === 'ERR_SERVER_NOT_RUNNING') resolve();
+      else reject(error);
+    }
+  });
+}
 
 function normalizeHostForUrl(host) {
   const value = String(host || '').trim();
@@ -393,12 +487,24 @@ class TeamRoomRuntime {
     this.electronCredentialIds = new Set();
     this.startPromise = null;
     this.stopPromise = null;
+    this.stopping = false;
     this.runtimePublished = false;
     this.ownedAtomicTemporaryPaths = new Set();
     this.pairing = options.pairing || new TeamRoomPairingRegistry({ now: this.now });
     this.dispatchPromises = new Set();
     this.pushPromises = new Set();
     this.retryTimers = new Set();
+    this.stopStageTimeoutMs = Math.max(
+      25,
+      Number(options.stopStageTimeoutMs) || DEFAULT_STOP_STAGE_TIMEOUT_MS
+    );
+    this.httpShutdownGraceMs = Math.max(
+      25,
+      Number(options.httpShutdownGraceMs) || DEFAULT_HTTP_SHUTDOWN_GRACE_MS
+    );
+    this.stopStageObserver = typeof options.stopStageObserver === 'function'
+      ? options.stopStageObserver
+      : null;
     this.presenceWindowMs = Math.max(10_000, Number(options.presenceWindowMs) || DEFAULT_PRESENCE_WINDOW_MS);
   }
 
@@ -728,6 +834,7 @@ class TeamRoomRuntime {
   }
 
   _schedulePush(message) {
+    if (this.stopping) return null;
     const notificationClass = String(message?.metadata?.notificationClass || '').trim();
     if (!notificationClass) return null;
     if (!this.pushAvailable || !this.pushManager) {
@@ -822,6 +929,7 @@ class TeamRoomRuntime {
   }
 
   _scheduleDispatch(activations = []) {
+    if (this.stopping) return;
     const targetIds = [...new Set((activations || [])
       .filter((activation) => activation.status === 'queued')
       .map((activation) => activation.targetMemberId))];
@@ -850,7 +958,7 @@ class TeamRoomRuntime {
             const delayMs = Math.min(10_000, 750 * (2 ** Math.max(0, activation.attempts - 1)));
             const timer = setTimeout(() => {
               this.retryTimers.delete(timer);
-              if (!this.server?.listening) return;
+              if (this.stopping || !this.server?.listening) return;
               const requeued = this.store.requeueFailedActivation(activationId);
               if (requeued.ok) this._scheduleDispatch([{ status: 'queued', targetMemberId }]);
             }, delayMs);
@@ -1270,16 +1378,22 @@ class TeamRoomRuntime {
   }
 
   _handleUpgrade(request, socket, head) {
+    if (this.stopping || !this.webSocketServer) { socket.destroy(); return; }
     let url;
     try { url = new URL(request.url || '/', `http://${request.headers.host || ''}`); } catch { socket.destroy(); return; }
     if (url.pathname !== '/ws' || !this._originAllowed(request)) { socket.destroy(); return; }
     const authenticated = this._authenticate(request, 'read', 'room_web');
     if (!authenticated.ok || authenticated.transport !== 'cookie') { socket.destroy(); return; }
-    this.webSocketServer.handleUpgrade(request, socket, head, (client) => {
+    const webSocketServer = this.webSocketServer;
+    webSocketServer.handleUpgrade(request, socket, head, (client) => {
+      if (this.stopping || this.webSocketServer !== webSocketServer) {
+        try { client.terminate(); } catch {}
+        return;
+      }
       client.roomIdentity = authenticated.identity;
       client.roomCredentialId = authenticated.credentialId;
       client.roomIngress = this._requestIngress(request);
-      this.webSocketServer.emit('connection', client, request);
+      webSocketServer.emit('connection', client, request);
     });
   }
 
@@ -1386,6 +1500,7 @@ class TeamRoomRuntime {
         [role, issued.credential.credentialId]
       )));
       this.webSocketServer = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+      this.stopping = false;
       this.webSocketServer.on('connection', (client) => {
         this.clients.add(client);
         client.roomFocusedAtMs = 0;
@@ -1444,9 +1559,39 @@ class TeamRoomRuntime {
   async stop() {
     if (this.stopPromise) return this.stopPromise;
     this.stopPromise = (async () => {
-      for (const client of this.clients) {
-        try { client.close(1001, 'server shutdown'); } catch {}
+      this.stopping = true;
+      const failures = [];
+      const runStage = async (stage, operation, details = {}) => {
+        const result = await settleStopStage(stage, operation, {
+          timeoutMs: this.stopStageTimeoutMs,
+          observer: this.stopStageObserver,
+          details,
+        });
+        if (!result.ok) {
+          failures.push({
+            stage,
+            reason: String(result.error?.message || 'team_room_stop_stage_failed'),
+          });
+        }
+        return result;
+      };
+      const webSocketServer = this.webSocketServer;
+      const webSocketClosed = webSocketServer
+        ? new Promise((resolve) => {
+          try { webSocketServer.close(() => resolve()); } catch { resolve(); }
+        })
+        : Promise.resolve();
+      const clients = new Set([
+        ...this.clients,
+        ...(webSocketServer?.clients || []),
+      ]);
+      await runStage('websocket_clients', () => closeWebSocketClients(clients), {
+        pendingCount: clients.size,
+      });
+      for (const client of webSocketServer?.clients || []) {
+        try { client.terminate?.(); } catch {}
       }
+      await runStage('websocket_server', () => webSocketClosed);
       this.clients.clear();
       for (const timer of this.retryTimers) clearTimeout(timer);
       this.retryTimers.clear();
@@ -1459,21 +1604,54 @@ class TeamRoomRuntime {
         this.store.revokeAuthCredential(credentialId);
       }
       this.electronCredentialIds.clear();
-      if (this.webSocketServer) {
-        await new Promise((resolve) => this.webSocketServer.close(() => resolve()));
-        this.webSocketServer = null;
-      }
+      this.webSocketServer = null;
       if (this.remoteServer) {
-        await new Promise((resolve) => this.remoteServer.close(() => resolve()));
+        const remoteServer = this.remoteServer;
+        const remoteClosed = beginHttpServerClose(remoteServer);
+        const graceful = await settleStopStage('remote_server_grace', () => remoteClosed, {
+          timeoutMs: this.httpShutdownGraceMs,
+          observer: this.stopStageObserver,
+        });
+        if (!graceful.ok) {
+          try { remoteServer.closeAllConnections?.(); } catch {}
+          await runStage('remote_server_force', () => remoteClosed);
+        }
         this.remoteServer = null;
       }
       if (this.server) {
-        await new Promise((resolve) => this.server.close(() => resolve()));
+        const server = this.server;
+        const serverClosed = beginHttpServerClose(server);
+        const graceful = await settleStopStage('http_server_grace', () => serverClosed, {
+          timeoutMs: this.httpShutdownGraceMs,
+          observer: this.stopStageObserver,
+        });
+        if (!graceful.ok) {
+          try { server.closeAllConnections?.(); } catch {}
+          await runStage('http_server_force', () => serverClosed);
+        }
         this.server = null;
       }
-      await Promise.allSettled([...this.dispatchPromises]);
-      await Promise.allSettled([...this.pushPromises]);
-      const uploadCleanup = await this.uploadManager.cleanupOwnedTemporaryPaths();
+      const dispatchTasks = [...this.dispatchPromises];
+      const pushTasks = [...this.pushPromises];
+      await runStage('dispatch', () => Promise.allSettled(dispatchTasks), {
+        pendingCount: dispatchTasks.length,
+      });
+      await runStage('push', () => Promise.allSettled(pushTasks), {
+        pendingCount: pushTasks.length,
+      });
+      this.dispatchPromises.clear();
+      this.pushPromises.clear();
+      const uploadCleanupResult = await runStage(
+        'upload_cleanup',
+        () => this.uploadManager.cleanupOwnedTemporaryPaths(),
+        { pendingCount: this.uploadManager.ownedTemporaryPaths?.size || 0 }
+      );
+      const uploadCleanup = uploadCleanupResult.ok
+        ? uploadCleanupResult.value
+        : { ok: false, reason: uploadCleanupResult.error?.message || 'room_upload_temp_cleanup_failed' };
+      if (uploadCleanupResult.ok && !uploadCleanup?.ok) {
+        failures.push({ stage: 'upload_cleanup', reason: uploadCleanup.reason });
+      }
       this.store.close();
       this.auth = null;
       this.service = null;
@@ -1494,7 +1672,11 @@ class TeamRoomRuntime {
         removeFileIfPresent(path.join(this.credentialsRoot, `${member.role}.json`));
       }
       this._cleanupOwnedAtomicTemporaryPaths();
-      if (!uploadCleanup.ok) throw new Error(uploadCleanup.reason);
+      if (failures.length > 0) {
+        throw new Error(`team_room_stop_incomplete:${failures
+          .map((failure) => `${failure.stage}:${failure.reason}`)
+          .join('|')}`);
+      }
       return { ok: true };
     })().finally(() => { this.stopPromise = null; });
     return this.stopPromise;
@@ -1503,6 +1685,9 @@ class TeamRoomRuntime {
 
 module.exports = {
   DEFAULT_COOKIE_NAME,
+  DEFAULT_HTTP_SHUTDOWN_GRACE_MS,
+  DEFAULT_STOP_STAGE_TIMEOUT_MS,
+  DEFAULT_WEBSOCKET_SHUTDOWN_GRACE_MS,
   normalizeRemoteTeamRoomOrigin,
   DEFAULT_CLAIM_RECOVERY_INTERVAL_MS,
   DEFAULT_PAIRING_TTL_MS,
@@ -1514,6 +1699,9 @@ module.exports = {
   STATIC_FILES,
   TeamRoomPairingRegistry,
   TeamRoomRuntime,
+  closeWebSocketClients,
+  beginHttpServerClose,
+  settleStopStage,
   normalizeRemoteAddress,
   parseCookies,
   parseSingleByteRange,

@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const WebSocket = require('ws');
@@ -759,9 +760,12 @@ describe('Team Room HTTP/WebSocket runtime', () => {
       firstSocket.once('message', resolve);
       firstSocket.once('error', reject);
     });
+    const serverSocket = [...runtime.clients][0];
+    const closeSpy = jest.spyOn(serverSocket, 'close');
     const closed = new Promise((resolve) => firstSocket.once('close', resolve));
     await runtime.stop();
     await closed;
+    expect(closeSpy).toHaveBeenCalledWith(1001, 'server shutdown');
 
     runtime = new TeamRoomRuntime({
       ...runtimeOptions(tempRoot, async () => ({ ok: true })),
@@ -779,6 +783,117 @@ describe('Team Room HTTP/WebSocket runtime', () => {
         }),
       }),
     }));
+  });
+
+  test('bounds shutdown when a WebSocket peer ignores the graceful close', async () => {
+    runtime = new TeamRoomRuntime(runtimeOptions(tempRoot, async () => ({ ok: true })));
+    const started = await runtime.start();
+    const paired = runtime._issueCredential('james', 'room_web', 'paired_device', { ttlMs: 60_000 });
+    const socket = new WebSocket(started.origin.replace(/^http/u, 'ws') + '/ws', {
+      headers: { Cookie: `squidrun_team_room=${paired.token}`, Origin: started.origin },
+    });
+    socket.on('error', () => {});
+    await new Promise((resolve, reject) => {
+      socket.once('message', resolve);
+      socket.once('error', reject);
+    });
+    const serverSocket = [...runtime.clients][0];
+    const closeSpy = jest.spyOn(serverSocket, 'close').mockImplementation(() => {});
+    const terminateSpy = jest.spyOn(serverSocket, 'terminate');
+    const closed = new Promise((resolve) => socket.once('close', resolve));
+    const startedAt = Date.now();
+    const stopPromise = runtime.stop();
+    let lateOpened = false;
+    const lateSocket = new WebSocket(started.origin.replace(/^http/u, 'ws') + '/ws', {
+      headers: { Cookie: `squidrun_team_room=${paired.token}`, Origin: started.origin },
+    });
+    lateSocket.on('open', () => { lateOpened = true; });
+    await new Promise((resolve) => {
+      lateSocket.once('error', resolve);
+      lateSocket.once('close', resolve);
+    });
+    await stopPromise;
+    await closed;
+    expect(closeSpy).toHaveBeenCalledWith(1001, 'server shutdown');
+    expect(terminateSpy).toHaveBeenCalledTimes(1);
+    expect(lateOpened).toBe(false);
+    expect(runtime.clients.size).toBe(0);
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    runtime = null;
+  });
+
+  test('forces a partial HTTP connection closed after the bounded shutdown grace', async () => {
+    const stopStages = [];
+    runtime = new TeamRoomRuntime({
+      ...runtimeOptions(tempRoot, async () => ({ ok: true })),
+      httpShutdownGraceMs: 40,
+      stopStageTimeoutMs: 250,
+      stopStageObserver: (event) => stopStages.push(event),
+    });
+    const started = await runtime.start();
+    const socket = net.createConnection({
+      host: '127.0.0.1',
+      port: Number(new URL(started.origin).port),
+    });
+    socket.on('error', () => {});
+    await new Promise((resolve, reject) => {
+      socket.once('connect', resolve);
+      socket.once('error', reject);
+    });
+    socket.write('GET /api/health HTTP/1.1\r\nHost: 127.0.0.1\r\n');
+    await waitFor(() => runtime.server?._connections === 1);
+    const closeAllSpy = jest.spyOn(runtime.server, 'closeAllConnections');
+    const socketClosed = new Promise((resolve) => socket.once('close', resolve));
+    const startedAt = Date.now();
+
+    await expect(runtime.stop()).resolves.toEqual({ ok: true });
+    await socketClosed;
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(closeAllSpy).toHaveBeenCalledTimes(1);
+    expect(stopStages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: 'http_server_grace', phase: 'timed_out' }),
+      expect.objectContaining({ stage: 'http_server_force', phase: 'settled', ok: true }),
+    ]));
+    expect(runtime.server).toBeNull();
+    runtime = null;
+  });
+
+  test('bounds every final shutdown wait and refuses work admitted after stop begins', async () => {
+    const stopStages = [];
+    runtime = new TeamRoomRuntime({
+      ...runtimeOptions(tempRoot, async () => ({ ok: true })),
+      stopStageTimeoutMs: 35,
+      stopStageObserver: (event) => stopStages.push(event),
+    });
+    expect((await runtime.start()).ok).toBe(true);
+
+    const neverSettles = new Promise(() => {});
+    runtime.dispatchPromises.add(neverSettles);
+    runtime.pushPromises.add(neverSettles);
+    const cleanupSpy = jest.spyOn(runtime.uploadManager, 'cleanupOwnedTemporaryPaths')
+      .mockImplementation(() => neverSettles);
+    const startedAt = Date.now();
+    const stopPromise = runtime.stop();
+
+    expect(runtime.stopping).toBe(true);
+    runtime._scheduleDispatch([{ status: 'queued', targetMemberId: 'builder' }]);
+    expect(runtime._schedulePush({ metadata: { notificationClass: 'needs_james' } })).toBeNull();
+    expect(runtime.dispatchPromises.size).toBe(1);
+    expect(runtime.pushPromises.size).toBe(1);
+
+    await expect(stopPromise).rejects.toThrow(
+      /team_room_stop_incomplete:dispatch:team_room_stop_dispatch_timeout\|push:team_room_stop_push_timeout\|upload_cleanup:team_room_stop_upload_cleanup_timeout/u
+    );
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(stopStages.filter((event) => event.phase === 'timed_out').map((event) => event.stage))
+      .toEqual(['dispatch', 'push', 'upload_cleanup']);
+    expect(runtime.server).toBeNull();
+    expect(runtime.webSocketServer).toBeNull();
+    expect(runtime.dispatchPromises.size).toBe(0);
+    expect(runtime.pushPromises.size).toBe(0);
+    expect(runtime.store.db).toBeNull();
+    cleanupSpy.mockRestore();
+    runtime = null;
   });
 
   test('catches up from the authoritative snapshot after a WebSocket drop', async () => {

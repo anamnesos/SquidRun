@@ -113,6 +113,7 @@
     unreadCount: 0,
     restoredDrafts: false,
     viewportBaselineHeight: 0,
+    localSendFollowNonces: new Set(),
     pendingTypewriterMessageIds: new Set(),
     activeTypewriters: new Map(),
     lightbox: { scale: 1, x: 0, y: 0, pointers: new Map(), gesture: null, settleTimer: null },
@@ -128,8 +129,16 @@
   const typewriterMinDurationMs = 280;
   const typewriterMaxDurationMs = 1_800;
   const typewriterMsPerCharacter = 20;
+  const viewportResizeSettleMs = 140;
   const reducedMotionQuery = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)') || null;
   let draftDatabasePromise = null;
+  let viewportResizeFrame = null;
+  let viewportResizeTimer = null;
+  let viewportResizeActive = false;
+  let viewportResizePreserveScroll = false;
+  let viewportResizeFollowBottom = false;
+  let viewportResizeAnchor = null;
+  let messageScrollRestoreFrame = null;
 
   function setConnection(status) {
     state.connected = status === 'connected';
@@ -401,6 +410,10 @@
     for (const controller of [...state.activeTypewriters.values()]) controller.finish();
   }
 
+  function stopFollowingActiveTypewriters() {
+    for (const controller of state.activeTypewriters.values()) controller.stopFollowing?.();
+  }
+
   function shouldTypewriterMessage(message) {
     return Boolean(
       message?.messageId
@@ -438,8 +451,7 @@
         remaining -= visibleInNode;
       }
       if (keepFollowingBottom) {
-        if (closeEnoughToBottom()) elements.scroll.scrollTop = elements.scroll.scrollHeight;
-        else keepFollowingBottom = false;
+        elements.scroll.scrollTop = elements.scroll.scrollHeight;
       }
     };
 
@@ -472,24 +484,29 @@
     item.dataset.typewriterActive = 'true';
     body.dataset.typewriterActive = 'true';
     body.addEventListener('click', skip);
-    state.activeTypewriters.set(message.messageId, { finish });
+    state.activeTypewriters.set(message.messageId, {
+      finish,
+      stopFollowing: () => { keepFollowingBottom = false; },
+    });
     reveal(1);
     finishTimerId = setTimeout(finish, durationMs);
     frameId = requestAnimationFrame(tick);
   }
 
-  function closeEnoughToBottom() {
-    return elements.scroll.scrollHeight - elements.scroll.scrollTop - elements.scroll.clientHeight < 140;
+  function atLatestMessage() {
+    return elements.scroll.scrollHeight - elements.scroll.scrollTop - elements.scroll.clientHeight <= 3;
   }
 
   function updateUnreadMarker() {
     const count = Math.max(0, Number(state.unreadCount) || 0);
-    elements.unreadMarker.hidden = count === 0;
-    elements.unreadMarkerLabel.textContent = count === 1 ? '1 new message' : `${count} new messages`;
+    const awayFromBottom = !atLatestMessage();
+    elements.unreadMarker.hidden = count === 0 && !awayFromBottom;
+    elements.unreadMarkerLabel.textContent = count === 0
+      ? 'Latest'
+      : count === 1 ? '1 new message' : `${count} new messages`;
   }
 
   function clearUnread() {
-    if (state.unreadCount === 0) return;
     state.unreadCount = 0;
     updateUnreadMarker();
   }
@@ -501,12 +518,28 @@
 
   function captureScrollAnchor() {
     const scrollRect = elements.scroll.getBoundingClientRect();
-    const candidates = [...elements.column.querySelectorAll('.message-item[data-message-id]')];
-    const anchor = candidates.find((candidate) => candidate.getBoundingClientRect().bottom >= scrollRect.top + 1);
+    const candidates = elements.column.querySelectorAll('.message-item[data-message-id]');
+    const threshold = scrollRect.top + 1;
+    let low = 0;
+    let high = candidates.length - 1;
+    let anchor = null;
+    let anchorRect = null;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      const candidate = candidates[middle];
+      const rect = candidate.getBoundingClientRect();
+      if (rect.bottom >= threshold) {
+        anchor = candidate;
+        anchorRect = rect;
+        high = middle - 1;
+      } else {
+        low = middle + 1;
+      }
+    }
     if (!anchor) return { messageId: null, offset: 0, scrollTop: elements.scroll.scrollTop };
     return {
       messageId: anchor.dataset.messageId,
-      offset: anchor.getBoundingClientRect().top - scrollRect.top,
+      offset: anchorRect.top - scrollRect.top,
       scrollTop: elements.scroll.scrollTop,
     };
   }
@@ -519,6 +552,11 @@
     if (!next) { elements.scroll.scrollTop = anchor.scrollTop; return; }
     const scrollRect = elements.scroll.getBoundingClientRect();
     elements.scroll.scrollTop += next.getBoundingClientRect().top - scrollRect.top - anchor.offset;
+  }
+
+  function cancelMessageScrollRestore() {
+    if (messageScrollRestoreFrame !== null) cancelAnimationFrame(messageScrollRestoreFrame);
+    messageScrollRestoreFrame = null;
   }
 
   function imageAttachment(attachment) {
@@ -603,13 +641,14 @@
   }
 
   function renderMessages({ forceBottom = false } = {}) {
+    cancelMessageScrollRestore();
     finishActiveTypewriters();
-    const stayAtBottom = forceBottom || closeEnoughToBottom();
+    const stayAtBottom = forceBottom || atLatestMessage();
     const anchor = stayAtBottom ? null : captureScrollAnchor();
     const typewriterCandidates = [];
-    elements.column.replaceChildren();
+    const fragment = document.createDocumentFragment();
     if (state.messages.length === 0) {
-      elements.column.append(createEmptyRoom());
+      elements.column.replaceChildren(createEmptyRoom());
       clearUnread();
       return;
     }
@@ -622,7 +661,7 @@
         const separator = document.createElement('div');
         separator.className = 'day-separator';
         separator.textContent = formatDay(message.createdAtMs);
-        elements.column.append(separator);
+        fragment.append(separator);
         currentDay = messageDay;
         currentRun = null;
         currentAuthor = null;
@@ -648,7 +687,7 @@
         time.textContent = formatClock(message.createdAtMs);
         heading.append(name, role, time);
         currentRun.append(heading);
-        elements.column.append(currentRun);
+        fragment.append(currentRun);
         currentAuthor = message.authorId;
       }
       const item = document.createElement('div');
@@ -683,19 +722,28 @@
       }
       currentRun.append(item);
     }
+    elements.column.replaceChildren(fragment);
+    if (stayAtBottom) elements.scroll.scrollTop = elements.scroll.scrollHeight;
+    else restoreScrollAnchor(anchor);
     for (const candidate of typewriterCandidates) {
       startTypewriter(candidate.message, candidate.item, candidate.body, { followBottom: stayAtBottom });
     }
-    requestAnimationFrame(() => {
+    messageScrollRestoreFrame = requestAnimationFrame(() => {
+      messageScrollRestoreFrame = null;
       if (stayAtBottom) {
         elements.scroll.scrollTop = elements.scroll.scrollHeight;
         clearUnread();
-      } else restoreScrollAnchor(anchor);
+      } else {
+        restoreScrollAnchor(anchor);
+        updateUnreadMarker();
+      }
     });
   }
 
   function mergeMessage(message) {
-    const wasAwayFromBottom = !closeEnoughToBottom();
+    const wasAwayFromBottom = !atLatestMessage();
+    const followLocalSend = Boolean(message.clientNonce
+      && state.localSendFollowNonces.has(message.clientNonce));
     const optimisticIndex = state.messages.findIndex((entry) => entry.clientNonce && entry.clientNonce === message.clientNonce);
     const exactIndex = state.messages.findIndex((entry) => entry.messageId === message.messageId);
     const index = exactIndex >= 0 ? exactIndex : optimisticIndex;
@@ -706,7 +754,8 @@
     }
     state.messages.sort((a, b) => Number(a.seq || Number.MAX_SAFE_INTEGER) - Number(b.seq || Number.MAX_SAFE_INTEGER)
       || Number(a.createdAtMs) - Number(b.createdAtMs));
-    renderMessages();
+    renderMessages({ forceBottom: followLocalSend });
+    if (followLocalSend) state.localSendFollowNonces.delete(message.clientNonce);
     if (index < 0 && wasAwayFromBottom) markUnread(1);
   }
 
@@ -774,7 +823,7 @@
     const nextMessages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
     const previousIds = new Set(state.messages.map((message) => message.messageId));
     const newCount = nextMessages.filter((message) => !previousIds.has(message.messageId)).length;
-    const wasAwayFromBottom = !initial && !closeEnoughToBottom();
+    const wasAwayFromBottom = !initial && !atLatestMessage();
     state.messages = nextMessages;
     mergeOutboxMessages();
     renderMessages({ forceBottom: initial });
@@ -901,7 +950,7 @@
   }
 
   function renderUploadTray() {
-    const keepBottom = closeEnoughToBottom();
+    const keepBottom = atLatestMessage();
     const countLabel = attachmentCountLabel(state.attachments);
     if (elements.uploadCount.textContent !== countLabel) elements.uploadCount.textContent = countLabel;
     elements.uploadCount.hidden = countLabel.length === 0;
@@ -1126,7 +1175,7 @@
     else if (!state.messages.some((message) => message.clientNonce === record.clientNonce)) {
       state.messages.push(outboxMessage(record, { sending }));
     }
-    renderMessages();
+    renderMessages({ forceBottom: state.localSendFollowNonces.has(record.clientNonce) });
   }
 
   async function uploadOutboxAttachment(item) {
@@ -1201,6 +1250,7 @@
           state.outbox.shift();
           state.outboxRetryAttempt = 0;
         } catch {
+          state.localSendFollowNonces.delete(record.clientNonce);
           setOutboxMessageState(record, false);
           scheduleOutboxDrain();
           break;
@@ -1232,6 +1282,7 @@
         return;
       }
       state.outbox.push(record);
+      state.localSendFollowNonces.add(clientNonce);
       state.outbox.sort((a, b) => a.createdAtMs - b.createdAtMs || a.clientNonce.localeCompare(b.clientNonce));
       for (const item of selectedItems) {
         item.removed = true;
@@ -1300,10 +1351,7 @@
     };
   }
 
-  function syncVisualViewport() {
-    const preserveScroll = state.authenticated && !elements.scroll.hidden;
-    const stayAtBottom = preserveScroll && closeEnoughToBottom();
-    const anchor = preserveScroll && !stayAtBottom ? captureScrollAnchor() : null;
+  function applyVisualViewportMetrics() {
     const layoutHeight = Math.max(1, Number(window.innerHeight) || 1);
     const reportedHeight = Number(globalThis.visualViewport?.height);
     const visualHeight = Number.isFinite(reportedHeight) && reportedHeight > 0
@@ -1319,10 +1367,68 @@
     document.documentElement.dataset.roomKeyboardOpen = String(keyboardOpen);
     document.documentElement.style.setProperty('--room-viewport-top', `${viewportTop}px`);
     document.documentElement.style.setProperty('--room-viewport-height', `${viewportHeight}px`);
+  }
+
+  function syncVisualViewport() {
+    const preserveScroll = state.authenticated && !elements.scroll.hidden;
+    const stayAtBottom = preserveScroll && atLatestMessage();
+    const anchor = preserveScroll && !stayAtBottom ? captureScrollAnchor() : null;
+    applyVisualViewportMetrics();
     if (preserveScroll) {
       if (stayAtBottom) elements.scroll.scrollTop = elements.scroll.scrollHeight;
       else restoreScrollAnchor(anchor);
     }
+    updateUnreadMarker();
+  }
+
+  function finishVisualViewportResize() {
+    if (viewportResizeFrame !== null) cancelAnimationFrame(viewportResizeFrame);
+    viewportResizeFrame = null;
+    clearTimeout(viewportResizeTimer);
+    viewportResizeTimer = null;
+    applyVisualViewportMetrics();
+    if (viewportResizePreserveScroll) {
+      if (viewportResizeFollowBottom) elements.scroll.scrollTop = elements.scroll.scrollHeight;
+      else restoreScrollAnchor(viewportResizeAnchor);
+    }
+    viewportResizeActive = false;
+    viewportResizePreserveScroll = false;
+    viewportResizeFollowBottom = false;
+    viewportResizeAnchor = null;
+    delete document.documentElement.dataset.roomResizing;
+    updateUnreadMarker();
+  }
+
+  function scheduleVisualViewportSync() {
+    if (!viewportResizeActive) {
+      viewportResizeActive = true;
+      viewportResizePreserveScroll = state.authenticated && !elements.scroll.hidden;
+      viewportResizeFollowBottom = viewportResizePreserveScroll && atLatestMessage();
+      viewportResizeAnchor = viewportResizePreserveScroll && !viewportResizeFollowBottom
+        ? captureScrollAnchor()
+        : null;
+      document.documentElement.dataset.roomResizing = 'true';
+    }
+    if (viewportResizeFrame === null) {
+      viewportResizeFrame = requestAnimationFrame(() => {
+        viewportResizeFrame = null;
+        applyVisualViewportMetrics();
+      });
+    }
+    clearTimeout(viewportResizeTimer);
+    viewportResizeTimer = setTimeout(finishVisualViewportResize, viewportResizeSettleMs);
+  }
+
+  function clearVisualViewportResize() {
+    if (viewportResizeFrame !== null) cancelAnimationFrame(viewportResizeFrame);
+    clearTimeout(viewportResizeTimer);
+    viewportResizeFrame = null;
+    viewportResizeTimer = null;
+    viewportResizeActive = false;
+    viewportResizePreserveScroll = false;
+    viewportResizeFollowBottom = false;
+    viewportResizeAnchor = null;
+    delete document.documentElement.dataset.roomResizing;
   }
 
   async function registerInstallShell() {
@@ -1834,10 +1940,21 @@
   elements.lightboxStage.addEventListener('pointerup', releasePointer);
   elements.lightboxStage.addEventListener('pointercancel', releasePointer);
   elements.unreadMarker.addEventListener('click', () => {
+    cancelMessageScrollRestore();
     clearUnread();
     elements.scroll.scrollTo({ top: elements.scroll.scrollHeight, behavior: 'auto' });
   });
-  elements.scroll.addEventListener('scroll', () => { if (closeEnoughToBottom()) clearUnread(); }, { passive: true });
+  elements.scroll.addEventListener('wheel', stopFollowingActiveTypewriters, { passive: true });
+  elements.scroll.addEventListener('touchmove', stopFollowingActiveTypewriters, { passive: true });
+  elements.scroll.addEventListener('scroll', () => {
+    if (atLatestMessage()) clearUnread();
+    else {
+      cancelMessageScrollRestore();
+      stopFollowingActiveTypewriters();
+      state.localSendFollowNonces.clear();
+      updateUnreadMarker();
+    }
+  }, { passive: true });
   window.addEventListener('online', () => {
     if (!state.socket) connectSocket();
     resumeDraftUploads();
@@ -1846,13 +1963,15 @@
   window.addEventListener('focus', () => sendPresence(true));
   window.addEventListener('blur', () => sendPresence(false));
   document.addEventListener('visibilitychange', () => sendPresence());
-  window.addEventListener('resize', syncVisualViewport, { passive: true });
-  globalThis.visualViewport?.addEventListener('resize', syncVisualViewport, { passive: true });
-  globalThis.visualViewport?.addEventListener('scroll', syncVisualViewport, { passive: true });
+  window.addEventListener('resize', scheduleVisualViewportSync, { passive: true });
+  globalThis.visualViewport?.addEventListener('resize', scheduleVisualViewportSync, { passive: true });
+  globalThis.visualViewport?.addEventListener('scroll', scheduleVisualViewportSync, { passive: true });
   window.addEventListener('beforeunload', () => {
     clearTimeout(state.reconnectTimer);
     clearTimeout(state.outboxRetryTimer);
     clearInterval(state.presenceTimer);
+    clearVisualViewportResize();
+    cancelMessageScrollRestore();
     sendPresence(false);
     finishActiveTypewriters();
     state.socket?.close();

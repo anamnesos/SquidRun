@@ -311,7 +311,7 @@ button { color: inherit; }
   text-transform: uppercase;
 }
 .run-time { color: #748697; font-size: 10px; opacity: .85; }
-.message-item { position: relative; max-width: 68ch; animation: message-enter 150ms ease-out both; }
+.message-item { position: relative; max-width: 68ch; }
 .message-item + .message-item { margin-top: 4px; }
 .message-item[data-pending="true"] { opacity: .58; }
 .message-item[data-queued="true"] { opacity: .76; }
@@ -656,11 +656,13 @@ button { color: inherit; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
 [hidden] { display: none !important; }
 
-@keyframes message-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes unread-enter { from { opacity: 0; transform: translate(50%, 5px); } to { opacity: 1; transform: translate(50%, 0); } }
 @keyframes typewriter-caret { 50% { opacity: 0; } }
 
-@media (prefers-reduced-motion: reduce) { .message-item, .unread-marker, .message-body::after { animation: none; } * { scroll-behavior: auto !important; transition-duration: 0s !important; } }
+html[data-room-resizing="true"] .room-header,
+html[data-room-resizing="true"] .composer-shell { backdrop-filter: none; }
+
+@media (prefers-reduced-motion: reduce) { .unread-marker, .message-body::after { animation: none; } * { scroll-behavior: auto !important; transition-duration: 0s !important; } }
 
 @media (max-width: 640px) {
   .room-header { min-height: 64px; padding: calc(10px + env(safe-area-inset-top, 0px)) max(15px, env(safe-area-inset-right, 0px)) 10px max(15px, env(safe-area-inset-left, 0px)); }

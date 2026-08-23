@@ -4642,18 +4642,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     registerRendererLifecycleCleanup(() => profileModalObserver.disconnect());
   }
 
-  // 2. resize.requested — window resize events
-  const onWindowResizeRequested = () => {
-    bus.emit('resize.requested', {
-      paneId: 'system',
-      payload: { trigger: 'window_resize' },
-      source: 'renderer.js',
-    });
-  };
-  window.addEventListener('resize', onWindowResizeRequested);
-  registerRendererLifecycleCleanup(() => window.removeEventListener('resize', onWindowResizeRequested));
-
-  // 3. resize.requested — panel toggle (right panel)
+  // 2. resize.requested — panel toggle (right panel). Raw window resize used
+  // to emit this synchronously on every drag pixel despite having no runtime
+  // consumer. Terminal geometry is now owned by terminal.js's quiet-period
+  // resize settler, so the dead per-pixel kernel work is intentionally gone.
   const panelBtn = document.getElementById('panelBtn');
   if (panelBtn) {
     const onPanelToggleResizeRequested = () => {
@@ -4667,14 +4659,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     registerRendererLifecycleCleanup(() => panelBtn.removeEventListener('click', onPanelToggleResizeRequested));
   }
 
-  // 4. pane.visibility.changed — pane expand/collapse
+  // 3. pane.visibility.changed — pane expand/collapse
   const onPaneVisibilityChanged = (event) => {
     emitPaneVisibilityChangedForExpandClick(event);
   };
   document.addEventListener('click', onPaneVisibilityChanged);
   registerRendererLifecycleCleanup(() => document.removeEventListener('click', onPaneVisibilityChanged));
 
-  // 5. ui.longtask.detected — PerformanceObserver for long tasks
+  // 4. ui.longtask.detected — PerformanceObserver for long tasks
   if (typeof PerformanceObserver !== 'undefined') {
     try {
       const longTaskObserver = new PerformanceObserver((list) => {

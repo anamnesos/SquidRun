@@ -177,6 +177,20 @@ global.ResizeObserver = class ResizeObserver {
 const terminal = require('../modules/terminal');
 const { Terminal } = require('@xterm/xterm');
 
+function installFakeMessageChannel() {
+  const pending = [];
+  global.MessageChannel = class FakeMessageChannel {
+    constructor() {
+      this.port1 = { onmessage: null, start: jest.fn(), close: jest.fn() };
+      this.port2 = {
+        postMessage: jest.fn(() => pending.push(() => this.port1.onmessage?.())),
+        close: jest.fn(),
+      };
+    }
+  };
+  return pending;
+}
+
 describe('terminal.js module', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -231,6 +245,7 @@ describe('terminal.js module', () => {
       clearTimeout(timer);
     }
     terminal._internals.terminalWriteFlushTimers.clear();
+    terminal._internals.resetTerminalBackgroundWriteChannel();
     terminal._internals.terminalWriteFrameBudgets.clear();
     terminal._internals.terminalWatermarks.clear();
     terminal._internals.terminalPaused.clear();
@@ -260,6 +275,7 @@ describe('terminal.js module', () => {
     }
     terminal._internals.deferredResizeTimers.clear();
     terminal._internals.deferredResizeFirstRequestedAt.clear();
+    terminal._internals.clearWindowResizeBurst();
     terminal.setStartupWindowContext({
       windowKey: 'main',
       profileName: 'main',
@@ -273,6 +289,10 @@ describe('terminal.js module', () => {
   });
 
   afterEach(() => {
+    // Some spawn tests deliberately use real timers before restoring the suite's
+    // fake clock. Restore the real clearTimeout first so those handles can be
+    // cancelled instead of leaking for another three to fifteen seconds.
+    jest.useRealTimers();
     terminal.stopPromotionCheckTimer();
     terminal.stopStuckMessageSweeper();
     for (const timer of terminal._internals.terminalWriteFlushTimers.values()) {
@@ -282,6 +302,7 @@ describe('terminal.js module', () => {
     terminal._internals.terminalWriteFrameBudgets.clear();
     terminal._internals.terminalWatermarks.clear();
     terminal._internals.terminalPaused.clear();
+    terminal._internals.resetTerminalBackgroundWriteChannel();
     for (const timer of terminal._internals.terminalPaintRefreshTimers.values()) {
       clearTimeout(timer);
     }
@@ -297,11 +318,16 @@ describe('terminal.js module', () => {
     }
     terminal._internals.deferredResizeTimers.clear();
     terminal._internals.deferredResizeFirstRequestedAt.clear();
+    terminal._internals.clearWindowResizeBurst();
+    for (const paneId of Array.from(terminal._internals.startupFallbackEnterTimers.keys())) {
+      terminal._internals.clearStartupFallbackEnter(paneId);
+    }
+    ['1', '2', '3', 'trustquote-app', 'trustquote-lead', 'trustquote-invoice', 'trustquote-schedule-dispatch']
+      .forEach((paneId) => terminal._internals.clearStartupInjection(paneId));
     terminal.clearPaneRuntimeOverride('trustquote-lead');
     terminal.clearPaneRuntimeOverride('trustquote-invoice');
     terminal.clearPaneRuntimeOverride('trustquote-schedule-dispatch');
     terminal.clearPaneRuntimeOverride('trustquote-app');
-    jest.useRealTimers();
   });
 
   describe('PANE_IDS constant', () => {
@@ -1496,9 +1522,139 @@ describe('terminal.js module', () => {
       expect(mockFitAddon.fit).toHaveBeenCalledTimes(1);
       expect(mockSquidRun.pty.resize).toHaveBeenCalledWith('1', 132, 44);
     });
+
+    test('coalesces a window drag into one settled terminal fit', () => {
+      const container = {
+        clientWidth: 920,
+        clientHeight: 500,
+        getBoundingClientRect: jest.fn(() => ({ width: 920, height: 500 })),
+      };
+      mockDocument.getElementById.mockImplementation((id) => (id === 'terminal-1' ? container : null));
+      const terminalObj = { cols: 80, rows: 24 };
+      const fitAddon = {
+        fit: jest.fn(() => {
+          terminalObj.cols = 136;
+          terminalObj.rows = 48;
+        }),
+      };
+      terminal.terminals.set('1', terminalObj);
+      terminal.fitAddons.set('1', fitAddon);
+
+      for (let index = 0; index < 12; index += 1) terminal._internals.noteWindowResize();
+      expect(terminal._internals.isWindowResizeBurstActive()).toBe(true);
+      jest.advanceTimersByTime(terminal._internals.WINDOW_RESIZE_SETTLE_MS - 1);
+      expect(fitAddon.fit).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(1);
+      // handleResize() deliberately staggers panes with zero/50/100ms timers.
+      // Advance past the first queued turn; Jest does not run a newly-created
+      // zero-delay timer during the callback that created it.
+      jest.advanceTimersByTime(1);
+      expect(fitAddon.fit).toHaveBeenCalledTimes(1);
+      expect(mockSquidRun.pty.resize).toHaveBeenCalledWith('1', 136, 48);
+      jest.advanceTimersByTime(terminal._internals.WINDOW_RESIZE_RELEASE_MS);
+      expect(terminal._internals.isWindowResizeBurstActive()).toBe(false);
+    });
+
+    test('does not start per-pane ResizeObserver work during a window resize burst', () => {
+      const originalResizeObserver = global.ResizeObserver;
+      let observerCallback;
+      global.ResizeObserver = jest.fn((callback) => {
+        observerCallback = callback;
+        return { observe: jest.fn(), disconnect: jest.fn() };
+      });
+      const container = {
+        clientWidth: 900,
+        clientHeight: 480,
+        getBoundingClientRect: jest.fn(() => ({ width: 900, height: 480 })),
+      };
+      mockDocument.getElementById.mockImplementation((id) => (id === 'terminal-1' ? container : null));
+      const terminalObj = { cols: 80, rows: 24 };
+      const fitAddon = { fit: jest.fn() };
+      terminal.terminals.set('1', terminalObj);
+      terminal.fitAddons.set('1', fitAddon);
+
+      try {
+        terminal._internals.setupResizeObserver('1');
+        terminal._internals.noteWindowResize();
+        observerCallback();
+        jest.advanceTimersByTime(150);
+        expect(fitAddon.fit).not.toHaveBeenCalled();
+        expect(terminal._internals.resizeDebounceTimers.has('1')).toBe(false);
+      } finally {
+        terminal._internals.clearWindowResizeBurst();
+        global.ResizeObserver = originalResizeObserver;
+      }
+    });
+
+    test('cancels staggered pane fits when a newer window resize starts', () => {
+      for (const paneId of ['1', '2', '3']) {
+        terminal.terminals.set(paneId, { cols: 80, rows: 24 });
+        terminal.fitAddons.set(paneId, { fit: jest.fn() });
+      }
+
+      terminal.handleResize();
+      jest.advanceTimersByTime(1);
+      expect(terminal.fitAddons.get('1').fit).toHaveBeenCalledTimes(1);
+
+      terminal._internals.noteWindowResize();
+      jest.advanceTimersByTime(terminal._internals.WINDOW_RESIZE_SETTLE_MS - 1);
+      expect(terminal.fitAddons.get('2').fit).not.toHaveBeenCalled();
+      expect(terminal.fitAddons.get('3').fit).not.toHaveBeenCalled();
+      terminal._internals.clearWindowResizeBurst();
+    });
+
+    test('cancels an input-deferred fit for the duration of a long window drag', () => {
+      terminal.initUIFocusTracker();
+      const focusinHandler = mockDocument.addEventListener.mock.calls.find(
+        call => call[0] === 'focusin'
+      )[1];
+      const inputHandler = mockDocument.addEventListener.mock.calls.find(
+        call => call[0] === 'input'
+      )[1];
+      const mockInput = {
+        tagName: 'TEXTAREA',
+        classList: { contains: jest.fn().mockReturnValue(false) },
+      };
+      mockDocument.activeElement = mockInput;
+      focusinHandler({ target: mockInput });
+      inputHandler({ target: mockInput });
+
+      const container = {
+        clientWidth: 920,
+        clientHeight: 500,
+        getBoundingClientRect: jest.fn(() => ({ width: 920, height: 500 })),
+      };
+      mockDocument.getElementById.mockImplementation((id) => (id === 'terminal-1' ? container : null));
+      const terminalObj = { cols: 80, rows: 24 };
+      const fitAddon = { fit: jest.fn() };
+      terminal.terminals.set('1', terminalObj);
+      terminal.fitAddons.set('1', fitAddon);
+
+      terminal._internals.resizeSinglePane('1');
+      expect(terminal._internals.deferredResizeTimers.has('1')).toBe(true);
+
+      for (let index = 0; index < 6; index += 1) {
+        terminal._internals.noteWindowResize();
+        jest.advanceTimersByTime(200);
+      }
+      expect(fitAddon.fit).not.toHaveBeenCalled();
+      expect(terminal._internals.deferredResizeTimers.has('1')).toBe(false);
+      terminal._internals.clearWindowResizeBurst();
+    });
   });
 
   describe('terminal write queue responsiveness', () => {
+    test('uses the background drain for hidden or unfocused cockpit windows', () => {
+      mockDocument.hidden = false;
+      mockDocument.hasFocus = jest.fn(() => false);
+      expect(terminal._internals.terminalRendererNeedsBackgroundDrain()).toBe(true);
+      mockDocument.hasFocus.mockReturnValue(true);
+      expect(terminal._internals.terminalRendererNeedsBackgroundDrain()).toBe(false);
+      mockDocument.hidden = true;
+      expect(terminal._internals.terminalRendererNeedsBackgroundDrain()).toBe(true);
+      mockDocument.hidden = false;
+      delete mockDocument.hasFocus;
+    });
     test('yields between queued terminal chunks instead of draining recursively', () => {
       const mockTerminalObj = {
         write: jest.fn((_data, callback) => callback()),
@@ -1847,6 +2003,97 @@ describe('terminal.js module', () => {
       expect(mockSquidRun.pty.write).toHaveBeenCalledWith('1', 'claude');
       expect(statusCb).toHaveBeenCalledWith('1', 'Starting...');
       jest.useFakeTimers();
+    });
+
+    test('cancels a delayed startup Enter when the pane tears down before it fires', async () => {
+      jest.useRealTimers();
+      terminal.terminals.set('1', { write: jest.fn() });
+
+      await terminal.spawnAgent('1');
+
+      expect(terminal._internals.startupFallbackEnterTimers.has('1')).toBe(true);
+      await terminal.killAllTerminals();
+      expect(terminal._internals.startupFallbackEnterTimers.has('1')).toBe(false);
+      jest.useFakeTimers();
+    });
+
+    test('drains a hidden terminal queue through task messages without waking timers', () => {
+      const originalMessageChannel = global.MessageChannel;
+      const pending = installFakeMessageChannel();
+      mockDocument.hidden = true;
+      const mockTerminalObj = {
+        write: jest.fn((_data, callback) => callback()),
+      };
+      terminal.terminals.set('1', mockTerminalObj);
+
+      try {
+        terminal._internals.queueTerminalWrite('1', mockTerminalObj, 'one');
+        terminal._internals.queueTerminalWrite('1', mockTerminalObj, 'two');
+        terminal._internals.queueTerminalWrite('1', mockTerminalObj, 'three');
+
+        expect(mockTerminalObj.write).toHaveBeenCalledTimes(1);
+        while (pending.length > 0) pending.shift()();
+        expect(mockTerminalObj.write).toHaveBeenCalledTimes(3);
+        expect(terminal._internals.terminalWriteFlushTimers.has('1')).toBe(false);
+      } finally {
+        mockDocument.hidden = false;
+        terminal._internals.resetTerminalBackgroundWriteChannel();
+        global.MessageChannel = originalMessageChannel;
+      }
+    });
+
+    test('moves a pending visible timer to the hidden task channel exactly once', () => {
+      const originalMessageChannel = global.MessageChannel;
+      const pending = installFakeMessageChannel();
+      mockDocument.hidden = false;
+      const mockTerminalObj = {
+        write: jest.fn((_data, callback) => callback()),
+      };
+      terminal.terminals.set('1', mockTerminalObj);
+
+      try {
+        terminal._internals.queueTerminalWrite('1', mockTerminalObj, 'one');
+        terminal._internals.queueTerminalWrite('1', mockTerminalObj, 'two');
+        expect(mockTerminalObj.write).toHaveBeenCalledTimes(1);
+
+        mockDocument.hidden = true;
+        terminal._internals.rescheduleTerminalQueueFlushesForVisibility();
+        jest.runOnlyPendingTimers();
+        expect(mockTerminalObj.write).toHaveBeenCalledTimes(1);
+        while (pending.length > 0) pending.shift()();
+        expect(mockTerminalObj.write).toHaveBeenCalledTimes(2);
+      } finally {
+        mockDocument.hidden = false;
+        terminal._internals.resetTerminalBackgroundWriteChannel();
+        global.MessageChannel = originalMessageChannel;
+      }
+    });
+
+    test('moves a pending hidden task back to a visible timer without duplicating a chunk', () => {
+      const originalMessageChannel = global.MessageChannel;
+      const pending = installFakeMessageChannel();
+      mockDocument.hidden = true;
+      const mockTerminalObj = {
+        write: jest.fn((_data, callback) => callback()),
+      };
+      terminal.terminals.set('1', mockTerminalObj);
+
+      try {
+        terminal._internals.queueTerminalWrite('1', mockTerminalObj, 'one');
+        terminal._internals.queueTerminalWrite('1', mockTerminalObj, 'two');
+        expect(mockTerminalObj.write).toHaveBeenCalledTimes(1);
+
+        mockDocument.hidden = false;
+        terminal._internals.rescheduleTerminalQueueFlushesForVisibility();
+        while (pending.length > 0) pending.shift()();
+        expect(mockTerminalObj.write).toHaveBeenCalledTimes(1);
+        jest.runOnlyPendingTimers();
+        expect(mockTerminalObj.write).toHaveBeenCalledTimes(2);
+      } finally {
+        mockDocument.hidden = false;
+        terminal._internals.resetTerminalBackgroundWriteChannel();
+        global.MessageChannel = originalMessageChannel;
+      }
     });
 
     test('consumes fresh next spawn setting for direct agent spawn', async () => {

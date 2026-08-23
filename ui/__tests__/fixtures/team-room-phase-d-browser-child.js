@@ -17,9 +17,28 @@ app.setPath('userData', path.join(smokeRoot, 'user-data'));
 app.commandLine.appendSwitch('disable-gpu');
 app.on('window-all-closed', () => {});
 
+function electronProcessIds() {
+  try {
+    return [...new Set([
+      process.pid,
+      ...app.getAppMetrics()
+        .map((metric) => Number(metric.pid))
+        .filter(Number.isInteger),
+    ])];
+  } catch {
+    return [process.pid];
+  }
+}
+
 function checkpoint(stage, details = {}) {
   if (!process.env.TEAM_ROOM_PHASE_D_OUTPUT) return;
-  fs.writeFileSync(outputPath, `${JSON.stringify({ complete: false, stage, ...details }, null, 2)}\n`, 'utf8');
+  fs.writeFileSync(outputPath, `${JSON.stringify({
+    complete: false,
+    stage,
+    smokeRoot,
+    mainPid: process.pid,
+    ...details,
+  }, null, 2)}\n`, 'utf8');
 }
 
 checkpoint('module-loaded', { smokeRoot });
@@ -92,6 +111,9 @@ function runtimeOptions(port, resolveBindings) {
     },
     deliverToPane: async () => ({ ok: true }),
     resolveCliBindings: resolveBindings,
+    stopStageObserver: ({ stage, phase, ...details }) => {
+      checkpoint(`runtime-stop-${stage}-${phase}`, details);
+    },
   };
 }
 
@@ -700,11 +722,12 @@ async function run() {
     await waitForRenderer(windowRef, `() => document.querySelector('#messageColumn')?.innerText.includes('Immutable packet is next.')`, 12_000, 'visual-conversation');
 
     const captureEnabled = Boolean(desktopScreenshotPath || phoneScreenshotPath || keyboardScreenshotPath);
-    if (captureEnabled) {
-      windowRef.setSkipTaskbar(true);
-      windowRef.setOpacity(0);
-      windowRef.showInactive();
-    }
+    // Chromium hit-testing is not reliable before a BrowserWindow has ever
+    // been composited. Materialize the real window without flashing it so the
+    // picker checks exercise the same visible-window path as production.
+    windowRef.setSkipTaskbar(true);
+    windowRef.setOpacity(0);
+    windowRef.showInactive();
     windowRef.setContentSize(1180, 820);
     await new Promise((resolve) => setTimeout(resolve, 180));
     await windowRef.webContents.executeJavaScript(`(() => {
@@ -945,10 +968,26 @@ async function run() {
       screenHeight: 390,
     });
     await windowRef.webContents.executeJavaScript(`window.dispatchEvent(new Event('resize'))`);
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await waitForRenderer(windowRef, `() => {
+      const buttonRect = document.querySelector('#attachmentButton')?.getBoundingClientRect();
+      if (!buttonRect || document.documentElement.dataset.roomResizing === 'true') return false;
+      const centerX = buttonRect.left + (buttonRect.width / 2);
+      const centerY = buttonRect.top + (buttonRect.height / 2);
+      return window.innerWidth === 844
+        && window.innerHeight === 390
+        && buttonRect.width > 0
+        && buttonRect.height > 0
+        && centerX >= 0
+        && centerX < window.innerWidth
+        && centerY >= 0
+        && centerY < window.innerHeight;
+    }`, 4_000, 'landscape-picker-settle');
     const pickerLandscape = await windowRef.webContents.executeJavaScript(`(() => {
       const pickerRect = document.querySelector('#fileInput').getBoundingClientRect();
       const buttonRect = document.querySelector('#attachmentButton').getBoundingClientRect();
+      const centerX = buttonRect.left + (buttonRect.width / 2);
+      const centerY = buttonRect.top + (buttonRect.height / 2);
+      const hitTarget = document.elementFromPoint(centerX, centerY);
       return {
         width: window.innerWidth,
         height: window.innerHeight,
@@ -956,13 +995,17 @@ async function run() {
           && Math.abs(pickerRect.top - buttonRect.top) <= 1
           && Math.abs(pickerRect.width - buttonRect.width) <= 1
           && Math.abs(pickerRect.height - buttonRect.height) <= 1,
-        hitTargetId: document.elementFromPoint(
-          buttonRect.left + (buttonRect.width / 2),
-          buttonRect.top + (buttonRect.height / 2),
-        )?.id || null,
+        hitTargetId: hitTarget?.id || null,
+        hitTargetTag: hitTarget?.tagName || null,
+        buttonRect: {
+          left: Math.round(buttonRect.left),
+          top: Math.round(buttonRect.top),
+          width: Math.round(buttonRect.width),
+          height: Math.round(buttonRect.height),
+        },
       };
     })()`);
-    if (captureEnabled) windowRef.hide();
+    windowRef.hide();
     checkpoint('visuals-captured');
 
     const pinchScale = Number(/scale\(([^)]+)\)/u.exec(pinchZoom.transformAfterPinch)?.[1] || 0);
@@ -1132,10 +1175,12 @@ async function run() {
         desktop: desktopScreenshotPath || null,
         phone: phoneScreenshotPath || null,
       },
+      mainPid: process.pid,
       smokeRoot,
     };
     checkpoint('result-computed', { ok: result.ok });
   } finally {
+    const processPids = electronProcessIds();
     checkpoint('cleanup-started');
     try {
       await windowRef?.webContents.executeJavaScript(`navigator.serviceWorker?.getRegistrations()
@@ -1153,7 +1198,10 @@ async function run() {
     checkpoint('window-destroyed');
     try { fs.rmSync(smokeRoot, { recursive: true, force: true }); } catch {}
     checkpoint('smoke-root-cleaned');
-    if (result) result.smokeRootRemoved = !fs.existsSync(smokeRoot);
+    if (result) {
+      result.smokeRootRemoved = !fs.existsSync(smokeRoot);
+      result.processPids = processPids;
+    }
   }
 
   fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
@@ -1174,6 +1222,8 @@ app.whenReady()
         complete: true,
         ok: false,
         error: error.stack || error.message,
+        mainPid: process.pid,
+        processPids: electronProcessIds(),
         smokeRoot,
       }, null, 2)}\n`, 'utf8');
     } catch {}

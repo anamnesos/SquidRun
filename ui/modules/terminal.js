@@ -97,6 +97,7 @@ const computerUseProofRuns = new Map();
 // Codex exec mode: track identity injection per pane
 const codexIdentityInjected = new Set();
 const codexIdentityTimeouts = new Map();
+const startupFallbackEnterTimers = new Map();
 const terminalInputBridgeDisposables = new Map();
 const pendingClaudeSessionCollisionRecovery = new Map();
 const paneRuntimeOverrides = new Map();
@@ -161,8 +162,10 @@ const terminalWriteQueues = new Map(); // paneId -> [data chunks]
 const terminalWriting = new Map(); // paneId -> boolean (write in progress)
 const terminalWatermarks = new Map(); // paneId -> number (bytes in flight)
 const terminalPaused = new Map(); // paneId -> boolean (is PTY paused)
-const terminalWriteFlushTimers = new Map(); // paneId -> timer ID
+const terminalWriteFlushTimers = new Map(); // paneId -> cancellable flush handle
 const terminalWriteFrameBudgets = new Map(); // paneId -> { startedAt, bytes, chunks }
+const terminalBackgroundWriteTasks = [];
+let terminalBackgroundWriteChannel = null;
 const terminalPaintRefreshTimers = new Map(); // `${paneId}:${delayMs}` -> timer ID
 const terminalStreamingFitTimers = new Map(); // paneId -> timer ID
 const terminalStreamingLastFitAt = new Map(); // paneId -> timestamp
@@ -347,11 +350,61 @@ function getTerminalWriteNow() {
   return Date.now();
 }
 
+function terminalRendererNeedsBackgroundDrain() {
+  if (typeof document === 'undefined') return false;
+  if (document?.hidden === true) return true;
+  return typeof document?.hasFocus === 'function' && document.hasFocus() === false;
+}
+
+function getTerminalBackgroundWriteChannel() {
+  if (terminalBackgroundWriteChannel) return terminalBackgroundWriteChannel;
+  const MessageChannelCtor = globalThis.MessageChannel || globalThis.window?.MessageChannel;
+  if (typeof MessageChannelCtor !== 'function') return null;
+  const channel = new MessageChannelCtor();
+  channel.port1.onmessage = () => {
+    const task = terminalBackgroundWriteTasks.shift();
+    if (!task || task.cancelled) return;
+    task.callback();
+  };
+  channel.port1.start?.();
+  terminalBackgroundWriteChannel = channel;
+  return terminalBackgroundWriteChannel;
+}
+
+function scheduleTerminalBackgroundWriteTask(callback) {
+  const channel = getTerminalBackgroundWriteChannel();
+  if (!channel) return null;
+  const task = { callback, cancelled: false };
+  terminalBackgroundWriteTasks.push(task);
+  channel.port2.postMessage(0);
+  return {
+    kind: 'message-channel',
+    cancel() { task.cancelled = true; },
+  };
+}
+
+function resetTerminalBackgroundWriteChannel() {
+  for (const task of terminalBackgroundWriteTasks) task.cancelled = true;
+  terminalBackgroundWriteTasks.length = 0;
+  terminalBackgroundWriteChannel?.port1?.close?.();
+  terminalBackgroundWriteChannel?.port2?.close?.();
+  terminalBackgroundWriteChannel = null;
+}
+
+function cancelTerminalWriteFlushHandle(handle) {
+  if (!handle) return;
+  if (typeof handle.cancel === 'function') {
+    handle.cancel();
+    return;
+  }
+  clearTimeout(handle);
+}
+
 function clearTerminalWriteFlushTimer(paneId) {
   const id = String(paneId);
-  const timer = terminalWriteFlushTimers.get(id);
-  if (timer) {
-    clearTimeout(timer);
+  const handle = terminalWriteFlushTimers.get(id);
+  if (handle) {
+    cancelTerminalWriteFlushHandle(handle);
     terminalWriteFlushTimers.delete(id);
   }
 }
@@ -359,11 +412,34 @@ function clearTerminalWriteFlushTimer(paneId) {
 function scheduleTerminalQueueFlush(paneId, terminal, delayMs = 0) {
   const id = String(paneId);
   if (terminalWriteFlushTimers.has(id)) return;
-  const timer = setTimeout(() => {
+  let handle = null;
+  const run = () => {
+    if (terminalWriteFlushTimers.get(id) !== handle) return;
     terminalWriteFlushTimers.delete(id);
     flushTerminalQueue(id, terminal);
-  }, Math.max(0, Number(delayMs) || 0));
-  terminalWriteFlushTimers.set(id, timer);
+  };
+  if (terminalRendererNeedsBackgroundDrain()) {
+    handle = scheduleTerminalBackgroundWriteTask(run);
+  }
+  if (!handle) {
+    const timer = setTimeout(run, Math.max(0, Number(delayMs) || 0));
+    handle = {
+      kind: 'timer',
+      cancel() { clearTimeout(timer); },
+    };
+  }
+  terminalWriteFlushTimers.set(id, handle);
+}
+
+function rescheduleTerminalQueueFlushesForVisibility() {
+  for (const [paneId, queue] of terminalWriteQueues.entries()) {
+    const id = String(paneId);
+    const terminal = terminals.get(id);
+    if (!terminal || !Array.isArray(queue) || queue.length === 0) continue;
+    if (terminalWriting.get(id)) continue;
+    clearTerminalWriteFlushTimer(id);
+    scheduleTerminalQueueFlush(id, terminal, 0);
+  }
 }
 
 function recordTerminalWriteFrame(paneId, byteLen) {
@@ -1598,6 +1674,19 @@ function initUIFocusTracker() {
   document.addEventListener('input', (e) => {
     markUserUiActivity(e.target);
   }, { signal });
+
+  // Timers are intentionally throttled while the cockpit is minimized. If a
+  // visible-window flush timer was pending when the window became hidden or
+  // unfocused, move that continuation onto the background MessageChannel so
+  // it cannot sit for seconds and replay on restore. The task handle is
+  // identity-guarded, so rapid hidden/visible transitions cannot double-run it.
+  document.addEventListener('visibilitychange', () => {
+    rescheduleTerminalQueueFlushesForVisibility();
+  }, { signal });
+  globalThis.window?.addEventListener?.('blur', rescheduleTerminalQueueFlushesForVisibility, { signal });
+  globalThis.window?.addEventListener?.('focus', rescheduleTerminalQueueFlushesForVisibility, { signal });
+  globalThis.window?.addEventListener?.('resize', noteWindowResize, { signal, passive: true });
+  signal.addEventListener?.('abort', clearWindowResizeBurst, { once: true });
 }
 
 // Returns true if user is actively typing in a UI input
@@ -1942,12 +2031,38 @@ function buildCodexExecPrompt(paneId, text) {
 function resetCodexIdentity(paneId) {
   const id = String(paneId);
   codexIdentityInjected.delete(id);
+  clearStartupFallbackEnter(id);
   const timeoutId = codexIdentityTimeouts.get(id);
   if (timeoutId) {
     clearTimeout(timeoutId);
     codexIdentityTimeouts.delete(id);
   }
   log.info('Terminal', `Reset codex identity tracking for pane ${paneId}`);
+}
+
+function clearStartupFallbackEnter(paneId) {
+  const id = String(paneId);
+  const timer = startupFallbackEnterTimers.get(id);
+  if (timer) clearTimeout(timer);
+  startupFallbackEnterTimers.delete(id);
+}
+
+function scheduleStartupFallbackEnter(paneId, cliLabel) {
+  const id = String(paneId);
+  clearStartupFallbackEnter(id);
+  const timer = setTimeout(() => {
+    if (startupFallbackEnterTimers.get(id) !== timer) return;
+    startupFallbackEnterTimers.delete(id);
+    try {
+      Promise.resolve(window.squidrun.pty.write(id, '\r')).catch((err) => {
+        log.error(`spawnAgent ${id}`, `${cliLabel} startup Enter failed:`, err);
+      });
+      log.info('spawnAgent', `${cliLabel} pane ${id}: PTY \\r startup fallback`);
+    } catch (err) {
+      log.error(`spawnAgent ${id}`, `${cliLabel} startup Enter failed:`, err);
+    }
+  }, 3000);
+  startupFallbackEnterTimers.set(id, timer);
 }
 
 function detachTerminalInputBridge(paneId) {
@@ -2339,6 +2454,7 @@ function teardownTerminalPane(paneId) {
   terminalSettleRedrawLastAt.delete(id);
   terminalLastWriteAt.delete(id);
   clearStartupInjection(id);
+  clearStartupFallbackEnter(id);
   coldSpawnBlankRecoveryController?.dispose(id);
   detachTerminalInputBridge(id);
   detachPtyListeners(id);
@@ -4615,20 +4731,10 @@ async function spawnAgent(paneId, model = null, options = {}) {
       const isCodexCommand = result.command.startsWith('codex');
       const isClaudeCommand = result.command.startsWith('claude');
       if (isCodexCommand && !computerUseClaim) {
-        setTimeout(() => {
-          window.squidrun.pty.write(String(paneId), '\r').catch(err => {
-            log.error(`spawnAgent ${paneId}`, 'Codex startup Enter failed:', err);
-          });
-          log.info('spawnAgent', `Codex pane ${paneId}: PTY \\r to dismiss any startup prompt`);
-        }, 3000);
+        scheduleStartupFallbackEnter(paneId, 'Codex');
       }
       if (isClaudeCommand) {
-        setTimeout(() => {
-          window.squidrun.pty.write(String(paneId), '\r').catch(err => {
-            log.error(`spawnAgent ${paneId}`, 'Claude startup Enter failed:', err);
-          });
-          log.info('spawnAgent', `Claude pane ${paneId}: PTY \\r startup fallback`);
-        }, 3000);
+        scheduleStartupFallbackEnter(paneId, 'Claude');
       }
 
       // ID-1 + Finding #14: Wait for CLI ready prompt before identity/context injection
@@ -4765,6 +4871,71 @@ const RESIZE_INPUT_DEFER_MS = 150;
 const RESIZE_INPUT_MAX_DEFER_MS = 900;
 const RESIZE_OWN_FIT_OBSERVER_SUPPRESS_MS = 250;
 const RESIZE_CONTAINER_TOLERANCE_PX = 2;
+const WINDOW_RESIZE_SETTLE_MS = 220;
+const WINDOW_RESIZE_RELEASE_MS = 180;
+let windowResizeBurstActive = false;
+let windowResizeSettleTimer = null;
+let windowResizeReleaseTimer = null;
+let windowResizePassGeneration = 0;
+const windowResizePaneTimers = new Set();
+
+function cancelWindowResizePaneTimers() {
+  windowResizePassGeneration += 1;
+  for (const timer of windowResizePaneTimers) clearTimeout(timer);
+  windowResizePaneTimers.clear();
+}
+
+function clearWindowResizeTimers() {
+  if (windowResizeSettleTimer) clearTimeout(windowResizeSettleTimer);
+  if (windowResizeReleaseTimer) clearTimeout(windowResizeReleaseTimer);
+  windowResizeSettleTimer = null;
+  windowResizeReleaseTimer = null;
+}
+
+function clearWindowResizeBurst() {
+  clearWindowResizeTimers();
+  cancelWindowResizePaneTimers();
+  windowResizeBurstActive = false;
+  if (document?.documentElement?.dataset) delete document.documentElement.dataset.windowResizing;
+}
+
+function cancelPaneResizeDebounces() {
+  for (const [paneId, timer] of resizeDebounceTimers.entries()) {
+    clearTimeout(timer);
+    resizeDebounceTimers.delete(paneId);
+  }
+}
+
+function cancelAllDeferredTerminalResizes() {
+  for (const timer of deferredResizeTimers.values()) clearTimeout(timer);
+  deferredResizeTimers.clear();
+  deferredResizeFirstRequestedAt.clear();
+}
+
+function noteWindowResize() {
+  windowResizeBurstActive = true;
+  if (document?.documentElement?.dataset) document.documentElement.dataset.windowResizing = 'true';
+  cancelPaneResizeDebounces();
+  cancelAllDeferredTerminalResizes();
+  cancelWindowResizePaneTimers();
+  if (windowResizeSettleTimer) clearTimeout(windowResizeSettleTimer);
+  if (windowResizeReleaseTimer) clearTimeout(windowResizeReleaseTimer);
+  windowResizeReleaseTimer = null;
+  windowResizeSettleTimer = setTimeout(() => {
+    windowResizeSettleTimer = null;
+    cancelPaneResizeDebounces();
+    handleResize();
+    windowResizeReleaseTimer = setTimeout(() => {
+      windowResizeReleaseTimer = null;
+      windowResizeBurstActive = false;
+      if (document?.documentElement?.dataset) delete document.documentElement.dataset.windowResizing;
+    }, WINDOW_RESIZE_RELEASE_MS);
+  }, WINDOW_RESIZE_SETTLE_MS);
+}
+
+function isWindowResizeBurstActive() {
+  return windowResizeBurstActive;
+}
 
 function getTerminalGeometry(terminal) {
   const cols = Math.trunc(Number(terminal?.cols));
@@ -5013,6 +5184,7 @@ function setupResizeObserver(paneId) {
   }
 
   const observer = new ResizeObserver(() => {
+    if (windowResizeBurstActive) return;
     if (shouldSuppressOwnFitResizeObserver(paneId)) {
       emitTerminalResizeSkipped(paneId, 'own_fit_resize_observer_suppressed', {
         operation: 'resize_observer',
@@ -5076,10 +5248,17 @@ function cleanupResizeObserver(paneId) {
 // Explicit resize all — kept for programmatic calls (e.g., right panel toggle)
 // Staggers pane resizes by 50ms to avoid 3 simultaneous WebGL renders
 function handleResize() {
+  cancelWindowResizePaneTimers();
+  const generation = windowResizePassGeneration;
   let i = 0;
   for (const [paneId] of fitAddons) {
     if (!rendererOwnsPtyGeometry(paneId)) continue;
-    setTimeout(() => resizeSinglePane(paneId), i * 50);
+    const timer = setTimeout(() => {
+      windowResizePaneTimers.delete(timer);
+      if (generation !== windowResizePassGeneration) return;
+      resizeSinglePane(paneId);
+    }, i * 50);
+    windowResizePaneTimers.add(timer);
     i++;
   }
 }
@@ -5370,6 +5549,8 @@ module.exports = {
     initPromotionEngine,
     buildStartupIdentityMessage,
     clearStartupInjection,
+    clearStartupFallbackEnter,
+    startupFallbackEnterTimers,
     parseDaemonCreatedAtMs,
     fetchStartupHealthSummary,
     fetchStartupAiBriefing,
@@ -5379,9 +5560,18 @@ module.exports = {
     getStartupWindowContext,
     getPaneIdentityLabel,
     queueTerminalWrite,
+    scheduleTerminalQueueFlush,
+    rescheduleTerminalQueueFlushesForVisibility,
+    terminalRendererNeedsBackgroundDrain,
+    resetTerminalBackgroundWriteChannel,
     refreshTerminalViewport,
     resizeSinglePane,
     setupResizeObserver,
+    noteWindowResize,
+    clearWindowResizeBurst,
+    isWindowResizeBurstActive,
+    cancelWindowResizePaneTimers,
+    windowResizePaneTimers,
     applyTerminalPtyResize,
     fitTerminalForPane,
     shouldSuppressOwnFitResizeObserver,
@@ -5419,6 +5609,7 @@ module.exports = {
     rendererOwnsStartupInjection,
     isSecondarySquidRoomMirrorPane,
     terminalWriteFlushTimers,
+    terminalBackgroundWriteTasks,
     terminalWriteFrameBudgets,
     terminalWatermarks,
     terminalPaused,
@@ -5439,6 +5630,8 @@ module.exports = {
     TERMINAL_SCROLL_FALLBACK_DELAY_MS,
     RESIZE_INPUT_MAX_DEFER_MS,
     RESIZE_OWN_FIT_OBSERVER_SUPPRESS_MS,
+    WINDOW_RESIZE_SETTLE_MS,
+    WINDOW_RESIZE_RELEASE_MS,
   },
 };
 

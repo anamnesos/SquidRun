@@ -3,7 +3,82 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
+
+const boundedSmokeName = /^squidrun-team-room-phase-d-browser-[A-Za-z0-9_-]+$/u;
+
+function resolveBoundedSmokeRoot(candidate) {
+  if (typeof candidate !== 'string' || !candidate.trim()) return null;
+  const resolved = path.resolve(candidate);
+  if (path.dirname(resolved) !== path.resolve(os.tmpdir())) return null;
+  return boundedSmokeName.test(path.basename(resolved)) ? resolved : null;
+}
+
+function removeBoundedSmokeRoot(candidate) {
+  const resolved = resolveBoundedSmokeRoot(candidate);
+  if (!resolved || !fs.existsSync(resolved)) return !resolved ? false : true;
+  const stat = fs.lstatSync(resolved);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`phase_d_smoke_root_unsafe:${resolved}`);
+  }
+  const cleanupDeadline = Date.now() + 5_000;
+  while (fs.existsSync(resolved) && Date.now() < cleanupDeadline) {
+    try { fs.rmSync(resolved, { recursive: true, force: true }); } catch {}
+    if (fs.existsSync(resolved)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+  return !fs.existsSync(resolved);
+}
+
+function unexpectedElectronStderr(stderr) {
+  const knownWidgetRejection = /^\[\d+:\d{4}\/\d{6}\.\d{3}:ERROR:interface_endpoint_client\.cc\(702\)\] Message \d+ rejected by interface blink\.mojom\.Widget(?:Host)?$/u;
+  return String(stderr || '').split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !knownWidgetRejection.test(line));
+}
+
+function stopProcessTree(pid) {
+  const targetPid = Number(pid);
+  if (!Number.isInteger(targetPid) || targetPid <= 0) return;
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('taskkill.exe', ['/PID', String(targetPid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+    } else {
+      process.kill(targetPid, 'SIGKILL');
+    }
+  } catch {}
+}
+
+function waitForProcessExit(pid, timeoutMs = 5_000) {
+  const targetPid = Number(pid);
+  if (!Number.isInteger(targetPid) || targetPid <= 0) return false;
+  const alive = () => {
+    try { process.kill(targetPid, 0); return true; } catch { return false; }
+  };
+  const deadline = Date.now() + timeoutMs;
+  while (alive() && Date.now() < deadline) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  }
+  return !alive();
+}
+
+function waitForProcessesExit(pids, timeoutMs = 5_000) {
+  const targets = [...new Set((Array.isArray(pids) ? pids : [])
+    .map(Number)
+    .filter((pid) => Number.isInteger(pid) && pid > 0))];
+  if (targets.length === 0) return false;
+  const alive = (pid) => {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  };
+  const deadline = Date.now() + timeoutMs;
+  while (targets.some(alive) && Date.now() < deadline) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  }
+  return targets.every((pid) => !alive(pid));
+}
 
 describe('Team Room Phase D browser recovery flow', () => {
   test('proves reconnect, restart, draft/upload recovery, PWA, scroll, and phone behavior in Electron 28', () => {
@@ -15,6 +90,7 @@ describe('Team Room Phase D browser recovery flow', () => {
       : require('electron');
     const childPath = path.join(__dirname, 'fixtures', 'team-room-phase-d-browser-child.js');
     const { ELECTRON_RUN_AS_NODE: _ignored, ...baseEnv } = process.env;
+    let result = null;
     try {
       const child = spawnSync(electronPath, [childPath], {
         cwd: path.resolve(__dirname, '..'),
@@ -37,24 +113,22 @@ describe('Team Room Phase D browser recovery flow', () => {
         }
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
       }
-      expect({ status: child.status, stderr: child.stderr, stdout: child.stdout, output }).toEqual(expect.objectContaining({
+      result = parsedOutput || JSON.parse(output);
+      if (child.status === null) stopProcessTree(result.mainPid);
+      result.mainProcessExited = waitForProcessExit(result.mainPid);
+      result.electronProcessesExited = waitForProcessesExit(result.processPids || [result.mainPid]);
+      result.smokeRootRemoved = removeBoundedSmokeRoot(result.smokeRoot);
+      const unexpectedStderr = unexpectedElectronStderr(child.stderr);
+      expect({ status: child.status, unexpectedStderr, stdout: child.stdout, output }).toEqual(expect.objectContaining({
         status: 0,
-        stderr: '',
+        unexpectedStderr: [],
       }));
-      const result = parsedOutput || JSON.parse(output);
-      const boundedSmokePrefix = `${path.join(os.tmpdir(), 'squidrun-team-room-phase-d-browser-')}`;
-      if (typeof result.smokeRoot === 'string' && result.smokeRoot.startsWith(boundedSmokePrefix)) {
-        const cleanupDeadline = Date.now() + 5_000;
-        while (fs.existsSync(result.smokeRoot) && Date.now() < cleanupDeadline) {
-          try { fs.rmSync(result.smokeRoot, { recursive: true, force: true }); } catch {}
-          if (fs.existsSync(result.smokeRoot)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
-        }
-        result.smokeRootRemoved = !fs.existsSync(result.smokeRoot);
-      }
       expect(result).toEqual(expect.objectContaining({
         ok: true,
         electron: '28.3.3',
         node: '18.18.2',
+        mainProcessExited: true,
+        electronProcessesExited: true,
         temporaryPathCount: 0,
         smokeRootRemoved: true,
         consoleErrors: [],
@@ -93,6 +167,10 @@ describe('Team Room Phase D browser recovery flow', () => {
         canonicalCount: 1,
       }));
     } finally {
+      if (!result && fs.existsSync(outputPath)) {
+        try { result = JSON.parse(fs.readFileSync(outputPath, 'utf8')); } catch {}
+      }
+      if (result?.smokeRoot) removeBoundedSmokeRoot(result.smokeRoot);
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   }, 120_000);
