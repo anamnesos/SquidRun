@@ -22,6 +22,14 @@ const {
   bindSessionAtStart,
   isTerminalHookEvent,
 } = require('../modules/main/telegram-admission-producer');
+const hookLogger = require('../modules/logger');
+
+// stdout is the hook protocol channel, not a console. The shared logger sends
+// info/debug messages to stdout, so a perfectly valid JSON acknowledgement can
+// become invalid the moment a dependency opens the Evidence Ledger and logs
+// its selected SQLite driver. Keep warnings/errors on stderr while this
+// short-lived adapter runs; only emitHookResponse may write to stdout.
+hookLogger.setLevel('warn');
 
 function parseArgs(argv) {
   const parsed = {
@@ -138,17 +146,34 @@ function recordTelegramStepOutcome(phase, runtime, outcome) {
   } catch { /* diagnostics never block a prompt */ }
 }
 
-function emitHookResponse(result = {}) {
-  const response = {
+function buildHookResponse(result = {}) {
+  const runtime = normalizeRuntime(result.runtime);
+  const hookEventName = typeof result.hookEventName === 'string'
+    ? result.hookEventName.trim()
+    : '';
+
+  // Codex validates Stop output against a different contract than its other
+  // hook events. `hookSpecificOutput` is valid for SessionStart and
+  // UserPromptSubmit, but Codex 0.149 rejects that shape for Stop. Keep the
+  // shared adapter's existing response for every other runtime/event and emit
+  // the exact fail-open Stop acknowledgement Codex accepts here.
+  if (runtime === 'codex' && hookEventName.toLowerCase() === 'stop') {
+    return { continue: true };
+  }
+
+  return {
     hookSpecificOutput: {
-      hookEventName: result.hookEventName || undefined,
+      hookEventName: result.error === true ? undefined : (hookEventName || undefined),
     },
   };
+}
+
+function emitHookResponse(result = {}) {
+  const response = buildHookResponse(result);
   process.stdout.write(`${JSON.stringify(response)}\n`);
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+async function main(args = parseArgs(process.argv.slice(2))) {
   // DIAGNOSTIC BREADCRUMB (S468 receipt-store silence): prove whether the
   // pane hook EXECUTES and what payload shape it receives. Remove after the
   // silent-skip class is diagnosed.
@@ -187,7 +212,7 @@ async function main() {
       payload,
     }));
     recordTelegramStepOutcome('session_bind', normalizeRuntime(args.runtime), bound);
-    emitHookResponse({ hookEventName: args.event, record });
+    emitHookResponse({ runtime: args.runtime, hookEventName: args.event, record });
     return;
   }
 
@@ -231,13 +256,21 @@ async function main() {
   }
 
   emitHookResponse({
+    runtime: args.runtime,
     hookEventName: args.event,
     status: result.status,
   });
 }
 
-main().catch((err) => {
+const startupArgs = parseArgs(process.argv.slice(2));
+
+main(startupArgs).catch((err) => {
   process.stderr.write(`[model-prompt-receipt-adapter] ${err.stack || err.message}\n`);
-  emitHookResponse({ hookEventName: null, status: 'adapter_error' });
+  emitHookResponse({
+    runtime: startupArgs.runtime,
+    hookEventName: startupArgs.event,
+    status: 'adapter_error',
+    error: true,
+  });
   process.exitCode = 0;
 });
