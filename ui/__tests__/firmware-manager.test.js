@@ -43,7 +43,6 @@ describe('FirmwareManager', () => {
 
     appContext = {
       currentSettings: {
-        firmwareInjectionEnabled: true,
         operatingMode: 'developer',
       },
       watcher: {
@@ -104,8 +103,7 @@ describe('FirmwareManager', () => {
     expect(fs.existsSync(path.join(codexRulesDir, 'AGENTS.override.md'))).toBe(false);
   });
 
-  test('ensureStartupFirmwareIfEnabled skips when feature flag is off', () => {
-    appContext.currentSettings.firmwareInjectionEnabled = false;
+  test('ensureStartupFirmwareIfEnabled skips in developer mode', () => {
     const result = manager.ensureStartupFirmwareIfEnabled();
     expect(result.ok).toBe(true);
     expect(result.skipped).toBe(true);

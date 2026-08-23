@@ -34,7 +34,6 @@ const BUILTIN_TEMPLATES = [
     config: {
       autoSpawn: true,
       autoSync: false,
-      agentNotify: true,
       paneCommands: { ...DEFAULT_PANE_COMMANDS },
     },
     paneProjects: {},
@@ -47,7 +46,6 @@ const BUILTIN_TEMPLATES = [
     config: {
       autoSpawn: true,
       autoSync: false,
-      agentNotify: true,
       paneCommands: { ...ALL_CLAUDE },
     },
     paneProjects: {},
@@ -60,7 +58,6 @@ const BUILTIN_TEMPLATES = [
     config: {
       autoSpawn: true,
       autoSync: false,
-      agentNotify: true,
       paneCommands: { ...ALL_CODEX },
     },
     paneProjects: {},
@@ -68,13 +65,11 @@ const BUILTIN_TEMPLATES = [
   {
     id: 'builtin-research-sprint',
     name: 'Research Sprint',
-    description: 'High communication mode for rapid research coordination.',
+    description: 'Rapid research coordination with autosync enabled.',
     tags: ['research', 'coordination'],
     config: {
       autoSpawn: true,
       autoSync: true,
-      agentNotify: true,
-      notifications: true,
       paneCommands: { ...DEFAULT_PANE_COMMANDS },
     },
     paneProjects: {},
@@ -94,12 +89,11 @@ const BUILTIN_TEMPLATES = [
   {
     id: 'builtin-focus-mode',
     name: 'Focus Mode',
-    description: 'Low-noise mode for deep work (notifications + autosync off).',
+    description: 'Low-noise mode for deep work with autosync off.',
     tags: ['focus'],
     config: {
       autoSpawn: true,
       autoSync: false,
-      notifications: false,
       paneCommands: { ...DEFAULT_PANE_COMMANDS },
     },
     paneProjects: {},

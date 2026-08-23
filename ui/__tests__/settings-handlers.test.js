@@ -142,6 +142,30 @@ describe('Settings Handlers', () => {
       expect(deps.saveSettings).not.toHaveBeenCalled();
     });
 
+    test('rejects every retired setting key', async () => {
+      const retiredKeys = [
+        'notifications',
+        'agentNotify',
+        'autoNudge',
+        'voiceLanguage',
+        'userPreferredStyle',
+        'templates',
+        'mcpAutoConfig',
+        'firmwareInjectionEnabled',
+        'userName',
+        'userExperienceLevel',
+        'devMode',
+      ];
+
+      for (const key of retiredKeys) {
+        const result = await harness.invoke('set-setting', key, 'stale');
+        expect(result).toEqual({ success: false, error: `Unknown setting key: ${key}` });
+      }
+
+      expect(deps.loadSettings).not.toHaveBeenCalled();
+      expect(deps.saveSettings).not.toHaveBeenCalled();
+    });
+
     test('starts watcher when watcherEnabled set to true', async () => {
       deps.loadSettings.mockReturnValue({});
 
@@ -274,7 +298,6 @@ describe('Settings Handlers', () => {
     test('clears watcher state project when switching operating mode away from project', async () => {
       deps.loadSettings.mockReturnValue({
         operatingMode: 'project',
-        firmwareInjectionEnabled: true,
       });
       ctx.watcher.readState = jest.fn(() => ({
         project: '/tmp/existing-project',

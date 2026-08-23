@@ -48,6 +48,20 @@ const { app } = require('electron');
 const log = require('../modules/logger');
 const SettingsManager = require('../modules/main/settings-manager');
 
+const RETIRED_SETTING_KEYS = Object.freeze([
+  'notifications',
+  'agentNotify',
+  'autoNudge',
+  'voiceLanguage',
+  'userPreferredStyle',
+  'templates',
+  'mcpAutoConfig',
+  'firmwareInjectionEnabled',
+  'userName',
+  'userExperienceLevel',
+  'devMode',
+]);
+
 function mockCliAvailability(availability) {
   spawnSync.mockImplementation((cmd, args, options = {}) => {
     const target = Array.isArray(args) && args[0];
@@ -177,6 +191,27 @@ describe('SettingsManager CLI auto-detection', () => {
 
     const loaded = manager.loadSettings();
     expect(loaded.paneCommands['3']).toBe('gemini --yolo --include-directories "<project-root>" --model gemini-3-pro-preview');
+  });
+
+  test('loadSettings drops every retired setting while preserving current settings', () => {
+    const retiredSettings = Object.fromEntries(RETIRED_SETTING_KEYS.map((key) => [key, 'stale']));
+    fs.existsSync.mockImplementation((targetPath) => String(targetPath).endsWith('settings.json'));
+    fs.readFileSync.mockImplementation((targetPath) => {
+      if (String(targetPath).endsWith('settings.json')) {
+        return JSON.stringify({
+          ...retiredSettings,
+          autoSpawn: false,
+        });
+      }
+      return '';
+    });
+
+    const loaded = manager.loadSettings();
+
+    expect(loaded.autoSpawn).toBe(false);
+    RETIRED_SETTING_KEYS.forEach((key) => {
+      expect(loaded[key]).toBeUndefined();
+    });
   });
 
   test('uses short spawnSync timeouts and Windows locator on Windows', () => {

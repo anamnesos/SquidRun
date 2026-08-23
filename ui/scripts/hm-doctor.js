@@ -499,27 +499,20 @@ function buildBridgeStatus(runtimeDir, envMap, knownDevicesResult) {
   };
 }
 
-function buildExperiencePrecedence(settingsResult, userProfileResult) {
-  const settingsValue = settingsResult?.ok
-    ? asString(settingsResult.data?.userExperienceLevel, '') || null
-    : null;
+function buildExperienceProfile(userProfileResult) {
   const profileValue = userProfileResult?.ok
     ? asString(userProfileResult.data?.experience_level, '') || null
     : null;
-  const resolved = profileValue || settingsValue || null;
 
   return {
-    ok: Boolean(settingsResult?.ok || userProfileResult?.ok),
-    canonicalSource: profileValue ? 'workspace/user-profile.json' : (settingsValue ? 'ui/settings.json' : null),
-    resolvedValue: resolved,
-    settingsValue,
+    ok: Boolean(userProfileResult?.ok),
+    canonicalSource: profileValue ? 'workspace/user-profile.json' : null,
+    resolvedValue: profileValue,
     profileValue,
-    status: settingsValue && profileValue
-      ? (settingsValue === profileValue ? 'aligned' : 'mismatch_profile_wins')
-      : 'partial',
+    status: profileValue ? 'profile_only' : 'missing',
     note: profileValue
-      ? 'workspace/user-profile.json is user-edited and wins when values differ.'
-      : 'No canonical user-profile experience level found; falling back to settings.json.',
+      ? 'workspace/user-profile.json is the canonical user-edited source.'
+      : 'No canonical user-profile experience level found.',
   };
 }
 
@@ -576,7 +569,7 @@ async function main() {
   const paneRoleModelMapping = buildPaneRoleModelMapping(settings, paneStatus);
   const supervisorState = buildSupervisorState(supervisorStatus, sessionState);
   const bridgeStatus = buildBridgeStatus(runtimeDir, envMap, knownDevices);
-  const experiencePrecedence = buildExperiencePrecedence(settings, userProfile);
+  const experienceProfile = buildExperienceProfile(userProfile);
 
   printSection('Platform', platformInfo);
   printSection('Node', nodeInfo);
@@ -584,7 +577,7 @@ async function main() {
   printSection('Pane Role/Model Mapping', paneRoleModelMapping);
   printSection('Supervisor / Daemon Task State', supervisorState);
   printSection('Bridge / Relay Status', bridgeStatus);
-  printSection('User Experience Level Precedence', experiencePrecedence);
+  printSection('User Experience Level', experienceProfile);
   printSection('Env Keys (redacted)', envKeys);
   printSection('WS Connectivity', wsTest);
   printSection('Pane Status', paneStatus);

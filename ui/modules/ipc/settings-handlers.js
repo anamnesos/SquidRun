@@ -315,12 +315,7 @@ function registerSettingsHandlers(ctx, deps) {
       settings.autonomyConsentUpdatedAt = null;
     }
 
-    // Operating mode is the single source of truth for firmware behavior.
     if (normalizedKey === 'operatingMode') {
-      // Remove the retired mirror if an older settings file or caller still
-      // supplies it. Keeping two persisted switches is what made the old
-      // Settings surface disagree with the behavior it controlled.
-      delete settings.firmwareInjectionEnabled;
       if (valueForStore !== 'project' && ctx.watcher?.writeState && ctx.watcher?.readState) {
         const currentState = ctx.watcher.readState() || {};
         if (currentState.project) {
