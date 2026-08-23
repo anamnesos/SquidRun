@@ -217,6 +217,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/modules/mira-local-text-ui-surface.js: Builds Mira's typed conversation surface for the live conversation engine, joining local shell gating, optional text model attachment, bounded thread context, tentative-understanding persistence counts, and developmental-understanding validation.
 - ui/modules/memory-consistency-check.js: On-demand drift checker that compares `workspace/knowledge/` chunks against knowledge-backed nodes in `workspace/memory/cognitive-memory.db`.
 - ui/modules/memory-broker.js: Unified recall broker that queries cognitive/vector memory, team-memory graph claims, evidence-ledger episodic decisions, and optional knowledge search providers, then merges ranked context with Reciprocal Rank Fusion for pane delivery and agent tooling.
+- ui/modules/belief-snapshot-prune.js: Copy-only belief-history retention planner and candidate builder. It opens the source SQLite database read-only, keeps every per-agent/session belief transition, newest row, and contradiction-referenced snapshot, verifies schema plus all non-belief table contents and the pre-existing foreign-key baseline, and atomically publishes only a fresh separately named candidate after verification; it never swaps or prunes the live database.
 - ui/modules/memory-ingest/delivery.js: Proactive memory delivery engine (trigger matching, injection budgets, handoff packets, and compaction survival persistence).
 - ui/modules/memory-ingest/journal.js: Shared ingest journal / retry queue / dedupe state backing Phases 1-4 of the memory contract.
 - ui/modules/memory-ingest/lifecycle.js: Session-based lifecycle advancement for memory objects (stale/archive/reactivation review flows).
@@ -342,6 +343,7 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/scripts/hm-memory-registry.js: CLI for transactive memory registry updates and expertise tracking by domain/agent.
 - ui/scripts/hm-memory-search.js: Queries the cognitive/vector memory index and returns ranked semantic matches.
 - ui/scripts/hm-memory.js: CLI utility that sends/queries runtime actions via WebSocket.
+- ui/scripts/hm-belief-snapshot-prune.js: Explicit `plan`/`build` CLI for the copy-only belief-snapshot retention path. `plan` is read-only; `build` requires a fresh candidate path and can emit a fresh proof receipt, with no live-database replacement command.
 - ui/scripts/hm-room.js: Runtime-identity-bound Team Room CLI for activation replies, read-only room listing/status, and clear same-root coverage refusals; it exposes no author override.
 - ui/scripts/hm-mira-emit.js: Emits Mira-originated route intents through the normal SquidRun messaging path for proof and runtime integration.
 - ui/scripts/hm-mira-progress.js: Prints contract-driven Mira progress and consumes fresh default progress proof artifacts unless explicitly disabled.
