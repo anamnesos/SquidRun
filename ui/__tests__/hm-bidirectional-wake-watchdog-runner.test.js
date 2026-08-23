@@ -815,6 +815,62 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
     );
   });
 
+  test('startRunner launches an Electron executable in Node mode', () => {
+    const envKey = 'SQUIDRUN_BIDIRECTIONAL_WAKE_NODE_PATH';
+    const previousExecutable = process.env[envKey];
+    const previousRunAsNode = process.env.ELECTRON_RUN_AS_NODE;
+    process.env[envKey] = 'C:\\Tools\\Electron\\electron.exe';
+    delete process.env.ELECTRON_RUN_AS_NODE;
+
+    try {
+      const result = moduleUnderTest.startRunner({
+        projectRoot: tempRoot,
+        ownershipProbe: ownershipProbe(),
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        started: true,
+        executable: 'C:\\Tools\\Electron\\electron.exe',
+      }));
+      expect(childProcess.spawn).toHaveBeenCalledWith(
+        'C:\\Tools\\Electron\\electron.exe',
+        expect.any(Array),
+        expect.objectContaining({
+          env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: '1' }),
+        })
+      );
+    } finally {
+      if (previousExecutable === undefined) delete process.env[envKey];
+      else process.env[envKey] = previousExecutable;
+      if (previousRunAsNode === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+      else process.env.ELECTRON_RUN_AS_NODE = previousRunAsNode;
+    }
+  });
+
+  test('startRunner strips inherited Electron Node mode from a Node executable', () => {
+    const envKey = 'SQUIDRUN_BIDIRECTIONAL_WAKE_NODE_PATH';
+    const previousExecutable = process.env[envKey];
+    const previousRunAsNode = process.env.ELECTRON_RUN_AS_NODE;
+    process.env[envKey] = 'C:\\Program Files\\nodejs\\node.exe';
+    process.env.ELECTRON_RUN_AS_NODE = '1';
+
+    try {
+      moduleUnderTest.startRunner({
+        projectRoot: tempRoot,
+        ownershipProbe: ownershipProbe(),
+      });
+
+      const spawnOptions = childProcess.spawn.mock.calls[0][2];
+      expect(spawnOptions.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    } finally {
+      if (previousExecutable === undefined) delete process.env[envKey];
+      else process.env[envKey] = previousExecutable;
+      if (previousRunAsNode === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+      else process.env.ELECTRON_RUN_AS_NODE = previousRunAsNode;
+    }
+  });
+
   test('startRunner atomic lock prevents a concurrent double spawn before pid file exists', () => {
     let reentrantResult = null;
     childProcess.spawn.mockImplementationOnce(() => {

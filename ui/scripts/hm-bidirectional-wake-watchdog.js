@@ -892,9 +892,21 @@ function resolveLaunchExecutable(env = process.env) {
   return process.execPath || (process.platform === 'win32' ? 'node.exe' : 'node');
 }
 
-function cleanNodeChildEnv(env = process.env) {
+function cleanNodeChildEnv(env = process.env, executable = '') {
   const childEnv = { ...env };
-  delete childEnv.ELECTRON_RUN_AS_NODE;
+  const executableName = toText(executable, '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .pop()
+    .toLowerCase();
+  if (executableName === 'electron' || executableName === 'electron.exe') {
+    // When startup runs inside Electron, process.execPath is electron.exe.
+    // Without this flag the detached "watchdog" boots another Electron app
+    // instead of executing this script as Node, leaving a pidfile-only orphan.
+    childEnv.ELECTRON_RUN_AS_NODE = '1';
+  } else {
+    delete childEnv.ELECTRON_RUN_AS_NODE;
+  }
   return childEnv;
 }
 
@@ -1358,6 +1370,7 @@ function startRunner(options = {}) {
     ensureDir(DEFAULT_LOG_PATH);
     const out = fs.openSync(DEFAULT_LOG_PATH, 'a');
     const executable = resolveLaunchExecutable();
+    const childEnv = cleanNodeChildEnv(process.env, executable);
     const projectRoot = path.resolve(
       toText(options.projectRoot, '')
       || process.env.SQUIDRUN_PROJECT_ROOT
@@ -1368,7 +1381,7 @@ function startRunner(options = {}) {
       detached: true,
       stdio: ['ignore', out, out],
       env: {
-        ...cleanNodeChildEnv(process.env),
+        ...childEnv,
         SQUIDRUN_PROJECT_ROOT: projectRoot,
         ...(generationId ? { SQUIDRUN_WAKE_APP_GENERATION: generationId } : {}),
       },
