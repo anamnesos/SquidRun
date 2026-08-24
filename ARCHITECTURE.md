@@ -344,6 +344,8 @@ This is a curated orientation map for agents, not a complete generated inventory
 - ui/scripts/hm-memory-search.js: Queries the cognitive/vector memory index and returns ranked semantic matches.
 - ui/scripts/hm-memory.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-belief-snapshot-prune.js: Explicit `plan`/`build` CLI for the copy-only belief-snapshot retention path. `plan` is read-only; `build` requires a fresh candidate path and can emit a fresh proof receipt, with no live-database replacement command.
+- ui/scripts/hm-nas-mirror.js: Incremental, browsable PC-to-NAS evidence mirror. It walks the allowlisted case/document roots and sends changed files through byte-counted atomic SSH writes so Windows codepage handling cannot corrupt Korean directory names.
+- ui/scripts/hm-nas-mirror-transfer.js: Path validation and remote receive-command builder for the NAS mirror; remote destinations travel as UTF-8 base64 and are decoded only inside quoted shell variables.
 - ui/scripts/hm-room.js: Runtime-identity-bound Team Room CLI for activation replies, read-only room listing/status, and clear same-root coverage refusals; it exposes no author override.
 - ui/scripts/hm-mira-emit.js: Emits Mira-originated route intents through the normal SquidRun messaging path for proof and runtime integration.
 - ui/scripts/hm-mira-progress.js: Prints contract-driven Mira progress and consumes fresh default progress proof artifacts unless explicitly disabled.
