@@ -7335,6 +7335,60 @@ describe('SquidRunApp', () => {
       expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledTimes(1);
     });
 
+    it('refreshes Team Room CLI bindings from an exact current-generation pane restart', async () => {
+      const { getDaemonClient } = require('../daemon-client');
+      const sharedDaemonClient = {
+        on: jest.fn(),
+        off: jest.fn(),
+        connect: jest.fn().mockResolvedValue(),
+        disconnect: jest.fn(),
+        getTerminal: jest.fn().mockReturnValue(null),
+      };
+      getDaemonClient.mockReturnValue(sharedDaemonClient);
+      const ctx = {
+        ...mockAppContext,
+        daemonClient: sharedDaemonClient,
+        agentRunning: new Map([['3', 'starting']]),
+      };
+      const app = new SquidRunApp(ctx, mockManagers);
+      const refreshCliBindings = jest
+        .spyOn(app.teamRoomController, 'refreshCliBindings')
+        .mockReturnValue({ ok: true, changedRoles: ['oracle'] });
+
+      await app.initDaemonClient();
+      const spawnedListener = sharedDaemonClient.on.mock.calls
+        .find(([eventName]) => eventName === 'spawned')?.[1];
+      expect(typeof spawnedListener).toBe('function');
+
+      const exact = {
+        paneId: '3',
+        pid: 7654,
+        paneLaunchId: `pl_${'d'.repeat(32)}`,
+        appGeneration: app.commsSessionScopeId,
+        spawnRequestId: 'pane-spawn-current-1',
+      };
+      spawnedListener('3', 7654, false, exact);
+      expect(refreshCliBindings).toHaveBeenCalledTimes(1);
+
+      spawnedListener('3', 7655, false, {
+        ...exact,
+        pid: 7655,
+        appGeneration: 'app-session-older',
+      });
+      spawnedListener('3', 7656, false, {
+        paneId: '3',
+        pid: 7656,
+        appGeneration: app.commsSessionScopeId,
+      });
+      spawnedListener('3', 7657, false, {
+        paneId: '3',
+        pid: 7657,
+        paneLaunchId: `pl_${'e'.repeat(32)}`,
+        appGeneration: app.commsSessionScopeId,
+      });
+      expect(refreshCliBindings).toHaveBeenCalledTimes(1);
+    });
+
     it('never recovers an exact current-session Computer Use verifier exit or dead reconnect', async () => {
       const { getDaemonClient } = require('../daemon-client');
       const paneId = 'cua-verifier-11111111-1111-4111-8111-111111111111';

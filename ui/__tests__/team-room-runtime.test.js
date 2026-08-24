@@ -988,10 +988,9 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     ]));
 
     builderLaunchId = `pl_${'9'.repeat(32)}`;
-    await expect(runtime.start()).resolves.toEqual(expect.objectContaining({
+    expect(runtime.refreshCliBindings()).toEqual(expect.objectContaining({
       ok: true,
-      alreadyRunning: true,
-      cliBindingsRotated: ['builder'],
+      changedRoles: ['builder'],
     }));
     expect(resolverCalls).toBe(2);
     const after = Object.fromEntries(['architect', 'builder', 'oracle'].map((role) => [

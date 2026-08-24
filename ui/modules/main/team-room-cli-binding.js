@@ -1,12 +1,13 @@
 'use strict';
 
 const { TelegramAdmissionWriter } = require('./telegram-admission-writer');
-const { findActivePaneLaunch } = require('./telegram-launch-registry');
+const { findPaneLaunchById } = require('./telegram-launch-registry');
 const { DEFAULT_PROFILE_NAME, DEFAULT_ROOM_MEMBERS, MEMBER_KINDS } = require('./team-room-contracts');
 
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
 const PANE_LAUNCH_PATTERN = /^pl_[a-f0-9]{32}$/u;
 const PROCESS_ID_PATTERN = /^[1-9][0-9]*$/u;
+const VALID_LAUNCH_STATES = new Set(['launching', 'complete']);
 
 function createTeamRoomCliBindingResolver(options = {}) {
   const getProfileName = typeof options.getProfileName === 'function'
@@ -15,9 +16,12 @@ function createTeamRoomCliBindingResolver(options = {}) {
   const writerFactory = typeof options.writerFactory === 'function'
     ? options.writerFactory
     : () => new TelegramAdmissionWriter({});
-  const lookupPaneLaunch = typeof options.lookupPaneLaunch === 'function'
-    ? options.lookupPaneLaunch
-    : findActivePaneLaunch;
+  const lookupPaneLaunchById = typeof options.lookupPaneLaunchById === 'function'
+    ? options.lookupPaneLaunchById
+    : findPaneLaunchById;
+  const getCurrentPaneLaunch = typeof options.getCurrentPaneLaunch === 'function'
+    ? options.getCurrentPaneLaunch
+    : () => null;
   const getDaemonProcessId = typeof options.getDaemonProcessId === 'function'
     ? options.getDaemonProcessId
     : () => process.pid;
@@ -38,6 +42,27 @@ function createTeamRoomCliBindingResolver(options = {}) {
     if (!PROCESS_ID_PATTERN.test(daemonProcessId)) {
       return { ok: false, reason: 'team_room_cli_daemon_binding_invalid' };
     }
+    const agentMembers = DEFAULT_ROOM_MEMBERS.filter(
+      (candidate) => candidate.memberKind === MEMBER_KINDS.AGENT
+    );
+    const currentLaunches = new Map();
+    for (const member of agentMembers) {
+      const current = getCurrentPaneLaunch(String(member.paneId));
+      const paneLaunchId = String(current?.paneLaunchId || '').trim();
+      if (!current
+        || current.alive !== true
+        || String(current.paneId) !== String(member.paneId)
+        || !PROCESS_ID_PATTERN.test(String(current.pid ?? '').trim())
+        || String(current.appGeneration || '') !== String(appGeneration)
+        || !PANE_LAUNCH_PATTERN.test(paneLaunchId)) {
+        return {
+          ok: false,
+          reason: 'team_room_cli_current_launch_unavailable',
+          detail: { role: member.role },
+        };
+      }
+      currentLaunches.set(member.role, { current, paneLaunchId });
+    }
     const writer = writerFactory();
     const opened = writer?.open?.();
     if (!opened?.ok || !writer.db) {
@@ -46,13 +71,9 @@ function createTeamRoomCliBindingResolver(options = {}) {
     }
     try {
       const bindings = {};
-      for (const member of DEFAULT_ROOM_MEMBERS.filter((candidate) => candidate.memberKind === MEMBER_KINDS.AGENT)) {
-        const found = lookupPaneLaunch(writer.db, {
-          appGeneration,
-          paneId: String(member.paneId),
-          daemonProcessId,
-          allowIncomplete: true,
-        });
+      for (const member of agentMembers) {
+        const { paneLaunchId } = currentLaunches.get(member.role);
+        const found = lookupPaneLaunchById(writer.db, { launchId: paneLaunchId });
         if (!found?.ok) {
           return {
             ok: false,
@@ -60,11 +81,12 @@ function createTeamRoomCliBindingResolver(options = {}) {
             detail: { role: member.role, registryReason: found?.reason || 'unknown' },
           };
         }
-        const paneLaunchId = String(found.launchId || '').trim();
-        if (String(found.appGeneration) !== String(appGeneration)
+        if (String(found.launchId || '').trim() !== paneLaunchId
+          || String(found.appGeneration) !== String(appGeneration)
           || String(found.paneId) !== String(member.paneId)
           || String(found.role).trim().toLowerCase() !== member.role
           || String(found.daemonProcessId) !== daemonProcessId
+          || !VALID_LAUNCH_STATES.has(String(found.state || ''))
           || !PANE_LAUNCH_PATTERN.test(paneLaunchId)) {
           return {
             ok: false,

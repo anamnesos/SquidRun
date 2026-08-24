@@ -14,12 +14,52 @@ const { EventEmitter } = require('events');
 const log = require('./modules/logger');
 const { PANE_ROLES, resolveCoordPath, PIPE_PATH } = require('./config');
 const { getProfilePipePath, normalizeProfileName } = require('./profile');
+const {
+  stripClaudeResumeFlags,
+  stripCodexResumeSubcommand,
+} = require('./modules/cli-resume-invocation');
 
 // In packaged builds, __dirname points inside app.asar which can't be spawned.
 // Resolve to the unpacked copy so child_process.spawn works.
 const ASAR_UNPACKED_DIR = __dirname.replace('app.asar', 'app.asar.unpacked');
 const DAEMON_SCRIPT = path.join(ASAR_UNPACKED_DIR, 'terminal-daemon.js');
 const DAEMON_PID_FILE = resolveCoordPath('runtime/daemon.pid', { forWrite: true });
+const PANE_LAUNCH_ID_PATTERN = /^pl_[a-f0-9]{32}$/u;
+const APP_GENERATION_PATTERN = /^app-(?:session-\d+|\d+-\d+)(?:[-:][A-Za-z0-9._-]+)?$/u;
+const APP_OWNED_RETRY_REASONS = new Set([
+  'claude_session_collision',
+  'codex_missing_resume',
+]);
+
+function normalizePaneLaunchBinding(input = {}) {
+  const paneLaunchId = String(input.paneLaunchId || '').trim();
+  const appGeneration = String(input.appGeneration || '').trim();
+  if (!PANE_LAUNCH_ID_PATTERN.test(paneLaunchId)
+    || !APP_GENERATION_PATTERN.test(appGeneration)) {
+    return null;
+  }
+  return { paneLaunchId, appGeneration };
+}
+
+function isCanonicalPaneId(paneId) {
+  return Object.prototype.hasOwnProperty.call(PANE_ROLES || {}, String(paneId));
+}
+
+function paneLaunchBindingsEqual(left, right) {
+  return Boolean(left && right
+    && left.paneLaunchId === right.paneLaunchId
+    && left.appGeneration === right.appGeneration);
+}
+
+function normalizePaneProcessId(input = {}) {
+  const pid = Number(input.pid);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+function ownedPaneLaunchMatches(input, owned) {
+  const pid = normalizePaneProcessId(input);
+  return Boolean(pid && paneLaunchBindingsEqual(input, owned) && pid === owned?.pid);
+}
 
 /**
  * Write the daemon-owned pane-launch record and hand its id to the pane.
@@ -66,9 +106,10 @@ function recordPaneLaunchForSpawn({ spawnEnv, paneId, role, mode, spawnOptions }
     const { applyTelegramAdmissionSchema } = require('./modules/main/telegram-admission-store');
     const { TelegramAdmissionWriter } = require('./modules/main/telegram-admission-writer');
 
-    const appGeneration = String(
-      spawnEnv[ENV_APP_GENERATION] || process.env[ENV_APP_GENERATION] || ''
-    ).trim();
+    // The app generation is startup-owned process state. A pane/renderer may
+    // supply ordinary environment values, but it may not choose the generation
+    // whose launch registry row and Room authority this spawn will inherit.
+    const appGeneration = String(process.env[ENV_APP_GENERATION] || '').trim();
     if (!appGeneration) return null;
 
     const { resolveConsumerRuntimeForLaunch } = require('./modules/runtime-detect');
@@ -132,6 +173,48 @@ function stripElectronRunAsNode(env) {
   return env;
 }
 
+function stripCallerPaneLaunchBinding(env) {
+  if (!env || typeof env !== 'object') return env;
+  for (const key of Object.keys(env)) {
+    const upperKey = key.toUpperCase();
+    if (upperKey === 'SQUIDRUN_PANE_LAUNCH_ID' || upperKey === 'SQUIDRUN_APP_GENERATION') {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
+function stripCallerPaneAddress(env) {
+  if (!env || typeof env !== 'object') return env;
+  for (const key of Object.keys(env)) {
+    const upperKey = key.toUpperCase();
+    if (upperKey === 'SQUIDRUN_ROLE' || upperKey === 'SQUIDRUN_PANE_ID') {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
+function readCaseInsensitiveEnv(env, name) {
+  const wanted = String(name || '').toUpperCase();
+  for (const [key, value] of Object.entries(env || {})) {
+    if (String(key).toUpperCase() === wanted) return value;
+  }
+  return undefined;
+}
+
+function sanitizeSpawnOptions(options) {
+  if (!options || typeof options !== 'object') return null;
+  const sanitized = {};
+  const reserved = new Set(['env', 'requestid', 'mode', 'paneid', 'cwd', 'dryrun']);
+  for (const [key, value] of Object.entries(options)) {
+    if (!reserved.has(String(key).toLowerCase())) {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
 class DaemonClient extends EventEmitter {
   constructor(options = {}) {
     super();
@@ -154,6 +237,16 @@ class DaemonClient extends EventEmitter {
     this.pendingWriteAcks = new Map(); // requestEventId -> { resolve, timer }
     this.writeAckSeq = 0;
     this.spawnSeq = 0;
+    // The app creates the launch id before sending the spawn request. Keep the
+    // exact handoff until the daemon confirms which terminal it created, so an
+    // older daemon that does not echo the new fields cannot make the app guess
+    // from registry row age or completion state.
+    this.pendingPaneLaunchBindings = new Map();
+    // Confirmed canonical launch authority is app-owned state. It is promoted
+    // only from an exact pending request/binding match and intentionally
+    // survives a daemon socket reconnect. Daemon snapshots can restore
+    // liveness against this map, but can never mint or replace its values.
+    this.ownedPaneLaunchBindings = new Map();
     this.pendingAddressSpawns = new Map(); // requestId -> { resolve, timer }
     this.addressSpawnSeq = 0;
     this.pendingAddressKills = new Map(); // requestId -> { resolve, timer }
@@ -358,6 +451,95 @@ class DaemonClient extends EventEmitter {
   /**
    * Handle incoming message from daemon
    */
+  _replaceTerminalSnapshot(terminals = []) {
+    const previous = new Map(this.terminals);
+    const next = new Map();
+    const observedPaneIds = new Set();
+    const recovered = [];
+    for (const terminal of terminals) {
+      const paneId = String(terminal?.paneId || '').trim();
+      if (!paneId) continue;
+      observedPaneIds.add(paneId);
+      const pending = this.pendingPaneLaunchBindings.get(paneId) || null;
+      if (pending) {
+        const snapshotRequestId = String(terminal?.spawnRequestId || '').trim();
+        const daemonBinding = normalizePaneLaunchBinding(terminal);
+        const snapshotPid = normalizePaneProcessId(terminal);
+        const exactRecovery = Boolean(
+          snapshotRequestId
+          && snapshotRequestId === String(pending.requestId || '')
+          && snapshotPid
+          && paneLaunchBindingsEqual(daemonBinding, pending)
+        );
+        if (exactRecovery) {
+          const restored = {
+            ...terminal,
+            paneId,
+            paneLaunchId: pending.paneLaunchId,
+            appGeneration: pending.appGeneration,
+            pid: snapshotPid,
+          };
+          this.ownedPaneLaunchBindings.set(paneId, {
+            paneLaunchId: pending.paneLaunchId,
+            appGeneration: pending.appGeneration,
+            pid: snapshotPid,
+            requestId: snapshotRequestId,
+            launchSpec: pending.launchSpec,
+          });
+          this.pendingPaneLaunchBindings.delete(paneId);
+          next.set(paneId, restored);
+          recovered.push({
+            ...restored,
+            requestId: snapshotRequestId,
+            paneLaunchRecovered: true,
+          });
+          continue;
+        }
+        const prior = previous.get(paneId);
+        if (prior) next.set(paneId, prior);
+        continue;
+      }
+      if (isCanonicalPaneId(paneId)) {
+        const daemonBinding = normalizePaneLaunchBinding(terminal);
+        const ownedBinding = this.ownedPaneLaunchBindings.get(paneId) || null;
+        const acceptedBinding = ownedPaneLaunchMatches(terminal, ownedBinding)
+          ? ownedBinding
+          : null;
+        if (ownedBinding && !acceptedBinding) {
+          // A different process cannot inherit a prior canonical launch label.
+          // Omit the pane from this snapshot so all Room consumers fail closed
+          // until an app-owned replacement request is confirmed.
+          continue;
+        }
+        next.set(paneId, {
+          ...terminal,
+          paneId,
+          paneLaunchId: acceptedBinding?.paneLaunchId || null,
+          appGeneration: acceptedBinding?.appGeneration || null,
+        });
+        continue;
+      }
+      next.set(paneId, { ...terminal, paneId });
+    }
+    for (const paneId of this.pendingPaneLaunchBindings.keys()) {
+      if (observedPaneIds.has(paneId)) continue;
+      const prior = previous.get(paneId);
+      if (prior) next.set(paneId, prior);
+    }
+    this.terminals.clear();
+    for (const [paneId, terminal] of next) this.terminals.set(paneId, terminal);
+    for (const terminal of recovered) {
+      this.emit(
+        'spawned',
+        terminal.paneId,
+        terminal.pid,
+        terminal.dryRun === true,
+        terminal
+      );
+    }
+    return Array.from(this.terminals.values());
+  }
+
   _handleMessage(message) {
     try {
       const msg = JSON.parse(message);
@@ -365,11 +547,7 @@ class DaemonClient extends EventEmitter {
       switch (msg.event) {
         case 'connected':
           // Initial connection, cache terminal list
-          this.terminals.clear();
-          for (const term of msg.terminals || []) {
-            this.terminals.set(term.paneId, term);
-          }
-          this.emit('connected', msg.terminals);
+          this.emit('connected', this._replaceTerminalSnapshot(msg.terminals || []));
           break;
 
         case 'data':
@@ -391,11 +569,82 @@ class DaemonClient extends EventEmitter {
               cached.alive = false;
             }
           }
+          {
+            const paneId = String(msg.paneId || '');
+            const ownedBinding = this.ownedPaneLaunchBindings.get(paneId) || null;
+            if (ownedPaneLaunchMatches(msg, ownedBinding)) {
+              this.ownedPaneLaunchBindings.delete(paneId);
+            }
+          }
           break;
 
-        case 'spawned':
-          this.terminals.set(msg.paneId, {
-            paneId: msg.paneId,
+        case 'spawned': {
+          const paneId = String(msg.paneId);
+          const pending = this.pendingPaneLaunchBindings.get(paneId) || null;
+          const requestMatches = !pending
+            || String(pending.requestId || '') === String(msg.requestId || '');
+          if (pending && !requestMatches) {
+            // A prior same-pane lifecycle can report after a replacement spawn
+            // was already requested. It may not consume or bypass the current
+            // app-owned launch handoff, update the terminal cache, or trigger a
+            // Room credential refresh.
+            log.warn('DaemonClient', `Ignored stale pane spawn confirmation for pane ${paneId}`);
+            break;
+          }
+          const daemonBinding = normalizePaneLaunchBinding(msg);
+          let launchBinding = daemonBinding;
+          let ownedBinding = null;
+          if (pending && requestMatches) {
+            const confirmedPid = normalizePaneProcessId(msg);
+            if (!confirmedPid
+              || (daemonBinding && !paneLaunchBindingsEqual(daemonBinding, pending))) {
+              log.warn('DaemonClient', `Refused mismatched pane launch confirmation for pane ${paneId}`);
+              break;
+            } else {
+              launchBinding = {
+                paneLaunchId: pending.paneLaunchId,
+                appGeneration: pending.appGeneration,
+              };
+            }
+            this.ownedPaneLaunchBindings.set(paneId, {
+              ...launchBinding,
+              pid: confirmedPid,
+              requestId: String(pending.requestId || ''),
+              launchSpec: pending.launchSpec,
+            });
+            this.pendingPaneLaunchBindings.delete(paneId);
+          } else if (isCanonicalPaneId(paneId)) {
+            ownedBinding = this.ownedPaneLaunchBindings.get(paneId) || null;
+            if (ownedBinding && !ownedPaneLaunchMatches(msg, ownedBinding)) {
+              log.warn('DaemonClient', `Ignored unowned pane process replacement for pane ${paneId}`);
+              break;
+            }
+            if (!ownedBinding) {
+              // Canonical terminal liveness may still update, but an unowned
+              // daemon event never becomes Room/launch authority.
+              launchBinding = null;
+              log.warn('DaemonClient', `Stripped unowned pane launch identity for pane ${paneId}`);
+            } else {
+              launchBinding = ownedBinding;
+            }
+          }
+          const spawnedMessage = {
+            ...msg,
+            paneId,
+            paneLaunchId: launchBinding?.paneLaunchId || null,
+            appGeneration: launchBinding?.appGeneration || null,
+            spawnRequestId: launchBinding
+              ? String(
+                pending?.requestId
+                || ownedBinding?.requestId
+                || msg.spawnRequestId
+                || msg.requestId
+                || ''
+              ).trim() || null
+              : null,
+          };
+          this.terminals.set(paneId, {
+            paneId,
             pid: msg.pid,
             alive: true,
             dryRun: msg.dryRun || false,
@@ -407,18 +656,112 @@ class DaemonClient extends EventEmitter {
             roomId: msg.roomId || null,
             role: msg.role || null,
             ownerPaneId: msg.ownerPaneId || null,
+            paneLaunchId: spawnedMessage.paneLaunchId,
+            appGeneration: spawnedMessage.appGeneration,
+            spawnRequestId: spawnedMessage.spawnRequestId,
           });
-          this.emit('spawned', msg.paneId, msg.pid, msg.dryRun || false, msg);
+          this.emit('spawned', paneId, msg.pid, msg.dryRun || false, spawnedMessage);
           break;
+        }
+
+        case 'spawn-retry-requested': {
+          const paneId = String(msg.paneId || '').trim();
+          const reason = String(msg.reason || '').trim();
+          const owned = this.ownedPaneLaunchBindings.get(paneId) || null;
+          const current = this.terminals.get(paneId) || null;
+          const exactRequest = Boolean(
+            owned?.requestId
+            && String(msg.spawnRequestId || '') === String(owned.requestId)
+          );
+          const launchSpec = owned?.launchSpec || null;
+          const retryCount = Number(launchSpec?.retryCount) || 0;
+          const authorized = Boolean(
+            APP_OWNED_RETRY_REASONS.has(reason)
+            && owned
+            && owned.retryRequested !== true
+            && retryCount < 1
+            && exactRequest
+            && ownedPaneLaunchMatches(msg, owned)
+            && ownedPaneLaunchMatches(current, owned)
+            && launchSpec
+            && !this.pendingPaneLaunchBindings.has(paneId)
+          );
+          if (!authorized) {
+            log.warn('DaemonClient', `Ignored unowned pane retry request for pane ${paneId || 'unknown'}`);
+            this.emit('spawn-retry-result', paneId, {
+              ok: false,
+              reason: 'pane_retry_not_app_owned',
+              retryReason: reason || null,
+            });
+            break;
+          }
+
+          owned.retryRequested = true;
+          const replacementOptions = { ...(launchSpec.spawnOptions || {}) };
+          if (reason === 'claude_session_collision') {
+            replacementOptions.paneCommand = stripClaudeResumeFlags(
+              replacementOptions.paneCommand
+            ) || 'claude';
+            replacementOptions.spawnCommandOnCreate = true;
+            replacementOptions.claudeCollisionRecoveryAttempted = true;
+          } else if (reason === 'codex_missing_resume') {
+            replacementOptions.paneCommand = stripCodexResumeSubcommand(
+              replacementOptions.paneCommand
+            ) || 'codex';
+            replacementOptions.spawnCommandOnCreate = true;
+            replacementOptions.codexResumeRecoveryAttempted = true;
+          }
+          const accepted = this.spawn(
+            paneId,
+            launchSpec.cwd,
+            launchSpec.dryRun === true,
+            launchSpec.mode,
+            { ...(launchSpec.env || {}) },
+            replacementOptions,
+            {
+              retryCount: retryCount + 1,
+              requireLaunchBinding: true,
+            }
+          );
+          const replacement = this.pendingPaneLaunchBindings.get(paneId) || null;
+          const replacementOwned = Boolean(
+            accepted === true
+            && replacement
+            && replacement.paneLaunchId !== owned.paneLaunchId
+            && replacement.requestId
+          );
+          this.emit('spawn-retry-result', paneId, {
+            ok: replacementOwned,
+            reason: replacementOwned
+              ? 'app_owned_pane_retry_requested'
+              : 'app_owned_pane_retry_launch_unavailable',
+            retryReason: reason,
+            previousPaneLaunchId: owned.paneLaunchId,
+            replacementPaneLaunchId: replacementOwned ? replacement.paneLaunchId : null,
+            replacementRequestId: replacementOwned ? replacement.requestId : null,
+          });
+          break;
+        }
 
         case 'address-spawn-result': {
           const requestId = msg.requestId || null;
-          if (msg.ok && msg.terminal) {
-            this.terminals.set(msg.paneId, {
-              ...msg.terminal,
-              paneId: msg.paneId,
-              alive: true,
-            });
+          if (msg.ok && msg.terminal
+            && !this.pendingPaneLaunchBindings.has(String(msg.paneId))) {
+            const paneId = String(msg.paneId);
+            const daemonBinding = normalizePaneLaunchBinding(msg.terminal);
+            const ownedBinding = this.ownedPaneLaunchBindings.get(paneId) || null;
+            const acceptedBinding = !isCanonicalPaneId(paneId)
+              ? daemonBinding
+              : (ownedPaneLaunchMatches(msg.terminal, ownedBinding) ? ownedBinding : null);
+            if (!(isCanonicalPaneId(paneId) && ownedBinding && !acceptedBinding)) {
+              this.terminals.set(paneId, {
+                ...msg.terminal,
+                paneId,
+                alive: true,
+                paneLaunchId: acceptedBinding?.paneLaunchId || null,
+                appGeneration: acceptedBinding?.appGeneration || null,
+              });
+            }
           }
           const pending = requestId ? this.pendingAddressSpawns.get(requestId) : null;
           if (pending) {
@@ -449,11 +792,7 @@ class DaemonClient extends EventEmitter {
         }
 
         case 'list':
-          this.terminals.clear();
-          for (const term of msg.terminals || []) {
-            this.terminals.set(term.paneId, term);
-          }
-          this.emit('list', msg.terminals);
+          this.emit('list', this._replaceTerminalSnapshot(msg.terminals || []));
           break;
 
         case 'attached':
@@ -470,11 +809,26 @@ class DaemonClient extends EventEmitter {
               this.terminals.delete(msg.paneId);
             }
           }
+          {
+            const paneId = String(msg.paneId || '');
+            const ownedBinding = this.ownedPaneLaunchBindings.get(paneId) || null;
+            if (ownedPaneLaunchMatches(msg, ownedBinding)) {
+              this.ownedPaneLaunchBindings.delete(paneId);
+            }
+          }
           this.emit('killed', msg.paneId, msg);
           break;
 
         case 'error':
-          this.emit('error', msg.paneId, msg.message);
+          {
+            const paneId = String(msg.paneId || '');
+            const requestId = String(msg.requestId || '').trim();
+            const pending = this.pendingPaneLaunchBindings.get(paneId) || null;
+            if (pending && requestId && requestId === String(pending.requestId || '')) {
+              this.pendingPaneLaunchBindings.delete(paneId);
+            }
+            this.emit('error', msg.paneId, msg.message, msg);
+          }
           break;
 
         case 'pong':
@@ -651,15 +1005,19 @@ class DaemonClient extends EventEmitter {
     requestMeta = null
   ) {
     const id = String(paneId);
-    const incomingEnv = (env && typeof env === 'object') ? env : {};
-    const explicitRole = typeof incomingEnv.SQUIDRUN_ROLE === 'string'
-      ? incomingEnv.SQUIDRUN_ROLE.trim()
+    const incomingEnv = (env && typeof env === 'object') ? { ...env } : {};
+    const incomingRole = readCaseInsensitiveEnv(incomingEnv, 'SQUIDRUN_ROLE');
+    const explicitRole = typeof incomingRole === 'string'
+      ? incomingRole.trim()
       : '';
-    const role = explicitRole || String(PANE_ROLES?.[id] || '').trim();
+    const canonicalRole = String(PANE_ROLES?.[id] || '').trim();
+    const role = canonicalRole || explicitRole;
+    stripCallerPaneAddress(incomingEnv);
+    stripCallerPaneLaunchBinding(incomingEnv);
     const spawnEnv = {
+      ...incomingEnv,
       SQUIDRUN_ROLE: role,
       SQUIDRUN_PANE_ID: id,
-      ...incomingEnv,
     };
     // THE DAEMON'S LAUNCH RECORD, written here because this is the one place
     // that knows a pane launch is happening and still controls the environment
@@ -667,7 +1025,7 @@ class DaemonClient extends EventEmitter {
     // SQUIDRUN_PANE_LAUNCH_ID; that hand-off is the only way a later hook can
     // name its own launch, and without it `pane_launch_id` stays what it was
     // for two checkpoints — a column the store read and nothing ever wrote.
-    recordPaneLaunchForSpawn({ spawnEnv, paneId: id, role, mode, spawnOptions });
+    const paneLaunchId = recordPaneLaunchForSpawn({ spawnEnv, paneId: id, role, mode, spawnOptions });
     stripElectronRunAsNode(spawnEnv);
     const payload = {
       action: 'spawn',
@@ -677,12 +1035,45 @@ class DaemonClient extends EventEmitter {
       mode,
       env: spawnEnv,
     };
-    const requestId = String(requestMeta?.requestId || '').trim();
-    if (requestId) payload.requestId = requestId;
-    if (spawnOptions && typeof spawnOptions === 'object') {
-      payload.options = { ...spawnOptions };
+    const requestId = String(requestMeta?.requestId || '').trim() || this._nextSpawnRequestId();
+    payload.requestId = requestId;
+    const sanitizedSpawnOptions = sanitizeSpawnOptions(spawnOptions);
+    if (sanitizedSpawnOptions) {
+      payload.options = sanitizedSpawnOptions;
     }
-    return this._send(payload);
+    const launchBinding = normalizePaneLaunchBinding({
+      paneLaunchId,
+      appGeneration: spawnEnv.SQUIDRUN_APP_GENERATION,
+    });
+    if (requestMeta?.requireLaunchBinding === true && !launchBinding) {
+      log.warn('DaemonClient', `Refused app-owned pane retry without launch authority for pane ${id}`);
+      return false;
+    }
+    if (launchBinding) {
+      const replayEnv = { ...spawnEnv };
+      stripCallerPaneAddress(replayEnv);
+      stripCallerPaneLaunchBinding(replayEnv);
+      this.pendingPaneLaunchBindings.set(id, {
+        ...launchBinding,
+        requestId,
+        launchSpec: {
+          cwd,
+          dryRun: dryRun === true,
+          mode,
+          env: replayEnv,
+          spawnOptions: { ...(sanitizedSpawnOptions || {}) },
+          retryCount: Math.max(0, Number(requestMeta?.retryCount) || 0),
+        },
+      });
+    }
+    const accepted = this._send(payload);
+    if (!accepted && launchBinding) {
+      const pending = this.pendingPaneLaunchBindings.get(id);
+      if (pending?.paneLaunchId === launchBinding.paneLaunchId) {
+        this.pendingPaneLaunchBindings.delete(id);
+      }
+    }
+    return accepted;
   }
 
   _nextSpawnRequestId() {
@@ -751,8 +1142,9 @@ class DaemonClient extends EventEmitter {
           requestId,
         });
       };
-      const onError = (errorPaneId, message) => {
-        if (String(errorPaneId || '') !== id) return;
+      const onError = (errorPaneId, message, errorEvent = {}) => {
+        if (String(errorPaneId || '') !== id
+          || String(errorEvent?.requestId || '') !== requestId) return;
         finish({
           ok: false,
           status: 'spawn_failed',

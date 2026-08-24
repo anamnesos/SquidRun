@@ -2,6 +2,7 @@
 
 const mockRuntime = {
   issueElectronCredential: jest.fn(),
+  refreshCliBindings: jest.fn(),
   start: jest.fn(),
   stop: jest.fn(),
 };
@@ -65,6 +66,7 @@ beforeEach(() => {
   mockRuntime.start.mockResolvedValue({ ok: true, origin: 'http://127.0.0.1:45123' });
   mockRuntime.stop.mockResolvedValue({ ok: true });
   mockRuntime.issueElectronCredential.mockReturnValue({ ok: true, token: 'electron-secret' });
+  mockRuntime.refreshCliBindings.mockReturnValue({ ok: true, changedRoles: [] });
   mockRemoteAccess.reconcile.mockResolvedValue({ ok: false, reason: 'tailscale_executable_not_found' });
   mockRemoteAccess.getStatus.mockResolvedValue({ ok: true, enabled: false, reason: 'tailscale_serve_disabled' });
   mockRemoteAccess.setEnabled.mockResolvedValue({ ok: true, enabled: false });
@@ -135,7 +137,28 @@ describe('team-room app controller', () => {
       windowKey: 'team-room',
     });
     expect(options.focusAppWindow).toHaveBeenCalledWith('team-room');
+    expect(mockRuntime.refreshCliBindings).toHaveBeenCalledTimes(1);
     expect(mockRuntime.start).not.toHaveBeenCalled();
+    expect(mockRuntime.issueElectronCredential).not.toHaveBeenCalled();
+  });
+
+  test('refuses to reuse a visible Room window when its current pane binding cannot refresh', async () => {
+    const existing = { id: 'existing-room' };
+    mockRuntime.refreshCliBindings.mockReturnValue({
+      ok: false,
+      reason: 'team_room_cli_current_launch_unavailable',
+    });
+    const { controller, options } = createHarness({
+      canSendToWindow: jest.fn(() => true),
+      getAppWindow: jest.fn(() => existing),
+    });
+
+    await expect(controller.openWindow()).resolves.toEqual({
+      ok: false,
+      windowKey: 'team-room',
+      reason: 'team_room_cli_current_launch_unavailable',
+    });
+    expect(options.focusAppWindow).not.toHaveBeenCalled();
     expect(mockRuntime.issueElectronCredential).not.toHaveBeenCalled();
   });
 

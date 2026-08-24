@@ -453,6 +453,44 @@ function findActivePaneLaunch(db, query = {}) {
 }
 
 /**
+ * Resolve the one launch id the app already observed on its current terminal.
+ *
+ * Unlike findActivePaneLaunch(), this performs no state-based selection and
+ * therefore cannot prefer an older COMPLETE row over the current LAUNCHING
+ * row (or become ambiguous when both exist). The caller must still compare
+ * every returned ownership field with its independently held runtime facts.
+ */
+function findPaneLaunchById(db, query = {}) {
+  const launchId = String(query.launchId ?? '').trim();
+  if (!launchId) return fail('launch_query_missing:launchId');
+
+  let row;
+  try {
+    row = db.prepare('SELECT * FROM telegram_pane_launches WHERE launch_id = ?').get(launchId);
+  } catch (err) {
+    return fail('launch_query_failed', { message: err.message });
+  }
+  if (!row) return fail('launch_not_recorded', { launchId });
+
+  const state = String(row.state);
+  return {
+    ok: true,
+    launchId: String(row.launch_id),
+    appGeneration: String(row.app_generation),
+    paneId: String(row.pane_id),
+    role: String(row.role),
+    consumerRuntime: String(row.consumer_runtime),
+    daemonProcessId: String(row.daemon_process_id),
+    launchedAtMs: Number(row.launched_at_ms),
+    completeAtMs: row.complete_at_ms === null ? null : Number(row.complete_at_ms),
+    state,
+    readinessWarning: state === LAUNCH_STATES.COMPLETE
+      ? null
+      : { reason: 'launch_incomplete', detail: { launchId, state } },
+  };
+}
+
+/**
  * DURABLE SESSION BINDING, written by the runtime's SessionStart hook.
  *
  * The runtime's session id is the only handle a UserPromptSubmit hook has on
@@ -917,6 +955,7 @@ module.exports = {
   recordPaneLaunch,
   completePaneLaunch,
   findActivePaneLaunch,
+  findPaneLaunchById,
   bindConsumerSession,
   recordAdmissionReceipt,
   loadAdmissionReceipt,

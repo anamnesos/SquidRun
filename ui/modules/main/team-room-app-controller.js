@@ -49,6 +49,7 @@ function createTeamRoomAppController(options = {}) {
   });
   const resolveCliBindings = dependencies.resolveTeamRoomCliBindings || createTeamRoomCliBindingResolver({
     getProfileName: () => dependencies.getWindowScope('main')?.profileName || '',
+    getCurrentPaneLaunch: dependencies.getCurrentPaneLaunch,
   });
   let runtime;
   const remoteAccess = dependencies.remoteAccess || new TeamRoomTailscaleAccess({
@@ -179,6 +180,14 @@ function createTeamRoomAppController(options = {}) {
     }
   }
 
+  function refreshCliBindings() {
+    try {
+      return runtime.refreshCliBindings();
+    } catch (error) {
+      return { ok: false, reason: error?.message || 'team_room_cli_binding_refresh_failed' };
+    }
+  }
+
   async function openWindow() {
     const windowKey = 'team-room';
     if (!network.ok) {
@@ -192,8 +201,18 @@ function createTeamRoomAppController(options = {}) {
     }
     const existing = dependencies.getAppWindow(windowKey);
     if (dependencies.canSendToWindow(existing)) {
+      const refreshed = refreshCliBindings();
+      if (!refreshed.ok) {
+        return { ok: false, windowKey, reason: refreshed.reason || 'team_room_cli_binding_refresh_failed' };
+      }
       dependencies.focusAppWindow(windowKey);
-      return { ok: true, windowKey, title: 'SquidRun Team Room', status: 'reused_existing' };
+      return {
+        ok: true,
+        windowKey,
+        title: 'SquidRun Team Room',
+        status: 'reused_existing',
+        cliBindingsRotated: refreshed.changedRoles || [],
+      };
     }
     const started = await start();
     if (!started.ok) return { ok: false, windowKey, reason: started.reason || 'team_room_runtime_start_failed' };
@@ -222,7 +241,16 @@ function createTeamRoomAppController(options = {}) {
     }
   }
 
-  return { openWindow, reconcileRemoteAccess, remoteAccess, runtime, start, stop, stopQuietly };
+  return {
+    openWindow,
+    reconcileRemoteAccess,
+    refreshCliBindings,
+    remoteAccess,
+    runtime,
+    start,
+    stop,
+    stopQuietly,
+  };
 }
 
 module.exports = { createTeamRoomAppController };

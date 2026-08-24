@@ -352,6 +352,75 @@ describe('DaemonClient', () => {
       expect(result).toBe(false);
     });
 
+    test('removes caller-authored launch identity fields before the app-owned spawn checkpoint', async () => {
+      const previousGeneration = process.env.SQUIDRUN_APP_GENERATION;
+      delete process.env.SQUIDRUN_APP_GENERATION;
+      try {
+        await client.connect();
+        client.spawn('3', 'D:\\projects\\squidrun', false, null, {
+          squidrun_role: 'Architect',
+          SquidRun_Pane_Id: '1',
+          SQUIDRUN_PANE_LAUNCH_ID: `pl_${'f'.repeat(32)}`,
+          squidrun_app_generation: 'app-session-999',
+          KEEP_ME: 'yes',
+        }, {
+          paneCommand: 'codex',
+          spawnCommandOnCreate: true,
+        });
+
+        const request = JSON.parse(mockSocket.write.mock.calls.at(-1)[0].trim());
+        expect(request.env).toEqual(expect.objectContaining({
+          KEEP_ME: 'yes',
+          SQUIDRUN_ROLE: 'Oracle',
+          SQUIDRUN_PANE_ID: '3',
+        }));
+        expect(Object.keys(request.env).filter((key) => (
+          ['SQUIDRUN_ROLE', 'SQUIDRUN_PANE_ID'].includes(key.toUpperCase())
+        ))).toEqual(['SQUIDRUN_ROLE', 'SQUIDRUN_PANE_ID']);
+        expect(Object.keys(request.env).filter((key) => (
+          ['SQUIDRUN_PANE_LAUNCH_ID', 'SQUIDRUN_APP_GENERATION'].includes(key.toUpperCase())
+        ))).toEqual([]);
+        expect(client.pendingPaneLaunchBindings.has('3')).toBe(false);
+      } finally {
+        if (previousGeneration === undefined) delete process.env.SQUIDRUN_APP_GENERATION;
+        else process.env.SQUIDRUN_APP_GENERATION = previousGeneration;
+      }
+    });
+
+    test('removes nested spawn options that could replace app-owned env and request provenance', async () => {
+      const previousGeneration = process.env.SQUIDRUN_APP_GENERATION;
+      delete process.env.SQUIDRUN_APP_GENERATION;
+      try {
+        await client.connect();
+        client.spawn('3', 'D:\\projects\\squidrun', false, null, {
+          SQUIDRUN_PANE_LAUNCH_ID: `pl_${'a'.repeat(32)}`,
+          SQUIDRUN_APP_GENERATION: 'app-session-999',
+        }, {
+          paneCommand: 'codex',
+          spawnCommandOnCreate: true,
+          env: {
+            SQUIDRUN_PANE_LAUNCH_ID: `pl_${'b'.repeat(32)}`,
+            SQUIDRUN_APP_GENERATION: 'app-session-998',
+          },
+          requestId: 'nested-override',
+          mode: 'nested-mode',
+        });
+
+        const request = JSON.parse(mockSocket.write.mock.calls.at(-1)[0].trim());
+        expect(request.requestId).toMatch(/^pane-spawn-/u);
+        expect(request.requestId).not.toBe('nested-override');
+        expect(request.options).toEqual({
+          paneCommand: 'codex',
+          spawnCommandOnCreate: true,
+        });
+        expect(request.env.SQUIDRUN_PANE_LAUNCH_ID).toBeUndefined();
+        expect(request.env.SQUIDRUN_APP_GENERATION).toBeUndefined();
+      } finally {
+        if (previousGeneration === undefined) delete process.env.SQUIDRUN_APP_GENERATION;
+        else process.env.SQUIDRUN_APP_GENERATION = previousGeneration;
+      }
+    });
+
     test('waits for the matching daemon spawned event before accepting command-on-create', async () => {
       await client.connect();
 
@@ -378,6 +447,39 @@ describe('DaemonClient', () => {
         reason: 'daemon_pane_spawn_observed',
         paneId: '3',
         pid: 42608,
+        requestId: request.requestId,
+      }));
+    });
+
+    test('waits for the exact request-scoped spawn error', async () => {
+      await client.connect();
+
+      const pending = client.spawnAndWait(
+        '3',
+        'D:\\projects\\squidrun',
+        false,
+        null,
+        null,
+        { paneCommand: 'codex --yolo', spawnCommandOnCreate: true }
+      );
+      const request = JSON.parse(mockSocket.write.mock.calls.at(-1)[0].trim());
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'error',
+        requestId: 'unrelated-request',
+        paneId: '3',
+        message: 'unrelated attach error',
+      })}\n`);
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'error',
+        requestId: request.requestId,
+        paneId: '3',
+        message: 'exact spawn error',
+      })}\n`);
+
+      await expect(pending).resolves.toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'daemon_pane_spawn_failed',
+        error: 'exact spawn error',
         requestId: request.requestId,
       }));
     });
@@ -732,7 +834,7 @@ describe('DaemonClient', () => {
       }));
     });
 
-    test('should emit spawned event and cache terminal', async () => {
+    test('keeps canonical terminal liveness but strips a launch identity with no app-owned handoff', async () => {
       const spawnedHandler = jest.fn();
       client.on('spawned', spawnedHandler);
 
@@ -744,6 +846,8 @@ describe('DaemonClient', () => {
         pid: 9999,
         mode: 'pty',
         createdAt: 123,
+        paneLaunchId: `pl_${'1'.repeat(32)}`,
+        appGeneration: 'app-session-512',
       }) + '\n';
       mockSocket.emit('data', msg);
 
@@ -754,6 +858,628 @@ describe('DaemonClient', () => {
       expect(client.terminals.has('1')).toBe(true);
       expect(client.terminals.get('1').pid).toBe(9999);
       expect(client.terminals.get('1').createdAt).toBe(123);
+      expect(client.terminals.get('1')).toEqual(expect.objectContaining({
+        paneLaunchId: null,
+        appGeneration: null,
+      }));
+      expect(spawnedHandler).toHaveBeenCalledWith('1', 9999, false, expect.objectContaining({
+        paneLaunchId: null,
+        appGeneration: null,
+      }));
+      expect(client.ownedPaneLaunchBindings.has('1')).toBe(false);
+    });
+
+    test('joins an older daemon spawn acknowledgement to the exact app-owned pending launch', async () => {
+      const spawnedHandler = jest.fn();
+      client.on('spawned', spawnedHandler);
+      await client.connect();
+      client.pendingPaneLaunchBindings.set('3', {
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-512',
+        requestId: 'pane-spawn-512',
+      });
+
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'spawned',
+        requestId: 'pane-spawn-512',
+        paneId: '3',
+        pid: 7777,
+      })}\n`);
+
+      expect(client.getTerminal('3')).toEqual(expect.objectContaining({
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-512',
+      }));
+      expect(spawnedHandler).toHaveBeenCalledWith(
+        '3',
+        7777,
+        false,
+        expect.objectContaining({
+          paneLaunchId: `pl_${'a'.repeat(32)}`,
+          appGeneration: 'app-session-512',
+        })
+      );
+      expect(client.pendingPaneLaunchBindings.has('3')).toBe(false);
+      expect(client.ownedPaneLaunchBindings.get('3')).toEqual(expect.objectContaining({
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-512',
+        pid: 7777,
+        requestId: 'pane-spawn-512',
+      }));
+    });
+
+    test('does not publish a daemon launch identity that disagrees with the app-owned pending launch', async () => {
+      const spawnedHandler = jest.fn();
+      client.on('spawned', spawnedHandler);
+      await client.connect();
+      const priorTerminal = {
+        paneId: '3',
+        pid: 6666,
+        alive: true,
+        paneLaunchId: `pl_${'0'.repeat(32)}`,
+        appGeneration: 'app-session-512',
+      };
+      client.terminals.set('3', priorTerminal);
+      const pending = {
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-512',
+        requestId: 'pane-spawn-512',
+      };
+      client.pendingPaneLaunchBindings.set('3', pending);
+
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'spawned',
+        requestId: 'pane-spawn-512',
+        paneId: '3',
+        pid: 7777,
+        paneLaunchId: `pl_${'b'.repeat(32)}`,
+        appGeneration: 'app-session-512',
+      })}\n`);
+
+      expect(client.getTerminal('3')).toBe(priorTerminal);
+      expect(client.pendingPaneLaunchBindings.get('3')).toBe(pending);
+      expect(spawnedHandler).not.toHaveBeenCalled();
+    });
+
+    test('ignores a different-request spawn event while preserving the pending launch and prior cache', async () => {
+      const spawnedHandler = jest.fn();
+      client.on('spawned', spawnedHandler);
+      await client.connect();
+      const priorTerminal = {
+        paneId: '3',
+        pid: 6666,
+        alive: true,
+        paneLaunchId: `pl_${'0'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+      };
+      client.terminals.set('3', priorTerminal);
+      const pending = {
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+        requestId: 'expected-request',
+      };
+      client.pendingPaneLaunchBindings.set('3', pending);
+
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'spawned',
+        requestId: 'different-request',
+        paneId: '3',
+        pid: 7777,
+        paneLaunchId: `pl_${'b'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+      })}\n`);
+
+      expect(client.getTerminal('3')).toBe(priorTerminal);
+      expect(client.pendingPaneLaunchBindings.get('3')).toBe(pending);
+      expect(spawnedHandler).not.toHaveBeenCalled();
+    });
+
+    test('keeps a pending app-owned pane launch authoritative across daemon snapshots and addressed results', async () => {
+      const connectedHandler = jest.fn();
+      const listHandler = jest.fn();
+      const spawnedHandler = jest.fn();
+      client.on('connected', connectedHandler);
+      client.on('list', listHandler);
+      client.on('spawned', spawnedHandler);
+      await client.connect();
+      const priorTerminal = {
+        paneId: '3',
+        pid: 6666,
+        alive: true,
+        paneLaunchId: `pl_${'0'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+      };
+      client.terminals.set('3', priorTerminal);
+      const pending = {
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+        requestId: 'expected-request',
+      };
+      client.pendingPaneLaunchBindings.set('3', pending);
+      const unrelatedTerminal = {
+        paneId: '2',
+        pid: 5555,
+        alive: true,
+      };
+      const competingTerminal = {
+        paneId: '3',
+        pid: 7777,
+        alive: true,
+        paneLaunchId: `pl_${'b'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+      };
+
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'connected',
+        terminals: [unrelatedTerminal, competingTerminal],
+      })}\n`);
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'list',
+        terminals: [unrelatedTerminal, competingTerminal],
+      })}\n`);
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'address-spawn-result',
+        requestId: 'addressed-request',
+        ok: true,
+        paneId: '3',
+        terminal: competingTerminal,
+      })}\n`);
+
+      expect(client.getTerminal('3')).toBe(priorTerminal);
+      expect(client.getTerminal('2')).toEqual(expect.objectContaining(unrelatedTerminal));
+      expect(client.pendingPaneLaunchBindings.get('3')).toBe(pending);
+      expect(connectedHandler).toHaveBeenLastCalledWith(expect.arrayContaining([
+        priorTerminal,
+        expect.objectContaining(unrelatedTerminal),
+      ]));
+      expect(listHandler).toHaveBeenLastCalledWith(expect.arrayContaining([
+        priorTerminal,
+        expect.objectContaining(unrelatedTerminal),
+      ]));
+      expect(spawnedHandler).not.toHaveBeenCalled();
+
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'spawned',
+        requestId: 'expected-request',
+        paneId: '3',
+        pid: 8888,
+      })}\n`);
+
+      expect(client.getTerminal('3')).toEqual(expect.objectContaining({
+        pid: 8888,
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+      }));
+      expect(client.pendingPaneLaunchBindings.has('3')).toBe(false);
+      expect(spawnedHandler).toHaveBeenCalledTimes(1);
+    });
+
+    test('recovers a pending app-owned launch from an exact reconnect snapshot without trusting newer rows', async () => {
+      const spawnedHandler = jest.fn();
+      client.on('spawned', spawnedHandler);
+      await client.connect();
+      const pending = {
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+        requestId: 'expected-request',
+      };
+      client.pendingPaneLaunchBindings.set('3', pending);
+
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'connected',
+        terminals: [{
+          paneId: '3',
+          pid: 8888,
+          alive: true,
+          paneLaunchId: `pl_${'a'.repeat(32)}`,
+          appGeneration: 'app-session-534',
+          spawnRequestId: 'expected-request',
+        }],
+      })}\n`);
+
+      expect(client.pendingPaneLaunchBindings.has('3')).toBe(false);
+      expect(client.ownedPaneLaunchBindings.get('3')).toEqual(expect.objectContaining({
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+        pid: 8888,
+        requestId: 'expected-request',
+      }));
+      expect(client.getTerminal('3')).toEqual(expect.objectContaining({
+        pid: 8888,
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+        spawnRequestId: 'expected-request',
+      }));
+      expect(spawnedHandler).toHaveBeenCalledWith(
+        '3',
+        8888,
+        false,
+        expect.objectContaining({
+          requestId: 'expected-request',
+          paneLaunchRecovered: true,
+        })
+      );
+    });
+
+    test('does not let the same owned launch label move to a different process event or snapshot', async () => {
+      const spawnedHandler = jest.fn();
+      const listHandler = jest.fn();
+      client.on('spawned', spawnedHandler);
+      client.on('list', listHandler);
+      await client.connect();
+      const owned = {
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+        pid: 6666,
+        requestId: 'owned-request',
+      };
+      const priorTerminal = {
+        paneId: '3',
+        pid: 6666,
+        alive: true,
+        paneLaunchId: owned.paneLaunchId,
+        appGeneration: owned.appGeneration,
+      };
+      client.ownedPaneLaunchBindings.set('3', owned);
+      client.terminals.set('3', priorTerminal);
+
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'spawned',
+        requestId: 'unowned-request',
+        paneId: '3',
+        pid: 7777,
+        paneLaunchId: owned.paneLaunchId,
+        appGeneration: owned.appGeneration,
+      })}\n`);
+
+      expect(client.getTerminal('3')).toBe(priorTerminal);
+      expect(client.ownedPaneLaunchBindings.get('3')).toBe(owned);
+      expect(spawnedHandler).not.toHaveBeenCalled();
+
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'list',
+        terminals: [{
+          paneId: '3',
+          pid: 8888,
+          alive: true,
+          paneLaunchId: owned.paneLaunchId,
+          appGeneration: owned.appGeneration,
+          spawnRequestId: 'owned-request',
+        }],
+      })}\n`);
+
+      expect(client.getTerminal('3')).toBeUndefined();
+      expect(client.ownedPaneLaunchBindings.get('3')).toBe(owned);
+      expect(listHandler).toHaveBeenCalledWith([]);
+      expect(spawnedHandler).not.toHaveBeenCalled();
+    });
+
+    test('clears owned launch authority only for the exact process lifecycle end', async () => {
+      await client.connect();
+      const owned = {
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+        pid: 7777,
+        requestId: 'owned-request',
+      };
+      client.ownedPaneLaunchBindings.set('3', owned);
+      client.terminals.set('3', {
+        paneId: '3',
+        pid: 7777,
+        alive: true,
+        paneLaunchId: owned.paneLaunchId,
+        appGeneration: owned.appGeneration,
+      });
+
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'exit',
+        paneId: '3',
+        pid: 6666,
+        code: 0,
+        paneLaunchId: owned.paneLaunchId,
+        appGeneration: owned.appGeneration,
+      })}\n`);
+      expect(client.ownedPaneLaunchBindings.get('3')).toBe(owned);
+      expect(client.getTerminal('3').alive).toBe(true);
+
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'exit',
+        paneId: '3',
+        pid: 7777,
+        code: 0,
+        paneLaunchId: owned.paneLaunchId,
+        appGeneration: owned.appGeneration,
+      })}\n`);
+      expect(client.ownedPaneLaunchBindings.has('3')).toBe(false);
+      expect(client.getTerminal('3').alive).toBe(false);
+    });
+
+    test.each([
+      {
+        retryReason: 'claude_session_collision',
+        originalCommand: 'claude --dangerously-skip-permissions --resume 11111111-1111-4111-8111-111111111111',
+        expectedCommand: 'claude --dangerously-skip-permissions',
+        recoveryFlag: 'claudeCollisionRecoveryAttempted',
+      },
+      {
+        retryReason: 'codex_missing_resume',
+        originalCommand: 'codex --profile squidrun-oracle --yolo resume 22222222-2222-4222-8222-222222222222',
+        expectedCommand: 'codex --profile squidrun-oracle --yolo',
+        recoveryFlag: 'codexResumeRecoveryAttempted',
+      },
+    ])(
+      'bounces $retryReason through a new app-owned request and process before publishing the replacement',
+      async ({ retryReason, originalCommand, expectedCommand, recoveryFlag }) => {
+        const retryResultHandler = jest.fn();
+        const spawnedHandler = jest.fn();
+        client.on('spawn-retry-result', retryResultHandler);
+        client.on('spawned', spawnedHandler);
+        await client.connect();
+
+        const original = {
+          paneLaunchId: `pl_${'a'.repeat(32)}`,
+          appGeneration: 'app-session-534',
+          pid: 6666,
+          requestId: 'original-request',
+          launchSpec: {
+            cwd: 'D:\\projects\\squidrun',
+            dryRun: false,
+            mode: 'pty-command',
+            env: { KEEP_ME: 'yes' },
+            spawnOptions: {
+              paneCommand: originalCommand,
+              spawnCommandOnCreate: true,
+            },
+            retryCount: 0,
+          },
+        };
+        client.ownedPaneLaunchBindings.set('3', original);
+        client.terminals.set('3', {
+          paneId: '3',
+          pid: original.pid,
+          alive: true,
+          paneLaunchId: original.paneLaunchId,
+          appGeneration: original.appGeneration,
+          spawnRequestId: original.requestId,
+        });
+
+        const replacement = {
+          paneLaunchId: `pl_${'b'.repeat(32)}`,
+          appGeneration: original.appGeneration,
+          requestId: 'replacement-request',
+          launchSpec: {
+            ...original.launchSpec,
+            retryCount: 1,
+          },
+        };
+        const spawnReplacement = jest.spyOn(client, 'spawn').mockImplementation(
+          (paneId, cwd, dryRun, mode, env, spawnOptions, requestMeta) => {
+            expect(paneId).toBe('3');
+            expect(cwd).toBe(original.launchSpec.cwd);
+            expect(dryRun).toBe(false);
+            expect(mode).toBe('pty-command');
+            expect(env).toEqual({ KEEP_ME: 'yes' });
+            expect(spawnOptions).toEqual(expect.objectContaining({
+              paneCommand: expectedCommand,
+              spawnCommandOnCreate: true,
+              [recoveryFlag]: true,
+            }));
+            expect(requestMeta).toEqual({
+              retryCount: 1,
+              requireLaunchBinding: true,
+            });
+            client.pendingPaneLaunchBindings.set('3', replacement);
+            return true;
+          }
+        );
+
+        mockSocket.emit('data', `${JSON.stringify({
+          event: 'spawn-retry-requested',
+          paneId: '3',
+          reason: retryReason,
+          pid: original.pid,
+          paneLaunchId: original.paneLaunchId,
+          appGeneration: original.appGeneration,
+          spawnRequestId: original.requestId,
+          // These daemon-authored fields are deliberately hostile. The app
+          // must replay only its own saved launch specification.
+          cwd: 'D:\\attacker',
+          paneCommand: 'malicious-command',
+          env: { SQUIDRUN_ROLE: 'Architect' },
+        })}\n`);
+
+        expect(spawnReplacement).toHaveBeenCalledTimes(1);
+        expect(retryResultHandler).toHaveBeenCalledWith('3', expect.objectContaining({
+          ok: true,
+          retryReason,
+          previousPaneLaunchId: original.paneLaunchId,
+          replacementPaneLaunchId: replacement.paneLaunchId,
+          replacementRequestId: replacement.requestId,
+        }));
+        expect(replacement.paneLaunchId).not.toBe(original.paneLaunchId);
+        expect(replacement.requestId).not.toBe(original.requestId);
+
+        mockSocket.emit('data', `${JSON.stringify({
+          event: 'exit',
+          paneId: '3',
+          pid: original.pid,
+          code: 1,
+          paneLaunchId: original.paneLaunchId,
+          appGeneration: original.appGeneration,
+          spawnRequestId: original.requestId,
+        })}\n`);
+        expect(client.pendingPaneLaunchBindings.get('3')).toBe(replacement);
+        expect(client.ownedPaneLaunchBindings.has('3')).toBe(false);
+
+        mockSocket.emit('data', `${JSON.stringify({
+          event: 'spawned',
+          paneId: '3',
+          pid: 7777,
+          requestId: replacement.requestId,
+        })}\n`);
+
+        expect(client.pendingPaneLaunchBindings.has('3')).toBe(false);
+        expect(client.ownedPaneLaunchBindings.get('3')).toEqual(expect.objectContaining({
+          paneLaunchId: replacement.paneLaunchId,
+          appGeneration: original.appGeneration,
+          pid: 7777,
+          requestId: replacement.requestId,
+          launchSpec: expect.objectContaining({ retryCount: 1 }),
+        }));
+        expect(client.getTerminal('3')).toEqual(expect.objectContaining({
+          pid: 7777,
+          alive: true,
+          paneLaunchId: replacement.paneLaunchId,
+          appGeneration: original.appGeneration,
+          spawnRequestId: replacement.requestId,
+        }));
+        expect(spawnedHandler).toHaveBeenCalledWith(
+          '3',
+          7777,
+          false,
+          expect.objectContaining({
+            paneLaunchId: replacement.paneLaunchId,
+            appGeneration: original.appGeneration,
+            spawnRequestId: replacement.requestId,
+          })
+        );
+      }
+    );
+
+    test('refuses retry requests that are stale, altered, unowned, repeated, or already being replaced', async () => {
+      await client.connect();
+      const baseOwned = {
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+        pid: 6666,
+        requestId: 'owned-request',
+        launchSpec: {
+          cwd: 'D:\\projects\\squidrun',
+          dryRun: false,
+          mode: 'pty-command',
+          env: {},
+          spawnOptions: { paneCommand: 'codex', spawnCommandOnCreate: true },
+          retryCount: 0,
+        },
+      };
+      const baseEvent = {
+        event: 'spawn-retry-requested',
+        paneId: '3',
+        reason: 'codex_missing_resume',
+        pid: baseOwned.pid,
+        paneLaunchId: baseOwned.paneLaunchId,
+        appGeneration: baseOwned.appGeneration,
+        spawnRequestId: baseOwned.requestId,
+      };
+      const refused = [
+        { event: { ...baseEvent, reason: 'unknown_retry' } },
+        { event: { ...baseEvent, pid: 7777 } },
+        { event: { ...baseEvent, paneLaunchId: `pl_${'b'.repeat(32)}` } },
+        { event: { ...baseEvent, appGeneration: 'app-session-older' } },
+        { event: { ...baseEvent, spawnRequestId: 'stale-request' } },
+        { event: baseEvent, owned: { ...baseOwned, retryRequested: true } },
+        {
+          event: baseEvent,
+          owned: {
+            ...baseOwned,
+            launchSpec: { ...baseOwned.launchSpec, retryCount: 1 },
+          },
+        },
+        { event: baseEvent, owned: { ...baseOwned, launchSpec: null } },
+        { event: baseEvent, pending: true },
+        { event: baseEvent, currentPid: 7777 },
+      ];
+      const spawnReplacement = jest.spyOn(client, 'spawn').mockReturnValue(true);
+
+      for (const scenario of refused) {
+        client.ownedPaneLaunchBindings.clear();
+        client.pendingPaneLaunchBindings.clear();
+        client.terminals.clear();
+        client.ownedPaneLaunchBindings.set('3', scenario.owned || { ...baseOwned });
+        client.terminals.set('3', {
+          paneId: '3',
+          pid: scenario.currentPid || baseOwned.pid,
+          alive: true,
+          paneLaunchId: baseOwned.paneLaunchId,
+          appGeneration: baseOwned.appGeneration,
+          spawnRequestId: baseOwned.requestId,
+        });
+        if (scenario.pending) {
+          client.pendingPaneLaunchBindings.set('3', {
+            paneLaunchId: `pl_${'c'.repeat(32)}`,
+            appGeneration: baseOwned.appGeneration,
+            requestId: 'replacement-in-flight',
+          });
+        }
+        client._handleMessage(JSON.stringify(scenario.event));
+      }
+
+      client.ownedPaneLaunchBindings.clear();
+      client.pendingPaneLaunchBindings.clear();
+      client.terminals.clear();
+      client._handleMessage(JSON.stringify(baseEvent));
+      expect(spawnReplacement).not.toHaveBeenCalled();
+    });
+
+    test('sends no automatic retry process when the app cannot mint replacement launch authority', async () => {
+      const previousGeneration = process.env.SQUIDRUN_APP_GENERATION;
+      delete process.env.SQUIDRUN_APP_GENERATION;
+      try {
+        await client.connect();
+        mockSocket.write.mockClear();
+
+        const accepted = client.spawn(
+          '3',
+          'D:\\projects\\squidrun',
+          false,
+          'pty-command',
+          {},
+          { paneCommand: 'codex', spawnCommandOnCreate: true },
+          { retryCount: 1, requireLaunchBinding: true }
+        );
+
+        expect(accepted).toBe(false);
+        expect(mockSocket.write).not.toHaveBeenCalled();
+        expect(client.pendingPaneLaunchBindings.has('3')).toBe(false);
+      } finally {
+        if (previousGeneration === undefined) delete process.env.SQUIDRUN_APP_GENERATION;
+        else process.env.SQUIDRUN_APP_GENERATION = previousGeneration;
+      }
+    });
+
+    test('an unrelated pane error cannot retire the exact pending spawn request', async () => {
+      const errorHandler = jest.fn();
+      client.on('error', errorHandler);
+      await client.connect();
+      const pending = {
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-534',
+        requestId: 'expected-request',
+      };
+      client.pendingPaneLaunchBindings.set('3', pending);
+
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'error',
+        paneId: '3',
+        requestId: 'unrelated-request',
+        message: 'unrelated attach error',
+      })}\n`);
+
+      expect(client.pendingPaneLaunchBindings.get('3')).toBe(pending);
+      expect(errorHandler).toHaveBeenCalledWith(
+        '3',
+        'unrelated attach error',
+        expect.objectContaining({ requestId: 'unrelated-request' })
+      );
+
+      mockSocket.emit('data', `${JSON.stringify({
+        event: 'error',
+        paneId: '3',
+        requestId: 'expected-request',
+        message: 'spawn failed',
+      })}\n`);
+
+      expect(client.pendingPaneLaunchBindings.has('3')).toBe(false);
     });
 
     test('should not mark a newer cached terminal dead from a stale exit event', async () => {
@@ -788,7 +1514,11 @@ describe('DaemonClient', () => {
       const msg = JSON.stringify({ event: 'error', paneId: '1', message: 'fail' }) + '\n';
       mockSocket.emit('data', msg);
 
-      expect(errorHandler).toHaveBeenCalledWith('1', 'fail');
+      expect(errorHandler).toHaveBeenCalledWith(
+        '1',
+        'fail',
+        expect.objectContaining({ paneId: '1', message: 'fail' })
+      );
     });
 
     test('should handle multiple messages in one chunk', async () => {

@@ -1583,6 +1583,9 @@ class SquidRunApp {
       appHost: this,
       BrowserWindow,
       sendDirectMessage: triggers.sendDirectMessage,
+      getCurrentPaneLaunch: (paneId) => (
+        this.ctx.daemonClient?.getTerminal?.(String(paneId)) || null
+      ),
     });
   }
 
@@ -9907,6 +9910,20 @@ class SquidRunApp {
       const command = this.cliIdentity.getPaneCommandForIdentity(String(paneId));
       this.cliIdentity.inferAndEmitCliIdentity(paneId, command);
       this.ctx.recoveryManager?.recordActivity(paneId);
+      const paneLaunchId = String(metadata?.paneLaunchId || '').trim();
+      const appGeneration = String(metadata?.appGeneration || '').trim();
+      const spawnRequestId = String(metadata?.spawnRequestId || metadata?.requestId || '').trim();
+      if (paneLaunchId
+        && spawnRequestId
+        && appGeneration === String(this.commsSessionScopeId || '')) {
+        const refreshed = this.teamRoomController?.refreshCliBindings?.();
+        if (refreshed?.ok && Array.isArray(refreshed.changedRoles) && refreshed.changedRoles.length > 0) {
+          log.info('TeamRoom', `Refreshed CLI binding after pane ${paneId} restart (${refreshed.changedRoles.join(',')})`);
+        } else if (refreshed?.ok === false
+          && refreshed.reason !== 'team_room_cli_binding_refresh_unavailable') {
+          log.warn('TeamRoom', `CLI binding refresh after pane ${paneId} restart refused (${refreshed.reason || 'unknown'})`);
+        }
+      }
     });
 
     this.attachDaemonClientListener('connected', (terminals) => {

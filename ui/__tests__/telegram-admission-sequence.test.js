@@ -30,6 +30,7 @@ const {
   completePaneLaunch,
   bindConsumerSession,
   findActivePaneLaunch,
+  findPaneLaunchById,
 } = require('../modules/main/telegram-launch-registry');
 const { TelegramAdmissionWriter } = require('../modules/main/telegram-admission-writer');
 const { parseConsumeMarker, MARKER_PREFIX } = require('../modules/main/telegram-consume-marker');
@@ -1070,6 +1071,33 @@ describe('findActivePaneLaunch', () => {
       ok: true,
       launchId: ownedLaunchId,
       daemonProcessId: '4242',
+    }));
+  });
+
+  test('an exact launch-id lookup returns the current launching row without selecting the older complete row', () => {
+    const db = freshDb();
+    const appGeneration = 'gen-exact-current';
+    seedLaunch(db, { appGeneration, daemonProcessId: '4242' });
+    const currentLaunchId = seedLaunch(db, {
+      complete: false,
+      appGeneration,
+      daemonProcessId: '4242',
+    });
+
+    expect(findActivePaneLaunch(db, {
+      appGeneration,
+      paneId: '1',
+      daemonProcessId: '4242',
+      allowIncomplete: true,
+    })).toEqual(expect.objectContaining({
+      ok: true,
+      state: 'complete',
+    }));
+    expect(findPaneLaunchById(db, { launchId: currentLaunchId })).toEqual(expect.objectContaining({
+      ok: true,
+      launchId: currentLaunchId,
+      state: 'launching',
+      readinessWarning: expect.objectContaining({ reason: 'launch_incomplete' }),
     }));
   });
 });

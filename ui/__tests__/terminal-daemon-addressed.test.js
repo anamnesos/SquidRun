@@ -54,6 +54,39 @@ describe('addressed terminal daemon protocol', () => {
       }
       expect(connected).toBe(true);
 
+      const ordinarySpawned = new Promise((resolve) => {
+        const onSpawned = (paneId, _pid, _dryRun, message) => {
+          if (paneId !== 'qa-nested-authority') return;
+          client.off('spawned', onSpawned);
+          resolve(message);
+        };
+        client.on('spawned', onSpawned);
+      });
+      expect(client._send({
+        action: 'spawn',
+        requestId: 'app-request-1',
+        paneId: 'qa-nested-authority',
+        cwd: path.resolve(__dirname, '..', '..'),
+        dryRun: true,
+        env: {
+          SQUIDRUN_PANE_LAUNCH_ID: `pl_${'a'.repeat(32)}`,
+          SQUIDRUN_APP_GENERATION: 'app-session-512',
+        },
+        options: {
+          requestId: 'nested-override',
+          env: {
+            SQUIDRUN_PANE_LAUNCH_ID: `pl_${'b'.repeat(32)}`,
+            SQUIDRUN_APP_GENERATION: 'app-session-998',
+          },
+        },
+      })).toBe(true);
+      await expect(ordinarySpawned).resolves.toEqual(expect.objectContaining({
+        requestId: 'app-request-1',
+        spawnRequestId: 'app-request-1',
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-512',
+      }));
+
       const base = {
         durableAddress: `arm://${profileName}/portal`,
         paneId: 'qa-portal',
@@ -62,7 +95,11 @@ describe('addressed terminal daemon protocol', () => {
         owner: 'terminal-daemon',
         recoveryEvent: 'lease_check_on_spawn',
         expectedResponseClass: 'arm.liveness.pong',
-        env: { SQUIDRUN_ROLE: 'qa-portal' },
+        env: {
+          SQUIDRUN_ROLE: 'qa-portal',
+          SQUIDRUN_PANE_LAUNCH_ID: `pl_${'a'.repeat(32)}`,
+          SQUIDRUN_APP_GENERATION: 'app-session-512',
+        },
       };
       const first = await client.spawnAddressed({ ...base, sourceMessageId: 'qa-ping-1' });
       const duplicate = await client.spawnAddressed({ ...base, sourceMessageId: 'qa-ping-2' });
@@ -80,6 +117,10 @@ describe('addressed terminal daemon protocol', () => {
         }),
       }));
       expect(first.receipt).not.toHaveProperty('whoFailed');
+      expect(first.terminal).toEqual(expect.objectContaining({
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-512',
+      }));
       expect(duplicate).toEqual(expect.objectContaining({
         ok: false,
         status: 'refused',
@@ -90,6 +131,8 @@ describe('addressed terminal daemon protocol', () => {
         alive: true,
         durableAddress: base.durableAddress,
         spawnLeaseId: first.spawnLeaseId,
+        paneLaunchId: `pl_${'a'.repeat(32)}`,
+        appGeneration: 'app-session-512',
       }));
 
       const killed = await client.killAddressed({

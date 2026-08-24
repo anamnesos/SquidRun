@@ -744,6 +744,10 @@ class TeamRoomRuntime {
     }
   }
 
+  refreshCliBindings() {
+    return this._refreshCliBindings();
+  }
+
   _cleanupOwnedAtomicTemporaryPaths() {
     const failures = [];
     for (const temporaryPath of [...this.ownedAtomicTemporaryPaths]) {
