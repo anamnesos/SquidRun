@@ -21,6 +21,8 @@ const {
   buildCodexComputerUseProofInvocation: buildActualCodexComputerUseProofInvocation,
   sha256File: sha256ActualFile,
 } = require('../modules/main/codex-computer-use-proof');
+const { SOURCE_PROJECT_ROOT } = require('../modules/codex-seat-model-policy');
+const { getProjectRoot, setProjectRoot } = require('../config');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const CODEX_TEST_IDS = {
@@ -2021,6 +2023,60 @@ describe('PTY Handlers', () => {
       expect(result.command).not.toContain('--session-id');
       expect(result.command).not.toContain('--resume');
       expect(fs.existsSync(deps.paneSessionIdsFilePath)).toBe(false);
+    });
+
+    test('registered MAIN Oracle spawn pins Sol/xhigh before exact Codex resume', async () => {
+      const previousProjectRoot = getProjectRoot();
+      const externalProjectRoot = makeFixtureCwd('oracle-external-project');
+      setProjectRoot(externalProjectRoot);
+      deps.resolveSquidrunInstallRoot = () => SOURCE_PROJECT_ROOT;
+      try {
+        seedCodexPaneBinding({
+          deps,
+          cwd: externalProjectRoot,
+          paneId: '3',
+          role: 'oracle',
+          sessionId: CODEX_TEST_IDS.oracle,
+        });
+        ctx.daemonClient.connected = true;
+        ctx.currentSettings.allowAllPermissions = false;
+        ctx.currentSettings.paneProjects = { '3': externalProjectRoot };
+        ctx.currentSettings.paneCommands = { '3': 'codex --profile squidrun-oracle' };
+
+        const result = await harness.invoke('spawn-claude', '3', '/ignored');
+
+        expect(result.command).toBe(
+          'codex --profile squidrun-oracle --model gpt-5.6-sol '
+          + `--config model_reasoning_effort=xhigh resume ${CODEX_TEST_IDS.oracle}`
+        );
+        expect(result.command).not.toContain('--last');
+      } finally {
+        setProjectRoot(previousProjectRoot);
+      }
+    });
+
+    test('registered MAIN Oracle spawn refuses a conflicting explicit Codex model', async () => {
+      const previousProjectRoot = getProjectRoot();
+      setProjectRoot(makeFixtureCwd('oracle-conflict-external-project'));
+      deps.resolveSquidrunInstallRoot = () => SOURCE_PROJECT_ROOT;
+      try {
+        ctx.daemonClient.connected = true;
+        ctx.currentSettings.allowAllPermissions = false;
+        ctx.currentSettings.paneProjects = { '3': SOURCE_PROJECT_ROOT };
+        ctx.currentSettings.paneCommands = { '3': 'codex --model gpt-5.6-luna' };
+
+        const result = await harness.invoke('spawn-claude', '3', '/ignored');
+
+        expect(result).toMatchObject({
+          success: false,
+          error: 'codex_model_policy_refused',
+          reason: 'codex_model_policy_conflict',
+          paneId: '3',
+        });
+        expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+      } finally {
+        setProjectRoot(previousProjectRoot);
+      }
     });
 
     test('unsafe explicit Codex resume is stripped to a visible cold start', async () => {

@@ -43,6 +43,8 @@ const pty = require('node-pty');
 const {
   PIPE_PATH,
   PANE_ROLES,
+  getProjectRoot,
+  getSquidrunRoot,
   resolvePaneCwd,
   resolveCoordPath,
 } = require('./config');
@@ -69,6 +71,10 @@ const {
   clearPaneBinding: clearCodexPaneBinding,
 } = require('./modules/codex-pane-session-store');
 const { AddressedTerminalSpawnCoordinator } = require('./modules/addressed-terminal-spawn');
+const {
+  applyCodexModelPolicy,
+  resolveMainOracleCodexPolicy,
+} = require('./modules/codex-seat-model-policy');
 
 // ============================================================
 // D1: DAEMON LOGGING TO FILE
@@ -1513,6 +1519,25 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   if (paneRuntime === 'claude') {
     runtimeEnv.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = 'false';
   }
+
+  // Final process-boundary enforcement for the MAIN Oracle seat. The Electron
+  // handler pins this too, but the daemon is durable and has its own direct
+  // spawn protocol. It must not be possible for that lower layer to resurrect
+  // a bare `codex resume` command after the app-side check passed.
+  const codexModelPolicy = resolveMainOracleCodexPolicy({
+    paneId,
+    role: PANE_ROLES[String(paneId)],
+    profile: process.env.SQUIDRUN_PROFILE || 'main',
+    installRoot: getSquidrunRoot(),
+    env: process.env,
+  });
+  const codexPolicyResult = applyCodexModelPolicy(paneCommand, codexModelPolicy);
+  if (!codexPolicyResult.ok) {
+    const error = new Error(codexPolicyResult.reason || 'codex_model_policy_refused');
+    error.code = 'CODEX_MODEL_POLICY_REFUSED';
+    throw error;
+  }
+  paneCommand = codexPolicyResult.command;
 
   // DRY-RUN MODE: Create mock terminal instead of real PTY
   if (dryRun) {

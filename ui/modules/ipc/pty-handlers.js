@@ -9,7 +9,12 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 const log = require('../logger');
-const { getProjectRoot, resolvePaneCwd, resolveCoordPath } = require('../../config');
+const {
+  getProjectRoot,
+  getSquidrunRoot,
+  resolvePaneCwd,
+  resolveCoordPath,
+} = require('../../config');
 const {
   hasCodexDangerouslyBypassFlag,
   hasCodexAskForApprovalFlag,
@@ -23,6 +28,10 @@ const {
   stripCodexResumeSubcommand,
   ensureClaudeModelFlag,
 } = require('../cli-resume-invocation');
+const {
+  applyCodexModelPolicy,
+  resolveMainOracleCodexPolicy,
+} = require('../codex-seat-model-policy');
 const { ensurePaneSessionId, remintPaneSessionId } = require('../pane-session-id-store');
 const {
   loadValidatedBinding: loadValidatedCodexBinding,
@@ -239,17 +248,49 @@ function appendResumeFlagsToAgentCommand({
   claudeModelHomeDir = null,
   claudeModelSettingsPath = null,
   claudeModelEnv = null,
+  codexModelPolicy = null,
 } = {}) {
   const originalCommand = String(command || '').trim();
   const strippedCommand = remintSessionId
     ? stripClaudeResumeFlags(originalCommand)
     : originalCommand;
-  const baseCommand = ensureClaudeModelFlag(strippedCommand, {
+  const claudePinnedCommand = ensureClaudeModelFlag(strippedCommand, {
     preferredModel: claudeModel,
     ...(claudeModelHomeDir ? { homeDir: claudeModelHomeDir } : {}),
     ...(claudeModelSettingsPath ? { settingsPath: claudeModelSettingsPath } : {}),
     ...(claudeModelEnv ? { env: claudeModelEnv } : {}),
   });
+  const codexPolicyResult = applyCodexModelPolicy(claudePinnedCommand, codexModelPolicy);
+  if (!codexPolicyResult.ok) {
+    return {
+      command: '',
+      decision: {
+        mode: 'model-policy-refused',
+        cli: 'codex',
+        modelPolicyRefused: true,
+        reason: codexPolicyResult.reason,
+        expectedModel: codexPolicyResult.expectedModel || codexModelPolicy?.model || null,
+        expectedEffort: codexPolicyResult.expectedEffort || codexModelPolicy?.effort || null,
+        actualModel: codexPolicyResult.actualModel || null,
+        actualEffort: codexPolicyResult.actualEffort || null,
+      },
+    };
+  }
+  const baseCommand = codexPolicyResult.command;
+  const withCodexPolicy = (decision) => (
+    codexModelPolicy
+      ? {
+        ...decision,
+        codexModelPolicy: {
+          schema: codexModelPolicy.schema || null,
+          model: codexPolicyResult.expectedModel || codexModelPolicy.model,
+          effort: codexPolicyResult.expectedEffort || codexModelPolicy.effort,
+          changed: codexPolicyResult.changed === true,
+          reason: codexPolicyResult.reason,
+        },
+      }
+      : decision
+  );
   if (!baseCommand) {
     return {
       command: baseCommand,
@@ -261,16 +302,16 @@ function appendResumeFlagsToAgentCommand({
   if (resumeStrategy === 'captured-session-id') {
     const alreadyPinned = resolveResumeAppendFlags({ command: baseCommand });
     if (alreadyPinned.mode === 'already-pinned') {
-      return { command: baseCommand, decision: alreadyPinned };
+      return { command: baseCommand, decision: withCodexPolicy(alreadyPinned) };
     }
     if (alreadyPinned.mode === 'unsafe-explicit-resume-refused') {
       return {
         command: stripCodexResumeSubcommand(baseCommand),
-        decision: {
+        decision: withCodexPolicy({
           ...alreadyPinned,
           mode: 'cold',
           unsafeExplicitResumeRefused: true,
-        },
+        }),
       };
     }
     if (freshSessionRequested || remintSessionId) {
@@ -278,19 +319,19 @@ function appendResumeFlagsToAgentCommand({
       if (!snapshot.ok) {
         return {
           command: baseCommand,
-          decision: {
+          decision: withCodexPolicy({
             flags: '',
             cli: 'codex',
             strategy: resumeStrategy,
             mode: 'fresh-precondition-failed',
             reason: `cannot snapshot prior Codex binding: ${snapshot.reason}`,
             freshPreconditionFailed: true,
-          },
+          }),
         };
       }
       return {
         command: baseCommand,
-        decision: {
+        decision: withCodexPolicy({
           flags: '',
           cli: 'codex',
           strategy: resumeStrategy,
@@ -300,7 +341,7 @@ function appendResumeFlagsToAgentCommand({
           previousSessionId: snapshot.sessionId,
           previousBindingExisted: snapshot.exists,
           previousBinding: snapshot.bindingSnapshot || null,
-        },
+        }),
       };
     }
     const loaded = loadValidatedCodexBinding(codexStorePath, paneId, {
@@ -310,13 +351,13 @@ function appendResumeFlagsToAgentCommand({
     if (!loaded.ok) {
       return {
         command: baseCommand,
-        decision: {
+        decision: withCodexPolicy({
           ...resolveResumeAppendFlags({ command: baseCommand }),
           reason: `codex binding refused: ${loaded.reason}`,
           bindingReason: loaded.reason,
           cwd,
           codexStorePath,
-        },
+        }),
       };
     }
     const decision = resolveResumeAppendFlags({
@@ -326,7 +367,7 @@ function appendResumeFlagsToAgentCommand({
     });
     return {
       command: decision.flags ? `${baseCommand} ${decision.flags}` : baseCommand,
-      decision: { ...decision, cwd, codexStorePath },
+      decision: withCodexPolicy({ ...decision, cwd, codexStorePath }),
     };
   }
 
@@ -650,6 +691,18 @@ function registerPtyHandlers(ctx, deps = {}) {
     const dataRoot = toNonEmptyString(deployment?.dataRoot);
     return deployment?.active === true && dataRoot ? path.resolve(dataRoot) : null;
   };
+  const resolveSquidrunInstallRoot = () => (
+    typeof deps?.resolveSquidrunInstallRoot === 'function'
+      ? deps.resolveSquidrunInstallRoot()
+      : getSquidrunRoot()
+  );
+  const getCodexModelPolicyForPane = (paneId, cwd) => resolveMainOracleCodexPolicy({
+    paneId,
+    role: ctx?.PANE_ROLES?.[String(paneId)],
+    profile: String(process.env.SQUIDRUN_PROFILE || '').trim() || 'main',
+    installRoot: resolveSquidrunInstallRoot(),
+    cwd,
+  });
   const paneSessionIdsFilePath = deps.paneSessionIdsFilePath || PANE_SESSION_IDS_FILE_PATH;
   const codexPaneSessionsFilePath = deps.codexPaneSessionsFilePath || CODEX_PANE_SESSIONS_FILE_PATH;
   const resumeHomeDir = deps.resumeHomeDir || null;
@@ -1113,6 +1166,7 @@ function registerPtyHandlers(ctx, deps = {}) {
         claudeModelHomeDir,
         claudeModelSettingsPath,
         claudeModelEnv,
+        codexModelPolicy: getCodexModelPolicyForPane(paneId, cwd),
         remintSessionId: ptyOptions.remintClaudeSessionId === true,
         freshSessionRequested: ptyOptions.freshSession === true,
       });
@@ -1130,6 +1184,14 @@ function registerPtyHandlers(ctx, deps = {}) {
           source: ptyOptions.remintClaudeSessionId === true ? 'pty-create-remint' : 'pty-create',
         });
       }
+    }
+    if (resumeDecision?.modelPolicyRefused === true) {
+      return {
+        success: false,
+        error: 'codex_model_policy_refused',
+        reason: resumeDecision.reason,
+        paneId: String(paneId),
+      };
     }
     if (resumeDecision?.freshPreconditionFailed === true) {
       return {
@@ -1799,6 +1861,7 @@ function registerPtyHandlers(ctx, deps = {}) {
       claudeModelHomeDir,
       claudeModelSettingsPath,
       claudeModelEnv,
+      codexModelPolicy: getCodexModelPolicyForPane(paneId, workDir),
       remintSessionId: spawnOptions.remintClaudeSessionId === true,
       freshSessionRequested: spawnOptions.freshSession === true,
     });
@@ -1814,6 +1877,14 @@ function registerPtyHandlers(ctx, deps = {}) {
         command: agentCmd,
         source: spawnOptions.remintClaudeSessionId === true ? 'spawn-claude-remint' : 'spawn-claude',
       });
+    }
+    if (resumeCommand.decision?.modelPolicyRefused === true) {
+      return {
+        success: false,
+        error: 'codex_model_policy_refused',
+        reason: resumeCommand.decision.reason,
+        paneId: String(paneId),
+      };
     }
     if (resumeCommand.decision?.freshPreconditionFailed === true) {
       return {
