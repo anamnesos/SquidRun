@@ -173,9 +173,17 @@ describe('team heartbeat routed-proof and retry dedupe', () => {
 describe('team heartbeat scheduled-task source contract', () => {
   const installer = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'hm-team-heartbeat-install.ps1'), 'utf8');
   const runner = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'hm-team-heartbeat.js'), 'utf8');
+  const launcher = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'hm-run-hidden.vbs'), 'utf8');
 
-  test('registers direct daily tasks with missed-run recovery and capped failure retry', () => {
+  test('registers hidden daily tasks with missed-run recovery and capped failure retry', () => {
     expect(installer).toContain("$taskPrefix = 'SquidRun-Team-Heartbeat-'");
+    expect(installer).toContain("$wscript = Join-Path $env:SystemRoot 'System32\\wscript.exe'");
+    expect(installer).toContain("$hiddenLauncher = Join-Path $PSScriptRoot 'hm-run-hidden.vbs'");
+    expect(installer).toContain("$hiddenTaskRunner = Join-Path $PSScriptRoot 'hm-hidden-task.js'");
+    expect(installer).toContain('-Execute $wscript');
+    expect(installer).not.toContain('-Execute $node `');
+    expect(launcher).toContain('shell.Run(command, 0, True)');
+    expect(launcher).toContain('WScript.Quit exitCode');
     expect(installer).toContain('-StartWhenAvailable');
     expect(installer).toContain('-RestartCount 6');
     expect(installer).toContain('-RestartInterval (New-TimeSpan -Minutes 15)');
@@ -183,7 +191,8 @@ describe('team heartbeat scheduled-task source contract', () => {
     expect(installer).toContain("-LogonType Interactive");
     expect(installer).toContain("-RunLevel Limited");
     expect(installer).toContain('-ErrorAction Stop');
-    expect(installer).toContain('run --scheduled-window');
+    expect(installer).toContain("'run',");
+    expect(installer).toContain("'--scheduled-window',");
     expect(installer).toContain('$null -ne $_');
   });
 

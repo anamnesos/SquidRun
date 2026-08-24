@@ -12,21 +12,52 @@ $uiRoot = Join-Path $projectRoot 'ui'
 $daemonScript = Join-Path $uiRoot 'supervisor-daemon.js'
 $runtimeDir = Join-Path $projectRoot '.squidrun\runtime'
 $taskLog = Join-Path $runtimeDir 'supervisor-task.log'
+$hiddenTaskRunner = Join-Path $PSScriptRoot 'hm-hidden-task.js'
+$hiddenLauncher = Join-Path $PSScriptRoot 'hm-run-hidden.vbs'
+$wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
 
 if (-not (Test-Path $daemonScript)) {
   throw "Supervisor daemon not found at $daemonScript"
 }
+if (-not (Test-Path -LiteralPath $hiddenTaskRunner)) { throw "Hidden task runner not found at $hiddenTaskRunner" }
+if (-not (Test-Path -LiteralPath $hiddenLauncher)) { throw "Hidden launcher not found at $hiddenLauncher" }
+if (-not (Test-Path -LiteralPath $wscript)) { throw "wscript executable not found at $wscript" }
 
 New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
 
 $nodeCommand = Get-Command node -ErrorAction Stop
 $nodePath = $nodeCommand.Source
-$commandLine = 'cd /d "{0}" && "{1}" "{2}" --daemon >> "{3}" 2>&1' -f $uiRoot, $nodePath, $daemonScript, $taskLog
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+
+function ConvertTo-TaskArgument {
+  param([string]$Value)
+  if ($Value.Contains('"')) { throw "task argument contains an unsafe quote: $Value" }
+  return '"' + $Value + '"'
+}
+
+$hiddenActionParts = @(
+  $hiddenLauncher,
+  $nodePath,
+  $hiddenTaskRunner,
+  '--cwd',
+  $uiRoot,
+  '--append-log',
+  $taskLog,
+  '--',
+  $nodePath,
+  $daemonScript,
+  '--daemon'
+)
+$hiddenActionArguments = ($hiddenActionParts | ForEach-Object {
+  ConvertTo-TaskArgument -Value ([string]$_)
+}) -join ' '
 
 switch ($Action) {
   'install' {
-    $taskAction = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/d /c $commandLine"
+    $taskAction = New-ScheduledTaskAction `
+      -Execute $wscript `
+      -Argument $hiddenActionArguments `
+      -WorkingDirectory $uiRoot
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
     $settings = New-ScheduledTaskSettingsSet `
       -AllowStartIfOnBatteries `
@@ -71,7 +102,7 @@ switch ($Action) {
       LastRunTime = $info.LastRunTime
       LastTaskResult = $info.LastTaskResult
       NextRunTime = $info.NextRunTime
-      Command = "cmd.exe /d /c $commandLine"
+      Command = "$wscript $hiddenActionArguments"
       LogPath = $taskLog
     } | Format-List
   }

@@ -8,6 +8,12 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $runner = Join-Path $PSScriptRoot 'hm-team-heartbeat.js'
 if (-not (Test-Path -LiteralPath $runner)) { throw "missing heartbeat runner: $runner" }
+$hiddenTaskRunner = Join-Path $PSScriptRoot 'hm-hidden-task.js'
+$hiddenLauncher = Join-Path $PSScriptRoot 'hm-run-hidden.vbs'
+if (-not (Test-Path -LiteralPath $hiddenTaskRunner)) { throw "missing hidden task runner: $hiddenTaskRunner" }
+if (-not (Test-Path -LiteralPath $hiddenLauncher)) { throw "missing hidden launcher: $hiddenLauncher" }
+$wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
+if (-not (Test-Path -LiteralPath $wscript)) { throw "wscript executable not found: $wscript" }
 
 $nodeCommand = Get-Command node.exe -ErrorAction Stop
 $node = $nodeCommand.Source
@@ -36,6 +42,30 @@ $desired = @($cadence | ForEach-Object {
 
 function Get-OwnedHeartbeatTasks {
   return @(Get-ScheduledTask -TaskName "$taskPrefix*" -ErrorAction SilentlyContinue)
+}
+
+function ConvertTo-TaskArgument {
+  param([string]$Value)
+  if ($Value.Contains('"')) { throw "task argument contains an unsafe quote: $Value" }
+  return '"' + $Value + '"'
+}
+
+function Get-HeartbeatActionArguments {
+  param([string]$ScheduledWindow)
+  $parts = @(
+    $hiddenLauncher,
+    $node,
+    $hiddenTaskRunner,
+    '--cwd',
+    $projectRoot,
+    '--',
+    $node,
+    $runner,
+    'run',
+    '--scheduled-window',
+    $ScheduledWindow
+  )
+  return ($parts | ForEach-Object { ConvertTo-TaskArgument -Value ([string]$_) }) -join ' '
 }
 
 function Get-TaskSnapshot {
@@ -80,7 +110,11 @@ $desiredAudit = @($desired | ForEach-Object {
     taskName = $_.taskName
     scheduledWindow = $_.id
     time = $_.time
-    execute = $node
+    execute = $wscript
+    hiddenLauncher = $hiddenLauncher
+    hiddenTaskRunner = $hiddenTaskRunner
+    childExecute = $node
+    childArguments = @($runner, 'run', '--scheduled-window', $_.id)
     runner = $runner
     workingDirectory = $projectRoot
     startWhenAvailable = $true
@@ -111,9 +145,10 @@ try {
 
   foreach ($entry in $desired) {
     $at = [DateTime]::ParseExact($entry.time, 'HH:mm', [Globalization.CultureInfo]::InvariantCulture)
+    $actionArguments = Get-HeartbeatActionArguments -ScheduledWindow $entry.id
     $action = New-ScheduledTaskAction `
-      -Execute $node `
-      -Argument "`"$runner`" run --scheduled-window $($entry.id)" `
+      -Execute $wscript `
+      -Argument $actionArguments `
       -WorkingDirectory $projectRoot
     $trigger = New-ScheduledTaskTrigger -Daily -At $at
     Register-ScheduledTask `
@@ -139,8 +174,8 @@ try {
   foreach ($entry in $desired) {
     $task = $afterTasks | Where-Object TaskName -EQ $entry.taskName | Select-Object -First 1
     if (-not $task) { throw "registered task is missing: $($entry.taskName)" }
-    $expectedArgs = "`"$runner`" run --scheduled-window $($entry.id)"
-    if ([string]$task.Actions.Execute -ne $node) { throw "wrong executable for $($entry.taskName)" }
+    $expectedArgs = Get-HeartbeatActionArguments -ScheduledWindow $entry.id
+    if ([string]$task.Actions.Execute -ne $wscript) { throw "wrong hidden executable for $($entry.taskName)" }
     if ([string]$task.Actions.Arguments -ne $expectedArgs) { throw "wrong arguments for $($entry.taskName)" }
     if ([string]$task.Actions.WorkingDirectory -ne $projectRoot) { throw "wrong working directory for $($entry.taskName)" }
     if (-not [bool]$task.Settings.StartWhenAvailable) { throw "StartWhenAvailable is off for $($entry.taskName)" }
