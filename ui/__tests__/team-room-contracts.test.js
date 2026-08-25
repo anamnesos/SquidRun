@@ -313,7 +313,23 @@ describe('team-room contracts', () => {
       participationReason: PARTICIPATION_REASONS.HUMAN_TEXTURE,
       rootBody: 'I added Home Screen.',
       priorPosts: [builderPhoto],
-    })).toEqual(expect.objectContaining({ covered: true, reason: 'social_beat_already_covered' }));
+    })).toEqual(expect.objectContaining({ covered: false, reason: 'distinct_human_texture' }));
+
+    expect(classifySameRootCoverage({
+      body: 'SquidRun is officially in your pocket now!',
+      participationReason: PARTICIPATION_REASONS.HUMAN_TEXTURE,
+      rootBody: 'I added Home Screen.',
+      priorPosts: [{
+        messageId: 'trm-builder-texture',
+        authorId: 'builder',
+        participationReason: PARTICIPATION_REASONS.HUMAN_TEXTURE,
+        body: 'squidrun is officially in your pocket now.',
+      }],
+    })).toEqual(expect.objectContaining({
+      covered: true,
+      reason: 'social_beat_duplicate',
+      coveredByAgentId: 'builder',
+    }));
 
     expect(classifySameRootCoverage({
       body: 'Production database row 884 persisted with checksum 7f2a.',

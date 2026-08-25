@@ -313,6 +313,15 @@ function extractSubstanceTokens(value) {
     .filter((token) => token.length >= 2 || /^\d+$/u.test(token)))];
 }
 
+function normalizeCoverageText(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .replace(/\s+/gu, ' ');
+}
+
 function hasDirectRoomMention(value) {
   return DIRECT_ROOM_MENTION_PATTERN.test(String(value || ''));
 }
@@ -345,13 +354,20 @@ function classifySameRootCoverage(input = {}) {
 
   const mostRecent = priorPosts[0];
   if (participationReason === PARTICIPATION_REASONS.HUMAN_TEXTURE) {
-    return {
-      covered: true,
-      reason: 'social_beat_already_covered',
-      coveredByAgentId: mostRecent.authorId,
-      coveredByMessageId: mostRecent.messageId,
-      coverageRatio: 1,
-    };
+    const candidateText = normalizeCoverageText(input.body);
+    const duplicate = candidateText
+      ? priorPosts.find((prior) => normalizeCoverageText(prior.body) === candidateText)
+      : null;
+    if (duplicate) {
+      return {
+        covered: true,
+        reason: 'social_beat_duplicate',
+        coveredByAgentId: duplicate.authorId,
+        coveredByMessageId: duplicate.messageId,
+        coverageRatio: 1,
+      };
+    }
+    return { covered: false, reason: 'distinct_human_texture' };
   }
 
   const candidateBody = String(input.body || '');

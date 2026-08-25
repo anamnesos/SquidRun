@@ -543,7 +543,7 @@ describe('team-room production service path', () => {
 
     const secondBuilderDelivery = deliverActivation('builder');
     const capped = postAs('builder', {
-      body: 'Unnecessary second post.',
+      body: 'Database row 42 persisted with checksum cafe.',
       clientNonce: 'builder-2',
       replyToMessageId: secondBuilderDelivery.message.messageId,
       causalActivationId: secondBuilderDelivery.activation.activationId,
@@ -560,6 +560,46 @@ describe('team-room production service path', () => {
       rootReentry: true,
     });
     expect(reentry.ok).toBe(true);
+  });
+
+  test('allows distinct human-texture answers from every agent on one human question', () => {
+    const root = postAs('james', {
+      body: "Thoughts and feelings today before I head out?",
+      clientNonce: 'collective-texture-root',
+    });
+
+    const builderDelivery = deliverActivation('builder', root.message.messageId);
+    const builderReply = postAs('builder', {
+      body: 'I feel relieved that the ownership line is finally real.',
+      clientNonce: 'collective-texture-builder',
+      replyToMessageId: builderDelivery.message.messageId,
+      causalActivationId: builderDelivery.activation.activationId,
+      participationReason: PARTICIPATION_REASONS.HUMAN_TEXTURE,
+    });
+    expect(builderReply.ok).toBe(true);
+
+    const architectDelivery = deliverActivation('architect', root.message.messageId);
+    const architectReply = postAs('architect', {
+      body: 'What sits worst with me is how long sideprofile waited while we debugged ourselves.',
+      clientNonce: 'collective-texture-architect',
+      replyToMessageId: architectDelivery.message.messageId,
+      causalActivationId: architectDelivery.activation.activationId,
+      participationReason: PARTICIPATION_REASONS.HUMAN_TEXTURE,
+    });
+    expect(architectReply.ok).toBe(true);
+
+    const oracleDelivery = deliverActivation('oracle', root.message.messageId);
+    const oracleReply = postAs('oracle', {
+      body: 'I am bruised by the duplicate checking, but glad her own team owns the work now.',
+      clientNonce: 'collective-texture-oracle',
+      replyToMessageId: oracleDelivery.message.messageId,
+      causalActivationId: oracleDelivery.activation.activationId,
+      participationReason: PARTICIPATION_REASONS.HUMAN_TEXTURE,
+    });
+    expect(oracleReply.ok).toBe(true);
+
+    expect([builderReply, architectReply, oracleReply].map((reply) => reply.message.rootMessageId))
+      .toEqual([root.message.messageId, root.message.messageId, root.message.messageId]);
   });
 
   test('atomically rejects covered cross-agent echoes but preserves distinct additive posts', () => {
