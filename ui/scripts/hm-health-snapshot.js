@@ -1313,6 +1313,11 @@ function inspectTelegramIngressBacklog(projectRoot, options = {}) {
     const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
     return readTelegramBacklogHealth(projectRoot, nowMs, {
       statePath: options.telegramIngressBacklogStatePath,
+      // The backlog producer is event-driven, so an old empty snapshot is
+      // ambiguous by itself. Thread the independently inspected poller result
+      // into the reader; only a fresh, explicitly empty/error-free poll may
+      // reclassify that ambiguity as verified idle.
+      telegramPoller: options.telegramPoller,
     });
   } catch (err) {
     // An inspector that THROWS must not read as a clean channel.
@@ -1640,6 +1645,7 @@ function createHealthSnapshot(options = {}) {
   const telegramIngressBacklog = inspectTelegramIngressBacklog(projectRoot, {
     ...options,
     profileName,
+    telegramPoller,
   });
   const supervisor = inspectSupervisorHeartbeat(projectRoot, {
     ...options,

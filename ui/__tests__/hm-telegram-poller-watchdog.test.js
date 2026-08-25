@@ -276,6 +276,47 @@ describe('hm-telegram-poller-watchdog', () => {
     }));
   });
 
+  test('projects the active durable cursor needed to order poller activity against backlog health', () => {
+    const cursorKey = 'telegram:token:main:1:2:accept-scoped';
+    writeJson(path.join(tempDir, '.squidrun', 'runtime', 'telegram-poller-state.json'), {
+      version: 1,
+      updatedAt: '2026-06-06T04:20:00.000Z',
+      poller: {
+        cursorKey,
+        profile: 'main',
+        lastPollAt: '2026-06-06T04:20:00.000Z',
+        lastPollStatus: 'ok_empty',
+        lastError: null,
+      },
+      cursors: {
+        [cursorKey]: {
+          profile: 'main',
+          updatedAt: '2026-06-06T04:19:59.000Z',
+          lastUpdateId: 807,
+          lastAction: 'delivered',
+        },
+      },
+    });
+
+    const freshness = inspectTelegramPollerFreshness({
+      projectRoot: tempDir,
+      nowMs: Date.parse('2026-06-06T04:20:01.000Z'),
+      staleThresholdMs: 10 * 60 * 1000,
+    });
+
+    expect(freshness).toEqual(expect.objectContaining({
+      status: 'fresh',
+      activeCursor: {
+        cursorKey,
+        profile: 'main',
+        updatedAt: '2026-06-06T04:19:59.000Z',
+        updatedAtMs: Date.parse('2026-06-06T04:19:59.000Z'),
+        lastUpdateId: 807,
+        lastAction: 'delivered',
+      },
+    }));
+  });
+
   test('successful app restart is not trusted until freshness is verified', async () => {
     const freshness = {
       status: 'stale',

@@ -322,18 +322,67 @@ function readTelegramBacklogHealth(projectRoot, nowMs = Date.now(), options = {}
       : { ...snapshot, oldestPendingAgeMs: null, oldestPendingAgeUnknown: true };
 
     const scored = scoreBacklogHealth(recomputed, options);
-    // A SNAPSHOT THAT STOPPED UPDATING is not a healthy route; it is a route
-    // whose reporter died. Treated exactly like an unreadable file. A FUTURE
-    // timestamp is equally untrustworthy — a clock we cannot reconcile is not
-    // evidence of freshness.
+    // The backlog producer writes on drain events, not on a heartbeat. An old
+    // snapshot is therefore ambiguous: the reporter may have died, or the lane
+    // may simply have remained idle. It stays degraded unless a second live
+    // signal proves the narrow quiet case: the poller itself is fresh, its
+    // latest result is explicitly empty and error-free, and the persisted
+    // route is explicitly empty, unblocked, and not awaiting recovery.
+    //
+    // A missing/invalid/future timestamp is never eligible. Neither is a stale
+    // poller. Those are clock or reporter failures, not evidence of quiet.
     const observedAtMs = Number(snapshot.observedAtMs);
-    const stale = !Number.isFinite(observedAtMs)
-      || (nowMs - observedAtMs) > staleAfterMs
-      || observedAtMs > (nowMs + 60_000);
-    const anomalous = stale || futureReceivedAt;
+    const observedAtValid = Number.isFinite(observedAtMs) && observedAtMs > 0;
+    const observedAtFuture = observedAtValid && observedAtMs > (nowMs + 60_000);
+    const staleByAge = observedAtValid
+      && !observedAtFuture
+      && (nowMs - observedAtMs) > staleAfterMs;
+    const stale = !observedAtValid || staleByAge || observedAtFuture;
+    const telegramPoller = options.telegramPoller && typeof options.telegramPoller === 'object'
+      ? options.telegramPoller
+      : null;
+    const latestPoll = telegramPoller?.poller && typeof telegramPoller.poller === 'object'
+      ? telegramPoller.poller
+      : null;
+    const activeCursor = telegramPoller?.activeCursor && typeof telegramPoller.activeCursor === 'object'
+      ? telegramPoller.activeCursor
+      : null;
+    const cursorUpdatedAtMs = Number(activeCursor?.updatedAtMs);
+    const cursorPredatesSnapshot = latestPoll?.profile === routeKey
+      && typeof latestPoll.cursorKey === 'string'
+      && latestPoll.cursorKey.length > 0
+      && activeCursor?.cursorKey === latestPoll.cursorKey
+      && activeCursor.profile === routeKey
+      && Number.isFinite(cursorUpdatedAtMs)
+      && cursorUpdatedAtMs > 0
+      && cursorUpdatedAtMs <= observedAtMs;
+    const pollerProvesQuiet = telegramPoller?.ok === true
+      && telegramPoller.status === 'fresh'
+      && telegramPoller.wedged === false
+      && latestPoll?.lastPollStatus === 'ok_empty'
+      // Missing is not error-free. The producer must explicitly report null.
+      && latestPoll.lastError === null
+      // `ok_empty` describes only the latest request. The active durable
+      // cursor must also prove that no accepted update postdates this snapshot;
+      // otherwise an update followed by an empty poll could hide a dead drain.
+      && cursorPredatesSnapshot;
+    const snapshotProvesQuiet = scored.severity === 'ok'
+      && snapshot.pendingCount === 0
+      && snapshot.blockedUpdateId === null
+      && snapshot.blockedReason === null
+      && snapshot.blockedFailureClass === null
+      && snapshot.proofUnattainable === false
+      && snapshot.recoveryRequired === false
+      && snapshot.orphanedAttemptReason === null;
+    const verifiedIdle = staleByAge && pollerProvesQuiet && snapshotProvesQuiet;
+    const anomalous = (stale && !verifiedIdle) || futureReceivedAt;
     const routeSeverity = anomalous && rank[scored.severity] < rank.degraded ? 'degraded' : scored.severity;
     const routeReasons = [...scored.reasons];
-    if (stale) routeReasons.push(`backlog_snapshot_stale:${routeKey}`);
+    if (verifiedIdle) {
+      routeReasons.push(`backlog_snapshot_idle_verified:${routeKey}`);
+    } else if (stale) {
+      routeReasons.push(`backlog_snapshot_stale:${routeKey}`);
+    }
     // Named separately from staleness so an operator can tell a dead reporter
     // from a clock that is lying.
     if (futureReceivedAt) routeReasons.push(`oldest_pending_received_at_in_future:${routeKey}`);

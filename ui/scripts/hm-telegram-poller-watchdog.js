@@ -130,6 +130,34 @@ function inspectTelegramPollerFreshness(options = {}) {
   const poller = read.value?.poller && typeof read.value.poller === 'object' && !Array.isArray(read.value.poller)
     ? read.value.poller
     : null;
+  const cursorKey = typeof poller?.cursorKey === 'string' && poller.cursorKey.trim()
+    ? poller.cursorKey.trim()
+    : null;
+  const cursors = read.value?.cursors && typeof read.value.cursors === 'object' && !Array.isArray(read.value.cursors)
+    ? read.value.cursors
+    : null;
+  const cursor = cursorKey
+    && cursors?.[cursorKey]
+    && typeof cursors[cursorKey] === 'object'
+    && !Array.isArray(cursors[cursorKey])
+    ? cursors[cursorKey]
+    : null;
+  const cursorUpdatedAt = typeof cursor?.updatedAt === 'string' && cursor.updatedAt.trim()
+    ? cursor.updatedAt.trim()
+    : null;
+  const parsedCursorUpdatedAtMs = cursorUpdatedAt ? Date.parse(cursorUpdatedAt) : NaN;
+  const activeCursor = cursor
+    ? {
+      cursorKey,
+      profile: typeof cursor.profile === 'string' && cursor.profile.trim() ? cursor.profile.trim() : null,
+      updatedAt: cursorUpdatedAt,
+      updatedAtMs: Number.isFinite(parsedCursorUpdatedAtMs) ? parsedCursorUpdatedAtMs : null,
+      lastUpdateId: Number.isSafeInteger(Number(cursor.lastUpdateId)) ? Number(cursor.lastUpdateId) : null,
+      lastAction: typeof cursor.lastAction === 'string' && cursor.lastAction.trim()
+        ? cursor.lastAction.trim()
+        : null,
+    }
+    : null;
   const lastPollAt = typeof poller?.lastPollAt === 'string' && poller.lastPollAt.trim()
     ? poller.lastPollAt.trim()
     : null;
@@ -164,6 +192,7 @@ function inspectTelegramPollerFreshness(options = {}) {
       freshnessSource,
       ownerClaimedAt,
       ownerClaimAgeMs,
+      activeCursor,
       pollerStartupInProgress,
       appUp: true,
       appState,
@@ -186,6 +215,7 @@ function inspectTelegramPollerFreshness(options = {}) {
     freshnessSource,
     ownerClaimedAt,
     ownerClaimAgeMs,
+    activeCursor,
     pollerStartupInProgress,
     appUp: true,
     appState,

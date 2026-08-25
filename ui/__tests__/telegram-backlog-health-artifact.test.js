@@ -97,6 +97,53 @@ describe('the emitted and written artifact carries the backlog', () => {
     }), 'utf8');
   }
 
+  function writeStaleEmptyBacklog() {
+    const statePath = path.join(tempDir, '.squidrun', 'runtime', 'telegram-backlog-health.json');
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    fs.writeFileSync(statePath, JSON.stringify({
+      schema: 'telegramBacklogHealth.v0',
+      routes: {
+        main: {
+          pendingCount: 0,
+          oldestPendingUpdateId: null,
+          oldestPendingReceivedAtMs: null,
+          blockedUpdateId: null,
+          blockedReason: null,
+          blockedFailureClass: null,
+          proofUnattainable: false,
+          recoveryRequired: false,
+          orphanedAttemptReason: null,
+          attemptedCount: 0,
+          observedAtMs: NOW - 2 * 60 * 60 * 1000,
+          activationMode: 'legacy_settlement',
+          activationModeHealthy: true,
+          activationModeReason: null,
+        },
+      },
+    }), 'utf8');
+  }
+
+  const freshEmptyPoller = (cursorOverrides = {}) => {
+    const cursorKey = 'telegram:token:main:1:2:accept-scoped';
+    return {
+      ok: true,
+      status: 'fresh',
+      wedged: false,
+      poller: {
+        cursorKey,
+        profile: 'main',
+        lastPollStatus: 'ok_empty',
+        lastError: null,
+      },
+      activeCursor: {
+        cursorKey,
+        profile: 'main',
+        updatedAtMs: NOW - 3 * 60 * 60 * 1000,
+        ...cursorOverrides,
+      },
+    };
+  };
+
   test('THE EMITTED JSON shows score < 100 and names the backlog', () => {
     const { main } = require('../scripts/hm-health-snapshot');
     writeWedgedBacklog();
@@ -173,6 +220,96 @@ describe('the emitted and written artifact carries the backlog', () => {
     const emitted = JSON.parse(stdout.text());
     expect(emitted.status.score).toBeLessThan(100);
     expect(emitted.status.warnings.join()).toMatch(/backlog_snapshot_stale/);
+  });
+
+  test('A QUIET LANE demotes a stale empty snapshot only with fresh independent poller proof', () => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    writeStaleEmptyBacklog();
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs: NOW,
+      telegramPoller: freshEmptyPoller(),
+    });
+
+    expect(snapshot.telegramIngressBacklog).toEqual(expect.objectContaining({
+      ok: true,
+      severity: 'ok',
+      reasons: ['main:backlog_snapshot_idle_verified:main'],
+    }));
+    expect(snapshot.status.warnings.join()).not.toMatch(/telegram_ingress_backlog/);
+  });
+
+  test('A STALE POLLER CANNOT EXEMPT a stale empty backlog', () => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    writeStaleEmptyBacklog();
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs: NOW,
+      telegramPoller: {
+        ...freshEmptyPoller(),
+        ok: false,
+        status: 'stale',
+        wedged: true,
+      },
+    });
+
+    expect(snapshot.telegramIngressBacklog.severity).toBe('degraded');
+    expect(snapshot.telegramIngressBacklog.reasons.join()).toMatch(/backlog_snapshot_stale/);
+    expect(snapshot.status.warnings.join()).toMatch(/telegram_ingress_backlog_degraded/);
+  });
+
+  test('AN UPDATE AFTER THE SNAPSHOT followed by an empty poll cannot create a false idle verdict', () => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    writeStaleEmptyBacklog();
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs: NOW,
+      // The latest request is empty, but this durable cursor advanced an hour
+      // after the two-hour-old backlog snapshot. The drain may have died.
+      telegramPoller: freshEmptyPoller({
+        updatedAtMs: NOW - 60 * 60 * 1000,
+      }),
+    });
+
+    expect(snapshot.telegramIngressBacklog.severity).toBe('degraded');
+    expect(snapshot.telegramIngressBacklog.reasons.join()).toMatch(/backlog_snapshot_stale/);
+  });
+
+  test.each([
+    ['missing', null],
+    ['profile-mismatched', { profile: 'sideprofile' }],
+    ['invalid-time', { updatedAtMs: null }],
+  ])('%s active cursor evidence cannot exempt a stale backlog', (_label, cursorOverride) => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    writeStaleEmptyBacklog();
+    const telegramPoller = freshEmptyPoller(cursorOverride || {});
+    if (cursorOverride === null) telegramPoller.activeCursor = null;
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs: NOW,
+      telegramPoller,
+    });
+
+    expect(snapshot.telegramIngressBacklog.severity).toBe('degraded');
+    expect(snapshot.telegramIngressBacklog.reasons.join()).toMatch(/backlog_snapshot_stale/);
+  });
+
+  test('A FRESH POLLER CANNOT SOFTEN a real pending backlog', () => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    writeWedgedBacklog();
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      nowMs: NOW,
+      telegramPoller: freshEmptyPoller(),
+    });
+
+    expect(snapshot.telegramIngressBacklog.severity).toBe('critical');
+    expect(snapshot.status.warnings.join()).toMatch(/telegram_ingress_backlog_critical/);
   });
 
   test('A MALFORMED SNAPSHOT degrades BOTH the emitted JSON and the written Markdown', () => {
