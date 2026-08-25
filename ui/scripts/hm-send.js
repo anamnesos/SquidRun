@@ -191,7 +191,7 @@ if (!listDevicesMode && args.length < 2) {
   console.log('  --list-devices: query relay for connected cross-device peers');
   console.log('  --role: your role (for identification)');
   console.log('  --priority: normal or urgent');
-  console.log('  --expects: declare <verdict|ack|packet|answer|receipt>:<turn|beat|day|open>');
+  console.log('  --expects: declare none or <verdict|ack|packet|answer|receipt>:<turn|beat|day|open>');
   console.log('  --fulfills: declare the obligation id this routed reply fulfills');
   console.log(`  --timeout: ack timeout in ms (default: ${DEFAULT_ACK_TIMEOUT_MS})`);
   console.log('  --retries: retry count after first send (default: 3)');
@@ -225,6 +225,7 @@ let targetWindowKeyOverride = null;
 let targetSessionScopeIdOverride = null;
 let bypassGuard = String(process.env.HM_SEND_BYPASS_GUARD || '').trim() === '1';
 let expectsDeclaration = null;
+let noAckNeededDeclaration = false;
 let fulfillsDeclaration = null;
 
 // Known flags that signal end of inline message content.
@@ -336,15 +337,22 @@ for (; i < args.length; i++) {
   }
   if (token === '--expects') {
     if (!args[i + 1]) {
-      console.error('--expects requires <class>:<staleness>.');
+      console.error('--expects requires none or <class>:<staleness>.');
       process.exit(1);
+    }
+    if (String(args[i + 1]).trim().toLowerCase() === 'none') {
+      expectsDeclaration = null;
+      noAckNeededDeclaration = true;
+      i++;
+      continue;
     }
     const parsed = parseExpectationFlag(args[i + 1]);
     if (!parsed.ok) {
-      console.error(`Invalid --expects value. Expected ${parsed.expected}.`);
+      console.error(`Invalid --expects value. Expected none or ${parsed.expected}.`);
       process.exit(1);
     }
     expectsDeclaration = parsed.expectation;
+    noAckNeededDeclaration = false;
     i++;
     continue;
   }
@@ -2859,6 +2867,9 @@ async function main() {
     ...(profileRouteAttributionMetadata || {}),
     ...(forwardProfileRoute ? forwardProfileRoute.metadata : {}),
   };
+  const intentionalAutonomyMetadata = noAckNeededDeclaration
+    ? { ackPolicy: { noAckNeeded: true } }
+    : {};
   const outboundMessage = message;
   const miraInboxMode = isMiraInboxTarget(targetRole);
   const guardResult = await runOutputGuards({ messageId, targetRole });
@@ -2891,7 +2902,15 @@ async function main() {
   if (isTelegramTextDirectModeActive()) {
     await sendTelegramTextDirect(envelope);
   }
-  const envelopeMetadata = buildCanonicalEnvelopeMetadata(envelope);
+  const envelopeMetadata = {
+    ...buildCanonicalEnvelopeMetadata(envelope),
+    ...intentionalAutonomyMetadata,
+  };
+  const triggerFallbackDescriptor = buildTriggerFallbackDescriptor(envelope);
+  triggerFallbackDescriptor.metadata = {
+    ...triggerFallbackDescriptor.metadata,
+    ...intentionalAutonomyMetadata,
+  };
   const preSendJournal = appendLocalCommsJournalEntry({
     messageId: envelope.message_id,
     sessionId: envelope.session_id || null,
@@ -2932,7 +2951,11 @@ async function main() {
       skipHealthCheck: bridgeMode,
       ...(forwardProfileRoute || {}),
       metadata: Object.keys(profileRouteDispatchMetadata).length > 0
-        ? profileRouteDispatchMetadata
+        || Object.keys(intentionalAutonomyMetadata).length > 0
+        ? {
+          ...profileRouteDispatchMetadata,
+          ...intentionalAutonomyMetadata,
+        }
         : null,
     });
   } catch (err) {
@@ -2970,7 +2993,7 @@ async function main() {
     }
 
     if (enableFallback && shouldFallbackForUnverifiedSend(sendResult, target)) {
-      const fallbackResult = writeTriggerFallback(target, buildTriggerFallbackDescriptor(envelope));
+      const fallbackResult = writeTriggerFallback(target, triggerFallbackDescriptor);
       if (fallbackResult.ok) {
         const reason = sendResult?.ack?.status
           ? `ack=${sendResult.ack.status}`
@@ -3154,7 +3177,7 @@ async function main() {
       process.exit(1);
     }
 
-    const fallbackResult = writeTriggerFallback(target, buildTriggerFallbackDescriptor(envelope));
+    const fallbackResult = writeTriggerFallback(target, triggerFallbackDescriptor);
     if (fallbackResult.ok) {
       const reason = sendResult?.ack
         ? `ack=${sendResult.ack.status}`

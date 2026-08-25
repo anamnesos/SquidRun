@@ -2737,6 +2737,42 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('carries --expects none as intentional no-ack metadata', async () => {
+    const tempProject = createLinkedProject();
+    const sendAttempts = [];
+    const { server, port } = await startAckServer(sendAttempts);
+
+    try {
+      writeAppStatus(tempProject, 'app-session-hm-send-no-ack');
+      const result = await runHmSend(
+        [
+          'architect',
+          '(BUILDER #2): informational progress only',
+          '--role',
+          'builder',
+          '--expects',
+          'none',
+          '--timeout',
+          '80',
+          '--retries',
+          '0',
+          '--no-fallback',
+        ],
+        { HM_SEND_PORT: String(port) },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0].metadata.expects).toBeNull();
+      expect(sendAttempts[0].metadata.ackPolicy).toEqual({ noAckNeeded: true });
+      expect(sendAttempts[0].metadata.envelope.expects).toBeNull();
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('rejects an invalid --expects declaration before dispatch', async () => {
     const tempProject = createLinkedProject();
     const result = await runHmSend(
