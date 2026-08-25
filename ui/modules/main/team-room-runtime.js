@@ -19,6 +19,7 @@ const { TeamRoomAuth, hashToken, isPrivateLanHostname, safeNetworkPolicy } = req
 // One screenful of scrollback plus room to scroll before older history is fetched.
 // The client renders every message it holds, so this bounds resize and scroll cost.
 const SNAPSHOT_MESSAGE_WINDOW = 150;
+const MAX_SNAPSHOT_MESSAGE_WINDOW = 500;
 const { inspectAttachmentFile, resolveSafeExistingFile } = require('./team-room-attachments');
 const { TeamRoomDeliveryAdapter } = require('./team-room-delivery-adapter');
 const { buildPairingUrl, renderPairingQrDataUrl } = require('./team-room-qr');
@@ -63,6 +64,40 @@ const SECURITY_HEADERS = Object.freeze({
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
 });
+
+function parseSnapshotOptions(request = {}) {
+  let url;
+  try {
+    url = new URL(request.url || '/', `http://${String(request.headers?.host || '127.0.0.1')}`);
+  } catch {
+    return { ok: false, reason: 'team_room_history_query_invalid' };
+  }
+  const rawLimit = url.searchParams.get('limit');
+  const limit = rawLimit === null ? SNAPSHOT_MESSAGE_WINDOW : Number(rawLimit);
+  if (!Number.isInteger(limit) || limit < 1) {
+    return { ok: false, reason: 'team_room_history_limit_invalid' };
+  }
+  const rawBeforeSeq = url.searchParams.get('beforeSeq');
+  const beforeSeq = rawBeforeSeq === null ? null : Number(rawBeforeSeq);
+  if (rawBeforeSeq !== null && (!Number.isInteger(beforeSeq) || beforeSeq < 1)) {
+    return { ok: false, reason: 'team_room_history_before_seq_invalid' };
+  }
+  const rawDay = url.searchParams.get('day');
+  const day = rawDay === null ? null : String(rawDay);
+  if (rawDay !== null && !/^\d{4}-\d{2}-\d{2}$/u.test(day)) {
+    return { ok: false, reason: 'team_room_history_day_invalid' };
+  }
+  if (day && beforeSeq !== null) {
+    return { ok: false, reason: 'team_room_history_query_conflict' };
+  }
+  return {
+    ok: true,
+    explicit: rawLimit !== null || rawBeforeSeq !== null || rawDay !== null,
+    limit: Math.min(MAX_SNAPSHOT_MESSAGE_WINDOW, limit),
+    beforeSeq,
+    day,
+  };
+}
 
 async function closeWebSocketClients(clients, graceMs = DEFAULT_WEBSOCKET_SHUTDOWN_GRACE_MS) {
   const sockets = [...new Set(clients || [])];
@@ -922,12 +957,25 @@ class TeamRoomRuntime {
   snapshot(options = {}) {
     const rawLimit = Number(options.limit);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0
-      ? Math.floor(rawLimit)
+      ? Math.min(MAX_SNAPSHOT_MESSAGE_WINDOW, Math.floor(rawLimit))
       : SNAPSHOT_MESSAGE_WINDOW;
     const day = options.day ? String(options.day).slice(0, 10) : null;
-    const messages = this.store
-      .listMessages(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME, day ? { day } : { limit })
-      .map((message) => this._enrichMessage(message));
+    let canonicalMessages;
+    let hasMore = false;
+    if (options.fullHistory === true) {
+      canonicalMessages = this.store.listMessages(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME);
+    } else if (day) {
+      canonicalMessages = this.store.listMessages(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME, { day });
+    } else {
+      const query = { limit: limit + 1 };
+      if (Number.isInteger(options.beforeSeq) && options.beforeSeq > 0) {
+        query.beforeSeq = options.beforeSeq;
+      }
+      const page = this.store.listMessages(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME, query);
+      hasMore = page.length > limit;
+      canonicalMessages = hasMore ? page.slice(1) : page;
+    }
+    const messages = canonicalMessages.map((message) => this._enrichMessage(message));
     const totalMessages = this.store.countMessages(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME);
     const oldestLoadedSeq = messages.length ? Number(messages[0].seq) : null;
     return {
@@ -940,31 +988,10 @@ class TeamRoomRuntime {
       days: this.store.listMessageDays(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME),
       totalMessages,
       oldestLoadedSeq,
-      hasMore: day ? false : messages.length < totalMessages,
+      hasMore,
+      limit: options.fullHistory === true ? messages.length : limit,
       day,
       generatedAtMs: Number(this.now()),
-    };
-  }
-
-  // Older history on demand: either one calendar day, or the page before a cursor.
-  historyPage(options = {}) {
-    const day = options.day ? String(options.day).slice(0, 10) : null;
-    const rawLimit = Number(options.limit);
-    const limit = Number.isFinite(rawLimit) && rawLimit > 0
-      ? Math.floor(rawLimit)
-      : SNAPSHOT_MESSAGE_WINDOW;
-    const query = day
-      ? { day }
-      : { limit, beforeSeq: Number(options.beforeSeq) };
-    const messages = this.store
-      .listMessages(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME, query)
-      .map((message) => this._enrichMessage(message));
-    return {
-      schema: 'squidrun.team_room_history.v1',
-      day,
-      messages,
-      oldestLoadedSeq: messages.length ? Number(messages[0].seq) : null,
-      hasMore: day ? false : messages.length === limit,
     };
   }
 
@@ -1044,34 +1071,12 @@ class TeamRoomRuntime {
   async _handleSnapshot(request, response, endpointSource) {
     const authenticated = this._authenticate(request, 'read', endpointSource);
     if (!authenticated.ok) return jsonResponse(response, resultStatus(authenticated), authenticated);
-    return jsonResponse(response, 200, { ok: true, snapshot: this.snapshot() });
-  }
-
-  // Older history, fetched only when asked for: one calendar day, or the page
-  // before a cursor. Same read authority as the snapshot it extends.
-  async _handleHistory(request, response, endpointSource) {
-    const authenticated = this._authenticate(request, 'read', endpointSource);
-    if (!authenticated.ok) return jsonResponse(response, resultStatus(authenticated), authenticated);
-    let url;
-    try {
-      url = new URL(request.url, 'http://localhost');
-    } catch {
-      return jsonResponse(response, 400, { ok: false, reason: 'room_history_bad_request' });
-    }
-    const day = url.searchParams.get('day');
-    const beforeSeq = Number(url.searchParams.get('beforeSeq'));
-    const limit = Number(url.searchParams.get('limit'));
-    if (!day && !Number.isFinite(beforeSeq)) {
-      return jsonResponse(response, 400, { ok: false, reason: 'room_history_cursor_required' });
-    }
-    return jsonResponse(response, 200, {
-      ok: true,
-      history: this.historyPage({
-        day: day || null,
-        beforeSeq: Number.isFinite(beforeSeq) ? beforeSeq : null,
-        limit: Number.isFinite(limit) ? limit : undefined,
-      }),
-    });
+    const options = parseSnapshotOptions(request);
+    if (!options.ok) return jsonResponse(response, 400, options);
+    const snapshotOptions = endpointSource === 'room_cli' && !options.explicit
+      ? { fullHistory: true }
+      : options;
+    return jsonResponse(response, 200, { ok: true, snapshot: this.snapshot(snapshotOptions) });
   }
 
   async _handlePost(request, response, endpointSource) {
@@ -1423,11 +1428,9 @@ class TeamRoomRuntime {
       });
     }
     if (url.pathname === '/api/snapshot' && request.method === 'GET') return this._handleSnapshot(request, response, 'room_web');
-    if (url.pathname === '/api/history' && request.method === 'GET') return this._handleHistory(request, response, 'room_web');
     if (url.pathname === '/api/messages' && request.method === 'POST') return this._handlePost(request, response, 'room_web');
     if (url.pathname === '/api/attachments' && request.method === 'POST') return this._handleUpload(request, response);
     if (url.pathname === '/api/cli/snapshot' && request.method === 'GET') return this._handleSnapshot(request, response, 'room_cli');
-    if (url.pathname === '/api/cli/history' && request.method === 'GET') return this._handleHistory(request, response, 'room_cli');
     if (url.pathname === '/api/cli/attachments' && request.method === 'POST') return this._handleCliUpload(request, response);
     if (url.pathname === '/api/cli/messages' && request.method === 'POST') return this._handlePost(request, response, 'room_cli');
     if (url.pathname === '/api/pairing/start' && request.method === 'POST') return this._handlePairingStart(request, response);

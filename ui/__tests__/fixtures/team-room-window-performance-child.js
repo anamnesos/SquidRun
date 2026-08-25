@@ -1,5 +1,7 @@
 'use strict';
 
+const Module = require('node:module');
+Module._initPaths();
 const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
@@ -13,6 +15,16 @@ const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-wind
 app.setPath('userData', path.join(smokeRoot, 'user-data'));
 app.commandLine.appendSwitch('disable-gpu');
 app.on('window-all-closed', () => {});
+
+function writeProgress(stage) {
+  if (!outputPath) return;
+  fs.writeFileSync(outputPath, `${JSON.stringify({
+    complete: false,
+    stage,
+    mainPid: process.pid,
+    smokeRoot,
+  }, null, 2)}\n`, 'utf8');
+}
 
 function electronProcessIds() {
   try {
@@ -65,7 +77,7 @@ function requestJson(origin, route, options = {}) {
   });
 }
 
-async function waitForRenderer(windowRef, predicate, timeoutMs = 15_000) {
+async function waitForRenderer(windowRef, predicate, timeoutMs = 15_000, label = 'renderer') {
   return windowRef.webContents.executeJavaScript(`(async () => {
     const deadline = Date.now() + ${Number(timeoutMs)};
     while (Date.now() < deadline) {
@@ -73,7 +85,7 @@ async function waitForRenderer(windowRef, predicate, timeoutMs = 15_000) {
       if (value) return value;
       await new Promise((resolve) => setTimeout(resolve, 30));
     }
-    throw new Error('team_room_window_performance_renderer_timeout');
+    throw new Error('team_room_window_performance_renderer_timeout:${String(label)}');
   })()`);
 }
 
@@ -114,6 +126,27 @@ async function seedMessages(origin, cookie, count) {
     })));
     const failed = results.find((result) => result.statusCode !== 201);
     if (failed) throw new Error(`team_room_window_performance_seed_failed:${failed.statusCode}`);
+  }
+}
+
+async function postLiveMessages(origin, cookie, count) {
+  const batchSize = 35;
+  for (let start = 1; start <= count; start += batchSize) {
+    const indexes = Array.from(
+      { length: Math.min(batchSize, count - start + 1) },
+      (_unused, offset) => start + offset
+    );
+    const results = await Promise.all(indexes.map((index) => requestJson(origin, '/api/messages', {
+      method: 'POST',
+      cookie,
+      origin,
+      body: {
+        body: `Performance live message ${index}. Keep explicitly loaded history on screen.`,
+        clientNonce: `window-performance-live-${index}`,
+      },
+    })));
+    const failed = results.find((result) => result.statusCode !== 201);
+    if (failed) throw new Error(`team_room_window_performance_live_post_failed:${failed.statusCode}`);
   }
 }
 
@@ -179,8 +212,90 @@ async function resizeProbe(windowRef, width, height) {
   })()`);
 }
 
+async function loadOlderProbe(windowRef) {
+  const before = await windowRef.webContents.executeJavaScript(`(() => {
+    const scroll = document.querySelector('#messageScroll');
+    const scrollRect = scroll.getBoundingClientRect();
+    const anchor = [...document.querySelectorAll('.message-item')]
+      .find((item) => item.getBoundingClientRect().bottom >= scrollRect.top + 1);
+    const captured = {
+      messageId: anchor?.dataset.messageId || null,
+      offset: anchor ? anchor.getBoundingClientRect().top - scrollRect.top : null,
+      messageCount: document.querySelectorAll('.message-item').length,
+    };
+    document.querySelector('.history-more')?.click();
+    return captured;
+  })()`);
+  await waitForRenderer(windowRef, `() => document.querySelectorAll('.message-item').length === 300
+    && document.querySelector('.history-more')?.textContent === 'Load older messages'`, 12_000, 'load-older');
+  const after = await windowRef.webContents.executeJavaScript(`(() => {
+    const scroll = document.querySelector('#messageScroll');
+    const scrollRect = scroll.getBoundingClientRect();
+    const anchor = document.querySelector('.message-item[data-message-id="${before.messageId}"]');
+    return {
+      messageId: anchor?.dataset.messageId || null,
+      offset: anchor ? anchor.getBoundingClientRect().top - scrollRect.top : null,
+      messageCount: document.querySelectorAll('.message-item').length,
+      oldestBody: document.querySelector('.message-item .message-body')?.textContent || null,
+    };
+  })()`);
+  return { before, after };
+}
+
+async function liveGrowthProbe(windowRef, origin, cookie, count) {
+  const before = await windowRef.webContents.executeJavaScript(`(async () => {
+    const scroll = document.querySelector('#messageScroll');
+    scroll.scrollTop = 0;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const scrollRect = scroll.getBoundingClientRect();
+    const anchor = [...document.querySelectorAll('.message-item')]
+      .find((item) => item.getBoundingClientRect().bottom >= scrollRect.top + 1);
+    return {
+      messageId: anchor?.dataset.messageId || null,
+      offset: anchor ? anchor.getBoundingClientRect().top - scrollRect.top : null,
+      messageCount: document.querySelectorAll('.message-item').length,
+      oldestBody: document.querySelector('.message-item .message-body')?.textContent || null,
+    };
+  })()`);
+  await postLiveMessages(origin, cookie, count);
+  try {
+    await waitForRenderer(windowRef, `() => document.querySelectorAll('.message-item').length === 300
+      && [...document.querySelectorAll('.message-body')]
+        .some((body) => body.textContent.includes('Performance live message ${Number(count)}.'))`, 20_000, 'live-growth');
+  } catch (error) {
+    const diagnostic = await windowRef.webContents.executeJavaScript(`(() => {
+      const bodies = [...document.querySelectorAll('.message-body')].map((body) => body.textContent || '');
+      return {
+        messageCount: document.querySelectorAll('.message-item').length,
+        historyCount: bodies.filter((body) => body.startsWith('Performance history message ')).length,
+        liveCount: bodies.filter((body) => body.startsWith('Performance live message ')).length,
+        oldestBody: bodies[0] || null,
+        newestBody: bodies[bodies.length - 1] || null,
+      };
+    })()`);
+    throw new Error(`team_room_live_growth_timeout:${JSON.stringify(diagnostic)}`, { cause: error });
+  }
+  const after = await windowRef.webContents.executeJavaScript(`(() => {
+    const scroll = document.querySelector('#messageScroll');
+    const scrollRect = scroll.getBoundingClientRect();
+    const anchor = document.querySelector('.message-item[data-message-id="${before.messageId}"]');
+    const bodies = [...document.querySelectorAll('.message-body')].map((body) => body.textContent || '');
+    return {
+      messageId: anchor?.dataset.messageId || null,
+      offset: anchor ? anchor.getBoundingClientRect().top - scrollRect.top : null,
+      messageCount: document.querySelectorAll('.message-item').length,
+      historyCount: bodies.filter((body) => body.startsWith('Performance history message ')).length,
+      liveCount: bodies.filter((body) => body.startsWith('Performance live message ')).length,
+      oldestBody: bodies[0] || null,
+      newestBody: bodies[bodies.length - 1] || null,
+    };
+  })()`);
+  return { before, after };
+}
+
 async function run() {
   if (!outputPath) throw new Error('TEAM_ROOM_WINDOW_PERFORMANCE_OUTPUT_required');
+  writeProgress('runtime_starting');
   const runtime = new TeamRoomRuntime(runtimeOptions());
   let windowRef = null;
   let result = null;
@@ -188,12 +303,14 @@ async function run() {
   try {
     const started = await runtime.start();
     if (!started.ok) throw new Error(started.reason);
+    writeProgress('runtime_started');
     const paired = runtime._issueCredential('james', 'room_web', 'paired_device', {
       ttlMs: 24 * 60 * 60 * 1000,
     });
     if (!paired.ok) throw new Error(paired.reason);
     const cookie = `squidrun_team_room=${paired.token}`;
     await seedMessages(started.origin, cookie, 875);
+    writeProgress('messages_seeded');
 
     const created = await createTeamRoomWindow({
       BrowserWindow,
@@ -212,33 +329,32 @@ async function run() {
       },
     });
     windowRef = created.window;
+    writeProgress('window_created');
     windowRef.webContents.on('console-message', (_event, level, message) => {
       if (Number(level) >= 2) consoleErrors.push(String(message));
     });
     windowRef.setOpacity(0);
     windowRef.showInactive();
     await waitForRenderer(windowRef, `() => document.querySelector('#connectionDot')?.dataset.state === 'connected'
-      && document.querySelectorAll('.message-item').length === 150`);
+      && document.querySelectorAll('.message-item').length === 150`, 15_000, 'initial-history');
+    writeProgress('recent_history_rendered');
 
     const desktopResize = await resizeProbe(windowRef, 1100, 760);
+    writeProgress('desktop_resize_complete');
     const phoneResize = await resizeProbe(windowRef, 390, 760);
-
-    const historyBefore = await windowRef.webContents.executeJavaScript(
-      `document.querySelectorAll('.message-item').length`
-    );
-    await windowRef.webContents.executeJavaScript(
-      `(() => { const b = document.querySelector('.history-more'); if (b) b.click(); return true; })()`
-    );
-    await waitForRenderer(windowRef, `() => document.querySelectorAll('.message-item').length > 150`, 12_000, 'load-older');
-    const historyAfter = await windowRef.webContents.executeJavaScript(
-      `document.querySelectorAll('.message-item').length`
-    );
+    writeProgress('phone_resize_complete');
+    const historyLoad = await loadOlderProbe(windowRef);
+    const historyBefore = historyLoad.before.messageCount;
+    const historyAfter = historyLoad.after.messageCount;
+    writeProgress('older_history_loaded');
+    const liveGrowth = await liveGrowthProbe(windowRef, started.origin, cookie, 160);
+    writeProgress('live_history_bounded');
 
     await windowRef.webContents.executeJavaScript(`document.querySelector('#unreadMarker').click()`);
     await waitForRenderer(windowRef, `() => document.querySelector('#unreadMarker')?.hidden
       && document.querySelector('#messageScroll').scrollHeight
         - document.querySelector('#messageScroll').scrollTop
-        - document.querySelector('#messageScroll').clientHeight <= 3`);
+        - document.querySelector('#messageScroll').clientHeight <= 3`, 15_000, 'latest-jump');
     const latestJump = await windowRef.webContents.executeJavaScript(`(() => {
       const scroll = document.querySelector('#messageScroll');
       return {
@@ -251,7 +367,7 @@ async function run() {
       type: 'message',
       message: {
         messageId: 'trm_window_performance_following_reply',
-        seq: 876,
+        seq: 5001,
         authorId: 'oracle',
         author: { memberId: 'oracle', displayName: 'Vera', memberKind: 'agent', role: 'oracle' },
         body: 'This long reply should keep following while the reader leaves it alone. '.repeat(16),
@@ -259,7 +375,7 @@ async function run() {
         createdAtMs: Date.now(),
       },
     });
-    await waitForRenderer(windowRef, `() => document.querySelector('[data-message-id="trm_window_performance_following_reply"]')?.dataset.typewriterActive === 'true'`);
+    await waitForRenderer(windowRef, `() => document.querySelector('[data-message-id="trm_window_performance_following_reply"]')?.dataset.typewriterActive === 'true'`, 15_000, 'following-typewriter');
     await new Promise((resolve) => setTimeout(resolve, 500));
     const untouchedTypewriter = await windowRef.webContents.executeJavaScript(`(() => {
       const scroll = document.querySelector('#messageScroll');
@@ -270,7 +386,7 @@ async function run() {
       type: 'message',
       message: {
         messageId: 'trm_window_performance_skipped_reply',
-        seq: 877,
+        seq: 5002,
         authorId: 'architect',
         author: { memberId: 'architect', displayName: 'Mira', memberKind: 'agent', role: 'architect' },
         body: 'Tapping this reply to reveal it immediately should still keep an untouched bottom reader at the bottom. '.repeat(16),
@@ -278,7 +394,7 @@ async function run() {
         createdAtMs: Date.now() + 1,
       },
     });
-    await waitForRenderer(windowRef, `() => document.querySelector('[data-message-id="trm_window_performance_skipped_reply"]')?.dataset.typewriterActive === 'true'`);
+    await waitForRenderer(windowRef, `() => document.querySelector('[data-message-id="trm_window_performance_skipped_reply"]')?.dataset.typewriterActive === 'true'`, 15_000, 'skipped-typewriter');
     const skippedTypewriter = await windowRef.webContents.executeJavaScript(`(async () => {
       document.querySelector('[data-message-id="trm_window_performance_skipped_reply"] .message-body').click();
       await new Promise((resolve) => setTimeout(resolve, 80));
@@ -293,7 +409,7 @@ async function run() {
       type: 'message',
       message: {
         messageId: 'trm_window_performance_interrupted_reply',
-        seq: 878,
+        seq: 5003,
         authorId: 'builder',
         author: { memberId: 'builder', displayName: 'Rook', memberKind: 'agent', role: 'builder' },
         body: 'This long reply must stop following as soon as the reader wheels or touches the history. '.repeat(16),
@@ -301,7 +417,7 @@ async function run() {
         createdAtMs: Date.now() + 2,
       },
     });
-    await waitForRenderer(windowRef, `() => document.querySelector('[data-message-id="trm_window_performance_interrupted_reply"]')?.dataset.typewriterActive === 'true'`);
+    await waitForRenderer(windowRef, `() => document.querySelector('[data-message-id="trm_window_performance_interrupted_reply"]')?.dataset.typewriterActive === 'true'`, 15_000, 'interrupted-typewriter');
     const interruptedTypewriter = await windowRef.webContents.executeJavaScript(`(async () => {
       const scroll = document.querySelector('#messageScroll');
       scroll.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -80 }));
@@ -331,7 +447,7 @@ async function run() {
       type: 'message',
       message: {
         messageId: 'trm_window_performance_agent_reply',
-        seq: 879,
+        seq: 5004,
         authorId: 'oracle',
         author: { memberId: 'oracle', displayName: 'Vera', memberKind: 'agent', role: 'oracle' },
         body: 'This incoming typed reply must never pull the reader away from the history they chose to read. '.repeat(8),
@@ -340,7 +456,7 @@ async function run() {
       },
     });
     await waitForRenderer(windowRef, `() => document.querySelector('[data-message-id="trm_window_performance_agent_reply"]')
-      && !document.querySelector('#unreadMarker')?.hidden`);
+      && !document.querySelector('#unreadMarker')?.hidden`, 15_000, 'incoming-reply');
     await new Promise((resolve) => setTimeout(resolve, 500));
     const incomingAfter = await windowRef.webContents.executeJavaScript(`(() => {
       const scroll = document.querySelector('#messageScroll');
@@ -356,7 +472,7 @@ async function run() {
 
     windowRef.webContents.reload();
     await waitForRenderer(windowRef, `() => document.querySelector('#connectionDot')?.dataset.state === 'connected'
-      && document.querySelectorAll('.message-item').length === 150`);
+      && document.querySelectorAll('.message-item').length === 150`, 15_000, 'reload-history');
 
     const localBody = 'My local send must land at the newest message.';
     await windowRef.webContents.executeJavaScript(`(() => {
@@ -372,7 +488,7 @@ async function run() {
       return matches.length === 1
         && !matches[0].dataset.pending
         && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= 3;
-    }`);
+    }`, 15_000, 'local-send');
     const localSend = await windowRef.webContents.executeJavaScript(`(() => {
       const scroll = document.querySelector('#messageScroll');
       return { bottomGap: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight };
@@ -420,7 +536,16 @@ async function run() {
       historyBefore,
       historyAfter,
       ok: historyBefore === 150
-        && historyAfter > historyBefore
+        && historyAfter === 300
+        && String(historyLoad.after.oldestBody || '').startsWith('Performance history message 576.')
+        && anchorStable(historyLoad.before, historyLoad.after)
+        && liveGrowth.before.messageCount === 300
+        && liveGrowth.after.messageCount === 300
+        && liveGrowth.after.historyCount === 150
+        && liveGrowth.after.liveCount === 150
+        && String(liveGrowth.after.oldestBody || '').startsWith('Performance history message 576.')
+        && String(liveGrowth.after.newestBody || '').startsWith('Performance live message 160.')
+        && anchorStable(liveGrowth.before, liveGrowth.after)
         && desktopResize.messageCount === 150
         && desktopResize.width === 1100
         && desktopResize.messageRectReads <= 20
@@ -456,8 +581,11 @@ async function run() {
         && consoleErrors.length === 0,
       electron: process.versions.electron,
       node: process.versions.node,
+      dependencyRoot: process.env.NODE_PATH || '',
       desktopResize,
       phoneResize,
+      historyLoad,
+      liveGrowth,
       latestJump,
       typewriter: {
         untouched: untouchedTypewriter,
@@ -492,7 +620,7 @@ async function run() {
     }
   }
   fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
-  if (!result?.ok) throw Object.assign(new Error('team_room_window_performance_failed'), { result });
+  if (!result?.ok) process.exitCode = 1;
 }
 
 app.whenReady()

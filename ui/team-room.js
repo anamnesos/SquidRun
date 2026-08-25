@@ -87,10 +87,16 @@
     connectedOnce: false,
     authenticated: false,
     messages: [],
+    // Keep the bounded newest-message window separate from older pages the
+    // reader explicitly loaded. Live socket traffic may advance this segment,
+    // but must not grow it forever or discard requested history.
+    recentMessages: [],
+    recentMessageLimit: 150,
     // Older pages the reader asked for. Held apart from the live snapshot so a
     // fresh broadcast cannot silently drop history already on screen.
     olderMessages: [],
     hasMoreHistory: false,
+    historyBeforeSeq: null,
     // Day index from the snapshot, and the archived day being browsed. While a
     // past day is open the live feed keeps arriving but must not replace it.
     days: [],
@@ -650,33 +656,43 @@
     return empty;
   }
 
-  function oldestLoadedSeq() {
-    let oldest = null;
-    for (const message of state.messages) {
-      const seq = Number(message.seq);
-      if (!Number.isFinite(seq)) continue;
-      if (oldest === null || seq < oldest) oldest = seq;
-    }
-    return oldest;
+  function messageSequence(message) {
+    if (message?.seq === null || message?.seq === undefined || message?.seq === '') return null;
+    const seq = Number(message.seq);
+    return Number.isFinite(seq) ? seq : null;
+  }
+
+  function compareMessages(a, b) {
+    return Number(a?.seq || Number.MAX_SAFE_INTEGER) - Number(b?.seq || Number.MAX_SAFE_INTEGER)
+      || Number(a?.createdAtMs) - Number(b?.createdAtMs);
+  }
+
+  function nextHistoryCursor() {
+    const remembered = Number(state.historyBeforeSeq);
+    if (Number.isInteger(remembered) && remembered > 0) return remembered;
+    const recentSeqs = state.recentMessages.map(messageSequence).filter(Number.isFinite);
+    const olderSeqs = state.olderMessages.map(messageSequence).filter(Number.isFinite);
+    if (recentSeqs.length === 0) return olderSeqs.length ? Math.min(...olderSeqs) : null;
+    return Math.min(...recentSeqs);
   }
 
   async function loadOlderMessages() {
     if (state.loadingHistory || !state.hasMoreHistory) return;
-    const beforeSeq = oldestLoadedSeq();
+    const beforeSeq = nextHistoryCursor();
     if (beforeSeq === null) return;
     state.loadingHistory = true;
     renderMessages();
     try {
-      const { response, payload } = await fetchJson(`/api/history?beforeSeq=${beforeSeq}`);
+      const { response, payload } = await fetchJson(`/api/snapshot?beforeSeq=${beforeSeq}`);
       if (!response.ok || !payload?.ok) return;
-      const older = Array.isArray(payload.history?.messages) ? payload.history.messages : [];
+      const older = Array.isArray(payload.snapshot?.messages) ? payload.snapshot.messages : [];
       const seen = new Set(state.messages.map((message) => message.messageId));
       const fresh = older.filter((message) => !seen.has(message.messageId));
       state.olderMessages = fresh.concat(state.olderMessages);
-      state.hasMoreHistory = payload.history?.hasMore === true;
-      state.messages = mergeHistory(state.messages);
-      state.messages.sort((a, b) => Number(a.seq || Number.MAX_SAFE_INTEGER) - Number(b.seq || Number.MAX_SAFE_INTEGER)
-        || Number(a.createdAtMs) - Number(b.createdAtMs));
+      state.olderMessages.sort(compareMessages);
+      state.historyBeforeSeq = payload.snapshot?.oldestLoadedSeq ?? beforeSeq;
+      state.hasMoreHistory = payload.snapshot?.hasMore === true;
+      rebuildVisibleMessages();
     } catch {
       // Nothing to reconcile: the button stays, the reader can try again.
     } finally {
@@ -699,12 +715,12 @@
     state.loadingHistory = true;
     renderDayPicker();
     try {
-      const { response, payload } = await fetchJson(`/api/history?day=${encodeURIComponent(day)}`);
+      const { response, payload } = await fetchJson(`/api/snapshot?day=${encodeURIComponent(day)}`);
       if (!response.ok || !payload?.ok) return;
       state.viewingDay = day;
       state.olderMessages = [];
       state.hasMoreHistory = false;
-      state.messages = Array.isArray(payload.history?.messages) ? payload.history.messages : [];
+      state.messages = Array.isArray(payload.snapshot?.messages) ? payload.snapshot.messages : [];
       renderMessages({ forceBottom: true });
     } catch {
       // Leave the reader where they were; the picker stays usable.
@@ -890,16 +906,22 @@
       return;
     }
     const wasAwayFromBottom = !atLatestMessage();
-    const optimisticIndex = state.messages.findIndex((entry) => entry.clientNonce && entry.clientNonce === message.clientNonce);
-    const exactIndex = state.messages.findIndex((entry) => entry.messageId === message.messageId);
+    const optimisticIndex = state.recentMessages.findIndex((entry) => entry.clientNonce && entry.clientNonce === message.clientNonce);
+    const exactIndex = state.recentMessages.findIndex((entry) => entry.messageId === message.messageId);
     const index = exactIndex >= 0 ? exactIndex : optimisticIndex;
-    if (index >= 0) state.messages[index] = { ...message, optimistic: optimisticIndex >= 0 };
+    if (index >= 0) state.recentMessages[index] = { ...message, optimistic: optimisticIndex >= 0 };
     else {
-      state.messages.push(message);
+      state.recentMessages.push(message);
       if (shouldTypewriterMessage(message)) state.pendingTypewriterMessageIds.add(message.messageId);
     }
-    state.messages.sort((a, b) => Number(a.seq || Number.MAX_SAFE_INTEGER) - Number(b.seq || Number.MAX_SAFE_INTEGER)
-      || Number(a.createdAtMs) - Number(b.createdAtMs));
+    const beforeTrim = state.recentMessages.length;
+    state.recentMessages = boundRecentMessages(state.recentMessages);
+    if (state.recentMessages.length < beforeTrim) {
+      const recentSeqs = state.recentMessages.map(messageSequence).filter(Number.isFinite);
+      state.historyBeforeSeq = recentSeqs.length ? Math.min(...recentSeqs) : state.historyBeforeSeq;
+      state.hasMoreHistory = true;
+    }
+    rebuildVisibleMessages();
     renderMessages({ forceBottom: followLocalSend });
     if (followLocalSend) state.localSendFollowNonces.delete(message.clientNonce);
     if (index < 0 && wasAwayFromBottom) markUnread(1);
@@ -961,8 +983,7 @@
         state.messages[matchingIndex] = outboxMessage(record, { sending: state.drainingOutbox });
       }
     }
-    state.messages.sort((a, b) => Number(a.seq || Number.MAX_SAFE_INTEGER) - Number(b.seq || Number.MAX_SAFE_INTEGER)
-      || Number(a.createdAtMs) - Number(b.createdAtMs));
+    state.messages.sort(compareMessages);
   }
 
   function mergeHistory(windowMessages) {
@@ -972,22 +993,41 @@
     return older.concat(windowMessages);
   }
 
+  function boundRecentMessages(messages) {
+    const sorted = [...messages].sort(compareMessages);
+    const limit = Math.max(1, Number(state.recentMessageLimit) || 150);
+    return sorted.length > limit ? sorted.slice(-limit) : sorted;
+  }
+
+  function rebuildVisibleMessages() {
+    state.recentMessages = boundRecentMessages(state.recentMessages);
+    state.messages = mergeHistory(state.recentMessages);
+    state.messages.sort(compareMessages);
+    mergeOutboxMessages();
+  }
+
   function applySnapshot(snapshot, { initial = false } = {}) {
     const windowMessages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
-    if (initial) state.olderMessages = [];
-    if (typeof snapshot?.hasMore === 'boolean') state.hasMoreHistory = snapshot.hasMore;
+    if (initial) {
+      state.olderMessages = [];
+      state.historyBeforeSeq = null;
+    }
+    if (Number.isInteger(Number(snapshot?.limit)) && Number(snapshot.limit) > 0) {
+      state.recentMessageLimit = Number(snapshot.limit);
+    }
     if (Array.isArray(snapshot?.days)) state.days = snapshot.days;
     if (state.viewingDay) {
       // Reading an archived day: refresh the picker, leave the page alone.
       renderDayPicker();
       return;
     }
-    const nextMessages = mergeHistory(windowMessages);
     const previousIds = new Set(state.messages.map((message) => message.messageId));
     const newCount = windowMessages.filter((message) => !previousIds.has(message.messageId)).length;
     const wasAwayFromBottom = !initial && !atLatestMessage();
-    state.messages = nextMessages;
-    mergeOutboxMessages();
+    state.recentMessages = boundRecentMessages(windowMessages);
+    state.historyBeforeSeq = snapshot?.oldestLoadedSeq ?? state.historyBeforeSeq;
+    state.hasMoreHistory = snapshot?.hasMore === true;
+    rebuildVisibleMessages();
     renderMessages({ forceBottom: initial });
     if (wasAwayFromBottom && newCount > 0) markUnread(newCount);
   }

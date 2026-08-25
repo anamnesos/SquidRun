@@ -328,8 +328,29 @@ describe('Team Room HTTP/WebSocket runtime', () => {
       .resolves.toEqual(expect.objectContaining({ statusCode: 403, payload: expect.objectContaining({ reason: 'room_source_mismatch' }) }));
     await expect(request(started.origin, '/api/cli/snapshot', { token: electron.token }))
       .resolves.toEqual(expect.objectContaining({ statusCode: 403, payload: expect.objectContaining({ reason: 'room_source_mismatch' }) }));
-    await expect(request(started.origin, '/api/snapshot', { cookie }))
-      .resolves.toEqual(expect.objectContaining({ statusCode: 200, payload: expect.objectContaining({ ok: true }) }));
+    await expect(request(started.origin, '/api/snapshot?limit=1', { cookie }))
+      .resolves.toEqual(expect.objectContaining({
+        statusCode: 200,
+        payload: expect.objectContaining({
+          ok: true,
+          snapshot: expect.objectContaining({ hasMore: false, limit: 1 }),
+        }),
+      }));
+    await expect(request(started.origin, '/api/snapshot?limit=0', { cookie }))
+      .resolves.toEqual(expect.objectContaining({
+        statusCode: 400,
+        payload: expect.objectContaining({ reason: 'team_room_history_limit_invalid' }),
+      }));
+    await expect(request(started.origin, '/api/snapshot?beforeSeq=not-a-sequence', { cookie }))
+      .resolves.toEqual(expect.objectContaining({
+        statusCode: 400,
+        payload: expect.objectContaining({ reason: 'team_room_history_before_seq_invalid' }),
+      }));
+    await expect(request(started.origin, '/api/snapshot?day=not-a-day', { cookie }))
+      .resolves.toEqual(expect.objectContaining({
+        statusCode: 400,
+        payload: expect.objectContaining({ reason: 'team_room_history_day_invalid' }),
+      }));
 
     const wsMessage = await new Promise((resolve, reject) => {
       const socket = new WebSocket(started.origin.replace(/^http/u, 'ws') + '/ws', {
@@ -381,7 +402,12 @@ describe('Team Room HTTP/WebSocket runtime', () => {
       payload: expect.objectContaining({ reason: 'room_origin_forbidden' }),
     }));
     await expect(request(started.origin, '/api/push/settings', {
-      method: 'POST', cookie, origin: started.origin, body: { subscription },
+      method: 'POST', cookie, origin: started.origin, body: {
+        subscription,
+        // Keep this delivery assertion independent of the wall clock. The
+        // production default quiet window intentionally includes 02:00.
+        preferences: { quietStart: '00:00', quietEnd: '00:00' },
+      },
     })).resolves.toEqual(expect.objectContaining({
       statusCode: 200,
       payload: expect.objectContaining({ ok: true }),
@@ -436,6 +462,90 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     expect(receiptText).not.toContain(subscription.keys.auth);
     expect(receiptText).not.toContain('Need James now.');
     socket.close();
+  });
+
+  test('keeps CLI list and status complete while the browser defaults to the newest 150 messages', async () => {
+    runtime = new TeamRoomRuntime(runtimeOptions(tempRoot, async () => ({ ok: true })));
+    const started = await runtime.start();
+    expect(started.ok).toBe(true);
+
+    for (let index = 1; index <= 205; index += 1) {
+      const posted = runtime.store.postMessage({
+        identity: {
+          memberId: 'james', roomId: 'main', profileName: 'main', memberKind: 'human',
+          role: 'james', paneId: null, source: 'room_web',
+        },
+        payload: { body: `History message ${index}.`, clientNonce: `history-page-${index}` },
+      });
+      expect(posted.ok).toBe(true);
+    }
+
+    const electron = runtime.issueElectronCredential();
+    const browser = await request(started.origin, '/api/snapshot', {
+      cookie: `squidrun_team_room=${electron.token}`,
+    });
+    expect(browser).toEqual(expect.objectContaining({
+      statusCode: 200,
+      payload: expect.objectContaining({
+        snapshot: expect.objectContaining({ hasMore: true, limit: 150 }),
+      }),
+    }));
+    expect(browser.payload.snapshot.messages).toHaveLength(150);
+    expect(browser.payload.snapshot.messages[0].body).toBe('History message 56.');
+    expect(browser.payload.snapshot.messages[149].body).toBe('History message 205.');
+
+    const older = await request(started.origin, '/api/snapshot?beforeSeq=56', {
+      cookie: `squidrun_team_room=${electron.token}`,
+    });
+    expect(older.payload.snapshot.messages).toHaveLength(55);
+    expect(older.payload.snapshot.messages[0].body).toBe('History message 1.');
+    expect(older.payload.snapshot.messages[54].body).toBe('History message 55.');
+    expect(older.payload.snapshot.hasMore).toBe(false);
+
+    const day = browser.payload.snapshot.days[0].day;
+    const archivedDay = await request(started.origin, `/api/snapshot?day=${encodeURIComponent(day)}`, {
+      cookie: `squidrun_team_room=${electron.token}`,
+    });
+    expect(archivedDay.payload.snapshot).toEqual(expect.objectContaining({
+      day,
+      hasMore: false,
+      totalMessages: 205,
+    }));
+    expect(archivedDay.payload.snapshot.messages).toHaveLength(205);
+    await expect(request(started.origin, '/api/history?beforeSeq=56', {
+      cookie: `squidrun_team_room=${electron.token}`,
+    })).resolves.toEqual(expect.objectContaining({ statusCode: 404 }));
+
+    let cliOutput = '';
+    expect(await runRoomCli(['list', '--json'], {
+      projectRoot: tempRoot,
+      env: cliEnv('builder', '2', `pl_${'2'.repeat(32)}`),
+      stdout: { write: (chunk) => { cliOutput += chunk; } },
+      stderr: { write: () => {} },
+    })).toBe(0);
+    const cliSnapshot = JSON.parse(cliOutput);
+    expect(cliSnapshot.messages).toHaveLength(205);
+    expect(cliSnapshot.messages[0].body).toBe('History message 1.');
+    expect(cliSnapshot.messages[204].body).toBe('History message 205.');
+    expect(cliSnapshot).toEqual(expect.objectContaining({
+      hasMore: false,
+      oldestLoadedSeq: 1,
+      totalMessages: 205,
+      limit: 205,
+    }));
+
+    let statusOutput = '';
+    expect(await runRoomCli(['status', '--json'], {
+      projectRoot: tempRoot,
+      env: cliEnv('builder', '2', `pl_${'2'.repeat(32)}`),
+      stdout: { write: (chunk) => { statusOutput += chunk; } },
+      stderr: { write: () => {} },
+    })).toBe(0);
+    expect(JSON.parse(statusOutput)).toEqual(expect.objectContaining({
+      ok: true,
+      role: 'builder',
+      messages: 205,
+    }));
   });
 
   test('keeps message posting live but records unavailable push transport as a failure', async () => {

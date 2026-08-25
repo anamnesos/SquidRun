@@ -46,16 +46,21 @@ describe('Team Room production-size scroll and resize behavior', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-window-performance-jest-'));
     const outputPath = path.join(tempRoot, 'result.json');
     const electronPackageRoot = path.dirname(require.resolve('electron/package.json'));
+    const dependencyRoot = path.dirname(electronPackageRoot);
     const electronPath = process.platform === 'win32'
       ? path.join(electronPackageRoot, 'dist', 'electron.exe')
       : require('electron');
     const childPath = path.join(__dirname, 'fixtures', 'team-room-window-performance-child.js');
-    const { ELECTRON_RUN_AS_NODE: _ignored, ...baseEnv } = process.env;
+    const { ELECTRON_RUN_AS_NODE: _ignored, NODE_PATH: _ignoredNodePath, ...baseEnv } = process.env;
     let smokeRoot = null;
     try {
-      const child = spawnSync(electronPath, [childPath], {
+      const child = spawnSync(electronPath, ['--disable-error-dialogs', childPath], {
         cwd: path.resolve(__dirname, '..'),
-        env: { ...baseEnv, TEAM_ROOM_WINDOW_PERFORMANCE_OUTPUT: outputPath },
+        env: {
+          ...baseEnv,
+          NODE_PATH: dependencyRoot,
+          TEAM_ROOM_WINDOW_PERFORMANCE_OUTPUT: outputPath,
+        },
         encoding: 'utf8',
         timeout: 90_000,
         windowsHide: true,
@@ -68,6 +73,7 @@ describe('Team Room production-size scroll and resize behavior', () => {
           output = fs.readFileSync(outputPath, 'utf8');
           try { result = JSON.parse(output); } catch {}
           if (result?.complete === true) break;
+          if (child.status !== 0 && result?.stage) break;
         }
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
       }
@@ -89,6 +95,7 @@ describe('Team Room production-size scroll and resize behavior', () => {
         ok: true,
         electron: '28.3.3',
         node: '18.18.2',
+        dependencyRoot,
         mainProcessExited: true,
         electronProcessesExited: true,
         smokeRootRemoved: true,
@@ -106,6 +113,17 @@ describe('Team Room production-size scroll and resize behavior', () => {
         // 875 seeded, one bounded window rendered, older history reachable.
         historyBefore: 150,
         historyAfter: 300,
+        historyLoad: expect.objectContaining({
+          after: expect.objectContaining({ messageCount: 300 }),
+        }),
+        liveGrowth: expect.objectContaining({
+          before: expect.objectContaining({ messageCount: 300 }),
+          after: expect.objectContaining({
+            messageCount: 300,
+            historyCount: 150,
+            liveCount: 150,
+          }),
+        }),
         duplicate: expect.objectContaining({ statusCode: 200 }),
       }));
     } finally {
