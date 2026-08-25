@@ -78,6 +78,17 @@ function buildTelegramEnvOverlay(settings) {
   return overlay;
 }
 
+// Token, owner chat, and allowlist together identify WHICH install and WHICH person a
+// send belongs to. Applying them key-by-key can splice one source’s token onto another
+// source’s chat id, which is how a message addressed to one chat leaves under another
+// install’s bot. They are resolved as one unit: whoever supplies any of them supplies all.
+const TELEGRAM_IDENTITY_ENV_KEYS = Object.freeze([
+  'TELEGRAM_BOT_TOKEN',
+  'TELEGRAM_CHAT_ID',
+  'TELEGRAM_CHAT_ALLOWLIST',
+  'TELEGRAM_CHAT_ALLOWLIST_STRICT',
+]);
+
 function applyTelegramEnvOverlay(options = {}) {
   const env = options.env || process.env;
   const settingsPath = toNonEmptyString(options.settingsPath)
@@ -90,19 +101,34 @@ function applyTelegramEnvOverlay(options = {}) {
   const overlay = buildTelegramEnvOverlay(settings);
   const applied = [];
   const skipped = [];
+  const envOwnsIdentity = TELEGRAM_IDENTITY_ENV_KEYS.some((key) => toNonEmptyString(env[key]));
   for (const [key, value] of Object.entries(overlay)) {
-    if (toNonEmptyString(env[key])) {
+    const isIdentityKey = TELEGRAM_IDENTITY_ENV_KEYS.includes(key);
+    // An identity already present in env wins as a whole, so the file cannot
+    // contribute a single identity key alongside it and produce a mixed sender.
+    if (toNonEmptyString(env[key]) || (isIdentityKey && envOwnsIdentity)) {
       skipped.push(key);
       continue;
     }
     env[key] = value;
     applied.push(key);
   }
-  return { ok: true, applied, skipped, source: settingsPath, relayMode: settings.relayMode };
+  const identitySource = envOwnsIdentity
+    ? 'env'
+    : (applied.some((key) => TELEGRAM_IDENTITY_ENV_KEYS.includes(key)) ? 'file' : 'none');
+  return {
+    ok: true,
+    applied,
+    skipped,
+    source: settingsPath,
+    relayMode: settings.relayMode,
+    identitySource,
+  };
 }
 
 module.exports = {
   BRIDGE_RELAY_MODE_ENV_KEY,
+  TELEGRAM_IDENTITY_ENV_KEYS,
   TELEGRAM_SETTINGS_RELATIVE_PATH,
   applyTelegramEnvOverlay,
   buildTelegramEnvOverlay,

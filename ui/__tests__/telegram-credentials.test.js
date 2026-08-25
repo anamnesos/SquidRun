@@ -75,7 +75,7 @@ describe('telegram-credentials', () => {
     expect(result.relayMode).toBe('off');
   });
 
-  test('existing env values always win and are reported as skipped', () => {
+  test('an env-supplied identity wins whole: the file adds no identity key beside it', () => {
     const root = makeDataRoot({
       botToken: '123456789:file_token',
       ownerChatId: '111111',
@@ -90,11 +90,51 @@ describe('telegram-credentials', () => {
 
     expect(env.TELEGRAM_BOT_TOKEN).toBe('999999999:env_token_wins');
     expect(env.TELEGRAM_CHAT_ID).toBe('222222');
-    expect(result.skipped.sort()).toEqual(['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']);
-    expect(result.applied.sort()).toEqual([
+    // The file allowlist must NOT be spliced onto the env token/chat.
+    expect(env.TELEGRAM_CHAT_ALLOWLIST).toBeUndefined();
+    expect(env.TELEGRAM_CHAT_ALLOWLIST_STRICT).toBeUndefined();
+    expect(result.skipped.sort()).toEqual([
+      'TELEGRAM_BOT_TOKEN',
       'TELEGRAM_CHAT_ALLOWLIST',
       'TELEGRAM_CHAT_ALLOWLIST_STRICT',
+      'TELEGRAM_CHAT_ID',
     ]);
+    expect(result.applied).toEqual([]);
+    expect(result.identitySource).toBe('env');
+  });
+
+  test('a lone inherited token cannot pick up another install’s chat id', () => {
+    // The real hazard: main’s token survives in env while the side install’s
+    // settings supply the recipient, sending one person’s message under another bot.
+    const root = makeDataRoot({
+      botToken: '123456789:side_install_token',
+      ownerChatId: REDACTED-CHAT-ID,
+      chatAllowlist: [REDACTED-CHAT-ID],
+    });
+    const env = { TELEGRAM_BOT_TOKEN: '999999999:inherited_main_token' };
+
+    const result = applyTelegramEnvOverlay({ env, dataRoot: root });
+
+    expect(env.TELEGRAM_BOT_TOKEN).toBe('999999999:inherited_main_token');
+    expect(env.TELEGRAM_CHAT_ID).toBeUndefined();
+    expect(env.TELEGRAM_CHAT_ALLOWLIST).toBeUndefined();
+    expect(result.identitySource).toBe('env');
+  });
+
+  test('an empty env takes the whole identity from the file', () => {
+    const root = makeDataRoot({
+      botToken: '123456789:side_install_token',
+      ownerChatId: REDACTED-CHAT-ID,
+      chatAllowlist: [REDACTED-CHAT-ID],
+    });
+    const env = {};
+
+    const result = applyTelegramEnvOverlay({ env, dataRoot: root });
+
+    expect(env.TELEGRAM_BOT_TOKEN).toBe('123456789:side_install_token');
+    expect(env.TELEGRAM_CHAT_ID).toBe('REDACTED-CHAT-ID');
+    expect(env.TELEGRAM_CHAT_ALLOWLIST).toBe('REDACTED-CHAT-ID');
+    expect(result.identitySource).toBe('file');
   });
 
   test('whitespace-only env values are treated as unset and get filled', () => {
