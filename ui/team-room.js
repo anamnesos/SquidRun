@@ -882,7 +882,11 @@
       // or scroll it; it is already durable and appears on return to latest.
       // The reader posting is different: they meant to join the live end, so
       // take them there rather than dropping what they just sent.
-      if (followLocalSend) returnToLive();
+      if (followLocalSend) {
+        // Mirrors the cleanup the normal path does; the early return skips it.
+        state.localSendFollowNonces.delete(message.clientNonce);
+        returnToLive();
+      }
       return;
     }
     const wasAwayFromBottom = !atLatestMessage();
