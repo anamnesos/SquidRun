@@ -1886,6 +1886,27 @@ function writeTriggerFallback(targetInput, descriptorOrContent, options = {}) {
   const payload = buildTriggerFallbackContent(descriptor.content, descriptor.messageId, descriptor.metadata);
   try {
     fs.mkdirSync(triggersDir, { recursive: true });
+    // A trigger file that still exists has NOT been consumed yet: the watcher
+    // claims a message by renaming it to <role>.txt.processing. Replacing it
+    // here would destroy a message nobody has read, with no error anywhere -
+    // the same silent loss the Telegram inbound queue was built to end. Append
+    // instead, so a burst to a busy pane arrives late rather than never.
+    let appended = false;
+    try {
+      if (fs.existsSync(triggerPath)) {
+        const existing = fs.readFileSync(triggerPath, 'utf8');
+        const separator = existing && !existing.endsWith(String.fromCharCode(10)) ? String.fromCharCode(10) : '';
+        fs.appendFileSync(triggerPath, `${separator}${payload}`, 'utf8');
+        appended = true;
+      }
+    } catch (appendErr) {
+      // The watcher may have claimed the file between the check and the append.
+      // Fall through to the atomic create below rather than dropping anything.
+      appended = false;
+    }
+    if (appended) {
+      return { ok: true, role: roleName, path: triggerPath, appended: true };
+    }
     fs.writeFileSync(tempPath, payload, 'utf8');
     try {
       fs.renameSync(tempPath, triggerPath);
