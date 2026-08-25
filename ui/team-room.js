@@ -875,9 +875,17 @@
   }
 
   function mergeMessage(message) {
-    const wasAwayFromBottom = !atLatestMessage();
     const followLocalSend = Boolean(message.clientNonce
       && state.localSendFollowNonces.has(message.clientNonce));
+    if (state.viewingDay) {
+      // Reading an archived day. Live traffic must not be appended to that day
+      // or scroll it; it is already durable and appears on return to latest.
+      // The reader posting is different: they meant to join the live end, so
+      // take them there rather than dropping what they just sent.
+      if (followLocalSend) returnToLive();
+      return;
+    }
+    const wasAwayFromBottom = !atLatestMessage();
     const optimisticIndex = state.messages.findIndex((entry) => entry.clientNonce && entry.clientNonce === message.clientNonce);
     const exactIndex = state.messages.findIndex((entry) => entry.messageId === message.messageId);
     const index = exactIndex >= 0 ? exactIndex : optimisticIndex;
