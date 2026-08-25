@@ -740,3 +740,11 @@ html[data-room-resizing="true"] .composer-shell { backdrop-filter: none; }
 }
 
 .day-live:hover { color: var(--room-text); }
+
+/* A long unbroken token — an error identifier, a hostname — must never push the
+   menu off screen. The grid column already allows shrinking; the text needs
+   permission to break, or it overflows the window instead of wrapping. */
+.room-menu-item > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

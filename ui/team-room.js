@@ -1879,8 +1879,13 @@
       tailscale_node_offline: 'This computer is offline in Tailscale.',
       tailscale_serve_unrecognized_config: 'SquidRun could not verify the current Tailscale Serve route.',
       team_room_remote_target_not_loopback: 'The private Team Room listener is unavailable.',
+      team_room_remote_access_external_managed: 'Remote access for this window is managed outside SquidRun.',
+      team_room_remote_access_unavailable: 'Remote access is not available for this window.',
     };
-    return known[reason] || detail || reason || 'Remote access change failed.';
+    // Never surface a raw snake_case identifier: it is unreadable, it overflows the
+    // menu, and it tells the reader nothing they can act on. Unknown reasons get a
+    // plain sentence; the exact code stays in the tooltip for whoever is debugging.
+    return known[reason] || detail || 'Remote access is unavailable right now.';
   }
 
   function renderRemoteAccess() {
@@ -1897,9 +1902,14 @@
     elements.remoteAccessLabel.textContent = visibleLabel;
     elements.remoteAccessButton.dataset.state = stateKey;
     elements.remoteAccessButton.setAttribute('aria-label', visibleLabel);
-    elements.remoteAccessButton.title = failureMessage || (remote.enabled
-      ? 'Turn off remote access. LAN Team Room stays running.'
-      : 'Turn on private Tailscale access.');
+    const diagnosticSuffix = remote.reason && !failureMessage.includes(remote.reason)
+      ? ` (${remote.reason})`
+      : '';
+    elements.remoteAccessButton.title = failureMessage
+      ? `${failureMessage}${diagnosticSuffix}`
+      : (remote.enabled
+        ? 'Turn off remote access. LAN Team Room stays running.'
+        : 'Turn on private Tailscale access.');
     elements.roomOverflowState.hidden = !remote.manageable || !remote.enabled || remote.pending;
     elements.roomOverflowTrigger.setAttribute('aria-label', remote.manageable
       ? `Room options. Remote access ${stateLabel.toLowerCase()}.`
