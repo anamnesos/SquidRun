@@ -39,6 +39,11 @@ class TeamRoomService {
       ok: true,
       messages: this.store.listMessages(
         authenticated.identity.roomId,
+        authenticated.identity.profileName,
+        request.window || {}
+      ),
+      days: this.store.listMessageDays(
+        authenticated.identity.roomId,
         authenticated.identity.profileName
       ),
     };

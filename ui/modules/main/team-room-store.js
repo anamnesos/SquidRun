@@ -26,6 +26,10 @@ const {
 } = require('./team-room-contracts');
 const { inspectAttachmentFile } = require('./team-room-attachments');
 
+// Hard ceiling on a single history page, so a bad caller cannot ask for the
+// whole room and undo the windowing.
+const MAX_MESSAGE_PAGE = 2000;
+
 function resolveDefaultDbPath() {
   return path.join(getProjectRoot(), '.squidrun', 'room', 'room.db');
 }
@@ -1103,11 +1107,81 @@ class TeamRoomStore {
     `).all(String(messageId)).map((row) => mapClaimAttachment(row, this.attachmentRoot));
   }
 
-  listMessages(roomId = DEFAULT_ROOM_ID, profileName = DEFAULT_PROFILE_NAME) {
+  // The room grows by a few hundred messages a day and the client draws every
+  // message it is handed, so an uncapped read makes resize and scroll cost climb
+  // forever. Callers ask for a window; older days are fetched deliberately.
+  listMessages(roomId = DEFAULT_ROOM_ID, profileName = DEFAULT_PROFILE_NAME, options = {}) {
     this._requireDb();
+    const room = String(roomId).toLowerCase();
+    const profile = String(profileName).toLowerCase();
+    const day = options.day ? String(options.day).slice(0, 10) : null;
+    const beforeSeq = Number.isFinite(Number(options.beforeSeq)) ? Number(options.beforeSeq) : null;
+    const rawLimit = Number(options.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(MAX_MESSAGE_PAGE, Math.floor(rawLimit))
+      : null;
+
+    if (day) {
+      return this.db.prepare(`
+        SELECT * FROM room_messages
+        WHERE room_id = ? AND profile_name = ?
+          AND date(created_at_ms / 1000, 'unixepoch', 'localtime') = ?
+        ORDER BY seq
+      `).all(room, profile, day).map(mapMessage);
+    }
+
+    if (limit) {
+      // Newest N (optionally older than a cursor), returned oldest-first so
+      // callers keep chronological order without re-sorting.
+      const rows = beforeSeq === null
+        ? this.db.prepare(`
+            SELECT * FROM (
+              SELECT * FROM room_messages
+              WHERE room_id = ? AND profile_name = ?
+              ORDER BY seq DESC LIMIT ?
+            ) ORDER BY seq
+          `).all(room, profile, limit)
+        : this.db.prepare(`
+            SELECT * FROM (
+              SELECT * FROM room_messages
+              WHERE room_id = ? AND profile_name = ? AND seq < ?
+              ORDER BY seq DESC LIMIT ?
+            ) ORDER BY seq
+          `).all(room, profile, beforeSeq, limit);
+      return rows.map(mapMessage);
+    }
+
     return this.db.prepare(`
       SELECT * FROM room_messages WHERE room_id = ? AND profile_name = ? ORDER BY seq
-    `).all(String(roomId).toLowerCase(), String(profileName).toLowerCase()).map(mapMessage);
+    `).all(room, profile).map(mapMessage);
+  }
+
+  countMessages(roomId = DEFAULT_ROOM_ID, profileName = DEFAULT_PROFILE_NAME) {
+    this._requireDb();
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS total FROM room_messages WHERE room_id = ? AND profile_name = ?
+    `).get(String(roomId).toLowerCase(), String(profileName).toLowerCase());
+    return Number(row?.total || 0);
+  }
+
+  listMessageDays(roomId = DEFAULT_ROOM_ID, profileName = DEFAULT_PROFILE_NAME) {
+    this._requireDb();
+    return this.db.prepare(`
+      SELECT date(created_at_ms / 1000, 'unixepoch', 'localtime') AS day,
+             COUNT(*) AS count,
+             MIN(seq) AS first_seq,
+             MAX(seq) AS last_seq
+      FROM room_messages
+      WHERE room_id = ? AND profile_name = ?
+      GROUP BY day
+      ORDER BY day DESC
+    `).all(String(roomId).toLowerCase(), String(profileName).toLowerCase())
+      .map((row) => ({
+        day: row.day,
+        count: Number(row.count),
+        firstSeq: Number(row.first_seq),
+        lastSeq: Number(row.last_seq),
+      }));
   }
 
   getActivation(activationId) {

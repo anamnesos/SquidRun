@@ -86,6 +86,11 @@
     connectedOnce: false,
     authenticated: false,
     messages: [],
+    // Older pages the reader asked for. Held apart from the live snapshot so a
+    // fresh broadcast cannot silently drop history already on screen.
+    olderMessages: [],
+    hasMoreHistory: false,
+    loadingHistory: false,
     attachments: [],
     socket: null,
     reconnectTimer: null,
@@ -640,6 +645,54 @@
     return empty;
   }
 
+  function oldestLoadedSeq() {
+    let oldest = null;
+    for (const message of state.messages) {
+      const seq = Number(message.seq);
+      if (!Number.isFinite(seq)) continue;
+      if (oldest === null || seq < oldest) oldest = seq;
+    }
+    return oldest;
+  }
+
+  async function loadOlderMessages() {
+    if (state.loadingHistory || !state.hasMoreHistory) return;
+    const beforeSeq = oldestLoadedSeq();
+    if (beforeSeq === null) return;
+    state.loadingHistory = true;
+    renderMessages();
+    try {
+      const { response, payload } = await fetchJson(`/api/history?beforeSeq=${beforeSeq}`);
+      if (!response.ok || !payload?.ok) return;
+      const older = Array.isArray(payload.history?.messages) ? payload.history.messages : [];
+      const seen = new Set(state.messages.map((message) => message.messageId));
+      const fresh = older.filter((message) => !seen.has(message.messageId));
+      state.olderMessages = fresh.concat(state.olderMessages);
+      state.hasMoreHistory = payload.history?.hasMore === true;
+      state.messages = mergeHistory(state.messages);
+      state.messages.sort((a, b) => Number(a.seq || Number.MAX_SAFE_INTEGER) - Number(b.seq || Number.MAX_SAFE_INTEGER)
+        || Number(a.createdAtMs) - Number(b.createdAtMs));
+    } catch {
+      // Nothing to reconcile: the button stays, the reader can try again.
+    } finally {
+      state.loadingHistory = false;
+      renderMessages();
+    }
+  }
+
+  function createHistoryControl() {
+    const wrap = document.createElement("div");
+    wrap.className = "history-control";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "history-more";
+    button.textContent = state.loadingHistory ? "Loading…" : "Load older messages";
+    button.disabled = state.loadingHistory;
+    button.addEventListener("click", loadOlderMessages);
+    wrap.append(button);
+    return wrap;
+  }
+
   function renderMessages({ forceBottom = false } = {}) {
     cancelMessageScrollRestore();
     finishActiveTypewriters();
@@ -652,6 +705,7 @@
       clearUnread();
       return;
     }
+    if (state.hasMoreHistory) fragment.append(createHistoryControl());
     let currentDay = null;
     let currentRun = null;
     let currentAuthor = null;
@@ -819,10 +873,20 @@
       || Number(a.createdAtMs) - Number(b.createdAtMs));
   }
 
+  function mergeHistory(windowMessages) {
+    if (state.olderMessages.length === 0) return windowMessages;
+    const seen = new Set(windowMessages.map((message) => message.messageId));
+    const older = state.olderMessages.filter((message) => !seen.has(message.messageId));
+    return older.concat(windowMessages);
+  }
+
   function applySnapshot(snapshot, { initial = false } = {}) {
-    const nextMessages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
+    const windowMessages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
+    if (initial) state.olderMessages = [];
+    if (typeof snapshot?.hasMore === 'boolean') state.hasMoreHistory = snapshot.hasMore;
+    const nextMessages = mergeHistory(windowMessages);
     const previousIds = new Set(state.messages.map((message) => message.messageId));
-    const newCount = nextMessages.filter((message) => !previousIds.has(message.messageId)).length;
+    const newCount = windowMessages.filter((message) => !previousIds.has(message.messageId)).length;
     const wasAwayFromBottom = !initial && !atLatestMessage();
     state.messages = nextMessages;
     mergeOutboxMessages();

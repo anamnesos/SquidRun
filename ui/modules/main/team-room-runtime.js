@@ -15,6 +15,10 @@ const {
   MEMBER_KINDS,
 } = require('./team-room-contracts');
 const { TeamRoomAuth, hashToken, isPrivateLanHostname, safeNetworkPolicy } = require('./team-room-auth');
+
+// One screenful of scrollback plus room to scroll before older history is fetched.
+// The client renders every message it holds, so this bounds resize and scroll cost.
+const SNAPSHOT_MESSAGE_WINDOW = 150;
 const { inspectAttachmentFile, resolveSafeExistingFile } = require('./team-room-attachments');
 const { TeamRoomDeliveryAdapter } = require('./team-room-delivery-adapter');
 const { buildPairingUrl, renderPairingQrDataUrl } = require('./team-room-qr');
@@ -912,15 +916,55 @@ class TeamRoomRuntime {
     };
   }
 
-  snapshot() {
+  // The client draws every message it is given, so handing it the entire room
+  // makes every resize and scroll proportional to all history ever sent. Send a
+  // recent window plus the day index; older days are loaded on request.
+  snapshot(options = {}) {
+    const rawLimit = Number(options.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.floor(rawLimit)
+      : SNAPSHOT_MESSAGE_WINDOW;
+    const day = options.day ? String(options.day).slice(0, 10) : null;
+    const messages = this.store
+      .listMessages(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME, day ? { day } : { limit })
+      .map((message) => this._enrichMessage(message));
+    const totalMessages = this.store.countMessages(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME);
+    const oldestLoadedSeq = messages.length ? Number(messages[0].seq) : null;
     return {
       schema: 'squidrun.team_room_snapshot.v1',
       roomId: DEFAULT_ROOM_ID,
       profileName: DEFAULT_PROFILE_NAME,
       members: this.store.listMembers(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME),
-      messages: this.store.listMessages(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME).map((message) => this._enrichMessage(message)),
+      messages,
       roomState: this.store.getRoomState(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME),
+      days: this.store.listMessageDays(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME),
+      totalMessages,
+      oldestLoadedSeq,
+      hasMore: day ? false : messages.length < totalMessages,
+      day,
       generatedAtMs: Number(this.now()),
+    };
+  }
+
+  // Older history on demand: either one calendar day, or the page before a cursor.
+  historyPage(options = {}) {
+    const day = options.day ? String(options.day).slice(0, 10) : null;
+    const rawLimit = Number(options.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.floor(rawLimit)
+      : SNAPSHOT_MESSAGE_WINDOW;
+    const query = day
+      ? { day }
+      : { limit, beforeSeq: Number(options.beforeSeq) };
+    const messages = this.store
+      .listMessages(DEFAULT_ROOM_ID, DEFAULT_PROFILE_NAME, query)
+      .map((message) => this._enrichMessage(message));
+    return {
+      schema: 'squidrun.team_room_history.v1',
+      day,
+      messages,
+      oldestLoadedSeq: messages.length ? Number(messages[0].seq) : null,
+      hasMore: day ? false : messages.length === limit,
     };
   }
 
@@ -1001,6 +1045,33 @@ class TeamRoomRuntime {
     const authenticated = this._authenticate(request, 'read', endpointSource);
     if (!authenticated.ok) return jsonResponse(response, resultStatus(authenticated), authenticated);
     return jsonResponse(response, 200, { ok: true, snapshot: this.snapshot() });
+  }
+
+  // Older history, fetched only when asked for: one calendar day, or the page
+  // before a cursor. Same read authority as the snapshot it extends.
+  async _handleHistory(request, response, endpointSource) {
+    const authenticated = this._authenticate(request, 'read', endpointSource);
+    if (!authenticated.ok) return jsonResponse(response, resultStatus(authenticated), authenticated);
+    let url;
+    try {
+      url = new URL(request.url, 'http://localhost');
+    } catch {
+      return jsonResponse(response, 400, { ok: false, reason: 'room_history_bad_request' });
+    }
+    const day = url.searchParams.get('day');
+    const beforeSeq = Number(url.searchParams.get('beforeSeq'));
+    const limit = Number(url.searchParams.get('limit'));
+    if (!day && !Number.isFinite(beforeSeq)) {
+      return jsonResponse(response, 400, { ok: false, reason: 'room_history_cursor_required' });
+    }
+    return jsonResponse(response, 200, {
+      ok: true,
+      history: this.historyPage({
+        day: day || null,
+        beforeSeq: Number.isFinite(beforeSeq) ? beforeSeq : null,
+        limit: Number.isFinite(limit) ? limit : undefined,
+      }),
+    });
   }
 
   async _handlePost(request, response, endpointSource) {
@@ -1352,9 +1423,11 @@ class TeamRoomRuntime {
       });
     }
     if (url.pathname === '/api/snapshot' && request.method === 'GET') return this._handleSnapshot(request, response, 'room_web');
+    if (url.pathname === '/api/history' && request.method === 'GET') return this._handleHistory(request, response, 'room_web');
     if (url.pathname === '/api/messages' && request.method === 'POST') return this._handlePost(request, response, 'room_web');
     if (url.pathname === '/api/attachments' && request.method === 'POST') return this._handleUpload(request, response);
     if (url.pathname === '/api/cli/snapshot' && request.method === 'GET') return this._handleSnapshot(request, response, 'room_cli');
+    if (url.pathname === '/api/cli/history' && request.method === 'GET') return this._handleHistory(request, response, 'room_cli');
     if (url.pathname === '/api/cli/attachments' && request.method === 'POST') return this._handleCliUpload(request, response);
     if (url.pathname === '/api/cli/messages' && request.method === 'POST') return this._handlePost(request, response, 'room_cli');
     if (url.pathname === '/api/pairing/start' && request.method === 'POST') return this._handlePairingStart(request, response);

@@ -218,10 +218,21 @@ async function run() {
     windowRef.setOpacity(0);
     windowRef.showInactive();
     await waitForRenderer(windowRef, `() => document.querySelector('#connectionDot')?.dataset.state === 'connected'
-      && document.querySelectorAll('.message-item').length === 875`);
+      && document.querySelectorAll('.message-item').length === 150`);
 
     const desktopResize = await resizeProbe(windowRef, 1100, 760);
     const phoneResize = await resizeProbe(windowRef, 390, 760);
+
+    const historyBefore = await windowRef.webContents.executeJavaScript(
+      `document.querySelectorAll('.message-item').length`
+    );
+    await windowRef.webContents.executeJavaScript(
+      `(() => { const b = document.querySelector('.history-more'); if (b) b.click(); return true; })()`
+    );
+    await waitForRenderer(windowRef, `() => document.querySelectorAll('.message-item').length > 150`, 12_000, 'load-older');
+    const historyAfter = await windowRef.webContents.executeJavaScript(
+      `document.querySelectorAll('.message-item').length`
+    );
 
     await windowRef.webContents.executeJavaScript(`document.querySelector('#unreadMarker').click()`);
     await waitForRenderer(windowRef, `() => document.querySelector('#unreadMarker')?.hidden
@@ -345,7 +356,7 @@ async function run() {
 
     windowRef.webContents.reload();
     await waitForRenderer(windowRef, `() => document.querySelector('#connectionDot')?.dataset.state === 'connected'
-      && document.querySelectorAll('.message-item').length === 875`);
+      && document.querySelectorAll('.message-item').length === 150`);
 
     const localBody = 'My local send must land at the newest message.';
     await windowRef.webContents.executeJavaScript(`(() => {
@@ -406,7 +417,11 @@ async function run() {
       && Math.abs(Number(before.offset) - Number(after.offset)) <= 2;
     result = {
       complete: true,
-      ok: desktopResize.messageCount === 875
+      historyBefore,
+      historyAfter,
+      ok: historyBefore === 150
+        && historyAfter > historyBefore
+        && desktopResize.messageCount === 150
         && desktopResize.width === 1100
         && desktopResize.messageRectReads <= 20
         && desktopResize.bottomGap > 3
@@ -414,7 +429,7 @@ async function run() {
         && desktopResize.latestLabel === 'Latest'
         && desktopResize.resizing === null
         && anchorStable(desktopResize.before, desktopResize.after)
-        && phoneResize.messageCount === 875
+        && phoneResize.messageCount === 150
         && phoneResize.width === 390
         && phoneResize.messageRectReads <= 20
         && phoneResize.bottomGap > 3

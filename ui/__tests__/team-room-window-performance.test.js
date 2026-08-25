@@ -95,14 +95,17 @@ describe('Team Room production-size scroll and resize behavior', () => {
         consoleErrors: [],
         desktopResize: expect.objectContaining({
           width: 1100,
-          messageCount: 875,
+          messageCount: 150,
           latestLabel: 'Latest',
         }),
         phoneResize: expect.objectContaining({
           width: 390,
-          messageCount: 875,
+          messageCount: 150,
           latestLabel: 'Latest',
         }),
+        // 875 seeded, one bounded window rendered, older history reachable.
+        historyBefore: 150,
+        historyAfter: 300,
         duplicate: expect.objectContaining({ statusCode: 200 }),
       }));
     } finally {
