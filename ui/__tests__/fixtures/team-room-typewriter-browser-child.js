@@ -1,14 +1,18 @@
 'use strict';
 
+const Module = require('node:module');
+Module._initPaths();
 const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { app, BrowserWindow } = require('electron');
-const { TeamRoomRuntime } = require('../../modules/main/team-room-runtime');
-const { createTeamRoomWindow } = require('../../modules/main/team-room-window');
 
 const outputPath = path.resolve(String(process.env.TEAM_ROOM_TYPEWRITER_OUTPUT || ''));
+const pidPath = String(process.env.TEAM_ROOM_TYPEWRITER_PID || '').trim();
+if (pidPath) fs.writeFileSync(path.resolve(pidPath), `${process.pid}\n`, 'utf8');
+const { TeamRoomRuntime } = require('../../modules/main/team-room-runtime');
+const { createTeamRoomWindow } = require('../../modules/main/team-room-window');
 const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-typewriter-browser-'));
 app.setPath('userData', path.join(smokeRoot, 'user-data'));
 app.commandLine.appendSwitch('disable-gpu');
