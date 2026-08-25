@@ -28,6 +28,7 @@
     app: document.getElementById('roomApp'),
     column: document.getElementById('messageColumn'),
     scroll: document.getElementById('messageScroll'),
+    dayPicker: document.getElementById('dayPicker'),
     composer: document.getElementById('composerShell'),
     composerForm: document.getElementById('composerForm'),
     input: document.getElementById('messageInput'),
@@ -90,6 +91,10 @@
     // fresh broadcast cannot silently drop history already on screen.
     olderMessages: [],
     hasMoreHistory: false,
+    // Day index from the snapshot, and the archived day being browsed. While a
+    // past day is open the live feed keeps arriving but must not replace it.
+    days: [],
+    viewingDay: null,
     loadingHistory: false,
     attachments: [],
     socket: null,
@@ -680,6 +685,80 @@
     }
   }
 
+  function formatDayLabel(entry) {
+    const [year, month, day] = String(entry.day).split("-").map(Number);
+    const date = new Date(year, (month || 1) - 1, day || 1);
+    const label = Number.isNaN(date.getTime())
+      ? entry.day
+      : date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    return `${label} (${entry.count})`;
+  }
+
+  async function openDay(day) {
+    if (!day) return returnToLive();
+    state.loadingHistory = true;
+    renderDayPicker();
+    try {
+      const { response, payload } = await fetchJson(`/api/history?day=${encodeURIComponent(day)}`);
+      if (!response.ok || !payload?.ok) return;
+      state.viewingDay = day;
+      state.olderMessages = [];
+      state.hasMoreHistory = false;
+      state.messages = Array.isArray(payload.history?.messages) ? payload.history.messages : [];
+      renderMessages({ forceBottom: true });
+    } catch {
+      // Leave the reader where they were; the picker stays usable.
+    } finally {
+      state.loadingHistory = false;
+      renderDayPicker();
+    }
+  }
+
+  async function returnToLive() {
+    state.viewingDay = null;
+    state.olderMessages = [];
+    try {
+      const { response, payload } = await fetchJson('/api/snapshot');
+      if (response.ok && payload?.ok) applySnapshot(payload.snapshot, { initial: true });
+    } catch {
+      // Still drop the archive view so the reader is not stranded in the past.
+      renderMessages({ forceBottom: true });
+    }
+    renderDayPicker();
+  }
+
+  function renderDayPicker() {
+    const host = elements.dayPicker;
+    if (!host) return;
+    host.replaceChildren();
+    if (state.days.length <= 1 && !state.viewingDay) { host.hidden = true; return; }
+    host.hidden = false;
+    const select = document.createElement("select");
+    select.className = "day-select";
+    select.disabled = state.loadingHistory;
+    const live = document.createElement("option");
+    live.value = "";
+    live.textContent = "Latest";
+    select.append(live);
+    for (const entry of state.days) {
+      const option = document.createElement("option");
+      option.value = entry.day;
+      option.textContent = formatDayLabel(entry);
+      if (entry.day === state.viewingDay) option.selected = true;
+      select.append(option);
+    }
+    select.addEventListener("change", () => openDay(select.value));
+    host.append(select);
+    if (state.viewingDay) {
+      const back = document.createElement("button");
+      back.type = "button";
+      back.className = "day-live";
+      back.textContent = "Back to latest";
+      back.addEventListener("click", returnToLive);
+      host.append(back);
+    }
+  }
+
   function createHistoryControl() {
     const wrap = document.createElement("div");
     wrap.className = "history-control";
@@ -694,6 +773,7 @@
   }
 
   function renderMessages({ forceBottom = false } = {}) {
+    renderDayPicker();
     cancelMessageScrollRestore();
     finishActiveTypewriters();
     const stayAtBottom = forceBottom || atLatestMessage();
@@ -884,6 +964,12 @@
     const windowMessages = Array.isArray(snapshot?.messages) ? snapshot.messages : [];
     if (initial) state.olderMessages = [];
     if (typeof snapshot?.hasMore === 'boolean') state.hasMoreHistory = snapshot.hasMore;
+    if (Array.isArray(snapshot?.days)) state.days = snapshot.days;
+    if (state.viewingDay) {
+      // Reading an archived day: refresh the picker, leave the page alone.
+      renderDayPicker();
+      return;
+    }
     const nextMessages = mergeHistory(windowMessages);
     const previousIds = new Set(state.messages.map((message) => message.messageId));
     const newCount = windowMessages.filter((message) => !previousIds.has(message.messageId)).length;

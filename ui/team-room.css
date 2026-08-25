@@ -709,3 +709,34 @@ html[data-room-resizing="true"] .composer-shell { backdrop-filter: none; }
   cursor: default;
   opacity: 0.6;
 }
+
+.day-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  padding: 0.35rem 0.9rem 0;
+}
+
+.day-select {
+  font: inherit;
+  font-size: 0.85em;
+  color: var(--room-dim);
+  background: transparent;
+  border: 1px solid var(--room-line);
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+}
+
+.day-live {
+  font: inherit;
+  font-size: 0.85em;
+  color: var(--room-dim);
+  background: transparent;
+  border: 1px solid var(--room-line);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  cursor: pointer;
+}
+
+.day-live:hover { color: var(--room-text); }
