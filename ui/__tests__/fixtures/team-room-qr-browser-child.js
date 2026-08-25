@@ -90,6 +90,7 @@ async function readHeaderGeometry(windowRef) {
 async function run() {
   if (!process.env.TEAM_ROOM_QR_OUTPUT) throw new Error('TEAM_ROOM_QR_OUTPUT_required');
   const appGeneration = `app-session-${Math.max(1, process.pid)}`;
+  let remoteAccessAttempt = 0;
   const runtime = new TeamRoomRuntime({
     appGeneration,
     projectRoot: smokeRoot,
@@ -106,12 +107,23 @@ async function run() {
     deliverToPane: async () => ({ ok: true }),
     resolveCliBindings: ({ appGeneration }) => bindings(appGeneration),
     getRemoteAccessStatus: async () => ({ ok: true, enabled: true, origin: 'https://squidrun.test.ts.net' }),
-    setRemoteAccessEnabled: async () => ({
-      ok: false,
-      enabled: false,
-      reason: 'tailscale_serve_enable_failed',
-      detail: '500 Internal Server Error: your Tailscale account does not support getting TLS certs',
-    }),
+    setRemoteAccessEnabled: async () => {
+      remoteAccessAttempt += 1;
+      if (remoteAccessAttempt === 1) {
+        return {
+          ok: false,
+          enabled: false,
+          reason: 'tailscale_serve_enable_failed',
+          detail: '500 Internal Server Error: your Tailscale account does not support getting TLS certs',
+        };
+      }
+      return {
+        ok: false,
+        enabled: false,
+        reason: 'team_room_remote_access_external_managed',
+        detail: null,
+      };
+    },
   });
   let desktopWindow = null;
   let nativeWindow = null;
@@ -208,6 +220,31 @@ async function run() {
       pressed: document.querySelector('#remoteAccessButton').getAttribute('aria-pressed'),
       actionClosed: !document.querySelector('#roomOverflow').open,
     }))()`);
+    await desktopWindow.webContents.executeJavaScript(`document.querySelector('#remoteAccessButton').click()`);
+    await waitForRenderer(desktopWindow, `() => document.querySelector('#remoteAccessLabel')?.textContent
+      === 'Remote access: Error — Remote access for this window is managed outside SquidRun.'`, 12_000, 'external-managed-error');
+    await desktopWindow.webContents.executeJavaScript(`document.querySelector('#roomOverflowTrigger').click()`);
+    const externalManagedDiagnostic = await desktopWindow.webContents.executeJavaScript(`new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const panel = document.querySelector('.room-overflow-panel');
+        const button = document.querySelector('#remoteAccessButton');
+        const label = document.querySelector('#remoteAccessLabel');
+        const panelRect = panel.getBoundingClientRect();
+        const buttonRect = button.getBoundingClientRect();
+        const labelRect = label.getBoundingClientRect();
+        resolve({
+          label: label.textContent,
+          title: button.title,
+          viewportWidth: window.innerWidth,
+          panelRect: { left: panelRect.left, right: panelRect.right },
+          buttonRect: { left: buttonRect.left, right: buttonRect.right },
+          labelRect: { left: labelRect.left, right: labelRect.right },
+          labelClientWidth: label.clientWidth,
+          labelScrollWidth: label.scrollWidth,
+        });
+      }));
+    })`);
+    await desktopWindow.webContents.executeJavaScript(`document.querySelector('#roomOverflow').open = false`);
     await desktopWindow.webContents.executeJavaScript(`document.querySelector('#roomOverflowTrigger').click()`);
     await desktopWindow.webContents.executeJavaScript(`document.querySelector('#pairPhoneButton').click()`);
     await waitForRenderer(desktopWindow, `() => document.querySelector('#pairDialog')?.open
@@ -335,9 +372,18 @@ async function run() {
         && headerDiagnostic.escapeClosed
         && headerDiagnostic.outsideClosed
         && remoteAccessDiagnostic.label === 'Remote access: Error — Enable HTTPS Certificates in the Tailscale DNS settings, then try again.'
-        && remoteAccessDiagnostic.title === 'Enable HTTPS Certificates in the Tailscale DNS settings, then try again.'
+        && remoteAccessDiagnostic.title === 'Enable HTTPS Certificates in the Tailscale DNS settings, then try again. (tailscale_serve_enable_failed)'
         && remoteAccessDiagnostic.pressed === 'false'
         && remoteAccessDiagnostic.actionClosed
+        && externalManagedDiagnostic.label === 'Remote access: Error — Remote access for this window is managed outside SquidRun.'
+        && externalManagedDiagnostic.title === 'Remote access for this window is managed outside SquidRun. (team_room_remote_access_external_managed)'
+        && externalManagedDiagnostic.panelRect.left >= 0
+        && externalManagedDiagnostic.panelRect.right <= externalManagedDiagnostic.viewportWidth
+        && externalManagedDiagnostic.buttonRect.left >= externalManagedDiagnostic.panelRect.left
+        && externalManagedDiagnostic.buttonRect.right <= externalManagedDiagnostic.panelRect.right
+        && externalManagedDiagnostic.labelRect.left >= externalManagedDiagnostic.buttonRect.left
+        && externalManagedDiagnostic.labelRect.right <= externalManagedDiagnostic.buttonRect.right
+        && externalManagedDiagnostic.labelScrollWidth <= externalManagedDiagnostic.labelClientWidth
         && dialog.open
         && dialog.actionClosed
         && dialog.title === 'Pair your phone'
@@ -367,6 +413,7 @@ async function run() {
       node: process.versions.node,
       origin: started.origin,
       remoteAccessDiagnostic,
+      externalManagedDiagnostic,
       headerDiagnostic,
       maximizedHeaderDiagnostic,
       nativeHeaderDiagnostic,

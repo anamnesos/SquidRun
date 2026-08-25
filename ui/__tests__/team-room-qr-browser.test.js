@@ -100,7 +100,22 @@ describe('Team Room QR pairing browser flow', () => {
       expect(result.maximizedHeaderDiagnostic.triggerRightGap).toBeLessThanOrEqual(24);
       expect(result.maximizedHeaderDiagnostic.triggerRect.top).toBeGreaterThanOrEqual(result.maximizedHeaderDiagnostic.overlayRect.bottom);
       expect(result.maximizedHeaderDiagnostic.brandRect.right).toBeLessThan(result.maximizedHeaderDiagnostic.triggerRect.left);
-      expect(result.remoteAccessDiagnostic).toEqual(expect.objectContaining({ actionClosed: true }));
+      expect(result.remoteAccessDiagnostic).toEqual(expect.objectContaining({
+        label: 'Remote access: Error — Enable HTTPS Certificates in the Tailscale DNS settings, then try again.',
+        title: 'Enable HTTPS Certificates in the Tailscale DNS settings, then try again. (tailscale_serve_enable_failed)',
+        actionClosed: true,
+      }));
+      expect(result.externalManagedDiagnostic).toEqual(expect.objectContaining({
+        label: 'Remote access: Error — Remote access for this window is managed outside SquidRun.',
+        title: 'Remote access for this window is managed outside SquidRun. (team_room_remote_access_external_managed)',
+      }));
+      expect(result.externalManagedDiagnostic.panelRect.left).toBeGreaterThanOrEqual(0);
+      expect(result.externalManagedDiagnostic.panelRect.right).toBeLessThanOrEqual(result.externalManagedDiagnostic.viewportWidth);
+      expect(result.externalManagedDiagnostic.buttonRect.left).toBeGreaterThanOrEqual(result.externalManagedDiagnostic.panelRect.left);
+      expect(result.externalManagedDiagnostic.buttonRect.right).toBeLessThanOrEqual(result.externalManagedDiagnostic.panelRect.right);
+      expect(result.externalManagedDiagnostic.labelRect.left).toBeGreaterThanOrEqual(result.externalManagedDiagnostic.buttonRect.left);
+      expect(result.externalManagedDiagnostic.labelRect.right).toBeLessThanOrEqual(result.externalManagedDiagnostic.buttonRect.right);
+      expect(result.externalManagedDiagnostic.labelScrollWidth).toBeLessThanOrEqual(result.externalManagedDiagnostic.labelClientWidth);
       expect(result.nativeHeaderDiagnostic).toEqual(expect.objectContaining({
         desktopShell: 'desktop',
         chromeMode: 'native',
